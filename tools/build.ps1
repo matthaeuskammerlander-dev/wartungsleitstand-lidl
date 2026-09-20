@@ -1,7 +1,7 @@
-$ErrorActionPreference = 'Stop'
+﻿$ErrorActionPreference = 'Stop'
 $recs    = Get-Content '.\data\positionen.json' -Raw -Encoding UTF8 | ConvertFrom-Json
 $markets = Get-Content '.\data\markets.json'    -Raw -Encoding UTF8 | ConvertFrom-Json
-$coords  = Get-Content '.\data\coords.json'     -Raw -Encoding UTF8 | ConvertFrom-Json
+$coords  = Get-Content '.\data\coords_by_address.json' -Raw -Encoding UTF8 | ConvertFrom-Json
 
 function NormStreet($s) {
   $t = $s.ToLower()
@@ -26,7 +26,10 @@ $standorte = New-Object System.Collections.ArrayList
 $keyToId = @{}
 for ($i = 0; $i -lt $markets.Count; $i++) {
   $m = $markets[$i]
-  $c = $coords.$i
+  # Koordinaten haengen an der Adresse, nicht an der Zeilennummer –
+  # sonst verschiebt sich alles, sobald sich die Liste aendert
+  $c = $null
+  if ($coords.PSObject.Properties[$m.adresse]) { $c = $coords.($m.adresse) }
   $lat = $null; $lon = $null; $g = 'keine'
   if ($c) { $lat = $c[0]; $lon = $c[1]; $g = if ($prec.ContainsKey($c[2])) { $prec[$c[2]] } else { 'strasse' } }
   $id = 'S' + $i

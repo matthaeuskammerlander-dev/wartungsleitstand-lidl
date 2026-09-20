@@ -1,4 +1,4 @@
-$ErrorActionPreference = 'Stop'
+﻿$ErrorActionPreference = 'Stop'
 $recs = Get-Content '.\data\positionen.json' -Raw -Encoding UTF8 | ConvertFrom-Json
 
 function NormStreet($s) {

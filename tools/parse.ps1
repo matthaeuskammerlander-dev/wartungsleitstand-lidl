@@ -1,4 +1,4 @@
-$ErrorActionPreference = 'Stop'
+﻿$ErrorActionPreference = 'Stop'
 
 function LoadT($p) {
   [System.IO.File]::ReadAllLines($p, [System.Text.Encoding]::UTF8) | ForEach-Object { ,($_ -split "`t") }
