@@ -98,6 +98,26 @@ Koordinaten über [Nominatim](https://nominatim.openstreetmap.org/) geocodiert,
 136 von 140 Standorten, die meisten adressgenau. Der Österreich-Umriss stammt
 ebenfalls aus OpenStreetMap (ODbL).
 
+## Fotos im Wartungsprotokoll
+
+Bis zu acht Bilder je Protokoll, je mit Bildunterschrift. Am Handy öffnet die
+Schaltfläche direkt die Kamera.
+
+Die Bilder werden **im Browser verkleinert, bevor sie das Gerät verlassen**:
+längste Kante 1600 Pixel, Qualität wird so weit gesenkt, bis das Bild unter
+160 KB liegt. Ein typisches Handyfoto schrumpft damit von rund 1,3 MB auf
+etwa 140 KB — für Typenschilder und Mängel gut lesbar, im Mobilfunk sparsam.
+
+Gespeichert wird getrennt vom Protokoll: auf Supabase im nicht öffentlichen
+Bucket `protokollfotos`, ausgeliefert über zeitlich begrenzte Links. Im
+Protokoll steht nur der Verweis. Innerhalb von Claude liegt je Foto ein
+eigenes Dokument in der dortigen Datenbank.
+
+Ohne Verbindung wandern Protokoll **und** Bilder zusammen in den
+Zwischenspeicher des Geräts und gehen später gemeinsam raus. Ein Protokoll
+wird nie gespeichert, bevor seine Fotos übertragen sind — sonst verwiese es
+auf Bilder, die es nicht gibt.
+
 ## Einrichtung der Protokoll-Datenbank
 
 1. Auf [supabase.com](https://supabase.com) ein Projekt anlegen (Region Frankfurt).

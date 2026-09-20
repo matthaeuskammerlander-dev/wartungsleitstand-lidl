@@ -1240,14 +1240,16 @@ function zuZeile(doc,uid){
     maengel:doc.maengel, betriebsbereit:doc.betriebsbereit, sofortmassnahme:doc.sofortmassnahme,
     ergebnis:doc.ergebnis, bemerkungen:doc.bemerkungen,
     name_techniker:doc.nameTechniker, auftraggebervertreter:doc.auftraggebervertreter,
-    unterschrift:doc.unterschrift };
+    unterschrift:doc.unterschrift, fotos:doc.fotos||[] };
 }
 function ausZeile(r){
   return { _id:r.id, erstellt:r.erstellt, standortName:r.standort_name, adresse:r.adresse, region:r.region,
     datum:r.datum, uhrzeit:r.uhrzeit, techniker:r.techniker, nameTechniker:r.name_techniker,
     wartungsart:r.wartungsart, bestellnummer:r.bestellnummer, auftragsnummer:r.auftragsnummer,
     arbeiten:r.arbeiten||[], maengel:r.maengel||[], betriebsbereit:r.betriebsbereit,
-    bemerkungen:r.bemerkungen, filiale:r.filiale };
+    bemerkungen:r.bemerkungen, filiale:r.filiale, fotos:r.fotos||[],
+    anlagen:r.anlagen||[], ergebnis:r.ergebnis||[], unterschrift:r.unterschrift,
+    sofortmassnahme:r.sofortmassnahme, auftraggebervertreter:r.auftraggebervertreter };
 }
 function ladeProtokolle(){
   if(!Store.sb) return;
@@ -1256,6 +1258,104 @@ function ladeProtokolle(){
     protokolle=(r.data||[]).map(ausZeile);
     storeNachRender();
   });
+}
+
+/* ---------------- Fotos ----------------
+   Handykameras liefern 3–8 MB je Bild. Das wird vor dem Hochladen auf
+   eine brauchbare Dokumentationsgröße gebracht – sonst dauert es im
+   Funkloch ewig und sprengt jede Speichergrenze. */
+var FOTO_KANTE = 1600;        // längste Kante in Pixel
+var FOTO_BUDGET = 160000;     // Zielgröße je Bild in Byte
+var FOTO_MAX = 8;             // Bilder je Protokoll
+
+function verkleinere(datei){
+  return new Promise(function(fertig, schiefgegangen){
+    var quelle = window.createImageBitmap
+      ? createImageBitmap(datei,{imageOrientation:"from-image"})
+      : new Promise(function(ok,nok){
+          var img=new Image(), url=URL.createObjectURL(datei);
+          img.onload=function(){ URL.revokeObjectURL(url); ok(img); };
+          img.onerror=function(){ URL.revokeObjectURL(url); nok(new Error("Bild nicht lesbar")); };
+          img.src=url;
+        });
+    quelle.then(function(bild){
+      var b=bild.width, h=bild.height;
+      var f=Math.min(1, FOTO_KANTE/Math.max(b,h));
+      var cv=document.createElement("canvas");
+      cv.width=Math.round(b*f); cv.height=Math.round(h*f);
+      cv.getContext("2d").drawImage(bild,0,0,cv.width,cv.height);
+      if(bild.close) bild.close();
+      /* Qualität so weit senken, bis das Budget passt */
+      var q=0.78, url=cv.toDataURL("image/jpeg",q);
+      while(url.length*0.75 > FOTO_BUDGET && q > 0.36){
+        q-=0.08; url=cv.toDataURL("image/jpeg",q);
+      }
+      fertig({datenUrl:url, breite:cv.width, hoehe:cv.height,
+              bytes:Math.round(url.length*0.75), qualitaet:Math.round(q*100)});
+    }, schiefgegangen);
+  });
+}
+function datenUrlZuBlob(url){
+  var teile=url.split(","), roh=atob(teile[1]);
+  var a=new Uint8Array(roh.length);
+  for(var i=0;i<roh.length;i++) a[i]=roh.charCodeAt(i);
+  return new Blob([a],{type:"image/jpeg"});
+}
+
+/* speichert alle Fotos eines Protokolls; liefert false, wenn etwas scheitert */
+function speichereFotos(protokollId, fotos){
+  if(!fotos || !fotos.length) return Promise.resolve(true);
+
+  if(Store.modus==="claude" && Store.claudeDb){
+    /* ein Dokument je Foto – die Grenze liegt bei 256 KiB je Dokument */
+    var i=0;
+    var naechstes=function(){
+      if(i>=fotos.length) return Promise.resolve(true);
+      var f=fotos[i++];
+      return Store.claudeDb.doc("protokollfotos/"+f.id).set({
+        protokollId:protokollId, name:f.name, hinweis:f.hinweis,
+        datenUrl:f.datenUrl, erstellt:new Date().toISOString()
+      }).then(naechstes, function(){ return false; });
+    };
+    return naechstes();
+  }
+
+  if(Store.modus==="supabase" && Store.sb){
+    var j=0;
+    var weiter=function(){
+      if(j>=fotos.length) return Promise.resolve(true);
+      var f=fotos[j++];
+      var pfad=protokollId+"/"+f.id+".jpg";
+      return Store.sb.storage.from("protokollfotos")
+        .upload(pfad, datenUrlZuBlob(f.datenUrl), {contentType:"image/jpeg", upsert:false})
+        .then(function(r){ if(r.error){ Store.fehler=r.error.message; return false; } return weiter(); },
+              function(){ return false; });
+    };
+    return weiter();
+  }
+  return Promise.resolve(false);
+}
+
+/* holt die Bilder eines Protokolls zur Anzeige */
+function ladeFotos(p){
+  if(!p.fotos || !p.fotos.length) return Promise.resolve([]);
+  if(Store.modus==="claude" && Store.claudeDb){
+    return Promise.all(p.fotos.map(function(f){
+      return Store.claudeDb.doc("protokollfotos/"+f.id).get().then(function(snap){
+        var d=snap.exists?snap.data():null;
+        return {name:f.name, hinweis:f.hinweis, url:d?d.datenUrl:null};
+      },function(){ return {name:f.name, hinweis:f.hinweis, url:null}; });
+    }));
+  }
+  if(Store.modus==="supabase" && Store.sb){
+    return Promise.all(p.fotos.map(function(f){
+      return Store.sb.storage.from("protokollfotos")
+        .createSignedUrl((p._id||p.id)+"/"+f.id+".jpg", 3600)
+        .then(function(r){ return {name:f.name, hinweis:f.hinweis, url:r.data?r.data.signedUrl:null}; },
+              function(){ return {name:f.name, hinweis:f.hinweis, url:null}; });
+    }));
+  }
+  return Promise.resolve([]);
 }
 
 /* ein Protokoll wegschreiben – liefert ein Promise, das nie ablehnt */
@@ -1277,9 +1377,13 @@ function flushQueue(){
   var rest=[], done=0;
   var next=function(i){
     if(i>=q.length){ lsSet("ukt_queue",rest); if(done) toast(done+" zwischengespeicherte(s) Protokoll(e) übertragen"); return; }
-    speichereProtokoll(q[i].id,q[i].doc).then(function(ok){
-      if(ok) done++; else rest.push(q[i]);
-      next(i+1);
+    var e=q[i];
+    speichereFotos(e.id, e.fotos||[]).then(function(fotosOk){
+      if(!fotosOk){ rest.push(e); next(i+1); return; }
+      speichereProtokoll(e.id,e.doc).then(function(ok){
+        if(ok) done++; else rest.push(e);
+        next(i+1);
+      });
     });
   };
   next(0);
@@ -1382,6 +1486,18 @@ function viewProtokoll(){
     ERGEBNISSE.map(function(a,i){ return '<label class="chk"><input type="checkbox" value="'+esc(a)+'" id="f_erg'+i+'" name="ergebnis"><span>'+esc(a)+"</span></label>"; }).join("")+
   '</div><label class="fl" style="margin-top:10px"><span>Bemerkungen</span><textarea id="f_bem" rows="3"></textarea></label></fieldset>'+
 
+  '<fieldset><legend>Fotos</legend>'+
+    '<div class="rowflex">'+
+      '<label class="btn ghost sm" for="f_foto" style="cursor:pointer">Foto aufnehmen oder auswählen</label>'+
+      '<input type="file" id="f_foto" accept="image/*" capture="environment" multiple hidden>'+
+      '<span class="muted" style="font-size:12.5px" id="f_fotoinfo">noch keine Fotos</span>'+
+    "</div>"+
+    '<div id="fotoliste" class="stack" style="margin-top:12px"></div>'+
+    '<div class="muted" style="font-size:12.5px;margin-top:8px">Bilder werden vor dem Hochladen auf '+
+      FOTO_KANTE+' Pixel Kantenlänge verkleinert – gut lesbar für Typenschilder und Mängel, '+
+      'aber sparsam im Funknetz. Höchstens '+FOTO_MAX+' Fotos je Protokoll.</div>'+
+  "</fieldset>"+
+
   '<fieldset><legend>Abschluss</legend><div class="grid">'+
     '<label class="fl"><span class="req">Name Techniker/in</span><input type="text" id="f_name" required></label>'+
     '<label class="fl"><span>Uhrzeit</span><input type="time" id="f_zeit"></label>'+
@@ -1481,6 +1597,56 @@ function viewProtokoll(){
   addMangel();
   form.querySelector("#addMangel").onclick=addMangel;
 
+  /* Fotos */
+  var fotos=[];
+  var fotoHost=form.querySelector("#fotoliste");
+  var fotoInfo=form.querySelector("#f_fotoinfo");
+  var fotoEingabe=form.querySelector("#f_foto");
+  function fotosZeichnen(){
+    fotoHost.innerHTML="";
+    var summe=0;
+    fotos.forEach(function(f,i){
+      summe+=f.bytes;
+      var z=el('<div class="rowflex" style="align-items:flex-start;gap:10px;border:1px solid var(--line);'+
+        'border-radius:8px;padding:8px;background:var(--ground)">'+
+        '<img alt="Vorschau" src="'+f.datenUrl+'" style="width:76px;height:76px;object-fit:cover;border-radius:6px;flex:none">'+
+        '<label class="fl" style="flex:1 1 160px"><span>Bildunterschrift</span>'+
+          '<input type="text" value="'+esc(f.hinweis)+'" placeholder="z. B. Mangel am Wärmetauscher"></label>'+
+        '<div style="display:grid;gap:6px;justify-items:end">'+
+          '<span class="muted mono" style="font-size:11.5px">'+Math.round(f.bytes/1024)+" KB</span>"+
+          '<button class="btn ghost sm" type="button">entfernen</button>'+
+        "</div>"+
+      "</div>");
+      z.querySelector("input").oninput=function(e2){ f.hinweis=e2.target.value; };
+      z.querySelector("button").onclick=function(){ fotos.splice(i,1); fotosZeichnen(); };
+      fotoHost.appendChild(z);
+    });
+    fotoInfo.textContent = fotos.length
+      ? fotos.length+" Foto"+(fotos.length===1?"":"s")+" · "+Math.round(summe/1024)+" KB gesamt"
+      : "noch keine Fotos";
+  }
+  fotoEingabe.onchange=function(){
+    var dateien=Array.prototype.slice.call(fotoEingabe.files||[]);
+    fotoEingabe.value="";
+    if(!dateien.length) return;
+    formDirty=true;
+    var frei=FOTO_MAX-fotos.length;
+    if(dateien.length>frei){ toast("Höchstens "+FOTO_MAX+" Fotos je Protokoll."); dateien=dateien.slice(0,frei); }
+    if(!dateien.length) return;
+    fotoInfo.textContent="Bilder werden verkleinert …";
+    var i=0;
+    var naechstes=function(){
+      if(i>=dateien.length){ fotosZeichnen(); return; }
+      var d=dateien[i++];
+      verkleinere(d).then(function(bild){
+        fotos.push({id:"f"+Date.now().toString(36)+Math.random().toString(36).slice(2,6),
+                    name:d.name||"Foto", hinweis:"", datenUrl:bild.datenUrl, bytes:bild.bytes});
+        naechstes();
+      },function(){ toast("Ein Bild konnte nicht gelesen werden."); naechstes(); });
+    };
+    naechstes();
+  };
+
   /* Unterschrift */
   var cv=form.querySelector("#sig"), ctx=cv.getContext("2d"), drawing=false, hasSig=false;
   ctx.lineWidth=3.2; ctx.lineCap="round"; ctx.lineJoin="round";
@@ -1541,16 +1707,28 @@ function viewProtokoll(){
       bemerkungen:v("f_bem"),
       nameTechniker:v("f_name"), auftraggebervertreter:v("f_agv"),
       unterschrift:hasSig?cv.toDataURL("image/png"):"",
+      /* die Bilddaten liegen getrennt, im Protokoll steht nur der Verweis */
+      fotos:fotos.map(function(f){ return {id:f.id, name:f.name, hinweis:f.hinweis, bytes:f.bytes}; }),
       erstellt:new Date().toISOString()
     };
     lsSet("ukt_tech",doc.nameTechniker||doc.techniker);
     var id="p_"+Date.now()+"_"+Math.random().toString(36).slice(2,7);
     var btn=form.querySelector("#save"); btn.disabled=true; btn.textContent="Speichern …";
     var fertig=function(msg){ btn.disabled=false; btn.textContent="Protokoll speichern"; formDirty=false; toast(msg); S.protoStandort=""; S.protoPos=""; render(); window.scrollTo({top:0,behavior:"smooth"}); };
-    speichereProtokoll(id,doc).then(function(ok){
-      if(ok){ fertig("Protokoll gespeichert."); return; }
-      var q=lsGet("ukt_queue",[]); q.push({id:id,doc:doc}); lsSet("ukt_queue",q);
-      fertig("Keine Verbindung – lokal zwischengespeichert, geht später automatisch raus.");
+    /* erst die Bilder, dann das Protokoll – sonst verweist es auf Fotos, die es nicht gibt */
+    if(fotos.length){ btn.textContent="Fotos werden übertragen …"; }
+    speichereFotos(id,fotos).then(function(fotosOk){
+      if(!fotosOk){
+        var q1=lsGet("ukt_queue",[]); q1.push({id:id,doc:doc,fotos:fotos}); lsSet("ukt_queue",q1);
+        fertig("Fotos konnten nicht übertragen werden – alles lokal zwischengespeichert.");
+        return;
+      }
+      btn.textContent="Speichern …";
+      speichereProtokoll(id,doc).then(function(ok){
+        if(ok){ fertig("Protokoll gespeichert."+(fotos.length?" "+fotos.length+" Foto(s) dabei.":"")); return; }
+        var q=lsGet("ukt_queue",[]); q.push({id:id,doc:doc,fotos:fotos}); lsSet("ukt_queue",q);
+        fertig("Keine Verbindung – lokal zwischengespeichert, geht später automatisch raus.");
+      });
     });
   };
 
@@ -1571,16 +1749,69 @@ function viewProtokoll(){
     '<div class="scrollx" id="plist"></div></div></div>');
   var pl=gesp.querySelector("#plist");
   if(protokolle.length){
-    pl.appendChild(el('<table class="dt"><thead><tr><th>Datum</th><th>Standort</th><th>Techniker/in</th><th>Art</th><th>Mängel</th><th>Bereit</th></tr></thead><tbody>'+
-      protokolle.slice(0,40).map(function(x){
-        return "<tr><td class='mono'>"+dfmt(x.datum)+"</td><td>"+esc(x.standortName||x.adresse||"–")+"</td><td>"+esc(x.nameTechniker||x.techniker||"–")+
-          "</td><td>"+esc(x.wartungsart||"–")+"</td><td class='mono'>"+((x.maengel||[]).length||"0")+"</td><td>"+esc(x.betriebsbereit||"–")+"</td></tr>";
-      }).join("")+"</tbody></table>"));
+    var tbl=el('<table class="dt"><thead><tr><th>Datum</th><th>Standort</th><th>Techniker/in</th>'+
+      "<th>Art</th><th>Mängel</th><th>Fotos</th><th>Bereit</th></tr></thead><tbody></tbody></table>");
+    var tb=tbl.querySelector("tbody");
+    protokolle.slice(0,40).forEach(function(x){
+      var tr=el("<tr style='cursor:pointer'><td class='mono'>"+dfmt(x.datum)+"</td><td>"+esc(x.standortName||x.adresse||"–")+
+        "</td><td>"+esc(x.nameTechniker||x.techniker||"–")+"</td><td>"+esc(x.wartungsart||"–")+
+        "</td><td class='mono'>"+((x.maengel||[]).length||"0")+"</td>"+
+        "<td class='mono'>"+((x.fotos||[]).length||"0")+"</td><td>"+esc(x.betriebsbereit||"–")+"</td></tr>");
+      tr.onclick=function(){
+        var ziel=gesp.querySelector("#pdetail");
+        ziel.innerHTML=""; ziel.appendChild(protokollDetail(x));
+        ziel.scrollIntoView({behavior:"smooth",block:"start"});
+      };
+      tb.appendChild(tr);
+    });
+    pl.appendChild(tbl);
+    gesp.querySelector(".stack").appendChild(el('<div id="pdetail"></div>'));
   } else {
     pl.appendChild(el('<div class="muted" style="font-size:13px">Noch keine Protokolle erfasst.</div>'));
   }
   f.appendChild(gesp);
   return f;
+}
+
+function protokollDetail(p){
+  var d=el('<div class="card" style="box-shadow:none;background:var(--ground)"><div class="pad stack">'+
+    '<div class="rowflex" style="justify-content:space-between">'+
+      '<strong style="font-family:var(--f-disp);font-size:15px">'+esc(p.standortName||p.adresse||"Protokoll")+"</strong>"+
+      '<span class="muted mono" style="font-size:12px">'+dfmt(p.datum)+(p.uhrzeit?" "+esc(p.uhrzeit):"")+"</span>"+
+    "</div>"+
+    '<dl class="dl">'+
+      "<dt>Techniker/in</dt><dd>"+esc(p.nameTechniker||p.techniker||"–")+"</dd>"+
+      "<dt>Wartungsart</dt><dd>"+esc(p.wartungsart||"–")+"</dd>"+
+      (p.bestellnummer?"<dt>Bestellnummer</dt><dd class='mono'>"+esc(p.bestellnummer)+"</dd>":"")+
+      "<dt>Betriebsbereit</dt><dd>"+esc(p.betriebsbereit||"–")+"</dd>"+
+    "</dl>"+
+    ((p.arbeiten&&p.arbeiten.length)?'<div><div class="l muted" style="font-size:11px;text-transform:uppercase;letter-spacing:.06em;margin-bottom:4px">Durchgeführte Arbeiten</div>'+
+      '<div class="rowflex">'+p.arbeiten.map(function(a){ return '<span class="tag">'+esc(a)+"</span>"; }).join("")+"</div></div>":"")+
+    ((p.maengel&&p.maengel.length)?'<div><div class="l muted" style="font-size:11px;text-transform:uppercase;letter-spacing:.06em;margin-bottom:4px">Mängel</div>'+
+      p.maengel.map(function(m){ return '<div style="font-size:13px">• '+esc(m.text)+
+        (m.prio?' <span class="tag">'+esc(m.prio)+"</span>":"")+(m.massnahme?" – "+esc(m.massnahme):"")+"</div>"; }).join("")+"</div>":"")+
+    (p.bemerkungen?'<div><div class="l muted" style="font-size:11px;text-transform:uppercase;letter-spacing:.06em;margin-bottom:4px">Bemerkungen</div>'+
+      '<div style="font-size:13px">'+esc(p.bemerkungen)+"</div></div>":"")+
+    '<div id="pfotos"></div>'+
+  "</div></div>");
+
+  var fh=d.querySelector("#pfotos");
+  if(p.fotos && p.fotos.length){
+    fh.innerHTML='<div class="muted" style="font-size:12.5px">'+p.fotos.length+" Foto(s) werden geladen …</div>";
+    ladeFotos(p).then(function(bilder){
+      fh.innerHTML='<div class="l muted" style="font-size:11px;text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px">Fotos</div>';
+      var g=el('<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px"></div>');
+      bilder.forEach(function(b){
+        g.appendChild(el('<figure style="margin:0">'+
+          (b.url?'<a href="'+b.url+'" target="_blank" rel="noopener">'+
+                 '<img src="'+b.url+'" alt="'+esc(b.hinweis||b.name)+'" style="width:100%;aspect-ratio:4/3;object-fit:cover;border-radius:8px;border:1px solid var(--line)"></a>'
+               :'<div class="note warnbox" style="font-size:12px">Bild nicht abrufbar</div>')+
+          '<figcaption class="muted" style="font-size:12px;margin-top:4px">'+esc(b.hinweis||b.name||"")+"</figcaption></figure>"));
+      });
+      fh.appendChild(g);
+    });
+  }
+  return d;
 }
 
 /* ---------- View: Datenbasis ---------- */

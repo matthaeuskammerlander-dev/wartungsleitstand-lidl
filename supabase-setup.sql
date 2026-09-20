@@ -44,7 +44,11 @@ create table if not exists public.protokolle (
   -- Abschluss
   name_techniker        text,
   auftraggebervertreter text,
-  unterschrift          text          -- PNG als Data-URL
+  unterschrift          text,         -- PNG als Data-URL
+
+  -- Verweise auf die Bilder im Speicher-Bucket "protokollfotos".
+  -- Die Bilddaten selbst liegen dort, nicht in dieser Tabelle.
+  fotos                 jsonb not null default '[]'::jsonb
 );
 
 create index if not exists protokolle_erstellt_idx  on public.protokolle (erstellt desc);
@@ -73,6 +77,32 @@ create policy "angemeldete schreiben eigene"
 
 -- Kein update, kein delete: ein abgegebenes Protokoll ist ein Nachweis.
 -- Korrekturen laufen über ein neues Protokoll mit Bemerkung.
+
+
+-- ---------------------------------------------------------------------------
+-- Fotospeicher
+-- ---------------------------------------------------------------------------
+-- Nicht oeffentlich: die Bilder werden ueber zeitlich begrenzte Links
+-- ausgeliefert, die die App fuer angemeldete Techniker erzeugt.
+insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
+values ('protokollfotos', 'protokollfotos', false, 2097152, array['image/jpeg','image/png'])
+on conflict (id) do nothing;
+
+drop policy if exists "fotos hochladen"  on storage.objects;
+drop policy if exists "fotos ansehen"    on storage.objects;
+
+create policy "fotos hochladen"
+  on storage.objects for insert
+  to authenticated
+  with check (bucket_id = 'protokollfotos');
+
+create policy "fotos ansehen"
+  on storage.objects for select
+  to authenticated
+  using (bucket_id = 'protokollfotos');
+
+-- Kein update, kein delete: ein Foto ist Teil des Nachweises und
+-- verschwindet nicht nachtraeglich.
 
 -- WICHTIG, sonst kann sich jeder aus dem Internet selbst einen Zugang anlegen:
 -- Authentication -> Sign In / Providers -> "Allow new users to sign up" AUS.
