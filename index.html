@@ -318,62 +318,123 @@ function luftlinie(a,b){
 function fahrKm(a,b){ return luftlinie(a,b)*UMWEG; }
 function fahrH(a,b){ return fahrKm(a,b)/TEMPO_KMH; }
 
-/* Nächster Nachbar, danach 2-opt gegen die schlimmsten Überkreuzungen */
-function reihenfolge(start, ziele){
-  var offen=ziele.slice(), weg=[], hier=start;
+/* ---------- Straßenrouting über OSRM (frei, ohne Schlüssel) ---------- */
+var ROUTER = [
+  "https://routing.openstreetmap.de/routed-car",   // FOSSGIS, betreibt auch osm.org
+  "https://router.project-osrm.org"                // Ausweichdienst
+];
+var routerBasis = null;
+var ROUTER_MAX = 90;   // Grenze der öffentlichen Matrix-Schnittstelle
+
+function osrm(pfad){
+  var kandidaten = routerBasis
+    ? [routerBasis].concat(ROUTER.filter(function(b){ return b!==routerBasis; }))
+    : ROUTER.slice();
+  var i=0;
+  function versuch(){
+    if(i>=kandidaten.length) return Promise.resolve(null);
+    var basis=kandidaten[i++];
+    return fetch(basis+pfad)
+      .then(function(r){ return r.ok ? r.json() : null; })
+      .then(function(j){ if(j && j.code==="Ok"){ routerBasis=basis; return j; } return versuch(); })
+      .catch(function(){ return versuch(); });
+  }
+  return versuch();
+}
+function koordListe(punkte){
+  return punkte.map(function(p){ return p.lon.toFixed(5)+","+p.lat.toFixed(5); }).join(";");
+}
+function strassenMatrix(punkte){
+  if(punkte.length<2 || punkte.length>ROUTER_MAX) return Promise.resolve(null);
+  return osrm("/table/v1/driving/"+koordListe(punkte)+"?annotations=duration,distance")
+    .then(function(j){
+      if(!j || !j.durations || !j.distances) return null;
+      return {dauer:j.durations, distanz:j.distances};
+    });
+}
+function strassenGeometrie(punkte){
+  if(punkte.length<2 || punkte.length>ROUTER_MAX) return Promise.resolve(null);
+  return osrm("/route/v1/driving/"+koordListe(punkte)+"?overview=full&geometries=geojson")
+    .then(function(j){
+      if(!j || !j.routes || !j.routes[0]) return null;
+      return j.routes[0].geometry.coordinates;   // [[lon,lat], ...]
+    });
+}
+
+/* Nächster Nachbar, danach 2-opt gegen die schlimmsten Überkreuzungen.
+   Gerechnet wird auf Fahrzeiten, nicht auf Entfernungen – über die
+   Autobahn ist der längere Weg oft der schnellere. */
+function reihenfolgeIdx(kosten, n){
+  var offen=[]; for(var i=1;i<n;i++) offen.push(i);
+  var weg=[], hier=0;
   while(offen.length){
     var best=0, bestD=Infinity;
-    for(var i=0;i<offen.length;i++){ var d=luftlinie(hier,offen[i]); if(d<bestD){bestD=d;best=i;} }
+    for(var k=0;k<offen.length;k++){ var d=kosten(hier,offen[k]); if(d<bestD){ bestD=d; best=k; } }
     hier=offen[best]; weg.push(hier); offen.splice(best,1);
   }
-  var knoten=[start].concat(weg);
-  var laenge=function(k){ var s=0; for(var i=0;i<k.length-1;i++) s+=luftlinie(k[i],k[i+1]); return s; };
-  var verbessert=true, runden=0;
-  while(verbessert && runden<60){
+  var knoten=[0].concat(weg);
+  var laenge=function(kn){ var s=0; for(var i=0;i<kn.length-1;i++) s+=kosten(kn[i],kn[i+1]); return s; };
+  var aktuell=laenge(knoten), verbessert=true, runden=0;
+  while(verbessert && runden<80){
     verbessert=false; runden++;
-    for(var i=1;i<knoten.length-1;i++){
-      for(var j=i+1;j<knoten.length;j++){
-        var neu=knoten.slice(0,i).concat(knoten.slice(i,j+1).reverse(), knoten.slice(j+1));
-        if(laenge(neu)+1e-9 < laenge(knoten)){ knoten=neu; verbessert=true; }
+    for(var a=1;a<knoten.length-1;a++){
+      for(var b=a+1;b<knoten.length;b++){
+        var neu=knoten.slice(0,a).concat(knoten.slice(a,b+1).reverse(), knoten.slice(b+1));
+        var l=laenge(neu);
+        if(l+1e-9 < aktuell){ knoten=neu; aktuell=l; verbessert=true; }
       }
     }
   }
   return knoten.slice(1);
 }
 
+/* liefert ein Promise, weil die Fahrzeiten vom Routendienst kommen */
 function planeTour(opt){
   var start = opt.start;
   var stopps = opt.stopps;                 // [{standort, positionen:[...]}]
-  if(!stopps.length) return null;
-  var sortiert = reihenfolge(start, stopps.map(function(s){ return s.standort; }));
-  var nachId={}; stopps.forEach(function(s){ nachId[s.standort.id]=s; });
+  if(!stopps.length) return Promise.resolve(null);
+  var punkte=[start].concat(stopps.map(function(s){ return s.standort; }));
 
-  var tage=[], tag=null, hier=start, kmGesamt=0;
-  for(var i=0;i<sortiert.length;i++){
-    var ziel=sortiert[i], eintrag=nachId[ziel.id];
-    var fahrt=fahrH(hier,ziel), km=fahrKm(hier,ziel);
-    var arbeit=eintrag.positionen.length*ARBEIT_H;
-    if(!tag || (tag.stunden + fahrt + arbeit) > opt.stundenProTag){
-      if(tag) tage.push(tag);
-      tag={nr:tage.length+1, stunden:0, km:0, stopps:[], startPunkt:hier};
-      /* ein neuer Tag beginnt dort, wo der vorige endete (Übernachtung) */
+  return strassenMatrix(punkte).then(function(M){
+    var echteStrasse = !!M;
+    var dauerH = M ? function(i,j){ return M.dauer[i][j]/3600; }
+                   : function(i,j){ return fahrH(punkte[i],punkte[j]); };
+    var distKm = M ? function(i,j){ return M.distanz[i][j]/1000; }
+                   : function(i,j){ return fahrKm(punkte[i],punkte[j]); };
+
+    var folge = reihenfolgeIdx(dauerH, punkte.length);
+    var tage=[], tag=null, hierIdx=0, kmGesamt=0;
+
+    for(var n=0;n<folge.length;n++){
+      var zielIdx=folge[n];
+      var eintrag=stopps[zielIdx-1];
+      var fahrt=dauerH(hierIdx,zielIdx), km=distKm(hierIdx,zielIdx);
+      var arbeit=eintrag.positionen.length*ARBEIT_H;
+      if(!tag || (tag.stunden + fahrt + arbeit) > opt.stundenProTag){
+        if(tag) tage.push(tag);
+        /* ein neuer Tag beginnt dort, wo der vorige endete (Übernachtung) */
+        tag={nr:tage.length+1, stunden:0, km:0, stopps:[], startPunkt:punkte[hierIdx]};
+      }
+      tag.stunden += fahrt + arbeit;
+      tag.km += km; kmGesamt += km;
+      tag.stopps.push({standort:punkte[zielIdx], positionen:eintrag.positionen,
+                       fahrtH:fahrt, km:km, arbeitH:arbeit});
+      hierIdx=zielIdx;
     }
-    tag.stunden += fahrt + arbeit;
-    tag.km += km; kmGesamt += km;
-    tag.stopps.push({standort:ziel, positionen:eintrag.positionen, fahrtH:fahrt, km:km, arbeitH:arbeit});
-    hier=ziel;
-  }
-  if(tag) tage.push(tag);
+    if(tag) tage.push(tag);
 
-  var rueck = tage.length ? fahrH(hier,start) : 0;
-  var rueckKm = tage.length ? fahrKm(hier,start) : 0;
-  if(tage.length){ tage[tage.length-1].rueckfahrtH=rueck; tage[tage.length-1].rueckfahrtKm=rueckKm; }
+    var rueck = tage.length ? dauerH(hierIdx,0) : 0;
+    var rueckKm = tage.length ? distKm(hierIdx,0) : 0;
+    if(tage.length){ tage[tage.length-1].rueckfahrtH=rueck; tage[tage.length-1].rueckfahrtKm=rueckKm; }
 
-  return { start:start, tage:tage, reihenfolge:sortiert,
-    kmGesamt:kmGesamt+rueckKm,
-    stundenGesamt:tage.reduce(function(a,t){return a+t.stunden;},0)+rueck,
-    anzahlStopps:sortiert.length,
-    anzahlPositionen:stopps.reduce(function(a,s){return a+s.positionen.length;},0) };
+    return { start:start, tage:tage,
+      reihenfolge:folge.map(function(i){ return punkte[i]; }),
+      echteStrasse:echteStrasse,
+      kmGesamt:kmGesamt+rueckKm,
+      stundenGesamt:tage.reduce(function(a,t){return a+t.stunden;},0)+rueck,
+      anzahlStopps:folge.length,
+      anzahlPositionen:stopps.reduce(function(a,s){return a+s.positionen.length;},0) };
+  });
 }
 
 /* ---------- Google Maps: Navigation und Routenübergabe ---------- */
@@ -614,7 +675,15 @@ function tourRechnen(){
   } else if(byId[S.tour.startId] && byId[S.tour.startId].lat){
     start=byId[S.tour.startId];
   }
-  S.tour.ergebnis=planeTour({start:start, stopps:kandidaten, stundenProTag:S.tour.stundenProTag});
+  S.tour.geometrie=null;
+  return planeTour({start:start, stopps:kandidaten, stundenProTag:S.tour.stundenProTag})
+    .then(function(erg){
+      S.tour.ergebnis=erg;
+      if(!erg || !erg.echteStrasse) return null;
+      /* die tatsächlich gefahrene Linie für die Karte nachladen */
+      return strassenGeometrie([erg.start].concat(erg.reihenfolge).concat([erg.start]))
+        .then(function(g){ S.tour.geometrie=g; return g; });
+    });
 }
 
 function viewKarte(){
@@ -766,9 +835,16 @@ function karteOsm(withGeo){
 
     if(T){
       var punkte=[T.start].concat(T.reihenfolge).concat([T.start]);
-      L.polyline(punkte.map(function(p){ return [p.lat,p.lon]; }),{
-        color:tokenFarbe("--accent"), weight:3, opacity:.85, dashArray:"8 6"
-      }).addTo(karte);
+      if(S.tour.geometrie){
+        /* tatsächlicher Straßenverlauf vom Routendienst */
+        L.polyline(S.tour.geometrie.map(function(c){ return [c[1],c[0]]; }),{
+          color:tokenFarbe("--accent"), weight:4, opacity:.8
+        }).addTo(karte);
+      } else {
+        L.polyline(punkte.map(function(p){ return [p.lat,p.lon]; }),{
+          color:tokenFarbe("--accent"), weight:3, opacity:.85, dashArray:"8 6"
+        }).addTo(karte);
+      }
       T.reihenfolge.forEach(function(p,i){
         L.marker([p.lat,p.lon],{icon:L.divIcon({className:"",iconSize:[22,22],iconAnchor:[11,11],
           html:'<div style="width:22px;height:22px;border-radius:50%;background:'+tokenFarbe("--accent")+
@@ -896,15 +972,23 @@ function tourPanel(){
     var v=parseFloat(c.querySelector("#t_std").value); if(v>=4&&v<=14) S.tour.stundenProTag=v;
     if(!tourKandidaten().length){ toast("Keine Standorte für diese Auswahl."); return; }
 
+    var rechnen=function(){
+      goBtn.disabled=true; goBtn.textContent="Route wird berechnet …";
+      tourRechnen().then(function(){
+        render(); window.scrollTo({top:0,behavior:"smooth"});
+      },function(){
+        goBtn.disabled=false; goBtn.textContent="Route vorschlagen";
+        toast("Die Route konnte nicht berechnet werden.");
+      });
+    };
+
     var frisch = S.tour.gps && (Date.now()-S.tour.gps.zeit < 300000);
-    if(S.tour.startId!=="__gps" || frisch){
-      tourRechnen(); render(); window.scrollTo({top:0,behavior:"smooth"}); return;
-    }
+    if(S.tour.startId!=="__gps" || frisch){ rechnen(); return; }
     goBtn.disabled=true; goBtn.textContent="Standort wird ermittelt …";
     holeStandort().then(function(p){
       if(p.fehler){ S.tour.gps=null; S.tour.gpsFehler=p.fehler; }
       else { S.tour.gps=p; S.tour.gpsFehler=""; }
-      tourRechnen(); render(); window.scrollTo({top:0,behavior:"smooth"});
+      rechnen();
     });
   };
   var clr=c.querySelector("#t_clear");
@@ -962,10 +1046,15 @@ function tourErgebnis(T){
     "</div></div>"));
   });
 
-  box.appendChild(el('<div class="note">Die Fahrzeiten sind geschätzt: Luftlinie mit Zuschlag '+
-    UMWEG.toString().replace(".",",")+' für den Straßenverlauf, gerechnet mit '+TEMPO_KMH+
-    ' km/h im Mittel. Für die echte Fahrzeit braucht es einen Routendienst — das lässt sich nachrüsten. '+
-    'Mehrtägige Touren fahren am Folgetag vom letzten Stopp weiter, es ist also eine Übernachtung unterwegs eingerechnet.</div>'));
+  box.appendChild(el('<div class="note">'+
+    (T.echteStrasse
+      ? 'Fahrzeiten und Kilometer stammen aus echtem Straßenrouting über OpenStreetMap (OSRM, PKW): '+
+        'Autobahnen, Tempolimits und Umwege sind berücksichtigt. Die Reihenfolge ist nach Fahrzeit optimiert, '+
+        'nicht nach Entfernung — über die Autobahn ist der längere Weg oft der schnellere. Verkehrslage und '+
+        'Baustellen kennt der Dienst nicht.'
+      : '<strong>Achtung, nur geschätzt:</strong> Der Routendienst war nicht erreichbar, daher Luftlinie mit Zuschlag '+
+        UMWEG.toString().replace(".",",")+' und '+TEMPO_KMH+' km/h im Mittel. Nochmal berechnen liefert meist echte Werte.')+
+    ' Mehrtägige Touren fahren am Folgetag vom letzten Stopp weiter, es ist also eine Übernachtung unterwegs eingerechnet.</div>'));
   return box;
 }
 

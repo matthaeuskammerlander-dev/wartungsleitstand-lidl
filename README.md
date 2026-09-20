@@ -48,11 +48,25 @@ fragt einmal nach der Freigabe); ohne Freigabe wird vom Betrieb in St. Johann
 aus gerechnet. Gerechnet wird mit **1,25 h je Wartungsposition** — ein Markt
 mit drei offenen Positionen bindet also 3,75 h.
 
-Die Reihenfolge entsteht über nächste Nachbarn mit anschließender
-2-opt-Verbesserung. Fahrzeiten sind geschätzt: Luftlinie mal 1,3 für den
-Straßenverlauf, gerechnet mit 70 km/h. Für echte Fahrzeiten müsste ein
-Routendienst angebunden werden. Mehrtägige Touren fahren am Folgetag vom
-letzten Stopp weiter, rechnen also mit Übernachtung unterwegs.
+Fahrzeiten und Kilometer kommen aus **echtem Straßenrouting für den PKW** über
+OSRM auf OpenStreetMap-Daten — Autobahnen, Tempolimits und Umwege sind
+berücksichtigt. Genutzt wird die Matrix-Schnittstelle (`/table`) für die
+Reihenfolge und `/route` für den gezeichneten Verlauf auf der Karte. Beides
+ohne Schlüssel und ohne Kosten, primär über die FOSSGIS-Instanz
+(`routing.openstreetmap.de`, betreibt auch osm.org), ersatzweise über den
+öffentlichen OSRM-Demoserver.
+
+Optimiert wird auf **Fahrzeit, nicht auf Entfernung** — über die Autobahn ist
+der längere Weg oft der schnellere. Die Reihenfolge entsteht über nächste
+Nachbarn mit anschließender 2-opt-Verbesserung.
+
+Was der Dienst nicht kennt: Verkehrslage und Baustellen. Ist er nicht
+erreichbar — etwa innerhalb von Claude, wo externe Abfragen gesperrt sind —
+fällt die Planung auf eine Schätzung zurück (Luftlinie mal 1,3 bei 70 km/h) und
+sagt das im Ergebnis deutlich dazu.
+
+Mehrtägige Touren fahren am Folgetag vom letzten Stopp weiter, rechnen also mit
+Übernachtung unterwegs.
 
 ## Karte und Navigation
 
