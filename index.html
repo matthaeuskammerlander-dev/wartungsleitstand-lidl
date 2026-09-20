@@ -243,6 +243,8 @@ table.dt td{padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:
 <script src="config.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/qrious/4.0.2/qrious.min.js"></script>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
 <script>
 function starteWartungsleitstand(){
 "use strict";
@@ -252,6 +254,7 @@ var byId = {}; ST.forEach(function(s){ byId[s.id]=s; });
 ST.forEach(function(s){ s.pos = []; });
 POS.forEach(function(p){ if(byId[p.standortId]) byId[p.standortId].pos.push(p); });
 
+var KARTE_MODUS = "svg";   // wird beim Start auf "osm" gesetzt, wenn Kacheln laden
 var HEUTE = new Date();
 var JAHR = HEUTE.getFullYear();
 var MON = HEUTE.getMonth()+1;
@@ -371,6 +374,33 @@ function planeTour(opt){
     stundenGesamt:tage.reduce(function(a,t){return a+t.stunden;},0)+rueck,
     anzahlStopps:sortiert.length,
     anzahlPositionen:stopps.reduce(function(a,s){return a+s.positionen.length;},0) };
+}
+
+/* ---------- Google Maps: Navigation und Routenübergabe ---------- */
+function gmapsPunkt(p){
+  /* echte Adresse navigiert zuverlässiger als eine Koordinate,
+     aber nur wenn sie vollständig genug ist */
+  if(p.plz && p.adresse) return encodeURIComponent(p.adresse+", Österreich");
+  return p.lat+","+p.lon;
+}
+function gmapsZiel(p){
+  return "https://www.google.com/maps/dir/?api=1&travelmode=driving&destination="+gmapsPunkt(p);
+}
+/* Google nimmt über die URL höchstens neun Zwischenziele entgegen */
+var GMAPS_MAX_WAYPOINTS=9;
+function gmapsRoute(punkte){
+  if(punkte.length<2) return null;
+  var start=punkte[0], ziel=punkte[punkte.length-1];
+  var zwischen=punkte.slice(1,-1).slice(0,GMAPS_MAX_WAYPOINTS);
+  var u="https://www.google.com/maps/dir/?api=1&travelmode=driving"+
+    "&origin="+gmapsPunkt(start)+"&destination="+gmapsPunkt(ziel);
+  if(zwischen.length) u+="&waypoints="+zwischen.map(gmapsPunkt).join("%7C");
+  return {url:u, gekuerzt: punkte.slice(1,-1).length > GMAPS_MAX_WAYPOINTS};
+}
+function tagPunkte(tag, mitRueckfahrt){
+  var p=[tag.startPunkt].concat(tag.stopps.map(function(s){ return s.standort; }));
+  if(mitRueckfahrt && tag.rueckfahrtH) p.push(S.tour.ergebnis.start);
+  return p;
 }
 
 function stdFmt(h){
@@ -593,6 +623,13 @@ function viewKarte(){
   var withGeo=list.filter(function(s){return s.lat;});
   var noGeo=list.filter(function(s){return !s.lat;});
 
+  if(KARTE_MODUS==="osm" && window.L){
+    f.appendChild(karteOsm(withGeo));
+    f.appendChild(tourPanel());
+    if(noGeo.length) f.appendChild(ohneKarte(noGeo));
+    return f;
+  }
+
   var lo=[9.5,17.2], la=[46.35,49.05];
   var k=Math.cos(47.7*Math.PI/180);
   var W=1000, pad=18;
@@ -673,14 +710,110 @@ function viewKarte(){
   f.appendChild(card);
   f.appendChild(tourPanel());
 
-  if(noGeo.length){
-    f.appendChild(el('<div class="card"><div class="pad stack">'+
-      '<h2>Ohne Kartenposition</h2>'+
-      '<div class="sub">Diese Einträge haben in der Liste keine auswertbare Adresse – meist Sammelzeilen oder Kurznamen.</div>'+
-      '<div class="rowflex">'+noGeo.map(function(s){ return '<span class="tag">'+esc(s.name)+" ("+s.pos.length+")</span>"; }).join("")+"</div>"+
-    "</div></div>"));
-  }
+  if(noGeo.length) f.appendChild(ohneKarte(noGeo));
   return f;
+}
+
+function ohneKarte(noGeo){
+  return el('<div class="card"><div class="pad stack">'+
+    '<h2>Ohne Kartenposition</h2>'+
+    '<div class="sub">Diese Einträge haben in der Liste keine auswertbare Adresse – meist Sammelzeilen oder Kurznamen.</div>'+
+    '<div class="rowflex">'+noGeo.map(function(s){ return '<span class="tag">'+esc(s.name)+" ("+s.pos.length+")</span>"; }).join("")+"</div>"+
+  "</div></div>");
+}
+
+/* ---------- Karte auf OpenStreetMap (Leaflet) ---------- */
+var leafletKarte=null;
+function tokenFarbe(name){
+  return getComputedStyle(document.documentElement).getPropertyValue(name).trim() || "#0E6E85";
+}
+function karteOsm(withGeo){
+  var T=S.tour.ergebnis;
+  var card=el('<div class="card"><div class="pad stack">'+
+    '<div><h2>Standortkarte</h2><div class="sub">'+withGeo.length+' Standorte auf OpenStreetMap. '+
+      'Punktgröße = Anzahl Wartungspositionen, Farbe = dringlichster Status. Antippen öffnet Details und die Navigation.</div></div>'+
+    '<div class="legend">'+["ueberfaellig","faellig","geplant","erledigt"].map(function(k){
+      return '<span><i style="background:var('+STATUS_VAR[k]+')"></i>'+STATUS_LABEL[k]+"</span>";
+    }).join("")+"</div>"+
+    '<div id="osmkarte" style="height:min(68vh,560px);width:100%;border-radius:10px;overflow:hidden;'+
+      'border:1px solid var(--line);background:var(--surface-2)"></div>'+
+    '<div id="mapdetail"></div>'+
+  "</div></div>");
+
+  /* Leaflet braucht den Container im Dokument, deshalb erst danach aufbauen */
+  setTimeout(function(){
+    var host=document.getElementById("osmkarte");
+    if(!host) return;
+    if(leafletKarte){ try{ leafletKarte.remove(); }catch(e){} leafletKarte=null; }
+    var karte=L.map(host,{scrollWheelZoom:true}).setView([47.6,13.4],7);
+    leafletKarte=karte;
+    L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png",{
+      maxZoom:19, attribution:'&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
+    }).addTo(karte);
+
+    var maxPos=1; withGeo.forEach(function(s){ if(s.pos.length>maxPos) maxPos=s.pos.length; });
+    var bounds=[];
+    withGeo.forEach(function(s){
+      var r=6+4*Math.sqrt((s.pos.length-1)/Math.max(1,maxPos-1));
+      var m=L.circleMarker([s.lat,s.lon],{
+        radius:r, color:tokenFarbe("--surface"), weight:1.8, opacity:1,
+        fillColor:tokenFarbe(STATUS_VAR[s.status]), fillOpacity:1
+      }).addTo(karte);
+      bounds.push([s.lat,s.lon]);
+      m.bindPopup(function(){ return popupInhalt(s); },{minWidth:230,maxWidth:280});
+      m.on("popupopen",function(){ S.sel=s.id; });
+    });
+
+    if(T){
+      var punkte=[T.start].concat(T.reihenfolge).concat([T.start]);
+      L.polyline(punkte.map(function(p){ return [p.lat,p.lon]; }),{
+        color:tokenFarbe("--accent"), weight:3, opacity:.85, dashArray:"8 6"
+      }).addTo(karte);
+      T.reihenfolge.forEach(function(p,i){
+        L.marker([p.lat,p.lon],{icon:L.divIcon({className:"",iconSize:[22,22],iconAnchor:[11,11],
+          html:'<div style="width:22px;height:22px;border-radius:50%;background:'+tokenFarbe("--accent")+
+            ';color:#fff;font:600 11px/22px system-ui,sans-serif;text-align:center;'+
+            'border:2px solid '+tokenFarbe("--surface")+'">'+(i+1)+"</div>"})}).addTo(karte);
+      });
+      L.marker([T.start.lat,T.start.lon],{icon:L.divIcon({className:"",iconSize:[16,16],iconAnchor:[8,8],
+        html:'<div style="width:16px;height:16px;border-radius:4px;background:'+tokenFarbe("--ink")+
+          ';border:2px solid '+tokenFarbe("--surface")+'"></div>'})})
+        .addTo(karte).bindPopup("Start: "+esc(T.start.name||"Startpunkt"));
+      bounds=bounds.concat(punkte.map(function(p){ return [p.lat,p.lon]; }));
+    }
+    if(S.tour.gps){
+      L.circle([S.tour.gps.lat,S.tour.gps.lon],{radius:Math.max(60,S.tour.gps.genauigkeit),
+        color:tokenFarbe("--accent"),weight:1,fillColor:tokenFarbe("--accent"),fillOpacity:.18}).addTo(karte);
+      L.circleMarker([S.tour.gps.lat,S.tour.gps.lon],{radius:6,color:tokenFarbe("--surface"),weight:2,
+        fillColor:tokenFarbe("--accent"),fillOpacity:1}).addTo(karte).bindPopup("Ihr aktueller Standort");
+      bounds.push([S.tour.gps.lat,S.tour.gps.lon]);
+    }
+    if(bounds.length) karte.fitBounds(bounds,{padding:[28,28]});
+  },0);
+
+  return card;
+}
+
+function popupInhalt(s){
+  var d=document.createElement("div");
+  d.innerHTML='<div style="font:600 14px/1.3 system-ui,sans-serif;margin-bottom:2px">'+esc(stName(s))+"</div>"+
+    '<div style="font-size:12.5px;color:#555;margin-bottom:6px">'+esc(s.adresse)+"</div>"+
+    '<div style="margin-bottom:8px">'+pill(s.status)+' <span class="tag">'+s.pos.length+" Position(en)</span></div>"+
+    '<div style="display:flex;flex-direction:column;gap:6px">'+
+      '<a class="btn sm" style="text-align:center;text-decoration:none" href="'+gmapsZiel(s)+
+        '" target="_blank" rel="noopener">Mit Google Maps navigieren</a>'+
+      '<button class="btn ghost sm" type="button" data-akt="detail">Anlagen und Historie</button>'+
+      '<button class="btn ghost sm" type="button" data-akt="proto">Protokoll ausfüllen</button>'+
+    "</div>";
+  d.querySelector('[data-akt="detail"]').onclick=function(){
+    var host=document.getElementById("mapdetail");
+    if(host){ host.innerHTML=""; host.appendChild(standortDetail(s)); host.scrollIntoView({behavior:"smooth",block:"start"}); }
+    if(leafletKarte) leafletKarte.closePopup();
+  };
+  d.querySelector('[data-akt="proto"]').onclick=function(){
+    S.protoStandort=s.id; S.protoPos=s.pos.length?s.pos[0].id:""; S.view="protokoll"; render(); window.scrollTo({top:0});
+  };
+  return d;
 }
 
 function tourPanel(){
@@ -804,22 +937,28 @@ function tourErgebnis(T){
         '<td class="mono">'+uhrFmt(minute,st.fahrtH)+'–'+uhrFmt(minute,st.fahrtH+st.arbeitH)+"</td>"+
         '<td>'+st.positionen.map(function(p){
             return '<span class="tag">'+esc(p.anlagentyp||"Anlage")+"</span>";
-          }).join(" ")+"</td></tr>";
+          }).join(" ")+"</td>"+
+        '<td><a class="btn ghost sm" href="'+gmapsZiel(st.standort)+'" target="_blank" rel="noopener">Navi</a></td></tr>';
       minute=ende;
       return r;
     }).join("");
     var rueck = tag.rueckfahrtH ?
       '<tr><td></td><td class="muted">Rückfahrt zum Startpunkt</td><td class="mono">'+Math.round(tag.rueckfahrtKm)+
       ' km<br><span class="muted">'+stdFmt(tag.rueckfahrtH)+'</span></td><td class="mono">bis '+
-      uhrFmt(minute,tag.rueckfahrtH)+"</td><td></td></tr>" : "";
+      uhrFmt(minute,tag.rueckfahrtH)+"</td><td></td><td></td></tr>" : "";
+    var gm=gmapsRoute(tagPunkte(tag,true));
     box.appendChild(el('<div class="card" style="box-shadow:none;background:var(--ground)"><div class="pad stack">'+
       '<div class="rowflex" style="justify-content:space-between">'+
         '<strong style="font-family:var(--f-disp);font-size:14.5px">Tag '+tag.nr+"</strong>"+
         '<span class="muted mono" style="font-size:12px">'+stdFmt(tag.stunden+(tag.rueckfahrtH||0))+
         ' · '+Math.round(tag.km+(tag.rueckfahrtKm||0))+" km</span>"+
       "</div>"+
+      (gm?'<div class="rowflex"><a class="btn sm" href="'+gm.url+'" target="_blank" rel="noopener">'+
+        "Tag "+tag.nr+' in Google Maps öffnen</a>'+
+        (gm.gekuerzt?'<span class="muted" style="font-size:12px">Google nimmt nur neun Zwischenziele – '+
+          'die weiteren Stopps fehlen in der Navigation.</span>':"")+"</div>":"")+
       '<div class="scrollx"><table class="dt"><thead><tr><th>#</th><th>Standort</th><th>Anfahrt</th>'+
-      "<th>vor Ort</th><th>Anlagen</th></tr></thead><tbody>"+zeilen+rueck+"</tbody></table></div>"+
+      "<th>vor Ort</th><th>Anlagen</th><th></th></tr></thead><tbody>"+zeilen+rueck+"</tbody></table></div>"+
     "</div></div>"));
   });
 
@@ -841,6 +980,8 @@ function standortDetail(s){
       (s.baujahrVon?"<dt>Baujahr</dt><dd class='mono'>"+s.baujahrVon+(s.baujahrBis!==s.baujahrVon?"–"+s.baujahrBis:"")+"</dd>":"")+
       "<dt>Geocodierung</dt><dd class='muted'>"+({adresse:"Adressgenau",strasse:"Straßenebene",ort:"Ortsebene",keine:"keine"}[s.genauigkeit]||s.genauigkeit)+"</dd>"+
     "</dl>"+
+    (s.lat?'<div class="rowflex"><a class="btn ghost sm" href="'+gmapsZiel(s)+
+      '" target="_blank" rel="noopener">In Google Maps navigieren</a></div>':"")+
     '<div class="stack" id="poslist"></div>'+
   "</div></div>");
   var pl=d.querySelector("#poslist");
@@ -1509,6 +1650,22 @@ document.getElementById("qrbtn").onclick=zeigeQr;
 
 render();
 initStore();
+
+/* Kachelserver erreichbar? Innerhalb von Claude sind externe Bilder gesperrt,
+   dort bleibt die gezeichnete Übersichtskarte. */
+(function(){
+  if(!window.L){ KARTE_MODUS="svg"; return; }
+  var bild=new Image(), erledigt=false;
+  var fertig=function(ok){
+    if(erledigt) return; erledigt=true;
+    KARTE_MODUS = ok ? "osm" : "svg";
+    if(S.view==="karte") render();
+  };
+  var t=setTimeout(function(){ fertig(false); },3000);
+  bild.onload=function(){ clearTimeout(t); fertig(true); };
+  bild.onerror=function(){ clearTimeout(t); fertig(false); };
+  bild.src="https://tile.openstreetmap.org/0/0/0.png?p="+Date.now();
+})();
 }
 
 /* ----------------------------------------------------------------

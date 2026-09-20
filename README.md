@@ -54,6 +54,23 @@ Straßenverlauf, gerechnet mit 70 km/h. Für echte Fahrzeiten müsste ein
 Routendienst angebunden werden. Mehrtägige Touren fahren am Folgetag vom
 letzten Stopp weiter, rechnen also mit Übernachtung unterwegs.
 
+## Karte und Navigation
+
+Die Karte ist OpenStreetMap über Leaflet — ohne Schlüssel und ohne Kosten.
+Ein Klick auf eine Filiale öffnet ein Fenster mit Status, Anzahl der
+Positionen und drei Schaltflächen: **Mit Google Maps navigieren**, Anlagen und
+Historie, Protokoll ausfüllen.
+
+Jeder Tag der geplanten Tour lässt sich als fertige Route an Google Maps
+übergeben. Google nimmt über eine URL höchstens neun Zwischenziele entgegen;
+bei längeren Tagen weist die App darauf hin, dass die weiteren Stopps in der
+Navigation fehlen.
+
+Wo die Kachelserver nicht erreichbar sind — etwa innerhalb von Claude, wo
+externe Bilder gesperrt sind — fällt die Karte automatisch auf eine
+gezeichnete Österreich-Übersicht zurück. Dafür prüft die App beim Start
+einmal, ob eine Kachel lädt.
+
 ## Datenherkunft
 
 Aufgebaut aus `Wartungen_Lidl.xlsx` (Blätter *2026*, *Aktuell*, *Bis 2022*).
