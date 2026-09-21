@@ -7,8 +7,8 @@
    (Protokolle bleiben am Gerät). Innerhalb von Claude wird ohnehin immer
    die dortige Datenbank verwendet, unabhängig von diesen Werten. */
 window.UKT_CONFIG = {
-  supabaseUrl: "",
-  supabaseAnonKey: "",
+  supabaseUrl: "https://crvqnsmepwmqdplrenqm.supabase.co",
+  supabaseAnonKey: "sb_publishable_rJ6VwbUhEyHPmFDbzdLI2g_6gy4zlai",
 
   /* Adresse, auf die der QR-Code zeigt. Leer lassen = die Adresse, unter der
      die Seite gerade aufgerufen wird. Für das spätere eigene Hosting hier
