@@ -249,6 +249,43 @@ create policy "fotos ansehen"
 -- Kein update, kein delete: ein Foto ist Teil des Nachweises und
 -- verschwindet nicht nachtraeglich.
 
+-- ---------------------------------------------------------------------------
+-- Archiv: ein PDF je Protokoll, abgeholt von der Synology
+-- ---------------------------------------------------------------------------
+-- Die App legt nach jedem Speichern und jeder Korrektur das Protokoll als PDF
+-- unter berichte/<jahr>/<kennung>.pdf ab und traegt es in die Tabelle
+-- "berichte" ein. Das Skript auf der Synology liest diese Tabelle und holt
+-- neue oder geaenderte PDFs in den Ordner Ukt/<jahr>/Lidl/Wartungen.
+insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
+values ('berichte', 'berichte', false, 10485760, array['application/pdf'])
+on conflict (id) do nothing;
+
+drop policy if exists "berichte hochladen"  on storage.objects;
+drop policy if exists "berichte ersetzen"   on storage.objects;
+drop policy if exists "berichte ansehen"    on storage.objects;
+create policy "berichte hochladen" on storage.objects for insert to authenticated
+  with check (bucket_id = 'berichte');
+-- ersetzen noetig, weil eine Korrektur das PDF unter gleichem Namen neu ablegt
+create policy "berichte ersetzen" on storage.objects for update to authenticated
+  using (bucket_id = 'berichte') with check (bucket_id = 'berichte');
+create policy "berichte ansehen" on storage.objects for select to authenticated
+  using (bucket_id = 'berichte');
+
+create table if not exists public.berichte (
+  client_id    text primary key,     -- Kennung des Protokolls
+  version      integer not null default 1,
+  pfad         text not null,
+  erstellt     timestamptz not null default now(),
+  erstellt_von uuid default auth.uid()
+);
+alter table public.berichte enable row level security;
+drop policy if exists "berichte lesen"     on public.berichte;
+drop policy if exists "berichte eintragen" on public.berichte;
+drop policy if exists "berichte erneuern"  on public.berichte;
+create policy "berichte lesen"     on public.berichte for select to authenticated using (true);
+create policy "berichte eintragen" on public.berichte for insert to authenticated with check (true);
+create policy "berichte erneuern"  on public.berichte for update to authenticated using (true) with check (true);
+
 -- WICHTIG, sonst kann sich jeder aus dem Internet selbst einen Zugang anlegen:
 -- Authentication -> Sign In / Providers -> "Allow new users to sign up" AUS.
 -- Techniker-Konten legen Sie unter Authentication -> Users -> Add user an.

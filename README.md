@@ -236,6 +236,77 @@ Zwischenspeicher des Geräts und gehen später gemeinsam raus. Ein Protokoll
 wird nie gespeichert, bevor seine Fotos übertragen sind — sonst verwiese es
 auf Bilder, die es nicht gibt.
 
+## Archiv auf der Synology
+
+Jedes Protokoll landet automatisch als PDF auf der Synology, im Ordner
+`Ukt/<Jahr>/Lidl/Wartungen`, zum Beispiel
+`2026-09-21_Filiale-380_Darko.pdf`. Das PDF sieht aus wie der Ausdruck aus der
+App, samt Fotos und Unterschrift. In der Fußzeile stehen die Protokollkennung
+und die Fassung.
+
+**So läuft es ab:**
+
+1. Nach dem Speichern erzeugt die App im Hintergrund das PDF und legt es in
+   Supabase ab (Bucket `berichte`, Tabelle `berichte`). Das dauert am Handy ein
+   paar Sekunden. Der Techniker muss nicht warten.
+2. Nach einer **Korrektur** entsteht das PDF neu und ersetzt das alte.
+3. Scheitert das Hochladen, etwa im Funkloch, merkt sich das Gerät das
+   Protokoll. Es holt das PDF beim nächsten Öffnen der App nach.
+4. Das Skript `synology/ukt_archiv.py` läuft auf der Synology alle 15 Minuten.
+   Es holt neue und geänderte PDFs ab.
+5. Wird ein Protokoll gelöscht, wandert sein PDF nach `_geloescht/`. Wird es
+   wiederhergestellt, kommt das PDF zurück.
+
+Das Skript meldet sich mit einem eigenen Konto an (`kammer.m@icloud.com`). Die
+Synology muss dafür nicht aus dem Internet erreichbar sein, denn sie holt die
+Dateien selbst ab. Das Skript schreibt nur Dateien, die es selbst angelegt
+hat. Andere Dateien im Ordner fasst es nicht an.
+
+**Ältere Protokolle** von vor dieser Funktion: **Verwaltung → Archiv
+(Synology) → Prüfen**, dann **Fehlende PDFs erzeugen**.
+
+### Einrichtung
+
+1. **Supabase:** `supabase-setup.sql` im SQL Editor noch einmal ausführen. Das
+   legt den Abschnitt „Archiv“ an. Bestehende Daten bleiben unverändert.
+2. **Konto:** In Supabase unter Authentication → Users muss
+   `kammer.m@icloud.com` stehen, mit „Auto Confirm User“.
+3. **Skriptordner auf der Synology:** Legen Sie einen Ordner an, den nur
+   Administratoren sehen, zum Beispiel `/volume1/homes/<admin>/ukt-archiv`.
+   Nehmen Sie **nicht** den Ukt-Ordner, denn in die Einstellungen kommt das
+   Passwort. Kopieren Sie `ukt_archiv.py` und `ukt_archiv.beispiel.json` dort
+   hinein.
+4. Benennen Sie `ukt_archiv.beispiel.json` in `ukt_archiv.json` um und öffnen
+   Sie die Datei mit dem Texteditor-Paket. Tragen Sie bei `passwort` das
+   Passwort des Archivkontos ein.
+5. **Zielpfad prüfen:** File Station → Rechtsklick auf den Ordner `Ukt` →
+   Eigenschaften → „Speicherort“. Steht dort etwas anderes als
+   `/volume1/Ukt`, tragen Sie es bei `basis` ein.
+6. **Aufgabenplaner:** Systemsteuerung → Aufgabenplaner → Erstellen →
+   Geplante Aufgabe → Benutzerdefiniertes Skript.
+   - Allgemein: Name `UKT Wartungsprotokolle`, Benutzer `root`.
+   - Zeitplan: täglich, alle 15 Minuten, von 00:00 bis 23:45.
+   - Aufgabeneinstellungen → Befehl:
+     `python3 /volume1/homes/<admin>/ukt-archiv/ukt_archiv.py`
+7. **Testen:** Erstellen Sie eine zweite Aufgabe mit
+   `python3 …/ukt_archiv.py --pruefen`. Führen Sie sie einmal aus
+   (Rechtsklick → Ausführen). Unter „Aktion → Ergebnis anzeigen“ steht dann,
+   was das Skript tun würde. Es schreibt dabei nichts. Löschen Sie die
+   Testaufgabe danach wieder.
+
+Jeder Lauf schreibt ins Protokoll `ukt_archiv.log` im Skriptordner. Ein
+Beispiel:
+
+```
+angemeldet als kammer.m@icloud.com
+37 Protokolle, 37 PDFs in der Datenbank
+neu: 2026/Lidl/Wartungen/2026-09-21_Filiale-380_Darko.pdf
+fertig: 1 neu, 0 erneuert, 0 nach _geloescht, 0 noch ohne PDF
+```
+
+`noch ohne PDF` heißt: Das Handy hat das PDF noch nicht hochgeladen. Es kommt
+beim nächsten Lauf nach dem Hochladen.
+
 ## Einrichtung der Protokoll-Datenbank
 
 1. Auf [supabase.com](https://supabase.com) ein Projekt anlegen (Region Frankfurt).

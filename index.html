@@ -1999,6 +1999,7 @@ function ladeProtokolle(){
     if(r.error){ Store.fehler=r.error.message; return; }
     protokolle=(r.data||[]).map(ausZeile);
     storeNachRender();
+    offeneBerichteNachholen();
   });
 }
 
@@ -2116,7 +2117,10 @@ function speichereProtokoll(id,doc){
     zeile.client_id=id;
     return Store.sb.from("protokolle").upsert(zeile,{onConflict:"client_id", ignoreDuplicates:true}).then(function(r){
       if(r.error){ Store.fehler=r.error.message; return false; }
-      ladeProtokolle(); return true;
+      ladeProtokolle();
+      /* Archiv-PDF im Hintergrund – das Speichern wartet nicht darauf */
+      berichtAblegen(Object.assign({}, doc, {_id:id, version:doc.version||1}));
+      return true;
     },function(){ return false; });
   }
   return Promise.resolve(false);
@@ -2138,7 +2142,9 @@ function aktualisiereProtokoll(id, doc, quelle, geraetFotos){
     zeile.version=doc.version; zeile.geaendert=doc.geaendert; zeile.korrektur_grund=doc.korrekturGrund||null;
     return Store.sb.from("protokolle").update(zeile).eq("client_id",id).then(function(r){
       if(r.error){ Store.fehler=r.error.message; return false; }
-      ladeProtokolle(); return true;
+      ladeProtokolle();
+      berichtAblegen(Object.assign({}, doc, {_id:id}));   /* neue Fassung ersetzt das PDF */
+      return true;
     },function(){ return false; });
   }
   return Promise.resolve(false);
@@ -2825,8 +2831,9 @@ function viewProtokoll(){
 
 /* ---------- Protokoll als Blatt: Drucken oder als PDF sichern ---------- */
 function kreuz(an){ return an ? "&#9746;" : "&#9744;"; }
-function druckeProtokoll(p){
-  var alt=document.getElementById("druckansicht"); if(alt) alt.remove();
+
+/* Das Blatt – dieselbe Darstellung für Drucken und für das PDF-Archiv */
+function blattInhalt(p){
   var gew=function(liste,wert){ return (liste||[]).indexOf(wert)>=0; };
   var zeile=function(k,v){ return "<tr><td class='k'>"+k+"</td><td>"+(v?esc(v):"&nbsp;")+"</td></tr>"; };
 
@@ -2851,14 +2858,7 @@ function druckeProtokoll(p){
       "</table>"
     : "<div>Keine Mängel festgestellt.</div>";
 
-  var ov=document.createElement("div");
-  ov.id="druckansicht";
-  ov.innerHTML=
-    '<div class="druckleiste">'+
-      '<button class="btn" type="button" id="d_druck">Drucken / als PDF speichern</button>'+
-      '<button class="btn ghost" type="button" id="d_zu" style="background:#fff">Schließen</button>'+
-    "</div>"+
-    '<div class="blatt">'+
+  return (
       '<div class="kopf">'+
         '<div class="firma"><b>KAMMERLANDER</b><span>Umwelt- und Klimatechnik GmbH</span></div>'+
         '<div class="kontakt">Speckbacherstraße 92, A-6380 St. Johann in Tirol<br>'+
@@ -2902,7 +2902,7 @@ function druckeProtokoll(p){
       '<div class="kaestchen" style="grid-template-columns:1fr">'+ERGEBNISSE.map(function(a){ return "<div>"+kreuz(gew(p.ergebnis,a))+" "+esc(a)+"</div>"; }).join("")+"</div>"+
       (p.bemerkungen?"<div style='margin-top:6px'><strong>Bemerkungen:</strong> "+esc(p.bemerkungen)+"</div>":"")+
 
-      '<div id="d_fotos"></div>'+
+      '<div data-rolle="fotos"></div>'+
 
       "<h2>Abschluss</h2><table>"+
         zeile("Name Techniker/in",p.nameTechniker)+
@@ -2914,26 +2914,178 @@ function druckeProtokoll(p){
 
       '<div class="fuss">Rechnung an den Vertragspartner in der Bestellanschrift. Bestellnummer im Rechnungskopf angeben. '+
         "Grundsätzlich eine separate Rechnung je Bestellung; bei Sammelbestellungen Lidl-Auftragsnummern exakt je Position ausweisen. "+
-        "Kältemittelarbeiten und Dichtheitsprüfungen nur durch befugte bzw. zertifizierte Personen und Unternehmen.</div>"+
-    "</div>";
+        "Kältemittelarbeiten und Dichtheitsprüfungen nur durch befugte bzw. zertifizierte Personen und Unternehmen."+
+        /* für das Archiv: welches Protokoll, welche Fassung */
+        "<br>Protokoll "+esc(p._id||"")+" · Fassung "+(p.version||1)+
+        (p.erstellt?" · erstellt "+dfmt(String(p.erstellt).slice(0,10)):"")+
+        ((p.version||1)>1&&p.geaendert?" · zuletzt korrigiert "+dfmt(String(p.geaendert).slice(0,10))+
+          (p.korrekturGrund?" („"+esc(p.korrekturGrund)+"“)":""):"")+"</div>"
+  );
+}
+
+/* Fotos ins Blatt setzen. Für das PDF als eingebettete Daten, sonst würde
+   das Zeichnen an fremden Bildadressen scheitern. */
+function fotosEinsetzen(host, p, eingebettet){
+  if(!p.fotos || !p.fotos.length){ host.innerHTML=""; return Promise.resolve(); }
+  host.innerHTML="<h2>Fotos</h2><div>werden geladen …</div>";
+  return ladeFotos(p).then(function(bilder){
+    var alsDaten=function(url){
+      if(!eingebettet || !url || url.indexOf("data:")===0) return Promise.resolve(url);
+      return fetch(url).then(function(r){ return r.blob(); }).then(function(b){
+        return new Promise(function(ok){ var fr=new FileReader(); fr.onload=function(){ ok(fr.result); }; fr.onerror=function(){ ok(null); }; fr.readAsDataURL(b); });
+      }).catch(function(){ return null; });
+    };
+    return Promise.all(bilder.map(function(b){ return alsDaten(b.url).then(function(u){ return Object.assign({},b,{url:u}); }); }))
+      .then(function(fertig){
+        host.innerHTML="<h2>Fotos</h2><div class='fotos'>"+fertig.map(function(b){
+          return "<figure>"+(b.url?'<img alt="" src="'+b.url+'">':"<div>Bild nicht abrufbar</div>")+
+            "<figcaption>"+esc(b.hinweis||b.name||"")+"</figcaption></figure>";
+        }).join("")+"</div>";
+      });
+  });
+}
+
+function druckeProtokoll(p){
+  var alt=document.getElementById("druckansicht"); if(alt) alt.remove();
+  var ov=document.createElement("div");
+  ov.id="druckansicht";
+  ov.innerHTML=
+    '<div class="druckleiste">'+
+      '<button class="btn" type="button" id="d_druck">Drucken / als PDF speichern</button>'+
+      '<button class="btn ghost" type="button" id="d_zu" style="background:#fff">Schließen</button>'+
+    "</div>"+
+    '<div class="blatt">'+blattInhalt(p)+"</div>";
   document.body.appendChild(ov);
   document.body.classList.add("druckmodus");
-
   var zu=function(){ ov.remove(); document.body.classList.remove("druckmodus"); };
   ov.querySelector("#d_zu").onclick=zu;
   ov.querySelector("#d_druck").onclick=function(){ window.print(); };
+  fotosEinsetzen(ov.querySelector('[data-rolle="fotos"]'), p, false);
+}
 
-  /* Fotos nachladen – erst danach ist das Blatt vollständig */
-  if(p.fotos && p.fotos.length){
-    var fh=ov.querySelector("#d_fotos");
-    fh.innerHTML="<h2>Fotos</h2><div>werden geladen …</div>";
-    ladeFotos(p).then(function(bilder){
-      fh.innerHTML="<h2>Fotos</h2><div class='fotos'>"+bilder.map(function(b){
-        return "<figure>"+(b.url?'<img alt="" src="'+b.url+'">':"<div>Bild nicht abrufbar</div>")+
-          "<figcaption>"+esc(b.hinweis||b.name||"")+"</figcaption></figure>";
-      }).join("")+"</div>";
-    });
-  }
+/* ---------------- PDF für das Archiv ----------------
+   Das Blatt wird unsichtbar aufgebaut, als Bild gezeichnet und auf
+   A4-Seiten verteilt – Seitenumbrüche nur zwischen Zeilen und Abschnitten. */
+var PDF_BIBLIOTHEKEN=[
+  "https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js",
+  "https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"
+];
+var pdfBereit=null, pdfInArbeit={};
+function ladePdfBibliotheken(){
+  if(pdfBereit) return pdfBereit;
+  pdfBereit=PDF_BIBLIOTHEKEN.reduce(function(kette,src){
+    return kette.then(function(){ return new Promise(function(ok,nok){
+      var s=document.createElement("script"); s.src=src; s.onload=ok;
+      s.onerror=function(){ pdfBereit=null; nok(new Error("PDF-Werkzeug nicht ladbar")); };
+      document.head.appendChild(s);
+    }); });
+  }, Promise.resolve());
+  return pdfBereit;
+}
+function bilderGeladen(host){
+  var imgs=Array.prototype.slice.call(host.querySelectorAll("img"));
+  return Promise.all(imgs.map(function(i){
+    if(i.complete && i.naturalWidth) return Promise.resolve();
+    return new Promise(function(ok){ i.onload=ok; i.onerror=ok; setTimeout(ok,8000); });
+  }));
+}
+function pdfErzeugen(p){
+  return ladePdfBibliotheken().then(function(){
+    var BREITE=794;                                  /* A4 bei 96 dpi */
+    var huelle=document.createElement("div");
+    huelle.style.cssText="position:fixed;left:-12000px;top:0;width:"+BREITE+"px;background:#fff;z-index:-1";
+    huelle.innerHTML='<div class="blatt" style="background:#fff;color:#111;font:12.5px/1.45 \'IBM Plex Sans\',\'Segoe UI\',Arial,sans-serif;padding:4px 6px;box-sizing:border-box;width:'+BREITE+'px">'+
+      blattInhalt(p)+"</div>";
+    document.body.appendChild(huelle);
+    var blatt=huelle.querySelector(".blatt");
+    return fotosEinsetzen(blatt.querySelector('[data-rolle="fotos"]'), p, true)
+      .then(function(){ return bilderGeladen(blatt); })
+      .then(function(){
+        /* mögliche Umbruchstellen: Unterkanten von Zeilen, Überschriften, Fotos */
+        var oben=blatt.getBoundingClientRect().top, stellen=[];
+        blatt.querySelectorAll("tr, h2, h1, .kopf, .kaestchen > div, figure, .fuss, table").forEach(function(e){
+          stellen.push(Math.round(e.getBoundingClientRect().bottom-oben));
+        });
+        stellen.sort(function(a,b){ return a-b; });
+        var hoehe=blatt.scrollHeight;
+        /* Obergrenze für die Zeichenfläche – Safari am iPhone verweigert mehr als ~16 Mio. Pixel */
+        var skala=Math.min(2, Math.sqrt(14e6/(BREITE*hoehe)));
+        return window.html2canvas(blatt,{scale:skala, backgroundColor:"#ffffff", useCORS:true, logging:false})
+          .then(function(bild){ return {bild:bild, stellen:stellen, hoehe:hoehe, skala:skala}; });
+      })
+      .then(function(r){
+        document.body.removeChild(huelle);
+        var jsPDF=window.jspdf.jsPDF;
+        var doc=new jsPDF({unit:"mm", format:"a4", compress:true});
+        var RAND=10, nutzB=210-2*RAND, nutzH=297-2*RAND-6;          /* 6 mm für die Seitenzahl */
+        var pxProMm=BREITE/nutzB, seitePx=Math.floor(nutzH*pxProMm);
+        var seiten=[], start=0;
+        while(start < r.hoehe-2){
+          var grenze=start+seitePx, ende=grenze;
+          if(grenze < r.hoehe){
+            var passend=r.stellen.filter(function(y){ return y>start+seitePx*0.5 && y<=grenze; });
+            if(passend.length) ende=passend[passend.length-1];
+          } else ende=r.hoehe;
+          seiten.push([start,ende]); start=ende;
+        }
+        seiten.forEach(function(s,i){
+          if(i) doc.addPage();
+          var hPx=s[1]-s[0];
+          var teil=document.createElement("canvas");
+          teil.width=r.bild.width; teil.height=Math.max(1,Math.round(hPx*r.skala));
+          var g=teil.getContext("2d"); g.fillStyle="#fff"; g.fillRect(0,0,teil.width,teil.height);
+          g.drawImage(r.bild, 0, Math.round(s[0]*r.skala), r.bild.width, teil.height, 0, 0, teil.width, teil.height);
+          doc.addImage(teil.toDataURL("image/jpeg",0.86),"JPEG",RAND,RAND,nutzB,hPx/pxProMm);
+          doc.setFontSize(8); doc.setTextColor(120);
+          doc.text("Wartungsprotokoll "+(p.standortName||"")+" vom "+dfmt(p.datum)+"  -  Seite "+(i+1)+" von "+seiten.length,
+                   105, 297-RAND+1, {align:"center"});
+        });
+        doc.setProperties({title:"Wartungsprotokoll "+(p.standortName||"")+" "+dfmt(p.datum),
+          subject:"Lidl Klimaanlagen - Protokoll "+(p._id||""), author:"Kammerlander Umwelt- und Klimatechnik GmbH",
+          creator:"Wartungsleitstand"});
+        return doc.output("blob");
+      }, function(e){ if(huelle.parentNode) document.body.removeChild(huelle); throw e; });
+  });
+}
+
+/* PDF in Supabase ablegen, von dort holt es die Synology ab.
+   Der Pfad hängt nur an der Kennung – den lesbaren Dateinamen vergibt die Synology. */
+function berichtAblegen(p){
+  if(Store.modus!=="supabase" || !Store.sb || !p || !p._id) return Promise.resolve(false);
+  if(pdfInArbeit[p._id]) return pdfInArbeit[p._id];
+  var jahr=String(p.datum||"").slice(0,4)||"ohne-datum", pfad=jahr+"/"+p._id+".pdf";
+  var offen=lsGet("ukt_pdf_offen",[]);
+  var merken=function(){ if(offen.indexOf(p._id)<0){ offen.push(p._id); lsSet("ukt_pdf_offen",offen); } return false; };
+  var lauf=pdfErzeugen(p).then(function(blob){
+    return Store.sb.storage.from("berichte").upload(pfad, blob, {contentType:"application/pdf", upsert:true})
+      .then(function(r){
+        if(r.error){ Store.fehler=r.error.message; return merken(); }
+        return Store.sb.from("berichte").upsert({client_id:p._id, version:p.version||1, pfad:pfad,
+          erstellt:new Date().toISOString()},{onConflict:"client_id"}).then(function(r2){
+            if(r2.error){ Store.fehler=r2.error.message; return merken(); }
+            lsSet("ukt_pdf_offen", lsGet("ukt_pdf_offen",[]).filter(function(x){ return x!==p._id; }));
+            return true;
+          });
+      });
+  }).catch(function(e){ Store.fehler=e&&e.message; return merken(); })
+    .then(function(x){ delete pdfInArbeit[p._id]; return x; });
+  pdfInArbeit[p._id]=lauf;
+  return lauf;
+}
+/* was beim letzten Mal nicht klappte (Funkloch), erneut versuchen */
+function offeneBerichteNachholen(){
+  if(Store.modus!=="supabase") return;
+  var offen=lsGet("ukt_pdf_offen",[]);
+  if(!offen.length) return;
+  var i=0;
+  var weiter=function(){
+    if(i>=offen.length) return;
+    var id=offen[i++];
+    var p=(protokolle||[]).filter(function(x){ return x._id===id && !x.geloescht; })[0];
+    if(!p){ lsSet("ukt_pdf_offen", lsGet("ukt_pdf_offen",[]).filter(function(x){ return x!==id; })); return weiter(); }
+    berichtAblegen(p).then(weiter);
+  };
+  weiter();
 }
 
 function protokollDetail(p){
@@ -3309,6 +3461,50 @@ function verwaltungSperre(){
   return c;
 }
 
+/* Archiv auf der Synology: zeigt, welche Protokolle noch kein aktuelles PDF
+   haben, und erzeugt diese auf Knopfdruck (z. B. alle Protokolle von vor
+   dieser Funktion oder solche, deren PDF im Funkloch hängen blieb). */
+function archivKarte(){
+  var c=el('<div class="card"><div class="pad stack">'+
+    '<div class="rowflex" style="justify-content:space-between"><div><h2>Archiv (Synology)</h2>'+
+      '<div class="sub" id="ar_stand">Jedes Protokoll wird als PDF abgelegt und von der Synology abgeholt.</div></div>'+
+      '<div class="rowflex"><button class="btn ghost sm" type="button" id="ar_pruef">Prüfen</button>'+
+      '<button class="btn sm" type="button" id="ar_los" hidden>Fehlende PDFs erzeugen</button></div></div>'+
+  "</div></div>");
+  var stand=c.querySelector("#ar_stand"), los=c.querySelector("#ar_los"), fehlend=[];
+  c.querySelector("#ar_pruef").onclick=function(){
+    stand.textContent="wird geprüft …";
+    Promise.all([
+      Store.sb.from("protokolle").select("*").is("geloescht",null).order("erstellt",{ascending:false}).limit(1000),
+      Store.sb.from("berichte").select("client_id,version").limit(5000)
+    ]).then(function(r){
+      if(r[0].error||r[1].error){ stand.textContent="Prüfen fehlgeschlagen: "+((r[0].error||r[1].error).message)+
+        " – ist das SQL-Skript mit dem Abschnitt „Archiv“ ausgeführt?"; return; }
+      var da={}; (r[1].data||[]).forEach(function(b){ da[b.client_id]=b.version||1; });
+      var alle=(r[0].data||[]).map(ausZeile);
+      fehlend=alle.filter(function(p){ return !da[p._id] || da[p._id]<(p.version||1); });
+      stand.textContent=(alle.length-fehlend.length)+" von "+alle.length+" Protokollen haben ein aktuelles PDF."+
+        (fehlend.length?" "+fehlend.length+(fehlend.length===1?" fehlt.":" fehlen."):"");
+      los.hidden=!fehlend.length;
+    });
+  };
+  los.onclick=function(){
+    los.disabled=true;
+    var i=0, ok=0;
+    var weiter=function(){
+      if(i>=fehlend.length){
+        stand.textContent=ok+" von "+fehlend.length+" PDFs erzeugt."+(ok<fehlend.length?" Fehler: "+(Store.fehler||"unbekannt"):"");
+        los.disabled=false; los.hidden=ok===fehlend.length; return;
+      }
+      var p=fehlend[i++];
+      stand.textContent="PDF "+i+" von "+fehlend.length+" – "+(p.standortName||"")+" vom "+dfmt(p.datum)+" …";
+      berichtAblegen(p).then(function(x){ if(x) ok++; weiter(); });
+    };
+    weiter();
+  };
+  return c;
+}
+
 function viewVerwaltung(){
   var f=document.createDocumentFragment();
   if(!Admin.frei){ f.appendChild(verwaltungSperre()); return f; }
@@ -3334,6 +3530,7 @@ function viewVerwaltung(){
   var zu=kopf.querySelector("#adm_zu");
   if(zu) zu.onclick=function(){ Admin.frei=false; try{ sessionStorage.removeItem("ukt_admin_frei"); }catch(x){} render(); };
   f.appendChild(kopf);
+  if(Store.modus==="supabase" && Admin.zentral) f.appendChild(archivKarte());
 
   /* ---- Bearbeitungsfenster ---- */
   if(A.sel){
