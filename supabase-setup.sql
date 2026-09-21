@@ -9,6 +9,7 @@ create table if not exists public.protokolle (
   -- Zuordnung zum Anlagenstamm
   standort_id           text,
   position_id           text,
+  position_ids          jsonb not null default '[]'::jsonb,  -- alle bei diesem Besuch gewarteten Anlagen
   filiale               text,
   standort_name         text,
   adresse               text,
@@ -51,6 +52,18 @@ create table if not exists public.protokolle (
   fotos                 jsonb not null default '[]'::jsonb
 );
 
+-- Wer das Skript schon einmal ausgefuehrt hat: "create table if not exists"
+-- legt spaeter ergaenzte Spalten nicht an. Das holen diese Zeilen nach.
+alter table public.protokolle add column if not exists position_ids    jsonb not null default '[]'::jsonb;
+alter table public.protokolle add column if not exists fotos           jsonb not null default '[]'::jsonb;
+-- Kennung aus der App: unter ihr liegen die Fotos, und eine wiederholte
+-- Uebertragung legt kein doppeltes Protokoll an
+alter table public.protokolle add column if not exists client_id       text;
+alter table public.protokolle add column if not exists version         integer not null default 1;
+alter table public.protokolle add column if not exists geaendert       timestamptz;
+alter table public.protokolle add column if not exists korrektur_grund text;
+create unique index if not exists protokolle_client_id_idx on public.protokolle (client_id);
+
 create index if not exists protokolle_erstellt_idx  on public.protokolle (erstellt desc);
 create index if not exists protokolle_standort_idx  on public.protokolle (standort_id);
 create index if not exists protokolle_datum_idx     on public.protokolle (datum);
@@ -75,8 +88,74 @@ create policy "angemeldete schreiben eigene"
   to authenticated
   with check (erstellt_von = auth.uid());
 
--- Kein update, kein delete: ein abgegebenes Protokoll ist ein Nachweis.
--- Korrekturen laufen über ein neues Protokoll mit Bemerkung.
+drop policy if exists "angemeldete korrigieren" on public.protokolle;
+
+-- Korrigieren darf jeder angemeldete Techniker und das Buero – aber nur
+-- mit Begruendung, und der urspruengliche Verfasser bleibt eingetragen.
+create policy "angemeldete korrigieren"
+  on public.protokolle for update
+  to authenticated
+  using (true)
+  with check (korrektur_grund is not null and length(trim(korrektur_grund)) > 0);
+
+-- Kein delete: ein abgegebenes Protokoll ist ein Nachweis.
+
+-- ---------------------------------------------------------------------------
+-- Aenderungsverlauf
+-- ---------------------------------------------------------------------------
+create table if not exists public.aenderungen (
+  id             uuid primary key default gen_random_uuid(),
+  client_id      text unique,
+  zeit           timestamptz not null default now(),
+  art            text not null,          -- angelegt | korrigiert | geloescht
+  protokoll_id   text,
+  standort_id    text,
+  standort_name  text,
+  von            text,
+  grund          text,
+  felder         jsonb not null default '[]'::jsonb,   -- [{feld, name, alt, neu}]
+  eingetragen_von uuid default auth.uid()
+);
+create index if not exists aenderungen_zeit_idx      on public.aenderungen (zeit desc);
+create index if not exists aenderungen_protokoll_idx on public.aenderungen (protokoll_id);
+
+alter table public.aenderungen enable row level security;
+drop policy if exists "verlauf lesen"     on public.aenderungen;
+drop policy if exists "verlauf ergaenzen" on public.aenderungen;
+create policy "verlauf lesen"     on public.aenderungen for select to authenticated using (true);
+create policy "verlauf ergaenzen" on public.aenderungen for insert to authenticated with check (true);
+-- Keine update- und keine delete-Regel: der Verlauf laesst sich nur ergaenzen.
+
+-- ---------------------------------------------------------------------------
+-- Fassungen: jede Korrektur sichert die vorherige Fassung vollstaendig.
+-- Das passiert in der Datenbank selbst und laesst sich aus der App heraus
+-- nicht umgehen – auch wenn jemand am Aenderungsverlauf vorbei schreibt.
+-- ---------------------------------------------------------------------------
+create table if not exists public.protokoll_fassungen (
+  id           bigint generated always as identity primary key,
+  protokoll_id uuid not null,
+  client_id    text,
+  version      integer,
+  gesichert    timestamptz not null default now(),
+  gesichert_von uuid default auth.uid(),
+  daten        jsonb not null
+);
+alter table public.protokoll_fassungen enable row level security;
+drop policy if exists "fassungen lesen" on public.protokoll_fassungen;
+create policy "fassungen lesen" on public.protokoll_fassungen for select to authenticated using (true);
+
+create or replace function public.protokoll_fassung_sichern() returns trigger
+language plpgsql security definer set search_path = public as $$
+begin
+  insert into public.protokoll_fassungen (protokoll_id, client_id, version, daten)
+  values (old.id, old.client_id, old.version, to_jsonb(old));
+  return new;
+end $$;
+
+drop trigger if exists protokoll_fassung_sichern on public.protokolle;
+create trigger protokoll_fassung_sichern
+  before update on public.protokolle
+  for each row execute function public.protokoll_fassung_sichern();
 
 
 -- ---------------------------------------------------------------------------

@@ -98,6 +98,57 @@ Koordinaten über [Nominatim](https://nominatim.openstreetmap.org/) geocodiert,
 136 von 140 Standorten, die meisten adressgenau. Der Österreich-Umriss stammt
 ebenfalls aus OpenStreetMap (ODbL).
 
+## Wie Fälligkeiten berechnet werden
+
+| Kürzel | Bedeutung | in der Liste oft |
+|---|---|---|
+| JW | Jahreswartung | JW |
+| HJW | Halbjahreswartung – vorgeschrieben ab 30 kg Kältemittel | HW |
+| HJI | Halbjahresinspektion | HI |
+
+Jede Zeile der Liste ist ein Termin, der **jedes Jahr am selben Tag**
+wiederkehrt. Der Tag hängt an der Inbetriebnahme: die Jahreswartung am
+Jahrestag der Inbetriebnahme, die Halbjahrestermine sechs Monate versetzt.
+Den Halbjahresrhythmus eines Marktes ergeben also zwei Zeilen – typisch JW
+und HJI, bei über 30 kg JW und HJW.
+
+Eine Wartung zählt für den Termin, in dessen Halbjahresfenster sie fällt.
+Wer früher oder später kommt, verschiebt den Folgetermin nicht. Ist der
+kommende Termin bereits erledigt, gilt ein davor versäumter nicht mehr als
+überfällig, sondern wird als „ausgelassen" vermerkt.
+
+Zusätzlich muss **jeder Markt spätestens 6 Monate nach dem letzten Besuch**
+wieder besucht werden. Das fängt Märkte, bei denen nur eine Zeile eingetragen
+ist.
+
+Ein gespeichertes Protokoll erledigt die angehakten Anlagen sofort – wenn die
+Wartungsart „planmäßig" oder „Prüfung" ist. Eine Störung oder Reparatur
+ersetzt keine Wartung.
+
+## Korrekturen und Änderungsverlauf
+
+Jedes gespeicherte Protokoll lässt sich korrigieren. Dafür ist ein Grund
+Pflicht. Festgehalten wird, wann, von wem, warum und welches Feld von welchem
+auf welchen Wert geändert wurde; das Protokoll trägt danach eine
+Fassungsnummer. Fotos kommen bei einer Korrektur nur dazu, keines
+verschwindet. Die Unterschrift bleibt, solange niemand neu unterschreibt.
+
+Der Verlauf lässt sich nur ergänzen, nicht ändern oder löschen. Auf Supabase
+sichert die Datenbank zusätzlich bei jeder Korrektur die vollständige
+vorherige Fassung in `protokoll_fassungen` – das geschieht in der Datenbank
+selbst und lässt sich aus der App heraus nicht umgehen.
+
+Wer eine Änderung gemacht hat: auf Supabase die angemeldete E-Mail-Adresse.
+Ohne Anmeldung ist es der Name, der auf dem Gerät zuletzt als Techniker
+eingetragen wurde – das ist kein Identitätsnachweis.
+
+## Wartungshistorie je Filiale
+
+Unter **Verlauf** lässt sich jede Filiale aufrufen: wer hat wann welche Anlage
+gewartet, nach Jahren geordnet, aus Excel-Liste und App-Protokollen
+zusammengeführt. In der Excel-Liste stehen Technikernamen nur für einen Teil
+der Einträge; diese Lücken zeigt die Historie offen als „ohne Namen".
+
 ## Protokolle ohne gemeinsame Ablage
 
 Die App funktioniert auch ohne eingerichtete Datenbank vollständig. Ein
