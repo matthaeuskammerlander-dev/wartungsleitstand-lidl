@@ -250,6 +250,34 @@ Der anon-Key ist zur Veröffentlichung bestimmt. Er erlaubt für sich genommen
 nichts — was damit möglich ist, regeln die Policies aus dem SQL-Skript. Der
 `service_role` Key gehört dagegen niemals in dieses Repository.
 
+## Konten für Techniker
+
+In Supabase unter **Authentication → Users → Add user → Create new user**:
+E-Mail, ein Startpasswort, **„Auto Confirm User" anhaken**. Das Startpasswort
+persönlich weitergeben. Nach der ersten Anmeldung weist die App darauf hin,
+über „Passwort ändern" ein eigenes zu vergeben.
+
+Admin-Rechte (Stammdaten ändern, Protokolle löschen) nur bei Bedarf:
+
+```sql
+insert into public.admins (user_id)
+select id from auth.users where email = 'name@ukt.at';
+```
+
+**Passwort vergessen:** Supabase verschickt ohne eigenen Mailserver nur an
+Mitglieder des Supabase-Teams – eine Zurücksetzen-Mail an Techniker kommt also
+nicht an. Bis ein Mailserver hinterlegt ist (Project Settings → Authentication
+→ SMTP), setzt ein Admin im SQL Editor ein neues Startpasswort:
+
+```sql
+update auth.users
+set encrypted_password = crypt('NeuesStartpasswort', gen_salt('bf')),
+    raw_user_meta_data = raw_user_meta_data - 'eigenesPasswort'
+where email = 'name@ukt.at';
+```
+
+Die zweite Zeile sorgt dafür, dass die App wieder zum Ändern auffordert.
+
 ## Hosting
 
 Die Seite ist statisch und braucht keinen Build-Schritt — es reicht, die

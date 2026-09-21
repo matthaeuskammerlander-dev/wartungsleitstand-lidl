@@ -2172,6 +2172,60 @@ function viewAnmeldung(){
   return f;
 }
 
+/* Wer angemeldet ist, samt Passwort ändern und Abmelden.
+   Steht außerhalb des Protokollformulars, damit Enter im Passwortfeld
+   nicht versehentlich ein Protokoll abschickt. */
+function kontoKarte(){
+  var mail=Store.benutzer&&Store.benutzer.email?Store.benutzer.email:"";
+  var c=el('<div class="card"><div class="pad stack">'+
+    '<div class="rowflex" style="justify-content:space-between">'+
+      '<span>Angemeldet als <strong>'+esc(mail)+"</strong>"+(Admin.zentral?' <span class="tag f30">Admin</span>':"")+"</span>"+
+      '<span class="rowflex"><button class="btn ghost sm" type="button" id="k_pw">Passwort ändern</button>'+
+      '<button class="btn ghost sm" type="button" id="k_ab">Abmelden</button></span>'+
+    "</div>"+
+    /* wer noch mit dem vom Büro vergebenen Startpasswort unterwegs ist, bekommt einen Hinweis */
+    ((Store.benutzer&&Store.benutzer.user_metadata&&Store.benutzer.user_metadata.eigenesPasswort)?"":
+      '<div class="note warnbox" id="k_hinweis">Sie verwenden noch das Startpasswort aus dem Büro. '+
+      'Bitte vergeben Sie über „Passwort ändern" ein eigenes, das nur Sie kennen.</div>')+
+    '<form id="k_form" class="stack" hidden autocomplete="off">'+
+      '<input type="email" value="'+esc(mail)+'" autocomplete="username" hidden>'+
+      '<label class="fl"><span>Neues Passwort (mindestens 10 Zeichen)</span>'+
+        '<input type="password" id="k_p1" autocomplete="new-password"></label>'+
+      '<label class="fl"><span>Neues Passwort wiederholen</span>'+
+        '<input type="password" id="k_p2" autocomplete="new-password"></label>'+
+      '<div class="note warnbox" id="k_err" hidden></div>'+
+      '<div class="rowflex"><button class="btn sm" type="submit">Passwort speichern</button>'+
+        '<button class="btn ghost sm" type="button" id="k_abbr">Abbrechen</button></div>'+
+    "</form>"+
+  "</div></div>");
+  var form=c.querySelector("#k_form"), err=c.querySelector("#k_err");
+  c.querySelector("#k_pw").onclick=function(){ form.hidden=false; err.hidden=true; c.querySelector("#k_p1").focus(); };
+  c.querySelector("#k_abbr").onclick=function(){ form.hidden=true; form.reset(); };
+  c.querySelector("#k_ab").onclick=function(){ formDirty=false; Store.sb.auth.signOut(); };
+  form.onsubmit=function(e){
+    e.preventDefault();
+    var p1=c.querySelector("#k_p1").value, p2=c.querySelector("#k_p2").value;
+    var fehl=function(t){ err.textContent=t; err.hidden=false; };
+    if(p1.length<10){ fehl("Das Passwort braucht mindestens 10 Zeichen."); return; }
+    if(p1!==p2){ fehl("Die beiden Eingaben stimmen nicht überein."); return; }
+    var knopf=form.querySelector('button[type="submit"]'); knopf.disabled=true; knopf.textContent="Wird gespeichert …";
+    Store.sb.auth.updateUser({password:p1, data:{eigenesPasswort:true}}).then(function(r){
+      knopf.disabled=false; knopf.textContent="Passwort speichern";
+      if(!r.error && r.data && r.data.user) Store.benutzer=r.data.user;
+      if(r.error){
+        fehl(/different/i.test(r.error.message) ? "Das neue Passwort muss sich vom bisherigen unterscheiden."
+           : /weak|short|characters/i.test(r.error.message) ? "Das Passwort ist zu schwach: "+r.error.message
+           : "Das hat nicht geklappt: "+r.error.message);
+        return;
+      }
+      form.reset(); form.hidden=true;
+      var h=c.querySelector("#k_hinweis"); if(h) h.remove();
+      toast("Passwort geändert. Ab jetzt mit dem neuen anmelden.");
+    },function(){ knopf.disabled=false; knopf.textContent="Passwort speichern"; fehl("Keine Verbindung – bitte erneut versuchen."); });
+  };
+  return c;
+}
+
 function viewProtokoll(){
   if(Store.modus==="anmeldung") return viewAnmeldung();
 
@@ -2182,8 +2236,7 @@ function viewProtokoll(){
 
   var dbHinweis;
   if(Store.modus==="claude") dbHinweis='<div class="note">Protokolle werden in der gemeinsamen Datenbank dieser App gespeichert und sind für alle sichtbar, die die App öffnen können.</div>';
-  else if(Store.modus==="supabase") dbHinweis='<div class="note">Angemeldet als '+esc(Store.benutzer&&Store.benutzer.email?Store.benutzer.email:"Techniker")+
-    '. Protokolle gehen in die gemeinsame Datenbank. <button type="button" class="btn ghost sm" id="logout" style="margin-left:6px">Abmelden</button></div>';
+  else if(Store.modus==="supabase") dbHinweis='<div class="note">Protokolle gehen in die gemeinsame Datenbank.</div>';
   else dbHinweis='<div class="note">Protokolle werden <strong>auf diesem Gerät</strong> gespeichert. '+
     'Sie erscheinen unten in der Liste, lassen sich dort öffnen und als PDF ausgeben. '+
     'Eine gemeinsame Ablage für alle Techniker ist noch nicht eingerichtet – sobald sie steht, '+
@@ -2673,6 +2726,7 @@ function viewProtokoll(){
         '<div><h2>Wartungsprotokoll Klimaanlage</h2><div class="sub">Digitale Fassung des Einseiters. '+
         (s?"Vorbelegt für <strong>"+esc(stName(s))+"</strong>.":"Standort unten auswählen oder aus Liste bzw. Karte heraus öffnen.")+"</div></div>"+
       "</div></div>");
+  if(Store.modus==="supabase" && Store.sb && !bearb) f.appendChild(kontoKarte());
   f.appendChild(head);
   var body=el('<div class="card"><div class="pad"></div></div>');
   body.querySelector(".pad").appendChild(form);
