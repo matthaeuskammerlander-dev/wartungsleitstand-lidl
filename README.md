@@ -142,6 +142,44 @@ Wer eine Änderung gemacht hat: auf Supabase die angemeldete E-Mail-Adresse.
 Ohne Anmeldung ist es der Name, der auf dem Gerät zuletzt als Techniker
 eingetragen wurde – das ist kein Identitätsnachweis.
 
+## Verwaltung (Admin)
+
+Der Reiter **Verwaltung** zeigt alle Märkte in einer sortierbaren Tabelle mit
+Status, letztem Besuch, nächstem Termin und den Auffälligkeiten der Liste –
+getrennt nach **Fehlern** (Soll-Monat passt nicht zur Inbetriebnahme, über
+30 kg ohne HJW, unklares Kürzel, doppelte Filialnummer, keine Kartenposition)
+und **Lücken** (fehlende Kältemittelmenge, Inbetriebnahme, PLZ). Ein Markt
+lässt sich dort öffnen und bearbeiten: Filialnummer, Adresse, Region,
+Koordinaten (auch aus der Adresse ermittelbar), und je Anlage Typ, Kürzel,
+Inbetriebnahme, Soll-Monat, Kältemittel und Rückkühler. Neue Märkte und
+Anlagen lassen sich anlegen; statt zu löschen werden sie **stillgelegt** – sie
+verschwinden aus Plan, Karte und Touren, ihre Historie bleibt.
+
+Technisch ist das eine **Ebene über der Excel-Liste**: je Markt bzw. Anlage
+werden nur die Felder gespeichert, die abweichen. Der Excel-Wert bleibt darunter
+erhalten; neben jedem geänderten Feld steht er zum Vergleich, und „Auf
+Excel-Stand zurücksetzen" stellt ihn wieder her. Jede Änderung verlangt einen
+Grund und landet feldgenau im Änderungsverlauf.
+
+**Wer darf?** Mit gemeinsamer Datenbank nur, wer in der Tabelle `admins`
+steht – das prüft die Datenbank bei jedem Schreibzugriff selbst:
+
+```sql
+insert into public.admins (user_id)
+select id from auth.users where email = 'ihre@adresse.at';
+```
+
+Ohne gemeinsame Datenbank gelten Änderungen nur auf dem Gerät, auf dem sie
+gemacht werden, und gehen später in die gemeinsame Ablage. Dort schützt eine
+PIN vor versehentlichen Eingriffen; ein Zugriffsschutz gegen Dritte ist sie
+nicht.
+
+**Beim nächsten Excel-Import beachten:** Die Änderungen hängen an den internen
+Kennungen der Märkte und Anlagen, und die leiten sich aus der Zeilenfolge der
+Liste ab. Wird die Liste neu eingelesen, müssen die Änderungen über
+Filialnummer und Anlagendaten neu zugeordnet werden – oder sie werden vorher in
+die Excel-Liste übernommen.
+
 ## Wartungshistorie je Filiale
 
 Unter **Verlauf** lässt sich jede Filiale aufrufen: wer hat wann welche Anlage

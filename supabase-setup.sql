@@ -159,6 +159,50 @@ create trigger protokoll_fassung_sichern
 
 
 -- ---------------------------------------------------------------------------
+-- Verwaltung: Admin-Rolle und Stammdaten-Aenderungen
+-- ---------------------------------------------------------------------------
+-- Wer hier eingetragen ist, darf Maerkte und Anlagen aendern. Eintragen nur
+-- im Supabase-Dashboard – die App selbst kann niemanden zum Admin machen:
+--   insert into public.admins (user_id)
+--   select id from auth.users where email = 'ihre@adresse.at';
+create table if not exists public.admins (
+  user_id      uuid primary key references auth.users(id) on delete cascade,
+  hinzugefuegt timestamptz not null default now()
+);
+alter table public.admins enable row level security;
+drop policy if exists "eigene rolle sehen" on public.admins;
+create policy "eigene rolle sehen" on public.admins for select to authenticated using (user_id = auth.uid());
+-- keine insert-, update- oder delete-Regel: aus der App heraus unveraenderbar
+
+create or replace function public.ist_admin() returns boolean
+language sql stable security definer set search_path = public as $$
+  select exists (select 1 from public.admins where user_id = auth.uid());
+$$;
+
+-- Je Markt bzw. Anlage die Felder, die von der Excel-Liste abweichen
+create table if not exists public.stammdaten (
+  id        text primary key,            -- "standort:S12" oder "position:P9"
+  typ       text not null,               -- standort | position
+  ziel      text not null,
+  felder    jsonb not null default '{}'::jsonb,
+  neu       boolean not null default false,
+  geaendert timestamptz not null default now(),
+  von       text,
+  grund     text
+);
+alter table public.stammdaten enable row level security;
+drop policy if exists "stammdaten lesen"   on public.stammdaten;
+drop policy if exists "stammdaten anlegen" on public.stammdaten;
+drop policy if exists "stammdaten aendern" on public.stammdaten;
+drop policy if exists "stammdaten zuruecksetzen" on public.stammdaten;
+create policy "stammdaten lesen"   on public.stammdaten for select to authenticated using (true);
+create policy "stammdaten anlegen" on public.stammdaten for insert to authenticated with check (public.ist_admin());
+create policy "stammdaten aendern" on public.stammdaten for update to authenticated
+  using (public.ist_admin()) with check (public.ist_admin());
+create policy "stammdaten zuruecksetzen" on public.stammdaten for delete to authenticated using (public.ist_admin());
+
+
+-- ---------------------------------------------------------------------------
 -- Fotospeicher
 -- ---------------------------------------------------------------------------
 -- Nicht oeffentlich: die Bilder werden ueber zeitlich begrenzte Links

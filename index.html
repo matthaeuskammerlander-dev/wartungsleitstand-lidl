@@ -269,6 +269,8 @@ table.dt th{text-align:left;font-family:var(--f-disp);font-size:11.5px;text-tran
   color:var(--ink-3);padding:8px 10px;border-bottom:1px solid var(--line-2);white-space:nowrap}
 table.dt td{padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
 .scrollx{overflow-x:auto;max-width:100%}
+.adr-zeile{display:grid;grid-template-columns:2fr 1fr 1fr;gap:12px;margin-top:12px}
+@media (max-width:560px){ .adr-zeile{grid-template-columns:1fr 1fr} .adr-zeile>:first-child{grid-column:1/-1} }
 /* Grid-Kinder dürfen schmaler werden als ihr Inhalt – sonst schiebt eine
    breite Tabelle trotz eigenem Scrollbereich die ganze Seite auseinander */
 .stack>*, section.view>*, .detail>*, .card>.pad>*{min-width:0}
@@ -301,10 +303,49 @@ table.dt td{padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:
 function starteWartungsleitstand(){
 "use strict";
 var DB = window.LIDL_DB || {standorte:[],positionen:[],meta:{}};
-var ST = DB.standorte, POS = DB.positionen;
-var byId = {}; ST.forEach(function(s){ byId[s.id]=s; });
-ST.forEach(function(s){ s.pos = []; });
-POS.forEach(function(p){ if(byId[p.standortId]) byId[p.standortId].pos.push(p); });
+
+/* ALLE_ST / ALLE_POS: jeder Datensatz, auch deaktivierte und von Hand angelegte.
+   ST / POS: nur die aktiven – damit arbeiten alle Ansichten. */
+var ALLE_ST = DB.standorte, ALLE_POS = DB.positionen;
+var ST = ALLE_ST, POS = ALLE_POS;
+var byId = {}, posById = {};
+
+/* Was sich in der Verwaltung ändern lässt. Der Excel-Stand wird beim Start
+   gemerkt, damit jede Änderung zurückgesetzt werden kann. */
+var STAMM_FELDER_ST  = ["filiale","name","adresse","plz","ort","region","lat","lon","aktiv","notiz"];
+var STAMM_FELDER_POS = ["anlagentyp","intervallCode","inbetriebnahme","monat","kaeltemittelKg",
+                        "kaeltemittelArt","rueckkuehler","aktiv","notiz"];
+var ABGELEITET_POS   = ["kaeltemittelText","ueber30kg","baujahr"];
+function auswahl(o, felder){
+  var r={}; felder.forEach(function(k){ r[k]=(o[k]===undefined?null:o[k]); }); return r;
+}
+var EXCEL = {};
+ALLE_ST.forEach(function(s){ s.aktiv=(s.aktiv!==false); EXCEL["standort:"+s.id]=auswahl(s,STAMM_FELDER_ST.concat(["genauigkeit"])); });
+ALLE_POS.forEach(function(p){
+  p.aktiv=(p.aktiv!==false);
+  EXCEL["position:"+p.id]=auswahl(p,STAMM_FELDER_POS.concat(ABGELEITET_POS));
+});
+
+function indexNeuAufbauen(){
+  byId={}; posById={};
+  ALLE_ST.forEach(function(s){ byId[s.id]=s; s.pos=[]; });
+  ALLE_POS.forEach(function(p){ posById[p.id]=p; });
+  ALLE_POS.forEach(function(p){ if(p.aktiv && byId[p.standortId]) byId[p.standortId].pos.push(p); });
+  ST = ALLE_ST.filter(function(s){ return s.aktiv; });
+  POS = ALLE_POS.filter(function(p){ return p.aktiv && byId[p.standortId] && byId[p.standortId].aktiv; });
+  /* Kennzahlen je Markt, die sonst aus der Excel-Aufbereitung stammen */
+  ALLE_ST.forEach(function(s){
+    var bj=s.pos.map(function(p){ return p.baujahr; }).filter(Boolean);
+    s.baujahrVon=bj.length?Math.min.apply(null,bj):null;
+    s.baujahrBis=bj.length?Math.max.apply(null,bj):null;
+    s.ueber30kg=s.pos.some(function(p){ return p.ueber30kg; });
+    var t={}; s.pos.forEach(function(p){ if(p.anlagentyp) t[p.anlagentyp]=1; });
+    s.typen=Object.keys(t);
+    s.anzahlPositionen=s.pos.length;
+    s.adresseUnvollstaendig=!s.plz;
+  });
+}
+indexNeuAufbauen();
 
 var KARTE_MODUS = "svg";   // wird beim Start auf "osm" gesetzt, wenn Kacheln laden
 var HEUTE = new Date();
@@ -701,7 +742,7 @@ function filtered(){
 function filteredPos(){ var ids={}; filtered().forEach(function(s){ids[s.id]=1;}); return POS.filter(function(p){return ids[p.standortId];}); }
 
 /* ---------- Tabs ---------- */
-var VIEWS=[["faellig","Fällig"],["karte","Karte"],["anlagen","Anlagen"],["protokoll","Protokoll"],["verlauf","Verlauf"],["daten","Datenbasis"]];
+var VIEWS=[["faellig","Fällig"],["karte","Karte"],["anlagen","Anlagen"],["protokoll","Protokoll"],["verlauf","Verlauf"],["verwaltung","Verwaltung"],["daten","Datenbasis"]];
 var tabsEl=document.getElementById("tabs");
 VIEWS.forEach(function(v){
   var b=document.createElement("button"); b.type="button"; b.textContent=v[1]; b.setAttribute("role","tab");
@@ -1343,11 +1384,17 @@ function standortDetail(s){
     '<div class="rowflex">'+
       (s.lat?'<a class="btn ghost sm" href="'+gmapsZiel(s)+'" target="_blank" rel="noopener">In Google Maps navigieren</a>':"")+
       '<button class="btn ghost sm" type="button" data-akt="historie">Wartungshistorie</button>'+
+      '<button class="btn ghost sm" type="button" data-akt="bearbeiten">Daten bearbeiten</button>'+
     "</div>"+
+    (s.notiz?'<div class="note"><strong>Notiz:</strong> '+esc(s.notiz)+"</div>":"")+
     '<div class="stack" id="poslist"></div>'+
   "</div></div>");
   d.querySelector('[data-akt="historie"]').onclick=function(){
     S.verlaufStandort=s.id; S.view="verlauf"; render(); window.scrollTo({top:0});
+  };
+  d.querySelector('[data-akt="bearbeiten"]').onclick=function(){
+    S.adm=S.adm||{suche:"", filter:"alle", sort:"filiale", auf:true};
+    S.adm.sel=s.id; S.adm.entwurf=null; S.view="verwaltung"; render(); window.scrollTo({top:0});
   };
   var pl=d.querySelector("#poslist");
   s.pos.forEach(function(p){ pl.appendChild(posBox(p,s)); });
@@ -1470,12 +1517,14 @@ function idbOeffnen(){
   return new Promise(function(ok,nok){
     if(!window.indexedDB){ nok(new Error("Dieser Browser kann keine Daten dauerhaft speichern.")); return; }
     var r;
-    try{ r=indexedDB.open("ukt-wartung",2); }catch(e){ nok(e); return; }
+    try{ r=indexedDB.open("ukt-wartung",3); }catch(e){ nok(e); return; }
     r.onupgradeneeded=function(){
       var db=r.result;
       if(!db.objectStoreNames.contains("protokolle")) db.createObjectStore("protokolle",{keyPath:"id"});
       /* Version 2: Änderungsverlauf */
       if(!db.objectStoreNames.contains("aenderungen")) db.createObjectStore("aenderungen",{keyPath:"id"});
+      /* Version 3: Stammdaten-Änderungen aus der Verwaltung */
+      if(!db.objectStoreNames.contains("stammdaten")) db.createObjectStore("stammdaten",{keyPath:"id"});
     };
     r.onsuccess=function(){ IDB=r.result; ok(IDB); };
     r.onerror=function(){ nok(r.error||new Error("Gerätespeicher nicht verfügbar")); };
@@ -1557,6 +1606,7 @@ function vergleiche(alt, neu){
 }
 function wer(){
   if(Store.modus==="supabase" && Store.benutzer && Store.benutzer.email) return Store.benutzer.email;
+  if(Admin && Admin.frei && lsGet("ukt_admin_name","")) return lsGet("ukt_admin_name","");
   return lsGet("ukt_tech","") || "unbekannt";
 }
 function protokolliere(ev){
@@ -1600,6 +1650,145 @@ function ladeAenderungen(){
       .sort(function(a,b){ return (b.zeit||"").localeCompare(a.zeit||""); });
     return aenderungen;
   });
+}
+
+/* ----------------------------------------------------------------
+   Stammdaten-Änderungen aus der Verwaltung. Sie liegen als eigene Ebene
+   über der Excel-Liste: je Markt bzw. Anlage ein Datensatz mit den Feldern,
+   die vom Excel-Stand abweichen. Löscht man ihn, gilt wieder Excel.
+   ---------------------------------------------------------------- */
+var stammUeber = {};   // "standort:S5" | "position:P9" -> {id, typ, ziel, felder, neu, geaendert, von, grund}
+
+function wendeStammdatenAn(){
+  /* 1. alles auf den Excel-Stand zurück */
+  ALLE_ST = ALLE_ST.filter(function(s){ return !s._neu; });
+  ALLE_POS = ALLE_POS.filter(function(p){ return !p._neu; });
+  ALLE_ST.forEach(function(s){ Object.assign(s, EXCEL["standort:"+s.id]); s._geaendert=false; });
+  ALLE_POS.forEach(function(p){ Object.assign(p, EXCEL["position:"+p.id]); p._geaendert=false; });
+
+  /* 2. Änderungen darüberlegen – Märkte zuerst, damit neue Anlagen ihren Markt finden */
+  var rang=function(k){ return k.indexOf("standort:")===0 ? 0 : 1; };
+  var schluessel=Object.keys(stammUeber).sort(function(a,b){ return rang(a)-rang(b); });
+  schluessel.forEach(function(k){
+    var r=stammUeber[k], ziel=null, i;
+    if(r.typ==="standort"){
+      for(i=0;i<ALLE_ST.length;i++){ if(ALLE_ST[i].id===r.ziel){ ziel=ALLE_ST[i]; break; } }
+      if(!ziel && r.neu){ ziel={id:r.ziel, _neu:true, pos:[], genauigkeit:"manuell", aktiv:true, name:""}; ALLE_ST.push(ziel); }
+    } else {
+      for(i=0;i<ALLE_POS.length;i++){ if(ALLE_POS[i].id===r.ziel){ ziel=ALLE_POS[i]; break; } }
+      if(!ziel && r.neu){ ziel={id:r.ziel, _neu:true, historie:[], techniker:{}, aktiv:true}; ALLE_POS.push(ziel); }
+    }
+    if(!ziel) return;
+    Object.assign(ziel, r.felder);
+    ziel._geaendert=true;
+  });
+
+  /* 3. abgeleitete Werte nachziehen */
+  ALLE_POS.forEach(function(p){
+    var ex=EXCEL["position:"+p.id];
+    p.monat = p.monat ? +p.monat : 0;
+    p.baujahr = p.inbetriebnahme ? +String(p.inbetriebnahme).slice(0,4) : null;
+    var kgGeaendert = !ex || p.kaeltemittelKg!==ex.kaeltemittelKg;
+    if(kgGeaendert){
+      var kg=(p.kaeltemittelKg===""||p.kaeltemittelKg==null)?null:+p.kaeltemittelKg;
+      p.kaeltemittelKg=kg;
+      p.kaeltemittelText = kg==null ? "" : String(kg).replace(".",",")+" kg";
+      p.ueber30kg = kg!=null && kg>=30;
+    }
+  });
+  ALLE_ST.forEach(function(s){
+    if(s.lat!=null&&s.lat!=="") s.lat=+s.lat; else s.lat=null;
+    if(s.lon!=null&&s.lon!=="") s.lon=+s.lon; else s.lon=null;
+    if(s._geaendert && s.lat && EXCEL["standort:"+s.id] && s.lat!==EXCEL["standort:"+s.id].lat) s.genauigkeit="manuell";
+    s.unklar=!s.lat;
+  });
+  indexNeuAufbauen();
+  berechneFaelligkeiten();
+}
+
+function stammSpeichern(rec){
+  var lokal=function(){
+    return idbVorgang("readwrite",function(st){ return st.put(rec); },"stammdaten")
+      .then(function(){ return "geraet"; }, function(){ return false; });
+  };
+  if(Store.modus==="supabase" && Store.sb && Admin.zentral){
+    return Store.sb.from("stammdaten").upsert({id:rec.id, typ:rec.typ, ziel:rec.ziel, felder:rec.felder,
+      neu:!!rec.neu, geaendert:rec.geaendert, von:rec.von, grund:rec.grund||null})
+      .then(function(r){ return r.error ? lokal() : "gemeinsam"; }, lokal);
+  }
+  if(Store.modus==="claude" && Store.claudeDb){
+    return Store.claudeDb.doc("stammdaten/"+rec.id.replace(":","_")).set(rec)
+      .then(function(){ return "gemeinsam"; }, lokal);
+  }
+  return lokal();
+}
+function stammLoeschen(id){
+  var lokal=idbVorgang("readwrite",function(st){ return st.delete(id); },"stammdaten").catch(function(){});
+  if(Store.modus==="supabase" && Store.sb && Admin.zentral){
+    return Promise.all([lokal, Store.sb.from("stammdaten").delete().eq("id",id)]);
+  }
+  if(Store.modus==="claude" && Store.claudeDb){
+    return Promise.all([lokal, Store.claudeDb.doc("stammdaten/"+id.replace(":","_")).delete().catch(function(){})]);
+  }
+  return lokal;
+}
+function ladeStammdaten(){
+  var lokal=idbVorgang("readonly",function(st){ return st.getAll(); },"stammdaten")
+    .then(function(l){ return l||[]; }, function(){ return []; });
+  var zentral=Promise.resolve([]);
+  if(Store.modus==="supabase" && Store.sb){
+    zentral=Store.sb.from("stammdaten").select("*").then(function(r){ return r.data||[]; }, function(){ return []; });
+  } else if(Store.modus==="claude" && Store.claudeDb){
+    zentral=Store.claudeDb.collection("stammdaten").get().then(function(s){
+      return (s.docs||[]).map(function(d){ return d.data(); });
+    }, function(){ return []; });
+  }
+  return Promise.all([lokal,zentral]).then(function(r){
+    var alle={};
+    /* gemeinsame Fassung zuerst, eine neuere vom Gerät gewinnt */
+    r[1].concat(r[0]).forEach(function(x){
+      if(!x||!x.id) return;
+      if(!alle[x.id] || (x.geaendert||"")>(alle[x.id].geaendert||"")) alle[x.id]=x;
+    });
+    stammUeber=alle;
+    wendeStammdatenAn();
+    return stammUeber;
+  });
+}
+/* auf dem Gerät gemachte Änderungen nachtragen, sobald man zentral Admin ist */
+function stammdatenUebertragen(){
+  var darf = (Store.modus==="supabase" && Admin.zentral) || Store.modus==="claude";
+  if(!darf) return;
+  idbVorgang("readonly",function(st){ return st.getAll(); },"stammdaten").then(function(liste){
+    (liste||[]).forEach(function(rec){
+      stammSpeichern(rec).then(function(wo){
+        if(wo==="gemeinsam") idbVorgang("readwrite",function(st){ return st.delete(rec.id); },"stammdaten");
+      });
+    });
+  },function(){});
+}
+
+/* ---------------- Admin-Freigabe ----------------
+   Mit gemeinsamer Datenbank entscheidet die Tabelle "admins" in Supabase –
+   das setzt die Datenbank selbst durch. Ohne sie gelten Änderungen nur auf
+   diesem Gerät; dort schützt eine PIN vor versehentlichen Eingriffen. */
+var Admin={frei:false, zentral:false, geprueft:false};
+function sha256hex(text){
+  return crypto.subtle.digest("SHA-256", new TextEncoder().encode(text)).then(function(b){
+    return Array.prototype.map.call(new Uint8Array(b),function(x){ return ("0"+x.toString(16)).slice(-2); }).join("");
+  });
+}
+function adminPruefen(){
+  if(Store.modus==="supabase" && Store.sb && Store.benutzer){
+    return Store.sb.from("admins").select("user_id").eq("user_id",Store.benutzer.id).then(function(r){
+      Admin.zentral=!!(r.data&&r.data.length); Admin.frei=Admin.zentral; Admin.geprueft=true;
+      if(Admin.zentral) stammdatenUebertragen();
+      return Admin.frei;
+    },function(){ Admin.geprueft=true; return false; });
+  }
+  Admin.geprueft=true;
+  try{ Admin.frei = sessionStorage.getItem("ukt_admin_frei")==="1"; }catch(e){}
+  return Promise.resolve(Admin.frei);
 }
 
 /* Einträge, die auf dem Gerät entstanden sind, in die gemeinsame Ablage
@@ -1673,6 +1862,7 @@ function initStore(versuch){
       storeNachRender();
     }, function(){ });
     flushQueue();
+    ladeStammdaten().then(storeNachRender);
     storeNachRender();
   }, function(){ if(supabaseKonfiguriert) return initSupabase(); Store.modus="lokal"; storeNachRender(); });
 }
@@ -1682,13 +1872,15 @@ function initSupabase(){
   Store.sb=window.supabase.createClient(CFG.supabaseUrl,CFG.supabaseAnonKey);
   Store.sb.auth.getSession().then(function(r){
     var sess=r&&r.data?r.data.session:null;
-    if(sess){ Store.benutzer=sess.user; Store.modus="supabase"; ladeProtokolle(); flushQueue(); }
+    if(sess){ Store.benutzer=sess.user; Store.modus="supabase"; ladeProtokolle(); flushQueue();
+      adminPruefen().then(ladeStammdaten).then(storeNachRender); }
     else { Store.modus="anmeldung"; }
     storeNachRender();
   });
   Store.sb.auth.onAuthStateChange(function(_ev,sess){
-    if(sess){ Store.benutzer=sess.user; Store.modus="supabase"; ladeProtokolle(); flushQueue(); }
-    else { Store.benutzer=null; Store.modus="anmeldung"; protokolle=[]; }
+    if(sess){ Store.benutzer=sess.user; Store.modus="supabase"; ladeProtokolle(); flushQueue();
+      adminPruefen().then(ladeStammdaten).then(storeNachRender); }
+    else { Store.benutzer=null; Store.modus="anmeldung"; protokolle=[]; Admin.zentral=false; Admin.frei=false; }
     storeNachRender();
   });
 }
@@ -2734,8 +2926,8 @@ function historieAnsicht(s){
   return box;
 }
 
-var ART_TEXT={angelegt:"angelegt", korrigiert:"korrigiert", geloescht:"gelöscht"};
-var ART_KLASSE={angelegt:"p-erledigt", korrigiert:"p-faellig", geloescht:"p-ueberfaellig"};
+var ART_TEXT={angelegt:"Protokoll angelegt", korrigiert:"Protokoll korrigiert", geloescht:"Protokoll gelöscht", stammdaten:"Stammdaten geändert"};
+var ART_KLASSE={angelegt:"p-erledigt", korrigiert:"p-faellig", geloescht:"p-ueberfaellig", stammdaten:"p-geplant"};
 function zeitFmt(iso){
   if(!iso) return "–";
   var d=new Date(iso);
@@ -2792,7 +2984,7 @@ function viewVerlauf(){
       return;
     }
     liste.slice(0,150).forEach(function(e){
-      var zeilen=(e.felder||[]).filter(function(x){ return e.art==="korrigiert"; }).map(function(x){
+      var zeilen=(e.felder||[]).filter(function(x){ return e.art==="korrigiert"||e.art==="stammdaten"; }).map(function(x){
         return "<tr><td>"+esc(x.name)+"</td><td>"+esc(x.alt)+"</td><td><strong>"+esc(x.neu)+"</strong></td></tr>";
       }).join("");
       var b=el('<div class="posbox">'+
@@ -2804,15 +2996,456 @@ function viewVerlauf(){
         (e.grund?'<div style="font-size:13px"><span class="muted">Grund:</span> '+esc(e.grund)+"</div>":"")+
         (zeilen?'<div class="scrollx"><table class="dt"><thead><tr><th>Feld</th><th>vorher</th><th>nachher</th></tr></thead><tbody>'+
           zeilen+"</tbody></table></div>":"")+
-        (e.protokollId?'<div><button class="btn ghost sm" type="button">Protokoll öffnen</button></div>':"")+
+        (e.protokollId?'<div><button class="btn ghost sm" type="button">Protokoll öffnen</button></div>':
+          (e.art==="stammdaten"&&e.standortId?'<div><button class="btn ghost sm" type="button">Markt in der Verwaltung öffnen</button></div>':""))+
       "</div>");
       var knopf=b.querySelector("button");
-      if(knopf) knopf.onclick=function(){ S.letztesProtokoll=e.protokollId; S.view="protokoll"; render(); window.scrollTo({top:0}); };
+      if(knopf) knopf.onclick=function(){
+        if(e.protokollId){ S.letztesProtokoll=e.protokollId; S.view="protokoll"; }
+        else { S.adm=S.adm||{suche:"", filter:"alle", sort:"filiale", auf:true}; S.adm.sel=e.standortId; S.adm.entwurf=null; S.view="verwaltung"; }
+        render(); window.scrollTo({top:0});
+      };
       host.appendChild(b);
     });
   };
   ladeAenderungen().then(zeichne, function(){ zeichne(aenderungen); });
   return f;
+}
+
+/* ================= Verwaltung ================= */
+var LABEL_ST={filiale:"Filialnummer", name:"Bezeichnung", adresse:"Adresse", plz:"PLZ", ort:"Ort",
+  region:"FM-Region", lat:"Breitengrad", lon:"Längengrad", aktiv:"betreut", notiz:"Notiz"};
+var LABEL_POS={anlagentyp:"Anlagentyp", intervallCode:"Kürzel", inbetriebnahme:"Inbetriebnahme",
+  monat:"Soll-Monat", kaeltemittelKg:"Kältemittel (kg)", kaeltemittelArt:"Kältemittelart",
+  rueckkuehler:"Rückkühler", aktiv:"in Betrieb", notiz:"Notiz"};
+function stammWert(feld, w){
+  if(w===null||w===undefined||w==="") return "–";
+  if(feld==="aktiv") return w?"ja":"nein";
+  if(feld==="monat") return MONATE_L[+w]||"–";
+  if(feld==="inbetriebnahme") return dfmt(w);
+  return String(w);
+}
+function objDiff(vorher, nachher, felder){
+  var d={}; felder.forEach(function(k){ if(!gleich(vorher[k],nachher[k])) d[k]=nachher[k]; }); return d;
+}
+
+/* Was an einem Markt nicht stimmt – getrennt nach Fehlern und fehlenden Angaben */
+function auffaelligkeiten(s){
+  var f=[], l=[];
+  if(!s.lat) f.push("keine Kartenposition");
+  if(!s.region) f.push("keine FM-Region");
+  if(s.filiale){
+    var doppelt=ALLE_ST.filter(function(o){ return o!==s && o.aktiv && String(o.filiale)===String(s.filiale); });
+    if(doppelt.length) f.push("Filialnummer "+s.filiale+" ist mehrfach vergeben");
+  }
+  if(!s.pos.length) f.push("keine Anlage in Betrieb");
+  if(s.pos.some(function(p){ return p.ueber30kg; }) && !s.pos.some(function(p){ return p.intervall&&p.intervall.kurz==="HJW"; }))
+    f.push("über 30 kg Kältemittel, aber keine Halbjahreswartung (HJW)");
+  s.pos.forEach(function(p){
+    var n=anlagenName(p);
+    if(p.intervall && p.intervall.unklar) f.push(n+": Kürzel „"+(p.intervallCode||"leer")+"“ unklar");
+    if(p.anker && p.anker.quelle==="Inbetriebnahme" && p.monat){
+      var d=Math.abs(p.anker.monat-p.monat); d=Math.min(d,12-d);
+      if(d>1) f.push(n+": Soll-Monat "+MONATE_L[p.monat]+" passt nicht zur Inbetriebnahme (ergibt "+MONATE_L[p.anker.monat]+")");
+    }
+    if(!p.inbetriebnahme) l.push(n+": Inbetriebnahme fehlt");
+    if(!p.kaeltemittelText) l.push(n+": Kältemittelmenge fehlt");
+  });
+  if(!s.filiale) l.push("keine Filialnummer");
+  if(!s.plz) l.push("keine PLZ in der Adresse");
+  if(s.pos.length===1) l.push("nur ein Termin im Jahr eingetragen – der Halbjahresbesuch fehlt in der Liste");
+  return {fehler:f, luecken:l};
+}
+function naechsterTerminMarkt(s){
+  var t=s.pos.map(function(p){ return p.naechste; }).filter(Boolean);
+  if(s.naechsterBesuch) t.push(s.naechsterBesuch);
+  t.sort(); return t[0]||null;
+}
+
+function verwaltungSperre(){
+  var c=el('<div class="card"><div class="pad stack" style="max-width:520px"></div></div>');
+  var pad=c.querySelector(".pad");
+  pad.appendChild(el('<div><h2>Verwaltung</h2><div class="sub">Märkte und Anlagen von Hand ändern, anlegen und stilllegen – '+
+    'mit Übersicht über alle Auffälligkeiten der Liste.</div></div>'));
+
+  if(Store.modus==="anmeldung"){
+    pad.appendChild(el('<div class="note">Bitte zuerst im Reiter „Protokoll" anmelden.</div>'));
+    return c;
+  }
+  if(Store.modus==="supabase"){
+    pad.appendChild(el('<div class="note warnbox"><strong>Ihr Konto hat keine Verwaltungsrechte.</strong> Freigeschaltet wird in Supabase: '+
+      'SQL Editor → New query → folgende Zeile mit Ihrer Adresse ausführen:</div>'));
+    pad.appendChild(el('<pre class="mono" style="white-space:pre-wrap;background:var(--surface-2);padding:10px;border-radius:8px;font-size:12px;margin:0">'+
+      "insert into public.admins (user_id)\nselect id from auth.users where email = '"+esc(Store.benutzer&&Store.benutzer.email||"ihre@adresse.at")+"';</pre>"));
+    pad.appendChild(el('<div class="muted" style="font-size:12.5px">Danach die Seite neu laden. Die Datenbank prüft die Rolle bei jedem Speichern selbst – '+
+      'ohne Eintrag lehnt sie Änderungen ab, auch wenn jemand die App umgeht.</div>'));
+    return c;
+  }
+
+  /* ohne gemeinsame Datenbank: PIN am Gerät */
+  var gespeichert=lsGet("ukt_admin_pin","");
+  pad.appendChild(el('<div class="note">Solange die gemeinsame Datenbank nicht eingerichtet ist, gelten Änderungen '+
+    '<strong>nur auf diesem Gerät</strong> und werden übertragen, sobald sie steht. Die PIN schützt vor versehentlichen Eingriffen auf diesem Gerät – '+
+    'ein Zugriffsschutz gegen Dritte ist sie nicht; den bringt erst die Admin-Rolle in der gemeinsamen Datenbank.</div>'));
+  var form=el('<form class="stack">'+
+    '<label class="fl"><span class="req">Ihr Name</span><input type="text" id="adm_name" autocomplete="name" required value="'+
+      esc(lsGet("ukt_admin_name",""))+'"></label>'+
+    '<div class="muted" style="font-size:12px;margin-top:-6px">Steht im Änderungsverlauf bei jeder Änderung, die Sie hier machen.</div>'+
+    '<label class="fl"><span>'+(gespeichert?"PIN":"Neue PIN festlegen (mindestens 4 Zeichen)")+'</span>'+
+      '<input type="password" id="adm_pin" inputmode="numeric" autocomplete="off" required></label>'+
+    (gespeichert?"":'<label class="fl"><span>PIN wiederholen</span><input type="password" id="adm_pin2" inputmode="numeric" autocomplete="off" required></label>')+
+    '<div class="note warnbox" id="adm_err" hidden></div>'+
+    '<div><button class="btn" type="submit">'+(gespeichert?"Verwaltung öffnen":"PIN festlegen und öffnen")+"</button></div>"+
+  "</form>");
+  form.onsubmit=function(e){
+    e.preventDefault();
+    var pin=form.querySelector("#adm_pin").value, err=form.querySelector("#adm_err");
+    var name=form.querySelector("#adm_name").value.trim();
+    var fehler=function(t){ err.textContent=t; err.hidden=false; };
+    if(!name){ fehler("Bitte Ihren Namen eintragen."); return; }
+    if(pin.length<4){ fehler("Die PIN braucht mindestens 4 Zeichen."); return; }
+    if(!gespeichert && pin!==form.querySelector("#adm_pin2").value){ fehler("Die beiden Eingaben stimmen nicht überein."); return; }
+    sha256hex("ukt-verwaltung:"+pin).then(function(h){
+      if(gespeichert && h!==gespeichert){ fehler("Die PIN stimmt nicht."); return; }
+      if(!gespeichert) lsSet("ukt_admin_pin",h);
+      lsSet("ukt_admin_name",name);
+      Admin.frei=true; try{ sessionStorage.setItem("ukt_admin_frei","1"); }catch(x){}
+      render();
+    });
+  };
+  pad.appendChild(form);
+  return c;
+}
+
+function viewVerwaltung(){
+  var f=document.createDocumentFragment();
+  if(!Admin.frei){ f.appendChild(verwaltungSperre()); return f; }
+  S.adm=S.adm||{suche:"", filter:"alle", sort:"filiale", auf:true, sel:null, entwurf:null};
+  var A=S.adm;
+
+  /* ---- Kopf ---- */
+  var gemeinsam=(Store.modus==="supabase"&&Admin.zentral)||Store.modus==="claude";
+  var anzGeaendert=Object.keys(stammUeber).length;
+  var kopf=el('<div class="card"><div class="pad stack">'+
+    '<div class="rowflex" style="justify-content:space-between"><div><h2>Verwaltung</h2>'+
+      '<div class="sub">'+(gemeinsam?"Änderungen gelten für alle Geräte.":"Änderungen gelten vorerst nur auf diesem Gerät.")+
+      " "+anzGeaendert+" Datensätze weichen von der Excel-Liste ab.</div></div>"+
+      '<div class="rowflex"><button class="btn sm" type="button" id="adm_neu">+ Neuer Markt</button>'+
+      (Store.modus!=="supabase"?'<button class="btn ghost sm" type="button" id="adm_zu">Sperren</button>':"")+"</div></div>"+
+  "</div></div>");
+  kopf.querySelector("#adm_neu").onclick=function(){
+    A.entwurf={id:"N"+Date.now().toString(36), _neu:true, _entwurf:true, aktiv:true, pos:[], filiale:"", name:"",
+               adresse:"", plz:"", ort:"", region:"", lat:null, lon:null, notiz:""};
+    A.sel=A.entwurf.id; render();
+    setTimeout(function(){ var e=document.getElementById("adm_editor"); if(e) e.scrollIntoView({behavior:"smooth"}); },50);
+  };
+  var zu=kopf.querySelector("#adm_zu");
+  if(zu) zu.onclick=function(){ Admin.frei=false; try{ sessionStorage.removeItem("ukt_admin_frei"); }catch(x){} render(); };
+  f.appendChild(kopf);
+
+  /* ---- Bearbeitungsfenster ---- */
+  if(A.sel){
+    var sEd = byId[A.sel] || (A.entwurf&&A.entwurf.id===A.sel ? A.entwurf : null);
+    if(sEd) f.appendChild(verwaltungEditor(sEd));
+  }
+
+  /* ---- Übersicht aller Märkte ---- */
+  var zeilen=ALLE_ST.map(function(s){ return {s:s, a:auffaelligkeiten(s), naechster:naechsterTerminMarkt(s)}; });
+  var zahl={alle:zeilen.length,
+    fehler:zeilen.filter(function(z){ return z.s.aktiv&&z.a.fehler.length; }).length,
+    luecken:zeilen.filter(function(z){ return z.s.aktiv&&z.a.luecken.length; }).length,
+    geaendert:zeilen.filter(function(z){ return z.s._geaendert||z.s.pos.some(function(p){ return p._geaendert; }); }).length,
+    inaktiv:zeilen.filter(function(z){ return !z.s.aktiv; }).length};
+  var q=A.suche.trim().toLowerCase();
+  var sicht=zeilen.filter(function(z){
+    if(A.filter==="inaktiv") { if(z.s.aktiv) return false; }
+    else if(!z.s.aktiv && A.filter!=="alle") return false;
+    if(A.filter==="fehler" && !z.a.fehler.length) return false;
+    if(A.filter==="luecken" && !z.a.luecken.length) return false;
+    if(A.filter==="geaendert" && !(z.s._geaendert||z.s.pos.some(function(p){ return p._geaendert; }))) return false;
+    if(q && (stName(z.s)+" "+(z.s.adresse||"")+" "+(z.s.ort||"")+" "+(z.s.region||"")).toLowerCase().indexOf(q)<0) return false;
+    return true;
+  });
+  var wert={
+    filiale:function(z){ return stName(z.s); }, ort:function(z){ return z.s.ort||z.s.adresse||""; },
+    region:function(z){ return z.s.region||"~"; }, anlagen:function(z){ return z.s.pos.length; },
+    letzter:function(z){ return z.s.letzterBesuch||""; }, naechster:function(z){ return z.naechster||"9999"; },
+    status:function(z){ return STATUS_RANK[z.s.status]; }, hinweise:function(z){ return -(z.a.fehler.length*100+z.a.luecken.length); }
+  };
+  sicht.sort(function(x,y){
+    var a=wert[A.sort](x), b=wert[A.sort](y), r;
+    r = (typeof a==="number"&&typeof b==="number") ? a-b : String(a).localeCompare(String(b),"de",{numeric:true});
+    return A.auf ? r : -r;
+  });
+
+  var ue=el('<div class="card"><div class="pad stack">'+
+    '<div><h2>Alle Märkte</h2><div class="sub">Spaltenkopf antippen sortiert. Zeile antippen öffnet den Markt zum Bearbeiten.</div></div>'+
+    '<div class="filters" style="padding:0">'+
+      '<input class="search" type="search" id="adm_q" placeholder="Filiale, Ort, Adresse …" value="'+esc(A.suche)+'">'+
+      '<div class="chips">'+[["alle","Alle"],["fehler","Fehler"],["luecken","Lücken"],["geaendert","geändert"],["inaktiv","stillgelegt"]].map(function(c){
+        return '<button class="chip" type="button" data-f="'+c[0]+'" aria-pressed="'+(A.filter===c[0])+'">'+c[1]+" ("+zahl[c[0]]+")</button>";
+      }).join("")+"</div>"+
+    "</div>"+
+    '<div class="scrollx"><table class="dt" id="adm_tab"><thead><tr>'+
+      [["filiale","Markt"],["ort","Ort"],["region","Region"],["anlagen","Anl."],["letzter","Zuletzt"],
+       ["naechster","Nächster Termin"],["status","Status"],["hinweise","Hinweise"]].map(function(h){
+        return '<th data-k="'+h[0]+'" style="cursor:pointer">'+h[1]+(A.sort===h[0]?(A.auf?" ▲":" ▼"):"")+"</th>";
+      }).join("")+
+    "</tr></thead><tbody></tbody></table></div>"+
+    '<div class="muted" style="font-size:12px">'+sicht.length+" von "+zeilen.length+" Märkten</div>"+
+  "</div></div>");
+  var tb=ue.querySelector("tbody");
+  sicht.forEach(function(z){
+    var s=z.s, kz={}; s.pos.forEach(function(p){ if(p.intervall) kz[p.intervall.kurz]=1; });
+    var tr=el("<tr style='cursor:pointer"+(A.sel===s.id?";background:var(--accent-soft)":"")+(s.aktiv?"":";opacity:.55")+"'>"+
+      "<td><strong>"+esc(stName(s))+"</strong>"+(s._geaendert||s.pos.some(function(p){ return p._geaendert; })?' <span class="tag">geändert</span>':"")+
+        (s._neu?' <span class="tag f30">neu</span>':"")+(!s.aktiv?' <span class="tag">stillgelegt</span>':"")+"</td>"+
+      "<td>"+esc(s.ort||(s.plz?"":s.adresse)||"–")+"</td><td>"+esc(s.region||"–")+"</td>"+
+      "<td class='mono'>"+s.pos.length+" <span class='muted'>"+Object.keys(kz).join("/")+"</span></td>"+
+      "<td class='mono'>"+(s.letzterBesuch?dfmt(s.letzterBesuch):"–")+"</td>"+
+      "<td class='mono'>"+(z.naechster?dfmt(z.naechster):"–")+"</td>"+
+      "<td>"+(s.aktiv?pill(s.status):"–")+"</td>"+
+      "<td>"+(z.a.fehler.length?'<span class="pill p-ueberfaellig">'+z.a.fehler.length+" Fehler</span> ":"")+
+        (z.a.luecken.length?'<span class="tag">'+z.a.luecken.length+" Lücken</span>":"")+(!z.a.fehler.length&&!z.a.luecken.length?'<span class="muted">–</span>':"")+"</td>"+
+    "</tr>");
+    tr.onclick=function(){
+      A.sel=s.id; A.entwurf=null; render();
+      setTimeout(function(){ var e=document.getElementById("adm_editor"); if(e) e.scrollIntoView({behavior:"smooth"}); },50);
+    };
+    tb.appendChild(tr);
+  });
+  ue.querySelectorAll("th[data-k]").forEach(function(th){
+    th.onclick=function(){ var k=th.dataset.k; if(A.sort===k) A.auf=!A.auf; else { A.sort=k; A.auf=true; } render(); };
+  });
+  ue.querySelectorAll(".chip[data-f]").forEach(function(c){ c.onclick=function(){ A.filter=c.dataset.f; render(); }; });
+  var qi=ue.querySelector("#adm_q");
+  qi.oninput=function(){ A.suche=qi.value; var pos=qi.selectionStart; render();
+    var n=document.getElementById("adm_q"); if(n){ n.focus(); try{ n.setSelectionRange(pos,pos); }catch(x){} } };
+  f.appendChild(ue);
+  return f;
+}
+
+function verwaltungEditor(s){
+  var A=S.adm;
+  var ausgewaehlt=ALLE_POS.filter(function(p){ return p.standortId===s.id; });
+  var au=s._entwurf?{fehler:[],luecken:[]}:auffaelligkeiten(s);
+  var exS=EXCEL["standort:"+s.id]||{};
+  var hinweisExcel=function(feld, aktuell){
+    if(s._neu || !(feld in exS) || gleich(exS[feld],aktuell)) return "";
+    return '<span class="muted" style="font-size:11px;text-transform:none;letter-spacing:0"> · Excel: '+esc(stammWert(feld,exS[feld]))+"</span>";
+  };
+  var feld=function(id,label,wert,typ,extra){
+    return '<label class="fl"><span>'+label+(extra||"")+'</span><input type="'+(typ||"text")+'" id="'+id+'" value="'+esc(wert==null?"":wert)+'"></label>';
+  };
+  var regionen=REGIONEN.map(function(r){ return '<option'+(s.region===r?" selected":"")+">"+r+"</option>"; }).join("");
+
+  var c=el('<div class="card" id="adm_editor" style="border-color:var(--accent)"><div class="pad stack">'+
+    '<div class="rowflex" style="justify-content:space-between">'+
+      '<h2 style="text-transform:none;font-size:17px;color:var(--ink)">'+(s._entwurf?"Neuer Markt":esc(stName(s))+" bearbeiten")+"</h2>"+
+      '<button class="btn ghost sm" type="button" id="adm_schliessen">Schließen</button></div>'+
+    ((au.fehler.length||au.luecken.length)?'<div class="stack">'+
+      (au.fehler.length?'<div class="note warnbox"><strong>Fehler</strong><br>'+au.fehler.map(esc).join("<br>")+"</div>":"")+
+      (au.luecken.length?'<div class="note"><strong>Fehlende Angaben</strong><br>'+au.luecken.map(esc).join("<br>")+"</div>":"")+
+    "</div>":"")+
+
+    '<fieldset><legend>Markt</legend><div class="grid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px">'+
+      feld("a_filiale","Filialnummer",s.filiale,"text",hinweisExcel("filiale",s.filiale))+
+      feld("a_name","Bezeichnung (ohne Filialnummer)",s.name,"text",hinweisExcel("name",s.name))+
+      '<label class="fl"><span>FM-Region'+hinweisExcel("region",s.region)+'</span><select id="a_region"><option value="">– keine –</option>'+regionen+"</select></label>"+
+    "</div>"+
+    '<div class="adr-zeile">'+
+      feld("a_adresse","Adresse",s.adresse,"text",hinweisExcel("adresse",s.adresse))+
+      feld("a_plz","PLZ",s.plz,"text",hinweisExcel("plz",s.plz))+
+      feld("a_ort","Ort",s.ort,"text",hinweisExcel("ort",s.ort))+
+    "</div>"+
+    '<div class="grid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin-top:12px">'+
+      feld("a_lat","Breitengrad",s.lat,"number")+feld("a_lon","Längengrad",s.lon,"number")+
+      '<div class="fl" style="justify-content:end"><span>&nbsp;</span><div class="rowflex">'+
+        '<button class="btn ghost sm" type="button" id="a_geo">Aus Adresse ermitteln</button>'+
+        (s.lat?'<a class="btn ghost sm" target="_blank" rel="noopener" href="https://www.openstreetmap.org/?mlat='+s.lat+"&mlon="+s.lon+"#map=17/"+s.lat+"/"+s.lon+'">Auf Karte prüfen</a>':"")+
+      "</div></div>"+
+    "</div>"+
+    '<label class="chk" style="margin-top:10px"><input type="checkbox" id="a_aktiv"'+(s.aktiv!==false?" checked":"")+'><span>Markt wird betreut '+
+      '<span class="muted">– abwählen legt ihn still: er verschwindet aus Plan, Karte und Touren, seine Historie bleibt.</span></span></label>'+
+    '<label class="fl" style="margin-top:8px"><span>Notiz</span><textarea id="a_notiz" rows="2">'+esc(s.notiz||"")+"</textarea></label>"+
+    "</fieldset>"+
+
+    '<fieldset><legend>Anlagen und Termine</legend><div id="a_anlagen" class="stack"></div>'+
+      '<div style="margin-top:10px"><button class="btn ghost sm" type="button" id="a_plus">+ Anlage / Termin hinzufügen</button></div>'+
+      '<div class="muted" style="font-size:12px;margin-top:8px">Jede Anlage steht für einen jährlichen Termin. Für den Halbjahresrhythmus braucht ein Markt zwei: '+
+        'JW am Jahrestag der Inbetriebnahme, dazu HJW (ab 30 kg) oder HJI sechs Monate versetzt.</div>'+
+    "</fieldset>"+
+
+    '<label class="fl"><span class="req">Grund der Änderung</span><input type="text" id="a_grund" placeholder="z. B. Adresse laut Lidl-Auftrag korrigiert"></label>'+
+    '<div class="note warnbox" id="a_err" hidden></div>'+
+    '<div class="rowflex" style="justify-content:flex-end;gap:10px">'+
+      ((!s._neu && (s._geaendert||ausgewaehlt.some(function(p){ return p._geaendert; })))?'<button class="btn ghost" type="button" id="a_reset">Auf Excel-Stand zurücksetzen</button>':"")+
+      '<button class="btn" type="button" id="a_speichern">'+(s._entwurf?"Markt anlegen":"Änderungen speichern")+"</button>"+
+    "</div>"+
+  "</div></div>");
+
+  var host=c.querySelector("#a_anlagen");
+  var anlageBlock=function(p, neu){
+    var ex=EXCEL["position:"+p.id]||{};
+    var hin=function(k){
+      if(neu || p._neu || !(k in ex) || gleich(ex[k],p[k])) return "";
+      return '<span class="muted" style="font-size:11px;text-transform:none;letter-spacing:0"> · Excel: '+esc(stammWert(k,ex[k]))+"</span>";
+    };
+    var pid=p.id;
+    var b=el('<div class="posbox" data-pid="'+esc(pid)+'" data-neu="'+(neu?"1":"")+'"'+(p.aktiv===false?' style="opacity:.6"':"")+">"+
+      '<div class="rowflex" style="justify-content:space-between"><strong>'+esc(neu?"Neue Anlage":anlagenName(p))+"</strong>"+
+        (!neu&&p.aktiv!==false&&p.naechste?'<span class="muted mono" style="font-size:12px">nächster Termin '+dfmt(p.naechste)+"</span>":"")+"</div>"+
+      '<div class="grid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px">'+
+        '<label class="fl"><span>Anlagentyp'+hin("anlagentyp")+'</span><input type="text" data-k="anlagentyp" value="'+esc(p.anlagentyp||"")+'"></label>'+
+        '<label class="fl"><span>Kürzel'+hin("intervallCode")+'</span><select data-k="intervallCode">'+
+          [["","– unklar –"],["JW","JW · Jahreswartung"],["HJW","HJW · Halbjahreswartung"],["HJI","HJI · Halbjahresinspektion"]].map(function(o){
+            var akt=String(p.intervallCode||"").trim().toUpperCase();
+            var norm=akt==="HW"?"HJW":(akt.indexOf("HI")===0?"HJI":akt);
+            return '<option value="'+o[0]+'"'+(norm===o[0]?" selected":"")+">"+o[1]+"</option>";
+          }).join("")+"</select></label>"+
+        '<label class="fl"><span>Inbetriebnahme'+hin("inbetriebnahme")+'</span><input type="date" data-k="inbetriebnahme" value="'+esc(p.inbetriebnahme||"")+'"></label>'+
+        '<label class="fl"><span>Soll-Monat'+hin("monat")+'</span><select data-k="monat"><option value="0">–</option>'+
+          MONATE_L.slice(1).map(function(m,i){ return '<option value="'+(i+1)+'"'+(+p.monat===i+1?" selected":"")+">"+m+"</option>"; }).join("")+"</select></label>"+
+        '<label class="fl"><span>Kältemittel (kg)'+hin("kaeltemittelKg")+'</span><input type="number" step="0.1" min="0" data-k="kaeltemittelKg" value="'+esc(p.kaeltemittelKg==null?"":p.kaeltemittelKg)+'"></label>'+
+        '<label class="fl"><span>Kältemittelart'+hin("kaeltemittelArt")+'</span><input type="text" data-k="kaeltemittelArt" placeholder="z. B. R410A" value="'+esc(p.kaeltemittelArt||"")+'"></label>'+
+        '<label class="fl"><span>Rückkühler'+hin("rueckkuehler")+'</span><input type="text" data-k="rueckkuehler" value="'+esc(p.rueckkuehler||"")+'"></label>'+
+      "</div>"+
+      '<label class="chk"><input type="checkbox" data-k="aktiv"'+(p.aktiv!==false?" checked":"")+'><span>in Betrieb '+
+        '<span class="muted">– abwählen, wenn die Anlage abgebaut ist oder der Termin entfällt</span></span></label>'+
+      '<label class="fl"><span>Notiz</span><input type="text" data-k="notiz" value="'+esc(p.notiz||"")+'"></label>'+
+    "</div>");
+    host.appendChild(b);
+  };
+  ausgewaehlt.forEach(function(p){ anlageBlock(p,false); });
+  if(s._entwurf) anlageBlock({id:"NP"+Date.now().toString(36), aktiv:true},true);
+  c.querySelector("#a_plus").onclick=function(){ anlageBlock({id:"NP"+Date.now().toString(36)+Math.random().toString(36).slice(2,5), aktiv:true},true); };
+
+  c.querySelector("#adm_schliessen").onclick=function(){ A.sel=null; A.entwurf=null; render(); };
+
+  c.querySelector("#a_geo").onclick=function(){
+    var adr=c.querySelector("#a_adresse").value.trim();
+    if(!adr){ toast("Zuerst eine Adresse eintragen."); return; }
+    toast("Adresse wird verortet …");
+    fetch("https://nominatim.openstreetmap.org/search?format=jsonv2&limit=1&countrycodes=at&q="+encodeURIComponent(adr))
+      .then(function(r){ return r.json(); })
+      .then(function(j){
+        if(!j||!j[0]){ toast("Adresse nicht gefunden – bitte genauer angeben oder Koordinaten von Hand eintragen."); return; }
+        c.querySelector("#a_lat").value=(+j[0].lat).toFixed(5);
+        c.querySelector("#a_lon").value=(+j[0].lon).toFixed(5);
+        toast("Gefunden: "+j[0].display_name.split(",").slice(0,3).join(","));
+      }, function(){ toast("Verortung hier nicht möglich – bitte Koordinaten von Hand eintragen."); });
+  };
+
+  var fehler=function(t){ var e=c.querySelector("#a_err"); e.textContent=t; e.hidden=false; e.scrollIntoView({behavior:"smooth",block:"center"}); };
+  var grundHolen=function(){
+    var g=c.querySelector("#a_grund").value.trim();
+    if(!g){ fehler("Bitte einen Grund angeben – er wird mit der Änderung im Verlauf festgehalten."); c.querySelector("#a_grund").focus(); }
+    return g;
+  };
+
+  var resetKnopf=c.querySelector("#a_reset");
+  if(resetKnopf) resetKnopf.onclick=function(){
+    var grund=grundHolen(); if(!grund) return;
+    if(!window.confirm("Alle Änderungen an diesem Markt und seinen Anlagen verwerfen und wieder die Werte der Excel-Liste verwenden?")) return;
+    var schl=["standort:"+s.id].concat(ausgewaehlt.filter(function(p){ return !p._neu; }).map(function(p){ return "position:"+p.id; }));
+    var felder=[];
+    schl.forEach(function(k){ if(stammUeber[k]){ Object.keys(stammUeber[k].felder||{}).forEach(function(f2){
+      felder.push({feld:f2, name:(k.indexOf("standort")===0?"":"Anlage – ")+(LABEL_ST[f2]||LABEL_POS[f2]||f2),
+                   alt:stammWert(f2,stammUeber[k].felder[f2]), neu:"Excel-Wert"}); }); } });
+    Promise.all(schl.filter(function(k){ return stammUeber[k]; }).map(function(k){ delete stammUeber[k]; return stammLoeschen(k); }))
+      .then(function(){
+        wendeStammdatenAn();
+        protokolliere({art:"stammdaten", standortId:s.id, standortName:stName(s), grund:grund, felder:felder});
+        toast("Auf Excel-Stand zurückgesetzt."); render();
+      });
+  };
+
+  c.querySelector("#a_speichern").onclick=function(){
+    var grund=grundHolen(); if(!grund) return;
+    var num=function(v){ v=String(v).trim().replace(",","."); return v===""?null:+v; };
+    var neuSt={
+      filiale:c.querySelector("#a_filiale").value.trim(), name:c.querySelector("#a_name").value.trim(),
+      adresse:c.querySelector("#a_adresse").value.trim(), plz:c.querySelector("#a_plz").value.trim(),
+      ort:c.querySelector("#a_ort").value.trim(), region:c.querySelector("#a_region").value,
+      lat:num(c.querySelector("#a_lat").value), lon:num(c.querySelector("#a_lon").value),
+      aktiv:c.querySelector("#a_aktiv").checked, notiz:c.querySelector("#a_notiz").value.trim()
+    };
+    if(!neuSt.filiale && !neuSt.name && !neuSt.adresse){ fehler("Ein Markt braucht mindestens Filialnummer, Bezeichnung oder Adresse."); return; }
+    if(neuSt.lat!=null && (isNaN(neuSt.lat)||neuSt.lat<46||neuSt.lat>49.5)){ fehler("Der Breitengrad liegt nicht in Österreich (etwa 46,3 bis 49,1)."); return; }
+    if(neuSt.lon!=null && (isNaN(neuSt.lon)||neuSt.lon<9||neuSt.lon>17.5)){ fehler("Der Längengrad liegt nicht in Österreich (etwa 9,5 bis 17,2)."); return; }
+
+    var recs=[], protokoll=[];
+    var jetzt=new Date().toISOString(), von=wer();
+
+    /* Markt */
+    var vorherSt=auswahl(s,STAMM_FELDER_ST);
+    var deltaSt=objDiff(vorherSt,neuSt,STAMM_FELDER_ST);
+    Object.keys(deltaSt).forEach(function(k){ protokoll.push({feld:k, name:LABEL_ST[k], alt:stammWert(k,vorherSt[k]), neu:stammWert(k,neuSt[k])}); });
+    if(s._neu){
+      if(Object.keys(deltaSt).length || s._entwurf) recs.push({id:"standort:"+s.id, felder:neuSt, neu:true});
+    } else if(Object.keys(deltaSt).length){
+      var gegenExcel=objDiff(EXCEL["standort:"+s.id],neuSt,STAMM_FELDER_ST);
+      recs.push({id:"standort:"+s.id, felder:gegenExcel, neu:false, leer:!Object.keys(gegenExcel).length});
+    }
+
+    /* Anlagen */
+    var fehlt=false;
+    host.querySelectorAll(".posbox").forEach(function(b){
+      var pid=b.dataset.pid, istNeu=b.dataset.neu==="1";
+      var lese=function(k){ var x=b.querySelector('[data-k="'+k+'"]'); return x.type==="checkbox"?x.checked:x.value.trim(); };
+      var neuP={anlagentyp:lese("anlagentyp"), intervallCode:lese("intervallCode"), inbetriebnahme:lese("inbetriebnahme")||null,
+                monat:+lese("monat")||0, kaeltemittelKg:num(lese("kaeltemittelKg")), kaeltemittelArt:lese("kaeltemittelArt"),
+                rueckkuehler:lese("rueckkuehler"), aktiv:lese("aktiv"), notiz:lese("notiz")};
+      if(istNeu){
+        if(!neuP.anlagentyp && !neuP.intervallCode && !neuP.inbetriebnahme) return;   /* leerer Zusatzblock */
+        if(!neuP.intervallCode){ fehlt=true; return; }
+        neuP.standortId=s.id;
+        recs.push({id:"position:"+pid, felder:neuP, neu:true});
+        protokoll.push({feld:"anlage", name:"Neue Anlage", alt:"–",
+          neu:(neuP.anlagentyp||"Anlage")+" · "+neuP.intervallCode+(neuP.inbetriebnahme?" · IB "+dfmt(neuP.inbetriebnahme):"")});
+        return;
+      }
+      var p=posById[pid]; if(!p) return;
+      var vorherP=auswahl(p,STAMM_FELDER_POS);
+      /* Kurz- und Langform gelten als gleich, sonst wäre jedes HW eine Änderung */
+      var norm=function(k){ k=String(k||"").trim().toUpperCase(); return k==="HW"?"HJW":(k.indexOf("HI")===0?"HJI":k); };
+      if(norm(vorherP.intervallCode)===norm(neuP.intervallCode)) neuP.intervallCode=vorherP.intervallCode;
+      var deltaP=objDiff(vorherP,neuP,STAMM_FELDER_POS);
+      if(!Object.keys(deltaP).length) return;
+      Object.keys(deltaP).forEach(function(k){
+        protokoll.push({feld:k, name:anlagenName(p)+" – "+LABEL_POS[k], alt:stammWert(k,vorherP[k]), neu:stammWert(k,neuP[k])});
+      });
+      if(p._neu){ neuP.standortId=s.id; recs.push({id:"position:"+pid, felder:neuP, neu:true}); }
+      else {
+        var gE=objDiff(EXCEL["position:"+pid],neuP,STAMM_FELDER_POS);
+        recs.push({id:"position:"+pid, felder:gE, neu:false, leer:!Object.keys(gE).length});
+      }
+    });
+    if(fehlt){ fehler("Jede neue Anlage braucht ein Kürzel (JW, HJW oder HJI) – daraus ergibt sich ihr Termin."); return; }
+    if(!recs.length){ fehler("Es wurde nichts geändert."); return; }
+
+    var knopf=c.querySelector("#a_speichern"); knopf.disabled=true; knopf.textContent="Wird gespeichert …";
+    Promise.all(recs.map(function(r){
+      if(r.leer){ delete stammUeber[r.id]; return stammLoeschen(r.id).then(function(){ return "zurueck"; }); }
+      var rec={id:r.id, typ:r.id.split(":")[0], ziel:r.id.split(":")[1], felder:r.felder, neu:!!r.neu,
+               geaendert:jetzt, von:von, grund:grund};
+      stammUeber[r.id]=rec;
+      return stammSpeichern(rec);
+    })).then(function(erg){
+      if(erg.indexOf(false)>=0){
+        knopf.disabled=false; knopf.textContent="Änderungen speichern";
+        fehler("Ein Teil der Änderungen ließ sich nicht speichern. Bitte erneut versuchen.");
+        return;
+      }
+      wendeStammdatenAn();
+      protokolliere({art:"stammdaten", standortId:s.id, standortName:stName(byId[s.id]||s), grund:grund, felder:protokoll});
+      A.entwurf=null; A.sel=s.id;
+      toast((s._entwurf?"Markt angelegt":"Gespeichert – "+protokoll.length+" Änderung"+(protokoll.length===1?"":"en"))+
+            (erg.indexOf("geraet")>=0?" (vorerst nur auf diesem Gerät)":"")+".");
+      render();
+    });
+  };
+  return c;
 }
 
 function viewDaten(){
@@ -2939,16 +3572,20 @@ function csv(name,head,rows){
 
 /* ---------- Render ---------- */
 function render(){
+  /* Kopfzeile nachziehen – Märkte können angelegt oder stillgelegt worden sein */
+  var standEl=document.getElementById("stand");
+  if(standEl) standEl.textContent="Stand "+dfmt(isoLokal(new Date()))+" · "+ST.length+" Standorte · "+POS.length+" Positionen";
   Array.prototype.forEach.call(tabsEl.children,function(b){ b.setAttribute("aria-selected", b.dataset.v===S.view?"true":"false"); });
   var host=document.getElementById("app");
   host.innerHTML="";
   var sec=document.createElement("section"); sec.className="view";
-  if(S.view!=="protokoll"&&S.view!=="daten"&&S.view!=="verlauf") host.appendChild(filterBar());
+  if(["protokoll","daten","verlauf","verwaltung"].indexOf(S.view)<0) host.appendChild(filterBar());
   if(S.view==="faellig") sec.appendChild(viewFaellig());
   else if(S.view==="karte") sec.appendChild(viewKarte());
   else if(S.view==="anlagen") sec.appendChild(viewAnlagen());
   else if(S.view==="protokoll") sec.appendChild(viewProtokoll());
   else if(S.view==="verlauf") sec.appendChild(viewVerlauf());
+  else if(S.view==="verwaltung") sec.appendChild(viewVerwaltung());
   else sec.appendChild(viewDaten());
   host.appendChild(sec);
   tipHide();
@@ -3015,6 +3652,8 @@ initStore();
 idbOeffnen()
   .then(altlastUebernehmen)
   .then(lokaleNeuLaden)
+  .then(ladeStammdaten)
+  .then(adminPruefen)
   .then(function(){ storeNachRender(); flushQueue(); })
   .catch(function(e){ Store.geraetFehler = e && e.message ? e.message : "Gerätespeicher nicht verfügbar"; storeNachRender(); });
 
