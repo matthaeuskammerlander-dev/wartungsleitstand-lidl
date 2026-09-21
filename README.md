@@ -98,6 +98,24 @@ Koordinaten über [Nominatim](https://nominatim.openstreetmap.org/) geocodiert,
 136 von 140 Standorten, die meisten adressgenau. Der Österreich-Umriss stammt
 ebenfalls aus OpenStreetMap (ODbL).
 
+## Protokolle ohne gemeinsame Ablage
+
+Die App funktioniert auch ohne eingerichtete Datenbank vollständig. Ein
+Protokoll wird **immer zuerst auf dem Gerät** gespeichert – in IndexedDB, nicht
+in localStorage, weil localStorage bei rund 5 MB still überläuft und mit
+Fotos und Unterschrift nach wenigen Protokollen voll wäre.
+
+Gerätegespeicherte Protokolle stehen in der Liste unter dem Formular (Spalte
+„Ablage: Gerät"), lassen sich öffnen, **drucken oder als PDF sichern** und per
+CSV exportieren. Die Druckansicht folgt dem Aufbau des bisherigen
+Papier-Einseiters, mit Briefkopf, Ankreuzfeldern, Fotos und Unterschrift.
+
+Sobald eine gemeinsame Ablage erreichbar ist, überträgt die App die
+Geräteprotokolle von selbst und entfernt sie erst nach bestätigter Übertragung
+vom Gerät. Scheitert schon das Speichern auf dem Gerät – etwa in einem privaten
+Browserfenster –, sagt die App das deutlich und lässt das Formular mit allen
+Eingaben stehen.
+
 ## Fotos im Wartungsprotokoll
 
 Bis zu acht Bilder je Protokoll, je mit Bildunterschrift. Am Handy öffnet die

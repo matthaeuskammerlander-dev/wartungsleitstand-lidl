@@ -1,3 +1,5 @@
+<!DOCTYPE html>
+<html lang="de">
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Wartungsleitstand Lidl</title>
@@ -225,6 +227,41 @@ canvas.sig{width:100%;height:150px;border:1px dashed var(--line-2);border-radius
 .qrframe canvas{display:block;width:100%;height:auto;max-width:280px;image-rendering:pixelated}
 .qrurl{font-family:var(--f-mono);font-size:12px;color:var(--ink-2);overflow-wrap:anywhere;background:var(--surface-2);padding:9px 11px;border-radius:8px}
 .btn.icon{padding:6px 10px;font-size:12.5px}
+/* ---- Druckansicht: immer hell, wie ein Blatt Papier ---- */
+#druckansicht{position:fixed;inset:0;z-index:95;overflow:auto;background:#5b6770;padding:16px}
+#druckansicht .druckleiste{position:sticky;top:0;z-index:2;display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end;
+  max-width:820px;margin:0 auto 12px}
+#druckansicht .blatt{background:#fff;color:#111;max-width:820px;margin:0 auto;padding:28px 30px;border-radius:4px;
+  box-shadow:0 10px 30px rgba(0,0,0,.35);font:12.5px/1.45 "IBM Plex Sans","Segoe UI",Arial,sans-serif}
+.blatt h1{font:700 19px/1.2 "IBM Plex Sans Condensed","Arial Narrow",Arial,sans-serif;letter-spacing:.04em;margin:14px 0 2px}
+.blatt h2{font:700 11.5px/1.2 "IBM Plex Sans Condensed","Arial Narrow",Arial,sans-serif;letter-spacing:.1em;
+  text-transform:uppercase;color:#0E6E85;border-bottom:1.5px solid #0E6E85;padding-bottom:3px;margin:16px 0 8px}
+.blatt .kopf{display:flex;justify-content:space-between;gap:16px;flex-wrap:wrap;border-bottom:2px solid #111;padding-bottom:10px}
+.blatt .firma b{display:block;font:700 17px/1.15 "IBM Plex Sans Condensed","Arial Narrow",Arial,sans-serif;letter-spacing:.06em}
+.blatt .firma span{font-size:11px;color:#444}
+.blatt .kontakt{font-size:10.5px;color:#444;text-align:right}
+.blatt table{width:100%;border-collapse:collapse}
+.blatt td,.blatt th{padding:4px 6px;border:1px solid #c9cfd3;vertical-align:top;text-align:left}
+.blatt th{background:#eef2f4;font-weight:600;font-size:11px}
+.blatt td.k{width:34%;color:#444;background:#f7f9fa}
+.blatt .kaestchen{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:2px 16px}
+.blatt .kaestchen div{white-space:normal}
+.blatt .fotos{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
+.blatt .fotos figure{margin:0;break-inside:avoid}
+.blatt .fotos img{width:100%;aspect-ratio:4/3;object-fit:cover;border:1px solid #c9cfd3}
+.blatt .fotos figcaption{font-size:10.5px;color:#444}
+.blatt .unterschrift img{height:70px;border-bottom:1px solid #111}
+.blatt .fuss{margin-top:18px;font-size:9.5px;color:#555;border-top:1px solid #c9cfd3;padding-top:6px}
+@media print{
+  @page{size:A4;margin:12mm}
+  body.druckmodus > *:not(#druckansicht){display:none!important}
+  body.druckmodus{background:#fff!important}
+  #druckansicht{position:static;padding:0;background:#fff;overflow:visible}
+  #druckansicht .druckleiste{display:none}
+  #druckansicht .blatt{box-shadow:none;padding:0;max-width:none;border-radius:0}
+  .blatt h2{break-after:avoid}
+  .blatt table,.blatt .fotos figure{break-inside:avoid}
+}
 .toast{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(18px + env(safe-area-inset-bottom,0px));z-index:100;
   background:var(--ink);color:var(--ground);padding:11px 16px;border-radius:9px;font-size:13.5px;box-shadow:var(--shadow);display:none}
 table.dt{width:100%;border-collapse:collapse;font-size:13px}
@@ -1211,6 +1248,72 @@ function lsGet(k,d){ try{ var v=localStorage.getItem(k); return v?JSON.parse(v):
 function lsSet(k,v){ try{ localStorage.setItem(k,JSON.stringify(v)); }catch(e){} }
 
 /* ----------------------------------------------------------------
+   Protokolle auf dem Gerät. IndexedDB statt localStorage: localStorage
+   fasst nur rund 5 MB und scheitert dann still – mit Fotos und
+   Unterschrift ist das nach wenigen Protokollen voll.
+   ---------------------------------------------------------------- */
+var IDB=null;
+var lokaleProtokolle=[];   // [{id, doc, fotos, erstellt}]
+
+function idbOeffnen(){
+  return new Promise(function(ok,nok){
+    if(!window.indexedDB){ nok(new Error("Dieser Browser kann keine Daten dauerhaft speichern.")); return; }
+    var r;
+    try{ r=indexedDB.open("ukt-wartung",1); }catch(e){ nok(e); return; }
+    r.onupgradeneeded=function(){
+      var db=r.result;
+      if(!db.objectStoreNames.contains("protokolle")) db.createObjectStore("protokolle",{keyPath:"id"});
+    };
+    r.onsuccess=function(){ IDB=r.result; ok(IDB); };
+    r.onerror=function(){ nok(r.error||new Error("Gerätespeicher nicht verfügbar")); };
+  });
+}
+function idbVorgang(modus, arbeit){
+  return new Promise(function(ok,nok){
+    if(!IDB){ nok(new Error("Gerätespeicher nicht geöffnet")); return; }
+    var tx=IDB.transaction("protokolle",modus), st=tx.objectStore("protokolle"), erg;
+    try{ erg=arbeit(st); }catch(e){ nok(e); return; }
+    tx.oncomplete=function(){ ok(erg && "result" in erg ? erg.result : undefined); };
+    tx.onerror=function(){ nok(tx.error||new Error("Speichern auf dem Gerät fehlgeschlagen")); };
+    tx.onabort=function(){ nok(tx.error||new Error("Gerätespeicher voll")); };
+  });
+}
+function idbAlle(){ return idbVorgang("readonly",function(st){ return st.getAll(); }); }
+function idbSchreiben(e){ return idbVorgang("readwrite",function(st){ return st.put(e); }); }
+function idbLoeschen(id){ return idbVorgang("readwrite",function(st){ return st.delete(id); }); }
+
+function lokaleNeuLaden(){
+  return idbAlle().then(function(liste){
+    lokaleProtokolle=(liste||[]).sort(function(a,b){ return (b.erstellt||"").localeCompare(a.erstellt||""); });
+    return lokaleProtokolle;
+  },function(){ lokaleProtokolle=[]; return []; });
+}
+
+/* zentral abgelegte und gerätegespeicherte Protokolle in einer Liste */
+function alleProtokolle(){
+  var zentral=protokolle.map(function(p){ return Object.assign({_quelle:"zentral"},p); });
+  var lokal=lokaleProtokolle.map(function(e){
+    return Object.assign({_quelle:"geraet", _id:e.id, _fotoDaten:e.fotos||[]}, e.doc);
+  });
+  return lokal.concat(zentral).sort(function(a,b){
+    return ((b.datum||"")+(b.erstellt||"")).localeCompare((a.datum||"")+(a.erstellt||""));
+  });
+}
+
+/* ältere Fassung legte die Warteschlange in localStorage ab – übernehmen */
+function altlastUebernehmen(){
+  var alt=lsGet("ukt_queue",[]);
+  if(!alt.length) return Promise.resolve();
+  var kette=Promise.resolve();
+  alt.forEach(function(e){
+    kette=kette.then(function(){
+      return idbSchreiben({id:e.id, doc:e.doc, fotos:e.fotos||[], erstellt:(e.doc&&e.doc.erstellt)||new Date().toISOString()});
+    });
+  });
+  return kette.then(function(){ try{ localStorage.removeItem("ukt_queue"); }catch(x){} });
+}
+
+/* ----------------------------------------------------------------
    Speicher: im Artifact die Claude-Datenbank, auf GitHub Pages
    Supabase, und wenn beides fehlt nur lokal am Gerät.
    ---------------------------------------------------------------- */
@@ -1227,9 +1330,12 @@ function storeNachRender(){ if((S.view==="protokoll"||S.view==="daten") && darfR
 function initStore(versuch){
   versuch=versuch||0;
   var supabaseKonfiguriert = CFG.supabaseUrl && CFG.supabaseAnonKey;
-  /* window.claude setzt der Host erst nach dem ersten Skriptlauf */
+  /* Innerhalb von Claude läuft die Seite in einem Rahmen, und window.claude
+     kommt erst nach dem ersten Skriptlauf. Als eigenständige Seite
+     (GitHub Pages, eigenes Hosting) gibt es darauf nichts zu warten. */
+  var imRahmen=false; try{ imRahmen = window.self!==window.top; }catch(e){ imRahmen=true; }
   if(!window.claude || !window.claude.use){
-    if(!supabaseKonfiguriert && versuch<40){ setTimeout(function(){ initStore(versuch+1); },250); return; }
+    if(!supabaseKonfiguriert && imRahmen && versuch<40){ setTimeout(function(){ initStore(versuch+1); },250); return; }
     if(supabaseKonfiguriert) return initSupabase();
     Store.modus="lokal"; storeNachRender(); return;
   }
@@ -1372,6 +1478,10 @@ function speichereFotos(protokollId, fotos){
 
 /* holt die Bilder eines Protokolls zur Anzeige */
 function ladeFotos(p){
+  /* noch nicht übertragen: die Bilder liegen direkt im Gerätespeicher */
+  if(p._fotoDaten && p._fotoDaten.length){
+    return Promise.resolve(p._fotoDaten.map(function(f){ return {name:f.name, hinweis:f.hinweis, url:f.datenUrl}; }));
+  }
   if(!p.fotos || !p.fotos.length) return Promise.resolve([]);
   if(Store.modus==="claude" && Store.claudeDb){
     return Promise.all(p.fotos.map(function(f){
@@ -1405,28 +1515,41 @@ function speichereProtokoll(id,doc){
   }
   return Promise.resolve(false);
 }
+/* überträgt Protokolle vom Gerät, sobald eine zentrale Ablage da ist */
+var uebertragungLaeuft=false;
 function flushQueue(){
-  var q=lsGet("ukt_queue",[]);
-  if(!q.length) return;
-  var rest=[], done=0;
-  var next=function(i){
-    if(i>=q.length){ lsSet("ukt_queue",rest); if(done) toast(done+" zwischengespeicherte(s) Protokoll(e) übertragen"); return; }
-    var e=q[i];
+  if(uebertragungLaeuft) return;
+  if(Store.modus!=="claude" && Store.modus!=="supabase") return;
+  if(!lokaleProtokolle.length) return;
+  uebertragungLaeuft=true;
+  var liste=lokaleProtokolle.slice(), done=0, i=0;
+  var next=function(){
+    if(i>=liste.length){
+      uebertragungLaeuft=false;
+      lokaleNeuLaden().then(function(){
+        if(done) toast(done+" Protokoll(e) vom Gerät in die zentrale Ablage übertragen.");
+        storeNachRender();
+      });
+      return;
+    }
+    var e=liste[i++];
     speichereFotos(e.id, e.fotos||[]).then(function(fotosOk){
-      if(!fotosOk){ rest.push(e); next(i+1); return; }
+      if(!fotosOk){ next(); return; }
       speichereProtokoll(e.id,e.doc).then(function(ok){
-        if(ok) done++; else rest.push(e);
-        next(i+1);
+        if(!ok){ next(); return; }
+        done++;
+        /* erst nach bestätigter Übertragung vom Gerät entfernen */
+        idbLoeschen(e.id).then(next,next);
       });
     });
   };
-  next(0);
+  next();
 }
 window.addEventListener("online",function(){ flushQueue(); });
 
 function viewAnmeldung(){
   var f=document.createDocumentFragment();
-  var offen=lsGet("ukt_queue",[]).length;
+  var offen=lokaleProtokolle.length;
   var card=el('<div class="card"><div class="pad stack" style="max-width:420px">'+
     '<div><h2>Anmeldung</h2><div class="sub">Wartungsprotokolle sind nur für angemeldete Techniker zugänglich. Zugangsdaten bekommen Sie aus dem Büro.</div></div>'+
     (offen?'<div class="note warnbox">'+offen+' Protokoll(e) liegen noch unübertragen auf diesem Gerät und gehen nach der Anmeldung automatisch raus.</div>':"")+
@@ -1465,8 +1588,13 @@ function viewProtokoll(){
   if(Store.modus==="claude") dbHinweis='<div class="note">Protokolle werden in der gemeinsamen Datenbank dieser App gespeichert und sind für alle sichtbar, die die App öffnen können.</div>';
   else if(Store.modus==="supabase") dbHinweis='<div class="note">Angemeldet als '+esc(Store.benutzer&&Store.benutzer.email?Store.benutzer.email:"Techniker")+
     '. Protokolle gehen in die gemeinsame Datenbank. <button type="button" class="btn ghost sm" id="logout" style="margin-left:6px">Abmelden</button></div>';
-  else if(Store.modus==="lade") dbHinweis='<div class="note">Datenbank wird verbunden …</div>';
-  else dbHinweis='<div class="note warnbox">Keine Verbindung zur gemeinsamen Datenbank. Protokolle werden am Gerät zwischengespeichert und beim nächsten Öffnen mit Verbindung automatisch übertragen.</div>';
+  else dbHinweis='<div class="note">Protokolle werden <strong>auf diesem Gerät</strong> gespeichert. '+
+    'Sie erscheinen unten in der Liste, lassen sich dort öffnen und als PDF ausgeben. '+
+    'Eine gemeinsame Ablage für alle Techniker ist noch nicht eingerichtet – sobald sie steht, '+
+    'werden die Protokolle von selbst dorthin übertragen.</div>';
+  if(Store.geraetFehler) dbHinweis='<div class="note warnbox"><strong>Dieses Gerät kann nichts dauerhaft speichern</strong> ('+
+    esc(Store.geraetFehler)+'). Das passiert meist in einem privaten Browserfenster. Bitte die Seite in einem '+
+    'normalen Fenster öffnen, sonst gehen Protokolle beim Schließen verloren.</div>'+dbHinweis;
 
   var form=el('<form id="proto" class="stack" autocomplete="off">'+dbHinweis+
 
@@ -1775,21 +1903,47 @@ function viewProtokoll(){
     lsSet("ukt_tech",doc.nameTechniker||doc.techniker);
     var id="p_"+Date.now()+"_"+Math.random().toString(36).slice(2,7);
     var btn=form.querySelector("#save"); btn.disabled=true; btn.textContent="Speichern …";
-    var fertig=function(msg){ btn.disabled=false; btn.textContent="Protokoll speichern"; formDirty=false; toast(msg); S.protoStandort=""; S.protoPos=""; render(); window.scrollTo({top:0,behavior:"smooth"}); };
-    /* erst die Bilder, dann das Protokoll – sonst verweist es auf Fotos, die es nicht gibt */
-    if(fotos.length){ btn.textContent="Fotos werden übertragen …"; }
-    speichereFotos(id,fotos).then(function(fotosOk){
-      if(!fotosOk){
-        var q1=lsGet("ukt_queue",[]); q1.push({id:id,doc:doc,fotos:fotos}); lsSet("ukt_queue",q1);
-        fertig("Fotos konnten nicht übertragen werden – alles lokal zwischengespeichert.");
+    var fertig=function(msg){
+      btn.disabled=false; btn.textContent="Protokoll speichern"; formDirty=false; toast(msg);
+      S.protoStandort=""; S.protoPos="";
+      S.letztesProtokoll=id;     /* nach dem Neuzeichnen direkt aufklappen */
+      render();
+    };
+    var fehlschlag=function(text){
+      /* Formular bleibt stehen – nichts von dem Eingegebenen geht verloren */
+      btn.disabled=false; btn.textContent="Protokoll speichern";
+      var box=form.querySelector("#f_fehlt");
+      box.textContent=text; box.hidden=false;
+      box.scrollIntoView({behavior:"smooth",block:"center"});
+    };
+
+    /* 1. immer zuerst sicher aufs Gerät – das klappt auch im Funkloch */
+    var eintrag={id:id, doc:doc, fotos:fotos, erstellt:doc.erstellt};
+    idbSchreiben(eintrag).then(function(){
+      lokaleProtokolle.unshift(eintrag);
+
+      /* 2. gibt es eine zentrale Ablage, gleich dorthin übertragen */
+      if(Store.modus!=="claude" && Store.modus!=="supabase"){
+        fertig("Protokoll gespeichert"+(fotos.length?" – mit "+fotos.length+" Foto(s)":"")+".");
         return;
       }
-      btn.textContent="Speichern …";
-      speichereProtokoll(id,doc).then(function(ok){
-        if(ok){ fertig("Protokoll gespeichert."+(fotos.length?" "+fotos.length+" Foto(s) dabei.":"")); return; }
-        var q=lsGet("ukt_queue",[]); q.push({id:id,doc:doc,fotos:fotos}); lsSet("ukt_queue",q);
-        fertig("Keine Verbindung – lokal zwischengespeichert, geht später automatisch raus.");
+      if(fotos.length) btn.textContent="Fotos werden übertragen …";
+      speichereFotos(id,fotos).then(function(fotosOk){
+        if(!fotosOk){ fertig("Auf dem Gerät gespeichert – wird übertragen, sobald Verbindung besteht."); return; }
+        btn.textContent="Übertragen …";
+        speichereProtokoll(id,doc).then(function(ok){
+          if(!ok){ fertig("Auf dem Gerät gespeichert – wird übertragen, sobald Verbindung besteht."); return; }
+          idbLoeschen(id).then(function(){
+            lokaleProtokolle=lokaleProtokolle.filter(function(x){ return x.id!==id; });
+            fertig("Protokoll gespeichert und übertragen.");
+          },function(){ fertig("Protokoll gespeichert und übertragen."); });
+        });
       });
+    },function(err){
+      fehlschlag("Das Protokoll konnte auf diesem Gerät nicht gespeichert werden: "+
+        (err&&err.message?err.message:"unbekannter Fehler")+
+        ". Ihre Eingaben sind noch da. Häufigste Ursache: privates Browserfenster oder voller Speicher – "+
+        "bitte in einem normalen Fenster öffnen oder Fotos entfernen und erneut speichern.");
     });
   };
 
@@ -1802,22 +1956,29 @@ function viewProtokoll(){
   body.querySelector(".pad").appendChild(form);
   f.appendChild(body);
 
-  /* gespeicherte Protokolle */
-  var q=lsGet("ukt_queue",[]);
+  /* gespeicherte Protokolle: zentral abgelegte und die auf diesem Gerät */
+  var alle=alleProtokolle();
+  var teile=[];
+  if(Store.modus==="claude"||Store.modus==="supabase") teile.push(protokolle.length+" in der gemeinsamen Ablage");
+  if(lokaleProtokolle.length) teile.push(lokaleProtokolle.length+" auf diesem Gerät");
+  var unterzeile = alle.length
+    ? teile.join(" · ")+". Antippen öffnet das Protokoll – dort auch Drucken und PDF."
+    : "Noch keine Protokolle erfasst.";
   var gesp=el('<div class="card"><div class="pad stack">'+
     "<div><h2>Gespeicherte Protokolle</h2>"+
-    '<div class="sub">'+protokolle.length+" in der Datenbank"+(q.length?" · "+q.length+" lokal wartend":"")+"</div></div>"+
+    '<div class="sub">'+unterzeile+"</div></div>"+
     '<div class="scrollx" id="plist"></div></div></div>');
   var pl=gesp.querySelector("#plist");
-  if(protokolle.length){
+  if(alle.length){
     var tbl=el('<table class="dt"><thead><tr><th>Datum</th><th>Standort</th><th>Techniker/in</th>'+
-      "<th>Art</th><th>Mängel</th><th>Fotos</th><th>Bereit</th></tr></thead><tbody></tbody></table>");
+      "<th>Art</th><th>Mängel</th><th>Fotos</th><th>Ablage</th></tr></thead><tbody></tbody></table>");
     var tb=tbl.querySelector("tbody");
-    protokolle.slice(0,40).forEach(function(x){
+    alle.slice(0,60).forEach(function(x){
       var tr=el("<tr style='cursor:pointer'><td class='mono'>"+dfmt(x.datum)+"</td><td>"+esc(x.standortName||x.adresse||"–")+
         "</td><td>"+esc(x.nameTechniker||x.techniker||"–")+"</td><td>"+esc(x.wartungsart||"–")+
         "</td><td class='mono'>"+((x.maengel||[]).length||"0")+"</td>"+
-        "<td class='mono'>"+((x.fotos||[]).length||"0")+"</td><td>"+esc(x.betriebsbereit||"–")+"</td></tr>");
+        "<td class='mono'>"+((x.fotos||[]).length||"0")+"</td>"+
+        "<td>"+(x._quelle==="geraet"?'<span class="tag">Gerät</span>':'<span class="tag f30">gemeinsam</span>')+"</td></tr>");
       tr.onclick=function(){
         var ziel=gesp.querySelector("#pdetail");
         ziel.innerHTML=""; ziel.appendChild(protokollDetail(x));
@@ -1827,6 +1988,15 @@ function viewProtokoll(){
     });
     pl.appendChild(tbl);
     gesp.querySelector(".stack").appendChild(el('<div id="pdetail"></div>'));
+    if(S.letztesProtokoll){
+      var neu=alle.filter(function(x){ return x._id===S.letztesProtokoll; })[0];
+      S.letztesProtokoll=null;
+      if(neu){
+        var ziel=gesp.querySelector("#pdetail");
+        ziel.appendChild(protokollDetail(neu));
+        setTimeout(function(){ ziel.scrollIntoView({behavior:"smooth",block:"start"}); },60);
+      }
+    }
   } else {
     pl.appendChild(el('<div class="muted" style="font-size:13px">Noch keine Protokolle erfasst.</div>'));
   }
@@ -1834,11 +2004,129 @@ function viewProtokoll(){
   return f;
 }
 
+/* ---------- Protokoll als Blatt: Drucken oder als PDF sichern ---------- */
+function kreuz(an){ return an ? "&#9746;" : "&#9744;"; }
+function druckeProtokoll(p){
+  var alt=document.getElementById("druckansicht"); if(alt) alt.remove();
+  var gew=function(liste,wert){ return (liste||[]).indexOf(wert)>=0; };
+  var zeile=function(k,v){ return "<tr><td class='k'>"+k+"</td><td>"+(v?esc(v):"&nbsp;")+"</td></tr>"; };
+
+  var anlagenHtml=(p.anlagen&&p.anlagen.length?p.anlagen:[{}]).map(function(a,i){
+    return "<table style='margin-bottom:8px'>"+
+      "<tr><th colspan='2'>Anlage "+(i+1)+"</th></tr>"+
+      "<tr><td class='k'>Anlagentyp</td><td>"+ANLAGENTYPEN.map(function(t){
+        return kreuz(gew(a.typ,t))+" "+esc(t); }).join(" &nbsp; ")+"</td></tr>"+
+      "<tr><td class='k'>Regelung</td><td>"+REGELUNGEN.map(function(t){
+        return kreuz(gew(a.regelung,t))+" "+esc(t); }).join(" &nbsp; ")+
+        " &nbsp; Fernzugriff: "+kreuz(a.fernzugriff)+" ja "+kreuz(a.fernzugriff===false)+" nein</td></tr>"+
+      zeile("Hersteller / Modell",[a.hersteller,a.modell].filter(Boolean).join(" / "))+
+      zeile("Seriennummer",a.seriennummer)+
+      zeile("Baujahr / Nennleistung",[a.baujahr,a.leistungKw?a.leistungKw+" kW":""].filter(Boolean).join(" / "))+
+      zeile("Standort Außengerät",a.standortAussen)+
+    "</table>";
+  }).join("");
+
+  var maengelHtml=(p.maengel&&p.maengel.length)
+    ? "<table><tr><th>Mangel / Feststellung</th><th style='width:14%'>Priorität</th><th>Empfohlene Maßnahme / Frist</th></tr>"+
+      p.maengel.map(function(m){ return "<tr><td>"+esc(m.text)+"</td><td>"+esc(m.prio||"")+"</td><td>"+esc(m.massnahme||"")+"</td></tr>"; }).join("")+
+      "</table>"
+    : "<div>Keine Mängel festgestellt.</div>";
+
+  var ov=document.createElement("div");
+  ov.id="druckansicht";
+  ov.innerHTML=
+    '<div class="druckleiste">'+
+      '<button class="btn" type="button" id="d_druck">Drucken / als PDF speichern</button>'+
+      '<button class="btn ghost" type="button" id="d_zu" style="background:#fff">Schließen</button>'+
+    "</div>"+
+    '<div class="blatt">'+
+      '<div class="kopf">'+
+        '<div class="firma"><b>KAMMERLANDER</b><span>Umwelt- und Klimatechnik GmbH</span></div>'+
+        '<div class="kontakt">Speckbacherstraße 92, A-6380 St. Johann in Tirol<br>'+
+          "Telefon 05352 / 61207-0 · office@ukt.at · www.ukt.at</div>"+
+      "</div>"+
+      "<h1>WARTUNGSPROTOKOLL</h1><div style='color:#444'>Lidl Markt / Lager</div>"+
+
+      "<h2>Einsatz</h2><table>"+
+        zeile("Datum der Wartung",dfmt(p.datum)+(p.uhrzeit?", "+p.uhrzeit+" Uhr":""))+
+        zeile("Bestellnummer",p.bestellnummer)+
+        zeile("Lidl-Auftragsnummer / Position",p.auftragsnummer)+
+        zeile("FM-Region",p.region)+
+        zeile("Standort / Filiale / Lager",p.standortName)+
+        zeile("Adresse",p.adresse)+
+        zeile("Wartungsart",p.wartungsart)+
+      "</table>"+
+
+      "<h2>Wartungsunternehmen</h2><table>"+
+        zeile("Firma / Vertragspartner",p.firma)+
+        zeile("Techniker/in",p.techniker)+
+        zeile("Telefon / E-Mail",p.kontakt)+
+        zeile("Subunternehmen",p.subunternehmen||"nein")+
+        zeile("F-Gase-Unternehmenszertifikat Nr.",p.zertUnternehmen)+
+        zeile("F-Gase-Personenzertifikat Nr.",p.zertPerson)+
+      "</table>"+
+
+      "<h2>Anlagendaten</h2>"+anlagenHtml+
+
+      "<h2>Durchgeführte Wartungsarbeiten</h2>"+
+      '<div class="kaestchen">'+ARBEITEN.map(function(a){ return "<div>"+kreuz(gew(p.arbeiten,a))+" "+esc(a)+"</div>"; }).join("")+"</div>"+
+      (p.arbeitenSonstiges?"<div style='margin-top:4px'>&#9746; Sonstiges: "+esc(p.arbeitenSonstiges)+"</div>":"")+
+
+      "<h2>Festgestellte Mängel und Empfehlungen</h2>"+maengelHtml+
+      "<table style='margin-top:8px'>"+
+        "<tr><td class='k'>Anlage betriebsbereit</td><td>"+["ja","eingeschränkt","nein"].map(function(o){
+          return kreuz(p.betriebsbereit===o)+" "+o; }).join(" &nbsp; ")+"</td></tr>"+
+        zeile("Sofortmaßnahme",p.sofortmassnahme||"nein")+
+      "</table>"+
+
+      "<h2>Ergebnis und Bemerkungen</h2>"+
+      '<div class="kaestchen" style="grid-template-columns:1fr">'+ERGEBNISSE.map(function(a){ return "<div>"+kreuz(gew(p.ergebnis,a))+" "+esc(a)+"</div>"; }).join("")+"</div>"+
+      (p.bemerkungen?"<div style='margin-top:6px'><strong>Bemerkungen:</strong> "+esc(p.bemerkungen)+"</div>":"")+
+
+      '<div id="d_fotos"></div>'+
+
+      "<h2>Abschluss</h2><table>"+
+        zeile("Name Techniker/in",p.nameTechniker)+
+        zeile("Datum / Uhrzeit",dfmt(p.datum)+(p.uhrzeit?", "+p.uhrzeit+" Uhr":""))+
+        "<tr><td class='k'>Unterschrift Techniker/in</td><td class='unterschrift'>"+
+          (p.unterschrift?'<img alt="Unterschrift" src="'+p.unterschrift+'">':"&nbsp;")+"</td></tr>"+
+        zeile("Auftraggebervertreter",p.auftraggebervertreter)+
+      "</table>"+
+
+      '<div class="fuss">Rechnung an den Vertragspartner in der Bestellanschrift. Bestellnummer im Rechnungskopf angeben. '+
+        "Grundsätzlich eine separate Rechnung je Bestellung; bei Sammelbestellungen Lidl-Auftragsnummern exakt je Position ausweisen. "+
+        "Kältemittelarbeiten und Dichtheitsprüfungen nur durch befugte bzw. zertifizierte Personen und Unternehmen.</div>"+
+    "</div>";
+  document.body.appendChild(ov);
+  document.body.classList.add("druckmodus");
+
+  var zu=function(){ ov.remove(); document.body.classList.remove("druckmodus"); };
+  ov.querySelector("#d_zu").onclick=zu;
+  ov.querySelector("#d_druck").onclick=function(){ window.print(); };
+
+  /* Fotos nachladen – erst danach ist das Blatt vollständig */
+  if(p.fotos && p.fotos.length){
+    var fh=ov.querySelector("#d_fotos");
+    fh.innerHTML="<h2>Fotos</h2><div>werden geladen …</div>";
+    ladeFotos(p).then(function(bilder){
+      fh.innerHTML="<h2>Fotos</h2><div class='fotos'>"+bilder.map(function(b){
+        return "<figure>"+(b.url?'<img alt="" src="'+b.url+'">':"<div>Bild nicht abrufbar</div>")+
+          "<figcaption>"+esc(b.hinweis||b.name||"")+"</figcaption></figure>";
+      }).join("")+"</div>";
+    });
+  }
+}
+
 function protokollDetail(p){
   var d=el('<div class="card" style="box-shadow:none;background:var(--ground)"><div class="pad stack">'+
     '<div class="rowflex" style="justify-content:space-between">'+
       '<strong style="font-family:var(--f-disp);font-size:15px">'+esc(p.standortName||p.adresse||"Protokoll")+"</strong>"+
       '<span class="muted mono" style="font-size:12px">'+dfmt(p.datum)+(p.uhrzeit?" "+esc(p.uhrzeit):"")+"</span>"+
+    "</div>"+
+    '<div class="rowflex">'+
+      '<button class="btn sm" type="button" data-akt="druck">Drucken / PDF</button>'+
+      (p._quelle==="geraet"?'<button class="btn ghost sm" type="button" data-akt="weg">Vom Gerät löschen</button>'+
+        '<span class="muted" style="font-size:12px">liegt nur auf diesem Gerät</span>':"")+
     "</div>"+
     '<dl class="dl">'+
       "<dt>Techniker/in</dt><dd>"+esc(p.nameTechniker||p.techniker||"–")+"</dd>"+
@@ -1855,6 +2143,17 @@ function protokollDetail(p){
       '<div style="font-size:13px">'+esc(p.bemerkungen)+"</div></div>":"")+
     '<div id="pfotos"></div>'+
   "</div></div>");
+
+  d.querySelector('[data-akt="druck"]').onclick=function(){ druckeProtokoll(p); };
+  var weg=d.querySelector('[data-akt="weg"]');
+  if(weg) weg.onclick=function(){
+    if(!window.confirm("Dieses Protokoll ist noch nicht übertragen und liegt nur auf diesem Gerät. "+
+                       "Wirklich endgültig löschen?")) return;
+    idbLoeschen(p._id).then(function(){
+      lokaleProtokolle=lokaleProtokolle.filter(function(x){ return x.id!==p._id; });
+      toast("Protokoll vom Gerät gelöscht."); render();
+    },function(){ toast("Löschen fehlgeschlagen."); });
+  };
 
   var fh=d.querySelector("#pfotos");
   if(p.fotos && p.fotos.length){
@@ -1916,7 +2215,7 @@ function viewDaten(){
   var exp=el('<div class="card"><div class="pad stack">'+
     '<div><h2>Export</h2><div class="sub">CSV mit Semikolon-Trennung, direkt in Excel zu öffnen.</div></div>'+
     '<div class="rowflex"><button class="btn ghost sm" id="expStamm">Anlagenstamm</button>'+
-    '<button class="btn ghost sm" id="expProto">Protokolle ('+protokolle.length+")</button></div>"+
+    '<button class="btn ghost sm" id="expProto">Protokolle ('+alleProtokolle().length+")</button></div>"+
   "</div></div>");
   exp.querySelector("#expStamm").onclick=function(){
     var head=["Filiale","Standort","Adresse","PLZ","Ort","Region","Lat","Lon","Anlagentyp","Kaeltemittel","Kuerzel","SollMonat","Inbetriebnahme","Rueckkuehler","Status","Wartungen"];
@@ -1928,7 +2227,7 @@ function viewDaten(){
   };
   exp.querySelector("#expProto").onclick=function(){
     var head=["Datum","Uhrzeit","Standort","Adresse","Region","Techniker","Wartungsart","Bestellnummer","Auftragsnummer","Arbeiten","Maengel","Betriebsbereit","Bemerkungen"];
-    var rows=protokolle.map(function(x){ return [x.datum,x.uhrzeit,x.standortName,x.adresse,x.region,x.nameTechniker||x.techniker,x.wartungsart,
+    var rows=alleProtokolle().map(function(x){ return [x.datum,x.uhrzeit,x.standortName,x.adresse,x.region,x.nameTechniker||x.techniker,x.wartungsart,
       x.bestellnummer,x.auftragsnummer,(x.arbeiten||[]).join(" | "),(x.maengel||[]).map(function(m){return m.text+" ("+m.prio+")";}).join(" | "),
       x.betriebsbereit,x.bemerkungen]; });
     csv("protokolle_lidl.csv",head,rows);
@@ -2031,6 +2330,11 @@ document.getElementById("qrbtn").onclick=zeigeQr;
 
 render();
 initStore();
+idbOeffnen()
+  .then(altlastUebernehmen)
+  .then(lokaleNeuLaden)
+  .then(function(){ storeNachRender(); flushQueue(); })
+  .catch(function(e){ Store.geraetFehler = e && e.message ? e.message : "Gerätespeicher nicht verfügbar"; storeNachRender(); });
 
 /* Kachelserver erreichbar? Innerhalb von Claude sind externe Bilder gesperrt,
    dort bleibt die gezeichnete Übersichtskarte. */
