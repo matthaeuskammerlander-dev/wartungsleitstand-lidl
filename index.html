@@ -1553,15 +1553,58 @@ function lokaleNeuLaden(){
 }
 
 /* zentral abgelegte und gerätegespeicherte Protokolle in einer Liste */
-function alleProtokolle(){
+function alleProtokolle(mitGeloeschten){
   /* wird schon beim Start für die Fälligkeiten gebraucht, bevor Listen geladen sind */
   var zentral=(protokolle||[]).map(function(p){ return Object.assign({_quelle:"zentral"},p); });
   var lokal=(lokaleProtokolle||[]).map(function(e){
     return Object.assign({_quelle:"geraet", _id:e.id, _fotoDaten:e.fotos||[]}, e.doc);
   });
-  return lokal.concat(zentral).sort(function(a,b){
-    return ((b.datum||"")+(b.erstellt||"")).localeCompare((a.datum||"")+(a.erstellt||""));
-  });
+  /* Gelöschte zählen nirgends mit – weder in Listen noch als Wartungsnachweis.
+     Nur die Verwaltung holt sie zum Wiederherstellen dazu. */
+  return lokal.concat(zentral)
+    .filter(function(p){ return mitGeloeschten || !p.geloescht; })
+    .sort(function(a,b){
+      return ((b.datum||"")+(b.erstellt||"")).localeCompare((a.datum||"")+(a.erstellt||""));
+    });
+}
+
+/* Löschen = als gelöscht markieren. Das Protokoll verschwindet aus allen
+   Listen und Berechnungen, bleibt aber mit Grund nachvollziehbar und lässt
+   sich wiederherstellen. Nur für Admins. */
+function protokollLoeschen(p, grund, wiederher){
+  var jetzt=new Date().toISOString(), von=wer(), id=p._id;
+  var felder = wiederher
+    ? {geloescht:null, geloeschtVon:null, loeschGrund:null}
+    : {geloescht:jetzt, geloeschtVon:von, loeschGrund:grund};
+  var fertig=function(ok){
+    if(!ok) return false;
+    protokolliere({art: wiederher?"wiederhergestellt":"geloescht", protokollId:id,
+      standortId:p.standortId, standortName:p.standortName, grund:grund,
+      felder:[{feld:"datum", name:"Protokoll vom", alt:dfmt(p.datum), neu: wiederher?"wiederhergestellt":"gelöscht"}]});
+    return true;
+  };
+  if(Store.modus==="supabase" && Store.sb){
+    var zeile={geloescht:felder.geloescht, geloescht_von:felder.geloeschtVon, loesch_grund:felder.loeschGrund,
+      version:(p.version||1)+1, geaendert:jetzt,
+      korrektur_grund:(wiederher?"Wiederhergestellt: ":"Gelöscht: ")+grund};
+    return Store.sb.from("protokolle").update(zeile).eq("client_id",id).select("client_id").then(function(r){
+      if(r.error){
+        Store.fehler = /column|geloescht/i.test(r.error.message)
+          ? "Die Datenbank kennt das Löschen noch nicht – bitte das Einrichtungsskript in Supabase erneut ausführen."
+          : r.error.message;
+        return false;
+      }
+      if(!r.data || !r.data.length){ Store.fehler="Die Datenbank hat das Löschen abgelehnt – nur Admins dürfen löschen."; return false; }
+      ladeProtokolle();
+      return fertig(true);
+    }, function(){ Store.fehler="Keine Verbindung."; return false; });
+  }
+  if(Store.modus==="claude" && Store.claudeDb){
+    return Store.claudeDb.doc("protokolle/"+id).update(Object.assign({version:(p.version||1)+1, geaendert:jetzt}, felder))
+      .then(function(){ return fertig(true); }, function(){ Store.fehler="Speichern fehlgeschlagen."; return false; });
+  }
+  Store.fehler="Keine gemeinsame Ablage verbunden.";
+  return Promise.resolve(false);
 }
 
 /* ---------------- Änderungsverlauf ----------------
@@ -1904,6 +1947,7 @@ function ausZeile(r){
   /* _id ist die Kennung aus der App – unter ihr liegen die Fotos */
   return { _id:r.client_id||r.id, erstellt:r.erstellt, standortName:r.standort_name, adresse:r.adresse, region:r.region,
     version:r.version||1, geaendert:r.geaendert, korrekturGrund:r.korrektur_grund,
+    geloescht:r.geloescht||null, geloeschtVon:r.geloescht_von||null, loeschGrund:r.loesch_grund||null,
     firma:r.firma, kontakt:r.kontakt, subunternehmen:r.subunternehmen, zertUnternehmen:r.zert_unternehmen, zertPerson:r.zert_person,
     arbeitenSonstiges:r.arbeiten_sonstiges,
     /* ohne diese drei verschieben übertragene Protokolle die Fälligkeit nicht */
@@ -2642,17 +2686,24 @@ function viewProtokoll(){
   var unterzeile = alle.length
     ? teile.join(" · ")+". Antippen öffnet das Protokoll – dort auch Drucken und PDF."
     : "Noch keine Protokolle erfasst.";
+  /* Admins können gelöschte Protokolle einblenden, um sie wiederherzustellen */
+  var anzGeloescht=alleProtokolle(true).length-alle.length;
+  if(Admin.frei && S.zeigeGeloeschte) alle=alleProtokolle(true);
   var gesp=el('<div class="card"><div class="pad stack">'+
     "<div><h2>Gespeicherte Protokolle</h2>"+
     '<div class="sub">'+unterzeile+"</div></div>"+
+    (Admin.frei && anzGeloescht ? '<div class="chips"><button class="chip" type="button" id="p_geloescht" aria-pressed="'+
+      (!!S.zeigeGeloeschte)+'">gelöschte anzeigen ('+anzGeloescht+")</button></div>" : "")+
     '<div class="scrollx" id="plist"></div></div></div>');
+  var chipG=gesp.querySelector("#p_geloescht");
+  if(chipG) chipG.onclick=function(){ S.zeigeGeloeschte=!S.zeigeGeloeschte; render(); };
   var pl=gesp.querySelector("#plist");
   if(alle.length){
     var tbl=el('<table class="dt"><thead><tr><th>Datum</th><th>Standort</th><th>Techniker/in</th>'+
       "<th>Art</th><th>Mängel</th><th>Fotos</th><th>Ablage</th></tr></thead><tbody></tbody></table>");
     var tb=tbl.querySelector("tbody");
     alle.slice(0,60).forEach(function(x){
-      var tr=el("<tr style='cursor:pointer'><td class='mono'>"+dfmt(x.datum)+"</td><td>"+esc(x.standortName||x.adresse||"–")+
+      var tr=el("<tr style='cursor:pointer"+(x.geloescht?";opacity:.55;text-decoration:line-through":"")+"'><td class='mono'>"+dfmt(x.datum)+"</td><td>"+esc(x.standortName||x.adresse||"–")+
         "</td><td>"+esc(x.nameTechniker||x.techniker||"–")+"</td><td>"+esc(x.wartungsart||"–")+
         "</td><td class='mono'>"+((x.maengel||[]).length||"0")+"</td>"+
         "<td class='mono'>"+((x.fotos||[]).length||"0")+"</td>"+
@@ -2801,11 +2852,25 @@ function protokollDetail(p){
       '<strong style="font-family:var(--f-disp);font-size:15px">'+esc(p.standortName||p.adresse||"Protokoll")+"</strong>"+
       '<span class="muted mono" style="font-size:12px">'+dfmt(p.datum)+(p.uhrzeit?" "+esc(p.uhrzeit):"")+"</span>"+
     "</div>"+
+    (p.geloescht?'<div class="note warnbox"><strong>Gelöscht</strong> am '+dfmt(String(p.geloescht).slice(0,10))+
+      (p.geloeschtVon?" von "+esc(p.geloeschtVon):"")+(p.loeschGrund?' – „'+esc(p.loeschGrund)+'"':"")+
+      '. Zählt nirgends mehr mit und ist nur hier in der Verwaltungsansicht sichtbar.</div>':"")+
     '<div class="rowflex">'+
       '<button class="btn sm" type="button" data-akt="druck">Drucken / PDF</button>'+
-      '<button class="btn ghost sm" type="button" data-akt="korr">Korrigieren</button>'+
+      (p.geloescht?"":'<button class="btn ghost sm" type="button" data-akt="korr">Korrigieren</button>')+
       '<button class="btn ghost sm" type="button" data-akt="verlauf">Änderungen ansehen</button>'+
       (p._quelle==="geraet"?'<button class="btn ghost sm" type="button" data-akt="weg">Vom Gerät löschen</button>':"")+
+      (p._quelle!=="geraet" && Admin.frei && !p.geloescht?'<button class="btn ghost sm" type="button" data-akt="loeschen" style="color:var(--crit);border-color:var(--crit)">Löschen</button>':"")+
+      (p._quelle!=="geraet" && Admin.frei && p.geloescht?'<button class="btn sm" type="button" data-akt="wiederher">Wiederherstellen</button>':"")+
+    "</div>"+
+    '<div data-rolle="loeschpanel" class="posbox" hidden style="border-color:var(--crit)">'+
+      '<label class="fl"><span class="req" data-rolle="loeschtitel">Grund für das Löschen</span>'+
+        '<input type="text" data-rolle="loeschgrund" placeholder="z. B. Testeintrag, doppelt erfasst, falscher Markt"></label>'+
+      '<div class="muted" style="font-size:12px" data-rolle="loeschtext">Das Protokoll verschwindet aus allen Listen, der Fälligkeit und der Historie. '+
+        'Es bleibt mit diesem Grund im Änderungsverlauf und lässt sich in der Protokollliste über „gelöschte anzeigen" wiederherstellen.</div>'+
+      '<div class="note warnbox" data-rolle="loeschfehler" hidden></div>'+
+      '<div class="rowflex"><button class="btn sm" type="button" data-rolle="loeschja" style="background:var(--crit);border-color:var(--crit)">Protokoll löschen</button>'+
+        '<button class="btn ghost sm" type="button" data-rolle="loeschnein">Abbrechen</button></div>'+
     "</div>"+
     ((p.version||1)>1?'<div class="note">Fassung '+p.version+' · zuletzt korrigiert am '+
       dfmt((p.geaendert||"").slice(0,10))+(p.korrekturGrund?' – „'+esc(p.korrekturGrund)+'"':"")+"</div>":"")+
@@ -2827,9 +2892,44 @@ function protokollDetail(p){
   "</div></div>");
 
   d.querySelector('[data-akt="druck"]').onclick=function(){ druckeProtokoll(p); };
-  d.querySelector('[data-akt="korr"]').onclick=function(){
+  var korrKnopf=d.querySelector('[data-akt="korr"]');
+  if(korrKnopf) korrKnopf.onclick=function(){
     formDirty=false; S.bearbeiten={x:p}; S.view="protokoll"; render(); window.scrollTo({top:0});
   };
+
+  /* Löschen und Wiederherstellen – nur Admins, immer mit Grund */
+  var panel=d.querySelector('[data-rolle="loeschpanel"]');
+  var oeffnePanel=function(wiederher){
+    panel.hidden=false;
+    panel.querySelector('[data-rolle="loeschtitel"]').textContent = wiederher?"Grund für das Wiederherstellen":"Grund für das Löschen";
+    panel.querySelector('[data-rolle="loeschtext"]').textContent = wiederher
+      ? "Das Protokoll zählt danach wieder überall mit – auch als Wartungsnachweis für die angehakten Anlagen."
+      : "Das Protokoll verschwindet aus allen Listen, der Fälligkeit und der Historie. Es bleibt mit diesem Grund im Änderungsverlauf und lässt sich über „gelöschte anzeigen\" wiederherstellen.";
+    var ja=panel.querySelector('[data-rolle="loeschja"]');
+    ja.textContent = wiederher?"Wiederherstellen":"Protokoll löschen";
+    ja.style.background = wiederher?"":"var(--crit)"; ja.style.borderColor = wiederher?"":"var(--crit)";
+    var feld=panel.querySelector('[data-rolle="loeschgrund"]'); feld.value=""; feld.focus();
+    var fehl=panel.querySelector('[data-rolle="loeschfehler"]'); fehl.hidden=true;
+    ja.onclick=function(){
+      var grund=feld.value.trim();
+      if(!grund){ fehl.textContent="Bitte einen Grund angeben – er wird im Änderungsverlauf festgehalten."; fehl.hidden=false; return; }
+      ja.disabled=true; ja.textContent= wiederher?"Wird wiederhergestellt …":"Wird gelöscht …";
+      protokollLoeschen(p, grund, wiederher).then(function(ok){
+        if(!ok){
+          ja.disabled=false; ja.textContent= wiederher?"Wiederherstellen":"Protokoll löschen";
+          fehl.textContent=Store.fehler||"Das hat nicht geklappt."; fehl.hidden=false; return;
+        }
+        toast(wiederher?"Protokoll wiederhergestellt.":"Protokoll gelöscht.");
+        berechneFaelligkeiten(); render();
+      });
+    };
+    panel.querySelector('[data-rolle="loeschnein"]').onclick=function(){ panel.hidden=true; };
+    panel.scrollIntoView({behavior:"smooth",block:"center"});
+  };
+  var loeschKnopf=d.querySelector('[data-akt="loeschen"]');
+  if(loeschKnopf) loeschKnopf.onclick=function(){ oeffnePanel(false); };
+  var wiederKnopf=d.querySelector('[data-akt="wiederher"]');
+  if(wiederKnopf) wiederKnopf.onclick=function(){ oeffnePanel(true); };
   d.querySelector('[data-akt="verlauf"]').onclick=function(){
     S.verlaufProtokoll=p._id; S.view="verlauf"; render(); window.scrollTo({top:0});
   };
@@ -2926,8 +3026,10 @@ function historieAnsicht(s){
   return box;
 }
 
-var ART_TEXT={angelegt:"Protokoll angelegt", korrigiert:"Protokoll korrigiert", geloescht:"Protokoll gelöscht", stammdaten:"Stammdaten geändert"};
-var ART_KLASSE={angelegt:"p-erledigt", korrigiert:"p-faellig", geloescht:"p-ueberfaellig", stammdaten:"p-geplant"};
+var ART_TEXT={angelegt:"Protokoll angelegt", korrigiert:"Protokoll korrigiert", geloescht:"Protokoll gelöscht",
+              wiederhergestellt:"Protokoll wiederhergestellt", stammdaten:"Stammdaten geändert"};
+var ART_KLASSE={angelegt:"p-erledigt", korrigiert:"p-faellig", geloescht:"p-ueberfaellig",
+                wiederhergestellt:"p-erledigt", stammdaten:"p-geplant"};
 function zeitFmt(iso){
   if(!iso) return "–";
   var d=new Date(iso);

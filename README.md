@@ -133,6 +133,17 @@ auf welchen Wert geändert wurde; das Protokoll trägt danach eine
 Fassungsnummer. Fotos kommen bei einer Korrektur nur dazu, keines
 verschwindet. Die Unterschrift bleibt, solange niemand neu unterschreibt.
 
+**Löschen** dürfen nur Admins, mit Pflicht-Begründung. Gelöscht wird durch
+Markieren: das Protokoll verschwindet aus allen Listen, aus der
+Fälligkeitsrechnung (es zählt also nicht mehr als Wartungsnachweis), aus der
+Filialhistorie und dem Export – bleibt aber in der Datenbank. Admins blenden
+gelöschte Protokolle in der Protokollliste über „gelöschte anzeigen" ein und
+können sie wiederherstellen. Ob jemand Admin ist, prüft auf Supabase ein
+Trigger in der Datenbank bei jeder Änderung selbst.
+
+Protokolle, die noch nicht übertragen wurden und nur auf einem Gerät liegen,
+lassen sich dort direkt löschen – ebenfalls mit Grund.
+
 Der Verlauf lässt sich nur ergänzen, nicht ändern oder löschen. Auf Supabase
 sichert die Datenbank zusätzlich bei jeder Korrektur die vollständige
 vorherige Fassung in `protokoll_fassungen` – das geschieht in der Datenbank

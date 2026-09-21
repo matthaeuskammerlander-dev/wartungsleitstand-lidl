@@ -62,6 +62,10 @@ alter table public.protokolle add column if not exists client_id       text;
 alter table public.protokolle add column if not exists version         integer not null default 1;
 alter table public.protokolle add column if not exists geaendert       timestamptz;
 alter table public.protokolle add column if not exists korrektur_grund text;
+-- Loeschen = als geloescht markieren; das Protokoll bleibt nachvollziehbar
+alter table public.protokolle add column if not exists geloescht       timestamptz;
+alter table public.protokolle add column if not exists geloescht_von   text;
+alter table public.protokolle add column if not exists loesch_grund    text;
 create unique index if not exists protokolle_client_id_idx on public.protokolle (client_id);
 
 create index if not exists protokolle_erstellt_idx  on public.protokolle (erstellt desc);
@@ -98,7 +102,9 @@ create policy "angemeldete korrigieren"
   using (true)
   with check (korrektur_grund is not null and length(trim(korrektur_grund)) > 0);
 
--- Kein delete: ein abgegebenes Protokoll ist ein Nachweis.
+-- Kein echtes delete: ein abgegebenes Protokoll ist ein Nachweis. Geloescht
+-- wird durch Markieren (Spalte geloescht) – das duerfen nur Admins, siehe
+-- Trigger "loeschen_nur_admins" weiter unten.
 
 -- ---------------------------------------------------------------------------
 -- Aenderungsverlauf
@@ -200,6 +206,22 @@ create policy "stammdaten anlegen" on public.stammdaten for insert to authentica
 create policy "stammdaten aendern" on public.stammdaten for update to authenticated
   using (public.ist_admin()) with check (public.ist_admin());
 create policy "stammdaten zuruecksetzen" on public.stammdaten for delete to authenticated using (public.ist_admin());
+
+-- Protokolle loeschen und wiederherstellen: nur Admins. Das prueft die
+-- Datenbank bei jeder Aenderung selbst, auch wenn jemand die App umgeht.
+create or replace function public.loeschen_nur_admins() returns trigger
+language plpgsql security definer set search_path = public as $$
+begin
+  if (new.geloescht is distinct from old.geloescht) and not public.ist_admin() then
+    raise exception 'Nur Admins duerfen Protokolle loeschen oder wiederherstellen';
+  end if;
+  return new;
+end $$;
+
+drop trigger if exists loeschen_nur_admins on public.protokolle;
+create trigger loeschen_nur_admins
+  before update on public.protokolle
+  for each row execute function public.loeschen_nur_admins();
 
 
 -- ---------------------------------------------------------------------------
