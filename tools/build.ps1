@@ -17,6 +17,20 @@ function AddrKey($r) {
 # nur reine Monats-Trennzeilen verwerfen; alles andere bleibt erhalten und wird ggf. als "unklar" markiert
 $junk = @('märz')
 
+# Schreibweisen von Technikernamen vereinheitlichen (Schluessel klein geschrieben).
+# Mehrere Namen in einem Feld ("Manfred,Tobias") werden einzeln behandelt.
+$NAMEN_EINHEITLICH = @{
+  'darko' = 'Darko'
+  'datko' = 'Darko'     # Tippfehler in der Liste
+}
+function TechnikerName($wert) {
+  $teile = ([string]$wert) -split ',' | ForEach-Object {
+    $n = $_.Trim()
+    if ($NAMEN_EINHEITLICH.ContainsKey($n.ToLower())) { $NAMEN_EINHEITLICH[$n.ToLower()] } else { $n }
+  }
+  return (($teile | Where-Object { $_ -ne '' }) -join ',')
+}
+
 $prec = @{}
 foreach ($t in @('house','supermarket','retail','apartments','commercial','mall','building','yes','fuel','police','stationery','clothes','fitness_centre','car_repair','parking')) { $prec[$t] = 'adresse' }
 foreach ($t in @('primary','secondary','tertiary','residential','living_street','unclassified','service','track')) { $prec[$t] = 'strasse' }
@@ -58,7 +72,7 @@ foreach ($r in $recs) {
   # Jahresspalten der Quelle sind teilweise falsch beschriftet -> Jahr aus dem Datum ableiten
   $dates = New-Object System.Collections.ArrayList
   $techByCol = @{}
-  foreach ($p in $r.techniker.PSObject.Properties) { $techByCol[$p.Name] = $p.Value }
+  foreach ($p in $r.techniker.PSObject.Properties) { $techByCol[$p.Name] = (TechnikerName $p.Value) }
   $t = @{}
   foreach ($p in $r.wartungen.PSObject.Properties) {
     $dt = $p.Value

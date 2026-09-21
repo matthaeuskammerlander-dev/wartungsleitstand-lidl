@@ -420,8 +420,42 @@ var STATUS_LABEL={ueberfaellig:"überfällig",faellig:"fällig in "+VORLAUF_TAGE
 var STATUS_RANK={ueberfaellig:0,faellig:1,unbekannt:2,geplant:3,erledigt:3};
 var STATUS_VAR={ueberfaellig:"--crit",faellig:"--warn",geplant:"--good",erledigt:"--good",unbekannt:"--ink-3"};
 
+/* ---------- Technikernamen: eine Person, eine Schreibweise ----------
+   Groß-/Kleinschreibung und Leerzeichen werden an den bekannten Namen
+   angeglichen, bekannte Tippfehler zusätzlich über die Liste unten. Die
+   Schreibweise aus der Excel-Liste hat Vorrang vor später getippten. */
+var NAMEN_ALIAS={ datko:"Darko" };
+var NAMEN_KANON={};
+function baueNamenKanon(){
+  var k={};
+  var merke=function(n){
+    n=String(n||"").trim();
+    if(!n || /^\d+$/.test(n)) return;          /* Zahlen sind keine Namen (Datum in der falschen Spalte) */
+    var l=n.toLowerCase();
+    if(!k[l]) k[l]=NAMEN_ALIAS[l]||n;
+  };
+  ALLE_POS.forEach(function(p){
+    Object.keys(p.techniker||{}).forEach(function(j){ String(p.techniker[j]).split(",").forEach(merke); });
+  });
+  (typeof alleProtokolle==="function" ? alleProtokolle() : []).forEach(function(pr){
+    [pr.techniker, pr.nameTechniker].forEach(function(v){ String(v||"").split(",").forEach(merke); });
+  });
+  return k;
+}
+function kanonName(n){
+  return String(n||"").split(",").map(function(t){
+    t=t.trim(); var l=t.toLowerCase();
+    return NAMEN_ALIAS[l] || NAMEN_KANON[l] || t;
+  }).filter(Boolean).join(",");
+}
+function bekannteNamen(){
+  var s={}; Object.keys(NAMEN_KANON).forEach(function(l){ s[NAMEN_KANON[l]]=1; });
+  return Object.keys(s).sort(function(a,b){ return a.localeCompare(b,"de"); });
+}
+
 /* rechnet alle Fälligkeiten neu – beim Start und nach jedem Protokoll */
 function berechneFaelligkeiten(){
+  NAMEN_KANON = baueNamenKanon();
   var heute=isoLokal(new Date());
   var bald=isoLokal(new Date(Date.now()+VORLAUF_TAGE*86400000));
 
@@ -2270,7 +2304,7 @@ function viewProtokoll(){
 
   '<fieldset><legend>Wartungsunternehmen</legend><div class="grid">'+
     '<label class="fl"><span>Firma / Vertragspartner</span><input type="text" id="f_firma" value="Kammerlander Umwelt- und Klimatechnik GmbH"></label>'+
-    '<label class="fl"><span class="req">Techniker/in</span><input type="text" id="f_tech" required></label>'+
+    '<label class="fl"><span class="req">Techniker/in</span><input type="text" id="f_tech" list="technamen" autocomplete="off" required></label>'+
     '<label class="fl"><span>Telefon / E-Mail</span><input type="text" id="f_kontakt"></label>'+
     '<label class="fl"><span>F-Gase-Unternehmenszertifikat Nr.</span><input type="text" id="f_zertu"></label>'+
     '<label class="fl"><span>F-Gase-Personenzertifikat Nr.</span><input type="text" id="f_zertp"></label>'+
@@ -2310,7 +2344,7 @@ function viewProtokoll(){
   "</fieldset>"+
 
   '<fieldset><legend>Abschluss</legend><div class="grid">'+
-    '<label class="fl"><span class="req">Name Techniker/in</span><input type="text" id="f_name" required></label>'+
+    '<label class="fl"><span class="req">Name Techniker/in</span><input type="text" id="f_name" list="technamen" autocomplete="off" required></label>'+
     '<label class="fl"><span>Uhrzeit</span><input type="time" id="f_zeit"></label>'+
     '<label class="fl"><span>Auftraggebervertreter</span><input type="text" id="f_agv"></label>'+
   "</div>"+
@@ -2321,6 +2355,8 @@ function viewProtokoll(){
     '<span class="muted" style="font-size:12px">Mit Finger oder Maus unterschreiben.</span></div></div>'+
   "</fieldset>"+
 
+  /* Vorschläge für die Namensfelder – so wird aus „dar" gleich „Darko" */
+  '<datalist id="technamen">'+bekannteNamen().map(function(n){ return '<option value="'+esc(n)+'">'; }).join("")+"</datalist>"+
   '<div id="f_grundbox" hidden><label class="fl"><span class="req">Grund der Korrektur</span>'+
     '<input type="text" id="f_grund" placeholder="z. B. falschen Standort gewählt, Tippfehler bei der Seriennummer"></label>'+
     '<div class="muted" style="font-size:12px;margin-top:4px">Wird mit allen geänderten Feldern im Änderungsverlauf festgehalten.</div></div>'+
@@ -2620,7 +2656,7 @@ function viewProtokoll(){
       datum:v("f_datum"), uhrzeit:v("f_zeit"),
       bestellnummer:v("f_bestell"), auftragsnummer:v("f_auftrag"),
       wartungsart:radio("wart")==="sonstige"?("sonstige: "+v("f_wart_sonst")):radio("wart"),
-      firma:v("f_firma"), techniker:v("f_tech"), kontakt:v("f_kontakt"),
+      firma:v("f_firma"), techniker:kanonName(v("f_tech")), kontakt:v("f_kontakt"),
       subunternehmen:v("f_sub"), zertUnternehmen:v("f_zertu"), zertPerson:v("f_zertp"),
       anlagen:anlagen,
       arbeiten:Array.prototype.map.call(form.querySelectorAll('input[name="arbeit"]:checked'),function(x){return x.value;}),
@@ -2629,7 +2665,7 @@ function viewProtokoll(){
       betriebsbereit:radio("bereit"), sofortmassnahme:v("f_sofort"),
       ergebnis:Array.prototype.map.call(form.querySelectorAll('input[name="ergebnis"]:checked'),function(x){return x.value;}),
       bemerkungen:v("f_bem"),
-      nameTechniker:v("f_name"), auftraggebervertreter:v("f_agv"),
+      nameTechniker:kanonName(v("f_name")), auftraggebervertreter:v("f_agv"),
       unterschrift:hasSig?cv.toDataURL("image/png"):"",
       /* die Bilddaten liegen getrennt, im Protokoll steht nur der Verweis */
       fotos:fotos.map(function(f){ return {id:f.id, name:f.name, hinweis:f.hinweis, bytes:f.bytes}; }),
@@ -2758,7 +2794,7 @@ function viewProtokoll(){
     var tb=tbl.querySelector("tbody");
     alle.slice(0,60).forEach(function(x){
       var tr=el("<tr style='cursor:pointer"+(x.geloescht?";opacity:.55;text-decoration:line-through":"")+"'><td class='mono'>"+dfmt(x.datum)+"</td><td>"+esc(x.standortName||x.adresse||"–")+
-        "</td><td>"+esc(x.nameTechniker||x.techniker||"–")+"</td><td>"+esc(x.wartungsart||"–")+
+        "</td><td>"+esc(kanonName(x.nameTechniker||x.techniker)||"–")+"</td><td>"+esc(x.wartungsart||"–")+
         "</td><td class='mono'>"+((x.maengel||[]).length||"0")+"</td>"+
         "<td class='mono'>"+((x.fotos||[]).length||"0")+"</td>"+
         "<td>"+(x._quelle==="geraet"?'<span class="tag">Gerät</span>':'<span class="tag f30">gemeinsam</span>')+"</td></tr>");
@@ -3029,14 +3065,14 @@ function historieEintraege(s){
   s.pos.forEach(function(p){
     (p.historie||[]).forEach(function(d){
       zeilen.push({datum:d, anlage:anlagenName(p), art:p.intervall.art,
-        techniker:(p.techniker&&p.techniker[d.slice(0,4)])||"", quelle:"Liste"});
+        techniker:kanonName((p.techniker&&p.techniker[d.slice(0,4)])||""), quelle:"Liste"});
     });
   });
   alleProtokolle().forEach(function(pr){
     if(pr.standortId!==s.id || !pr.datum) return;
     var ids=(pr.positionIds&&pr.positionIds.length)?pr.positionIds:(pr.positionId?[pr.positionId]:[]);
     zeilen.push({datum:pr.datum, anlage:ids.length?feldText("positionIds",ids):"(Markt allgemein)",
-      art:pr.wartungsart||"", techniker:pr.nameTechniker||pr.techniker||"", quelle:"App", protokoll:pr});
+      art:pr.wartungsart||"", techniker:kanonName(pr.nameTechniker||pr.techniker||""), quelle:"App", protokoll:pr});
   });
   return zeilen.sort(function(a,b){ return b.datum.localeCompare(a.datum); });
 }
