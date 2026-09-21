@@ -296,7 +296,7 @@ In der Datenbank liegen die Angaben in der Spalte `stoerung` der Tabelle
 
 Jedes Protokoll landet automatisch als PDF auf der Synology, im Ordner
 `Ukt/<Jahr>/Lidl/Wartungen`, zum Beispiel
-`2026-09-21_Filiale-380_Darko.pdf`. Das PDF sieht aus wie der Ausdruck aus der
+`2026-09-21_Seekirchen_Darko.pdf`. Das PDF sieht aus wie der Ausdruck aus der
 App, samt Fotos und Unterschrift. In der Fußzeile stehen die Protokollkennung
 und die Fassung.
 
@@ -356,7 +356,7 @@ Beispiel:
 ```
 angemeldet als kammer.m@icloud.com
 37 Protokolle, 37 PDFs in der Datenbank
-neu: 2026/Lidl/Wartungen/2026-09-21_Filiale-380_Darko.pdf
+neu: 2026/Lidl/Wartungen/2026-09-21_Seekirchen_Darko.pdf
 fertig: 1 neu, 0 erneuert, 0 nach _geloescht, 0 noch ohne PDF
 ```
 

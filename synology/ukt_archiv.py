@@ -7,7 +7,7 @@ Die App legt jedes Protokoll als PDF in Supabase ab. Dieses Skript läuft auf
 der Synology (Systemsteuerung -> Aufgabenplaner, alle 15 Minuten), meldet sich
 mit einem eigenen Konto an und legt neue und korrigierte PDFs ab unter
 
-    <basis>/<jahr>/Lidl/Wartungen/2026-09-21_Filiale-380_Darko.pdf
+    <basis>/<jahr>/Lidl/Wartungen/2026-09-21_Seekirchen_Darko.pdf
 
 Gelöschte Protokolle wandern in den Unterordner "_geloescht". Das Skript
 schreibt nur in diese Ordner und fasst sonst nichts an.
@@ -136,17 +136,23 @@ class Supabase:
 
 def sauber(text):
     """für Dateinamen: keine Pfadzeichen, Leerzeichen als Bindestrich"""
-    t = re.sub(r'[\\/:*?"<>|\x00-\x1f]', "", str(text or "")).strip()
+    t = re.sub(r"[\\/]+", "-", str(text or ""))           # Bruck/Leitha -> Bruck-Leitha
+    t = re.sub(r'[:*?"<>|\x00-\x1f]', "", t).strip()
     t = re.sub(r"\s+", "-", t)
     return t[:60]
 
 
 def dateiname(p):
+    """2026-09-21_Seekirchen_Darko.pdf – der Markt so, wie UKT ihn nennt
+    (Ort bzw. Ort + Straße, vergibt die App); Störungen sind gekennzeichnet:
+    2026-09-21_Innsbruck_Stoerung_Darko.pdf"""
     teile = [str(p.get("datum") or "ohne-Datum")[:10]]
-    if p.get("filiale"):
-        teile.append("Filiale-" + sauber(p["filiale"]))
-    elif p.get("standort_name"):
+    if p.get("standort_name"):
         teile.append(sauber(p["standort_name"]))
+    elif p.get("filiale"):
+        teile.append("Filiale-" + sauber(p["filiale"]))
+    if p.get("wartungsart") == "Störung":
+        teile.append("Stoerung")
     tech = p.get("name_techniker") or p.get("techniker")
     if tech:
         teile.append(sauber(tech))
@@ -183,7 +189,7 @@ def schreibe(pfad, inhalt):
 
 def abgleich(k, sb, stand):
     protokolle = sb.tabelle("protokolle", "client_id,datum,filiale,standort_name,"
-                                          "techniker,name_techniker,version,geloescht")
+                                          "techniker,name_techniker,wartungsart,version,geloescht")
     berichte = {b["client_id"]: b for b in sb.tabelle("berichte", "client_id,version,pfad")}
     log("%d Protokolle, %d PDFs in der Datenbank" % (len(protokolle), len(berichte)))
 

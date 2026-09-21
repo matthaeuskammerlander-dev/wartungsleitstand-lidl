@@ -354,6 +354,7 @@ function indexNeuAufbauen(){
     s.anzahlPositionen=s.pos.length;
     s.adresseUnvollstaendig=!s.plz;
   });
+  if(typeof autoNamenVergeben==="function") autoNamenVergeben();
 }
 indexNeuAufbauen();
 
@@ -567,7 +568,54 @@ function dfmt(iso){ if(!iso) return "–"; var p=iso.split("-"); return p[2]+"."
 function el(html){ var t=document.createElement("template"); t.innerHTML=html.trim(); return t.content.firstElementChild; }
 function pill(st){ return '<span class="pill p-'+st+'">'+STATUS_LABEL[st]+"</span>"; }
 function anlagenName(p){ return p.anlagentyp || "Anlage ohne Typangabe"; }
-function stName(s){ return s.filiale ? "Filiale "+s.filiale : s.name; }
+/* Wie UKT einen Markt nennt: „Seekirchen“, in Orten mit mehreren Märkten
+   „Wien Jedletzbergerstraße“. Eine in der Verwaltung vergebene Bezeichnung
+   geht vor; die Filialnummer ist nur Zusatz. */
+function eigenerName(s){
+  var n=String(s.name||"").trim();
+  if(!n || /^Filiale\s/i.test(n) || n===String(s.adresse||"").trim()) return "";
+  return n;
+}
+function stName(s){
+  if(!s) return "";
+  return eigenerName(s) || s.autoName || (s.filiale ? "Filiale "+s.filiale : (s.name||s.adresse||""));
+}
+/* Name eines Protokolls: immer der aktuelle Name des Marktes, damit
+   eine spätere Umbenennung auch alte Protokolle erfasst */
+function protoName(p){
+  var s=p&&p.standortId&&byId[p.standortId];
+  return s ? stName(s) : ((p&&(p.standortName||p.adresse))||"");
+}
+function strasseAus(s){
+  var a=String(s.adresse||"").trim().replace(/^\d{4}\s*/,"");
+  if(s.ort && a.toLowerCase().indexOf(s.ort.toLowerCase())===0) a=a.slice(s.ort.length);
+  a=a.replace(/^[\s,]+/,"")
+     .replace(/[\s,]*\d.*$/,"")                    /* Hausnummer und alles danach */
+     .replace(/\.G\.?$/,"-Gasse")                   /* Christian-Bucher.G. */
+     .replace(/([a-zäöüß])str\.?$/i,"$1straße")     /* Heinestr. */
+     .replace(/(^|[\s-])Str\.?$/,"$1Straße")        /* Triester Str., August-Jacksch-Str. */
+     .replace(/strasse$/i,"straße")
+     .replace(/([a-zäöüß])g\.$/i,"$1gasse")         /* Zieglerg. */
+     .replace(/[\s,.]+$/,"");
+  return a;
+}
+function autoNamenVergeben(){
+  var jeOrt={};
+  ALLE_ST.forEach(function(s){ if(s.ort){ var k=s.ort.toLowerCase(); jeOrt[k]=(jeOrt[k]||0)+1; } });
+  ALLE_ST.forEach(function(s){
+    if(!s.ort){ s.autoName=s.filiale?String(s.adresse||"").trim():""; return; }
+    var str=jeOrt[s.ort.toLowerCase()]>1 ? strasseAus(s) : "";
+    s.autoName=s.ort+(str?" "+str:"");
+  });
+  /* gleiche Namen (z. B. zwei Märkte an einer Adresse): Filialnummer dazu.
+     Verglichen wird ohne Schreibweise – „Johann Federer Str.“ = „Johann-Federer-Straße“ */
+  var schluessel=function(n){ return String(n||"").toLowerCase().replace(/strasse|straße|str\b/g,"str").replace(/[^a-z0-9äöüß]/g,""); };
+  var zahl={};
+  ALLE_ST.forEach(function(s){ var k=schluessel(stName(s)); zahl[k]=(zahl[k]||0)+1; });
+  ALLE_ST.forEach(function(s){
+    if(!eigenerName(s) && s.autoName && zahl[schluessel(s.autoName)]>1 && s.filiale) s.autoName+=" (Fil. "+s.filiale+")";
+  });
+}
 function toast(msg){ var t=document.getElementById("toast"); t.textContent=msg; t.style.display="block"; clearTimeout(t._h); t._h=setTimeout(function(){t.style.display="none";},3200); }
 
 var TIP=document.getElementById("tip");
@@ -780,7 +828,7 @@ function filtered(){
   return ST.filter(function(s){
     if(S.region!=="alle" && s.region!==S.region) return false;
     if(!q) return true;
-    return (s.name+" "+s.adresse+" "+(s.filiale||"")+" "+(s.ort||"")+" "+s.typen.join(" ")).toLowerCase().indexOf(q)>=0;
+    return (stName(s)+" "+s.name+" "+s.adresse+" "+(s.filiale||"")+" "+(s.ort||"")+" "+s.typen.join(" ")).toLowerCase().indexOf(q)>=0;
   });
 }
 function filteredPos(){ var ids={}; filtered().forEach(function(s){ids[s.id]=1;}); return POS.filter(function(p){return ids[p.standortId];}); }
@@ -2743,7 +2791,7 @@ function viewProtokoll(){
     if(!nr) return "";
     var da=alleProtokolle().filter(function(x){ return x.auftragsnummer===nr && (!bearb || x._id!==bearb._id); });
     return da.length ? "Zu Auftrag <strong>"+esc(nr)+"</strong> gibt es schon ein Protokoll vom "+dfmt(da[0].datum)+
-      " ("+esc(da[0].standortName||"")+"). Bei einem zweiten Einsatz ist das in Ordnung – sonst bitte das vorhandene korrigieren." : "";
+      " ("+esc(protoName(da[0]))+"). Bei einem zweiten Einsatz ist das in Ordnung – sonst bitte das vorhandene korrigieren." : "";
   };
   function uebernimmAuftrag(a){
     geladenerAuftrag=a;
@@ -3091,7 +3139,7 @@ function viewProtokoll(){
   var head = bearb
     ? el('<div class="card" style="border-color:var(--warn)"><div class="pad stack">'+
         '<div><h2>Protokoll korrigieren</h2><div class="sub">Protokoll vom <strong>'+dfmt(bearb.datum)+"</strong>"+
-        (bearb.standortName?" – "+esc(bearb.standortName):"")+". Ändern Sie, was falsch ist, und geben Sie unten den Grund an. "+
+        (protoName(bearb)?" – "+esc(protoName(bearb)):"")+". Ändern Sie, was falsch ist, und geben Sie unten den Grund an. "+
         "Die bisherige Fassung bleibt im Änderungsverlauf nachvollziehbar.</div></div>"+
       "</div></div>")
     : el('<div class="card"><div class="pad stack">'+
@@ -3143,7 +3191,7 @@ function viewProtokoll(){
       "<th>Art</th><th>Mängel</th><th>Fotos</th><th>Ablage</th></tr></thead><tbody></tbody></table>");
     var tb=tbl.querySelector("tbody");
     alle.slice(0,60).forEach(function(x){
-      var tr=el("<tr style='cursor:pointer"+(x.geloescht?";opacity:.55;text-decoration:line-through":"")+"'><td class='mono'>"+dfmt(x.datum)+"</td><td>"+esc(x.standortName||x.adresse||"–")+
+      var tr=el("<tr style='cursor:pointer"+(x.geloescht?";opacity:.55;text-decoration:line-through":"")+"'><td class='mono'>"+dfmt(x.datum)+"</td><td>"+esc(protoName(x)||"–")+
         "</td><td>"+esc(kanonName(x.nameTechniker||x.techniker)||"–")+"</td><td>"+
         (istStoerung(x)?'<span class="tag st">Störung</span>':esc(x.wartungsart||"–"))+
         "</td><td class='mono'>"+((x.maengel||[]).length||"0")+"</td>"+
@@ -3245,7 +3293,7 @@ function blattInhalt(p){
         zeile("Bestellnummer",p.bestellnummer)+
         zeile("Lidl-Auftragsnummer / Position",p.auftragsnummer)+
         zeile("FM-Region",p.region)+
-        zeile("Standort / Filiale / Lager",p.standortName)+
+        zeile("Standort / Filiale / Lager",protoName(p)+(p.filiale&&protoName(p).indexOf(p.filiale)<0?" · Filiale "+p.filiale:""))+
         zeile("Adresse",p.adresse)+
         (st?"":zeile("Wartungsart",p.wartungsart))+
       "</table>"+
@@ -3414,10 +3462,10 @@ function pdfErzeugen(p){
           g.drawImage(r.bild, 0, Math.round(s[0]*r.skala), r.bild.width, teil.height, 0, 0, teil.width, teil.height);
           doc.addImage(teil.toDataURL("image/jpeg",0.86),"JPEG",RAND,RAND,nutzB,hPx/pxProMm);
           doc.setFontSize(8); doc.setTextColor(120);
-          doc.text((istStoerung(p)?"Störungsprotokoll ":"Wartungsprotokoll ")+(p.standortName||"")+" vom "+dfmt(p.datum)+"  -  Seite "+(i+1)+" von "+seiten.length,
+          doc.text((istStoerung(p)?"Störungsprotokoll ":"Wartungsprotokoll ")+protoName(p)+" vom "+dfmt(p.datum)+"  -  Seite "+(i+1)+" von "+seiten.length,
                    105, 297-RAND+1, {align:"center"});
         });
-        doc.setProperties({title:(istStoerung(p)?"Störungsprotokoll ":"Wartungsprotokoll ")+(p.standortName||"")+" "+dfmt(p.datum),
+        doc.setProperties({title:(istStoerung(p)?"Störungsprotokoll ":"Wartungsprotokoll ")+protoName(p)+" "+dfmt(p.datum),
           subject:"Lidl Klimaanlagen - Protokoll "+(p._id||""), author:"Kammerlander Umwelt- und Klimatechnik GmbH",
           creator:"Wartungsleitstand"});
         return doc.output("blob");
@@ -3479,7 +3527,7 @@ function protokollDetail(p){
   var d=el('<div class="card" style="box-shadow:none;background:var(--ground)"><div class="pad stack">'+
     '<div class="rowflex" style="justify-content:space-between">'+
       '<strong style="font-family:var(--f-disp);font-size:15px">'+(istStoerung(p)?'<span class="tag st">Störung</span> ':"")+
-        esc(p.standortName||p.adresse||"Protokoll")+"</strong>"+
+        esc(protoName(p)||"Protokoll")+"</strong>"+
       '<span class="muted mono" style="font-size:12px">'+dfmt(p.datum)+(p.uhrzeit?" "+esc(p.uhrzeit):"")+"</span>"+
     "</div>"+
     (p.geloescht?'<div class="note warnbox"><strong>Gelöscht</strong> am '+dfmt(String(p.geloescht).slice(0,10))+
@@ -3745,7 +3793,7 @@ function viewVerlauf(){
       }).join("");
       var b=el('<div class="posbox">'+
         '<div class="rowflex" style="justify-content:space-between;gap:8px">'+
-          '<span><strong>'+esc(e.standortName||"Protokoll")+"</strong><br>"+
+          '<span><strong>'+esc((e.standortId&&byId[e.standortId]?stName(byId[e.standortId]):e.standortName)||"Protokoll")+"</strong><br>"+
           '<span class="muted mono" style="font-size:12px">'+zeitFmt(e.zeit)+" · "+esc(e.von||"unbekannt")+"</span></span>"+
           '<span class="pill '+(ART_KLASSE[e.art]||"p-unbekannt")+'">'+(ART_TEXT[e.art]||esc(e.art))+"</span>"+
         "</div>"+
@@ -3909,7 +3957,7 @@ function archivKarte(){
         los.disabled=false; los.hidden=ok===fehlend.length; return;
       }
       var p=fehlend[i++];
-      stand.textContent="PDF "+i+" von "+fehlend.length+" – "+(p.standortName||"")+" vom "+dfmt(p.datum)+" …";
+      stand.textContent="PDF "+i+" von "+fehlend.length+" – "+protoName(p)+" vom "+dfmt(p.datum)+" …";
       berichtAblegen(p).then(function(x){ if(x) ok++; weiter(); });
     };
     weiter();
@@ -4051,7 +4099,10 @@ function verwaltungEditor(s){
 
     '<fieldset><legend>Markt</legend><div class="grid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px">'+
       feld("a_filiale","Filialnummer",s.filiale,"text",hinweisExcel("filiale",s.filiale))+
-      feld("a_name","Bezeichnung (ohne Filialnummer)",s.name,"text",hinweisExcel("name",s.name))+
+      /* leer lassen = automatischer Name (Ort bzw. Ort + Straße) */
+      '<label class="fl"><span>Bezeichnung</span><input type="text" id="a_name" value="'+esc(eigenerName(s))+
+        '" placeholder="'+esc(s.autoName||"z. B. Seekirchen")+'"><span class="muted" style="font-size:11.5px">'+
+        "Leer lassen für den automatischen Namen"+(s.autoName?" („"+esc(s.autoName)+"“)":"")+"</span></label>"+
       '<label class="fl"><span>FM-Region'+hinweisExcel("region",s.region)+'</span><select id="a_region"><option value="">– keine –</option>'+regionen+"</select></label>"+
     "</div>"+
     '<div class="adr-zeile">'+
@@ -4165,7 +4216,8 @@ function verwaltungEditor(s){
     var grund=grundHolen(); if(!grund) return;
     var num=function(v){ v=String(v).trim().replace(",","."); return v===""?null:+v; };
     var neuSt={
-      filiale:c.querySelector("#a_filiale").value.trim(), name:c.querySelector("#a_name").value.trim(),
+      /* leer = automatischer Name: dann den Wert aus der Liste behalten, sonst entstünde eine Scheinänderung */
+      filiale:c.querySelector("#a_filiale").value.trim(), name:c.querySelector("#a_name").value.trim()||(exS.name||""),
       adresse:c.querySelector("#a_adresse").value.trim(), plz:c.querySelector("#a_plz").value.trim(),
       ort:c.querySelector("#a_ort").value.trim(), region:c.querySelector("#a_region").value,
       lat:num(c.querySelector("#a_lat").value), lon:num(c.querySelector("#a_lon").value),
@@ -4342,7 +4394,7 @@ function viewDaten(){
   };
   exp.querySelector("#expProto").onclick=function(){
     var head=["Datum","Uhrzeit","Standort","Adresse","Region","Techniker","Wartungsart","Bestellnummer","Auftragsnummer","Arbeiten","Maengel","Betriebsbereit","Bemerkungen"];
-    var rows=alleProtokolle().map(function(x){ return [x.datum,x.uhrzeit,x.standortName,x.adresse,x.region,x.nameTechniker||x.techniker,x.wartungsart,
+    var rows=alleProtokolle().map(function(x){ return [x.datum,x.uhrzeit,protoName(x),x.adresse,x.region,x.nameTechniker||x.techniker,x.wartungsart,
       x.bestellnummer,x.auftragsnummer,(x.arbeiten||[]).join(" | "),(x.maengel||[]).map(function(m){return m.text+" ("+m.prio+")";}).join(" | "),
       x.betriebsbereit,x.bemerkungen]; });
     csv("protokolle_lidl.csv",head,rows);

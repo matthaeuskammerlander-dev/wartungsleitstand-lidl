@@ -102,7 +102,16 @@ foreach ($r in ($s1 | Select-Object -Skip 2)) {
   if ($adr -match '^\s*(\d{4})\s+(.+)$') {
     $plz = $Matches[1]
     $rest = $Matches[2]
-    if ($rest -match '^([^,]+),\s*(.*)$') { $ort = $Matches[1].Trim() } else { $ort = ($rest -split '\s')[0] }
+    if ($rest -match '^([^,]+),\s*(.*)$') { $ort = $Matches[1].Trim() }
+    else {
+      # ohne Komma: erstes Wort; mehrteilige Ortsnamen zusammenhalten
+      # ("Deutsch Wagram Dr.L.Figl Gasse 5", "Bruck/ Leitha. Altstadt 125")
+      $w = @($rest -split '\s+')
+      $ort = $w[0]
+      if ($w.Count -gt 1 -and ($ort -match '/$' -or $ort -match '^(Deutsch|Bad|Sankt|St\.|Maria|Groß|Klein|Neu|Markt|Hall)$')) {
+        $ort = ($ort + ' ' + $w[1]) -replace '/\s+', '/' -replace '[.,]$', ''
+      }
+    }
   }
 
   $k = KeyOf $r
