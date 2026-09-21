@@ -236,7 +236,63 @@ Zwischenspeicher des Geräts und gehen später gemeinsam raus. Ein Protokoll
 wird nie gespeichert, bevor seine Fotos übertragen sind — sonst verwiese es
 auf Bilder, die es nicht gibt.
 
+## Störungseinsätze
+
+Unter **Protokoll** wird zwischen **Wartung** und **Störung** umgeschaltet.
+Ein Störungsprotokoll gehört zu einem Lidl-Störungsauftrag.
+
+**Den Auftrag übernehmen:** Tippen Sie auf **Auftrag-PDF öffnen** und wählen
+Sie die PDF aus der Lidl-Mail. Speichern Sie die PDF dafür vorher aus dem
+Mailprogramm in „Dateien“ bzw. „Downloads“. Die App liest dann aus:
+
+- Auftragsnummer und Auftragsdatum
+- Störungsnummer und „Ausführen bis“
+- Kostenstelle
+- Problemtyp und Beschreibung
+- Typ, Modell, LIN, IA-Nummer
+- Lidl-Ansprechpartner mit Telefon und E-Mail
+
+Der **Markt wird über die Kostenstelle erkannt**: AT0234 ist Filiale 234.
+Klappt das nicht, sucht die App über die Adresse.
+
+**QR-Code scannen:** Der QR-Code auf dem Lidl-Auftrag enthält *nur* die
+Auftragsnummer. Der Scan ist deshalb gedacht
+
+- für reine Papieraufträge: Die Nummer steht dann im Protokoll, der Rest wird
+  abgetippt;
+- zur Kontrolle, ob Ausdruck und geöffnete PDF zusammenpassen. Wenn nicht,
+  warnt die App.
+
+Gibt es zur Auftragsnummer schon ein Protokoll, weist die App darauf hin.
+
+**Im Formular** stehen statt der Wartungscheckliste diese Felder:
+
+- Ankunft und Fertig
+- Fehlerbild vor Ort
+- Ursache
+- durchgeführte Maßnahmen (Pflichtfeld)
+- Material und Ersatzteile
+- Kältemittel: nachgefüllt und zurückgewonnen
+- Folgeauftrag oder Angebot erforderlich
+
+Mängel, „betriebsbereit“, Fotos und Unterschrift funktionieren wie bei der
+Wartung. Drucken und PDF erzeugen ein eigenes Blatt **STÖRUNGSPROTOKOLL**.
+
+**Auswirkung auf die Termine:** keine. Ein Störungsprotokoll hat die
+Wartungsart „Störung“. Deshalb verschiebt es weder einen Wartungstermin noch
+den „letzten Besuch“ des Marktes. In der **Wartungshistorie** der Filiale
+erscheint der Einsatz mit rotem „Störung“-Etikett und dem Problemtyp. Dort
+stehen Wartungen und Störungen getrennt gezählt.
+
+In der Datenbank liegen die Angaben in der Spalte `stoerung` der Tabelle
+`protokolle`. Dafür `supabase-setup.sql` einmal erneut ausführen.
+
 ## Archiv auf der Synology
+
+> Vorbereitet, aber noch nicht eingerichtet: Auf der Synology fehlen noch die
+> Berechtigungen. Die App legt die PDFs trotzdem schon ab, sobald der Abschnitt
+> „Archiv“ im SQL-Skript ausgeführt ist. Bis dahin passiert in diesem Teil
+> nichts, und alles andere funktioniert unverändert.
 
 Jedes Protokoll landet automatisch als PDF auf der Synology, im Ordner
 `Ukt/<Jahr>/Lidl/Wartungen`, zum Beispiel

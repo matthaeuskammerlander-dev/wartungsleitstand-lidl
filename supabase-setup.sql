@@ -66,6 +66,11 @@ alter table public.protokolle add column if not exists korrektur_grund text;
 alter table public.protokolle add column if not exists geloescht       timestamptz;
 alter table public.protokolle add column if not exists geloescht_von   text;
 alter table public.protokolle add column if not exists loesch_grund    text;
+-- Stoerungseinsaetze: Angaben aus dem Lidl-Auftrag und zur Behebung.
+-- Leer bei Wartungen. Stoerungen haben wartungsart = 'Stoerung' und
+-- verschieben deshalb keine Faelligkeit.
+alter table public.protokolle add column if not exists stoerung        jsonb;
+create index if not exists protokolle_auftrag_idx on public.protokolle (auftragsnummer);
 create unique index if not exists protokolle_client_id_idx on public.protokolle (client_id);
 
 create index if not exists protokolle_erstellt_idx  on public.protokolle (erstellt desc);
