@@ -118,6 +118,7 @@ section.view{display:grid;gap:18px}
 .p-geplant{background:var(--plan-soft);color:var(--plan)}
 .p-erledigt{background:var(--good-soft);color:var(--good)}
 .p-unbekannt{background:var(--surface-2);color:var(--ink-3)}
+.p-pausiert{background:var(--surface-2);color:var(--ink-3);font-style:italic}
 .tag{display:inline-block;font-size:11px;font-weight:500;padding:1px 7px;border-radius:5px;background:var(--surface-2);color:var(--ink-2);white-space:nowrap}
 .tag.st{background:var(--crit-soft);color:var(--crit);font-weight:600}
 .tag.f30{background:var(--accent-soft);color:var(--accent-ink);font-family:var(--f-mono)}
@@ -235,6 +236,28 @@ canvas.sig{width:100%;height:150px;border:1px dashed var(--line-2);border-radius
 .qrscan video{width:100%;height:100%;object-fit:cover}
 .qrscan .qrrahmen{position:absolute;inset:18%;border:3px solid #fff;border-radius:12px;box-shadow:0 0 0 999px rgba(0,0,0,.35)}
 .qrscan .qrtext{color:#fff;font-size:14px;text-align:center}
+.assistent{position:fixed;inset:0;z-index:110;background:rgba(10,14,18,.55);display:flex;align-items:center;justify-content:center;padding:12px}
+.as-karte{background:var(--surface);color:var(--ink);width:min(560px,100%);max-height:100%;display:flex;flex-direction:column;
+  border-radius:14px;box-shadow:0 20px 50px rgba(0,0,0,.35);overflow:hidden}
+.as-kopf{display:flex;justify-content:space-between;align-items:flex-start;gap:10px;padding:14px 16px;border-bottom:1px solid var(--line)}
+.as-titel{font-weight:700;font-size:16px;overflow-wrap:anywhere}
+.as-schritt{font-size:12.5px;color:var(--ink-3);margin-top:2px}
+.as-inhalt{padding:16px;overflow:auto;display:grid;gap:16px;flex:1;align-content:start}
+.as-frage{font-size:15px;font-weight:600}
+.as-feld{display:grid;gap:8px}
+.as-label{font-size:12px;text-transform:uppercase;letter-spacing:.05em;color:var(--ink-3)}
+.as-feld .chips{display:flex;flex-wrap:wrap;gap:8px;align-items:flex-start}
+.as-feld .chip{font-size:14px;padding:9px 14px}
+.as-hinweis{font-size:12.5px;color:var(--warn)}
+.as-fuss{display:flex;justify-content:flex-end;flex-wrap:wrap;gap:8px;padding:12px 16px;border-top:1px solid var(--line)}
+.as-gruppe{border:1px solid var(--line);border-radius:10px;padding:10px 12px;display:grid;gap:6px}
+.as-gkopf{display:flex;justify-content:space-between;align-items:center;font-weight:700;font-size:13px}
+.as-zeile{display:flex;justify-content:space-between;gap:12px;font-size:13.5px}
+.as-zeile span{color:var(--ink-3)}
+.as-zeile strong{text-align:right;overflow-wrap:anywhere}
+.as-offen{color:var(--warn)}
+.akarte{border:1px solid var(--line);border-radius:10px;padding:10px 12px;display:grid;gap:6px;background:var(--ground)}
+@media (max-width:600px){ .assistent{padding:0} .as-karte{border-radius:0;height:100%} }
 .modus{display:inline-flex;align-self:flex-start;justify-self:start;width:max-content;border:1px solid var(--line-2);border-radius:10px;overflow:hidden}
 .modus button{border:0;background:transparent;color:inherit;font:inherit;font-weight:600;padding:9px 18px;cursor:pointer}
 .modus button[aria-pressed="true"]{background:var(--accent);color:#fff}
@@ -324,7 +347,10 @@ var byId = {}, posById = {};
    gemerkt, damit jede Änderung zurückgesetzt werden kann. */
 var STAMM_FELDER_ST  = ["filiale","name","adresse","plz","ort","region","lat","lon","aktiv","notiz"];
 var STAMM_FELDER_POS = ["anlagentyp","intervallCode","inbetriebnahme","monat","kaeltemittelKg",
-                        "kaeltemittelArt","rueckkuehler","aktiv","notiz"];
+                        "kaeltemittelArt","rueckkuehler","aktiv","notiz",
+                        /* Anlagendaten, die vor Ort nach und nach ergänzt werden */
+                        "pausiert","pausiertGrund","bauart","kreislaeufe","pruefbuch","rkUkt","pumpeUkt",
+                        "regelung","regelungFirma","regelungFirmaName","fernzugriff","hersteller","modell","seriennummer","vorOrtNeu"];
 var ABGELEITET_POS   = ["kaeltemittelText","ueber30kg","baujahr"];
 function auswahl(o, felder){
   var r={}; felder.forEach(function(k){ r[k]=(o[k]===undefined?null:o[k]); }); return r;
@@ -338,11 +364,15 @@ ALLE_POS.forEach(function(p){
 
 function indexNeuAufbauen(){
   byId={}; posById={};
-  ALLE_ST.forEach(function(s){ byId[s.id]=s; s.pos=[]; });
+  ALLE_ST.forEach(function(s){ byId[s.id]=s; s.pos=[]; s.pausiertePos=[]; });
   ALLE_POS.forEach(function(p){ posById[p.id]=p; });
-  ALLE_POS.forEach(function(p){ if(p.aktiv && byId[p.standortId]) byId[p.standortId].pos.push(p); });
+  /* „zur Zeit nicht gewartet“: bleibt sichtbar, zählt aber für keine Fälligkeit */
+  ALLE_POS.forEach(function(p){
+    if(!p.aktiv || !byId[p.standortId]) return;
+    (p.pausiert ? byId[p.standortId].pausiertePos : byId[p.standortId].pos).push(p);
+  });
   ST = ALLE_ST.filter(function(s){ return s.aktiv; });
-  POS = ALLE_POS.filter(function(p){ return p.aktiv && byId[p.standortId] && byId[p.standortId].aktiv; });
+  POS = ALLE_POS.filter(function(p){ return p.aktiv && !p.pausiert && byId[p.standortId] && byId[p.standortId].aktiv; });
   /* Kennzahlen je Markt, die sonst aus der Excel-Aufbereitung stammen */
   ALLE_ST.forEach(function(s){
     var bj=s.pos.map(function(p){ return p.baujahr; }).filter(Boolean);
@@ -427,9 +457,9 @@ function tageBis(iso){
 }
 
 var STATUS_LABEL={ueberfaellig:"überfällig",faellig:"fällig in "+VORLAUF_TAGE+" Tagen",
-                  geplant:"im Plan",erledigt:"im Plan",unbekannt:"ohne Termin"};
-var STATUS_RANK={ueberfaellig:0,faellig:1,unbekannt:2,geplant:3,erledigt:3};
-var STATUS_VAR={ueberfaellig:"--crit",faellig:"--warn",geplant:"--good",erledigt:"--good",unbekannt:"--ink-3"};
+                  geplant:"im Plan",erledigt:"im Plan",unbekannt:"ohne Termin",pausiert:"zur Zeit nicht gewartet"};
+var STATUS_RANK={ueberfaellig:0,faellig:1,unbekannt:2,geplant:3,erledigt:3,pausiert:4};
+var STATUS_VAR={ueberfaellig:"--crit",faellig:"--warn",geplant:"--good",erledigt:"--good",unbekannt:"--ink-3",pausiert:"--ink-3"};
 
 /* ---------- Technikernamen: eine Person, eine Schreibweise ----------
    Groß-/Kleinschreibung und Leerzeichen werden an den bekannten Namen
@@ -540,6 +570,11 @@ function berechneFaelligkeiten(){
   });
 
   ST.forEach(function(s){
+    /* nur Anlagen, die zur Zeit nicht gewartet werden: der Markt ist nicht fällig */
+    if(!s.pos.length && s.pausiertePos.length){
+      s.letzterBesuch=null; s.naechsterBesuch=null; s.marktStatus="pausiert"; s.status="pausiert"; s.offen=0;
+      return;
+    }
     var besuche=[];
     s.pos.forEach(function(p){ if(p.letzte) besuche.push(p.letzte); });
     (ausProtMarkt[s.id]||[]).forEach(function(d){ besuche.push(d); });
@@ -1490,7 +1525,14 @@ function standortDetail(s){
   };
   var pl=d.querySelector("#poslist");
   s.pos.forEach(function(p){ pl.appendChild(posBox(p,s)); });
+  s.pausiertePos.forEach(function(p){ pl.appendChild(pausiertBox(p)); });
   return d;
+}
+/* zur Zeit nicht gewartet – sichtbar, aber ohne Termin */
+function pausiertBox(p){
+  return el('<div class="posbox" style="opacity:.75"><div class="rowflex" style="justify-content:space-between;gap:8px">'+
+    '<strong style="font-size:14px">'+esc(anlagenName(p))+"</strong>"+pill("pausiert")+"</div>"+
+    '<div class="muted" style="font-size:13px">'+esc([p.pausiertGrund?"Grund: "+p.pausiertGrund:"", anlageKurz(p)].filter(Boolean).join(" · ")||"Keine Termine, bis die Anlage in der Verwaltung wieder auf „in Betrieb“ steht.")+"</div></div>");
 }
 function posBox(p,s){
   var b=el('<div class="posbox">'+
@@ -1508,6 +1550,9 @@ function posBox(p,s){
       (p.kaeltemittelText?"<dt>Kältemittel</dt><dd class='mono'>"+esc(p.kaeltemittelText)+"</dd>":"")+
       (p.inbetriebnahme?"<dt>Inbetriebnahme</dt><dd class='mono'>"+dfmt(p.inbetriebnahme)+"</dd>":"")+
       (p.rueckkuehler?"<dt>Rückkühler</dt><dd>"+esc(p.rueckkuehler)+"</dd>":"")+
+      "<dt>Anlagendaten</dt><dd>"+(anlageKurz(p)?esc(anlageKurz(p)):'<span class="muted">noch nicht erfasst</span>')+
+        (anlageLuecken(p).length?' <span class="muted" style="font-size:12px">· '+anlageLuecken(p).length+" Angabe(n) offen</span>":"")+"</dd>"+
+      (p.hersteller||p.seriennummer?"<dt>Typenschild</dt><dd>"+esc([p.hersteller,p.modell,p.seriennummer?"SN "+p.seriennummer:""].filter(Boolean).join(" · "))+"</dd>":"")+
     "</dl>"+
     '<div><div class="l muted" style="font-size:11px;text-transform:uppercase;letter-spacing:.06em;margin-bottom:4px">Durchgeführte Wartungen</div>'+
       '<div class="timeline">'+(p.historie.length?p.historie.map(function(dt){
@@ -1570,7 +1615,8 @@ function viewAnlagen(){
     '</summary><div class="inner"></div></details>');
     var inner=d.querySelector(".inner");
     d.addEventListener("toggle",function(){
-      if(d.open && !inner.dataset.done){ s.pos.forEach(function(p){ inner.appendChild(posBox(p,s)); }); inner.dataset.done="1"; }
+      if(d.open && !inner.dataset.done){ s.pos.forEach(function(p){ inner.appendChild(posBox(p,s)); });
+        s.pausiertePos.forEach(function(p){ inner.appendChild(pausiertBox(p)); }); inner.dataset.done="1"; }
     });
     host.appendChild(d);
   });
@@ -1581,6 +1627,216 @@ function viewAnlagen(){
 /* ---------- Protokoll ---------- */
 var ANLAGENTYPEN=["Split","Multi-Split","VRV wassergekühlt","VRV luftgekühlt","Rückkühler","Pumpe","sonstige"];
 var REGELUNGEN=["Daikin Touch Manager","R&S","Wurm","LichtLoidl"];
+
+/* ---------- Anlagendaten ----------
+   Was UKT über jede Anlage wissen muss. Die Excel-Liste ist hier lückenhaft;
+   ergänzt wird vor Ort beim Protokoll über einen geführten Dialog, der nur
+   fragt, was fehlt. Gruppen = Schritte des Dialogs. */
+var BAUARTEN=["Split","Multi-Split","VRV luftgekühlt","VRV wassergekühlt","Kaltwassersatz","sonstige"];
+var KAELTEMITTEL=["R410A","R32","R407C","R134a","R454B","R744"];
+var OHNE_REGELUNG="keine eigene Regelung";
+function istWassergekuehlt(a){
+  var b=String(a.bauart||"").toLowerCase();
+  if(b) return b.indexOf("wasser")>=0 || b.indexOf("kaltwasser")>=0;
+  return /wasser|rza|rk\b|rückkühl/i.test(String(a.anlagentyp||"")+" "+String(a.rueckkuehler||""));
+}
+var ANLAGE_GRUPPEN=[
+  {titel:"Bauart", frage:"Was für eine Anlage ist das?", felder:[
+    {k:"bauart", l:"Bauart", t:"wahl", o:BAUARTEN}]},
+  {titel:"Kältekreis", frage:"Wie viele Kältekreisläufe hat die Anlage – und gibt es ein Prüfbuch?", felder:[
+    {k:"kreislaeufe", l:"Kältekreisläufe", t:"zahl"},
+    {k:"pruefbuch", l:"Prüfbuch vorhanden", t:"jn"}]},
+  {titel:"Kältemittel", frage:"Welches Kältemittel, wie viel?", felder:[
+    {k:"kaeltemittelArt", l:"Kältemittel", t:"wahl", o:KAELTEMITTEL, frei:true},
+    {k:"kaeltemittelKg", l:"Füllmenge (kg)", t:"kg"}]},
+  {titel:"Rückkühler und Pumpen", frage:"Wassergekühlt: Gehören Rückkühler und Pumpenstation zu unserem Auftrag?",
+    wenn:istWassergekuehlt, felder:[
+    {k:"rkUkt", l:"Rückkühler von UKT zu warten", t:"jn"},
+    {k:"pumpeUkt", l:"Pumpenstation von UKT zu warten", t:"jn"}]},
+  {titel:"Regelung", frage:"Welche Regelung, wer betreut sie, haben wir Fernzugriff?", felder:[
+    {k:"regelung", l:"Regelung", t:"wahl", o:REGELUNGEN.concat([OHNE_REGELUNG]), frei:true},
+    {k:"regelungFirma", l:"Regelung betreut von", t:"wahl", o:["UKT","andere Firma"],
+      wenn:function(a){ return a.regelung!==OHNE_REGELUNG; }},
+    {k:"regelungFirmaName", l:"Name der Firma", t:"text",
+      wenn:function(a){ return a.regelung!==OHNE_REGELUNG && a.regelungFirma==="andere Firma"; }},
+    {k:"fernzugriff", l:"Fernzugriff durch UKT", t:"jn",
+      wenn:function(a){ return a.regelung!==OHNE_REGELUNG; }}]},
+  {titel:"Typenschild", frage:"Angaben vom Typenschild (freiwillig)", optional:true, felder:[
+    {k:"hersteller", l:"Hersteller", t:"text"},
+    {k:"modell", l:"Modell", t:"text"},
+    {k:"seriennummer", l:"Seriennummer", t:"text"}]}
+];
+var ANLAGE_FELDER=[].concat.apply([], ANLAGE_GRUPPEN.map(function(g){
+  return g.felder.map(function(f){ return Object.assign({gruppe:g}, f); }); }));
+function leerWert(w){ return w==null || w==="" || (typeof w==="number" && isNaN(w)); }
+function feldGilt(f, a){ return (!f.gruppe.wenn || f.gruppe.wenn(a)) && (!f.wenn || f.wenn(a)); }
+/* was an Pflichtangaben noch fehlt */
+function anlageLuecken(a){
+  return ANLAGE_FELDER.filter(function(f){ return !f.gruppe.optional && feldGilt(f,a) && leerWert(a[f.k]); });
+}
+function anlageWertText(f, w){
+  if(leerWert(w)) return "–";
+  if(f.t==="kg") return String(w).replace(".",",")+" kg";
+  return String(w);
+}
+/* kurze Zusammenfassung für Karten, Detailansicht und Druck */
+function anlageKurz(a){
+  var t=[];
+  if(a.bauart) t.push(a.bauart);
+  if(a.kreislaeufe) t.push(a.kreislaeufe+" Kältekreis"+(+a.kreislaeufe===1?"":"e"));
+  if(a.kaeltemittelArt||!leerWert(a.kaeltemittelKg)) t.push([a.kaeltemittelArt, leerWert(a.kaeltemittelKg)?"":String(a.kaeltemittelKg).replace(".",",")+" kg"].filter(Boolean).join(" "));
+  if(a.pruefbuch==="ja") t.push("Prüfbuch");
+  if(istWassergekuehlt(a) && (a.rkUkt||a.pumpeUkt))
+    t.push("RK "+(a.rkUkt==="ja"?"UKT":"fremd")+" · Pumpen "+(a.pumpeUkt==="ja"?"UKT":"fremd"));
+  if(a.regelung) t.push(a.regelung===OHNE_REGELUNG ? "ohne eigene Regelung"
+    : a.regelung+(a.regelungFirma?" ("+(a.regelungFirma==="UKT"?"UKT":(a.regelungFirmaName||"andere Firma"))+")":"")+
+      (a.fernzugriff?" · Fernzugriff "+a.fernzugriff:""));
+  return t.join(" · ");
+}
+
+/* Geführte Erfassung einer Anlage. Fragt nur die Gruppen ab, in denen etwas
+   fehlt, und endet mit einer Übersicht, in der sich alles ändern lässt.
+   Liefert die vollständigen Werte oder null (abgebrochen). */
+function anlageAssistent(start, titel, neu){
+  return new Promise(function(fertig){
+    var a=Object.assign({}, start);
+    var ov=el('<div class="assistent" role="dialog" aria-modal="true"><div class="as-karte">'+
+      '<div class="as-kopf"><div style="min-width:0"><div class="as-titel"></div><div class="as-schritt"></div></div>'+
+        '<button class="btn ghost sm" type="button" data-as="zu">Abbrechen</button></div>'+
+      '<div class="as-inhalt"></div><div class="as-fuss"></div></div></div>');
+    document.body.appendChild(ov);
+    document.body.style.overflow="hidden";
+    var inhalt=ov.querySelector(".as-inhalt"), fuss=ov.querySelector(".as-fuss");
+    var schliessen=function(wert){ ov.remove(); document.body.style.overflow=""; fertig(wert); };
+    ov.querySelector('[data-as="zu"]').onclick=function(){ schliessen(null); };
+
+    /* Schritte: bei einer neuen Anlage zuerst die Bezeichnung, dann jede
+       Gruppe, in der eine Pflichtangabe fehlt */
+    var gruppenMitLuecke=function(){
+      var fehl=anlageLuecken(a);
+      return ANLAGE_GRUPPEN.filter(function(g){ return fehl.some(function(f){ return f.gruppe===g; }); });
+    };
+    var schritte=(neu?["name"]:[]).concat(gruppenMitLuecke());
+    var pos=0, zurUebersicht=false;
+
+    var kopf=function(text, schritt){
+      ov.querySelector(".as-titel").textContent=titel||"Anlage";
+      ov.querySelector(".as-schritt").textContent=text+(schritt?" · "+schritt:"");
+    };
+    var knopf=function(text, art, fn){
+      var b=el('<button class="btn'+(art?" "+art:"")+'" type="button">'+esc(text)+"</button>"); b.onclick=fn; fuss.appendChild(b); return b;
+    };
+
+    function feldHtml(f){
+      var w=a[f.k], h='<div class="as-feld"><div class="as-label">'+esc(f.l)+"</div>";
+      var chip=function(wert, text, an){
+        return '<button class="chip" type="button" data-f="'+f.k+'" data-w="'+esc(wert)+'" aria-pressed="'+(!!an)+'">'+esc(text)+"</button>"; };
+      if(f.t==="wahl"){
+        var eigen=!leerWert(w) && f.o.indexOf(w)<0;
+        h+='<div class="chips">'+f.o.map(function(o){ return chip(o,o,w===o); }).join("")+
+          (f.frei?chip("__frei","andere …",eigen):"")+"</div>"+
+          (f.frei?'<input type="text" class="as-frei" data-frei="'+f.k+'" placeholder="Bezeichnung eingeben" value="'+esc(eigen?w:"")+'"'+(eigen?"":" hidden")+">":"");
+      } else if(f.t==="jn"){
+        h+='<div class="chips">'+chip("ja","ja",w==="ja")+chip("nein","nein",w==="nein")+chip("","weiß nicht",leerWert(w))+"</div>";
+      } else if(f.t==="zahl"){
+        h+='<div class="chips">'+[1,2,3,4].map(function(n){ return chip(n,String(n),+w===n); }).join("")+"</div>"+
+          '<input type="number" min="1" max="99" inputmode="numeric" data-in="'+f.k+'" placeholder="andere Anzahl" value="'+esc(+w>4?w:"")+'">';
+      } else if(f.t==="kg"){
+        h+='<input type="text" inputmode="decimal" data-in="'+f.k+'" placeholder="z. B. 12,5" value="'+esc(leerWert(w)?"":String(w).replace(".",","))+'">'+
+          '<div class="as-hinweis" data-hinweis="'+f.k+'"></div>';
+      } else {
+        h+='<input type="text" data-in="'+f.k+'" value="'+esc(leerWert(w)?"":w)+'">';
+      }
+      return h+"</div>";
+    }
+    function kgHinweis(){
+      var n=inhalt.querySelector('[data-hinweis="kaeltemittelKg"]'); if(!n) return;
+      n.textContent = +a.kaeltemittelKg>=30 ? "Ab 30 kg ist eine Halbjahreswartung (HJW) vorgeschrieben." : "";
+    }
+    function gruppeZeigen(g){
+      inhalt.innerHTML='<div class="as-frage">'+esc(g.frage)+"</div>"+
+        g.felder.filter(function(f){ return feldGilt(Object.assign({gruppe:g},f),a); }).map(feldHtml).join("");
+      inhalt.querySelectorAll(".chip[data-f]").forEach(function(c){
+        c.onclick=function(){
+          var k=c.dataset.f, w=c.dataset.w, frei=inhalt.querySelector('[data-frei="'+k+'"]');
+          if(w==="__frei"){ if(frei){ frei.hidden=false; frei.focus(); a[k]=frei.value.trim(); } }
+          else {
+            a[k]= (k==="kreislaeufe") ? +w : w;
+            if(frei){ frei.hidden=true; frei.value=""; }
+            var zahlIn=inhalt.querySelector('[data-in="'+k+'"]'); if(zahlIn) zahlIn.value="";
+          }
+          /* abhängige Fragen (z. B. Firmenname) sofort ein- oder ausblenden */
+          gruppeZeigen(g);
+        };
+      });
+      inhalt.querySelectorAll("[data-frei]").forEach(function(i){ i.oninput=function(){ a[i.dataset.frei]=i.value.trim(); }; });
+      inhalt.querySelectorAll("[data-in]").forEach(function(i){
+        i.oninput=function(){
+          var k=i.dataset.in, v=i.value.trim();
+          if(k==="kaeltemittelKg"){ v=v.replace(",","."); a[k]= v===""?null:(isNaN(+v)?a[k]:+v); kgHinweis(); }
+          else if(k==="kreislaeufe"){ a[k]= v===""?a[k]:+v; inhalt.querySelectorAll('.chip[data-f="kreislaeufe"]').forEach(function(c){ c.setAttribute("aria-pressed","false"); }); }
+          else a[k]=v;
+        };
+      });
+      kgHinweis();
+    }
+    function nameZeigen(){
+      inhalt.innerHTML='<div class="as-frage">Wie heißt die Anlage, damit sie jeder wiederfindet?</div>'+
+        '<div class="as-feld"><div class="as-label">Bezeichnung</div><input type="text" data-in="anlagentyp" '+
+        'placeholder="z. B. VRV Verkaufsraum, Split Serverraum" value="'+esc(a.anlagentyp||"")+'"></div>';
+      var i=inhalt.querySelector("input"); i.oninput=function(){ a.anlagentyp=i.value.trim(); }; setTimeout(function(){ i.focus(); },50);
+    }
+    function schrittZeigen(){
+      fuss.innerHTML="";
+      var s=schritte[pos];
+      kopf("Schritt "+(pos+1)+" von "+schritte.length, s==="name"?"Bezeichnung":s.titel);
+      if(s==="name") nameZeigen(); else gruppeZeigen(s);
+      if(pos>0 && !zurUebersicht) knopf("Zurück","ghost",function(){ pos--; schrittZeigen(); });
+      if(s!=="name" && !zurUebersicht) knopf("Überspringen","ghost",function(){ weiter(); });
+      knopf(zurUebersicht?"Fertig":"Weiter","",function(){
+        if(s==="name" && !a.anlagentyp){ toast("Bitte eine Bezeichnung eingeben."); return; }
+        weiter();
+      });
+      inhalt.scrollTop=0;
+    }
+    function weiter(){
+      if(zurUebersicht){ uebersicht(); return; }
+      /* die restlichen Schritte neu bestimmen – eine Antwort kann Fragen
+         hinzufügen (wassergekühlt -> Rückkühler) oder überflüssig machen */
+      var akt=schritte[pos], ab=akt==="name"?-1:ANLAGE_GRUPPEN.indexOf(akt);
+      var rest=gruppenMitLuecke().filter(function(g){ return ANLAGE_GRUPPEN.indexOf(g)>ab; });
+      schritte=schritte.slice(0,pos+1).concat(rest);
+      if(pos>=schritte.length-1){ uebersicht(); return; }
+      pos++; schrittZeigen();
+    }
+    function uebersicht(){
+      zurUebersicht=true; fuss.innerHTML="";
+      var fehl=anlageLuecken(a);
+      kopf(fehl.length ? fehl.length+" Angabe"+(fehl.length===1?"":"n")+" noch offen" : "Alle Angaben vorhanden", "Übersicht");
+      inhalt.innerHTML='<div class="as-frage">'+(fehl.length?"Offenes kann auch später ergänzt werden.":"Stimmt noch alles?")+"</div>"+
+        ANLAGE_GRUPPEN.filter(function(g){ return !g.wenn || g.wenn(a); }).map(function(g,i){
+          var zeilen=g.felder.filter(function(f){ return feldGilt(Object.assign({gruppe:g},f),a); }).map(function(f){
+            var w=a[f.k];
+            return '<div class="as-zeile"><span>'+esc(f.l)+"</span><strong"+(leerWert(w)&&!g.optional?' class="as-offen"':"")+">"+
+              esc(leerWert(w)?(g.optional?"–":"offen"):anlageWertText(f,w))+"</strong></div>";
+          }).join("");
+          return '<div class="as-gruppe"><div class="as-gkopf"><span>'+esc(g.titel)+"</span>"+
+            '<button class="btn ghost sm" type="button" data-g="'+ANLAGE_GRUPPEN.indexOf(g)+'">ändern</button></div>'+zeilen+"</div>";
+        }).join("");
+      inhalt.querySelectorAll("[data-g]").forEach(function(b){
+        b.onclick=function(){
+          var g=ANLAGE_GRUPPEN[+b.dataset.g];
+          fuss.innerHTML=""; kopf("Ändern", g.titel); gruppeZeigen(g);
+          knopf("Zurück zur Übersicht","",uebersicht);
+        };
+      });
+      if(neu) knopf("Bezeichnung ändern","ghost",function(){ fuss.innerHTML=""; kopf("Ändern","Bezeichnung"); nameZeigen(); knopf("Zurück zur Übersicht","",uebersicht); });
+      knopf("Übernehmen","",function(){ schliessen(a); });
+      inhalt.scrollTop=0;
+    }
+    if(schritte.length) schrittZeigen(); else uebersicht();
+  });
+}
 var ARBEITEN=["Sicht-/Sicherheitsprüfung","Betriebszustand/Fehlerspeicher","Filter geprüft/gereinigt/getauscht",
   "Wärmetauscher geprüft/gereinigt","Kondensatwanne/-ablauf","Ventilatoren/Motoren/Luftführung",
   "Elektrische Anschlüsse/Schutzorgane/Erdung","Kältemittelleitungen/Isolierung/Absperrorgane",
@@ -1853,12 +2109,17 @@ function wendeStammdatenAn(){
   berechneFaelligkeiten();
 }
 
+/* Anlagendaten dürfen alle angemeldeten Techniker ergänzen (vor Ort beim
+   Protokoll), Märkte nur Admins – so regelt es auch die Datenbank */
+function darfStammZentral(rec){
+  return Admin.zentral || (!!Store.benutzer && rec && rec.typ==="position");
+}
 function stammSpeichern(rec){
   var lokal=function(){
     return idbVorgang("readwrite",function(st){ return st.put(rec); },"stammdaten")
       .then(function(){ return "geraet"; }, function(){ return false; });
   };
-  if(Store.modus==="supabase" && Store.sb && Admin.zentral){
+  if(Store.modus==="supabase" && Store.sb && darfStammZentral(rec)){
     return Store.sb.from("stammdaten").upsert({id:rec.id, typ:rec.typ, ziel:rec.ziel, felder:rec.felder,
       neu:!!rec.neu, geaendert:rec.geaendert, von:rec.von, grund:rec.grund||null})
       .then(function(r){ return r.error ? lokal() : "gemeinsam"; }, lokal);
@@ -1904,10 +2165,11 @@ function ladeStammdaten(){
 }
 /* auf dem Gerät gemachte Änderungen nachtragen, sobald man zentral Admin ist */
 function stammdatenUebertragen(){
-  var darf = (Store.modus==="supabase" && Admin.zentral) || Store.modus==="claude";
+  var darf = (Store.modus==="supabase" && !!Store.benutzer) || Store.modus==="claude";
   if(!darf) return;
   idbVorgang("readonly",function(st){ return st.getAll(); },"stammdaten").then(function(liste){
     (liste||[]).forEach(function(rec){
+      if(Store.modus==="supabase" && !darfStammZentral(rec)) return;
       stammSpeichern(rec).then(function(wo){
         if(wo==="gemeinsam") idbVorgang("readwrite",function(st){ return st.delete(rec.id); },"stammdaten");
       });
@@ -1929,7 +2191,7 @@ function adminPruefen(){
   if(Store.modus==="supabase" && Store.sb && Store.benutzer){
     return Store.sb.from("admins").select("user_id").eq("user_id",Store.benutzer.id).then(function(r){
       Admin.zentral=!!(r.data&&r.data.length); Admin.frei=Admin.zentral; Admin.geprueft=true;
-      if(Admin.zentral) stammdatenUebertragen();
+      stammdatenUebertragen();   /* Anlagendaten auch von Technikern */
       return Admin.frei;
     },function(){ Admin.geprueft=true; return false; });
   }
@@ -2596,8 +2858,11 @@ function viewProtokoll(){
     '<label class="fl"><span>Subunternehmen</span><input type="text" id="f_sub" placeholder="leer = nein"></label>'+
   "</div></fieldset>"+
 
-  '<fieldset><legend>Anlagendaten</legend><div id="anlagen" class="stack"></div>'+
-    '<div style="margin-top:10px"><button type="button" class="btn ghost sm" id="addAnlage">+ weitere Anlage</button></div></fieldset>'+
+  '<fieldset><legend>Anlagendaten</legend>'+
+    '<div class="muted" style="font-size:12.5px;margin-bottom:10px">Die Liste ist hier oft lückenhaft. Fehlendes wird Schritt für Schritt abgefragt '+
+      "und mit dem Protokoll in die Anlagendaten übernommen – für alle sichtbar.</div>"+
+    '<div id="anlagen" class="stack"></div>'+
+    '<div style="margin-top:10px"><button type="button" class="btn ghost sm" id="addAnlage">+ Anlage fehlt in der Liste</button></div></fieldset>'+
 
   (stoer ? stoerBehebungHtml :
   '<fieldset><legend>Durchgeführte Wartungsarbeiten</legend><div class="checks">'+
@@ -2696,6 +2961,11 @@ function viewProtokoll(){
       : 'Angehakte Anlagen gelten mit diesem Protokoll als gewartet – '+
         'ihr Termin ist für dieses Jahr erledigt, als nächstes steht derselbe Termin im Folgejahr an. '+
         'Das gilt nur bei Wartungsart „planmäßig" oder „Prüfung"; eine Störung oder Reparatur ersetzt keine Wartung.')+"</div>"));
+    /* Anlagen, die zur Zeit nicht gewartet werden: nur als Hinweis */
+    if(cur.pausiertePos && cur.pausiertePos.length)
+      posBox.appendChild(el('<div class="muted" style="font-size:12px">Zur Zeit nicht gewartet: '+
+        esc(cur.pausiertePos.map(function(x){ return anlagenName(x)+(x.pausiertGrund?" ("+x.pausiertGrund+")":""); }).join(", "))+"</div>"));
+    anlagenZeichnen();
   }
   selSt.onchange=function(){ var cur=byId[selSt.value];
     form.querySelector("#f_adresse").value=cur?cur.adresse:"";
@@ -2704,56 +2974,112 @@ function viewProtokoll(){
   if(s){ selSt.value=s.id; form.querySelector("#f_adresse").value=s.adresse; }
   fillPos(p?p.id:null);
 
-  /* Anlagenblöcke */
-  var anlagenHost=form.querySelector("#anlagen");
-  var anlagenN=0;
-  function addAnlage(pref){
-    anlagenN++; var n=anlagenN;
-    var b=el('<div class="posbox">'+
-      '<div class="rowflex" style="justify-content:space-between"><strong>Anlage '+n+"</strong>"+
-        (n>1?'<button type="button" class="btn ghost sm rm">entfernen</button>':"")+"</div>"+
-      '<div><div class="fl" style="margin-bottom:6px"><span>Anlagentyp</span></div><div class="optrow">'+
-        ANLAGENTYPEN.map(function(t,i){ return '<label class="opt"><input type="checkbox" name="atyp'+n+'" value="'+esc(t)+'" id="f_atyp'+n+"_"+i+'"><span>'+esc(t)+"</span></label>"; }).join("")+
-      "</div></div>"+
-      '<div><div class="fl" style="margin-bottom:6px"><span>Regelung</span></div><div class="optrow">'+
-        REGELUNGEN.map(function(t,i){ return '<label class="opt"><input type="checkbox" name="areg'+n+'" value="'+esc(t)+'" id="f_areg'+n+"_"+i+'"><span>'+esc(t)+"</span></label>"; }).join("")+
-        '<label class="opt"><input type="checkbox" name="afern'+n+'" value="Fernzugriff" id="f_afern'+n+'"><span>Fernzugriff</span></label>'+
-      "</div></div>"+
-      '<div class="grid">'+
-        '<label class="fl"><span>Hersteller</span><input type="text" name="ah'+n+'" id="f_ah'+n+'"></label>'+
-        '<label class="fl"><span>Modell</span><input type="text" name="am'+n+'" id="f_am'+n+'"></label>'+
-        '<label class="fl"><span>Seriennummer</span><input type="text" name="as'+n+'" id="f_as'+n+'"></label>'+
-        '<label class="fl"><span>Baujahr</span><input type="number" name="ab'+n+'" id="f_ab'+n+'" min="1980" max="2100"></label>'+
-        '<label class="fl"><span>Nennleistung (kW)</span><input type="text" name="ak'+n+'" id="f_ak'+n+'" inputmode="decimal"></label>'+
-        '<label class="fl"><span>Standort Außengerät</span><input type="text" name="ao'+n+'" id="f_ao'+n+'"></label>'+
-      "</div></div>");
-    var rm=b.querySelector(".rm"); if(rm) rm.onclick=function(){ b.remove(); };
-    anlagenHost.appendChild(b);
-    if(pref){
-      if(pref.baujahr) b.querySelector("#f_ab"+n).value=pref.baujahr;
-      var t=(pref.anlagentyp||"").toLowerCase();
-      var guess=null;
-      if(t.indexOf("multi")>=0) guess="Multi-Split";
-      else if(t.indexOf("vrv")>=0) guess=(t.indexOf("luft")>=0?"VRV luftgekühlt":"VRV wassergekühlt");
-      else if(t.indexOf("split")>=0) guess="Split";
-      if(guess){ var cb=b.querySelector('input[name="atyp'+n+'"][value="'+guess+'"]'); if(cb) cb.checked=true; }
-      if(pref.rueckkuehler){ var cb2=b.querySelector('input[name="atyp'+n+'"][value="Rückkühler"]'); if(cb2) cb2.checked=true; }
-    }
-    return {b:b, n:n};
-  }
-  /* füllt einen Anlagenblock mit gespeicherten Werten (Korrektur) */
-  function fuelleAnlage(blk, a){
-    var n=blk.n, b=blk.b;
-    var setz=function(name,wert){ var x=b.querySelector('input[name="'+name+'"]'); if(x&&wert!=null) x.value=wert; };
-    (a.typ||[]).forEach(function(t){ var x=b.querySelector('input[name="atyp'+n+'"][value="'+t+'"]'); if(x) x.checked=true; });
-    (a.regelung||[]).forEach(function(t){ var x=b.querySelector('input[name="areg'+n+'"][value="'+t+'"]'); if(x) x.checked=true; });
-    var fz=b.querySelector('input[name="afern'+n+'"]'); if(fz) fz.checked=!!a.fernzugriff;
-    setz("ah"+n,a.hersteller); setz("am"+n,a.modell); setz("as"+n,a.seriennummer);
-    setz("ab"+n,a.baujahr); setz("ak"+n,a.leistungKw); setz("ao"+n,a.standortAussen);
-  }
+  /* ---- Anlagendaten: je angehakter Anlage eine Karte, Ergänzen über den Assistenten ---- */
   var bearb = S.bearbeiten ? S.bearbeiten.x : null;
-  if(!bearb) addAnlage(p);
-  form.querySelector("#addAnlage").onclick=function(){ if(anlagenN<6) addAnlage(null); };
+  var anlagenHost=form.querySelector("#anlagen");
+  var anlagenAend={};     /* posId -> geänderte Felder */
+  var neueAnlagen=[];     /* vor Ort neu erfasst: {id, werte} */
+  /* alte Protokolle hatten frei eingetippte Anlagenblöcke – die bleiben unverändert erhalten */
+  var altAnlagen = (bearb && (bearb.anlagen||[]).length && !(bearb.anlagen||[]).some(function(x){ return x.positionId; })) ? bearb.anlagen : null;
+  var ANLAGE_KEYS=ANLAGE_FELDER.map(function(f){ return f.k; });
+  function anlageBasis(p){
+    var w={anlagentyp:p.anlagentyp, rueckkuehler:p.rueckkuehler};
+    ANLAGE_KEYS.forEach(function(k){ w[k]=(p[k]===undefined?null:p[k]); });
+    return w;
+  }
+  function anlageWerte(p){ return Object.assign(anlageBasis(p), anlagenAend[p.id]||{}); }
+  function angehakt(){ return Array.prototype.map.call(form.querySelectorAll('input[name="posw"]:checked'),function(x){ return x.value; }); }
+  function anlagenKarte(id, name, w, neu){
+    var l=anlageLuecken(w), markiert=neu||!!anlagenAend[id];
+    var k=el('<div class="akarte">'+
+      '<div class="rowflex" style="justify-content:space-between;gap:8px"><strong>'+esc(name)+"</strong>"+
+        (neu?'<span class="tag st">neu erfasst</span>':markiert?'<span class="tag f30">wird aktualisiert</span>':"")+"</div>"+
+      '<div class="muted" style="font-size:12.5px">'+esc(anlageKurz(w)||"noch keine Angaben")+"</div>"+
+      '<div class="rowflex" style="justify-content:space-between;gap:8px;align-items:center">'+
+        '<span style="font-size:12.5px;color:'+(l.length?"var(--warn)":"var(--good)")+'">'+
+          (l.length?"Fehlt: "+esc(l.map(function(f){ return f.l; }).join(", ")):"vollständig")+"</span>"+
+        '<span class="rowflex" style="gap:6px">'+(neu?'<button class="btn ghost sm" type="button" data-a="weg">entfernen</button>':"")+
+          '<button class="btn sm'+(l.length?"":" ghost")+'" type="button" data-a="los">'+(l.length?"Ergänzen":"Prüfen")+"</button></span>"+
+      "</div></div>");
+    k.querySelector('[data-a="los"]').onclick=function(){
+      anlageAssistent(w, name, neu).then(function(erg){
+        if(!erg) return;
+        formDirty=true;
+        if(neu){ neueAnlagen.forEach(function(n){ if(n.id===id) n.werte=erg; }); }
+        else {
+          var basis=anlageBasis(posById[id]), delta={};
+          Object.keys(erg).forEach(function(kk){ if(!gleich(basis[kk],erg[kk])) delta[kk]=erg[kk]; });
+          if(Object.keys(delta).length) anlagenAend[id]=delta; else delete anlagenAend[id];
+        }
+        anlagenZeichnen();
+      });
+    };
+    var weg=k.querySelector('[data-a="weg"]');
+    if(weg) weg.onclick=function(){ neueAnlagen=neueAnlagen.filter(function(n){ return n.id!==id; }); anlagenZeichnen(); };
+    anlagenHost.appendChild(k);
+  }
+  function anlagenZeichnen(){
+    if(!anlagenHost) return;
+    anlagenHost.innerHTML="";
+    var ids=angehakt();
+    ids.forEach(function(id){ var p=posById[id]; if(p) anlagenKarte(id, anlagenName(p), anlageWerte(p), false); });
+    neueAnlagen.forEach(function(n){ anlagenKarte(n.id, n.werte.anlagentyp||"Neue Anlage", n.werte, true); });
+    if(!ids.length && !neueAnlagen.length)
+      anlagenHost.appendChild(el('<div class="muted" style="font-size:13px">Oben den Standort wählen und die Anlagen anhaken – dann erscheinen sie hier.</div>'));
+    if(altAnlagen) anlagenHost.appendChild(el('<div class="note">Dieses Protokoll enthält Anlagenangaben aus der früheren Erfassung. '+
+      "Sie bleiben unverändert im Protokoll; Ergänzungen oben gehen in die Anlagendaten.</div>"));
+  }
+  posBox.addEventListener("change",function(e){ if(e.target && e.target.name==="posw") anlagenZeichnen(); });
+  form.querySelector("#addAnlage").onclick=function(){
+    if(!byId[selSt.value]){ toast("Bitte zuerst oben den Standort wählen."); selSt.focus(); return; }
+    anlageAssistent({}, "Neue Anlage", true).then(function(erg){
+      if(!erg) return;
+      formDirty=true;
+      neueAnlagen.push({id:"NP"+Date.now().toString(36)+Math.random().toString(36).slice(2,5), werte:erg});
+      anlagenZeichnen();
+    });
+  };
+  /* Stand der Anlagen zum Zeitpunkt des Protokolls – für Druck und Archiv */
+  function anlagenSchnappschuss(){
+    var liste=angehakt().map(function(id){
+      var p=posById[id]; if(!p) return null;
+      return Object.assign({positionId:id, name:anlagenName(p), inbetriebnahme:p.inbetriebnahme||null}, anlageWerte(p));
+    }).filter(Boolean);
+    neueAnlagen.forEach(function(n){ liste.push(Object.assign({positionId:n.id, name:n.werte.anlagentyp, neu:true}, n.werte)); });
+    return liste;
+  }
+  /* Ergänzungen in die Anlagendaten übernehmen (lokal sofort, zentral im Hintergrund) */
+  function anlagenUebernehmen(doc){
+    var jetzt=new Date().toISOString(), von=wer(), recs=[], felder=[];
+    var grund="Vor Ort erfasst beim "+(stoer?"Störungseinsatz":"Wartungsprotokoll")+" vom "+dfmt(doc.datum)+
+              (doc.nameTechniker?" ("+doc.nameTechniker+")":"");
+    var sid=doc.standortId;
+    Object.keys(anlagenAend).forEach(function(id){
+      var p=posById[id]; if(!p) return;
+      var vorher=auswahl(p,STAMM_FELDER_POS), neuP=Object.assign({}, vorher, anlagenAend[id]);
+      Object.keys(anlagenAend[id]).forEach(function(k){
+        var f=ANLAGE_FELDER.filter(function(x){ return x.k===k; })[0];
+        felder.push({feld:k, name:anlagenName(p)+" – "+(f?f.l:k), alt:f?anlageWertText(f,vorher[k]):stammWert(k,vorher[k]),
+                     neu:f?anlageWertText(f,neuP[k]):stammWert(k,neuP[k])});
+      });
+      if(p._neu){ neuP.standortId=p.standortId; recs.push({id:"position:"+id, felder:neuP, neu:true}); }
+      else recs.push({id:"position:"+id, felder:objDiff(EXCEL["position:"+id]||{},neuP,STAMM_FELDER_POS), neu:false});
+    });
+    neueAnlagen.forEach(function(n){
+      var neuP=Object.assign({standortId:sid, intervallCode:"", monat:0, aktiv:true, vorOrtNeu:true}, n.werte);
+      recs.push({id:"position:"+n.id, felder:neuP, neu:true});
+      felder.push({feld:"anlage", name:"Neue Anlage (vor Ort erfasst)", alt:"–", neu:(n.werte.anlagentyp||"Anlage")+" · "+anlageKurz(n.werte)});
+    });
+    if(!recs.length) return;
+    recs.forEach(function(r){
+      var rec={id:r.id, typ:"position", ziel:r.id.split(":")[1], felder:r.felder, neu:!!r.neu, geaendert:jetzt, von:von, grund:grund};
+      stammUeber[r.id]=rec;
+      stammSpeichern(rec);
+    });
+    wendeStammdatenAn();
+    protokolliere({art:"stammdaten", standortId:sid, standortName:byId[sid]?stName(byId[sid]):doc.standortName, grund:grund, felder:felder});
+  }
+  anlagenZeichnen();
 
   /* Mängel */
   var mHost=form.querySelector("#maengel");
@@ -2910,6 +3236,46 @@ function viewProtokoll(){
   var lastTech=lsGet("ukt_tech","");
   if(lastTech){ form.querySelector("#f_tech").value=lastTech; form.querySelector("#f_name").value=lastTech; }
 
+  /* Zertifikatsnummer und Kontakt je Techniker: einmal eingegeben, danach
+     automatisch – aus seinem letzten Protokoll (auf jedem Gerät) bzw. dem
+     auf diesem Gerät gemerkten Stand */
+  function techDaten(name){
+    var k=kanonName(name); if(!k) return {zertp:"", kontakt:""};
+    var gemerkt=(lsGet("ukt_techdaten",{})||{})[k]||{};
+    var r={zertp:gemerkt.zertp||"", kontakt:gemerkt.kontakt||""};
+    alleProtokolle().slice().sort(function(a,b){ return String(b.erstellt||"").localeCompare(String(a.erstellt||"")); })
+      .forEach(function(x){
+        if(kanonName(x.nameTechniker||x.techniker)!==k) return;
+        if(!r.zertp && x.zertPerson) r.zertp=x.zertPerson;
+        if(!r.kontakt && x.kontakt) r.kontakt=x.kontakt;
+      });
+    return r;
+  }
+  var autoWert={}, letzterTech=form.querySelector("#f_tech").value;
+  function techAnwenden(){
+    if(bearb) return;   /* eine Korrektur behält, was im Protokoll steht */
+    var name=form.querySelector("#f_tech").value, d=techDaten(name);
+    [["f_zertp","zertp"],["f_kontakt","kontakt"]].forEach(function(z){
+      var n=form.querySelector("#"+z[0]);
+      /* nur leere oder zuvor automatisch gefüllte Felder anfassen */
+      if(!n.value || n.value===autoWert[z[0]]){ n.value=d[z[1]]||""; autoWert[z[0]]=n.value; }
+    });
+    var zu=form.querySelector("#f_zertu");
+    if(!zu.value){
+      var firma=lsGet("ukt_zertu","");
+      if(!firma) alleProtokolle().some(function(x){ if(x.zertUnternehmen){ firma=x.zertUnternehmen; return true; } return false; });
+      zu.value=firma||"";
+    }
+    var nm=form.querySelector("#f_name");
+    if(!nm.value || nm.value===letzterTech) nm.value=name;
+    letzterTech=name;
+  }
+  form.querySelector("#f_tech").addEventListener("change",techAnwenden);
+  /* Auswahl aus der Namensliste sofort übernehmen, nicht erst beim Verlassen des Felds */
+  form.querySelector("#f_tech").addEventListener("input",function(e){
+    if(bekannteNamen().indexOf(e.target.value)>=0) techAnwenden(); });
+  techAnwenden();
+
   /* Korrektur: das Formular mit der gespeicherten Fassung füllen */
   if(bearb){
     var setz=function(id,w){ var n=form.querySelector("#"+id); if(n) n.value=(w==null?"":w); };
@@ -2928,8 +3294,7 @@ function viewProtokoll(){
     } else { var r2=form.querySelector('input[name="wart"][value="'+art+'"]'); if(r2) r2.checked=true; }
     setz("f_firma",bearb.firma); setz("f_tech",bearb.techniker); setz("f_kontakt",bearb.kontakt);
     setz("f_zertu",bearb.zertUnternehmen); setz("f_zertp",bearb.zertPerson); setz("f_sub",bearb.subunternehmen);
-    anlagenHost.innerHTML=""; anlagenN=0;
-    (bearb.anlagen&&bearb.anlagen.length?bearb.anlagen:[{}]).forEach(function(a){ fuelleAnlage(addAnlage(null),a); });
+    anlagenZeichnen();
     form.querySelectorAll('input[name="arbeit"]').forEach(function(c){ c.checked=(bearb.arbeiten||[]).indexOf(c.value)>=0; });
     setz("f_arb_sonst",bearb.arbeitenSonstiges);
     mHost.innerHTML="";
@@ -2999,17 +3364,8 @@ function viewProtokoll(){
     if(!pflichtPruefung()) return;
     var v=function(id){ var n=form.querySelector("#"+id); return n?n.value.trim():""; };
     var radio=function(name){ var n=form.querySelector('input[name="'+name+'"]:checked'); return n?n.value:""; };
-    var anlagen=[];
-    Array.prototype.forEach.call(anlagenHost.children,function(b,i){
-      var n=i+1;
-      var get=function(sel){ var x=b.querySelector(sel); return x?x.value.trim():""; };
-      var multi=function(name){ return Array.prototype.map.call(b.querySelectorAll('input[name="'+name+'"]:checked'),function(x){return x.value;}); };
-      var typ=multi("atyp"+n), reg=multi("areg"+n);
-      if(!typ.length&&!get('input[name="ah'+n+'"]')&&!get('input[name="as'+n+'"]')) return;
-      anlagen.push({typ:typ,regelung:reg,fernzugriff:!!b.querySelector('input[name="afern'+n+'"]:checked'),
-        hersteller:get('input[name="ah'+n+'"]'),modell:get('input[name="am'+n+'"]'),seriennummer:get('input[name="as'+n+'"]'),
-        baujahr:get('input[name="ab'+n+'"]'),leistungKw:get('input[name="ak'+n+'"]'),standortAussen:get('input[name="ao'+n+'"]')});
-    });
+    /* frühere, frei getippte Anlagenblöcke bleiben erhalten; sonst der aktuelle Stand der angehakten Anlagen */
+    var anlagen = altAnlagen || anlagenSchnappschuss();
     var maengel=[];
     Array.prototype.forEach.call(mHost.children,function(b){
       var t=b.querySelector(".m-t").value.trim();
@@ -3019,7 +3375,7 @@ function viewProtokoll(){
     var stSel=byId[v("f_standort")];
     var doc={
       standortId:v("f_standort"),
-      positionIds:Array.prototype.map.call(form.querySelectorAll('input[name="posw"]:checked'),function(x){ return x.value; }),
+      positionIds:angehakt().concat(neueAnlagen.map(function(n){ return n.id; })),
       positionId:(form.querySelector('input[name="posw"]:checked')||{}).value||"",
       filiale:stSel?stSel.filiale:"", standortName:stSel?stName(stSel):"",
       adresse:v("f_adresse"), region:radio("fm"),
@@ -3056,6 +3412,14 @@ function viewProtokoll(){
       doc.wartungsart="Störung";
     }
     lsSet("ukt_tech",doc.nameTechniker||doc.techniker);
+    /* für die nächste Wartung merken */
+    (function(){
+      var k=kanonName(doc.techniker||doc.nameTechniker); if(!k) return;
+      var m=lsGet("ukt_techdaten",{})||{};
+      m[k]={zertp:doc.zertPerson||(m[k]||{}).zertp||"", kontakt:doc.kontakt||(m[k]||{}).kontakt||""};
+      lsSet("ukt_techdaten",m);
+      if(doc.zertUnternehmen) lsSet("ukt_zertu",doc.zertUnternehmen);
+    })();
     var id="p_"+Date.now()+"_"+Math.random().toString(36).slice(2,7);
     var btn=form.querySelector("#save"); btn.disabled=true; btn.textContent="Speichern …";
     var fertig=function(msg){
@@ -3092,6 +3456,7 @@ function viewProtokoll(){
         if(!fotosOk){ fehlschlag("Die neuen Fotos ließen sich nicht übertragen – die Korrektur ist noch nicht gespeichert. Bitte bei Verbindung erneut versuchen."); return; }
         aktualisiereProtokoll(kid, doc, bearb._quelle, geraetFotos).then(function(ok){
           if(!ok){ fehlschlag("Die Korrektur konnte nicht gespeichert werden"+(Store.fehler?" ("+Store.fehler+")":"")+". Ihre Eingaben sind noch da."); return; }
+          anlagenUebernehmen(doc);
           protokolliere({art:"korrigiert", protokollId:kid, standortId:doc.standortId,
                          standortName:doc.standortName, grund:grund, felder:felder});
           (aufGeraet ? lokaleNeuLaden() : Promise.resolve()).then(function(){
@@ -3107,6 +3472,7 @@ function viewProtokoll(){
     /* 1. immer zuerst sicher aufs Gerät – das klappt auch im Funkloch */
     var eintrag={id:id, doc:doc, fotos:fotos, erstellt:doc.erstellt};
     idbSchreiben(eintrag).then(function(){
+      anlagenUebernehmen(doc);   /* vor Ort ergänzte Anlagendaten */
       lokaleProtokolle.unshift(eintrag);
       protokolliere({art:"angelegt", protokollId:id, standortId:doc.standortId, standortName:doc.standortName,
                      felder:[{feld:"positionIds", name:"Gewartete Anlagen", alt:"–", neu:feldText("positionIds",doc.positionIds)}]});
@@ -3231,6 +3597,24 @@ function blattInhalt(p){
   var zeile=function(k,v){ return "<tr><td class='k'>"+k+"</td><td>"+(v?esc(v):"&nbsp;")+"</td></tr>"; };
 
   var anlagenHtml=(p.anlagen&&p.anlagen.length?p.anlagen:[{}]).map(function(a,i){
+    /* neue Erfassung: je Anlage aus dem Anlagenstamm, mit Kältekreis, Rückkühler, Regelung */
+    if(a.positionId){
+      var z=function(k,v){ return v?zeile(k,v):""; };
+      var jn=function(w){ return w==="ja"?"ja":w==="nein"?"nein":""; };
+      return "<table style='margin-bottom:8px'>"+
+        "<tr><th colspan='2'>"+esc(a.name||("Anlage "+(i+1)))+(a.neu?" (vor Ort neu erfasst)":"")+"</th></tr>"+
+        z("Bauart",a.bauart)+
+        z("Kältekreisläufe / Prüfbuch",[a.kreislaeufe?a.kreislaeufe+" Kältekreis"+(+a.kreislaeufe===1?"":"e"):"", a.pruefbuch?"Prüfbuch: "+jn(a.pruefbuch):""].filter(Boolean).join(" · "))+
+        z("Kältemittel / Füllmenge",[a.kaeltemittelArt, leerWert(a.kaeltemittelKg)?"":String(a.kaeltemittelKg).replace(".",",")+" kg"].filter(Boolean).join(" · "))+
+        (istWassergekuehlt(a)?z("Rückkühler / Pumpenstation von UKT",[a.rkUkt?"Rückkühler: "+jn(a.rkUkt):"", a.pumpeUkt?"Pumpen: "+jn(a.pumpeUkt):""].filter(Boolean).join(" · ")):"")+
+        z("Regelung", a.regelung===OHNE_REGELUNG ? "keine eigene Regelung" : [a.regelung,
+          a.regelungFirma?"betreut von "+(a.regelungFirma==="UKT"?"UKT":(a.regelungFirmaName||"anderer Firma")):"",
+          a.fernzugriff?"Fernzugriff: "+jn(a.fernzugriff):""].filter(Boolean).join(" · "))+
+        z("Hersteller / Modell",[a.hersteller,a.modell].filter(Boolean).join(" / "))+
+        z("Seriennummer",a.seriennummer)+
+        z("Inbetriebnahme",a.inbetriebnahme?dfmt(a.inbetriebnahme):"")+
+      "</table>";
+    }
     return "<table style='margin-bottom:8px'>"+
       "<tr><th colspan='2'>Anlage "+(i+1)+"</th></tr>"+
       "<tr><td class='k'>Anlagentyp</td><td>"+ANLAGENTYPEN.map(function(t){
@@ -3821,10 +4205,12 @@ var LABEL_ST={filiale:"Filialnummer", name:"Bezeichnung", adresse:"Adresse", plz
   region:"FM-Region", lat:"Breitengrad", lon:"Längengrad", aktiv:"betreut", notiz:"Notiz"};
 var LABEL_POS={anlagentyp:"Anlagentyp", intervallCode:"Kürzel", inbetriebnahme:"Inbetriebnahme",
   monat:"Soll-Monat", kaeltemittelKg:"Kältemittel (kg)", kaeltemittelArt:"Kältemittelart",
-  rueckkuehler:"Rückkühler", aktiv:"in Betrieb", notiz:"Notiz"};
+  rueckkuehler:"Rückkühler", aktiv:"in Betrieb", notiz:"Notiz",
+  pausiert:"zur Zeit nicht gewartet", pausiertGrund:"Grund (nicht gewartet)", vorOrtNeu:"vor Ort neu erfasst"};
+ANLAGE_FELDER.forEach(function(f){ if(!LABEL_POS[f.k]) LABEL_POS[f.k]=f.l; });
 function stammWert(feld, w){
   if(w===null||w===undefined||w==="") return "–";
-  if(feld==="aktiv") return w?"ja":"nein";
+  if(feld==="aktiv"||feld==="pausiert"||feld==="vorOrtNeu") return w?"ja":"nein";
   if(feld==="monat") return MONATE_L[+w]||"–";
   if(feld==="inbetriebnahme") return dfmt(w);
   return String(w);
@@ -3852,9 +4238,13 @@ function auffaelligkeiten(s){
       var d=Math.abs(p.anker.monat-p.monat); d=Math.min(d,12-d);
       if(d>1) f.push(n+": Soll-Monat "+MONATE_L[p.monat]+" passt nicht zur Inbetriebnahme (ergibt "+MONATE_L[p.anker.monat]+")");
     }
+    if(p.vorOrtNeu) f.push(n+": vor Ort neu erfasst – Kürzel und Termin festlegen");
     if(!p.inbetriebnahme) l.push(n+": Inbetriebnahme fehlt");
     if(!p.kaeltemittelText) l.push(n+": Kältemittelmenge fehlt");
+    var al=anlageLuecken(p).filter(function(f2){ return f2.k!=="kaeltemittelKg"; });
+    if(al.length) l.push(n+": "+al.length+" Anlagendaten offen ("+al.map(function(f2){ return f2.l; }).join(", ")+")");
   });
+  s.pausiertePos.forEach(function(p){ l.push(anlagenName(p)+": zur Zeit nicht gewartet"+(p.pausiertGrund?" – "+p.pausiertGrund:"")); });
   if(!s.filiale) l.push("keine Filialnummer");
   if(!s.plz) l.push("keine PLZ in der Adresse");
   if(s.pos.length===1) l.push("nur ein Termin im Jahr eingetragen – der Halbjahresbesuch fehlt in der Liste");
@@ -4162,8 +4552,31 @@ function verwaltungEditor(s){
         '<label class="fl"><span>Kältemittelart'+hin("kaeltemittelArt")+'</span><input type="text" data-k="kaeltemittelArt" placeholder="z. B. R410A" value="'+esc(p.kaeltemittelArt||"")+'"></label>'+
         '<label class="fl"><span>Rückkühler'+hin("rueckkuehler")+'</span><input type="text" data-k="rueckkuehler" value="'+esc(p.rueckkuehler||"")+'"></label>'+
       "</div>"+
-      '<label class="chk"><input type="checkbox" data-k="aktiv"'+(p.aktiv!==false?" checked":"")+'><span>in Betrieb '+
-        '<span class="muted">– abwählen, wenn die Anlage abgebaut ist oder der Termin entfällt</span></span></label>'+
+      '<div class="grid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:10px">'+
+        '<label class="fl"><span>Status</span><select data-k="betrieb">'+
+          [["aktiv","in Betrieb – wird gewartet"],["pausiert","zur Zeit nicht gewartet"],["still","stillgelegt / abgebaut"]].map(function(o){
+            var akt=p.aktiv===false?"still":p.pausiert?"pausiert":"aktiv";
+            return '<option value="'+o[0]+'"'+(akt===o[0]?" selected":"")+">"+o[1]+"</option>"; }).join("")+"</select></label>"+
+        '<label class="fl"><span>Grund, falls nicht gewartet</span><input type="text" data-k="pausiertGrund" '+
+          'placeholder="z. B. von Lidl ausgesetzt, Umbau" value="'+esc(p.pausiertGrund||"")+'"></label>'+
+      "</div>"+
+      '<div class="muted" style="font-size:12px">„Zur Zeit nicht gewartet“: bleibt mit allen Daten sichtbar, taucht aber in keiner Fälligkeit auf. '+
+        "„Stillgelegt“: Anlage ist weg, nur die Historie bleibt.</div>"+
+      (p.vorOrtNeu?'<div class="note warnbox" style="font-size:12.5px">Vor Ort neu erfasst – bitte Kürzel, Soll-Monat und Inbetriebnahme ergänzen.</div>':"")+
+      /* Anlagendaten – dieselben Angaben, die Techniker vor Ort ergänzen */
+      '<details'+(anlageLuecken(p).length<ANLAGE_FELDER.length?"":" open")+'><summary style="cursor:pointer;font-weight:600;font-size:13px">Anlagendaten'+
+        ' <span class="muted" style="font-weight:400">– '+esc(anlageKurz(p)||"noch leer")+"</span></summary>"+
+        '<div class="grid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:10px;margin-top:10px">'+
+        ANLAGE_FELDER.filter(function(f){ return f.k!=="kaeltemittelArt" && f.k!=="kaeltemittelKg"; }).map(function(f){
+          var w=p[f.k]==null?"":p[f.k];
+          if(f.t==="jn") return '<label class="fl"><span>'+esc(f.l)+'</span><select data-k="'+f.k+'">'+
+            [["","–"],["ja","ja"],["nein","nein"]].map(function(o){ return '<option value="'+o[0]+'"'+(w===o[0]?" selected":"")+">"+o[1]+"</option>"; }).join("")+"</select></label>";
+          if(f.t==="zahl") return '<label class="fl"><span>'+esc(f.l)+'</span><input type="number" min="1" data-k="'+f.k+'" value="'+esc(w)+'"></label>';
+          var dl=f.o?' list="dl_'+f.k+'"':"";
+          return '<label class="fl"><span>'+esc(f.l)+'</span><input type="text" data-k="'+f.k+'"'+dl+' value="'+esc(w)+'">'+
+            (f.o?'<datalist id="dl_'+f.k+'">'+f.o.map(function(o){ return '<option value="'+esc(o)+'">'; }).join("")+"</datalist>":"")+"</label>";
+        }).join("")+
+      "</div></details>"+
       '<label class="fl"><span>Notiz</span><input type="text" data-k="notiz" value="'+esc(p.notiz||"")+'"></label>'+
     "</div>");
     host.appendChild(b);
@@ -4246,9 +4659,20 @@ function verwaltungEditor(s){
     host.querySelectorAll(".posbox").forEach(function(b){
       var pid=b.dataset.pid, istNeu=b.dataset.neu==="1";
       var lese=function(k){ var x=b.querySelector('[data-k="'+k+'"]'); return x.type==="checkbox"?x.checked:x.value.trim(); };
+      var betrieb=lese("betrieb");
       var neuP={anlagentyp:lese("anlagentyp"), intervallCode:lese("intervallCode"), inbetriebnahme:lese("inbetriebnahme")||null,
                 monat:+lese("monat")||0, kaeltemittelKg:num(lese("kaeltemittelKg")), kaeltemittelArt:lese("kaeltemittelArt"),
-                rueckkuehler:lese("rueckkuehler"), aktiv:lese("aktiv"), notiz:lese("notiz")};
+                rueckkuehler:lese("rueckkuehler"), aktiv:betrieb!=="still", notiz:lese("notiz"),
+                pausiert:betrieb==="pausiert", pausiertGrund:betrieb==="pausiert"?lese("pausiertGrund"):""};
+      ANLAGE_FELDER.forEach(function(f){
+        if(f.k==="kaeltemittelArt"||f.k==="kaeltemittelKg") return;
+        var v=lese(f.k); neuP[f.k]= f.t==="zahl" ? (v===""?null:+v) : v;
+      });
+      /* unveränderte Leerwerte nicht als Änderung zählen (null gegen "") */
+      var p0=posById[pid];
+      if(p0) STAMM_FELDER_POS.forEach(function(k){ if(leerWert(neuP[k]) && leerWert(p0[k]) && neuP[k]!==false) neuP[k]=p0[k]; });
+      if(p0 && !neuP.pausiert && !p0.pausiert) neuP.pausiert=p0.pausiert;
+      if(p0) neuP.vorOrtNeu = p0.vorOrtNeu && !neuP.intervallCode ? p0.vorOrtNeu : (p0.vorOrtNeu?false:p0.vorOrtNeu);
       if(istNeu){
         if(!neuP.anlagentyp && !neuP.intervallCode && !neuP.inbetriebnahme) return;   /* leerer Zusatzblock */
         if(!neuP.intervallCode){ fehlt=true; return; }

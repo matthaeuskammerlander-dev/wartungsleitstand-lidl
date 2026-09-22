@@ -236,6 +236,67 @@ Zwischenspeicher des Geräts und gehen später gemeinsam raus. Ein Protokoll
 wird nie gespeichert, bevor seine Fotos übertragen sind — sonst verwiese es
 auf Bilder, die es nicht gibt.
 
+## Anlagendaten vor Ort ergänzen
+
+Die Excel-Liste weiß über die Anlagen oft zu wenig. Je Anlage erfasst die
+App deshalb zusätzlich:
+
+- Bauart (Split, Multi-Split, VRV luft- oder wassergekühlt, Kaltwassersatz)
+- Anzahl der Kältekreisläufe und ob es ein Prüfbuch gibt
+- Kältemittel und Füllmenge. Ab 30 kg weist die App auf die
+  Halbjahreswartung hin.
+- bei wassergekühlten Anlagen: ob Rückkühler und Pumpenstation von UKT
+  zu warten sind
+- Regelung: welche, betreut von UKT oder einer anderen Firma (mit Namen),
+  Fernzugriff ja/nein
+- Typenschild: Hersteller, Modell, Seriennummer (freiwillig)
+
+**Beim Protokoll** steht unter „Anlagendaten“ je angehakter Anlage eine
+Karte. Sie zeigt, was bekannt ist und was fehlt. **Ergänzen** öffnet einen
+geführten Dialog: ein Thema pro Schritt, große Knöpfe, und gefragt wird nur,
+was fehlt. Wer „wassergekühlt“ wählt, bekommt die Frage nach Rückkühler und
+Pumpen; ohne eigene Regelung entfallen die Fragen dazu. Am Ende steht eine
+Übersicht, in der sich alles ändern lässt. Ist schon alles bekannt, heißt
+der Knopf **Prüfen** und führt direkt zur Übersicht.
+
+Die Angaben gehen **mit dem Speichern des Protokolls** in die
+Anlagendaten, für alle sichtbar. Im Änderungsverlauf steht jedes Feld mit
+altem und neuem Wert, Techniker und Datum. Das Protokoll selbst hält den
+Stand der Anlagen zum Zeitpunkt der Wartung fest; so steht es auch auf dem
+Druckblatt.
+
+**Anlage fehlt in der Liste:** Über „+ Anlage fehlt in der Liste“ legt der
+Techniker sie vor Ort an. Sie ist als „vor Ort neu erfasst“ markiert, und in
+der Verwaltung erscheint der Hinweis, Kürzel, Soll-Monat und
+Inbetriebnahme festzulegen.
+
+**Rechte:** Anlagendaten dürfen alle angemeldeten Techniker ergänzen, Märkte
+nur Admins. Dafür einmal `tools/anlagendaten-techniker.sql` im Supabase SQL
+Editor ausführen (steht auch in `supabase-setup.sql`). Bis dahin bleiben die
+Ergänzungen von Technikern auf deren Gerät und gehen nach dem Ausführen
+automatisch raus.
+
+### Status einer Anlage
+
+In der **Verwaltung** hat jede Anlage einen von drei Zuständen:
+
+- **in Betrieb:** wird gewartet, normale Fälligkeit.
+- **zur Zeit nicht gewartet** (mit Grund, z. B. „von Lidl ausgesetzt“): Die
+  Anlage bleibt mit allen Daten sichtbar, erscheint aber in keiner
+  Fälligkeit. Hat ein Markt nur noch solche Anlagen, fällt auch der
+  Halbjahresbesuch weg. Zurück auf „in Betrieb“, und die Termine laufen
+  weiter.
+- **stillgelegt / abgebaut:** Die Anlage ist weg, nur die Historie bleibt.
+
+### Zertifikatsnummern
+
+Die F-Gase-Personenzertifikatsnummer und die Kontaktdaten übernimmt das
+Formular automatisch, sobald der Name des Technikers eingetragen ist. Sie
+stammen aus seinem letzten Protokoll und stehen damit auf jedem Gerät
+bereit; zusätzlich merkt sich das Handy den letzten Stand. Die
+Unternehmenszertifikatsnummer wird ebenso übernommen. Ändert jemand die
+Nummer, gilt ab dem nächsten Protokoll die neue.
+
 ## Störungseinsätze
 
 Unter **Protokoll** wird zwischen **Wartung** und **Störung** umgeschaltet.
