@@ -258,6 +258,9 @@ canvas.sig{width:100%;height:150px;border:1px dashed var(--line-2);border-radius
 .as-titel{font-weight:700;font-size:16px;overflow-wrap:anywhere}
 .as-schritt{font-size:12.5px;color:var(--ink-3);margin-top:2px}
 .as-inhalt{padding:16px;overflow:auto;display:grid;gap:16px;flex:1;align-content:start}
+.as-inhalt>*{min-width:0;max-width:100%}
+.as-inhalt input,.as-inhalt textarea,.as-inhalt select{max-width:100%}
+.as-inhalt .chip{white-space:normal;text-align:left;max-width:100%}
 .as-frage{font-size:15px;font-weight:600}
 .as-feld{display:grid;gap:8px}
 .as-label{font-size:12px;text-transform:uppercase;letter-spacing:.05em;color:var(--ink-3)}
@@ -2892,6 +2895,310 @@ function scanneQr(){
   });
 }
 
+/* ================= Geführtes Protokoll =================
+   Derselbe Ablauf wie bei den Anlagendaten: ein Thema je Schritt, große
+   Knöpfe, am Ende eine Übersicht. Der Dialog füllt das Formular darunter
+   aus – gespeichert wird also genau wie bisher, mit Fotos, Anlagendaten
+   und Unterschrift. */
+function protokollAssistent(form, stoer){
+  var ov=el('<div class="assistent" role="dialog" aria-modal="true"><div class="as-karte">'+
+    '<div class="as-kopf"><div style="min-width:0"><div class="as-titel"></div><div class="as-schritt"></div></div>'+
+      '<button class="btn ghost sm" type="button" data-as="zu">Schließen</button></div>'+
+    '<div class="as-inhalt"></div><div class="as-fuss"></div></div></div>');
+  document.body.appendChild(ov);
+  document.body.style.overflow="hidden";
+  var inhalt=ov.querySelector(".as-inhalt"), fuss=ov.querySelector(".as-fuss");
+  var zu=function(){ ov.remove(); document.body.style.overflow=""; };
+  ov.querySelector('[data-as="zu"]').onclick=function(){
+    if(window.confirm("Dialog schließen? Das Eingetragene bleibt im Formular stehen, Sie können dort weitermachen.")) zu();
+  };
+  var f=function(sel){ return form.querySelector(sel); };
+  var setz=function(sel,wert){ var n=f(sel); if(n){ n.value=wert; formDirty=true; } };
+  var wert=function(sel){ var n=f(sel); return n?n.value:""; };
+
+  /* ---- Bausteine ---- */
+  function frage(text){ return '<div class="as-frage">'+esc(text)+"</div>"; }
+  function feld(label, innen){ return '<div class="as-feld"><div class="as-label">'+esc(label)+"</div>"+innen+"</div>"; }
+  function chips(werte, aktiv, auswahl){
+    var box=el('<div class="chips"></div>');
+    werte.forEach(function(w){
+      var b=el('<button class="chip" type="button" aria-pressed="'+(w[0]===aktiv)+'">'+esc(w[1])+"</button>");
+      b.onclick=function(){ auswahl(w[0]); box.querySelectorAll(".chip").forEach(function(x){ x.setAttribute("aria-pressed", String(x===b)); }); };
+      box.appendChild(b);
+    });
+    return box;
+  }
+  function textFeld(label, sel, mehrzeilig, platzhalter){
+    var d=el('<div class="as-feld"><div class="as-label">'+esc(label)+"</div>"+
+      (mehrzeilig?'<textarea rows="3"></textarea>':'<input type="text">')+"</div>");
+    var n=d.querySelector("textarea,input");
+    n.value=wert(sel); if(platzhalter) n.placeholder=platzhalter;
+    n.oninput=function(){ setz(sel,n.value); };
+    return d;
+  }
+  function knopf(text, art, fn){
+    var b=el('<button class="btn'+(art?" "+art:"")+'" type="button">'+esc(text)+"</button>"); b.onclick=fn; fuss.appendChild(b); return b;
+  }
+
+  /* ---- Schritte ---- */
+  var schritte=[];
+
+  schritte.push({titel:"Markt", zeigen:function(){
+    var aktuell=f("#f_standort").value;
+    inhalt.innerHTML=frage("In welchem Markt sind Sie?");
+    var suche=el('<input type="search" placeholder="Filiale, Ort oder Adresse suchen …" style="width:100%">');
+    var liste=el('<div class="stack" style="max-height:46vh;overflow:auto"></div>');
+    var zeichne=function(){
+      var q=suche.value.trim().toLowerCase();
+      liste.innerHTML="";
+      ST.filter(function(s){ return !q || (stName(s)+" "+(s.filiale||"")+" "+s.adresse).toLowerCase().indexOf(q)>=0; })
+        .sort(function(a,b){ return stName(a).localeCompare(stName(b),"de"); })
+        .slice(0,40).forEach(function(s){
+          var b=el('<button class="chip" type="button" style="display:block;width:100%;text-align:left;padding:10px 12px"'+
+            (s.id===f("#f_standort").value?' aria-pressed="true"':"")+"><strong>"+esc(stName(s))+"</strong>"+
+            '<br><span class="muted" style="font-size:12px">'+esc(s.adresse)+(s.filiale?" · Filiale "+esc(s.filiale):"")+"</span></button>");
+          b.onclick=function(){
+            var sel=f("#f_standort"); sel.value=s.id; sel.onchange(); formDirty=true;
+            weiter();
+          };
+          liste.appendChild(b);
+        });
+    };
+    suche.oninput=zeichne; zeichne();
+    inhalt.appendChild(feldRahmen("Markt suchen", suche));
+    inhalt.appendChild(liste);
+    if(aktuell) inhalt.appendChild(el('<div class="muted" style="font-size:12.5px">Gewählt: <strong>'+
+      esc(byId[aktuell]?stName(byId[aktuell]):aktuell)+"</strong> – weiter mit „Weiter“.</div>"));
+  }, pruefen:function(){ return f("#f_standort").value ? "" : "Bitte einen Markt wählen."; }});
+  function feldRahmen(label, n){ var d=el('<div class="as-feld"><div class="as-label">'+esc(label)+'</div></div>'); d.appendChild(n); return d; }
+
+  schritte.push({titel:stoer?"Betroffene Anlagen":"Gewartete Anlagen", zeigen:function(){
+    inhalt.innerHTML=frage(stoer?"Welche Anlage war betroffen?":"Welche Anlagen haben Sie gewartet?");
+    var box=el('<div class="stack"></div>');
+    var zeilen=form.querySelectorAll('#f_posbox label.chk');
+    if(!zeilen.length) box.appendChild(el('<div class="muted">Für diesen Markt ist keine Anlage eingetragen.</div>'));
+    zeilen.forEach(function(z){
+      var cb=z.querySelector('input[name="posw"]'), slot=z.querySelector(".posslot");
+      var name=z.querySelector("strong").textContent;
+      var k=el('<div class="as-gruppe"><div class="as-gkopf"><span>'+esc(name)+"</span>"+
+        '<button class="chip" type="button" aria-pressed="'+cb.checked+'">'+(cb.checked?"gewartet":"nicht dabei")+"</button></div></div>");
+      var b=k.querySelector(".chip");
+      b.onclick=function(){ cb.checked=!cb.checked; cb.dispatchEvent(new Event("change",{bubbles:true}));
+        b.setAttribute("aria-pressed",String(cb.checked)); b.textContent=cb.checked?"gewartet":"nicht dabei"; };
+      if(slot){
+        var s2=el('<select style="width:100%;font-size:13px"></select>');
+        s2.innerHTML=slot.innerHTML; s2.value=slot.value;
+        s2.onchange=function(){ slot.value=s2.value; slot.dispatchEvent(new Event("change")); };
+        k.appendChild(feldRahmen("zählt als", s2));
+      }
+      box.appendChild(k);
+    });
+    inhalt.appendChild(box);
+  }, pruefen:function(){
+    return form.querySelectorAll('input[name="posw"]:checked').length ? "" : "Bitte mindestens eine Anlage wählen.";
+  }});
+
+  schritte.push({titel:"Anlagendaten", zeigen:function(){
+    inhalt.innerHTML=frage("Stimmen die Angaben zu den Anlagen noch?");
+    var karten=form.querySelectorAll("#anlagen .akarte");
+    if(!karten.length) inhalt.appendChild(el('<div class="muted">Keine Anlage gewählt.</div>'));
+    karten.forEach(function(k){
+      var titel=k.querySelector("strong").textContent;
+      var stand=k.querySelector("span[style*='font-size:12.5px']");
+      var d=el('<div class="as-gruppe"><div class="as-gkopf"><span>'+esc(titel)+"</span>"+
+        '<button class="btn ghost sm" type="button">'+esc((k.querySelector('[data-a="los"]')||{}).textContent||"Prüfen")+"</button></div>"+
+        '<div style="font-size:13px">'+esc(k.querySelectorAll("div")[1]?k.querySelectorAll("div")[1].textContent:"")+"</div>"+
+        (stand?'<div style="font-size:12.5px">'+esc(stand.textContent)+"</div>":"")+"</div>");
+      d.querySelector("button").onclick=function(){
+        var los=k.querySelector('[data-a="los"]'); if(los) los.click();
+        /* nach dem Anlagendialog die Übersicht neu zeichnen */
+        var beob=setInterval(function(){ if(!document.querySelector(".assistent:not([data-haupt])")) {} },300);
+        setTimeout(function(){ clearInterval(beob); },100);
+      };
+      inhalt.appendChild(d);
+    });
+    inhalt.appendChild(el('<div class="muted" style="font-size:12.5px">Was hier ergänzt wird, steht mit dem Speichern in den Anlagendaten – für alle sichtbar.</div>'));
+  }});
+
+  if(stoer) schritte.push({titel:"Störungsauftrag", zeigen:function(){
+    inhalt.innerHTML=frage("Lidl-Auftrag übernehmen");
+    var reihe=el('<div class="chips"></div>');
+    var pdf=el('<button class="btn" type="button">Auftrag-PDF öffnen</button>');
+    pdf.onclick=function(){ var l=form.querySelector('label[for="s_pdf"]'); if(l) l.click(); };
+    var qr=el('<button class="btn ghost" type="button">QR-Code scannen</button>');
+    qr.onclick=function(){ var b=form.querySelector("#s_qr"); if(b) b.click(); };
+    reihe.appendChild(pdf); reihe.appendChild(qr);
+    inhalt.appendChild(reihe);
+    inhalt.appendChild(el('<div class="muted" style="font-size:12.5px">'+esc((form.querySelector("#s_info")||{}).textContent||"")+"</div>"));
+    ["s_auftragsdatum|Auftragsdatum","s_stoerungsnr|Störungsnummer","s_problemtyp|Problemtyp"].forEach(function(x){
+      var t=x.split("|"); inhalt.appendChild(textFeld(t[1], "#"+t[0], false));
+    });
+    inhalt.appendChild(textFeld("Beschreibung laut Auftrag", "#s_beschreibung", true));
+  }});
+
+  schritte.push({titel:stoer?"Störungsbehebung":"Arbeiten", zeigen:function(){
+    if(stoer){
+      inhalt.innerHTML=frage("Was war los und was haben Sie gemacht?");
+      inhalt.appendChild(textFeld("Fehlerbild vor Ort","#s_fehlerbild",true));
+      inhalt.appendChild(textFeld("Ursache","#s_ursache",true));
+      inhalt.appendChild(textFeld("Durchgeführte Maßnahmen","#s_massnahmen",true));
+      return;
+    }
+    inhalt.innerHTML=frage("Was haben Sie gemacht?");
+    var box=el('<div class="chips"></div>');
+    form.querySelectorAll('input[name="arbeit"]').forEach(function(cb){
+      var b=el('<button class="chip" type="button" aria-pressed="'+cb.checked+'">'+esc(cb.nextElementSibling.textContent)+"</button>");
+      b.onclick=function(){ cb.checked=!cb.checked; formDirty=true; b.setAttribute("aria-pressed",String(cb.checked)); };
+      box.appendChild(b);
+    });
+    inhalt.appendChild(feldRahmen("Antippen, was zutrifft", box));
+    var alle=el('<button class="btn ghost sm" type="button">alle auswählen</button>');
+    alle.onclick=function(){
+      form.querySelectorAll('input[name="arbeit"]').forEach(function(cb){ cb.checked=true; });
+      formDirty=true; schritte[pos].zeigen(); fussNeu();
+    };
+    inhalt.appendChild(alle);
+    inhalt.appendChild(textFeld("Sonstiges","#f_arb_sonst",false,"weitere Arbeiten"));
+  }});
+
+  schritte.push({titel:"Mängel", zeigen:function(){
+    inhalt.innerHTML=frage("Gibt es Mängel?");
+    var liste=el('<div class="stack"></div>');
+    var zeichne=function(){
+      liste.innerHTML="";
+      var zeilen=[].slice.call(form.querySelectorAll(".mangelrow"));
+      var mit=zeilen.filter(function(z){ return z.querySelector(".m-t").value.trim(); });
+      if(!mit.length) liste.appendChild(el('<div class="muted" style="font-size:13px">Noch kein Mangel eingetragen.</div>'));
+      zeilen.forEach(function(z){
+        var t=z.querySelector(".m-t"), p=z.querySelector(".m-p"), m=z.querySelector(".m-m");
+        if(!t.value.trim() && zeilen.length>1 && z!==zeilen[zeilen.length-1]) return;
+        var g=el('<div class="as-gruppe"></div>');
+        g.appendChild(textFeldRoh("Mangel / Feststellung", t));
+        var prio=chips([["","–"],["niedrig","niedrig"],["mittel","mittel"],["hoch","hoch"],["sofort","sofort"]], p.value, function(v){ p.value=v; formDirty=true; });
+        g.appendChild(feldRahmen("Priorität", prio));
+        g.appendChild(textFeldRoh("Empfohlene Maßnahme / Frist", m));
+        liste.appendChild(g);
+      });
+    };
+    var neu=el('<button class="btn ghost sm" type="button">+ weiterer Mangel</button>');
+    neu.onclick=function(){ form._mangelHinzu(); zeichne(); };
+    inhalt.appendChild(liste); inhalt.appendChild(neu);
+    zeichne();
+  }});
+  function textFeldRoh(label, ziel){
+    var d=el('<div class="as-feld"><div class="as-label">'+esc(label)+'</div><input type="text"></div>');
+    var n=d.querySelector("input"); n.value=ziel.value;
+    n.oninput=function(){ ziel.value=n.value; formDirty=true; };
+    return d;
+  }
+
+  schritte.push({titel:"Ergebnis", zeigen:function(){
+    inhalt.innerHTML=frage("Wie ist der Stand nach dem Einsatz?");
+    var br=form.querySelector('input[name="bereit"]:checked');
+    inhalt.appendChild(feldRahmen("Anlage betriebsbereit",
+      chips([["ja","ja"],["eingeschränkt","eingeschränkt"],["nein","nein"]], br?br.value:"ja", function(v){
+        var r=form.querySelector('input[name="bereit"][value="'+v+'"]'); if(r){ r.checked=true; formDirty=true; }
+      })));
+    inhalt.appendChild(textFeld("Sofortmaßnahme","#f_sofort",false,"leer = keine"));
+    if(!stoer){
+      var box=el('<div class="chips"></div>');
+      form.querySelectorAll('input[name="ergebnis"]').forEach(function(cb){
+        var b=el('<button class="chip" type="button" aria-pressed="'+cb.checked+'">'+esc(cb.nextElementSibling.textContent)+"</button>");
+        b.onclick=function(){ cb.checked=!cb.checked; formDirty=true; b.setAttribute("aria-pressed",String(cb.checked)); };
+        box.appendChild(b);
+      });
+      inhalt.appendChild(feldRahmen("Ergebnis", box));
+    }
+    inhalt.appendChild(textFeld("Bemerkungen","#f_bem",true));
+  }});
+
+  schritte.push({titel:"Fotos", zeigen:function(){
+    inhalt.innerHTML=frage("Fotos vom Einsatz (freiwillig)");
+    var reihe=el('<div class="chips"></div>');
+    var a=el('<button class="btn" type="button">Foto aufnehmen</button>');
+    a.onclick=function(){ form.querySelector("#f_foto").click(); };
+    var b=el('<button class="btn ghost" type="button">Aus Galerie wählen</button>');
+    b.onclick=function(){ form.querySelector("#f_galerie").click(); };
+    reihe.appendChild(a); reihe.appendChild(b);
+    inhalt.appendChild(reihe);
+    var stand=el('<div class="muted" style="font-size:12.5px"></div>');
+    var zeige=function(){ stand.textContent=(form.querySelector("#f_fotoinfo")||{}).textContent||""; };
+    zeige(); var t=setInterval(zeige, 800); setTimeout(function(){ clearInterval(t); }, 120000);
+    inhalt.appendChild(stand);
+  }});
+
+  schritte.push({titel:"Abschluss", zeigen:function(){
+    inhalt.innerHTML=frage("Wer war vor Ort?");
+    inhalt.appendChild(textFeld("Name Techniker/in","#f_name",false));
+    inhalt.appendChild(textFeld("Uhrzeit","#f_zeit",false));
+    inhalt.appendChild(textFeld("Auftraggebervertreter","#f_agv",false,"wer war vom Markt dabei"));
+    var d=el('<div class="as-feld"><div class="as-label">Unterschrift</div>'+
+      '<canvas class="sig" width="900" height="300" style="width:100%;height:120px;border:1px solid var(--line-2);border-radius:8px;background:var(--surface);touch-action:none"></canvas>'+
+      '<div class="rowflex" style="margin-top:6px"><button class="btn ghost sm" type="button">löschen</button>'+
+      '<span class="muted" style="font-size:12px">Mit dem Finger unterschreiben.</span></div></div>');
+    var cv=d.querySelector("canvas"), ctx=cv.getContext("2d"), malt=false, etwas=false;
+    ctx.lineWidth=3.2; ctx.lineCap="round"; ctx.lineJoin="round"; ctx.strokeStyle=getComputedStyle(document.body).color;
+    var pt=function(e){ var r=cv.getBoundingClientRect(); return [(e.clientX-r.left)*cv.width/r.width,(e.clientY-r.top)*cv.height/r.height]; };
+    cv.addEventListener("pointerdown",function(e){ e.preventDefault(); cv.setPointerCapture(e.pointerId); malt=true; etwas=true;
+      var q=pt(e); ctx.beginPath(); ctx.moveTo(q[0],q[1]); });
+    cv.addEventListener("pointermove",function(e){ if(!malt) return; var q=pt(e); ctx.lineTo(q[0],q[1]); ctx.stroke(); });
+    cv.addEventListener("pointerup",function(){ malt=false; if(etwas) form._sig.setzen(cv.toDataURL("image/png")); });
+    cv.addEventListener("pointerleave",function(){ if(malt){ malt=false; if(etwas) form._sig.setzen(cv.toDataURL("image/png")); } });
+    d.querySelector("button").onclick=function(){ ctx.clearRect(0,0,cv.width,cv.height); etwas=false; form._sig.leeren(); };
+    inhalt.appendChild(d);
+  }});
+
+  schritte.push({titel:"Übersicht", uebersicht:true, zeigen:function(){
+    var st=byId[f("#f_standort").value];
+    var anlagen=[].slice.call(form.querySelectorAll('input[name="posw"]:checked')).map(function(cb){
+      return cb.closest("label").querySelector("strong").textContent; });
+    var arbeiten=[].slice.call(form.querySelectorAll('input[name="arbeit"]:checked')).length;
+    var maengel=[].slice.call(form.querySelectorAll(".mangelrow")).filter(function(z){ return z.querySelector(".m-t").value.trim(); }).length;
+    var zeile=function(k,v){ return '<div class="as-zeile"><span>'+esc(k)+"</span><strong>"+esc(v||"–")+"</strong></div>"; };
+    inhalt.innerHTML=frage("Passt so?")+
+      '<div class="as-gruppe">'+
+        zeile("Markt", st?stName(st):"–")+
+        zeile("Datum", dfmt(wert("#f_datum")))+
+        zeile(stoer?"Betroffen":"Gewartet", anlagen.join(", "))+
+        (stoer?zeile("Maßnahmen", wert("#s_massnahmen").slice(0,60)):zeile("Arbeiten", arbeiten+" angehakt"))+
+        zeile("Mängel", maengel?maengel+" eingetragen":"keine")+
+        zeile("Betriebsbereit", (form.querySelector('input[name="bereit"]:checked')||{}).value||"–")+
+        zeile("Fotos", (form.querySelector("#f_fotoinfo")||{}).textContent||"–")+
+        zeile("Techniker/in", wert("#f_name"))+
+        zeile("Unterschrift", form._sig.vorhanden()?"vorhanden":"fehlt")+
+      "</div>"+
+      '<div class="muted" style="font-size:12.5px">Mit „Protokoll speichern“ geht es in die gemeinsame Ablage. '+
+      "Änderungen sind danach über „Korrigieren“ möglich.</div>";
+  }});
+
+  /* ---- Ablauf ---- */
+  var pos=0;
+  function fussNeu(){
+    fuss.innerHTML="";
+    if(pos>0) knopf("Zurück","ghost",function(){ pos--; zeige(); });
+    var s=schritte[pos];
+    if(s.uebersicht){
+      knopf("Protokoll speichern","",function(){
+        zu();
+        var b=form.querySelector("#save"); b.scrollIntoView({block:"center"}); b.click();
+      });
+    } else {
+      knopf("Weiter","",function(){ weiter(); });
+    }
+  }
+  function zeige(){
+    var s=schritte[pos];
+    ov.querySelector(".as-titel").textContent=(stoer?"Störungsprotokoll":"Wartungsprotokoll");
+    ov.querySelector(".as-schritt").textContent="Schritt "+(pos+1)+" von "+schritte.length+" · "+s.titel;
+    s.zeigen(); fussNeu(); inhalt.scrollTop=0;
+  }
+  function weiter(){
+    var s=schritte[pos];
+    if(s.pruefen){ var m=s.pruefen(); if(m){ toast(m); return; } }
+    if(pos<schritte.length-1){ pos++; zeige(); }
+  }
+  zeige();
+}
 function viewProtokoll(){
   if(Store.modus==="anmeldung") return viewAnmeldung();
 
@@ -3376,6 +3683,21 @@ function viewProtokoll(){
   cv.addEventListener("pointerup",function(){ drawing=false; });
   cv.addEventListener("pointerleave",function(){ drawing=false; });
   form.querySelector("#sigclear").onclick=function(){ ctx.clearRect(0,0,cv.width,cv.height); hasSig=false; };
+  /* Haken für den geführten Dialog: Unterschrift von dort übernehmen,
+     Mangelzeile anlegen, Zustand abfragen */
+  form._sig={
+    vorhanden:function(){ return hasSig; },
+    setzen:function(datenUrl){
+      return new Promise(function(ok){
+        var b=new Image();
+        b.onload=function(){ ctx.clearRect(0,0,cv.width,cv.height); ctx.drawImage(b,0,0,cv.width,cv.height); hasSig=true; formDirty=true; ok(true); };
+        b.onerror=function(){ ok(false); };
+        b.src=datenUrl;
+      });
+    },
+    leeren:function(){ ctx.clearRect(0,0,cv.width,cv.height); hasSig=false; }
+  };
+  form._mangelHinzu=addMangel;
 
   /* Defaults */
   form.querySelector("#f_datum").value=isoLokal(HEUTE);
@@ -3673,7 +3995,11 @@ function viewProtokoll(){
             "Erscheint in der Anlagenhistorie, verschiebt aber keinen Wartungstermin.</div></div>"
           : '<div><h2>Wartungsprotokoll Klimaanlage</h2><div class="sub">Digitale Fassung des Einseiters. '+
             (s?"Vorbelegt für <strong>"+esc(stName(s))+"</strong>.":"Standort unten auswählen oder aus Liste bzw. Karte heraus öffnen.")+"</div></div>")+
+        '<div class="rowflex"><button class="btn" type="button" id="p_gefuehrt">Schritt für Schritt ausfüllen</button>'+
+          '<span class="muted" style="font-size:12.5px">ein Thema nach dem anderen – am Handy meist schneller</span></div>'+
       "</div></div>");
+  var gefuehrt=head.querySelector("#p_gefuehrt");
+  if(gefuehrt) gefuehrt.onclick=function(){ protokollAssistent(form, stoer); };
   head.querySelectorAll("[data-art]").forEach(function(b){
     b.onclick=function(){
       var ziel=b.getAttribute("data-art");

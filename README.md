@@ -242,6 +242,29 @@ vom Gerät. Scheitert schon das Speichern auf dem Gerät – etwa in einem priva
 Browserfenster –, sagt die App das deutlich und lässt das Formular mit allen
 Eingaben stehen.
 
+## Protokoll Schritt für Schritt
+
+Über dem Formular steht **„Schritt für Schritt ausfüllen“**. Der Dialog führt
+wie bei den Anlagendaten durch ein Thema nach dem anderen – am Handy meist
+schneller als das lange Formular:
+
+1. Markt (mit Suche)
+2. gewartete bzw. betroffene Anlagen, bei mehreren Terminen auch, als welcher
+   der Besuch zählt
+3. Anlagendaten prüfen und ergänzen
+4. bei Störungen: Lidl-Auftrag (PDF, QR) und die Behebung
+5. durchgeführte Arbeiten, auf Wunsch alle auf einmal
+6. Mängel
+7. Ergebnis, betriebsbereit, Bemerkungen
+8. Fotos
+9. Name, Uhrzeit und Unterschrift
+10. Übersicht, dann speichern
+
+Der Dialog füllt dabei das normale Formular aus. Gespeichert wird also genau
+wie sonst – mit Fotos, übernommenen Anlagendaten, Änderungsverlauf und PDF.
+Wer lieber tippt, füllt das Formular weiter direkt aus; beides lässt sich
+mischen, auch mittendrin.
+
 ## Fotos im Wartungsprotokoll
 
 Bis zu acht Bilder je Protokoll, je mit Bildunterschrift. Am Handy öffnet die
