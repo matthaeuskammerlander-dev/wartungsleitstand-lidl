@@ -241,6 +241,23 @@ Zwischenspeicher des Geräts und gehen später gemeinsam raus. Ein Protokoll
 wird nie gespeichert, bevor seine Fotos übertragen sind — sonst verwiese es
 auf Bilder, die es nicht gibt.
 
+## Erscheinungsbild und App-Symbol
+
+Farben, Logo und Symbol stammen aus dem Firmenlogo: **Türkis #019891** und
+**Magenta #C4004E**. Im hellen Modus ist das Türkis auf #00726E abgedunkelt,
+damit weiße Schrift darauf gut lesbar bleibt; im dunklen Modus wird es
+aufgehellt (#4FC2BC) und die Schrift auf farbigen Flächen dunkel
+(`--on-accent`). Alle Knöpfe, Reiter und Etiketten liegen damit über 4,5:1
+Kontrast, auch im Dunkelmodus.
+
+`logo.png` (600 × 153) kommt aus der Vektorvorlage und steht in der
+Kopfzeile und im Briefkopf der Protokolle.
+
+**Zum Homebildschirm hinzufügen:** `manifest.json` und
+`apple-touch-icon` verweisen auf `icon-180.png` bzw. `icon-512.png` – das
+große K aus dem Logo. Am iPhone: Seite in Safari öffnen, Teilen-Symbol,
+„Zum Home-Bildschirm“. Am Android: Menü, „App installieren“.
+
 ## Liste herunterladen
 
 Im Reiter **Verlauf** steht oben „Liste herunterladen“: Rückblick (30 Tage
