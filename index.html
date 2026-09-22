@@ -3920,7 +3920,8 @@ function druckeProtokoll(p){
   ov.id="druckansicht";
   ov.innerHTML=
     '<div class="druckleiste">'+
-      '<button class="btn" type="button" id="d_druck">Drucken / als PDF speichern</button>'+
+      '<button class="btn" type="button" id="d_pdf">Als PDF speichern</button>'+
+      '<button class="btn ghost" type="button" id="d_druck" style="background:#fff">Drucken</button>'+
       '<button class="btn ghost" type="button" id="d_zu" style="background:#fff">Schließen</button>'+
     "</div>"+
     '<div class="blatt">'+blattInhalt(p)+"</div>";
@@ -3929,6 +3930,25 @@ function druckeProtokoll(p){
   var zu=function(){ ov.remove(); document.body.classList.remove("druckmodus"); };
   ov.querySelector("#d_zu").onclick=zu;
   ov.querySelector("#d_druck").onclick=function(){ window.print(); };
+  /* Eigenes PDF statt Druckdialog: ohne Kopf- und Fußzeile des Browsers
+     (Adresse der Seite, Datum, Seitenzahlen) und ohne leere Seiten. */
+  var pdfKnopf=ov.querySelector("#d_pdf");
+  pdfKnopf.onclick=function(){
+    pdfKnopf.disabled=true; pdfKnopf.textContent="PDF wird erstellt …";
+    pdfErzeugen(p).then(function(blob){
+      var name=(istStoerung(p)?"Stoerungsprotokoll_":"Wartungsprotokoll_")+
+        String(protoName(p)||"").replace(/[\\/:*?"<>|]/g,"").replace(/\s+/g,"-")+"_"+(p.datum||"")+".pdf";
+      var url=URL.createObjectURL(blob);
+      var a=document.createElement("a"); a.href=url; a.download=name; a.rel="noopener";
+      document.body.appendChild(a); a.click(); document.body.removeChild(a);
+      setTimeout(function(){ URL.revokeObjectURL(url); },4000);
+      pdfKnopf.disabled=false; pdfKnopf.textContent="Als PDF speichern";
+      toast("PDF erstellt.");
+    }, function(e){
+      pdfKnopf.disabled=false; pdfKnopf.textContent="Als PDF speichern";
+      toast("PDF ließ sich nicht erstellen: "+(e&&e.message||e));
+    });
+  };
   fotosEinsetzen(ov.querySelector('[data-rolle="fotos"]'), p, false);
 }
 
@@ -4823,10 +4843,11 @@ function verwaltungEditor(s){
     '<label class="fl" style="margin-top:8px"><span>Notiz</span><textarea id="a_notiz" rows="2">'+esc(s.notiz||"")+"</textarea></label>"+
     "</fieldset>"+
 
-    '<fieldset><legend>Anlagen und Termine</legend><div id="a_anlagen" class="stack"></div>'+
-      '<div style="margin-top:10px"><button class="btn ghost sm" type="button" id="a_plus">+ Anlage / Termin hinzufügen</button></div>'+
-      '<div class="muted" style="font-size:12px;margin-top:8px">Jede Anlage steht für einen jährlichen Termin. Für den Halbjahresrhythmus braucht ein Markt zwei: '+
-        'JW am Jahrestag der Inbetriebnahme, dazu HJW (ab 30 kg) oder HJI sechs Monate versetzt.</div>'+
+    '<fieldset><legend>Anlagen dieses Markts</legend><div id="a_anlagen" class="stack"></div>'+
+      '<div style="margin-top:10px"><button class="btn ghost sm" type="button" id="a_plus">+ weitere Anlage</button></div>'+
+      '<div class="muted" style="font-size:12px;margin-top:8px">Ein Markt hat eine oder mehrere <strong>Anlagen</strong>. Jede Anlage hat ihre '+
+        '<strong>Termine</strong>: die Jahreswartung am Jahrestag der Inbetriebnahme, dazu sechs Monate versetzt HJW (ab 30 kg Kältemittel) '+
+        'oder HJI. Steht ein Termin in der falschen Anlage, schiebt ihn die Auswahl rechts neben dem Termin hinüber.</div>'+
     "</fieldset>"+
 
     '<label class="fl"><span class="req">Grund der Änderung</span><input type="text" id="a_grund" placeholder="z. B. Adresse laut Lidl-Auftrag korrigiert"></label>'+
@@ -4841,80 +4862,141 @@ function verwaltungEditor(s){
     "</div>"+
   "</div></div>");
 
+  /* ---- Anlagen als Karten, Termine darin ----------------------------------
+     Der Markt hat Anlagen, jede Anlage hat einen oder zwei Termine im Jahr.
+     Genau so sieht der Editor aus: eine Karte je Anlage, darin ihre Termine.
+     Ein Termin lässt sich per Auswahl in eine andere Anlage schieben. */
   var host=c.querySelector("#a_anlagen");
-  var anlageBlock=function(p, neu){
+  var kartenNr=0;
+  var KUERZEL=[["","– fehlt –"],["JW","JW · Jahreswartung"],["HJW","HJW · Halbjahreswartung"],["HJI","HJI · Halbjahresinspektion"]];
+  var normCode=function(k){ k=String(k||"").trim().toUpperCase(); return k==="HW"?"HJW":(k.indexOf("HI")===0?"HJI":k); };
+
+  function terminZeile(p, neu){
     var ex=EXCEL["position:"+p.id]||{};
     var hin=function(k){
       if(neu || p._neu || !(k in ex) || gleich(ex[k],p[k])) return "";
       return '<span class="muted" style="font-size:11px;text-transform:none;letter-spacing:0"> · Excel: '+esc(stammWert(k,ex[k]))+"</span>";
     };
-    var pid=p.id;
-    /* erste Zeile einer Anlage trägt Anlagendaten und Status; weitere Zeilen sind nur Termine */
-    var chef = neu || !p.aktiv || anlageLeader(p)===p;
-    var dd = neu ? p : anlageDaten(p);
-    var andere = neu ? [] : ausgewaehlt.filter(function(x){ return x.aktiv && anlageLeader(x)===x && x!==p; });
-    var zuordnung = (neu || !p.aktiv || (!andere.length && chef)) ? "" :
-      '<label class="fl"><span>Gehört zu Anlage</span><select data-k="anlageZu">'+
-        '<option value="'+esc(p.id)+'"'+(chef?" selected":"")+">eigene Anlage</option>"+
-        andere.map(function(x){ return '<option value="'+esc(x.id)+'"'+(anlageLeader(p)===x?" selected":"")+">"+
-          esc(anlagenName(anlageDaten(x))+" ("+termineText(x)+")")+"</option>"; }).join("")+
-      "</select></label>";
-    var b=el('<div class="posbox" data-pid="'+esc(pid)+'" data-neu="'+(neu?"1":"")+'"'+
-        (p.aktiv===false?' style="opacity:.6"':!chef?' style="margin-left:18px;border-left:3px solid var(--line-2)"':"")+">"+
-      '<div class="rowflex" style="justify-content:space-between"><strong>'+esc(neu?"Neue Anlage":chef?anlagenName(dd):"weiterer Termin: "+p.intervall.art)+"</strong>"+
-        (!neu&&p.aktiv!==false&&p.naechste?'<span class="muted mono" style="font-size:12px">nächster Termin '+dfmt(p.naechste)+"</span>":"")+"</div>"+
-      zuordnung+
+    var z=el('<div class="terminzeile" data-pid="'+esc(p.id)+'" data-neu="'+(neu?"1":"")+'">'+
+      '<div class="grid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(135px,1fr));gap:8px">'+
+        '<label class="fl"><span>Kürzel'+hin("intervallCode")+'</span><select data-t="intervallCode">'+
+          KUERZEL.map(function(o){ return '<option value="'+o[0]+'"'+(normCode(p.intervallCode)===o[0]?" selected":"")+">"+o[1]+"</option>"; }).join("")+
+        "</select></label>"+
+        '<label class="fl"><span>Inbetriebnahme'+hin("inbetriebnahme")+'</span><input type="date" data-t="inbetriebnahme" value="'+esc(p.inbetriebnahme||"")+'"></label>'+
+        '<label class="fl"><span>Soll-Monat'+hin("monat")+'</span><select data-t="monat"><option value="0">–</option>'+
+          MONATE_L.slice(1).map(function(m,i){ return '<option value="'+(i+1)+'"'+(+p.monat===i+1?" selected":"")+">"+m+"</option>"; }).join("")+
+        "</select></label>"+
+      "</div>"+
+      '<div class="rowflex" style="justify-content:space-between;gap:8px;margin-top:6px">'+
+        '<span class="muted" style="font-size:12px">'+
+          (neu ? "neuer Termin"
+               : (p.naechste ? "nächster Termin "+dfmt(p.naechste)+(p.letzte?" · zuletzt "+dfmt(p.letzte):"")
+                             : "Termin ergibt sich aus Kürzel und Inbetriebnahme"))+"</span>"+
+        '<span class="rowflex" style="gap:8px">'+
+          '<label class="chk" style="font-size:12.5px;align-items:center"><input type="checkbox" data-t="entfaellt"'+
+            (p.aktiv===false?" checked":"")+"><span>Termin entfällt</span></label>"+
+          '<select class="verschieben" style="font-size:12.5px;max-width:200px"></select>'+
+          (neu?'<button class="btn ghost sm" type="button" data-t="weg">entfernen</button>':"")+
+        "</span>"+
+      "</div>"+
+    "</div>");
+    var weg=z.querySelector('[data-t="weg"]');
+    if(weg) weg.onclick=function(){ z.remove(); leereKartenWeg(); optionenNeu(); };
+    z.querySelector(".verschieben").onchange=function(e2){
+      var ziel=e2.target.value;
+      if(!ziel) return;
+      var karte;
+      if(ziel==="__neu"){
+        /* neue Anlage mit den Angaben dieses Termins vorbelegen, sonst wären sie weg */
+        var p0=posById[z.dataset.pid];
+        karte=anlageKarte(p0?{leader:p0, termine:[]}:null);
+      } else karte=host.querySelector('.anlagekarte[data-k="'+ziel+'"]');
+      if(karte) karte.querySelector(".termine").appendChild(z);
+      leereKartenWeg(); optionenNeu();
+    };
+    return z;
+  }
+
+  function anlageKarte(anl){
+    kartenNr++;
+    var d = anl ? anlageDaten(anl.leader) : {};
+    var akt = anl ? (anl.leader.aktiv===false?"still":(anl.leader.pausiert?"pausiert":"aktiv")) : "aktiv";
+    var k=el('<div class="akarte anlagekarte" data-k="k'+kartenNr+'" style="background:var(--surface)">'+
+      '<div class="rowflex" style="justify-content:space-between;gap:8px">'+
+        '<strong style="font-size:15px">'+(anl?"Anlage":"Neue Anlage")+"</strong>"+
+        '<button class="btn ghost sm" type="button" data-a="plus">+ Termin</button></div>'+
       '<div class="grid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px">'+
-        '<label class="fl"><span>Anlagentyp'+hin("anlagentyp")+'</span><input type="text" data-k="anlagentyp" value="'+esc(p.anlagentyp||"")+'"></label>'+
-        '<label class="fl"><span>Kürzel'+hin("intervallCode")+'</span><select data-k="intervallCode">'+
-          [["","– unklar –"],["JW","JW · Jahreswartung"],["HJW","HJW · Halbjahreswartung"],["HJI","HJI · Halbjahresinspektion"]].map(function(o){
-            var akt=String(p.intervallCode||"").trim().toUpperCase();
-            var norm=akt==="HW"?"HJW":(akt.indexOf("HI")===0?"HJI":akt);
-            return '<option value="'+o[0]+'"'+(norm===o[0]?" selected":"")+">"+o[1]+"</option>";
-          }).join("")+"</select></label>"+
-        '<label class="fl"><span>Inbetriebnahme'+hin("inbetriebnahme")+'</span><input type="date" data-k="inbetriebnahme" value="'+esc(p.inbetriebnahme||"")+'"></label>'+
-        '<label class="fl"><span>Soll-Monat'+hin("monat")+'</span><select data-k="monat"><option value="0">–</option>'+
-          MONATE_L.slice(1).map(function(m,i){ return '<option value="'+(i+1)+'"'+(+p.monat===i+1?" selected":"")+">"+m+"</option>"; }).join("")+"</select></label>"+
-        '<label class="fl"><span>Kältemittel (kg)'+hin("kaeltemittelKg")+'</span><input type="number" step="0.1" min="0" data-k="kaeltemittelKg" value="'+esc(p.kaeltemittelKg==null?"":p.kaeltemittelKg)+'"></label>'+
-        '<label class="fl"><span>Kältemittelart'+hin("kaeltemittelArt")+'</span><input type="text" data-k="kaeltemittelArt" placeholder="z. B. R410A" value="'+esc(p.kaeltemittelArt||"")+'"></label>'+
-        '<label class="fl"><span>Rückkühler'+hin("rueckkuehler")+'</span><input type="text" data-k="rueckkuehler" value="'+esc(p.rueckkuehler||"")+'"></label>'+
-      "</div>"+
-      (chef ? (
-      '<div class="grid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:10px">'+
-        '<label class="fl"><span>Status</span><select data-k="betrieb">'+
+        '<label class="fl"><span>Bezeichnung der Anlage</span><input type="text" data-a="name" placeholder="z. B. VRV Verkaufsraum" value="'+esc(d.anlagentyp||"")+'"></label>'+
+        '<label class="fl"><span>Status</span><select data-a="betrieb">'+
           [["aktiv","in Betrieb – wird gewartet"],["pausiert","zur Zeit nicht gewartet"],["still","stillgelegt / abgebaut"]].map(function(o){
-            var akt=p.aktiv===false?"still":p.pausiert?"pausiert":"aktiv";
             return '<option value="'+o[0]+'"'+(akt===o[0]?" selected":"")+">"+o[1]+"</option>"; }).join("")+"</select></label>"+
-        '<label class="fl"><span>Grund, falls nicht gewartet</span><input type="text" data-k="pausiertGrund" '+
-          'placeholder="z. B. von Lidl ausgesetzt, Umbau" value="'+esc(p.pausiertGrund||"")+'"></label>'+
+        '<label class="fl"><span>Grund, falls nicht gewartet</span><input type="text" data-a="pausiertGrund" placeholder="z. B. von Lidl ausgesetzt" value="'+esc(d.pausiertGrund||"")+'"></label>'+
+        '<label class="fl"><span>Kältemittel (kg)</span><input type="number" step="0.1" min="0" data-a="kaeltemittelKg" value="'+esc(d.kaeltemittelKg==null?"":d.kaeltemittelKg)+'"></label>'+
+        '<label class="fl"><span>Kältemittelart</span><input type="text" data-a="kaeltemittelArt" placeholder="z. B. R410A" value="'+esc(d.kaeltemittelArt||"")+'"></label>'+
+        '<label class="fl"><span>Rückkühler (laut Liste)</span><input type="text" data-a="rueckkuehler" value="'+esc(d.rueckkuehler||"")+'"></label>'+
       "</div>"+
-      '<div class="muted" style="font-size:12px">„Zur Zeit nicht gewartet“: bleibt mit allen Daten sichtbar, taucht aber in keiner Fälligkeit auf. '+
-        "„Stillgelegt“: Anlage ist weg, nur die Historie bleibt.</div>"+
-      (p.vorOrtNeu?'<div class="note warnbox" style="font-size:12.5px">Vor Ort neu erfasst – bitte Kürzel, Soll-Monat und Inbetriebnahme ergänzen.</div>':"")+
-      /* Anlagendaten – dieselben Angaben, die Techniker vor Ort ergänzen */
-      '<details'+(anlageLuecken(dd).length<ANLAGE_FELDER.length?"":" open")+'><summary style="cursor:pointer;font-weight:600;font-size:13px">Anlagendaten'+
-        ' <span class="muted" style="font-weight:400">– '+esc(anlageKurz(dd)||"noch leer")+"</span></summary>"+
+      ((anl&&anl.leader.vorOrtNeu)?'<div class="note warnbox" style="font-size:12.5px">Vor Ort neu erfasst – bitte Kürzel, Soll-Monat und Inbetriebnahme ergänzen.</div>':"")+
+      '<details><summary style="cursor:pointer;font-weight:600;font-size:13px">Anlagendaten'+
+        ' <span class="muted" style="font-weight:400">– '+esc(anlageKurz(d)||"noch leer")+"</span></summary>"+
         '<div class="grid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:10px;margin-top:10px">'+
         ANLAGE_FELDER.filter(function(f){ return f.k!=="kaeltemittelArt" && f.k!=="kaeltemittelKg"; }).map(function(f){
-          var w=dd[f.k]==null?"":dd[f.k];
-          if(f.t==="jn") return '<label class="fl"><span>'+esc(f.l)+'</span><select data-k="'+f.k+'">'+
+          var w=d[f.k]==null?"":d[f.k];
+          if(f.t==="jn") return '<label class="fl"><span>'+esc(f.l)+'</span><select data-a="'+f.k+'">'+
             [["","–"],["ja","ja"],["nein","nein"]].map(function(o){ return '<option value="'+o[0]+'"'+(w===o[0]?" selected":"")+">"+o[1]+"</option>"; }).join("")+"</select></label>";
-          if(f.t==="zahl") return '<label class="fl"><span>'+esc(f.l)+'</span><input type="number" min="1" data-k="'+f.k+'" value="'+esc(w)+'"></label>';
+          if(f.t==="zahl") return '<label class="fl"><span>'+esc(f.l)+'</span><input type="number" min="1" data-a="'+f.k+'" value="'+esc(w)+'"></label>';
           var dl=f.o?' list="dl_'+f.k+'"':"";
-          return '<label class="fl"><span>'+esc(f.l)+'</span><input type="text" data-k="'+f.k+'"'+dl+' value="'+esc(w)+'">'+
+          return '<label class="fl"><span>'+esc(f.l)+'</span><input type="text" data-a="'+f.k+'"'+dl+' value="'+esc(w)+'">'+
             (f.o?'<datalist id="dl_'+f.k+'">'+f.o.map(function(o){ return '<option value="'+esc(o)+'">'; }).join("")+"</datalist>":"")+"</label>";
         }).join("")+
-      "</div></details>") :
-      /* weitere Termin-Zeile: nur ob der Termin gilt */
-      '<label class="fl"><span>Termin</span><select data-k="betrieb"><option value="aktiv">gilt</option>'+
-        '<option value="still"'+(p.aktiv===false?" selected":"")+'>entfällt</option></select></label>')+
-      '<label class="fl"><span>Notiz</span><input type="text" data-k="notiz" value="'+esc(p.notiz||"")+'"></label>'+
+      "</div></details>"+
+      '<div class="fl" style="margin-top:4px"><span>Termine dieser Anlage</span></div>'+
+      '<div class="termine stack"></div>'+
+      '<label class="fl"><span>Notiz</span><input type="text" data-a="notiz" value="'+esc((anl?anl.leader.notiz:"")||"")+'"></label>'+
     "</div>");
-    host.appendChild(b);
+    k.querySelector('[data-a="plus"]').onclick=function(){
+      k.querySelector(".termine").appendChild(terminZeile({id:"NP"+Date.now().toString(36)+Math.random().toString(36).slice(2,5), aktiv:true}, true));
+      optionenNeu();
+    };
+    k.querySelector('[data-a="name"]').oninput=optionenNeu;
+    host.appendChild(k);
+    if(anl) anl.termine.forEach(function(p){ k.querySelector(".termine").appendChild(terminZeile(p,false)); });
+    return k;
+  }
+
+  function leereKartenWeg(){
+    host.querySelectorAll(".anlagekarte").forEach(function(k){ if(!k.querySelector(".terminzeile")) k.remove(); });
+  }
+  function optionenNeu(){
+    var karten=[].slice.call(host.querySelectorAll(".anlagekarte"));
+    host.querySelectorAll(".terminzeile").forEach(function(z){
+      var sel=z.querySelector(".verschieben"); if(!sel) return;
+      var meine=z.parentElement.parentElement;
+      var mehrere=meine && meine.querySelectorAll(".terminzeile").length>1;
+      sel.innerHTML='<option value="">gehört zu dieser Anlage</option>'+
+        karten.filter(function(x){ return x!==meine; }).map(function(x){
+          var nm=x.querySelector('[data-a="name"]').value.trim();
+          return '<option value="'+x.dataset.k+'">→ verschieben zu: '+esc(nm||("Anlage "+(karten.indexOf(x)+1)))+"</option>";
+        }).join("")+
+        (mehrere?'<option value="__neu">→ eigene Anlage daraus machen</option>':"");
+    });
+  }
+
+  /* bestehende Anlagen des Markts, auch stillgelegte und pausierte */
+  (function(){
+    var gruppen={}, reihe=[];
+    ausgewaehlt.forEach(function(p){
+      var id=anlageLeader(p).id;
+      if(!gruppen[id]){ gruppen[id]={leader:anlageLeader(p), termine:[]}; reihe.push(gruppen[id]); }
+      gruppen[id].termine.push(p);
+    });
+    reihe.forEach(function(g){ anlageKarte(g); });
+  })();
+  if(s._entwurf) anlageKarte(null).querySelector('[data-a="plus"]').click();
+  optionenNeu();
+  c.querySelector("#a_plus").onclick=function(){
+    anlageKarte(null).querySelector('[data-a="plus"]').click();
+    optionenNeu();
   };
-  ausgewaehlt.forEach(function(p){ anlageBlock(p,false); });
-  if(s._entwurf) anlageBlock({id:"NP"+Date.now().toString(36), aktiv:true},true);
-  c.querySelector("#a_plus").onclick=function(){ anlageBlock({id:"NP"+Date.now().toString(36)+Math.random().toString(36).slice(2,5), aktiv:true},true); };
 
   c.querySelector("#adm_schliessen").onclick=function(){ A.sel=null; A.entwurf=null; render(); };
 
@@ -5010,59 +5092,86 @@ function verwaltungEditor(s){
       recs.push({id:"standort:"+s.id, felder:gegenExcel, neu:false, leer:!Object.keys(gegenExcel).length});
     }
 
-    /* Anlagen */
-    var fehlt=false;
-    host.querySelectorAll(".posbox").forEach(function(b){
-      var pid=b.dataset.pid, istNeu=b.dataset.neu==="1";
-      var lese=function(k){ var x=b.querySelector('[data-k="'+k+'"]'); if(!x) return undefined; return x.type==="checkbox"?x.checked:x.value.trim(); };
-      var betrieb=lese("betrieb");
-      var neuP={anlagentyp:lese("anlagentyp"), intervallCode:lese("intervallCode"), inbetriebnahme:lese("inbetriebnahme")||null,
-                monat:+lese("monat")||0, kaeltemittelKg:num(lese("kaeltemittelKg")), kaeltemittelArt:lese("kaeltemittelArt"),
-                rueckkuehler:lese("rueckkuehler"), aktiv:betrieb!=="still", notiz:lese("notiz"),
-                pausiert:betrieb==="pausiert", pausiertGrund:betrieb==="pausiert"?lese("pausiertGrund"):""};
-      var p0=posById[pid];
-      ANLAGE_FELDER.forEach(function(f){
-        if(f.k==="kaeltemittelArt"||f.k==="kaeltemittelKg") return;
-        var v=lese(f.k);
-        if(v===undefined){ if(p0) neuP[f.k]=p0[f.k]; return; }   /* weitere Termin-Zeile: keine Anlagendaten */
-        neuP[f.k]= f.t==="zahl" ? (v===""?null:+v) : v;
-        /* nur angezeigt, weil eine andere Zeile der Anlage ihn hat – keine Änderung */
-        if(p0 && leerWert(p0[f.k]) && gleich(neuP[f.k], anlageDaten(p0)[f.k])) neuP[f.k]=p0[f.k];
+    /* Anlagen und ihre Termine: was in einer Karte steht, gehört zusammen */
+    var fehlend=[], doppelt=[];
+    host.querySelectorAll(".anlagekarte").forEach(function(k){
+      var zeilen=[].slice.call(k.querySelectorAll(".terminzeile"));
+      if(!zeilen.length) return;
+      var la=function(key){ var x=k.querySelector('[data-a="'+key+'"]'); if(!x) return undefined;
+        return x.type==="checkbox"?x.checked:x.value.trim(); };
+      var betrieb=la("betrieb"), ankerPid=zeilen[0].dataset.pid;
+      var kartenName=la("name");
+      var monate={};
+      zeilen.forEach(function(z, idx){
+        var pid=z.dataset.pid, istNeu=z.dataset.neu==="1", p0=posById[pid], istAnker=(idx===0);
+        var lt=function(key){ var x=z.querySelector('[data-t="'+key+'"]'); if(!x) return undefined;
+          return x.type==="checkbox"?x.checked:x.value.trim(); };
+        var neuP=Object.assign({}, p0?auswahl(p0,STAMM_FELDER_POS):{});
+        neuP.intervallCode=lt("intervallCode");
+        neuP.inbetriebnahme=lt("inbetriebnahme")||null;
+        neuP.monat=+lt("monat")||0;
+        neuP.aktiv = betrieb!=="still" && !lt("entfaellt");
+        /* Status und Anlagendaten hängen an der ersten Zeile der Anlage */
+        neuP.pausiert = istAnker ? (betrieb==="pausiert") : (p0?p0.pausiert:false);
+        neuP.pausiertGrund = istAnker ? (betrieb==="pausiert"?la("pausiertGrund"):"") : (p0?p0.pausiertGrund:"");
+        if(istAnker){
+          neuP.anlagentyp=kartenName;
+          neuP.kaeltemittelKg=num(la("kaeltemittelKg"));
+          neuP.kaeltemittelArt=la("kaeltemittelArt");
+          neuP.rueckkuehler=la("rueckkuehler");
+          neuP.notiz=la("notiz");
+          ANLAGE_FELDER.forEach(function(f){
+            if(f.k==="kaeltemittelArt"||f.k==="kaeltemittelKg") return;
+            var v=la(f.k); if(v===undefined) return;
+            neuP[f.k]= f.t==="zahl" ? (v===""?null:+v) : v;
+            /* stand nur da, weil eine andere Zeile der Anlage ihn hat – keine Änderung */
+            if(p0 && leerWert(p0[f.k]) && gleich(neuP[f.k], anlageDaten(p0)[f.k])) neuP[f.k]=p0[f.k];
+          });
+        }
+        /* Zuordnung: erste Zeile ist die Anlage, die anderen hängen an ihr */
+        var will = istAnker ? pid : ankerPid;
+        neuP.anlageZu = (p0 && p0.anlageId===will) ? (p0.anlageZu||null) : will;
+        if(p0) STAMM_FELDER_POS.forEach(function(kk){
+          if(leerWert(neuP[kk]) && leerWert(p0[kk]) && neuP[kk]!==false) neuP[kk]=p0[kk];
+        });
+        if(p0 && !neuP.pausiert && !p0.pausiert) neuP.pausiert=p0.pausiert;
+        if(p0) neuP.vorOrtNeu = (p0.vorOrtNeu && !neuP.intervallCode) ? p0.vorOrtNeu : (p0.vorOrtNeu?false:p0.vorOrtNeu);
+
+        var name=(kartenName||(p0?anlagenName(p0):"Anlage"));
+        if(neuP.aktiv && !neuP.intervallCode) fehlend.push(name);
+        if(neuP.aktiv && neuP.monat){ if(monate[neuP.monat]) doppelt.push(name+" (zweimal "+MONATE_L[neuP.monat]+")"); monate[neuP.monat]=1; }
+
+        if(istNeu){
+          if(!neuP.intervallCode && !neuP.inbetriebnahme && !kartenName) return;  /* leer geblieben */
+          neuP.standortId=s.id;
+          recs.push({id:"position:"+pid, felder:neuP, neu:true});
+          protokoll.push({feld:"anlage", name:"Neuer Termin", alt:"–",
+            neu:(kartenName||"Anlage")+" · "+(neuP.intervallCode||"ohne Kürzel")+(neuP.inbetriebnahme?" · IB "+dfmt(neuP.inbetriebnahme):"")});
+          return;
+        }
+        if(!p0) return;
+        var vorherP=auswahl(p0,STAMM_FELDER_POS);
+        var norm=function(x){ x=String(x||"").trim().toUpperCase(); return x==="HW"?"HJW":(x.indexOf("HI")===0?"HJI":x); };
+        if(norm(vorherP.intervallCode)===norm(neuP.intervallCode)) neuP.intervallCode=vorherP.intervallCode;
+        var deltaP=objDiff(vorherP,neuP,STAMM_FELDER_POS);
+        if(!Object.keys(deltaP).length) return;
+        Object.keys(deltaP).forEach(function(kk){
+          protokoll.push({feld:kk, name:name+" – "+(LABEL_POS[kk]||kk), alt:stammWert(kk,vorherP[kk]), neu:stammWert(kk,neuP[kk])});
+        });
+        if(p0._neu){ neuP.standortId=s.id; recs.push({id:"position:"+pid, felder:neuP, neu:true}); }
+        else {
+          var gE=objDiff(EXCEL["position:"+pid],neuP,STAMM_FELDER_POS);
+          recs.push({id:"position:"+pid, felder:gE, neu:false, leer:!Object.keys(gE).length});
+        }
       });
-      if(neuP.pausiertGrund===undefined) neuP.pausiertGrund=p0?p0.pausiertGrund:"";
-      /* Zuordnung zu einer Anlage: nur speichern, wenn sie sich ändert */
-      var zu=lese("anlageZu");
-      neuP.anlageZu = (zu!==undefined && p0 && zu!==anlageLeader(p0).id) ? zu : (p0?p0.anlageZu:null);
-      /* unveränderte Leerwerte nicht als Änderung zählen (null gegen "") */
-      if(p0) STAMM_FELDER_POS.forEach(function(k){ if(leerWert(neuP[k]) && leerWert(p0[k]) && neuP[k]!==false) neuP[k]=p0[k]; });
-      if(p0 && !neuP.pausiert && !p0.pausiert) neuP.pausiert=p0.pausiert;
-      if(p0) neuP.vorOrtNeu = p0.vorOrtNeu && !neuP.intervallCode ? p0.vorOrtNeu : (p0.vorOrtNeu?false:p0.vorOrtNeu);
-      if(istNeu){
-        if(!neuP.anlagentyp && !neuP.intervallCode && !neuP.inbetriebnahme) return;   /* leerer Zusatzblock */
-        if(!neuP.intervallCode){ fehlt=true; return; }
-        neuP.standortId=s.id;
-        recs.push({id:"position:"+pid, felder:neuP, neu:true});
-        protokoll.push({feld:"anlage", name:"Neue Anlage", alt:"–",
-          neu:(neuP.anlagentyp||"Anlage")+" · "+neuP.intervallCode+(neuP.inbetriebnahme?" · IB "+dfmt(neuP.inbetriebnahme):"")});
-        return;
-      }
-      var p=posById[pid]; if(!p) return;
-      var vorherP=auswahl(p,STAMM_FELDER_POS);
-      /* Kurz- und Langform gelten als gleich, sonst wäre jedes HW eine Änderung */
-      var norm=function(k){ k=String(k||"").trim().toUpperCase(); return k==="HW"?"HJW":(k.indexOf("HI")===0?"HJI":k); };
-      if(norm(vorherP.intervallCode)===norm(neuP.intervallCode)) neuP.intervallCode=vorherP.intervallCode;
-      var deltaP=objDiff(vorherP,neuP,STAMM_FELDER_POS);
-      if(!Object.keys(deltaP).length) return;
-      Object.keys(deltaP).forEach(function(k){
-        protokoll.push({feld:k, name:anlagenName(p)+" – "+LABEL_POS[k], alt:stammWert(k,vorherP[k]), neu:stammWert(k,neuP[k])});
-      });
-      if(p._neu){ neuP.standortId=s.id; recs.push({id:"position:"+pid, felder:neuP, neu:true}); }
-      else {
-        var gE=objDiff(EXCEL["position:"+pid],neuP,STAMM_FELDER_POS);
-        recs.push({id:"position:"+pid, felder:gE, neu:false, leer:!Object.keys(gE).length});
-      }
     });
-    if(fehlt){ fehler("Jede neue Anlage braucht ein Kürzel (JW, HJW oder HJI) – daraus ergibt sich ihr Termin."); return; }
+    if(fehlend.length){
+      fehler("Ohne Kürzel gibt es keinen Termin. Bitte bei „"+fehlend[0]+"“ JW, HJW oder HJI wählen"+
+             (fehlend.length>1?" (und bei "+(fehlend.length-1)+" weiteren)":"")+".");
+      return;
+    }
+    if(doppelt.length && !window.confirm("Zwei Termine im selben Monat: "+doppelt.join(", ")+
+        ".\n\nGewollt? Sonst abbrechen und einen der Termine auf den Halbjahresmonat setzen.")) return;
     if(!recs.length){ fehler("Es wurde nichts geändert."); return; }
 
     var knopf=c.querySelector("#a_speichern"); knopf.disabled=true; knopf.textContent="Wird gespeichert …";

@@ -168,11 +168,29 @@ Status, letztem Besuch, nächstem Termin und den Auffälligkeiten der Liste –
 getrennt nach **Fehlern** (Soll-Monat passt nicht zur Inbetriebnahme, über
 30 kg ohne HJW, unklares Kürzel, doppelte Filialnummer, keine Kartenposition)
 und **Lücken** (fehlende Kältemittelmenge, Inbetriebnahme, PLZ). Ein Markt
-lässt sich dort öffnen und bearbeiten: Filialnummer, Adresse, Region,
-Koordinaten (auch aus der Adresse ermittelbar), und je Anlage Typ, Kürzel,
-Inbetriebnahme, Soll-Monat, Kältemittel und Rückkühler. Neue Märkte und
-Anlagen lassen sich anlegen; statt zu löschen werden sie **stillgelegt** – sie
-verschwinden aus Plan, Karte und Touren, ihre Historie bleibt.
+lässt sich dort öffnen und bearbeiten: Filialnummer, Adresse, Region und
+Koordinaten (auch aus der Adresse ermittelbar).
+
+**Anlagen und Termine:** Darunter steht **je Anlage eine Karte** – mit
+Bezeichnung, Status, Kältemittel und den Anlagendaten. In der Karte liegen die
+**Termine** dieser Anlage, je Termin Kürzel, Inbetriebnahme und Soll-Monat.
+So ist auf einen Blick klar, was zusammengehört.
+
+- **+ Termin** ergänzt einen Termin in der Anlage, etwa den fehlenden
+  Halbjahrestermin.
+- Die Auswahl neben einem Termin **verschiebt ihn in eine andere Anlage**
+  oder macht **eine eigene Anlage** daraus – so lassen sich falsch
+  zusammengefasste Zeilen der Excel-Liste trennen.
+- **Termin entfällt** nimmt einen einzelnen Termin aus dem Plan, der Status
+  der Anlage gilt für alle ihre Termine.
+- Beim Speichern prüft die App: ohne Kürzel kein Termin, und zwei Termine im
+  selben Monat fragen nach. Gespeichert wird nur, was sich wirklich geändert
+  hat; alles steht mit altem und neuem Wert im Änderungsverlauf.
+
+Neue Märkte und Anlagen lassen sich anlegen; statt zu löschen werden sie
+**stillgelegt** – sie verschwinden aus Plan, Karte und Touren, ihre Historie
+bleibt. Sammelzeilen der Excel-Liste, die gar keine Märkte sind, lassen sich
+über **Aus der Liste entfernen** ganz ausblenden.
 
 Technisch ist das eine **Ebene über der Excel-Liste**: je Markt bzw. Anlage
 werden nur die Felder gespeichert, die abweichen. Der Excel-Wert bleibt darunter
