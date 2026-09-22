@@ -350,7 +350,9 @@ var STAMM_FELDER_POS = ["anlagentyp","intervallCode","inbetriebnahme","monat","k
                         "kaeltemittelArt","rueckkuehler","aktiv","notiz",
                         /* Anlagendaten, die vor Ort nach und nach ergänzt werden */
                         "pausiert","pausiertGrund","bauart","kreislaeufe","pruefbuch","rkUkt","pumpeUkt",
-                        "regelung","regelungFirma","regelungFirmaName","fernzugriff","hersteller","modell","seriennummer","vorOrtNeu"];
+                        "regelung","regelungFirma","regelungFirmaName","fernzugriff","hersteller","modell","seriennummer","vorOrtNeu",
+                        /* Zuordnung einer Termin-Zeile zu ihrer Anlage (von Hand) */
+                        "anlageZu"];
 var ABGELEITET_POS   = ["kaeltemittelText","ueber30kg","baujahr"];
 function auswahl(o, felder){
   var r={}; felder.forEach(function(k){ r[k]=(o[k]===undefined?null:o[k]); }); return r;
@@ -366,13 +368,15 @@ function indexNeuAufbauen(){
   byId={}; posById={};
   ALLE_ST.forEach(function(s){ byId[s.id]=s; s.pos=[]; s.pausiertePos=[]; });
   ALLE_POS.forEach(function(p){ posById[p.id]=p; });
-  /* „zur Zeit nicht gewartet“: bleibt sichtbar, zählt aber für keine Fälligkeit */
+  anlagenBilden();
+  /* „zur Zeit nicht gewartet“ gilt für die ganze Anlage (steht an ihrer ersten Zeile):
+     bleibt sichtbar, zählt aber für keine Fälligkeit */
   ALLE_POS.forEach(function(p){
     if(!p.aktiv || !byId[p.standortId]) return;
-    (p.pausiert ? byId[p.standortId].pausiertePos : byId[p.standortId].pos).push(p);
+    (anlagePausiert(p) ? byId[p.standortId].pausiertePos : byId[p.standortId].pos).push(p);
   });
   ST = ALLE_ST.filter(function(s){ return s.aktiv; });
-  POS = ALLE_POS.filter(function(p){ return p.aktiv && !p.pausiert && byId[p.standortId] && byId[p.standortId].aktiv; });
+  POS = ALLE_POS.filter(function(p){ return p.aktiv && !anlagePausiert(p) && byId[p.standortId] && byId[p.standortId].aktiv; });
   /* Kennzahlen je Markt, die sonst aus der Excel-Aufbereitung stammen */
   ALLE_ST.forEach(function(s){
     var bj=s.pos.map(function(p){ return p.baujahr; }).filter(Boolean);
@@ -385,6 +389,103 @@ function indexNeuAufbauen(){
     s.adresseUnvollstaendig=!s.plz;
   });
   if(typeof autoNamenVergeben==="function") autoNamenVergeben();
+}
+
+/* ---------- Anlagen und ihre Termine ----------
+   Die Excel-Liste hat je Wartungstermin eine Zeile – eine Anlage mit
+   Jahres- und Halbjahreswartung steht also zweimal drin. Hier werden die
+   Zeilen wieder zu Anlagen zusammengefasst: Zeilen desselben Markts, deren
+   Termine rund ein halbes Jahr auseinanderliegen, gehören zusammen (zuerst
+   bei gleichem Namen, sonst wenn genau zwei übrig sind). Zeilen mit gleichem
+   Termin sind echte Doppel und bleiben getrennt. In der Verwaltung lässt sich
+   jede Zuordnung von Hand festlegen (Feld anlageZu).
+   Die erste Zeile einer Anlage – bevorzugt die Jahreswartung – trägt deren
+   Anlagendaten und den Status. */
+var ANLAGEN={};
+function slotMonat(p){
+  var iv=intervallArt(p.intervallCode), halb=/^HJ/.test(iv.kurz);
+  if(p.inbetriebnahme && !iv.unklar) return +plusMonate(p.inbetriebnahme, halb?6:12).slice(5,7);
+  return +p.monat||0;
+}
+function anlagenBilden(){
+  ANLAGEN={};
+  var jeMarkt={};
+  ALLE_POS.forEach(function(p){
+    p.anlageId=null;
+    if(p.aktiv && p.standortId) (jeMarkt[p.standortId]=jeMarkt[p.standortId]||[]).push(p);
+  });
+  var halb=function(p){ return /^HJ/.test(intervallArt(p.intervallCode).kurz); };
+  var norm=function(p){ return String(p.anlagentyp||"").toLowerCase().replace(/[^a-z0-9äöüß]/g,""); };
+  Object.keys(jeMarkt).forEach(function(sid){
+    var ps=jeMarkt[sid];
+    /* 1. von Hand festgelegt */
+    ps.forEach(function(p){ if(p.anlageZu===p.id) p.anlageId=p.id; });
+    ps.forEach(function(p){
+      if(!p.anlageZu || p.anlageZu===p.id) return;
+      var z=posById[p.anlageZu];
+      if(z && z.standortId===sid && z.aktiv){ if(!z.anlageId) z.anlageId=z.id; p.anlageId=z.anlageId; }
+    });
+    /* 2. automatisch */
+    var frei=ps.filter(function(p){ return !p.anlageId; });
+    var passt=function(a,b){
+      var m1=slotMonat(a), m2=slotMonat(b);
+      if(m1 && m2){ var d=Math.abs(m1-m2); d=Math.min(d,12-d); if(d<4) return false; if(d>=5) return true; }
+      return halb(a)!==halb(b);
+    };
+    var paaren=function(bed){
+      frei.forEach(function(a){
+        if(a.anlageId) return;
+        var b=frei.filter(function(x){ return x!==a && !x.anlageId && passt(a,x) && bed(a,x); })[0];
+        if(!b) return;
+        var chef=(halb(a)&&!halb(b))?b:a;
+        a.anlageId=b.anlageId=chef.id;
+      });
+    };
+    paaren(function(a,b){ return norm(a)===norm(b); });
+    if(frei.filter(function(p){ return !p.anlageId; }).length===2) paaren(function(){ return true; });
+  });
+  ALLE_POS.forEach(function(p){
+    if(!p.anlageId) p.anlageId=p.id;
+    (ANLAGEN[p.anlageId]=ANLAGEN[p.anlageId]||{id:p.anlageId, termine:[]}).termine.push(p);
+  });
+  Object.keys(ANLAGEN).forEach(function(k){
+    var a=ANLAGEN[k];
+    a.leader=posById[k]||a.termine[0];
+    /* Jahreswartung zuerst, dann die Halbjahrestermine */
+    a.termine.sort(function(x,y){ return (halb(x)?1:0)-(halb(y)?1:0); });
+  });
+}
+function anzahlAnlagen(){ var m={}; POS.forEach(function(p){ m[p.anlageId]=1; }); return Object.keys(m).length; }
+/* Anlagen eines Markts in Reihenfolge, je mit ihren (aktiven) Terminen */
+function anlagenDesMarkts(s, auchPausiert){
+  var m={}, liste=[];
+  s.pos.concat(auchPausiert?s.pausiertePos:[]).forEach(function(p){
+    var a=anlageVon(p);
+    if(!m[a.id]){ m[a.id]={id:a.id, leader:a.leader, termine:[]}; liste.push(m[a.id]); }
+    m[a.id].termine.push(p);
+  });
+  return liste;
+}
+function anlageVon(p){ return p ? ANLAGEN[p.anlageId] || {id:p.id, leader:p, termine:[p]} : null; }
+function anlageLeader(p){ return anlageVon(p).leader; }
+function anlagePausiert(p){ var l=anlageLeader(p); return !!(l && l.pausiert); }
+/* Anlagendaten einer Anlage: erste Zeile zuerst, Lücken aus den anderen Zeilen */
+var ANLAGE_DATEN_KEYS=null;
+function anlageDaten(p){
+  var a=anlageVon(p), l=a.leader, r=Object.assign({}, l);
+  if(!ANLAGE_DATEN_KEYS) ANLAGE_DATEN_KEYS=ANLAGE_FELDER.map(function(f){ return f.k; }).concat(["anlagentyp","pausiertGrund"]);
+  ANLAGE_DATEN_KEYS.forEach(function(k){
+    if(!leerWert(r[k])) return;
+    for(var i=0;i<a.termine.length;i++){ if(!leerWert(a.termine[i][k])){ r[k]=a.termine[i][k]; break; } }
+  });
+  return r;
+}
+/* „Jahreswartung 17.06. · Halbjahreswartung 17.12.“ */
+function termineText(p){
+  return anlageVon(p).termine.filter(function(t){ return t.aktiv; }).map(function(t){
+    var iv=t.intervall||intervallArt(t.intervallCode);
+    return iv.kurz+(t.anker?" "+String(t.anker.tag).padStart(2,"0")+"."+String(t.anker.monat).padStart(2,"0")+".":(t.monat?" "+MONATE[t.monat]:""));
+  }).join(" · ");
 }
 indexNeuAufbauen();
 
@@ -602,7 +703,11 @@ function isoLokal(d){
 function dfmt(iso){ if(!iso) return "–"; var p=iso.split("-"); return p[2]+"."+p[1]+"."+p[0]; }
 function el(html){ var t=document.createElement("template"); t.innerHTML=html.trim(); return t.content.firstElementChild; }
 function pill(st){ return '<span class="pill p-'+st+'">'+STATUS_LABEL[st]+"</span>"; }
-function anlagenName(p){ return p.anlagentyp || "Anlage ohne Typangabe"; }
+function anlagenName(p){
+  /* alle Termine einer Anlage tragen den Namen ihrer ersten Zeile */
+  var l=(p && p.anlageId && ANLAGEN[p.anlageId]) ? ANLAGEN[p.anlageId].leader : p;
+  return (l && l.anlagentyp) || (p && p.anlagentyp) || "Anlage ohne Typangabe";
+}
 /* Wie UKT einen Markt nennt: „Seekirchen“, in Orten mit mehreren Märkten
    „Wien Jedletzbergerstraße“. Eine in der Verwaltung vergebene Bezeichnung
    geht vor; die Filialnummer ist nur Zusatz. */
@@ -879,7 +984,7 @@ VIEWS.forEach(function(v){
   };
   b.dataset.v=v[0]; tabsEl.appendChild(b);
 });
-document.getElementById("stand").textContent = "Stand "+dfmt(isoLokal(HEUTE))+" · "+ST.length+" Standorte · "+POS.length+" Positionen";
+document.getElementById("stand").textContent = "Stand "+dfmt(isoLokal(HEUTE))+" · "+ST.length+" Standorte · "+anzahlAnlagen()+" Anlagen · "+POS.length+" Termine";
 
 /* ---------- Filterleiste ---------- */
 function filterBar(){
@@ -1501,7 +1606,7 @@ function standortDetail(s){
       "<dt>Adresse</dt><dd>"+esc(s.adresse)+"</dd>"+
       "<dt>FM-Region</dt><dd>"+esc(s.region||"nicht zugeordnet")+"</dd>"+
       (s.filiale?"<dt>Filiale</dt><dd class='mono'>"+esc(s.filiale)+"</dd>":"")+
-      "<dt>Positionen</dt><dd>"+s.pos.length+"</dd>"+
+      "<dt>Anlagen</dt><dd>"+anlagenDesMarkts(s,false).length+" · "+s.pos.length+" Termine im Jahr</dd>"+
       "<dt>Letzter Besuch</dt><dd class='mono'>"+(s.letzterBesuch?dfmt(s.letzterBesuch):"—")+"</dd>"+
       "<dt>Halbjahresbesuch fällig</dt><dd class='mono'>"+(s.naechsterBesuch?dfmt(s.naechsterBesuch):"—")+
         (s.marktStatus==="ueberfaellig"?" <span class='pill p-ueberfaellig'>überfällig</span>":"")+"</dd>"+
@@ -1524,20 +1629,36 @@ function standortDetail(s){
     S.adm.sel=s.id; S.adm.entwurf=null; S.view="verwaltung"; render(); window.scrollTo({top:0});
   };
   var pl=d.querySelector("#poslist");
-  s.pos.forEach(function(p){ pl.appendChild(posBox(p,s)); });
-  s.pausiertePos.forEach(function(p){ pl.appendChild(pausiertBox(p)); });
+  anlagenBloecke(s, pl);
   return d;
 }
 /* zur Zeit nicht gewartet – sichtbar, aber ohne Termin */
 function pausiertBox(p){
+  var d=anlageDaten(p);
   return el('<div class="posbox" style="opacity:.75"><div class="rowflex" style="justify-content:space-between;gap:8px">'+
-    '<strong style="font-size:14px">'+esc(anlagenName(p))+"</strong>"+pill("pausiert")+"</div>"+
-    '<div class="muted" style="font-size:13px">'+esc([p.pausiertGrund?"Grund: "+p.pausiertGrund:"", anlageKurz(p)].filter(Boolean).join(" · ")||"Keine Termine, bis die Anlage in der Verwaltung wieder auf „in Betrieb“ steht.")+"</div></div>");
+    '<strong style="font-size:14px">'+esc(anlagenName(d))+"</strong>"+pill("pausiert")+"</div>"+
+    '<div class="muted" style="font-size:13px">'+esc([d.pausiertGrund?"Grund: "+d.pausiertGrund:"", anlageKurz(d)].filter(Boolean).join(" · ")||"Keine Termine, bis die Anlage in der Verwaltung wieder auf „in Betrieb“ steht.")+"</div></div>");
 }
-function posBox(p,s){
+/* je Anlage ein Block: Name, Anlagendaten, darunter ihre Termine */
+function anlagenBloecke(s, host){
+  anlagenDesMarkts(s,true).forEach(function(a){
+    if(anlagePausiert(a.leader)){ host.appendChild(pausiertBox(a.leader)); return; }
+    var d=anlageDaten(a.leader), l=anlageLuecken(d);
+    var blk=el('<div class="akarte" style="background:var(--surface)"><div class="rowflex" style="justify-content:space-between;gap:8px">'+
+      '<strong style="font-size:15px">'+esc(anlagenName(d))+"</strong>"+
+      '<span class="muted" style="font-size:12px">'+a.termine.length+" Termin"+(a.termine.length===1?"":"e")+" im Jahr</span></div>"+
+      '<div style="font-size:13px">'+(anlageKurz(d)?esc(anlageKurz(d)):'<span class="muted">Anlagendaten noch nicht erfasst</span>')+
+        (l.length?' <span class="muted" style="font-size:12px">· '+l.length+" Angabe(n) offen</span>":"")+"</div>"+
+      (d.hersteller||d.seriennummer?'<div class="muted" style="font-size:12.5px">'+esc([d.hersteller,d.modell,d.seriennummer?"SN "+d.seriennummer:""].filter(Boolean).join(" · "))+"</div>":"")+
+      '<div class="stack" data-termine></div></div>');
+    a.termine.forEach(function(t){ blk.querySelector("[data-termine]").appendChild(posBox(t,s,true)); });
+    host.appendChild(blk);
+  });
+}
+function posBox(p,s,imBlock){
   var b=el('<div class="posbox">'+
     '<div class="rowflex" style="justify-content:space-between;gap:8px">'+
-      '<strong style="font-size:14px">'+esc(anlagenName(p))+"</strong>"+pill(p.status)+"</div>"+
+      '<strong style="font-size:14px">'+esc(imBlock?p.intervall.art:anlagenName(p))+"</strong>"+pill(p.status)+"</div>"+
     '<dl class="dl">'+
       "<dt>Art</dt><dd>"+esc(p.intervall.art)+
         (p.intervallCode?" <span class='muted mono'>("+esc(p.intervallCode)+")</span>":"")+"</dd>"+
@@ -1550,9 +1671,9 @@ function posBox(p,s){
       (p.kaeltemittelText?"<dt>Kältemittel</dt><dd class='mono'>"+esc(p.kaeltemittelText)+"</dd>":"")+
       (p.inbetriebnahme?"<dt>Inbetriebnahme</dt><dd class='mono'>"+dfmt(p.inbetriebnahme)+"</dd>":"")+
       (p.rueckkuehler?"<dt>Rückkühler</dt><dd>"+esc(p.rueckkuehler)+"</dd>":"")+
-      "<dt>Anlagendaten</dt><dd>"+(anlageKurz(p)?esc(anlageKurz(p)):'<span class="muted">noch nicht erfasst</span>')+
-        (anlageLuecken(p).length?' <span class="muted" style="font-size:12px">· '+anlageLuecken(p).length+" Angabe(n) offen</span>":"")+"</dd>"+
-      (p.hersteller||p.seriennummer?"<dt>Typenschild</dt><dd>"+esc([p.hersteller,p.modell,p.seriennummer?"SN "+p.seriennummer:""].filter(Boolean).join(" · "))+"</dd>":"")+
+      (imBlock?"":"<dt>Anlagendaten</dt><dd>"+(anlageKurz(p)?esc(anlageKurz(p)):'<span class="muted">noch nicht erfasst</span>')+
+        (anlageLuecken(p).length?' <span class="muted" style="font-size:12px">· '+anlageLuecken(p).length+" Angabe(n) offen</span>":"")+"</dd>")+
+      (!imBlock&&(p.hersteller||p.seriennummer)?"<dt>Typenschild</dt><dd>"+esc([p.hersteller,p.modell,p.seriennummer?"SN "+p.seriennummer:""].filter(Boolean).join(" · "))+"</dd>":"")+
     "</dl>"+
     '<div><div class="l muted" style="font-size:11px;text-transform:uppercase;letter-spacing:.06em;margin-bottom:4px">Durchgeführte Wartungen</div>'+
       '<div class="timeline">'+(p.historie.length?p.historie.map(function(dt){
@@ -1611,12 +1732,11 @@ function viewAnlagen(){
       "<span><strong>"+esc(stName(s))+'</strong><br><span class="muted" style="font-size:12.5px">'+esc(s.adresse)+(s.region?" · "+esc(s.region):"")+"</span></span>"+
       '<span class="rowflex" style="justify-content:flex-end">'+
         (s.ueber30kg?'<span class="tag f30">&gt;30 kg</span>':"")+
-        '<span class="tag">'+s.pos.length+" Pos.</span>"+pill(s.status)+"</span>"+
+        '<span class="tag">'+anlagenDesMarkts(s,true).length+" Anl.</span>"+pill(s.status)+"</span>"+
     '</summary><div class="inner"></div></details>');
     var inner=d.querySelector(".inner");
     d.addEventListener("toggle",function(){
-      if(d.open && !inner.dataset.done){ s.pos.forEach(function(p){ inner.appendChild(posBox(p,s)); });
-        s.pausiertePos.forEach(function(p){ inner.appendChild(pausiertBox(p)); }); inner.dataset.done="1"; }
+      if(d.open && !inner.dataset.done){ anlagenBloecke(s, inner); inner.dataset.done="1"; }
     });
     host.appendChild(d);
   });
@@ -2943,17 +3063,31 @@ function viewProtokoll(){
     var cur=byId[selSt.value];
     if(!cur) return;
     posBox.appendChild(el('<div class="fl"><span>'+(stoer?"Betroffene Anlage(n)":"Bei diesem Besuch gewartete Anlagen")+'</span></div>'));
+    /* eine Zeile je Anlage; bei mehreren Terminen wählt die App den, für den
+       dieser Besuch zählt (den fälligen, sonst den nächstgelegenen) */
     var liste=el('<div class="checks" style="grid-template-columns:1fr"></div>');
-    cur.pos.forEach(function(x,i){
-      var an = x.id===vorwahlId || (!stoer && (x.status==="ueberfaellig" || x.status==="faellig"));
-      var w=wannText(x);
-      liste.appendChild(el('<label class="chk" style="border-color:var(--line);align-items:center">'+
-        '<input type="checkbox" name="posw" value="'+esc(x.id)+'" id="f_posw'+i+'"'+(an?" checked":"")+">"+
-        '<span style="flex:1;min-width:0"><strong>'+esc(anlagenName(x))+"</strong><br>"+
-          '<span class="muted" style="font-size:12px">'+esc(x.intervall.art)+
-          (x.naechste?" · fällig "+dfmt(x.naechste)+" ("+w.zusatz+")":"")+"</span></span>"+
-        pill(x.status)+
-      "</label>"));
+    var datum=(form.querySelector("#f_datum")||{}).value||isoLokal(new Date());
+    var abst=function(t){ return t.naechste ? Math.abs(new Date(t.naechste)-new Date(datum)) : 9e15; };
+    anlagenDesMarkts(cur,false).forEach(function(a,i){
+      var ts=a.termine.slice();
+      var offen=ts.filter(function(t){ return t.status==="ueberfaellig"||t.status==="faellig"; });
+      var wahl=(offen.length?offen:ts).slice().sort(function(x,y){ return abst(x)-abst(y); })[0];
+      if(vorwahlId){ ts.forEach(function(t){ if(t.id===vorwahlId) wahl=t; }); }
+      var an = ts.some(function(t){ return t.id===vorwahlId; }) || (!stoer && offen.length>0);
+      var schlecht=ts.reduce(function(r,t){ return STATUS_RANK[t.status]<STATUS_RANK[r]?t.status:r; },"erledigt");
+      var terminText=function(t){ var w=wannText(t); return t.intervall.art+(t.naechste?" · fällig "+dfmt(t.naechste)+" ("+w.zusatz+")":""); };
+      var z=el('<label class="chk" style="border-color:var(--line);align-items:center">'+
+        '<input type="checkbox" name="posw" value="'+esc(stoer?a.leader.id:wahl.id)+'" data-anlage="'+esc(a.id)+'" id="f_posw'+i+'"'+(an?" checked":"")+">"+
+        '<span style="flex:1;min-width:0"><strong>'+esc(anlagenName(anlageDaten(a.leader)))+"</strong><br>"+
+          (stoer||ts.length===1
+            ? '<span class="muted" style="font-size:12px">'+esc(ts.map(terminText).join(" · "))+"</span>"
+            : '<span class="muted" style="font-size:12px">zählt als </span><select class="posslot" style="font-size:12.5px;padding:3px 6px;max-width:100%">'+
+                ts.map(function(t){ return '<option value="'+esc(t.id)+'"'+(t===wahl?" selected":"")+">"+esc(terminText(t))+"</option>"; }).join("")+"</select>")+
+        "</span>"+pill(schlecht)+"</label>");
+      var sl=z.querySelector(".posslot");
+      if(sl){ sl.onclick=function(e){ e.stopPropagation(); };
+        sl.onchange=function(){ z.querySelector('input[name="posw"]').value=sl.value; }; }
+      liste.appendChild(z);
     });
     posBox.appendChild(liste);
     posBox.appendChild(el('<div class="muted" style="font-size:12px">'+(stoer
@@ -2964,7 +3098,7 @@ function viewProtokoll(){
     /* Anlagen, die zur Zeit nicht gewartet werden: nur als Hinweis */
     if(cur.pausiertePos && cur.pausiertePos.length)
       posBox.appendChild(el('<div class="muted" style="font-size:12px">Zur Zeit nicht gewartet: '+
-        esc(cur.pausiertePos.map(function(x){ return anlagenName(x)+(x.pausiertGrund?" ("+x.pausiertGrund+")":""); }).join(", "))+"</div>"));
+        esc(cur.pausiertePos.filter(function(x){ return anlageLeader(x)===x || cur.pausiertePos.indexOf(anlageLeader(x))<0; }).map(function(x){ var d=anlageDaten(x); return anlagenName(d)+(d.pausiertGrund?" ("+d.pausiertGrund+")":""); }).join(", "))+"</div>"));
     anlagenZeichnen();
   }
   selSt.onchange=function(){ var cur=byId[selSt.value];
@@ -2983,12 +3117,18 @@ function viewProtokoll(){
   var altAnlagen = (bearb && (bearb.anlagen||[]).length && !(bearb.anlagen||[]).some(function(x){ return x.positionId; })) ? bearb.anlagen : null;
   var ANLAGE_KEYS=ANLAGE_FELDER.map(function(f){ return f.k; });
   function anlageBasis(p){
+    p=anlageDaten(p);   /* Anlage = alle ihre Termin-Zeilen zusammen */
     var w={anlagentyp:p.anlagentyp, rueckkuehler:p.rueckkuehler};
     ANLAGE_KEYS.forEach(function(k){ w[k]=(p[k]===undefined?null:p[k]); });
     return w;
   }
   function anlageWerte(p){ return Object.assign(anlageBasis(p), anlagenAend[p.id]||{}); }
   function angehakt(){ return Array.prototype.map.call(form.querySelectorAll('input[name="posw"]:checked'),function(x){ return x.value; }); }
+  /* angehakte Termine -> ihre Anlagen (erste Zeile), ohne Doppel */
+  function angehakteAnlagen(){
+    var r=[]; angehakt().forEach(function(id){ var p=posById[id]; if(!p) return; var l=anlageLeader(p); if(r.indexOf(l)<0) r.push(l); });
+    return r;
+  }
   function anlagenKarte(id, name, w, neu){
     var l=anlageLuecken(w), markiert=neu||!!anlagenAend[id];
     var k=el('<div class="akarte">'+
@@ -3021,8 +3161,8 @@ function viewProtokoll(){
   function anlagenZeichnen(){
     if(!anlagenHost) return;
     anlagenHost.innerHTML="";
-    var ids=angehakt();
-    ids.forEach(function(id){ var p=posById[id]; if(p) anlagenKarte(id, anlagenName(p), anlageWerte(p), false); });
+    var ids=angehakteAnlagen();
+    ids.forEach(function(l){ anlagenKarte(l.id, anlagenName(anlageDaten(l)), anlageWerte(l), false); });
     neueAnlagen.forEach(function(n){ anlagenKarte(n.id, n.werte.anlagentyp||"Neue Anlage", n.werte, true); });
     if(!ids.length && !neueAnlagen.length)
       anlagenHost.appendChild(el('<div class="muted" style="font-size:13px">Oben den Standort wählen und die Anlagen anhaken – dann erscheinen sie hier.</div>'));
@@ -3041,10 +3181,14 @@ function viewProtokoll(){
   };
   /* Stand der Anlagen zum Zeitpunkt des Protokolls – für Druck und Archiv */
   function anlagenSchnappschuss(){
-    var liste=angehakt().map(function(id){
-      var p=posById[id]; if(!p) return null;
-      return Object.assign({positionId:id, name:anlagenName(p), inbetriebnahme:p.inbetriebnahme||null}, anlageWerte(p));
-    }).filter(Boolean);
+    var termine=angehakt();
+    var liste=angehakteAnlagen().map(function(l){
+      /* als welcher Termin dieser Besuch zählt */
+      var slot=anlageVon(l).termine.filter(function(t){ return termine.indexOf(t.id)>=0; })[0]||l;
+      var d=anlageDaten(l);
+      return Object.assign({positionId:l.id, name:anlagenName(d), inbetriebnahme:d.inbetriebnahme||null,
+        termin:stoer?"":(slot.intervall?slot.intervall.art:"")}, anlageWerte(l));
+    });
     neueAnlagen.forEach(function(n){ liste.push(Object.assign({positionId:n.id, name:n.werte.anlagentyp, neu:true}, n.werte)); });
     return liste;
   }
@@ -3285,7 +3429,16 @@ function viewProtokoll(){
     if(bearb.standortId && byId[bearb.standortId]) selSt.value=bearb.standortId;
     fillPos(null);
     var gew=(bearb.positionIds&&bearb.positionIds.length)?bearb.positionIds:(bearb.positionId?[bearb.positionId]:[]);
-    form.querySelectorAll('input[name="posw"]').forEach(function(c){ c.checked=gew.indexOf(c.value)>=0; });
+    /* je Anlage: angehakt, wenn einer ihrer Termine im Protokoll steht – und genau diesen Termin wählen */
+    form.querySelectorAll('input[name="posw"]').forEach(function(c){
+      var a=ANLAGEN[c.dataset.anlage], treffer=a ? a.termine.filter(function(t){ return gew.indexOf(t.id)>=0; })[0] : null;
+      if(!treffer && gew.indexOf(c.value)>=0) treffer=posById[c.value];
+      c.checked=!!treffer;
+      if(treffer && !stoer){
+        c.value=treffer.id;
+        var sl=c.closest("label").querySelector(".posslot"); if(sl) sl.value=treffer.id;
+      }
+    });
     setz("f_adresse",bearb.adresse);
     var art=bearb.wartungsart||"planmäßig";
     if(art.indexOf("sonstige")===0){
@@ -3603,6 +3756,7 @@ function blattInhalt(p){
       var jn=function(w){ return w==="ja"?"ja":w==="nein"?"nein":""; };
       return "<table style='margin-bottom:8px'>"+
         "<tr><th colspan='2'>"+esc(a.name||("Anlage "+(i+1)))+(a.neu?" (vor Ort neu erfasst)":"")+"</th></tr>"+
+        z("Gewartet als",a.termin)+
         z("Bauart",a.bauart)+
         z("Kältekreisläufe / Prüfbuch",[a.kreislaeufe?a.kreislaeufe+" Kältekreis"+(+a.kreislaeufe===1?"":"e"):"", a.pruefbuch?"Prüfbuch: "+jn(a.pruefbuch):""].filter(Boolean).join(" · "))+
         z("Kältemittel / Füllmenge",[a.kaeltemittelArt, leerWert(a.kaeltemittelKg)?"":String(a.kaeltemittelKg).replace(".",",")+" kg"].filter(Boolean).join(" · "))+
@@ -4206,7 +4360,7 @@ var LABEL_ST={filiale:"Filialnummer", name:"Bezeichnung", adresse:"Adresse", plz
 var LABEL_POS={anlagentyp:"Anlagentyp", intervallCode:"Kürzel", inbetriebnahme:"Inbetriebnahme",
   monat:"Soll-Monat", kaeltemittelKg:"Kältemittel (kg)", kaeltemittelArt:"Kältemittelart",
   rueckkuehler:"Rückkühler", aktiv:"in Betrieb", notiz:"Notiz",
-  pausiert:"zur Zeit nicht gewartet", pausiertGrund:"Grund (nicht gewartet)", vorOrtNeu:"vor Ort neu erfasst"};
+  pausiert:"zur Zeit nicht gewartet", pausiertGrund:"Grund (nicht gewartet)", vorOrtNeu:"vor Ort neu erfasst", anlageZu:"gehört zu Anlage"};
 ANLAGE_FELDER.forEach(function(f){ if(!LABEL_POS[f.k]) LABEL_POS[f.k]=f.l; });
 function stammWert(feld, w){
   if(w===null||w===undefined||w==="") return "–";
@@ -4229,6 +4383,15 @@ function auffaelligkeiten(s){
     if(doppelt.length) f.push("Filialnummer "+s.filiale+" ist mehrfach vergeben");
   }
   if(!s.pos.length) f.push("keine Anlage in Betrieb");
+  /* zwei Zeilen mit demselben Termin: in der alten Liste meist die Halbjahreswartung mit falschem Kürzel */
+  s.pos.forEach(function(p,i){
+    s.pos.slice(i+1).forEach(function(q){
+      if(anlageLeader(p)!==p || anlageLeader(q)!==q) return;
+      if(slotMonat(p) && slotMonat(p)===slotMonat(q) && intervallArt(p.intervallCode).kurz===intervallArt(q.intervallCode).kurz)
+        f.push(anlagenName(p)+": zweimal "+intervallArt(p.intervallCode).kurz+" im "+MONATE_L[slotMonat(p)]+
+          " – ist eine Zeile eigentlich die Halbjahreswartung? Dann dort Kürzel HJW/HJI setzen, sonst über „Gehört zu Anlage“ zusammenführen.");
+    });
+  });
   if(s.pos.some(function(p){ return p.ueber30kg; }) && !s.pos.some(function(p){ return p.intervall&&p.intervall.kurz==="HJW"; }))
     f.push("über 30 kg Kältemittel, aber keine Halbjahreswartung (HJW)");
   s.pos.forEach(function(p){
@@ -4241,10 +4404,10 @@ function auffaelligkeiten(s){
     if(p.vorOrtNeu) f.push(n+": vor Ort neu erfasst – Kürzel und Termin festlegen");
     if(!p.inbetriebnahme) l.push(n+": Inbetriebnahme fehlt");
     if(!p.kaeltemittelText) l.push(n+": Kältemittelmenge fehlt");
-    var al=anlageLuecken(p).filter(function(f2){ return f2.k!=="kaeltemittelKg"; });
+    var al=anlageLeader(p)===p ? anlageLuecken(anlageDaten(p)).filter(function(f2){ return f2.k!=="kaeltemittelKg"; }) : [];
     if(al.length) l.push(n+": "+al.length+" Anlagendaten offen ("+al.map(function(f2){ return f2.l; }).join(", ")+")");
   });
-  s.pausiertePos.forEach(function(p){ l.push(anlagenName(p)+": zur Zeit nicht gewartet"+(p.pausiertGrund?" – "+p.pausiertGrund:"")); });
+  s.pausiertePos.forEach(function(p){ if(anlageLeader(p)===p) l.push(anlagenName(p)+": zur Zeit nicht gewartet"+(p.pausiertGrund?" – "+p.pausiertGrund:"")); });
   if(!s.filiale) l.push("keine Filialnummer");
   if(!s.plz) l.push("keine PLZ in der Adresse");
   if(s.pos.length===1) l.push("nur ein Termin im Jahr eingetragen – der Halbjahresbesuch fehlt in der Liste");
@@ -4467,6 +4630,10 @@ function viewVerwaltung(){
 function verwaltungEditor(s){
   var A=S.adm;
   var ausgewaehlt=ALLE_POS.filter(function(p){ return p.standortId===s.id; });
+  /* nach Anlagen geordnet: erste Zeile einer Anlage, dann ihre weiteren Termine */
+  var urReihe=ausgewaehlt.slice();
+  var rangA=function(p){ var l=anlageLeader(p); var i=urReihe.indexOf(l); if(i<0) i=urReihe.indexOf(p); return i*10+(l===p?0:1)+urReihe.indexOf(p)/1000; };
+  ausgewaehlt.sort(function(x,y){ return rangA(x)-rangA(y); });
   var au=s._entwurf?{fehler:[],luecken:[]}:auffaelligkeiten(s);
   var exS=EXCEL["standort:"+s.id]||{};
   var hinweisExcel=function(feld, aktuell){
@@ -4534,9 +4701,21 @@ function verwaltungEditor(s){
       return '<span class="muted" style="font-size:11px;text-transform:none;letter-spacing:0"> · Excel: '+esc(stammWert(k,ex[k]))+"</span>";
     };
     var pid=p.id;
-    var b=el('<div class="posbox" data-pid="'+esc(pid)+'" data-neu="'+(neu?"1":"")+'"'+(p.aktiv===false?' style="opacity:.6"':"")+">"+
-      '<div class="rowflex" style="justify-content:space-between"><strong>'+esc(neu?"Neue Anlage":anlagenName(p))+"</strong>"+
+    /* erste Zeile einer Anlage trägt Anlagendaten und Status; weitere Zeilen sind nur Termine */
+    var chef = neu || !p.aktiv || anlageLeader(p)===p;
+    var dd = neu ? p : anlageDaten(p);
+    var andere = neu ? [] : ausgewaehlt.filter(function(x){ return x.aktiv && anlageLeader(x)===x && x!==p; });
+    var zuordnung = (neu || !p.aktiv || (!andere.length && chef)) ? "" :
+      '<label class="fl"><span>Gehört zu Anlage</span><select data-k="anlageZu">'+
+        '<option value="'+esc(p.id)+'"'+(chef?" selected":"")+">eigene Anlage</option>"+
+        andere.map(function(x){ return '<option value="'+esc(x.id)+'"'+(anlageLeader(p)===x?" selected":"")+">"+
+          esc(anlagenName(anlageDaten(x))+" ("+termineText(x)+")")+"</option>"; }).join("")+
+      "</select></label>";
+    var b=el('<div class="posbox" data-pid="'+esc(pid)+'" data-neu="'+(neu?"1":"")+'"'+
+        (p.aktiv===false?' style="opacity:.6"':!chef?' style="margin-left:18px;border-left:3px solid var(--line-2)"':"")+">"+
+      '<div class="rowflex" style="justify-content:space-between"><strong>'+esc(neu?"Neue Anlage":chef?anlagenName(dd):"weiterer Termin: "+p.intervall.art)+"</strong>"+
         (!neu&&p.aktiv!==false&&p.naechste?'<span class="muted mono" style="font-size:12px">nächster Termin '+dfmt(p.naechste)+"</span>":"")+"</div>"+
+      zuordnung+
       '<div class="grid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px">'+
         '<label class="fl"><span>Anlagentyp'+hin("anlagentyp")+'</span><input type="text" data-k="anlagentyp" value="'+esc(p.anlagentyp||"")+'"></label>'+
         '<label class="fl"><span>Kürzel'+hin("intervallCode")+'</span><select data-k="intervallCode">'+
@@ -4552,6 +4731,7 @@ function verwaltungEditor(s){
         '<label class="fl"><span>Kältemittelart'+hin("kaeltemittelArt")+'</span><input type="text" data-k="kaeltemittelArt" placeholder="z. B. R410A" value="'+esc(p.kaeltemittelArt||"")+'"></label>'+
         '<label class="fl"><span>Rückkühler'+hin("rueckkuehler")+'</span><input type="text" data-k="rueckkuehler" value="'+esc(p.rueckkuehler||"")+'"></label>'+
       "</div>"+
+      (chef ? (
       '<div class="grid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:10px">'+
         '<label class="fl"><span>Status</span><select data-k="betrieb">'+
           [["aktiv","in Betrieb – wird gewartet"],["pausiert","zur Zeit nicht gewartet"],["still","stillgelegt / abgebaut"]].map(function(o){
@@ -4564,11 +4744,11 @@ function verwaltungEditor(s){
         "„Stillgelegt“: Anlage ist weg, nur die Historie bleibt.</div>"+
       (p.vorOrtNeu?'<div class="note warnbox" style="font-size:12.5px">Vor Ort neu erfasst – bitte Kürzel, Soll-Monat und Inbetriebnahme ergänzen.</div>':"")+
       /* Anlagendaten – dieselben Angaben, die Techniker vor Ort ergänzen */
-      '<details'+(anlageLuecken(p).length<ANLAGE_FELDER.length?"":" open")+'><summary style="cursor:pointer;font-weight:600;font-size:13px">Anlagendaten'+
-        ' <span class="muted" style="font-weight:400">– '+esc(anlageKurz(p)||"noch leer")+"</span></summary>"+
+      '<details'+(anlageLuecken(dd).length<ANLAGE_FELDER.length?"":" open")+'><summary style="cursor:pointer;font-weight:600;font-size:13px">Anlagendaten'+
+        ' <span class="muted" style="font-weight:400">– '+esc(anlageKurz(dd)||"noch leer")+"</span></summary>"+
         '<div class="grid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:10px;margin-top:10px">'+
         ANLAGE_FELDER.filter(function(f){ return f.k!=="kaeltemittelArt" && f.k!=="kaeltemittelKg"; }).map(function(f){
-          var w=p[f.k]==null?"":p[f.k];
+          var w=dd[f.k]==null?"":dd[f.k];
           if(f.t==="jn") return '<label class="fl"><span>'+esc(f.l)+'</span><select data-k="'+f.k+'">'+
             [["","–"],["ja","ja"],["nein","nein"]].map(function(o){ return '<option value="'+o[0]+'"'+(w===o[0]?" selected":"")+">"+o[1]+"</option>"; }).join("")+"</select></label>";
           if(f.t==="zahl") return '<label class="fl"><span>'+esc(f.l)+'</span><input type="number" min="1" data-k="'+f.k+'" value="'+esc(w)+'"></label>';
@@ -4576,7 +4756,10 @@ function verwaltungEditor(s){
           return '<label class="fl"><span>'+esc(f.l)+'</span><input type="text" data-k="'+f.k+'"'+dl+' value="'+esc(w)+'">'+
             (f.o?'<datalist id="dl_'+f.k+'">'+f.o.map(function(o){ return '<option value="'+esc(o)+'">'; }).join("")+"</datalist>":"")+"</label>";
         }).join("")+
-      "</div></details>"+
+      "</div></details>") :
+      /* weitere Termin-Zeile: nur ob der Termin gilt */
+      '<label class="fl"><span>Termin</span><select data-k="betrieb"><option value="aktiv">gilt</option>'+
+        '<option value="still"'+(p.aktiv===false?" selected":"")+'>entfällt</option></select></label>')+
       '<label class="fl"><span>Notiz</span><input type="text" data-k="notiz" value="'+esc(p.notiz||"")+'"></label>'+
     "</div>");
     host.appendChild(b);
@@ -4658,18 +4841,26 @@ function verwaltungEditor(s){
     var fehlt=false;
     host.querySelectorAll(".posbox").forEach(function(b){
       var pid=b.dataset.pid, istNeu=b.dataset.neu==="1";
-      var lese=function(k){ var x=b.querySelector('[data-k="'+k+'"]'); return x.type==="checkbox"?x.checked:x.value.trim(); };
+      var lese=function(k){ var x=b.querySelector('[data-k="'+k+'"]'); if(!x) return undefined; return x.type==="checkbox"?x.checked:x.value.trim(); };
       var betrieb=lese("betrieb");
       var neuP={anlagentyp:lese("anlagentyp"), intervallCode:lese("intervallCode"), inbetriebnahme:lese("inbetriebnahme")||null,
                 monat:+lese("monat")||0, kaeltemittelKg:num(lese("kaeltemittelKg")), kaeltemittelArt:lese("kaeltemittelArt"),
                 rueckkuehler:lese("rueckkuehler"), aktiv:betrieb!=="still", notiz:lese("notiz"),
                 pausiert:betrieb==="pausiert", pausiertGrund:betrieb==="pausiert"?lese("pausiertGrund"):""};
+      var p0=posById[pid];
       ANLAGE_FELDER.forEach(function(f){
         if(f.k==="kaeltemittelArt"||f.k==="kaeltemittelKg") return;
-        var v=lese(f.k); neuP[f.k]= f.t==="zahl" ? (v===""?null:+v) : v;
+        var v=lese(f.k);
+        if(v===undefined){ if(p0) neuP[f.k]=p0[f.k]; return; }   /* weitere Termin-Zeile: keine Anlagendaten */
+        neuP[f.k]= f.t==="zahl" ? (v===""?null:+v) : v;
+        /* nur angezeigt, weil eine andere Zeile der Anlage ihn hat – keine Änderung */
+        if(p0 && leerWert(p0[f.k]) && gleich(neuP[f.k], anlageDaten(p0)[f.k])) neuP[f.k]=p0[f.k];
       });
+      if(neuP.pausiertGrund===undefined) neuP.pausiertGrund=p0?p0.pausiertGrund:"";
+      /* Zuordnung zu einer Anlage: nur speichern, wenn sie sich ändert */
+      var zu=lese("anlageZu");
+      neuP.anlageZu = (zu!==undefined && p0 && zu!==anlageLeader(p0).id) ? zu : (p0?p0.anlageZu:null);
       /* unveränderte Leerwerte nicht als Änderung zählen (null gegen "") */
-      var p0=posById[pid];
       if(p0) STAMM_FELDER_POS.forEach(function(k){ if(leerWert(neuP[k]) && leerWert(p0[k]) && neuP[k]!==false) neuP[k]=p0[k]; });
       if(p0 && !neuP.pausiert && !p0.pausiert) neuP.pausiert=p0.pausiert;
       if(p0) neuP.vorOrtNeu = p0.vorOrtNeu && !neuP.intervallCode ? p0.vorOrtNeu : (p0.vorOrtNeu?false:p0.vorOrtNeu);
@@ -4851,7 +5042,7 @@ function csv(name,head,rows){
 function render(){
   /* Kopfzeile nachziehen – Märkte können angelegt oder stillgelegt worden sein */
   var standEl=document.getElementById("stand");
-  if(standEl) standEl.textContent="Stand "+dfmt(isoLokal(new Date()))+" · "+ST.length+" Standorte · "+POS.length+" Positionen";
+  if(standEl) standEl.textContent="Stand "+dfmt(isoLokal(new Date()))+" · "+ST.length+" Standorte · "+anzahlAnlagen()+" Anlagen · "+POS.length+" Termine";
   Array.prototype.forEach.call(tabsEl.children,function(b){ b.setAttribute("aria-selected", b.dataset.v===S.view?"true":"false"); });
   var host=document.getElementById("app");
   host.innerHTML="";

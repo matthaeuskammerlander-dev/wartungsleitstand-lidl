@@ -236,6 +236,35 @@ Zwischenspeicher des Geräts und gehen später gemeinsam raus. Ein Protokoll
 wird nie gespeichert, bevor seine Fotos übertragen sind — sonst verwiese es
 auf Bilder, die es nicht gibt.
 
+## Anlagen und Termine
+
+Die Excel-Liste hat eine Zeile je **Wartungstermin**. Eine Anlage mit
+Jahres- und Halbjahreswartung steht dort also zweimal. Die App fasst diese
+Zeilen wieder zu **einer Anlage mit ihren Terminen** zusammen:
+
+- Zeilen desselben Markts, deren Termine rund ein halbes Jahr auseinander
+  liegen, gehören zusammen. Zuerst werden Zeilen mit gleichem Namen
+  gepaart, danach die beiden übrigen, falls genau zwei übrig bleiben.
+- Die erste Zeile einer Anlage, bevorzugt die Jahreswartung, trägt Name,
+  Anlagendaten und Status. Die anderen Zeilen sind nur Termine.
+- Zeilen mit **demselben Termin**, z. B. zweimal JW im Mai, werden nicht
+  zusammengelegt. Meist ist eine davon die Halbjahreswartung mit falschem
+  Kürzel. Die Verwaltung markiert das als Fehler.
+
+Ergebnis beim aktuellen Stand: 261 Termine, 163 Anlagen. 98 davon haben zwei
+Termine, 65 einen.
+
+**Im Protokoll** steht je Anlage eine Zeile. Hat sie mehrere Termine, wählt
+die App aus, als welcher Termin der Besuch zählt: den fälligen, sonst den
+nächstgelegenen. Über „zählt als“ lässt sich das ändern. Nur dieser Termin
+rückt ein Jahr weiter. Auf dem Druckblatt steht „Gewartet als:
+Halbjahreswartung“.
+
+**In der Verwaltung** sind die Zeilen nach Anlagen geordnet. Weitere Termine
+sind eingerückt und haben nur „Termin gilt / entfällt“. Über **„Gehört zu
+Anlage“** wird eine Zeile einer anderen Anlage zugeordnet oder mit „eigene
+Anlage“ getrennt. So lassen sich falsche automatische Zuordnungen beheben.
+
 ## Anlagendaten vor Ort ergänzen
 
 Die Excel-Liste weiß über die Anlagen oft zu wenig. Je Anlage erfasst die
