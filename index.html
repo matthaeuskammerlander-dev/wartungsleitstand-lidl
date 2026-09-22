@@ -4917,6 +4917,48 @@ function verwaltungEditor(s){
     return z;
   }
 
+  /* Anlagendaten in denselben Gruppen wie der Dialog vor Ort. Fragen, die
+     nicht zur Anlage passen (Rückkühler bei luftgekühlt, Firma ohne eigene
+     Regelung), stehen gar nicht erst da. */
+  function anlagenWerte(k){
+    var w={};
+    k.querySelectorAll("[data-a]").forEach(function(x){
+      var key=x.dataset.a, v=x.type==="checkbox"?x.checked:x.value.trim();
+      w[key]= (key==="kreislaeufe"||key==="kaeltemittelKg") ? (v===""?null:+v) : v;
+    });
+    return w;
+  }
+  function datenFeld(f, w){
+    var v=(w[f.k]==null?"":w[f.k]);
+    if(f.t==="jn") return '<label class="fl"><span>'+esc(f.l)+'</span><select data-a="'+f.k+'">'+
+      [["","–"],["ja","ja"],["nein","nein"]].map(function(o){ return '<option value="'+o[0]+'"'+(v===o[0]?" selected":"")+">"+o[1]+"</option>"; }).join("")+"</select></label>";
+    if(f.t==="zahl") return '<label class="fl"><span>'+esc(f.l)+'</span><input type="number" min="1" data-a="'+f.k+'" value="'+esc(v)+'"></label>';
+    if(f.t==="kg") return '<label class="fl"><span>'+esc(f.l)+'</span><input type="number" step="0.1" min="0" data-a="'+f.k+'" value="'+esc(v)+'"></label>';
+    var dl=f.o?' list="dl_'+f.k+'"':"";
+    return '<label class="fl"><span>'+esc(f.l)+'</span><input type="text" data-a="'+f.k+'"'+dl+' placeholder="'+esc(f.o?f.o[0]:"")+'" value="'+esc(v)+'">'+
+      (f.o?'<datalist id="dl_'+f.k+'">'+f.o.map(function(o){ return '<option value="'+esc(o)+'">'; }).join("")+"</datalist>":"")+"</label>";
+  }
+  function datenBlockHtml(w){
+    return ANLAGE_GRUPPEN.filter(function(g){ return !g.wenn || g.wenn(w); }).map(function(g){
+      var felder=g.felder.filter(function(f){ return feldGilt(Object.assign({gruppe:g},f), w); });
+      if(!felder.length) return "";
+      return '<div class="datengruppe"><div class="l muted" style="font-size:11px;text-transform:uppercase;letter-spacing:.06em;margin:8px 0 4px">'+
+        esc(g.titel)+(g.optional?" (freiwillig)":"")+"</div>"+
+        '<div class="grid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:10px">'+
+        felder.map(function(f){ return datenFeld(f, w); }).join("")+"</div></div>";
+    }).join("");
+  }
+  function datenBlockSetzen(k, w){
+    var box=k.querySelector(".anlagendaten");
+    box.innerHTML=datenBlockHtml(w);
+    /* Bauart und Regelung entscheiden, welche Fragen folgen */
+    box.querySelectorAll('[data-a="bauart"],[data-a="regelung"]').forEach(function(x){
+      x.onchange=function(){ datenBlockSetzen(k, anlagenWerte(k)); };
+    });
+    var zus=k.querySelector(".datenkurz");
+    if(zus) zus.textContent=anlageKurz(w)||"noch leer";
+  }
+
   function anlageKarte(anl){
     kartenNr++;
     var d = anl ? anlageDaten(anl.leader) : {};
@@ -4924,45 +4966,33 @@ function verwaltungEditor(s){
     var k=el('<div class="akarte anlagekarte" data-k="k'+kartenNr+'" style="background:var(--surface)">'+
       '<div class="rowflex" style="justify-content:space-between;gap:8px">'+
         '<strong style="font-size:15px">'+(anl?"Anlage":"Neue Anlage")+"</strong>"+
-        '<button class="btn ghost sm" type="button" data-a="plus">+ Termin</button></div>'+
-      '<div class="grid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px">'+
-        '<label class="fl"><span>Bezeichnung der Anlage</span><input type="text" data-a="name" placeholder="z. B. VRV Verkaufsraum" value="'+esc(d.anlagentyp||"")+'"></label>'+
+        '<button class="btn ghost sm" type="button" data-a2="plus">+ Termin</button></div>'+
+      '<div class="grid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:10px">'+
+        '<label class="fl"><span>Bezeichnung der Anlage</span><input type="text" data-a="anlagentyp" placeholder="z. B. VRV Verkaufsraum" value="'+esc(d.anlagentyp||"")+'"></label>'+
         '<label class="fl"><span>Status</span><select data-a="betrieb">'+
           [["aktiv","in Betrieb – wird gewartet"],["pausiert","zur Zeit nicht gewartet"],["still","stillgelegt / abgebaut"]].map(function(o){
             return '<option value="'+o[0]+'"'+(akt===o[0]?" selected":"")+">"+o[1]+"</option>"; }).join("")+"</select></label>"+
         '<label class="fl"><span>Grund, falls nicht gewartet</span><input type="text" data-a="pausiertGrund" placeholder="z. B. von Lidl ausgesetzt" value="'+esc(d.pausiertGrund||"")+'"></label>'+
-        '<label class="fl"><span>Kältemittel (kg)</span><input type="number" step="0.1" min="0" data-a="kaeltemittelKg" value="'+esc(d.kaeltemittelKg==null?"":d.kaeltemittelKg)+'"></label>'+
-        '<label class="fl"><span>Kältemittelart</span><input type="text" data-a="kaeltemittelArt" placeholder="z. B. R410A" value="'+esc(d.kaeltemittelArt||"")+'"></label>'+
-        '<label class="fl"><span>Rückkühler (laut Liste)</span><input type="text" data-a="rueckkuehler" value="'+esc(d.rueckkuehler||"")+'"></label>'+
       "</div>"+
       ((anl&&anl.leader.vorOrtNeu)?'<div class="note warnbox" style="font-size:12.5px">Vor Ort neu erfasst – bitte Kürzel, Soll-Monat und Inbetriebnahme ergänzen.</div>':"")+
-      '<details><summary style="cursor:pointer;font-weight:600;font-size:13px">Anlagendaten'+
-        ' <span class="muted" style="font-weight:400">– '+esc(anlageKurz(d)||"noch leer")+"</span></summary>"+
-        '<div class="grid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:10px;margin-top:10px">'+
-        ANLAGE_FELDER.filter(function(f){ return f.k!=="kaeltemittelArt" && f.k!=="kaeltemittelKg"; }).map(function(f){
-          var w=d[f.k]==null?"":d[f.k];
-          if(f.t==="jn") return '<label class="fl"><span>'+esc(f.l)+'</span><select data-a="'+f.k+'">'+
-            [["","–"],["ja","ja"],["nein","nein"]].map(function(o){ return '<option value="'+o[0]+'"'+(w===o[0]?" selected":"")+">"+o[1]+"</option>"; }).join("")+"</select></label>";
-          if(f.t==="zahl") return '<label class="fl"><span>'+esc(f.l)+'</span><input type="number" min="1" data-a="'+f.k+'" value="'+esc(w)+'"></label>';
-          var dl=f.o?' list="dl_'+f.k+'"':"";
-          return '<label class="fl"><span>'+esc(f.l)+'</span><input type="text" data-a="'+f.k+'"'+dl+' value="'+esc(w)+'">'+
-            (f.o?'<datalist id="dl_'+f.k+'">'+f.o.map(function(o){ return '<option value="'+esc(o)+'">'; }).join("")+"</datalist>":"")+"</label>";
-        }).join("")+
-      "</div></details>"+
+      (d.rueckkuehler?'<div class="muted" style="font-size:12px">Eintrag der Excel-Liste zum Rückkühler: „'+esc(d.rueckkuehler)+"“</div>":"")+
+      '<details'+((anl && !anlageLuecken(d).length)?"":" open")+'><summary style="cursor:pointer;font-weight:600;font-size:13px">Anlagendaten'+
+        ' <span class="muted datenkurz" style="font-weight:400"></span></summary>'+
+        '<div class="anlagendaten"></div></details>'+
       '<div class="fl" style="margin-top:4px"><span>Termine dieser Anlage</span></div>'+
       '<div class="termine stack"></div>'+
       '<label class="fl"><span>Notiz</span><input type="text" data-a="notiz" value="'+esc((anl?anl.leader.notiz:"")||"")+'"></label>'+
     "</div>");
-    k.querySelector('[data-a="plus"]').onclick=function(){
+    k.querySelector('[data-a2="plus"]').onclick=function(){
       k.querySelector(".termine").appendChild(terminZeile({id:"NP"+Date.now().toString(36)+Math.random().toString(36).slice(2,5), aktiv:true}, true));
       optionenNeu();
     };
-    k.querySelector('[data-a="name"]').oninput=optionenNeu;
+    k.querySelector('[data-a="anlagentyp"]').oninput=optionenNeu;
     host.appendChild(k);
+    datenBlockSetzen(k, d);
     if(anl) anl.termine.forEach(function(p){ k.querySelector(".termine").appendChild(terminZeile(p,false)); });
     return k;
   }
-
   function leereKartenWeg(){
     host.querySelectorAll(".anlagekarte").forEach(function(k){ if(!k.querySelector(".terminzeile")) k.remove(); });
   }
@@ -5100,7 +5130,7 @@ function verwaltungEditor(s){
       var la=function(key){ var x=k.querySelector('[data-a="'+key+'"]'); if(!x) return undefined;
         return x.type==="checkbox"?x.checked:x.value.trim(); };
       var betrieb=la("betrieb"), ankerPid=zeilen[0].dataset.pid;
-      var kartenName=la("name");
+      var kartenName=la("anlagentyp");
       var monate={};
       zeilen.forEach(function(z, idx){
         var pid=z.dataset.pid, istNeu=z.dataset.neu==="1", p0=posById[pid], istAnker=(idx===0);
@@ -5116,14 +5146,11 @@ function verwaltungEditor(s){
         neuP.pausiertGrund = istAnker ? (betrieb==="pausiert"?la("pausiertGrund"):"") : (p0?p0.pausiertGrund:"");
         if(istAnker){
           neuP.anlagentyp=kartenName;
-          neuP.kaeltemittelKg=num(la("kaeltemittelKg"));
-          neuP.kaeltemittelArt=la("kaeltemittelArt");
-          neuP.rueckkuehler=la("rueckkuehler");
           neuP.notiz=la("notiz");
           ANLAGE_FELDER.forEach(function(f){
-            if(f.k==="kaeltemittelArt"||f.k==="kaeltemittelKg") return;
+            /* nicht gezeigte Felder (z. B. Rückkühler bei luftgekühlt) unverändert lassen */
             var v=la(f.k); if(v===undefined) return;
-            neuP[f.k]= f.t==="zahl" ? (v===""?null:+v) : v;
+            neuP[f.k]= (f.t==="zahl"||f.t==="kg") ? (v===""?null:+v) : v;
             /* stand nur da, weil eine andere Zeile der Anlage ihn hat – keine Änderung */
             if(p0 && leerWert(p0[f.k]) && gleich(neuP[f.k], anlageDaten(p0)[f.k])) neuP[f.k]=p0[f.k];
           });

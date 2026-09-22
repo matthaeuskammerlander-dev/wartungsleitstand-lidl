@@ -172,7 +172,7 @@ lässt sich dort öffnen und bearbeiten: Filialnummer, Adresse, Region und
 Koordinaten (auch aus der Adresse ermittelbar).
 
 **Anlagen und Termine:** Darunter steht **je Anlage eine Karte** – mit
-Bezeichnung, Status, Kältemittel und den Anlagendaten. In der Karte liegen die
+Bezeichnung, Status und den Anlagendaten. In der Karte liegen die
 **Termine** dieser Anlage, je Termin Kürzel, Inbetriebnahme und Soll-Monat.
 So ist auf einen Blick klar, was zusammengehört.
 
