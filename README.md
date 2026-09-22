@@ -44,10 +44,13 @@ einen echten Zugriffsschutz auf dem Server.
 
 
 Auf der Karte lassen sich Wartungen nach Fälligkeit zu einer Route bündeln.
-Neben „überfällig“, „fällig“ und „im Plan – vorziehen“ gibt es den Knopf
-**„auch nächster Monat“**: Er nimmt zusätzlich alles mit, was bis zum Ende
-des Folgemonats ansteht — praktisch, um eine Fahrt in eine Region gleich
-mitzuerledigen.
+Welche Termine in die Tour kommen, bestimmen vier Knöpfe:
+
+- **überfällig** und **fällig in 30 Tagen**: der Normalfall.
+- **bis Ende nächsten Monats**: nimmt zusätzlich mit, was bald ansteht —
+  praktisch, um eine Fahrt in eine Region gleich mitzuerledigen.
+- **später fällige – alle**: nimmt jeden noch nicht fälligen Termin dazu,
+  auch einen in elf Monaten. Damit ist der Monatsknopf eingeschlossen.
 Startpunkt ist standardmäßig die aktuelle Position des Technikers (der Browser
 fragt einmal nach der Freigabe); ohne Freigabe wird vom Betrieb in St. Johann
 aus gerechnet. Gerechnet wird mit **1,25 h je Wartungsposition** — ein Markt
