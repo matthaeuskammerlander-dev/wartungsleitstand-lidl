@@ -42,7 +42,12 @@ einen echten Zugriffsschutz auf dem Server.
 
 ## Tourenplanung
 
+
 Auf der Karte lassen sich Wartungen nach Fälligkeit zu einer Route bündeln.
+Neben „überfällig“, „fällig“ und „im Plan – vorziehen“ gibt es den Knopf
+**„auch nächster Monat“**: Er nimmt zusätzlich alles mit, was bis zum Ende
+des Folgemonats ansteht — praktisch, um eine Fahrt in eine Region gleich
+mitzuerledigen.
 Startpunkt ist standardmäßig die aktuelle Position des Technikers (der Browser
 fragt einmal nach der Freigabe); ohne Freigabe wird vom Betrieb in St. Johann
 aus gerechnet. Gerechnet wird mit **1,25 h je Wartungsposition** — ein Markt
@@ -235,6 +240,19 @@ Ohne Verbindung wandern Protokoll **und** Bilder zusammen in den
 Zwischenspeicher des Geräts und gehen später gemeinsam raus. Ein Protokoll
 wird nie gespeichert, bevor seine Fotos übertragen sind — sonst verwiese es
 auf Bilder, die es nicht gibt.
+
+## Liste herunterladen
+
+Im Reiter **Verlauf** steht oben „Liste herunterladen“: Rückblick (30 Tage
+bis 1 Jahr), Vorschau (30 Tage bis 6 Monate) und Region wählen, dann
+
+- **Als CSV für Excel:** eine Datei mit beiden Blöcken – „Erledigt“ und
+  „Anstehend“.
+- **Drucken / als PDF:** eine Übersicht im Briefkopf mit beiden Tabellen.
+
+„Erledigt“ führt die Protokolle der App und die Termine aus der
+Wartungsliste zusammen, „Anstehend“ die nächsten Termine je Anlage und die
+fälligen Halbjahresbesuche.
 
 ## Anlagen und Termine
 

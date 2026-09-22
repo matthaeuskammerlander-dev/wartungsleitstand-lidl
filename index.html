@@ -946,7 +946,12 @@ function uhrFmt(startMin, h){
 /* ---------- State ---------- */
 var S={view:"faellig",region:"alle",q:"",sel:null,selPos:null,protoStandort:"",protoPos:"",
   tour:{status:["ueberfaellig","faellig"], stundenProTag:8, startId:"__gps",
-        gps:null, gpsFehler:"", ergebnis:null, manuell:null}};
+        gps:null, gpsFehler:"", ergebnis:null, manuell:null, naechsterMonat:false}};
+/* letzter Tag des Folgemonats – für „auch nächsten Monat mitnehmen“ */
+function endeFolgemonat(){
+  var h=new Date(), d=new Date(h.getFullYear(), h.getMonth()+2, 0);
+  return isoLokal(d);
+}
 
 /* Aktueller Standort des Technikers als Startpunkt */
 function holeStandort(){
@@ -1177,9 +1182,12 @@ function tourKandidaten(){
   var raus=[];
   filtered().forEach(function(s){
     if(!s.lat) return;
+    var bis=endeFolgemonat();
     var pos=s.pos.filter(function(p){
       var st = p.status==="geplant" ? "erledigt" : p.status;
-      return S.tour.status.indexOf(st)>=0;
+      if(S.tour.status.indexOf(st)>=0) return true;
+      /* auf Wunsch auch, was erst im nächsten Monat dran ist */
+      return S.tour.naechsterMonat && p.naechste && p.naechste<=bis;
     });
     if(!pos.length && S.tour.status.indexOf(s.marktStatus)>=0){
       /* Anlagen einzeln im Plan, aber der Halbjahresbesuch ist fällig */
@@ -1461,6 +1469,8 @@ function tourPanel(){
           return '<button class="chip" type="button" data-s="'+k+'" aria-pressed="'+(S.tour.status.indexOf(k)>=0)+'">'+
             (k==="erledigt"?"im Plan – vorziehen":STATUS_LABEL[k])+"</button>";
         }).join("")+
+        '<button class="chip" type="button" id="t_folge" aria-pressed="'+(!!S.tour.naechsterMonat)+'">'+
+          "auch nächster Monat – bis "+dfmt(endeFolgemonat())+"</button>"+
       "</div></div>"+
 
     '<div class="grid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px">'+
@@ -1498,6 +1508,9 @@ function tourPanel(){
       S.tour.manuell=null; render();
     };
   });
+  c.querySelector("#t_folge").onclick=function(){
+    S.tour.naechsterMonat=!S.tour.naechsterMonat; S.tour.manuell=null; render();
+  };
   startSel.onchange=function(){ S.tour.startId=startSel.value; };
 
   var gpsBtn=c.querySelector("#t_gps");
@@ -1757,7 +1770,7 @@ var REGELUNGEN=["Daikin Touch Manager","R&S","Wurm","LichtLoidl"];
    Was UKT über jede Anlage wissen muss. Die Excel-Liste ist hier lückenhaft;
    ergänzt wird vor Ort beim Protokoll über einen geführten Dialog, der nur
    fragt, was fehlt. Gruppen = Schritte des Dialogs. */
-var BAUARTEN=["Split","Multi-Split","VRV luftgekühlt","VRV wassergekühlt","Kaltwassersatz","sonstige"];
+var BAUARTEN=["Split","Multi-Split","VRV luftgekühlt","VRV wassergekühlt","Kaltwassersatz"];
 var KAELTEMITTEL=["R410A","R32","R407C","R134a","R454B","R744"];
 var OHNE_REGELUNG="keine eigene Regelung";
 function istWassergekuehlt(a){
@@ -1767,7 +1780,7 @@ function istWassergekuehlt(a){
 }
 var ANLAGE_GRUPPEN=[
   {titel:"Bauart", frage:"Was für eine Anlage ist das?", felder:[
-    {k:"bauart", l:"Bauart", t:"wahl", o:BAUARTEN}]},
+    {k:"bauart", l:"Bauart", t:"wahl", o:BAUARTEN, frei:true}]},
   {titel:"Kältekreis", frage:"Wie viele Kältekreisläufe hat die Anlage – und gibt es ein Prüfbuch?", felder:[
     {k:"kreislaeufe", l:"Kältekreisläufe", t:"zahl"},
     {k:"pruefbuch", l:"Prüfbuch vorhanden", t:"jn"}]},
@@ -1884,12 +1897,15 @@ function anlageAssistent(start, titel, neu){
       inhalt.querySelectorAll(".chip[data-f]").forEach(function(c){
         c.onclick=function(){
           var k=c.dataset.f, w=c.dataset.w, frei=inhalt.querySelector('[data-frei="'+k+'"]');
-          if(w==="__frei"){ if(frei){ frei.hidden=false; frei.focus(); a[k]=frei.value.trim(); } }
-          else {
-            a[k]= (k==="kreislaeufe") ? +w : w;
-            if(frei){ frei.hidden=true; frei.value=""; }
-            var zahlIn=inhalt.querySelector('[data-in="'+k+'"]'); if(zahlIn) zahlIn.value="";
+          if(w==="__frei"){
+            /* Eingabefeld aufklappen – ohne Neuaufbau, sonst verschwände es gleich wieder */
+            if(frei){ frei.hidden=false; frei.focus(); a[k]=frei.value.trim(); }
+            inhalt.querySelectorAll('.chip[data-f="'+k+'"]').forEach(function(x){ x.setAttribute("aria-pressed", String(x===c)); });
+            return;
           }
+          a[k]= (k==="kreislaeufe") ? +w : w;
+          if(frei){ frei.hidden=true; frei.value=""; }
+          var zahlIn=inhalt.querySelector('[data-in="'+k+'"]'); if(zahlIn) zahlIn.value="";
           /* abhängige Fragen (z. B. Firmenname) sofort ein- oder ausblenden */
           gruppeZeigen(g);
         };
@@ -4281,8 +4297,125 @@ function zeitFmt(iso){
   return dfmt(isoLokal(d))+" "+String(d.getHours()).padStart(2,"0")+":"+String(d.getMinutes()).padStart(2,"0");
 }
 
+/* ---------- Übersicht zum Mitnehmen ----------
+   Was zuletzt gemacht wurde und was als Nächstes ansteht – als CSV für
+   Excel oder als Ausdruck bzw. PDF. */
+function berichtDaten(tageZurueck, tageVoraus, region){
+  var heute=isoLokal(new Date());
+  var von=isoLokal(new Date(Date.now()-tageZurueck*86400000));
+  var bis=isoLokal(new Date(Date.now()+tageVoraus*86400000));
+  var passt=function(s){ return !region || s.region===region; };
+  var rueck=[];
+  alleProtokolle().forEach(function(p){
+    if(!p.datum || p.datum<von || p.datum>heute) return;
+    var s=byId[p.standortId];
+    if(s && !passt(s)) return;
+    if(!s && region) return;
+    var ids=(p.positionIds&&p.positionIds.length)?p.positionIds:(p.positionId?[p.positionId]:[]);
+    rueck.push({datum:p.datum, markt:protoName(p), filiale:s?s.filiale:p.filiale, region:p.region||(s?s.region:""),
+      anlage:ids.length?feldText("positionIds",ids):"(Markt allgemein)",
+      art:istStoerung(p)?("Störung"+(p.stoerung&&p.stoerung.problemtyp?": "+p.stoerung.problemtyp:"")):(p.wartungsart||"Wartung"),
+      techniker:kanonName(p.nameTechniker||p.techniker||""), maengel:(p.maengel||[]).length, quelle:"Protokoll"});
+  });
+  /* Termine aus der Excel-Liste, zu denen es kein App-Protokoll gibt */
+  POS.forEach(function(p){
+    var s=byId[p.standortId]; if(!s || !passt(s)) return;
+    (p.historie||[]).forEach(function(d){
+      if(d<von || d>heute) return;
+      if(rueck.some(function(r){ return r.datum===d && r.markt===stName(s); })) return;
+      rueck.push({datum:d, markt:stName(s), filiale:s.filiale, region:s.region, anlage:anlagenName(p),
+        art:p.intervall.art, techniker:kanonName((p.techniker&&p.techniker[d.slice(0,4)])||""), maengel:"", quelle:"Liste"});
+    });
+  });
+  rueck.sort(function(a,b){ return b.datum.localeCompare(a.datum); });
+
+  var vor=[];
+  POS.forEach(function(p){
+    var s=byId[p.standortId]; if(!s || !passt(s) || !p.naechste || p.naechste>bis) return;
+    vor.push({datum:p.naechste, status:STATUS_LABEL[p.status]||"", markt:stName(s), filiale:s.filiale, region:s.region,
+      anlage:anlagenName(p), termin:p.intervall.art, letzte:p.letzte?dfmt(p.letzte):"—", adresse:s.adresse});
+  });
+  ST.forEach(function(s){
+    if(!passt(s) || !s.naechsterBesuch || s.naechsterBesuch>bis) return;
+    if(s.pos.some(function(p){ return p.naechste && p.naechste<=s.naechsterBesuch; })) return;
+    vor.push({datum:s.naechsterBesuch, status:STATUS_LABEL[s.marktStatus]||"", markt:stName(s), filiale:s.filiale,
+      region:s.region, anlage:"(ganzer Markt)", termin:"Halbjahresbesuch", letzte:s.letzterBesuch?dfmt(s.letzterBesuch):"—", adresse:s.adresse});
+  });
+  vor.sort(function(a,b){ return a.datum.localeCompare(b.datum); });
+  return {von:von, bis:bis, heute:heute, region:region, rueck:rueck, vor:vor};
+}
+function berichtDrucken(d){
+  var alt=document.getElementById("druckansicht"); if(alt) alt.remove();
+  var zeitraum="Rückblick "+dfmt(d.von)+" bis "+dfmt(d.heute)+" · Vorschau bis "+dfmt(d.bis)+
+    (d.region?" · Region "+d.region:" · alle Regionen");
+  var tab=function(kopf, zeilen){
+    return "<table><tr>"+kopf.map(function(k){ return "<th>"+esc(k)+"</th>"; }).join("")+"</tr>"+
+      (zeilen.length?zeilen.map(function(r){ return "<tr>"+r.map(function(z){ return "<td>"+esc(z==null?"":z)+"</td>"; }).join("")+"</tr>"; }).join("")
+        :"<tr><td colspan='"+kopf.length+"'>keine Einträge</td></tr>")+"</table>";
+  };
+  var ov=el('<div id="druckansicht">'+
+    '<div class="druckleiste"><button class="btn" type="button" id="d_druck">Drucken / als PDF speichern</button>'+
+      '<button class="btn ghost" type="button" id="d_zu" style="background:#fff">Schließen</button></div>'+
+    '<div class="blatt">'+
+      '<div class="kopf"><div class="firma"><img src="logo.png" alt="Kammerlander Umwelt- und Klimatechnik GmbH"></div>'+
+        '<div class="kontakt">Speckbacherstraße 92, A-6380 St. Johann in Tirol<br>'+
+        "Telefon 05352 / 61207-0 · office@ukt.at · www.ukt.at</div></div>"+
+      "<h1>WARTUNGSÜBERSICHT</h1><div style='color:#444'>Lidl Österreich · "+esc(zeitraum)+"</div>"+
+      "<h2>Erledigt ("+d.rueck.length+")</h2>"+
+      tab(["Datum","Markt","Anlage","Art","Techniker/in","Mängel","Quelle"], d.rueck.map(function(r){
+        return [dfmt(r.datum), r.markt, r.anlage, r.art, r.techniker||"—", r.maengel===""?"":r.maengel, r.quelle]; }))+
+      "<h2>Anstehend ("+d.vor.length+")</h2>"+
+      tab(["Fällig am","Status","Markt","Anlage","Termin","zuletzt"], d.vor.map(function(r){
+        return [dfmt(r.datum), r.status, r.markt, r.anlage, r.termin, r.letzte]; }))+
+      '<div class="fuss">Erstellt am '+dfmt(isoLokal(new Date()))+" aus dem Wartungsleitstand. "+
+        "„Erledigt“ enthält Protokolle aus der App und Termine aus der Wartungsliste.</div>"+
+    "</div></div>");
+  document.body.appendChild(ov);
+  document.body.classList.add("druckmodus");
+  ov.querySelector("#d_zu").onclick=function(){ ov.remove(); document.body.classList.remove("druckmodus"); };
+  ov.querySelector("#d_druck").onclick=function(){ window.print(); };
+}
+function berichtKarte(){
+  var c=el('<div class="card"><div class="pad stack">'+
+    '<div><h2>Liste herunterladen</h2><div class="sub">Was zuletzt gemacht wurde und was als Nächstes ansteht – '+
+      "als CSV für Excel oder als Ausdruck bzw. PDF.</div></div>"+
+    '<div class="grid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px">'+
+      '<label class="fl"><span>Rückblick</span><select id="b_rueck">'+
+        [[30,"letzte 30 Tage"],[90,"letzte 3 Monate"],[180,"letzte 6 Monate"],[365,"letztes Jahr"]].map(function(o){
+          return '<option value="'+o[0]+'"'+(o[0]===90?" selected":"")+">"+o[1]+"</option>"; }).join("")+"</select></label>"+
+      '<label class="fl"><span>Vorschau</span><select id="b_vor">'+
+        [[30,"nächste 30 Tage"],[60,"nächste 2 Monate"],[90,"nächste 3 Monate"],[180,"nächste 6 Monate"]].map(function(o){
+          return '<option value="'+o[0]+'"'+(o[0]===60?" selected":"")+">"+o[1]+"</option>"; }).join("")+"</select></label>"+
+      '<label class="fl"><span>Region</span><select id="b_reg"><option value="">alle Regionen</option>'+
+        REGIONEN.map(function(r){ return "<option>"+esc(r)+"</option>"; }).join("")+"</select></label>"+
+    "</div>"+
+    '<div class="rowflex"><button class="btn" type="button" id="b_csv">Als CSV für Excel</button>'+
+      '<button class="btn ghost" type="button" id="b_druck">Drucken / als PDF</button>'+
+      '<span class="muted" style="font-size:12.5px" id="b_info"></span></div>'+
+  "</div></div>");
+  var hole=function(){
+    return berichtDaten(+c.querySelector("#b_rueck").value, +c.querySelector("#b_vor").value, c.querySelector("#b_reg").value);
+  };
+  var zeigen=function(){
+    var d=hole();
+    c.querySelector("#b_info").textContent=d.rueck.length+" erledigt · "+d.vor.length+" anstehend";
+  };
+  c.querySelectorAll("select").forEach(function(s){ s.onchange=zeigen; });
+  zeigen();
+  c.querySelector("#b_csv").onclick=function(){
+    var d=hole();
+    var head=["Block","Datum","Status/Art","Markt","Filiale","Region","Anlage","Termin/Techniker","Mängel/zuletzt","Quelle"];
+    var rows=d.rueck.map(function(r){ return ["Erledigt",r.datum,r.art,r.markt,r.filiale||"",r.region||"",r.anlage,r.techniker||"",r.maengel,r.quelle]; })
+      .concat([[]], d.vor.map(function(r){ return ["Anstehend",r.datum,r.status,r.markt,r.filiale||"",r.region||"",r.anlage,r.termin,r.letzte,""]; }));
+    csv("wartungsuebersicht_"+isoLokal(new Date())+".csv", head, rows);
+  };
+  c.querySelector("#b_druck").onclick=function(){ berichtDrucken(hole()); };
+  return c;
+}
+
 function viewVerlauf(){
   var f=document.createDocumentFragment();
+  f.appendChild(berichtKarte());
 
   /* 1. Wartungshistorie je Filiale */
   var hk=el('<div class="card"><div class="pad stack">'+
