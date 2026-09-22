@@ -125,9 +125,9 @@ Wer früher oder später kommt, verschiebt den Folgetermin nicht. Ist der
 kommende Termin bereits erledigt, gilt ein davor versäumter nicht mehr als
 überfällig, sondern wird als „ausgelassen" vermerkt.
 
-Zusätzlich muss **jeder Markt spätestens 6 Monate nach dem letzten Besuch**
-wieder besucht werden. Das fängt Märkte, bei denen nur eine Zeile eingetragen
-ist.
+Ein Markt gilt als fällig, sobald einer seiner Termine fällig ist. Eine
+zusätzliche Regel auf Marktebene gibt es nicht – maßgeblich ist allein die
+Inbetriebnahme.
 
 Ein gespeichertes Protokoll erledigt die angehakten Anlagen sofort – wenn die
 Wartungsart „planmäßig" oder „Prüfung" ist. Eine Störung oder Reparatur
@@ -271,8 +271,7 @@ bis 1 Jahr), Vorschau (30 Tage bis 6 Monate) und Region wählen, dann
 - **Drucken / als PDF:** eine Übersicht im Briefkopf mit beiden Tabellen.
 
 „Erledigt“ führt die Protokolle der App und die Termine aus der
-Wartungsliste zusammen, „Anstehend“ die nächsten Termine je Anlage und die
-fälligen Halbjahresbesuche.
+Wartungsliste zusammen, „Anstehend“ die nächsten Termine je Anlage.
 
 ## Anlagen und Termine
 
@@ -350,8 +349,8 @@ In der **Verwaltung** hat jede Anlage einen von drei Zuständen:
 - **in Betrieb:** wird gewartet, normale Fälligkeit.
 - **zur Zeit nicht gewartet** (mit Grund, z. B. „von Lidl ausgesetzt“): Die
   Anlage bleibt mit allen Daten sichtbar, erscheint aber in keiner
-  Fälligkeit. Hat ein Markt nur noch solche Anlagen, fällt auch der
-  Halbjahresbesuch weg. Zurück auf „in Betrieb“, und die Termine laufen
+  Fälligkeit. Hat ein Markt nur noch solche Anlagen, steht er nirgends mehr
+  als fällig. Zurück auf „in Betrieb“, und die Termine laufen
   weiter.
 - **stillgelegt / abgebaut:** Die Anlage ist weg, nur die Historie bleibt.
 

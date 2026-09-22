@@ -528,16 +528,16 @@ var STAEDTE=[["Wien",16.372,48.208,"start"],["Graz",15.439,47.071,"start"],["Lin
      JW  = Jahreswartung
      HJW = Halbjahreswartung   (vorgeschrieben ab 30 kg Kältemittel)
      HJI = Halbjahresinspektion
-   Jeder Markt wird alle 6 Monate besucht.
+   Maßgeblich ist allein die Inbetriebnahme: JW +12 Monate, HJW und HJI
+   +6 Monate, danach jedes Jahr am selben Tag.
 
    Aufbau der Liste: jede Zeile ist ein Besuchstermin, der JEDES JAHR im
    selben Monat wiederkehrt. Den Halbjahresrhythmus ergeben zwei Zeilen im
    Abstand von 6 Monaten – typisch JW im Jänner und HJI im Juli. Eine
    einzelne Zeile ist deshalb nach 12 Monaten wieder fällig; das Kürzel
-   sagt, WAS gemacht wird, nicht wie oft. Die Halbjahresregel wird auf
-   Marktebene geprüft – sie fängt auch Märkte mit nur einer Zeile. */
+   sagt, WAS gemacht wird, nicht wie oft. Ein Markt ist fällig, sobald einer
+   seiner Termine fällig ist. */
 var ZEILEN_INTERVALL = 12;
-var MARKT_INTERVALL = 6;
 var VORLAUF_TAGE = 30;          // ab so vielen Tagen vorher gilt eine Wartung als fällig
 /* Nur diese Einsatzarten setzen die Uhr zurück. Eine Störung oder Reparatur
    ist kein Wartungsnachweis. */
@@ -695,7 +695,7 @@ function berechneFaelligkeiten(){
   ST.forEach(function(s){
     /* nur Anlagen, die zur Zeit nicht gewartet werden: der Markt ist nicht fällig */
     if(!s.pos.length && s.pausiertePos.length){
-      s.letzterBesuch=null; s.naechsterBesuch=null; s.marktStatus="pausiert"; s.status="pausiert"; s.offen=0;
+      s.letzterBesuch=null; s.status="pausiert"; s.offen=0;
       return;
     }
     var besuche=[];
@@ -703,17 +703,9 @@ function berechneFaelligkeiten(){
     (ausProtMarkt[s.id]||[]).forEach(function(d){ besuche.push(d); });
     besuche.sort();
     s.letzterBesuch = besuche.length ? besuche[besuche.length-1] : null;
-    s.naechsterBesuch = s.letzterBesuch ? plusMonate(s.letzterBesuch, MARKT_INTERVALL) : null;
-    s.marktStatus = !s.naechsterBesuch ? "unbekannt"
-                  : s.naechsterBesuch < heute ? "ueberfaellig"
-                  : s.naechsterBesuch < bald ? "faellig" : "erledigt";
-    /* der schlechtere von Positionen und Halbjahresregel zählt */
-    var st=s.pos.reduce(function(a,p){ return STATUS_RANK[p.status]<STATUS_RANK[a]?p.status:a; },"erledigt");
-    /* woher der Status kommt – sonst wundert man sich, warum ein Markt fällig
-       ist, obwohl jeder einzelne Termin noch im Plan steht */
-    s.statusGrund = STATUS_RANK[s.marktStatus]<STATUS_RANK[st] ? "halbjahr" : "termin";
-    if(s.statusGrund==="halbjahr") st=s.marktStatus;
-    s.status=st;
+    /* Der Status eines Markts ist der schlechteste seiner Termine – jeder
+       Termin hängt an der Inbetriebnahme (+12 Monate bzw. +6 Monate). */
+    s.status=s.pos.reduce(function(a,p){ return STATUS_RANK[p.status]<STATUS_RANK[a]?p.status:a; },"erledigt");
     s.offen=s.pos.filter(function(p){ return p.status==="ueberfaellig"||p.status==="faellig"; }).length;
   });
 }
@@ -728,13 +720,7 @@ function isoLokal(d){
 function dfmt(iso){ if(!iso) return "–"; var p=iso.split("-"); return p[2]+"."+p[1]+"."+p[0]; }
 function el(html){ var t=document.createElement("template"); t.innerHTML=html.trim(); return t.content.firstElementChild; }
 function pill(st){ return '<span class="pill p-'+st+'">'+STATUS_LABEL[st]+"</span>"; }
-/* Status eines Markts samt Grund: „Halbjahresbesuch“ heißt, die einzelnen
-   Termine sind im Plan, aber seit über sechs Monaten war niemand dort. */
-function marktPill(s){
-  var zusatz = (s.statusGrund==="halbjahr" && (s.status==="ueberfaellig"||s.status==="faellig"))
-    ? ' <span class="tag" title="Jeder Termin ist im Plan, aber der Halbjahresbesuch steht an">Halbjahresbesuch</span>' : "";
-  return pill(s.status)+zusatz;
-}
+function marktPill(s){ return pill(s.status); }
 function anlagenName(p){
   /* alle Termine einer Anlage tragen den Namen ihrer ersten Zeile */
   var l=(p && p.anlageId && ANLAGEN[p.anlageId]) ? ANLAGEN[p.anlageId].leader : p;
@@ -1102,14 +1088,13 @@ function viewFaellig(){
   var c={ueberfaellig:0,faellig:0,erledigt:0,unbekannt:0};
   pos.forEach(function(p){ c[p.status==="geplant"?"erledigt":p.status]++; });
   var maerkte=filtered();
-  var ohneBesuch=maerkte.filter(function(s){ return s.marktStatus==="ueberfaellig"; });
   var f=document.createDocumentFragment();
 
   f.appendChild(el('<div class="kpis">'+
-    '<div class="kpi crit"><div class="n">'+c.ueberfaellig+'</div><div class="l">Positionen überfällig</div></div>'+
+    '<div class="kpi crit"><div class="n">'+c.ueberfaellig+'</div><div class="l">Termine überfällig</div></div>'+
     '<div class="kpi warn"><div class="n">'+c.faellig+'</div><div class="l">fällig in '+VORLAUF_TAGE+' Tagen</div></div>'+
     '<div class="kpi good"><div class="n">'+c.erledigt+'</div><div class="l">im Plan</div></div>'+
-    '<div class="kpi crit"><div class="n">'+ohneBesuch.length+'</div><div class="l">Märkte &gt; 6 Monate ohne Besuch</div></div>'+
+    '<div class="kpi"><div class="n">'+maerkte.length+'</div><div class="l">Märkte in der Auswahl</div></div>'+
   '</div>'));
 
   /* Small multiples je Region */
@@ -1140,34 +1125,6 @@ function viewFaellig(){
   });
   f.appendChild(chart);
 
-  /* Märkte, die nur die Halbjahresregel reißt – sie tauchen in der Positionsliste nicht auf */
-  var nurMarkt=ohneBesuch.filter(function(s){
-    return !s.pos.some(function(p){ return p.status==="ueberfaellig"; });
-  });
-  if(nurMarkt.length){
-    var mk=el('<div class="card"><div class="pad"><h2>Halbjahresbesuch überfällig</h2>'+
-      '<div class="sub">'+nurMarkt.length+' Märkte, deren Anlagen einzeln noch im Plan sind, die aber seit über 6 Monaten niemand besucht hat. '+
-      'Betroffen sind vor allem Märkte, bei denen in der Liste nur eine Jahreswartung steht.</div></div>'+
-      '<div class="rows" id="mklist"></div></div>');
-    var mrows=mk.querySelector("#mklist");
-    nurMarkt.sort(function(a,b){ return (a.naechsterBesuch||"").localeCompare(b.naechsterBesuch||""); })
-      .slice(0,60).forEach(function(s){
-        var t=s.naechsterBesuch?tageBis(s.naechsterBesuch):null;
-        var r=el('<button class="row" type="button">'+
-          '<span class="when">'+(s.naechsterBesuch?dfmt(s.naechsterBesuch).replace(/\.(\d\d)(\d\d)$/,".$2"):"—")+
-            (t!==null&&t<0?'<br><span style="font-size:10.5px">seit '+(-t)+" T.</span>":"")+"</span>"+
-          '<span class="body"><span class="ttl">'+esc(stName(s))+"</span>"+
-            '<span class="meta">'+(stName(s)===s.adresse?"":esc(s.adresse)+(s.region?" · ":""))+esc(s.region||"")+"</span>"+
-            '<span class="badges"><span class="tag">zuletzt besucht '+dfmt(s.letzterBesuch)+"</span>"+
-              '<span class="tag">'+s.pos.length+" Anlage(n)</span></span>"+
-          "</span>"+
-          '<span class="right">'+pill("ueberfaellig")+"</span>"+
-        "</button>");
-        r.onclick=function(){ S.protoStandort=s.id; S.protoPos=""; S.protoArt="wartung"; S.view="protokoll"; render(); window.scrollTo({top:0}); };
-        mrows.appendChild(r);
-      });
-    f.appendChild(mk);
-  }
 
   /* Positionsliste: nach Fälligkeitsdatum, das dringendste zuerst */
   var list=pos.slice().sort(function(a,b){
@@ -1203,8 +1160,8 @@ function viewFaellig(){
 }
 
 /* ---------- View: Karte ---------- */
-/* Kandidaten für die Tour: Standorte, deren Positionen zu den gewählten
-   Fälligkeiten passen – oder die die Halbjahresregel für den Markt reißen */
+/* Kandidaten für die Tour: Standorte, deren Termine zu den gewählten
+   Fälligkeiten passen */
 function tourKandidaten(){
   var raus=[];
   filtered().forEach(function(s){
@@ -1216,10 +1173,6 @@ function tourKandidaten(){
       /* auf Wunsch auch, was erst im nächsten Monat dran ist */
       return S.tour.naechsterMonat && p.naechste && p.naechste<=bis;
     });
-    if(!pos.length && S.tour.status.indexOf(s.marktStatus)>=0){
-      /* Anlagen einzeln im Plan, aber der Halbjahresbesuch ist fällig */
-      pos=[{id:"markt_"+s.id, anlagentyp:"Halbjahresbesuch Markt", _markt:true}];
-    }
     if(pos.length) raus.push({standort:s, positionen:pos});
   });
   return raus;
@@ -1656,8 +1609,6 @@ function standortDetail(s){
       (s.filiale?"<dt>Filiale</dt><dd class='mono'>"+esc(s.filiale)+"</dd>":"")+
       "<dt>Anlagen</dt><dd>"+anlagenDesMarkts(s,false).length+" · "+s.pos.length+" Termine im Jahr</dd>"+
       "<dt>Letzter Besuch</dt><dd class='mono'>"+(s.letzterBesuch?dfmt(s.letzterBesuch):"—")+"</dd>"+
-      "<dt>Halbjahresbesuch fällig</dt><dd class='mono'>"+(s.naechsterBesuch?dfmt(s.naechsterBesuch):"—")+
-        (s.marktStatus==="ueberfaellig"?" <span class='pill p-ueberfaellig'>überfällig</span>":"")+"</dd>"+
       (s.baujahrVon?"<dt>Baujahr</dt><dd class='mono'>"+s.baujahrVon+(s.baujahrBis!==s.baujahrVon?"–"+s.baujahrBis:"")+"</dd>":"")+
       "<dt>Geocodierung</dt><dd class='muted'>"+({adresse:"Adressgenau",strasse:"Straßenebene",ort:"Ortsebene",keine:"keine"}[s.genauigkeit]||s.genauigkeit)+"</dd>"+
     "</dl>"+
@@ -4369,12 +4320,6 @@ function berichtDaten(tageZurueck, tageVoraus, region){
     vor.push({datum:p.naechste, status:STATUS_LABEL[p.status]||"", markt:stName(s), filiale:s.filiale, region:s.region,
       anlage:anlagenName(p), termin:p.intervall.art, letzte:p.letzte?dfmt(p.letzte):"—", adresse:s.adresse});
   });
-  ST.forEach(function(s){
-    if(!passt(s) || !s.naechsterBesuch || s.naechsterBesuch>bis) return;
-    if(s.pos.some(function(p){ return p.naechste && p.naechste<=s.naechsterBesuch; })) return;
-    vor.push({datum:s.naechsterBesuch, status:STATUS_LABEL[s.marktStatus]||"", markt:stName(s), filiale:s.filiale,
-      region:s.region, anlage:"(ganzer Markt)", termin:"Halbjahresbesuch", letzte:s.letzterBesuch?dfmt(s.letzterBesuch):"—", adresse:s.adresse});
-  });
   vor.sort(function(a,b){ return a.datum.localeCompare(b.datum); });
   return {von:von, bis:bis, heute:heute, region:region, rueck:rueck, vor:vor};
 }
@@ -4604,12 +4549,11 @@ function auffaelligkeiten(s){
   s.pausiertePos.forEach(function(p){ if(anlageLeader(p)===p) l.push(anlagenName(p)+": zur Zeit nicht gewartet"+(p.pausiertGrund?" – "+p.pausiertGrund:"")); });
   if(!s.filiale) l.push("keine Filialnummer");
   if(!s.plz) l.push("keine PLZ in der Adresse");
-  if(s.pos.length===1) l.push("nur ein Termin im Jahr eingetragen – der Halbjahresbesuch fehlt in der Liste");
+  if(s.pos.length===1) l.push("nur ein Termin im Jahr eingetragen – fehlt der zweite Termin in der Liste?");
   return {fehler:f, luecken:l};
 }
 function naechsterTerminMarkt(s){
   var t=s.pos.map(function(p){ return p.naechste; }).filter(Boolean);
-  if(s.naechsterBesuch) t.push(s.naechsterBesuch);
   t.sort(); return t[0]||null;
 }
 
@@ -5213,8 +5157,8 @@ function viewDaten(){
       '<div class="note"><strong>So wird gerechnet:</strong> Jede Zeile der Liste ist ein Termin, der jedes Jahr am selben Tag wiederkehrt – '+
         'die Jahreswartung (JW) am Jahrestag der Inbetriebnahme, Halbjahreswartung (HJW, oft HW) und Halbjahresinspektion '+
         '(HJI, oft HI) sechs Monate versetzt. Eine Wartung zählt für den Termin, in dessen Halbjahresfenster sie fällt; '+
-        'wer früher oder später kommt, verschiebt den Folgetermin also nicht. Zusätzlich muss jeder Markt spätestens '+
-        '6 Monate nach dem letzten Besuch wieder besucht werden. Protokolle aus der App zählen mit, wenn die Wartungsart '+
+        'wer früher oder später kommt, verschiebt den Folgetermin also nicht. '+
+        'Protokolle aus der App zählen mit, wenn die Wartungsart '+
         '„planmäßig" oder „Prüfung" ist.</div>'+
       '<div class="note"><strong>'+ohneMonat+' Positionen ohne Soll-Monat</strong> und <strong>'+ohneKm+' ohne Kältemittelangabe</strong>. Für Anlagen ab 5 t CO₂-Äquivalent hängt daran die gesetzliche Dichtheitsprüfpflicht.</div>'+
       (ohneGeo.length?'<div class="note"><strong>'+ohneGeo.length+" Einträge ohne verwertbare Adresse</strong>: "+ohneGeo.map(function(s){return esc(s.name);}).join(", ")+". Das sind Sammelzeilen der Liste, keine echten Standorte.</div>":"")+
