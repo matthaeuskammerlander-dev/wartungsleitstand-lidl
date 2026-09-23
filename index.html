@@ -19,14 +19,14 @@
 <style>
 :root{
   --ground:#F2F5F5; --surface:#FFFFFF; --surface-2:#E7EDED; --surface-3:#DBE4E4;
-  --ink:#10201F; --ink-2:#3B4F4E; --ink-3:#69807E;
+  --ink:#10201F; --ink-2:#3B4F4E; --ink-3:#5A7170;
   --line:#D2DCDB; --line-2:#BDCBCA;
   /* Hausfarben aus dem Logo: Türkis #019891, Magenta #C4004E */
   --accent:#00726E; --accent-ink:#00514E; --accent-soft:#DCEFEE; --on-accent:#FFFFFF;
   --marke:#B30047; --marke-soft:#FBE2EB; --on-marke:#FFFFFF;
   --crit:#B3342A; --crit-soft:#F7E2E0;
-  --warn:#9C6410; --warn-soft:#F8EBD6;
-  --good:#2C7A56; --good-soft:#DDEEE5;
+  --warn:#8A5709; --warn-soft:#F8EBD6;
+  --good:#276D4C; --good-soft:#DDEEE5;
   --plan:#41697E; --plan-soft:#E2EAEE;
   --shadow:0 1px 2px rgba(16,32,31,.06), 0 6px 18px rgba(16,32,31,.05);
   --r:10px;
@@ -232,7 +232,7 @@ legend{font-family:var(--f-disp);font-size:12.5px;font-weight:600;text-transform
 .mangelrow{display:grid;grid-template-columns:2fr 1fr 2fr auto;gap:8px;align-items:end}
 @media (max-width:640px){.mangelrow{grid-template-columns:1fr}}
 canvas.sig{width:100%;height:150px;border:1px dashed var(--line-2);border-radius:8px;background:var(--surface);touch-action:none;display:block}
-.note{font-size:12.5px;color:var(--ink-3);background:var(--surface-2);border-radius:8px;padding:10px 12px}
+.note{font-size:12.5px;color:var(--ink-2);background:var(--surface-2);border-radius:8px;padding:10px 12px}
 .note.warnbox{background:var(--warn-soft);color:var(--warn)}
 /* ---- QR-Overlay ---- */
 .overlay{position:fixed;inset:0;z-index:80;background:rgba(9,15,18,.62);display:flex;align-items:center;justify-content:center;padding:16px}
@@ -389,8 +389,23 @@ ALLE_POS.forEach(function(p){
   EXCEL["position:"+p.id]=auswahl(p,STAMM_FELDER_POS.concat(ABGELEITET_POS));
 });
 
+/* Die Kältemittelspalte kommt aus der Excel-Liste als „30.900000“ heraus.
+   Reine Zahlen werden lesbar gemacht, alles andere bleibt so stehen, wie es
+   in der Liste steht – auch „>30 KG“ oder ein falscher Eintrag soll sichtbar
+   bleiben und nicht wegformatiert werden. */
+function kgText(roh){
+  var s=String(roh==null?"":roh).trim();
+  if(!s) return "";
+  if(/^\d+([.,]\d+)?$/.test(s)){
+    var n=+s.replace(",",".");
+    return (n%1 ? n.toFixed(1) : String(n)).replace(".",",")+" kg";
+  }
+  return s.replace(/\bKG\b/g,"kg");
+}
+
 function indexNeuAufbauen(){
   byId={}; posById={};
+  ALLE_POS.forEach(function(p){ p.kaeltemittelText=kgText(p.kaeltemittelText); });
   ALLE_ST.forEach(function(s){ byId[s.id]=s; s.pos=[]; s.pausiertePos=[]; });
   ALLE_POS.forEach(function(p){ posById[p.id]=p; });
   anlagenBilden();
@@ -721,6 +736,9 @@ function isoLokal(d){
   return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0");
 }
 function dfmt(iso){ if(!iso) return "–"; var p=iso.split("-"); return p[2]+"."+p[1]+"."+p[0]; }
+/* Zeitstempel stehen in Weltzeit. Kurz nach Mitternacht ist das bei uns
+   schon der nächste Tag – also erst in Ortszeit umrechnen, dann anzeigen. */
+function tagFmt(zeitstempel){ return zeitstempel ? dfmt(isoLokal(new Date(zeitstempel))) : "–"; }
 function el(html){ var t=document.createElement("template"); t.innerHTML=html.trim(); return t.content.firstElementChild; }
 function pill(st){ return '<span class="pill p-'+st+'">'+STATUS_LABEL[st]+"</span>"; }
 function marktPill(s){ return pill(s.status); }
@@ -1617,7 +1635,11 @@ function tourErgebnis(T){
     box.appendChild(el('<div class="card" style="box-shadow:none;background:var(--ground)"><div class="pad stack">'+
       '<div class="rowflex" style="justify-content:space-between">'+
         '<strong style="font-family:var(--f-disp);font-size:14.5px">Tag '+tag.nr+"</strong>"+
-        '<span class="muted mono" style="font-size:12px">'+stdFmt(tag.stunden+(tag.rueckfahrtH||0))+
+        /* Die Rückfahrt getrennt ausweisen: geplant wird auf die eingestellte
+           Arbeitszeit, der Heimweg kommt obendrauf. Sonst steht über dem Tag
+           eine Stundenzahl, die zur Vorgabe nicht passt. */
+        '<span class="muted mono" style="font-size:12px">'+stdFmt(tag.stunden)+' Arbeit'+
+        (tag.rueckfahrtH ? ' + '+stdFmt(tag.rueckfahrtH)+' Rückfahrt' : "")+
         ' · '+Math.round(tag.km+(tag.rueckfahrtKm||0))+" km</span>"+
       "</div>"+
       (gm?'<div class="rowflex"><a class="btn sm" href="'+gm.url+'" target="_blank" rel="noopener">'+
@@ -1907,7 +1929,15 @@ function anlageAssistent(start, titel, neu){
        Gruppe, in der eine Pflichtangabe fehlt */
     var gruppenMitLuecke=function(){
       var fehl=anlageLuecken(a);
-      return ANLAGE_GRUPPEN.filter(function(g){ return fehl.some(function(f){ return f.gruppe===g; }); });
+      var pflicht=ANLAGE_GRUPPEN.filter(function(g){ return fehl.some(function(f){ return f.gruppe===g; }); });
+      /* Freiwilliges zum Schluss: wer gerade vor dem Typenschild steht, soll
+         es eintragen können, ohne dafür in die Verwaltung zu wechseln.
+         Überspringen geht in jedem Schritt. */
+      var frei=ANLAGE_GRUPPEN.filter(function(g){
+        return g.optional && (!g.wenn || g.wenn(a)) && g.felder.some(function(f){
+          return feldGilt(Object.assign({gruppe:g}, f), a) && leerWert(a[f.k]); });
+      });
+      return pflicht.concat(frei);
     };
     var schritte=(neu?["name"]:[]).concat(gruppenMitLuecke());
     var pos=0, zurUebersicht=false;
@@ -2296,7 +2326,7 @@ function wendeStammdatenAn(){
     if(kgGeaendert){
       var kg=(p.kaeltemittelKg===""||p.kaeltemittelKg==null)?null:+p.kaeltemittelKg;
       p.kaeltemittelKg=kg;
-      p.kaeltemittelText = kg==null ? "" : String(kg).replace(".",",")+" kg";
+      p.kaeltemittelText = kg==null ? "" : kgText(kg);
       p.ueber30kg = kg!=null && kg>=30;
     }
   });
@@ -2883,7 +2913,10 @@ function werteLidlAuftrag(teile){
       var weiter=z.filter(function(t){ return t.y<y-3 && t.y>y-15 && Math.abs(t.x-xv)<4; });
       if(!weiter.length) break;
       var yy=weiter[0].y;
-      if(z.some(function(t){ return Math.abs(t.y-yy)<3 && istLabel(t) && t.x<xv; })) break;
+      /* Eine Fortsetzungszeile hat links von sich nichts stehen. Steht dort
+         etwas, beginnt ein neues Feld – auch wenn dessen Bezeichnung hier
+         nicht bekannt ist. */
+      if(z.some(function(t){ return Math.abs(t.y-yy)<3 && t.x<xv-5; })) break;
       text.push(weiter.map(function(t){ return t.s; }).join(" ")); y=yy;
     }
     r[LABELS[l.s]]=text.join(l.s==="Beschreibung"?" ":"\n");
@@ -3273,7 +3306,14 @@ function protokollAssistent(form, stoer){
   }
   function weiter(){
     var s=schritte[pos];
-    if(s.pruefen){ var m=s.pruefen(); if(m){ toast(m); return; } }
+    if(s.pruefen){ var m=s.pruefen(); if(m){
+      /* Der Hinweis gehört dorthin, wo hingeschaut wird – ein Einblender am
+         unteren Rand wird auf dem Handy leicht übersehen. */
+      var alt=inhalt.querySelector(".as-hinweis"); if(alt) alt.remove();
+      var n=el('<div class="note warnbox as-hinweis">'+esc(m)+"</div>");
+      inhalt.appendChild(n); n.scrollIntoView({block:"nearest"});
+      toast(m); return;
+    } }
     if(pos<schritte.length-1){ pos++; zeige(); }
   }
   zeige();
@@ -3464,7 +3504,10 @@ function viewProtokoll(){
       var offen=ts.filter(function(t){ return t.status==="ueberfaellig"||t.status==="faellig"; });
       var wahl=(offen.length?offen:ts).slice().sort(function(x,y){ return abst(x)-abst(y); })[0];
       if(vorwahlId){ ts.forEach(function(t){ if(t.id===vorwahlId) wahl=t; }); }
-      var an = ts.some(function(t){ return t.id===vorwahlId; }) || (!stoer && offen.length>0);
+      /* Hat der Markt nur eine Anlage, ist klar, worum es geht – dann ist sie
+         angehakt, auch wenn sie noch nicht fällig wäre. */
+      var an = ts.some(function(t){ return t.id===vorwahlId; }) ||
+               (!stoer && (offen.length>0 || anlagenDesMarkts(cur,false).length===1));
       var schlecht=ts.reduce(function(r,t){ return STATUS_RANK[t.status]<STATUS_RANK[r]?t.status:r; },"erledigt");
       var terminText=function(t){ var w=wannText(t); return t.intervall.art+(t.naechste?" · fällig "+dfmt(t.naechste)+" ("+w.zusatz+")":""); };
       var z=el('<label class="chk" style="border-color:var(--line);align-items:center">'+
@@ -3769,10 +3812,14 @@ function viewProtokoll(){
   form._sig={
     vorhanden:function(){ return hasSig; },
     setzen:function(datenUrl){
+      /* Das Bild wird erst im onload gezeichnet. Bis dahin gilt die
+         Unterschrift trotzdem als vorhanden – sonst steht im nächsten
+         Schritt „fehlt“, obwohl gerade unterschrieben wurde. */
+      hasSig=true; formDirty=true;
       return new Promise(function(ok){
         var b=new Image();
-        b.onload=function(){ ctx.clearRect(0,0,cv.width,cv.height); ctx.drawImage(b,0,0,cv.width,cv.height); hasSig=true; formDirty=true; ok(true); };
-        b.onerror=function(){ ok(false); };
+        b.onload=function(){ ctx.clearRect(0,0,cv.width,cv.height); ctx.drawImage(b,0,0,cv.width,cv.height); ok(true); };
+        b.onerror=function(){ hasSig=false; ok(false); };
         b.src=datenUrl;
       });
     },
@@ -4296,8 +4343,8 @@ function blattInhalt(p){
         "Kältemittelarbeiten und Dichtheitsprüfungen nur durch befugte bzw. zertifizierte Personen und Unternehmen."+
         /* für das Archiv: welches Protokoll, welche Fassung */
         "<br>Protokoll "+esc(p._id||"")+" · Fassung "+(p.version||1)+
-        (p.erstellt?" · erstellt "+dfmt(String(p.erstellt).slice(0,10)):"")+
-        ((p.version||1)>1&&p.geaendert?" · zuletzt korrigiert "+dfmt(String(p.geaendert).slice(0,10))+
+        (p.erstellt?" · erstellt "+tagFmt(p.erstellt):"")+
+        ((p.version||1)>1&&p.geaendert?" · zuletzt korrigiert "+tagFmt(p.geaendert)+
           (p.korrekturGrund?" („"+esc(p.korrekturGrund)+"“)":""):"")+"</div>"
   );
 }
@@ -4504,7 +4551,7 @@ function protokollDetail(p){
         esc(protoName(p)||"Protokoll")+"</strong>"+
       '<span class="muted mono" style="font-size:12px">'+dfmt(p.datum)+(p.uhrzeit?" "+esc(p.uhrzeit):"")+"</span>"+
     "</div>"+
-    (p.geloescht?'<div class="note warnbox"><strong>Gelöscht</strong> am '+dfmt(String(p.geloescht).slice(0,10))+
+    (p.geloescht?'<div class="note warnbox"><strong>Gelöscht</strong> am '+tagFmt(p.geloescht)+
       (p.geloeschtVon?" von "+esc(p.geloeschtVon):"")+(p.loeschGrund?' – „'+esc(p.loeschGrund)+'"':"")+
       '. Zählt nirgends mehr mit und ist nur hier in der Verwaltungsansicht sichtbar.</div>':"")+
     '<div class="rowflex">'+
@@ -4525,7 +4572,7 @@ function protokollDetail(p){
         '<button class="btn ghost sm" type="button" data-rolle="loeschnein">Abbrechen</button></div>'+
     "</div>"+
     ((p.version||1)>1?'<div class="note">Fassung '+p.version+' · zuletzt korrigiert am '+
-      dfmt((p.geaendert||"").slice(0,10))+(p.korrekturGrund?' – „'+esc(p.korrekturGrund)+'"':"")+"</div>":"")+
+      tagFmt(p.geaendert)+(p.korrekturGrund?' – „'+esc(p.korrekturGrund)+'"':"")+"</div>":"")+
     (p._quelle==="geraet"?'<div class="muted" style="font-size:12px">Liegt bisher nur auf diesem Gerät.</div>':"")+
     '<dl class="dl">'+
       "<dt>Techniker/in</dt><dd>"+esc([p.nameTechniker||p.techniker].concat(p.mitarbeiter||[]).filter(Boolean).join(", ")||"–")+"</dd>"+
@@ -4892,7 +4939,7 @@ function viewVerlauf(){
             '<span class="pill '+(ART_KLASSE[e.art]||"p-unbekannt")+'">'+(ART_TEXT[e.art]||esc(e.art))+"</span></span>"+
         "</div>"+
         (spaeterGeloescht?'<div class="muted" style="font-size:12.5px">Dieses Protokoll wurde am '+
-          dfmt(String(jetzt.geloescht).slice(0,10))+" gelöscht"+(jetzt.loeschGrund?' – „'+esc(jetzt.loeschGrund)+'"':"")+
+          tagFmt(jetzt.geloescht)+" gelöscht"+(jetzt.loeschGrund?' – „'+esc(jetzt.loeschGrund)+'"':"")+
           ". Es zählt nirgends mehr mit.</div>":"")+
         (verschwunden?'<div class="muted" style="font-size:12.5px">Das Protokoll liegt nicht mehr auf diesem Gerät bzw. in der Liste.</div>':"")+
         (e.grund?'<div style="font-size:13px"><span class="muted">Grund:</span> '+esc(e.grund)+"</div>":"")+
@@ -4980,7 +5027,10 @@ function auffaelligkeiten(s){
   if(!s.filiale) l.push("keine Filialnummer");
   if(!s.plz) l.push("keine PLZ in der Adresse");
   if(s.pos.length===1) l.push("nur ein Termin im Jahr eingetragen – fehlt der zweite Termin in der Liste?");
-  return {fehler:f, luecken:l};
+  /* Bei mehreren gleichartigen Anlagen entsteht derselbe Hinweis mehrfach –
+     einmal genügt. */
+  var einmal=function(liste){ return liste.filter(function(x,i){ return liste.indexOf(x)===i; }); };
+  return {fehler:einmal(f), luecken:einmal(l)};
 }
 function naechsterTerminMarkt(s){
   var t=s.pos.map(function(p){ return p.naechste; }).filter(Boolean);
@@ -5415,7 +5465,7 @@ function verwaltungEditor(s){
       var mehrere=meine && meine.querySelectorAll(".terminzeile").length>1;
       sel.innerHTML='<option value="">gehört zu dieser Anlage</option>'+
         karten.filter(function(x){ return x!==meine; }).map(function(x){
-          var nm=x.querySelector('[data-a="name"]').value.trim();
+          var nm=x.querySelector('[data-a="anlagentyp"]').value.trim();
           return '<option value="'+x.dataset.k+'">→ verschieben zu: '+esc(nm||("Anlage "+(karten.indexOf(x)+1)))+"</option>";
         }).join("")+
         (mehrere?'<option value="__neu">→ eigene Anlage daraus machen</option>':"");
@@ -5432,10 +5482,10 @@ function verwaltungEditor(s){
     });
     reihe.forEach(function(g){ anlageKarte(g); });
   })();
-  if(s._entwurf) anlageKarte(null).querySelector('[data-a="plus"]').click();
+  if(s._entwurf) anlageKarte(null).querySelector('[data-a2="plus"]').click();
   optionenNeu();
   c.querySelector("#a_plus").onclick=function(){
-    anlageKarte(null).querySelector('[data-a="plus"]').click();
+    anlageKarte(null).querySelector('[data-a2="plus"]').click();
     optionenNeu();
   };
 

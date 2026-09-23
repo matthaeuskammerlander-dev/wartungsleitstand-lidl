@@ -78,6 +78,11 @@ sagt das im Ergebnis deutlich dazu.
 Mehrtägige Touren fahren am Folgetag vom letzten Stopp weiter, rechnen also mit
 Übernachtung unterwegs.
 
+Über jedem Tag steht die **Arbeitszeit** — Anfahrten zwischen den Märkten plus
+Zeit vor Ort. Sie bleibt in der eingestellten Grenze. Die **Rückfahrt zum
+Startpunkt** steht daneben und im letzten Tabellenfeld: sie kommt obendrauf
+und wird nicht auf den Arbeitstag angerechnet.
+
 ## Karte und Navigation
 
 Die Karte ist OpenStreetMap über Leaflet — ohne Schlüssel und ohne Kosten.
@@ -370,21 +375,23 @@ App deshalb zusätzlich:
   Liste der üblichen Orte (Technikraum hinten/vorne, von innen oder außen,
   Dachboden, Dach Filiale, Dach Backshop, Büro, Sozialraum, Pfandraum,
   Backshop, Lager, IT-Raum) oder frei eingetippt
+- Typenschild: Hersteller, Modell, Seriennummer (freiwillig)
 
 **Die Listen lernen dazu.** Was einmal unter „andere …“ eingetippt wurde,
 steht beim nächsten Mal als Knopf zur Auswahl – zuerst das, was am häufigsten
 vorkommt. Bis das Protokoll gespeichert ist, kennt nur das Gerät den neuen
 Wert; danach steht er über die Anlagendaten allen zur Verfügung. Das gilt für
 Bauart, Kältemittel, Regelung und die Orte.
-- Typenschild: Hersteller, Modell, Seriennummer (freiwillig)
 
 **Beim Protokoll** steht unter „Anlagendaten“ je angehakter Anlage eine
 Karte. Sie zeigt, was bekannt ist und was fehlt. **Ergänzen** öffnet einen
 geführten Dialog: ein Thema pro Schritt, große Knöpfe, und gefragt wird nur,
 was fehlt. Wer „wassergekühlt“ wählt, bekommt die Frage nach Rückkühler und
-Pumpen; ohne eigene Regelung entfallen die Fragen dazu. Am Ende steht eine
-Übersicht, in der sich alles ändern lässt. Ist schon alles bekannt, heißt
-der Knopf **Prüfen** und führt direkt zur Übersicht.
+Pumpen; ohne eigene Regelung entfallen die Fragen dazu. Zuletzt kommt das
+Typenschild – freiwillig, aber gleich zur Hand, wenn man ohnehin davorsteht;
+jeder Schritt lässt sich überspringen. Am Ende steht eine Übersicht, in der
+sich alles ändern lässt. Ist schon alles bekannt, heißt der Knopf **Prüfen**
+und führt direkt zur Übersicht.
 
 Die Angaben gehen **mit dem Speichern des Protokolls** in die
 Anlagendaten, für alle sichtbar. Im Änderungsverlauf steht jedes Feld mit
