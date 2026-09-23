@@ -370,6 +370,12 @@ App deshalb zusätzlich:
   Liste der üblichen Orte (Technikraum hinten/vorne, von innen oder außen,
   Dachboden, Dach Filiale, Dach Backshop, Büro, Sozialraum, Pfandraum,
   Backshop, Lager, IT-Raum) oder frei eingetippt
+
+**Die Listen lernen dazu.** Was einmal unter „andere …“ eingetippt wurde,
+steht beim nächsten Mal als Knopf zur Auswahl – zuerst das, was am häufigsten
+vorkommt. Bis das Protokoll gespeichert ist, kennt nur das Gerät den neuen
+Wert; danach steht er über die Anlagendaten allen zur Verfügung. Das gilt für
+Bauart, Kältemittel, Regelung und die Orte.
 - Typenschild: Hersteller, Modell, Seriennummer (freiwillig)
 
 **Beim Protokoll** steht unter „Anlagendaten“ je angehakter Anlage eine

@@ -1838,6 +1838,29 @@ var ANLAGE_GRUPPEN=[
 var ANLAGE_FELDER=[].concat.apply([], ANLAGE_GRUPPEN.map(function(g){
   return g.felder.map(function(f){ return Object.assign({gruppe:g}, f); }); }));
 function leerWert(w){ return w==null || w==="" || (typeof w==="number" && isNaN(w)); }
+/* Die Auswahllisten lernen dazu: was einmal unter „andere …“ eingetippt wurde,
+   steht beim nächsten Mal als Knopf da – zuerst das, was am häufigsten
+   vorkommt. Gespeichert wird es mit den Anlagendaten, bis dahin auf dem Gerät. */
+function gelernteWerte(key){
+  var haeufig={};
+  ALLE_POS.forEach(function(p){
+    var v=p[key];
+    if(typeof v==="string" && v.trim()) haeufig[v.trim()]=(haeufig[v.trim()]||0)+1;
+  });
+  (lsGet("ukt_eigene",{})[key]||[]).forEach(function(v){ if(v) haeufig[v]=haeufig[v]||1; });
+  return Object.keys(haeufig).sort(function(a,b){ return haeufig[b]-haeufig[a] || a.localeCompare(b,"de"); });
+}
+function feldOptionen(f){
+  var o=(f.o||[]).slice();
+  gelernteWerte(f.k).forEach(function(v){ if(o.indexOf(v)<0) o.push(v); });
+  return o;
+}
+function merkeWert(key, wert){
+  wert=String(wert||"").trim();
+  if(!wert) return;
+  var m=lsGet("ukt_eigene",{}) || {}, liste=m[key]||[];
+  if(liste.indexOf(wert)<0){ liste.push(wert); m[key]=liste.slice(-30); lsSet("ukt_eigene",m); }
+}
 function feldGilt(f, a){ return (!f.gruppe.wenn || f.gruppe.wenn(a)) && (!f.wenn || f.wenn(a)); }
 /* was an Pflichtangaben noch fehlt */
 function anlageLuecken(a){
@@ -1902,8 +1925,9 @@ function anlageAssistent(start, titel, neu){
       var chip=function(wert, text, an){
         return '<button class="chip" type="button" data-f="'+f.k+'" data-w="'+esc(wert)+'" aria-pressed="'+(!!an)+'">'+esc(text)+"</button>"; };
       if(f.t==="wahl"){
-        var eigen=!leerWert(w) && f.o.indexOf(w)<0;
-        h+='<div class="chips">'+f.o.map(function(o){ return chip(o,o,w===o); }).join("")+
+        var listeO=feldOptionen(f);
+        var eigen=!leerWert(w) && listeO.indexOf(w)<0;
+        h+='<div class="chips">'+listeO.map(function(o){ return chip(o,o,w===o); }).join("")+
           (f.frei?chip("__frei","andere …",eigen):"")+"</div>"+
           (f.frei?'<input type="text" class="as-frei" data-frei="'+f.k+'" placeholder="Bezeichnung eingeben" value="'+esc(eigen?w:"")+'"'+(eigen?"":" hidden")+">":"");
       } else if(f.t==="jn"){
@@ -1942,7 +1966,11 @@ function anlageAssistent(start, titel, neu){
           gruppeZeigen(g);
         };
       });
-      inhalt.querySelectorAll("[data-frei]").forEach(function(i){ i.oninput=function(){ a[i.dataset.frei]=i.value.trim(); }; });
+      inhalt.querySelectorAll("[data-frei]").forEach(function(i){
+        i.oninput=function(){ a[i.dataset.frei]=i.value.trim(); };
+        /* eingetippte Bezeichnung merken – sie steht dann als Knopf zur Auswahl */
+        i.onchange=function(){ merkeWert(i.dataset.frei, i.value); };
+      });
       inhalt.querySelectorAll("[data-in]").forEach(function(i){
         i.oninput=function(){
           var k=i.dataset.in, v=i.value.trim();
@@ -5317,8 +5345,9 @@ function verwaltungEditor(s){
     if(f.t==="zahl") return '<label class="fl"><span>'+esc(f.l)+'</span><input type="number" min="1" data-a="'+f.k+'" value="'+esc(v)+'"></label>';
     if(f.t==="kg") return '<label class="fl"><span>'+esc(f.l)+'</span><input type="number" step="0.1" min="0" data-a="'+f.k+'" value="'+esc(v)+'"></label>';
     var dl=f.o?' list="dl_'+f.k+'"':"";
+    var listeO=f.o?feldOptionen(f):[];
     return '<label class="fl"><span>'+esc(f.l)+'</span><input type="text" data-a="'+f.k+'"'+dl+' placeholder="'+esc(f.o?f.o[0]:"")+'" value="'+esc(v)+'">'+
-      (f.o?'<datalist id="dl_'+f.k+'">'+f.o.map(function(o){ return '<option value="'+esc(o)+'">'; }).join("")+"</datalist>":"")+"</label>";
+      (f.o?'<datalist id="dl_'+f.k+'">'+listeO.map(function(o){ return '<option value="'+esc(o)+'">'; }).join("")+"</datalist>":"")+"</label>";
   }
   function datenBlockHtml(w){
     return ANLAGE_GRUPPEN.filter(function(g){ return !g.wenn || g.wenn(w); }).map(function(g){
@@ -5532,6 +5561,7 @@ function verwaltungEditor(s){
           ANLAGE_FELDER.forEach(function(f){
             /* nicht gezeigte Felder (z. B. Rückkühler bei luftgekühlt) unverändert lassen */
             var v=la(f.k); if(v===undefined) return;
+            if(f.o && v && f.o.indexOf(v)<0) merkeWert(f.k, v);   /* eigener Wert kommt in die Liste */
             neuP[f.k]= (f.t==="zahl"||f.t==="kg") ? (v===""?null:+v) : v;
             /* stand nur da, weil eine andere Zeile der Anlage ihn hat – keine Änderung */
             if(p0 && leerWert(p0[f.k]) && gleich(neuP[f.k], anlageDaten(p0)[f.k])) neuP[f.k]=p0[f.k];
