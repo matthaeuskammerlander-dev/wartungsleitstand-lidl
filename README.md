@@ -49,6 +49,8 @@ Welche Termine in die Tour kommen, bestimmen vier Knöpfe:
 - **überfällig** und **fällig in 30 Tagen**: der Normalfall.
 - **bis Ende nächsten Monats**: nimmt zusätzlich mit, was bald ansteht —
   praktisch, um eine Fahrt in eine Region gleich mitzuerledigen.
+- **Bundesländer**: Ohne Auswahl zählt ganz Österreich; sonst nur die
+  angetippten. Das Bundesland ergibt sich aus der PLZ.
 - **später fällige – alle**: nimmt jeden noch nicht fälligen Termin dazu,
   auch einen in elf Monaten. Damit ist der Monatsknopf eingeschlossen.
 Startpunkt ist standardmäßig die aktuelle Position des Technikers (der Browser
@@ -242,6 +244,14 @@ vom Gerät. Scheitert schon das Speichern auf dem Gerät – etwa in einem priva
 Browserfenster –, sagt die App das deutlich und lässt das Formular mit allen
 Eingaben stehen.
 
+## Wer war vor Ort
+
+Neben der Technikerin oder dem Techniker haben zwei weitere Felder Platz für
+Kolleginnen und Kollegen, die mitgearbeitet haben. Sie stehen im Protokoll,
+auf dem Druckblatt und im Export. Die Zertifikatsnummer wird weiter für die
+Hauptperson gemerkt. Dafür einmal `supabase-setup.sql` erneut ausführen, es
+legt die Spalte `mitarbeiter` an.
+
 ## Protokoll Schritt für Schritt
 
 Über dem Formular steht **„Schritt für Schritt ausfüllen“**. Der Dialog führt
@@ -356,6 +366,10 @@ App deshalb zusätzlich:
   zu warten sind
 - Regelung: welche, betreut von UKT oder einer anderen Firma (mit Namen),
   Fernzugriff ja/nein
+- Wo steht was: Außengeräte, elektrische Absicherung und Regelung – aus einer
+  Liste der üblichen Orte (Technikraum hinten/vorne, von innen oder außen,
+  Dachboden, Dach Filiale, Dach Backshop, Büro, Sozialraum, Pfandraum,
+  Backshop, Lager, IT-Raum) oder frei eingetippt
 - Typenschild: Hersteller, Modell, Seriennummer (freiwillig)
 
 **Beim Protokoll** steht unter „Anlagendaten“ je angehakter Anlage eine

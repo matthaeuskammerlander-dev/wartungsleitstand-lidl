@@ -375,7 +375,7 @@ var STAMM_FELDER_POS = ["anlagentyp","intervallCode","inbetriebnahme","monat","k
                         "kaeltemittelArt","rueckkuehler","aktiv","notiz",
                         /* Anlagendaten, die vor Ort nach und nach ergänzt werden */
                         "pausiert","pausiertGrund","bauart","kreislaeufe","pruefbuch","rkUkt","pumpeUkt",
-                        "regelung","regelungFirma","regelungFirmaName","fernzugriff","hersteller","modell","seriennummer","vorOrtNeu",
+                        "regelung","regelungFirma","regelungFirmaName","fernzugriff","ortAussen","ortStrom","ortRegelung","hersteller","modell","seriennummer","vorOrtNeu",
                         /* Zuordnung einer Termin-Zeile zu ihrer Anlage (von Hand) */
                         "anlageZu"];
 var ABGELEITET_POS   = ["kaeltemittelText","ueber30kg","baujahr"];
@@ -962,7 +962,25 @@ function uhrFmt(startMin, h){
 /* ---------- State ---------- */
 var S={view:"faellig",region:"alle",q:"",sel:null,selPos:null,protoStandort:"",protoPos:"",
   tour:{status:["ueberfaellig","faellig"], stundenProTag:8, startId:"__gps",
-        gps:null, gpsFehler:"", ergebnis:null, manuell:null, naechsterMonat:false}};
+        gps:null, gpsFehler:"", ergebnis:null, manuell:null, naechsterMonat:false, laender:[]}};
+/* Bundesland aus der Postleitzahl. Die Blöcke sind eindeutig bis auf ein paar
+   Ränder: 52xx/53xx gehören zu Oberösterreich (Braunau, Mattighofen),
+   99xx ist Osttirol. */
+var BUNDESLAENDER=["Wien","Niederösterreich","Oberösterreich","Salzburg","Tirol","Vorarlberg","Burgenland","Steiermark","Kärnten"];
+function bundesland(s){
+  var plz=String((s&&s.plz)||"").trim();
+  if(!/^\d{4}$/.test(plz)) return "";
+  var n=+plz;
+  if(n<2000) return "Wien";
+  if(n<4000) return "Niederösterreich";
+  if(n<5000) return "Oberösterreich";
+  if(n<6000) return (n>=5200 && n<5400) ? "Oberösterreich" : "Salzburg";
+  if(n<6700) return "Tirol";
+  if(n<7000) return "Vorarlberg";
+  if(n<8000) return "Burgenland";
+  if(n<9000) return "Steiermark";
+  return n>=9900 ? "Tirol" : "Kärnten";
+}
 /* letzter Tag des Folgemonats – für „auch nächsten Monat mitnehmen“ */
 function endeFolgemonat(){
   var h=new Date(), d=new Date(h.getFullYear(), h.getMonth()+2, 0);
@@ -1169,6 +1187,7 @@ function tourKandidaten(){
   var raus=[];
   filtered().forEach(function(s){
     if(!s.lat) return;
+    if(S.tour.laender.length && S.tour.laender.indexOf(bundesland(s))<0) return;
     var bis=endeFolgemonat();
     var pos=s.pos.filter(function(p){
       var st = p.status==="geplant" ? "erledigt" : p.status;
@@ -1459,6 +1478,17 @@ function tourPanel(){
         "„Später fällige – alle“ nimmt jeden noch nicht fälligen Termin dazu, auch einen in elf Monaten, "+
         "und schließt den Monat damit ein.</div></div>"+
 
+    /* Bundesländer: ohne Auswahl zählt ganz Österreich */
+    '<div style="margin-top:12px"><div class="fl" style="margin-bottom:6px"><span>Bundesländer</span></div>'+
+      '<div class="chips" id="t_land">'+
+        BUNDESLAENDER.filter(function(l){ return ST.some(function(s){ return s.lat && bundesland(s)===l; }); }).map(function(l){
+          var n=ST.filter(function(s){ return s.lat && bundesland(s)===l; }).length;
+          return '<button class="chip" type="button" data-l="'+esc(l)+'" aria-pressed="'+(S.tour.laender.indexOf(l)>=0)+'">'+
+            esc(l)+' <span class="muted">'+n+"</span></button>";
+        }).join("")+
+        '<button class="chip" type="button" data-l="__alle" aria-pressed="'+(!S.tour.laender.length)+'">ganz Österreich</button>'+
+      "</div></div>"+
+
     '<div class="grid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px">'+
       '<label class="fl"><span>Startpunkt</span><select id="t_start"></select></label>'+
       '<label class="fl"><span>Position</span><button class="btn ghost" type="button" id="t_gps">'+
@@ -1497,6 +1527,14 @@ function tourPanel(){
   c.querySelector("#t_folge").onclick=function(){
     S.tour.naechsterMonat=!S.tour.naechsterMonat; S.tour.manuell=null; render();
   };
+  c.querySelectorAll("#t_land .chip").forEach(function(b){
+    b.onclick=function(){
+      var l=b.dataset.l;
+      if(l==="__alle") S.tour.laender=[];
+      else { var i=S.tour.laender.indexOf(l); if(i>=0) S.tour.laender.splice(i,1); else S.tour.laender.push(l); }
+      S.tour.manuell=null; render();
+    };
+  });
   startSel.onchange=function(){ S.tour.startId=startSel.value; };
 
   var gpsBtn=c.querySelector("#t_gps");
@@ -1757,6 +1795,10 @@ var REGELUNGEN=["Daikin Touch Manager","R&S","Wurm","LichtLoidl"];
 var BAUARTEN=["Split","Multi-Split","VRV luftgekühlt","VRV wassergekühlt","Kaltwassersatz"];
 var KAELTEMITTEL=["R410A","R32","R407C","R134a","R454B","R744"];
 var OHNE_REGELUNG="keine eigene Regelung";
+/* Wo in der Filiale etwas steht – die Orte, die bei Lidl vorkommen */
+var ORTE=["Technikraum hinten, von innen","Technikraum hinten, von außen","Technikraum vorne, von innen",
+  "Technikraum vorne, von außen","Dachboden","Dach Filiale","Dach Backshop","Büro","Sozialraum","Pfandraum",
+  "Backshop","Lager","IT-Raum"];
 function istWassergekuehlt(a){
   var b=String(a.bauart||"").toLowerCase();
   if(b) return b.indexOf("wasser")>=0 || b.indexOf("kaltwasser")>=0;
@@ -1782,6 +1824,11 @@ var ANLAGE_GRUPPEN=[
     {k:"regelungFirmaName", l:"Name der Firma", t:"text",
       wenn:function(a){ return a.regelung!==OHNE_REGELUNG && a.regelungFirma==="andere Firma"; }},
     {k:"fernzugriff", l:"Fernzugriff durch UKT", t:"jn",
+      wenn:function(a){ return a.regelung!==OHNE_REGELUNG; }}]},
+  {titel:"Wo steht was", frage:"Wo stehen Außengeräte, Absicherung und Regelung?", felder:[
+    {k:"ortAussen", l:"Außengeräte", t:"wahl", o:ORTE, frei:true},
+    {k:"ortStrom", l:"Elektrische Absicherung", t:"wahl", o:ORTE, frei:true},
+    {k:"ortRegelung", l:"Regelung", t:"wahl", o:ORTE, frei:true,
       wenn:function(a){ return a.regelung!==OHNE_REGELUNG; }}]},
   {titel:"Typenschild", frage:"Angaben vom Typenschild (freiwillig)", optional:true, felder:[
     {k:"hersteller", l:"Hersteller", t:"text"},
@@ -1813,6 +1860,7 @@ function anlageKurz(a){
   if(a.regelung) t.push(a.regelung===OHNE_REGELUNG ? "ohne eigene Regelung"
     : a.regelung+(a.regelungFirma?" ("+(a.regelungFirma==="UKT"?"UKT":(a.regelungFirmaName||"andere Firma"))+")":"")+
       (a.fernzugriff?" · Fernzugriff "+a.fernzugriff:""));
+  if(a.ortAussen) t.push("Außengeräte: "+a.ortAussen);
   return t.join(" · ");
 }
 
@@ -2088,7 +2136,7 @@ var aenderungen=[];   // neueste zuerst
 
 var FELDNAMEN={ datum:"Datum", uhrzeit:"Uhrzeit", bestellnummer:"Bestellnummer", auftragsnummer:"Lidl-Auftragsnummer",
   region:"FM-Region", standortName:"Standort", adresse:"Adresse", wartungsart:"Wartungsart", firma:"Firma",
-  techniker:"Techniker/in", kontakt:"Telefon / E-Mail", subunternehmen:"Subunternehmen",
+  techniker:"Techniker/in", mitarbeiter:"Weitere Techniker/innen", kontakt:"Telefon / E-Mail", subunternehmen:"Subunternehmen",
   zertUnternehmen:"F-Gase-Unternehmenszertifikat", zertPerson:"F-Gase-Personenzertifikat",
   positionIds:"Gewartete Anlagen", anlagen:"Anlagendaten", arbeiten:"Durchgeführte Arbeiten",
   arbeitenSonstiges:"Sonstige Arbeiten", maengel:"Mängel", betriebsbereit:"Betriebsbereit",
@@ -2437,6 +2485,7 @@ function zuZeile(doc,uid){
   /* nur mitschicken, wenn es eins ist – Wartungen gehen so auch an eine
      Datenbank, in der die Spalte noch fehlt */
   if(doc.stoerung) zeile.stoerung=doc.stoerung;
+  if(doc.mitarbeiter && doc.mitarbeiter.length) zeile.mitarbeiter=doc.mitarbeiter;
   return zeile;
 }
 function ausZeile(r){
@@ -2454,7 +2503,7 @@ function ausZeile(r){
     bemerkungen:r.bemerkungen, filiale:r.filiale, fotos:r.fotos||[],
     anlagen:r.anlagen||[], ergebnis:r.ergebnis||[], unterschrift:r.unterschrift,
     sofortmassnahme:r.sofortmassnahme, auftraggebervertreter:r.auftraggebervertreter,
-    stoerung:r.stoerung||null };
+    stoerung:r.stoerung||null, mitarbeiter:r.mitarbeiter||[] };
 }
 function ladeProtokolle(){
   if(!Store.sb) return;
@@ -2580,8 +2629,8 @@ function speichereProtokoll(id,doc){
     zeile.client_id=id;
     return Store.sb.from("protokolle").upsert(zeile,{onConflict:"client_id", ignoreDuplicates:true}).then(function(r){
       if(r.error){
-        Store.fehler=/stoerung/.test(r.error.message||"")
-          ? "In der Datenbank fehlt die Spalte für Störungen – bitte supabase-setup.sql im Supabase SQL Editor erneut ausführen"
+        Store.fehler=/stoerung|mitarbeiter/.test(r.error.message||"")
+          ? "In der Datenbank fehlt eine Spalte – bitte supabase-setup.sql im Supabase SQL Editor erneut ausführen"
           : r.error.message;
         return false;
       }
@@ -3130,6 +3179,8 @@ function protokollAssistent(form, stoer){
   schritte.push({titel:"Abschluss", zeigen:function(){
     inhalt.innerHTML=frage("Wer war vor Ort?");
     inhalt.appendChild(textFeld("Name Techniker/in","#f_name",false));
+    inhalt.appendChild(textFeld("Weitere/r Techniker/in","#f_tech2",false,"leer = allein"));
+    inhalt.appendChild(textFeld("Dritte/r Techniker/in","#f_tech3",false));
     inhalt.appendChild(textFeld("Uhrzeit","#f_zeit",false));
     inhalt.appendChild(textFeld("Auftraggebervertreter","#f_agv",false,"wer war vom Markt dabei"));
     var d=el('<div class="as-feld"><div class="as-label">Unterschrift</div>'+
@@ -3282,6 +3333,8 @@ function viewProtokoll(){
   '<fieldset><legend>Wartungsunternehmen</legend><div class="grid">'+
     '<label class="fl"><span>Firma / Vertragspartner</span><input type="text" id="f_firma" value="Kammerlander Umwelt- und Klimatechnik GmbH"></label>'+
     '<label class="fl"><span class="req">Techniker/in</span><input type="text" id="f_tech" list="technamen" autocomplete="off" required></label>'+
+    '<label class="fl"><span>Weitere/r Techniker/in</span><input type="text" id="f_tech2" list="technamen" autocomplete="off" placeholder="leer = allein"></label>'+
+    '<label class="fl"><span>Dritte/r Techniker/in</span><input type="text" id="f_tech3" list="technamen" autocomplete="off"></label>'+
     '<label class="fl"><span>Telefon / E-Mail</span><input type="text" id="f_kontakt"></label>'+
     '<label class="fl"><span>F-Gase-Unternehmenszertifikat Nr.</span><input type="text" id="f_zertu"></label>'+
     '<label class="fl"><span>F-Gase-Personenzertifikat Nr.</span><input type="text" id="f_zertp"></label>'+
@@ -3771,6 +3824,7 @@ function viewProtokoll(){
       setz("f_wart_sonst",art.replace(/^sonstige:\s*/,""));
     } else { var r2=form.querySelector('input[name="wart"][value="'+art+'"]'); if(r2) r2.checked=true; }
     setz("f_firma",bearb.firma); setz("f_tech",bearb.techniker); setz("f_kontakt",bearb.kontakt);
+    setz("f_tech2",(bearb.mitarbeiter||[])[0]); setz("f_tech3",(bearb.mitarbeiter||[])[1]);
     setz("f_zertu",bearb.zertUnternehmen); setz("f_zertp",bearb.zertPerson); setz("f_sub",bearb.subunternehmen);
     anlagenZeichnen();
     form.querySelectorAll('input[name="arbeit"]').forEach(function(c){ c.checked=(bearb.arbeiten||[]).indexOf(c.value)>=0; });
@@ -3861,6 +3915,8 @@ function viewProtokoll(){
       bestellnummer:v("f_bestell"), auftragsnummer:v("f_auftrag"),
       wartungsart:radio("wart")==="sonstige"?("sonstige: "+v("f_wart_sonst")):radio("wart"),
       firma:v("f_firma"), techniker:kanonName(v("f_tech")), kontakt:v("f_kontakt"),
+      /* wer noch mitgearbeitet hat */
+      mitarbeiter:[v("f_tech2"),v("f_tech3")].map(kanonName).filter(Boolean),
       subunternehmen:v("f_sub"), zertUnternehmen:v("f_zertu"), zertPerson:v("f_zertp"),
       anlagen:anlagen,
       arbeiten:Array.prototype.map.call(form.querySelectorAll('input[name="arbeit"]:checked'),function(x){return x.value;}),
@@ -4169,7 +4225,7 @@ function blattInhalt(p){
 
       "<h2>Wartungsunternehmen</h2><table>"+
         zeile("Firma / Vertragspartner",p.firma)+
-        zeile("Techniker/in",p.techniker)+
+        zeile("Techniker/in",[p.techniker].concat(p.mitarbeiter||[]).filter(Boolean).join(", "))+
         zeile("Telefon / E-Mail",p.kontakt)+
         zeile("Subunternehmen",p.subunternehmen||"nein")+
         zeile("F-Gase-Unternehmenszertifikat Nr.",p.zertUnternehmen)+
@@ -4444,7 +4500,7 @@ function protokollDetail(p){
       dfmt((p.geaendert||"").slice(0,10))+(p.korrekturGrund?' – „'+esc(p.korrekturGrund)+'"':"")+"</div>":"")+
     (p._quelle==="geraet"?'<div class="muted" style="font-size:12px">Liegt bisher nur auf diesem Gerät.</div>':"")+
     '<dl class="dl">'+
-      "<dt>Techniker/in</dt><dd>"+esc(p.nameTechniker||p.techniker||"–")+"</dd>"+
+      "<dt>Techniker/in</dt><dd>"+esc([p.nameTechniker||p.techniker].concat(p.mitarbeiter||[]).filter(Boolean).join(", ")||"–")+"</dd>"+
       "<dt>Wartungsart</dt><dd>"+esc(p.wartungsart||"–")+"</dd>"+
       (p.bestellnummer?"<dt>Bestellnummer</dt><dd class='mono'>"+esc(p.bestellnummer)+"</dd>":"")+
       (p.auftragsnummer?"<dt>Lidl-Auftrag</dt><dd class='mono'>"+esc(p.auftragsnummer)+"</dd>":"")+

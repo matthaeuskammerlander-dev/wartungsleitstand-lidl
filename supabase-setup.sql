@@ -70,6 +70,8 @@ alter table public.protokolle add column if not exists loesch_grund    text;
 -- Leer bei Wartungen. Stoerungen haben wartungsart = 'Stoerung' und
 -- verschieben deshalb keine Faelligkeit.
 alter table public.protokolle add column if not exists stoerung        jsonb;
+-- zweiter und dritter Techniker, falls zu mehreren gearbeitet wurde
+alter table public.protokolle add column if not exists mitarbeiter     jsonb;
 create index if not exists protokolle_auftrag_idx on public.protokolle (auftragsnummer);
 create unique index if not exists protokolle_client_id_idx on public.protokolle (client_id);
 
