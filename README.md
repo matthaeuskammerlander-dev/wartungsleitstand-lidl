@@ -231,6 +231,18 @@ gewartet, nach Jahren geordnet, aus Excel-Liste und App-Protokollen
 zusammengeführt. In der Excel-Liste stehen Technikernamen nur für einen Teil
 der Einträge; diese Lücken zeigt die Historie offen als „ohne Namen".
 
+**Eine Person, eine Schreibweise.** In der Excel-Liste steht dieselbe Person
+unterschiedlich: Tobi und Tobias, Matthäus, Mattäus, Matti, Mat. Die Liste
+`NAMEN_ALIAS` in `index.html` ordnet diese Schreibweisen der richtigen zu —
+überall, wo ein Name erscheint, und beim Speichern eines neuen Protokolls.
+Eine neue Variante wird dort ergänzt (klein geschrieben, rechts die richtige
+Schreibweise). Zahlen in der Technikerspalte — in der alten Liste steht dort
+vereinzelt ein Datum — werden gar nicht erst als Name angezeigt.
+
+Protokolle, die schon vor dieser Zuordnung in der Datenbank lagen, räumt
+`tools/namen-vereinheitlichen.sql` auf: erst der Ansehen-Block, dann der
+Änderungs-Block.
+
 ## Protokolle ohne gemeinsame Ablage
 
 Die App funktioniert auch ohne eingerichtete Datenbank vollständig. Ein
@@ -673,3 +685,37 @@ wieder steht. Der Techniker muss nichts nachholen.
 
 Der Code steht unter der MIT-Lizenz. Die Anlagen- und Standortdaten sind
 Betriebsdaten und ausdrücklich **nicht** Teil der Lizenz.
+
+## Was die App nicht zulässt
+
+Geprüft mit angemeldetem Techniker- und Admin-Konto, jeweils auch an der
+Oberfläche vorbei direkt gegen die Datenbank:
+
+| Versuch | Ergebnis |
+|---|---|
+| Protokoll ohne Pflichtangaben speichern | benennt die fehlenden Felder, speichert nicht |
+| Datum in der Zukunft | abgelehnt mit Hinweis |
+| Datum über zwei Jahre zurück | fragt einmal nach |
+| Mehrfach auf Speichern tippen | legt trotzdem nur ein Protokoll an |
+| HTML oder Skript in Freitextfeldern | erscheint als Text, wird nie ausgeführt |
+| Mehr als acht Fotos | nimmt acht, sagt es |
+| Störungsprotokoll auf „planmäßig" stellen | wird als Störung gespeichert, verschiebt keinen Termin |
+| Protokoll löschen ohne Verwaltungsrechte | Knopf fehlt, Datenbank lehnt es zusätzlich ab |
+| Korrigieren ohne Grund | Datenbank lehnt ab |
+| Änderungsverlauf ändern oder löschen | Datenbank lehnt ab, auch für Admins |
+| Protokoll wirklich löschen (delete) | gesperrt, auch für Admins |
+| Sich selbst zum Admin machen | Datenbank lehnt ab |
+| Marktdaten ändern ohne Verwaltungsrechte | Editor erscheint nicht, Datenbank lehnt ab |
+| Inbetriebnahme in der Zukunft | abgelehnt — sonst fiele die Anlage aus der Planung |
+| Zwei Märkte mit derselben Filialnummer | erlaubt, aber beide unter „Fehler" gemeldet |
+| Gleichzeitig korrigieren | die zweite Speicherung wird abgelehnt, nichts geht verloren |
+| Reiter wechseln oder abmelden mit offenem Protokoll | fragt nach |
+| Markt entfernen, an dem Protokolle hängen | Protokolle bleiben vollständig erhalten |
+
+Die Sperren stehen nicht nur im Browser, sondern als Zugriffsregeln und
+Trigger in der Datenbank — ein manipulierter Browser kommt daran nicht vorbei.
+
+**Bekannte Grenze:** Die App lädt die neuesten 1000 Protokolle. Das reicht bei
+163 Anlagen für gut drei Jahre. Danach muss die Unterschrift aus der
+Listenabfrage heraus und beim Öffnen einzeln nachgeladen werden — sonst fällt
+der älteste Wartungsnachweis heraus und ein Termin springt auf überfällig.

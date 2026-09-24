@@ -611,7 +611,14 @@ var STATUS_VAR={ueberfaellig:"--crit",faellig:"--warn",geplant:"--good",erledigt
    Groß-/Kleinschreibung und Leerzeichen werden an den bekannten Namen
    angeglichen, bekannte Tippfehler zusätzlich über die Liste unten. Die
    Schreibweise aus der Excel-Liste hat Vorrang vor später getippten. */
-var NAMEN_ALIAS={ datko:"Darko" };
+/* Schreibweisen, die dieselbe Person meinen – so aus dem Büro bestätigt.
+   Schlüssel klein geschrieben, der Wert ist die Schreibweise, die überall
+   erscheinen soll. */
+var NAMEN_ALIAS={
+  datko:"Darko",
+  mat:"Matthäus", matti:"Matthäus", "mattäus":"Matthäus", mattaeus:"Matthäus", matthaeus:"Matthäus",
+  tobi:"Tobias"
+};
 var NAMEN_KANON={};
 function baueNamenKanon(){
   var k={};
@@ -632,8 +639,11 @@ function baueNamenKanon(){
 function kanonName(n){
   return String(n||"").split(",").map(function(t){
     t=t.trim(); var l=t.toLowerCase();
+    /* In der Excel-Liste steht in der Technikerspalte vereinzelt ein Datum.
+       Eine Zahl ist kein Name und wird nicht angezeigt. */
+    if(/^\d+$/.test(t)) return "";
     return NAMEN_ALIAS[l] || NAMEN_KANON[l] || t;
-  }).filter(Boolean).join(",");
+  }).filter(Boolean).join(", ");
 }
 function bekannteNamen(){
   var s={}; Object.keys(NAMEN_KANON).forEach(function(l){ s[NAMEN_KANON[l]]=1; });
@@ -728,7 +738,11 @@ function berechneFaelligkeiten(){
     s.letzterBesuch = besuche.length ? besuche[besuche.length-1] : null;
     /* Der Status eines Markts ist der schlechteste seiner Termine – jeder
        Termin hängt an der Inbetriebnahme (+12 Monate bzw. +6 Monate). */
-    s.status=s.pos.reduce(function(a,p){ return STATUS_RANK[p.status]<STATUS_RANK[a]?p.status:a; },"erledigt");
+    /* Gar keine Anlage in Betrieb: das ist kein „im Plan“, sondern nichts zu
+       planen. Grün wäre hier irreführend. */
+    s.status = s.pos.length
+      ? s.pos.reduce(function(a,p){ return STATUS_RANK[p.status]<STATUS_RANK[a]?p.status:a; },"erledigt")
+      : "unbekannt";
     s.offen=s.pos.filter(function(p){ return p.status==="ueberfaellig"||p.status==="faellig"; }).length;
   });
 }
@@ -1800,7 +1814,8 @@ function posBox(p,s,imBlock){
     "</dl>"+
     '<div><div class="l muted" style="font-size:11px;text-transform:uppercase;letter-spacing:.06em;margin-bottom:4px">Durchgeführte Wartungen</div>'+
       '<div class="timeline">'+(p.historie.length?p.historie.map(function(dt){
-        return '<span class="tl'+(dt.slice(0,4)===String(JAHR)?" cur":"")+'">'+dfmt(dt)+(p.techniker&&p.techniker[dt.slice(0,4)]?" · "+esc(p.techniker[dt.slice(0,4)]):"")+"</span>";
+        var wer=kanonName((p.techniker&&p.techniker[dt.slice(0,4)])||"");
+        return '<span class="tl'+(dt.slice(0,4)===String(JAHR)?" cur":"")+'">'+dfmt(dt)+(wer?" · "+esc(wer):"")+"</span>";
       }).join(""):'<span class="muted" style="font-size:12.5px">keine Einträge in der Liste</span>')+"</div></div>"+
     '<div><button class="btn ghost sm" type="button">Protokoll ausfüllen</button></div>'+
   "</div>");
@@ -2168,6 +2183,12 @@ var protokolle=[];
 var formDirty=false;
 /* nie neu rendern, solange jemand das Protokoll ausfüllt – sonst sind die Eingaben weg */
 function darfRendern(){ return !(S.view==="protokoll" && formDirty); }
+/* Abmelden wirft ein angefangenes Protokoll weg – vorher fragen. */
+function abmeldenErlaubt(){
+  if(S.view!=="protokoll" || !formDirty) return true;
+  return window.confirm("Das Protokoll ist angefangen und noch nicht gespeichert.\n\n"+
+    "Beim Abmelden gehen die Eingaben verloren. Trotzdem abmelden?");
+}
 function lsGet(k,d){ try{ var v=localStorage.getItem(k); return v?JSON.parse(v):d; }catch(e){ return d; } }
 function lsSet(k,v){ try{ localStorage.setItem(k,JSON.stringify(v)); }catch(e){} }
 
@@ -2585,7 +2606,7 @@ function initStore(versuch){
   window.claude.use("db").then(function(api){
     if(!api){ if(supabaseKonfiguriert) return initSupabase(); Store.modus="lokal"; storeNachRender(); return; }
     Store.claudeDb=api; Store.modus="claude";
-    api.collection("protokolle").orderBy("erstellt","desc").limit(200).onSnapshot(function(snap){
+    api.collection("protokolle").orderBy("erstellt","desc").limit(1000).onSnapshot(function(snap){
       protokolle=(snap.docs||[]).map(function(d){ return Object.assign({_id:d.id},d.data()||{}); });
       storeNachRender();
     }, function(){ });
@@ -2652,7 +2673,13 @@ function ausZeile(r){
 }
 function ladeProtokolle(){
   if(!Store.sb) return;
-  Store.sb.from("protokolle").select("*").order("erstellt",{ascending:false}).limit(200).then(function(r){
+  /* Die Grenze muss über den gesamten Bestand reichen: aus den Protokollen
+     kommt der Wartungsnachweis. Fällt ein altes Protokoll heraus, gilt seine
+     Wartung als nicht geschehen und der Termin springt auf überfällig.
+     163 Anlagen mal zwei Termine im Jahr plus Störungen – 1000 trägt gut drei
+     Jahre. Wird es mehr, muss die Unterschrift aus dieser Abfrage heraus und
+     einzeln nachgeladen werden (siehe README). */
+  Store.sb.from("protokolle").select("*").order("erstellt",{ascending:false}).limit(1000).then(function(r){
     if(r.error){ Store.fehler=r.error.message; return; }
     protokolle=(r.data||[]).map(ausZeile);
     storeNachRender();
@@ -2802,8 +2829,20 @@ function aktualisiereProtokoll(id, doc, quelle, geraetFotos){
     delete zeile.erstellt_von;   /* der ursprüngliche Verfasser bleibt eingetragen */
     delete zeile.erstellt;
     zeile.version=doc.version; zeile.geaendert=doc.geaendert; zeile.korrektur_grund=doc.korrekturGrund||null;
-    return Store.sb.from("protokolle").update(zeile).eq("client_id",id).then(function(r){
+    /* Nur schreiben, wenn das Protokoll noch die Fassung hat, auf der diese
+       Korrektur aufbaut. Sonst hat in der Zwischenzeit jemand anderer
+       korrigiert – dessen Arbeit soll nicht stillschweigend verschwinden. */
+    var erwartet=(doc.version||2)-1;
+    Store.fehler="";   /* alte Meldung nicht stehen lassen */
+    return Store.sb.from("protokolle").update(zeile)
+      .eq("client_id",id).eq("version",erwartet).select("client_id").then(function(r){
       if(r.error){ Store.fehler=r.error.message; return false; }
+      if(!r.data || !r.data.length){
+        Store.fehler="Das Protokoll wurde inzwischen von jemand anderem geändert. "+
+          "Bitte neu laden, die Änderung ansehen und dann noch einmal korrigieren.";
+        ladeProtokolle();
+        return false;
+      }
       ladeProtokolle();
       berichtAblegen(Object.assign({}, doc, {_id:id}));   /* neue Fassung ersetzt das PDF */
       return true;
@@ -2903,7 +2942,7 @@ function kontoKarte(){
   var form=c.querySelector("#k_form"), err=c.querySelector("#k_err");
   c.querySelector("#k_pw").onclick=function(){ form.hidden=false; err.hidden=true; c.querySelector("#k_p1").focus(); };
   c.querySelector("#k_abbr").onclick=function(){ form.hidden=true; form.reset(); };
-  c.querySelector("#k_ab").onclick=function(){ formDirty=false; Store.sb.auth.signOut(); };
+  c.querySelector("#k_ab").onclick=function(){ if(!abmeldenErlaubt()) return; formDirty=false; Store.sb.auth.signOut(); };
   form.onsubmit=function(e){
     e.preventDefault();
     var p1=c.querySelector("#k_p1").value, p2=c.querySelector("#k_p2").value;
@@ -3564,7 +3603,7 @@ function viewProtokoll(){
   form.addEventListener("input",function(){ formDirty=true; });
   form.addEventListener("change",function(){ formDirty=true; });
   var abmelden=form.querySelector("#logout");
-  if(abmelden) abmelden.onclick=function(){ formDirty=false; Store.sb.auth.signOut(); };
+  if(abmelden) abmelden.onclick=function(){ if(!abmeldenErlaubt()) return; formDirty=false; Store.sb.auth.signOut(); };
 
   /* Standort-Auswahl */
   var selSt=form.querySelector("#f_standort");
@@ -4053,6 +4092,23 @@ function viewProtokoll(){
       if(leer) fehlend.push(n);
     });
     var box=form.querySelector("#f_fehlt");
+    /* Ein Protokoll entsteht nach dem Einsatz. Ein Datum in der Zukunft ist
+       immer ein Vertipper – und einer mit Folgen: liegt es im Fenster des
+       nächsten Termins, gilt der als erledigt und die Wartung fällt aus. */
+    var dfeld=form.querySelector("#f_datum"), heute=isoLokal(new Date());
+    if(!fehlend.length && dfeld && dfeld.value && dfeld.value>heute){
+      dfeld.style.borderColor="var(--crit)";
+      box.textContent="Das Datum liegt in der Zukunft ("+dfmt(dfeld.value)+"). "+
+        "Bitte den Tag eintragen, an dem der Einsatz war.";
+      box.hidden=false;
+      dfeld.scrollIntoView({behavior:"smooth", block:"center"});
+      try{ dfeld.focus({preventScroll:true}); }catch(x){ dfeld.focus(); }
+      return false;
+    }
+    /* Weit zurückliegende Nachträge gibt es, aber selten – einmal nachfragen. */
+    if(!fehlend.length && dfeld && dfeld.value && dfeld.value < plusMonate(heute,-24) &&
+       !window.confirm("Das Datum liegt mehr als zwei Jahre zurück ("+dfmt(dfeld.value)+").\n\nStimmt das?"))
+      { dfeld.focus(); return false; }
     if(!fehlend.length){ box.hidden=true; return true; }
     box.textContent = fehlend.length===1
       ? "Es fehlt noch: "+(NAMEN[fehlend[0].id]||"ein Pflichtfeld")
@@ -5119,6 +5175,8 @@ function auffaelligkeiten(s){
       var d=Math.abs(p.anker.monat-p.monat); d=Math.min(d,12-d);
       if(d>1) f.push(n+": Soll-Monat "+MONATE_L[p.monat]+" passt nicht zur Inbetriebnahme (ergibt "+MONATE_L[p.anker.monat]+")");
     }
+    if(p.inbetriebnahme && p.inbetriebnahme>isoLokal(new Date()))
+      f.push(n+": Inbetriebnahme "+dfmt(p.inbetriebnahme)+" liegt in der Zukunft – die Anlage fällt so aus der Planung");
     if(p.vorOrtNeu) f.push(n+": vor Ort neu erfasst – Kürzel und Termin festlegen");
     if(!p.inbetriebnahme) l.push(n+": Inbetriebnahme fehlt");
     if(!p.kaeltemittelText) l.push(n+": Kältemittelmenge fehlt");
@@ -5696,7 +5754,7 @@ function verwaltungEditor(s){
     }
 
     /* Anlagen und ihre Termine: was in einer Karte steht, gehört zusammen */
-    var fehlend=[], doppelt=[];
+    var fehlend=[], doppelt=[], kuenftig=[];
     host.querySelectorAll(".anlagekarte").forEach(function(k){
       var zeilen=[].slice.call(k.querySelectorAll(".terminzeile"));
       if(!zeilen.length) return;
@@ -5740,6 +5798,10 @@ function verwaltungEditor(s){
 
         var name=(kartenName||(p0?anlagenName(p0):"Anlage"));
         if(neuP.aktiv && !neuP.intervallCode) fehlend.push(name);
+        /* Eine Inbetriebnahme in der Zukunft schiebt den Jahrestermin mit –
+           die Anlage verschwindet still aus der Planung. Das ist immer ein
+           Vertipper und wird hier abgefangen. */
+        if(neuP.inbetriebnahme && neuP.inbetriebnahme>isoLokal(new Date())) kuenftig.push(name+" ("+dfmt(neuP.inbetriebnahme)+")");
         if(neuP.aktiv && neuP.monat){ if(monate[neuP.monat]) doppelt.push(name+" (zweimal "+MONATE_L[neuP.monat]+")"); monate[neuP.monat]=1; }
 
         if(istNeu){
@@ -5766,6 +5828,11 @@ function verwaltungEditor(s){
         }
       });
     });
+    if(kuenftig.length){
+      fehler("Die Inbetriebnahme liegt in der Zukunft: "+kuenftig.join(", ")+
+             ". Der Jahrestermin haengt daran – so faellt die Anlage aus der Planung. Bitte das Datum pruefen.");
+      return;
+    }
     if(fehlend.length){
       fehler("Ohne Kürzel gibt es keinen Termin. Bitte bei „"+fehlend[0]+"“ JW, HJW oder HJI wählen"+
              (fehlend.length>1?" (und bei "+(fehlend.length-1)+" weiteren)":"")+".");

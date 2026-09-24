@@ -238,6 +238,24 @@ create trigger loeschen_nur_admins
   for each row execute function public.loeschen_nur_admins();
 
 
+-- Die Urheberschaft eines Protokolls bleibt, was sie ist. Die App schickt das
+-- Feld bei einer Korrektur ohnehin nicht mit; dieser Trigger sorgt dafuer,
+-- dass es auch sonst niemand umschreiben kann. Ein abgegebenes Protokoll ist
+-- ein Nachweis - wer es geschrieben hat, muss nachvollziehbar bleiben.
+create or replace function public.urheber_bleibt() returns trigger
+language plpgsql security definer set search_path = public as $$
+begin
+  new.erstellt_von := old.erstellt_von;
+  new.erstellt     := old.erstellt;
+  return new;
+end $$;
+
+drop trigger if exists urheber_bleibt on public.protokolle;
+create trigger urheber_bleibt
+  before update on public.protokolle
+  for each row execute function public.urheber_bleibt();
+
+
 -- ---------------------------------------------------------------------------
 -- Fotospeicher
 -- ---------------------------------------------------------------------------
