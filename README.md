@@ -375,7 +375,28 @@ App deshalb zusätzlich:
   Liste der üblichen Orte (Technikraum hinten/vorne, von innen oder außen,
   Dachboden, Dach Filiale, Dach Backshop, Büro, Sozialraum, Pfandraum,
   Backshop, Lager, IT-Raum) oder frei eingetippt
+- Zugang zur Regelung: Adresse bzw. Link, Benutzername, Passwort — erscheint
+  nur, wenn „Fernzugriff durch UKT" auf **ja** steht
 - Typenschild: Hersteller, Modell, Seriennummer (freiwillig)
+
+**Zugangsdaten für den Fernzugriff.** Sie stehen bei der Anlage, nicht beim
+Einsatz. Zu finden sind sie unter **Anlagen** beim jeweiligen Markt und beim
+Ausfüllen eines Protokolls direkt auf der Anlagenkarte — mit anklickbarem
+Link und je einem Knopf zum Kopieren, damit man auf dem Handy nichts abtippen
+muss. Das Passwort steht verdeckt da und wird erst auf Antippen sichtbar.
+
+Drei Dinge sind bewusst so gebaut:
+
+- Die Zugangsdaten gehen **nicht ins Protokoll**. Sie stehen weder auf dem
+  Blatt, das an Lidl geht, noch im PDF auf der Synology, noch in der
+  Protokollzeile der Datenbank.
+- Der Änderungsverlauf hält fest, **dass** jemand ein Passwort gesetzt oder
+  geändert hat, nie den Wert. Link und Benutzername stehen dort im Klartext.
+- Sehen kann sie **jede und jeder Angemeldete**. Die Daten sind in der
+  Datenbank nicht verschlüsselt; wer sich anmelden kann, kommt daran. Ein
+  verlorenes Handy oder ein weitergegebenes Passwort öffnet also alle
+  Regelungen — Techniker-Konten gehören deshalb persönlich vergeben und beim
+  Ausscheiden gesperrt.
 
 **Die Listen lernen dazu.** Was einmal unter „andere …“ eingetippt wurde,
 steht beim nächsten Mal als Knopf zur Auswahl – zuerst das, was am häufigsten

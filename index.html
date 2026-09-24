@@ -19,7 +19,7 @@
 <style>
 :root{
   --ground:#F2F5F5; --surface:#FFFFFF; --surface-2:#E7EDED; --surface-3:#DBE4E4;
-  --ink:#10201F; --ink-2:#3B4F4E; --ink-3:#5A7170;
+  --ink:#10201F; --ink-2:#3B4F4E; --ink-3:#536867;
   --line:#D2DCDB; --line-2:#BDCBCA;
   /* Hausfarben aus dem Logo: Türkis #019891, Magenta #C4004E */
   --accent:#00726E; --accent-ink:#00514E; --accent-soft:#DCEFEE; --on-accent:#FFFFFF;
@@ -233,6 +233,10 @@ legend{font-family:var(--f-disp);font-size:12.5px;font-weight:600;text-transform
 @media (max-width:640px){.mangelrow{grid-template-columns:1fr}}
 canvas.sig{width:100%;height:150px;border:1px dashed var(--line-2);border-radius:8px;background:var(--surface);touch-action:none;display:block}
 .note{font-size:12.5px;color:var(--ink-2);background:var(--surface-2);border-radius:8px;padding:10px 12px}
+/* Links im Inhalt: ohne eigene Farbe nimmt der Browser sein Blau, das im
+   Dunkelmodus auf dunklem Grund praktisch unlesbar ist. */
+a:not(.btn){color:var(--accent);text-underline-offset:2px}
+a:not(.btn):hover{opacity:.8}
 .note.warnbox{background:var(--warn-soft);color:var(--warn)}
 /* ---- QR-Overlay ---- */
 .overlay{position:fixed;inset:0;z-index:80;background:rgba(9,15,18,.62);display:flex;align-items:center;justify-content:center;padding:16px}
@@ -375,7 +379,8 @@ var STAMM_FELDER_POS = ["anlagentyp","intervallCode","inbetriebnahme","monat","k
                         "kaeltemittelArt","rueckkuehler","aktiv","notiz",
                         /* Anlagendaten, die vor Ort nach und nach ergänzt werden */
                         "pausiert","pausiertGrund","bauart","kreislaeufe","pruefbuch","rkUkt","pumpeUkt",
-                        "regelung","regelungFirma","regelungFirmaName","fernzugriff","ortAussen","ortStrom","ortRegelung","hersteller","modell","seriennummer","vorOrtNeu",
+                        "regelung","regelungFirma","regelungFirmaName","fernzugriff","zugangLink","zugangBenutzer","zugangPasswort",
+                        "ortAussen","ortStrom","ortRegelung","hersteller","modell","seriennummer","vorOrtNeu",
                         /* Zuordnung einer Termin-Zeile zu ihrer Anlage (von Hand) */
                         "anlageZu"];
 var ABGELEITET_POS   = ["kaeltemittelText","ueber30kg","baujahr"];
@@ -1041,7 +1046,13 @@ var tabsEl=document.getElementById("tabs");
 VIEWS.forEach(function(v){
   var b=document.createElement("button"); b.type="button"; b.textContent=v[1]; b.setAttribute("role","tab");
   b.onclick=function(){
-    if(S.view==="protokoll"){ formDirty=false; S.bearbeiten=null; }
+    if(S.view==="protokoll" && v[0]!=="protokoll"){
+      /* Ein angefangenes Protokoll ist Arbeit vor Ort – nicht stillschweigend
+         wegwerfen, nur weil jemand kurz etwas nachschlagen wollte. */
+      if(formDirty && !window.confirm("Das Protokoll ist angefangen und noch nicht gespeichert.\n\n"+
+        "Beim Wechseln gehen die Eingaben verloren. Trotzdem wechseln?")) return;
+      formDirty=false; S.bearbeiten=null;
+    }
     S.view=v[0]; render(); window.scrollTo({top:0,behavior:"smooth"});
   };
   b.dataset.v=v[0]; tabsEl.appendChild(b);
@@ -1701,6 +1712,54 @@ function pausiertBox(p){
     '<strong style="font-size:14px">'+esc(anlagenName(d))+"</strong>"+pill("pausiert")+"</div>"+
     '<div class="muted" style="font-size:13px">'+esc([d.pausiertGrund?"Grund: "+d.pausiertGrund:"", anlageKurz(d)].filter(Boolean).join(" · ")||"Keine Termine, bis die Anlage in der Verwaltung wieder auf „in Betrieb“ steht.")+"</div></div>");
 }
+/* Zugang zur Regelung – nur wo es Fernzugriff gibt und etwas eingetragen ist.
+   Das Passwort steht verdeckt da; aufdecken und kopieren geht mit einem Tipp. */
+function inZwischenablage(text, was){
+  var fertig=function(ok){ toast(ok ? was+" kopiert." : "Kopieren hat nicht geklappt – bitte von Hand abtippen."); };
+  if(navigator.clipboard && navigator.clipboard.writeText)
+    return navigator.clipboard.writeText(text).then(function(){ fertig(true); }, function(){ fertig(false); });
+  try{
+    var h=document.createElement("textarea");
+    h.value=text; h.style.position="fixed"; h.style.opacity="0";
+    document.body.appendChild(h); h.select();
+    fertig(document.execCommand("copy")); document.body.removeChild(h);
+  }catch(e){ fertig(false); }
+}
+function zugangsAdresse(roh){
+  var s=String(roh||"").trim();
+  if(!s) return "";
+  return /^[a-z][a-z0-9+.-]*:\/\//i.test(s) ? s : "http://"+s;
+}
+function zugangBox(d){
+  if(d.fernzugriff!=="ja") return null;
+  if(!d.zugangLink && !d.zugangBenutzer && !d.zugangPasswort) return null;
+  var b=el('<div class="note" style="display:grid;gap:6px">'+
+    '<div class="l muted" style="font-size:11px;text-transform:uppercase;letter-spacing:.06em">Zugang zur Regelung</div>'+
+    (d.zugangLink?'<div class="rowflex" style="gap:8px"><a href="'+esc(zugangsAdresse(d.zugangLink))+
+      '" target="_blank" rel="noopener" class="mono" style="word-break:break-all">'+esc(d.zugangLink)+"</a>"+
+      '<button class="btn ghost sm" type="button" data-kopiere="link">kopieren</button></div>':"")+
+    (d.zugangBenutzer?'<div class="rowflex" style="gap:8px"><span>Benutzer: <span class="mono">'+esc(d.zugangBenutzer)+
+      "</span></span>"+'<button class="btn ghost sm" type="button" data-kopiere="benutzer">kopieren</button></div>':"")+
+    (d.zugangPasswort?'<div class="rowflex" style="gap:8px"><span>Passwort: <span class="mono" data-pw>••••••••</span></span>'+
+      '<button class="btn ghost sm" type="button" data-zeigen>anzeigen</button>'+
+      '<button class="btn ghost sm" type="button" data-kopiere="passwort">kopieren</button></div>':"")+
+  "</div>");
+  var pw=b.querySelector("[data-pw]"), zeig=b.querySelector("[data-zeigen]");
+  if(zeig) zeig.onclick=function(){
+    var zu=pw.textContent.indexOf("•")>=0;
+    pw.textContent=zu?d.zugangPasswort:"••••••••";
+    zeig.textContent=zu?"verbergen":"anzeigen";
+  };
+  b.querySelectorAll("[data-kopiere]").forEach(function(k){
+    var was=k.dataset.kopiere;
+    k.onclick=function(){
+      inZwischenablage(was==="link"?d.zugangLink:was==="benutzer"?d.zugangBenutzer:d.zugangPasswort,
+        was==="link"?"Adresse":was==="benutzer"?"Benutzername":"Passwort");
+    };
+  });
+  return b;
+}
+
 /* je Anlage ein Block: Name, Anlagendaten, darunter ihre Termine */
 function anlagenBloecke(s, host){
   anlagenDesMarkts(s,true).forEach(function(a){
@@ -1713,6 +1772,8 @@ function anlagenBloecke(s, host){
         (l.length?' <span class="muted" style="font-size:12px">· '+l.length+" Angabe(n) offen</span>":"")+"</div>"+
       (d.hersteller||d.seriennummer?'<div class="muted" style="font-size:12.5px">'+esc([d.hersteller,d.modell,d.seriennummer?"SN "+d.seriennummer:""].filter(Boolean).join(" · "))+"</div>":"")+
       '<div class="stack" data-termine></div></div>');
+    var zg=zugangBox(d);
+    if(zg) blk.insertBefore(zg, blk.querySelector("[data-termine]"));
     a.termine.forEach(function(t){ blk.querySelector("[data-termine]").appendChild(posBox(t,s,true)); });
     host.appendChild(blk);
   });
@@ -1847,6 +1908,14 @@ var ANLAGE_GRUPPEN=[
       wenn:function(a){ return a.regelung!==OHNE_REGELUNG && a.regelungFirma==="andere Firma"; }},
     {k:"fernzugriff", l:"Fernzugriff durch UKT", t:"jn",
       wenn:function(a){ return a.regelung!==OHNE_REGELUNG; }}]},
+  /* Zugangsdaten der Regelung. „geheim“ heißt: diese Felder stehen nie im
+     Protokoll, nie auf dem Blatt, nie im PDF fürs Archiv und nie mit Wert im
+     Änderungsverlauf. Sie gehören zur Anlage, nicht zum Einsatz. */
+  {titel:"Zugang zur Regelung", frage:"Wie kommt man auf die Regelung?", geheim:true,
+    wenn:function(a){ return a.regelung!==OHNE_REGELUNG && a.fernzugriff==="ja"; }, felder:[
+    {k:"zugangLink", l:"Adresse / Link", t:"text"},
+    {k:"zugangBenutzer", l:"Benutzername", t:"text"},
+    {k:"zugangPasswort", l:"Passwort", t:"geheim"}]},
   {titel:"Wo steht was", frage:"Wo stehen Außengeräte, Absicherung und Regelung?", felder:[
     {k:"ortAussen", l:"Außengeräte", t:"wahl", o:ORTE, frei:true},
     {k:"ortStrom", l:"Elektrische Absicherung", t:"wahl", o:ORTE, frei:true},
@@ -1859,6 +1928,10 @@ var ANLAGE_GRUPPEN=[
 ];
 var ANLAGE_FELDER=[].concat.apply([], ANLAGE_GRUPPEN.map(function(g){
   return g.felder.map(function(f){ return Object.assign({gruppe:g}, f); }); }));
+/* Zugangsdaten bleiben bei der Anlage. Sie dürfen weder in den Schnappschuss
+   eines Protokolls noch auf das Blatt, das an Lidl geht. */
+var GEHEIME_FELDER=ANLAGE_FELDER.filter(function(f){ return f.gruppe.geheim; }).map(function(f){ return f.k; });
+function istGeheim(k){ return GEHEIME_FELDER.indexOf(k)>=0; }
 function leerWert(w){ return w==null || w==="" || (typeof w==="number" && isNaN(w)); }
 /* Die Auswahllisten lernen dazu: was einmal unter „andere …“ eingetippt wurde,
    steht beim nächsten Mal als Knopf da – zuerst das, was am häufigsten
@@ -1891,6 +1964,9 @@ function anlageLuecken(a){
 function anlageWertText(f, w){
   if(leerWert(w)) return "–";
   if(f.t==="kg") return String(w).replace(".",",")+" kg";
+  /* Übersicht und Änderungsverlauf halten fest, DASS ein Passwort gesetzt
+     wurde – nicht, wie es lautet. Zum Nachsehen gibt es „ändern“. */
+  if(f.t==="geheim") return "••••••••";
   return String(w);
 }
 /* kurze Zusammenfassung für Karten, Detailansicht und Druck */
@@ -1968,6 +2044,14 @@ function anlageAssistent(start, titel, neu){
       } else if(f.t==="kg"){
         h+='<input type="text" inputmode="decimal" data-in="'+f.k+'" placeholder="z. B. 12,5" value="'+esc(leerWert(w)?"":String(w).replace(".",","))+'">'+
           '<div class="as-hinweis" data-hinweis="'+f.k+'"></div>';
+      } else if(f.t==="geheim"){
+        /* Beim Eintippen sichtbar – man überträgt es meist von einem Zettel
+           und will sehen, was dasteht. Angezeigt wird es später verdeckt. */
+        h+='<input type="text" data-in="'+f.k+'" autocomplete="off" autocapitalize="off" '+
+          'autocorrect="off" spellcheck="false" value="'+esc(leerWert(w)?"":w)+'">';
+      } else if(f.k==="zugangLink"){
+        h+='<input type="text" inputmode="url" data-in="'+f.k+'" autocapitalize="off" '+
+          'spellcheck="false" placeholder="z. B. 192.168.1.50 oder https://…" value="'+esc(leerWert(w)?"":w)+'">';
       } else {
         h+='<input type="text" data-in="'+f.k+'" value="'+esc(leerWert(w)?"":w)+'">';
       }
@@ -1979,6 +2063,9 @@ function anlageAssistent(start, titel, neu){
     }
     function gruppeZeigen(g){
       inhalt.innerHTML='<div class="as-frage">'+esc(g.frage)+"</div>"+
+        (g.geheim?'<div class="note">Diese Angaben stehen bei der Anlage, nicht im Protokoll: '+
+          "sie erscheinen weder auf dem Blatt für Lidl noch im Archiv. Sehen kann sie jede "+
+          "angemeldete Kollegin und jeder angemeldete Kollege.</div>":"")+
         g.felder.filter(function(f){ return feldGilt(Object.assign({gruppe:g},f),a); }).map(feldHtml).join("");
       inhalt.querySelectorAll(".chip[data-f]").forEach(function(c){
         c.onclick=function(){
@@ -3590,6 +3677,10 @@ function viewProtokoll(){
     };
     var weg=k.querySelector('[data-a="weg"]');
     if(weg) weg.onclick=function(){ neueAnlagen=neueAnlagen.filter(function(n){ return n.id!==id; }); anlagenZeichnen(); };
+    /* Zugang zur Regelung gleich hier – sonst müsste man für das Passwort den
+       Reiter wechseln und das angefangene Protokoll verlassen. */
+    var zg=zugangBox(w);
+    if(zg) k.appendChild(zg);
     anlagenHost.appendChild(k);
   }
   function anlagenZeichnen(){
@@ -3613,7 +3704,14 @@ function viewProtokoll(){
       anlagenZeichnen();
     });
   };
-  /* Stand der Anlagen zum Zeitpunkt des Protokolls – für Druck und Archiv */
+  /* Stand der Anlagen zum Zeitpunkt des Protokolls – für Druck und Archiv.
+     Hier ist die eine Stelle, an der Anlagendaten ins Protokoll übergehen:
+     die Zugangsdaten der Regelung bleiben zurück. Sie stehen damit weder im
+     Protokoll in der Datenbank noch auf dem Blatt, das an Lidl geht, noch
+     im PDF auf der Synology. */
+  function ohneGeheimes(o){
+    var r={}; Object.keys(o).forEach(function(k){ if(!istGeheim(k)) r[k]=o[k]; }); return r;
+  }
   function anlagenSchnappschuss(){
     var termine=angehakt();
     var liste=angehakteAnlagen().map(function(l){
@@ -3621,9 +3719,9 @@ function viewProtokoll(){
       var slot=anlageVon(l).termine.filter(function(t){ return termine.indexOf(t.id)>=0; })[0]||l;
       var d=anlageDaten(l);
       return Object.assign({positionId:l.id, name:anlagenName(d), inbetriebnahme:d.inbetriebnahme||null,
-        termin:stoer?"":(slot.intervall?slot.intervall.art:"")}, anlageWerte(l));
+        termin:stoer?"":(slot.intervall?slot.intervall.art:"")}, ohneGeheimes(anlageWerte(l)));
     });
-    neueAnlagen.forEach(function(n){ liste.push(Object.assign({positionId:n.id, name:n.werte.anlagentyp, neu:true}, n.werte)); });
+    neueAnlagen.forEach(function(n){ liste.push(Object.assign({positionId:n.id, name:n.werte.anlagentyp, neu:true}, ohneGeheimes(n.werte))); });
     return liste;
   }
   /* Ergänzungen in die Anlagendaten übernehmen (lokal sofort, zentral im Hintergrund) */
@@ -4980,6 +5078,10 @@ var LABEL_POS={anlagentyp:"Anlagentyp", intervallCode:"Kürzel", inbetriebnahme:
 ANLAGE_FELDER.forEach(function(f){ if(!LABEL_POS[f.k]) LABEL_POS[f.k]=f.l; });
 function stammWert(feld, w){
   if(w===null||w===undefined||w==="") return "–";
+  /* Der Änderungsverlauf hält fest, DASS jemand ein Passwort geändert hat –
+     nicht, wie es lautet. Sonst stünde jedes alte Passwort dauerhaft lesbar
+     in einer Liste, die sich absichtlich nicht mehr ändern lässt. */
+  if(feld==="zugangPasswort") return "••••••••";
   if(feld==="aktiv"||feld==="pausiert"||feld==="vorOrtNeu") return w?"ja":"nein";
   if(feld==="monat") return MONATE_L[+w]||"–";
   if(feld==="inbetriebnahme") return dfmt(w);
@@ -5394,6 +5496,10 @@ function verwaltungEditor(s){
       [["","–"],["ja","ja"],["nein","nein"]].map(function(o){ return '<option value="'+o[0]+'"'+(v===o[0]?" selected":"")+">"+o[1]+"</option>"; }).join("")+"</select></label>";
     if(f.t==="zahl") return '<label class="fl"><span>'+esc(f.l)+'</span><input type="number" min="1" data-a="'+f.k+'" value="'+esc(v)+'"></label>';
     if(f.t==="kg") return '<label class="fl"><span>'+esc(f.l)+'</span><input type="number" step="0.1" min="0" data-a="'+f.k+'" value="'+esc(v)+'"></label>';
+    if(f.t==="geheim") return '<label class="fl"><span>'+esc(f.l)+'</span>'+
+      '<span class="rowflex" style="gap:6px"><input type="password" data-a="'+f.k+'" autocomplete="off" '+
+        'spellcheck="false" style="flex:1;min-width:0" value="'+esc(v)+'">'+
+      '<button class="btn ghost sm" type="button" data-zeigen="1">anzeigen</button></span></label>';
     var dl=f.o?' list="dl_'+f.k+'"':"";
     var listeO=f.o?feldOptionen(f):[];
     return '<label class="fl"><span>'+esc(f.l)+'</span><input type="text" data-a="'+f.k+'"'+dl+' placeholder="'+esc(f.o?f.o[0]:"")+'" value="'+esc(v)+'">'+
@@ -5412,9 +5518,15 @@ function verwaltungEditor(s){
   function datenBlockSetzen(k, w){
     var box=k.querySelector(".anlagendaten");
     box.innerHTML=datenBlockHtml(w);
-    /* Bauart und Regelung entscheiden, welche Fragen folgen */
-    box.querySelectorAll('[data-a="bauart"],[data-a="regelung"]').forEach(function(x){
+    /* Bauart, Regelung und Fernzugriff entscheiden, welche Fragen folgen */
+    box.querySelectorAll('[data-a="bauart"],[data-a="regelung"],[data-a="fernzugriff"]').forEach(function(x){
       x.onchange=function(){ datenBlockSetzen(k, anlagenWerte(k)); };
+    });
+    box.querySelectorAll("[data-zeigen]").forEach(function(b){
+      b.onclick=function(){
+        var i=b.previousElementSibling, zu=i.type==="password";
+        i.type=zu?"text":"password"; b.textContent=zu?"verbergen":"anzeigen";
+      };
     });
     var zus=k.querySelector(".datenkurz");
     if(zus) zus.textContent=anlageKurz(w)||"noch leer";
