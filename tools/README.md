@@ -33,3 +33,22 @@ dokumentiert, falls das Formular wieder einmal abgeglichen werden muss.
   überein (in der 2020-Spalte stehen 61 Termine aus 2021). Das Jahr wird
   deshalb immer aus dem Datum gelesen.
 - Excel-Datumswerte sind Seriennummern ab dem 30.12.1899.
+
+## Was nicht ins Repository gehört
+
+Das Repository ist **öffentlich** — GitHub Pages braucht das ohne Bezahlkonto.
+Deshalb wird der Anlagenstamm verschlüsselt ausgeliefert (`daten.enc.js`).
+
+Aus demselben Grund bleiben diese Dateien draußen, sie stehen in `.gitignore`:
+
+- `daten.js` — der unverschlüsselte Anlagenstamm
+- `data/` — alle Zwischenstände der Aufbereitung
+- `tools/coords_by_address.json` — die Adressen aller betreuten Märkte im
+  Klartext. Die Skripte lesen den Zwischenspeicher ohnehin aus `data\`; die
+  Kopie hier war überflüssig.
+
+Vor jedem Commit kurz prüfen, dass keine Marktadresse mitgeht:
+
+```powershell
+git diff --cached | Select-String -Pattern '\d{4} (Wien|Linz|Graz|Salzburg|Innsbruck)'
+```

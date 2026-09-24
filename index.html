@@ -2647,7 +2647,11 @@ function zuZeile(doc,uid){
     maengel:doc.maengel, betriebsbereit:doc.betriebsbereit, sofortmassnahme:doc.sofortmassnahme,
     ergebnis:doc.ergebnis, bemerkungen:doc.bemerkungen,
     name_techniker:doc.nameTechniker, auftraggebervertreter:doc.auftraggebervertreter,
-    unterschrift:doc.unterschrift, fotos:doc.fotos||[] };
+    fotos:doc.fotos||[] };
+  /* Nur mitschicken, wenn sie wirklich vorliegt. Wurde sie nicht nachgeladen,
+     bleibt die Spalte unberührt – eine Korrektur darf keine Unterschrift
+     löschen, nur weil sie gerade nicht im Speicher war. */
+  if(typeof doc.unterschrift==="string") zeile.unterschrift=doc.unterschrift;
   /* nur mitschicken, wenn es eins ist – Wartungen gehen so auch an eine
      Datenbank, in der die Spalte noch fehlt */
   if(doc.stoerung) zeile.stoerung=doc.stoerung;
@@ -2671,15 +2675,40 @@ function ausZeile(r){
     sofortmassnahme:r.sofortmassnahme, auftraggebervertreter:r.auftraggebervertreter,
     stoerung:r.stoerung||null, mitarbeiter:r.mitarbeiter||[] };
 }
+/* Alle Spalten außer der Unterschrift. Die ist ein PNG als Text, rund 25 KB
+   je Protokoll – bei tausend Protokollen wären das 25 MB bei jedem Start der
+   App, im Markt am Handy eine Zumutung. Gebraucht wird sie nur, wenn ein
+   einzelnes Protokoll gedruckt, als PDF gesichert oder korrigiert wird; dann
+   holt ladeUnterschrift() sie nach. */
+var PROTOKOLL_SPALTEN=["id","client_id","erstellt","erstellt_von","standort_id","position_id","position_ids",
+  "filiale","standort_name","adresse","region","datum","uhrzeit","bestellnummer","auftragsnummer","wartungsart",
+  "firma","techniker","kontakt","subunternehmen","zert_unternehmen","zert_person","anlagen","arbeiten",
+  "arbeiten_sonstiges","maengel","betriebsbereit","sofortmassnahme","ergebnis","bemerkungen","name_techniker",
+  "auftraggebervertreter","fotos","version","geaendert","korrektur_grund","geloescht","geloescht_von",
+  "loesch_grund","stoerung","mitarbeiter"].join(",");
+
+/* Holt die Unterschrift eines Protokolls nach. Schon vorhandene bleibt.
+   Liefert immer, auch wenn es keine gibt oder die Leitung weg ist. */
+function ladeUnterschrift(p){
+  if(!p) return Promise.resolve("");
+  if(typeof p.unterschrift==="string") return Promise.resolve(p.unterschrift);
+  if(!Store.sb || !p._id){ p.unterschrift=""; return Promise.resolve(""); }
+  return Store.sb.from("protokolle").select("unterschrift").eq("client_id",p._id).limit(1).then(function(r){
+    var w=(r && r.data && r.data[0] && r.data[0].unterschrift) || "";
+    p.unterschrift=w;
+    /* Die Listen liefern Kopien; damit nicht bei jedem Öffnen neu geladen
+       wird, auch am gemerkten Datensatz hinterlegen. */
+    (protokolle||[]).forEach(function(x){ if(x._id===p._id) x.unterschrift=w; });
+    return w;
+  }, function(){ return ""; });
+}
+
 function ladeProtokolle(){
   if(!Store.sb) return;
   /* Die Grenze muss über den gesamten Bestand reichen: aus den Protokollen
      kommt der Wartungsnachweis. Fällt ein altes Protokoll heraus, gilt seine
-     Wartung als nicht geschehen und der Termin springt auf überfällig.
-     163 Anlagen mal zwei Termine im Jahr plus Störungen – 1000 trägt gut drei
-     Jahre. Wird es mehr, muss die Unterschrift aus dieser Abfrage heraus und
-     einzeln nachgeladen werden (siehe README). */
-  Store.sb.from("protokolle").select("*").order("erstellt",{ascending:false}).limit(1000).then(function(r){
+     Wartung als nicht geschehen und der Termin springt auf überfällig. */
+  Store.sb.from("protokolle").select(PROTOKOLL_SPALTEN).order("erstellt",{ascending:false}).limit(1000).then(function(r){
     if(r.error){ Store.fehler=r.error.message; return; }
     protokolle=(r.data||[]).map(ausZeile);
     storeNachRender();
@@ -4526,6 +4555,10 @@ function fotosEinsetzen(host, p, eingebettet){
 }
 
 function druckeProtokoll(p){
+  /* Die Unterschrift steht nicht in der Liste – vor dem Blatt nachholen. */
+  ladeUnterschrift(p).then(function(){ druckansichtZeigen(p); });
+}
+function druckansichtZeigen(p){
   var alt=document.getElementById("druckansicht"); if(alt) alt.remove();
   var ov=document.createElement("div");
   ov.id="druckansicht";
@@ -4590,7 +4623,7 @@ function bilderGeladen(host){
   }));
 }
 function pdfErzeugen(p){
-  return ladePdfBibliotheken().then(function(){
+  return ladeUnterschrift(p).then(ladePdfBibliotheken).then(function(){
     var BREITE=794;                                  /* A4 bei 96 dpi */
     var huelle=document.createElement("div");
     huelle.style.cssText="position:fixed;left:-12000px;top:0;width:"+BREITE+"px;background:#fff;z-index:-1";
@@ -4765,7 +4798,13 @@ function protokollDetail(p){
   d.querySelector('[data-akt="druck"]').onclick=function(){ druckeProtokoll(p); };
   var korrKnopf=d.querySelector('[data-akt="korr"]');
   if(korrKnopf) korrKnopf.onclick=function(){
-    formDirty=false; S.bearbeiten={x:p}; S.view="protokoll"; render(); window.scrollTo({top:0});
+    /* Erst die Unterschrift holen, dann das Formular aufbauen: es zeigt sie an
+       und übernimmt sie beim Speichern, wenn niemand neu unterschreibt. */
+    korrKnopf.disabled=true;
+    ladeUnterschrift(p).then(function(){
+      korrKnopf.disabled=false;
+      formDirty=false; S.bearbeiten={x:p}; S.view="protokoll"; render(); window.scrollTo({top:0});
+    });
   };
 
   /* Löschen und Wiederherstellen – nur Admins, immer mit Grund */

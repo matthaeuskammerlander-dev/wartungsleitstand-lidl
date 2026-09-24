@@ -675,9 +675,8 @@ wieder steht. Der Techniker muss nichts nachholen.
   HJI (8×), HJW (7×), HJ (1×). Die Bedeutung ist nirgends hinterlegt. Bis sie
   feststeht, rechnet die App die Fälligkeit nur über den eingetragenen
   Soll-Monat statt über einen echten Rhythmus.
-- **Filiale 592** steht auf zwei Adressen (1200 Wien, Klosterneuburgerstraße 79
-  und Vösendorf Nordring 16-18), **Filiale 446** ebenso (7000 Eisenstadt,
-  Rusterstraße 145 und Linz Kaisergasse). Je eine davon ist ein Tippfehler.
+- Zwei **Filialnummern stehen auf je zwei Adressen**; je eine davon ist ein
+  Tippfehler. Welche, zeigt die App unter *Verwaltung → Fehler*.
 - 23 Einträge ohne PLZ in der Adresse, 4 Sammelzeilen ohne echten Standort.
   Beides ist in der App unter *Datenbasis* aufgelistet.
 
