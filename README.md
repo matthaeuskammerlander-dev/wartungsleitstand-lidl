@@ -572,6 +572,15 @@ Der anon-Key ist zur Veröffentlichung bestimmt. Er erlaubt für sich genommen
 nichts — was damit möglich ist, regeln die Policies aus dem SQL-Skript. Der
 `service_role` Key gehört dagegen niemals in dieses Repository.
 
+**Tabellenrechte.** Bis Oktober 2026 hat Supabase jeder neuen Tabelle im
+Schema `public` die Rechte für die Data API automatisch mitgegeben. Seit dem
+30.10.2026 gilt das nicht mehr: ohne ausdrückliches `grant` antwortet die
+Datenbank mit *permission denied*. Am Ende von `supabase-setup.sql` stehen
+diese `grant`-Zeilen. Für das laufende Projekt ändert sich nichts — die
+bestehenden Tabellen behalten ihre Rechte. Wichtig wird es, wenn das Skript
+einmal in einem frischen Projekt läuft oder eine Tabelle dazukommt: dann
+gehört das `grant` in denselben Durchlauf wie das `create table`.
+
 ## Konten für Techniker
 
 In Supabase unter **Authentication → Users → Add user → Create new user**:

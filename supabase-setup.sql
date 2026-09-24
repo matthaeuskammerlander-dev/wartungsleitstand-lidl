@@ -1,5 +1,8 @@
 -- Wartungsprotokolle für den Wartungsleitstand Lidl
 -- Einmalig im Supabase-Projekt ausführen: SQL Editor -> New query -> einfügen -> Run.
+-- Das Skript lässt sich jederzeit erneut ausführen; bereits Vorhandenes bleibt.
+-- Ganz unten stehen die Tabellenrechte für die Data API – seit 30.10.2026
+-- vergibt Supabase sie nicht mehr von selbst (siehe Erklärung dort).
 
 create table if not exists public.protokolle (
   id                    uuid primary key default gen_random_uuid(),
@@ -297,6 +300,47 @@ create policy "berichte lesen"     on public.berichte for select to authenticate
 create policy "berichte eintragen" on public.berichte for insert to authenticated with check (true);
 create policy "berichte erneuern"  on public.berichte for update to authenticated using (true) with check (true);
 
+-- ---------------------------------------------------------------------------
+-- Tabellenrechte fuer die Data API
+--
+-- Supabase hat neu angelegten Tabellen im Schema "public" bisher automatisch
+-- die Rechte fuer die Data API mitgegeben. Ab 30. Oktober 2026 ist damit
+-- Schluss: eine neu angelegte Tabelle ist ohne ausdrueckliches "grant" ueber
+-- supabase-js nicht erreichbar, und die Antwort lautet "permission denied".
+--
+-- Fuer das laufende Projekt aendert sich nichts, die bestehenden Tabellen
+-- behalten ihre Rechte. Die Zeilen hier stehen fuer den Fall, dass dieses
+-- Skript einmal in einem frischen Projekt, einem Vorschau-Zweig oder nach
+-- einem Zuruecksetzen laeuft. Ein zweites "grant" schadet nie.
+--
+-- Was hier steht, ist nur die Grundberechtigung auf die Tabelle. Welche
+-- Zeilen jemand tatsaechlich sieht und schreiben darf, regeln weiterhin die
+-- Policies weiter oben. "anon" – also jeder ohne Anmeldung – bekommt
+-- bewusst gar nichts: ohne Anmeldung liest die App keine einzige Tabelle.
+-- ---------------------------------------------------------------------------
+
+grant select, insert, update          on public.protokolle          to authenticated;
+grant select, insert                  on public.aenderungen         to authenticated;
+grant select                          on public.protokoll_fassungen to authenticated;
+grant select                          on public.admins              to authenticated;
+grant select, insert, update, delete  on public.stammdaten          to authenticated;
+grant select, insert, update          on public.berichte            to authenticated;
+
+-- service_role umgeht die Policies und wird nur serverseitig verwendet
+-- (Supabase-Oberflaeche, spaetere Hilfsprogramme). Der dazugehoerige
+-- Schluessel gehoert ins Buero und nie in die App.
+grant select, insert, update, delete on public.protokolle          to service_role;
+grant select, insert, update, delete on public.aenderungen         to service_role;
+grant select, insert, update, delete on public.protokoll_fassungen to service_role;
+grant select, insert, update, delete on public.admins              to service_role;
+grant select, insert, update, delete on public.stammdaten          to service_role;
+grant select, insert, update, delete on public.berichte            to service_role;
+
+grant usage, select on all sequences in schema public to authenticated, service_role;
+
+-- ---------------------------------------------------------------------------
 -- WICHTIG, sonst kann sich jeder aus dem Internet selbst einen Zugang anlegen:
 -- Authentication -> Sign In / Providers -> "Allow new users to sign up" AUS.
 -- Techniker-Konten legen Sie unter Authentication -> Users -> Add user an.
+
+
