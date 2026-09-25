@@ -24,10 +24,6 @@ Die Skripte erwarten ein Unterverzeichnis `data` neben sich und schreiben
 `pdftext2.ps1` zieht den Text aus dem alten Wartungsprotokoll-PDF — nur
 dokumentiert, falls das Formular wieder einmal abgeglichen werden muss.
 
-`icon-bauen.html` erzeugt das App-Symbol: im Browser öffnen, die acht
-Bilder herunterladen und neben `index.html` legen. Vorlage ist `k-quelle.png`,
-das flache K aus dem Logo — nicht das fertige Symbol.
-
 ## Stolpersteine, die hier schon gelöst sind
 
 - Die drei Blätter der Liste lassen sich **nicht** über die Zeilennummer

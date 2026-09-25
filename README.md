@@ -324,49 +324,11 @@ Kontrast, auch im Dunkelmodus.
 `logo.png` (600 × 153) kommt aus der Vektorvorlage und steht in der
 Kopfzeile und im Briefkopf der Protokolle.
 
-**Zum Homebildschirm hinzufügen:** Am iPhone: Seite in Safari öffnen,
-Teilen-Symbol, „Zum Home-Bildschirm“. Am Android: Menü, „App installieren“.
-
-### Das Symbol
-
-Das große K aus dem Logo liegt auf einer **Glasfläche**: farbige Schlieren in
-Türkis und Magenta hinter einer milchigen Scheibe, darüber ein schräger
-Lichtstreifen, am Rand eine feine Fase und nach unten hin Tiefe. Der
-Buchstabe sitzt mit weichem Schatten darin, als läge er unter dem Glas.
-
-Gebaut wird das Symbol nicht von Hand, sondern gerechnet: Das bestehende
-`icon-512.png` wird freigestellt (Weiß wird durchsichtig, die Farbe
-zurückgerechnet), auf 1024 px gesetzt und schrittweise verkleinert. So
-bleiben die Kanten sauber.
-
-| Datei | wofür |
-|---|---|
-| `icon-180.png` | `apple-touch-icon`, Homebildschirm am iPhone |
-| `icon-192.png`, `icon-512.png` | `manifest.json`, Zweck `any` |
-| `icon-192-maske.png`, `icon-512-maske.png` | `manifest.json`, Zweck `maskable` |
-| `favicon-32.png` | Symbol im Browser-Reiter |
-| `*-dunkel.png` | dieselben Größen für den Dunkelmodus |
-
-**Zwei Größen des Buchstabens, mit Absicht.** Android schneidet Symbole mit
-`purpose: "maskable"` auf einen Kreis zu und garantiert nur die inneren 80 %.
-Bei einem K über 60 % fehlen danach der Türkis-Arm oben rechts und das
-schmale Feld unten rechts.
-
-Statt den Buchstaben überall kleiner zu machen, gibt es zwei Fassungen: das
-normale Symbol zeigt ihn mit **66 %** groß — so kommt es aufs iPhone und
-überallhin, wo nicht zugeschnitten wird. Für den Kreiszuschnitt liegt
-daneben eine eigene Fassung mit **57,5 %**. Beide Werte stehen in
-`tools/icon-bauen.html` oben als `GROSS` und `SICHER`.
-
-**Dunkelmodus:** Das Symbol im Browser-Reiter richtet sich über
-`media="(prefers-color-scheme: dark)"` nach der Einstellung des Geräts. Auf
-dem Homebildschirm geht das nicht — iOS und Android übernehmen beim
-Hinzufügen genau ein Bild. Dort liegt die helle Fassung; iOS ab Version 18
-dunkelt sie selbst ab, wenn jemand dunkle Symbole eingestellt hat. Die
-dunklen Dateien liegen trotzdem bereit, falls sich das ändert.
-
-Neu bauen lässt sich das Symbol mit `tools/icon-bauen.html`: Datei im Browser
-öffnen, die erzeugten Bilder herunterladen.
+**Zum Homebildschirm hinzufügen:** `manifest.json` und
+`apple-touch-icon` verweisen auf `icon-180.png` bzw. `icon-512.png` – das
+große K aus dem Logo, das die Kachel ausfüllt. Am iPhone: Seite in Safari
+öffnen, Teilen-Symbol, „Zum Home-Bildschirm“. Am Android: Menü,
+„App installieren“.
 
 ## Liste herunterladen
 
