@@ -324,10 +324,42 @@ Kontrast, auch im Dunkelmodus.
 `logo.png` (600 × 153) kommt aus der Vektorvorlage und steht in der
 Kopfzeile und im Briefkopf der Protokolle.
 
-**Zum Homebildschirm hinzufügen:** `manifest.json` und
-`apple-touch-icon` verweisen auf `icon-180.png` bzw. `icon-512.png` – das
-große K aus dem Logo. Am iPhone: Seite in Safari öffnen, Teilen-Symbol,
-„Zum Home-Bildschirm“. Am Android: Menü, „App installieren“.
+**Zum Homebildschirm hinzufügen:** Am iPhone: Seite in Safari öffnen,
+Teilen-Symbol, „Zum Home-Bildschirm“. Am Android: Menü, „App installieren“.
+
+### Das Symbol
+
+Das große K aus dem Logo liegt auf einer **Glasfläche**: farbige Schlieren in
+Türkis und Magenta hinter einer milchigen Scheibe, darüber ein schräger
+Lichtstreifen, am Rand eine feine Fase und nach unten hin Tiefe. Der
+Buchstabe sitzt mit weichem Schatten darin, als läge er unter dem Glas.
+
+Gebaut wird das Symbol nicht von Hand, sondern gerechnet: Das bestehende
+`icon-512.png` wird freigestellt (Weiß wird durchsichtig, die Farbe
+zurückgerechnet), auf 1024 px gesetzt und schrittweise verkleinert. So
+bleiben die Kanten sauber.
+
+| Datei | wofür |
+|---|---|
+| `icon-180.png` | `apple-touch-icon`, Homebildschirm am iPhone |
+| `icon-192.png`, `icon-512.png` | `manifest.json`, Android und Chrome |
+| `favicon-32.png` | Symbol im Browser-Reiter |
+| `*-dunkel.png` | dieselben Größen für den Dunkelmodus |
+
+**Der Buchstabe füllt 57,5 % der Fläche.** Das ist kein Zufall: Android
+schneidet Symbole mit `purpose: "maskable"` auf einen Kreis zu und garantiert
+nur die inneren 80 %. Bei größerem K wurden die Ecken abgeschnitten — der
+Türkis-Arm oben rechts und das schmale Feld unten rechts.
+
+**Dunkelmodus:** Das Symbol im Browser-Reiter richtet sich über
+`media="(prefers-color-scheme: dark)"` nach der Einstellung des Geräts. Auf
+dem Homebildschirm geht das nicht — iOS und Android übernehmen beim
+Hinzufügen genau ein Bild. Dort liegt die helle Fassung; iOS ab Version 18
+dunkelt sie selbst ab, wenn jemand dunkle Symbole eingestellt hat. Die
+dunklen Dateien liegen trotzdem bereit, falls sich das ändert.
+
+Neu bauen lässt sich das Symbol mit `tools/icon-bauen.html`: Datei im Browser
+öffnen, die erzeugten Bilder herunterladen.
 
 ## Liste herunterladen
 
