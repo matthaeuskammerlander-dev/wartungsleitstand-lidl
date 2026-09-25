@@ -207,6 +207,9 @@ details.st[open]>summary{background:var(--surface-2)}
 .st .inner{padding:4px 16px 16px;display:grid;gap:10px}
 .posbox{border:1px solid var(--line);border-radius:8px;padding:12px;display:grid;gap:8px;background:var(--ground)}
 .stoerbox{border-left:3px solid var(--crit)}
+.stoerhinweis{font-size:13px;padding:6px 8px;border-left:3px solid var(--crit);background:var(--crit-soft);border-radius:4px}
+.marktlink{cursor:pointer;text-decoration:underline;text-decoration-style:dotted;text-decoration-thickness:1px;text-underline-offset:3px}
+.marktlink:hover{text-decoration-style:solid;color:var(--accent)}
 .stoerpin{width:24px;height:24px;border-radius:50% 50% 50% 0;transform:rotate(-45deg);background:#C0322A;border:2px solid #fff;
   box-shadow:0 1px 4px rgba(0,0,0,.35);display:flex;align-items:center;justify-content:center;color:#fff;font:700 13px/1 system-ui,sans-serif}
 .stoerpin>span{transform:rotate(45deg)}
@@ -330,9 +333,12 @@ a:not(.btn):hover{opacity:.8}
 .blatt td.k{width:34%;color:#444;background:#f7f9fa}
 .blatt .kaestchen{display:grid;grid-template-columns:repeat(auto-fill,minmax(165px,1fr));gap:1px 12px;font-size:9.6px}
 .blatt .kaestchen div{white-space:normal}
-.blatt .fotos{display:grid;grid-template-columns:repeat(4,1fr);gap:6px}
-.blatt .fotos figure{margin:0;break-inside:avoid}
-.blatt .fotos img{width:100%;aspect-ratio:4/3;object-fit:cover;border:1px solid #c9cfd3}
+/* Fotos vollständig und im eigenen Seitenverhältnis – kein Zuschneiden.
+   object-fit versteht html2canvas nicht; mit ihm sahen Druck und
+   gespeichertes PDF verschieden aus, im PDF waren die Bilder verzerrt. */
+.blatt .fotos{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;align-items:start}
+.blatt .fotos figure{margin:0;break-inside:avoid;text-align:center}
+.blatt .fotos img{display:block;margin:0 auto;width:auto;height:auto;max-width:100%;max-height:200px;border:1px solid #c9cfd3}
 .blatt .fotos figcaption{font-size:9px;line-height:1.25;color:#444}
 .blatt .unterschrift img{height:44px;border-bottom:1px solid #111}
 .blatt .fuss{margin-top:10px;font-size:8.3px;line-height:1.3;color:#555;border-top:1px solid #c9cfd3;padding-top:4px}
@@ -412,7 +418,10 @@ var STAMM_FELDER_POS = ["anlagentyp","intervallCode","inbetriebnahme","monat","m
                         /* Zuordnung einer Termin-Zeile zu ihrer Anlage (von Hand) */
                         "anlageZu",
                         /* Wartungen laut Prüfbuch, die in der Excel-Liste fehlen: [{datum, techniker}] */
-                        "nachweise"];
+                        "nachweise",
+                        /* Angaben aus dem Prüfbuch */
+                        "gwp","psBar","toC","tkC","hermetisch","fluidgruppe","psv","gefahr","erstePruefung",
+                        "leckageerkennung","dichtheitMonate","astv","konformitaet","aufsteller"];
 var ABGELEITET_POS   = ["kaeltemittelText","ueber30kg","baujahr"];
 function auswahl(o, felder){
   var r={}; felder.forEach(function(k){ r[k]=(o[k]===undefined?null:o[k]); }); return r;
@@ -554,6 +563,8 @@ function anlagenDesMarkts(s, auchPausiert){
 function anlageVon(p){ return p ? ANLAGEN[p.anlageId] || {id:p.id, leader:p, termine:[p]} : null; }
 function anlageLeader(p){ return anlageVon(p).leader; }
 function anlagePausiert(p){ var l=anlageLeader(p); return !!(l && l.pausiert); }
+/* Die Prüfbücher liegen gesammelt bei UKT – der Standard für jede Anlage */
+var PRUEFBUCH_ORT="Büro UKT – Technik-Ordner 2";
 /* Anlagendaten einer Anlage: erste Zeile zuerst, Lücken aus den anderen Zeilen */
 var ANLAGE_DATEN_KEYS=null;
 function anlageDaten(p){
@@ -564,6 +575,10 @@ function anlageDaten(p){
     if(!leerWert(r[k])) return;
     for(var i=0;i<a.termine.length;i++){ if(!leerWert(a.termine[i][k])){ r[k]=a.termine[i][k]; break; } }
   });
+  /* Standard: jede Kälteanlage hat ein Prüfbuch (§ 23 KAV), und die Bücher
+     liegen gesammelt bei UKT – solange nichts anderes eingetragen ist */
+  if(leerWert(r.pruefbuch)) r.pruefbuch="ja";
+  if(r.pruefbuch==="ja" && leerWert(r.ortPruefbuch)) r.ortPruefbuch=PRUEFBUCH_ORT;
   return r;
 }
 /* „Jahreswartung 17.06. · Halbjahreswartung 17.12.“ */
@@ -1131,7 +1146,7 @@ function filtered(){
 function filteredPos(){ var ids={}; filtered().forEach(function(s){ids[s.id]=1;}); return POS.filter(function(p){return ids[p.standortId];}); }
 
 /* ---------- Tabs ---------- */
-var VIEWS=[["faellig","Fällig"],["karte","Karte"],["anlagen","Anlagen"],["protokoll","Protokoll"],["verlauf","Verlauf"],["verwaltung","Verwaltung"],["daten","Datenbasis"]];
+var VIEWS=[["faellig","Fällig"],["karte","Karte"],["anlagen","Anlagen"],["protokoll","Protokoll"],["verlauf","Verlauf"],["pruefen","Prüfen"],["verwaltung","Verwaltung"],["daten","Datenbasis"]];
 var tabsEl=document.getElementById("tabs");
 VIEWS.forEach(function(v){
   var b=document.createElement("button"); b.type="button"; b.textContent=v[1]; b.setAttribute("role","tab");
@@ -1142,6 +1157,9 @@ VIEWS.forEach(function(v){
       if(formDirty && !window.confirm("Das Protokoll ist angefangen und noch nicht gespeichert.\n\n"+
         "Beim Wechseln gehen die Eingaben verloren. Trotzdem wechseln?")) return;
       formDirty=false; S.bearbeiten=null;
+      /* die Verknüpfung zur offenen Störung gilt nur für dieses eine Formular;
+         ein Entwurf merkt sie sich selbst und bringt sie beim Weitermachen mit */
+      S.stoerungAus=null;
     }
     S.view=v[0]; render(); window.scrollTo({top:0,behavior:"smooth"});
   };
@@ -1289,6 +1307,9 @@ function stoerungDialog(vorhanden){
           return '<option value="'+esc(s.id)+'"'+(o.standortId===s.id?" selected":"")+">"+
             esc(stName(s))+(s.filiale?" · Filiale "+esc(s.filiale):"")+"</option>"; }).join("")+
         "</select></div>"+
+      /* welche Anlage betroffen ist – freiwillig, oft weiß man es erst vor Ort */
+      '<div class="as-feld"><div class="as-label">Betroffene Anlage (falls bekannt)</div>'+
+        '<select id="st_anlage" style="width:100%"></select></div>'+
       '<div class="grid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:10px;margin-top:10px">'+
         FELDER.map(function(f){
           return '<label class="fl"><span'+(f[3]?' class="req"':"")+">"+esc(f[1])+"</span>"+
@@ -1299,12 +1320,23 @@ function stoerungDialog(vorhanden){
         '<textarea data-s="beschreibung" rows="3">'+esc(o.beschreibung||"")+"</textarea></label>"+
       '<label class="fl" style="margin-top:10px"><span>Notiz</span>'+
         '<input type="text" data-s="notiz" value="'+esc(o.notiz||"")+'" placeholder="z. B. Schlüssel beim Marktleiter"></label>'+
+      '<label class="chk" style="margin-top:10px"><input type="checkbox" id="st_ohne"'+(o.ohneAuftrag?" checked":"")+'>'+
+        "<span>Ausnahme: kein Lidl-Auftrag (z. B. telefonisch beauftragt) – Auftragsnummer folgt oder entfällt</span></label>"+
       '<div class="note warnbox" id="st_fehlt" hidden style="margin-top:10px"></div>';
 
     bilderZeigen();
     if(meldung) melde(meldung);
     if(warnung) warnen(warnung);
-    inhalt.querySelector("#st_markt").onchange=function(){ o.standortId=this.value||null; };
+    var anlWahl=function(){
+      var sel=inhalt.querySelector("#st_anlage"), s=o.standortId?byId[o.standortId]:null;
+      sel.innerHTML='<option value="">– noch unklar –</option>'+(s?anlagenDesMarkts(s,false).map(function(a){
+        return '<option value="'+esc(a.leader.id)+'"'+(o.positionId===a.leader.id?" selected":"")+">"+esc(anlagenName(anlageDaten(a.leader)))+"</option>"; }).join(""):"");
+      sel.disabled=!s;
+      sel.onchange=function(){ o.positionId=this.value||null; };
+    };
+    anlWahl();
+    inhalt.querySelector("#st_markt").onchange=function(){ o.standortId=this.value||null; o.positionId=null; anlWahl(); };
+    inhalt.querySelector("#st_ohne").onchange=function(){ o.ohneAuftrag=this.checked; };
     inhalt.querySelectorAll("[data-s]").forEach(function(i){
       i.oninput=function(){
         o[i.dataset.s]=i.value.trim();
@@ -1314,7 +1346,7 @@ function stoerungDialog(vorhanden){
           var st=standortZuAuftrag({kostenstelle:i.value});
           if(st){
             o.standortId=st.id;
-            var w=inhalt.querySelector("#st_markt"); if(w) w.value=st.id;
+            var w=inhalt.querySelector("#st_markt"); if(w) w.value=st.id; anlWahl();
             melde("Markt erkannt: <strong>"+esc(stName(st))+"</strong>.");
           }
         }
@@ -1392,7 +1424,7 @@ function stoerungDialog(vorhanden){
     var b=el('<button class="btn" type="button">'+(vorhanden?"Änderung speichern":"Störung anlegen")+"</button>");
     b.onclick=function(){
       var fehlt=[];
-      if(!o.auftragsnummer) fehlt.push("Auftragsnummer");
+      if(!o.auftragsnummer && !o.ohneAuftrag) fehlt.push("Auftragsnummer (oder Ausnahme ankreuzen)");
       if(!o.standortId) fehlt.push("Markt");
       var box=inhalt.querySelector("#st_fehlt");
       if(fehlt.length){ box.textContent="Es fehlt noch: "+fehlt.join(", ")+"."; box.hidden=false;
@@ -1525,7 +1557,7 @@ function stoerungsKalender(){
       }
       var p=x.p;
       var r=el('<div class="posbox"><div class="rowflex" style="justify-content:space-between;gap:8px">'+
-        '<div style="min-width:0"><strong style="font-size:14px">'+esc(protoName(p)||"Störungseinsatz")+"</strong>"+
+        '<div style="min-width:0"><strong style="font-size:14px">'+(byId[p.standortId]?marktLink(byId[p.standortId]):esc(protoName(p)||"Störungseinsatz"))+"</strong>"+
           '<br><span class="muted" style="font-size:12.5px">erledigt'+(p.nameTechniker?" · "+esc(p.nameTechniker):"")+
           (p.auftragsnummer?" · Auftrag "+esc(p.auftragsnummer):"")+"</span></div>"+
         '<button class="btn ghost sm" type="button">Protokoll</button></div></div>');
@@ -1546,6 +1578,45 @@ function stoerungsKalender(){
   zeichne();
   return c;
 }
+
+/* ---------- Marktansicht von überall ----------
+   Ein Marktname lässt sich antippen – in der Fälligkeitsliste, bei offenen
+   Störungen, im Kalender, im Protokoll. Es öffnet sich der Markt mit offenen
+   Störungen, Anlagen und Terminen und seiner Wartungs- und Störungshistorie,
+   ohne dass man den Reiter wechselt und etwas Angefangenes verliert. */
+function marktLink(s, text){
+  return '<span class="marktlink" role="link" tabindex="0" data-markt="'+esc(s.id)+'" title="Markt ansehen">'+
+    esc(text||stName(s))+"</span>";
+}
+function marktAnsicht(sid){
+  var s=byId[sid]; if(!s) return;
+  var a=ansichtOeffnen(stName(s));
+  a.schritt.textContent=[s.filiale?"Filiale "+s.filiale:"", s.adresse].filter(Boolean).join(" · ");
+  a.inhalt.appendChild(standortDetail(s));
+  var h=el('<div class="card" style="box-shadow:none;margin-top:12px"><div class="pad stack">'+
+    '<h2>Wartungs- und Störungshistorie</h2></div></div>');
+  h.querySelector(".stack").appendChild(historieAnsicht(s));
+  a.inhalt.appendChild(h);
+  /* führt ein Knopf woandershin (Protokoll, Verwaltung), geht die Ansicht zu */
+  var vorher=S.view;
+  a.inhalt.addEventListener("click", function(e){
+    if(!e.target.closest || !e.target.closest("button,a")) return;
+    setTimeout(function(){ if(S.view!==vorher || S.bearbeiten) a.zu(); }, 60);
+  });
+}
+/* in der Einfangphase: sonst öffnete die Zeile darunter (etwa das
+   Protokoll) zuerst ihr eigenes Ziel */
+document.addEventListener("click", function(e){
+  var m=e.target && e.target.closest ? e.target.closest("[data-markt]") : null;
+  if(!m) return;
+  e.preventDefault(); e.stopPropagation();
+  marktAnsicht(m.dataset.markt);
+}, true);
+document.addEventListener("keydown", function(e){
+  if(e.key!=="Enter") return;
+  var m=e.target && e.target.closest ? e.target.closest("[data-markt]") : null;
+  if(m){ e.preventDefault(); marktAnsicht(m.dataset.markt); }
+}, true);
 
 /* Termin einer Störung für den Kalender des Handys. Mit geplantem Einsatz
    und Uhrzeit wird es ein Termin über eine Stunde, sonst ein Ganztags-
@@ -1589,7 +1660,7 @@ function stoerungEintrag(o, ohneMarkt){
     var z=el('<div class="posbox stoerbox">'+
       '<div class="rowflex" style="justify-content:space-between;gap:8px;align-items:flex-start">'+
         '<div style="min-width:0">'+(ohneMarkt?'<strong style="font-size:14px">Offene Störung</strong>':
-          '<strong style="font-size:14px">'+esc(s?stName(s):(o.filialCode||"Markt offen"))+"</strong>")+
+          '<strong style="font-size:14px">'+(s?marktLink(s):esc(o.filialCode||"Markt offen"))+"</strong>")+
           (o.problemtyp?'<br><span style="font-size:13px">'+esc(o.problemtyp)+"</span>":"")+"</div>"+
         '<span class="pill '+alter.klasse+'">'+esc(alter.text)+"</span></div>"+
       (o.termin?'<div style="font-size:13px"><strong>Einsatz geplant:</strong> '+esc(dfmt(o.termin))+
@@ -1597,7 +1668,7 @@ function stoerungEintrag(o, ohneMarkt){
       (o.beschreibung?'<div class="muted" style="font-size:12.5px">'+esc(String(o.beschreibung).slice(0,220))+
         (String(o.beschreibung).length>220?" …":"")+"</div>":"")+
       '<div class="muted mono" style="font-size:12px">'+
-        [o.auftragsnummer?"Auftrag "+esc(o.auftragsnummer):"", o.stoerungsnr?"Störung "+esc(o.stoerungsnr):"",
+        [o.auftragsnummer?"Auftrag "+esc(o.auftragsnummer):(o.ohneAuftrag?"ohne Lidl-Auftrag (Ausnahme)":""), o.stoerungsnr?"Störung "+esc(o.stoerungsnr):"",
          o.filialCode?esc(o.filialCode):""].filter(Boolean).join(" · ")+"</div>"+
       '<div class="rowflex" style="gap:6px">'+
         '<button class="btn sm" type="button" data-a="proto">Störungsprotokoll erstellen</button>'+
@@ -1606,7 +1677,7 @@ function stoerungEintrag(o, ohneMarkt){
       "</div></div>");
     z.querySelector('[data-a="proto"]').onclick=function(){
       if(!o.standortId){ toast("Der Störung ist noch kein Markt zugewiesen – bitte über „Ansehen / ändern“ nachtragen."); return; }
-      S.stoerungAus=o._id; S.protoStandort=o.standortId; S.protoArt="stoerung";
+      S.stoerungAus=o._id; S.protoStandort=o.standortId; S.protoPos=o.positionId||""; S.protoArt="stoerung";
       S.view="protokoll"; formDirty=false; S.bearbeiten=null; render(); window.scrollTo({top:0});
     };
     z.querySelector('[data-a="bearb"]').onclick=function(){ stoerungDialog(o); };
@@ -1678,7 +1749,7 @@ function viewFaellig(){
     var s=byId[p.standortId], w=wannText(p);
     var r=el('<button class="row" type="button">'+
       '<span class="when">'+w.zeile+(w.zusatz?'<br><span style="font-size:10.5px">'+w.zusatz+"</span>":"")+"</span>"+
-      '<span class="body"><span class="ttl">'+esc(stName(s))+"</span>"+
+      '<span class="body"><span class="ttl">'+marktLink(s)+"</span>"+
         '<span class="meta">'+(stName(s)===s.adresse?"":esc(s.adresse)+(s.region?" · ":""))+esc(s.region||"")+"</span>"+
         '<span class="badges"><span class="tag">'+esc(anlagenName(p))+"</span>"+
           '<span class="tag">'+esc(p.intervall.art)+"</span>"+
@@ -2335,6 +2406,8 @@ function anlageDatenErgaenzen(leader){
     ANLAGE_FELDER.concat([{k:"anlagentyp", l:"Bezeichnung der Anlage"}]).forEach(function(f){
       if(erg[f.k]===undefined) return;
       if(gleich(vorher[f.k], erg[f.k])) return;
+      /* im Dialog nicht angefasst (etwa ein Standardwert): nichts speichern */
+      if(gleich(start[f.k], erg[f.k])) return;
       leaderNeu[f.k]=erg[f.k];
       geaendert.push({feld:f.k, name:anlagenName(jetzt)+" – "+(f.l||f.k),
         alt:anlageWertText(f, vorher[f.k]), neu:anlageWertText(f, erg[f.k])});
@@ -2366,19 +2439,78 @@ function anlagenBloecke(s, host){
       '<div style="font-size:13px">'+(anlageKurz(d)?esc(anlageKurz(d)):'<span class="muted">Anlagendaten noch nicht erfasst</span>')+
         (l.length?' <span class="muted" style="font-size:12px">· '+l.length+" Angabe(n) offen</span>":"")+"</div>"+
       (d.hersteller||d.seriennummer?'<div class="muted" style="font-size:12.5px">'+esc([d.hersteller,d.modell,d.seriennummer?"SN "+d.seriennummer:""].filter(Boolean).join(" · "))+"</div>":"")+
+      stoerungenDerAnlage(a).map(function(o){
+        return '<div class="stoerhinweis"><strong>Störung offen</strong>'+(o.problemtyp?": "+esc(o.problemtyp):"")+
+          ' <span class="muted">· '+esc(stoerungAlter(o).text)+"</span></div>"; }).join("")+
       '<div class="rowflex" style="gap:6px"><button class="btn'+(l.length?" sm":" ghost sm")+'" type="button" data-a="daten">'+
-        (l.length?"Anlagendaten ergänzen":"Anlagendaten prüfen")+"</button></div>"+
+        (l.length?"Anlagendaten ergänzen":"Anlagendaten prüfen")+"</button>"+
+        '<button class="btn ghost sm" type="button" data-a="hist">Historie der Anlage</button></div>'+
       '<div class="stack" data-termine></div></div>');
     /* Dieselbe geführte Erfassung wie beim Protokoll, nur ohne Protokoll –
        zum Nachtragen, wenn jemand die Angaben gerade zur Hand hat. */
     blk.querySelector('[data-a="daten"]').onclick=function(){
       anlageDatenErgaenzen(a.leader);
     };
+    blk.querySelector('[data-a="hist"]').onclick=function(){ anlageHistorieAnsicht(a.leader); };
     var zg=zugangBox(d);
     if(zg) blk.insertBefore(zg, blk.querySelector("[data-termine]"));
     a.termine.forEach(function(t){ blk.querySelector("[data-termine]").appendChild(posBox(t,s,true)); });
     host.appendChild(blk);
   });
+}
+/* Offene Störungen, die ausdrücklich an dieser Anlage hängen */
+function stoerungenDerAnlage(a){
+  var ids=a.termine.map(function(t){ return t.id; });
+  return offeneStoerungen(true).filter(function(o){ return o.positionId && ids.indexOf(o.positionId)>=0; });
+}
+/* Alles, was an einer Anlage je gemacht wurde: Wartungen aus Liste und
+   Prüfbuch, Protokolle aus der App (Wartung und Störung) und was offen ist.
+   Derselbe Besuch aus mehreren Quellen steht nur einmal da. */
+function anlageHistorie(leader){
+  var a=anlageVon(leader), ids=a.termine.map(function(t){ return t.id; }), z=[];
+  var prot=alleProtokolle().filter(function(pr){
+    var pids=(pr.positionIds&&pr.positionIds.length)?pr.positionIds:(pr.positionId?[pr.positionId]:[]);
+    return pids.some(function(id){ return ids.indexOf(id)>=0; });
+  });
+  prot.forEach(function(pr){
+    var stoe=istStoerung(pr);
+    z.push({datum:pr.datum, art:stoe?"Störung"+(pr.stoerung&&pr.stoerung.problemtyp?": "+pr.stoerung.problemtyp:""):(pr.wartungsart||"Wartung"),
+      stoerung:stoe, techniker:kanonName(pr.nameTechniker||pr.techniker||""), quelle:"Protokoll", protokoll:pr,
+      rapport:rapportVon(pr)});
+  });
+  a.termine.forEach(function(t){
+    (t.historie||[]).forEach(function(d){
+      if(prot.some(function(pr){ return !istStoerung(pr) && gleicherBesuch(pr.datum,d); })) return;
+      if(z.some(function(x){ return x.quelle!=="Protokoll" && gleicherBesuch(x.datum,d); })) return;
+      var nw=(t.nachweise||[]).some(function(n){ return n.datum===d; });
+      z.push({datum:d, art:t.intervall.art, techniker:kanonName((t.techniker&&t.techniker[d.slice(0,4)])||""),
+        quelle:nw?"Prüfbuch":"Liste"});
+    });
+  });
+  return z.sort(function(x,y){ return String(y.datum).localeCompare(String(x.datum)); });
+}
+function anlageHistorieAnsicht(leader){
+  var d=anlageDaten(leader), s=byId[leader.standortId];
+  var v=ansichtOeffnen(anlagenName(d));
+  v.schritt.innerHTML=s?marktLink(s):"";
+  var box=el('<div class="stack"></div>');
+  stoerungenDerAnlage(anlageVon(leader)).forEach(function(o){ box.appendChild(stoerungEintrag(o,true)); });
+  var h=anlageHistorie(leader);
+  if(!h.length) box.appendChild(el('<div class="muted">Für diese Anlage ist noch nichts erfasst.</div>'));
+  h.forEach(function(x){
+    var r=el('<div class="posbox'+(x.stoerung?" stoerbox":"")+'"><div class="rowflex" style="justify-content:space-between;gap:8px">'+
+      '<div><strong class="mono">'+esc(dfmt(x.datum))+"</strong> · "+esc(x.art)+
+        (x.techniker?' <span class="muted">· '+esc(x.techniker)+"</span>":"")+
+        (x.rapport&&x.rapport.daten&&x.rapport.daten.stunden?' <span class="tag">Rapport '+esc(x.rapport.daten.stunden)+" h</span>":(x.rapport?' <span class="tag">Rapport</span>':""))+
+      '</div><span class="tag">'+esc(x.quelle)+"</span></div></div>");
+    if(x.protokoll){
+      var b=el('<button class="btn ghost sm" type="button" style="justify-self:start">Protokoll ansehen</button>');
+      b.onclick=function(){ var w=ansichtOeffnen(x.stoerung?"Störungsprotokoll":"Wartungsprotokoll"); w.inhalt.appendChild(protokollDetail(x.protokoll)); };
+      r.appendChild(b);
+    }
+    box.appendChild(r);
+  });
+  v.inhalt.appendChild(box);
 }
 function posBox(p,s,imBlock){
   var b=el('<div class="posbox">'+
@@ -2541,13 +2673,44 @@ var ANLAGE_GRUPPEN=[
     {k:"ortRegelung", l:"Regelung", t:"wahl", o:ORTE, frei:true,
       wenn:function(a){ return a.regelung!==OHNE_REGELUNG; }},
     /* Nach dem Prüfbuch wird nur gefragt, wenn es eins gibt. */
-    {k:"ortPruefbuch", l:"Prüfbuch", t:"wahl", o:ORTE, frei:true,
+    {k:"ortPruefbuch", l:"Prüfbuch", t:"wahl", o:[PRUEFBUCH_ORT].concat(ORTE), frei:true,
       wenn:function(a){ return a.pruefbuch==="ja"; }}]},
   {titel:"Typenschild", frage:"Angaben vom Typenschild (freiwillig)", optional:true, felder:[
     {k:"hersteller", l:"Hersteller", t:"text"},
     {k:"modell", l:"Modell", t:"text"},
-    {k:"seriennummer", l:"Seriennummer", t:"text"}]}
+    {k:"seriennummer", l:"Seriennummer", t:"text"}]},
+  /* Was das Prüf- und Anlagenbuch sonst noch festhält (Seiten 2 bis 4) –
+     freiwillig, gebraucht vor allem für Behörde und F-Gase-Nachweis */
+  {titel:"Prüfbuch-Angaben", frage:"Angaben aus dem Prüfbuch (freiwillig)", optional:true, felder:[
+    {k:"gwp", l:"GWP", t:"dez", e:"", h:"leer = Standardwert des Kältemittels"},
+    {k:"psBar", l:"Höchster Betriebsdruck PS", t:"dez", e:"bar"},
+    {k:"toC", l:"Verdampfung to", t:"dez", e:"°C"},
+    {k:"tkC", l:"Verflüssigung tk", t:"dez", e:"°C"},
+    {k:"hermetisch", l:"Hermetisch dicht", t:"jn"},
+    {k:"fluidgruppe", l:"Fluidgruppe (DGÜW-V)", t:"wahl", o:["1","2"]},
+    {k:"psv", l:"Druck-Liter-Produkt PS·V", t:"dez", e:"bar·l"},
+    {k:"gefahr", l:"Gefahrenpotential", t:"wahl", o:["NP","HP"]},
+    {k:"erstePruefung", l:"Erste Betriebsprüfung durch", t:"wahl", o:["skP","KPSt"]},
+    {k:"leckageerkennung", l:"Leckage-Erkennungssystem", t:"jn"},
+    {k:"dichtheitMonate", l:"Dichtheitskontrolle alle", t:"wahl", o:["3","6","12","24","nz"]},
+    {k:"astv", l:"Arbeitsstättenverordnung zutreffend", t:"jn"},
+    {k:"konformitaet", l:"Konformitätserklärung vom", t:"datum"},
+    {k:"aufsteller", l:"Aufsteller", t:"text"}]}
 ];
+/* GWP üblicher Kältemittel (AR4, wie in den Prüfbüchern) – für das
+   CO2-Äquivalent, wenn im Prüfbuch keines eingetragen ist */
+var GWP_STANDARD={R410A:2087.5, R32:675, R407C:1774, R134a:1430, R454B:466, R744:1, R404A:3922, R407F:1825, R22:1810};
+function gwpVon(a){
+  if(!leerWert(a.gwp)) return +a.gwp;
+  var art=String(a.kaeltemittelArt||"").replace(/\s+/g,"").toUpperCase();
+  var k=Object.keys(GWP_STANDARD).filter(function(x){ return x.toUpperCase()===art; })[0];
+  return k ? GWP_STANDARD[k] : null;
+}
+function co2Tonnen(a){
+  var kg=+a.kaeltemittelKg, gwp=gwpVon(a);
+  if(!kg || !gwp) return null;
+  return Math.round(kg*gwp/10)/100;   /* Tonnen, zwei Stellen */
+}
 var ANLAGE_FELDER=[].concat.apply([], ANLAGE_GRUPPEN.map(function(g){
   return g.felder.map(function(f){ return Object.assign({gruppe:g}, f); }); }));
 /* Zugangsdaten bleiben bei der Anlage. Sie dürfen weder in den Schnappschuss
@@ -2587,6 +2750,8 @@ function anlageWertText(f, w){
   if(leerWert(w)) return "–";
   if(f.t==="kg") return String(w).replace(".",",")+" kg";
   if(f.t==="kw") return String(w).replace(".",",")+" kW";
+  if(f.t==="dez") return String(w).replace(".",",")+(f.e?" "+f.e:"");
+  if(f.t==="datum") return dfmt(w);
   /* Übersicht und Änderungsverlauf halten fest, DASS ein Passwort gesetzt
      wurde – nicht, wie es lautet. Zum Nachsehen gibt es „ändern“. */
   if(f.t==="geheim") return "••••••••";
@@ -2599,6 +2764,7 @@ function anlageKurz(a){
   if(a.kreislaeufe) t.push(a.kreislaeufe+" Kältekreis"+(+a.kreislaeufe===1?"":"e"));
   if(a.kaeltemittelArt||!leerWert(a.kaeltemittelKg)) t.push([a.kaeltemittelArt, leerWert(a.kaeltemittelKg)?"":String(a.kaeltemittelKg).replace(".",",")+" kg"].filter(Boolean).join(" "));
   if(!leerWert(a.leistungKw)) t.push(String(a.leistungKw).replace(".",",")+" kW");
+  var co2=co2Tonnen(a); if(co2) t.push(String(co2).replace(".",",")+" t CO₂e");
   if(a.pruefbuch==="ja") t.push("Prüfbuch"+(a.ortPruefbuch?" ("+a.ortPruefbuch+")":""));
   if(istWassergekuehlt(a) && (a.rkUkt||a.pumpeUkt))
     t.push("RK "+(a.rkUkt==="ja"?"UKT":"fremd")+" · Pumpen "+(a.pumpeUkt==="ja"?"UKT":"fremd"));
@@ -2739,6 +2905,10 @@ function anlageAssistent(start, titel, neu, alles){
       } else if(f.t==="zahl"){
         h+='<div class="chips">'+[1,2,3,4].map(function(n){ return chip(n,String(n),+w===n); }).join("")+"</div>"+
           '<input type="number" min="1" max="99" inputmode="numeric" data-in="'+f.k+'" placeholder="andere Anzahl" value="'+esc(+w>4?w:"")+'">';
+      } else if(f.t==="dez"){
+        h+='<input type="text" inputmode="decimal" data-in="'+f.k+'" placeholder="'+esc(f.h||(f.e?"in "+f.e:""))+'" value="'+esc(leerWert(w)?"":String(w).replace(".",","))+'">';
+      } else if(f.t==="datum"){
+        h+='<input type="date" data-in="'+f.k+'" max="'+isoLokal(new Date())+'" value="'+esc(leerWert(w)?"":w)+'">';
       } else if(f.t==="kg"||f.t==="kw"){
         h+='<input type="text" inputmode="decimal" data-in="'+f.k+'" placeholder="'+(f.t==="kw"?"z. B. 35":"z. B. 12,5")+'" value="'+esc(leerWert(w)?"":String(w).replace(".",","))+'">'+
           '<div class="as-hinweis" data-hinweis="'+f.k+'"></div>';
@@ -2791,6 +2961,7 @@ function anlageAssistent(start, titel, neu, alles){
           var k=i.dataset.in, v=i.value.trim();
           if(k==="kaeltemittelKg"){ v=v.replace(",","."); a[k]= v===""?null:(isNaN(+v)?a[k]:+v); kgHinweis(); }
           else if(k==="leistungKw"){ v=v.replace(",","."); a[k]= v===""?null:(isNaN(+v)?a[k]:+v); }
+          else if(i.inputMode==="decimal"){ v=v.replace(",","."); a[k]= v===""?null:(isNaN(+v)?a[k]:+v); }
           else if(k==="kreislaeufe"){ a[k]= v===""?a[k]:+v; inhalt.querySelectorAll('.chip[data-f="kreislaeufe"]').forEach(function(c){ c.setAttribute("aria-pressed","false"); }); }
           else a[k]=v;
         };
@@ -3086,8 +3257,17 @@ function wer(){
   if(Admin && Admin.frei && lsGet("ukt_admin_name","")) return lsGet("ukt_admin_name","");
   return lsGet("ukt_tech","") || "unbekannt";
 }
+var rueckSpalte=true;
+function aenderungZeile(ev){
+  var z={client_id:ev.id, zeit:ev.zeit, art:ev.art, protokoll_id:ev.protokollId, standort_id:ev.standortId,
+    standort_name:ev.standortName, von:ev.von, grund:ev.grund||null, felder:ev.felder||[]};
+  if(rueckSpalte && ev.rueck) z.rueck=ev.rueck;
+  return z;
+}
 function protokolliere(ev){
   ev.id = ev.id || "e_"+Date.now().toString(36)+Math.random().toString(36).slice(2,6);
+  /* Stammdaten-Änderung: den Stand davor mitgeben, damit sie sich zurücknehmen lässt */
+  if(ev.art==="stammdaten" && !ev.rueck && Object.keys(rueckPuffer).length){ ev.rueck=rueckPuffer; rueckPuffer={}; }
   ev.zeit = ev.zeit || new Date().toISOString();
   ev.von = ev.von || wer();
   aenderungen.unshift(ev);
@@ -3098,9 +3278,11 @@ function protokolliere(ev){
     return Store.claudeDb.doc("aenderungen/"+ev.id).set(ev).then(function(){}, lokal);
   }
   if(Store.modus==="supabase" && Store.sb){
-    return Store.sb.from("aenderungen").insert({
-      client_id:ev.id, zeit:ev.zeit, art:ev.art, protokoll_id:ev.protokollId, standort_id:ev.standortId,
-      standort_name:ev.standortName, von:ev.von, grund:ev.grund||null, felder:ev.felder||[]
+    var senden=function(){ return Store.sb.from("aenderungen").insert(aenderungZeile(ev)); };
+    return senden().then(function(r){
+      /* Spalte rueck fehlt noch (SQL nicht gelaufen): ohne sie senden */
+      if(r.error && rueckSpalte && /rueck/.test(r.error.message||"")){ rueckSpalte=false; return senden(); }
+      return r;
     }).then(function(r){ if(r.error) return lokal(); }, lokal);
   }
   return lokal();
@@ -3112,7 +3294,7 @@ function ladeAenderungen(){
   if(Store.modus==="supabase" && Store.sb){
     zentral=Store.sb.from("aenderungen").select("*").order("zeit",{ascending:false}).limit(300).then(function(r){
       return (r.data||[]).map(function(x){ return {id:x.client_id||x.id, zeit:x.zeit, art:x.art,
-        protokollId:x.protokoll_id, standortId:x.standort_id, standortName:x.standort_name,
+        protokollId:x.protokoll_id, standortId:x.standort_id, standortName:x.standort_name, rueck:x.rueck||null,
         von:x.von, grund:x.grund, felder:x.felder||[]}; });
     }, function(){ return []; });
   } else if(Store.modus==="claude" && Store.claudeDb){
@@ -3161,7 +3343,7 @@ function stoerungSpeichern(o, grund){
 }
 var STOER_OFFEN_FELDER=["auftragsnummer","stoerungsnr","filialCode","problemtyp","beschreibung",
   "zieltermin","auftragsdatum","prioritaet","lidlTyp","lidlModell","hersteller","lin","seriennummer",
-  "lidlKontakt","lidlTelefon","lidlMail","notiz","seiten","pdfName","pdfDaten","termin","terminZeit","terminTechniker",
+  "lidlKontakt","lidlTelefon","lidlMail","notiz","seiten","pdfName","pdfDaten","termin","terminZeit","terminTechniker","ohneAuftrag","positionId",
   "erledigt","protokollId","quelle"];
 
 function wendeStammdatenAn(){
@@ -3204,7 +3386,11 @@ function wendeStammdatenAn(){
        in der Historie. Der Excel-Stand bleibt darunter unverändert. */
     if(!p._historieExcel) p._historieExcel=(p.historie||[]).slice();
     var nw=Array.isArray(p.nachweise) ? p.nachweise.filter(function(n){ return n && /^\d{4}-\d\d-\d\d$/.test(n.datum||""); }) : [];
-    var tage={}; p._historieExcel.concat(nw.map(function(n){ return n.datum; })).forEach(function(d){ if(d) tage[d]=1; });
+    /* derselbe Besuch nicht doppelt: liegt ein Listeneintrag höchstens
+       BESUCH_TAGE neben einem Prüfbuch-Eintrag, gilt das Prüfbuch */
+    var nwTage=nw.map(function(n){ return n.datum; });
+    var tage={}; p._historieExcel.filter(function(d){ return !nwTage.some(function(n){ return gleicherBesuch(d,n); }); })
+      .concat(nwTage).forEach(function(d){ if(d) tage[d]=1; });
     p.historie=Object.keys(tage).sort();
     p.techniker=p.techniker||{};
     nw.forEach(function(n){ var j=n.datum.slice(0,4); if(n.techniker && !p.techniker[j]) p.techniker[j]=n.techniker; });
@@ -3234,7 +3420,17 @@ function darfStammZentral(rec){
      Märkte nur Admins – so regelt es auch die Datenbank. */
   return Admin.zentral || (!!Store.benutzer && rec && (rec.typ==="position" || rec.typ==="stoerung"));
 }
+/* Für „Rückgängig“: der zuletzt gespeicherte Stand jedes Eintrags. Wer
+   speichert, hinterlässt den Stand davor im Puffer; der nächste Eintrag im
+   Änderungsverlauf nimmt ihn mit. So lässt sich jede Stammdaten-Änderung
+   exakt zurücknehmen, ohne dass jede speichernde Stelle das selbst tut. */
+var stammStand={}, rueckPuffer={};
+function stammVorherMerken(id){
+  if(!(id in rueckPuffer)) rueckPuffer[id]=stammStand[id] ? JSON.parse(JSON.stringify(stammStand[id])) : null;
+}
 function stammSpeichern(rec){
+  stammVorherMerken(rec.id);
+  stammStand[rec.id]=JSON.parse(JSON.stringify(rec));
   var lokal=function(){
     return idbVorgang("readwrite",function(st){ return st.put(rec); },"stammdaten")
       .then(function(){ return "geraet"; }, function(){ return false; });
@@ -3251,6 +3447,8 @@ function stammSpeichern(rec){
   return lokal();
 }
 function stammLoeschen(id){
+  stammVorherMerken(id);
+  delete stammStand[id];
   var lokal=idbVorgang("readwrite",function(st){ return st.delete(id); },"stammdaten").catch(function(){});
   if(Store.modus==="supabase" && Store.sb && Admin.zentral){
     return Promise.all([lokal, Store.sb.from("stammdaten").delete().eq("id",id)]);
@@ -3279,6 +3477,7 @@ function ladeStammdaten(){
       if(!alle[x.id] || (x.geaendert||"")>(alle[x.id].geaendert||"")) alle[x.id]=x;
     });
     stammUeber=alle;
+    stammStand=JSON.parse(JSON.stringify(alle));
     wendeStammdatenAn();
     return stammUeber;
   });
@@ -3330,10 +3529,7 @@ function aenderungenUebertragen(){
       if(Store.modus==="claude"){
         Store.claudeDb.doc("aenderungen/"+ev.id).set(ev).then(weg,function(){});
       } else {
-        Store.sb.from("aenderungen").upsert({
-          client_id:ev.id, zeit:ev.zeit, art:ev.art, protokoll_id:ev.protokollId, standort_id:ev.standortId,
-          standort_name:ev.standortName, von:ev.von, grund:ev.grund||null, felder:ev.felder||[]
-        },{onConflict:"client_id", ignoreDuplicates:true}).then(function(r){ if(!r.error) weg(); },function(){});
+        Store.sb.from("aenderungen").upsert(aenderungZeile(ev),{onConflict:"client_id", ignoreDuplicates:true}).then(function(r){ if(!r.error) weg(); },function(){});
       }
     });
   },function(){});
@@ -3651,7 +3847,10 @@ function speichereAnhangPdf(art, protokollId, pdf){
     return Store.sb.storage.from("protokollfotos")
       .upload(a.pfad(protokollId), datenUrlZuBlob(pdf.datenUrl,"application/pdf"),
               {contentType:"application/pdf", upsert:false})
-      .then(function(r){ if(r.error){ Store.fehler=r.error.message; return false; } return true; },
+      .then(function(r){ 
+        /* liegt schon da (etwa nach Zurücknehmen und erneutem Anhängen): gut so */
+        if(r.error && /exist|duplicate/i.test(r.error.message||"")) return true;
+        if(r.error){ Store.fehler=r.error.message; return false; } return true; },
             function(){ return false; });
   }
   return Promise.resolve(false);
@@ -4594,6 +4793,7 @@ function viewProtokoll(){
        den Wert älterer Protokolle fest */
     '<input type="hidden" id="f_bestell">'+
     '<label class="fl"><span'+(stoer?' class="req"':"")+'>Lidl-Auftragsnummer'+(stoer?"":" / Position")+'</span><input type="text" id="f_auftrag"'+(stoer?" required":"")+'></label>'+
+    (stoer?'<label class="chk" style="align-self:end"><input type="checkbox" id="f_ohneauftrag"><span>Ausnahme: kein Lidl-Auftrag</span></label>':"")+
   '</div>'+
   '<div style="margin-top:12px"><div class="fl" style="margin-bottom:6px"><span>FM-Region</span></div>'+
     '<div class="optrow">'+REGIONEN.map(function(r,i){
@@ -5030,9 +5230,19 @@ function viewProtokoll(){
     if(!bearb) addMaterial(null);
     /* Aus einer offenen Störung heraus: die Angaben des Auftrags stehen schon
        da, der Auftrag als Bild daneben. Nur noch beheben und abschließen. */
+    /* Ausnahme ohne Lidl-Auftrag: dann ist die Auftragsnummer keine Pflicht */
+    var ohneA=form.querySelector("#f_ohneauftrag"), aufNr=form.querySelector("#f_auftrag");
+    var ohneAnwenden=function(){
+      aufNr.required=!ohneA.checked;
+      aufNr.previousElementSibling.className=ohneA.checked?"":"req";
+    };
+    ohneA.onchange=ohneAnwenden;
+    if(bearb && bearb.stoerung && bearb.stoerung.ohneAuftrag) ohneA.checked=true;
+    form._ohneAnwenden=ohneAnwenden;
     if(S.stoerungAus && !bearb){
       var vor=OFFENE.filter(function(x){ return x._id===S.stoerungAus; })[0];
       if(vor){
+        if(vor.ohneAuftrag && !vor.auftragsnummer) ohneA.checked=true;
         ["stoerungsnr","problemtyp","beschreibung","auftragsdatum","lidlTyp","lidlModell",
          "hersteller","lin","seriennummer","lidlKontakt","lidlTelefon","lidlMail"]
           .forEach(function(k){ setzS(k, vor[k]); });
@@ -5045,6 +5255,7 @@ function viewProtokoll(){
               ". Mit dem Speichern wird sie als erledigt abgehakt.");
       }
     }
+    ohneAnwenden();
 
     var pdfEin=form.querySelector("#s_pdf");
     pdfEin.onchange=function(){
@@ -5402,6 +5613,7 @@ function viewProtokoll(){
     if(d.rapportPdf && d.rapportPdf.datenUrl){ rapportPdf=d.rapportPdf; if(form._rapportZeigen) form._rapportZeigen(); }
     if(d.unterschrift) form._sig.setzen(d.unterschrift);
     if(d.stoerungAus) S.stoerungAus=d.stoerungAus;
+    if(form._ohneAnwenden) form._ohneAnwenden();
     formDirty=true;
   }
   /* Nicht bei jedem Tastendruck schreiben – das Gerät hat anderes zu tun. */
@@ -5427,8 +5639,8 @@ function viewProtokoll(){
     var e2=entwurfStand;
     var wieAlt=function(){
       var m=Math.round((Date.now()-new Date(e2.zeit).getTime())/60000);
-      if(m<60) return "vor "+Math.max(1,m)+" Minuten";
-      if(m<1440) return "vor "+Math.round(m/60)+" Stunden";
+      if(m<60) return m<=1 ? "vor einer Minute" : "vor "+m+" Minuten";
+      if(m<1440) return Math.round(m/60)===1 ? "vor einer Stunde" : "vor "+Math.round(m/60)+" Stunden";
       return "vom "+tagFmt(e2.zeit);
     };
     var wo=byId[e2.standort];
@@ -5446,7 +5658,7 @@ function viewProtokoll(){
     };
     kasten.querySelector('[data-e="weg"]').onclick=function(){
       if(!window.confirm("Das angefangene Protokoll verwerfen?\n\nDie Eingaben sind dann weg.")) return;
-      entwurfWeg(); kasten.remove(); toast("Entwurf verworfen.");
+      entwurfWeg(); kasten.remove(); S.stoerungAus=null; toast("Entwurf verworfen.");
     };
     entwurfKasten=kasten;
   }
@@ -5502,6 +5714,7 @@ function viewProtokoll(){
       so2.folgeText=v("s_folgeText");
       /* woher die Auftragsdaten stammen – hilft beim Nachvollziehen */
       so2.quelle = geladenerAuftrag ? "pdf" : qrGescannt ? "qr" : (bearb&&bearb.stoerung&&bearb.stoerung.quelle) || "hand";
+      so2.ohneAuftrag=!!(form.querySelector("#f_ohneauftrag")||{}).checked && !doc.auftragsnummer;
       /* Verweis auf das abgelegte Auftrags-PDF. Die Datei selbst liegt
          daneben, wie die Fotos – im Protokoll steht nur, dass es sie gibt. */
       var altePdf=bearb && bearb.stoerung && bearb.stoerung.auftragDatei;
@@ -5537,6 +5750,9 @@ function viewProtokoll(){
       if(S.stoerungAus){
         var vor=OFFENE.filter(function(x){ return x._id===S.stoerungAus; })[0];
         S.stoerungAus=null;
+        /* nur ein Störungsprotokoll für denselben Markt erledigt die Störung –
+           sonst hakt ein ganz anderes Protokoll sie still mit ab */
+        if(vor && (!istStoerung(doc) || vor.standortId!==doc.standortId)) vor=null;
         if(vor){
           var z=Object.assign({}, vor, {erledigt:new Date().toISOString(), protokollId:id});
           stoerungSpeichern(z, "Durch Störungsprotokoll vom "+dfmt(doc.datum)+" erledigt")
@@ -5664,7 +5880,7 @@ function viewProtokoll(){
       var ziel=b.getAttribute("data-art");
       if((ziel==="stoerung")===stoer) return;
       if(formDirty && !window.confirm("Das Formular enthält Eingaben. Wirklich wechseln? Die Eingaben gehen verloren.")) return;
-      formDirty=false; S.protoArt=ziel; render(); window.scrollTo({top:0});
+      formDirty=false; S.protoArt=ziel; S.stoerungAus=null; render(); window.scrollTo({top:0});
     };
   });
   if(Store.modus==="supabase" && Store.sb && !bearb) f.appendChild(kontoKarte());
@@ -5759,6 +5975,12 @@ function blattInhalt(p){
         z("Hersteller / Modell",[a.hersteller,a.modell].filter(Boolean).join(" / "))+
         z("Seriennummer",a.seriennummer)+
         z("Inbetriebnahme",a.inbetriebnahme?dfmt(a.inbetriebnahme):"")+
+        /* Angaben aus dem Prüfbuch, soweit bekannt */
+        z("Kältemittel / Umwelt",[gwpVon(a)?"GWP "+String(gwpVon(a)).replace(".",","):"", co2Tonnen(a)?String(co2Tonnen(a)).replace(".",",")+" t CO₂-Äquivalent":"",
+          a.hermetisch?"hermetisch dicht: "+jn(a.hermetisch):"", a.dichtheitMonate?"Dichtheitskontrolle "+(a.dichtheitMonate==="nz"?"nicht zutreffend":"alle "+a.dichtheitMonate+" Monate"):"",
+          a.leckageerkennung?"Leckage-Erkennung: "+jn(a.leckageerkennung):""].filter(Boolean).join(" · "))+
+        z("Druck / Einstufung",[leerWert(a.psBar)?"":"PS "+String(a.psBar).replace(".",",")+" bar", leerWert(a.psv)?"":"PS·V "+String(a.psv).replace(".",",")+" bar·l",
+          a.fluidgruppe?"Fluidgruppe "+a.fluidgruppe:"", a.gefahr?(a.gefahr==="HP"?"hohes":"niederes")+" Gefahrenpotential":""].filter(Boolean).join(" · "))+
       "</table>";
     }
     return "<table style='margin-bottom:8px'>"+
@@ -5825,7 +6047,7 @@ function blattInhalt(p){
         zeile(st?"Datum des Einsatzes":"Datum der Wartung",dfmt(p.datum)+(p.uhrzeit?", "+p.uhrzeit+" Uhr":""))+
         /* Bestellnummer gibt es im Formular nicht mehr – ältere Protokolle zeigen sie weiter */
         (p.bestellnummer?zeile("Bestellnummer",p.bestellnummer):"")+
-        zeile("Lidl-Auftragsnummer / Position",p.auftragsnummer)+
+        zeile("Lidl-Auftragsnummer / Position",p.auftragsnummer||(p.stoerung&&p.stoerung.ohneAuftrag?"ohne Lidl-Auftrag (Ausnahme)":""))+
         (rapportVon(p)?zeile("Rapportbericht Lidl",rapportZeile(rapportVon(p))):"")+
         zeile("FM-Region",p.region)+
         zeile("Standort / Filiale / Lager",protoName(p)+(p.filiale&&protoName(p).indexOf(p.filiale)<0?" · Filiale "+p.filiale:""))+
@@ -5865,13 +6087,14 @@ function blattInhalt(p){
 
       '<div data-rolle="fotos"></div>'+
 
-      "<h2>Abschluss</h2><table style='max-width:60%'>"+
+      /* Abschluss mit Unterschrift bleibt beisammen – nie die Unterschrift allein auf der nächsten Seite */
+      "<div class='zusammen'><h2>Abschluss</h2><table style='max-width:60%'>"+
         zeile("Name Techniker/in",p.nameTechniker)+
         zeile("Datum / Uhrzeit",dfmt(p.datum)+(p.uhrzeit?", "+p.uhrzeit+" Uhr":""))+
         "<tr><td class='k'>Unterschrift Techniker/in</td><td class='unterschrift'>"+
           (p.unterschrift?'<img alt="Unterschrift" src="'+p.unterschrift+'">':"&nbsp;")+"</td></tr>"+
         (p.auftraggebervertreter?zeile("Auftraggebervertreter",p.auftraggebervertreter):"")+
-      "</table>"+
+      "</table>"+"</div>"+
 
       '<div class="fuss">Rechnung an den Vertragspartner in der Bestellanschrift. Bestellnummer im Rechnungskopf angeben. '+
         "Grundsätzlich eine separate Rechnung je Bestellung; bei Sammelbestellungen Lidl-Auftragsnummern exakt je Position ausweisen. "+
@@ -5925,7 +6148,27 @@ function druckansichtZeigen(p){
   document.body.classList.add("druckmodus");
   var zu=function(){ ov.remove(); document.body.classList.remove("druckmodus"); };
   ov.querySelector("#d_zu").onclick=zu;
-  ov.querySelector("#d_druck").onclick=function(){ window.print(); };
+  /* Drucken druckt dasselbe PDF, das auch gespeichert und archiviert wird –
+     eine Darstellung statt zwei, ohne Kopf- und Fußzeile des Browsers und
+     mit dem Rapportbericht dahinter. Nur wenn das PDF nicht entstehen kann
+     (etwa ohne Verbindung beim ersten Mal), druckt der Browser das Blatt. */
+  var druckKnopf=ov.querySelector("#d_druck");
+  druckKnopf.onclick=function(){
+    var fenster=window.open("", "_blank");   /* gleich öffnen, sonst blockiert der Browser es */
+    druckKnopf.disabled=true; druckKnopf.textContent="PDF wird erstellt …";
+    pdfErzeugen(p).then(function(blob){
+      druckKnopf.disabled=false; druckKnopf.textContent="Drucken";
+      var url=URL.createObjectURL(blob);
+      if(fenster && !fenster.closed){ fenster.location.href=url; }
+      else pdfAnsicht(url, "Protokoll zum Drucken");
+      setTimeout(function(){ URL.revokeObjectURL(url); }, 120000);
+    }, function(e){
+      druckKnopf.disabled=false; druckKnopf.textContent="Drucken";
+      if(fenster && !fenster.closed) fenster.close();
+      toast("PDF ließ sich nicht erstellen ("+(e&&e.message||e)+") – es wird das Blatt gedruckt.");
+      window.print();
+    });
+  };
   /* Eigenes PDF statt Druckdialog: ohne Kopf- und Fußzeile des Browsers
      (Adresse der Seite, Datum, Seitenzahlen) und ohne leere Seiten. */
   var pdfKnopf=ov.querySelector("#d_pdf");
@@ -6036,8 +6279,18 @@ function protokollPdfErzeugen(p){
       .then(function(){
         /* mögliche Umbruchstellen: Unterkanten von Zeilen, Überschriften, Fotos */
         var oben=blatt.getBoundingClientRect().top, stellen=[];
-        blatt.querySelectorAll("tr, h2, h1, .kopf, .kaestchen > div, figure, .fuss, table").forEach(function(e){
+        blatt.querySelectorAll("tr, h1, .kopf, .kaestchen > div, figure, .fuss, table, .zusammen").forEach(function(e){
+          /* in einem Block, der beisammen bleiben soll, nur dessen Ende */
+          var z=e.closest(".zusammen");
+          if(z && z!==e) return;
           stellen.push(Math.round(e.getBoundingClientRect().bottom-oben));
+        });
+        /* vor einer Überschrift umbrechen, nie danach – sonst steht sie allein
+           am Seitenende und ihr Abschnitt auf der nächsten Seite */
+        blatt.querySelectorAll("h2").forEach(function(e){
+          var z=e.closest(".zusammen");
+          if(z && z.firstElementChild!==e) return;
+          stellen.push(Math.round((z||e).getBoundingClientRect().top-oben)-2);
         });
         stellen.sort(function(a,b){ return a-b; });
         var hoehe=blatt.scrollHeight;
@@ -6135,7 +6388,7 @@ function protokollDetail(p){
   var d=el('<div class="card" style="box-shadow:none;background:var(--ground)"><div class="pad stack">'+
     '<div class="rowflex" style="justify-content:space-between">'+
       '<strong style="font-family:var(--f-disp);font-size:15px">'+(istStoerung(p)?'<span class="tag st">Störung</span> ':"")+
-        esc(protoName(p)||"Protokoll")+"</strong>"+
+        (byId[p.standortId]?marktLink(byId[p.standortId],protoName(p)):esc(protoName(p)||"Protokoll"))+"</strong>"+
       '<span class="muted mono" style="font-size:12px">'+dfmt(p.datum)+(p.uhrzeit?" "+esc(p.uhrzeit):"")+"</span>"+
     "</div>"+
     (p.geloescht?'<div class="note warnbox"><strong>Gelöscht</strong> am '+tagFmt(p.geloescht)+
@@ -6342,10 +6595,23 @@ function protokollDetail(p){
 /* ---------- Wartungshistorie einer Filiale ----------
    Führt die Einträge aus der Excel-Liste und die Protokolle der App
    zusammen: wer hat wann welche Anlage gewartet. */
+/* Zwei Einträge für dieselbe Anlage, die höchstens so viele Tage auseinander
+   liegen, sind ein und derselbe Besuch – aus Liste, Prüfbuch oder App. */
+var BESUCH_TAGE=14;
+function gleicherBesuch(a,b){
+  if(!a || !b) return false;
+  return Math.abs(new Date(a+"T12:00:00")-new Date(b+"T12:00:00"))<=BESUCH_TAGE*86400000;
+}
 function historieEintraege(s){
   var zeilen=[];
   s.pos.forEach(function(p){
     (p.historie||[]).forEach(function(d){
+      /* gibt es dazu ein Protokoll aus der App, steht nur das */
+      var ausApp=alleProtokolle().some(function(pr){
+        var ids=(pr.positionIds&&pr.positionIds.length)?pr.positionIds:(pr.positionId?[pr.positionId]:[]);
+        return !istStoerung(pr) && ids.indexOf(p.id)>=0 && gleicherBesuch(pr.datum,d);
+      });
+      if(ausApp) return;
       zeilen.push({datum:d, anlage:anlagenName(p), art:p.intervall.art,
         techniker:kanonName((p.techniker&&p.techniker[d.slice(0,4)])||""), quelle:"Liste"});
     });
@@ -6617,11 +6883,85 @@ function viewVerlauf(){
         else { S.adm=S.adm||{suche:"", filter:"alle", sort:"filiale", auf:true}; S.adm.sel=e.standortId; S.adm.entwurf=null; S.view="verwaltung"; }
         render(); window.scrollTo({top:0});
       };
+      /* Rückgängig: Stammdaten auf den Stand davor, eine Korrektur auf die
+         Fassung davor. Nur für die Verwaltung, immer mit Grund, und selbst
+         wieder ein Eintrag im Verlauf – der sich ebenso zurücknehmen lässt. */
+      if(Admin.frei){
+        var zurueck=null;
+        if(e.art==="stammdaten" && e.rueck && Object.keys(e.rueck).length) zurueck=function(){ stammRueckgaengig(e); };
+        else if(e.art==="korrigiert" && jetzt && jetzt._quelle==="zentral" && Store.modus==="supabase" && !jetzt.geloescht &&
+                liste.filter(function(x){ return x.protokollId===e.protokollId && x.art==="korrigiert"; })[0]===e)
+          zurueck=function(){ korrekturRueckgaengig(e, jetzt); };
+        if(zurueck){
+          var rb=el('<button class="btn ghost sm" type="button">Rückgängig machen</button>');
+          rb.onclick=zurueck;
+          var leiste=b.querySelector("button") ? b.querySelector("button").parentNode : null;
+          if(leiste) leiste.appendChild(rb); else { var d2=el("<div></div>"); d2.appendChild(rb); b.appendChild(d2); }
+        }
+      }
       host.appendChild(b);
     });
   };
   ladeAenderungen().then(zeichne, function(){ zeichne(aenderungen); });
   return f;
+}
+
+function stammRueckgaengig(e){
+  var ids=Object.keys(e.rueck);
+  /* wurde seither nochmals geändert, geht auch das verloren – sagen */
+  var spaeter=ids.filter(function(id){ var j=stammStand[id]; return j && (j.geaendert||"")>(e.zeit||""); });
+  var frage="Diese Änderung vom "+zeitFmt(e.zeit)+" zurücknehmen?"+
+    (spaeter.length?"\n\nAchtung: "+spaeter.length+" der betroffenen Einträge wurde seither nochmals geändert – auch das wird damit zurückgesetzt.":"");
+  if(!window.confirm(frage)) return;
+  var grund=window.prompt("Warum wird die Änderung zurückgenommen?","");
+  if(grund===null) return;
+  if(!grund.trim()){ toast("Ohne Grund wird nichts zurückgenommen."); return; }
+  var zeit=new Date().toISOString();
+  Promise.all(ids.map(function(id){
+    var vorher=e.rueck[id];
+    if(vorher){
+      var rec=Object.assign({}, vorher, {geaendert:zeit, von:wer(), grund:"Rückgängig: "+grund.trim()});
+      stammUeber[id]=rec;
+      return stammSpeichern(rec);
+    }
+    delete stammUeber[id];                 /* gab es vorher nicht */
+    return stammLoeschen(id);
+  })).then(function(){
+    wendeStammdatenAn();
+    protokolliere({art:"stammdaten", standortId:e.standortId, standortName:e.standortName,
+      grund:"Rückgängig (Änderung vom "+zeitFmt(e.zeit)+"): "+grund.trim(),
+      felder:(e.felder||[]).map(function(x){ return {feld:x.feld, name:x.name, alt:x.neu, neu:x.alt}; })});
+    berechneFaelligkeiten(); render();
+    toast("Änderung zurückgenommen.");
+  });
+}
+/* Eine Korrektur zurücknehmen: die Datenbank hat vor jeder Korrektur die
+   ganze Fassung gesichert (protokoll_fassungen). Die wird als neue Fassung
+   wieder eingesetzt – nichts wird überschrieben oder gelöscht. */
+function korrekturRueckgaengig(e, p){
+  if(!window.confirm("Die Korrektur vom "+zeitFmt(e.zeit)+" zurücknehmen? Das Protokoll bekommt wieder den Stand davor, als neue Fassung.")) return;
+  var grund=window.prompt("Warum wird die Korrektur zurückgenommen?","");
+  if(grund===null) return;
+  if(!grund.trim()){ toast("Ohne Grund wird nichts zurückgenommen."); return; }
+  Store.sb.from("protokoll_fassungen").select("daten,version").eq("client_id",p._id).order("gesichert",{ascending:false}).limit(1)
+    .then(function(r){
+      var f=r.data && r.data[0];
+      if(r.error || !f){ toast("Die vorherige Fassung ließ sich nicht laden"+(r.error?" ("+r.error.message+")":"")+"."); return; }
+      return ladeUnterschrift(p).then(function(){
+        var alt=ausZeile(f.daten);
+        var doc=Object.assign({}, alt, {version:(p.version||1)+1, geaendert:new Date().toISOString(),
+          korrekturGrund:"Rückgängig: "+grund.trim()});
+        if(typeof doc.unterschrift!=="string") doc.unterschrift=p.unterschrift||"";
+        var felder=vergleiche(p, doc);
+        return aktualisiereProtokoll(p._id, doc, "zentral").then(function(ok){
+          if(!ok){ toast("Zurücknehmen fehlgeschlagen"+(Store.fehler?" ("+Store.fehler+")":"")+"."); return; }
+          protokolliere({art:"korrigiert", protokollId:p._id, standortId:doc.standortId, standortName:doc.standortName,
+            grund:"Rückgängig (Korrektur vom "+zeitFmt(e.zeit)+"): "+grund.trim(), felder:felder});
+          berechneFaelligkeiten(); render();
+          toast("Korrektur zurückgenommen – "+felder.length+" Feld"+(felder.length===1?"":"er")+" wieder wie vorher.");
+        });
+      });
+    });
 }
 
 /* ================= Verwaltung ================= */
@@ -7466,6 +7806,177 @@ function verwaltungEditor(s){
   return c;
 }
 
+/* ================= Prüfen: Checkliste fürs Büro =================
+   Termine und Daten kommen inzwischen aus vielen Quellen: Excel-Liste,
+   Verwaltung, Anlagendaten vor Ort, Prüfbuch, Protokolle, offene Störungen,
+   Rapporte. Hier steht alles, was sich widerspricht oder doppelt ist – mit
+   dem Markt zum Antippen. Nichts wird automatisch geändert. */
+function pruefListe(){
+  var L=[], dazu=function(schwere, thema, text, s, extra){
+    L.push(Object.assign({schwere:schwere, thema:thema, text:text, standortId:s?s.id:null}, extra||{}));
+  };
+  var protos=alleProtokolle();
+  var pids=function(pr){ return (pr.positionIds&&pr.positionIds.length)?pr.positionIds:(pr.positionId?[pr.positionId]:[]); };
+  var heute=isoLokal(new Date());
+
+  /* 1. was die Verwaltung je Markt findet */
+  ST.forEach(function(s){
+    var a=auffaelligkeiten(s);
+    a.fehler.forEach(function(t){ dazu("Fehler", /Termin|Soll-Monat|Kürzel|JW|HJ|Inbetriebnahme/.test(t)?"Termine":"Stammdaten", t, s); });
+    a.luecken.forEach(function(t){
+      if(/Zwei Termine am selben Tag/.test(t)) return;          /* zwei Anlagen am selben Tag ist normal */
+      if(/bewusst so/.test(t)) return;                           /* begründet – nur eine Notiz */
+      dazu("Lücke", /Termin|Inbetriebnahme/.test(t)?"Termine":"Anlagendaten", t, s);
+    });
+  });
+
+  /* 2. Termine, um die sich jemand kümmern sollte */
+  POS.forEach(function(p){
+    var s=byId[p.standortId]; if(!s) return;
+    if(p.ausgelassen) dazu("Hinweis","Termine", anlagenName(p)+": Termin "+dfmt(p.ausgelassen)+" wurde ausgelassen (nicht gewartet).", s);
+    if(!p.letzte && p.status==="ueberfaellig") dazu("Hinweis","Termine", anlagenName(p)+": nie gewartet erfasst und überfällig – fehlt ein Nachweis (Liste, Prüfbuch, Protokoll)?", s);
+  });
+
+  /* 3. Doppelte Anlagen */
+  var nachSn={};
+  ALLE_POS.forEach(function(p){
+    if(anlageLeader(p)!==p || p.aktiv===false) return;
+    var d=anlageDaten(p), sn=String(d.seriennummer||"").replace(/\s+/g,"").toUpperCase();
+    if(sn.length>=4) (nachSn[sn]=nachSn[sn]||[]).push(p);
+  });
+  Object.keys(nachSn).forEach(function(sn){
+    var l=nachSn[sn]; if(l.length<2) return;
+    dazu("Fehler","Doppelt", "Seriennummer "+sn+" steht bei "+l.length+" Anlagen: "+
+      l.map(function(p){ return anlagenName(p)+" ("+stName(byId[p.standortId]||{})+")"; }).join(", ")+" – eine davon ist doppelt erfasst.",
+      byId[l[0].standortId]);
+  });
+  ST.forEach(function(s){
+    var an=anlagenDesMarkts(s,false).map(function(a){ return {p:a.leader, d:anlageDaten(a.leader)}; });
+    an.forEach(function(x,i){
+      an.slice(i+1).forEach(function(y){
+        var gleichesModell=x.d.modell && y.d.modell && x.d.modell.replace(/\s+/g,"").toUpperCase()===y.d.modell.replace(/\s+/g,"").toUpperCase();
+        var snX=String(x.d.seriennummer||""), snY=String(y.d.seriennummer||"");
+        if(!gleichesModell || (snX && snY && snX!==snY)) return;
+        if(!gleich(x.d.kaeltemittelKg, y.d.kaeltemittelKg)) return;
+        var neu=x.p.vorOrtNeu||y.p.vorOrtNeu||x.p._neu||y.p._neu;
+        dazu(neu?"Fehler":"Hinweis","Doppelt", anlagenName(x.p)+" und "+anlagenName(y.p)+": gleiches Modell "+x.d.modell+
+          (x.d.kaeltemittelKg?" und gleiche Füllmenge":"")+(snX||snY?"":", keine Seriennummer")+
+          " – dieselbe Anlage zweimal"+(neu?" (eine davon neu angelegt)":"")+"? Sonst Seriennummer eintragen.", s);
+      });
+    });
+  });
+
+  /* 4. Doppelte Protokolle: dieselbe Anlage, derselbe Besuch */
+  var wart=protos.filter(function(pr){ return !istStoerung(pr) && pr.datum; });
+  wart.forEach(function(pr,i){
+    wart.slice(i+1).forEach(function(q){
+      if(pr.standortId!==q.standortId || !gleicherBesuch(pr.datum,q.datum)) return;
+      var gemeinsam=pids(pr).filter(function(id){ return pids(q).indexOf(id)>=0; });
+      if(!gemeinsam.length) return;
+      dazu("Fehler","Doppelt", "Zwei Wartungsprotokolle für "+feldText("positionIds",gemeinsam)+" ("+dfmt(pr.datum)+" und "+dfmt(q.datum)+
+        ") – ein Besuch zweimal erfasst? Eines davon löschen (Admin).", byId[pr.standortId]);
+    });
+  });
+
+  /* 5. Offene Störungen */
+  var offen=offeneStoerungen(true);
+  var nachNr={};
+  offen.forEach(function(o){ if(o.auftragsnummer) (nachNr[o.auftragsnummer]=nachNr[o.auftragsnummer]||[]).push(o); });
+  Object.keys(nachNr).forEach(function(nr){
+    if(nachNr[nr].length>1) dazu("Fehler","Störungen", "Auftrag "+nr+" ist "+nachNr[nr].length+"× als offene Störung erfasst.", byId[nachNr[nr][0].standortId]);
+  });
+  offen.forEach(function(o){
+    var s=byId[o.standortId];
+    if(!o.standortId) dazu("Fehler","Störungen", "Offene Störung "+(o.auftragsnummer||o.problemtyp||"")+" hat keinen Markt.", null);
+    var pr=o.auftragsnummer ? protos.filter(function(x){ return istStoerung(x) && x.auftragsnummer===o.auftragsnummer; })[0] : null;
+    if(pr) dazu("Fehler","Störungen", "Auftrag "+o.auftragsnummer+" ist noch offen, obwohl es schon ein Störungsprotokoll vom "+dfmt(pr.datum)+" gibt – abhaken?", s);
+  });
+  var stNr={};
+  protos.filter(istStoerung).forEach(function(pr){ if(pr.auftragsnummer) (stNr[pr.auftragsnummer]=stNr[pr.auftragsnummer]||[]).push(pr); });
+  Object.keys(stNr).forEach(function(nr){
+    var l=stNr[nr]; if(l.length<2) return;
+    dazu("Hinweis","Störungen", "Auftrag "+nr+" hat "+l.length+" Störungsprotokolle ("+l.map(function(p){ return dfmt(p.datum); }).join(", ")+
+      ") – bei mehreren Einsätzen richtig, sonst doppelt.", byId[l[0].standortId]);
+  });
+
+  /* 6. Rapporte */
+  var rapNr={};
+  protos.forEach(function(pr){
+    var r=rapportVon(pr); if(!r) return;
+    var d=r.daten;
+    if(d && d.nummer) (rapNr[d.nummer]=rapNr[d.nummer]||[]).push(pr);
+    var s=byId[pr.standortId];
+    var abw=rapportAbweichung(d, s&&s.filiale, pr.datum);
+    if(abw) dazu("Fehler","Rapporte", "Protokoll vom "+dfmt(pr.datum)+": "+abw, s);
+  });
+  Object.keys(rapNr).forEach(function(nr){
+    var l=rapNr[nr]; if(l.length<2) return;
+    dazu("Fehler","Rapporte", "Rapport "+nr+" hängt an "+l.length+" Protokollen ("+l.map(function(p){ return dfmt(p.datum); }).join(", ")+
+      ") – er gehört nur zu einem.", byId[l[0].standortId]);
+  });
+  protos.forEach(function(pr){
+    if(pr.datum && pr.datum>heute) dazu("Fehler","Protokolle", "Protokoll mit Datum in der Zukunft ("+dfmt(pr.datum)+").", byId[pr.standortId]);
+  });
+
+  var rang={Fehler:0, Hinweis:1, "Lücke":2};
+  return L.sort(function(a,b){ return rang[a.schwere]-rang[b.schwere] || a.thema.localeCompare(b.thema) ||
+    stName(byId[a.standortId]||{}).localeCompare(stName(byId[b.standortId]||{}),"de"); });
+}
+function viewPruefen(){
+  var f=document.createDocumentFragment();
+  var liste=pruefListe();
+  S.pruef=S.pruef||{schwere:"Fehler", thema:"alle"};
+  var themen=["alle"].concat(liste.map(function(x){ return x.thema; }).filter(function(t,i,a){ return a.indexOf(t)===i; }).sort());
+  var zahl=function(sw){ return liste.filter(function(x){ return x.schwere===sw; }).length; };
+  var c=el('<div class="card"><div class="pad stack">'+
+    '<div><h2>Prüfen</h2><div class="sub">Checkliste fürs Büro: was sich widerspricht, doppelt ist oder fehlt – '+
+      "aus Liste, Verwaltung, Anlagendaten, Prüfbuch, Protokollen, offenen Störungen und Rapporten. "+
+      "Marktnamen antippen öffnet den Markt. Geändert wird hier nichts.</div></div>"+
+    '<div class="kpis">'+
+      '<div class="kpi crit"><div class="n">'+zahl("Fehler")+'</div><div class="l">Fehler</div></div>'+
+      '<div class="kpi warn"><div class="n">'+zahl("Hinweis")+'</div><div class="l">Hinweise</div></div>'+
+      '<div class="kpi"><div class="n">'+zahl("Lücke")+'</div><div class="l">Lücken</div></div>'+
+    "</div>"+
+    '<div class="chips" data-f="schwere">'+["Fehler","Hinweis","Lücke","alle"].map(function(w){
+      return '<button class="chip" type="button" data-w="'+w+'" aria-pressed="'+(S.pruef.schwere===w)+'">'+
+        ({Fehler:"Fehler",Hinweis:"Hinweise","Lücke":"Lücken",alle:"alles"})[w]+"</button>"; }).join("")+"</div>"+
+    '<div class="chips" data-f="thema">'+themen.map(function(w){
+      return '<button class="chip" type="button" data-w="'+esc(w)+'" aria-pressed="'+(S.pruef.thema===w)+'">'+esc(w)+"</button>"; }).join("")+"</div>"+
+    '<div class="rowflex"><button class="btn ghost sm" type="button" data-a="csv">Liste als CSV für Excel</button></div>'+
+    '<div class="stack" data-liste></div>'+
+  "</div></div>");
+  var sicht=liste.filter(function(x){
+    return (S.pruef.schwere==="alle" || x.schwere===S.pruef.schwere) && (S.pruef.thema==="alle" || x.thema===S.pruef.thema);
+  });
+  var host=c.querySelector("[data-liste]");
+  if(!sicht.length) host.appendChild(el('<div class="muted">Nichts gefunden.</div>'));
+  sicht.slice(0,400).forEach(function(x){
+    var s=byId[x.standortId];
+    var r=el('<div class="posbox'+(x.schwere==="Fehler"?" stoerbox":"")+'"><div class="rowflex" style="justify-content:space-between;gap:8px">'+
+      "<div>"+(s?"<strong>"+marktLink(s)+"</strong>"+(s.filiale?' <span class="muted mono">'+esc(s.filiale)+"</span>":""):"<strong>ohne Markt</strong>")+"</div>"+
+      '<span class="rowflex" style="gap:4px"><span class="tag">'+esc(x.thema)+'</span><span class="pill '+
+        (x.schwere==="Fehler"?"p-ueberfaellig":x.schwere==="Hinweis"?"p-faellig":"p-unbekannt")+'">'+esc(x.schwere)+"</span></span></div>"+
+      '<div style="font-size:13px">'+esc(x.text)+"</div></div>");
+    if(s && Admin.frei){
+      var b=el('<button class="btn ghost sm" type="button" style="justify-self:start">In der Verwaltung öffnen</button>');
+      b.onclick=function(){ S.adm=S.adm||{suche:"", filter:"alle", sort:"filiale", auf:true}; S.adm.sel=s.id; S.adm.entwurf=null;
+        S.view="verwaltung"; render(); window.scrollTo({top:0}); };
+      r.appendChild(b);
+    }
+    host.appendChild(r);
+  });
+  if(sicht.length>400) host.appendChild(el('<div class="muted">… und '+(sicht.length-400)+" weitere – Filter enger stellen oder CSV nehmen.</div>"));
+  c.querySelectorAll("[data-f] .chip").forEach(function(b){
+    b.onclick=function(){ S.pruef[b.parentNode.dataset.f]=b.dataset.w; render(); };
+  });
+  c.querySelector('[data-a="csv"]').onclick=function(){
+    csv("pruefliste_lidl.csv", ["Schwere","Thema","Filiale","Markt","Befund"], sicht.map(function(x){
+      var s=byId[x.standortId]||{}; return [x.schwere, x.thema, s.filiale||"", s.id?stName(s):"", x.text]; }));
+  };
+  f.appendChild(c);
+  return f;
+}
+
 function viewDaten(){
   var f=document.createDocumentFragment();
   var codes={}; POS.forEach(function(p){ var c=p.intervallCode||"(leer)"; codes[c]=(codes[c]||0)+1; });
@@ -7597,13 +8108,14 @@ function render(){
   var host=document.getElementById("app");
   host.innerHTML="";
   var sec=document.createElement("section"); sec.className="view";
-  if(["protokoll","daten","verlauf","verwaltung"].indexOf(S.view)<0) host.appendChild(filterBar());
+  if(["protokoll","daten","verlauf","verwaltung","pruefen"].indexOf(S.view)<0) host.appendChild(filterBar());
   if(S.view==="faellig") sec.appendChild(viewFaellig());
   else if(S.view==="karte") sec.appendChild(viewKarte());
   else if(S.view==="anlagen") sec.appendChild(viewAnlagen());
   else if(S.view==="protokoll") sec.appendChild(viewProtokoll());
   else if(S.view==="verlauf") sec.appendChild(viewVerlauf());
   else if(S.view==="verwaltung") sec.appendChild(viewVerwaltung());
+  else if(S.view==="pruefen") sec.appendChild(viewPruefen());
   else sec.appendChild(viewDaten());
   host.appendChild(sec);
   tipHide();

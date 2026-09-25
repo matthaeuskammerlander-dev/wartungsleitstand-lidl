@@ -492,6 +492,16 @@ Drei Dinge sind bewusst so gebaut:
   Regelungen — Techniker-Konten gehören deshalb persönlich vergeben und beim
   Ausscheiden gesperrt.
 
+**Prüfbuch-Angaben** (freiwillig, eigener Schritt im Dialog): GWP, höchster
+Betriebsdruck, to/tk, hermetisch dicht, Fluidgruppe, Druck-Liter-Produkt,
+Gefahrenpotential, erste Betriebsprüfung, Leckage-Erkennung,
+Dichtheitskontrolle, Arbeitsstättenverordnung, Konformitätserklärung und
+Aufsteller. Das **CO₂-Äquivalent** rechnet die App aus Füllmenge und GWP
+(ohne eingetragenes GWP mit dem Standardwert des Kältemittels).
+
+**Prüfbuch** gilt als vorhanden und liegt standardmäßig im **Büro UKT –
+Technik-Ordner 2**, solange vor Ort nichts anderes eingetragen wird.
+
 **Die Listen lernen dazu.** Was einmal unter „andere …“ eingetippt wurde,
 steht beim nächsten Mal als Knopf zur Auswahl – zuerst das, was am häufigsten
 vorkommt. Bis das Protokoll gespeichert ist, kennt nur das Gerät den neuen
@@ -622,6 +632,62 @@ Zugriffsregel auf `stammdaten` um den neuen Typ. Bis dahin bleibt eine
 erfasste Störung auf dem Gerät und geht von selbst raus, sobald die Regel
 da ist.
 
+## Prüfen – Checkliste fürs Büro
+
+Termine und Anlagendaten kommen aus vielen Quellen: Excel-Liste, Verwaltung,
+Anlagendaten vor Ort, Prüfbuch, Protokolle, offene Störungen und Rapporte.
+Der Reiter **Prüfen** zeigt, was sich widerspricht, doppelt ist oder fehlt –
+getrennt nach Fehlern, Hinweisen und Lücken, filterbar nach Thema und als CSV
+für Excel. Geändert wird dort nichts; Marktnamen antippen öffnet den Markt,
+Admins springen mit einem Tipp in die Verwaltung.
+
+Geprüft wird unter anderem:
+
+- **Termine:** Soll-Monat ohne Begründung, unklares Kürzel, zwei Termine
+  derselben Anlage am selben Tag, verschiedene Inbetriebnahmedaten einer
+  Anlage, ausgelassene und nie gewartete Termine.
+- **Doppelt:** dieselbe Seriennummer bei mehreren Anlagen; zwei Anlagen im
+  selben Markt mit gleichem Modell und gleicher Füllmenge ohne
+  unterscheidende Seriennummer (vor allem, wenn eine vor Ort neu angelegt
+  wurde); zwei Wartungsprotokolle für dieselbe Anlage und denselben Besuch.
+- **Störungen:** dieselbe Auftragsnummer mehrfach offen; eine offene
+  Störung, zu der es schon ein Störungsprotokoll gibt; mehrere
+  Störungsprotokolle zu einem Auftrag.
+- **Rapporte:** derselbe Rapport an mehreren Protokollen; Rapport passt
+  nicht zu Filiale oder Datum.
+- **Protokolle** mit Datum in der Zukunft.
+
+**Derselbe Besuch nur einmal.** Einträge für dieselbe Anlage, die höchstens
+14 Tage auseinanderliegen, gelten als ein Besuch – ob aus Liste, Prüfbuch
+oder App. Steht ein Tag im Prüfbuch, gilt er statt des Listeneintrags; gibt
+es ein Protokoll aus der App, steht in der Historie nur das.
+
+## Markt und Anlage von überall
+
+- **Marktnamen antippen** – in Fällig, bei offenen Störungen, im Kalender,
+  im Protokoll, unter Prüfen – öffnet den Markt mit offenen Störungen,
+  Anlagen, Terminen und seiner Wartungs- und Störungshistorie, ohne den
+  Reiter zu wechseln.
+- **Historie der Anlage** (Knopf an jeder Anlagenkarte): Wartungen aus Liste,
+  Prüfbuch und App, Störungseinsätze, Rapportstunden, offene Störungen.
+- Eine **offene Störung** kann ihre Anlage nennen („Betroffene Anlage“,
+  freiwillig). Sie steht dann rot an der Anlagenkarte, und das
+  Störungsprotokoll hat die Anlage schon angehakt.
+- **Ausnahme ohne Lidl-Auftrag:** bei offener Störung und Störungsprotokoll
+  ankreuzbar – dann ist die Auftragsnummer keine Pflicht.
+
+## Änderungen rückgängig machen
+
+Unter *Verlauf → Letzte Änderungen* haben Admins bei Stammdaten-Änderungen
+und bei der jeweils letzten Korrektur eines Protokolls **Rückgängig machen**.
+Stammdaten gehen exakt auf den Stand davor zurück (jeder Eintrag im Verlauf
+trägt ihn in der Spalte `rueck` mit); eine Korrektur wird mit der Fassung
+davor aus `protokoll_fassungen` zurückgenommen – als neue Fassung, nichts
+wird gelöscht. Immer mit Grund, und selbst wieder ein Eintrag im Verlauf.
+Wurde seither nochmals geändert, sagt die App das vorher.
+
+Einmalig nötig: `tools/update-2026-09-26.sql` (Rapport-Spalte und `rueck`).
+
 ## Rapportbericht von Lidl
 
 Ist ein Auftrag im Lidl-System abgeschlossen, entsteht dort der
@@ -642,8 +708,10 @@ Rechnung und gehört deshalb zum Protokoll – bei **Wartungen und Störungen**.
   App das, bevor gespeichert wird.
 - **Im PDF und im Druck:** „Als PDF speichern“ und das PDF für die Synology
   hängen den Rapportzettel mit seinen **Originalseiten** hinter das Protokoll
-  (pdf-lib) – scharf und durchsuchbar. Beim Drucken folgt er auf eigenen
-  Blättern. Auf dem Blatt selbst steht „Rapportbericht Lidl: liegt bei“ mit
+  (pdf-lib) – scharf und durchsuchbar. **Drucken** druckt genau dieses PDF –
+  eine Darstellung statt zwei, ohne Kopf- und Fußzeile des Browsers. Fotos
+  stehen vollständig im eigenen Seitenverhältnis, der Abschluss mit
+  Unterschrift bleibt auf einer Seite. Auf dem Blatt selbst steht „Rapportbericht Lidl: liegt bei“ mit
   Nummer, Einsatzzeiten und Stunden. Wird ein Rapport nachgereicht, entsteht
   das Archiv-PDF neu. Lässt er sich beim Erzeugen nicht laden, gilt das
   Archiv-PDF als nicht fertig und wird später nachgeholt.

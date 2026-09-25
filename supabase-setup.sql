@@ -136,6 +136,9 @@ create table if not exists public.aenderungen (
   felder         jsonb not null default '[]'::jsonb,   -- [{feld, name, alt, neu}]
   eingetragen_von uuid default auth.uid()
 );
+-- Stand davor bei Stammdaten-Änderungen – damit „Rückgängig machen“ exakt
+-- zurücksetzen kann (je Eintrag die vorherige Fassung der Stammdaten-Zeile)
+alter table public.aenderungen add column if not exists rueck jsonb;
 create index if not exists aenderungen_zeit_idx      on public.aenderungen (zeit desc);
 create index if not exists aenderungen_protokoll_idx on public.aenderungen (protokoll_id);
 
