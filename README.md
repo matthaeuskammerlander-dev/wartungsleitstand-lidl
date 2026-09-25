@@ -696,6 +696,33 @@ Die Datei liegt im selben Speicher wie die Fotos, unter
 sie mit „mime type not supported" ab, und das Protokoll bleibt so lange auf
 dem Gerät.
 
+**Rapportbericht von Lidl.** Ist der Auftrag im Lidl-System abgeschlossen,
+entsteht dort der Rapportzettel, den wir uns per Mail schicken. Er gehört
+zum Störungsprotokoll und wird dort im Original abgelegt, unter
+`<protokollkennung>/rapport.pdf`:
+
+- Liegt er schon vor, im Störungsprotokoll unter **Rapportbericht von Lidl**
+  → „Rapportbericht öffnen“.
+- Kommt er später – der Normalfall –, am gespeicherten Protokoll auf
+  **Rapportbericht anhängen** tippen und die PDF wählen. Die App öffnet die
+  Korrektur mit dem Grund „Rapportbericht angehängt“; „Korrektur speichern“
+  legt ihn ab. So steht er wie jede Änderung im Verlauf, das Protokoll
+  bekommt eine neue Fassung.
+- Einmal abgelegt, bleibt er: ersetzen lässt er sich nicht, wie beim
+  Auftrags-PDF.
+- Auf dem Druckblatt steht „Rapportbericht Lidl: liegt bei“. Die PDF selbst
+  geht nicht mit ins Archiv auf der Synology.
+
+Der Rapportzettel kommt als eingescanntes Bild ohne lesbaren Text. Die App
+liest deshalb nichts daraus aus; Auftragsnummer und Arbeitszeit stehen
+ohnehin im Protokoll.
+
+*Geplant:* eine eigene Mailadresse, an die Lidl Aufträge und Rapportberichte
+direkt schickt und aus der die App sie abholt. Dafür braucht es ein Postfach
+und einen Dienst, der es abruft; weil der Rapportzettel nur ein Bild ist,
+müsste er die Auftragsnummer per Texterkennung lesen, um ihn dem richtigen
+Protokoll zuzuordnen.
+
 **Welche Anlage betroffen ist,** wird im Störungsprotokoll genauso ausgewählt
 wie bei der Wartung die gewartete Anlage – nur heißt die Frage hier **„An
 welcher Anlage liegt die Störung?"** und der Vermerk **betroffen** statt

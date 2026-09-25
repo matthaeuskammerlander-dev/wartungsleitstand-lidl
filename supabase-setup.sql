@@ -265,7 +265,8 @@ create trigger urheber_bleibt
 -- Nicht oeffentlich: die Dateien werden ueber zeitlich begrenzte Links
 -- ausgeliefert, die die App fuer angemeldete Techniker erzeugt.
 -- Im selben Bucket liegt bei einem Stoerungsprotokoll der Auftrag von Lidl
--- im Original, unter <protokollkennung>/auftrag.pdf.
+-- im Original, unter <protokollkennung>/auftrag.pdf, und der Rapportbericht,
+-- den Lidl nach Abschluss des Auftrags erzeugt, unter <protokollkennung>/rapport.pdf.
 insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
 values ('protokollfotos', 'protokollfotos', false, 5242880,
         array['image/jpeg','image/png','application/pdf'])

@@ -2970,7 +2970,7 @@ function alleProtokolle(mitGeloeschten){
   var zentral=(protokolle||[]).map(function(p){ return Object.assign({_quelle:"zentral"},p); });
   var lokal=(lokaleProtokolle||[]).map(function(e){
     return Object.assign({_quelle:"geraet", _id:e.id, _fotoDaten:e.fotos||[],
-                          _auftragDaten:e.auftrag||null}, e.doc);
+                          _auftragDaten:e.auftrag||null, _rapportDaten:e.rapport||null}, e.doc);
   });
   /* Gelöschte zählen nirgends mit – weder in Listen noch als Wartungsnachweis.
      Nur die Verwaltung holt sie zum Wiederherstellen dazu. */
@@ -3065,6 +3065,7 @@ function vergleiche(alt, neu){
     var txt=function(w){
       if(k==="material") return (w||[]).map(function(m){ return m.text+(m.menge?" ("+m.menge+")":""); }).join("; ")||"–";
       if(k==="folgeauftrag") return w?"ja":"nein";
+      if(k==="rapportDatei") return w&&w.name?w.name:"–";
       if(/datum|Bis$/.test(k)) return w?dfmt(w):"–";
       return (w==null||w==="")?"–":String(w);
     };
@@ -3613,45 +3614,57 @@ function ladeFotos(p){
    -------------------------------------------------------------------- */
 function auftragPfad(protokollId){ return protokollId+"/auftrag.pdf"; }
 
-function speichereAuftragPdf(protokollId, pdf){
+/* Zweites PDF daneben: der Rapportbericht, den Lidl nach Abschluss des
+   Auftrags erzeugt. Gleiche Ablage, gleiche Regeln – kein Überschreiben. */
+var ANHANG={
+  auftrag:{pfad:auftragPfad, claude:"auftragspdf/", feld:"auftragDatei", daten:"_auftragDaten", datei:"auftrag.pdf"},
+  rapport:{pfad:function(id){ return id+"/rapport.pdf"; }, claude:"rapportpdf/", feld:"rapportDatei", daten:"_rapportDaten", datei:"rapport.pdf"}
+};
+function speichereAnhangPdf(art, protokollId, pdf){
+  var a=ANHANG[art];
   if(!pdf || !pdf.datenUrl) return Promise.resolve(true);
   if(Store.modus==="claude" && Store.claudeDb){
-    return Store.claudeDb.doc("auftragspdf/"+protokollId).set({
-      protokollId:protokollId, name:pdf.name||"auftrag.pdf",
+    return Store.claudeDb.doc(a.claude+protokollId).set({
+      protokollId:protokollId, name:pdf.name||a.datei,
       datenUrl:pdf.datenUrl, erstellt:new Date().toISOString()
     }).then(function(){ return true; }, function(){ return false; });
   }
   if(Store.modus==="supabase" && Store.sb){
     return Store.sb.storage.from("protokollfotos")
-      .upload(auftragPfad(protokollId), datenUrlZuBlob(pdf.datenUrl,"application/pdf"),
+      .upload(a.pfad(protokollId), datenUrlZuBlob(pdf.datenUrl,"application/pdf"),
               {contentType:"application/pdf", upsert:false})
       .then(function(r){ if(r.error){ Store.fehler=r.error.message; return false; } return true; },
             function(){ return false; });
   }
   return Promise.resolve(false);
 }
+function speichereAuftragPdf(protokollId, pdf){ return speichereAnhangPdf("auftrag", protokollId, pdf); }
+function speichereRapportPdf(protokollId, pdf){ return speichereAnhangPdf("rapport", protokollId, pdf); }
 
-/* Link zum Auftrag eines Protokolls – null, wenn keiner dabei ist */
-function ladeAuftragPdf(p){
-  var ref=p.stoerung && p.stoerung.auftragDatei;
+/* Link zu Auftrag bzw. Rapport eines Protokolls – null, wenn keiner dabei ist */
+function ladeAnhangPdf(art, p){
+  var a=ANHANG[art];
+  var ref=p.stoerung && p.stoerung[a.feld];
   if(!ref) return Promise.resolve(null);
   /* noch nicht uebertragen: das PDF liegt im Geraetespeicher */
-  if(p._auftragDaten && p._auftragDaten.datenUrl)
-    return Promise.resolve({name:ref.name, url:p._auftragDaten.datenUrl});
+  if(p[a.daten] && p[a.daten].datenUrl)
+    return Promise.resolve({name:ref.name, url:p[a.daten].datenUrl});
   var id=p._id||p.id;
   if(Store.modus==="claude" && Store.claudeDb){
-    return Store.claudeDb.doc("auftragspdf/"+id).get().then(function(snap){
+    return Store.claudeDb.doc(a.claude+id).get().then(function(snap){
       var d=snap.exists?snap.data():null;
       return d ? {name:ref.name, url:d.datenUrl} : null;
     }, function(){ return null; });
   }
   if(Store.modus==="supabase" && Store.sb){
-    return Store.sb.storage.from("protokollfotos").createSignedUrl(auftragPfad(id), 3600)
+    return Store.sb.storage.from("protokollfotos").createSignedUrl(a.pfad(id), 3600)
       .then(function(r){ return r.data ? {name:ref.name, url:r.data.signedUrl} : null; },
             function(){ return null; });
   }
   return Promise.resolve(null);
 }
+function ladeAuftragPdf(p){ return ladeAnhangPdf("auftrag", p); }
+function ladeRapportPdf(p){ return ladeAnhangPdf("rapport", p); }
 
 /* ein Protokoll wegschreiben – liefert ein Promise, das nie ablehnt */
 function speichereProtokoll(id,doc){
@@ -3680,9 +3693,9 @@ function speichereProtokoll(id,doc){
 }
 
 /* eine Korrektur wegschreiben – gleiche Kennung, neue Fassung */
-function aktualisiereProtokoll(id, doc, quelle, geraetFotos, geraetAuftrag){
+function aktualisiereProtokoll(id, doc, quelle, geraetFotos, geraetAuftrag, geraetRapport){
   if(quelle==="geraet"){
-    return idbSchreiben({id:id, doc:doc, fotos:geraetFotos||[], auftrag:geraetAuftrag||null, erstellt:doc.erstellt})
+    return idbSchreiben({id:id, doc:doc, fotos:geraetFotos||[], auftrag:geraetAuftrag||null, rapport:geraetRapport||null, erstellt:doc.erstellt})
       .then(function(){ return true; }, function(){ return false; });
   }
   if(Store.modus==="claude" && Store.claudeDb){
@@ -3736,6 +3749,8 @@ function flushQueue(){
     speichereFotos(e.id, e.fotos||[]).then(function(fotosOk){
       if(!fotosOk){ next(); return; }
       speichereAuftragPdf(e.id, e.auftrag).then(function(pdfOk){
+        return pdfOk ? speichereRapportPdf(e.id, e.rapport) : false;
+      }).then(function(pdfOk){
         if(!pdfOk){ next(); return; }
         speichereProtokoll(e.id,e.doc).then(function(ok){
           if(!ok){ next(); return; }
@@ -3854,7 +3869,8 @@ var STOER_TEXTE=[["beschreibung","Beschreibung laut Auftrag"],["fehlerbild","Feh
   ["ursache","Ursache"],["massnahmen","Durchgeführte Maßnahmen"]];
 /* für Änderungsverlauf und Anzeige: alle Felder mit Namen */
 var STOER_NAMEN=(function(){ var n={}; STOER_AUFTRAG.concat(STOER_BEHEBUNG,STOER_TEXTE).forEach(function(f){ n[f[0]]=f[1]; });
-  n.material="Material / Ersatzteile"; n.folgeauftrag="Folgeauftrag / Angebot"; n.folgeText="Folgeauftrag – was"; return n; })();
+  n.material="Material / Ersatzteile"; n.folgeauftrag="Folgeauftrag / Angebot"; n.folgeText="Folgeauftrag – was";
+  n.rapportDatei="Rapportbericht"; return n; })();
 
 function istStoerung(p){ return !!p && (p.wartungsart==="Störung" || !!p.stoerung); }
 function datumIso(t){ var m=/^(\d{1,2})\.(\d{1,2})\.(\d{4})$/.exec(String(t||"").trim());
@@ -4467,6 +4483,18 @@ function viewProtokoll(){
       '<label class="chk" style="margin-top:12px"><input type="checkbox" id="s_folgeauftrag"><span>Folgeauftrag / Angebot erforderlich</span></label>'+
       '<label class="fl" style="margin-top:8px"><span>Was ist noch zu tun?</span><input type="text" id="s_folgeText" '+
         'placeholder="z. B. Verdichter tauschen – Angebot an Lidl"></label>'+
+    "</fieldset>"+
+    /* Den Rapportbericht erzeugt Lidl erst nach Abschluss des Auftrags und
+       schickt ihn per Mail. Er kann gleich hier oder später am gespeicherten
+       Protokoll angehängt werden. */
+    '<fieldset><legend>Rapportbericht von Lidl</legend>'+
+      '<div class="rowflex">'+
+        '<label class="btn ghost sm" for="s_rapport" style="cursor:pointer">Rapportbericht öffnen</label>'+
+        '<input type="file" id="s_rapport" accept="application/pdf,.pdf" hidden>'+
+        '<span class="muted" id="s_rapportinfo" style="font-size:12.5px">noch keiner angehängt</span>'+
+      "</div>"+
+      '<div class="muted" style="font-size:12.5px;margin-top:6px">Die PDF aus der Mail von Lidl, im Original. '+
+        "Kommt sie erst später, lässt sie sich am gespeicherten Protokoll nachreichen.</div>"+
     "</fieldset>";
 
   var dbHinweis;
@@ -4830,6 +4858,8 @@ function viewProtokoll(){
   /* das Auftrags-PDF im Original – aus der geoeffneten Datei oder aus der
      offenen Stoerung. Es wird mit dem Protokoll abgelegt. */
   var auftragPdf=null;
+  /* der Rapportbericht von Lidl – ebenfalls im Original */
+  var rapportPdf=null;
   var setzS=function(k,w){ var n=form.querySelector("#s_"+k); if(n && w!=null && w!=="") n.value=w; };
   var sInfo=function(html){ var n=form.querySelector("#s_info"); if(n) n.innerHTML=html; };
   var sWarn=function(html){ var n=form.querySelector("#s_warn"); if(n){ n.innerHTML=html||""; n.hidden=!html; } };
@@ -4888,6 +4918,41 @@ function viewProtokoll(){
               ". Mit dem Speichern wird sie als erledigt abgehakt.");
       }
     }
+    /* Rapportbericht: einmal abgelegt, bleibt er – eine Korrektur kann ihn
+       nachreichen, aber nicht ersetzen (wie beim Auftrag) */
+    var rapEin=form.querySelector("#s_rapport"), rapInfo=form.querySelector("#s_rapportinfo");
+    var rapZeigen=function(){
+      var alt=bearb && bearb.stoerung && bearb.stoerung.rapportDatei;
+      if(alt){
+        rapInfo.innerHTML="liegt bei: <strong>"+esc(alt.name||"rapport.pdf")+"</strong>";
+        rapEin.disabled=true; rapEin.previousElementSibling.hidden=true;
+      } else if(rapportPdf){
+        rapInfo.innerHTML='<strong>'+esc(rapportPdf.name)+'</strong> · <a href="#" data-a="rapsehen">ansehen</a> · <a href="#" data-a="rapweg">entfernen</a>';
+        rapInfo.querySelector('[data-a="rapsehen"]').onclick=function(e){ e.preventDefault(); pdfAnsicht(rapportPdf.datenUrl, rapportPdf.name); };
+        rapInfo.querySelector('[data-a="rapweg"]').onclick=function(e){ e.preventDefault(); rapportPdf=null; formDirty=true; rapZeigen(); };
+      } else rapInfo.textContent="noch keiner angehängt";
+    };
+    form._rapportZeigen=rapZeigen;
+    rapEin.onchange=function(){
+      var datei=rapEin.files&&rapEin.files[0]; rapEin.value="";
+      if(!datei) return;
+      if(!/pdf$/i.test(datei.type||"") && !/\.pdf$/i.test(datei.name||"")){ toast("Bitte die PDF aus der Mail von Lidl wählen."); return; }
+      dateiAlsDatenUrl(datei).then(function(u){
+        rapportPdf={name:datei.name||"rapport.pdf", datenUrl:u}; formDirty=true; rapZeigen();
+      }, function(){ toast("Die Datei ließ sich nicht lesen."); });
+    };
+    /* vom gespeicherten Protokoll aus gewählt: gleich übernehmen */
+    if(S.rapportNeu && bearb && !(bearb.stoerung && bearb.stoerung.rapportDatei)){
+      rapportPdf=S.rapportNeu; formDirty=true;
+      setTimeout(function(){
+        var g=form.querySelector("#f_grund"); if(g && !g.value) g.value="Rapportbericht angehängt";
+        var sv=form.querySelector("#save"); if(sv) sv.scrollIntoView({behavior:"smooth", block:"center"});
+        toast("Rapportbericht übernommen – jetzt „Korrektur speichern“ tippen.");
+      }, 300);
+    }
+    S.rapportNeu=null;
+    rapZeigen();
+
     var pdfEin=form.querySelector("#s_pdf");
     pdfEin.onchange=function(){
       var datei=pdfEin.files&&pdfEin.files[0]; pdfEin.value="";
@@ -5197,7 +5262,7 @@ function viewProtokoll(){
       anlagenAend:JSON.parse(JSON.stringify(anlagenAend||{})),
       neueAnlagen:JSON.parse(JSON.stringify(neueAnlagen||[])),
       auftragSeiten:(geladenerAuftrag&&geladenerAuftrag._seiten)||null,
-      auftragPdf:auftragPdf,
+      auftragPdf:auftragPdf, rapportPdf:rapportPdf,
       unterschrift: form._sig.vorhanden() ? cv.toDataURL("image/png") : ""
     };
     form.querySelectorAll("input,select,textarea").forEach(function(n){
@@ -5241,6 +5306,7 @@ function viewProtokoll(){
     anlagenZeichnen();
     if(d.auftragSeiten && d.auftragSeiten.length) auftragBildZeigen(d.auftragSeiten);
     if(d.auftragPdf && d.auftragPdf.datenUrl) auftragPdf=d.auftragPdf;
+    if(d.rapportPdf && d.rapportPdf.datenUrl){ rapportPdf=d.rapportPdf; if(form._rapportZeigen) form._rapportZeigen(); }
     if(d.unterschrift) form._sig.setzen(d.unterschrift);
     if(d.stoerungAus) S.stoerungAus=d.stoerungAus;
     formDirty=true;
@@ -5349,6 +5415,10 @@ function viewProtokoll(){
       if(altePdf) so2.auftragDatei=altePdf;             /* liegt schon da und bleibt */
       else if(auftragPdf && auftragPdf.datenUrl)
         so2.auftragDatei={name:auftragPdf.name||"auftrag.pdf", bytes:datenUrlBytes(auftragPdf.datenUrl)};
+      var alterRapport=bearb && bearb.stoerung && bearb.stoerung.rapportDatei;
+      if(alterRapport) so2.rapportDatei=alterRapport;
+      else if(rapportPdf && rapportPdf.datenUrl)
+        so2.rapportDatei={name:rapportPdf.name||"rapport.pdf", bytes:datenUrlBytes(rapportPdf.datenUrl)};
       doc.stoerung=so2;
       doc.wartungsart="Störung";
     }
@@ -5409,12 +5479,16 @@ function viewProtokoll(){
       var neuesPdf=(auftragPdf && auftragPdf.datenUrl && !(bearb.stoerung && bearb.stoerung.auftragDatei))
                    ? auftragPdf : null;
       var geraetAuftrag=aufGeraet ? (neuesPdf || bearb._auftragDaten || null) : null;
+      var neuerRapport=(rapportPdf && rapportPdf.datenUrl && !(bearb.stoerung && bearb.stoerung.rapportDatei))
+                   ? rapportPdf : null;
+      var geraetRapport=aufGeraet ? (neuerRapport || bearb._rapportDaten || null) : null;
       (aufGeraet ? Promise.resolve(true)
                  : speichereFotos(kid, fotos).then(function(ok2){
-                     return ok2 ? speichereAuftragPdf(kid, neuesPdf) : false; })
+                     return ok2 ? speichereAuftragPdf(kid, neuesPdf) : false; }).then(function(ok3){
+                     return ok3 ? speichereRapportPdf(kid, neuerRapport) : false; })
       ).then(function(fotosOk){
-        if(!fotosOk){ fehlschlag("Die neuen Fotos ließen sich nicht übertragen – die Korrektur ist noch nicht gespeichert. Bitte bei Verbindung erneut versuchen."); return; }
-        aktualisiereProtokoll(kid, doc, bearb._quelle, geraetFotos, geraetAuftrag).then(function(ok){
+        if(!fotosOk){ fehlschlag("Neue Fotos oder PDFs ließen sich nicht übertragen – die Korrektur ist noch nicht gespeichert. Bitte bei Verbindung erneut versuchen."); return; }
+        aktualisiereProtokoll(kid, doc, bearb._quelle, geraetFotos, geraetAuftrag, geraetRapport).then(function(ok){
           if(!ok){ fehlschlag("Die Korrektur konnte nicht gespeichert werden"+(Store.fehler?" ("+Store.fehler+")":"")+". Ihre Eingaben sind noch da."); return; }
           anlagenUebernehmen(doc);
           protokolliere({art:"korrigiert", protokollId:kid, standortId:doc.standortId,
@@ -5431,7 +5505,7 @@ function viewProtokoll(){
 
     /* 1. immer zuerst sicher aufs Gerät – das klappt auch im Funkloch */
     var eintrag={id:id, doc:doc, fotos:fotos, auftrag:(auftragPdf&&auftragPdf.datenUrl)?auftragPdf:null,
-                 erstellt:doc.erstellt};
+                 rapport:(rapportPdf&&rapportPdf.datenUrl)?rapportPdf:null, erstellt:doc.erstellt};
     idbSchreiben(eintrag).then(function(){
       anlagenUebernehmen(doc);   /* vor Ort ergänzte Anlagendaten */
       lokaleProtokolle.unshift(eintrag);
@@ -5449,6 +5523,8 @@ function viewProtokoll(){
         if(!fotosOk){ fertig(wartet); return; }
         if(eintrag.auftrag) btn.textContent="Auftrag wird übertragen …";
         return speichereAuftragPdf(id, eintrag.auftrag).then(function(pdfOk){
+          return pdfOk ? speichereRapportPdf(id, eintrag.rapport) : false;
+        }).then(function(pdfOk){
           if(!pdfOk){ fertig(wartet); return; }
           btn.textContent="Übertragen …";
           return speichereProtokoll(id,doc).then(function(ok){
@@ -5652,6 +5728,7 @@ function blattInhalt(p){
         /* Bestellnummer gibt es im Formular nicht mehr – ältere Protokolle zeigen sie weiter */
         (p.bestellnummer?zeile("Bestellnummer",p.bestellnummer):"")+
         zeile("Lidl-Auftragsnummer / Position",p.auftragsnummer)+
+        (p.stoerung&&p.stoerung.rapportDatei?zeile("Rapportbericht Lidl","liegt bei ("+p.stoerung.rapportDatei.name+")"):"")+
         zeile("FM-Region",p.region)+
         zeile("Standort / Filiale / Lager",protoName(p)+(p.filiale&&protoName(p).indexOf(p.filiale)<0?" · Filiale "+p.filiale:""))+
         zeile("Adresse",p.adresse)+
@@ -5970,6 +6047,7 @@ function protokollDetail(p){
     (p.bemerkungen?'<div><div class="l muted" style="font-size:11px;text-transform:uppercase;letter-spacing:.06em;margin-bottom:4px">Bemerkungen</div>'+
       '<div style="font-size:13px">'+esc(p.bemerkungen)+"</div></div>":"")+
     '<div id="pauftrag"></div>'+
+    '<div id="prapport"></div>'+
     '<div id="pfotos"></div>'+
   "</div></div>");
 
@@ -6055,6 +6133,41 @@ function protokollDetail(p){
         : el('<div class="note warnbox" style="font-size:12.5px">Die PDF <strong>'+esc(ref.name||"auftrag.pdf")+
              "</strong> gehört zu diesem Protokoll, ließ sich aber gerade nicht abrufen.</div>"));
     });
+  }
+
+  /* Rapportbericht von Lidl: öffnen, oder – solange keiner dabei ist –
+     nachreichen. Nachreichen ist eine Korrektur mit vorbelegtem Grund, damit
+     es wie jede andere Änderung im Verlauf steht. */
+  var rh=d.querySelector("#prapport");
+  var rTitel='<div class="l muted" style="font-size:11px;text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px">Rapportbericht von Lidl</div>';
+  if(istStoerung(p) && p.stoerung && p.stoerung.rapportDatei){
+    var rref=p.stoerung.rapportDatei;
+    var rkb=rref.bytes ? " · "+Math.max(1,Math.round(rref.bytes/1024))+" KB" : "";
+    rh.innerHTML=rTitel;
+    var rk=el('<button class="btn ghost sm" type="button">'+esc(rref.name||"rapport.pdf")+rkb+" öffnen</button>");
+    rk.onclick=function(){
+      ladeRapportPdf(p).then(function(b){
+        if(b && b.url) pdfAnsicht(b.url, rref.name); else toast("Der Rapportbericht ließ sich gerade nicht abrufen.");
+      });
+    };
+    rh.appendChild(rk);
+  } else if(istStoerung(p) && korrKnopf){
+    rh.innerHTML=rTitel+'<div class="rowflex">'+
+      '<label class="btn sm" style="cursor:pointer">Rapportbericht anhängen'+
+        '<input type="file" accept="application/pdf,.pdf" hidden></label>'+
+      '<span class="muted" style="font-size:12.5px">noch keiner dabei – die PDF aus der Mail von Lidl</span></div>';
+    var rein=rh.querySelector("input");
+    rein.onchange=function(){
+      var datei=rein.files&&rein.files[0]; rein.value="";
+      if(!datei) return;
+      if(!/pdf$/i.test(datei.type||"") && !/\.pdf$/i.test(datei.name||"")){ toast("Bitte die PDF aus der Mail von Lidl wählen."); return; }
+      dateiAlsDatenUrl(datei).then(function(u){
+        S.rapportNeu={name:datei.name||"rapport.pdf", datenUrl:u};
+        return ladeUnterschrift(p);
+      }).then(function(){
+        formDirty=false; S.bearbeiten={x:p}; S.view="protokoll"; render(); window.scrollTo({top:0});
+      }, function(){ toast("Die Datei ließ sich nicht lesen."); });
+    };
   }
 
   var fh=d.querySelector("#pfotos");
