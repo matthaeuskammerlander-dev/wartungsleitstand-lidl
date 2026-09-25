@@ -588,6 +588,28 @@ Auftragsnummer. Der Scan ist deshalb gedacht
 
 Gibt es zur Auftragsnummer schon ein Protokoll, weist die App darauf hin.
 
+**Das Auftrags-PDF wird mitgespeichert.** Wo eine PDF geöffnet wurde – beim
+Erfassen der offenen Störung oder direkt im Protokoll –, liegt sie mit dem
+Protokoll in der Ablage, im **Original** und nicht als Bild. Im gespeicherten
+Protokoll steht dafür unter den Fotos ein Knopf mit Dateiname und Größe, der
+sie öffnet; der Link gilt eine Stunde und wird bei jedem Aufruf neu erzeugt.
+
+Dazu drei Punkte:
+
+- Kommt das Protokoll aus einer **offenen Störung**, wandert die dort
+  hochgeladene PDF mit. Zweimal hochladen muss niemand.
+- Ohne Verbindung bleibt die PDF mit dem Protokoll auf dem Gerät und geht
+  raus, sobald wieder Netz da ist – wie die Fotos.
+- Eine **Korrektur** kann eine fehlende PDF nachreichen, aber keine
+  vorhandene ersetzen. Sie gehört zum Nachweis; die Ablage lässt Überschreiben
+  gar nicht erst zu.
+
+Die Datei liegt im selben Speicher wie die Fotos, unter
+`<protokollkennung>/auftrag.pdf`. Damit sie angenommen wird, muss
+`supabase-setup.sql` einmal neu ausgeführt werden – ohne das weist die Ablage
+sie mit „mime type not supported" ab, und das Protokoll bleibt so lange auf
+dem Gerät.
+
 **Welche Anlage betroffen ist,** wird im Störungsprotokoll genauso ausgewählt
 wie bei der Wartung die gewartete Anlage – nur heißt die Frage hier **„An
 welcher Anlage liegt die Störung?"** und der Vermerk **betroffen** statt
@@ -801,6 +823,7 @@ Oberfläche vorbei direkt gegen die Datenbank:
 |---|---|
 | Protokoll ohne Pflichtangaben speichern | benennt die fehlenden Felder, speichert nicht |
 | Protokoll ohne angehakte Anlage speichern | abgelehnt — sonst wüsste niemand, woran gearbeitet wurde |
+| Ein abgelegtes Auftrags-PDF durch ein anderes ersetzen | Ablage lässt kein Überschreiben zu |
 | Datum in der Zukunft | abgelehnt mit Hinweis |
 | Datum über zwei Jahre zurück | fragt einmal nach |
 | Mehrfach auf Speichern tippen | legt trotzdem nur ein Protokoll an |

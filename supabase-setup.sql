@@ -260,13 +260,24 @@ create trigger urheber_bleibt
 
 
 -- ---------------------------------------------------------------------------
--- Fotospeicher
+-- Fotospeicher (und das Auftrags-PDF von Lidl)
 -- ---------------------------------------------------------------------------
--- Nicht oeffentlich: die Bilder werden ueber zeitlich begrenzte Links
+-- Nicht oeffentlich: die Dateien werden ueber zeitlich begrenzte Links
 -- ausgeliefert, die die App fuer angemeldete Techniker erzeugt.
+-- Im selben Bucket liegt bei einem Stoerungsprotokoll der Auftrag von Lidl
+-- im Original, unter <protokollkennung>/auftrag.pdf.
 insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
-values ('protokollfotos', 'protokollfotos', false, 2097152, array['image/jpeg','image/png'])
+values ('protokollfotos', 'protokollfotos', false, 5242880,
+        array['image/jpeg','image/png','application/pdf'])
 on conflict (id) do nothing;
+
+-- Bestehende Ablage nachziehen: "on conflict do nothing" oben laesst einen
+-- schon angelegten Bucket unberuehrt. Ohne diese Zeilen weist er das
+-- Auftrags-PDF ab ("mime type not supported").
+update storage.buckets
+   set allowed_mime_types = array['image/jpeg','image/png','application/pdf'],
+       file_size_limit    = greatest(coalesce(file_size_limit, 0), 5242880)
+ where id = 'protokollfotos';
 
 drop policy if exists "fotos hochladen"  on storage.objects;
 drop policy if exists "fotos ansehen"    on storage.objects;
@@ -281,8 +292,9 @@ create policy "fotos ansehen"
   to authenticated
   using (bucket_id = 'protokollfotos');
 
--- Kein update, kein delete: ein Foto ist Teil des Nachweises und
--- verschwindet nicht nachtraeglich.
+-- Kein update, kein delete: Foto und Auftrags-PDF sind Teil des Nachweises
+-- und verschwinden nicht nachtraeglich. Eine Korrektur kann ein Auftrags-PDF
+-- nachreichen, aber keines ersetzen.
 
 -- ---------------------------------------------------------------------------
 -- Archiv: ein PDF je Protokoll, abgeholt von der Synology

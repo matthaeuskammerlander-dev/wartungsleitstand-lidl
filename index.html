@@ -1275,6 +1275,9 @@ function stoerungDialog(vorhanden){
     leseLidlPdf(datei).then(function(a){
       o.seiten=(a._seiten||[]).slice(0,2);
       o.quelle="pdf";
+      /* die PDF selbst bleibt am Auftrag haengen und wandert spaeter ins
+         Protokoll – die Seitenbilder sind nur fuers Anschauen da */
+      o.pdfName=a._pdfName; o.pdfDaten=a._pdfDaten;
       if(a._lesbar===false){
         warnen("Aus dieser PDF lässt sich kein Text auslesen – so kommt sie von Lidl. "+
                "Der Auftrag steht unten als Bild, bitte die Felder danach ausfüllen.");
@@ -2581,7 +2584,8 @@ function alleProtokolle(mitGeloeschten){
   /* wird schon beim Start für die Fälligkeiten gebraucht, bevor Listen geladen sind */
   var zentral=(protokolle||[]).map(function(p){ return Object.assign({_quelle:"zentral"},p); });
   var lokal=(lokaleProtokolle||[]).map(function(e){
-    return Object.assign({_quelle:"geraet", _id:e.id, _fotoDaten:e.fotos||[]}, e.doc);
+    return Object.assign({_quelle:"geraet", _id:e.id, _fotoDaten:e.fotos||[],
+                          _auftragDaten:e.auftrag||null}, e.doc);
   });
   /* Gelöschte zählen nirgends mit – weder in Listen noch als Wartungsnachweis.
      Nur die Verwaltung holt sie zum Wiederherstellen dazu. */
@@ -2763,7 +2767,8 @@ function stoerungSpeichern(o, grund){
 }
 var STOER_OFFEN_FELDER=["auftragsnummer","stoerungsnr","filialCode","problemtyp","beschreibung",
   "zieltermin","auftragsdatum","prioritaet","lidlTyp","lidlModell","hersteller","lin","seriennummer",
-  "lidlKontakt","lidlTelefon","lidlMail","notiz","seiten","erledigt","protokollId","quelle"];
+  "lidlKontakt","lidlTelefon","lidlMail","notiz","seiten","pdfName","pdfDaten",
+  "erledigt","protokollId","quelle"];
 
 function wendeStammdatenAn(){
   /* 1. alles auf den Excel-Stand zurück */
@@ -3123,11 +3128,27 @@ function verkleinere(datei){
     }, schiefgegangen);
   });
 }
-function datenUrlZuBlob(url){
+function datenUrlZuBlob(url, typ){
   var teile=url.split(","), roh=atob(teile[1]);
   var a=new Uint8Array(roh.length);
   for(var i=0;i<roh.length;i++) a[i]=roh.charCodeAt(i);
-  return new Blob([a],{type:"image/jpeg"});
+  return new Blob([a],{type:typ||"image/jpeg"});
+}
+/* eine Datei so einlesen, wie sie ist – fuer das Auftrags-PDF, das im
+   Original erhalten bleiben soll und nicht als Bild */
+function dateiAlsDatenUrl(datei){
+  return new Promise(function(ok, nein){
+    var r=new FileReader();
+    r.onload=function(){ ok(r.result); };
+    r.onerror=function(){ nein(r.error||new Error("Datei nicht lesbar")); };
+    r.readAsDataURL(datei);
+  });
+}
+/* Groesse der Originaldatei aus der Data-URL, ohne sie zu dekodieren */
+function datenUrlBytes(url){
+  var b64=String(url||"").split(",")[1]||"";
+  var fuell=(b64.slice(-2).match(/=/g)||[]).length;
+  return Math.max(0, Math.floor(b64.length*3/4)-fuell);
 }
 
 /* speichert alle Fotos eines Protokolls; liefert false, wenn etwas scheitert */
@@ -3190,6 +3211,54 @@ function ladeFotos(p){
   return Promise.resolve([]);
 }
 
+/* --------------------------------------------------------------------
+   Das Auftrags-PDF von Lidl. Es gehoert zum Einsatz und wird deshalb beim
+   Protokoll abgelegt – im Original, nicht als Bild. Die Bilder der ersten
+   zwei Seiten bleiben daneben bestehen, sie sind fuer die Anzeige da.
+   Ablage wie bei den Fotos: ein Pfad unter der Protokollkennung.
+   -------------------------------------------------------------------- */
+function auftragPfad(protokollId){ return protokollId+"/auftrag.pdf"; }
+
+function speichereAuftragPdf(protokollId, pdf){
+  if(!pdf || !pdf.datenUrl) return Promise.resolve(true);
+  if(Store.modus==="claude" && Store.claudeDb){
+    return Store.claudeDb.doc("auftragspdf/"+protokollId).set({
+      protokollId:protokollId, name:pdf.name||"auftrag.pdf",
+      datenUrl:pdf.datenUrl, erstellt:new Date().toISOString()
+    }).then(function(){ return true; }, function(){ return false; });
+  }
+  if(Store.modus==="supabase" && Store.sb){
+    return Store.sb.storage.from("protokollfotos")
+      .upload(auftragPfad(protokollId), datenUrlZuBlob(pdf.datenUrl,"application/pdf"),
+              {contentType:"application/pdf", upsert:false})
+      .then(function(r){ if(r.error){ Store.fehler=r.error.message; return false; } return true; },
+            function(){ return false; });
+  }
+  return Promise.resolve(false);
+}
+
+/* Link zum Auftrag eines Protokolls – null, wenn keiner dabei ist */
+function ladeAuftragPdf(p){
+  var ref=p.stoerung && p.stoerung.auftragDatei;
+  if(!ref) return Promise.resolve(null);
+  /* noch nicht uebertragen: das PDF liegt im Geraetespeicher */
+  if(p._auftragDaten && p._auftragDaten.datenUrl)
+    return Promise.resolve({name:ref.name, url:p._auftragDaten.datenUrl});
+  var id=p._id||p.id;
+  if(Store.modus==="claude" && Store.claudeDb){
+    return Store.claudeDb.doc("auftragspdf/"+id).get().then(function(snap){
+      var d=snap.exists?snap.data():null;
+      return d ? {name:ref.name, url:d.datenUrl} : null;
+    }, function(){ return null; });
+  }
+  if(Store.modus==="supabase" && Store.sb){
+    return Store.sb.storage.from("protokollfotos").createSignedUrl(auftragPfad(id), 3600)
+      .then(function(r){ return r.data ? {name:ref.name, url:r.data.signedUrl} : null; },
+            function(){ return null; });
+  }
+  return Promise.resolve(null);
+}
+
 /* ein Protokoll wegschreiben – liefert ein Promise, das nie ablehnt */
 function speichereProtokoll(id,doc){
   if(Store.modus==="claude" && Store.claudeDb){
@@ -3217,9 +3286,9 @@ function speichereProtokoll(id,doc){
 }
 
 /* eine Korrektur wegschreiben – gleiche Kennung, neue Fassung */
-function aktualisiereProtokoll(id, doc, quelle, geraetFotos){
+function aktualisiereProtokoll(id, doc, quelle, geraetFotos, geraetAuftrag){
   if(quelle==="geraet"){
-    return idbSchreiben({id:id, doc:doc, fotos:geraetFotos||[], erstellt:doc.erstellt})
+    return idbSchreiben({id:id, doc:doc, fotos:geraetFotos||[], auftrag:geraetAuftrag||null, erstellt:doc.erstellt})
       .then(function(){ return true; }, function(){ return false; });
   }
   if(Store.modus==="claude" && Store.claudeDb){
@@ -3272,11 +3341,14 @@ function flushQueue(){
     var e=liste[i++];
     speichereFotos(e.id, e.fotos||[]).then(function(fotosOk){
       if(!fotosOk){ next(); return; }
-      speichereProtokoll(e.id,e.doc).then(function(ok){
-        if(!ok){ next(); return; }
-        done++;
-        /* erst nach bestätigter Übertragung vom Gerät entfernen */
-        idbLoeschen(e.id).then(next,next);
+      speichereAuftragPdf(e.id, e.auftrag).then(function(pdfOk){
+        if(!pdfOk){ next(); return; }
+        speichereProtokoll(e.id,e.doc).then(function(ok){
+          if(!ok){ next(); return; }
+          done++;
+          /* erst nach bestätigter Übertragung vom Gerät entfernen */
+          idbLoeschen(e.id).then(next,next);
+        });
       });
     });
   };
@@ -3486,7 +3558,10 @@ function pdfSeitenAlsBild(pdf, maxSeiten){
 }
 
 function leseLidlPdf(datei){
-  return ladePdfJs().then(function(){ return datei.arrayBuffer(); }).then(function(buf){
+  /* das Original merken – es wird beim Protokoll abgelegt */
+  var roh=null;
+  return ladePdfJs().then(function(){ return dateiAlsDatenUrl(datei); })
+    .then(function(u){ roh=u; return datei.arrayBuffer(); }).then(function(buf){
     return window.pdfjsLib.getDocument({data:new Uint8Array(buf)}).promise;
   }).then(function(pdf){
     var seiten=[]; for(var i=1;i<=Math.min(pdf.numPages,2);i++) seiten.push(i);
@@ -3501,6 +3576,7 @@ function leseLidlPdf(datei){
       return pdfSeitenAlsBild(pdf, 2).then(function(bilder){
         var a = lesbar ? werteLidlAuftrag(teile) : {};
         a._lesbar=lesbar; a._seiten=bilder;
+        a._pdfName=datei.name||"auftrag.pdf"; a._pdfDaten=roh;
         return a;
       });
     });
@@ -4268,6 +4344,9 @@ function viewProtokoll(){
     matHost.appendChild(b);
   }
   var geladenerAuftrag=null, qrGescannt=false;
+  /* das Auftrags-PDF im Original – aus der geoeffneten Datei oder aus der
+     offenen Stoerung. Es wird mit dem Protokoll abgelegt. */
+  var auftragPdf=null;
   var setzS=function(k,w){ var n=form.querySelector("#s_"+k); if(n && w!=null && w!=="") n.value=w; };
   var sInfo=function(html){ var n=form.querySelector("#s_info"); if(n) n.innerHTML=html; };
   var sWarn=function(html){ var n=form.querySelector("#s_warn"); if(n){ n.innerHTML=html||""; n.hidden=!html; } };
@@ -4321,6 +4400,7 @@ function viewProtokoll(){
         setzS("ausfuehrenBis", vor.zieltermin);
         if(vor.auftragsnummer) form.querySelector("#f_auftrag").value=vor.auftragsnummer;
         if(vor.seiten && vor.seiten.length) auftragBildZeigen(vor.seiten);
+        if(vor.pdfDaten) auftragPdf={name:vor.pdfName||"auftrag.pdf", datenUrl:vor.pdfDaten};
         sInfo("Aus der offenen Störung übernommen"+(vor.auftragsnummer?" (Auftrag <strong>"+esc(vor.auftragsnummer)+"</strong>)":"")+
               ". Mit dem Speichern wird sie als erledigt abgehakt.");
       }
@@ -4331,6 +4411,7 @@ function viewProtokoll(){
       if(!datei) return;
       sInfo("Auftrag wird gelesen …"); sWarn("");
       leseLidlPdf(datei).then(function(a){
+        if(a._pdfDaten) auftragPdf={name:a._pdfName, datenUrl:a._pdfDaten};
         if(a._lesbar===false){
           /* Die Schrift im Auftrag hat keine Unicode-Tabelle: zeichnen ja,
              auslesen nein. Statt zu raten wird der Auftrag als Bild gezeigt. */
@@ -4633,6 +4714,7 @@ function viewProtokoll(){
       anlagenAend:JSON.parse(JSON.stringify(anlagenAend||{})),
       neueAnlagen:JSON.parse(JSON.stringify(neueAnlagen||[])),
       auftragSeiten:(geladenerAuftrag&&geladenerAuftrag._seiten)||null,
+      auftragPdf:auftragPdf,
       unterschrift: form._sig.vorhanden() ? cv.toDataURL("image/png") : ""
     };
     form.querySelectorAll("input,select,textarea").forEach(function(n){
@@ -4675,6 +4757,7 @@ function viewProtokoll(){
     if(d.neueAnlagen){ neueAnlagen.length=0; d.neueAnlagen.forEach(function(n){ neueAnlagen.push(n); }); }
     anlagenZeichnen();
     if(d.auftragSeiten && d.auftragSeiten.length) auftragBildZeigen(d.auftragSeiten);
+    if(d.auftragPdf && d.auftragPdf.datenUrl) auftragPdf=d.auftragPdf;
     if(d.unterschrift) form._sig.setzen(d.unterschrift);
     if(d.stoerungAus) S.stoerungAus=d.stoerungAus;
     formDirty=true;
@@ -4777,6 +4860,12 @@ function viewProtokoll(){
       so2.folgeText=v("s_folgeText");
       /* woher die Auftragsdaten stammen – hilft beim Nachvollziehen */
       so2.quelle = geladenerAuftrag ? "pdf" : qrGescannt ? "qr" : (bearb&&bearb.stoerung&&bearb.stoerung.quelle) || "hand";
+      /* Verweis auf das abgelegte Auftrags-PDF. Die Datei selbst liegt
+         daneben, wie die Fotos – im Protokoll steht nur, dass es sie gibt. */
+      var altePdf=bearb && bearb.stoerung && bearb.stoerung.auftragDatei;
+      if(altePdf) so2.auftragDatei=altePdf;             /* liegt schon da und bleibt */
+      else if(auftragPdf && auftragPdf.datenUrl)
+        so2.auftragDatei={name:auftragPdf.name||"auftrag.pdf", bytes:datenUrlBytes(auftragPdf.datenUrl)};
       doc.stoerung=so2;
       doc.wartungsart="Störung";
     }
@@ -4832,9 +4921,17 @@ function viewProtokoll(){
       var kid=bearb._id, aufGeraet=bearb._quelle==="geraet";
       btn.disabled=true; btn.textContent="Korrektur wird gespeichert …";
       var geraetFotos=aufGeraet ? (bearb._fotoDaten||[]).concat(fotos) : null;
-      (aufGeraet ? Promise.resolve(true) : speichereFotos(kid, fotos)).then(function(fotosOk){
+      /* beim Korrigieren darf ein Auftrags-PDF nachgereicht werden; ein schon
+         abgelegtes bleibt, wo es ist */
+      var neuesPdf=(auftragPdf && auftragPdf.datenUrl && !(bearb.stoerung && bearb.stoerung.auftragDatei))
+                   ? auftragPdf : null;
+      var geraetAuftrag=aufGeraet ? (neuesPdf || bearb._auftragDaten || null) : null;
+      (aufGeraet ? Promise.resolve(true)
+                 : speichereFotos(kid, fotos).then(function(ok2){
+                     return ok2 ? speichereAuftragPdf(kid, neuesPdf) : false; })
+      ).then(function(fotosOk){
         if(!fotosOk){ fehlschlag("Die neuen Fotos ließen sich nicht übertragen – die Korrektur ist noch nicht gespeichert. Bitte bei Verbindung erneut versuchen."); return; }
-        aktualisiereProtokoll(kid, doc, bearb._quelle, geraetFotos).then(function(ok){
+        aktualisiereProtokoll(kid, doc, bearb._quelle, geraetFotos, geraetAuftrag).then(function(ok){
           if(!ok){ fehlschlag("Die Korrektur konnte nicht gespeichert werden"+(Store.fehler?" ("+Store.fehler+")":"")+". Ihre Eingaben sind noch da."); return; }
           anlagenUebernehmen(doc);
           protokolliere({art:"korrigiert", protokollId:kid, standortId:doc.standortId,
@@ -4850,7 +4947,8 @@ function viewProtokoll(){
     }
 
     /* 1. immer zuerst sicher aufs Gerät – das klappt auch im Funkloch */
-    var eintrag={id:id, doc:doc, fotos:fotos, erstellt:doc.erstellt};
+    var eintrag={id:id, doc:doc, fotos:fotos, auftrag:(auftragPdf&&auftragPdf.datenUrl)?auftragPdf:null,
+                 erstellt:doc.erstellt};
     idbSchreiben(eintrag).then(function(){
       anlagenUebernehmen(doc);   /* vor Ort ergänzte Anlagendaten */
       lokaleProtokolle.unshift(eintrag);
@@ -4862,16 +4960,21 @@ function viewProtokoll(){
         fertig("Protokoll gespeichert"+(fotos.length?" – mit "+fotos.length+" Foto(s)":"")+".");
         return;
       }
+      var wartet="Auf dem Gerät gespeichert – wird übertragen, sobald Verbindung besteht.";
       if(fotos.length) btn.textContent="Fotos werden übertragen …";
       speichereFotos(id,fotos).then(function(fotosOk){
-        if(!fotosOk){ fertig("Auf dem Gerät gespeichert – wird übertragen, sobald Verbindung besteht."); return; }
-        btn.textContent="Übertragen …";
-        speichereProtokoll(id,doc).then(function(ok){
-          if(!ok){ fertig("Auf dem Gerät gespeichert – wird übertragen, sobald Verbindung besteht."); return; }
-          idbLoeschen(id).then(function(){
-            lokaleProtokolle=lokaleProtokolle.filter(function(x){ return x.id!==id; });
-            fertig("Protokoll gespeichert und übertragen.");
-          },function(){ fertig("Protokoll gespeichert und übertragen."); });
+        if(!fotosOk){ fertig(wartet); return; }
+        if(eintrag.auftrag) btn.textContent="Auftrag wird übertragen …";
+        return speichereAuftragPdf(id, eintrag.auftrag).then(function(pdfOk){
+          if(!pdfOk){ fertig(wartet); return; }
+          btn.textContent="Übertragen …";
+          return speichereProtokoll(id,doc).then(function(ok){
+            if(!ok){ fertig(wartet); return; }
+            return idbLoeschen(id).then(function(){
+              lokaleProtokolle=lokaleProtokolle.filter(function(x){ return x.id!==id; });
+              fertig("Protokoll gespeichert und übertragen.");
+            },function(){ fertig("Protokoll gespeichert und übertragen."); });
+          });
         });
       });
     },function(err){
@@ -5382,6 +5485,7 @@ function protokollDetail(p){
         (m.prio?' <span class="tag">'+esc(m.prio)+"</span>":"")+(m.massnahme?" – "+esc(m.massnahme):"")+"</div>"; }).join("")+"</div>":"")+
     (p.bemerkungen?'<div><div class="l muted" style="font-size:11px;text-transform:uppercase;letter-spacing:.06em;margin-bottom:4px">Bemerkungen</div>'+
       '<div style="font-size:13px">'+esc(p.bemerkungen)+"</div></div>":"")+
+    '<div id="pauftrag"></div>'+
     '<div id="pfotos"></div>'+
   "</div></div>");
 
@@ -5446,6 +5550,23 @@ function protokollDetail(p){
       toast("Protokoll vom Gerät gelöscht."); berechneFaelligkeiten(); render();
     },function(){ toast("Löschen fehlgeschlagen."); });
   };
+
+  /* Das Auftrags-PDF von Lidl – im Original, nicht als Bild. Der Link gilt
+     eine Stunde und wird deshalb erst beim Aufklappen geholt. */
+  var ah=d.querySelector("#pauftrag");
+  if(p.stoerung && p.stoerung.auftragDatei){
+    var ref=p.stoerung.auftragDatei;
+    var kb=ref.bytes ? " · "+Math.max(1,Math.round(ref.bytes/1024))+" KB" : "";
+    ah.innerHTML='<div class="muted" style="font-size:12.5px">Auftrag wird geladen …</div>';
+    ladeAuftragPdf(p).then(function(a){
+      ah.innerHTML='<div class="l muted" style="font-size:11px;text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px">Auftrag von Lidl</div>';
+      ah.appendChild(a && a.url
+        ? el('<a class="btn ghost sm" style="text-decoration:none" href="'+a.url+'" target="_blank" rel="noopener">'+
+             esc(ref.name||"auftrag.pdf")+kb+" öffnen</a>")
+        : el('<div class="note warnbox" style="font-size:12.5px">Die PDF <strong>'+esc(ref.name||"auftrag.pdf")+
+             "</strong> gehört zu diesem Protokoll, ließ sich aber gerade nicht abrufen.</div>"));
+    });
+  }
 
   var fh=d.querySelector("#pfotos");
   if(p.fotos && p.fotos.length){
