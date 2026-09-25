@@ -255,6 +255,25 @@ Liste ab. Wird die Liste neu eingelesen, müssen die Änderungen über
 Filialnummer und Anlagendaten neu zugeordnet werden – oder sie werden vorher in
 die Excel-Liste übernommen.
 
+## Wartungen laut Prüfbuch
+
+Die Excel-Liste kennt nicht jede frühere Wartung, und neu erfasste Anlagen
+haben dort gar keine. Je Anlage lassen sich deshalb **Wartungen laut
+Prüfbuch** nachtragen (Feld `nachweise` in den Stammdaten, je Eintrag Datum
+und auf Wunsch Techniker). Sie zählen wie ein Eintrag der Liste: für den
+letzten Besuch, die Fälligkeit und die Historie. Der Excel-Stand darunter
+bleibt unverändert.
+
+Eingelesen werden die Prüfbücher bisher über Fotos im Chat mit Claude:
+daraus entsteht eine Datendatei, aus der `pruefbuch-sql.ps1` das Skript für
+den Supabase SQL Editor erzeugt. Beides liegt außerhalb des Repositorys, weil
+es Anlagendaten enthält.
+
+Anlagen, die ausdrücklich als eigene Anlage geführt werden, dürfen im selben
+Monat drankommen, ohne dass die Verwaltung „zweimal JW im selben Monat“ als
+Fehler meldet – so wie ein Markt, dessen Anlagen alle an einem Tag gewartet
+werden.
+
 ## Wartungshistorie je Filiale
 
 Unter **Verlauf** lässt sich jede Filiale aufrufen: wer hat wann welche Anlage

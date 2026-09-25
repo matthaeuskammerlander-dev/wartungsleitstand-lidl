@@ -405,7 +405,9 @@ var STAMM_FELDER_POS = ["anlagentyp","intervallCode","inbetriebnahme","monat","m
                         "regelung","regelungFirma","regelungFirmaName","fernzugriff","zugangLink","zugangBenutzer","zugangPasswort",
                         "ortAussen","ortStrom","ortRegelung","ortPruefbuch","hersteller","modell","seriennummer","leistungKw","vorOrtNeu",
                         /* Zuordnung einer Termin-Zeile zu ihrer Anlage (von Hand) */
-                        "anlageZu"];
+                        "anlageZu",
+                        /* Wartungen laut Prüfbuch, die in der Excel-Liste fehlen: [{datum, techniker}] */
+                        "nachweise"];
 var ABGELEITET_POS   = ["kaeltemittelText","ueber30kg","baujahr"];
 function auswahl(o, felder){
   var r={}; felder.forEach(function(k){ r[k]=(o[k]===undefined?null:o[k]); }); return r;
@@ -3188,6 +3190,15 @@ function wendeStammdatenAn(){
     var ex=EXCEL["position:"+p.id];
     p.monat = p.monat ? +p.monat : 0;
     p.baujahr = p.inbetriebnahme ? +String(p.inbetriebnahme).slice(0,4) : null;
+    /* Wartungen laut Prüfbuch: nachgetragene Termine, die in der Excel-Liste
+       fehlen. Sie zählen wie ein Eintrag der Liste – für die Fälligkeit und
+       in der Historie. Der Excel-Stand bleibt darunter unverändert. */
+    if(!p._historieExcel) p._historieExcel=(p.historie||[]).slice();
+    var nw=Array.isArray(p.nachweise) ? p.nachweise.filter(function(n){ return n && /^\d{4}-\d\d-\d\d$/.test(n.datum||""); }) : [];
+    var tage={}; p._historieExcel.concat(nw.map(function(n){ return n.datum; })).forEach(function(d){ if(d) tage[d]=1; });
+    p.historie=Object.keys(tage).sort();
+    p.techniker=p.techniker||{};
+    nw.forEach(function(n){ var j=n.datum.slice(0,4); if(n.techniker && !p.techniker[j]) p.techniker[j]=n.techniker; });
     var kgGeaendert = !ex || p.kaeltemittelKg!==ex.kaeltemittelKg;
     if(kgGeaendert){
       var kg=(p.kaeltemittelKg===""||p.kaeltemittelKg==null)?null:+p.kaeltemittelKg;
@@ -6359,7 +6370,8 @@ var LABEL_POS={anlagentyp:"Anlagentyp", intervallCode:"Kürzel", inbetriebnahme:
   monatGrund:"Grund für den abweichenden Soll-Monat",
   monat:"Soll-Monat", kaeltemittelKg:"Kältemittel (kg)", kaeltemittelArt:"Kältemittelart",
   rueckkuehler:"Rückkühler", aktiv:"in Betrieb", notiz:"Notiz",
-  pausiert:"zur Zeit nicht gewartet", pausiertGrund:"Grund (nicht gewartet)", vorOrtNeu:"vor Ort neu erfasst", anlageZu:"gehört zu Anlage"};
+  pausiert:"zur Zeit nicht gewartet", pausiertGrund:"Grund (nicht gewartet)", vorOrtNeu:"vor Ort neu erfasst", anlageZu:"gehört zu Anlage",
+  nachweise:"Wartungen laut Prüfbuch"};
 ANLAGE_FELDER.forEach(function(f){ if(!LABEL_POS[f.k]) LABEL_POS[f.k]=f.l; });
 function stammWert(feld, w){
   if(w===null||w===undefined||w==="") return "–";
@@ -6367,6 +6379,7 @@ function stammWert(feld, w){
      nicht, wie es lautet. Sonst stünde jedes alte Passwort dauerhaft lesbar
      in einer Liste, die sich absichtlich nicht mehr ändern lässt. */
   if(feld==="zugangPasswort") return "••••••••";
+  if(feld==="nachweise") return Array.isArray(w)&&w.length ? w.map(function(n){ return dfmt(n.datum)+(n.techniker?" ("+n.techniker+")":""); }).join(", ") : "–";
   if(feld==="aktiv"||feld==="pausiert"||feld==="vorOrtNeu") return w?"ja":"nein";
   if(feld==="monat") return MONATE_L[+w]||"–";
   if(feld==="inbetriebnahme") return dfmt(w);
@@ -6390,6 +6403,9 @@ function auffaelligkeiten(s){
   s.pos.forEach(function(p,i){
     s.pos.slice(i+1).forEach(function(q){
       if(anlageLeader(p)!==p || anlageLeader(q)!==q) return;
+      /* ausdrücklich als eigene Anlage geführt: dann sind es wirklich zwei
+         Anlagen, die im selben Monat drankommen – kein vergessenes Paar */
+      if(p.anlageZu===p.id || q.anlageZu===q.id) return;
       if(slotMonat(p) && slotMonat(p)===slotMonat(q) && intervallArt(p.intervallCode).kurz===intervallArt(q.intervallCode).kurz)
         f.push(anlagenName(p)+": zweimal "+intervallArt(p.intervallCode).kurz+" im "+MONATE_L[slotMonat(p)]+
           " – ist eine Zeile eigentlich die Halbjahreswartung? Dann dort Kürzel HJW/HJI setzen, sonst über „Gehört zu Anlage“ zusammenführen.");
