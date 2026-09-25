@@ -73,6 +73,10 @@ alter table public.protokolle add column if not exists loesch_grund    text;
 -- Leer bei Wartungen. Stoerungen haben wartungsart = 'Stoerung' und
 -- verschieben deshalb keine Faelligkeit.
 alter table public.protokolle add column if not exists stoerung        jsonb;
+-- Rapportbericht von Lidl (Wartung und Störung): Name, Größe und was sich aus
+-- der PDF lesen ließ. Die Datei selbst liegt im Bucket protokollfotos unter
+-- <client_id>/rapport.pdf.
+alter table public.protokolle add column if not exists rapport         jsonb;
 -- zweiter und dritter Techniker, falls zu mehreren gearbeitet wurde
 alter table public.protokolle add column if not exists mitarbeiter     jsonb;
 create index if not exists protokolle_auftrag_idx on public.protokolle (auftragsnummer);

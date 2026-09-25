@@ -622,6 +622,69 @@ Zugriffsregel auf `stammdaten` um den neuen Typ. Bis dahin bleibt eine
 erfasste Störung auf dem Gerät und geht von selbst raus, sobald die Regel
 da ist.
 
+## Rapportbericht von Lidl
+
+Ist ein Auftrag im Lidl-System abgeschlossen, entsteht dort der
+Rapportzettel, den wir uns per Mail schicken. Er ist die Grundlage der
+Rechnung und gehört deshalb zum Protokoll – bei **Wartungen und Störungen**.
+
+- **Anhängen:** im Protokoll unter *Rapportbericht von Lidl* → „Rapportbericht
+  öffnen“, oder später am gespeicherten Protokoll → **Rapportbericht
+  anhängen**. Das Nachreichen öffnet die Korrektur mit dem Grund
+  „Rapportbericht angehängt“; „Korrektur speichern“ legt ihn ab.
+- **Ausgelesen:** Die PDF aus der Lidl-Mail enthält echten Text. Die App liest
+  Rapportnummer, Auftrags-Nr., Filiale und je Einsatztag Datum, Arbeitskräfte,
+  Anfang, Ende, Pause, verrechenbare Stunden und die ausgeführten Arbeiten.
+  Der Dateiname aus der Mail (`619415854_AT0249_28658685_rapport.pdf`) hilft,
+  wo der Text schweigt. Ein eingescannter Zettel liefert nichts – dann bleibt
+  es beim Original.
+- **Abgleich:** Passt die Filiale oder der Tag nicht zum Protokoll, sagt die
+  App das, bevor gespeichert wird.
+- **Im PDF und im Druck:** „Als PDF speichern“ und das PDF für die Synology
+  hängen den Rapportzettel mit seinen **Originalseiten** hinter das Protokoll
+  (pdf-lib) – scharf und durchsuchbar. Beim Drucken folgt er auf eigenen
+  Blättern. Auf dem Blatt selbst steht „Rapportbericht Lidl: liegt bei“ mit
+  Nummer, Einsatzzeiten und Stunden. Wird ein Rapport nachgereicht, entsteht
+  das Archiv-PDF neu. Lässt er sich beim Erzeugen nicht laden, gilt das
+  Archiv-PDF als nicht fertig und wird später nachgeholt.
+- **Ablage:** im Original unter `<protokollkennung>/rapport.pdf`, der Verweis
+  samt ausgelesenen Daten in der Spalte `rapport`. Einmal abgelegt, bleibt er
+  – ersetzen lässt er sich nicht.
+
+**Einmalig nötig:** `tools/rapport-spalte.sql` (steht auch in
+`supabase-setup.sql`) im SQL Editor ausführen. Bis dahin lädt die App
+normal; ein Protokoll mit Rapport bleibt so lange auf dem Gerät und geht
+danach von selbst raus.
+
+*Geplant:* ein eigenes Postfach nur für die Datenbank, an das Lidl Aufträge
+und Rapportberichte direkt schickt. Weil der Rapport lesbaren Text und die
+Filiale im Dateinamen hat, lässt er sich dann auch ohne Texterkennung dem
+richtigen Protokoll zuordnen.
+
+## Überprüfung nach § 22 Kälteanlagenverordnung
+
+§ 22 Abs. 1 KAV (BGBl. Nr. 305/1969 idF BGBl. Nr. 450/1994, geprüft am
+25.09.2026 im RIS) verlangt, Kälteanlagen **jedenfalls in Abständen von
+höchstens einem Jahr** – und zusätzlich nach größeren Betriebsstörungen,
+größeren Instandsetzungen und wesentlichen Änderungen – durch befugte
+fachkundige Personen auf ihre Betriebssicherheit zu überprüfen. § 23 Abs. 1
+verlangt im Prüfbuch den Zeitpunkt jeder Überprüfung, die festgestellten
+Mängel und die Angabe, ob gegen den weiteren Betrieb vom
+sicherheitstechnischen Standpunkt Bedenken bestehen.
+
+Im Wartungsprotokoll steht deshalb:
+
+- unter dem Titel „Wartung und Überprüfung der Betriebssicherheit nach § 22
+  Kälteanlagenverordnung (KAV)“,
+- je Anlage „Gewartet als: Jahreswartung nach § 22 KAV“ (bzw.
+  Halbjahreswartung, Halbjahresinspektion),
+- unter *Ergebnis* zum Ankreuzen – bewusst nicht vorbelegt – „Gegen den
+  weiteren Betrieb bestehen vom sicherheitstechnischen Standpunkt keine
+  Bedenken (§ 23 KAV).“
+
+Alles Weitere wird wie bisher angehakt. Die amtliche Abkürzung ist KAV;
+„KAVO“ ist umgangssprachlich.
+
 ## Störungseinsätze
 
 Unter **Protokoll** wird zwischen **Wartung** und **Störung** umgeschaltet.
@@ -696,32 +759,8 @@ Die Datei liegt im selben Speicher wie die Fotos, unter
 sie mit „mime type not supported" ab, und das Protokoll bleibt so lange auf
 dem Gerät.
 
-**Rapportbericht von Lidl.** Ist der Auftrag im Lidl-System abgeschlossen,
-entsteht dort der Rapportzettel, den wir uns per Mail schicken. Er gehört
-zum Störungsprotokoll und wird dort im Original abgelegt, unter
-`<protokollkennung>/rapport.pdf`:
-
-- Liegt er schon vor, im Störungsprotokoll unter **Rapportbericht von Lidl**
-  → „Rapportbericht öffnen“.
-- Kommt er später – der Normalfall –, am gespeicherten Protokoll auf
-  **Rapportbericht anhängen** tippen und die PDF wählen. Die App öffnet die
-  Korrektur mit dem Grund „Rapportbericht angehängt“; „Korrektur speichern“
-  legt ihn ab. So steht er wie jede Änderung im Verlauf, das Protokoll
-  bekommt eine neue Fassung.
-- Einmal abgelegt, bleibt er: ersetzen lässt er sich nicht, wie beim
-  Auftrags-PDF.
-- Auf dem Druckblatt steht „Rapportbericht Lidl: liegt bei“. Die PDF selbst
-  geht nicht mit ins Archiv auf der Synology.
-
-Der Rapportzettel kommt als eingescanntes Bild ohne lesbaren Text. Die App
-liest deshalb nichts daraus aus; Auftragsnummer und Arbeitszeit stehen
-ohnehin im Protokoll.
-
-*Geplant:* eine eigene Mailadresse, an die Lidl Aufträge und Rapportberichte
-direkt schickt und aus der die App sie abholt. Dafür braucht es ein Postfach
-und einen Dienst, der es abruft; weil der Rapportzettel nur ein Bild ist,
-müsste er die Auftragsnummer per Texterkennung lesen, um ihn dem richtigen
-Protokoll zuzuordnen.
+Den **Rapportbericht von Lidl** gibt es bei Störungen wie bei Wartungen, siehe
+den eigenen Abschnitt weiter oben.
 
 **Welche Anlage betroffen ist,** wird im Störungsprotokoll genauso ausgewählt
 wie bei der Wartung die gewartete Anlage – nur heißt die Frage hier **„An
