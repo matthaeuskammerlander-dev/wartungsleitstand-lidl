@@ -86,6 +86,9 @@ und wird nicht auf den Arbeitstag angerechnet.
 ## Karte und Navigation
 
 Die Karte ist OpenStreetMap über Leaflet — ohne Schlüssel und ohne Kosten.
+Unter **Anlagen** steht beim aufgeklappten Markt ganz oben **Mit Google
+Maps navigieren**.
+
 Ein Klick auf eine Filiale öffnet ein Fenster mit Status, Anzahl der
 Positionen und drei Schaltflächen: **Mit Google Maps navigieren**, Anlagen und
 Historie, Protokoll ausfüllen.
@@ -501,8 +504,18 @@ gerade kein Protokoll geschrieben wird. Gespeichert wird sofort, mit
 Änderungsverlauf („Anlagendaten geprüft und ergänzt", je Feld alter und neuer
 Wert). Dafür muss man angemeldet sein.
 
-Filiale, Adresse, Soll-Monate und Termine gehören dagegen in die
-**Verwaltung** und bleiben Admins vorbehalten.
+**Termine prüfen.** Der letzte Schritt des Dialogs zeigt die Termine der
+Anlage: Inbetriebnahme, je Termin Kürzel (JW, HJW, HJI) und Soll-Monat.
+Weicht der Soll-Monat von der Inbetriebnahme ab, sagt der Dialog das und
+fragt nach dem Grund – der eingetragene Monat gilt trotzdem, denn Termine
+werden oft bewusst vorgezogen, wenn es in die Tour passt. Beim Knopf an der
+Anlage kommt der Schritt immer, beim Protokoll nur, wenn etwas fehlt; sonst
+stehen die Termine in der Übersicht zum Ändern. Termine sind Stammdaten und
+gehen sofort raus, auch mitten im Protokoll, mit eigenem Eintrag im
+Änderungsverlauf.
+
+Filiale und Adresse, neue Termine und gestrichene Termine gehören dagegen
+in die **Verwaltung** und bleiben Admins vorbehalten.
 
 **Anlage fehlt in der Liste:** Über „+ Anlage fehlt in der Liste“ legt der
 Techniker sie vor Ort an. Sie ist als „vor Ort neu erfasst“ markiert, und in
@@ -566,6 +579,21 @@ Zwei Knöpfe:
 - **Ansehen / ändern** — Angaben nachtragen, den Auftrag ansehen, oder von
   Hand abhaken. Löschen dürfen nur Admins.
 
+**Einsatz planen:** Unter „Ansehen / ändern“ stehen *Einsatz geplant am*,
+Uhrzeit und wer hinfährt. **In Handykalender** lädt den Termin als
+Kalenderdatei; das Handy fragt, in welchen Kalender er soll. Ohne geplanten
+Einsatz wird es ein Ganztagseintrag am Zieltermin.
+
+**Störungskalender** (Reiter *Fällig*, unter den offenen Störungen): ein
+Monat auf einen Blick. Rot gefüllt der geplante Einsatz, rot umrandet der
+Zieltermin, grau die erledigten Störungseinsätze. Ein Tag angetippt zeigt,
+was dort liegt, mit denselben Knöpfen wie in der Liste.
+
+**Auf Karte und in der Marktliste:** Ein Markt mit offener Störung trägt
+auf der Karte eine rote Markierung, im Kartenfenster steht die Störung
+obenan. Unter *Anlagen* steht beim Markt „Störung offen“, aufgeklappt die
+Störung selbst vor den Anlagen.
+
 Offene Störungen liegen wie die Anlagendaten in `stammdaten` (`typ`
 `stoerung`) und stehen damit auf allen Geräten. Jede angemeldete Person darf
 sie anlegen und ändern — der Auftrag kommt herein, bevor jemand vor Ort war.
@@ -617,6 +645,16 @@ Auftragsnummer. Der Scan ist deshalb gedacht
 
 Gibt es zur Auftragsnummer schon ein Protokoll, weist die App darauf hin.
 
+**Auftragsnummer ist Pflicht** im Störungsprotokoll – im Formular wie im
+Schritt „Störungsauftrag“ des geführten Dialogs. Bestellnummer und
+Auftraggebervertreter gibt es im Protokoll nicht mehr; ältere Protokolle
+zeigen sie weiter, wo etwas eingetragen war.
+
+**Auftrag ansehen.** PDF und Seitenbilder zeigt die App selbst an, Seite für
+Seite. Ein Link auf eingebettete Daten öffnen iPhone und Chrome nicht in
+einem neuen Fenster; früher passierte beim Antippen deshalb nichts.
+„Datei öffnen“ in der Ansicht gibt die PDF an das Programm des Geräts.
+
 **Das Auftrags-PDF wird mitgespeichert.** Wo eine PDF geöffnet wurde – beim
 Erfassen der offenen Störung oder direkt im Protokoll –, liegt sie mit dem
 Protokoll in der Ablage, im **Original** und nicht als Bild. Im gespeicherten
@@ -648,8 +686,8 @@ ist Pflicht: ohne sie lässt sich das Protokoll nicht speichern.
 **Daten prüfen und ergänzen** geht im Störungsprotokoll wie im
 Wartungsprotokoll: Anschrift und Anlagenkarte stehen oben, **Ergänzen** bzw.
 **Prüfen** öffnet den geführten Dialog, und „+ Anlage fehlt in der Liste“
-legt eine übersehene Anlage gleich vor Ort an. Filiale, Soll-Monate und
-Termine ändert weiterhin nur ein Admin in der **Verwaltung**.
+legt eine übersehene Anlage gleich vor Ort an. Filiale, neue und
+gestrichene Termine ändert weiterhin nur ein Admin in der **Verwaltung**.
 
 **Im Formular** stehen statt der Wartungscheckliste diese Felder:
 
