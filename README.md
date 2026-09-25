@@ -243,6 +243,34 @@ Protokolle, die schon vor dieser Zuordnung in der Datenbank lagen, räumt
 `tools/namen-vereinheitlichen.sql` auf: erst der Ansehen-Block, dann der
 Änderungs-Block.
 
+## Angefangene Protokolle
+
+Ein Einsatz dauert. Zwischendurch geht das Handy aus, jemand ruft an, der
+Browser räumt die Seite weg — und das halb ausgefüllte Protokoll wäre
+verloren. Deshalb liegt **laufend eine Zwischenfassung auf dem Gerät**:
+alle Felder, Haken, Mängel- und Materialzeilen, Fotos, Unterschrift und die
+vor Ort ergänzten Anlagendaten. Geschrieben wird rund eine Sekunde nach der
+letzten Eingabe, nicht bei jedem Tastendruck.
+
+Beim nächsten Öffnen des Reiters **Protokoll** steht über dem Formular:
+
+> **Angefangenes Protokoll gefunden** – vor 20 Minuten, Seekirchen.
+> Weitermachen oder verwerfen?
+
+**Weitermachen** stellt alles wieder her, auch Fotos und Unterschrift. War
+es ein Störungsprotokoll, schaltet die App vorher auf Störung um.
+**Verwerfen** fragt einmal nach und löscht die Zwischenfassung.
+
+Weg ist sie außerdem, sobald das Protokoll **abgeschickt** oder das Formular
+über **Formular leeren** geräumt wird — Letzteres fragt jetzt nach, wenn
+etwas drinsteht. Eine **Korrektur** eines schon gespeicherten Protokolls legt
+keine Zwischenfassung an; dort steht der Stand ohnehin in der Datenbank.
+
+Gespeichert wird in IndexedDB, nicht in localStorage: mit Fotos und
+Unterschrift wären dessen rund 5 MB nach zwei Protokollen voll. Es ist immer
+nur **eine** Zwischenfassung — das angefangene Protokoll. Ein zweites
+gleichzeitig anzufangen ergibt in der Praxis keinen Sinn.
+
 ## Protokolle ohne gemeinsame Ablage
 
 Die App funktioniert auch ohne eingerichtete Datenbank vollständig. Ein

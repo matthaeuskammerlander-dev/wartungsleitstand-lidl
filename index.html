@@ -2459,7 +2459,7 @@ function idbOeffnen(){
   return new Promise(function(ok,nok){
     if(!window.indexedDB){ nok(new Error("Dieser Browser kann keine Daten dauerhaft speichern.")); return; }
     var r;
-    try{ r=indexedDB.open("ukt-wartung",3); }catch(e){ nok(e); return; }
+    try{ r=indexedDB.open("ukt-wartung",4); }catch(e){ nok(e); return; }
     r.onupgradeneeded=function(){
       var db=r.result;
       if(!db.objectStoreNames.contains("protokolle")) db.createObjectStore("protokolle",{keyPath:"id"});
@@ -2467,6 +2467,8 @@ function idbOeffnen(){
       if(!db.objectStoreNames.contains("aenderungen")) db.createObjectStore("aenderungen",{keyPath:"id"});
       /* Version 3: Stammdaten-Änderungen aus der Verwaltung */
       if(!db.objectStoreNames.contains("stammdaten")) db.createObjectStore("stammdaten",{keyPath:"id"});
+      /* Version 4: angefangene Protokolle, die noch nicht abgeschickt sind */
+      if(!db.objectStoreNames.contains("entwurf")) db.createObjectStore("entwurf",{keyPath:"id"});
     };
     r.onsuccess=function(){ IDB=r.result; ok(IDB); };
     r.onerror=function(){ nok(r.error||new Error("Gerätespeicher nicht verfügbar")); };
@@ -2486,6 +2488,30 @@ function idbVorgang(modus, arbeit, ablage){
 function idbAlle(){ return idbVorgang("readonly",function(st){ return st.getAll(); }); }
 function idbSchreiben(e){ return idbVorgang("readwrite",function(st){ return st.put(e); }); }
 function idbLoeschen(id){ return idbVorgang("readwrite",function(st){ return st.delete(id); }); }
+
+/* ----------------------------------------------------------------
+   Angefangene Protokolle. Ein Einsatz dauert, das Handy geht zwischendurch
+   aus oder der Browser räumt die Seite weg. Was im Formular steht, liegt
+   deshalb laufend auf dem Gerät – bis es abgeschickt oder verworfen wird.
+   Fotos und Unterschrift sind dabei, deshalb IndexedDB und nicht
+   localStorage: dort wären nach zwei Bildern die 5 MB voll.
+   ---------------------------------------------------------------- */
+var ENTWURF_ID="aktuell";
+var entwurfStand=null;      /* zuletzt gesehener Entwurf, für den Hinweis */
+function entwurfSchreiben(d){
+  if(!d) return Promise.resolve(false);
+  d.id=ENTWURF_ID;
+  return idbVorgang("readwrite",function(st){ return st.put(d); },"entwurf")
+    .then(function(){ return true; }, function(){ return false; });
+}
+function entwurfHolen(){
+  return idbVorgang("readonly",function(st){ return st.get(ENTWURF_ID); },"entwurf")
+    .then(function(d){ entwurfStand=d||null; return entwurfStand; }, function(){ return null; });
+}
+function entwurfWeg(){
+  entwurfStand=null;
+  return idbVorgang("readwrite",function(st){ return st.delete(ENTWURF_ID); },"entwurf").catch(function(){});
+}
 
 function lokaleNeuLaden(){
   return idbAlle().then(function(liste){
@@ -4320,7 +4346,7 @@ function viewProtokoll(){
     fotoInfo.textContent="Bilder werden verkleinert …";
     var i=0;
     var naechstes=function(){
-      if(i>=dateien.length){ fotosZeichnen(); return; }
+      if(i>=dateien.length){ fotosZeichnen(); if(form._entwurfMerken) form._entwurfMerken(); return; }
       var d=dateien[i++];
       verkleinere(d).then(function(bild){
         fotos.push({id:"f"+Date.now().toString(36)+Math.random().toString(36).slice(2,6),
@@ -4339,7 +4365,7 @@ function viewProtokoll(){
   cv.addEventListener("pointerdown",function(e){ e.preventDefault(); cv.setPointerCapture(e.pointerId); drawing=true; hasSig=true; stroke();
     var q=pt(e); ctx.beginPath(); ctx.moveTo(q[0],q[1]); });
   cv.addEventListener("pointermove",function(e){ if(!drawing) return; var q=pt(e); ctx.lineTo(q[0],q[1]); ctx.stroke(); });
-  cv.addEventListener("pointerup",function(){ drawing=false; });
+  cv.addEventListener("pointerup",function(){ drawing=false; if(form._entwurfMerken) form._entwurfMerken(); });
   cv.addEventListener("pointerleave",function(){ drawing=false; });
   form.querySelector("#sigclear").onclick=function(){ ctx.clearRect(0,0,cv.width,cv.height); hasSig=false; };
   /* Haken für den geführten Dialog: Unterschrift von dort übernehmen,
@@ -4351,6 +4377,7 @@ function viewProtokoll(){
          Unterschrift trotzdem als vorhanden – sonst steht im nächsten
          Schritt „fehlt“, obwohl gerade unterschrieben wurde. */
       hasSig=true; formDirty=true;
+      if(form._entwurfMerken) form._entwurfMerken();
       return new Promise(function(ok){
         var b=new Image();
         b.onload=function(){ ctx.clearRect(0,0,cv.width,cv.height); ctx.drawImage(b,0,0,cv.width,cv.height); ok(true); };
@@ -4471,7 +4498,9 @@ function viewProtokoll(){
   }
 
   form.querySelector("#reset").onclick=function(){
+    if(!bearb && formDirty && !window.confirm("Formular leeren?\n\nDas Angefangene wird verworfen.")) return;
     formDirty=false; S.protoStandort=""; S.protoPos=""; S.stoerungAus=null;
+    if(!bearb) entwurfWeg();
     if(S.bearbeiten){ S.letztesProtokoll=S.bearbeiten.x._id; S.bearbeiten=null; }
     render();
   };
@@ -4516,6 +4545,113 @@ function viewProtokoll(){
     fehlend[0].scrollIntoView({behavior:"smooth", block:"center"});
     try{ fehlend[0].focus({preventScroll:true}); }catch(x){ fehlend[0].focus(); }
     return false;
+  }
+
+  /* ---- Angefangenes Protokoll auf dem Gerät halten ----
+     Alles, was im Formular steht, wird laufend weggeschrieben: Felder,
+     Haken, Mängel- und Materialzeilen, Fotos, Unterschrift und die vor Ort
+     ergänzten Anlagendaten. Beim nächsten Öffnen fragt die App, ob es
+     weitergehen soll. */
+  function entwurfSammeln(){
+    var d={art:stoer?"stoerung":"wartung", zeit:new Date().toISOString(),
+      standort:form.querySelector("#f_standort").value||"",
+      stoerungAus:S.stoerungAus||null,
+      werte:{}, haken:{}, wahl:{},
+      maengel:[], material:[], fotos:fotos.slice(),
+      anlagenAend:JSON.parse(JSON.stringify(anlagenAend||{})),
+      neueAnlagen:JSON.parse(JSON.stringify(neueAnlagen||[])),
+      auftragSeiten:(geladenerAuftrag&&geladenerAuftrag._seiten)||null,
+      unterschrift: form._sig.vorhanden() ? cv.toDataURL("image/png") : ""
+    };
+    form.querySelectorAll("input,select,textarea").forEach(function(n){
+      if(!n.id) return;
+      if(n.type==="checkbox"||n.type==="radio"){ if(n.checked) d.haken[n.id]=true; }
+      else if(n.type!=="file") d.werte[n.id]=n.value;
+    });
+    form.querySelectorAll(".mangelrow").forEach(function(z){
+      d.maengel.push({t:z.querySelector(".m-t").value, p:z.querySelector(".m-p").value, m:z.querySelector(".m-m").value});
+    });
+    if(matHost) Array.prototype.forEach.call(matHost.children,function(z){
+      var t=z.querySelector(".mt-t"), m=z.querySelector(".mt-m");
+      if(t) d.material.push({text:t.value, menge:m?m.value:""});
+    });
+    return d;
+  }
+  function entwurfEinsetzen(d){
+    if(!d) return;
+    if(d.standort){ var sel2=form.querySelector("#f_standort"); sel2.value=d.standort; if(sel2.onchange) sel2.onchange(); }
+    Object.keys(d.werte||{}).forEach(function(id){
+      var n=form.querySelector("#"+CSS.escape(id)); if(n && n.type!=="file") n.value=d.werte[id];
+    });
+    form.querySelectorAll('input[type="checkbox"],input[type="radio"]').forEach(function(n){
+      if(n.id) n.checked=!!(d.haken&&d.haken[n.id]);
+    });
+    /* Mängel- und Materialzeilen in der gespeicherten Zahl wiederherstellen */
+    mHost.innerHTML="";
+    (d.maengel&&d.maengel.length?d.maengel:[null]).forEach(function(m){
+      var z=addMangel();
+      if(m){ z.querySelector(".m-t").value=m.t||""; z.querySelector(".m-p").value=m.p||""; z.querySelector(".m-m").value=m.m||""; }
+    });
+    if(stoer && matHost){
+      matHost.innerHTML="";
+      (d.material&&d.material.length?d.material:[null]).forEach(addMaterial);
+    }
+    fotos.length=0; (d.fotos||[]).forEach(function(f){ fotos.push(f); });
+    fotosZeichnen();
+    if(d.anlagenAend){ Object.keys(anlagenAend).forEach(function(k){ delete anlagenAend[k]; });
+      Object.keys(d.anlagenAend).forEach(function(k){ anlagenAend[k]=d.anlagenAend[k]; }); }
+    if(d.neueAnlagen){ neueAnlagen.length=0; d.neueAnlagen.forEach(function(n){ neueAnlagen.push(n); }); }
+    anlagenZeichnen();
+    if(d.auftragSeiten && d.auftragSeiten.length) auftragBildZeigen(d.auftragSeiten);
+    if(d.unterschrift) form._sig.setzen(d.unterschrift);
+    if(d.stoerungAus) S.stoerungAus=d.stoerungAus;
+    formDirty=true;
+  }
+  /* Nicht bei jedem Tastendruck schreiben – das Gerät hat anderes zu tun. */
+  var entwurfTakt=null;
+  function entwurfMerken(){
+    if(bearb) return;                 /* eine Korrektur ist kein Entwurf */
+    clearTimeout(entwurfTakt);
+    entwurfTakt=setTimeout(function(){
+      /* Ein Fehler beim Zwischenspeichern darf das Formular nicht stoeren,
+         soll aber nicht stillschweigend verschwinden. */
+      try{ entwurfSchreiben(entwurfSammeln()); }
+      catch(e){ if(window.console) console.warn("Entwurf nicht gespeichert:", e); }
+    }, 1200);
+  }
+  form.addEventListener("input", entwurfMerken);
+  form.addEventListener("change", entwurfMerken);
+  form._entwurfMerken=entwurfMerken;   /* Fotos und Unterschrift melden sich selbst */
+
+  /* Hinweis auf einen liegengebliebenen Entwurf – er kommt weiter unten
+     direkt über das Formular. */
+  var entwurfKasten=null;
+  if(!bearb && entwurfStand && entwurfStand.werte){
+    var e2=entwurfStand;
+    var wieAlt=function(){
+      var m=Math.round((Date.now()-new Date(e2.zeit).getTime())/60000);
+      if(m<60) return "vor "+Math.max(1,m)+" Minuten";
+      if(m<1440) return "vor "+Math.round(m/60)+" Stunden";
+      return "vom "+tagFmt(e2.zeit);
+    };
+    var wo=byId[e2.standort];
+    var kasten=el('<div class="note warnbox" style="margin-bottom:12px">'+
+      "<strong>Angefangenes Protokoll gefunden</strong> – "+esc(wieAlt())+
+      (wo?", "+esc(stName(wo)):"")+(e2.art==="stoerung"?" (Störung)":"")+
+      ". Weitermachen oder verwerfen?"+
+      '<div class="rowflex" style="margin-top:8px"><button class="btn sm" type="button" data-e="weiter">Weitermachen</button>'+
+      '<button class="btn ghost sm" type="button" data-e="weg">Verwerfen</button></div></div>');
+    kasten.querySelector('[data-e="weiter"]').onclick=function(){
+      if(e2.art==="stoerung" && !stoer){ S.protoArt="stoerung"; render(); return; }
+      if(e2.art!=="stoerung" && stoer){ S.protoArt="wartung"; render(); return; }
+      entwurfEinsetzen(e2); kasten.remove();
+      toast("Weiter, wo Sie aufgehört haben.");
+    };
+    kasten.querySelector('[data-e="weg"]').onclick=function(){
+      if(!window.confirm("Das angefangene Protokoll verwerfen?\n\nDie Eingaben sind dann weg.")) return;
+      entwurfWeg(); kasten.remove(); toast("Entwurf verworfen.");
+    };
+    entwurfKasten=kasten;
   }
 
   form.onsubmit=function(e){
@@ -4585,6 +4721,7 @@ function viewProtokoll(){
     var btn=form.querySelector("#save"); btn.disabled=true; btn.textContent="Speichern …";
     var fertig=function(msg){
       btn.disabled=false; btn.textContent="Protokoll speichern"; formDirty=false; toast(msg);
+      entwurfWeg();          /* abgeschickt – der Entwurf hat seinen Zweck erfüllt */
       S.protoStandort=""; S.protoPos="";
       S.letztesProtokoll=id;     /* nach dem Neuzeichnen direkt aufklappen */
       /* Kam das Protokoll aus einer offenen Störung, ist die damit erledigt. */
@@ -4703,6 +4840,7 @@ function viewProtokoll(){
   });
   if(Store.modus==="supabase" && Store.sb && !bearb) f.appendChild(kontoKarte());
   f.appendChild(head);
+  if(entwurfKasten) f.appendChild(entwurfKasten);
   var body=el('<div class="card"><div class="pad"></div></div>');
   body.querySelector(".pad").appendChild(form);
   f.appendChild(body);
@@ -6488,6 +6626,7 @@ initStore();
 idbOeffnen()
   .then(altlastUebernehmen)
   .then(lokaleNeuLaden)
+  .then(entwurfHolen)
   .then(ladeStammdaten)
   .then(adminPruefen)
   .then(function(){ storeNachRender(); flushQueue(); })
