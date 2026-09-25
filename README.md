@@ -121,11 +121,30 @@ ebenfalls aus OpenStreetMap (ODbL).
 | HJW | Halbjahreswartung – vorgeschrieben ab 30 kg Kältemittel | HW |
 | HJI | Halbjahresinspektion | HI |
 
-Jede Zeile der Liste ist ein Termin, der **jedes Jahr am selben Tag**
-wiederkehrt. Der Tag hängt an der Inbetriebnahme: die Jahreswartung am
-Jahrestag der Inbetriebnahme, die Halbjahrestermine sechs Monate versetzt.
-Den Halbjahresrhythmus eines Marktes ergeben also zwei Zeilen – typisch JW
-und HJI, bei über 30 kg JW und HJW.
+**Eine Anlage, ein Inbetriebnahmedatum, ein oder zwei Termine.** Die
+Inbetriebnahme gehört zur Anlage, nicht zum einzelnen Termin – sie steht
+deshalb in der Verwaltung einmal oben auf der Anlagenkarte und gilt für
+jeden Termin darunter. Den Halbjahresrhythmus eines Marktes ergeben zwei
+Termine derselben Anlage – typisch JW und HJI, bei über 30 kg JW und HJW.
+
+**Woher der Termin kommt, in dieser Reihenfolge:**
+
+1. **Der eingetragene Soll-Monat.** Er kommt aus dem Büro oder von vor Ort
+   und hat das letzte Wort – auch wenn er von der Regel abweicht.
+2. **Sonst die Regel aus der Inbetriebnahme:** Jahreswartung im Monat der
+   Inbetriebnahme, Halbjahrestermine sechs Monate versetzt.
+3. **Sonst der Abstand zur letzten Wartung.**
+
+Den **Tag im Monat** liefert immer die Inbetriebnahme; fehlt sie, ist es die
+Monatsmitte. Der Termin wiederholt sich **jedes Jahr am selben Tag**.
+
+**Abweichungen sind erlaubt und werden vermerkt.** Trägt jemand einen anderen
+Soll-Monat ein als die Regel ergibt – etwa weil ein Markt an einem Tag
+komplett gewartet wird –, steht die Abweichung mit Begründung in der
+Verwaltung und in der Anlagenansicht („Soll-Monat März statt September –
+bewusst so: …"). Ohne Begründung meldet die App sie unter **Fehler**, mit
+Begründung unter **Lücken** als reine Notiz. Der eingetragene Monat gilt in
+beiden Fällen.
 
 Eine Wartung zählt für den Termin, in dessen Halbjahresfenster sie fällt.
 Wer früher oder später kommt, verschiebt den Folgetermin nicht. Ist der
@@ -133,8 +152,17 @@ kommende Termin bereits erledigt, gilt ein davor versäumter nicht mehr als
 überfällig, sondern wird als „ausgelassen" vermerkt.
 
 Ein Markt gilt als fällig, sobald einer seiner Termine fällig ist. Eine
-zusätzliche Regel auf Marktebene gibt es nicht – maßgeblich ist allein die
-Inbetriebnahme.
+zusätzliche Regel auf Marktebene gibt es nicht.
+
+**Was die App am Termin prüft** (Reiter Datenbasis, Spalte Fehler/Lücken):
+
+- zwei Termine desselben Marktes am selben Tag – dann kann eine Wartung nur
+  für einen von beiden zählen. Gehören sie zur selben Anlage, ist das ein
+  Fehler; sind es zwei Anlagen, die am selben Tag drankommen, nur ein Hinweis;
+- Termine einer Anlage mit verschiedenen Inbetriebnahmedaten;
+- ein Soll-Monat, der ohne Begründung von der Regel abweicht;
+- zweimal dasselbe Kürzel im selben Monat;
+- ein Kürzel, das die App nicht kennt.
 
 Ein gespeichertes Protokoll erledigt die angehakten Anlagen sofort – wenn die
 Wartungsart „planmäßig" oder „Prüfung" ist. Eine Störung oder Reparatur
@@ -410,6 +438,7 @@ App deshalb zusätzlich:
 - Anzahl der Kältekreisläufe und ob es ein Prüfbuch gibt
 - Kältemittel und Füllmenge. Ab 30 kg weist die App auf die
   Halbjahreswartung hin.
+- Kälteleistung in kW
 - bei wassergekühlten Anlagen: ob Rückkühler und Pumpenstation von UKT
   zu warten sind
 - Regelung: welche, betreut von UKT oder einer anderen Firma (mit Namen),

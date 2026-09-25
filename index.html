@@ -378,12 +378,12 @@ var byId = {}, posById = {};
 var STAMM_FELDER_ST  = ["filiale","name","adresse","plz","ort","region","lat","lon","aktiv","notiz",
                         /* aus der Liste entfernt: Sammelzeilen, die keine Märkte sind */
                         "entfernt","entferntGrund"];
-var STAMM_FELDER_POS = ["anlagentyp","intervallCode","inbetriebnahme","monat","kaeltemittelKg",
+var STAMM_FELDER_POS = ["anlagentyp","intervallCode","inbetriebnahme","monat","monatGrund","kaeltemittelKg",
                         "kaeltemittelArt","rueckkuehler","aktiv","notiz",
                         /* Anlagendaten, die vor Ort nach und nach ergänzt werden */
                         "pausiert","pausiertGrund","bauart","kreislaeufe","pruefbuch","rkUkt","pumpeUkt",
                         "regelung","regelungFirma","regelungFirmaName","fernzugriff","zugangLink","zugangBenutzer","zugangPasswort",
-                        "ortAussen","ortStrom","ortRegelung","ortPruefbuch","hersteller","modell","seriennummer","vorOrtNeu",
+                        "ortAussen","ortStrom","ortRegelung","ortPruefbuch","hersteller","modell","seriennummer","leistungKw","vorOrtNeu",
                         /* Zuordnung einer Termin-Zeile zu ihrer Anlage (von Hand) */
                         "anlageZu"];
 var ABGELEITET_POS   = ["kaeltemittelText","ueber30kg","baujahr"];
@@ -451,9 +451,12 @@ function indexNeuAufbauen(){
    Anlagendaten und den Status. */
 var ANLAGEN={};
 function slotMonat(p){
+  /* Auch hier gilt der eingetragene Soll-Monat zuerst – sonst gruppiert die
+     App nach einem Monat, den in der Liste niemand stehen hat. */
+  if(+p.monat) return +p.monat;
   var iv=intervallArt(p.intervallCode), halb=/^HJ/.test(iv.kurz);
   if(p.inbetriebnahme && !iv.unklar) return +plusMonate(p.inbetriebnahme, halb?6:12).slice(5,7);
-  return +p.monat||0;
+  return 0;
 }
 function anlagenBilden(){
   ANLAGEN={};
@@ -476,9 +479,16 @@ function anlagenBilden(){
     /* 2. automatisch */
     var frei=ps.filter(function(p){ return !p.anlageId; });
     var passt=function(a,b){
+      /* Eine Anlage hat höchstens einen Jahrestermin. Zwei Jahreswartungen
+         gehören zu zwei Anlagen, auch wenn sie ein halbes Jahr auseinander-
+         liegen – sonst verschwindet in Braunau die zweite Anlage in der
+         ersten. Wer sie doch zusammengehören lässt, sagt das in der
+         Verwaltung über „Gehört zu Anlage“. */
+      var klar=function(x){ return !intervallArt(x.intervallCode).unklar; };
+      if(klar(a) && klar(b) && halb(a)===halb(b)) return false;
       var m1=slotMonat(a), m2=slotMonat(b);
-      if(m1 && m2){ var d=Math.abs(m1-m2); d=Math.min(d,12-d); if(d<4) return false; if(d>=5) return true; }
-      return halb(a)!==halb(b);
+      if(m1 && m2){ var d=Math.abs(m1-m2); d=Math.min(d,12-d); return d>=4; }
+      return true;
     };
     var paaren=function(bed){
       frei.forEach(function(a){
@@ -521,7 +531,8 @@ function anlagePausiert(p){ var l=anlageLeader(p); return !!(l && l.pausiert); }
 var ANLAGE_DATEN_KEYS=null;
 function anlageDaten(p){
   var a=anlageVon(p), l=a.leader, r=Object.assign({}, l);
-  if(!ANLAGE_DATEN_KEYS) ANLAGE_DATEN_KEYS=ANLAGE_FELDER.map(function(f){ return f.k; }).concat(["anlagentyp","pausiertGrund"]);
+  if(!ANLAGE_DATEN_KEYS) ANLAGE_DATEN_KEYS=ANLAGE_FELDER.map(function(f){ return f.k; })
+    .concat(["anlagentyp","pausiertGrund","inbetriebnahme"]);   /* IB gehört der Anlage */
   ANLAGE_DATEN_KEYS.forEach(function(k){
     if(!leerWert(r[k])) return;
     for(var i=0;i<a.termine.length;i++){ if(!leerWert(a.termine[i][k])){ r[k]=a.termine[i][k]; break; } }
@@ -576,17 +587,51 @@ function intervallArt(code){
   if(c==="HJI"||c.indexOf("HI")===0) return {art:"Halbjahresinspektion", monate:ZEILEN_INTERVALL, kurz:"HJI"};
   return {art:"Besuch (Kürzel "+(c||"leer")+")", monate:ZEILEN_INTERVALL, kurz:c||"?", unklar:true};
 }
-/* Der feste Jahrestermin einer Zeile. Laut Kammerlander: Inbetriebnahme
-   plus 12 Monate für die Jahreswartung, plus 6 Monate für die Halbjahres-
-   termine – jedes Jahr am selben Tag. Ohne Inbetriebnahme bleibt der
-   Soll-Monat der Liste (Monatsmitte) als Anker. */
+/* Die Inbetriebnahme gehört zur Anlage, nicht zum einzelnen Termin. In der
+   Excel-Liste steht sie je Zeile und geht dort vereinzelt um Tage oder gar
+   ein Jahr auseinander. Maßgeblich ist der Wert der ersten Zeile der Anlage,
+   sonst der erste, der überhaupt gefüllt ist. */
+function inbetriebnahmeVon(p){
+  if(!p) return null;
+  var a=(typeof anlageVon==="function") ? anlageVon(p) : null;
+  if(!a) return p.inbetriebnahme||null;
+  if(a.leader && a.leader.inbetriebnahme) return a.leader.inbetriebnahme;
+  for(var i=0;i<a.termine.length;i++) if(a.termine[i].inbetriebnahme) return a.termine[i].inbetriebnahme;
+  return null;
+}
+/* Welchen Soll-Monat die Regel vorschlägt: die Jahreswartung im Monat der
+   Inbetriebnahme, die Halbjahrestermine sechs Monate versetzt. */
+function sollMonatVorschlag(ib, halb){
+  if(!ib) return 0;
+  return +plusMonate(ib, halb?6:12).slice(5,7);
+}
+/* Der erste Termin, den es überhaupt geben kann: vor der Inbetriebnahme plus
+   einem Jahr (bzw. einem halben) war nichts zu warten. */
+function ersterTermin(ib, monat, tag, halb){
+  if(!ib) return null;
+  var frueh=plusMonate(ib, halb?6:12), a={monat:monat, tag:tag};
+  var d=ankerIm(a, +frueh.slice(0,4));
+  if(d<frueh) d=ankerIm(a, +frueh.slice(0,4)+1);
+  return d;
+}
+/* Der feste Jahrestermin einer Zeile.
+   Reihenfolge, und zwar bewusst so:
+   1. der eingetragene Soll-Monat – er kommt aus dem Büro oder von vor Ort
+      und darf bewusst von der Regel abweichen (etwa wenn ein Markt an einem
+      Tag komplett gewartet wird);
+   2. sonst die Regel aus der Inbetriebnahme der Anlage.
+   Den Tag im Monat liefert immer die Inbetriebnahme, sonst die Monatsmitte. */
 function ankerFuer(p){
   var k=p.intervall.kurz, halb=(k==="HJW"||k==="HJI"||k==="HJ");
-  if(p.inbetriebnahme && !p.intervall.unklar){
-    var erster=plusMonate(p.inbetriebnahme, halb?6:12);
-    return {monat:+erster.slice(5,7), tag:+erster.slice(8,10), erster:erster, quelle:"Inbetriebnahme"};
+  var ib=inbetriebnahmeVon(p);
+  var tag=ib ? +ib.slice(8,10) : 15;
+  if(p.monat) return {monat:+p.monat, tag:tag, erster:ersterTermin(ib,+p.monat,tag,halb),
+                      quelle:"Soll-Monat", regel:sollMonatVorschlag(ib,halb)};
+  if(ib && !p.intervall.unklar){
+    var erster=plusMonate(ib, halb?6:12);
+    return {monat:+erster.slice(5,7), tag:+erster.slice(8,10), erster:erster,
+            quelle:"Inbetriebnahme", regel:+erster.slice(5,7)};
   }
-  if(p.monat) return {monat:p.monat, tag:15, erster:null, quelle:"Soll-Monat"};
   return null;
 }
 function ankerIm(a, jahr){
@@ -2107,9 +2152,14 @@ function posBox(p,s,imBlock){
       "<dt>Zuletzt gewartet</dt><dd class='mono'>"+(p.letzte?dfmt(p.letzte)+(p.letzteAusApp?" · aus App-Protokoll":""):"—")+"</dd>"+
       "<dt>Nächster Termin</dt><dd class='mono'>"+(p.naechste?dfmt(p.naechste)+" · "+wannText(p).zusatz:"—")+"</dd>"+
       (p.ausgelassen?"<dt>Ausgelassen</dt><dd><span class='pill p-faellig'>Termin "+dfmt(p.ausgelassen)+" nicht gewartet</span></dd>":"")+
-      "<dt>Soll-Monat laut Liste</dt><dd>"+(p.monat?MONATE_L[p.monat]:"—")+"</dd>"+
+      "<dt>Soll-Monat</dt><dd>"+(p.monat?MONATE_L[p.monat]:"—")+
+        (p.anker && p.anker.regel && p.monat && +p.monat!==p.anker.regel
+          ? ' <span class="muted">(bewusst verschoben, die Regel ergäbe '+MONATE_L[p.anker.regel]+')</span>'+
+            (String(p.monatGrund||"").trim()?'<br><span class="muted">'+esc(p.monatGrund)+"</span>":"")
+          : "")+"</dd>"+
       (p.kaeltemittelText?"<dt>Kältemittel</dt><dd class='mono'>"+esc(p.kaeltemittelText)+"</dd>":"")+
-      (p.inbetriebnahme?"<dt>Inbetriebnahme</dt><dd class='mono'>"+dfmt(p.inbetriebnahme)+"</dd>":"")+
+      (inbetriebnahmeVon(p)?"<dt>Inbetriebnahme</dt><dd class='mono'>"+dfmt(inbetriebnahmeVon(p))+
+        ' <span class="muted">(gilt für die ganze Anlage)</span></dd>':"")+
       (p.rueckkuehler?"<dt>Rückkühler</dt><dd>"+esc(p.rueckkuehler)+"</dd>":"")+
       (imBlock?"":"<dt>Anlagendaten</dt><dd>"+(anlageKurz(p)?esc(anlageKurz(p)):'<span class="muted">noch nicht erfasst</span>')+
         (anlageLuecken(p).length?' <span class="muted" style="font-size:12px">· '+anlageLuecken(p).length+" Angabe(n) offen</span>":"")+"</dd>")+
@@ -2211,9 +2261,10 @@ var ANLAGE_GRUPPEN=[
   {titel:"Kältekreis", frage:"Wie viele Kältekreisläufe hat die Anlage – und gibt es ein Prüfbuch?", felder:[
     {k:"kreislaeufe", l:"Kältekreisläufe", t:"zahl"},
     {k:"pruefbuch", l:"Prüfbuch vorhanden", t:"jn"}]},
-  {titel:"Kältemittel", frage:"Welches Kältemittel, wie viel?", felder:[
+  {titel:"Kältemittel und Leistung", frage:"Welches Kältemittel, wie viel – und wie stark ist die Anlage?", felder:[
     {k:"kaeltemittelArt", l:"Kältemittel", t:"wahl", o:KAELTEMITTEL, frei:true},
-    {k:"kaeltemittelKg", l:"Füllmenge (kg)", t:"kg"}]},
+    {k:"kaeltemittelKg", l:"Füllmenge (kg)", t:"kg"},
+    {k:"leistungKw", l:"Kälteleistung (kW)", t:"kw"}]},
   {titel:"Rückkühler und Pumpen", frage:"Wassergekühlt: Gehören Rückkühler und Pumpenstation zu unserem Auftrag?",
     wenn:istWassergekuehlt, felder:[
     {k:"rkUkt", l:"Rückkühler von UKT zu warten", t:"jn"},
@@ -2285,6 +2336,7 @@ function anlageLuecken(a){
 function anlageWertText(f, w){
   if(leerWert(w)) return "–";
   if(f.t==="kg") return String(w).replace(".",",")+" kg";
+  if(f.t==="kw") return String(w).replace(".",",")+" kW";
   /* Übersicht und Änderungsverlauf halten fest, DASS ein Passwort gesetzt
      wurde – nicht, wie es lautet. Zum Nachsehen gibt es „ändern“. */
   if(f.t==="geheim") return "••••••••";
@@ -2296,6 +2348,7 @@ function anlageKurz(a){
   if(a.bauart) t.push(a.bauart);
   if(a.kreislaeufe) t.push(a.kreislaeufe+" Kältekreis"+(+a.kreislaeufe===1?"":"e"));
   if(a.kaeltemittelArt||!leerWert(a.kaeltemittelKg)) t.push([a.kaeltemittelArt, leerWert(a.kaeltemittelKg)?"":String(a.kaeltemittelKg).replace(".",",")+" kg"].filter(Boolean).join(" "));
+  if(!leerWert(a.leistungKw)) t.push(String(a.leistungKw).replace(".",",")+" kW");
   if(a.pruefbuch==="ja") t.push("Prüfbuch"+(a.ortPruefbuch?" ("+a.ortPruefbuch+")":""));
   if(istWassergekuehlt(a) && (a.rkUkt||a.pumpeUkt))
     t.push("RK "+(a.rkUkt==="ja"?"UKT":"fremd")+" · Pumpen "+(a.pumpeUkt==="ja"?"UKT":"fremd"));
@@ -2368,8 +2421,8 @@ function anlageAssistent(start, titel, neu, alles){
       } else if(f.t==="zahl"){
         h+='<div class="chips">'+[1,2,3,4].map(function(n){ return chip(n,String(n),+w===n); }).join("")+"</div>"+
           '<input type="number" min="1" max="99" inputmode="numeric" data-in="'+f.k+'" placeholder="andere Anzahl" value="'+esc(+w>4?w:"")+'">';
-      } else if(f.t==="kg"){
-        h+='<input type="text" inputmode="decimal" data-in="'+f.k+'" placeholder="z. B. 12,5" value="'+esc(leerWert(w)?"":String(w).replace(".",","))+'">'+
+      } else if(f.t==="kg"||f.t==="kw"){
+        h+='<input type="text" inputmode="decimal" data-in="'+f.k+'" placeholder="'+(f.t==="kw"?"z. B. 35":"z. B. 12,5")+'" value="'+esc(leerWert(w)?"":String(w).replace(".",","))+'">'+
           '<div class="as-hinweis" data-hinweis="'+f.k+'"></div>';
       } else if(f.t==="geheim"){
         /* Beim Eintippen sichtbar – man überträgt es meist von einem Zettel
@@ -2419,6 +2472,7 @@ function anlageAssistent(start, titel, neu, alles){
         i.oninput=function(){
           var k=i.dataset.in, v=i.value.trim();
           if(k==="kaeltemittelKg"){ v=v.replace(",","."); a[k]= v===""?null:(isNaN(+v)?a[k]:+v); kgHinweis(); }
+          else if(k==="leistungKw"){ v=v.replace(",","."); a[k]= v===""?null:(isNaN(+v)?a[k]:+v); }
           else if(k==="kreislaeufe"){ a[k]= v===""?a[k]:+v; inhalt.querySelectorAll('.chip[data-f="kreislaeufe"]').forEach(function(c){ c.setAttribute("aria-pressed","false"); }); }
           else a[k]=v;
         };
@@ -5878,6 +5932,7 @@ var LABEL_ST={filiale:"Filialnummer", name:"Bezeichnung", adresse:"Adresse", plz
   region:"FM-Region", lat:"Breitengrad", lon:"Längengrad", aktiv:"betreut", notiz:"Notiz",
   entfernt:"aus der Liste entfernt", entferntGrund:"Grund (entfernt)"};
 var LABEL_POS={anlagentyp:"Anlagentyp", intervallCode:"Kürzel", inbetriebnahme:"Inbetriebnahme",
+  monatGrund:"Grund für den abweichenden Soll-Monat",
   monat:"Soll-Monat", kaeltemittelKg:"Kältemittel (kg)", kaeltemittelArt:"Kältemittelart",
   rueckkuehler:"Rückkühler", aktiv:"in Betrieb", notiz:"Notiz",
   pausiert:"zur Zeit nicht gewartet", pausiertGrund:"Grund (nicht gewartet)", vorOrtNeu:"vor Ort neu erfasst", anlageZu:"gehört zu Anlage"};
@@ -5918,17 +5973,50 @@ function auffaelligkeiten(s){
   });
   if(s.pos.some(function(p){ return p.ueber30kg; }) && !s.pos.some(function(p){ return p.intervall&&p.intervall.kurz==="HJW"; }))
     f.push("über 30 kg Kältemittel, aber keine Halbjahreswartung (HJW)");
+  /* Zwei Termine auf demselben Tag: dann streiten sie sich um dieselben
+     Wartungen, und einer steht am Ende zu Unrecht als überfällig da. */
+  var gesehen={};
+  s.pos.forEach(function(p){
+    if(!p.anker) return;
+    var k=p.anker.monat+"-"+p.anker.tag, vor=gesehen[k];
+    if(vor){
+      var wo="Zwei Termine am selben Tag ("+String(p.anker.tag).padStart(2,"0")+"."+
+        String(p.anker.monat).padStart(2,"0")+".): "+anlagenName(vor)+" "+(vor.intervall?vor.intervall.kurz:"")+
+        " und "+anlagenName(p)+" "+(p.intervall?p.intervall.kurz:"");
+      if(vor.anlageId===p.anlageId)
+        f.push(wo+" – beide gehören zur selben Anlage. Ein Termin ist zu viel oder hat das falsche Kürzel.");
+      else
+        l.push(wo+" – zwei Anlagen, die am selben Tag drankommen. Beim Protokoll darauf achten, für welche es zählt.");
+    }
+    else gesehen[k]=p;
+  });
+  /* Eine Anlage, ein Inbetriebnahmedatum. Gehen die Zeilen auseinander,
+     stammt das meist aus der Excel-Liste. */
+  anlagenDesMarkts(s,true).forEach(function(a){
+    var w={};
+    a.termine.forEach(function(p){ if(p.inbetriebnahme) w[p.inbetriebnahme]=1; });
+    var k=Object.keys(w);
+    if(k.length>1) f.push(anlagenName(a.leader)+": die Termine haben verschiedene Inbetriebnahmedaten ("+
+      k.map(function(x){ return dfmt(x); }).join(", ")+") – es gilt "+dfmt(inbetriebnahmeVon(a.leader))+
+      ". In der Verwaltung einmal richtigstellen.");
+  });
   s.pos.forEach(function(p){
     var n=anlagenName(p);
     if(p.intervall && p.intervall.unklar) f.push(n+": Kürzel „"+(p.intervallCode||"leer")+"“ unklar");
-    if(p.anker && p.anker.quelle==="Inbetriebnahme" && p.monat){
-      var d=Math.abs(p.anker.monat-p.monat); d=Math.min(d,12-d);
-      if(d>1) f.push(n+": Soll-Monat "+MONATE_L[p.monat]+" passt nicht zur Inbetriebnahme (ergibt "+MONATE_L[p.anker.monat]+")");
+    /* Der eingetragene Soll-Monat gilt, auch wenn er von der Regel abweicht.
+       Ohne Begründung bleibt aber offen, ob das Absicht war. */
+    if(p.anker && p.anker.regel && p.monat && +p.monat!==p.anker.regel){
+      if(String(p.monatGrund||"").trim())
+        l.push(n+": Soll-Monat "+MONATE_L[p.monat]+" statt "+MONATE_L[p.anker.regel]+
+               " – bewusst so: "+String(p.monatGrund).trim());
+      else
+        f.push(n+": Soll-Monat "+MONATE_L[p.monat]+" weicht von der Regel ab (aus der Inbetriebnahme käme "+
+               MONATE_L[p.anker.regel]+"). Gilt trotzdem – bitte in der Verwaltung begründen oder angleichen.");
     }
     if(p.inbetriebnahme && p.inbetriebnahme>isoLokal(new Date()))
       f.push(n+": Inbetriebnahme "+dfmt(p.inbetriebnahme)+" liegt in der Zukunft – die Anlage fällt so aus der Planung");
     if(p.vorOrtNeu) f.push(n+": vor Ort neu erfasst – Kürzel und Termin festlegen");
-    if(!p.inbetriebnahme) l.push(n+": Inbetriebnahme fehlt");
+    if(!inbetriebnahmeVon(p)) l.push(n+": Inbetriebnahme fehlt");
     if(!p.kaeltemittelText) l.push(n+": Kältemittelmenge fehlt");
     var al=anlageLeader(p)===p ? anlageLuecken(anlageDaten(p)).filter(function(f2){ return f2.k!=="kaeltemittelKg"; }) : [];
     if(al.length) l.push(n+": "+al.length+" Anlagendaten offen ("+al.map(function(f2){ return f2.l; }).join(", ")+")");
@@ -6241,6 +6329,46 @@ function verwaltungEditor(s){
   var KUERZEL=[["","– fehlt –"],["JW","JW · Jahreswartung"],["HJW","HJW · Halbjahreswartung"],["HJI","HJI · Halbjahresinspektion"]];
   var normCode=function(k){ k=String(k||"").trim().toUpperCase(); return k==="HW"?"HJW":(k.indexOf("HI")===0?"HJI":k); };
 
+  /* Soll-Monat gegen die Regel halten: Jahreswartung im Monat der
+     Inbetriebnahme, Halbjahrestermine sechs Monate versetzt. Weicht der
+     eingetragene Monat ab, gilt er trotzdem – aber er will begründet sein. */
+  function sollHinweisNeu(k){
+    var ibFeld=k.querySelector('[data-a="inbetriebnahme"]');
+    var ib=ibFeld?ibFeld.value:"";
+    k.querySelectorAll(".terminzeile").forEach(function(z){
+      var box=z.querySelector(".sollhinweis"); if(!box) return;
+      var code=normCode(z.querySelector('[data-t="intervallCode"]').value);
+      var halb=(code==="HJW"||code==="HJI");
+      var monat=+z.querySelector('[data-t="monat"]').value||0;
+      var regel=ib?sollMonatVorschlag(ib,halb):0;
+      var p0=posById[z.dataset.pid];
+      var grund=(box.querySelector('[data-t="monatGrund"]')||{}).value;
+      if(grund===undefined) grund=(p0&&p0.monatGrund)||"";
+      if(!regel){ box.hidden=true; box.innerHTML=""; return; }
+      if(!monat){
+        box.hidden=false;
+        box.innerHTML='<div class="note" style="font-size:12.5px">Vorschlag aus der Inbetriebnahme: <strong>'+
+          MONATE_L[regel]+"</strong> "+(halb?"(sechs Monate versetzt)":"(Monat der Inbetriebnahme)")+
+          ' <button class="btn ghost sm" type="button" data-t="sollnehmen" style="margin-left:6px">übernehmen</button></div>';
+        box.querySelector('[data-t="sollnehmen"]').onclick=function(){
+          z.querySelector('[data-t="monat"]').value=String(regel); sollHinweisNeu(k);
+        };
+        return;
+      }
+      if(monat===regel){ box.hidden=true; box.innerHTML=""; return; }
+      box.hidden=false;
+      box.innerHTML='<div class="note warnbox" style="font-size:12.5px">'+
+        "Weicht von der Regel ab: aus der Inbetriebnahme käme <strong>"+MONATE_L[regel]+"</strong>, "+
+        "eingetragen ist <strong>"+MONATE_L[monat]+"</strong>. Der eingetragene Monat gilt."+
+        ' <button class="btn ghost sm" type="button" data-t="sollnehmen">Regel übernehmen</button>'+
+        '<label class="fl" style="margin-top:6px"><span>Warum abweichend?</span>'+
+        '<input type="text" data-t="monatGrund" placeholder="z. B. Markt wird an einem Tag komplett gewartet" value="'+
+          esc(grund||"")+'"></label></div>';
+      box.querySelector('[data-t="sollnehmen"]').onclick=function(){
+        z.querySelector('[data-t="monat"]').value=String(regel); sollHinweisNeu(k);
+      };
+    });
+  }
   function terminZeile(p, neu){
     var ex=EXCEL["position:"+p.id]||{};
     var hin=function(k){
@@ -6252,11 +6380,13 @@ function verwaltungEditor(s){
         '<label class="fl"><span>Kürzel'+hin("intervallCode")+'</span><select data-t="intervallCode">'+
           KUERZEL.map(function(o){ return '<option value="'+o[0]+'"'+(normCode(p.intervallCode)===o[0]?" selected":"")+">"+o[1]+"</option>"; }).join("")+
         "</select></label>"+
-        '<label class="fl"><span>Inbetriebnahme'+hin("inbetriebnahme")+'</span><input type="date" data-t="inbetriebnahme" value="'+esc(p.inbetriebnahme||"")+'"></label>'+
         '<label class="fl"><span>Soll-Monat'+hin("monat")+'</span><select data-t="monat"><option value="0">–</option>'+
           MONATE_L.slice(1).map(function(m,i){ return '<option value="'+(i+1)+'"'+(+p.monat===i+1?" selected":"")+">"+m+"</option>"; }).join("")+
         "</select></label>"+
       "</div>"+
+      /* Der Soll-Monat darf bewusst von der Regel abweichen – dann soll aber
+         dastehen, warum. Der Hinweis erscheint nur bei einer Abweichung. */
+      '<div class="sollhinweis" hidden style="margin-top:6px"></div>'+
       '<div class="rowflex" style="justify-content:space-between;gap:8px;margin-top:6px">'+
         '<span class="muted" style="font-size:12px">'+
           (neu ? "neuer Termin"
@@ -6270,6 +6400,11 @@ function verwaltungEditor(s){
         "</span>"+
       "</div>"+
     "</div>");
+    /* Kürzel und Soll-Monat entscheiden über den Hinweis zur Regel */
+    ["intervallCode","monat"].forEach(function(key){
+      var f=z.querySelector('[data-t="'+key+'"]');
+      if(f) f.onchange=function(){ var k=z.closest(".anlagekarte"); if(k) sollHinweisNeu(k); };
+    });
     var weg=z.querySelector('[data-t="weg"]');
     if(weg) weg.onclick=function(){ z.remove(); leereKartenWeg(); optionenNeu(); };
     z.querySelector(".verschieben").onchange=function(e2){
@@ -6281,8 +6416,11 @@ function verwaltungEditor(s){
         var p0=posById[z.dataset.pid];
         karte=anlageKarte(p0?{leader:p0, termine:[]}:null);
       } else karte=host.querySelector('.anlagekarte[data-k="'+ziel+'"]');
+      var vorher=z.closest(".anlagekarte");
       if(karte) karte.querySelector(".termine").appendChild(z);
       leereKartenWeg(); optionenNeu();
+      if(vorher && vorher.isConnected) sollHinweisNeu(vorher);
+      if(karte) sollHinweisNeu(karte);
     };
     return z;
   }
@@ -6294,7 +6432,7 @@ function verwaltungEditor(s){
     var w={};
     k.querySelectorAll("[data-a]").forEach(function(x){
       var key=x.dataset.a, v=x.type==="checkbox"?x.checked:x.value.trim();
-      w[key]= (key==="kreislaeufe"||key==="kaeltemittelKg") ? (v===""?null:+v) : v;
+      w[key]= (key==="kreislaeufe"||key==="kaeltemittelKg"||key==="leistungKw") ? (v===""?null:+v) : v;
     });
     return w;
   }
@@ -6303,7 +6441,7 @@ function verwaltungEditor(s){
     if(f.t==="jn") return '<label class="fl"><span>'+esc(f.l)+'</span><select data-a="'+f.k+'">'+
       [["","–"],["ja","ja"],["nein","nein"]].map(function(o){ return '<option value="'+o[0]+'"'+(v===o[0]?" selected":"")+">"+o[1]+"</option>"; }).join("")+"</select></label>";
     if(f.t==="zahl") return '<label class="fl"><span>'+esc(f.l)+'</span><input type="number" min="1" data-a="'+f.k+'" value="'+esc(v)+'"></label>';
-    if(f.t==="kg") return '<label class="fl"><span>'+esc(f.l)+'</span><input type="number" step="0.1" min="0" data-a="'+f.k+'" value="'+esc(v)+'"></label>';
+    if(f.t==="kg"||f.t==="kw") return '<label class="fl"><span>'+esc(f.l)+'</span><input type="number" step="0.1" min="0" data-a="'+f.k+'" value="'+esc(v)+'"></label>';
     if(f.t==="geheim") return '<label class="fl"><span>'+esc(f.l)+'</span>'+
       '<span class="rowflex" style="gap:6px"><input type="password" data-a="'+f.k+'" autocomplete="off" '+
         'spellcheck="false" style="flex:1;min-width:0" value="'+esc(v)+'">'+
@@ -6350,6 +6488,10 @@ function verwaltungEditor(s){
         '<button class="btn ghost sm" type="button" data-a2="plus">+ Termin</button></div>'+
       '<div class="grid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:10px">'+
         '<label class="fl"><span>Bezeichnung der Anlage</span><input type="text" data-a="anlagentyp" placeholder="z. B. VRV Verkaufsraum" value="'+esc(d.anlagentyp||"")+'"></label>'+
+        /* Eine Anlage, ein Inbetriebnahmedatum – die Termine darunter teilen
+           es sich. Früher stand es je Termin, dadurch liefen die Anker
+           auseinander. */
+        '<label class="fl"><span>Inbetriebnahme der Anlage</span><input type="date" data-a="inbetriebnahme" value="'+esc(d.inbetriebnahme||"")+'"></label>'+
         '<label class="fl"><span>Status</span><select data-a="betrieb">'+
           [["aktiv","in Betrieb – wird gewartet"],["pausiert","zur Zeit nicht gewartet"],["still","stillgelegt / abgebaut"]].map(function(o){
             return '<option value="'+o[0]+'"'+(akt===o[0]?" selected":"")+">"+o[1]+"</option>"; }).join("")+"</select></label>"+
@@ -6366,12 +6508,14 @@ function verwaltungEditor(s){
     "</div>");
     k.querySelector('[data-a2="plus"]').onclick=function(){
       k.querySelector(".termine").appendChild(terminZeile({id:"NP"+Date.now().toString(36)+Math.random().toString(36).slice(2,5), aktiv:true}, true));
-      optionenNeu();
+      optionenNeu(); sollHinweisNeu(k);
     };
     k.querySelector('[data-a="anlagentyp"]').oninput=optionenNeu;
+    k.querySelector('[data-a="inbetriebnahme"]').onchange=function(){ sollHinweisNeu(k); };
     host.appendChild(k);
     datenBlockSetzen(k, d);
     if(anl) anl.termine.forEach(function(p){ k.querySelector(".termine").appendChild(terminZeile(p,false)); });
+    sollHinweisNeu(k);
     return k;
   }
   function leereKartenWeg(){
@@ -6519,8 +6663,12 @@ function verwaltungEditor(s){
           return x.type==="checkbox"?x.checked:x.value.trim(); };
         var neuP=Object.assign({}, p0?auswahl(p0,STAMM_FELDER_POS):{});
         neuP.intervallCode=lt("intervallCode");
-        neuP.inbetriebnahme=lt("inbetriebnahme")||null;
+        /* Die Inbetriebnahme steht einmal an der Anlage und gilt für jeden
+           ihrer Termine – so können die Anker nicht mehr auseinanderlaufen. */
+        neuP.inbetriebnahme=la("inbetriebnahme")||null;
         neuP.monat=+lt("monat")||0;
+        var vGrund=lt("monatGrund");
+        neuP.monatGrund = (vGrund===undefined) ? ((p0&&p0.monatGrund)||"") : vGrund;
         neuP.aktiv = betrieb!=="still" && !lt("entfaellt");
         /* Status und Anlagendaten hängen an der ersten Zeile der Anlage */
         neuP.pausiert = istAnker ? (betrieb==="pausiert") : (p0?p0.pausiert:false);
@@ -6532,7 +6680,7 @@ function verwaltungEditor(s){
             /* nicht gezeigte Felder (z. B. Rückkühler bei luftgekühlt) unverändert lassen */
             var v=la(f.k); if(v===undefined) return;
             if(f.o && v && f.o.indexOf(v)<0) merkeWert(f.k, v);   /* eigener Wert kommt in die Liste */
-            neuP[f.k]= (f.t==="zahl"||f.t==="kg") ? (v===""?null:+v) : v;
+            neuP[f.k]= (f.t==="zahl"||f.t==="kg"||f.t==="kw") ? (v===""?null:+v) : v;
             /* stand nur da, weil eine andere Zeile der Anlage ihn hat – keine Änderung */
             if(p0 && leerWert(p0[f.k]) && gleich(neuP[f.k], anlageDaten(p0)[f.k])) neuP[f.k]=p0[f.k];
           });
