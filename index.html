@@ -383,7 +383,7 @@ var STAMM_FELDER_POS = ["anlagentyp","intervallCode","inbetriebnahme","monat","k
                         /* Anlagendaten, die vor Ort nach und nach ergänzt werden */
                         "pausiert","pausiertGrund","bauart","kreislaeufe","pruefbuch","rkUkt","pumpeUkt",
                         "regelung","regelungFirma","regelungFirmaName","fernzugriff","zugangLink","zugangBenutzer","zugangPasswort",
-                        "ortAussen","ortStrom","ortRegelung","hersteller","modell","seriennummer","vorOrtNeu",
+                        "ortAussen","ortStrom","ortRegelung","ortPruefbuch","hersteller","modell","seriennummer","vorOrtNeu",
                         /* Zuordnung einer Termin-Zeile zu ihrer Anlage (von Hand) */
                         "anlageZu"];
 var ABGELEITET_POS   = ["kaeltemittelText","ueber30kg","baujahr"];
@@ -2030,6 +2030,44 @@ function zugangBox(d){
 }
 
 /* je Anlage ein Block: Name, Anlagendaten, darunter ihre Termine */
+/* Anlagendaten ergänzen, ohne ein Protokoll zu schreiben. Dieselbe geführte
+   Erfassung; gespeichert wird direkt in die Anlagendaten, mit Eintrag im
+   Änderungsverlauf. Anlagendaten darf jede angemeldete Person ergänzen. */
+function anlageDatenErgaenzen(leader){
+  if(!Store.benutzer && Store.modus==="anmeldung"){ toast("Dafür bitte zuerst anmelden."); return; }
+  var vorher=auswahl(leader, STAMM_FELDER_POS);
+  var jetzt=anlageDaten(leader);
+  var start={anlagentyp:jetzt.anlagentyp, rueckkuehler:jetzt.rueckkuehler};
+  ANLAGE_FELDER.forEach(function(f){ start[f.k]=(jetzt[f.k]===undefined?null:jetzt[f.k]); });
+  /* true: alle Gruppen zeigen. Hier geht es ums Prüfen und Korrigieren,
+     nicht nur ums Nachtragen fehlender Angaben. */
+  anlageAssistent(start, anlagenName(jetzt), false, true).then(function(erg){
+    if(!erg) return;
+    var geaendert=[], neuP=Object.assign({}, vorher);
+    ANLAGE_FELDER.concat([{k:"anlagentyp", l:"Bezeichnung der Anlage"}]).forEach(function(f){
+      if(erg[f.k]===undefined) return;
+      if(gleich(vorher[f.k], erg[f.k])) return;
+      neuP[f.k]=erg[f.k];
+      geaendert.push({feld:f.k, name:anlagenName(jetzt)+" – "+(f.l||f.k),
+        alt:anlageWertText(f, vorher[f.k]), neu:anlageWertText(f, erg[f.k])});
+    });
+    if(!geaendert.length){ toast("Nichts geändert."); return; }
+    var zeit=new Date().toISOString();
+    var gegenExcel=objDiff(EXCEL["position:"+leader.id]||{}, neuP, STAMM_FELDER_POS);
+    var rec={id:"position:"+leader.id, typ:"position", ziel:leader.id, felder:gegenExcel, neu:!!leader._neu,
+             geaendert:zeit, von:wer(), grund:"Anlagendaten geprüft und ergänzt"};
+    stammUeber[rec.id]=rec;
+    stammSpeichern(rec).then(function(wo){
+      wendeStammdatenAn();
+      protokolliere({art:"stammdaten", standortId:leader.standortId,
+        standortName:stName(byId[leader.standortId]||{}), grund:"Anlagendaten geprüft und ergänzt", felder:geaendert});
+      toast(wo==="geraet" ? "Auf dem Gerät gespeichert – wird übertragen, sobald Verbindung besteht."
+                          : geaendert.length+" Angabe"+(geaendert.length===1?"":"n")+" gespeichert.");
+      render();
+    });
+  });
+}
+
 function anlagenBloecke(s, host){
   anlagenDesMarkts(s,true).forEach(function(a){
     if(anlagePausiert(a.leader)){ host.appendChild(pausiertBox(a.leader)); return; }
@@ -2040,7 +2078,14 @@ function anlagenBloecke(s, host){
       '<div style="font-size:13px">'+(anlageKurz(d)?esc(anlageKurz(d)):'<span class="muted">Anlagendaten noch nicht erfasst</span>')+
         (l.length?' <span class="muted" style="font-size:12px">· '+l.length+" Angabe(n) offen</span>":"")+"</div>"+
       (d.hersteller||d.seriennummer?'<div class="muted" style="font-size:12.5px">'+esc([d.hersteller,d.modell,d.seriennummer?"SN "+d.seriennummer:""].filter(Boolean).join(" · "))+"</div>":"")+
+      '<div class="rowflex" style="gap:6px"><button class="btn'+(l.length?" sm":" ghost sm")+'" type="button" data-a="daten">'+
+        (l.length?"Anlagendaten ergänzen":"Anlagendaten prüfen")+"</button></div>"+
       '<div class="stack" data-termine></div></div>');
+    /* Dieselbe geführte Erfassung wie beim Protokoll, nur ohne Protokoll –
+       zum Nachtragen, wenn jemand die Angaben gerade zur Hand hat. */
+    blk.querySelector('[data-a="daten"]').onclick=function(){
+      anlageDatenErgaenzen(a.leader);
+    };
     var zg=zugangBox(d);
     if(zg) blk.insertBefore(zg, blk.querySelector("[data-termine]"));
     a.termine.forEach(function(t){ blk.querySelector("[data-termine]").appendChild(posBox(t,s,true)); });
@@ -2186,11 +2231,14 @@ var ANLAGE_GRUPPEN=[
     {k:"zugangLink", l:"Adresse / Link", t:"text"},
     {k:"zugangBenutzer", l:"Benutzername", t:"text"},
     {k:"zugangPasswort", l:"Passwort", t:"geheim"}]},
-  {titel:"Wo steht was", frage:"Wo stehen Außengeräte, Absicherung und Regelung?", felder:[
+  {titel:"Wo steht was", frage:"Wo stehen Außengeräte, Absicherung, Regelung und Prüfbuch?", felder:[
     {k:"ortAussen", l:"Außengeräte", t:"wahl", o:ORTE, frei:true},
     {k:"ortStrom", l:"Elektrische Absicherung", t:"wahl", o:ORTE, frei:true},
     {k:"ortRegelung", l:"Regelung", t:"wahl", o:ORTE, frei:true,
-      wenn:function(a){ return a.regelung!==OHNE_REGELUNG; }}]},
+      wenn:function(a){ return a.regelung!==OHNE_REGELUNG; }},
+    /* Nach dem Prüfbuch wird nur gefragt, wenn es eins gibt. */
+    {k:"ortPruefbuch", l:"Prüfbuch", t:"wahl", o:ORTE, frei:true,
+      wenn:function(a){ return a.pruefbuch==="ja"; }}]},
   {titel:"Typenschild", frage:"Angaben vom Typenschild (freiwillig)", optional:true, felder:[
     {k:"hersteller", l:"Hersteller", t:"text"},
     {k:"modell", l:"Modell", t:"text"},
@@ -2245,7 +2293,7 @@ function anlageKurz(a){
   if(a.bauart) t.push(a.bauart);
   if(a.kreislaeufe) t.push(a.kreislaeufe+" Kältekreis"+(+a.kreislaeufe===1?"":"e"));
   if(a.kaeltemittelArt||!leerWert(a.kaeltemittelKg)) t.push([a.kaeltemittelArt, leerWert(a.kaeltemittelKg)?"":String(a.kaeltemittelKg).replace(".",",")+" kg"].filter(Boolean).join(" "));
-  if(a.pruefbuch==="ja") t.push("Prüfbuch");
+  if(a.pruefbuch==="ja") t.push("Prüfbuch"+(a.ortPruefbuch?" ("+a.ortPruefbuch+")":""));
   if(istWassergekuehlt(a) && (a.rkUkt||a.pumpeUkt))
     t.push("RK "+(a.rkUkt==="ja"?"UKT":"fremd")+" · Pumpen "+(a.pumpeUkt==="ja"?"UKT":"fremd"));
   if(a.regelung) t.push(a.regelung===OHNE_REGELUNG ? "ohne eigene Regelung"
@@ -2258,7 +2306,7 @@ function anlageKurz(a){
 /* Geführte Erfassung einer Anlage. Fragt nur die Gruppen ab, in denen etwas
    fehlt, und endet mit einer Übersicht, in der sich alles ändern lässt.
    Liefert die vollständigen Werte oder null (abgebrochen). */
-function anlageAssistent(start, titel, neu){
+function anlageAssistent(start, titel, neu, alles){
   return new Promise(function(fertig){
     var a=Object.assign({}, start);
     var ov=el('<div class="assistent" role="dialog" aria-modal="true"><div class="as-karte">'+
@@ -2285,7 +2333,13 @@ function anlageAssistent(start, titel, neu){
       });
       return pflicht.concat(frei);
     };
-    var schritte=(neu?["name"]:[]).concat(gruppenMitLuecke());
+    /* „alles“: der Aufruf kommt nicht aus einem Protokoll, sondern vom Knopf an
+       der Anlage. Dann geht es ums Prüfen und Korrigieren, nicht nur ums
+       Nachtragen – also jede Gruppe zeigen, die zur Anlage passt. */
+    var alleGruppen=function(){
+      return ANLAGE_GRUPPEN.filter(function(g){ return !g.wenn || g.wenn(a); });
+    };
+    var schritte=(neu?["name"]:[]).concat(alles?alleGruppen():gruppenMitLuecke());
     var pos=0, zurUebersicht=false;
 
     var kopf=function(text, schritt){
@@ -2392,7 +2446,7 @@ function anlageAssistent(start, titel, neu){
       /* die restlichen Schritte neu bestimmen – eine Antwort kann Fragen
          hinzufügen (wassergekühlt -> Rückkühler) oder überflüssig machen */
       var akt=schritte[pos], ab=akt==="name"?-1:ANLAGE_GRUPPEN.indexOf(akt);
-      var rest=gruppenMitLuecke().filter(function(g){ return ANLAGE_GRUPPEN.indexOf(g)>ab; });
+      var rest=(alles?alleGruppen():gruppenMitLuecke()).filter(function(g){ return ANLAGE_GRUPPEN.indexOf(g)>ab; });
       schritte=schritte.slice(0,pos+1).concat(rest);
       if(pos>=schritte.length-1){ uebersicht(); return; }
       pos++; schrittZeigen();
@@ -2501,6 +2555,8 @@ var entwurfStand=null;      /* zuletzt gesehener Entwurf, für den Hinweis */
 function entwurfSchreiben(d){
   if(!d) return Promise.resolve(false);
   d.id=ENTWURF_ID;
+  entwurfStand=d;            /* auch innerhalb der Sitzung: nach einem Tabwechsel
+                               soll der Hinweis sofort wieder da sein */
   return idbVorgang("readwrite",function(st){ return st.put(d); },"entwurf")
     .then(function(){ return true; }, function(){ return false; });
 }
@@ -3599,10 +3655,10 @@ function protokollAssistent(form, stoer){
       var cb=z.querySelector('input[name="posw"]'), slot=z.querySelector(".posslot");
       var name=z.querySelector("strong").textContent;
       var k=el('<div class="as-gruppe"><div class="as-gkopf"><span>'+esc(name)+"</span>"+
-        '<button class="chip" type="button" aria-pressed="'+cb.checked+'">'+(cb.checked?"gewartet":"nicht dabei")+"</button></div></div>");
+        '<button class="chip" type="button" aria-pressed="'+cb.checked+'">'+(cb.checked?(stoer?"betroffen":"gewartet"):"nicht dabei")+"</button></div></div>");
       var b=k.querySelector(".chip");
       b.onclick=function(){ cb.checked=!cb.checked; cb.dispatchEvent(new Event("change",{bubbles:true}));
-        b.setAttribute("aria-pressed",String(cb.checked)); b.textContent=cb.checked?"gewartet":"nicht dabei"; };
+        b.setAttribute("aria-pressed",String(cb.checked)); b.textContent=cb.checked?(stoer?"betroffen":"gewartet"):"nicht dabei"; };
       if(slot){
         var s2=el('<select style="width:100%;font-size:13px"></select>');
         s2.innerHTML=slot.innerHTML; s2.value=slot.value;
@@ -3613,7 +3669,8 @@ function protokollAssistent(form, stoer){
     });
     inhalt.appendChild(box);
   }, pruefen:function(){
-    return form.querySelectorAll('input[name="posw"]:checked').length ? "" : "Bitte mindestens eine Anlage wählen.";
+    return form.querySelectorAll('input[name="posw"]:checked').length ? "" :
+      (stoer ? "Bitte die Anlage wählen, an der die Störung vorliegt." : "Bitte mindestens eine Anlage wählen.");
   }});
 
   schritte.push({titel:"Anlagendaten", zeigen:function(){
@@ -4002,7 +4059,8 @@ function viewProtokoll(){
     posBox.innerHTML="";
     var cur=byId[selSt.value];
     if(!cur) return;
-    posBox.appendChild(el('<div class="fl"><span>'+(stoer?"Betroffene Anlage(n)":"Bei diesem Besuch gewartete Anlagen")+'</span></div>'));
+    posBox.appendChild(el('<div class="fl"><span class="req">'+
+      (stoer?"An welcher Anlage liegt die Störung?":"Bei diesem Besuch gewartete Anlagen")+"</span></div>"));
     /* eine Zeile je Anlage; bei mehreren Terminen wählt die App den, für den
        dieser Besuch zählt (den fälligen, sonst den nächstgelegenen) */
     var liste=el('<div class="checks" style="grid-template-columns:1fr"></div>');
@@ -4015,8 +4073,11 @@ function viewProtokoll(){
       if(vorwahlId){ ts.forEach(function(t){ if(t.id===vorwahlId) wahl=t; }); }
       /* Hat der Markt nur eine Anlage, ist klar, worum es geht – dann ist sie
          angehakt, auch wenn sie noch nicht fällig wäre. */
+      /* Hat der Markt nur eine Anlage, ist klar, worum es geht – das gilt fuer
+         die Wartung wie fuer die Stoerung. */
       var an = ts.some(function(t){ return t.id===vorwahlId; }) ||
-               (!stoer && (offen.length>0 || anlagenDesMarkts(cur,false).length===1));
+               anlagenDesMarkts(cur,false).length===1 ||
+               (!stoer && offen.length>0);
       var schlecht=ts.reduce(function(r,t){ return STATUS_RANK[t.status]<STATUS_RANK[r]?t.status:r; },"erledigt");
       var terminText=function(t){ var w=wannText(t); return t.intervall.art+(t.naechste?" · fällig "+dfmt(t.naechste)+" ("+w.zusatz+")":""); };
       var z=el('<label class="chk" style="border-color:var(--line);align-items:center">'+
@@ -4519,6 +4580,17 @@ function viewProtokoll(){
       if(leer) fehlend.push(n);
     });
     var box=form.querySelector("#f_fehlt");
+    /* Ohne Anlage kein Protokoll: bei der Wartung, weil sonst kein Termin
+       quittiert wird, bei der Störung, weil sonst offen bleibt, woran
+       gearbeitet wurde. Die Haken stehen nicht in [required]. */
+    var posFeld=form.querySelector('input[name="posw"]');
+    if(!fehlend.length && posFeld && !form.querySelector('input[name="posw"]:checked')){
+      box.textContent = stoer ? "Bitte die Anlage wählen, an der die Störung vorliegt."
+                              : "Bitte mindestens eine gewartete Anlage wählen.";
+      box.hidden=false;
+      posFeld.scrollIntoView({behavior:"smooth", block:"center"});
+      return false;
+    }
     /* Ein Protokoll entsteht nach dem Einsatz. Ein Datum in der Zukunft ist
        immer ein Vertipper – und einer mit Folgen: liegt es im Fenster des
        nächsten Termins, gilt der als erledigt und die Wartung fällt aus. */
@@ -4918,7 +4990,8 @@ function blattInhalt(p){
         "<tr><th colspan='2'>"+esc(a.name||("Anlage "+(i+1)))+(a.neu?" (vor Ort neu erfasst)":"")+"</th></tr>"+
         z("Gewartet als",a.termin)+
         z("Bauart",a.bauart)+
-        z("Kältekreisläufe / Prüfbuch",[a.kreislaeufe?a.kreislaeufe+" Kältekreis"+(+a.kreislaeufe===1?"":"e"):"", a.pruefbuch?"Prüfbuch: "+jn(a.pruefbuch):""].filter(Boolean).join(" · "))+
+        z("Kältekreisläufe / Prüfbuch",[a.kreislaeufe?a.kreislaeufe+" Kältekreis"+(+a.kreislaeufe===1?"":"e"):"",
+          a.pruefbuch?"Prüfbuch: "+jn(a.pruefbuch):"", a.ortPruefbuch?"liegt "+a.ortPruefbuch:""].filter(Boolean).join(" · "))+
         z("Kältemittel / Füllmenge",[a.kaeltemittelArt, leerWert(a.kaeltemittelKg)?"":String(a.kaeltemittelKg).replace(".",",")+" kg"].filter(Boolean).join(" · "))+
         (istWassergekuehlt(a)?z("Rückkühler / Pumpenstation von UKT",[a.rkUkt?"Rückkühler: "+jn(a.rkUkt):"", a.pumpeUkt?"Pumpen: "+jn(a.pumpeUkt):""].filter(Boolean).join(" · ")):"")+
         z("Regelung", a.regelung===OHNE_REGELUNG ? "keine eigene Regelung" : [a.regelung,

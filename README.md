@@ -252,7 +252,9 @@ alle Felder, Haken, Mängel- und Materialzeilen, Fotos, Unterschrift und die
 vor Ort ergänzten Anlagendaten. Geschrieben wird rund eine Sekunde nach der
 letzten Eingabe, nicht bei jedem Tastendruck.
 
-Beim nächsten Öffnen des Reiters **Protokoll** steht über dem Formular:
+Beim nächsten Öffnen des Reiters **Protokoll** steht über dem Formular — auch
+schon nach einem kurzen Abstecher auf **Fällig** oder **Karte**, nicht erst
+nach einem Neustart der App:
 
 > **Angefangenes Protokoll gefunden** – vor 20 Minuten, Seekirchen.
 > Weitermachen oder verwerfen?
@@ -412,10 +414,10 @@ App deshalb zusätzlich:
   zu warten sind
 - Regelung: welche, betreut von UKT oder einer anderen Firma (mit Namen),
   Fernzugriff ja/nein
-- Wo steht was: Außengeräte, elektrische Absicherung und Regelung – aus einer
-  Liste der üblichen Orte (Technikraum hinten/vorne, von innen oder außen,
-  Dachboden, Dach Filiale, Dach Backshop, Büro, Sozialraum, Pfandraum,
-  Backshop, Lager, IT-Raum) oder frei eingetippt
+- Wo steht was: Außengeräte, elektrische Absicherung, Regelung und – wenn es
+  eines gibt – das Prüfbuch. Aus einer Liste der üblichen Orte (Technikraum
+  hinten/vorne, von innen oder außen, Dachboden, Dach Filiale, Dach Backshop,
+  Büro, Sozialraum, Pfandraum, Backshop, Lager, IT-Raum) oder frei eingetippt.
 - Zugang zur Regelung: Adresse bzw. Link, Benutzername, Passwort — erscheint
   nur, wenn „Fernzugriff durch UKT" auf **ja** steht
 - Typenschild: Hersteller, Modell, Seriennummer (freiwillig)
@@ -460,6 +462,18 @@ Anlagendaten, für alle sichtbar. Im Änderungsverlauf steht jedes Feld mit
 altem und neuem Wert, Techniker und Datum. Das Protokoll selbst hält den
 Stand der Anlagen zum Zeitpunkt der Wartung fest; so steht es auch auf dem
 Druckblatt.
+
+**Auch ohne Protokoll.** Unter **Anlagen** steht bei jeder Anlage der Knopf
+**Anlagendaten ergänzen** – solange etwas fehlt. Ist alles bekannt, heißt er
+**Anlagendaten prüfen**. Beide öffnen denselben geführten Dialog, hier aber
+mit **allen** Themen, nicht nur den Lücken: so lässt sich eine falsche
+Füllmenge oder eine ausgetauschte Regelung auch dann richtigstellen, wenn
+gerade kein Protokoll geschrieben wird. Gespeichert wird sofort, mit
+Änderungsverlauf („Anlagendaten geprüft und ergänzt", je Feld alter und neuer
+Wert). Dafür muss man angemeldet sein.
+
+Filiale, Adresse, Soll-Monate und Termine gehören dagegen in die
+**Verwaltung** und bleiben Admins vorbehalten.
 
 **Anlage fehlt in der Liste:** Über „+ Anlage fehlt in der Liste“ legt der
 Techniker sie vor Ort an. Sie ist als „vor Ort neu erfasst“ markiert, und in
@@ -573,6 +587,18 @@ Auftragsnummer. Der Scan ist deshalb gedacht
   warnt die App.
 
 Gibt es zur Auftragsnummer schon ein Protokoll, weist die App darauf hin.
+
+**Welche Anlage betroffen ist,** wird im Störungsprotokoll genauso ausgewählt
+wie bei der Wartung die gewartete Anlage – nur heißt die Frage hier **„An
+welcher Anlage liegt die Störung?"** und der Vermerk **betroffen** statt
+*gewartet*. Hat der Markt nur eine Anlage, ist sie vorausgewählt. Die Angabe
+ist Pflicht: ohne sie lässt sich das Protokoll nicht speichern.
+
+**Daten prüfen und ergänzen** geht im Störungsprotokoll wie im
+Wartungsprotokoll: Anschrift und Anlagenkarte stehen oben, **Ergänzen** bzw.
+**Prüfen** öffnet den geführten Dialog, und „+ Anlage fehlt in der Liste“
+legt eine übersehene Anlage gleich vor Ort an. Filiale, Soll-Monate und
+Termine ändert weiterhin nur ein Admin in der **Verwaltung**.
 
 **Im Formular** stehen statt der Wartungscheckliste diese Felder:
 
@@ -774,6 +800,7 @@ Oberfläche vorbei direkt gegen die Datenbank:
 | Versuch | Ergebnis |
 |---|---|
 | Protokoll ohne Pflichtangaben speichern | benennt die fehlenden Felder, speichert nicht |
+| Protokoll ohne angehakte Anlage speichern | abgelehnt — sonst wüsste niemand, woran gearbeitet wurde |
 | Datum in der Zukunft | abgelehnt mit Hinweis |
 | Datum über zwei Jahre zurück | fragt einmal nach |
 | Mehrfach auf Speichern tippen | legt trotzdem nur ein Protokoll an |
