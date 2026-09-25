@@ -214,11 +214,14 @@ drop policy if exists "stammdaten zuruecksetzen" on public.stammdaten;
 create policy "stammdaten lesen"   on public.stammdaten for select to authenticated using (true);
 -- Maerkte aendern nur Admins. Anlagendaten (typ 'position') duerfen alle
 -- angemeldeten Techniker ergaenzen – das passiert vor Ort beim Protokoll.
+-- Offene Stoerungen (typ 'stoerung') ebenso: der Auftrag von Lidl kommt
+-- herein, bevor jemand vor Ort war.
 -- Jede Aenderung steht mit Name und Grund im Aenderungsverlauf.
 create policy "stammdaten anlegen" on public.stammdaten for insert to authenticated
-  with check (public.ist_admin() or typ = 'position');
+  with check (public.ist_admin() or typ in ('position','stoerung'));
 create policy "stammdaten aendern" on public.stammdaten for update to authenticated
-  using (public.ist_admin() or typ = 'position') with check (public.ist_admin() or typ = 'position');
+  using (public.ist_admin() or typ in ('position','stoerung'))
+  with check (public.ist_admin() or typ in ('position','stoerung'));
 create policy "stammdaten zuruecksetzen" on public.stammdaten for delete to authenticated using (public.ist_admin());
 
 -- Protokolle loeschen und wiederherstellen: nur Admins. Das prueft die

@@ -3,7 +3,10 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Wartungsleitstand Lidl</title>
-<!-- Zum Homebildschirm hinzufügen: das K aus dem Firmenlogo als Symbol -->
+<!-- Zum Homebildschirm hinzufügen: das K aus dem Firmenlogo als Symbol.
+     Im Browser-Reiter dasselbe K, im Dunkelmodus auf dunklem Grund. -->
+<link rel="icon" href="favicon-32-dunkel.png" sizes="32x32" type="image/png" media="(prefers-color-scheme: dark)">
+<link rel="icon" href="favicon-32.png" sizes="32x32" type="image/png">
 <link rel="icon" href="icon-180.png" sizes="180x180" type="image/png">
 <link rel="apple-touch-icon" href="icon-180.png">
 <link rel="manifest" href="manifest.json">
@@ -998,7 +1001,7 @@ function uhrFmt(startMin, h){
 }
 
 /* ---------- State ---------- */
-var S={view:"faellig",region:"alle",q:"",sel:null,selPos:null,protoStandort:"",protoPos:"",
+var S={view:"faellig",region:"alle",q:"",sel:null,selPos:null,protoStandort:"",protoPos:"",stoerungAus:null,
   tour:{status:["ueberfaellig","faellig"], stundenProTag:8, startId:"__gps",
         gps:null, gpsFehler:"", ergebnis:null, manuell:null, naechsterMonat:false, laender:[]}};
 /* Bundesland aus der Postleitzahl. Die Blöcke sind eindeutig bis auf ein paar
@@ -1148,6 +1151,252 @@ function wannText(p){
 }
 
 /* ---------- View: Fällig ---------- */
+/* ---------- Offene Störungen im Reiter „Fällig“ ---------- */
+function stoerungAlter(o){
+  if(!o.zieltermin) return {text:"ohne Zieltermin", klasse:"p-unbekannt"};
+  var t=tageBis(o.zieltermin);
+  if(t<0) return {text:"Zieltermin seit "+(-t)+" Tagen überschritten", klasse:"p-ueberfaellig"};
+  if(t===0) return {text:"heute fällig", klasse:"p-faellig"};
+  return {text:"bis "+dfmt(o.zieltermin)+" · in "+t+" Tag"+(t===1?"":"en"), klasse:t<=3?"p-faellig":"p-erledigt"};
+}
+/* Eine offene Störung erfassen oder ändern. Der Auftrag von Lidl wird als
+   PDF geöffnet oder abfotografiert; was sich auslesen lässt, wird übernommen,
+   der Rest steht als Bild daneben zum Abtippen. */
+function stoerungDialog(vorhanden){
+  var o = vorhanden ? Object.assign({}, vorhanden)
+                    : {_id:"st_"+Date.now().toString(36)+Math.random().toString(36).slice(2,6), seiten:[]};
+  if(!o.seiten) o.seiten=[];
+  var ov=el('<div class="assistent" role="dialog" aria-modal="true"><div class="as-karte">'+
+    '<div class="as-kopf"><div style="min-width:0"><div class="as-titel">'+
+      (vorhanden?"Offene Störung":"Störung erfassen")+'</div>'+
+      '<div class="as-schritt">Auftrag von Lidl</div></div>'+
+      '<button class="btn ghost sm" type="button" data-a="zu">Schließen</button></div>'+
+    '<div class="as-inhalt"></div><div class="as-fuss"></div></div></div>');
+  document.body.appendChild(ov);
+  document.body.style.overflow="hidden";
+  var inhalt=ov.querySelector(".as-inhalt"), fuss=ov.querySelector(".as-fuss");
+  var zu=function(){ ov.remove(); document.body.style.overflow=""; };
+  ov.querySelector('[data-a="zu"]').onclick=zu;
+
+  var FELDER=[
+    ["auftragsnummer","Auftragsnummer","text",true],
+    ["filialCode","Filial-Nr. laut Auftrag","text",false],
+    ["stoerungsnr","Störungsnummer","text",false],
+    ["problemtyp","Problemtyp","text",false],
+    ["zieltermin","Zieltermin","date",false],
+    ["auftragsdatum","Auftragsdatum","date",false],
+    ["lidlTyp","Typ","text",false],
+    ["hersteller","Hersteller","text",false],
+    ["lidlModell","Modell","text",false],
+    ["lin","LIN","text",false],
+    ["lidlKontakt","Kontakt bei Lidl","text",false],
+    ["lidlTelefon","Telefon Lidl","text",false]
+  ];
+
+  function zeichne(){
+    inhalt.innerHTML=
+      '<div class="rowflex" style="gap:8px;flex-wrap:wrap">'+
+        '<label class="btn sm" for="st_pdf" style="cursor:pointer">Auftrag-PDF öffnen</label>'+
+        '<input type="file" id="st_pdf" accept="application/pdf,.pdf" hidden>'+
+        '<label class="btn ghost sm" for="st_foto" style="cursor:pointer">Auftrag abfotografieren</label>'+
+        '<input type="file" id="st_foto" accept="image/*" capture="environment" hidden>'+
+        '<button class="btn ghost sm" type="button" id="st_qr">QR-Code scannen</button>'+
+      "</div>"+
+      '<div class="note" id="st_info" style="margin-top:8px">Die PDF aus der Lidl-Mail öffnen. '+
+        "Lässt sie sich auslesen, werden die Felder gefüllt; sonst steht der Auftrag als Bild darunter "+
+        "und die paar Angaben werden abgetippt.</div>"+
+      '<div class="note warnbox" id="st_warn" hidden style="margin-top:8px"></div>'+
+      '<div id="st_bild" style="margin-top:10px"></div>'+
+      '<div class="as-feld"><div class="as-label">Markt</div>'+
+        '<select id="st_markt" style="width:100%"><option value="">– bitte wählen –</option>'+
+        ST.slice().sort(function(a,b){ return stName(a).localeCompare(stName(b),"de"); }).map(function(s){
+          return '<option value="'+esc(s.id)+'"'+(o.standortId===s.id?" selected":"")+">"+
+            esc(stName(s))+(s.filiale?" · Filiale "+esc(s.filiale):"")+"</option>"; }).join("")+
+        "</select></div>"+
+      '<div class="grid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:10px;margin-top:10px">'+
+        FELDER.map(function(f){
+          return '<label class="fl"><span'+(f[3]?' class="req"':"")+">"+esc(f[1])+"</span>"+
+            '<input type="'+f[2]+'" data-s="'+f[0]+'" value="'+esc(o[f[0]]||"")+'"></label>';
+        }).join("")+
+      "</div>"+
+      '<label class="fl" style="margin-top:10px"><span>Beschreibung laut Auftrag</span>'+
+        '<textarea data-s="beschreibung" rows="3">'+esc(o.beschreibung||"")+"</textarea></label>"+
+      '<label class="fl" style="margin-top:10px"><span>Notiz</span>'+
+        '<input type="text" data-s="notiz" value="'+esc(o.notiz||"")+'" placeholder="z. B. Schlüssel beim Marktleiter"></label>'+
+      '<div class="note warnbox" id="st_fehlt" hidden style="margin-top:10px"></div>';
+
+    bilderZeigen();
+    if(meldung) melde(meldung);
+    if(warnung) warnen(warnung);
+    inhalt.querySelector("#st_markt").onchange=function(){ o.standortId=this.value||null; };
+    inhalt.querySelectorAll("[data-s]").forEach(function(i){
+      i.oninput=function(){
+        o[i.dataset.s]=i.value.trim();
+        /* Aus der abgetippten Filialnummer den Markt setzen – AT0405 ist
+           Filiale 405. Eine schon getroffene Wahl bleibt. */
+        if(i.dataset.s==="filialCode" && !o.standortId){
+          var st=standortZuAuftrag({kostenstelle:i.value});
+          if(st){
+            o.standortId=st.id;
+            var w=inhalt.querySelector("#st_markt"); if(w) w.value=st.id;
+            melde("Markt erkannt: <strong>"+esc(stName(st))+"</strong>.");
+          }
+        }
+      };
+    });
+    inhalt.querySelector("#st_pdf").onchange=function(){ pdfLesen(this); };
+    inhalt.querySelector("#st_foto").onchange=function(){ fotoNehmen(this); };
+    inhalt.querySelector("#st_qr").onclick=function(){
+      scanneQr().then(function(wert){
+        if(!wert) return;
+        var nr=(/\d{5,}/.exec(wert)||[String(wert).trim()])[0];
+        o.auftragsnummer=nr; o.quelle="qr";
+        var e=inhalt.querySelector('[data-s="auftragsnummer"]'); if(e) e.value=nr;
+        melde("Auftragsnummer <strong>"+esc(nr)+"</strong> gescannt.");
+      });
+    };
+  }
+  /* Die Meldungen ueberleben das Neuzeichnen des Dialogs. */
+  var meldung="", warnung="";
+  function melde(html){ meldung=html; var e=inhalt.querySelector("#st_info"); if(e) e.innerHTML=html; }
+  function warnen(html){ warnung=html||""; var e=inhalt.querySelector("#st_warn"); if(!e) return;
+    e.innerHTML=warnung; e.hidden=!warnung; }
+  function bilderZeigen(){
+    var box=inhalt.querySelector("#st_bild"); if(!box) return;
+    box.innerHTML = o.seiten.length ? o.seiten.map(function(b,i){
+      return '<a href="'+b+'" target="_blank" rel="noopener">'+
+        '<img src="'+b+'" alt="Auftrag Seite '+(i+1)+'" style="width:100%;border:1px solid var(--line);'+
+        'border-radius:8px;margin-bottom:8px;background:#fff"></a>'; }).join("") : "";
+  }
+  function pdfLesen(ein){
+    var datei=ein.files&&ein.files[0]; ein.value="";
+    if(!datei) return;
+    melde("Auftrag wird gelesen …"); warnen("");
+    leseLidlPdf(datei).then(function(a){
+      o.seiten=(a._seiten||[]).slice(0,2);
+      o.quelle="pdf";
+      if(a._lesbar===false){
+        warnen("Aus dieser PDF lässt sich kein Text auslesen – so kommt sie von Lidl. "+
+               "Der Auftrag steht unten als Bild, bitte die Felder danach ausfüllen.");
+        melde("");
+      } else {
+        ["auftragsnummer","stoerungsnr","problemtyp","beschreibung","auftragsdatum","ausfuehrenBis",
+         "lidlTyp","lidlModell","hersteller","lin","seriennummer","lidlKontakt","lidlTelefon","lidlMail"]
+          .forEach(function(k){ if(a[k]) o[k]=a[k]; });
+        if(a.ausfuehrenBis) o.zieltermin=a.ausfuehrenBis;
+        if(a.kostenstelle) o.filialCode=a.kostenstelle;
+        var st=standortZuAuftrag(a);
+        if(st) o.standortId=st.id;
+        melde("Übernommen aus dem Auftrag"+(st?", Markt erkannt: <strong>"+esc(stName(st))+"</strong>":"")+
+              ". Bitte kurz gegenprüfen.");
+      }
+      zeichne(); fussNeu();
+    }, function(e){ melde(""); warnen("Die PDF konnte nicht gelesen werden: "+esc(e&&e.message||String(e))); });
+  }
+  function fotoNehmen(ein){
+    var datei=ein.files&&ein.files[0]; ein.value="";
+    if(!datei) return;
+    melde("Bild wird verkleinert …");
+    verkleinere(datei).then(function(k){
+      o.seiten=o.seiten.concat([k.datenUrl||k]); o.quelle=o.quelle||"foto";
+      melde("Bild übernommen. Bitte die Felder danach ausfüllen.");
+      zeichne(); fussNeu();
+    }, function(){ melde(""); warnen("Das Bild ließ sich nicht verarbeiten."); });
+  }
+
+  function fussNeu(){
+    fuss.innerHTML="";
+    var b=el('<button class="btn" type="button">'+(vorhanden?"Änderung speichern":"Störung anlegen")+"</button>");
+    b.onclick=function(){
+      var fehlt=[];
+      if(!o.auftragsnummer) fehlt.push("Auftragsnummer");
+      if(!o.standortId) fehlt.push("Markt");
+      var box=inhalt.querySelector("#st_fehlt");
+      if(fehlt.length){ box.textContent="Es fehlt noch: "+fehlt.join(", ")+"."; box.hidden=false;
+        box.scrollIntoView({behavior:"smooth",block:"center"}); return; }
+      b.disabled=true; b.textContent="Wird gespeichert …";
+      stoerungSpeichern(o, vorhanden?"Offene Störung geändert":"Offene Störung erfasst").then(function(wo){
+        protokolliere({art:"stammdaten", standortId:o.standortId, standortName:stName(byId[o.standortId]||{}),
+          grund:(vorhanden?"Offene Störung geändert":"Offene Störung erfasst")+
+                (o.auftragsnummer?" – Auftrag "+o.auftragsnummer:""),
+          felder:[{feld:"stoerung", name:"Offene Störung", alt:vorhanden?"vorhanden":"–",
+                   neu:(o.problemtyp||"Störung")+(o.zieltermin?" · bis "+dfmt(o.zieltermin):"")}]});
+        zu();
+        toast(wo==="geraet" ? "Auf dem Gerät gespeichert – wird übertragen, sobald Verbindung besteht."
+                            : "Offene Störung gespeichert.");
+        render();
+      });
+    };
+    fuss.appendChild(b);
+    if(vorhanden){
+      var e=el('<button class="btn ghost" type="button">Als erledigt abhaken</button>');
+      e.onclick=function(){
+        if(!window.confirm("Die Störung als erledigt abhaken?\n\nSie verschwindet aus der Liste unter „Fällig“.")) return;
+        o.erledigt=new Date().toISOString();
+        stoerungSpeichern(o,"Offene Störung abgehakt").then(function(){ zu(); toast("Störung abgehakt."); render(); });
+      };
+      fuss.appendChild(e);
+      if(Admin.frei){
+        var w=el('<button class="btn ghost" type="button" style="color:var(--crit)">Eintrag löschen</button>');
+        w.onclick=function(){
+          if(!window.confirm("Diese offene Störung ganz löschen?\n\nDas lässt sich nicht rückgängig machen.")) return;
+          delete stammUeber[o._id];
+          stammLoeschen(o._id).then(function(){ wendeStammdatenAn(); zu(); toast("Eintrag gelöscht."); render(); });
+        };
+        fuss.appendChild(w);
+      }
+    }
+  }
+  zeichne(); fussNeu();
+}
+function stoerungsKarte(){
+  var offen=offeneStoerungen(true).filter(function(o){
+    if(!o.standortId) return true;
+    var s=byId[o.standortId];
+    return !s || filtered().some(function(x){ return x.id===o.standortId; });
+  });
+  var c=el('<div class="card"><div class="pad stack">'+
+    '<div class="rowflex" style="justify-content:space-between;align-items:flex-start;gap:12px">'+
+      '<div><h2>Offene Störungen</h2><div class="sub">Aufträge von Lidl, die noch zu erledigen sind. '+
+        "Antippen erstellt daraus das Störungsprotokoll.</div></div>"+
+      '<button class="btn sm" type="button" id="st_neu">+ Störung erfassen</button>'+
+    "</div>"+
+    '<div class="stack" id="st_liste"></div>'+
+  "</div></div>");
+  var host=c.querySelector("#st_liste");
+  if(!offen.length){
+    host.appendChild(el('<div class="muted" style="font-size:13px">Zur Zeit keine offene Störung. '+
+      "Kommt ein Auftrag von Lidl, hier erfassen – er erscheint dann an dieser Stelle.</div>"));
+  }
+  offen.forEach(function(o){
+    var s=o.standortId?byId[o.standortId]:null;
+    var alter=stoerungAlter(o);
+    var z=el('<div class="posbox">'+
+      '<div class="rowflex" style="justify-content:space-between;gap:8px;align-items:flex-start">'+
+        '<div style="min-width:0"><strong style="font-size:14px">'+esc(s?stName(s):(o.filialCode||"Markt offen"))+"</strong>"+
+          (o.problemtyp?'<br><span style="font-size:13px">'+esc(o.problemtyp)+"</span>":"")+"</div>"+
+        '<span class="pill '+alter.klasse+'">'+esc(alter.text)+"</span></div>"+
+      (o.beschreibung?'<div class="muted" style="font-size:12.5px">'+esc(String(o.beschreibung).slice(0,220))+
+        (String(o.beschreibung).length>220?" …":"")+"</div>":"")+
+      '<div class="muted mono" style="font-size:12px">'+
+        [o.auftragsnummer?"Auftrag "+esc(o.auftragsnummer):"", o.stoerungsnr?"Störung "+esc(o.stoerungsnr):"",
+         o.filialCode?esc(o.filialCode):""].filter(Boolean).join(" · ")+"</div>"+
+      '<div class="rowflex" style="gap:6px">'+
+        '<button class="btn sm" type="button" data-a="proto">Störungsprotokoll erstellen</button>'+
+        '<button class="btn ghost sm" type="button" data-a="bearb">Ansehen / ändern</button>'+
+      "</div></div>");
+    z.querySelector('[data-a="proto"]').onclick=function(){
+      if(!o.standortId){ toast("Der Störung ist noch kein Markt zugewiesen – bitte über „Ansehen / ändern“ nachtragen."); return; }
+      S.stoerungAus=o._id; S.protoStandort=o.standortId; S.protoArt="stoerung";
+      S.view="protokoll"; formDirty=false; S.bearbeiten=null; render(); window.scrollTo({top:0});
+    };
+    z.querySelector('[data-a="bearb"]').onclick=function(){ stoerungDialog(o); };
+    host.appendChild(z);
+  });
+  c.querySelector("#st_neu").onclick=function(){ stoerungDialog(null); };
+  return c;
+}
+
 function viewFaellig(){
   var pos=filteredPos();
   var c={ueberfaellig:0,faellig:0,erledigt:0,unbekannt:0};
@@ -1155,12 +1404,17 @@ function viewFaellig(){
   var maerkte=filtered();
   var f=document.createDocumentFragment();
 
+  var offen=offeneStoerungen(true);
   f.appendChild(el('<div class="kpis">'+
+    (offen.length?'<div class="kpi crit"><div class="n">'+offen.length+'</div><div class="l">offene Störungen</div></div>':"")+
     '<div class="kpi crit"><div class="n">'+c.ueberfaellig+'</div><div class="l">Termine überfällig</div></div>'+
     '<div class="kpi warn"><div class="n">'+c.faellig+'</div><div class="l">fällig in '+VORLAUF_TAGE+' Tagen</div></div>'+
     '<div class="kpi good"><div class="n">'+c.erledigt+'</div><div class="l">im Plan</div></div>'+
     '<div class="kpi"><div class="n">'+maerkte.length+'</div><div class="l">Märkte in der Auswahl</div></div>'+
   '</div>'));
+
+  /* Offene Störungen stehen ganz oben – sie warten, nicht der Kalender. */
+  f.appendChild(stoerungsKarte());
 
   /* Small multiples je Region */
   var bands=REGIONEN.map(function(r){
@@ -2400,7 +2654,34 @@ function ladeAenderungen(){
    über der Excel-Liste: je Markt bzw. Anlage ein Datensatz mit den Feldern,
    die vom Excel-Stand abweichen. Löscht man ihn, gilt wieder Excel.
    ---------------------------------------------------------------- */
-var stammUeber = {};   // "standort:S5" | "position:P9" -> {id, typ, ziel, felder, neu, geaendert, von, grund}
+var stammUeber = {};   // "standort:S5" | "position:P9" | "stoerung:<id>" -> {id, typ, ziel, felder, neu, geaendert, von, grund}
+
+/* ----------------------------------------------------------------
+   Offene Störungen. Lidl schickt einen Auftrag, gearbeitet wird oft erst
+   Tage später. Bis dahin steht die Störung hier: sie hängt am Markt,
+   erscheint unter „Fällig“ ganz oben und wird mit einem Griff zum
+   Störungsprotokoll. Abgelegt werden sie wie Stammdaten-Änderungen, damit
+   sie ohne eigene Tabelle auf allen Geräten stehen.
+   ---------------------------------------------------------------- */
+var OFFENE=[];
+function offeneStoerungen(nurOffen){
+  return OFFENE.filter(function(o){ return !nurOffen || !o.erledigt; })
+    .sort(function(a,b){
+      /* was zuerst fällig ist, steht oben; ohne Zieltermin nach hinten */
+      var x=a.zieltermin||"9999", y=b.zieltermin||"9999";
+      return x.localeCompare(y) || String(b.erfasstAm||"").localeCompare(String(a.erfasstAm||""));
+    });
+}
+function stoerungVonMarkt(sid){ return offeneStoerungen(true).filter(function(o){ return o.standortId===sid; }); }
+function stoerungSpeichern(o, grund){
+  var rec={id:o._id, typ:"stoerung", ziel:o.standortId||"", neu:false,
+    felder:auswahl(o, STOER_OFFEN_FELDER), geaendert:new Date().toISOString(), von:wer(), grund:grund||""};
+  stammUeber[rec.id]=rec;
+  return stammSpeichern(rec).then(function(wo){ wendeStammdatenAn(); return wo; });
+}
+var STOER_OFFEN_FELDER=["auftragsnummer","stoerungsnr","filialCode","problemtyp","beschreibung",
+  "zieltermin","auftragsdatum","prioritaet","lidlTyp","lidlModell","hersteller","lin","seriennummer",
+  "lidlKontakt","lidlTelefon","lidlMail","notiz","seiten","erledigt","protokollId","quelle"];
 
 function wendeStammdatenAn(){
   /* 1. alles auf den Excel-Stand zurück */
@@ -2410,10 +2691,16 @@ function wendeStammdatenAn(){
   ALLE_POS.forEach(function(p){ Object.assign(p, EXCEL["position:"+p.id]); p._geaendert=false; });
 
   /* 2. Änderungen darüberlegen – Märkte zuerst, damit neue Anlagen ihren Markt finden */
+  OFFENE=[];
   var rang=function(k){ return k.indexOf("standort:")===0 ? 0 : 1; };
   var schluessel=Object.keys(stammUeber).sort(function(a,b){ return rang(a)-rang(b); });
   schluessel.forEach(function(k){
     var r=stammUeber[k], ziel=null, i;
+    /* Offene Störungen hängen an keinem Datensatz – sie sind eigene Einträge */
+    if(r.typ==="stoerung"){
+      OFFENE.push(Object.assign({_id:r.id, standortId:r.ziel, erfasstAm:r.geaendert, erfasstVon:r.von}, r.felder));
+      return;
+    }
     if(r.typ==="standort"){
       for(i=0;i<ALLE_ST.length;i++){ if(ALLE_ST[i].id===r.ziel){ ziel=ALLE_ST[i]; break; } }
       if(!ziel && r.neu){ ziel={id:r.ziel, _neu:true, pos:[], genauigkeit:"manuell", aktiv:true, name:""}; ALLE_ST.push(ziel); }
@@ -2453,7 +2740,9 @@ function wendeStammdatenAn(){
 /* Anlagendaten dürfen alle angemeldeten Techniker ergänzen (vor Ort beim
    Protokoll), Märkte nur Admins – so regelt es auch die Datenbank */
 function darfStammZentral(rec){
-  return Admin.zentral || (!!Store.benutzer && rec && rec.typ==="position");
+  /* Anlagendaten und offene Störungen darf jede angemeldete Person schreiben,
+     Märkte nur Admins – so regelt es auch die Datenbank. */
+  return Admin.zentral || (!!Store.benutzer && rec && (rec.typ==="position" || rec.typ==="stoerung"));
 }
 function stammSpeichern(rec){
   var lokal=function(){
@@ -3085,6 +3374,35 @@ function werteLidlAuftrag(teile){
   if(r.leistungsort){ var zl=r.leistungsort.split("\n"); r.adresse=zl[zl.length-1]; }
   return r;
 }
+/* Ob aus einem PDF überhaupt Text zu holen ist, entscheidet die eingebettete
+   Schrift. Lidl-Aufträge kommen mit einer Schrift ohne Unicode-Tabelle – die
+   Zeichen lassen sich zeichnen, aber nicht lesen. Dann liefert das Auslesen
+   Zeichensalat, und die App merkt das an den fehlenden Feldnamen. */
+var LIDL_MARKER=["Auftrag-Nr","Filial-Nr","Störung","Problemtyp","Auftragstext",
+                 "Leistungsort","Kostenstelle","Modell","Hersteller","Beschreibung"];
+function textIstLesbar(teile){
+  var alles=teile.map(function(t){ return t.s; }).join("\n");
+  return LIDL_MARKER.some(function(m){ return alles.indexOf(m)>=0; });
+}
+
+/* Seiten als Bild – damit geht nichts verloren, auch wenn der Text nicht
+   lesbar ist. Die Technikerin sieht den Auftrag und tippt ab, was fehlt. */
+function pdfSeitenAlsBild(pdf, maxSeiten){
+  var seiten=[]; for(var i=1;i<=Math.min(pdf.numPages, maxSeiten||2);i++) seiten.push(i);
+  return Promise.all(seiten.map(function(n){
+    return pdf.getPage(n).then(function(pg){
+      var roh=pg.getViewport({scale:1});
+      /* rund 1400 px breit: gut lesbar und trotzdem sparsam */
+      var vp=pg.getViewport({scale:Math.min(2.4, 1400/roh.width)});
+      var cv=document.createElement("canvas");
+      cv.width=Math.round(vp.width); cv.height=Math.round(vp.height);
+      return pg.render({canvasContext:cv.getContext("2d"), viewport:vp}).promise.then(function(){
+        return cv.toDataURL("image/jpeg", 0.75);
+      });
+    });
+  }));
+}
+
 function leseLidlPdf(datei){
   return ladePdfJs().then(function(){ return datei.arrayBuffer(); }).then(function(buf){
     return window.pdfjsLib.getDocument({data:new Uint8Array(buf)}).promise;
@@ -3095,8 +3413,16 @@ function leseLidlPdf(datei){
         /* Seite 2 nach unten versetzen, damit sich Zeilen nicht überlagern */
         return tc.items.map(function(it){ return {s:it.str, x:Math.round(it.transform[4]), y:Math.round(it.transform[5])-(n-1)*2000}; });
       });
-    }));
-  }).then(function(listen){ return werteLidlAuftrag([].concat.apply([],listen)); });
+    })).then(function(listen){
+      var teile=[].concat.apply([],listen);
+      var lesbar=textIstLesbar(teile);
+      return pdfSeitenAlsBild(pdf, 2).then(function(bilder){
+        var a = lesbar ? werteLidlAuftrag(teile) : {};
+        a._lesbar=lesbar; a._seiten=bilder;
+        return a;
+      });
+    });
+  });
 }
 
 /* Kostenstelle AT0234 -> Filiale 234; sonst über die Adresse */
@@ -3500,6 +3826,7 @@ function viewProtokoll(){
         "Störung, Problem, Markt und Ansprechpartner werden übernommen. Nur ein Ausdruck da? QR-Code scannen, "+
         "dann steht die Auftragsnummer drin und der Rest wird abgetippt.</div>"+
       '<div class="note warnbox" id="s_warn" hidden style="margin-top:8px"></div>'+
+      '<div id="s_bild" hidden style="margin-top:10px"></div>'+
       '<div class="grid" style="margin-top:12px">'+STOER_AUFTRAG.map(feldZeile).join("")+"</div>"+
       textFeld("beschreibung","Beschreibung laut Auftrag")+
     "</fieldset>";
@@ -3864,6 +4191,18 @@ function viewProtokoll(){
     return da.length ? "Zu Auftrag <strong>"+esc(nr)+"</strong> gibt es schon ein Protokoll vom "+dfmt(da[0].datum)+
       " ("+esc(protoName(da[0]))+"). Bei einem zweiten Einsatz ist das in Ordnung – sonst bitte das vorhandene korrigieren." : "";
   };
+  /* Den Auftrag als Bild einblenden – zum Abtippen und zum Nachsehen. */
+  function auftragBildZeigen(bilder){
+    var box=form.querySelector("#s_bild"); if(!box || !bilder || !bilder.length) return;
+    box.hidden=false;
+    box.innerHTML='<div class="l muted" style="font-size:11px;text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px">'+
+      "Auftrag von Lidl</div>"+
+      bilder.map(function(b,i){
+        return '<a href="'+b+'" target="_blank" rel="noopener" title="größer ansehen">'+
+          '<img src="'+b+'" alt="Auftrag Seite '+(i+1)+'" style="width:100%;max-width:520px;border:1px solid var(--line);'+
+          'border-radius:8px;margin-bottom:8px;background:#fff"></a>';
+      }).join("");
+  }
   function uebernimmAuftrag(a){
     geladenerAuftrag=a;
     STOER_AUFTRAG.forEach(function(f){ setzS(f[0], a[f[0]]); });
@@ -3883,15 +4222,44 @@ function viewProtokoll(){
   if(stoer){
     form.querySelector("#s_addmat").onclick=function(){ addMaterial(null); };
     if(!bearb) addMaterial(null);
+    /* Aus einer offenen Störung heraus: die Angaben des Auftrags stehen schon
+       da, der Auftrag als Bild daneben. Nur noch beheben und abschließen. */
+    if(S.stoerungAus && !bearb){
+      var vor=OFFENE.filter(function(x){ return x._id===S.stoerungAus; })[0];
+      if(vor){
+        ["stoerungsnr","problemtyp","beschreibung","auftragsdatum","lidlTyp","lidlModell",
+         "hersteller","lin","seriennummer","lidlKontakt","lidlTelefon","lidlMail"]
+          .forEach(function(k){ setzS(k, vor[k]); });
+        setzS("kostenstelle", vor.filialCode);
+        setzS("ausfuehrenBis", vor.zieltermin);
+        if(vor.auftragsnummer) form.querySelector("#f_auftrag").value=vor.auftragsnummer;
+        if(vor.seiten && vor.seiten.length) auftragBildZeigen(vor.seiten);
+        sInfo("Aus der offenen Störung übernommen"+(vor.auftragsnummer?" (Auftrag <strong>"+esc(vor.auftragsnummer)+"</strong>)":"")+
+              ". Mit dem Speichern wird sie als erledigt abgehakt.");
+      }
+    }
     var pdfEin=form.querySelector("#s_pdf");
     pdfEin.onchange=function(){
       var datei=pdfEin.files&&pdfEin.files[0]; pdfEin.value="";
       if(!datei) return;
       sInfo("Auftrag wird gelesen …"); sWarn("");
       leseLidlPdf(datei).then(function(a){
+        if(a._lesbar===false){
+          /* Die Schrift im Auftrag hat keine Unicode-Tabelle: zeichnen ja,
+             auslesen nein. Statt zu raten wird der Auftrag als Bild gezeigt. */
+          geladenerAuftrag=a; formDirty=true;
+          sInfo("");
+          sWarn("Aus dieser PDF lässt sich kein Text auslesen – so schickt Lidl sie. "+
+                "Der Auftrag steht unten als Bild; bitte Auftragsnummer, Markt und Problem von dort abtippen.");
+          auftragBildZeigen(a._seiten);
+          return;
+        }
         if(!a.auftragsnummer && !a.stoerungsnr && !a.problemtyp){
-          sInfo(""); sWarn("In dieser PDF wurde kein Lidl-Störungsauftrag erkannt. Ist es die richtige Datei?"); return; }
+          sInfo(""); sWarn("In dieser PDF wurde kein Lidl-Störungsauftrag erkannt. Ist es die richtige Datei?");
+          if(a._seiten && a._seiten.length) auftragBildZeigen(a._seiten);
+          return; }
         uebernimmAuftrag(a);
+        if(a._seiten && a._seiten.length) auftragBildZeigen(a._seiten);
       }, function(e){ sInfo(""); sWarn("Die PDF konnte nicht gelesen werden: "+esc(e&&e.message||String(e))); });
     };
     form.querySelector("#s_qr").onclick=function(){
@@ -4103,7 +4471,7 @@ function viewProtokoll(){
   }
 
   form.querySelector("#reset").onclick=function(){
-    formDirty=false; S.protoStandort=""; S.protoPos="";
+    formDirty=false; S.protoStandort=""; S.protoPos=""; S.stoerungAus=null;
     if(S.bearbeiten){ S.letztesProtokoll=S.bearbeiten.x._id; S.bearbeiten=null; }
     render();
   };
@@ -4219,6 +4587,16 @@ function viewProtokoll(){
       btn.disabled=false; btn.textContent="Protokoll speichern"; formDirty=false; toast(msg);
       S.protoStandort=""; S.protoPos="";
       S.letztesProtokoll=id;     /* nach dem Neuzeichnen direkt aufklappen */
+      /* Kam das Protokoll aus einer offenen Störung, ist die damit erledigt. */
+      if(S.stoerungAus){
+        var vor=OFFENE.filter(function(x){ return x._id===S.stoerungAus; })[0];
+        S.stoerungAus=null;
+        if(vor){
+          var z=Object.assign({}, vor, {erledigt:new Date().toISOString(), protokollId:id});
+          stoerungSpeichern(z, "Durch Störungsprotokoll vom "+dfmt(doc.datum)+" erledigt")
+            .then(function(){ berechneFaelligkeiten(); render(); });
+        }
+      }
       berechneFaelligkeiten();   /* die gewarteten Positionen rücken sofort weiter */
       render();
     };

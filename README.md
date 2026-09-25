@@ -465,6 +465,45 @@ bereit; zusätzlich merkt sich das Handy den letzten Stand. Die
 Unternehmenszertifikatsnummer wird ebenso übernommen. Ändert jemand die
 Nummer, gilt ab dem nächsten Protokoll die neue.
 
+## Offene Störungen
+
+Ein Auftrag von Lidl kommt herein, gearbeitet wird oft erst Tage später.
+Dazwischen steht die Störung im Reiter **Fällig** ganz oben — vor allen
+Wartungsterminen, denn sie wartet nicht auf den Kalender.
+
+**Erfassen:** Unter *Fällig* auf **+ Störung erfassen**. Dann entweder
+
+- **Auftrag-PDF öffnen** — die Datei aus der Lidl-Mail,
+- **Auftrag abfotografieren** — wenn nur ein Ausdruck da ist, oder
+- **QR-Code scannen** — trägt die Auftragsnummer ein.
+
+Der Auftrag wird immer **als Bild mitgespeichert**, gleich unter den
+Knöpfen. Was sich auslesen lässt, füllt die Felder; der Rest wird davon
+abgetippt. Tippt man die **Filial-Nr.** ein (`AT0405`), sucht die App den
+Markt selbst.
+
+Pflicht sind nur **Auftragsnummer** und **Markt** — ohne die beiden lässt
+sich die Störung weder wiederfinden noch zuordnen.
+
+**In der Liste** steht je Störung der Markt, das Problem, der Zieltermin und
+wie lange es noch dauert. Ist der Zieltermin vorbei, steht das rot da.
+Zwei Knöpfe:
+
+- **Störungsprotokoll erstellen** — öffnet das Protokoll mit allen Angaben
+  und dem Auftragsbild. Mit dem Speichern gilt die Störung als erledigt und
+  verschwindet aus der Liste; Protokoll und Störung bleiben verknüpft.
+- **Ansehen / ändern** — Angaben nachtragen, den Auftrag ansehen, oder von
+  Hand abhaken. Löschen dürfen nur Admins.
+
+Offene Störungen liegen wie die Anlagendaten in `stammdaten` (`typ`
+`stoerung`) und stehen damit auf allen Geräten. Jede angemeldete Person darf
+sie anlegen und ändern — der Auftrag kommt herein, bevor jemand vor Ort war.
+
+**Dafür einmal `supabase-setup.sql` erneut ausführen.** Es erweitert die
+Zugriffsregel auf `stammdaten` um den neuen Typ. Bis dahin bleibt eine
+erfasste Störung auf dem Gerät und geht von selbst raus, sobald die Regel
+da ist.
+
 ## Störungseinsätze
 
 Unter **Protokoll** wird zwischen **Wartung** und **Störung** umgeschaltet.
@@ -472,7 +511,20 @@ Ein Störungsprotokoll gehört zu einem Lidl-Störungsauftrag.
 
 **Den Auftrag übernehmen:** Tippen Sie auf **Auftrag-PDF öffnen** und wählen
 Sie die PDF aus der Lidl-Mail. Speichern Sie die PDF dafür vorher aus dem
-Mailprogramm in „Dateien“ bzw. „Downloads“. Die App liest dann aus:
+Mailprogramm in „Dateien“ bzw. „Downloads“.
+
+> **Wichtig, aus einem echten Auftrag geprüft:** Aus den PDFs, die Lidl
+> verschickt, lässt sich **kein Text auslesen**. Die eingebettete Schrift hat
+> keine Unicode-Tabelle — die Zeichen lassen sich zeichnen, aber nicht lesen;
+> heraus kommt Zeichensalat. Einen QR-Code hat der geprüfte Auftrag auch
+> nicht. Die App erkennt das an den fehlenden Feldnamen, sagt es und zeigt
+> den Auftrag stattdessen **als Bild**. Abgetippt werden müssen dann nur
+> Auftragsnummer, Filial-Nr. und das Problem.
+>
+> Sollte Lidl irgendwann lesbare PDFs schicken, greift die Auswertung unten
+> von selbst — sie bleibt eingebaut.
+
+Aus einem lesbaren Auftrag holt die App:
 
 - Auftragsnummer und Auftragsdatum
 - Störungsnummer und „Ausführen bis“
