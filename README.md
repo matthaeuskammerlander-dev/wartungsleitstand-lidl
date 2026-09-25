@@ -342,14 +342,21 @@ bleiben die Kanten sauber.
 | Datei | wofür |
 |---|---|
 | `icon-180.png` | `apple-touch-icon`, Homebildschirm am iPhone |
-| `icon-192.png`, `icon-512.png` | `manifest.json`, Android und Chrome |
+| `icon-192.png`, `icon-512.png` | `manifest.json`, Zweck `any` |
+| `icon-192-maske.png`, `icon-512-maske.png` | `manifest.json`, Zweck `maskable` |
 | `favicon-32.png` | Symbol im Browser-Reiter |
 | `*-dunkel.png` | dieselben Größen für den Dunkelmodus |
 
-**Der Buchstabe füllt 57,5 % der Fläche.** Das ist kein Zufall: Android
-schneidet Symbole mit `purpose: "maskable"` auf einen Kreis zu und garantiert
-nur die inneren 80 %. Bei größerem K wurden die Ecken abgeschnitten — der
-Türkis-Arm oben rechts und das schmale Feld unten rechts.
+**Zwei Größen des Buchstabens, mit Absicht.** Android schneidet Symbole mit
+`purpose: "maskable"` auf einen Kreis zu und garantiert nur die inneren 80 %.
+Bei einem K über 60 % fehlen danach der Türkis-Arm oben rechts und das
+schmale Feld unten rechts.
+
+Statt den Buchstaben überall kleiner zu machen, gibt es zwei Fassungen: das
+normale Symbol zeigt ihn mit **66 %** groß — so kommt es aufs iPhone und
+überallhin, wo nicht zugeschnitten wird. Für den Kreiszuschnitt liegt
+daneben eine eigene Fassung mit **57,5 %**. Beide Werte stehen in
+`tools/icon-bauen.html` oben als `GROSS` und `SICHER`.
 
 **Dunkelmodus:** Das Symbol im Browser-Reiter richtet sich über
 `media="(prefers-color-scheme: dark)"` nach der Einstellung des Geräts. Auf
