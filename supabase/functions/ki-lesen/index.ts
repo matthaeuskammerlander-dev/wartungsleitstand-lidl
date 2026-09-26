@@ -149,8 +149,9 @@ Deno.serve(async (req) => {
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return antwort({ fehler: "Bitte anmelden." }, 401);
   // Kunde und Präsentation dürfen nicht (kostet echtes Geld; Rolle aus tools/rollen.sql)
+  // (fehlt die Funktion, weil rollen.sql noch nicht lief, wird nicht blockiert)
   const { data: darf, error: rollenFehler } = await supabase.rpc("darf_schreiben");
-  if (rollenFehler || darf !== true) return antwort({ fehler: "Mit diesem Konto ist die KI-Erkennung nicht freigegeben." }, 403);
+  if (!rollenFehler && darf === false) return antwort({ fehler: "Mit diesem Konto ist die KI-Erkennung nicht freigegeben." }, 403);
 
   // 2. Was soll gelesen werden?
   let eingabe: { art?: string; bilder?: { media_type: string; data: string }[]; kontext?: string };

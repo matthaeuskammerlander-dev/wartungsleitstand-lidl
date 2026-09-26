@@ -47,29 +47,35 @@ mit – das hilft beim Entziffern von Handschrift und Stempeln.
 
 ## Kosten
 
-Rechnung nach verbrauchten Tokens (Stand 2026: 5 USD je Million Eingabe-,
-25 USD je Million Ausgabe-Tokens). Ein Bild in 1800 px sind grob 2.000–3.000
-Eingabe-Tokens. Eine Prüfbuch-Serie mit 6 Seiten liegt damit bei wenigen
-Cent. Inhaber sehen unter *Verwaltung → Inhaber* die Summe des Monats.
+Rechnung nach verbrauchten Tokens (Modell `claude-opus-5`, Stand 2026: 5 USD je
+Million Eingabe-, 25 USD je Million Ausgabe-Tokens). Ein Foto in 1800 px sind
+grob 2.000–3.000 Eingabe-Tokens. Eine Prüfbuch-Serie mit 6 Seiten kostet damit
+etwa **10–15 US-Cent**, ein Typenschild 2–4 Cent. Inhaber sehen unter
+*Verwaltung → Inhaber* die Summe des Monats. Ein Ausgabenlimit in der Console
+schützt vor Überraschungen.
 
-## Einrichten (einmalig)
+## Einrichten (einmalig, alles im Browser – ca. 15 Minuten)
 
-1. **API-Konto bei Anthropic** anlegen (console.anthropic.com – unabhängig vom
-   Claude-Abo, ohne Arbeitsplätze), Guthaben aufladen, unter *API Keys* einen
-   Schlüssel erzeugen. Am besten ein eigener
-   Workspace „Wartungsleitstand“ mit Ausgabenlimit (z. B. 20 USD im Monat).
-2. **SQL:** `tools/ki-und-posteingang.sql` im Supabase SQL Editor ausführen
-   (legt `ki_nutzung` an).
-3. **Funktion hochladen** – mit der Supabase-Kommandozeile auf einem PC:
-   ```
-   npx supabase login
-   npx supabase link --project-ref crvqnsmepwmqdplrenqm
-   npx supabase secrets set ANTHROPIC_API_KEY=sk-ant-...
-   npx supabase functions deploy ki-lesen
-   ```
-   Optional ein anderes Tageslimit je Person: `npx supabase secrets set KI_LIMIT_JE_TAG=40`
-   (Standard 60).
-4. **Einschalten:** in `config.js` `kiAktiv: true` setzen und hochladen.
+1. **API-Konto bei Anthropic:** console.anthropic.com – unabhängig vom
+   Claude-Abo, ohne Arbeitsplätze. Unter *Billing* Guthaben aufladen (z. B.
+   10 USD) und ein **monatliches Ausgabenlimit** setzen (z. B. 20 USD). Unter
+   *API Keys* → *Create Key* einen Schlüssel „Wartungsleitstand“ erzeugen und
+   kopieren (er wird nur einmal angezeigt; nicht per Mail verschicken).
+2. **Supabase – SQL:** Im SQL Editor `tools/ki-und-posteingang.sql` ausführen
+   (legt `ki_nutzung` für Kosten und Tageslimit an; setzt `tools/rollen.sql` voraus).
+3. **Supabase – Schlüssel hinterlegen:** *Edge Functions* → *Secrets* (bzw.
+   *Project Settings → Edge Functions*) → *Add new secret*:
+   Name `ANTHROPIC_API_KEY`, Wert = der kopierte Schlüssel. Optional
+   `KI_LIMIT_JE_TAG` (Standard 60 Aufrufe je Person und Tag).
+4. **Supabase – Funktion anlegen:** *Edge Functions* → *Deploy a new function*
+   → *Via Editor*. Name genau **`ki-lesen`**. Den ganzen Inhalt von
+   `supabase/functions/ki-lesen/index.ts` in den Editor kopieren (den
+   Beispielcode ersetzen) → *Deploy function*. „Verify JWT“ eingeschaltet lassen.
+5. **Einschalten:** in `config.js` `kiAktiv: true` setzen und hochladen (das
+   übernimmt Claude, sobald Schritt 1–4 erledigt sind).
+
+Klappt der direkte Weg einmal nicht (Netz, Limit, Einrichtung), bietet die App
+automatisch den Kopier-Weg über die Claude-App an.
 
 In der Präsentation ist die KI immer aus – sie kostet echtes Geld.
 
