@@ -608,6 +608,12 @@ Zwei Knöpfe:
 - **Ansehen / ändern** — Angaben nachtragen, den Auftrag ansehen, oder von
   Hand abhaken. Löschen dürfen nur Admins.
 
+**QR-Code zeigen:** An offener Störung und Störungsprotokoll zeigt die App den
+QR-Code des Lidl-Auftrags groß auf Weiß, darunter die Nummer zum Abtippen und
+Kopieren – für den Rapport im Lidl-System, das den Auftrag darüber
+wiederfindet. Wurde der Ausdruck gescannt, steht genau dessen Inhalt im Code,
+sonst die Auftragsnummer (der einzige Inhalt des Lidl-QR-Codes).
+
 **Einsatz planen:** Unter „Ansehen / ändern“ stehen *Einsatz geplant am*,
 Uhrzeit und wer hinfährt. **In Handykalender** lädt den Termin als
 Kalenderdatei; das Handy fragt, in welchen Kalender er soll. Ohne geplanten
@@ -637,7 +643,7 @@ da ist.
 | Rolle | Wer | Darf |
 |---|---|---|
 | **Inhaber** | Manfred, Matthäus | alles, dazu *Rückgängig machen*, KI-Kosten und Kontenübersicht (*Verwaltung → Inhaber*) |
-| **Admin** | Darko | Verwaltung, Nachbessern, Protokolle löschen/wiederherstellen, Posteingang |
+| **Admin** | Darko | Verwaltung mit Nachbessern, Protokolle löschen/wiederherstellen, Posteingang |
 | **Techniker** | alle übrigen | Protokolle, Störungen, Anlagendaten – ohne Büro-Reiter |
 | **Kunde** | Lidl | nur lesen: Fällig, Karte, Anlagen, Verlauf; keine Zugangsdaten, kein interner Verlauf |
 | **Präsentation** | Vorführung | Spielwiese: alles bedienbar wie als Admin, **gespeichert wird nichts** – kein Gerätespeicher, keine Datenbank, keine KI; nach dem Neuladen ist alles wie vorher. Ein Banner sagt das dauerhaft. |
@@ -660,11 +666,17 @@ erledigt, keine Mängel** (hakt alle Arbeiten, „ohne wesentliche
 Beanstandung“, die § 23-Aussage und „betriebsbereit: ja“ an) → unterschreiben
 → speichern. Der Name kommt aus dem Konto.
 
-## Prüfen – Checkliste fürs Büro
+## Nachbessern – Checkliste fürs Büro
 
 Termine und Anlagendaten kommen aus vielen Quellen: Excel-Liste, Verwaltung,
 Anlagendaten vor Ort, Prüfbuch, Protokolle, offene Störungen und Rapporte.
-Der Reiter **Prüfen** zeigt, was sich widerspricht, doppelt ist oder fehlt –
+**Verwaltung → Nachbessern** (öffnet als Erstes, die Zahl der Fehler steht im
+Menü) zeigt je Markt, sortiert nach **Chaosfaktor**: Termin-Fehler wiegen am
+schwersten, dann Doppelungen, Störungen und Rapporte, fehlende Anlagendaten am
+wenigsten; überfällige oder bald fällige Märkte rücken nach oben. Je Markt
+führt **Markt, Anlagen und Termine bearbeiten** direkt in den Editor (mit
+„zurück zu Nachbessern“), und je Anlage mit Lücken **Anlagendaten: …** in den
+geführten Dialog. Die Liste zeigt, was sich widerspricht, doppelt ist oder fehlt –
 getrennt nach Fehlern, Hinweisen und Lücken, filterbar nach Thema und als CSV
 für Excel. Geändert wird dort nichts; Marktnamen antippen öffnet den Markt,
 Admins springen mit einem Tipp in die Verwaltung.

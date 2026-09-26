@@ -1153,7 +1153,7 @@ function filtered(){
 function filteredPos(){ var ids={}; filtered().forEach(function(s){ids[s.id]=1;}); return POS.filter(function(p){return ids[p.standortId];}); }
 
 /* ---------- Tabs ---------- */
-var VIEWS=[["faellig","Fällig"],["karte","Karte"],["anlagen","Anlagen"],["protokoll","Protokoll"],["verlauf","Verlauf"],["pruefen","Prüfen"],["verwaltung","Verwaltung"],["daten","Datenbasis"]];
+var VIEWS=[["faellig","Fällig"],["karte","Karte"],["anlagen","Anlagen"],["protokoll","Protokoll"],["verlauf","Verlauf"],["verwaltung","Verwaltung"],["daten","Datenbasis"]];
 var tabsEl=document.getElementById("tabs");
 VIEWS.forEach(function(v){
   var b=document.createElement("button"); b.type="button"; b.textContent=v[1]; b.setAttribute("role","tab");
@@ -1389,7 +1389,7 @@ function stoerungDialog(vorhanden){
       scanneQr().then(function(wert){
         if(!wert) return;
         var nr=(/\d{5,}/.exec(wert)||[String(wert).trim()])[0];
-        o.auftragsnummer=nr; o.quelle="qr";
+        o.auftragsnummer=nr; o.quelle="qr"; o.qrInhalt=String(wert);
         var e=inhalt.querySelector('[data-s="auftragsnummer"]'); if(e) e.value=nr;
         melde("Auftragsnummer <strong>"+esc(nr)+"</strong> gescannt.");
       });
@@ -1747,6 +1747,33 @@ function posteingangRapport(e){
   }, function(x){ toast(x.message); });
 }
 
+/* ---------- QR-Code des Lidl-Auftrags zeigen ----------
+   Beim Rapport im Lidl-System wird der Auftrag über seinen QR-Code bzw. die
+   Nummer wiedergefunden. Die App zeigt den QR-Code groß auf Weiß – gescannt
+   wurde er, steht genau dessen Inhalt drin; sonst die Auftragsnummer, die
+   laut Auftrag der einzige Inhalt des Lidl-QR-Codes ist. */
+function auftragQrAnsicht(nummer, roh){
+  var inhalt=String(roh||nummer||"").trim();
+  if(!inhalt){ toast("Keine Auftragsnummer eingetragen."); return; }
+  var v=ansichtOeffnen("Lidl-Auftrag "+(nummer||""));
+  v.schritt.textContent=roh ? "QR-Code wie auf dem Auftrag gescannt" : "QR-Code aus der Auftragsnummer";
+  var box=el('<div class="stack" style="align-items:center;text-align:center">'+
+    '<div style="background:#fff;padding:18px;border-radius:12px;display:inline-block;max-width:100%">'+
+      '<canvas style="width:min(78vw,340px);height:auto;display:block;image-rendering:pixelated"></canvas></div>'+
+    '<div class="mono" style="font-size:30px;font-weight:700;letter-spacing:.06em;user-select:all">'+esc(nummer||inhalt)+"</div>"+
+    '<div class="rowflex" style="justify-content:center"><button class="btn ghost sm" type="button">Nummer kopieren</button></div>'+
+    '<div class="muted" style="font-size:12.5px">Beim Rapport im Lidl-System scannen oder die Nummer eintippen. '+
+      "Bildschirm hell stellen, falls der Scanner nicht greift.</div></div>");
+  try{
+    if(!window.QRious) throw new Error("QR-Bibliothek nicht geladen – keine Verbindung?");
+    new window.QRious({element:box.querySelector("canvas"), value:inhalt, size:600, level:"M", padding:0, background:"#ffffff", foreground:"#000000"});
+  }catch(e){
+    box.querySelector("canvas").replaceWith(el('<div style="color:#111;font-size:13px;padding:12px">'+esc(e.message)+"</div>"));
+  }
+  box.querySelector("button").onclick=function(){ inZwischenablage(nummer||inhalt, "Auftragsnummer"); };
+  v.inhalt.appendChild(box);
+}
+
 /* ---------- Marktansicht von überall ----------
    Ein Marktname lässt sich antippen – in der Fälligkeitsliste, bei offenen
    Störungen, im Kalender, im Protokoll. Es öffnet sich der Markt mit offenen
@@ -1842,6 +1869,7 @@ function stoerungEintrag(o, ohneMarkt){
         '<button class="btn sm" type="button" data-a="proto" data-schreiben>Störungsprotokoll erstellen</button>'+
         '<button class="btn ghost sm" type="button" data-a="bearb" data-schreiben>Ansehen / ändern</button>'+
         '<button class="btn ghost sm" type="button" data-a="ics">In Handykalender</button>'+
+        ((o.auftragsnummer||o.qrInhalt) ? '<button class="btn ghost sm" type="button" data-a="qr">QR-Code zeigen</button>' : "")+
       "</div></div>");
     z.querySelector('[data-a="proto"]').onclick=function(){
       if(!o.standortId){ toast("Der Störung ist noch kein Markt zugewiesen – bitte über „Ansehen / ändern“ nachtragen."); return; }
@@ -1850,6 +1878,8 @@ function stoerungEintrag(o, ohneMarkt){
     };
     z.querySelector('[data-a="bearb"]').onclick=function(){ stoerungDialog(o); };
     z.querySelector('[data-a="ics"]').onclick=function(){ stoerungIcs(o); };
+    var qrb=z.querySelector('[data-a="qr"]');
+    if(qrb) qrb.onclick=function(){ auftragQrAnsicht(o.auftragsnummer, o.qrInhalt); };
     return z;
 }
 
@@ -3592,7 +3622,7 @@ function stoerungSpeichern(o, grund){
 }
 var STOER_OFFEN_FELDER=["auftragsnummer","stoerungsnr","filialCode","problemtyp","beschreibung",
   "zieltermin","auftragsdatum","prioritaet","lidlTyp","lidlModell","hersteller","lin","seriennummer",
-  "lidlKontakt","lidlTelefon","lidlMail","notiz","seiten","pdfName","pdfDaten","termin","terminZeit","terminTechniker","ohneAuftrag","positionId",
+  "lidlKontakt","lidlTelefon","lidlMail","notiz","seiten","pdfName","pdfDaten","termin","terminZeit","terminTechniker","ohneAuftrag","positionId","qrInhalt",
   "erledigt","protokollId","quelle"];
 
 function wendeStammdatenAn(){
@@ -5167,6 +5197,7 @@ function viewProtokoll(){
         '<label class="btn sm" for="s_pdf" style="cursor:pointer">Auftrag-PDF öffnen</label>'+
         '<input type="file" id="s_pdf" accept="application/pdf,.pdf" hidden>'+
         '<button type="button" class="btn ghost sm" id="s_qr">QR-Code scannen</button>'+
+        '<button type="button" class="btn ghost sm" id="s_qrzeigen">QR-Code zeigen</button>'+
       "</div>"+
       '<div class="muted" id="s_info" style="font-size:12.5px;margin-top:8px">Die PDF aus der Lidl-Mail öffnen – Auftragsnummer, '+
         "Störung, Problem, Markt und Ansprechpartner werden übernommen. Nur ein Ausdruck da? QR-Code scannen, "+
@@ -5628,6 +5659,8 @@ function viewProtokoll(){
     matHost.appendChild(b);
   }
   var geladenerAuftrag=null, qrGescannt=false;
+  /* Inhalt des gescannten QR-Codes, damit „QR-Code zeigen“ genau ihn zeigt */
+  var qrRoh=(bearb && bearb.stoerung && bearb.stoerung.qrInhalt) || "";
   /* das Auftrags-PDF im Original – aus der geoeffneten Datei oder aus der
      offenen Stoerung. Es wird mit dem Protokoll abgelegt. */
   var auftragPdf=null;
@@ -5693,6 +5726,7 @@ function viewProtokoll(){
         setzS("kostenstelle", vor.filialCode);
         setzS("ausfuehrenBis", vor.zieltermin);
         if(vor.auftragsnummer) form.querySelector("#f_auftrag").value=vor.auftragsnummer;
+        if(vor.qrInhalt) qrRoh=vor.qrInhalt;
         if(vor.seiten && vor.seiten.length) auftragBildZeigen(vor.seiten);
         if(vor.pdfDaten) auftragPdf={name:vor.pdfName||"auftrag.pdf", datenUrl:vor.pdfDaten};
         sInfo("Aus der offenen Störung übernommen"+(vor.auftragsnummer?" (Auftrag <strong>"+esc(vor.auftragsnummer)+"</strong>)":"")+
@@ -5726,6 +5760,7 @@ function viewProtokoll(){
         if(a._seiten && a._seiten.length) auftragBildZeigen(a._seiten);
       }, function(e){ sInfo(""); sWarn("Die PDF konnte nicht gelesen werden: "+esc(e&&e.message||String(e))); });
     };
+    form.querySelector("#s_qrzeigen").onclick=function(){ auftragQrAnsicht(form.querySelector("#f_auftrag").value.trim(), qrRoh); };
     form.querySelector("#s_qr").onclick=function(){
       scanneQr().then(function(wert){
         if(!wert) return;
@@ -5735,7 +5770,7 @@ function viewProtokoll(){
             esc(geladenerAuftrag.auftragsnummer)+"</strong>. Falsche PDF oder falscher Ausdruck?");
           return;
         }
-        qrGescannt=true; formDirty=true;
+        qrGescannt=true; formDirty=true; qrRoh=String(wert);
         form.querySelector("#f_auftrag").value=nr;
         sInfo("Auftragsnummer <strong>"+esc(nr)+"</strong> gescannt"+(geladenerAuftrag?" – passt zur geöffneten PDF.":
           ". Die übrigen Angaben stehen nur auf dem Auftrag selbst – bitte abtippen oder die PDF öffnen."));
@@ -6167,6 +6202,7 @@ function viewProtokoll(){
       /* woher die Auftragsdaten stammen – hilft beim Nachvollziehen */
       so2.quelle = geladenerAuftrag ? "pdf" : qrGescannt ? "qr" : (bearb&&bearb.stoerung&&bearb.stoerung.quelle) || "hand";
       so2.ohneAuftrag=!!(form.querySelector("#f_ohneauftrag")||{}).checked && !doc.auftragsnummer;
+      if(qrRoh) so2.qrInhalt=qrRoh;
       /* Verweis auf das abgelegte Auftrags-PDF. Die Datei selbst liegt
          daneben, wie die Fotos – im Protokoll steht nur, dass es sie gibt. */
       var altePdf=bearb && bearb.stoerung && bearb.stoerung.auftragDatei;
@@ -6852,6 +6888,7 @@ function protokollDetail(p){
       '. Zählt nirgends mehr mit und ist nur hier in der Verwaltungsansicht sichtbar.</div>':"")+
     '<div class="rowflex">'+
       '<button class="btn sm" type="button" data-akt="druck">Drucken / PDF</button>'+
+      (istStoerung(p) && (p.auftragsnummer||(p.stoerung&&p.stoerung.qrInhalt)) ? '<button class="btn ghost sm" type="button" data-akt="qr">QR-Code zeigen</button>' : "")+
       (p.geloescht||nurLesen()?"":'<button class="btn ghost sm" type="button" data-akt="korr">Korrigieren</button>')+
       '<button class="btn ghost sm" type="button" data-akt="verlauf">Änderungen ansehen</button>'+
       (p._quelle==="geraet"?'<button class="btn ghost sm" type="button" data-akt="weg">Vom Gerät löschen</button>':"")+
@@ -6907,6 +6944,8 @@ function protokollDetail(p){
   "</div></div>");
 
   d.querySelector('[data-akt="druck"]').onclick=function(){ druckeProtokoll(p); };
+  var qrk=d.querySelector('[data-akt="qr"]');
+  if(qrk) qrk.onclick=function(){ auftragQrAnsicht(p.auftragsnummer, p.stoerung && p.stoerung.qrInhalt); };
   var korrKnopf=d.querySelector('[data-akt="korr"]');
   if(korrKnopf) korrKnopf.onclick=function(){
     /* Erst die Unterschrift holen, dann das Formular aufbauen: es zeigt sie an
@@ -7679,9 +7718,30 @@ function viewVerwaltung(){
   var f=document.createDocumentFragment();
   if(!Admin.frei){ f.appendChild(verwaltungSperre()); return f; }
   S.adm=S.adm||{suche:"", filter:"alle", sort:"filiale", auf:true, sel:null, entwurf:null};
-  /* ein Fehler in der Inhaber-Karte darf die Verwaltung nie blockieren */
-  if(istInhaber() && Store.modus==="supabase" && Store.sb){ try{ f.appendChild(inhaberKarte()); }catch(e){ console.error(e); } }
   var A=S.adm;
+
+  /* ---- Menü: Nachbessern · Märkte & Anlagen · Inhaber ---- */
+  var liste=pruefListe();
+  var fehlerZahl=liste.filter(function(x){ return x.schwere==="Fehler"; }).length;
+  if(!A.tab) A.tab="nachbessern";
+  var menue=el('<div class="card"><div class="pad"><div class="chips" role="tablist" style="gap:8px">'+
+    [["nachbessern","Nachbessern"+(fehlerZahl?" · "+fehlerZahl+" Fehler":"")],["maerkte","Märkte & Anlagen"]]
+      .concat(istInhaber() && Store.modus==="supabase" && Store.sb ? [["inhaber","Inhaber"]] : [])
+      .map(function(t){ return '<button class="chip" type="button" role="tab" data-tab="'+t[0]+'" aria-pressed="'+(A.tab===t[0])+'">'+esc(t[1])+"</button>"; }).join("")+
+    "</div></div></div>");
+  menue.querySelectorAll("[data-tab]").forEach(function(b){ b.onclick=function(){ A.tab=b.dataset.tab; if(A.tab!=="maerkte") A.vonNachbessern=false; render(); window.scrollTo({top:0}); }; });
+  f.appendChild(menue);
+  if(A.tab==="nachbessern"){ f.appendChild(nachbessernAnsicht(liste)); return f; }
+  if(A.tab==="inhaber"){
+    /* ein Fehler in der Inhaber-Karte darf die Verwaltung nie blockieren */
+    try{ f.appendChild(inhaberKarte()); }catch(e){ console.error(e); }
+    return f;
+  }
+  if(A.vonNachbessern){
+    var zur=el('<div class="card"><div class="pad"><button class="btn ghost sm" type="button">← zurück zu Nachbessern</button></div></div>');
+    zur.querySelector("button").onclick=function(){ A.tab="nachbessern"; A.sel=null; A.vonNachbessern=false; render(); window.scrollTo({top:0}); };
+    f.appendChild(zur);
+  }
 
   /* ---- Kopf ---- */
   var gemeinsam=(Store.modus==="supabase"&&Admin.zentral)||Store.modus==="claude";
@@ -8423,58 +8483,110 @@ function pruefListe(){
   return L.sort(function(a,b){ return rang[a.schwere]-rang[b.schwere] || a.thema.localeCompare(b.thema) ||
     stName(byId[a.standortId]||{}).localeCompare(stName(byId[b.standortId]||{}),"de"); });
 }
-function viewPruefen(){
+/* ---------- Nachbessern: die Arbeitsliste fürs Büro ----------
+   Unter Verwaltung → Nachbessern. Je Markt, was sich widerspricht, doppelt
+   ist oder fehlt – sortiert nach Chaosfaktor: Termin-Fehler wiegen am
+   schwersten, fehlende Anlagendaten am wenigsten, und ein Markt, der
+   überfällig oder bald fällig ist, rückt nach oben. Von jedem Markt geht es
+   mit einem Tipp in den Editor (Markt, Anlagen, Termine) oder in die
+   Anlagendaten. */
+var GEWICHT={
+  "Fehler":{Termine:30, Doppelt:28, "Störungen":22, Rapporte:18, Protokolle:18, Stammdaten:10, _:10},
+  "Hinweis":{Termine:12, Doppelt:9, "Störungen":6, _:4},
+  "Lücke":{Termine:5, Anlagendaten:1, _:2}
+};
+function befundGewicht(x){ var g=GEWICHT[x.schwere]||{}; return g[x.thema]!=null ? g[x.thema] : (g._||1); }
+function marktDrang(s){
+  if(!s) return 1;
+  if(s.status==="ueberfaellig") return 2;
+  if(s.status==="faellig") return 1.6;
+  var n=naechsterTerminMarkt(s);
+  return n && tageBis(n)<=90 ? 1.2 : 1;
+}
+function nachbessernAnsicht(liste){
   var f=document.createDocumentFragment();
-  var liste=pruefListe();
-  S.pruef=S.pruef||{schwere:"Fehler", thema:"alle"};
+  var A=S.adm;
+  A.nbThema=A.nbThema||"alle";
   var themen=["alle"].concat(liste.map(function(x){ return x.thema; }).filter(function(t,i,a){ return a.indexOf(t)===i; }).sort());
+  var sicht=liste.filter(function(x){ return A.nbThema==="alle" || x.thema===A.nbThema; });
+  /* je Markt bündeln */
+  var gruppen={}, ohne=[];
+  sicht.forEach(function(x){
+    if(!x.standortId || !byId[x.standortId]){ ohne.push(x); return; }
+    (gruppen[x.standortId]=gruppen[x.standortId]||[]).push(x);
+  });
+  var maerkte=Object.keys(gruppen).map(function(id){
+    var l=gruppen[id].sort(function(a,b){ return befundGewicht(b)-befundGewicht(a); });
+    var summe=l.reduce(function(n,x){ return n+befundGewicht(x); },0);
+    return {s:byId[id], l:l, punkte:Math.round(summe*marktDrang(byId[id]))};
+  }).sort(function(a,b){ return b.punkte-a.punkte || stName(a.s).localeCompare(stName(b.s),"de"); });
   var zahl=function(sw){ return liste.filter(function(x){ return x.schwere===sw; }).length; };
-  var c=el('<div class="card"><div class="pad stack">'+
-    '<div><h2>Prüfen</h2><div class="sub">Checkliste fürs Büro: was sich widerspricht, doppelt ist oder fehlt – '+
-      "aus Liste, Verwaltung, Anlagendaten, Prüfbuch, Protokollen, offenen Störungen und Rapporten. "+
-      "Marktnamen antippen öffnet den Markt. Geändert wird hier nichts.</div></div>"+
+
+  var kopf=el('<div class="card"><div class="pad stack">'+
+    '<div><h2>Nachbessern</h2><div class="sub">Was sich bei Terminen und Daten widerspricht, doppelt ist oder fehlt – '+
+      "je Markt, das Dringendste zuerst. Termine vor Anlagendaten; überfällige Märkte rücken nach oben.</div></div>"+
     '<div class="kpis">'+
       '<div class="kpi crit"><div class="n">'+zahl("Fehler")+'</div><div class="l">Fehler</div></div>'+
       '<div class="kpi warn"><div class="n">'+zahl("Hinweis")+'</div><div class="l">Hinweise</div></div>'+
       '<div class="kpi"><div class="n">'+zahl("Lücke")+'</div><div class="l">Lücken</div></div>'+
+      '<div class="kpi"><div class="n">'+maerkte.length+'</div><div class="l">Märkte betroffen</div></div>'+
     "</div>"+
-    '<div class="chips" data-f="schwere">'+["Fehler","Hinweis","Lücke","alle"].map(function(w){
-      return '<button class="chip" type="button" data-w="'+w+'" aria-pressed="'+(S.pruef.schwere===w)+'">'+
-        ({Fehler:"Fehler",Hinweis:"Hinweise","Lücke":"Lücken",alle:"alles"})[w]+"</button>"; }).join("")+"</div>"+
-    '<div class="chips" data-f="thema">'+themen.map(function(w){
-      return '<button class="chip" type="button" data-w="'+esc(w)+'" aria-pressed="'+(S.pruef.thema===w)+'">'+esc(w)+"</button>"; }).join("")+"</div>"+
+    '<div class="chips">'+themen.map(function(w){
+      return '<button class="chip" type="button" data-w="'+esc(w)+'" aria-pressed="'+(A.nbThema===w)+'">'+esc(w==="alle"?"alles":w)+"</button>"; }).join("")+"</div>"+
     '<div class="rowflex"><button class="btn ghost sm" type="button" data-a="csv">Liste als CSV für Excel</button></div>'+
-    '<div class="stack" data-liste></div>'+
   "</div></div>");
-  var sicht=liste.filter(function(x){
-    return (S.pruef.schwere==="alle" || x.schwere===S.pruef.schwere) && (S.pruef.thema==="alle" || x.thema===S.pruef.thema);
-  });
-  var host=c.querySelector("[data-liste]");
-  if(!sicht.length) host.appendChild(el('<div class="muted">Nichts gefunden.</div>'));
-  sicht.slice(0,400).forEach(function(x){
-    var s=byId[x.standortId];
-    var r=el('<div class="posbox'+(x.schwere==="Fehler"?" stoerbox":"")+'"><div class="rowflex" style="justify-content:space-between;gap:8px">'+
-      "<div>"+(s?"<strong>"+marktLink(s)+"</strong>"+(s.filiale?' <span class="muted mono">'+esc(s.filiale)+"</span>":""):"<strong>ohne Markt</strong>")+"</div>"+
-      '<span class="rowflex" style="gap:4px"><span class="tag">'+esc(x.thema)+'</span><span class="pill '+
-        (x.schwere==="Fehler"?"p-ueberfaellig":x.schwere==="Hinweis"?"p-faellig":"p-unbekannt")+'">'+esc(x.schwere)+"</span></span></div>"+
-      '<div style="font-size:13px">'+esc(x.text)+"</div></div>");
-    if(s && Admin.frei){
-      var b=el('<button class="btn ghost sm" type="button" style="justify-self:start">In der Verwaltung öffnen</button>');
-      b.onclick=function(){ S.adm=S.adm||{suche:"", filter:"alle", sort:"filiale", auf:true}; S.adm.sel=s.id; S.adm.entwurf=null;
-        S.view="verwaltung"; render(); window.scrollTo({top:0}); };
-      r.appendChild(b);
-    }
-    host.appendChild(r);
-  });
-  if(sicht.length>400) host.appendChild(el('<div class="muted">… und '+(sicht.length-400)+" weitere – Filter enger stellen oder CSV nehmen.</div>"));
-  c.querySelectorAll("[data-f] .chip").forEach(function(b){
-    b.onclick=function(){ S.pruef[b.parentNode.dataset.f]=b.dataset.w; render(); };
-  });
-  c.querySelector('[data-a="csv"]').onclick=function(){
-    csv("pruefliste_lidl.csv", ["Schwere","Thema","Filiale","Markt","Befund"], sicht.map(function(x){
-      var s=byId[x.standortId]||{}; return [x.schwere, x.thema, s.filiale||"", s.id?stName(s):"", x.text]; }));
+  kopf.querySelectorAll(".chip").forEach(function(b){ b.onclick=function(){ A.nbThema=b.dataset.w; render(); }; });
+  kopf.querySelector('[data-a="csv"]').onclick=function(){
+    var zeilen=[];
+    maerkte.forEach(function(m){ m.l.forEach(function(x){ zeilen.push([m.punkte, x.schwere, x.thema, m.s.filiale||"", stName(m.s), x.text]); }); });
+    ohne.forEach(function(x){ zeilen.push(["", x.schwere, x.thema, "", "", x.text]); });
+    csv("nachbessern_lidl.csv", ["Chaos-Punkte","Schwere","Thema","Filiale","Markt","Befund"], zeilen);
   };
-  f.appendChild(c);
+  f.appendChild(kopf);
+
+  ohne.forEach(function(x){
+    f.appendChild(el('<div class="card"><div class="pad"><div class="posbox stoerbox"><strong>ohne Markt</strong>'+
+      '<div style="font-size:13px">'+esc(x.text)+"</div></div></div></div>"));
+  });
+  var zeige=A.nbAlle ? maerkte : maerkte.slice(0,40);
+  zeige.forEach(function(m){
+    var s=m.s, stufe=m.punkte>=60?"hoch":m.punkte>=25?"mittel":"gering";
+    var c=el('<div class="card"><div class="pad stack">'+
+      '<div class="rowflex" style="justify-content:space-between;gap:8px;align-items:flex-start">'+
+        "<div><strong style=\"font-size:15px\">"+marktLink(s)+"</strong>"+(s.filiale?' <span class="muted mono">'+esc(s.filiale)+"</span>":"")+
+          '<br><span class="muted" style="font-size:12.5px">'+esc(s.adresse||"")+"</span></div>"+
+        '<span class="rowflex" style="gap:4px">'+marktPill(s)+'<span class="pill '+
+          (stufe==="hoch"?"p-ueberfaellig":stufe==="mittel"?"p-faellig":"p-unbekannt")+'">Chaos '+stufe+" · "+m.punkte+"</span></span></div>"+
+      '<div class="stack" data-befunde></div>'+
+      '<div class="rowflex" style="gap:6px" data-knoepfe>'+
+        '<button class="btn sm" type="button" data-a="edit">Markt, Anlagen und Termine bearbeiten</button>'+
+      "</div></div></div>");
+    var bh=c.querySelector("[data-befunde]");
+    m.l.forEach(function(x){
+      bh.appendChild(el('<div style="font-size:13px;display:grid;grid-template-columns:auto 1fr;gap:8px;align-items:start">'+
+        '<span class="pill '+(x.schwere==="Fehler"?"p-ueberfaellig":x.schwere==="Hinweis"?"p-faellig":"p-unbekannt")+'">'+esc(x.thema)+"</span>"+
+        "<span>"+esc(x.text)+"</span></div>"));
+    });
+    c.querySelector('[data-a="edit"]').onclick=function(){
+      A.tab="maerkte"; A.sel=s.id; A.entwurf=null; A.vonNachbessern=true; render();
+      setTimeout(function(){ var e=document.getElementById("adm_editor"); if(e) e.scrollIntoView({behavior:"smooth"}); },60);
+    };
+    /* Anlagen mit offenen Anlagendaten: gleich hier ergänzen */
+    var kh=c.querySelector("[data-knoepfe]");
+    anlagenDesMarkts(s,false).forEach(function(a){
+      if(!anlageLuecken(anlageDaten(a.leader)).length) return;
+      var b=el('<button class="btn ghost sm" type="button">Anlagendaten: '+esc(anlagenName(anlageDaten(a.leader)))+"</button>");
+      b.onclick=function(){ anlageDatenErgaenzen(a.leader); };
+      kh.appendChild(b);
+    });
+    f.appendChild(c);
+  });
+  if(!maerkte.length && !ohne.length) f.appendChild(el('<div class="card"><div class="pad muted">Nichts nachzubessern.</div></div>'));
+  if(!A.nbAlle && maerkte.length>40){
+    var mehr=el('<div class="card"><div class="pad"><button class="btn ghost" type="button">Alle '+maerkte.length+" Märkte zeigen</button></div></div>");
+    mehr.querySelector("button").onclick=function(){ A.nbAlle=true; render(); };
+    f.appendChild(mehr);
+  }
   return f;
 }
 
@@ -8609,7 +8721,7 @@ function render(){
   var NUR_LESEN_REITER=["faellig","karte","anlagen","verlauf"];
   /* Büro-Reiter nur für Admins: ein Techniker kann dort nichts tun, und
      jemand Neues soll sich nicht in Verwaltungstexte verirren */
-  var BUERO_REITER=["pruefen","verwaltung","daten"];
+  var BUERO_REITER=["verwaltung","daten"];
   var versteckt=function(v){
     if(nurLesen()) return NUR_LESEN_REITER.indexOf(v)<0;
     return (Store.modus==="supabase"||Store.modus==="anmeldung") && !Admin.frei && BUERO_REITER.indexOf(v)>=0;
@@ -8619,6 +8731,7 @@ function render(){
   Array.prototype.forEach.call(tabsEl.children,function(b){ b.setAttribute("aria-selected", b.dataset.v===S.view?"true":"false"); });
   var host=document.getElementById("app");
   host.innerHTML="";
+  if(S.view==="pruefen"){ S.view="verwaltung"; S.adm=S.adm||{suche:"", filter:"alle", sort:"filiale", auf:true}; S.adm.tab="nachbessern"; }
   var sec=document.createElement("section"); sec.className="view";
   /* Abgemeldet zeigt die App nur die Excel-Liste. Ohne diesen Hinweis sähe
      „keine offene Störung“ und ein falsch überfälliger Termin echt aus. */
@@ -8637,7 +8750,6 @@ function render(){
   else if(S.view==="protokoll") sec.appendChild(viewProtokoll());
   else if(S.view==="verlauf") sec.appendChild(viewVerlauf());
   else if(S.view==="verwaltung") sec.appendChild(viewVerwaltung());
-  else if(S.view==="pruefen") sec.appendChild(viewPruefen());
   else sec.appendChild(viewDaten());
   host.appendChild(sec);
   tipHide();
