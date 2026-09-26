@@ -396,6 +396,7 @@ table.dt td{padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:
     <div class="mark"><b>Wartungsleitstand</b><span>Lidl Österreich · Klimaanlagen</span></div>
     <div class="hspace"></div>
     <button class="btn ghost icon" type="button" id="neuladen" hidden title="Daten und App neu laden" aria-label="Aktualisieren">↻</button>
+    <button class="btn ghost sm" type="button" id="fragebtn" hidden title="Claude fragen – Kältetechnik, Vorschriften, die App">✦ Claude</button>
     <button class="btn ghost icon" type="button" id="qrbtn" hidden>QR-Code</button>
     <div class="stand" id="stand" hidden></div>
   </div>
@@ -2061,6 +2062,7 @@ function marktLink(s, text){
 }
 function marktAnsicht(sid){
   var s=byId[sid]; if(!s) return;
+  S.letzterMarkt=sid;   /* für „Claude fragen“: welcher Markt gerade offen ist */
   var a=ansichtOeffnen(stName(s));
   a.schritt.textContent=[s.filiale?"Filiale "+s.filiale:"", s.adresse].filter(Boolean).join(" · ");
   a.inhalt.appendChild(standortDetail(s));
@@ -10585,6 +10587,102 @@ function csv(name,head,rows){
 }
 
 /* ---------- Render ---------- */
+/* ================= Claude fragen =================
+   Allgemeine Fragen (Kältetechnik, Vorschriften, Fehlersuche, die App) –
+   auf Wunsch mit dem gerade offenen Markt als Hintergrund. Zwei Wege wie beim
+   Prüfbuch: über die eigene Claude-App (im Abo) oder direkt in der App
+   (Funktion ki-frage, ein paar Cent je Frage). Das Gespräch bleibt bis zum
+   Neuladen erhalten; gespeichert wird es nicht. */
+var FRAGE_VERLAUF=[];
+function frageMarkt(){
+  var A=S.adm||{}, id=null;
+  if(S.view==="verwaltung" && A.tab==="maerkte" && A.sel) id=A.sel;
+  else if(S.view==="protokoll" && S.protoStandort) id=S.protoStandort;
+  else if(S.view==="karte" && S.sel) id=S.sel;
+  if(!id && S.letzterMarkt && document.querySelector(".assistent")) id=S.letzterMarkt;
+  return (id && byId[id]) || null;
+}
+function marktKurzText(s){
+  var z=["Markt: "+stName(s)+(s.filiale?" (Filiale "+s.filiale+")":"")+(s.adresse?", "+s.adresse:"")];
+  anlagenDesMarkts(s,true).forEach(function(a){
+    var d=anlageDaten(a.leader);
+    z.push("- Anlage „"+anlagenName(d)+"“: "+[anlageKurz(d), [d.hersteller,d.modell].filter(Boolean).join(" "), d.kaeltemittelArt,
+      leerWert(d.kaeltemittelKg)?"":String(d.kaeltemittelKg).replace(".",",")+" kg", d.inbetriebnahme?"Inbetriebnahme "+dfmt(d.inbetriebnahme):"",
+      anlagePausiert(a.leader)?"zur Zeit nicht gewartet":""].filter(Boolean).join(", "));
+    a.termine.forEach(function(p){
+      z.push("  · "+((p.intervall&&p.intervall.kurz)||p.intervallCode||"?")+", Soll-Monat "+(MONATE_L[+p.monat]||"–")+
+        ", zuletzt "+(p.letzte?dfmt(p.letzte):"–")+", nächster "+(p.naechste?dfmt(p.naechste):"–")+(p.status?" ("+p.status+")":""));
+    });
+    stoerungenDerAnlage(a).forEach(function(o){
+      z.push("  · Störung offen seit "+stoerungAlter(o).text+": "+[o.problemtyp, String(o.beschreibung||"").slice(0,300)].filter(Boolean).join(" – "));
+    });
+  });
+  return z.join("\n");
+}
+function frageText(t){ return String(t||"").replace(/^#+\s*/gm,"").replace(/\*\*/g,"").replace(/`/g,""); }
+function claudeFragen(){
+  if(!wuenscheAn()){ toast("Dafür bitte anmelden."); return; }
+  var v=ansichtOeffnen("Claude fragen");
+  v.schritt.textContent="Kältetechnik, Vorschriften, Fehlersuche, die App …";
+  var markt=frageMarkt();
+  var box=el('<div class="stack">'+
+    '<div data-a="verlauf" class="stack" style="gap:10px"></div>'+
+    '<label class="fl"><span>Deine Frage</span><textarea rows="3" data-a="frage" placeholder="z. B. Welche Dichtheitsintervalle gelten bei 34 kg R410A?"></textarea></label>'+
+    (markt?'<label class="chk" style="font-size:13px"><input type="checkbox" data-a="markt" checked><span>Angaben zu „'+esc(stName(markt))+
+      '“ mitschicken (Anlagen, Termine, offene Störungen)</span></label>':"")+
+    '<div class="muted" style="font-size:12px">Keine Passwörter oder Zugangsdaten hineinschreiben. Antworten von Claude können irren – '+
+      "bei Vorschriften und Grenzwerten bitte gegenprüfen.</div></div>");
+  v.inhalt.appendChild(box);
+  var verlauf=box.querySelector('[data-a="verlauf"]'), feld=box.querySelector('[data-a="frage"]');
+  var zeigen=function(){
+    verlauf.innerHTML="";
+    FRAGE_VERLAUF.forEach(function(n){
+      verlauf.appendChild(el('<div style="white-space:pre-wrap;font-size:14px;line-height:1.45;padding:10px 12px;border-radius:12px;'+
+        (n.role==="user"?"background:var(--accent);color:#fff;margin-left:18%":"background:var(--ground);border:1px solid var(--line);margin-right:8%")+'">'+
+        esc(n.role==="user"?n.text:frageText(n.text))+"</div>"));
+    });
+    if(FRAGE_VERLAUF.length) setTimeout(function(){ feld.scrollIntoView({block:"nearest"}); }, 30);
+  };
+  zeigen();
+  var kontext=function(){ var c=box.querySelector('[data-a="markt"]'); return (markt && c && c.checked) ? marktKurzText(markt) : ""; };
+  var neu=el('<button class="btn ghost sm" type="button">Neues Gespräch</button>');
+  var app=el('<button class="btn ghost" type="button">In der Claude-App (Abo)</button>');
+  var direkt=el('<button class="btn" type="button">Fragen · ca. 1–3 Cent</button>');
+  neu.onclick=function(){ FRAGE_VERLAUF=[]; zeigen(); feld.value=""; feld.focus(); };
+  /* Claude-App: Frage samt Hintergrund in die Zwischenablage und claude.ai öffnen */
+  app.onclick=function(){
+    var f=feld.value.trim(); if(!f){ toast("Bitte zuerst die Frage eingeben."); return; }
+    var k=kontext();
+    var alles=(FRAGE_VERLAUF.length?"Bisher:\n"+FRAGE_VERLAUF.map(function(n){ return (n.role==="user"?"Frage: ":"Antwort: ")+n.text; }).join("\n")+"\n\n":"")+
+      f+(k?"\n\nHintergrund aus unserem Wartungsleitstand (UKT, Lidl Österreich):\n"+k:"");
+    inZwischenablage(alles, "Frage");
+    window.open("https://claude.ai/new?q="+encodeURIComponent(alles.length>1800?alles.slice(0,1800):alles), "_blank", "noopener");
+  };
+  direkt.onclick=function(){
+    var f=feld.value.trim(); if(!f){ toast("Bitte zuerst die Frage eingeben."); return; }
+    FRAGE_VERLAUF.push({role:"user", text:f}); feld.value=""; zeigen();
+    var warte=el('<div class="muted" style="font-size:13px"><span class="kilaeuft" style="display:inline-block;width:14px;height:14px;border-width:3px;vertical-align:-2px;margin:0 6px 0 0"></span>Claude denkt nach …</div>');
+    verlauf.appendChild(warte); direkt.disabled=true; app.disabled=true;
+    mitFrist(Store.sb.functions.invoke("ki-frage", {body:{nachrichten:FRAGE_VERLAUF, kontext:kontext()}}), 120000).then(function(r){
+      if(!r.error) return r.data;
+      var ctx=r.error.context;
+      return (ctx && ctx.json ? ctx.json().catch(function(){ return null; }) : Promise.resolve(null)).then(function(j){
+        if(!j && r.error.name==="FunctionsFetchError") throw new Error("Verbindung abgebrochen – bitte nochmals versuchen.");
+        throw new Error((j && j.fehler) || r.error.message || "Claude nicht erreichbar");
+      });
+    }).then(function(d){
+      FRAGE_VERLAUF.push({role:"assistant", text:String((d&&d.text)||"(keine Antwort)")});
+    }, function(e){
+      FRAGE_VERLAUF.pop(); feld.value=f;   /* Frage nicht verlieren */
+      toast(e.message||String(e));
+    }).then(function(){ direkt.disabled=false; app.disabled=false; zeigen(); });
+  };
+  v.fuss.appendChild(neu); v.fuss.appendChild(app);
+  if(kiAn()) v.fuss.appendChild(direkt);
+  setTimeout(function(){ feld.focus(); }, 60);
+}
+function frageKnopfNeu(){ var e=document.getElementById("fragebtn"); if(e) e.hidden=!wuenscheAn(); }
+
 /* ================= Änderungswünsche =================
    Wer mitarbeitet (nicht Kunde/Präsentation), schickt aus der App einen
    Wunsch („Änderung vorschlagen“ ganz unten). Inhaber sehen alle Wünsche
@@ -10597,7 +10695,7 @@ var WUNSCH_REPO="matthaeuskammerlander-dev/wartungsleitstand-lidl";
 var WUNSCH_STATUS={neu:["Neu – wartet auf Freigabe","warn"], in_arbeit:["Claude arbeitet daran","plan"], vorschau:["Vorschau bereit","plan"],
   uebernommen:["In der App übernommen","good"], abgelehnt:["Abgelehnt",""], fehler:["Fehler","crit"]};
 function wuenscheAn(){ return Store.modus==="supabase" && !!Store.sb && !!Store.benutzer && !nurLesen() && !demo(); }
-function wunschLinkNeu(){ var e=document.getElementById("wunschlink"); if(e) e.hidden=!wuenscheAn(); }
+function wunschLinkNeu(){ var e=document.getElementById("wunschlink"); if(e) e.hidden=!wuenscheAn(); frageKnopfNeu(); }
 function wunschName(){ var b=Store.benutzer||{}; return ((b.user_metadata||{}).name)||b.email||"unbekannt"; }
 function wuenscheLaden(){
   if(!wuenscheAn()) return Promise.resolve([]);
@@ -10898,7 +10996,8 @@ function zeigeQr(){
 document.getElementById("qrbtn").onclick=zeigeQr;
 /* Aktualisieren: holt die neueste App-Fassung und alle Daten neu. Ein
    angefangenes Protokoll ist als Entwurf gesichert – trotzdem nachfragen. */
-(function(){ var wl=document.getElementById("wunschlink"); if(wl) wl.onclick=wunschSchicken; })();
+(function(){ var wl=document.getElementById("wunschlink"); if(wl) wl.onclick=wunschSchicken;
+  var fb=document.getElementById("fragebtn"); if(fb) fb.onclick=claudeFragen; })();
 document.getElementById("neuladen").onclick=function(){
   if(formDirty && !window.confirm("Das Protokoll ist angefangen. Es ist als Entwurf gesichert und wird nach dem Neuladen angeboten.\n\nJetzt aktualisieren?")) return;
   if(typeof entwurfSofort==="function" && entwurfSofort) entwurfSofort();
