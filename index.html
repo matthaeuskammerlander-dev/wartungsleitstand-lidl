@@ -288,6 +288,10 @@ a:not(.btn):hover{opacity:.8}
 .qrscan video{width:100%;height:100%;object-fit:cover}
 .qrscan .qrrahmen{position:absolute;inset:18%;border:3px solid #fff;border-radius:12px;box-shadow:0 0 0 999px rgba(0,0,0,.35)}
 .qrscan .qrtext{color:#fff;font-size:14px;text-align:center}
+.befundzeile{cursor:pointer;border-radius:8px;padding:4px 6px;margin:0 -6px}
+.befundzeile:hover,.befundzeile:focus-visible{background:var(--accent-soft,rgba(0,114,100,.08));outline:none}
+.sprungziel{animation:sprungblink 2.4s ease-out 1;border-radius:8px}
+@keyframes sprungblink{0%,35%{box-shadow:0 0 0 3px var(--accent)}100%{box-shadow:0 0 0 0 transparent}}
 .kilaeuft{margin:0 auto;width:46px;height:46px;border-radius:50%;border:5px solid var(--line);border-top-color:var(--accent,#0a7a6c);animation:kidreh 1s linear infinite}
 @keyframes kidreh{to{transform:rotate(360deg)}}
 .assistent{position:fixed;inset:0;z-index:110;background:rgba(10,14,18,.55);display:flex;align-items:center;justify-content:center;padding:12px}
@@ -3092,13 +3096,13 @@ function positionenSchreiben(proPos, grund){
 /* Anlagendaten ergänzen, ohne ein Protokoll zu schreiben. Dieselbe geführte
    Erfassung; gespeichert wird direkt in die Anlagendaten, mit Eintrag im
    Änderungsverlauf. Anlagendaten darf jede angemeldete Person ergänzen. */
-function anlageDatenErgaenzen(leader, vorlage){
+function anlageDatenErgaenzen(leader, vorlage, springe){
   if(nurLesen()){ toast("Mit diesem Konto lässt sich nur ansehen."); return; }
   if(!Store.benutzer && Store.modus==="anmeldung"){ toast("Dafür bitte zuerst anmelden."); return; }
   var vorher=auswahl(leader, STAMM_FELDER_POS);
   var jetzt=anlageDaten(leader);
   var start={anlagentyp:jetzt.anlagentyp, rueckkuehler:jetzt.rueckkuehler,
-             inbetriebnahme:jetzt.inbetriebnahme||null, _termine:termineStart(leader), _leaderId:leader.id, _kiVorlage:vorlage||null};
+             inbetriebnahme:jetzt.inbetriebnahme||null, _termine:termineStart(leader), _leaderId:leader.id, _kiVorlage:vorlage||null, _springe:springe||null};
   ANLAGE_FELDER.forEach(function(f){ start[f.k]=(jetzt[f.k]===undefined?null:jetzt[f.k]); });
   /* true: alle Gruppen zeigen. Hier geht es ums Prüfen und Korrigieren,
      nicht nur ums Nachtragen fehlender Angaben. */
@@ -4016,7 +4020,19 @@ function anlageAssistent(start, titel, neu, alles){
       knopf("Übernehmen","",function(){ schliessen(a); });
       inhalt.scrollTop=0;
     }
-    if(schritte.length) schrittZeigen(); else uebersicht();
+    /* aus Nachbessern: gleich zur Frage mit der fehlenden Angabe */
+    var sprung=start._springe && ANLAGE_GRUPPEN.filter(function(g){ return g.felder.some(function(f){ return f.k===start._springe; }); })[0];
+    if(sprung){
+      uebersicht(); fuss.innerHTML=""; kopf("Ergänzen", sprung.titel); gruppeZeigen(sprung);
+      knopf("Zur Übersicht","",uebersicht);
+      setTimeout(function(){
+        var z=inhalt.querySelector('[data-in="'+start._springe+'"],[data-f="'+start._springe+'"]');
+        if(!z) return;
+        var feld=z.closest(".as-feld")||z; feld.classList.add("sprungziel"); feld.scrollIntoView({block:"center"});
+        if(z.tagName==="INPUT") z.focus();
+      },80);
+    }
+    else if(schritte.length) schrittZeigen(); else uebersicht();
     /* ein weiteres Buch aus derselben Fotoserie: gleich zur Prüfansicht */
     if(start._kiVorlage) setTimeout(function(){ kiArt("pruefbuch", null, start._kiVorlage); }, 50);
   });
@@ -9929,10 +9945,10 @@ function pruefListe(){
   /* 2. Termine, um die sich jemand kümmern sollte */
   POS.forEach(function(p){
     var s=byId[p.standortId]; if(!s) return;
-    if(p.ausgelassen) dazu("Hinweis","Termine", anlagenName(p)+": Termin "+dfmt(p.ausgelassen)+" wurde ausgelassen (nicht gewartet).", s);
+    if(p.ausgelassen) dazu("Hinweis","Termine", anlagenName(p)+": Termin "+dfmt(p.ausgelassen)+" wurde ausgelassen (nicht gewartet).", s, {pid:p.id});
     if(p.doppeltImFenster) dazu("Hinweis","Doppelt", anlagenName(p)+" ("+p.intervall.kurz+"): zwei Wartungen für denselben Termin ("+
-      p.doppeltImFenster.map(dfmt).join(" und ")+") – doppelt erfasst oder einem falschen Termin zugeordnet?", s);
-    if(!p.letzte && p.status==="ueberfaellig") dazu("Hinweis","Termine", anlagenName(p)+": nie gewartet erfasst und überfällig – fehlt ein Nachweis (Liste, Prüfbuch, Protokoll)?", s);
+      p.doppeltImFenster.map(dfmt).join(" und ")+") – doppelt erfasst oder einem falschen Termin zugeordnet?", s, {pid:p.id});
+    if(!p.letzte && p.status==="ueberfaellig") dazu("Hinweis","Termine", anlagenName(p)+": nie gewartet erfasst und überfällig – fehlt ein Nachweis (Liste, Prüfbuch, Protokoll)?", s, {pid:p.id, nachweis:true});
   });
 
   /* 3. Doppelte Anlagen */
@@ -10209,6 +10225,96 @@ function doppelKarte(){
   });
   return c;
 }
+/* ---- Vom Befund direkt zur Stelle, an der man ihn behebt ----
+   Die Befunde sind Text („Anlage: …“). Daraus: welche Anlage, welcher Termin,
+   welches Feld – und dorthin springen (Verwaltung oder Anlagendaten-Dialog),
+   Stelle hervorheben. */
+function befundAnlage(x, s){
+  var an=anlagenDesMarkts(s,true);
+  if(x.pid){ var p=posById[x.pid]; if(p){ var av=anlageVon(p); if(av) return av; } }
+  var kand=[], laenge=0;
+  an.forEach(function(a){
+    [a.leader].concat(a.termine).forEach(function(p){
+      var n=anlagenName(p);
+      if(!n || !(x.text.indexOf(n+":")===0 || x.text.indexOf(n+" (")===0 || x.text.indexOf("„"+n+"“")===0)) return;
+      if(n.length>laenge){ kand=[a]; laenge=n.length; } else if(n.length===laenge && kand.indexOf(a)<0) kand.push(a);
+    });
+  });
+  /* gleich benannte Anlagen: die mit dem genannten Soll-Monat bzw. Kürzel */
+  if(kand.length>1){
+    var sm=/Soll-Monat (\S+) (weicht|statt)/.exec(x.text), ku=/Kürzel „([^“]*)“/.exec(x.text);
+    var passt=kand.filter(function(a){ return a.termine.some(function(p){
+      return (sm && +p.monat===MONATE_L.indexOf(sm[1])) || (ku && String(p.intervallCode||"leer")===ku[1]); }); });
+    if(passt.length) return passt[0];
+  }
+  return kand[0]||null;
+}
+function sprungHervorheben(z){
+  if(!z) return;
+  var d=z.closest("details"); if(d) d.open=true;
+  var box=z.closest(".terminzeile,.fl,.as-feld")||z;
+  box.classList.remove("sprungziel"); void box.offsetWidth; box.classList.add("sprungziel");
+  box.scrollIntoView({block:"center"});
+  if(/^(INPUT|SELECT|TEXTAREA)$/.test(z.tagName)) setTimeout(function(){ try{ z.focus({preventScroll:true}); }catch(e){} }, 350);
+}
+function verwaltungSprung(s, finde){
+  var A=S.adm; A.tab="maerkte"; A.sel=s.id; A.entwurf=null; A.vonNachbessern=true; render();
+  setTimeout(function(){
+    var ed=document.getElementById("adm_editor"); if(!ed) return;
+    var z=null; try{ z=finde ? finde(ed) : null; }catch(e){ console.error(e); }
+    if(z) sprungHervorheben(z); else ed.scrollIntoView({behavior:"smooth"});
+  }, 80);
+}
+function springeZu(x, s){
+  var t=x.text, a=befundAnlage(x, s);
+  var karte=function(ed){
+    if(!a) return null;
+    var ids=[a.leader.id].concat(a.termine.map(function(p){ return p.id; }));
+    for(var i=0;i<ids.length;i++){ var z=ed.querySelector('.terminzeile[data-pid="'+ids[i]+'"]'); if(z) return z.closest(".anlagekarte"); }
+    return null;
+  };
+  var zeile=function(ed, pid){ return ed.querySelector('.terminzeile[data-pid="'+pid+'"]'); };
+  /* Anlagendaten: den Dialog gleich bei der fehlenden Angabe öffnen */
+  if(x.thema==="Anlagendaten" && a){
+    var fk = /Kältemittelmenge/.test(t) ? "kaeltemittelKg"
+      : ((ANLAGE_FELDER.filter(function(f){ return t.indexOf("("+f.l)>=0 || t.indexOf(", "+f.l)>=0; })[0])||{}).k;
+    anlageDatenErgaenzen(a.leader, null, fk||null); return;
+  }
+  /* doppelte Seriennummer: die Anlage mit dieser Nummer in diesem Markt */
+  var snM=/^Seriennummer (\S+) steht bei/.exec(t), snAnl=[];
+  if(snM){
+    snAnl=anlagenDesMarkts(s,false).filter(function(a2){ return String(anlageDaten(a2.leader).seriennummer||"").replace(/\s+/g,"").toUpperCase()===snM[1]; });
+    if(!a) a=snAnl[0]||null;
+  }
+  /* beide im selben Markt → zusammenführen; sonst zur Seriennummer der Anlage */
+  if(x.thema==="Doppelt" && a && (/dieselbe Anlage zweimal/.test(t) || snAnl.length>1)){ zusammenfuehrenWaehlen(a); return; }
+  if(x.nachweis && a){ anlageDatenErgaenzen(a.leader); return; }   /* Nachweis fehlt: Prüfbuch (auch per KI) */
+  verwaltungSprung(s, function(ed){
+    var k=karte(ed);
+    /* Soll-Monat zuerst – der Text nennt auch „aus der Inbetriebnahme“ */
+    var sm=/Soll-Monat (\S+) (weicht|statt)/.exec(t);
+    if(sm && k){
+      var m=MONATE_L.indexOf(sm[1]);
+      var z=Array.prototype.filter.call(k.querySelectorAll(".terminzeile"), function(r){ return +r.querySelector('[data-t="monat"]').value===m; })[0];
+      if(z) return z.querySelector('[data-t="monat"]');
+    }
+    if(snM && k){ var snF=k.querySelector('[data-a="seriennummer"]'); if(snF) return snF; }
+    if(/Inbetriebnahme/.test(t) && k) return k.querySelector('[data-a="inbetriebnahme"]');
+    if(x.pid){ var r=zeile(ed, x.pid); if(r) return r; }
+    if(/Kürzel/.test(t) && k){
+      var r2=Array.prototype.filter.call(k.querySelectorAll(".terminzeile"), function(r){ return !r.querySelector('[data-t="intervallCode"]').value || !+r.querySelector('[data-t="monat"]').value; })[0]
+        || k.querySelector(".terminzeile");
+      if(r2) return r2.querySelector('[data-t="intervallCode"]');
+    }
+    if(/nur ein Termin im Jahr/.test(t)){ var rg=ed.querySelector('[data-a2="regel"]'); if(rg) return rg; }
+    if(/Kartenposition/.test(t)) return ed.querySelector("#a_lat");
+    if(/FM-Region/.test(t)) return ed.querySelector("#a_region");
+    if(/Filialnummer/.test(t)) return ed.querySelector("#a_filiale");
+    if(/PLZ/.test(t)) return ed.querySelector("#a_plz");
+    if(k) return k;
+    return ed.querySelector("#a_anlagen");
+  });
+}
 function nachbessernAnsicht(liste){
   var f=document.createDocumentFragment();
   var A=S.adm;
@@ -10271,9 +10377,14 @@ function nachbessernAnsicht(liste){
       "</div></div></div>");
     var bh=c.querySelector("[data-befunde]");
     m.l.forEach(function(x){
-      bh.appendChild(el('<div style="font-size:13px;display:grid;grid-template-columns:auto 1fr;gap:8px;align-items:start">'+
+      /* antippen: direkt zur Stelle, an der man es behebt */
+      var zb=el('<div class="befundzeile" role="button" tabindex="0" title="Antippen: direkt zur Stelle, an der man es behebt" '+
+        'style="font-size:13px;display:grid;grid-template-columns:auto 1fr auto;gap:8px;align-items:start">'+
         '<span class="pill '+(x.schwere==="Fehler"?"p-ueberfaellig":x.schwere==="Hinweis"?"p-faellig":"p-unbekannt")+'">'+esc(x.thema)+"</span>"+
-        "<span>"+esc(x.text)+"</span></div>"));
+        "<span>"+esc(x.text)+'</span><span class="muted" aria-hidden="true">›</span></div>');
+      zb.onclick=function(){ springeZu(x, s); };
+      zb.onkeydown=function(e){ if(e.key==="Enter"||e.key===" "){ e.preventDefault(); springeZu(x, s); } };
+      bh.appendChild(zb);
     });
     c.querySelector('[data-a="edit"]').onclick=function(){
       A.tab="maerkte"; A.sel=s.id; A.entwurf=null; A.vonNachbessern=true; render();
