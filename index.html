@@ -209,7 +209,7 @@ details.st>summary::-webkit-details-marker{display:none}
 details.st>summary:hover{background:var(--surface-2)}
 details.st[open]>summary{background:var(--surface-2)}
 .st .inner{padding:4px 16px 16px;display:grid;gap:10px}
-.posbox{border:1px solid var(--line);border-radius:8px;padding:12px;display:grid;gap:8px;background:var(--ground)}
+.posbox{border:1px solid var(--line);border-radius:8px;padding:12px;display:grid;grid-template-columns:minmax(0,1fr);gap:8px;background:var(--ground);overflow-wrap:anywhere}   /* lange Wörter/Links sprengen die Karte nicht */
 .stoerbox{border-left:3px solid var(--crit)}
 #demobanner{position:sticky;top:0;z-index:120;background:#7a3fb0;color:#fff;font-size:13px;line-height:1.35;padding:8px 14px;text-align:center}
 /* Kunde und Präsentation: nur lesen */
@@ -335,8 +335,8 @@ a:not(.btn):hover{opacity:.8}
 .blatt .firma span{font-size:11px;color:#444}
 .blatt .firma img{height:36px;width:auto;display:block}
 .blatt .kontakt{font-size:9.2px;line-height:1.3;color:#444;text-align:right}
-.blatt table{width:100%;border-collapse:collapse}
-.blatt td,.blatt th{padding:2px 5px;border:1px solid #c9cfd3;vertical-align:top;text-align:left}
+.blatt table{width:100%;border-collapse:collapse;table-layout:fixed}
+.blatt td,.blatt th{overflow-wrap:anywhere;word-break:break-word;padding:2px 5px;border:1px solid #c9cfd3;vertical-align:top;text-align:left}
 .blatt th{background:#eef2f4;font-weight:600;font-size:9.6px}
 .blatt td.k{width:34%;color:#444;background:#f7f9fa}
 .blatt .kaestchen{display:grid;grid-template-columns:repeat(auto-fill,minmax(165px,1fr));gap:1px 12px;font-size:9.6px}
@@ -1255,12 +1255,19 @@ function holeStandort(){
     );
   });
 }
+/* Suchtext angleichen: ß/ss, Umlaute ä/ae, Bindestriche und Leerzeichen egal */
+function suchNorm(t){
+  return String(t||"").toLowerCase().replace(/ß/g,"ss").replace(/ä/g,"ae").replace(/ö/g,"oe").replace(/ü/g,"ue").replace(/[\s\-]+/g," ");
+}
 function filtered(){
-  var q=S.q.trim().toLowerCase();
+  var q=suchNorm(S.q.trim());
+  /* Filialnummer in Lidl-Schreibweise: „AT0405“ oder „0405“ findet Filiale 405 */
+  var fil=/^(at)?0*(\d{1,4})$/i.exec(S.q.trim());
   return ST.filter(function(s){
     if(S.region!=="alle" && s.region!==S.region) return false;
     if(!q) return true;
-    return (stName(s)+" "+s.name+" "+s.adresse+" "+(s.filiale||"")+" "+(s.ort||"")+" "+s.typen.join(" ")).toLowerCase().indexOf(q)>=0;
+    if(fil && String(s.filiale||"").replace(/^0+/,"")===fil[2]) return true;
+    return suchNorm(stName(s)+" "+s.name+" "+s.adresse+" "+(s.filiale||"")+" "+(s.ort||"")+" "+s.typen.join(" ")).indexOf(q)>=0;
   });
 }
 function filteredPos(){ var ids={}; filtered().forEach(function(s){ids[s.id]=1;}); return POS.filter(function(p){return ids[p.standortId];}); }
@@ -1427,7 +1434,7 @@ function stoerungDialog(vorhanden){
         '<label class="btn ghost sm" for="st_foto" style="cursor:pointer">Auftrag abfotografieren</label>'+
         '<input type="file" id="st_foto" accept="image/*" capture="environment" hidden>'+
         '<button class="btn ghost sm" type="button" id="st_qr">QR-Code scannen</button>'+
-        (kiAn() && o.seiten.length ? '<button class="btn sm" type="button" id="st_ki">Mit KI auslesen</button>' : "")+
+        (o.seiten.length && !demo() ? '<button class="btn sm" type="button" id="st_ki">Mit KI auslesen</button>' : "")+
       "</div>"+
       '<div class="note" id="st_info" style="margin-top:8px">Die PDF aus der Lidl-Mail öffnen. '+
         "Lässt sie sich auslesen, werden die Felder gefüllt; sonst steht der Auftrag als Bild darunter "+
@@ -1493,13 +1500,21 @@ function stoerungDialog(vorhanden){
       /* eingescannter oder abfotografierter Auftrag: die KI liest ihn, die
          Werte kommen zur Kontrolle, dann in die Felder */
       kiKnopf.disabled=true; kiKnopf.textContent="KI liest …";
-      kiLesen("auftrag", o.seiten).then(function(erg){
+      var knopfZurueck=function(){ kiKnopf.disabled=false; kiKnopf.textContent="Mit KI auslesen"; };
+      /* ohne KI-Zugang über die eigene Claude-App (Kopier-Weg) */
+      var lesen = kiAn() ? mitFrist(kiLesen("auftrag", o.seiten, kiKontext(o.standortId?byId[o.standortId]:null, null)), 120000)
+                         : kiKopierweg("auftrag", kiKontext(o.standortId?byId[o.standortId]:null, null)).then(function(d){ return d?{daten:d}:null; });
+      lesen.then(function(erg){
+        if(!erg){ knopfZurueck(); return; }
         var d=erg.daten||{}, g={};
         FELDER.forEach(function(f){ var w=String(d[f[0]]||"").trim(); if(!w) return;
           g[f[0]] = f[2]==="date" ? kiDatum(w, true) : w; });
         if(d.beschreibung) g.beschreibung=String(d.beschreibung).trim();
         var felder=FELDER.map(function(f){ return {k:f[0], l:f[1], zeige:f[2]==="date"?dfmt:null}; })
           .concat([{k:"beschreibung", l:"Beschreibung"}]);
+        /* gelesen, aber nicht im Dialog sichtbar – trotzdem anbieten und speichern */
+        [["prioritaet","Priorität"],["seriennummer","Seriennummer (Lidl)"],["lidlMail","E-Mail Lidl"]].forEach(function(f){
+          var w=String(d[f[0]]||"").trim(); if(w){ g[f[0]]=w; felder.push({k:f[0], l:f[1]}); } });
         return kiPruefen("Lidl-Auftrag", g, o, felder, d.unsicher, d.hinweise).then(function(wahl){
           if(wahl){
             Object.keys(wahl).forEach(function(k){ o[k]=wahl[k]; });
@@ -1508,7 +1523,7 @@ function stoerungDialog(vorhanden){
           }
           zeichne(); fussNeu();
         });
-      }, function(e){ toast(e.message); kiKnopf.disabled=false; kiKnopf.textContent="Mit KI auslesen"; });
+      }).catch(function(e){ toast(e&&e.message||"KI-Erkennung fehlgeschlagen"); knopfZurueck(); });
     };
     inhalt.querySelector("#st_qr").onclick=function(){
       scanneQr().then(function(wert){
@@ -1593,6 +1608,10 @@ function stoerungDialog(vorhanden){
         box.scrollIntoView({behavior:"smooth",block:"center"}); return; }
       /* gescannter QR-Inhalt eines anderen Auftrags (Nummer seither geändert) fällt weg */
       if(o.qrInhalt && !qrPasst(o.qrInhalt, o.auftragsnummer)) delete o.qrInhalt;
+      if(o.terminTechniker) o.terminTechniker=kanonName(o.terminTechniker);   /* „Tobi“ → voller Name */
+      /* derselbe Lidl-Auftrag schon offen (etwa doppelt gemailt)? */
+      var gleicheNr=!vorhanden && o.auftragsnummer ? offeneStoerungen(true).filter(function(x){ return x._id!==o._id && String(x.auftragsnummer||"")===String(o.auftragsnummer); })[0] : null;
+      if(gleicheNr && !window.confirm("Auftrag "+o.auftragsnummer+" ist schon als offene Störung erfasst ("+stName(byId[gleicheNr.standortId]||{})+").\n\nTrotzdem ein zweites Mal anlegen?")) return;
       b.disabled=true; b.textContent="Wird gespeichert …";
       stoerungSpeichern(o, vorhanden?"Offene Störung geändert":"Offene Störung erfasst").then(function(wo){
         if(wo===false){
@@ -1850,6 +1869,8 @@ function posteingangKarte(){
             /* die PDF gleich einlesen, als hätte man sie geöffnet */
             var ein=document.querySelector(".assistent #st_pdf");
             if(ein && /pdf/.test(f.type)){ var dt=new DataTransfer(); dt.items.add(f); ein.files=dt.files; ein.dispatchEvent(new Event("change")); }
+            /* ein abfotografierter Auftrag (JPG/PNG) kommt als Bild dazu */
+            else if(/^image\//.test(f.type)){ var fe=document.querySelector(".assistent #st_foto"); if(fe){ var dt2=new DataTransfer(); dt2.items.add(f); fe.files=dt2.files; fe.dispatchEvent(new Event("change")); } }
           }, function(x){ toast(x.message); });
         };
         leiste.appendChild(ab);
@@ -1858,6 +1879,7 @@ function posteingangKarte(){
       vb.onclick=function(){
         if(demo()){ z.remove(); toast("Präsentation: verworfen – gespeichert wurde nichts."); return; }
         var g=window.prompt("Warum wird „"+e.dateiname+"“ verworfen?",""); if(g===null) return;
+        if(!g.trim()){ toast("Bitte einen Grund angeben – der Eingang bleibt sonst nicht nachvollziehbar."); return; }
         Store.sb.from("posteingang").update({status:"verworfen", notiz:g, erledigt_von:wer(), erledigt_am:new Date().toISOString()})
           .eq("id",e.id).select("id").then(function(r){
             /* keine Zeile geändert = abgelehnt (Rechte) – dann bleibt der Eintrag stehen */
@@ -1883,6 +1905,9 @@ function posteingangRapport(e){
       if(!daten || (!daten.filiale && !(daten.zeilen&&daten.zeilen.length))){
         toast("Aus diesem Rapport lassen sich Filiale und Datum nicht lesen – bitte im Protokoll über „Rapportbericht anhängen“ zuordnen."); return;
       }
+      /* dieselbe Rapportnummer hängt schon an einem Protokoll (doppelte Mail) */
+      var schonDa=daten.nummer ? alleProtokolle().filter(function(p){ var r=rapportVon(p); return r && r.daten && r.daten.nummer===daten.nummer; })[0] : null;
+      if(schonDa){ toast("Rapport Nr. "+daten.nummer+" hängt schon am Protokoll vom "+dfmt(schonDa.datum)+" ("+protoName(schonDa)+") – doppelt gemailt? Dann hier verwerfen."); return; }
       var fil=daten && daten.filiale;
       var tage=(daten&&daten.zeilen||[]).map(function(z){ return z.datum; });
       var kand=alleProtokolle().filter(function(p){
@@ -2012,7 +2037,7 @@ function stoerungIcs(o){
   }
   var titel="Störung "+(s?stName(s):(o.filialCode||""))+(o.problemtyp?" – "+o.problemtyp:"");
   var text=[o.auftragsnummer?"Lidl-Auftrag "+o.auftragsnummer:"", o.zieltermin?"Zieltermin "+dfmt(o.zieltermin):"",
-            o.terminTechniker?"Techniker/in: "+o.terminTechniker:"", o.beschreibung||"", o.notiz?"Notiz: "+o.notiz:""].filter(Boolean).join("\n");
+            o.terminTechniker?"Techniker/in: "+kanonName(o.terminTechniker):"", o.beschreibung||"", o.notiz?"Notiz: "+o.notiz:""].filter(Boolean).join("\n");
   var ics=["BEGIN:VCALENDAR","VERSION:2.0","PRODID:-//UKT//Wartungsleitstand//DE","CALSCALE:GREGORIAN","BEGIN:VEVENT",
     "UID:"+o._id+"@wartungsleitstand", "DTSTAMP:"+jetzt]
     .concat(zeilen)
@@ -2037,7 +2062,7 @@ function stoerungEintrag(o, ohneMarkt){
           (o.problemtyp?'<br><span style="font-size:13px">'+esc(o.problemtyp)+"</span>":"")+"</div>"+
         '<span class="pill '+alter.klasse+'">'+esc(alter.text)+"</span></div>"+
       (o.termin?'<div style="font-size:13px"><strong>Einsatz geplant:</strong> '+esc(dfmt(o.termin))+
-        (o.terminZeit?", "+esc(o.terminZeit)+" Uhr":"")+(o.terminTechniker?" · "+esc(o.terminTechniker):"")+"</div>":"")+
+        (o.terminZeit?", "+esc(o.terminZeit)+" Uhr":"")+(o.terminTechniker?" · "+esc(kanonName(o.terminTechniker)):"")+"</div>":"")+
       (o.beschreibung?'<div class="muted" style="font-size:12.5px">'+esc(String(o.beschreibung).slice(0,220))+
         (String(o.beschreibung).length>220?" …":"")+"</div>":"")+
       '<div class="muted mono" style="font-size:12px">'+
@@ -2141,6 +2166,8 @@ function viewFaellig(){
   });
   if(show.length>120) card.appendChild(el('<div class="pad muted" style="font-size:12.5px">… weitere '+(show.length-120)+" Positionen über Filter eingrenzen.</div>"));
   f.appendChild(card);
+  /* der Kunde hat keinen Protokoll-Reiter – dort stünde sonst das Abmelden */
+  if(nurLesen() && Store.modus==="supabase" && Store.benutzer) f.appendChild(kontoKarte());
   return f;
 }
 
@@ -2416,7 +2443,8 @@ function karteOsm(withGeo){
     ausrichten();
     /* Leaflet misst den Container sofort, die endgültige Höhe steht
        aber erst nach dem Layout fest */
-    setTimeout(function(){ if(leafletKarte){ karte.invalidateSize(); ausrichten(); } },200);
+    /* nur, wenn diese Karte noch die aktuelle ist (schneller Reiterwechsel) */
+    setTimeout(function(){ if(leafletKarte===karte && document.body.contains(karte.getContainer())){ karte.invalidateSize(); ausrichten(); } },200);
 
     var knopf=document.getElementById("kartealle");
     if(knopf) knopf.onclick=alleZeigen;
@@ -3237,6 +3265,7 @@ function gelernteWerte(key){
   var haeufig={};
   ALLE_POS.forEach(function(p){
     var v=p[key];
+    if(key==="ortPruefbuch" && v===PRUEFBUCH_ORT_ALT) v=PRUEFBUCH_ORT;   /* alter Standard = neuer */
     if(typeof v==="string" && v.trim()) haeufig[v.trim()]=(haeufig[v.trim()]||0)+1;
   });
   (lsGet("ukt_eigene",{})[key]||[]).forEach(function(v){ if(v) haeufig[v]=haeufig[v]||1; });
@@ -3324,7 +3353,9 @@ function anlageAssistent(start, titel, neu, alles){
     document.body.appendChild(ov);
     document.body.style.overflow="hidden";
     var inhalt=ov.querySelector(".as-inhalt"), fuss=ov.querySelector(".as-fuss");
+    var geschlossen=false;   /* eine späte KI-Antwort nach dem Schließen nicht mehr „übernehmen“ */
     var schliessen=function(wert){
+      geschlossen=true;
       ov.remove(); document.body.style.overflow=""; fertig(wert);
       /* weitere Prüfbücher aus derselben Fotoserie: nach dem Speichern anbieten */
       if(wert && kiRest && kiRest.liste.length) setTimeout(weitereAusPruefbuch, 400);
@@ -3389,16 +3420,19 @@ function anlageAssistent(start, titel, neu, alles){
       if(vorgabe){ verarbeiten({daten:vorgabe, _gewaehlt:true}); return; }
       /* Ohne eigenen KI-Zugang: über die Claude-App kopieren – gleiche Prüfansicht */
       if(!kiAn()){
-        kiKopierweg(art, kiKontext(kiMarkt(), a)).then(function(d){ if(d) verarbeiten({daten:d}); });
+        kiKopierweg(art, kiKontext(kiMarkt(), a)).then(function(d){ if(d) return verarbeiten({daten:d}); })
+          .catch(function(e){ toast("Antwort nicht verwertbar: "+(e&&e.message||e)); uebersicht(); });
         return;
       }
       kiFotosWaehlen().then(function(dateien){
         if(!dateien.length) return;
         if(dateien.length>12){ toast("Höchstens 12 Bilder auf einmal."); return; }
         kopf("KI liest "+dateien.length+" Bild"+(dateien.length===1?"":"er")+" …", "bitte warten");
-        return kiLesen(art, dateien, kiKontext(kiMarkt(), a)).then(verarbeiten, function(e){ toast(e.message); uebersicht(); });
+        /* mit Zeitgrenze: eine hängende Anfrage darf den Dialog nicht ewig sperren */
+        return mitFrist(kiLesen(art, dateien, kiKontext(kiMarkt(), a)), 120000).then(verarbeiten, function(e){ toast(e.message); uebersicht(); });
       });
       function verarbeiten(erg){
+          if(geschlossen){ toast("Der Dialog war schon geschlossen – das Ergebnis der KI wurde verworfen."); return; }
           var d=erg.daten||{};
           /* Prüfbuch: eine Fotoserie kann mehrere Bücher (Anlagen) enthalten –
              eins gehört zu dieser Anlage, die anderen werden danach angeboten */
@@ -3852,26 +3886,43 @@ function idbLoeschen(id){ return idbVorgang("readwrite",function(st){ return st.
    Fotos und Unterschrift sind dabei, deshalb IndexedDB und nicht
    localStorage: dort wären nach zwei Bildern die 5 MB voll.
    ---------------------------------------------------------------- */
-var ENTWURF_ID="aktuell";
+/* je Konto ein eigener Entwurfsplatz – ein anderes Konto auf demselben Gerät
+   überschreibt ihn nicht und bekommt ihn nicht angeboten */
+function entwurfId(){ var m=Store.benutzer&&Store.benutzer.email; return m ? "aktuell:"+m : "aktuell"; }
 var entwurfStand=null;      /* zuletzt gesehener Entwurf, für den Hinweis */
 function entwurfSchreiben(d){
   if(!d) return Promise.resolve(false);
-  d.id=ENTWURF_ID;
+  d.id=entwurfId();
   entwurfStand=d;            /* auch innerhalb der Sitzung: nach einem Tabwechsel
                                soll der Hinweis sofort wieder da sein */
   return idbVorgang("readwrite",function(st){ return st.put(d); },"entwurf")
     .then(function(){ return true; }, function(){ return false; });
 }
 function entwurfHolen(){
-  return idbVorgang("readonly",function(st){ return st.get(ENTWURF_ID); },"entwurf")
+  var id=entwurfId();
+  return idbVorgang("readonly",function(st){ return st.get(id); },"entwurf")
+    .then(function(d){
+      /* ein Entwurf aus der Zeit vor den Kontoplätzen (ohne Konto) gilt weiter */
+      if(!d && id!=="aktuell") return idbVorgang("readonly",function(st){ return st.get("aktuell"); },"entwurf")
+        .then(function(alt){ return (alt && !alt.konto) ? alt : null; }, function(){ return null; });
+      return d;
+    })
     .then(function(d){ entwurfStand=d||null; return entwurfStand; }, function(){ return null; });
 }
 var entwurfSofort=null;
 document.addEventListener("visibilitychange", function(){ if(document.hidden && entwurfSofort) entwurfSofort(); });
 window.addEventListener("pagehide", function(){ if(entwurfSofort) entwurfSofort(); });
+/* Schließen/Neuladen: stand noch ein Entwurf aus, oder ist eine Korrektur
+   angefangen (die hat keinen Entwurf), nachfragen – die Rückfrage gibt dem
+   Gerätespeicher auch die Zeit, den Entwurf fertig zu schreiben */
+window.addEventListener("beforeunload", function(e){
+  var offen = (entwurfSofort && entwurfSofort()) || (formDirty && S.bearbeiten);
+  if(offen){ e.preventDefault(); e.returnValue=""; }
+});
 function entwurfWeg(){
   entwurfStand=null;
-  return idbVorgang("readwrite",function(st){ return st.delete(ENTWURF_ID); },"entwurf").catch(function(){});
+  var id=entwurfId();
+  return idbVorgang("readwrite",function(st){ st.delete("aktuell"); return st.delete(id); },"entwurf").catch(function(){});
 }
 
 function lokaleNeuLaden(){
@@ -4355,6 +4406,7 @@ function adminPruefen(){
 /* Einträge, die auf dem Gerät entstanden sind, in die gemeinsame Ablage
    nachtragen – erst nach bestätigter Übertragung vom Gerät entfernen */
 function aenderungenUebertragen(){
+  if(nurLesen()||demo()) return;   /* Kunde und Präsentation schreiben nichts */
   if(Store.modus!=="claude" && Store.modus!=="supabase") return;
   idbVorgang("readonly",function(st){ return st.getAll(); },"aenderungen").then(function(liste){
     (liste||[]).forEach(function(ev){
@@ -4430,8 +4482,8 @@ function initSupabase(){
   Store.sb=window.supabase.createClient(CFG.supabaseUrl,CFG.supabaseAnonKey);
   Store.sb.auth.getSession().then(function(r){
     var sess=r&&r.data?r.data.session:null;
-    if(sess){ Store.benutzer=sess.user; Store.modus="supabase"; ladeProtokolle(); flushQueue();
-      adminPruefen().then(ladeStammdaten).then(storeNachRender); }
+    if(sess){ Store.benutzer=sess.user; Store.modus="supabase"; ladeProtokolle();   /* übertragen erst nach der Rollenprüfung */
+      adminPruefen().then(function(){ flushQueue(); return ladeStammdaten(); }).then(storeNachRender); }
     else { Store.modus="anmeldung"; }
     storeNachRender();
   });
@@ -4449,16 +4501,19 @@ function initSupabase(){
         storeNachRender();
       }, function(){});
     }
-    if(sess){ Store.benutzer=sess.user; Store.modus="supabase"; ladeProtokolle(); flushQueue();
-      adminPruefen().then(ladeStammdaten).then(storeNachRender); }
+    if(sess){ Store.benutzer=sess.user; Store.modus="supabase"; ladeProtokolle();   /* übertragen erst nach der Rollenprüfung */
+      adminPruefen().then(function(){ flushQueue(); return ladeStammdaten(); }).then(storeNachRender); }
     else {
       Store.benutzer=null; Store.modus="anmeldung"; protokolle=[]; Admin.zentral=false; Admin.frei=false;
       /* abgemeldet: nichts von dem, was nur Angemeldete sehen dürfen, bleibt
          im Speicher – auch nicht die Zugangsdaten der Regelungen */
       Rolle.name="techniker"; Rolle.da=false; aenderungen=[]; POSTEINGANG=[];
+      OFFENE=[];   /* sofort weg – nicht erst, wenn die Stammdaten neu geladen sind */
       document.body.classList.remove("nurlesen","demo"); demoBanner();
-      ladeStammdaten();
+      ladeStammdaten().then(storeNachRender, function(){});
     }
+    /* der Entwurf gehört zum Konto – den des jetzt angemeldeten laden */
+    entwurfHolen().then(function(){ storeNachRender(); }, function(){});
     storeNachRender();
   });
 }
@@ -4895,6 +4950,7 @@ function aktualisiereProtokoll(id, doc, quelle, geraetFotos, geraetAuftrag, gera
 /* überträgt Protokolle vom Gerät, sobald eine zentrale Ablage da ist */
 var uebertragungLaeuft=false;
 function flushQueue(){
+  if(nurLesen()||demo()) return;   /* Kunde und Präsentation schreiben nichts */
   if(uebertragungLaeuft) return;
   if(Store.modus!=="claude" && Store.modus!=="supabase") return;
   /* Vorführ-Protokolle der Präsentation gehen nie in die Ablage */
@@ -5002,7 +5058,8 @@ function angabenDialog(){
       if(r.error){ err.textContent="Das hat nicht geklappt: "+r.error.message; err.hidden=false; return; }
       if(r.data && r.data.user) Store.benutzer=r.data.user;
       else Store.benutzer.user_metadata=Object.assign({}, Store.benutzer.user_metadata, {einstellungen:neu});
-      v.zu(); toast("Gespeichert – gilt ab dem nächsten Protokoll."); render();
+      v.zu(); toast("Gespeichert – gilt ab dem nächsten Protokoll.");
+      if(darfRendern()) render();   /* ein angefangenes Protokoll nicht wegräumen */
     }, function(){ k.disabled=false; k.textContent="Speichern"; err.textContent="Keine Verbindung."; err.hidden=false; });
   };
   v.inhalt.appendChild(f);
@@ -5071,6 +5128,7 @@ var STOER_AUFTRAG=[
   ["auftragsdatum","Auftragsdatum","date"], ["stoerungsnr","Störungsnummer (Lidl)","text"],
   ["ausfuehrenBis","Ausführen bis","date"], ["kostenstelle","Kostenstelle","text"],
   ["problemtyp","Problemtyp","text"], ["lidlTyp","Typ (Lidl)","text"], ["lidlModell","Modell (Lidl)","text"],
+  ["hersteller","Hersteller (Lidl)","text"], ["seriennummer","Seriennummer (Lidl)","text"],
   ["lin","LIN","text"], ["iaNummer","IA-Nummer","text"],
   ["lidlKontakt","Kontakt bei Lidl","text"], ["lidlTelefon","Telefon Lidl","text"], ["lidlMail","E-Mail Lidl","text"]
 ];
@@ -5297,6 +5355,10 @@ var KI_AUFTRAG={
     "WICHTIG: Die Fotos können Seiten MEHRERER Prüfbücher enthalten (je Anlage ein Buch, z. B. zwei VRV und ein Split). "+
     "Lege je Prüfbuch einen eigenen Eintrag in \"pruefbuecher\" an und ordne jede Seite dem richtigen Buch zu "+
     "(Anlagenbezeichnung, Seriennummer, Aufstellungsort, Handschrift, Stempel). Mische nie Angaben verschiedener Bücher.",
+  auftrag:"Die Fotos zeigen einen Störungsauftrag von Lidl Österreich an einen Handwerksbetrieb (Ausdruck oder "+
+    "PDF-Seite). Lies Auftragsnummer, Störungsnummer, Kostenstelle/Filial-Nr. (z. B. AT0405 → filialCode), Problemtyp, "+
+    "Beschreibung, Auftragsdatum, „Ausführen bis“ (als zieltermin), Priorität, Gerätedaten (Typ, Modell, Hersteller, "+
+    "LIN/IA-Nummer, Seriennummer) und den Lidl-Ansprechpartner mit Telefon und E-Mail.",
   typenschild:"Die Fotos zeigen Typenschilder von Klimageräten – Außengeräte (outdoor unit) und/oder Innengeräte "+
     "(indoor unit, Kassette, Wandgerät, Kanalgerät). Lege je unterschiedlichem Typenschild einen Eintrag in "+
     "\"geraete\" an; zeigen mehrere Fotos dasselbe Schild, nur einmal. Setze \"art\" auf aussen oder innen, sonst "+
@@ -5310,7 +5372,10 @@ var KI_VORLAGE={
     inbetriebnahme:"",konformitaet:"",aufsteller:"",filiale:"",adresse:"",wartungsintervallMonate:""},
     pruefungen:[{datum:"",firma:"",techniker:"",maengel:""}], unsicher:[], hinweise:""}], hinweise:""},
   typenschild:{geraete:[{art:"",hersteller:"",modell:"",seriennummer:"",baujahr:"",kaeltemittelArt:"",
-    werksfuellungKg:"",leistungKw:"",psBar:""}], unsicher:[], hinweise:""}
+    werksfuellungKg:"",leistungKw:"",psBar:""}], unsicher:[], hinweise:""},
+  auftrag:{auftragsnummer:"",stoerungsnr:"",filialCode:"",problemtyp:"",beschreibung:"",auftragsdatum:"",zieltermin:"",
+    prioritaet:"",lidlTyp:"",lidlModell:"",hersteller:"",lin:"",seriennummer:"",lidlKontakt:"",lidlTelefon:"",lidlMail:"",
+    unsicher:[], hinweise:""}
 };
 function kiAuftragText(art, kontext){
   return KI_AUFTRAG[art]+"\n\n"+
@@ -5414,13 +5479,28 @@ function kiBuchText(b){
 }
 /* Antwort aus der Claude-App lesen – verträgt Codeblöcke und Text drumherum */
 function kiAntwortLesen(text, art){
-  var t=String(text||"").replace(/```(?:json)?/gi,"");
-  var von=t.indexOf("{"), bis=t.lastIndexOf("}");
-  if(von<0 || bis<von) throw new Error("Kein Datenblock gefunden – bitte die ganze Antwort von Claude einfügen.");
-  var d;
-  try{ d=JSON.parse(t.slice(von, bis+1)); }
-  catch(e){ throw new Error("Die Antwort ist nicht vollständig – bitte die ganze Antwort kopieren (oder Claude bitten, nur das JSON zu schicken)."); }
-  if(!d || typeof d!=="object") throw new Error("Unerwartete Antwort.");
+  var roh=String(text||""), d=null;
+  /* zuerst ein Codeblock ```json … ```, sonst vom ersten „{“ bis zum letzten „}“,
+     sonst das erste vollständige {…} (Begleittext mit Klammern stört dann nicht) */
+  var zaun=/```(?:json)?\s*([\s\S]*?)```/i.exec(roh);
+  var versuche=[];
+  if(zaun) versuche.push(zaun[1]);
+  var t=roh.replace(/```(?:json)?/gi,""), von=t.indexOf("{"), bis=t.lastIndexOf("}");
+  if(von>=0 && bis>von) versuche.push(t.slice(von, bis+1));
+  if(von>=0){ var tiefe=0, inStr=false, esc2=false;
+    for(var i=von;i<t.length;i++){ var c=t.charAt(i);
+      if(inStr){ if(esc2) esc2=false; else if(c==="\\") esc2=true; else if(c==='"') inStr=false; continue; }
+      if(c==='"') inStr=true; else if(c==="{") tiefe++; else if(c==="}"){ tiefe--; if(!tiefe){ versuche.push(t.slice(von,i+1)); break; } } } }
+  if(!versuche.length) throw new Error("Kein Datenblock gefunden – bitte die ganze Antwort von Claude einfügen.");
+  for(var k=0;k<versuche.length && !d;k++){ try{ d=JSON.parse(versuche[k]); }catch(e){ d=null; } }
+  if(!d) throw new Error("Die Antwort ist nicht vollständig – bitte die ganze Antwort kopieren (oder Claude bitten, nur das JSON zu schicken).");
+  if(typeof d!=="object") throw new Error("Unerwartete Antwort.");
+  /* falsche Art erwischt: Prüfbuch-Antwort bei Typenschildern (oder umgekehrt) nicht umdeuten */
+  if(art==="typenschild" && (Array.isArray(d.pruefbuecher) || Array.isArray(d.pruefungen)))
+    throw new Error("Das ist eine Prüfbuch-Antwort – bitte „Prüfbuch“ wählen.");
+  if(art==="pruefbuch" && Array.isArray(d.geraete) && !d.pruefbuecher && !d.anlage)
+    throw new Error("Das ist eine Typenschild-Antwort – bitte „Typenschild“ wählen.");
+  if(Array.isArray(d.geraete)) d.geraete=d.geraete.filter(function(x){ return x && typeof x==="object"; });
   if(art==="typenschild" && !Array.isArray(d.geraete)){
     /* ein einzelnes Schild ohne Liste geht auch */
     if(d.anlage || d.hersteller || d.modell) d={geraete:[d.anlage||d], unsicher:d.unsicher||[], hinweise:d.hinweise||""};
@@ -5433,12 +5513,12 @@ function kiAntwortLesen(text, art){
 function kiKopierweg(art, kontext){
   return new Promise(function(fertig){
     var auftrag=kiAuftragText(art, kontext);
-    var v=ansichtOeffnen(art==="pruefbuch"?"Prüfbuch mit Claude lesen":"Typenschilder mit Claude lesen");
+    var v=ansichtOeffnen(art==="pruefbuch"?"Prüfbuch mit Claude lesen":art==="auftrag"?"Lidl-Auftrag mit Claude lesen":"Typenschilder mit Claude lesen");
     v.schritt.textContent="Über die Claude-App – ohne eigenen KI-Zugang";
     var box=el('<div class="stack">'+
       '<div class="note"><strong>So geht’s:</strong><ol style="margin:6px 0 0 18px;padding:0">'+
         "<li>„Auftrag kopieren“ tippen.</li>"+
-        "<li>In der Claude-App einen neuen Chat öffnen, die Fotos "+(art==="pruefbuch"?"aller Prüfbuch-Seiten":"der Typenschilder")+
+        "<li>In der Claude-App einen neuen Chat öffnen, die Fotos "+(art==="pruefbuch"?"aller Prüfbuch-Seiten":art==="auftrag"?"bzw. Seiten des Auftrags":"der Typenschilder")+
           " dazugeben, den Auftrag einfügen und abschicken.</li>"+
         "<li>Die Antwort von Claude ganz kopieren und unten einfügen.</li></ol></div>"+
       '<div class="rowflex"><button class="btn" type="button" data-a="kopie">Auftrag kopieren</button>'+
@@ -5525,7 +5605,8 @@ function kiAnlage(k){
    Datum; nur Monat/Jahr kommt als Notiz) */
 function kiNachweise(liste){
   var voll=[], ohneTag=[];
-  (liste||[]).forEach(function(p){
+  (Array.isArray(liste)?liste:[]).forEach(function(p){
+    if(!p || typeof p!=="object") return;
     var d=kiDatum(p.datum);
     /* UKT selbst (Stempel „Umwelt- und Klimatechnik GmbH“) ist kein Name; ein
        Techniker wird auf die bekannte Schreibweise gebracht (Tobias) */
@@ -5924,7 +6005,10 @@ function protokollAssistent(form, stoer){
     inhalt.appendChild(nameFeld);
     inhalt.appendChild(textFeld("Weitere/r Techniker/in","#f_tech2",false,"leer = allein"));
     inhalt.appendChild(textFeld("Dritte/r Techniker/in","#f_tech3",false));
-    inhalt.appendChild(textFeld("Uhrzeit","#f_zeit",false));
+    /* Uhrzeit als echtes Zeitfeld – „8:30“ als Text würde das Formular still leeren */
+    var zf=el('<div class="as-feld"><div class="as-label">Uhrzeit</div><input type="time"></div>'), zi=zf.querySelector("input");
+    zi.value=wert("#f_zeit"); zi.oninput=zi.onchange=function(){ if(zi.value) setz("#f_zeit", zi.value); };
+    inhalt.appendChild(zf);
     var d=el('<div class="as-feld"><div class="as-label">Unterschrift</div>'+
       '<canvas class="sig" width="900" height="300" style="width:100%;height:120px;border:1px solid var(--line-2);border-radius:8px;background:var(--surface);touch-action:none"></canvas>'+
       '<div class="rowflex" style="margin-top:6px"><button class="btn ghost sm" type="button">löschen</button>'+
@@ -6349,7 +6433,7 @@ function viewProtokoll(){
   posBox.addEventListener("change",function(e){ if(e.target && e.target.name==="posw") anlagenZeichnen(); });
   form.querySelector("#addAnlage").onclick=function(){
     if(!byId[selSt.value]){ toast("Bitte zuerst oben den Standort wählen."); selSt.focus(); return; }
-    anlageAssistent({}, "Neue Anlage", true).then(function(erg){
+    anlageAssistent({standortId:selSt.value}, "Neue Anlage", true).then(function(erg){   /* Markt als Kontext für die KI */
       if(!erg) return;
       formDirty=true;
       neueAnlagen.push({id:"NP"+Date.now().toString(36)+Math.random().toString(36).slice(2,5), werte:erg});
@@ -6552,6 +6636,7 @@ function viewProtokoll(){
     STOER_AUFTRAG.forEach(function(f){ setzS(f[0], a[f[0]]); });
     setzS("beschreibung", a.beschreibung);
     if(a.auftragsnummer) form.querySelector("#f_auftrag").value=a.auftragsnummer;
+    if(form._rapportZeigen) form._rapportZeigen();   /* Rapport-Abgleich mit der neuen Nummer */
     var st=standortZuAuftrag(a);
     if(st){ selSt.value=st.id; selSt.onchange(); }
     else if(a.adresse) form.querySelector("#f_adresse").value=a.adresse;
@@ -6634,6 +6719,7 @@ function viewProtokoll(){
         }
         qrGescannt=true; formDirty=true; qrRoh=String(wert);
         form.querySelector("#f_auftrag").value=nr;
+    if(form._rapportZeigen) form._rapportZeigen();   /* Rapport-Abgleich mit der neuen Nummer */
         sInfo("Auftragsnummer <strong>"+esc(nr)+"</strong> gescannt"+(geladenerAuftrag?" – passt zur geöffneten PDF.":
           ". Die übrigen Angaben stehen nur auf dem Auftrag selbst – bitte abtippen oder die PDF öffnen."));
         sWarn(doppelt(nr));
@@ -6861,6 +6947,7 @@ function viewProtokoll(){
     if(formDirty && !window.confirm(bearb ? "Korrektur verwerfen?\n\nDie Änderungen (auch ein angehängter Rapport) gehen verloren."
                                           : "Formular leeren?\n\nDas Angefangene wird verworfen.")) return;
     formDirty=false; S.protoStandort=""; S.protoPos=""; S.stoerungAus=null;
+    posteingangOffen=null;   /* abgebrochen: ein Posteingangs-Rapport bleibt im Posteingang */
     clearTimeout(entwurfTakt); entwurfTakt=null;   /* sonst kommt das Verworfene als Entwurf zurück */
     if(!bearb) entwurfWeg();
     if(S.bearbeiten){ S.letztesProtokoll=S.bearbeiten.x._id; S.bearbeiten=null; }
@@ -6945,6 +7032,8 @@ function viewProtokoll(){
      weitergehen soll. */
   function entwurfSammeln(){
     var d={art:stoer?"stoerung":"wartung", zeit:new Date().toISOString(),
+      /* wem der Entwurf gehört – ein anderes Konto auf demselben Gerät bekommt ihn nicht angeboten */
+      konto:(Store.benutzer&&Store.benutzer.email)||"",
       standort:form.querySelector("#f_standort").value||"",
       stoerungAus:stoer ? (S.stoerungAus||null) : null,   /* nur ein Störungsprotokoll trägt den Bezug */
       werte:{}, haken:{}, wahl:{},
@@ -7021,19 +7110,33 @@ function viewProtokoll(){
   }
   form.addEventListener("input", entwurfMerken);
   form.addEventListener("change", entwurfMerken);
+  /* Enter in einem Eingabefeld speichert nicht sofort das ganze Protokoll
+     (ohne Unterschrift, ohne Rückfrage) – gespeichert wird nur mit dem Knopf */
+  form.addEventListener("keydown", function(e){
+    if(e.key==="Enter" && e.target && e.target.tagName==="INPUT" && !/^(submit|button|checkbox|radio)$/.test(e.target.type)) e.preventDefault();
+  });
+  /* Entfernen (Foto, Mangel, Material, Unterschrift löschen) löst kein
+     input aus – jeder Knopf im Formular meldet sich deshalb auch */
+  form.addEventListener("click", function(e){ if(e.target.closest && e.target.closest("button")) entwurfMerken(); });
   form._entwurfMerken=entwurfMerken;   /* Fotos und Unterschrift melden sich selbst */
   /* App geht in den Hintergrund (Handy gesperrt, anderer App gewechselt):
      ausstehenden Entwurf sofort schreiben, nicht erst nach dem Takt */
   entwurfSofort=function(){
-    if(!entwurfTakt || bearb || !document.body.contains(form)) return;
+    if(!entwurfTakt || bearb || !document.body.contains(form)) return false;
     clearTimeout(entwurfTakt); entwurfTakt=null;
     try{ entwurfSchreiben(entwurfSammeln()); }catch(e){}
+    return true;   /* es stand noch etwas aus */
   };
 
   /* Hinweis auf einen liegengebliebenen Entwurf – er kommt weiter unten
      direkt über das Formular. */
   var entwurfKasten=null;
-  if(!bearb && entwurfStand && entwurfStand.werte){
+  var meinKonto=(Store.benutzer&&Store.benutzer.email)||"";
+  if(!bearb && entwurfStand && entwurfStand.werte && entwurfStand.konto && meinKonto && entwurfStand.konto!==meinKonto){
+    /* Entwurf eines anderen Kontos: nicht anbieten (samt dessen Unterschrift), nur erwähnen */
+    form.insertBefore(el('<div class="note" style="margin-bottom:12px;font-size:13px">Auf diesem Gerät liegt ein angefangenes Protokoll von '+
+      esc(entwurfStand.konto)+'. Es bleibt für dieses Konto aufgehoben.</div>'), form.firstChild);
+  } else if(!bearb && entwurfStand && entwurfStand.werte){
     var e2=entwurfStand;
     var wieAlt=function(){
       var m=Math.round((Date.now()-new Date(e2.zeit).getTime())/60000);
@@ -7202,6 +7305,8 @@ function viewProtokoll(){
           stoerungSpeichern(z, "Durch Störungsprotokoll vom "+dfmt(doc.datum)+" erledigt")
             .then(function(wo){
               if(wo!==false) stoerungVerlauf(z, "Durch Störungsprotokoll vom "+dfmt(doc.datum)+" erledigt", "offen", "erledigt");
+              /* das eben gespeicherte Protokoll bleibt aufgeklappt */
+              if(S.view==="protokoll") S.letztesProtokoll=id;
               berechneFaelligkeiten(); render(); });
         }
       }
@@ -7420,17 +7525,23 @@ function blattInhalt(p){
         "<tr><th colspan='2'>"+esc(a.name||("Anlage "+(i+1)))+(a.neu?" (vor Ort neu erfasst)":"")+"</th></tr>"+
         /* Jede planmäßige Wartung ist zugleich die Überprüfung der Betriebs-
            sicherheit, die § 22 Abs. 1 KAV mindestens jährlich verlangt */
-        (zaehltAlsWartung(p) ? z("Gewartet als",a.termin?a.termin+" nach § 22 KAV":"") : istStoerung(p) ? z("Gewartet als",a.termin) : "")+
+        /* vor Ort neu erfasst: noch ohne Kürzel – gewartet wurde sie trotzdem nach § 22 KAV */
+        (zaehltAlsWartung(p) ? z("Gewartet als",a.termin?a.termin+" nach § 22 KAV":(a.neu?"Wartung nach § 22 KAV":"")) : istStoerung(p) ? z("Gewartet als",a.termin) : "")+
         z("Bauart",a.bauart)+
         z("Kältekreisläufe / Prüfbuch",[a.kreislaeufe?a.kreislaeufe+" Kältekreis"+(+a.kreislaeufe===1?"":"e"):"",
-          a.pruefbuch?"Prüfbuch: "+jn(a.pruefbuch):"", a.ortPruefbuch?"liegt "+a.ortPruefbuch:""].filter(Boolean).join(" · "))+
+          a.pruefbuch?"Prüfbuch: "+jn(a.pruefbuch):"", a.ortPruefbuch?"liegt "+(a.ortPruefbuch===PRUEFBUCH_ORT_ALT?PRUEFBUCH_ORT:a.ortPruefbuch):""].filter(Boolean).join(" · "))+
         z("Kältemittel / Füllmenge",[a.kaeltemittelArt, leerWert(a.kaeltemittelKg)?"":String(a.kaeltemittelKg).replace(".",",")+" kg"].filter(Boolean).join(" · "))+
         (istWassergekuehlt(a)?z("Rückkühler / Pumpenstation von UKT",[a.rkUkt?"Rückkühler: "+jn(a.rkUkt):"", a.pumpeUkt?"Pumpen: "+jn(a.pumpeUkt):""].filter(Boolean).join(" · ")):"")+
         z("Regelung", a.regelung===OHNE_REGELUNG ? "keine eigene Regelung" : [a.regelung,
           a.regelungFirma?"betreut von "+(a.regelungFirma==="UKT"?"UKT":(a.regelungFirmaName||"anderer Firma")):"",
           a.fernzugriff?"Fernzugriff: "+jn(a.fernzugriff):""].filter(Boolean).join(" · "))+
-        z("Hersteller / Modell",[a.hersteller,a.modell].filter(Boolean).join(" / "))+
-        z("Seriennummer",a.seriennummer)+
+        /* Typenschild und Prüfbuch gelten dem Außengerät */
+        z("Außengerät Hersteller / Modell",[a.hersteller,a.modell].filter(Boolean).join(" / "))+
+        z("Außengerät Seriennummer",a.seriennummer)+
+        (Array.isArray(a.innengeraete)?a.innengeraete.filter(innenBelegt).map(function(g,j){
+          return z("Innengerät "+(j+1), [g.raum, [g.hersteller,g.modell].filter(Boolean).join(" "), g.seriennummer?"SN "+g.seriennummer:"",
+            leerWert(g.leistungKw)?"":String(g.leistungKw).replace(".",",")+" kW"].filter(Boolean).join(" · "));
+        }).join(""):"")+
         z("Inbetriebnahme",a.inbetriebnahme?dfmt(a.inbetriebnahme):"")+
         /* Angaben aus dem Prüfbuch, soweit bekannt */
         z("Kältemittel / Umwelt",[gwpVon(a)?"GWP "+String(gwpVon(a)).replace(".",","):"", co2Tonnen(a)?String(co2Tonnen(a)).replace(".",",")+" t CO₂-Äquivalent":"",
@@ -7471,7 +7582,8 @@ function blattInhalt(p){
       zeile("Kostenstelle",so.kostenstelle)+
       zeile("Problemtyp",so.problemtyp)+
       absatz("Beschreibung",so.beschreibung)+
-      zeile("Typ / Modell (Lidl)",[so.lidlTyp,so.lidlModell].filter(Boolean).join(" / "))+
+      zeile("Typ / Modell (Lidl)",[so.lidlTyp,so.lidlModell,so.hersteller].filter(Boolean).join(" / "))+
+      (so.seriennummer?zeile("Seriennummer (Lidl)",so.seriennummer):"")+
       zeile("LIN / IA-Nummer",[so.lin?"LIN "+so.lin:"",so.iaNummer?"IA "+so.iaNummer:""].filter(Boolean).join(" · "))+
       zeile("Kontakt Lidl",[so.lidlKontakt,so.lidlTelefon,so.lidlMail].filter(Boolean).join(" · "))+
     "</table>";
@@ -7516,7 +7628,7 @@ function blattInhalt(p){
 
       "<h2>Wartungsunternehmen</h2><table>"+
         zeile("Firma / Vertragspartner",p.firma)+
-        zeile("Techniker/in",[p.techniker].concat(p.mitarbeiter||[]).filter(Boolean).join(", "))+
+        zeile("Techniker/in",[p.techniker].concat(p.mitarbeiter||[]).filter(Boolean).map(kanonName).join(", "))+
         zeile("Telefon / E-Mail",p.kontakt)+
         zeile("Subunternehmen",p.subunternehmen||"nein")+
         zeile("F-Gase-Unternehmenszertifikat Nr.",p.zertUnternehmen)+
@@ -7548,7 +7660,7 @@ function blattInhalt(p){
 
       /* Abschluss mit Unterschrift bleibt beisammen – nie die Unterschrift allein auf der nächsten Seite */
       "<div class='zusammen'><h2>Abschluss</h2><table style='max-width:60%'>"+
-        zeile("Name Techniker/in",p.nameTechniker)+
+        zeile("Name Techniker/in",kanonName(p.nameTechniker))+
         zeile("Datum / Uhrzeit",dfmt(p.datum)+(p.uhrzeit?", "+p.uhrzeit+" Uhr":""))+
         "<tr><td class='k'>Unterschrift Techniker/in</td><td class='unterschrift'>"+
           (p.unterschrift?'<img alt="Unterschrift" src="'+bildUrl(p.unterschrift)+'">':"&nbsp;")+"</td></tr>"+
@@ -7861,6 +7973,7 @@ function berichtErzeugenUndAblegen(p){
 }
 /* was beim letzten Mal nicht klappte (Funkloch), erneut versuchen */
 function offeneBerichteNachholen(){
+  if(nurLesen()||demo()) return;   /* Kunde und Präsentation schreiben nichts */
   if(Store.modus!=="supabase") return;
   var offen=lsGet("ukt_pdf_offen",[]);
   if(!offen.length) return;
@@ -7889,7 +8002,7 @@ function protokollDetail(p){
       '<button class="btn sm" type="button" data-akt="druck">Drucken / PDF</button>'+
       (istStoerung(p) && (p.auftragsnummer||(p.stoerung&&p.stoerung.qrInhalt)) ? '<button class="btn ghost sm" type="button" data-akt="qr">QR-Code zeigen</button>' : "")+
       (p.geloescht||nurLesen()?"":'<button class="btn ghost sm" type="button" data-akt="korr">Korrigieren</button>')+
-      '<button class="btn ghost sm" type="button" data-akt="verlauf">Änderungen ansehen</button>'+
+      (nurLesen()?"":'<button class="btn ghost sm" type="button" data-akt="verlauf">Änderungen ansehen</button>')+
       /* endgültig vom Gerät löschen (es gibt keine zentrale Kopie): nur Admins */
       (p._quelle==="geraet" && Admin.frei && !nurLesen()?'<button class="btn ghost sm" type="button" data-akt="weg">Vom Gerät löschen</button>':"")+
       (p._quelle!=="geraet" && Admin.frei && !p.geloescht?'<button class="btn ghost sm" type="button" data-akt="loeschen" style="color:var(--crit);border-color:var(--crit)">Löschen</button>':"")+
@@ -7908,7 +8021,7 @@ function protokollDetail(p){
       tagFmt(p.geaendert)+(p.korrekturGrund?' – „'+esc(p.korrekturGrund)+'"':"")+"</div>":"")+
     (p._quelle==="geraet"?'<div class="muted" style="font-size:12px">Liegt bisher nur auf diesem Gerät.</div>':"")+
     '<dl class="dl">'+
-      "<dt>Techniker/in</dt><dd>"+esc([p.nameTechniker||p.techniker].concat(p.mitarbeiter||[]).filter(Boolean).join(", ")||"–")+"</dd>"+
+      "<dt>Techniker/in</dt><dd>"+esc([p.nameTechniker||p.techniker].concat(p.mitarbeiter||[]).filter(Boolean).map(kanonName).join(", ")||"–")+"</dd>"+
       "<dt>Wartungsart</dt><dd>"+esc(p.wartungsart||"–")+"</dd>"+
       (p.bestellnummer?"<dt>Bestellnummer</dt><dd class='mono'>"+esc(p.bestellnummer)+"</dd>":"")+
       (p.auftragsnummer?"<dt>Lidl-Auftrag</dt><dd class='mono'>"+esc(p.auftragsnummer)+"</dd>":"")+
@@ -7990,7 +8103,8 @@ function protokollDetail(p){
   if(loeschKnopf) loeschKnopf.onclick=function(){ oeffnePanel(false); };
   var wiederKnopf=d.querySelector('[data-akt="wiederher"]');
   if(wiederKnopf) wiederKnopf.onclick=function(){ oeffnePanel(true); };
-  d.querySelector('[data-akt="verlauf"]').onclick=function(){
+  var verlaufKnopf=d.querySelector('[data-akt="verlauf"]');
+  if(verlaufKnopf) verlaufKnopf.onclick=function(){
     S.verlaufProtokoll=p._id; S.view="verlauf"; render(); window.scrollTo({top:0});
   };
   var weg=d.querySelector('[data-akt="weg"]');
@@ -8361,7 +8475,7 @@ function viewVerlauf(){
         (zeilen?'<div class="scrollx"><table class="dt"><thead><tr><th>Feld</th><th>vorher</th><th>nachher</th></tr></thead><tbody>'+
           zeilen+"</tbody></table></div>":"")+
         (e.protokollId?'<div><button class="btn ghost sm" type="button">'+((jetzt&&jetzt.geloescht)?"Gelöschtes Protokoll öffnen":"Protokoll öffnen")+"</button></div>":
-          (e.art==="stammdaten"&&e.standortId?'<div><button class="btn ghost sm" type="button">Markt in der Verwaltung öffnen</button></div>':""))+
+          (e.art==="stammdaten"&&e.standortId&&Admin.frei?'<div><button class="btn ghost sm" type="button">Markt in der Verwaltung öffnen</button></div>':""))+
       "</div>");
       var knopf=b.querySelector("button");
       if(knopf && verschwunden) knopf.remove();
@@ -8417,7 +8531,8 @@ function inhaberKarte(){
       l.map(function(x){ return "<tr><td>"+esc(x.name||"–")+"</td><td>"+esc(TEXT[x.rolle]||x.rolle)+"</td></tr>"; }).join("")+
       '<tr><td colspan="2" class="muted">alle anderen Konten: Techniker</td></tr></tbody></table></div>'));
   });
-  var monat=isoLokal(new Date()).slice(0,7)+"-01";
+  /* Monatsbeginn in Ortszeit als Zeitpunkt – sonst zählten die ersten Stunden zum Vormonat */
+  var monat=new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString();
   Store.sb.from("ki_nutzung").select("zeit,email,art,bilder,tokens_ein,tokens_aus").gte("zeit",monat).then(function(r){
     if(r.error){ kih.appendChild(el('<div class="muted">KI-Erkennung noch nicht eingerichtet.</div>')); return; }
     var l=r.data||[], ein=0, aus=0, bilder=0;
@@ -8769,6 +8884,7 @@ function viewVerwaltung(){
   menue.querySelectorAll("[data-tab]").forEach(function(b){ b.onclick=function(){ A.tab=b.dataset.tab; if(A.tab!=="maerkte") A.vonNachbessern=false; render(); window.scrollTo({top:0}); }; });
   f.appendChild(menue);
   if(A.tab==="nachbessern"){ f.appendChild(nachbessernAnsicht(liste)); return f; }
+  if(A.tab==="inhaber" && !(istInhaber() && Store.modus==="supabase")) A.tab="nachbessern";   /* nach Kontowechsel */
   if(A.tab==="inhaber"){
     /* ein Fehler in der Inhaber-Karte darf die Verwaltung nie blockieren */
     try{ f.appendChild(inhaberKarte()); }catch(e){ console.error(e); }
@@ -9348,12 +9464,15 @@ function verwaltungEditor(s){
         }
         /* Zuordnung: erste Zeile ist die Anlage, die anderen hängen an ihr */
         var will = istAnker ? pid : ankerPid;
-        neuP.anlageZu = (p0 && p0.anlageId===will) ? (p0.anlageZu||null) : will;
+        /* Folgezeilen einer Karte mit mehreren Terminen immer ausdrücklich an die
+           erste hängen – sonst trennte ein neuer Termin den bisherigen zweiten ab */
+        neuP.anlageZu = (!istAnker && zeilen.length>1 && zeilen.some(function(zz){ return zz.dataset.neu==="1"; })) ? ankerPid : ((p0 && p0.anlageId===will) ? (p0.anlageZu||null) : will);
         if(p0) STAMM_FELDER_POS.forEach(function(kk){
           if(leerWert(neuP[kk]) && leerWert(p0[kk]) && neuP[kk]!==false) neuP[kk]=p0[kk];
         });
         if(p0 && !neuP.pausiert && !p0.pausiert) neuP.pausiert=p0.pausiert;
-        if(p0) neuP.vorOrtNeu = (p0.vorOrtNeu && !neuP.intervallCode) ? p0.vorOrtNeu : (p0.vorOrtNeu?false:p0.vorOrtNeu);
+        /* „vor Ort neu“ erst erledigt, wenn Kürzel UND Soll-Monat da sind – nicht bei jedem Speichern */
+        if(p0) neuP.vorOrtNeu = (p0.vorOrtNeu && !(neuP.intervallCode && neuP.monat)) ? p0.vorOrtNeu : (p0.vorOrtNeu ? false : p0.vorOrtNeu);
 
         var name=(kartenName||(p0?anlagenName(p0):"Anlage"));
         if(neuP.aktiv && !neuP.intervallCode) fehlend.push(name);
@@ -9793,7 +9912,10 @@ function viewDaten(){
   return f;
 }
 function csv(name,head,rows){
-  var q=function(v){ v=String(v==null?"":v); return /[";\n]/.test(v)?'"'+v.replace(/"/g,'""')+'"':v; };
+  var q=function(v){ v=String(v==null?"":v);
+    /* =, +, -, @ am Anfang würde Excel als Formel ausführen – als Text kennzeichnen (Zahlen ausgenommen) */
+    if(/^[=+\-@\t\r]/.test(v) && !/^-?\d+([.,]\d+)?$/.test(v)) v="'"+v;
+    return /[";\n]/.test(v)?'"'+v.replace(/"/g,'""')+'"':v; };
   var text="﻿"+[head.map(q).join(";")].concat(rows.map(function(r){return r.map(q).join(";");})).join("\r\n");
   if(window.claude&&window.claude.use){
     /* im Artifact sind eigene Downloads gesperrt, der Host übernimmt das */
