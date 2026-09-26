@@ -87,11 +87,15 @@ header.app{position:sticky;top:env(safe-area-inset-top,0px);z-index:40;backgroun
   .mark span{display:none}
   .mark b{font-size:17px}
   .hbar{gap:8px;padding-block:8px}
-  .stand{font-size:11px;white-space:normal}
   nav.tabs button{padding:10px 11px;font-size:14px}
 }
 .hspace{flex:1 1 auto}
-.stand{font-family:var(--f-mono);font-size:11.5px;color:var(--ink-3);white-space:nowrap}
+/* darf umbrechen: auf schmalen Handys (iPhone) schob die lange Zeile sonst
+   die ganze Seite breiter als den Bildschirm */
+.stand{font-family:var(--f-mono);font-size:11.5px;color:var(--ink-3);white-space:normal;min-width:0;overflow-wrap:anywhere}
+@media (max-width:560px){ .stand{font-size:11px} }
+/* Sicherheitsnetz: nichts darf die Seite seitlich verschiebbar machen */
+html,body{max-width:100%;overflow-x:clip}
 nav.tabs{display:flex;gap:2px;overflow-x:auto;scrollbar-width:none;border-top:1px solid var(--line)}
 nav.tabs::-webkit-scrollbar{display:none}
 nav.tabs button{appearance:none;background:none;border:0;border-bottom:2px solid transparent;color:var(--ink-3);
@@ -361,6 +365,8 @@ a:not(.btn):hover{opacity:.8}
 .toast{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(18px + env(safe-area-inset-bottom,0px));z-index:100;
   background:var(--ink);color:var(--ground);padding:11px 16px;border-radius:9px;font-size:13.5px;box-shadow:var(--shadow);display:none}
 table.dt{width:100%;border-collapse:collapse;font-size:13px}
+/* breite Tabellen scrollen auf dem Handy in sich, statt die Seite zu verbreitern */
+@media (max-width:700px){ table.dt{display:block;overflow-x:auto;-webkit-overflow-scrolling:touch;max-width:100%} }
 table.dt th{text-align:left;font-family:var(--f-disp);font-size:11.5px;text-transform:uppercase;letter-spacing:.06em;
   color:var(--ink-3);padding:8px 10px;border-bottom:1px solid var(--line-2);white-space:nowrap}
 table.dt td{padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
@@ -424,7 +430,9 @@ var STAMM_FELDER_POS = ["anlagentyp","intervallCode","inbetriebnahme","monat","m
                         "nachweise",
                         /* Angaben aus dem Prüfbuch */
                         "gwp","psBar","toC","tkC","hermetisch","fluidgruppe","psv","gefahr","erstePruefung",
-                        "leckageerkennung","dichtheitMonate","astv","konformitaet","aufsteller"];
+                        "leckageerkennung","dichtheitMonate","astv","konformitaet","aufsteller",
+                        /* Innengeräte: [{raum, hersteller, modell, seriennummer, leistungKw}] */
+                        "innengeraete"];
 var ABGELEITET_POS   = ["kaeltemittelText","ueber30kg","baujahr"];
 function auswahl(o, felder){
   var r={}; felder.forEach(function(k){ r[k]=(o[k]===undefined?null:o[k]); }); return r;
@@ -566,8 +574,9 @@ function anlagenDesMarkts(s, auchPausiert){
 function anlageVon(p){ return p ? ANLAGEN[p.anlageId] || {id:p.id, leader:p, termine:[p]} : null; }
 function anlageLeader(p){ return anlageVon(p).leader; }
 function anlagePausiert(p){ var l=anlageLeader(p); return !!(l && l.pausiert); }
-/* Die Prüfbücher liegen gesammelt bei UKT – der Standard für jede Anlage */
-var PRUEFBUCH_ORT="Büro UKT – Technik-Ordner 2";
+/* Die Prüfbücher liegen im Büro der Filiale – der Standard für jede Anlage */
+var PRUEFBUCH_ORT="Büro Filiale – Technikordner 2";
+var PRUEFBUCH_ORT_ALT="Büro UKT – Technik-Ordner 2";   /* früherer Standard, gilt als der neue */
 /* Anlagendaten einer Anlage: erste Zeile zuerst, Lücken aus den anderen Zeilen */
 var ANLAGE_DATEN_KEYS=null;
 function anlageDaten(p){
@@ -578,9 +587,10 @@ function anlageDaten(p){
     if(!leerWert(r[k])) return;
     for(var i=0;i<a.termine.length;i++){ if(!leerWert(a.termine[i][k])){ r[k]=a.termine[i][k]; break; } }
   });
-  /* Standard: jede Kälteanlage hat ein Prüfbuch (§ 23 KAV), und die Bücher
-     liegen gesammelt bei UKT – solange nichts anderes eingetragen ist */
+  /* Standard: jede Kälteanlage hat ein Prüfbuch (§ 23 KAV), und es liegt im
+     Büro der Filiale im Technikordner 2 – solange nichts anderes eingetragen ist */
   if(leerWert(r.pruefbuch)) r.pruefbuch="ja";
+  if(r.ortPruefbuch===PRUEFBUCH_ORT_ALT) r.ortPruefbuch=PRUEFBUCH_ORT;
   if(r.pruefbuch==="ja" && leerWert(r.ortPruefbuch)) r.ortPruefbuch=PRUEFBUCH_ORT;
   return r;
 }
@@ -707,11 +717,15 @@ var STATUS_VAR={ueberfaellig:"--crit",faellig:"--warn",geplant:"--good",erledigt
 /* Schreibweisen, die dieselbe Person meinen – so aus dem Büro bestätigt.
    Schlüssel klein geschrieben, der Wert ist die Schreibweise, die überall
    erscheinen soll. */
+/* Die eigenen Techniker stehen mit vollem Namen da – auch wo in der
+   Excel-Liste nur der Vorname oder ein Kürzel steht. */
 var NAMEN_ALIAS={
-  datko:"Darko",
-  mat:"Matthäus", matti:"Matthäus", "mattäus":"Matthäus", mattaeus:"Matthäus", matthaeus:"Matthäus",
-  mattias:"Matthäus", matthias:"Matthäus",
-  tobi:"Tobias"
+  darko:"Darko Jekic", datko:"Darko Jekic", "darko jekic":"Darko Jekic", "darko jekić":"Darko Jekic",
+  "matthäus":"Matthäus Kammerlander", mat:"Matthäus Kammerlander", matti:"Matthäus Kammerlander",
+  "mattäus":"Matthäus Kammerlander", mattaeus:"Matthäus Kammerlander", matthaeus:"Matthäus Kammerlander",
+  mattias:"Matthäus Kammerlander", matthias:"Matthäus Kammerlander", "matthäus kammerlander":"Matthäus Kammerlander",
+  manfred:"Manfred Kammerlander", "manfred kammerlander":"Manfred Kammerlander",
+  tobias:"Tobias Kammerlander", tobi:"Tobias Kammerlander", "tobias kammerlander":"Tobias Kammerlander"
 };
 var NAMEN_KANON={};
 function baueNamenKanon(){
@@ -1273,8 +1287,19 @@ function stoerungDialog(vorhanden){
   document.body.appendChild(ov);
   document.body.style.overflow="hidden";
   var inhalt=ov.querySelector(".as-inhalt"), fuss=ov.querySelector(".as-fuss");
-  var zu=function(){ ov.remove(); document.body.style.overflow=""; };
-  ov.querySelector('[data-a="zu"]').onclick=zu;
+  var zu=function(){
+    ov.remove(); document.body.style.overflow="";
+    /* ein aus dem Posteingang geöffneter Auftrag gilt nur für diesen Dialog –
+       abgebrochen bleibt er im Posteingang stehen */
+    if(posteingangOffen && posteingangOffen.art==="auftrag") posteingangOffen=null;
+  };
+  var anfang=JSON.stringify(o);
+  ov.querySelector('[data-a="zu"]').onclick=function(){
+    /* abgetippte oder eingelesene Angaben nicht still wegwerfen */
+    if(JSON.stringify(o)!==anfang &&
+       !window.confirm("Die Eingaben zu dieser Störung sind noch nicht gespeichert.\n\nDialog trotzdem schließen?")) return;
+    zu();
+  };
 
   var FELDER=[
     ["auftragsnummer","Auftragsnummer","text",true],
@@ -1378,7 +1403,7 @@ function stoerungDialog(vorhanden){
         return kiPruefen("Lidl-Auftrag", g, o, felder, d.unsicher, d.hinweise).then(function(wahl){
           if(wahl){
             Object.keys(wahl).forEach(function(k){ o[k]=wahl[k]; });
-            if(wahl.filialCode && !o.standortId){ var st=standortZuAuftrag({kostenstelle:wahl.filialCode}); if(st) o.standortId=st.id; }
+            if(wahl.filialCode && !o.standortId){ var st=standortZuAuftrag({kostenstelle:wahl.filialCode}); if(st){ o.standortId=st.id; o.positionId=null; } }
             o.quelle="ki";
           }
           zeichne(); fussNeu();
@@ -1432,7 +1457,8 @@ function stoerungDialog(vorhanden){
         if(a.ausfuehrenBis) o.zieltermin=a.ausfuehrenBis;
         if(a.kostenstelle) o.filialCode=a.kostenstelle;
         var st=standortZuAuftrag(a);
-        if(st) o.standortId=st.id;
+        /* anderer Markt laut Auftrag: die Anlage des vorher gewählten Markts passt nicht mehr */
+        if(st && st.id!==o.standortId){ o.standortId=st.id; o.positionId=null; }
         melde("Übernommen aus dem Auftrag"+(st?", Markt erkannt: <strong>"+esc(stName(st))+"</strong>":"")+
               ". Bitte kurz gegenprüfen.");
       }
@@ -1460,8 +1486,17 @@ function stoerungDialog(vorhanden){
       var box=inhalt.querySelector("#st_fehlt");
       if(fehlt.length){ box.textContent="Es fehlt noch: "+fehlt.join(", ")+"."; box.hidden=false;
         box.scrollIntoView({behavior:"smooth",block:"center"}); return; }
+      /* gescannter QR-Inhalt eines anderen Auftrags (Nummer seither geändert) fällt weg */
+      if(o.qrInhalt && !qrPasst(o.qrInhalt, o.auftragsnummer)) delete o.qrInhalt;
       b.disabled=true; b.textContent="Wird gespeichert …";
       stoerungSpeichern(o, vorhanden?"Offene Störung geändert":"Offene Störung erfasst").then(function(wo){
+        if(wo===false){
+          /* weder zentral noch auf dem Gerät gespeichert – Dialog bleibt offen, nichts geht verloren */
+          b.disabled=false; b.textContent=vorhanden?"Änderung speichern":"Störung anlegen";
+          box.textContent="Die Störung konnte nicht gespeichert werden – weder in der Ablage noch auf dem Gerät"+
+            (Store.fehler?" ("+Store.fehler+")":"")+". Die Eingaben sind noch da; bitte später nochmals speichern.";
+          box.hidden=false; return;
+        }
         if(!vorhanden) posteingangErledigt("auftrag", o._id);
         protokolliere({art:"stammdaten", standortId:o.standortId, standortName:stName(byId[o.standortId]||{}),
           grund:(vorhanden?"Offene Störung geändert":"Offene Störung erfasst")+
@@ -1480,15 +1515,25 @@ function stoerungDialog(vorhanden){
       e.onclick=function(){
         if(!window.confirm("Die Störung als erledigt abhaken?\n\nSie verschwindet aus der Liste unter „Fällig“.")) return;
         o.erledigt=new Date().toISOString();
-        stoerungSpeichern(o,"Offene Störung abgehakt").then(function(){ zu(); toast("Störung abgehakt."); render(); });
+        stoerungSpeichern(o,"Offene Störung abgehakt").then(function(wo){
+          if(wo===false){ o.erledigt=null; toast("Konnte nicht gespeichert werden – die Störung bleibt offen."); return; }
+          /* eigener Verlaufseintrag – sonst hinge der Stand davor am nächsten, fremden Eintrag */
+          stoerungVerlauf(o, "Offene Störung abgehakt", "offen", "erledigt");
+          zu(); toast("Störung abgehakt."); render(); });
       };
       fuss.appendChild(e);
       if(Admin.frei){
         var w=el('<button class="btn ghost" type="button" style="color:var(--crit)">Eintrag löschen</button>');
         w.onclick=function(){
           if(!window.confirm("Diese offene Störung ganz löschen?\n\nDas lässt sich nicht rückgängig machen.")) return;
+          var sicher=stammUeber[o._id];
           delete stammUeber[o._id];
-          stammLoeschen(o._id).then(function(){ wendeStammdatenAn(); zu(); toast("Eintrag gelöscht."); render(); });
+          stammLoeschen(o._id).then(function(r){
+            var f=Array.isArray(r) && r[1] && r[1].error;
+            if(f){ stammUeber[o._id]=sicher; wendeStammdatenAn(); render();
+              toast("Löschen fehlgeschlagen ("+f.message+") – die Störung bleibt."); return; }
+            stoerungVerlauf(o, "Offene Störung gelöscht", "offen", "gelöscht");
+            wendeStammdatenAn(); zu(); toast("Eintrag gelöscht."); render(); });
         };
         fuss.appendChild(w);
       }
@@ -1646,6 +1691,7 @@ function ladePosteingang(){
 function posteingangErledigt(art, bezug){
   var e=posteingangOffen;
   if(!e || e.art!==art || !posteingangAn()) return;
+  if(e.ziel && e.ziel!==bezug) return;
   if(demo()){ posteingangOffen=null; POSTEINGANG=POSTEINGANG.filter(function(x){ return x.id!==e.id; }); return; }
   posteingangOffen=null;
   Store.sb.from("posteingang").update({status:"erledigt", bezug:bezug, erledigt_von:wer(), erledigt_am:new Date().toISOString()})
@@ -1737,7 +1783,8 @@ function posteingangRapport(e){
           esc(protoName(p))+" · "+esc(istStoerung(p)?"Störung":(p.wartungsart||"Wartung"))+(p.nameTechniker?" · "+esc(p.nameTechniker):"")+"</button>");
         b.onclick=function(){
           v.zu();
-          posteingangOffen={id:e.id, art:"rapport"};
+          /* an genau dieses Protokoll gebunden – eine andere Korrektur erledigt ihn nicht */
+          posteingangOffen={id:e.id, art:"rapport", ziel:p._id};
           S.rapportNeu={name:e.dateiname, datenUrl:u, daten:daten};
           ladeUnterschrift(p).then(function(){ formDirty=false; S.bearbeiten={x:p}; S.view="protokoll"; render(); window.scrollTo({top:0}); });
         };
@@ -1752,7 +1799,16 @@ function posteingangRapport(e){
    Nummer wiedergefunden. Die App zeigt den QR-Code groß auf Weiß – gescannt
    wurde er, steht genau dessen Inhalt drin; sonst die Auftragsnummer, die
    laut Auftrag der einzige Inhalt des Lidl-QR-Codes ist. */
+/* Der gescannte QR-Inhalt gilt nur, solange er zur eingetragenen Nummer
+   passt – nach einer geänderten Nummer oder einem anderen Auftrag wäre es
+   der QR-Code des falschen Auftrags. */
+function qrPasst(roh, nummer){
+  roh=String(roh||"").trim(); nummer=String(nummer||"").trim();
+  if(!roh || !nummer) return roh;
+  return roh.indexOf(nummer)>=0 ? roh : "";
+}
 function auftragQrAnsicht(nummer, roh){
+  roh=qrPasst(roh, nummer);
   var inhalt=String(roh||nummer||"").trim();
   if(!inhalt){ toast("Keine Auftragsnummer eingetragen."); return; }
   var v=ansichtOeffnen("Lidl-Auftrag "+(nummer||""));
@@ -2043,6 +2099,12 @@ function viewKarte(){
       '" style="fill:var('+STATUS_VAR[s.status]+')" data-id="'+s.id+'" tabindex="0" role="button" aria-label="'+esc(stName(s)+", "+s.adresse)+'">'+
       "<title>"+esc(stName(s)+" · "+s.adresse+" · "+STATUS_LABEL[s.status])+"</title></circle>";
   }).join("");
+  /* Störungsmärkte außerhalb der Auswahl: trotzdem der rote Ring */
+  var drin={}; withGeo.forEach(function(s){ drin[s.id]=1; });
+  dots+=stoerungsMaerkte().filter(function(s){ return !drin[s.id]; }).map(function(s){
+    return '<circle cx="'+X(s.lon).toFixed(1)+'" cy="'+Y(s.lat).toFixed(1)+'" r="9" data-id="'+s.id+'" '+
+      'style="fill:none;stroke:var(--crit);stroke-width:2.5"><title>'+esc("Störung offen: "+stName(s))+"</title></circle>";
+  }).join("");
 
   /* Route zeichnen: Linienzug + nummerierte Stopps */
   var routeSvg="";
@@ -2083,6 +2145,7 @@ function viewKarte(){
 
   var card=el('<div class="card"><div class="pad stack">'+
     '<div><h2>Standortkarte Österreich</h2><div class="sub">'+withGeo.length+' Standorte mit Koordinaten. Punktgröße = Anzahl Wartungspositionen, Farbe = dringlichster Status am Standort. Antippen für Details.</div></div>'+
+    stoerungAusserhalbHinweis(withGeo)+
     '<div class="legend">'+["ueberfaellig","faellig","erledigt"].map(function(k2){
       return '<span><i style="background:var('+STATUS_VAR[k2]+')"></i>'+STATUS_LABEL[k2]+"</span>";
     }).join("")+"</div>"+
@@ -2123,11 +2186,25 @@ var leafletKarte=null;
 function tokenFarbe(name){
   return getComputedStyle(document.documentElement).getPropertyValue(name).trim() || "#0E6E85";
 }
+/* Märkte mit offener Störung und Koordinaten – unabhängig von jedem Filter */
+function stoerungsMaerkte(){
+  var ids={};
+  offeneStoerungen(true).forEach(function(o){ if(o.standortId) ids[o.standortId]=1; });
+  return Object.keys(ids).map(function(id){ return byId[id]; }).filter(function(s){ return s && s.lat; });
+}
+/* Hinweis, wenn offene Störungen außerhalb der aktuellen Auswahl liegen */
+function stoerungAusserhalbHinweis(withGeo){
+  var drin={}; withGeo.forEach(function(s){ drin[s.id]=1; });
+  var n=offeneStoerungen(true).filter(function(o){ return !o.standortId || !drin[o.standortId]; }).length;
+  return n ? '<div class="note warnbox" style="font-size:13px"><strong>'+n+" offene Störung"+(n===1?"":"en")+
+    "</strong> außerhalb der Suche bzw. Region – sie stehen trotzdem als rotes Zeichen auf der Karte.</div>" : "";
+}
 function karteOsm(withGeo){
   var T=S.tour.ergebnis;
   var card=el('<div class="card"><div class="pad stack">'+
     '<div><h2>Standortkarte</h2><div class="sub">'+withGeo.length+' Standorte auf OpenStreetMap. '+
       'Punktgröße = Anzahl Wartungspositionen, Farbe = dringlichster Status. Antippen öffnet Details und die Navigation.</div></div>'+
+    stoerungAusserhalbHinweis(withGeo)+
     '<div class="legend">'+["ueberfaellig","faellig","erledigt"].map(function(k){
       return '<span><i style="background:var('+STATUS_VAR[k]+')"></i>'+STATUS_LABEL[k]+"</span>";
     }).join("")+'<span><span class="stoerpin klein">!</span>offene Störung</span></div>'+
@@ -2162,8 +2239,9 @@ function karteOsm(withGeo){
       m.on("popupopen",function(){ S.sel=s.id; });
     });
     /* Offene Störungen obenauf: ein rotes Warnzeichen am Markt, das auch
-       zwischen vielen Punkten auffällt */
-    withGeo.forEach(function(s){
+       zwischen vielen Punkten auffällt – IMMER alle, auch Märkte außerhalb
+       von Suche oder Region; still weggefiltert sähe es aus, als gäbe es keine */
+    stoerungsMaerkte().forEach(function(s){
       var n=stoerungVonMarkt(s.id).length; if(!n) return;
       var mk=L.marker([s.lat,s.lon],{zIndexOffset:1000, title:"Störung offen: "+stName(s),
         icon:L.divIcon({className:"", iconSize:[26,26], iconAnchor:[13,30],
@@ -2894,10 +2972,14 @@ var ANLAGE_GRUPPEN=[
     /* Nach dem Prüfbuch wird nur gefragt, wenn es eins gibt. */
     {k:"ortPruefbuch", l:"Prüfbuch", t:"wahl", o:[PRUEFBUCH_ORT].concat(ORTE), frei:true,
       wenn:function(a){ return a.pruefbuch==="ja"; }}]},
-  {titel:"Typenschild", frage:"Angaben vom Typenschild (freiwillig)", optional:true, felder:[
+  /* Typenschild und Prüfbuch beziehen sich auf das Außengerät */
+  {titel:"Typenschild Außengerät", frage:"Angaben vom Typenschild des Außengeräts (freiwillig)", optional:true, felder:[
     {k:"hersteller", l:"Hersteller", t:"text"},
     {k:"modell", l:"Modell", t:"text"},
     {k:"seriennummer", l:"Seriennummer", t:"text"}]},
+  /* Innengeräte sind zweitrangig – je Gerät eine Zeile, alles freiwillig */
+  {titel:"Innengeräte", frage:"Welche Innengeräte hängen an der Anlage? (freiwillig)", optional:true, felder:[
+    {k:"innengeraete", l:"Innengeräte", t:"innen"}]},
   /* Was das Prüf- und Anlagenbuch sonst noch festhält (Seiten 2 bis 4) –
      freiwillig, gebraucht vor allem für Behörde und F-Gase-Nachweis */
   {titel:"Prüfbuch-Angaben", frage:"Angaben aus dem Prüfbuch (freiwillig)", optional:true, felder:[
@@ -2965,7 +3047,20 @@ function feldGilt(f, a){ return (!f.gruppe.wenn || f.gruppe.wenn(a)) && (!f.wenn
 function anlageLuecken(a){
   return ANLAGE_FELDER.filter(function(f){ return !f.gruppe.optional && feldGilt(f,a) && leerWert(a[f.k]); });
 }
+var INNEN_FELDER=[["raum","Raum / Bezeichnung","z. B. Verkaufsraum 1"],["hersteller","Hersteller",""],
+  ["modell","Modell",""],["seriennummer","Seriennummer",""],["leistungKw","Leistung (kW)","z. B. 5,6"]];
+function innenText(liste){
+  liste=(Array.isArray(liste)?liste:[]).filter(innenBelegt);
+  if(!liste.length) return "–";
+  return liste.map(function(g,i){
+    var d=[g.hersteller, g.modell, g.seriennummer?"SN "+g.seriennummer:"",
+      leerWert(g.leistungKw)?"":String(g.leistungKw).replace(".",",")+" kW"].filter(Boolean).join(" ");
+    return (g.raum||"Innengerät "+(i+1))+(d?": "+d:"");
+  }).join("; ");
+}
+function innenBelegt(g){ return g && INNEN_FELDER.some(function(f){ return !leerWert(g[f[0]]); }); }
 function anlageWertText(f, w){
+  if(f.t==="innen") return innenText(w);
   if(leerWert(w)) return "–";
   if(f.t==="kg") return String(w).replace(".",",")+" kg";
   if(f.t==="kw") return String(w).replace(".",",")+" kW";
@@ -3180,6 +3275,19 @@ function anlageAssistent(start, titel, neu, alles){
       } else if(f.t==="kg"||f.t==="kw"){
         h+='<input type="text" inputmode="decimal" data-in="'+f.k+'" placeholder="'+(f.t==="kw"?"z. B. 35":"z. B. 12,5")+'" value="'+esc(leerWert(w)?"":String(w).replace(".",","))+'">'+
           '<div class="as-hinweis" data-hinweis="'+f.k+'"></div>';
+      } else if(f.t==="innen"){
+        var liste=Array.isArray(w)?w:[];
+        h+=liste.map(function(g,i){
+          return '<div class="posbox" style="margin-bottom:8px"><div class="rowflex" style="justify-content:space-between">'+
+            "<strong>Innengerät "+(i+1)+'</strong><button class="btn ghost sm" type="button" data-innenweg="'+i+'">entfernen</button></div>'+
+            '<div class="grid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px;margin-top:6px">'+
+            INNEN_FELDER.map(function(x){
+              return '<label class="fl"><span>'+esc(x[1])+'</span><input type="text" data-innen="'+i+"|"+x[0]+'"'+
+                (x[0]==="leistungKw"?' inputmode="decimal"':"")+(x[0]==="seriennummer"?' autocapitalize="characters" spellcheck="false" autocorrect="off"':"")+
+                ' placeholder="'+esc(x[2])+'" value="'+esc(leerWert(g[x[0]])?"":String(g[x[0]]).replace(x[0]==="leistungKw"?".":"\u0000",","))+'"></label>';
+            }).join("")+"</div></div>";
+        }).join("")+
+          '<button class="btn ghost sm" type="button" data-innendazu>+ Innengerät</button>';
       } else if(f.t==="geheim"){
         /* Beim Eintippen sichtbar – man überträgt es meist von einem Zettel
            und will sehen, was dasteht. Angezeigt wird es später verdeckt. */
@@ -3232,6 +3340,21 @@ function anlageAssistent(start, titel, neu, alles){
           else if(i.inputMode==="decimal"){ v=v.replace(",","."); a[k]= v===""?null:(isNaN(+v)?a[k]:+v); }
           else if(k==="kreislaeufe"){ a[k]= v===""?a[k]:+v; inhalt.querySelectorAll('.chip[data-f="kreislaeufe"]').forEach(function(c){ c.setAttribute("aria-pressed","false"); }); }
           else a[k]=v;
+        };
+      });
+      /* Innengeräte: eigene Kopie der Liste bearbeiten, nie den gespeicherten Stand */
+      var innen=function(){ a.innengeraete=(Array.isArray(a.innengeraete)?a.innengeraete:[]).map(function(g){ return Object.assign({},g); }); return a.innengeraete; };
+      var dazu=inhalt.querySelector("[data-innendazu]");
+      if(dazu) dazu.onclick=function(){ innen().push({}); gruppeZeigen(g);
+        var l=inhalt.querySelectorAll("[data-innen]"); if(l.length) l[l.length-INNEN_FELDER.length].focus(); };
+      inhalt.querySelectorAll("[data-innenweg]").forEach(function(b){
+        b.onclick=function(){ innen().splice(+b.dataset.innenweg,1); gruppeZeigen(g); };
+      });
+      inhalt.querySelectorAll("[data-innen]").forEach(function(i){
+        i.oninput=function(){
+          var t=i.dataset.innen.split("|"), liste=innen(), v=i.value.trim();
+          if(t[1]==="leistungKw"){ v=v.replace(",","."); v= v===""?null:(isNaN(+v)?liste[+t[0]][t[1]]:+v); }
+          liste[+t[0]][t[1]]=v;
         };
       });
       kgHinweis();
@@ -3445,6 +3568,19 @@ function protokollLoeschen(p, grund, wiederher){
     protokolliere({art: wiederher?"wiederhergestellt":"geloescht", protokollId:id,
       standortId:p.standortId, standortName:p.standortName, grund:grund,
       felder:[{feld:"datum", name:"Protokoll vom", alt:dfmt(p.datum), neu: wiederher?"wiederhergestellt":"gelöscht"}]});
+    /* Die Störung, die dieses Protokoll erledigt hatte, ist ohne das Protokoll
+       wieder offen – sonst wäre sie still verschwunden. Beim Wiederherstellen
+       ist sie wieder erledigt. Die Verknüpfung (protokollId) bleibt dafür stehen. */
+    OFFENE.filter(function(x){ return x.protokollId===id && (wiederher ? !x.erledigt : !!x.erledigt); }).forEach(function(x){
+      var z=Object.assign({}, x, {erledigt: wiederher ? jetzt : null});
+      stoerungSpeichern(z, wiederher ? "Störungsprotokoll wiederhergestellt – wieder erledigt" : "Störungsprotokoll gelöscht – Störung wieder offen")
+        .then(function(wo){
+          if(wo===false) return;
+          stoerungVerlauf(z, wiederher ? "Störungsprotokoll wiederhergestellt" : "Störungsprotokoll gelöscht – Störung wieder offen",
+            wiederher ? "offen" : "erledigt", wiederher ? "erledigt" : "offen");
+          berechneFaelligkeiten(); render();
+        });
+    });
     return true;
   };
   if(demo()){
@@ -3620,6 +3756,15 @@ function stoerungSpeichern(o, grund){
   stammUeber[rec.id]=rec;
   return stammSpeichern(rec).then(function(wo){ wendeStammdatenAn(); return wo; });
 }
+/* Jede Statusänderung einer Störung (abgehakt, gelöscht, per Protokoll
+   erledigt) bekommt ihren eigenen Eintrag im Änderungsverlauf. So nimmt
+   „Rückgängig“ genau diese Änderung zurück – und keine andere Änderung
+   trägt den Stand davor stillschweigend mit. */
+function stoerungVerlauf(o, grund, alt, neu){
+  return protokolliere({art:"stammdaten", standortId:o.standortId, standortName:stName(byId[o.standortId]||{}),
+    grund:grund+(o.auftragsnummer?" – Auftrag "+o.auftragsnummer:""),
+    felder:[{feld:"stoerung", name:"Offene Störung", alt:alt, neu:neu}]});
+}
 var STOER_OFFEN_FELDER=["auftragsnummer","stoerungsnr","filialCode","problemtyp","beschreibung",
   "zieltermin","auftragsdatum","prioritaet","lidlTyp","lidlModell","hersteller","lin","seriennummer",
   "lidlKontakt","lidlTelefon","lidlMail","notiz","seiten","pdfName","pdfDaten","termin","terminZeit","terminTechniker","ohneAuftrag","positionId","qrInhalt",
@@ -3715,9 +3860,10 @@ function stammVorherMerken(id){
   if(v && v.felder) NICHT_IM_VERLAUF().forEach(function(k){ delete v.felder[k]; });
   rueckPuffer[id]=v;
 }
-function stammSpeichern(rec){
+function stammSpeichern(rec, nachtragen){
   if(demo()){ stammStand[rec.id]=JSON.parse(JSON.stringify(rec)); rueckPuffer={}; return Promise.resolve("demo"); }
-  stammVorherMerken(rec.id);
+  /* ein nachgetragener Gerätestand ist keine neue Änderung – nichts für „Rückgängig“ */
+  if(!nachtragen) stammVorherMerken(rec.id);
   stammStand[rec.id]=JSON.parse(JSON.stringify(rec));
   var lokal=function(){
     return idbVorgang("readwrite",function(st){ return st.put(rec); },"stammdaten")
@@ -3778,7 +3924,7 @@ function stammdatenUebertragen(){
   idbVorgang("readonly",function(st){ return st.getAll(); },"stammdaten").then(function(liste){
     (liste||[]).forEach(function(rec){
       if(Store.modus==="supabase" && !darfStammZentral(rec)) return;
-      stammSpeichern(rec).then(function(wo){
+      stammSpeichern(rec, true).then(function(wo){
         if(wo==="gemeinsam") idbVorgang("readwrite",function(st){ return st.delete(rec.id); },"stammdaten");
       });
     });
@@ -3920,6 +4066,11 @@ function initSupabase(){
     storeNachRender();
   });
   Store.sb.auth.onAuthStateChange(function(_ev,sess){
+    /* anderes Konto oder abgemeldet: was die Präsentation nur im Speicher
+       angelegt hat, fliegt raus – sonst überträgt es die nächste echte
+       Sitzung in die Datenbank */
+    if(!sess || !Store.benutzer || sess.user.id!==Store.benutzer.id)
+      lokaleProtokolle=lokaleProtokolle.filter(function(x){ return !x._demo; });
     if(sess){ Store.benutzer=sess.user; Store.modus="supabase"; ladeProtokolle(); flushQueue();
       adminPruefen().then(ladeStammdaten).then(storeNachRender); }
     else {
@@ -4230,10 +4381,13 @@ function rapportZeile(r){
     (d.zeilen||[]).map(function(z){ return dfmt(z.datum)+" · "+z.personen+" Pers. "+z.von+"–"+z.bis; }).join("; "),
     d.stunden?d.stunden+" h verrechenbar":""].filter(Boolean).join(" · ");
 }
-/* Passt der Rapport zum Protokoll? Filiale und Tag gegenhalten. */
-function rapportAbweichung(d, filiale, datum){
+/* Passt der Rapport zum Protokoll? Lidl-Auftrag, Filiale und Tag gegenhalten. */
+function rapportAbweichung(d, filiale, datum, auftrag){
   if(!d) return "";
   var w=[];
+  auftrag=String(auftrag||"").trim();
+  if(d.auftrag && auftrag && d.auftrag!==auftrag)
+    w.push("Der Rapport gehört zu Lidl-Auftrag "+d.auftrag+", das Protokoll zu Auftrag "+auftrag+".");
   if(d.filiale && filiale && String(filiale).replace(/^0+/,"")!==String(d.filiale).replace(/^0+/,""))
     w.push("Der Rapport ist für Filiale "+d.filiale+", das Protokoll für Filiale "+filiale+".");
   if(datum && d.zeilen && d.zeilen.length && !d.zeilen.some(function(z){ return z.datum===datum; }))
@@ -4341,9 +4495,10 @@ var uebertragungLaeuft=false;
 function flushQueue(){
   if(uebertragungLaeuft) return;
   if(Store.modus!=="claude" && Store.modus!=="supabase") return;
-  if(!lokaleProtokolle.length){ aenderungenUebertragen(); return; }
+  /* Vorführ-Protokolle der Präsentation gehen nie in die Ablage */
+  var liste=lokaleProtokolle.filter(function(x){ return !x._demo; }), done=0, i=0;
+  if(!liste.length || demo()){ if(!demo()) aenderungenUebertragen(); return; }
   uebertragungLaeuft=true;
-  var liste=lokaleProtokolle.slice(), done=0, i=0;
   var next=function(){
     if(i>=liste.length){
       uebertragungLaeuft=false;
@@ -4407,12 +4562,56 @@ function viewAnmeldung(){
 /* Wer angemeldet ist, samt Passwort ändern und Abmelden.
    Steht außerhalb des Protokollformulars, damit Enter im Passwortfeld
    nicht versehentlich ein Protokoll abschickt. */
+/* Meine Angaben: Name, Personenzertifikat, Telefon, E-Mail – je Konto im
+   Benutzerprofil von Supabase (user_metadata), damit sie auf jedem Gerät
+   gleich sind. Sie belegen das Protokoll vor. */
+function meineAngaben(){
+  var m=(Store.benutzer && Store.benutzer.user_metadata) || {};
+  return m.einstellungen || {};
+}
+function angabenDialog(){
+  if(demo()||nurLesen()){ toast("Für dieses gemeinsame Konto gibt es keine persönlichen Angaben."); return; }
+  var a=meineAngaben();
+  var v=ansichtOeffnen("Meine Angaben");
+  v.schritt.textContent="Stehen automatisch in jedem neuen Protokoll";
+  var f=el('<form class="stack" autocomplete="off" style="max-width:460px">'+
+    '<label class="fl"><span class="req">Name (vollständig)</span><input type="text" id="u_name" list="u_namen" required></label>'+
+    '<datalist id="u_namen">'+bekannteNamen().map(function(n){ return '<option value="'+esc(n)+'">'; }).join("")+"</datalist>"+
+    '<label class="fl"><span>F-Gase-Personenzertifikat Nr.</span><input type="text" id="u_zertp" autocapitalize="characters" spellcheck="false" autocorrect="off"></label>'+
+    '<label class="fl"><span>Telefon</span><input type="tel" id="u_tel"></label>'+
+    '<label class="fl"><span>E-Mail</span><input type="email" id="u_mail"></label>'+
+    '<div class="note warnbox" id="u_err" hidden></div>'+
+    '<div class="rowflex"><button class="btn" type="submit">Speichern</button></div></form>');
+  f.querySelector("#u_name").value=a.name||kanonName(Rolle.anzeige||"")||"";
+  f.querySelector("#u_zertp").value=a.zertp||"";
+  f.querySelector("#u_tel").value=a.telefon||"";
+  f.querySelector("#u_mail").value=a.email||(Store.benutzer&&Store.benutzer.email)||"";
+  f.onsubmit=function(e){
+    e.preventDefault();
+    var neu={name:kanonName(f.querySelector("#u_name").value.trim()), zertp:f.querySelector("#u_zertp").value.trim(),
+             telefon:f.querySelector("#u_tel").value.trim(), email:f.querySelector("#u_mail").value.trim()};
+    var err=f.querySelector("#u_err");
+    if(!neu.name){ err.textContent="Bitte den Namen eintragen."; err.hidden=false; return; }
+    var k=f.querySelector('button[type="submit"]'); k.disabled=true; k.textContent="Wird gespeichert …";
+    Store.sb.auth.updateUser({data:{einstellungen:neu}}).then(function(r){
+      k.disabled=false; k.textContent="Speichern";
+      if(r.error){ err.textContent="Das hat nicht geklappt: "+r.error.message; err.hidden=false; return; }
+      if(r.data && r.data.user) Store.benutzer=r.data.user;
+      else Store.benutzer.user_metadata=Object.assign({}, Store.benutzer.user_metadata, {einstellungen:neu});
+      v.zu(); toast("Gespeichert – gilt ab dem nächsten Protokoll."); render();
+    }, function(){ k.disabled=false; k.textContent="Speichern"; err.textContent="Keine Verbindung."; err.hidden=false; });
+  };
+  v.inhalt.appendChild(f);
+}
 function kontoKarte(){
   var mail=Store.benutzer&&Store.benutzer.email?Store.benutzer.email:"";
+  var ich=meineAngaben();
   var c=el('<div class="card"><div class="pad stack">'+
     '<div class="rowflex" style="justify-content:space-between">'+
-      '<span>Angemeldet als <strong>'+esc(mail)+"</strong>"+(Admin.zentral?' <span class="tag f30">Admin</span>':"")+"</span>"+
-      '<span class="rowflex"><button class="btn ghost sm" type="button" id="k_pw">Passwort ändern</button>'+
+      '<span>Angemeldet als <strong>'+esc(ich.name||mail)+"</strong>"+(ich.name?' <span class="muted">('+esc(mail)+")</span>":"")+
+        (Admin.zentral?' <span class="tag f30">Admin</span>':"")+"</span>"+
+      '<span class="rowflex">'+(demo()||nurLesen()?"":'<button class="btn ghost sm" type="button" id="k_angaben">Meine Angaben</button>')+
+      '<button class="btn ghost sm" type="button" id="k_pw">Passwort ändern</button>'+
       '<button class="btn ghost sm" type="button" id="k_ab">Abmelden</button></span>'+
     "</div>"+
     /* wer noch mit dem vom Büro vergebenen Startpasswort unterwegs ist, bekommt einen Hinweis */
@@ -4433,6 +4632,7 @@ function kontoKarte(){
   var form=c.querySelector("#k_form"), err=c.querySelector("#k_err");
   c.querySelector("#k_pw").onclick=function(){ if(demo()||nurLesen()){ toast("Für dieses gemeinsame Konto lässt sich das Passwort nur im Büro ändern."); return; } form.hidden=false; err.hidden=true; c.querySelector("#k_p1").focus(); };
   c.querySelector("#k_abbr").onclick=function(){ form.hidden=true; form.reset(); };
+  var ka=c.querySelector("#k_angaben"); if(ka) ka.onclick=angabenDialog;
   c.querySelector("#k_ab").onclick=function(){ if(!abmeldenErlaubt()) return; formDirty=false; Store.sb.auth.signOut(); };
   form.onsubmit=function(e){
     e.preventDefault();
@@ -5191,6 +5391,11 @@ function viewProtokoll(){
   var textFeld=function(k,name,pflicht){
     return '<label class="fl" style="margin-top:10px"><span'+(pflicht?' class="req"':"")+">"+esc(name)+'</span>'+
       '<textarea id="s_'+k+'" rows="3"'+(pflicht?" required":"")+"></textarea></label>"; };
+  /* Lidl-Auftragsnummer: bei der Störung gehört sie zum Störungsauftrag ganz
+     oben, bei der Wartung steht sie beim Einsatz */
+  var auftragFeldHtml=
+    '<label class="fl"><span'+(stoer?' class="req"':"")+'>Lidl-Auftragsnummer'+(stoer?"":" / Position")+'</span><input type="text" id="f_auftrag"'+(stoer?" required":"")+'></label>'+
+    (stoer?'<label class="chk" style="align-self:end"><input type="checkbox" id="f_ohneauftrag"><span>Ausnahme: kein Lidl-Auftrag</span></label>':"");
   var stoerAuftragHtml = !stoer ? "" :
     '<fieldset><legend>Lidl-Störungsauftrag</legend>'+
       '<div class="rowflex">'+
@@ -5204,7 +5409,7 @@ function viewProtokoll(){
         "dann steht die Auftragsnummer drin und der Rest wird abgetippt.</div>"+
       '<div class="note warnbox" id="s_warn" hidden style="margin-top:8px"></div>'+
       '<div id="s_bild" hidden style="margin-top:10px"></div>'+
-      '<div class="grid" style="margin-top:12px">'+STOER_AUFTRAG.map(feldZeile).join("")+"</div>"+
+      '<div class="grid" style="margin-top:12px">'+auftragFeldHtml+STOER_AUFTRAG.map(feldZeile).join("")+"</div>"+
       textFeld("beschreibung","Beschreibung laut Auftrag")+
     "</fieldset>";
   var stoerBehebungHtml = !stoer ? "" :
@@ -5253,8 +5458,7 @@ function viewProtokoll(){
     /* Bestellnummer entfällt; das versteckte Feld hält bei einer Korrektur
        den Wert älterer Protokolle fest */
     '<input type="hidden" id="f_bestell">'+
-    '<label class="fl"><span'+(stoer?' class="req"':"")+'>Lidl-Auftragsnummer'+(stoer?"":" / Position")+'</span><input type="text" id="f_auftrag"'+(stoer?" required":"")+'></label>'+
-    (stoer?'<label class="chk" style="align-self:end"><input type="checkbox" id="f_ohneauftrag"><span>Ausnahme: kein Lidl-Auftrag</span></label>':"")+
+    (stoer?"":auftragFeldHtml)+
   '</div>'+
   '<div style="margin-top:12px"><div class="fl" style="margin-bottom:6px"><span>FM-Region</span></div>'+
     '<div class="optrow">'+REGIONEN.map(function(r,i){
@@ -5610,7 +5814,7 @@ function viewProtokoll(){
       rapEin.disabled=true; rapEin.previousElementSibling.hidden=true;
     } else if(rapportPdf){
       var st0=byId[form.querySelector("#f_standort").value];
-      var abw=rapportAbweichung(rapportPdf.daten, st0&&st0.filiale, form.querySelector("#f_datum").value);
+      var abw=rapportAbweichung(rapportPdf.daten, st0&&st0.filiale, form.querySelector("#f_datum").value, stoer?form.querySelector("#f_auftrag").value:"");
       rapInfo.innerHTML='<strong>'+esc(rapportPdf.name)+'</strong> · <a href="#" data-a="rapsehen">ansehen</a> · <a href="#" data-a="rapweg">entfernen</a>'+
         (rapportPdf.daten ? '<br>'+esc(rapportZeile({daten:rapportPdf.daten}).replace(/^liegt bei · /,""))+
           (rapportPdf.daten.zeilen&&rapportPdf.daten.zeilen.length?'<br>'+esc(rapportPdf.daten.zeilen.map(function(z){ return z.arbeiten; }).join(" / ")):"")
@@ -5867,7 +6071,11 @@ function viewProtokoll(){
   form.querySelector("#f_zeit").value=String(HEUTE.getHours()).padStart(2,"0")+":"+String(HEUTE.getMinutes()).padStart(2,"0");
   /* wer angemeldet ist, ist meist auch der Techniker – aus dem Konto (Name in
      der Rollen-Tabelle), sonst der zuletzt auf diesem Gerät eingetragene */
-  var lastTech=lsGet("ukt_tech","") || (Rolle.anzeige ? kanonName(Rolle.anzeige) : "");
+  /* Reihenfolge: eigene Angaben des Kontos, Name aus der Rollen-Tabelle, erst
+     dann der zuletzt auf diesem Gerät eingetragene – sonst stünde auf einem
+     geteilten Gerät der Name der Person davor im Protokoll */
+  var eigene=meineAngaben();
+  var lastTech=kanonName(eigene.name||"") || (Rolle.anzeige ? kanonName(Rolle.anzeige) : "") || lsGet("ukt_tech","");
   if(lastTech){ form.querySelector("#f_tech").value=lastTech; form.querySelector("#f_name").value=lastTech; }
 
   /* Zertifikatsnummer und Kontakt je Techniker: einmal eingegeben, danach
@@ -5877,6 +6085,12 @@ function viewProtokoll(){
     var k=kanonName(name); if(!k) return {zertp:"", kontakt:""};
     var gemerkt=(lsGet("ukt_techdaten",{})||{})[k]||{};
     var r={zertp:gemerkt.zertp||"", kontakt:gemerkt.kontakt||""};
+    /* die eigenen Angaben aus „Meine Angaben“ gehen allem anderen vor */
+    if(eigene.name && kanonName(eigene.name)===k){
+      if(eigene.zertp) r.zertp=eigene.zertp;
+      var kt=[eigene.telefon, eigene.email].filter(Boolean).join(" · ");
+      if(kt) r.kontakt=kt;
+    }
     alleProtokolle().slice().sort(function(a,b){ return String(b.erstellt||"").localeCompare(String(a.erstellt||"")); })
       .forEach(function(x){
         if(kanonName(x.nameTechniker||x.techniker)!==k) return;
@@ -5975,6 +6189,7 @@ function viewProtokoll(){
   form.querySelector("#reset").onclick=function(){
     if(!bearb && formDirty && !window.confirm("Formular leeren?\n\nDas Angefangene wird verworfen.")) return;
     formDirty=false; S.protoStandort=""; S.protoPos=""; S.stoerungAus=null;
+    clearTimeout(entwurfTakt); entwurfTakt=null;   /* sonst kommt das Verworfene als Entwurf zurück */
     if(!bearb) entwurfWeg();
     if(S.bearbeiten){ S.letztesProtokoll=S.bearbeiten.x._id; S.bearbeiten=null; }
     render();
@@ -6053,7 +6268,7 @@ function viewProtokoll(){
       anlagenAend:JSON.parse(JSON.stringify(anlagenAend||{})),
       neueAnlagen:JSON.parse(JSON.stringify(neueAnlagen||[])),
       auftragSeiten:(geladenerAuftrag&&geladenerAuftrag._seiten)||null,
-      auftragPdf:auftragPdf, rapportPdf:rapportPdf,
+      auftragPdf:auftragPdf, rapportPdf:rapportPdf, qrRoh:qrRoh,
       unterschrift: form._sig.vorhanden() ? cv.toDataURL("image/png") : ""
     };
     form.querySelectorAll("input,select,textarea").forEach(function(n){
@@ -6096,10 +6311,15 @@ function viewProtokoll(){
     if(d.neueAnlagen){ neueAnlagen.length=0; d.neueAnlagen.forEach(function(n){ neueAnlagen.push(n); }); }
     anlagenZeichnen();
     if(d.auftragSeiten && d.auftragSeiten.length) auftragBildZeigen(d.auftragSeiten);
-    if(d.auftragPdf && d.auftragPdf.datenUrl) auftragPdf=d.auftragPdf;
+    /* Der Entwurf bringt seine eigene Herkunft mit: Auftrags-PDF, QR-Inhalt und
+       die offene Störung, aus der er begonnen wurde – oder eben keine. Nichts
+       vom gerade geöffneten Formular darf an ihm hängen bleiben, sonst
+       erledigt ein fremder Entwurf die Störung. */
+    auftragPdf=(d.auftragPdf && d.auftragPdf.datenUrl) ? d.auftragPdf : null;
+    qrRoh=d.qrRoh||"";
     if(d.rapportPdf && d.rapportPdf.datenUrl){ rapportPdf=d.rapportPdf; if(form._rapportZeigen) form._rapportZeigen(); }
     if(d.unterschrift) form._sig.setzen(d.unterschrift);
-    if(d.stoerungAus) S.stoerungAus=d.stoerungAus;
+    S.stoerungAus=d.stoerungAus||null;
     if(form._ohneAnwenden) form._ohneAnwenden();
     formDirty=true;
   }
@@ -6140,6 +6360,9 @@ function viewProtokoll(){
     kasten.querySelector('[data-e="weiter"]').onclick=function(){
       if(e2.art==="stoerung" && !stoer){ S.protoArt="stoerung"; render(); return; }
       if(e2.art!=="stoerung" && stoer){ S.protoArt="wartung"; render(); return; }
+      if(S.stoerungAus && e2.stoerungAus!==S.stoerungAus &&
+         !window.confirm("Das angefangene Protokoll gehört nicht zu der Störung, aus der Sie gerade kommen.\n\n"+
+           "Trotzdem damit weitermachen? Die Störung bleibt dann offen.")) return;
       entwurfEinsetzen(e2); kasten.remove();
       toast("Weiter, wo Sie aufgehört haben.");
     };
@@ -6204,7 +6427,7 @@ function viewProtokoll(){
       /* woher die Auftragsdaten stammen – hilft beim Nachvollziehen */
       so2.quelle = geladenerAuftrag ? "pdf" : qrGescannt ? "qr" : (bearb&&bearb.stoerung&&bearb.stoerung.quelle) || "hand";
       so2.ohneAuftrag=!!(form.querySelector("#f_ohneauftrag")||{}).checked && !doc.auftragsnummer;
-      if(qrRoh) so2.qrInhalt=qrRoh;
+      if(qrPasst(qrRoh, doc.auftragsnummer)) so2.qrInhalt=qrPasst(qrRoh, doc.auftragsnummer);
       /* Verweis auf das abgelegte Auftrags-PDF. Die Datei selbst liegt
          daneben, wie die Fotos – im Protokoll steht nur, dass es sie gibt. */
       var altePdf=bearb && bearb.stoerung && bearb.stoerung.auftragDatei;
@@ -6220,9 +6443,10 @@ function viewProtokoll(){
     if(alterRapport) doc.rapport=alterRapport;             /* liegt schon da und bleibt */
     else if(rapportPdf && rapportPdf.datenUrl)
       doc.rapport={name:rapportPdf.name||"rapport.pdf", bytes:datenUrlBytes(rapportPdf.datenUrl), daten:rapportPdf.daten||null};
-    lsSet("ukt_tech",doc.nameTechniker||doc.techniker);
-    /* für die nächste Wartung merken */
-    (function(){
+    /* für die nächste Wartung merken – nicht in der Präsentation, sonst
+       stünden Vorführ-Namen und -Zertifikate im nächsten echten Protokoll */
+    if(!demo()) lsSet("ukt_tech",doc.nameTechniker||doc.techniker);
+    if(!demo()) (function(){
       var k=kanonName(doc.techniker||doc.nameTechniker); if(!k) return;
       var m=lsGet("ukt_techdaten",{})||{};
       m[k]={zertp:doc.zertPerson||(m[k]||{}).zertp||"", kontakt:doc.kontakt||(m[k]||{}).kontakt||""};
@@ -6233,7 +6457,11 @@ function viewProtokoll(){
     var btn=form.querySelector("#save"); btn.disabled=true; btn.textContent="Speichern …";
     var fertig=function(msg){
       btn.disabled=false; btn.textContent="Protokoll speichern"; formDirty=false; toast(msg);
-      entwurfWeg();          /* abgeschickt – der Entwurf hat seinen Zweck erfüllt */
+      /* abgeschickt – der Entwurf hat seinen Zweck erfüllt. Erst den noch
+         laufenden Schreibtakt stoppen, sonst schreibt er das gespeicherte
+         Protokoll als Geister-Entwurf zurück (→ doppeltes Protokoll). */
+      clearTimeout(entwurfTakt); entwurfTakt=null;
+      entwurfWeg();
       S.protoStandort=""; S.protoPos="";
       S.letztesProtokoll=id;     /* nach dem Neuzeichnen direkt aufklappen */
       /* Kam das Protokoll aus einer offenen Störung, ist die damit erledigt. */
@@ -6243,10 +6471,19 @@ function viewProtokoll(){
         /* nur ein Störungsprotokoll für denselben Markt erledigt die Störung –
            sonst hakt ein ganz anderes Protokoll sie still mit ab */
         if(vor && (!istStoerung(doc) || vor.standortId!==doc.standortId)) vor=null;
+        /* schon erledigt, oder das Protokoll nennt einen anderen Lidl-Auftrag: nicht anfassen */
+        if(vor && vor.erledigt) vor=null;
+        var nrP=String(doc.auftragsnummer||"").trim(), nrS=String((vor&&vor.auftragsnummer)||"").trim();
+        if(vor && nrP && nrS && nrP!==nrS){
+          toast("Die Störung mit Auftrag "+nrS+" bleibt offen – das Protokoll nennt Auftrag "+nrP+".");
+          vor=null;
+        }
         if(vor){
           var z=Object.assign({}, vor, {erledigt:new Date().toISOString(), protokollId:id});
           stoerungSpeichern(z, "Durch Störungsprotokoll vom "+dfmt(doc.datum)+" erledigt")
-            .then(function(){ berechneFaelligkeiten(); render(); });
+            .then(function(wo){
+              if(wo!==false) stoerungVerlauf(z, "Durch Störungsprotokoll vom "+dfmt(doc.datum)+" erledigt", "offen", "erledigt");
+              berechneFaelligkeiten(); render(); });
         }
       }
       berechneFaelligkeiten();   /* die gewarteten Positionen rücken sofort weiter */
@@ -6308,6 +6545,7 @@ function viewProtokoll(){
     /* 1. immer zuerst sicher aufs Gerät – das klappt auch im Funkloch */
     var eintrag={id:id, doc:doc, fotos:fotos, auftrag:(auftragPdf&&auftragPdf.datenUrl)?auftragPdf:null,
                  rapport:(rapportPdf&&rapportPdf.datenUrl)?rapportPdf:null, erstellt:doc.erstellt};
+    if(demo()) eintrag._demo=true;
     idbSchreiben(eintrag).then(function(){
       anlagenUebernehmen(doc);   /* vor Ort ergänzte Anlagendaten */
       lokaleProtokolle.unshift(eintrag);
@@ -6501,6 +6739,7 @@ function blattInhalt(p){
   var absatz=function(k,v){ return v ? "<tr><td class='k'>"+k+"</td><td style='white-space:pre-wrap'>"+esc(v)+"</td></tr>" : ""; };
   var stoerAuftragHtml = !st ? "" :
     "<h2>Störungsmeldung Lidl</h2><table>"+
+      zeile("Lidl-Auftragsnummer",p.auftragsnummer||(so.ohneAuftrag?"ohne Lidl-Auftrag (Ausnahme)":""))+
       zeile("Störungsnummer",so.stoerungsnr)+
       zeile("Auftragsdatum / Ausführen bis",[so.auftragsdatum?dfmt(so.auftragsdatum):"", so.ausfuehrenBis?"bis "+dfmt(so.ausfuehrenBis):""].filter(Boolean).join(" · "))+
       zeile("Kostenstelle",so.kostenstelle)+
@@ -6540,7 +6779,8 @@ function blattInhalt(p){
         zeile(st?"Datum des Einsatzes":"Datum der Wartung",dfmt(p.datum)+(p.uhrzeit?", "+p.uhrzeit+" Uhr":""))+
         /* Bestellnummer gibt es im Formular nicht mehr – ältere Protokolle zeigen sie weiter */
         (p.bestellnummer?zeile("Bestellnummer",p.bestellnummer):"")+
-        zeile("Lidl-Auftragsnummer / Position",p.auftragsnummer||(p.stoerung&&p.stoerung.ohneAuftrag?"ohne Lidl-Auftrag (Ausnahme)":""))+
+        /* bei der Störung steht sie unter „Störungsmeldung Lidl“ */
+        (st?"":zeile("Lidl-Auftragsnummer / Position",p.auftragsnummer))+
         (rapportVon(p)?zeile("Rapportbericht Lidl",rapportZeile(rapportVon(p))):"")+
         zeile("FM-Region",p.region)+
         zeile("Standort / Filiale / Lager",protoName(p)+(p.filiale&&protoName(p).indexOf(p.filiale)<0?" · Filiale "+p.filiale:""))+
@@ -6758,8 +6998,19 @@ function rapportAnhaengen(p, blob){
     });
   }).then(function(bytes){ return new Blob([bytes],{type:"application/pdf"}); });
 }
+/* Firmenlogo fürs Wasserzeichen – einmal geladen; fehlt es, gibt es eben keins */
+var WASSERZEICHEN=null;
+function ladeWasserzeichen(){
+  if(WASSERZEICHEN) return Promise.resolve(WASSERZEICHEN);
+  return new Promise(function(ok){
+    var b=new Image();
+    b.onload=function(){ WASSERZEICHEN=b; ok(b); };
+    b.onerror=function(){ ok(null); };
+    b.src="logo.png";
+  });
+}
 function protokollPdfErzeugen(p){
-  return ladeUnterschrift(p).then(ladePdfBibliotheken).then(function(){
+  return ladeUnterschrift(p).then(ladePdfBibliotheken).then(ladeWasserzeichen).then(function(){
     var BREITE=794;                                  /* A4 bei 96 dpi */
     var huelle=document.createElement("div");
     huelle.style.cssText="position:fixed;left:-12000px;top:0;width:"+BREITE+"px;background:#fff;z-index:-1";
@@ -6814,6 +7065,17 @@ function protokollPdfErzeugen(p){
           teil.width=r.bild.width; teil.height=Math.max(1,Math.round(hPx*r.skala));
           var g=teil.getContext("2d"); g.fillStyle="#fff"; g.fillRect(0,0,teil.width,teil.height);
           g.drawImage(r.bild, 0, Math.round(s[0]*r.skala), r.bild.width, teil.height, 0, 0, teil.width, teil.height);
+          /* Wasserzeichen: Firmenlogo blass und schräg in der Seitenmitte.
+             „multiply“ legt es wie Farbe aufs Papier – Schrift bleibt schwarz
+             und lesbar, nur das Weiß bekommt den Hauch Logo. */
+          if(WASSERZEICHEN){
+            var wb=teil.width*0.62, wh=wb*WASSERZEICHEN.naturalHeight/WASSERZEICHEN.naturalWidth;
+            var mitteY=Math.min(teil.height, Math.round(nutzH*pxProMm*r.skala))/2;
+            g.save(); g.globalAlpha=0.07; g.globalCompositeOperation="multiply";
+            g.translate(teil.width/2, mitteY); g.rotate(-Math.PI/9);
+            g.drawImage(WASSERZEICHEN, -wb/2, -wh/2, wb, wh);
+            g.restore();
+          }
           doc.addImage(teil.toDataURL("image/jpeg",0.86),"JPEG",RAND,RAND,nutzB,hPx/pxProMm);
           doc.setFontSize(8); doc.setTextColor(120);
           doc.text((istStoerung(p)?"Störungsprotokoll ":"Wartungsprotokoll ")+protoName(p)+" vom "+dfmt(p.datum)+"  -  Seite "+(i+1)+" von "+seiten.length,
@@ -7521,6 +7783,7 @@ function stammWert(feld, w){
      nicht, wie es lautet. Sonst stünde jedes alte Passwort dauerhaft lesbar
      in einer Liste, die sich absichtlich nicht mehr ändern lässt. */
   if(feld==="zugangPasswort") return "••••••••";
+  if(feld==="innengeraete") return innenText(w);
   if(feld==="nachweise") return Array.isArray(w)&&w.length ? w.map(function(n){ return dfmt(n.datum)+(n.techniker?" ("+n.techniker+")":""); }).join(", ") : "–";
   if(feld==="aktiv"||feld==="pausiert"||feld==="vorOrtNeu") return w?"ja":"nein";
   if(feld==="monat") return MONATE_L[+w]||"–";
@@ -8469,7 +8732,7 @@ function pruefListe(){
     var d=r.daten;
     if(d && d.nummer) (rapNr[d.nummer]=rapNr[d.nummer]||[]).push(pr);
     var s=byId[pr.standortId];
-    var abw=rapportAbweichung(d, s&&s.filiale, pr.datum);
+    var abw=rapportAbweichung(d, s&&s.filiale, pr.datum, istStoerung(pr)?pr.auftragsnummer:"");
     if(abw) dazu("Fehler","Rapporte", "Protokoll vom "+dfmt(pr.datum)+": "+abw, s);
   });
   Object.keys(rapNr).forEach(function(nr){

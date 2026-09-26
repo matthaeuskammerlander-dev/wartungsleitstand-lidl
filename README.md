@@ -499,8 +499,8 @@ Dichtheitskontrolle, Arbeitsstättenverordnung, Konformitätserklärung und
 Aufsteller. Das **CO₂-Äquivalent** rechnet die App aus Füllmenge und GWP
 (ohne eingetragenes GWP mit dem Standardwert des Kältemittels).
 
-**Prüfbuch** gilt als vorhanden und liegt standardmäßig im **Büro UKT –
-Technik-Ordner 2**, solange vor Ort nichts anderes eingetragen wird.
+**Prüfbuch** gilt als vorhanden und liegt standardmäßig im **Büro Filiale –
+Technikordner 2**, solange vor Ort nichts anderes eingetragen wird.
 
 **Die Listen lernen dazu.** Was einmal unter „andere …“ eingetippt wurde,
 steht beim nächsten Mal als Knopf zur Auswahl – zuerst das, was am häufigsten
