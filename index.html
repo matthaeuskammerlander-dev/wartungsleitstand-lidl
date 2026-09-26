@@ -681,6 +681,37 @@ function inbetriebnahmeVon(p){
 }
 /* Welchen Soll-Monat die Regel vorschlägt: die Jahreswartung im Monat der
    Inbetriebnahme, die Halbjahrestermine sechs Monate versetzt. */
+/* Standardregel für die Termine einer Anlage (vom Büro so festgelegt):
+   JW im Monat der Inbetriebnahme, sechs Monate versetzt HJW (ab 30 kg
+   Kältemittel) bzw. HJI. Ein eingetragener Soll-Monat bleibt, wenn er
+   höchstens 3 Monate abweicht. termine: [{intervallCode, monat}] – höchstens
+   zwei, Reihenfolge bleibt; fehlende kommen hinten dazu (neu:true). */
+function standardRegel(ib, kg, termine){
+  var mIb=+String(ib||"").slice(5,7); if(!mIb) return null;
+  var mH=((mIb+5)%12)+1, hjCode=(+kg||0)>=30?"HJW":"HJI";
+  var abst=function(x,y){ var d=Math.abs(x-y); return Math.min(d,12-d); };
+  var code=function(t){ var k=String(t.intervallCode||"").trim().toUpperCase(); return k==="HW"?"HJW":(k.indexOf("HI")===0?"HJI":k); };
+  /* wie nah ist ein Termin an der Jahreswartung? Monat zählt vor Kürzel */
+  var naeheJW=function(t){ var m=+t.monat||0; return m ? abst(m,mIb) : (code(t)==="JW"?0:(code(t)?6:3)); };
+  var behalte=function(alt, ziel){ alt=+alt||0; return (alt && abst(alt,ziel)<=3) ? alt : ziel; };
+  var l=(termine||[]).slice(0,2), jwI=-1;
+  if(l.length===2) jwI = naeheJW(l[0])<=naeheJW(l[1]) ? 0 : 1;
+  else if(l.length===1) jwI = naeheJW(l[0])<=3 ? 0 : -1;
+  var r=l.map(function(t,i){ return i===jwI ? {code:"JW", monat:behalte(t.monat,mIb)} : {code:hjCode, monat:behalte(t.monat,mH)}; });
+  if(jwI<0) r.push({code:"JW", monat:mIb, neu:true});
+  while(r.length<2) r.push({code:hjCode, monat:mH, neu:true});
+  return r;
+}
+/* weitere Termine einer Anlage neu anlegen (aus der Standardregel im Dialog) */
+function termineNeuAnlegen(standortId, anlageId, liste, grund){
+  return Promise.all((liste||[]).map(function(t){
+    var id="NP"+Date.now().toString(36)+Math.random().toString(36).slice(2,6);
+    var rec={id:"position:"+id, typ:"position", ziel:id, neu:true, geaendert:new Date().toISOString(), von:wer(), grund:grund||"Termin angelegt",
+             felder:{standortId:standortId, intervallCode:t.intervallCode||"", monat:+t.monat||0, monatGrund:t.monatGrund||"", aktiv:true, anlageZu:anlageId}};
+    stammUeber[rec.id]=rec;
+    return stammSpeichern(rec);
+  })).then(function(wo){ wendeStammdatenAn(); return wo.indexOf(false)>=0 ? false : true; });
+}
 function sollMonatVorschlag(ib, halb){
   if(!ib) return 0;
   return +plusMonate(ib, halb?6:12).slice(5,7);
@@ -2915,6 +2946,9 @@ function anlageNeuAnlegen(s, vorlage){
     return stammSpeichern(rec).then(function(wo){
       if(wo===false){ delete stammUeber[rec.id]; wendeStammdatenAn(); render(); toast("Nicht gespeichert – weder Datenbank noch Gerätespeicher erreichbar."); return; }
       wendeStammdatenAn();
+      /* zweiter Termin (Standardregel: HJW/HJI sechs Monate versetzt) */
+      var weitere=(erg._termine||[]).slice(1);
+      if(weitere.length) termineNeuAnlegen(s.id, id, weitere, "Termin nach Standardregel angelegt").then(function(){ render(); });
       protokolliere({art:"stammdaten", standortId:s.id, standortName:stName(s), grund:"Anlage angelegt",
         felder:[{feld:"anlage", name:"Neue Anlage", alt:"–", neu:(felder.anlagentyp||"Anlage")+" · "+anlageKurz(felder)+
           (felder.intervallCode?" · "+felder.intervallCode+(felder.monat?" "+MONATE_L[felder.monat]:""):"")}]});
@@ -2938,7 +2972,7 @@ function besucheDerAnlage(p){
   return l;
 }
 function terminAenderungen(start, erg, name){
-  var proPos={}, log=[];
+  var proPos={}, log=[], neu=[];
   if(!start._termine || !erg._termine) return {proPos:proPos, log:log};
   var ibAlt=start.inbetriebnahme||null, ibNeu=erg.inbetriebnahme||null, ibNeuGesetzt=!gleich(ibAlt, ibNeu);
   if(ibNeuGesetzt) log.push({feld:"inbetriebnahme", name:name+" – Inbetriebnahme", alt:ibAlt?dfmt(ibAlt):"–", neu:ibNeu?dfmt(ibNeu):"–"});
@@ -2980,6 +3014,8 @@ function terminAenderungen(start, erg, name){
     }
   }
   erg._termine.forEach(function(t,i){
+    /* per Standardregel dazugekommen: wird als eigener Termin angelegt */
+    if(t._neu){ neu.push(t); log.push({feld:"intervallCode", name:name+" – neuer Termin", alt:"–", neu:(t.intervallCode||"?")+(+t.monat?" "+MONATE_L[+t.monat]:"")}); return; }
     var alt=start._termine[i]||{}, d={}, code=String(t.intervallCode||"").toUpperCase()||"?";
     if(ibNeuGesetzt) d.inbetriebnahme=ibNeu;
     if(!gleich(alt.intervallCode||"", t.intervallCode||"")){
@@ -2998,7 +3034,7 @@ function terminAenderungen(start, erg, name){
        Anlage, an der schon Prüfbuch-Wartungen und Notiz hängen */
     if(Object.keys(d).length) proPos[t.id]=Object.assign(proPos[t.id]||{}, d);
   });
-  return {proPos:proPos, log:log};
+  return {proPos:proPos, log:log, neu:neu};
 }
 /* Geänderte Felder mehrerer Zeilen wegschreiben – je Zeile ein Eintrag in
    den Stammdaten, gerechnet gegen den Excel-Stand wie überall sonst. */
@@ -3056,6 +3092,10 @@ function anlageDatenErgaenzen(leader, vorlage){
     geaendert=geaendert.concat(ta.log);
     if(!geaendert.length){ toast("Nichts geändert."); return; }
     return positionenSchreiben(proPos, "Anlagendaten geprüft und ergänzt").then(function(wo){
+      /* per Standardregel dazugekommene Termine als eigene Zeilen der Anlage */
+      if(wo===false || !(ta.neu&&ta.neu.length)) return wo;
+      return termineNeuAnlegen(leader.standortId, leader.anlageId||leader.id, ta.neu, "Termin nach Standardregel angelegt").then(function(ok){ return ok===false?false:wo; });
+    }).then(function(wo){
       if(wo===false){ wendeStammdatenAn(); render(); toast("Nicht gespeichert – weder Datenbank noch Gerätespeicher erreichbar. Bitte nochmals versuchen."); return; }
       wendeStammdatenAn();
       protokolliere({art:"stammdaten", standortId:leader.standortId,
@@ -3700,8 +3740,24 @@ function anlageAssistent(start, titel, neu, alles){
           '<input type="text" data-grund placeholder="Warum abweichend? z. B. passt besser in die Tour" value="'+esc(t.monatGrund||"")+'" hidden style="margin-top:6px">'+
         "</div>";
       });
-      h+='<div class="muted" style="font-size:12.5px">Einen Termin dazunehmen oder streichen geht in der Verwaltung.</div>';
+      h+='<div class="as-feld"><button class="btn ghost sm" type="button" data-regelall>Standardregel anwenden</button>'+
+        '<div class="as-hinweis">JW im Monat der Inbetriebnahme, sechs Monate später HJW (ab 30 kg) bzw. HJI. '+
+        "Ein eingetragener Soll-Monat bleibt, wenn er höchstens 3 Monate abweicht. Fehlt der zweite Termin, kommt er dazu.</div></div>"+
+        '<div class="muted" style="font-size:12.5px">Einen Termin streichen geht in der Verwaltung.</div>';
       inhalt.innerHTML=h;
+      inhalt.querySelector("[data-regelall]").onclick=function(){
+        if(!a.inbetriebnahme){ toast("Zuerst die Inbetriebnahme eintragen – daraus kommen die Termine."); return; }
+        if(a._termine.length>2){ toast("Mehr als zwei Termine – bitte in der Verwaltung ordnen."); return; }
+        var r=standardRegel(a.inbetriebnahme, a.kaeltemittelKg, a._termine);
+        r.forEach(function(x,i){
+          var t=a._termine[i];
+          if(!t){ t={id:null, _neu:true, monatGrund:""}; a._termine.push(t); }
+          t.intervallCode=x.code; t.monat=x.monat;
+        });
+        termineZeigen();
+        toast("Standardregel: "+r.map(function(x){ return x.code+" "+MONATE_L[x.monat]; }).join(" · ")+
+          ((+a.kaeltemittelKg||0)?"":" (Füllmenge unbekannt → HJI)"));
+      };
       var hinweise=function(){
         inhalt.querySelectorAll("[data-ti]").forEach(function(box){
           var t=a._termine[+box.dataset.ti], regel=terminRegel(t), m=+t.monat||0;
@@ -6607,6 +6663,10 @@ function viewProtokoll(){
         if(p0){
           var ta=terminAenderungen(start, erg, name);
           if(ta.log.length) positionenSchreiben(ta.proPos, "Termine beim Protokoll geprüft").then(function(wo){
+            if(wo===false || !(ta.neu&&ta.neu.length)) return wo;
+            return termineNeuAnlegen(p0.standortId, p0.anlageId||p0.id, ta.neu, "Termin nach Standardregel angelegt").then(function(ok){ return ok===false?false:wo; });
+          }).then(function(wo){
+            if(wo===undefined) return;
             if(wo===false){ toast("Termine nicht gespeichert – bitte später nochmals prüfen."); return; }
             protokolliere({art:"stammdaten", standortId:p0.standortId, standortName:stName(byId[p0.standortId]||{}),
               grund:"Termine beim Protokoll geprüft", felder:ta.log});
@@ -9487,7 +9547,8 @@ function verwaltungEditor(s){
       '<div class="fl" style="margin-top:4px"><span>Termine dieser Anlage</span></div>'+
       '<div class="termine stack"></div>'+
       /* direkt unter den Terminen – dort, wo man ihn braucht */
-      '<div><button class="btn ghost sm" type="button" data-a2="plus">+ Termin hinzufügen</button></div>'+
+      '<div class="rowflex" style="gap:6px"><button class="btn ghost sm" type="button" data-a2="plus">+ Termin hinzufügen</button>'+
+        '<button class="btn ghost sm" type="button" data-a2="regel" title="JW im Monat der Inbetriebnahme, sechs Monate später HJW (ab 30 kg) bzw. HJI">Standardregel anwenden</button></div>'+
       '<label class="fl"><span>Notiz</span><input type="text" data-a="notiz" value="'+esc((anl?anl.leader.notiz:"")||"")+'"></label>'+
     "</div>");
     var zfKnopf=k.querySelector('[data-a2="zusammen"]');
@@ -9506,6 +9567,27 @@ function verwaltungEditor(s){
       optionenNeu(); sollHinweisNeu(k);
       if(neuT.scrollIntoView) neuT.scrollIntoView({block:"nearest", behavior:"smooth"});
       bearbeitet=true;
+    };
+    /* Standardregel: Kürzel und Soll-Monate aus Inbetriebnahme und Füllmenge,
+       fehlender zweiter Termin kommt dazu. Gespeichert wird mit „Speichern“. */
+    k.querySelector('[data-a2="regel"]').onclick=function(){
+      var ib=(k.querySelector('[data-a="inbetriebnahme"]')||{}).value;
+      if(!ib){ toast("Zuerst die Inbetriebnahme der Anlage eintragen – daraus kommen die Termine."); return; }
+      var kgF=k.querySelector('[data-a="kaeltemittelKg"]');
+      var kg=(kgF && kgF.value!=="") ? parseFloat(String(kgF.value).replace(",",".")) : +(d.kaeltemittelKg||0);
+      var zeilen=Array.prototype.filter.call(k.querySelectorAll(".terminzeile"), function(z){ var e=z.querySelector('[data-t="entfaellt"]'); return !(e && e.checked); });
+      if(zeilen.length>2){ toast("Diese Anlage hat mehr als zwei Termine – bitte zuerst die überzähligen auf „Termin entfällt“ setzen."); return; }
+      var r=standardRegel(ib, kg, zeilen.map(function(z){
+        return {intervallCode:z.querySelector('[data-t="intervallCode"]').value, monat:z.querySelector('[data-t="monat"]').value}; }));
+      r.forEach(function(x,i){
+        var z=zeilen[i];
+        if(!z){ z=terminZeile({id:"NP"+Date.now().toString(36)+Math.random().toString(36).slice(2,5), aktiv:true}, true); k.querySelector(".termine").appendChild(z); }
+        z.querySelector('[data-t="intervallCode"]').value=x.code;
+        z.querySelector('[data-t="monat"]').value=String(x.monat);
+      });
+      optionenNeu(); sollHinweisNeu(k); bearbeitet=true;
+      toast("Standardregel: "+r.map(function(x){ return x.code+" "+MONATE_L[x.monat]; }).join(" · ")+
+        ((+kg||0)?"":" (Füllmenge unbekannt → HJI)")+" – bitte speichern.");
     };
     k.querySelector('[data-a="anlagentyp"]').oninput=optionenNeu;
     k.querySelector('[data-a="inbetriebnahme"]').onchange=function(){ sollHinweisNeu(k); };
