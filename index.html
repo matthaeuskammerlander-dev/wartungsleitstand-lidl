@@ -2677,7 +2677,9 @@ function terminAenderungen(start, erg, name){
       d.monatGrund=t.monatGrund||"";
       log.push({feld:"monatGrund", name:name+" – Grund für den abweichenden Soll-Monat "+code, alt:alt.monatGrund||"–", neu:t.monatGrund||"–"});
     }
-    if(Object.keys(d).length) proPos[t.id]=d;
+    /* zusammenführen, nicht ersetzen: die erste Zeile ist oft zugleich die
+       Anlage, an der schon Prüfbuch-Wartungen und Notiz hängen */
+    if(Object.keys(d).length) proPos[t.id]=Object.assign(proPos[t.id]||{}, d);
   });
   return {proPos:proPos, log:log};
 }
@@ -3089,6 +3091,7 @@ function anlageWertText(f, w){
   if(f.t==="kw") return String(w).replace(".",",")+" kW";
   if(f.t==="dez") return String(w).replace(".",",")+(f.e?" "+f.e:"");
   if(f.t==="datum") return dfmt(w);
+  if(f.k==="dichtheitMonate") return w==="nz" ? "nicht zutreffend" : w+" Monate";
   /* Übersicht und Änderungsverlauf halten fest, DASS ein Passwort gesetzt
      wurde – nicht, wie es lautet. Zum Nachsehen gibt es „ändern“. */
   if(f.t==="geheim") return "••••••••";
@@ -3161,20 +3164,41 @@ function anlageAssistent(start, titel, neu, alles){
        Übernahme landet im Dialog, gespeichert wird wie sonst auch erst mit
        „Übernehmen“. Prüfungen aus dem Prüfbuch werden zu Wartungen laut
        Prüfbuch. */
+    /* der Markt der Anlage – für die Einordnung durch die KI */
+    function kiMarkt(){
+      var lp=a._leaderId ? ALLE_POS.filter(function(x){ return x.id===a._leaderId; })[0] : null;
+      return byId[a.standortId] || (lp && byId[lp.standortId]) || null;
+    }
     function kiEinlesen(){
       var w=ansichtOeffnen("Aus Fotos lesen");
       w.schritt.textContent="Was ist auf den Fotos?";
       var reihe=el('<div class="stack"><button class="btn" type="button" data-kiart="pruefbuch">Prüfbuch – eine oder mehrere Seiten</button>'+
-        '<button class="btn" type="button" data-kiart="typenschild">Typenschild</button></div>');
-      reihe.querySelectorAll("[data-kiart]").forEach(function(b){ b.onclick=function(){ w.zu(); kiArt(b.dataset.kiart); }; });
+        '<button class="btn" type="button" data-kiart="typenschild" data-geraet="aussen">Typenschild Außengerät</button>'+
+        '<button class="btn ghost" type="button" data-kiart="typenschild" data-geraet="innen">Typenschilder Innengeräte – eins oder mehrere</button>'+
+        '<div class="muted" style="font-size:12.5px">Prüfbuch-Seiten dürfen in einem Rutsch fotografiert werden (bis 12 Bilder). '+
+        "Die Füllmenge der Anlage kommt aus dem Prüfbuch – auf dem Typenschild steht nur die Werksfüllung.</div></div>");
+      reihe.querySelectorAll("[data-kiart]").forEach(function(b){ b.onclick=function(){ w.zu(); kiArt(b.dataset.kiart, b.dataset.geraet); }; });
       w.inhalt.appendChild(reihe);
     }
-    function kiArt(art){
+    function kiArt(art, geraet){
       kiFotosWaehlen().then(function(dateien){
         if(!dateien.length) return;
+        if(dateien.length>12){ toast("Höchstens 12 Bilder auf einmal."); return; }
         kopf("KI liest "+dateien.length+" Bild"+(dateien.length===1?"":"er")+" …", "bitte warten");
-        return kiLesen(art, dateien).then(function(erg){
-          var d=erg.daten||{}, gelesen=kiAnlage(d.anlage);
+        return kiLesen(art, dateien, kiKontext(kiMarkt(), a)).then(function(erg){
+          var d=erg.daten||{};
+          if(art==="typenschild" && geraet==="innen") return kiInnen(d);
+          /* Außengerät: das Schild, das die KI als außen erkennt, sonst das erste */
+          if(art==="typenschild"){
+            var gl=Array.isArray(d.geraete)?d.geraete:[];
+            var ag=gl.filter(function(x){ return x.art==="aussen"; })[0] || gl.filter(function(x){ return x.art!=="innen"; })[0] || gl[0] || {};
+            /* Werksfüllung ist nicht die Füllmenge der Anlage – die bleibt dem Prüfbuch */
+            d={anlage:{hersteller:ag.hersteller, modell:ag.modell, seriennummer:ag.seriennummer, kaeltemittelArt:ag.kaeltemittelArt,
+               leistungKw:ag.leistungKw, psBar:ag.psBar}, unsicher:d.unsicher,
+               hinweise:[d.hinweise, gl.length>1?"Auf den Fotos sind "+gl.length+" Typenschilder – übernommen wird das Außengerät; Innengeräte über „Typenschilder Innengeräte“.":"",
+                 ag.werksfuellungKg?"Werksfüllung laut Schild: "+ag.werksfuellungKg+" kg (nicht die Füllmenge der Anlage).":""].filter(Boolean).join(" ")};
+          }
+          var gelesen=kiAnlage(d.anlage);
           var felder=ANLAGE_FELDER.filter(function(f){ return !f.gruppe.geheim; }).map(function(f){
             return {k:f.k, l:f.l, zeige:function(w){ return anlageWertText(f,w); }}; });
           felder.unshift({k:"anlagentyp", l:"Bezeichnung"});
@@ -3191,11 +3215,29 @@ function anlageAssistent(start, titel, neu, alles){
             felder.push({k:"_nachweise", l:"Wartungen laut Prüfbuch", q:"pruefungen", zeige:function(l){
               return (l||[]).map(function(n){ return dfmt(n.datum)+(n.techniker?" ("+n.techniker+")":""); }).join(", "); }});
           }
-          var hinweis=[d.hinweise, nw.ohneTag.length?"Ohne Tag, kommt als Notiz: "+nw.ohneTag.join(", "):""].filter(Boolean).join(" ");
-          return kiPruefen(art==="pruefbuch"?"Prüfbuch":"Typenschild", gelesen, a, felder, d.unsicher, hinweis).then(function(wahl){
+          /* Wartungsintervall laut Prüfbuch gegen die Termine: 12 Monate = eine
+             Jahreswartung. Nur das Kürzel wird angeboten – der Soll-Monat bleibt,
+             Termine dazunehmen oder streichen geht in der Verwaltung. */
+          var intervallHinweis="";
+          var mon=kiZahl(d.anlage && d.anlage.wartungsintervallMonate);
+          if(art==="pruefbuch" && mon && a._termine){
+            var tl=a._termine;
+            if(mon===12 && tl.length===1 && tl[0].intervallCode!=="JW"){
+              gelesen._intervall="JW";
+              felder.push({k:"_intervall", l:"Termin laut Prüfbuch", q:"wartungsintervallMonate",
+                zeige:function(){ return "Jahreswartung (JW) – im Prüfbuch alle 12 Monate; der Soll-Monat bleibt"; }});
+            } else if(mon===12 && tl.length>1){
+              intervallHinweis="Laut Prüfbuch jährlich (12 Monate), eingetragen sind aber "+tl.length+" Termine – bitte in der Verwaltung prüfen.";
+            } else if(mon===6 && tl.length<2){
+              intervallHinweis="Laut Prüfbuch halbjährlich (6 Monate), eingetragen ist nur ein Termin – den zweiten bitte in der Verwaltung anlegen.";
+            }
+          }
+          var hinweis=[d.hinweise, intervallHinweis, nw.ohneTag.length?"Ohne Tag, kommt als Notiz: "+nw.ohneTag.join(", "):""].filter(Boolean).join(" ");
+          return kiPruefen(art==="pruefbuch"?"Prüfbuch":"Typenschild Außengerät", gelesen, a, felder, d.unsicher, hinweis).then(function(wahl){
             if(!wahl){ uebersicht(); return; }
             Object.keys(wahl).forEach(function(k){
               if(k==="_nachweise") a._nachweiseNeu=(a._nachweiseNeu||[]).concat(wahl[k]);
+              else if(k==="_intervall") a._termine.forEach(function(t){ t.intervallCode=wahl[k]; });
               else a[k]=wahl[k];
             });
             if(nw.ohneTag.length && wahl._nachweise) a._notizDazu="Laut Prüfbuch außerdem (ohne Tag): "+nw.ohneTag.join(", ")+".";
@@ -3203,6 +3245,37 @@ function anlageAssistent(start, titel, neu, alles){
             uebersicht();
           });
         }, function(e){ toast(e.message); uebersicht(); });
+      });
+    }
+    /* Innengeräte vom Typenschild: je Gerät ein Haken. Schon erfasste
+       Seriennummern werden nicht doppelt angeboten; übernommen wird ans Ende
+       der Liste, den Raum trägt man danach ein. */
+    function kiInnen(d){
+      /* Nummern wie in der Antwort der KI („geraet 3“), auch wenn Außengeräte wegfallen */
+      var gl=(Array.isArray(d.geraete)?d.geraete:[]).map(function(x){ return x.art==="aussen" ? null : x; });
+      var da=(Array.isArray(a.innengeraete)?a.innengeraete:[]).map(function(g){ return String(g.seriennummer||"").trim().toUpperCase(); }).filter(Boolean);
+      var gelesen={}, felder=[], doppelt=0;
+      gl.forEach(function(x, i){
+        if(!x) return;
+        var sn=String(x.seriennummer||"").trim();
+        if(sn && da.indexOf(sn.toUpperCase())>=0){ doppelt++; return; }
+        var g={hersteller:String(x.hersteller||"").trim(), modell:String(x.modell||"").trim(), seriennummer:sn,
+               leistungKw:kiZahl(x.leistungKw)};
+        if(!innenBelegt(g)) return;
+        gelesen["_innen"+i]=g;
+        felder.push({k:"_innen"+i, l:"Innengerät "+(felder.length+1), q:"geraet "+(i+1),
+          zeige:function(w){ return innenText([w]).replace(/^Innengerät 1: /,""); }});
+      });
+      var hinweis=[d.hinweise, doppelt?doppelt+" Gerät"+(doppelt===1?" ist":"e sind")+" schon erfasst (gleiche Seriennummer).":""].filter(Boolean).join(" ");
+      /* unsichere Angaben je Gerät („geraet 2: seriennummer“) markieren das ganze Gerät */
+      var uns=(d.unsicher||[]).map(function(u){ var m=/geraet\s*(\d+)/i.exec(u); return m?"geraet "+m[1]:u; });
+      return kiPruefen("Typenschilder Innengeräte", gelesen, {}, felder, uns, hinweis).then(function(wahl){
+        if(wahl && Object.keys(wahl).length){
+          a.innengeraete=(Array.isArray(a.innengeraete)?a.innengeraete:[]).map(function(g){ return Object.assign({},g); })
+            .concat(Object.keys(wahl).sort(function(x,y){ return +x.slice(6)-+y.slice(6); }).map(function(k){ return wahl[k]; }));
+          toast(Object.keys(wahl).length+" Innengerät"+(Object.keys(wahl).length===1?"":"e")+" übernommen – Raum bitte ergänzen, dann „Übernehmen“.");
+        }
+        uebersicht();
       });
     }
     /* Termine prüfen: Inbetriebnahme der Anlage, je Termin Kürzel und
@@ -4892,10 +4965,19 @@ function kiBild(quelle){
     img.src=url;
   });
 }
-function kiLesen(art, quellen){
+/* Einordnung für die KI: Markt, Anlage und wer bei uns wartet – damit sie
+   Handschrift und Stempel richtig zuordnet */
+function kiKontext(s, a){
+  return [s ? "Lidl-Filiale "+(s.filiale||"")+" "+stName(s)+(s.adresse?", "+s.adresse:"") : "",
+    a && a.anlagentyp ? "Anlage: "+a.anlagentyp : "",
+    "Wartungsfirma: Kammerlander Umwelt- und Klimatechnik GmbH (UKT), Techniker: "+
+      bekannteNamen().filter(function(n){ return /kammerlander|jekic/i.test(n); }).join(", ")
+  ].filter(Boolean).join(". ");
+}
+function kiLesen(art, quellen, kontext){
   if(!kiAn()) return Promise.reject(new Error("KI-Erkennung ist nicht eingeschaltet."));
   return Promise.all(quellen.map(kiBild)).then(function(bilder){
-    return Store.sb.functions.invoke("ki-lesen", {body:{art:art,
+    return Store.sb.functions.invoke("ki-lesen", {body:{art:art, kontext:kontext||"",
       bilder:bilder.map(function(u){ return {media_type:"image/jpeg", data:u.split(",")[1]}; })}});
   }).then(function(r){
     if(!r.error) return r.data;

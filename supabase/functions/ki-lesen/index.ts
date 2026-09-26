@@ -58,6 +58,17 @@ const ANLAGE = {
   konformitaet: text,       // Datum der Konformitätserklärung
   aufsteller: text,
   filiale: text, adresse: text,
+  wartungsintervallMonate: text, // „12“ oder „6“ – wie im Prüfbuch vorgegeben
+};
+
+// ein Typenschild – Außen- oder Innengerät
+const GERAET = {
+  art: text,                // aussen | innen | "" (wenn nicht erkennbar)
+  hersteller: text, modell: text, seriennummer: text, baujahr: text,
+  kaeltemittelArt: text,
+  werksfuellungKg: text,    // Füllmenge ab Werk laut Schild – nicht die Gesamtfüllmenge der Anlage
+  leistungKw: text,         // Kälteleistung
+  psBar: text,
 };
 
 const SCHEMAS: Record<string, unknown> = {
@@ -67,11 +78,9 @@ const SCHEMAS: Record<string, unknown> = {
     unsicher: { type: "array", items: text },
     hinweise: text,
   }),
+  // je unterschiedlichem Typenschild ein Eintrag – mehrere Innengeräte auf einmal gehen
   typenschild: objekt({
-    anlage: objekt({
-      hersteller: text, modell: text, seriennummer: text, baujahr: text,
-      kaeltemittelArt: text, kaeltemittelKg: text, leistungKw: text, psBar: text,
-    }),
+    geraete: liste(GERAET),
     unsicher: { type: "array", items: text },
     hinweise: text,
   }),
@@ -94,16 +103,22 @@ const ANWEISUNG: Record<string, string> = {
     "Inbetriebnahmedatum (Seite 5/6) und alle eingetragenen Überprüfungen nach § 22 KAV (Seite 8 ff.) " +
     "mit Datum, prüfender Firma (Stempel), Techniker falls lesbar und ob Mängel eingetragen sind " +
     "(\"keine\" wenn in der rechten Spalte „erfolgreich überprüft“ gestempelt ist). " +
+    "Lies auch das vorgeschriebene Wartungs- bzw. Überprüfungsintervall in Monaten " +
+    "(wartungsintervallMonate, meist 12 oder 6). Als kaeltemittelKg gilt die Gesamtfüllmenge der Anlage. " +
     "Daten immer als TT.MM.JJJJ; steht nur Monat und Jahr, schreibe MM.JJJJ. " +
     "Lass Felder leer, die nicht auf den Bildern stehen – nichts ergänzen, nichts schätzen, " +
     "keine Standardwerte einsetzen. Nimm jedes Feld, bei dem die Handschrift mehrdeutig ist, " +
     "mit seinem Feldnamen in \"unsicher\" auf und erkläre in \"hinweise\" kurz, warum. " +
     "Wenn Bilder zu verschiedenen Anlagen zu gehören scheinen, sag das in \"hinweise\".",
   typenschild:
-    "Die Bilder zeigen das Typenschild eines Klimageräts (Außen- oder Innengerät). Lies Hersteller, " +
-    "Modell/Typ, Seriennummer, Baujahr bzw. Herstelldatum, Kältemittel und Füllmenge, Kälteleistung " +
-    "und den zulässigen Betriebsdruck (PS/HP). Lass leer, was nicht lesbar ist; nichts schätzen. " +
-    "Mehrdeutige Felder in \"unsicher\".",
+    "Die Bilder zeigen Typenschilder von Klimageräten – Außengeräte (outdoor unit, Verflüssiger) " +
+    "und/oder Innengeräte (indoor unit, Kassette, Wandgerät, Kanalgerät). Lege je unterschiedlichem " +
+    "Typenschild einen Eintrag in \"geraete\" an; zeigen mehrere Bilder dasselbe Schild, nur einmal. " +
+    "Setze \"art\" auf aussen oder innen, wie es das Schild oder die Modellbezeichnung erkennen lässt, " +
+    "sonst leer. Lies Hersteller, Modell/Typ, Seriennummer, Baujahr bzw. Herstelldatum, Kältemittel, " +
+    "die Füllmenge ab Werk (werksfuellungKg), die Kälteleistung in kW und den zulässigen Betriebsdruck " +
+    "(PS/HP) in bar. Lass leer, was nicht lesbar ist; nichts schätzen. Mehrdeutige Felder als " +
+    "\"geraet N: feld\" in \"unsicher\".",
   auftrag:
     "Die Bilder zeigen einen Störungsauftrag von Lidl Österreich an einen Handwerksbetrieb (Ausdruck " +
     "oder PDF-Seite). Lies Auftragsnummer, Störungsnummer, Kostenstelle/Filial-Nr. (z. B. AT0405), " +
@@ -128,9 +143,11 @@ Deno.serve(async (req) => {
   if (!user) return antwort({ fehler: "Bitte anmelden." }, 401);
 
   // 2. Was soll gelesen werden?
-  let eingabe: { art?: string; bilder?: { media_type: string; data: string }[] };
+  let eingabe: { art?: string; bilder?: { media_type: string; data: string }[]; kontext?: string };
   try { eingabe = await req.json(); } catch { return antwort({ fehler: "Anfrage nicht lesbar." }, 400); }
   const art = String(eingabe.art ?? "");
+  // Einordnung aus der App (Markt, Anlage, bekannte Techniker) – hilft bei Handschrift
+  const kontext = String(eingabe.kontext ?? "").slice(0, 800);
   const bilder = Array.isArray(eingabe.bilder) ? eingabe.bilder : [];
   if (!SCHEMAS[art]) return antwort({ fehler: "Unbekannte Art: " + art }, 400);
   if (!bilder.length) return antwort({ fehler: "Keine Bilder." }, 400);
@@ -165,7 +182,9 @@ Deno.serve(async (req) => {
             type: "image" as const,
             source: { type: "base64" as const, media_type: b.media_type as "image/jpeg", data: b.data },
           })),
-          { type: "text" as const, text: ANWEISUNG[art] },
+          { type: "text" as const, text: ANWEISUNG[art] + (kontext
+              ? "\n\nZur Einordnung (nur als Hilfe beim Entziffern, nichts davon ungelesen übernehmen): " + kontext
+              : "") },
         ],
       }],
     });

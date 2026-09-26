@@ -17,9 +17,24 @@ bis diese Schritte erledigt sind.
    markiert und nie vorbelegt. Übernommen wird nur, was angehakt bleibt;
    gespeichert wie jede andere Änderung, mit Änderungsverlauf.
 
-Aus dem Prüfbuch kommen die Anlagendaten (Seite 2–4), die Inbetriebnahme
-(§ 17 KAV) und die Überprüfungen nach § 22 KAV als „Wartungen laut Prüfbuch“.
-Besuche, die die Anlage schon hat, werden nicht doppelt angeboten.
+Im Anlagendialog unter „Aus Fotos lesen (KI)“ gibt es drei Wege:
+
+- **Prüfbuch** (bis 12 Seiten auf einmal): Anlagendaten (Seite 2–4), Gesamtfüllmenge,
+  Inbetriebnahme (§ 17 KAV), die Überprüfungen nach § 22 KAV als „Wartungen laut
+  Prüfbuch“ und das Wartungsintervall. Besuche, die die Anlage schon hat, werden
+  nicht doppelt angeboten (≤ 14 Tage = derselbe Besuch). Steht im Prüfbuch
+  „12 Monate“ und ist der Termin keine Jahreswartung, schlägt die App „JW“ vor –
+  der **Soll-Monat bleibt immer**. Bei „6 Monaten“ mit nur einem Termin kommt ein
+  Hinweis (zweiten Termin in der Verwaltung anlegen).
+- **Typenschild Außengerät:** Hersteller, Modell, Seriennummer, Kältemittel,
+  Leistung, Betriebsdruck. Die Werksfüllung vom Schild ist **nicht** die
+  Füllmenge der Anlage – die kommt nur aus dem Prüfbuch.
+- **Typenschilder Innengeräte** (eins oder mehrere Fotos): je Schild ein
+  Innengerät; schon erfasste Seriennummern werden nicht doppelt angeboten, den
+  Raum trägt man danach ein.
+
+Die App schickt zur Einordnung Filiale, Anlage und die Namen der UKT-Techniker
+mit – das hilft beim Entziffern von Handschrift und Stempeln.
 
 ## Kosten
 
