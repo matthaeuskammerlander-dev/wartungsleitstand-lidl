@@ -10,7 +10,10 @@
 import Anthropic from "npm:@anthropic-ai/sdk";
 import { createClient } from "npm:@supabase/supabase-js@2";
 
-const MODELL = "claude-opus-5";
+// einfache Fragen zur Datenbank: das kleine, günstige Modell (ca. 0,1–0,3 Cent je Frage)
+const MODELL = "claude-haiku-4-5-20251001";
+const REPO = Deno.env.get("GITHUB_REPO") ?? "matthaeuskammerlander-dev/wartungsleitstand-lidl";
+const GH_TOKEN = Deno.env.get("GITHUB_TOKEN_WUENSCHE") ?? "";
 const LIMIT_JE_TAG = Number(Deno.env.get("KI_FRAGEN_JE_TAG") ?? "100");
 const MAX_NACHRICHTEN = 20;
 const MAX_ZEICHEN = 8000;
@@ -38,7 +41,7 @@ Deno.serve(async (req) => {
   if (req.method !== "POST") return antwort({ fehler: "Nur POST" }, 405);
 
   // Anfrage zuerst ganz lesen (sonst hängt der Upload am Handy)
-  let e: { nachrichten?: { role: string; text: string }[]; kontext?: string } = {};
+  let e: { nachrichten?: { role: string; text: string }[]; kontext?: string; weg?: string; nr?: number } = {};
   try { e = await req.json(); } catch { return antwort({ fehler: "Anfrage nicht lesbar." }, 400); }
 
   const supabase = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_ANON_KEY")!,
@@ -53,14 +56,57 @@ Deno.serve(async (req) => {
     .map((n) => ({ role: n.role as "user" | "assistant", content: n.text.slice(0, MAX_ZEICHEN) }));
   // muss mit einer Frage beginnen und enden
   while (l.length && l[0].role !== "user") l.shift();
-  if (!l.length || l[l.length - 1].role !== "user") return antwort({ fehler: "Keine Frage." }, 400);
+  if (e.weg !== "github_stand" && (!l.length || l[l.length - 1].role !== "user")) return antwort({ fehler: "Keine Frage." }, 400);
+
+  // ---- Weg über GitHub: Claude Code beantwortet die Frage im Abo (kostet nichts
+  // extra, dauert 1–2 Minuten). Das Repository ist öffentlich – die App schickt
+  // auf diesem Weg deshalb keine Adressen und keine Marktübersicht mit.
+  if (e.weg === "github") {
+    if (!GH_TOKEN) return antwort({ fehler: "GitHub-Zugang fehlt (Secret GITHUB_TOKEN_WUENSCHE)." }, 500);
+    const verlauf = l.slice(0, -1).map((n) => (n.role === "user" ? "Frage: " : "Antwort: ") + n.content).join("\n\n");
+    const frage = l[l.length - 1].content;
+    const kontext = String(e.kontext ?? "").slice(0, 4000);
+    const body = [
+      "@claude Bitte diese Frage aus dem Wartungsleitstand beantworten. **Nur antworten – nichts ändern, keinen Zweig, keinen Pull Request.**",
+      "Antworte auf Deutsch, kurz und praxisnah, so wie in CLAUDE.md beschrieben (Kältetechnik, Vorschriften, Terminregeln, die App in index.html).",
+      "",
+      verlauf ? "Bisheriges Gespräch:\n" + verlauf.split("\n").map((z) => "> " + z).join("\n") + "\n" : "",
+      "**Frage:**",
+      frage.split("\n").map((z) => "> " + z).join("\n"),
+      kontext ? "\nAus der App (gerade offen):\n```\n" + kontext + "\n```" : "",
+    ].join("\n");
+    const r = await fetch(`https://api.github.com/repos/${REPO}/issues`, {
+      method: "POST",
+      headers: { Authorization: "Bearer " + GH_TOKEN, Accept: "application/vnd.github+json", "User-Agent": "wartungsleitstand-frage", "Content-Type": "application/json" },
+      body: JSON.stringify({ title: "Frage: " + frage.replace(/\s+/g, " ").slice(0, 80), body, labels: ["frage"] }),
+    });
+    const d = await r.json().catch(() => null);
+    if (!r.ok) return antwort({ fehler: "GitHub: " + ((d && d.message) || r.status) }, 502);
+    return antwort({ nr: d.number });
+  }
+  if (e.weg === "github_stand") {
+    const nr = Number(e.nr);
+    if (!nr || !GH_TOKEN) return antwort({ fehler: "Keine Frage-Nummer." }, 400);
+    const h = { Authorization: "Bearer " + GH_TOKEN, Accept: "application/vnd.github+json", "User-Agent": "wartungsleitstand-frage" };
+    const issue = await (await fetch(`https://api.github.com/repos/${REPO}/issues/${nr}`, { headers: h })).json();
+    if (!issue || !String(issue.title || "").startsWith("Frage:")) return antwort({ fehler: "Das ist keine Frage aus der App." }, 400);
+    const l2 = await (await fetch(`https://api.github.com/repos/${REPO}/issues/${nr}/comments?per_page=50`, { headers: h })).json();
+    const c = (Array.isArray(l2) ? l2 : []).filter((x: any) => /claude/i.test(String(x.user?.login || ""))).pop();
+    const text = c ? String(c.body || "") : "";
+    const fertig = /Claude finished|Claude encountered an error/i.test(text);
+    if (fertig && issue.state === "open") {
+      await fetch(`https://api.github.com/repos/${REPO}/issues/${nr}`, { method: "PATCH", headers: { ...h, "Content-Type": "application/json" },
+        body: JSON.stringify({ state: "closed" }) });
+    }
+    return antwort({ fertig, text: fertig ? text : "", fehler: /encountered an error/i.test(text) ? "Claude hat einen Fehler gemeldet." : undefined });
+  }
 
   const heute = new Date().toISOString().slice(0, 10);
   const { count } = await supabase.from("ki_nutzung").select("id", { count: "exact", head: true })
     .eq("user_id", user.id).eq("art", "frage").gte("zeit", heute);
   if ((count ?? 0) >= LIMIT_JE_TAG) return antwort({ fehler: "Tageslimit für Fragen erreicht." }, 429);
 
-  const kontext = String(e.kontext ?? "").slice(0, 6000);
+  const kontext = String(e.kontext ?? "").slice(0, 24000);   // Übersicht aller Märkte ≈ 8000 Zeichen
   const client = new Anthropic();
   let r;
   try {

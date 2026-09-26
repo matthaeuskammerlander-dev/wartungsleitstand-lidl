@@ -10596,6 +10596,27 @@ function marktKurzText(s){
   });
   return z.join("\n");
 }
+/* Übersicht aller Märkte für Fragen zur Datenbank: nur was auffällt
+   (überfällig, fällig, offene Störungen, fehlende Inbetriebnahme) */
+function uebersichtText(){
+  var st=offeneStoerungen(true), z=[], zahl={ueberfaellig:0, faellig:0};
+  ST.forEach(function(s){
+    var teile=[];
+    s.pos.forEach(function(p){
+      if(p.status!=="ueberfaellig" && p.status!=="faellig") return;
+      zahl[p.status]++;
+      teile.push((p.status==="ueberfaellig"?"überfällig ":"fällig ")+anlagenName(p)+" "+((p.intervall&&p.intervall.kurz)||p.intervallCode||"?")+
+        " (Soll "+(MONATE_L[+p.monat]||"–")+", zuletzt "+(p.letzte?dfmt(p.letzte):"nie")+(p.naechste?", Termin "+dfmt(p.naechste):"")+")");
+    });
+    var so=st.filter(function(o){ return o.standortId===s.id; });
+    if(so.length) teile.push(so.length+" Störung(en) offen"+(so[0].problemtyp?": "+so.map(function(o){ return o.problemtyp||"?"; }).join(", "):""));
+    var ohneIb=anlagenDesMarkts(s,false).filter(function(a){ return !inbetriebnahmeVon(a.leader); }).length;
+    if(ohneIb) teile.push(ohneIb+" Anlage(n) ohne Inbetriebnahme");
+    if(teile.length) z.push("- "+(s.filiale?"Filiale "+s.filiale+" ":"")+stName(s)+(s.region?" ["+s.region+"]":"")+": "+teile.join("; "));
+  });
+  return "Stand "+dfmt(isoLokal(new Date()))+": "+ST.length+" Märkte, "+anzahlAnlagen()+" Anlagen, "+POS.length+" Termine; "+
+    zahl.ueberfaellig+" überfällig, "+zahl.faellig+" fällig, "+st.length+" Störungen offen.\nAuffällige Märkte:\n"+z.join("\n");
+}
 function frageText(t){ return String(t||"").replace(/^#+\s*/gm,"").replace(/\*\*/g,"").replace(/`/g,""); }
 function claudeFragen(){
   if(!wuenscheAn()){ toast("Dafür bitte anmelden."); return; }
@@ -10604,9 +10625,15 @@ function claudeFragen(){
   var markt=frageMarkt();
   var box=el('<div class="stack">'+
     '<div data-a="verlauf" class="stack" style="gap:10px"></div>'+
-    '<label class="fl"><span>Deine Frage</span><textarea rows="3" data-a="frage" placeholder="z. B. Welche Dichtheitsintervalle gelten bei 34 kg R410A?"></textarea></label>'+
+    '<label class="fl"><span>Deine Frage</span><textarea rows="3" data-a="frage" placeholder="z. B. Welche Märkte in Tirol sind im Oktober fällig?"></textarea></label>'+
     (markt?'<label class="chk" style="font-size:13px"><input type="checkbox" data-a="markt" checked><span>Angaben zu „'+esc(stName(markt))+
       '“ mitschicken (Anlagen, Termine, offene Störungen)</span></label>':"")+
+    '<label class="chk" style="font-size:13px"><input type="checkbox" data-a="alle"><span>Übersicht aller Märkte mitschicken '+
+      '(Fälliges, Überfälliges, offene Störungen) – für Fragen zur ganzen Datenbank</span></label>'+
+    '<div class="note" style="font-size:12.5px"><strong>Drei Wege:</strong> '+
+      "<strong>Claude-App</strong> – im Abo, sofort, du wechselst kurz in die Claude-App. "+
+      "<strong>Über GitHub</strong> – im Abo, Antwort kommt hier nach 1–2 Minuten; öffentlich lesbar, darum ohne Adressen und ohne Marktübersicht. "+
+      "<strong>Direkt</strong> – sofort hier, ca. 0,2–0,5 Cent je Frage.</div>"+
     '<div class="muted" style="font-size:12px">Keine Passwörter oder Zugangsdaten hineinschreiben. Antworten von Claude können irren – '+
       "bei Vorschriften und Grenzwerten bitte gegenprüfen.</div></div>");
   v.inhalt.appendChild(box);
@@ -10616,46 +10643,91 @@ function claudeFragen(){
     FRAGE_VERLAUF.forEach(function(n){
       verlauf.appendChild(el('<div style="white-space:pre-wrap;font-size:14px;line-height:1.45;padding:10px 12px;border-radius:12px;'+
         (n.role==="user"?"background:var(--accent);color:#fff;margin-left:18%":"background:var(--ground);border:1px solid var(--line);margin-right:8%")+'">'+
-        esc(n.role==="user"?n.text:frageText(n.text))+"</div>"));
+        esc(n.role==="user"?n.text:frageText(n.text))+(n.weg?'<div class="muted" style="font-size:11px;margin-top:4px">'+esc(n.weg)+"</div>":"")+"</div>"));
     });
     if(FRAGE_VERLAUF.length) setTimeout(function(){ feld.scrollIntoView({block:"nearest"}); }, 30);
   };
   zeigen();
-  var kontext=function(){ var c=box.querySelector('[data-a="markt"]'); return (markt && c && c.checked) ? marktKurzText(markt) : ""; };
+  /* oeffentlich: für GitHub – ohne Adresse, ohne Übersicht aller Märkte */
+  var kontext=function(oeffentlich){
+    var c=box.querySelector('[data-a="markt"]'), a=box.querySelector('[data-a="alle"]'), t=[];
+    if(markt && c && c.checked){
+      var mt=marktKurzText(markt);
+      if(oeffentlich) mt=mt.replace(/^Markt: .*$/m, "Markt: "+stName(markt));
+      t.push(mt);
+    }
+    if(a && a.checked && !oeffentlich) t.push(uebersichtText());
+    return t.join("\n\n");
+  };
   var neu=el('<button class="btn ghost sm" type="button">Neues Gespräch</button>');
-  var app=el('<button class="btn ghost" type="button">In der Claude-App (Abo)</button>');
-  var direkt=el('<button class="btn" type="button">Fragen · ca. 1–3 Cent</button>');
+  var app=el('<button class="btn" type="button">Claude-App (Abo)</button>');
+  var gh=el('<button class="btn ghost" type="button">Über GitHub (Abo)</button>');
+  var direkt=el('<button class="btn ghost" type="button">Direkt · ca. 0,2–0,5 Cent</button>');
+  var knoepfe=function(an){ [app,gh,direkt,neu].forEach(function(b){ b.disabled=!an; }); };
   neu.onclick=function(){ FRAGE_VERLAUF=[]; zeigen(); feld.value=""; feld.focus(); };
-  /* Claude-App: Frage samt Hintergrund in die Zwischenablage und claude.ai öffnen */
+  var frageHolen=function(){ var f=feld.value.trim(); if(!f) toast("Bitte zuerst die Frage eingeben."); return f; };
+  /* Claude-App: alles in die Zwischenablage, claude.ai mit der Frage öffnen */
   app.onclick=function(){
-    var f=feld.value.trim(); if(!f){ toast("Bitte zuerst die Frage eingeben."); return; }
-    var k=kontext();
-    var alles=(FRAGE_VERLAUF.length?"Bisher:\n"+FRAGE_VERLAUF.map(function(n){ return (n.role==="user"?"Frage: ":"Antwort: ")+n.text; }).join("\n")+"\n\n":"")+
-      f+(k?"\n\nHintergrund aus unserem Wartungsleitstand (UKT, Lidl Österreich):\n"+k:"");
-    inZwischenablage(alles, "Frage");
-    window.open("https://claude.ai/new?q="+encodeURIComponent(alles.length>1800?alles.slice(0,1800):alles), "_blank", "noopener");
+    var f=frageHolen(); if(!f) return;
+    var k=kontext(false);
+    var vorher=FRAGE_VERLAUF.length?"Bisher:\n"+FRAGE_VERLAUF.map(function(n){ return (n.role==="user"?"Frage: ":"Antwort: ")+n.text; }).join("\n")+"\n\n":"";
+    var alles=vorher+f+(k?"\n\nDaten aus unserem Wartungsleitstand (UKT, Kälte-/Klimaanlagen in Lidl-Filialen Österreich):\n"+k:"");
+    inZwischenablage(alles, "Frage samt Daten");
+    /* passt nicht in den Link: nur die Frage vorbelegen, die Daten liegen in der Zwischenablage */
+    var q = alles.length<=1800 ? alles : vorher.slice(0,600)+f+"\n\n(Die Daten aus dem Wartungsleitstand füge ich gleich ein.)";
+    if(alles.length>1800) toast("Daten sind in der Zwischenablage – in Claude einfügen.");
+    window.open("https://claude.ai/new?q="+encodeURIComponent(q), "_blank", "noopener");
   };
+  var fehlerText=function(r){
+    if(!r.error) return Promise.resolve(r.data);
+    var ctx=r.error.context;
+    return (ctx && ctx.json ? ctx.json().catch(function(){ return null; }) : Promise.resolve(null)).then(function(j){
+      if(!j && r.error.name==="FunctionsFetchError") throw new Error("Verbindung abgebrochen – bitte nochmals versuchen.");
+      throw new Error((j && j.fehler) || r.error.message || "Claude nicht erreichbar");
+    });
+  };
+  var warteZeile=function(text){
+    var w=el('<div class="muted" style="font-size:13px"><span class="kilaeuft" style="display:inline-block;width:14px;height:14px;border-width:3px;vertical-align:-2px;margin:0 6px 0 0"></span>'+
+      '<span data-t>'+esc(text)+"</span></div>");
+    verlauf.appendChild(w); return w.querySelector("[data-t]");
+  };
+  var nurText=function(){ return FRAGE_VERLAUF.map(function(n){ return {role:n.role, text:n.text}; }); };
   direkt.onclick=function(){
-    var f=feld.value.trim(); if(!f){ toast("Bitte zuerst die Frage eingeben."); return; }
+    var f=frageHolen(); if(!f) return;
     FRAGE_VERLAUF.push({role:"user", text:f}); feld.value=""; zeigen();
-    var warte=el('<div class="muted" style="font-size:13px"><span class="kilaeuft" style="display:inline-block;width:14px;height:14px;border-width:3px;vertical-align:-2px;margin:0 6px 0 0"></span>Claude denkt nach …</div>');
-    verlauf.appendChild(warte); direkt.disabled=true; app.disabled=true;
-    mitFrist(Store.sb.functions.invoke("ki-frage", {body:{nachrichten:FRAGE_VERLAUF, kontext:kontext()}}), 120000).then(function(r){
-      if(!r.error) return r.data;
-      var ctx=r.error.context;
-      return (ctx && ctx.json ? ctx.json().catch(function(){ return null; }) : Promise.resolve(null)).then(function(j){
-        if(!j && r.error.name==="FunctionsFetchError") throw new Error("Verbindung abgebrochen – bitte nochmals versuchen.");
-        throw new Error((j && j.fehler) || r.error.message || "Claude nicht erreichbar");
-      });
-    }).then(function(d){
-      FRAGE_VERLAUF.push({role:"assistant", text:String((d&&d.text)||"(keine Antwort)")});
-    }, function(e){
-      FRAGE_VERLAUF.pop(); feld.value=f;   /* Frage nicht verlieren */
-      toast(e.message||String(e));
-    }).then(function(){ direkt.disabled=false; app.disabled=false; zeigen(); });
+    warteZeile("Claude denkt nach …"); knoepfe(false);
+    mitFrist(Store.sb.functions.invoke("ki-frage", {body:{nachrichten:nurText(), kontext:kontext(false)}}), 120000)
+      .then(fehlerText).then(function(d){
+        FRAGE_VERLAUF.push({role:"assistant", text:String((d&&d.text)||"(keine Antwort)"), weg:"direkt · Claude Haiku"});
+      }, function(e){ FRAGE_VERLAUF.pop(); feld.value=f; toast(e.message||String(e)); })
+      .then(function(){ knoepfe(true); zeigen(); });
   };
-  v.fuss.appendChild(neu); v.fuss.appendChild(app);
+  /* GitHub: Claude Code beantwortet im Abo – nachfragen, bis die Antwort da ist */
+  gh.onclick=function(){
+    var f=frageHolen(); if(!f) return;
+    FRAGE_VERLAUF.push({role:"user", text:f}); feld.value=""; zeigen();
+    var t=warteZeile("wird an GitHub geschickt …"), t0=Date.now(); knoepfe(false);
+    var fertig=function(){ knoepfe(true); zeigen(); };
+    mitFrist(Store.sb.functions.invoke("ki-frage", {body:{weg:"github", nachrichten:nurText(), kontext:kontext(true)}}), 60000)
+      .then(fehlerText).then(function(d){
+        var nr=d&&d.nr; if(!nr) throw new Error("GitHub hat keine Nummer zurückgegeben.");
+        var frag=function(){
+          if(!v.inhalt.isConnected) return;   /* Fenster zu: nicht weiter fragen */
+          var s=Math.round((Date.now()-t0)/1000);
+          if(s>480){ FRAGE_VERLAUF.push({role:"assistant", text:"Noch keine Antwort nach 8 Minuten – auf GitHub nachsehen: Frage #"+nr+".", weg:"über GitHub"}); fertig(); return; }
+          t.textContent="Claude antwortet über GitHub … "+s+" s (meist 1–2 Minuten)";
+          mitFrist(Store.sb.functions.invoke("ki-frage", {body:{weg:"github_stand", nr:nr}}), 30000).then(fehlerText).then(function(x){
+            if(x && x.fertig){ FRAGE_VERLAUF.push({role:"assistant", text:wunschAntwortText(x.text)||"(keine Antwort)", weg:"über GitHub · im Abo"}); fertig(); }
+            else setTimeout(frag, 10000);
+          }, function(){ setTimeout(frag, 15000); });
+        };
+        t.textContent="Claude antwortet über GitHub … (meist 1–2 Minuten)";
+        setTimeout(frag, 20000);
+      }).catch(function(e){ FRAGE_VERLAUF.pop(); feld.value=f; toast(e.message||String(e)); fertig(); });
+  };
+  v.fuss.appendChild(neu); v.fuss.appendChild(gh);
   if(kiAn()) v.fuss.appendChild(direkt);
+  v.fuss.appendChild(app);
   setTimeout(function(){ feld.focus(); }, 60);
 }
 function frageKnopfNeu(){ var e=document.getElementById("fragebtn"); if(e) e.hidden=!wuenscheAn(); }
