@@ -688,7 +688,8 @@ function inbetriebnahmeVon(p){
    zwei, Reihenfolge bleibt; fehlende kommen hinten dazu (neu:true). */
 function standardRegel(ib, kg, termine){
   var mIb=+String(ib||"").slice(5,7); if(!mIb) return null;
-  var mH=((mIb+5)%12)+1, hjCode=(+kg||0)>=30?"HJW":"HJI";
+  /* kg null = Füllmenge unbekannt: Halbjahres-Kürzel offen lassen */
+  var mH=((mIb+5)%12)+1, hjCode=kg===null?"":((+kg||0)>=30?"HJW":"HJI");
   var abst=function(x,y){ var d=Math.abs(x-y); return Math.min(d,12-d); };
   var code=function(t){ var k=String(t.intervallCode||"").trim().toUpperCase(); return k==="HW"?"HJW":(k.indexOf("HI")===0?"HJI":k); };
   /* wie nah ist ein Termin an der Jahreswartung? Monat zählt vor Kürzel */
@@ -701,6 +702,33 @@ function standardRegel(ib, kg, termine){
   if(jwI<0) r.push({code:"JW", monat:mIb, neu:true});
   while(r.length<2) r.push({code:hjCode, monat:mH, neu:true});
   return r;
+}
+/* Füllmenge für die Standardregel: bekannt → so; sonst kurz nachfragen, ob
+   die Anlage 30 kg oder mehr hat (HJW) oder weniger (HJI). „weiß nicht“ → null
+   (Kürzel bleibt offen), Abbrechen → undefined */
+function regelKgFragen(kg){
+  kg=parseFloat(String(kg==null?"":kg).replace(",","."));
+  if(kg>0) return Promise.resolve(kg);
+  return new Promise(function(fertig){
+    var v=ansichtOeffnen("Füllmenge unbekannt");
+    v.schritt.textContent="für den Halbjahrestermin";
+    var erledigt=false, ende=function(w){ if(erledigt) return; erledigt=true; v.zu(); fertig(w); };
+    var box=el('<div class="stack"><div style="font-size:16px;font-weight:600">Hat die Anlage 30 kg Kältemittel oder mehr?</div>'+
+      '<div class="muted" style="font-size:13px">Ab 30 kg ist der Halbjahrestermin eine Halbjahreswartung (HJW), darunter eine Halbjahresinspektion (HJI).</div>'+
+      '<button class="btn" type="button" data-w="ja" style="text-align:left">Ja, 30 kg oder mehr → HJW</button>'+
+      '<button class="btn" type="button" data-w="nein" style="text-align:left">Nein, weniger als 30 kg → HJI</button>'+
+      '<button class="btn ghost" type="button" data-w="weiss" style="text-align:left">Weiß nicht – Kürzel offen lassen</button></div>');
+    box.querySelector('[data-w="ja"]').onclick=function(){ ende(30); };
+    box.querySelector('[data-w="nein"]').onclick=function(){ ende(0); };
+    box.querySelector('[data-w="weiss"]').onclick=function(){ ende(null); };
+    v.inhalt.appendChild(box);
+    box.closest(".assistent").querySelector('[data-a="zu"]').onclick=function(){ ende(undefined); };
+  });
+}
+/* Text zur angewandten Regel */
+function regelText(r){
+  return "Standardregel: "+r.map(function(x){ return (x.code||"Kürzel offen")+" "+MONATE_L[x.monat]; }).join(" · ")+
+    (r.some(function(x){ return !x.code; }) ? " – HJW oder HJI bitte noch wählen" : "");
 }
 /* weitere Termine einer Anlage neu anlegen (aus der Standardregel im Dialog) */
 function termineNeuAnlegen(standortId, anlageId, liste, grund){
@@ -3748,15 +3776,17 @@ function anlageAssistent(start, titel, neu, alles){
       inhalt.querySelector("[data-regelall]").onclick=function(){
         if(!a.inbetriebnahme){ toast("Zuerst die Inbetriebnahme eintragen – daraus kommen die Termine."); return; }
         if(a._termine.length>2){ toast("Mehr als zwei Termine – bitte in der Verwaltung ordnen."); return; }
-        var r=standardRegel(a.inbetriebnahme, a.kaeltemittelKg, a._termine);
-        r.forEach(function(x,i){
-          var t=a._termine[i];
-          if(!t){ t={id:null, _neu:true, monatGrund:""}; a._termine.push(t); }
-          t.intervallCode=x.code; t.monat=x.monat;
+        regelKgFragen(a.kaeltemittelKg).then(function(kg){
+          if(kg===undefined) return;
+          var r=standardRegel(a.inbetriebnahme, kg, a._termine);
+          r.forEach(function(x,i){
+            var t=a._termine[i];
+            if(!t){ t={id:null, _neu:true, monatGrund:""}; a._termine.push(t); }
+            t.intervallCode=x.code; t.monat=x.monat;
+          });
+          termineZeigen();
+          toast(regelText(r));
         });
-        termineZeigen();
-        toast("Standardregel: "+r.map(function(x){ return x.code+" "+MONATE_L[x.monat]; }).join(" · ")+
-          ((+a.kaeltemittelKg||0)?"":" (Füllmenge unbekannt → HJI)"));
       };
       var hinweise=function(){
         inhalt.querySelectorAll("[data-ti]").forEach(function(box){
@@ -9577,17 +9607,19 @@ function verwaltungEditor(s){
       var kg=(kgF && kgF.value!=="") ? parseFloat(String(kgF.value).replace(",",".")) : +(d.kaeltemittelKg||0);
       var zeilen=Array.prototype.filter.call(k.querySelectorAll(".terminzeile"), function(z){ var e=z.querySelector('[data-t="entfaellt"]'); return !(e && e.checked); });
       if(zeilen.length>2){ toast("Diese Anlage hat mehr als zwei Termine – bitte zuerst die überzähligen auf „Termin entfällt“ setzen."); return; }
-      var r=standardRegel(ib, kg, zeilen.map(function(z){
-        return {intervallCode:z.querySelector('[data-t="intervallCode"]').value, monat:z.querySelector('[data-t="monat"]').value}; }));
-      r.forEach(function(x,i){
-        var z=zeilen[i];
-        if(!z){ z=terminZeile({id:"NP"+Date.now().toString(36)+Math.random().toString(36).slice(2,5), aktiv:true}, true); k.querySelector(".termine").appendChild(z); }
-        z.querySelector('[data-t="intervallCode"]').value=x.code;
-        z.querySelector('[data-t="monat"]').value=String(x.monat);
+      regelKgFragen(kg).then(function(kg2){
+        if(kg2===undefined) return;
+        var r=standardRegel(ib, kg2, zeilen.map(function(z){
+          return {intervallCode:z.querySelector('[data-t="intervallCode"]').value, monat:z.querySelector('[data-t="monat"]').value}; }));
+        r.forEach(function(x,i){
+          var z=zeilen[i];
+          if(!z){ z=terminZeile({id:"NP"+Date.now().toString(36)+Math.random().toString(36).slice(2,5), aktiv:true}, true); k.querySelector(".termine").appendChild(z); }
+          z.querySelector('[data-t="intervallCode"]').value=x.code;
+          z.querySelector('[data-t="monat"]').value=String(x.monat);
+        });
+        optionenNeu(); sollHinweisNeu(k); bearbeitet=true;
+        toast(regelText(r)+" – bitte speichern.");
       });
-      optionenNeu(); sollHinweisNeu(k); bearbeitet=true;
-      toast("Standardregel: "+r.map(function(x){ return x.code+" "+MONATE_L[x.monat]; }).join(" · ")+
-        ((+kg||0)?"":" (Füllmenge unbekannt → HJI)")+" – bitte speichern.");
     };
     k.querySelector('[data-a="anlagentyp"]').oninput=optionenNeu;
     k.querySelector('[data-a="inbetriebnahme"]').onchange=function(){ sollHinweisNeu(k); };
