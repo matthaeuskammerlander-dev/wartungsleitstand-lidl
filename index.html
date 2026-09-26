@@ -387,6 +387,7 @@ table.dt td{padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:
     <img class="logo" src="logo.png" alt="Kammerlander Umwelt- und Klimatechnik GmbH" width="223" height="64">
     <div class="mark"><b>Wartungsleitstand</b><span>Lidl Österreich · Klimaanlagen</span></div>
     <div class="hspace"></div>
+    <button class="btn ghost icon" type="button" id="neuladen" hidden title="Daten und App neu laden" aria-label="Aktualisieren">↻</button>
     <button class="btn ghost icon" type="button" id="qrbtn" hidden>QR-Code</button>
     <div class="stand" id="stand" hidden></div>
   </div>
@@ -881,6 +882,39 @@ function berechneFaelligkeiten(){
     p.naechste=folge;
     p.erledigtDurch=durch;
     p.status = folge<bald ? "faellig" : "erledigt";
+  });
+
+  /* Mehrere Termine einer Anlage (z. B. März und September): wurde die Anlage
+     NACH einem überfälligen Termin für einen späteren Termin gewartet, ist der
+     frühere überholt – nicht gemacht („ausgelassen“), aber auch nicht mehr
+     überfällig. Er kommt im nächsten Jahr wieder dran. (So im Büro vereinbart,
+     Beispiel Braunau.) */
+  /* gleiche Anlage = zusammengeführte Anlage ODER im selben Markt gleich benannt
+     (in der alten Liste steht dieselbe Anlage oft zweimal, je Termin eine Zeile) */
+  var jeAnlage={};
+  POS.forEach(function(p){
+    var an=anlageVon(p); if(!an) return;
+    var nm=String(anlagenName(an.leader)||"").toLowerCase().replace(/[^a-z0-9äöüß]/g,"");
+    var key = (nm && nm!=="anlageohnetypangabe") ? p.standortId+"|"+nm : "a|"+an.id;
+    (jeAnlage[key]=jeAnlage[key]||[]).push(p);
+  });
+  Object.keys(jeAnlage).forEach(function(k){
+    var zeilen=jeAnlage[k]; if(zeilen.length<2) return;
+    zeilen.forEach(function(p){
+      if(p.status!=="ueberfaellig" || !p.naechste || !p.anker) return;
+      /* nur ein ANDERER Termin derselben Anlage zählt: zusammengeführt, oder
+         gleich benannt mit anderem Soll-Monat (gleicher Monat = eher zwei Geräte) */
+      var L=zeilen.filter(function(q){
+        return q!==p && (anlageVon(q).id===anlageVon(p).id || (+q.monat||0)!==(+p.monat||0));
+      }).map(function(q){ return q.letzte; }).filter(Boolean).sort().pop();
+      if(!L || !(p.naechste<L)) return;
+      if(L>plusMonate(p.naechste,12)) return;             /* ein Jahr später hilft das nicht mehr */
+      var j=+L.slice(0,4), n=ankerIm(p.anker,j);
+      while(n<=L){ j++; n=ankerIm(p.anker,j); }
+      p.ausgelassen=p.naechste; p.ueberholtDurch=L;
+      p.naechste=n; p.erledigtDurch=null;
+      p.status = n<heute ? "ueberfaellig" : (n<bald ? "faellig" : "erledigt");
+    });
   });
 
   ST.forEach(function(s){
@@ -2633,6 +2667,8 @@ function standortDetail(s){
       '<button class="btn ghost sm" type="button" data-akt="historie">Wartungshistorie</button>'+
       /* bearbeitet wird in der Verwaltung – nur für Admins */
       (Admin.frei?'<button class="btn ghost sm" type="button" data-akt="bearbeiten" data-schreiben>Daten bearbeiten</button>':"")+
+      /* weitere Anlage, etwa aus dem Prüfbuch (auch per KI) – die alte Liste kennt oft nur eine */
+      (angemeldetOderLokal() && !nurLesen()?'<button class="btn ghost sm" type="button" data-akt="anlageneu" data-schreiben>+ Anlage anlegen</button>':"")+
     "</div>"+
     (s.notiz?'<div class="note"><strong>Notiz:</strong> '+esc(s.notiz)+"</div>":"")+
     '<div class="stack" id="poslist"></div>'+
@@ -2640,6 +2676,8 @@ function standortDetail(s){
   d.querySelector('[data-akt="historie"]').onclick=function(){
     S.verlaufStandort=s.id; S.view="verlauf"; render(); window.scrollTo({top:0});
   };
+  var anlNeuKnopf=d.querySelector('[data-akt="anlageneu"]');
+  if(anlNeuKnopf) anlNeuKnopf.onclick=function(){ anlageNeuAnlegen(s); };
   var bearbKnopf=d.querySelector('[data-akt="bearbeiten"]');
   if(bearbKnopf) bearbKnopf.onclick=function(){
     S.adm=S.adm||{suche:"", filter:"alle", sort:"filiale", auf:true};
@@ -2715,6 +2753,37 @@ function termineStart(leader){
 /* Was der Dialog an Inbetriebnahme und Terminen geändert hat – je Zeile
    die neuen Werte und die Einträge für den Änderungsverlauf. Die
    Inbetriebnahme gehört der Anlage und geht deshalb auf alle ihre Zeilen. */
+/* Eine Anlage zu einem Markt anlegen – ohne Protokoll, etwa aus dem Prüfbuch,
+   wenn die alte Liste für den Markt nur eine Anlage kennt, es aber mehrere
+   gibt. Derselbe geführte Dialog mit KI („Aus Fotos lesen“) und Termin. */
+function anlageNeuAnlegen(s){
+  if(nurLesen()){ toast("Mit diesem Konto lässt sich nur ansehen."); return; }
+  if(!s) return;
+  var start={standortId:s.id, _termine:[{id:"NEU", intervallCode:"JW", monat:0}], inbetriebnahme:null};
+  anlageAssistent(start, "Neue Anlage – "+stName(s), true, true).then(function(erg){
+    if(!erg) return;
+    var id="NP"+Date.now().toString(36)+Math.random().toString(36).slice(2,5);
+    var t=(erg._termine&&erg._termine[0])||{};
+    var felder={standortId:s.id, intervallCode:t.intervallCode||"", monat:+t.monat||0, monatGrund:t.monatGrund||"",
+      aktiv:true, vorOrtNeu:!(t.intervallCode && +t.monat), inbetriebnahme:erg.inbetriebnahme||null};
+    Object.keys(erg).forEach(function(k){ if(k.charAt(0)!=="_" && STAMM_FELDER_POS.indexOf(k)>=0 && !leerWert(erg[k])) felder[k]=erg[k]; });
+    if(erg._nachweiseNeu && erg._nachweiseNeu.length)
+      felder.nachweise=erg._nachweiseNeu.slice().sort(function(x,y){ return x.datum.localeCompare(y.datum); });
+    if(erg._notizDazu) felder.notiz=((felder.notiz||"")+" "+erg._notizDazu).trim();
+    var rec={id:"position:"+id, typ:"position", ziel:id, felder:felder, neu:true,
+             geaendert:new Date().toISOString(), von:wer(), grund:"Anlage angelegt"};
+    stammUeber[rec.id]=rec;
+    stammSpeichern(rec).then(function(wo){
+      if(wo===false){ delete stammUeber[rec.id]; wendeStammdatenAn(); render(); toast("Nicht gespeichert – weder Datenbank noch Gerätespeicher erreichbar."); return; }
+      wendeStammdatenAn();
+      protokolliere({art:"stammdaten", standortId:s.id, standortName:stName(s), grund:"Anlage angelegt",
+        felder:[{feld:"anlage", name:"Neue Anlage", alt:"–", neu:(felder.anlagentyp||"Anlage")+" · "+anlageKurz(felder)+
+          (felder.intervallCode?" · "+felder.intervallCode+(felder.monat?" "+MONATE_L[felder.monat]:""):"")}]});
+      toast(wo==="geraet" ? "Anlage auf dem Gerät gespeichert – wird übertragen, sobald Verbindung besteht." : "Anlage angelegt.");
+      render();
+    });
+  });
+}
 /* alle bekannten Wartungsbesuche einer Anlage: Liste und Prüfbuch jeder
    Termin-Zeile, dazu die Wartungsprotokolle der App */
 function besucheDerAnlage(p){
@@ -8756,7 +8825,8 @@ function verwaltungEditor(s){
     "</fieldset>"+
 
     '<fieldset><legend>Anlagen dieses Markts</legend><div id="a_anlagen" class="stack"></div>'+
-      '<div style="margin-top:10px"><button class="btn ghost sm" type="button" id="a_plus">+ weitere Anlage</button></div>'+
+      '<div class="rowflex" style="margin-top:10px"><button class="btn ghost sm" type="button" id="a_plus">+ weitere Anlage</button>'+
+        (s._entwurf?"":'<button class="btn ghost sm" type="button" id="a_plusKi">+ Anlage geführt anlegen (auch aus Prüfbuch per KI)</button>')+"</div>"+
       '<div class="muted" style="font-size:12px;margin-top:8px">Ein Markt hat eine oder mehrere <strong>Anlagen</strong>. Jede Anlage hat ihre '+
         '<strong>Termine</strong>: die Jahreswartung am Jahrestag der Inbetriebnahme, dazu sechs Monate versetzt HJW (ab 30 kg Kältemittel) '+
         'oder HJI. Steht ein Termin in der falschen Anlage, schiebt ihn die Auswahl rechts neben dem Termin hinüber.</div>'+
@@ -8948,7 +9018,10 @@ function verwaltungEditor(s){
     var k=el('<div class="akarte anlagekarte" data-k="k'+kartenNr+'" style="background:var(--surface)">'+
       '<div class="rowflex" style="justify-content:space-between;gap:8px">'+
         '<strong style="font-size:15px">'+(anl?"Anlage":"Neue Anlage")+"</strong>"+
-        '<button class="btn ghost sm" type="button" data-a2="plus">+ Termin</button></div>'+
+        '<span class="rowflex" style="gap:6px">'+
+        /* dieselbe geführte Prüfung wie beim Protokoll – samt KI aus Prüfbuch/Typenschild */
+        (anl?'<button class="btn ghost sm" type="button" data-a2="pruefen">Prüfen / aus Fotos (KI)</button>':"")+
+        '<button class="btn ghost sm" type="button" data-a2="plus">+ Termin</button></span></div>'+
       '<div class="grid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:10px">'+
         '<label class="fl"><span>Bezeichnung der Anlage</span><input type="text" data-a="anlagentyp" placeholder="z. B. VRV Verkaufsraum" value="'+esc(d.anlagentyp||"")+'"></label>'+
         /* Eine Anlage, ein Inbetriebnahmedatum – die Termine darunter teilen
@@ -8969,6 +9042,11 @@ function verwaltungEditor(s){
       '<div class="termine stack"></div>'+
       '<label class="fl"><span>Notiz</span><input type="text" data-a="notiz" value="'+esc((anl?anl.leader.notiz:"")||"")+'"></label>'+
     "</div>");
+    var prKnopf=k.querySelector('[data-a2="pruefen"]');
+    if(prKnopf) prKnopf.onclick=function(){
+      if(!window.confirm("Die Anlage im geführten Dialog prüfen (auch aus Fotos per KI)?\n\nNoch nicht gespeicherte Änderungen hier im Markt gehen dabei verloren – vorher „Speichern“, falls nötig.")) return;
+      anlageDatenErgaenzen(anl.leader);
+    };
     k.querySelector('[data-a2="plus"]').onclick=function(){
       k.querySelector(".termine").appendChild(terminZeile({id:"NP"+Date.now().toString(36)+Math.random().toString(36).slice(2,5), aktiv:true}, true));
       optionenNeu(); sollHinweisNeu(k);
@@ -9015,6 +9093,8 @@ function verwaltungEditor(s){
     anlageKarte(null).querySelector('[data-a2="plus"]').click();
     optionenNeu();
   };
+  var plusKi=c.querySelector("#a_plusKi");
+  if(plusKi) plusKi.onclick=function(){ anlageNeuAnlegen(s); };
 
   c.querySelector("#adm_schliessen").onclick=function(){ A.sel=null; A.entwurf=null; render(); };
 
@@ -9287,6 +9367,24 @@ function pruefListe(){
           (x.d.kaeltemittelKg?" und gleiche Füllmenge":"")+(snX||snY?"":", keine Seriennummer")+
           " – dieselbe Anlage zweimal"+(neu?" (eine davon neu angelegt)":"")+"? Sonst Seriennummer eintragen.", s);
       });
+    });
+  });
+
+  /* 3a. Dieselbe Anlage zweimal geführt: im selben Markt gleich benannt, nicht
+     zusammengeführt, verschiedene Soll-Monate (so stand es oft in der alten Liste) */
+  ST.forEach(function(s){
+    var jeName={};
+    anlagenDesMarkts(s,false).forEach(function(a){
+      var nm=String(anlagenName(a.leader)||"").toLowerCase().replace(/[^a-z0-9äöüß]/g,"");
+      if(!nm || nm==="anlageohnetypangabe") return;
+      (jeName[nm]=jeName[nm]||[]).push(a);
+    });
+    Object.keys(jeName).forEach(function(nm){
+      var l=jeName[nm]; if(l.length<2) return;
+      var monate=l.map(function(a){ return +a.leader.monat||0; });
+      if(monate.filter(function(m,i){ return monate.indexOf(m)===i; }).length<2) return;
+      dazu("Hinweis","Termine", "„"+anlagenName(l[0].leader)+"“ steht "+l.length+"× mit verschiedenen Soll-Monaten ("+
+        monate.map(function(m){ return MONATE_L[m]||"–"; }).join(", ")+") – eine Anlage mit mehreren Terminen? Dann in der Verwaltung zusammenführen.", s);
     });
   });
 
@@ -9696,6 +9794,13 @@ function zeigeQr(){
   ov.querySelector("#qrclose").focus();
 }
 document.getElementById("qrbtn").onclick=zeigeQr;
+/* Aktualisieren: holt die neueste App-Fassung und alle Daten neu. Ein
+   angefangenes Protokoll ist als Entwurf gesichert – trotzdem nachfragen. */
+document.getElementById("neuladen").onclick=function(){
+  if(formDirty && !window.confirm("Das Protokoll ist angefangen. Es ist als Entwurf gesichert und wird nach dem Neuladen angeboten.\n\nJetzt aktualisieren?")) return;
+  if(typeof entwurfSofort==="function" && entwurfSofort) entwurfSofort();
+  setTimeout(function(){ location.reload(); }, 150);
+};
 
 render();
 initStore();
@@ -9761,6 +9866,7 @@ idbOeffnen()
     window.LIDL_DB=daten;
     if(tabs) tabs.hidden=false;
     if(qrbtn) qrbtn.hidden=false;
+    var nl=document.getElementById("neuladen"); if(nl) nl.hidden=false;
     if(stand) stand.hidden=false;
     starteWartungsleitstand();
   }
@@ -9768,6 +9874,7 @@ idbOeffnen()
   function schirm(){
     if(tabs) tabs.hidden=true;
     if(qrbtn) qrbtn.hidden=true;
+    var nl2=document.getElementById("neuladen"); if(nl2) nl2.hidden=true;
     if(stand) stand.hidden=true;
     app.innerHTML="";
     var card=document.createElement("div");
