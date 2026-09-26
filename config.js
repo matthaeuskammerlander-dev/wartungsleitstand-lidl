@@ -18,7 +18,7 @@ window.UKT_CONFIG = {
   /* KI-Erkennung von Prüfbüchern, Typenschildern und Lidl-Aufträgen. Bleibt
      aus, bis die Funktion ki-lesen in Supabase eingerichtet ist (siehe
      KI-EINRICHTUNG.md). Dann auf true stellen. */
-  kiAktiv: false,
+  kiAktiv: true,
 
   /* Posteingang aus dem Datenbank-Postfach (Synology-Skript). Bleibt aus, bis
      POSTEINGANG-EINRICHTUNG.md erledigt ist. */
