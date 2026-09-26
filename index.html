@@ -889,24 +889,16 @@ function berechneFaelligkeiten(){
      frühere überholt – nicht gemacht („ausgelassen“), aber auch nicht mehr
      überfällig. Er kommt im nächsten Jahr wieder dran. (So im Büro vereinbart,
      Beispiel Braunau.) */
-  /* gleiche Anlage = zusammengeführte Anlage ODER im selben Markt gleich benannt
-     (in der alten Liste steht dieselbe Anlage oft zweimal, je Termin eine Zeile) */
+  /* nur die Termine EINER Anlage (automatisch gepaart oder zusammengeführt).
+     Doppelte JW-Zeilen der alten Liste werden vorher bereinigt (Altlasten). */
   var jeAnlage={};
-  POS.forEach(function(p){
-    var an=anlageVon(p); if(!an) return;
-    var nm=String(anlagenName(an.leader)||"").toLowerCase().replace(/[^a-z0-9äöüß]/g,"");
-    var key = (nm && nm!=="anlageohnetypangabe") ? p.standortId+"|"+nm : "a|"+an.id;
-    (jeAnlage[key]=jeAnlage[key]||[]).push(p);
-  });
+  POS.forEach(function(p){ var an=anlageVon(p); if(an) (jeAnlage[an.id]=jeAnlage[an.id]||[]).push(p); });
   Object.keys(jeAnlage).forEach(function(k){
     var zeilen=jeAnlage[k]; if(zeilen.length<2) return;
     zeilen.forEach(function(p){
       if(p.status!=="ueberfaellig" || !p.naechste || !p.anker) return;
-      /* nur ein ANDERER Termin derselben Anlage zählt: zusammengeführt, oder
-         gleich benannt mit anderem Soll-Monat (gleicher Monat = eher zwei Geräte) */
-      var L=zeilen.filter(function(q){
-        return q!==p && (anlageVon(q).id===anlageVon(p).id || (+q.monat||0)!==(+p.monat||0));
-      }).map(function(q){ return q.letzte; }).filter(Boolean).sort().pop();
+      /* ein ANDERER Termin derselben Anlage */
+      var L=zeilen.filter(function(q){ return q!==p; }).map(function(q){ return q.letzte; }).filter(Boolean).sort().pop();
       if(!L || !(p.naechste<L)) return;
       if(L>plusMonate(p.naechste,12)) return;             /* ein Jahr später hilft das nicht mehr */
       var j=+L.slice(0,4), n=ankerIm(p.anker,j);
@@ -4483,7 +4475,8 @@ function initSupabase(){
   Store.sb.auth.getSession().then(function(r){
     var sess=r&&r.data?r.data.session:null;
     if(sess){ Store.benutzer=sess.user; Store.modus="supabase"; ladeProtokolle();   /* übertragen erst nach der Rollenprüfung */
-      adminPruefen().then(function(){ flushQueue(); return ladeStammdaten(); }).then(storeNachRender); }
+      adminPruefen().then(function(){ flushQueue(); return ladeStammdaten(); }).then(storeNachRender)
+        .then(function(){ setTimeout(altlastenAutomatisch, 1500); }); }   /* Altlasten der alten Liste bereinigen (nur Admins) */
     else { Store.modus="anmeldung"; }
     storeNachRender();
   });
@@ -4502,7 +4495,8 @@ function initSupabase(){
       }, function(){});
     }
     if(sess){ Store.benutzer=sess.user; Store.modus="supabase"; ladeProtokolle();   /* übertragen erst nach der Rollenprüfung */
-      adminPruefen().then(function(){ flushQueue(); return ladeStammdaten(); }).then(storeNachRender); }
+      adminPruefen().then(function(){ flushQueue(); return ladeStammdaten(); }).then(storeNachRender)
+        .then(function(){ setTimeout(altlastenAutomatisch, 1500); }); }   /* Altlasten der alten Liste bereinigen (nur Admins) */
     else {
       Store.benutzer=null; Store.modus="anmeldung"; protokolle=[]; Admin.zentral=false; Admin.frei=false;
       /* abgemeldet: nichts von dem, was nur Angemeldete sehen dürfen, bleibt
@@ -9606,22 +9600,10 @@ function pruefListe(){
     });
   });
 
-  /* 3a. Dieselbe Anlage zweimal geführt: im selben Markt gleich benannt, nicht
-     zusammengeführt, verschiedene Soll-Monate (so stand es oft in der alten Liste) */
-  ST.forEach(function(s){
-    var jeName={};
-    anlagenDesMarkts(s,false).forEach(function(a){
-      var nm=String(anlagenName(a.leader)||"").toLowerCase().replace(/[^a-z0-9äöüß]/g,"");
-      if(!nm || nm==="anlageohnetypangabe") return;
-      (jeName[nm]=jeName[nm]||[]).push(a);
-    });
-    Object.keys(jeName).forEach(function(nm){
-      var l=jeName[nm]; if(l.length<2) return;
-      var monate=l.map(function(a){ return +a.leader.monat||0; });
-      if(monate.filter(function(m,i){ return monate.indexOf(m)===i; }).length<2) return;
-      dazu("Hinweis","Termine", "„"+anlagenName(l[0].leader)+"“ steht "+l.length+"× mit verschiedenen Soll-Monaten ("+
-        monate.map(function(m){ return MONATE_L[m]||"–"; }).join(", ")+") – eine Anlage mit mehreren Terminen? Dann in der Verwaltung zusammenführen.", s);
-    });
+  /* 3a. Altlast der alten Liste: dieselbe Anlage zweimal mit „JW“ */
+  altlastenFaelle().forEach(function(fa){
+    dazu("Hinweis","Termine", "„"+fa.name+"“ steht "+fa.anlagen.length+"× mit JW (Altlast der alten Liste) – "+
+      (fa.vorschlag ? "wird beim Öffnen durch einen Admin bereinigt: "+altlastText(fa.vorschlag)+"." : fa.grund+"."), fa.s);
   });
 
   /* 3b. Derselbe Markt doppelt: gleiche Adresse oder gleiche Kartenposition */
@@ -9723,9 +9705,122 @@ function marktDrang(s){
   var n=naechsterTerminMarkt(s);
   return n && tageBis(n)<=90 ? 1.2 : 1;
 }
+/* ---------- Altlasten der alten Excel-Liste ----------
+   Eine Anlage mit Halbjahrestermin steht in der alten Liste in zwei Zeilen.
+   Ist bei beiden „JW“ eingetragen, hält die App sie für zwei Anlagen (eine
+   Anlage hat nur eine Jahreswartung). Regel des Büros für die Korrektur:
+   – die JW liegt im Monat der Inbetriebnahme, der Halbjahrestermin sechs
+     Monate danach; welche Zeile welche ist: die näher am IB-Monat ist die JW;
+   – weicht der Soll-Monat der alten Liste höchstens 3 Monate davon ab, bleibt er;
+   – Halbjahrestermin ab 30 kg Kältemittel HJW, sonst HJI;
+   – ohne Inbetriebnahme wird nichts gerechnet, der Fall steht in Nachbessern. */
+function altlastNamen(a){ return String(anlagenName(a.leader)||"").toLowerCase().replace(/[^a-z0-9äöüß]/g,""); }
+function monatsAbstand(a,b){ var d=Math.abs((+a||0)-(+b||0)); return Math.min(d, 12-d); }
+function altlastenFaelle(){
+  var faelle=[];
+  ST.forEach(function(s){
+    var jeName={};
+    anlagenDesMarkts(s,false).forEach(function(a){
+      var nm=altlastNamen(a); if(!nm || nm==="anlageohnetypangabe") return;
+      (jeName[nm]=jeName[nm]||[]).push(a);
+    });
+    Object.keys(jeName).forEach(function(nm){
+      var l=jeName[nm]; if(l.length<2) return;
+      if(l.every(function(a){ return a.leader.anlageZu===a.leader.id; })) return;   /* bewusst getrennt */
+      /* nur die klare Altlast: Zeilen, die jede für sich nur eine Jahreswartung haben */
+      var alleJW=l.every(function(a){ return a.termine.length===1 && intervallArt(a.termine[0].intervallCode).kurz==="JW"; });
+      if(!alleJW) return;
+      var fall={s:s, name:anlagenName(l[0].leader), anlagen:l, vorschlag:null, grund:""};
+      if(l.length!==2){ fall.grund=l.length+" Zeilen – bitte von Hand ordnen"; faelle.push(fall); return; }
+      var d0=anlageDaten(l[0].leader), d1=anlageDaten(l[1].leader);
+      var ib=d0.inbetriebnahme||d1.inbetriebnahme;
+      if(!ib){ fall.grund="Inbetriebnahme fehlt – bitte eintragen, dann korrigiert die App"; faelle.push(fall); return; }
+      var mIb=+ib.slice(5,7), zielHalb=((mIb+6-1)%12)+1;
+      var t0=l[0].termine[0], t1=l[1].termine[0];
+      var m0=slotMonat(t0), m1=slotMonat(t1);
+      /* näher am IB-Monat = Jahreswartung */
+      var jw = (monatsAbstand(m0,mIb) <= monatsAbstand(m1,mIb)) ? t0 : t1, hj = jw===t0 ? t1 : t0;
+      var kg=+(d0.kaeltemittelKg||d1.kaeltemittelKg||0);
+      var neuMonat=function(alt, ziel){ return (alt && monatsAbstand(alt,ziel)<=3) ? +alt : ziel; };
+      fall.vorschlag={jw:{t:jw, monat:neuMonat(slotMonat(jw), mIb)}, hj:{t:hj, monat:neuMonat(slotMonat(hj), zielHalb), code:kg>=30?"HJW":"HJI"}, ib:ib};
+      faelle.push(fall);
+    });
+  });
+  return faelle;
+}
+function altlastText(v){
+  return "JW "+MONATE_L[v.jw.monat]+" · "+v.hj.code+" "+MONATE_L[v.hj.monat]+" (Inbetriebnahme "+dfmt(v.ib)+")";
+}
+/* einen Vorschlag schreiben: Kürzel und Soll-Monate, und die Halbjahreszeile
+   ausdrücklich an die JW-Zeile hängen – dann ist es eine Anlage */
+function altlastUebernehmen(fall){
+  var v=fall.vorschlag, pro={};
+  pro[v.jw.t.id]={intervallCode:"JW", monat:v.jw.monat};
+  pro[v.hj.t.id]={intervallCode:v.hj.code, monat:v.hj.monat, anlageZu:v.jw.t.id};
+  var felder=[{feld:"intervallCode", name:fall.name+" – Termine", alt:"JW "+MONATE_L[slotMonat(v.jw.t)]+" · JW "+MONATE_L[slotMonat(v.hj.t)], neu:altlastText(v)}];
+  return positionenSchreiben(pro, "Altlast der alten Liste: zweimal JW bereinigt").then(function(wo){
+    if(wo===false) return false;
+    protokolliere({art:"stammdaten", standortId:fall.s.id, standortName:stName(fall.s),
+      grund:"Altlast der alten Liste: zweimal JW → "+altlastText(v), felder:felder});
+    return true;
+  });
+}
+/* Beim Öffnen durch einen Admin: alle Fälle mit Inbetriebnahme gleich korrigieren
+   (so vom Büro gewünscht; jeder Schritt steht im Änderungsverlauf und lässt
+   sich dort zurücknehmen). Nie in Präsentation oder als Kunde. */
+var altlastLaeuft=false;
+function altlastenAutomatisch(){
+  if(altlastLaeuft || !Admin.frei || demo() || nurLesen() || Store.modus!=="supabase") return;
+  var faelle=altlastenFaelle().filter(function(f){ return f.vorschlag; });
+  if(!faelle.length) return;
+  altlastLaeuft=true;
+  var ok=0, i=0;
+  var weiter=function(){
+    if(i>=faelle.length){
+      altlastLaeuft=false; berechneFaelligkeiten();
+      if(ok) toast(ok+" Altlast"+(ok===1?"":"en")+" der alten Liste bereinigt (zweimal JW) – siehe Änderungsverlauf.");
+      storeNachRender(); return;
+    }
+    altlastUebernehmen(faelle[i++]).then(function(x){ if(x) ok++; weiter(); }, weiter);
+  };
+  weiter();
+}
+/* Nachbessern: was die App nicht selbst bereinigen kann */
+function altlastKarte(){
+  var faelle=altlastenFaelle().filter(function(f){ return !f.vorschlag; });
+  if(!faelle.length || !Admin.frei) return null;
+  var c=el('<div class="card" style="border-color:var(--warn)"><div class="pad stack">'+
+    '<div><h2>Altlasten aus der alten Liste ('+faelle.length+')</h2><div class="sub">Dieselbe Anlage steht zweimal mit „JW“ – '+
+    "eine davon ist der Halbjahrestermin. Mit Inbetriebnahme korrigiert die App das selbst (JW im IB-Monat, "+
+    "Halbjahrestermin sechs Monate danach, alter Soll-Monat bleibt bei höchstens 3 Monaten Abweichung).</div></div></div></div>");
+  var host=c.querySelector(".stack");
+  faelle.forEach(function(fa){
+    var b=el('<div class="posbox"><div><strong>'+marktLink(fa.s)+"</strong> · „"+esc(fa.name)+"“ – "+esc(fa.grund)+"</div>"+
+      '<div style="font-size:13px">'+fa.anlagen.map(function(a){ var t=a.termine[0];
+        return "JW "+esc(MONATE_L[slotMonat(t)]||"–")+" · zuletzt "+(t.letzte?dfmt(t.letzte):"–"); }).join(" / ")+"</div>"+
+      '<div class="rowflex" style="gap:6px"><button class="btn sm" type="button" data-a="ib">Inbetriebnahme eintragen (auch aus Prüfbuch)</button>'+
+      '<button class="btn ghost sm" type="button" data-a="getrennt">Sind wirklich getrennte Anlagen</button></div></div>');
+    b.querySelector('[data-a="ib"]').onclick=function(){
+      Promise.resolve(anlageDatenErgaenzen(fa.anlagen[0].leader)).then(function(){ setTimeout(altlastenAutomatisch, 500); });
+    };
+    b.querySelector('[data-a="getrennt"]').onclick=function(){
+      if(!window.confirm("„"+fa.name+"“ in "+stName(fa.s)+" sind wirklich "+fa.anlagen.length+" getrennte Anlagen mit je einer Jahreswartung?\n\nTipp: danach in der Verwaltung unterscheidbar benennen.")) return;
+      var pro={}; fa.anlagen.forEach(function(a){ pro[a.leader.id]={anlageZu:a.leader.id}; });
+      positionenSchreiben(pro, "Altlast geprüft: getrennte Anlagen").then(function(wo){
+        if(wo===false){ toast("Nicht gespeichert – bitte nochmals versuchen."); return; }
+        protokolliere({art:"stammdaten", standortId:fa.s.id, standortName:stName(fa.s), grund:"Altlast geprüft: getrennte Anlagen",
+          felder:[{feld:"anlageZu", name:fa.name, alt:"unklar", neu:"getrennte Anlagen"}]});
+        berechneFaelligkeiten(); render();
+      });
+    };
+    host.appendChild(b);
+  });
+  return c;
+}
 function nachbessernAnsicht(liste){
   var f=document.createDocumentFragment();
   var A=S.adm;
+  var alt=altlastKarte(); if(alt) f.appendChild(alt);
   A.nbThema=A.nbThema||"alle";
   var themen=["alle"].concat(liste.map(function(x){ return x.thema; }).filter(function(t,i,a){ return a.indexOf(t)===i; }).sort());
   var sicht=liste.filter(function(x){ return A.nbThema==="alle" || x.thema===A.nbThema; });
