@@ -1,19 +1,11 @@
--- Techniker duerfen Anlagendaten vor Ort ergaenzen
+-- ÜBERHOLT – nicht mehr ausführen.
 --
--- Einmal im Supabase SQL Editor ausfuehren (New query -> einfuegen -> Run).
--- Sicher wiederholbar. Dasselbe steht auch in supabase-setup.sql.
+-- Die Rechte für Anlagendaten und offene Störungen regelt jetzt
+-- tools/rollen.sql (Techniker dürfen Anlagen UND offene Störungen speichern,
+-- Kunde und Präsentation nichts). Dieses alte Skript kannte die Störungen
+-- und die Rollen noch nicht und hätte Technikern das zentrale Speichern
+-- offener Störungen wieder genommen.
 --
--- Vorher: nur Admins durften Maerkte und Anlagen aendern.
--- Nachher: Maerkte weiterhin nur Admins; Anlagen (Kaeltemittel, Kreislaeufe,
--- Pruefbuch, Rueckkuehler, Regelung, Fernzugriff ...) alle angemeldeten
--- Techniker. Jede Aenderung steht mit Name und Grund im Aenderungsverlauf;
--- ein Admin kann sie in der Verwaltung jederzeit zuruecksetzen.
--- Loeschen bleibt Admins vorbehalten.
-
-drop policy if exists "stammdaten anlegen" on public.stammdaten;
-drop policy if exists "stammdaten aendern" on public.stammdaten;
-
-create policy "stammdaten anlegen" on public.stammdaten for insert to authenticated
-  with check (public.ist_admin() or typ = 'position');
-create policy "stammdaten aendern" on public.stammdaten for update to authenticated
-  using (public.ist_admin() or typ = 'position') with check (public.ist_admin() or typ = 'position');
+-- Wer es versehentlich ausgeführt hat: einfach tools/rollen.sql erneut
+-- ausführen, das stellt die richtigen Regeln wieder her.
+select 'überholt – bitte tools/rollen.sql verwenden' as hinweis;

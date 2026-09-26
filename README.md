@@ -552,10 +552,10 @@ der Verwaltung erscheint der Hinweis, Kürzel, Soll-Monat und
 Inbetriebnahme festzulegen.
 
 **Rechte:** Anlagendaten dürfen alle angemeldeten Techniker ergänzen, Märkte
-nur Admins. Dafür einmal `tools/anlagendaten-techniker.sql` im Supabase SQL
-Editor ausführen (steht auch in `supabase-setup.sql`). Bis dahin bleiben die
-Ergänzungen von Technikern auf deren Gerät und gehen nach dem Ausführen
-automatisch raus.
+nur Admins; offene Störungen dürfen alle Techniker speichern. Das regelt
+`tools/rollen.sql` (das ältere `anlagendaten-techniker.sql` ist überholt). Bis
+dahin bleiben Ergänzungen von Technikern auf deren Gerät und gehen nach dem
+Ausführen automatisch raus.
 
 ### Status einer Anlage
 

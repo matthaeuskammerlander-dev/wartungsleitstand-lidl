@@ -141,6 +141,9 @@ Deno.serve(async (req) => {
   );
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return antwort({ fehler: "Bitte anmelden." }, 401);
+  // Kunde und Präsentation dürfen nicht (kostet echtes Geld; Rolle aus tools/rollen.sql)
+  const { data: darf, error: rollenFehler } = await supabase.rpc("darf_schreiben");
+  if (rollenFehler || darf !== true) return antwort({ fehler: "Mit diesem Konto ist die KI-Erkennung nicht freigegeben." }, 403);
 
   // 2. Was soll gelesen werden?
   let eingabe: { art?: string; bilder?: { media_type: string; data: string }[]; kontext?: string };
@@ -204,10 +207,12 @@ Deno.serve(async (req) => {
   catch { return antwort({ fehler: "Die Antwort der KI war nicht lesbar." }, 502); }
 
   // 5. festhalten, was es gekostet hat
-  await supabase.from("ki_nutzung").insert({
+  const { error: nachweisFehler } = await supabase.from("ki_nutzung").insert({
     user_id: user.id, email: user.email, art, bilder: bilder.length, modell: r.model,
     tokens_ein: r.usage.input_tokens, tokens_aus: r.usage.output_tokens,
   });
+  // ohne Kostennachweis greift auch das Tageslimit nicht – das muss auffallen
+  if (nachweisFehler) console.error("ki_nutzung nicht eingetragen:", nachweisFehler.message);
 
   return antwort({ art, daten, modell: r.model });
 });

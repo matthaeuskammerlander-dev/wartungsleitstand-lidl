@@ -1,6 +1,9 @@
 -- Wartungsprotokolle für den Wartungsleitstand Lidl
 -- Einmalig im Supabase-Projekt ausführen: SQL Editor -> New query -> einfügen -> Run.
 -- Das Skript lässt sich jederzeit erneut ausführen; bereits Vorhandenes bleibt.
+-- ACHTUNG: Dieses Skript setzt die Zugriffsregeln auf den Grundstand OHNE
+-- Rollen zurück (Kunde/Präsentation könnten dann wieder mehr). Nach JEDEM
+-- Lauf deshalb tools/rollen.sql erneut ausführen.
 -- Ganz unten stehen die Tabellenrechte für die Data API – seit 30.10.2026
 -- vergibt Supabase sie nicht mehr von selbst (siehe Erklärung dort).
 
@@ -385,3 +388,9 @@ grant usage, select on all sequences in schema public to authenticated, service_
 -- Techniker-Konten legen Sie unter Authentication -> Users -> Add user an.
 
 
+
+-- ---------------------------------------------------------------------------
+-- DANACH: tools/rollen.sql erneut ausführen. Dieses Skript kennt die Rollen
+-- (Kunde, Präsentation, Inhaber) nicht und hat eben deren Sperren durch die
+-- Grundregeln ersetzt.
+select 'Fertig – jetzt tools/rollen.sql erneut ausführen!' as naechster_schritt;

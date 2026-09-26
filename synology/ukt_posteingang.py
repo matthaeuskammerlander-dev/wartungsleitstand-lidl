@@ -126,9 +126,19 @@ class Supabase:
 # ---------------------------------------------------------------- Mails
 
 def entschluesseln(wert):
+    """Kopfzeile lesbar machen – nie mit Fehler: eine Mail mit ungewöhnlich
+    kodiertem Betreff darf nicht den ganzen Posteingang blockieren"""
     teile = []
-    for text, zs in email.header.decode_header(wert or ""):
-        teile.append(text.decode(zs or "utf-8", "replace") if isinstance(text, bytes) else text)
+    try:
+        for text, zs in email.header.decode_header(str(wert) if wert is not None else ""):
+            if isinstance(text, bytes):
+                try:
+                    text = text.decode(zs or "utf-8", "replace")
+                except (LookupError, UnicodeDecodeError):
+                    text = text.decode("utf-8", "replace")
+            teile.append(text)
+    except Exception:                                     # noqa: BLE001
+        return str(wert or "").strip()
     return "".join(teile).strip()
 
 
@@ -143,6 +153,7 @@ def art_von(dateiname, betreff):
 
 
 def anhaenge(nachricht):
+    namen = {}
     for teil in nachricht.walk():
         if teil.get_content_maintype() == "multipart":
             continue
@@ -152,9 +163,19 @@ def anhaenge(nachricht):
         endung = os.path.splitext(name)[1].lower()
         if endung not in ARTEN:
             continue
+        # eingebettete Bilder (Logo in der Signatur) sind keine Anhänge
+        if teil.get_content_maintype() == "image" and (teil.get("Content-Disposition") or "").lower().startswith("inline"):
+            continue
         inhalt = teil.get_payload(decode=True)
-        if inhalt:
-            yield name, inhalt, ARTEN[endung]
+        if not inhalt:
+            continue
+        # gleichnamige Anhänge einer Mail: durchnummerieren, sonst ginge der zweite verloren
+        n = namen.get(name.lower(), 0)
+        namen[name.lower()] = n + 1
+        if n:
+            stamm, end = os.path.splitext(name)
+            name = "%s (%d)%s" % (stamm, n + 1, end)
+        yield name, inhalt, ARTEN[endung]
 
 
 def sauber(name):
@@ -173,13 +194,15 @@ def abholen(k):
         uids = (daten[0] or b"").split()
         neu = verschoben = 0
         for uid in uids:
+          # eine kaputte Mail darf die übrigen nicht aufhalten
+          try:
             typ, teile = imap.uid("fetch", uid, "(RFC822)")
             if typ != "OK" or not teile or not teile[0]:
                 continue
             nachricht = email.message_from_bytes(teile[0][1])
-            nid = (nachricht.get("Message-ID") or "").strip() or ("ohne-id-" + uid.decode())
+            nid = entschluesseln(nachricht.get("Message-ID")) or ("ohne-id-" + uid.decode())
             betreff = entschluesseln(nachricht.get("Subject"))
-            absender = email.utils.parseaddr(nachricht.get("From") or "")[1]
+            absender = email.utils.parseaddr(entschluesseln(nachricht.get("From")))[1]
             gefunden = list(anhaenge(nachricht))
             if not gefunden:
                 log("ohne PDF, bleibt liegen: %s – %s" % (absender, betreff))
@@ -207,6 +230,8 @@ def abholen(k):
                 if imap.uid("copy", uid, k["ordner_erledigt"])[0] == "OK":
                     imap.uid("store", uid, "+FLAGS", "(\\Deleted)")
                     verschoben += 1
+          except Exception as e:                         # noqa: BLE001
+            log("FEHLER bei Mail %s, bleibt liegen: %s" % (uid.decode(errors="replace"), e))
         if not PRUEFEN:
             imap.expunge()
         log("fertig: %d Mails, %d Dateien neu im Posteingang, %d Mails nach %s" %

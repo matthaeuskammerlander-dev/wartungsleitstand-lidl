@@ -69,11 +69,16 @@ create policy "stammdaten aendern" on public.stammdaten for update to authentica
 create policy "stammdaten zuruecksetzen" on public.stammdaten for delete to authenticated using (public.ist_admin());
 
 -- Stammdaten ohne Zugangsdaten der Regelungen – für Kunde und Präsentation
+-- Eine View läuft mit den Rechten ihres Besitzers (umgeht also die RLS der
+-- Tabelle). Deshalb: nur für Angemeldete, und nur lesen – die Standardrechte
+-- (auch anon, auch insert/update/delete) werden ausdrücklich entzogen.
 create or replace view public.stammdaten_lesen as
   select id, typ, ziel,
          felder - 'zugangLink' - 'zugangBenutzer' - 'zugangPasswort' as felder,
          neu, geaendert, von, grund
-    from public.stammdaten;
+    from public.stammdaten
+   where auth.uid() is not null;
+revoke all on public.stammdaten_lesen from public, anon, authenticated;
 grant select on public.stammdaten_lesen to authenticated;
 
 drop policy if exists "fotos hochladen" on storage.objects;
