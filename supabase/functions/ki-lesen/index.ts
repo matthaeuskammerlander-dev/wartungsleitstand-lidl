@@ -140,6 +140,12 @@ Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: CORS });
   if (req.method !== "POST") return antwort({ fehler: "Nur POST" }, 405);
 
+  // 0. Anfrage zuerst ganz lesen: wird die (große) Bilder-Anfrage nicht
+  //    abgenommen, hängt der Upload am Handy und endet mit
+  //    „Failed to send a request to the Edge Function“.
+  let eingabe: { art?: string; bilder?: { media_type: string; data: string }[]; kontext?: string };
+  try { eingabe = await req.json(); } catch { return antwort({ fehler: "Anfrage nicht lesbar." }, 400); }
+
   // 1. Wer ruft? Nur angemeldete Konten der App.
   const supabase = createClient(
     Deno.env.get("SUPABASE_URL")!,
@@ -154,8 +160,6 @@ Deno.serve(async (req) => {
   if (!rollenFehler && darf === false) return antwort({ fehler: "Mit diesem Konto ist die KI-Erkennung nicht freigegeben." }, 403);
 
   // 2. Was soll gelesen werden?
-  let eingabe: { art?: string; bilder?: { media_type: string; data: string }[]; kontext?: string };
-  try { eingabe = await req.json(); } catch { return antwort({ fehler: "Anfrage nicht lesbar." }, 400); }
   const art = String(eingabe.art ?? "");
   // Einordnung aus der App (Markt, Anlage, bekannte Techniker) – hilft bei Handschrift
   const kontext = String(eingabe.kontext ?? "").slice(0, 800);

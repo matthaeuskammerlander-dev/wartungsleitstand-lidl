@@ -288,6 +288,8 @@ a:not(.btn):hover{opacity:.8}
 .qrscan video{width:100%;height:100%;object-fit:cover}
 .qrscan .qrrahmen{position:absolute;inset:18%;border:3px solid #fff;border-radius:12px;box-shadow:0 0 0 999px rgba(0,0,0,.35)}
 .qrscan .qrtext{color:#fff;font-size:14px;text-align:center}
+.kilaeuft{margin:0 auto;width:46px;height:46px;border-radius:50%;border:5px solid var(--line);border-top-color:var(--accent,#0a7a6c);animation:kidreh 1s linear infinite}
+@keyframes kidreh{to{transform:rotate(360deg)}}
 .assistent{position:fixed;inset:0;z-index:110;background:rgba(10,14,18,.55);display:flex;align-items:center;justify-content:center;padding:12px}
 .as-karte{background:var(--surface);color:var(--ink);width:min(560px,100%);max-height:100%;display:flex;flex-direction:column;
   border-radius:14px;box-shadow:0 20px 50px rgba(0,0,0,.35);overflow:hidden}
@@ -1499,7 +1501,7 @@ function stoerungDialog(vorhanden){
       var knopfZurueck=function(){ kiKnopf.disabled=false; kiKnopf.textContent="Mit KI auslesen"; };
       /* ohne KI-Zugang über die eigene Claude-App (Kopier-Weg) */
       var lesen = kiWegWaehlen("auftrag").then(function(weg){
-        if(weg==="direkt") return mitFrist(kiLesen("auftrag", o.seiten, kiKontext(o.standortId?byId[o.standortId]:null, null)), 120000);
+        if(weg==="direkt") return kiLesen("auftrag", o.seiten, kiKontext(o.standortId?byId[o.standortId]:null, null));
         if(weg==="kopie") return kiKopierweg("auftrag", kiKontext(o.standortId?byId[o.standortId]:null, null)).then(function(d){ return d?{daten:d}:null; });
         return null;
       });
@@ -3531,7 +3533,8 @@ function anlageAssistent(start, titel, neu, alles){
         if(dateien.length>12){ toast("Höchstens 12 Bilder auf einmal."); return; }
         kopf("KI liest "+dateien.length+" Bild"+(dateien.length===1?"":"er")+" …", "bitte warten");
         /* mit Zeitgrenze: eine hängende Anfrage darf den Dialog nicht ewig sperren */
-        return mitFrist(kiLesen(art, dateien, kiKontext(kiMarkt(), a)), 120000).then(verarbeiten, function(e){
+        return kiLesen(art, dateien, kiKontext(kiMarkt(), a)).then(verarbeiten, function(e){
+          if(e && e.message==="abgebrochen"){ uebersicht(); return; }
           /* direkt nicht erreichbar (nicht eingerichtet, Limit, Netz): Kopier-Weg anbieten */
           if(window.confirm("Die KI-Erkennung hat nicht geklappt:\n"+(e&&e.message||e)+"\n\nStattdessen über die Claude-App lesen (Auftrag kopieren, Antwort einfügen)?")){
             kiKopierweg(art, kiKontext(kiMarkt(), a)).then(function(d){ if(d) return verarbeiten({daten:d}); else uebersicht(); })
@@ -5713,7 +5716,24 @@ function kiKopierweg(art, kontext){
 }
 function kiLesen(art, quellen, kontext){
   if(!kiAn()) return Promise.reject(new Error("KI-Erkennung ist nicht eingeschaltet."));
-  return Promise.all(quellen.map(kiBild)).then(function(bilder){
+  /* gut sichtbar: was gerade passiert und wie lange schon */
+  var v=ansichtOeffnen("KI liest "+quellen.length+" Bild"+(quellen.length===1?"":"er"));
+  v.schritt.textContent="bitte warten – meist 20 bis 90 Sekunden";
+  v.inhalt.appendChild(el('<div class="stack" style="align-items:center;text-align:center;padding:18px 4px">'+
+    '<div class="kilaeuft"></div>'+
+    '<div data-a="stand" style="font-size:16px;font-weight:600">Bilder werden vorbereitet …</div>'+
+    '<div data-a="zeit" class="muted"></div>'+
+    '<div class="note" style="text-align:left"><strong>Bitte in der App bleiben</strong> und den Bildschirm nicht sperren – '+
+      'sonst bricht das Handy die Verbindung ab. Danach kommt alles zur Kontrolle, nichts wird ungesehen gespeichert.</div></div>'));
+  var stand=v.inhalt.querySelector('[data-a="stand"]'), zeit=v.inhalt.querySelector('[data-a="zeit"]'), t0=Date.now();
+  var uhr=setInterval(function(){ zeit.textContent=Math.round((Date.now()-t0)/1000)+" s"; }, 1000);
+  var ende=function(){ clearInterval(uhr); v.zu(); };
+  /* „Schließen“ bricht nur die Anzeige ab – das Ergebnis wird dann verworfen */
+  var abgebrochen=false;
+  v.inhalt.closest(".assistent").querySelector('[data-a="zu"]').textContent="Abbrechen";
+  var abbruch=new Promise(function(_, nein){ v.inhalt.closest(".assistent").querySelector('[data-a="zu"]').onclick=function(){ abgebrochen=true; ende(); nein(new Error("abgebrochen")); }; });
+  var lauf=Promise.all(quellen.map(kiBild)).then(function(bilder){
+    stand.textContent="Claude liest "+bilder.length+" Bild"+(bilder.length===1?"":"er")+" …";
     return Store.sb.functions.invoke("ki-lesen", {body:{art:art, kontext:kontext||"",
       bilder:bilder.map(function(u){ return {media_type:"image/jpeg", data:u.split(",")[1]}; })}});
   }).then(function(r){
@@ -5721,9 +5741,15 @@ function kiLesen(art, quellen, kontext){
     /* die Funktion schickt eine lesbare Meldung mit – die zeigen */
     var ctx=r.error.context;
     return (ctx && ctx.json ? ctx.json().catch(function(){ return null; }) : Promise.resolve(null)).then(function(j){
+      /* Verbindung abgerissen (Netz, Handy gesperrt, Zeitüberschreitung) – verständlich sagen */
+      if(!j && r.error.name==="FunctionsFetchError")
+        throw new Error("Die Verbindung zur KI ist abgebrochen (Netz schwach, App verlassen oder Bildschirm gesperrt). Bitte nochmals versuchen, eventuell mit weniger Bildern.");
       throw new Error((j && j.fehler) || r.error.message || "KI-Erkennung fehlgeschlagen");
     });
   });
+  var frist=new Promise(function(_, nein){ setTimeout(function(){ nein(new Error("Die KI hat nicht rechtzeitig geantwortet – bitte mit weniger Bildern nochmals versuchen.")); }, 170000); });
+  return Promise.race([lauf, abbruch, frist]).then(function(d){ if(abgebrochen) throw new Error("abgebrochen"); ende(); return d; },
+    function(e){ ende(); throw e; });
 }
 /* Fotos wählen (Kamera oder Galerie), dann lesen lassen */
 function kiFotosWaehlen(){
