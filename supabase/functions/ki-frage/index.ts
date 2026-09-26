@@ -106,7 +106,7 @@ Deno.serve(async (req) => {
     .eq("user_id", user.id).eq("art", "frage").gte("zeit", heute);
   if ((count ?? 0) >= LIMIT_JE_TAG) return antwort({ fehler: "Tageslimit für Fragen erreicht." }, 429);
 
-  const kontext = String(e.kontext ?? "").slice(0, 24000);   // Übersicht aller Märkte ≈ 8000 Zeichen
+  const kontext = String(e.kontext ?? "").slice(0, 40000);   // Übersicht aller Märkte samt Anlagenliste ≈ 20000 Zeichen
   const client = new Anthropic();
   let r;
   try {
