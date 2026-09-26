@@ -434,7 +434,11 @@ var STAMM_FELDER_POS = ["anlagentyp","intervallCode","inbetriebnahme","monat","m
                         "gwp","psBar","toC","tkC","hermetisch","fluidgruppe","psv","gefahr","erstePruefung",
                         "leckageerkennung","dichtheitMonate","astv","konformitaet","aufsteller",
                         /* Innengeräte: [{raum, hersteller, modell, seriennummer, leistungKw}] */
-                        "innengeraete"];
+                        "innengeraete",
+                        /* neu angelegte Anlage ist geprüft und KEIN Doppel einer alten Zeile */
+                        "doppelGeprueft",
+                        /* wann vor Ort bzw. über „Anlage anlegen“ neu angelegt (nicht beim geplanten Import) */
+                        "neuAngelegt"];
 var ABGELEITET_POS   = ["kaeltemittelText","ueber30kg","baujahr"];
 function auswahl(o, felder){
   var r={}; felder.forEach(function(k){ r[k]=(o[k]===undefined?null:o[k]); }); return r;
@@ -2776,6 +2780,106 @@ function termineStart(leader){
 /* Eine Anlage zu einem Markt anlegen – ohne Protokoll, etwa aus dem Prüfbuch,
    wenn die alte Liste für den Markt nur eine Anlage kennt, es aber mehrere
    gibt. Derselbe geführte Dialog mit KI („Aus Fotos lesen“) und Termin. */
+/* ---------- Anlagen zusammenführen ----------
+   Dieselbe Anlage steht zweimal – etwa eine Zeile der alten Liste und eine per
+   KI aus dem Prüfbuch angelegte. Die Anlage mit Terminen/Historie bleibt (haupt),
+   die andere (doppel) wird stillgelegt. Unterschiedliche Angaben wählt der
+   Nutzer je Feld (Vorschlag: der Wert der jüngeren Anlage – meist aus dem
+   Prüfbuch). Wartungen, Historie und Innengeräte werden vereinigt. */
+/* in der App angelegt (vor Ort, „+ Anlage anlegen“, KI) – nicht die geplant
+   importierten NP…_-Zeilen (z. B. Salzburg 405), die sind geprüft */
+function anlageIstNeu(a){ return !!(a && (a.leader.neuAngelegt || a.leader.vorOrtNeu || /^NP[0-9a-z]{8,}$/.test(a.leader.id))); }
+function anlagenZusammenfuehren(a1, a2){
+  if(nurLesen()||!Admin.frei){ toast("Zusammenführen dürfen nur Admins."); return Promise.resolve(false); }
+  /* die Anlage aus der Liste (mit echten Terminen) bleibt, die neu angelegte geht auf */
+  var haupt = anlageIstNeu(a1) && !anlageIstNeu(a2) ? a2 : a1, doppel = haupt===a1 ? a2 : a1;
+  var s=byId[haupt.leader.standortId]||{};
+  var dh=anlageDaten(haupt.leader), dd=anlageDaten(doppel.leader);
+  var felder=[{k:"anlagentyp", l:"Bezeichnung"}].concat(ANLAGE_FELDER.filter(function(f){ return f.t!=="innen" && !f.gruppe.geheim; }).map(function(f){ return {k:f.k, l:f.l, f:f}; }))
+    .concat([{k:"inbetriebnahme", l:"Inbetriebnahme"}]);
+  var zeige=function(x,w){ return x.f ? anlageWertText(x.f,w) : (x.k==="inbetriebnahme" ? (w?dfmt(w):"–") : (leerWert(w)?"–":String(w))); };
+  var strittig=felder.filter(function(x){ return !leerWert(dh[x.k]) && !leerWert(dd[x.k]) && !gleich(dh[x.k], dd[x.k]); });
+  return new Promise(function(fertig){
+    var v=ansichtOeffnen("Anlagen zusammenführen");
+    v.schritt.textContent=stName(s);
+    v.inhalt.appendChild(el('<div class="note">„<strong>'+esc(anlagenName(dh))+'</strong>“ (bleibt, mit ihren Terminen) und „<strong>'+
+      esc(anlagenName(dd))+'</strong>“ werden eine Anlage. Leere Angaben werden aus der jeweils anderen ergänzt, Wartungen und Innengeräte '+
+      "zusammengelegt; „"+esc(anlagenName(dd))+"“ wird danach stillgelegt (im Änderungsverlauf rücknehmbar).</div>"));
+    var box=el('<div class="stack"></div>');
+    if(strittig.length) box.appendChild(el('<div class="as-label">Unterschiedliche Angaben – bitte wählen:</div>'));
+    strittig.forEach(function(x){
+      var z=el('<div class="posbox"><strong>'+esc(x.l)+'</strong>'+
+        '<label class="chk"><input type="radio" name="zf_'+esc(x.k)+'" value="d" checked><span>'+esc(zeige(x,dd[x.k]))+' <span class="muted">(„'+esc(anlagenName(dd))+'“)</span></span></label>'+
+        '<label class="chk"><input type="radio" name="zf_'+esc(x.k)+'" value="h"><span>'+esc(zeige(x,dh[x.k]))+' <span class="muted">(„'+esc(anlagenName(dh))+'“)</span></span></label></div>');
+      box.appendChild(z);
+    });
+    if(!strittig.length) box.appendChild(el('<div class="muted">Keine widersprüchlichen Angaben.</div>'));
+    v.inhalt.appendChild(box);
+    var ab=el('<button class="btn ghost" type="button">Abbrechen</button>'), los=el('<button class="btn" type="button">Zusammenführen</button>');
+    ab.onclick=function(){ v.zu(); fertig(false); };
+    los.onclick=function(){
+      var neu={};
+      felder.forEach(function(x){
+        var wh=dh[x.k], wd=dd[x.k];
+        if(leerWert(wh) && !leerWert(wd)) neu[x.k]=wd;                       /* Lücke der Haupt-Anlage füllen */
+        else if(strittig.indexOf(x)>=0){ var r=box.querySelector('input[name="zf_'+x.k+'"]:checked'); if(r && r.value==="d") neu[x.k]=wd; }
+      });
+      /* Innengeräte vereinigen (gleiche Seriennummer nur einmal) */
+      var ig=(Array.isArray(dh.innengeraete)?dh.innengeraete:[]).slice(), sn=ig.map(function(g){ return String(g.seriennummer||"").toUpperCase(); });
+      (Array.isArray(dd.innengeraete)?dd.innengeraete:[]).forEach(function(g){ var k=String(g.seriennummer||"").toUpperCase(); if(!k || sn.indexOf(k)<0){ ig.push(g); if(k) sn.push(k); } });
+      if(ig.length>(dh.innengeraete||[]).length) neu.innengeraete=ig;
+      /* Wartungen: Prüfbuch-Nachweise UND die Historie der aufgehenden Anlage
+         kommen zur bleibenden – derselbe Besuch (≤14 Tage) nur einmal */
+      var schon=besucheDerAnlage(haupt.leader), dazu=[];
+      doppel.termine.forEach(function(t){
+        (t.nachweise||[]).concat((t.historie||[]).map(function(d){ return {datum:d}; })).forEach(function(n){
+          if(!n || !n.datum || schon.some(function(d){ return gleicherBesuch(d,n.datum); })) return;
+          schon.push(n.datum); dazu.push(n);
+        });
+      });
+      var pro={};
+      pro[haupt.leader.id]=neu;
+      if(dazu.length) pro[haupt.leader.id].nachweise=(haupt.leader.nachweise||[]).concat(dazu).sort(function(x,y){ return x.datum.localeCompare(y.datum); });
+      doppel.termine.forEach(function(t){
+        pro[t.id]=Object.assign(pro[t.id]||{}, {aktiv:false, notiz:((t.notiz||"")+" Zusammengeführt mit „"+anlagenName(dh)+"“").trim()});
+      });
+      v.zu();
+      positionenSchreiben(pro, "Anlagen zusammengeführt").then(function(wo){
+        if(wo===false){ toast("Nicht gespeichert – bitte nochmals versuchen."); fertig(false); return; }
+        protokolliere({art:"stammdaten", standortId:s.id, standortName:stName(s), grund:"Anlagen zusammengeführt: „"+anlagenName(dd)+"“ → „"+anlagenName(dh)+"“",
+          felder:[{feld:"anlage", name:anlagenName(dh), alt:"2 Anlagen", neu:"1 Anlage"+(dazu.length?" · "+dazu.length+" Wartung(en) übernommen":"")}]});
+        berechneFaelligkeiten(); toast("Zusammengeführt."); render(); fertig(true);
+      });
+    };
+    v.fuss.appendChild(ab); v.fuss.appendChild(los);
+  });
+}
+/* Auswahl: mit welcher anderen Anlage des Markts zusammenführen? */
+function zusammenfuehrenWaehlen(a){
+  var s=byId[a.leader.standortId]; if(!s) return;
+  var andere=anlagenDesMarkts(s,false).filter(function(x){ return x.id!==a.id; });
+  if(!andere.length){ toast("Im Markt gibt es keine andere Anlage."); return; }
+  var v=ansichtOeffnen("Zusammenführen mit …");
+  v.schritt.textContent="„"+anlagenName(anlageDaten(a.leader))+"“ ist dieselbe Anlage wie:";
+  andere.forEach(function(x){
+    var d=anlageDaten(x.leader);
+    var b=el('<button class="btn ghost" type="button" style="text-align:left;display:block;width:100%;margin-top:8px"><strong>'+esc(anlagenName(d))+'</strong><br>'+
+      '<span style="font-size:13px">'+esc([anlageKurz(d), x.termine.map(function(t){ return (t.intervall?t.intervall.kurz:"?")+" "+(MONATE_L[+t.monat]||"–"); }).join(", ")].filter(Boolean).join(" · "))+"</span></button>");
+    b.onclick=function(){ v.zu(); anlagenZusammenfuehren(a, x); };
+    v.inhalt.appendChild(b);
+  });
+}
+/* mögliche Doppelanlage: eine neu (per KI oder vor Ort) angelegte Anlage neben
+   Anlagen aus der alten Liste im selben Markt */
+function moeglicheDoppel(){
+  var l=[];
+  ST.forEach(function(s){
+    var an=anlagenDesMarkts(s,false), neu=an.filter(function(a){ return anlageIstNeu(a) && !a.leader.doppelGeprueft; }), alt=an.filter(function(a){ return !anlageIstNeu(a); });
+    if(!neu.length || !alt.length) return;
+    neu.forEach(function(n){ l.push({s:s, neu:n, alt:alt}); });
+  });
+  return l;
+}
 function anlageNeuAnlegen(s, vorlage){
   if(nurLesen()){ toast("Mit diesem Konto lässt sich nur ansehen."); return; }
   if(!s) return;
@@ -2784,7 +2888,7 @@ function anlageNeuAnlegen(s, vorlage){
     if(!erg) return;
     var id="NP"+Date.now().toString(36)+Math.random().toString(36).slice(2,5);
     var t=(erg._termine&&erg._termine[0])||{};
-    var felder={standortId:s.id, intervallCode:t.intervallCode||"", monat:+t.monat||0, monatGrund:t.monatGrund||"",
+    var felder={standortId:s.id, intervallCode:t.intervallCode||"", monat:+t.monat||0, monatGrund:t.monatGrund||"", neuAngelegt:new Date().toISOString(),
       aktiv:true, vorOrtNeu:!(t.intervallCode && +t.monat), inbetriebnahme:erg.inbetriebnahme||null};
     Object.keys(erg).forEach(function(k){ if(k.charAt(0)!=="_" && STAMM_FELDER_POS.indexOf(k)>=0 && !leerWert(erg[k])) felder[k]=erg[k]; });
     if(erg._nachweiseNeu && erg._nachweiseNeu.length)
@@ -5437,6 +5541,7 @@ function weitereAusPruefbuch(){
   var v=ansichtOeffnen("Weitere Prüfbücher");
   v.schritt.textContent=stName(s)+" · "+rest.liste.length+" weitere Anlage"+(rest.liste.length===1?"":"n");
   v.inhalt.appendChild(el('<div class="note">Aus derselben Fotoserie stammen noch diese Prüfbücher. Wohin damit?</div>'));
+  var vergebenIds=[];   /* eine alte Zeile nur einem Buch vorschlagen */
   var wahlen=rest.liste.map(function(b,i){
     /* Vorschlag: vorhandene Anlage mit gleicher Seriennummer oder Bezeichnung, sonst neu */
     var sn=String((b.anlage||{}).seriennummer||"").replace(/\s+/g,"").toUpperCase();
@@ -5446,6 +5551,19 @@ function weitereAusPruefbuch(){
       return (sn && String(d.seriennummer||"").replace(/\s+/g,"").toUpperCase()===sn) ||
              (nm && String(anlagenName(x.leader)||"").toLowerCase().replace(/[^a-z0-9äöüß]/g,"")===nm);
     })[0];
+    /* sonst: eine Zeile der alten Liste ohne Seriennummer, deren Name ein
+       Wort mit dem Buch teilt (VRV, Split …) – eher sie ergänzen als doppelt anlegen */
+    if(!treffer){
+      var woerter=function(t){ return String(t||"").toLowerCase().split(/[^a-z0-9äöüß]+/).filter(function(w){ return w.length>=3 && !/^(anlage|neu|und)$/.test(w); }); };
+      var wb=woerter((b.anlage||{}).bezeichnung).concat(woerter((b.anlage||{}).bauart));
+      treffer=vorhandene.filter(function(x){
+        if(anlageIstNeu(x) || anlageDaten(x.leader).seriennummer) return false;
+        if(vergebenIds.indexOf(x.leader.id)>=0) return false;   /* schon einem anderen Buch vorgeschlagen */
+        var wx=woerter(anlagenName(x.leader));
+        return wb.some(function(w){ return wx.indexOf(w)>=0; });
+      })[0];
+    }
+    if(treffer) vergebenIds.push(treffer.leader.id);
     var z=el('<div class="posbox" style="margin-top:8px"><strong>'+esc(kiBuchText(b))+'</strong>'+
       '<select style="width:100%;margin-top:6px"><option value="neu">als neue Anlage anlegen</option>'+
       vorhandene.map(function(x){ return '<option value="'+esc(x.leader.id)+'"'+(treffer===x?" selected":"")+'>zu vorhandener: '+esc(anlagenName(anlageDaten(x.leader)))+"</option>"; }).join("")+
@@ -6481,7 +6599,7 @@ function viewProtokoll(){
       else recs.push({id:"position:"+id, felder:objDiff(EXCEL["position:"+id]||{},neuP,STAMM_FELDER_POS), neu:false});
     });
     neueAnlagen.forEach(function(n){
-      var neuP=Object.assign({standortId:sid, intervallCode:"", monat:0, aktiv:true, vorOrtNeu:true}, n.werte);
+      var neuP=Object.assign({standortId:sid, intervallCode:"", monat:0, aktiv:true, vorOrtNeu:true, neuAngelegt:new Date().toISOString()}, n.werte);
       recs.push({id:"position:"+n.id, felder:neuP, neu:true});
       felder.push({feld:"anlage", name:"Neue Anlage (vor Ort erfasst)", alt:"–", neu:(n.werte.anlagentyp||"Anlage")+" · "+anlageKurz(n.werte)});
     });
@@ -9254,6 +9372,7 @@ function verwaltungEditor(s){
         '<span class="rowflex" style="gap:6px">'+
         /* dieselbe geführte Prüfung wie beim Protokoll – samt KI aus Prüfbuch/Typenschild */
         (anl?'<button class="btn ghost sm" type="button" data-a2="pruefen">Prüfen / aus Fotos (KI)</button>':"")+
+        (anl?'<button class="btn ghost sm" type="button" data-a2="zusammen">Zusammenführen mit …</button>':"")+
         '<button class="btn ghost sm" type="button" data-a2="plus">+ Termin</button></span></div>'+
       '<div class="grid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:10px">'+
         '<label class="fl"><span>Bezeichnung der Anlage</span><input type="text" data-a="anlagentyp" placeholder="z. B. VRV Verkaufsraum" value="'+esc(d.anlagentyp||"")+'"></label>'+
@@ -9275,6 +9394,11 @@ function verwaltungEditor(s){
       '<div class="termine stack"></div>'+
       '<label class="fl"><span>Notiz</span><input type="text" data-a="notiz" value="'+esc((anl?anl.leader.notiz:"")||"")+'"></label>'+
     "</div>");
+    var zfKnopf=k.querySelector('[data-a2="zusammen"]');
+    if(zfKnopf) zfKnopf.onclick=function(){
+      if(!window.confirm("Diese Anlage mit einer anderen des Markts zusammenführen?\n\nNoch nicht gespeicherte Änderungen hier im Markt gehen dabei verloren – vorher „Speichern“, falls nötig.")) return;
+      zusammenfuehrenWaehlen(anlageVon(anl.leader));
+    };
     var prKnopf=k.querySelector('[data-a2="pruefen"]');
     if(prKnopf) prKnopf.onclick=function(){
       if(!window.confirm("Die Anlage im geführten Dialog prüfen (auch aus Fotos per KI)?\n\nNoch nicht gespeicherte Änderungen hier im Markt gehen dabei verloren – vorher „Speichern“, falls nötig.")) return;
@@ -9823,9 +9947,38 @@ function altlastKarte(){
   });
   return c;
 }
+/* Nachbessern: neu angelegte Anlagen, die eine Zeile der alten Liste doppeln könnten */
+function doppelKarte(){
+  var l=moeglicheDoppel();
+  if(!l.length || !Admin.frei) return null;
+  var c=el('<div class="card" style="border-color:var(--warn)"><div class="pad stack">'+
+    '<div><h2>Mögliche Doppelanlagen ('+l.length+')</h2><div class="sub">Neu angelegte Anlagen (vor Ort oder per KI aus dem Prüfbuch) neben '+
+    "Anlagen aus der alten Liste. Ist es dieselbe Anlage, zusammenführen – sonst als eigene Anlage bestätigen.</div></div></div></div>");
+  var host=c.querySelector(".stack");
+  l.forEach(function(x){
+    var dn=anlageDaten(x.neu.leader);
+    var b=el('<div class="posbox"><div><strong>'+marktLink(x.s)+"</strong> · neu: „"+esc(anlagenName(dn))+"“ "+
+      '<span class="muted" style="font-size:12.5px">'+esc(anlageKurz(dn))+"</span></div>"+
+      '<div class="rowflex" style="gap:6px;flex-wrap:wrap">'+x.alt.map(function(a,i){
+        return '<button class="btn ghost sm" type="button" data-i="'+i+'">ist dieselbe wie „'+esc(anlagenName(anlageDaten(a.leader)))+'“</button>'; }).join("")+
+      '<button class="btn ghost sm" type="button" data-a="eigen">eigene Anlage</button></div></div>');
+    b.querySelectorAll("[data-i]").forEach(function(k){ k.onclick=function(){ anlagenZusammenfuehren(x.neu, x.alt[+k.dataset.i]); }; });
+    b.querySelector('[data-a="eigen"]').onclick=function(){
+      var pro={}; pro[x.neu.leader.id]={doppelGeprueft:true};
+      positionenSchreiben(pro, "Neue Anlage geprüft: kein Doppel").then(function(wo){
+        if(wo===false){ toast("Nicht gespeichert – bitte nochmals versuchen."); return; }
+        protokolliere({art:"stammdaten", standortId:x.s.id, standortName:stName(x.s), grund:"Neue Anlage geprüft: eigene Anlage, kein Doppel",
+          felder:[{feld:"doppelGeprueft", name:anlagenName(dn), alt:"–", neu:"eigene Anlage"}]});
+        render(); });
+    };
+    host.appendChild(b);
+  });
+  return c;
+}
 function nachbessernAnsicht(liste){
   var f=document.createDocumentFragment();
   var A=S.adm;
+  var dk=doppelKarte(); if(dk) f.appendChild(dk);
   var alt=altlastKarte(); if(alt) f.appendChild(alt);
   A.nbThema=A.nbThema||"alle";
   var themen=["alle"].concat(liste.map(function(x){ return x.thema; }).filter(function(t,i,a){ return a.indexOf(t)===i; }).sort());
