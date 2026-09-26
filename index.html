@@ -3181,11 +3181,18 @@ function anlageAssistent(start, titel, neu, alles){
       w.inhalt.appendChild(reihe);
     }
     function kiArt(art, geraet){
+      /* Ohne eigenen KI-Zugang: über die Claude-App kopieren – gleiche Prüfansicht */
+      if(!kiAn()){
+        kiKopierweg(art, kiKontext(kiMarkt(), a)).then(function(d){ if(d) verarbeiten({daten:d}); });
+        return;
+      }
       kiFotosWaehlen().then(function(dateien){
         if(!dateien.length) return;
         if(dateien.length>12){ toast("Höchstens 12 Bilder auf einmal."); return; }
         kopf("KI liest "+dateien.length+" Bild"+(dateien.length===1?"":"er")+" …", "bitte warten");
-        return kiLesen(art, dateien, kiKontext(kiMarkt(), a)).then(function(erg){
+        return kiLesen(art, dateien, kiKontext(kiMarkt(), a)).then(verarbeiten, function(e){ toast(e.message); uebersicht(); });
+      });
+      function verarbeiten(erg){
           var d=erg.daten||{};
           if(art==="typenschild" && geraet==="innen") return kiInnen(d);
           /* Außengerät: das Schild, das die KI als außen erkennt, sonst das erste */
@@ -3244,8 +3251,7 @@ function anlageAssistent(start, titel, neu, alles){
             toast(Object.keys(wahl).length+" Angabe"+(Object.keys(wahl).length===1?"":"n")+" übernommen – bitte prüfen und dann „Übernehmen“.");
             uebersicht();
           });
-        }, function(e){ toast(e.message); uebersicht(); });
-      });
+      }
     }
     /* Innengeräte vom Typenschild: je Gerät ein Haken. Schon erfasste
        Seriennummern werden nicht doppelt angeboten; übernommen wird ans Ende
@@ -3466,7 +3472,8 @@ function anlageAssistent(start, titel, neu, alles){
       var s=schritte[pos];
       kopf("Schritt "+(pos+1)+" von "+schritte.length, s==="name"?"Bezeichnung":s==="termine"?"Termine":s.titel);
       if(s==="name") nameZeigen(); else if(s==="termine") termineZeigen(); else gruppeZeigen(s);
-      if(pos===0 && kiAn()) knopf("Aus Fotos lesen (KI)","ghost",kiEinlesen);
+      /* mit KI-Zugang automatisch, sonst über die Claude-App (Kopier-Weg) */
+      if(pos===0 && !nurLesen()) knopf("Aus Fotos lesen (KI)","ghost",kiEinlesen);
       if(pos>0 && !zurUebersicht) knopf("Zurück","ghost",function(){ pos--; schrittZeigen(); });
       if(s!=="name" && !zurUebersicht) knopf("Überspringen","ghost",function(){ weiter(); });
       knopf(zurUebersicht?"Fertig":"Weiter","",function(){
@@ -3524,7 +3531,7 @@ function anlageAssistent(start, titel, neu, alles){
           knopf("Zurück zur Übersicht","",uebersicht);
         };
       });
-      if(kiAn()) knopf("Aus Fotos lesen (KI)","ghost",kiEinlesen);
+      if(!nurLesen()) knopf("Aus Fotos lesen (KI)","ghost",kiEinlesen);
       if(neu) knopf("Bezeichnung ändern","ghost",function(){ fuss.innerHTML=""; kopf("Ändern","Bezeichnung"); nameZeigen(); knopf("Zurück zur Übersicht","",uebersicht); });
       knopf("Übernehmen","",function(){ schliessen(a); });
       inhalt.scrollTop=0;
@@ -4973,6 +4980,95 @@ function kiKontext(s, a){
     "Wartungsfirma: Kammerlander Umwelt- und Klimatechnik GmbH (UKT), Techniker: "+
       bekannteNamen().filter(function(n){ return /kammerlander|jekic/i.test(n); }).join(", ")
   ].filter(Boolean).join(". ");
+}
+/* ---------- Kopier-Weg: KI über die eigene Claude-App ----------
+   Ohne API-Zugang: Die App gibt einen fertigen Auftrag zum Kopieren, man
+   schickt ihn mit den Fotos in der Claude-App ab und fügt die Antwort hier
+   ein. Danach dieselbe Prüfansicht wie beim automatischen Weg. Auftrag und
+   Antwortform entsprechen der Funktion ki-lesen (supabase/functions). */
+var KI_AUFTRAG={
+  pruefbuch:"Die Fotos sind Seiten eines österreichischen Prüf- und Anlagenbuchs (WKO/ÖKKV-Vordruck) für eine "+
+    "Kälte- oder Klimaanlage, teils handschriftlich ausgefüllt. Lies die Stammdaten (Seite 2), die technischen "+
+    "Angaben nach DGÜW-V, F-Gase-Verordnung und AStV (Seite 3), die Konformitätserklärung (Seite 4/5), die "+
+    "Bescheinigung nach § 17 KAV mit dem Übergabe-/Inbetriebnahmedatum und alle eingetragenen Überprüfungen "+
+    "nach § 22 KAV mit Datum, prüfender Firma (Stempel), Techniker falls lesbar und ob Mängel eingetragen sind "+
+    "(\"keine\", wenn „erfolgreich überprüft“ gestempelt ist). Lies auch das vorgeschriebene Wartungsintervall "+
+    "in Monaten (wartungsintervallMonate, meist 12 oder 6). Als kaeltemittelKg gilt die Gesamtfüllmenge der Anlage.",
+  typenschild:"Die Fotos zeigen Typenschilder von Klimageräten – Außengeräte (outdoor unit) und/oder Innengeräte "+
+    "(indoor unit, Kassette, Wandgerät, Kanalgerät). Lege je unterschiedlichem Typenschild einen Eintrag in "+
+    "\"geraete\" an; zeigen mehrere Fotos dasselbe Schild, nur einmal. Setze \"art\" auf aussen oder innen, sonst "+
+    "leer. Lies Hersteller, Modell/Typ, Seriennummer, Baujahr, Kältemittel, die Füllmenge ab Werk (werksfuellungKg), "+
+    "die Kälteleistung in kW und den zulässigen Betriebsdruck (PS/HP) in bar."
+};
+var KI_VORLAGE={
+  pruefbuch:{anlage:{bezeichnung:"",hersteller:"",modell:"",seriennummer:"",bauart:"",kreislaeufe:"",
+    kaeltemittelArt:"",kaeltemittelKg:"",gwp:"",co2t:"",leistungKw:"",psBar:"",toC:"",tkC:"",hermetisch:"",
+    baujahr:"",fluidgruppe:"",psv:"",gefahr:"",erstePruefung:"",leckageerkennung:"",dichtheitMonate:"",astv:"",
+    inbetriebnahme:"",konformitaet:"",aufsteller:"",filiale:"",adresse:"",wartungsintervallMonate:""},
+    pruefungen:[{datum:"",firma:"",techniker:"",maengel:""}], unsicher:[], hinweise:""},
+  typenschild:{geraete:[{art:"",hersteller:"",modell:"",seriennummer:"",baujahr:"",kaeltemittelArt:"",
+    werksfuellungKg:"",leistungKw:"",psBar:""}], unsicher:[], hinweise:""}
+};
+function kiAuftragText(art, kontext){
+  return KI_AUFTRAG[art]+"\n\n"+
+    "Daten immer als TT.MM.JJJJ; steht nur Monat und Jahr, schreibe MM.JJJJ. Lass Felder leer (\"\"), die nicht "+
+    "auf den Fotos stehen – nichts ergänzen, nichts schätzen, keine Standardwerte. Nimm jedes Feld, bei dem die "+
+    "Schrift mehrdeutig ist, mit seinem Feldnamen in \"unsicher\" auf"+(art==="typenschild"?" (als \"geraet N: feld\")":"")+
+    " und erkläre in \"hinweise\" kurz, warum."+
+    (kontext?"\n\nZur Einordnung (nur als Hilfe beim Entziffern, nichts davon ungelesen übernehmen): "+kontext:"")+
+    "\n\nAntworte AUSSCHLIESSLICH mit einem JSON-Objekt genau in dieser Form – alle Werte als Text, "+
+    "Listen mit so vielen Einträgen wie gefunden:\n"+JSON.stringify(KI_VORLAGE[art], null, 1);
+}
+/* Antwort aus der Claude-App lesen – verträgt Codeblöcke und Text drumherum */
+function kiAntwortLesen(text, art){
+  var t=String(text||"").replace(/```(?:json)?/gi,"");
+  var von=t.indexOf("{"), bis=t.lastIndexOf("}");
+  if(von<0 || bis<von) throw new Error("Kein Datenblock gefunden – bitte die ganze Antwort von Claude einfügen.");
+  var d;
+  try{ d=JSON.parse(t.slice(von, bis+1)); }
+  catch(e){ throw new Error("Die Antwort ist nicht vollständig – bitte die ganze Antwort kopieren (oder Claude bitten, nur das JSON zu schicken)."); }
+  if(!d || typeof d!=="object") throw new Error("Unerwartete Antwort.");
+  if(art==="typenschild" && !Array.isArray(d.geraete)){
+    /* ein einzelnes Schild ohne Liste geht auch */
+    if(d.anlage || d.hersteller || d.modell) d={geraete:[d.anlage||d], unsicher:d.unsicher||[], hinweise:d.hinweise||""};
+    else throw new Error("In der Antwort stehen keine Typenschilder (\"geraete\").");
+  }
+  if(art==="pruefbuch" && !d.anlage && !Array.isArray(d.pruefungen)) throw new Error("In der Antwort stehen keine Prüfbuch-Angaben (\"anlage\").");
+  if(!Array.isArray(d.unsicher)) d.unsicher=[];
+  return d;
+}
+function kiKopierweg(art, kontext){
+  return new Promise(function(fertig){
+    var auftrag=kiAuftragText(art, kontext);
+    var v=ansichtOeffnen(art==="pruefbuch"?"Prüfbuch mit Claude lesen":"Typenschilder mit Claude lesen");
+    v.schritt.textContent="Über die Claude-App – ohne eigenen KI-Zugang";
+    var box=el('<div class="stack">'+
+      '<div class="note"><strong>So geht’s:</strong><ol style="margin:6px 0 0 18px;padding:0">'+
+        "<li>„Auftrag kopieren“ tippen.</li>"+
+        "<li>In der Claude-App einen neuen Chat öffnen, die Fotos "+(art==="pruefbuch"?"aller Prüfbuch-Seiten":"der Typenschilder")+
+          " dazugeben, den Auftrag einfügen und abschicken.</li>"+
+        "<li>Die Antwort von Claude ganz kopieren und unten einfügen.</li></ol></div>"+
+      '<div class="rowflex"><button class="btn" type="button" data-a="kopie">Auftrag kopieren</button>'+
+        '<button class="btn ghost sm" type="button" data-a="zeigen">Auftrag ansehen</button></div>'+
+      '<textarea rows="8" readonly data-a="text" hidden style="font:12px var(--f-mono)"></textarea>'+
+      '<label class="fl"><span>Antwort von Claude</span><textarea rows="8" data-a="antwort" placeholder="Hier einfügen …" spellcheck="false"></textarea></label>'+
+      '<div class="note warnbox" data-a="fehler" hidden></div></div>');
+    box.querySelector('[data-a="text"]').value=auftrag;
+    box.querySelector('[data-a="kopie"]').onclick=function(){ inZwischenablage(auftrag, "Auftrag"); };
+    box.querySelector('[data-a="zeigen"]').onclick=function(){ var t=box.querySelector('[data-a="text"]'); t.hidden=!t.hidden; };
+    v.inhalt.appendChild(box);
+    var fehler=box.querySelector('[data-a="fehler"]');
+    var zu=el('<button class="btn ghost" type="button">Abbrechen</button>');
+    var lesen=el('<button class="btn" type="button">Antwort einlesen</button>');
+    zu.onclick=function(){ v.zu(); fertig(null); };
+    lesen.onclick=function(){
+      try{
+        var d=kiAntwortLesen(box.querySelector('[data-a="antwort"]').value, art);
+        v.zu(); fertig(d);
+      }catch(e){ fehler.textContent=e.message; fehler.hidden=false; }
+    };
+    v.fuss.appendChild(zu); v.fuss.appendChild(lesen);
+  });
 }
 function kiLesen(art, quellen, kontext){
   if(!kiAn()) return Promise.reject(new Error("KI-Erkennung ist nicht eingeschaltet."));

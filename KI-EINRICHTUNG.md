@@ -1,8 +1,17 @@
 # KI-Erkennung einrichten
 
 Die App kann Prüfbuch-Seiten, Typenschilder und eingescannte Lidl-Aufträge von
-Claude (Anthropic) auslesen lassen. Alles ist vorbereitet und **ausgeschaltet**,
-bis diese Schritte erledigt sind.
+Claude (Anthropic) auslesen lassen. Es gibt zwei Wege:
+
+- **Kopier-Weg (sofort nutzbar, ohne Zusatzkosten):** Solange kein API-Zugang
+  eingerichtet ist, zeigt „Aus Fotos lesen (KI)“ einen fertigen Auftrag zum
+  Kopieren. Den mit den Fotos in der eigenen Claude-App (z. B. Max-Abo) abschicken,
+  die Antwort kopieren und in der App einfügen – danach dieselbe Prüfansicht wie
+  unten. Kein Schlüssel, kein Konto nötig.
+- **Automatisch (API-Zugang):** Die App schickt die Fotos selbst an Claude. Dafür
+  braucht es einen API-Zugang auf console.anthropic.com – **kein Team-Tarif,
+  keine Arbeitsplätze**: Guthaben aufladen, bezahlt wird nur, was gelesen wird.
+  Die Einrichtung steht unten; bis dahin ist dieser Weg **ausgeschaltet**.
 
 ## Wie es arbeitet
 
@@ -45,8 +54,9 @@ Cent. Inhaber sehen unter *Verwaltung → Inhaber* die Summe des Monats.
 
 ## Einrichten (einmalig)
 
-1. **Geschäftskonto bei Anthropic** anlegen (console.anthropic.com), Zahlungsart
-   hinterlegen, unter *API Keys* einen Schlüssel erzeugen. Am besten ein eigener
+1. **API-Konto bei Anthropic** anlegen (console.anthropic.com – unabhängig vom
+   Claude-Abo, ohne Arbeitsplätze), Guthaben aufladen, unter *API Keys* einen
+   Schlüssel erzeugen. Am besten ein eigener
    Workspace „Wartungsleitstand“ mit Ausgabenlimit (z. B. 20 USD im Monat).
 2. **SQL:** `tools/ki-und-posteingang.sql` im Supabase SQL Editor ausführen
    (legt `ki_nutzung` an).
