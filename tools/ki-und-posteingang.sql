@@ -1,8 +1,9 @@
 -- KI-Erkennung und Mail-Posteingang – vorbereitet, erst ausführen, wenn es
 -- losgehen soll (siehe KI-EINRICHTUNG.md und POSTEINGANG-EINRICHTUNG.md).
 -- Mehrfach ausführen schadet nicht.
+-- Setzt tools/rollen.sql voraus (Funktion darf_schreiben).
 
--- ---------------------------------------------------------------------------
+-- -------------------------------------------------------------A--------------
 -- 1. KI-Nutzung: jeder Aufruf der Funktion ki-lesen mit Art, Bildzahl und
 --    Tokens – für die Kostenübersicht und das Tageslimit je Person.
 -- ---------------------------------------------------------------------------
@@ -24,7 +25,7 @@ drop policy if exists "ki eintragen"      on public.ki_nutzung;
 create policy "ki eigene lesen" on public.ki_nutzung for select to authenticated
   using (user_id = auth.uid() or public.ist_admin());
 create policy "ki eintragen" on public.ki_nutzung for insert to authenticated
-  with check (user_id = auth.uid());
+  with check (user_id = auth.uid() and public.darf_schreiben());
 -- kein update, kein delete: die Liste ist der Kostennachweis
 grant select, insert on public.ki_nutzung to authenticated;
 
@@ -56,8 +57,9 @@ drop policy if exists "posteingang lesen"    on public.posteingang;
 drop policy if exists "posteingang anlegen"  on public.posteingang;
 drop policy if exists "posteingang erledigen" on public.posteingang;
 create policy "posteingang lesen"     on public.posteingang for select to authenticated using (true);
-create policy "posteingang anlegen"   on public.posteingang for insert to authenticated with check (true);
-create policy "posteingang erledigen" on public.posteingang for update to authenticated using (true) with check (true);
+create policy "posteingang anlegen"   on public.posteingang for insert to authenticated with check (public.darf_schreiben());
+create policy "posteingang erledigen" on public.posteingang for update to authenticated
+  using (public.darf_schreiben()) with check (public.darf_schreiben());
 -- kein delete: „verworfen“ statt löschen, der Eingang bleibt nachvollziehbar
 grant select, insert, update on public.posteingang to authenticated;
 
@@ -68,7 +70,7 @@ on conflict (id) do nothing;
 drop policy if exists "posteingang hochladen" on storage.objects;
 drop policy if exists "posteingang ansehen"   on storage.objects;
 create policy "posteingang hochladen" on storage.objects for insert to authenticated
-  with check (bucket_id = 'posteingang');
+  with check (bucket_id = 'posteingang' and public.darf_schreiben());
 create policy "posteingang ansehen"   on storage.objects for select to authenticated
   using (bucket_id = 'posteingang');
 
