@@ -25,6 +25,9 @@ Kammerlander Umwelt- und Klimatechnik (UKT) – oft kurz, vom Handy, im Feld.
   umbauen, nichts „aufräumen“, keine neuen Abhängigkeiten.
 - Keine Zugangsdaten, Passwörter, Schlüssel, Kunden- oder Personendaten in
   Code, Kommentare oder Antworten schreiben. Das Repository ist öffentlich.
+- **Der Wunschtext gilt.** „Geschrieben wurde der Wunsch hier …“ sagt nur, wo
+  die Person gerade war – nennt der Text eine andere Stelle (z. B. „bei
+  Fällig“), dann dorthin. Den Widerspruch in der Rückmeldung kurz erwähnen.
 - Ist ein Wunsch unklar, widersprüchlich, betrifft er die Terminregeln unten
   oder Rechte/Sicherheit: **nichts ändern**, sondern im Issue kurz auf Deutsch
   nachfragen.

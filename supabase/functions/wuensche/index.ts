@@ -157,7 +157,7 @@ Deno.serve(async (req) => {
         "",
         auftrag.split("\n").map((z) => "> " + z).join("\n"),
         "",
-        w.kontext ? `Wo in der App: ${w.kontext}` : "",
+        w.kontext ? `Geschrieben wurde der Wunsch hier (nur zur Orientierung – bei Widerspruch gilt der Wunschtext): ${w.kontext}` : "",
         "",
         "Nur `index.html` ändern (bei Bedarf `README.md`). Vor dem Abschluss `node tools/pruefen.mjs` ausführen.",
         "Zum Schluss auf Deutsch kurz und für Nicht-Programmierer erklären, was geändert wurde und wie man es ausprobiert.",
