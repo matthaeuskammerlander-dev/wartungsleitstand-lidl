@@ -288,6 +288,8 @@ a:not(.btn):hover{opacity:.8}
 .qrscan video{width:100%;height:100%;object-fit:cover}
 .qrscan .qrrahmen{position:absolute;inset:18%;border:3px solid #fff;border-radius:12px;box-shadow:0 0 0 999px rgba(0,0,0,.35)}
 .qrscan .qrtext{color:#fff;font-size:14px;text-align:center}
+.sprunglink{color:inherit;text-decoration:underline;text-decoration-style:dotted;text-underline-offset:3px;cursor:pointer}
+.sprunglink:hover{color:var(--accent)}
 .befundzeile{cursor:pointer;border-radius:8px;padding:4px 6px;margin:0 -6px}
 .befundzeile:hover,.befundzeile:focus-visible{background:var(--accent-soft,rgba(0,114,100,.08));outline:none}
 .sprungziel{animation:sprungblink 2.4s ease-out 1;border-radius:8px}
@@ -3147,8 +3149,11 @@ function anlagenBloecke(s, host){
     var blk=el('<div class="akarte" style="background:var(--surface)"><div class="rowflex" style="justify-content:space-between;gap:8px">'+
       '<strong style="font-size:15px">'+esc(anlagenName(d))+"</strong>"+
       '<span class="muted" style="font-size:12px">'+a.termine.length+" Termin"+(a.termine.length===1?"":"e")+" im Jahr</span></div>"+
-      '<div style="font-size:13px">'+(anlageKurz(d)?esc(anlageKurz(d)):'<span class="muted">Anlagendaten noch nicht erfasst</span>')+
-        (l.length?' <span class="muted" style="font-size:12px">· '+l.length+" Angabe(n) offen</span>":"")+"</div>"+
+      '<div style="font-size:13px">'+(anlageKurz(d)?esc(anlageKurz(d)):'<span class="muted">Anlagendaten noch nicht erfasst</span>')+"</div>"+
+      /* offene Angaben einzeln antippbar – führt direkt zur Frage */
+      (l.length && !nurLesen()?'<div style="font-size:12.5px;color:var(--warn)">Fehlt: '+l.map(function(f){
+        return '<a href="#" class="sprunglink" data-spring="'+esc(f.k)+'">'+esc(f.l)+"</a>"; }).join(", ")+"</div>"
+        :(l.length?'<div class="muted" style="font-size:12px">'+l.length+" Angabe(n) offen</div>":""))+
       (d.hersteller||d.seriennummer?'<div class="muted" style="font-size:12.5px">'+esc([d.hersteller,d.modell,d.seriennummer?"SN "+d.seriennummer:""].filter(Boolean).join(" · "))+"</div>":"")+
       stoerungenDerAnlage(a).map(function(o){
         return '<div class="stoerhinweis"><strong>Störung offen</strong>'+(o.problemtyp?": "+esc(o.problemtyp):"")+
@@ -3163,6 +3168,9 @@ function anlagenBloecke(s, host){
       anlageDatenErgaenzen(a.leader);
     };
     blk.querySelector('[data-a="hist"]').onclick=function(){ anlageHistorieAnsicht(a.leader); };
+    blk.querySelectorAll("[data-spring]").forEach(function(x){
+      x.onclick=function(e){ e.preventDefault(); anlageDatenErgaenzen(a.leader, null, x.dataset.spring); };
+    });
     var zg=zugangBox(d);
     if(zg) blk.insertBefore(zg, blk.querySelector("[data-termine]"));
     a.termine.forEach(function(t){ blk.querySelector("[data-termine]").appendChild(posBox(t,s,true)); });
@@ -3540,6 +3548,7 @@ function anlageAssistent(start, titel, neu, alles){
     var geschlossen=false;   /* eine späte KI-Antwort nach dem Schließen nicht mehr „übernehmen“ */
     var schliessen=function(wert){
       geschlossen=true;
+      if(wert) delete wert._springe;   /* nur Steuerung des Dialogs, kein Anlagenwert */
       ov.remove(); document.body.style.overflow=""; fertig(wert);
       /* weitere Prüfbücher aus derselben Fotoserie: nach dem Speichern anbieten */
       if(wert && kiRest && kiRest.liste.length) setTimeout(weitereAusPruefbuch, 400);
@@ -6702,14 +6711,19 @@ function viewProtokoll(){
       '<div class="muted" style="font-size:12.5px">'+esc(anlageKurz(w)||"noch keine Angaben")+"</div>"+
       '<div class="rowflex" style="justify-content:space-between;gap:8px;align-items:center">'+
         '<span style="font-size:12.5px;color:'+(l.length?"var(--warn)":"var(--good)")+'">'+
-          (l.length?"Fehlt: "+esc(l.map(function(f){ return f.l; }).join(", ")):"vollständig")+"</span>"+
+          (l.length?"Fehlt: "+l.map(function(f){ return '<a href="#" class="sprunglink" data-spring="'+esc(f.k)+'">'+esc(f.l)+"</a>"; }).join(", "):"vollständig")+"</span>"+
         '<span class="rowflex" style="gap:6px">'+(neu?'<button class="btn ghost sm" type="button" data-a="weg">entfernen</button>':"")+
           '<button class="btn sm'+(l.length?"":" ghost")+'" type="button" data-a="los">'+(l.length?"Ergänzen":"Prüfen")+"</button></span>"+
       "</div></div>");
-    k.querySelector('[data-a="los"]').onclick=function(){
+    /* fehlende Angabe antippen: Dialog gleich bei dieser Frage */
+    k.querySelectorAll("[data-spring]").forEach(function(x){
+      x.onclick=function(e){ e.preventDefault(); k.querySelector('[data-a="los"]').onclick(e, x.dataset.spring); };
+    });
+    k.querySelector('[data-a="los"]').onclick=function(ev, springe){
       /* bei einer bekannten Anlage auch die Termine zum Prüfen dazu */
       var p0=neu?null:posById[id];
-      var start=p0 ? Object.assign({}, w, {inbetriebnahme:anlageDaten(p0).inbetriebnahme||null, _termine:termineStart(p0), _leaderId:p0.id}) : w;
+      var start=p0 ? Object.assign({}, w, {inbetriebnahme:anlageDaten(p0).inbetriebnahme||null, _termine:termineStart(p0), _leaderId:p0.id}) : Object.assign({}, w);
+      start._springe=springe||null;
       anlageAssistent(start, name, neu).then(function(erg){
         if(!erg) return;
         formDirty=true;
@@ -9362,8 +9376,8 @@ function verwaltungEditor(s){
       '<h2 style="text-transform:none;font-size:17px;color:var(--ink)">'+(s._entwurf?"Neuer Markt":esc(stName(s))+" bearbeiten")+"</h2>"+
       '<button class="btn ghost sm" type="button" id="adm_schliessen">Schließen</button></div>'+
     ((au.fehler.length||au.luecken.length)?'<div class="stack">'+
-      (au.fehler.length?'<div class="note warnbox"><strong>Fehler</strong><br>'+au.fehler.map(esc).join("<br>")+"</div>":"")+
-      (au.luecken.length?'<div class="note"><strong>Fehlende Angaben</strong><br>'+au.luecken.map(esc).join("<br>")+"</div>":"")+
+      (au.fehler.length?'<div class="note warnbox"><strong>Fehler</strong><br>'+au.fehler.map(function(t,i){ return '<a href="#" class="sprunglink" data-befund="f'+i+'">'+esc(t)+'</a>'; }).join("<br>")+"</div>":"")+
+      (au.luecken.length?'<div class="note"><strong>Fehlende Angaben</strong><br>'+au.luecken.map(function(t,i){ return '<a href="#" class="sprunglink" data-befund="l'+i+'">'+esc(t)+'</a>'; }).join("<br>")+"</div>":"")+
     "</div>":"")+
 
     '<fieldset><legend>Markt</legend><div class="grid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px">'+
@@ -9415,6 +9429,16 @@ function verwaltungEditor(s){
      Der Markt hat Anlagen, jede Anlage hat einen oder zwei Termine im Jahr.
      Genau so sieht der Editor aus: eine Karte je Anlage, darin ihre Termine.
      Ein Termin lässt sich per Auswahl in eine andere Anlage schieben. */
+  /* Fehler und fehlende Angaben oben antippen: gleich zur Stelle in diesem
+     Editor (ohne neu zu zeichnen – Angefangenes bleibt) bzw. zum Dialog */
+  c.querySelectorAll("[data-befund]").forEach(function(x){
+    x.onclick=function(e){
+      e.preventDefault();
+      var fehler=x.dataset.befund.charAt(0)==="f", t=(fehler?au.fehler:au.luecken)[+x.dataset.befund.slice(1)];
+      springeZu({text:t, thema: fehler ? (/Termin|Soll-Monat|Kürzel|JW|HJ|Inbetriebnahme/.test(t)?"Termine":"Stammdaten")
+                                       : (/Termin|Inbetriebnahme/.test(t)?"Termine":"Anlagendaten")}, s);
+    };
+  });
   var host=c.querySelector("#a_anlagen");
   var kartenNr=0;
   var KUERZEL=[["","– fehlt –"],["JW","JW · Jahreswartung"],["HJW","HJW · Halbjahreswartung"],["HJI","HJI · Halbjahresinspektion"]];
@@ -10258,7 +10282,10 @@ function sprungHervorheben(z){
   if(/^(INPUT|SELECT|TEXTAREA)$/.test(z.tagName)) setTimeout(function(){ try{ z.focus({preventScroll:true}); }catch(e){} }, 350);
 }
 function verwaltungSprung(s, finde){
-  var A=S.adm; A.tab="maerkte"; A.sel=s.id; A.entwurf=null; A.vonNachbessern=true; render();
+  var A=S.adm;
+  /* schon im Editor dieses Markts: nicht neu zeichnen, sonst wären Eingaben weg */
+  var offen=S.view==="verwaltung" && A.tab==="maerkte" && A.sel===s.id && document.getElementById("adm_editor");
+  if(!offen){ A.tab="maerkte"; A.sel=s.id; A.entwurf=null; A.vonNachbessern=true; render(); }
   setTimeout(function(){
     var ed=document.getElementById("adm_editor"); if(!ed) return;
     var z=null; try{ z=finde ? finde(ed) : null; }catch(e){ console.error(e); }
