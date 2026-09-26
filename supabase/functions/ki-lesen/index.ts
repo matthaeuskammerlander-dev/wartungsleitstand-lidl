@@ -72,10 +72,14 @@ const GERAET = {
 };
 
 const SCHEMAS: Record<string, unknown> = {
+  // eine Fotoserie kann die Prüfbücher mehrerer Anlagen enthalten – je Prüfbuch ein Eintrag
   pruefbuch: objekt({
-    anlage: objekt(ANLAGE),
-    pruefungen: liste({ datum: text, firma: text, techniker: text, maengel: text }),
-    unsicher: { type: "array", items: text },
+    pruefbuecher: liste({
+      anlage: objekt(ANLAGE),
+      pruefungen: liste({ datum: text, firma: text, techniker: text, maengel: text }),
+      unsicher: { type: "array", items: text },
+      hinweise: text,
+    }),
     hinweise: text,
   }),
   // je unterschiedlichem Typenschild ein Eintrag – mehrere Innengeräte auf einmal gehen
@@ -109,7 +113,10 @@ const ANWEISUNG: Record<string, string> = {
     "Lass Felder leer, die nicht auf den Bildern stehen – nichts ergänzen, nichts schätzen, " +
     "keine Standardwerte einsetzen. Nimm jedes Feld, bei dem die Handschrift mehrdeutig ist, " +
     "mit seinem Feldnamen in \"unsicher\" auf und erkläre in \"hinweise\" kurz, warum. " +
-    "Wenn Bilder zu verschiedenen Anlagen zu gehören scheinen, sag das in \"hinweise\".",
+    "Die Fotos können Seiten MEHRERER Prüfbücher enthalten (je Anlage ein Buch). Lege je Prüfbuch " +
+    "einen Eintrag in \"pruefbuecher\" an und ordne jede Seite dem richtigen Buch zu (Anlagenbezeichnung, " +
+    "Seriennummer, Aufstellungsort, Handschrift, Stempel). Mische nie Angaben verschiedener Bücher. " +
+    "\"unsicher\" und \"hinweise\" gehören zum jeweiligen Buch; übergreifende Hinweise ins äußere \"hinweise\".",
   typenschild:
     "Die Bilder zeigen Typenschilder von Klimageräten – Außengeräte (outdoor unit, Verflüssiger) " +
     "und/oder Innengeräte (indoor unit, Kassette, Wandgerät, Kanalgerät). Lege je unterschiedlichem " +

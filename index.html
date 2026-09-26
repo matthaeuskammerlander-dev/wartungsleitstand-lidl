@@ -2756,11 +2756,11 @@ function termineStart(leader){
 /* Eine Anlage zu einem Markt anlegen – ohne Protokoll, etwa aus dem Prüfbuch,
    wenn die alte Liste für den Markt nur eine Anlage kennt, es aber mehrere
    gibt. Derselbe geführte Dialog mit KI („Aus Fotos lesen“) und Termin. */
-function anlageNeuAnlegen(s){
+function anlageNeuAnlegen(s, vorlage){
   if(nurLesen()){ toast("Mit diesem Konto lässt sich nur ansehen."); return; }
   if(!s) return;
-  var start={standortId:s.id, _termine:[{id:"NEU", intervallCode:"JW", monat:0}], inbetriebnahme:null};
-  anlageAssistent(start, "Neue Anlage – "+stName(s), true, true).then(function(erg){
+  var start={standortId:s.id, _termine:[{id:"NEU", intervallCode:"JW", monat:0}], inbetriebnahme:null, _kiVorlage:vorlage||null};
+  return anlageAssistent(start, "Neue Anlage – "+stName(s), true, true).then(function(erg){
     if(!erg) return;
     var id="NP"+Date.now().toString(36)+Math.random().toString(36).slice(2,5);
     var t=(erg._termine&&erg._termine[0])||{};
@@ -2773,7 +2773,7 @@ function anlageNeuAnlegen(s){
     var rec={id:"position:"+id, typ:"position", ziel:id, felder:felder, neu:true,
              geaendert:new Date().toISOString(), von:wer(), grund:"Anlage angelegt"};
     stammUeber[rec.id]=rec;
-    stammSpeichern(rec).then(function(wo){
+    return stammSpeichern(rec).then(function(wo){
       if(wo===false){ delete stammUeber[rec.id]; wendeStammdatenAn(); render(); toast("Nicht gespeichert – weder Datenbank noch Gerätespeicher erreichbar."); return; }
       wendeStammdatenAn();
       protokolliere({art:"stammdaten", standortId:s.id, standortName:stName(s), grund:"Anlage angelegt",
@@ -2888,17 +2888,17 @@ function positionenSchreiben(proPos, grund){
 /* Anlagendaten ergänzen, ohne ein Protokoll zu schreiben. Dieselbe geführte
    Erfassung; gespeichert wird direkt in die Anlagendaten, mit Eintrag im
    Änderungsverlauf. Anlagendaten darf jede angemeldete Person ergänzen. */
-function anlageDatenErgaenzen(leader){
+function anlageDatenErgaenzen(leader, vorlage){
   if(nurLesen()){ toast("Mit diesem Konto lässt sich nur ansehen."); return; }
   if(!Store.benutzer && Store.modus==="anmeldung"){ toast("Dafür bitte zuerst anmelden."); return; }
   var vorher=auswahl(leader, STAMM_FELDER_POS);
   var jetzt=anlageDaten(leader);
   var start={anlagentyp:jetzt.anlagentyp, rueckkuehler:jetzt.rueckkuehler,
-             inbetriebnahme:jetzt.inbetriebnahme||null, _termine:termineStart(leader), _leaderId:leader.id};
+             inbetriebnahme:jetzt.inbetriebnahme||null, _termine:termineStart(leader), _leaderId:leader.id, _kiVorlage:vorlage||null};
   ANLAGE_FELDER.forEach(function(f){ start[f.k]=(jetzt[f.k]===undefined?null:jetzt[f.k]); });
   /* true: alle Gruppen zeigen. Hier geht es ums Prüfen und Korrigieren,
      nicht nur ums Nachtragen fehlender Angaben. */
-  anlageAssistent(start, anlagenName(jetzt), false, true).then(function(erg){
+  return anlageAssistent(start, anlagenName(jetzt), false, true).then(function(erg){
     if(!erg) return;
     var geaendert=[], leaderNeu={};
     ANLAGE_FELDER.concat([{k:"anlagentyp", l:"Bezeichnung der Anlage"}]).forEach(function(f){
@@ -2916,7 +2916,7 @@ function anlageDatenErgaenzen(leader){
     if(Object.keys(leaderNeu).length) proPos[leader.id]=Object.assign(proPos[leader.id]||{}, leaderNeu);
     geaendert=geaendert.concat(ta.log);
     if(!geaendert.length){ toast("Nichts geändert."); return; }
-    positionenSchreiben(proPos, "Anlagendaten geprüft und ergänzt").then(function(wo){
+    return positionenSchreiben(proPos, "Anlagendaten geprüft und ergänzt").then(function(wo){
       if(wo===false){ wendeStammdatenAn(); render(); toast("Nicht gespeichert – weder Datenbank noch Gerätespeicher erreichbar. Bitte nochmals versuchen."); return; }
       wendeStammdatenAn();
       protokolliere({art:"stammdaten", standortId:leader.standortId,
@@ -3324,7 +3324,12 @@ function anlageAssistent(start, titel, neu, alles){
     document.body.appendChild(ov);
     document.body.style.overflow="hidden";
     var inhalt=ov.querySelector(".as-inhalt"), fuss=ov.querySelector(".as-fuss");
-    var schliessen=function(wert){ ov.remove(); document.body.style.overflow=""; fertig(wert); };
+    var schliessen=function(wert){
+      ov.remove(); document.body.style.overflow=""; fertig(wert);
+      /* weitere Prüfbücher aus derselben Fotoserie: nach dem Speichern anbieten */
+      if(wert && kiRest && kiRest.liste.length) setTimeout(weitereAusPruefbuch, 400);
+      else if(!wert) kiRest=null;
+    };
     var anfangA=JSON.stringify(a);
     ov.querySelector('[data-as="zu"]').onclick=function(){
       /* Eingetragenes (auch von der KI Übernommenes) nicht still wegwerfen */
@@ -3379,7 +3384,9 @@ function anlageAssistent(start, titel, neu, alles){
       reihe.querySelectorAll("[data-kiart]").forEach(function(b){ b.onclick=function(){ w.zu(); kiArt(b.dataset.kiart, b.dataset.geraet); }; });
       w.inhalt.appendChild(reihe);
     }
-    function kiArt(art, geraet){
+    function kiArt(art, geraet, vorgabe){
+      /* schon gelesenes Prüfbuch (weiteres Buch aus derselben Fotoserie) */
+      if(vorgabe){ verarbeiten({daten:vorgabe, _gewaehlt:true}); return; }
       /* Ohne eigenen KI-Zugang: über die Claude-App kopieren – gleiche Prüfansicht */
       if(!kiAn()){
         kiKopierweg(art, kiKontext(kiMarkt(), a)).then(function(d){ if(d) verarbeiten({daten:d}); });
@@ -3393,6 +3400,21 @@ function anlageAssistent(start, titel, neu, alles){
       });
       function verarbeiten(erg){
           var d=erg.daten||{};
+          /* Prüfbuch: eine Fotoserie kann mehrere Bücher (Anlagen) enthalten –
+             eins gehört zu dieser Anlage, die anderen werden danach angeboten */
+          if(art==="pruefbuch"){
+            var buecher=kiPruefbuecher(d);
+            if(!buecher.length){ toast("Auf den Fotos wurde kein Prüfbuch erkannt."); uebersicht(); return; }
+            if(buecher.length>1 && !erg._gewaehlt){
+              return kiBuchWaehlen(buecher, d.hinweise, a).then(function(i){
+                if(i===null){ uebersicht(); return; }
+                kiRest={standortId:(kiMarkt()||{}).id||a.standortId, liste:buecher.filter(function(b,j){ return j!==i; })};
+                if(i<0){ toast(buecher.length+" Prüfbücher werden nach dem Übernehmen als weitere Anlagen angeboten."); uebersicht(); return; }
+                verarbeiten({daten:buecher[i], _gewaehlt:true});
+              });
+            }
+            d=buecher[0];
+          }
           if(art==="typenschild" && geraet==="innen") return kiInnen(d);
           /* Außengerät: das Schild, das die KI als außen erkennt, sonst das erste */
           if(art==="typenschild"){
@@ -3751,6 +3773,8 @@ function anlageAssistent(start, titel, neu, alles){
       inhalt.scrollTop=0;
     }
     if(schritte.length) schrittZeigen(); else uebersicht();
+    /* ein weiteres Buch aus derselben Fotoserie: gleich zur Prüfansicht */
+    if(start._kiVorlage) setTimeout(function(){ kiArt("pruefbuch", null, start._kiVorlage); }, 50);
   });
 }
 var ARBEITEN=["Sicht-/Sicherheitsprüfung","Betriebszustand/Fehlerspeicher","Filter geprüft/gereinigt/getauscht",
@@ -5269,7 +5293,10 @@ var KI_AUFTRAG={
     "Bescheinigung nach § 17 KAV mit dem Übergabe-/Inbetriebnahmedatum und alle eingetragenen Überprüfungen "+
     "nach § 22 KAV mit Datum, prüfender Firma (Stempel), Techniker falls lesbar und ob Mängel eingetragen sind "+
     "(\"keine\", wenn „erfolgreich überprüft“ gestempelt ist). Lies auch das vorgeschriebene Wartungsintervall "+
-    "in Monaten (wartungsintervallMonate, meist 12 oder 6). Als kaeltemittelKg gilt die Gesamtfüllmenge der Anlage.",
+    "in Monaten (wartungsintervallMonate, meist 12 oder 6). Als kaeltemittelKg gilt die Gesamtfüllmenge der Anlage. "+
+    "WICHTIG: Die Fotos können Seiten MEHRERER Prüfbücher enthalten (je Anlage ein Buch, z. B. zwei VRV und ein Split). "+
+    "Lege je Prüfbuch einen eigenen Eintrag in \"pruefbuecher\" an und ordne jede Seite dem richtigen Buch zu "+
+    "(Anlagenbezeichnung, Seriennummer, Aufstellungsort, Handschrift, Stempel). Mische nie Angaben verschiedener Bücher.",
   typenschild:"Die Fotos zeigen Typenschilder von Klimageräten – Außengeräte (outdoor unit) und/oder Innengeräte "+
     "(indoor unit, Kassette, Wandgerät, Kanalgerät). Lege je unterschiedlichem Typenschild einen Eintrag in "+
     "\"geraete\" an; zeigen mehrere Fotos dasselbe Schild, nur einmal. Setze \"art\" auf aussen oder innen, sonst "+
@@ -5277,11 +5304,11 @@ var KI_AUFTRAG={
     "die Kälteleistung in kW und den zulässigen Betriebsdruck (PS/HP) in bar."
 };
 var KI_VORLAGE={
-  pruefbuch:{anlage:{bezeichnung:"",hersteller:"",modell:"",seriennummer:"",bauart:"",kreislaeufe:"",
+  pruefbuch:{pruefbuecher:[{anlage:{bezeichnung:"",hersteller:"",modell:"",seriennummer:"",bauart:"",kreislaeufe:"",
     kaeltemittelArt:"",kaeltemittelKg:"",gwp:"",co2t:"",leistungKw:"",psBar:"",toC:"",tkC:"",hermetisch:"",
     baujahr:"",fluidgruppe:"",psv:"",gefahr:"",erstePruefung:"",leckageerkennung:"",dichtheitMonate:"",astv:"",
     inbetriebnahme:"",konformitaet:"",aufsteller:"",filiale:"",adresse:"",wartungsintervallMonate:""},
-    pruefungen:[{datum:"",firma:"",techniker:"",maengel:""}], unsicher:[], hinweise:""},
+    pruefungen:[{datum:"",firma:"",techniker:"",maengel:""}], unsicher:[], hinweise:""}], hinweise:""},
   typenschild:{geraete:[{art:"",hersteller:"",modell:"",seriennummer:"",baujahr:"",kaeltemittelArt:"",
     werksfuellungKg:"",leistungKw:"",psBar:""}], unsicher:[], hinweise:""}
 };
@@ -5294,6 +5321,96 @@ function kiAuftragText(art, kontext){
     (kontext?"\n\nZur Einordnung (nur als Hilfe beim Entziffern, nichts davon ungelesen übernehmen): "+kontext:"")+
     "\n\nAntworte AUSSCHLIESSLICH mit einem JSON-Objekt genau in dieser Form – alle Werte als Text, "+
     "Listen mit so vielen Einträgen wie gefunden:\n"+JSON.stringify(KI_VORLAGE[art], null, 1);
+}
+/* Prüfbuch-Antwort als Liste der Bücher – neue Form {pruefbuecher:[…]} und die
+   alte Form {anlage, pruefungen} (ein Buch) werden gleich behandelt */
+function kiPruefbuecher(d){
+  d=d||{};
+  var l=Array.isArray(d.pruefbuecher) ? d.pruefbuecher
+      : (d.anlage || Array.isArray(d.pruefungen)) ? [{anlage:d.anlage, pruefungen:d.pruefungen, unsicher:d.unsicher, hinweise:d.hinweise}] : [];
+  return l.filter(function(b){ return b && typeof b==="object"; }).map(function(b){
+    return {anlage:(b.anlage&&typeof b.anlage==="object")?b.anlage:{},
+            pruefungen:Array.isArray(b.pruefungen)?b.pruefungen.filter(function(x){ return x && typeof x==="object"; }):[],
+            unsicher:Array.isArray(b.unsicher)?b.unsicher:[],
+            hinweise:[typeof b.hinweise==="string"?b.hinweise:"", l.length===1 && d.hinweise!==b.hinweise && typeof d.hinweise==="string" ? d.hinweise : ""].filter(Boolean).join(" ")};
+  });
+}
+/* Mehrere Prüfbücher in einer Fotoserie: welches gehört zur geöffneten Anlage?
+   Liefert den Index, -1 (keins – alle als weitere Anlagen) oder null (abbrechen). */
+var kiRest=null;
+function kiBuchWaehlen(buecher, hinweise, a){
+  return new Promise(function(fertig){
+    var v=ansichtOeffnen("Mehrere Prüfbücher erkannt");
+    v.schritt.textContent=buecher.length+" Anlagen auf den Fotos";
+    v.inhalt.appendChild(el('<div class="note">Auf den Fotos sind die Prüfbücher von <strong>'+buecher.length+
+      ' Anlagen</strong>. Welches gehört zu '+(a&&a.anlagentyp?"„"+esc(a.anlagentyp)+"“":"dieser Anlage")+
+      '? Die anderen werden danach als weitere Anlagen angeboten – neu anlegen oder einer vorhandenen zuordnen.</div>'));
+    if(hinweise) v.inhalt.appendChild(el('<div class="note">'+esc(hinweise)+"</div>"));
+    var fertigAuf=function(w){ v.zu(); fertig(w); };
+    buecher.forEach(function(b,i){
+      var k=el('<button class="btn ghost" type="button" style="text-align:left;display:block;width:100%;margin-top:8px">'+
+        "<strong>Buch "+(i+1)+"</strong><br><span style=\"font-size:13px\">"+esc(kiBuchText(b))+"</span></button>");
+      k.onclick=function(){ fertigAuf(i); };
+      v.inhalt.appendChild(k);
+    });
+    var keins=el('<button class="btn ghost" type="button">Keins davon – alle als weitere Anlagen</button>');
+    var ab=el('<button class="btn ghost" type="button">Abbrechen</button>');
+    keins.onclick=function(){ fertigAuf(-1); };
+    ab.onclick=function(){ fertigAuf(null); };
+    v.fuss.appendChild(ab); v.fuss.appendChild(keins);
+  });
+}
+/* Die übrigen Bücher: je Buch neu anlegen, einer vorhandenen Anlage des
+   Markts zuordnen oder überspringen – danach der Reihe nach im geführten
+   Dialog mit der Prüfansicht der KI */
+function weitereAusPruefbuch(){
+  var rest=kiRest; kiRest=null;
+  if(!rest || !rest.liste.length) return;
+  var s=byId[rest.standortId];
+  if(!s){ toast("Weitere Prüfbücher: Markt nicht gefunden."); return; }
+  var vorhandene=anlagenDesMarkts(s,false);
+  var v=ansichtOeffnen("Weitere Prüfbücher");
+  v.schritt.textContent=stName(s)+" · "+rest.liste.length+" weitere Anlage"+(rest.liste.length===1?"":"n");
+  v.inhalt.appendChild(el('<div class="note">Aus derselben Fotoserie stammen noch diese Prüfbücher. Wohin damit?</div>'));
+  var wahlen=rest.liste.map(function(b,i){
+    /* Vorschlag: vorhandene Anlage mit gleicher Seriennummer oder Bezeichnung, sonst neu */
+    var sn=String((b.anlage||{}).seriennummer||"").replace(/\s+/g,"").toUpperCase();
+    var nm=String((b.anlage||{}).bezeichnung||"").toLowerCase().replace(/[^a-z0-9äöüß]/g,"");
+    var treffer=vorhandene.filter(function(x){
+      var d=anlageDaten(x.leader);
+      return (sn && String(d.seriennummer||"").replace(/\s+/g,"").toUpperCase()===sn) ||
+             (nm && String(anlagenName(x.leader)||"").toLowerCase().replace(/[^a-z0-9äöüß]/g,"")===nm);
+    })[0];
+    var z=el('<div class="posbox" style="margin-top:8px"><strong>'+esc(kiBuchText(b))+'</strong>'+
+      '<select style="width:100%;margin-top:6px"><option value="neu">als neue Anlage anlegen</option>'+
+      vorhandene.map(function(x){ return '<option value="'+esc(x.leader.id)+'"'+(treffer===x?" selected":"")+'>zu vorhandener: '+esc(anlagenName(anlageDaten(x.leader)))+"</option>"; }).join("")+
+      '<option value="weg">überspringen</option></select></div>');
+    v.inhalt.appendChild(z);
+    return z.querySelector("select");
+  });
+  var los=el('<button class="btn" type="button">Weiter</button>');
+  var ab=el('<button class="btn ghost" type="button">Alle überspringen</button>');
+  ab.onclick=function(){ v.zu(); };
+  los.onclick=function(){
+    var auftraege=rest.liste.map(function(b,i){ return {buch:b, ziel:wahlen[i].value}; })
+      .filter(function(x){ return x.ziel!=="weg"; });
+    v.zu();
+    var naechstes=function(){
+      var x=auftraege.shift(); if(!x) return;
+      var p = x.ziel==="neu" ? anlageNeuAnlegen(s, x.buch)
+            : anlageDatenErgaenzen(posById[x.ziel], x.buch);
+      Promise.resolve(p).then(function(){ setTimeout(naechstes, 400); });
+    };
+    naechstes();
+  };
+  v.fuss.appendChild(ab); v.fuss.appendChild(los);
+}
+/* Kurzbeschreibung eines gelesenen Prüfbuchs für die Auswahl */
+function kiBuchText(b){
+  var a=b.anlage||{};
+  return [a.bezeichnung, [a.hersteller, a.modell].filter(Boolean).join(" "), a.seriennummer?"SN "+a.seriennummer:"",
+    a.kaeltemittelArt?a.kaeltemittelArt+(a.kaeltemittelKg?" "+a.kaeltemittelKg+" kg":""):"", a.inbetriebnahme?"IB "+a.inbetriebnahme:""]
+    .filter(Boolean).join(" · ") || "Prüfbuch ohne lesbare Kennung";
 }
 /* Antwort aus der Claude-App lesen – verträgt Codeblöcke und Text drumherum */
 function kiAntwortLesen(text, art){
@@ -5309,7 +5426,7 @@ function kiAntwortLesen(text, art){
     if(d.anlage || d.hersteller || d.modell) d={geraete:[d.anlage||d], unsicher:d.unsicher||[], hinweise:d.hinweise||""};
     else throw new Error("In der Antwort stehen keine Typenschilder (\"geraete\").");
   }
-  if(art==="pruefbuch" && !d.anlage && !Array.isArray(d.pruefungen)) throw new Error("In der Antwort stehen keine Prüfbuch-Angaben (\"anlage\").");
+  if(art==="pruefbuch" && !kiPruefbuecher(d).length) throw new Error("In der Antwort stehen keine Prüfbuch-Angaben (\"pruefbuecher\" bzw. \"anlage\").");
   if(!Array.isArray(d.unsicher)) d.unsicher=[];
   return d;
 }
@@ -9130,7 +9247,7 @@ function verwaltungEditor(s){
     var rec={id:"standort:"+s.id, typ:"standort", ziel:s.id, felder:s._neu?neu:gegenExcel, neu:!!s._neu,
              geaendert:new Date().toISOString(), von:wer(), grund:grund};
     stammUeber[rec.id]=rec;
-    stammSpeichern(rec).then(function(wo){
+    return stammSpeichern(rec).then(function(wo){
       wendeStammdatenAn();
       protokolliere({art:"stammdaten", standortId:s.id, standortName:stName(s), grund:grund,
         felder:[{feld:"entfernt", name:"Markt", alt:weg?"in der Liste":"entfernt", neu:weg?"aus der Liste entfernt":"wieder aufgenommen"}]});
