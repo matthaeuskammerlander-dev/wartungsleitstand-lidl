@@ -632,6 +632,34 @@ Zugriffsregel auf `stammdaten` um den neuen Typ. Bis dahin bleibt eine
 erfasste Störung auf dem Gerät und geht von selbst raus, sobald die Regel
 da ist.
 
+## Rollen und Konten
+
+| Rolle | Wer | Darf |
+|---|---|---|
+| **Inhaber** | Manfred, Matthäus | alles, dazu *Rückgängig machen*, KI-Kosten und Kontenübersicht (*Verwaltung → Inhaber*) |
+| **Admin** | Darko | Verwaltung, Nachbessern, Protokolle löschen/wiederherstellen, Posteingang |
+| **Techniker** | alle übrigen | Protokolle, Störungen, Anlagendaten – ohne Büro-Reiter |
+| **Kunde** | Lidl | nur lesen: Fällig, Karte, Anlagen, Verlauf; keine Zugangsdaten, kein interner Verlauf |
+| **Präsentation** | Vorführung | Spielwiese: alles bedienbar wie als Admin, **gespeichert wird nichts** – kein Gerätespeicher, keine Datenbank, keine KI; nach dem Neuladen ist alles wie vorher. Ein Banner sagt das dauerhaft. |
+
+Vergeben werden Rollen im SQL Editor (`tools/rollen.sql`); wer keinen Eintrag
+hat, ist Techniker. Die Datenbank prüft selbst: Kunde und Präsentation können
+nicht schreiben, und Stammdaten lesen sie nur über die Sicht `stammdaten_lesen`
+ohne Zugangsdaten.
+
+**Abgemeldet** zeigt die App nur die Wartungsliste und sagt das oben deutlich:
+offene Störungen, App-Protokolle und ergänzte Anlagendaten fehlen dann, und
+Fälligkeiten können falsch sein. Beim Abmelden wird alles Geladene aus dem
+Speicher geräumt, auch Zugangsdaten.
+
+**Offene Störungen stehen immer alle da**, auch wenn oben nach Markt oder
+Region gefiltert ist – was außerhalb der Auswahl liegt, ist markiert.
+
+**Schnell für den Normalfall:** Termin unter *Fällig* antippen → **Alles
+erledigt, keine Mängel** (hakt alle Arbeiten, „ohne wesentliche
+Beanstandung“, die § 23-Aussage und „betriebsbereit: ja“ an) → unterschreiben
+→ speichern. Der Name kommt aus dem Konto.
+
 ## Prüfen – Checkliste fürs Büro
 
 Termine und Anlagendaten kommen aus vielen Quellen: Excel-Liste, Verwaltung,
@@ -1020,6 +1048,13 @@ wieder steht. Der Techniker muss nichts nachholen.
 
 ## Offene Punkte
 
+- **Archiv auf der Synology** einrichten (Berechtigungen, Aufgabenplaner) – siehe
+  *Archiv auf der Synology*.
+- **Datenbank-Postfach** für Aufträge und Rapporte – vorbereitet, siehe
+  `POSTEINGANG-EINRICHTUNG.md` (mit Georg).
+- **KI-Erkennung** von Prüfbüchern, Typenschildern und Aufträgen – vorbereitet,
+  siehe `KI-EINRICHTUNG.md` (Geschäftskonto bei Anthropic, Freigabe).
+- **Rollen** vergeben – `tools/rollen.sql` (Inhaber, Admin, Kunde, Präsentation).
 - **Intervall-Kürzel** in der Spalte *HJ/HI/JW*: JW (148×), HI (64×), HW (23×),
   HJI (8×), HJW (7×), HJ (1×). Die Bedeutung ist nirgends hinterlegt. Bis sie
   feststeht, rechnet die App die Fälligkeit nur über den eingetragenen

@@ -13,5 +13,14 @@ window.UKT_CONFIG = {
   /* Adresse, auf die der QR-Code zeigt. Leer lassen = die Adresse, unter der
      die Seite gerade aufgerufen wird. Für das spätere eigene Hosting hier
      die endgültige Adresse eintragen, z. B. "https://wartung.ukt.at/". */
-  appUrl: ""
+  appUrl: "",
+
+  /* KI-Erkennung von Prüfbüchern, Typenschildern und Lidl-Aufträgen. Bleibt
+     aus, bis die Funktion ki-lesen in Supabase eingerichtet ist (siehe
+     KI-EINRICHTUNG.md). Dann auf true stellen. */
+  kiAktiv: false,
+
+  /* Posteingang aus dem Datenbank-Postfach (Synology-Skript). Bleibt aus, bis
+     POSTEINGANG-EINRICHTUNG.md erledigt ist. */
+  posteingangAktiv: false
 };
