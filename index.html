@@ -397,6 +397,7 @@ table.dt td{padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:
 </header>
 
 <main class="wrap"><div id="app"></div></main>
+<div class="wrap" style="text-align:center;padding-top:18px"><button class="btn ghost sm" type="button" id="wunschlink" hidden>💡 Änderung vorschlagen</button></div>
 <div class="wrap" id="appversion" style="font-size:10.5px;color:var(--ink-2);opacity:.6;text-align:center;padding:14px 0 calc(10px + env(safe-area-inset-bottom,0px))"></div>
 <script>
 /* App-Version, ganz klein unten: Stand der Datei, wie sie der Server ausliefert
@@ -4604,6 +4605,14 @@ function adminPruefen(){
       document.body.classList.toggle("demo", demo());
       demoBanner();
       if(!nurLesen() && !demo()) stammdatenUebertragen();   /* Anlagendaten auch von Technikern */
+      wunschLinkNeu();
+      /* Inhaber: offene Änderungswünsche zählen – nur die Zahl am Reiter
+         nachziehen, nicht neu zeichnen (sonst ginge Angefangenes verloren) */
+      if(istInhaber()) wuenscheLaden().then(function(){
+        var b=document.querySelector('[data-tab="wuensche"]'); if(!b) return;
+        var n=WUENSCHE.filter(function(w){ return w.status==="neu"||(w.status==="vorschau"&&w.pruefung==="ok"); }).length;
+        b.textContent="Änderungswünsche"+(n?" · "+n:"");
+      }, function(){});
       return Admin.frei;
     },function(){ Admin.geprueft=true; return false; });
   }
@@ -9180,13 +9189,20 @@ function viewVerwaltung(){
   if(!A.tab) A.tab="nachbessern";
   var menue=el('<div class="card"><div class="pad"><div class="chips" role="tablist" style="gap:8px">'+
     [["nachbessern","Nachbessern"+(fehlerZahl?" · "+fehlerZahl+" Fehler":"")],["maerkte","Märkte & Anlagen"]]
+      /* Änderungswünsche: was auf eine Entscheidung wartet, steht als Zahl dran */
+      .concat(istInhaber() && Store.modus==="supabase" && Store.sb ? [["wuensche","Änderungswünsche"+(function(){
+        var n=WUENSCHE.filter(function(w){ return w.status==="neu"||(w.status==="vorschau"&&w.pruefung==="ok"); }).length; return n?" · "+n:""; })()]] : [])
       .concat(istInhaber() && Store.modus==="supabase" && Store.sb ? [["inhaber","Inhaber"]] : [])
       .map(function(t){ return '<button class="chip" type="button" role="tab" data-tab="'+t[0]+'" aria-pressed="'+(A.tab===t[0])+'">'+esc(t[1])+"</button>"; }).join("")+
     "</div></div></div>");
   menue.querySelectorAll("[data-tab]").forEach(function(b){ b.onclick=function(){ A.tab=b.dataset.tab; if(A.tab!=="maerkte") A.vonNachbessern=false; render(); window.scrollTo({top:0}); }; });
   f.appendChild(menue);
   if(A.tab==="nachbessern"){ f.appendChild(nachbessernAnsicht(liste)); return f; }
-  if(A.tab==="inhaber" && !(istInhaber() && Store.modus==="supabase")) A.tab="nachbessern";   /* nach Kontowechsel */
+  if((A.tab==="inhaber"||A.tab==="wuensche") && !(istInhaber() && Store.modus==="supabase")) A.tab="nachbessern";   /* nach Kontowechsel */
+  if(A.tab==="wuensche"){
+    try{ f.appendChild(wuenscheAnsicht()); }catch(e){ console.error(e); }
+    return f;
+  }
   if(A.tab==="inhaber"){
     /* ein Fehler in der Inhaber-Karte darf die Verwaltung nie blockieren */
     try{ f.appendChild(inhaberKarte()); }catch(e){ console.error(e); }
@@ -10408,8 +10424,214 @@ function csv(name,head,rows){
 }
 
 /* ---------- Render ---------- */
+/* ================= Änderungswünsche =================
+   Wer mitarbeitet (nicht Kunde/Präsentation), schickt aus der App einen
+   Wunsch („Änderung vorschlagen“ ganz unten). Inhaber sehen alle Wünsche
+   unter Verwaltung → Änderungswünsche und entscheiden jeden Schritt selbst:
+   freigeben an Claude (GitHub, Funktion „wuensche“), Vorschau und Ergebnis
+   der automatischen Prüfung ansehen, übernehmen, nachbessern oder ablehnen.
+   Ohne „Übernehmen“ ändert sich an der echten App nichts. */
+var WUENSCHE=[], wuenscheStand=0;
+var WUNSCH_REPO="matthaeuskammerlander-dev/wartungsleitstand-lidl";
+var WUNSCH_STATUS={neu:["Neu – wartet auf Freigabe","warn"], in_arbeit:["Claude arbeitet daran","plan"], vorschau:["Vorschau bereit","plan"],
+  uebernommen:["In der App übernommen","good"], abgelehnt:["Abgelehnt",""], fehler:["Fehler","crit"]};
+function wuenscheAn(){ return Store.modus==="supabase" && !!Store.sb && !!Store.benutzer && !nurLesen() && !demo(); }
+function wunschLinkNeu(){ var e=document.getElementById("wunschlink"); if(e) e.hidden=!wuenscheAn(); }
+function wunschName(){ var b=Store.benutzer||{}; return ((b.user_metadata||{}).name)||b.email||"unbekannt"; }
+function wuenscheLaden(){
+  if(!wuenscheAn()) return Promise.resolve([]);
+  return Store.sb.from("aenderungswuensche").select("*").order("erstellt",{ascending:false}).limit(200).then(function(r){
+    if(r.error) throw new Error(/relation|does not exist/i.test(r.error.message)?"Änderungswünsche noch nicht eingerichtet (tools/aenderungswuensche.sql).":r.error.message);
+    WUENSCHE=r.data||[]; wuenscheStand=Date.now(); return WUENSCHE;
+  });
+}
+function wunschFunktion(body){
+  return mitFrist(Store.sb.functions.invoke("wuensche", {body:body}), 60000).then(function(r){
+    if(!r.error) return r.data;
+    var ctx=r.error.context;
+    return (ctx && ctx.json ? ctx.json().catch(function(){ return null; }) : Promise.resolve(null)).then(function(j){
+      throw new Error((j && j.fehler) || r.error.message || "Nicht erreichbar");
+    });
+  });
+}
+function wunschStatusHtml(w){
+  var s=WUNSCH_STATUS[w.status]||[w.status,""];
+  return '<span class="tag"'+(s[1]?' style="border-color:var(--'+s[1]+');color:var(--'+s[1]+')"':"")+">"+esc(s[0])+"</span>";
+}
+/* Für alle, die mitarbeiten: Wunsch schicken, eigene Wünsche verfolgen */
+function wunschSchicken(){
+  if(!wuenscheAn()){ toast("Dafür bitte anmelden."); return; }
+  var v=ansichtOeffnen("Änderung vorschlagen");
+  v.schritt.textContent="Idee, Fehler oder fehlender Knopf – geht zuerst ans Büro";
+  var reiter=(VIEWS.filter(function(x){ return x[0]===S.view; })[0]||[S.view,S.view])[1];
+  var markt=(S.view==="verwaltung" && S.adm && S.adm.sel && byId[S.adm.sel]) ? stName(byId[S.adm.sel]) : "";
+  var kontext=["Reiter „"+reiter+"“", markt?"Markt "+markt:"", window.innerWidth<700?"am Handy":"am PC"].filter(Boolean).join(" · ");
+  var box=el('<div class="stack">'+
+    '<label class="fl"><span>Was soll anders sein?</span><textarea rows="6" data-a="text" maxlength="4000" '+
+      'placeholder="z. B. Beim Protokoll soll der Knopf „Fotos“ ganz oben stehen, weil man ihn sonst suchen muss."></textarea></label>'+
+    '<div class="muted" style="font-size:12.5px">Mitgeschickt wird: '+esc(kontext)+"</div>"+
+    '<div class="note"><strong>So geht es weiter:</strong> Der Inhaber sieht den Wunsch und entscheidet. Wird er umgesetzt, '+
+      "steht der Text auf GitHub (öffentlich) – bitte <strong>keine Namen, Adressen, Telefonnummern oder Passwörter</strong> hineinschreiben.</div>"+
+    '<div class="note warnbox" data-a="fehler" hidden></div>'+
+    '<div data-a="meine" class="stack"></div></div>');
+  v.inhalt.appendChild(box);
+  var fe=box.querySelector('[data-a="fehler"]');
+  var ab=el('<button class="btn ghost" type="button">Abbrechen</button>'), los=el('<button class="btn" type="button">Wunsch schicken</button>');
+  ab.onclick=v.zu;
+  los.onclick=function(){
+    var t=box.querySelector('[data-a="text"]').value.trim();
+    if(t.length<5){ fe.textContent="Bitte kurz beschreiben, was anders sein soll."; fe.hidden=false; return; }
+    los.disabled=true; los.textContent="wird geschickt …";
+    Store.sb.from("aenderungswuensche").insert({text:t, kontext:kontext, von_name:wunschName()}).then(function(r){
+      if(r.error){ los.disabled=false; los.textContent="Wunsch schicken";
+        fe.textContent=/relation|does not exist/i.test(r.error.message)?"Änderungswünsche sind noch nicht eingerichtet.":"Nicht geschickt: "+r.error.message; fe.hidden=false; return; }
+      v.zu(); toast("Danke – der Wunsch ist beim Büro.");
+    });
+  };
+  v.fuss.appendChild(ab); v.fuss.appendChild(los);
+  /* eigene Wünsche und ihr Stand */
+  Store.sb.from("aenderungswuensche").select("id,erstellt,text,status,notiz").eq("von", Store.benutzer.id).order("erstellt",{ascending:false}).limit(10).then(function(r){
+    var l=(r && r.data)||[]; if(!l.length) return;
+    var m=box.querySelector('[data-a="meine"]');
+    m.appendChild(el('<div class="as-label" style="margin-top:6px">Deine letzten Wünsche</div>'));
+    l.forEach(function(w){
+      m.appendChild(el('<div class="posbox" style="font-size:13px"><div class="rowflex" style="justify-content:space-between;gap:6px"><span>W-'+w.id+" · "+
+        esc(dfmt(isoLokal(new Date(w.erstellt))))+"</span>"+wunschStatusHtml(w)+"</div><div>"+esc(w.text.length>160?w.text.slice(0,159)+"…":w.text)+"</div>"+
+        (w.status==="abgelehnt"&&w.notiz?'<div class="muted">Grund: '+esc(w.notiz)+"</div>":"")+"</div>"));
+    });
+  });
+}
+/* Für Inhaber: volle Übersicht und jede Entscheidung */
+function wuenscheAnsicht(){
+  var c=el('<div class="card"><div class="pad stack">'+
+    '<div class="rowflex" style="justify-content:space-between;gap:8px"><div><h2>Änderungswünsche</h2>'+
+      '<div class="sub">Aus der App geschickt. Du entscheidest jeden Schritt: an Claude freigeben → Vorschau und automatische Prüfung ansehen → '+
+      "übernehmen, nachbessern lassen oder ablehnen. Ohne „Übernehmen“ ändert sich an der echten App nichts.</div></div>"+
+      '<button class="btn ghost sm" type="button" data-a="stand">Stand bei GitHub abfragen</button></div>'+
+    '<div class="chips" data-a="filter"></div>'+
+    '<div data-a="liste" class="stack"><div class="muted">wird geladen …</div></div></div></div>');
+  var liste=c.querySelector('[data-a="liste"]'), filterBox=c.querySelector('[data-a="filter"]');
+  S.wunschFilter=S.wunschFilter||"offen";
+  var FILTER=[["offen","Offen"],["neu","Neu"],["vorschau","Vorschau"],["erledigt","Erledigt"],["alle","Alle"]];
+  var passt=function(w){ var f=S.wunschFilter;
+    if(f==="alle") return true; if(f==="offen") return ["neu","in_arbeit","vorschau","fehler"].indexOf(w.status)>=0;
+    if(f==="erledigt") return ["uebernommen","abgelehnt"].indexOf(w.status)>=0; return w.status===f; };
+  var zeichnen=function(){
+    filterBox.innerHTML=FILTER.map(function(f){ var n=WUENSCHE.filter(function(w){ var alt=S.wunschFilter; S.wunschFilter=f[0]; var p=passt(w); S.wunschFilter=alt; return p; }).length;
+      return '<button class="chip" type="button" data-f="'+f[0]+'" aria-pressed="'+(S.wunschFilter===f[0])+'">'+f[1]+" · "+n+"</button>"; }).join("");
+    filterBox.querySelectorAll("[data-f]").forEach(function(b){ b.onclick=function(){ S.wunschFilter=b.dataset.f; zeichnen(); }; });
+    liste.innerHTML="";
+    var l=WUENSCHE.filter(passt);
+    if(!l.length){ liste.appendChild(el('<div class="muted">Keine Wünsche in dieser Auswahl.</div>')); return; }
+    l.forEach(function(w){ liste.appendChild(wunschKarte(w, neuLaden)); });
+  };
+  var neuLaden=function(abgleich){
+    var p=abgleich ? wunschFunktion({aktion:"abgleichen"}).then(function(d){ if(d && d.fehler && d.fehler.length) toast("GitHub: "+d.fehler[0]); }, function(e){ toast("GitHub nicht erreichbar: "+e.message); }) : Promise.resolve();
+    return p.then(wuenscheLaden).then(zeichnen, function(e){ liste.innerHTML=""; liste.appendChild(el('<div class="note warnbox">'+esc(e.message)+"</div>")); });
+  };
+  c.querySelector('[data-a="stand"]').onclick=function(){ var b=this; b.disabled=true; b.textContent="fragt ab …";
+    neuLaden(true).then(function(){ b.disabled=false; b.textContent="Stand bei GitHub abfragen"; }); };
+  /* beim Öffnen: laufende Wünsche gleich abgleichen */
+  wuenscheLaden().then(function(l){
+    zeichnen();
+    if(l.some(function(w){ return w.status==="in_arbeit"||w.status==="vorschau"; })) neuLaden(true);
+  }, function(e){ liste.innerHTML=""; liste.appendChild(el('<div class="note warnbox">'+esc(e.message)+"</div>")); });
+  return c;
+}
+function wunschKarte(w, neuLaden){
+  var gh="https://github.com/"+WUNSCH_REPO;
+  var probe=w.branch ? "https://raw.githack.com/"+WUNSCH_REPO+"/"+w.branch.split("/").map(encodeURIComponent).join("/")+"/index.html" : "";
+  var P={ok:["✓ automatische Prüfung bestanden","good"], fehler:["✗ automatische Prüfung NICHT bestanden","crit"], laeuft:["… Prüfung läuft","plan"], keine:["Prüfung noch nicht gelaufen","warn"]}[w.pruefung]||null;
+  var k=el('<div class="posbox stack" style="gap:8px">'+
+    '<div class="rowflex" style="justify-content:space-between;gap:8px"><strong>W-'+w.id+" · "+esc(w.von_name||"–")+
+      ' <span class="muted" style="font-weight:400">'+esc(dfmt(isoLokal(new Date(w.erstellt))))+"</span></strong>"+wunschStatusHtml(w)+"</div>"+
+    (w.rueckgaengig_von?'<div class="note" style="font-size:12.5px">Nimmt die Änderung <strong>W-'+esc(w.rueckgaengig_von)+"</strong> zurück.</div>":"")+
+    '<div style="white-space:pre-wrap">'+esc(w.text)+"</div>"+
+    (w.kontext?'<div class="muted" style="font-size:12.5px">'+esc(w.kontext)+"</div>":"")+
+    (w.text_claude && w.text_claude!==w.text?'<div style="font-size:13px"><span class="muted">Auftrag an Claude:</span><div style="white-space:pre-wrap">'+esc(w.text_claude)+"</div></div>":"")+
+    (P?'<div style="font-weight:600;color:var(--'+P[1]+')">'+P[0]+"</div>":"")+
+    (w.antwort?'<details><summary style="cursor:pointer;font-weight:600;font-size:13px">Rückmeldung von Claude</summary>'+
+      '<div style="white-space:pre-wrap;font-size:13px;margin-top:6px">'+esc(w.antwort)+"</div></details>":"")+
+    '<div class="rowflex" style="gap:10px;font-size:13px;flex-wrap:wrap">'+
+      (w.issue_nr?'<a href="'+gh+"/issues/"+w.issue_nr+'" target="_blank" rel="noopener">Auftrag auf GitHub</a>':"")+
+      (w.pr_url?'<a href="'+esc(w.pr_url)+'/files" target="_blank" rel="noopener">Änderungen ansehen</a>':"")+
+      (probe && w.status==="vorschau"?'<a href="'+esc(probe)+'" target="_blank" rel="noopener">Vorschau ausprobieren</a>':"")+"</div>"+
+    (probe && w.status==="vorschau"?'<div class="muted" style="font-size:12px">Die Vorschau arbeitet mit den echten Daten – dort nur ansehen, nichts speichern.</div>':"")+
+    '<div class="rowflex" data-a="knoepfe" style="gap:6px;flex-wrap:wrap"></div>'+
+    ((w.verlauf||[]).length?'<details><summary class="muted" style="cursor:pointer;font-size:12.5px">Verlauf</summary><div style="font-size:12.5px;margin-top:4px">'+
+      w.verlauf.map(function(v){ return esc(dfmt(isoLokal(new Date(v.zeit)))+" "+new Date(v.zeit).toTimeString().slice(0,5)+" · "+(v.wer||"")+" · "+v.schritt); }).join("<br>")+"</div></details>":"")+
+  "</div>");
+  var kn=k.querySelector('[data-a="knoepfe"]');
+  var knopf=function(text, art, fn){ var b=el('<button class="btn '+(art||"ghost")+' sm" type="button">'+esc(text)+"</button>");
+    b.onclick=function(){ fn(b); }; kn.appendChild(b); };
+  var ausfuehren=function(b, body, erfolg){
+    b.disabled=true; var t=b.textContent; b.textContent="bitte warten …";
+    wunschFunktion(body).then(function(){ toast(erfolg); return neuLaden(false); },
+      function(e){ b.disabled=false; b.textContent=t; window.alert(e.message); });
+  };
+  var textFragen=function(titel, hinweis, vorgabe, knopfText){
+    return new Promise(function(fertig){
+      var v=ansichtOeffnen(titel); v.schritt.textContent="W-"+w.id;
+      var box=el('<div class="stack"><div class="muted" style="font-size:13px">'+hinweis+'</div><textarea rows="7" style="width:100%"></textarea></div>');
+      box.querySelector("textarea").value=vorgabe||"";
+      v.inhalt.appendChild(box);
+      var ab=el('<button class="btn ghost" type="button">Abbrechen</button>'), ok=el('<button class="btn" type="button">'+esc(knopfText)+"</button>");
+      ab.onclick=function(){ v.zu(); fertig(null); };
+      ok.onclick=function(){ var t=box.querySelector("textarea").value.trim(); v.zu(); fertig(t); };
+      v.fuss.appendChild(ab); v.fuss.appendChild(ok);
+    });
+  };
+  if(w.status==="neu"||w.status==="fehler"){
+    knopf("An Claude freigeben …","",function(b){
+      textFragen("An Claude freigeben", "So geht der Auftrag an Claude – du kannst ihn noch klarer formulieren. Er steht danach öffentlich auf GitHub: "+
+        "keine Namen, Adressen oder Passwörter.", w.text, "Freigeben").then(function(t){
+        if(t===null) return; if(t.length<5){ toast("Der Auftrag ist zu kurz."); return; }
+        ausfuehren(b, {aktion:"freigeben", id:w.id, text:t}, "An Claude weitergegeben – das dauert meist ein paar Minuten.");
+      });
+    });
+  }
+  if(w.status==="vorschau"){
+    if(w.pruefung==="ok") knopf("Übernehmen – in die echte App","",function(b){
+      if(!window.confirm("W-"+w.id+" in die echte App übernehmen?\n\nDie Änderung gilt danach für alle (nach 1–2 Minuten, beim nächsten Laden). "+
+        "Zurücknehmen geht über einen neuen Wunsch.")) return;
+      ausfuehren(b, {aktion:"uebernehmen", id:w.id}, "Übernommen – in 1–2 Minuten in der App.");
+    });
+    knopf("Nachbessern lassen …","",function(b){
+      textFragen("Nachbessern lassen", "Was soll Claude noch ändern?", "", "Schicken").then(function(t){
+        if(!t) return; ausfuehren(b, {aktion:"nachbessern", id:w.id, text:t}, "Claude bessert nach.");
+      });
+    });
+  }
+  /* Übernommenes zurücknehmen: wieder als Vorschlag mit Prüfung – erst dein
+     „Übernehmen“ macht es in der App rückgängig */
+  if(w.status==="uebernommen") knopf("Rückgängig machen …","",function(b){
+    if(!window.confirm("Die Änderung W-"+w.id+" zurücknehmen?\n\nEs entsteht ein neuer Eintrag „Rückgängig: …“ mit Vorschau und automatischer Prüfung. "+
+      "In der App ändert sich erst etwas, wenn du ihn übernimmst.")) return;
+    ausfuehren(b, {aktion:"rueckgaengig", id:w.id}, "Rücknahme vorbereitet – steht jetzt oben in der Liste.");
+  });
+  if(w.status==="in_arbeit"||w.status==="vorschau") knopf("Stand abfragen","",function(b){
+    b.disabled=true; neuLaden(true);
+  });
+  if(["neu","in_arbeit","vorschau","fehler"].indexOf(w.status)>=0) knopf("Ablehnen …","",function(b){
+    textFragen("Wunsch ablehnen", "Grund (sieht auch, wer den Wunsch geschickt hat):", "", "Ablehnen").then(function(t){
+      if(t===null) return;
+      if(!w.issue_nr){   /* noch nicht bei GitHub: direkt hier */
+        b.disabled=true;
+        Store.sb.from("aenderungswuensche").update({status:"abgelehnt", notiz:t||null, geaendert:new Date().toISOString(),
+          verlauf:(w.verlauf||[]).concat([{zeit:new Date().toISOString(), wer:wunschName(), schritt:"abgelehnt"+(t?": "+t:"")}])}).eq("id", w.id).then(function(r){
+          if(r.error){ b.disabled=false; window.alert(r.error.message); return; }
+          toast("Abgelehnt."); neuLaden(false);
+        });
+        return;
+      }
+      ausfuehren(b, {aktion:"ablehnen", id:w.id, text:t}, "Abgelehnt.");
+    });
+  });
+  return k;
+}
 function render(){
   /* Kopfzeile nachziehen – Märkte können angelegt oder stillgelegt worden sein */
+  wunschLinkNeu();
   var standEl=document.getElementById("stand");
   if(standEl) standEl.textContent="Stand "+dfmt(isoLokal(new Date()))+" · "+ST.length+" Standorte · "+anzahlAnlagen()+" Anlagen · "+POS.length+" Termine";
   /* Kunde und Präsentation: nur die Reiter zum Ansehen */
@@ -10507,6 +10729,7 @@ function zeigeQr(){
 document.getElementById("qrbtn").onclick=zeigeQr;
 /* Aktualisieren: holt die neueste App-Fassung und alle Daten neu. Ein
    angefangenes Protokoll ist als Entwurf gesichert – trotzdem nachfragen. */
+(function(){ var wl=document.getElementById("wunschlink"); if(wl) wl.onclick=wunschSchicken; })();
 document.getElementById("neuladen").onclick=function(){
   if(formDirty && !window.confirm("Das Protokoll ist angefangen. Es ist als Entwurf gesichert und wird nach dem Neuladen angeboten.\n\nJetzt aktualisieren?")) return;
   if(typeof entwurfSofort==="function" && entwurfSofort) entwurfSofort();

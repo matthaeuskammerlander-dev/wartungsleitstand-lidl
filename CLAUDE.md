@@ -1,0 +1,61 @@
+# Wartungsleitstand Lidl – Regeln für Claude
+
+Diese Datei gilt für Änderungswünsche, die aus der App kommen (GitHub-Issue
+„Änderungswunsch W-…“). Die Wünsche schreiben Techniker und Büro von
+Kammerlander Umwelt- und Klimatechnik (UKT) – oft kurz, vom Handy, im Feld.
+
+## Was die App ist
+
+- **Eine einzige Datei: `index.html`** (HTML, CSS und Vanilla-JavaScript, kein
+  Build, keine Bibliotheken außer den bereits eingebundenen). Ausgeliefert
+  über GitHub Pages; Daten und Anmeldung über Supabase.
+- Oberfläche und Kommentare sind **Deutsch**, ohne Anglizismen, verständlich
+  für Techniker. Schreibe Code so wie der umgebende Code: gleiche Benennung
+  (deutsche Namen), gleiche Kommentardichte, gleicher Stil (`var`, `function`,
+  Hilfen wie `el()`, `esc()`, `toast()`, `ansichtOeffnen()`).
+- Muss am **iPhone** (Safari, schmaler Bildschirm) gut bedienbar sein.
+
+## Was du ändern darfst
+
+- **Nur `index.html`** (bei Bedarf `README.md`). Alles andere ist gesperrt –
+  die automatische Prüfung lehnt Änderungen an anderen Dateien ab
+  (Automatik, Prüfprogramm, Datenbank-Regeln, Supabase-Funktionen,
+  verschlüsselte Daten `daten.enc.js`, `config.js`).
+- **Kleine, gezielte Änderungen.** Nur das, was der Wunsch verlangt. Nichts
+  umbauen, nichts „aufräumen“, keine neuen Abhängigkeiten.
+- Keine Zugangsdaten, Passwörter, Schlüssel, Kunden- oder Personendaten in
+  Code, Kommentare oder Antworten schreiben. Das Repository ist öffentlich.
+- Ist ein Wunsch unklar, widersprüchlich, betrifft er die Terminregeln unten
+  oder Rechte/Sicherheit: **nichts ändern**, sondern im Issue kurz auf Deutsch
+  nachfragen.
+
+## Terminregeln (vom Büro festgelegt – nie eigenmächtig ändern)
+
+- Jede Anlage hat eine Jahreswartung (**JW**) im Monat der Inbetriebnahme und
+  sechs Monate versetzt einen Halbjahrestermin: **HJW** ab 30 kg Kältemittel,
+  sonst **HJI**. Ein eingetragener Soll-Monat bleibt, wenn er höchstens
+  3 Monate von der Regel abweicht (`standardRegel`).
+- Den Soll-Monat nie automatisch ändern; vorgezogene Wartungen sind normal.
+- Einträge ≤ 14 Tage auseinander sind derselbe Besuch (`BESUCH_TAGE`).
+- Versäumter Termin: eine spätere Wartung erfüllt ihn als verspätet, wenn sie
+  mehr als 3 Monate vor dem nächsten Termin liegt; sonst gilt sie als
+  vorgezogen für den nächsten, der versäumte als „ausgelassen“.
+- Wurde nach einem überfälligen Termin ein späterer Termin derselben Anlage
+  erledigt, ist der frühere „ausgelassen“ (nicht mehr überfällig).
+- Altlast der alten Liste: dieselbe Anlage zweimal mit „JW“ wird automatisch
+  bereinigt (`altlastenFaelle`).
+- Nur planmäßige Wartung/Prüfung zählt als Wartung („nach § 22 KAV“).
+
+## Rollen
+
+inhaber, admin, techniker, kunde, praesentation. Kunde und Präsentation
+dürfen nur ansehen (`nurLesen()`, `demo()`); Verwaltung nur Admins
+(`Admin.frei`), Inhaber-Bereich nur Inhaber (`istInhaber()`). Diese
+Grenzen nie lockern.
+
+## Vor dem Abschluss
+
+1. `node tools/pruefen.mjs` ausführen – muss „OK“ melden.
+2. Zum Schluss **auf Deutsch, kurz und ohne Fachchinesisch** erklären:
+   was geändert wurde, wo man es in der App findet und wie man es ausprobiert.
+   Offene Fragen oder Risiken deutlich nennen.

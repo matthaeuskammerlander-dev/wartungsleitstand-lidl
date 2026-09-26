@@ -1,0 +1,48 @@
+# Automatische Prüfung jeder vorgeschlagenen Änderung (Änderungswünsche aus
+# der App, umgesetzt von Claude) und jedes Stands der echten App.
+# Ohne bestandene Prüfung lässt sich ein Wunsch in der App nicht übernehmen.
+name: App prüfen
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  pruefen:
+    name: App prüfen
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      # Claude darf nur die App-Seite (und die Beschreibung) ändern – nie die
+      # Prüfung selbst, die Automatik, Datenbank-Regeln oder Funktionen
+      - name: Nur erlaubte Dateien geändert
+        if: github.event_name == 'pull_request' && startsWith(github.head_ref, 'claude/')
+        run: |
+          geaendert=$(git diff --name-only "origin/${{ github.base_ref }}...HEAD")
+          echo "Geänderte Dateien:"; echo "$geaendert"
+          verboten=$(echo "$geaendert" | grep -vE '^(index\.html|README\.md)$' || true)
+          if [ -n "$verboten" ]; then
+            echo "::error::Geschützte Dateien geändert: $verboten"
+            exit 1
+          fi
+
+      - name: Syntax und Regeln
+        run: node tools/pruefen.mjs
+
+      - name: App im Browser starten (PC und Handy)
+        run: |
+          npm install --no-save --no-package-lock playwright@1
+          npx playwright install --with-deps chromium
+          node tools/pruefen.mjs --browser
