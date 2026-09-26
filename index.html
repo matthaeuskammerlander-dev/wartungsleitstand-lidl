@@ -363,7 +363,7 @@ a:not(.btn):hover{opacity:.8}
   .blatt h2{break-after:avoid}
   .blatt table,.blatt .fotos figure{break-inside:avoid}
 }
-.toast{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(18px + env(safe-area-inset-bottom,0px));z-index:100;
+.toast{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(18px + env(safe-area-inset-bottom,0px));z-index:100000;
   background:var(--ink);color:var(--ground);padding:11px 16px;border-radius:9px;font-size:13.5px;box-shadow:var(--shadow);display:none}
 table.dt{width:100%;border-collapse:collapse;font-size:13px}
 /* breite Tabellen scrollen auf dem Handy in sich, statt die Seite zu verbreitern */
@@ -1498,8 +1498,11 @@ function stoerungDialog(vorhanden){
       kiKnopf.disabled=true; kiKnopf.textContent="KI liest …";
       var knopfZurueck=function(){ kiKnopf.disabled=false; kiKnopf.textContent="Mit KI auslesen"; };
       /* ohne KI-Zugang über die eigene Claude-App (Kopier-Weg) */
-      var lesen = kiAn() ? mitFrist(kiLesen("auftrag", o.seiten, kiKontext(o.standortId?byId[o.standortId]:null, null)), 120000)
-                         : kiKopierweg("auftrag", kiKontext(o.standortId?byId[o.standortId]:null, null)).then(function(d){ return d?{daten:d}:null; });
+      var lesen = kiWegWaehlen("auftrag").then(function(weg){
+        if(weg==="direkt") return mitFrist(kiLesen("auftrag", o.seiten, kiKontext(o.standortId?byId[o.standortId]:null, null)), 120000);
+        if(weg==="kopie") return kiKopierweg("auftrag", kiKontext(o.standortId?byId[o.standortId]:null, null)).then(function(d){ return d?{daten:d}:null; });
+        return null;
+      });
       lesen.then(function(erg){
         if(!erg){ knopfZurueck(); return; }
         var d=erg.daten||{}, g={};
@@ -3514,13 +3517,16 @@ function anlageAssistent(start, titel, neu, alles){
     function kiArt(art, geraet, vorgabe){
       /* schon gelesenes Prüfbuch (weiteres Buch aus derselben Fotoserie) */
       if(vorgabe){ verarbeiten({daten:vorgabe, _gewaehlt:true}); return; }
-      /* Ohne eigenen KI-Zugang: über die Claude-App kopieren – gleiche Prüfansicht */
-      if(!kiAn()){
-        kiKopierweg(art, kiKontext(kiMarkt(), a)).then(function(d){ if(d) return verarbeiten({daten:d}); })
-          .catch(function(e){ toast("Antwort nicht verwertbar: "+(e&&e.message||e)); uebersicht(); });
-        return;
-      }
-      kiFotosWaehlen().then(function(dateien){
+      /* Weg wählen: direkt in der App oder über die eigene Claude-App
+         (Kopier-Weg) – gleiche Prüfansicht */
+      kiWegWaehlen(art).then(function(weg){
+        if(weg==="kopie")
+          kiKopierweg(art, kiKontext(kiMarkt(), a)).then(function(d){ if(d) return verarbeiten({daten:d}); else uebersicht(); })
+            .catch(function(e){ toast("Antwort nicht verwertbar: "+(e&&e.message||e)); uebersicht(); });
+        else if(weg==="direkt") direkt();
+        else uebersicht();
+      });
+      function direkt(){ kiFotosWaehlen().then(function(dateien){
         if(!dateien.length) return;
         if(dateien.length>12){ toast("Höchstens 12 Bilder auf einmal."); return; }
         kopf("KI liest "+dateien.length+" Bild"+(dateien.length===1?"":"er")+" …", "bitte warten");
@@ -3532,7 +3538,7 @@ function anlageAssistent(start, titel, neu, alles){
               .catch(function(x){ toast("Antwort nicht verwertbar: "+(x&&x.message||x)); uebersicht(); });
           } else uebersicht();
         });
-      });
+      }); }
       function verarbeiten(erg){
           if(geschlossen){ toast("Der Dialog war schon geschlossen – das Ergebnis der KI wurde verworfen."); return; }
           var d=erg.daten||{};
@@ -5360,14 +5366,32 @@ function dialogeSchliessen(){
   document.querySelectorAll(".assistent").forEach(function(d){ d.remove(); });
   document.body.style.overflow="";
 }
+/* Das zuletzt geöffnete Fenster liegt immer ganz vorne – auch wenn ein
+   Assistent aus einer Ansicht heraus aufgeht. Darunterliegende Fenster
+   bekommen keinen weiteren dunklen Schleier (sonst wird es schwarz). */
+(function fensterNachVorne(){
+  var z=1000, SEL=".assistent,.overlay,.qrscan,#druckansicht";
+  var start=function(){
+    new MutationObserver(function(liste){
+      liste.forEach(function(m){ Array.prototype.forEach.call(m.addedNodes, function(n){
+        if(n.nodeType!==1 || !n.matches(SEL)) return;
+        var schonOffen=Array.prototype.some.call(document.querySelectorAll(SEL), function(x){ return x!==n && x.id!=="druckansicht" && x.dataset.vorne; });
+        n.dataset.vorne="1";
+        n.style.zIndex=String(++z);
+        if(schonOffen && n.id!=="druckansicht" && !n.classList.contains("qrscan")) n.style.background="rgba(10,14,18,.25)";
+      }); });
+    }).observe(document.body, {childList:true});
+  };
+  if(document.body) start(); else document.addEventListener("DOMContentLoaded", start);
+})();
 function ansichtOeffnen(titel){
   var ov=el('<div class="assistent" role="dialog" aria-modal="true"><div class="as-karte">'+
     '<div class="as-kopf"><div style="min-width:0"><div class="as-titel"></div><div class="as-schritt"></div></div>'+
       '<button class="btn ghost sm" type="button" data-a="zu">Schließen</button></div>'+
     '<div class="as-inhalt"></div><div class="as-fuss"></div></div></div>');
   ov.querySelector(".as-titel").textContent=titel;
-  /* liegt über einem anderen Dialog (etwa der offenen Störung) */
-  ov.style.zIndex="1100";
+  /* liegt über einem anderen Dialog (etwa der offenen Störung) – Reihenfolge
+     regelt fensterNachVorne */
   document.body.appendChild(ov);
   var vorher=document.body.style.overflow;
   document.body.style.overflow="hidden";
@@ -5628,11 +5652,34 @@ function kiAntwortLesen(text, art){
   if(!Array.isArray(d.unsicher)) d.unsicher=[];
   return d;
 }
+/* Welcher Weg? Direkt (kostet ein paar Cent, geht nur mit eingeschalteter
+   KI) oder über die eigene Claude-App (Abo, kostet nichts extra) – immer
+   wählbar. Ohne direkte KI gleich der Kopier-Weg. */
+function kiWegWaehlen(art){
+  if(!kiAn()) return Promise.resolve("kopie");
+  return new Promise(function(fertig){
+    var v=ansichtOeffnen(art==="pruefbuch"?"Prüfbuch lesen":art==="auftrag"?"Lidl-Auftrag lesen":"Typenschilder lesen");
+    v.schritt.textContent="Wie soll gelesen werden?";
+    var erledigt=false, ende=function(w){ if(erledigt) return; erledigt=true; v.zu(); fertig(w); };
+    var box=el('<div class="stack">'+
+      '<button class="btn" type="button" data-weg="direkt" style="text-align:left;display:block;width:100%"><strong>Direkt in der App</strong><br>'+
+        '<span style="font-size:13px;font-weight:400">Fotos wählen, die App liest sie selbst · ca. 10–15 Cent je Serie</span></button>'+
+      '<button class="btn ghost" type="button" data-weg="kopie" style="text-align:left;display:block;width:100%"><strong>Über die Claude-App</strong><br>'+
+        '<span style="font-size:13px">Auftrag kopieren, Fotos in Claude geben, Antwort einfügen · im Abo enthalten</span></button></div>');
+    box.querySelectorAll("[data-weg]").forEach(function(b){ b.onclick=function(){ ende(b.dataset.weg); }; });
+    v.inhalt.appendChild(box);
+    var ab=el('<button class="btn ghost" type="button">Abbrechen</button>');
+    ab.onclick=function(){ ende(null); };
+    v.fuss.appendChild(ab);
+    /* „Schließen“ oben = Abbrechen */
+    box.closest(".assistent").querySelector('[data-a="zu"]').onclick=function(){ ende(null); };
+  });
+}
 function kiKopierweg(art, kontext){
   return new Promise(function(fertig){
     var auftrag=kiAuftragText(art, kontext);
     var v=ansichtOeffnen(art==="pruefbuch"?"Prüfbuch mit Claude lesen":art==="auftrag"?"Lidl-Auftrag mit Claude lesen":"Typenschilder mit Claude lesen");
-    v.schritt.textContent="Über die Claude-App – ohne eigenen KI-Zugang";
+    v.schritt.textContent="Über die Claude-App – im Abo enthalten";
     var box=el('<div class="stack">'+
       '<div class="note"><strong>So geht’s:</strong><ol style="margin:6px 0 0 18px;padding:0">'+
         "<li>„Auftrag kopieren“ tippen.</li>"+
