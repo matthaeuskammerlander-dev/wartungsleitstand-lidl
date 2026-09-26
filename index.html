@@ -634,6 +634,9 @@ var VORLAUF_TAGE = 30;          // ab so vielen Tagen vorher gilt eine Wartung a
 /* Nur diese Einsatzarten setzen die Uhr zurück. Eine Störung oder Reparatur
    ist kein Wartungsnachweis. */
 var ZAEHLT_ALS_WARTUNG = ["planmäßig","Prüfung"];
+/* Nur eine planmäßige Wartung bzw. Prüfung bescheinigt die Überprüfung nach
+   § 22 KAV – eine Reparatur oder ein sonstiger Einsatz nicht */
+function zaehltAlsWartung(p){ return !!p && !istStoerung(p) && ZAEHLT_ALS_WARTUNG.indexOf(p.wartungsart)>=0; }
 
 function intervallArt(code){
   var c=String(code||"").trim().toUpperCase();
@@ -792,15 +795,28 @@ function berechneFaelligkeiten(){
     /* Jeder Termin hat ein Fenster von einem halben Jahr davor bis einem
        halben Jahr danach. Die Fenster aufeinanderfolgender Jahre stoßen
        aneinander, jede Wartung gehört also genau zu einem Termin. */
-    var erledigtFuer=function(termin){
-      var von=plusMonate(termin,-6), bis=plusMonate(termin,6);
-      for(var i=termine.length-1;i>=0;i--){ if(termine[i]>von && termine[i]<=bis) return termine[i]; }
-      return null;
-    };
-
-    /* aktueller Termin = der letzte, der spätestens in VORLAUF_TAGE Tagen ansteht */
+    /* Die Wartungen werden den Terminen der Reihe nach zugeordnet, jede zählt
+       nur einmal. Ist ein Termin in seinem Fenster nicht gewartet worden,
+       erfüllt ihn eine spätere Wartung als verspätete – sofern sie mehr als
+       drei Monate vor dem nächsten Termin liegt. Näher dran gilt sie als für
+       den nächsten Termin vorgezogen (das ist bei uns üblich). Der Soll-Monat
+       bleibt in jedem Fall derselbe. */
     var j=+bald.slice(0,4), aktuell=ankerIm(a,j);
     if(aktuell>bald) aktuell=ankerIm(a,j-1);
+    var zu={}, benutzt={};
+    (function(){
+      var ab=termine.length ? Math.min(+termine[0].slice(0,4)-1, +aktuell.slice(0,4)-1) : +aktuell.slice(0,4)-1;
+      for(var y=ab; y<=+aktuell.slice(0,4)+1; y++){
+        var T=ankerIm(a,y), N=ankerIm(a,y+1), von=plusMonate(T,-6), bis=plusMonate(T,6), i, w=null;
+        for(i=termine.length-1;i>=0;i--){ if(!benutzt[i] && termine[i]>von && termine[i]<=bis){ w=i; break; } }
+        if(w==null && T<heute){
+          var spaet=plusMonate(N,-3);
+          for(i=0;i<termine.length;i++){ if(!benutzt[i] && termine[i]>bis && termine[i]<=spaet){ w=i; break; } }
+        }
+        if(w!=null){ benutzt[w]=1; zu[T]=termine[w]; }
+      }
+    })();
+    var erledigtFuer=function(termin){ return zu[termin]||null; };
 
     if(a.erster && aktuell<a.erster){
       /* noch keine Wartung fällig seit Inbetriebnahme */
@@ -2707,7 +2723,7 @@ function anlageDatenErgaenzen(leader){
       if(gleich(start[f.k], erg[f.k])) return;
       leaderNeu[f.k]=erg[f.k];
       geaendert.push({feld:f.k, name:anlagenName(jetzt)+" – "+(f.l||f.k),
-        alt:anlageWertText(f, vorher[f.k]), neu:anlageWertText(f, erg[f.k])});
+        alt:verlaufWert(f, vorher[f.k]), neu:verlaufWert(f, erg[f.k])});
     });
     /* dazu, was sich an Inbetriebnahme und Terminen geändert hat */
     var ta=terminAenderungen(start, erg, anlagenName(jetzt));
@@ -3059,6 +3075,13 @@ function innenText(liste){
   }).join("; ");
 }
 function innenBelegt(g){ return g && INNEN_FELDER.some(function(f){ return !leerWert(g[f[0]]); }); }
+/* Für den Änderungsverlauf: Zugangsdaten der Regelung (Adresse, Benutzer,
+   Passwort) nie mit Wert – der Verlauf ist für alle Angemeldeten lesbar und
+   lässt sich nicht löschen. Festgehalten wird nur, DASS sie geändert wurden. */
+function verlaufWert(f, w){
+  if(istGeheim(f.k)) return leerWert(w) ? "–" : "•••••••• (vertraulich)";
+  return anlageWertText(f, w);
+}
 function anlageWertText(f, w){
   if(f.t==="innen") return innenText(w);
   if(leerWert(w)) return "–";
@@ -3525,6 +3548,9 @@ function entwurfHolen(){
   return idbVorgang("readonly",function(st){ return st.get(ENTWURF_ID); },"entwurf")
     .then(function(d){ entwurfStand=d||null; return entwurfStand; }, function(){ return null; });
 }
+var entwurfSofort=null;
+document.addEventListener("visibilitychange", function(){ if(document.hidden && entwurfSofort) entwurfSofort(); });
+window.addEventListener("pagehide", function(){ if(entwurfSofort) entwurfSofort(); });
 function entwurfWeg(){
   entwurfStand=null;
   return idbVorgang("readwrite",function(st){ return st.delete(ENTWURF_ID); },"entwurf").catch(function(){});
@@ -4262,7 +4288,11 @@ function speichereFotos(protokollId, fotos){
       var pfad=protokollId+"/"+f.id+".jpg";
       return Store.sb.storage.from("protokollfotos")
         .upload(pfad, datenUrlZuBlob(f.datenUrl), {contentType:"image/jpeg", upsert:false})
-        .then(function(r){ if(r.error){ Store.fehler=r.error.message; return false; } return weiter(); },
+        .then(function(r){
+          /* schon da (ein früherer Versuch kam bis hierher): gilt als hochgeladen –
+             sonst bliebe das Protokoll für immer auf dem Gerät hängen */
+          if(r.error && !/exist|duplicate|409/i.test((r.error.message||"")+" "+(r.error.statusCode||""))){ Store.fehler=r.error.message; return false; }
+          return weiter(); },
               function(){ return false; });
     };
     return weiter();
@@ -5076,6 +5106,13 @@ function protokollAssistent(form, stoer){
   ov.querySelector('[data-as="zu"]').onclick=function(){
     if(window.confirm("Dialog schließen? Das Eingetragene bleibt im Formular stehen, Sie können dort weitermachen.")) zu();
   };
+  /* Der Assistent setzt die Werte direkt ins Formular, ohne dessen Ereignisse –
+     damit der Entwurf trotzdem mitschreibt, meldet jede Eingabe, jeder Haken
+     und jeder Knopf hier sich beim Entwurf */
+  var merken=function(){ setTimeout(function(){ if(form._entwurfMerken) form._entwurfMerken(); }, 0); };
+  ov.addEventListener("input", merken);
+  ov.addEventListener("change", merken);
+  ov.addEventListener("click", merken);
   var f=function(sel){ return form.querySelector(sel); };
   var setz=function(sel,wert){ var n=f(sel); if(n){ n.value=wert; formDirty=true; } };
   var wert=function(sel){ var n=f(sel); return n?n.value:""; };
@@ -5750,11 +5787,14 @@ function viewProtokoll(){
     var sid=doc.standortId;
     Object.keys(anlagenAend).forEach(function(id){
       var p=posById[id]; if(!p) return;
+      /* nur Anlagen des Markts, für den das Protokoll gespeichert wird – was
+         vor einem Marktwechsel beim falschen Markt eingetragen wurde, nicht */
+      if(p.standortId && sid && p.standortId!==sid) return;
       var vorher=auswahl(p,STAMM_FELDER_POS), neuP=Object.assign({}, vorher, anlagenAend[id]);
       Object.keys(anlagenAend[id]).forEach(function(k){
         var f=ANLAGE_FELDER.filter(function(x){ return x.k===k; })[0];
-        felder.push({feld:k, name:anlagenName(p)+" – "+(f?f.l:k), alt:f?anlageWertText(f,vorher[k]):stammWert(k,vorher[k]),
-                     neu:f?anlageWertText(f,neuP[k]):stammWert(k,neuP[k])});
+        felder.push({feld:k, name:anlagenName(p)+" – "+(f?f.l:k), alt:f?verlaufWert(f,vorher[k]):stammWert(k,vorher[k]),
+                     neu:f?verlaufWert(f,neuP[k]):stammWert(k,neuP[k])});
       });
       if(p._neu){ neuP.standortId=p.standortId; recs.push({id:"position:"+id, felder:neuP, neu:true}); }
       else recs.push({id:"position:"+id, felder:objDiff(EXCEL["position:"+id]||{},neuP,STAMM_FELDER_POS), neu:false});
@@ -5984,7 +6024,7 @@ function viewProtokoll(){
   }
 
   /* Fotos */
-  var fotos=[];
+  var fotos=[], fotosInArbeit=0;   /* fotosInArbeit: werden gerade noch verkleinert */
   var fotoHost=form.querySelector("#fotoliste");
   var fotoInfo=form.querySelector("#f_fotoinfo");
   var fotoEingabe=form.querySelector("#f_foto");
@@ -6017,10 +6057,12 @@ function viewProtokoll(){
     quelle.value="";
     if(!dateien.length) return;
     formDirty=true;
-    var frei=FOTO_MAX-fotos.length;
-    if(dateien.length>frei){ toast("Höchstens "+FOTO_MAX+" Fotos je Protokoll."); dateien=dateien.slice(0,frei); }
+    /* Bilder, die gerade noch verkleinert werden, zählen schon mit */
+    var frei=FOTO_MAX-fotos.length-fotosInArbeit;
+    if(dateien.length>frei){ toast("Höchstens "+FOTO_MAX+" Fotos je Protokoll."); dateien=dateien.slice(0,Math.max(0,frei)); }
     if(!dateien.length) return;
     fotoInfo.textContent="Bilder werden verkleinert …";
+    fotosInArbeit+=dateien.length;
     var i=0;
     var naechstes=function(){
       if(i>=dateien.length){ fotosZeichnen(); if(form._entwurfMerken) form._entwurfMerken(); return; }
@@ -6028,8 +6070,8 @@ function viewProtokoll(){
       verkleinere(d).then(function(bild){
         fotos.push({id:"f"+Date.now().toString(36)+Math.random().toString(36).slice(2,6),
                     name:d.name||"Foto", hinweis:"", datenUrl:bild.datenUrl, bytes:bild.bytes});
-        naechstes();
-      },function(){ toast("Ein Bild konnte nicht gelesen werden."); naechstes(); });
+        fotosInArbeit--; naechstes();
+      },function(){ fotosInArbeit--; toast("Ein Bild konnte nicht gelesen werden."); naechstes(); });
     };
     naechstes();
   };
@@ -6118,6 +6160,14 @@ function viewProtokoll(){
     if(!nm.value || nm.value===letzterTech) nm.value=name;
     letzterTech=name;
   }
+  /* Text bei „sonstige Wartungsart“ getippt: dann ist es auch eine sonstige –
+     sonst ginge der Text verloren und der Einsatz zählte als planmäßige Wartung */
+  var wartSonst=form.querySelector("#f_wart_sonst");
+  if(wartSonst) wartSonst.addEventListener("input",function(){
+    if(!wartSonst.value.trim()) return;
+    var r1=form.querySelector('input[name="wart"][value="sonstige"]');
+    if(r1 && !r1.checked){ r1.checked=true; r1.dispatchEvent(new Event("change",{bubbles:true})); }
+  });
   form.querySelector("#f_tech").addEventListener("change",techAnwenden);
   /* Auswahl aus der Namensliste sofort übernehmen, nicht erst beim Verlassen des Felds */
   form.querySelector("#f_tech").addEventListener("input",function(e){
@@ -6338,6 +6388,13 @@ function viewProtokoll(){
   form.addEventListener("input", entwurfMerken);
   form.addEventListener("change", entwurfMerken);
   form._entwurfMerken=entwurfMerken;   /* Fotos und Unterschrift melden sich selbst */
+  /* App geht in den Hintergrund (Handy gesperrt, anderer App gewechselt):
+     ausstehenden Entwurf sofort schreiben, nicht erst nach dem Takt */
+  entwurfSofort=function(){
+    if(!entwurfTakt || bearb || !document.body.contains(form)) return;
+    clearTimeout(entwurfTakt); entwurfTakt=null;
+    try{ entwurfSchreiben(entwurfSammeln()); }catch(e){}
+  };
 
   /* Hinweis auf einen liegengebliebenen Entwurf – er kommt weiter unten
      direkt über das Formular. */
@@ -6377,6 +6434,8 @@ function viewProtokoll(){
 
   form.onsubmit=function(e){
     e.preventDefault();
+    /* Fotos noch in Arbeit: erst fertig verkleinern lassen, sonst fehlen sie im Protokoll */
+    if(fotosInArbeit>0){ toast("Die Fotos werden noch verkleinert – bitte einen Moment, dann nochmals speichern."); return; }
     if(!pflichtPruefung()) return;
     var v=function(id){ var n=form.querySelector("#"+id); return n?n.value.trim():""; };
     var radio=function(name){ var n=form.querySelector('input[name="'+name+'"]:checked'); return n?n.value:""; };
@@ -6694,7 +6753,7 @@ function blattInhalt(p){
         "<tr><th colspan='2'>"+esc(a.name||("Anlage "+(i+1)))+(a.neu?" (vor Ort neu erfasst)":"")+"</th></tr>"+
         /* Jede planmäßige Wartung ist zugleich die Überprüfung der Betriebs-
            sicherheit, die § 22 Abs. 1 KAV mindestens jährlich verlangt */
-        z("Gewartet als",a.termin&&!istStoerung(p)?a.termin+" nach § 22 KAV":a.termin)+
+        (zaehltAlsWartung(p) ? z("Gewartet als",a.termin?a.termin+" nach § 22 KAV":"") : istStoerung(p) ? z("Gewartet als",a.termin) : "")+
         z("Bauart",a.bauart)+
         z("Kältekreisläufe / Prüfbuch",[a.kreislaeufe?a.kreislaeufe+" Kältekreis"+(+a.kreislaeufe===1?"":"e"):"",
           a.pruefbuch?"Prüfbuch: "+jn(a.pruefbuch):"", a.ortPruefbuch?"liegt "+a.ortPruefbuch:""].filter(Boolean).join(" · "))+
@@ -6771,7 +6830,7 @@ function blattInhalt(p){
           "Telefon 05352 / 61207-0 · office@ukt.at · www.ukt.at</div>"+
       "</div>"+
       "<h1>"+(st?"STÖRUNGSPROTOKOLL":"WARTUNGSPROTOKOLL")+"</h1><div style='color:#444'>Lidl Markt / Lager"+
-        (st?"":" · Wartung und Überprüfung der Betriebssicherheit nach § 22 Kälteanlagenverordnung (KAV)")+"</div>"+
+        (!zaehltAlsWartung(p)?"":" · Wartung und Überprüfung der Betriebssicherheit nach § 22 Kälteanlagenverordnung (KAV)")+"</div>"+
 
       /* Einsatz und Wartungsunternehmen nebeneinander – spart eine halbe Seite */
       '<div class="zwei"><div>'+
@@ -7782,7 +7841,7 @@ function stammWert(feld, w){
   /* Der Änderungsverlauf hält fest, DASS jemand ein Passwort geändert hat –
      nicht, wie es lautet. Sonst stünde jedes alte Passwort dauerhaft lesbar
      in einer Liste, die sich absichtlich nicht mehr ändern lässt. */
-  if(feld==="zugangPasswort") return "••••••••";
+  if(feld==="zugangPasswort" || istGeheim(feld)) return "••••••••";
   if(feld==="innengeraete") return innenText(w);
   if(feld==="nachweise") return Array.isArray(w)&&w.length ? w.map(function(n){ return dfmt(n.datum)+(n.techniker?" ("+n.techniker+")":""); }).join(", ") : "–";
   if(feld==="aktiv"||feld==="pausiert"||feld==="vorOrtNeu") return w?"ja":"nein";
