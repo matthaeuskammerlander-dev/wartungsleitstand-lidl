@@ -9,8 +9,8 @@
 //
 // Secrets (Supabase → Edge Functions → Secrets):
 //   GITHUB_TOKEN_WUENSCHE  fein abgestufter GitHub-Token nur für dieses Repository
-//                          (Issues, Pull requests, Contents: lesen+schreiben;
-//                           Checks, Commit statuses, Metadata: lesen)
+//                          (Contents, Issues, Pull requests: lesen+schreiben;
+//                           Actions: lesen; Metadata kommt automatisch)
 //   GITHUB_REPO            optional, Vorgabe matthaeuskammerlander-dev/wartungsleitstand-lidl
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
@@ -62,9 +62,10 @@ async function letzteAntwort(nummern: number[]) {
 }
 
 /* Prüfergebnis der GitHub-Automatik („App prüfen“) für den Stand des Zweigs */
+/* (über die Actions-Läufe – fein abgestufte Tokens kennen keine „Checks“-Berechtigung) */
 async function pruefung(sha: string) {
-  const d = await gh("GET", `/repos/${REPO}/commits/${sha}/check-runs?per_page=50`);
-  const l = (d?.check_runs || []).filter((c: any) => !/claude/i.test(String(c.name || "")));
+  const d = await gh("GET", `/repos/${REPO}/actions/runs?head_sha=${sha}&per_page=50`);
+  const l = (d?.workflow_runs || []).filter((c: any) => String(c.name || "") === "App prüfen");
   if (!l.length) return "keine";
   if (l.some((c: any) => c.status !== "completed")) return "laeuft";
   if (l.every((c: any) => ["success", "neutral", "skipped"].includes(c.conclusion))) return "ok";

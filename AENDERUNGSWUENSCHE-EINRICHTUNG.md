@@ -44,7 +44,7 @@ einfügen, speichern.
 - Repository access: **Only select repositories** → `wartungsleitstand-lidl`
 - Permissions → Repository permissions:
   **Contents**, **Issues**, **Pull requests**: *Read and write*;
-  **Checks**, **Commit statuses**: *Read-only* (Metadata ist automatisch dabei)
+  **Actions**: *Read-only* (Metadata ist automatisch dabei)
 - **Generate token**, Token kopieren.
 
 Supabase → Projekt → **Edge Functions → Secrets** → Name
