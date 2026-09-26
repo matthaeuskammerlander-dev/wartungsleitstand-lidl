@@ -908,6 +908,21 @@ berechneFaelligkeiten();
 
 /* ---------- Helper ---------- */
 function esc(s){ return String(s==null?"":s).replace(/[&<>"']/g,function(c){return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c];}); }
+/* Zeitgrenze für Speicheraufrufe: eine hängende Verbindung darf Knöpfe und
+   Warteschlange nicht für immer sperren – nach Ablauf gilt es als gescheitert
+   (die Daten liegen dann auf dem Gerät und gehen später raus) */
+function mitFrist(p, ms){
+  return Promise.race([p, new Promise(function(_, nein){ setTimeout(function(){ nein(new Error("Zeitüberschreitung – keine Antwort vom Server")); }, ms||25000); })]);
+}
+/* Bildadressen aus Daten (Unterschrift, Auftragsseiten, Fotos) gehen nur als
+   echte Bilddaten ins HTML – ein manipulierter Wert mit Anführungszeichen
+   könnte sonst Script einschleusen (gespeichertes XSS) */
+function bildUrl(u){
+  u=String(u||"");
+  if(/^data:image\/(png|jpe?g|webp|gif);base64,[A-Za-z0-9+\/=\s]+$/.test(u)) return u;
+  if(/^(blob:|https:\/\/)[^"'<>\s]+$/.test(u)) return u;
+  return "";
+}
 /* toISOString rechnet in UTC – vor 2 Uhr früh käme sonst der Vortag heraus */
 function isoLokal(d){
   return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0");
@@ -1324,7 +1339,7 @@ function stoerungAlter(o){
    PDF geöffnet oder abfotografiert; was sich auslesen lässt, wird übernommen,
    der Rest steht als Bild daneben zum Abtippen. */
 function stoerungDialog(vorhanden){
-  if(nurLesen()){ toast("Mit diesem Konto lässt sich nur ansehen."); return; }
+  if(nurLesen()){ posteingangOffen=null; toast("Mit diesem Konto lässt sich nur ansehen."); return; }
   var o = vorhanden ? Object.assign({}, vorhanden)
                     : {_id:"st_"+Date.now().toString(36)+Math.random().toString(36).slice(2,6), seiten:[]};
   if(!o.seiten) o.seiten=[];
@@ -1447,7 +1462,7 @@ function stoerungDialog(vorhanden){
       kiLesen("auftrag", o.seiten).then(function(erg){
         var d=erg.daten||{}, g={};
         FELDER.forEach(function(f){ var w=String(d[f[0]]||"").trim(); if(!w) return;
-          g[f[0]] = f[2]==="date" ? kiDatum(w) : w; });
+          g[f[0]] = f[2]==="date" ? kiDatum(w, true) : w; });
         if(d.beschreibung) g.beschreibung=String(d.beschreibung).trim();
         var felder=FELDER.map(function(f){ return {k:f[0], l:f[1], zeige:f[2]==="date"?dfmt:null}; })
           .concat([{k:"beschreibung", l:"Beschreibung"}]);
@@ -1481,8 +1496,8 @@ function stoerungDialog(vorhanden){
     box.innerHTML = (o.pdfDaten ? '<button class="btn ghost sm" type="button" data-a="pdf" style="margin-bottom:8px">'+
         esc(o.pdfName||"Auftrag-PDF")+" ansehen</button>" : "")+
       (o.seiten.length ? o.seiten.map(function(b,i){
-      return '<a href="'+b+'" title="Auftrag Seite '+(i+1)+'">'+
-        '<img src="'+b+'" alt="Auftrag Seite '+(i+1)+'" style="width:100%;border:1px solid var(--line);'+
+      return '<a href="'+bildUrl(b)+'" title="Auftrag Seite '+(i+1)+'">'+
+        '<img src="'+bildUrl(b)+'" alt="Auftrag Seite '+(i+1)+'" style="width:100%;border:1px solid var(--line);'+
         'border-radius:8px;margin-bottom:8px;background:#fff"></a>'; }).join("") : "");
     var pb=box.querySelector('[data-a="pdf"]');
     if(pb) pb.onclick=function(){ pdfAnsicht(o.pdfDaten, o.pdfName); };
@@ -1824,8 +1839,16 @@ function posteingangKarte(){
 /* Rapport aus dem Postfach: lesen, passendes Protokoll suchen (Filiale und
    Tag), dort anhängen. Ohne Treffer: Liste der Protokolle dieser Filiale. */
 function posteingangRapport(e){
-  posteingangDatei(e).then(function(f){ return dateiAlsDatenUrl(f); }).then(function(u){
+  posteingangDatei(e).then(function(f){
+    if(!/pdf/i.test(f.type||"") && !/\.pdf$/i.test(e.dateiname||"")) throw new Error("„"+e.dateiname+"“ ist keine PDF – als Rapport nicht verwendbar.");
+    if(pdfZuGross(f)) throw new Error("Die PDF ist zu groß für die Ablage.");
+    return dateiAlsDatenUrl(f);
+  }).then(function(u){
     return leseRapport(u, e.dateiname).then(function(daten){
+      /* ohne Filiale und Datum ließe sich nichts sinnvoll vorschlagen */
+      if(!daten || (!daten.filiale && !(daten.zeilen&&daten.zeilen.length))){
+        toast("Aus diesem Rapport lassen sich Filiale und Datum nicht lesen – bitte im Protokoll über „Rapportbericht anhängen“ zuordnen."); return;
+      }
       var fil=daten && daten.filiale;
       var tage=(daten&&daten.zeilen||[]).map(function(z){ return z.datum; });
       var kand=alleProtokolle().filter(function(p){
@@ -2777,7 +2800,11 @@ function positionenSchreiben(proPos, grund){
     var p=ALLE_POS.filter(function(x){ return x.id===pid; })[0];
     if(!p) return null;
     var neuP=Object.assign(auswahl(p, STAMM_FELDER_POS), proPos[pid]);
-    var rec={id:"position:"+pid, typ:"position", ziel:pid, felder:objDiff(EXCEL["position:"+pid]||{}, neuP, STAMM_FELDER_POS),
+    /* vor Ort neu angelegte Anlage: es gibt keinen Excel-Stand – der ganze
+       Datensatz samt Markt wird geschrieben, sonst verlöre sie ihren Markt */
+    var felderNeu = p._neu ? Object.assign({}, (stammUeber["position:"+pid]||{}).felder||{}, neuP, {standortId:p.standortId})
+                           : objDiff(EXCEL["position:"+pid]||{}, neuP, STAMM_FELDER_POS);
+    var rec={id:"position:"+pid, typ:"position", ziel:pid, felder:felderNeu,
              neu:!!p._neu, geaendert:zeit, von:wer(), grund:grund};
     stammUeber[rec.id]=rec;
     return stammSpeichern(rec);
@@ -3301,10 +3328,15 @@ function anlageAssistent(start, titel, neu, alles){
           /* Außengerät: das Schild, das die KI als außen erkennt, sonst das erste */
           if(art==="typenschild"){
             var gl=Array.isArray(d.geraete)?d.geraete:[];
-            var ag=gl.filter(function(x){ return x.art==="aussen"; })[0] || gl.filter(function(x){ return x.art!=="innen"; })[0] || gl[0] || {};
+            var ag=gl.filter(function(x){ return x.art==="aussen"; })[0] || gl.filter(function(x){ return x.art!=="innen"; })[0] || null;
+            /* nur Innengeräte auf den Fotos: nicht als Außengerät übernehmen */
+            if(!ag){ toast(gl.length ? "Auf den Fotos ist nur ein Innengerät-Typenschild – bitte „Typenschilder Innengeräte“ wählen." : "Kein Typenschild erkannt."); uebersicht(); return; }
+            /* unsicher „geraet N: feld“ gilt nur, wenn N das Außengerät ist */
+            var agNr=gl.indexOf(ag)+1;
+            var unsA=(d.unsicher||[]).map(function(u){ var m=/geraet\s*(\d+)\s*:\s*(\w+)/i.exec(u); return m ? (+m[1]===agNr ? m[2] : null) : u; }).filter(Boolean);
             /* Werksfüllung ist nicht die Füllmenge der Anlage – die bleibt dem Prüfbuch */
             d={anlage:{hersteller:ag.hersteller, modell:ag.modell, seriennummer:ag.seriennummer, kaeltemittelArt:ag.kaeltemittelArt,
-               leistungKw:ag.leistungKw, psBar:ag.psBar}, unsicher:d.unsicher,
+               leistungKw:ag.leistungKw, psBar:ag.psBar}, unsicher:unsA,
                hinweise:[d.hinweise, gl.length>1?"Auf den Fotos sind "+gl.length+" Typenschilder – übernommen wird das Außengerät; Innengeräte über „Typenschilder Innengeräte“.":"",
                  ag.werksfuellungKg?"Werksfüllung laut Schild: "+ag.werksfuellungKg+" kg (nicht die Füllmenge der Anlage).":""].filter(Boolean).join(" ")};
           }
@@ -3371,6 +3403,7 @@ function anlageAssistent(start, titel, neu, alles){
         if(!x) return;
         var sn=String(x.seriennummer||"").trim();
         if(sn && da.indexOf(sn.toUpperCase())>=0){ doppelt++; return; }
+        if(sn) da.push(sn.toUpperCase());   /* dasselbe Schild zweimal in der Antwort: einmal */
         var g={hersteller:String(x.hersteller||"").trim(), modell:String(x.modell||"").trim(), seriennummer:sn,
                leistungKw:kiZahl(x.leistungKw)};
         if(!innenBelegt(g)) return;
@@ -3380,7 +3413,13 @@ function anlageAssistent(start, titel, neu, alles){
       });
       var hinweis=[d.hinweise, doppelt?doppelt+" Gerät"+(doppelt===1?" ist":"e sind")+" schon erfasst (gleiche Seriennummer).":""].filter(Boolean).join(" ");
       /* unsichere Angaben je Gerät („geraet 2: seriennummer“) markieren das ganze Gerät */
-      var uns=(d.unsicher||[]).map(function(u){ var m=/geraet\s*(\d+)/i.exec(u); return m?"geraet "+m[1]:u; });
+      var alleNr=gl.map(function(x,i){ return x ? "geraet "+(i+1) : null; }).filter(Boolean);
+      var uns=[];
+      (d.unsicher||[]).forEach(function(u){
+        var m=/geraet\s*(\d+)/i.exec(u);
+        /* ohne Gerätenummer: bei einem Gerät dieses, sonst sicherheitshalber alle */
+        if(m) uns.push("geraet "+m[1]); else uns=uns.concat(alleNr);
+      });
       return kiPruefen("Typenschilder Innengeräte", gelesen, {}, felder, uns, hinweis).then(function(wahl){
         if(wahl && Object.keys(wahl).length){
           a.innengeraete=(Array.isArray(a.innengeraete)?a.innengeraete:[]).map(function(g){ return Object.assign({},g); })
@@ -4091,8 +4130,8 @@ function stammSpeichern(rec, nachtragen){
       .then(function(){ return "geraet"; }, function(){ return false; });
   };
   if(Store.modus==="supabase" && Store.sb && darfStammZentral(rec)){
-    return Store.sb.from("stammdaten").upsert({id:rec.id, typ:rec.typ, ziel:rec.ziel, felder:rec.felder,
-      neu:!!rec.neu, geaendert:rec.geaendert, von:rec.von, grund:rec.grund||null})
+    return mitFrist(Store.sb.from("stammdaten").upsert({id:rec.id, typ:rec.typ, ziel:rec.ziel, felder:rec.felder,
+      neu:!!rec.neu, geaendert:rec.geaendert, von:rec.von, grund:rec.grund||null}))
       .then(function(r){ return r.error ? lokal() : "gemeinsam"; }, lokal);
   }
   if(Store.modus==="claude" && Store.claudeDb){
@@ -4307,8 +4346,16 @@ function initSupabase(){
     /* anderes Konto oder abgemeldet: was die Präsentation nur im Speicher
        angelegt hat, fliegt raus – sonst überträgt es die nächste echte
        Sitzung in die Datenbank */
-    if(!sess || !Store.benutzer || sess.user.id!==Store.benutzer.id)
-      lokaleProtokolle=lokaleProtokolle.filter(function(x){ return !x._demo; });
+    if(!sess || !Store.benutzer || sess.user.id!==Store.benutzer.id){
+      lokaleProtokolle=lokaleProtokolle.map(function(x){ return x._original || x; }).filter(function(x){ return !x._demo; });
+      posteingangOffen=null;   /* ein angefangener Posteingangs-Vorgang gehört zum alten Konto */
+      /* was die Präsentation „vom Gerät gelöscht“ hat, ist wieder da: frisch aus dem Gerätespeicher */
+      /* (direkt, ohne die Präsentations-Sperre – die Rolle ist hier noch die alte) */
+      idbAlle().then(function(liste){
+        lokaleProtokolle=(liste||[]).sort(function(a,b){ return (b.erstellt||"").localeCompare(a.erstellt||""); });
+        storeNachRender();
+      }, function(){});
+    }
     if(sess){ Store.benutzer=sess.user; Store.modus="supabase"; ladeProtokolle(); flushQueue();
       adminPruefen().then(ladeStammdaten).then(storeNachRender); }
     else {
@@ -4710,7 +4757,10 @@ function speichereProtokoll(id,doc){
 function aktualisiereProtokoll(id, doc, quelle, geraetFotos, geraetAuftrag, geraetRapport){
   if(demo()){
     /* nur im Speicher: die Korrektur ersetzt die Anzeige, nicht die Datenbank */
-    if(quelle==="geraet"){ lokaleProtokolle=lokaleProtokolle.map(function(e){ return e.id===id ? Object.assign({}, e, {doc:doc, fotos:geraetFotos||e.fotos, auftrag:geraetAuftrag||e.auftrag, rapport:geraetRapport||e.rapport}) : e; }); }
+    /* ein echtes, wartendes Geräteprotokoll nicht anfassen: die Vorführ-Fassung
+       ersetzt nur die Anzeige und merkt sich das Original (_original) – beim
+       Kontowechsel kommt das Original zurück, übertragen wird nie die Vorführung */
+    if(quelle==="geraet"){ lokaleProtokolle=lokaleProtokolle.map(function(e){ return e.id===id ? Object.assign({}, e, {doc:doc, fotos:geraetFotos||e.fotos, auftrag:geraetAuftrag||e.auftrag, rapport:geraetRapport||e.rapport, _demo:true, _original:e._original||e}) : e; }); }
     else protokolle=protokolle.map(function(x){ return x._id===id ? Object.assign({}, x, doc, {_id:id}) : x; });
     return Promise.resolve(true);
   }
@@ -4769,20 +4819,22 @@ function flushQueue(){
       return;
     }
     var e=liste[i++];
-    speichereFotos(e.id, e.fotos||[]).then(function(fotosOk){
-      if(!fotosOk){ next(); return; }
-      speichereAuftragPdf(e.id, e.auftrag).then(function(pdfOk){
+    /* ein Protokoll nach dem anderen – mit Zeitgrenze, damit ein hängender
+       Upload die Warteschlange nicht für immer blockiert */
+    mitFrist(speichereFotos(e.id, e.fotos||[]).then(function(fotosOk){
+      if(!fotosOk) return false;
+      return speichereAuftragPdf(e.id, e.auftrag).then(function(pdfOk){
         return pdfOk ? speichereRapportPdf(e.id, e.rapport) : false;
       }).then(function(pdfOk){
-        if(!pdfOk){ next(); return; }
-        speichereProtokoll(e.id,e.doc).then(function(ok){
-          if(!ok){ next(); return; }
-          done++;
-          /* erst nach bestätigter Übertragung vom Gerät entfernen */
-          idbLoeschen(e.id).then(next,next);
-        });
+        if(!pdfOk) return false;
+        return speichereProtokoll(e.id,e.doc);
       });
-    });
+    }), 120000).then(function(ok){
+      if(!ok){ next(); return; }
+      done++;
+      /* erst nach bestätigter Übertragung vom Gerät entfernen */
+      idbLoeschen(e.id).then(next,next);
+    }, function(){ next(); });
   };
   next();
 }
@@ -5072,7 +5124,7 @@ function ansichtOeffnen(titel){
 }
 function bildAnsicht(bild, titel){
   var a=ansichtOeffnen(titel||"Auftrag");
-  a.inhalt.appendChild(el('<img alt="" src="'+bild+'" style="width:100%;border:1px solid var(--line);border-radius:8px;background:#fff">'));
+  a.inhalt.appendChild(el('<img alt="" src="'+bildUrl(bild)+'" style="width:100%;border:1px solid var(--line);border-radius:8px;background:#fff">'));
 }
 function pdfAnsicht(quelle, name){
   var a=ansichtOeffnen(name||"Auftrag");
@@ -5089,7 +5141,7 @@ function pdfAnsicht(quelle, name){
       var seiten=[]; for(var i=1;i<=Math.min(pdf.numPages,20);i++) seiten.push(i);
       return pdfSeitenAlsBild(pdf, seiten.length).then(function(bilder){
         bilder.forEach(function(b,i){
-          a.inhalt.appendChild(el('<img alt="Seite '+(i+1)+'" src="'+b+'" style="width:100%;border:1px solid var(--line);'+
+          a.inhalt.appendChild(el('<img alt="Seite '+(i+1)+'" src="'+bildUrl(b)+'" style="width:100%;border:1px solid var(--line);'+
             'border-radius:8px;margin-bottom:10px;background:#fff">'));
         });
       });
@@ -5257,8 +5309,13 @@ function kiZahl(t){
   return v===""||isNaN(+v) ? null : +v;
 }
 function kiJn(t){ t=String(t||"").trim().toLowerCase(); return /^(ja|j|yes|x)$/.test(t)?"ja":/^(nein|n|no)$/.test(t)?"nein":null; }
-function kiDatum(t){ var m=/(\d{1,2})\.\s*(\d{1,2})\.\s*(\d{2,4})/.exec(String(t||"")); if(!m) return null;
-  var j=m[3].length===2?"20"+m[3]:m[3]; return j+"-"+("0"+m[2]).slice(-2)+"-"+("0"+m[1]).slice(-2); }
+/* Datum aus der KI: nur echte Kalendertage (kein 31.09.) und nicht in der Zukunft */
+function kiDatum(t, zukunftOk){ var m=/(\d{1,2})\.\s*(\d{1,2})\.\s*(\d{2,4})/.exec(String(t||"")); if(!m) return null;
+  var j=m[3].length===2?"20"+m[3]:m[3], iso=j+"-"+("0"+m[2]).slice(-2)+"-"+("0"+m[1]).slice(-2);
+  var d=new Date(iso+"T12:00:00");
+  if(isNaN(d) || isoLokal(d)!==iso) return null;
+  if(!zukunftOk && iso>isoLokal(new Date())) return null;
+  return iso; }
 function kiAnlage(k){
   k=k||{}; var r={};
   var setz=function(key,w){ if(w!=null && w!=="") r[key]=w; };
@@ -6299,8 +6356,8 @@ function viewProtokoll(){
     box.innerHTML='<div class="l muted" style="font-size:11px;text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px">'+
       "Auftrag von Lidl</div>"+
       bilder.map(function(b,i){
-        return '<a href="'+b+'" title="Auftrag Seite '+(i+1)+'">'+
-          '<img src="'+b+'" alt="Auftrag Seite '+(i+1)+'" style="width:100%;max-width:520px;border:1px solid var(--line);'+
+        return '<a href="'+bildUrl(b)+'" title="Auftrag Seite '+(i+1)+'">'+
+          '<img src="'+bildUrl(b)+'" alt="Auftrag Seite '+(i+1)+'" style="width:100%;max-width:520px;border:1px solid var(--line);'+
           'border-radius:8px;margin-bottom:8px;background:#fff"></a>';
       }).join("");
   }
@@ -6410,7 +6467,7 @@ function viewProtokoll(){
       summe+=f.bytes;
       var z=el('<div class="rowflex" style="align-items:flex-start;gap:10px;border:1px solid var(--line);'+
         'border-radius:8px;padding:8px;background:var(--ground)">'+
-        '<img alt="Vorschau" src="'+f.datenUrl+'" style="width:76px;height:76px;object-fit:cover;border-radius:6px;flex:none">'+
+        '<img alt="Vorschau" src="'+bildUrl(f.datenUrl)+'" style="width:76px;height:76px;object-fit:cover;border-radius:6px;flex:none">'+
         '<label class="fl" style="flex:1 1 160px"><span>Bildunterschrift</span>'+
           '<input type="text" value="'+esc(f.hinweis)+'" placeholder="z. B. Mangel am Wärmetauscher"></label>'+
         '<div style="display:grid;gap:6px;justify-items:end">'+
@@ -6602,7 +6659,7 @@ function viewProtokoll(){
 
     if(bearb.unterschrift){
       var sa=form.querySelector("#f_sigalt"); sa.hidden=false;
-      sa.innerHTML='<img alt="bisherige Unterschrift" src="'+bearb.unterschrift+'" style="height:60px;border-bottom:1px solid var(--line-2)">'+
+      sa.innerHTML='<img alt="bisherige Unterschrift" src="'+bildUrl(bearb.unterschrift)+'" style="height:60px;border-bottom:1px solid var(--line-2)">'+
         '<div class="muted" style="font-size:12px">Bisherige Unterschrift – bleibt erhalten, solange Sie unten nicht neu unterschreiben.</div>';
     }
     if(bearb.fotos && bearb.fotos.length){
@@ -6648,6 +6705,16 @@ function viewProtokoll(){
        quittiert wird, bei der Störung, weil sonst offen bleibt, woran
        gearbeitet wurde. Die Haken stehen nicht in [required]. */
     var posFeld=form.querySelector('input[name="posw"]');
+    /* eine Mängelzeile mit Maßnahme, aber ohne Beschreibung ginge beim Speichern
+       still verloren – lieber nachfragen */
+    var ohneText=[].filter.call(form.querySelectorAll(".mangelrow"), function(z){
+      return !z.querySelector(".m-t").value.trim() && z.querySelector(".m-m").value.trim(); });
+    if(!fehlend.length && ohneText.length){
+      box.textContent="Bitte den Mangel beschreiben – bei „"+ohneText[0].querySelector(".m-m").value.trim()+"“ fehlt, worum es geht.";
+      box.hidden=false; ohneText[0].querySelector(".m-t").style.borderColor="var(--crit)";
+      ohneText[0].scrollIntoView({behavior:"smooth", block:"center"});
+      return false;
+    }
     /* eine vor Ort neu erfasste Anlage zählt auch – sonst müsste man eine
        nicht gewartete anhaken und bekäme einen falschen Wartungsnachweis */
     if(!fehlend.length && posFeld && !form.querySelector('input[name="posw"]:checked') && !neueAnlagen.length){
@@ -6919,7 +6986,9 @@ function viewProtokoll(){
     })();
     var id="p_"+Date.now()+"_"+Math.random().toString(36).slice(2,7);
     var btn=form.querySelector("#save"); btn.disabled=true; btn.textContent="Speichern …";
+    var fertigSchon=false;
     var fertig=function(msg){
+      if(fertigSchon) return; fertigSchon=true;   /* nur einmal – auch wenn die Zeitgrenze schon abgeschlossen hat */
       btn.disabled=false; btn.textContent="Protokoll speichern"; formDirty=false; toast(msg);
       /* abgeschickt – der Entwurf hat seinen Zweck erfüllt. Erst den noch
          laufenden Schreibtakt stoppen, sonst schreibt er das gespeicherte
@@ -7013,6 +7082,10 @@ function viewProtokoll(){
                  rapport:(rapportPdf&&rapportPdf.datenUrl)?rapportPdf:null, erstellt:doc.erstellt};
     if(demo()) eintrag._demo=true;
     idbSchreiben(eintrag).then(function(){
+      /* ab hier liegt es sicher in der Warteschlange – der Entwurf hat seinen
+         Zweck erfüllt, auch wenn die Übertragung noch hängt oder die App
+         geschlossen wird (sonst würde es als Entwurf ein zweites Mal gespeichert) */
+      clearTimeout(entwurfTakt); entwurfTakt=null; entwurfWeg();
       anlagenUebernehmen(doc);   /* vor Ort ergänzte Anlagendaten */
       lokaleProtokolle.unshift(eintrag);
       if(eintrag.rapport) posteingangErledigt("rapport", id);
@@ -7027,7 +7100,8 @@ function viewProtokoll(){
       var wartet=demo() ? "Präsentation: Protokoll angelegt – zur Ansicht, gespeichert wurde nichts."
                         : "Auf dem Gerät gespeichert – wird übertragen, sobald Verbindung besteht.";
       if(fotos.length) btn.textContent="Fotos werden übertragen …";
-      speichereFotos(id,fotos).then(function(fotosOk){
+      /* hängt die Übertragung, gilt es nach 2 Minuten als „auf dem Gerät“ – es liegt ja sicher in der Warteschlange */
+      mitFrist(speichereFotos(id,fotos).then(function(fotosOk){
         if(!fotosOk){ fertig(wartet); return; }
         if(eintrag.auftrag) btn.textContent="Auftrag wird übertragen …";
         return speichereAuftragPdf(id, eintrag.auftrag).then(function(pdfOk){
@@ -7043,7 +7117,7 @@ function viewProtokoll(){
             },function(){ fertig("Protokoll gespeichert und übertragen."); });
           });
         });
-      });
+      }), 120000).catch(function(){ fertig(wartet); });
     },function(err){
       fehlschlag("Das Protokoll konnte auf diesem Gerät nicht gespeichert werden: "+
         (err&&err.message?err.message:"unbekannter Fehler")+
@@ -7291,7 +7365,7 @@ function blattInhalt(p){
         zeile("Name Techniker/in",p.nameTechniker)+
         zeile("Datum / Uhrzeit",dfmt(p.datum)+(p.uhrzeit?", "+p.uhrzeit+" Uhr":""))+
         "<tr><td class='k'>Unterschrift Techniker/in</td><td class='unterschrift'>"+
-          (p.unterschrift?'<img alt="Unterschrift" src="'+p.unterschrift+'">':"&nbsp;")+"</td></tr>"+
+          (p.unterschrift?'<img alt="Unterschrift" src="'+bildUrl(p.unterschrift)+'">':"&nbsp;")+"</td></tr>"+
         (p.auftraggebervertreter?zeile("Auftraggebervertreter",p.auftraggebervertreter):"")+
       "</table>"+"</div>"+
 
@@ -7325,7 +7399,7 @@ function fotosEinsetzen(host, p, eingebettet){
         if(eingebettet && (fertig.length<p.fotos.length || fertig.some(function(b){ return !b.url; })))
           throw new Error("Foto(s) gerade nicht abrufbar – das PDF wird später erzeugt. Bitte bei Verbindung nochmals versuchen.");
         host.innerHTML="<h2>Fotos</h2><div class='fotos'>"+fertig.map(function(b){
-          return "<figure>"+(b.url?'<img alt="" src="'+b.url+'">':"<div>Bild nicht abrufbar</div>")+
+          return "<figure>"+(b.url?'<img alt="" src="'+bildUrl(b.url)+'">':"<div>Bild nicht abrufbar</div>")+
             "<figcaption>"+esc(b.hinweis||b.name||"")+"</figcaption></figure>";
         }).join("")+"</div>";
       });
@@ -7406,7 +7480,7 @@ function druckansichtZeigen(p){
     }).then(function(pdf){ return pdfSeitenAlsBild(pdf, pdf.numPages); })
       .then(function(bilder){
         rhost.innerHTML=bilder.map(function(b,i){
-          return '<div class="rapportseite"><img alt="Rapportbericht Seite '+(i+1)+'" src="'+b+'"></div>'; }).join("");
+          return '<div class="rapportseite"><img alt="Rapportbericht Seite '+(i+1)+'" src="'+bildUrl(b)+'"></div>'; }).join("");
       }, function(){
         rhost.innerHTML='<div class="note warnbox rapportseite-fehlt">Der Rapportbericht ließ sich gerade nicht laden – '+
           "bitte mit Verbindung erneut öffnen, bevor gedruckt wird.</div>";
@@ -7630,7 +7704,8 @@ function protokollDetail(p){
       (istStoerung(p) && (p.auftragsnummer||(p.stoerung&&p.stoerung.qrInhalt)) ? '<button class="btn ghost sm" type="button" data-akt="qr">QR-Code zeigen</button>' : "")+
       (p.geloescht||nurLesen()?"":'<button class="btn ghost sm" type="button" data-akt="korr">Korrigieren</button>')+
       '<button class="btn ghost sm" type="button" data-akt="verlauf">Änderungen ansehen</button>'+
-      (p._quelle==="geraet"?'<button class="btn ghost sm" type="button" data-akt="weg">Vom Gerät löschen</button>':"")+
+      /* endgültig vom Gerät löschen (es gibt keine zentrale Kopie): nur Admins */
+      (p._quelle==="geraet" && Admin.frei && !nurLesen()?'<button class="btn ghost sm" type="button" data-akt="weg">Vom Gerät löschen</button>':"")+
       (p._quelle!=="geraet" && Admin.frei && !p.geloescht?'<button class="btn ghost sm" type="button" data-akt="loeschen" style="color:var(--crit);border-color:var(--crit)">Löschen</button>':"")+
       (p._quelle!=="geraet" && Admin.frei && p.geloescht?'<button class="btn sm" type="button" data-akt="wiederher">Wiederherstellen</button>':"")+
     "</div>"+
