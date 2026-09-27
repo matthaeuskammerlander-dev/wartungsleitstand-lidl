@@ -37,7 +37,9 @@ Kammerlander Umwelt- und Klimatechnik (UKT) – oft kurz, vom Handy, im Feld.
 - Jede Anlage hat eine Jahreswartung (**JW**) im Monat der Inbetriebnahme und
   sechs Monate versetzt einen Halbjahrestermin: **HJW** ab 30 kg Kältemittel,
   sonst **HJI**. Ein eingetragener Soll-Monat bleibt, wenn er höchstens
-  3 Monate von der Regel abweicht (`standardRegel`).
+  3 Monate von der Regel abweicht (`standardRegel`) – der Halbjahrestermin
+  zusätzlich nur, wenn er 5–7 Monate von der JW entfernt liegt, sonst JW + 6
+  (`sollGeduldet`, `sollAbweichend` – auch genau im Regelmonat).
 - Erste JW: im Soll-Monat rund um den ersten Jahrestag der Inbetriebnahme
   (±6 Monate, `ersterTermin`); erster Halbjahrestermin: der erste Soll-Monat
   nach der Inbetriebnahme. Nie fast zwei Jahre ohne JW.
@@ -52,8 +54,19 @@ Kammerlander Umwelt- und Klimatechnik (UKT) – oft kurz, vom Handy, im Feld.
   vorgezogen für den nächsten, und der versäumte gilt als mit erledigt.
 - Wurde nach einem versäumten Termin eine spätere Wartung gemacht (für den
   nächsten Termin), zählen BEIDE Termine als erledigt – die Wartung für ihren
-  Termin und zugleich für den versäumten. Ohne spätere Wartung bleibt ein
-  versäumter Termin überfällig.
+  Termin und zugleich für den versäumten. Der versäumte bekommt nur den
+  Vermerk „mit erledigt durch Wartung vom …“ (keine Warnung in Nachbessern).
+  Ohne spätere Wartung bleibt ein versäumter Termin überfällig – auch wenn der
+  nächste schon in der 30-Tage-Frist steht.
+- „Zählt als“ im Protokoll (`fillPos`): ist ein Termin versäumt und liegt der
+  nächste Termin der Anlage höchstens 3 Monate nach dem Protokolldatum, ist
+  der nächste vorgewählt.
+- Markt-Status (Verwaltung): **betreut** · **zur Zeit nicht betreut**
+  (`pausiert`, `pausiertGrund` am Markt, `marktPausiert`: bleibt in Anlagen,
+  Karte und Suche sichtbar mit Vermerk und Grund, alle Anlagen wie „zur Zeit
+  nicht gewartet“ – keine Fälligkeit, nicht in Fällig/Tour, offene Störungen
+  bleiben sichtbar) · **stillgelegt** (`aktiv=false`: geschlossen, verschwindet,
+  Historie bleibt). Ein stillgelegter Markt lässt sich wieder umstellen.
 - Altlast der alten Liste: dieselbe Anlage zweimal mit „JW“ wird automatisch
   bereinigt (`altlastenFaelle`).
 - Nur planmäßige Wartung/Prüfung zählt als Wartung („nach § 22 KAV“).

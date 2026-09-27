@@ -198,9 +198,10 @@ svg.map{display:block;width:100%;height:auto}
 
 /* ---- detail ---- */
 .detail{display:grid;gap:12px}
-.dl{display:grid;grid-template-columns:auto 1fr;gap:4px 14px;font-size:13px;align-items:baseline}
+.dl{display:grid;grid-template-columns:auto minmax(0,1fr);gap:4px 14px;font-size:13px;align-items:baseline}
 .dl dt{color:var(--ink-3);font-size:11.5px;text-transform:uppercase;letter-spacing:.06em;white-space:nowrap}
-.dl dd{margin:0}
+.dl dd{margin:0;overflow-wrap:break-word}
+.dl .pill{white-space:normal}
 .timeline{display:flex;gap:4px;flex-wrap:wrap;align-items:center}
 .tl{font-family:var(--f-mono);font-size:11.5px;padding:2px 7px;border-radius:6px;background:var(--surface-2);color:var(--ink-2)}
 .tl.cur{background:var(--good-soft);color:var(--good);font-weight:500}
@@ -454,7 +455,9 @@ var byId = {}, posById = {};
    gemerkt, damit jede Änderung zurückgesetzt werden kann. */
 var STAMM_FELDER_ST  = ["filiale","name","adresse","plz","ort","region","lat","lon","aktiv","notiz",
                         /* aus der Liste entfernt: Sammelzeilen, die keine Märkte sind */
-                        "entfernt","entferntGrund"];
+                        "entfernt","entferntGrund",
+                        /* zur Zeit nicht betreut (bleibt sichtbar, ohne Termine) – anders als aktiv=false (stillgelegt) */
+                        "pausiert","pausiertGrund"];
 var STAMM_FELDER_POS = ["anlagentyp","intervallCode","inbetriebnahme","monat","monatGrund","kaeltemittelKg",
                         "kaeltemittelArt","rueckkuehler","aktiv","notiz",
                         /* Anlagendaten, die vor Ort nach und nach ergänzt werden */
@@ -530,14 +533,16 @@ function indexNeuAufbauen(){
     var q=(("kaeltemittelKg" in geaenderteFelder(l)) || l.kaeltemittelText) ? l : (a.termine.filter(function(t){ return t.kaeltemittelText; })[0]||l);
     a.termine.forEach(function(t){ t.kaeltemittelText=q.kaeltemittelText||""; t.ueber30kg=!!q.ueber30kg; });
   });
-  /* „zur Zeit nicht gewartet“ gilt für die ganze Anlage (steht an ihrer ersten Zeile):
-     bleibt sichtbar, zählt aber für keine Fälligkeit */
+  /* „zur Zeit nicht gewartet“ gilt für die ganze Anlage (steht an ihrer ersten Zeile),
+     „zur Zeit nicht betreut“ für alle Anlagen des Markts: bleibt sichtbar,
+     zählt aber für keine Fälligkeit */
   ALLE_POS.forEach(function(p){
     if(!p.aktiv || !byId[p.standortId]) return;
-    (anlagePausiert(p) ? byId[p.standortId].pausiertePos : byId[p.standortId].pos).push(p);
+    var st=byId[p.standortId];
+    ((anlagePausiert(p) || marktPausiert(st)) ? st.pausiertePos : st.pos).push(p);
   });
   ST = ALLE_ST.filter(function(s){ return s.aktiv; });
-  POS = ALLE_POS.filter(function(p){ return p.aktiv && !anlagePausiert(p) && byId[p.standortId] && byId[p.standortId].aktiv; });
+  POS = ALLE_POS.filter(function(p){ return p.aktiv && !anlagePausiert(p) && byId[p.standortId] && byId[p.standortId].aktiv && !marktPausiert(byId[p.standortId]); });
   /* Kennzahlen je Markt, die sonst aus der Excel-Aufbereitung stammen */
   ALLE_ST.forEach(function(s){
     var bj=s.pos.map(function(p){ return p.baujahr; }).filter(Boolean);
@@ -640,6 +645,16 @@ function anlagenDesMarkts(s, auchPausiert){
 function anlageVon(p){ return p ? ANLAGEN[p.anlageId] || {id:p.id, leader:p, termine:[p]} : null; }
 function anlageLeader(p){ return anlageVon(p).leader; }
 function anlagePausiert(p){ var l=anlageLeader(p); return !!(l && l.pausiert); }
+/* Markt „zur Zeit nicht betreut“ (etwa Umbau, von Lidl ausgesetzt): bleibt in
+   Anlagen, Karte und Suche sichtbar, alle seine Anlagen zählen wie „zur Zeit
+   nicht gewartet“. Stillgelegt (aktiv=false) geht vor – der ist ganz weg. */
+function marktPausiert(s){ return !!(s && s.aktiv!==false && s.pausiert); }
+/* aktiv eines entfernten Markts: zur Laufzeit immer false (wendeStammdatenAn) –
+   maßgeblich ist, was gespeichert ist (sonst Excel) */
+function marktAktivGespeichert(s){
+  var f0=((typeof stammUeber!=="undefined" && stammUeber && stammUeber["standort:"+s.id])||{}).felder||{};
+  return ("aktiv" in f0) ? f0.aktiv!==false : ((EXCEL["standort:"+s.id]||{}).aktiv!==false);
+}
 /* Die Prüfbücher liegen im Büro der Filiale – der Standard für jede Anlage */
 var PRUEFBUCH_ORT="Büro Filiale – Technikordner 2";
 var PRUEFBUCH_ORT_ALT="Büro UKT – Technik-Ordner 2";   /* früherer Standard, gilt als der neue */
@@ -754,7 +769,9 @@ function standardRegel(ib, kg, termine){
   var naeheJW=function(t){ var m=+t.monat||0; return m ? abst(m,mIb) : (code(t)==="JW"?0:(code(t)?6:3)); };
   var behalte=function(alt, ziel){ alt=+alt||0; return (alt && abst(alt,ziel)<=3) ? alt : ziel; };
   var l=(termine||[]).slice(0,2), jwI=-1;
-  if(l.length===2) jwI = naeheJW(l[0])<=naeheJW(l[1]) ? 0 : 1;
+  /* bei gleichem Abstand entscheidet das Kürzel: die Zeile, die schon JW heißt, bleibt die JW */
+  if(l.length===2){ var d0=naeheJW(l[0]), d1=naeheJW(l[1]);
+    jwI = d0<d1 ? 0 : (d1<d0 ? 1 : ((code(l[1])==="JW" && code(l[0])!=="JW") ? 1 : 0)); }
   else if(l.length===1) jwI = naeheJW(l[0])<=3 ? 0 : -1;
   /* Der Halbjahrestermin gehört sechs Monate neben die (endgültige) JW: sein
      eingetragener Monat bleibt nur, wenn er höchstens 3 Monate von seiner
@@ -803,6 +820,33 @@ function regelText(r){
    Anker (vom Büro so festgelegt, 27.09.2026). Bei einer ganz neuen Anlage gilt
    wie immer die Inbetriebnahme. */
 function termineNeuAnlegen(standortId, anlageId, liste, grund, rueck, abHeute){
+  /* Zu einer schon bestehenden Anlage: erst gegen den zentralen Stand prüfen –
+     hat das Büro (oder ein anderes Gerät) den Termin inzwischen angelegt, kein
+     zweites Mal (sonst zwei HJI, wenn dieses Gerät einen alten Stand hat) */
+  if(abHeute && Store.modus==="supabase" && Store.sb && !demo()){
+    /* JW oder Halbjahrestermin (HJW/HJI bzw. noch offenes Kürzel) – ein unklares Kürzel zählt nicht */
+    var art=function(code){ var iv=intervallArt(code); return iv.kurz==="JW" ? "JW" : ((/^HJ/.test(iv.kurz) || !String(code||"").trim()) ? "HJ" : "?"+iv.kurz); };
+    return mitFrist(alleSeiten(function(){ return Store.sb.from("stammdaten").select("id,felder").eq("typ","position").order("id"); }, "id"), 15000)
+      .then(function(r){
+        if(!r || r.error) return liste;
+        var da={};
+        (r.data||[]).forEach(function(z){
+          var f=z.felder||{};
+          if(f.anlageZu===anlageId && f.aktiv!==false) da[art(f.intervallCode)]=1;
+        });
+        var rest=(liste||[]).filter(function(t){ return !da[art(t.intervallCode)]; });
+        if(rest.length<(liste||[]).length)
+          toast("Ein Termin dieser Anlage ist inzwischen schon angelegt (anderes Gerät bzw. Büro) – nicht doppelt angelegt. Die Daten werden neu geladen.");
+        return rest;
+      }, function(){ return liste; })
+      .then(function(rest){
+        if(rest.length<(liste||[]).length) ladeStammdaten(true);
+        return termineNeuSchreiben(standortId, anlageId, rest, grund, rueck, abHeute);
+      });
+  }
+  return termineNeuSchreiben(standortId, anlageId, liste, grund, rueck, abHeute);
+}
+function termineNeuSchreiben(standortId, anlageId, liste, grund, rueck, abHeute){
   return Promise.all((liste||[]).map(function(t){
     var id="NP"+Date.now().toString(36)+Math.random().toString(36).slice(2,6);
     var rec={id:"position:"+id, typ:"position", ziel:id, neu:true, geaendert:new Date().toISOString(), von:wer(), grund:grund||"Termin angelegt",
@@ -825,6 +869,27 @@ function sollMonatVorschlag(ib, halb){
 function sollGeduldet(monat, regel, halb, jwMonat){
   if(!monat || !regel || monatsAbstand(monat, regel)>3) return false;
   return !halb || !jwMonat || monatsAbstand(monat, jwMonat)>=5;
+}
+/* Soll-Monat der Jahreswartung derselben Anlage (für die 5–7 Monate), sonst 0 */
+function jwMonatDerAnlage(p){
+  var av=anlageVon(p), jw=av && av.termine.filter(function(t){ return t!==p && t.aktiv!==false && intervallArt(t.intervallCode).kurz==="JW"; })[0];
+  return jw ? +jw.monat||0 : 0;
+}
+/* Behielte die Standardregel den eingetragenen Soll-Monat NICHT? – auch wenn
+   er genau im Regelmonat liegt, aber als Halbjahrestermin zu nah an der JW.
+   Einzige Prüfung dafür (Nachbessern, Handbuch, Verwaltung, Assistent). */
+function sollAbweichend(p){
+  if(!p || !p.anker || !p.anker.regel || !+p.monat) return false;
+  return !sollGeduldet(+p.monat, p.anker.regel, /^HJ/.test(intervallArt(p.intervallCode).kurz), jwMonatDerAnlage(p));
+}
+/* Halbjahrestermin zu nah an der JW: was die Standardregel stattdessen nähme */
+function sollJwText(monat, jwMonat){
+  return "liegt nur "+monatsAbstand(monat, jwMonat)+" Monate neben der JW ("+MONATE_L[jwMonat]+") – die Standardregel ergäbe "+MONATE_L[(jwMonat+5)%12+1];
+}
+/* passt ein Halbjahrestermin zur Regel (höchstens 3 Monate daneben, auch genau
+   im Regelmonat), liegt aber zu nah an der JW? */
+function sollZuNahJW(monat, regel, halb, jwMonat){
+  return !!(halb && jwMonat && +monat && regel && monatsAbstand(monat, regel)<=3 && monatsAbstand(monat, jwMonat)<5);
 }
 /* Der erste Termin nach der Inbetriebnahme (vom Büro so festgelegt, 27.09.2026):
    der Soll-Monat, der „Inbetriebnahme + 12 Monate“ (Halbjahrestermin + 6)
@@ -995,13 +1060,20 @@ function berechneFaelligkeiten(){
   /* Wartungsnachweise aus den Protokollen der App */
   var ausProtPos={}, ausProtMarkt={};
   (typeof alleProtokolle==="function" ? alleProtokolle() : []).forEach(function(pr){
-    if(!pr.datum || ZAEHLT_ALS_WARTUNG.indexOf(pr.wartungsart)<0) return;
+    /* ein Datum in der Zukunft (Vertipper) ist noch kein Besuch – auch nicht als „letzter Besuch“ */
+    if(!pr.datum || pr.datum>heute || ZAEHLT_ALS_WARTUNG.indexOf(pr.wartungsart)<0) return;
     if(pr.standortId) (ausProtMarkt[pr.standortId]=ausProtMarkt[pr.standortId]||[]).push(pr.datum);
     protokollZeilen(pr).forEach(function(id){ (ausProtPos[id]=ausProtPos[id]||[]).push(pr.datum); });
   });
 
-  POS.forEach(function(p){
+  var imPlan={}; POS.forEach(function(p){ imPlan[p.id]=1; });
+  ALLE_POS.forEach(function(p){
+    /* Kürzel für JEDE Zeile – auch pausierte, stillgelegte und erst später
+       geladene: Marktfenster und Korrektur eines Protokolls brauchen es */
     p.intervall=intervallArt(p.intervallCode);
+    /* abgeleitete Hinweise jedes Mal neu – sonst bliebe ein alter stehen,
+       etwa wenn eine Zeile ihren Anker verliert oder pausiert wird */
+    p.ausgelassen=null; p.ueberholtDurch=null; p.doppeltImFenster=null;
     /* Einträge aus Liste, Prüfbuch und App, die höchstens BESUCH_TAGE
        auseinanderliegen, sind EIN Besuch – sonst erfüllte derselbe Besuch
        einen versäumten Termin und zusätzlich den nächsten */
@@ -1016,6 +1088,11 @@ function berechneFaelligkeiten(){
 
     var a=ankerFuer(p);
     p.anker=mitGiltAb(p, a);
+    if(!imPlan[p.id]){
+      /* zur Zeit nicht gewartet (die Anlage oder der ganze Markt): kein Termin, nichts fällig */
+      if(p.aktiv && (anlagePausiert(p) || marktPausiert(byId[p.standortId]))){ p.status="pausiert"; p.naechste=null; p.erledigtDurch=null; }
+      return;
+    }
     if(!a){
       /* kein fester Termin bestimmbar – dann ab der letzten Wartung */
       p.naechste = p.letzte ? plusMonate(p.letzte, ZEILEN_INTERVALL) : null;
@@ -1036,7 +1113,6 @@ function berechneFaelligkeiten(){
     var j=+bald.slice(0,4), aktuell=ankerIm(a,j);
     if(aktuell>bald) aktuell=ankerIm(a,j-1);
     var zu={}, benutzt={};
-    p.doppeltImFenster=null;
     (function(){
       var ab=termine.length ? Math.min(+termine[0].slice(0,4)-1, +aktuell.slice(0,4)-1) : +aktuell.slice(0,4)-1;
       for(var y=ab; y<=+aktuell.slice(0,4)+1; y++){
@@ -1068,34 +1144,41 @@ function berechneFaelligkeiten(){
          vorgezogen erledigt, kommt der Termin danach */
       var ersteDurch=zu[a.erster]||null;
       p.naechste=ersteDurch ? ankerIm(a,+a.erster.slice(0,4)+1) : a.erster;
-      p.erledigtDurch=ersteDurch; p.ausgelassen=null;
+      p.erledigtDurch=ersteDurch;
       p.status = p.naechste<bald ? "faellig" : "erledigt";
       return;
     }
     var durch=erledigtFuer(aktuell);
     var folge=ankerIm(a,+aktuell.slice(0,4)+1);
     var vorgezogen=erledigtFuer(folge);
-    /* der Termin davor versäumt (obwohl die Anlage vorher gewartet wurde):
-       bleibt als „ausgelassen“ sichtbar, auch wenn schon der nächste ansteht */
+    /* Steht der jetzige Termin erst in den nächsten Tagen an (Vorlauffrist),
+       kann der Termin davor versäumt sein. Regel des Büros (27.09.2026): wurde
+       danach gewartet, zählt diese Wartung für BEIDE Termine – der versäumte
+       ist mit erledigt (nur ein Vermerk). Ohne spätere Wartung bleibt er
+       überfällig. */
     var davor=ankerIm(a,+aktuell.slice(0,4)-1);
-    p.ausgelassen = (aktuell>heute && !zu[davor] && (!a.erster || davor>=a.erster) &&
-                     termine.some(function(d){ return d<plusMonate(davor,-6); })) ? davor : null;
+    var davorVersaeumt = aktuell>heute && !zu[davor] && (!a.erster || davor>=a.erster);
 
     if(vorgezogen){
-      /* Für den kommenden Termin schon gewartet. Ein davor versäumter Termin
-         lässt sich nicht mehr nachholen – er wird vermerkt, aber nicht mehr
-         als überfällig gezählt. */
-      if(!durch) p.ausgelassen=aktuell;
+      /* Für den kommenden Termin schon gewartet – ein davor versäumter Termin
+         ist damit mit erledigt (Vermerk, nicht überfällig) */
+      if(!durch){ p.ausgelassen=aktuell; p.ueberholtDurch=vorgezogen; }
+      else if(davorVersaeumt){ p.ausgelassen=davor; p.ueberholtDurch=durch; }
       p.naechste=ankerIm(a,+folge.slice(0,4)+1);
       p.erledigtDurch=vorgezogen;
       p.status = p.naechste<bald ? "faellig" : "erledigt";
       return;
     }
     if(!durch){
+      /* nichts gewartet: der versäumte Termin davor bleibt überfällig – nicht
+         still „ausgelassen“, nur weil der nächste schon in der Frist steht */
+      if(davorVersaeumt){ p.naechste=davor; p.erledigtDurch=null; p.status="ueberfaellig"; return; }
       p.naechste=aktuell; p.erledigtDurch=null;
       p.status = aktuell<heute ? "ueberfaellig" : "faellig";
       return;
     }
+    /* der versäumte Termin davor zählt mit dieser Wartung als erledigt */
+    if(davorVersaeumt){ p.ausgelassen=davor; p.ueberholtDurch=durch; }
     /* erledigt – als nächstes steht derselbe Tag im Folgejahr an */
     p.naechste=folge;
     p.erledigtDurch=durch;
@@ -1103,10 +1186,12 @@ function berechneFaelligkeiten(){
   });
 
   /* Mehrere Termine einer Anlage (z. B. März und September): wurde die Anlage
-     NACH einem überfälligen Termin für einen späteren Termin gewartet, ist der
-     frühere überholt – nicht gemacht („ausgelassen“), aber auch nicht mehr
-     überfällig. Er kommt im nächsten Jahr wieder dran. (So im Büro vereinbart,
-     Beispiel Braunau.) */
+     NACH einem überfälligen Termin gewartet, zählt diese Wartung zugleich für
+     den versäumten – er ist mit erledigt (Vermerk „mit erledigt durch Wartung
+     vom …“, keine Warnung) und kommt im nächsten Jahr wieder dran. Das gilt
+     auch, wenn der Besuch verspätet für einen anderen Termin zählte – so vom
+     Büro bestätigt (27.09.2026, Beispiel Braunau): sonst gälte der Markt als
+     überfällig, obwohl er gerade gewartet wurde. */
   /* nur die Termine EINER Anlage (automatisch gepaart oder zusammengeführt).
      Doppelte JW-Zeilen der alten Liste werden vorher bereinigt (Altlasten). */
   var jeAnlage={};
@@ -1128,16 +1213,17 @@ function berechneFaelligkeiten(){
   });
 
   ST.forEach(function(s){
-    /* nur Anlagen, die zur Zeit nicht gewartet werden: der Markt ist nicht fällig */
-    if(!s.pos.length && s.pausiertePos.length){
-      s.letzterBesuch=null; s.status="pausiert"; s.offen=0;
-      return;
-    }
     var besuche=[];
-    s.pos.forEach(function(p){ if(p.letzte) besuche.push(p.letzte); });
+    s.pos.concat(s.pausiertePos).forEach(function(p){ if(p.letzte) besuche.push(p.letzte); });
     (ausProtMarkt[s.id]||[]).forEach(function(d){ besuche.push(d); });
     besuche.sort();
     s.letzterBesuch = besuche.length ? besuche[besuche.length-1] : null;
+    /* Markt zur Zeit nicht betreut, oder nur Anlagen, die zur Zeit nicht
+       gewartet werden: der Markt ist nicht fällig */
+    if(marktPausiert(s) || (!s.pos.length && s.pausiertePos.length)){
+      s.status="pausiert"; s.offen=0;
+      return;
+    }
     /* Der Status eines Markts ist der schlechteste seiner Termine – jeder
        Termin hängt an der Inbetriebnahme (+12 Monate bzw. +6 Monate). */
     /* Gar keine Anlage in Betrieb: das ist kein „im Plan“, sondern nichts zu
@@ -1177,11 +1263,24 @@ function dfmt(iso){ if(!iso) return "–"; var p=iso.split("-"); return p[2]+"."
 function tagFmt(zeitstempel){ return zeitstempel ? dfmt(isoLokal(new Date(zeitstempel))) : "–"; }
 function el(html){ var t=document.createElement("template"); t.innerHTML=html.trim(); return t.content.firstElementChild; }
 function pill(st){ return '<span class="pill p-'+st+'">'+STATUS_LABEL[st]+"</span>"; }
-function marktPill(s){ return pill(s.status); }
+function marktPill(s){
+  if(marktPausiert(s)) return '<span class="pill p-pausiert"'+(s.pausiertGrund?' title="'+esc(s.pausiertGrund)+'"':"")+">zur Zeit nicht betreut</span>";
+  return pill(s.status);
+}
+/* deutlicher Vermerk für einen Markt, der zur Zeit nicht betreut wird – mit Grund */
+function marktVermerk(s){
+  if(!marktPausiert(s)) return "";
+  return '<div class="note warnbox" style="font-size:13px"><strong>Zur Zeit nicht betreut</strong>'+
+    (s.pausiertGrund?" – "+esc(s.pausiertGrund):"")+
+    '<br><span class="muted">Keine Termine und keine Fälligkeit, bis der Markt in der Verwaltung wieder auf „betreut“ steht. Offene Störungen bleiben sichtbar.</span></div>';
+}
 function anlagenName(p){
-  /* alle Termine einer Anlage tragen den Namen ihrer ersten Zeile */
-  var l=(p && p.anlageId && ANLAGEN[p.anlageId]) ? ANLAGEN[p.anlageId].leader : p;
-  return (l && l.anlagentyp) || (p && p.anlagentyp) || "Anlage ohne Typangabe";
+  /* alle Termine einer Anlage tragen den Namen ihrer ersten Zeile – fehlt er
+     dort, aus den anderen Zeilen der Anlage wie bei anlageDaten (ein an der
+     ersten Zeile ausdrücklich geleerter Name bleibt leer) */
+  var an=(p && p.anlageId && ANLAGEN[p.anlageId]);
+  var d=an ? (ANLAGE_FELDER ? anlageDaten(an.leader) : an.leader) : p;   /* ganz am Anfang fehlen die Anlagenfelder noch */
+  return (d && d.anlagentyp) || "Anlage ohne Typangabe";
 }
 /* Wie UKT einen Markt nennt: „Seekirchen“, in Orten mit mehreren Märkten
    „Wien Jedletzbergerstraße“. Eine in der Verwaltung vergebene Bezeichnung
@@ -2772,6 +2871,7 @@ function popupInhalt(s){
   d.innerHTML='<div style="font:600 14px/1.3 system-ui,sans-serif;margin-bottom:2px">'+esc(stName(s))+"</div>"+
     '<div style="font-size:12.5px;color:#555;margin-bottom:6px">'+esc(s.adresse)+"</div>"+
     '<div style="margin-bottom:8px">'+marktPill(s)+' <span class="tag">'+s.pos.length+" Position(en)</span></div>"+
+    (marktPausiert(s)?'<div style="font-size:12.5px;margin-bottom:8px">Zur Zeit nicht betreut'+(s.pausiertGrund?": "+esc(s.pausiertGrund):"")+"</div>":"")+
     stoerungVonMarkt(s.id).map(function(o){
       return '<div style="font-size:12.5px;margin-bottom:8px;padding:6px 8px;border-left:3px solid #B3342A;background:#F7E2E0;color:#222;border-radius:4px">'+
         "<strong>Störung offen</strong>"+(o.problemtyp?": "+esc(o.problemtyp):"")+
@@ -2999,11 +3099,13 @@ function standortDetail(s){
       "<dt>Adresse</dt><dd>"+esc(s.adresse)+"</dd>"+
       "<dt>FM-Region</dt><dd>"+esc(s.region||"nicht zugeordnet")+"</dd>"+
       (s.filiale?"<dt>Filiale</dt><dd class='mono'>"+esc(s.filiale)+"</dd>":"")+
-      "<dt>Anlagen</dt><dd>"+anlagenDesMarkts(s,false).length+" · "+s.pos.length+" Termine im Jahr</dd>"+
+      "<dt>Anlagen</dt><dd>"+(marktPausiert(s) ? anlagenDesMarkts(s,true).length+" · zur Zeit ohne Termine"
+        : anlagenDesMarkts(s,false).length+" · "+s.pos.length+" Termine im Jahr")+"</dd>"+
       "<dt>Letzter Besuch</dt><dd class='mono'>"+(s.letzterBesuch?dfmt(s.letzterBesuch):"—")+"</dd>"+
       (s.baujahrVon?"<dt>Baujahr</dt><dd class='mono'>"+s.baujahrVon+(s.baujahrBis!==s.baujahrVon?"–"+s.baujahrBis:"")+"</dd>":"")+
       "<dt>Geocodierung</dt><dd class='muted'>"+({adresse:"Adressgenau",strasse:"Straßenebene",ort:"Ortsebene",keine:"keine"}[s.genauigkeit]||s.genauigkeit)+"</dd>"+
     "</dl>"+
+    marktVermerk(s)+
     '<div class="rowflex">'+
       (s.lat?'<a class="btn ghost sm" href="'+gmapsZiel(s)+'" target="_blank" rel="noopener">In Google Maps navigieren</a>':"")+
       '<button class="btn ghost sm" type="button" data-akt="historie">Wartungshistorie</button>'+
@@ -3033,9 +3135,11 @@ function standortDetail(s){
 /* zur Zeit nicht gewartet – sichtbar, aber ohne Termin */
 function pausiertBox(p){
   var d=anlageDaten(p);
+  /* ruht nur, weil der ganze Markt zur Zeit nicht betreut wird */
+  var nurMarkt=!anlagePausiert(p) && marktPausiert(byId[p.standortId]);
   return el('<div class="posbox" style="opacity:.75"><div class="rowflex" style="justify-content:space-between;gap:8px">'+
     '<strong style="font-size:14px">'+esc(anlagenName(d))+"</strong>"+pill("pausiert")+"</div>"+
-    '<div class="muted" style="font-size:13px">'+esc([d.pausiertGrund?"Grund: "+d.pausiertGrund:"", anlageKurz(d)].filter(Boolean).join(" · ")||"Keine Termine, bis die Anlage in der Verwaltung wieder auf „in Betrieb“ steht.")+"</div></div>");
+    '<div class="muted" style="font-size:13px">'+esc([nurMarkt?"Markt zur Zeit nicht betreut":"", d.pausiertGrund&&!nurMarkt?"Grund: "+d.pausiertGrund:"", anlageKurz(d)].filter(Boolean).join(" · ")||"Keine Termine, bis die Anlage in der Verwaltung wieder auf „in Betrieb“ steht.")+"</div></div>");
 }
 /* Zugang zur Regelung – nur wo es Fernzugriff gibt und etwas eingetragen ist.
    Das Passwort steht verdeckt da; aufdecken und kopieren geht mit einem Tipp. */
@@ -3511,7 +3615,7 @@ function anlageDatenErgaenzen(leader, vorlage, springe, ohneRegel, weiter){
 
 function anlagenBloecke(s, host){
   anlagenDesMarkts(s,true).forEach(function(a){
-    if(anlagePausiert(a.leader)){ host.appendChild(pausiertBox(a.leader)); return; }
+    if(anlagePausiert(a.leader) || marktPausiert(s)){ host.appendChild(pausiertBox(a.leader)); return; }
     var d=anlageDaten(a.leader), l=anlageLuecken(d);
     var blk=el('<div class="akarte" style="background:var(--surface)"><div class="rowflex" style="justify-content:space-between;gap:8px">'+
       '<strong style="font-size:15px">'+esc(anlagenName(d))+"</strong>"+
@@ -3619,6 +3723,8 @@ function anlageHistorieAnsicht(leader){
   v.inhalt.appendChild(box);
 }
 function posBox(p,s,imBlock){
+  /* das Kürzel fehlt nie – auch nicht bei einer erst später geladenen Zeile */
+  if(!p.intervall) p.intervall=intervallArt(p.intervallCode);
   var b=el('<div class="posbox">'+
     '<div class="rowflex" style="justify-content:space-between;gap:8px">'+
       '<strong style="font-size:14px">'+esc(imBlock?p.intervall.art:anlagenName(p))+"</strong>"+pill(p.status)+"</div>"+
@@ -3629,7 +3735,8 @@ function posBox(p,s,imBlock){
         ". <span class='muted'>(aus "+p.anker.quelle+")</span>":"—")+"</dd>"+
       "<dt>Zuletzt gewartet</dt><dd class='mono'>"+(p.letzte?dfmt(p.letzte)+(p.letzteAusApp?" · aus App-Protokoll":""):"—")+"</dd>"+
       "<dt>Nächster Termin</dt><dd class='mono'>"+(p.naechste?dfmt(p.naechste)+" · "+wannText(p).zusatz:"—")+"</dd>"+
-      (p.ausgelassen?"<dt>Ausgelassen</dt><dd><span class='pill p-faellig'>Termin "+dfmt(p.ausgelassen)+" nicht gewartet</span></dd>":"")+
+      /* versäumter Termin, den eine spätere Wartung mit erledigt hat (Regel des Büros) – nur ein Vermerk */
+      (p.ausgelassen?"<dt>Termin davor</dt><dd>"+dfmt(p.ausgelassen)+" · mit erledigt"+(p.ueberholtDurch?" durch Wartung vom "+dfmt(p.ueberholtDurch):"")+"</dd>":"")+
       "<dt>Soll-Monat</dt><dd>"+(p.monat?MONATE_L[p.monat]:"—")+
         (p.anker && p.anker.regel && p.monat && +p.monat!==p.anker.regel
           ? ' <span class="muted">(bewusst verschoben, die Regel ergäbe '+MONATE_L[p.anker.regel]+')</span>'+
@@ -3722,6 +3829,7 @@ function viewAnlagen(){
           (s.lat||s.plz?'<a class="btn sm" style="text-decoration:none" href="'+gmapsZiel(s)+'" target="_blank" rel="noopener">Mit Google Maps navigieren</a>':"")+
           "</div>");
         if(kopf.children.length) inner.appendChild(kopf);
+        if(marktPausiert(s)){ var vm=el(marktVermerk(s)); vm.style.marginBottom="10px"; inner.appendChild(vm); }
         st.forEach(function(o){ var z=stoerungEintrag(o,true); z.style.marginBottom="10px"; inner.appendChild(z); });
         anlagenBloecke(s, inner); inner.dataset.done="1";
       }
@@ -4213,7 +4321,7 @@ function anlageAssistent(start, titel, neu, alles, vorgang){
         ? '<div class="note" style="font-size:12.5px">Nur die Inbetriebnahme eintragen – die App korrigiert danach beide Zeilen der alten Liste selbst.</div>'
         : '<div class="as-feld"><button class="btn ghost sm" type="button" data-regelall>Standardregel anwenden</button>'+
         '<div class="as-hinweis">JW im Monat der Inbetriebnahme, sechs Monate später HJW (ab 30 kg) bzw. HJI. '+
-        "Ein eingetragener Soll-Monat bleibt, wenn er höchstens 3 Monate abweicht. "+
+        "Ein eingetragener Soll-Monat bleibt, wenn er höchstens 3 Monate abweicht – der Halbjahrestermin zusätzlich nur, wenn er 5–7 Monate von der JW entfernt liegt (sonst JW + 6). "+
         (Admin.frei?"Fehlt der zweite Termin, kommt er dazu.":"Fehlt ein Termin, legt ihn das Büro in der Verwaltung an.")+"</div></div>")+
         '<div class="muted" style="font-size:12.5px">Einen Termin streichen geht in der Verwaltung.</div>';
       inhalt.innerHTML=h;
@@ -4248,13 +4356,19 @@ function anlageAssistent(start, titel, neu, alles, vorgang){
           if(!regel) return;
           if(!m){
             hin.innerHTML="Vorschlag aus der Inbetriebnahme: <strong>"+MONATE_L[regel]+'</strong> <button class="chip" type="button" data-nehmen>übernehmen</button>';
-          } else if(m!==regel){
+          } else {
             /* höchstens 3 Monate daneben (Halbjahrestermin 5–7 Monate neben der JW):
-               so behält ihn auch die Standardregel – kein Grund nötig */
+               so behält ihn auch die Standardregel – kein Grund nötig. Auch genau
+               im Regelmonat zählt der Abstand zur JW. */
             var c=normCode(t.intervallCode), jw=a._termine.filter(function(x){ return x!==t && normCode(x.intervallCode)==="JW" && +x.monat; })[0];
-            if(sollGeduldet(m, regel, c==="HJW"||c==="HJI", jw ? +jw.monat : 0))
-              hin.innerHTML="Aus der Inbetriebnahme käme <strong>"+MONATE_L[regel]+"</strong>. Eingetragen ist "+MONATE_L[m]+" – höchstens 3 Monate daneben, gilt nach der Regel.";
-            else {
+            var halbT=(c==="HJW"||c==="HJI"), jwM=jw ? +jw.monat : 0;
+            if(sollGeduldet(m, regel, halbT, jwM)){
+              if(m!==regel)
+                hin.innerHTML="Aus der Inbetriebnahme käme <strong>"+MONATE_L[regel]+"</strong>. Eingetragen ist "+MONATE_L[m]+" – höchstens 3 Monate daneben, gilt nach der Regel.";
+            } else if(sollZuNahJW(m, regel, halbT, jwM)){
+              hin.innerHTML="Eingetragen ist "+MONATE_L[m]+" – "+esc(sollJwText(m, jwM))+". Der eingetragene Monat gilt.";
+              grund.hidden=false;
+            } else {
               hin.innerHTML="Aus der Inbetriebnahme käme <strong>"+MONATE_L[regel]+"</strong>. Eingetragen ist "+MONATE_L[m]+" – das gilt.";
               grund.hidden=false;
             }
@@ -7560,14 +7674,27 @@ function viewProtokoll(){
        sie inzwischen pausiert sind; sonst verlöre die Korrektur sie still */
     var korrIds=(S.bearbeiten && S.bearbeiten.x && S.bearbeiten.x.positionIds) || [];
     var pausiertIds=(cur.pausiertePos||[]).map(function(p){ return p.id; });
-    var anlagenListe=anlagenDesMarkts(cur, korrIds.length>0).filter(function(a){
+    /* Markt zur Zeit nicht betreut: seine Anlagen bleiben wählbar – etwa für
+       eine Störung, die dort trotzdem behoben wird (ruhende Anlagen einzeln wie bisher) */
+    var marktRuht=marktPausiert(cur);
+    var anlagenListe=anlagenDesMarkts(cur, korrIds.length>0 || marktRuht).filter(function(a){
       return a.termine.some(function(t){ return pausiertIds.indexOf(t.id)<0; }) ||
+             (marktRuht && !anlagePausiert(a.leader)) ||
              a.termine.some(function(t){ return korrIds.indexOf(t.id)>=0; });
     });
     anlagenListe.forEach(function(a,i){
       var ts=a.termine.slice();
       var offen=ts.filter(function(t){ return t.status==="ueberfaellig"||t.status==="faellig"; });
       var wahl=(offen.length?offen:ts).slice().sort(function(x,y){ return abst(x)-abst(y); })[0];
+      /* Entscheidung des Büros: ist der gewählte Termin versäumt und steht der
+         nächste Termin der Anlage höchstens 3 Monate nach dem Protokolldatum an,
+         zählt der Besuch für den nächsten – der versäumte ist damit mit erledigt */
+      if(wahl && wahl.status==="ueberfaellig"){
+        var grenze=plusMonate(datum, 3);
+        var naechster=ts.filter(function(t){ return t!==wahl && t.status!=="ueberfaellig" && t.naechste && t.naechste>wahl.naechste && t.naechste<=grenze; })
+          .sort(function(x,y){ return x.naechste<y.naechste?-1:1; })[0];
+        if(naechster) wahl=naechster;
+      }
       if(vorwahlId){ ts.forEach(function(t){ if(t.id===vorwahlId) wahl=t; }); }
       /* Hat der Markt nur eine Anlage, ist klar, worum es geht – dann ist sie
          angehakt, auch wenn sie noch nicht fällig wäre. */
@@ -7576,8 +7703,9 @@ function viewProtokoll(){
       var an = ts.some(function(t){ return t.id===vorwahlId; }) ||
                anlagenListe.length===1 ||
                (!stoer && offen.length>0);
-      var schlecht=ts.reduce(function(r,t){ return STATUS_RANK[t.status]<STATUS_RANK[r]?t.status:r; },"erledigt");
-      var terminText=function(t){ var w=wannText(t); return t.intervall.art+(t.naechste?" · fällig "+dfmt(t.naechste)+" ("+w.zusatz+")":""); };
+      var schlecht=ts.reduce(function(r,t){ return STATUS_RANK[t.status]<STATUS_RANK[r]?t.status:r; },
+        ts.every(function(t){ return t.status==="pausiert"; })?"pausiert":"erledigt");   /* ruhend: nicht „im Plan“ zeigen */
+      var terminText=function(t){ var w=wannText(t); return (t.intervall||intervallArt(t.intervallCode)).art+(t.naechste?" · fällig "+dfmt(t.naechste)+" ("+w.zusatz+")":""); };
       var z=el('<label class="chk" style="border-color:var(--line);align-items:center">'+
         '<input type="checkbox" name="posw" value="'+esc(stoer?a.leader.id:wahl.id)+'" data-anlage="'+esc(a.id)+'" id="f_posw'+i+'"'+(an?" checked":"")+">"+
         '<span style="flex:1;min-width:0"><strong>'+esc(anlagenName(anlageDaten(a.leader)))+"</strong><br>"+
@@ -7598,7 +7726,10 @@ function viewProtokoll(){
         'ihr Termin ist für dieses Jahr erledigt, als nächstes steht derselbe Termin im Folgejahr an. '+
         'Das gilt nur bei Wartungsart „planmäßig" oder „Prüfung"; eine Störung oder Reparatur ersetzt keine Wartung.')+"</div>"));
     /* Anlagen, die zur Zeit nicht gewartet werden: nur als Hinweis */
-    if(cur.pausiertePos && cur.pausiertePos.length)
+    if(marktRuht)
+      posBox.appendChild(el('<div class="muted" style="font-size:12px">Markt zur Zeit nicht betreut'+
+        (cur.pausiertGrund?" ("+esc(cur.pausiertGrund)+")":"")+" – seine Anlagen haben keine Termine.</div>"));
+    else if(cur.pausiertePos && cur.pausiertePos.length)
       posBox.appendChild(el('<div class="muted" style="font-size:12px">Zur Zeit nicht gewartet: '+
         esc(cur.pausiertePos.filter(function(x){ return anlageLeader(x)===x || cur.pausiertePos.indexOf(anlageLeader(x))<0; }).map(function(x){ var d=anlageDaten(x); return anlagenName(d)+(d.pausiertGrund?" ("+d.pausiertGrund+")":""); }).join(", "))+"</div>"));
     anlagenZeichnen();
@@ -9675,9 +9806,11 @@ function historieEintraege(s){
     if(pr.standortId!==s.id || !pr.datum) return;
     var ids=(pr.positionIds&&pr.positionIds.length)?pr.positionIds:(pr.positionId?[pr.positionId]:[]);
     var stoe=istStoerung(pr);
+    /* Datum in der Zukunft (Vertipper): steht da, zählt aber noch nicht als Wartung */
+    var zukunft=pr.datum>isoLokal(new Date());
     zeilen.push({datum:pr.datum, anlage:ids.length?feldText("positionIds",ids):"(Markt allgemein)",
       art:stoe ? ("Störung"+(pr.stoerung&&pr.stoerung.problemtyp?": "+pr.stoerung.problemtyp:"")) : (pr.wartungsart||""),
-      stoerung:stoe, techniker:kanonName(pr.nameTechniker||pr.techniker||""), quelle:"App", protokoll:pr});
+      stoerung:stoe, zukunft:zukunft, techniker:kanonName(pr.nameTechniker||pr.techniker||""), quelle:"App", protokoll:pr});
   });
   return zeilen.sort(function(a,b){ return b.datum.localeCompare(a.datum); });
 }
@@ -9686,7 +9819,9 @@ function historieAnsicht(s){
   box.className="stack";
   var z=historieEintraege(s);
   if(!z.length){ box.appendChild(el('<div class="muted">Für diesen Standort ist keine Wartung erfasst.</div>')); return box; }
-  var anzStoer=z.filter(function(e){ return e.stoerung; }).length, anzWart=z.length-anzStoer;
+  var anzStoer=z.filter(function(e){ return e.stoerung; }).length;
+  /* ein Protokoll mit Datum in der Zukunft zählt noch nicht als Wartung */
+  var anzWart=z.filter(function(e){ return !e.stoerung && !e.zukunft; }).length;
 
   /* wer war in den letzten Jahren hier – auf einen Blick */
   var wer={}; z.forEach(function(e){ if(e.techniker) wer[e.techniker]=(wer[e.techniker]||0)+1; });
@@ -9702,15 +9837,17 @@ function historieAnsicht(s){
 
   var jahre={}; z.forEach(function(e){ var j=e.datum.slice(0,4); (jahre[j]=jahre[j]||[]).push(e); });
   Object.keys(jahre).sort().reverse().forEach(function(j){
-    var nS=jahre[j].filter(function(e){ return e.stoerung; }).length, nW=jahre[j].length-nS;
+    var nS=jahre[j].filter(function(e){ return e.stoerung; }).length, nW=jahre[j].filter(function(e){ return !e.stoerung && !e.zukunft; }).length;
     var t=el('<div><div class="chart-t" style="margin-bottom:4px">'+j+' <span class="muted mono" style="font-size:12px;font-weight:400">· '+
-      [nW?nW+" Wartung"+(nW===1?"":"en"):"", nS?nS+" Störung"+(nS===1?"":"en"):""].filter(Boolean).join(" · ")+'</span></div>'+
+      [nW?nW+" Wartung"+(nW===1?"":"en"):"", nS?nS+" Störung"+(nS===1?"":"en"):"",
+       jahre[j].some(function(e){ return e.zukunft; })?"Datum in der Zukunft":""].filter(Boolean).join(" · ")+'</span></div>'+
       '<div class="scrollx"><table class="dt"><thead><tr><th>Datum</th><th>Anlage</th><th>Art</th><th>Techniker/in</th><th>Quelle</th></tr></thead>'+
       "<tbody></tbody></table></div></div>");
     var tb=t.querySelector("tbody");
     jahre[j].forEach(function(e){
       var tr=el("<tr><td class='mono'>"+dfmt(e.datum)+"</td><td>"+esc(e.anlage)+"</td><td>"+
         (e.stoerung?'<span class="tag st">Störung</span> '+esc(e.art.replace(/^Störung:?\s*/,"")):esc(e.art))+
+        (e.zukunft?' <span class="tag st">Datum in der Zukunft – zählt noch nicht</span>':"")+
         "</td><td>"+(e.techniker?esc(e.techniker):'<span class="muted">–</span>')+"</td><td>"+
         (e.quelle==="App"?'<span class="tag f30">Protokoll</span>':'<span class="tag">Liste</span>')+"</td></tr>");
       if(e.protokoll){
@@ -10251,8 +10388,9 @@ function korrekturRueckgaengig(e, p){
 
 /* ================= Verwaltung ================= */
 var LABEL_ST={filiale:"Filialnummer", name:"Bezeichnung", adresse:"Adresse", plz:"PLZ", ort:"Ort",
-  region:"FM-Region", lat:"Breitengrad", lon:"Längengrad", aktiv:"betreut", notiz:"Notiz",
-  entfernt:"aus der Liste entfernt", entferntGrund:"Grund (entfernt)"};
+  region:"FM-Region", lat:"Breitengrad", lon:"Längengrad", aktiv:"betreut (nicht stillgelegt)", notiz:"Notiz",
+  entfernt:"aus der Liste entfernt", entferntGrund:"Grund (entfernt)",
+  pausiert:"zur Zeit nicht betreut", pausiertGrund:"Grund (nicht betreut)"};
 var LABEL_POS={anlagentyp:"Anlagentyp", intervallCode:"Kürzel", inbetriebnahme:"Inbetriebnahme",
   monatGrund:"Grund für den abweichenden Soll-Monat",
   monat:"Soll-Monat", kaeltemittelKg:"Kältemittel (kg)", kaeltemittelArt:"Kältemittelart",
@@ -10290,7 +10428,7 @@ function auffaelligkeiten(s){
     var doppelt=ALLE_ST.filter(function(o){ return o!==s && o.aktiv && String(o.filiale)===String(s.filiale); });
     if(doppelt.length) f.push("Filialnummer "+s.filiale+" ist mehrfach vergeben");
   }
-  if(!s.pos.length) f.push("keine Anlage in Betrieb");
+  if(!s.pos.length && !marktPausiert(s)) f.push("keine Anlage in Betrieb");
   /* zwei Zeilen mit demselben Termin: in der alten Liste meist die Halbjahreswartung mit falschem Kürzel */
   s.pos.forEach(function(p,i){
     s.pos.slice(i+1).forEach(function(q){
@@ -10313,8 +10451,10 @@ function auffaelligkeiten(s){
     Object.keys(k).forEach(function(kz){ if(k[kz]>1)
       f.push(mit(anlagenName(a.leader)+": "+k[kz]+" Termine mit demselben Kürzel "+kz+" – einer davon doppelt oder mit falschem Kürzel?", a.leader)); });
   });
-  if(s.pos.some(function(p){ return p.ueber30kg; }) && !s.pos.some(function(p){ return p.intervall&&p.intervall.kurz==="HJW"; }))
-    f.push("über 30 kg Kältemittel, aber keine Halbjahreswartung (HJW)");
+  /* „ab 30 kg HJW“ gilt je Anlage – eine HJW einer anderen Anlage im Markt hilft nicht */
+  anlagenOhneHJW(s).forEach(function(a){
+    f.push(mit(anlagenName(a.leader)+": ab 30 kg Kältemittel, aber keine Halbjahreswartung (HJW)", a.leader));
+  });
   /* Zwei Termine auf demselben Tag: dann streiten sie sich um dieselben
      Wartungen, und einer steht am Ende zu Unrecht als überfällig da. */
   var gesehen={};
@@ -10347,18 +10487,22 @@ function auffaelligkeiten(s){
     if(p.intervall && p.intervall.unklar) f.push(mit(n+": Kürzel „"+(p.intervallCode||"leer")+"“ unklar", p));
     /* Der eingetragene Soll-Monat gilt, auch wenn er von der Regel abweicht.
        Ohne Begründung bleibt aber offen, ob das Absicht war. */
-    if(p.anker && p.anker.regel && p.monat && +p.monat!==p.anker.regel){
+    /* gleiche Prüfung wie in Verwaltung, Assistent und Handbuch (sollAbweichend):
+       ein Halbjahrestermin muss außerdem 5–7 Monate von der JW der Anlage
+       entfernt sein – auch wenn er genau im Regelmonat liegt */
+    var sollAb=sollAbweichend(p);
+    if(p.anker && p.anker.regel && p.monat && (+p.monat!==p.anker.regel || sollAb)){
+      var jwM=jwMonatDerAnlage(p), zuNah=sollZuNahJW(+p.monat, p.anker.regel, /^HJ/.test(p.intervall.kurz||""), jwM);
+      var wasSoll=zuNah ? "Soll-Monat "+MONATE_L[p.monat]+" "+sollJwText(+p.monat, jwM)
+                        : "Soll-Monat "+MONATE_L[p.monat]+" statt "+MONATE_L[p.anker.regel];
       if(String(p.monatGrund||"").trim())
-        l.push(mit(n+": Soll-Monat "+MONATE_L[p.monat]+" statt "+MONATE_L[p.anker.regel]+
-               " – bewusst so: "+String(p.monatGrund).trim(), p));
+        l.push(mit(n+": "+wasSoll+" – bewusst so: "+String(p.monatGrund).trim(), p));
       /* höchstens 3 Monate daneben: so behält ihn auch die Regel des Büros
          (Standardregel, Altlast-Bereinigung) – kein Fehler, nur eine Notiz */
-      /* gleiche Prüfung wie in Verwaltung und Assistent: ein Halbjahrestermin
-         muss außerdem 5–7 Monate von der Jahreswartung der Anlage entfernt sein */
-      else if(sollGeduldet(+p.monat, p.anker.regel, !!(p.intervall && /^HJ/.test(p.intervall.kurz)),
-              (function(){ var av=anlageVon(p), jw=av && av.termine.filter(function(t){ return t!==p && t.intervall && t.intervall.kurz==="JW"; })[0]; return jw ? +jw.monat||0 : 0; })()))
-        l.push(mit(n+": Soll-Monat "+MONATE_L[p.monat]+" statt "+MONATE_L[p.anker.regel]+
-               " – höchstens 3 Monate daneben, gilt nach der Regel", p));
+      else if(!sollAb)
+        l.push(mit(n+": "+wasSoll+" – höchstens 3 Monate daneben, gilt nach der Regel", p));
+      else if(zuNah)
+        f.push(mit(n+": "+wasSoll+". Gilt trotzdem – bitte in der Verwaltung begründen oder angleichen.", p));
       else
         f.push(mit(n+": Soll-Monat "+MONATE_L[p.monat]+" weicht von der Regel ab (aus der Inbetriebnahme käme "+
                MONATE_L[p.anker.regel]+"). Gilt trotzdem – bitte in der Verwaltung begründen oder angleichen.", p));
@@ -10372,7 +10516,9 @@ function auffaelligkeiten(s){
     var al=anlageLeader(p)===p ? anlageLuecken(anlageDaten(p)).filter(function(f2){ return f2.k!=="kaeltemittelKg"; }) : [];
     if(al.length) l.push(mit(n+": "+al.length+" Anlagendaten offen ("+al.map(function(f2){ return f2.l; }).join(", ")+")", p));
   });
-  s.pausiertePos.forEach(function(p){ if(anlageLeader(p)===p) l.push(mit(anlagenName(p)+": zur Zeit nicht gewartet"+(p.pausiertGrund?" – "+p.pausiertGrund:""), p)); });
+  /* ganzer Markt zur Zeit nicht betreut: ein Vermerk statt einer Zeile je Anlage */
+  if(marktPausiert(s)) l.push("Markt zur Zeit nicht betreut"+(s.pausiertGrund?" – "+s.pausiertGrund:"")+" – keine Termine, bis er wieder betreut wird");
+  else s.pausiertePos.forEach(function(p){ if(anlageLeader(p)===p) l.push(mit(anlagenName(p)+": zur Zeit nicht gewartet"+(p.pausiertGrund?" – "+p.pausiertGrund:""), p)); });
   if(!s.filiale) l.push("keine Filialnummer");
   if(!s.plz) l.push("keine PLZ in der Adresse");
   if(s.pos.length===1) l.push(mit("nur ein Termin im Jahr eingetragen – fehlt der zweite Termin in der Liste?", s.pos[0]));
@@ -10380,6 +10526,14 @@ function auffaelligkeiten(s){
      einmal genügt. */
   var einmal=function(liste){ return liste.filter(function(x,i){ return liste.indexOf(x)===i; }); };
   return {fehler:einmal(f), luecken:einmal(l), pid:ziel};
+}
+/* Anlagen eines Markts ab 30 kg Kältemittel ohne Halbjahreswartung (HJW) –
+   je Anlage geprüft (Nachbessern und Handbuch „Zu klären“) */
+function anlagenOhneHJW(s){
+  return anlagenDesMarkts(s,false).filter(function(a){
+    return a.termine.some(function(t){ return t.ueber30kg; }) &&
+           !a.termine.some(function(t){ return intervallArt(t.intervallCode).kurz==="HJW"; });
+  });
 }
 function naechsterTerminMarkt(s){
   var t=s.pos.map(function(p){ return p.naechste; }).filter(Boolean);
@@ -10652,6 +10806,9 @@ function verwaltungEditor(s){
      (Nachladen, Altlast-Bereinigung, anderes Gerät), überschreibt der alte
      Formularstand nicht still wieder. */
   var basisP={}, basisSt=auswahl(s, STAMM_FELDER_ST);
+  /* aus der Liste entfernt: aktiv ist zur Laufzeit erzwungen – es gilt der gespeicherte Wert */
+  if(s.entfernt) basisSt.aktiv=marktAktivGespeichert(s);
+  var marktStatusStart = basisSt.aktiv===false ? "still" : (basisSt.pausiert ? "pausiert" : "betreut");
   ausgewaehlt.forEach(function(p){ basisP[p.id]=Object.assign(auswahl(p, STAMM_FELDER_POS), {_anlageId:p.anlageId}); });
   /* nach Anlagen geordnet: erste Zeile einer Anlage, dann ihre weiteren Termine */
   var urReihe=ausgewaehlt.slice();
@@ -10697,8 +10854,16 @@ function verwaltungEditor(s){
         (s.lat?'<a class="btn ghost sm" target="_blank" rel="noopener" href="https://www.openstreetmap.org/?mlat='+s.lat+"&mlon="+s.lon+"#map=17/"+s.lat+"/"+s.lon+'">Auf Karte prüfen</a>':"")+
       "</div></div>"+
     "</div>"+
-    '<label class="chk" style="margin-top:10px"><input type="checkbox" id="a_aktiv"'+(s.aktiv!==false?" checked":"")+'><span>Markt wird betreut '+
-      '<span class="muted">– abwählen legt ihn still: er verschwindet aus Plan, Karte und Touren, seine Historie bleibt.</span></span></label>'+
+    /* drei Stufen: betreut · zur Zeit nicht betreut (bleibt sichtbar, ohne Termine) · stillgelegt (geschlossen) */
+    '<div class="grid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;margin-top:10px">'+
+      '<label class="fl"><span>Status des Markts</span><select id="a_status">'+
+        [["betreut","betreut"],["pausiert","zur Zeit nicht betreut"],["still","stillgelegt (geschlossen)"]].map(function(o){
+          return '<option value="'+o[0]+'"'+(o[0]===marktStatusStart?" selected":"")+">"+o[1]+"</option>"; }).join("")+"</select></label>"+
+      '<label class="fl" id="a_pgZeile"'+(marktStatusStart==="pausiert"?"":" hidden")+'><span>Grund, falls nicht betreut</span>'+
+        '<input type="text" id="a_pausiertGrund" placeholder="z. B. Umbau, von Lidl ausgesetzt" value="'+esc(s.pausiertGrund||"")+'"></label>'+
+    "</div>"+
+    '<div class="muted" style="font-size:12px;margin-top:4px">Zur Zeit nicht betreut: bleibt in Anlagen, Karte und Suche sichtbar (mit Vermerk und Grund), '+
+      "aber ohne Fälligkeit, nicht in „Fällig“ und Tour; offene Störungen bleiben sichtbar. Stillgelegt: verschwindet aus Plan, Karte und Touren, die Historie bleibt.</div>"+
     '<label class="fl" style="margin-top:8px"><span>Notiz</span><textarea id="a_notiz" rows="2">'+esc(s.notiz||"")+"</textarea></label>"+
     "</fieldset>"+
 
@@ -10774,24 +10939,29 @@ function verwaltungEditor(s){
         };
         return;
       }
-      if(monat===regel){ box.hidden=true; box.innerHTML=""; return; }
+      var geduldet=sollGeduldet(monat, regel, halb, jwMonat);
+      /* genau im Regelmonat – ein Halbjahrestermin aber nur, wenn er auch 5–7 Monate neben der JW liegt */
+      if(monat===regel && geduldet){ box.hidden=true; box.innerHTML=""; return; }
       box.hidden=false;
       /* höchstens 3 Monate daneben: so behält ihn auch die Regel des Büros
          (Standardregel, Altlast-Bereinigung) – nur eine Notiz, keine Warnung */
-      if(sollGeduldet(monat, regel, halb, jwMonat)){
+      if(geduldet){
         box.innerHTML='<div class="note" style="font-size:12.5px">Aus der Inbetriebnahme käme <strong>'+MONATE_L[regel]+"</strong>, "+
           "eingetragen ist <strong>"+MONATE_L[monat]+"</strong> – höchstens 3 Monate daneben, gilt nach der Regel des Büros.</div>";
         return;
       }
+      /* zu nah an der JW: die Regel nimmt dann JW + 6 */
+      var zuNah=sollZuNahJW(monat, regel, halb, jwMonat), ziel=zuNah ? (jwMonat+5)%12+1 : regel;
       box.innerHTML='<div class="note warnbox" style="font-size:12.5px">'+
-        "Weicht von der Regel ab: aus der Inbetriebnahme käme <strong>"+MONATE_L[regel]+"</strong>, "+
-        "eingetragen ist <strong>"+MONATE_L[monat]+"</strong>. Der eingetragene Monat gilt."+
+        (zuNah ? "Eingetragen ist <strong>"+MONATE_L[monat]+"</strong> – "+esc(sollJwText(monat, jwMonat))+". Der eingetragene Monat gilt."
+               : "Weicht von der Regel ab: aus der Inbetriebnahme käme <strong>"+MONATE_L[regel]+"</strong>, "+
+                 "eingetragen ist <strong>"+MONATE_L[monat]+"</strong>. Der eingetragene Monat gilt.")+
         ' <button class="btn ghost sm" type="button" data-t="sollnehmen">Regel übernehmen</button>'+
         '<label class="fl" style="margin-top:6px"><span>Warum abweichend?</span>'+
         '<input type="text" data-t="monatGrund" placeholder="z. B. Markt wird an einem Tag komplett gewartet" value="'+
           esc(grund||"")+'"></label></div>';
       box.querySelector('[data-t="sollnehmen"]').onclick=function(){
-        z.querySelector('[data-t="monat"]').value=String(regel); sollHinweisNeu(k);
+        z.querySelector('[data-t="monat"]').value=String(ziel); sollHinweisNeu(k);
         verwaltungBearbeitet=true;   /* per Knopf gesetzt – kein input/change */
       };
     });
@@ -11007,6 +11177,14 @@ function verwaltungEditor(s){
     };
     k.querySelector('[data-a="anlagentyp"]').oninput=optionenNeu;
     k.querySelector('[data-a="inbetriebnahme"]').onchange=function(){ sollHinweisNeu(k); };
+    /* Eine stillgelegte Anlage hat alle Termine auf „Termin entfällt“ – wird sie
+       wieder in Betrieb genommen oder nur pausiert, gelten die Termine wieder
+       (sonst übersteuerte das Häkchen die Auswahl und nichts änderte sich) */
+    k.querySelector('[data-a="betrieb"]').addEventListener("change", function(){
+      if(akt!=="still" || this.value==="still") return;
+      k.querySelectorAll('[data-t="entfaellt"]').forEach(function(e){ e.checked=false; });
+      sollHinweisNeu(k);
+    });
     k.setAttribute("data-basis", basisIds);
     host.appendChild(k);
     datenBlockSetzen(k, d);
@@ -11066,6 +11244,9 @@ function verwaltungEditor(s){
   if(plusKi) plusKi.onclick=function(){ if(!verwaltungVerwerfenOk()) return; anlageNeuAnlegen(s); };
 
   c.querySelector("#adm_schliessen").onclick=function(){ if(!verwaltungVerwerfenOk()) return; A.sel=null; A.entwurf=null; render(); };
+  /* der Grund gehört nur zu „zur Zeit nicht betreut“ */
+  var statusSel=c.querySelector("#a_status");
+  statusSel.addEventListener("change", function(){ c.querySelector("#a_pgZeile").hidden = statusSel.value!=="pausiert"; });
 
   c.querySelector("#a_geo").onclick=function(){
     var adr=c.querySelector("#a_adresse").value.trim();
@@ -11095,7 +11276,11 @@ function verwaltungEditor(s){
     if(weg && !window.confirm("„"+stName(s)+"“ aus der Liste nehmen?\n\nDer Eintrag verschwindet aus Plan, Karte, Touren und dieser Übersicht. "+
         "Unter „entfernt“ ist er weiter zu finden und lässt sich wieder aufnehmen.")) return;
     var vorher=auswahl(s,STAMM_FELDER_ST);
-    var neu=Object.assign({}, vorher, {entfernt:weg, entferntGrund:weg?grund:"", aktiv:weg?false:true});
+    /* aktiv (betreut/stillgelegt) nicht anfassen: entfernt zählt ohnehin nirgends
+       (wendeStammdatenAn), und beim Wiederaufnehmen gilt wieder der gespeicherte
+       Status – ein vorher stillgelegter Markt bleibt stillgelegt */
+    if(s.entfernt) vorher.aktiv=marktAktivGespeichert(s);
+    var neu=Object.assign({}, vorher, {entfernt:weg, entferntGrund:weg?grund:""});
     var gegenExcel=objDiff(EXCEL["standort:"+s.id]||{}, neu, STAMM_FELDER_ST);
     var rec={id:"standort:"+s.id, typ:"standort", ziel:s.id, felder:s._neu?neu:gegenExcel, neu:!!s._neu,
              geaendert:new Date().toISOString(), von:wer(), grund:grund};
@@ -11148,8 +11333,14 @@ function verwaltungEditor(s){
       adresse:c.querySelector("#a_adresse").value.trim(), plz:c.querySelector("#a_plz").value.trim(),
       ort:c.querySelector("#a_ort").value.trim(), region:c.querySelector("#a_region").value,
       lat:num(c.querySelector("#a_lat").value), lon:num(c.querySelector("#a_lon").value),
-      aktiv:c.querySelector("#a_aktiv").checked, notiz:c.querySelector("#a_notiz").value.trim()
+      notiz:c.querySelector("#a_notiz").value.trim()
     };
+    /* Status des Markts: stillgelegt = aktiv false; zur Zeit nicht betreut = pausiert (mit Grund –
+       ohne eigenen Grund gilt der Grund der Änderung) */
+    var mStatus=c.querySelector("#a_status").value;
+    neuSt.aktiv = mStatus!=="still";
+    neuSt.pausiert = mStatus==="pausiert" ? true : null;
+    neuSt.pausiertGrund = mStatus==="pausiert" ? (c.querySelector("#a_pausiertGrund").value.trim()||grund) : "";
     if(!neuSt.filiale && !neuSt.name && !neuSt.adresse){ fehler("Ein Markt braucht mindestens Filialnummer, Bezeichnung oder Adresse."); return; }
     if(neuSt.lat!=null && (isNaN(neuSt.lat)||neuSt.lat<46||neuSt.lat>49.5)){ fehler("Der Breitengrad liegt nicht in Österreich (etwa 46,3 bis 49,1)."); return; }
     if(neuSt.lon!=null && (isNaN(neuSt.lon)||neuSt.lon<9||neuSt.lon>17.5)){ fehler("Der Längengrad liegt nicht in Österreich (etwa 9,5 bis 17,2)."); return; }
@@ -11159,8 +11350,13 @@ function verwaltungEditor(s){
 
     /* Markt – was hier nicht geändert wurde, bleibt so, wie es jetzt ist */
     var sJetzt=byId[s.id]||s;
-    Object.keys(neuSt).forEach(function(k){ if(gleich(neuSt[k], basisSt[k])) neuSt[k]=(sJetzt[k]===undefined?null:sJetzt[k]); });
     var vorherSt=auswahl(sJetzt,STAMM_FELDER_ST);
+    /* aus der Liste entfernt: aktiv ist zur Laufzeit erzwungen false – maßgeblich ist der gespeicherte Wert */
+    if(sJetzt.entfernt) vorherSt.aktiv=marktAktivGespeichert(sJetzt);
+    Object.keys(neuSt).forEach(function(k){ if(gleich(neuSt[k], basisSt[k])) neuSt[k]=vorherSt[k]; });
+    /* Felder, die nicht im Formular stehen (entfernt, entferntGrund): bleiben, wie sie
+       jetzt sind – sonst gälten sie als geleert, und ein entfernter Markt käme still zurück */
+    STAMM_FELDER_ST.forEach(function(k){ if(!(k in neuSt)) neuSt[k]=vorherSt[k]; });
     var deltaSt=objDiff(vorherSt,neuSt,STAMM_FELDER_ST);
     Object.keys(deltaSt).forEach(function(k){ protokoll.push({feld:k, name:LABEL_ST[k], alt:stammWert(k,vorherSt[k]), neu:stammWert(k,neuSt[k])}); });
     if(s._neu){
@@ -11373,7 +11569,8 @@ function pruefListe(){
   /* 2. Termine, um die sich jemand kümmern sollte */
   POS.forEach(function(p){
     var s=byId[p.standortId]; if(!s) return;
-    if(p.ausgelassen) dazu("Hinweis","Termine", anlagenName(p)+": Termin "+dfmt(p.ausgelassen)+" wurde ausgelassen (nicht gewartet).", s, {pid:p.id});
+    /* ein versäumter Termin, den eine spätere Wartung mit erledigt hat, ist nach der
+       Regel des Büros erledigt – kein Hinweis hier (nur der Vermerk bei der Anlage) */
     if(p.doppeltImFenster) dazu("Hinweis","Doppelt", anlagenName(p)+" ("+p.intervall.kurz+"): zwei Wartungen für denselben Termin ("+
       p.doppeltImFenster.map(dfmt).join(" und ")+") – doppelt erfasst oder einem falschen Termin zugeordnet?", s, {pid:p.id});
     if(!p.letzte && p.status==="ueberfaellig") dazu("Hinweis","Termine", anlagenName(p)+": nie gewartet erfasst und überfällig – fehlt ein Nachweis (Liste, Prüfbuch, Protokoll)?", s, {pid:p.id, nachweis:true});
@@ -12055,22 +12252,32 @@ function handbuchKarte(z){
           "auch wenn er von der Regel abweicht (dann soll ein Grund dabeistehen). Einzige Ausnahme ist die automatische Bereinigung der "+
           "Altlasten (unten). Nur wenn er fehlt, rechnet die App aus der Inbetriebnahme.",
         "<strong>Standardregel</strong> (Knopf „Standardregel anwenden“): JW im Monat der Inbetriebnahme, sechs Monate versetzt "+
-          "<strong>HJW ab 30 kg</strong> Kältemittel, sonst <strong>HJI</strong>. Ein eingetragener Soll-Monat bleibt, wenn er höchstens 3 Monate abweicht.",
+          "<strong>HJW ab 30 kg</strong> Kältemittel, sonst <strong>HJI</strong>. Ein eingetragener Soll-Monat bleibt, wenn er höchstens 3 Monate abweicht – der Halbjahrestermin zusätzlich nur, wenn er 5–7 Monate von der JW entfernt liegt (sonst JW + 6).",
         "<strong>Tag im Monat:</strong> der Tag der Inbetriebnahme, ohne Inbetriebnahme die Monatsmitte (15.).",
         "<strong>Erste Jahreswartung:</strong> im Soll-Monat rund um den ersten Jahrestag der Inbetriebnahme (höchstens sechs Monate früher oder später) – im Normalfall genau ein Jahr danach; steht der Soll-Monat etwa auf Dezember bei Inbetriebnahme im Jänner, ist schon der Dezember davor die erste JW (sonst wäre fast zwei Jahre keine). <strong>Erster Halbjahrestermin:</strong> der erste Soll-Monat nach der Inbetriebnahme – im Normalfall sechs Monate danach.",
-        "<strong>Nachträglich angelegter Termin</strong> (etwa per Standardregel zu einer bestehenden Anlage): zählt ab dem Tag des Anlegens – erst der nächste Soll-Monat ist fällig, nichts davor gilt als überfällig oder ausgelassen.",
+        "<strong>Nachträglich angelegter Termin</strong> (etwa per Standardregel zu einer bestehenden Anlage): zählt ab dem Tag des Anlegens – erst der nächste Soll-Monat ist fällig, nichts davor gilt als überfällig oder versäumt.",
         "<strong>Derselbe Besuch:</strong> Einträge, die höchstens "+BESUCH_TAGE+" Tage auseinanderliegen (Liste, Prüfbuch, App), zählen als ein Besuch.",
         "<strong>Was zählt:</strong> nur Wartungsart „planmäßig“ oder „Prüfung“ – eine Störung oder Reparatur setzt keinen Termin zurück "+
           "und bescheinigt nicht die Überprüfung nach § 22 KAV. Datumsangaben in der Zukunft werden ignoriert.",
         "<strong>Vorgezogen und verspätet:</strong> Die Besuche werden den Terminen der Reihe nach zugeordnet. Eine Wartung nach einem versäumten "+
           "Termin erfüllt ihn als <em>verspätet</em>, wenn sie mehr als 3 Monate vor dem nächsten Termin liegt; näher dran gilt sie als "+
           "<em>vorgezogen</em> für den nächsten. Vorgezogene Wartungen (Tour) sind normal und verschieben den Folgetermin nicht.",
-        "<strong>Ausgelassen:</strong> Wurde nach einem überfälligen Termin ein späterer Termin derselben Anlage erledigt, ist der frühere "+
-          "„ausgelassen“ – nicht gemacht, aber nicht mehr überfällig. Er steht als Hinweis in „Nachbessern“.",
+        "<strong>Versäumter Termin:</strong> Wurde die Anlage nach einem versäumten Termin gewartet (etwa für den nächsten Termin), "+
+          "zählen <strong>beide</strong> Termine als erledigt – die Wartung für ihren Termin und zugleich für den versäumten. Der Markt ist "+
+          "dann nicht überfällig; beim Termin steht nur der Vermerk „mit erledigt durch Wartung vom …“, keine Warnung. "+
+          "<strong>Ohne</strong> spätere Wartung bleibt ein versäumter Termin überfällig – auch wenn der nächste schon ansteht.",
+        "<strong>„Zählt als“ im Protokoll:</strong> Hat eine Anlage mehrere Termine, wählt das Formular den fälligen vor. Ist ein Termin "+
+          "versäumt und liegt der nächste Termin der Anlage höchstens 3 Monate nach dem Protokolldatum, ist der nächste vorgewählt – "+
+          "der versäumte gilt damit als mit erledigt.",
         "<strong>Status:</strong> <em>überfällig</em> = Termin vorbei, nicht erledigt · <em>fällig</em> = in den nächsten "+VORLAUF_TAGE+" Tagen · "+
           "<em>im Plan</em> = erledigt, nächster Termin später · <em>ohne Termin</em> = weder Soll-Monat noch Inbetriebnahme "+
           "(mit gültigem Kürzel) noch eine frühere Wartung, bzw. ein Markt ohne Anlage in Betrieb · "+
           "<em>zur Zeit nicht gewartet</em> = pausiert (z. B. von Lidl ausgesetzt), stillgelegte Anlagen zählen gar nicht.",
+        "<strong>Markt-Status</strong> (Verwaltung): <em>betreut</em> – normale Termine · <em>zur Zeit nicht betreut</em> (mit Grund, z. B. Umbau) – "+
+          "der Markt bleibt in Anlagen, Karte und Suche sichtbar, mit Vermerk und Grund; alle seine Anlagen zählen wie „zur Zeit nicht gewartet“: "+
+          "keine Fälligkeit, nicht in „Fällig“ und nicht in der Tour, offene Störungen bleiben sichtbar · <em>stillgelegt</em> – geschlossen, "+
+          "verschwindet aus Plan, Karte und Touren, die Historie bleibt. Ein stillgelegter Markt lässt sich jederzeit auf „zur Zeit nicht betreut“ "+
+          "oder „betreut“ zurückstellen.",
         "<strong>Altlasten der alten Liste:</strong> Dieselbe Anlage in zwei Zeilen der Liste, jede mit „JW“, ist ein Fehler der Liste. "+
           "Öffnet ein Admin die App, korrigiert sie das einmal selbst: JW im Monat der Inbetriebnahme (ein alter Soll-Monat bleibt, wenn er "+
           "höchstens 3 Monate abweicht), der Halbjahrestermin sechs Monate von der JW entfernt – ab 30 kg HJW, sonst HJI (sein alter Soll-Monat "+
@@ -12150,26 +12357,29 @@ function viewDaten(){
       (function(){
         /* Regel: ab 30 kg Kältemittel ist der zweite Besuch im Jahr eine
            Halbjahreswartung (HJW), keine bloße Inspektion */
-        var maerkte=ST.filter(function(s){
-          if(!s.pos.some(function(p){ return p.ueber30kg; })) return false;
-          return !s.pos.some(function(p){ return p.intervall.kurz==="HJW"; });
-        });
-        if(!maerkte.length) return "";
-        return '<div class="note warnbox"><strong>'+maerkte.length+' Märkte mit über 30 kg Kältemittel ohne Halbjahreswartung</strong> – '+
+        /* je Anlage geprüft wie in Nachbessern – eine HJW einer anderen Anlage im Markt hilft nicht */
+        var anlagen=[];
+        ST.forEach(function(s){ anlagenOhneHJW(s).forEach(function(a){ anlagen.push({s:s, a:a}); }); });
+        if(!anlagen.length) return "";
+        var maerkte=anlagen.filter(function(x,i){ return !i || anlagen[i-1].s!==x.s; }).length;
+        return '<div class="note warnbox"><strong>'+anlagen.length+' Anlage'+(anlagen.length===1?"":"n")+' ab 30 kg Kältemittel ohne Halbjahreswartung</strong> '+
+          '(in '+maerkte+' Markt'+(maerkte===1?"":"en")+') – '+
           'dort steht nur eine Jahreswartung, oder der zweite Termin ist als Inspektion (HJI) eingetragen. '+
           'Nach Ihrer Regel braucht es ab 30 kg eine Halbjahreswartung (HJW): '+
-          maerkte.slice(0,14).map(function(s){ return esc(stName(s)); }).join(", ")+(maerkte.length>14?" …":"")+".</div>";
+          anlagen.slice(0,14).map(function(x){ return esc(stName(x.s)+" – "+anlagenName(x.a.leader)); }).join(", ")+(anlagen.length>14?" …":"")+".</div>";
       })()+
       (function(){
         /* Soll-Monat der Liste gegen die Inbetriebnahme-Regel prüfen */
         var abw=POS.filter(function(p){
           if(!p.anker || !p.anker.regel || !p.monat || String(p.monatGrund||"").trim()) return false;
-          /* bis 3 Monate behält ihn auch die Regel des Büros – wie in Nachbessern */
-          return monatsAbstand(p.anker.regel, p.monat)>3;
+          /* dieselbe Prüfung wie in Nachbessern: bis 3 Monate behält ihn auch die
+             Regel des Büros – den Halbjahrestermin nur 5–7 Monate neben der JW */
+          return sollAbweichend(p);
         });
         if(!abw.length) return "";
         return '<div class="note warnbox"><strong>'+abw.length+' Termine passen nicht zur Inbetriebnahme</strong> – '+
-          'der Soll-Monat weicht um mehr als drei Monate von der Regel (Inbetriebnahme bzw. + 6 Monate) ab, ohne Begründung. '+
+          'der Soll-Monat weicht um mehr als drei Monate von der Regel (Inbetriebnahme bzw. + 6 Monate) ab, '+
+          'oder ein Halbjahrestermin liegt weniger als 5 Monate neben der JW – ohne Begründung. '+
           'Häufig ist das Kürzel vertauscht (JW statt HW oder umgekehrt) oder das Inbetriebnahmedatum falsch. '+
           'Es gilt der eingetragene Soll-Monat – bitte begründen oder angleichen (Nachbessern führt direkt hin). Betroffen: '+
           abw.slice(0,10).map(function(p){
@@ -12280,6 +12490,7 @@ function marktKurzText(s, oeffentlich){
     return "Offene Störung ("+stoerungAlter(o).text+")"+(t?": "+t:"");
   };
   var gezeigt=[];
+  if(marktPausiert(s)) z.push("- Markt zur Zeit nicht betreut"+(!oeffentlich && s.pausiertGrund?" ("+s.pausiertGrund+")":"")+" – keine Termine");
   anlagenDesMarkts(s,true).forEach(function(a,i){
     var d=anlageDaten(a.leader);
     z.push("- Anlage "+(oeffentlich?(i+1):"„"+anlagenName(d)+"“")+": "+[oeffentlich?"":anlageKurz(d), [d.hersteller,d.modell].filter(Boolean).join(" "), d.kaeltemittelArt,
