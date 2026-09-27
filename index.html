@@ -8869,6 +8869,71 @@ function viewVerlauf(){
 
 /* Nur für Inhaber: wer welche Rolle hat, und was die KI-Erkennung kostet */
 var KI_PREIS={ein:5, aus:25};   /* USD je Million Tokens (claude-opus-5), Stand 2026 */
+/* Preis je Modell (USD je Million Tokens, Eingang/Ausgang) – Fragen laufen mit
+   Haiku, Prüfbücher mit Opus. Früher wurde alles mit dem Opus-Preis gerechnet. */
+var KI_PREISE=[[/haiku/i,{ein:1, aus:5, name:"Haiku"}], [/sonnet/i,{ein:3, aus:15, name:"Sonnet"}], [/opus/i,{ein:5, aus:25, name:"Opus"}]];
+var KI_ART={pruefbuch:"Prüfbuch lesen", typenschild:"Typenschild lesen", auftrag:"Lidl-Auftrag lesen", frage:"Claude fragen"};
+function kiPreis(modell){
+  for(var i=0;i<KI_PREISE.length;i++) if(KI_PREISE[i][0].test(String(modell||""))) return KI_PREISE[i][1];
+  return {ein:KI_PREIS.ein, aus:KI_PREIS.aus, name:String(modell||"?")};
+}
+function kiUsd(x){ var p=kiPreis(x.modell); return ((x.tokens_ein||0)*p.ein+(x.tokens_aus||0)*p.aus)/1e6; }
+function centText(usd){ var c=usd*100; return (c<10?c.toFixed(1):Math.round(c)).toString().replace(".",",")+" ct"; }
+/* Inhaber: Kosten der direkten KI-Aufrufe, aufgeschlüsselt nach Art, Person
+   und je Aufruf. Claude-App und GitHub-Weg laufen übers Abo und stehen hier nicht. */
+function kiKostenAnsicht(host){
+  var zeitraum=S.kiZeitraum||"monat";
+  var jetzt=new Date(), ab, bis=null;
+  if(zeitraum==="vormonat"){ ab=new Date(jetzt.getFullYear(), jetzt.getMonth()-1, 1); bis=new Date(jetzt.getFullYear(), jetzt.getMonth(), 1); }
+  else if(zeitraum==="jahr") ab=new Date(jetzt.getFullYear(), 0, 1);
+  else ab=new Date(jetzt.getFullYear(), jetzt.getMonth(), 1);   /* Monatsbeginn in Ortszeit */
+  host.innerHTML="";
+  var kopf=el('<div class="stack" style="gap:8px"><div class="rowflex" style="justify-content:space-between;gap:8px"><strong>KI-Kosten (direkte Aufrufe)</strong>'+
+    '<div class="chips">'+[["monat","Dieser Monat"],["vormonat","Letzter Monat"],["jahr","Dieses Jahr"]].map(function(z){
+      return '<button class="chip" type="button" data-z="'+z[0]+'" aria-pressed="'+(zeitraum===z[0])+'">'+z[1]+"</button>"; }).join("")+"</div></div>"+
+    '<div data-a="inhalt" class="stack"><div class="muted">wird geladen …</div></div></div>');
+  kopf.querySelectorAll("[data-z]").forEach(function(b){ b.onclick=function(){ S.kiZeitraum=b.dataset.z; kiKostenAnsicht(host); }; });
+  host.appendChild(kopf);
+  var ziel=kopf.querySelector('[data-a="inhalt"]');
+  var q=Store.sb.from("ki_nutzung").select("zeit,email,art,bilder,modell,tokens_ein,tokens_aus").gte("zeit",ab.toISOString()).order("zeit",{ascending:false});
+  if(bis) q=q.lt("zeit",bis.toISOString());
+  q.then(function(r){
+    ziel.innerHTML="";
+    if(r.error){ ziel.appendChild(el('<div class="muted">KI-Erkennung noch nicht eingerichtet.</div>')); return; }
+    var l=r.data||[];
+    if(!l.length){ ziel.appendChild(el('<div class="muted">Keine direkten KI-Aufrufe in diesem Zeitraum.</div>')); return; }
+    var summe=0, jeArt={}, jeWer={};
+    l.forEach(function(x){
+      var u=kiUsd(x); summe+=u;
+      var a=jeArt[x.art]=jeArt[x.art]||{n:0,usd:0,bilder:0,ein:0,aus:0}; a.n++; a.usd+=u; a.bilder+=x.bilder||0; a.ein+=x.tokens_ein||0; a.aus+=x.tokens_aus||0;
+      var w=String(x.email||"?"), p=jeWer[w]=jeWer[w]||{n:0,usd:0}; p.n++; p.usd+=u;
+    });
+    var tab=function(kopfz, zeilen){ return '<div class="scrollx"><table class="dt"><thead><tr>'+kopfz.map(function(k){ return "<th>"+k+"</th>"; }).join("")+
+      "</tr></thead><tbody>"+zeilen.join("")+"</tbody></table></div>"; };
+    var tk=function(n){ return n>=1000 ? (n/1000).toFixed(n>=10000?0:1).replace(".",",")+" k" : String(n); };
+    ziel.appendChild(el('<div class="kpis">'+
+      '<div class="kpi"><div class="n">'+l.length+'</div><div class="l">Aufrufe</div></div>'+
+      '<div class="kpi"><div class="n">'+(summe*100<100?centText(summe):"$ "+summe.toFixed(2).replace(".",","))+'</div><div class="l">Kosten gesamt (USD)</div></div></div>'));
+    ziel.appendChild(el("<div><strong style=\"font-size:13px\">Nach Art</strong>"+tab(["Art","Aufrufe","Tokens ein / aus","Ø je Aufruf","Summe"],
+      Object.keys(jeArt).sort(function(a,b){ return jeArt[b].usd-jeArt[a].usd; }).map(function(k){ var a=jeArt[k];
+        return "<tr><td>"+esc(KI_ART[k]||k)+(a.bilder?' <span class="muted">('+a.bilder+" Bilder)</span>":"")+"</td><td>"+a.n+"</td><td>"+tk(a.ein)+" / "+tk(a.aus)+
+          "</td><td>"+centText(a.usd/a.n)+"</td><td><strong>"+centText(a.usd)+"</strong></td></tr>"; }))+"</div>"));
+    ziel.appendChild(el("<div><strong style=\"font-size:13px\">Nach Person</strong>"+tab(["Wer","Aufrufe","Summe"],
+      Object.keys(jeWer).sort(function(a,b){ return jeWer[b].usd-jeWer[a].usd; }).map(function(k){
+        return "<tr><td>"+esc(k)+"</td><td>"+jeWer[k].n+"</td><td>"+centText(jeWer[k].usd)+"</td></tr>"; }))+"</div>"));
+    ziel.appendChild(el('<details><summary style="cursor:pointer;font-weight:600;font-size:13px">Jeder Aufruf ('+l.length+")</summary>"+
+      tab(["Wann","Wer","Art","Modell","Bilder","Tokens ein / aus","Kosten"], l.slice(0,200).map(function(x){
+        var d=new Date(x.zeit);
+        return "<tr><td>"+esc(dfmt(isoLokal(d))+" "+d.toTimeString().slice(0,5))+"</td><td>"+esc(String(x.email||"?").split("@")[0])+"</td><td>"+esc(KI_ART[x.art]||x.art)+
+          "</td><td>"+esc(kiPreis(x.modell).name)+"</td><td>"+(x.bilder||"–")+"</td><td>"+tk(x.tokens_ein||0)+" / "+tk(x.tokens_aus||0)+
+          "</td><td><strong>"+centText(kiUsd(x))+"</strong></td></tr>"; }))+"</details>"));
+    ziel.appendChild(el('<div class="note" style="font-size:12.5px"><strong>Was kostet was:</strong> Bezahlt wird nach Tokens (Textbausteinen) – '+
+      "<em>Eingang</em> ist alles, was mitgeht (Fotos, mitgeschickte Daten, Frage), <em>Ausgang</em> die Antwort. Preise je Million Tokens: "+
+      "Opus 5 $ / 25 $, Haiku 1 $ / 5 $ (Eingang / Ausgang). Richtwerte: Prüfbuch-Serie mit Opus 10–25 ct; Frage mit Haiku ohne Daten ca. 0,1–0,3 ct, "+
+      "mit einem Markt ca. 0,3 ct, mit der Übersicht aller Märkte (≈ 11 000 Tokens) ca. 1–1,5 ct. "+
+      "Beträge in US-Cent, so rechnet Anthropic ab. <strong>Claude-App und GitHub-Weg laufen übers Abo</strong> und stehen hier nicht.</div>"));
+  });
+}
 function inhaberKarte(){
   var c=el('<div class="card"><div class="pad stack"><div><h2>Inhaber</h2>'+
     '<div class="sub">Konten und Rollen, Kosten der KI-Erkennung. Rollen vergibt der SQL Editor (tools/rollen.sql).</div></div>'+
@@ -8884,16 +8949,7 @@ function inhaberKarte(){
       l.map(function(x){ return "<tr><td>"+esc(x.name||"–")+"</td><td>"+esc(TEXT[x.rolle]||x.rolle)+"</td></tr>"; }).join("")+
       '<tr><td colspan="2" class="muted">alle anderen Konten: Techniker</td></tr></tbody></table></div>'));
   });
-  /* Monatsbeginn in Ortszeit als Zeitpunkt – sonst zählten die ersten Stunden zum Vormonat */
-  var monat=new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString();
-  Store.sb.from("ki_nutzung").select("zeit,email,art,bilder,tokens_ein,tokens_aus").gte("zeit",monat).then(function(r){
-    if(r.error){ kih.appendChild(el('<div class="muted">KI-Erkennung noch nicht eingerichtet.</div>')); return; }
-    var l=r.data||[], ein=0, aus=0, bilder=0;
-    l.forEach(function(x){ ein+=x.tokens_ein||0; aus+=x.tokens_aus||0; bilder+=x.bilder||0; });
-    var usd=(ein*KI_PREIS.ein+aus*KI_PREIS.aus)/1e6;
-    kih.appendChild(el('<div style="font-size:13.5px"><strong>KI-Erkennung diesen Monat:</strong> '+l.length+" Aufrufe, "+bilder+
-      " Bilder, rund "+usd.toFixed(2).replace(".",",")+" USD</div>"));
-  });
+  kiKostenAnsicht(kih);
   return c;
 }
 /* Dauerhafter Hinweis in der Präsentation – niemand soll glauben, dort
@@ -10784,7 +10840,7 @@ function claudeFragen(){
     '<div class="note" style="font-size:12.5px"><strong>Drei Wege:</strong> '+
       "<strong>Claude-App</strong> – im Abo, sofort, du wechselst kurz in die Claude-App. "+
       "<strong>Über GitHub</strong> – im Abo, Antwort kommt hier nach 1–2 Minuten; öffentlich lesbar, darum ohne Adressen – statt der Übersicht gehen <em>erfundene Testdaten</em> mit (bis der eigene Server läuft). "+
-      "<strong>Direkt</strong> – sofort hier, ca. 0,2–1 Cent je Frage (mit Übersicht mehr).</div>"+
+      "<strong>Direkt</strong> – sofort hier, ca. 0,2 Cent je Frage, mit Übersicht aller Märkte ca. 1–1,5 Cent.</div>"+
     '<div class="muted" style="font-size:12px">Keine Passwörter oder Zugangsdaten hineinschreiben. Antworten von Claude können irren – '+
       "bei Vorschriften und Grenzwerten bitte gegenprüfen.</div></div>");
   v.inhalt.appendChild(box);
@@ -10814,7 +10870,7 @@ function claudeFragen(){
   var neu=el('<button class="btn ghost sm" type="button">Neues Gespräch</button>');
   var app=el('<button class="btn" type="button">Claude-App (Abo)</button>');
   var gh=el('<button class="btn ghost" type="button">Über GitHub (Abo)</button>');
-  var direkt=el('<button class="btn ghost" type="button">Direkt · ca. 0,2–1 Cent</button>');
+  var direkt=el('<button class="btn ghost" type="button">Direkt · ca. 0,2–1,5 Cent</button>');
   var knoepfe=function(an){ [app,gh,direkt,neu].forEach(function(b){ b.disabled=!an; }); };
   neu.onclick=function(){ FRAGE_VERLAUF=[]; zeigen(); feld.value=""; feld.focus(); };
   var frageHolen=function(){ var f=feld.value.trim(); if(!f) toast("Bitte zuerst die Frage eingeben."); return f; };
