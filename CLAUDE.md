@@ -49,9 +49,11 @@ Kammerlander Umwelt- und Klimatechnik (UKT) – oft kurz, vom Handy, im Feld.
 - Einträge ≤ 14 Tage auseinander sind derselbe Besuch (`BESUCH_TAGE`).
 - Versäumter Termin: eine spätere Wartung erfüllt ihn als verspätet, wenn sie
   mehr als 3 Monate vor dem nächsten Termin liegt; sonst gilt sie als
-  vorgezogen für den nächsten, der versäumte als „ausgelassen“.
-- Wurde nach einem überfälligen Termin ein späterer Termin derselben Anlage
-  erledigt, ist der frühere „ausgelassen“ (nicht mehr überfällig).
+  vorgezogen für den nächsten, und der versäumte gilt als mit erledigt.
+- Wurde nach einem versäumten Termin eine spätere Wartung gemacht (für den
+  nächsten Termin), zählen BEIDE Termine als erledigt – die Wartung für ihren
+  Termin und zugleich für den versäumten. Ohne spätere Wartung bleibt ein
+  versäumter Termin überfällig.
 - Altlast der alten Liste: dieselbe Anlage zweimal mit „JW“ wird automatisch
   bereinigt (`altlastenFaelle`).
 - Nur planmäßige Wartung/Prüfung zählt als Wartung („nach § 22 KAV“).
