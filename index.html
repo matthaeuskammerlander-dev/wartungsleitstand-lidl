@@ -4742,7 +4742,28 @@ function idbLoeschen(id){ return idbVorgang("readwrite",function(st){ return st.
    überschreibt ihn nicht und bekommt ihn nicht angeboten */
 function entwurfId(){ var m=Store.benutzer&&Store.benutzer.email; return m ? "aktuell:"+m : "aktuell"; }
 var entwurfStand=null;      /* zuletzt gesehener Entwurf, für den Hinweis */
-/* platz: eigener Entwurfsplatz (Korrektur), sonst der des Kontos */
+/* Jedes Protokollformular schreibt auf einen eigenen Platz (Konto, Fenster,
+   Formular): ein angebotener, noch nicht entschiedener Entwurf wird so weder
+   vom neuen Formular noch von einem zweiten Fenster desselben Kontos
+   überschrieben. Das Fenster hält eine Sperre auf seine Kennung – solange es
+   offen ist, bietet ein anderes Fenster dessen Entwürfe nicht an. */
+var ENTWURF_FENSTER=Date.now().toString(36)+Math.random().toString(36).slice(2,7);
+try{ if(navigator.locks && navigator.locks.request)
+  navigator.locks.request("ukt-fenster:"+ENTWURF_FENSTER, function(){ return new Promise(function(){}); }).catch(function(){}); }catch(e){}
+var entwurfZaehler=0;
+function entwurfPlatzNeu(){ return entwurfId()+":f:"+ENTWURF_FENSTER+":"+(++entwurfZaehler); }
+/* Kennungen der Fenster, die gerade offen sind (ohne Sperren-Schnittstelle: keine) */
+function fensterOffen(){
+  try{
+    if(navigator.locks && navigator.locks.query) return navigator.locks.query().then(function(q){
+      var o={};
+      (q.held||[]).forEach(function(l){ if(l.name && l.name.indexOf("ukt-fenster:")===0) o[l.name.slice(12)]=true; });
+      return o;
+    }, function(){ return {}; });
+  }catch(e){}
+  return Promise.resolve({});
+}
+/* platz: der Platz des Formulars bzw. der Korrektur, sonst der alte Kontoplatz */
 function entwurfSchreiben(d, platz){
   if(!d) return Promise.resolve(false);
   d.id=platz||entwurfId();
@@ -4751,16 +4772,23 @@ function entwurfSchreiben(d, platz){
   return idbVorgang("readwrite",function(st){ return st.put(d); },"entwurf")
     .then(function(){ return true; }, function(){ return false; });
 }
+/* den jüngsten Entwurf des Kontos holen, der keinem anderen offenen Fenster gehört */
 function entwurfHolen(){
-  var id=entwurfId();
-  return idbVorgang("readonly",function(st){ return st.get(id); },"entwurf")
-    .then(function(d){
-      /* ein Entwurf aus der Zeit vor den Kontoplätzen (ohne Konto) gilt weiter */
-      if(!d && id!=="aktuell") return idbVorgang("readonly",function(st){ return st.get("aktuell"); },"entwurf")
-        .then(function(alt){ return (alt && !alt.konto) ? alt : null; }, function(){ return null; });
-      return d;
-    })
-    .then(function(d){ entwurfStand=d||null; return entwurfStand; }, function(){ return null; });
+  var id=entwurfId(), vorne=id+":f:";
+  return Promise.all([idbVorgang("readonly",function(st){ return st.getAll(); },"entwurf"), fensterOffen()])
+    .then(function(r){
+      var offen=r[1];
+      var liste=(r[0]||[]).filter(function(d){
+        if(!d || !d.id) return false;
+        if(d.id===id) return true;   /* Kontoplatz aus der Zeit vor den Formularplätzen */
+        /* ein Entwurf aus der Zeit vor den Kontoplätzen (ohne Konto) gilt weiter */
+        if(d.id==="aktuell") return !d.konto;
+        if(d.id.indexOf(vorne)!==0) return false;   /* anderes Konto, Korrektur */
+        var fenster=d.id.slice(vorne.length).split(":")[0];
+        return fenster===ENTWURF_FENSTER || !offen[fenster];
+      }).sort(function(a,b){ return String(b.zeit||"").localeCompare(String(a.zeit||"")); });
+      entwurfStand=liste[0]||null; return entwurfStand;
+    }, function(){ return null; });
 }
 var entwurfSofort=null;
 document.addEventListener("visibilitychange", function(){ if(document.hidden && entwurfSofort) entwurfSofort(); });
@@ -4773,10 +4801,16 @@ window.addEventListener("beforeunload", function(e){
   var offen = (entwurfSofort && entwurfSofort()) || (formDirty && S.bearbeiten) || verwaltungOffen();
   if(offen){ e.preventDefault(); e.returnValue=""; }
 });
-function entwurfWeg(){
-  entwurfStand=null;
-  var id=entwurfId();
-  return idbVorgang("readwrite",function(st){ st.delete("aktuell"); return st.delete(id); },"entwurf").catch(function(){});
+/* nur den genannten Platz löschen (ohne Angabe den alten Kontoplatz) – ein
+   anderer, noch angebotener Entwurf bleibt; liegt noch einer, wird er der
+   nächste Hinweis */
+function entwurfWeg(platz){
+  var id=platz||entwurfId();
+  var warStand=!entwurfStand || entwurfStand.id===id;
+  if(warStand) entwurfStand=null;
+  return idbVorgang("readwrite",function(st){ if(!platz) st.delete("aktuell"); return st.delete(id); },"entwurf")
+    .then(function(){ if(warStand && !entwurfStand) return entwurfHolen(); })
+    .catch(function(){});
 }
 /* Eine angefangene Korrektur hat je Konto und Protokoll einen eigenen Platz –
    sie übersteht Neuladen und das Beenden der App am Handy wie ein Entwurf */
@@ -4807,6 +4841,15 @@ function alleProtokolle(mitGeloeschten){
     return Object.assign({_quelle:"geraet", _id:e.id, _fotoDaten:e.fotos||[],
                           _auftragDaten:e.auftrag||null, _rapportDaten:e.rapport||null}, e.doc);
   });
+  /* Liegt dasselbe Protokoll zentral und noch auf dem Gerät (die Übertragung
+     kam an, die Antwort nicht): nur einmal zeigen – die höhere Fassung, bei
+     gleicher die vom Gerät (sie wird noch übertragen); zentral gelöscht bleibt gelöscht */
+  var geraetFassung={};
+  lokal.forEach(function(p){ geraetFassung[p._id]=p.version||1; });
+  zentral=zentral.filter(function(p){ return !(p._id in geraetFassung) || p.geloescht || (p.version||1)>geraetFassung[p._id]; });
+  var zentralFassung={};
+  zentral.forEach(function(p){ zentralFassung[p._id]=true; });
+  lokal=lokal.filter(function(p){ return !zentralFassung[p._id]; });
   /* Gelöschte zählen nirgends mit – weder in Listen noch als Wartungsnachweis.
      Nur die Verwaltung holt sie zum Wiederherstellen dazu. */
   return lokal.concat(zentral)
@@ -5157,22 +5200,97 @@ function stammVorherMerken(id, puffer){
     if(GEHEIME_FELDER.some(function(k){ return !leerWert(v.felder[k]); })) v.mitZugang=true;
     NICHT_IM_VERLAUF().forEach(function(k){ delete v.felder[k]; });
   }
+  /* die Werte davor (auch Zugangsdaten) gehören nicht in den Verlauf */
+  if(v){ delete v.aenderung; delete v.basisDa; }
   ziel[id]=v;
+}
+/* Was ein Vorgang an einem Eintrag selbst geändert hat: je Feld der Wert
+   davor ({v:…}, ohne v = gab es nicht). Noch nicht übertragene Änderungen
+   desselben Eintrags (auf dem Gerät) zählen mit, mit ihrem ersten Stand. */
+/* fehlt und leer (null) gelten beim Vergleichen als gleich */
+function stammWertText(x){ return JSON.stringify(x===undefined ? null : x); }
+function stammAenderung(alt, rec){
+  var a={}, af=(alt&&alt.felder)||{}, nf=rec.felder||{}, vorher=(alt&&alt.aenderung)||{};
+  Object.keys(vorher).forEach(function(k){ a[k]=vorher[k]; });
+  Object.keys(af).concat(Object.keys(nf)).forEach(function(k){
+    if(k in a) return;
+    if(stammWertText(af[k])!==stammWertText(nf[k])) a[k]=(k in af) ? {v:af[k]} : {};
+  });
+  return a;
+}
+/* Den Stand vom Gerät bzw. aus einem länger offenen Formular auf den
+   aktuellen zentralen Datensatz legen: nur die selbst geänderten Felder.
+   Hat zentral inzwischen jemand dasselbe Feld geändert, bleibt dessen Wert
+   (konflikt). Ohne bekannte Änderungen (alter Gerätestand) wird ein neuerer
+   zentraler Stand gar nicht überschrieben (null). */
+function stammAufZentral(zentral, rec){
+  var a=rec.aenderung, zNeuer=!!zentral && String(zentral.geaendert||"")>String(rec.geaendert||"");
+  if(!a) return (zentral && zNeuer) ? null : {rec:rec, konflikt:[]};
+  /* zentral nicht (mehr) da: neu angelegt, oder inzwischen gelöscht – eine
+     gelöschte Störung bzw. vor Ort angelegte Anlage kommt nicht zurück,
+     sonst gilt für die übrigen Felder wieder der Excel-Stand */
+  if(!zentral && rec.basisDa && (rec.typ==="stoerung" || rec.neu)) return null;
+  var f=Object.assign({}, (zentral && zentral.felder) || {}), nf=rec.felder||{}, konflikt=[];
+  Object.keys(a).forEach(function(k){
+    var basis=stammWertText(a[k].v), zw=stammWertText(f[k]), gw=stammWertText(nf[k]);
+    if(zentral && zw!==basis && zw!==gw){ konflikt.push(k); return; }
+    if(k in nf) f[k]=nf[k]; else delete f[k];
+  });
+  var neu=Object.assign({}, rec, {felder:f, geaendert: zNeuer ? new Date().toISOString() : rec.geaendert});
+  delete neu.aenderung; delete neu.basisDa;
+  return {rec:neu, konflikt:konflikt};
 }
 /* puffer: der Rückgängig-Puffer des Vorgangs (siehe oben); ohne ihn der gemeinsame */
 function stammSpeichern(rec, nachtragen, puffer){
   if(demo()){ stammStand[rec.id]=JSON.parse(JSON.stringify(rec)); rueckPuffer={}; return Promise.resolve("demo"); }
   /* ein nachgetragener Gerätestand ist keine neue Änderung – nichts für „Rückgängig“ */
   if(!nachtragen) stammVorherMerken(rec.id, puffer);
+  /* was dieser Vorgang ändert, gegen den Stand, auf dem er aufbaut (beim
+     Nachtragen bringt der Gerätestand das selbst mit) */
+  var alt0=stammStand[rec.id];
+  if(nachtragen!=="geraet"){
+    var alt=alt0;
+    rec.aenderung=stammAenderung(alt, rec);
+    rec.basisDa=(alt && alt.aenderung) ? !!alt.basisDa : !!alt;
+  }
   stammStand[rec.id]=JSON.parse(JSON.stringify(rec));
   var lokal=function(){
     return idbVorgang("readwrite",function(st){ return st.put(rec); },"stammdaten")
       .then(function(){ return "geraet"; }, function(){ return false; });
   };
   if(Store.modus==="supabase" && Store.sb && darfStammZentral(rec)){
-    return mitFrist(Store.sb.from("stammdaten").upsert({id:rec.id, typ:rec.typ, ziel:rec.ziel, felder:rec.felder,
-      neu:!!rec.neu, geaendert:rec.geaendert, von:rec.von, grund:rec.grund||null}))
-      .then(function(r){ return r.error ? lokal() : "gemeinsam"; }, lokal);
+    /* erst den aktuellen zentralen Stand lesen: ein älterer Stand (Gerät,
+       lange offenes Formular) darf keine neueren Änderungen überschreiben */
+    return mitFrist(Store.sb.from("stammdaten").select("felder,geaendert").eq("id",rec.id).then(function(r0){
+      if(r0.error) return r0;
+      var erg=stammAufZentral((r0.data||[])[0]||null, rec);
+      if(!erg) return {zurueck:true};
+      var z=erg.rec;
+      if(erg.konflikt.length) toast("Zentral inzwischen geändert – dort gilt der neuere Stand: "+
+        erg.konflikt.map(function(k){ return LABEL_POS[k]||LABEL_ST[k]||k; }).join(", ")+".");
+      /* weicht nichts mehr von der Liste ab: Eintrag weg statt leer (nur Admins dürfen löschen) */
+      var ende=function(r){
+        if(r.error) return r;
+        stammStand[rec.id]=JSON.parse(JSON.stringify(z));
+        if(stammUeber[rec.id]===rec || nachtragen==="geraet") stammUeber[rec.id]=z;
+        return r;
+      };
+      if(!z.neu && z.typ!=="stoerung" && !Object.keys(z.felder||{}).length && Admin.zentral)
+        return Store.sb.from("stammdaten").delete().eq("id",rec.id).then(function(r){
+          r=ende(r); if(!r.error){ delete stammStand[rec.id]; if(stammUeber[rec.id]===z) delete stammUeber[rec.id]; } return r; });
+      return Store.sb.from("stammdaten").upsert({id:z.id, typ:z.typ, ziel:z.ziel, felder:z.felder,
+        neu:!!z.neu, geaendert:z.geaendert, von:z.von, grund:z.grund||null}).then(ende);
+    }))
+      .then(function(r){
+        if(r && r.zurueck){
+          /* zentral inzwischen gelöscht bzw. (alter Gerätestand) neuer: nicht überschreiben */
+          if(alt0) stammStand[rec.id]=alt0; else delete stammStand[rec.id];
+          Store.fehler="Eine Änderung ("+(rec.typ==="stoerung"?"Störung":"Anlagendaten")+") wurde nicht übernommen – "+
+            "zentral wurde der Eintrag inzwischen gelöscht oder neuer geändert.";
+          return nachtragen==="geraet" ? "zurueck" : false;
+        }
+        return r.error ? lokal() : "gemeinsam";
+      }, lokal);
   }
   if(Store.modus==="claude" && Store.claudeDb){
     return Store.claudeDb.doc("stammdaten/"+rec.id.replace(":","_")).set(rec)
@@ -5277,11 +5395,22 @@ function stammdatenUebertragen(){
   var darf = (Store.modus==="supabase" && !!Store.benutzer) || Store.modus==="claude";
   if(!darf) return;
   idbVorgang("readonly",function(st){ return st.getAll(); },"stammdaten").then(function(liste){
-    (liste||[]).forEach(function(rec){
-      if(Store.modus==="supabase" && !darfStammZentral(rec)) return;
-      stammSpeichern(rec, true).then(function(wo){
-        if(wo==="gemeinsam") idbVorgang("readwrite",function(st){ return st.delete(rec.id); },"stammdaten");
+    /* „geraet“: nur die auf dem Gerät gemachten Änderungen auf den zentralen
+       Stand legen – nie einen neueren zentralen Stand überschreiben */
+    return Promise.all((liste||[]).map(function(rec){
+      if(Store.modus==="supabase" && !darfStammZentral(rec)) return false;
+      return stammSpeichern(rec, "geraet").then(function(wo){
+        if(wo!=="gemeinsam" && wo!=="zurueck") return false;
+        /* nur löschen, was übertragen wurde – nicht eine inzwischen neuere Änderung */
+        return idbVorgang("readwrite",function(st){
+          var g=st.get(rec.id);
+          g.onsuccess=function(){ if(g.result && g.result.geaendert===rec.geaendert) st.delete(rec.id); };
+          return g;
+        },"stammdaten").then(function(){ return true; }, function(){ return false; });
       });
+    })).then(function(erg){
+      /* zusammengeführter Stand: anzeigen, was jetzt zentral gilt */
+      if(erg.indexOf(true)>=0) ladeStammdaten(true).then(storeNachRender, function(){});
     });
   },function(){});
 }
@@ -5479,11 +5608,56 @@ function initStore(versuch){
 function kontowechselAufraeumen(){
   /* „Claude fragen“ und Änderungswünsche: Gespräch, Liste, zurückgelegte
      Frage; offene Fenster dazu (data-konto) und eine offene Vorschau schließen.
-     Angefangene Wunschtexte bleiben – je Konto gemerkt (WUNSCH_ENTWURF, WUNSCH_TEXTE). */
+     Angefangene Wunschtexte bleiben – je Konto gemerkt (WUNSCH_ENTWURF, WUNSCH_TEXTE),
+     ebenso Frage und Gespräch an Claude (frageSichern, noch unter dem alten Konto). */
+  frageSichern();
   FRAGE_VERLAUF=[]; FRAGE_ENTWURF=""; FRAGE_FENSTER=null; FRAGE_DECKNAMEN={}; WUENSCHE=[];
   document.querySelectorAll(".vorschau-rahmen [data-a=\"zu\"]").forEach(function(b){ b.click(); });
   document.querySelectorAll(".assistent[data-konto], .vorschau-rahmen").forEach(function(x){ x.remove(); });
   if(!document.querySelector(".assistent, .vorschau-rahmen")) document.body.style.overflow="";
+}
+/* Sitzungsende von außen (Abmelden in einem zweiten Tab, abgelaufene
+   Anmeldung, anderes Konto): offene Fenster und ein angefangener
+   Markt-Editor gehören zum alten Konto. Sie werden nicht verworfen, sondern
+   je Konto zurückgelegt – nur im Speicher dieser Seite, nie auf dem Gerät
+   (Zugangsdaten) – und nach erneuter Anmeldung mit demselben Konto (nach
+   der Rollenprüfung) wieder eingesetzt. Ein anderes Konto sieht nichts davon. */
+var GEPARKT={};
+function sitzungParken(){
+  var uid=Store.benutzer && Store.benutzer.id;
+  if(!uid || demo() || nurLesen()) return false;
+  var p={dialoge:[], verwaltung:null};
+  /* Claude-Vorgang (Kopier-Weg): jetzt noch sichern und nicht mehr als
+     „beendet“ deuten, wenn sein Fenster gleich weg ist – er geht nach der
+     Anmeldung mit demselben Konto über kiVorgangFortsetzen weiter (samt
+     seinem Dialog, der deshalb nicht zusätzlich zurückgelegt wird) */
+  var kiLief=!!kiVorgangSichern;
+  if(kiVorgangSichern){ try{ kiVorgangSichern(); }catch(e){} kiVorgangSichern=null; }
+  kiVorgangFortgesetzt=null;
+  if(!kiLief) document.querySelectorAll(".assistent:not([data-konto])").forEach(function(d){ p.dialoge.push(d); d.remove(); });
+  var ed=document.getElementById("adm_editor");
+  if(verwaltungOffen() && ed && S.adm){
+    p.verwaltung={el:ed, sel:S.adm.sel, tab:S.adm.tab, entwurf:S.adm.entwurf};
+    ed.remove();
+  }
+  if(!p.dialoge.length && !p.verwaltung) return false;
+  GEPARKT[uid]=p;
+  return true;
+}
+function sitzungZurueck(){
+  var uid=Store.benutzer && Store.benutzer.id, p=uid && GEPARKT[uid];
+  if(!p || demo() || nurLesen()) return;
+  delete GEPARKT[uid];
+  p.dialoge.forEach(function(d){ document.body.appendChild(d); });
+  if(p.dialoge.length) document.body.style.overflow="hidden";
+  /* den Markt-Editor nur mit Verwaltungsrecht – sonst bleibt er verworfen */
+  if(p.verwaltung && Admin.frei){
+    S.adm=S.adm||{suche:"", filter:"alle", sort:"filiale", auf:true, sel:null, entwurf:null};
+    S.adm.tab=p.verwaltung.tab||"maerkte"; S.adm.sel=p.verwaltung.sel; S.adm.entwurf=p.verwaltung.entwurf;
+    S.adm.editorBehalten=p.verwaltung.el; verwaltungBearbeitet=true;
+    if(!formDirty){ S.view="verwaltung"; render(); }
+  }
+  toast("Wieder angemeldet – die offenen Eingaben von vorhin sind wieder da.");
 }
 /* Im Hintergrund frisch holen (Tab wieder sichtbar, Token erneuert, wieder
    online): Protokolle und Stammdaten samt offener Störungen – höchstens
@@ -5537,8 +5711,13 @@ function initSupabase(){
        Konto) und das Formular schließen – sonst speichert es das neue Konto
        oder ein Kunde sieht darin die Zugangsdaten der Regelung. */
     var kontoWeg = !!Store.benutzer && (!sess || sess.user.id!==Store.benutzer.id);
+    /* vor dem Aufräumen merken, ob Fenster offen waren (auch „Claude fragen“) */
+    var warOffen = kontoWeg && !!document.querySelector(".assistent");
+    var geparkt = false;
     if(kontoWeg){
       if(entwurfSofort) entwurfSofort();
+      /* offene Fenster und Verwaltung je Konto zurücklegen (sitzungParken) */
+      geparkt=sitzungParken();
       formDirty=false; S.bearbeiten=null; S.stoerungAus=null; S.protoStandort=""; S.protoPos="";
     }
     /* anderes Konto oder abgemeldet: was die Präsentation nur im Speicher
@@ -5549,13 +5728,12 @@ function initSupabase(){
       /* bisher angemeldet: auch jedes andere offene Fenster (Anlagendaten,
          Störung, Termine …) gehört zum alten Konto und seinen Rechten – sonst
          speicherte das neue Konto oder ein Abgemeldeter „erfolgreich“ nur aufs Gerät */
-      if(kontoWeg && document.querySelector(".assistent")){
-        dialogeSchliessen();
-        toast(sess ? "Anderes Konto angemeldet – offene Fenster geschlossen, nicht gespeichert."
-                   : "Abgemeldet – offene Fenster geschlossen, nicht gespeichert.");
-      }
+      if(kontoWeg && document.querySelector(".assistent")) dialogeSchliessen();
+      if(warOffen || geparkt)
+        toast((sess ? "Anderes Konto angemeldet" : "Abgemeldet")+" – offene Eingaben sind zurückgelegt und nach erneuter Anmeldung "+
+              "mit demselben Konto wieder da.");
       /* ein angefangener Markt-Editor gehört zum alten Konto und seinen Rechten –
-         nicht festhalten, die Ansicht wird neu gezeichnet */
+         er ist zurückgelegt (sitzungParken), die Ansicht wird neu gezeichnet */
       verwaltungBearbeitet=false;
       lokaleProtokolle=lokaleProtokolle.map(function(x){ return x._original || x; }).filter(function(x){ return !x._demo; });
       posteingangOffen=null;   /* ein angefangener Posteingangs-Vorgang gehört zum alten Konto */
@@ -5567,7 +5745,7 @@ function initSupabase(){
       }, function(){});
     }
     if(sess){ Store.benutzer=sess.user; Store.modus="supabase"; nachgeladenUm=Date.now(); ladeProtokolle();   /* übertragen erst nach der Rollenprüfung */
-      adminPruefen().then(function(){ flushQueue(); return ladeStammdaten(); }).then(storeNachRender)
+      adminPruefen().then(function(){ flushQueue(); return ladeStammdaten(); }).then(storeNachRender).then(sitzungZurueck)
         .then(function(){ setTimeout(altlastenAutomatisch, 1500); setTimeout(kiVorgangFortsetzen, 300); }); }   /* Altlasten der alten Liste bereinigen (nur Admins); ein Claude-Vorgang von vor dem Neuladen geht weiter */
     else {
       Store.benutzer=null; Store.modus="anmeldung"; protokolle=[]; Admin.zentral=false; Admin.frei=false;
@@ -5963,22 +6141,57 @@ function speichereProtokoll(id,doc){
     /* Die Kennung aus der App mitgeben: unter ihr liegen die Fotos, und ein
        zweiter Übertragungsversuch legt so kein doppeltes Protokoll an. */
     zeile.client_id=id;
-    return Store.sb.from("protokolle").upsert(zeile,{onConflict:"client_id", ignoreDuplicates:true}).then(function(r){
+    /* ein auf dem Gerät schon korrigiertes Protokoll bringt seine Fassung mit
+       (sonst stünde zentral Fassung 1 ohne Korrekturdatum und Grund) */
+    var fassung=doc.version||1;
+    zeile.version=fassung;
+    if(doc.geaendert) zeile.geaendert=doc.geaendert;
+    if(doc.korrekturGrund) zeile.korrektur_grund=doc.korrekturGrund;
+    /* .select meldet, ob wirklich eingefügt wurde – liegt das Protokoll schon
+       zentral (erste Übertragung kam an, die Antwort nicht), schreibt der
+       Upsert nichts und meldet trotzdem Erfolg */
+    return Store.sb.from("protokolle").upsert(zeile,{onConflict:"client_id", ignoreDuplicates:true}).select("client_id").then(function(r){
       if(r.error){
         Store.fehler=/stoerung|mitarbeiter/.test(r.error.message||"")
           ? "In der Datenbank fehlt eine Spalte – bitte supabase-setup.sql im Supabase SQL Editor erneut ausführen"
           : r.error.message;
         return false;
       }
-      ladeProtokolle();
-      /* Archiv-PDF im Hintergrund – das Speichern wartet nicht darauf */
-      berichtAblegen(Object.assign({}, doc, {_id:id, version:doc.version||1}));
-      return true;
+      if(r.data && r.data.length){
+        ladeProtokolle();
+        /* Archiv-PDF im Hintergrund – das Speichern wartet nicht darauf */
+        berichtAblegen(Object.assign({}, doc, {_id:id, version:fassung}));
+        return true;
+      }
+      return protokollSchonZentral(id, doc);
     },function(){ return false; });
   }
   return Promise.resolve(false);
 }
 
+/* Das Protokoll vom Gerät liegt schon zentral. Mit dem zentralen Stand
+   vergleichen: dieselbe oder eine neuere Fassung der ersten Übertragung →
+   erledigt (kein Archiv-PDF vom Gerätestand über eine neuere Fassung); auf
+   dem Gerät korrigiert → als Korrektur nachschreiben (versionsgeprüft);
+   zentral inzwischen anders korrigiert → auf dem Gerät lassen und melden. */
+function protokollSchonZentral(id, doc){
+  var fassung=doc.version||1;
+  return Store.sb.from("protokolle").select("version,geaendert").eq("client_id",id).then(function(r){
+    var z=r && !r.error && r.data && r.data[0];
+    if(!z) return false;   /* nicht lesbar (etwa gelöscht oder kein Netz): beim nächsten Mal wieder */
+    var zv=z.version||1;
+    ladeProtokolle();
+    /* die Fassung vom Gerät ist genau die zentrale */
+    if(zv===fassung && (fassung===1 || String(z.geaendert||"")===String(doc.geaendert||""))) return true;
+    /* unkorrigiert vom Gerät, zentral schon weiter: das Gerät hat nichts Neues */
+    if(fassung===1) return true;
+    /* auf dem Gerät korrigiert, zentral noch die Fassung davor */
+    if(zv===fassung-1) return aktualisiereProtokoll(id, doc, "zentral");
+    Store.fehler="Ein auf diesem Gerät korrigiertes Protokoll wurde inzwischen auch zentral geändert (Fassung "+zv+
+      "). Die Korrektur bleibt auf dem Gerät – bitte das Protokoll ansehen und die Korrektur dort noch einmal eintragen.";
+    return false;
+  }, function(){ return false; });
+}
 /* eine Korrektur wegschreiben – gleiche Kennung, neue Fassung */
 function aktualisiereProtokoll(id, doc, quelle, geraetFotos, geraetAuftrag, geraetRapport){
   if(demo()){
@@ -6032,38 +6245,73 @@ function flushQueue(){
   if(uebertragungLaeuft) return;
   if(Store.modus!=="claude" && Store.modus!=="supabase") return;
   /* Vorführ-Protokolle der Präsentation gehen nie in die Ablage */
-  var liste=lokaleProtokolle.filter(function(x){ return !x._demo; }), done=0, i=0;
+  var liste=lokaleProtokolle.filter(function(x){ return !x._demo; }), done=0, i=0, nochmal=false;
   if(!liste.length || demo()){ if(!demo()) aenderungenUebertragen(); return; }
   uebertragungLaeuft=true;
+  var freigeben=null;   /* Sperre über alle Fenster: nie zwei Übertragungen gleichzeitig */
   var next=function(){
     if(i>=liste.length){
       uebertragungLaeuft=false;
+      if(freigeben) freigeben();
       aenderungenUebertragen();
       lokaleNeuLaden().then(function(){
         if(done) toast(done+" Protokoll(e) vom Gerät in die zentrale Ablage übertragen.");
         storeNachRender();
+        /* während der Übertragung auf dem Gerät korrigiert: gleich nachschieben */
+        if(nochmal) setTimeout(flushQueue, 500);
       });
       return;
     }
-    var e=liste[i++];
-    /* ein Protokoll nach dem anderen – mit Zeitgrenze, damit ein hängender
-       Upload die Warteschlange nicht für immer blockiert */
-    mitFrist(speichereFotos(e.id, e.fotos||[]).then(function(fotosOk){
-      if(!fotosOk) return false;
-      return speichereAuftragPdf(e.id, e.auftrag).then(function(pdfOk){
-        return pdfOk ? speichereRapportPdf(e.id, e.rapport) : false;
-      }).then(function(pdfOk){
-        if(!pdfOk) return false;
-        return speichereProtokoll(e.id,e.doc);
-      });
-    }), 120000).then(function(ok){
-      if(!ok){ next(); return; }
-      done++;
-      /* erst nach bestätigter Übertragung vom Gerät entfernen */
-      idbLoeschen(e.id).then(next,next);
+    var e0=liste[i++];
+    /* frisch aus dem Gerätespeicher: inzwischen korrigiert, schon von einem
+       anderen Fenster übertragen (dann ist er weg) … */
+    idbVorgang("readonly",function(st){ return st.get(e0.id); }).then(function(e){
+      if(!e){ next(); return; }
+      /* ein Protokoll nach dem anderen – mit Zeitgrenze, damit ein hängender
+         Upload die Warteschlange nicht für immer blockiert */
+      mitFrist(speichereFotos(e.id, e.fotos||[]).then(function(fotosOk){
+        if(!fotosOk) return false;
+        return speichereAuftragPdf(e.id, e.auftrag).then(function(pdfOk){
+          return pdfOk ? speichereRapportPdf(e.id, e.rapport) : false;
+        }).then(function(pdfOk){
+          if(!pdfOk) return false;
+          return speichereProtokoll(e.id,e.doc);
+        });
+      }), 120000).then(function(ok){
+        if(!ok){ next(); return; }
+        done++;
+        /* erst nach bestätigter Übertragung vom Gerät entfernen – und nur die
+           übertragene Fassung, nicht eine inzwischen gespeicherte Korrektur */
+        geraetEintragErledigt(e.id, e.doc).then(function(weg){ if(!weg) nochmal=true; next(); }, next);
+      }, function(){ next(); });
     }, function(){ next(); });
   };
+  try{
+    if(navigator.locks && navigator.locks.request){
+      navigator.locks.request("ukt-uebertragung", {ifAvailable:true}, function(sperre){
+        if(!sperre){ uebertragungLaeuft=false; return; }   /* ein anderes Fenster überträgt gerade */
+        return new Promise(function(ok){ freigeben=ok; next(); });
+      }).catch(function(){ if(uebertragungLaeuft && !freigeben) next(); });
+      return;
+    }
+  }catch(x){}
   next();
+}
+/* Übertragen: den Geräteeintrag nur löschen, wenn er noch genau die
+   übertragene Fassung ist (in einem Zug, damit keine Korrektur dazwischen
+   rutscht). Liefert true, wenn gelöscht. */
+function geraetEintragErledigt(id, doc){
+  var weg=false;
+  return idbVorgang("readwrite",function(st){
+    var g=st.get(id);
+    g.onsuccess=function(){
+      var akt=g.result;
+      if(!akt){ weg=true; return; }
+      var a=akt.doc||{};
+      if((a.version||1)===(doc.version||1) && String(a.geaendert||"")===String(doc.geaendert||"")){ st.delete(id); weg=true; }
+    };
+    return g;
+  }).then(function(){ return weg; });
 }
 /* wieder Netz: Protokolle und Verlauf, aber auch offline erfasste Störungen
    und Anlagendaten nachtragen („sobald Verbindung besteht“) – und frisch
@@ -8023,6 +8271,9 @@ function viewProtokoll(){
     rapportPdf=S.rapportNeu; formDirty=true;
     setTimeout(function(){
       var g=form.querySelector("#f_grund"); if(g && !g.value) g.value="Rapportbericht angehängt";
+      /* ohne Tippen kein input-Ereignis – die Korrektur samt Rapport trotzdem
+         als Entwurf sichern (App am Handy im Hintergrund beendet) */
+      entwurfMerken();
       var sv=form.querySelector("#save"); if(sv) sv.scrollIntoView({behavior:"smooth", block:"center"});
       toast("Rapportbericht übernommen – jetzt „Korrektur speichern“ tippen.");
     }, 300);
@@ -8398,8 +8649,9 @@ function viewProtokoll(){
     posteingangOffen=null;   /* abgebrochen: ein Posteingangs-Rapport bleibt im Posteingang */
     clearTimeout(entwurfTakt); entwurfTakt=null;   /* sonst kommt das Verworfene als Entwurf zurück */
     /* eine gefundene, noch nicht eingesetzte Korrektur bleibt liegen, solange
-       hier nichts geändert wurde – weg ist sie nur mit „Verwerfen“ */
-    if(!bearb) entwurfWeg(); else if(formDirty0 || !(korrKasten && korrKasten.isConnected)) korrekturEntwurfWeg(bearb._id);
+       hier nichts geändert wurde – weg ist sie nur mit „Verwerfen“. Ebenso ein
+       angebotenes Protokoll: geleert wird nur der Platz dieses Formulars. */
+    if(!bearb) entwurfWeg(meinPlatz); else if(formDirty0 || !(korrKasten && korrKasten.isConnected)) korrekturEntwurfWeg(bearb._id);
     if(S.bearbeiten){ S.letztesProtokoll=S.bearbeiten.x._id; S.bearbeiten=null; }
     render();
   };
@@ -8570,11 +8822,19 @@ function viewProtokoll(){
   }
   /* Nicht bei jedem Tastendruck schreiben – das Gerät hat anderes zu tun. */
   var entwurfTakt=null;
+  /* der eigene Platz dieses Formulars – nie der eines angebotenen Entwurfs */
+  var meinPlatz=entwurfPlatzNeu();
   /* eine Korrektur kommt auf ihren eigenen Platz (je Protokoll) – samt
      „Rapport ersetzen“ und einem zugeordneten Posteingangs-Rapport */
   function entwurfAblegen(){
     var d=entwurfSammeln();
-    if(!bearb) return entwurfSchreiben(d);
+    if(!bearb){
+      var w=entwurfSchreiben(d, meinPlatz);
+      /* solange „Angefangenes Protokoll gefunden“ zur Wahl steht, bleibt der
+         Hinweis bei diesem – sonst ist dieses Formular der jüngste Entwurf */
+      if(!(entwurfKasten && entwurfKasten.isConnected)) entwurfStand=d;
+      return w;
+    }
     d.korrektur=bearb._id; d.version=bearb.version||1; d.rapErsetzen=rapErsetzen;
     if(posteingangOffen && posteingangOffen.art==="rapport" && posteingangOffen.ziel===bearb._id) d.posteingang=posteingangOffen;
     return entwurfSchreiben(d, korrekturEntwurfId(bearb._id));
@@ -8640,7 +8900,15 @@ function viewProtokoll(){
       if(S.stoerungAus && e2.stoerungAus!==S.stoerungAus &&
          !window.confirm("Das angefangene Protokoll gehört nicht zu der Störung, aus der Sie gerade kommen.\n\n"+
            "Trotzdem damit weitermachen? Die Störung bleibt dann offen.")) return;
+      /* hier schon Eingetragenes wird ersetzt – nicht ohne Rückfrage */
+      if(formDirty && !window.confirm("In diesem Formular ist schon etwas eingetragen. Es wird durch das angefangene Protokoll ersetzt.\n\nTrotzdem weitermachen?")) return;
+      clearTimeout(entwurfTakt); entwurfTakt=null;
       entwurfEinsetzen(e2); kasten.remove();
+      /* ab jetzt liegt der Entwurf auf dem Platz dieses Formulars (sein Fenster
+         hält ihn, ein zweites Fenster bietet ihn nicht an): erst dort
+         schreiben, dann den alten Platz räumen */
+      var altPlatz=e2.id;
+      entwurfAblegen().then(function(ok){ if(ok && altPlatz && altPlatz!==meinPlatz) entwurfWeg(altPlatz); });
       /* der Hinweis „aus der offenen Störung übernommen“ folgt dem Entwurf */
       var si=form.querySelector("#s_info");
       if(si && stoer){
@@ -8654,7 +8922,10 @@ function viewProtokoll(){
       if(!window.confirm("Das angefangene Protokoll verwerfen?\n\nDie Eingaben sind dann weg.")) return;
       /* nur den alten Entwurf verwerfen – die Verknüpfung des gerade geöffneten
          Protokolls (etwa aus einer offenen Störung) bleibt */
-      entwurfWeg(); kasten.remove(); toast("Entwurf verworfen.");
+      kasten.remove(); entwurfStand=null; entwurfWeg(e2.id||entwurfId());
+      /* was hier schon eingetragen ist, ist jetzt der Entwurf */
+      if(formDirty){ clearTimeout(entwurfTakt); entwurfTakt=null; entwurfAblegen(); }
+      toast("Entwurf verworfen.");
     };
     entwurfKasten=kasten;
   }
@@ -8922,7 +9193,7 @@ function viewProtokoll(){
       /* ab hier liegt es sicher in der Warteschlange – der Entwurf hat seinen
          Zweck erfüllt, auch wenn die Übertragung noch hängt oder die App
          geschlossen wird (sonst würde es als Entwurf ein zweites Mal gespeichert) */
-      clearTimeout(entwurfTakt); entwurfTakt=null; entwurfWeg();
+      clearTimeout(entwurfTakt); entwurfTakt=null; entwurfWeg(meinPlatz);   /* ein noch angebotener Entwurf bleibt */
       /* gesichert: Reiterwechsel und Neuzeichnen verlieren nichts mehr – nicht
          erst nach der Übertragung freigeben (die kann bis zu 2 Minuten dauern).
          Das Formular selbst ist erledigt: keine Eingaben mehr (sie gingen
@@ -8930,7 +9201,8 @@ function viewProtokoll(){
       formDirty=false; S.protoStandort=""; S.protoPos="";
       if(S.stoerungAus===ausStoerung) S.stoerungAus=null;
       form.inert=true; form.style.pointerEvents="none"; if(gefuehrt) gefuehrt.disabled=true;
-      /* „Angefangenes Protokoll gefunden“ steht außerhalb des Formulars – weg damit */
+      /* „Angefangenes Protokoll gefunden“ steht außerhalb des Formulars – weg damit
+         (der Entwurf selbst bleibt und wird beim nächsten Formular angeboten) */
       if(entwurfKasten && entwurfKasten.parentNode) entwurfKasten.parentNode.removeChild(entwurfKasten);
       btn.textContent="Auf dem Gerät gesichert – wird übertragen …";
       anlagenUebernehmen(doc);   /* vor Ort ergänzte Anlagendaten */
@@ -8958,8 +9230,15 @@ function viewProtokoll(){
           btn.textContent="Übertragen …";
           return speichereProtokoll(id,doc).then(function(ok){
             if(!ok){ fertig(wartet); return; }
-            return idbLoeschen(id).then(function(){
-              lokaleProtokolle=lokaleProtokolle.filter(function(x){ return x.id!==id; });
+            /* erst in die zentrale Liste, dann vom Gerät – sonst fehlt es bis
+               zum Nachladen in Liste und Fälligkeit (ladeProtokolle ersetzt es
+               danach durch den Stand der Datenbank) */
+            protokolle=[Object.assign({}, doc, {_id:id, version:doc.version||1})]
+              .concat((protokolle||[]).filter(function(x){ return x._id!==id; }));
+            /* inzwischen auf dem Gerät korrigiert: die Korrektur bleibt in der Warteschlange */
+            return geraetEintragErledigt(id, doc).then(function(weg){
+              if(weg) lokaleProtokolle=lokaleProtokolle.filter(function(x){ return x.id!==id; });
+              else { lokaleNeuLaden(); setTimeout(flushQueue, 500); }
               fertig("Protokoll gespeichert und übertragen.");
             },function(){ fertig("Protokoll gespeichert und übertragen."); });
           });
@@ -9518,9 +9797,19 @@ function berichtAblegen(p){
      korrigiert worden, danach die neue Fassung ablegen – sonst bliebe im
      Archiv die alte */
   var laeuft=pdfInArbeit[p._id];
-  if(laeuft) return laeuft.version===(p.version||1) ? laeuft : laeuft.then(function(){ return berichtAblegen(p); });
+  /* eine ältere Fassung nie hinter eine neuere hängen */
+  if(laeuft) return laeuft.version>=(p.version||1) ? laeuft : laeuft.then(function(){ return berichtAblegen(p); });
   /* Archiv noch nicht eingerichtet (SQL-Abschnitt fehlt): gar nicht erst ein PDF bauen */
-  return archivEingerichtet().then(function(an){ return an ? berichtErzeugenUndAblegen(p) : false; });
+  return archivEingerichtet().then(function(an){
+    if(!an) return false;
+    /* liegt im Archiv schon eine neuere Fassung (anderes Fenster, anderes
+       Gerät), bleibt sie – kein PDF vom älteren Stand darüber */
+    return Store.sb.from("berichte").select("version").eq("client_id",p._id).then(function(r){
+      var alt=r && !r.error && r.data && r.data[0];
+      if(alt && (alt.version||1)>(p.version||1)) return false;
+      return pdfInArbeit[p._id] ? berichtAblegen(p) : berichtErzeugenUndAblegen(p);
+    }, function(){ return berichtErzeugenUndAblegen(p); });
+  });
 }
 var archivStatus=null;
 function archivEingerichtet(){
@@ -11518,7 +11807,17 @@ function verwaltungEditor(s){
     var knopf=c.querySelector("#a_speichern"); knopf.disabled=true; knopf.textContent="Wird gespeichert …";
     var rueck={};
     Promise.all(recs.map(function(r){
-      if(r.leer){ delete stammUeber[r.id]; return stammLoeschen(r.id, rueck).then(function(){ return "zurueck"; }); }
+      /* weicht nicht mehr von der Liste ab: nicht einfach löschen – was zentral
+         inzwischen jemand anderer geändert hat, bleibt (stammSpeichern legt nur
+         die eigenen Änderungen auf den zentralen Stand; leer → gelöscht) */
+      if(r.leer){
+        var leer={id:r.id, typ:r.id.split(":")[0], ziel:r.id.split(":")[1], felder:{}, neu:false, geaendert:jetzt, von:von, grund:grund};
+        stammUeber[r.id]=leer;
+        return stammSpeichern(leer, false, rueck).then(function(wo){
+          if(stammUeber[r.id]===leer && !Object.keys(leer.felder).length) delete stammUeber[r.id];
+          return wo===false ? false : "zurueck";
+        });
+      }
       var rec={id:r.id, typ:r.id.split(":")[0], ziel:r.id.split(":")[1], felder:r.felder, neu:!!r.neu,
                geaendert:jetzt, von:von, grund:grund};
       stammUeber[r.id]=rec;
@@ -12454,14 +12753,49 @@ function csv(name,head,rows){
    Allgemeine Fragen (Kältetechnik, Vorschriften, Fehlersuche, die App) –
    auf Wunsch mit dem gerade offenen Markt als Hintergrund. Zwei Wege wie beim
    Prüfbuch: über die eigene Claude-App (im Abo) oder direkt in der App
-   (Funktion ki-frage, ein paar Cent je Frage). Das Gespräch bleibt bis zum
-   Neuladen erhalten; gespeichert wird es nicht. Jeder Eintrag merkt sich,
+   (Funktion ki-frage, ein paar Cent je Frage). Angefangene Frage und
+   Gespräch liegen je Konto höchstens 2 Stunden auf dem Gerät (frageSichern) –
+   sie überstehen Neuladen, den Wechsel in die Claude-App und Abmelden.
+   Jeder Eintrag merkt sich,
    ob er über GitHub lief (oeffentlich) – nur solche gehen dort wieder mit. */
 var FRAGE_VERLAUF=[];
 /* das gerade offene Fenster „Claude fragen“: eine späte Antwort oder eine
    gescheiterte Frage landet dort, auch wenn es inzwischen neu geöffnet wurde;
    FRAGE_ENTWURF hält eine gescheiterte Frage, bis das Fenster wieder aufgeht */
 var FRAGE_FENSTER=null, FRAGE_ENTWURF="", FRAGE_DECKNAMEN={};
+function frageSchluessel(){ var m=Store.benutzer&&Store.benutzer.email; return m ? "ukt-frage:"+m : null; }
+/* Frage und Gespräch des angemeldeten Kontos auf dem Gerät sichern (nicht in der Präsentation) */
+function frageSichern(leeren){
+  var k=frageSchluessel();
+  if(!k || demo() || nurLesen()) return;
+  try{
+    /* leer: das Gemerkte nur auf ausdrücklichen Wunsch („Neues Gespräch“) löschen –
+       nach dem Neuladen ist der Speicher leer, bis das Fenster aufgeht */
+    if(!String(FRAGE_ENTWURF||"").trim() && !FRAGE_VERLAUF.length){ if(leeren) localStorage.removeItem(k); }
+    else localStorage.setItem(k, JSON.stringify({zeit:Date.now(), entwurf:FRAGE_ENTWURF, verlauf:FRAGE_VERLAUF, decknamen:FRAGE_DECKNAMEN}));
+  }catch(e){}
+}
+/* beim Öffnen: nach Neuladen bzw. erneuter Anmeldung das Gemerkte zurückholen */
+function frageGemerktHolen(){
+  var k=frageSchluessel();
+  if(!k || demo() || nurLesen() || FRAGE_VERLAUF.length || FRAGE_ENTWURF) return;
+  var d=null;
+  try{ d=JSON.parse(localStorage.getItem(k)||"null"); }catch(e){}
+  if(!d) return;
+  if(!(Date.now()-(+d.zeit||0) < KI_VORGANG_MS)){ try{ localStorage.removeItem(k); }catch(e){} return; }
+  var verlauf=Array.isArray(d.verlauf) ? d.verlauf : [], entwurf=d.entwurf||"", neu=[];
+  verlauf.forEach(function(n, i){
+    neu.push(n);
+    var beantwortet=verlauf[i+1] && verlauf[i+1].role==="assistant";
+    if(n.role!=="user" || beantwortet) return;
+    /* die Antwort war noch unterwegs: über GitHub steht sie dort, sonst die Frage zurück ins Feld */
+    if(n.nr) neu.push({role:"assistant", text:"Die Antwort war beim Neuladen bzw. Abmelden noch unterwegs – sie steht auf GitHub: Frage #"+n.nr+".", weg:"über GitHub"});
+    else { neu.pop(); if(entwurf.indexOf(n.text)<0) entwurf=entwurf.trim() ? n.text+"\n\n"+entwurf : n.text; }
+  });
+  FRAGE_VERLAUF=neu; FRAGE_ENTWURF=entwurf; FRAGE_DECKNAMEN=d.decknamen||{};
+}
+document.addEventListener("visibilitychange", function(){ if(document.hidden) frageSichern(); });
+window.addEventListener("pagehide", function(){ frageSichern(); });
 /* Deckname eines Markts im laufenden GitHub-Gespräch: der erste „Markt A“,
    ein anderer Markt im selben Gespräch „Markt B“ usw. – so vermischt Claude
    die Märkte nicht. Neues Gespräch (keine GitHub-Runde mehr) → neu vergeben */
@@ -12610,8 +12944,9 @@ function claudeFragen(){
   };
   FRAGE_FENSTER={feld:feld, zeigen:zeigen};
   /* angefangene oder gescheiterte Frage von vorhin – bleibt gemerkt, bis sie abgeschickt ist, auch wenn das Fenster wieder zugeht */
+  frageGemerktHolen();   /* nach Neuladen bzw. erneuter Anmeldung */
   if(FRAGE_ENTWURF) feld.value=FRAGE_ENTWURF;
-  feld.addEventListener("input", function(){ FRAGE_ENTWURF=feld.value; });
+  feld.addEventListener("input", function(){ FRAGE_ENTWURF=feld.value; frageSichern(true); });
   zeigen();
   /* oeffentlich: für GitHub – Markt nur mit Decknamen („Markt A“), Testdaten statt der Übersicht */
   var kontext=function(oeffentlich){
@@ -12626,7 +12961,7 @@ function claudeFragen(){
   var gh=el('<button class="btn ghost" type="button">Über GitHub (Abo)</button>');
   var direkt=el('<button class="btn ghost" type="button">Direkt · ca. 0,2–1,5 Cent</button>');
   var knoepfe=function(an){ [app,gh,direkt,neu].forEach(function(b){ b.disabled=!an; }); };
-  neu.onclick=function(){ FRAGE_VERLAUF=[]; zeigen(); feld.value=""; FRAGE_ENTWURF=""; feld.focus(); };
+  neu.onclick=function(){ FRAGE_VERLAUF=[]; zeigen(); feld.value=""; FRAGE_ENTWURF=""; frageSichern(true); feld.focus(); };
   var frageHolen=function(){ var f=feld.value.trim(); if(!f) toast("Bitte zuerst die Frage eingeben."); return f; };
   /* Claude-App: alles in die Zwischenablage, claude.ai mit der Frage öffnen */
   app.onclick=function(){
@@ -12671,7 +13006,7 @@ function claudeFragen(){
     zeigen(); return warte.querySelector("[data-t]");
   };
   /* Anfrage fertig: dieses Fenster und ein inzwischen neu geöffnetes nachziehen */
-  var fertig=function(){ warte=null; knoepfe(true); zeigen(); var o=frageFensterOffen(); if(o && o.zeigen!==zeigen) o.zeigen(); };
+  var fertig=function(){ warte=null; knoepfe(true); zeigen(); var o=frageFensterOffen(); if(o && o.zeigen!==zeigen) o.zeigen(); frageSichern(); };
   /* die Antwort gehört hinter ihre Frage – ist die Frage nicht mehr im
      Gespräch („Neues Gespräch“, Kontowechsel), fällt sie weg */
   var antwortDazu=function(e, a){ var i=FRAGE_VERLAUF.indexOf(e); if(i>=0) FRAGE_VERLAUF.splice(i+1, 0, a); };
@@ -12694,7 +13029,7 @@ function claudeFragen(){
   direkt.onclick=function(){
     var f=frageHolen(); if(!f) return;
     var e={role:"user", text:f};
-    FRAGE_VERLAUF.push(e); feld.value=""; FRAGE_ENTWURF="";
+    FRAGE_VERLAUF.push(e); feld.value=""; FRAGE_ENTWURF=""; frageSichern();
     warteZeile("Claude denkt nach …"); knoepfe(false);
     mitFrist(Store.sb.functions.invoke("ki-frage", {body:{nachrichten:nurText(false), kontext:kontext(false)}}), 120000)
       .then(fehlerText).then(function(d){
@@ -12716,7 +13051,7 @@ function claudeFragen(){
     if(mitTest) hin.push("erfundene Testdaten statt der echten Übersicht");
     if(hin.length) toast("Über GitHub (öffentlich): "+hin.join(", ")+".");
     var e={role:"user", text:f, oeffentlich:true};
-    FRAGE_VERLAUF.push(e); feld.value=""; FRAGE_ENTWURF="";
+    FRAGE_VERLAUF.push(e); feld.value=""; FRAGE_ENTWURF=""; frageSichern();
     var t=warteZeile("wird an GitHub geschickt …"), t0=Date.now(); knoepfe(false);
     mitFrist(Store.sb.functions.invoke("ki-frage", {body:{weg:"github", nachrichten:nurText(true), kontext:kontext(true)}}), 60000)
       .then(fehlerText).then(function(d){
@@ -12727,7 +13062,7 @@ function claudeFragen(){
             antwortDazu(e, {role:"assistant", text:"Fenster geschlossen, bevor die Antwort da war – sie steht auf GitHub: Frage #"+nr+".", weg:"über GitHub"}); fertig(); return; }
           var s=Math.round((Date.now()-t0)/1000);
           if(s>480){ antwortDazu(e, {role:"assistant", text:"Noch keine Antwort nach 8 Minuten – auf GitHub nachsehen: Frage #"+nr+".", weg:"über GitHub"}); fertig(); return; }
-          t.textContent="Claude antwortet über GitHub … "+s+" s (meist 1–2 Minuten)";
+          t.textContent="Claude antwortet über GitHub (Frage #"+nr+") … "+s+" s (meist 1–2 Minuten)";
           mitFrist(Store.sb.functions.invoke("ki-frage", {body:{weg:"github_stand", nr:nr}}), 30000).then(fehlerText).then(function(x){
             /* Claude meldet einen Fehler: keine Antwort daraus machen, die Frage kommt zurück ins Feld */
             if(x && x.fertig && x.fehler){ frageZurueck(e, x.fehler+" (GitHub-Frage #"+nr+") – bitte nochmals fragen."); fertig(); return; }
@@ -12736,7 +13071,9 @@ function claudeFragen(){
             else setTimeout(frag, 10000);
           }, function(){ setTimeout(frag, 15000); });
         };
-        t.textContent="Claude antwortet über GitHub … (meist 1–2 Minuten)";
+        /* die Nummer gleich merken und zeigen – nach einem Neuladen ist die Frage so wiederzufinden */
+        e.nr=nr; frageSichern();
+        t.textContent="Claude antwortet über GitHub (Frage #"+nr+") … (meist 1–2 Minuten)";
         setTimeout(frag, 20000);
       }).catch(function(x){ frageZurueck(e, x.message||String(x)); fertig(); });
   };
