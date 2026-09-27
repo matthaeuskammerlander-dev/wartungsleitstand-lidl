@@ -11130,6 +11130,33 @@ function wunschAntwortText(t){
   return t.split("\n").filter(function(z){ return !/^\s*- \[[ xX]\]/.test(z) && !/^\*\*Aufgaben\*\*\s*$/.test(z); })
     .join("\n").replace(/^#+\s*/gm,"").replace(/\*\*/g,"").replace(/`/g,"").replace(/\n{3,}/g,"\n\n").trim();
 }
+/* Was Claude am Code geändert hat – direkt aus GitHub geholt (öffentlich,
+   ohne Anmeldung) und hier farbig gezeigt: grün neu, rot entfernt. */
+function wunschAenderungen(w){
+  var v=ansichtOeffnen("Änderungen W-"+w.id);
+  v.schritt.textContent="Grün = neu hinzugefügt · Rot = entfernt · Grau = unverändert zur Orientierung";
+  var host=el('<div class="stack"><div class="muted">wird geladen …</div></div>');
+  v.inhalt.appendChild(host);
+  if(w.pr_url){ var gl=el('<a class="btn ghost sm" style="text-decoration:none" target="_blank" rel="noopener">Auf GitHub öffnen</a>'); gl.href=w.pr_url+"/files"; v.fuss.appendChild(gl); }
+  fetch("https://api.github.com/repos/"+WUNSCH_REPO+"/pulls/"+encodeURIComponent(w.pr_nr)+"/files?per_page=50", {headers:{Accept:"application/vnd.github+json"}})
+    .then(function(r){ if(!r.ok) throw new Error(r.status===403?"GitHub-Abfragegrenze erreicht – in einer Stunde nochmals versuchen.":"GitHub antwortet nicht ("+r.status+")."); return r.json(); })
+    .then(function(dateien){
+      host.innerHTML="";
+      if(!dateien.length){ host.appendChild(el('<div class="muted">Keine geänderten Dateien.</div>')); return; }
+      dateien.forEach(function(f){
+        var zeilen=String(f.patch||"").split("\n").map(function(z){
+          var c=z.charAt(0), stil = c==="+" ? "background:rgba(46,160,67,.18)" : c==="-" ? "background:rgba(248,81,73,.18)" :
+            c==="@" ? "color:var(--ink-3);background:var(--ground);margin-top:6px" : "color:var(--ink-3)";
+          var text = c==="@" ? "··· weiter unten im Code ···" : z;
+          return '<div style="white-space:pre;'+stil+'">'+esc(text||" ")+"</div>";
+        }).join("");
+        host.appendChild(el('<div class="posbox stack" style="gap:6px"><div><strong>'+esc(f.filename)+'</strong> <span class="muted">· '+
+          '<span style="color:var(--good)">+'+(+f.additions||0)+'</span> <span style="color:var(--crit)">−'+(+f.deletions||0)+"</span></span></div>"+
+          (f.patch ? '<div style="overflow-x:auto;font:12px/1.45 var(--f-mono);border:1px solid var(--line);border-radius:8px;padding:6px 8px">'+zeilen+"</div>"
+                   : '<div class="muted">Zu groß für die Anzeige – bitte auf GitHub ansehen.</div>')+"</div>"));
+      });
+    }).catch(function(e){ host.innerHTML=""; host.appendChild(el('<div class="note warnbox">'+esc(e.message||String(e))+"</div>")); });
+}
 function wunschKarte(w, neuLaden){
   var gh="https://github.com/"+WUNSCH_REPO;
   var probe=w.branch ? "https://raw.githack.com/"+WUNSCH_REPO+"/"+w.branch.split("/").map(encodeURIComponent).join("/")+"/index.html" : "";
@@ -11148,7 +11175,7 @@ function wunschKarte(w, neuLaden){
       '<div style="white-space:pre-wrap;font-size:13px;margin-top:6px">'+esc(wunschAntwortText(w.antwort))+"</div></details>":"")+
     '<div class="rowflex" style="gap:10px;font-size:13px;flex-wrap:wrap">'+
       (w.issue_nr?'<a href="'+gh+"/issues/"+w.issue_nr+'" target="_blank" rel="noopener">Auftrag auf GitHub</a>':"")+
-      (w.pr_url?'<a href="'+esc(w.pr_url)+'/files" target="_blank" rel="noopener">Änderungen ansehen</a>':"")+
+      (w.pr_nr?'<a href="#" data-a="diff">Änderungen ansehen</a>':"")+
       (probe && w.status==="vorschau"?'<a href="'+esc(probe)+'" target="_blank" rel="noopener">Vorschau ausprobieren</a>':"")+"</div>"+
     (probe && w.status==="vorschau"?'<div class="muted" style="font-size:12px">Die Vorschau arbeitet mit den echten Daten – dort nur ansehen, nichts speichern.</div>':"")+
     '<div class="rowflex" data-a="knoepfe" style="gap:6px;flex-wrap:wrap"></div>'+
@@ -11156,6 +11183,8 @@ function wunschKarte(w, neuLaden){
       w.verlauf.map(function(v){ return esc(dfmt(isoLokal(new Date(v.zeit)))+" "+new Date(v.zeit).toTimeString().slice(0,5)+" · "+(v.wer||"")+" · "+v.schritt); }).join("<br>")+"</div></details>":"")+
   "</div>");
   var kn=k.querySelector('[data-a="knoepfe"]');
+  /* Änderungen direkt in der App zeigen – GitHub verlangt am Handy sonst eine Anmeldung */
+  var dl=k.querySelector('[data-a="diff"]'); if(dl) dl.onclick=function(e){ e.preventDefault(); wunschAenderungen(w); };
   var knopf=function(text, art, fn){ var b=el('<button class="btn '+(art||"ghost")+' sm" type="button">'+esc(text)+"</button>");
     b.onclick=function(){ fn(b); }; kn.appendChild(b); };
   var ausfuehren=function(b, body, erfolg){
