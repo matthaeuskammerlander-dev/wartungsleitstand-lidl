@@ -658,7 +658,10 @@ da ist.
 Vergeben werden Rollen im SQL Editor (`tools/rollen.sql`); wer keinen Eintrag
 hat, ist Techniker. Die Datenbank prüft selbst: Kunde und Präsentation können
 nicht schreiben, und Stammdaten lesen sie nur über die Sicht `stammdaten_lesen`
-ohne Zugangsdaten.
+ohne Zugangsdaten. Lässt sich die Rolle beim Start nicht prüfen (kein Netz),
+gilt die zuletzt auf dem Gerät bestätigte Rolle des Kontos, sonst „nur
+ansehen“ – nie mehr Rechte; die App prüft nach 15 Sekunden erneut. Techniker
+finden das Handbuch unten über „📖 Handbuch“.
 
 **Abgemeldet** zeigt die App nur die Wartungsliste und sagt das oben deutlich:
 offene Störungen, App-Protokolle und ergänzte Anlagendaten fehlen dann, und
@@ -1129,7 +1132,8 @@ Oberfläche vorbei direkt gegen die Datenbank:
 Die Sperren stehen nicht nur im Browser, sondern als Zugriffsregeln und
 Trigger in der Datenbank — ein manipulierter Browser kommt daran nicht vorbei.
 
-**Bekannte Grenze:** Die App lädt die neuesten 1000 Protokolle. Das reicht bei
-163 Anlagen für gut drei Jahre. Danach muss die Unterschrift aus der
-Listenabfrage heraus und beim Öffnen einzeln nachgeladen werden — sonst fällt
-der älteste Wartungsnachweis heraus und ein Termin springt auf überfällig.
+**Große Datenmengen:** Supabase liefert je Abfrage höchstens 1000 Zeilen. Die
+App liest Protokolle, Stammdaten, den Archivabgleich und die KI-Kosten deshalb
+seitenweise (`alleSeiten`) – es fällt kein alter Wartungsnachweis heraus. Die
+Unterschrift steht nicht in der Listenabfrage; sie wird beim Öffnen, Drucken
+oder Ablegen eines Protokolls einzeln nachgeladen.
