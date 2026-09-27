@@ -4620,7 +4620,9 @@ function angemeldetOderLokal(){ return Store.modus!=="anmeldung"; }
    aber nichts verlässt dieses Browserfenster – keine Datenbank, kein
    Gerätespeicher, keine KI. Nach dem Neuladen ist alles wieder wie vorher.
    Die Datenbank sperrt das Schreiben für diese Rolle zusätzlich. */
-function demo(){ return Rolle.name==="praesentation"; }
+/* Präsentation – und die Vorschau eines Änderungswunsches (UKT_VORSCHAU): alles
+   bedienbar, gespeichert wird nichts */
+function demo(){ return Rolle.name==="praesentation" || !!window.UKT_VORSCHAU; }
 /* solange die Rollen-Tabelle fehlt, haben Admins die Inhaber-Rechte */
 function istInhaber(){ return Rolle.name==="inhaber" || (!Rolle.da && Admin.frei); }
 function sha256hex(text){
@@ -4738,7 +4740,12 @@ function initStore(versuch){
 
 function initSupabase(){
   if(!window.supabase || !window.supabase.createClient){ Store.modus="lokal"; Store.fehler="Supabase-Bibliothek nicht geladen."; storeNachRender(); return; }
-  Store.sb=window.supabase.createClient(CFG.supabaseUrl,CFG.supabaseAnonKey);
+  /* Vorschau im App-Fenster: die Anmeldung der App nur lesen – kein eigenes
+     Erneuern, Speichern oder Abmelden, sonst wäre die App danach abgemeldet */
+  Store.sb = window.UKT_VORSCHAU
+    ? window.supabase.createClient(CFG.supabaseUrl,CFG.supabaseAnonKey,{auth:{autoRefreshToken:false, persistSession:true, detectSessionInUrl:false,
+        storage:{getItem:function(k){ try{ return localStorage.getItem(k); }catch(e){ return null; } }, setItem:function(){}, removeItem:function(){}}}})
+    : window.supabase.createClient(CFG.supabaseUrl,CFG.supabaseAnonKey);
   Store.sb.auth.getSession().then(function(r){
     var sess=r&&r.data?r.data.session:null;
     if(sess){ Store.benutzer=sess.user; Store.modus="supabase"; ladeProtokolle();   /* übertragen erst nach der Rollenprüfung */
@@ -9009,8 +9016,9 @@ function demoBanner(){
   var b=document.getElementById("demobanner");
   if(!demo()){ if(b) b.remove(); return; }
   if(b) return;
-  b=el('<div id="demobanner" role="status">Präsentation – alles lässt sich ausprobieren, '+
-    "<strong>gespeichert wird nichts</strong>. Nach dem Neuladen ist alles wie vorher.</div>");
+  b=el('<div id="demobanner" role="status">'+(window.UKT_VORSCHAU
+    ? "<strong>Vorschau "+esc(String(window.UKT_VORSCHAU))+"</strong> – so sähe die App mit der Änderung aus. Alles lässt sich ausprobieren, <strong>gespeichert wird nichts</strong>."
+    : "Präsentation – alles lässt sich ausprobieren, <strong>gespeichert wird nichts</strong>. Nach dem Neuladen ist alles wie vorher.")+"</div>");
   document.body.insertBefore(b, document.body.firstChild);
 }
 function stammRueckgaengig(e){
@@ -11157,6 +11165,36 @@ function wunschAenderungen(w){
       });
     }).catch(function(e){ host.innerHTML=""; host.appendChild(el('<div class="note warnbox">'+esc(e.message||String(e))+"</div>")); });
 }
+/* Vorschau eines Änderungswunsches IN der App: die geänderte Seite vom Stand
+   des Zweigs holen und als Vollbild einbetten – gleiche Adresse, also gleiche
+   Anmeldung und gleiches Datenpasswort, kein Link, kein erneutes Eingeben.
+   Mit UKT_VORSCHAU läuft sie wie die Präsentation: nichts wird gespeichert. */
+function wunschVorschau(w){
+  var zweig=String(w.branch||""), roh=function(ref){ return "https://raw.githubusercontent.com/"+WUNSCH_REPO+"/"+ref+"/index.html"; };
+  toast("Vorschau wird geladen …");
+  /* über den genauen Stand (Commit) – der Zweig-Name wäre bei GitHub einige Minuten zwischengespeichert */
+  var stand = w.pr_nr
+    ? fetch("https://api.github.com/repos/"+WUNSCH_REPO+"/pulls/"+encodeURIComponent(w.pr_nr)).then(function(r){ return r.ok ? r.json() : null; })
+        .then(function(p){ return (p && p.head && p.head.sha) || zweig.split("/").map(encodeURIComponent).join("/"); }, function(){ return zweig.split("/").map(encodeURIComponent).join("/"); })
+    : Promise.resolve(zweig.split("/").map(encodeURIComponent).join("/"));
+  stand.then(function(ref){ return fetch(roh(ref), {cache:"no-store"}); })
+    .then(function(r){ if(!r.ok) throw new Error("Vorschau nicht gefunden ("+r.status+")."); return r.text(); })
+    .then(function(html){
+      /* ältere Vorschauen kennen den Schutz noch nicht – dann ehrlich warnen */
+      if(html.indexOf("UKT_VORSCHAU")<0 && !window.confirm("Diese Vorschau stammt aus einer älteren Fassung der App und hat den Speicherschutz noch nicht – "+
+        "dort Eingegebenes würde echt gespeichert.\n\nNur ansehen, nichts speichern. Trotzdem öffnen?")) return;
+      html=html.replace(/<head(\s[^>]*)?>/i,'<head$1><script>window.UKT_VORSCHAU='+JSON.stringify("W-"+w.id)+';<\/script>');
+      var ov=el('<div class="vorschau-rahmen" style="position:fixed;inset:0;z-index:5000;background:var(--ground);display:flex;flex-direction:column">'+
+        '<div style="display:flex;align-items:center;gap:10px;justify-content:space-between;padding:8px 12px calc(8px) 12px;padding-top:calc(8px + env(safe-area-inset-top,0px));'+
+          'background:#7a3fb0;color:#fff;font-size:14px"><span><strong>Vorschau W-'+esc(w.id)+'</strong> – gespeichert wird nichts</span>'+
+          '<button class="btn sm" type="button" style="background:#fff;color:#7a3fb0;border-color:#fff">Vorschau schließen</button></div>'+
+        '<iframe title="Vorschau" style="flex:1;border:0;width:100%;background:var(--ground)"></iframe></div>');
+      var alt=document.body.style.overflow; document.body.style.overflow="hidden";
+      ov.querySelector("button").onclick=function(){ ov.remove(); document.body.style.overflow=alt; };
+      document.body.appendChild(ov);
+      ov.querySelector("iframe").srcdoc=html;
+    }).catch(function(e){ window.alert("Vorschau ließ sich nicht laden: "+(e&&e.message||e)); });
+}
 function wunschKarte(w, neuLaden){
   var gh="https://github.com/"+WUNSCH_REPO;
   var probe=w.branch ? "https://raw.githack.com/"+WUNSCH_REPO+"/"+w.branch.split("/").map(encodeURIComponent).join("/")+"/index.html" : "";
@@ -11176,8 +11214,8 @@ function wunschKarte(w, neuLaden){
     '<div class="rowflex" style="gap:10px;font-size:13px;flex-wrap:wrap">'+
       (w.issue_nr?'<a href="'+gh+"/issues/"+w.issue_nr+'" target="_blank" rel="noopener">Auftrag auf GitHub</a>':"")+
       (w.pr_nr?'<a href="#" data-a="diff">Änderungen ansehen</a>':"")+
-      (probe && w.status==="vorschau"?'<a href="'+esc(probe)+'" target="_blank" rel="noopener">Vorschau ausprobieren</a>':"")+"</div>"+
-    (probe && w.status==="vorschau"?'<div class="muted" style="font-size:12px">Die Vorschau arbeitet mit den echten Daten – dort nur ansehen, nichts speichern.</div>':"")+
+      (probe && w.status==="vorschau"?'<a href="#" data-a="vorschau">Vorschau ausprobieren</a>':"")+"</div>"+
+    (probe && w.status==="vorschau"?'<div class="muted" style="font-size:12px">Die Vorschau öffnet sich hier in der App mit deiner Anmeldung – alles lässt sich ausprobieren, gespeichert wird nichts.</div>':"")+
     '<div class="rowflex" data-a="knoepfe" style="gap:6px;flex-wrap:wrap"></div>'+
     ((w.verlauf||[]).length?'<details><summary class="muted" style="cursor:pointer;font-size:12.5px">Verlauf</summary><div style="font-size:12.5px;margin-top:4px">'+
       w.verlauf.map(function(v){ return esc(dfmt(isoLokal(new Date(v.zeit)))+" "+new Date(v.zeit).toTimeString().slice(0,5)+" · "+(v.wer||"")+" · "+v.schritt); }).join("<br>")+"</div></details>":"")+
@@ -11185,6 +11223,7 @@ function wunschKarte(w, neuLaden){
   var kn=k.querySelector('[data-a="knoepfe"]');
   /* Änderungen direkt in der App zeigen – GitHub verlangt am Handy sonst eine Anmeldung */
   var dl=k.querySelector('[data-a="diff"]'); if(dl) dl.onclick=function(e){ e.preventDefault(); wunschAenderungen(w); };
+  var vl=k.querySelector('[data-a="vorschau"]'); if(vl) vl.onclick=function(e){ e.preventDefault(); wunschVorschau(w); };
   var knopf=function(text, art, fn){ var b=el('<button class="btn '+(art||"ghost")+' sm" type="button">'+esc(text)+"</button>");
     b.onclick=function(){ fn(b); }; kn.appendChild(b); };
   var ausfuehren=function(b, body, erfolg){
