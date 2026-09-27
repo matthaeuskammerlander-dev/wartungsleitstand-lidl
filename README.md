@@ -146,8 +146,11 @@ Soll-Monat ein als die Regel ergibt – etwa weil ein Markt an einem Tag
 komplett gewartet wird –, steht die Abweichung mit Begründung in der
 Verwaltung und in der Anlagenansicht („Soll-Monat März statt September –
 bewusst so: …"). Ohne Begründung meldet die App sie unter **Fehler**, mit
-Begründung unter **Lücken** als reine Notiz. Der eingetragene Monat gilt in
-beiden Fällen.
+Begründung unter **Lücken** als reine Notiz. Liegt der Soll-Monat höchstens
+3 Monate neben der Regel, ist das nach der Regel des Büros in Ordnung (so
+behalten ihn auch Standardregel und Altlast-Bereinigung) – dann steht er
+auch ohne Begründung nur als Notiz da. Der eingetragene Monat gilt in allen
+Fällen.
 
 Eine Wartung zählt für den Termin, in dessen Halbjahresfenster sie fällt.
 Wer früher oder später kommt, verschiebt den Folgetermin nicht. Ist der
@@ -163,7 +166,7 @@ zusätzliche Regel auf Marktebene gibt es nicht.
   für einen von beiden zählen. Gehören sie zur selben Anlage, ist das ein
   Fehler; sind es zwei Anlagen, die am selben Tag drankommen, nur ein Hinweis;
 - Termine einer Anlage mit verschiedenen Inbetriebnahmedaten;
-- ein Soll-Monat, der ohne Begründung von der Regel abweicht;
+- ein Soll-Monat, der ohne Begründung mehr als 3 Monate von der Regel abweicht;
 - zweimal dasselbe Kürzel im selben Monat;
 - ein Kürzel, das die App nicht kennt.
 
@@ -549,7 +552,11 @@ in die **Verwaltung** und bleiben Admins vorbehalten.
 **Anlage fehlt in der Liste:** Über „+ Anlage fehlt in der Liste“ legt der
 Techniker sie vor Ort an. Sie ist als „vor Ort neu erfasst“ markiert, und in
 der Verwaltung erscheint der Hinweis, Kürzel, Soll-Monat und
-Inbetriebnahme festzulegen.
+Inbetriebnahme festzulegen. Was dazu schon vor Ort bekannt ist, fragt der
+Dialog gleich mit ab (Schritt „Termine“); aus dem Prüfbuch gelesene
+Wartungen werden Wartungen laut Prüfbuch. Die neue Anlage bleibt eine eigene
+Anlage – ist sie doch dieselbe wie eine der Liste, führt man sie unter
+Nachbessern → „Mögliche Doppelanlagen“ zusammen.
 
 **Rechte:** Anlagendaten dürfen alle angemeldeten Techniker ergänzen, Märkte
 nur Admins; offene Störungen dürfen alle Techniker speichern. Das regelt
@@ -683,7 +690,7 @@ Admins springen mit einem Tipp in die Verwaltung.
 
 Geprüft wird unter anderem:
 
-- **Termine:** Soll-Monat ohne Begründung, unklares Kürzel, zwei Termine
+- **Termine:** Soll-Monat ohne Begründung (mehr als 3 Monate neben der Regel), unklares Kürzel, zwei Termine
   derselben Anlage am selben Tag, verschiedene Inbetriebnahmedaten einer
   Anlage, ausgelassene und nie gewartete Termine.
 - **Doppelt:** dieselbe Seriennummer bei mehreren Anlagen; zwei Anlagen im
