@@ -30,6 +30,18 @@ skripte.forEach((code, i) => {
   catch (e) { melde(`Skript ${i + 1} hat einen Syntaxfehler: ${e.message}`); }
 });
 
+// 2b. Doppelte Namen auf oberster Ebene: die spätere Funktion überschreibt
+//     die frühere still (so legte einmal eine zweite „altlastUebernehmen“ den
+//     Start lahm). Gilt für function- und var-Namen untereinander.
+{
+  const namen = new Map();
+  for (const m of html.matchAll(/^(function|var) ([A-Za-z_$][\w$]*)/gm)) {
+    const n = m[2];
+    if (namen.has(n)) melde(`Name doppelt vergeben (${namen.get(n)} und ${m[1]}): ${n} – die spätere Fassung überschreibt die frühere`);
+    else namen.set(n, m[1]);
+  }
+}
+
 // 3. Die Terminregeln stehen noch (vom Büro festgelegt – nicht versehentlich entfernen)
 for (const regel of ["var BESUCH_TAGE", "function standardRegel(", "function sollMonatVorschlag(", "function altlastenFaelle("]) {
   if (!html.includes(regel)) melde("Regel-Funktion fehlt: " + regel);
