@@ -22,10 +22,13 @@
 -- SCHRITT 1 - nur ansehen, aendert nichts
 -- ===========================================================================
 with kanon(variante, richtig) as (values
-    ('darko','Darko'),   ('datko','Darko'),
-    ('mat','Matthäus'),  ('matti','Matthäus'), ('mattäus','Matthäus'),
-    ('mattaeus','Matthäus'), ('matthaeus','Matthäus'),
-    ('tobi','Tobias')
+    -- volle Namen wie NAMEN_ALIAS in index.html
+    ('darko','Darko Jekic'), ('datko','Darko Jekic'), ('darko jekic','Darko Jekic'), ('darko jekić','Darko Jekic'),
+    ('matthäus','Matthäus Kammerlander'), ('mat','Matthäus Kammerlander'), ('matti','Matthäus Kammerlander'),
+    ('mattäus','Matthäus Kammerlander'), ('mattaeus','Matthäus Kammerlander'), ('matthaeus','Matthäus Kammerlander'),
+    ('mattias','Matthäus Kammerlander'), ('matthias','Matthäus Kammerlander'), ('matthäus kammerlander','Matthäus Kammerlander'),
+    ('manfred','Manfred Kammerlander'), ('manfred kammerlander','Manfred Kammerlander'),
+    ('tobias','Tobias Kammerlander'), ('tobi','Tobias Kammerlander'), ('tobias kammerlander','Tobias Kammerlander')
 ),
 neu as (
   select p.client_id, p.standort_name,
@@ -52,10 +55,13 @@ select standort_name as markt, client_id as protokoll,
 -- SCHRITT 2 - aendern. Erst ausfuehren, wenn die Liste oben passt.
 -- ===========================================================================
 with kanon(variante, richtig) as (values
-    ('darko','Darko'),   ('datko','Darko'),
-    ('mat','Matthäus'),  ('matti','Matthäus'), ('mattäus','Matthäus'),
-    ('mattaeus','Matthäus'), ('matthaeus','Matthäus'),
-    ('tobi','Tobias')
+    -- volle Namen wie NAMEN_ALIAS in index.html
+    ('darko','Darko Jekic'), ('datko','Darko Jekic'), ('darko jekic','Darko Jekic'), ('darko jekić','Darko Jekic'),
+    ('matthäus','Matthäus Kammerlander'), ('mat','Matthäus Kammerlander'), ('matti','Matthäus Kammerlander'),
+    ('mattäus','Matthäus Kammerlander'), ('mattaeus','Matthäus Kammerlander'), ('matthaeus','Matthäus Kammerlander'),
+    ('mattias','Matthäus Kammerlander'), ('matthias','Matthäus Kammerlander'), ('matthäus kammerlander','Matthäus Kammerlander'),
+    ('manfred','Manfred Kammerlander'), ('manfred kammerlander','Manfred Kammerlander'),
+    ('tobias','Tobias Kammerlander'), ('tobi','Tobias Kammerlander'), ('tobias kammerlander','Tobias Kammerlander')
 ),
 neu as (
   select p.client_id, p.standort_id, p.standort_name,

@@ -64,10 +64,17 @@ if (process.argv.includes("--browser") && !fehler.length) {
     const seite = await browser.newPage({ viewport: geraet.viewport, isMobile: !!geraet.isMobile });
     seite.on("pageerror", (e) => melde(`${geraet.name}: Laufzeitfehler beim Start: ${e.message}`));
     seite.on("dialog", (d) => d.dismiss());
+    // ohne Daten wartet die App am Passwort-Schirm und startet nie – dann
+    // prüfte das hier nur die Passwortseite. Leere Daten vorbelegen: das Tor
+    // nimmt sie wie „unverschlüsselt ausgeliefert“ und startet die App.
+    await seite.addInitScript(() => { window.LIDL_DB = { standorte: [], positionen: [], meta: {} }; });
     await seite.goto(`http://localhost:${port}/index.html`, { waitUntil: "load", timeout: 60000 });
     await seite.waitForTimeout(4000);
-    const inhalt = await seite.evaluate(() => (document.getElementById("app")?.innerText || "").trim().length);
-    if (!inhalt) melde(`${geraet.name}: Die App zeigt nach dem Laden nichts an`);
+    const inhalt = await seite.evaluate(() => (document.getElementById("app")?.innerText || "").trim());
+    if (!inhalt.length) melde(`${geraet.name}: Die App zeigt nach dem Laden nichts an`);
+    // wirklich gestartet? (Reiterleiste sichtbar, nicht der Passwort-Schirm)
+    const gestartet = await seite.evaluate(() => { const t = document.getElementById("tabs"); return !!t && !t.hidden; });
+    if (!gestartet || /^Zugang\b/.test(inhalt)) melde(`${geraet.name}: Die App ist nicht gestartet (nur der Passwort-Schirm)`);
     const breit = await seite.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
     if (breit > 4) console.warn(`HINWEIS ${geraet.name}: Seite ist ${breit}px breiter als der Bildschirm`);
     await seite.close();

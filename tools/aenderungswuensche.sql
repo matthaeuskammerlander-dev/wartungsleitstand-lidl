@@ -13,7 +13,9 @@
 create table if not exists public.aenderungswuensche (
   id          bigserial primary key,
   erstellt    timestamptz not null default now(),
-  von         uuid not null default auth.uid() references auth.users(id) on delete set null,
+  -- ohne „not null“: sonst scheitert das Löschen eines Kontos an „on delete set null“;
+  -- neue Zeilen haben trotzdem immer einen Absender (Regel „wunsch schicken“: von = auth.uid())
+  von         uuid default auth.uid() references auth.users(id) on delete set null,
   von_name    text,
   text        text not null check (length(trim(text)) between 5 and 4000),
   kontext     text,
@@ -35,6 +37,11 @@ create table if not exists public.aenderungswuensche (
 -- spätere Spalten auch bei schon angelegter Tabelle
 alter table public.aenderungswuensche add column if not exists merge_sha text;
 alter table public.aenderungswuensche add column if not exists rueckgaengig_von bigint;
+-- Stand des Pull Requests beim „Nachbessern“: bis Claude einen neuen Stand
+-- schiebt, bleibt der Wunsch „in Arbeit“ (nicht wieder „Vorschau bereit“)
+alter table public.aenderungswuensche add column if not exists warte_auf_sha text;
+-- schon angelegte Tabelle: „not null“ bei von entfernen (siehe oben)
+alter table public.aenderungswuensche alter column von drop not null;
 alter table public.aenderungswuensche enable row level security;
 
 drop policy if exists "wunsch schicken" on public.aenderungswuensche;

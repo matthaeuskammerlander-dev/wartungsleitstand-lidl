@@ -73,8 +73,10 @@ Kammerlander Umwelt- und Klimatechnik (UKT) – oft kurz, vom Handy, im Feld.
 
 ## Rollen
 
-inhaber, admin, techniker, kunde, praesentation. Kunde und Präsentation
-dürfen nur ansehen (`nurLesen()`, `demo()`); Verwaltung nur Admins
+inhaber, admin, techniker, kunde, praesentation. Der Kunde darf nur ansehen
+(`nurLesen()`). Die Präsentation darf alles bedienen wie ein Admin, gespeichert
+wird aber nichts (`demo()` – jedes Speichern muss `demo()` abfangen; die
+Vorschau eines Änderungswunsches läuft genauso). Verwaltung nur Admins
 (`Admin.frei`), Inhaber-Bereich nur Inhaber (`istInhaber()`). Diese
 Grenzen nie lockern.
 

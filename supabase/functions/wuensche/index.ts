@@ -83,8 +83,19 @@ async function pruefung(sha: string) {
   return "fehler";
 }
 
+/* Arbeitet Claude gerade an einem Wunsch (Lauf „Claude Änderungswünsche“
+   wartet oder läuft)? Welcher Wunsch es ist, verrät GitHub nicht – solange
+   irgendein Lauf offen ist, gilt deshalb kein Wunsch in Arbeit als fertig. */
+async function claudeLaeuft() {
+  for (const st of ["in_progress", "queued"]) {
+    const d = await gh("GET", `/repos/${REPO}/actions/runs?status=${st}&per_page=50`);
+    if ((d?.workflow_runs || []).some((r: any) => String(r.name || "") === "Claude Änderungswünsche")) return true;
+  }
+  return false;
+}
+
 /* Stand eines Wunsches bei GitHub holen; PR anlegen, sobald Claudes Zweig da ist */
-async function abgleichen(w: any) {
+async function abgleichen(w: any, laeuft: boolean) {
   const neu: Record<string, unknown> = {};
   let branch = w.branch as string | null;
   // nur Zweige, die Claude bzw. diese Funktion selbst anlegt – einem sonst
@@ -120,10 +131,14 @@ async function abgleichen(w: any) {
   if (pr) {
     neu.pr_nr = pr.number;
     neu.pr_url = pr.html_url;
-    neu.pruefung = await pruefung(pr.head.sha);
     if (pr.merged_at) neu.status = "uebernommen";
     else if (pr.state === "closed") neu.status = "abgelehnt";
-    else neu.status = "vorschau";
+    // „Nachbessern“ bzw. der erste Lauf: Claude arbeitet noch – der Stand im
+    // Pull Request ist noch der alte (bzw. ein Zwischenstand) → „in Arbeit“
+    // lassen, sonst ließe sich der alte Stand übernehmen
+    else if (w.status === "in_arbeit" && ((w.warte_auf_sha && pr.head.sha === w.warte_auf_sha) || laeuft)) { /* bleibt in Arbeit */ }
+    else { neu.status = "vorschau"; neu.pruefung = await pruefung(pr.head.sha); if (w.warte_auf_sha) neu.warte_auf_sha = null; }
+    if (neu.status === "uebernommen" || neu.status === "abgelehnt") neu.pruefung = await pruefung(pr.head.sha);
   }
   const a = await letzteAntwort([w.issue_nr, pr?.number].filter(Boolean));
   if (a) neu.antwort = a;
@@ -168,6 +183,8 @@ Deno.serve(async (req) => {
       if (w.status !== "neu" && w.status !== "fehler") return antwort({ fehler: "Dieser Wunsch ist schon weitergegeben." }, 409);
       const auftrag = String(e.text || w.text).trim();
       if (auftrag.length < 5) return antwort({ fehler: "Der Auftrag ist zu kurz." }, 400);
+      // Grenze der Spalte text (4000) – sonst scheitert später „Rückgängig machen“
+      if (auftrag.length > 4000) return antwort({ fehler: `Der Auftrag ist zu lang (${auftrag.length} Zeichen, höchstens 4000).` }, 400);
       const body = [
         "@claude Bitte diesen Änderungswunsch aus dem Wartungsleitstand umsetzen. Die Regeln stehen in CLAUDE.md – bitte genau einhalten.",
         "",
@@ -192,9 +209,11 @@ Deno.serve(async (req) => {
     if (aktion === "abgleichen") {
       const { data: offen } = await sb.from("aenderungswuensche").select("*").in("status", ["in_arbeit", "vorschau"]);
       const fehler: string[] = [];
+      let laeuft = false;
+      try { laeuft = await claudeLaeuft(); } catch (x) { fehler.push(`Läufe: ${x instanceof Error ? x.message : x}`); }
       for (const w of offen || []) {
         try {
-          const neu = await abgleichen(w);
+          const neu = await abgleichen(w, laeuft);
           const schritt = neu.status && neu.status !== w.status
             ? ({ vorschau: "Vorschau bereit", uebernommen: "in GitHub übernommen", abgelehnt: "in GitHub geschlossen" } as Record<string, string>)[String(neu.status)]
             : undefined;
@@ -207,7 +226,11 @@ Deno.serve(async (req) => {
     if (aktion === "uebernehmen") {
       const w = await laden(Number(e.id));
       if (!w.pr_nr) return antwort({ fehler: "Es gibt noch keine Vorschau (Pull Request)." }, 409);
+      // nur „Vorschau bereit“ – nach „Nachbessern“ arbeitet Claude noch am Pull Request
+      if (w.status !== "vorschau") return antwort({ fehler: "Claude arbeitet noch daran – bitte warten, bis die Vorschau bereit ist." }, 409);
+      if (await claudeLaeuft()) return antwort({ fehler: "Claude arbeitet gerade (noch ein Lauf offen) – bitte kurz warten und nochmals versuchen." }, 409);
       const pr = await gh("GET", `/repos/${REPO}/pulls/${w.pr_nr}`);
+      if (w.warte_auf_sha && pr.head.sha === w.warte_auf_sha) return antwort({ fehler: "Die Nachbesserung ist noch nicht da – bitte warten." }, 409);
       const p = await pruefung(pr.head.sha);
       if (p !== "ok") return antwort({ fehler: p === "laeuft" ? "Die automatische Prüfung läuft noch – bitte kurz warten." : "Die automatische Prüfung ist nicht bestanden – so wird nichts übernommen." }, 409);
       const m = await gh("PUT", `/repos/${REPO}/pulls/${w.pr_nr}/merge`, {
@@ -249,10 +272,15 @@ Deno.serve(async (req) => {
       }
       const titel = `Rückgängig: ${kurz(String(w.text_claude || w.text).replace(/\s+/g, " "), 80)}`;
       // neuer Eintrag in der Liste – damit Rücknahme und Prüfung genauso sichtbar sind
+      // auf die Grenze der Spalte text (4000) gekürzt – der Stand kommt über sha, nicht über den Text
       const { data: neu, error: fe } = await sb.from("aenderungswuensche")
-        .insert({ text: `Änderung W-${w.id} rückgängig machen:\n${w.text_claude || w.text}`, kontext: `Rücknahme von W-${w.id}`, von_name: wer })
+        .insert({ text: kurz(`Änderung W-${w.id} rückgängig machen:\n${w.text_claude || w.text}`, 4000), kontext: `Rücknahme von W-${w.id}`, von_name: wer })
         .select("*").single();
       if (fe || !neu) throw new Error("Eintrag nicht angelegt: " + (fe?.message || ""));
+      // gleich als Rücknahme kennzeichnen – scheitert danach GitHub, bleibt kein
+      // gewöhnlicher, verwaister Wunsch „neu“ stehen (und kein zweiter bei jedem Versuch)
+      await speichern(neu, { rueckgaengig_von: w.id });
+      try {
       if (direkt) {
         const main = await gh("GET", `/repos/${REPO}/git/ref/heads/main`);
         const mainCommit = await gh("GET", `/repos/${REPO}/git/commits/${main.object.sha}`);
@@ -283,6 +311,12 @@ Deno.serve(async (req) => {
         await speichern(neu, { status: "in_arbeit", text_claude: neu.text, issue_nr: issue.number, rueckgaengig_von: w.id },
           `Rücknahme von W-${w.id} an Claude (seither weiter geändert, GitHub #${issue.number})`);
       }
+      } catch (x) {
+        // abschließen statt offen lassen: ein neuer Versuch ist dann wieder möglich
+        const m = x instanceof Error ? x.message : String(x);
+        try { await speichern(neu, { status: "abgelehnt", notiz: "Rücknahme gescheitert: " + kurz(m, 300) }, "Rücknahme gescheitert"); } catch { /* bleibt */ }
+        throw x;
+      }
       await speichern(w, {}, `Rücknahme beantragt → W-${neu.id}`);
       return antwort({ ok: true, id: neu.id, direkt });
     }
@@ -293,8 +327,11 @@ Deno.serve(async (req) => {
       if (t.length < 3) return antwort({ fehler: "Bitte beschreiben, was noch anders sein soll." }, 400);
       const nr = w.pr_nr || w.issue_nr;
       if (!nr) return antwort({ fehler: "Der Wunsch ist noch nicht weitergegeben." }, 409);
+      // den jetzigen Stand merken: erst ein neuer Stand von Claude macht wieder „Vorschau bereit“
+      let warte: string | null = null;
+      if (w.pr_nr) { try { warte = (await gh("GET", `/repos/${REPO}/pulls/${w.pr_nr}`)).head.sha; } catch { /* dann über die Läufe */ } }
       await gh("POST", `/repos/${REPO}/issues/${nr}/comments`, { body: "@claude " + t + "\n\n(Regeln in CLAUDE.md; vor dem Abschluss `node tools/pruefen.mjs`.)" });
-      await speichern(w, { status: "in_arbeit", pruefung: null }, "nachbessern: " + kurz(t, 200));
+      await speichern(w, { status: "in_arbeit", pruefung: null, warte_auf_sha: warte }, "nachbessern: " + kurz(t, 200));
       return antwort({ ok: true });
     }
 

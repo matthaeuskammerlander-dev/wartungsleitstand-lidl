@@ -26,6 +26,18 @@ const CORS = {
 const antwort = (daten: unknown, status = 200) =>
   new Response(JSON.stringify(daten), { status, headers: { ...CORS, "Content-Type": "application/json" } });
 
+// Mitternacht des heutigen Tages in Österreich (Europe/Vienna) als Zeitpunkt
+// (ISO, UTC) – wie in ki-lesen, damit das Tageslimit um Mitternacht hier
+// zurückspringt und nicht erst um 1 bzw. 2 Uhr früh (UTC-Tag).
+function tagesbeginnWien(jetzt: Date): string {
+  const teil = (f: Intl.DateTimeFormat, d: Date, typ: string) => f.formatToParts(d).find((t) => t.type === typ)?.value ?? "";
+  const datum = new Intl.DateTimeFormat("en-GB", { timeZone: "Europe/Vienna", year: "numeric", month: "2-digit", day: "2-digit" });
+  const tag = `${teil(datum, jetzt, "year")}-${teil(datum, jetzt, "month")}-${teil(datum, jetzt, "day")}`;
+  const zone = new Intl.DateTimeFormat("en-GB", { timeZone: "Europe/Vienna", timeZoneName: "longOffset" });
+  const versatz = teil(zone, new Date(tag + "T00:00:00Z"), "timeZoneName").replace("GMT", "") || "Z";   // „GMT+02:00“ → „+02:00“
+  return new Date(tag + "T00:00:00" + versatz).toISOString();
+}
+
 const SYSTEM = `Du bist der Assistent im „Wartungsleitstand Lidl“ von Kammerlander Umwelt- und Klimatechnik (UKT), St. Johann in Tirol. UKT wartet Kälte- und Klimaanlagen (Split, Multi-Split, VRV, Kaltwassersätze) in Lidl-Filialen in Österreich. Die Fragen kommen von Technikern und dem Büro, oft vom Handy im Einsatz.
 
 Antworte auf Deutsch (österreichisch üblich, „Jänner“), kurz, klar und praxisnah – ohne Fachchinesisch, wo es nicht nötig ist. Keine langen Einleitungen. Nutze kurze Absätze oder Aufzählungen, keine Tabellen.
@@ -103,9 +115,8 @@ Deno.serve(async (req) => {
     return antwort({ fertig, text: fertig ? text : "", fehler: /encountered an error/i.test(text) ? "Claude hat einen Fehler gemeldet." : undefined });
   }
 
-  const heute = new Date().toISOString().slice(0, 10);
   const { count } = await supabase.from("ki_nutzung").select("id", { count: "exact", head: true })
-    .eq("user_id", user.id).eq("art", "frage").gte("zeit", heute);
+    .eq("user_id", user.id).eq("art", "frage").gte("zeit", tagesbeginnWien(new Date()));
   if ((count ?? 0) >= LIMIT_JE_TAG) return antwort({ fehler: "Tageslimit für Fragen erreicht." }, 429);
 
   const kontext = String(e.kontext ?? "").slice(0, 40000);   // Übersicht aller Märkte samt Anlagenliste ≈ 20000 Zeichen
@@ -124,14 +135,15 @@ Deno.serve(async (req) => {
     if (x instanceof Anthropic.APIError) return antwort({ fehler: `KI-Fehler ${x.status}` }, 502);
     return antwort({ fehler: "Claude nicht erreichbar." }, 502);
   }
-  if (r.stop_reason === "refusal") return antwort({ fehler: "Darauf antwortet Claude nicht." }, 422);
-  const text = r.content.filter((b) => b.type === "text").map((b) => (b as { text: string }).text).join("\n").trim();
-
+  // Kostennachweis gleich nach der Antwort – auch eine Ablehnung ist bezahlt
   const { error: nf } = await supabase.from("ki_nutzung").insert({
     user_id: user.id, email: user.email, art: "frage", bilder: 0, modell: r.model,
     tokens_ein: r.usage.input_tokens, tokens_aus: r.usage.output_tokens,
   });
   if (nf) console.error("ki_nutzung nicht eingetragen:", nf.message);
+
+  if (r.stop_reason === "refusal") return antwort({ fehler: "Darauf antwortet Claude nicht." }, 422);
+  const text = r.content.filter((b) => b.type === "text").map((b) => (b as { text: string }).text).join("\n").trim();
 
   return antwort({ text: text + (r.stop_reason === "max_tokens" ? "\n\n(Antwort abgeschnitten – bitte nachfragen.)" : ""), modell: r.model });
 });

@@ -621,6 +621,25 @@ function anlagenBilden(){
     paaren(function(a,b){ return norm(a)===norm(b); });
     if(frei.filter(function(p){ return !p.anlageId; }).length===2) paaren(function(){ return true; });
   });
+  /* beim Zusammenführen stillgelegte Zeilen einer Anlage bleiben beisammen –
+     sonst zerfiele die Doppel-Anlage im Editor in Einzelkarten und ließe sich
+     nur halb wieder in Betrieb nehmen. Neu: über anlageZu (setzt das
+     Zusammenführen); ältere: je Ziel-Anlage und Vermerk eine Jahres- und
+     eine Halbjahreszeile */
+  var stillGr={};
+  ALLE_POS.forEach(function(p){
+    if(p.aktiv!==false || !p.zusammengefuehrtIn || p.anlageId) return;
+    var z=(p.anlageZu && p.anlageZu!==p.id) ? posById[p.anlageZu] : null;
+    if(z && z.aktiv===false && z.standortId===p.standortId){ if(!z.anlageId) z.anlageId=z.id; p.anlageId=z.anlageId; return; }
+    if(p.anlageZu) return;   /* ausdrücklich eigene Anlage oder anderswohin: nicht raten */
+    var ziel=posById[p.zusammengefuehrtIn];
+    var key=p.standortId+"|"+(ziel?(ziel.anlageId||ziel.id):"")+"|"+String(p.notiz||"").trim();
+    var l=stillGr[key]=stillGr[key]||[];
+    var partner=l.filter(function(x){ return x.anlageId===x.id && halb(x)!==halb(p) &&
+      !l.some(function(y){ return y!==x && y.anlageId===x.id; }); })[0];
+    p.anlageId=partner ? partner.id : p.id;
+    l.push(p);
+  });
   ALLE_POS.forEach(function(p){
     if(!p.anlageId) p.anlageId=p.id;
     (ANLAGEN[p.anlageId]=ANLAGEN[p.anlageId]||{id:p.anlageId, termine:[]}).termine.push(p);
@@ -1378,10 +1397,20 @@ function osrm(pfad){
   function versuch(){
     if(i>=kandidaten.length) return Promise.resolve(null);
     var basis=kandidaten[i++];
-    return fetch(basis+pfad)
-      .then(function(r){ return r.ok ? r.json() : null; })
-      .then(function(j){ if(j && j.code==="Ok"){ routerBasis=basis; return j; } return versuch(); })
-      .catch(function(){ return versuch(); });
+    /* Frist: ein Dienst, der die Verbindung annimmt und nie antwortet, hielte
+       sonst den Knopf für immer auf „wird berechnet“ – nach 15 s der nächste
+       Dienst, zuletzt die Luftlinie */
+    var ab=window.AbortController ? new AbortController() : null;
+    var frist=null;
+    var zeit=new Promise(function(_, nein){
+      frist=setTimeout(function(){ if(ab) ab.abort(); nein(new Error("Frist")); }, 15000);
+    });
+    return Promise.race([
+        fetch(basis+pfad, ab ? {signal:ab.signal} : undefined)
+          .then(function(r){ return r.ok ? r.json() : null; }),
+        zeit])
+      .then(function(j){ clearTimeout(frist); if(j && j.code==="Ok"){ routerBasis=basis; return j; } return versuch(); })
+      .catch(function(){ clearTimeout(frist); return versuch(); });
   }
   return versuch();
 }
@@ -1441,9 +1470,11 @@ function planeTour(opt){
 
   return strassenMatrix(punkte).then(function(M){
     var echteStrasse = !!M;
-    var dauerH = M ? function(i,j){ return M.dauer[i][j]/3600; }
+    /* findet der Dienst für ein Paar keine Straße, steht dort null –
+       das wäre sonst 0 km / 0 h; dann für dieses Paar die Luftlinie */
+    var dauerH = M ? function(i,j){ var d=M.dauer[i][j]; return d==null ? fahrH(punkte[i],punkte[j]) : d/3600; }
                    : function(i,j){ return fahrH(punkte[i],punkte[j]); };
-    var distKm = M ? function(i,j){ return M.distanz[i][j]/1000; }
+    var distKm = M ? function(i,j){ var d=M.distanz[i][j]; return d==null ? fahrKm(punkte[i],punkte[j]) : d/1000; }
                    : function(i,j){ return fahrKm(punkte[i],punkte[j]); };
 
     var folge = reihenfolgeIdx(dauerH, punkte.length);
@@ -1460,6 +1491,9 @@ function planeTour(opt){
         tag={nr:tage.length+1, stunden:0, km:0, stopps:[], startPunkt:punkte[hierIdx]};
       }
       tag.stunden += fahrt + arbeit;
+      /* ein Markt allein braucht mehr als einen Arbeitstag – geteilt wird er
+         nicht, aber der Tag wird markiert und doppelt gezählt */
+      if(fahrt + arbeit > opt.stundenProTag) tag.zuLang=true;
       tag.km += km; kmGesamt += km;
       tag.stopps.push({standort:punkte[zielIdx], positionen:eintrag.positionen,
                        fahrtH:fahrt, km:km, arbeitH:arbeit});
@@ -1474,6 +1508,7 @@ function planeTour(opt){
     return { start:start, tage:tage,
       reihenfolge:folge.map(function(i){ return punkte[i]; }),
       echteStrasse:echteStrasse,
+      zuViele: punkte.length>ROUTER_MAX,   // Routendienst gar nicht gefragt
       kmGesamt:kmGesamt+rueckKm,
       stundenGesamt:tage.reduce(function(a,t){return a+t.stunden;},0)+rueck,
       anzahlStopps:folge.length,
@@ -1522,8 +1557,9 @@ var S={view:"faellig",region:"alle",q:"",sel:null,selPos:null,protoStandort:"",p
   tour:{status:["ueberfaellig","faellig"], stundenProTag:8, startId:"__gps",
         gps:null, gpsFehler:"", ergebnis:null, manuell:null, naechsterMonat:false, laender:[]}};
 /* Bundesland aus der Postleitzahl. Die Blöcke sind eindeutig bis auf ein paar
-   Ränder: 52xx/53xx gehören zu Oberösterreich (Braunau, Mattighofen),
-   99xx ist Osttirol. */
+   Ränder: 5210–5299 (Innviertel: Braunau, Mattighofen), 5310/5311 (Mondsee)
+   und 5360 (St. Wolfgang) gehören zu Oberösterreich – 5201–5205 (Seekirchen,
+   Straßwalchen) und die übrigen 53xx zum Flachgau; 99xx ist Osttirol. */
 var BUNDESLAENDER=["Wien","Niederösterreich","Oberösterreich","Salzburg","Tirol","Vorarlberg","Burgenland","Steiermark","Kärnten"];
 function bundesland(s){
   var plz=String((s&&s.plz)||"").trim();
@@ -1532,7 +1568,7 @@ function bundesland(s){
   if(n<2000) return "Wien";
   if(n<4000) return "Niederösterreich";
   if(n<5000) return "Oberösterreich";
-  if(n<6000) return (n>=5200 && n<5400) ? "Oberösterreich" : "Salzburg";
+  if(n<6000) return ((n>=5210 && n<5300) || n===5310 || n===5311 || n===5360) ? "Oberösterreich" : "Salzburg";
   if(n<6700) return "Tirol";
   if(n<7000) return "Vorarlberg";
   if(n<8000) return "Burgenland";
@@ -1888,16 +1924,19 @@ function stoerungDialog(vorhanden, weiter){
     });
     lesen.then(function(erg){
       if(!erg){ knopfZurueck(); return; }
-      var d=erg.daten||{}, g={};
+      var d=erg.daten||{}, g={}, verworfen=[];
       FELDER.forEach(function(f){ var w=String(d[f[0]]||"").trim(); if(!w) return;
-        g[f[0]] = f[2]==="date" ? kiDatum(w, true) : w; });
+        g[f[0]] = f[2]==="date" ? kiDatum(w, true) : w;
+        /* kein gültiges Datum (etwa 31.11.): nicht still weglassen, sondern nennen */
+        if(f[2]==="date" && !g[f[0]]){ delete g[f[0]]; verworfen.push(f[1]+" „"+w+"“"); } });
       if(d.beschreibung) g.beschreibung=String(d.beschreibung).trim();
       var felder=FELDER.map(function(f){ return {k:f[0], l:f[1], zeige:f[2]==="date"?dfmt:null}; })
         .concat([{k:"beschreibung", l:"Beschreibung"}]);
       /* gelesen, aber nicht im Dialog sichtbar – trotzdem anbieten und speichern */
       [["prioritaet","Priorität"],["seriennummer","Seriennummer (Lidl)"],["lidlMail","E-Mail Lidl"]].forEach(function(f){
         var w=String(d[f[0]]||"").trim(); if(w){ g[f[0]]=w; felder.push({k:f[0], l:f[1]}); } });
-      return kiPruefen("Lidl-Auftrag", g, o, felder, d.unsicher, d.hinweise).then(function(wahl){
+      var hinweisA=[d.hinweise, verworfen.length?"Nicht übernommen (ungültiges Datum): "+verworfen.join(", ")+".":""].filter(Boolean).join(" ");
+      return kiPruefen("Lidl-Auftrag", g, o, felder, d.unsicher, hinweisA).then(function(wahl){
         if(wahl){
           Object.keys(wahl).forEach(function(k){ o[k]=wahl[k]; });
           /* wie beim Abtippen und beim Auftrags-PDF: ein automatisch erkannter
@@ -2665,13 +2704,18 @@ function tourKandidaten(){
       var st = p.status==="geplant" ? "erledigt" : p.status;
       if(S.tour.status.indexOf(st)>=0) return true;
       /* auf Wunsch auch, was erst im nächsten Monat dran ist */
-      return S.tour.naechsterMonat && p.naechste && p.naechste<=bis;
+      return S.tour.naechsterMonat && st!=="ueberfaellig" && p.naechste && p.naechste<=bis;
     });
     if(pos.length) raus.push({standort:s, positionen:pos});
   });
   return raus;
 }
+/* Laufnummer der Tourrechnung: eine späte Antwort des Routendienstes darf
+   eine neuere Rechnung nicht überschreiben und eine gelöschte Route nicht
+   zurückbringen (Löschen und Auswahl-Chips zählen hoch) */
+var tourLauf=0;
 function tourRechnen(){
+  var lauf=++tourLauf;
   var kandidaten=tourKandidaten();
   if(S.tour.manuell){
     var erlaubt={}; S.tour.manuell.forEach(function(id){ erlaubt[id]=1; });
@@ -2688,11 +2732,12 @@ function tourRechnen(){
   S.tour.geometrie=null;
   return planeTour({start:start, stopps:kandidaten, stundenProTag:S.tour.stundenProTag})
     .then(function(erg){
+      if(lauf!==tourLauf) return false;   // überholt – nichts übernehmen
       S.tour.ergebnis=erg;
-      if(!erg || !erg.echteStrasse) return null;
+      if(!erg || !erg.echteStrasse) return true;
       /* die tatsächlich gefahrene Linie für die Karte nachladen */
       return strassenGeometrie([erg.start].concat(erg.reihenfolge).concat([erg.start]))
-        .then(function(g){ S.tour.geometrie=g; return g; });
+        .then(function(g){ if(lauf!==tourLauf) return false; S.tour.geometrie=g; return true; });
     });
 }
 
@@ -3055,18 +3100,18 @@ function tourPanel(){
     b.onclick=function(){
       var k=b.dataset.s, i=S.tour.status.indexOf(k);
       if(i>=0){ if(S.tour.status.length>1) S.tour.status.splice(i,1); } else S.tour.status.push(k);
-      S.tour.manuell=null; render();
+      S.tour.manuell=null; tourLauf++; render();
     };
   });
   c.querySelector("#t_folge").onclick=function(){
-    S.tour.naechsterMonat=!S.tour.naechsterMonat; S.tour.manuell=null; render();
+    S.tour.naechsterMonat=!S.tour.naechsterMonat; S.tour.manuell=null; tourLauf++; render();
   };
   c.querySelectorAll("#t_land .chip").forEach(function(b){
     b.onclick=function(){
       var l=b.dataset.l;
       if(l==="__alle") S.tour.laender=[];
       else { var i=S.tour.laender.indexOf(l); if(i>=0) S.tour.laender.splice(i,1); else S.tour.laender.push(l); }
-      S.tour.manuell=null; render();
+      S.tour.manuell=null; tourLauf++; render();
     };
   });
   startSel.onchange=function(){ S.tour.startId=startSel.value; };
@@ -3075,9 +3120,16 @@ function tourPanel(){
   gpsBtn.onclick=function(){
     gpsBtn.disabled=true; gpsBtn.textContent="Wird ermittelt …";
     holeStandort().then(function(p){
-      if(p.fehler){ S.tour.gps=null; S.tour.gpsFehler=p.fehler; }
+      /* bei Fehler bleibt eine ältere Position gültig (ihre Frische prüft
+         „Route vorschlagen“); die Meldung kommt immer als Hinweis, auch wenn
+         Betrieb oder ein Markt der Start ist */
+      if(p.fehler){ S.tour.gpsFehler=p.fehler; toast(p.fehler); }
       else { S.tour.gps=p; S.tour.gpsFehler=""; S.tour.startId="__gps"; toast("Standort übernommen."); }
-      render();
+      /* nur die Karte neu zeichnen – inzwischen offene Verwaltung oder ein
+         angefangenes Protokoll würden sonst aus den gespeicherten Daten neu
+         aufgebaut und die Eingaben gingen verloren */
+      if(S.view==="karte" && darfRendern()) render();
+      else { gpsBtn.disabled=false; gpsBtn.textContent=S.tour.gps?"Standort aktualisieren":"Standort bestimmen"; }
     });
   };
   c.querySelector("#t_std").onchange=function(e2){
@@ -3091,8 +3143,12 @@ function tourPanel(){
 
     var rechnen=function(){
       goBtn.disabled=true; goBtn.textContent="Route wird berechnet …";
-      tourRechnen().then(function(){
-        render(); window.scrollTo({top:0,behavior:"smooth"});
+      tourRechnen().then(function(aktuell){
+        if(aktuell===false) return;   // überholt: neuere Rechnung oder Route gelöscht
+        /* wie beim Standort: nur in der Karte und ohne Angefangenes neu zeichnen;
+           das Ergebnis steht in S.tour und erscheint beim nächsten Öffnen */
+        if(S.view==="karte" && darfRendern()){ render(); window.scrollTo({top:0,behavior:"smooth"}); }
+        else { goBtn.disabled=false; goBtn.textContent="Route vorschlagen"; }
       },function(){
         goBtn.disabled=false; goBtn.textContent="Route vorschlagen";
         toast("Die Route konnte nicht berechnet werden.");
@@ -3109,7 +3165,7 @@ function tourPanel(){
     });
   };
   var clr=c.querySelector("#t_clear");
-  if(clr) clr.onclick=function(){ S.tour.ergebnis=null; S.tour.manuell=null; render(); };
+  if(clr) clr.onclick=function(){ tourLauf++; S.tour.ergebnis=null; S.tour.geometrie=null; S.tour.manuell=null; render(); };
 
   if(T) c.querySelector("#t_out").appendChild(tourErgebnis(T));
   return c;
@@ -3122,7 +3178,8 @@ function tourErgebnis(T){
     '<div class="kpi"><div class="n">'+T.anzahlStopps+'</div><div class="l">Stopps</div></div>'+
     '<div class="kpi"><div class="n">'+T.anzahlPositionen+'</div><div class="l">Wartungen</div></div>'+
     '<div class="kpi"><div class="n">'+Math.round(T.kmGesamt)+'</div><div class="l">km gesamt</div></div>'+
-    '<div class="kpi"><div class="n">'+T.tage.length+'</div><div class="l">Arbeitstage</div></div>'+
+    /* ein Tag, der allein länger ist als die eingestellte Arbeitszeit, zählt so oft, wie er Tage braucht */
+    '<div class="kpi"><div class="n">'+T.tage.reduce(function(a,t){ return a+(t.zuLang ? Math.max(1,Math.ceil(t.stunden/S.tour.stundenProTag)) : 1); },0)+'</div><div class="l">Arbeitstage</div></div>'+
   "</div>"));
 
   T.tage.forEach(function(tag){
@@ -3158,6 +3215,8 @@ function tourErgebnis(T){
         (tag.rueckfahrtH ? ' + '+stdFmt(tag.rueckfahrtH)+' Rückfahrt' : "")+
         ' · '+Math.round(tag.km+(tag.rueckfahrtKm||0))+" km</span>"+
       "</div>"+
+      (tag.zuLang?'<div class="note warnbox">Länger als die eingestellte Arbeitszeit von '+String(S.tour.stundenProTag).replace(".",",")+
+        ' h – diesen Markt auf mehrere Tage aufteilen.</div>':"")+
       (gm?'<div class="rowflex"><a class="btn sm" href="'+gm.url+'" target="_blank" rel="noopener">'+
         "Tag "+tag.nr+' in Google Maps öffnen</a>'+
         (gm.gekuerzt?'<span class="muted" style="font-size:12px">Google nimmt nur neun Zwischenziele – '+
@@ -3173,6 +3232,10 @@ function tourErgebnis(T){
         'Autobahnen, Tempolimits und Umwege sind berücksichtigt. Die Reihenfolge ist nach Fahrzeit optimiert, '+
         'nicht nach Entfernung — über die Autobahn ist der längere Weg oft der schnellere. Verkehrslage und '+
         'Baustellen kennt der Dienst nicht.'
+      : T.zuViele
+      ? '<strong>Achtung, nur geschätzt:</strong> Bei mehr als '+ROUTER_MAX+' Stopps rechnet der Routendienst nicht – '+
+        'Luftlinie mit Zuschlag '+UMWEG.toString().replace(".",",")+' und '+TEMPO_KMH+' km/h im Mittel. '+
+        'Für echte Werte die Auswahl verkleinern (z. B. Bundesland).'
       : '<strong>Achtung, nur geschätzt:</strong> Der Routendienst war nicht erreichbar, daher Luftlinie mit Zuschlag '+
         UMWEG.toString().replace(".",",")+' und '+TEMPO_KMH+' km/h im Mittel. Nochmal berechnen liefert meist echte Werte.')+
     ' Mehrtägige Touren fahren am Folgetag vom letzten Stopp weiter, es ist also eine Übernachtung unterwegs eingerechnet.</div>'));
@@ -3235,15 +3298,18 @@ function pausiertBox(p){
 /* Zugang zur Regelung – nur wo es Fernzugriff gibt und etwas eingetragen ist.
    Das Passwort steht verdeckt da; aufdecken und kopieren geht mit einem Tipp. */
 function inZwischenablage(text, was){
-  var fertig=function(ok){ toast(ok ? was+" kopiert." : "Kopieren hat nicht geklappt – bitte von Hand abtippen."); };
+  /* liefert immer ein Promise mit dem Ergebnis (true/false) – wer den Text
+     sonst anzeigt, muss wissen, ob das Kopieren geklappt hat */
+  var fertig=function(ok){ toast(ok ? was+" kopiert." : "Kopieren hat nicht geklappt – bitte von Hand abtippen."); return !!ok; };
   if(navigator.clipboard && navigator.clipboard.writeText)
-    return navigator.clipboard.writeText(text).then(function(){ fertig(true); }, function(){ fertig(false); });
+    return navigator.clipboard.writeText(text).then(function(){ return fertig(true); }, function(){ return fertig(false); });
   try{
     var h=document.createElement("textarea");
     h.value=text; h.style.position="fixed"; h.style.opacity="0";
     document.body.appendChild(h); h.select();
-    fertig(document.execCommand("copy")); document.body.removeChild(h);
-  }catch(e){ fertig(false); }
+    var ok=document.execCommand("copy"); document.body.removeChild(h);
+    return Promise.resolve(fertig(ok));
+  }catch(e){ return Promise.resolve(fertig(false)); }
 }
 function zugangsAdresse(roh){
   var s=String(roh||"").trim();
@@ -3365,7 +3431,8 @@ function anlagenZusammenfuehren(a1, a2){
     if(zugangFrage) box.appendChild(el('<div class="posbox"><strong>Zugang zur Regelung – welcher Satz gilt?</strong>'+
       '<label class="chk"><input type="radio" name="zf__zugang" value="h" checked><span>'+esc(zugangText(dh))+' <span class="muted">(„'+esc(nameH)+'“)</span></span></label>'+
       '<label class="chk"><input type="radio" name="zf__zugang" value="d"><span>'+esc(zugangText(dd))+' <span class="muted">(„'+esc(nameD)+'“)</span></span></label>'+
-      '<div class="muted" style="font-size:12px">Übernommen wird immer der ganze Satz (Adresse, Benutzer, Passwort).</div></div>'));
+      '<div class="muted" style="font-size:12px">Übernommen wird immer der ganze Satz (Adresse, Benutzer, Passwort). '+
+      "Der andere Satz wird endgültig ersetzt – Zugangsdaten stehen nicht im Änderungsverlauf und kommen auch über „Rückgängig“ nicht zurück.</div></div>"));
     v.inhalt.appendChild(box);
     var ab=el('<button class="btn ghost" type="button">Abbrechen</button>'), los=el('<button class="btn" type="button">Zusammenführen</button>');
     ab.onclick=function(){ v.zu(); fertig(false); };
@@ -3380,10 +3447,14 @@ function anlagenZusammenfuehren(a1, a2){
         if(leerWert(wh) && !leerWert(wd)) neu[x.k]=wd;                       /* Lücke der Haupt-Anlage füllen */
         else if(strittig.indexOf(x)>=0){ var r=box.querySelector('input[name="zf_'+x.k+'"]:checked'); if(r && r.value==="d") neu[x.k]=wd; }
       });
+      /* die Notiz der anderen Anlage nicht verlieren: an die eigene anhängen */
+      var notizH=String(haupt.leader.notiz||"").trim(), notizD=String(doppel.leader.notiz||"").trim();
+      if(notizD && notizH.indexOf(notizD)<0) neu.notiz = notizH ? notizH+" · aus „"+nameD+"“: "+notizD : notizD;
       /* Zugangsdaten der Regelung als ganzer Satz: gewählt (beide hatten welche)
          oder – hat die bleibende Anlage keine – komplett von der anderen */
       var zw=box.querySelector('input[name="zf__zugang"]:checked');
-      if((zw && zw.value==="d") || (!hatZugang(dh) && hatZugang(dd))) GEHEIME_FELDER.forEach(function(k){ neu[k]=leerWert(dd[k]) ? "" : dd[k]; });
+      var zugangErsetzt=!!(zw && zw.value==="d");   /* der bisherige Satz der bleibenden Anlage ist weg */
+      if(zugangErsetzt || (!hatZugang(dh) && hatZugang(dd))) GEHEIME_FELDER.forEach(function(k){ neu[k]=leerWert(dd[k]) ? "" : dd[k]; });
       /* Innengeräte vereinigen (gleiche Seriennummer nur einmal – auch in anderer Schreibweise) */
       var snKey=function(g){ return String(g.seriennummer||"").replace(/[\s\-]+/g,"").toUpperCase(); };
       var ig=(Array.isArray(dh.innengeraete)?dh.innengeraete:[]).slice(), sn=ig.map(snKey);
@@ -3436,17 +3507,33 @@ function anlagenZusammenfuehren(a1, a2){
         })).forEach(function(n){
           if(!n || !n.datum || schon.some(function(d){ return gleicherBesuch(d,n.datum); })) return;
           schon.push(n.datum); gezaehlt++;
+          /* Herkunft merken: wird die Zeile wieder in Betrieb genommen, nimmt der
+             Editor diese Kopie wieder weg (sonst stünde die Wartung doppelt da) */
+          n=Object.assign({}, n, {ausZeile:t.id});
           var z=zeileFuerDatum(bleiben, n.datum, haupt.leader), l=(pro[z.id]&&pro[z.id].nachweise) || (z.nachweise||[]).slice();
           setze(z, {nachweise:l.concat([n]).sort(function(x,y){ return x.datum.localeCompare(y.datum); })});
         });
-        setze(t, {aktiv:false, zusammengefuehrtIn:zielFuer(t).id, notiz:((t.notiz||"")+" Zusammengeführt mit „"+nameH+"“").trim()});
+        /* anlageZu: die stillgelegten Zeilen der Doppel-Anlage bleiben eine Anlage (anlagenBilden) */
+        setze(t, {aktiv:false, zusammengefuehrtIn:zielFuer(t).id, anlageZu:doppel.leader.id, notiz:((t.notiz||"")+" Zusammengeführt mit „"+nameH+"“").trim()});
       });
       /* offene Störungen der stillgelegten Zeilen an die bleibende Anlage – sie müssen dort sichtbar bleiben */
       var stoer=offeneStoerungen(true).filter(function(o){ return o.positionId && wegIds.indexOf(o.positionId)>=0; });
       v.zu();
       var rueck={};
       positionenSchreiben(pro, "Anlagen zusammengeführt", rueck).then(function(wo){
-        if(wo===false){ toast("Nicht gespeichert – bitte nochmals versuchen."); fertig(false); return; }
+        if(wo===false){
+          /* ein Teil ist schon gespeichert: im Verlauf festhalten, damit
+             „Rückgängig“ ihn zurücknehmen kann (fehlgeschlagene Zeilen gelten
+             wieder im alten Stand, ein neuer Versuch ist möglich) */
+          if(Object.keys(rueck).length){
+            protokolliere({art:"stammdaten", standortId:s.id, standortName:stName(s),
+              grund:"Anlagen zusammengeführt – nur teilweise gespeichert: „"+nameD+"“ → „"+nameH+"“",
+              felder:[{feld:"anlage", name:nameH, alt:"2 Anlagen", neu:"teilweise gespeichert ("+Object.keys(rueck).length+" Zeile(n))"}], rueck:rueck});
+            berechneFaelligkeiten(); render();
+            toast("Nur teilweise gespeichert – im Änderungsverlauf festgehalten. Bitte nochmals versuchen.");
+          } else toast("Nicht gespeichert – bitte nochmals versuchen.");
+          fertig(false); return;
+        }
         return Promise.all(stoer.map(function(o){
           return stoerungSpeichern(Object.assign({}, o, {positionId:haupt.leader.id}), "Anlage zusammengeführt", rueck);
         })).then(function(){
@@ -3456,7 +3543,9 @@ function anlagenZusammenfuehren(a1, a2){
             felder:[{feld:"anlage", name:nameNeu, alt:"2 Anlagen", neu:"1 Anlage"+
               (dazuT.length?" · "+dazuT.length+" Termin(e) übernommen":"")+
               (gezaehlt?" · "+gezaehlt+" Wartung(en) übernommen":"")+
-              (stoer.length?" · "+stoer.length+" offene Störung(en) umgehängt":"")}], rueck:rueck});
+              (stoer.length?" · "+stoer.length+" offene Störung(en) umgehängt":"")}]
+              /* ohne Werte – nur damit „Rückgängig“ weiß und sagt, dass der alte Satz nicht zurückkommt */
+              .concat(zugangErsetzt?[{feld:"zugang", name:nameNeu+" – Zugang zur Regelung", alt:"bisheriger Satz", neu:"Satz von „"+nameD+"“"}]:[]), rueck:rueck});
           berechneFaelligkeiten(); toast("Zusammengeführt."); render(); fertig(true);
         });
       });
@@ -3468,7 +3557,8 @@ function anlagenZusammenfuehren(a1, a2){
 function zusammenfuehrenWaehlen(a){
   var s=byId[a.leader.standortId]; if(!s) return;
   if(a.leader.aktiv===false){ toast("Eine stillgelegte Anlage lässt sich nicht zusammenführen – zuerst wieder in Betrieb setzen."); return; }
-  var andere=anlagenDesMarkts(s,false).filter(function(x){ return x.id!==a.id; });
+  /* auch die zur Zeit nicht gewarteten – anlagenZusammenfuehren ist für sie gebaut */
+  var andere=anlagenDesMarkts(s,true).filter(function(x){ return x.id!==a.id && x.leader.aktiv!==false; });
   if(!andere.length){ toast("Im Markt gibt es keine andere Anlage."); return; }
   var v=ansichtOeffnen("Zusammenführen mit …");
   v.inhalt.closest(".assistent").setAttribute("data-konto","");   /* gehört zum Konto – beim Kontowechsel zu */
@@ -3486,7 +3576,9 @@ function zusammenfuehrenWaehlen(a){
 function moeglicheDoppel(){
   var l=[];
   ST.forEach(function(s){
-    var an=anlagenDesMarkts(s,false), neu=an.filter(function(a){ return anlageIstNeu(a) && !a.leader.doppelGeprueft; }), alt=an.filter(function(a){ return !anlageIstNeu(a); });
+    /* neu: nur gewartete; alt: auch die zur Zeit nicht gewarteten (sie lassen sich zusammenführen) */
+    var an=anlagenDesMarkts(s,false), neu=an.filter(function(a){ return anlageIstNeu(a) && !a.leader.doppelGeprueft; }),
+        alt=anlagenDesMarkts(s,true).filter(function(a){ return !anlageIstNeu(a) && a.leader.aktiv!==false; });
     if(!neu.length || !alt.length) return;
     neu.forEach(function(n){ l.push({s:s, neu:n, alt:alt}); });
   });
@@ -3636,8 +3728,19 @@ function positionenSchreiben(proPos, grund, rueck){
                            : objDiff(EXCEL["position:"+pid]||{}, neuP, STAMM_FELDER_POS);
     var rec={id:"position:"+pid, typ:"position", ziel:pid, felder:felderNeu,
              neu:!!p._neu, geaendert:zeit, von:wer(), grund:grund};
+    /* schlägt das Speichern dieser Zeile fehl, gilt für sie wieder der alte
+       Stand (wie bei stoerungSpeichern) – die Anzeige soll nicht zeigen, was
+       nirgends gespeichert ist, und „Rückgängig“ nur Gespeichertes kennen */
+    var altU=stammUeber[rec.id], altS=stammStand[rec.id], imPuffer=!!rueck && (rec.id in rueck);
     stammUeber[rec.id]=rec;
-    return stammSpeichern(rec, false, rueck);
+    return stammSpeichern(rec, false, rueck).then(function(w){
+      if(w===false){
+        if(altU) stammUeber[rec.id]=altU; else delete stammUeber[rec.id];
+        if(altS) stammStand[rec.id]=altS; else delete stammStand[rec.id];
+        if(rueck && !imPuffer) delete rueck[rec.id];
+      }
+      return w;
+    });
   })).then(function(wo){
     wendeStammdatenAn();
     /* nirgends gespeichert (weder Datenbank noch Gerät): so melden, nicht als Erfolg */
@@ -4298,6 +4401,12 @@ function anlageAssistent(start, titel, neu, alles, vorgang){
               if(schon.some(function(dd){ return gleicherBesuch(dd,n.datum); })) return false;
               schon.push(n.datum); return true; });
           }
+          /* Angaben ohne Tag: als eigene Zeile zum Abhaken – nicht an die Zeile
+             der Wartungen gekoppelt (die fehlt, wenn alle schon bekannt sind) */
+          if(nw.ohneTag.length){
+            gelesen._notizOhneTag="Laut Prüfbuch außerdem (ohne Tag): "+nw.ohneTag.join(", ")+".";
+            felder.push({k:"_notizOhneTag", l:"Notiz (Prüfungen ohne Tag)", q:"pruefungen", zeige:function(t){ return String(t||""); }});
+          }
           if(nw.voll.length){
             gelesen._nachweise=nw.voll;
             felder.push({k:"_nachweise", l:"Wartungen laut Prüfbuch", q:"pruefungen", zeige:function(l){
@@ -4320,16 +4429,22 @@ function anlageAssistent(start, titel, neu, alles, vorgang){
               intervallHinweis="Laut Prüfbuch halbjährlich (6 Monate), eingetragen ist nur ein Termin – den zweiten bitte in der Verwaltung anlegen.";
             }
           }
-          var hinweis=[d.hinweise, intervallHinweis, nw.ohneTag.length?"Ohne Tag, kommt als Notiz: "+nw.ohneTag.join(", "):"",
+          var verworfen=gelesen._verworfen||[]; delete gelesen._verworfen;
+          var hinweis=[d.hinweise, intervallHinweis,
+            verworfen.length?"Nicht übernommen (ungültiges Datum oder in der Zukunft): "+verworfen.join(", ")+".":"",
             nw.ungueltig.length?"Nicht übernommen (Datum in der Zukunft oder ungültig): "+nw.ungueltig.join(", ")+".":""].filter(Boolean).join(" ");
-          return kiPruefen(art==="pruefbuch"?"Prüfbuch":"Typenschild Außengerät", gelesen, a, felder, d.unsicher, hinweis).then(function(wahl){
+          /* „unsicher“ auf die Schlüssel der Prüfansicht bringen: Pfade („anlage.x“,
+             „pruefungen[1].datum“) und einzelne Prüfungsfelder zählen für die Zeile */
+          var unsP=(d.unsicher||[]).map(function(u){ u=String(u).trim();
+            return /^(pruefungen|datum|techniker|firma|maengel)\b/i.test(u) ? "pruefungen" : u.replace(/^anlage\s*[.:]\s*/i,"").replace(/\[\d+\]/g,""); });
+          return kiPruefen(art==="pruefbuch"?"Prüfbuch":"Typenschild Außengerät", gelesen, a, felder, unsP, hinweis).then(function(wahl){
             if(!wahl){ zurueck(); return; }
             Object.keys(wahl).forEach(function(k){
               if(k==="_nachweise") a._nachweiseNeu=(a._nachweiseNeu||[]).concat(wahl[k]);
+              else if(k==="_notizOhneTag") a._notizDazu=wahl[k];
               else if(k==="_intervall") a._termine.forEach(function(t){ t.intervallCode=wahl[k]; });
               else a[k]=wahl[k];
             });
-            if(nw.ohneTag.length && wahl._nachweise) a._notizDazu="Laut Prüfbuch außerdem (ohne Tag): "+nw.ohneTag.join(", ")+".";
             toast(Object.keys(wahl).length+" Angabe"+(Object.keys(wahl).length===1?"":"n")+" übernommen – bitte prüfen und dann „Übernehmen“.");
             uebersicht();
           });
@@ -4987,7 +5102,7 @@ function protokollLoeschen(p, grund, wiederher){
     return mitFrist(Store.sb.from("protokolle").update(zeile).eq("client_id",id).select("client_id"), 30000).then(function(r){
       if(r.error){
         Store.fehler = /column|geloescht/i.test(r.error.message)
-          ? "Die Datenbank kennt das Löschen noch nicht – bitte das Einrichtungsskript in Supabase erneut ausführen."
+          ? "Die Datenbank kennt das Löschen noch nicht – bitte das Einrichtungsskript (supabase-setup.sql) und danach tools/rollen.sql in Supabase erneut ausführen."
           : r.error.message;
         return false;
       }
@@ -5685,8 +5800,10 @@ function stammdatenUebertragen(){
    diesem Gerät; dort schützt eine PIN vor versehentlichen Eingriffen. */
 var Admin={frei:false, zentral:false, geprueft:false};
 /* Rollen. Inhaber (Manfred, Matthäus) haben zusätzlich Rückgängig, KI-Kosten
-   und die Kontenübersicht; Kunde und Präsentation lesen nur – die Datenbank
-   sperrt das Schreiben selbst (tools/rollen.sql). */
+   und die Kontenübersicht. Der Kunde liest nur (nurLesen()); die Präsentation
+   darf alles bedienen wie ein Admin, gespeichert wird aber nichts (demo() –
+   jedes Speichern fängt demo() ab). Die Datenbank sperrt das Schreiben für
+   beide selbst (tools/rollen.sql). */
 var Rolle={name:"techniker", da:false, gemerkt:false};
 function nurLesen(){ return Rolle.name==="kunde"; }
 /* Mit gemeinsamer Datenbank, aber abgemeldet, fehlt alles, was nur Angemeldete
@@ -5928,7 +6045,7 @@ function kontowechselAufraeumen(){
      Angefangene Wunschtexte bleiben – je Konto gemerkt (WUNSCH_ENTWURF, WUNSCH_TEXTE),
      ebenso Frage und Gespräch an Claude (frageSichern, noch unter dem alten Konto). */
   frageSichern();
-  FRAGE_VERLAUF=[]; FRAGE_ENTWURF=""; FRAGE_FENSTER=null; FRAGE_DECKNAMEN={}; WUENSCHE=[];
+  FRAGE_VERLAUF=[]; FRAGE_ENTWURF=""; FRAGE_FENSTER=null; FRAGE_WARTE=null; FRAGE_DECKNAMEN={}; WUENSCHE=[];
   document.querySelectorAll(".vorschau-rahmen [data-a=\"zu\"]").forEach(function(b){ b.click(); });
   document.querySelectorAll(".assistent[data-konto], .vorschau-rahmen").forEach(function(x){ x.remove(); });
   if(!document.querySelector(".assistent, .vorschau-rahmen")) document.body.style.overflow="";
@@ -6510,7 +6627,7 @@ function speichereProtokoll(id,doc){
     return Store.sb.from("protokolle").upsert(zeile,{onConflict:"client_id", ignoreDuplicates:true}).select("client_id").then(function(r){
       if(r.error){
         Store.fehler=/stoerung|mitarbeiter/.test(r.error.message||"")
-          ? "In der Datenbank fehlt eine Spalte – bitte supabase-setup.sql im Supabase SQL Editor erneut ausführen"
+          ? "In der Datenbank fehlt eine Spalte – bitte supabase-setup.sql und danach tools/rollen.sql im Supabase SQL Editor erneut ausführen"
           : r.error.message;
         return false;
       }
@@ -7121,7 +7238,8 @@ function kiAuftragText(art, kontext){
   return KI_AUFTRAG[art]+"\n\n"+
     "Daten immer als TT.MM.JJJJ; steht nur Monat und Jahr, schreibe MM.JJJJ. Lass Felder leer (\"\"), die nicht "+
     "auf den Fotos stehen – nichts ergänzen, nichts schätzen, keine Standardwerte. Nimm jedes Feld, bei dem die "+
-    "Schrift mehrdeutig ist, mit seinem Feldnamen in \"unsicher\" auf"+(art==="typenschild"?" (als \"geraet N: feld\")":"")+
+    "Schrift mehrdeutig ist, mit seinem Feldnamen in \"unsicher\" auf"+(art==="typenschild"?" (als \"geraet N: feld\")":
+      " (Feldname wie in der Vorlage, ohne Pfad, z. B. \"kaeltemittelKg\"; unsichere Prüfungsdaten als \"pruefungen\")")+
     " und erkläre in \"hinweise\" kurz, warum."+
     (kontext?"\n\nZur Einordnung (nur als Hilfe beim Entziffern, nichts davon ungelesen übernehmen): "+kontext:"")+
     "\n\nAntworte AUSSCHLIESSLICH mit einem JSON-Objekt genau in dieser Form – alle Werte als Text, "+
@@ -7589,7 +7707,9 @@ function kiZahl(t){
 function kiJn(t){ t=String(t||"").trim().toLowerCase(); return /^(ja|j|yes|x)$/.test(t)?"ja":/^(nein|n|no)$/.test(t)?"nein":null; }
 /* Datum aus der KI: nur echte Kalendertage (kein 31.09.) und nicht in der Zukunft */
 function kiDatum(t, zukunftOk){ var m=/(\d{1,2})\.\s*(\d{1,2})\.\s*(\d{2,4})/.exec(String(t||"")); if(!m) return null;
-  var j=m[3].length===2?"20"+m[3]:m[3], iso=j+"-"+("0"+m[2]).slice(-2)+"-"+("0"+m[1]).slice(-2);
+  /* zweistelliges Jahr: 20xx – außer das läge in der Zukunft, wo keine sein darf
+     (Konformität „15.03.95“ ist 1995, nicht 2095) */
+  var j=m[3].length===2 ? ((!zukunftOk && +("20"+m[3])>new Date().getFullYear()) ? "19"+m[3] : "20"+m[3]) : m[3], iso=j+"-"+("0"+m[2]).slice(-2)+"-"+("0"+m[1]).slice(-2);
   var d=new Date(iso+"T12:00:00");
   if(isNaN(d) || isoLokal(d)!==iso) return null;
   if(!zukunftOk && iso>isoLokal(new Date())) return null;
@@ -7611,6 +7731,12 @@ function kiAnlage(k){
   var dm=String(k.dichtheitMonate||""); setz("dichtheitMonate", /nz|nicht/i.test(dm)?"nz":((/(3|6|12|24)/.exec(dm)||[])[1]||null));
   setz("inbetriebnahme", kiDatum(k.inbetriebnahme));
   setz("konformitaet", kiDatum(k.konformitaet));
+  /* gelesen, aber kein gültiges Datum (kein Kalendertag, in der Zukunft): nicht
+     still verwerfen – die Prüfansicht nennt es (wie bei den Prüfungen) */
+  [["inbetriebnahme","Inbetriebnahme"],["konformitaet","Konformität"]].forEach(function(x){
+    var w=String(k[x[0]]||"").trim();
+    if(w && !kiDatum(w)) r._verworfen=(r._verworfen||[]).concat(x[1]+" „"+w+"“");
+  });
   return r;
 }
 /* Prüfungen aus dem Prüfbuch -> Wartungen laut Prüfbuch (nur mit vollem
@@ -7856,7 +7982,7 @@ function protokollAssistent(form, stoer){
     inhalt.innerHTML=frage(stoer?"Welche Anlage war betroffen?":"Welche Anlagen haben Sie gewartet?");
     var box=el('<div class="stack"></div>');
     var zeilen=form.querySelectorAll('#f_posbox label.chk');
-    if(!zeilen.length) box.appendChild(el('<div class="muted">Für diesen Markt ist keine wählbare Anlage eingetragen (zur Zeit nicht gewartete zählen für eine Wartung nicht).</div>'));
+    if(!zeilen.length && !(form._neueAnlagen && form._neueAnlagen().length)) box.appendChild(el('<div class="muted">Für diesen Markt ist keine wählbare Anlage eingetragen (zur Zeit nicht gewartete zählen für eine Wartung nicht).</div>'));
     zeilen.forEach(function(z){
       var cb=z.querySelector('input[name="posw"]'), slot=z.querySelector(".posslot");
       var name=z.querySelector("strong").textContent;
@@ -7873,9 +7999,14 @@ function protokollAssistent(form, stoer){
       }
       box.appendChild(k);
     });
+    /* vor Ort neu erfasste Anlagen zählen mit – sie haben keinen Haken */
+    (form._neueAnlagen ? form._neueAnlagen() : []).forEach(function(n){
+      box.appendChild(el('<div class="as-gruppe"><div class="as-gkopf"><span>'+esc((n.werte&&n.werte.anlagentyp)||"Neue Anlage")+
+        '</span><span class="tag">vor Ort neu erfasst</span></div></div>'));
+    });
     inhalt.appendChild(box);
   }, pruefen:function(){
-    return form.querySelectorAll('input[name="posw"]:checked').length ? "" :
+    return (form.querySelectorAll('input[name="posw"]:checked').length || (form._neueAnlagen && form._neueAnlagen().length)) ? "" :
       (stoer ? "Bitte die Anlage wählen, an der die Störung vorliegt." : "Bitte mindestens eine Anlage wählen.");
   }});
 
@@ -8399,6 +8530,9 @@ function viewProtokoll(){
   var anlagenHost=form.querySelector("#anlagen");
   var anlagenAend={};     /* posId -> geänderte Felder */
   var neueAnlagen=[];     /* vor Ort neu erfasst: {id, werte} */
+  /* für den Schritt-für-Schritt-Dialog: er sieht sonst nur die Haken der
+     vorhandenen Anlagen (neueAnlagen wird per filter neu gesetzt – daher Funktion) */
+  form._neueAnlagen=function(){ return neueAnlagen; };
   /* alte Protokolle hatten frei eingetippte Anlagenblöcke – die bleiben unverändert erhalten */
   var altAnlagen = (bearb && (bearb.anlagen||[]).length && !(bearb.anlagen||[]).some(function(x){ return x.positionId; })) ? bearb.anlagen : null;
   var ANLAGE_KEYS=ANLAGE_FELDER.map(function(f){ return f.k; });
@@ -11020,7 +11154,7 @@ function stammRueckgaengig(e){
      heißt „kein Datensatz“ einfach „Stand der Liste“ (leere Felder). Nur bei
      eigenen Einträgen ohne Liste darunter (neue Anlage, neuer Markt, Störung),
      die es inzwischen nicht mehr gibt, kommt der ganze Stand davor zurück. */
-  var schritte=[], ueber=[], ganz=0, still=[], ohneZugang=0, stoerWeg=[], spaeterWeg=[], zugangWeg=0;
+  var schritte=[], ueber=[], ganz=0, still=[], ohneZugang=0, stoerWeg=[], spaeterWeg=[], zugangWeg=0, marktStill=[];
   ids.forEach(function(id){
     if(weg.indexOf(id)>=0) return;       /* inzwischen gelöschte Störung nicht still zurückholen */
     var vorher=e.rueck[id], jetzt=stammStand[id]||null;
@@ -11041,6 +11175,16 @@ function stammRueckgaengig(e){
          dem Termin. Dann stilllegen statt löschen und die Wartung an die Anlage
          weiterleiten, zu der er gehört (wie beim Zusammenführen) – sonst fiele
          sie still aus Historie und Fälligkeit. */
+      /* ein von dieser Änderung angelegter Markt, an dem schon ein Protokoll
+         hängt: nicht löschen (das Protokoll verlöre seinen Markt, stillgelegte
+         Termine wären nicht mehr erreichbar), sondern stilllegen */
+      var sidNeu=jetzt.typ==="standort" ? jetzt.ziel : null;
+      var protSt=sidNeu ? alleProtokolle(true).filter(function(pr){ return pr.standortId===sidNeu; }) : [];
+      if(protSt.length){
+        schritte.push({id:id, rec:Object.assign({}, jetzt, {felder:Object.assign({}, jetzt.felder, {aktiv:false})})});
+        marktStill.push({name:byId[sidNeu] ? stName(byId[sidNeu]) : "Markt", n:protSt.length});
+        return;
+      }
       var pid=jetzt.typ==="position" ? jetzt.ziel : null;
       var prot=pid ? alleProtokolle(true).filter(function(pr){
         return ((pr.positionIds&&pr.positionIds.length)?pr.positionIds:(pr.positionId?[pr.positionId]:[])).indexOf(pid)>=0; }) : [];
@@ -11082,9 +11226,15 @@ function stammRueckgaengig(e){
     if(vorher.typ==="stoerung" && !statusAenderung)
       keys=keys.filter(function(k){ return ["erledigt","protokollId","geloescht","geloeschtVon"].indexOf(k)<0; });
     keys=keys.filter(function(k){ return !gleich(jF[k], vF[k]); });   /* steht schon wieder so da */
-    if(!keys.length) return;
+    /* hat diese Änderung Zugangsdaten geändert (Passwort geändert, beim
+       Zusammenführen den anderen Satz gewählt)? Die stehen nicht im Verlauf –
+       das alte kommt nicht zurück, und das muss die Rückfrage sagen */
+    var geheimGeaendert=vorher.typ==="position" && (
+      (e.felder||[]).some(function(x){ return GEHEIME_FELDER.indexOf(x.feld)>=0 || (x.feld==="zugang" && vorher.mitZugang); }) ||
+      (vorher.mitZugang && /zusammengef/i.test(e.grund||"") && !(e.felder||[]).some(function(x){ return x.feld==="zugang"; })));
+    if(!keys.length){ if(geheimGeaendert) ohneZugang++; return; }
     /* Zugangsdaten stehen nicht im Verlauf – mit dem Datensatz (Zurücksetzen) sind sie weg */
-    if(zurueckAufListe && vorher.typ==="position" && (vorher.mitZugang || vF.fernzugriff==="ja")) ohneZugang++;
+    if((zurueckAufListe && vorher.typ==="position" && (vorher.mitZugang || vF.fernzugriff==="ja")) || geheimGeaendert) ohneZugang++;
     var f=Object.assign({}, jetzt.felder);
     keys.forEach(function(k){ if(k in vF) f[k]=vF[k]; else delete f[k]; });
     /* nichts weicht mehr von der Excel-Liste ab: Datensatz weg, wie „leer“ in der Verwaltung */
@@ -11093,6 +11243,8 @@ function stammRueckgaengig(e){
     keys.forEach(function(k){ if(!gleich(jF[k], nF[k])) ueber.push({r:jetzt, k:k, alt:jF[k], neu:vF[k]}); });
   });
   if(!schritte.length){
+    /* nur Zugangsdaten geändert: die lassen sich nicht zurückholen – nicht „gilt schon wieder“ melden */
+    if(ohneZugang){ toast("Zugangsdaten der Regelung stehen nicht im Änderungsverlauf – der alte Stand (etwa das alte Passwort) kommt über „Rückgängig“ nicht zurück. Bitte von Hand eintragen."); return; }
     toast(weg.length ? "Die betroffene Störung ist inzwischen gelöscht – nichts zurückgenommen."
                      : "Der Stand vor dieser Änderung gilt schon wieder – nichts zurückzunehmen.");
     return;
@@ -11106,10 +11258,13 @@ function stammRueckgaengig(e){
       "Neuere Änderungen besser zuerst zurücknehmen.":"")+
     (zugangWeg?"\n\nAchtung: Dabei gehen die Zugangsdaten der Regelung (Link, Benutzer, Passwort) endgültig verloren – sie stehen nicht im "+
       "Änderungsverlauf und kommen auch über „Rückgängig“ nicht zurück. Bitte vorher notieren.":"")+
-    (ohneZugang?"\n\nZugangsdaten der Regelung (Link, Benutzer, Passwort) stehen nicht im Änderungsverlauf und kommen nicht zurück – bitte danach neu eintragen.":"")+
+    (ohneZugang?"\n\nZugangsdaten der Regelung (Link, Benutzer, Passwort) stehen nicht im Änderungsverlauf und kommen nicht zurück – "+
+      "der jetzige Satz bleibt, der frühere ist nicht wiederherstellbar. Bitte danach von Hand prüfen bzw. neu eintragen.":"")+
     (still.length?"\n\nAn "+(still.length===1?"diesem Termin":"diesen Terminen")+" hängt schon ein Protokoll – "+(still.length===1?"er wird":"sie werden")+
       " deshalb nicht gelöscht, sondern stillgelegt:\n"+still.map(function(x){ return "· "+x.name+" (Protokoll vom "+x.prot+")"+
         (x.weiter?" – die Wartung zählt weiter für „"+x.weiter+"“":" – die Wartung zählt dann nirgends mehr, bitte das Protokoll einem Termin zuordnen"); }).join("\n"):"")+
+    (marktStill.length?"\n\n"+marktStill.map(function(x){ return "Markt „"+x.name+"“ wird nicht gelöscht, sondern stillgelegt – "+
+      x.n+" Protokoll(e) hängen daran."; }).join("\n"):"")+
     (weg.length?"\n\n"+weg.length+" betroffene Störung(en) wurde(n) inzwischen gelöscht und bleiben gelöscht.":"");
   if(!window.confirm(frage)) return;
   var grund=window.prompt("Warum wird die Änderung zurückgenommen?","");
@@ -11139,9 +11294,12 @@ function stammRueckgaengig(e){
     }
     protokolliere({art:"stammdaten", standortId:e.standortId, standortName:e.standortName,
       grund:"Rückgängig (Änderung vom "+zeitFmt(e.zeit)+"): "+grund.trim()+(fehlt?" – nur teilweise übernommen":""),
-      felder:(e.felder||[]).map(function(x){ return {feld:x.feld, name:x.name, alt:x.neu, neu:x.alt}; })
+      /* Zugangsdaten wurden nicht zurückgenommen – nicht als zurückgenommen verbuchen */
+      felder:(e.felder||[]).filter(function(x){ return GEHEIME_FELDER.indexOf(x.feld)<0 && x.feld!=="zugang"; })
+        .map(function(x){ return {feld:x.feld, name:x.name, alt:x.neu, neu:x.alt}; })
         .concat(ueber.map(function(x){ return {feld:x.k, name:rueckFeldName(x.r, x.k)+" (seither geändert)", alt:stammWert(x.k, x.alt), neu:stammWert(x.k, x.neu)}; }))
         .concat(still.map(function(x){ return {feld:"aktiv", name:x.name, alt:"in Betrieb", neu:"stillgelegt – Protokoll vom "+x.prot+" hängt daran"}; }))
+        .concat(marktStill.map(function(x){ return {feld:"aktiv", name:"Markt „"+x.name+"“", alt:"angelegt", neu:"stillgelegt – "+x.n+" Protokoll(e) hängen daran"}; }))
         .concat(spaeterWeg.map(function(nm){ return {feld:"geloescht", name:nm+" (seither geändert)", alt:"vorhanden", neu:"gelöscht"}; }))
         .concat(stoerWeg.map(function(st){ return {feld:"stoerung", name:"Offene Störung", alt:st, neu:"gelöscht"}; })),
       rueck:rueck});
@@ -11488,7 +11646,9 @@ function viewVerwaltung(){
   var menue=el('<div class="card"><div class="pad"><div class="chips" role="tablist" style="gap:8px">'+
     [["nachbessern","Nachbessern"+(fehlerZahl?" · "+fehlerZahl+" Fehler":"")],["maerkte","Märkte & Anlagen"]]
       /* Änderungswünsche: was auf eine Entscheidung wartet, steht als Zahl dran */
-      .concat(istInhaber() && Store.modus==="supabase" && Store.sb ? [["wuensche","Änderungswünsche"+(wunschZahl()?" · "+wunschZahl():"")]] : [])
+      /* nicht in der Vorschau/Präsentation (demo): dort dürfen die Wünsche weder
+         geladen noch abgeglichen werden – der Reiter stünde nur leer da */
+      .concat(istInhaber() && !demo() && Store.modus==="supabase" && Store.sb ? [["wuensche","Änderungswünsche"+(wunschZahl()?" · "+wunschZahl():"")]] : [])
       .concat(istInhaber() && Store.modus==="supabase" && Store.sb ? [["inhaber","Inhaber"]] : [])
       .map(function(t){ return '<button class="chip" type="button" role="tab" data-tab="'+t[0]+'" aria-pressed="'+(A.tab===t[0])+'">'+esc(t[1])+"</button>"; }).join("")+
     "</div></div></div>");
@@ -11496,6 +11656,7 @@ function viewVerwaltung(){
   f.appendChild(menue);
   if(A.tab==="nachbessern"){ f.appendChild(nachbessernAnsicht(liste)); return f; }
   if((A.tab==="inhaber"||A.tab==="wuensche") && !(istInhaber() && Store.modus==="supabase")) A.tab="nachbessern";   /* nach Kontowechsel */
+  if(A.tab==="wuensche" && demo()) A.tab="nachbessern";
   if(A.tab==="wuensche"){
     try{ f.appendChild(wuenscheAnsicht()); }catch(e){ console.error(e); }
     return f;
@@ -12204,7 +12365,7 @@ function verwaltungEditor(s){
        jetzt sind – sonst gälten sie als geleert, und ein entfernter Markt käme still zurück */
     STAMM_FELDER_ST.forEach(function(k){ if(!(k in neuSt)) neuSt[k]=vorherSt[k]; });
     var deltaSt=objDiff(vorherSt,neuSt,STAMM_FELDER_ST);
-    Object.keys(deltaSt).forEach(function(k){ protokoll.push({feld:k, name:LABEL_ST[k], alt:stammWert(k,vorherSt[k]), neu:stammWert(k,neuSt[k])}); });
+    Object.keys(deltaSt).forEach(function(k){ protokoll.push({_rid:"standort:"+s.id, feld:k, name:LABEL_ST[k], alt:stammWert(k,vorherSt[k]), neu:stammWert(k,neuSt[k])}); });
     if(s._neu){
       if(Object.keys(deltaSt).length || s._entwurf) recs.push({id:"standort:"+s.id, felder:neuSt, neu:true});
     } else if(Object.keys(deltaSt).length){
@@ -12213,7 +12374,7 @@ function verwaltungEditor(s){
     }
 
     /* Anlagen und ihre Termine: was in einer Karte steht, gehört zusammen */
-    var fehlend=[], doppelt=[], kuenftig=[], unlesbar=[], tausender=[];
+    var fehlend=[], doppelt=[], kuenftig=[], unlesbar=[], tausender=[], reaktiv=[];
     /* nurFest: bloßes Festschreiben der Zuordnung in Karten ohne eigene Änderung;
        paarung: im Markt ändert sich, wonach die App Termine automatisch paart */
     var nurFest=[], paarung=false, PAAR_FELDER=["anlagentyp","intervallCode","monat","aktiv","anlageZu"];
@@ -12279,7 +12440,7 @@ function verwaltungEditor(s){
         });
         if(p0 && !neuP.pausiert && !p0.pausiert) neuP.pausiert=p0.pausiert;
         /* wieder in Betrieb: eine beim Zusammenführen stillgelegte Zeile leitet nicht mehr weiter */
-        if(neuP.aktiv && neuP.zusammengefuehrtIn) neuP.zusammengefuehrtIn=null;
+        if(neuP.aktiv && neuP.zusammengefuehrtIn){ if(p0 && p0.aktiv===false) reaktiv.push(p0); neuP.zusammengefuehrtIn=null; }
         /* „vor Ort neu“ erst erledigt, wenn Kürzel UND Soll-Monat da sind – nicht bei jedem Speichern */
         if(p0) neuP.vorOrtNeu = (p0.vorOrtNeu && !(neuP.intervallCode && neuP.monat)) ? p0.vorOrtNeu : (p0.vorOrtNeu ? false : p0.vorOrtNeu);
         /* Was hier gegenüber dem Aufbau nicht geändert wurde, bleibt so, wie es
@@ -12307,7 +12468,7 @@ function verwaltungEditor(s){
           if(!neuP.intervallCode && !neuP.inbetriebnahme && !kartenName) return;  /* leer geblieben */
           neuP.standortId=s.id;
           recs.push({id:"position:"+pid, felder:neuP, neu:true}); paarung=true;
-          protokoll.push({feld:"anlage", name:"Neuer Termin", alt:"–",
+          protokoll.push({_rid:"position:"+pid, feld:"anlage", name:"Neuer Termin", alt:"–",
             neu:(kartenName||"Anlage")+" · "+(neuP.intervallCode||"ohne Kürzel")+(neuP.inbetriebnahme?" · IB "+dfmt(neuP.inbetriebnahme):"")});
           return;
         }
@@ -12322,7 +12483,7 @@ function verwaltungEditor(s){
         var schonDabei=!istAnker && !!ankerP0 && ankerP0.anlageId===ankerPid && p0.anlageId===ankerPid;
         Object.keys(deltaP).forEach(function(kk){
           if(kk==="anlageZu" && schonDabei) return;
-          protokoll.push({feld:kk, name:name+" – "+(LABEL_POS[kk]||kk), alt:stammWert(kk,vorherP[kk]), neu:stammWert(kk,neuP[kk])});
+          protokoll.push({_rid:"position:"+pid, feld:kk, name:name+" – "+(LABEL_POS[kk]||kk), alt:stammWert(kk,vorherP[kk]), neu:stammWert(kk,neuP[kk])});
         });
         var nurZuordnung=schonDabei && Object.keys(deltaP).join()==="anlageZu";
         if(!nurZuordnung && Object.keys(deltaP).some(function(kk){ return PAAR_FELDER.indexOf(kk)>=0; })) paarung=true;
@@ -12359,11 +12520,49 @@ function verwaltungEditor(s){
         ".\n\nStimmt das? Sonst abbrechen und die Dezimalstellen mit Komma eingeben (z. B. 1,15).")) return;
     if(doppelt.length && !window.confirm("Zwei Termine im selben Monat: "+doppelt.join(", ")+
         ".\n\nGewollt? Sonst abbrechen und einen der Termine auf den Halbjahresmonat setzen.")) return;
+    /* beim Zusammenführen stillgelegte Zeilen wieder in Betrieb: vorher sagen,
+       was das heißt, und die damals kopierten Wartungen (ausZeile) bei der
+       bleibenden Anlage wieder wegnehmen – sonst stünden sie doppelt da */
+    if(reaktiv.length){
+      var rIds=reaktiv.map(function(p){ return p.id; });
+      var ziele=reaktiv.map(function(p){ var z=posById[p.zusammengefuehrtIn]; return z ? "„"+anlagenName(z)+"“" : ""; })
+        .filter(function(x,i,l){ return x && l.indexOf(x)===i; });
+      var kopien=0, kopieRecs=[];
+      ALLE_POS.forEach(function(q){
+        if(q.standortId!==s.id || rIds.indexOf(q.id)>=0) return;
+        var nw=q.nachweise||[], rest=nw.filter(function(n){ return !(n && rIds.indexOf(n.ausZeile)>=0); });
+        if(rest.length===nw.length) return;
+        kopien+=nw.length-rest.length; kopieRecs.push({q:q, rest:rest});
+      });
+      /* ältere Zusammenführungen: weitere Zeilen desselben Vorgangs, die stillgelegt bleiben */
+      var uebrig=ALLE_POS.filter(function(q){ return q.standortId===s.id && q.aktiv===false && q.zusammengefuehrtIn && rIds.indexOf(q.id)<0 &&
+        reaktiv.some(function(p){ return String(p.notiz||"").trim()===String(q.notiz||"").trim(); }); });
+      if(!window.confirm("Diese Anlage wurde mit "+(ziele.join(", ")||"einer anderen Anlage")+" zusammengeführt. Wieder in Betrieb nehmen heißt:\n"+
+          (kopien?"· die damals übernommenen "+kopien+" Wartung(en) werden dort wieder entfernt,\n":"")+
+          "· App-Protokolle dieser Anlage zählen wieder hier – dort kann dadurch ein Termin wieder fällig werden,\n"+
+          "· damals übernommene Termine und umgehängte Störungen bleiben dort."+
+          (uebrig.length?"\n\nAchtung: "+uebrig.length+" weitere Zeile(n) desselben Zusammenführens bleiben stillgelegt ("+
+            uebrig.map(function(q){ return anlagenName(q)+" "+(q.intervallCode||""); }).join(", ")+") – bitte dort ebenfalls umstellen.":"")+
+          "\n\nSauberer ist meist „Rückgängig“ im Änderungsverlauf. Trotzdem wieder in Betrieb nehmen?")) return;
+      kopieRecs.forEach(function(x){
+        var id="position:"+x.q.id, vorhanden=recs.filter(function(r){ return r.id===id; })[0];
+        protokoll.push({_rid:id, feld:"nachweise", name:anlagenName(x.q)+" – "+(LABEL_POS.nachweise||"Wartungen"),
+          alt:stammWert("nachweise", x.q.nachweise), neu:stammWert("nachweise", x.rest)});
+        if(vorhanden){ vorhanden.felder=Object.assign({}, vorhanden.felder, {nachweise:x.rest}); vorhanden.leer=false; return; }
+        var neuQ=Object.assign(auswahl(x.q, STAMM_FELDER_POS), {nachweise:x.rest});
+        if(x.q._neu){ neuQ.standortId=s.id; recs.push({id:id, felder:neuQ, neu:true}); }
+        else { var gQ=objDiff(EXCEL[id], neuQ, STAMM_FELDER_POS); recs.push({id:id, felder:gQ, neu:false, leer:!Object.keys(gQ).length}); }
+      });
+    }
     if(!recs.length){ fehler("Es wurde nichts geändert."); return; }
 
     var knopf=c.querySelector("#a_speichern"); knopf.disabled=true; knopf.textContent="Wird gespeichert …";
-    var rueck={};
+    var rueck={}, altStand={};
+    /* Kennung nur zum Zuordnen beim Teil-Fehlschlag – nicht in den Verlauf */
+    var ohneKennung=function(l){ return l.map(function(x){ var y=Object.assign({}, x); delete y._rid; return y; }); };
     Promise.all(recs.map(function(r){
+      /* Stand davor merken: schlägt das Speichern fehl, gilt er wieder */
+      altStand[r.id]={u:stammUeber[r.id], s:stammStand[r.id], imPuffer:(r.id in rueck)};
       /* weicht nicht mehr von der Liste ab: nicht einfach löschen – was zentral
          inzwischen jemand anderer geändert hat, bleibt (stammSpeichern legt nur
          die eigenen Änderungen auf den zentralen Stand; leer → gelöscht) */
@@ -12381,12 +12580,28 @@ function verwaltungEditor(s){
       return stammSpeichern(rec, false, rueck);
     })).then(function(erg){
       if(erg.indexOf(false)>=0){
+        /* nicht Gespeichertes zurück auf den alten Stand; schon Gespeichertes
+           kommt mit seinen Zeilen in den Verlauf (rücknehmbar) – ein neuer
+           Versuch speichert dann nur noch den Rest */
+        var gespeichert={};
+        recs.forEach(function(r, i){
+          var a=altStand[r.id];
+          if(erg[i]===false){
+            if(a.u) stammUeber[r.id]=a.u; else delete stammUeber[r.id];
+            if(a.s) stammStand[r.id]=a.s; else delete stammStand[r.id];
+            if(!a.imPuffer) delete rueck[r.id];
+          } else gespeichert[r.id]=1;
+        });
+        wendeStammdatenAn();
+        var teil=protokoll.filter(function(x){ return gespeichert[x._rid]; });
+        if(teil.length) protokolliere({art:"stammdaten", standortId:s.id, standortName:stName(byId[s.id]||s),
+          grund:grund+" (nur teilweise gespeichert)", felder:ohneKennung(teil), rueck:rueck});
         knopf.disabled=false; knopf.textContent="Änderungen speichern";
-        fehler("Ein Teil der Änderungen ließ sich nicht speichern. Bitte erneut versuchen.");
+        fehler("Ein Teil der Änderungen ließ sich nicht speichern"+(teil.length?" (der gespeicherte Teil steht im Änderungsverlauf)":"")+". Bitte erneut versuchen.");
         return;
       }
       wendeStammdatenAn();
-      protokolliere({art:"stammdaten", standortId:s.id, standortName:stName(byId[s.id]||s), grund:grund, felder:protokoll, rueck:rueck});
+      protokolliere({art:"stammdaten", standortId:s.id, standortName:stName(byId[s.id]||s), grund:grund, felder:ohneKennung(protokoll), rueck:rueck});
       A.entwurf=null; A.sel=s.id;
       toast((s._entwurf?"Markt angelegt":"Gespeichert – "+protokoll.length+" Änderung"+(protokoll.length===1?"":"en"))+
             (erg.indexOf("geraet")>=0?" (vorerst nur auf diesem Gerät)":"")+".");
@@ -12432,6 +12647,13 @@ function pruefListe(){
     if(!p.letzte && p.status==="ueberfaellig") dazu("Hinweis","Termine", anlagenName(p)+": nie gewartet erfasst und überfällig – fehlt ein Nachweis (Liste, Prüfbuch, Protokoll)?", s, {pid:p.id, nachweis:true});
   });
 
+  /* Protokolle, deren Markt es nicht mehr gibt (etwa früher per „Rückgängig“ gelöscht) */
+  protos.forEach(function(pr){
+    if(pr.geloescht || !pr.standortId || byId[pr.standortId]) return;
+    dazu("Fehler","Protokoll", "Protokoll vom "+dfmt(pr.datum)+" („"+(pr.standortName||pr.standortId)+"“): der Markt dazu fehlt – "+
+      "bitte den Markt wieder anlegen oder das Protokoll einem Markt zuordnen.", null);
+  });
+
   /* 3. Doppelte Anlagen */
   var nachSn={};
   ALLE_POS.forEach(function(p){
@@ -12449,6 +12671,8 @@ function pruefListe(){
     var an=anlagenDesMarkts(s,false).map(function(a){ return {p:a.leader, d:anlageDaten(a.leader)}; });
     an.forEach(function(x,i){
       an.slice(i+1).forEach(function(y){
+        /* als „eigene Anlage“ bestätigt (Mögliche Doppelanlagen): nicht mehr melden */
+        if(x.p.doppelGeprueft || y.p.doppelGeprueft) return;
         var gleichesModell=x.d.modell && y.d.modell && x.d.modell.replace(/\s+/g,"").toUpperCase()===y.d.modell.replace(/\s+/g,"").toUpperCase();
         var snX=String(x.d.seriennummer||""), snY=String(y.d.seriennummer||"");
         if(!gleichesModell || (snX && snY && snX!==snY)) return;
@@ -12686,11 +12910,16 @@ function altlastenFaelle(){
       var l=jeName[nm]; if(l.length<2) return;
       /* bewusst getrennt (schon EINE ausdrücklich eigene Anlage genügt), als
          eigene Anlage bestätigt oder schon einmal bereinigt bzw. geprüft */
-      if(l.some(function(a){ return a.termine.some(function(t){ return t.anlageZu===t.id || t.doppelGeprueft || geprueft[t.id]; }); })) return;
+      if(l.some(function(a){ return a.termine.some(function(t){ return t.anlageZu===t.id || t.doppelGeprueft; }); })) return;
       /* nur die klare Altlast: Zeilen, die jede für sich nur eine Jahreswartung haben */
       var alleJW=l.every(function(a){ return a.termine.length===1 && intervallArt(a.termine[0].intervallCode).kurz==="JW"; });
       if(!alleJW) return;
       var fall={s:s, name:anlagenName(l[0].leader), anlagen:l, vorschlag:null, grund:""};
+      /* schon einmal behandelt (Merker) und im Verlauf zurückgenommen: die
+         Automatik baut nicht erneut um (nur einmal) – der Fall bleibt aber
+         sichtbar, zum Ordnen von Hand */
+      if(l.some(function(a){ return a.termine.some(function(t){ return geprueft[t.id]; }); })){
+        fall.grund="nach „Rückgängig“ wieder offen – bitte von Hand ordnen"; faelle.push(fall); return; }
       if(l.length!==2){ fall.grund=l.length+" Zeilen – bitte von Hand ordnen"; faelle.push(fall); return; }
       var d0=anlageDaten(l[0].leader), d1=anlageDaten(l[1].leader);
       /* verschiedenes Typenschild: wohl zwei Geräte gleichen Namens – nur Hinweis */
@@ -13198,16 +13427,20 @@ function handbuchKarte(z){
           "derselben Störung gilt noch; beim Wiederherstellen bzw. Zurücknehmen ist sie wieder erledigt, wenn es noch passt. "+
           "Erledigte Störungen, deren Protokoll nicht mehr passt, meldet „Nachbessern“.",
         "<strong>Mögliche Doppelanlagen:</strong> neu angelegte Anlagen neben Anlagen aus der Liste – „ist dieselbe wie …“ führt zusammen "+
-          "(Daten und Wartungen werden vereint, die doppelte wird stillgelegt). Haben beide Zugangsdaten zur Regelung, fragt die App, welcher Satz gilt – immer als ganzer Satz.",
+          "(Daten, Notiz und Wartungen werden vereint, die doppelte wird stillgelegt). Haben beide Zugangsdaten zur Regelung, fragt die App, welcher Satz gilt – immer als ganzer Satz; "+
+          "der andere Satz kommt auch über „Rückgängig“ nicht zurück. Wird die stillgelegte später im Editor wieder in Betrieb genommen, "+
+          "nimmt die App die damals übernommenen Wartungen bei der bleibenden Anlage wieder weg (mit Rückfrage).",
         "<strong>KI liest Prüfbücher, Typenschilder und Lidl-Aufträge:</strong> zwei Wege – Claude-App (im Abo) oder direkt in der App "+
           "(ca. 10–25 Cent je Fotoserie, je nach Seitenzahl; nur mit eingeschaltetem KI-Zugang) – und das Ergebnis kommt "+
           "<strong>immer zur Kontrolle</strong>, nichts wird ungesehen gespeichert.",
         "<strong>✦ Claude fragen:</strong> Claude-App (Abo), über GitHub (Abo, 1–2 Minuten, öffentlich lesbar – der Markt nur als „Markt A“ "+
           "ohne Namen und Adresse, statt der Übersicht erfundene Testdaten) oder direkt (ca. 0,2 Cent je Frage, mit Übersicht aller Märkte "+
-          "ca. 1–1,5 Cent; nur mit eingeschaltetem KI-Zugang). Auf Wunsch mit dem offenen Markt oder einer Übersicht aller Märkte.",
+          "ca. 1–1,5 Cent; nur mit eingeschaltetem KI-Zugang). Auf Wunsch mit dem offenen Markt oder einer Übersicht aller Märkte. "+
+          "In der Präsentation nur über die eigene Claude-App, die Übersicht dann als erfundene Testdaten.",
         "<strong>💡 Änderungswünsche:</strong> jede Person, die mitarbeitet, kann einen Wunsch schicken. Nur der Inhaber gibt frei; Claude "+
           "setzt auf einer Kopie um, eine automatische Prüfung testet die App (Syntax, Regeln, Start am PC und am Handy), erst "+
-          "„Übernehmen“ ändert die echte App. Jede Übernahme lässt sich rückgängig machen."]))+
+          "„Übernehmen“ ändert die echte App. Hat Claude eine Rückfrage, beantwortest du sie mit „Claude antworten …“. "+
+          "Jede Übernahme lässt sich rückgängig machen (Aufträge höchstens 4000 Zeichen)."]))+
 
     abschnitt("6 · Rollen",
       liste(["<strong>Inhaber</strong> – alles, dazu Rollenübersicht, KI-Kosten und Änderungswünsche freigeben.",
@@ -13215,7 +13448,8 @@ function handbuchKarte(z){
         "<strong>Techniker</strong> – Protokolle, Störungen, Anlagendaten ergänzen und Termine prüfen (Soll-Monat, Kürzel – neue "+
           "Termine legt das Büro an), Wünsche schicken, Claude fragen.",
         "<strong>Kunde</strong> – nur ansehen (Fällig, Karte, Anlagen, Verlauf), keine internen Daten.",
-        "<strong>Präsentation</strong> – Spielwiese zum Vorführen, nichts wird gespeichert, keine KI-Kosten.",
+        "<strong>Präsentation</strong> – Spielwiese zum Vorführen: alles bedienbar wie als Admin, nichts wird gespeichert, keine KI-Kosten "+
+          "(KI und „Claude fragen“ nur über die eigene Claude-App bzw. mit Beispieldaten).",
         "Die Rechte prüft die Datenbank selbst – ein verstecktes Menü allein wäre kein Schutz."]))+
 
     abschnitt("7 · Schwachstellen und worauf zu achten ist",
@@ -13370,6 +13604,13 @@ var FRAGE_VERLAUF=[];
    gescheiterte Frage landet dort, auch wenn es inzwischen neu geöffnet wurde;
    FRAGE_ENTWURF hält eine gescheiterte Frage, bis das Fenster wieder aufgeht */
 var FRAGE_FENSTER=null, FRAGE_ENTWURF="", FRAGE_DECKNAMEN={};
+/* Wartezeile der laufenden Anfrage – gehört nicht zu einem Fenster: ein neu
+   geöffnetes zeigt sie weiter und sperrt seine Knöpfe, bis die Antwort da ist
+   (sonst ginge dieselbe Frage ein zweites Mal hinaus) */
+var FRAGE_WARTE=null;
+/* „Claude fragen“: wer mitarbeitet – und die Präsentation (auch die Vorschau)
+   nur über die eigene Claude-App (kostet nichts, speichert nichts) */
+function frageAn(){ return wuenscheAn() || (demo() && !!Store.benutzer); }
 function frageSchluessel(){ var m=Store.benutzer&&Store.benutzer.email; return m ? "ukt-frage:"+m : null; }
 /* Frage und Gespräch des angemeldeten Kontos auf dem Gerät sichern (nicht in der Präsentation) */
 function frageSichern(leeren){
@@ -13515,7 +13756,8 @@ function anlagenListeText(){
 }
 function frageText(t){ return String(t||"").replace(/^#+\s*/gm,"").replace(/\*\*/g,"").replace(/`/g,""); }
 function claudeFragen(){
-  if(!wuenscheAn()){ toast("Dafür bitte anmelden."); return; }
+  if(!frageAn()){ toast(Store.benutzer ? "Mit diesem Konto nicht verfügbar." : "Dafür bitte anmelden."); return; }
+  var nurApp=demo();   /* Präsentation/Vorschau: nur der Weg über die eigene Claude-App */
   var markt=frageMarkt();
   var v=ansichtOeffnen("Claude fragen");
   v.inhalt.closest(".assistent").setAttribute("data-konto","");   /* gehört zum Konto – beim Kontowechsel zu */
@@ -13528,17 +13770,19 @@ function claudeFragen(){
     '<label class="chk" style="font-size:13px"><input type="checkbox" data-a="alle"><span>Übersicht aller Märkte mitschicken '+
       '(Fälliges, Überfälliges, offene Störungen) – für Fragen zur ganzen Datenbank</span></label>'+
     /* „Direkt“ gibt es nur mit eingeschaltetem KI-Zugang – dann auch nur so beschreiben */
+    (nurApp ? '<div class="note" style="font-size:12.5px"><strong>Präsentation: nur über die eigene Claude-App</strong> – im Abo, '+
+      "du wechselst kurz in die Claude-App. Die Übersicht aller Märkte geht als erfundene Testdaten mit. Hier wird nichts gespeichert.</div>" :
     '<div class="note" style="font-size:12.5px"><strong>'+(kiAn()?"Drei Wege":"Zwei Wege")+':</strong> '+
       "<strong>Claude-App</strong> – im Abo, sofort, du wechselst kurz in die Claude-App. "+
       "<strong>Über GitHub</strong> – im Abo, Antwort kommt hier nach 1–2 Minuten. <strong>Öffentlich lesbar:</strong> dort steht deine Frage "+
       "(samt früheren GitHub-Fragen, nie etwas aus den anderen Wegen), der Markt nur als „Markt A“ ohne Namen, Ort, Adresse und Störungstexte, "+
       "statt der Übersicht <em>erfundene Testdaten</em> (bis der eigene Server läuft)."+
-      (kiAn()?" <strong>Direkt</strong> – sofort hier, ca. 0,2 Cent je Frage, mit Übersicht aller Märkte ca. 1–1,5 Cent.":"")+"</div>"+
+      (kiAn()?" <strong>Direkt</strong> – sofort hier, ca. 0,2 Cent je Frage, mit Übersicht aller Märkte ca. 1–1,5 Cent.":"")+"</div>")+
     '<div class="muted" style="font-size:12px">Keine Passwörter oder Zugangsdaten hineinschreiben. Antworten von Claude können irren – '+
       "bei Vorschriften und Grenzwerten bitte gegenprüfen.</div></div>");
   v.inhalt.appendChild(box);
   var verlauf=box.querySelector('[data-a="verlauf"]'), feld=box.querySelector('[data-a="frage"]');
-  var warte=null;   /* Wartezeile einer laufenden Anfrage aus diesem Fenster */
+  /* Wartezeile einer laufenden Anfrage: FRAGE_WARTE (für alle Fenster) */
   var zeigen=function(){
     verlauf.innerHTML="";
     FRAGE_VERLAUF.forEach(function(n){
@@ -13546,10 +13790,10 @@ function claudeFragen(){
         (n.role==="user"?"background:var(--accent);color:#fff;margin-left:18%":"background:var(--ground);border:1px solid var(--line);margin-right:8%")+'">'+
         esc(n.role==="user"?n.text:frageText(n.text))+(n.weg?'<div class="muted" style="font-size:11px;margin-top:4px">'+esc(n.weg)+"</div>":"")+"</div>"));
     });
-    if(warte) verlauf.appendChild(warte);
+    if(FRAGE_WARTE) verlauf.appendChild(FRAGE_WARTE);
     if(FRAGE_VERLAUF.length) setTimeout(function(){ feld.scrollIntoView({block:"nearest"}); }, 30);
   };
-  FRAGE_FENSTER={feld:feld, zeigen:zeigen};
+  FRAGE_FENSTER={feld:feld, zeigen:zeigen, knoepfe:function(an){ knoepfe(an); }};
   /* angefangene oder gescheiterte Frage von vorhin – bleibt gemerkt, bis sie abgeschickt ist, auch wenn das Fenster wieder zugeht */
   frageGemerktHolen();   /* nach Neuladen bzw. erneuter Anmeldung */
   if(FRAGE_ENTWURF) feld.value=FRAGE_ENTWURF;
@@ -13560,7 +13804,7 @@ function claudeFragen(){
     var c=box.querySelector('[data-a="markt"]'), a=box.querySelector('[data-a="alle"]'), t=[];
     if(markt && c && c.checked) t.push(marktKurzText(markt, oeffentlich ? marktDeckname(markt) : false));
     /* über GitHub (öffentlich): erfundene Testdaten statt der echten Übersicht */
-    if(a && a.checked) t.push(oeffentlich ? testUebersichtText() : uebersichtText());
+    if(a && a.checked) t.push((oeffentlich || demo()) ? testUebersichtText() : uebersichtText());
     return t.join("\n\n");
   };
   var neu=el('<button class="btn ghost sm" type="button">Neues Gespräch</button>');
@@ -13568,7 +13812,10 @@ function claudeFragen(){
   var gh=el('<button class="btn ghost" type="button">Über GitHub (Abo)</button>');
   var direkt=el('<button class="btn ghost" type="button">Direkt · ca. 0,2–1,5 Cent</button>');
   var knoepfe=function(an){ [app,gh,direkt,neu].forEach(function(b){ b.disabled=!an; }); };
-  neu.onclick=function(){ FRAGE_VERLAUF=[]; zeigen(); feld.value=""; FRAGE_ENTWURF=""; frageSichern(true); feld.focus(); };
+  /* läuft noch eine Anfrage (aus einem vorher geschlossenen Fenster): gesperrt lassen */
+  knoepfe(!FRAGE_WARTE);
+  /* nur das Gespräch leeren – eine getippte, noch nicht geschickte Frage bleibt stehen */
+  neu.onclick=function(){ FRAGE_VERLAUF=[]; FRAGE_DECKNAMEN={}; zeigen(); frageSichern(true); feld.focus(); };
   var frageHolen=function(){ var f=feld.value.trim(); if(!f) toast("Bitte zuerst die Frage eingeben."); return f; };
   /* Claude-App: alles in die Zwischenablage, claude.ai mit der Frage öffnen */
   app.onclick=function(){
@@ -13584,18 +13831,29 @@ function claudeFragen(){
     }
     /* zu lang für einen Link: NICHT halb vorbelegen (sonst schickt man die Frage
        ohne Daten ab) – alles in die Zwischenablage, Claude leer öffnen, einmal einfügen */
-    inZwischenablage(alles, "Frage samt Daten");
     var h=ansichtOeffnen("In Claude einfügen");
     h.inhalt.closest(".assistent").setAttribute("data-konto","");
-    h.schritt.textContent="Frage und Daten sind kopiert ("+Math.round(alles.length/1000)+" 000 Zeichen)";
+    h.schritt.textContent="Frage und Daten werden kopiert ("+Math.round(alles.length/1000)+" 000 Zeichen) …";
+    /* zum Markieren von Hand, falls das Kopieren nicht klappt */
+    var ta=el('<textarea readonly rows="6" style="width:100%;font-size:12px" hidden></textarea>'); ta.value=alles;
+    var kopiert=function(ok){
+      h.schritt.textContent = ok ? "Frage und Daten sind kopiert ("+Math.round(alles.length/1000)+" 000 Zeichen)"
+                                 : "Kopieren hat nicht geklappt – Text unten markieren und kopieren";
+      if(!ok) ta.hidden=false;
+    };
+    inZwischenablage(alles, "Frage samt Daten").then(kopiert);
     h.inhalt.appendChild(el('<div class="stack" style="font-size:15px">'+
       '<ol style="margin:0 0 0 20px;padding:0;line-height:1.7">'+
         "<li><strong>„Claude öffnen“</strong> tippen – es öffnet sich ein neuer Chat.</li>"+
         "<li>Ins Eingabefeld tippen und halten → <strong>Einfügen</strong>.</li>"+
         "<li><strong>Senden</strong> – Frage und Daten gehen zusammen hinaus.</li></ol>"+
       '<div class="muted" style="font-size:12.5px">Die Daten sind zu lang für einen direkten Link, deshalb dieser eine Schritt. Kosten: keine, läuft über das Claude-Abo.</div></div>'));
+    h.inhalt.appendChild(ta);
+    var ansehen=el('<button class="btn ghost" type="button">Text ansehen</button>');
+    ansehen.onclick=function(){ ta.hidden=false; ta.focus(); ta.select(); };
     var nochmal=el('<button class="btn ghost" type="button">Nochmal kopieren</button>'), los=el('<button class="btn" type="button">Claude öffnen</button>');
-    nochmal.onclick=function(){ inZwischenablage(alles, "Frage samt Daten"); };
+    nochmal.onclick=function(){ inZwischenablage(alles, "Frage samt Daten").then(kopiert); };
+    h.fuss.appendChild(ansehen);
     los.onclick=function(){ h.zu(); window.open("https://claude.ai/new", "_blank", "noopener"); };
     h.fuss.appendChild(nochmal); h.fuss.appendChild(los);
   };
@@ -13608,12 +13866,12 @@ function claudeFragen(){
     });
   };
   var warteZeile=function(text){
-    warte=el('<div class="muted" style="font-size:13px"><span class="kilaeuft" style="display:inline-block;width:14px;height:14px;border-width:3px;vertical-align:-2px;margin:0 6px 0 0"></span>'+
+    FRAGE_WARTE=el('<div class="muted" style="font-size:13px"><span class="kilaeuft" style="display:inline-block;width:14px;height:14px;border-width:3px;vertical-align:-2px;margin:0 6px 0 0"></span>'+
       '<span data-t>'+esc(text)+"</span></div>");
-    zeigen(); return warte.querySelector("[data-t]");
+    zeigen(); return FRAGE_WARTE.querySelector("[data-t]");
   };
   /* Anfrage fertig: dieses Fenster und ein inzwischen neu geöffnetes nachziehen */
-  var fertig=function(){ warte=null; knoepfe(true); zeigen(); var o=frageFensterOffen(); if(o && o.zeigen!==zeigen) o.zeigen(); frageSichern(); };
+  var fertig=function(){ FRAGE_WARTE=null; knoepfe(true); zeigen(); var o=frageFensterOffen(); if(o && o.zeigen!==zeigen){ o.knoepfe(true); o.zeigen(); } frageSichern(); };
   /* die Antwort gehört hinter ihre Frage – ist die Frage nicht mehr im
      Gespräch („Neues Gespräch“, Kontowechsel), fällt sie weg */
   var antwortDazu=function(e, a){ var i=FRAGE_VERLAUF.indexOf(e); if(i>=0) FRAGE_VERLAUF.splice(i+1, 0, a); };
@@ -13684,12 +13942,14 @@ function claudeFragen(){
         setTimeout(frag, 20000);
       }).catch(function(x){ frageZurueck(e, x.message||String(x)); fertig(); });
   };
-  v.fuss.appendChild(neu); v.fuss.appendChild(gh);
-  if(kiAn()) v.fuss.appendChild(direkt);
+  v.fuss.appendChild(neu);
+  /* GitHub und Direkt kosten bzw. schreiben öffentlich – nicht in der Präsentation */
+  if(!nurApp) v.fuss.appendChild(gh);
+  if(kiAn() && !nurApp) v.fuss.appendChild(direkt);
   v.fuss.appendChild(app);
   setTimeout(function(){ feld.focus(); }, 60);
 }
-function frageKnopfNeu(){ var e=document.getElementById("fragebtn"); if(e) e.hidden=!wuenscheAn(); }
+function frageKnopfNeu(){ var e=document.getElementById("fragebtn"); if(e) e.hidden=!frageAn(); }
 
 /* ================= Änderungswünsche =================
    Wer mitarbeitet (nicht Kunde/Präsentation), schickt aus der App einen
@@ -13751,6 +14011,8 @@ function wunschReiterNeu(){
 /* angefangene Texte je Konto: Wunsch (WUNSCH_ENTWURF) und Freigabe/
    Nachbessern/Ablehnen (WUNSCH_TEXTE) – bis der Schritt geklappt hat */
 var WUNSCH_ENTWURF={}, WUNSCH_TEXTE={};
+/* Textgrenze der Spalte text in der Datenbank (tools/aenderungswuensche.sql) */
+var WUNSCH_MAX=4000;
 /* Wünsche, an denen gerade ein Schritt läuft (Freigeben, Ablehnen …) – ihre
    Karten bleiben gesperrt, auch wenn die Liste inzwischen neu gezeichnet wurde */
 var WUNSCH_LAEUFT={};
@@ -13911,8 +14173,12 @@ function wunschAenderungen(w){
 function vorschauSchutz(supa){
   var W=window;
   var zuSupabase=function(u){ u=String(u||""); var c=(W.UKT_CONFIG||{}).supabaseUrl; return (!!supa && u.indexOf(supa)===0) || (!!c && u.indexOf(c)===0); };
-  /* nur Lesen (GET/HEAD) darf zur Datenbank */
-  var gesperrt=function(m, u){ m=String(m||"GET").toUpperCase(); return m!=="GET" && m!=="HEAD" && zuSupabase(u); };
+  /* nur Lesen (GET/HEAD) darf zur Datenbank – dazu das Signieren von
+     Lese-Links (Fotos, PDFs: POST auf /storage/v1/object/sign/, speichert
+     nichts). Das Signieren eines Hochlade-Links (/object/upload/sign/) bleibt gesperrt. */
+  var gesperrt=function(m, u){ m=String(m||"GET").toUpperCase();
+    if(/\/storage\/v1\/object\/sign\//.test(String(u||""))) return false;
+    return m!=="GET" && m!=="HEAD" && zuSupabase(u); };
   var f=W.fetch;
   W.fetch=function(u, o){
     if(gesperrt((o&&o.method)||(u&&u.method), (u&&u.url)||u))
@@ -13971,6 +14237,9 @@ function vorschauSchutz(supa){
   }
 }
 function wunschVorschau(w){
+  /* Doppeltipp: nur eine Vorschau auf einmal (lädt schon bzw. ist offen) */
+  if(wunschVorschau.laeuft || document.querySelector(".vorschau-rahmen")) return;
+  wunschVorschau.laeuft=true;
   var zweig=String(w.branch||""), roh=function(ref){ return "https://raw.githubusercontent.com/"+WUNSCH_REPO+"/"+ref+"/index.html"; };
   toast("Vorschau wird geladen …");
   /* über den genauen Stand (Commit) – der Zweig-Name wäre bei GitHub einige Minuten zwischengespeichert */
@@ -14003,12 +14272,15 @@ function wunschVorschau(w){
       };
       document.body.appendChild(ov);
       ov.querySelector("iframe").srcdoc=html;
-    }).catch(function(e){ window.alert("Vorschau ließ sich nicht laden: "+(e&&e.message||e)); });
+    }).catch(function(e){ window.alert("Vorschau ließ sich nicht laden: "+(e&&e.message||e)); })
+    .then(function(){ wunschVorschau.laeuft=false; });   /* nach Erfolg, Abbruch und Fehler wieder frei */
 }
 function wunschKarte(w, neuLaden){
   var gh="https://github.com/"+WUNSCH_REPO;
   var probe=w.branch ? "https://raw.githack.com/"+WUNSCH_REPO+"/"+w.branch.split("/").map(encodeURIComponent).join("/")+"/index.html" : "";
   var P={ok:["✓ automatische Prüfung bestanden","good"], fehler:["✗ automatische Prüfung NICHT bestanden","crit"], laeuft:["… Prüfung läuft","plan"], keine:["Prüfung noch nicht gelaufen","warn"]}[w.pruefung]||null;
+  /* Rückfrage von Claude: in Arbeit, Auftrag auf GitHub, noch kein Pull Request, aber eine Antwort */
+  var rueckfrage=w.status==="in_arbeit" && !!w.issue_nr && !w.pr_nr && !!w.antwort;
   var k=el('<div class="posbox stack" style="gap:8px" data-wunsch="'+esc(String(w.id))+'">'+
     '<div class="rowflex" style="justify-content:space-between;gap:8px"><strong>W-'+w.id+" · "+esc(w.von_name||"–")+
       ' <span class="muted" style="font-weight:400">'+esc(dfmt(isoLokal(new Date(w.erstellt))))+"</span></strong>"+wunschStatusHtml(w)+"</div>"+
@@ -14019,7 +14291,9 @@ function wunschKarte(w, neuLaden){
     (P?'<div style="font-weight:600;color:var(--'+P[1]+')">'+P[0]+"</div>":"")+
     /* Rückmeldung lesbar: ohne Kopfzeile mit Links, Aufgabenliste und Markdown-Zeichen;
        bei „Vorschau bereit“ gleich offen – dort stehen Hinweise wie „wo ausprobieren“ */
-    (w.antwort?'<details'+(w.status==="vorschau"?" open":"")+'><summary style="cursor:pointer;font-weight:600;font-size:13px">Rückmeldung von Claude</summary>'+
+    /* Claude hat geantwortet, aber (noch) nichts umgesetzt – meist eine Rückfrage */
+    (rueckfrage?'<div class="note warnbox" style="font-size:12.5px"><strong>Claude hat eine Rückfrage</strong> – bitte unten lesen und mit „Claude antworten …“ beantworten.</div>':"")+
+    (w.antwort?'<details'+(w.status==="vorschau"||rueckfrage?" open":"")+'><summary style="cursor:pointer;font-weight:600;font-size:13px">Rückmeldung von Claude</summary>'+
       '<div style="white-space:pre-wrap;font-size:13px;margin-top:6px">'+esc(wunschAntwortText(w.antwort))+"</div></details>":"")+
     '<div class="rowflex" style="gap:10px;font-size:13px;flex-wrap:wrap">'+
       (w.issue_nr?'<a href="'+gh+"/issues/"+w.issue_nr+'" target="_blank" rel="noopener">Auftrag auf GitHub</a>':"")+
@@ -14092,6 +14366,8 @@ function wunschKarte(w, neuLaden){
         "der danach <strong>öffentlich auf GitHub</strong> steht: keine Namen, Adressen oder Passwörter.", w.text, "Freigeben",
         function(t){
           if(t.length<5) return "Der Auftrag ist zu kurz.";
+          /* Grenze der Datenbank (4000 Zeichen) – sonst scheitert später „Rückgängig machen“ */
+          if(t.length>WUNSCH_MAX) return "Der Auftrag ist zu lang ("+t.length+" Zeichen, höchstens "+WUNSCH_MAX+") – bitte kürzen.";
           return ausfuehren(b, {aktion:"freigeben", id:w.id, text:t}, "An Claude weitergegeben – das dauert meist ein paar Minuten.");
         },
         function(t){
@@ -14124,6 +14400,11 @@ function wunschKarte(w, neuLaden){
       "In der App ändert sich erst etwas, wenn du ihn übernimmst.")) return;
     /* den neuen Eintrag auch zeigen: er steht unter „Offen“ */
     ausfuehren(b, {aktion:"rueckgaengig", id:w.id}, "Rücknahme vorbereitet – steht jetzt oben unter „Offen“.", function(){ S.wunschFilter="offen"; }).then(meldeFehler);
+  });
+  /* Rückfrage beantworten: geht wie „Nachbessern“ an den Auftrag (Issue) */
+  if(rueckfrage) knopf("Claude antworten …","",function(b){
+    textFragen("Claude antworten", "Deine Antwort auf die Rückfrage – steht öffentlich auf GitHub, keine Namen, Adressen oder Passwörter.", "", "Schicken",
+      function(t){ if(!t) return "Bitte die Antwort eingeben."; return ausfuehren(b, {aktion:"nachbessern", id:w.id, text:t}, "Antwort an Claude geschickt."); });
   });
   if(w.status==="in_arbeit"||w.status==="vorschau") knopf("Stand abfragen","",function(b){
     b.disabled=true; neuLaden(true);

@@ -79,7 +79,9 @@ Mehrtägige Touren fahren am Folgetag vom letzten Stopp weiter, rechnen also mit
 Übernachtung unterwegs.
 
 Über jedem Tag steht die **Arbeitszeit** — Anfahrten zwischen den Märkten plus
-Zeit vor Ort. Sie bleibt in der eingestellten Grenze. Die **Rückfahrt zum
+Zeit vor Ort. Sie bleibt in der eingestellten Grenze – nur ein Markt, der allein
+länger braucht, steht als eigener Tag mit Warnhinweis da und zählt entsprechend
+mehrfach bei den Arbeitstagen (bitte auf mehrere Tage aufteilen). Die **Rückfahrt zum
 Startpunkt** steht daneben und im letzten Tabellenfeld: sie kommt obendrauf
 und wird nicht auf den Arbeitstag angerechnet.
 
@@ -350,7 +352,8 @@ Neben der Technikerin oder dem Techniker haben zwei weitere Felder Platz für
 Kolleginnen und Kollegen, die mitgearbeitet haben. Sie stehen im Protokoll,
 auf dem Druckblatt und im Export. Die Zertifikatsnummer wird weiter für die
 Hauptperson gemerkt. Dafür einmal `supabase-setup.sql` erneut ausführen, es
-legt die Spalte `mitarbeiter` an.
+legt die Spalte `mitarbeiter` an – **danach immer auch `tools/rollen.sql`**,
+sonst gelten die Sperren für Kunde, Präsentation und Zugangsdaten nicht mehr.
 
 ## Protokoll Schritt für Schritt
 
@@ -640,8 +643,9 @@ Offene Störungen liegen wie die Anlagendaten in `stammdaten` (`typ`
 `stoerung`) und stehen damit auf allen Geräten. Jede angemeldete Person darf
 sie anlegen und ändern — der Auftrag kommt herein, bevor jemand vor Ort war.
 
-**Dafür einmal `supabase-setup.sql` erneut ausführen.** Es erweitert die
-Zugriffsregel auf `stammdaten` um den neuen Typ. Bis dahin bleibt eine
+**Dafür einmal `supabase-setup.sql` und danach `tools/rollen.sql` erneut
+ausführen.** Es erweitert die Zugriffsregel auf `stammdaten` um den neuen Typ
+(ohne `tools/rollen.sql` wären die Rollensperren danach aufgehoben). Bis dahin bleibt eine
 erfasste Störung auf dem Gerät und geht von selbst raus, sobald die Regel
 da ist.
 
@@ -653,7 +657,7 @@ da ist.
 | **Admin** | Darko | Verwaltung mit Nachbessern, Protokolle löschen/wiederherstellen, Posteingang |
 | **Techniker** | alle übrigen | Protokolle, Störungen, Anlagendaten – ohne Büro-Reiter |
 | **Kunde** | Lidl | nur lesen: Fällig, Karte, Anlagen, Verlauf; keine Zugangsdaten, kein interner Verlauf |
-| **Präsentation** | Vorführung | Spielwiese: alles bedienbar wie als Admin, **gespeichert wird nichts** – kein Gerätespeicher, keine Datenbank, keine KI; nach dem Neuladen ist alles wie vorher. Ein Banner sagt das dauerhaft. |
+| **Präsentation** | Vorführung | Spielwiese: alles bedienbar wie als Admin, **gespeichert wird nichts** – kein Gerätespeicher, keine Datenbank, keine bezahlte KI (Prüfbuch, Auftrag und „Claude fragen“ nur über die eigene Claude-App bzw. mit Beispieldaten); nach dem Neuladen ist alles wie vorher. Ein Banner sagt das dauerhaft. |
 
 Vergeben werden Rollen im SQL Editor (`tools/rollen.sql`); wer keinen Eintrag
 hat, ist Techniker. Die Datenbank prüft selbst: Kunde und Präsentation können
@@ -883,7 +887,8 @@ Dazu drei Punkte:
 
 Die Datei liegt im selben Speicher wie die Fotos, unter
 `<protokollkennung>/auftrag.pdf`. Damit sie angenommen wird, muss
-`supabase-setup.sql` einmal neu ausgeführt werden – ohne das weist die Ablage
+`supabase-setup.sql` einmal neu ausgeführt werden (danach `tools/rollen.sql`,
+sonst sind die Rollensperren aufgehoben) – ohne das weist die Ablage
 sie mit „mime type not supported" ab, und das Protokoll bleibt so lange auf
 dem Gerät.
 
@@ -922,7 +927,8 @@ erscheint der Einsatz mit rotem „Störung“-Etikett und dem Problemtyp. Dort
 stehen Wartungen und Störungen getrennt gezählt.
 
 In der Datenbank liegen die Angaben in der Spalte `stoerung` der Tabelle
-`protokolle`. Dafür `supabase-setup.sql` einmal erneut ausführen.
+`protokolle`. Dafür `supabase-setup.sql` und danach `tools/rollen.sql` einmal
+erneut ausführen.
 
 ## Archiv auf der Synology
 
@@ -962,6 +968,8 @@ hat. Andere Dateien im Ordner fasst es nicht an.
 
 1. **Supabase:** `supabase-setup.sql` im SQL Editor noch einmal ausführen. Das
    legt den Abschnitt „Archiv“ an. Bestehende Daten bleiben unverändert.
+   Danach `tools/rollen.sql` erneut ausführen – `supabase-setup.sql` setzt die
+   Zugriffsregeln auf den Stand ohne Rollen zurück (Kunde, Präsentation, Zugangsdaten).
 2. **Konto:** In Supabase unter Authentication → Users muss
    `kammer.m@icloud.com` stehen, mit „Auto Confirm User“.
 3. **Skriptordner auf der Synology:** Legen Sie einen Ordner an, den nur

@@ -124,7 +124,8 @@ const ANWEISUNG: Record<string, string> = {
     "Daten immer als TT.MM.JJJJ; steht nur Monat und Jahr, schreibe MM.JJJJ. " +
     "Lass Felder leer, die nicht auf den Bildern stehen – nichts ergänzen, nichts schätzen, " +
     "keine Standardwerte einsetzen. Nimm jedes Feld, bei dem die Handschrift mehrdeutig ist, " +
-    "mit seinem Feldnamen in \"unsicher\" auf und erkläre in \"hinweise\" kurz, warum. " +
+    "mit seinem Feldnamen in \"unsicher\" auf (Feldname wie im Schema, ohne Pfad, z. B. \"kaeltemittelKg\"; " +
+    "unsichere Prüfungsdaten als \"pruefungen\") und erkläre in \"hinweise\" kurz, warum. " +
     "Die Fotos können Seiten MEHRERER Prüfbücher enthalten (je Anlage ein Buch). Lege je Prüfbuch " +
     "einen Eintrag in \"pruefbuecher\" an und ordne jede Seite dem richtigen Buch zu (Anlagenbezeichnung, " +
     "Seriennummer, Aufstellungsort, Handschrift, Stempel). Mische nie Angaben verschiedener Bücher. " +
@@ -187,9 +188,10 @@ Deno.serve(async (req) => {
 
   // 3. Tageslimit je Person – schützt vor versehentlichen Serien. Der Tag
   //    beginnt um Mitternacht österreichischer Zeit, nicht UTC (sonst erst
-  //    um 1 bzw. 2 Uhr früh) – wie die KI-Kosten in der App
+  //    um 1 bzw. 2 Uhr früh) – wie die KI-Kosten in der App. Fragen an Claude
+  //    (ki-frage, art "frage") haben ihr eigenes Limit und zählen hier nicht mit.
   const { count } = await supabase.from("ki_nutzung").select("id", { count: "exact", head: true })
-    .eq("user_id", user.id).gte("zeit", tagesbeginnWien(new Date()));
+    .eq("user_id", user.id).neq("art", "frage").gte("zeit", tagesbeginnWien(new Date()));
   if ((count ?? 0) >= LIMIT_JE_TAG) return antwort({ fehler: "Tageslimit für die KI-Erkennung erreicht." }, 429);
 
   // 4. Claude fragen
@@ -224,20 +226,21 @@ Deno.serve(async (req) => {
     return antwort({ fehler: "KI nicht erreichbar." }, 502);
   }
 
-  if (r.stop_reason === "refusal") return antwort({ fehler: "Die KI hat diese Bilder nicht verarbeitet." }, 422);
-  if (r.stop_reason === "max_tokens") return antwort({ fehler: "Antwort zu lang – bitte weniger Bilder auf einmal." }, 422);
-  const block = r.content.find((b) => b.type === "text");
-  let daten: unknown = null;
-  try { daten = JSON.parse(block && block.type === "text" ? block.text : ""); }
-  catch { return antwort({ fehler: "Die Antwort der KI war nicht lesbar." }, 502); }
-
-  // 5. festhalten, was es gekostet hat
+  // 5. festhalten, was es gekostet hat – gleich nach der Antwort: auch eine
+  //    abgelehnte, zu lange oder unlesbare Antwort ist bezahlt und zählt fürs Tageslimit
   const { error: nachweisFehler } = await supabase.from("ki_nutzung").insert({
     user_id: user.id, email: user.email, art, bilder: bilder.length, modell: r.model,
     tokens_ein: r.usage.input_tokens, tokens_aus: r.usage.output_tokens,
   });
   // ohne Kostennachweis greift auch das Tageslimit nicht – das muss auffallen
   if (nachweisFehler) console.error("ki_nutzung nicht eingetragen:", nachweisFehler.message);
+
+  if (r.stop_reason === "refusal") return antwort({ fehler: "Die KI hat diese Bilder nicht verarbeitet." }, 422);
+  if (r.stop_reason === "max_tokens") return antwort({ fehler: "Antwort zu lang – bitte weniger Bilder auf einmal." }, 422);
+  const block = r.content.find((b) => b.type === "text");
+  let daten: unknown = null;
+  try { daten = JSON.parse(block && block.type === "text" ? block.text : ""); }
+  catch { return antwort({ fehler: "Die Antwort der KI war nicht lesbar." }, 502); }
 
   return antwort({ art, daten, modell: r.model });
 });
