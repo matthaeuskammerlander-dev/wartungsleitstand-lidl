@@ -460,6 +460,8 @@ var STAMM_FELDER_POS = ["anlagentyp","intervallCode","inbetriebnahme","monat","m
                         "ortAussen","ortStrom","ortRegelung","ortPruefbuch","hersteller","modell","seriennummer","leistungKw","vorOrtNeu",
                         /* Zuordnung einer Termin-Zeile zu ihrer Anlage (von Hand) */
                         "anlageZu",
+                        /* beim Zusammenführen stillgelegte Zeile: ihre Protokolle zählen für diese Zeile */
+                        "zusammengefuehrtIn",
                         /* Wartungen laut Prüfbuch, die in der Excel-Liste fehlen: [{datum, techniker}] */
                         "nachweise",
                         /* Angaben aus dem Prüfbuch */
@@ -862,6 +864,40 @@ function bekannteNamen(){
   return Object.keys(s).sort(function(a,b){ return a.localeCompare(b,"de"); });
 }
 
+/* Beim Zusammenführen stillgelegte Termin-Zeile: was über ihre Kennung an ihr
+   hängt (Wartungsprotokolle der App), zählt für die Zeile der bleibenden
+   Anlage (Feld zusammengefuehrtIn). Wieder in Betrieb genommen oder
+   zurückgenommen: keine Weiterleitung mehr. */
+function zeileWeiter(id){
+  for(var i=0;i<5;i++){
+    var p=posById[id];
+    if(!p || p.aktiv!==false || !p.zusammengefuehrtIn) return id;
+    id=p.zusammengefuehrtIn;
+  }
+  return id;
+}
+/* die Termin-Zeilen, an denen ein Protokoll zählt – samt Weiterleitung */
+function protokollZeilen(pr){
+  var ids=(pr.positionIds&&pr.positionIds.length)?pr.positionIds:(pr.positionId?[pr.positionId]:[]);
+  return ids.map(zeileWeiter);
+}
+/* Zu welcher Termin-Zeile gehört ein Wartungsdatum? Zu der, deren Termin ihm
+   am nächsten liegt – eine Halbjahresinspektion nicht an die Jahreswartung.
+   Ohne bestimmbaren Termin: vorgabe (sonst die erste Zeile). */
+function zeileFuerDatum(zeilen, datum, vorgabe){
+  var best=vorgabe||zeilen[0]||null, abst=Infinity, y=+String(datum).slice(0,4);
+  zeilen.forEach(function(t){
+    var a=null;
+    try{ a=ankerFuer(t.intervall ? t : Object.assign({}, t, {intervall:intervallArt(t.intervallCode)})); }catch(e){ a=null; }
+    if(!a) return;
+    [y-1,y,y+1].forEach(function(j){
+      var d=Math.abs(new Date(ankerIm(a,j)+"T12:00:00")-new Date(datum+"T12:00:00"));
+      if(d<abst){ abst=d; best=t; }
+    });
+  });
+  return best;
+}
+
 /* rechnet alle Fälligkeiten neu – beim Start und nach jedem Protokoll */
 function berechneFaelligkeiten(){
   NAMEN_KANON = baueNamenKanon();
@@ -873,8 +909,7 @@ function berechneFaelligkeiten(){
   (typeof alleProtokolle==="function" ? alleProtokolle() : []).forEach(function(pr){
     if(!pr.datum || ZAEHLT_ALS_WARTUNG.indexOf(pr.wartungsart)<0) return;
     if(pr.standortId) (ausProtMarkt[pr.standortId]=ausProtMarkt[pr.standortId]||[]).push(pr.datum);
-    var ids = (pr.positionIds && pr.positionIds.length) ? pr.positionIds : (pr.positionId?[pr.positionId]:[]);
-    ids.forEach(function(id){ (ausProtPos[id]=ausProtPos[id]||[]).push(pr.datum); });
+    protokollZeilen(pr).forEach(function(id){ (ausProtPos[id]=ausProtPos[id]||[]).push(pr.datum); });
   });
 
   POS.forEach(function(p){
@@ -2878,8 +2913,9 @@ function termineStart(leader){
    gibt. Derselbe geführte Dialog mit KI („Aus Fotos lesen“) und Termin. */
 /* ---------- Anlagen zusammenführen ----------
    Dieselbe Anlage steht zweimal – etwa eine Zeile der alten Liste und eine per
-   KI aus dem Prüfbuch angelegte. Die Anlage mit Terminen/Historie bleibt (haupt),
-   die andere (doppel) wird stillgelegt. Unterschiedliche Angaben wählt der
+   KI aus dem Prüfbuch angelegte. Die Anlage mit Terminen/Historie bleibt (haupt);
+   von der anderen (doppel) kommen Termine dazu, die ihr fehlen, der Rest wird
+   stillgelegt und leitet weiter (zusammengefuehrtIn). Unterschiedliche Angaben wählt der
    Nutzer je Feld (Vorschlag: der Wert der jüngeren Anlage – meist aus dem
    Prüfbuch). Wartungen, Historie und Innengeräte werden vereinigt. */
 /* in der App angelegt (vor Ort, „+ Anlage anlegen“, KI) – nicht die geplant
@@ -2887,26 +2923,53 @@ function termineStart(leader){
 function anlageIstNeu(a){ return !!(a && (a.leader.neuAngelegt || a.leader.vorOrtNeu || /^NP[0-9a-z]{8,}$/.test(a.leader.id))); }
 function anlagenZusammenfuehren(a1, a2){
   if(nurLesen()||!Admin.frei){ toast("Zusammenführen dürfen nur Admins."); return Promise.resolve(false); }
+  /* eine stillgelegte Anlage zuerst wieder in Betrieb setzen – sonst bliebe
+     sie mit den Terminen der anderen stillgelegt, und der Markt verlöre die Anlage */
+  if(a1.leader.aktiv===false || a2.leader.aktiv===false){ toast("Eine stillgelegte Anlage lässt sich nicht zusammenführen – zuerst wieder in Betrieb setzen."); return Promise.resolve(false); }
   /* die Anlage aus der Liste (mit echten Terminen) bleibt, die neu angelegte geht auf */
   var haupt = anlageIstNeu(a1) && !anlageIstNeu(a2) ? a2 : a1, doppel = haupt===a1 ? a2 : a1;
+  /* nie die ruhende („zur Zeit nicht gewartet“) behalten, wenn die andere gewartet wird */
+  if(anlagePausiert(haupt.leader) && !anlagePausiert(doppel.leader)){ var tausch=haupt; haupt=doppel; doppel=tausch; }
   var s=byId[haupt.leader.standortId]||{};
   var dh=anlageDaten(haupt.leader), dd=anlageDaten(doppel.leader);
+  /* die Namen jetzt festhalten – nach dem Speichern trägt die bleibende Anlage schon den gewählten */
+  var nameH=anlagenName(dh), nameD=anlagenName(dd);
+  var konto=Store.benutzer ? Store.benutzer.id : null;
   var felder=[{k:"anlagentyp", l:"Bezeichnung"}].concat(ANLAGE_FELDER.filter(function(f){ return f.t!=="innen" && !f.gruppe.geheim; }).map(function(f){ return {k:f.k, l:f.l, f:f}; }))
     .concat([{k:"inbetriebnahme", l:"Inbetriebnahme"}]);
   var zeige=function(x,w){ return x.f ? anlageWertText(x.f,w) : (x.k==="inbetriebnahme" ? (w?dfmt(w):"–") : (leerWert(w)?"–":String(w))); };
   var strittig=felder.filter(function(x){ return !leerWert(dh[x.k]) && !leerWert(dd[x.k]) && !gleich(dh[x.k], dd[x.k]); });
+  /* Termine: was der bleibenden Anlage fehlt (etwa der Halbjahrestermin),
+     übernimmt sie samt Wartungen von der anderen. Termine, die sie schon hat,
+     werden stillgelegt – ihre Wartungen zählen dann für den passenden Termin
+     der bleibenden Anlage. */
+  var art=function(t){ var iv=intervallArt(t.intervallCode); return iv.unklar ? "" : (/^HJ/.test(iv.kurz) ? "HJ" : "JW"); };
+  var bleiben=haupt.termine.slice(), dazuT=[], weg=[];
+  doppel.termine.forEach(function(t){
+    var a=art(t);
+    if(a && !bleiben.some(function(b){ return art(b)===a; })){ bleiben.push(t); dazuT.push(t); }
+    else weg.push(t);
+  });
+  /* wohin eine stillgelegte Zeile weiterleitet: zum Termin derselben Art, sonst zur ersten Zeile */
+  var zielFuer=function(t){ var a=art(t); return (a && bleiben.filter(function(b){ return art(b)===a; })[0]) || haupt.leader; };
+  var wegIds=weg.map(function(t){ return t.id; });
+  var tText=function(t){ return (String(t.intervallCode||"").trim() ? intervallArt(t.intervallCode).kurz : "Termin ohne Kürzel")+(+t.monat?" "+MONATE_L[+t.monat]:""); };
   return new Promise(function(fertig){
     var v=ansichtOeffnen("Anlagen zusammenführen");
+    v.inhalt.closest(".assistent").setAttribute("data-konto","");   /* gehört zum Konto – beim Kontowechsel zu */
     v.schritt.textContent=stName(s);
-    v.inhalt.appendChild(el('<div class="note">„<strong>'+esc(anlagenName(dh))+'</strong>“ (bleibt, mit ihren Terminen) und „<strong>'+
-      esc(anlagenName(dd))+'</strong>“ werden eine Anlage. Leere Angaben werden aus der jeweils anderen ergänzt, Wartungen und Innengeräte '+
-      "zusammengelegt; „"+esc(anlagenName(dd))+"“ wird danach stillgelegt (im Änderungsverlauf rücknehmbar).</div>"));
+    v.inhalt.appendChild(el('<div class="note">„<strong>'+esc(nameH)+'</strong>“ (bleibt, mit ihren Terminen) und „<strong>'+
+      esc(nameD)+'</strong>“ werden eine Anlage. Leere Angaben werden aus der jeweils anderen ergänzt, Wartungen und Innengeräte '+
+      "zusammengelegt."+
+      (dazuT.length?" Von „"+esc(nameD)+"“ übernommen: "+esc(dazuT.map(tText).join(", "))+".":"")+
+      (weg.length?" Stillgelegt (im Änderungsverlauf rücknehmbar): "+esc(weg.map(tText).join(", "))+" von „"+esc(nameD)+"“ – ihre Wartungen zählen für „"+esc(nameH)+"“.":"")+
+      "</div>"));
     var box=el('<div class="stack"></div>');
     if(strittig.length) box.appendChild(el('<div class="as-label">Unterschiedliche Angaben – bitte wählen:</div>'));
     strittig.forEach(function(x){
       var z=el('<div class="posbox"><strong>'+esc(x.l)+'</strong>'+
-        '<label class="chk"><input type="radio" name="zf_'+esc(x.k)+'" value="d" checked><span>'+esc(zeige(x,dd[x.k]))+' <span class="muted">(„'+esc(anlagenName(dd))+'“)</span></span></label>'+
-        '<label class="chk"><input type="radio" name="zf_'+esc(x.k)+'" value="h"><span>'+esc(zeige(x,dh[x.k]))+' <span class="muted">(„'+esc(anlagenName(dh))+'“)</span></span></label></div>');
+        '<label class="chk"><input type="radio" name="zf_'+esc(x.k)+'" value="d" checked><span>'+esc(zeige(x,dd[x.k]))+' <span class="muted">(„'+esc(nameD)+'“)</span></span></label>'+
+        '<label class="chk"><input type="radio" name="zf_'+esc(x.k)+'" value="h"><span>'+esc(zeige(x,dh[x.k]))+' <span class="muted">(„'+esc(nameH)+'“)</span></span></label></div>');
       box.appendChild(z);
     });
     if(!strittig.length) box.appendChild(el('<div class="muted">Keine widersprüchlichen Angaben.</div>'));
@@ -2914,37 +2977,92 @@ function anlagenZusammenfuehren(a1, a2){
     var ab=el('<button class="btn ghost" type="button">Abbrechen</button>'), los=el('<button class="btn" type="button">Zusammenführen</button>');
     ab.onclick=function(){ v.zu(); fertig(false); };
     los.onclick=function(){
+      /* Rechte beim Speichern nochmals prüfen – seit dem Öffnen kann ein anderes Konto angemeldet sein */
+      if(nurLesen() || !Admin.frei || (Store.benutzer ? Store.benutzer.id : null)!==konto){
+        v.zu(); toast("Zusammenführen dürfen nur Admins – nicht gespeichert."); fertig(false); return;
+      }
       var neu={};
       felder.forEach(function(x){
         var wh=dh[x.k], wd=dd[x.k];
         if(leerWert(wh) && !leerWert(wd)) neu[x.k]=wd;                       /* Lücke der Haupt-Anlage füllen */
         else if(strittig.indexOf(x)>=0){ var r=box.querySelector('input[name="zf_'+x.k+'"]:checked'); if(r && r.value==="d") neu[x.k]=wd; }
       });
-      /* Innengeräte vereinigen (gleiche Seriennummer nur einmal) */
-      var ig=(Array.isArray(dh.innengeraete)?dh.innengeraete:[]).slice(), sn=ig.map(function(g){ return String(g.seriennummer||"").toUpperCase(); });
-      (Array.isArray(dd.innengeraete)?dd.innengeraete:[]).forEach(function(g){ var k=String(g.seriennummer||"").toUpperCase(); if(!k || sn.indexOf(k)<0){ ig.push(g); if(k) sn.push(k); } });
+      /* Zugangsdaten der Regelung: nicht im Dialog gezeigt, Lücken aber ebenso füllen */
+      GEHEIME_FELDER.forEach(function(k){ if(leerWert(dh[k]) && !leerWert(dd[k])) neu[k]=dd[k]; });
+      /* Innengeräte vereinigen (gleiche Seriennummer nur einmal – auch in anderer Schreibweise) */
+      var snKey=function(g){ return String(g.seriennummer||"").replace(/[\s\-]+/g,"").toUpperCase(); };
+      var ig=(Array.isArray(dh.innengeraete)?dh.innengeraete:[]).slice(), sn=ig.map(snKey);
+      (Array.isArray(dd.innengeraete)?dd.innengeraete:[]).forEach(function(g){ var k=snKey(g); if(!k || sn.indexOf(k)<0){ ig.push(g); if(k) sn.push(k); } });
       if(ig.length>(dh.innengeraete||[]).length) neu.innengeraete=ig;
-      /* Wartungen: Prüfbuch-Nachweise UND die Historie der aufgehenden Anlage
-         kommen zur bleibenden – derselbe Besuch (≤14 Tage) nur einmal */
-      var schon=besucheDerAnlage(haupt.leader), dazu=[];
-      doppel.termine.forEach(function(t){
-        (t.nachweise||[]).concat((t.historie||[]).map(function(d){ return {datum:d}; })).forEach(function(n){
-          if(!n || !n.datum || schon.some(function(d){ return gleicherBesuch(d,n.datum); })) return;
-          schon.push(n.datum); dazu.push(n);
+      var pro={}, setze=function(t, d){ pro[t.id]=Object.assign(pro[t.id]||{}, d); };
+      pro[haupt.leader.id]=neu;
+      /* Inbetriebnahme und Füllmenge gelten für die ganze Anlage – an jede ihrer
+         Zeilen (neu gewählt: an alle; sonst an die übernommenen Termine) */
+      ["inbetriebnahme","kaeltemittelKg"].forEach(function(k){
+        var alle=(k in neu), w=alle ? neu[k] : dh[k];
+        if(leerWert(w)) return;
+        bleiben.forEach(function(t){
+          if(t===haupt.leader && alle) return;
+          if(!alle && dazuT.indexOf(t)<0) return;
+          if(!gleich(t[k], w)){ var d={}; d[k]=w; setze(t, d); }
         });
       });
-      var pro={};
-      pro[haupt.leader.id]=neu;
-      if(dazu.length) pro[haupt.leader.id].nachweise=(haupt.leader.nachweise||[]).concat(dazu).sort(function(x,y){ return x.datum.localeCompare(y.datum); });
-      doppel.termine.forEach(function(t){
-        pro[t.id]=Object.assign(pro[t.id]||{}, {aktiv:false, notiz:((t.notiz||"")+" Zusammengeführt mit „"+anlagenName(dh)+"“").trim()});
+      /* übernommene Termine ausdrücklich an die bleibende Anlage hängen – und
+         deren eigene Zeilen auch, sonst löste die feste Zuordnung die bisher
+         automatisch gebildete Anlage auf */
+      if(dazuT.length) bleiben.forEach(function(t){
+        if(t===haupt.leader || t.anlageZu===haupt.leader.id) return;
+        var d={anlageZu:haupt.leader.id};
+        if(dazuT.indexOf(t)>=0 && t.pausiert){ d.pausiert=false; d.pausiertGrund=""; }   /* ruht nur, wenn die Anlage ruht */
+        setze(t, d);
       });
+      /* Wartungen: App-Protokolle der stillgelegten Zeilen bleiben Protokolle und
+         zählen über die Weiterleitung. Prüfbuch-Nachweise und Listeneinträge
+         kommen an den Termin, dem sie am nächsten liegen – derselbe Besuch
+         (≤14 Tage) nur einmal je Anlage. */
+      var schon=besucheDerAnlage(haupt.leader), gezaehlt=0;
+      dazuT.forEach(function(t){
+        schon=schon.concat(t.historie||[]).concat((t.nachweise||[]).map(function(n){ return n.datum; }));
+        alleProtokolle().forEach(function(pr){
+          if(pr.datum && !pr.geloescht && zaehltAlsWartung(pr) && protokollZeilen(pr).indexOf(t.id)>=0) schon.push(pr.datum);
+        });
+      });
+      alleProtokolle().forEach(function(pr){
+        if(!pr.datum || pr.geloescht || !zaehltAlsWartung(pr)) return;
+        if(!protokollZeilen(pr).some(function(id){ return wegIds.indexOf(id)>=0; })) return;
+        if(!schon.some(function(d){ return gleicherBesuch(d,pr.datum); })) gezaehlt++;
+        schon.push(pr.datum);
+      });
+      weg.forEach(function(t){
+        var techn=t.techniker||{};
+        (t.nachweise||[]).concat((t.historie||[]).map(function(d){
+          /* Eintrag der Liste: mit dem Techniker des Jahres und als „Liste“ gekennzeichnet */
+          var n={datum:d, quelle:"Liste"}; if(techn[d.slice(0,4)]) n.techniker=techn[d.slice(0,4)]; return n;
+        })).forEach(function(n){
+          if(!n || !n.datum || schon.some(function(d){ return gleicherBesuch(d,n.datum); })) return;
+          schon.push(n.datum); gezaehlt++;
+          var z=zeileFuerDatum(bleiben, n.datum, haupt.leader), l=(pro[z.id]&&pro[z.id].nachweise) || (z.nachweise||[]).slice();
+          setze(z, {nachweise:l.concat([n]).sort(function(x,y){ return x.datum.localeCompare(y.datum); })});
+        });
+        setze(t, {aktiv:false, zusammengefuehrtIn:zielFuer(t).id, notiz:((t.notiz||"")+" Zusammengeführt mit „"+nameH+"“").trim()});
+      });
+      /* offene Störungen der stillgelegten Zeilen an die bleibende Anlage – sie müssen dort sichtbar bleiben */
+      var stoer=offeneStoerungen(true).filter(function(o){ return o.positionId && wegIds.indexOf(o.positionId)>=0; });
       v.zu();
       positionenSchreiben(pro, "Anlagen zusammengeführt").then(function(wo){
         if(wo===false){ toast("Nicht gespeichert – bitte nochmals versuchen."); fertig(false); return; }
-        protokolliere({art:"stammdaten", standortId:s.id, standortName:stName(s), grund:"Anlagen zusammengeführt: „"+anlagenName(dd)+"“ → „"+anlagenName(dh)+"“",
-          felder:[{feld:"anlage", name:anlagenName(dh), alt:"2 Anlagen", neu:"1 Anlage"+(dazu.length?" · "+dazu.length+" Wartung(en) übernommen":"")}]});
-        berechneFaelligkeiten(); toast("Zusammengeführt."); render(); fertig(true);
+        return Promise.all(stoer.map(function(o){
+          return stoerungSpeichern(Object.assign({}, o, {positionId:haupt.leader.id}), "Anlage zusammengeführt");
+        })).then(function(){
+          var nameNeu=anlagenName(posById[haupt.leader.id]||haupt.leader);
+          protokolliere({art:"stammdaten", standortId:s.id, standortName:stName(s),
+            grund:"Anlagen zusammengeführt: „"+nameD+"“ → „"+nameH+"“"+(nameNeu!==nameH?" (jetzt „"+nameNeu+"“)":""),
+            felder:[{feld:"anlage", name:nameNeu, alt:"2 Anlagen", neu:"1 Anlage"+
+              (dazuT.length?" · "+dazuT.length+" Termin(e) übernommen":"")+
+              (gezaehlt?" · "+gezaehlt+" Wartung(en) übernommen":"")+
+              (stoer.length?" · "+stoer.length+" offene Störung(en) umgehängt":"")}]});
+          berechneFaelligkeiten(); toast("Zusammengeführt."); render(); fertig(true);
+        });
       });
     };
     v.fuss.appendChild(ab); v.fuss.appendChild(los);
@@ -2953,9 +3071,11 @@ function anlagenZusammenfuehren(a1, a2){
 /* Auswahl: mit welcher anderen Anlage des Markts zusammenführen? */
 function zusammenfuehrenWaehlen(a){
   var s=byId[a.leader.standortId]; if(!s) return;
+  if(a.leader.aktiv===false){ toast("Eine stillgelegte Anlage lässt sich nicht zusammenführen – zuerst wieder in Betrieb setzen."); return; }
   var andere=anlagenDesMarkts(s,false).filter(function(x){ return x.id!==a.id; });
   if(!andere.length){ toast("Im Markt gibt es keine andere Anlage."); return; }
   var v=ansichtOeffnen("Zusammenführen mit …");
+  v.inhalt.closest(".assistent").setAttribute("data-konto","");   /* gehört zum Konto – beim Kontowechsel zu */
   v.schritt.textContent="„"+anlagenName(anlageDaten(a.leader))+"“ ist dieselbe Anlage wie:";
   andere.forEach(function(x){
     var d=anlageDaten(x.leader);
@@ -3016,8 +3136,7 @@ function besucheDerAnlage(p){
   });
   alleProtokolle().forEach(function(pr){
     if(!pr.datum || pr.geloescht || !zaehltAlsWartung(pr)) return;
-    var pids=(pr.positionIds&&pr.positionIds.length)?pr.positionIds:(pr.positionId?[pr.positionId]:[]);
-    if(pids.some(function(x){ return ids.indexOf(x)>=0; })) l.push(pr.datum);
+    if(protokollZeilen(pr).some(function(x){ return ids.indexOf(x)>=0; })) l.push(pr.datum);
   });
   return l;
 }
@@ -3035,23 +3154,11 @@ function terminAenderungen(start, erg, name){
     var zeilen=anlageVon(lp).termine, schon=besucheDerAnlage(lp);
     /* Jeder Eintrag gehört an die Termin-Zeile, deren Termin ihm am nächsten
        liegt – eine Halbjahresinspektion nicht an die Jahreswartung */
-    var zeileFuer=function(datum){
-      var best=lp, abst=Infinity, y=+datum.slice(0,4);
-      zeilen.forEach(function(t){
-        var a=null; try{ a=t.intervall ? ankerFuer(t) : null; }catch(e){ a=null; }
-        if(!a) return;
-        [y-1,y,y+1].forEach(function(j){
-          var d=Math.abs(new Date(ankerIm(a,j)+"T12:00:00")-new Date(datum+"T12:00:00"));
-          if(d<abst){ abst=d; best=t; }
-        });
-      });
-      return best;
-    };
     var dazu=[];
     erg._nachweiseNeu.forEach(function(n){
       if(schon.some(function(d){ return gleicherBesuch(d,n.datum); })) return;
       schon.push(n.datum); dazu.push(n);
-      var z=zeileFuer(n.datum), neuL=(proPos[z.id]&&proPos[z.id].nachweise) || (z.nachweise||[]).slice();
+      var z=zeileFuerDatum(zeilen, n.datum, lp), neuL=(proPos[z.id]&&proPos[z.id].nachweise) || (z.nachweise||[]).slice();
       proPos[z.id]=Object.assign(proPos[z.id]||{}, {nachweise:neuL.concat([n]).sort(function(x,y2){ return x.datum.localeCompare(y2.datum); })});
     });
     if(dazu.length) log.push({feld:"nachweise", name:name+" – Wartungen laut Prüfbuch", alt:"–", neu:stammWert("nachweise",dazu)});
@@ -3195,7 +3302,7 @@ function anlagenBloecke(s, host){
 /* Offene Störungen, die ausdrücklich an dieser Anlage hängen */
 function stoerungenDerAnlage(a){
   var ids=a.termine.map(function(t){ return t.id; });
-  return offeneStoerungen(true).filter(function(o){ return o.positionId && ids.indexOf(o.positionId)>=0; });
+  return offeneStoerungen(true).filter(function(o){ return o.positionId && ids.indexOf(zeileWeiter(o.positionId))>=0; });
 }
 /* Alles, was an einer Anlage je gemacht wurde: Wartungen aus Liste und
    Prüfbuch, Protokolle aus der App (Wartung und Störung) und was offen ist.
@@ -3203,8 +3310,7 @@ function stoerungenDerAnlage(a){
 function anlageHistorie(leader){
   var a=anlageVon(leader), ids=a.termine.map(function(t){ return t.id; }), z=[];
   var prot=alleProtokolle().filter(function(pr){
-    var pids=(pr.positionIds&&pr.positionIds.length)?pr.positionIds:(pr.positionId?[pr.positionId]:[]);
-    return pids.some(function(id){ return ids.indexOf(id)>=0; });
+    return protokollZeilen(pr).some(function(id){ return ids.indexOf(id)>=0; });
   });
   prot.forEach(function(pr){
     var stoe=istStoerung(pr);
@@ -3216,9 +3322,10 @@ function anlageHistorie(leader){
     (t.historie||[]).forEach(function(d){
       if(prot.some(function(pr){ return !istStoerung(pr) && gleicherBesuch(pr.datum,d); })) return;
       if(z.some(function(x){ return x.quelle!=="Protokoll" && gleicherBesuch(x.datum,d); })) return;
-      var nw=(t.nachweise||[]).some(function(n){ return n.datum===d; });
+      /* nachgetragen: Prüfbuch – außer beim Zusammenführen übernommene Listeneinträge */
+      var nw=(t.nachweise||[]).filter(function(n){ return n && n.datum===d; })[0];
       z.push({datum:d, art:t.intervall.art, techniker:kanonName((t.techniker&&t.techniker[d.slice(0,4)])||""),
-        quelle:nw?"Prüfbuch":"Liste"});
+        quelle:nw?(nw.quelle||"Prüfbuch"):"Liste"});
     });
   });
   return z.sort(function(x,y){ return String(y.datum).localeCompare(String(x.datum)); });
@@ -7468,6 +7575,11 @@ function viewProtokoll(){
       if(n.type==="checkbox"||n.type==="radio"){ if(n.checked) d.haken[n.id]=true; }
       else if(n.type!=="file") d.werte[n.id]=n.value;
     });
+    /* angehakte Anlagen nach ihrer Kennung (und dem gewählten Termin) – die
+       Stelle in der Liste kann sich bis zum Weitermachen verschieben */
+    d.anlagen=Array.prototype.map.call(form.querySelectorAll('input[name="posw"]:checked'), function(cb){
+      return {anlage:cb.dataset.anlage||"", pos:cb.value||""};
+    });
     form.querySelectorAll(".mangelrow").forEach(function(z){
       d.maengel.push({t:z.querySelector(".m-t").value, p:z.querySelector(".m-p").value, m:z.querySelector(".m-m").value});
     });
@@ -7486,6 +7598,23 @@ function viewProtokoll(){
     form.querySelectorAll('input[type="checkbox"],input[type="radio"]').forEach(function(n){
       if(n.id) n.checked=!!(d.haken&&d.haken[n.id]);
     });
+    /* Anlagen nach ihrer Kennung anhaken, nicht nach der Stelle in der Liste:
+       seit dem Entwurf kann eine Anlage zusammengeführt, stillgelegt oder
+       bereinigt worden sein – sonst hinge die Wartung still an der falschen */
+    if(Array.isArray(d.anlagen)){
+      var boxen=form.querySelectorAll('input[name="posw"]'), fehlt=0;
+      boxen.forEach(function(cb){ cb.checked=false; });
+      d.anlagen.forEach(function(w){
+        var p=posById[zeileWeiter(w.anlage)], aid=p ? anlageVon(p).id : w.anlage;
+        var cb=Array.prototype.filter.call(boxen, function(x){ return x.dataset.anlage===aid; })[0];
+        if(!cb){ fehlt++; return; }
+        cb.checked=true;
+        /* der gewählte Termin („zählt als“), sofern es ihn noch gibt */
+        var sl=cb.closest("label") && cb.closest("label").querySelector(".posslot"), pz=w.pos ? zeileWeiter(w.pos) : "";
+        if(sl && pz && Array.prototype.some.call(sl.options, function(o){ return o.value===pz; })){ sl.value=pz; cb.value=pz; }
+      });
+      if(fehlt) toast("Eine im Entwurf gewählte Anlage gibt es so nicht mehr – bitte die angehakten Anlagen prüfen.");
+    }
     /* Mängel- und Materialzeilen in der gespeicherten Zahl wiederherstellen */
     mHost.innerHTML="";
     (d.maengel&&d.maengel.length?d.maengel:[null]).forEach(function(m){
@@ -8634,8 +8763,7 @@ function historieEintraege(s){
     (p.historie||[]).forEach(function(d){
       /* gibt es dazu ein Protokoll aus der App, steht nur das */
       var ausApp=alleProtokolle().some(function(pr){
-        var ids=(pr.positionIds&&pr.positionIds.length)?pr.positionIds:(pr.positionId?[pr.positionId]:[]);
-        return !istStoerung(pr) && ids.indexOf(p.id)>=0 && gleicherBesuch(pr.datum,d);
+        return !istStoerung(pr) && protokollZeilen(pr).indexOf(p.id)>=0 && gleicherBesuch(pr.datum,d);
       });
       if(ausApp) return;
       zeilen.push({datum:d, anlage:anlagenName(p), art:p.intervall.art,
@@ -9128,6 +9256,7 @@ var LABEL_POS={anlagentyp:"Anlagentyp", intervallCode:"Kürzel", inbetriebnahme:
   monat:"Soll-Monat", kaeltemittelKg:"Kältemittel (kg)", kaeltemittelArt:"Kältemittelart",
   rueckkuehler:"Rückkühler", aktiv:"in Betrieb", notiz:"Notiz",
   pausiert:"zur Zeit nicht gewartet", pausiertGrund:"Grund (nicht gewartet)", vorOrtNeu:"vor Ort neu erfasst", anlageZu:"gehört zu Anlage",
+  zusammengefuehrtIn:"zusammengeführt in",
   nachweise:"Wartungen laut Prüfbuch"};
 ANLAGE_FELDER.forEach(function(f){ if(!LABEL_POS[f.k]) LABEL_POS[f.k]=f.l; });
 function stammWert(feld, w){
@@ -9746,7 +9875,8 @@ function verwaltungEditor(s){
         '<span class="rowflex" style="gap:6px">'+
         /* dieselbe geführte Prüfung wie beim Protokoll – samt KI aus Prüfbuch/Typenschild */
         (anl?'<button class="btn ghost sm" type="button" data-a2="pruefen">Prüfen / aus Fotos (KI)</button>':"")+
-        (anl?'<button class="btn ghost sm" type="button" data-a2="zusammen">Zusammenführen mit …</button>':"")+
+        /* nicht an stillgelegten Anlagen – die würden sonst die aktive mitnehmen */
+        (anl&&akt!=="still"?'<button class="btn ghost sm" type="button" data-a2="zusammen">Zusammenführen mit …</button>':"")+
         '</span></div>'+
       '<div class="grid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:10px">'+
         '<label class="fl"><span>Bezeichnung der Anlage</span><input type="text" data-a="anlagentyp" placeholder="z. B. VRV Verkaufsraum" value="'+esc(d.anlagentyp||"")+'"></label>'+
@@ -10003,6 +10133,8 @@ function verwaltungEditor(s){
           if(leerWert(neuP[kk]) && leerWert(p0[kk]) && neuP[kk]!==false) neuP[kk]=p0[kk];
         });
         if(p0 && !neuP.pausiert && !p0.pausiert) neuP.pausiert=p0.pausiert;
+        /* wieder in Betrieb: eine beim Zusammenführen stillgelegte Zeile leitet nicht mehr weiter */
+        if(neuP.aktiv && neuP.zusammengefuehrtIn) neuP.zusammengefuehrtIn=null;
         /* „vor Ort neu“ erst erledigt, wenn Kürzel UND Soll-Monat da sind – nicht bei jedem Speichern */
         if(p0) neuP.vorOrtNeu = (p0.vorOrtNeu && !(neuP.intervallCode && neuP.monat)) ? p0.vorOrtNeu : (p0.vorOrtNeu ? false : p0.vorOrtNeu);
 
@@ -10137,6 +10269,38 @@ function pruefListe(){
       });
     });
   });
+  /* gleich benannte Anlagen eines Markts mit demselben Kürzel oder derselben
+     Wartungshistorie – etwa der Halbjahrestermin als eigene Anlage (Kufstein
+     „VRV Loidl“). Bewusst getrennte (eigene Anlage, geprüft) nicht; die Altlast
+     „je eine JW“ und „zweimal dasselbe im selben Monat“ stehen schon oben. */
+  ST.forEach(function(s){
+    var an=anlagenDesMarkts(s,false);
+    var getrennt=function(a){ return a.leader.anlageZu===a.leader.id || !!a.leader.doppelGeprueft; };
+    var nurJW=function(a){ return a.termine.length===1 && intervallArt(a.termine[0].intervallCode).kurz==="JW"; };
+    var kz=function(t){ var ia=intervallArt(t.intervallCode); return ia.unklar ? "" : ia.kurz; };
+    var hist=function(t){ return JSON.stringify((t.historie||[]).slice().sort()); };
+    var treffer={};   /* je Name nur eine Meldung – die deutlichste */
+    an.forEach(function(x,i){
+      an.slice(i+1).forEach(function(y){
+        var nm=altlastNamen(x); if(!nm || nm==="anlageohnetypangabe" || nm!==altlastNamen(y)) return;
+        if(getrennt(x) || getrennt(y) || (nurJW(x) && nurJW(y))) return;
+        if(slotMonat(x.leader) && slotMonat(x.leader)===slotMonat(y.leader) && kz(x.leader)===kz(y.leader)) return;
+        var gleicheKz=x.termine.map(kz).filter(function(k,j,l){ return k && l.indexOf(k)===j && y.termine.some(function(u){ return kz(u)===k; }); });
+        /* ein Termin der einen mit genau derselben Historie wie ein Termin der anderen */
+        var gleicheHist=x.termine.some(function(t){ return (t.historie||[]).length>=2 && y.termine.some(function(u){ return hist(u)===hist(t); }); });
+        if(!gleicheKz.length && !gleicheHist) return;
+        if(!treffer[nm] || (gleicheHist && !treffer[nm].hist)) treffer[nm]={x:x, y:y, hist:gleicheHist, kz:gleicheKz};
+      });
+    });
+    Object.keys(treffer).forEach(function(nm){
+      var t=treffer[nm];
+      /* die Anlage mit mehr Terminen führt – sie bleibt beim Zusammenführen */
+      var fuehrt=t.y.termine.length>t.x.termine.length ? t.y : t.x;
+      dazu(t.hist?"Fehler":"Hinweis","Doppelt", anlagenName(t.x.leader)+" steht zweimal als eigene Anlage ("+
+        (t.hist?"gleiche Wartungshistorie":"beide mit "+t.kz.join(", "))+") – dieselbe Anlage zweimal? "+
+        "Dann zusammenführen, sonst unterscheidbar benennen.", s, {pid:fuehrt.leader.id});
+    });
+  });
 
   /* 3a. Altlast der alten Liste: dieselbe Anlage zweimal mit „JW“ */
   altlastenFaelle().forEach(function(fa){
@@ -10146,8 +10310,15 @@ function pruefListe(){
 
   /* 3b. Derselbe Markt doppelt: gleiche Adresse oder gleiche Kartenposition */
   var nachAdr={};
+  var normAdr=function(x){ return String(x||"").toLowerCase().replace(/straße/g,"str").replace(/strasse/g,"str").replace(/[^a-z0-9äöü]/g,""); };
   ST.forEach(function(s){
-    var adr=String(s.adresse||"").toLowerCase().replace(/straße/g,"str").replace(/strasse/g,"str").replace(/[^a-z0-9äöü]/g,"");
+    /* Straße und Hausnummer samt PLZ vergleichen: in der alten Liste steht
+       „PLZ Ort, Straße“ im Feld Adresse, bei neu angelegten Märkten meist nur
+       die Straße (PLZ und Ort in eigenen Feldern) */
+    var roh=String(s.adresse||""), vorn=/^\s*(\d{4})\s+[^,]*,\s*/.exec(roh), hinten=/,\s*(\d{4})\s+[^,]*$/.exec(roh);
+    var strasse=normAdr(roh.slice(vorn?vorn[0].length:0, hinten?roh.length-hinten[0].length:roh.length));
+    var plz=String(s.plz||(vorn?vorn[1]:(hinten?hinten[1]:""))).trim();
+    var adr = (plz && strasse.length>=4) ? plz+"|"+strasse : normAdr(roh);
     if(adr.length>=6) (nachAdr["a:"+adr]=nachAdr["a:"+adr]||[]).push(s);
     /* gleiche Kartenposition nur bei adressgenauer Lage – ortsgenau liegen viele Märkte auf einem Punkt */
     if(s.lat && s.lon && (s.genauigkeit==="adresse"||s.genauigkeit==="manuell"))
@@ -10166,14 +10337,14 @@ function pruefListe(){
 
   /* 4. Doppelte Protokolle: dieselbe Anlage, derselbe Besuch – verglichen über
      die Anlage, nicht über den Termin (sonst fiele JW + HJW am selben Tag durch) */
-  var anl=function(pr){ return pids(pr).map(function(id){ var pp=posById[id]; return pp ? anlageVon(pp).id : id; }); };
+  var anl=function(pr){ return pids(pr).map(function(id){ var pp=posById[zeileWeiter(id)]; return pp ? anlageVon(pp).id : id; }); };
   var wart=protos.filter(function(pr){ return zaehltAlsWartung(pr) && pr.datum; });
   wart.forEach(function(pr,i){
     wart.slice(i+1).forEach(function(q){
       if(pr.standortId!==q.standortId || !gleicherBesuch(pr.datum,q.datum)) return;
       var aq=anl(q), gemeinsamA=anl(pr).filter(function(id){ return aq.indexOf(id)>=0; });
       if(!gemeinsamA.length) return;
-      var gemeinsam=pids(pr).filter(function(id){ var pp=posById[id]; return gemeinsamA.indexOf(pp?anlageVon(pp).id:id)>=0; });
+      var gemeinsam=pids(pr).filter(function(id){ var pp=posById[zeileWeiter(id)]; return gemeinsamA.indexOf(pp?anlageVon(pp).id:id)>=0; });
       dazu("Fehler","Doppelt", "Zwei Wartungsprotokolle für "+feldText("positionIds",gemeinsam)+" ("+dfmt(pr.datum)+" und "+dfmt(q.datum)+
         ") – ein Besuch zweimal erfasst? Eines davon löschen (Admin).", byId[pr.standortId]);
     });
