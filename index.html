@@ -2574,6 +2574,11 @@ function viewFaellig(){
     '<div class="kpi good"><div class="n">'+c.erledigt+'</div><div class="l">im Plan</div></div>'+
     '<div class="kpi"><div class="n">'+maerkte.length+'</div><div class="l">Märkte in der Auswahl</div></div>'+
   '</div>'));
+  /* Protokolle nicht geladen: die Wartungen darin fehlen – Termine erschienen
+     sonst ohne Hinweis überfällig */
+  if(Store.modus==="supabase" && Store.benutzer && !protokolleGeladen && protokolleFehler)
+    f.appendChild(el('<div class="note warnbox" style="font-size:13px"><strong>Protokolle konnten nicht geladen werden</strong> '+
+      "(Verbindung?) – Fälligkeiten sind vorläufig, es wird erneut versucht.</div>"));
 
   /* Offene Störungen stehen ganz oben – sie warten, nicht der Kalender. */
   if(posteingangAn()) f.appendChild(posteingangKarte());
@@ -5050,6 +5055,10 @@ function wer(){
   if(Admin && Admin.frei && lsGet("ukt_admin_name","")) return lsGet("ukt_admin_name","");
   return lsGet("ukt_tech","") || "unbekannt";
 }
+/* Merker für den zuletzt eingetragenen Techniker samt Zertifikat und Kontakt:
+   angemeldet je Konto – sonst stünde auf einem geteilten Gerät der Name der
+   Person davor im neuen Protokoll; ohne Anmeldung (lokal) je Gerät */
+function techMerkName(n){ return n+(Store.modus==="supabase" && Store.benutzer ? "_"+Store.benutzer.id : ""); }
 var rueckSpalte=true;
 function aenderungZeile(ev){
   var z={client_id:ev.id, zeit:ev.zeit, art:ev.art, protokoll_id:ev.protokollId, standort_id:ev.standortId,
@@ -5463,6 +5472,13 @@ function stammSpeichern(rec, nachtragen, puffer){
             "zentral wurde der Eintrag inzwischen gelöscht oder neuer geändert.";
           return nachtragen==="geraet" ? "zurueck" : false;
         }
+        /* von der Datenbank aus Rechtegründen abgelehnt (etwa Kunde): nicht aufs
+           Gerät – sonst trüge es später ein anderes Konto dauerhaft ein */
+        if(r.error && /42501|row-level security|permission denied/i.test((r.error.code||"")+" "+(r.error.message||""))){
+          if(alt0) stammStand[rec.id]=alt0; else delete stammStand[rec.id];
+          Store.fehler="Keine Berechtigung ("+(r.error.message||r.error.code)+")";
+          return false;
+        }
         return r.error ? lokal() : "gemeinsam";
       }, lokal);
   }
@@ -5472,18 +5488,37 @@ function stammSpeichern(rec, nachtragen, puffer){
   }
   return lokal();
 }
+/* Ergebnis wie stammSpeichern: "gemeinsam" | "geraet" (nur lokal) | "demo" |
+   false (zentral nicht gelöscht – dann bleibt auch hier alles, wie es war;
+   der Aufrufer stellt stammUeber wieder her und meldet es) */
 function stammLoeschen(id, puffer){
-  if(demo()){ delete stammStand[id]; return Promise.resolve(); }
-  stammVorherMerken(id, puffer);
-  delete stammStand[id];
-  var lokal=idbVorgang("readwrite",function(st){ return st.delete(id); },"stammdaten").catch(function(){});
-  if(Store.modus==="supabase" && Store.sb && Admin.zentral){
-    return Promise.all([lokal, Store.sb.from("stammdaten").delete().eq("id",id)]);
+  if(demo()){ delete stammStand[id]; return Promise.resolve("demo"); }
+  /* hier erst nach dem zentralen Löschen – sonst käme die Zeile beim nächsten
+     Laden still wieder, obwohl „gespeichert“ gemeldet wurde */
+  var hierWeg=function(wo){
+    stammVorherMerken(id, puffer);
+    delete stammStand[id];
+    return idbVorgang("readwrite",function(st){ return st.delete(id); },"stammdaten")
+      .then(function(){ return wo; }, function(){ return wo; });
+  };
+  var gescheitert=function(x){
+    Store.fehler=(x&&x.message) || "Keine Verbindung.";
+    return false;
+  };
+  if(Store.modus==="supabase" && Store.sb){
+    /* nur Admins löschen zentral – sonst käme die Zeile beim Laden wieder */
+    if(!Admin.zentral) return Promise.resolve(gescheitert({message:"Löschen nur für Admins."}));
+    /* mit Zeitgrenze: eine hängende Verbindung darf den Knopf nicht sperren */
+    return mitFrist(Store.sb.from("stammdaten").delete().eq("id",id)).then(function(r){
+      if(r && r.error) return gescheitert(r.error);
+      return hierWeg("gemeinsam");
+    }, gescheitert);
   }
   if(Store.modus==="claude" && Store.claudeDb){
-    return Promise.all([lokal, Store.claudeDb.doc("stammdaten/"+id.replace(":","_")).delete().catch(function(){})]);
+    return mitFrist(Store.claudeDb.doc("stammdaten/"+id.replace(":","_")).delete())
+      .then(function(){ return hierWeg("gemeinsam"); }, gescheitert);
   }
-  return lokal;
+  return hierWeg("geraet");
 }
 /* Eine Abfrage vollständig lesen, Seite für Seite: Supabase liefert höchstens
    1000 Zeilen je Abfrage, der Rest fehlte sonst still (alte Protokolle →
@@ -5523,7 +5558,9 @@ function ladeStammdaten(nurVollstaendig){
   if(Store.modus==="supabase" && Store.sb){
     /* seitenweise: Supabase liefert höchstens 1000 Zeilen je Abfrage – darüber
        fehlten sonst zufällig Anlagendaten und offene Störungen */
-    var tab=nurLesen()||demo()?"stammdaten_lesen":"stammdaten", SEITE=1000;
+    /* nur gemerkte (ungeprüfte) Rolle: ohne Zugangsdaten lesen – so bleiben auch
+       offene Störungen sichtbar, falls die Rolle inzwischen nur noch lesen darf */
+    var tab=nurLesen()||demo()||Rolle.gemerkt?"stammdaten_lesen":"stammdaten", SEITE=1000;
     var seite=function(ab, bisher){
       return Store.sb.from(tab).select("*").order("id").range(ab, ab+SEITE-1).then(function(r){
         if(r.error) komplett=false;
@@ -5546,7 +5583,7 @@ function ladeStammdaten(nurVollstaendig){
     if(!angemeldetOderLokal()) r[0]=[];
     /* Kunde, Präsentation und Abgemeldete sehen keine Zugangsdaten – auch
        nicht die, die noch auf dem Gerät auf die Übertragung warten */
-    if(nurLesen()||demo()||!angemeldetOderLokal()) r[0]=r[0].map(function(x){
+    if(nurLesen()||demo()||Rolle.gemerkt||!angemeldetOderLokal()) r[0]=r[0].map(function(x){
       if(!x || !x.felder) return x;
       var y=Object.assign({}, x, {felder:Object.assign({}, x.felder)});
       GEHEIME_FELDER.forEach(function(k){ delete y.felder[k]; });
@@ -5579,6 +5616,9 @@ function stammdatenUebertragen(){
        Stand legen – nie einen neueren zentralen Stand überschreiben */
     return Promise.all((liste||[]).map(function(rec){
       if(Store.modus==="supabase" && !darfStammZentral(rec)) return false;
+      /* nur, was dieses Konto selbst auf dem Gerät gespeichert hat – nie unter
+         einem anderen Konto nachtragen (etwa was die Datenbank einem Kunden abgelehnt hat) */
+      if(Store.modus==="supabase" && rec.von && /@/.test(rec.von) && rec.von!==wer()) return false;
       return stammSpeichern(rec, "geraet").then(function(wo){
         if(wo!=="gemeinsam" && wo!=="zurueck") return false;
         /* nur löschen, was übertragen wurde – nicht eine inzwischen neuere Änderung */
@@ -5603,7 +5643,7 @@ var Admin={frei:false, zentral:false, geprueft:false};
 /* Rollen. Inhaber (Manfred, Matthäus) haben zusätzlich Rückgängig, KI-Kosten
    und die Kontenübersicht; Kunde und Präsentation lesen nur – die Datenbank
    sperrt das Schreiben selbst (tools/rollen.sql). */
-var Rolle={name:"techniker", da:false};
+var Rolle={name:"techniker", da:false, gemerkt:false};
 function nurLesen(){ return Rolle.name==="kunde"; }
 /* Mit gemeinsamer Datenbank, aber abgemeldet, fehlt alles, was nur Angemeldete
    lesen: offene Störungen, App-Protokolle, ergänzte Anlagendaten. */
@@ -5622,23 +5662,50 @@ function sha256hex(text){
     return Array.prototype.map.call(new Uint8Array(b),function(x){ return ("0"+x.toString(16)).slice(-2); }).join("");
   });
 }
+/* Bis die Rolle geprüft ist (Anmeldung, anderes Konto): die engste Rolle –
+   nur ansehen, keine Verwaltung, keine Zugangsdaten. Sonst gälte bis dahin
+   die Vorgabe „techniker“ bzw. die Rolle und die geladenen Zugangsdaten des
+   vorigen Kontos. */
+function rolleVorlaeufig(){
+  clearTimeout(rolleNochmal); rolleNochmal=null;
+  Rolle.name="kunde"; Rolle.da=false; Rolle.anzeige=""; Rolle.gemerkt=false;
+  Admin.frei=false; Admin.zentral=false; Admin.geprueft=false;
+  zugangsdatenVerwerfen();
+  document.body.classList.add("nurlesen"); document.body.classList.remove("demo"); demoBanner();
+}
+/* Zugangsdaten der Regelung aus dem Speicher dieser Seite nehmen (nicht vom
+   Gerät) – sie kommen mit dem nächsten Laden wieder, wenn die Rolle sie erlaubt */
+function zugangsdatenVerwerfen(){
+  [stammUeber, stammStand].forEach(function(m){
+    Object.keys(m||{}).forEach(function(id){
+      var x=m[id]; if(x && x.felder) GEHEIME_FELDER.forEach(function(k){ delete x.felder[k]; });
+    });
+  });
+  wendeStammdatenAn();
+}
 /* nochmal: wiederholte Prüfung nach einem Fehler (ohne erneuten Hinweis) */
 var rolleNochmal=null;
 function adminPruefen(nochmal){
   if(Store.modus==="supabase" && Store.sb && Store.benutzer){
     var fuer=Store.benutzer.id;
+    /* mit Zeitgrenze: eine hängende Abfrage gilt nach 10 s als gescheitert
+       (dann die gemerkte bzw. engste Rolle und später nochmals prüfen) – sonst
+       bliebe die vorläufige Rolle stehen und nichts würde geladen */
+    var frage=function(q){
+      return mitFrist(q, 10000).then(null, function(x){
+        /* Abfrage geworfen statt Fehler gemeldet: wie ein Fehler behandeln */
+        return {data:null, error:{message:String((x&&x.message)||x)}};
+      });
+    };
     return Promise.all([
-      Store.sb.from("admins").select("user_id").eq("user_id",Store.benutzer.id),
+      frage(Store.sb.from("admins").select("user_id").eq("user_id",Store.benutzer.id)),
       /* Rolle: Inhaber, Admin, Techniker, Kunde, Präsentation (tools/rollen.sql).
          Fehlt die Tabelle noch, gilt das bisherige: Admin oder Techniker. */
-      Store.sb.from("rollen").select("rolle,name").eq("user_id",Store.benutzer.id)
-    ]).then(null, function(x){
-      /* Abfrage geworfen statt Fehler gemeldet: wie ein Fehler behandeln */
-      var f={data:null, error:{message:String((x&&x.message)||x)}}; return [f,f];
-    }).then(function(r){
+      frage(Store.sb.from("rollen").select("rolle,name").eq("user_id",Store.benutzer.id))
+    ]).then(function(r){
       /* inzwischen abgemeldet oder anderes Konto: das Ergebnis gehört nicht zu ihm */
       if(!Store.benutzer || Store.benutzer.id!==fuer) return Admin.frei;
-      Admin.zentral=!!(r[0].data&&r[0].data.length); Admin.frei=Admin.zentral; Admin.geprueft=true;
+      var fa=r[0].error, imAdmins=!fa && !!(r[0].data&&r[0].data.length);
       /* Nur wenn die Tabelle wirklich fehlt, gilt das Bisherige (Admin =
          Inhaber). Jeder andere Fehler (kein Netz, Zeitüberschreitung) leitet
          keine Rolle her: dann die zuletzt bestätigte dieses Kontos, sonst die
@@ -5651,38 +5718,60 @@ function adminPruefen(nochmal){
       var gemerkt=null; try{ gemerkt=lsGet(merkName,null); }catch(e){}
       clearTimeout(rolleNochmal); rolleNochmal=null;
       if(fe && !tabelleFehlt){
-        Rolle.da=true;
+        /* die gemerkte Rolle höchstens herabstufen: Admin/Inhaber nur, wenn
+           admins es jetzt bestätigt; solange sie nur gemerkt ist, weder
+           Zugangsdaten noch Übertragen vom Gerät (Rolle.gemerkt) */
+        Rolle.da=true; Rolle.gemerkt=true;
         Rolle.name=(gemerkt && gemerkt.rolle) || "kunde";
+        if(/^(inhaber|admin)$/.test(Rolle.name) && !imAdmins) Rolle.name="techniker";
         Rolle.anzeige=(gemerkt && gemerkt.name) || "";
-        /* Admin nur, wenn beides stimmt: die Rolle erlaubt es und admins sagt es */
-        if(!/^(inhaber|admin)$/.test(Rolle.name)){ Admin.zentral=false; Admin.frei=false; }
-        /* später nochmals prüfen; ändert sich die Rolle, Daten passend neu laden
-           (Zugangsdaten, Warteschlange) und neu zeichnen */
+      } else {
+        Rolle.da=!fe; Rolle.gemerkt=false;
+        Rolle.name=(r[1].data&&r[1].data[0]&&r[1].data[0].rolle) || (imAdmins?"admin":"techniker");
+        Rolle.anzeige=(r[1].data&&r[1].data[0]&&r[1].data[0].name) || "";
+        /* bestätigte Rolle je Konto merken – für einen Start ohne Netz (nicht
+           aus Präsentation oder Vorschau: die schreiben nichts auf das Gerät) */
+        if(!fe && !fa && !demo()) lsSet(merkName, {rolle:Rolle.name, name:Rolle.anzeige});
+      }
+      /* Admin nur, wenn beides stimmt: admins sagt es und die Rolle erlaubt es
+         (ohne Rollen-Tabelle zählt admins allein) – mit und ohne Netz dieselbe Regel.
+         Scheitert admins, gibt es bis zur nächsten Prüfung keine Verwaltung. */
+      Admin.zentral=imAdmins && (!Rolle.da || /^(inhaber|admin)$/.test(Rolle.name));
+      Admin.frei=Admin.zentral; Admin.geprueft=true;
+      /* eine der Abfragen gescheitert: später nochmals prüfen und dann die
+         Daten passend neu laden (Zugangsdaten, Warteschlange, Störungen,
+         Protokolle) – auch wenn die Rolle gleich bleibt, das Laden aber
+         unvollständig war */
+      if((fe && !tabelleFehlt) || fa){
         var konto=Store.benutzer.id;
         rolleNochmal=setTimeout(function(){
           rolleNochmal=null;
           if(!Store.benutzer || Store.benutzer.id!==konto) return;
-          var vorher=Rolle.name+"|"+Admin.frei;
+          var vorher=Rolle.name+"|"+Admin.frei+"|"+!!Rolle.gemerkt, warLesen=nurLesen()||demo();
           adminPruefen(true).then(function(){
-            if(Rolle.name+"|"+Admin.frei===vorher || !Store.benutzer || Store.benutzer.id!==konto) return;
-            flushQueue(); ladeStammdaten().then(storeNachRender, function(){});
+            if(!Store.benutzer || Store.benutzer.id!==konto) return;
+            if(Rolle.name+"|"+Admin.frei+"|"+!!Rolle.gemerkt===vorher){
+              if(!stammGeladenKomplett || !protokolleGeladen){ nachgeladenUm=0; hintergrundNachladen(); }
+              return;
+            }
+            /* jetzt nur noch ansehen: offene Fenster gehören zu den Rechten von vorher */
+            if((nurLesen()||demo()) && !warLesen) dialogeSchliessen();
+            if(nurLesen()||demo()||Rolle.gemerkt) zugangsdatenVerwerfen();
+            flushQueue(); ladeProtokolle();
+            ladeStammdaten().then(storeNachRender, function(){});
           });
         }, 15000);
-        if(!gemerkt && !nochmal) toast("Rolle konnte nicht geprüft werden (Verbindung?) – bis dahin nur Ansicht.");
-      } else {
-        Rolle.da=!fe;
-        Rolle.name=(r[1].data&&r[1].data[0]&&r[1].data[0].rolle) || (Admin.zentral?"admin":"techniker");
-        Rolle.anzeige=(r[1].data&&r[1].data[0]&&r[1].data[0].name) || "";
-        /* bestätigte Rolle je Konto merken – für einen Start ohne Netz (nicht
-           aus Präsentation oder Vorschau: die schreiben nichts auf das Gerät) */
-        if(!fe && !r[0].error && !demo()) lsSet(merkName, {rolle:Rolle.name, name:Rolle.anzeige});
+        if(!nochmal && fe && !tabelleFehlt && !gemerkt) toast("Rolle konnte nicht geprüft werden (Verbindung?) – bis dahin nur Ansicht.");
+        else if(!nochmal && fa && !fe && /^(inhaber|admin)$/.test(Rolle.name))
+          toast("Admin-Rechte konnten nicht geprüft werden (Verbindung?) – Verwaltung erst danach, es wird erneut versucht.");
       }
       /* Präsentation darf alles bedienen wie ein Admin – gespeichert wird nichts */
       if(demo()) Admin.frei=true;
       document.body.classList.toggle("nurlesen", nurLesen());
       document.body.classList.toggle("demo", demo());
       demoBanner();
-      if(!nurLesen() && !demo()) stammdatenUebertragen();   /* Anlagendaten auch von Technikern */
+      /* Anlagendaten vom Gerät auch von Technikern – nicht unter einer nur gemerkten Rolle */
+      if(!nurLesen() && !demo() && !Rolle.gemerkt) stammdatenUebertragen();
       wunschLinkNeu();
       /* Inhaber: offene Änderungswünsche zählen – nur die Zahl am Reiter
          nachziehen, nicht neu zeichnen (sonst ginge Angefangenes verloren) */
@@ -5699,9 +5788,12 @@ function adminPruefen(nochmal){
    nachtragen – erst nach bestätigter Übertragung vom Gerät entfernen */
 function aenderungenUebertragen(){
   if(nurLesen()||demo()) return;   /* Kunde und Präsentation schreiben nichts */
+  if(Rolle.gemerkt) return;        /* Rolle noch nicht bestätigt: erst nach der nächsten Prüfung */
   if(Store.modus!=="claude" && Store.modus!=="supabase") return;
   idbVorgang("readonly",function(st){ return st.getAll(); },"aenderungen").then(function(liste){
     (liste||[]).forEach(function(ev){
+      /* nur die eigenen Einträge – nie unter einem anderen Konto nachtragen */
+      if(Store.modus==="supabase" && ev.von && /@/.test(ev.von) && ev.von!==wer()) return;
       var weg=function(){ return idbVorgang("readwrite",function(st){ return st.delete(ev.id); },"aenderungen"); };
       if(Store.modus==="claude"){
         Store.claudeDb.doc("aenderungen/"+ev.id).set(ev).then(weg,function(){});
@@ -5796,6 +5888,12 @@ function kontowechselAufraeumen(){
   document.querySelectorAll(".vorschau-rahmen [data-a=\"zu\"]").forEach(function(b){ b.click(); });
   document.querySelectorAll(".assistent[data-konto], .vorschau-rahmen").forEach(function(x){ x.remove(); });
   if(!document.querySelector(".assistent, .vorschau-rahmen")) document.body.style.overflow="";
+  /* Druckansicht (Wartungsübersicht, Bericht) zeigt die Daten des alten Kontos */
+  var da=document.getElementById("druckansicht"); if(da) da.remove();
+  document.body.classList.remove("druckmodus");
+  /* Änderungsverlauf und Posteingang gehören zum alten Konto – die
+     Präsentation mischte den Speicherinhalt sonst in ihren Verlauf */
+  aenderungen=[]; POSTEINGANG=[]; protokolleFehler="";
 }
 /* Sitzungsende von außen (Abmelden in einem zweiten Tab, abgelaufene
    Anmeldung, anderes Konto): offene Fenster und ein angefangener
@@ -5848,9 +5946,12 @@ function sitzungZurueck(){
 var nachgeladenUm=0;
 function hintergrundNachladen(){
   if(Store.modus!=="supabase" || !Store.benutzer || demo()) return;
+  /* Rolle noch nicht geprüft: nicht mit der vorläufigen Rolle laden – nach der
+     Prüfung wird ohnehin geladen */
+  if(!Admin.geprueft) return;
   /* höchstens einmal je Minute – außer das letzte Laden war unvollständig */
   if(stammLaedt) return;   /* lädt schon */
-  if(Date.now()-nachgeladenUm<60000 && stammGeladenKomplett) return;
+  if(Date.now()-nachgeladenUm<60000 && stammGeladenKomplett && protokolleGeladen) return;
   nachgeladenUm=Date.now();
   ladeProtokolle();
   /* ein Claude-Vorgang, der beim Anmelden mangels vollständiger Daten warten
@@ -5867,7 +5968,8 @@ function initSupabase(){
     : window.supabase.createClient(CFG.supabaseUrl,CFG.supabaseAnonKey);
   Store.sb.auth.getSession().then(function(r){
     var sess=r&&r.data?r.data.session:null;
-    if(sess){ Store.benutzer=sess.user; Store.modus="supabase"; nachgeladenUm=Date.now(); ladeProtokolle();   /* übertragen erst nach der Rollenprüfung */
+    /* bis die Rolle geprüft ist: die engste (nur ansehen, keine Zugangsdaten) */
+    if(sess){ Store.benutzer=sess.user; Store.modus="supabase"; rolleVorlaeufig(); nachgeladenUm=Date.now(); ladeProtokolle();   /* übertragen erst nach der Rollenprüfung */
       adminPruefen().then(function(){ flushQueue(); return ladeStammdaten(); }).then(storeNachRender)
         .then(function(){ setTimeout(altlastenAutomatisch, 1500); setTimeout(kiVorgangFortsetzen, 300); }); }   /* Altlasten der alten Liste bereinigen (nur Admins); ein Claude-Vorgang von vor dem Neuladen geht weiter */
     else { Store.modus="anmeldung"; }
@@ -5925,14 +6027,16 @@ function initSupabase(){
         storeNachRender();
       }, function(){});
     }
-    if(sess){ Store.benutzer=sess.user; Store.modus="supabase"; nachgeladenUm=Date.now(); ladeProtokolle();   /* übertragen erst nach der Rollenprüfung */
+    /* bis die Rolle geprüft ist: die engste (nur ansehen, keine Zugangsdaten) */
+    if(sess){ Store.benutzer=sess.user; Store.modus="supabase"; rolleVorlaeufig(); nachgeladenUm=Date.now(); ladeProtokolle();   /* übertragen erst nach der Rollenprüfung */
       adminPruefen().then(function(){ flushQueue(); return ladeStammdaten(); }).then(storeNachRender).then(sitzungZurueck)
         .then(function(){ setTimeout(altlastenAutomatisch, 1500); setTimeout(kiVorgangFortsetzen, 300); }); }   /* Altlasten der alten Liste bereinigen (nur Admins); ein Claude-Vorgang von vor dem Neuladen geht weiter */
     else {
       Store.benutzer=null; Store.modus="anmeldung"; protokolle=[]; protokolleGeladen=false; Admin.zentral=false; Admin.frei=false;
       /* abgemeldet: nichts von dem, was nur Angemeldete sehen dürfen, bleibt
          im Speicher – auch nicht die Zugangsdaten der Regelungen */
-      Rolle.name="techniker"; Rolle.da=false; aenderungen=[]; POSTEINGANG=[];
+      clearTimeout(rolleNochmal); rolleNochmal=null; protokolleFehler="";
+      Rolle.name="techniker"; Rolle.da=false; Rolle.anzeige=""; Rolle.gemerkt=false; aenderungen=[]; POSTEINGANG=[];
       OFFENE=[];   /* sofort weg – nicht erst, wenn die Stammdaten neu geladen sind */
       document.body.classList.remove("nurlesen","demo"); demoBanner();
       ladeStammdaten().then(storeNachRender, function(){});
@@ -6034,11 +6138,20 @@ function ladeProtokolle(){
     return Store.sb.from("protokolle").select(PROTOKOLL_SPALTEN+(rapportSpalte?",rapport":"")).order("erstellt",{ascending:false}).order("id");
   }, "client_id").then(function(r){
     if(r.error && rapportSpalte && /rapport/.test(r.error.message||"")){ rapportSpalte=false; ladeProtokolle(); return; }
-    if(r.error){ Store.fehler=r.error.message; return; }
-    protokolle=(r.data||[]).map(ausZeile); protokolleGeladen=true;
+    if(r.error){ protokolleNichtGeladen(r.error.message); return; }
+    protokolle=(r.data||[]).map(ausZeile); protokolleGeladen=true; protokolleFehler="";
     storeNachRender();
     offeneBerichteNachholen();
-  });
+  }, function(x){ protokolleNichtGeladen((x&&x.message)||String(x)); });
+}
+/* Laden der Protokolle gescheitert (etwa schlechter Empfang): Hinweis in
+   „Fällig“ (Fälligkeiten vorläufig) und bald nochmals versuchen – sonst
+   fehlten sie still, bis der Tab das nächste Mal sichtbar wird */
+var protokolleFehler="";
+function protokolleNichtGeladen(meldung){
+  Store.fehler=meldung; protokolleFehler=meldung||"Verbindung?";
+  if(Store.modus==="supabase" && Store.benutzer) setTimeout(hintergrundNachladen, 30000);
+  if(darfRendern() && S.view==="faellig") render();
 }
 
 /* ---------------- Fotos ----------------
@@ -6431,8 +6544,18 @@ function aktualisiereProtokoll(id, doc, quelle, geraetFotos, geraetAuftrag, gera
 }
 /* überträgt Protokolle vom Gerät, sobald eine zentrale Ablage da ist */
 var uebertragungLaeuft=false;
+var warteHinweisFuer=null;
 function flushQueue(){
-  if(nurLesen()||demo()) return;   /* Kunde und Präsentation schreiben nichts */
+  if(nurLesen()||demo()){   /* Kunde und Präsentation schreiben nichts */
+    /* … aber sagen, dass die Protokolle auf dem Gerät liegen bleiben (einmal je Konto) */
+    var wartend=lokaleProtokolle.filter(function(x){ return !x._demo; }).length;
+    var fuer=Store.benutzer && Store.benutzer.id;
+    if(wartend && fuer && Admin.geprueft && warteHinweisFuer!==fuer){
+      warteHinweisFuer=fuer;
+      toast(wartend+" Protokoll(e) auf diesem Gerät werden erst mit einem Techniker-Konto übertragen.");
+    }
+    return;
+  }
   if(uebertragungLaeuft) return;
   if(Store.modus!=="claude" && Store.modus!=="supabase") return;
   /* Vorführ-Protokolle der Präsentation gehen nie in die Ablage */
@@ -6516,7 +6639,7 @@ function viewAnmeldung(){
   var offen=lokaleProtokolle.length;
   var card=el('<div class="card"><div class="pad stack" style="max-width:420px">'+
     '<div><h2>Anmeldung</h2><div class="sub">Wartungsprotokolle sind nur für angemeldete Techniker zugänglich. Zugangsdaten bekommen Sie aus dem Büro.</div></div>'+
-    (offen?'<div class="note warnbox">'+offen+' Protokoll(e) liegen noch unübertragen auf diesem Gerät und gehen nach der Anmeldung automatisch raus.</div>':"")+
+    (offen?'<div class="note warnbox">'+offen+' Protokoll(e) liegen noch unübertragen auf diesem Gerät und gehen nach der Anmeldung eines Techniker- oder Büro-Kontos automatisch raus.</div>':"")+
     '<form class="stack" id="loginform">'+
       '<label class="fl"><span>E-Mail</span><input type="email" id="l_mail" autocomplete="username" required></label>'+
       '<label class="fl"><span>Passwort</span><input type="password" id="l_pw" autocomplete="current-password" required></label>'+
@@ -6594,11 +6717,12 @@ function kontoKarte(){
       '<span>Angemeldet als <strong>'+esc(ich.name||mail)+"</strong>"+(ich.name?' <span class="muted">('+esc(mail)+")</span>":"")+
         (Admin.zentral?' <span class="tag f30">Admin</span>':"")+"</span>"+
       '<span class="rowflex">'+(demo()||nurLesen()?"":'<button class="btn ghost sm" type="button" id="k_angaben">Meine Angaben</button>')+
-      '<button class="btn ghost sm" type="button" id="k_pw">Passwort ändern</button>'+
+      (demo()||nurLesen()?"":'<button class="btn ghost sm" type="button" id="k_pw">Passwort ändern</button>')+
       '<button class="btn ghost sm" type="button" id="k_ab">Abmelden</button></span>'+
     "</div>"+
     /* wer noch mit dem vom Büro vergebenen Startpasswort unterwegs ist, bekommt einen Hinweis */
-    ((Store.benutzer&&Store.benutzer.user_metadata&&Store.benutzer.user_metadata.eigenesPasswort)?"":
+    /* nicht bei Kunde und Präsentation: deren Passwort ändert nur das Büro */
+    ((demo()||nurLesen()||(Store.benutzer&&Store.benutzer.user_metadata&&Store.benutzer.user_metadata.eigenesPasswort))?"":
       '<div class="note warnbox" id="k_hinweis">Sie verwenden noch das Startpasswort aus dem Büro. '+
       'Bitte vergeben Sie über „Passwort ändern" ein eigenes, das nur Sie kennen.</div>')+
     '<form id="k_form" class="stack" hidden autocomplete="off">'+
@@ -6613,10 +6737,10 @@ function kontoKarte(){
     "</form>"+
   "</div></div>");
   var form=c.querySelector("#k_form"), err=c.querySelector("#k_err");
-  c.querySelector("#k_pw").onclick=function(){ if(demo()||nurLesen()){ toast("Für dieses gemeinsame Konto lässt sich das Passwort nur im Büro ändern."); return; } form.hidden=false; err.hidden=true; c.querySelector("#k_p1").focus(); };
+  var kpw=c.querySelector("#k_pw"); if(kpw) kpw.onclick=function(){ if(demo()||nurLesen()){ toast("Für dieses gemeinsame Konto lässt sich das Passwort nur im Büro ändern."); return; } form.hidden=false; err.hidden=true; c.querySelector("#k_p1").focus(); };
   c.querySelector("#k_abbr").onclick=function(){ form.hidden=true; form.reset(); };
   var ka=c.querySelector("#k_angaben"); if(ka) ka.onclick=angabenDialog;
-  c.querySelector("#k_ab").onclick=function(){ if(!abmeldenErlaubt()) return; formDirty=false; Store.sb.auth.signOut(); };
+  c.querySelector("#k_ab").onclick=function(){ if(!abmeldenErlaubt()) return; formDirty=false; Store.sb.auth.signOut({scope:"local"}); };
   form.onsubmit=function(e){
     e.preventDefault();
     var p1=c.querySelector("#k_p1").value, p2=c.querySelector("#k_p2").value;
@@ -8090,7 +8214,7 @@ function viewProtokoll(){
   form.addEventListener("input",function(){ formDirty=true; });
   form.addEventListener("change",function(){ formDirty=true; });
   var abmelden=form.querySelector("#logout");
-  if(abmelden) abmelden.onclick=function(){ if(!abmeldenErlaubt()) return; formDirty=false; Store.sb.auth.signOut(); };
+  if(abmelden) abmelden.onclick=function(){ if(!abmeldenErlaubt()) return; formDirty=false; Store.sb.auth.signOut({scope:"local"}); };
 
   /* Standort-Auswahl */
   var selSt=form.querySelector("#f_standort");
@@ -8735,7 +8859,7 @@ function viewProtokoll(){
      dann der zuletzt auf diesem Gerät eingetragene – sonst stünde auf einem
      geteilten Gerät der Name der Person davor im Protokoll */
   var eigene=meineAngaben();
-  var lastTech=kanonName(eigene.name||"") || (Rolle.anzeige ? kanonName(Rolle.anzeige) : "") || lsGet("ukt_tech","");
+  var lastTech=kanonName(eigene.name||"") || (Rolle.anzeige ? kanonName(Rolle.anzeige) : "") || lsGet(techMerkName("ukt_tech"),"");
   if(lastTech){ form.querySelector("#f_tech").value=lastTech; form.querySelector("#f_name").value=lastTech; }
 
   /* Zertifikatsnummer und Kontakt je Techniker: einmal eingegeben, danach
@@ -8743,7 +8867,7 @@ function viewProtokoll(){
      auf diesem Gerät gemerkten Stand */
   function techDaten(name){
     var k=kanonName(name); if(!k) return {zertp:"", kontakt:""};
-    var gemerkt=(lsGet("ukt_techdaten",{})||{})[k]||{};
+    var gemerkt=(lsGet(techMerkName("ukt_techdaten"),{})||{})[k]||{};
     var r={zertp:gemerkt.zertp||"", kontakt:gemerkt.kontakt||""};
     /* die eigenen Angaben aus „Meine Angaben“ gehen allem anderen vor */
     if(eigene.name && kanonName(eigene.name)===k){
@@ -9279,12 +9403,12 @@ function viewProtokoll(){
     }
     /* für die nächste Wartung merken – nicht in der Präsentation, sonst
        stünden Vorführ-Namen und -Zertifikate im nächsten echten Protokoll */
-    if(!demo()) lsSet("ukt_tech",doc.nameTechniker||doc.techniker);
+    if(!demo()) lsSet(techMerkName("ukt_tech"),doc.nameTechniker||doc.techniker);
     if(!demo()) (function(){
       var k=kanonName(doc.techniker||doc.nameTechniker); if(!k) return;
-      var m=lsGet("ukt_techdaten",{})||{};
+      var m=lsGet(techMerkName("ukt_techdaten"),{})||{};
       m[k]={zertp:doc.zertPerson||(m[k]||{}).zertp||"", kontakt:doc.kontakt||(m[k]||{}).kontakt||""};
-      lsSet("ukt_techdaten",m);
+      lsSet(techMerkName("ukt_techdaten"),m);
       if(doc.zertUnternehmen) lsSet("ukt_zertu",doc.zertUnternehmen);
     })();
     var id="p_"+Date.now()+"_"+Math.random().toString(36).slice(2,7);
@@ -10085,8 +10209,8 @@ function protokollDetail(p){
       (nurLesen()?"":'<button class="btn ghost sm" type="button" data-akt="verlauf">Änderungen ansehen</button>')+
       /* endgültig vom Gerät löschen (es gibt keine zentrale Kopie): nur Admins */
       (p._quelle==="geraet" && Admin.frei && !nurLesen()?'<button class="btn ghost sm" type="button" data-akt="weg">Vom Gerät löschen</button>':"")+
-      (p._quelle!=="geraet" && Admin.frei && !p.geloescht?'<button class="btn ghost sm" type="button" data-akt="loeschen" style="color:var(--crit);border-color:var(--crit)">Löschen</button>':"")+
-      (p._quelle!=="geraet" && Admin.frei && p.geloescht?'<button class="btn sm" type="button" data-akt="wiederher">Wiederherstellen</button>':"")+
+      (p._quelle!=="geraet" && Admin.frei && !nurLesen() && !p.geloescht?'<button class="btn ghost sm" type="button" data-akt="loeschen" style="color:var(--crit);border-color:var(--crit)">Löschen</button>':"")+
+      (p._quelle!=="geraet" && Admin.frei && !nurLesen() && p.geloescht?'<button class="btn sm" type="button" data-akt="wiederher">Wiederherstellen</button>':"")+
     "</div>"+
     '<div data-rolle="loeschpanel" class="posbox" hidden style="border-color:var(--crit)">'+
       '<label class="fl"><span class="req" data-rolle="loeschtitel">Grund für das Löschen</span>'+
@@ -10841,15 +10965,27 @@ function stammRueckgaengig(e){
   var zeit=new Date().toISOString(), rueck={};
   Promise.all(schritte.map(function(s){
     /* gab es vorher nicht bzw. weicht nicht mehr von der Liste ab */
-    if(s.loeschen){ delete stammUeber[s.id]; return stammLoeschen(s.id, rueck); }
+    var davor=stammUeber[s.id];
+    /* gescheitert: den Stand davor wieder anzeigen (nichts ist geändert) */
+    var zurueckStellen=function(wo){
+      if(wo===false){ if(davor) stammUeber[s.id]=davor; else delete stammUeber[s.id]; }
+      return wo;
+    };
+    if(s.loeschen){ delete stammUeber[s.id]; return stammLoeschen(s.id, rueck).then(zurueckStellen); }
     var rec=Object.assign({}, s.rec, {geaendert:zeit, von:wer(), grund:"Rückgängig: "+grund.trim()});
     delete rec.mitZugang;
     stammUeber[s.id]=rec;
-    return stammSpeichern(rec, false, rueck);
-  })).then(function(){
+    return stammSpeichern(rec, false, rueck).then(function(wo){ return stammUeber[s.id]===rec ? zurueckStellen(wo) : wo; });
+  })).then(function(erg){
     wendeStammdatenAn();
+    var fehlt=erg.filter(function(w){ return w===false; }).length;
+    if(fehlt===erg.length){
+      berechneFaelligkeiten(); render();
+      toast("Zurücknehmen fehlgeschlagen"+(Store.fehler?" ("+Store.fehler+")":"")+" – es wurde nichts geändert. Bitte später nochmals versuchen.");
+      return;
+    }
     protokolliere({art:"stammdaten", standortId:e.standortId, standortName:e.standortName,
-      grund:"Rückgängig (Änderung vom "+zeitFmt(e.zeit)+"): "+grund.trim(),
+      grund:"Rückgängig (Änderung vom "+zeitFmt(e.zeit)+"): "+grund.trim()+(fehlt?" – nur teilweise übernommen":""),
       felder:(e.felder||[]).map(function(x){ return {feld:x.feld, name:x.name, alt:x.neu, neu:x.alt}; })
         .concat(ueber.map(function(x){ return {feld:x.k, name:rueckFeldName(x.r, x.k)+" (seither geändert)", alt:stammWert(x.k, x.alt), neu:stammWert(x.k, x.neu)}; }))
         .concat(still.map(function(x){ return {feld:"aktiv", name:x.name, alt:"in Betrieb", neu:"stillgelegt – Protokoll vom "+x.prot+" hängt daran"}; }))
@@ -10857,7 +10993,9 @@ function stammRueckgaengig(e){
         .concat(stoerWeg.map(function(st){ return {feld:"stoerung", name:"Offene Störung", alt:st, neu:"gelöscht"}; })),
       rueck:rueck});
     berechneFaelligkeiten(); render();
-    toast("Änderung zurückgenommen."+(ohneZugang?" Zugangsdaten der Regelung bitte neu eintragen.":""));
+    toast((fehlt ? "Nur teilweise zurückgenommen – "+fehlt+" Eintrag/Einträge ließ(en) sich nicht speichern"+(Store.fehler?" ("+Store.fehler+")":"")+"."
+                 : "Änderung zurückgenommen"+(erg.indexOf("geraet")>=0?" (vorerst nur auf diesem Gerät)":"")+".")+
+      (ohneZugang?" Zugangsdaten der Regelung bitte neu eintragen.":""));
   });
 }
 /* Eine Korrektur zurücknehmen: die Datenbank hat vor jeder Korrektur die
@@ -11825,13 +11963,31 @@ function verwaltungEditor(s){
     var felder=[];
     schl.forEach(function(k){ if(stammUeber[k]){ Object.keys(stammUeber[k].felder||{}).forEach(function(f2){
       felder.push({feld:f2, name:(k.indexOf("standort")===0?"":"Anlage – ")+(LABEL_ST[f2]||LABEL_POS[f2]||f2),
-                   alt:stammWert(f2,stammUeber[k].felder[f2]), neu:"Excel-Wert"}); }); } });
-    var rueck={};
-    Promise.all(schl.filter(function(k){ return stammUeber[k]; }).map(function(k){ delete stammUeber[k]; return stammLoeschen(k, rueck); }))
-      .then(function(){
+                   alt:stammWert(f2,stammUeber[k].felder[f2]), neu:"Excel-Wert", _k:k}); }); } });
+    var rueck={}, knopf=this;
+    knopf.disabled=true;
+    Promise.all(schl.filter(function(k){ return stammUeber[k]; }).map(function(k){
+      var davor=stammUeber[k];
+      delete stammUeber[k];
+      return stammLoeschen(k, rueck).then(function(wo){
+        /* nicht gelöscht: bleibt wie es war (auch in der Anzeige und im Verlauf) */
+        if(wo===false){ if(!stammUeber[k]) stammUeber[k]=davor; felder=felder.filter(function(x){ return x._k!==k; }); }
+        return wo;
+      });
+    }))
+      .then(function(erg){
+        knopf.disabled=false;
         wendeStammdatenAn();
-        protokolliere({art:"stammdaten", standortId:s.id, standortName:stName(s), grund:grund, felder:felder, rueck:rueck});
-        toast("Auf Excel-Stand zurückgesetzt."); render();
+        var fehlt=erg.filter(function(w){ return w===false; }).length;
+        if(fehlt===erg.length && erg.length){
+          fehler("Zurücksetzen fehlgeschlagen"+(Store.fehler?" ("+Store.fehler+")":"")+" – es wurde nichts geändert. Bitte erneut versuchen.");
+          return;
+        }
+        protokolliere({art:"stammdaten", standortId:s.id, standortName:stName(s), grund:grund+(fehlt?" – nur teilweise übernommen":""),
+          felder:felder.map(function(x){ var y=Object.assign({}, x); delete y._k; return y; }), rueck:rueck});
+        toast(fehlt ? "Nur teilweise auf Excel-Stand zurückgesetzt – "+fehlt+" Eintrag/Einträge ließ(en) sich nicht speichern"+(Store.fehler?" ("+Store.fehler+")":"")+"."
+                    : "Auf Excel-Stand zurückgesetzt"+(erg.indexOf("geraet")>=0?" (vorerst nur auf diesem Gerät)":"")+".");
+        render();
       });
   };
 
