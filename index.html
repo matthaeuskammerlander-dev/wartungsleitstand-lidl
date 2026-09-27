@@ -776,8 +776,9 @@ function regelText(r){
   return "Standardregel: "+r.map(function(x){ return (x.code||"Kürzel offen")+" "+MONATE_L[x.monat]; }).join(" · ")+
     (r.some(function(x){ return !x.code; }) ? " – HJW oder HJI bitte noch wählen" : "");
 }
-/* weitere Termine einer Anlage neu anlegen (aus der Standardregel im Dialog) */
-function termineNeuAnlegen(standortId, anlageId, liste, grund){
+/* weitere Termine einer Anlage neu anlegen (aus der Standardregel im Dialog);
+   rueck: Rückgängig-Puffer des Vorgangs (stammSpeichern) */
+function termineNeuAnlegen(standortId, anlageId, liste, grund, rueck){
   return Promise.all((liste||[]).map(function(t){
     var id="NP"+Date.now().toString(36)+Math.random().toString(36).slice(2,6);
     var rec={id:"position:"+id, typ:"position", ziel:id, neu:true, geaendert:new Date().toISOString(), von:wer(), grund:grund||"Termin angelegt",
@@ -785,7 +786,7 @@ function termineNeuAnlegen(standortId, anlageId, liste, grund){
     /* Wartungen laut Prüfbuch, die zu diesem Termin gehören (neue Anlage) */
     if(t.nachweise && t.nachweise.length) rec.felder.nachweise=t.nachweise;
     stammUeber[rec.id]=rec;
-    return stammSpeichern(rec);
+    return stammSpeichern(rec, false, rueck);
   })).then(function(wo){ wendeStammdatenAn(); return wo.indexOf(false)>=0 ? false : true; });
 }
 function sollMonatVorschlag(ib, halb){
@@ -1768,7 +1769,8 @@ function stoerungDialog(vorhanden){
       var gleicheNr=!vorhanden && o.auftragsnummer ? offeneStoerungen(true).filter(function(x){ return x._id!==o._id && String(x.auftragsnummer||"")===String(o.auftragsnummer); })[0] : null;
       if(gleicheNr && !window.confirm("Auftrag "+o.auftragsnummer+" ist schon als offene Störung erfasst ("+stName(byId[gleicheNr.standortId]||{})+").\n\nTrotzdem ein zweites Mal anlegen?")) return;
       b.disabled=true; b.textContent="Wird gespeichert …";
-      stoerungSpeichern(o, vorhanden?"Offene Störung geändert":"Offene Störung erfasst").then(function(wo){
+      var rueck={};
+      stoerungSpeichern(o, vorhanden?"Offene Störung geändert":"Offene Störung erfasst", rueck).then(function(wo){
         if(wo===false){
           /* weder zentral noch auf dem Gerät gespeichert – Dialog bleibt offen, nichts geht verloren */
           b.disabled=false; b.textContent=vorhanden?"Änderung speichern":"Störung anlegen";
@@ -1781,7 +1783,7 @@ function stoerungDialog(vorhanden){
           grund:(vorhanden?"Offene Störung geändert":"Offene Störung erfasst")+
                 (o.auftragsnummer?" – Auftrag "+o.auftragsnummer:""),
           felder:[{feld:"stoerung", name:"Offene Störung", alt:vorhanden?"vorhanden":"–",
-                   neu:(o.problemtyp||"Störung")+(o.zieltermin?" · bis "+dfmt(o.zieltermin):"")}]});
+                   neu:(o.problemtyp||"Störung")+(o.zieltermin?" · bis "+dfmt(o.zieltermin):"")}], rueck:rueck});
         zu();
         toast(wo==="geraet" ? "Auf dem Gerät gespeichert – wird übertragen, sobald Verbindung besteht."
                             : "Offene Störung gespeichert.");
@@ -1794,25 +1796,26 @@ function stoerungDialog(vorhanden){
       e.onclick=function(){
         if(!window.confirm("Die Störung als erledigt abhaken?\n\nSie verschwindet aus der Liste unter „Fällig“.")) return;
         o.erledigt=new Date().toISOString();
-        stoerungSpeichern(o,"Offene Störung abgehakt").then(function(wo){
+        var rueck={};
+        stoerungSpeichern(o,"Offene Störung abgehakt", rueck).then(function(wo){
           if(wo===false){ o.erledigt=null; toast("Konnte nicht gespeichert werden – die Störung bleibt offen."); return; }
           /* eigener Verlaufseintrag – sonst hinge der Stand davor am nächsten, fremden Eintrag */
-          stoerungVerlauf(o, "Offene Störung abgehakt", "offen", "erledigt");
+          stoerungVerlauf(o, "Offene Störung abgehakt", "offen", "erledigt", rueck);
           zu(); toast("Störung abgehakt."); render(); });
       };
       fuss.appendChild(e);
       if(Admin.frei){
         var w=el('<button class="btn ghost" type="button" style="color:var(--crit)">Eintrag löschen</button>');
+        /* Löschen = als gelöscht markieren (geloescht): die Störung verschwindet
+           aus allen Listen (wendeStammdatenAn), Auftrags-PDF und Seitenbilder
+           bleiben aber erhalten – ein „Rückgängig“ holt sie vollständig zurück */
         w.onclick=function(){
-          if(!window.confirm("Diese offene Störung ganz löschen?\n\nDas lässt sich nicht rückgängig machen.")) return;
-          var sicher=stammUeber[o._id];
-          delete stammUeber[o._id];
-          stammLoeschen(o._id).then(function(r){
-            var f=Array.isArray(r) && r[1] && r[1].error;
-            if(f){ stammUeber[o._id]=sicher; wendeStammdatenAn(); render();
-              toast("Löschen fehlgeschlagen ("+f.message+") – die Störung bleibt."); return; }
-            stoerungVerlauf(o, "Offene Störung gelöscht", "offen", "gelöscht");
-            wendeStammdatenAn(); zu(); toast("Eintrag gelöscht."); render(); });
+          if(!window.confirm("Diese offene Störung löschen?\n\nSie verschwindet aus allen Listen. Ein Inhaber kann das im Änderungsverlauf zurücknehmen (samt Auftrags-PDF).")) return;
+          var rueck={}, z=Object.assign({}, o, {geloescht:new Date().toISOString(), geloeschtVon:wer()});
+          stoerungSpeichern(z, "Offene Störung gelöscht", rueck).then(function(wo){
+            if(wo===false){ toast("Löschen fehlgeschlagen – die Störung bleibt."); return; }
+            stoerungVerlauf(o, "Offene Störung gelöscht", "offen", "gelöscht", rueck);
+            zu(); toast("Eintrag gelöscht."); render(); });
         };
         fuss.appendChild(w);
       }
@@ -3078,10 +3081,11 @@ function anlagenZusammenfuehren(a1, a2){
       /* offene Störungen der stillgelegten Zeilen an die bleibende Anlage – sie müssen dort sichtbar bleiben */
       var stoer=offeneStoerungen(true).filter(function(o){ return o.positionId && wegIds.indexOf(o.positionId)>=0; });
       v.zu();
-      positionenSchreiben(pro, "Anlagen zusammengeführt").then(function(wo){
+      var rueck={};
+      positionenSchreiben(pro, "Anlagen zusammengeführt", rueck).then(function(wo){
         if(wo===false){ toast("Nicht gespeichert – bitte nochmals versuchen."); fertig(false); return; }
         return Promise.all(stoer.map(function(o){
-          return stoerungSpeichern(Object.assign({}, o, {positionId:haupt.leader.id}), "Anlage zusammengeführt");
+          return stoerungSpeichern(Object.assign({}, o, {positionId:haupt.leader.id}), "Anlage zusammengeführt", rueck);
         })).then(function(){
           var nameNeu=anlagenName(posById[haupt.leader.id]||haupt.leader);
           protokolliere({art:"stammdaten", standortId:s.id, standortName:stName(s),
@@ -3089,7 +3093,7 @@ function anlagenZusammenfuehren(a1, a2){
             felder:[{feld:"anlage", name:nameNeu, alt:"2 Anlagen", neu:"1 Anlage"+
               (dazuT.length?" · "+dazuT.length+" Termin(e) übernommen":"")+
               (gezaehlt?" · "+gezaehlt+" Wartung(en) übernommen":"")+
-              (stoer.length?" · "+stoer.length+" offene Störung(en) umgehängt":"")}]});
+              (stoer.length?" · "+stoer.length+" offene Störung(en) umgehängt":"")}], rueck:rueck});
           berechneFaelligkeiten(); toast("Zusammengeführt."); render(); fertig(true);
         });
       });
@@ -3166,14 +3170,15 @@ function anlageNeuAnlegen(s, vorlage){
     var rec={id:"position:"+id, typ:"position", ziel:id, felder:felder, neu:true,
              geaendert:new Date().toISOString(), von:wer(), grund:"Anlage angelegt"};
     stammUeber[rec.id]=rec;
-    return stammSpeichern(rec).then(function(wo){
+    var rueck={};
+    return stammSpeichern(rec, false, rueck).then(function(wo){
       if(wo===false){ delete stammUeber[rec.id]; wendeStammdatenAn(); render(); toast("Nicht gespeichert – weder Datenbank noch Gerätespeicher erreichbar."); return; }
       wendeStammdatenAn();
       /* zweiter Termin (Standardregel: HJW/HJI sechs Monate versetzt) – mit seinen Wartungen laut Prüfbuch */
-      if(w.weitere.length) termineNeuAnlegen(s.id, id, w.weitere, "Termin nach Standardregel angelegt").then(function(){ render(); });
+      if(w.weitere.length) termineNeuAnlegen(s.id, id, w.weitere, "Termin nach Standardregel angelegt", rueck).then(function(){ render(); });
       protokolliere({art:"stammdaten", standortId:s.id, standortName:stName(s), grund:"Anlage angelegt",
         felder:[{feld:"anlage", name:"Neue Anlage", alt:"–", neu:(felder.anlagentyp||"Anlage")+" · "+anlageKurz(felder)+
-          (felder.intervallCode?" · "+felder.intervallCode+(felder.monat?" "+MONATE_L[felder.monat]:""):"")}]});
+          (felder.intervallCode?" · "+felder.intervallCode+(felder.monat?" "+MONATE_L[felder.monat]:""):"")}], rueck:rueck});
       toast(wo==="geraet" ? "Anlage auf dem Gerät gespeichert – wird übertragen, sobald Verbindung besteht." : "Anlage angelegt.");
       render();
     });
@@ -3252,8 +3257,9 @@ function terminAenderungen(start, erg, name){
   return {proPos:proPos, log:log, neu:neu};
 }
 /* Geänderte Felder mehrerer Zeilen wegschreiben – je Zeile ein Eintrag in
-   den Stammdaten, gerechnet gegen den Excel-Stand wie überall sonst. */
-function positionenSchreiben(proPos, grund){
+   den Stammdaten, gerechnet gegen den Excel-Stand wie überall sonst.
+   rueck: Rückgängig-Puffer des Vorgangs (stammSpeichern). */
+function positionenSchreiben(proPos, grund, rueck){
   var zeit=new Date().toISOString();
   return Promise.all(Object.keys(proPos).map(function(pid){
     var p=ALLE_POS.filter(function(x){ return x.id===pid; })[0];
@@ -3266,7 +3272,7 @@ function positionenSchreiben(proPos, grund){
     var rec={id:"position:"+pid, typ:"position", ziel:pid, felder:felderNeu,
              neu:!!p._neu, geaendert:zeit, von:wer(), grund:grund};
     stammUeber[rec.id]=rec;
-    return stammSpeichern(rec);
+    return stammSpeichern(rec, false, rueck);
   })).then(function(wo){
     wendeStammdatenAn();
     /* nirgends gespeichert (weder Datenbank noch Gerät): so melden, nicht als Erfolg */
@@ -3309,15 +3315,16 @@ function anlageDatenErgaenzen(leader, vorlage, springe, ohneRegel){
     if(Object.keys(leaderNeu).length) proPos[leader.id]=Object.assign(proPos[leader.id]||{}, leaderNeu);
     geaendert=geaendert.concat(ta.log);
     if(!geaendert.length){ toast("Nichts geändert."); return; }
-    return positionenSchreiben(proPos, "Anlagendaten geprüft und ergänzt").then(function(wo){
+    var rueck={};
+    return positionenSchreiben(proPos, "Anlagendaten geprüft und ergänzt", rueck).then(function(wo){
       /* per Standardregel dazugekommene Termine als eigene Zeilen der Anlage */
       if(wo===false || !(ta.neu&&ta.neu.length)) return wo;
-      return termineNeuAnlegen(leader.standortId, leader.anlageId||leader.id, ta.neu, "Termin nach Standardregel angelegt").then(function(ok){ return ok===false?false:wo; });
+      return termineNeuAnlegen(leader.standortId, leader.anlageId||leader.id, ta.neu, "Termin nach Standardregel angelegt", rueck).then(function(ok){ return ok===false?false:wo; });
     }).then(function(wo){
       if(wo===false){ wendeStammdatenAn(); render(); toast("Nicht gespeichert – weder Datenbank noch Gerätespeicher erreichbar. Bitte nochmals versuchen."); return; }
       wendeStammdatenAn();
       protokolliere({art:"stammdaten", standortId:leader.standortId,
-        standortName:stName(byId[leader.standortId]||{}), grund:"Anlagendaten geprüft und ergänzt", felder:geaendert});
+        standortName:stName(byId[leader.standortId]||{}), grund:"Anlagendaten geprüft und ergänzt", felder:geaendert, rueck:rueck});
       toast(wo==="geraet" ? "Auf dem Gerät gespeichert – wird übertragen, sobald Verbindung besteht."
                           : geaendert.length+" Angabe"+(geaendert.length===1?"":"n")+" gespeichert.");
       render();
@@ -4438,12 +4445,12 @@ function protokollLoeschen(p, grund, wiederher){
        wieder offen – sonst wäre sie still verschwunden. Beim Wiederherstellen
        ist sie wieder erledigt. Die Verknüpfung (protokollId) bleibt dafür stehen. */
     OFFENE.filter(function(x){ return x.protokollId===id && (wiederher ? !x.erledigt : !!x.erledigt); }).forEach(function(x){
-      var z=Object.assign({}, x, {erledigt: wiederher ? jetzt : null});
-      stoerungSpeichern(z, wiederher ? "Störungsprotokoll wiederhergestellt – wieder erledigt" : "Störungsprotokoll gelöscht – Störung wieder offen")
+      var z=Object.assign({}, x, {erledigt: wiederher ? jetzt : null}), rueck={};
+      stoerungSpeichern(z, wiederher ? "Störungsprotokoll wiederhergestellt – wieder erledigt" : "Störungsprotokoll gelöscht – Störung wieder offen", rueck)
         .then(function(wo){
           if(wo===false) return;
           stoerungVerlauf(z, wiederher ? "Störungsprotokoll wiederhergestellt" : "Störungsprotokoll gelöscht – Störung wieder offen",
-            wiederher ? "offen" : "erledigt", wiederher ? "erledigt" : "offen");
+            wiederher ? "offen" : "erledigt", wiederher ? "erledigt" : "offen", rueck);
           berechneFaelligkeiten(); render();
         });
     });
@@ -4545,8 +4552,13 @@ function aenderungZeile(ev){
 function protokolliere(ev){
   if(demo()){ ev.id=ev.id||"e_"+Date.now().toString(36); ev.zeit=ev.zeit||new Date().toISOString(); ev.von=ev.von||wer(); aenderungen.unshift(ev); rueckPuffer={}; return Promise.resolve(); }
   ev.id = ev.id || "e_"+Date.now().toString(36)+Math.random().toString(36).slice(2,6);
-  /* Stammdaten-Änderung: den Stand davor mitgeben, damit sie sich zurücknehmen lässt */
-  if(ev.art==="stammdaten" && !ev.rueck && Object.keys(rueckPuffer).length){ ev.rueck=rueckPuffer; rueckPuffer={}; }
+  /* Stammdaten-Änderung: den Stand davor mitgeben, damit sie sich zurücknehmen
+     lässt. Bringt der Vorgang seinen eigenen Puffer mit (rueck), gilt nur der –
+     auch wenn er leer ist; der gemeinsame Puffer nur für Stellen ohne eigenen. */
+  if(ev.art==="stammdaten"){
+    if(ev.rueck===undefined && Object.keys(rueckPuffer).length){ ev.rueck=rueckPuffer; rueckPuffer={}; }
+    if(ev.rueck && !Object.keys(ev.rueck).length) delete ev.rueck;
+  }
   ev.zeit = ev.zeit || new Date().toISOString();
   ev.von = ev.von || wer();
   aenderungen.unshift(ev);
@@ -4557,12 +4569,17 @@ function protokolliere(ev){
     return Store.claudeDb.doc("aenderungen/"+ev.id).set(ev).then(function(){}, lokal);
   }
   if(Store.modus==="supabase" && Store.sb){
-    var senden=function(){ return Store.sb.from("aenderungen").insert(aenderungZeile(ev)); };
+    var senden=function(){ return mitFrist(Store.sb.from("aenderungen").insert(aenderungZeile(ev))); };
+    /* zuerst auf dem Gerät ablegen, erst nach bestätigter Übertragung wieder
+       weg: hängt die Verbindung und wird die App inzwischen geschlossen, trägt
+       aenderungenUebertragen den Eintrag nach (doppelt kommt er nicht an) */
+    var abgelegt=lokal();
+    var weg=function(){ return idbVorgang("readwrite",function(st){ return st.delete(ev.id); },"aenderungen").catch(function(){}); };
     return senden().then(function(r){
       /* Spalte rueck fehlt noch (SQL nicht gelaufen): ohne sie senden */
       if(r.error && rueckSpalte && /rueck/.test(r.error.message||"")){ rueckSpalte=false; return senden(); }
       return r;
-    }).then(function(r){ if(r.error) return lokal(); }, lokal);
+    }).then(function(r){ if(!r.error) abgelegt.then(weg); }, function(){});
   }
   return lokal();
 }
@@ -4616,14 +4633,15 @@ function offeneStoerungen(nurOffen){
     });
 }
 function stoerungVonMarkt(sid){ return offeneStoerungen(true).filter(function(o){ return o.standortId===sid; }); }
-function stoerungSpeichern(o, grund){
+/* rueck: Rückgängig-Puffer des Vorgangs (stammSpeichern) */
+function stoerungSpeichern(o, grund, rueck){
   var rec={id:o._id, typ:"stoerung", ziel:o.standortId||"", neu:false,
     felder:auswahl(o, STOER_OFFEN_FELDER), geaendert:new Date().toISOString(), von:wer(), grund:grund||""};
   /* schlägt das Speichern fehl, gilt wieder der alte Stand – die Anzeige soll
      nicht zeigen, was nirgends gespeichert ist */
   var altU=stammUeber[rec.id], altS=stammStand[rec.id];
   stammUeber[rec.id]=rec;
-  return stammSpeichern(rec).then(function(wo){
+  return stammSpeichern(rec, false, rueck).then(function(wo){
     if(wo===false){
       if(altU) stammUeber[rec.id]=altU; else delete stammUeber[rec.id];
       if(altS) stammStand[rec.id]=altS; else delete stammStand[rec.id];
@@ -4635,15 +4653,15 @@ function stoerungSpeichern(o, grund){
    erledigt) bekommt ihren eigenen Eintrag im Änderungsverlauf. So nimmt
    „Rückgängig“ genau diese Änderung zurück – und keine andere Änderung
    trägt den Stand davor stillschweigend mit. */
-function stoerungVerlauf(o, grund, alt, neu){
+function stoerungVerlauf(o, grund, alt, neu, rueck){
   return protokolliere({art:"stammdaten", standortId:o.standortId, standortName:stName(byId[o.standortId]||{}),
     grund:grund+(o.auftragsnummer?" – Auftrag "+o.auftragsnummer:""),
-    felder:[{feld:"stoerung", name:"Offene Störung", alt:alt, neu:neu}]});
+    felder:[{feld:"stoerung", name:"Offene Störung", alt:alt, neu:neu}], rueck:rueck});
 }
 var STOER_OFFEN_FELDER=["auftragsnummer","stoerungsnr","filialCode","problemtyp","beschreibung",
   "zieltermin","auftragsdatum","prioritaet","lidlTyp","lidlModell","hersteller","lin","seriennummer",
   "lidlKontakt","lidlTelefon","lidlMail","notiz","seiten","pdfName","pdfDaten","termin","terminZeit","terminTechniker","ohneAuftrag","positionId","qrInhalt",
-  "erledigt","protokollId","quelle"];
+  "erledigt","protokollId","quelle","geloescht","geloeschtVon"];
 
 function wendeStammdatenAn(){
   /* 1. alles auf den Excel-Stand zurück */
@@ -4658,8 +4676,11 @@ function wendeStammdatenAn(){
   var schluessel=Object.keys(stammUeber).sort(function(a,b){ return rang(a)-rang(b); });
   schluessel.forEach(function(k){
     var r=stammUeber[k], ziel=null, i;
-    /* Offene Störungen hängen an keinem Datensatz – sie sind eigene Einträge */
+    /* Offene Störungen hängen an keinem Datensatz – sie sind eigene Einträge.
+       Gelöschte bleiben nur als Datensatz stehen (für „Rückgängig“ samt PDF)
+       und zählen nirgends mehr: keine Liste, kein „Fällig“, keine Prüfung. */
     if(r.typ==="stoerung"){
+      if(r.felder && r.felder.geloescht) return;
       OFFENE.push(Object.assign({_id:r.id, standortId:r.ziel, erfasstAm:r.geaendert, erfasstVon:r.von}, r.felder));
       return;
     }
@@ -4721,27 +4742,37 @@ function darfStammZentral(rec){
   return Admin.zentral || (!!Store.benutzer && rec && (rec.typ==="position" || rec.typ==="stoerung"));
 }
 /* Für „Rückgängig“: der zuletzt gespeicherte Stand jedes Eintrags. Wer
-   speichert, hinterlässt den Stand davor im Puffer; der nächste Eintrag im
-   Änderungsverlauf nimmt ihn mit. So lässt sich jede Stammdaten-Änderung
-   exakt zurücknehmen, ohne dass jede speichernde Stelle das selbst tut. */
+   speichert, hinterlässt den Stand davor in einem Puffer; der Eintrag im
+   Änderungsverlauf nimmt ihn mit. Jeder Vorgang führt dafür seinen EIGENEN
+   Puffer (var rueck={} → stammSpeichern(rec, false, rueck) → protokolliere({…,
+   rueck:rueck})): laufen zwei Vorgänge gleichzeitig (etwa die Altlast-
+   Automatik und ein Speichern in der Verwaltung), mischten sich sonst ihre
+   Stände, und „Rückgängig“ nähme die falsche Änderung mit zurück.
+   rueckPuffer ist nur noch der Rückfall für Stellen ohne eigenen Puffer. */
 var stammStand={}, rueckPuffer={};
 /* true, wenn die gemeinsamen Stammdaten zuletzt ohne Fehler ganz geladen wurden */
 var stammVollstaendig=false;
 /* nicht in den Verlauf: Zugangsdaten (vertraulich) und eingebettete
    Auftrags-PDFs und Seitenbilder offener Störungen (mehrere MB) */
 function NICHT_IM_VERLAUF(){ return GEHEIME_FELDER.concat(["pdfDaten","seiten"]); }
-function stammVorherMerken(id){
-  if(id in rueckPuffer) return;
+function stammVorherMerken(id, puffer){
+  var ziel=puffer||rueckPuffer;
+  if(id in ziel) return;
   var v=stammStand[id] ? JSON.parse(JSON.stringify(stammStand[id])) : null;
   /* Zugangsdaten der Regelung gehören nie in den Verlauf – der ist für alle
-     Angemeldeten lesbar und lässt sich nicht löschen */
-  if(v && v.felder) NICHT_IM_VERLAUF().forEach(function(k){ delete v.felder[k]; });
-  rueckPuffer[id]=v;
+     Angemeldeten lesbar und lässt sich nicht löschen. Vermerkt wird nur,
+     DASS es welche gab: „Rückgängig“ kann sie dann nicht zurückholen und sagt das. */
+  if(v && v.felder){
+    if(GEHEIME_FELDER.some(function(k){ return !leerWert(v.felder[k]); })) v.mitZugang=true;
+    NICHT_IM_VERLAUF().forEach(function(k){ delete v.felder[k]; });
+  }
+  ziel[id]=v;
 }
-function stammSpeichern(rec, nachtragen){
+/* puffer: der Rückgängig-Puffer des Vorgangs (siehe oben); ohne ihn der gemeinsame */
+function stammSpeichern(rec, nachtragen, puffer){
   if(demo()){ stammStand[rec.id]=JSON.parse(JSON.stringify(rec)); rueckPuffer={}; return Promise.resolve("demo"); }
   /* ein nachgetragener Gerätestand ist keine neue Änderung – nichts für „Rückgängig“ */
-  if(!nachtragen) stammVorherMerken(rec.id);
+  if(!nachtragen) stammVorherMerken(rec.id, puffer);
   stammStand[rec.id]=JSON.parse(JSON.stringify(rec));
   var lokal=function(){
     return idbVorgang("readwrite",function(st){ return st.put(rec); },"stammdaten")
@@ -4758,9 +4789,9 @@ function stammSpeichern(rec, nachtragen){
   }
   return lokal();
 }
-function stammLoeschen(id){
+function stammLoeschen(id, puffer){
   if(demo()){ delete stammStand[id]; return Promise.resolve(); }
-  stammVorherMerken(id);
+  stammVorherMerken(id, puffer);
   delete stammStand[id];
   var lokal=idbVorgang("readwrite",function(st){ return st.delete(id); },"stammdaten").catch(function(){});
   if(Store.modus==="supabase" && Store.sb && Admin.zentral){
@@ -7046,15 +7077,15 @@ function viewProtokoll(){
         /* Termine sind Stammdaten, nicht Teil des Protokolls: sie gehen
            gleich raus, mit eigenem Eintrag im Änderungsverlauf */
         if(p0){
-          var ta=terminAenderungen(start, erg, name);
-          if(ta.log.length) positionenSchreiben(ta.proPos, "Termine beim Protokoll geprüft").then(function(wo){
+          var ta=terminAenderungen(start, erg, name), rueckT={};
+          if(ta.log.length) positionenSchreiben(ta.proPos, "Termine beim Protokoll geprüft", rueckT).then(function(wo){
             if(wo===false || !(ta.neu&&ta.neu.length)) return wo;
-            return termineNeuAnlegen(p0.standortId, p0.anlageId||p0.id, ta.neu, "Termin nach Standardregel angelegt").then(function(ok){ return ok===false?false:wo; });
+            return termineNeuAnlegen(p0.standortId, p0.anlageId||p0.id, ta.neu, "Termin nach Standardregel angelegt", rueckT).then(function(ok){ return ok===false?false:wo; });
           }).then(function(wo){
             if(wo===undefined) return;
             if(wo===false){ toast("Termine nicht gespeichert – bitte später nochmals prüfen."); return; }
             protokolliere({art:"stammdaten", standortId:p0.standortId, standortName:stName(byId[p0.standortId]||{}),
-              grund:"Termine beim Protokoll geprüft", felder:ta.log});
+              grund:"Termine beim Protokoll geprüft", felder:ta.log, rueck:rueckT});
             toast(wo==="geraet" ? "Termine auf dem Gerät gespeichert – gehen raus, sobald Verbindung besteht." : "Termine gespeichert.");
             /* Kürzel oder Termine haben sich geändert (etwa per Standardregel): die
                Auswahl oben mit den neuen Terminen aufbauen – sonst zeigte sie die
@@ -7171,15 +7202,16 @@ function viewProtokoll(){
       }
     });
     if(!recs.length) return;
+    var rueck={};
     recs.forEach(function(r){
       var rec={id:r.id, typ:"position", ziel:r.id.split(":")[1], felder:r.felder, neu:!!r.neu, geaendert:jetzt, von:von, grund:grund};
       stammUeber[r.id]=rec;
-      stammSpeichern(rec);
+      stammSpeichern(rec, false, rueck);
     });
     /* per Standardregel dazugekommene Termine der neuen Anlage (nur Admins) */
-    weitere.forEach(function(x){ termineNeuAnlegen(sid, x.id, x.liste, "Termin nach Standardregel angelegt"); });
+    weitere.forEach(function(x){ termineNeuAnlegen(sid, x.id, x.liste, "Termin nach Standardregel angelegt", rueck); });
     wendeStammdatenAn();
-    protokolliere({art:"stammdaten", standortId:sid, standortName:byId[sid]?stName(byId[sid]):doc.standortName, grund:grund, felder:felder});
+    protokolliere({art:"stammdaten", standortId:sid, standortName:byId[sid]?stName(byId[sid]):doc.standortName, grund:grund, felder:felder, rueck:rueck});
   }
   anlagenZeichnen();
 
@@ -8010,10 +8042,10 @@ function viewProtokoll(){
           vor=null;
         }
         if(vor){
-          var z=Object.assign({}, vor, {erledigt:new Date().toISOString(), protokollId:id});
-          stoerungSpeichern(z, "Durch Störungsprotokoll vom "+dfmt(doc.datum)+" erledigt")
+          var z=Object.assign({}, vor, {erledigt:new Date().toISOString(), protokollId:id}), rueckS={};
+          stoerungSpeichern(z, "Durch Störungsprotokoll vom "+dfmt(doc.datum)+" erledigt", rueckS)
             .then(function(wo){
-              if(wo!==false) stoerungVerlauf(z, "Durch Störungsprotokoll vom "+dfmt(doc.datum)+" erledigt", "offen", "erledigt");
+              if(wo!==false) stoerungVerlauf(z, "Durch Störungsprotokoll vom "+dfmt(doc.datum)+" erledigt", "offen", "erledigt", rueckS);
               /* das eben gespeicherte Protokoll bleibt aufgeklappt */
               if(S.view==="protokoll") S.letztesProtokoll=id;
               berechneFaelligkeiten(); render(); });
@@ -9320,59 +9352,142 @@ function demoBanner(){
     : "Präsentation – alles lässt sich ausprobieren, <strong>gespeichert wird nichts</strong>. Nach dem Neuladen ist alles wie vorher.")+"</div>");
   document.body.insertBefore(b, document.body.firstChild);
 }
+/* Felder eines Stands, wie sie im Verlauf stehen (ohne Zugangsdaten und PDFs) */
+function verlaufFelder(r){
+  var f=Object.assign({}, (r&&r.felder)||{});
+  NICHT_IM_VERLAUF().forEach(function(k){ delete f[k]; });
+  return f;
+}
+/* Stand eines Datensatzes direkt NACH der Änderung e: der Stand davor der
+   nächsten späteren Änderung, die ihn wieder angefasst hat – sonst der jetzige */
+function standNachAenderung(e, id){
+  var n=aenderungen.filter(function(x){ return x!==e && x.rueck && (id in x.rueck) && (x.zeit||"")>(e.zeit||""); })
+    .sort(function(a,b){ return String(a.zeit||"").localeCompare(String(b.zeit||"")); })[0];
+  return n ? {rec:n.rueck[id], spaeter:true} : {rec:stammStand[id]||null, spaeter:false};
+}
+/* Bezeichnung eines Felds für Rückfrage und Verlauf */
+function rueckFeldName(r, k){
+  if(r.typ==="standort") return LABEL_ST[k]||k;
+  if(r.typ==="position"){ var p=posById[r.ziel]; return (p?anlagenName(p)+" – ":"Anlage – ")+(LABEL_POS[k]||k); }
+  return "Offene Störung – "+k;
+}
 function stammRueckgaengig(e){
   var ids=Object.keys(e.rueck);
-  /* wurde seither nochmals geändert, geht auch das verloren – sagen */
-  /* seither geändert: am Datensatz ODER laut Verlauf (auch wenn er inzwischen
-     gelöscht bzw. auf den Listenstand zurückgesetzt ist) */
-  var spaeter=ids.filter(function(id){
-    var j=stammStand[id];
-    return (j && (j.geaendert||"")>(e.zeit||"")) ||
-      aenderungen.some(function(x){ return x!==e && x.rueck && (id in x.rueck) && (x.zeit||"")>(e.zeit||""); });
-  });
   /* Störungen: der Status (erledigt, gelöscht) gehört zu seiner eigenen
      Änderung. Nimmt man etwas anderes zurück, bleibt er, wie er jetzt ist –
      sonst ginge eine erledigte Störung wieder auf oder eine gelöschte käme zurück. */
   var statusAenderung=(e.felder||[]).some(function(x){ return x.feld==="stoerung" && /^(offen|erledigt|gelöscht)$/.test(String(x.neu)); });
-  var weg=ids.filter(function(id){ var v=e.rueck[id]; return v && v.typ==="stoerung" && !stammStand[id] && !statusAenderung; });
+  var weg=ids.filter(function(id){ var v=e.rueck[id], j=stammStand[id];
+    return v && v.typ==="stoerung" && (!j || !!(j.felder&&j.felder.geloescht)) && !statusAenderung; });
+  /* Feldweise zurücknehmen: nur, was DIESE Änderung geändert hat (Stand davor
+     gegen Stand danach). Spätere Änderungen an anderen Feldern bleiben stehen;
+     wurde ein Feld seither nochmals geändert, sagt das die Rückfrage, und der
+     Verlauf verbucht es. Liegt der Datensatz über einer Zeile der Excel-Liste,
+     heißt „kein Datensatz“ einfach „Stand der Liste“ (leere Felder). Nur bei
+     eigenen Einträgen ohne Liste darunter (neue Anlage, neuer Markt, Störung),
+     die es inzwischen nicht mehr gibt, kommt der ganze Stand davor zurück. */
+  var schritte=[], ueber=[], ganz=0, still=[], ohneZugang=0, stoerWeg=[];
+  ids.forEach(function(id){
+    if(weg.indexOf(id)>=0) return;       /* inzwischen gelöschte Störung nicht still zurückholen */
+    var vorher=e.rueck[id], jetzt=stammStand[id]||null;
+    var liste=function(r){ return {id:id, typ:r.typ, ziel:r.ziel, neu:false, felder:{}}; }, zurueckAufListe=false;
+    if(!vorher && jetzt && !jetzt.neu && EXCEL[id]) vorher=liste(jetzt);
+    if(!jetzt && vorher && !vorher.neu && EXCEL[id]){ jetzt=liste(vorher); zurueckAufListe=true; }
+    if(!vorher){
+      if(!jetzt) return;                 /* gab es vorher nicht und gibt es nicht mehr */
+      /* eine Störung wie beim Löschen nur als gelöscht markieren – Auftrags-PDF
+         und Seitenbilder bleiben für ein späteres „Rückgängig“ erhalten */
+      if(jetzt.typ==="stoerung"){
+        if((jetzt.felder||{}).geloescht) return;
+        schritte.push({id:id, rec:Object.assign({}, jetzt, {felder:Object.assign({}, jetzt.felder, {geloescht:new Date().toISOString(), geloeschtVon:wer()})})});
+        stoerWeg.push((jetzt.felder||{}).erledigt ? "erledigt" : "offen");
+        return;
+      }
+      /* von dieser Änderung angelegt: wieder weg – außer ein Protokoll hängt an
+         dem Termin. Dann stilllegen statt löschen und die Wartung an die Anlage
+         weiterleiten, zu der er gehört (wie beim Zusammenführen) – sonst fiele
+         sie still aus Historie und Fälligkeit. */
+      var pid=jetzt.typ==="position" ? jetzt.ziel : null;
+      var prot=pid ? alleProtokolle(true).filter(function(pr){
+        return ((pr.positionIds&&pr.positionIds.length)?pr.positionIds:(pr.positionId?[pr.positionId]:[])).indexOf(pid)>=0; }) : [];
+      if(!prot.length){ schritte.push({id:id, loeschen:true}); return; }
+      var zu=(jetzt.felder||{}).anlageZu, f0=Object.assign({}, jetzt.felder, {aktiv:false});
+      /* nicht an eine Zeile, die dieses Rückgängig selbst wieder entfernt (von
+         dieser Änderung neu angelegt, keine Zeile der Liste) */
+      var weiter=zu && zu!==pid && posById[zu] && !(e.rueck["position:"+zu]===null && !EXCEL["position:"+zu]) ? zu : null;
+      if(weiter) f0.zusammengefuehrtIn=weiter;
+      schritte.push({id:id, rec:Object.assign({}, jetzt, {felder:f0})});
+      var p0=posById[pid];
+      still.push({name:(p0?anlagenName(p0)+" "+(p0.intervallCode||"")+(+p0.monat?" "+MONATE_L[+p0.monat]:""):pid).trim(),
+        prot:prot.map(function(pr){ return dfmt(pr.datum); }).join(", "), weiter:weiter?anlagenName(posById[weiter]):""});
+      return;
+    }
+    var vF=verlaufFelder(vorher);
+    if(!jetzt){
+      var rec=Object.assign({}, vorher);
+      if(rec.typ==="stoerung" && rec.felder && rec.felder.pdfName && !rec.felder.pdfDaten){
+        /* zurückgeholte Störung: das Auftrags-PDF stand nicht im Verlauf */
+        rec.felder=Object.assign({}, rec.felder); delete rec.felder.pdfName;
+        rec.felder.notiz=((rec.felder.notiz||"")+" (Auftrags-PDF nach dem Zurückholen bitte neu anhängen)").trim();
+      }
+      if(rec.typ==="position" && (vorher.mitZugang || vF.fernzugriff==="ja")) ohneZugang++;
+      if(standNachAenderung(e, id).spaeter) ganz++;
+      schritte.push({id:id, rec:rec});
+      return;
+    }
+    var nF=verlaufFelder(standNachAenderung(e, id).rec), jF=verlaufFelder(jetzt);
+    var keys=Object.keys(Object.assign({}, vF, nF)).filter(function(k){ return !gleich(vF[k], nF[k]); });
+    if(vorher.typ==="stoerung" && !statusAenderung)
+      keys=keys.filter(function(k){ return ["erledigt","protokollId","geloescht","geloeschtVon"].indexOf(k)<0; });
+    keys=keys.filter(function(k){ return !gleich(jF[k], vF[k]); });   /* steht schon wieder so da */
+    if(!keys.length) return;
+    /* Zugangsdaten stehen nicht im Verlauf – mit dem Datensatz (Zurücksetzen) sind sie weg */
+    if(zurueckAufListe && vorher.typ==="position" && (vorher.mitZugang || vF.fernzugriff==="ja")) ohneZugang++;
+    var f=Object.assign({}, jetzt.felder);
+    keys.forEach(function(k){ if(k in vF) f[k]=vF[k]; else delete f[k]; });
+    /* nichts weicht mehr von der Excel-Liste ab: Datensatz weg, wie „leer“ in der Verwaltung */
+    if(!jetzt.neu && EXCEL[id] && !Object.keys(f).length) schritte.push({id:id, loeschen:true});
+    else schritte.push({id:id, rec:Object.assign({}, jetzt, {felder:f})});
+    keys.forEach(function(k){ if(!gleich(jF[k], nF[k])) ueber.push({r:jetzt, k:k, alt:jF[k], neu:vF[k]}); });
+  });
+  if(!schritte.length){
+    toast(weg.length ? "Die betroffene Störung ist inzwischen gelöscht – nichts zurückgenommen."
+                     : "Der Stand vor dieser Änderung gilt schon wieder – nichts zurückzunehmen.");
+    return;
+  }
   var frage="Diese Änderung vom "+zeitFmt(e.zeit)+" zurücknehmen?"+
-    (spaeter.length?"\n\nAchtung: "+spaeter.length+" der betroffenen Einträge wurde seither nochmals geändert (oder schon zurückgenommen) – "+
-      "auch das wird damit zurückgesetzt. Neuere Änderungen besser zuerst zurücknehmen.":"")+
+    (ueber.length?"\n\nAchtung: seither nochmals geändert und damit ebenfalls zurückgesetzt: "+
+      ueber.map(function(x){ return rueckFeldName(x.r, x.k); }).join(", ")+". Neuere Änderungen besser zuerst zurücknehmen.":"")+
+    (ganz?"\n\n"+ganz+" betroffene"+(ganz===1?"r Eintrag wurde":" Einträge wurden")+" seither gelöscht – "+
+      "dort kommt der ganze Stand vor dieser Änderung zurück.":"")+
+    (ohneZugang?"\n\nZugangsdaten der Regelung (Link, Benutzer, Passwort) stehen nicht im Änderungsverlauf und kommen nicht zurück – bitte danach neu eintragen.":"")+
+    (still.length?"\n\nAn "+(still.length===1?"diesem Termin":"diesen Terminen")+" hängt schon ein Protokoll – "+(still.length===1?"er wird":"sie werden")+
+      " deshalb nicht gelöscht, sondern stillgelegt:\n"+still.map(function(x){ return "· "+x.name+" (Protokoll vom "+x.prot+")"+
+        (x.weiter?" – die Wartung zählt weiter für „"+x.weiter+"“":" – die Wartung zählt dann nirgends mehr, bitte das Protokoll einem Termin zuordnen"); }).join("\n"):"")+
     (weg.length?"\n\n"+weg.length+" betroffene Störung(en) wurde(n) inzwischen gelöscht und bleiben gelöscht.":"");
   if(!window.confirm(frage)) return;
   var grund=window.prompt("Warum wird die Änderung zurückgenommen?","");
   if(grund===null) return;
   if(!grund.trim()){ toast("Ohne Grund wird nichts zurückgenommen."); return; }
-  var zeit=new Date().toISOString();
-  Promise.all(ids.map(function(id){
-    var vorher=e.rueck[id];
-    if(weg.indexOf(id)>=0) return null;    /* inzwischen gelöschte Störung nicht still zurückholen */
-    if(vorher){
-      var rec=Object.assign({}, vorher, {geaendert:zeit, von:wer(), grund:"Rückgängig: "+grund.trim()});
-      /* Zugangsdaten und eingebettete PDFs stehen nicht im Verlauf – die aktuellen bleiben */
-      var jetztRec=stammStand[id];
-      if(jetztRec && jetztRec.felder){ rec.felder=Object.assign({}, rec.felder);
-        NICHT_IM_VERLAUF().forEach(function(k){ if(k in jetztRec.felder) rec.felder[k]=jetztRec.felder[k]; });
-        if(rec.typ==="stoerung" && !statusAenderung){
-          rec.felder.erledigt=jetztRec.felder.erledigt||null; rec.felder.protokollId=jetztRec.felder.protokollId||null;
-        }
-      } else if(rec.typ==="stoerung" && rec.felder && rec.felder.pdfName && !rec.felder.pdfDaten){
-        /* zurückgeholte Störung: das Auftrags-PDF stand nicht im Verlauf */
-        rec.felder=Object.assign({}, rec.felder); delete rec.felder.pdfName;
-        rec.felder.notiz=((rec.felder.notiz||"")+" (Auftrags-PDF nach dem Zurückholen bitte neu anhängen)").trim();
-      }
-      stammUeber[id]=rec;
-      return stammSpeichern(rec);
-    }
-    delete stammUeber[id];                 /* gab es vorher nicht */
-    return stammLoeschen(id);
+  var zeit=new Date().toISOString(), rueck={};
+  Promise.all(schritte.map(function(s){
+    /* gab es vorher nicht bzw. weicht nicht mehr von der Liste ab */
+    if(s.loeschen){ delete stammUeber[s.id]; return stammLoeschen(s.id, rueck); }
+    var rec=Object.assign({}, s.rec, {geaendert:zeit, von:wer(), grund:"Rückgängig: "+grund.trim()});
+    delete rec.mitZugang;
+    stammUeber[s.id]=rec;
+    return stammSpeichern(rec, false, rueck);
   })).then(function(){
     wendeStammdatenAn();
     protokolliere({art:"stammdaten", standortId:e.standortId, standortName:e.standortName,
       grund:"Rückgängig (Änderung vom "+zeitFmt(e.zeit)+"): "+grund.trim(),
-      felder:(e.felder||[]).map(function(x){ return {feld:x.feld, name:x.name, alt:x.neu, neu:x.alt}; })});
+      felder:(e.felder||[]).map(function(x){ return {feld:x.feld, name:x.name, alt:x.neu, neu:x.alt}; })
+        .concat(ueber.map(function(x){ return {feld:x.k, name:rueckFeldName(x.r, x.k)+" (seither geändert)", alt:stammWert(x.k, x.alt), neu:stammWert(x.k, x.neu)}; }))
+        .concat(still.map(function(x){ return {feld:"aktiv", name:x.name, alt:"in Betrieb", neu:"stillgelegt – Protokoll vom "+x.prot+" hängt daran"}; }))
+        .concat(stoerWeg.map(function(st){ return {feld:"stoerung", name:"Offene Störung", alt:st, neu:"gelöscht"}; })),
+      rueck:rueck});
     berechneFaelligkeiten(); render();
-    toast("Änderung zurückgenommen.");
+    toast("Änderung zurückgenommen."+(ohneZugang?" Zugangsdaten der Regelung bitte neu eintragen.":""));
   });
 }
 /* Eine Korrektur zurücknehmen: die Datenbank hat vor jeder Korrektur die
@@ -10211,10 +10326,11 @@ function verwaltungEditor(s){
     var rec={id:"standort:"+s.id, typ:"standort", ziel:s.id, felder:s._neu?neu:gegenExcel, neu:!!s._neu,
              geaendert:new Date().toISOString(), von:wer(), grund:grund};
     stammUeber[rec.id]=rec;
-    return stammSpeichern(rec).then(function(wo){
+    var rueck={};
+    return stammSpeichern(rec, false, rueck).then(function(wo){
       wendeStammdatenAn();
       protokolliere({art:"stammdaten", standortId:s.id, standortName:stName(s), grund:grund,
-        felder:[{feld:"entfernt", name:"Markt", alt:weg?"in der Liste":"entfernt", neu:weg?"aus der Liste entfernt":"wieder aufgenommen"}]});
+        felder:[{feld:"entfernt", name:"Markt", alt:weg?"in der Liste":"entfernt", neu:weg?"aus der Liste entfernt":"wieder aufgenommen"}], rueck:rueck});
       A.sel=weg?null:s.id; A.entwurf=null;
       toast(weg?"Aus der Liste entfernt.":"Wieder aufgenommen."+(wo==="geraet"?" (vorerst nur auf diesem Gerät)":""));
       render();
@@ -10228,16 +10344,23 @@ function verwaltungEditor(s){
   var resetKnopf=c.querySelector("#a_reset");
   if(resetKnopf) resetKnopf.onclick=function(){
     var grund=grundHolen(); if(!grund) return;
-    if(!window.confirm("Alle Änderungen an diesem Markt und seinen Anlagen verwerfen und wieder die Werte der Excel-Liste verwenden?")) return;
     var schl=["standort:"+s.id].concat(ausgewaehlt.filter(function(p){ return !p._neu; }).map(function(p){ return "position:"+p.id; }));
+    /* Zugangsdaten stehen absichtlich nicht im Änderungsverlauf – nach dem
+       Zurücksetzen sind sie endgültig weg, auch „Rückgängig“ holt sie nicht zurück */
+    var mitZugang=schl.filter(function(k){ var f0=(stammUeber[k]||{}).felder||{};
+      return GEHEIME_FELDER.some(function(g){ return !leerWert(f0[g]); }); }).length;
+    if(!window.confirm("Alle Änderungen an diesem Markt und seinen Anlagen verwerfen und wieder die Werte der Excel-Liste verwenden?"+
+      (mitZugang?"\n\nAchtung: Dabei werden auch die Zugangsdaten der Regelung (Link, Benutzer, Passwort) bei "+mitZugang+" Anlage"+(mitZugang===1?"":"n")+
+        " endgültig gelöscht. Sie stehen nicht im Änderungsverlauf und kommen auch mit „Rückgängig“ nicht zurück – vorher notieren.":""))) return;
     var felder=[];
     schl.forEach(function(k){ if(stammUeber[k]){ Object.keys(stammUeber[k].felder||{}).forEach(function(f2){
       felder.push({feld:f2, name:(k.indexOf("standort")===0?"":"Anlage – ")+(LABEL_ST[f2]||LABEL_POS[f2]||f2),
                    alt:stammWert(f2,stammUeber[k].felder[f2]), neu:"Excel-Wert"}); }); } });
-    Promise.all(schl.filter(function(k){ return stammUeber[k]; }).map(function(k){ delete stammUeber[k]; return stammLoeschen(k); }))
+    var rueck={};
+    Promise.all(schl.filter(function(k){ return stammUeber[k]; }).map(function(k){ delete stammUeber[k]; return stammLoeschen(k, rueck); }))
       .then(function(){
         wendeStammdatenAn();
-        protokolliere({art:"stammdaten", standortId:s.id, standortName:stName(s), grund:grund, felder:felder});
+        protokolliere({art:"stammdaten", standortId:s.id, standortName:stName(s), grund:grund, felder:felder, rueck:rueck});
         toast("Auf Excel-Stand zurückgesetzt."); render();
       });
   };
@@ -10385,12 +10508,13 @@ function verwaltungEditor(s){
     if(!recs.length){ fehler("Es wurde nichts geändert."); return; }
 
     var knopf=c.querySelector("#a_speichern"); knopf.disabled=true; knopf.textContent="Wird gespeichert …";
+    var rueck={};
     Promise.all(recs.map(function(r){
-      if(r.leer){ delete stammUeber[r.id]; return stammLoeschen(r.id).then(function(){ return "zurueck"; }); }
+      if(r.leer){ delete stammUeber[r.id]; return stammLoeschen(r.id, rueck).then(function(){ return "zurueck"; }); }
       var rec={id:r.id, typ:r.id.split(":")[0], ziel:r.id.split(":")[1], felder:r.felder, neu:!!r.neu,
                geaendert:jetzt, von:von, grund:grund};
       stammUeber[r.id]=rec;
-      return stammSpeichern(rec);
+      return stammSpeichern(rec, false, rueck);
     })).then(function(erg){
       if(erg.indexOf(false)>=0){
         knopf.disabled=false; knopf.textContent="Änderungen speichern";
@@ -10398,7 +10522,7 @@ function verwaltungEditor(s){
         return;
       }
       wendeStammdatenAn();
-      protokolliere({art:"stammdaten", standortId:s.id, standortName:stName(byId[s.id]||s), grund:grund, felder:protokoll});
+      protokolliere({art:"stammdaten", standortId:s.id, standortName:stName(byId[s.id]||s), grund:grund, felder:protokoll, rueck:rueck});
       A.entwurf=null; A.sel=s.id;
       toast((s._entwurf?"Markt angelegt":"Gespeichert – "+protokoll.length+" Änderung"+(protokoll.length===1?"":"en"))+
             (erg.indexOf("geraet")>=0?" (vorerst nur auf diesem Gerät)":"")+".");
@@ -10592,6 +10716,15 @@ function pruefListe(){
   protos.forEach(function(pr){
     if(pr.datum && pr.datum>heute) dazu("Fehler","Protokolle", "Protokoll mit Datum in der Zukunft ("+dfmt(pr.datum)+").", byId[pr.standortId], {protokolle:[pr._id]});
   });
+  /* Protokoll an einem Termin, den es nicht mehr gibt (etwa nach einem
+     „Rückgängig“ oder Zusammenführen): die Wartung zählt dann nirgends – nur
+     mit vollständig geladenen Stammdaten, sonst fehlten neu angelegte Termine */
+  if(stammVollstaendig) protos.forEach(function(pr){
+    var fehlt=pids(pr).filter(function(id){ return !posById[zeileWeiter(id)]; });
+    if(fehlt.length) dazu("Fehler","Protokolle", "Protokoll vom "+dfmt(pr.datum)+" hängt an "+(fehlt.length===1?"einem Termin, den":"Terminen, die")+
+      " es nicht mehr gibt – "+(zaehltAlsWartung(pr)?"die Wartung zählt so nirgends. ":"")+"Bitte das Protokoll korrigieren und die Anlage neu zuordnen.",
+      byId[pr.standortId], {protokolle:[pr._id]});
+  });
 
   var rang={Fehler:0, Hinweis:1, "Lücke":2};
   return L.sort(function(a,b){ return rang[a.schwere]-rang[b.schwere] || a.thema.localeCompare(b.thema) ||
@@ -10715,10 +10848,11 @@ function altlastBereinigen(fall){
   pro[v.jw.t.id]={intervallCode:"JW", monat:v.jw.monat};
   pro[v.hj.t.id]={intervallCode:v.hj.code, monat:v.hj.monat, anlageZu:v.jw.t.id};
   var felder=[{feld:"intervallCode", name:fall.name+" – Termine", alt:"JW "+MONATE_L[slotMonat(v.jw.t)]+" · JW "+MONATE_L[slotMonat(v.hj.t)], neu:altlastText(v)}];
-  return positionenSchreiben(pro, "Altlast der alten Liste: zweimal JW bereinigt").then(function(wo){
+  var rueck={};
+  return positionenSchreiben(pro, "Altlast der alten Liste: zweimal JW bereinigt", rueck).then(function(wo){
     if(wo===false) return false;
     protokolliere({art:"stammdaten", standortId:fall.s.id, standortName:stName(fall.s),
-      grund:"Altlast der alten Liste: zweimal JW → "+altlastText(v), felder:felder});
+      grund:"Altlast der alten Liste: zweimal JW → "+altlastText(v), felder:felder, rueck:rueck});
     /* nur einmal: nach „Rückgängig“ nicht erneut umbauen */
     return altlastMerken(fall, "bereinigt").then(function(){ return true; }, function(){ return true; });
   });
@@ -10774,11 +10908,11 @@ function altlastKarte(){
     if(ordK) ordK.onclick=function(){ verwaltungSprung(fa.s); };
     b.querySelector('[data-a="getrennt"]').onclick=function(){
       if(!window.confirm("„"+fa.name+"“ in "+stName(fa.s)+" sind wirklich "+fa.anlagen.length+" getrennte Anlagen mit je einer Jahreswartung?\n\nTipp: danach in der Verwaltung unterscheidbar benennen.")) return;
-      var pro={}; fa.anlagen.forEach(function(a){ pro[a.leader.id]={anlageZu:a.leader.id}; });
-      positionenSchreiben(pro, "Altlast geprüft: getrennte Anlagen").then(function(wo){
+      var pro={}, rueck={}; fa.anlagen.forEach(function(a){ pro[a.leader.id]={anlageZu:a.leader.id}; });
+      positionenSchreiben(pro, "Altlast geprüft: getrennte Anlagen", rueck).then(function(wo){
         if(wo===false){ toast("Nicht gespeichert – bitte nochmals versuchen."); return; }
         protokolliere({art:"stammdaten", standortId:fa.s.id, standortName:stName(fa.s), grund:"Altlast geprüft: getrennte Anlagen",
-          felder:[{feld:"anlageZu", name:fa.name, alt:"unklar", neu:"getrennte Anlagen"}]});
+          felder:[{feld:"anlageZu", name:fa.name, alt:"unklar", neu:"getrennte Anlagen"}], rueck:rueck});
         /* dauerhaft: auch nach „Rückgängig“ nicht wieder als Altlast umbauen */
         return altlastMerken(fa, "getrennt").then(null, function(){});
       }).then(function(){ berechneFaelligkeiten(); render(); });
@@ -10804,11 +10938,11 @@ function doppelKarte(){
       '<button class="btn ghost sm" type="button" data-a="eigen">eigene Anlage</button></div></div>');
     b.querySelectorAll("[data-i]").forEach(function(k){ k.onclick=function(){ anlagenZusammenfuehren(x.neu, x.alt[+k.dataset.i]); }; });
     b.querySelector('[data-a="eigen"]').onclick=function(){
-      var pro={}; pro[x.neu.leader.id]={doppelGeprueft:true};
-      positionenSchreiben(pro, "Neue Anlage geprüft: kein Doppel").then(function(wo){
+      var pro={}, rueck={}; pro[x.neu.leader.id]={doppelGeprueft:true};
+      positionenSchreiben(pro, "Neue Anlage geprüft: kein Doppel", rueck).then(function(wo){
         if(wo===false){ toast("Nicht gespeichert – bitte nochmals versuchen."); return; }
         protokolliere({art:"stammdaten", standortId:x.s.id, standortName:stName(x.s), grund:"Neue Anlage geprüft: eigene Anlage, kein Doppel",
-          felder:[{feld:"doppelGeprueft", name:anlagenName(dn), alt:"–", neu:"eigene Anlage"}]});
+          felder:[{feld:"doppelGeprueft", name:anlagenName(dn), alt:"–", neu:"eigene Anlage"}], rueck:rueck});
         render(); });
     };
     host.appendChild(b);
