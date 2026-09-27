@@ -1521,7 +1521,7 @@ function stoerungDialog(vorhanden){
         '<label class="btn ghost sm" for="st_foto" style="cursor:pointer">Auftrag abfotografieren</label>'+
         '<input type="file" id="st_foto" accept="image/*" capture="environment" hidden>'+
         '<button class="btn ghost sm" type="button" id="st_qr">QR-Code scannen</button>'+
-        (o.seiten.length && !demo() ? '<button class="btn sm" type="button" id="st_ki">Mit KI auslesen</button>' : "")+
+        (o.seiten.length ? '<button class="btn sm" type="button" id="st_ki">Mit KI auslesen</button>' : "")+
       "</div>"+
       '<div class="note" id="st_info" style="margin-top:8px">Die PDF aus der Lidl-Mail öffnen. '+
         "Lässt sie sich auslesen, werden die Felder gefüllt; sonst steht der Auftrag als Bild darunter "+
@@ -1592,6 +1592,7 @@ function stoerungDialog(vorhanden){
       var lesen = kiWegWaehlen("auftrag").then(function(weg){
         if(weg==="direkt") return kiLesen("auftrag", o.seiten, kiKontext(o.standortId?byId[o.standortId]:null, null));
         if(weg==="kopie") return kiKopierweg("auftrag", kiKontext(o.standortId?byId[o.standortId]:null, null)).then(function(d){ return d?{daten:d}:null; });
+        if(weg==="beispiel") return {daten:kiBeispiel("auftrag")};
         return null;
       });
       lesen.then(function(erg){
@@ -3632,6 +3633,7 @@ function anlageAssistent(start, titel, neu, alles){
           kiKopierweg(art, kiKontext(kiMarkt(), a)).then(function(d){ if(d) return verarbeiten({daten:d}); else uebersicht(); })
             .catch(function(e){ toast("Antwort nicht verwertbar: "+(e&&e.message||e)); uebersicht(); });
         else if(weg==="direkt") direkt();
+        else if(weg==="beispiel") verarbeiten({daten:kiBeispiel(art)});
         else uebersicht();
       });
       function direkt(){ kiFotosWaehlen().then(function(dateien){
@@ -5804,7 +5806,54 @@ function kiAntwortLesen(text, art){
 /* Welcher Weg? Direkt (kostet ein paar Cent, geht nur mit eingeschalteter
    KI) oder über die eigene Claude-App (Abo, kostet nichts extra) – immer
    wählbar. Ohne direkte KI gleich der Kopier-Weg. */
+/* Beispieldaten zum Ausprobieren in der Präsentation – erfunden, aber so, wie
+   die KI wirklich antwortet (gleiche Prüfansicht, eine unsichere Angabe). */
+var KI_BEISPIEL={
+  pruefbuch:{pruefbuecher:[{anlage:{bezeichnung:"VRV Anlage (Beispiel)",hersteller:"Daikin",modell:"RWEYQ10T8",seriennummer:"BSP-0001 ; BSP-0002",
+      bauart:"VRV",kreislaeufe:"1",kaeltemittelArt:"R410A",kaeltemittelKg:"34,3",gwp:"2088",co2t:"71,6",leistungKw:"56",psBar:"40",
+      toC:"",tkC:"",hermetisch:"nein",baujahr:"2017",fluidgruppe:"2",psv:"1372",gefahr:"NP",erstePruefung:"skP",leckageerkennung:"nein",
+      dichtheitMonate:"6",astv:"ja",inbetriebnahme:"03.10.2017",konformitaet:"",aufsteller:"Umwelt- und Klimatechnik GmbH",filiale:"",adresse:"",wartungsintervallMonate:"6"},
+    pruefungen:[{datum:"11.04.2023",firma:"UKT",techniker:"DJ",maengel:""},{datum:"13.11.2023",firma:"UKT",techniker:"MK",maengel:""},
+      {datum:"29.03.2024",firma:"UKT",techniker:"DJ",maengel:""},{datum:"20.09.2024",firma:"UKT",techniker:"MK",maengel:""}],
+    unsicher:["kaeltemittelKg"], hinweise:"BEISPIELDATEN – keine echten Fotos gelesen. Füllmenge handschriftlich, 34,3 oder 34,8 kg."}], hinweise:""},
+  typenschild:{geraete:[{art:"aussen",hersteller:"Daikin",modell:"RXYQ8U7W1B",seriennummer:"BSP-A100",baujahr:"2019",kaeltemittelArt:"R410A",
+      werksfuellungKg:"5,9",leistungKw:"22,4",psBar:"41,7"},
+    {art:"innen",hersteller:"Daikin",modell:"FXFQ63A",seriennummer:"BSP-I201",baujahr:"2019",kaeltemittelArt:"R410A",werksfuellungKg:"",leistungKw:"7,1",psBar:""},
+    {art:"innen",hersteller:"Daikin",modell:"FXFQ50A",seriennummer:"BSP-I202",baujahr:"2019",kaeltemittelArt:"R410A",werksfuellungKg:"",leistungKw:"5,6",psBar:""}],
+    unsicher:["geraet 1: seriennummer"], hinweise:"BEISPIELDATEN – keine echten Fotos gelesen."},
+  auftrag:{auftragsnummer:"600000001",stoerungsnr:"130000001",filialCode:"AT0999",problemtyp:"Klimaanlage kühlt nicht",
+    beschreibung:"Beispiel: Im Verkaufsraum wird es zu warm, Innengerät zeigt Fehler U4. Bitte prüfen.",auftragsdatum:"",zieltermin:"",
+    prioritaet:"2",lidlTyp:"VRV",lidlModell:"",hersteller:"Daikin",lin:"",seriennummer:"",lidlKontakt:"Beispiel Filialleitung",lidlTelefon:"",lidlMail:"",
+    unsicher:[], hinweise:"BEISPIELDATEN – kein echter Auftrag."}
+};
+function kiBeispiel(art){
+  var d=JSON.parse(JSON.stringify(KI_BEISPIEL[art]||{}));
+  if(art==="auftrag"){ var h=new Date(); d.auftragsdatum=dfmt(isoLokal(h)); d.zieltermin=dfmt(isoLokal(new Date(h.getTime()+7*864e5))); }
+  toast("Beispieldaten – nichts wurde gelesen, nichts kostet etwas.");
+  return d;
+}
 function kiWegWaehlen(art){
+  /* Präsentation: kostenpflichtiges Lesen gesperrt – stattdessen Beispieldaten
+     oder das eigene Claude-Konto (kostet die Firma nichts) */
+  if(demo()) return new Promise(function(fertig){
+    var v=ansichtOeffnen(art==="pruefbuch"?"Prüfbuch lesen":art==="auftrag"?"Lidl-Auftrag lesen":"Typenschilder lesen");
+    v.schritt.textContent="Präsentation – zum Ausprobieren";
+    var erledigt=false, ende=function(w){ if(erledigt) return; erledigt=true; v.zu(); fertig(w); };
+    var box=el('<div class="stack">'+
+      '<button class="btn" type="button" data-weg="beispiel" style="text-align:left;display:block;width:100%"><strong>Mit Beispieldaten ausprobieren</strong><br>'+
+        '<span style="font-size:13px;font-weight:400">Zeigt, was die KI aus einem '+(art==="pruefbuch"?"Prüfbuch":art==="auftrag"?"Lidl-Auftrag":"Typenschild")+
+        ' liest – mit erfundenen Daten, kostenlos</span></button>'+
+      '<button class="btn ghost" type="button" data-weg="kopie" style="text-align:left;display:block;width:100%"><strong>Mit eigenen Fotos über die Claude-App</strong><br>'+
+        '<span style="font-size:13px">Auftrag kopieren, Fotos in deiner Claude-App lesen lassen, Antwort einfügen · über dein eigenes Claude-Konto</span></button>'+
+      '<div class="muted" style="font-size:12.5px">„Direkt in der App lesen“ ist in der Präsentation abgeschaltet – das kostet echtes Geld. '+
+        "Wie immer in der Präsentation wird nichts gespeichert.</div></div>");
+    box.querySelectorAll("[data-weg]").forEach(function(b){ b.onclick=function(){ ende(b.dataset.weg); }; });
+    v.inhalt.appendChild(box);
+    var ab=el('<button class="btn ghost" type="button">Abbrechen</button>');
+    ab.onclick=function(){ ende(null); };
+    v.fuss.appendChild(ab);
+    box.closest(".assistent").querySelector('[data-a="zu"]').onclick=function(){ ende(null); };
+  });
   if(!kiAn()) return Promise.resolve("kopie");
   return new Promise(function(fertig){
     var v=ansichtOeffnen(art==="pruefbuch"?"Prüfbuch lesen":art==="auftrag"?"Lidl-Auftrag lesen":"Typenschilder lesen");
