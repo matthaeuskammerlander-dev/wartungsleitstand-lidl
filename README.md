@@ -686,7 +686,17 @@ führt **Markt, Anlagen und Termine bearbeiten** direkt in den Editor (mit
 geführten Dialog. Die Liste zeigt, was sich widerspricht, doppelt ist oder fehlt –
 getrennt nach Fehlern, Hinweisen und Lücken, filterbar nach Thema und als CSV
 für Excel. Geändert wird dort nichts; Marktnamen antippen öffnet den Markt,
-Admins springen mit einem Tipp in die Verwaltung.
+Admins springen mit einem Tipp in die Verwaltung. Ein Befund antippen führt zur
+Stelle, an der man ihn behebt: Termin- und Anlagenbefunde zum Feld im Editor
+(auch bei gleich benannten Anlagen die richtige), doppelte Anlagen zu
+„Zusammenführen mit …“, Protokoll- und Rapportbefunde zu den betroffenen
+Protokollen (korrigieren, löschen), offene Störungen zur Störung (abhaken, Markt
+zuordnen), doppelte Märkte zur Adresse.
+
+Ungespeicherte Eingaben im Markt-Editor bleiben stehen, solange er offen ist –
+auch wenn die App im Hintergrund Daten nachlädt. Wer den Markt wechselt, den
+Reiter wechselt, neu lädt oder einen Dialog öffnet, der danach neu zeichnet,
+wird vorher gefragt.
 
 Geprüft wird unter anderem:
 
