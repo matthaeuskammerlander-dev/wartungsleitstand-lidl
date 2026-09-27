@@ -1,4 +1,5 @@
-<!DOCTYPE html>
+    /* null = nicht ladbar (nicht dasselbe wie „nichts Neues“) */
+    .then(function(r){ if(r.error) return null; POSTEINGANG=r.data||[]; return POSTEINGANG; }, function(){ return null; });<!DOCTYPE html>
 <html lang="de">
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
@@ -1702,12 +1703,17 @@ function stoerungAlter(o){
    der Dialog kommt mit seinen Eingaben zurück und geht gleich in den Kopier-Weg */
 function stoerungDialog(vorhanden, weiter){
   if(nurLesen()){ posteingangOffen=null; toast("Mit diesem Konto lässt sich nur ansehen."); return; }
+  /* gemeinsame Datenbank, aber abgemeldet: nichts erfassen oder ändern – es
+     ginge sonst später unter fremdem Namen in die Datenbank */
+  if(!angemeldetOderLokal()){ posteingangOffen=null; toast("Dafür bitte zuerst anmelden."); return; }
   var o = weiter ? Object.assign({}, weiter.ort.o)
         : vorhanden ? Object.assign({}, vorhanden)
                     : {_id:"st_"+Date.now().toString(36)+Math.random().toString(36).slice(2,6), seiten:[]};
   if(!o.seiten) o.seiten=[];
   /* der Auftrag kam aus dem Posteingang: nach dem Speichern dort erledigen */
   if(weiter && weiter.ort.posteingang && !posteingangOffen) posteingangOffen=weiter.ort.posteingang;
+  /* genau dieser Eingang gehört zu diesem Dialog (nicht zu einem zweiten, später geöffneten) */
+  var meinEingang=(!vorhanden && posteingangOffen && posteingangOffen.art==="auftrag") ? posteingangOffen : null;
   var ov=el('<div class="assistent" role="dialog" aria-modal="true"><div class="as-karte">'+
     '<div class="as-kopf"><div style="min-width:0"><div class="as-titel">'+
       (vorhanden?"Offene Störung":"Störung erfassen")+'</div>'+
@@ -1723,9 +1729,24 @@ function stoerungDialog(vorhanden, weiter){
     ov.remove(); document.body.style.overflow=vorherOv;
     /* ein aus dem Posteingang geöffneter Auftrag gilt nur für diesen Dialog –
        abgebrochen bleibt er im Posteingang stehen */
-    if(posteingangOffen && posteingangOffen.art==="auftrag") posteingangOffen=null;
+    if(meinEingang && posteingangOffen===meinEingang) posteingangOffen=null;
   };
   var anfang=weiter ? "" : JSON.stringify(o);   /* wiederhergestellt: gilt als eingegeben */
+  /* Stand beim Öffnen – gespeichert wird nur, was im Dialog geändert wurde,
+     und zwar auf den JETZT geltenden Stand (aufAktuell): ein länger offenes
+     Fenster (etwa die Markt-Ansicht) holt sonst Überschriebenes, Erledigtes
+     oder Gelöschtes zurück */
+  var basisStand=vorhanden ? JSON.parse(JSON.stringify(vorhanden)) : null;
+  var aufAktuell=function(extra){
+    var jetzt=OFFENE.filter(function(x){ return x._id===o._id; })[0];
+    if(!jetzt || jetzt.erledigt || jetzt.geloescht) return null;
+    var z=Object.assign({}, jetzt);
+    STOER_OFFEN_FELDER.forEach(function(k){ if(!gleich(basisStand[k], o[k])) z[k]=o[k]; });
+    if(o.standortId!==basisStand.standortId) z.standortId=o.standortId;
+    return Object.assign(z, extra||{});
+  };
+  /* für das Neuladen bzw. Schließen der Seite (beforeunload): noch nicht gespeichert? */
+  ov._ungespeichert=function(){ return document.body.contains(ov) && JSON.stringify(o)!==anfang; };
   ov.querySelector('[data-a="zu"]').onclick=function(){
     /* abgetippte oder eingelesene Angaben nicht still wegwerfen */
     if(JSON.stringify(o)!==anfang &&
@@ -1795,13 +1816,15 @@ function stoerungDialog(vorhanden, weiter){
     if(warnung) warnen(warnung);
     var anlWahl=function(){
       var sel=inhalt.querySelector("#st_anlage"), s=o.standortId?byId[o.standortId]:null;
-      sel.innerHTML='<option value="">– noch unklar –</option>'+(s?anlagenDesMarkts(s,false).map(function(a){
+      sel.innerHTML='<option value="">– noch unklar –</option>'+(s?anlagenDesMarkts(s,true).map(function(a){   /* auch zur Zeit nicht gewartete Anlagen können gestört sein */
         return '<option value="'+esc(a.leader.id)+'"'+(o.positionId===a.leader.id?" selected":"")+">"+esc(anlagenName(anlageDaten(a.leader)))+"</option>"; }).join(""):"");
       sel.disabled=!s;
       sel.onchange=function(){ o.positionId=this.value||null; };
     };
     anlWahl();
-    inhalt.querySelector("#st_markt").onchange=function(){ o.standortId=this.value||null; o.positionId=null; o._marktAuto=false; anlWahl(); };
+    inhalt.querySelector("#st_markt").onchange=function(){ o.standortId=this.value||null; o.positionId=null; o._marktAuto=false; anlWahl();
+      /* von Hand gewählt: eine Meldung zur Markterkennung stimmt nicht mehr */
+      if(/Markt erkannt|kein Markt bekannt|Markt laut Auftrag/.test(meldung)) melde(""); };
     inhalt.querySelector("#st_ohne").onchange=function(){ o.ohneAuftrag=this.checked; };
     inhalt.querySelectorAll("[data-s]").forEach(function(i){
       i.oninput=function(){
@@ -1816,11 +1839,14 @@ function stoerungDialog(vorhanden, weiter){
             o.standortId=st.id; o._marktAuto=true;
             if(w) w.value=st.id; anlWahl();
             melde("Markt erkannt: <strong>"+esc(stName(st))+"</strong>.");
-          } else if(o._marktAuto){
+          } else {
             /* die Nummer passt zu keinem Markt (mehr): der nur aus ihr erkannte
                Markt gilt nicht mehr – sonst hinge die Störung am falschen */
-            o.standortId=null; o.positionId=null; o._marktAuto=false;
-            if(w) w.value=""; anlWahl();
+            if(o._marktAuto){
+              o.standortId=null; o.positionId=null; o._marktAuto=false;
+              if(w) w.value=""; anlWahl();
+            }
+            /* auch ohne vorher erkannten Markt sagen, dass die Nummer nicht passt (leer: Meldung weg) */
             melde(i.value.trim() ? "Zur Filial-Nr. „"+esc(i.value.trim())+"“ ist kein Markt bekannt – bitte den Markt wählen." : "");
           }
         }
@@ -1852,7 +1878,7 @@ function stoerungDialog(vorhanden, weiter){
     /* Stand des Dialogs – für den Wechsel in die Claude-App gesichert */
     var vorgang={weiter:weiter, ort:function(){
       return {typ:"stoerung", vorhandenId:vorhanden?vorhanden._id:null, o:o,
-              posteingang:(posteingangOffen && posteingangOffen.art==="auftrag") ? posteingangOffen : null}; }};
+              posteingang:meinEingang}; }};
     /* ohne KI-Zugang über die eigene Claude-App (Kopier-Weg) */
     var lesen = (weiter ? Promise.resolve("kopie") : kiWegWaehlen("auftrag")).then(function(weg){
       if(weg==="direkt") return kiLesen("auftrag", o.seiten, kontext);
@@ -1943,8 +1969,8 @@ function stoerungDialog(vorhanden, weiter){
         /* anderer Markt laut Auftrag: die Anlage des vorher gewählten Markts passt nicht mehr */
         if(st && st.id!==o.standortId){ o.standortId=st.id; o.positionId=null; o._marktAuto=true; }
         /* Kostenstelle zu keinem Markt: ein nur automatisch erkannter Markt gilt nicht mehr */
-        var ohneMarkt=!st && a.kostenstelle && o._marktAuto;
-        if(ohneMarkt){ o.standortId=null; o.positionId=null; o._marktAuto=false; }
+        var ohneMarkt=!st && a.kostenstelle && (o._marktAuto || !o.standortId);   /* auch ohne gewählten Markt melden */
+        if(ohneMarkt && o._marktAuto){ o.standortId=null; o.positionId=null; o._marktAuto=false; }
         melde("Übernommen aus dem Auftrag"+(st?", Markt erkannt: <strong>"+esc(stName(st))+"</strong>":"")+
               ". Bitte kurz gegenprüfen."+(ohneMarkt?" Zur Filial-Nr. „"+esc(a.kostenstelle)+"“ ist kein Markt bekannt – bitte den Markt wählen.":""));
       }
@@ -1984,9 +2010,15 @@ function stoerungDialog(vorhanden, weiter){
       /* derselbe Lidl-Auftrag schon offen (etwa doppelt gemailt)? */
       var gleicheNr=!vorhanden && o.auftragsnummer ? offeneStoerungen(true).filter(function(x){ return x._id!==o._id && String(x.auftragsnummer||"")===String(o.auftragsnummer); })[0] : null;
       if(gleicheNr && !window.confirm("Auftrag "+o.auftragsnummer+" ist schon als offene Störung erfasst ("+stName(byId[gleicheNr.standortId]||{})+").\n\nTrotzdem ein zweites Mal anlegen?")) return;
+      /* geändert: nur die Änderungen des Dialogs auf den jetzigen Stand legen */
+      var ziel=o;
+      if(vorhanden){
+        ziel=aufAktuell();
+        if(!ziel){ box.textContent="Die Störung wurde inzwischen erledigt oder gelöscht – nicht gespeichert. Die Eingaben stehen noch hier."; box.hidden=false; return; }
+      }
       b.disabled=true; b.textContent="Wird gespeichert …";
       var rueck={};
-      stoerungSpeichern(o, vorhanden?"Offene Störung geändert":"Offene Störung erfasst", rueck).then(function(wo){
+      stoerungSpeichern(ziel, vorhanden?"Offene Störung geändert":"Offene Störung erfasst", rueck).then(function(wo){
         if(wo===false){
           /* weder zentral noch auf dem Gerät gespeichert – Dialog bleibt offen, nichts geht verloren */
           b.disabled=false; b.textContent=vorhanden?"Änderung speichern":"Störung anlegen";
@@ -1994,12 +2026,12 @@ function stoerungDialog(vorhanden, weiter){
             (Store.fehler?" ("+Store.fehler+")":"")+". Die Eingaben sind noch da; bitte später nochmals speichern.";
           box.hidden=false; return;
         }
-        if(!vorhanden) posteingangErledigt("auftrag", o._id);
-        protokolliere({art:"stammdaten", standortId:o.standortId, standortName:stName(byId[o.standortId]||{}),
+        if(!vorhanden && meinEingang){ posteingangOffen=meinEingang; posteingangErledigt("auftrag", o._id); }
+        protokolliere({art:"stammdaten", standortId:ziel.standortId, standortName:stName(byId[ziel.standortId]||{}),
           grund:(vorhanden?"Offene Störung geändert":"Offene Störung erfasst")+
-                (o.auftragsnummer?" – Auftrag "+o.auftragsnummer:""),
+                (ziel.auftragsnummer?" – Auftrag "+ziel.auftragsnummer:""),
           felder:[{feld:"stoerung", name:"Offene Störung", alt:vorhanden?"vorhanden":"–",
-                   neu:(o.problemtyp||"Störung")+(o.zieltermin?" · bis "+dfmt(o.zieltermin):"")}], rueck:rueck});
+                   neu:(ziel.problemtyp||"Störung")+(ziel.zieltermin?" · bis "+dfmt(ziel.zieltermin):"")}], rueck:rueck});
         zu();
         toast(wo==="geraet" ? "Auf dem Gerät gespeichert – wird übertragen, sobald Verbindung besteht."
                             : "Offene Störung gespeichert.");
@@ -2011,12 +2043,13 @@ function stoerungDialog(vorhanden, weiter){
       var e=el('<button class="btn ghost" type="button">Als erledigt abhaken</button>');
       e.onclick=function(){
         if(!window.confirm("Die Störung als erledigt abhaken?\n\nSie verschwindet aus der Liste unter „Fällig“.")) return;
-        o.erledigt=new Date().toISOString();
+        var z=aufAktuell({erledigt:new Date().toISOString()});
+        if(!z){ toast("Die Störung ist inzwischen erledigt oder gelöscht."); zu(); render(); return; }
         var rueck={};
-        stoerungSpeichern(o,"Offene Störung abgehakt", rueck).then(function(wo){
-          if(wo===false){ o.erledigt=null; toast("Konnte nicht gespeichert werden – die Störung bleibt offen."); return; }
+        stoerungSpeichern(z,"Offene Störung abgehakt", rueck).then(function(wo){
+          if(wo===false){ toast("Konnte nicht gespeichert werden – die Störung bleibt offen."); return; }
           /* eigener Verlaufseintrag – sonst hinge der Stand davor am nächsten, fremden Eintrag */
-          stoerungVerlauf(o, "Offene Störung abgehakt", "offen", "erledigt", rueck);
+          stoerungVerlauf(z, "Offene Störung abgehakt", "offen", "erledigt", rueck);
           zu(); toast("Störung abgehakt."); render(); });
       };
       fuss.appendChild(e);
@@ -2027,10 +2060,11 @@ function stoerungDialog(vorhanden, weiter){
            bleiben aber erhalten – ein „Rückgängig“ holt sie vollständig zurück */
         w.onclick=function(){
           if(!window.confirm("Diese offene Störung löschen?\n\nSie verschwindet aus allen Listen. Ein Inhaber kann das im Änderungsverlauf zurücknehmen (samt Auftrags-PDF).")) return;
-          var rueck={}, z=Object.assign({}, o, {geloescht:new Date().toISOString(), geloeschtVon:wer()});
+          var rueck={}, z=aufAktuell({geloescht:new Date().toISOString(), geloeschtVon:wer()});
+          if(!z){ toast("Die Störung ist inzwischen erledigt oder gelöscht."); zu(); render(); return; }
           stoerungSpeichern(z, "Offene Störung gelöscht", rueck).then(function(wo){
             if(wo===false){ toast("Löschen fehlgeschlagen – die Störung bleibt."); return; }
-            stoerungVerlauf(o, "Offene Störung gelöscht", "offen", "gelöscht", rueck);
+            stoerungVerlauf(z, "Offene Störung gelöscht", "offen", "gelöscht", rueck);
             zu(); toast("Eintrag gelöscht."); render(); });
         };
         fuss.appendChild(w);
@@ -2039,6 +2073,7 @@ function stoerungDialog(vorhanden, weiter){
   }
   zeichne(); fussNeu();
   if(weiter) kiAuslesen(weiter);
+  return ov;
 }
 function stoerungsKarte(){
   /* Offene Störungen stehen IMMER alle da – auch wenn oben nach Region oder
@@ -2061,9 +2096,19 @@ function stoerungsKarte(){
   "</div></div>");
   var host=c.querySelector("#st_liste");
   if(!angemeldetOderLokal()){
-    /* ohne Anmeldung liefert die Datenbank keine Störungen – nicht „keine“ behaupten */
+    /* ohne Anmeldung liefert die Datenbank keine Störungen – nicht „keine“
+       behaupten, aber auch nichts zeigen oder erfassen lassen (auch nicht, was
+       noch auf dem Gerät liegt: das gehört dem zuletzt angemeldeten Konto) */
     host.appendChild(el('<div class="note warnbox" style="font-size:13px"><strong>Nicht angemeldet:</strong> '+
       "Offene Störungen sind erst nach der Anmeldung sichtbar.</div>"));
+    c.querySelector("#st_neu").hidden=true;
+    return c;
+  } else if(!stammVollstaendig && !(stammLaedt && offen.length)){   /* beim Nachladen bleibt der bisherige Stand stehen */
+    /* noch nicht (vollständig) geladen – etwa schlechter Empfang beim Anmelden:
+       dann nie „keine offene Störung“ behaupten */
+    host.appendChild(el('<div class="note warnbox" style="font-size:13px"><strong>'+
+      (stammLaedt ? "Offene Störungen werden geladen …" : "Offene Störungen konnten nicht vollständig geladen werden")+"</strong>"+
+      (stammLaedt ? "" : " (Verbindung?) – es wird erneut versucht."+(offen.length?" Hier steht nur, was bisher angekommen ist.":""))+"</div>"));
   } else if(!offen.length){
     host.appendChild(el('<div class="muted" style="font-size:13px">Zur Zeit keine offene Störung. '+
       "Kommt ein Auftrag von Lidl, hier erfassen – er erscheint dann an dieser Stelle.</div>"));
@@ -2185,7 +2230,8 @@ function posteingangAn(){ return !!(window.UKT_CONFIG && window.UKT_CONFIG.poste
 function ladePosteingang(){
   if(!posteingangAn()) return Promise.resolve([]);
   return Store.sb.from("posteingang").select("*").eq("status","neu").order("eingang",{ascending:false}).limit(100)
-    .then(function(r){ POSTEINGANG=r.error?[]:(r.data||[]); return POSTEINGANG; }, function(){ return []; });
+    /* null = nicht ladbar – nicht dasselbe wie „nichts Neues“ */
+    .then(function(r){ if(r.error) return null; POSTEINGANG=r.data||[]; return POSTEINGANG; }, function(){ return null; });
 }
 /* rapport: der tatsächlich gespeicherte Rapport – erledigt ist der Eingang nur,
    wenn es seine PDF ist (nicht ein später stattdessen angehängter Rapport) */
@@ -2221,6 +2267,7 @@ function posteingangKarte(){
   var host=c.querySelector("[data-liste]");
   ladePosteingang().then(function(liste){
     host.innerHTML="";
+    if(liste===null){ host.appendChild(el('<div class="note warnbox" style="font-size:13px">Der Posteingang konnte nicht geladen werden (Verbindung?) – später nochmals öffnen.</div>')); return; }
     if(!liste.length){ host.appendChild(el('<div class="muted" style="font-size:13px">Nichts Neues im Postfach.</div>')); return; }
     liste.forEach(function(e){
       var info=werteRapport("", e.dateiname) || {};
@@ -2246,15 +2293,20 @@ function posteingangKarte(){
       if(e.art!=="rapport"){
         var ab=el('<button class="btn sm" type="button">Als offene Störung erfassen</button>');
         ab.onclick=function(){
+          /* doppelt angetippt: nur ein Dialog (das Laden der Datei dauert etwas) */
+          if(ab.disabled) return;
+          ab.disabled=true;
           posteingangDatei(e).then(function(f){
+            ab.disabled=false;
             posteingangOffen={id:e.id, art:"auftrag"};
-            stoerungDialog(null);
-            /* die PDF gleich einlesen, als hätte man sie geöffnet */
-            var ein=document.querySelector(".assistent #st_pdf");
+            var ov=stoerungDialog(null);
+            if(!ov) return;
+            /* die PDF gleich einlesen, als hätte man sie geöffnet – in DIESEN Dialog */
+            var ein=ov.querySelector("#st_pdf");
             if(ein && /pdf/.test(f.type)){ var dt=new DataTransfer(); dt.items.add(f); ein.files=dt.files; ein.dispatchEvent(new Event("change")); }
             /* ein abfotografierter Auftrag (JPG/PNG) kommt als Bild dazu */
-            else if(/^image\//.test(f.type)){ var fe=document.querySelector(".assistent #st_foto"); if(fe){ var dt2=new DataTransfer(); dt2.items.add(f); fe.files=dt2.files; fe.dispatchEvent(new Event("change")); } }
-          }, function(x){ toast(x.message); });
+            else if(/^image\//.test(f.type)){ var fe=ov.querySelector("#st_foto"); if(fe){ var dt2=new DataTransfer(); dt2.items.add(f); fe.files=dt2.files; fe.dispatchEvent(new Event("change")); } }
+          }, function(x){ ab.disabled=false; toast(x.message); });
         };
         leiste.appendChild(ab);
       }
@@ -2468,16 +2520,43 @@ function stoerungEintrag(o, ohneMarkt){
         '<button class="btn ghost sm" type="button" data-a="ics">In Handykalender</button>'+
         ((o.auftragsnummer||o.qrInhalt) ? '<button class="btn ghost sm" type="button" data-a="qr">QR-Code zeigen</button>' : "")+
       "</div></div>");
+    z.dataset.sid=o._id; if(ohneMarkt) z.dataset.ohneMarkt="1";
+    /* immer den JETZT geltenden Stand nehmen – die Zeile kann in einem länger
+       offenen Fenster (Markt-Ansicht, Karte) stehen und längst überholt sein */
+    var aktuell=function(){
+      var a=OFFENE.filter(function(x){ return x._id===o._id; })[0];
+      if(!a || a.erledigt || a.geloescht){ toast("Diese Störung ist inzwischen erledigt oder gelöscht."); z.remove(); return null; }
+      return a;
+    };
     z.querySelector('[data-a="proto"]').onclick=function(){
-      if(!o.standortId){ toast("Der Störung ist noch kein Markt zugewiesen – bitte über „Ansehen / ändern“ nachtragen."); return; }
-      S.stoerungAus=o._id; S.protoStandort=o.standortId; S.protoPos=o.positionId||""; S.protoArt="stoerung";
+      var a=aktuell(); if(!a) return;
+      if(!a.standortId){ toast("Der Störung ist noch kein Markt zugewiesen – bitte über „Ansehen / ändern“ nachtragen."); return; }
+      S.stoerungAus=a._id; S.protoStandort=a.standortId; S.protoPos=a.positionId||""; S.protoArt="stoerung";
       S.view="protokoll"; formDirty=false; S.bearbeiten=null; render(); window.scrollTo({top:0});
     };
-    z.querySelector('[data-a="bearb"]').onclick=function(){ stoerungDialog(o); };
+    z.querySelector('[data-a="bearb"]').onclick=function(){ var a=aktuell(); if(a) stoerungDialog(a); };
     z.querySelector('[data-a="ics"]').onclick=function(){ stoerungIcs(o); };
+    /* das Störungsprotokoll dazu wartet noch auf dem Gerät: erst nach der
+       Übertragung ist die Störung erledigt – kein zweites Protokoll beginnen */
+    var wartend=(lokaleProtokolle||[]).filter(function(e){ return e && e.ausStoerung===o._id && e.doc; })[0];
+    if(wartend) z.insertBefore(el('<div class="note" style="font-size:12.5px">Das Störungsprotokoll vom '+esc(dfmt(wartend.doc.datum))+
+      " liegt auf diesem Gerät – nach der Übertragung wird die Störung abgehakt.</div>"), z.lastElementChild);
     var qrb=z.querySelector('[data-a="qr"]');
     if(qrb) qrb.onclick=function(){ auftragQrAnsicht(o.auftragsnummer, o.qrInhalt); };
     return z;
+}
+/* Offene Fenster (Markt-Ansicht u. a.) und die Karte zeichnet render() nicht
+   neu – ihre Störungszeilen hier auf den jetzigen Stand bringen: erledigte und
+   gelöschte verschwinden, geänderte zeigen das Neue */
+function stoerungEintraegeAuffrischen(){
+  document.querySelectorAll(".stoerbox[data-sid]").forEach(function(z){
+    if(!z.closest(".assistent") && S.view!=="karte") return;   /* die Hauptansicht zeichnet render() */
+    var o=OFFENE.filter(function(x){ return x._id===z.dataset.sid; })[0];
+    if(!o || o.erledigt){ z.remove(); return; }
+    var neu=stoerungEintrag(o, z.dataset.ohneMarkt==="1");
+    neu.style.cssText=z.style.cssText;
+    if(neu.innerHTML!==z.innerHTML) z.replaceWith(neu);
+  });
 }
 
 function viewFaellig(){
@@ -4798,7 +4877,9 @@ window.addEventListener("pagehide", function(){ if(entwurfSofort) entwurfSofort(
    gespeichert, nachfragen – die Rückfrage gibt dem Gerätespeicher auch die
    Zeit, den Entwurf fertig zu schreiben */
 window.addEventListener("beforeunload", function(e){
-  var offen = (entwurfSofort && entwurfSofort()) || (formDirty && S.bearbeiten) || verwaltungOffen();
+  var offen = (entwurfSofort && entwurfSofort()) || (formDirty && S.bearbeiten) || verwaltungOffen() ||
+    /* ein Fenster mit noch nicht gespeicherten Eingaben (etwa „Störung erfassen“) */
+    [].some.call(document.querySelectorAll(".assistent"), function(x){ return x._ungespeichert && x._ungespeichert(); });
   if(offen){ e.preventDefault(); e.returnValue=""; }
 });
 /* nur den genannten Platz löschen (ohne Angabe den alten Kontoplatz) – ein
@@ -4874,17 +4955,11 @@ function protokollLoeschen(p, grund, wiederher){
       felder:[{feld:"datum", name:"Protokoll vom", alt:dfmt(p.datum), neu: wiederher?"wiederhergestellt":"gelöscht"}]});
     /* Die Störung, die dieses Protokoll erledigt hatte, ist ohne das Protokoll
        wieder offen – sonst wäre sie still verschwunden. Beim Wiederherstellen
-       ist sie wieder erledigt. Die Verknüpfung (protokollId) bleibt dafür stehen. */
-    OFFENE.filter(function(x){ return x.protokollId===id && (wiederher ? !x.erledigt : !!x.erledigt); }).forEach(function(x){
-      var z=Object.assign({}, x, {erledigt: wiederher ? jetzt : null}), rueck={};
-      stoerungSpeichern(z, wiederher ? "Störungsprotokoll wiederhergestellt – wieder erledigt" : "Störungsprotokoll gelöscht – Störung wieder offen", rueck)
-        .then(function(wo){
-          if(wo===false) return;
-          stoerungVerlauf(z, wiederher ? "Störungsprotokoll wiederhergestellt" : "Störungsprotokoll gelöscht – Störung wieder offen",
-            wiederher ? "offen" : "erledigt", wiederher ? "erledigt" : "offen", rueck);
-          berechneFaelligkeiten(); render();
-        });
-    });
+       ist sie wieder erledigt – aber nur, wenn sie noch zu ihm passt (Markt,
+       Auftragsnummer), und ein anderes Störungsprotokoll derselben Störung
+       hält sie erledigt. Die Verknüpfung (protokollId) bleibt dafür stehen. */
+    stoerungenAbgleichen(id, wiederher ? Object.assign({}, p, felder) : null,
+      wiederher ? "Störungsprotokoll wiederhergestellt" : "Störungsprotokoll gelöscht");
     return true;
   };
   if(demo()){
@@ -4970,6 +5045,8 @@ function vergleiche(alt, neu){
 }
 function wer(){
   if(Store.modus==="supabase" && Store.benutzer && Store.benutzer.email) return Store.benutzer.email;
+  /* gemeinsame Datenbank, aber niemand angemeldet: nicht der zuletzt gemerkte Techniker */
+  if(!angemeldetOderLokal()) return "unbekannt";
   if(Admin && Admin.frei && lsGet("ukt_admin_name","")) return lsGet("ukt_admin_name","");
   return lsGet("ukt_tech","") || "unbekannt";
 }
@@ -4981,6 +5058,8 @@ function aenderungZeile(ev){
   return z;
 }
 function protokolliere(ev){
+  /* abgemeldet bei gemeinsamer Datenbank wird nichts geändert – also auch nichts eingetragen */
+  if(!angemeldetOderLokal()) return Promise.resolve();
   if(demo()){ ev.id=ev.id||"e_"+Date.now().toString(36); ev.zeit=ev.zeit||new Date().toISOString(); ev.von=ev.von||wer(); aenderungen.unshift(ev); rueckPuffer={}; return Promise.resolve(); }
   ev.id = ev.id || "e_"+Date.now().toString(36)+Math.random().toString(36).slice(2,6);
   /* Stammdaten-Änderung: den Stand davor mitgeben, damit sie sich zurücknehmen
@@ -5015,7 +5094,8 @@ function protokolliere(ev){
   return lokal();
 }
 function ladeAenderungen(){
-  var lokal=idbVorgang("readonly",function(st){ return st.getAll(); },"aenderungen")
+  /* abgemeldet: die noch nicht übertragenen Einträge gehören dem zuletzt angemeldeten Konto */
+  var lokal=!angemeldetOderLokal() ? Promise.resolve([]) : idbVorgang("readonly",function(st){ return st.getAll(); },"aenderungen")
     .then(function(l){ return l||[]; }, function(){ return []; });
   var zentral=Promise.resolve([]);
   if(Store.modus==="supabase" && Store.sb){
@@ -5066,6 +5146,8 @@ function offeneStoerungen(nurOffen){
 function stoerungVonMarkt(sid){ return offeneStoerungen(true).filter(function(o){ return o.standortId===sid; }); }
 /* rueck: Rückgängig-Puffer des Vorgangs (stammSpeichern) */
 function stoerungSpeichern(o, grund, rueck){
+  /* abgemeldet bei gemeinsamer Datenbank: nichts ablegen (auch nicht auf dem Gerät) */
+  if(!angemeldetOderLokal()){ Store.fehler="Nicht angemeldet."; return Promise.resolve(false); }
   var rec={id:o._id, typ:"stoerung", ziel:o.standortId||"", neu:false,
     felder:auswahl(o, STOER_OFFEN_FELDER), geaendert:new Date().toISOString(), von:wer(), grund:grund||""};
   /* schlägt das Speichern fehl, gilt wieder der alte Stand – die Anzeige soll
@@ -5077,7 +5159,7 @@ function stoerungSpeichern(o, grund, rueck){
       if(altU) stammUeber[rec.id]=altU; else delete stammUeber[rec.id];
       if(altS) stammStand[rec.id]=altS; else delete stammStand[rec.id];
     }
-    wendeStammdatenAn(); return wo;
+    wendeStammdatenAn(); stoerungEintraegeAuffrischen(); return wo;
   });
 }
 /* Jede Statusänderung einer Störung (abgehakt, gelöscht, per Protokoll
@@ -5088,6 +5170,98 @@ function stoerungVerlauf(o, grund, alt, neu, rueck){
   return protokolliere({art:"stammdaten", standortId:o.standortId, standortName:stName(byId[o.standortId]||{}),
     grund:grund+(o.auftragsnummer?" – Auftrag "+o.auftragsnummer:""),
     felder:[{feld:"stoerung", name:"Offene Störung", alt:alt, neu:neu}], rueck:rueck});
+}
+/* ---- Störung und Störungsprotokoll abgleichen ----
+   Eine Störung gilt als erledigt, solange ein nicht gelöschtes Störungs-
+   protokoll DESSELBEN Markts sie erledigt (und dieselbe Lidl-Auftragsnummer
+   nennt, falls beide eine haben). Jeder Weg, der das ändern kann – Anlegen
+   (nach der Übertragung), Korrigieren, Zurücknehmen, Löschen, „Vom Gerät
+   löschen“, Wiederherstellen – legt hier denselben Maßstab an. */
+function stoerungNr(x){ return String((x&&x.auftragsnummer)||"").trim(); }
+function stoerungPasst(x, p){
+  if(!x || !p || p.geloescht || !istStoerung(p) || !x.standortId || p.standortId!==x.standortId) return false;
+  var nrP=stoerungNr(p), nrS=stoerungNr(x);
+  return !(nrP && nrS && nrP!==nrS);
+}
+/* ein anderes, nicht gelöschtes Störungsprotokoll zu derselben Störung
+   (gleicher Markt und gleiche Auftragsnummer) – dann bleibt sie erledigt */
+function stoerungAnderesProtokoll(x, ohneId){
+  if(!stoerungNr(x)) return null;
+  return alleProtokolle().filter(function(q){ return q._id!==ohneId && stoerungPasst(x, q) && stoerungNr(q)===stoerungNr(x); })[0]||null;
+}
+/* Das Protokoll pid hat sich geändert; p ist sein jetziger Stand (null =
+   gelöscht bzw. vom Gerät weg). Die Störungen, die es erledigt hat, werden
+   wieder offen, wenn es nicht mehr passt – außer ein anderes Störungsprotokoll
+   derselben Störung trägt sie. Passt es (wieder), sind sie erledigt.
+   nachfragen: nur die Auftragsnummer weicht ab (Korrektur) – ein Tippfehler
+   soll die Störung nicht still öffnen, deshalb die Rückfrage. */
+function stoerungenAbgleichen(pid, p, anlass, nachfragen){
+  var jetzt=new Date().toISOString(), wege=[];
+  OFFENE.filter(function(x){ return x.protokollId===pid && !x.geloescht; }).forEach(function(x){
+    var passt=stoerungPasst(x, p), wo=stName(byId[x.standortId]||{}), auf=stoerungNr(x)?"Auftrag "+stoerungNr(x):"Die Störung";
+    var z=null, grund="", alt="", neu="";
+    if(x.erledigt){
+      if(passt) return;
+      var nurNr=p && !p.geloescht && istStoerung(p) && p.standortId===x.standortId;
+      if(nurNr && nachfragen && !window.confirm(auf+" bei "+wo+" wurde durch dieses Störungsprotokoll erledigt – es nennt jetzt Auftrag "+
+           stoerungNr(p)+".\n\nDie Störung wieder öffnen? (Abbrechen: sie bleibt erledigt, Nachbessern meldet es.)")) return;
+      var andere=stoerungAnderesProtokoll(x, pid);
+      if(andere){
+        z=Object.assign({}, x, {protokollId:andere._id});
+        grund=anlass+" – erledigt durch Störungsprotokoll vom "+dfmt(andere.datum); alt="erledigt"; neu="erledigt";
+      } else {
+        z=Object.assign({}, x, {erledigt:null});
+        grund=anlass+" – Störung wieder offen"; alt="erledigt"; neu="offen";
+        toast(auf+" bei "+wo+" ist wieder offen – "+(p && !p.geloescht ? "das Störungsprotokoll passt nicht mehr dazu." : "ihr Störungsprotokoll gibt es nicht mehr."));
+      }
+    } else {
+      if(!passt){
+        if(p && !p.geloescht) toast(auf+" bei "+wo+" bleibt offen – sie passt nicht (mehr) zu diesem Störungsprotokoll.");
+        return;
+      }
+      z=Object.assign({}, x, {erledigt:jetzt});
+      grund=anlass+" – wieder erledigt"; alt="offen"; neu="erledigt";
+    }
+    var rueck={};
+    wege.push(stoerungSpeichern(z, grund, rueck).then(function(wo2){
+      if(wo2!==false) stoerungVerlauf(z, grund, alt, neu, rueck);
+      else toast("Die Störung "+stoerungNr(x)+" ließ sich nicht angleichen – bitte in Nachbessern prüfen.");
+    }));
+  });
+  return Promise.all(wege).then(function(){ if(wege.length){ berechneFaelligkeiten(); storeNachRender(); } });
+}
+/* Ein übertragenes Störungsprotokoll erledigt die Störung, aus der es begonnen
+   wurde – nur für denselben Markt und denselben Lidl-Auftrag, und erst nach
+   der Übertragung: sonst wäre die Störung für alle anderen weg, während das
+   Protokoll nur auf diesem Gerät liegt (es wartet mit ausStoerung). */
+var stoerungWirdErledigt={};   /* Formular und Warteschlange können gleichzeitig fertig werden */
+function stoerungDurchProtokoll(sid, pid, doc){
+  if(stoerungWirdErledigt[sid]) return stoerungWirdErledigt[sid];
+  /* laufen die Stammdaten gerade, erst deren Stand abwarten */
+  var lauf=(stammLaedt || Promise.resolve()).then(function(){
+    var vor=OFFENE.filter(function(x){ return x._id===sid && !x.geloescht; })[0];
+    if(!vor || !istStoerung(doc)) return false;
+    if(vor.standortId!==doc.standortId){
+      toast("Die Störung bei "+stName(byId[vor.standortId]||{})+" bleibt offen – das Protokoll ist für einen anderen Markt.");
+      return false;
+    }
+    if(vor.erledigt) return false;   /* schon erledigt (etwa durch ein anderes Protokoll): nicht anfassen */
+    if(!stoerungPasst(vor, doc)){
+      toast("Die Störung mit Auftrag "+stoerungNr(vor)+" bleibt offen – das Protokoll nennt Auftrag "+stoerungNr(doc)+".");
+      return false;
+    }
+    var z=Object.assign({}, vor, {erledigt:new Date().toISOString(), protokollId:pid}), rueck={};
+    var grund="Durch Störungsprotokoll vom "+dfmt(doc.datum)+" erledigt";
+    return stoerungSpeichern(z, grund, rueck).then(function(wo){
+      if(wo!==false) stoerungVerlauf(z, grund, "offen", "erledigt", rueck);
+      berechneFaelligkeiten(); storeNachRender();
+      return wo!==false;
+    });
+  });
+  var ende=function(){ delete stoerungWirdErledigt[sid]; };
+  stoerungWirdErledigt[sid]=lauf;
+  lauf.then(ende, ende);
+  return lauf;
 }
 var STOER_OFFEN_FELDER=["auftragsnummer","stoerungsnr","filialCode","problemtyp","beschreibung",
   "zieltermin","auftragsdatum","prioritaet","lidlTyp","lidlModell","hersteller","lin","seriennummer",
@@ -5366,6 +5540,10 @@ function ladeStammdaten(nurVollstaendig){
   var lauf=Promise.all([lokal,zentral]).then(function(r){
     if(nurVollstaendig && !komplett && vorherKomplett){ stammVollstaendig=true; return stammUeber; }
     var alle={};
+    /* abgemeldet (gemeinsame Datenbank): was noch auf dem Gerät wartet, gehört
+       dem zuletzt angemeldeten Konto – nicht zeigen (etwa offene Störungen);
+       übertragen wird es nach der nächsten Anmeldung (stammdatenUebertragen) */
+    if(!angemeldetOderLokal()) r[0]=[];
     /* Kunde, Präsentation und Abgemeldete sehen keine Zugangsdaten – auch
        nicht die, die noch auf dem Gerät auf die Übertragung warten */
     if(nurLesen()||demo()||!angemeldetOderLokal()) r[0]=r[0].map(function(x){
@@ -5381,6 +5559,8 @@ function ladeStammdaten(nurVollstaendig){
     });
     stammUeber=alle;
     stammVollstaendig=komplett; stammGeladenKomplett=komplett;
+    /* unvollständig (etwa schlechter Empfang beim Anmelden): bald nochmal versuchen */
+    if(!komplett && Store.modus==="supabase" && Store.benutzer) setTimeout(hintergrundNachladen, 30000);
     stammStand=JSON.parse(JSON.stringify(alle));
     wendeStammdatenAn();
     return stammUeber;
@@ -5576,6 +5756,7 @@ function storeNachRender(){
   berechneFaelligkeiten();
   /* die Karte nicht unter der Hand neu aufbauen – Zoom und Ausschnitt gingen verloren */
   if(darfRendern() && S.view!=="karte") render();
+  stoerungEintraegeAuffrischen();   /* offene Fenster und Karte zeigen die Störungen wie sie jetzt sind */
 }
 
 function initStore(versuch){
@@ -5748,7 +5929,7 @@ function initSupabase(){
       adminPruefen().then(function(){ flushQueue(); return ladeStammdaten(); }).then(storeNachRender).then(sitzungZurueck)
         .then(function(){ setTimeout(altlastenAutomatisch, 1500); setTimeout(kiVorgangFortsetzen, 300); }); }   /* Altlasten der alten Liste bereinigen (nur Admins); ein Claude-Vorgang von vor dem Neuladen geht weiter */
     else {
-      Store.benutzer=null; Store.modus="anmeldung"; protokolle=[]; Admin.zentral=false; Admin.frei=false;
+      Store.benutzer=null; Store.modus="anmeldung"; protokolle=[]; protokolleGeladen=false; Admin.zentral=false; Admin.frei=false;
       /* abgemeldet: nichts von dem, was nur Angemeldete sehen dürfen, bleibt
          im Speicher – auch nicht die Zugangsdaten der Regelungen */
       Rolle.name="techniker"; Rolle.da=false; aenderungen=[]; POSTEINGANG=[];
@@ -5842,6 +6023,8 @@ function ladeUnterschrift(p){
   }, function(){ return ""; });
 }
 
+/* zuletzt ohne Fehler aus der Datenbank geladen (für Prüfungen, die fehlende Protokolle melden) */
+var protokolleGeladen=false;
 function ladeProtokolle(){
   if(!Store.sb) return;
   /* Der gesamte Bestand, seitenweise: aus den Protokollen kommt der
@@ -5852,7 +6035,7 @@ function ladeProtokolle(){
   }, "client_id").then(function(r){
     if(r.error && rapportSpalte && /rapport/.test(r.error.message||"")){ rapportSpalte=false; ladeProtokolle(); return; }
     if(r.error){ Store.fehler=r.error.message; return; }
-    protokolle=(r.data||[]).map(ausZeile);
+    protokolle=(r.data||[]).map(ausZeile); protokolleGeladen=true;
     storeNachRender();
     offeneBerichteNachholen();
   });
@@ -6204,8 +6387,16 @@ function aktualisiereProtokoll(id, doc, quelle, geraetFotos, geraetAuftrag, gera
     return Promise.resolve(true);
   }
   if(quelle==="geraet"){
-    return idbSchreiben({id:id, doc:doc, fotos:geraetFotos||[], auftrag:geraetAuftrag||null, rapport:geraetRapport||null, erstellt:doc.erstellt})
-      .then(function(){ return true; }, function(){ return false; });
+    /* in einem Zug: die offene Störung, auf die das Protokoll noch wartet (ausStoerung), bleibt dran */
+    return idbVorgang("readwrite", function(st){
+      var g=st.get(id);
+      g.onsuccess=function(){
+        var e={id:id, doc:doc, fotos:geraetFotos||[], auftrag:geraetAuftrag||null, rapport:geraetRapport||null, erstellt:doc.erstellt};
+        if(g.result && g.result.ausStoerung) e.ausStoerung=g.result.ausStoerung;
+        st.put(e);
+      };
+      return g;
+    }).then(function(){ return true; }, function(){ return false; });
   }
   if(Store.modus==="claude" && Store.claudeDb){
     return Store.claudeDb.doc("protokolle/"+id).set(doc).then(function(){ return true; }, function(){ return false; });
@@ -6280,6 +6471,8 @@ function flushQueue(){
       }), 120000).then(function(ok){
         if(!ok){ next(); return; }
         done++;
+        /* jetzt zentral: die Störung, aus der es kam, ist damit erledigt */
+        if(e.ausStoerung) stoerungDurchProtokoll(e.ausStoerung, e.id, e.doc);
         /* erst nach bestätigter Übertragung vom Gerät entfernen – und nur die
            übertragene Fassung, nicht eine inzwischen gespeicherte Korrektur */
         geraetEintragErledigt(e.id, e.doc).then(function(weg){ if(!weg) nochmal=true; next(); }, next);
@@ -7314,7 +7507,8 @@ function leseLidlPdf(datei){
 
 /* Kostenstelle AT0234 -> Filiale 234; sonst über die Adresse */
 function standortZuAuftrag(a){
-  var m=/AT0*(\d+)/i.exec(a.kostenstelle||"");
+  /* auch die blanke Filialnummer („405“, „0405“) */
+  var m=/^\s*(?:AT)?0*(\d{1,4})\s*$/i.exec(a.kostenstelle||"") || /AT0*(\d+)/i.exec(a.kostenstelle||"");
   if(m){ var tr=ST.filter(function(s){ return String(s.filiale||"").replace(/^0+/,"")===m[1]; }); if(tr.length) return tr[0]; }
   if(a.adresse){
     var norm=function(t){ return String(t||"").toLowerCase().replace(/straße|strasse/g,"str").replace(/[^a-z0-9äöüß]/g,""); };
@@ -7462,7 +7656,7 @@ function protokollAssistent(form, stoer){
     inhalt.innerHTML=frage(stoer?"Welche Anlage war betroffen?":"Welche Anlagen haben Sie gewartet?");
     var box=el('<div class="stack"></div>');
     var zeilen=form.querySelectorAll('#f_posbox label.chk');
-    if(!zeilen.length) box.appendChild(el('<div class="muted">Für diesen Markt ist keine Anlage eingetragen.</div>'));
+    if(!zeilen.length) box.appendChild(el('<div class="muted">Für diesen Markt ist keine wählbare Anlage eingetragen (zur Zeit nicht gewartete zählen für eine Wartung nicht).</div>'));
     zeilen.forEach(function(z){
       var cb=z.querySelector('input[name="posw"]'), slot=z.querySelector(".posslot");
       var name=z.querySelector("strong").textContent;
@@ -7710,7 +7904,8 @@ function viewProtokoll(){
 
   var f=document.createDocumentFragment();
   var s=byId[S.protoStandort]||null;
-  var p=null; if(s&&S.protoPos) p=s.pos.filter(function(x){return x.id===S.protoPos;})[0]||null;
+  /* auch eine zur Zeit nicht gewartete Anlage (Störung an ihr) */
+  var p=null; if(s&&S.protoPos) p=s.pos.concat(s.pausiertePos||[]).filter(function(x){return x.id===S.protoPos;})[0]||null;
   if(S.bearbeiten){ s=byId[S.bearbeiten.x.standortId]||null; p=null; }
   /* Wartung oder Störung – bei einer Korrektur bestimmt das gespeicherte Protokoll */
   var stoer = S.bearbeiten ? istStoerung(S.bearbeiten.x) : S.protoArt==="stoerung";
@@ -7925,8 +8120,10 @@ function viewProtokoll(){
     /* Markt zur Zeit nicht betreut: seine Anlagen bleiben wählbar – etwa für
        eine Störung, die dort trotzdem behoben wird (ruhende Anlagen einzeln wie bisher) */
     var marktRuht=marktPausiert(cur);
-    var anlagenListe=anlagenDesMarkts(cur, korrIds.length>0 || marktRuht).filter(function(a){
-      return a.termine.some(function(t){ return pausiertIds.indexOf(t.id)<0; }) ||
+    /* Störung: auch an einer zur Zeit nicht gewarteten Anlage kann etwas kaputt
+       sein – im Störungsprotokoll sind deshalb alle Anlagen des Markts wählbar */
+    var anlagenListe=anlagenDesMarkts(cur, korrIds.length>0 || marktRuht || stoer).filter(function(a){
+      return stoer || a.termine.some(function(t){ return pausiertIds.indexOf(t.id)<0; }) ||
              (marktRuht && !anlagePausiert(a.leader)) ||
              a.termine.some(function(t){ return korrIds.indexOf(t.id)>=0; });
     });
@@ -7948,8 +8145,11 @@ function viewProtokoll(){
          angehakt, auch wenn sie noch nicht fällig wäre. */
       /* Hat der Markt nur eine Anlage, ist klar, worum es geht – das gilt fuer
          die Wartung wie fuer die Stoerung. */
+      /* zeigt die Vorwahl (etwa die Anlage der Störung) auf eine andere Anlage,
+         wird die einzige hier nicht still angehakt */
+      var vorwahlAnders=!!vorwahlId && !anlagenListe.some(function(b){ return b.termine.some(function(t){ return t.id===vorwahlId; }); });
       var an = ts.some(function(t){ return t.id===vorwahlId; }) ||
-               anlagenListe.length===1 ||
+               (anlagenListe.length===1 && !vorwahlAnders) ||
                (!stoer && offen.length>0);
       var schlecht=ts.reduce(function(r,t){ return STATUS_RANK[t.status]<STATUS_RANK[r]?t.status:r; },
         ts.every(function(t){ return t.status==="pausiert"; })?"pausiert":"erledigt");   /* ruhend: nicht „im Plan“ zeigen */
@@ -7977,7 +8177,7 @@ function viewProtokoll(){
     if(marktRuht)
       posBox.appendChild(el('<div class="muted" style="font-size:12px">Markt zur Zeit nicht betreut'+
         (cur.pausiertGrund?" ("+esc(cur.pausiertGrund)+")":"")+" – seine Anlagen haben keine Termine.</div>"));
-    else if(cur.pausiertePos && cur.pausiertePos.length)
+    else if(!stoer && cur.pausiertePos && cur.pausiertePos.length)   /* Störung: stehen oben mit zur Wahl */
       posBox.appendChild(el('<div class="muted" style="font-size:12px">Zur Zeit nicht gewartet: '+
         esc(cur.pausiertePos.filter(function(x){ return anlageLeader(x)===x || cur.pausiertePos.indexOf(anlageLeader(x))<0; }).map(function(x){ var d=anlageDaten(x); return anlagenName(d)+(d.pausiertGrund?" ("+d.pausiertGrund+")":""); }).join(", "))+"</div>"));
     anlagenZeichnen();
@@ -7988,7 +8188,9 @@ function viewProtokoll(){
     fillPos(null);
     /* auch beim Setzen aus Auftrags-PDF oder Schritt-für-Schritt (direkter
        Aufruf ohne change-Ereignis): Rapport gegen den neuen Markt abgleichen */
-    if(form._rapportZeigen) form._rapportZeigen(); };
+    if(form._rapportZeigen) form._rapportZeigen();
+    /* Hinweis zur offenen Störung folgt dem Markt (anderer Markt: sie bleibt offen) */
+    if(form._stoerBezug) form._stoerBezug(); };
   if(s){ selSt.value=s.id; form.querySelector("#f_adresse").value=s.adresse; }
   fillPos(p?p.id:null);
 
@@ -8308,6 +8510,18 @@ function viewProtokoll(){
   var auftragPdf=null;
   var setzS=function(k,w){ var n=form.querySelector("#s_"+k); if(n && w!=null && w!=="") n.value=w; };
   var sInfo=function(html){ var n=form.querySelector("#s_info"); if(n) n.innerHTML=html; };
+  /* Hinweis zur offenen Störung, aus der dieses Protokoll kommt. Ein anderer
+     Markt erledigt sie nicht – das steht dann gleich hier, nicht erst nach dem Speichern. */
+  form._stoerBezug=function(){
+    if(bearb || !stoer) return;
+    var v=S.stoerungAus ? OFFENE.filter(function(x){ return x._id===S.stoerungAus; })[0] : null;
+    if(!v) return;
+    var mk=(form.querySelector("#f_standort")||{}).value||"";
+    var anders=!!(v.standortId && mk && mk!==v.standortId);
+    sInfo("Aus der offenen Störung übernommen"+(v.auftragsnummer?" (Auftrag <strong>"+esc(v.auftragsnummer)+"</strong>)":"")+". "+
+      (anders ? "<strong>Anderer Markt als die Störung</strong> ("+esc(stName(byId[v.standortId]||{}))+") – sie bleibt offen."
+              : "Mit dem Speichern wird sie als erledigt abgehakt (sobald das Protokoll übertragen ist)."));
+  };
   var sWarn=function(html){ var n=form.querySelector("#s_warn"); if(n){ n.innerHTML=html||""; n.hidden=!html; } };
   /* gibt es zu diesem Auftrag schon ein Protokoll? */
   var doppelt=function(nr){
@@ -8372,8 +8586,7 @@ function viewProtokoll(){
         if(vor.qrInhalt) qrRoh=vor.qrInhalt;
         if(vor.seiten && vor.seiten.length) auftragBildZeigen(vor.seiten);
         if(vor.pdfDaten) auftragPdf={name:vor.pdfName||"auftrag.pdf", datenUrl:vor.pdfDaten};
-        sInfo("Aus der offenen Störung übernommen"+(vor.auftragsnummer?" (Auftrag <strong>"+esc(vor.auftragsnummer)+"</strong>)":"")+
-              ". Mit dem Speichern wird sie als erledigt abgehakt.");
+        form._stoerBezug();
       }
     }
     ohneAnwenden();
@@ -8913,8 +9126,7 @@ function viewProtokoll(){
       var si=form.querySelector("#s_info");
       if(si && stoer){
         var v2=OFFENE.filter(function(x){ return x._id===S.stoerungAus; })[0];
-        si.innerHTML = v2 ? "Aus der offenen Störung übernommen"+(v2.auftragsnummer?" (Auftrag <strong>"+esc(v2.auftragsnummer)+"</strong>)":"")+
-          ". Mit dem Speichern wird sie als erledigt abgehakt." : "Angefangenes Protokoll ohne Bezug zu einer offenen Störung.";
+        if(v2) form._stoerBezug(); else si.innerHTML="Angefangenes Protokoll ohne Bezug zu einer offenen Störung.";
       }
       toast("Weiter, wo Sie aufgehört haben.");
     };
@@ -9079,9 +9291,21 @@ function viewProtokoll(){
     var btn=form.querySelector("#save"); btn.disabled=true; btn.textContent="Speichern …";
     /* die offene Störung dieses Formulars – bis die Übertragung durch ist,
        kann längst ein anderes Formular (mit anderer Störung) offen sein */
-    var ausStoerung=S.stoerungAus;
+    var stoerungDesFormulars=S.stoerungAus, ausStoerung=stoer ? S.stoerungAus : null;   /* erledigt wird nur aus dem Störungsformular */
+    /* Die Störung erledigt erst das übertragene Protokoll (stoerungDurchProtokoll):
+       ohne gemeinsame Ablage bzw. in der Präsentation gleich, sonst nach der
+       Übertragung – auch wenn die erst die Warteschlange schafft */
+    var stoerungErledigen=function(){
+      if(!ausStoerung) return;
+      var sid=ausStoerung; ausStoerung=null;   /* nur einmal */
+      stoerungDurchProtokoll(sid, id, doc).then(function(){
+        /* das eben gespeicherte Protokoll bleibt aufgeklappt */
+        if(document.body.contains(form) && S.view==="protokoll") S.letztesProtokoll=id;
+      });
+    };
     var fertigSchon=false;
-    var fertig=function(msg){
+    var fertig=function(msg, uebertragen){
+      if(uebertragen || demo()) stoerungErledigen();   /* Präsentation: nur im Speicher, wie bisher gleich */
       if(fertigSchon) return; fertigSchon=true;   /* nur einmal – auch wenn die Zeitgrenze schon abgeschlossen hat */
       toast(msg);
       /* Die Übertragung kann bis zu 2 Minuten dauern. Inzwischen darf man
@@ -9093,30 +9317,6 @@ function viewProtokoll(){
       /* das gesperrte Formular hat nichts Ungespeichertes – auch wenn ein später
          Rückruf formDirty gesetzt hat (sonst fragte der Reiterwechsel grundlos) */
       if(hier){ formDirty=false; btn.disabled=false; btn.textContent="Protokoll speichern"; S.letztesProtokoll=id; }   /* nach dem Neuzeichnen direkt aufklappen */
-      /* Kam das Protokoll aus einer offenen Störung, ist die damit erledigt. */
-      if(ausStoerung){
-        var vor=OFFENE.filter(function(x){ return x._id===ausStoerung; })[0];
-        /* nur ein Störungsprotokoll für denselben Markt erledigt die Störung –
-           sonst hakt ein ganz anderes Protokoll sie still mit ab */
-        if(vor && (!stoer || !istStoerung(doc) || vor.standortId!==doc.standortId)) vor=null;   /* nur aus dem Störungsformular */
-        /* schon erledigt, oder das Protokoll nennt einen anderen Lidl-Auftrag: nicht anfassen */
-        if(vor && vor.erledigt) vor=null;
-        var nrP=String(doc.auftragsnummer||"").trim(), nrS=String((vor&&vor.auftragsnummer)||"").trim();
-        if(vor && nrP && nrS && nrP!==nrS){
-          toast("Die Störung mit Auftrag "+nrS+" bleibt offen – das Protokoll nennt Auftrag "+nrP+".");
-          vor=null;
-        }
-        if(vor){
-          var z=Object.assign({}, vor, {erledigt:new Date().toISOString(), protokollId:id}), rueckS={};
-          stoerungSpeichern(z, "Durch Störungsprotokoll vom "+dfmt(doc.datum)+" erledigt", rueckS)
-            .then(function(wo){
-              if(wo!==false) stoerungVerlauf(z, "Durch Störungsprotokoll vom "+dfmt(doc.datum)+" erledigt", "offen", "erledigt", rueckS);
-              /* das eben gespeicherte Protokoll bleibt aufgeklappt */
-              if(hier && S.view==="protokoll") S.letztesProtokoll=id;
-              /* nicht über ein inzwischen angefangenes Formular hinweg neu zeichnen */
-              berechneFaelligkeiten(); storeNachRender(); });
-        }
-      }
       berechneFaelligkeiten();   /* die gewarteten Positionen rücken sofort weiter */
       if(hier) render(); else storeNachRender();
     };
@@ -9166,6 +9366,8 @@ function viewProtokoll(){
         aktualisiereProtokoll(kid, doc, bearb._quelle, geraetFotos, geraetAuftrag, geraetRapport).then(function(ok){
           if(!ok){ fehlschlag("Die Korrektur konnte nicht gespeichert werden"+(Store.fehler?" ("+Store.fehler+")":"")+". Ihre Eingaben sind noch da."); return; }
           anlagenUebernehmen(doc);
+          /* anderer Markt bzw. Auftrag: die damit erledigte Störung passt nicht mehr */
+          stoerungenAbgleichen(kid, Object.assign({}, doc, {_id:kid}), "Störungsprotokoll korrigiert", true);
           if(doc.rapport && !rapportVon(bearb)) posteingangErledigt("rapport", kid, doc.rapport);
           protokolliere({art:"korrigiert", protokollId:kid, standortId:doc.standortId,
                          standortName:doc.standortName, grund:grund, felder:felder});
@@ -9188,6 +9390,8 @@ function viewProtokoll(){
     /* 1. immer zuerst sicher aufs Gerät – das klappt auch im Funkloch */
     var eintrag={id:id, doc:doc, fotos:fotos, auftrag:(auftragPdf&&auftragPdf.datenUrl)?auftragPdf:null,
                  rapport:(rapportPdf&&rapportPdf.datenUrl)?rapportPdf:null, erstellt:doc.erstellt};
+    /* die offene Störung wartet mit: erledigt wird sie, wenn das Protokoll übertragen ist (flushQueue) */
+    if(ausStoerung) eintrag.ausStoerung=ausStoerung;
     if(demo()) eintrag._demo=true;
     idbSchreiben(eintrag).then(function(){
       /* ab hier liegt es sicher in der Warteschlange – der Entwurf hat seinen
@@ -9199,7 +9403,7 @@ function viewProtokoll(){
          Das Formular selbst ist erledigt: keine Eingaben mehr (sie gingen
          verloren oder kämen als Geister-Entwurf zurück), kein zweites Speichern. */
       formDirty=false; S.protoStandort=""; S.protoPos="";
-      if(S.stoerungAus===ausStoerung) S.stoerungAus=null;
+      if(S.stoerungAus===stoerungDesFormulars) S.stoerungAus=null;
       form.inert=true; form.style.pointerEvents="none"; if(gefuehrt) gefuehrt.disabled=true;
       /* „Angefangenes Protokoll gefunden“ steht außerhalb des Formulars – weg damit
          (der Entwurf selbst bleibt und wird beim nächsten Formular angeboten) */
@@ -9213,11 +9417,19 @@ function viewProtokoll(){
 
       /* 2. gibt es eine zentrale Ablage, gleich dorthin übertragen */
       if(Store.modus!=="claude" && Store.modus!=="supabase"){
-        fertig("Protokoll gespeichert"+(fotos.length?" – mit "+fotos.length+" Foto(s)":"")+".");
+        fertig("Protokoll gespeichert"+(fotos.length?" – mit "+fotos.length+" Foto(s)":"")+".", true);
         return;
       }
       var wartet=demo() ? "Präsentation: Protokoll angelegt – zur Ansicht, gespeichert wurde nichts."
-                        : "Auf dem Gerät gespeichert – wird übertragen, sobald Verbindung besteht.";
+                        : "Auf dem Gerät gespeichert – wird übertragen, sobald Verbindung besteht."+
+                          (eintrag.ausStoerung ? " Die Störung wird danach abgehakt." : "");
+      Store.fehler="";   /* alte Meldung nicht stehen lassen */
+      /* lehnt die Ablage das Protokoll inhaltlich ab (nicht nur keine Verbindung),
+         das sagen – sonst verspräche die Meldung eine Übertragung, die nicht kommt */
+      var wartetMit=function(){
+        return (Store.fehler && !/fetch|network|netz|verbindung|timeout|zeit/i.test(Store.fehler))
+          ? "Auf dem Gerät gespeichert – die Ablage lehnt es zur Zeit ab ("+Store.fehler+"). Bitte dem Büro melden." : wartet;
+      };
       if(fotos.length) btn.textContent="Fotos werden übertragen …";
       /* hängt die Übertragung, gilt es nach 2 Minuten als „auf dem Gerät“ – es liegt ja sicher in der Warteschlange */
       mitFrist(speichereFotos(id,fotos).then(function(fotosOk){
@@ -9229,7 +9441,8 @@ function viewProtokoll(){
           if(!pdfOk){ fertig(wartet); return; }
           btn.textContent="Übertragen …";
           return speichereProtokoll(id,doc).then(function(ok){
-            if(!ok){ fertig(wartet); return; }
+            if(!ok){ fertig(wartetMit()); return; }
+            stoerungErledigen();   /* übertragen – auch wenn die Zeitgrenze schon „auf dem Gerät“ gemeldet hat */
             /* erst in die zentrale Liste, dann vom Gerät – sonst fehlt es bis
                zum Nachladen in Liste und Fälligkeit (ladeProtokolle ersetzt es
                danach durch den Stand der Datenbank) */
@@ -9239,8 +9452,8 @@ function viewProtokoll(){
             return geraetEintragErledigt(id, doc).then(function(weg){
               if(weg) lokaleProtokolle=lokaleProtokolle.filter(function(x){ return x.id!==id; });
               else { lokaleNeuLaden(); setTimeout(flushQueue, 500); }
-              fertig("Protokoll gespeichert und übertragen.");
-            },function(){ fertig("Protokoll gespeichert und übertragen."); });
+              fertig("Protokoll gespeichert und übertragen.", true);
+            },function(){ fertig("Protokoll gespeichert und übertragen.", true); });
           });
         });
       }), 120000).catch(function(){ fertig(wartet); });
@@ -9976,7 +10189,11 @@ function protokollDetail(p){
   };
   var weg=d.querySelector('[data-akt="weg"]');
   if(weg) weg.onclick=function(){
-    var grund=window.prompt("Dieses Protokoll liegt nur auf diesem Gerät und wird endgültig gelöscht.\n\n"+
+    /* eine damit erledigte Störung geht wieder auf – das vorher sagen */
+    var erl=OFFENE.filter(function(x){ return x.protokollId===p._id && x.erledigt && !x.geloescht; });
+    if(protokolle.some(function(x){ return x._id===p._id && !x.geloescht; })) erl=[];   /* zentral liegt es noch */
+    var grund=window.prompt("Dieses Protokoll liegt nur auf diesem Gerät und wird endgültig gelöscht."+
+                            (erl.length?" Die damit erledigte Störung ist danach wieder offen.":"")+"\n\n"+
                             "Bitte kurz den Grund angeben – er wird im Änderungsverlauf festgehalten:");
     if(grund===null) return;
     if(!grund.trim()){ toast("Ohne Grund wird nicht gelöscht."); return; }
@@ -9984,6 +10201,9 @@ function protokollDetail(p){
       lokaleProtokolle=lokaleProtokolle.filter(function(x){ return x.id!==p._id; });
       protokolliere({art:"geloescht", protokollId:p._id, standortId:p.standortId, standortName:p.standortName,
                      grund:grund.trim(), felder:[{feld:"datum", name:"Protokoll vom", alt:dfmt(p.datum), neu:"gelöscht"}]});
+      /* wie beim Löschen zentral: ohne das Protokoll ist die Störung wieder offen
+         (liegt davon noch eine zentrale Fassung, gilt die) */
+      stoerungenAbgleichen(p._id, alleProtokolle().filter(function(x){ return x._id===p._id; })[0]||null, "Störungsprotokoll vom Gerät gelöscht");
       toast("Protokoll vom Gerät gelöscht."); berechneFaelligkeiten(); render();
     },function(){ toast("Löschen fehlgeschlagen."); });
   };
@@ -10668,6 +10888,8 @@ function korrekturRueckgaengig(e, p){
           if(!ok){ toast("Zurücknehmen fehlgeschlagen"+(Store.fehler?" ("+Store.fehler+")":"")+"."); return; }
           protokolliere({art:"korrigiert", protokollId:p._id, standortId:doc.standortId, standortName:doc.standortName,
             grund:"Rückgängig (Korrektur vom "+zeitFmt(e.zeit)+"): "+grund.trim(), felder:felder});
+          /* die Störung folgt dem zurückgeholten Stand: passt er wieder, ist sie erledigt */
+          stoerungenAbgleichen(p._id, Object.assign({}, doc, {_id:p._id}), "Korrektur des Störungsprotokolls zurückgenommen", true);
           berechneFaelligkeiten(); render();
           toast("Korrektur zurückgenommen – "+felder.length+" Feld"+(felder.length===1?"":"er")+" wieder wie vorher.");
         });
@@ -12003,8 +12225,31 @@ function pruefListe(){
     var s=byId[o.standortId];
     if(!o.standortId) dazu("Fehler","Störungen", "Offene Störung "+(o.auftragsnummer||o.problemtyp||"")+" hat keinen Markt.", null, {stoerung:o._id});
     var pr=o.auftragsnummer ? protos.filter(function(x){ return istStoerung(x) && x.auftragsnummer===o.auftragsnummer; })[0] : null;
+    /* ihr Protokoll wartet noch auf dem Gerät – nach der Übertragung wird sie abgehakt */
+    if(pr && (lokaleProtokolle||[]).some(function(e){ return e && e.ausStoerung===o._id; })) pr=null;
     if(pr) dazu("Fehler","Störungen", "Auftrag "+o.auftragsnummer+" ist noch offen, obwohl es schon ein Störungsprotokoll vom "+dfmt(pr.datum)+" gibt – abhaken?", s, {stoerung:o._id});
   });
+  /* 5b. erledigte Störungen, deren Störungsprotokoll nicht (mehr) passt: gelöscht,
+     anderer Markt, kein Störungsprotokoll – dann ist sie zu Unrecht erledigt.
+     Nur mit vollständig geladenen Stammdaten und Protokollen – sonst fehlte
+     das Protokoll bloß in der Anzeige. */
+  if(stammVollstaendig && (Store.modus!=="supabase" || protokolleGeladen)){
+    var mitGel=alleProtokolle(true);
+    OFFENE.filter(function(o){ return o.erledigt && o.protokollId && !o.geloescht; }).forEach(function(o){
+      var pr=mitGel.filter(function(x){ return x._id===o.protokollId; })[0], s=byId[o.standortId];
+      var auf=o.auftragsnummer ? "Auftrag "+o.auftragsnummer : "Störung "+(o.problemtyp||"");
+      if(stoerungPasst(o, pr)) return;
+      if(stoerungAnderesProtokoll(o, o.protokollId)) return;   /* ein anderes passendes Protokoll trägt sie */
+      var warum = !pr ? "ihr Störungsprotokoll gibt es nicht (mehr)"
+                : pr.geloescht ? "ihr Störungsprotokoll vom "+dfmt(pr.datum)+" ist gelöscht"
+                : !istStoerung(pr) ? "das Protokoll vom "+dfmt(pr.datum)+" ist kein Störungsprotokoll"
+                : pr.standortId!==o.standortId ? "ihr Störungsprotokoll vom "+dfmt(pr.datum)+" gehört zu "+stName(byId[pr.standortId]||{})
+                : "ihr Störungsprotokoll vom "+dfmt(pr.datum)+" nennt Auftrag "+stoerungNr(pr);
+      /* nur die Auftragsnummer weicht ab (etwa Tippfehler korrigiert): Hinweis, sonst Fehler */
+      dazu((pr && !pr.geloescht && istStoerung(pr) && pr.standortId===o.standortId) ? "Hinweis" : "Fehler", "Störungen",
+        auf+" ist erledigt, aber "+warum+" – wieder öffnen?", s, {stoerungOeffnen:o._id});
+    });
+  }
   var stNr={};
   protos.filter(istStoerung).forEach(function(pr){ if(pr.auftragsnummer) (stNr[pr.auftragsnummer]=stNr[pr.auftragsnummer]||[]).push(pr); });
   Object.keys(stNr).forEach(function(nr){
@@ -12315,6 +12560,20 @@ function verwaltungSprung(s, finde){
 }
 function springeZu(x, s){
   var t=x.text;
+  /* erledigte Störung, deren Protokoll nicht mehr passt: wieder öffnen (mit Rückfrage) */
+  if(x.stoerungOeffnen){
+    var so=OFFENE.filter(function(y){ return y._id===x.stoerungOeffnen && y.erledigt; })[0];
+    if(!so){ toast("Die Störung ist nicht mehr erledigt – nichts zu tun."); return; }
+    if(nurLesen()){ toast("Mit diesem Konto lässt sich nur ansehen."); return; }
+    if(!window.confirm(t+"\n\nDie Störung wieder öffnen? Sie steht dann wieder unter „Fällig“.")) return;
+    var zo=Object.assign({}, so, {erledigt:null}), rueckO={};
+    stoerungSpeichern(zo, "Nachbessern: Protokoll passt nicht – Störung wieder offen", rueckO).then(function(wo){
+      if(wo===false){ toast("Konnte nicht gespeichert werden."); return; }
+      stoerungVerlauf(zo, "Nachbessern: Protokoll passt nicht – Störung wieder offen", "erledigt", "offen", rueckO);
+      toast("Störung wieder offen."); berechneFaelligkeiten(); render();
+    });
+    return;
+  }
   /* Protokolle und Rapporte: die betroffenen Protokolle zeigen – dort lassen sie
      sich korrigieren oder löschen (ein Fenster, die Ansicht darunter bleibt) */
   if(x.protokolle && x.protokolle.length){
@@ -12598,6 +12857,11 @@ function handbuchKarte(z){
     abschnitt("5 · Was automatisch passiert – und was nie ohne Mensch",
       liste(["<strong>Nachbessern</strong> (Verwaltung): sammelt Widersprüche, Doppeltes und Lücken je Markt, das Dringendste zuerst. "+
           "Jeder Befund ist antippbar und führt direkt zur Stelle, an der man ihn behebt.",
+        "<strong>Offene Störung und Störungsprotokoll:</strong> ein aus der Störung begonnenes Störungsprotokoll desselben Markts "+
+          "(und desselben Lidl-Auftrags) hakt sie ab – erst, wenn es in der gemeinsamen Ablage angekommen ist. Wird es gelöscht (auch "+
+          "„vom Gerät“) oder auf einen anderen Markt korrigiert, ist die Störung wieder offen, außer ein anderes Störungsprotokoll "+
+          "derselben Störung gilt noch; beim Wiederherstellen bzw. Zurücknehmen ist sie wieder erledigt, wenn es noch passt. "+
+          "Erledigte Störungen, deren Protokoll nicht mehr passt, meldet „Nachbessern“.",
         "<strong>Mögliche Doppelanlagen:</strong> neu angelegte Anlagen neben Anlagen aus der Liste – „ist dieselbe wie …“ führt zusammen "+
           "(Daten und Wartungen werden vereint, die doppelte wird stillgelegt). Haben beide Zugangsdaten zur Regelung, fragt die App, welcher Satz gilt – immer als ganzer Satz.",
         "<strong>KI liest Prüfbücher, Typenschilder und Lidl-Aufträge:</strong> zwei Wege – Claude-App (im Abo) oder direkt in der App "+
