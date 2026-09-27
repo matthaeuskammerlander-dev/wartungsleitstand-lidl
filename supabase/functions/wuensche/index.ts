@@ -220,7 +220,8 @@ Deno.serve(async (req) => {
           if (Object.keys(neu).length) await speichern(w, neu, schritt);
         } catch (x) { fehler.push(`W-${w.id}: ${x instanceof Error ? x.message : x}`); }
       }
-      return antwort({ ok: true, fehler });
+      // „laeuft“: die App wertet Claudes letzten Kommentar nur ohne offenen Lauf als Rückfrage
+      return antwort({ ok: true, fehler, laeuft });
     }
 
     if (aktion === "uebernehmen") {
@@ -327,6 +328,9 @@ Deno.serve(async (req) => {
       if (t.length < 3) return antwort({ fehler: "Bitte beschreiben, was noch anders sein soll." }, 400);
       const nr = w.pr_nr || w.issue_nr;
       if (!nr) return antwort({ fehler: "Der Wunsch ist noch nicht weitergegeben." }, 409);
+      // Antwort auf eine Rückfrage (noch kein Pull Request): nicht, solange Claude
+      // noch arbeitet – sonst liefe ein zweiter Lauf parallel
+      if (!w.pr_nr && await claudeLaeuft()) return antwort({ fehler: "Claude arbeitet gerade noch daran – bitte warten, bis der Lauf fertig ist." }, 409);
       // den jetzigen Stand merken: erst ein neuer Stand von Claude macht wieder „Vorschau bereit“
       let warte: string | null = null;
       if (w.pr_nr) { try { warte = (await gh("GET", `/repos/${REPO}/pulls/${w.pr_nr}`)).head.sha; } catch { /* dann über die Läufe */ } }

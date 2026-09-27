@@ -1186,7 +1186,7 @@ function berechneFaelligkeiten(){
        ist mit erledigt (nur ein Vermerk). Ohne spätere Wartung bleibt er
        überfällig. */
     var davor=ankerIm(a,+aktuell.slice(0,4)-1);
-    var davorVersaeumt = aktuell>heute && !zu[davor] && (!a.erster || davor>=a.erster);
+    var davorVersaeumt = aktuell>=heute && !zu[davor] && (!a.erster || davor>=a.erster);
 
     if(vorgezogen){
       /* Für den kommenden Termin schon gewartet – ein davor versäumter Termin
@@ -1296,6 +1296,10 @@ function marktPill(s){
   if(marktPausiert(s)) return '<span class="pill p-pausiert"'+(s.pausiertGrund?' title="'+esc(s.pausiertGrund)+'"':"")+">zur Zeit nicht betreut</span>";
   return pill(s.status);
 }
+/* Status und Anlagenzahl eines Markts als Text (Karte: Titel, Tooltip, Popup) –
+   ein nicht betreuter Markt heißt so und zählt seine ruhenden Anlagen mit */
+function marktStatusText(s){ return marktPausiert(s) ? "zur Zeit nicht betreut" : STATUS_LABEL[s.status]; }
+function marktPosAnzahl(s){ return s.pos.length + (marktPausiert(s) ? (s.pausiertePos||[]).length : 0); }
 /* deutlicher Vermerk für einen Markt, der zur Zeit nicht betreut wird – mit Grund */
 function marktVermerk(s){
   if(!marktPausiert(s)) return "";
@@ -1515,6 +1519,7 @@ function planeTour(opt){
     if(tage.length){ tage[tage.length-1].rueckfahrtH=rueck; tage[tage.length-1].rueckfahrtKm=rueckKm; }
 
     return { start:start, tage:tage,
+      stundenProTag:opt.stundenProTag,   // die Grenze dieser Rechnung (das Feld kann sich danach ändern)
       reihenfolge:folge.map(function(i){ return punkte[i]; }),
       echteStrasse:echteStrasse,
       zuViele: punkte.length>ROUTER_MAX,   // Routendienst gar nicht gefragt
@@ -1917,7 +1922,11 @@ function stoerungDialog(vorhanden, weiter){
       /* „Anlage ansehen“: ihre Geschichte als Fenster – kehrt die Störung wieder? */
       var sehen=inhalt.querySelector("#st_anlsehen");
       var sehenNeu=function(){ sehen.hidden=!(o.positionId && posById[o.positionId]); };
-      sel.onchange=function(){ o.positionId=this.value||null; sehenNeu(); };
+      sel.onchange=function(){
+        /* zurück auf „noch unklar“: wieder der leere Wert vom Öffnen – sonst
+           gälte null statt „nicht gesetzt“ als ungespeicherte Änderung */
+        var leer=anfang ? JSON.parse(anfang).positionId : null;
+        o.positionId=this.value || (leer ? null : leer); sehenNeu(); };
       sehen.onclick=function(e){ e.preventDefault(); if(posById[o.positionId]) anlageHistorieAnsicht(posById[o.positionId], o._id); };
       sehenNeu();
     };
@@ -2169,7 +2178,10 @@ function stoerungDialog(vorhanden, weiter){
       var e=el('<button class="btn ghost" type="button">Als erledigt abhaken</button>');
       e.onclick=function(){
         if(!window.confirm("Die Störung als erledigt abhaken?\n\nSie verschwindet aus der Liste unter „Fällig“.")) return;
-        var z=aufAktuell({erledigt:new Date().toISOString()});
+        /* von Hand abgehakt: nicht mehr an einem (etwa gelöschten) Störungsprotokoll
+           festmachen – sonst meldete Nachbessern sie als zu Unrecht erledigt und
+           der Abgleich öffnete sie beim Korrigieren jenes Protokolls wieder */
+        var z=aufAktuell({erledigt:new Date().toISOString(), protokollId:null});
         if(!z){ toast("Die Störung ist inzwischen erledigt oder gelöscht."); zu(); nachStoerungsDialog(); return; }
         var rueck={};
         stoerungSpeichern(z,"Offene Störung abgehakt", rueck).then(function(wo){
@@ -3012,7 +3024,7 @@ function viewKarte(){
         '" style="fill:none;stroke:var(--crit);stroke-width:2.5;pointer-events:none"/>':"")+
       '<circle class="dot'+(S.sel===s.id?" sel":"")+'" cx="'+X(s.lon).toFixed(1)+'" cy="'+Y(s.lat).toFixed(1)+'" r="'+r.toFixed(1)+
       '" style="fill:var('+STATUS_VAR[s.status]+')" data-id="'+s.id+'" tabindex="0" role="button" aria-label="'+esc(stName(s)+", "+s.adresse)+'">'+
-      "<title>"+esc(stName(s)+" · "+s.adresse+" · "+STATUS_LABEL[s.status])+"</title></circle>";
+      "<title>"+esc(stName(s)+" · "+s.adresse+" · "+marktStatusText(s))+"</title></circle>";
   }).join("");
   /* Störungsmärkte außerhalb der Auswahl: trotzdem der rote Ring */
   var drin={}; withGeo.forEach(function(s){ drin[s.id]=1; });
@@ -3086,7 +3098,7 @@ function viewKarte(){
     d.addEventListener("click",function(){ sel(d.dataset.id, true); });
     d.addEventListener("keydown",function(e){ if(e.key==="Enter"||e.key===" "){ e.preventDefault(); sel(d.dataset.id, true); } });
     d.addEventListener("mousemove",function(e){ var s=byId[d.dataset.id];
-      tipShow(e,"<b>"+esc(stName(s))+"</b><br>"+esc(s.adresse)+"<br>"+s.pos.length+" Position(en) · "+STATUS_LABEL[s.status]); });
+      tipShow(e,"<b>"+esc(stName(s))+"</b><br>"+esc(s.adresse)+"<br>"+marktPosAnzahl(s)+" Position(en) · "+marktStatusText(s)); });
     d.addEventListener("mouseleave",tipHide);
   });
   if(S.sel && byId[S.sel] && byId[S.sel].lat) sel(S.sel);
@@ -3297,7 +3309,7 @@ function popupInhalt(s){
   var d=document.createElement("div");
   d.innerHTML='<div style="font:600 14px/1.3 system-ui,sans-serif;margin-bottom:2px">'+esc(stName(s))+"</div>"+
     '<div style="font-size:12.5px;color:#555;margin-bottom:6px">'+esc(s.adresse)+"</div>"+
-    '<div style="margin-bottom:8px">'+marktPill(s)+' <span class="tag">'+s.pos.length+" Position(en)</span></div>"+
+    '<div style="margin-bottom:8px">'+marktPill(s)+' <span class="tag">'+marktPosAnzahl(s)+" Position(en)</span></div>"+
     (marktPausiert(s)?'<div style="font-size:12.5px;margin-bottom:8px">Zur Zeit nicht betreut'+(s.pausiertGrund?": "+esc(s.pausiertGrund):"")+"</div>":"")+
     /* je offener Störung: der rote Kasten (antippen: „Ansehen / ändern“, nicht
        beim Kunden) und das passende Störungsprotokoll */
@@ -3491,7 +3503,7 @@ function tourErgebnis(T){
     '<div class="kpi"><div class="n">'+T.anzahlPositionen+'</div><div class="l">Wartungen</div></div>'+
     '<div class="kpi"><div class="n">'+Math.round(T.kmGesamt)+'</div><div class="l">km gesamt</div></div>'+
     /* ein Tag, der allein länger ist als die eingestellte Arbeitszeit, zählt so oft, wie er Tage braucht */
-    '<div class="kpi"><div class="n">'+T.tage.reduce(function(a,t){ return a+(t.zuLang ? Math.max(1,Math.ceil(t.stunden/S.tour.stundenProTag)) : 1); },0)+'</div><div class="l">Arbeitstage</div></div>'+
+    '<div class="kpi"><div class="n">'+T.tage.reduce(function(a,t){ return a+(t.zuLang ? Math.max(1,Math.ceil(t.stunden/(T.stundenProTag||S.tour.stundenProTag))) : 1); },0)+'</div><div class="l">Arbeitstage</div></div>'+
   "</div>"));
 
   T.tage.forEach(function(tag){
@@ -3532,7 +3544,7 @@ function tourErgebnis(T){
         (tag.rueckfahrtH ? ' + '+stdFmt(tag.rueckfahrtH)+' Rückfahrt' : "")+
         ' · '+Math.round(tag.km+(tag.rueckfahrtKm||0))+" km</span>"+
       "</div>"+
-      (tag.zuLang?'<div class="note warnbox">Länger als die eingestellte Arbeitszeit von '+String(S.tour.stundenProTag).replace(".",",")+
+      (tag.zuLang?'<div class="note warnbox">Länger als die eingestellte Arbeitszeit von '+String(T.stundenProTag||S.tour.stundenProTag).replace(".",",")+
         ' h – diesen Markt auf mehrere Tage aufteilen.</div>':"")+
       (gm?'<div class="rowflex"><a class="btn sm" href="'+gm.url+'" target="_blank" rel="noopener">'+
         "Tag "+tag.nr+' in Google Maps öffnen</a>'+
@@ -5465,14 +5477,18 @@ function alleProtokolle(mitGeloeschten){
   var zentral=(protokolle||[]).map(function(p){ return Object.assign({_quelle:"zentral"},p); });
   var lokal=(lokaleProtokolle||[]).map(function(e){
     return Object.assign({_quelle:"geraet", _id:e.id, _fotoDaten:e.fotos||[],
-                          _auftragDaten:e.auftrag||null, _rapportDaten:e.rapport||null}, e.doc);
+                          _auftragDaten:e.auftrag||null, _rapportDaten:e.rapport||null, _konflikt:e.konflikt||null}, e.doc);
   });
   /* Liegt dasselbe Protokoll zentral und noch auf dem Gerät (die Übertragung
      kam an, die Antwort nicht): nur einmal zeigen – die höhere Fassung, bei
-     gleicher die vom Gerät (sie wird noch übertragen); zentral gelöscht bleibt gelöscht */
-  var geraetFassung={};
-  lokal.forEach(function(p){ geraetFassung[p._id]=p.version||1; });
-  zentral=zentral.filter(function(p){ return !(p._id in geraetFassung) || p.geloescht || (p.version||1)>geraetFassung[p._id]; });
+     gleicher die vom Gerät (sie wird noch übertragen); zentral gelöscht bleibt
+     gelöscht. Widerspricht die Korrektur vom Gerät einer zentralen (Büro hat
+     inzwischen selbst korrigiert oder gelöscht), gilt die zentrale – die vom
+     Gerät hängt an ihr (_geraetKonflikt) und bleibt so sichtbar. */
+  var geraetFassung={}, geraetDoc={};
+  lokal.forEach(function(p){ geraetFassung[p._id]=p.version||1; geraetDoc[p._id]=p; });
+  zentral=zentral.filter(function(p){ return !(p._id in geraetFassung) || p.geloescht || geraetDoc[p._id]._konflikt || (p.version||1)>geraetFassung[p._id]; });
+  zentral.forEach(function(p){ var g=geraetDoc[p._id]; if(g && g._konflikt) p._geraetKonflikt=g; });
   var zentralFassung={};
   zentral.forEach(function(p){ zentralFassung[p._id]=true; });
   lokal=lokal.filter(function(p){ return !zentralFassung[p._id]; });
@@ -5980,11 +5996,18 @@ function stammAenderung(alt, rec){
 /* Den Stand vom Gerät bzw. aus einem länger offenen Formular auf den
    aktuellen zentralen Datensatz legen: nur die selbst geänderten Felder.
    Hat zentral inzwischen jemand dasselbe Feld geändert, bleibt dessen Wert
-   (konflikt). Ohne bekannte Änderungen (alter Gerätestand) wird ein neuerer
-   zentraler Stand gar nicht überschrieben (null). */
+   (konflikt). Ein alter Gerätestand ohne bekannte Änderungen ergänzt einen
+   neueren zentralen Stand nur um Felder, die dort noch leer sind. */
 function stammAufZentral(zentral, rec){
   var a=rec.aenderung, zNeuer=!!zentral && String(zentral.geaendert||"")>String(rec.geaendert||"");
-  if(!a) return (zentral && zNeuer) ? null : {rec:rec, konflikt:[]};
+  if(!a){
+    if(!zentral || !zNeuer) return {rec:rec, konflikt:[]};
+    /* alter Gerätestand ohne Feldliste (aus der Zeit vor dem feldweisen
+       Nachtragen): seine Felder gelten als auf dem Gerät gesetzt. Ein Feld,
+       das zentral noch leer ist, kommt dazu; hat es zentral schon jemand
+       anders gesetzt, bleibt das (konflikt – mit Hinweis samt Gerätewert) */
+    a={}; Object.keys(rec.felder||{}).forEach(function(k){ a[k]={}; });
+  }
   /* zentral nicht (mehr) da: neu angelegt, oder inzwischen gelöscht – eine
      gelöschte Störung bzw. vor Ort angelegte Anlage kommt nicht zurück,
      sonst gilt für die übrigen Felder wieder der Excel-Stand */
@@ -6014,7 +6037,26 @@ function stammSpeichern(rec, nachtragen, puffer){
   }
   stammStand[rec.id]=JSON.parse(JSON.stringify(rec));
   var lokal=function(){
-    return idbVorgang("readwrite",function(st){ return st.put(rec); },"stammdaten")
+    /* Zugangsdaten ausgeblendet: die auf dem Gerät wartenden (etwa offline
+       geänderten) bleiben samt ihrer Änderung erhalten – sonst überschriebe
+       sie dieser Stand ohne sie */
+    var mitGeheim=geheimesAusgeblendet();
+    return idbVorgang("readwrite",function(st){
+      if(!mitGeheim) return st.put(rec);
+      var g=st.get(rec.id);
+      g.onsuccess=function(){
+        var alt=g.result, neu=JSON.parse(JSON.stringify(rec));
+        if(alt && alt.felder) GEHEIME_FELDER.forEach(function(k){
+          if(!(k in alt.felder)) return;
+          neu.felder=neu.felder||{}; neu.felder[k]=alt.felder[k];
+          neu.aenderung=neu.aenderung||{};
+          if(alt.aenderung && alt.aenderung[k]) neu.aenderung[k]=alt.aenderung[k];
+          else if(!alt.aenderung) neu.aenderung[k]={};
+        });
+        st.put(neu);
+      };
+      return g;
+    },"stammdaten")
       .then(function(){ return "geraet"; }, function(){ return false; });
   };
   if(Store.modus==="supabase" && Store.sb && darfStammZentral(rec)){
@@ -6025,8 +6067,13 @@ function stammSpeichern(rec, nachtragen, puffer){
       var erg=stammAufZentral((r0.data||[])[0]||null, rec);
       if(!erg) return {zurueck:true};
       var z=erg.rec;
+      /* beim Nachtragen vom Gerät den nicht übernommenen Wert nennen – sonst
+         wäre die Eingabe still weg */
       if(erg.konflikt.length) toast("Zentral inzwischen geändert – dort gilt der neuere Stand: "+
-        erg.konflikt.map(function(k){ return LABEL_POS[k]||LABEL_ST[k]||k; }).join(", ")+".");
+        erg.konflikt.map(function(k){
+          var gw=(rec.felder||{})[k];
+          return (LABEL_POS[k]||LABEL_ST[k]||k)+((nachtragen==="geraet" && gw!=null && GEHEIME_FELDER.indexOf(k)<0 && gw!=="") ? " (vom Gerät nicht übernommen: „"+String(typeof gw==="object"?JSON.stringify(gw):gw)+"“)" : "");
+        }).join(", ")+".");
       /* weicht nichts mehr von der Liste ab: Eintrag weg statt leer (nur Admins dürfen löschen) */
       var ende=function(r){
         if(r.error) return r;
@@ -6046,6 +6093,8 @@ function stammSpeichern(rec, nachtragen, puffer){
           if(alt0) stammStand[rec.id]=alt0; else delete stammStand[rec.id];
           Store.fehler="Eine Änderung ("+(rec.typ==="stoerung"?"Störung":"Anlagendaten")+") wurde nicht übernommen – "+
             "zentral wurde der Eintrag inzwischen gelöscht oder neuer geändert.";
+          /* beim Nachtragen im Hintergrund sähe Store.fehler niemand */
+          if(nachtragen==="geraet") toast(Store.fehler);
           return nachtragen==="geraet" ? "zurueck" : false;
         }
         /* von der Datenbank aus Rechtegründen abgelehnt (etwa Kunde): nicht aufs
@@ -6084,6 +6133,9 @@ function stammLoeschen(id, puffer){
   if(Store.modus==="supabase" && Store.sb){
     /* nur Admins löschen zentral – sonst käme die Zeile beim Laden wieder */
     if(!Admin.zentral) return Promise.resolve(gescheitert({message:"Löschen nur für Admins."}));
+    /* Zugangsdaten gerade ausgeblendet (Rolle noch nicht bestätigt): ein ganzer
+       Datensatz samt Zugangsdaten verschwände, ohne dass die Rückfrage sie nennt */
+    if(geheimesAusgeblendet()) return Promise.resolve(gescheitert({message:"Zur Zeit nicht möglich – die Rollenprüfung ist noch nicht abgeschlossen, die Zugangsdaten sind ausgeblendet. Bitte gleich noch einmal versuchen."}));
     /* mit Zeitgrenze: eine hängende Verbindung darf den Knopf nicht sperren */
     return mitFrist(Store.sb.from("stammdaten").delete().eq("id",id)).then(function(r){
       if(r && r.error) return gescheitert(r.error);
@@ -6159,10 +6211,13 @@ function ladeStammdaten(nurVollstaendig){
     if(!angemeldetOderLokal()) r[0]=[];
     /* Kunde, Präsentation und Abgemeldete sehen keine Zugangsdaten – auch
        nicht die, die noch auf dem Gerät auf die Übertragung warten */
-    if(nurLesen()||demo()||Rolle.gemerkt||!angemeldetOderLokal()) r[0]=r[0].map(function(x){
+    if(geheimesAusgeblendet()) r[0]=r[0].map(function(x){
       if(!x || !x.felder) return x;
       var y=Object.assign({}, x, {felder:Object.assign({}, x.felder)});
       GEHEIME_FELDER.forEach(function(k){ delete y.felder[k]; });
+      /* auch die gemerkte Änderung daran – sonst gälte das Feld beim nächsten
+         Speichern als gelöscht (die Werte bleiben im Gerätespeicher, stammSpeichern) */
+      if(y.aenderung){ y.aenderung=Object.assign({}, y.aenderung); GEHEIME_FELDER.forEach(function(k){ delete y.aenderung[k]; }); }
       return y;
     });
     /* gemeinsame Fassung zuerst, eine neuere vom Gerät gewinnt */
@@ -6223,6 +6278,9 @@ var Admin={frei:false, zentral:false, geprueft:false};
    beide selbst (tools/rollen.sql). */
 var Rolle={name:"techniker", da:false, gemerkt:false};
 function nurLesen(){ return Rolle.name==="kunde"; }
+/* Zugangsdaten nicht zeigen: Kunde, Präsentation, Abgemeldete und eine nur
+   gemerkte (noch nicht bestätigte) Rolle */
+function geheimesAusgeblendet(){ return nurLesen()||demo()||Rolle.gemerkt||!angemeldetOderLokal(); }
 /* Mit gemeinsamer Datenbank, aber abgemeldet, fehlt alles, was nur Angemeldete
    lesen: offene Störungen, App-Protokolle, ergänzte Anlagendaten. */
 function angemeldetOderLokal(){ return Store.modus!=="anmeldung"; }
@@ -6472,6 +6530,9 @@ function kontowechselAufraeumen(){
   /* Änderungsverlauf und Posteingang gehören zum alten Konto – die
      Präsentation mischte den Speicherinhalt sonst in ihren Verlauf */
   aenderungen=[]; POSTEINGANG=[]; protokolleFehler="";
+  /* ebenso die Protokolle: bis die des neuen Kontos da sind, gilt „nicht geladen“ –
+     sonst stünden die des vorigen Kontos da und ein Ladefehler bliebe ungemeldet */
+  protokolle=[]; protokolleGeladen=false;
 }
 /* Sitzungsende von außen (Abmelden in einem zweiten Tab, abgelaufene
    Anmeldung, anderes Konto): offene Fenster und ein angefangener
@@ -6497,7 +6558,7 @@ function sitzungParken(){
     p.verwaltung={el:ed, sel:S.adm.sel, tab:S.adm.tab, entwurf:S.adm.entwurf};
     ed.remove();
   }
-  if(!p.dialoge.length && !p.verwaltung) return false;
+  if(!p.dialoge.length && !p.verwaltung) return kiLief;   /* der Claude-Vorgang ist gesichert */
   GEPARKT[uid]=p;
   return true;
 }
@@ -6590,9 +6651,13 @@ function initSupabase(){
          Störung, Termine …) gehört zum alten Konto und seinen Rechten – sonst
          speicherte das neue Konto oder ein Abgemeldeter „erfolgreich“ nur aufs Gerät */
       if(kontoWeg && document.querySelector(".assistent")) dialogeSchliessen();
-      if(warOffen || geparkt)
+      /* „zurückgelegt“ nur, wenn wirklich etwas zurückgelegt wurde – Kunde und
+         Präsentation legen nichts zurück, ihre Fenster sind nur zu */
+      if(geparkt)
         toast((sess ? "Anderes Konto angemeldet" : "Abgemeldet")+" – offene Eingaben sind zurückgelegt und nach erneuter Anmeldung "+
               "mit demselben Konto wieder da.");
+      else if(warOffen)
+        toast((sess ? "Anderes Konto angemeldet" : "Abgemeldet")+" – offene Fenster geschlossen, nicht gespeichert.");
       /* ein angefangener Markt-Editor gehört zum alten Konto und seinen Rechten –
          er ist zurückgelegt (sitzungParken), die Ansicht wird neu gezeichnet */
       verwaltungBearbeitet=false;
@@ -7023,7 +7088,7 @@ function ladeAuftragPdf(p){ return ladeAnhangPdf("auftrag", p); }
 function ladeRapportPdf(p){ return ladeAnhangPdf("rapport", p); }
 
 /* ein Protokoll wegschreiben – liefert ein Promise, das nie ablehnt */
-function speichereProtokoll(id,doc){
+function speichereProtokoll(id,doc,eintrag){
   if(demo()) return Promise.resolve(false);
   if(Store.modus==="claude" && Store.claudeDb){
     return Store.claudeDb.doc("protokolle/"+id).set(doc).then(function(){ return true; },function(){ return false; });
@@ -7055,7 +7120,7 @@ function speichereProtokoll(id,doc){
         berichtAblegen(Object.assign({}, doc, {_id:id, version:fassung}));
         return true;
       }
-      return protokollSchonZentral(id, doc);
+      return protokollSchonZentral(id, doc, eintrag);
     },function(){ return false; });
   }
   return Promise.resolve(false);
@@ -7064,28 +7129,67 @@ function speichereProtokoll(id,doc){
 /* Das Protokoll vom Gerät liegt schon zentral. Mit dem zentralen Stand
    vergleichen: dieselbe oder eine neuere Fassung der ersten Übertragung →
    erledigt (kein Archiv-PDF vom Gerätestand über eine neuere Fassung); auf
-   dem Gerät korrigiert → als Korrektur nachschreiben (versionsgeprüft);
-   zentral inzwischen anders korrigiert → auf dem Gerät lassen und melden. */
-function protokollSchonZentral(id, doc){
+   dem Gerät korrigiert → als Korrektur nachschreiben (versionsgeprüft, und nur,
+   wenn die Gerätekorrektur auf genau dem zentralen Stand aufbaut); zentral
+   inzwischen anders korrigiert oder gelöscht → auf dem Gerät lassen, als
+   Widerspruch merken (angezeigt wird dann die zentrale Fassung, die vom Gerät
+   bleibt dort erreichbar) und sichtbar melden. */
+function protokollSchonZentral(id, doc, eintrag){
   var fassung=doc.version||1;
-  return Store.sb.from("protokolle").select("version,geaendert").eq("client_id",id).then(function(r){
+  return Store.sb.from("protokolle").select("version,geaendert,geloescht").eq("client_id",id).then(function(r){
     var z=r && !r.error && r.data && r.data[0];
-    if(!z) return false;   /* nicht lesbar (etwa gelöscht oder kein Netz): beim nächsten Mal wieder */
+    if(!z) return false;   /* nicht lesbar (etwa kein Netz): beim nächsten Mal wieder */
     var zv=z.version||1;
     ladeProtokolle();
     /* die Fassung vom Gerät ist genau die zentrale */
-    if(zv===fassung && (fassung===1 || String(z.geaendert||"")===String(doc.geaendert||""))) return true;
+    if(zv===fassung && (fassung===1 || gleicheZeit(z.geaendert, doc.geaendert))) return true;
     /* unkorrigiert vom Gerät, zentral schon weiter: das Gerät hat nichts Neues */
     if(fassung===1) return true;
-    /* auf dem Gerät korrigiert, zentral noch die Fassung davor */
-    if(zv===fassung-1) return aktualisiereProtokoll(id, doc, "zentral");
-    Store.fehler="Ein auf diesem Gerät korrigiertes Protokoll wurde inzwischen auch zentral geändert (Fassung "+zv+
-      "). Die Korrektur bleibt auf dem Gerät – bitte das Protokoll ansehen und die Korrektur dort noch einmal eintragen.";
-    return false;
+    if(!z.geloescht){
+      /* zentral steht noch die erste Übertragung von diesem Gerät – die
+         Korrekturen auf dem Gerät bauen darauf auf */
+      if(zv===1) return aktualisiereProtokoll(id, doc, "zentral", null, null, null, 1);
+      /* auf dem Gerät korrigiert, zentral noch genau die Fassung davor */
+      var basis=eintrag && eintrag.basisGeaendert;
+      if(zv===fassung-1 && (basis==null || gleicheZeit(z.geaendert, basis))) return aktualisiereProtokoll(id, doc, "zentral");
+    }
+    var text = z.geloescht
+      ? "Ein auf diesem Gerät korrigiertes Protokoll ist zentral gelöscht. Die Korrektur bleibt auf dem Gerät und wird nicht übertragen – beim Protokoll (gelöschte anzeigen) ist sie zu sehen."
+      : "Ein auf diesem Gerät korrigiertes Protokoll wurde inzwischen auch zentral geändert (Fassung "+zv+
+        "). Angezeigt wird jetzt die zentrale Fassung; die Korrektur vom Gerät bleibt dort beim Protokoll zu sehen – bitte ansehen und noch einmal eintragen.";
+    Store.fehler=text;
+    return geraetKonfliktMerken(id, doc, {version:zv, geaendert:z.geaendert||null, geloescht:!!z.geloescht}).then(function(){
+      /* sichtbar melden – einmal je Protokoll und zentralem Stand */
+      var schl=id+":"+zv+":"+(z.geloescht?"g":"");
+      if(!konfliktGemeldet[schl]){ konfliktGemeldet[schl]=true; toast(text); }
+      return false;
+    });
   }, function(){ return false; });
 }
+/* gleicher Zeitpunkt – die Datenbank schreibt ihn anders als die App
+   („+00:00“ statt „.000Z“); leer ist gleich leer */
+function gleicheZeit(a, b){
+  if(!a || !b) return !a && !b;
+  var x=Date.parse(a), y=Date.parse(b);
+  return (isNaN(x) || isNaN(y)) ? String(a)===String(b) : x===y;
+}
+var konfliktGemeldet={};
+/* den Geräteeintrag als Widerspruch zum zentralen Stand kennzeichnen – nur,
+   wenn er noch genau die geprüfte Fassung ist */
+function geraetKonfliktMerken(id, doc, konflikt){
+  return idbVorgang("readwrite",function(st){
+    var g=st.get(id);
+    g.onsuccess=function(){
+      var akt=g.result, a=akt && akt.doc || {};
+      if(akt && (a.version||1)===(doc.version||1) && String(a.geaendert||"")===String(doc.geaendert||"")){
+        akt.konflikt=konflikt; st.put(akt);
+      }
+    };
+    return g;
+  }).then(function(){}, function(){});
+}
 /* eine Korrektur wegschreiben – gleiche Kennung, neue Fassung */
-function aktualisiereProtokoll(id, doc, quelle, geraetFotos, geraetAuftrag, geraetRapport){
+function aktualisiereProtokoll(id, doc, quelle, geraetFotos, geraetAuftrag, geraetRapport, erwartetFassung){
   if(demo()){
     /* nur im Speicher: die Korrektur ersetzt die Anzeige, nicht die Datenbank */
     /* ein echtes, wartendes Geräteprotokoll nicht anfassen: die Vorführ-Fassung
@@ -7106,6 +7210,9 @@ function aktualisiereProtokoll(id, doc, quelle, geraetFotos, geraetAuftrag, gera
       g.onsuccess=function(){
         var e={id:id, doc:doc, fotos:geraetFotos||[], auftrag:geraetAuftrag||null, rapport:geraetRapport||null, erstellt:doc.erstellt};
         if(g.result && g.result.ausStoerung) e.ausStoerung=g.result.ausStoerung;
+        /* worauf diese Korrektur aufbaut – beim Nachtragen darf sie nur über
+           genau diesen Stand geschrieben werden (protokollSchonZentral) */
+        if(g.result) e.basisGeaendert=String((g.result.doc||{}).geaendert||"");
         st.put(e);
       };
       return g;
@@ -7127,7 +7234,7 @@ function aktualisiereProtokoll(id, doc, quelle, geraetFotos, geraetAuftrag, gera
     /* Nur schreiben, wenn das Protokoll noch die Fassung hat, auf der diese
        Korrektur aufbaut. Sonst hat in der Zwischenzeit jemand anderer
        korrigiert – dessen Arbeit soll nicht stillschweigend verschwinden. */
-    var erwartet=(doc.version||2)-1;
+    var erwartet=erwartetFassung || (doc.version||2)-1;
     Store.fehler="";   /* alte Meldung nicht stehen lassen */
     /* mit Zeitgrenze – sonst bliebe der Knopf bei hängender Leitung gesperrt */
     return mitFrist(Store.sb.from("protokolle").update(zeile)
@@ -7197,7 +7304,7 @@ function flushQueue(){
           return pdfOk ? speichereRapportPdf(e.id, e.rapport) : false;
         }).then(function(pdfOk){
           if(!pdfOk) return false;
-          return speichereProtokoll(e.id,e.doc);
+          return speichereProtokoll(e.id,e.doc,e);
         });
       }), 120000).then(function(ok){
         if(!ok){ next(); return; }
@@ -8125,10 +8232,11 @@ function kiZahl(t){
 }
 function kiJn(t){ t=String(t||"").trim().toLowerCase(); return /^(ja|j|yes|x)$/.test(t)?"ja":/^(nein|n|no)$/.test(t)?"nein":null; }
 /* Datum aus der KI: nur echte Kalendertage (kein 31.09.) und nicht in der Zukunft */
-function kiDatum(t, zukunftOk){ var m=/(\d{1,2})\.\s*(\d{1,2})\.\s*(\d{2,4})/.exec(String(t||"")); if(!m) return null;
-  /* zweistelliges Jahr: 20xx – außer das läge in der Zukunft, wo keine sein darf
-     (Konformität „15.03.95“ ist 1995, nicht 2095) */
-  var j=m[3].length===2 ? ((!zukunftOk && +("20"+m[3])>new Date().getFullYear()) ? "19"+m[3] : "20"+m[3]) : m[3], iso=j+"-"+("0"+m[2]).slice(-2)+"-"+("0"+m[1]).slice(-2);
+function kiDatum(t, zukunftOk, frueherOk){ var m=/(\d{1,2})\.\s*(\d{1,2})\.\s*(\d{2,4})/.exec(String(t||"")); if(!m) return null;
+  /* zweistelliges Jahr: 20xx – nur bei Baujahr-Angaben (frueherOk: Konformität,
+     Inbetriebnahme) 19xx, wenn 20xx in der Zukunft läge („15.03.95“ ist 1995,
+     nicht 2095). Eine Wartung „15.03.27“ ist keine von 1927 – ungültig. */
+  var j=m[3].length===2 ? ((frueherOk && !zukunftOk &&+("20"+m[3])>new Date().getFullYear()) ? "19"+m[3] : "20"+m[3]) : m[3], iso=j+"-"+("0"+m[2]).slice(-2)+"-"+("0"+m[1]).slice(-2);
   var d=new Date(iso+"T12:00:00");
   if(isNaN(d) || isoLokal(d)!==iso) return null;
   if(!zukunftOk && iso>isoLokal(new Date())) return null;
@@ -8148,13 +8256,13 @@ function kiAnlage(k){
   var gp=String(k.gefahr||"").toUpperCase(); setz("gefahr", /HP|HOH/.test(gp)?"HP":/NP|NIED/.test(gp)?"NP":null);
   var ep=String(k.erstePruefung||""); setz("erstePruefung", /kpst|kessel/i.test(ep)?"KPSt":/skp|sachk/i.test(ep)?"skP":null);
   var dm=String(k.dichtheitMonate||""); setz("dichtheitMonate", /nz|nicht/i.test(dm)?"nz":((/(3|6|12|24)/.exec(dm)||[])[1]||null));
-  setz("inbetriebnahme", kiDatum(k.inbetriebnahme));
-  setz("konformitaet", kiDatum(k.konformitaet));
+  setz("inbetriebnahme", kiDatum(k.inbetriebnahme, false, true));
+  setz("konformitaet", kiDatum(k.konformitaet, false, true));
   /* gelesen, aber kein gültiges Datum (kein Kalendertag, in der Zukunft): nicht
      still verwerfen – die Prüfansicht nennt es (wie bei den Prüfungen) */
   [["inbetriebnahme","Inbetriebnahme"],["konformitaet","Konformität"]].forEach(function(x){
     var w=String(k[x[0]]||"").trim();
-    if(w && !kiDatum(w)) r._verworfen=(r._verworfen||[]).concat(x[1]+" „"+w+"“");
+    if(w && !kiDatum(w, false, true)) r._verworfen=(r._verworfen||[]).concat(x[1]+" „"+w+"“");
   });
   return r;
 }
@@ -8446,24 +8554,28 @@ function protokollAssistent(form, stoer){
             return '<a href="#" class="sprunglink" data-spring="'+esc(x.dataset.spring)+'">'+esc(x.textContent)+"</a>"; }).join(", ")+"</div>"
           : (stand?'<div style="font-size:12.5px">'+esc(stand.textContent)+"</div>":""))+"</div>");
       /* nach dem Anlagendialog diesen Schritt neu zeigen (neuer Stand der Karte) */
-      var danach=function(){
+      /* erst zählen, dann öffnen – sonst zählte der eben geöffnete Dialog schon
+         zu „vorher“ und sein Schließen fiele nie auf */
+      var danach=function(oeffnen){
         var vorher=document.querySelectorAll(".assistent").length, gesehen=false, n=0;
+        oeffnen();
         var t=setInterval(function(){
           var jetzt=document.querySelectorAll(".assistent").length;
           if(jetzt>vorher) gesehen=true;
-          if((gesehen && jetzt<=vorher) || ++n>2000 || !document.body.contains(ov)){
+          /* ging gar kein Dialog auf: nach 15 s aufhören statt minutenlang weiterzuprüfen */
+          if((gesehen && jetzt<=vorher) || (!gesehen && n>50) || ++n>2000 || !document.body.contains(ov)){
             clearInterval(t);
             if(gesehen && document.body.contains(ov) && schritte[pos].titel==="Anlagendaten") schritte[pos].zeigen();
           }
         },300);
       };
       d.querySelector("button").onclick=function(){
-        var los=k.querySelector('[data-a="los"]'); if(los){ los.click(); danach(); }
+        var los=k.querySelector('[data-a="los"]'); if(los) danach(function(){ los.click(); });
       };
       d.querySelectorAll("[data-spring]").forEach(function(x){
         tippe(x, function(e){
           var los=k.querySelector('[data-a="los"]'); if(!los) return;
-          los.onclick(e, x.dataset.spring); danach();
+          danach(function(){ los.onclick(e, x.dataset.spring); });
         });
       });
       inhalt.appendChild(d);
@@ -9755,7 +9867,7 @@ function viewProtokoll(){
 
     if(bearb.unterschrift){
       var sa=form.querySelector("#f_sigalt"); sa.hidden=false;
-      sa.innerHTML='<img alt="bisherige Unterschrift" src="'+bildUrl(bearb.unterschrift)+'" style="height:60px;border-bottom:1px solid var(--line-2)">'+
+      sa.innerHTML='<img alt="bisherige Unterschrift" src="'+bildUrl(bearb.unterschrift)+'" style="height:60px;background:#fff;border-bottom:1px solid var(--line-2)">'+
         '<div class="muted" style="font-size:12px">Bisherige Unterschrift – bleibt erhalten, solange Sie unten nicht neu unterschreiben.</div>';
     }
     if(bearb.fotos && bearb.fotos.length){
@@ -11090,6 +11202,16 @@ function protokollDetail(p){
     ((p.version||1)>1?'<div class="note">'+(nurLesen()?"Fassung "+p.version:'<a href="#" class="sprunglink" data-akt="fassung" title="Änderungen ansehen">Fassung '+p.version+"</a>")+
       ' · zuletzt korrigiert am '+tagFmt(p.geaendert)+(p.korrekturGrund?' – „'+esc(p.korrekturGrund)+'"':"")+"</div>":"")+
     (p._quelle==="geraet"?'<div class="muted" style="font-size:12px">Liegt bisher nur auf diesem Gerät.</div>':"")+
+    /* eine Korrektur vom Gerät, die dem zentralen Stand widerspricht: nicht
+       übertragen, aber auch nicht verloren – ansehen und bewusst verwerfen */
+    (p._geraetKonflikt?'<div class="note warnbox" data-rolle="konflikt"><strong>Korrektur auf diesem Gerät nicht übertragen</strong><br>'+
+      "Fassung "+(p._geraetKonflikt.version||1)+(p._geraetKonflikt.geaendert?" vom "+tagFmt(p._geraetKonflikt.geaendert):"")+
+      (p._geraetKonflikt.korrekturGrund?' – „'+esc(p._geraetKonflikt.korrekturGrund)+'"':"")+
+      (p._geraetKonflikt._konflikt && p._geraetKonflikt._konflikt.geloescht
+        ? ". Das Protokoll wurde zentral gelöscht."
+        : ". Zentral wurde das Protokoll inzwischen anders geändert – es gilt die zentrale Fassung. Bitte die Korrektur ansehen und bei Bedarf hier noch einmal eintragen.")+
+      '<div class="rowflex" style="margin-top:6px"><button class="btn ghost sm" type="button" data-akt="konfliktdruck">Korrektur vom Gerät ansehen</button>'+
+      (nurLesen()||demo()?"":'<button class="btn ghost sm" type="button" data-akt="konfliktweg">Vom Gerät verwerfen</button>')+"</div></div>":"")+
     '<dl class="dl">'+
       "<dt>Techniker/in</dt><dd>"+esc([p.nameTechniker||p.techniker].concat(p.mitarbeiter||[]).filter(Boolean).map(kanonName).join(", ")||"–")+"</dd>"+
       "<dt>Wartungsart</dt><dd>"+esc(p.wartungsart||"–")+"</dd>"+
@@ -11199,6 +11321,16 @@ function protokollDetail(p){
   if(verlaufKnopf) verlaufKnopf.onclick=zuAenderungen;
   var fassung=d.querySelector('[data-akt="fassung"]');
   if(fassung) tippe(fassung, zuAenderungen);
+  var kDruck=d.querySelector('[data-akt="konfliktdruck"]');
+  if(kDruck) kDruck.onclick=function(){ druckeProtokoll(p._geraetKonflikt); };
+  var kWeg=d.querySelector('[data-akt="konfliktweg"]');
+  if(kWeg) kWeg.onclick=function(){
+    if(!window.confirm("Die nicht übertragene Korrektur auf diesem Gerät endgültig verwerfen? Die zentrale Fassung bleibt, wie sie ist.")) return;
+    /* nur genau diese Fassung – eine inzwischen neuere bleibt liegen */
+    geraetEintragErledigt(p._id, p._geraetKonflikt).then(function(){ return lokaleNeuLaden(); }).then(function(){
+      toast("Korrektur vom Gerät verworfen."); berechneFaelligkeiten(); render();
+    }, function(){ toast("Verwerfen fehlgeschlagen."); });
+  };
   var weg=d.querySelector('[data-akt="weg"]');
   if(weg) weg.onclick=function(){
     /* eine damit erledigte Störung geht wieder auf – das vorher sagen */
@@ -12051,6 +12183,8 @@ function korrekturRueckgaengig(e, p){
         var felder=vergleiche(p, doc);
         if(!felder.length){ toast("Die vorherige Fassung entspricht dem jetzigen Stand – nichts zurückgenommen."); return; }
         var rapportWeg=rapportVon(p) && !rapportVon(doc);
+        /* umgekehrt (etwa ein Rückgängig wird zurückgenommen): der Rapport hängt wieder am Protokoll */
+        var rapportZurueck=!rapportVon(p) && rapportVon(doc);
         return aktualisiereProtokoll(p._id, doc, "zentral").then(function(ok){
           if(!ok){ toast("Zurücknehmen fehlgeschlagen"+(Store.fehler?" ("+Store.fehler+")":"")+"."); return; }
           protokolliere({art:"korrigiert", protokollId:p._id, standortId:doc.standortId, standortName:doc.standortName,
@@ -12063,9 +12197,20 @@ function korrekturRueckgaengig(e, p){
               .eq("bezug", p._id).eq("art","rapport").eq("status","erledigt").select("id")
               .then(function(r2){ if(!r2.error && (r2.data||[]).length) ladePosteingang(); }, function(){});
           }
+          /* … dann ist sein Eingang (vom Rückgängig wieder offen gestellt, Bezug
+             noch dieses Protokoll) wieder erledigt – sonst stünde er doppelt offen */
+          if(rapportZurueck && posteingangAn()){
+            Store.sb.from("posteingang").update({status:"erledigt", erledigt_von:wer(), erledigt_am:new Date().toISOString()})
+              .eq("bezug", p._id).eq("art","rapport").eq("status","neu").select("id")
+              .then(function(r3){ if(!r3.error && (r3.data||[]).length) ladePosteingang(); }, function(){});
+          }
           berechneFaelligkeiten(); render();
           toast("Korrektur zurückgenommen – "+felder.length+" Feld"+(felder.length===1?"":"er")+" wieder wie vorher.");
         });
+      }, function(e2){
+        /* die Unterschrift ließ sich nicht sicher laden: nichts zurücknehmen
+           (sonst ginge sie mit der neuen Fassung verloren) – aber sagen */
+        toast("Zurücknehmen nicht möglich – "+((e2 && e2.message) || "die Unterschrift ließ sich nicht laden")+". Bitte später nochmals versuchen.");
       });
     }, function(){ toast("Die vorherige Fassung ließ sich nicht laden (keine Verbindung)."); });
 }
@@ -12362,6 +12507,10 @@ function viewVerwaltung(){
   var liste=pruefListe();
   var fehlerZahl=liste.filter(function(x){ return x.schwere==="Fehler"; }).length;
   if(!A.tab) A.tab="nachbessern";
+  /* nicht erlaubte Reiter vor dem Zeichnen des Menüs umstellen – sonst zeigte
+     das erste Zeichnen keinen gewählten Reiter (nach Kontowechsel, Vorschau) */
+  if((A.tab==="inhaber"||A.tab==="wuensche") && !(istInhaber() && Store.modus==="supabase")) A.tab="nachbessern";   /* nach Kontowechsel */
+  if(A.tab==="wuensche" && demo()) A.tab="nachbessern";
   var menue=el('<div class="card"><div class="pad"><div class="chips" role="tablist" style="gap:8px">'+
     [["nachbessern","Nachbessern"+(fehlerZahl?" · "+fehlerZahl+" Fehler":"")],["maerkte","Märkte & Anlagen"]]
       /* Änderungswünsche: was auf eine Entscheidung wartet, steht als Zahl dran */
@@ -12377,8 +12526,6 @@ function viewVerwaltung(){
     render(); window.scrollTo({top:0}); }; });
   f.appendChild(menue);
   if(A.tab==="nachbessern"){ f.appendChild(nachbessernAnsicht(liste)); return f; }
-  if((A.tab==="inhaber"||A.tab==="wuensche") && !(istInhaber() && Store.modus==="supabase")) A.tab="nachbessern";   /* nach Kontowechsel */
-  if(A.tab==="wuensche" && demo()) A.tab="nachbessern";
   if(A.tab==="wuensche"){
     try{ f.appendChild(wuenscheAnsicht()); }catch(e){ console.error(e); }
     return f;
@@ -14000,6 +14147,11 @@ function ansichtenSchliessen(){
 /* Ein neues Protokoll beginnen (Fällig-Zeile, posBox, Karte, Tour, Störung) –
    mit Rückfrage, wenn schon eines angefangen ist */
 function protokollBeginnen(sid, pid, art, stoerungId){
+  /* das Störungsprotokoll zu dieser Störung wartet noch auf dem Gerät: ein
+     zweites nur bewusst (etwa ein weiterer Einsatz) */
+  var wartet=stoerungId && (lokaleProtokolle||[]).filter(function(e){ return e && !e._demo && e.ausStoerung===stoerungId && e.doc; })[0];
+  if(wartet && !window.confirm("Zu dieser Störung liegt schon ein Störungsprotokoll vom "+dfmt(wartet.doc.datum)+
+       " auf diesem Gerät und wartet auf die Übertragung.\n\nTrotzdem ein weiteres Störungsprotokoll erstellen?")) return false;
   return springe({reiter:"protokoll", neu:true, alleFenster:true, vorher:function(){
     S.protoStandort=sid; S.protoPos=pid||""; S.protoArt=art||"wartung"; S.stoerungAus=stoerungId||null;
     S.bearbeiten=null; formDirty=false;
@@ -14058,10 +14210,13 @@ function verwaltungSprung(s, finde){
   var offen=S.view==="verwaltung" && A.tab==="maerkte" && A.sel===s.id && document.getElementById("adm_editor");
   if(!offen){
     if(!wechselnOk("verwaltung")) return;
+    /* Fenster darüber (Markt-Ansicht u. a.) schließen, sonst passiert scheinbar
+       nichts – ein Störungsdialog mit Eingaben bleibt stehen */
+    ansichtenSchliessen();
     var vonNb=S.view==="verwaltung" && A.tab==="nachbessern";
     if(vonNb) nbMerken(s.id);
     A.tab="maerkte"; A.sel=s.id; A.entwurf=null; A.vonNachbessern=vonNb; S.view="verwaltung"; render(); window.scrollTo({top:0});
-  }
+  } else ansichtenSchliessen();
   setTimeout(function(){
     var ed=document.getElementById("adm_editor"); if(!ed) return;
     var z=null; try{ z=finde ? finde(ed) : null; }catch(e){ console.error(e); }
@@ -15157,7 +15312,10 @@ function wuenscheAnsicht(){
     l.forEach(function(w){ liste.appendChild(wunschKarte(w, neuLaden)); });
   };
   var neuLaden=function(abgleich){
-    var p=abgleich ? wunschFunktion({aktion:"abgleichen"}).then(function(d){ if(d && d.fehler && d.fehler.length) toast("GitHub: "+d.fehler[0]); }, function(e){ toast("GitHub nicht erreichbar: "+e.message); }) : Promise.resolve();
+    var p=abgleich ? wunschFunktion({aktion:"abgleichen"}).then(function(d){
+      /* läuft bei GitHub noch ein Claude-Lauf, ist sein Kommentar ein Zwischenstand – keine Rückfrage */
+      wunschClaudeLaeuft = (d && typeof d.laeuft==="boolean") ? d.laeuft : null;
+      if(d && d.fehler && d.fehler.length) toast("GitHub: "+d.fehler[0]); }, function(e){ toast("GitHub nicht erreichbar: "+e.message); }) : Promise.resolve();
     return p.then(wuenscheLaden).then(zeichnen, function(e){ liste.innerHTML=""; liste.appendChild(el('<div class="note warnbox">'+esc(e.message)+"</div>")); });
   };
   c.querySelector('[data-a="stand"]').onclick=function(){ var b=this; b.disabled=true; b.textContent="fragt ab …";
@@ -15169,6 +15327,8 @@ function wuenscheAnsicht(){
   }, function(e){ liste.innerHTML=""; liste.appendChild(el('<div class="note warnbox">'+esc(e.message)+"</div>")); });
   return c;
 }
+/* Stand des letzten Abgleichs: läuft bei GitHub ein Claude-Lauf? (null = unbekannt) */
+var wunschClaudeLaeuft=null;
 function wunschAntwortText(t){
   t=String(t||"");
   var i=t.indexOf("\n---\n"); if(i>=0 && i<1500) t=t.slice(i+5);
@@ -15221,7 +15381,9 @@ function vorschauSchutz(supa){
      Lese-Links (Fotos, PDFs: POST auf /storage/v1/object/sign/, speichert
      nichts). Das Signieren eines Hochlade-Links (/object/upload/sign/) bleibt gesperrt. */
   var gesperrt=function(m, u){ m=String(m||"GET").toUpperCase();
-    if(/\/storage\/v1\/object\/sign\//.test(String(u||""))) return false;
+    /* nur POST und nur im Pfad – nicht irgendwo in der Abfrage (?x=/storage/…) */
+    var pfad=""; try{ pfad=new URL(String(u||""), W.location.href).pathname; }catch(e){}
+    if(m==="POST" && /\/storage\/v1\/object\/sign\//.test(pfad)) return false;
     return m!=="GET" && m!=="HEAD" && zuSupabase(u); };
   var f=W.fetch;
   W.fetch=function(u, o){
@@ -15324,7 +15486,10 @@ function wunschKarte(w, neuLaden){
   var probe=w.branch ? "https://raw.githack.com/"+WUNSCH_REPO+"/"+w.branch.split("/").map(encodeURIComponent).join("/")+"/index.html" : "";
   var P={ok:["✓ automatische Prüfung bestanden","good"], fehler:["✗ automatische Prüfung NICHT bestanden","crit"], laeuft:["… Prüfung läuft","plan"], keine:["Prüfung noch nicht gelaufen","warn"]}[w.pruefung]||null;
   /* Rückfrage von Claude: in Arbeit, Auftrag auf GitHub, noch kein Pull Request, aber eine Antwort */
-  var rueckfrage=w.status==="in_arbeit" && !!w.issue_nr && !w.pr_nr && !!w.antwort;
+  /* nur, wenn gerade sicher kein Claude-Lauf offen ist – sonst ist die Antwort
+     sein Fortschrittskommentar („working …“), und eine Antwort stieße einen
+     zweiten, parallelen Lauf an */
+  var rueckfrage=w.status==="in_arbeit" && !!w.issue_nr && !w.pr_nr && !!w.antwort && wunschClaudeLaeuft===false;
   var k=el('<div class="posbox stack" style="gap:8px" data-wunsch="'+esc(String(w.id))+'">'+
     '<div class="rowflex" style="justify-content:space-between;gap:8px"><strong>W-'+w.id+" · "+esc(w.von_name||"–")+
       ' <span class="muted" style="font-weight:400">'+esc(dfmt(isoLokal(new Date(w.erstellt))))+"</span></strong>"+wunschStatusHtml(w)+"</div>"+
