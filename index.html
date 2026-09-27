@@ -1436,6 +1436,8 @@ VIEWS.forEach(function(v){
       /* die Verknüpfung zur offenen Störung gilt nur für dieses eine Formular;
          ein Entwurf merkt sie sich selbst und bringt sie beim Weitermachen mit */
       S.stoerungAus=null;
+      /* ebenso ein zugeordneter Posteingangs-Rapport: er bleibt im Posteingang */
+      if(posteingangOffen && posteingangOffen.art==="rapport") posteingangOffen=null;
     }
     /* ebenso ungespeicherte Eingaben im Markt-Editor der Verwaltung (auch beim
        erneuten Antippen von „Verwaltung“ – das zeichnet neu) */
@@ -1636,11 +1638,18 @@ function stoerungDialog(vorhanden){
            Filiale 405. Eine schon getroffene Wahl bleibt. */
         if(i.dataset.s==="filialCode" && (!o.standortId || o._marktAuto)){   /* von Hand gewählter Markt bleibt */
           var st=standortZuAuftrag({kostenstelle:i.value});
+          var w=inhalt.querySelector("#st_markt");
           if(st){
             if(st.id!==o.standortId) o.positionId=null;
             o.standortId=st.id; o._marktAuto=true;
-            var w=inhalt.querySelector("#st_markt"); if(w) w.value=st.id; anlWahl();
+            if(w) w.value=st.id; anlWahl();
             melde("Markt erkannt: <strong>"+esc(stName(st))+"</strong>.");
+          } else if(o._marktAuto){
+            /* die Nummer passt zu keinem Markt (mehr): der nur aus ihr erkannte
+               Markt gilt nicht mehr – sonst hinge die Störung am falschen */
+            o.standortId=null; o.positionId=null; o._marktAuto=false;
+            if(w) w.value=""; anlWahl();
+            melde(i.value.trim() ? "Zur Filial-Nr. „"+esc(i.value.trim())+"“ ist kein Markt bekannt – bitte den Markt wählen." : "");
           }
         }
       };
@@ -1674,7 +1683,19 @@ function stoerungDialog(vorhanden){
         return kiPruefen("Lidl-Auftrag", g, o, felder, d.unsicher, d.hinweise).then(function(wahl){
           if(wahl){
             Object.keys(wahl).forEach(function(k){ o[k]=wahl[k]; });
-            if(wahl.filialCode && !o.standortId){ var st=standortZuAuftrag({kostenstelle:wahl.filialCode}); if(st){ o.standortId=st.id; o.positionId=null; } }
+            /* wie beim Abtippen und beim Auftrags-PDF: ein automatisch erkannter
+               Markt zieht mit der Filial-Nr. mit (samt Anlage), ein von Hand
+               gewählter bleibt – dann ein Hinweis, beim Speichern die Rückfrage */
+            if(wahl.filialCode){
+              var st=standortZuAuftrag({kostenstelle:wahl.filialCode});
+              if(st && st.id!==o.standortId){
+                if(!o.standortId || o._marktAuto){
+                  o.standortId=st.id; o.positionId=null; o._marktAuto=true;
+                  melde("Markt laut Auftrag: <strong>"+esc(stName(st))+"</strong>. Bitte kurz gegenprüfen.");
+                } else melde("Die Filial-Nr. "+esc(wahl.filialCode)+" gehört zu <strong>"+esc(stName(st))+"</strong>, gewählt ist "+
+                  esc(stName(byId[o.standortId]||{}))+" – bitte den Markt prüfen.");
+              }
+            }
             o.quelle="ki";
           }
           zeichne(); fussNeu();
@@ -1762,6 +1783,12 @@ function stoerungDialog(vorhanden){
       var box=inhalt.querySelector("#st_fehlt");
       if(fehlt.length){ box.textContent="Es fehlt noch: "+fehlt.join(", ")+"."; box.hidden=false;
         box.scrollIntoView({behavior:"smooth",block:"center"}); return; }
+      /* Filial-Nr. laut Auftrag und gewählter Markt passen nicht zusammen? */
+      var stF=o.filialCode ? standortZuAuftrag({kostenstelle:o.filialCode}) : null, stG=byId[o.standortId];
+      var filNr=function(s){ return String((s&&s.filiale)||"").replace(/^0+/,""); };
+      if(stF && stG && filNr(stF)!==filNr(stG) &&
+         !window.confirm("Die Filial-Nr. "+o.filialCode+" gehört zu „"+stName(stF)+"“, gewählt ist aber „"+stName(stG)+"“.\n\n"+
+           "Trotzdem beim gewählten Markt speichern?")) return;
       /* gescannter QR-Inhalt eines anderen Auftrags (Nummer seither geändert) fällt weg */
       if(o.qrInhalt && !qrPasst(o.qrInhalt, o.auftragsnummer)) delete o.qrInhalt;
       if(o.terminTechniker) o.terminTechniker=kanonName(o.terminTechniker);   /* „Tobi“ → voller Name */
@@ -1970,10 +1997,18 @@ function ladePosteingang(){
   return Store.sb.from("posteingang").select("*").eq("status","neu").order("eingang",{ascending:false}).limit(100)
     .then(function(r){ POSTEINGANG=r.error?[]:(r.data||[]); return POSTEINGANG; }, function(){ return []; });
 }
-function posteingangErledigt(art, bezug){
+/* rapport: der tatsächlich gespeicherte Rapport – erledigt ist der Eingang nur,
+   wenn es seine PDF ist (nicht ein später stattdessen angehängter Rapport) */
+function posteingangErledigt(art, bezug, rapport){
   var e=posteingangOffen;
   if(!e || e.art!==art || !posteingangAn()) return;
   if(e.ziel && e.ziel!==bezug) return;
+  if(rapport && (e.name || e.nummer)){
+    var nr=rapport.daten && rapport.daten.nummer;
+    var istEr = (e.nummer && nr) ? nr===e.nummer : rapport.name===e.name;
+    /* ein anderer Rapport: der Eingang bleibt im Posteingang stehen */
+    if(!istEr){ posteingangOffen=null; return; }
+  }
   if(demo()){ posteingangOffen=null; POSTEINGANG=POSTEINGANG.filter(function(x){ return x.id!==e.id; }); return; }
   posteingangOffen=null;
   Store.sb.from("posteingang").update({status:"erledigt", bezug:bezug, erledigt_von:wer(), erledigt_am:new Date().toISOString()})
@@ -2073,19 +2108,29 @@ function posteingangRapport(e){
         var s=byId[p.standortId];
         if(fil && (!s || String(s.filiale||"").replace(/^0+/,"")!==fil)) return false;
         return !tage.length || tage.some(function(t){ return gleicherBesuch(t,p.datum); });
-      }).sort(function(a,b){ return String(b.datum).localeCompare(String(a.datum)); });
+      }).sort(function(a,b){
+        /* das genau passende zuerst: derselbe Lidl-Auftrag, dann derselbe Tag, dann das neueste */
+        var auf=function(p){ return daten.auftrag && auftragZumVergleich(p.auftragsnummer, true)===daten.auftrag ? 0 : 1; };
+        var tag=function(p){ return tage.indexOf(p.datum)>=0 ? 0 : 1; };
+        return (auf(a)-auf(b)) || (tag(a)-tag(b)) || String(b.datum).localeCompare(String(a.datum));
+      });
       var v=ansichtOeffnen("Rapport zuordnen");
       v.schritt.textContent=rapportZeile({daten:daten, name:e.dateiname}).replace(/^liegt bei · /,"");
       if(!kand.length) v.inhalt.appendChild(el('<div class="note warnbox">Kein passendes Protokoll ohne Rapport gefunden'+
         (fil?" (Filiale "+esc(fil)+(tage.length?", "+esc(tage.map(dfmt).join(", ")):"")+")":"")+
         ". Gibt es das Protokoll schon? Sonst erst das Protokoll anlegen und den Rapport dort anhängen.</div>"));
       kand.slice(0,8).forEach(function(p){
+        /* mit Auftrag und Anlagen – sonst sähen zwei Einsätze am selben Tag gleich aus */
+        var anl=(p.anlagen||[]).map(function(a){ return a && a.name; }).filter(Boolean);
         var b=el('<button class="btn ghost" type="button" style="text-align:left">'+esc(dfmt(p.datum))+" · "+
-          esc(protoName(p))+" · "+esc(istStoerung(p)?"Störung":(p.wartungsart||"Wartung"))+(p.nameTechniker?" · "+esc(p.nameTechniker):"")+"</button>");
+          esc(protoName(p))+" · "+esc(istStoerung(p)?"Störung":(p.wartungsart||"Wartung"))+(p.nameTechniker?" · "+esc(kanonName(p.nameTechniker)):"")+
+          (p.auftragsnummer?" · Auftrag "+esc(p.auftragsnummer):"")+
+          (anl.length?'<br><span class="muted" style="font-size:12.5px">'+esc(anl.join(", "))+"</span>":"")+"</button>");
         b.onclick=function(){
           v.zu();
-          /* an genau dieses Protokoll gebunden – eine andere Korrektur erledigt ihn nicht */
-          posteingangOffen={id:e.id, art:"rapport", ziel:p._id};
+          /* an genau dieses Protokoll und genau diese PDF gebunden – eine andere
+             Korrektur oder ein anderer angehängter Rapport erledigt ihn nicht */
+          posteingangOffen={id:e.id, art:"rapport", ziel:p._id, name:e.dateiname, nummer:daten.nummer||""};
           S.rapportNeu={name:e.dateiname, datenUrl:u, daten:daten};
           ladeUnterschrift(p).then(function(){ formDirty=false; S.bearbeiten={x:p}; S.view="protokoll"; dialogeSchliessen(); render(); window.scrollTo({top:0}); });
         };
@@ -4367,10 +4412,11 @@ function idbLoeschen(id){ return idbVorgang("readwrite",function(st){ return st.
    überschreibt ihn nicht und bekommt ihn nicht angeboten */
 function entwurfId(){ var m=Store.benutzer&&Store.benutzer.email; return m ? "aktuell:"+m : "aktuell"; }
 var entwurfStand=null;      /* zuletzt gesehener Entwurf, für den Hinweis */
-function entwurfSchreiben(d){
+/* platz: eigener Entwurfsplatz (Korrektur), sonst der des Kontos */
+function entwurfSchreiben(d, platz){
   if(!d) return Promise.resolve(false);
-  d.id=entwurfId();
-  entwurfStand=d;            /* auch innerhalb der Sitzung: nach einem Tabwechsel
+  d.id=platz||entwurfId();
+  if(!platz) entwurfStand=d; /* auch innerhalb der Sitzung: nach einem Tabwechsel
                                soll der Hinweis sofort wieder da sein */
   return idbVorgang("readwrite",function(st){ return st.put(d); },"entwurf")
     .then(function(){ return true; }, function(){ return false; });
@@ -4390,7 +4436,7 @@ var entwurfSofort=null;
 document.addEventListener("visibilitychange", function(){ if(document.hidden && entwurfSofort) entwurfSofort(); });
 window.addEventListener("pagehide", function(){ if(entwurfSofort) entwurfSofort(); });
 /* Schließen/Neuladen: stand noch ein Entwurf aus, oder ist eine Korrektur
-   angefangen (die hat keinen Entwurf) oder in der Verwaltung etwas nicht
+   angefangen (ihr Entwurf ist evtl. noch nicht geschrieben) oder in der Verwaltung etwas nicht
    gespeichert, nachfragen – die Rückfrage gibt dem Gerätespeicher auch die
    Zeit, den Entwurf fertig zu schreiben */
 window.addEventListener("beforeunload", function(e){
@@ -4401,6 +4447,18 @@ function entwurfWeg(){
   entwurfStand=null;
   var id=entwurfId();
   return idbVorgang("readwrite",function(st){ st.delete("aktuell"); return st.delete(id); },"entwurf").catch(function(){});
+}
+/* Eine angefangene Korrektur hat je Konto und Protokoll einen eigenen Platz –
+   sie übersteht Neuladen und das Beenden der App am Handy wie ein Entwurf */
+function korrekturEntwurfId(pid){ return entwurfId()+":korr:"+pid; }
+function korrekturEntwurfHolen(pid){
+  var id=korrekturEntwurfId(pid);
+  return idbVorgang("readonly",function(st){ return st.get(id); },"entwurf")
+    .then(function(d){ return d||null; }, function(){ return null; });
+}
+function korrekturEntwurfWeg(pid){
+  var id=korrekturEntwurfId(pid);
+  return idbVorgang("readwrite",function(st){ return st.delete(id); },"entwurf").catch(function(){});
 }
 
 function lokaleNeuLaden(){
@@ -4937,14 +4995,28 @@ function aenderungenUebertragen(){
 /* ältere Fassung legte die Warteschlange in localStorage ab – übernehmen */
 function altlastUebernehmen(){
   var alt=lsGet("ukt_queue",[]);
-  if(!alt.length) return Promise.resolve();
-  var kette=Promise.resolve();
-  alt.forEach(function(e){
+  if(!Array.isArray(alt) || !alt.length) return Promise.resolve();
+  /* Eintrag für Eintrag: ein kaputter darf den Start nicht blockieren.
+     Ohne Kennung bekommt er eine; ohne Protokoll ist er unbrauchbar und
+     wird beiseitegelegt (ukt_queue_defekt); scheitert das Schreiben, bleibt
+     er für den nächsten Start in der alten Warteschlange */
+  var kette=Promise.resolve(), rest=[], defekt=[];
+  alt.forEach(function(e, i){
     kette=kette.then(function(){
-      return idbSchreiben({id:e.id, doc:e.doc, fotos:e.fotos||[], erstellt:(e.doc&&e.doc.erstellt)||new Date().toISOString()});
+      if(!e || typeof e!=="object" || !e.doc || typeof e.doc!=="object"){ defekt.push(e); return; }
+      var id=e.id || ("p_"+Date.now()+"_alt"+i);
+      return idbSchreiben({id:id, doc:e.doc, fotos:e.fotos||[], erstellt:e.doc.erstellt||new Date().toISOString()})
+        .catch(function(){ rest.push(e); });
     });
   });
-  return kette.then(function(){ try{ localStorage.removeItem("ukt_queue"); }catch(x){} });
+  return kette.then(function(){
+    try{
+      var schonDefekt=lsGet("ukt_queue_defekt",[]);
+      if(defekt.length) localStorage.setItem("ukt_queue_defekt", JSON.stringify((Array.isArray(schonDefekt)?schonDefekt:[]).concat(defekt)));
+      if(rest.length) localStorage.setItem("ukt_queue", JSON.stringify(rest));
+      else localStorage.removeItem("ukt_queue");
+    }catch(x){}
+  });
 }
 
 /* ----------------------------------------------------------------
@@ -5028,6 +5100,16 @@ function initSupabase(){
       if(_ev==="INITIAL_SESSION") entwurfHolen().then(function(){ storeNachRender(); }, function(){});
       return;
     }
+    /* Abgemeldet oder anderes Konto (auch aus einem zweiten Tab): ein offenes
+       Protokoll bzw. eine Korrektur gehört zum alten Konto. Noch unter dessen
+       Namen als Entwurf sichern (Store.benutzer ist hier noch das alte
+       Konto) und das Formular schließen – sonst speichert es das neue Konto
+       oder ein Kunde sieht darin die Zugangsdaten der Regelung. */
+    var kontoWeg = !!Store.benutzer && (!sess || sess.user.id!==Store.benutzer.id);
+    if(kontoWeg){
+      if(entwurfSofort) entwurfSofort();
+      formDirty=false; S.bearbeiten=null; S.stoerungAus=null; S.protoStandort=""; S.protoPos="";
+    }
     /* anderes Konto oder abgemeldet: was die Präsentation nur im Speicher
        angelegt hat, fliegt raus – sonst überträgt es die nächste echte
        Sitzung in die Datenbank */
@@ -5059,7 +5141,9 @@ function initSupabase(){
     }
     /* der Entwurf gehört zum Konto – den des jetzt angemeldeten laden */
     entwurfHolen().then(function(){ storeNachRender(); }, function(){});
-    storeNachRender();
+    /* nach Abmelden/Kontowechsel immer neu zeichnen – Reiter, Nur-Lesen und
+       ein stehengebliebenes Formular gehören sonst noch zum alten Konto */
+    if(kontoWeg){ berechneFaelligkeiten(); render(); } else storeNachRender();
   });
 }
 
@@ -5378,6 +5462,14 @@ function rapportZeile(r){
     (d.zeilen||[]).map(function(z){ return dfmt(z.datum)+" · "+z.personen+" Pers. "+z.von+"–"+z.bis; }).join("; "),
     d.stunden?d.stunden+" h verrechenbar":""].filter(Boolean).join(" · ");
 }
+/* Welche Lidl-Auftragsnummer gegen den Rapport gehalten wird: die führende
+   Nummer („619415854 / 2“ → 619415854). Bei der Wartung nur, wenn dort eine
+   steht; bei der Störung sonst das ganze Feld. */
+function auftragZumVergleich(nr, stoer){
+  nr=String(nr||"").trim();
+  var m=/^(\d{6,})(?!\d)/.exec(nr);
+  return m ? m[1] : (stoer ? nr : "");
+}
 /* Passt der Rapport zum Protokoll? Lidl-Auftrag, Filiale und Tag gegenhalten. */
 function rapportAbweichung(d, filiale, datum, auftrag){
   if(!d) return "";
@@ -5532,7 +5624,9 @@ function flushQueue(){
   };
   next();
 }
-window.addEventListener("online",function(){ flushQueue(); });
+/* wieder Netz: Protokolle und Verlauf, aber auch offline erfasste Störungen
+   und Anlagendaten nachtragen („sobald Verbindung besteht“) */
+window.addEventListener("online",function(){ flushQueue(); if(Admin.geprueft && !nurLesen() && !demo()) stammdatenUebertragen(); });
 
 function viewAnmeldung(){
   var f=document.createDocumentFragment();
@@ -7025,7 +7119,10 @@ function viewProtokoll(){
   selSt.onchange=function(){ var cur=byId[selSt.value];
     form.querySelector("#f_adresse").value=cur?cur.adresse:"";
     if(cur&&cur.region){ var rb=form.querySelector('input[name="fm"][value="'+cur.region+'"]'); if(rb) rb.checked=true; }
-    fillPos(null); };
+    fillPos(null);
+    /* auch beim Setzen aus Auftrags-PDF oder Schritt-für-Schritt (direkter
+       Aufruf ohne change-Ereignis): Rapport gegen den neuen Markt abgleichen */
+    if(form._rapportZeigen) form._rapportZeigen(); };
   if(s){ selSt.value=s.id; form.querySelector("#f_adresse").value=s.adresse; }
   fillPos(p?p.id:null);
 
@@ -7268,7 +7365,7 @@ function viewProtokoll(){
       var st0=byId[form.querySelector("#f_standort").value];
       /* Lidl-Auftrag gegenhalten: bei der Störung immer, bei der Wartung, wenn dort eine Auftragsnummer steht */
       var nrF=form.querySelector("#f_auftrag").value.trim();
-      var abw=rapportAbweichung(rapportPdf.daten, st0&&st0.filiale, form.querySelector("#f_datum").value, (stoer || /^\d{6,}$/.test(nrF)) ? nrF : "");
+      var abw=rapportAbweichung(rapportPdf.daten, st0&&st0.filiale, form.querySelector("#f_datum").value, auftragZumVergleich(nrF, stoer));
       rapInfo.innerHTML=(alt?"Ersetzt „"+esc(alt.name||"rapport.pdf")+"“: ":"")+'<strong>'+esc(rapportPdf.name)+'</strong> · <a href="#" data-a="rapsehen">ansehen</a> · <a href="#" data-a="rapweg">entfernen</a>'+
         (rapportPdf.daten ? '<br>'+esc(rapportZeile({daten:rapportPdf.daten}).replace(/^liegt bei · /,""))+
           (rapportPdf.daten.zeilen&&rapportPdf.daten.zeilen.length?'<br>'+esc(rapportPdf.daten.zeilen.map(function(z){ return z.arbeiten; }).join(" / ")):"")
@@ -7355,10 +7452,10 @@ function viewProtokoll(){
     STOER_AUFTRAG.forEach(function(f){ setzS(f[0], a[f[0]]); });
     setzS("beschreibung", a.beschreibung);
     if(a.auftragsnummer) form.querySelector("#f_auftrag").value=a.auftragsnummer;
-    if(form._rapportZeigen) form._rapportZeigen();   /* Rapport-Abgleich mit der neuen Nummer */
     var st=standortZuAuftrag(a);
-    if(st){ selSt.value=st.id; selSt.onchange(); }
+    if(st){ selSt.value=st.id; selSt.onchange(); }   /* gleicht dabei auch den Rapport ab */
     else if(a.adresse) form.querySelector("#f_adresse").value=a.adresse;
+    if(!st && form._rapportZeigen) form._rapportZeigen();   /* Rapport-Abgleich mit der neuen Nummer */
     formDirty=true;
     var n=STOER_AUFTRAG.filter(function(f){ return a[f[0]]; }).length+(a.beschreibung?1:0);
     sInfo("Übernommen aus Auftrag <strong>"+esc(a.auftragsnummer||"?")+"</strong>: "+n+" Angaben. "+
@@ -7668,7 +7765,7 @@ function viewProtokoll(){
     formDirty=false; S.protoStandort=""; S.protoPos=""; S.stoerungAus=null;
     posteingangOffen=null;   /* abgebrochen: ein Posteingangs-Rapport bleibt im Posteingang */
     clearTimeout(entwurfTakt); entwurfTakt=null;   /* sonst kommt das Verworfene als Entwurf zurück */
-    if(!bearb) entwurfWeg();
+    if(!bearb) entwurfWeg(); else korrekturEntwurfWeg(bearb._id);
     if(S.bearbeiten){ S.letztesProtokoll=S.bearbeiten.x._id; S.bearbeiten=null; }
     render();
   };
@@ -7839,13 +7936,24 @@ function viewProtokoll(){
   }
   /* Nicht bei jedem Tastendruck schreiben – das Gerät hat anderes zu tun. */
   var entwurfTakt=null;
+  /* eine Korrektur kommt auf ihren eigenen Platz (je Protokoll) – samt
+     „Rapport ersetzen“ und einem zugeordneten Posteingangs-Rapport */
+  function entwurfAblegen(){
+    var d=entwurfSammeln();
+    if(!bearb) return entwurfSchreiben(d);
+    d.korrektur=bearb._id; d.version=bearb.version||1; d.rapErsetzen=rapErsetzen;
+    if(posteingangOffen && posteingangOffen.art==="rapport" && posteingangOffen.ziel===bearb._id) d.posteingang=posteingangOffen;
+    return entwurfSchreiben(d, korrekturEntwurfId(bearb._id));
+  }
   function entwurfMerken(){
-    if(bearb) return;                 /* eine Korrektur ist kein Entwurf */
+    /* schon verworfen bzw. ersetzt (der Klick auf „Abbrechen“ kommt erst nach
+       dem Neuzeichnen hier an): sonst käme das Verworfene als Entwurf zurück */
+    if(!document.body.contains(form)) return;
     clearTimeout(entwurfTakt);
     entwurfTakt=setTimeout(function(){
       /* Ein Fehler beim Zwischenspeichern darf das Formular nicht stoeren,
          soll aber nicht stillschweigend verschwinden. */
-      try{ entwurfSchreiben(entwurfSammeln()); }
+      try{ entwurfAblegen(); }
       catch(e){ if(window.console) console.warn("Entwurf nicht gespeichert:", e); }
     }, 1200);
   }
@@ -7863,9 +7971,9 @@ function viewProtokoll(){
   /* App geht in den Hintergrund (Handy gesperrt, anderer App gewechselt):
      ausstehenden Entwurf sofort schreiben, nicht erst nach dem Takt */
   entwurfSofort=function(){
-    if(!entwurfTakt || bearb || !document.body.contains(form)) return false;
+    if(!entwurfTakt || !document.body.contains(form)) return false;
     clearTimeout(entwurfTakt); entwurfTakt=null;
-    try{ entwurfSchreiben(entwurfSammeln()); }catch(e){}
+    try{ entwurfAblegen(); }catch(e){}
     return true;   /* es stand noch etwas aus */
   };
 
@@ -7916,9 +8024,40 @@ function viewProtokoll(){
     };
     entwurfKasten=kasten;
   }
+  /* angefangene Korrektur desselben Protokolls (etwa vor dem Neuladen oder
+     bevor die App am Handy beendet wurde) wieder anbieten */
+  if(bearb) korrekturEntwurfHolen(bearb._id).then(function(d){
+    if(!d || !d.werte || !document.body.contains(form)) return;
+    var neuer=(bearb.version||1)!==(d.version||1);
+    var k=el('<div class="note warnbox" style="margin-bottom:12px"><strong>Angefangene Korrektur gefunden</strong> – vom '+
+      esc(zeitFmt(d.zeit))+". Weitermachen oder verwerfen?"+
+      (neuer?"<br>Achtung: Das Protokoll wurde seither geändert (jetzt Fassung "+(bearb.version||1)+") – bitte die Angaben prüfen.":"")+
+      '<div class="rowflex" style="margin-top:8px"><button class="btn sm" type="button" data-e="weiter">Weitermachen</button>'+
+      '<button class="btn ghost sm" type="button" data-e="weg">Verwerfen</button></div></div>');
+    /* der Kasten steht im Formular: dessen Klick-Horcher schriebe sonst sofort
+       wieder einen Entwurf (auch den eben verworfenen) */
+    k.addEventListener("click", function(e){ e.stopPropagation(); });
+    k.querySelector('[data-e="weiter"]').onclick=function(){
+      k.remove();
+      if(d.rapErsetzen) rapErsetzen=true;
+      entwurfEinsetzen(d);
+      rapZeigen();
+      if(d.posteingang && !posteingangOffen) posteingangOffen=d.posteingang;
+      toast("Weiter, wo Sie aufgehört haben.");
+    };
+    k.querySelector('[data-e="weg"]').onclick=function(){
+      if(!window.confirm("Die angefangene Korrektur verwerfen?\n\nDie Eingaben sind dann weg.")) return;
+      korrekturEntwurfWeg(bearb._id); k.remove(); toast("Angefangene Korrektur verworfen.");
+    };
+    form.insertBefore(k, form.firstChild);
+  });
 
   form.onsubmit=function(e){
     e.preventDefault();
+    /* ein stehengebliebenes Formular nach Abmelden oder Wechsel auf ein Konto,
+       das nur ansehen darf: nichts anlegen (die Eingaben bleiben stehen) */
+    if(nurLesen()){ toast("Mit diesem Konto lässt sich nur ansehen."); return; }
+    if(Store.modus==="anmeldung"){ toast("Nicht angemeldet – bitte zuerst anmelden."); return; }
     /* Fotos noch in Arbeit: erst fertig verkleinern lassen, sonst fehlen sie im Protokoll */
     if(fotosInArbeit>0){ toast("Die Fotos werden noch verkleinert – bitte einen Moment, dann nochmals speichern."); return; }
     if(!pflichtPruefung()) return;
@@ -8016,21 +8155,23 @@ function viewProtokoll(){
     })();
     var id="p_"+Date.now()+"_"+Math.random().toString(36).slice(2,7);
     var btn=form.querySelector("#save"); btn.disabled=true; btn.textContent="Speichern …";
+    /* die offene Störung dieses Formulars – bis die Übertragung durch ist,
+       kann längst ein anderes Formular (mit anderer Störung) offen sein */
+    var ausStoerung=S.stoerungAus;
     var fertigSchon=false;
     var fertig=function(msg){
       if(fertigSchon) return; fertigSchon=true;   /* nur einmal – auch wenn die Zeitgrenze schon abgeschlossen hat */
-      btn.disabled=false; btn.textContent="Protokoll speichern"; formDirty=false; toast(msg);
-      /* abgeschickt – der Entwurf hat seinen Zweck erfüllt. Erst den noch
-         laufenden Schreibtakt stoppen, sonst schreibt er das gespeicherte
-         Protokoll als Geister-Entwurf zurück (→ doppeltes Protokoll). */
+      toast(msg);
+      /* Die Übertragung kann bis zu 2 Minuten dauern. Inzwischen darf man
+         weiterarbeiten, auch ein neues Protokoll beginnen – Formular,
+         Entwurf und Auswahl gehören dann dem neuen und bleiben unangetastet.
+         Aufs Gerät gesichert (und der Entwurf gelöscht) ist schon vorher. */
+      var hier=document.body.contains(form);
       clearTimeout(entwurfTakt); entwurfTakt=null;
-      entwurfWeg();
-      S.protoStandort=""; S.protoPos="";
-      S.letztesProtokoll=id;     /* nach dem Neuzeichnen direkt aufklappen */
+      if(hier){ btn.disabled=false; btn.textContent="Protokoll speichern"; S.letztesProtokoll=id; }   /* nach dem Neuzeichnen direkt aufklappen */
       /* Kam das Protokoll aus einer offenen Störung, ist die damit erledigt. */
-      if(S.stoerungAus){
-        var vor=OFFENE.filter(function(x){ return x._id===S.stoerungAus; })[0];
-        S.stoerungAus=null;
+      if(ausStoerung){
+        var vor=OFFENE.filter(function(x){ return x._id===ausStoerung; })[0];
         /* nur ein Störungsprotokoll für denselben Markt erledigt die Störung –
            sonst hakt ein ganz anderes Protokoll sie still mit ab */
         if(vor && (!stoer || !istStoerung(doc) || vor.standortId!==doc.standortId)) vor=null;   /* nur aus dem Störungsformular */
@@ -8047,16 +8188,17 @@ function viewProtokoll(){
             .then(function(wo){
               if(wo!==false) stoerungVerlauf(z, "Durch Störungsprotokoll vom "+dfmt(doc.datum)+" erledigt", "offen", "erledigt", rueckS);
               /* das eben gespeicherte Protokoll bleibt aufgeklappt */
-              if(S.view==="protokoll") S.letztesProtokoll=id;
-              berechneFaelligkeiten(); render(); });
+              if(hier && S.view==="protokoll") S.letztesProtokoll=id;
+              /* nicht über ein inzwischen angefangenes Formular hinweg neu zeichnen */
+              berechneFaelligkeiten(); storeNachRender(); });
         }
       }
       berechneFaelligkeiten();   /* die gewarteten Positionen rücken sofort weiter */
-      render();
+      if(hier) render(); else storeNachRender();
     };
     var fehlschlag=function(text){
       /* Formular bleibt stehen – nichts von dem Eingegebenen geht verloren */
-      btn.disabled=false; btn.textContent="Protokoll speichern";
+      btn.disabled=false; btn.textContent=bearb ? "Korrektur speichern" : "Protokoll speichern";
       var box=form.querySelector("#f_fehlt");
       box.textContent=text; box.hidden=false;
       box.scrollIntoView({behavior:"smooth",block:"center"});
@@ -8096,13 +8238,19 @@ function viewProtokoll(){
         aktualisiereProtokoll(kid, doc, bearb._quelle, geraetFotos, geraetAuftrag, geraetRapport).then(function(ok){
           if(!ok){ fehlschlag("Die Korrektur konnte nicht gespeichert werden"+(Store.fehler?" ("+Store.fehler+")":"")+". Ihre Eingaben sind noch da."); return; }
           anlagenUebernehmen(doc);
-          if(doc.rapport && !rapportVon(bearb)) posteingangErledigt("rapport", kid);
+          if(doc.rapport && !rapportVon(bearb)) posteingangErledigt("rapport", kid, doc.rapport);
           protokolliere({art:"korrigiert", protokollId:kid, standortId:doc.standortId,
                          standortName:doc.standortName, grund:grund, felder:felder});
+          /* gespeichert – die angefangene Korrektur hat ihren Zweck erfüllt
+             (erst den Schreibtakt stoppen, sonst käme sie als Entwurf zurück) */
+          clearTimeout(entwurfTakt); entwurfTakt=null; korrekturEntwurfWeg(kid);
           (aufGeraet ? lokaleNeuLaden() : Promise.resolve()).then(function(){
-            formDirty=false; S.bearbeiten=null; S.letztesProtokoll=kid;
+            /* inzwischen weggewechselt (etwa ein neues Protokoll begonnen): dessen
+               Formular und Auswahl nicht anfassen */
+            var hier=document.body.contains(form);
+            if(hier){ formDirty=false; S.bearbeiten=null; S.letztesProtokoll=kid; }
             toast("Korrektur gespeichert – "+felder.length+" Feld"+(felder.length===1?"":"er")+" geändert.");
-            berechneFaelligkeiten(); render();
+            berechneFaelligkeiten(); if(hier) render(); else storeNachRender();
           });
         });
       });
@@ -8118,9 +8266,17 @@ function viewProtokoll(){
          Zweck erfüllt, auch wenn die Übertragung noch hängt oder die App
          geschlossen wird (sonst würde es als Entwurf ein zweites Mal gespeichert) */
       clearTimeout(entwurfTakt); entwurfTakt=null; entwurfWeg();
+      /* gesichert: Reiterwechsel und Neuzeichnen verlieren nichts mehr – nicht
+         erst nach der Übertragung freigeben (die kann bis zu 2 Minuten dauern).
+         Das Formular selbst ist erledigt: keine Eingaben mehr (sie gingen
+         verloren oder kämen als Geister-Entwurf zurück), kein zweites Speichern. */
+      formDirty=false; S.protoStandort=""; S.protoPos="";
+      if(S.stoerungAus===ausStoerung) S.stoerungAus=null;
+      form.inert=true; form.style.pointerEvents="none"; if(gefuehrt) gefuehrt.disabled=true;
+      btn.textContent="Auf dem Gerät gesichert – wird übertragen …";
       anlagenUebernehmen(doc);   /* vor Ort ergänzte Anlagendaten */
       lokaleProtokolle.unshift(eintrag);
-      if(eintrag.rapport) posteingangErledigt("rapport", id);
+      if(eintrag.rapport) posteingangErledigt("rapport", id, eintrag.rapport);
       protokolliere({art:"angelegt", protokollId:id, standortId:doc.standortId, standortName:doc.standortName,
                      felder:[{feld:"positionIds", name:"Gewartete Anlagen", alt:"–", neu:feldText("positionIds",doc.positionIds)}]});
 
@@ -8619,6 +8775,13 @@ function protokollPdfErzeugen(p){
           if(z && z.firstElementChild!==e) return;
           stellen.push(Math.round((z||e).getBoundingClientRect().top-oben)-2);
         });
+        /* keine Stelle, die mitten durch etwas daneben geht: ein höheres Foto
+           in derselben Reihe, die Nachbarspalte, ein Block, der beisammen bleibt */
+        var kaesten=[];
+        blatt.querySelectorAll("tr, h1, h2, .kopf, .kaestchen > div, figure, .fuss, .zusammen").forEach(function(e){
+          var r=e.getBoundingClientRect(); kaesten.push([r.top-oben, r.bottom-oben]);
+        });
+        stellen=stellen.filter(function(y){ return !kaesten.some(function(k){ return k[0]<y-1 && k[1]>y+1; }); });
         stellen.sort(function(a,b){ return a-b; });
         var hoehe=blatt.scrollHeight;
         /* Obergrenze für die Zeichenfläche – Safari am iPhone verweigert mehr als ~16 Mio. Pixel */
@@ -8644,22 +8807,25 @@ function protokollPdfErzeugen(p){
         seiten.forEach(function(s,i){
           if(i) doc.addPage();
           var hPx=s[1]-s[0];
+          /* immer die volle Seite (weiß, Inhalt oben) – das Wasserzeichen steht
+             so auch auf einer kurzen letzten Seite ganz in der Seitenmitte */
+          var inhaltH=Math.max(1,Math.min(Math.round(hPx*r.skala), r.bild.height-Math.round(s[0]*r.skala)));
           var teil=document.createElement("canvas");
-          teil.width=r.bild.width; teil.height=Math.max(1,Math.round(hPx*r.skala));
+          teil.width=r.bild.width; teil.height=Math.max(inhaltH, Math.round(seitePx*r.skala));
           var g=teil.getContext("2d"); g.fillStyle="#fff"; g.fillRect(0,0,teil.width,teil.height);
-          g.drawImage(r.bild, 0, Math.round(s[0]*r.skala), r.bild.width, teil.height, 0, 0, teil.width, teil.height);
+          g.drawImage(r.bild, 0, Math.round(s[0]*r.skala), r.bild.width, inhaltH, 0, 0, teil.width, inhaltH);
           /* Wasserzeichen: Firmenlogo blass und schräg in der Seitenmitte.
              „multiply“ legt es wie Farbe aufs Papier – Schrift bleibt schwarz
              und lesbar, nur das Weiß bekommt den Hauch Logo. */
           if(WASSERZEICHEN){
             var wb=teil.width*0.62, wh=wb*WASSERZEICHEN.naturalHeight/WASSERZEICHEN.naturalWidth;
-            var mitteY=Math.min(teil.height, Math.round(nutzH*pxProMm*r.skala))/2;
+            var mitteY=teil.height/2;
             g.save(); g.globalAlpha=0.07; g.globalCompositeOperation="multiply";
             g.translate(teil.width/2, mitteY); g.rotate(-Math.PI/9);
             g.drawImage(WASSERZEICHEN, -wb/2, -wh/2, wb, wh);
             g.restore();
           }
-          doc.addImage(teil.toDataURL("image/jpeg",0.86),"JPEG",RAND,RAND,nutzB,hPx/pxProMm);
+          doc.addImage(teil.toDataURL("image/jpeg",0.86),"JPEG",RAND,RAND,nutzB,teil.height/r.skala/pxProMm);
           doc.setFontSize(8); doc.setTextColor(120);
           doc.text((istStoerung(p)?"Störungsprotokoll ":"Wartungsprotokoll ")+protoName(p)+" vom "+dfmt(p.datum)+"  -  Seite "+(i+1)+" von "+seiten.length,
                    105, 297-RAND+1, {align:"center"});
@@ -10705,7 +10871,7 @@ function pruefListe(){
     var d=r.daten;
     if(d && d.nummer) (rapNr[d.nummer]=rapNr[d.nummer]||[]).push(pr);
     var s=byId[pr.standortId];
-    var abw=rapportAbweichung(d, s&&s.filiale, pr.datum, (istStoerung(pr) || /^\d{6,}$/.test(String(pr.auftragsnummer||"").trim())) ? pr.auftragsnummer : "");
+    var abw=rapportAbweichung(d, s&&s.filiale, pr.datum, auftragZumVergleich(pr.auftragsnummer, istStoerung(pr)));
     if(abw) dazu("Fehler","Rapporte", "Protokoll vom "+dfmt(pr.datum)+": "+abw, s, {protokolle:[pr._id]});
   });
   Object.keys(rapNr).forEach(function(nr){
@@ -12228,7 +12394,8 @@ document.getElementById("neuladen").onclick=function(){
 render();
 initStore();
 idbOeffnen()
-  .then(altlastUebernehmen)
+  /* die alte Warteschlange: ein Fehler dort ist kein Gerätefehler */
+  .then(function(){ return altlastUebernehmen().catch(function(){}); })
   .then(lokaleNeuLaden)
   .then(entwurfHolen)
   .then(ladeStammdaten)
