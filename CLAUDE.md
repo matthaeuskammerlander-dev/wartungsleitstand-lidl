@@ -38,8 +38,9 @@ Kammerlander Umwelt- und Klimatechnik (UKT) – oft kurz, vom Handy, im Feld.
   sechs Monate versetzt einen Halbjahrestermin: **HJW** ab 30 kg Kältemittel,
   sonst **HJI**. Ein eingetragener Soll-Monat bleibt, wenn er höchstens
   3 Monate von der Regel abweicht (`standardRegel`).
-- Erster Termin nach der Inbetriebnahme: der Soll-Monat, der „IB + 12 Monate“
-  (Halbjahrestermin „IB + 6“) am nächsten liegt (`ersterTermin`).
+- Erste JW: im Soll-Monat rund um den ersten Jahrestag der Inbetriebnahme
+  (±6 Monate, `ersterTermin`); erster Halbjahrestermin: der erste Soll-Monat
+  nach der Inbetriebnahme. Nie fast zwei Jahre ohne JW.
 - Ein nachträglich zu einer bestehenden Anlage angelegter Termin zählt ab dem
   Tag des Anlegens (Feld `giltAb`, `mitGiltAb`) – nicht rückwirkend.
 - Altlast-Bereinigung ohne bekannte Füllmenge: HJI. Beim Zusammenführen mit
