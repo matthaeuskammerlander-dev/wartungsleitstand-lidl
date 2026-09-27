@@ -27,6 +27,18 @@ const CORS = {
 const antwort = (daten: unknown, status = 200) =>
   new Response(JSON.stringify(daten), { status, headers: { ...CORS, "Content-Type": "application/json" } });
 
+// Mitternacht des heutigen Tages in Österreich (Europe/Vienna) als Zeitpunkt
+// (ISO, UTC). Der Versatz zu UTC wird für 00:00 UTC desselben Tages bestimmt –
+// Sommer- und Winterzeit wechseln erst um 2 bzw. 3 Uhr, er gilt also schon um Mitternacht.
+function tagesbeginnWien(jetzt: Date): string {
+  const teil = (f: Intl.DateTimeFormat, d: Date, typ: string) => f.formatToParts(d).find((t) => t.type === typ)?.value ?? "";
+  const datum = new Intl.DateTimeFormat("en-GB", { timeZone: "Europe/Vienna", year: "numeric", month: "2-digit", day: "2-digit" });
+  const tag = `${teil(datum, jetzt, "year")}-${teil(datum, jetzt, "month")}-${teil(datum, jetzt, "day")}`;
+  const zone = new Intl.DateTimeFormat("en-GB", { timeZone: "Europe/Vienna", timeZoneName: "longOffset" });
+  const versatz = teil(zone, new Date(tag + "T00:00:00Z"), "timeZoneName").replace("GMT", "") || "Z";   // „GMT+02:00“ → „+02:00“
+  return new Date(tag + "T00:00:00" + versatz).toISOString();
+}
+
 // ------------------------------------------------------------ Schemas
 // Alles als Text, "" wenn nicht lesbar – die App wandelt Zahlen selbst um.
 // "unsicher" nennt die Felder, bei denen die Handschrift nicht eindeutig war;
@@ -173,10 +185,11 @@ Deno.serve(async (req) => {
     if (b.data.length > MAX_BYTES_JE_BILD) return antwort({ fehler: "Ein Bild ist zu groß." }, 400);
   }
 
-  // 3. Tageslimit je Person – schützt vor versehentlichen Serien
-  const heute = new Date().toISOString().slice(0, 10);
+  // 3. Tageslimit je Person – schützt vor versehentlichen Serien. Der Tag
+  //    beginnt um Mitternacht österreichischer Zeit, nicht UTC (sonst erst
+  //    um 1 bzw. 2 Uhr früh) – wie die KI-Kosten in der App
   const { count } = await supabase.from("ki_nutzung").select("id", { count: "exact", head: true })
-    .eq("user_id", user.id).gte("zeit", heute);
+    .eq("user_id", user.id).gte("zeit", tagesbeginnWien(new Date()));
   if ((count ?? 0) >= LIMIT_JE_TAG) return antwort({ fehler: "Tageslimit für die KI-Erkennung erreicht." }, 429);
 
   // 4. Claude fragen

@@ -1533,11 +1533,16 @@ function stoerungAlter(o){
 /* Eine offene Störung erfassen oder ändern. Der Auftrag von Lidl wird als
    PDF geöffnet oder abfotografiert; was sich auslesen lässt, wird übernommen,
    der Rest steht als Bild daneben zum Abtippen. */
-function stoerungDialog(vorhanden){
+/* weiter: gesicherter Claude-Vorgang nach dem Neuladen (kiVorgangFortsetzen) –
+   der Dialog kommt mit seinen Eingaben zurück und geht gleich in den Kopier-Weg */
+function stoerungDialog(vorhanden, weiter){
   if(nurLesen()){ posteingangOffen=null; toast("Mit diesem Konto lässt sich nur ansehen."); return; }
-  var o = vorhanden ? Object.assign({}, vorhanden)
+  var o = weiter ? Object.assign({}, weiter.ort.o)
+        : vorhanden ? Object.assign({}, vorhanden)
                     : {_id:"st_"+Date.now().toString(36)+Math.random().toString(36).slice(2,6), seiten:[]};
   if(!o.seiten) o.seiten=[];
+  /* der Auftrag kam aus dem Posteingang: nach dem Speichern dort erledigen */
+  if(weiter && weiter.ort.posteingang && !posteingangOffen) posteingangOffen=weiter.ort.posteingang;
   var ov=el('<div class="assistent" role="dialog" aria-modal="true"><div class="as-karte">'+
     '<div class="as-kopf"><div style="min-width:0"><div class="as-titel">'+
       (vorhanden?"Offene Störung":"Störung erfassen")+'</div>'+
@@ -1545,15 +1550,17 @@ function stoerungDialog(vorhanden){
       '<button class="btn ghost sm" type="button" data-a="zu">Schließen</button></div>'+
     '<div class="as-inhalt"></div><div class="as-fuss"></div></div></div>');
   document.body.appendChild(ov);
+  /* Scroll-Sperre der Ansicht darunter (etwa der Markt-Ansicht) beim Schließen zurückgeben */
+  var vorherOv=document.body.style.overflow;
   document.body.style.overflow="hidden";
   var inhalt=ov.querySelector(".as-inhalt"), fuss=ov.querySelector(".as-fuss");
   var zu=function(){
-    ov.remove(); document.body.style.overflow="";
+    ov.remove(); document.body.style.overflow=vorherOv;
     /* ein aus dem Posteingang geöffneter Auftrag gilt nur für diesen Dialog –
        abgebrochen bleibt er im Posteingang stehen */
     if(posteingangOffen && posteingangOffen.art==="auftrag") posteingangOffen=null;
   };
-  var anfang=JSON.stringify(o);
+  var anfang=weiter ? "" : JSON.stringify(o);   /* wiederhergestellt: gilt als eingegeben */
   ov.querySelector('[data-a="zu"]').onclick=function(){
     /* abgetippte oder eingelesene Angaben nicht still wegwerfen */
     if(JSON.stringify(o)!==anfang &&
@@ -1657,51 +1664,7 @@ function stoerungDialog(vorhanden){
     inhalt.querySelector("#st_pdf").onchange=function(){ pdfLesen(this); };
     inhalt.querySelector("#st_foto").onchange=function(){ fotoNehmen(this); };
     var kiKnopf=inhalt.querySelector("#st_ki");
-    if(kiKnopf) kiKnopf.onclick=function(){
-      /* eingescannter oder abfotografierter Auftrag: die KI liest ihn, die
-         Werte kommen zur Kontrolle, dann in die Felder */
-      kiKnopf.disabled=true; kiKnopf.textContent="KI liest …";
-      var knopfZurueck=function(){ kiKnopf.disabled=false; kiKnopf.textContent="Mit KI auslesen"; };
-      /* ohne KI-Zugang über die eigene Claude-App (Kopier-Weg) */
-      var lesen = kiWegWaehlen("auftrag").then(function(weg){
-        if(weg==="direkt") return kiLesen("auftrag", o.seiten, kiKontext(o.standortId?byId[o.standortId]:null, null));
-        if(weg==="kopie") return kiKopierweg("auftrag", kiKontext(o.standortId?byId[o.standortId]:null, null)).then(function(d){ return d?{daten:d}:null; });
-        if(weg==="beispiel") return {daten:kiBeispiel("auftrag")};
-        return null;
-      });
-      lesen.then(function(erg){
-        if(!erg){ knopfZurueck(); return; }
-        var d=erg.daten||{}, g={};
-        FELDER.forEach(function(f){ var w=String(d[f[0]]||"").trim(); if(!w) return;
-          g[f[0]] = f[2]==="date" ? kiDatum(w, true) : w; });
-        if(d.beschreibung) g.beschreibung=String(d.beschreibung).trim();
-        var felder=FELDER.map(function(f){ return {k:f[0], l:f[1], zeige:f[2]==="date"?dfmt:null}; })
-          .concat([{k:"beschreibung", l:"Beschreibung"}]);
-        /* gelesen, aber nicht im Dialog sichtbar – trotzdem anbieten und speichern */
-        [["prioritaet","Priorität"],["seriennummer","Seriennummer (Lidl)"],["lidlMail","E-Mail Lidl"]].forEach(function(f){
-          var w=String(d[f[0]]||"").trim(); if(w){ g[f[0]]=w; felder.push({k:f[0], l:f[1]}); } });
-        return kiPruefen("Lidl-Auftrag", g, o, felder, d.unsicher, d.hinweise).then(function(wahl){
-          if(wahl){
-            Object.keys(wahl).forEach(function(k){ o[k]=wahl[k]; });
-            /* wie beim Abtippen und beim Auftrags-PDF: ein automatisch erkannter
-               Markt zieht mit der Filial-Nr. mit (samt Anlage), ein von Hand
-               gewählter bleibt – dann ein Hinweis, beim Speichern die Rückfrage */
-            if(wahl.filialCode){
-              var st=standortZuAuftrag({kostenstelle:wahl.filialCode});
-              if(st && st.id!==o.standortId){
-                if(!o.standortId || o._marktAuto){
-                  o.standortId=st.id; o.positionId=null; o._marktAuto=true;
-                  melde("Markt laut Auftrag: <strong>"+esc(stName(st))+"</strong>. Bitte kurz gegenprüfen.");
-                } else melde("Die Filial-Nr. "+esc(wahl.filialCode)+" gehört zu <strong>"+esc(stName(st))+"</strong>, gewählt ist "+
-                  esc(stName(byId[o.standortId]||{}))+" – bitte den Markt prüfen.");
-              }
-            }
-            o.quelle="ki";
-          }
-          zeichne(); fussNeu();
-        });
-      }).catch(function(e){ toast(e&&e.message||"KI-Erkennung fehlgeschlagen"); knopfZurueck(); });
-    };
+    if(kiKnopf) kiKnopf.onclick=function(){ kiAuslesen(null); };
     inhalt.querySelector("#st_qr").onclick=function(){
       scanneQr().then(function(wert){
         if(!wert) return;
@@ -1711,6 +1674,59 @@ function stoerungDialog(vorhanden){
         melde("Auftragsnummer <strong>"+esc(nr)+"</strong> gescannt.");
       });
     };
+  }
+  /* eingescannter oder abfotografierter Auftrag: die KI liest ihn, die Werte
+     kommen zur Kontrolle, dann in die Felder. weiter: nach dem Neuladen gleich
+     zurück in den Kopier-Weg (Wechsel in die Claude-App). */
+  function kiAuslesen(weiter){
+    var kiKnopf=inhalt.querySelector("#st_ki");
+    if(kiKnopf){ kiKnopf.disabled=true; kiKnopf.textContent="KI liest …"; }
+    /* nach dem Neuzeichnen ist es ein neuer Knopf – den jeweils aktuellen nehmen */
+    var knopfZurueck=function(){ var k=inhalt.querySelector("#st_ki"); if(k){ k.disabled=false; k.textContent="Mit KI auslesen"; } };
+    var kontext=kiKontext(o.standortId?byId[o.standortId]:null, null);
+    /* Stand des Dialogs – für den Wechsel in die Claude-App gesichert */
+    var vorgang={weiter:weiter, ort:function(){
+      return {typ:"stoerung", vorhandenId:vorhanden?vorhanden._id:null, o:o,
+              posteingang:(posteingangOffen && posteingangOffen.art==="auftrag") ? posteingangOffen : null}; }};
+    /* ohne KI-Zugang über die eigene Claude-App (Kopier-Weg) */
+    var lesen = (weiter ? Promise.resolve("kopie") : kiWegWaehlen("auftrag")).then(function(weg){
+      if(weg==="direkt") return kiLesen("auftrag", o.seiten, kontext);
+      if(weg==="kopie") return kiKopierweg("auftrag", kontext, vorgang).then(function(d){ return d?{daten:d}:null; });
+      if(weg==="beispiel") return {daten:kiBeispiel("auftrag")};
+      return null;
+    });
+    lesen.then(function(erg){
+      if(!erg){ knopfZurueck(); return; }
+      var d=erg.daten||{}, g={};
+      FELDER.forEach(function(f){ var w=String(d[f[0]]||"").trim(); if(!w) return;
+        g[f[0]] = f[2]==="date" ? kiDatum(w, true) : w; });
+      if(d.beschreibung) g.beschreibung=String(d.beschreibung).trim();
+      var felder=FELDER.map(function(f){ return {k:f[0], l:f[1], zeige:f[2]==="date"?dfmt:null}; })
+        .concat([{k:"beschreibung", l:"Beschreibung"}]);
+      /* gelesen, aber nicht im Dialog sichtbar – trotzdem anbieten und speichern */
+      [["prioritaet","Priorität"],["seriennummer","Seriennummer (Lidl)"],["lidlMail","E-Mail Lidl"]].forEach(function(f){
+        var w=String(d[f[0]]||"").trim(); if(w){ g[f[0]]=w; felder.push({k:f[0], l:f[1]}); } });
+      return kiPruefen("Lidl-Auftrag", g, o, felder, d.unsicher, d.hinweise).then(function(wahl){
+        if(wahl){
+          Object.keys(wahl).forEach(function(k){ o[k]=wahl[k]; });
+          /* wie beim Abtippen und beim Auftrags-PDF: ein automatisch erkannter
+             Markt zieht mit der Filial-Nr. mit (samt Anlage), ein von Hand
+             gewählter bleibt – dann ein Hinweis, beim Speichern die Rückfrage */
+          if(wahl.filialCode){
+            var st=standortZuAuftrag({kostenstelle:wahl.filialCode});
+            if(st && st.id!==o.standortId){
+              if(!o.standortId || o._marktAuto){
+                o.standortId=st.id; o.positionId=null; o._marktAuto=true;
+                melde("Markt laut Auftrag: <strong>"+esc(stName(st))+"</strong>. Bitte kurz gegenprüfen.");
+              } else melde("Die Filial-Nr. "+esc(wahl.filialCode)+" gehört zu <strong>"+esc(stName(st))+"</strong>, gewählt ist "+
+                esc(stName(byId[o.standortId]||{}))+" – bitte den Markt prüfen.");
+            }
+          }
+          o.quelle="ki";
+        }
+        zeichne(); fussNeu();
+      });
+    }).catch(function(e){ toast(e&&e.message||"KI-Erkennung fehlgeschlagen"); knopfZurueck(); });
   }
   /* Die Meldungen ueberleben das Neuzeichnen des Dialogs. */
   var meldung="", warnung="";
@@ -1849,6 +1865,7 @@ function stoerungDialog(vorhanden){
     }
   }
   zeichne(); fussNeu();
+  if(weiter) kiAuslesen(weiter);
 }
 function stoerungsKarte(){
   /* Offene Störungen stehen IMMER alle da – auch wenn oben nach Region oder
@@ -3200,11 +3217,12 @@ function neueAnlageWerte(erg){
     var z=zeilen[i+1]; return z.nachweise.length ? Object.assign({}, x, {nachweise:sortiert(z.nachweise)}) : x; });
   return {felder:felder, weitere:weitere};
 }
-function anlageNeuAnlegen(s, vorlage){
+/* weiter: gesicherter Claude-Vorgang nach dem Neuladen (kiVorgangFortsetzen) */
+function anlageNeuAnlegen(s, vorlage, weiter){
   if(nurLesen()){ toast("Mit diesem Konto lässt sich nur ansehen."); return; }
   if(!s) return;
   var start={standortId:s.id, _termine:[{id:"NEU", intervallCode:"JW", monat:0}], inbetriebnahme:null, _kiVorlage:vorlage||null};
-  return anlageAssistent(start, "Neue Anlage – "+stName(s), true, true).then(function(erg){
+  return anlageAssistent(start, "Neue Anlage – "+stName(s), true, true, {ort:{aufruf:"neu", standortId:s.id}, weiter:weiter||null}).then(function(erg){
     if(!erg) return;
     var id="NP"+Date.now().toString(36)+Math.random().toString(36).slice(2,5);
     var w=neueAnlageWerte(erg);
@@ -3331,7 +3349,8 @@ function positionenSchreiben(proPos, grund, rueck){
    Änderungsverlauf. Anlagendaten darf jede angemeldete Person ergänzen. */
 /* ohneRegel: aus der Altlast-Karte – dort nur die Inbetriebnahme, keine
    Standardregel (die zweite JW-Zeile kennt der Dialog nicht) */
-function anlageDatenErgaenzen(leader, vorlage, springe, ohneRegel){
+/* weiter: gesicherter Claude-Vorgang nach dem Neuladen (kiVorgangFortsetzen) */
+function anlageDatenErgaenzen(leader, vorlage, springe, ohneRegel, weiter){
   if(nurLesen()){ toast("Mit diesem Konto lässt sich nur ansehen."); return; }
   if(!Store.benutzer && Store.modus==="anmeldung"){ toast("Dafür bitte zuerst anmelden."); return; }
   var vorher=auswahl(leader, STAMM_FELDER_POS);
@@ -3342,7 +3361,8 @@ function anlageDatenErgaenzen(leader, vorlage, springe, ohneRegel){
   ANLAGE_FELDER.forEach(function(f){ start[f.k]=(jetzt[f.k]===undefined?null:jetzt[f.k]); });
   /* true: alle Gruppen zeigen. Hier geht es ums Prüfen und Korrigieren,
      nicht nur ums Nachtragen fehlender Angaben. */
-  return anlageAssistent(start, anlagenName(jetzt), false, true).then(function(erg){
+  return anlageAssistent(start, anlagenName(jetzt), false, true,
+      {ort:{aufruf:"ergaenzen", leaderId:leader.id, ohneRegel:!!ohneRegel}, weiter:weiter||null}).then(function(erg){
     if(!erg) return;
     var geaendert=[], leaderNeu={};
     ANLAGE_FELDER.concat([{k:"anlagentyp", l:"Bezeichnung der Anlage"}]).forEach(function(f){
@@ -3782,7 +3802,10 @@ function anlageKurz(a){
 /* Geführte Erfassung einer Anlage. Fragt nur die Gruppen ab, in denen etwas
    fehlt, und endet mit einer Übersicht, in der sich alles ändern lässt.
    Liefert die vollständigen Werte oder null (abgebrochen). */
-function anlageAssistent(start, titel, neu, alles){
+/* vorgang (freiwillig): {ort:{aufruf, …}, weiter} – ort sagt, von wo der
+   Dialog kommt (für den Wechsel in die Claude-App gesichert); weiter ist der
+   gesicherte Claude-Vorgang nach dem Neuladen (kiVorgangFortsetzen) */
+function anlageAssistent(start, titel, neu, alles, vorgang){
   return new Promise(function(fertig){
     var a=Object.assign({}, start);
     /* eigene Kopie der Termine – der Vergleich mit dem Stand vorher braucht das Original */
@@ -3792,13 +3815,15 @@ function anlageAssistent(start, titel, neu, alles){
         '<button class="btn ghost sm" type="button" data-as="zu">Abbrechen</button></div>'+
       '<div class="as-inhalt"></div><div class="as-fuss"></div></div></div>');
     document.body.appendChild(ov);
+    /* Scroll-Sperre der Ansicht darunter (etwa der Markt-Ansicht) beim Schließen zurückgeben */
+    var vorherOv=document.body.style.overflow;
     document.body.style.overflow="hidden";
     var inhalt=ov.querySelector(".as-inhalt"), fuss=ov.querySelector(".as-fuss");
     var geschlossen=false;   /* eine späte KI-Antwort nach dem Schließen nicht mehr „übernehmen“ */
     var schliessen=function(wert){
       geschlossen=true;
       if(wert){ delete wert._springe; delete wert._ohneRegel; }   /* nur Steuerung des Dialogs, kein Anlagenwert */
-      ov.remove(); document.body.style.overflow=""; fertig(wert);
+      ov.remove(); document.body.style.overflow=vorherOv; fertig(wert);
       /* weitere Prüfbücher aus derselben Fotoserie: nach dem Speichern anbieten */
       if(wert && kiRest && kiRest.liste.length) setTimeout(weitereAusPruefbuch, 400);
       else if(!wert) kiRest=null;
@@ -3809,6 +3834,13 @@ function anlageAssistent(start, titel, neu, alles){
       if(JSON.stringify(a)!==anfangA && !window.confirm("Die eingetragenen Anlagendaten verwerfen?")) return;
       schliessen(null);
     };
+    /* zurück aus der Claude-App (Seite neu geladen): die Eingaben von vorher –
+       verglichen wird weiter mit dem Stand, den der Aufrufer übergeben hat */
+    var fortsetzen=vorgang && vorgang.weiter;   /* nicht „weiter“ – so heißt der Schritt vorwärts */
+    if(fortsetzen){
+      a=Object.assign({}, fortsetzen.ort.a);
+      if(fortsetzen.ort.kiRest) kiRest=fortsetzen.ort.kiRest;   /* weitere Prüfbücher derselben Fotoserie */
+    }
 
     /* Schritte: bei einer neuen Anlage zuerst die Bezeichnung, dann jede
        Gruppe, in der eine Pflichtangabe fehlt */
@@ -3857,18 +3889,30 @@ function anlageAssistent(start, titel, neu, alles){
       reihe.querySelectorAll("[data-kiart]").forEach(function(b){ b.onclick=function(){ w.zu(); kiArt(b.dataset.kiart, b.dataset.geraet); }; });
       w.inhalt.appendChild(reihe);
     }
-    function kiArt(art, geraet, vorgabe){
+    /* abgebrochen oder nichts übernommen: zurück, wo man war – im Schritt
+       (bei einer neuen Anlage etwa die Bezeichnung) oder in der Übersicht */
+    function zurueck(){ if(zurUebersicht) uebersicht(); else schrittZeigen(); }
+    /* Stand des Dialogs für den Wechsel in die Claude-App (nur mit bekanntem Aufrufer) */
+    var ortStand = vorgang && vorgang.ort ? function(){
+      return Object.assign({typ:"anlage"}, vorgang.ort, {a:a, pos:pos, zurUebersicht:zurUebersicht, kiRest:kiRest});
+    } : null;
+    function kiArt(art, geraet, vorgabe, weiterKi){
       /* schon gelesenes Prüfbuch (weiteres Buch aus derselben Fotoserie) */
       if(vorgabe){ verarbeiten({daten:vorgabe, _gewaehlt:true}); return; }
+      var kopie=function(w){
+        kiKopierweg(art, kiKontext(kiMarkt(), a), {ort:ortStand, geraet:geraet||null, weiter:w||null})
+          .then(function(d){ if(d) return verarbeiten({daten:d}); else zurueck(); })
+          .catch(function(e){ toast("Antwort nicht verwertbar: "+(e&&e.message||e)); zurueck(); });
+      };
+      /* nach dem Neuladen: gleich wieder im Kopier-Weg */
+      if(weiterKi){ kopie(weiterKi); return; }
       /* Weg wählen: direkt in der App oder über die eigene Claude-App
          (Kopier-Weg) – gleiche Prüfansicht */
       kiWegWaehlen(art).then(function(weg){
-        if(weg==="kopie")
-          kiKopierweg(art, kiKontext(kiMarkt(), a)).then(function(d){ if(d) return verarbeiten({daten:d}); else uebersicht(); })
-            .catch(function(e){ toast("Antwort nicht verwertbar: "+(e&&e.message||e)); uebersicht(); });
+        if(weg==="kopie") kopie();
         else if(weg==="direkt") direkt();
         else if(weg==="beispiel") verarbeiten({daten:kiBeispiel(art)});
-        else uebersicht();
+        else zurueck();
       });
       function direkt(){ kiFotosWaehlen().then(function(dateien){
         if(!dateien.length) return;
@@ -3876,12 +3920,10 @@ function anlageAssistent(start, titel, neu, alles){
         kopf("KI liest "+dateien.length+" Bild"+(dateien.length===1?"":"er")+" …", "bitte warten");
         /* mit Zeitgrenze: eine hängende Anfrage darf den Dialog nicht ewig sperren */
         return kiLesen(art, dateien, kiKontext(kiMarkt(), a)).then(verarbeiten, function(e){
-          if(e && e.message==="abgebrochen"){ uebersicht(); return; }
+          if(e && e.message==="abgebrochen"){ zurueck(); return; }
           /* direkt nicht erreichbar (nicht eingerichtet, Limit, Netz): Kopier-Weg anbieten */
-          if(window.confirm("Die KI-Erkennung hat nicht geklappt:\n"+(e&&e.message||e)+"\n\nStattdessen über die Claude-App lesen (Auftrag kopieren, Antwort einfügen)?")){
-            kiKopierweg(art, kiKontext(kiMarkt(), a)).then(function(d){ if(d) return verarbeiten({daten:d}); else uebersicht(); })
-              .catch(function(x){ toast("Antwort nicht verwertbar: "+(x&&x.message||x)); uebersicht(); });
-          } else uebersicht();
+          if(window.confirm("Die KI-Erkennung hat nicht geklappt:\n"+(e&&e.message||e)+"\n\nStattdessen über die Claude-App lesen (Auftrag kopieren, Antwort einfügen)?")) kopie();
+          else zurueck();
         });
       }); }
       function verarbeiten(erg){
@@ -3891,10 +3933,10 @@ function anlageAssistent(start, titel, neu, alles){
              eins gehört zu dieser Anlage, die anderen werden danach angeboten */
           if(art==="pruefbuch"){
             var buecher=kiPruefbuecher(d);
-            if(!buecher.length){ toast("Auf den Fotos wurde kein Prüfbuch erkannt."); uebersicht(); return; }
+            if(!buecher.length){ toast("Auf den Fotos wurde kein Prüfbuch erkannt."); zurueck(); return; }
             if(buecher.length>1 && !erg._gewaehlt){
               return kiBuchWaehlen(buecher, d.hinweise, a).then(function(i){
-                if(i===null){ uebersicht(); return; }
+                if(i===null){ zurueck(); return; }
                 kiRest={standortId:(kiMarkt()||{}).id||a.standortId, liste:buecher.filter(function(b,j){ return j!==i; })};
                 if(i<0){ toast(buecher.length+" Prüfbücher werden nach dem Übernehmen als weitere Anlagen angeboten."); uebersicht(); return; }
                 verarbeiten({daten:buecher[i], _gewaehlt:true});
@@ -3908,7 +3950,7 @@ function anlageAssistent(start, titel, neu, alles){
             var gl=Array.isArray(d.geraete)?d.geraete:[];
             var ag=gl.filter(function(x){ return x.art==="aussen"; })[0] || gl.filter(function(x){ return x.art!=="innen"; })[0] || null;
             /* nur Innengeräte auf den Fotos: nicht als Außengerät übernehmen */
-            if(!ag){ toast(gl.length ? "Auf den Fotos ist nur ein Innengerät-Typenschild – bitte „Typenschilder Innengeräte“ wählen." : "Kein Typenschild erkannt."); uebersicht(); return; }
+            if(!ag){ toast(gl.length ? "Auf den Fotos ist nur ein Innengerät-Typenschild – bitte „Typenschilder Innengeräte“ wählen." : "Kein Typenschild erkannt."); zurueck(); return; }
             /* unsicher „geraet N: feld“ gilt nur, wenn N das Außengerät ist */
             var agNr=gl.indexOf(ag)+1;
             var unsA=(d.unsicher||[]).map(function(u){ var m=/geraet\s*(\d+)\s*:\s*(\w+)/i.exec(u); return m ? (+m[1]===agNr ? m[2] : null) : u; }).filter(Boolean);
@@ -3955,9 +3997,10 @@ function anlageAssistent(start, titel, neu, alles){
               intervallHinweis="Laut Prüfbuch halbjährlich (6 Monate), eingetragen ist nur ein Termin – den zweiten bitte in der Verwaltung anlegen.";
             }
           }
-          var hinweis=[d.hinweise, intervallHinweis, nw.ohneTag.length?"Ohne Tag, kommt als Notiz: "+nw.ohneTag.join(", "):""].filter(Boolean).join(" ");
+          var hinweis=[d.hinweise, intervallHinweis, nw.ohneTag.length?"Ohne Tag, kommt als Notiz: "+nw.ohneTag.join(", "):"",
+            nw.ungueltig.length?"Nicht übernommen (Datum in der Zukunft oder ungültig): "+nw.ungueltig.join(", ")+".":""].filter(Boolean).join(" ");
           return kiPruefen(art==="pruefbuch"?"Prüfbuch":"Typenschild Außengerät", gelesen, a, felder, d.unsicher, hinweis).then(function(wahl){
-            if(!wahl){ uebersicht(); return; }
+            if(!wahl){ zurueck(); return; }
             Object.keys(wahl).forEach(function(k){
               if(k==="_nachweise") a._nachweiseNeu=(a._nachweiseNeu||[]).concat(wahl[k]);
               else if(k==="_intervall") a._termine.forEach(function(t){ t.intervallCode=wahl[k]; });
@@ -3975,13 +4018,17 @@ function anlageAssistent(start, titel, neu, alles){
     function kiInnen(d){
       /* Nummern wie in der Antwort der KI („geraet 3“), auch wenn Außengeräte wegfallen */
       var gl=(Array.isArray(d.geraete)?d.geraete:[]).map(function(x){ return x.art==="aussen" ? null : x; });
+      /* schon erfasst (zählt als „schon erfasst“) und schon in dieser Antwort
+         gesehen (dasselbe Schild zweimal: still nur einmal) – zwei Listen */
       var da=(Array.isArray(a.innengeraete)?a.innengeraete:[]).map(function(g){ return String(g.seriennummer||"").trim().toUpperCase(); }).filter(Boolean);
+      var gesehen=[];
       var gelesen={}, felder=[], doppelt=0;
       gl.forEach(function(x, i){
         if(!x) return;
         var sn=String(x.seriennummer||"").trim();
+        if(sn && gesehen.indexOf(sn.toUpperCase())>=0) return;
+        if(sn) gesehen.push(sn.toUpperCase());
         if(sn && da.indexOf(sn.toUpperCase())>=0){ doppelt++; return; }
-        if(sn) da.push(sn.toUpperCase());   /* dasselbe Schild zweimal in der Antwort: einmal */
         var g={hersteller:String(x.hersteller||"").trim(), modell:String(x.modell||"").trim(), seriennummer:sn,
                leistungKw:kiZahl(x.leistungKw)};
         if(!innenBelegt(g)) return;
@@ -3989,6 +4036,11 @@ function anlageAssistent(start, titel, neu, alles){
         felder.push({k:"_innen"+i, l:"Innengerät "+(felder.length+1), q:"geraet "+(i+1),
           zeige:function(w){ return innenText([w]).replace(/^Innengerät 1: /,""); }});
       });
+      /* alles schon da: kein leerer Prüfschirm mit „nichts Verwertbares gefunden“ */
+      if(!felder.length && doppelt){
+        toast(doppelt===1 ? "Das Gerät ist schon erfasst (gleiche Seriennummer)." : "Alle "+doppelt+" Geräte sind schon erfasst (gleiche Seriennummer).");
+        zurueck(); return;
+      }
       var hinweis=[d.hinweise, doppelt?doppelt+" Gerät"+(doppelt===1?" ist":"e sind")+" schon erfasst (gleiche Seriennummer).":""].filter(Boolean).join(" ");
       /* unsichere Angaben je Gerät („geraet 2: seriennummer“) markieren das ganze Gerät */
       var alleNr=gl.map(function(x,i){ return x ? "geraet "+(i+1) : null; }).filter(Boolean);
@@ -4003,8 +4055,8 @@ function anlageAssistent(start, titel, neu, alles){
           a.innengeraete=(Array.isArray(a.innengeraete)?a.innengeraete:[]).map(function(g){ return Object.assign({},g); })
             .concat(Object.keys(wahl).sort(function(x,y){ return +x.slice(6)-+y.slice(6); }).map(function(k){ return wahl[k]; }));
           toast(Object.keys(wahl).length+" Innengerät"+(Object.keys(wahl).length===1?"":"e")+" übernommen – Raum bitte ergänzen, dann „Übernehmen“.");
-        }
-        uebersicht();
+          uebersicht();
+        } else zurueck();   /* nichts übernommen */
       });
     }
     /* Termine prüfen: Inbetriebnahme der Anlage, je Termin Kürzel und
@@ -4290,6 +4342,13 @@ function anlageAssistent(start, titel, neu, alles){
       if(!nurLesen()) knopf("Aus Fotos lesen (KI)","ghost",kiEinlesen);
       if(neu) knopf("Bezeichnung ändern","ghost",function(){ fuss.innerHTML=""; kopf("Ändern","Bezeichnung"); nameZeigen(); knopf("Zurück zur Übersicht","",uebersicht); });
       knopf("Übernehmen","",function(){
+        /* eine neue Anlage braucht ihre Bezeichnung – auch wenn ein KI-Abbruch
+           oder ein KI-Ergebnis ohne Bezeichnung direkt hierher geführt hat */
+        if(neu && !String(a.anlagentyp||"").trim()){
+          toast("Bitte eine Bezeichnung eingeben.");
+          fuss.innerHTML=""; kopf("Ändern","Bezeichnung"); nameZeigen(); knopf("Zurück zur Übersicht","",uebersicht);
+          return;
+        }
         /* wie in der Verwaltung: ohne Kürzel gibt es keinen Termin – ein neuer
            oder bisher gesetzter Termin wird nicht ohne Kürzel gespeichert */
         var ohne=(a._termine||[]).filter(function(t,i){
@@ -4305,7 +4364,15 @@ function anlageAssistent(start, titel, neu, alles){
     }
     /* aus Nachbessern: gleich zur Frage mit der fehlenden Angabe */
     var sprung=start._springe && ANLAGE_GRUPPEN.filter(function(g){ return g.felder.some(function(f){ return f.k===start._springe; }); })[0];
-    if(sprung){
+    if(fortsetzen){
+      /* zurück aus der Claude-App: dieselbe Stelle, dann gleich der Kopier-Weg
+         mit Auftrag und schon eingefügter Antwort */
+      zurUebersicht=!!fortsetzen.ort.zurUebersicht;
+      if(zurUebersicht || !schritte.length) uebersicht();
+      else { pos=Math.max(0, Math.min(+fortsetzen.ort.pos||0, schritte.length-1)); schrittZeigen(); }
+      setTimeout(function(){ kiArt(fortsetzen.art, fortsetzen.geraet, null, fortsetzen); }, 50);
+    }
+    else if(sprung){
       uebersicht(); fuss.innerHTML=""; kopf("Ergänzen", sprung.titel); gruppeZeigen(sprung);
       knopf("Zur Übersicht","",uebersicht);
       setTimeout(function(){
@@ -5086,7 +5153,7 @@ function initSupabase(){
     var sess=r&&r.data?r.data.session:null;
     if(sess){ Store.benutzer=sess.user; Store.modus="supabase"; ladeProtokolle();   /* übertragen erst nach der Rollenprüfung */
       adminPruefen().then(function(){ flushQueue(); return ladeStammdaten(); }).then(storeNachRender)
-        .then(function(){ setTimeout(altlastenAutomatisch, 1500); }); }   /* Altlasten der alten Liste bereinigen (nur Admins) */
+        .then(function(){ setTimeout(altlastenAutomatisch, 1500); setTimeout(kiVorgangFortsetzen, 300); }); }   /* Altlasten der alten Liste bereinigen (nur Admins); ein Claude-Vorgang von vor dem Neuladen geht weiter */
     else { Store.modus="anmeldung"; }
     storeNachRender();
   });
@@ -5129,7 +5196,7 @@ function initSupabase(){
     }
     if(sess){ Store.benutzer=sess.user; Store.modus="supabase"; ladeProtokolle();   /* übertragen erst nach der Rollenprüfung */
       adminPruefen().then(function(){ flushQueue(); return ladeStammdaten(); }).then(storeNachRender)
-        .then(function(){ setTimeout(altlastenAutomatisch, 1500); }); }   /* Altlasten der alten Liste bereinigen (nur Admins) */
+        .then(function(){ setTimeout(altlastenAutomatisch, 1500); setTimeout(kiVorgangFortsetzen, 300); }); }   /* Altlasten der alten Liste bereinigen (nur Admins); ein Claude-Vorgang von vor dem Neuladen geht weiter */
     else {
       Store.benutzer=null; Store.modus="anmeldung"; protokolle=[]; Admin.zentral=false; Admin.frei=false;
       /* abgemeldet: nichts von dem, was nur Angemeldete sehen dürfen, bleibt
@@ -5913,7 +5980,10 @@ function dialogeSchliessen(){
   };
   if(document.body) start(); else document.addEventListener("DOMContentLoaded", start);
 }());
-function ansichtOeffnen(titel){
+/* beimSchliessen: läuft zusätzlich, wenn oben „Schließen“ getippt wird – etwa
+   um ein wartendes Ergebnis als abgebrochen (null) zu beenden; sonst hinge der
+   Aufrufer (KI-Knopf „KI liest …“) für immer */
+function ansichtOeffnen(titel, beimSchliessen){
   var ov=el('<div class="assistent" role="dialog" aria-modal="true"><div class="as-karte">'+
     '<div class="as-kopf"><div style="min-width:0"><div class="as-titel"></div><div class="as-schritt"></div></div>'+
       '<button class="btn ghost sm" type="button" data-a="zu">Schließen</button></div>'+
@@ -5926,7 +5996,7 @@ function ansichtOeffnen(titel){
   document.body.style.overflow="hidden";
   var blobs=[];
   var zu=function(){ ov.remove(); document.body.style.overflow=vorher; blobs.forEach(function(b){ URL.revokeObjectURL(b); }); };
-  ov.querySelector('[data-a="zu"]').onclick=zu;
+  ov.querySelector('[data-a="zu"]').onclick=function(){ zu(); if(beimSchliessen) beimSchliessen(); };
   return {inhalt:ov.querySelector(".as-inhalt"), fuss:ov.querySelector(".as-fuss"),
           schritt:ov.querySelector(".as-schritt"), zu:zu, blob:function(u){ var b=datenUrlZuBlobUrl(u); if(b!==u) blobs.push(b); return b; }};
 }
@@ -6062,7 +6132,7 @@ function kiPruefbuecher(d){
 var kiRest=null;
 function kiBuchWaehlen(buecher, hinweise, a){
   return new Promise(function(fertig){
-    var v=ansichtOeffnen("Mehrere Prüfbücher erkannt");
+    var v=ansichtOeffnen("Mehrere Prüfbücher erkannt", function(){ fertig(null); });   /* „Schließen“ = Abbrechen */
     v.schritt.textContent=buecher.length+" Anlagen auf den Fotos";
     v.inhalt.appendChild(el('<div class="note">Auf den Fotos sind die Prüfbücher von <strong>'+buecher.length+
       ' Anlagen</strong>. Welches gehört zu '+(a&&a.anlagentyp?"„"+esc(a.anlagentyp)+"“":"dieser Anlage")+
@@ -6104,17 +6174,21 @@ function weitereAusPruefbuch(){
       return (sn && String(d.seriennummer||"").replace(/\s+/g,"").toUpperCase()===sn) ||
              (nm && String(anlagenName(x.leader)||"").toLowerCase().replace(/[^a-z0-9äöüß]/g,"")===nm);
     })[0];
-    /* sonst: eine Zeile der alten Liste ohne Seriennummer, deren Name ein
-       Wort mit dem Buch teilt (VRV, Split …) – eher sie ergänzen als doppelt anlegen */
+    /* sonst: eine Zeile der alten Liste ohne Seriennummer, deren Name Wörter
+       mit dem Buch teilt (VRV, Split, Lager …) – die mit den meisten gemeinsamen
+       Wörtern, nicht die erste mit irgendeinem; eher sie ergänzen als doppelt anlegen */
     if(!treffer){
       var woerter=function(t){ return String(t||"").toLowerCase().split(/[^a-z0-9äöüß]+/).filter(function(w){ return w.length>=3 && !/^(anlage|neu|und)$/.test(w); }); };
       var wb=woerter((b.anlage||{}).bezeichnung).concat(woerter((b.anlage||{}).bauart));
-      treffer=vorhandene.filter(function(x){
-        if(anlageIstNeu(x) || anlageDaten(x.leader).seriennummer) return false;
-        if(vergebenIds.indexOf(x.leader.id)>=0) return false;   /* schon einem anderen Buch vorgeschlagen */
+      wb=wb.filter(function(w,i){ return wb.indexOf(w)===i; });   /* „Split“ in Bezeichnung und Bauart zählt einmal */
+      var bestN=0;
+      vorhandene.forEach(function(x){
+        if(anlageIstNeu(x) || anlageDaten(x.leader).seriennummer) return;
+        if(vergebenIds.indexOf(x.leader.id)>=0) return;   /* schon einem anderen Buch vorgeschlagen */
         var wx=woerter(anlagenName(x.leader));
-        return wb.some(function(w){ return wx.indexOf(w)>=0; });
-      })[0];
+        var n=wb.filter(function(w){ return wx.indexOf(w)>=0; }).length;
+        if(n>bestN){ treffer=x; bestN=n; }
+      });
     }
     if(treffer) vergebenIds.push(treffer.leader.id);
     var z=el('<div class="posbox" style="margin-top:8px"><strong>'+esc(kiBuchText(b))+'</strong>'+
@@ -6171,6 +6245,11 @@ function kiAntwortLesen(text, art){
     throw new Error("Das ist eine Prüfbuch-Antwort – bitte „Prüfbuch“ wählen.");
   if(art==="pruefbuch" && Array.isArray(d.geraete) && !d.pruefbuecher && !d.anlage)
     throw new Error("Das ist eine Typenschild-Antwort – bitte „Typenschild“ wählen.");
+  /* Antwort zu einem Lidl-Auftrag (Hersteller, Seriennummer) sähe sonst wie ein Typenschild aus */
+  if(art!=="auftrag" && (d.auftragsnummer || d.filialCode || d.stoerungsnr))
+    throw new Error("Das ist eine Antwort zu einem Lidl-Auftrag – bitte die Antwort zu den "+(art==="pruefbuch"?"Prüfbuch":"Typenschild")+"-Fotos einfügen.");
+  if(art==="auftrag" && (Array.isArray(d.pruefbuecher) || Array.isArray(d.geraete) || Array.isArray(d.pruefungen)) && !d.auftragsnummer && !d.stoerungsnr)
+    throw new Error("Das ist eine Antwort zu Prüfbuch bzw. Typenschild – bitte die Antwort zum Lidl-Auftrag einfügen.");
   if(Array.isArray(d.geraete)) d.geraete=d.geraete.filter(function(x){ return x && typeof x==="object"; });
   if(art==="typenschild" && !Array.isArray(d.geraete)){
     /* ein einzelnes Schild ohne Liste geht auch */
@@ -6254,10 +6333,101 @@ function kiWegWaehlen(art){
     box.closest(".assistent").querySelector('[data-a="zu"]').onclick=function(){ ende(null); };
   });
 }
-function kiKopierweg(art, kontext){
+/* ---------- Wechsel in die Claude-App und zurück ----------
+   Beim Kopier-Weg wechselt man in die Claude-App. Das Handy kann die Seite
+   dabei verwerfen und beim Zurückkehren neu laden – Störungsdialog bzw.
+   Anlagen-Dialog samt Eingaben, Auftrag und eingefügter Antwort wären weg.
+   Solange die Kopier-Ansicht offen ist, liegt der Vorgang deshalb je Konto
+   im localStorage (höchstens 2 Stunden) und wird nach dem Neuladen genau dort
+   wieder geöffnet. Nicht in der Präsentation – die speichert nie etwas. */
+var KI_VORGANG_MS=2*3600000;
+var kiVorgangSichern=null;       /* solange die Kopier-Ansicht offen ist: Stand sofort schreiben */
+var kiVorgangFortgesetzt=false;  /* je Seitenaufruf nur einmal fortsetzen */
+var kiVorgangProtokoll=null;     /* im Protokollformular fortzusetzen (dessen Anlagen-Dialog) */
+function kiVorgangSchluessel(){ var m=Store.benutzer&&Store.benutzer.email; return m ? "ukt-kivorgang:"+m : null; }
+function kiVorgangMerken(schluessel, d){
+  if(!schluessel || demo()) return;
+  d=Object.assign({}, d, {zeit:Date.now()});
+  try{ localStorage.setItem(schluessel, JSON.stringify(d)); return; }catch(e){}
+  /* zu groß für den localStorage (Auftrags-PDF, Seitenbilder der Störung):
+     die großen Teile in den Gerätespeicher, der Rest wie gehabt */
+  var o=d.ort && d.ort.o;
+  if(!o) return;
+  idbVorgang("readwrite", function(st){ return st.put({id:schluessel, oid:o._id, seiten:o.seiten||[], pdfDaten:o.pdfDaten||null}); }, "entwurf").catch(function(){});
+  var ok=Object.assign({}, o, {seiten:[]}); delete ok.pdfDaten;
+  try{ localStorage.setItem(schluessel, JSON.stringify(Object.assign({}, d, {ort:Object.assign({}, d.ort, {o:ok, gross:true})}))); }catch(e){}
+}
+function kiVorgangWeg(schluessel){
+  if(!schluessel || demo()) return;
+  try{ localStorage.removeItem(schluessel); }catch(e){}
+  idbVorgang("readwrite", function(st){ return st.delete(schluessel); }, "entwurf").catch(function(){});
+}
+/* App geht in den Hintergrund (Wechsel in die Claude-App) oder wird verworfen */
+document.addEventListener("visibilitychange", function(){ if(document.hidden && kiVorgangSichern) kiVorgangSichern(); });
+window.addEventListener("pagehide", function(){ if(kiVorgangSichern) kiVorgangSichern(); });
+/* Nach dem Neuladen (angemeldet, Stammdaten geladen): einen gesicherten
+   Vorgang genau dort wieder öffnen – mit Auftrag und schon eingefügter Antwort */
+function kiVorgangFortsetzen(){
+  var schluessel=kiVorgangSchluessel();
+  if(kiVorgangFortgesetzt || !schluessel || demo() || nurLesen()) return;
+  var d=lsGet(schluessel, null);
+  if(!d || !d.ort){ kiVorgangFortgesetzt=true; return; }
+  if(!(Date.now()-(+d.zeit||0) < KI_VORGANG_MS)){ kiVorgangFortgesetzt=true; kiVorgangWeg(schluessel); return; }
+  /* gerade wird schon etwas bearbeitet: nicht dazwischenfunken – beim
+     nächsten Laden (innerhalb der zwei Stunden) kommt der Vorgang wieder */
+  if(document.querySelector(".assistent") || formDirty || verwaltungOffen()) return;
+  kiVorgangFortgesetzt=true;
+  var ort=d.ort, weg=function(text){ kiVorgangWeg(schluessel); toast(text); };
+  /* der Gerätespeicher (große Teile der Störung, Protokollentwurf) öffnet sich beim Start etwas später */
+  var warten=function(n){ return (IDB || n>=20) ? Promise.resolve() : new Promise(function(ok){ setTimeout(ok, 250); }).then(function(){ return warten(n+1); }); };
+  warten(0).then(function(){
+    if(!ort.gross || !ort.o) return;
+    return idbVorgang("readonly", function(st){ return st.get(schluessel); }, "entwurf").then(function(g){
+      if(g && g.oid===ort.o._id){ ort.o.seiten=g.seiten||[]; if(g.pdfDaten) ort.o.pdfDaten=g.pdfDaten; }
+    }, function(){});
+  }).then(function(){
+    if(ort.typ==="stoerung"){
+      var vorh=ort.vorhandenId ? OFFENE.filter(function(x){ return x._id===ort.vorhandenId; })[0] : null;
+      if(ort.vorhandenId && !vorh) return weg("Die Störung aus dem Claude-Vorgang ist nicht mehr offen – nichts fortgesetzt.");
+      stoerungDialog(vorh||null, d);
+    } else if(ort.typ==="anlage" && ort.aufruf==="neu"){
+      if(!byId[ort.standortId]) return weg("Den Markt der neuen Anlage gibt es nicht mehr – nichts fortgesetzt.");
+      anlageNeuAnlegen(byId[ort.standortId], null, d);
+    } else if(ort.typ==="anlage" && ort.aufruf==="ergaenzen"){
+      if(!posById[ort.leaderId]) return weg("Die Anlage aus dem Claude-Vorgang gibt es so nicht mehr – nichts fortgesetzt.");
+      anlageDatenErgaenzen(posById[ort.leaderId], null, null, ort.ohneRegel, d);
+    } else if(ort.typ==="anlage" && ort.aufruf==="protokoll"){
+      /* im angefangenen Protokoll: Formular öffnen, den Entwurf einsetzen und
+         dort den Anlagen-Dialog wieder öffnen (macht viewProtokoll) */
+      return entwurfHolen().then(function(){
+        if(!entwurfStand || !entwurfStand.werte) return weg("Das angefangene Protokoll ist nicht mehr da – nichts fortgesetzt.");
+        kiVorgangProtokoll=d;
+        S.view="protokoll"; S.protoArt=entwurfStand.art==="stoerung"?"stoerung":"wartung"; S.bearbeiten=null; S.stoerungAus=null;
+        render(); window.scrollTo({top:0});
+      });
+    } else kiVorgangWeg(schluessel);
+  }).catch(function(e){ kiVorgangWeg(schluessel); if(window.console) console.warn("Claude-Vorgang nicht fortgesetzt:", e); });
+}
+/* vorgang (freiwillig): {ort:function(){ return Stand des Dialogs; }, geraet, weiter}
+   ort – der Dialog sichert sich für den Wechsel in die Claude-App;
+   weiter – der gesicherte Vorgang nach dem Neuladen (Auftrag und Antwort) */
+function kiKopierweg(art, kontext, vorgang){
+  vorgang=vorgang||{};
+  var weiter=vorgang.weiter||null;
   return new Promise(function(fertig){
-    var auftrag=kiAuftragText(art, kontext);
-    var v=ansichtOeffnen(art==="pruefbuch"?"Prüfbuch mit Claude lesen":art==="auftrag"?"Lidl-Auftrag mit Claude lesen":"Typenschilder mit Claude lesen");
+    var auftrag=(weiter && weiter.auftrag) || kiAuftragText(art, kontext);
+    var schluessel=vorgang.ort ? kiVorgangSchluessel() : null;
+    var erledigt=false, takt=null, sichern=null;
+    /* Ende auf jedem Weg (Abbrechen, oben „Schließen“, eingelesen): der
+       gesicherte Vorgang ist erledigt */
+    var ende=function(d){
+      if(erledigt) return; erledigt=true;
+      clearTimeout(takt); if(kiVorgangSichern===sichern) kiVorgangSichern=null;
+      if(schluessel) kiVorgangWeg(schluessel);
+      fertig(d);
+    };
+    var v=ansichtOeffnen(art==="pruefbuch"?"Prüfbuch mit Claude lesen":art==="auftrag"?"Lidl-Auftrag mit Claude lesen":"Typenschilder mit Claude lesen",
+      function(){ ende(null); });
     v.schritt.textContent="Über die Claude-App – im Abo enthalten";
     var box=el('<div class="stack">'+
       '<div class="note"><strong>So geht’s:</strong><ol style="margin:6px 0 0 18px;padding:0">'+
@@ -6271,17 +6441,38 @@ function kiKopierweg(art, kontext){
       '<label class="fl"><span>Antwort von Claude</span><textarea rows="8" data-a="antwort" placeholder="Hier einfügen …" spellcheck="false"></textarea></label>'+
       '<div class="note warnbox" data-a="fehler" hidden></div></div>');
     box.querySelector('[data-a="text"]').value=auftrag;
-    box.querySelector('[data-a="kopie"]').onclick=function(){ inZwischenablage(auftrag, "Auftrag"); };
-    box.querySelector('[data-a="zeigen"]').onclick=function(){ var t=box.querySelector('[data-a="text"]'); t.hidden=!t.hidden; };
+    var antwort=box.querySelector('[data-a="antwort"]');
+    if(weiter){
+      /* zurück aus der Claude-App, die Seite war neu geladen */
+      antwort.value=weiter.antwort||"";
+      box.insertBefore(el('<div class="note warnbox"><strong>Weiter: Antwort aus der Claude-App einfügen</strong><br>'+
+        "Die App wurde beim Wechsel neu geladen. Dialog und Eingaben sind wieder da – jetzt die Antwort von Claude "+
+        "unten einfügen und „Antwort einlesen“ tippen.</div>"), box.firstChild);
+    }
     v.inhalt.appendChild(box);
+    /* Stand sichern – gleich beim Öffnen, beim Kopieren des Auftrags (danach
+       kommt der Wechsel in die Claude-App) und beim Einfügen der Antwort */
+    if(schluessel){
+      sichern=function(){
+        if(erledigt) return;
+        /* von außen weggeräumt (etwa alle Dialoge geschlossen): der Vorgang ist vorbei */
+        if(!document.body.contains(box)){ ende(null); return; }
+        kiVorgangMerken(schluessel, {art:art, geraet:vorgang.geraet||null, kontext:kontext||"",
+          auftrag:auftrag, antwort:antwort.value, ort:vorgang.ort()});
+      };
+      kiVorgangSichern=sichern; sichern();
+      antwort.addEventListener("input", function(){ clearTimeout(takt); takt=setTimeout(sichern, 600); });
+    }
+    box.querySelector('[data-a="kopie"]').onclick=function(){ if(sichern) sichern(); inZwischenablage(auftrag, "Auftrag"); };
+    box.querySelector('[data-a="zeigen"]').onclick=function(){ var t=box.querySelector('[data-a="text"]'); t.hidden=!t.hidden; };
     var fehler=box.querySelector('[data-a="fehler"]');
     var zu=el('<button class="btn ghost" type="button">Abbrechen</button>');
     var lesen=el('<button class="btn" type="button">Antwort einlesen</button>');
-    zu.onclick=function(){ v.zu(); fertig(null); };
+    zu.onclick=function(){ v.zu(); ende(null); };
     lesen.onclick=function(){
       try{
-        var d=kiAntwortLesen(box.querySelector('[data-a="antwort"]').value, art);
-        v.zu(); fertig(d);
+        var d=kiAntwortLesen(antwort.value, art);
+        v.zu(); ende(d);
       }catch(e){ fehler.textContent=e.message; fehler.hidden=false; }
     };
     v.fuss.appendChild(zu); v.fuss.appendChild(lesen);
@@ -6326,16 +6517,21 @@ function kiLesen(art, quellen, kontext){
 }
 /* Fotos wählen (Kamera oder Galerie), dann lesen lassen */
 function kiFotosWaehlen(){
+  /* Felder früherer Aufrufe, deren Auswahl ohne „cancel“-Ereignis abgebrochen
+     wurde (ältere Browser): wegräumen, ihr Warten endet mit „nichts gewählt“ */
+  document.querySelectorAll("input[data-kifotos]").forEach(function(x){ if(x._fertig) x._fertig([]); else x.remove(); });
   return new Promise(function(ok){
     var ein=document.createElement("input");
     ein.type="file"; ein.accept="image/*"; ein.multiple=true;
+    ein.setAttribute("data-kifotos","1");
     /* iPhone: nur ein Feld, das im Dokument hängt, meldet die Auswahl
        zuverlässig zurück – sonst passiert nach dem Aussuchen nichts */
     ein.style.cssText="position:fixed;left:-9999px;top:0;opacity:0";
     document.body.appendChild(ein);
-    var weg=function(){ if(ein.parentNode) ein.parentNode.removeChild(ein); };
-    ein.onchange=function(){ var d=Array.prototype.slice.call(ein.files||[]); weg(); ok(d); };
-    ein.addEventListener("cancel", function(){ weg(); ok([]); });
+    var erledigt=false;
+    var fertig=ein._fertig=function(d){ if(erledigt) return; erledigt=true; if(ein.parentNode) ein.parentNode.removeChild(ein); ok(d); };
+    ein.onchange=function(){ fertig(Array.prototype.slice.call(ein.files||[])); };
+    ein.addEventListener("cancel", function(){ fertig([]); });
     ein.click();
   });
 }
@@ -6377,7 +6573,7 @@ function kiAnlage(k){
 /* Prüfungen aus dem Prüfbuch -> Wartungen laut Prüfbuch (nur mit vollem
    Datum; nur Monat/Jahr kommt als Notiz) */
 function kiNachweise(liste){
-  var voll=[], ohneTag=[];
+  var voll=[], ohneTag=[], ungueltig=[];
   (Array.isArray(liste)?liste:[]).forEach(function(p){
     if(!p || typeof p!=="object") return;
     var d=kiDatum(p.datum);
@@ -6389,16 +6585,19 @@ function kiNachweise(liste){
       wer = bekannteNamen().indexOf(k)>=0 ? k : (bekannteNamen().indexOf(kurz)>=0 ? kurz : wer); }
     else if(!ukt) wer=String(p.firma||"").trim();
     if(d) voll.push({datum:d, techniker:wer||undefined});
-    else if(/\d{1,2}\.\d{4}/.test(p.datum||"")) ohneTag.push(p.datum+(p.firma?" ("+p.firma+")":""));
+    /* ein volles Datum, das kiDatum abgelehnt hat (in der Zukunft, kein
+       Kalendertag wie 31.02.), ist kein „ohne Tag“ – eigens nennen */
+    else if(/\d{1,2}\.\s*\d{1,2}\.\s*\d{2,4}/.test(p.datum||"")) ungueltig.push(p.datum+(p.firma?" ("+p.firma+")":""));
+    else if(/\d{1,2}\.\s*\d{4}/.test(p.datum||"")) ohneTag.push(p.datum+(p.firma?" ("+p.firma+")":""));
   });
-  return {voll:voll, ohneTag:ohneTag};
+  return {voll:voll, ohneTag:ohneTag, ungueltig:ungueltig};
 }
 /* Kontrollansicht: was die KI gelesen hat, gegen den jetzigen Stand. Je
    Feld ein Haken – vorbelegt, wo bisher nichts steht; unsichere Felder
    sind markiert und nie vorbelegt. Liefert die gewählten Werte. */
 function kiPruefen(titel, gelesen, jetzt, felder, unsicher, hinweis){
   return new Promise(function(fertig){
-    var v=ansichtOeffnen(titel);
+    var v=ansichtOeffnen(titel, function(){ fertig(null); });   /* „Schließen“ = nichts übernehmen */
     v.schritt.textContent="Von der KI gelesen – bitte prüfen";
     var zeilen=felder.filter(function(f){ return gelesen[f.k]!=null && gelesen[f.k]!==""; });
     if(!zeilen.length){ v.inhalt.appendChild(el('<div class="note warnbox">Die KI hat auf den Bildern nichts Verwertbares gefunden.</div>')); }
@@ -7163,12 +7362,15 @@ function viewProtokoll(){
     k.querySelectorAll("[data-spring]").forEach(function(x){
       x.onclick=function(e){ e.preventDefault(); k.querySelector('[data-a="los"]').onclick(e, x.dataset.spring); };
     });
-    k.querySelector('[data-a="los"]').onclick=function(ev, springe){
+    k.dataset.karte=id;   /* zum Wiederfinden nach dem Wechsel in die Claude-App */
+    /* weiter: gesicherter Claude-Vorgang nach dem Neuladen (kiVorgangFortsetzen) */
+    k.querySelector('[data-a="los"]').onclick=function(ev, springe, weiter){
       /* bei einer bekannten Anlage auch die Termine zum Prüfen dazu */
       var p0=neu?null:posById[id];
       var start=p0 ? Object.assign({}, w, {inbetriebnahme:anlageDaten(p0).inbetriebnahme||null, _termine:termineStart(p0), _leaderId:p0.id}) : Object.assign({}, w);
       start._springe=springe||null;
-      anlageAssistent(start, name, neu).then(function(erg){
+      /* eine Korrektur hat keinen Platz zum Fortsetzen – nur das neue Protokoll */
+      anlageAssistent(start, name, neu, false, bearb ? null : {ort:{aufruf:"protokoll", karte:id}, weiter:weiter||null}).then(function(erg){
         if(!erg) return;
         formDirty=true;
         /* Termine sind Stammdaten, nicht Teil des Protokolls: sie gehen
@@ -7226,11 +7428,12 @@ function viewProtokoll(){
       "Sie bleiben unverändert im Protokoll; Ergänzungen oben gehen in die Anlagendaten.</div>"));
   }
   posBox.addEventListener("change",function(e){ if(e.target && e.target.name==="posw") anlagenZeichnen(); });
-  form.querySelector("#addAnlage").onclick=function(){
+  form.querySelector("#addAnlage").onclick=function(ev, weiter){
     if(!byId[selSt.value]){ toast("Bitte zuerst oben den Standort wählen."); selSt.focus(); return; }
     /* Markt als Kontext für die KI; mit Termin wie bei „+ Anlage anlegen“ – so
        fragt der Dialog auch Inbetriebnahme, Kürzel und Soll-Monat */
-    anlageAssistent({standortId:selSt.value, _termine:[{id:"NEU", intervallCode:"JW", monat:0}], inbetriebnahme:null}, "Neue Anlage", true).then(function(erg){
+    anlageAssistent({standortId:selSt.value, _termine:[{id:"NEU", intervallCode:"JW", monat:0}], inbetriebnahme:null}, "Neue Anlage", true, false,
+        bearb ? null : {ort:{aufruf:"protokoll", karte:null}, weiter:weiter||null}).then(function(erg){
       if(!erg) return;
       formDirty=true;
       neueAnlagen.push({id:"NP"+Date.now().toString(36)+Math.random().toString(36).slice(2,5), werte:erg});
@@ -8345,6 +8548,21 @@ function viewProtokoll(){
   if(Store.modus==="supabase" && Store.sb && !bearb) f.appendChild(kontoKarte());
   f.appendChild(head);
   if(entwurfKasten) f.appendChild(entwurfKasten);
+  /* zurück aus der Claude-App (die Seite war dabei neu geladen): das
+     angefangene Protokoll einsetzen und seinen Anlagen-Dialog wieder öffnen */
+  if(kiVorgangProtokoll && !bearb){
+    var kiV=kiVorgangProtokoll; kiVorgangProtokoll=null;
+    setTimeout(function(){
+      var weiterK=entwurfKasten && entwurfKasten.querySelector('[data-e="weiter"]');
+      if(!weiterK || !document.body.contains(form)){ kiVorgangWeg(kiVorgangSchluessel()); toast("Das angefangene Protokoll ist nicht mehr da – nichts fortgesetzt."); return; }
+      weiterK.onclick();
+      if(!formDirty) return;   /* Entwurf nicht eingesetzt (etwa andere Protokollart) */
+      var karte=kiV.ort.karte ? anlagenHost.querySelector('[data-karte="'+CSS.escape(kiV.ort.karte)+'"] [data-a="los"]') : null;
+      if(karte) karte.onclick(null, null, kiV);
+      else if(!kiV.ort.karte) form.querySelector("#addAnlage").onclick(null, kiV);
+      else { kiVorgangWeg(kiVorgangSchluessel()); toast("Die Anlage aus dem Claude-Vorgang ist im Protokoll nicht mehr angehakt – nichts fortgesetzt."); }
+    }, 0);
+  }
   var body=el('<div class="card"><div class="pad"></div></div>');
   body.querySelector(".pad").appendChild(form);
   f.appendChild(body);
