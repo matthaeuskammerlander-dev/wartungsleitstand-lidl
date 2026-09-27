@@ -4987,6 +4987,9 @@ function darfStammZentral(rec){
 var stammStand={}, rueckPuffer={};
 /* true, wenn die gemeinsamen Stammdaten zuletzt ohne Fehler ganz geladen wurden */
 var stammVollstaendig=false;
+/* der zuletzt abgeschlossene Ladevorgang war vollständig (bleibt während eines
+   neuen Ladens stehen) – und das gerade laufende Laden, falls eins läuft */
+var stammGeladenKomplett=false, stammLaedt=null;
 /* nicht in den Verlauf: Zugangsdaten (vertraulich) und eingebettete
    Auftrags-PDFs und Seitenbilder offener Störungen (mehrere MB) */
 function NICHT_IM_VERLAUF(){ return GEHEIME_FELDER.concat(["pdfDaten","seiten"]); }
@@ -5063,9 +5066,14 @@ function alleSeiten(bau, schluessel){
    (schlechter Empfang) ersetzt keinen vollständig geladenen Stand – sonst
    verschwänden offene Störungen und Anlagendaten bis zum nächsten Laden */
 function ladeStammdaten(nurVollstaendig){
+  /* Nachladen im Hintergrund, während schon geladen wird: nicht doppelt –
+     sonst hielte der zweite Lauf „lädt gerade“ für „unvollständig“ und könnte
+     einen vollständigen Stand durch einen lückenhaften ersetzen */
+  if(nurVollstaendig && stammLaedt) return stammLaedt;
   var lokal=idbVorgang("readonly",function(st){ return st.getAll(); },"stammdaten")
     .then(function(l){ return l||[]; }, function(){ return []; });
-  var zentral=Promise.resolve([]), komplett=true, vorherKomplett=stammVollstaendig;
+  /* maßgeblich ist der zuletzt ABGESCHLOSSENE Stand, nicht der Zwischenzustand eines laufenden Ladens */
+  var zentral=Promise.resolve([]), komplett=true, vorherKomplett=stammGeladenKomplett;
   stammVollstaendig=false;
   if(Store.modus==="supabase" && Store.sb){
     /* seitenweise: Supabase liefert höchstens 1000 Zeilen je Abfrage – darüber
@@ -5084,7 +5092,7 @@ function ladeStammdaten(nurVollstaendig){
       return (s.docs||[]).map(function(d){ return d.data(); });
     }, function(){ komplett=false; return []; });
   }
-  return Promise.all([lokal,zentral]).then(function(r){
+  var lauf=Promise.all([lokal,zentral]).then(function(r){
     if(nurVollstaendig && !komplett && vorherKomplett){ stammVollstaendig=true; return stammUeber; }
     var alle={};
     /* Kunde, Präsentation und Abgemeldete sehen keine Zugangsdaten – auch
@@ -5101,11 +5109,15 @@ function ladeStammdaten(nurVollstaendig){
       if(!alle[x.id] || (x.geaendert||"")>(alle[x.id].geaendert||"")) alle[x.id]=x;
     });
     stammUeber=alle;
-    stammVollstaendig=komplett;
+    stammVollstaendig=komplett; stammGeladenKomplett=komplett;
     stammStand=JSON.parse(JSON.stringify(alle));
     wendeStammdatenAn();
     return stammUeber;
   });
+  stammLaedt=lauf;
+  var ende=function(){ if(stammLaedt===lauf) stammLaedt=null; };
+  lauf.then(ende, ende);
+  return lauf;
 }
 /* auf dem Gerät gemachte Änderungen nachtragen, sobald man zentral Admin ist */
 function stammdatenUebertragen(){
@@ -5329,7 +5341,8 @@ var nachgeladenUm=0;
 function hintergrundNachladen(){
   if(Store.modus!=="supabase" || !Store.benutzer || demo()) return;
   /* höchstens einmal je Minute – außer das letzte Laden war unvollständig */
-  if(Date.now()-nachgeladenUm<60000 && stammVollstaendig) return;
+  if(stammLaedt) return;   /* lädt schon */
+  if(Date.now()-nachgeladenUm<60000 && stammGeladenKomplett) return;
   nachgeladenUm=Date.now();
   ladeProtokolle();
   /* ein Claude-Vorgang, der beim Anmelden mangels vollständiger Daten warten
@@ -10301,7 +10314,10 @@ function auffaelligkeiten(s){
                " – bewusst so: "+String(p.monatGrund).trim(), p));
       /* höchstens 3 Monate daneben: so behält ihn auch die Regel des Büros
          (Standardregel, Altlast-Bereinigung) – kein Fehler, nur eine Notiz */
-      else if(monatsAbstand(p.monat, p.anker.regel)<=3)
+      /* gleiche Prüfung wie in Verwaltung und Assistent: ein Halbjahrestermin
+         muss außerdem 5–7 Monate von der Jahreswartung der Anlage entfernt sein */
+      else if(sollGeduldet(+p.monat, p.anker.regel, !!(p.intervall && /^HJ/.test(p.intervall.kurz)),
+              (function(){ var av=anlageVon(p), jw=av && av.termine.filter(function(t){ return t!==p && t.intervall && t.intervall.kurz==="JW"; })[0]; return jw ? +jw.monat||0 : 0; })()))
         l.push(mit(n+": Soll-Monat "+MONATE_L[p.monat]+" statt "+MONATE_L[p.anker.regel]+
                " – höchstens 3 Monate daneben, gilt nach der Regel", p));
       else
@@ -12339,7 +12355,9 @@ function claudeFragen(){
     if(FRAGE_VERLAUF.length) setTimeout(function(){ feld.scrollIntoView({block:"nearest"}); }, 30);
   };
   FRAGE_FENSTER={feld:feld, zeigen:zeigen};
-  if(FRAGE_ENTWURF){ feld.value=FRAGE_ENTWURF; FRAGE_ENTWURF=""; }   /* eine gescheiterte Frage von vorhin */
+  /* angefangene oder gescheiterte Frage von vorhin – bleibt gemerkt, bis sie abgeschickt ist, auch wenn das Fenster wieder zugeht */
+  if(FRAGE_ENTWURF) feld.value=FRAGE_ENTWURF;
+  feld.addEventListener("input", function(){ FRAGE_ENTWURF=feld.value; });
   zeigen();
   /* oeffentlich: für GitHub – Markt nur mit Decknamen („Markt A“), Testdaten statt der Übersicht */
   var kontext=function(oeffentlich){
@@ -12354,7 +12372,7 @@ function claudeFragen(){
   var gh=el('<button class="btn ghost" type="button">Über GitHub (Abo)</button>');
   var direkt=el('<button class="btn ghost" type="button">Direkt · ca. 0,2–1,5 Cent</button>');
   var knoepfe=function(an){ [app,gh,direkt,neu].forEach(function(b){ b.disabled=!an; }); };
-  neu.onclick=function(){ FRAGE_VERLAUF=[]; zeigen(); feld.value=""; feld.focus(); };
+  neu.onclick=function(){ FRAGE_VERLAUF=[]; zeigen(); feld.value=""; FRAGE_ENTWURF=""; feld.focus(); };
   var frageHolen=function(){ var f=feld.value.trim(); if(!f) toast("Bitte zuerst die Frage eingeben."); return f; };
   /* Claude-App: alles in die Zwischenablage, claude.ai mit der Frage öffnen */
   app.onclick=function(){
@@ -12411,7 +12429,7 @@ function claudeFragen(){
     var o=frageFensterOffen();
     /* Fenster zu: an einen schon wartenden Entwurf anhängen, nicht überschreiben */
     if(!o){ if(FRAGE_ENTWURF.indexOf(e.text)<0) FRAGE_ENTWURF=FRAGE_ENTWURF.trim() ? e.text+"\n\n"+FRAGE_ENTWURF : e.text; }
-    else if(o.feld.value.indexOf(e.text)<0) o.feld.value=o.feld.value.trim() ? e.text+"\n\n"+o.feld.value : e.text;
+    else if(o.feld.value.indexOf(e.text)<0){ o.feld.value=o.feld.value.trim() ? e.text+"\n\n"+o.feld.value : e.text; FRAGE_ENTWURF=o.feld.value; }
     toast(meldung);
   };
   /* nurOeffentlich (GitHub): nur Fragen und Antworten, die selbst über GitHub
@@ -12422,7 +12440,7 @@ function claudeFragen(){
   direkt.onclick=function(){
     var f=frageHolen(); if(!f) return;
     var e={role:"user", text:f};
-    FRAGE_VERLAUF.push(e); feld.value="";
+    FRAGE_VERLAUF.push(e); feld.value=""; FRAGE_ENTWURF="";
     warteZeile("Claude denkt nach …"); knoepfe(false);
     mitFrist(Store.sb.functions.invoke("ki-frage", {body:{nachrichten:nurText(false), kontext:kontext(false)}}), 120000)
       .then(fehlerText).then(function(d){
@@ -12444,7 +12462,7 @@ function claudeFragen(){
     if(mitTest) hin.push("erfundene Testdaten statt der echten Übersicht");
     if(hin.length) toast("Über GitHub (öffentlich): "+hin.join(", ")+".");
     var e={role:"user", text:f, oeffentlich:true};
-    FRAGE_VERLAUF.push(e); feld.value="";
+    FRAGE_VERLAUF.push(e); feld.value=""; FRAGE_ENTWURF="";
     var t=warteZeile("wird an GitHub geschickt …"), t0=Date.now(); knoepfe(false);
     mitFrist(Store.sb.functions.invoke("ki-frage", {body:{weg:"github", nachrichten:nurText(true), kontext:kontext(true)}}), 60000)
       .then(fehlerText).then(function(d){
