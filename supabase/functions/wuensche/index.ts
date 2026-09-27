@@ -46,6 +46,17 @@ async function gh(methode: string, pfad: string, body?: unknown) {
 
 const kurz = (t: string, n: number) => (t.length > n ? t.slice(0, n - 1) + "…" : t);
 
+// Das Repository ist öffentlich: im Issue steht der Absender nur mit Vornamen
+// (bei einer E-Mail der Teil vor „@“), sonst „Techniker“; vom mitgeschickten
+// Ort nur Reiter und Gerät – nie ein Markt oder eine Adresse. Die App zeigt
+// dem Inhaber vor dem Freigeben genau diesen Text (wunschIssueText in index.html).
+const vorname = (n: unknown) => {
+  const v = String(n ?? "").trim().split("@")[0].split(/[\s._,;:()\[\]\/-]+/)[0].replace(/[^A-Za-zÀ-ÖØ-öø-ÿ]/g, "").slice(0, 30);
+  return !v || /^unbekannt$/i.test(v) ? "Techniker" : v.charAt(0).toUpperCase() + v.slice(1);
+};
+const ort = (k: unknown) => String(k ?? "").split(" · ").map((t) => t.trim())
+  .filter((t) => /^(geschrieben im Reiter „[^„“"<>]{1,40}“|am Handy|am PC|Rücknahme von W-\d+)$/.test(t)).join(" · ");
+
 /* Rückmeldung von Claude: der letzte Kommentar des Claude-Bots (Issue und PR) */
 async function letzteAntwort(nummern: number[]) {
   let beste: { zeit: string; text: string } | null = null;
@@ -76,6 +87,11 @@ async function pruefung(sha: string) {
 async function abgleichen(w: any) {
   const neu: Record<string, unknown> = {};
   let branch = w.branch as string | null;
+  // nur Zweige, die Claude bzw. diese Funktion selbst anlegt – einem sonst
+  // eingetragenen Namen nicht trauen (die Spalte kommt aus der Datenbank)
+  if (branch && !(branch.startsWith(`claude/issue-${w.issue_nr}-`) || branch.startsWith(`rueckgaengig/w-${w.rueckgaengig_von}-`))) {
+    throw new Error(`Unbekannter Zweig „${kurz(branch, 60)}“ – nicht verwendet.`);
+  }
   if (!branch && w.issue_nr) {
     const refs = await gh("GET", `/repos/${REPO}/git/matching-refs/heads/claude/issue-${w.issue_nr}-`);
     if (Array.isArray(refs) && refs.length) branch = String(refs[refs.length - 1].ref).replace("refs/heads/", "");
@@ -128,7 +144,9 @@ Deno.serve(async (req) => {
   if (inhaber !== true) return antwort({ fehler: "Änderungswünsche weitergeben dürfen nur Inhaber." }, 403);
   if (!TOKEN) return antwort({ fehler: "GitHub-Zugang fehlt (Secret GITHUB_TOKEN_WUENSCHE)." }, 500);
 
-  const wer = (user.user_metadata?.name as string) || user.email || "Inhaber";
+  // nur für den Verlauf in der Datenbank (sieht nur das Büro) – nie im Issue.
+  // „Meine Angaben“ der App liegen unter user_metadata.einstellungen.
+  const wer = (user.user_metadata?.einstellungen?.name as string) || (user.user_metadata?.name as string) || user.email || "Inhaber";
   const laden = async (id: number) => {
     const { data, error } = await sb.from("aenderungswuensche").select("*").eq("id", id).single();
     if (error || !data) throw new Error("Wunsch nicht gefunden.");
@@ -153,11 +171,11 @@ Deno.serve(async (req) => {
       const body = [
         "@claude Bitte diesen Änderungswunsch aus dem Wartungsleitstand umsetzen. Die Regeln stehen in CLAUDE.md – bitte genau einhalten.",
         "",
-        `**Wunsch W-${w.id}** (von ${w.von_name || "unbekannt"}, freigegeben von ${wer}):`,
+        `**Wunsch W-${w.id}** (von ${vorname(w.von_name)}, freigegeben vom Inhaber):`,
         "",
         auftrag.split("\n").map((z) => "> " + z).join("\n"),
         "",
-        w.kontext ? `Geschrieben wurde der Wunsch hier (nur zur Orientierung – bei Widerspruch gilt der Wunschtext): ${w.kontext}` : "",
+        ort(w.kontext) ? `Geschrieben wurde der Wunsch hier (nur zur Orientierung – bei Widerspruch gilt der Wunschtext): ${ort(w.kontext)}` : "",
         "",
         "Nur `index.html` ändern (bei Bedarf `README.md`). Vor dem Abschluss `node tools/pruefen.mjs` ausführen.",
         "Zum Schluss auf Deutsch kurz und für Nicht-Programmierer erklären, was geändert wurde und wie man es ausprobiert.",
@@ -208,6 +226,10 @@ Deno.serve(async (req) => {
     if (aktion === "rueckgaengig") {
       const w = await laden(Number(e.id));
       if (w.status !== "uebernommen") return antwort({ fehler: "Nur übernommene Änderungen lassen sich zurücknehmen." }, 409);
+      // nur einmal: läuft schon eine Rücknahme, keine zweite (sonst doppelte Pull Requests)
+      const { data: laufend } = await sb.from("aenderungswuensche").select("id")
+        .eq("rueckgaengig_von", w.id).in("status", ["neu", "in_arbeit", "vorschau", "fehler"]);
+      if (laufend && laufend.length) return antwort({ fehler: `Die Rücknahme läuft schon (W-${laufend[0].id}).` }, 409);
       let sha = w.merge_sha as string | null;
       if (!sha && w.pr_nr) sha = (await gh("GET", `/repos/${REPO}/pulls/${w.pr_nr}`)).merge_commit_sha;
       if (!sha) return antwort({ fehler: "Zu dieser Änderung ist kein Stand bekannt." }, 409);

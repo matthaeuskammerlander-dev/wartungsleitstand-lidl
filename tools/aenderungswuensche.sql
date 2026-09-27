@@ -51,7 +51,13 @@ create policy "wuensche bearbeiten" on public.aenderungswuensche for update to a
   using (public.ist_inhaber()) with check (public.ist_inhaber());
 
 revoke all on public.aenderungswuensche from anon;
-grant select, insert, update on public.aenderungswuensche to authenticated;
+grant select, update on public.aenderungswuensche to authenticated;
+-- Wer einen Wunsch schickt, füllt nur Text, Ort und Namen – alles andere
+-- (Status, Prüfung, Rückmeldung, Zweig, Verlauf …) kommt aus den Vorgaben
+-- bzw. später vom Inhaber. Sonst ließen sich Prüfergebnis, Claude-Auftrag
+-- oder ein fremder Zweig schon beim Schicken vorbelegen.
+revoke insert on public.aenderungswuensche from authenticated;
+grant insert (text, kontext, von_name) on public.aenderungswuensche to authenticated;
 grant usage, select on sequence public.aenderungswuensche_id_seq to authenticated;
 
 -- Kontrolle

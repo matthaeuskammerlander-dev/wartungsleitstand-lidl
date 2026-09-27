@@ -2075,8 +2075,8 @@ function marktLink(s, text){
 }
 function marktAnsicht(sid){
   var s=byId[sid]; if(!s) return;
-  S.letzterMarkt=sid;   /* für „Claude fragen“: welcher Markt gerade offen ist */
   var a=ansichtOeffnen(stName(s));
+  a.inhalt.closest(".assistent").setAttribute("data-marktfenster", sid);   /* für „Claude fragen“: welcher Markt gerade offen ist (nicht data-markt – das öffnet beim Antippen einen Markt) */
   a.schritt.textContent=[s.filiale?"Filiale "+s.filiale:"", s.adresse].filter(Boolean).join(" · ");
   a.inhalt.appendChild(standortDetail(s));
   var h=el('<div class="card" style="box-shadow:none;margin-top:12px"><div class="pad stack">'+
@@ -4651,11 +4651,7 @@ function adminPruefen(){
       wunschLinkNeu();
       /* Inhaber: offene Änderungswünsche zählen – nur die Zahl am Reiter
          nachziehen, nicht neu zeichnen (sonst ginge Angefangenes verloren) */
-      if(istInhaber()) wuenscheLaden().then(function(){
-        var b=document.querySelector('[data-tab="wuensche"]'); if(!b) return;
-        var n=WUENSCHE.filter(function(w){ return w.status==="neu"||(w.status==="vorschau"&&w.pruefung==="ok"); }).length;
-        b.textContent="Änderungswünsche"+(n?" · "+n:"");
-      }, function(){});
+      if(istInhaber()) wuenscheLaden().then(wunschReiterNeu, function(){});
       return Admin.frei;
     },function(){ Admin.geprueft=true; return false; });
   }
@@ -4738,6 +4734,17 @@ function initStore(versuch){
   }, function(){ if(supabaseKonfiguriert) return initSupabase(); Store.modus="lokal"; storeNachRender(); });
 }
 
+/* Anderes Konto oder abgemeldet: was nur zum alten Konto gehört, kommt weg
+   (aufgerufen aus onAuthStateChange – jede Funktion trägt hier ihren Teil ein) */
+function kontowechselAufraeumen(){
+  /* „Claude fragen“ und Änderungswünsche: Gespräch, Liste, zurückgelegte
+     Frage; offene Fenster dazu (data-konto) und eine offene Vorschau schließen.
+     Angefangene Wunschtexte bleiben – je Konto gemerkt (WUNSCH_ENTWURF, WUNSCH_TEXTE). */
+  FRAGE_VERLAUF=[]; FRAGE_ENTWURF=""; FRAGE_FENSTER=null; WUENSCHE=[];
+  document.querySelectorAll(".vorschau-rahmen [data-a=\"zu\"]").forEach(function(b){ b.click(); });
+  document.querySelectorAll(".assistent[data-konto], .vorschau-rahmen").forEach(function(x){ x.remove(); });
+  if(!document.querySelector(".assistent, .vorschau-rahmen")) document.body.style.overflow="";
+}
 function initSupabase(){
   if(!window.supabase || !window.supabase.createClient){ Store.modus="lokal"; Store.fehler="Supabase-Bibliothek nicht geladen."; storeNachRender(); return; }
   /* Vorschau im App-Fenster: die Anmeldung der App nur lesen – kein eigenes
@@ -4759,6 +4766,7 @@ function initSupabase(){
        angelegt hat, fliegt raus – sonst überträgt es die nächste echte
        Sitzung in die Datenbank */
     if(!sess || !Store.benutzer || sess.user.id!==Store.benutzer.id){
+      kontowechselAufraeumen();
       lokaleProtokolle=lokaleProtokolle.map(function(x){ return x._original || x; }).filter(function(x){ return !x._demo; });
       posteingangOffen=null;   /* ein angefangener Posteingangs-Vorgang gehört zum alten Konto */
       /* was die Präsentation „vom Gerät gelöscht“ hat, ist wieder da: frisch aus dem Gerätespeicher */
@@ -9347,8 +9355,7 @@ function viewVerwaltung(){
   var menue=el('<div class="card"><div class="pad"><div class="chips" role="tablist" style="gap:8px">'+
     [["nachbessern","Nachbessern"+(fehlerZahl?" · "+fehlerZahl+" Fehler":"")],["maerkte","Märkte & Anlagen"]]
       /* Änderungswünsche: was auf eine Entscheidung wartet, steht als Zahl dran */
-      .concat(istInhaber() && Store.modus==="supabase" && Store.sb ? [["wuensche","Änderungswünsche"+(function(){
-        var n=WUENSCHE.filter(function(w){ return w.status==="neu"||(w.status==="vorschau"&&w.pruefung==="ok"); }).length; return n?" · "+n:""; })()]] : [])
+      .concat(istInhaber() && Store.modus==="supabase" && Store.sb ? [["wuensche","Änderungswünsche"+(wunschZahl()?" · "+wunschZahl():"")]] : [])
       .concat(istInhaber() && Store.modus==="supabase" && Store.sb ? [["inhaber","Inhaber"]] : [])
       .map(function(t){ return '<button class="chip" type="button" role="tab" data-tab="'+t[0]+'" aria-pressed="'+(A.tab===t[0])+'">'+esc(t[1])+"</button>"; }).join("")+
     "</div></div></div>");
@@ -10790,31 +10797,46 @@ function csv(name,head,rows){
    auf Wunsch mit dem gerade offenen Markt als Hintergrund. Zwei Wege wie beim
    Prüfbuch: über die eigene Claude-App (im Abo) oder direkt in der App
    (Funktion ki-frage, ein paar Cent je Frage). Das Gespräch bleibt bis zum
-   Neuladen erhalten; gespeichert wird es nicht. */
+   Neuladen erhalten; gespeichert wird es nicht. Jeder Eintrag merkt sich,
+   ob er über GitHub lief (oeffentlich) – nur solche gehen dort wieder mit. */
 var FRAGE_VERLAUF=[];
+/* das gerade offene Fenster „Claude fragen“: eine späte Antwort oder eine
+   gescheiterte Frage landet dort, auch wenn es inzwischen neu geöffnet wurde;
+   FRAGE_ENTWURF hält eine gescheiterte Frage, bis das Fenster wieder aufgeht */
+var FRAGE_FENSTER=null, FRAGE_ENTWURF="";
+function frageFensterOffen(){ return FRAGE_FENSTER && FRAGE_FENSTER.feld.isConnected ? FRAGE_FENSTER : null; }
 function frageMarkt(){
   var A=S.adm||{}, id=null;
   if(S.view==="verwaltung" && A.tab==="maerkte" && A.sel) id=A.sel;
   else if(S.view==="protokoll" && S.protoStandort) id=S.protoStandort;
   else if(S.view==="karte" && S.sel) id=S.sel;
-  if(!id && S.letzterMarkt && document.querySelector(".assistent")) id=S.letzterMarkt;
+  /* sonst ein offenes Marktfenster (das oberste) – ein geschlossenes zählt nicht mehr */
+  if(!id){ var mv=document.querySelectorAll(".assistent[data-marktfenster]"); if(mv.length) id=mv[mv.length-1].getAttribute("data-marktfenster"); }
   return (id && byId[id]) || null;
 }
-function marktKurzText(s){
-  var z=["Markt: "+stName(s)+(s.filiale?" (Filiale "+s.filiale+")":"")+(s.adresse?", "+s.adresse:"")];
-  anlagenDesMarkts(s,true).forEach(function(a){
+/* oeffentlich (über GitHub): der Markt nur als „Markt A“ – ohne Namen,
+   Filiale, Ort, Adresse, Anlagennamen und Störungstexte */
+function marktKurzText(s, oeffentlich){
+  var z=[oeffentlich ? "Markt: Markt A (Name, Filiale, Ort und Adresse weggelassen)"
+                     : "Markt: "+stName(s)+(s.filiale?" (Filiale "+s.filiale+")":"")+(s.adresse?", "+s.adresse:"")];
+  var stoerung=function(o){
+    var t=oeffentlich ? "" : [o.problemtyp, String(o.beschreibung||"").slice(0,300)].filter(Boolean).join(" – ");
+    return "Offene Störung ("+stoerungAlter(o).text+")"+(t?": "+t:"");
+  };
+  var gezeigt=[];
+  anlagenDesMarkts(s,true).forEach(function(a,i){
     var d=anlageDaten(a.leader);
-    z.push("- Anlage „"+anlagenName(d)+"“: "+[anlageKurz(d), [d.hersteller,d.modell].filter(Boolean).join(" "), d.kaeltemittelArt,
+    z.push("- Anlage "+(oeffentlich?(i+1):"„"+anlagenName(d)+"“")+": "+[oeffentlich?"":anlageKurz(d), [d.hersteller,d.modell].filter(Boolean).join(" "), d.kaeltemittelArt,
       leerWert(d.kaeltemittelKg)?"":String(d.kaeltemittelKg).replace(".",",")+" kg", d.inbetriebnahme?"Inbetriebnahme "+dfmt(d.inbetriebnahme):"",
       anlagePausiert(a.leader)?"zur Zeit nicht gewartet":""].filter(Boolean).join(", "));
     a.termine.forEach(function(p){
       z.push("  · "+((p.intervall&&p.intervall.kurz)||p.intervallCode||"?")+", Soll-Monat "+(MONATE_L[+p.monat]||"–")+
         ", zuletzt "+(p.letzte?dfmt(p.letzte):"–")+", nächster "+(p.naechste?dfmt(p.naechste):"–")+(p.status?" ("+p.status+")":""));
     });
-    stoerungenDerAnlage(a).forEach(function(o){
-      z.push("  · Störung offen seit "+stoerungAlter(o).text+": "+[o.problemtyp, String(o.beschreibung||"").slice(0,300)].filter(Boolean).join(" – "));
-    });
+    stoerungenDerAnlage(a).forEach(function(o){ gezeigt.push(o); z.push("  · "+stoerung(o)); });
   });
+  /* offene Störungen ohne Anlage (oder an einer Anlage, die hier nicht steht) */
+  stoerungVonMarkt(s.id).forEach(function(o){ if(gezeigt.indexOf(o)<0) z.push("- "+stoerung(o)+" – keiner Anlage zugeordnet"); });
   return z.join("\n");
 }
 /* Übersicht aller Märkte für Fragen zur Datenbank: nur was auffällt
@@ -10886,24 +10908,28 @@ function anlagenListeText(){
 function frageText(t){ return String(t||"").replace(/^#+\s*/gm,"").replace(/\*\*/g,"").replace(/`/g,""); }
 function claudeFragen(){
   if(!wuenscheAn()){ toast("Dafür bitte anmelden."); return; }
-  var v=ansichtOeffnen("Claude fragen");
-  v.schritt.textContent="Kältetechnik, Vorschriften, Fehlersuche, die App …";
   var markt=frageMarkt();
+  var v=ansichtOeffnen("Claude fragen");
+  v.inhalt.closest(".assistent").setAttribute("data-konto","");   /* gehört zum Konto – beim Kontowechsel zu */
+  v.schritt.textContent="Kältetechnik, Vorschriften, Fehlersuche, die App …";
   var box=el('<div class="stack">'+
     '<div data-a="verlauf" class="stack" style="gap:10px"></div>'+
     '<label class="fl"><span>Deine Frage</span><textarea rows="3" data-a="frage" placeholder="z. B. Welche Märkte in Tirol sind im Oktober fällig?"></textarea></label>'+
     (markt?'<label class="chk" style="font-size:13px"><input type="checkbox" data-a="markt" checked><span>Angaben zu „'+esc(stName(markt))+
-      '“ mitschicken (Anlagen, Termine, offene Störungen)</span></label>':"")+
+      '“ mitschicken (Anlagen, Termine, offene Störungen) – über GitHub nur als „Markt A“ ohne Namen, Adresse und Störungstexte</span></label>':"")+
     '<label class="chk" style="font-size:13px"><input type="checkbox" data-a="alle"><span>Übersicht aller Märkte mitschicken '+
       '(Fälliges, Überfälliges, offene Störungen) – für Fragen zur ganzen Datenbank</span></label>'+
     '<div class="note" style="font-size:12.5px"><strong>Drei Wege:</strong> '+
       "<strong>Claude-App</strong> – im Abo, sofort, du wechselst kurz in die Claude-App. "+
-      "<strong>Über GitHub</strong> – im Abo, Antwort kommt hier nach 1–2 Minuten; öffentlich lesbar, darum ohne Adressen – statt der Übersicht gehen <em>erfundene Testdaten</em> mit (bis der eigene Server läuft). "+
+      "<strong>Über GitHub</strong> – im Abo, Antwort kommt hier nach 1–2 Minuten. <strong>Öffentlich lesbar:</strong> dort steht deine Frage "+
+      "(samt früheren GitHub-Fragen, nie Antworten aus „Direkt“), der Markt nur als „Markt A“ ohne Namen, Ort, Adresse und Störungstexte, "+
+      "statt der Übersicht <em>erfundene Testdaten</em> (bis der eigene Server läuft). "+
       "<strong>Direkt</strong> – sofort hier, ca. 0,2 Cent je Frage, mit Übersicht aller Märkte ca. 1–1,5 Cent.</div>"+
     '<div class="muted" style="font-size:12px">Keine Passwörter oder Zugangsdaten hineinschreiben. Antworten von Claude können irren – '+
       "bei Vorschriften und Grenzwerten bitte gegenprüfen.</div></div>");
   v.inhalt.appendChild(box);
   var verlauf=box.querySelector('[data-a="verlauf"]'), feld=box.querySelector('[data-a="frage"]');
+  var warte=null;   /* Wartezeile einer laufenden Anfrage aus diesem Fenster */
   var zeigen=function(){
     verlauf.innerHTML="";
     FRAGE_VERLAUF.forEach(function(n){
@@ -10911,17 +10937,16 @@ function claudeFragen(){
         (n.role==="user"?"background:var(--accent);color:#fff;margin-left:18%":"background:var(--ground);border:1px solid var(--line);margin-right:8%")+'">'+
         esc(n.role==="user"?n.text:frageText(n.text))+(n.weg?'<div class="muted" style="font-size:11px;margin-top:4px">'+esc(n.weg)+"</div>":"")+"</div>"));
     });
+    if(warte) verlauf.appendChild(warte);
     if(FRAGE_VERLAUF.length) setTimeout(function(){ feld.scrollIntoView({block:"nearest"}); }, 30);
   };
+  FRAGE_FENSTER={feld:feld, zeigen:zeigen};
+  if(FRAGE_ENTWURF){ feld.value=FRAGE_ENTWURF; FRAGE_ENTWURF=""; }   /* eine gescheiterte Frage von vorhin */
   zeigen();
-  /* oeffentlich: für GitHub – ohne Adresse, ohne Übersicht aller Märkte */
+  /* oeffentlich: für GitHub – Markt als „Markt A“, Testdaten statt der Übersicht */
   var kontext=function(oeffentlich){
     var c=box.querySelector('[data-a="markt"]'), a=box.querySelector('[data-a="alle"]'), t=[];
-    if(markt && c && c.checked){
-      var mt=marktKurzText(markt);
-      if(oeffentlich) mt=mt.replace(/^Markt: .*$/m, "Markt: "+stName(markt));
-      t.push(mt);
-    }
+    if(markt && c && c.checked) t.push(marktKurzText(markt, oeffentlich));
     /* über GitHub (öffentlich): erfundene Testdaten statt der echten Übersicht */
     if(a && a.checked) t.push(oeffentlich ? testUebersichtText() : uebersichtText());
     return t.join("\n\n");
@@ -10949,6 +10974,7 @@ function claudeFragen(){
        ohne Daten ab) – alles in die Zwischenablage, Claude leer öffnen, einmal einfügen */
     inZwischenablage(alles, "Frage samt Daten");
     var h=ansichtOeffnen("In Claude einfügen");
+    h.inhalt.closest(".assistent").setAttribute("data-konto","");
     h.schritt.textContent="Frage und Daten sind kopiert ("+Math.round(alles.length/1000)+" 000 Zeichen)";
     h.inhalt.appendChild(el('<div class="stack" style="font-size:15px">'+
       '<ol style="margin:0 0 0 20px;padding:0;line-height:1.7">'+
@@ -10970,46 +10996,75 @@ function claudeFragen(){
     });
   };
   var warteZeile=function(text){
-    var w=el('<div class="muted" style="font-size:13px"><span class="kilaeuft" style="display:inline-block;width:14px;height:14px;border-width:3px;vertical-align:-2px;margin:0 6px 0 0"></span>'+
+    warte=el('<div class="muted" style="font-size:13px"><span class="kilaeuft" style="display:inline-block;width:14px;height:14px;border-width:3px;vertical-align:-2px;margin:0 6px 0 0"></span>'+
       '<span data-t>'+esc(text)+"</span></div>");
-    verlauf.appendChild(w); return w.querySelector("[data-t]");
+    zeigen(); return warte.querySelector("[data-t]");
   };
-  var nurText=function(){ return FRAGE_VERLAUF.map(function(n){ return {role:n.role, text:n.text}; }); };
+  /* Anfrage fertig: dieses Fenster und ein inzwischen neu geöffnetes nachziehen */
+  var fertig=function(){ warte=null; knoepfe(true); zeigen(); var o=frageFensterOffen(); if(o && o.zeigen!==zeigen) o.zeigen(); };
+  /* die Antwort gehört hinter ihre Frage – ist die Frage nicht mehr im
+     Gespräch („Neues Gespräch“, Kontowechsel), fällt sie weg */
+  var antwortDazu=function(e, a){ var i=FRAGE_VERLAUF.indexOf(e); if(i>=0) FRAGE_VERLAUF.splice(i+1, 0, a); };
+  /* gescheitert: genau diese Frage aus dem Gespräch nehmen und zurück ins
+     Feld – ins gerade offene Fenster, sonst beim nächsten Öffnen */
+  var frageZurueck=function(e, meldung){
+    var i=FRAGE_VERLAUF.indexOf(e); if(i<0) return;
+    FRAGE_VERLAUF.splice(i, 1);
+    var o=frageFensterOffen();
+    if(!o) FRAGE_ENTWURF=e.text;
+    else if(o.feld.value.indexOf(e.text)<0) o.feld.value=o.feld.value.trim() ? e.text+"\n\n"+o.feld.value : e.text;
+    toast(meldung);
+  };
+  /* nurOeffentlich (GitHub): nur Fragen und Antworten, die selbst über GitHub
+     liefen – Antworten aus „Direkt“ enthalten echte Märkte und Adressen */
+  var nurText=function(nurOeffentlich){
+    return FRAGE_VERLAUF.filter(function(n){ return !nurOeffentlich || n.oeffentlich; }).map(function(n){ return {role:n.role, text:n.text}; });
+  };
   direkt.onclick=function(){
     var f=frageHolen(); if(!f) return;
-    FRAGE_VERLAUF.push({role:"user", text:f}); feld.value=""; zeigen();
+    var e={role:"user", text:f};
+    FRAGE_VERLAUF.push(e); feld.value="";
     warteZeile("Claude denkt nach …"); knoepfe(false);
-    mitFrist(Store.sb.functions.invoke("ki-frage", {body:{nachrichten:nurText(), kontext:kontext(false)}}), 120000)
+    mitFrist(Store.sb.functions.invoke("ki-frage", {body:{nachrichten:nurText(false), kontext:kontext(false)}}), 120000)
       .then(fehlerText).then(function(d){
-        FRAGE_VERLAUF.push({role:"assistant", text:String((d&&d.text)||"(keine Antwort)"), weg:"direkt · Claude Haiku"});
-      }, function(e){ FRAGE_VERLAUF.pop(); feld.value=f; toast(e.message||String(e)); })
-      .then(function(){ knoepfe(true); zeigen(); });
+        antwortDazu(e, {role:"assistant", text:String((d&&d.text)||"(keine Antwort)"), weg:"direkt · Claude Haiku"});
+      }, function(x){ frageZurueck(e, x.message||String(x)); })
+      .then(fertig);
   };
   /* GitHub: Claude Code beantwortet im Abo – nachfragen, bis die Antwort da ist */
   gh.onclick=function(){
     var f=frageHolen(); if(!f) return;
-    /* Übersicht angehakt: über GitHub gehen Testdaten statt der echten Daten mit */
-    var mitTest=!!(box.querySelector('[data-a="alle"]')||{}).checked;
-    if(mitTest) toast("Über GitHub gehen erfundene Testdaten statt der echten Übersicht mit.");
-    FRAGE_VERLAUF.push({role:"user", text:f}); feld.value=""; zeigen();
+    /* sagen, was über GitHub (öffentlich) anders ist als hier */
+    var mitTest=!!(box.querySelector('[data-a="alle"]')||{}).checked, mitMarkt=!!(markt && (box.querySelector('[data-a="markt"]')||{}).checked);
+    var hin=[];
+    if(FRAGE_VERLAUF.some(function(n){ return !n.oeffentlich; })) hin.push("nur diese Frage und frühere GitHub-Fragen gehen mit");
+    if(mitMarkt) hin.push("der Markt nur als „Markt A“");
+    if(mitTest) hin.push("erfundene Testdaten statt der echten Übersicht");
+    if(hin.length) toast("Über GitHub (öffentlich): "+hin.join(", ")+".");
+    var e={role:"user", text:f, oeffentlich:true};
+    FRAGE_VERLAUF.push(e); feld.value="";
     var t=warteZeile("wird an GitHub geschickt …"), t0=Date.now(); knoepfe(false);
-    var fertig=function(){ knoepfe(true); zeigen(); };
-    mitFrist(Store.sb.functions.invoke("ki-frage", {body:{weg:"github", nachrichten:nurText(), kontext:kontext(true)}}), 60000)
+    mitFrist(Store.sb.functions.invoke("ki-frage", {body:{weg:"github", nachrichten:nurText(true), kontext:kontext(true)}}), 60000)
       .then(fehlerText).then(function(d){
         var nr=d&&d.nr; if(!nr) throw new Error("GitHub hat keine Nummer zurückgegeben.");
         var frag=function(){
-          if(!v.inhalt.isConnected) return;   /* Fenster zu: nicht weiter fragen */
+          if(FRAGE_VERLAUF.indexOf(e)<0){ fertig(); return; }   /* neues Gespräch oder Kontowechsel: nicht weiter fragen */
+          if(!frageFensterOffen()){   /* Fenster zu: nicht weiter fragen */
+            antwortDazu(e, {role:"assistant", text:"Fenster geschlossen, bevor die Antwort da war – sie steht auf GitHub: Frage #"+nr+".", weg:"über GitHub"}); fertig(); return; }
           var s=Math.round((Date.now()-t0)/1000);
-          if(s>480){ FRAGE_VERLAUF.push({role:"assistant", text:"Noch keine Antwort nach 8 Minuten – auf GitHub nachsehen: Frage #"+nr+".", weg:"über GitHub"}); fertig(); return; }
+          if(s>480){ antwortDazu(e, {role:"assistant", text:"Noch keine Antwort nach 8 Minuten – auf GitHub nachsehen: Frage #"+nr+".", weg:"über GitHub"}); fertig(); return; }
           t.textContent="Claude antwortet über GitHub … "+s+" s (meist 1–2 Minuten)";
           mitFrist(Store.sb.functions.invoke("ki-frage", {body:{weg:"github_stand", nr:nr}}), 30000).then(fehlerText).then(function(x){
-            if(x && x.fertig){ FRAGE_VERLAUF.push({role:"assistant", text:wunschAntwortText(x.text)||"(keine Antwort)", weg:"über GitHub · im Abo"+(mitTest?" · mit TESTDATEN, nicht den echten Märkten":"")}); fertig(); }
+            /* Claude meldet einen Fehler: keine Antwort daraus machen, die Frage kommt zurück ins Feld */
+            if(x && x.fertig && x.fehler){ frageZurueck(e, x.fehler+" (GitHub-Frage #"+nr+") – bitte nochmals fragen."); fertig(); return; }
+            if(x && x.fertig){ antwortDazu(e, {role:"assistant", text:wunschAntwortText(x.text)||"(keine Antwort)", oeffentlich:true,
+              weg:"über GitHub · im Abo"+(mitTest?" · mit TESTDATEN, nicht den echten Märkten":"")+(mitMarkt?" · Markt als „Markt A“":"")}); fertig(); }
             else setTimeout(frag, 10000);
           }, function(){ setTimeout(frag, 15000); });
         };
         t.textContent="Claude antwortet über GitHub … (meist 1–2 Minuten)";
         setTimeout(frag, 20000);
-      }).catch(function(e){ FRAGE_VERLAUF.pop(); feld.value=f; toast(e.message||String(e)); fertig(); });
+      }).catch(function(x){ frageZurueck(e, x.message||String(x)); fertig(); });
   };
   v.fuss.appendChild(neu); v.fuss.appendChild(gh);
   if(kiAn()) v.fuss.appendChild(direkt);
@@ -11031,7 +11086,44 @@ var WUNSCH_STATUS={neu:["Neu – wartet auf Freigabe","warn"], in_arbeit:["Claud
   uebernommen:["In der App übernommen","good"], abgelehnt:["Abgelehnt",""], fehler:["Fehler","crit"]};
 function wuenscheAn(){ return Store.modus==="supabase" && !!Store.sb && !!Store.benutzer && !nurLesen() && !demo(); }
 function wunschLinkNeu(){ var e=document.getElementById("wunschlink"); if(e) e.hidden=!wuenscheAn(); frageKnopfNeu(); }
-function wunschName(){ var b=Store.benutzer||{}; return ((b.user_metadata||{}).name)||b.email||"unbekannt"; }
+/* Absender für die Liste im Büro: „Meine Angaben“, sonst der Name aus der
+   Rollen-Tabelle. Öffentlich (GitHub) steht davon nur der Vorname. */
+function wunschName(){ var b=Store.benutzer||{}; return kanonName(meineAngaben().name||"")||kanonName(Rolle.anzeige||"")||b.email||"unbekannt"; }
+/* Was beim Freigeben öffentlich auf GitHub steht – genau so baut es die
+   Funktion „wuensche“ (supabase/functions/wuensche/index.ts): Absender nur
+   mit Vornamen (bei einer E-Mail der Teil vor „@“), sonst „Techniker“; vom
+   mitgeschickten Ort nur Reiter und Gerät – kein Markt, keine Adresse */
+function wunschVorname(n){
+  n=String(n||"").trim().split("@")[0].split(/[\s._,;:()\[\]\/-]+/)[0].replace(/[^A-Za-zÀ-ÖØ-öø-ÿ]/g,"").slice(0,30);
+  return !n || /^unbekannt$/i.test(n) ? "Techniker" : n.charAt(0).toUpperCase()+n.slice(1);
+}
+function wunschOrt(k){
+  return String(k||"").split(" · ").map(function(t){ return t.trim(); })
+    .filter(function(t){ return /^(geschrieben im Reiter „[^„“"<>]{1,40}“|am Handy|am PC|Rücknahme von W-\d+)$/.test(t); }).join(" · ");
+}
+function wunschIssueText(w, auftrag){
+  var titel=auftrag.replace(/\s+/g," "), ort=wunschOrt(w.kontext);
+  return {titel:"Änderungswunsch W-"+w.id+": "+(titel.length>70?titel.slice(0,69)+"…":titel), text:[
+    "@claude Bitte diesen Änderungswunsch aus dem Wartungsleitstand umsetzen. Die Regeln stehen in CLAUDE.md – bitte genau einhalten.",
+    "",
+    "**Wunsch W-"+w.id+"** (von "+wunschVorname(w.von_name)+", freigegeben vom Inhaber):",
+    "",
+    auftrag.split("\n").map(function(z){ return "> "+z; }).join("\n"),
+    "",
+    ort ? "Geschrieben wurde der Wunsch hier (nur zur Orientierung – bei Widerspruch gilt der Wunschtext): "+ort : "",
+    "",
+    "Nur `index.html` ändern (bei Bedarf `README.md`). Vor dem Abschluss `node tools/pruefen.mjs` ausführen.",
+    "Zum Schluss auf Deutsch kurz und für Nicht-Programmierer erklären, was geändert wurde und wie man es ausprobiert."].join("\n")};
+}
+/* Zahl am Reiter „Änderungswünsche“: was auf eine Entscheidung wartet */
+function wunschZahl(){ return WUENSCHE.filter(function(w){ return w.status==="neu"||(w.status==="vorschau"&&w.pruefung==="ok"); }).length; }
+function wunschReiterNeu(){
+  var b=document.querySelector('[data-tab="wuensche"]'); if(!b) return;
+  var n=wunschZahl(); b.textContent="Änderungswünsche"+(n?" · "+n:"");
+}
+/* angefangene Texte je Konto: Wunsch (WUNSCH_ENTWURF) und Freigabe/
+   Nachbessern/Ablehnen (WUNSCH_TEXTE) – bis der Schritt geklappt hat */
+var WUNSCH_ENTWURF={}, WUNSCH_TEXTE={};
 function wuenscheLaden(){
   if(!wuenscheAn()) return Promise.resolve([]);
   return Store.sb.from("aenderungswuensche").select("*").order("erstellt",{ascending:false}).limit(200).then(function(r){
@@ -11056,31 +11148,39 @@ function wunschStatusHtml(w){
 function wunschSchicken(){
   if(!wuenscheAn()){ toast("Dafür bitte anmelden."); return; }
   var v=ansichtOeffnen("Änderung vorschlagen");
+  var ov=v.inhalt.closest(".assistent"); ov.setAttribute("data-konto","");   /* gehört zum Konto – beim Kontowechsel zu */
   v.schritt.textContent="Idee, Fehler oder fehlender Knopf – geht zuerst ans Büro";
   var reiter=(VIEWS.filter(function(x){ return x[0]===S.view; })[0]||[S.view,S.view])[1];
-  var markt=(S.view==="verwaltung" && S.adm && S.adm.sel && byId[S.adm.sel]) ? stName(byId[S.adm.sel]) : "";
-  var kontext=["geschrieben im Reiter „"+reiter+"“", markt?"Markt "+markt:"", window.innerWidth<700?"am Handy":"am PC"].filter(Boolean).join(" · ");
+  /* nur Reiter und Gerät – kein Markt: der Text steht später öffentlich auf GitHub */
+  var kontext=["geschrieben im Reiter „"+reiter+"“", window.innerWidth<700?"am Handy":"am PC"].join(" · ");
   var box=el('<div class="stack">'+
     '<label class="fl"><span>Was soll anders sein?</span><textarea rows="6" data-a="text" maxlength="4000" '+
       'placeholder="z. B. Beim Protokoll soll der Knopf „Fotos“ ganz oben stehen, weil man ihn sonst suchen muss."></textarea></label>'+
-    '<div class="muted" style="font-size:12.5px">Mitgeschickt wird: '+esc(kontext)+"</div>"+
+    '<div class="muted" style="font-size:12.5px">Mitgeschickt wird: '+esc(kontext)+" · als Absender auf GitHub nur „"+esc(wunschVorname(wunschName()))+"“</div>"+
     '<div class="note"><strong>So geht es weiter:</strong> Der Inhaber sieht den Wunsch und entscheidet. Wird er umgesetzt, '+
       "steht der Text auf GitHub (öffentlich) – bitte <strong>keine Namen, Adressen, Telefonnummern oder Passwörter</strong> hineinschreiben.</div>"+
     '<div class="note warnbox" data-a="fehler" hidden></div>'+
     '<div data-a="meine" class="stack"></div></div>');
   v.inhalt.appendChild(box);
-  var fe=box.querySelector('[data-a="fehler"]');
+  var fe=box.querySelector('[data-a="fehler"]'), ta=box.querySelector('[data-a="text"]'), uid=Store.benutzer.id;
+  /* der angefangene Text bleibt (je Konto), bis er geschickt ist */
+  ta.value=WUNSCH_ENTWURF[uid]||"";
+  ta.oninput=function(){ WUNSCH_ENTWURF[uid]=ta.value; };
   var ab=el('<button class="btn ghost" type="button">Abbrechen</button>'), los=el('<button class="btn" type="button">Wunsch schicken</button>');
-  ab.onclick=v.zu;
+  var schliessen=function(){
+    if(ta.value.trim() && !window.confirm("Der Wunsch ist noch nicht geschickt.\n\nText verwerfen?")) return;
+    delete WUNSCH_ENTWURF[uid]; v.zu();
+  };
+  ab.onclick=schliessen; ov.querySelector('[data-a="zu"]').onclick=schliessen;
+  var nichtGeschickt=function(m){ los.disabled=false; los.textContent="Wunsch schicken"; fe.textContent=m; fe.hidden=false; };
   los.onclick=function(){
-    var t=box.querySelector('[data-a="text"]').value.trim();
+    var t=ta.value.trim();
     if(t.length<5){ fe.textContent="Bitte kurz beschreiben, was anders sein soll."; fe.hidden=false; return; }
-    los.disabled=true; los.textContent="wird geschickt …";
-    Store.sb.from("aenderungswuensche").insert({text:t, kontext:kontext, von_name:wunschName()}).then(function(r){
-      if(r.error){ los.disabled=false; los.textContent="Wunsch schicken";
-        fe.textContent=/relation|does not exist/i.test(r.error.message)?"Änderungswünsche sind noch nicht eingerichtet.":"Nicht geschickt: "+r.error.message; fe.hidden=false; return; }
-      v.zu(); toast("Danke – der Wunsch ist beim Büro.");
-    });
+    los.disabled=true; los.textContent="wird geschickt …"; fe.hidden=true;
+    mitFrist(Store.sb.from("aenderungswuensche").insert({text:t, kontext:kontext, von_name:wunschName()}), 20000).then(function(r){
+      if(r.error) return nichtGeschickt(/relation|does not exist/i.test(r.error.message)?"Änderungswünsche sind noch nicht eingerichtet.":"Nicht geschickt: "+r.error.message);
+      delete WUNSCH_ENTWURF[uid]; v.zu(); toast("Danke – der Wunsch ist beim Büro.");
+    }).catch(function(x){ nichtGeschickt("Nicht geschickt: "+(x.message||x)+" – der Text bleibt hier stehen, bitte nochmals versuchen."); });
   };
   v.fuss.appendChild(ab); v.fuss.appendChild(los);
   /* eigene Wünsche und ihr Stand */
@@ -11114,6 +11214,7 @@ function wuenscheAnsicht(){
     filterBox.innerHTML=FILTER.map(function(f){ var n=WUENSCHE.filter(function(w){ var alt=S.wunschFilter; S.wunschFilter=f[0]; var p=passt(w); S.wunschFilter=alt; return p; }).length;
       return '<button class="chip" type="button" data-f="'+f[0]+'" aria-pressed="'+(S.wunschFilter===f[0])+'">'+f[1]+" · "+n+"</button>"; }).join("");
     filterBox.querySelectorAll("[data-f]").forEach(function(b){ b.onclick=function(){ S.wunschFilter=b.dataset.f; zeichnen(); }; });
+    wunschReiterNeu();   /* die Zahl am Reiter gleich mit */
     liste.innerHTML="";
     var l=WUENSCHE.filter(passt);
     if(!l.length){ liste.appendChild(el('<div class="muted">Keine Wünsche in dieser Auswahl.</div>')); return; }
@@ -11168,7 +11269,77 @@ function wunschAenderungen(w){
 /* Vorschau eines Änderungswunsches IN der App: die geänderte Seite vom Stand
    des Zweigs holen und als Vollbild einbetten – gleiche Adresse, also gleiche
    Anmeldung und gleiches Datenpasswort, kein Link, kein erneutes Eingeben.
-   Mit UKT_VORSCHAU läuft sie wie die Präsentation: nichts wird gespeichert. */
+   Mit UKT_VORSCHAU läuft sie wie die Präsentation: nichts wird gespeichert.
+   Zusätzlich sperrt vorschauSchutz das Speichern von außen – das hängt nicht
+   daran, dass der noch ungeprüfte Code überall demo() beachtet. */
+/* Läuft in der eingebetteten Seite VOR allen ihren Skripten (als Text
+   eingesetzt): nichts Schreibendes geht an die Datenbank (auch keine
+   Anmeldung/Token-Erneuerung), Gerätespeicher und Anmeldung der echten App
+   bleiben unberührt. Gegen absichtlich bösartigen Code (Zugriff über
+   window.parent) hilft das nicht – die Zweige legt nur Claude auf Auftrag
+   des Inhabers an. */
+function vorschauSchutz(supa){
+  var W=window;
+  var zuSupabase=function(u){ u=String(u||""); var c=(W.UKT_CONFIG||{}).supabaseUrl; return (!!supa && u.indexOf(supa)===0) || (!!c && u.indexOf(c)===0); };
+  /* nur Lesen (GET/HEAD) darf zur Datenbank */
+  var gesperrt=function(m, u){ m=String(m||"GET").toUpperCase(); return m!=="GET" && m!=="HEAD" && zuSupabase(u); };
+  var f=W.fetch;
+  W.fetch=function(u, o){
+    if(gesperrt((o&&o.method)||(u&&u.method), (u&&u.url)||u))
+      return Promise.resolve(new Response(JSON.stringify({message:"Vorschau – gespeichert wird nichts", fehler:"Vorschau – gespeichert wird nichts."}),
+        {status:403, headers:{"Content-Type":"application/json"}}));
+    return f.apply(this, arguments);
+  };
+  var X=W.XMLHttpRequest && W.XMLHttpRequest.prototype;
+  if(X){
+    var xo=X.open, xs=X.send;
+    X.open=function(m, u){ this.ukt_gesperrt=gesperrt(m, u); return xo.apply(this, arguments); };
+    X.send=function(){
+      if(!this.ukt_gesperrt) return xs.apply(this, arguments);
+      var x=this; setTimeout(function(){ x.dispatchEvent(new Event("error")); x.dispatchEvent(new Event("loadend")); }, 0);
+    };
+  }
+  if(W.navigator && W.navigator.sendBeacon){ var sb=W.navigator.sendBeacon; W.navigator.sendBeacon=function(u){ return zuSupabase(u) ? false : sb.apply(W.navigator, arguments); }; }
+  /* Supabase gleicht die Anmeldung zwischen Fenstern darüber ab – die Vorschau meldet nichts an die App */
+  W.BroadcastChannel=function(){ return {postMessage:function(){}, close:function(){}, addEventListener:function(){}, removeEventListener:function(){}}; };
+  /* Gerätespeicher: lesen wie die App (Anmeldung, Einstellungen), geschrieben
+     wird nur in den Arbeitsspeicher der Vorschau */
+  var SP=W.Storage && W.Storage.prototype;
+  if(SP){
+    var gi=SP.getItem, lagen=[];
+    var ablage=function(s){ for(var i=0;i<lagen.length;i++) if(lagen[i].s===s) return lagen[i]; var n={s:s, werte:{}, weg:{}, alles:false}; lagen.push(n); return n; };
+    SP.getItem=function(k){ var a=ablage(this); k=String(k);
+      if(Object.prototype.hasOwnProperty.call(a.werte, k)) return a.werte[k];
+      return (a.alles || a.weg[k]) ? null : gi.call(this, k); };
+    SP.setItem=function(k, v){ var a=ablage(this); k=String(k); a.werte[k]=String(v); delete a.weg[k]; };
+    SP.removeItem=function(k){ var a=ablage(this); k=String(k); delete a.werte[k]; a.weg[k]=true; };
+    SP.clear=function(){ var a=ablage(this); a.werte={}; a.weg={}; a.alles=true; };
+    /* auch „localStorage.x = …“ und „delete localStorage.x“ */
+    ["localStorage","sessionStorage"].forEach(function(n){
+      try{
+        var echt=W[n], p=new Proxy(echt, {
+          get:function(t, k){
+            if(["getItem","setItem","removeItem","clear","key"].indexOf(k)>=0) return function(){ return SP[k].apply(t, arguments); };
+            if(typeof k!=="string" || k in SP) return t[k];
+            var v=SP.getItem.call(t, k); return v===null ? undefined : v;
+          },
+          set:function(t, k, v){ SP.setItem.call(t, k, v); return true; },
+          deleteProperty:function(t, k){ SP.removeItem.call(t, k); return true; }
+        });
+        Object.defineProperty(W, n, {configurable:true, enumerable:true, get:function(){ return p; }});
+      }catch(e){}
+    });
+  }
+  /* Datenbank am Gerät: eine eigene mit Vorsilbe – die der echten App
+     (Warteschlange, Entwurf) bleibt unberührt; beim Schließen wieder gelöscht */
+  var IF=W.IDBFactory && W.IDBFactory.prototype;
+  if(IF){
+    var io=IF.open, idel=IF.deleteDatabase; W.UKT_VORSCHAU_DBS=[];
+    IF.open=function(name){ var a=[].slice.call(arguments); a[0]="vorschau-"+name;
+      if(W.UKT_VORSCHAU_DBS.indexOf(a[0])<0) W.UKT_VORSCHAU_DBS.push(a[0]); return io.apply(this, a); };
+    IF.deleteDatabase=function(name){ return idel.call(this, "vorschau-"+name); };
+  }
+}
 function wunschVorschau(w){
   var zweig=String(w.branch||""), roh=function(ref){ return "https://raw.githubusercontent.com/"+WUNSCH_REPO+"/"+ref+"/index.html"; };
   toast("Vorschau wird geladen …");
@@ -11180,17 +11351,26 @@ function wunschVorschau(w){
   stand.then(function(ref){ return fetch(roh(ref), {cache:"no-store"}); })
     .then(function(r){ if(!r.ok) throw new Error("Vorschau nicht gefunden ("+r.status+")."); return r.text(); })
     .then(function(html){
-      /* ältere Vorschauen kennen den Schutz noch nicht – dann ehrlich warnen */
-      if(html.indexOf("UKT_VORSCHAU")<0 && !window.confirm("Diese Vorschau stammt aus einer älteren Fassung der App und hat den Speicherschutz noch nicht – "+
-        "dort Eingegebenes würde echt gespeichert.\n\nNur ansehen, nichts speichern. Trotzdem öffnen?")) return;
-      html=html.replace(/<head(\s[^>]*)?>/i,'<head$1><script>window.UKT_VORSCHAU='+JSON.stringify("W-"+w.id)+';<\/script>');
+      /* ältere Vorschauen kennen demo() noch nicht – gespeichert wird trotzdem
+         nichts (vorschauSchutz), einzelne Knöpfe melden dann aber Fehler */
+      if(html.indexOf("UKT_VORSCHAU")<0 && !window.confirm("Diese Vorschau stammt aus einer älteren Fassung der App. Gespeichert wird nichts, "+
+        "Knöpfe zum Speichern melden dort aber vielleicht einen Fehler.\n\nTrotzdem öffnen?")) return;
+      /* Schutz und Kennzeichen VOR allen Skripten der Seite: gleich hinter
+         <!DOCTYPE html> – die App hat kein eigenes <head>, dort griffe es nicht */
+      var schutz='<script>('+vorschauSchutz.toString()+')('+JSON.stringify(String(CFG.supabaseUrl||""))+');window.UKT_VORSCHAU='+JSON.stringify("W-"+w.id)+';<\/script>';
+      html=html.replace(/^(﻿?\s*<!DOCTYPE[^>]*>)?/i, function(m){ return m+schutz; });
       var ov=el('<div class="vorschau-rahmen" style="position:fixed;inset:0;z-index:5000;background:var(--ground);display:flex;flex-direction:column">'+
         '<div style="display:flex;align-items:center;gap:10px;justify-content:space-between;padding:8px 12px calc(8px) 12px;padding-top:calc(8px + env(safe-area-inset-top,0px));'+
           'background:#7a3fb0;color:#fff;font-size:14px"><span><strong>Vorschau W-'+esc(w.id)+'</strong> – gespeichert wird nichts</span>'+
-          '<button class="btn sm" type="button" style="background:#fff;color:#7a3fb0;border-color:#fff">Vorschau schließen</button></div>'+
+          '<button class="btn sm" type="button" data-a="zu" style="background:#fff;color:#7a3fb0;border-color:#fff">Vorschau schließen</button></div>'+
         '<iframe title="Vorschau" style="flex:1;border:0;width:100%;background:var(--ground)"></iframe></div>');
       var alt=document.body.style.overflow; document.body.style.overflow="hidden";
-      ov.querySelector("button").onclick=function(){ ov.remove(); document.body.style.overflow=alt; };
+      ov.querySelector("button").onclick=function(){
+        var dbs=[]; try{ dbs=(ov.querySelector("iframe").contentWindow.UKT_VORSCHAU_DBS||[]).slice(); }catch(e){}
+        ov.remove(); document.body.style.overflow=alt;
+        /* die Gerätedatenbank der Vorschau (Vorsilbe „vorschau-“) wieder weg */
+        dbs.forEach(function(n){ if(/^vorschau-/.test(n)) try{ indexedDB.deleteDatabase(n); }catch(e){} });
+      };
       document.body.appendChild(ov);
       ov.querySelector("iframe").srcdoc=html;
     }).catch(function(e){ window.alert("Vorschau ließ sich nicht laden: "+(e&&e.message||e)); });
@@ -11226,67 +11406,107 @@ function wunschKarte(w, neuLaden){
   var vl=k.querySelector('[data-a="vorschau"]'); if(vl) vl.onclick=function(e){ e.preventDefault(); wunschVorschau(w); };
   var knopf=function(text, art, fn){ var b=el('<button class="btn '+(art||"ghost")+' sm" type="button">'+esc(text)+"</button>");
     b.onclick=function(){ fn(b); }; kn.appendChild(b); };
-  var ausfuehren=function(b, body, erfolg){
-    b.disabled=true; var t=b.textContent; b.textContent="bitte warten …";
-    wunschFunktion(body).then(function(){ toast(erfolg); return neuLaden(false); },
-      function(e){ b.disabled=false; b.textContent=t; window.alert(e.message); });
+  /* während ein Schritt läuft, sind alle Knöpfe der Karte gesperrt */
+  var sperren=function(zu){ kn.querySelectorAll("button").forEach(function(x){ x.disabled=zu; }); };
+  /* liefert null (geklappt) oder die Fehlermeldung; die Liste wird in jedem
+     Fall neu geladen – nach einer Zeitüberschreitung stimmt sie sonst nicht mehr */
+  var ausfuehren=function(b, body, erfolg, vorher){
+    sperren(true); var t=b.textContent; b.textContent="bitte warten …";
+    return wunschFunktion(body).then(function(){ toast(erfolg); if(vorher) vorher(); neuLaden(false); return null; },
+      function(e){ sperren(false); b.textContent=t; neuLaden(false); return e.message||String(e); });
   };
-  var textFragen=function(titel, hinweis, vorgabe, knopfText){
-    return new Promise(function(fertig){
-      var v=ansichtOeffnen(titel); v.schritt.textContent="W-"+w.id;
-      var box=el('<div class="stack"><div class="muted" style="font-size:13px">'+hinweis+'</div><textarea rows="7" style="width:100%"></textarea></div>');
-      box.querySelector("textarea").value=vorgabe||"";
-      v.inhalt.appendChild(box);
-      var ab=el('<button class="btn ghost" type="button">Abbrechen</button>'), ok=el('<button class="btn" type="button">'+esc(knopfText)+"</button>");
-      ab.onclick=function(){ v.zu(); fertig(null); };
-      ok.onclick=function(){ var t=box.querySelector("textarea").value.trim(); v.zu(); fertig(t); };
-      v.fuss.appendChild(ab); v.fuss.appendChild(ok);
-    });
+  var meldeFehler=function(f){ if(f) window.alert(f); };
+  /* Text abfragen und damit den Schritt ausführen: aktion(text) liefert einen
+     Hinweis (Text zu kurz …) oder ein Promise mit null bzw. der Fehlermeldung.
+     Der Dialog bleibt offen, bis der Schritt geklappt hat; der Text bleibt
+     auch beim Schließen gemerkt (WUNSCH_TEXTE). vorschau(text) zeigt darunter,
+     was öffentlich wird. */
+  var textFragen=function(titel, hinweis, vorgabe, knopfText, aktion, vorschau){
+    var schluessel=(Store.benutzer&&Store.benutzer.id)+"|"+w.id+"|"+titel;
+    var v=ansichtOeffnen(titel); v.schritt.textContent="W-"+w.id;
+    v.inhalt.closest(".assistent").setAttribute("data-konto","");
+    var box=el('<div class="stack"><div class="muted" style="font-size:13px">'+hinweis+'</div><textarea rows="7" style="width:100%"></textarea>'+
+      '<div class="note warnbox" data-a="fehler" hidden></div><div data-a="vorschau"></div></div>');
+    var ta=box.querySelector("textarea"), fe=box.querySelector('[data-a="fehler"]'), vs=box.querySelector('[data-a="vorschau"]');
+    ta.value=schluessel in WUNSCH_TEXTE ? WUNSCH_TEXTE[schluessel] : (vorgabe||"");
+    var zeigeVorschau=function(){ if(!vorschau) return; vs.innerHTML=""; vs.appendChild(vorschau(ta.value.trim())); };
+    ta.oninput=function(){ WUNSCH_TEXTE[schluessel]=ta.value; zeigeVorschau(); };
+    zeigeVorschau();
+    v.inhalt.appendChild(box);
+    var ab=el('<button class="btn ghost" type="button">Abbrechen</button>'), ok=el('<button class="btn" type="button">'+esc(knopfText)+"</button>");
+    ab.onclick=v.zu;
+    ok.onclick=function(){
+      fe.hidden=true;
+      var p=aktion(ta.value.trim());
+      if(typeof p==="string"){ fe.textContent=p; fe.hidden=false; return; }
+      ok.disabled=ab.disabled=true; ok.textContent="bitte warten …";
+      p.then(function(f){
+        if(!f){ delete WUNSCH_TEXTE[schluessel]; v.zu(); return; }
+        ok.disabled=ab.disabled=false; ok.textContent=knopfText;
+        fe.textContent=f+" – der Text bleibt hier stehen."; fe.hidden=false;
+      });
+    };
+    v.fuss.appendChild(ab); v.fuss.appendChild(ok);
   };
   if(w.status==="neu"||w.status==="fehler"){
     knopf("An Claude freigeben …","",function(b){
-      textFragen("An Claude freigeben", "So geht der Auftrag an Claude – du kannst ihn noch klarer formulieren. Er steht danach öffentlich auf GitHub: "+
-        "keine Namen, Adressen oder Passwörter.", w.text, "Freigeben").then(function(t){
-        if(t===null) return; if(t.length<5){ toast("Der Auftrag ist zu kurz."); return; }
-        ausfuehren(b, {aktion:"freigeben", id:w.id, text:t}, "An Claude weitergegeben – das dauert meist ein paar Minuten.");
-      });
+      textFragen("An Claude freigeben", "So geht der Auftrag an Claude – du kannst ihn noch klarer formulieren. Unten steht der ganze Text, "+
+        "der danach <strong>öffentlich auf GitHub</strong> steht: keine Namen, Adressen oder Passwörter.", w.text, "Freigeben",
+        function(t){
+          if(t.length<5) return "Der Auftrag ist zu kurz.";
+          return ausfuehren(b, {aktion:"freigeben", id:w.id, text:t}, "An Claude weitergegeben – das dauert meist ein paar Minuten.");
+        },
+        function(t){
+          var it=wunschIssueText(w, t||"…");
+          var d=el('<div class="stack" style="gap:4px"><div class="as-label">Öffentlich auf GitHub</div>'+
+            '<div style="white-space:pre-wrap;font:12px/1.45 var(--f-mono);border:1px solid var(--line);border-radius:8px;padding:8px;background:var(--ground)"></div></div>');
+          d.lastChild.textContent="Titel: "+it.titel+"\n\n"+it.text;
+          return d;
+        });
     });
   }
   if(w.status==="vorschau"){
     if(w.pruefung==="ok") knopf("Übernehmen – in die echte App","",function(b){
       if(!window.confirm("W-"+w.id+" in die echte App übernehmen?\n\nDie Änderung gilt danach für alle (nach 1–2 Minuten, beim nächsten Laden). "+
         "Zurücknehmen geht über einen neuen Wunsch.")) return;
-      ausfuehren(b, {aktion:"uebernehmen", id:w.id}, "Übernommen – in 1–2 Minuten in der App.");
+      ausfuehren(b, {aktion:"uebernehmen", id:w.id}, "Übernommen – in 1–2 Minuten in der App.").then(meldeFehler);
     });
     knopf("Nachbessern lassen …","",function(b){
-      textFragen("Nachbessern lassen", "Was soll Claude noch ändern?", "", "Schicken").then(function(t){
-        if(!t) return; ausfuehren(b, {aktion:"nachbessern", id:w.id, text:t}, "Claude bessert nach.");
-      });
+      textFragen("Nachbessern lassen", "Was soll Claude noch ändern? Steht öffentlich auf GitHub – keine Namen, Adressen oder Passwörter.", "", "Schicken",
+        function(t){ if(!t) return "Bitte beschreiben, was noch anders sein soll."; return ausfuehren(b, {aktion:"nachbessern", id:w.id, text:t}, "Claude bessert nach."); });
     });
   }
   /* Übernommenes zurücknehmen: wieder als Vorschlag mit Prüfung – erst dein
-     „Übernehmen“ macht es in der App rückgängig */
-  if(w.status==="uebernommen") knopf("Rückgängig machen …","",function(b){
+     „Übernehmen“ macht es in der App rückgängig. Nur einmal: läuft schon
+     eine Rücknahme, gibt es keine zweite. */
+  var ruecknahme=WUENSCHE.filter(function(x){ return String(x.rueckgaengig_von)===String(w.id) && ["neu","in_arbeit","vorschau","fehler"].indexOf(x.status)>=0; })[0];
+  if(w.status==="uebernommen" && ruecknahme) kn.appendChild(el('<span class="muted" style="font-size:12.5px">Rücknahme läuft: W-'+esc(ruecknahme.id)+"</span>"));
+  else if(w.status==="uebernommen") knopf("Rückgängig machen …","",function(b){
     if(!window.confirm("Die Änderung W-"+w.id+" zurücknehmen?\n\nEs entsteht ein neuer Eintrag „Rückgängig: …“ mit Vorschau und automatischer Prüfung. "+
       "In der App ändert sich erst etwas, wenn du ihn übernimmst.")) return;
-    ausfuehren(b, {aktion:"rueckgaengig", id:w.id}, "Rücknahme vorbereitet – steht jetzt oben in der Liste.");
+    /* den neuen Eintrag auch zeigen: er steht unter „Offen“ */
+    ausfuehren(b, {aktion:"rueckgaengig", id:w.id}, "Rücknahme vorbereitet – steht jetzt oben unter „Offen“.", function(){ S.wunschFilter="offen"; }).then(meldeFehler);
   });
   if(w.status==="in_arbeit"||w.status==="vorschau") knopf("Stand abfragen","",function(b){
     b.disabled=true; neuLaden(true);
   });
   if(["neu","in_arbeit","vorschau","fehler"].indexOf(w.status)>=0) knopf("Ablehnen …","",function(b){
-    textFragen("Wunsch ablehnen", "Grund (sieht auch, wer den Wunsch geschickt hat):", "", "Ablehnen").then(function(t){
-      if(t===null) return;
-      if(!w.issue_nr){   /* noch nicht bei GitHub: direkt hier */
-        b.disabled=true;
-        Store.sb.from("aenderungswuensche").update({status:"abgelehnt", notiz:t||null, geaendert:new Date().toISOString(),
-          verlauf:(w.verlauf||[]).concat([{zeit:new Date().toISOString(), wer:wunschName(), schritt:"abgelehnt"+(t?": "+t:"")}])}).eq("id", w.id).then(function(r){
-          if(r.error){ b.disabled=false; window.alert(r.error.message); return; }
-          toast("Abgelehnt."); neuLaden(false);
-        });
-        return;
+    textFragen("Wunsch ablehnen", "Grund (sieht auch, wer den Wunsch geschickt hat"+
+      (w.issue_nr?"; steht außerdem öffentlich auf GitHub – keine Namen oder Adressen":"")+"):", "", "Ablehnen", function(t){
+      /* noch gar nicht bei GitHub (kein Auftrag, kein Pull Request, kein Zweig): direkt hier –
+         aber nur, wenn der Wunsch noch so ist wie hier angezeigt */
+      if(!w.issue_nr && !w.pr_nr && !w.branch){
+        sperren(true);
+        return mitFrist(Store.sb.from("aenderungswuensche").update({status:"abgelehnt", notiz:t||null, geaendert:new Date().toISOString(),
+          verlauf:(w.verlauf||[]).concat([{zeit:new Date().toISOString(), wer:wunschName(), schritt:"abgelehnt"+(t?": "+t:"")}])})
+          .eq("id", w.id).eq("status", w.status).is("issue_nr", null).is("pr_nr", null).is("branch", null).select("id"), 20000).then(function(r){
+          if(r.error) throw new Error(r.error.message);
+          neuLaden(false);
+          if(!r.data || !r.data.length) return "Der Wunsch hat sich inzwischen geändert (oder ist schon bei GitHub) – bitte in der neu geladenen Liste nochmals ablehnen";
+          toast("Abgelehnt."); return null;
+        }).catch(function(e){ sperren(false); return e.message||String(e); });
       }
-      ausfuehren(b, {aktion:"ablehnen", id:w.id, text:t}, "Abgelehnt.");
+      return ausfuehren(b, {aktion:"ablehnen", id:w.id, text:t}, "Abgelehnt.");
     });
   });
   return k;

@@ -60,12 +60,14 @@ Deno.serve(async (req) => {
 
   // ---- Weg über GitHub: Claude Code beantwortet die Frage im Abo (kostet nichts
   // extra, dauert 1–2 Minuten). Das Repository ist öffentlich – die App schickt
-  // auf diesem Weg deshalb keine Adressen und keine Marktübersicht mit.
+  // auf diesem Weg deshalb nur Fragen und Antworten, die selbst über GitHub
+  // liefen, den Markt nur als „Markt A“ (ohne Namen, Adresse, Störungstexte)
+  // und statt der Marktübersicht erfundene Testdaten.
   if (e.weg === "github") {
     if (!GH_TOKEN) return antwort({ fehler: "GitHub-Zugang fehlt (Secret GITHUB_TOKEN_WUENSCHE)." }, 500);
     const verlauf = l.slice(0, -1).map((n) => (n.role === "user" ? "Frage: " : "Antwort: ") + n.content).join("\n\n");
     const frage = l[l.length - 1].content;
-    const kontext = String(e.kontext ?? "").slice(0, 12000);   // Markt ohne Adresse bzw. Testdaten
+    const kontext = String(e.kontext ?? "").slice(0, 12000);   // „Markt A“ bzw. Testdaten
     const body = [
       "@claude Bitte diese Frage aus dem Wartungsleitstand beantworten. **Nur antworten – nichts ändern, keinen Zweig, keinen Pull Request.**",
       "Antworte auf Deutsch, kurz und praxisnah, so wie in CLAUDE.md beschrieben (Kältetechnik, Vorschriften, Terminregeln, die App in index.html).",
