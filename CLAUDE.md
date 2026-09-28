@@ -57,7 +57,13 @@ Kammerlander Umwelt- und Klimatechnik (UKT) – oft kurz, vom Handy, im Feld.
   Termin und zugleich für den versäumten. Der versäumte bekommt nur den
   Vermerk „mit erledigt durch Wartung vom …“ (keine Warnung in Nachbessern).
   Ohne spätere Wartung bleibt ein versäumter Termin überfällig – auch wenn der
-  nächste schon in der 30-Tage-Frist steht.
+  nächste schon in der 30-Tage-Frist steht; „überfällig seit“ nennt dann den
+  ältesten in Folge versäumten Termin.
+- Eine aktuelle Wartung an EINEM Termin der Anlage erledigt auch einen
+  versäumten ANDEREN Termin derselben Anlage mit (JW gemacht → offene HJI ist
+  mit erledigt, egal wie lange sie zurückliegt; Büro 28.09.2026, Braunau).
+- Wiederkehrende Störungen: ab 3 Störungen in 90 Tagen an derselben Anlage
+  (`WIEDERKEHR_ANZAHL`, `WIEDERKEHR_TAGE`) – Markierung, kein Eingriff.
 - „Zählt als“ im Protokoll (`fillPos`): ist ein Termin versäumt und liegt der
   nächste Termin der Anlage höchstens 3 Monate nach dem Protokolldatum, ist
   der nächste vorgewählt.

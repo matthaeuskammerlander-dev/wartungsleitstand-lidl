@@ -1254,7 +1254,9 @@ function berechneFaelligkeiten(){
       /* ein ANDERER Termin derselben Anlage */
       var L=zeilen.filter(function(q){ return q!==p; }).map(function(q){ return q.letzte; }).filter(Boolean).sort().pop();
       if(!L || !(p.naechste<L)) return;
-      if(L>plusMonate(p.naechste,12)) return;             /* ein Jahr später hilft das nicht mehr */
+      /* auch wenn der versäumte Termin schon Jahre zurückliegt (Büro 28.09.2026,
+         Braunau: JW gerade gemacht, HJI seit über 1000 Tagen offen – die Anlage
+         ist damit nicht überfällig; der Halbjahrestermin kommt als nächstes) */
       var j=+L.slice(0,4), n=ankerIm(p.anker,j);
       while(n<=L){ j++; n=ankerIm(p.anker,j); }
       p.ausgelassen=p.naechste; p.ueberholtDurch=L;
@@ -1284,6 +1286,7 @@ function berechneFaelligkeiten(){
       : "unbekannt";
     s.offen=s.pos.filter(function(p){ return p.status==="ueberfaellig"||p.status==="faellig"; }).length;
   });
+  wiederkehrBerechnen();   /* wiederkehrende Störungen je Anlage – hängen an denselben Daten */
 }
 berechneFaelligkeiten();
 
@@ -4283,6 +4286,7 @@ function anlagenBloecke(s, host){
     var d=anlageDaten(a.leader), l=anlageLuecken(d);
     var blk=el('<div class="akarte" style="background:var(--surface)"><div class="rowflex" style="justify-content:space-between;gap:8px">'+
       '<strong style="font-size:15px">'+esc(anlagenName(d))+"</strong>"+
+      (WIEDERKEHR[a.id] ? '<span class="pill p-ueberfaellig" title="'+esc(wiederkehrText(WIEDERKEHR[a.id]))+'">⚠ wiederkehrende Störung</span>' : "")+
       '<span class="muted" style="font-size:12px">'+a.termine.length+" Termin"+(a.termine.length===1?"":"e")+" im Jahr</span></div>"+
       '<div style="font-size:13px">'+(anlageKurz(d)?esc(anlageKurz(d)):'<span class="muted">Anlagendaten noch nicht erfasst</span>')+"</div>"+
       /* offene Angaben einzeln antippbar – führt direkt zur Frage */
@@ -4324,6 +4328,32 @@ function anlagenBloecke(s, host){
   });
 }
 /* Offene Störungen, die ausdrücklich an dieser Anlage hängen */
+/* Wiederkehrende Störungen: ab WIEDERKEHR_ANZAHL Störungen in WIEDERKEHR_TAGE
+   Tagen an derselben Anlage (Schwelle vom Büro 28.09.2026). Offene Störungen
+   und Störungsprotokolle zählen zusammen; was zum selben Besuch gehört
+   (≤ BESUCH_TAGE), zählt einmal. Ergebnis je Anlage in WIEDERKEHR. */
+var WIEDERKEHR_ANZAHL=3, WIEDERKEHR_TAGE=90, WIEDERKEHR={};
+function wiederkehrBerechnen(){
+  WIEDERKEHR={};
+  var ab=isoLokal(new Date(Date.now()-WIEDERKEHR_TAGE*864e5)), je={};
+  var merken=function(zeileId, datum){
+    var p=posById[zeileWeiter(zeileId)]; if(!p || !datum || datum<ab) return;
+    var a=anlageVon(p); (je[a.id]=je[a.id]||[]).push(datum.slice(0,10));
+  };
+  /* beim allerersten Durchlauf (Start) sind die Störungen noch nicht geladen */
+  (typeof OFFENE!=="undefined" && OFFENE ? OFFENE : []).forEach(function(o){ if(!o.geloescht && o.positionId) merken(o.positionId, (o.erfasstAm||o.auftragsdatum||"")); });
+  alleProtokolle().forEach(function(pr){
+    if(!istStoerung(pr) || !pr.datum) return;
+    protokollZeilen(pr).forEach(function(id){ merken(id, pr.datum); });
+  });
+  Object.keys(je).forEach(function(aid){
+    var tage=je[aid].sort(), einzeln=[];
+    tage.forEach(function(d){ if(!einzeln.length || !gleicherBesuch(einzeln[einzeln.length-1], d)) einzeln.push(d); });
+    if(einzeln.length>=WIEDERKEHR_ANZAHL) WIEDERKEHR[aid]={n:einzeln.length, seit:einzeln[0]};
+  });
+}
+function wiederkehrVon(p){ var a=p && anlageVon(p); return a ? WIEDERKEHR[a.id]||null : null; }
+function wiederkehrText(w){ return w.n+" Störungen seit "+dfmt(w.seit)+" – wiederkehrend, Ursache prüfen"; }
 function stoerungenDerAnlage(a){
   var ids=a.termine.map(function(t){ return t.id; });
   return offeneStoerungen(true).filter(function(o){ return o.positionId && ids.indexOf(zeileWeiter(o.positionId))>=0; });
@@ -4382,6 +4412,8 @@ function anlageHistorieAnsicht(leader, ohneStoerung){
   var v=ansichtOeffnen(anlagenName(d));
   v.schritt.innerHTML=s?marktLink(s):"";
   var box=el('<div class="stack"></div>');
+  var wk=wiederkehrVon(leader);
+  if(wk) box.appendChild(el('<div class="note warnbox"><strong>⚠ Wiederkehrende Störung:</strong> '+esc(wiederkehrText(wk))+'.</div>'));
   stoerungenDerAnlage(anlageVon(leader)).forEach(function(o){ if(o._id!==ohneStoerung) box.appendChild(stoerungEintrag(o,true)); });
   var h=anlageHistorie(leader);
   if(!h.length) box.appendChild(el('<div class="muted">Für diese Anlage ist noch nichts erfasst.</div>'));
@@ -4413,7 +4445,8 @@ function posBox(p,s,imBlock){
   var zurVerw=verwaltungDarf() && !demo();
   var b=el('<div class="posbox" data-status="'+esc(p.status)+'" data-pid="'+esc(p.id)+'">'+
     '<div class="rowflex" style="justify-content:space-between;gap:8px">'+
-      '<strong style="font-size:14px">'+esc(imBlock?p.intervall.art:anlagenName(p))+"</strong>"+pill(p.status)+"</div>"+
+      '<strong style="font-size:14px">'+esc(imBlock?p.intervall.art:anlagenName(p))+"</strong>"+pill(p.status)+
+      (!imBlock && wiederkehrVon(p) ? ' <span class="pill p-ueberfaellig" title="'+esc(wiederkehrText(wiederkehrVon(p)))+'">⚠ wiederkehrende Störung</span>' : "")+"</div>"+
     '<dl class="dl">'+
       "<dt>Art</dt><dd>"+esc(p.intervall.art)+
         (p.intervallCode?" <span class='muted mono'>("+esc(p.intervallCode)+")</span>":"")+"</dd>"+
@@ -14129,6 +14162,13 @@ function pruefListe(){
     });
   });
 
+  /* 1b. wiederkehrende Störungen – eine Zeile je Anlage */
+  Object.keys(WIEDERKEHR).forEach(function(aid){
+    var a=ANLAGEN[aid]; if(!a || !a.leader) return;
+    var s=byId[a.leader.standortId]; if(!s) return;
+    dazu("Hinweis", "Störungen", anlagenName(anlageDaten(a.leader))+": "+wiederkehrText(WIEDERKEHR[aid]), s, {pid:a.leader.id});
+  });
+
   /* 2. Termine, um die sich jemand kümmern sollte */
   POS.forEach(function(p){
     var s=byId[p.standortId]; if(!s) return;
@@ -15154,6 +15194,8 @@ function handbuchKarte(z){
           "Anlage, eine Störung oder ein Protokoll beziehen – über „Bezug wählen“ oder direkt dort mit „Nachricht dazu“. Sie steht dann "+
           "auch bei der Sache selbst (beim Markt auch die zu seinen Anlagen, Störungen und Protokollen). Fotos möglich; ohne Netz geht "+
           "die Nachricht raus, sobald wieder Verbindung ist. Nur Büro und Techniker.",
+        "<strong>⚠ Wiederkehrende Störungen:</strong> ab 3 Störungen in 90 Tagen an derselben Anlage (offene Störungen und Störungsprotokolle, "+
+          "derselbe Besuch zählt einmal) – Markierung bei der Anlage und im Markt, Hinweis unter Nachbessern. Schwelle vom Büro, 28.09.2026.",
         "<strong>€ Abgerechnet:</strong> Inhaber setzen beim geöffneten Protokoll den Haken (mit Rechnungsnummer als Notiz); die Protokollliste "+
           "filtert mit „noch nicht abgerechnet“. Techniker und Kunde sehen davon nichts."]))+
 
