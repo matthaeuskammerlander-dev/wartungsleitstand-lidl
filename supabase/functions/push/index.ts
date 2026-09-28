@@ -191,8 +191,9 @@ async function senden() {
     if (r === "kunde" || r === "praesentation") return null;
     const arten = Array.isArray(abo.arten) ? abo.arten : [];
     // nur_user: persönliche Chat-Nachricht – nur der Empfänger bekommt sie
+    // nur_rolle: eine Rolle oder mehrere mit Komma („inhaber,admin“ – Wochenübersicht)
     const fuerMich = frisch.filter((e) =>
-      arten.includes(e.art) && e.von_user !== abo.user_id && (!e.nur_rolle || e.nur_rolle === r) && (!e.nur_user || e.nur_user === abo.user_id));
+      arten.includes(e.art) && e.von_user !== abo.user_id && (!e.nur_rolle || e.nur_rolle.split(",").includes(r)) && (!e.nur_user || e.nur_user === abo.user_id));
     return fuerMich.length ? schicken(app, abo, nachricht(fuerMich)) : null;
   }));
 }

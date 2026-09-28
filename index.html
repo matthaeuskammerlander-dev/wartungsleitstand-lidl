@@ -2848,6 +2848,8 @@ function viewFaellig(){
 
   /* Offene Störungen stehen ganz oben – sie warten, nicht der Kalender. */
   if(posteingangAn()) f.appendChild(posteingangKarte());
+  /* Wochenübersicht fürs Büro – dieselben Zahlen wie die Montag-Nachricht */
+  if(Admin.frei && !nurLesen()) f.appendChild(wochenKarte());
   f.appendChild(stoerungsKarte());
   f.appendChild(stoerungsKalender());
 
@@ -6630,6 +6632,7 @@ function storeNachRender(){
   /* die Karte nicht unter der Hand neu aufbauen – Zoom und Ausschnitt gingen verloren */
   if(darfRendern() && S.view!=="karte") render();
   stoerungEintraegeAuffrischen();   /* offene Fenster und Karte zeigen die Störungen wie sie jetzt sind */
+  kennzahlenSchreiben();            /* Stand für die Montag-Nachricht (Wochenübersicht) */
 }
 
 function initStore(versuch){
@@ -7575,7 +7578,8 @@ function angabenDialog(){
    die Funktion „push“ an (tools/push.sql). Nur Büro und Techniker.
    ================================================================ */
 var PUSH_ARTEN=[["stoerung","Störungen (neu, geändert, erledigt)"],["protokoll","Neue Protokolle"],["korrektur","Korrekturen und Löschungen"],
-  ["stammdaten","Markt- und Anlagendaten"],["chat","Team-Chat"],["wunsch","Änderungswünsche (nur Inhaber)"],["posteingang","Posteingang"]];
+  ["stammdaten","Markt- und Anlagendaten"],["chat","Team-Chat"],["wunsch","Änderungswünsche (nur Inhaber)"],["posteingang","Posteingang"],
+  ["wochen","Wochenübersicht – Montag früh (Büro)"]];
 var pushReg=null;     /* die Registrierung des Hintergrund-Helfers */
 function pushMoeglich(){ return "serviceWorker" in navigator && "PushManager" in window && "Notification" in window && !!window.isSecureContext; }
 function pushAn(){ return Store.modus==="supabase" && !!Store.sb && !!Store.benutzer && !demo() && !nurLesen(); }
@@ -7708,6 +7712,7 @@ function pushZiel(z, versuch){
   if(art==="wunsch"){ if(!verwaltungDarf()) return;
     springe({reiter:"verwaltung", alleFenster:true, finde:function(){ return document.querySelector('[data-wunsch="'+id+'"]'); }}); return; }
   if(art==="posteingang"){ springe({reiter:"faellig", alleFenster:true, block:"start"}); return; }
+  if(art==="wochen"){ springe({reiter:"faellig", alleFenster:true, block:"start", finde:function(){ return document.getElementById("wochenkarte"); }}); return; }
   if(art==="chat"){ chatOeffnen({zu:id}); return; }
   springe({reiter:"verlauf", alleFenster:true});
 }
@@ -12529,6 +12534,73 @@ function monatsberichtKarte(){
   k.appendChild(vs);
   return c;
 }
+/* ---------- Wochenübersicht: Karte im Reiter Fällig und Zahlen für die
+   Montag-Nachricht (tools/wochenuebersicht.sql: Tabelle kennzahlen, pg_cron).
+   Die Termine rechnet nur die App – darum schreibt sie ihren Stand in die
+   Datenbank, und der Zeitplan dort verschickt ihn Montag früh. ---------- */
+function wochenZahlen(){
+  var in7=isoLokal(new Date(Date.now()+7*864e5)), heute=isoLokal(new Date());
+  var ueber=[], woche=[];
+  ST.forEach(function(s){ s.pos.forEach(function(p){
+    if(p.status==="ueberfaellig") ueber.push({s:s, p:p});
+    else if(p.status==="faellig" && p.naechste && p.naechste<=in7) woche.push({s:s, p:p});
+  }); });
+  ueber.sort(function(a,b){ return String(a.p.naechste).localeCompare(String(b.p.naechste)); });
+  woche.sort(function(a,b){ return String(a.p.naechste).localeCompare(String(b.p.naechste)); });
+  var stoer=offeneStoerungen(true);
+  var bil=kaeltemittelBilanz(), lecks=Object.keys(bil).filter(function(k){ return bil[k].leck; }).length;
+  var nachb=0; try{ nachb=pruefListe().filter(function(x){ return x.schwere==="Fehler"; }).length; }catch(e){}
+  return {stand:heute, ueberfaellig:ueber.length, dieseWoche:woche.length, stoerungen:stoer.length,
+    zieltermine:stoer.filter(function(o){ return o.zieltermin && o.zieltermin<=in7; }).length,
+    wiederkehrend:Object.keys(WIEDERKEHR).length, leck:lecks, fehler:nachb, ueber:ueber, woche:woche, stoer:stoer};
+}
+function wochenText(z){
+  return [z.ueberfaellig+" überfällig", z.dieseWoche+" diese Woche fällig", z.stoerungen+" offene Störung"+(z.stoerungen===1?"":"en")+(z.zieltermine?" ("+z.zieltermine+" mit Zieltermin diese Woche)":""),
+    z.wiederkehrend?z.wiederkehrend+" wiederkehrend":"", z.leck?z.leck+" Leck-Verdacht":"", z.fehler?z.fehler+" Fehler unter Nachbessern":""].filter(Boolean).join(" · ");
+}
+var kennzahlenZuletzt=0, kennzahlenTimer=null;
+function kennzahlenSchreiben(){
+  /* erst, wenn sich nichts mehr tut (Störungen und Protokolle sind nach dem
+     Start in mehreren Schritten da) – und höchstens stündlich */
+  if(kennzahlenTimer) clearTimeout(kennzahlenTimer);
+  kennzahlenTimer=setTimeout(kennzahlenJetzt, 20000);
+}
+function kennzahlenJetzt(){
+  if(Store.modus!=="supabase" || !Store.sb || !Store.benutzer || !Admin.frei || demo() || nurLesen()) return;
+  if(!ST.length || (typeof protokolleGeladen!=="undefined" && !protokolleGeladen)) return;
+  if(Date.now()-kennzahlenZuletzt<3600e3) return;
+  kennzahlenZuletzt=Date.now();
+  var z=wochenZahlen();
+  var werte={stand:z.stand, ueberfaellig:z.ueberfaellig, dieseWoche:z.dieseWoche, stoerungen:z.stoerungen, zieltermine:z.zieltermine,
+    wiederkehrend:z.wiederkehrend, leck:z.leck, fehler:z.fehler, text:wochenText(z)};
+  Store.sb.from("kennzahlen").upsert({id:1, stand:new Date().toISOString(), werte:werte},{onConflict:"id"}).then(function(){}, function(){});
+}
+function wochenKarte(){
+  var z=wochenZahlen();
+  var zeile=function(liste, art){
+    if(!liste.length) return '<div class="muted" style="font-size:13px">keine</div>';
+    return '<div class="stack" style="gap:3px">'+liste.slice(0,8).map(function(x){
+      return '<div style="font-size:13px"><a href="#" class="sprunglink" data-markt="'+esc(x.s.id)+'">'+esc(stName(x.s))+"</a> – "+esc(anlagenName(anlageDaten(x.p)))+
+        ' <span class="muted">'+esc((x.p.intervall&&x.p.intervall.kurz)||"")+" "+(art==="ueber"?"seit ":"am ")+dfmt(x.p.naechste)+"</span></div>"; }).join("")+
+      (liste.length>8?'<div class="muted" style="font-size:12.5px">… und '+(liste.length-8)+" weitere</div>":"")+"</div>";
+  };
+  var c=el('<div class="card" id="wochenkarte"><div class="pad stack">'+
+    '<div class="rowflex" style="justify-content:space-between"><h2>Diese Woche</h2><span class="muted" style="font-size:12px">Stand '+dfmt(z.stand)+' · geht Montag früh als Nachricht ans Büro</span></div>'+
+    '<div class="sub">'+esc(wochenText(z))+"</div>"+
+    '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px">'+
+      '<div><strong style="font-size:13px">Überfällig ('+z.ueberfaellig+')</strong>'+zeile(z.ueber,"ueber")+"</div>"+
+      '<div><strong style="font-size:13px">Fällig bis '+dfmt(isoLokal(new Date(Date.now()+7*864e5)))+' ('+z.dieseWoche+')</strong>'+zeile(z.woche,"woche")+"</div>"+
+    "</div>"+
+    '<div class="rowflex" style="gap:6px">'+
+      (z.stoerungen?'<button class="btn ghost sm" type="button" data-a="stoer">'+z.stoerungen+" offene Störung"+(z.stoerungen===1?"":"en")+"</button>":"")+
+      (z.ueberfaellig?'<button class="btn ghost sm" type="button" data-a="ueber">alle überfälligen</button>':"")+
+      (verwaltungDarf() && (z.wiederkehrend||z.leck||z.fehler)?'<button class="btn ghost sm" type="button" data-a="nachb">Nachbessern</button>':"")+
+    "</div></div></div>");
+  var b=c.querySelector('[data-a="stoer"]'); if(b) b.onclick=function(){ faelligSprung("stoerungen"); };
+  var u=c.querySelector('[data-a="ueber"]'); if(u) u.onclick=function(){ faelligSprung("ueberfaellig"); };
+  var n=c.querySelector('[data-a="nachb"]'); if(n) n.onclick=function(){ nachbessernSprung(); };
+  return c;
+}
 function berichtKarte(){
   var c=el('<div class="card"><div class="pad stack">'+
     '<div><h2>Liste herunterladen</h2><div class="sub">Was zuletzt gemacht wurde und was als Nächstes ansteht – '+
@@ -15515,6 +15587,8 @@ function handbuchKarte(z){
         "<strong>Monatsbericht (Verlauf, Admins):</strong> Monat und Region wählen – „PDF für Lidl“ (Wartungen, fristgerecht, Störungseinsätze mit "+
           "Erledigungsdauer, Kältemittel, ohne Internes) und für Inhaber „PDF intern“ (zusätzlich Abrechnungsstand, Stunden aus Rapporten, "+
           "überfällige Termine, wiederkehrende Störungen, Leck-Verdacht). „Vorschau“ zeigt den Bericht vorher in der App.",
+        "<strong>Wochenübersicht (Fällig, Admins):</strong> Karte „Diese Woche“ mit überfälligen und diese Woche fälligen Terminen, offenen Störungen, "+
+          "wiederkehrenden Störungen und Leck-Verdacht. Dieselben Zahlen kommen Montag früh als Nachricht an Inhaber und Admins (Benachrichtigung „Wochenübersicht“).",
         "<strong>⚠ Wiederkehrende Störungen:</strong> ab 3 Störungen in 90 Tagen an derselben Anlage (offene Störungen und Störungsprotokolle, "+
           "derselbe Besuch zählt einmal) – Markierung bei der Anlage und im Markt, Hinweis unter Nachbessern. Schwelle vom Büro, 28.09.2026.",
         "<strong>€ Abgerechnet:</strong> Inhaber setzen beim geöffneten Protokoll den Haken (mit Rechnungsnummer als Notiz); die Protokollliste "+

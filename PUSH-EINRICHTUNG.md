@@ -53,3 +53,10 @@ Liegengebliebenes, das älter als 24 Stunden ist, wird nicht mehr verschickt.
 `tools/chat-direkt.sql` ausführen (nach chat.sql) und die Funktion `push`
 neu deployen: Nachrichten mit „An: Person“ sehen nur Absender und
 Empfänger, die Push-Nachricht geht nur an den Empfänger (`nur_user`).
+
+## Wochenübersicht (Montag früh)
+
+`tools/wochenuebersicht.sql` ausführen (legt pg_cron, die Tabelle
+`kennzahlen` und den Zeitplan an) und die Funktion `push` neu deployen
+(`nur_rolle` mit Komma). Die App schreibt ihren Stand in `kennzahlen`, sobald
+ein Admin sie benutzt; der Zeitplan verschickt ihn Montag 05:00 UTC.
