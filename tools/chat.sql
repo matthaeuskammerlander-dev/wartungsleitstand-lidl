@@ -30,6 +30,13 @@ create policy "chat eigene loeschen" on public.chat for delete to authenticated
   using (von = auth.uid() or public.ist_admin());
 grant select, insert, delete on public.chat to authenticated;
 
+-- Fotos einer gelöschten Nachricht aus dem Speicher nehmen: nur unter chat/…,
+-- nur die selbst hochgeladenen (Admins: alle). Protokollfotos bleiben unberührt.
+drop policy if exists "chatfotos loeschen" on storage.objects;
+create policy "chatfotos loeschen" on storage.objects for delete to authenticated
+  using (bucket_id = 'protokollfotos' and name like 'chat/%'
+         and public.darf_schreiben() and (owner = auth.uid() or public.ist_admin()));
+
 -- neue Nachricht → Push an alle anderen (Absender und Bezug im Titel)
 create or replace function public.push_aus_chat() returns trigger
 language plpgsql security definer set search_path = public as $$

@@ -1860,6 +1860,7 @@ function stoerungDialog(vorhanden, weiter){
       '<div class="as-schritt">Auftrag von Lidl</div></div>'+
       '<button class="btn ghost sm" type="button" data-a="zu">Schließen</button></div>'+
     '<div class="as-inhalt"></div><div class="as-fuss"></div></div></div>');
+  if(vorhanden) ov.dataset.stoerung=o._id;   /* chatBezugOeffnen findet den offenen Dialog daran */
   document.body.appendChild(ov);
   /* Scroll-Sperre der Ansicht darunter (etwa der Markt-Ansicht) beim Schließen zurückgeben */
   var vorherOv=document.body.style.overflow;
@@ -2977,8 +2978,14 @@ function faelligSprung(art, opt){
   if(art==="stoerungen"){
     springe({reiter:"faellig", alleFenster:true, block:"start", finde:function(){
       var k=document.getElementById("st_karte"); if(!k) return null;
-      /* genau eine Störung: gleich ihren Eintrag */
+      /* genau eine Störung: gleich ihren Eintrag; opt.markt (aus einer Nachricht):
+         die Störungen dieses Markts */
       var st=offeneStoerungen(true);
+      var vomMarkt=opt.markt ? st.filter(function(o){ return o.standortId===opt.markt; }) : [];
+      if(vomMarkt.length){
+        var z=Array.prototype.filter.call(k.querySelectorAll(".stoerbox[data-sid]"), function(b){ return vomMarkt.some(function(o){ return o._id===b.dataset.sid; }); });
+        if(z.length) return z;
+      }
       return (st.length===1 && k.querySelector('.stoerbox[data-sid="'+st[0]._id+'"]')) || k;
     }});
     return;
@@ -5492,7 +5499,8 @@ function abmeldenErlaubt(){
     "Beim Abmelden gehen die Eingaben verloren. Trotzdem abmelden?");
 }
 function lsGet(k,d){ try{ var v=localStorage.getItem(k); return v?JSON.parse(v):d; }catch(e){ return d; } }
-function lsSet(k,v){ try{ localStorage.setItem(k,JSON.stringify(v)); }catch(e){} }
+/* liefert false, wenn sich nichts ablegen ließ (Speicher voll oder gesperrt) */
+function lsSet(k,v){ try{ localStorage.setItem(k,JSON.stringify(v)); return true; }catch(e){ return false; } }
 
 /* ----------------------------------------------------------------
    Protokolle auf dem Gerät. IndexedDB statt localStorage: localStorage
@@ -7619,27 +7627,65 @@ function pushStart(){
   });
   /* aus einer Nachricht heraus geöffnet: #push=ziel */
   var m=/[#&]push=([^&]*)/.exec(location.hash||"");
-  if(m){ history.replaceState(null,"",location.pathname+location.search); pushZiel(decodeURIComponent(m[1])); }
+  if(m){
+    history.replaceState(null,"",location.pathname+location.search);
+    /* ein abgeschnittener oder von Hand veränderter Link darf den Start nicht aufhalten */
+    var ziel=""; try{ ziel=decodeURIComponent(m[1]); }catch(e){ console.warn("Sprungziel unlesbar", m[1]); }
+    pushZiel(ziel);
+  }
 }
-/* Gehört das Abo dieses Geräts noch zum angemeldeten Konto? (Kontowechsel;
-   Kunde und Präsentation bekommen nichts) */
+/* Steht fest, wer angemeldet ist und was er darf? Bis zur Rollenprüfung gilt
+   die engste Rolle, ohne Netz nur die gemerkte – daraus wird nichts abgeleitet */
+function pushKontoFest(){ return Store.modus==="supabase" && !!Store.benutzer && Admin.geprueft && !Rolle.gemerkt; }
+/* Gehört das Abo dieses Geräts noch zum angemeldeten Konto? Abgemeldet, Kunde
+   oder Präsentation: das Gerät bekommt nichts mehr (sonst kämen weiter die
+   Nachrichten des vorigen Kontos). Meldet sich danach wieder jemand aus Büro
+   oder Technik an, schaltet es sich von selbst wieder ein (ukt_push_wieder). */
 function pushAbgleich(){
-  if(!pushReg || !Store.benutzer) return;
+  if(!pushReg) return;
+  var abgemeldet=Store.modus==="anmeldung" && !Store.benutzer;
+  if(!abgemeldet && !pushKontoFest()) return;
+  var konto=Store.benutzer ? Store.benutzer.email : "";
   pushReg.pushManager.getSubscription().then(function(sub){
-    if(!sub) return;
-    if(!pushAn()){ pushAbmelden(sub); return; }
+    if((Store.benutzer ? Store.benutzer.email : "")!==konto) return;   /* inzwischen gewechselt */
+    if(abgemeldet){
+      /* ohne Anmeldung lässt sich die Zeile in der Datenbank nicht mehr löschen – das
+         Abo des Geräts endet hier, die Funktion „push“ räumt die Zeile dann weg */
+      if(sub){ lsSet("ukt_push_wieder", 1); sub.unsubscribe().then(function(){ lsSet("ukt_push_konto",""); }, function(){}); }
+      return;
+    }
+    if(!pushAn()){ if(sub){ lsSet("ukt_push_wieder", 1); pushAbmelden(sub).catch(function(){}); } return; }
+    if(!sub){
+      if(lsGet("ukt_push_wieder", 0) && window.Notification && Notification.permission==="granted")
+        pushEinschalten(pushArtenGewaehlt()).then(function(){ pushStandText(document.getElementById("k_pushstand")); }, function(){});
+      return;
+    }
     if(lsGet("ukt_push_konto","")!==Store.benutzer.email) pushAboSpeichern(sub, pushArtenGewaehlt()).catch(function(){});
-  });
+  }, function(){});
 }
+/* Abmelden über den Knopf: solange die Anmeldung noch gilt, auch die Zeile in
+   der Datenbank löschen (höchstens 4 s – ohne Netz wird trotzdem abgemeldet) */
+function pushVorAbmelden(){
+  if(!pushReg || !Store.benutzer) return Promise.resolve();
+  return mitFrist(pushReg.pushManager.getSubscription().then(function(sub){
+    if(!sub) return;
+    lsSet("ukt_push_wieder", 1);
+    return pushAbmelden(sub);
+  }), 4000).then(null, function(){});
+}
+/* Die Auswahl gilt je Konto (am selben Gerät wählt jeder für sich); die
+   bisherige Auswahl des Geräts gehört dem Konto, das das Abo hält */
+function pushArtenSchluessel(){ return "ukt_push_arten:"+((Store.benutzer&&Store.benutzer.email)||""); }
 function pushArtenGewaehlt(){
-  var a=lsGet("ukt_push_arten", null);
-  if(!Array.isArray(a)) a=PUSH_ARTEN.map(function(x){ return x[0]; });
+  var a=lsGet(pushArtenSchluessel(), null);
+  if(!Array.isArray(a) && lsGet("ukt_push_konto","")===(Store.benutzer&&Store.benutzer.email)) a=lsGet("ukt_push_arten", null);
+  if(!Array.isArray(a) || !a.length) a=PUSH_ARTEN.map(function(x){ return x[0]; });
   return a.filter(function(k){ return k!=="wunsch" || istInhaber(); });
 }
 function pushAboSpeichern(sub, arten){
   var j=sub.toJSON();
   return Store.sb.rpc("push_abo_speichern", {p_endpoint:j.endpoint, p_p256dh:j.keys.p256dh, p_auth:j.keys.auth, p_geraet:pushGeraetName(), p_arten:arten})
-    .then(function(r){ if(r.error) throw new Error(r.error.message); lsSet("ukt_push_konto", Store.benutzer.email); lsSet("ukt_push_arten", arten); });
+    .then(function(r){ if(r.error) throw new Error(r.error.message); lsSet("ukt_push_konto", Store.benutzer.email); lsSet(pushArtenSchluessel(), arten); lsSet("ukt_push_wieder", 0); });
 }
 function pushAbmelden(sub){
   return Store.sb.from("push_abos").delete().eq("endpoint", sub.endpoint).then(function(){ return sub.unsubscribe(); }).then(function(){ lsSet("ukt_push_konto",""); });
@@ -7655,10 +7701,16 @@ function pushEinschalten(arten){
     return pushReg.pushManager.getSubscription().then(function(s){ return s || pushReg.pushManager.subscribe({userVisibleOnly:true, applicationServerKey:b64ZuBytes(k)}); });
   }).then(function(sub){ return pushAboSpeichern(sub, arten); });
 }
-function pushStandText(n){
+function pushStandText(n, versuch){
   if(!n) return;
   if(!pushMoeglich()){ n.textContent=pushIosOhneApp()?"am iPhone erst nach „Zum Home-Bildschirm“":"in diesem Browser nicht möglich"; return; }
-  if(!pushReg){ n.textContent=""; return; }
+  if(!pushReg){
+    /* der Hintergrund-Helfer meldet sich beim Start erst nach ein paar Sekunden */
+    versuch=versuch||0;
+    if(versuch<5){ n.textContent=""; setTimeout(function(){ if(n.isConnected) pushStandText(n, versuch+1); }, 1200); }
+    else n.textContent="Hintergrund-Helfer nicht bereit – bitte die Seite neu laden";
+    return;
+  }
   pushReg.pushManager.getSubscription().then(function(s){ n.textContent=s&&lsGet("ukt_push_konto","")===(Store.benutzer&&Store.benutzer.email) ? "auf diesem Gerät eingeschaltet" : "auf diesem Gerät aus"; });
 }
 function pushDialog(){
@@ -7675,7 +7727,7 @@ function pushDialog(){
     '<div class="muted" style="font-size:13px">Sie bekommen eine Nachricht aufs Gerät, wenn jemand anderer etwas geändert hat – was Sie selbst eintragen, löst keine aus. Jedes Gerät (Handy, PC) wird eigens eingeschaltet.</div>'+
     '<div class="posbox stack" style="gap:6px"><strong>Worüber?</strong>'+
     PUSH_ARTEN.filter(function(x){ return x[0]!=="wunsch" || istInhaber(); }).map(function(x){
-      return '<label class="fl" style="flex-direction:row;gap:8px;align-items:center"><input type="checkbox" data-art="'+x[0]+'"'+(arten.indexOf(x[0])>=0?" checked":"")+'> <span>'+esc(x[1])+"</span></label>"; }).join("")+
+      return '<label class="chk"><input type="checkbox" data-art="'+x[0]+'"'+(arten.indexOf(x[0])>=0?" checked":"")+'> <span>'+esc(x[1])+"</span></label>"; }).join("")+
     "</div>"+
     '<div class="rowflex"><button class="btn sm" type="button" data-a="an">Auf diesem Gerät einschalten</button>'+
       '<button class="btn ghost sm" type="button" data-a="aus" hidden>Auf diesem Gerät ausschalten</button>'+
@@ -7687,9 +7739,20 @@ function pushDialog(){
   var err=f.querySelector('[data-a="err"]'), an=f.querySelector('[data-a="an"]'), aus=f.querySelector('[data-a="aus"]'), test=f.querySelector('[data-a="test"]');
   var fehl=function(t){ err.textContent=t; err.hidden=false; };
   var gewaehlt=function(){ return Array.prototype.map.call(f.querySelectorAll("[data-art]:checked"), function(c){ return c.dataset.art; }); };
+  var warten=0, keineArt="Bitte mindestens eine Art wählen – sonst kommt nie eine Nachricht.";
   var stand=function(){
-    if(!pushReg){ an.disabled=true; setTimeout(stand, 800); return; }
+    if(!f.isConnected) return;   /* Fenster geschlossen */
+    if(!pushReg){
+      an.disabled=true;
+      /* der Hintergrund-Helfer ist nicht bereit: nochmals anmelden und nach ein paar Sekunden sagen, woran es liegt */
+      if(warten===0) navigator.serviceWorker.register("sw.js").then(function(r){ pushReg=r; }, function(){});
+      if(++warten===5) fehl("Der Hintergrund-Helfer der App ist nicht bereit – ohne ihn lassen sich Benachrichtigungen nicht einschalten. Bitte die Seite neu laden (↻ oben) und es nochmals versuchen.");
+      setTimeout(stand, 800); return;
+    }
+    if(warten>=5) err.hidden=true;
+    warten=0;
     an.disabled=false;
+    pushStandText(document.getElementById("k_pushstand"));   /* die Konto-Karte darunter zeigt denselben Stand */
     pushReg.pushManager.getSubscription().then(function(s){
       var ein=!!s && lsGet("ukt_push_konto","")===Store.benutzer.email;
       an.hidden=ein; aus.hidden=!ein; test.hidden=!ein;
@@ -7700,48 +7763,68 @@ function pushDialog(){
     }, function(){});
   };
   f.querySelectorAll("[data-art]").forEach(function(c){ c.onchange=function(){
-    var a=gewaehlt(); lsSet("ukt_push_arten", a);
+    var a=gewaehlt(); err.hidden=true;
+    /* nichts gewählt: nicht speichern – eingeschaltet, aber ohne Art käme nie etwas */
+    if(!a.length){ fehl(keineArt); return; }
+    lsSet(pushArtenSchluessel(), a);
     if(!pushReg) return;
     pushReg.pushManager.getSubscription().then(function(s){ if(s && !aus.hidden) pushAboSpeichern(s, a).then(function(){ toast("Auswahl gespeichert."); }, function(e){ fehl(e.message); }); });
   }; });
   an.onclick=function(){
-    err.hidden=true; an.disabled=true; an.textContent="Wird eingeschaltet …";
+    err.hidden=true;
+    if(!gewaehlt().length){ fehl(keineArt); return; }
+    an.disabled=true; an.textContent="Wird eingeschaltet …";
     pushEinschalten(gewaehlt()).then(function(){ toast("Benachrichtigungen eingeschaltet."); an.disabled=false; an.textContent="Auf diesem Gerät einschalten"; stand(); },
       function(e){ an.disabled=false; an.textContent="Auf diesem Gerät einschalten"; fehl(e.message||String(e)); });
   };
   aus.onclick=function(){
-    pushReg.pushManager.getSubscription().then(function(s){ return s ? pushAbmelden(s) : null; }).then(function(){ toast("Ausgeschaltet."); stand(); }, function(e){ fehl(e.message||String(e)); });
+    err.hidden=true;
+    /* bewusst ausgeschaltet: nach dem nächsten Anmelden nicht von selbst wieder ein */
+    pushReg.pushManager.getSubscription().then(function(s){ return s ? pushAbmelden(s) : null; }).then(function(){ lsSet("ukt_push_wieder", 0); toast("Ausgeschaltet."); stand(); }, function(e){ fehl(e.message||String(e)); });
   };
   test.onclick=function(){
-    test.disabled=true;
+    test.disabled=true; err.hidden=true;
     Store.sb.functions.invoke("push", {body:{aktion:"test"}}).then(function(r){
       test.disabled=false;
       var d=r.data||{}; if(r.error||d.fehler){ fehl(d.fehler||r.error.message); return; }
+      if(!d.geschickt){ fehl("Die Probe-Nachricht ließ sich nicht zustellen (0 von "+(d.geraete||0)+" Gerät(en)). Bitte hier aus- und wieder einschalten und es nochmals versuchen."); return; }
       toast("Probe-Nachricht an "+d.geschickt+" von "+d.geraete+" Gerät(en) geschickt – sie kommt gleich an.");
     }, function(e){ test.disabled=false; fehl(String(e)); });
   };
   stand();
 }
 /* Antippen einer Nachricht: an die passende Stelle – sobald die Daten da sind */
+var pushWartet=null;   /* Sprungziel, das auf die Anmeldung wartet: {z, seit} */
 function pushZiel(z, versuch){
   versuch=versuch||0;
   if(!z) return;
+  /* noch nicht angemeldet oder die Rolle noch nicht geprüft: das Ziel merken –
+     es kommt dran, sobald das Konto feststeht (chatKnopf). Sonst hieße es
+     „nicht (mehr) da“, obwohl nur noch nichts geladen ist. */
+  if(Store.modus==="lade" || Store.modus==="anmeldung" || (Store.modus==="supabase" && !Admin.geprueft)){ pushWartet={z:z, seit:Date.now()}; return; }
   if((!ST.length || (Store.modus==="supabase" && !protokolleGeladen)) && versuch<12){ setTimeout(function(){ pushZiel(z, versuch+1); }, 800); return; }
   var t=z.split(":"), art=t[0], id=t.slice(1).join(":");
-  if(art==="stoerungen"){ faelligSprung("stoerungen"); return; }
-  if(art==="markt"){ if(byId[id]) marktAnsicht(id); else springe({reiter:"anlagen"}); return; }
+  /* stoerungen:Markt – die Störung dieses Markts hervorheben */
+  if(art==="stoerungen"){ faelligSprung("stoerungen", {markt:id}); return; }
+  if(art==="markt"){
+    /* ein neues Ziel ersetzt die Fenster von vorher (nicht einen Störungsdialog mit Eingaben) */
+    if(byId[id]){ ansichtenSchliessen(); marktAnsicht(id); }
+    else { if(id) toast("Diesen Markt gibt es nicht (mehr)."); springe({reiter:"anlagen", alleFenster:true}); }
+    return; }
   if(art==="protokoll"){
+    /* mehrere Protokolle in einer Nachricht gebündelt (Ziel ohne Kennung): in den Verlauf */
+    if(!id){ springe({reiter:"verlauf", alleFenster:true}); return; }
     var p=alleProtokolle(true).filter(function(x){ return x._id===id; })[0];
-    if(p) protokollFenster(p); else toast("Das Protokoll ist nicht (mehr) da."); return;
+    if(p){ ansichtenSchliessen(); protokollFenster(p); } else toast("Das Protokoll ist nicht (mehr) da."); return;
   }
   if(art==="wunsch"){
     if(!verwaltungDarf() || !istInhaber()){ toast("Änderungswünsche sieht nur der Inhaber."); return; }
     /* in der Verwaltung auf den Reiter „Änderungswünsche“, Filter „Alle“ – die
        Wünsche laden erst nach dem Öffnen, darum ein paar Sekunden nachsehen */
     var ok=springe({reiter:"verwaltung", alleFenster:true, vorher:function(){ S.adm=S.adm||{suche:"", filter:"alle", sort:"filiale", auf:true, sel:null, entwurf:null}; S.adm.tab="wuensche"; S.wunschFilter="alle"; }});
-    if(ok===false) return;
+    if(ok===false || !id) return;   /* ohne Kennung (mehrere Wünsche gebündelt): nur die Liste */
     var n=0, suchen=function(){
-      var z=document.querySelector('[data-wunsch="'+id+'"]');
+      var z=Array.prototype.filter.call(document.querySelectorAll("[data-wunsch]"), function(x){ return x.dataset.wunsch===id; })[0];
       if(z){ sprungHervorheben(z, {block:"start"}); return; }
       if(n++<12) setTimeout(suchen, 500);
       else toast("W-"+id+" ist nicht (mehr) unter den Änderungswünschen.");
@@ -7760,6 +7843,9 @@ function pushZiel(z, versuch){
    und steht dann auch dort. Kunde und Präsentation sehen ihn nicht.
    ================================================================ */
 var chatNachrichten=[], chatGeladen=false, chatTimer=null, chatFenster=null, chatBildUrls={}, chatKonto=null, chatTeam=null;
+var chatFehler="";                     /* warum sich der Chat nicht laden ließ */
+var chatEntwurf={text:"", fotos:[]};   /* angefangene Nachricht – bleibt, wenn das Fenster zugeht (Sprung aus einer Nachricht) */
+var pushKonto=null;                    /* für welchen Stand (Konto, Recht) das Abo des Geräts zuletzt abgeglichen wurde */
 /* wer im Team ist (Büro und Techniker) – für „An: Person“ (Funktion team_liste, tools/chat.sql) */
 function chatTeamLaden(){
   if(chatTeam) return Promise.resolve(chatTeam);
@@ -7785,7 +7871,17 @@ function chatStart(){
 function chatKnopf(){
   var k=document.getElementById("chatbtn"); if(!k) return;
   var konto=chatAn() ? Store.benutzer.email : null;
-  if(konto!==chatKonto){ chatKonto=konto; chatNachrichten=[]; chatGeladen=false; chatBildUrls={}; chatLaden(); pushAbgleich(); }
+  if(konto!==chatKonto){ chatKonto=konto; chatNachrichten=[]; chatGeladen=false; chatFehler=""; chatBildUrls={}; chatTeam=null; chatEntwurf={text:"", fotos:[]}; chatLaden(); }
+  /* Benachrichtigungen: bei jedem Wechsel nachsehen, ob das Abo des Geräts noch
+     passt – auch nach dem Abmelden und bei Kunde/Präsentation (dort gibt es
+     keinen Chat, chatKonto bleibt leer) */
+  var pk=(Store.modus==="anmeldung" && !Store.benutzer) ? "abgemeldet" : pushKontoFest() ? Store.benutzer.email+"|"+(pushAn()?"an":"aus") : null;
+  if(pk && pk!==pushKonto){ pushKonto=pk; pushAbgleich(); }
+  /* ein Sprungziel aus einer Nachricht, das auf die Anmeldung gewartet hat (höchstens 15 Minuten) */
+  if(pushWartet && Store.modus!=="lade" && Store.modus!=="anmeldung" && (Store.modus!=="supabase" || Admin.geprueft)){
+    var pw=pushWartet; pushWartet=null;
+    if(Date.now()-pw.seit<900000) setTimeout(function(){ pushZiel(pw.z); }, 0);
+  }
   k.hidden=!chatAn();
   /* Zahl am Knopf: ungelesene Chat-Nachrichten und neue Meldungen zusammen */
   var z=document.getElementById("chatzahl"), n=chatAn()?chatUngelesen()+meldungenNeu():0;
@@ -7800,18 +7896,22 @@ function chatGelesen(){ if(chatSchluessel()) lsSet(chatSchluessel(), new Date().
 /* Meldungen: was als Push-Nachricht verschickt wurde (Tabelle push_ereignisse,
    nur die, die dieses Konto betreffen) – im Chat-Fenster unter „Meldungen“,
    Neues zählt am Knopf mit */
-var meldungen=[];
+var meldungen=[], meldungenFehler="";
 function meldungenSchluessel(){ var m=Store.benutzer&&Store.benutzer.email; return m ? "ukt-meldungen-gelesen:"+m : null; }
+/* Meldungen der Art „chat“ zählen nicht mit: dieselbe Nachricht zählt schon
+   als ungelesen im Chat – sonst stünde jede Nachricht doppelt am Knopf */
 function meldungenNeu(){
   var seit=lsGet(meldungenSchluessel(),""), ich=Store.benutzer&&Store.benutzer.id;
-  return meldungen.filter(function(e){ return e.von_user!==ich && (!seit || e.erstellt>seit); }).length;
+  return meldungen.filter(function(e){ return e.art!=="chat" && e.von_user!==ich && (!seit || e.erstellt>seit); }).length;
 }
 function meldungenGelesen(){ if(meldungenSchluessel()) lsSet(meldungenSchluessel(), new Date().toISOString()); chatKnopf(); }
 function meldungenLaden(){
-  if(!chatAn()){ meldungen=[]; return Promise.resolve(); }
+  if(!chatAn()){ meldungen=[]; meldungenFehler=""; return Promise.resolve(); }
   return Store.sb.from("push_ereignisse").select("id,erstellt,art,titel,text,ziel,von_user,nur_rolle,nur_user").order("id",{ascending:false}).limit(80).then(function(r){
-    if(!r.error && Array.isArray(r.data)){ meldungen=r.data; chatKnopf(); if(chatFenster && chatFenster.meldungen) chatFenster.meldungen(); }
-  }, function(){});
+    if(!r.error && Array.isArray(r.data)){ meldungen=r.data; meldungenFehler=""; chatKnopf(); }
+    else meldungenFehler=(r.error&&r.error.message)||"keine Antwort";
+    if(chatFenster && chatFenster.meldungen) chatFenster.meldungen();
+  }, function(){ meldungenFehler="keine Verbindung"; if(chatFenster && chatFenster.meldungen) chatFenster.meldungen(); });
 }
 var MELDUNG_SYMBOL={stoerung:"⚠️", protokoll:"📋", korrektur:"✏️", stammdaten:"🏬", chat:"💬", wunsch:"💡", posteingang:"📥", wochen:"📅"};
 function meldungEl(e){
@@ -7829,14 +7929,20 @@ function meldungEl(e){
 function chatLaden(){
   abrechnungLaden(); meldungenLaden();
   if(!chatAn()){ chatNachrichten=[]; chatGeladen=false; if(document.getElementById("chatbtn")) document.getElementById("chatbtn").hidden=true; return Promise.resolve(); }
+  /* nicht geladen: im Fenster steht, woran es liegt (statt für immer „wird geladen“) */
+  var fehl=function(t){ chatFehler=t; if(chatFenster && !chatGeladen) chatFenster.zeichnen(); };
   return mitFrist(Store.sb.from("chat").select("*").order("erstellt",{ascending:false}).limit(300), 15000).then(function(r){
-    if(r.error) return;
+    if(r.error){ fehl(r.error.message||"Fehler beim Laden"); return; }
     chatNachrichten=(r.data||[]).slice().sort(function(a,b){ return String(a.erstellt).localeCompare(String(b.erstellt)); });
-    chatGeladen=true; chatKnopf();
-    if(chatFenster) chatFenster.zeichnen();
-    document.querySelectorAll("[data-chatkarte]").forEach(function(k){ if(k._zeichnen) k._zeichnen(); });
+    chatGeladen=true; chatFehler=""; chatKnopf();
+    if(chatFenster) chatFenster.zeichnen(true);
+    chatKartenZeichnen();
     chatWarteSenden();
-  }, function(){});
+  }, function(){ fehl("keine Verbindung"); });
+}
+/* die Karten „Nachrichten dazu“ in offenen Fenstern neu zeichnen */
+function chatKartenZeichnen(){
+  document.querySelectorAll("[data-chatkarte]").forEach(function(k){ if(k._zeichnen) k._zeichnen(); });
 }
 /* Bezug: {art, id, text} – wozu die Nachricht gehört */
 function chatBezugText(art, o){
@@ -7851,12 +7957,24 @@ function chatBezugOeffnen(m){
   if(m.bezug_art==="markt"){ if(byId[m.bezug_id]) marktAnsicht(m.bezug_id); else toast("Diesen Markt gibt es nicht mehr."); }
   else if(m.bezug_art==="anlage"){ var p=posById[m.bezug_id]; if(p) anlageHistorieAnsicht(p); else toast("Diese Anlage gibt es nicht mehr."); }
   else if(m.bezug_art==="stoerung"){ var o=OFFENE.filter(function(x){ return x._id===m.bezug_id; })[0];
+    /* ihr Dialog ist schon offen (der Chat wurde daraus geöffnet): nicht doppelt
+       öffnen – der Chat geht zu, der Dialog darunter ist wieder zu sehen (eine
+       angefangene Nachricht bleibt als Entwurf) */
+    var offen=Array.prototype.filter.call(document.querySelectorAll(".assistent[data-stoerung]"), function(d){ return d.dataset.stoerung===m.bezug_id; })[0];
+    if(offen){
+      if(chatFenster){ chatFenster.zu(); chatFenster=null; }
+      var alle=document.querySelectorAll(".assistent");
+      if(alle[alle.length-1]!==offen) toast("Diese Störung ist schon geöffnet – sie liegt unter diesem Fenster.");
+      return;
+    }
     if(o && !o.erledigt) stoerungDialog(o); else toast(o?"Diese Störung ist erledigt.":"Diese Störung gibt es nicht mehr."); }
   else if(m.bezug_art==="protokoll"){ var pr=alleProtokolle(true).filter(function(x){ return x._id===m.bezug_id; })[0]; if(pr) protokollFenster(pr); else toast("Das Protokoll ist nicht mehr da."); }
 }
 /* Nachrichten zu einer Sache – beim Markt auch die zu seinen Anlagen, Störungen und Protokollen */
 function chatZu(art, id){
   var ids={};
+  /* Anlage: alle ihre Termine – die Nachricht kann an jedem davon hängen */
+  if(art==="anlage" && posById[id]) anlageVon(posById[id]).termine.forEach(function(t){ ids["anlage:"+t.id]=1; });
   if(art==="markt"){
     Object.keys(posById||{}).forEach(function(k){ if(posById[k] && posById[k].standortId===id) ids["anlage:"+k]=1; });
     OFFENE.forEach(function(o){ if(o.standortId===id) ids["stoerung:"+o._id]=1; });
@@ -7870,11 +7988,14 @@ function chatNachrichtEl(m, ohneBezug){
     '<div class="chatkopf"><span>'+esc(m.von_name||"Jemand")+
       /* persönliche Nachricht: nur Absender und Empfänger sehen sie */
       (m.an ? ' <span class="tag" title="Nur für den Empfänger sichtbar">🔒 '+(m.an===ich?"an dich":"an "+esc(m.an_name||"…"))+"</span>" : "")+
-      '</span><span>'+(m._wartet?"wartet auf Verbindung":esc(zeitFmt(m.erstellt)))+
-      (m.von===ich && !m._wartet ? ' <a href="#" class="sprunglink" data-a="weg" title="Nachricht löschen">✕</a>' : "")+"</span></div>"+
+      '</span><span>'+(m._wartet?(m._abgelehnt?"nicht gesendet":"wartet auf Verbindung"):esc(zeitFmt(m.erstellt)))+
+      (m.von===ich ? ' <a href="#" class="sprunglink" data-a="weg" title="Nachricht löschen">✕</a>' : "")+"</span></div>"+
     (m.bezug_art && !ohneBezug ? '<a href="#" class="chatbezug" data-a="bezug">'+esc(m.bezug_text||m.bezug_art)+"</a>" : "")+
-    '<div class="chattext">'+esc(m.text||"")+"</div></div>");
-  (m.fotos||[]).forEach(function(pfad){
+    '<div class="chattext">'+esc(m.text||"")+"</div>"+
+    /* vom Server abgelehnt: geht auch später nicht raus – Grund nennen, löschen mit ✕ */
+    (m._abgelehnt ? '<div class="note warnbox" style="font-size:12.5px;margin-top:4px">Nicht gesendet: '+esc(m._abgelehnt)+" Mit ✕ löschen und neu schreiben.</div>" : "")+"</div>");
+  /* wartende Nachrichten haben ihre Fotos noch auf dem Gerät (_fotoDaten) */
+  (m.fotos||(m._wartet?Object.keys(m._fotoDaten||{}):[])).forEach(function(pfad){
     var img=el('<img alt="Foto" loading="lazy">');
     if(m._fotoDaten && m._fotoDaten[pfad]) img.src=m._fotoDaten[pfad];
     else chatBildUrl(pfad).then(function(u){ if(u) img.src=u; else img.remove(); });
@@ -7883,8 +8004,19 @@ function chatNachrichtEl(m, ohneBezug){
   });
   tippe(d.querySelector('[data-a="bezug"]'), function(){ chatBezugOeffnen(m); });
   tippe(d.querySelector('[data-a="weg"]'), function(){
-    if(!window.confirm("Diese Nachricht löschen?")) return;
-    Store.sb.from("chat").delete().eq("id", m.id).then(function(r){ if(r.error){ toast("Nicht gelöscht: "+r.error.message); return; } chatNachrichten=chatNachrichten.filter(function(x){ return x.id!==m.id; }); d.remove(); chatKnopf(); });
+    if(!window.confirm(m._wartet ? "Diese Nachricht ist noch nicht gesendet. Vom Gerät löschen?" : "Diese Nachricht löschen?")) return;
+    /* noch in der Warteschlange: nur vom Gerät nehmen */
+    if(m._wartet){ lsSet("ukt_chat_warte", lsGet("ukt_chat_warte",[]).filter(function(x){ return x.id!==m.id; })); d.remove(); return; }
+    Store.sb.from("chat").delete().eq("id", m.id).then(function(r){
+      if(r.error){ toast("Nicht gelöscht: "+r.error.message); return; }
+      chatNachrichten=chatNachrichten.filter(function(x){ return x.id!==m.id; });
+      /* ihre Fotos aus dem Speicher nehmen (Regel „chatfotos loeschen“, tools/chat.sql) – klappt das nicht, bleibt es dabei */
+      if((m.fotos||[]).length){ try{ Store.sb.storage.from("protokollfotos").remove(m.fotos).then(function(){}, function(){}); }catch(e){} }
+      /* im Chat-Fenster und in den Karten „Nachrichten dazu“ darunter verschwindet sie auch */
+      var imFenster=!!d.closest("[data-chatfenster]");
+      d.remove(); chatKnopf(); chatKartenZeichnen();
+      if(chatFenster && !imFenster) chatFenster.zeichnen();
+    });
   });
   return d;
 }
@@ -7906,28 +8038,67 @@ function chatBezugKarte(art, id, text){
   return k;
 }
 /* Warteschlange: ohne Verbindung bleibt die Nachricht auf dem Gerät und geht später raus */
+var chatWarteLaeuft=false;
 function chatWarteSenden(){
-  if(!chatAn()) return;
-  var w=lsGet("ukt_chat_warte",[]).filter(function(m){ return m.konto===Store.benutzer.email; }); if(!w.length) return;
-  var m=w[0];
-  chatSenden(m, true).then(function(ok){ if(ok){ lsSet("ukt_chat_warte", lsGet("ukt_chat_warte",[]).filter(function(x){ return x.id!==m.id; })); chatLaden(); } });
+  if(!chatAn() || chatWarteLaeuft) return;
+  var konto=Store.benutzer.email;
+  var w=lsGet("ukt_chat_warte",[]).filter(function(m){ return m.konto===konto && !m._abgelehnt; }); if(!w.length) return;
+  var i=0, gesendet=0;
+  chatWarteLaeuft=true;
+  var fertig=function(){ chatWarteLaeuft=false; if(gesendet) chatLaden(); else if(chatFenster) chatFenster.zeichnen(); };
+  /* der Reihe nach alle: eine abgelehnte Nachricht hält die anderen nicht auf */
+  var weiter=function(){
+    if(i>=w.length || !chatAn() || Store.benutzer.email!==konto){ fertig(); return; }
+    var m=w[i++];
+    chatSenden(m, true).then(function(r){
+      var alle=lsGet("ukt_chat_warte",[]);
+      if(r.ok){ gesendet++; lsSet("ukt_chat_warte", alle.filter(function(x){ return x.id!==m.id; })); }
+      else if(r.dauerhaft){ alle.forEach(function(x){ if(x.id===m.id) x._abgelehnt=r.grund; }); lsSet("ukt_chat_warte", alle); }
+      else if(r.netz){ fertig(); return; }   /* keine Verbindung: alles wartet weiter */
+      weiter();
+    }, function(){ fertig(); });
+  };
+  weiter();
 }
+/* Dauerhaft abgelehnt (Regel der Datenbank, Rechte, Tabelle fehlt) – oder nur
+   gerade keine Verbindung? Im Zweifel Verbindung: dann wartet die Nachricht. */
+function chatDauerhaft(f){
+  if(!f) return false;
+  var c=String(f.code||""), s=String(f.statusCode||f.status||""), t=String(f.message||f);
+  /* abgelaufene Anmeldung erneuert sich von selbst – das ist keine Ablehnung */
+  if(/jwt|token|failed to fetch|network|load failed/i.test(t)) return false;
+  return /^(22|23|42)[0-9A-Z]{3}$|^PGRST20[45]$/.test(c) || /^(400|403|404|413|415|422)$/.test(s) ||
+    /violates|row-level security|permission denied|does not exist|could not find|payload too large|invalid input/i.test(t);
+}
+function chatFehlerText(f){
+  var t=String((f&&f.message)||f||"");
+  if(/chat_text_check|value too long/i.test(t)) return "Die Nachricht ist zu lang (höchstens 4000 Zeichen).";
+  if(/row-level security|permission denied|42501/i.test(t+" "+((f&&f.code)||""))) return "Dieses Konto darf im Chat nicht schreiben.";
+  if(/does not exist|could not find/i.test(t)) return "Der Chat ist in der Datenbank nicht eingerichtet ("+t+").";
+  return "Der Server hat die Nachricht abgelehnt ("+t+").";
+}
+/* Liefert {ok}, sonst {dauerhaft, grund} (abgelehnt – geht auch später nicht
+   raus) oder {netz} (keine Verbindung bzw. keine Antwort – später nochmals) */
 function chatSenden(m, ausWarte){
   var fotos=m._fotoDaten||{}, pfade=Object.keys(fotos), i=0;
+  var ab=function(f){ return chatDauerhaft(f) ? {ok:false, dauerhaft:true, grund:chatFehlerText(f)} : {ok:false, netz:!f || !f.code}; };
   var hoch=function(){
-    if(i>=pfade.length) return Promise.resolve(true);
+    if(i>=pfade.length) return Promise.resolve(null);
     var pf=pfade[i++];
-    return Store.sb.storage.from("protokollfotos").upload(pf, datenUrlZuBlob(fotos[pf]), {contentType:"image/jpeg", upsert:false})
-      .then(function(r){ if(r.error && !/exist|duplicate|409/i.test((r.error.message||"")+" "+(r.error.statusCode||""))) return false; return hoch(); }, function(){ return false; });
+    /* mit Frist: eine hängende Verbindung darf „Senden“ nicht für immer sperren */
+    return mitFrist(Store.sb.storage.from("protokollfotos").upload(pf, datenUrlZuBlob(fotos[pf]), {contentType:"image/jpeg", upsert:false}), 30000)
+      .then(function(r){ if(r.error && !/exist|duplicate|409/i.test((r.error.message||"")+" "+(r.error.statusCode||""))) return ab(r.error); return hoch(); }, function(){ return ab(null); });
   };
-  return hoch().then(function(ok){
-    if(!ok) return false;
-    var zeile={id:m.id, erstellt:m.erstellt||new Date().toISOString(), text:m.text, bezug_art:m.bezug_art||null, bezug_id:m.bezug_id||null, bezug_text:m.bezug_text||null, fotos:pfade, von_name:m.von_name, von:Store.benutzer.id,
+  return hoch().then(function(fehler){
+    if(fehler) return fehler;
+    /* aus der Warteschlange: die Zeit des Absendens – sonst stünde die Nachricht
+       bei den Kollegen vor schon Gelesenem und zählte nie als ungelesen */
+    var zeile={id:m.id, erstellt:ausWarte ? new Date().toISOString() : (m.erstellt||new Date().toISOString()), text:m.text, bezug_art:m.bezug_art||null, bezug_id:m.bezug_id||null, bezug_text:m.bezug_text||null, fotos:pfade, von_name:m.von_name, von:Store.benutzer.id,
                an:m.an||null, an_name:m.an_name||null};
     return mitFrist(Store.sb.from("chat").insert(zeile), 15000).then(function(r){
-      if(r.error){ if(/duplicate|23505/i.test(r.error.message||"")) return true; if(!ausWarte) toast("Nicht gesendet: "+r.error.message); return false; }
-      return true;
-    }, function(){ return false; });
+      if(r.error){ if(/duplicate|23505/i.test((r.error.message||"")+" "+(r.error.code||""))) return {ok:true}; return ab(r.error); }
+      return {ok:true};
+    }, function(){ return ab(null); });
   });
 }
 function chatOeffnen(opt){
@@ -7936,15 +8107,15 @@ function chatOeffnen(opt){
   if(chatFenster){ chatFenster.zu(); chatFenster=null; }
   var v=ansichtOeffnen("Team-Chat", function(){ chatFenster=null; });
   var bezug=opt.bezug||null;
-  var box=el('<div class="stack" style="gap:10px">'+
-    '<div class="chips" data-reiter><button class="chip" type="button" data-r="chat" aria-pressed="true">Chat</button>'+
+  var box=el('<div class="stack" style="gap:10px" data-chatfenster>'+
+    '<div class="chips" data-reiter><button class="chip" type="button" data-r="chat" aria-pressed="true">Chat<span data-czahl></span></button>'+
       '<button class="chip" type="button" data-r="meldungen" aria-pressed="false">Meldungen<span data-mzahl></span></button></div>'+
     '<div class="stack" data-meldungen hidden style="gap:6px"></div>'+
     '<div class="chatliste" data-liste></div>'+
     '<div class="posbox stack" data-schreiben style="gap:6px;position:sticky;bottom:0;background:var(--surface)">'+
       '<div class="rowflex" style="gap:6px;font-size:12.5px"><span class="muted">An:</span><select data-an style="max-width:220px"><option value="">Alle im Team</option></select></div>'+
       '<div data-bezug class="rowflex" style="gap:6px;font-size:12.5px"></div>'+
-      '<textarea data-text rows="2" placeholder="Nachricht ans Team …" style="width:100%"></textarea>'+
+      '<textarea data-text rows="2" maxlength="4000" placeholder="Nachricht ans Team …" style="width:100%"></textarea>'+
       '<div data-fotos class="rowflex" style="gap:6px"></div>'+
       '<div class="rowflex" style="gap:6px"><button class="btn sm" type="button" data-a="senden">Senden</button>'+
         '<button class="btn ghost sm" type="button" data-a="bezugwahl">Bezug wählen</button>'+
@@ -7952,37 +8123,57 @@ function chatOeffnen(opt){
       '<div class="note warnbox" data-err hidden></div></div></div>');
   v.inhalt.appendChild(box);
   var li=box.querySelector("[data-liste]"), ta=box.querySelector("[data-text]"), bz=box.querySelector("[data-bezug]"), fo=box.querySelector("[data-fotos]"), err=box.querySelector("[data-err]");
-  var fotos=[];
+  /* eine angefangene Nachricht steht wieder da (chatEntwurf) */
+  var fotos=chatEntwurf.fotos.slice(), fotosOffen=0;
+  ta.value=chatEntwurf.text;
+  ta.oninput=function(){ chatEntwurf.text=ta.value; };
   var bezugZeichnen=function(){
     bz.innerHTML=""; if(!bezug){ bz.appendChild(el('<span class="muted">Ohne Bezug – oder „Bezug wählen“ (Markt, Anlage, Störung, Protokoll).</span>')); return; }
     bz.appendChild(el('<span class="chatbezug" style="display:inline-block;padding:1px 8px;border-radius:9px;border:1px solid var(--line)">Bezug: '+esc(bezug.text)+"</span>"));
     var x=el('<button class="btn ghost sm" type="button" title="Bezug entfernen">✕</button>'); x.onclick=function(){ bezug=null; bezugZeichnen(); }; bz.appendChild(x);
   };
-  var fotosZeichnen=function(){ fo.innerHTML=""; fotos.forEach(function(f,i){ var im=el('<img alt="" style="height:54px;border-radius:6px;cursor:pointer" title="entfernen">'); im.src=f; im.onclick=function(){ fotos.splice(i,1); fotosZeichnen(); }; fo.appendChild(im); }); };
-  var zeichnen=function(){
+  var fotosZeichnen=function(){ chatEntwurf.fotos=fotos.slice(); fo.innerHTML=""; fotos.forEach(function(f,i){ var im=el('<img alt="" style="height:54px;border-radius:6px;cursor:pointer" title="entfernen">'); im.src=f; im.onclick=function(){ fotos.splice(i,1); fotosZeichnen(); }; fo.appendChild(im); }); };
+  /* nachLaden: eben frisch geladen – erst dann steht fest, ob es die gesuchte Nachricht (opt.zu) noch gibt */
+  var zeichnen=function(nachLaden){
     li.innerHTML="";
-    if(!chatGeladen) li.appendChild(el('<div class="muted">Nachrichten werden geladen …</div>'));
+    if(!chatGeladen && chatFehler) li.appendChild(el('<div class="note warnbox">Der Chat ließ sich nicht laden ('+esc(chatFehler)+'). '+
+      (/verbindung|fetch|zeit/i.test(chatFehler) ? "Sobald wieder Netz da ist, kommt er von selbst." : "Ist er in der Datenbank eingerichtet (tools/chat.sql)?")+"</div>"));
+    else if(!chatGeladen) li.appendChild(el('<div class="muted">Nachrichten werden geladen …</div>'));
     else if(!chatNachrichten.length) li.appendChild(el('<div class="muted" style="font-size:13px">Noch keine Nachrichten. Die erste schreibt das Team.</div>'));
     chatNachrichten.slice(-150).forEach(function(m){ li.appendChild(chatNachrichtEl(m)); });
     lsGet("ukt_chat_warte",[]).forEach(function(m){ if(m.konto===Store.benutzer.email) li.appendChild(chatNachrichtEl(Object.assign({_wartet:true}, m))); });
-    chatGelesen();
-    var ziel=opt.zu ? li.querySelector('[data-chat="'+opt.zu+'"]') : null;
+    /* gelesen ist nur, was zu sehen war – nicht, solange „Meldungen“ offen ist */
+    if(reiter==="chat") chatGelesen();
+    zahlen();
+    /* die Kennung nicht in einen Selektor bauen – ein Anführungszeichen darin bräche ihn */
+    var ziel=opt.zu ? Array.prototype.filter.call(li.querySelectorAll("[data-chat]"), function(n){ return n.dataset.chat===opt.zu; })[0] : null;
+    if(opt.zu && !ziel && nachLaden){ opt.zu=null; toast("Diese Nachricht gibt es nicht mehr."); }
     setTimeout(function(){ if(ziel){ ziel.scrollIntoView({block:"center"}); sprungHervorheben(ziel,{}); opt.zu=null; } else v.inhalt.scrollTop=v.inhalt.scrollHeight; }, 30);
   };
   /* Reiter „Meldungen“: was als Push verschickt wurde – antippen führt hin */
-  var reiter=opt.reiter||"chat", ml=box.querySelector("[data-meldungen]"), mz=box.querySelector("[data-mzahl]");
+  var reiter=opt.reiter||"chat", ml=box.querySelector("[data-meldungen]"), mz=box.querySelector("[data-mzahl]"), cz=box.querySelector("[data-czahl]");
+  /* Zahlen an den beiden Reitern: was dort neu ist */
+  var zahlen=function(){
+    var n=meldungenNeu(), c=chatUngelesen();
+    mz.textContent=n?" ("+n+")":""; cz.textContent=c?" ("+c+")":"";
+  };
   var meldungenZeichnen=function(){
-    var n=meldungenNeu(); mz.textContent=n?" ("+n+")":"";
+    zahlen();
     if(reiter!=="meldungen") return;
     ml.innerHTML="";
-    if(!meldungen.length){ ml.appendChild(el('<div class="muted" style="font-size:13px">Noch keine Meldungen. Hier steht, was als Push-Nachricht verschickt wurde – auch was du selbst ausgelöst hast.</div>')); return; }
+    if(!meldungen.length){
+      ml.appendChild(meldungenFehler
+        ? el('<div class="note warnbox">Die Meldungen ließen sich nicht laden ('+esc(meldungenFehler)+"). Sind sie in der Datenbank eingerichtet (tools/meldungen.sql)?</div>")
+        : el('<div class="muted" style="font-size:13px">Noch keine Meldungen. Hier steht, was als Push-Nachricht verschickt wurde – auch was du selbst ausgelöst hast.</div>'));
+      return; }
     meldungen.forEach(function(e){ ml.appendChild(meldungEl(e)); });
   };
   var reiterZeigen=function(){
     box.querySelectorAll("[data-r]").forEach(function(c){ c.setAttribute("aria-pressed", String(c.dataset.r===reiter)); });
     ml.hidden=reiter!=="meldungen"; li.hidden=reiter==="meldungen"; box.querySelector("[data-schreiben]").hidden=reiter==="meldungen";
-    if(reiter==="meldungen"){ meldungenZeichnen(); meldungenGelesen(); v.inhalt.scrollTop=0; }
-    else { v.inhalt.scrollTop=v.inhalt.scrollHeight; }
+    /* erst zeichnen (Neues bleibt markiert), dann als gelesen merken – die Zahl am Reiter ist danach weg */
+    if(reiter==="meldungen"){ meldungenZeichnen(); meldungenGelesen(); zahlen(); v.inhalt.scrollTop=0; }
+    else { if(chatGeladen) chatGelesen(); zahlen(); v.inhalt.scrollTop=v.inhalt.scrollHeight; }
   };
   box.querySelectorAll("[data-r]").forEach(function(c){ c.onclick=function(){ reiter=c.dataset.r; reiterZeigen(); }; });
   chatFenster={zu:v.zu, zeichnen:zeichnen, meldungen:meldungenZeichnen};
@@ -7993,8 +8184,12 @@ function chatOeffnen(opt){
     if(opt.an && team.some(function(t){ return t.user_id===opt.an; })) sel.value=opt.an;
   });
   box.querySelector("[data-foto]").onchange=function(e){
-    Array.prototype.slice.call(e.target.files||[]).slice(0,4).forEach(function(datei){
-      verkleinere(datei).then(function(b){ fotos.push(b.datenUrl); fotosZeichnen(); }, function(){ toast("Bild nicht lesbar."); });
+    /* höchstens 4 Fotos je Nachricht – insgesamt, nicht je Auswahl */
+    var dateien=Array.prototype.slice.call(e.target.files||[]), frei=Math.max(0, 4-fotos.length-fotosOffen);
+    if(dateien.length>frei) toast("Höchstens 4 Fotos je Nachricht – "+(frei ? "nur die ersten "+frei+" wurden übernommen." : "es sind schon 4.")+" Weitere bitte in einer zweiten Nachricht.");
+    dateien.slice(0,frei).forEach(function(datei){
+      fotosOffen++;
+      verkleinere(datei).then(function(b){ fotosOffen--; fotos.push(b.datenUrl); fotosZeichnen(); }, function(){ fotosOffen--; toast("Bild nicht lesbar."); });
     });
     e.target.value="";
   };
@@ -8002,6 +8197,7 @@ function chatOeffnen(opt){
   box.querySelector('[data-a="senden"]').onclick=function(){
     var text=ta.value.trim(); err.hidden=true;
     if(!text && !fotos.length){ err.textContent="Bitte etwas schreiben."; err.hidden=false; return; }
+    if(text.length>4000){ err.textContent="Die Nachricht ist zu lang ("+text.length+" Zeichen, höchstens 4000) – bitte kürzen oder auf zwei Nachrichten aufteilen."; err.hidden=false; return; }
     var id="c_"+Date.now().toString(36)+Math.random().toString(36).slice(2,8), fd={};
     fotos.forEach(function(u,i){ fd["chat/"+id+"/"+(i+1)+".jpg"]=u; });
     var anSel=box.querySelector("[data-an]"), anId=anSel.value||null, anName=anId ? anSel.options[anSel.selectedIndex].textContent : null;
@@ -8009,13 +8205,26 @@ function chatOeffnen(opt){
            an:anId, an_name:anName,
            von_name:meineAngaben().name||wer(), von:Store.benutzer.id, erstellt:new Date().toISOString(), konto:Store.benutzer.email, _fotoDaten:fd};
     var k=box.querySelector('[data-a="senden"]'); k.disabled=true;
-    chatSenden(m).then(function(ok){
-      k.disabled=false;
-      if(!ok){ var w=lsGet("ukt_chat_warte",[]); w.push(m); lsSet("ukt_chat_warte",w); toast("Keine Verbindung – die Nachricht geht raus, sobald wieder Netz da ist."); }
+    var nicht=function(t){ err.textContent=t; err.hidden=false; };
+    k.textContent="Wird gesendet …";
+    var frei=function(){ k.disabled=false; k.textContent="Senden"; };
+    chatSenden(m).then(function(r){
+      frei();
+      /* abgelehnt (zu lang, keine Rechte, Tabelle fehlt): das geht auch später nicht raus – Text und Fotos bleiben stehen */
+      if(!r.ok && r.dauerhaft){ nicht("Nicht gesendet: "+r.grund+" Der Text steht noch hier."); return; }
+      if(!r.ok){
+        var w=lsGet("ukt_chat_warte",[]); w.push(m);
+        /* lässt sie sich nicht auf dem Gerät ablegen (Speicher voll, gesperrt), bleibt sie im Feld stehen */
+        if(!lsSet("ukt_chat_warte",w)){
+          nicht("Keine Verbindung – und die Nachricht ließ sich nicht auf dem Gerät ablegen (Speicher voll?). Sie steht noch hier: bitte mit Netz nochmals senden"+(fotos.length?" oder die Fotos weglassen":"")+".");
+          return;
+        }
+        toast("Keine Verbindung – die Nachricht geht raus, sobald wieder Netz da ist.");
+      }
       else { m.fotos=Object.keys(fd); chatNachrichten.push(m); }
-      ta.value=""; fotos=[]; fotosZeichnen(); bezug=opt.bezug||null; bezugZeichnen(); zeichnen();
-      if(ok) chatLaden();
-    });
+      ta.value=""; chatEntwurf.text=""; fotos=[]; fotosZeichnen(); bezug=opt.bezug||null; bezugZeichnen(); zeichnen();
+      if(r.ok){ chatKartenZeichnen(); chatLaden(); }
+    }, function(e){ frei(); nicht("Nicht gesendet: "+((e&&e.message)||e)); });
   };
 }
 /* Bezug aussuchen: Suche über Märkte, offene Störungen, Anlagen und die letzten Protokolle */
@@ -8031,7 +8240,11 @@ function chatBezugWahl(fertig){
   var alles=[];
   ST.forEach(function(m){ alles.push({art:"markt", id:m.id, text:chatBezugText("markt",m), such:stName(m)+" "+(m.filiale||"")+" "+(m.adresse||"")}); });
   offeneStoerungen(true).forEach(function(o){ alles.push({art:"stoerung", id:o._id, text:chatBezugText("stoerung",o), such:chatBezugText("stoerung",o)+" "+(o.beschreibung||"")}); });
-  Object.keys(posById||{}).forEach(function(k){ var p=posById[k]; if(!p||p.aktiv===false||!byId[p.standortId]) return; alles.push({art:"anlage", id:k, text:chatBezugText("anlage",p), such:stName(byId[p.standortId])+" "+anlagenName(anlageDaten(p))}); });
+  /* jede Anlage einmal (nicht je Termin) – unter der Kennung, mit der auch die Anlagenhistorie sie führt */
+  var anlageDa={};
+  Object.keys(posById||{}).forEach(function(k){ var p=posById[k]; if(!p||p.aktiv===false||!byId[p.standortId]) return;
+    var a=anlageVon(p); p=(a&&a.leader)||p; k=p.id; if(anlageDa[k]) return; anlageDa[k]=1;
+    alles.push({art:"anlage", id:k, text:chatBezugText("anlage",p), such:stName(byId[p.standortId])+" "+anlagenName(anlageDaten(p))}); });
   alleProtokolle().slice(0,80).forEach(function(p){ alles.push({art:"protokoll", id:p._id, text:chatBezugText("protokoll",p), such:chatBezugText("protokoll",p)}); });
   var namen={markt:"Markt",stoerung:"Störung",anlage:"Anlage",protokoll:"Protokoll"};
   var zeichnen=function(){
@@ -8043,6 +8256,7 @@ function chatBezugWahl(fertig){
     else l=treffer.slice(0,60);
     if(!l.length){ erg.appendChild(el('<div class="muted">Nichts gefunden.</div>')); return; }
     if(!q && !typ && treffer.length>l.length) erg.appendChild(el('<div class="muted" style="font-size:12.5px">Je Art die ersten – oben eine Art wählen oder suchen.</div>'));
+    else if(treffer.length>l.length) erg.appendChild(el('<div class="muted" style="font-size:12.5px">Die ersten '+l.length+" von "+treffer.length+" – zum Eingrenzen oben suchen.</div>"));
     l.forEach(function(x){
       var b=el('<button class="btn ghost sm" type="button" style="text-align:left;justify-content:flex-start"><span class="tag">'+namen[x.art]+"</span>&nbsp;"+esc(x.text)+"</button>");
       b.onclick=function(){ v.zu(); fertig({art:x.art, id:x.id, text:x.text}); };
@@ -8069,7 +8283,7 @@ function abrechnungLaden(){
 function abrechnungZeile(p){
   var a=abrechnung[p._id];
   var z=el('<div class="posbox stack" style="gap:6px" data-abrechnung>'+
-    '<label class="fl" style="flex-direction:row;gap:8px;align-items:center"><input type="checkbox" data-a="haken"'+(a?" checked":"")+'> <strong>€ Abgerechnet</strong>'+
+    '<label class="chk" style="align-items:center;flex-wrap:wrap"><input type="checkbox" data-a="haken" style="margin:0"'+(a?" checked":"")+'> <strong>€ Abgerechnet</strong>'+
       '<span class="muted" style="font-size:12px" data-a="wann">'+(a?"am "+tagFmt(a.abgerechnet)+(a.von?" von "+esc(a.von):""):"")+"</span></label>"+
     '<input type="text" data-a="notiz" placeholder="Rechnungsnummer / Notiz (optional)" value="'+esc((a&&a.notiz)||"")+'"'+(a?"":" hidden")+'>'+
     '<div class="note warnbox" data-a="err" hidden></div></div>');
@@ -8130,7 +8344,8 @@ function kontoKarte(){
   var kpw=c.querySelector("#k_pw"); if(kpw) kpw.onclick=function(){ if(demo()||nurLesen()){ toast("Für dieses gemeinsame Konto lässt sich das Passwort nur im Büro ändern."); return; } form.hidden=false; err.hidden=true; c.querySelector("#k_p1").focus(); };
   c.querySelector("#k_abbr").onclick=function(){ form.hidden=true; form.reset(); };
   var ka=c.querySelector("#k_angaben"); if(ka) ka.onclick=angabenDialog;
-  c.querySelector("#k_ab").onclick=function(){ if(!abmeldenErlaubt()) return; formDirty=false; Store.sb.auth.signOut({scope:"local"}); };
+  /* vor dem Abmelden die Benachrichtigungen dieses Geräts abbestellen (pushVorAbmelden) */
+  c.querySelector("#k_ab").onclick=function(){ if(!abmeldenErlaubt()) return; formDirty=false; pushVorAbmelden().then(function(){ Store.sb.auth.signOut({scope:"local"}); }); };
   form.onsubmit=function(e){
     e.preventDefault();
     var p1=c.querySelector("#k_p1").value, p2=c.querySelector("#k_p2").value;
@@ -9700,7 +9915,7 @@ function viewProtokoll(){
   form.addEventListener("input",function(){ formDirty=true; });
   form.addEventListener("change",function(){ formDirty=true; });
   var abmelden=form.querySelector("#logout");
-  if(abmelden) abmelden.onclick=function(){ if(!abmeldenErlaubt()) return; formDirty=false; Store.sb.auth.signOut({scope:"local"}); };
+  if(abmelden) abmelden.onclick=function(){ if(!abmeldenErlaubt()) return; formDirty=false; pushVorAbmelden().then(function(){ Store.sb.auth.signOut({scope:"local"}); }); };
 
   /* Standort-Auswahl */
   var selSt=form.querySelector("#f_standort");
@@ -16840,15 +17055,31 @@ function ansichtHolen(){
   }catch(e){}
   /* wer inzwischen selbst einen Reiter wählt, bleibt dort */
   tabsEl.addEventListener("click", function(){ S.wunschView=null; }, true);
-  setTimeout(function(){ S.wunschView=null; }, 20000);
+}
+/* Stehen Anmeldung und Rolle fest? Vorher gilt die Vorgabe bzw. nach der
+   Anmeldung kurz die engste Rolle (rolleVorlaeufig) */
+function ansichtRolleFest(){
+  return Store.modus==="lokal" || Store.modus==="claude" || (Store.modus==="supabase" && !!Store.benutzer && Admin.geprueft);
 }
 function ansichtWiederherstellen(){
-  var w=S.wunschView; if(!w || !reiterErlaubt(w.view)) return;
+  var w=S.wunschView; if(!w) return;
+  /* der Wunsch verfällt 20 s, nachdem Anmeldung und Rolle feststehen – ist der
+     Reiter bis dahin nicht erlaubt, bleibt es beim jetzigen */
+  var fest=ansichtRolleFest();
+  if(fest){ if(!w.festSeit) w.festSeit=Date.now(); else if(Date.now()-w.festSeit>20000){ S.wunschView=null; return; } }
+  else if(w.festSeit){ S.wunschView=null; return; }   /* inzwischen abgemeldet oder anderes Konto: der Wunsch galt dem vorigen */
+  if(!reiterErlaubt(w.view)) return;
   /* Verwaltung: erst, wenn sie freigeschaltet ist (sonst stünde nur die Sperre da) */
   if((w.view==="verwaltung"||w.view==="daten") && !Admin.frei) return;
-  S.wunschView=null; S.view=w.view;
+  /* inzwischen selbst woanders hingegangen: dort bleiben */
+  if(w.gesetzt && S.view!==w.view && S.view!=="faellig"){ S.wunschView=null; return; }
+  S.view=w.view; w.gesetzt=true;
   if(w.region) S.region=w.region;
   if(w.view==="verwaltung" && w.tab){ S.adm=S.adm||{suche:"", filter:"alle", sort:"filiale", auf:true, sel:null, entwurf:null}; S.adm.tab=w.tab; }
+  /* erledigt erst, wenn die Rolle feststeht: bis dahin wirft render() etwa
+     „Protokoll“ noch einmal auf „Fällig“ zurück (engste Rolle) – der Wunsch
+     bleibt stehen und kommt danach wieder dran */
+  if(fest) S.wunschView=null;
 }
 /* ---------- QR-Code zum Aufrufen am Handy ---------- */
 function appAdresse(){
@@ -16931,7 +17162,9 @@ idbOeffnen()
   .then(lokaleNeuLaden)
   .then(entwurfHolen)
   .then(ladeStammdaten)
-  .then(function(){ pushStart(); chatStart(); })   /* Benachrichtigungen, Team-Chat, Abrechnung – sobald ein Konto da ist */
+  /* Benachrichtigungen, Team-Chat, Abrechnung – sobald ein Konto da ist (ein Fehler
+     bei den Benachrichtigungen hält den Rest des Starts nicht auf) */
+  .then(function(){ try{ pushStart(); }catch(e){ console.warn("Benachrichtigungen", e); } chatStart(); })
   .then(adminPruefen)
   .then(function(){ storeNachRender(); flushQueue(); })
   .catch(function(e){ Store.geraetFehler = e && e.message ? e.message : "Gerätespeicher nicht verfügbar"; storeNachRender(); });
