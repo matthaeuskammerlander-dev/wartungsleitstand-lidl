@@ -92,6 +92,18 @@ header.app{position:sticky;top:env(safe-area-inset-top,0px);z-index:40;backgroun
 .hspace{flex:1 1 auto}
 /* ↻, Claude und QR-Code bleiben immer zusammen in einer Zeile */
 .kopfknoepfe{display:flex;gap:6px;flex:none}
+/* Team-Chat: Zahl der ungelesenen Nachrichten am Knopf */
+.btn.icon{position:relative}
+.chatzahl{position:absolute;top:-5px;right:-5px;min-width:17px;height:17px;line-height:17px;padding:0 4px;border-radius:9px;background:var(--crit);color:#fff;font-size:10.5px;font-weight:700;text-align:center;font-family:var(--f-mono,monospace)}
+.chatzahl:empty{display:none}
+.chatliste{display:flex;flex-direction:column;gap:8px}
+.chatmsg{max-width:88%;padding:8px 11px;border-radius:12px;background:var(--ground);border:1px solid var(--line);font-size:14px;align-self:flex-start;overflow-wrap:anywhere}
+.chatmsg.mein{align-self:flex-end;background:var(--accent-soft);border-color:var(--line-2)}
+.chatmsg .chatkopf{font-size:11.5px;color:var(--muted);margin-bottom:3px;display:flex;gap:8px;justify-content:space-between}
+.chatmsg .chatbezug{display:inline-block;font-size:11.5px;padding:1px 8px;border-radius:9px;background:var(--surface);border:1px solid var(--line);color:var(--accent-ink,var(--accent));margin-bottom:4px;cursor:pointer;text-decoration:none}
+.chatmsg .chattext{white-space:pre-wrap}
+.chatmsg img{max-width:100%;max-height:220px;border-radius:8px;margin-top:6px;display:block;cursor:zoom-in}
+.chatmsg.wartet{opacity:.6}
 /* darf umbrechen: auf schmalen Handys (iPhone) schob die lange Zeile sonst
    die ganze Seite breiter als den Bildschirm */
 .stand{font-family:var(--f-mono);font-size:11.5px;color:var(--ink-3);white-space:normal;min-width:0;overflow-wrap:anywhere;
@@ -422,6 +434,7 @@ table.dt td{padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:
     <div class="hspace"></div>
     <span class="kopfknoepfe"><button class="btn ghost icon" type="button" id="neuladen" hidden title="Daten und App neu laden" aria-label="Aktualisieren">↻</button>
     <button class="btn ghost icon" type="button" id="fragebtn" hidden title="Claude fragen – Kältetechnik, Vorschriften, die App" aria-label="Claude fragen">✦</button>
+    <button class="btn ghost icon" type="button" id="chatbtn" hidden title="Team-Chat" aria-label="Team-Chat">💬<span class="chatzahl" id="chatzahl"></span></button>
     <button class="btn ghost icon" type="button" id="qrbtn" hidden title="QR-Code zur App" aria-label="QR-Code zur App"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M3 3h8v8H3V3zm2 2v4h4V5H5zm8-2h8v8h-8V3zm2 2v4h4V5h-4zM3 13h8v8H3v-8zm2 2v4h4v-4H5zm1-9h2v2H6V6zm10 0h2v2h-2V6zM6 16h2v2H6v-2zm7-3h2v2h-2v-2zm2 2h2v2h-2v-2zm-2 2h2v2h-2v-2zm4 0h2v2h-2v-2zm2-2h2v2h-2v-2zm0 4h2v2h-2v-2zm-4 2h2v2h-2v-2zm2-2h2v2h-2v-2z"/></svg></button></span>
     <div class="stand" id="stand" hidden></div>
   </div>
@@ -1201,9 +1214,16 @@ function berechneFaelligkeiten(){
     if(!durch){
       /* nichts gewartet: der versäumte Termin davor bleibt überfällig – nicht
          still „ausgelassen“, nur weil der nächste schon in der Frist steht */
-      if(davorVersaeumt){ p.naechste=davor; p.erledigtDurch=null; p.status="ueberfaellig"; return; }
-      p.naechste=aktuell; p.erledigtDurch=null;
-      p.status = aktuell<heute ? "ueberfaellig" : "faellig";
+      /* „überfällig seit“ nennt den ältesten in Folge versäumten Termin – auch
+         wenn inzwischen ein weiterer Termin verstrichen ist (Büro 28.09.2026:
+         man soll sehen, seit wann wirklich nichts gemacht wurde); zurück bis
+         zur letzten Wartung bzw. zum ersten Termin, höchstens drei Jahre */
+      var seit=aktuell, n=0, v;
+      while(n++<3){ v=ankerIm(a,+seit.slice(0,4)-1);
+        if(zu[v] || (a.erster && v<a.erster) || (p.letzte && v<=p.letzte)) break;
+        seit=v; }
+      p.naechste=seit; p.erledigtDurch=null;
+      p.status = seit<heute ? "ueberfaellig" : "faellig";
       return;
     }
     /* der versäumte Termin davor zählt mit dieser Wartung als erledigt */
@@ -1808,6 +1828,9 @@ function stoerungDialog(vorhanden, weiter){
   var vorherOv=document.body.style.overflow;
   document.body.style.overflow="hidden";
   var inhalt=ov.querySelector(".as-inhalt"), fuss=ov.querySelector(".as-fuss");
+  /* Team-Chat: Nachrichten zu dieser Störung unter dem Formular (erst nach
+     dem Aufbau anhängen – der Dialog füllt inhalt gleich darunter) */
+  if(vorhanden) setTimeout(function(){ if(ov.isConnected && chatAn()) inhalt.appendChild(chatBezugKarte("stoerung", o._id, chatBezugText("stoerung", o))); }, 0);
   var zu=function(){
     ov.remove(); document.body.style.overflow=vorherOv;
     /* ein aus dem Posteingang geöffneter Auftrag gilt nur für diesen Dialog –
@@ -2640,6 +2663,8 @@ function marktAnsicht(sid){
     '<h2>Wartungs- und Störungshistorie</h2></div></div>');
   h.querySelector(".stack").appendChild(historieAnsicht(s));
   a.inhalt.appendChild(h);
+  /* Team-Chat: Nachrichten zu diesem Markt (auch zu seinen Anlagen, Störungen, Protokollen) */
+  if(chatAn()) a.inhalt.appendChild(chatBezugKarte("markt", s.id, chatBezugText("markt", s)));
   /* führt ein Knopf woandershin (Protokoll, Verwaltung), geht die Ansicht zu */
   /* auch wenn man schon im Protokoll-Reiter ist: ein neu begonnenes Protokoll
      (anderer Markt/Termin/Störung) – sonst läge die Ansicht über dem Formular
@@ -7436,6 +7461,407 @@ function angabenDialog(){
   };
   v.inhalt.appendChild(f);
 }
+/* ================================================================
+   Push-Benachrichtigungen („es hat sich etwas getan“) – je Gerät.
+   Der Hintergrund-Helfer sw.js zeigt die Nachricht; die Datenbank stößt
+   die Funktion „push“ an (tools/push.sql). Nur Büro und Techniker.
+   ================================================================ */
+var PUSH_ARTEN=[["stoerung","Störungen (neu, geändert, erledigt)"],["protokoll","Neue Protokolle"],["korrektur","Korrekturen und Löschungen"],
+  ["stammdaten","Markt- und Anlagendaten"],["chat","Team-Chat"],["wunsch","Änderungswünsche (nur Inhaber)"],["posteingang","Posteingang"]];
+var pushReg=null;     /* die Registrierung des Hintergrund-Helfers */
+function pushMoeglich(){ return "serviceWorker" in navigator && "PushManager" in window && "Notification" in window && !!window.isSecureContext; }
+function pushAn(){ return Store.modus==="supabase" && !!Store.sb && !!Store.benutzer && !demo() && !nurLesen(); }
+/* iPhone/iPad: Benachrichtigungen nur als installierte App („Zum Home-Bildschirm“) */
+function pushIosOhneApp(){ return /iPhone|iPad|iPod/.test(navigator.userAgent) && !window.navigator.standalone; }
+function pushGeraetName(){ var u=navigator.userAgent; return /iPhone/.test(u)?"iPhone":/iPad/.test(u)?"iPad":/Android/.test(u)?"Android":/Windows/.test(u)?"PC (Windows)":/Mac/.test(u)?"Mac":"Gerät"; }
+function pushStart(){
+  if(!pushMoeglich() || window.UKT_VORSCHAU) return;
+  navigator.serviceWorker.register("sw.js").then(function(r){ pushReg=r; pushAbgleich(); }, function(e){ console.warn("Hintergrund-Helfer", e); });
+  navigator.serviceWorker.addEventListener("message", function(e){
+    var d=e.data||{}; if(d.pushZiel!==undefined){ pushZiel(d.pushZiel); chatLaden(); }
+  });
+  /* aus einer Nachricht heraus geöffnet: #push=ziel */
+  var m=/[#&]push=([^&]*)/.exec(location.hash||"");
+  if(m){ history.replaceState(null,"",location.pathname+location.search); pushZiel(decodeURIComponent(m[1])); }
+}
+/* Gehört das Abo dieses Geräts noch zum angemeldeten Konto? (Kontowechsel;
+   Kunde und Präsentation bekommen nichts) */
+function pushAbgleich(){
+  if(!pushReg || !Store.benutzer) return;
+  pushReg.pushManager.getSubscription().then(function(sub){
+    if(!sub) return;
+    if(!pushAn()){ pushAbmelden(sub); return; }
+    if(lsGet("ukt_push_konto","")!==Store.benutzer.email) pushAboSpeichern(sub, pushArtenGewaehlt()).catch(function(){});
+  });
+}
+function pushArtenGewaehlt(){
+  var a=lsGet("ukt_push_arten", null);
+  if(!Array.isArray(a)) a=PUSH_ARTEN.map(function(x){ return x[0]; });
+  return a.filter(function(k){ return k!=="wunsch" || istInhaber(); });
+}
+function pushAboSpeichern(sub, arten){
+  var j=sub.toJSON();
+  return Store.sb.rpc("push_abo_speichern", {p_endpoint:j.endpoint, p_p256dh:j.keys.p256dh, p_auth:j.keys.auth, p_geraet:pushGeraetName(), p_arten:arten})
+    .then(function(r){ if(r.error) throw new Error(r.error.message); lsSet("ukt_push_konto", Store.benutzer.email); lsSet("ukt_push_arten", arten); });
+}
+function pushAbmelden(sub){
+  return Store.sb.from("push_abos").delete().eq("endpoint", sub.endpoint).then(function(){ return sub.unsubscribe(); }).then(function(){ lsSet("ukt_push_konto",""); });
+}
+function b64ZuBytes(s){ var b=atob((s+"=".repeat((4-s.length%4)%4)).replace(/-/g,"+").replace(/_/g,"/")); var a=new Uint8Array(b.length); for(var i=0;i<b.length;i++) a[i]=b.charCodeAt(i); return a; }
+function pushEinschalten(arten){
+  if(!pushReg) return Promise.reject(new Error("Der Hintergrund-Helfer ist noch nicht bereit – bitte gleich nochmals."));
+  return Notification.requestPermission().then(function(erl){
+    if(erl!=="granted") throw new Error("Benachrichtigungen sind für diese App im Browser nicht erlaubt (Einstellungen des Browsers).");
+    return Store.sb.functions.invoke("push", {body:{aktion:"schluessel"}});
+  }).then(function(r){
+    var k=r.data&&r.data.schluessel; if(!k) throw new Error("Schlüssel fehlt – ist die Funktion „push“ eingerichtet?");
+    return pushReg.pushManager.getSubscription().then(function(s){ return s || pushReg.pushManager.subscribe({userVisibleOnly:true, applicationServerKey:b64ZuBytes(k)}); });
+  }).then(function(sub){ return pushAboSpeichern(sub, arten); });
+}
+function pushStandText(n){
+  if(!n) return;
+  if(!pushMoeglich()){ n.textContent=pushIosOhneApp()?"am iPhone erst nach „Zum Home-Bildschirm“":"in diesem Browser nicht möglich"; return; }
+  if(!pushReg){ n.textContent=""; return; }
+  pushReg.pushManager.getSubscription().then(function(s){ n.textContent=s&&lsGet("ukt_push_konto","")===(Store.benutzer&&Store.benutzer.email) ? "auf diesem Gerät eingeschaltet" : "auf diesem Gerät aus"; });
+}
+function pushDialog(){
+  if(!pushAn()){ toast("Benachrichtigungen gibt es nur für Büro und Techniker mit gemeinsamer Datenbank."); return; }
+  var v=ansichtOeffnen("Benachrichtigungen");
+  if(!pushMoeglich()){
+    v.inhalt.appendChild(el('<div class="note warnbox">'+(pushIosOhneApp()
+      ? "Am iPhone gehen Benachrichtigungen nur, wenn die App installiert ist: in Safari unten <strong>Teilen</strong> antippen, dann <strong>„Zum Home-Bildschirm“</strong>. Danach die App vom Home-Bildschirm öffnen und hier einschalten."
+      : "Dieser Browser kann keine Benachrichtigungen empfangen.")+"</div>"));
+    return;
+  }
+  var arten=pushArtenGewaehlt();
+  var f=el('<div class="stack">'+
+    '<div class="muted" style="font-size:13px">Sie bekommen eine Nachricht aufs Gerät, wenn jemand anderer etwas geändert hat – was Sie selbst eintragen, löst keine aus. Jedes Gerät (Handy, PC) wird eigens eingeschaltet.</div>'+
+    '<div class="posbox stack" style="gap:6px"><strong>Worüber?</strong>'+
+    PUSH_ARTEN.filter(function(x){ return x[0]!=="wunsch" || istInhaber(); }).map(function(x){
+      return '<label class="fl" style="flex-direction:row;gap:8px;align-items:center"><input type="checkbox" data-art="'+x[0]+'"'+(arten.indexOf(x[0])>=0?" checked":"")+'> <span>'+esc(x[1])+"</span></label>"; }).join("")+
+    "</div>"+
+    '<div class="rowflex"><button class="btn sm" type="button" data-a="an">Auf diesem Gerät einschalten</button>'+
+      '<button class="btn ghost sm" type="button" data-a="aus" hidden>Auf diesem Gerät ausschalten</button>'+
+      '<button class="btn ghost sm" type="button" data-a="test" hidden>Probe-Nachricht</button></div>'+
+    '<div class="note warnbox" data-a="err" hidden></div>'+
+    '<div data-a="geraete" class="muted" style="font-size:12.5px"></div>'+
+  "</div>");
+  v.inhalt.appendChild(f);
+  var err=f.querySelector('[data-a="err"]'), an=f.querySelector('[data-a="an"]'), aus=f.querySelector('[data-a="aus"]'), test=f.querySelector('[data-a="test"]');
+  var fehl=function(t){ err.textContent=t; err.hidden=false; };
+  var gewaehlt=function(){ return Array.prototype.map.call(f.querySelectorAll("[data-art]:checked"), function(c){ return c.dataset.art; }); };
+  var stand=function(){
+    if(!pushReg){ an.disabled=true; setTimeout(stand, 800); return; }
+    an.disabled=false;
+    pushReg.pushManager.getSubscription().then(function(s){
+      var ein=!!s && lsGet("ukt_push_konto","")===Store.benutzer.email;
+      an.hidden=ein; aus.hidden=!ein; test.hidden=!ein;
+    });
+    Store.sb.from("push_abos").select("endpoint,geraet,erstellt,zuletzt").then(function(r){
+      var g=f.querySelector('[data-a="geraete"]'); if(r.error||!r.data||!r.data.length){ g.textContent=r.error?"":"Auf keinem Ihrer Geräte eingeschaltet."; return; }
+      g.innerHTML="Eingeschaltet auf: "+r.data.map(function(x){ return esc(x.geraet||"Gerät")+" (seit "+tagFmt(x.erstellt)+(x.zuletzt?", zuletzt "+tagFmt(x.zuletzt):"")+")"; }).join(" · ");
+    }, function(){});
+  };
+  f.querySelectorAll("[data-art]").forEach(function(c){ c.onchange=function(){
+    var a=gewaehlt(); lsSet("ukt_push_arten", a);
+    if(!pushReg) return;
+    pushReg.pushManager.getSubscription().then(function(s){ if(s && !aus.hidden) pushAboSpeichern(s, a).then(function(){ toast("Auswahl gespeichert."); }, function(e){ fehl(e.message); }); });
+  }; });
+  an.onclick=function(){
+    err.hidden=true; an.disabled=true; an.textContent="Wird eingeschaltet …";
+    pushEinschalten(gewaehlt()).then(function(){ toast("Benachrichtigungen eingeschaltet."); an.disabled=false; an.textContent="Auf diesem Gerät einschalten"; stand(); },
+      function(e){ an.disabled=false; an.textContent="Auf diesem Gerät einschalten"; fehl(e.message||String(e)); });
+  };
+  aus.onclick=function(){
+    pushReg.pushManager.getSubscription().then(function(s){ return s ? pushAbmelden(s) : null; }).then(function(){ toast("Ausgeschaltet."); stand(); }, function(e){ fehl(e.message||String(e)); });
+  };
+  test.onclick=function(){
+    test.disabled=true;
+    Store.sb.functions.invoke("push", {body:{aktion:"test"}}).then(function(r){
+      test.disabled=false;
+      var d=r.data||{}; if(r.error||d.fehler){ fehl(d.fehler||r.error.message); return; }
+      toast("Probe-Nachricht an "+d.geschickt+" von "+d.geraete+" Gerät(en) geschickt – sie kommt gleich an.");
+    }, function(e){ test.disabled=false; fehl(String(e)); });
+  };
+  stand();
+}
+/* Antippen einer Nachricht: an die passende Stelle – sobald die Daten da sind */
+function pushZiel(z, versuch){
+  versuch=versuch||0;
+  if(!z) return;
+  if((!ST.length || (Store.modus==="supabase" && !protokolleGeladen)) && versuch<12){ setTimeout(function(){ pushZiel(z, versuch+1); }, 800); return; }
+  var t=z.split(":"), art=t[0], id=t.slice(1).join(":");
+  if(art==="stoerungen"){ faelligSprung("stoerungen"); return; }
+  if(art==="markt"){ if(byId[id]) marktAnsicht(id); else springe({reiter:"anlagen"}); return; }
+  if(art==="protokoll"){
+    var p=alleProtokolle(true).filter(function(x){ return x._id===id; })[0];
+    if(p) protokollFenster(p); else toast("Das Protokoll ist nicht (mehr) da."); return;
+  }
+  if(art==="wunsch"){ if(!verwaltungDarf()) return;
+    springe({reiter:"verwaltung", alleFenster:true, finde:function(){ return document.querySelector('[data-wunsch="'+id+'"]'); }}); return; }
+  if(art==="posteingang"){ springe({reiter:"faellig", alleFenster:true, block:"start"}); return; }
+  if(art==="chat"){ chatOeffnen({zu:id}); return; }
+  springe({reiter:"verlauf", alleFenster:true});
+}
+
+/* ================================================================
+   Team-Chat – gemeinsamer Verlauf für Büro und Techniker. Jede Nachricht
+   kann sich auf eine Sache beziehen (Markt, Anlage, Störung, Protokoll)
+   und steht dann auch dort. Kunde und Präsentation sehen ihn nicht.
+   ================================================================ */
+var chatNachrichten=[], chatGeladen=false, chatTimer=null, chatFenster=null, chatBildUrls={}, chatKonto=null;
+function chatAn(){ return Store.modus==="supabase" && !!Store.sb && !!Store.benutzer && !demo() && !nurLesen(); }
+function chatSchluessel(){ var m=Store.benutzer&&Store.benutzer.email; return m ? "ukt-chat-gelesen:"+m : null; }
+function chatStart(){
+  var k=document.getElementById("chatbtn"); if(k) k.onclick=function(){ chatOeffnen(); };
+  document.addEventListener("visibilitychange", function(){ if(!document.hidden) chatLaden(); });
+  window.addEventListener("online", function(){ chatWarteSenden(); });
+  if(chatTimer) clearInterval(chatTimer);
+  chatTimer=setInterval(function(){ if(!document.hidden && chatAn()) chatLaden(); }, 90000);
+  /* die Rolle steht erst nach der Rollenprüfung fest – in den ersten Sekunden öfter nachsehen */
+  [0,3000,8000,20000].forEach(function(ms){ setTimeout(chatKnopf, ms); });
+}
+/* Knopf in der Kopfzeile samt Zahl der ungelesenen – und der Kontowechsel */
+function chatKnopf(){
+  var k=document.getElementById("chatbtn"); if(!k) return;
+  var konto=chatAn() ? Store.benutzer.email : null;
+  if(konto!==chatKonto){ chatKonto=konto; chatNachrichten=[]; chatGeladen=false; chatBildUrls={}; chatLaden(); pushAbgleich(); }
+  k.hidden=!chatAn();
+  var z=document.getElementById("chatzahl"), n=chatAn()?chatUngelesen():0;
+  z.textContent=n?String(n>99?"99+":n):"";
+}
+function chatUngelesen(){
+  var seit=lsGet(chatSchluessel(),""), ich=Store.benutzer&&Store.benutzer.id;
+  return chatNachrichten.filter(function(m){ return m.von!==ich && (!seit || m.erstellt>seit); }).length;
+}
+function chatGelesen(){ if(chatSchluessel()) lsSet(chatSchluessel(), new Date().toISOString()); chatKnopf(); }
+function chatLaden(){
+  abrechnungLaden();
+  if(!chatAn()){ chatNachrichten=[]; chatGeladen=false; if(document.getElementById("chatbtn")) document.getElementById("chatbtn").hidden=true; return Promise.resolve(); }
+  return mitFrist(Store.sb.from("chat").select("*").order("erstellt",{ascending:false}).limit(300), 15000).then(function(r){
+    if(r.error) return;
+    chatNachrichten=(r.data||[]).slice().sort(function(a,b){ return String(a.erstellt).localeCompare(String(b.erstellt)); });
+    chatGeladen=true; chatKnopf();
+    if(chatFenster) chatFenster.zeichnen();
+    document.querySelectorAll("[data-chatkarte]").forEach(function(k){ if(k._zeichnen) k._zeichnen(); });
+    chatWarteSenden();
+  }, function(){});
+}
+/* Bezug: {art, id, text} – wozu die Nachricht gehört */
+function chatBezugText(art, o){
+  if(art==="markt") return stName(o);
+  if(art==="anlage"){ var s=byId[o.standortId]; return (s?stName(s)+" – ":"")+anlagenName(anlageDaten(o)); }
+  if(art==="stoerung"){ var st=byId[o.standortId]; return "Störung "+(st?stName(st):"")+(o.auftragsnummer?" (Auftrag "+o.auftragsnummer+")":"")+(o.problemtyp?" – "+o.problemtyp:""); }
+  if(art==="protokoll") return (istStoerung(o)?"Störungsprotokoll ":"Protokoll ")+protoName(o)+" vom "+dfmt(o.datum);
+  return "";
+}
+function chatBezugOeffnen(m){
+  if(!m.bezug_art) return;
+  if(m.bezug_art==="markt"){ if(byId[m.bezug_id]) marktAnsicht(m.bezug_id); else toast("Diesen Markt gibt es nicht mehr."); }
+  else if(m.bezug_art==="anlage"){ var p=posById[m.bezug_id]; if(p) anlageHistorieAnsicht(p); else toast("Diese Anlage gibt es nicht mehr."); }
+  else if(m.bezug_art==="stoerung"){ var o=OFFENE.filter(function(x){ return x._id===m.bezug_id; })[0];
+    if(o && !o.erledigt) stoerungDialog(o); else toast(o?"Diese Störung ist erledigt.":"Diese Störung gibt es nicht mehr."); }
+  else if(m.bezug_art==="protokoll"){ var pr=alleProtokolle(true).filter(function(x){ return x._id===m.bezug_id; })[0]; if(pr) protokollFenster(pr); else toast("Das Protokoll ist nicht mehr da."); }
+}
+/* Nachrichten zu einer Sache – beim Markt auch die zu seinen Anlagen, Störungen und Protokollen */
+function chatZu(art, id){
+  var ids={};
+  if(art==="markt"){
+    Object.keys(posById||{}).forEach(function(k){ if(posById[k] && posById[k].standortId===id) ids["anlage:"+k]=1; });
+    OFFENE.forEach(function(o){ if(o.standortId===id) ids["stoerung:"+o._id]=1; });
+    alleProtokolle(true).forEach(function(p){ if(p.standortId===id) ids["protokoll:"+p._id]=1; });
+  }
+  return chatNachrichten.filter(function(m){ return (m.bezug_art===art && m.bezug_id===id) || ids[m.bezug_art+":"+m.bezug_id]; });
+}
+function chatNachrichtEl(m, ohneBezug){
+  var ich=Store.benutzer&&Store.benutzer.id;
+  var d=el('<div class="chatmsg'+(m.von===ich?" mein":"")+(m._wartet?" wartet":"")+'" data-chat="'+esc(m.id||"")+'">'+
+    '<div class="chatkopf"><span>'+esc(m.von_name||"Jemand")+'</span><span>'+(m._wartet?"wartet auf Verbindung":esc(zeitFmt(m.erstellt)))+
+      (m.von===ich && !m._wartet ? ' <a href="#" class="sprunglink" data-a="weg" title="Nachricht löschen">✕</a>' : "")+"</span></div>"+
+    (m.bezug_art && !ohneBezug ? '<a href="#" class="chatbezug" data-a="bezug">'+esc(m.bezug_text||m.bezug_art)+"</a>" : "")+
+    '<div class="chattext">'+esc(m.text||"")+"</div></div>");
+  (m.fotos||[]).forEach(function(pfad){
+    var img=el('<img alt="Foto" loading="lazy">');
+    if(m._fotoDaten && m._fotoDaten[pfad]) img.src=m._fotoDaten[pfad];
+    else chatBildUrl(pfad).then(function(u){ if(u) img.src=u; else img.remove(); });
+    img.onclick=function(){ if(img.src) bildAnsicht(img.src, "Foto aus dem Chat"); };
+    d.appendChild(img);
+  });
+  tippe(d.querySelector('[data-a="bezug"]'), function(){ chatBezugOeffnen(m); });
+  tippe(d.querySelector('[data-a="weg"]'), function(){
+    if(!window.confirm("Diese Nachricht löschen?")) return;
+    Store.sb.from("chat").delete().eq("id", m.id).then(function(r){ if(r.error){ toast("Nicht gelöscht: "+r.error.message); return; } chatNachrichten=chatNachrichten.filter(function(x){ return x.id!==m.id; }); d.remove(); chatKnopf(); });
+  });
+  return d;
+}
+function chatBildUrl(pfad){
+  if(chatBildUrls[pfad]) return Promise.resolve(chatBildUrls[pfad]);
+  return Store.sb.storage.from("protokollfotos").createSignedUrl(pfad, 3600).then(function(r){ var u=r.data&&r.data.signedUrl; if(u) chatBildUrls[pfad]=u; return u||null; }, function(){ return null; });
+}
+/* Karte „Nachrichten dazu“ unter Markt, Störung, Protokoll */
+function chatBezugKarte(art, id, text){
+  var k=el('<div class="card" style="box-shadow:none;margin-top:12px" data-chatkarte><div class="pad stack" style="gap:8px"><h2>💬 Nachrichten dazu</h2><div class="chatliste" data-liste></div>'+
+    '<div><button class="btn ghost sm" type="button" data-a="neu">Nachricht dazu schreiben</button></div></div></div>');
+  var li=k.querySelector("[data-liste]"), zeichnen=function(){
+    li.innerHTML=""; var l=chatZu(art,id);
+    if(!l.length){ li.appendChild(el('<div class="muted" style="font-size:13px">Noch keine Nachrichten.</div>')); return; }
+    l.slice(-20).forEach(function(m){ li.appendChild(chatNachrichtEl(m, m.bezug_art===art && m.bezug_id===id)); });
+  };
+  zeichnen(); k._zeichnen=zeichnen;
+  k.querySelector('[data-a="neu"]').onclick=function(){ chatOeffnen({bezug:{art:art, id:id, text:text}}); };
+  return k;
+}
+/* Warteschlange: ohne Verbindung bleibt die Nachricht auf dem Gerät und geht später raus */
+function chatWarteSenden(){
+  if(!chatAn()) return;
+  var w=lsGet("ukt_chat_warte",[]).filter(function(m){ return m.konto===Store.benutzer.email; }); if(!w.length) return;
+  var m=w[0];
+  chatSenden(m, true).then(function(ok){ if(ok){ lsSet("ukt_chat_warte", lsGet("ukt_chat_warte",[]).filter(function(x){ return x.id!==m.id; })); chatLaden(); } });
+}
+function chatSenden(m, ausWarte){
+  var fotos=m._fotoDaten||{}, pfade=Object.keys(fotos), i=0;
+  var hoch=function(){
+    if(i>=pfade.length) return Promise.resolve(true);
+    var pf=pfade[i++];
+    return Store.sb.storage.from("protokollfotos").upload(pf, datenUrlZuBlob(fotos[pf]), {contentType:"image/jpeg", upsert:false})
+      .then(function(r){ if(r.error && !/exist|duplicate|409/i.test((r.error.message||"")+" "+(r.error.statusCode||""))) return false; return hoch(); }, function(){ return false; });
+  };
+  return hoch().then(function(ok){
+    if(!ok) return false;
+    var zeile={id:m.id, erstellt:m.erstellt||new Date().toISOString(), text:m.text, bezug_art:m.bezug_art||null, bezug_id:m.bezug_id||null, bezug_text:m.bezug_text||null, fotos:pfade, von_name:m.von_name, von:Store.benutzer.id};
+    return mitFrist(Store.sb.from("chat").insert(zeile), 15000).then(function(r){
+      if(r.error){ if(/duplicate|23505/i.test(r.error.message||"")) return true; if(!ausWarte) toast("Nicht gesendet: "+r.error.message); return false; }
+      return true;
+    }, function(){ return false; });
+  });
+}
+function chatOeffnen(opt){
+  opt=opt||{};
+  if(!chatAn()){ toast("Der Team-Chat ist nur für Büro und Techniker mit gemeinsamer Datenbank."); return; }
+  if(chatFenster){ chatFenster.zu(); chatFenster=null; }
+  var v=ansichtOeffnen("Team-Chat", function(){ chatFenster=null; });
+  var bezug=opt.bezug||null;
+  var box=el('<div class="stack" style="gap:10px"><div class="chatliste" data-liste></div>'+
+    '<div class="posbox stack" style="gap:6px;position:sticky;bottom:0;background:var(--surface)">'+
+      '<div data-bezug class="rowflex" style="gap:6px;font-size:12.5px"></div>'+
+      '<textarea data-text rows="2" placeholder="Nachricht ans Team …" style="width:100%"></textarea>'+
+      '<div data-fotos class="rowflex" style="gap:6px"></div>'+
+      '<div class="rowflex" style="gap:6px"><button class="btn sm" type="button" data-a="senden">Senden</button>'+
+        '<button class="btn ghost sm" type="button" data-a="bezugwahl">Bezug wählen</button>'+
+        '<label class="btn ghost sm" style="cursor:pointer">📷 Foto<input type="file" accept="image/*" multiple hidden data-foto></label></div>'+
+      '<div class="note warnbox" data-err hidden></div></div></div>');
+  v.inhalt.appendChild(box);
+  var li=box.querySelector("[data-liste]"), ta=box.querySelector("[data-text]"), bz=box.querySelector("[data-bezug]"), fo=box.querySelector("[data-fotos]"), err=box.querySelector("[data-err]");
+  var fotos=[];
+  var bezugZeichnen=function(){
+    bz.innerHTML=""; if(!bezug){ bz.appendChild(el('<span class="muted">Ohne Bezug – oder „Bezug wählen“ (Markt, Anlage, Störung, Protokoll).</span>')); return; }
+    bz.appendChild(el('<span class="chatbezug" style="display:inline-block;padding:1px 8px;border-radius:9px;border:1px solid var(--line)">Bezug: '+esc(bezug.text)+"</span>"));
+    var x=el('<button class="btn ghost sm" type="button" title="Bezug entfernen">✕</button>'); x.onclick=function(){ bezug=null; bezugZeichnen(); }; bz.appendChild(x);
+  };
+  var fotosZeichnen=function(){ fo.innerHTML=""; fotos.forEach(function(f,i){ var im=el('<img alt="" style="height:54px;border-radius:6px;cursor:pointer" title="entfernen">'); im.src=f; im.onclick=function(){ fotos.splice(i,1); fotosZeichnen(); }; fo.appendChild(im); }); };
+  var zeichnen=function(){
+    li.innerHTML="";
+    if(!chatGeladen) li.appendChild(el('<div class="muted">Nachrichten werden geladen …</div>'));
+    else if(!chatNachrichten.length) li.appendChild(el('<div class="muted" style="font-size:13px">Noch keine Nachrichten. Die erste schreibt das Team.</div>'));
+    chatNachrichten.slice(-150).forEach(function(m){ li.appendChild(chatNachrichtEl(m)); });
+    lsGet("ukt_chat_warte",[]).forEach(function(m){ if(m.konto===Store.benutzer.email) li.appendChild(chatNachrichtEl(Object.assign({_wartet:true}, m))); });
+    chatGelesen();
+    var ziel=opt.zu ? li.querySelector('[data-chat="'+opt.zu+'"]') : null;
+    setTimeout(function(){ if(ziel){ ziel.scrollIntoView({block:"center"}); sprungHervorheben(ziel,{}); opt.zu=null; } else v.inhalt.scrollTop=v.inhalt.scrollHeight; }, 30);
+  };
+  chatFenster={zu:v.zu, zeichnen:zeichnen};
+  bezugZeichnen(); zeichnen(); chatLaden();
+  box.querySelector("[data-foto]").onchange=function(e){
+    Array.prototype.slice.call(e.target.files||[]).slice(0,4).forEach(function(datei){
+      verkleinere(datei).then(function(b){ fotos.push(b.datenUrl); fotosZeichnen(); }, function(){ toast("Bild nicht lesbar."); });
+    });
+    e.target.value="";
+  };
+  box.querySelector('[data-a="bezugwahl"]').onclick=function(){ chatBezugWahl(function(b){ bezug=b; bezugZeichnen(); }); };
+  box.querySelector('[data-a="senden"]').onclick=function(){
+    var text=ta.value.trim(); err.hidden=true;
+    if(!text && !fotos.length){ err.textContent="Bitte etwas schreiben."; err.hidden=false; return; }
+    var id="c_"+Date.now().toString(36)+Math.random().toString(36).slice(2,8), fd={};
+    fotos.forEach(function(u,i){ fd["chat/"+id+"/"+(i+1)+".jpg"]=u; });
+    var m={id:id, text:text||"📷", bezug_art:bezug?bezug.art:null, bezug_id:bezug?bezug.id:null, bezug_text:bezug?bezug.text:null,
+           von_name:meineAngaben().name||wer(), von:Store.benutzer.id, erstellt:new Date().toISOString(), konto:Store.benutzer.email, _fotoDaten:fd};
+    var k=box.querySelector('[data-a="senden"]'); k.disabled=true;
+    chatSenden(m).then(function(ok){
+      k.disabled=false;
+      if(!ok){ var w=lsGet("ukt_chat_warte",[]); w.push(m); lsSet("ukt_chat_warte",w); toast("Keine Verbindung – die Nachricht geht raus, sobald wieder Netz da ist."); }
+      else { m.fotos=Object.keys(fd); chatNachrichten.push(m); }
+      ta.value=""; fotos=[]; fotosZeichnen(); bezug=opt.bezug||null; bezugZeichnen(); zeichnen();
+      if(ok) chatLaden();
+    });
+  };
+}
+/* Bezug aussuchen: Suche über Märkte, offene Störungen, Anlagen und die letzten Protokolle */
+function chatBezugWahl(fertig){
+  var v=ansichtOeffnen("Bezug wählen");
+  var s=el('<div class="stack"><input type="search" placeholder="Markt, Filiale, Auftrag, Anlage …" style="width:100%"><div class="stack" data-erg style="gap:4px"></div></div>');
+  v.inhalt.appendChild(s);
+  var inp=s.querySelector("input"), erg=s.querySelector("[data-erg]");
+  var alles=[];
+  ST.forEach(function(m){ alles.push({art:"markt", id:m.id, text:chatBezugText("markt",m), such:stName(m)+" "+(m.filiale||"")+" "+(m.adresse||"")}); });
+  offeneStoerungen(true).forEach(function(o){ alles.push({art:"stoerung", id:o._id, text:chatBezugText("stoerung",o), such:chatBezugText("stoerung",o)+" "+(o.beschreibung||"")}); });
+  Object.keys(posById||{}).forEach(function(k){ var p=posById[k]; if(!p||p.aktiv===false||!byId[p.standortId]) return; alles.push({art:"anlage", id:k, text:chatBezugText("anlage",p), such:stName(byId[p.standortId])+" "+anlagenName(anlageDaten(p))}); });
+  alleProtokolle().slice(0,80).forEach(function(p){ alles.push({art:"protokoll", id:p._id, text:chatBezugText("protokoll",p), such:chatBezugText("protokoll",p)}); });
+  var namen={markt:"Markt",stoerung:"Störung",anlage:"Anlage",protokoll:"Protokoll"};
+  var zeichnen=function(){
+    var q=inp.value.trim().toLowerCase(); erg.innerHTML="";
+    var l=alles.filter(function(x){ return !q || x.such.toLowerCase().indexOf(q)>=0; }).slice(0,40);
+    if(!l.length){ erg.appendChild(el('<div class="muted">Nichts gefunden.</div>')); return; }
+    l.forEach(function(x){
+      var b=el('<button class="btn ghost sm" type="button" style="text-align:left;justify-content:flex-start"><span class="tag">'+namen[x.art]+"</span>&nbsp;"+esc(x.text)+"</button>");
+      b.onclick=function(){ v.zu(); fertig({art:x.art, id:x.id, text:x.text}); };
+      erg.appendChild(b);
+    });
+  };
+  inp.oninput=zeichnen; zeichnen(); setTimeout(function(){ inp.focus(); }, 50);
+}
+
+/* ================================================================
+   „Abgerechnet“ – Haken je Protokoll, nur für Inhaber (Tabelle abrechnung,
+   tools/abrechnung.sql). Kein Eingriff ins Protokoll selbst.
+   ================================================================ */
+var abrechnung={}, abrechnungGeladen=false;
+function abrechnungAn(){ return Store.modus==="supabase" && !!Store.sb && !!Store.benutzer && istInhaber() && !demo(); }
+function abrechnungLaden(){
+  if(!abrechnungAn()){ abrechnung={}; abrechnungGeladen=false; return Promise.resolve(); }
+  return Store.sb.from("abrechnung").select("*").then(function(r){
+    if(r.error) return;
+    var neu={}; (r.data||[]).forEach(function(z){ neu[z.protokoll_id]=z; });
+    abrechnung=neu; abrechnungGeladen=true;
+  }, function(){});
+}
+function abrechnungZeile(p){
+  var a=abrechnung[p._id];
+  var z=el('<div class="posbox stack" style="gap:6px" data-abrechnung>'+
+    '<label class="fl" style="flex-direction:row;gap:8px;align-items:center"><input type="checkbox" data-a="haken"'+(a?" checked":"")+'> <strong>€ Abgerechnet</strong>'+
+      '<span class="muted" style="font-size:12px" data-a="wann">'+(a?"am "+tagFmt(a.abgerechnet)+(a.von?" von "+esc(a.von):""):"")+"</span></label>"+
+    '<input type="text" data-a="notiz" placeholder="Rechnungsnummer / Notiz (optional)" value="'+esc((a&&a.notiz)||"")+'"'+(a?"":" hidden")+'>'+
+    '<div class="note warnbox" data-a="err" hidden></div></div>');
+  var hk=z.querySelector('[data-a="haken"]'), no=z.querySelector('[data-a="notiz"]'), err=z.querySelector('[data-a="err"]'), wann=z.querySelector('[data-a="wann"]');
+  var fehl=function(t){ err.textContent=t; err.hidden=false; };
+  var speichern=function(){
+    err.hidden=true;
+    if(!hk.checked){
+      return Store.sb.from("abrechnung").delete().eq("protokoll_id", p._id).then(function(r){
+        if(r.error){ fehl("Nicht gespeichert: "+r.error.message); hk.checked=true; return; }
+        delete abrechnung[p._id]; no.hidden=true; wann.textContent=""; toast("Haken entfernt.");
+      });
+    }
+    var zeile={protokoll_id:p._id, abgerechnet:new Date().toISOString(), von:meineAngaben().name||wer(), notiz:no.value.trim()||null};
+    if(abrechnung[p._id]){ zeile.abgerechnet=abrechnung[p._id].abgerechnet; zeile.von=abrechnung[p._id].von; }
+    return Store.sb.from("abrechnung").upsert(zeile,{onConflict:"protokoll_id"}).then(function(r){
+      if(r.error){ fehl("Nicht gespeichert: "+r.error.message); hk.checked=!!abrechnung[p._id]; return; }
+      abrechnung[p._id]=zeile; no.hidden=false; wann.textContent="am "+tagFmt(zeile.abgerechnet)+(zeile.von?" von "+zeile.von:""); toast("Als abgerechnet vermerkt.");
+    });
+  };
+  hk.onchange=speichern;
+  no.onchange=function(){ if(hk.checked) speichern(); };
+  return z;
+}
 function kontoKarte(){
   var mail=Store.benutzer&&Store.benutzer.email?Store.benutzer.email:"";
   var ich=meineAngaben();
@@ -7462,7 +7888,12 @@ function kontoKarte(){
       '<div class="rowflex"><button class="btn sm" type="submit">Passwort speichern</button>'+
         '<button class="btn ghost sm" type="button" id="k_abbr">Abbrechen</button></div>'+
     "</form>"+
+    /* Push-Benachrichtigungen je Gerät (Büro und Techniker, gemeinsame Datenbank) */
+    (Store.modus==="supabase" && !demo() && !nurLesen() ? '<div class="rowflex"><button class="btn ghost sm" type="button" id="k_push">🔔 Benachrichtigungen</button>'+
+      '<span class="muted" style="font-size:12.5px" id="k_pushstand"></span></div>' : "")+
   "</div></div>");
+  var kp=c.querySelector("#k_push");
+  if(kp){ kp.onclick=pushDialog; pushStandText(c.querySelector("#k_pushstand")); }
   var form=c.querySelector("#k_form"), err=c.querySelector("#k_err");
   var kpw=c.querySelector("#k_pw"); if(kpw) kpw.onclick=function(){ if(demo()||nurLesen()){ toast("Für dieses gemeinsame Konto lässt sich das Passwort nur im Büro ändern."); return; } form.hidden=false; err.hidden=true; c.querySelector("#k_p1").focus(); };
   c.querySelector("#k_abbr").onclick=function(){ form.hidden=true; form.reset(); };
@@ -10575,14 +11006,21 @@ function viewProtokoll(){
   /* Admins können gelöschte Protokolle einblenden, um sie wiederherzustellen */
   var anzGeloescht=alleProtokolle(true).length-alle.length;
   if(Admin.frei && S.zeigeGeloeschte) alle=alleProtokolle(true);
+  /* Inhaber: nur die noch nicht abgerechneten (zentral abgelegten) Protokolle */
+  var abrOffen = abrechnungAn() ? alle.filter(function(x){ return x._quelle!=="geraet" && !x.geloescht && !abrechnung[x._id]; }).length : 0;
+  if(abrechnungAn() && S.nurUnabgerechnet) alle=alle.filter(function(x){ return x._quelle!=="geraet" && !x.geloescht && !abrechnung[x._id]; });
   var gesp=el('<div class="card"><div class="pad stack">'+
     "<div><h2>Gespeicherte Protokolle</h2>"+
     '<div class="sub">'+unterzeile+"</div></div>"+
-    (Admin.frei && anzGeloescht ? '<div class="chips"><button class="chip" type="button" id="p_geloescht" aria-pressed="'+
-      (!!S.zeigeGeloeschte)+'">gelöschte anzeigen ('+anzGeloescht+")</button></div>" : "")+
+    ((Admin.frei && anzGeloescht) || abrechnungAn() ? '<div class="chips">'+
+      (Admin.frei && anzGeloescht ? '<button class="chip" type="button" id="p_geloescht" aria-pressed="'+(!!S.zeigeGeloeschte)+'">gelöschte anzeigen ('+anzGeloescht+")</button>" : "")+
+      (abrechnungAn() ? '<button class="chip" type="button" id="p_unabger" aria-pressed="'+(!!S.nurUnabgerechnet)+'">noch nicht abgerechnet ('+abrOffen+")</button>" : "")+
+      "</div>" : "")+
     '<div class="scrollx" id="plist"></div></div></div>');
   var chipG=gesp.querySelector("#p_geloescht");
   if(chipG) chipG.onclick=function(){ S.zeigeGeloeschte=!S.zeigeGeloeschte; render(); };
+  var chipA=gesp.querySelector("#p_unabger");
+  if(chipA) chipA.onclick=function(){ S.nurUnabgerechnet=!S.nurUnabgerechnet; render(); };
   var pl=gesp.querySelector("#plist");
   /* Filter „nur auf diesem Gerät“ – nur die Liste neu, nie render(): oben im
      Reiter steht womöglich ein angefangenes Protokoll */
@@ -10624,7 +11062,8 @@ function viewProtokoll(){
         (istStoerung(x)?'<span class="tag st">Störung</span>':esc(x.wartungsart||"–"))+
         "</td><td class='mono'>"+((x.maengel||[]).length||"0")+"</td>"+
         "<td class='mono'>"+((x.fotos||[]).length||"0")+"</td>"+
-        "<td>"+(x._quelle==="geraet"?'<span class="tag">Gerät</span>':'<span class="tag f30">gemeinsam</span>')+"</td></tr>");
+        "<td>"+(x._quelle==="geraet"?'<span class="tag">Gerät</span>':'<span class="tag f30">gemeinsam</span>')+
+        (abrechnungAn() && x._quelle!=="geraet" && abrechnung[x._id] ? ' <span class="tag f30" title="abgerechnet am '+tagFmt(abrechnung[x._id].abgerechnet)+'">€ abgerechnet</span>' : "")+"</td></tr>");
       tr.onclick=function(){
         var ziel=gesp.querySelector("#pdetail");
         ziel.innerHTML=""; ziel.appendChild(protokollDetail(x));
@@ -11197,6 +11636,7 @@ function protokollDetail(p){
       (istStoerung(p) && (p.auftragsnummer||(p.stoerung&&p.stoerung.qrInhalt)) ? '<button class="btn ghost sm" type="button" data-akt="qr">QR-Code zeigen</button>' : "")+
       (p.geloescht||nurLesen()?"":'<button class="btn ghost sm" type="button" data-akt="korr">Korrigieren</button>')+
       (nurLesen()?"":'<button class="btn ghost sm" type="button" data-akt="verlauf">Änderungen ansehen</button>')+
+      (chatAn() && p._quelle!=="geraet" ? '<button class="btn ghost sm" type="button" data-akt="chat">💬 Nachricht dazu</button>' : "")+
       /* endgültig vom Gerät löschen (es gibt keine zentrale Kopie): nur Admins */
       (p._quelle==="geraet" && Admin.frei && !nurLesen()?'<button class="btn ghost sm" type="button" data-akt="weg">Vom Gerät löschen</button>':"")+
       (p._quelle!=="geraet" && Admin.frei && !nurLesen() && !p.geloescht?'<button class="btn ghost sm" type="button" data-akt="loeschen" style="color:var(--crit);border-color:var(--crit)">Löschen</button>':"")+
@@ -11273,6 +11713,13 @@ function protokollDetail(p){
 
   d.querySelector('[data-akt="druck"]').onclick=function(){ druckeProtokoll(p); };
   d.querySelectorAll("[data-anl]").forEach(function(a){ tippe(a, function(){ if(posById[a.dataset.anl]) anlageHistorieAnsicht(posById[a.dataset.anl]); }); });
+  /* Team-Chat und „Abgerechnet“ (nur Inhaber) – beides nur bei zentral abgelegten Protokollen */
+  var chatK=d.querySelector('[data-akt="chat"]');
+  if(chatK) chatK.onclick=function(){ chatOeffnen({bezug:{art:"protokoll", id:p._id, text:chatBezugText("protokoll", p)}}); };
+  if(p._quelle!=="geraet" && !p.geloescht){
+    if(istInhaber() && Store.modus==="supabase") d.querySelector(".stack").appendChild(abrechnungZeile(p));
+    if(chatAn()) d.querySelector(".stack").appendChild(chatBezugKarte("protokoll", p._id, chatBezugText("protokoll", p)));
+  }
   var qrk=d.querySelector('[data-akt="qr"]');
   if(qrk) qrk.onclick=function(){ auftragQrAnsicht(p.auftragsnummer, p.stoerung && p.stoerung.qrInhalt); };
   var korrKnopf=d.querySelector('[data-akt="korr"]');
@@ -14602,7 +15049,17 @@ function handbuchKarte(z){
         "<strong>💡 Änderungswünsche:</strong> jede Person, die mitarbeitet, kann einen Wunsch schicken. Nur der Inhaber gibt frei; Claude "+
           "setzt auf einer Kopie um, eine automatische Prüfung testet die App (Syntax, Regeln, Start am PC und am Handy), erst "+
           "„Übernehmen“ ändert die echte App. Hat Claude eine Rückfrage, beantwortest du sie mit „Claude antworten …“. "+
-          "Jede Übernahme lässt sich rückgängig machen (Aufträge höchstens 4000 Zeichen)."]))+
+          "Jede Übernahme lässt sich rückgängig machen (Aufträge höchstens 4000 Zeichen).",
+        "<strong>🔔 Benachrichtigungen:</strong> unter „Angemeldet als“ → „Benachrichtigungen“ je Gerät einschalten und wählen, worüber "+
+          "(Störungen, Protokolle, Korrekturen, Markt-/Anlagendaten, Team-Chat, Posteingang; Änderungswünsche nur Inhaber). Die Nachricht "+
+          "nennt gleich das Wichtigste (Anlagen, Mängel, Störung, geänderte Felder) und führt beim Antippen hin. Was du selbst einträgst, "+
+          "löst keine aus. Am iPhone nur als installierte App (Teilen → „Zum Home-Bildschirm“). Kunde und Präsentation bekommen nichts.",
+        "<strong>💬 Team-Chat:</strong> Sprechblase in der Kopfzeile (Zahl = ungelesen). Eine Nachricht kann sich auf einen Markt, eine "+
+          "Anlage, eine Störung oder ein Protokoll beziehen – über „Bezug wählen“ oder direkt dort mit „Nachricht dazu“. Sie steht dann "+
+          "auch bei der Sache selbst (beim Markt auch die zu seinen Anlagen, Störungen und Protokollen). Fotos möglich; ohne Netz geht "+
+          "die Nachricht raus, sobald wieder Verbindung ist. Nur Büro und Techniker.",
+        "<strong>€ Abgerechnet:</strong> Inhaber setzen beim geöffneten Protokoll den Haken (mit Rechnungsnummer als Notiz); die Protokollliste "+
+          "filtert mit „noch nicht abgerechnet“. Techniker und Kunde sehen davon nichts."]))+
 
     abschnitt("6 · Rollen",
       liste(["<strong>Inhaber</strong> – alles, dazu Rollenübersicht, KI-Kosten und Änderungswünsche freigeben.",
@@ -15707,6 +16164,7 @@ function render(){
   else sec.appendChild(viewDaten());
   host.appendChild(sec);
   tipHide();
+  chatKnopf();   /* Team-Chat-Knopf und Ungelesene – auch nach Kontowechsel und Rollenprüfung */
 }
 /* ---------- QR-Code zum Aufrufen am Handy ---------- */
 function appAdresse(){
@@ -15788,6 +16246,7 @@ idbOeffnen()
   .then(lokaleNeuLaden)
   .then(entwurfHolen)
   .then(ladeStammdaten)
+  .then(function(){ pushStart(); chatStart(); })   /* Benachrichtigungen, Team-Chat, Abrechnung – sobald ein Konto da ist */
   .then(adminPruefen)
   .then(function(){ storeNachRender(); flushQueue(); })
   .catch(function(e){ Store.geraetFehler = e && e.message ? e.message : "Gerätespeicher nicht verfügbar"; storeNachRender(); });
