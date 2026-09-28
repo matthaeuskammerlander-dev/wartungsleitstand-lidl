@@ -40,6 +40,19 @@ Kammerlander Umwelt- und Klimatechnik (UKT) – oft kurz, vom Handy, im Feld.
   3 Monate von der Regel abweicht (`standardRegel`) – der Halbjahrestermin
   zusätzlich nur, wenn er 5–7 Monate von der JW entfernt liegt, sonst JW + 6
   (`sollGeduldet`, `sollAbweichend` – auch genau im Regelmonat).
+- Nur Jahreswartung (`nurJW`, Büro 29.09.2026): sehr kleine Anlagen brauchen
+  nur einen Besuch im Jahr. Bei unbekannter Füllmenge bietet die Frage der
+  Standardregel (`regelKgFragen`) zusätzlich „Kein Halbjahrestermin – nur
+  Jahreswartung“ – nur solange die Anlage keinen zweiten Termin hat. Dann wird
+  kein Halbjahrestermin angelegt, die Anlage gilt nicht als lückenhaft; die
+  Entscheidung steht mit Name im Änderungsverlauf und ist in der Verwaltung
+  rücknehmbar. Ab 30 kg bleibt die HJW Pflicht (`anlagenOhneHJW`).
+- Termine vor Ort prüfen (`termineOffen`, `termineSchritt`): im geführten
+  Protokoll je Anlage ein Schritt „Stimmen Inbetriebnahme und Termine?“,
+  solange Inbetriebnahme, Soll-Monat oder Kürzel fehlen oder ein Soll-Monat
+  unbegründet von der Standardregel abweicht. Bestätigt gilt nur für genau
+  diesen Stand (`termineGeprueft`, `terminStand`). Das ist nur eine Frage an
+  den Menschen – an der Fälligkeit ändert es nichts.
 - Erste JW: im Soll-Monat rund um den ersten Jahrestag der Inbetriebnahme
   (±6 Monate, `ersterTermin`); erster Halbjahrestermin: der erste Soll-Monat
   nach der Inbetriebnahme. Nie fast zwei Jahre ohne JW.
