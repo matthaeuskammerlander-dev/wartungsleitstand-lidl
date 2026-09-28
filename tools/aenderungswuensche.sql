@@ -45,8 +45,11 @@ alter table public.aenderungswuensche alter column von drop not null;
 alter table public.aenderungswuensche enable row level security;
 
 drop policy if exists "wunsch schicken" on public.aenderungswuensche;
+-- auch Präsentations-Konten dürfen einen Wunsch schicken (ihr einziger Eintrag);
+-- der Kunde nicht. An Claude geht ein Wunsch erst nach Freigabe durch den Inhaber.
 create policy "wunsch schicken" on public.aenderungswuensche for insert to authenticated
-  with check (von = auth.uid() and public.darf_schreiben() and status = 'neu' and issue_nr is null and pr_nr is null);
+  with check (von = auth.uid() and (public.darf_schreiben() or public.meine_rolle() = 'praesentation')
+              and status = 'neu' and issue_nr is null and pr_nr is null);
 
 drop policy if exists "wuensche lesen" on public.aenderungswuensche;
 create policy "wuensche lesen" on public.aenderungswuensche for select to authenticated
