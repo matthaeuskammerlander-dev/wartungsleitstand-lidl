@@ -7674,7 +7674,17 @@ function pushZiel(z, versuch){
    kann sich auf eine Sache beziehen (Markt, Anlage, Störung, Protokoll)
    und steht dann auch dort. Kunde und Präsentation sehen ihn nicht.
    ================================================================ */
-var chatNachrichten=[], chatGeladen=false, chatTimer=null, chatFenster=null, chatBildUrls={}, chatKonto=null;
+var chatNachrichten=[], chatGeladen=false, chatTimer=null, chatFenster=null, chatBildUrls={}, chatKonto=null, chatTeam=null;
+/* wer im Team ist (Büro und Techniker) – für „An: Person“ (Funktion team_liste, tools/chat.sql) */
+function chatTeamLaden(){
+  if(chatTeam) return Promise.resolve(chatTeam);
+  return Store.sb.rpc("team_liste").then(function(r){
+    if(r.error || !Array.isArray(r.data)) return [];
+    chatTeam=r.data.filter(function(t){ return t.user_id!==(Store.benutzer&&Store.benutzer.id); })
+      .sort(function(a,b){ return String(a.name||"").localeCompare(String(b.name||""), "de"); });
+    return chatTeam;
+  }, function(){ return []; });
+}
 function chatAn(){ return Store.modus==="supabase" && !!Store.sb && !!Store.benutzer && !demo() && !nurLesen(); }
 function chatSchluessel(){ var m=Store.benutzer&&Store.benutzer.email; return m ? "ukt-chat-gelesen:"+m : null; }
 function chatStart(){
@@ -7741,7 +7751,10 @@ function chatZu(art, id){
 function chatNachrichtEl(m, ohneBezug){
   var ich=Store.benutzer&&Store.benutzer.id;
   var d=el('<div class="chatmsg'+(m.von===ich?" mein":"")+(m._wartet?" wartet":"")+'" data-chat="'+esc(m.id||"")+'">'+
-    '<div class="chatkopf"><span>'+esc(m.von_name||"Jemand")+'</span><span>'+(m._wartet?"wartet auf Verbindung":esc(zeitFmt(m.erstellt)))+
+    '<div class="chatkopf"><span>'+esc(m.von_name||"Jemand")+
+      /* persönliche Nachricht: nur Absender und Empfänger sehen sie */
+      (m.an ? ' <span class="tag" title="Nur für den Empfänger sichtbar">🔒 '+(m.an===ich?"an dich":"an "+esc(m.an_name||"…"))+"</span>" : "")+
+      '</span><span>'+(m._wartet?"wartet auf Verbindung":esc(zeitFmt(m.erstellt)))+
       (m.von===ich && !m._wartet ? ' <a href="#" class="sprunglink" data-a="weg" title="Nachricht löschen">✕</a>' : "")+"</span></div>"+
     (m.bezug_art && !ohneBezug ? '<a href="#" class="chatbezug" data-a="bezug">'+esc(m.bezug_text||m.bezug_art)+"</a>" : "")+
     '<div class="chattext">'+esc(m.text||"")+"</div></div>");
@@ -7793,7 +7806,8 @@ function chatSenden(m, ausWarte){
   };
   return hoch().then(function(ok){
     if(!ok) return false;
-    var zeile={id:m.id, erstellt:m.erstellt||new Date().toISOString(), text:m.text, bezug_art:m.bezug_art||null, bezug_id:m.bezug_id||null, bezug_text:m.bezug_text||null, fotos:pfade, von_name:m.von_name, von:Store.benutzer.id};
+    var zeile={id:m.id, erstellt:m.erstellt||new Date().toISOString(), text:m.text, bezug_art:m.bezug_art||null, bezug_id:m.bezug_id||null, bezug_text:m.bezug_text||null, fotos:pfade, von_name:m.von_name, von:Store.benutzer.id,
+               an:m.an||null, an_name:m.an_name||null};
     return mitFrist(Store.sb.from("chat").insert(zeile), 15000).then(function(r){
       if(r.error){ if(/duplicate|23505/i.test(r.error.message||"")) return true; if(!ausWarte) toast("Nicht gesendet: "+r.error.message); return false; }
       return true;
@@ -7808,6 +7822,7 @@ function chatOeffnen(opt){
   var bezug=opt.bezug||null;
   var box=el('<div class="stack" style="gap:10px"><div class="chatliste" data-liste></div>'+
     '<div class="posbox stack" style="gap:6px;position:sticky;bottom:0;background:var(--surface)">'+
+      '<div class="rowflex" style="gap:6px;font-size:12.5px"><span class="muted">An:</span><select data-an style="max-width:220px"><option value="">Alle im Team</option></select></div>'+
       '<div data-bezug class="rowflex" style="gap:6px;font-size:12.5px"></div>'+
       '<textarea data-text rows="2" placeholder="Nachricht ans Team …" style="width:100%"></textarea>'+
       '<div data-fotos class="rowflex" style="gap:6px"></div>'+
@@ -7836,6 +7851,11 @@ function chatOeffnen(opt){
   };
   chatFenster={zu:v.zu, zeichnen:zeichnen};
   bezugZeichnen(); zeichnen(); chatLaden();
+  chatTeamLaden().then(function(team){
+    var sel=box.querySelector("[data-an]");
+    team.forEach(function(t){ var o=document.createElement("option"); o.value=t.user_id; o.textContent=(t.name||"Unbekannt")+(t.rolle&&t.rolle!=="techniker"?" ("+t.rolle+")":""); sel.appendChild(o); });
+    if(opt.an && team.some(function(t){ return t.user_id===opt.an; })) sel.value=opt.an;
+  });
   box.querySelector("[data-foto]").onchange=function(e){
     Array.prototype.slice.call(e.target.files||[]).slice(0,4).forEach(function(datei){
       verkleinere(datei).then(function(b){ fotos.push(b.datenUrl); fotosZeichnen(); }, function(){ toast("Bild nicht lesbar."); });
@@ -7848,7 +7868,9 @@ function chatOeffnen(opt){
     if(!text && !fotos.length){ err.textContent="Bitte etwas schreiben."; err.hidden=false; return; }
     var id="c_"+Date.now().toString(36)+Math.random().toString(36).slice(2,8), fd={};
     fotos.forEach(function(u,i){ fd["chat/"+id+"/"+(i+1)+".jpg"]=u; });
+    var anSel=box.querySelector("[data-an]"), anId=anSel.value||null, anName=anId ? anSel.options[anSel.selectedIndex].textContent : null;
     var m={id:id, text:text||"📷", bezug_art:bezug?bezug.art:null, bezug_id:bezug?bezug.id:null, bezug_text:bezug?bezug.text:null,
+           an:anId, an_name:anName,
            von_name:meineAngaben().name||wer(), von:Store.benutzer.id, erstellt:new Date().toISOString(), konto:Store.benutzer.email, _fotoDaten:fd};
     var k=box.querySelector('[data-a="senden"]'); k.disabled=true;
     chatSenden(m).then(function(ok){
@@ -15128,7 +15150,7 @@ function handbuchKarte(z){
           "(Störungen, Protokolle, Korrekturen, Markt-/Anlagendaten, Team-Chat, Posteingang; Änderungswünsche nur Inhaber). Die Nachricht "+
           "nennt gleich das Wichtigste (Anlagen, Mängel, Störung, geänderte Felder) und führt beim Antippen hin. Was du selbst einträgst, "+
           "löst keine aus. Am iPhone nur als installierte App (Teilen → „Zum Home-Bildschirm“). Kunde und Präsentation bekommen nichts.",
-        "<strong>💬 Team-Chat:</strong> Sprechblase in der Kopfzeile (Zahl = ungelesen). Eine Nachricht kann sich auf einen Markt, eine "+
+        "<strong>💬 Team-Chat:</strong> Sprechblase in der Kopfzeile (Zahl = ungelesen). Mit „An: Person“ geht eine Nachricht nur an eine Person – nur Absender und Empfänger sehen sie (🔒). Eine Nachricht kann sich auf einen Markt, eine "+
           "Anlage, eine Störung oder ein Protokoll beziehen – über „Bezug wählen“ oder direkt dort mit „Nachricht dazu“. Sie steht dann "+
           "auch bei der Sache selbst (beim Markt auch die zu seinen Anlagen, Störungen und Protokollen). Fotos möglich; ohne Netz geht "+
           "die Nachricht raus, sobald wieder Verbindung ist. Nur Büro und Techniker.",

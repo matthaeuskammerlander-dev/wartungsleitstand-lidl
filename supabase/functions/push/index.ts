@@ -58,7 +58,7 @@ function absenderHolen() {
 
 type Abo = { endpoint: string; user_id: string; p256dh: string; auth: string; arten: string[]; fehler: number };
 type Ereignis = { id: number; erstellt: string; art: string; titel: string; text: string | null; ziel: string | null;
-  von_user: string | null; nur_rolle: string | null; daten: any; lang?: string; kurz?: string };
+  von_user: string | null; nur_rolle: string | null; nur_user?: string | null; daten: any; lang?: string; kurz?: string };
 
 /* eine Nachricht an ein Gerät; abgemeldete Geräte (410/404) fliegen raus */
 async function schicken(app: webpush.ApplicationServer, abo: Abo, inhalt: unknown) {
@@ -190,8 +190,9 @@ async function senden() {
     const r = rolle.get(abo.user_id) ?? "techniker";
     if (r === "kunde" || r === "praesentation") return null;
     const arten = Array.isArray(abo.arten) ? abo.arten : [];
+    // nur_user: persönliche Chat-Nachricht – nur der Empfänger bekommt sie
     const fuerMich = frisch.filter((e) =>
-      arten.includes(e.art) && e.von_user !== abo.user_id && (!e.nur_rolle || e.nur_rolle === r));
+      arten.includes(e.art) && e.von_user !== abo.user_id && (!e.nur_rolle || e.nur_rolle === r) && (!e.nur_user || e.nur_user === abo.user_id));
     return fuerMich.length ? schicken(app, abo, nachricht(fuerMich)) : null;
   }));
 }

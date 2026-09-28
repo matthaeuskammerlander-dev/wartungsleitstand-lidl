@@ -47,3 +47,9 @@ Zugangsdaten der Regelung stehen nie in einer Nachricht.
 
 Geräte, die der Push-Dienst nicht mehr kennt (410/404), werden entfernt.
 Liegengebliebenes, das älter als 24 Stunden ist, wird nicht mehr verschickt.
+
+## Persönliche Nachrichten im Chat
+
+`tools/chat-direkt.sql` ausführen (nach chat.sql) und die Funktion `push`
+neu deployen: Nachrichten mit „An: Person“ sehen nur Absender und
+Empfänger, die Push-Nachricht geht nur an den Empfänger (`nur_user`).
