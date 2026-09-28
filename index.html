@@ -12336,7 +12336,12 @@ function berichtDrucken(d){
    Störungsprotokoll (kmArt/kmNach/kmEnt). Bilanz je Anlage und Jahr mit
    CO₂-Äquivalent; Leck-Verdacht nach der Schwelle des Büros (28.09.2026). */
 var LECK_ANTEIL=0.10, LECK_NACHFUELLUNGEN=2;
-function kgZahl(w){ var n=parseFloat(String(w==null?"":w).replace(",",".")); return isNaN(n)||n<0 ? 0 : Math.round(n*100)/100; }
+/* „1.234,5“ → 1234.5, „8,5“ → 8.5, „8.5“ → 8.5; Negatives zählt nicht */
+function kgZahl(w){
+  var s=String(w==null?"":w).trim();
+  if(s.indexOf(",")>=0) s=s.replace(/\./g,"").replace(",",".");
+  var n=parseFloat(s); return isNaN(n)||n<0 ? 0 : Math.round(n*100)/100;
+}
 function kgFmt(n){ return (Math.round(n*100)/100).toLocaleString("de-AT",{minimumFractionDigits:0, maximumFractionDigits:2}); }
 function co2Kg(kg, gwp){ return gwp && kg ? Math.round(kg*gwp) : null; }
 /* Auswahl „für Anlage“ im Formular aus den angehakten Anlagen füllen */
@@ -12416,12 +12421,14 @@ function kaeltemittelKarte(){
     ids.forEach(function(k){
       var e=bil[k], n=0, en=0;
       Object.keys(e.jahre).forEach(function(y){ if(!j || y===j){ n+=e.jahre[y].nach; en+=e.jahre[y].ent; } });
-      if(!n && !en && !(e.leck && (!j || j===heuer))) return;
+      /* Leck-Verdacht gilt für die letzten 12 Monate – nur beim laufenden Jahr bzw. „alle Jahre“ zeigen */
+      var leck=(!j || j===heuer) ? e.leck : null;
+      if(!n && !en && !leck) return;
       var s=byId[e.standortId], co2=co2Kg(n, e.gwp);
       sumN+=n; sumE+=en; if(co2) sumC+=co2;
-      rows.push({e:e, s:s, n:n, en:en, co2:co2});
+      rows.push({e:e, s:s, n:n, en:en, co2:co2, leck:leck});
     });
-    rows.sort(function(a,b){ return (b.e.leck?1:0)-(a.e.leck?1:0) || b.n-a.n; });
+    rows.sort(function(a,b){ return (b.leck?1:0)-(a.leck?1:0) || b.n-a.n; });
     zeilenAktuell=rows;
     host.innerHTML="";
     var t=el('<table class="dt"><thead><tr><th>Markt</th><th>Anlage</th><th>Kältemittel</th><th>Füllmenge</th><th>nachgefüllt</th><th>zurückgewonnen</th><th>CO₂-Äqu.</th><th>Hinweis</th></tr></thead><tbody></tbody></table>');
@@ -12429,7 +12436,7 @@ function kaeltemittelKarte(){
     rows.forEach(function(r){
       var tr=el("<tr style='cursor:pointer'><td>"+(r.s?marktLink(r.s):"–")+"</td><td>"+esc(r.e.name)+"</td><td>"+esc(r.e.art||"–")+"</td>"+
         "<td class='mono'>"+(r.e.fuellung?kgFmt(r.e.fuellung)+" kg":"–")+"</td><td class='mono'>"+kgFmt(r.n)+" kg</td><td class='mono'>"+kgFmt(r.en)+" kg</td>"+
-        "<td class='mono'>"+(r.co2!=null?kgFmt(r.co2/1000)+" t":"–")+"</td><td>"+(r.e.leck?'<span class="pill p-ueberfaellig" title="'+esc(r.e.leck)+'">⚠ Leck-Verdacht</span>':"")+"</td></tr>");
+        "<td class='mono'>"+(r.co2!=null?kgFmt(r.co2/1000)+" t":"–")+"</td><td>"+(r.leck?'<span class="pill p-ueberfaellig" title="'+esc(r.leck)+'">⚠ Leck-Verdacht</span>':"")+"</td></tr>");
       tr.onclick=function(ev){ if(ev.target.closest("[data-markt]")) return; var a=ANLAGEN[r.e.anlageId]; if(a&&a.leader) anlageHistorieAnsicht(a.leader); };
       tb.appendChild(tr);
     });
@@ -12440,7 +12447,8 @@ function kaeltemittelKarte(){
   sel.onchange=zeichnen; zeichnen();
   c.querySelector("#km_csv").onclick=function(){
     var z=[["Markt","Anlage","Kältemittel","Füllmenge kg","nachgefüllt kg","zurückgewonnen kg","CO2-Äquivalent kg","Hinweis"]];
-    zeilenAktuell.forEach(function(r){ z.push([r.s?stName(r.s):"", r.e.name, r.e.art||"", r.e.fuellung||"", r.n, r.en, r.co2!=null?r.co2:"", r.e.leck||""]); });
+    /* Zahlen mit Komma wie in der Anzeige – Excel (de-AT) liest „8.5“ sonst als Text oder Datum */
+    zeilenAktuell.forEach(function(r){ z.push([r.s?stName(r.s):"", r.e.name, r.e.art||"", r.e.fuellung?kgFmt(r.e.fuellung):"", kgFmt(r.n), kgFmt(r.en), r.co2!=null?r.co2:"", r.leck||""]); });
     var csv=z.map(function(r){ return r.map(function(x){ return '"'+String(x).replace(/"/g,'""')+'"'; }).join(";"); }).join("\r\n");
     var a=document.createElement("a"); a.href=URL.createObjectURL(new Blob(["﻿"+csv],{type:"text/csv"})); a.download="kaeltemittel-bilanz"+(sel.value?"-"+sel.value:"")+".csv"; a.click();
   };
@@ -12708,7 +12716,7 @@ function berichtKarte(){
 function viewVerlauf(){
   var f=document.createDocumentFragment();
   f.appendChild(berichtKarte());
-  f.appendChild(kaeltemittelKarte());
+  if(!nurLesen()) f.appendChild(kaeltemittelKarte());   /* Kunde: interne Auswertung, Leck-Verdacht ist Sache der Firma */
   if(Admin.frei && !nurLesen()) f.appendChild(monatsberichtKarte());
 
   /* 1. Wartungshistorie je Filiale */
