@@ -12,7 +12,7 @@ window.UKT_CONFIG = {
 
   /* Adresse, auf die der QR-Code zeigt. Leer lassen = die Adresse, unter der
      die Seite gerade aufgerufen wird. Für das spätere eigene Hosting hier
-     die endgültige Adresse eintragen, z. B. "https://wartung.ukt.at/". */
+     die endgültige Adresse eintragen, z. B. "https://leitstand.ukt.at/". */
   appUrl: "",
 
   /* KI-Erkennung von Prüfbüchern, Typenschildern und Lidl-Aufträgen. Bleibt
