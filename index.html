@@ -1148,6 +1148,7 @@ function berechneFaelligkeiten(){
     /* abgeleitete Hinweise jedes Mal neu – sonst bliebe ein alter stehen,
        etwa wenn eine Zeile ihren Anker verliert oder pausiert wird */
     p.ausgelassen=null; p.ueberholtDurch=null; p.doppeltImFenster=null;
+    p.zugeordnet=null;   /* Termin → Wartungsdatum, für den Monatsbericht (terminZuWartung) */
     /* Einträge aus Liste, Prüfbuch und App, die höchstens BESUCH_TAGE
        auseinanderliegen, sind EIN Besuch – sonst erfüllte derselbe Besuch
        einen versäumten Termin und zusätzlich den nächsten */
@@ -1212,6 +1213,7 @@ function berechneFaelligkeiten(){
       }
     })();
     var erledigtFuer=function(termin){ return zu[termin]||null; };
+    p.zugeordnet=zu;
 
     if(a.erster && aktuell<a.erster){
       /* noch keine Wartung fällig seit Inbetriebnahme – ist die erste schon
@@ -2972,7 +2974,7 @@ function viewFaellig(){
 
 /* Sprünge aus den Kacheln und dem Diagramm im Reiter Fällig (auch aus dem
    Handbuch und der Kopfzeile). art: stoerungen | ueberfaellig | faellig |
-   plan | monat | liste | maerkte. opt.region / opt.monat / opt.liste */
+   plan | monat | liste | maerkte. opt.region / opt.monat / opt.liste / opt.alle */
 function faelligSprung(art, opt){
   opt=opt||{};
   if(art==="stoerungen"){
@@ -3000,10 +3002,12 @@ function faelligSprung(art, opt){
   var liste=art==="plan" ? "plan" : art==="monat" ? "monat" : (opt.liste||"");
   springe({reiter:"faellig", alleFenster:true, block:status?"center":"start",
     vorher:function(){
-      var alt=[S.region, S.faelligListe, S.faelligMonat].join("|");
+      var alt=[S.region, S.faelligListe, S.faelligMonat, S.q].join("|");
       if(opt.region) S.region=opt.region;
+      /* opt.alle (Wochenkarte): die Zahl dort gilt für alle Märkte – Suche und Region aufheben */
+      if(opt.alle){ S.q=""; S.region="alle"; }
       S.faelligListe=liste; S.faelligMonat=liste==="monat" ? opt.monat : "";
-      return [S.region, S.faelligListe, S.faelligMonat].join("|")!==alt;
+      return [S.region, S.faelligListe, S.faelligMonat, S.q].join("|")!==alt;
     },
     finde:function(){
       if(!status) return document.getElementById("du_karte");
@@ -4450,8 +4454,9 @@ function anlageHistorieAnsicht(leader, ohneStoerung){
   if(!nurLesen()){ var abRow=el('<div class="rowflex"></div>'); abRow.appendChild(pdfKnopf("📄 Anlagenbuch als PDF", function(){ return "Anlagenbuch_"+(s?stName(s)+"_":"")+anlagenName(d)+".pdf"; }, function(){ return anlagenbuchPdf(leader); })); box.appendChild(abRow); }
   var wk=wiederkehrVon(leader);
   if(wk) box.appendChild(el('<div class="note warnbox"><strong>⚠ Wiederkehrende Störung:</strong> '+esc(wiederkehrText(wk))+'.</div>'));
-  /* Kältemittel-Bilanz dieser Anlage (je Jahr) samt Leck-Verdacht */
-  var kmB=kaeltemittelBilanz()[anlageVon(leader).id];
+  /* Kältemittel-Bilanz dieser Anlage (je Jahr) samt Leck-Verdacht –
+     nicht für den Kunden (interne Auswertung, wie im Reiter Verlauf) */
+  var kmB=nurLesen() ? null : kaeltemittelBilanz()[anlageVon(leader).id];
   if(kmB){
     var jahre=Object.keys(kmB.jahre).sort().reverse();
     box.appendChild(el('<div class="note'+(kmB.leck?" warnbox":"")+'" style="font-size:13px"><strong>'+(kmB.leck?"⚠ Leck-Verdacht: "+esc(kmB.leck)+" – Dichtheit prüfen. ":"")+"Kältemittel"+(kmB.art?" "+esc(kmB.art):"")+
@@ -5744,7 +5749,7 @@ var FELDNAMEN={ datum:"Datum", uhrzeit:"Uhrzeit", bestellnummer:"Bestellnummer",
   zertUnternehmen:"F-Gase-Unternehmenszertifikat", zertPerson:"F-Gase-Personenzertifikat",
   positionIds:"Gewartete Anlagen", anlagen:"Anlagendaten", arbeiten:"Durchgeführte Arbeiten",
   arbeitenSonstiges:"Sonstige Arbeiten", maengel:"Mängel", betriebsbereit:"Betriebsbereit",
-  sofortmassnahme:"Sofortmaßnahme", ergebnis:"Ergebnis", bemerkungen:"Bemerkungen",
+  sofortmassnahme:"Sofortmaßnahme", ergebnis:"Ergebnis", bemerkungen:"Bemerkungen", kaeltemittel:"Kältemittel",
   nameTechniker:"Name Techniker/in", auftraggebervertreter:"Auftraggebervertreter",
   unterschrift:"Unterschrift", fotos:"Fotos", rapport:"Rapportbericht" };
 
@@ -5752,6 +5757,8 @@ function feldText(feld, wert, mitArt){
   if(wert==null || wert==="" || (Array.isArray(wert)&&!wert.length)) return "–";
   if(feld==="datum") return dfmt(wert);
   if(feld==="rapport") return wert.name||"rapport.pdf";
+  if(feld==="kaeltemittel"){ var ka=wert.anlage && posById[zeileWeiter(wert.anlage)];
+    return kaeltemittelText(wert)+(ka ? " (für "+anlagenName(ka)+")" : ""); }
   /* auch pausierte, stillgelegte und zusammengeführte Anlagen beim Namen
      nennen (posById kennt alle Zeilen, zusammengeführte leiten weiter);
      im Verlauf mit der Terminart – „zählt als“ bestimmt die Fälligkeit */
@@ -5800,7 +5807,13 @@ function anlagenUnterschiede(alt, neu){
 function vergleiche(alt, neu){
   var felder=[];
   var sortiert=function(v){ return Array.isArray(v) ? v.slice().sort() : v; };
+  /* Kältemittel nach seinen Werten vergleichen – die Datenbank gibt die
+     Angaben in anderer Reihenfolge zurück, als das Formular sie schreibt */
+  var kmWert=function(w){ return w ? [w.art||"", +w.nach||0, +w.ent||0, w.anlage||""].join("|") : ""; };
   Object.keys(FELDNAMEN).forEach(function(k){
+    if(k==="kaeltemittel"){
+      if(kmWert(alt[k])!==kmWert(neu[k])) felder.push({feld:k, name:FELDNAMEN[k], alt:feldText(k,alt[k],true), neu:feldText(k,neu[k],true)});
+      return; }
     /* nur umsortierte Anlagen sind keine Änderung */
     if(k==="positionIds" ? gleich(sortiert(alt[k]),sortiert(neu[k])) : gleich(alt[k],neu[k])) return;
     if(k==="anlagen"){ anlagenUnterschiede(alt[k], neu[k]).forEach(function(x){ felder.push(x); }); return; }
@@ -8271,16 +8284,37 @@ function chatBezugWahl(fertig){
    tools/abrechnung.sql). Kein Eingriff ins Protokoll selbst.
    ================================================================ */
 var abrechnung={}, abrechnungGeladen=false;
+var abrechnungListe=null;   /* zeichnet Liste und Zähler im Reiter Protokoll neu (setzt viewProtokoll) */
 function abrechnungAn(){ return Store.modus==="supabase" && !!Store.sb && !!Store.benutzer && istInhaber() && !demo(); }
 function abrechnungLaden(){
   if(!abrechnungAn()){ abrechnung={}; abrechnungGeladen=false; return Promise.resolve(); }
   return Store.sb.from("abrechnung").select("*").then(function(r){
+    /* Fehler: der bisherige Stand bleibt; ohne geladenen Stand gilt nichts als „nicht abgerechnet“ */
     if(r.error) return;
     var neu={}; (r.data||[]).forEach(function(z){ neu[z.protokoll_id]=z; });
+    var anders=!abrechnungGeladen || JSON.stringify(neu)!==JSON.stringify(abrechnung);
     abrechnung=neu; abrechnungGeladen=true;
+    if(anders) abrechnungZeichnen();
   }, function(){});
 }
+/* Haken im offenen Protokoll, Liste und Zähler nachziehen – ohne den Reiter neu
+   aufzubauen (oben steht womöglich ein angefangenes Protokoll) */
+function abrechnungZeichnen(){
+  document.querySelectorAll('[data-abrechnung="ungeladen"]').forEach(function(b){ if(b._p) b.replaceWith(abrechnungZeile(b._p)); });
+  if(abrechnungListe) abrechnungListe();
+}
 function abrechnungZeile(p){
+  /* Stand nicht geladen: kein Haken – er würde Datum und Rechnungsnummer eines vorhandenen Eintrags überschreiben */
+  if(!abrechnungGeladen){
+    var u=el('<div class="posbox stack" style="gap:6px" data-abrechnung="ungeladen"><div><strong>€ Abgerechnet</strong> '+
+      '<span class="muted" style="font-size:12.5px">Der Abrechnungsstand konnte nicht geladen werden.</span></div>'+
+      '<div><button class="btn ghost sm" type="button">Erneut laden</button></div></div>');
+    u._p=p;
+    u.querySelector("button").onclick=function(){
+      abrechnungLaden().then(function(){ if(!abrechnungGeladen) toast("Der Abrechnungsstand ließ sich nicht laden – bitte die Verbindung prüfen."); });
+    };
+    return u;
+  }
   var a=abrechnung[p._id];
   var z=el('<div class="posbox stack" style="gap:6px" data-abrechnung>'+
     '<label class="chk" style="align-items:center;flex-wrap:wrap"><input type="checkbox" data-a="haken" style="margin:0"'+(a?" checked":"")+'> <strong>€ Abgerechnet</strong>'+
@@ -8295,6 +8329,7 @@ function abrechnungZeile(p){
       return Store.sb.from("abrechnung").delete().eq("protokoll_id", p._id).then(function(r){
         if(r.error){ fehl("Nicht gespeichert: "+r.error.message); hk.checked=true; return; }
         delete abrechnung[p._id]; no.hidden=true; wann.textContent=""; toast("Haken entfernt.");
+        if(abrechnungListe) abrechnungListe();
       });
     }
     var zeile={protokoll_id:p._id, abgerechnet:new Date().toISOString(), von:meineAngaben().name||wer(), notiz:no.value.trim()||null};
@@ -8302,6 +8337,7 @@ function abrechnungZeile(p){
     return Store.sb.from("abrechnung").upsert(zeile,{onConflict:"protokoll_id"}).then(function(r){
       if(r.error){ fehl("Nicht gespeichert: "+r.error.message); hk.checked=!!abrechnung[p._id]; return; }
       abrechnung[p._id]=zeile; no.hidden=false; wann.textContent="am "+tagFmt(zeile.abgerechnet)+(zeile.von?" von "+zeile.von:""); toast("Als abgerechnet vermerkt.");
+      if(abrechnungListe) abrechnungListe();
     });
   };
   hk.onchange=speichern;
@@ -9581,6 +9617,37 @@ function protokollAssistent(form, stoer){
     inhalt.appendChild(textFeld("Bemerkungen","#f_bem",true));
   }});
 
+  /* Kältemittel: dieselben Felder wie im Formular (Wartung f_km…, Störung
+     s_km…) – sonst fehlte in der Kältemittel-Bilanz, was nur hier erfasst wird */
+  var kmVor=stoer?"#s_km":"#f_km";
+  var kmKurz=function(){
+    var n=wert(kmVor+"Nach").trim(), e=wert(kmVor+"Ent").trim();
+    return [wert(kmVor+"Art").trim(), n?"nachgefüllt "+n+" kg":"", e?"zurückgewonnen "+e+" kg":""].filter(Boolean).join(" · ");
+  };
+  if(f(kmVor+"Nach")) schritte.push({titel:"Kältemittel", zeigen:function(){
+    inhalt.innerHTML=frage("Kältemittel nachgefüllt oder zurückgewonnen?")+
+      '<div class="muted" style="font-size:12.5px">Nichts nachgefüllt und nichts zurückgewonnen: leer lassen und weiter.</div>';
+    inhalt.appendChild(textFeld("Kältemittel", kmVor+"Art", false, "z. B. R410A"));
+    [["Nach","nachgefüllt (kg)"],["Ent","zurückgewonnen (kg)"]].forEach(function(x){
+      var d=textFeld(x[1], kmVor+x[0], false, "0");
+      d.querySelector("input").setAttribute("inputmode","decimal");
+      inhalt.appendChild(d);
+    });
+    /* „für Anlage“ nur bei der Wartung und nur, wenn mehrere angehakt sind */
+    var ziel=f("#f_kmAnlage");
+    if(ziel){
+      kaeltemittelAnlagen(form);
+      if(ziel.options.length>2){
+        var s2=el('<select style="width:100%"></select>');
+        s2.innerHTML=ziel.innerHTML; s2.value=ziel.value;
+        s2.onchange=function(){ ziel.value=s2.value; formDirty=true; };
+        inhalt.appendChild(feldRahmen("für Anlage", s2));
+      }
+    }
+  }, pruefen:function(){
+    return kgGueltig(wert(kmVor+"Nach")) && kgGueltig(wert(kmVor+"Ent")) ? "" : "Bitte die Menge in kg nur als Zahl eintragen (z. B. 2,5).";
+  }});
+
   schritte.push({titel:"Fotos", zeigen:function(){
     inhalt.innerHTML=frage("Fotos vom Einsatz (freiwillig)");
     var reihe=el('<div class="chips"></div>');
@@ -9643,6 +9710,7 @@ function protokollAssistent(form, stoer){
         (stoer?zeile("Maßnahmen", wert("#s_massnahmen").slice(0,60), "Störungsbehebung"):zeile("Arbeiten", arbeiten+" angehakt", "Arbeiten"))+
         zeile("Mängel", maengel?maengel+" eingetragen":"keine", "Mängel")+
         zeile("Betriebsbereit", (form.querySelector('input[name="bereit"]:checked')||{}).value||"–", "Ergebnis")+
+        (f(kmVor+"Nach")?zeile("Kältemittel", kmKurz()||"keines", "Kältemittel"):"")+
         zeile("Fotos", (form.querySelector("#f_fotoinfo")||{}).textContent||"–", "Fotos")+
         zeile("Techniker/in", wert("#f_name"), "Abschluss")+
         zeile("Unterschrift", form._sig.vorhanden()?"vorhanden":"fehlt", "Abschluss")+
@@ -10006,6 +10074,7 @@ function viewProtokoll(){
       posBox.appendChild(el('<div class="muted" style="font-size:12px">Zur Zeit nicht gewartet: '+
         esc(cur.pausiertePos.filter(function(x){ return anlageLeader(x)===x || cur.pausiertePos.indexOf(anlageLeader(x))<0; }).map(function(x){ var d=anlageDaten(x); return anlagenName(d)+(d.pausiertGrund?" ("+d.pausiertGrund+")":""); }).join(", "))+"</div>"));
     anlagenZeichnen();
+    kaeltemittelAnlagen(form);   /* „für Anlage“ beim Kältemittel folgt der neuen Liste */
   }
   selSt.onchange=function(){ var cur=byId[selSt.value];
     form.querySelector("#f_adresse").value=cur?cur.adresse:"";
@@ -10640,7 +10709,19 @@ function viewProtokoll(){
   /* Haken für den geführten Dialog: Unterschrift von dort übernehmen,
      Mangelzeile anlegen, Zustand abfragen */
   /* „für Anlage“ beim Kältemittel: die Auswahl folgt den angehakten Anlagen */
-  var kmSel=form.querySelector("#f_kmAnlage"); if(kmSel) kmSel.addEventListener("focus", function(){ kaeltemittelAnlagen(form); });
+  var kmSel=form.querySelector("#f_kmAnlage");
+  if(kmSel){
+    kmSel.addEventListener("focus", function(){ kaeltemittelAnlagen(form); });
+    /* Haken entfernt: eine dort gewählte Anlage gilt nicht weiter */
+    form.addEventListener("change", function(e){
+      if(!e.target || e.target.name!=="posw") return;
+      if(!kaeltemittelAnlagen(form)) toast("Kältemittel „für Anlage“: die gewählte Anlage ist nicht mehr angehakt – es gilt die erste angehakte.");
+    });
+  }
+  /* Kältemittel-Mengen gleich beim Verlassen des Felds prüfen (Wartung und Störung) */
+  KM_MENGEN.forEach(function(id){
+    var n=form.querySelector("#"+id); if(n) n.addEventListener("change", function(){ n.style.borderColor=kgGueltig(n.value) ? "" : "var(--crit)"; });
+  });
   form._sig={
     vorhanden:function(){ return hasSig; },
     setzen:function(datenUrl){
@@ -10769,7 +10850,7 @@ function viewProtokoll(){
     form.querySelectorAll('input[name="ergebnis"]').forEach(function(c){ c.checked=(bearb.ergebnis||[]).indexOf(c.value)>=0; });
     setz("f_bem",bearb.bemerkungen); setz("f_name",bearb.nameTechniker); setz("f_agv",bearb.auftraggebervertreter);
     if(bearb.kaeltemittel){ var km=bearb.kaeltemittel; setz("f_kmArt",km.art); setz("f_kmNach",km.nach?String(km.nach).replace(".",","):""); setz("f_kmEnt",km.ent?String(km.ent).replace(".",","):"");
-      var ks=f("f_kmAnlage"); if(ks && km.anlage){ kaeltemittelAnlagen(form); ks.value=km.anlage; } }
+      kaeltemittelAnlagen(form, km.anlage); }
     if(stoer){
       var so=bearb.stoerung||{};
       STOER_AUFTRAG.concat(STOER_BEHEBUNG,STOER_TEXTE).forEach(function(f2){ setz("s_"+f2[0], so[f2[0]]); });
@@ -10849,6 +10930,17 @@ function viewProtokoll(){
       tippe(box.querySelector("a"), function(){ sprungHervorheben(form.querySelector("#f_posbox"), {block:"start"}); });
       box.hidden=false;
       posFeld.scrollIntoView({behavior:"smooth", block:"center"});
+      return false;
+    }
+    /* Kältemittel-Mengen müssen Zahlen sein – „ca. 3 kg“ oder „-1“ gingen
+       sonst ohne Hinweis verloren und fehlten in der Kältemittel-Bilanz */
+    var kmFalsch=KM_MENGEN.map(function(id){ return form.querySelector("#"+id); }).filter(function(n){ return n && !kgGueltig(n.value); });
+    if(!fehlend.length && kmFalsch.length){
+      kmFalsch.forEach(function(n){ n.style.borderColor="var(--crit)"; });
+      box.textContent="Kältemittel: bitte die Menge in kg nur als Zahl eintragen (z. B. 2,5) – „"+kmFalsch[0].value.trim()+"“ lässt sich nicht rechnen.";
+      box.hidden=false;
+      kmFalsch[0].scrollIntoView({behavior:"smooth", block:"center"});
+      try{ kmFalsch[0].focus({preventScroll:true}); }catch(x){ kmFalsch[0].focus(); }
       return false;
     }
     /* Ein Protokoll entsteht nach dem Einsatz. Ein Datum in der Zukunft ist
@@ -10947,6 +11039,8 @@ function viewProtokoll(){
       });
       if(fehlt) toast("Eine im Entwurf gewählte Anlage gibt es so nicht mehr – bitte die angehakten Anlagen prüfen.");
     }
+    /* „für Anlage“ beim Kältemittel: erst jetzt stehen die angehakten Anlagen zur Wahl */
+    kaeltemittelAnlagen(form, (d.werte&&d.werte.f_kmAnlage)||"");
     /* Mängel- und Materialzeilen in der gespeicherten Zahl wiederherstellen */
     mHost.innerHTML="";
     (d.maengel&&d.maengel.length?d.maengel:[null]).forEach(function(m){
@@ -11478,8 +11572,11 @@ function viewProtokoll(){
   var anzGeloescht=alleProtokolle(true).length-alle.length;
   if(Admin.frei && S.zeigeGeloeschte) alle=alleProtokolle(true);
   /* Inhaber: nur die noch nicht abgerechneten (zentral abgelegten) Protokolle */
-  var abrOffen = abrechnungAn() ? alle.filter(function(x){ return x._quelle!=="geraet" && !x.geloescht && !abrechnung[x._id]; }).length : 0;
-  if(abrechnungAn() && S.nurUnabgerechnet) alle=alle.filter(function(x){ return x._quelle!=="geraet" && !x.geloescht && !abrechnung[x._id]; });
+  var alleVoll=alle, abrFrei=function(x){ return x._quelle!=="geraet" && !x.geloescht && !abrechnung[x._id]; };
+  /* solange der Abrechnungsstand nicht geladen ist, gilt nichts als „nicht abgerechnet“ */
+  var abrZahl=function(){ return abrechnungGeladen ? alleVoll.filter(abrFrei).length : "?"; };
+  var abrOffen = abrechnungAn() ? abrZahl() : 0;
+  if(abrechnungAn() && abrechnungGeladen && S.nurUnabgerechnet) alle=alleVoll.filter(abrFrei);
   var gesp=el('<div class="card"><div class="pad stack">'+
     "<div><h2>Gespeicherte Protokolle</h2>"+
     '<div class="sub">'+unterzeile+"</div></div>"+
@@ -11491,7 +11588,16 @@ function viewProtokoll(){
   var chipG=gesp.querySelector("#p_geloescht");
   if(chipG) chipG.onclick=function(){ S.zeigeGeloeschte=!S.zeigeGeloeschte; render(); };
   var chipA=gesp.querySelector("#p_unabger");
-  if(chipA) chipA.onclick=function(){ S.nurUnabgerechnet=!S.nurUnabgerechnet; render(); };
+  if(chipA) chipA.onclick=function(){
+    if(!abrechnungGeladen){ toast("Der Abrechnungsstand ist noch nicht geladen – einen Moment bitte."); abrechnungLaden(); return; }
+    S.nurUnabgerechnet=!S.nurUnabgerechnet; render(); };
+  /* nach dem Anhaken oder Nachladen: Zähler, Tag „€ abgerechnet“ und Liste nachziehen */
+  abrechnungListe = !chipA ? null : function(){
+    if(!gesp.isConnected){ abrechnungListe=null; return; }
+    chipA.textContent="noch nicht abgerechnet ("+abrZahl()+")";
+    alle=(abrechnungGeladen && S.nurUnabgerechnet) ? alleVoll.filter(abrFrei) : alleVoll;
+    if(alleVoll.length) listeZeichnen();
+  };
   var pl=gesp.querySelector("#plist");
   /* Filter „nur auf diesem Gerät“ – nur die Liste neu, nie render(): oben im
      Reiter steht womöglich ein angefangenes Protokoll */
@@ -12180,6 +12286,8 @@ function protokollDetail(p){
         block("Fehlerbild vor Ort",so.fehlerbild)+
         block("Ursache",so.ursache)+
         block("Durchgeführte Maßnahmen",so.massnahmen)+
+        /* Kältemittel wie im Druckblatt */
+        block("Kältemittel",[so.kmArt, so.kmNach?"nachgefüllt "+so.kmNach+" kg":"", so.kmEnt?"zurückgewonnen "+so.kmEnt+" kg":""].filter(Boolean).join(" · "))+
         ((so.material&&so.material.length)?"<div>"+kl+"Material</div>"+so.material.map(function(m){
           return '<div style="font-size:13px">• '+esc(m.text)+(m.menge?" – "+esc(m.menge):"")+"</div>"; }).join("")+"</div>":"");
     })()+
@@ -12595,21 +12703,44 @@ function kgZahl(w){
 }
 function kgFmt(n){ return (Math.round(n*100)/100).toLocaleString("de-AT",{minimumFractionDigits:0, maximumFractionDigits:2}); }
 function co2Kg(kg, gwp){ return gwp && kg ? Math.round(kg*gwp) : null; }
-/* Auswahl „für Anlage“ im Formular aus den angehakten Anlagen füllen */
-function kaeltemittelAnlagen(form){
+/* Eingabe prüfen: leer ist in Ordnung, sonst muss es eine Zahl ≥ 0 sein
+   („ca. 3 kg“ oder „-1“ würden sonst still als 0 gelten) */
+var KM_MENGEN=["f_kmNach","f_kmEnt","s_kmNach","s_kmEnt"];
+function kgGueltig(w){
+  var s=String(w==null?"":w).trim();
+  return !s || /^\d{1,3}(\.\d{3})+(,\d+)?$/.test(s) || /^\d+([.,]\d+)?$/.test(s);
+}
+/* Auswahl „für Anlage“ im Formular aus den angehakten Anlagen füllen.
+   wahl: diese Anlage vorwählen (Korrektur, Entwurf) – sonst bleibt die bisherige */
+function kaeltemittelAnlagen(form, wahl){
   var sel=form.querySelector("#f_kmAnlage"); if(!sel) return;
-  var alt=sel.value; sel.innerHTML='<option value="">– erste angehakte –</option>';
-  form.querySelectorAll('input[name="posw"]:checked').forEach(function(cb){
-    var lab=cb.closest("label"), st=lab&&lab.querySelector("strong");
-    var o=document.createElement("option"); o.value=cb.dataset.anlage||""; o.textContent=st?st.textContent:(cb.dataset.anlage||""); sel.appendChild(o);
+  var alt=wahl!==undefined ? (wahl||"") : sel.value;
+  if(alt){ var pw=posById[zeileWeiter(alt)]; if(pw) alt=anlageVon(pw).id; }   /* zusammengeführt: die bleibende Anlage */
+  sel.innerHTML='<option value="">– erste angehakte –</option>';
+  var alle=form.querySelectorAll('input[name="posw"]'), namen=[], zahl={};
+  alle.forEach(function(cb){ var lab=cb.closest("label"), st=lab&&lab.querySelector("strong"), n=st?st.textContent:(cb.dataset.anlage||"");
+    namen.push(n); zahl[n]=(zahl[n]||0)+1; });
+  alle.forEach(function(cb, i){
+    if(!cb.checked) return;
+    /* gleichnamige Anlagen: mit ihrer Stelle in der Liste oben unterscheidbar */
+    var o=document.createElement("option"); o.value=cb.dataset.anlage||"";
+    o.textContent=namen[i]+(zahl[namen[i]]>1 ? " ("+(i+1)+". in der Liste)" : ""); sel.appendChild(o);
   });
+  /* Korrektur: eine Anlage des Protokolls, die hier gar nicht zur Wahl steht (etwa stillgelegt), bleibt */
+  if(alt && posById[alt] && posById[alt].standortId===(form.querySelector("#f_standort")||{}).value &&
+     !Array.prototype.some.call(alle, function(cb){ return cb.dataset.anlage===alt; })){
+    var ob=document.createElement("option"); ob.value=alt; ob.textContent=anlagenName(anlageDaten(posById[alt])); sel.appendChild(ob);
+  }
   sel.value=alt; if(sel.value!==alt) sel.value="";
+  return !alt || sel.value===alt;
 }
 function kaeltemittelAusForm(form){
   var v=function(id){ var n=form.querySelector("#"+id); return n?n.value.trim():""; };
   if(!form.querySelector("#f_kmNach")) return null;
   var art=v("f_kmArt"), nach=kgZahl(v("f_kmNach")), ent=kgZahl(v("f_kmEnt"));
   if(!art && !nach && !ent) return null;
+  /* die gewählte Anlage muss noch angehakt sein – sonst landete die Nachfüllung bei einer nicht gewarteten */
+  kaeltemittelAnlagen(form);
   var anlage=v("f_kmAnlage");
   if(!anlage){ var cb=form.querySelector('input[name="posw"]:checked'); anlage=cb?(cb.dataset.anlage||""):""; }
   return {art:art||null, nach:nach, ent:ent, anlage:anlage||null};
@@ -12625,7 +12756,9 @@ function kaeltemittelBewegungen(){
     if(istStoerung(pr)){ var so=pr.stoerung||{}; if(so.kmNach||so.kmEnt) k={art:so.kmArt||null, nach:kgZahl(so.kmNach), ent:kgZahl(so.kmEnt), anlage:null}; }
     else if(pr.kaeltemittel) k=pr.kaeltemittel;
     if(!k || (!k.nach && !k.ent)) return;
-    var aid=k.anlage && ANLAGEN[k.anlage] ? k.anlage : null;
+    /* zusammengeführte Anlage: die Bewegung zählt bei der bleibenden (wie beim Störungsprotokoll) */
+    var ka=k.anlage ? posById[zeileWeiter(k.anlage)] : null;
+    var aid=ka ? anlageVon(ka).id : (k.anlage && ANLAGEN[k.anlage] ? k.anlage : null);
     if(!aid){ var z=protokollZeilen(pr)[0], p=z&&posById[z]; aid=p?anlageVon(p).id:null; }
     if(!aid) return;
     raus.push({datum:pr.datum, anlageId:aid, art:k.art, nach:k.nach||0, ent:k.ent||0, protokoll:pr});
@@ -12634,21 +12767,27 @@ function kaeltemittelBewegungen(){
 }
 /* Bilanz je Anlage: {anlageId, name, standortId, art, fuellung, gwp, jahre:{jahr:{nach,ent,n}}, leck} */
 function kaeltemittelBilanz(){
-  var je={}, ab=isoLokal(new Date(Date.now()-365*864e5));
+  var je={}, heute=isoLokal(new Date()), ab=isoLokal(new Date(Date.now()-365*864e5));
   kaeltemittelBewegungen().forEach(function(b){
     var a=ANLAGEN[b.anlageId]; if(!a||!a.leader) return;
     var e=je[b.anlageId];
     if(!e){ var d=anlageDaten(a.leader); e=je[b.anlageId]={anlageId:b.anlageId, name:anlagenName(d), standortId:a.leader.standortId,
-      art:d.kaeltemittelArt||b.art||"", fuellung:kgZahl(d.kaeltemittelKg),
-      /* GWP aus der Anlage, sonst aus dem im Protokoll genannten Kältemittel */
-      gwp:gwpVon(d)||gwpVon({kaeltemittelArt:b.art||"", gwp:null}), jahre:{}, jahrNach:0, letzte:[]}; }
+      art:d.kaeltemittelArt||"", artFest:!!d.kaeltemittelArt, fuellung:kgZahl(d.kaeltemittelKg),
+      gwp:gwpVon(d), gwpFest:!!gwpVon(d), jahre:{}, jahrNach:0, letzte:[]}; }
+    /* Art und GWP aus der Anlage; fehlen sie dort, aus dem zuletzt im Protokoll genannten Kältemittel */
+    if(b.art){
+      if(!e.artFest) e.art=b.art;
+      if(!e.gwpFest) e.gwp=gwpVon({kaeltemittelArt:e.art, gwp:null})||e.gwp;
+    }
     var j=String(b.datum||"").slice(0,4), y=e.jahre[j]=e.jahre[j]||{nach:0, ent:0, n:0};
     y.nach+=b.nach; y.ent+=b.ent; y.n++;
-    if(b.nach && b.datum>=ab){ e.jahrNach+=b.nach; if(!e.letzte.length || !gleicherBesuch(e.letzte[e.letzte.length-1], b.datum)) e.letzte.push(b.datum); }
+    /* die letzten 12 Monate enden heute – ein Datum in der Zukunft (Altbestand) zählt nicht dazu */
+    if(b.nach && b.datum>=ab && b.datum<=heute){ e.jahrNach+=b.nach; if(!e.letzte.length || !gleicherBesuch(e.letzte[e.letzte.length-1], b.datum)) e.letzte.push(b.datum); }
   });
   Object.keys(je).forEach(function(k){
     var e=je[k]; e.leck=null;
-    if(e.fuellung && e.jahrNach>e.fuellung*LECK_ANTEIL) e.leck=kgFmt(e.jahrNach)+" kg in 12 Monaten nachgefüllt ("+Math.round(e.jahrNach/e.fuellung*100)+" % der Füllmenge)";
+    /* „mehr als 10 %“: auf 10 g gerundet vergleichen – 22,4 × 0,10 ergäbe sonst 2,2399… und genau 10 % zählte schon */
+    if(e.fuellung && Math.round(e.jahrNach*100)>Math.round(e.fuellung*LECK_ANTEIL*100)) e.leck=kgFmt(e.jahrNach)+" kg in 12 Monaten nachgefüllt ("+Math.round(e.jahrNach/e.fuellung*100)+" % der Füllmenge)";
     else if(e.letzte.length>=LECK_NACHFUELLUNGEN) e.leck=e.letzte.length+"× in 12 Monaten nachgefüllt ("+kgFmt(e.jahrNach)+" kg)";
   });
   return je;
@@ -12660,7 +12799,7 @@ function kaeltemittelKarte(){
   if(jl.indexOf(heuer)<0) jl.unshift(heuer);
   var c=el('<div class="card"><div class="pad stack">'+
     '<div><h2>Kältemittel-Bilanz</h2><div class="sub">Nachgefüllt und zurückgewonnen je Anlage und Jahr, aus Wartungs- und Störungsprotokollen, '+
-      'mit CO₂-Äquivalent (GWP). Leck-Verdacht ab '+Math.round(LECK_ANTEIL*100)+' % der Füllmenge oder ab '+LECK_NACHFUELLUNGEN+' Nachfüllungen in 12 Monaten.</div></div>'+
+      'mit CO₂-Äquivalent (GWP). Leck-Verdacht bei mehr als '+Math.round(LECK_ANTEIL*100)+' % der Füllmenge oder ab '+LECK_NACHFUELLUNGEN+' Nachfüllungen in 12 Monaten.</div></div>'+
     (ids.length ? '<div class="rowflex"><label class="fl"><span>Jahr</span><select id="km_jahr">'+jl.map(function(j){ return '<option value="'+j+'"'+(j===heuer?" selected":"")+">"+j+"</option>"; }).join("")+'<option value="">alle Jahre</option></select></label>'+
       '<button class="btn ghost sm" type="button" id="km_csv">Als CSV</button></div><div class="scrollx" id="km_tab"></div>'
       : '<div class="muted" style="font-size:13px">Noch keine Kältemittel-Bewegungen erfasst – die Felder stehen im Wartungsprotokoll unter „Ergebnis und Bemerkungen“ und im Störungsprotokoll unter „Störungsbehebung“.</div>')+
@@ -12668,7 +12807,7 @@ function kaeltemittelKarte(){
   if(!ids.length) return c;
   var sel=c.querySelector("#km_jahr"), host=c.querySelector("#km_tab"), zeilenAktuell=[];
   var zeichnen=function(){
-    var j=sel.value, rows=[], sumN=0, sumE=0, sumC=0;
+    var j=sel.value, rows=[], sumN=0, sumE=0, sumC=0, ohneGwp=0;
     ids.forEach(function(k){
       var e=bil[k], n=0, en=0;
       Object.keys(e.jahre).forEach(function(y){ if(!j || y===j){ n+=e.jahre[y].nach; en+=e.jahre[y].ent; } });
@@ -12676,7 +12815,7 @@ function kaeltemittelKarte(){
       var leck=(!j || j===heuer) ? e.leck : null;
       if(!n && !en && !leck) return;
       var s=byId[e.standortId], co2=co2Kg(n, e.gwp);
-      sumN+=n; sumE+=en; if(co2) sumC+=co2;
+      sumN+=n; sumE+=en; if(co2) sumC+=co2; else if(n) ohneGwp++;
       rows.push({e:e, s:s, n:n, en:en, co2:co2, leck:leck});
     });
     rows.sort(function(a,b){ return (b.leck?1:0)-(a.leck?1:0) || b.n-a.n; });
@@ -12693,6 +12832,9 @@ function kaeltemittelKarte(){
     });
     tb.appendChild(el("<tr><td colspan='4'><strong>Summe</strong></td><td class='mono'><strong>"+kgFmt(sumN)+" kg</strong></td><td class='mono'><strong>"+kgFmt(sumE)+" kg</strong></td><td class='mono'><strong>"+(sumC?kgFmt(sumC/1000)+" t":"–")+"</strong></td><td></td></tr>"));
     host.appendChild(t);
+    /* fehlt das Kältemittel oder ist sein GWP nicht bekannt, fehlt die Anlage in der CO₂-Summe – das sagen */
+    if(ohneGwp) host.appendChild(el('<div class="muted" style="font-size:12.5px">CO₂-Äquivalent ohne '+ohneGwp+" Anlage"+(ohneGwp===1?"":"n")+
+      " – dort ist das Kältemittel nicht eingetragen oder sein GWP nicht bekannt (in den Anlagendaten ergänzen).</div>"));
     if(!rows.length) host.appendChild(el('<div class="muted" style="font-size:13px">Keine Bewegungen in diesem Jahr.</div>'));
   };
   sel.onchange=zeichnen; zeichnen();
@@ -12772,74 +12914,132 @@ function anlagenbuchPdf(leader){
 }
 
 /* ---------- Monatsbericht: für Lidl (ohne Internes) oder intern für UKT ---------- */
+/* Stunden aus dem Rapport: „3:32“ (Stunden:Minuten) oder „3,5“ → Zahl in Stunden */
+function stundenZahl(w){
+  var s=String(w==null?"":w).trim(), m=/^(\d+):(\d{1,2})$/.exec(s);
+  if(m) return Math.round((+m[1] + (+m[2])/60)*100)/100;
+  var n=parseFloat(s.replace(",",".")); return isNaN(n)||n<0 ? null : n;
+}
+/* Für welchen Termin zählt eine Wartung an dieser Termin-Zeile? So, wie
+   berechneFaelligkeiten sie zugeordnet hat (auch über den Jahreswechsel,
+   vorgezogen oder verspätet). Ohne Zuordnung (Zeile ruht oder ist stillgelegt):
+   der Termin, der dem Datum am nächsten liegt. Zählt die Wartung für keinen
+   Termin (zweite im selben Fenster, Datum in der Zukunft): null. */
+function terminZuWartung(z, datum){
+  var zu=z.zugeordnet, t=null;
+  if(zu){
+    Object.keys(zu).forEach(function(T){ if(!t && (zu[T]===datum || gleicherBesuch(zu[T], datum))) t=T; });
+    return t;
+  }
+  if(!z.anker) return null;
+  var y=+String(datum).slice(0,4), abst=Infinity;
+  [y-1,y,y+1].forEach(function(j){
+    var T=ankerIm(z.anker,j), d=Math.abs(new Date(T+"T12:00:00")-new Date(datum+"T12:00:00"));
+    if(d<abst){ abst=d; t=T; }
+  });
+  return t;
+}
 function monatsberichtDaten(monat, region){
   var von=monat+"-01", bis=plusMonate(von,1), heute=isoLokal(new Date());
-  var passt=function(s){ return s && (!region || s.region===region) && s.aktiv!==false; };
-  var protos=alleProtokolle().filter(function(p){ return p.datum>=von && p.datum<bis && passt(byId[p.standortId]); });
-  var wartungen=[], stoerProt=[];
+  /* was im Monat geschehen ist, bleibt im Bericht – auch wenn der Markt inzwischen stillgelegt ist */
+  var passtMarkt=function(s){ return s && (!region || s.region===region); };
+  var passt=function(s){ return passtMarkt(s) && s.aktiv!==false; };
+  var protos=alleProtokolle().filter(function(p){ return p.datum>=von && p.datum<bis && passtMarkt(byId[p.standortId]); });
+  var wartungen=[], stoerProt=[], weitere=[];
+  var stundenVon=function(p){ var r=rapportVon(p); return r&&r.daten&&r.daten.stunden ? stundenZahl(r.daten.stunden) : null; };
   protos.forEach(function(p){
     var s=byId[p.standortId];
     if(istStoerung(p)){
-      var so=p.stoerung||{}, o=OFFENE.filter(function(x){ return so.auftragsnummer && x.auftragsnummer===so.auftragsnummer; })[0];
-      var erfasst=o&&(o.erfasstAm||o.auftragsdatum)?String(o.erfasstAm||o.auftragsdatum).slice(0,10):(so.auftragsdatum||null);
+      /* die Auftragsnummer steht im Protokoll selbst; die zugehörige Störung hängt über protokollId daran */
+      var so=p.stoerung||{}, nr=String(p.auftragsnummer||so.auftragsnummer||"").trim();
+      var o=OFFENE.filter(function(x){ return x.protokollId && x.protokollId===p._id; })[0] ||
+            OFFENE.filter(function(x){ return nr && String(x.auftragsnummer||"").trim()===nr; })[0];
+      /* erfasst: Auftragsdatum bzw. Eingang der Störung – ein Datum nach dem Einsatz ergibt keine Dauer */
+      var erfasst=[o&&o.erfasstAm, o&&o.auftragsdatum, so.auftragsdatum].filter(Boolean).map(function(d){ return String(d).slice(0,10); })
+        .filter(function(d){ return d<=p.datum; })[0]||null;
       var tage=erfasst ? Math.round((new Date(p.datum+"T12:00:00")-new Date(erfasst+"T12:00:00"))/864e5) : null;
-      stoerProt.push({p:p, s:s, problem:so.problemtyp||"", auftrag:so.auftragsnummer||"", erfasst:erfasst, tage:tage, km:so.kmNach?kgZahl(so.kmNach):0});
+      stoerProt.push({p:p, s:s, problem:so.problemtyp||(o&&o.problemtyp)||"", auftrag:nr, erfasst:erfasst, tage:tage, stunden:stundenVon(p)});
       return;
     }
+    /* Reparatur und Sonstiges: kein Wartungsnachweis, also auch keine Terminbewertung */
+    if(!zaehltAlsWartung(p)){ weitere.push({p:p, s:s, art:p.wartungsart||"", stunden:stundenVon(p),
+      name:protokollZeilen(p).map(function(id){ return posById[id] ? anlagenName(anlageDaten(posById[id])) : ""; }).filter(function(n,i,l){ return n && l.indexOf(n)===i; }).join(", ")}); return; }
+    var erste=true;
     protokollZeilen(p).forEach(function(id){
       var z=posById[id]; if(!z) return;
-      var termin=z.anker ? ankerIm(z.anker, +p.datum.slice(0,4)) : null;
+      var termin=terminZuWartung(z, p.datum);
       /* fristgerecht: bis zum Termin (vorgezogen ist normal) oder innerhalb des Besuchsfensters danach */
-      var frist = !termin ? null : (p.datum<=plusMonate(termin,0) || gleicherBesuch(p.datum, termin));
+      var frist = !termin ? null : (p.datum<=termin || gleicherBesuch(p.datum, termin));
+      /* Stunden gelten je Protokoll – sie stehen nur in dessen erster Zeile */
       wartungen.push({p:p, s:s, z:z, name:anlagenName(anlageDaten(z)), art:(z.intervall&&z.intervall.art)||p.wartungsart||"", termin:termin, frist:frist,
-        maengel:(p.maengel||[]).length, km:p.kaeltemittel&&p.kaeltemittel.nach?p.kaeltemittel.nach:0, stunden:(function(){ var r=rapportVon(p); return r&&r.daten&&r.daten.stunden?+String(r.daten.stunden).replace(",","."):null; })()});
+        maengel:(p.maengel||[]).length, erste:erste, stunden:erste?stundenVon(p):null});
+      erste=false;
     });
   });
-  var neuStoer=OFFENE.filter(function(o){ var d=String(o.erfasstAm||o.auftragsdatum||"").slice(0,10); return d>=von && d<bis && passt(byId[o.standortId]); });
-  var offenEnde=OFFENE.filter(function(o){ return !o.erledigt && !o.geloescht && passt(byId[o.standortId]); });
+  /* Kältemittel wie in der Kältemittel-Bilanz: je Protokoll einmal */
+  var imMonat={}; protos.forEach(function(p){ imMonat[p._id]=1; });
+  var kmNach=kaeltemittelBewegungen().reduce(function(a,b){ return a+(imMonat[b.protokoll._id]?b.nach:0); },0);
+  var neuStoer=OFFENE.filter(function(o){ var d=String(o.erfasstAm||o.auftragsdatum||"").slice(0,10); return !o.geloescht && d>=von && d<bis && passtMarkt(byId[o.standortId]); });
+  /* Stand am Monatsende: damals schon erfasst und noch nicht erledigt (läuft der Monat noch: Stand heute) */
+  var offenEnde=OFFENE.filter(function(o){
+    var d=String(o.erfasstAm||o.auftragsdatum||"").slice(0,10), e=o.erledigt ? String(o.erledigt).slice(0,10) : "";
+    return !o.geloescht && d<bis && (e ? e>=bis : passt(byId[o.standortId])) && passtMarkt(byId[o.standortId]); });
   var maerkte=ST.filter(passt);
   var ueberf=[]; maerkte.forEach(function(s){ s.pos.forEach(function(p){ if(p.status==="ueberfaellig") ueberf.push({s:s, p:p}); }); });
-  return {von:von, bis:bis, maerkte:maerkte, wartungen:wartungen, stoerProt:stoerProt, neuStoer:neuStoer, offenEnde:offenEnde, ueberf:ueberf, heute:heute};
+  return {von:von, bis:bis, maerkte:maerkte, protos:protos, wartungen:wartungen, stoerProt:stoerProt, weitere:weitere, kmNach:kmNach,
+    neuStoer:neuStoer, offenEnde:offenEnde, laeuft:bis>heute, ueberf:ueberf, heute:heute};
 }
 function monatsberichtHtml(monat, region, intern){
   var D=monatsberichtDaten(monat, region), mon=new Date(monat+"-01T12:00:00").toLocaleDateString("de-AT",{month:"long", year:"numeric"});
   var fristJa=D.wartungen.filter(function(w){ return w.frist===true; }).length, fristNein=D.wartungen.filter(function(w){ return w.frist===false; }).length;
-  var kmSum=D.wartungen.reduce(function(a,w){ return a+w.km; },0)+D.stoerProt.reduce(function(a,x){ return a+x.km; },0);
+  var kmSum=D.kmNach;
   var dauer=D.stoerProt.filter(function(x){ return x.tage!=null; });
   var dauerMittel=dauer.length ? Math.round(dauer.reduce(function(a,x){ return a+x.tage; },0)/dauer.length*10)/10 : null;
+  var offenTitel=D.laeuft ? "Offene Störungen (Stand heute)" : "Offene Störungen am Monatsende";
+  var stdText=function(n){ return n!=null ? String(Math.round(n*10)/10).replace(".",",") : "–"; };
+  /* Abrechnungsstand nicht geladen: nichts behaupten */
+  var abgerText=function(p){ return !abrechnungGeladen ? "?" : abrechnung[p._id] ? "ja" : "nein"; };
   var kacheln=[["Märkte",D.maerkte.length],["Wartungen",D.wartungen.length],["davon fristgerecht",fristJa+(fristNein?" / "+fristNein+" verspätet":"")],
-    ["Störungseinsätze",D.stoerProt.length],["neue Störungen",D.neuStoer.length],["offen am Monatsende",D.offenEnde.length],
-    ["Ø Erledigung",dauerMittel!=null?dauerMittel+" Tage":"–"],["Kältemittel nachgefüllt",kgFmt(kmSum)+" kg"]];
-  var kHtml="<div style='display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin-bottom:8px'>"+kacheln.map(function(k){
+    ["Störungseinsätze",D.stoerProt.length],["neue Störungen",D.neuStoer.length],[D.laeuft?"offen (Stand heute)":"offen am Monatsende",D.offenEnde.length],
+    ["Ø Erledigung",dauerMittel!=null?String(dauerMittel).replace(".",",")+" Tage":"–"],["Kältemittel nachgefüllt",kgFmt(kmSum)+" kg"]];
+  var kHtml="<div style='display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:6px;margin-bottom:8px'>"+kacheln.map(function(k){
     return "<div style='border:1px solid #c9cfd3;padding:4px 6px'><div style='font-size:15px;font-weight:700'>"+esc(String(k[1]))+"</div><div style='font-size:9.5px;color:#555;text-transform:uppercase'>"+esc(k[0])+"</div></div>"; }).join("")+"</div>";
   var wHtml=D.wartungen.length ? "<table><tr><th style='width:11%'>Datum</th><th>Markt</th><th>Anlage</th><th style='width:9%'>Art</th><th style='width:11%'>Termin</th><th style='width:10%'>fristgerecht</th><th style='width:8%'>Mängel</th>"+
     (intern?"<th style='width:8%'>Std.</th><th style='width:9%'>abger.</th>":"")+"</tr>"+
     D.wartungen.sort(function(a,b){ return a.p.datum.localeCompare(b.p.datum); }).map(function(w){
       return "<tr><td>"+dfmt(w.p.datum)+"</td><td>"+esc(w.s?stName(w.s):"")+"</td><td>"+esc(w.name)+"</td><td>"+esc(w.art)+"</td><td>"+(w.termin?dfmt(w.termin):"–")+"</td><td>"+
         (w.frist==null?"–":w.frist?"ja":"verspätet")+"</td><td>"+w.maengel+"</td>"+
-        (intern?"<td>"+(w.stunden!=null?String(w.stunden).replace(".",","):"–")+"</td><td>"+(abrechnung[w.p._id]?"ja":"nein")+"</td>":"")+"</tr>"; }).join("")+"</table>"
+        /* Stunden und Abrechnung gelten je Protokoll: nur in dessen erster Zeile */
+        (intern?"<td>"+(w.erste?stdText(w.stunden):"")+"</td><td>"+(w.erste?abgerText(w.p):"")+"</td>":"")+"</tr>"; }).join("")+"</table>"
     : "<div>Keine Wartungen in diesem Monat.</div>";
-  var sHtml=D.stoerProt.length ? "<table><tr><th style='width:11%'>Datum</th><th>Markt</th><th>Problem</th><th style='width:12%'>Auftrag</th><th style='width:11%'>erfasst</th><th style='width:10%'>Dauer</th>"+(intern?"<th style='width:9%'>abger.</th>":"")+"</tr>"+
+  var sHtml=D.stoerProt.length ? "<table><tr><th style='width:11%'>Datum</th><th>Markt</th><th>Problem</th><th style='width:12%'>Auftrag</th><th style='width:11%'>erfasst</th><th style='width:10%'>Dauer</th>"+(intern?"<th style='width:8%'>Std.</th><th style='width:9%'>abger.</th>":"")+"</tr>"+
     D.stoerProt.sort(function(a,b){ return a.p.datum.localeCompare(b.p.datum); }).map(function(x){
       return "<tr><td>"+dfmt(x.p.datum)+"</td><td>"+esc(x.s?stName(x.s):"")+"</td><td>"+esc(x.problem)+"</td><td>"+esc(x.auftrag)+"</td><td>"+(x.erfasst?dfmt(x.erfasst):"–")+"</td><td>"+
-        (x.tage!=null?x.tage+" Tage":"–")+"</td>"+(intern?"<td>"+(abrechnung[x.p._id]?"ja":"nein")+"</td>":"")+"</tr>"; }).join("")+"</table>"
+        (x.tage!=null?x.tage+(x.tage===1?" Tag":" Tage"):"–")+"</td>"+(intern?"<td>"+stdText(x.stunden)+"</td><td>"+abgerText(x.p)+"</td>":"")+"</tr>"; }).join("")+"</table>"
     : "<div>Keine Störungseinsätze in diesem Monat.</div>";
+  /* Reparaturen und Sonstiges: gemacht, aber keine Wartung nach Plan */
+  var xHtml=D.weitere.length ? "<h2>Weitere Einsätze (keine Wartung)</h2><table><tr><th style='width:11%'>Datum</th><th>Markt</th><th>Anlage</th><th style='width:22%'>Art</th>"+(intern?"<th style='width:8%'>Std.</th><th style='width:9%'>abger.</th>":"")+"</tr>"+
+    D.weitere.sort(function(a,b){ return a.p.datum.localeCompare(b.p.datum); }).map(function(x){
+      return "<tr><td>"+dfmt(x.p.datum)+"</td><td>"+esc(x.s?stName(x.s):"")+"</td><td>"+esc(x.name)+"</td><td>"+esc(x.art)+"</td>"+(intern?"<td>"+stdText(x.stunden)+"</td><td>"+abgerText(x.p)+"</td>":"")+"</tr>"; }).join("")+"</table>"
+    : "";
   var oHtml=D.offenEnde.length ? "<table><tr><th style='width:11%'>erfasst</th><th>Markt</th><th>Problem</th><th style='width:12%'>Auftrag</th><th style='width:11%'>Zieltermin</th></tr>"+
     D.offenEnde.map(function(o){ var s=byId[o.standortId]; return "<tr><td>"+dfmt(String(o.erfasstAm||"").slice(0,10))+"</td><td>"+esc(s?stName(s):"")+"</td><td>"+esc(o.problemtyp||"")+"</td><td>"+esc(o.auftragsnummer||"")+"</td><td>"+(o.zieltermin?dfmt(o.zieltermin):"–")+"</td></tr>"; }).join("")+"</table>"
     : "<div>Keine offene Störung.</div>";
   var internHtml="";
   if(intern){
-    var unabger=D.wartungen.filter(function(w){ return !abrechnung[w.p._id]; }).length+D.stoerProt.filter(function(x){ return !abrechnung[x.p._id]; }).length;
-    var std=D.wartungen.reduce(function(a,w){ return a+(w.stunden||0); },0);
+    /* je Protokoll einmal – nicht je Anlagenzeile */
+    var unabger=D.protos.filter(function(p){ return p._quelle!=="geraet" && !abrechnung[p._id]; }).length;
+    var unabgerText=abrechnungGeladen ? unabger+" Protokoll"+(unabger===1?"":"e") : "unbekannt – der Abrechnungsstand konnte nicht geladen werden";
+    var std=D.protos.reduce(function(a,p){ var r=rapportVon(p); return a+((r&&r.daten&&stundenZahl(r.daten.stunden))||0); },0);
     var lecks=Object.keys(kaeltemittelBilanz()).map(function(k){ return kaeltemittelBilanz()[k]; }).filter(function(e){ return e.leck && (!region || (byId[e.standortId]||{}).region===region); });
-    internHtml="<h2>Intern (UKT)</h2><table>"+tz("Noch nicht abgerechnet", unabger+" Protokoll"+(unabger===1?"":"e"))+tz("Stunden laut Rapporten", String(Math.round(std*10)/10).replace(".",",")+" h")+
+    internHtml="<h2>Intern (UKT)</h2><table>"+tz("Noch nicht abgerechnet", unabgerText)+tz("Stunden laut Rapporten", String(Math.round(std*10)/10).replace(".",",")+" h")+
       tz("Überfällige Termine (Stand heute)", D.ueberf.length ? D.ueberf.slice(0,25).map(function(u){ return stName(u.s)+" – "+anlagenName(anlageDaten(u.p))+" (seit "+dfmt(u.p.naechste)+")"; }).join("; ")+(D.ueberf.length>25?" …":"") : "keine")+
       tz("Wiederkehrende Störungen", Object.keys(WIEDERKEHR).filter(function(k){ var a=ANLAGEN[k]; return a&&a.leader&&(!region||(byId[a.leader.standortId]||{}).region===region); }).map(function(k){ var a=ANLAGEN[k]; return stName(byId[a.leader.standortId])+" – "+anlagenName(anlageDaten(a.leader)); }).join("; ")||"keine")+
       tz("Leck-Verdacht", lecks.map(function(e){ return (byId[e.standortId]?stName(byId[e.standortId]):"")+" – "+e.name+" ("+e.leck+")"; }).join("; ")||"keiner")+
       "</table>";
   }
   return blattKopf("Monatsbericht "+mon+(intern?" (intern)":""), (region?"Region "+region:"Alle Regionen")+" · Lidl Österreich – Klimaanlagen")+
-    kHtml+"<h2>Wartungen</h2>"+wHtml+"<h2>Störungseinsätze</h2>"+sHtml+"<h2>Offene Störungen am Monatsende</h2>"+oHtml+internHtml+
+    kHtml+"<h2>Wartungen</h2>"+wHtml+"<h2>Störungseinsätze</h2>"+sHtml+xHtml+"<h2>"+offenTitel+"</h2>"+oHtml+internHtml+
     "<div style='margin-top:10px;font-size:10px;color:#666'>Erstellt mit dem Wartungsleitstand am "+dfmt(D.heute)+". "+(intern?"Interne Fassung – nicht für den Kunden.":"Wartungen nach § 22 KAV; Fristen laut Wartungsplan.")+"</div>";
 }
 function monatsberichtKarte(){
@@ -12855,7 +13055,9 @@ function monatsberichtKarte(){
   var bauen=function(intern){ return function(){ return blattZuPdf({html:monatsberichtHtml(mon(), reg(), intern), fuss:"Monatsbericht "+mon()+(intern?" (intern)":" für Lidl")+(reg()?" – "+reg():""), titel:"Monatsbericht "+mon(), betreff:"Lidl Klimaanlagen - Monatsbericht"}); }; };
   k.appendChild(pdfKnopf("PDF für Lidl", function(){ return "Monatsbericht_"+mon()+(reg()?"_"+reg():"")+".pdf"; }, bauen(false)));
   if(istInhaber()) k.appendChild(pdfKnopf("PDF intern", function(){ return "Monatsbericht_"+mon()+(reg()?"_"+reg():"")+"_intern.pdf"; }, bauen(true)));
-  var vs=pdfKnopf("Vorschau", function(){ return ""; }, function(){ return null; }); vs.onclick=function(){ var v=ansichtOeffnen("Monatsbericht – Vorschau"); v.inhalt.appendChild(el('<div class="blatt" style="background:#fff;color:#111;padding:10px;font-size:12px">'+monatsberichtHtml(mon(), reg(), false)+"</div>")); };
+  var vs=pdfKnopf("Vorschau", function(){ return ""; }, function(){ return null; }); vs.onclick=function(){ var v=ansichtOeffnen("Monatsbericht – Vorschau");
+    /* am Handy: das Blatt behält seine Breite und lässt sich seitlich schieben – sonst zerhackt es die Tabellen */
+    v.inhalt.appendChild(el('<div class="scrollx"><div class="blatt" style="background:#fff;color:#111;padding:10px;font-size:12px;min-width:660px">'+monatsberichtHtml(mon(), reg(), false)+"</div></div>")); };
   k.appendChild(vs);
   return c;
 }
@@ -12883,7 +13085,7 @@ function wochenText(z){
   return [z.ueberfaellig+" überfällig", z.dieseWoche+" diese Woche fällig", z.stoerungen+" offene Störung"+(z.stoerungen===1?"":"en")+(z.zieltermine?" ("+z.zieltermine+" mit Zieltermin diese Woche)":""),
     z.wiederkehrend?z.wiederkehrend+" wiederkehrend":"", z.leck?z.leck+" Leck-Verdacht":"", z.fehler?z.fehler+" Fehler unter Nachbessern":""].filter(Boolean).join(" · ");
 }
-var kennzahlenZuletzt=0, kennzahlenTimer=null;
+var kennzahlenZuletzt=0, kennzahlenVon="", kennzahlenTimer=null;
 function kennzahlenSchreiben(){
   /* erst, wenn sich nichts mehr tut (Störungen und Protokolle sind nach dem
      Start in mehreren Schritten da) – und höchstens stündlich */
@@ -12893,12 +13095,19 @@ function kennzahlenSchreiben(){
 function kennzahlenJetzt(){
   if(Store.modus!=="supabase" || !Store.sb || !Store.benutzer || !Admin.frei || demo() || nurLesen()) return;
   if(!ST.length || (typeof protokolleGeladen!=="undefined" && !protokolleGeladen)) return;
-  if(Date.now()-kennzahlenZuletzt<3600e3) return;
-  kennzahlenZuletzt=Date.now();
+  /* die Stunde gilt je Konto – und nur nach einem gelungenen Schreiben */
+  var ich=Store.benutzer.id||Store.benutzer.email||"";
+  if(kennzahlenVon===ich && Date.now()-kennzahlenZuletzt<3600e3) return;
+  var vorher=kennzahlenZuletzt, vorherVon=kennzahlenVon;
+  var zurueck=function(){ kennzahlenZuletzt=vorher; kennzahlenVon=vorherVon; };
+  kennzahlenZuletzt=Date.now(); kennzahlenVon=ich;
   var z=wochenZahlen();
   var werte={stand:z.stand, ueberfaellig:z.ueberfaellig, dieseWoche:z.dieseWoche, stoerungen:z.stoerungen, zieltermine:z.zieltermine,
     wiederkehrend:z.wiederkehrend, leck:z.leck, fehler:z.fehler, text:wochenText(z)};
-  Store.sb.from("kennzahlen").upsert({id:1, stand:new Date().toISOString(), werte:werte},{onConflict:"id"}).then(function(){}, function(){});
+  Store.sb.from("kennzahlen").upsert({id:1, stand:new Date().toISOString(), werte:werte},{onConflict:"id"}).then(function(r){
+    /* nicht geschrieben: beim nächsten Anlass wieder versuchen */
+    if(r && r.error) zurueck();
+  }, zurueck);
 }
 function wochenKarte(){
   var z=wochenZahlen();
@@ -12922,7 +13131,7 @@ function wochenKarte(){
       (verwaltungDarf() && (z.wiederkehrend||z.leck||z.fehler)?'<button class="btn ghost sm" type="button" data-a="nachb">Nachbessern</button>':"")+
     "</div></div></div>");
   var b=c.querySelector('[data-a="stoer"]'); if(b) b.onclick=function(){ faelligSprung("stoerungen"); };
-  var u=c.querySelector('[data-a="ueber"]'); if(u) u.onclick=function(){ faelligSprung("ueberfaellig"); };
+  var u=c.querySelector('[data-a="ueber"]'); if(u) u.onclick=function(){ faelligSprung("ueberfaellig", {alle:true}); };
   var n=c.querySelector('[data-a="nachb"]'); if(n) n.onclick=function(){ nachbessernSprung(); };
   return c;
 }
@@ -15907,7 +16116,7 @@ function handbuchKarte(z){
           "die Nachricht raus, sobald wieder Verbindung ist. Reiter „Meldungen“ im Chat-Fenster zeigt, was als Push-Nachricht verschickt wurde "+
           "(auch was du selbst ausgelöst hast) – antippen führt hin. Die Zahl an der Sprechblase zählt ungelesene Nachrichten und neue Meldungen. Nur Büro und Techniker.",
         "<strong>Kältemittel-Bilanz (Verlauf):</strong> nachgefüllt und zurückgewonnen je Anlage und Jahr mit CO₂-Äquivalent, aus dem Wartungsprotokoll "+
-          "(Felder unter „Ergebnis und Bemerkungen“) und dem Störungsprotokoll. Leck-Verdacht ab 10 % der Füllmenge oder ab 2 Nachfüllungen in "+
+          "(Felder unter „Ergebnis und Bemerkungen“) und dem Störungsprotokoll. Leck-Verdacht bei mehr als 10 % der Füllmenge oder ab 2 Nachfüllungen in "+
           "12 Monaten – Hinweis unter Nachbessern und in der Anlagenhistorie. Als CSV für Behörde oder Lidl.",
         "<strong>📄 Anlagenbuch als PDF:</strong> in der Anlagenhistorie (Anlage antippen) – Anlagendaten, Termine, alle Wartungen und Störungseinsätze, "+
           "offene Störungen und Kältemittel-Bewegungen einer Anlage auf einem Blatt.",
