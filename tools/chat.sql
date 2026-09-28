@@ -30,6 +30,15 @@ create policy "chat eigene loeschen" on public.chat for delete to authenticated
   using (von = auth.uid() or public.ist_admin());
 grant select, insert, delete on public.chat to authenticated;
 
+-- Fotos des Team-Chats (chat/…) sieht nur, wer mitarbeitet – Kunde und
+-- Präsentation nicht. Die Regel „fotos ansehen“ aus supabase-setup.sql galt für
+-- den ganzen Bucket; Protokollfotos und Auftrags-PDFs bleiben für alle
+-- Angemeldeten lesbar wie bisher. (Wird supabase-setup.sql später nochmals
+-- ausgeführt, danach diese Datei erneut ausführen.)
+drop policy if exists "fotos ansehen" on storage.objects;
+create policy "fotos ansehen" on storage.objects for select to authenticated
+  using (bucket_id = 'protokollfotos' and (name not like 'chat/%' or public.darf_schreiben()));
+
 -- Fotos einer gelöschten Nachricht aus dem Speicher nehmen: nur unter chat/…,
 -- nur die selbst hochgeladenen (Admins: alle). Protokollfotos bleiben unberührt.
 drop policy if exists "chatfotos loeschen" on storage.objects;
