@@ -4412,6 +4412,8 @@ function anlageHistorieAnsicht(leader, ohneStoerung){
   var v=ansichtOeffnen(anlagenName(d));
   v.schritt.innerHTML=s?marktLink(s):"";
   var box=el('<div class="stack"></div>');
+  /* Anlagenbuch: alles zu dieser Anlage als PDF (Kunde: nur ansehen, kein Export) */
+  if(!nurLesen()){ var abRow=el('<div class="rowflex"></div>'); abRow.appendChild(pdfKnopf("📄 Anlagenbuch als PDF", function(){ return "Anlagenbuch_"+(s?stName(s)+"_":"")+anlagenName(d)+".pdf"; }, function(){ return anlagenbuchPdf(leader); })); box.appendChild(abRow); }
   var wk=wiederkehrVon(leader);
   if(wk) box.appendChild(el('<div class="note warnbox"><strong>⚠ Wiederkehrende Störung:</strong> '+esc(wiederkehrText(wk))+'.</div>'));
   /* Kältemittel-Bilanz dieser Anlage (je Jahr) samt Leck-Verdacht */
@@ -11593,15 +11595,27 @@ function ladeWasserzeichen(){
   });
 }
 function protokollPdfErzeugen(p){
-  return ladeUnterschrift(p).then(ladePdfBibliotheken).then(ladeWasserzeichen).then(function(){
+  var titel=(istStoerung(p)?"Störungsprotokoll ":"Wartungsprotokoll ")+protoName(p);
+  return ladeUnterschrift(p).then(function(){ return blattZuPdf({
+    html:blattInhalt(p),
+    vorbereiten:function(blatt){ return fotosEinsetzen(blatt.querySelector('[data-rolle="fotos"]'), p, true); },
+    fuss:titel+" vom "+dfmt(p.datum),
+    titel:titel+" "+dfmt(p.datum), betreff:"Lidl Klimaanlagen - Protokoll "+(p._id||"")
+  }); });
+}
+/* Ein Blatt (HTML im Stil des Protokollblatts) als mehrseitiges A4-PDF –
+   für Protokoll, Anlagenbuch und Monatsbericht. opt: html, vorbereiten(blatt)
+   (Promise, etwa Fotos einsetzen), fuss (Text in der Fußzeile), titel, betreff */
+function blattZuPdf(opt){
+  return ladePdfBibliotheken().then(ladeWasserzeichen).then(function(){
     var BREITE=794;                                  /* A4 bei 96 dpi */
     var huelle=document.createElement("div");
     huelle.style.cssText="position:fixed;left:-12000px;top:0;width:"+BREITE+"px;background:#fff;z-index:-1";
     huelle.innerHTML='<div class="blatt" style="background:#fff;color:#111;font:12.5px/1.45 \'IBM Plex Sans\',\'Segoe UI\',Arial,sans-serif;padding:4px 6px;box-sizing:border-box;width:'+BREITE+'px">'+
-      blattInhalt(p)+"</div>";
+      opt.html+"</div>";
     document.body.appendChild(huelle);
     var blatt=huelle.querySelector(".blatt");
-    return fotosEinsetzen(blatt.querySelector('[data-rolle="fotos"]'), p, true)
+    return (opt.vorbereiten ? opt.vorbereiten(blatt) : Promise.resolve())
       .then(function(){ return bilderGeladen(blatt); })
       .then(function(){
         /* mögliche Umbruchstellen: Unterkanten von Zeilen, Überschriften, Fotos */
@@ -11693,11 +11707,9 @@ function protokollPdfErzeugen(p){
           }
           doc.addImage(teil.toDataURL("image/jpeg",0.86),"JPEG",RAND,RAND,nutzB,teil.height/r.skala/pxProMm);
           doc.setFontSize(8); doc.setTextColor(120);
-          doc.text((istStoerung(p)?"Störungsprotokoll ":"Wartungsprotokoll ")+protoName(p)+" vom "+dfmt(p.datum)+"  -  Seite "+(i+1)+" von "+seiten.length,
-                   105, 297-RAND+1, {align:"center"});
+          doc.text((opt.fuss||"")+"  -  Seite "+(i+1)+" von "+seiten.length, 105, 297-RAND+1, {align:"center"});
         });
-        doc.setProperties({title:(istStoerung(p)?"Störungsprotokoll ":"Wartungsprotokoll ")+protoName(p)+" "+dfmt(p.datum),
-          subject:"Lidl Klimaanlagen - Protokoll "+(p._id||""), author:"Kammerlander Umwelt- und Klimatechnik GmbH",
+        doc.setProperties({title:opt.titel||"", subject:opt.betreff||"", author:"Kammerlander Umwelt- und Klimatechnik GmbH",
           creator:"Wartungsleitstand"});
         return doc.output("blob");
       }, function(e){ if(huelle.parentNode) document.body.removeChild(huelle); throw e; });
@@ -12363,6 +12375,160 @@ function kaeltemittelKarte(){
   };
   return c;
 }
+/* ---------- Anlagenbuch als PDF: Stammdaten, Termine, Historie, Störungen,
+   Kältemittel einer Anlage – aus denselben Daten wie die Anlagenhistorie ---------- */
+function pdfHerunterladen(blob, name){
+  var url=URL.createObjectURL(blob);
+  var a=document.createElement("a"); a.href=url; a.download=name.replace(/[\\/:*?"<>|]/g,"").replace(/\s+/g,"-"); a.rel="noopener";
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  setTimeout(function(){ URL.revokeObjectURL(url); }, 4000);
+}
+function pdfKnopf(text, name, bauen){
+  var b=el('<button class="btn ghost sm" type="button">'+esc(text)+"</button>");
+  b.onclick=function(){
+    b.disabled=true; b.textContent="PDF wird erstellt …";
+    Promise.resolve().then(bauen).then(function(blob){ pdfHerunterladen(blob, name()); b.disabled=false; b.textContent=text; toast("PDF erstellt."); },
+      function(e){ b.disabled=false; b.textContent=text; toast("PDF ließ sich nicht erstellen: "+(e&&e.message||e)); });
+  };
+  return b;
+}
+var BLATT_KOPF='<div class="kopf" style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;border-bottom:2px solid #00726e;padding-bottom:6px;margin-bottom:8px">'+
+  '<div><div style="font:700 15px/1.2 \'IBM Plex Sans Condensed\',Arial,sans-serif;letter-spacing:.03em">%TITEL%</div><div style="color:#555;font-size:11px">%UNTER%</div></div>'+
+  '<div style="text-align:right;font-size:10.5px;color:#444"><strong>Kammerlander Umwelt- und Klimatechnik GmbH</strong><br>Wartungsleitstand · Stand %STAND%</div></div>';
+function blattKopf(titel, unter){ return BLATT_KOPF.replace("%TITEL%",esc(titel)).replace("%UNTER%",esc(unter||"")).replace("%STAND%",dfmt(isoLokal(new Date()))); }
+function tz(k,v){ return "<tr><td class='k'>"+esc(k)+"</td><td>"+(v?esc(v):"–")+"</td></tr>"; }
+function anlagenbuchHtml(leader){
+  var a=anlageVon(leader), d=anlageDaten(leader), s=byId[leader.standortId];
+  var stamm="";
+  ANLAGE_GRUPPEN.forEach(function(g){
+    if(g.geheim || (g.wenn && !g.wenn(d))) return;
+    var zeilen=g.felder.filter(function(f){ return !leerWert(d[f.k]) && (!f.wenn || f.wenn(d)); }).map(function(f){
+      var w=d[f.k]; if(f.k==="innengeraete") return tz(f.l, innenText(w));
+      return tz(f.l, anlageWertText(f, w)); }).join("");
+    if(zeilen) stamm+="<tr><th colspan='2'>"+esc(g.titel)+"</th></tr>"+zeilen;
+  });
+  var termine=a.termine.map(function(t){
+    var st=STATUS_LABEL[t.status]||t.status;
+    return "<tr><td>"+esc((t.intervall&&t.intervall.art)||"")+"</td><td>"+(t.anker?String(t.anker.tag).padStart(2,"0")+"."+String(t.anker.monat).padStart(2,"0")+".":"–")+
+      "</td><td>"+(t.letzte?dfmt(t.letzte):"–")+"</td><td>"+(t.naechste?dfmt(t.naechste):"–")+"</td><td>"+esc(st)+(t.aktiv===false?" (stillgelegt)":"")+"</td></tr>";
+  }).join("");
+  var hist=anlageHistorie(leader).map(function(x){
+    var mg=x.protokoll&&x.protokoll.maengel&&x.protokoll.maengel.length ? x.protokoll.maengel.map(function(m){ return m.text+(m.prio?" ("+m.prio+")":""); }).join("; ") : "";
+    return "<tr><td>"+dfmt(x.datum)+"</td><td>"+esc(x.art)+"</td><td>"+esc(x.techniker||"")+"</td><td>"+esc(x.quelle)+"</td><td>"+esc(mg)+"</td></tr>";
+  }).join("");
+  var offen=stoerungenDerAnlage(a).map(function(o){
+    return "<tr><td>"+dfmt((o.erfasstAm||"").slice(0,10))+"</td><td>"+esc(o.problemtyp||"")+"</td><td>"+esc(o.auftragsnummer||"")+"</td><td>"+(o.zieltermin?dfmt(o.zieltermin):"–")+"</td><td>"+esc(stoerungAlter(o).text)+"</td></tr>";
+  }).join("");
+  var km=kaeltemittelBewegungen().filter(function(b){ return b.anlageId===a.id; });
+  var bil=kaeltemittelBilanz()[a.id], wk=WIEDERKEHR[a.id];
+  var kmHtml=km.length ? "<table><tr><th>Datum</th><th>Kältemittel</th><th>nachgefüllt</th><th>zurückgewonnen</th><th>Protokoll</th></tr>"+
+    km.slice().reverse().map(function(b){ return "<tr><td>"+dfmt(b.datum)+"</td><td>"+esc(b.art||bil.art||"")+"</td><td>"+kgFmt(b.nach)+" kg</td><td>"+kgFmt(b.ent)+" kg</td><td>"+
+      esc(istStoerung(b.protokoll)?"Störung":(b.protokoll.wartungsart||"Wartung"))+"</td></tr>"; }).join("")+
+    (bil ? "<tr><th colspan='5'>Je Jahr</th></tr>"+Object.keys(bil.jahre).sort().reverse().map(function(j){ var y=bil.jahre[j], c=co2Kg(y.nach, bil.gwp);
+      return "<tr><td>"+j+"</td><td>"+esc(bil.art||"")+"</td><td>"+kgFmt(y.nach)+" kg</td><td>"+kgFmt(y.ent)+" kg</td><td>"+(c?"≈ "+kgFmt(c/1000)+" t CO₂-Äqu.":"")+"</td></tr>"; }).join("") : "")+
+    "</table>" : "<div>Keine Kältemittel-Bewegungen erfasst.</div>";
+  return blattKopf("Anlagenbuch – "+anlagenName(d), (s?stName(s)+(s.adresse?" · "+s.adresse:""):"")+(s&&s.filiale?" · Filiale "+s.filiale:""))+
+    (wk ? "<div style='border:1px solid #b3261e;color:#b3261e;padding:4px 8px;margin-bottom:6px'><strong>Wiederkehrende Störung:</strong> "+esc(wiederkehrText(wk))+"</div>" : "")+
+    (bil&&bil.leck ? "<div style='border:1px solid #b3261e;color:#b3261e;padding:4px 8px;margin-bottom:6px'><strong>Leck-Verdacht:</strong> "+esc(bil.leck)+" – Dichtheit prüfen.</div>" : "")+
+    "<h2>Anlagendaten</h2><table>"+(stamm||tz("Anlagentyp", anlagenName(d)))+"</table>"+
+    "<h2>Termine</h2><table><tr><th>Art</th><th>Soll (Tag.Monat)</th><th>letzte Wartung</th><th>nächster Termin</th><th>Stand</th></tr>"+(termine||"<tr><td colspan='5'>–</td></tr>")+"</table>"+
+    "<h2>Wartungen und Störungseinsätze</h2><table><tr><th style='width:13%'>Datum</th><th>Art</th><th>Techniker/in</th><th style='width:12%'>Quelle</th><th>Mängel</th></tr>"+(hist||"<tr><td colspan='5'>Noch nichts erfasst.</td></tr>")+"</table>"+
+    "<h2>Offene Störungen</h2>"+(offen ? "<table><tr><th>erfasst</th><th>Problem</th><th>Auftrag</th><th>Zieltermin</th><th>Stand</th></tr>"+offen+"</table>" : "<div>Keine offene Störung.</div>")+
+    "<h2>Kältemittel</h2>"+kmHtml;
+}
+function anlagenbuchPdf(leader){
+  var d=anlageDaten(leader), s=byId[leader.standortId], name=anlagenName(d);
+  return blattZuPdf({html:anlagenbuchHtml(leader), fuss:"Anlagenbuch "+name+(s?" – "+stName(s):""), titel:"Anlagenbuch "+name, betreff:"Lidl Klimaanlagen - Anlagenbuch"});
+}
+
+/* ---------- Monatsbericht: für Lidl (ohne Internes) oder intern für UKT ---------- */
+function monatsberichtDaten(monat, region){
+  var von=monat+"-01", bis=plusMonate(von,1), heute=isoLokal(new Date());
+  var passt=function(s){ return s && (!region || s.region===region) && s.aktiv!==false; };
+  var protos=alleProtokolle().filter(function(p){ return p.datum>=von && p.datum<bis && passt(byId[p.standortId]); });
+  var wartungen=[], stoerProt=[];
+  protos.forEach(function(p){
+    var s=byId[p.standortId];
+    if(istStoerung(p)){
+      var so=p.stoerung||{}, o=OFFENE.filter(function(x){ return so.auftragsnummer && x.auftragsnummer===so.auftragsnummer; })[0];
+      var erfasst=o&&(o.erfasstAm||o.auftragsdatum)?String(o.erfasstAm||o.auftragsdatum).slice(0,10):(so.auftragsdatum||null);
+      var tage=erfasst ? Math.round((new Date(p.datum+"T12:00:00")-new Date(erfasst+"T12:00:00"))/864e5) : null;
+      stoerProt.push({p:p, s:s, problem:so.problemtyp||"", auftrag:so.auftragsnummer||"", erfasst:erfasst, tage:tage, km:so.kmNach?kgZahl(so.kmNach):0});
+      return;
+    }
+    protokollZeilen(p).forEach(function(id){
+      var z=posById[id]; if(!z) return;
+      var termin=z.anker ? ankerIm(z.anker, +p.datum.slice(0,4)) : null;
+      /* fristgerecht: bis zum Termin (vorgezogen ist normal) oder innerhalb des Besuchsfensters danach */
+      var frist = !termin ? null : (p.datum<=plusMonate(termin,0) || gleicherBesuch(p.datum, termin));
+      wartungen.push({p:p, s:s, z:z, name:anlagenName(anlageDaten(z)), art:(z.intervall&&z.intervall.art)||p.wartungsart||"", termin:termin, frist:frist,
+        maengel:(p.maengel||[]).length, km:p.kaeltemittel&&p.kaeltemittel.nach?p.kaeltemittel.nach:0, stunden:(function(){ var r=rapportVon(p); return r&&r.daten&&r.daten.stunden?+String(r.daten.stunden).replace(",","."):null; })()});
+    });
+  });
+  var neuStoer=OFFENE.filter(function(o){ var d=String(o.erfasstAm||o.auftragsdatum||"").slice(0,10); return d>=von && d<bis && passt(byId[o.standortId]); });
+  var offenEnde=OFFENE.filter(function(o){ return !o.erledigt && !o.geloescht && passt(byId[o.standortId]); });
+  var maerkte=ST.filter(passt);
+  var ueberf=[]; maerkte.forEach(function(s){ s.pos.forEach(function(p){ if(p.status==="ueberfaellig") ueberf.push({s:s, p:p}); }); });
+  return {von:von, bis:bis, maerkte:maerkte, wartungen:wartungen, stoerProt:stoerProt, neuStoer:neuStoer, offenEnde:offenEnde, ueberf:ueberf, heute:heute};
+}
+function monatsberichtHtml(monat, region, intern){
+  var D=monatsberichtDaten(monat, region), mon=new Date(monat+"-01T12:00:00").toLocaleDateString("de-AT",{month:"long", year:"numeric"});
+  var fristJa=D.wartungen.filter(function(w){ return w.frist===true; }).length, fristNein=D.wartungen.filter(function(w){ return w.frist===false; }).length;
+  var kmSum=D.wartungen.reduce(function(a,w){ return a+w.km; },0)+D.stoerProt.reduce(function(a,x){ return a+x.km; },0);
+  var dauer=D.stoerProt.filter(function(x){ return x.tage!=null; });
+  var dauerMittel=dauer.length ? Math.round(dauer.reduce(function(a,x){ return a+x.tage; },0)/dauer.length*10)/10 : null;
+  var kacheln=[["Märkte",D.maerkte.length],["Wartungen",D.wartungen.length],["davon fristgerecht",fristJa+(fristNein?" / "+fristNein+" verspätet":"")],
+    ["Störungseinsätze",D.stoerProt.length],["neue Störungen",D.neuStoer.length],["offen am Monatsende",D.offenEnde.length],
+    ["Ø Erledigung",dauerMittel!=null?dauerMittel+" Tage":"–"],["Kältemittel nachgefüllt",kgFmt(kmSum)+" kg"]];
+  var kHtml="<div style='display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin-bottom:8px'>"+kacheln.map(function(k){
+    return "<div style='border:1px solid #c9cfd3;padding:4px 6px'><div style='font-size:15px;font-weight:700'>"+esc(String(k[1]))+"</div><div style='font-size:9.5px;color:#555;text-transform:uppercase'>"+esc(k[0])+"</div></div>"; }).join("")+"</div>";
+  var wHtml=D.wartungen.length ? "<table><tr><th style='width:11%'>Datum</th><th>Markt</th><th>Anlage</th><th style='width:9%'>Art</th><th style='width:11%'>Termin</th><th style='width:10%'>fristgerecht</th><th style='width:8%'>Mängel</th>"+
+    (intern?"<th style='width:8%'>Std.</th><th style='width:9%'>abger.</th>":"")+"</tr>"+
+    D.wartungen.sort(function(a,b){ return a.p.datum.localeCompare(b.p.datum); }).map(function(w){
+      return "<tr><td>"+dfmt(w.p.datum)+"</td><td>"+esc(w.s?stName(w.s):"")+"</td><td>"+esc(w.name)+"</td><td>"+esc(w.art)+"</td><td>"+(w.termin?dfmt(w.termin):"–")+"</td><td>"+
+        (w.frist==null?"–":w.frist?"ja":"verspätet")+"</td><td>"+w.maengel+"</td>"+
+        (intern?"<td>"+(w.stunden!=null?String(w.stunden).replace(".",","):"–")+"</td><td>"+(abrechnung[w.p._id]?"ja":"nein")+"</td>":"")+"</tr>"; }).join("")+"</table>"
+    : "<div>Keine Wartungen in diesem Monat.</div>";
+  var sHtml=D.stoerProt.length ? "<table><tr><th style='width:11%'>Datum</th><th>Markt</th><th>Problem</th><th style='width:12%'>Auftrag</th><th style='width:11%'>erfasst</th><th style='width:10%'>Dauer</th>"+(intern?"<th style='width:9%'>abger.</th>":"")+"</tr>"+
+    D.stoerProt.sort(function(a,b){ return a.p.datum.localeCompare(b.p.datum); }).map(function(x){
+      return "<tr><td>"+dfmt(x.p.datum)+"</td><td>"+esc(x.s?stName(x.s):"")+"</td><td>"+esc(x.problem)+"</td><td>"+esc(x.auftrag)+"</td><td>"+(x.erfasst?dfmt(x.erfasst):"–")+"</td><td>"+
+        (x.tage!=null?x.tage+" Tage":"–")+"</td>"+(intern?"<td>"+(abrechnung[x.p._id]?"ja":"nein")+"</td>":"")+"</tr>"; }).join("")+"</table>"
+    : "<div>Keine Störungseinsätze in diesem Monat.</div>";
+  var oHtml=D.offenEnde.length ? "<table><tr><th style='width:11%'>erfasst</th><th>Markt</th><th>Problem</th><th style='width:12%'>Auftrag</th><th style='width:11%'>Zieltermin</th></tr>"+
+    D.offenEnde.map(function(o){ var s=byId[o.standortId]; return "<tr><td>"+dfmt(String(o.erfasstAm||"").slice(0,10))+"</td><td>"+esc(s?stName(s):"")+"</td><td>"+esc(o.problemtyp||"")+"</td><td>"+esc(o.auftragsnummer||"")+"</td><td>"+(o.zieltermin?dfmt(o.zieltermin):"–")+"</td></tr>"; }).join("")+"</table>"
+    : "<div>Keine offene Störung.</div>";
+  var internHtml="";
+  if(intern){
+    var unabger=D.wartungen.filter(function(w){ return !abrechnung[w.p._id]; }).length+D.stoerProt.filter(function(x){ return !abrechnung[x.p._id]; }).length;
+    var std=D.wartungen.reduce(function(a,w){ return a+(w.stunden||0); },0);
+    var lecks=Object.keys(kaeltemittelBilanz()).map(function(k){ return kaeltemittelBilanz()[k]; }).filter(function(e){ return e.leck && (!region || (byId[e.standortId]||{}).region===region); });
+    internHtml="<h2>Intern (UKT)</h2><table>"+tz("Noch nicht abgerechnet", unabger+" Protokoll"+(unabger===1?"":"e"))+tz("Stunden laut Rapporten", String(Math.round(std*10)/10).replace(".",",")+" h")+
+      tz("Überfällige Termine (Stand heute)", D.ueberf.length ? D.ueberf.slice(0,25).map(function(u){ return stName(u.s)+" – "+anlagenName(anlageDaten(u.p))+" (seit "+dfmt(u.p.naechste)+")"; }).join("; ")+(D.ueberf.length>25?" …":"") : "keine")+
+      tz("Wiederkehrende Störungen", Object.keys(WIEDERKEHR).filter(function(k){ var a=ANLAGEN[k]; return a&&a.leader&&(!region||(byId[a.leader.standortId]||{}).region===region); }).map(function(k){ var a=ANLAGEN[k]; return stName(byId[a.leader.standortId])+" – "+anlagenName(anlageDaten(a.leader)); }).join("; ")||"keine")+
+      tz("Leck-Verdacht", lecks.map(function(e){ return (byId[e.standortId]?stName(byId[e.standortId]):"")+" – "+e.name+" ("+e.leck+")"; }).join("; ")||"keiner")+
+      "</table>";
+  }
+  return blattKopf("Monatsbericht "+mon+(intern?" (intern)":""), (region?"Region "+region:"Alle Regionen")+" · Lidl Österreich – Klimaanlagen")+
+    kHtml+"<h2>Wartungen</h2>"+wHtml+"<h2>Störungseinsätze</h2>"+sHtml+"<h2>Offene Störungen am Monatsende</h2>"+oHtml+internHtml+
+    "<div style='margin-top:10px;font-size:10px;color:#666'>Erstellt mit dem Wartungsleitstand am "+dfmt(D.heute)+". "+(intern?"Interne Fassung – nicht für den Kunden.":"Wartungen nach § 22 KAV; Fristen laut Wartungsplan.")+"</div>";
+}
+function monatsberichtKarte(){
+  var jetzt=new Date(), monate=[];
+  for(var i=0;i<12;i++){ var d=new Date(jetzt.getFullYear(), jetzt.getMonth()-i, 1); monate.push(isoLokal(d).slice(0,7)); }
+  var c=el('<div class="card"><div class="pad stack">'+
+    '<div><h2>Monatsbericht</h2><div class="sub">Wartungen, Störungseinsätze mit Erledigungsdauer, fristgerecht ja/nein, Kältemittel – als PDF. '+
+      '„Für Lidl“ ohne interne Angaben'+(istInhaber()?'; „intern“ zusätzlich mit Abrechnungsstand, Stunden aus Rapporten und offenen Punkten':"")+'.</div></div>'+
+    '<div class="rowflex" style="gap:10px;align-items:flex-end;flex-wrap:wrap"><label class="fl"><span>Monat</span><select id="mb_monat">'+monate.map(function(m){ return '<option value="'+m+'">'+new Date(m+"-01T12:00:00").toLocaleDateString("de-AT",{month:"long",year:"numeric"})+"</option>"; }).join("")+"</select></label>"+
+    '<label class="fl"><span>Region</span><select id="mb_region"><option value="">alle</option>'+REGIONEN.map(function(r){ return '<option value="'+esc(r)+'">'+esc(r)+"</option>"; }).join("")+"</select></label>"+
+    '<span id="mb_knoepfe" class="rowflex" style="gap:6px"></span></div></div></div>');
+  var k=c.querySelector("#mb_knoepfe"), mon=function(){ return c.querySelector("#mb_monat").value; }, reg=function(){ return c.querySelector("#mb_region").value; };
+  var bauen=function(intern){ return function(){ return blattZuPdf({html:monatsberichtHtml(mon(), reg(), intern), fuss:"Monatsbericht "+mon()+(intern?" (intern)":" für Lidl")+(reg()?" – "+reg():""), titel:"Monatsbericht "+mon(), betreff:"Lidl Klimaanlagen - Monatsbericht"}); }; };
+  k.appendChild(pdfKnopf("PDF für Lidl", function(){ return "Monatsbericht_"+mon()+(reg()?"_"+reg():"")+".pdf"; }, bauen(false)));
+  if(istInhaber()) k.appendChild(pdfKnopf("PDF intern", function(){ return "Monatsbericht_"+mon()+(reg()?"_"+reg():"")+"_intern.pdf"; }, bauen(true)));
+  var vs=pdfKnopf("Vorschau", function(){ return ""; }, function(){ return null; }); vs.onclick=function(){ var v=ansichtOeffnen("Monatsbericht – Vorschau"); v.inhalt.appendChild(el('<div class="blatt" style="background:#fff;color:#111;padding:10px;font-size:12px">'+monatsberichtHtml(mon(), reg(), false)+"</div>")); };
+  k.appendChild(vs);
+  return c;
+}
 function berichtKarte(){
   var c=el('<div class="card"><div class="pad stack">'+
     '<div><h2>Liste herunterladen</h2><div class="sub">Was zuletzt gemacht wurde und was als Nächstes ansteht – '+
@@ -12405,6 +12571,7 @@ function viewVerlauf(){
   var f=document.createDocumentFragment();
   f.appendChild(berichtKarte());
   f.appendChild(kaeltemittelKarte());
+  if(Admin.frei && !nurLesen()) f.appendChild(monatsberichtKarte());
 
   /* 1. Wartungshistorie je Filiale */
   var hk=el('<div class="card"><div class="pad stack">'+
@@ -15343,6 +15510,11 @@ function handbuchKarte(z){
         "<strong>Kältemittel-Bilanz (Verlauf):</strong> nachgefüllt und zurückgewonnen je Anlage und Jahr mit CO₂-Äquivalent, aus dem Wartungsprotokoll "+
           "(Felder unter „Ergebnis und Bemerkungen“) und dem Störungsprotokoll. Leck-Verdacht ab 10 % der Füllmenge oder ab 2 Nachfüllungen in "+
           "12 Monaten – Hinweis unter Nachbessern und in der Anlagenhistorie. Als CSV für Behörde oder Lidl.",
+        "<strong>📄 Anlagenbuch als PDF:</strong> in der Anlagenhistorie (Anlage antippen) – Anlagendaten, Termine, alle Wartungen und Störungseinsätze, "+
+          "offene Störungen und Kältemittel-Bewegungen einer Anlage auf einem Blatt.",
+        "<strong>Monatsbericht (Verlauf, Admins):</strong> Monat und Region wählen – „PDF für Lidl“ (Wartungen, fristgerecht, Störungseinsätze mit "+
+          "Erledigungsdauer, Kältemittel, ohne Internes) und für Inhaber „PDF intern“ (zusätzlich Abrechnungsstand, Stunden aus Rapporten, "+
+          "überfällige Termine, wiederkehrende Störungen, Leck-Verdacht). „Vorschau“ zeigt den Bericht vorher in der App.",
         "<strong>⚠ Wiederkehrende Störungen:</strong> ab 3 Störungen in 90 Tagen an derselben Anlage (offene Störungen und Störungsprotokolle, "+
           "derselbe Besuch zählt einmal) – Markierung bei der Anlage und im Markt, Hinweis unter Nachbessern. Schwelle vom Büro, 28.09.2026.",
         "<strong>€ Abgerechnet:</strong> Inhaber setzen beim geöffneten Protokoll den Haken (mit Rechnungsnummer als Notiz); die Protokollliste "+
