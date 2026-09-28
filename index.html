@@ -1593,7 +1593,7 @@ function uhrFmt(startMin, h){
 /* ---------- State ---------- */
 var S={view:"faellig",region:"alle",q:"",sel:null,selPos:null,protoStandort:"",protoPos:"",stoerungAus:null,
   tour:{status:["ueberfaellig","faellig"], stundenProTag:8, startId:"__gps",
-        gps:null, gpsFehler:"", ergebnis:null, manuell:null, naechsterMonat:false, laender:[]}};
+        gps:null, gpsFehler:"", ergebnis:null, manuell:null, dazu:null, naechsterMonat:false, laender:[]}};
 /* Bundesland aus der Postleitzahl. Die Blöcke sind eindeutig bis auf ein paar
    Ränder: 5210–5299 (Innviertel: Braunau, Mattighofen), 5310/5311 (Mondsee)
    und 5360 (St. Wolfgang) gehören zu Oberösterreich – 5201–5205 (Seekirchen,
@@ -3012,6 +3012,12 @@ function tourRechnen(){
     var erlaubt={}; S.tour.manuell.forEach(function(id){ erlaubt[id]=1; });
     kandidaten=kandidaten.filter(function(k){ return erlaubt[k.standort.id]; });
   }
+  /* von Hand dazugenommene Märkte (auch ohne fälligen Termin): mit allen Anlagen des Markts */
+  (S.tour.dazu||[]).forEach(function(id){
+    var s=byId[id]; if(!s || !s.lat) return;
+    if(kandidaten.some(function(k){ return k.standort.id===id; })) return;
+    kandidaten.push({standort:s, positionen:s.pos.slice()});
+  });
   var start=BETRIEB;
   if(S.tour.startId==="__gps"){
     if(S.tour.gps) start={ id:"__gps", name:"Aktueller Standort",
@@ -3467,18 +3473,18 @@ function tourPanel(){
     b.onclick=function(){
       var k=b.dataset.s, i=S.tour.status.indexOf(k);
       if(i>=0){ if(S.tour.status.length>1) S.tour.status.splice(i,1); } else S.tour.status.push(k);
-      S.tour.manuell=null; tourLauf++; render();
+      S.tour.manuell=null; S.tour.dazu=null; tourLauf++; render();
     };
   });
   c.querySelector("#t_folge").onclick=function(){
-    S.tour.naechsterMonat=!S.tour.naechsterMonat; S.tour.manuell=null; tourLauf++; render();
+    S.tour.naechsterMonat=!S.tour.naechsterMonat; S.tour.manuell=null; S.tour.dazu=null; tourLauf++; render();
   };
   c.querySelectorAll("#t_land .chip").forEach(function(b){
     b.onclick=function(){
       var l=b.dataset.l;
       if(l==="__alle") S.tour.laender=[];
       else { var i=S.tour.laender.indexOf(l); if(i>=0) S.tour.laender.splice(i,1); else S.tour.laender.push(l); }
-      S.tour.manuell=null; tourLauf++; render();
+      S.tour.manuell=null; S.tour.dazu=null; tourLauf++; render();
     };
   });
   startSel.onchange=function(){ S.tour.startId=startSel.value; };
@@ -3532,10 +3538,50 @@ function tourPanel(){
     });
   };
   var clr=c.querySelector("#t_clear");
-  if(clr) clr.onclick=function(){ tourLauf++; S.tour.ergebnis=null; S.tour.geometrie=null; S.tour.manuell=null; render(); };
+  if(clr) clr.onclick=function(){ tourLauf++; S.tour.ergebnis=null; S.tour.geometrie=null; S.tour.manuell=null; S.tour.dazu=null; render(); };
 
   if(T) c.querySelector("#t_out").appendChild(tourErgebnis(T));
   return c;
+}
+
+/* Tour von Hand anpassen: Markt aus der Route nehmen (wegId) oder dazunehmen
+   (dazuId) – die übrigen Stopps bleiben, die Route wird neu gerechnet. Nur
+   die Karte zeichnet neu (ein angefangenes Protokoll bleibt stehen). */
+function tourAnpassen(wegId, dazuId){
+  var T=S.tour.ergebnis; if(!T) return;
+  var ids=[];
+  (T.tage||[]).forEach(function(t){ t.stopps.forEach(function(s){ if(s.standort && s.standort.id!==wegId && ids.indexOf(s.standort.id)<0) ids.push(s.standort.id); }); });
+  S.tour.dazu=(S.tour.dazu||[]).filter(function(i){ return i!==wegId && i!==dazuId; });
+  if(dazuId){ ids.push(dazuId); S.tour.dazu.push(dazuId); }
+  S.tour.manuell=ids;
+  if(!ids.length){ S.tour.ergebnis=null; S.tour.geometrie=null; S.tour.manuell=null; S.tour.dazu=null; tourLauf++; toast("Kein Markt mehr in der Tour."); if(darfRendern()) render(); return; }
+  toast("Route wird neu berechnet …");
+  tourRechnen().then(function(ok){
+    if(ok===false) return;
+    if(S.view==="karte" && darfRendern()){ render(); var t=document.getElementById("t_out"); if(t) t.scrollIntoView({behavior:"smooth", block:"start"}); }
+  }, function(){ toast("Die Route konnte nicht neu berechnet werden – bitte nochmals."); });
+}
+function tourMarktDazu(){
+  var T=S.tour.ergebnis, drin={};
+  (T?T.tage:[]).forEach(function(t){ t.stopps.forEach(function(s){ if(s.standort) drin[s.standort.id]=1; }); });
+  var v=ansichtOeffnen("Markt zur Tour dazunehmen");
+  var s=el('<div class="stack"><input type="search" placeholder="Markt, Filiale, Ort …" style="width:100%"><div class="stack" data-erg style="gap:4px"></div></div>');
+  v.inhalt.appendChild(s);
+  var inp=s.querySelector("input"), erg=s.querySelector("[data-erg]");
+  var zeichnen=function(){
+    var q=inp.value.trim().toLowerCase(); erg.innerHTML="";
+    var l=ST.filter(function(m){ return m.lat && !drin[m.id] && !marktPausiert(m) &&
+      (!q || (stName(m)+" "+(m.filiale||"")+" "+(m.adresse||"")).toLowerCase().indexOf(q)>=0); }).slice(0,30);
+    if(!l.length){ erg.appendChild(el('<div class="muted">Nichts gefunden (nur Märkte mit Koordinaten).</div>')); return; }
+    l.forEach(function(m){
+      var f=m.pos.some(function(p){ return p.status==="ueberfaellig"||p.status==="faellig"; });
+      var b=el('<button class="btn ghost sm" type="button" style="text-align:left;justify-content:flex-start">'+esc(stName(m))+
+        ' <span class="muted">'+esc(m.adresse||"")+"</span>"+(f?' <span class="tag">fällig</span>':"")+"</button>");
+      b.onclick=function(){ v.zu(); tourAnpassen(null, m.id); };
+      erg.appendChild(b);
+    });
+  };
+  inp.oninput=zeichnen; zeichnen(); setTimeout(function(){ inp.focus(); }, 50);
 }
 
 function tourErgebnis(T){
@@ -3548,6 +3594,11 @@ function tourErgebnis(T){
     /* ein Tag, der allein länger ist als die eingestellte Arbeitszeit, zählt so oft, wie er Tage braucht */
     '<div class="kpi"><div class="n">'+T.tage.reduce(function(a,t){ return a+(t.zuLang ? Math.max(1,Math.ceil(t.stunden/(T.stundenProTag||S.tour.stundenProTag))) : 1); },0)+'</div><div class="l">Arbeitstage</div></div>'+
   "</div>"));
+  /* Tour von Hand anpassen: ✕ an jedem Stopp nimmt den Markt heraus, hier kommt einer dazu */
+  var anp=el('<div class="rowflex" style="gap:8px"><button class="btn ghost sm" type="button">+ Markt dazunehmen</button>'+
+    '<span class="muted" style="font-size:12px">✕ an einem Stopp nimmt den Markt aus der Tour – die Route wird jeweils neu gerechnet.</span></div>');
+  anp.querySelector("button").onclick=tourMarktDazu;
+  box.appendChild(anp);
 
   T.tage.forEach(function(tag){
     var minute=7*60;   /* Tagesbeginn 07:00 */
@@ -3566,6 +3617,7 @@ function tourErgebnis(T){
         /* am Stopp gleich das Protokoll (bzw. bei offener Störung das Störungsprotokoll) */
         '<td><div class="rowflex" style="gap:4px;flex-wrap:nowrap"><a class="btn ghost sm" href="'+gmapsZiel(st.standort)+'" target="_blank" rel="noopener">Navi</a>'+
           '<button class="btn ghost sm" type="button" data-tourproto="'+esc(st.standort.id)+'" data-schreiben>Protokoll</button>'+
+          '<button class="btn ghost sm" type="button" data-tourweg="'+esc(st.standort.id)+'" title="Aus der Tour nehmen – die Route wird neu gerechnet">✕</button>'+
           stoerungVonMarkt(st.standort.id).map(function(o){
             return '<button class="btn ghost sm" type="button" data-tourstoer="'+esc(o._id)+'" data-schreiben>Störungsprotokoll</button>'; }).join("")+
         "</div></td></tr>";
@@ -3598,6 +3650,9 @@ function tourErgebnis(T){
     "</div></div>");
     tagKarte.querySelectorAll("[data-tourproto]").forEach(function(b){
       b.onclick=function(){ protokollBeginnen(b.dataset.tourproto, "", "wartung"); };
+    });
+    tagKarte.querySelectorAll("[data-tourweg]").forEach(function(b){
+      b.onclick=function(){ tourAnpassen(b.dataset.tourweg, null); };
     });
     tagKarte.querySelectorAll("[data-tourstoer]").forEach(function(b){
       b.onclick=function(){
