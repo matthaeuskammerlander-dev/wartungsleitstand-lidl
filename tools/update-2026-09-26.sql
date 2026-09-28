@@ -12,3 +12,4 @@ select table_name, column_name, data_type from information_schema.columns
  where table_schema = 'public'
    and ((table_name = 'protokolle' and column_name = 'rapport')
      or (table_name = 'aenderungen' and column_name = 'rueck'));
+alter table public.protokolle add column if not exists kaeltemittel jsonb;

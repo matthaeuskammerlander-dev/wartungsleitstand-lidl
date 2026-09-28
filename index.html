@@ -4414,6 +4414,14 @@ function anlageHistorieAnsicht(leader, ohneStoerung){
   var box=el('<div class="stack"></div>');
   var wk=wiederkehrVon(leader);
   if(wk) box.appendChild(el('<div class="note warnbox"><strong>⚠ Wiederkehrende Störung:</strong> '+esc(wiederkehrText(wk))+'.</div>'));
+  /* Kältemittel-Bilanz dieser Anlage (je Jahr) samt Leck-Verdacht */
+  var kmB=kaeltemittelBilanz()[anlageVon(leader).id];
+  if(kmB){
+    var jahre=Object.keys(kmB.jahre).sort().reverse();
+    box.appendChild(el('<div class="note'+(kmB.leck?" warnbox":"")+'" style="font-size:13px"><strong>'+(kmB.leck?"⚠ Leck-Verdacht: "+esc(kmB.leck)+" – Dichtheit prüfen. ":"")+"Kältemittel"+(kmB.art?" "+esc(kmB.art):"")+
+      (kmB.fuellung?" · Füllmenge "+kgFmt(kmB.fuellung)+" kg":"")+":</strong> "+
+      jahre.map(function(j){ var y=kmB.jahre[j], c=co2Kg(y.nach, kmB.gwp); return j+": nachgefüllt "+kgFmt(y.nach)+" kg"+(y.ent?", zurückgewonnen "+kgFmt(y.ent)+" kg":"")+(c?" (≈ "+kgFmt(c/1000)+" t CO₂)":""); }).join(" · ")+"</div>"));
+  }
   stoerungenDerAnlage(anlageVon(leader)).forEach(function(o){ if(o._id!==ohneStoerung) box.appendChild(stoerungEintrag(o,true)); });
   var h=anlageHistorie(leader);
   if(!h.length) box.appendChild(el('<div class="muted">Für diese Anlage ist noch nichts erfasst.</div>'));
@@ -6838,7 +6846,7 @@ function zuZeile(doc,uid){
     zert_unternehmen:doc.zertUnternehmen, zert_person:doc.zertPerson,
     anlagen:doc.anlagen, arbeiten:doc.arbeiten, arbeiten_sonstiges:doc.arbeitenSonstiges,
     maengel:doc.maengel, betriebsbereit:doc.betriebsbereit, sofortmassnahme:doc.sofortmassnahme,
-    ergebnis:doc.ergebnis, bemerkungen:doc.bemerkungen,
+    ergebnis:doc.ergebnis, bemerkungen:doc.bemerkungen, kaeltemittel:doc.kaeltemittel||null,
     name_techniker:doc.nameTechniker, auftraggebervertreter:doc.auftraggebervertreter,
     fotos:doc.fotos||[] };
   /* Nur mitschicken, wenn sie wirklich vorliegt. Wurde sie nicht nachgeladen,
@@ -6872,7 +6880,7 @@ function ausZeile(r){
     bemerkungen:r.bemerkungen, filiale:r.filiale, fotos:r.fotos||[],
     anlagen:r.anlagen||[], ergebnis:r.ergebnis||[], unterschrift:r.unterschrift,
     sofortmassnahme:r.sofortmassnahme, auftraggebervertreter:r.auftraggebervertreter,
-    stoerung:r.stoerung||null, mitarbeiter:r.mitarbeiter||[], rapport:r.rapport||null };
+    stoerung:r.stoerung||null, mitarbeiter:r.mitarbeiter||[], rapport:r.rapport||null, kaeltemittel:r.kaeltemittel||null };
 }
 /* Alle Spalten außer der Unterschrift. Die ist ein PNG als Text, rund 25 KB
    je Protokoll – bei tausend Protokollen wären das 25 MB bei jedem Start der
@@ -6884,7 +6892,7 @@ var PROTOKOLL_SPALTEN=["id","client_id","erstellt","erstellt_von","standort_id",
   "firma","techniker","kontakt","subunternehmen","zert_unternehmen","zert_person","anlagen","arbeiten",
   "arbeiten_sonstiges","maengel","betriebsbereit","sofortmassnahme","ergebnis","bemerkungen","name_techniker",
   "auftraggebervertreter","fotos","version","geaendert","korrektur_grund","geloescht","geloescht_von",
-  "loesch_grund","stoerung","mitarbeiter"].join(",");
+  "loesch_grund","stoerung","mitarbeiter","kaeltemittel"].join(",");
 /* Die Spalte rapport kommt mit einer späteren Fassung von supabase-setup.sql.
    Fehlt sie noch, lädt die App ohne sie weiter, statt gar nichts zu zeigen. */
 var rapportSpalte=true;
@@ -9513,7 +9521,14 @@ function viewProtokoll(){
 
   '<fieldset><legend>'+(stoer?"Bemerkungen":"Ergebnis und Bemerkungen")+'</legend><div class="checks"'+(stoer?" hidden":"")+">"+
     ERGEBNISSE.map(function(a,i){ return '<label class="chk"><input type="checkbox" value="'+esc(a)+'" id="f_erg'+i+'" name="ergebnis"><span>'+esc(a)+"</span></label>"; }).join("")+
-  '</div><label class="fl" style="margin-top:10px"><span>Bemerkungen</span><textarea id="f_bem" rows="3"></textarea></label></fieldset>'+
+  '</div><label class="fl" style="margin-top:10px"><span>Bemerkungen</span><textarea id="f_bem" rows="3"></textarea></label>'+
+  /* Kältemittel bei der Wartung (Störungsprotokoll hat eigene Felder) – für die Kältemittel-Bilanz */
+  (stoer?"":'<div class="rowflex" style="gap:8px;margin-top:10px;align-items:flex-end;flex-wrap:wrap">'+
+    '<label class="fl"><span>Kältemittel</span><input id="f_kmArt" type="text" placeholder="z. B. R410A" style="width:110px"></label>'+
+    '<label class="fl"><span>nachgefüllt (kg)</span><input id="f_kmNach" type="text" inputmode="decimal" placeholder="0" style="width:90px"></label>'+
+    '<label class="fl"><span>zurückgewonnen (kg)</span><input id="f_kmEnt" type="text" inputmode="decimal" placeholder="0" style="width:90px"></label>'+
+    '<label class="fl"><span>für Anlage</span><select id="f_kmAnlage"><option value="">– erste angehakte –</option></select></label></div>')+
+  "</fieldset>"+
 
   rapportHtml+
 
@@ -10302,6 +10317,8 @@ function viewProtokoll(){
   form.querySelector("#sigclear").onclick=function(){ ctx.clearRect(0,0,cv.width,cv.height); hasSig=false; };
   /* Haken für den geführten Dialog: Unterschrift von dort übernehmen,
      Mangelzeile anlegen, Zustand abfragen */
+  /* „für Anlage“ beim Kältemittel: die Auswahl folgt den angehakten Anlagen */
+  var kmSel=form.querySelector("#f_kmAnlage"); if(kmSel) kmSel.addEventListener("focus", function(){ kaeltemittelAnlagen(form); });
   form._sig={
     vorhanden:function(){ return hasSig; },
     setzen:function(datenUrl){
@@ -10429,6 +10446,8 @@ function viewProtokoll(){
     setz("f_sofort",bearb.sofortmassnahme);
     form.querySelectorAll('input[name="ergebnis"]').forEach(function(c){ c.checked=(bearb.ergebnis||[]).indexOf(c.value)>=0; });
     setz("f_bem",bearb.bemerkungen); setz("f_name",bearb.nameTechniker); setz("f_agv",bearb.auftraggebervertreter);
+    if(bearb.kaeltemittel){ var km=bearb.kaeltemittel; setz("f_kmArt",km.art); setz("f_kmNach",km.nach?String(km.nach).replace(".",","):""); setz("f_kmEnt",km.ent?String(km.ent).replace(".",","):"");
+      var ks=f("f_kmAnlage"); if(ks && km.anlage){ kaeltemittelAnlagen(form); ks.value=km.anlage; } }
     if(stoer){
       var so=bearb.stoerung||{};
       STOER_AUFTRAG.concat(STOER_BEHEBUNG,STOER_TEXTE).forEach(function(f2){ setz("s_"+f2[0], so[f2[0]]); });
@@ -10842,6 +10861,7 @@ function viewProtokoll(){
       betriebsbereit:radio("bereit"), sofortmassnahme:v("f_sofort"),
       ergebnis:Array.prototype.map.call(form.querySelectorAll('input[name="ergebnis"]:checked'),function(x){return x.value;}),
       bemerkungen:v("f_bem"),
+      kaeltemittel:kaeltemittelAusForm(form),
       nameTechniker:kanonName(v("f_name")), auftraggebervertreter:v("f_agv"),
       unterschrift:hasSig?cv.toDataURL("image/png"):"",
       /* die Bilddaten liegen getrennt, im Protokoll steht nur der Verweis */
@@ -11368,6 +11388,7 @@ function blattInhalt(p){
       "<h2>Ergebnis und Bemerkungen</h2>"+
       '<div class="kaestchen" style="grid-template-columns:1fr">'+ERGEBNISSE.map(function(a){ return "<div>"+kreuz(gew(p.ergebnis,a))+" "+esc(a)+"</div>"; }).join("")+"</div>")+
       (p.bemerkungen?"<div style='margin-top:6px'><strong>Bemerkungen:</strong> "+esc(p.bemerkungen)+"</div>":"")+
+      (!st && p.kaeltemittel ? "<div style='margin-top:6px'><strong>Kältemittel:</strong> "+esc(kaeltemittelText(p.kaeltemittel))+"</div>":"")+
 
       '<div data-rolle="fotos"></div>'+
 
@@ -11835,6 +11856,8 @@ function protokollDetail(p){
         (m.prio?' <span class="tag">'+esc(m.prio)+"</span>":"")+(m.massnahme?" – "+esc(m.massnahme):"")+"</div>"; }).join("")+"</div>":"")+
     (p.bemerkungen?'<div><div class="l muted" style="font-size:11px;text-transform:uppercase;letter-spacing:.06em;margin-bottom:4px">Bemerkungen</div>'+
       '<div style="font-size:13px">'+esc(p.bemerkungen)+"</div></div>":"")+
+    (!istStoerung(p) && p.kaeltemittel ? '<div><div class="l muted" style="font-size:11px;text-transform:uppercase;letter-spacing:.06em;margin-bottom:4px">Kältemittel</div>'+
+      '<div style="font-size:13px">'+esc(kaeltemittelText(p.kaeltemittel))+"</div></div>":"")+
     '<div id="pauftrag"></div>'+
     '<div id="prapport"></div>'+
     '<div id="pfotos"></div>'+
@@ -12225,6 +12248,121 @@ function berichtDrucken(d){
   ov.querySelector("#d_zu").onclick=function(){ ov.remove(); document.body.classList.remove("druckmodus"); };
   ov.querySelector("#d_druck").onclick=function(){ window.print(); };
 }
+/* ---------- Kältemittel: Eingabe im Wartungsprotokoll und Bilanz ----------
+   Bewegungen kommen aus dem Wartungsprotokoll (Feld kaeltemittel) und dem
+   Störungsprotokoll (kmArt/kmNach/kmEnt). Bilanz je Anlage und Jahr mit
+   CO₂-Äquivalent; Leck-Verdacht nach der Schwelle des Büros (28.09.2026). */
+var LECK_ANTEIL=0.10, LECK_NACHFUELLUNGEN=2;
+function kgZahl(w){ var n=parseFloat(String(w==null?"":w).replace(",",".")); return isNaN(n)||n<0 ? 0 : Math.round(n*100)/100; }
+function kgFmt(n){ return (Math.round(n*100)/100).toLocaleString("de-AT",{minimumFractionDigits:0, maximumFractionDigits:2}); }
+function co2Kg(kg, gwp){ return gwp && kg ? Math.round(kg*gwp) : null; }
+/* Auswahl „für Anlage“ im Formular aus den angehakten Anlagen füllen */
+function kaeltemittelAnlagen(form){
+  var sel=form.querySelector("#f_kmAnlage"); if(!sel) return;
+  var alt=sel.value; sel.innerHTML='<option value="">– erste angehakte –</option>';
+  form.querySelectorAll('input[name="posw"]:checked').forEach(function(cb){
+    var lab=cb.closest("label"), st=lab&&lab.querySelector("strong");
+    var o=document.createElement("option"); o.value=cb.dataset.anlage||""; o.textContent=st?st.textContent:(cb.dataset.anlage||""); sel.appendChild(o);
+  });
+  sel.value=alt; if(sel.value!==alt) sel.value="";
+}
+function kaeltemittelAusForm(form){
+  var v=function(id){ var n=form.querySelector("#"+id); return n?n.value.trim():""; };
+  if(!form.querySelector("#f_kmNach")) return null;
+  var art=v("f_kmArt"), nach=kgZahl(v("f_kmNach")), ent=kgZahl(v("f_kmEnt"));
+  if(!art && !nach && !ent) return null;
+  var anlage=v("f_kmAnlage");
+  if(!anlage){ var cb=form.querySelector('input[name="posw"]:checked'); anlage=cb?(cb.dataset.anlage||""):""; }
+  return {art:art||null, nach:nach, ent:ent, anlage:anlage||null};
+}
+function kaeltemittelText(k){
+  return [k.art, k.nach?"nachgefüllt "+kgFmt(k.nach)+" kg":"", k.ent?"zurückgewonnen "+kgFmt(k.ent)+" kg":""].filter(Boolean).join(" · ")||"–";
+}
+/* Alle Bewegungen aus Protokollen: [{datum, anlageId, art, nach, ent, protokoll}] */
+function kaeltemittelBewegungen(){
+  var raus=[];
+  alleProtokolle().forEach(function(pr){
+    var k=null;
+    if(istStoerung(pr)){ var so=pr.stoerung||{}; if(so.kmNach||so.kmEnt) k={art:so.kmArt||null, nach:kgZahl(so.kmNach), ent:kgZahl(so.kmEnt), anlage:null}; }
+    else if(pr.kaeltemittel) k=pr.kaeltemittel;
+    if(!k || (!k.nach && !k.ent)) return;
+    var aid=k.anlage && ANLAGEN[k.anlage] ? k.anlage : null;
+    if(!aid){ var z=protokollZeilen(pr)[0], p=z&&posById[z]; aid=p?anlageVon(p).id:null; }
+    if(!aid) return;
+    raus.push({datum:pr.datum, anlageId:aid, art:k.art, nach:k.nach||0, ent:k.ent||0, protokoll:pr});
+  });
+  return raus.sort(function(a,b){ return String(a.datum).localeCompare(String(b.datum)); });
+}
+/* Bilanz je Anlage: {anlageId, name, standortId, art, fuellung, gwp, jahre:{jahr:{nach,ent,n}}, leck} */
+function kaeltemittelBilanz(){
+  var je={}, ab=isoLokal(new Date(Date.now()-365*864e5));
+  kaeltemittelBewegungen().forEach(function(b){
+    var a=ANLAGEN[b.anlageId]; if(!a||!a.leader) return;
+    var e=je[b.anlageId];
+    if(!e){ var d=anlageDaten(a.leader); e=je[b.anlageId]={anlageId:b.anlageId, name:anlagenName(d), standortId:a.leader.standortId,
+      art:d.kaeltemittelArt||b.art||"", fuellung:kgZahl(d.kaeltemittelKg),
+      /* GWP aus der Anlage, sonst aus dem im Protokoll genannten Kältemittel */
+      gwp:gwpVon(d)||gwpVon({kaeltemittelArt:b.art||"", gwp:null}), jahre:{}, jahrNach:0, letzte:[]}; }
+    var j=String(b.datum||"").slice(0,4), y=e.jahre[j]=e.jahre[j]||{nach:0, ent:0, n:0};
+    y.nach+=b.nach; y.ent+=b.ent; y.n++;
+    if(b.nach && b.datum>=ab){ e.jahrNach+=b.nach; if(!e.letzte.length || !gleicherBesuch(e.letzte[e.letzte.length-1], b.datum)) e.letzte.push(b.datum); }
+  });
+  Object.keys(je).forEach(function(k){
+    var e=je[k]; e.leck=null;
+    if(e.fuellung && e.jahrNach>e.fuellung*LECK_ANTEIL) e.leck=kgFmt(e.jahrNach)+" kg in 12 Monaten nachgefüllt ("+Math.round(e.jahrNach/e.fuellung*100)+" % der Füllmenge)";
+    else if(e.letzte.length>=LECK_NACHFUELLUNGEN) e.leck=e.letzte.length+"× in 12 Monaten nachgefüllt ("+kgFmt(e.jahrNach)+" kg)";
+  });
+  return je;
+}
+function kaeltemittelKarte(){
+  var bil=kaeltemittelBilanz(), ids=Object.keys(bil);
+  var jahre={}; ids.forEach(function(k){ Object.keys(bil[k].jahre).forEach(function(j){ jahre[j]=1; }); });
+  var jl=Object.keys(jahre).sort().reverse(), heuer=String(new Date().getFullYear());
+  if(jl.indexOf(heuer)<0) jl.unshift(heuer);
+  var c=el('<div class="card"><div class="pad stack">'+
+    '<div><h2>Kältemittel-Bilanz</h2><div class="sub">Nachgefüllt und zurückgewonnen je Anlage und Jahr, aus Wartungs- und Störungsprotokollen, '+
+      'mit CO₂-Äquivalent (GWP). Leck-Verdacht ab '+Math.round(LECK_ANTEIL*100)+' % der Füllmenge oder ab '+LECK_NACHFUELLUNGEN+' Nachfüllungen in 12 Monaten.</div></div>'+
+    (ids.length ? '<div class="rowflex"><label class="fl"><span>Jahr</span><select id="km_jahr">'+jl.map(function(j){ return '<option value="'+j+'"'+(j===heuer?" selected":"")+">"+j+"</option>"; }).join("")+'<option value="">alle Jahre</option></select></label>'+
+      '<button class="btn ghost sm" type="button" id="km_csv">Als CSV</button></div><div class="scrollx" id="km_tab"></div>'
+      : '<div class="muted" style="font-size:13px">Noch keine Kältemittel-Bewegungen erfasst – die Felder stehen im Wartungsprotokoll unter „Ergebnis und Bemerkungen“ und im Störungsprotokoll unter „Störungsbehebung“.</div>')+
+  "</div></div>");
+  if(!ids.length) return c;
+  var sel=c.querySelector("#km_jahr"), host=c.querySelector("#km_tab"), zeilenAktuell=[];
+  var zeichnen=function(){
+    var j=sel.value, rows=[], sumN=0, sumE=0, sumC=0;
+    ids.forEach(function(k){
+      var e=bil[k], n=0, en=0;
+      Object.keys(e.jahre).forEach(function(y){ if(!j || y===j){ n+=e.jahre[y].nach; en+=e.jahre[y].ent; } });
+      if(!n && !en && !(e.leck && (!j || j===heuer))) return;
+      var s=byId[e.standortId], co2=co2Kg(n, e.gwp);
+      sumN+=n; sumE+=en; if(co2) sumC+=co2;
+      rows.push({e:e, s:s, n:n, en:en, co2:co2});
+    });
+    rows.sort(function(a,b){ return (b.e.leck?1:0)-(a.e.leck?1:0) || b.n-a.n; });
+    zeilenAktuell=rows;
+    host.innerHTML="";
+    var t=el('<table class="dt"><thead><tr><th>Markt</th><th>Anlage</th><th>Kältemittel</th><th>Füllmenge</th><th>nachgefüllt</th><th>zurückgewonnen</th><th>CO₂-Äqu.</th><th>Hinweis</th></tr></thead><tbody></tbody></table>');
+    var tb=t.querySelector("tbody");
+    rows.forEach(function(r){
+      var tr=el("<tr style='cursor:pointer'><td>"+(r.s?marktLink(r.s):"–")+"</td><td>"+esc(r.e.name)+"</td><td>"+esc(r.e.art||"–")+"</td>"+
+        "<td class='mono'>"+(r.e.fuellung?kgFmt(r.e.fuellung)+" kg":"–")+"</td><td class='mono'>"+kgFmt(r.n)+" kg</td><td class='mono'>"+kgFmt(r.en)+" kg</td>"+
+        "<td class='mono'>"+(r.co2!=null?kgFmt(r.co2/1000)+" t":"–")+"</td><td>"+(r.e.leck?'<span class="pill p-ueberfaellig" title="'+esc(r.e.leck)+'">⚠ Leck-Verdacht</span>':"")+"</td></tr>");
+      tr.onclick=function(ev){ if(ev.target.closest("[data-markt]")) return; var a=ANLAGEN[r.e.anlageId]; if(a&&a.leader) anlageHistorieAnsicht(a.leader); };
+      tb.appendChild(tr);
+    });
+    tb.appendChild(el("<tr><td colspan='4'><strong>Summe</strong></td><td class='mono'><strong>"+kgFmt(sumN)+" kg</strong></td><td class='mono'><strong>"+kgFmt(sumE)+" kg</strong></td><td class='mono'><strong>"+(sumC?kgFmt(sumC/1000)+" t":"–")+"</strong></td><td></td></tr>"));
+    host.appendChild(t);
+    if(!rows.length) host.appendChild(el('<div class="muted" style="font-size:13px">Keine Bewegungen in diesem Jahr.</div>'));
+  };
+  sel.onchange=zeichnen; zeichnen();
+  c.querySelector("#km_csv").onclick=function(){
+    var z=[["Markt","Anlage","Kältemittel","Füllmenge kg","nachgefüllt kg","zurückgewonnen kg","CO2-Äquivalent kg","Hinweis"]];
+    zeilenAktuell.forEach(function(r){ z.push([r.s?stName(r.s):"", r.e.name, r.e.art||"", r.e.fuellung||"", r.n, r.en, r.co2!=null?r.co2:"", r.e.leck||""]); });
+    var csv=z.map(function(r){ return r.map(function(x){ return '"'+String(x).replace(/"/g,'""')+'"'; }).join(";"); }).join("\r\n");
+    var a=document.createElement("a"); a.href=URL.createObjectURL(new Blob(["﻿"+csv],{type:"text/csv"})); a.download="kaeltemittel-bilanz"+(sel.value?"-"+sel.value:"")+".csv"; a.click();
+  };
+  return c;
+}
 function berichtKarte(){
   var c=el('<div class="card"><div class="pad stack">'+
     '<div><h2>Liste herunterladen</h2><div class="sub">Was zuletzt gemacht wurde und was als Nächstes ansteht – '+
@@ -12266,6 +12404,7 @@ function berichtKarte(){
 function viewVerlauf(){
   var f=document.createDocumentFragment();
   f.appendChild(berichtKarte());
+  f.appendChild(kaeltemittelKarte());
 
   /* 1. Wartungshistorie je Filiale */
   var hk=el('<div class="card"><div class="pad stack">'+
@@ -14168,6 +14307,13 @@ function pruefListe(){
     var s=byId[a.leader.standortId]; if(!s) return;
     dazu("Hinweis", "Störungen", anlagenName(anlageDaten(a.leader))+": "+wiederkehrText(WIEDERKEHR[aid]), s, {pid:a.leader.id});
   });
+  /* 1c. Kältemittel: Leck-Verdacht */
+  var kmBil=kaeltemittelBilanz();
+  Object.keys(kmBil).forEach(function(aid){
+    var e=kmBil[aid]; if(!e.leck) return;
+    var a=ANLAGEN[aid], s=a&&a.leader&&byId[a.leader.standortId]; if(!s) return;
+    dazu("Hinweis", "Kältemittel", e.name+": Leck-Verdacht – "+e.leck+" – Dichtheit prüfen", s, {pid:a.leader.id});
+  });
 
   /* 2. Termine, um die sich jemand kümmern sollte */
   POS.forEach(function(p){
@@ -15194,6 +15340,9 @@ function handbuchKarte(z){
           "Anlage, eine Störung oder ein Protokoll beziehen – über „Bezug wählen“ oder direkt dort mit „Nachricht dazu“. Sie steht dann "+
           "auch bei der Sache selbst (beim Markt auch die zu seinen Anlagen, Störungen und Protokollen). Fotos möglich; ohne Netz geht "+
           "die Nachricht raus, sobald wieder Verbindung ist. Nur Büro und Techniker.",
+        "<strong>Kältemittel-Bilanz (Verlauf):</strong> nachgefüllt und zurückgewonnen je Anlage und Jahr mit CO₂-Äquivalent, aus dem Wartungsprotokoll "+
+          "(Felder unter „Ergebnis und Bemerkungen“) und dem Störungsprotokoll. Leck-Verdacht ab 10 % der Füllmenge oder ab 2 Nachfüllungen in "+
+          "12 Monaten – Hinweis unter Nachbessern und in der Anlagenhistorie. Als CSV für Behörde oder Lidl.",
         "<strong>⚠ Wiederkehrende Störungen:</strong> ab 3 Störungen in 90 Tagen an derselben Anlage (offene Störungen und Störungsprotokolle, "+
           "derselbe Besuch zählt einmal) – Markierung bei der Anlage und im Markt, Hinweis unter Nachbessern. Schwelle vom Büro, 28.09.2026.",
         "<strong>€ Abgerechnet:</strong> Inhaber setzen beim geöffneten Protokoll den Haken (mit Rechnungsnummer als Notiz); die Protokollliste "+
