@@ -7765,16 +7765,47 @@ function chatKnopf(){
   var konto=chatAn() ? Store.benutzer.email : null;
   if(konto!==chatKonto){ chatKonto=konto; chatNachrichten=[]; chatGeladen=false; chatBildUrls={}; chatLaden(); pushAbgleich(); }
   k.hidden=!chatAn();
-  var z=document.getElementById("chatzahl"), n=chatAn()?chatUngelesen():0;
+  /* Zahl am Knopf: ungelesene Chat-Nachrichten und neue Meldungen zusammen */
+  var z=document.getElementById("chatzahl"), n=chatAn()?chatUngelesen()+meldungenNeu():0;
   z.textContent=n?String(n>99?"99+":n):"";
+  z.title=n?(chatUngelesen()+" im Chat, "+meldungenNeu()+" Meldungen"):"";
 }
 function chatUngelesen(){
   var seit=lsGet(chatSchluessel(),""), ich=Store.benutzer&&Store.benutzer.id;
   return chatNachrichten.filter(function(m){ return m.von!==ich && (!seit || m.erstellt>seit); }).length;
 }
 function chatGelesen(){ if(chatSchluessel()) lsSet(chatSchluessel(), new Date().toISOString()); chatKnopf(); }
+/* Meldungen: was als Push-Nachricht verschickt wurde (Tabelle push_ereignisse,
+   nur die, die dieses Konto betreffen) – im Chat-Fenster unter „Meldungen“,
+   Neues zählt am Knopf mit */
+var meldungen=[];
+function meldungenSchluessel(){ var m=Store.benutzer&&Store.benutzer.email; return m ? "ukt-meldungen-gelesen:"+m : null; }
+function meldungenNeu(){
+  var seit=lsGet(meldungenSchluessel(),""), ich=Store.benutzer&&Store.benutzer.id;
+  return meldungen.filter(function(e){ return e.von_user!==ich && (!seit || e.erstellt>seit); }).length;
+}
+function meldungenGelesen(){ if(meldungenSchluessel()) lsSet(meldungenSchluessel(), new Date().toISOString()); chatKnopf(); }
+function meldungenLaden(){
+  if(!chatAn()){ meldungen=[]; return Promise.resolve(); }
+  return Store.sb.from("push_ereignisse").select("id,erstellt,art,titel,text,ziel,von_user,nur_rolle,nur_user").order("id",{ascending:false}).limit(80).then(function(r){
+    if(!r.error && Array.isArray(r.data)){ meldungen=r.data; chatKnopf(); if(chatFenster && chatFenster.meldungen) chatFenster.meldungen(); }
+  }, function(){});
+}
+var MELDUNG_SYMBOL={stoerung:"⚠️", protokoll:"📋", korrektur:"✏️", stammdaten:"🏬", chat:"💬", wunsch:"💡", posteingang:"📥", wochen:"📅"};
+function meldungEl(e){
+  var ich=Store.benutzer&&Store.benutzer.id, seit=lsGet(meldungenSchluessel(),"");
+  var neu=e.von_user!==ich && (!seit || e.erstellt>seit);
+  var d=el('<div class="posbox" style="cursor:pointer;gap:2px'+(neu?";border-color:var(--accent)":"")+'">'+
+    '<div class="rowflex" style="justify-content:space-between;gap:8px"><strong style="font-size:13.5px">'+(MELDUNG_SYMBOL[e.art]||"•")+" "+esc(e.titel||"")+"</strong>"+
+      '<span class="muted mono" style="font-size:11.5px;white-space:nowrap">'+esc(zeitFmt(e.erstellt))+"</span></div>"+
+    (e.text?'<div style="font-size:13px;white-space:pre-wrap">'+esc(e.text)+"</div>":"")+
+    '<div class="muted" style="font-size:11.5px">'+(e.von_user===ich?"von dir ausgelöst – keine Nachricht an dich":(e.nur_user?"persönlich an dich":e.nur_rolle?"an "+esc(e.nur_rolle.replace(",", " und ")):"an alle mit eingeschalteter Benachrichtigung"))+
+      (neu?' · <span class="tag f30">neu</span>':"")+"</div></div>");
+  d.onclick=function(){ if(e.ziel){ if(chatFenster){ chatFenster.zu(); chatFenster=null; } pushZiel(e.ziel); } };
+  return d;
+}
 function chatLaden(){
-  abrechnungLaden();
+  abrechnungLaden(); meldungenLaden();
   if(!chatAn()){ chatNachrichten=[]; chatGeladen=false; if(document.getElementById("chatbtn")) document.getElementById("chatbtn").hidden=true; return Promise.resolve(); }
   return mitFrist(Store.sb.from("chat").select("*").order("erstellt",{ascending:false}).limit(300), 15000).then(function(r){
     if(r.error) return;
@@ -7883,8 +7914,12 @@ function chatOeffnen(opt){
   if(chatFenster){ chatFenster.zu(); chatFenster=null; }
   var v=ansichtOeffnen("Team-Chat", function(){ chatFenster=null; });
   var bezug=opt.bezug||null;
-  var box=el('<div class="stack" style="gap:10px"><div class="chatliste" data-liste></div>'+
-    '<div class="posbox stack" style="gap:6px;position:sticky;bottom:0;background:var(--surface)">'+
+  var box=el('<div class="stack" style="gap:10px">'+
+    '<div class="chips" data-reiter><button class="chip" type="button" data-r="chat" aria-pressed="true">Chat</button>'+
+      '<button class="chip" type="button" data-r="meldungen" aria-pressed="false">Meldungen<span data-mzahl></span></button></div>'+
+    '<div class="stack" data-meldungen hidden style="gap:6px"></div>'+
+    '<div class="chatliste" data-liste></div>'+
+    '<div class="posbox stack" data-schreiben style="gap:6px;position:sticky;bottom:0;background:var(--surface)">'+
       '<div class="rowflex" style="gap:6px;font-size:12.5px"><span class="muted">An:</span><select data-an style="max-width:220px"><option value="">Alle im Team</option></select></div>'+
       '<div data-bezug class="rowflex" style="gap:6px;font-size:12.5px"></div>'+
       '<textarea data-text rows="2" placeholder="Nachricht ans Team …" style="width:100%"></textarea>'+
@@ -7912,8 +7947,24 @@ function chatOeffnen(opt){
     var ziel=opt.zu ? li.querySelector('[data-chat="'+opt.zu+'"]') : null;
     setTimeout(function(){ if(ziel){ ziel.scrollIntoView({block:"center"}); sprungHervorheben(ziel,{}); opt.zu=null; } else v.inhalt.scrollTop=v.inhalt.scrollHeight; }, 30);
   };
-  chatFenster={zu:v.zu, zeichnen:zeichnen};
-  bezugZeichnen(); zeichnen(); chatLaden();
+  /* Reiter „Meldungen“: was als Push verschickt wurde – antippen führt hin */
+  var reiter=opt.reiter||"chat", ml=box.querySelector("[data-meldungen]"), mz=box.querySelector("[data-mzahl]");
+  var meldungenZeichnen=function(){
+    var n=meldungenNeu(); mz.textContent=n?" ("+n+")":"";
+    if(reiter!=="meldungen") return;
+    ml.innerHTML="";
+    if(!meldungen.length){ ml.appendChild(el('<div class="muted" style="font-size:13px">Noch keine Meldungen. Hier steht, was als Push-Nachricht verschickt wurde – auch was du selbst ausgelöst hast.</div>')); return; }
+    meldungen.forEach(function(e){ ml.appendChild(meldungEl(e)); });
+  };
+  var reiterZeigen=function(){
+    box.querySelectorAll("[data-r]").forEach(function(c){ c.setAttribute("aria-pressed", String(c.dataset.r===reiter)); });
+    ml.hidden=reiter!=="meldungen"; li.hidden=reiter==="meldungen"; box.querySelector("[data-schreiben]").hidden=reiter==="meldungen";
+    if(reiter==="meldungen"){ meldungenZeichnen(); meldungenGelesen(); v.inhalt.scrollTop=0; }
+    else { v.inhalt.scrollTop=v.inhalt.scrollHeight; }
+  };
+  box.querySelectorAll("[data-r]").forEach(function(c){ c.onclick=function(){ reiter=c.dataset.r; reiterZeigen(); }; });
+  chatFenster={zu:v.zu, zeichnen:zeichnen, meldungen:meldungenZeichnen};
+  bezugZeichnen(); zeichnen(); reiterZeigen(); chatLaden();
   chatTeamLaden().then(function(team){
     var sel=box.querySelector("[data-an]");
     team.forEach(function(t){ var o=document.createElement("option"); o.value=t.user_id; o.textContent=(t.name||"Unbekannt")+(t.rolle&&t.rolle!=="techniker"?" ("+t.rolle+")":""); sel.appendChild(o); });
@@ -15593,7 +15644,8 @@ function handbuchKarte(z){
         "<strong>💬 Team-Chat:</strong> Sprechblase in der Kopfzeile (Zahl = ungelesen). Mit „An: Person“ geht eine Nachricht nur an eine Person – nur Absender und Empfänger sehen sie (🔒). Eine Nachricht kann sich auf einen Markt, eine "+
           "Anlage, eine Störung oder ein Protokoll beziehen – über „Bezug wählen“ oder direkt dort mit „Nachricht dazu“. Sie steht dann "+
           "auch bei der Sache selbst (beim Markt auch die zu seinen Anlagen, Störungen und Protokollen). Fotos möglich; ohne Netz geht "+
-          "die Nachricht raus, sobald wieder Verbindung ist. Nur Büro und Techniker.",
+          "die Nachricht raus, sobald wieder Verbindung ist. Reiter „Meldungen“ im Chat-Fenster zeigt, was als Push-Nachricht verschickt wurde "+
+          "(auch was du selbst ausgelöst hast) – antippen führt hin. Die Zahl an der Sprechblase zählt ungelesene Nachrichten und neue Meldungen. Nur Büro und Techniker.",
         "<strong>Kältemittel-Bilanz (Verlauf):</strong> nachgefüllt und zurückgewonnen je Anlage und Jahr mit CO₂-Äquivalent, aus dem Wartungsprotokoll "+
           "(Felder unter „Ergebnis und Bemerkungen“) und dem Störungsprotokoll. Leck-Verdacht ab 10 % der Füllmenge oder ab 2 Nachfüllungen in "+
           "12 Monaten – Hinweis unter Nachbessern und in der Anlagenhistorie. Als CSV für Behörde oder Lidl.",

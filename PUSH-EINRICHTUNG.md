@@ -60,3 +60,8 @@ Empfänger, die Push-Nachricht geht nur an den Empfänger (`nur_user`).
 `kennzahlen` und den Zeitplan an) und die Funktion `push` neu deployen
 (`nur_rolle` mit Komma). Die App schreibt ihren Stand in `kennzahlen`, sobald
 ein Admin sie benutzt; der Zeitplan verschickt ihn Montag 05:00 UTC.
+
+## Meldungen in der App
+
+`tools/meldungen.sql` ausführen: jedes Konto darf die Push-Ereignisse lesen,
+die es betreffen. Im Chat-Fenster steht dann der Reiter „Meldungen“.
