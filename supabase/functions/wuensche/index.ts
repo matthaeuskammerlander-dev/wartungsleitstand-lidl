@@ -209,11 +209,12 @@ Deno.serve(async (req) => {
     if (aktion === "abgleichen") {
       const { data: offen } = await sb.from("aenderungswuensche").select("*").in("status", ["in_arbeit", "vorschau"]);
       const fehler: string[] = [];
-      let laeuft = false;
-      try { laeuft = await claudeLaeuft(); } catch (x) { fehler.push(`Läufe: ${x instanceof Error ? x.message : x}`); }
+      // null = unbekannt (Abfrage der Läufe gescheitert): die App zeigt dann keine Rückfrage
+      let laeuft: boolean | null = false;
+      try { laeuft = await claudeLaeuft(); } catch (x) { laeuft = null; fehler.push(`Läufe: ${x instanceof Error ? x.message : x}`); }
       for (const w of offen || []) {
         try {
-          const neu = await abgleichen(w, laeuft);
+          const neu = await abgleichen(w, laeuft === true);
           const schritt = neu.status && neu.status !== w.status
             ? ({ vorschau: "Vorschau bereit", uebernommen: "in GitHub übernommen", abgelehnt: "in GitHub geschlossen" } as Record<string, string>)[String(neu.status)]
             : undefined;
