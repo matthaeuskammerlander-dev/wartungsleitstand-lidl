@@ -80,6 +80,9 @@ alter table public.protokolle add column if not exists stoerung        jsonb;
 -- der PDF lesen ließ. Die Datei selbst liegt im Bucket protokollfotos unter
 -- <client_id>/rapport.pdf.
 alter table public.protokolle add column if not exists rapport         jsonb;
+-- Kaeltemittel im Wartungsprotokoll: Art, nachgefuellt, zurueckgewonnen, fuer
+-- welche Anlage (Kaeltemittel-Bilanz). Leer, wenn nichts eingetragen wurde.
+alter table public.protokolle add column if not exists kaeltemittel    jsonb;
 -- zweiter und dritter Techniker, falls zu mehreren gearbeitet wurde
 alter table public.protokolle add column if not exists mitarbeiter     jsonb;
 create index if not exists protokolle_auftrag_idx on public.protokolle (auftragsnummer);

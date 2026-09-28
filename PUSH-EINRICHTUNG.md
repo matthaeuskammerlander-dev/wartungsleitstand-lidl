@@ -12,6 +12,11 @@ Alles läuft über Supabase; die App braucht keine weiteren Schlüssel.
 Voraussetzung: `tools/rollen.sql` ist schon gelaufen (`darf_schreiben`,
 `ist_inhaber`, `ist_admin`).
 
+**Posteingang:** `push.sql` legt den Auslöser für den Posteingang nur an, wenn
+es die Tabelle `posteingang` beim Ausführen schon gibt. Wird der Posteingang
+erst später eingerichtet (POSTEINGANG-EINRICHTUNG.md), danach `tools/push.sql`
+noch einmal ausführen – sonst kommt nie eine Nachricht „Posteingang“.
+
 ## 2. Funktion „push“ (Edge Functions)
 
 - Neue Funktion `push` mit dem Inhalt von `supabase/functions/push/index.ts`

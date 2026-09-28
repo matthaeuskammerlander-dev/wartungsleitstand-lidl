@@ -7,9 +7,14 @@ alter table public.chat add column if not exists an uuid references auth.users(i
 alter table public.chat add column if not exists an_name text;
 create index if not exists chat_an_idx on public.chat (an);
 
+-- „An alle“ ist nur, was nie einen Empfänger hatte (an und an_name leer). Wird
+-- das Konto eines Empfängers gelöscht, wird an = null – der Empfängername
+-- bleibt stehen, und die Nachricht bleibt persönlich: nur der Absender sieht
+-- sie noch (sonst wäre sie plötzlich für das ganze Team lesbar).
 drop policy if exists "chat lesen" on public.chat;
 create policy "chat lesen" on public.chat for select to authenticated
-  using (public.darf_schreiben() and (an is null or an = auth.uid() or von = auth.uid()));
+  using (public.darf_schreiben()
+         and ((an is null and an_name is null) or an = auth.uid() or von = auth.uid()));
 
 -- Ereignis nur für eine Person (Push-Funktion filtert nach nur_user)
 alter table public.push_ereignisse add column if not exists nur_user uuid;

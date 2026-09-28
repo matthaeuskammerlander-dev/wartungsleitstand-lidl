@@ -1232,13 +1232,26 @@ function berechneFaelligkeiten(){
        danach gewartet, zählt diese Wartung für BEIDE Termine – der versäumte
        ist mit erledigt (nur ein Vermerk). Ohne spätere Wartung bleibt er
        überfällig. */
-    var davor=ankerIm(a,+aktuell.slice(0,4)-1);
-    var davorVersaeumt = aktuell>=heute && !zu[davor] && (!a.erster || davor>=a.erster);
+    /* Der Vermerk hängt nicht daran, ob der jetzige Termin noch bevorsteht, und
+       nennt den ÄLTESTEN in Folge versäumten Termin (wie „überfällig seit“,
+       höchstens drei Termine zurück) – reine Anzeige, der Stand bleibt gleich */
+    var versaeumtVor=function(T){
+      var s=null, n=0, v=T;
+      while(n++<3){ v=ankerIm(a,+v.slice(0,4)-1);
+        if(zu[v] || (a.erster && v<a.erster)) break;
+        /* weiter zurück nur, solange davor eine Wartung bekannt ist – ohne
+           ältere Nachweise lässt sich nicht sagen, was versäumt wurde */
+        if(n>1 && (!termine.length || v<termine[0])) break;
+        s=v; }
+      return s;
+    };
+    var davor=versaeumtVor(aktuell);
+    var davorVersaeumt = !!davor;
 
     if(vorgezogen){
       /* Für den kommenden Termin schon gewartet – ein davor versäumter Termin
          ist damit mit erledigt (Vermerk, nicht überfällig) */
-      if(!durch){ p.ausgelassen=aktuell; p.ueberholtDurch=vorgezogen; }
+      if(!durch){ p.ausgelassen=davor||aktuell; p.ueberholtDurch=vorgezogen; }
       else if(davorVersaeumt){ p.ausgelassen=davor; p.ueberholtDurch=durch; }
       p.naechste=ankerIm(a,+folge.slice(0,4)+1);
       p.erledigtDurch=vorgezogen;
@@ -3045,10 +3058,24 @@ function tourRechnen(){
   if(S.tour.manuell){
     var erlaubt={}; S.tour.manuell.forEach(function(id){ erlaubt[id]=1; });
     kandidaten=kandidaten.filter(function(k){ return erlaubt[k.standort.id]; });
+    /* Von Hand gewählt bleibt gewählt – auch wenn Suche, Region oder die
+       Auswahl oben inzwischen anders stehen: solche Märkte bleiben mit den
+       Anlagen, mit denen sie in der Route stehen (sonst nähme „✕“ an einem
+       Stopp still weitere Märkte mit heraus) */
+    var inRoute={};
+    ((S.tour.ergebnis||{}).tage||[]).forEach(function(t){ t.stopps.forEach(function(x){ if(x.standort) inRoute[x.standort.id]=x; }); });
+    S.tour.manuell.forEach(function(id){
+      var s=byId[id], x=inRoute[id];
+      if(!s || !s.lat || !x || (S.tour.dazu||[]).indexOf(id)>=0) return;
+      if(kandidaten.some(function(k){ return k.standort.id===id; })) return;
+      var pos=(x.positionen||[]).map(function(p){ return posById[p.id]; }).filter(function(p){ return p && s.pos.indexOf(p)>=0; });
+      if(pos.length) kandidaten.push({standort:s, positionen:pos});
+    });
   }
-  /* von Hand dazugenommene Märkte (auch ohne fälligen Termin): mit allen Anlagen des Markts */
+  /* von Hand dazugenommene Märkte (auch ohne fälligen Termin): mit allen Anlagen des Markts –
+     nicht, wenn dort zur Zeit nichts zu warten ist (Markt nicht betreut, alle Anlagen ruhen) */
   (S.tour.dazu||[]).forEach(function(id){
-    var s=byId[id]; if(!s || !s.lat) return;
+    var s=byId[id]; if(!s || !s.lat || !s.pos.length) return;
     if(kandidaten.some(function(k){ return k.standort.id===id; })) return;
     kandidaten.push({standort:s, positionen:s.pos.slice()});
   });
@@ -3488,7 +3515,8 @@ function tourPanel(){
       '<button class="btn" type="button" id="t_go">Route vorschlagen</button>'+
       (T?'<button class="btn ghost" type="button" id="t_clear">Route löschen</button>':"")+
       '<span class="muted" style="font-size:12.5px">'+kand.length+' Standorte passen zur Auswahl'+
-      (S.tour.manuell?' · '+S.tour.manuell.length+' davon von Hand gewählt':"")+"</span>"+
+      /* die Handauswahl kann auch Märkte außerhalb der Auswahl enthalten – also nicht „davon“ */
+      (S.tour.manuell?' · Tour von Hand angepasst: '+S.tour.manuell.length+(S.tour.manuell.length===1?' Markt':' Märkte'):"")+"</span>"+
     "</div>"+
     '<div id="t_out"></div>'+
   "</div></div>");
@@ -3585,16 +3613,30 @@ function tourAnpassen(wegId, dazuId){
   var T=S.tour.ergebnis; if(!T) return;
   var ids=[];
   (T.tage||[]).forEach(function(t){ t.stopps.forEach(function(s){ if(s.standort && s.standort.id!==wegId && ids.indexOf(s.standort.id)<0) ids.push(s.standort.id); }); });
+  /* wird gerade neu gerechnet (zweimal rasch hintereinander angepasst), zeigt die
+     Route noch den Stand davor – dann gilt die Handauswahl, nicht die alte Route */
+  if(tourPasstAn && S.tour.manuell){
+    ids=ids.filter(function(i){ return S.tour.manuell.indexOf(i)>=0 || (S.tour.dazu||[]).indexOf(i)>=0; });
+    S.tour.manuell.concat(S.tour.dazu||[]).forEach(function(i){ if(i!==wegId && ids.indexOf(i)<0) ids.push(i); });
+  }
   S.tour.dazu=(S.tour.dazu||[]).filter(function(i){ return i!==wegId && i!==dazuId; });
   if(dazuId){ ids.push(dazuId); S.tour.dazu.push(dazuId); }
   S.tour.manuell=ids;
   if(!ids.length){ S.tour.ergebnis=null; S.tour.geometrie=null; S.tour.manuell=null; S.tour.dazu=null; tourLauf++; toast("Kein Markt mehr in der Tour."); if(darfRendern()) render(); return; }
   toast("Route wird neu berechnet …");
+  tourPasstAn++;
   tourRechnen().then(function(ok){
+    tourPasstAn--;
     if(ok===false) return;
+    /* in den übrigen Märkten ist nichts (mehr) zu warten – etwa inzwischen nicht betreut */
+    if(!S.tour.ergebnis || !S.tour.ergebnis.anzahlStopps){
+      S.tour.ergebnis=null; S.tour.geometrie=null; S.tour.manuell=null; S.tour.dazu=null;
+      toast("Kein Markt mehr in der Tour – in den übrigen ist zur Zeit nichts zu warten.");
+    }
     if(S.view==="karte" && darfRendern()){ render(); var t=document.getElementById("t_out"); if(t) t.scrollIntoView({behavior:"smooth", block:"start"}); }
-  }, function(){ toast("Die Route konnte nicht neu berechnet werden – bitte nochmals."); });
+  }, function(){ tourPasstAn--; toast("Die Route konnte nicht neu berechnet werden – bitte nochmals."); });
 }
+var tourPasstAn=0;   /* so viele Anpassungen rechnen gerade */
 function tourMarktDazu(){
   var T=S.tour.ergebnis, drin={};
   (T?T.tage:[]).forEach(function(t){ t.stopps.forEach(function(s){ if(s.standort) drin[s.standort.id]=1; }); });
@@ -3604,7 +3646,9 @@ function tourMarktDazu(){
   var inp=s.querySelector("input"), erg=s.querySelector("[data-erg]");
   var zeichnen=function(){
     var q=inp.value.trim().toLowerCase(); erg.innerHTML="";
-    var l=ST.filter(function(m){ return m.lat && !drin[m.id] && !marktPausiert(m) &&
+    /* nur Märkte, in denen es etwas zu warten gibt – nicht, wenn der Markt zur
+       Zeit nicht betreut wird oder alle seine Anlagen ruhen */
+    var l=ST.filter(function(m){ return m.lat && !drin[m.id] && !marktPausiert(m) && m.pos.length &&
       (!q || (stName(m)+" "+(m.filiale||"")+" "+(m.adresse||"")).toLowerCase().indexOf(q)>=0); }).slice(0,30);
     if(!l.length){ erg.appendChild(el('<div class="muted">Nichts gefunden (nur Märkte mit Koordinaten).</div>')); return; }
     l.forEach(function(m){
@@ -3639,10 +3683,17 @@ function tourErgebnis(T){
     var zeilen=tag.stopps.map(function(st,i){
       var anf=minute+st.fahrtH*60;
       var ende=anf+st.arbeitH*60;
+      /* die Route steht, der Markt hat sich inzwischen geändert (nicht mehr
+         betreut, stillgelegt, alle Anlagen ruhen): am Stopp vermerken */
+      var mJetzt=byId[st.standort.id]||st.standort;
+      var ruht = mJetzt.aktiv===false ? "stillgelegt"
+        : marktPausiert(mJetzt) ? "zur Zeit nicht betreut"+(mJetzt.pausiertGrund?" – "+mJetzt.pausiertGrund:"")
+        : (!(mJetzt.pos||[]).length ? "zur Zeit keine Anlage zu warten" : "");
       var r='<tr><td class="mono">'+(i+1)+'</td>'+
         '<td><strong>'+marktLink(st.standort)+"</strong>"+
           (stName(st.standort)===st.standort.adresse ? "" :
-            '<br><span class="muted" style="font-size:12px">'+esc(st.standort.adresse)+"</span>")+"</td>"+
+            '<br><span class="muted" style="font-size:12px">'+esc(st.standort.adresse)+"</span>")+
+          (ruht ? '<br><span class="pill p-pausiert">'+esc(ruht)+"</span>" : "")+"</td>"+
         '<td class="mono">'+Math.round(st.km)+' km<br><span class="muted">'+stdFmt(st.fahrtH)+"</span></td>"+
         '<td class="mono">'+uhrFmt(minute,st.fahrtH)+'–'+uhrFmt(minute,st.fahrtH+st.arbeitH)+"</td>"+
         '<td>'+st.positionen.map(function(p){
@@ -4317,7 +4368,7 @@ function anlagenBloecke(s, host){
     var d=anlageDaten(a.leader), l=anlageLuecken(d);
     var blk=el('<div class="akarte" style="background:var(--surface)"><div class="rowflex" style="justify-content:space-between;gap:8px">'+
       '<strong style="font-size:15px">'+esc(anlagenName(d))+"</strong>"+
-      (WIEDERKEHR[a.id] ? '<span class="pill p-ueberfaellig" title="'+esc(wiederkehrText(WIEDERKEHR[a.id]))+'">⚠ wiederkehrende Störung</span>' : "")+
+      (wiederkehrVon(a.leader) ? '<span class="pill p-ueberfaellig" title="'+esc(wiederkehrText(wiederkehrVon(a.leader)))+'">⚠ wiederkehrende Störung</span>' : "")+
       '<span class="muted" style="font-size:12px">'+a.termine.length+" Termin"+(a.termine.length===1?"":"e")+" im Jahr</span></div>"+
       '<div style="font-size:13px">'+(anlageKurz(d)?esc(anlageKurz(d)):'<span class="muted">Anlagendaten noch nicht erfasst</span>')+"</div>"+
       /* offene Angaben einzeln antippbar – führt direkt zur Frage */
@@ -4376,7 +4427,11 @@ function wiederkehrBerechnen(){
   var ab=isoLokal(new Date(Date.now()-WIEDERKEHR_TAGE*864e5)), je={};
   var merken=function(zeileId, datum){
     var p=posById[zeileWeiter(zeileId)]; if(!p || !datum || datum<ab) return;
-    var a=anlageVon(p); (je[a.id]=je[a.id]||[]).push(datum.slice(0,10));
+    var a=anlageVon(p), st=byId[p.standortId];
+    /* stillgelegt (der Markt oder die ganze Anlage): verschwindet – keine
+       Markierung, keine Zählung. Zur Zeit nicht betreut/gewartet zählt weiter. */
+    if((st && st.aktiv===false) || !a.termine.some(function(t){ return t.aktiv!==false; })) return;
+    (je[a.id]=je[a.id]||[]).push(datum.slice(0,10));
   };
   /* beim allerersten Durchlauf (Start) sind die Störungen noch nicht geladen */
   (typeof OFFENE!=="undefined" && OFFENE ? OFFENE : []).forEach(function(o){ if(!o.geloescht && o.positionId) merken(o.positionId, (o.erfasstAm||o.auftragsdatum||"")); });
@@ -4390,7 +4445,8 @@ function wiederkehrBerechnen(){
     if(einzeln.length>=WIEDERKEHR_ANZAHL) WIEDERKEHR[aid]={n:einzeln.length, seit:einzeln[0]};
   });
 }
-function wiederkehrVon(p){ var a=p && anlageVon(p); return a ? WIEDERKEHR[a.id]||null : null; }
+/* nicht für den Kunden: interne Bewertung, wie Kältemittel-Bilanz und Leck-Verdacht */
+function wiederkehrVon(p){ var a=p && !nurLesen() && anlageVon(p); return a ? WIEDERKEHR[a.id]||null : null; }
 function wiederkehrText(w){ return w.n+" Störungen seit "+dfmt(w.seit)+" – wiederkehrend, Ursache prüfen"; }
 function stoerungenDerAnlage(a){
   var ids=a.termine.map(function(t){ return t.id; });
@@ -5944,6 +6000,11 @@ function stoerungSpeichern(o, grund, rueck){
   if(!angemeldetOderLokal()){ Store.fehler="Nicht angemeldet."; return Promise.resolve(false); }
   var rec={id:o._id, typ:"stoerung", ziel:o.standortId||"", neu:false,
     felder:auswahl(o, STOER_OFFEN_FELDER), geaendert:new Date().toISOString(), von:wer(), grund:grund||""};
+  /* erfasst bleibt erfasst: „geaendert“ springt bei jeder Änderung (Notiz,
+     Termin, erledigt) auf jetzt – wann und von wem die Störung erfasst wurde,
+     steht deshalb eigens in den Feldern (wiederkehrende Störungen, Monatsbericht) */
+  rec.felder.erfasstAm=o.erfasstAm||rec.geaendert;
+  rec.felder.erfasstVon=o.erfasstVon||rec.von;
   /* schlägt das Speichern fehl, gilt wieder der alte Stand – die Anzeige soll
      nicht zeigen, was nirgends gespeichert ist */
   var altU=stammUeber[rec.id], altS=stammStand[rec.id];
@@ -6080,7 +6141,12 @@ function wendeStammdatenAn(){
        und zählen nirgends mehr: keine Liste, kein „Fällig“, keine Prüfung. */
     if(r.typ==="stoerung"){
       if(r.felder && r.felder.geloescht) return;
-      OFFENE.push(Object.assign({_id:r.id, standortId:r.ziel, erfasstAm:r.geaendert, erfasstVon:r.von}, r.felder));
+      /* erfasst: steht in den Feldern (stoerungSpeichern); bei älteren
+         Einträgen ohne diese Angabe gilt wie bisher die letzte Änderung */
+      var so=Object.assign({_id:r.id, standortId:r.ziel}, r.felder);
+      if(!so.erfasstAm) so.erfasstAm=r.geaendert;
+      if(!so.erfasstVon) so.erfasstVon=r.von;
+      OFFENE.push(so);
       return;
     }
     if(r.typ==="altlast") return;   /* nur Merker der Altlast-Bereinigung (altlastMerken) */
@@ -6791,6 +6857,19 @@ function hintergrundNachladen(){
      musste, geht jetzt weiter (ein schon fortgesetzter nicht noch einmal) */
   ladeStammdaten(true).then(storeNachRender).then(function(){ setTimeout(kiVorgangFortsetzen, 300); }, function(){});
 }
+/* Sprung aus einer Nachricht oder Meldung: dahinter steht meist etwas Neues
+   (neue Störung, neues Protokoll), das die offene App noch nicht geladen hat –
+   Meldungen kommen alle 90 s, die Daten dahinter sonst nur beim Zurückkehren
+   in den Tab. Holt Protokolle und Stammdaten frisch (höchstens 10 s) und
+   liefert danach ja/nein: wurde geladen? */
+function frischLaden(){
+  if(Store.modus!=="supabase" || !Store.sb || !Store.benutzer || !Admin.geprueft || demo()) return Promise.resolve(false);
+  /* eben erst vollständig geladen (Start aus der Nachricht heraus): nicht noch einmal */
+  if(Date.now()-nachgeladenUm<15000 && stammGeladenKomplett && protokolleGeladen && !stammLaedt) return Promise.resolve(false);
+  nachgeladenUm=Date.now();
+  return mitFrist(Promise.all([ladeProtokolle(), ladeStammdaten(true).then(storeNachRender)]), 10000)
+    .then(function(){ return true; }, function(){ return false; });
+}
 function initSupabase(){
   if(!window.supabase || !window.supabase.createClient){ Store.modus="lokal"; Store.fehler="Supabase-Bibliothek nicht geladen."; storeNachRender(); return; }
   /* Vorschau im App-Fenster: die Anmeldung der App nur lesen – kein eigenes
@@ -6897,7 +6976,7 @@ function zuZeile(doc,uid){
     zert_unternehmen:doc.zertUnternehmen, zert_person:doc.zertPerson,
     anlagen:doc.anlagen, arbeiten:doc.arbeiten, arbeiten_sonstiges:doc.arbeitenSonstiges,
     maengel:doc.maengel, betriebsbereit:doc.betriebsbereit, sofortmassnahme:doc.sofortmassnahme,
-    ergebnis:doc.ergebnis, bemerkungen:doc.bemerkungen, kaeltemittel:doc.kaeltemittel||null,
+    ergebnis:doc.ergebnis, bemerkungen:doc.bemerkungen,
     name_techniker:doc.nameTechniker, auftraggebervertreter:doc.auftraggebervertreter,
     fotos:doc.fotos||[] };
   /* Nur mitschicken, wenn sie wirklich vorliegt. Wurde sie nicht nachgeladen,
@@ -6911,6 +6990,9 @@ function zuZeile(doc,uid){
   /* ebenso: fehlt die Spalte noch, bleibt ein Protokoll mit Rapport auf dem
      Gerät, bis supabase-setup.sql gelaufen ist */
   if(doc.rapport) zeile.rapport=doc.rapport;
+  /* ebenso das Kältemittel: ohne Angabe geht das Protokoll auch an eine
+     Datenbank, in der die Spalte noch fehlt (tools/update-2026-09-26.sql) */
+  if(doc.kaeltemittel) zeile.kaeltemittel=doc.kaeltemittel;
   return zeile;
 }
 /* Der Rapportbericht eines Protokolls. Anfangs lag er nur bei Störungen in
@@ -6943,10 +7025,14 @@ var PROTOKOLL_SPALTEN=["id","client_id","erstellt","erstellt_von","standort_id",
   "firma","techniker","kontakt","subunternehmen","zert_unternehmen","zert_person","anlagen","arbeiten",
   "arbeiten_sonstiges","maengel","betriebsbereit","sofortmassnahme","ergebnis","bemerkungen","name_techniker",
   "auftraggebervertreter","fotos","version","geaendert","korrektur_grund","geloescht","geloescht_von",
-  "loesch_grund","stoerung","mitarbeiter","kaeltemittel"].join(",");
+  "loesch_grund","stoerung","mitarbeiter"].join(",");
 /* Die Spalte rapport kommt mit einer späteren Fassung von supabase-setup.sql.
    Fehlt sie noch, lädt die App ohne sie weiter, statt gar nichts zu zeigen. */
 var rapportSpalte=true;
+/* ebenso die Spalte kaeltemittel (tools/update-2026-09-26.sql): fehlt sie,
+   scheiterte sonst die ganze Abfrage – keine Protokolle, alle Termine überfällig */
+var kaeltemittelSpalte=true, kaeltemittelGemeldet=false;
+function protokollSpalten(){ return PROTOKOLL_SPALTEN+(rapportSpalte?",rapport":"")+(kaeltemittelSpalte?",kaeltemittel":""); }
 
 /* Holt die Unterschrift eines Protokolls nach. Schon vorhandene bleibt.
    Gibt es keine, liefert sie "". Ist die Leitung gestört, lehnt sie ab und
@@ -6974,16 +7060,26 @@ function ladeUnterschrift(p){
 /* zuletzt ohne Fehler aus der Datenbank geladen (für Prüfungen, die fehlende Protokolle melden) */
 var protokolleGeladen=false;
 function ladeProtokolle(){
-  if(!Store.sb) return;
+  if(!Store.sb) return Promise.resolve();
   /* Der gesamte Bestand, seitenweise: aus den Protokollen kommt der
      Wartungsnachweis. Fiele ein altes Protokoll heraus, gälte seine Wartung
      als nicht geschehen und der Termin spränge auf überfällig. */
-  alleSeiten(function(){
-    return Store.sb.from("protokolle").select(PROTOKOLL_SPALTEN+(rapportSpalte?",rapport":"")).order("erstellt",{ascending:false}).order("id");
+  /* liefert ein Versprechen, das nach dem Laden (oder Scheitern) erfüllt ist – für frischLaden */
+  return alleSeiten(function(){
+    return Store.sb.from("protokolle").select(protokollSpalten()).order("erstellt",{ascending:false}).order("id");
   }, "client_id").then(function(r){
-    if(r.error && rapportSpalte && /rapport/.test(r.error.message||"")){ rapportSpalte=false; ladeProtokolle(); return; }
+    if(r.error && rapportSpalte && /rapport/.test(r.error.message||"")){ rapportSpalte=false; return ladeProtokolle(); }
+    if(r.error && kaeltemittelSpalte && /kaeltemittel/.test(r.error.message||"")){
+      kaeltemittelSpalte=false;
+      return ladeProtokolle();
+    }
     if(r.error){ protokolleNichtGeladen(r.error.message); return; }
     protokolle=(r.data||[]).map(ausZeile); protokolleGeladen=true; protokolleFehler="";
+    /* fehlende Spalte: dem Büro einmal sagen (beim ersten Laden steht die Rolle noch nicht fest) */
+    if(!kaeltemittelSpalte && !kaeltemittelGemeldet && Admin.frei && !demo()){
+      kaeltemittelGemeldet=true;
+      toast("In der Datenbank fehlt die Spalte „kaeltemittel“ – bitte tools/update-2026-09-26.sql im Supabase SQL Editor ausführen. Bis dahin fehlen die Kältemittel-Angaben.");
+    }
     storeNachRender();
     offeneBerichteNachholen();
   }, function(x){ protokolleNichtGeladen((x&&x.message)||String(x)); });
@@ -7303,7 +7399,9 @@ function speichereProtokoll(id,doc,eintrag){
        Upsert nichts und meldet trotzdem Erfolg */
     return Store.sb.from("protokolle").upsert(zeile,{onConflict:"client_id", ignoreDuplicates:true}).select("client_id").then(function(r){
       if(r.error){
-        Store.fehler=/stoerung|mitarbeiter/.test(r.error.message||"")
+        Store.fehler=/kaeltemittel|rapport/.test(r.error.message||"")
+          ? "In der Datenbank fehlt eine Spalte – bitte tools/update-2026-09-26.sql im Supabase SQL Editor ausführen. Das Protokoll bleibt bis dahin auf dem Gerät."
+          : /stoerung|mitarbeiter/.test(r.error.message||"")
           ? "In der Datenbank fehlt eine Spalte – bitte supabase-setup.sql und danach tools/rollen.sql im Supabase SQL Editor erneut ausführen"
           : r.error.message;
         return false;
@@ -7425,6 +7523,8 @@ function aktualisiereProtokoll(id, doc, quelle, geraetFotos, geraetAuftrag, gera
     /* ebenso der Rapport: nimmt ein Zurücknehmen ihn weg, muss der Verweis
        wirklich weg (sonst stimmen Verlauf, Archiv-PDF und Datenbank nicht) */
     if(rapportSpalte) zeile.rapport=doc.rapport||null;
+    /* und das Kältemittel: in der Korrektur geleert heißt geleert */
+    if(kaeltemittelSpalte) zeile.kaeltemittel=doc.kaeltemittel||null;
     /* Nur schreiben, wenn das Protokoll noch die Fassung hat, auf der diese
        Korrektur aufbaut. Sonst hat in der Zwischenzeit jemand anderer
        korrigiert – dessen Arbeit soll nicht stillschweigend verschwinden. */
@@ -7637,6 +7737,9 @@ function pushStart(){
   navigator.serviceWorker.register("sw.js").then(function(r){ pushReg=r; pushAbgleich(); }, function(e){ console.warn("Hintergrund-Helfer", e); });
   navigator.serviceWorker.addEventListener("message", function(e){
     var d=e.data||{}; if(d.pushZiel!==undefined){ pushZiel(d.pushZiel); chatLaden(); }
+    /* der Browser hat das Abo des Geräts erneuert (sw.js): neu eintragen */
+    if(d.pushAbo && pushReg && pushAn() && lsGet("ukt_push_konto","")===Store.benutzer.email)
+      pushReg.pushManager.getSubscription().then(function(s){ return s ? pushAboSpeichern(s, pushArtenGewaehlt()) : null; }).then(null, function(){});
   });
   /* aus einer Nachricht heraus geöffnet: #push=ziel */
   var m=/[#&]push=([^&]*)/.exec(location.hash||"");
@@ -7673,8 +7776,30 @@ function pushAbgleich(){
         pushEinschalten(pushArtenGewaehlt()).then(function(){ pushStandText(document.getElementById("k_pushstand")); }, function(){});
       return;
     }
-    if(lsGet("ukt_push_konto","")!==Store.benutzer.email) pushAboSpeichern(sub, pushArtenGewaehlt()).catch(function(){});
+    /* auch wenn seit dem Einschalten eine neue Art dazugekommen ist (sie gilt als gewählt) */
+    if(lsGet("ukt_push_konto","")!==Store.benutzer.email || pushArtenNeu().length){ pushAboSpeichern(sub, pushArtenGewaehlt()).catch(function(){}); return; }
+    pushAboPruefen(sub);
   }, function(){});
+}
+/* Kennt die Datenbank dieses Gerät noch? Die Funktion „push“ löscht ein Gerät,
+   dessen Adresse nicht mehr gilt oder das lange nicht erreichbar war – die App
+   zeigte dann weiter „eingeschaltet“, und es käme nie mehr etwas an. Dann mit
+   frischem Abo neu eintragen; gelingt das nicht, steht das Gerät ehrlich auf
+   „aus“ und schaltet sich beim nächsten Start wieder ein (ukt_push_wieder). */
+var pushPrueft=false;
+function pushAboPruefen(sub){
+  if(pushPrueft || !pushAn() || !sub) return Promise.resolve(false);
+  var konto=Store.benutzer.email, zeigen=function(){ pushStandText(document.getElementById("k_pushstand")); };
+  pushPrueft=true;
+  var ende=function(w){ pushPrueft=false; return w; };
+  return Store.sb.from("push_abos").select("endpoint").eq("endpoint", sub.endpoint).then(function(r){
+    if(r.error || !Array.isArray(r.data) || r.data.length) return false;   /* bekannt – oder nicht feststellbar */
+    if(!pushAn() || Store.benutzer.email!==konto) return false;
+    var arten=pushArtenGewaehlt();
+    lsSet("ukt_push_wieder", 1); lsSet("ukt_push_konto","");
+    return sub.unsubscribe().then(function(){ return pushEinschalten(arten); })
+      .then(function(){ zeigen(); return true; }, function(){ zeigen(); return true; });
+  }, function(){ return false; }).then(ende, function(){ return ende(false); });
 }
 /* Abmelden über den Knopf: solange die Anmeldung noch gilt, auch die Zeile in
    der Datenbank löschen (höchstens 4 s – ohne Netz wird trotzdem abgemeldet) */
@@ -7689,16 +7814,33 @@ function pushVorAbmelden(){
 /* Die Auswahl gilt je Konto (am selben Gerät wählt jeder für sich); die
    bisherige Auswahl des Geräts gehört dem Konto, das das Abo hält */
 function pushArtenSchluessel(){ return "ukt_push_arten:"+((Store.benutzer&&Store.benutzer.email)||""); }
-function pushArtenGewaehlt(){
+/* Arten, die es bei der letzten Auswahl auf diesem Gerät noch nicht gab: sie
+   gelten als gewählt (wie die Vorgabe in der Datenbank) – sonst bekäme ein
+   früher eingeschaltetes Gerät nie eine Nachricht dieser Art. Ohne Merker gilt
+   der Stand der ersten Fassung (alles außer der Wochenübersicht). */
+var PUSH_ARTEN_ANFANG=["stoerung","protokoll","korrektur","stammdaten","chat","wunsch","posteingang"];
+function pushArtenBekanntSchluessel(){ return "ukt_push_arten_bekannt:"+((Store.benutzer&&Store.benutzer.email)||""); }
+function pushArtenMerken(arten){ lsSet(pushArtenSchluessel(), arten); lsSet(pushArtenBekanntSchluessel(), PUSH_ARTEN.map(function(x){ return x[0]; })); }
+function pushArtenGemerkt(){
   var a=lsGet(pushArtenSchluessel(), null);
   if(!Array.isArray(a) && lsGet("ukt_push_konto","")===(Store.benutzer&&Store.benutzer.email)) a=lsGet("ukt_push_arten", null);
-  if(!Array.isArray(a) || !a.length) a=PUSH_ARTEN.map(function(x){ return x[0]; });
+  return Array.isArray(a) && a.length ? a : null;
+}
+function pushArtenNeu(){
+  if(!pushArtenGemerkt()) return [];
+  var b=lsGet(pushArtenBekanntSchluessel(), null); if(!Array.isArray(b)) b=PUSH_ARTEN_ANFANG;
+  return PUSH_ARTEN.map(function(x){ return x[0]; }).filter(function(k){ return b.indexOf(k)<0 && (k!=="wunsch" || istInhaber()); });
+}
+function pushArtenGewaehlt(){
+  var a=pushArtenGemerkt();
+  if(!a) a=PUSH_ARTEN.map(function(x){ return x[0]; });
+  else a=a.concat(pushArtenNeu().filter(function(k){ return a.indexOf(k)<0; }));
   return a.filter(function(k){ return k!=="wunsch" || istInhaber(); });
 }
 function pushAboSpeichern(sub, arten){
   var j=sub.toJSON();
   return Store.sb.rpc("push_abo_speichern", {p_endpoint:j.endpoint, p_p256dh:j.keys.p256dh, p_auth:j.keys.auth, p_geraet:pushGeraetName(), p_arten:arten})
-    .then(function(r){ if(r.error) throw new Error(r.error.message); lsSet("ukt_push_konto", Store.benutzer.email); lsSet(pushArtenSchluessel(), arten); lsSet("ukt_push_wieder", 0); });
+    .then(function(r){ if(r.error) throw new Error(r.error.message); lsSet("ukt_push_konto", Store.benutzer.email); pushArtenMerken(arten); lsSet("ukt_push_wieder", 0); });
 }
 function pushAbmelden(sub){
   return Store.sb.from("push_abos").delete().eq("endpoint", sub.endpoint).then(function(){ return sub.unsubscribe(); }).then(function(){ lsSet("ukt_push_konto",""); });
@@ -7752,7 +7894,7 @@ function pushDialog(){
   var err=f.querySelector('[data-a="err"]'), an=f.querySelector('[data-a="an"]'), aus=f.querySelector('[data-a="aus"]'), test=f.querySelector('[data-a="test"]');
   var fehl=function(t){ err.textContent=t; err.hidden=false; };
   var gewaehlt=function(){ return Array.prototype.map.call(f.querySelectorAll("[data-art]:checked"), function(c){ return c.dataset.art; }); };
-  var warten=0, keineArt="Bitte mindestens eine Art wählen – sonst kommt nie eine Nachricht.";
+  var warten=0, geprueft=false, keineArt="Bitte mindestens eine Art wählen – sonst kommt nie eine Nachricht.";
   var stand=function(){
     if(!f.isConnected) return;   /* Fenster geschlossen */
     if(!pushReg){
@@ -7769,6 +7911,8 @@ function pushDialog(){
     pushReg.pushManager.getSubscription().then(function(s){
       var ein=!!s && lsGet("ukt_push_konto","")===Store.benutzer.email;
       an.hidden=ein; aus.hidden=!ein; test.hidden=!ein;
+      /* eingeschaltet, aber die Datenbank kennt das Gerät nicht mehr: neu eintragen und den Stand neu zeigen */
+      if(ein && !geprueft){ geprueft=true; pushAboPruefen(s).then(function(erneuert){ if(erneuert) stand(); }); }
     });
     Store.sb.from("push_abos").select("endpoint,geraet,erstellt,zuletzt").then(function(r){
       var g=f.querySelector('[data-a="geraete"]'); if(r.error||!r.data||!r.data.length){ g.textContent=r.error?"":"Auf keinem Ihrer Geräte eingeschaltet."; return; }
@@ -7779,7 +7923,7 @@ function pushDialog(){
     var a=gewaehlt(); err.hidden=true;
     /* nichts gewählt: nicht speichern – eingeschaltet, aber ohne Art käme nie etwas */
     if(!a.length){ fehl(keineArt); return; }
-    lsSet(pushArtenSchluessel(), a);
+    pushArtenMerken(a);
     if(!pushReg) return;
     pushReg.pushManager.getSubscription().then(function(s){ if(s && !aus.hidden) pushAboSpeichern(s, a).then(function(){ toast("Auswahl gespeichert."); }, function(e){ fehl(e.message); }); });
   }; });
@@ -7808,7 +7952,7 @@ function pushDialog(){
 }
 /* Antippen einer Nachricht: an die passende Stelle – sobald die Daten da sind */
 var pushWartet=null;   /* Sprungziel, das auf die Anmeldung wartet: {z, seit} */
-function pushZiel(z, versuch){
+function pushZiel(z, versuch, frisch){
   versuch=versuch||0;
   if(!z) return;
   /* noch nicht angemeldet oder die Rolle noch nicht geprüft: das Ziel merken –
@@ -7817,6 +7961,13 @@ function pushZiel(z, versuch){
   if(Store.modus==="lade" || Store.modus==="anmeldung" || (Store.modus==="supabase" && !Admin.geprueft)){ pushWartet={z:z, seit:Date.now()}; return; }
   if((!ST.length || (Store.modus==="supabase" && !protokolleGeladen)) && versuch<12){ setTimeout(function(){ pushZiel(z, versuch+1); }, 800); return; }
   var t=z.split(":"), art=t[0], id=t.slice(1).join(":");
+  /* Störung, Markt oder Protokoll, die die offene App noch nicht kennt (eben
+     erst von jemand anderem angelegt): erst frisch laden, dann springen */
+  if(!frisch && (art==="stoerungen" || (art==="markt" && id && !byId[id]) ||
+      (art==="protokoll" && id && !alleProtokolle(true).some(function(x){ return x._id===id; })))){
+    frischLaden().then(function(){ pushZiel(z, 99, true); });
+    return;
+  }
   /* stoerungen:Markt – die Störung dieses Markts hervorheben */
   if(art==="stoerungen"){ faelligSprung("stoerungen", {markt:id}); return; }
   if(art==="markt"){
@@ -7828,7 +7979,8 @@ function pushZiel(z, versuch){
     /* mehrere Protokolle in einer Nachricht gebündelt (Ziel ohne Kennung): in den Verlauf */
     if(!id){ springe({reiter:"verlauf", alleFenster:true}); return; }
     var p=alleProtokolle(true).filter(function(x){ return x._id===id; })[0];
-    if(p){ ansichtenSchliessen(); protokollFenster(p); } else toast("Das Protokoll ist nicht (mehr) da."); return;
+    /* das Ereignis entsteht beim Sichern aufs Gerät – die Übertragung (mit Fotos) kann noch laufen */
+    if(p){ ansichtenSchliessen(); protokollFenster(p); } else toast("Das Protokoll ist (noch) nicht da – vielleicht wird es gerade übertragen. Bitte gleich nochmals versuchen."); return;
   }
   if(art==="wunsch"){
     if(!verwaltungDarf() || !istInhaber()){ toast("Änderungswünsche sieht nur der Inhaber."); return; }
@@ -7871,6 +8023,14 @@ function chatTeamLaden(){
 }
 function chatAn(){ return Store.modus==="supabase" && !!Store.sb && !!Store.benutzer && !demo() && !nurLesen(); }
 function chatSchluessel(){ var m=Store.benutzer&&Store.benutzer.email; return m ? "ukt-chat-gelesen:"+m : null; }
+/* einmal beim Start (ein Fehler bei den Benachrichtigungen hält den Chat nicht auf) */
+var chatUndPushGestartet=false;
+function chatUndPushStarten(){
+  if(chatUndPushGestartet) return;
+  chatUndPushGestartet=true;
+  try{ pushStart(); }catch(e){ console.warn("Benachrichtigungen", e); }
+  chatStart();
+}
 function chatStart(){
   var k=document.getElementById("chatbtn"); if(k) k.onclick=function(){ chatOeffnen(); };
   document.addEventListener("visibilitychange", function(){ if(!document.hidden) chatLaden(); });
@@ -7884,7 +8044,8 @@ function chatStart(){
 function chatKnopf(){
   var k=document.getElementById("chatbtn"); if(!k) return;
   var konto=chatAn() ? Store.benutzer.email : null;
-  if(konto!==chatKonto){ chatKonto=konto; chatNachrichten=[]; chatGeladen=false; chatFehler=""; chatBildUrls={}; chatTeam=null; chatEntwurf={text:"", fotos:[]}; chatLaden(); }
+  if(konto!==chatKonto){ chatKonto=konto; chatNachrichten=[]; chatGeladen=false; chatFehler=""; chatBildUrls={}; chatTeam=null; chatEntwurf={text:"", fotos:[]};
+    chatBezugAlt={}; chatBezugGeladen=false; chatMehr=false; chatLaden(); }
   /* Benachrichtigungen: bei jedem Wechsel nachsehen, ob das Abo des Geräts noch
      passt – auch nach dem Abmelden und bei Kunde/Präsentation (dort gibt es
      keinen Chat, chatKonto bleibt leer) */
@@ -7921,7 +8082,12 @@ function meldungenGelesen(){ if(meldungenSchluessel()) lsSet(meldungenSchluessel
 function meldungenLaden(){
   if(!chatAn()){ meldungen=[]; meldungenFehler=""; return Promise.resolve(); }
   return Store.sb.from("push_ereignisse").select("id,erstellt,art,titel,text,ziel,von_user,nur_rolle,nur_user").order("id",{ascending:false}).limit(80).then(function(r){
-    if(!r.error && Array.isArray(r.data)){ meldungen=r.data; meldungenFehler=""; chatKnopf(); }
+    if(!r.error && Array.isArray(r.data)){
+      meldungen=r.data; meldungenFehler="";
+      /* erstes Laden auf diesem Gerät: die Zählung beginnt beim jetzigen Stand (wie im Chat) */
+      if(meldungenSchluessel() && !lsGet(meldungenSchluessel(),"")) lsSet(meldungenSchluessel(), meldungen.length ? String(meldungen[0].erstellt) : new Date().toISOString());
+      chatKnopf();
+    }
     else meldungenFehler=(r.error&&r.error.message)||"keine Antwort";
     if(chatFenster && chatFenster.meldungen) chatFenster.meldungen();
   }, function(){ meldungenFehler="keine Verbindung"; if(chatFenster && chatFenster.meldungen) chatFenster.meldungen(); });
@@ -7944,14 +8110,64 @@ function chatLaden(){
   if(!chatAn()){ chatNachrichten=[]; chatGeladen=false; if(document.getElementById("chatbtn")) document.getElementById("chatbtn").hidden=true; return Promise.resolve(); }
   /* nicht geladen: im Fenster steht, woran es liegt (statt für immer „wird geladen“) */
   var fehl=function(t){ chatFehler=t; if(chatFenster && !chatGeladen) chatFenster.zeichnen(); };
-  return mitFrist(Store.sb.from("chat").select("*").order("erstellt",{ascending:false}).limit(300), 15000).then(function(r){
+  var konto=Store.benutzer.email;
+  return mitFrist(Store.sb.from("chat").select("*").order("erstellt",{ascending:false}).limit(CHAT_FENSTER), 15000).then(function(r){
     if(r.error){ fehl(r.error.message||"Fehler beim Laden"); return; }
-    chatNachrichten=(r.data||[]).slice().sort(function(a,b){ return String(a.erstellt).localeCompare(String(b.erstellt)); });
+    if(!chatAn() || Store.benutzer.email!==konto) return;   /* inzwischen gewechselt */
+    var neu=(r.data||[]).filter(chatSichtbar).sort(function(a,b){ return String(a.erstellt).localeCompare(String(b.erstellt)); });
+    var voll=(r.data||[]).length>=CHAT_FENSTER, ab=neu.length ? String(neu[0].erstellt) : "";
+    /* was über „Ältere Nachrichten“ schon nachgeladen wurde, bleibt davor stehen */
+    var davor=voll ? chatNachrichten.filter(function(m){ return String(m.erstellt)<ab; }) : [];
+    if(!chatGeladen || !voll) chatMehr=voll;
+    /* ältere Nachrichten mit Bezug: was im frisch geladenen Zeitraum liegt, gilt von dort (auch Gelöschtes ist dann weg) */
+    Object.keys(chatBezugAlt).forEach(function(k){ if(!voll || String(chatBezugAlt[k].erstellt)>=ab) delete chatBezugAlt[k]; });
+    chatNachrichten=davor.concat(neu);
+    /* erstes Laden auf diesem Gerät: die Zählung beginnt beim jetzigen Stand –
+       sonst gälte der ganze bisherige Verlauf als ungelesen („99+“) */
+    if(chatSchluessel() && !lsGet(chatSchluessel(),"")) lsSet(chatSchluessel(), neu.length ? String(neu[neu.length-1].erstellt) : new Date().toISOString());
     chatGeladen=true; chatFehler=""; chatKnopf();
     if(chatFenster) chatFenster.zeichnen(true);
     chatKartenZeichnen();
     chatWarteSenden();
+    if(voll) chatBezugLaden();
   }, function(){ fehl("keine Verbindung"); });
+}
+/* Persönliche Nachricht, deren Empfänger-Konto gelöscht wurde (an ist dann
+   leer, der Empfängername steht noch): sie bleibt persönlich – nur der
+   Absender sieht sie noch (dieselbe Regel in tools/chat-direkt.sql) */
+function chatSichtbar(m){
+  return !!m && (!!m.an || !m.an_name || m.von===(Store.benutzer&&Store.benutzer.id));
+}
+/* Der Chat lädt nur die neuesten Nachrichten. Was zu einem Markt, einer Anlage,
+   Störung oder einem Protokoll geschrieben wurde, soll dort aber dauerhaft
+   stehen: alle Nachrichten MIT Bezug einmal je Anmeldung nachladen (seitenweise). */
+var CHAT_FENSTER=300, CHAT_SEITE=150;
+var chatBezugAlt={}, chatBezugGeladen=false, chatMehr=false;
+function chatBezugLaden(){
+  if(!chatAn() || chatBezugGeladen) return Promise.resolve();
+  var konto=Store.benutzer.email;
+  chatBezugGeladen=true;
+  return alleSeiten(function(){ return Store.sb.from("chat").select("*").not("bezug_art","is",null).order("erstellt").order("id"); }, "id").then(function(r){
+    if(!chatAn() || Store.benutzer.email!==konto) return;
+    if(r.error){ chatBezugGeladen=false; return; }   /* beim nächsten Laden wieder versuchen */
+    var ab=chatNachrichten.length ? String(chatNachrichten[0].erstellt) : "";
+    (r.data||[]).filter(chatSichtbar).forEach(function(m){ if(String(m.erstellt)<ab) chatBezugAlt[m.id]=m; });
+    chatKartenZeichnen();
+  }, function(){ chatBezugGeladen=false; });
+}
+/* „Ältere Nachrichten“ im Chat-Fenster: die nächsten CHAT_SEITE vor der ältesten geladenen */
+function chatAeltereLaden(){
+  if(!chatAn() || !chatNachrichten.length) return Promise.resolve(0);
+  var konto=Store.benutzer.email, vor=String(chatNachrichten[0].erstellt);
+  return mitFrist(Store.sb.from("chat").select("*").lt("erstellt", vor).order("erstellt",{ascending:false}).limit(CHAT_SEITE), 15000).then(function(r){
+    if(r.error) throw new Error(r.error.message||"Fehler beim Laden");
+    if(!chatAn() || Store.benutzer.email!==konto) return 0;
+    var da={}; chatNachrichten.forEach(function(m){ da[m.id]=1; });
+    var alt=(r.data||[]).filter(function(m){ return !da[m.id] && chatSichtbar(m); }).sort(function(a,b){ return String(a.erstellt).localeCompare(String(b.erstellt)); });
+    chatMehr=(r.data||[]).length>=CHAT_SEITE;
+    chatNachrichten=alt.concat(chatNachrichten);
+    return alt.length;
+  });
 }
 /* die Karten „Nachrichten dazu“ in offenen Fenstern neu zeichnen */
 function chatKartenZeichnen(){
@@ -7965,10 +8181,17 @@ function chatBezugText(art, o){
   if(art==="protokoll") return (istStoerung(o)?"Störungsprotokoll ":"Protokoll ")+protoName(o)+" vom "+dfmt(o.datum);
   return "";
 }
-function chatBezugOeffnen(m){
+function chatBezugOeffnen(m, frisch){
   if(!m.bezug_art) return;
+  /* Bezug auf etwas, das die offene App noch nicht kennt (eben erst angelegt):
+     einmal frisch laden, dann öffnen */
+  var da = m.bezug_art==="markt" ? !!byId[m.bezug_id] : m.bezug_art==="anlage" ? !!posById[m.bezug_id]
+    : m.bezug_art==="stoerung" ? OFFENE.some(function(x){ return x._id===m.bezug_id; })
+    : m.bezug_art==="protokoll" ? alleProtokolle(true).some(function(x){ return x._id===m.bezug_id; }) : true;
+  if(!da && !frisch){ frischLaden().then(function(geladen){ chatBezugOeffnen(m, true); }); return; }
   if(m.bezug_art==="markt"){ if(byId[m.bezug_id]) marktAnsicht(m.bezug_id); else toast("Diesen Markt gibt es nicht mehr."); }
-  else if(m.bezug_art==="anlage"){ var p=posById[m.bezug_id]; if(p) anlageHistorieAnsicht(p); else toast("Diese Anlage gibt es nicht mehr."); }
+  /* Anlage: die bleibende, falls sie beim Zusammenführen in einer anderen aufgegangen ist */
+  else if(m.bezug_art==="anlage"){ var p=posById[zeileWeiter(m.bezug_id)]; if(p) anlageHistorieAnsicht(anlageVon(p).leader||p); else toast("Diese Anlage gibt es nicht mehr."); }
   else if(m.bezug_art==="stoerung"){ var o=OFFENE.filter(function(x){ return x._id===m.bezug_id; })[0];
     /* ihr Dialog ist schon offen (der Chat wurde daraus geöffnet): nicht doppelt
        öffnen – der Chat geht zu, der Dialog darunter ist wieder zu sehen (eine
@@ -7986,21 +8209,29 @@ function chatBezugOeffnen(m){
 /* Nachrichten zu einer Sache – beim Markt auch die zu seinen Anlagen, Störungen und Protokollen */
 function chatZu(art, id){
   var ids={};
-  /* Anlage: alle ihre Termine – die Nachricht kann an jedem davon hängen */
+  /* Anlage: alle ihre Termine – die Nachricht kann an jedem davon hängen, auch
+     an einer beim Zusammenführen in dieser Anlage aufgegangenen (zeileWeiter) */
+  var anlageZu=function(zid){ var p=posById[zeileWeiter(zid)]; return p ? anlageVon(p).id : null; };
+  var ziel=art==="anlage" ? anlageZu(id) : null;
   if(art==="anlage" && posById[id]) anlageVon(posById[id]).termine.forEach(function(t){ ids["anlage:"+t.id]=1; });
   if(art==="markt"){
     Object.keys(posById||{}).forEach(function(k){ if(posById[k] && posById[k].standortId===id) ids["anlage:"+k]=1; });
     OFFENE.forEach(function(o){ if(o.standortId===id) ids["stoerung:"+o._id]=1; });
     alleProtokolle(true).forEach(function(p){ if(p.standortId===id) ids["protokoll:"+p._id]=1; });
   }
-  return chatNachrichten.filter(function(m){ return (m.bezug_art===art && m.bezug_id===id) || ids[m.bezug_art+":"+m.bezug_id]; });
+  /* auch ältere Nachrichten mit Bezug (chatBezugLaden) – der Chat selbst lädt nur die neuesten */
+  var schon={}, alle=chatNachrichten.concat(Object.keys(chatBezugAlt).map(function(k){ return chatBezugAlt[k]; }))
+    .filter(function(m){ if(!m || schon[m.id]) return false; schon[m.id]=1; return true; });
+  return alle.filter(function(m){ return (m.bezug_art===art && m.bezug_id===id) || ids[m.bezug_art+":"+m.bezug_id] ||
+      (ziel && m.bezug_art==="anlage" && anlageZu(m.bezug_id)===ziel); })
+    .sort(function(a,b){ return String(a.erstellt).localeCompare(String(b.erstellt)); });
 }
 function chatNachrichtEl(m, ohneBezug){
   var ich=Store.benutzer&&Store.benutzer.id;
   var d=el('<div class="chatmsg'+(m.von===ich?" mein":"")+(m._wartet?" wartet":"")+'" data-chat="'+esc(m.id||"")+'">'+
     '<div class="chatkopf"><span>'+esc(m.von_name||"Jemand")+
       /* persönliche Nachricht: nur Absender und Empfänger sehen sie */
-      (m.an ? ' <span class="tag" title="Nur für den Empfänger sichtbar">🔒 '+(m.an===ich?"an dich":"an "+esc(m.an_name||"…"))+"</span>" : "")+
+      (m.an || m.an_name ? ' <span class="tag" title="Nur für den Empfänger sichtbar">🔒 '+(m.an===ich?"an dich":"an "+esc(m.an_name||"…"))+"</span>" : "")+
       '</span><span>'+(m._wartet?(m._abgelehnt?"nicht gesendet":"wartet auf Verbindung"):esc(zeitFmt(m.erstellt)))+
       (m.von===ich ? ' <a href="#" class="sprunglink" data-a="weg" title="Nachricht löschen">✕</a>' : "")+"</span></div>"+
     (m.bezug_art && !ohneBezug ? '<a href="#" class="chatbezug" data-a="bezug">'+esc(m.bezug_text||m.bezug_art)+"</a>" : "")+
@@ -8011,8 +8242,17 @@ function chatNachrichtEl(m, ohneBezug){
   (m.fotos||(m._wartet?Object.keys(m._fotoDaten||{}):[])).forEach(function(pfad){
     var img=el('<img alt="Foto" loading="lazy">');
     if(m._fotoDaten && m._fotoDaten[pfad]) img.src=m._fotoDaten[pfad];
-    else chatBildUrl(pfad).then(function(u){ if(u) img.src=u; else img.remove(); });
-    img.onclick=function(){ if(img.src) bildAnsicht(img.src, "Foto aus dem Chat"); };
+    else {
+      chatBildUrl(pfad).then(function(u){ if(u) img.src=u; else img.remove(); });
+      /* lädt nicht (Adresse abgelaufen): einmal mit frischer Adresse versuchen */
+      img.onerror=function(){ img.onerror=null; chatBildUrl(pfad, true).then(function(u){ if(u) img.src=u; else img.remove(); }); };
+    }
+    /* eine gemerkte Adresse kann inzwischen abgelaufen sein – zum Ansehen eine gültige */
+    img.onclick=function(){
+      if(!img.src) return;
+      if(m._fotoDaten && m._fotoDaten[pfad]){ bildAnsicht(img.src, "Foto aus dem Chat"); return; }
+      chatBildUrl(pfad).then(function(u){ bildAnsicht(u||img.src, "Foto aus dem Chat"); });
+    };
     d.appendChild(img);
   });
   tippe(d.querySelector('[data-a="bezug"]'), function(){ chatBezugOeffnen(m); });
@@ -8023,6 +8263,7 @@ function chatNachrichtEl(m, ohneBezug){
     Store.sb.from("chat").delete().eq("id", m.id).then(function(r){
       if(r.error){ toast("Nicht gelöscht: "+r.error.message); return; }
       chatNachrichten=chatNachrichten.filter(function(x){ return x.id!==m.id; });
+      delete chatBezugAlt[m.id];
       /* ihre Fotos aus dem Speicher nehmen (Regel „chatfotos loeschen“, tools/chat.sql) – klappt das nicht, bleibt es dabei */
       if((m.fotos||[]).length){ try{ Store.sb.storage.from("protokollfotos").remove(m.fotos).then(function(){}, function(){}); }catch(e){} }
       /* im Chat-Fenster und in den Karten „Nachrichten dazu“ darunter verschwindet sie auch */
@@ -8033,9 +8274,12 @@ function chatNachrichtEl(m, ohneBezug){
   });
   return d;
 }
-function chatBildUrl(pfad){
-  if(chatBildUrls[pfad]) return Promise.resolve(chatBildUrls[pfad]);
-  return Store.sb.storage.from("protokollfotos").createSignedUrl(pfad, 3600).then(function(r){ var u=r.data&&r.data.signedUrl; if(u) chatBildUrls[pfad]=u; return u||null; }, function(){ return null; });
+/* Die Adresse gilt eine Stunde – gemerkt wird sie deshalb nur 50 Minuten, danach
+   (oder wenn das Bild damit nicht mehr lädt: neu=true) kommt eine frische */
+function chatBildUrl(pfad, neu){
+  var g=chatBildUrls[pfad];
+  if(g && !neu && Date.now()-g.seit<3000000) return Promise.resolve(g.u);
+  return Store.sb.storage.from("protokollfotos").createSignedUrl(pfad, 3600).then(function(r){ var u=r.data&&r.data.signedUrl; if(u) chatBildUrls[pfad]={u:u, seit:Date.now()}; return u||null; }, function(){ return null; });
 }
 /* Karte „Nachrichten dazu“ unter Markt, Störung, Protokoll */
 function chatBezugKarte(art, id, text){
@@ -8146,14 +8390,41 @@ function chatOeffnen(opt){
     var x=el('<button class="btn ghost sm" type="button" title="Bezug entfernen">✕</button>'); x.onclick=function(){ bezug=null; bezugZeichnen(); }; bz.appendChild(x);
   };
   var fotosZeichnen=function(){ chatEntwurf.fotos=fotos.slice(); fo.innerHTML=""; fotos.forEach(function(f,i){ var im=el('<img alt="" style="height:54px;border-radius:6px;cursor:pointer" title="entfernen">'); im.src=f; im.onclick=function(){ fotos.splice(i,1); fotosZeichnen(); }; fo.appendChild(im); }); };
-  /* nachLaden: eben frisch geladen – erst dann steht fest, ob es die gesuchte Nachricht (opt.zu) noch gibt */
-  var zeichnen=function(nachLaden){
+  /* Leseposition: wer am Ende steht, sieht Neues – wer weiter oben liest, bleibt
+     an seiner Stelle (das Fenster zeichnet alle 90 s und nach jeder Nachricht neu) */
+  /* amEnde folgt dem Schieben von Hand – nicht dem eigenen Neuzeichnen (baut)
+     und nicht Bildern, die erst nachladen und die Liste länger machen */
+  var amEnde=true, baut=0, stand=false, zeigen=CHAT_SEITE;
+  var stelleMerken=function(){
+    if(baut || !stand || reiter!=="chat") return;
+    amEnde=v.inhalt.scrollHeight-v.inhalt.scrollTop-v.inhalt.clientHeight<80;
+  };
+  v.inhalt.addEventListener("scroll", stelleMerken);
+  /* nachLaden: eben frisch geladen – erst dann steht fest, ob es die gesuchte Nachricht (opt.zu) noch gibt;
+     wohin: "ende" (eigene Nachricht gesendet) oder "oben" (ältere dazugekommen – die Stelle bleibt) */
+  var zeichnen=function(nachLaden, wohin){
+    var sc=v.inhalt, oben=sc.scrollTop, hoch=sc.scrollHeight;
+    stelleMerken();
+    if(wohin==="ende") amEnde=true;
+    baut++;
     li.innerHTML="";
     if(!chatGeladen && chatFehler) li.appendChild(el('<div class="note warnbox">Der Chat ließ sich nicht laden ('+esc(chatFehler)+'). '+
       (/verbindung|fetch|zeit/i.test(chatFehler) ? "Sobald wieder Netz da ist, kommt er von selbst." : "Ist er in der Datenbank eingerichtet (tools/chat.sql)?")+"</div>"));
     else if(!chatGeladen) li.appendChild(el('<div class="muted">Nachrichten werden geladen …</div>'));
     else if(!chatNachrichten.length) li.appendChild(el('<div class="muted" style="font-size:13px">Noch keine Nachrichten. Die erste schreibt das Team.</div>'));
-    chatNachrichten.slice(-150).forEach(function(m){ li.appendChild(chatNachrichtEl(m)); });
+    /* weiter zurück: erst was schon geladen ist, dann seitenweise aus der Datenbank */
+    if(chatGeladen && (chatNachrichten.length>zeigen || chatMehr)){
+      var mehr=el('<div style="text-align:center"><button class="btn ghost sm" type="button">Ältere Nachrichten</button></div>');
+      mehr.querySelector("button").onclick=function(){
+        var k=this; zeigen+=CHAT_SEITE;
+        if(chatNachrichten.length>=zeigen || !chatMehr){ zeichnen(false, "oben"); return; }
+        k.disabled=true; k.textContent="Wird geladen …";
+        chatAeltereLaden().then(function(){ zeichnen(false, "oben"); },
+          function(){ zeigen-=CHAT_SEITE; k.disabled=false; k.textContent="Ältere Nachrichten"; toast("Die älteren Nachrichten ließen sich nicht laden – bitte nochmals."); });
+      };
+      li.appendChild(mehr);
+    }
+    chatNachrichten.slice(-zeigen).forEach(function(m){ li.appendChild(chatNachrichtEl(m)); });
     lsGet("ukt_chat_warte",[]).forEach(function(m){ if(m.konto===Store.benutzer.email) li.appendChild(chatNachrichtEl(Object.assign({_wartet:true}, m))); });
     /* gelesen ist nur, was zu sehen war – nicht, solange „Meldungen“ offen ist */
     if(reiter==="chat") chatGelesen();
@@ -8161,7 +8432,16 @@ function chatOeffnen(opt){
     /* die Kennung nicht in einen Selektor bauen – ein Anführungszeichen darin bräche ihn */
     var ziel=opt.zu ? Array.prototype.filter.call(li.querySelectorAll("[data-chat]"), function(n){ return n.dataset.chat===opt.zu; })[0] : null;
     if(opt.zu && !ziel && nachLaden){ opt.zu=null; toast("Diese Nachricht gibt es nicht mehr."); }
-    setTimeout(function(){ if(ziel){ ziel.scrollIntoView({block:"center"}); sprungHervorheben(ziel,{}); opt.zu=null; } else v.inhalt.scrollTop=v.inhalt.scrollHeight; }, 30);
+    /* das Leeren der Liste hat die Stelle verschoben – gleich wieder hin, damit nichts springt */
+    if(reiter==="chat" && !amEnde && !ziel) sc.scrollTop=(wohin==="oben" ? oben+(sc.scrollHeight-hoch) : oben);
+    setTimeout(function(){
+      if(ziel){ ziel.scrollIntoView({block:"center"}); sprungHervorheben(ziel,{}); opt.zu=null; amEnde=false; }
+      else if(reiter==="chat" && amEnde) sc.scrollTop=sc.scrollHeight;   /* unter „Meldungen“ bewegt sich nichts */
+      /* das eigene Schieben ist erst einen Augenblick später durch */
+      setTimeout(function(){ baut--; stand=true; }, 120);
+    }, 30);
+    /* Fotos laden nach und machen die Liste länger: wer am Ende stand, bleibt dort */
+    li.querySelectorAll("img").forEach(function(b){ b.addEventListener("load", function(){ if(amEnde && reiter==="chat") sc.scrollTop=sc.scrollHeight; }); });
   };
   /* Reiter „Meldungen“: was als Push verschickt wurde – antippen führt hin */
   var reiter=opt.reiter||"chat", ml=box.querySelector("[data-meldungen]"), mz=box.querySelector("[data-mzahl]"), cz=box.querySelector("[data-czahl]");
@@ -8173,6 +8453,8 @@ function chatOeffnen(opt){
   var meldungenZeichnen=function(){
     zahlen();
     if(reiter!=="meldungen") return;
+    /* neu gezeichnet wird alle 90 s – die Stelle, an der gerade gelesen wird, bleibt */
+    var stelle=v.inhalt.scrollTop;
     ml.innerHTML="";
     if(!meldungen.length){
       ml.appendChild(meldungenFehler
@@ -8180,13 +8462,14 @@ function chatOeffnen(opt){
         : el('<div class="muted" style="font-size:13px">Noch keine Meldungen. Hier steht, was als Push-Nachricht verschickt wurde – auch was du selbst ausgelöst hast.</div>'));
       return; }
     meldungen.forEach(function(e){ ml.appendChild(meldungEl(e)); });
+    v.inhalt.scrollTop=stelle;
   };
   var reiterZeigen=function(){
     box.querySelectorAll("[data-r]").forEach(function(c){ c.setAttribute("aria-pressed", String(c.dataset.r===reiter)); });
     ml.hidden=reiter!=="meldungen"; li.hidden=reiter==="meldungen"; box.querySelector("[data-schreiben]").hidden=reiter==="meldungen";
     /* erst zeichnen (Neues bleibt markiert), dann als gelesen merken – die Zahl am Reiter ist danach weg */
     if(reiter==="meldungen"){ meldungenZeichnen(); meldungenGelesen(); zahlen(); v.inhalt.scrollTop=0; }
-    else { if(chatGeladen) chatGelesen(); zahlen(); v.inhalt.scrollTop=v.inhalt.scrollHeight; }
+    else { if(chatGeladen) chatGelesen(); zahlen(); amEnde=true; v.inhalt.scrollTop=v.inhalt.scrollHeight; }
   };
   box.querySelectorAll("[data-r]").forEach(function(c){ c.onclick=function(){ reiter=c.dataset.r; reiterZeigen(); }; });
   chatFenster={zu:v.zu, zeichnen:zeichnen, meldungen:meldungenZeichnen};
@@ -8235,7 +8518,7 @@ function chatOeffnen(opt){
         toast("Keine Verbindung – die Nachricht geht raus, sobald wieder Netz da ist.");
       }
       else { m.fotos=Object.keys(fd); chatNachrichten.push(m); }
-      ta.value=""; chatEntwurf.text=""; fotos=[]; fotosZeichnen(); bezug=opt.bezug||null; bezugZeichnen(); zeichnen();
+      ta.value=""; chatEntwurf.text=""; fotos=[]; fotosZeichnen(); bezug=opt.bezug||null; bezugZeichnen(); zeichnen(false, "ende");
       if(r.ok){ chatKartenZeichnen(); chatLaden(); }
     }, function(e){ frei(); nicht("Nicht gesendet: "+((e&&e.message)||e)); });
   };
@@ -8288,7 +8571,9 @@ var abrechnungListe=null;   /* zeichnet Liste und Zähler im Reiter Protokoll ne
 function abrechnungAn(){ return Store.modus==="supabase" && !!Store.sb && !!Store.benutzer && istInhaber() && !demo(); }
 function abrechnungLaden(){
   if(!abrechnungAn()){ abrechnung={}; abrechnungGeladen=false; return Promise.resolve(); }
-  return Store.sb.from("abrechnung").select("*").then(function(r){
+  /* seitenweise – Supabase liefert je Abfrage höchstens 1000 Zeilen, die Haken
+     darüber fehlten sonst still („noch nicht abgerechnet“) */
+  return alleSeiten(function(){ return Store.sb.from("abrechnung").select("*").order("protokoll_id"); }, "protokoll_id").then(function(r){
     /* Fehler: der bisherige Stand bleibt; ohne geladenen Stand gilt nichts als „nicht abgerechnet“ */
     if(r.error) return;
     var neu={}; (r.data||[]).forEach(function(z){ neu[z.protokoll_id]=z; });
@@ -10005,7 +10290,23 @@ function viewProtokoll(){
        dieser Besuch zählt (den fälligen, sonst den nächstgelegenen) */
     var liste=el('<div class="checks" style="grid-template-columns:1fr"></div>');
     var datum=(form.querySelector("#f_datum")||{}).value||isoLokal(new Date());
-    var abst=function(t){ return t.naechste ? Math.abs(new Date(t.naechste)-new Date(datum)) : 9e15; };
+    /* Bei einem überfälligen Termin steht in naechste der ÄLTESTE versäumte
+       („überfällig seit“). Für die Vorwahl zählt, welcher Termin der Zeile
+       ansteht: der erste ab dem Protokolldatum. */
+    var kommend=function(t){
+      if(t.status!=="ueberfaellig" || !t.anker) return t.naechste||null;
+      var j=+datum.slice(0,4), n=ankerIm(t.anker,j);
+      if(n<datum) n=ankerIm(t.anker,j+1);
+      return n;
+    };
+    var tageBis=function(d){ return Math.abs(new Date(d+"T12:00:00")-new Date(datum+"T12:00:00")); };
+    /* Abstand zum nächstgelegenen Termin der Zeile – überfällig: der zuletzt
+       verstrichene oder der anstehende, je nachdem, welcher näher liegt */
+    var abst=function(t){
+      var k=kommend(t); if(!k) return 9e15;
+      if(t.status!=="ueberfaellig" || !t.anker) return tageBis(k);
+      return Math.min(tageBis(k), tageBis(ankerIm(t.anker, +k.slice(0,4)-1)));
+    };
     /* Korrektur: Anlagen, die im Protokoll stehen, bleiben wählbar – auch wenn
        sie inzwischen pausiert sind; sonst verlöre die Korrektur sie still */
     var korrIds=(S.bearbeiten && S.bearbeiten.x && S.bearbeiten.x.positionIds) || [];
@@ -10029,8 +10330,10 @@ function viewProtokoll(){
          zählt der Besuch für den nächsten – der versäumte ist damit mit erledigt */
       if(wahl && wahl.status==="ueberfaellig"){
         var grenze=plusMonate(datum, 3);
-        var naechster=ts.filter(function(t){ return t!==wahl && t.status!=="ueberfaellig" && t.naechste && t.naechste>wahl.naechste && t.naechste<=grenze; })
-          .sort(function(x,y){ return x.naechste<y.naechste?-1:1; })[0];
+        /* auch ein Termin, der selbst überfällig ist, kann der nächste sein
+           (beide Termine der Anlage versäumt) – es zählt der anstehende Tag */
+        var naechster=ts.filter(function(t){ var k=kommend(t); return !!k && k>=datum && k<=grenze; })
+          .sort(function(x,y){ return kommend(x)<kommend(y)?-1:1; })[0];
         if(naechster) wahl=naechster;
       }
       if(vorwahlId){ ts.forEach(function(t){ if(t.id===vorwahlId) wahl=t; }); }
@@ -12311,7 +12614,8 @@ function protokollDetail(p){
   var chatK=d.querySelector('[data-akt="chat"]');
   if(chatK) chatK.onclick=function(){ chatOeffnen({bezug:{art:"protokoll", id:p._id, text:chatBezugText("protokoll", p)}}); };
   if(p._quelle!=="geraet" && !p.geloescht){
-    if(istInhaber() && Store.modus==="supabase") d.querySelector(".stack").appendChild(abrechnungZeile(p));
+    /* nicht in Präsentation und Vorschau: dort wird der Stand nicht geladen – die Zeile zeigte ein abgerechnetes Protokoll ohne Haken */
+    if(abrechnungAn()) d.querySelector(".stack").appendChild(abrechnungZeile(p));
     if(chatAn()) d.querySelector(".stack").appendChild(chatBezugKarte("protokoll", p._id, chatBezugText("protokoll", p)));
   }
   var qrk=d.querySelector('[data-akt="qr"]');
@@ -12954,9 +13258,10 @@ function monatsberichtDaten(monat, region){
       var so=p.stoerung||{}, nr=String(p.auftragsnummer||so.auftragsnummer||"").trim();
       var o=OFFENE.filter(function(x){ return x.protokollId && x.protokollId===p._id; })[0] ||
             OFFENE.filter(function(x){ return nr && String(x.auftragsnummer||"").trim()===nr; })[0];
-      /* erfasst: Auftragsdatum bzw. Eingang der Störung – ein Datum nach dem Einsatz ergibt keine Dauer */
+      /* erfasst: Auftragsdatum bzw. Eingang der Störung – ein Datum nach dem Einsatz ergibt keine Dauer.
+         Es gilt das früheste: bei älteren Einträgen steht als „erfasst“ noch der Tag der letzten Änderung */
       var erfasst=[o&&o.erfasstAm, o&&o.auftragsdatum, so.auftragsdatum].filter(Boolean).map(function(d){ return String(d).slice(0,10); })
-        .filter(function(d){ return d<=p.datum; })[0]||null;
+        .filter(function(d){ return d<=p.datum; }).sort()[0]||null;
       var tage=erfasst ? Math.round((new Date(p.datum+"T12:00:00")-new Date(erfasst+"T12:00:00"))/864e5) : null;
       stoerProt.push({p:p, s:s, problem:so.problemtyp||(o&&o.problemtyp)||"", auftrag:nr, erfasst:erfasst, tage:tage, stunden:stundenVon(p)});
       return;
@@ -13095,6 +13400,10 @@ function kennzahlenSchreiben(){
 function kennzahlenJetzt(){
   if(Store.modus!=="supabase" || !Store.sb || !Store.benutzer || !Admin.frei || demo() || nurLesen()) return;
   if(!ST.length || (typeof protokolleGeladen!=="undefined" && !protokolleGeladen)) return;
+  /* Stammdaten unvollständig oder gerade am Laden (offene Störungen, Anlagendaten
+     fehlen): nichts schreiben – sonst meldete die Montag-Nachricht „0 offene
+     Störungen“. Nach dem nächsten vollständigen Laden kommt der Anlass wieder. */
+  if(!stammVollstaendig || !stammGeladenKomplett || stammLaedt) return;
   /* die Stunde gilt je Konto – und nur nach einem gelungenen Schreiben */
   var ich=Store.benutzer.id||Store.benutzer.email||"";
   if(kennzahlenVon===ich && Date.now()-kennzahlenZuletzt<3600e3) return;
@@ -13565,6 +13874,8 @@ function stammRueckgaengig(e){
     var keys=Object.keys(Object.assign({}, vF, nF)).filter(function(k){ return !gleich(vF[k], nF[k]); });
     if(vorher.typ==="stoerung" && !statusAenderung)
       keys=keys.filter(function(k){ return ["erledigt","protokollId","geloescht","geloeschtVon"].indexOf(k)<0; });
+    /* wann und von wem die Störung erfasst wurde, nimmt kein „Rückgängig“ zurück */
+    if(vorher.typ==="stoerung") keys=keys.filter(function(k){ return k!=="erfasstAm" && k!=="erfasstVon"; });
     keys=keys.filter(function(k){ return !gleich(jF[k], vF[k]); });   /* steht schon wieder so da */
     /* hat diese Änderung Zugangsdaten geändert (Passwort geändert, beim
        Zusammenführen den anderen Satz gewählt)? Die stehen nicht im Verlauf –
@@ -13951,7 +14262,7 @@ function archivKarte(){
        gälten vorhandene PDFs als fehlend. Ohne Unterschrift: die holt das
        PDF-Erzeugen je Protokoll selbst nach (ladeUnterschrift). */
     Promise.all([
-      alleSeiten(function(){ return Store.sb.from("protokolle").select(PROTOKOLL_SPALTEN+(rapportSpalte?",rapport":""))
+      alleSeiten(function(){ return Store.sb.from("protokolle").select(protokollSpalten())
         .is("geloescht",null).order("erstellt",{ascending:false}).order("id"); }, "client_id"),
       alleSeiten(function(){ return Store.sb.from("berichte").select("client_id,version").order("client_id"); }, "client_id")
     ]).then(function(r){
@@ -17373,10 +17684,11 @@ idbOeffnen()
   .then(ladeStammdaten)
   /* Benachrichtigungen, Team-Chat, Abrechnung – sobald ein Konto da ist (ein Fehler
      bei den Benachrichtigungen hält den Rest des Starts nicht auf) */
-  .then(function(){ try{ pushStart(); }catch(e){ console.warn("Benachrichtigungen", e); } chatStart(); })
+  .then(chatUndPushStarten)
   .then(adminPruefen)
   .then(function(){ storeNachRender(); flushQueue(); })
-  .catch(function(e){ Store.geraetFehler = e && e.message ? e.message : "Gerätespeicher nicht verfügbar"; storeNachRender(); });
+  /* Chat und Benachrichtigungen hängen nicht am Gerätespeicher – sie starten auch, wenn der sich nicht öffnen lässt */
+  .catch(function(e){ Store.geraetFehler = e && e.message ? e.message : "Gerätespeicher nicht verfügbar"; chatUndPushStarten(); storeNachRender(); });
 
 /* Kachelserver erreichbar? Innerhalb von Claude sind externe Bilder gesperrt,
    dort bleibt die gezeichnete Übersichtskarte. */

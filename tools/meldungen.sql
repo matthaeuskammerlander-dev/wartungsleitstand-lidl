@@ -1,6 +1,11 @@
 -- Meldungen in der App: jedes Konto darf die Push-Ereignisse lesen, die es
 -- betreffen (alle allgemeinen, die seiner Rolle, die persönlich an es).
--- Im Supabase SQL Editor einmal ausführen (nach tools/push.sql).
+-- Im Supabase SQL Editor einmal ausführen (nach tools/push.sql). Mehrfach
+-- ausführen schadet nicht.
+--
+-- Die Spalte nur_user legt sonst erst tools/chat-direkt.sql an – hier
+-- ebenfalls, damit die Reihenfolge der beiden Dateien keine Rolle spielt.
+alter table public.push_ereignisse add column if not exists nur_user uuid;
 drop policy if exists "meldungen lesen" on public.push_ereignisse;
 create policy "meldungen lesen" on public.push_ereignisse for select to authenticated
   using (public.darf_schreiben()

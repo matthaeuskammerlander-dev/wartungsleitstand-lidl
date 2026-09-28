@@ -16,6 +16,16 @@ self.addEventListener("push", function(e){
   }));
 });
 
+/* Der Browser hat das Abo dieses Geräts erneuert oder beendet: die Datenbank
+   kennt die neue Adresse noch nicht. Eintragen kann sie nur die angemeldete
+   App – einer offenen Bescheid geben; sonst gleicht sie beim nächsten Start
+   von selbst ab (pushAbgleich). */
+self.addEventListener("pushsubscriptionchange", function(e){
+  e.waitUntil(self.clients.matchAll({ type: "window", includeUncontrolled: true }).then(function(liste){
+    liste.forEach(function(c){ c.postMessage({ pushAbo: true }); });
+  }));
+});
+
 /* Antippen: offene App nach vorne holen und dorthin springen, sonst öffnen */
 self.addEventListener("notificationclick", function(e){
   e.notification.close();

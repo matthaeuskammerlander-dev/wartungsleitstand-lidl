@@ -750,7 +750,11 @@ davor aus `protokoll_fassungen` zurückgenommen – als neue Fassung, nichts
 wird gelöscht. Immer mit Grund, und selbst wieder ein Eintrag im Verlauf.
 Wurde seither nochmals geändert, sagt die App das vorher.
 
-Einmalig nötig: `tools/update-2026-09-26.sql` (Rapport-Spalte und `rueck`).
+Einmalig nötig: `tools/update-2026-09-26.sql` (Rapport-Spalte, `rueck` und –
+seit 28.09.2026 – die Spalte `kaeltemittel` der Protokolle; wer die Datei davor
+ausgeführt hat, führt sie noch einmal aus). Fehlt `kaeltemittel`, lädt die App
+ohne die Kältemittel-Angaben weiter und weist Admins darauf hin; ein Protokoll
+mit Kältemittel-Angabe bleibt bis dahin auf dem Gerät.
 
 ## Rapportbericht von Lidl
 
