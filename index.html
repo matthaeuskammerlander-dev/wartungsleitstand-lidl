@@ -543,7 +543,11 @@ var STAMM_FELDER_POS = ["anlagentyp","intervallCode","inbetriebnahme","monat","m
                         /* neu angelegte Anlage ist geprüft und KEIN Doppel einer alten Zeile */
                         "doppelGeprueft",
                         /* wann vor Ort bzw. über „Anlage anlegen“ neu angelegt (nicht beim geplanten Import) */
-                        "neuAngelegt"];
+                        "neuAngelegt",
+                        /* sehr kleine Anlage: nur die Jahreswartung, bewusst kein Halbjahrestermin (Büro 29.09.2026) */
+                        "nurJW",
+                        /* Inbetriebnahme und Termine vor Ort bestätigt: „Tag|Stand“ – gilt nur für genau diesen Stand (terminStand) */
+                        "termineGeprueft"];
 var ABGELEITET_POS   = ["kaeltemittelText","ueber30kg","baujahr"];
 function auswahl(o, felder){
   var r={}; felder.forEach(function(k){ r[k]=(o[k]===undefined?null:o[k]); }); return r;
@@ -749,7 +753,7 @@ var ANLAGE_DATEN_KEYS=null;
 function anlageDaten(p){
   var a=anlageVon(p), l=a.leader, r=Object.assign({}, l);
   if(!ANLAGE_DATEN_KEYS) ANLAGE_DATEN_KEYS=ANLAGE_FELDER.map(function(f){ return f.k; })
-    .concat(["anlagentyp","pausiertGrund","inbetriebnahme"]);   /* IB gehört der Anlage */
+    .concat(["anlagentyp","pausiertGrund","inbetriebnahme","nurJW","termineGeprueft"]);   /* IB gehört der Anlage */
   /* an der ersten Zeile ausdrücklich gesetzt – auch geleert: das gilt, kein
      Auffüllen aus einer anderen Zeile (sonst käme ein gelöschter Wert zurück) */
   var gesetzt=geaenderteFelder(l);
@@ -840,9 +844,16 @@ function inbetriebnahmeVon(p){
    Kältemittel) bzw. HJI. Ein eingetragener Soll-Monat bleibt, wenn er
    höchstens 3 Monate abweicht (der Halbjahrestermin zusätzlich nur, wenn er
    5 bis 7 Monate neben der JW liegt). termine: [{intervallCode, monat}] – höchstens
-   zwei, Reihenfolge bleibt; fehlende kommen hinten dazu (neu:true). */
+   zwei, Reihenfolge bleibt; fehlende kommen hinten dazu (neu:true).
+   kg "nurJW": sehr kleine Anlage, bewusst nur die Jahreswartung – es kommt
+   kein Halbjahrestermin dazu (Büro 29.09.2026; nur wählbar, solange die
+   Anlage höchstens einen Termin hat). */
 function standardRegel(ib, kg, termine){
   var mIb=+String(ib||"").slice(5,7); if(!mIb) return null;
+  if(kg==="nurJW"){
+    var e=(termine||[])[0], am=e ? +e.monat||0 : 0, ad=Math.abs(am-mIb);
+    return [e ? {code:"JW", monat:(am && Math.min(ad,12-ad)<=3) ? am : mIb} : {code:"JW", monat:mIb, neu:true}];
+  }
   /* kg null = Füllmenge unbekannt: Halbjahres-Kürzel offen lassen */
   var mH=((mIb+5)%12)+1, hjCode=kg===null?"":((+kg||0)>=30?"HJW":"HJI");
   var abst=function(x,y){ var d=Math.abs(x-y); return Math.min(d,12-d); };
@@ -870,8 +881,10 @@ function standardRegel(ib, kg, termine){
 }
 /* Füllmenge für die Standardregel: bekannt → so; sonst kurz nachfragen, ob
    die Anlage 30 kg oder mehr hat (HJW) oder weniger (HJI). „weiß nicht“ → null
-   (Kürzel bleibt offen), Abbrechen → undefined */
-function regelKgFragen(kg){
+   (Kürzel bleibt offen), Abbrechen → undefined.
+   mitNurJW: zusätzlich „Kein Halbjahrestermin – nur Jahreswartung“ anbieten
+   (sehr kleine Anlagen brauchen nur einen Besuch im Jahr) → "nurJW" */
+function regelKgFragen(kg, mitNurJW){
   kg=zahlLesen(kg);
   if(kg>0) return Promise.resolve(kg);
   return new Promise(function(fertig){
@@ -882,18 +895,22 @@ function regelKgFragen(kg){
       '<div class="muted" style="font-size:13px">Ab 30 kg ist der Halbjahrestermin eine Halbjahreswartung (HJW), darunter eine Halbjahresinspektion (HJI).</div>'+
       '<button class="btn" type="button" data-w="ja" style="text-align:left">Ja, 30 kg oder mehr → HJW</button>'+
       '<button class="btn" type="button" data-w="nein" style="text-align:left">Nein, weniger als 30 kg → HJI</button>'+
+      (mitNurJW?'<button class="btn ghost" type="button" data-w="nurjw" style="text-align:left">Kein Halbjahrestermin – nur Jahreswartung<br>'+
+        '<span style="font-size:12.5px;font-weight:400">sehr kleine Anlage, ein Besuch im Jahr genügt</span></button>':"")+
       '<button class="btn ghost" type="button" data-w="weiss" style="text-align:left">Weiß nicht – Kürzel offen lassen</button></div>');
     box.querySelector('[data-w="ja"]').onclick=function(){ ende(30); };
     box.querySelector('[data-w="nein"]').onclick=function(){ ende(0); };
     box.querySelector('[data-w="weiss"]').onclick=function(){ ende(null); };
+    if(mitNurJW) box.querySelector('[data-w="nurjw"]').onclick=function(){ ende("nurJW"); };
     v.inhalt.appendChild(box);
     box.closest(".assistent").querySelector('[data-a="zu"]').onclick=function(){ ende(undefined); };
   });
 }
 /* Text zur angewandten Regel */
-function regelText(r){
+function regelText(r, nurJW){
   return "Standardregel: "+r.map(function(x){ return (x.code||"Kürzel offen")+" "+MONATE_L[x.monat]; }).join(" · ")+
-    (r.some(function(x){ return !x.code; }) ? " – HJW oder HJI bitte noch wählen" : "");
+    (r.some(function(x){ return !x.code; }) ? " – HJW oder HJI bitte noch wählen" : "")+
+    (nurJW ? " – nur Jahreswartung, kein Halbjahrestermin" : "");
 }
 /* weitere Termine einer Anlage neu anlegen (aus der Standardregel im Dialog);
    rueck: Rückgängig-Puffer des Vorgangs (stammSpeichern) */
@@ -3927,6 +3944,47 @@ function termineStart(leader){
     return {id:t.id, intervallCode:t.intervallCode||"", monat:+t.monat||0, monatGrund:t.monatGrund||"", naechste:t.naechste||null};
   });
 }
+/* Inbetriebnahme und Termine einer gespeicherten Anlage, wie sie der
+   Termine-Schritt braucht (Anlagen-Dialog, geführtes Protokoll) */
+function termineWerte(leader){
+  var d=anlageDaten(leader);
+  return {inbetriebnahme:d.inbetriebnahme||null, _termine:termineStart(leader), _leaderId:leader.id,
+          nurJW:!!d.nurJW, termineGeprueft:d.termineGeprueft||""};
+}
+/* Stand von Inbetriebnahme und Terminen als kurzer Text: „geprüft“ gilt nur
+   für genau den Stand, den jemand bestätigt hat – ändert sich danach etwas,
+   wird wieder gefragt */
+function terminStand(a){
+  return [a.inbetriebnahme||"-"].concat((a._termine||[]).map(function(t){
+    return intervallArt(t.intervallCode).kurz+(+t.monat||0); }).sort()).join(";");
+}
+function termineBestaetigt(a){
+  var g=String(a.termineGeprueft||""), i=g.indexOf("|");
+  return i>0 && g.slice(i+1)===terminStand(a);
+}
+/* Was an Inbetriebnahme und Terminen einer Anlage nicht sauber ist – für die
+   Planung das Wichtigste. a wie im Anlagen-Dialog (inbetriebnahme, _termine,
+   termineGeprueft). Fehlendes (Inbetriebnahme, Soll-Monat, Kürzel) zählt
+   immer; eine Abweichung von der Standardregel ohne Begründung nur, solange
+   niemand die Termine so bestätigt hat (weich). Nur eine Frage an den
+   Menschen – an der Fälligkeit ändert das nichts. */
+function termineOffen(a){
+  var tl=a._termine||[], l=[];
+  if(!a.inbetriebnahme) l.push({k:"inbetriebnahme", l:"Inbetriebnahme"});
+  if(tl.some(function(t){ return !+t.monat; })) l.push({k:"monat", l:"Soll-Monat"});
+  if(tl.some(function(t){ return intervallArt(t.intervallCode).unklar; })) l.push({k:"intervallCode", l:"Kürzel des Termins"});
+  if(a.inbetriebnahme && !termineBestaetigt(a)){
+    var jw=tl.filter(function(t){ return intervallArt(t.intervallCode).kurz==="JW" && +t.monat; })[0];
+    var ab=tl.some(function(t){
+      if(!+t.monat || String(t.monatGrund||"").trim()) return false;
+      var halb=/^HJ/.test(intervallArt(t.intervallCode).kurz);
+      return !sollGeduldet(+t.monat, sollMonatVorschlag(a.inbetriebnahme, halb), halb, (jw && jw!==t) ? +jw.monat : 0);
+    });
+    if(ab) l.push({k:"abweichung", l:"Soll-Monat weicht von der Regel ab", weich:true});
+  }
+  return l;
+}
+function termineOffenVon(leader){ return termineOffen(termineWerte(leader)); }
 /* Was der Dialog an Inbetriebnahme und Terminen geändert hat – je Zeile
    die neuen Werte und die Einträge für den Änderungsverlauf. Die
    Inbetriebnahme gehört der Anlage und geht deshalb auf alle ihre Zeilen. */
@@ -4257,6 +4315,24 @@ function terminAenderungen(start, erg, name){
       log.push({feld:"notiz", name:name+" – Notiz", alt:nz||"–", neu:(nz?nz+" ":"")+erg._notizDazu});
     }
   }
+  /* „nur Jahreswartung“ (sehr kleine Anlage, kein Halbjahrestermin): die
+     Entscheidung steht mit Name im Änderungsverlauf, rücknehmbar in der Verwaltung */
+  if(lp && !!start.nurJW!==!!erg.nurJW){
+    proPos[lid]=Object.assign(proPos[lid]||{}, {nurJW:erg.nurJW?true:null});
+    log.push({feld:"nurJW", name:name+" – Halbjahrestermin", alt:start.nurJW?"keiner – nur Jahreswartung":"vorgesehen",
+      neu:erg.nurJW?"keiner – nur Jahreswartung":"vorgesehen"});
+  }
+  /* Termine bestätigt (Schritt „Termine“ mit „Weiter“ verlassen): eine
+     unbegründete Abweichung von der Standardregel gilt damit als gewollt – gefragt
+     wird erst wieder, wenn sich an Inbetriebnahme oder Terminen etwas ändert.
+     Fehlt noch etwas (Inbetriebnahme, Soll-Monat, Kürzel), gilt nichts als geprüft. */
+  if(lp && erg._termineOk){
+    var offenT=termineOffen(erg);
+    if(offenT.length && offenT.every(function(x){ return x.weich; })){
+      proPos[lid]=Object.assign(proPos[lid]||{}, {termineGeprueft:isoLokal(new Date())+"|"+terminStand(erg)});
+      log.push({feld:"termineGeprueft", name:name+" – Termine", alt:"nicht bestätigt", neu:"geprüft – gelten so"});
+    }
+  }
   erg._termine.forEach(function(t,i){
     /* per Standardregel dazugekommen: wird als eigener Termin angelegt */
     if(t._neu){ neu.push(t); log.push({feld:"intervallCode", name:name+" – neuer Termin", alt:"–", neu:(t.intervallCode||"?")+(+t.monat?" "+MONATE_L[+t.monat]:"")}); return; }
@@ -4335,9 +4411,8 @@ function anlageDatenErgaenzen(leader, vorlage, springe, ohneRegel, weiter){
   var konto=Store.benutzer ? Store.benutzer.id : null;
   var vorher=auswahl(leader, STAMM_FELDER_POS);
   var jetzt=anlageDaten(leader);
-  var start={anlagentyp:jetzt.anlagentyp, rueckkuehler:jetzt.rueckkuehler,
-             inbetriebnahme:jetzt.inbetriebnahme||null, _termine:termineStart(leader), _leaderId:leader.id, _kiVorlage:vorlage||null, _springe:springe||null,
-             _ohneRegel:!!ohneRegel};
+  var start=Object.assign({anlagentyp:jetzt.anlagentyp, rueckkuehler:jetzt.rueckkuehler}, termineWerte(leader),
+            {_kiVorlage:vorlage||null, _springe:springe||null, _ohneRegel:!!ohneRegel});
   ANLAGE_FELDER.forEach(function(f){ start[f.k]=(jetzt[f.k]===undefined?null:jetzt[f.k]); });
   /* true: alle Gruppen zeigen. Hier geht es ums Prüfen und Korrigieren,
      nicht nur ums Nachtragen fehlender Angaben. */
@@ -4883,6 +4958,123 @@ function anlageKurz(a){
   return t.join(" · ");
 }
 
+/* Termine prüfen: Inbetriebnahme der Anlage, je Termin Kürzel und
+   Soll-Monat. Dieselbe Regel wie in der Verwaltung – weicht der
+   Soll-Monat von der Inbetriebnahme ab, gilt er trotzdem, will aber
+   begründet sein.
+   Eigener Baustein: derselbe Schritt steht im Anlagen-Dialog und im geführten
+   Protokoll. a: {inbetriebnahme, _termine, kaeltemittelKg, nurJW, _ohneRegel} –
+   wird direkt geändert; gespeichert wird beim Aufrufer. */
+var KURZ_TEXT={JW:"Jahreswartung", HJW:"Halbjahreswartung", HJI:"Halbjahresinspektion"};
+function kuerzelNorm(k){ k=String(k||"").trim().toUpperCase(); return k==="HW"?"HJW":(k.indexOf("HI")===0?"HJI":k); }
+function terminRegelMonat(a, t){ var c=kuerzelNorm(t.intervallCode); return a.inbetriebnahme ? sollMonatVorschlag(a.inbetriebnahme, c==="HJW"||c==="HJI") : 0; }
+function termineSchritt(inhalt, a){
+  var normCode=kuerzelNorm;
+  var h='<div class="as-frage">Stimmen Inbetriebnahme und Termine?</div>'+
+    '<div class="as-feld"><div class="as-label">Inbetriebnahme der Anlage</div>'+
+      '<input type="date" data-ib max="'+isoLokal(new Date())+'" value="'+esc(a.inbetriebnahme||"")+'">'+
+      '<div class="as-hinweis">Gilt für alle Termine dieser Anlage. Daraus kommt der Tag im Monat.</div></div>';
+  a._termine.forEach(function(t,i){
+    var c=normCode(t.intervallCode);
+    h+='<div class="as-feld" data-ti="'+i+'"><div class="as-label">Termin '+(a._termine.length>1?(i+1):"")+
+        (t.naechste?' <span style="font-weight:400;text-transform:none;letter-spacing:0"> · nächster '+esc(dfmt(t.naechste))+"</span>":"")+"</div>"+
+      '<div class="chips">'+["JW","HJW","HJI"].map(function(k){
+        return '<button class="chip" type="button" data-code="'+k+'" aria-pressed="'+(c===k)+'">'+k+" · "+KURZ_TEXT[k]+"</button>"; }).join("")+"</div>"+
+      '<select data-monat style="margin-top:8px;width:100%"><option value="0">Soll-Monat – fehlt</option>'+
+        MONATE_L.slice(1).map(function(m,j){ return '<option value="'+(j+1)+'"'+(+t.monat===j+1?" selected":"")+">Soll-Monat "+m+"</option>"; }).join("")+
+      "</select>"+
+      '<div class="as-hinweis" data-regel></div>'+
+      '<input type="text" data-grund placeholder="Warum abweichend? z. B. passt besser in die Tour" value="'+esc(t.monatGrund||"")+'" hidden style="margin-top:6px">'+
+    "</div>";
+  });
+  /* sehr kleine Anlage: bewusst nur die Jahreswartung (in der Verwaltung rücknehmbar) */
+  if(a.nurJW && a._termine.length<2)
+    h+='<div class="note" style="font-size:12.5px"><strong>Nur Jahreswartung</strong> – für diese Anlage ist bewusst kein Halbjahrestermin vorgesehen '+
+      "(sehr kleine Anlage). Zurücknehmen geht in der Verwaltung.</div>";
+  h+=(a._ohneRegel
+    /* aus der Altlast-Karte: die zweite JW-Zeile der alten Liste kennt dieser
+       Dialog nicht – die Standardregel legte sonst einen dritten Termin an */
+    ? '<div class="note" style="font-size:12.5px">Nur die Inbetriebnahme eintragen – die App korrigiert danach beide Zeilen der alten Liste selbst.</div>'
+    : '<div class="as-feld"><button class="btn ghost sm" type="button" data-regelall>Standardregel anwenden</button>'+
+    '<div class="as-hinweis">JW im Monat der Inbetriebnahme, sechs Monate später HJW (ab 30 kg) bzw. HJI. '+
+    "Ein eingetragener Soll-Monat bleibt, wenn er höchstens 3 Monate abweicht – der Halbjahrestermin zusätzlich nur, wenn er 5–7 Monate von der JW entfernt liegt (sonst JW + 6). "+
+    (Admin.frei?"Fehlt der zweite Termin, kommt er dazu.":"Fehlt ein Termin, legt ihn das Büro in der Verwaltung an.")+"</div></div>")+
+    '<div class="muted" style="font-size:12.5px">Einen Termin streichen geht in der Verwaltung.</div>';
+  inhalt.innerHTML=h;
+  var regelK=inhalt.querySelector("[data-regelall]");
+  if(regelK) regelK.onclick=function(){
+    if(!a.inbetriebnahme){ toast("Zuerst die Inbetriebnahme eintragen – daraus kommen die Termine."); return; }
+    if(a._termine.length>2){ toast("Mehr als zwei Termine – bitte in der Verwaltung ordnen."); return; }
+    /* „nur Jahreswartung“ nur, solange die Anlage keinen zweiten Termin hat */
+    regelKgFragen(a.kaeltemittelKg, a._termine.length<2).then(function(kg){
+      if(kg===undefined) return;
+      var r=standardRegel(a.inbetriebnahme, kg, a._termine);
+      /* Neue Termine legen nur Admins an (README: Verwaltung) – Kürzel und
+         Soll-Monat ändern darf jeder. Fehlte die Jahreswartung ganz, bliebe
+         die Anlage ohne JW: dann gar nichts ändern. */
+      if(!Admin.frei && r.some(function(x){ return x.neu && x.code==="JW"; })){
+        toast("Die Standardregel bräuchte hier einen neuen Jahrestermin – den legt das Büro in der Verwaltung an."); return; }
+      var ohneNeu=false;
+      r.forEach(function(x,i){
+        var t=a._termine[i];
+        if(!t){ if(!Admin.frei){ ohneNeu=true; return; } t={id:null, _neu:true, monatGrund:""}; a._termine.push(t); }
+        t.intervallCode=x.code; t.monat=x.monat;
+      });
+      a.nurJW = kg==="nurJW";
+      termineSchritt(inhalt, a);
+      toast(ohneNeu ? regelText(r.filter(function(x){ return !x.neu; }))+" – der zweite Termin fehlt noch, bitte im Büro anlegen lassen."
+                    : regelText(r, a.nurJW));
+    });
+  };
+  var hinweise=function(){
+    inhalt.querySelectorAll("[data-ti]").forEach(function(box){
+      var t=a._termine[+box.dataset.ti], regel=terminRegelMonat(a, t), m=+t.monat||0;
+      var hin=box.querySelector("[data-regel]"), grund=box.querySelector("[data-grund]");
+      hin.innerHTML=""; grund.hidden=true;
+      if(!regel) return;
+      if(!m){
+        hin.innerHTML="Vorschlag aus der Inbetriebnahme: <strong>"+MONATE_L[regel]+'</strong> <button class="chip" type="button" data-nehmen>übernehmen</button>';
+      } else {
+        /* höchstens 3 Monate daneben (Halbjahrestermin 5–7 Monate neben der JW):
+           so behält ihn auch die Standardregel – kein Grund nötig. Auch genau
+           im Regelmonat zählt der Abstand zur JW. */
+        var c=normCode(t.intervallCode), jw=a._termine.filter(function(x){ return x!==t && normCode(x.intervallCode)==="JW" && +x.monat; })[0];
+        var halbT=(c==="HJW"||c==="HJI"), jwM=jw ? +jw.monat : 0;
+        if(sollGeduldet(m, regel, halbT, jwM)){
+          if(m!==regel)
+            hin.innerHTML="Aus der Inbetriebnahme käme <strong>"+MONATE_L[regel]+"</strong>. Eingetragen ist "+MONATE_L[m]+" – höchstens 3 Monate daneben, gilt nach der Regel.";
+        } else if(sollZuNahJW(m, regel, halbT, jwM)){
+          hin.innerHTML="Eingetragen ist "+MONATE_L[m]+" – "+esc(sollJwText(m, jwM))+". Der eingetragene Monat gilt.";
+          grund.hidden=false;
+        } else {
+          hin.innerHTML="Aus der Inbetriebnahme käme <strong>"+MONATE_L[regel]+"</strong>. Eingetragen ist "+MONATE_L[m]+" – das gilt.";
+          grund.hidden=false;
+        }
+      }
+      var n=hin.querySelector("[data-nehmen]");
+      if(n) n.onclick=function(){ t.monat=regel; box.querySelector("[data-monat]").value=String(regel); hinweise(); };
+    });
+  };
+  inhalt.querySelector("[data-ib]").onchange=function(){
+    var v=this.value;
+    if(v && v>isoLokal(new Date())){ toast("Die Inbetriebnahme kann nicht in der Zukunft liegen."); this.value=a.inbetriebnahme||""; return; }
+    a.inbetriebnahme=v||null; hinweise();
+  };
+  inhalt.querySelectorAll("[data-ti]").forEach(function(box){
+    var t=a._termine[+box.dataset.ti];
+    box.querySelectorAll("[data-code]").forEach(function(c){
+      c.onclick=function(){
+        t.intervallCode=c.dataset.code;
+        box.querySelectorAll("[data-code]").forEach(function(x){ x.setAttribute("aria-pressed", String(x===c)); });
+        hinweise();
+      };
+    });
+    box.querySelector("[data-monat]").onchange=function(){ t.monat=+this.value||0; hinweise(); };
+    box.querySelector("[data-grund]").oninput=function(){ t.monatGrund=this.value.trim(); };
+  });
+  hinweise();
+}
+
 /* Geführte Erfassung einer Anlage. Fragt nur die Gruppen ab, in denen etwas
    fehlt, und endet mit einer Übersicht, in der sich alles ändern lässt.
    Liefert die vollständigen Werte oder null (abgebrochen). */
@@ -4946,9 +5138,11 @@ function anlageAssistent(start, titel, neu, alles, vorgang){
     var alleGruppen=function(){
       return ANLAGE_GRUPPEN.filter(function(g){ return !g.wenn || g.wenn(a); });
     };
-    /* Termine als eigener Schritt: beim Prüfen immer, beim Ergänzen nur, wenn
-       dort etwas fehlt – sonst stehen sie in der Übersicht */
-    var termineZeigenNoetig=function(){ return !!a._termine && (alles || !a.inbetriebnahme || a._termine.some(function(t){ return !t.intervallCode || !+t.monat; })); };
+    /* Termine als eigener Schritt: beim Prüfen immer, beim Ergänzen, solange
+       dort etwas nicht sauber ist (Inbetriebnahme, Soll-Monat oder Kürzel fehlt,
+       unbestätigte Abweichung von der Standardregel) – sonst stehen sie in der Übersicht */
+    var termineZeigenNoetig=function(){ return !!a._termine && (alles || !a.inbetriebnahme || termineOffen(a).length>0 ||
+      a._termine.some(function(t){ return !t.intervallCode || !+t.monat; })); };
     var schritte=(neu?["name"]:[]).concat(alles?alleGruppen():gruppenMitLuecke()).concat(termineZeigenNoetig()?["termine"]:[]);
     var pos=0, zurUebersicht=false;
 
@@ -5105,6 +5299,9 @@ function anlageAssistent(start, titel, neu, alles, vorgang){
             });
             toast(Object.keys(wahl).length+" Angabe"+(Object.keys(wahl).length===1?"":"n")+" übernommen – bitte prüfen und dann „Übernehmen“.");
             uebersicht();
+            /* gehen Inbetriebnahme oder Termine aus dem Prüfbuch nicht hervor:
+               gleich danach fragen – für die Planung das Wichtigste */
+            if(art==="pruefbuch" && a._termine && termineOffen(a).some(function(x){ return !x.weich; })) termineEinzeln("Noch offen","Zur Übersicht");
           });
       }
     }
@@ -5155,111 +5352,17 @@ function anlageAssistent(start, titel, neu, alles, vorgang){
         } else zurueck();   /* nichts übernommen */
       });
     }
-    /* Termine prüfen: Inbetriebnahme der Anlage, je Termin Kürzel und
-       Soll-Monat. Dieselbe Regel wie in der Verwaltung – weicht der
-       Soll-Monat von der Inbetriebnahme ab, gilt er trotzdem, will aber
-       begründet sein. */
-    var normCode=function(k){ k=String(k||"").trim().toUpperCase(); return k==="HW"?"HJW":(k.indexOf("HI")===0?"HJI":k); };
-    var KURZ_TEXT={JW:"Jahreswartung", HJW:"Halbjahreswartung", HJI:"Halbjahresinspektion"};
-    function terminRegel(t){ var c=normCode(t.intervallCode); return a.inbetriebnahme ? sollMonatVorschlag(a.inbetriebnahme, c==="HJW"||c==="HJI") : 0; }
-    function termineZeigen(){
-      var h='<div class="as-frage">Stimmen Inbetriebnahme und Termine?</div>'+
-        '<div class="as-feld"><div class="as-label">Inbetriebnahme der Anlage</div>'+
-          '<input type="date" data-ib max="'+isoLokal(new Date())+'" value="'+esc(a.inbetriebnahme||"")+'">'+
-          '<div class="as-hinweis">Gilt für alle Termine dieser Anlage. Daraus kommt der Tag im Monat.</div></div>';
-      a._termine.forEach(function(t,i){
-        var c=normCode(t.intervallCode);
-        h+='<div class="as-feld" data-ti="'+i+'"><div class="as-label">Termin '+(a._termine.length>1?(i+1):"")+
-            (t.naechste?' <span style="font-weight:400;text-transform:none;letter-spacing:0"> · nächster '+esc(dfmt(t.naechste))+"</span>":"")+"</div>"+
-          '<div class="chips">'+["JW","HJW","HJI"].map(function(k){
-            return '<button class="chip" type="button" data-code="'+k+'" aria-pressed="'+(c===k)+'">'+k+" · "+KURZ_TEXT[k]+"</button>"; }).join("")+"</div>"+
-          '<select data-monat style="margin-top:8px;width:100%"><option value="0">Soll-Monat – fehlt</option>'+
-            MONATE_L.slice(1).map(function(m,j){ return '<option value="'+(j+1)+'"'+(+t.monat===j+1?" selected":"")+">Soll-Monat "+m+"</option>"; }).join("")+
-          "</select>"+
-          '<div class="as-hinweis" data-regel></div>'+
-          '<input type="text" data-grund placeholder="Warum abweichend? z. B. passt besser in die Tour" value="'+esc(t.monatGrund||"")+'" hidden style="margin-top:6px">'+
-        "</div>";
-      });
-      h+=(a._ohneRegel
-        /* aus der Altlast-Karte: die zweite JW-Zeile der alten Liste kennt dieser
-           Dialog nicht – die Standardregel legte sonst einen dritten Termin an */
-        ? '<div class="note" style="font-size:12.5px">Nur die Inbetriebnahme eintragen – die App korrigiert danach beide Zeilen der alten Liste selbst.</div>'
-        : '<div class="as-feld"><button class="btn ghost sm" type="button" data-regelall>Standardregel anwenden</button>'+
-        '<div class="as-hinweis">JW im Monat der Inbetriebnahme, sechs Monate später HJW (ab 30 kg) bzw. HJI. '+
-        "Ein eingetragener Soll-Monat bleibt, wenn er höchstens 3 Monate abweicht – der Halbjahrestermin zusätzlich nur, wenn er 5–7 Monate von der JW entfernt liegt (sonst JW + 6). "+
-        (Admin.frei?"Fehlt der zweite Termin, kommt er dazu.":"Fehlt ein Termin, legt ihn das Büro in der Verwaltung an.")+"</div></div>")+
-        '<div class="muted" style="font-size:12.5px">Einen Termin streichen geht in der Verwaltung.</div>';
-      inhalt.innerHTML=h;
-      var regelK=inhalt.querySelector("[data-regelall]");
-      if(regelK) regelK.onclick=function(){
-        if(!a.inbetriebnahme){ toast("Zuerst die Inbetriebnahme eintragen – daraus kommen die Termine."); return; }
-        if(a._termine.length>2){ toast("Mehr als zwei Termine – bitte in der Verwaltung ordnen."); return; }
-        regelKgFragen(a.kaeltemittelKg).then(function(kg){
-          if(kg===undefined) return;
-          var r=standardRegel(a.inbetriebnahme, kg, a._termine);
-          /* Neue Termine legen nur Admins an (README: Verwaltung) – Kürzel und
-             Soll-Monat ändern darf jeder. Fehlte die Jahreswartung ganz, bliebe
-             die Anlage ohne JW: dann gar nichts ändern. */
-          if(!Admin.frei && r.some(function(x){ return x.neu && x.code==="JW"; })){
-            toast("Die Standardregel bräuchte hier einen neuen Jahrestermin – den legt das Büro in der Verwaltung an."); return; }
-          var ohneNeu=false;
-          r.forEach(function(x,i){
-            var t=a._termine[i];
-            if(!t){ if(!Admin.frei){ ohneNeu=true; return; } t={id:null, _neu:true, monatGrund:""}; a._termine.push(t); }
-            t.intervallCode=x.code; t.monat=x.monat;
-          });
-          termineZeigen();
-          toast(ohneNeu ? regelText(r.filter(function(x){ return !x.neu; }))+" – der zweite Termin fehlt noch, bitte im Büro anlegen lassen."
-                        : regelText(r));
-        });
-      };
-      var hinweise=function(){
-        inhalt.querySelectorAll("[data-ti]").forEach(function(box){
-          var t=a._termine[+box.dataset.ti], regel=terminRegel(t), m=+t.monat||0;
-          var hin=box.querySelector("[data-regel]"), grund=box.querySelector("[data-grund]");
-          hin.innerHTML=""; grund.hidden=true;
-          if(!regel) return;
-          if(!m){
-            hin.innerHTML="Vorschlag aus der Inbetriebnahme: <strong>"+MONATE_L[regel]+'</strong> <button class="chip" type="button" data-nehmen>übernehmen</button>';
-          } else {
-            /* höchstens 3 Monate daneben (Halbjahrestermin 5–7 Monate neben der JW):
-               so behält ihn auch die Standardregel – kein Grund nötig. Auch genau
-               im Regelmonat zählt der Abstand zur JW. */
-            var c=normCode(t.intervallCode), jw=a._termine.filter(function(x){ return x!==t && normCode(x.intervallCode)==="JW" && +x.monat; })[0];
-            var halbT=(c==="HJW"||c==="HJI"), jwM=jw ? +jw.monat : 0;
-            if(sollGeduldet(m, regel, halbT, jwM)){
-              if(m!==regel)
-                hin.innerHTML="Aus der Inbetriebnahme käme <strong>"+MONATE_L[regel]+"</strong>. Eingetragen ist "+MONATE_L[m]+" – höchstens 3 Monate daneben, gilt nach der Regel.";
-            } else if(sollZuNahJW(m, regel, halbT, jwM)){
-              hin.innerHTML="Eingetragen ist "+MONATE_L[m]+" – "+esc(sollJwText(m, jwM))+". Der eingetragene Monat gilt.";
-              grund.hidden=false;
-            } else {
-              hin.innerHTML="Aus der Inbetriebnahme käme <strong>"+MONATE_L[regel]+"</strong>. Eingetragen ist "+MONATE_L[m]+" – das gilt.";
-              grund.hidden=false;
-            }
-          }
-          var n=hin.querySelector("[data-nehmen]");
-          if(n) n.onclick=function(){ t.monat=regel; box.querySelector("[data-monat]").value=String(regel); hinweise(); };
-        });
-      };
-      inhalt.querySelector("[data-ib]").onchange=function(){
-        var v=this.value;
-        if(v && v>isoLokal(new Date())){ toast("Die Inbetriebnahme kann nicht in der Zukunft liegen."); this.value=a.inbetriebnahme||""; return; }
-        a.inbetriebnahme=v||null; hinweise();
-      };
-      inhalt.querySelectorAll("[data-ti]").forEach(function(box){
-        var t=a._termine[+box.dataset.ti];
-        box.querySelectorAll("[data-code]").forEach(function(c){
-          c.onclick=function(){
-            t.intervallCode=c.dataset.code;
-            box.querySelectorAll("[data-code]").forEach(function(x){ x.setAttribute("aria-pressed", String(x===c)); });
-            hinweise();
-          };
-        });
-        box.querySelector("[data-monat]").onchange=function(){ t.monat=+this.value||0; hinweise(); };
-        box.querySelector("[data-grund]").oninput=function(){ t.monatGrund=this.value.trim(); };
-      });
-      hinweise();
+    /* Termine prüfen: der Schritt selbst steht in termineSchritt (derselbe
+       wie im geführten Protokoll) */
+    var normCode=kuerzelNorm;
+    function terminRegel(t){ return terminRegelMonat(a, t); }
+    function termineZeigen(){ termineSchritt(inhalt, a); }
+    /* Termine außerhalb der Schrittfolge zeigen (aus der Übersicht, als Sprung,
+       nach einer KI-Übernahme); wer von dort weitergeht, hat sie bestätigt */
+    function termineEinzeln(kopfText, knopfText){
+      fuss.innerHTML=""; kopf(kopfText,"Termine"); termineZeigen();
+      knopf(knopfText,"",function(){ a._termineOk=true; uebersicht(); });
+      inhalt.scrollTop=0;
     }
 
     var kopf=function(text, schritt){
@@ -5414,6 +5517,7 @@ function anlageAssistent(start, titel, neu, alles, vorgang){
         /* eine nicht lesbare Zahl nicht still durch den alten Wert ersetzen */
         var unlesbar=inhalt.querySelector('[aria-invalid="true"]');
         if(unlesbar){ toast("„"+unlesbar.value.trim()+"“ ist keine lesbare Zahl – bitte korrigieren (z. B. 12,5)."); unlesbar.focus(); return; }
+        if(s==="termine") a._termineOk=true;   /* mit „Weiter“ verlassen = bestätigt (Überspringen nicht) */
         weiter();
       });
       inhalt.scrollTop=0;
@@ -5457,11 +5561,7 @@ function anlageAssistent(start, titel, neu, alles, vorgang){
           }).join("")+"</div>" : "");
       inhalt.querySelectorAll("[data-g]").forEach(function(b){
         b.onclick=function(){
-          if(b.dataset.g==="termine"){
-            fuss.innerHTML=""; kopf("Ändern","Termine"); termineZeigen();
-            knopf("Zurück zur Übersicht","",uebersicht);
-            return;
-          }
+          if(b.dataset.g==="termine"){ termineEinzeln("Ändern","Zurück zur Übersicht"); return; }
           var g=ANLAGE_GRUPPEN[+b.dataset.g];
           fuss.innerHTML=""; kopf("Ändern", g.titel); gruppeZeigen(g);
           knopf("Zurück zur Übersicht","",uebersicht);
@@ -5483,7 +5583,7 @@ function anlageAssistent(start, titel, neu, alles, vorgang){
           return !String(t.intervallCode||"").trim() && (t._neu || String(((start._termine||[])[i]||{}).intervallCode||"").trim()); });
         if(ohne.length){
           toast("Bitte bei den Terminen JW, HJW oder HJI wählen – ohne Kürzel ist unklar, welche Wartung fällig ist.");
-          fuss.innerHTML=""; kopf("Ändern","Termine"); termineZeigen(); knopf("Zurück zur Übersicht","",uebersicht);
+          termineEinzeln("Ändern","Zurück zur Übersicht");
           return;
         }
         schliessen(a);
@@ -5500,6 +5600,8 @@ function anlageAssistent(start, titel, neu, alles, vorgang){
       else { pos=Math.max(0, Math.min(+fortsetzen.ort.pos||0, schritte.length-1)); schrittZeigen(); }
       setTimeout(function(){ kiArt(fortsetzen.art, fortsetzen.geraet, null, fortsetzen); }, 50);
     }
+    /* Inbetriebnahme, Soll-Monat oder Kürzel fehlt: gleich zum Termine-Schritt */
+    else if(start._springe==="termine" && a._termine){ uebersicht(); termineEinzeln("Ergänzen","Zur Übersicht"); }
     else if(sprung){
       uebersicht(); fuss.innerHTML=""; kopf("Ergänzen", sprung.titel); gruppeZeigen(sprung);
       knopf("Zur Übersicht","",uebersicht);
@@ -9773,11 +9875,25 @@ function protokollAssistent(form, stoer){
       var b=k.querySelector(".chip");
       b.onclick=function(){ cb.checked=!cb.checked; cb.dispatchEvent(new Event("change",{bubbles:true}));
         b.setAttribute("aria-pressed",String(cb.checked)); b.textContent=cb.checked?(stoer?"betroffen":"gewartet"):"nicht dabei"; };
-      if(slot){
-        var s2=el('<select style="width:100%;font-size:13px"></select>');
-        s2.innerHTML=slot.innerHTML; s2.value=slot.value;
-        s2.onchange=function(){ slot.value=s2.value; slot.dispatchEvent(new Event("change")); };
-        k.appendChild(feldRahmen("zählt als", s2));
+      /* Wartung: bei jeder Anlage zeigen, WELCHER Termin gewartet wird (Kürzel
+         und Datum des Termins) – bei zwei Terminen zum Wählen. Die Störung
+         zählt für keinen Termin. */
+      if(!stoer){
+        var ts=(slot ? [].map.call(slot.options, function(o){ return posById[o.value]; }) : [posById[cb.value]]).filter(Boolean);
+        var kurzT=function(t){ return (t.intervall||intervallArt(t.intervallCode)).kurz+" · "+
+          (t.naechste ? dfmt(t.naechste) : (+t.monat ? MONATE_L[+t.monat] : "ohne Termin")); };
+        var langT=function(t){ return (t.intervall||intervallArt(t.intervallCode)).art+
+          (t.naechste ? " – Termin "+dfmt(t.naechste)+" ("+wannText(t).zusatz+")" : " – noch ohne Termin"); };
+        if(ts.length){
+          var lang=el('<div class="muted" style="font-size:12.5px;margin-top:4px"></div>');
+          var zeigeLang=function(id){ var t=ts.filter(function(x){ return x.id===id; })[0]||ts[0]; lang.textContent=langT(t); };
+          var fr=feldRahmen("zählt als", ts.length>1
+            ? chips(ts.map(function(t){ return [t.id, kurzT(t)]; }), slot.value, function(v){
+                slot.value=v; slot.dispatchEvent(new Event("change")); formDirty=true; zeigeLang(v); })
+            : el('<div style="font-size:14px"><strong>'+esc(kurzT(ts[0]))+"</strong></div>"));
+          fr.appendChild(lang); zeigeLang(slot ? slot.value : ts[0].id);
+          k.appendChild(fr);
+        }
       }
       box.appendChild(k);
     });
@@ -9837,6 +9953,91 @@ function protokollAssistent(form, stoer){
     });
     inhalt.appendChild(el('<div class="muted" style="font-size:12.5px">Was hier ergänzt wird, steht mit dem Speichern in den Anlagendaten – für alle sichtbar.</div>'));
   }});
+
+  /* ---- Termine je Anlage ----
+     Inbetriebnahme und Soll-Monate sind für die Planung das Wichtigste. Wer
+     vor Ort ist, kann sie am ehesten nachsehen (Typenschild, Prüfbuch) – bei
+     Wartung UND Störung. Je Anlage ein eigener Schritt, derselbe wie im
+     Anlagen-Dialog (termineSchritt), mit „Überspringen“:
+       – angehakte Anlagen, solange ihre Daten nicht sauber sind (termineOffen:
+         Fehlendes und unbestätigte Abweichung von der Standardregel),
+       – die ANDEREN Anlagen des Markts, wenn Inbetriebnahme, Soll-Monat oder
+         Kürzel fehlen,
+       – vor Ort neu erfasste Anlagen, wenn dasselbe fehlt.
+     Gespeichert wird gleich (Termine sind Stammdaten), mit Eintrag „Termine
+     beim Protokoll geprüft“ im Änderungsverlauf. */
+  var terminMerker={};   /* Anlage → angefangene Eingaben, solange der Dialog offen ist */
+  function terminSchritte(){
+    var l=[], st=byId[f("#f_standort").value];
+    if(!st || nurLesen() || !form._termineStart) return l;
+    var dabei=[];
+    form.querySelectorAll('input[name="posw"]:checked').forEach(function(cb){ var p=posById[cb.value]; if(p) dabei.push(anlageVon(p).id); });
+    var hart=function(x){ return !x.weich; };
+    anlagenDesMarkts(st, true).forEach(function(an){
+      var an0=dabei.indexOf(an.id)>=0;
+      /* zur Zeit nicht gewartet bzw. Markt nicht betreut: keine Termine – nur, wenn angehakt */
+      if(!an0 && (anlagePausiert(an.leader) || marktPausiert(st))) return;
+      var offen=termineOffenVon(an.leader).filter(function(x){ return an0 || hart(x); });
+      if(!offen.length) return;
+      var lid=an.leader.id, name=anlagenName(anlageDaten(an.leader));
+      var z=terminMerker[lid]=terminMerker[lid]||{};
+      l.push({titel:"Termine · "+name, termine:true, zeigen:function(){
+        var ld=posById[lid]; if(!ld){ inhalt.innerHTML='<div class="muted">Die Anlage ist nicht mehr geladen.</div>'; return; }
+        if(!z.a){ z.start=form._termineStart(ld); z.a=JSON.parse(JSON.stringify(z.start)); }
+        var jetzt=termineOffen(z.a).filter(function(x){ return an0 || hart(x); });
+        inhalt.innerHTML='<div class="note" style="font-size:13px"><strong>'+esc(name)+"</strong> – "+
+          (an0 ? (stoer?"betroffene Anlage":"heute gewartet") : "andere Anlage dieses Markts")+"."+
+          (jetzt.length ? " Noch offen: <strong>"+esc(jetzt.map(function(x){ return x.l; }).join(", "))+"</strong>." : "")+
+          " Wer es vor Ort nachsehen kann (Typenschild, Prüfbuch), trägt es hier ein – sonst „Überspringen“.</div>";
+        var host=el("<div></div>"); inhalt.appendChild(host);
+        termineSchritt(host, z.a);
+      }, speichern:function(){
+        var ld=posById[lid]; if(!ld || !z.a) return Promise.resolve(null);
+        /* wie im Anlagen-Dialog: ein neuer oder bisher gesetzter Termin nicht ohne Kürzel */
+        if(z.a._termine.some(function(t,i){
+            return !String(t.intervallCode||"").trim() && (t._neu || String(((z.start._termine||[])[i]||{}).intervallCode||"").trim()); })){
+          toast("Bitte bei den Terminen JW, HJW oder HJI wählen – ohne Kürzel ist unklar, welche Wartung fällig ist.");
+          return Promise.resolve(false);
+        }
+        var erg=Object.assign({}, z.a, {_termineOk:true});
+        return form._termineSpeichern(ld, z.start, erg, name).then(function(r){
+          if(r===false) return false;
+          var rest=termineOffen(erg).filter(hart);
+          if(rest.length) toast("Noch offen: "+rest.map(function(x){ return x.l; }).join(", ")+" – beim nächsten Besuch wird wieder gefragt.");
+          z.a=null; z.start=null;   /* beim Zurückgehen: der gespeicherte Stand */
+          return r;
+        });
+      }});
+    });
+    /* vor Ort neu erfasst: die Angaben gehen mit dem Protokoll in die Anlagendaten */
+    (form._neueAnlagen ? form._neueAnlagen() : []).forEach(function(n){
+      var w=n.werte||{};
+      if(!termineOffen({inbetriebnahme:w.inbetriebnahme||null, _termine:w._termine||[]}).some(hart)) return;
+      var name=w.anlagentyp||"Neue Anlage", z=terminMerker[n.id]=terminMerker[n.id]||{};
+      l.push({titel:"Termine · "+name, termine:true, zeigen:function(){
+        if(!z.a) z.a=JSON.parse(JSON.stringify({inbetriebnahme:n.werte.inbetriebnahme||null, _termine:n.werte._termine||[{id:"NEU", intervallCode:"JW", monat:0}],
+          kaeltemittelKg:n.werte.kaeltemittelKg, nurJW:!!n.werte.nurJW}));
+        inhalt.innerHTML='<div class="note" style="font-size:13px"><strong>'+esc(name)+"</strong> – vor Ort neu erfasst. "+
+          "Inbetriebnahme und Termine bitte gleich eintragen (Typenschild, Prüfbuch) – sonst „Überspringen“.</div>";
+        var host=el("<div></div>"); inhalt.appendChild(host);
+        termineSchritt(host, z.a);
+      }, speichern:function(){
+        if(!z.a) return Promise.resolve(null);
+        n.werte.inbetriebnahme=z.a.inbetriebnahme||null; n.werte._termine=z.a._termine;
+        if(z.a.nurJW) n.werte.nurJW=true; else delete n.werte.nurJW;
+        formDirty=true; z.a=null;
+        return Promise.resolve(true);
+      }});
+    });
+    return l;
+  }
+  /* die Termine-Schritte stehen gleich nach den Anlagendaten; neu bestimmt
+     wird, sobald die Auswahl der Anlagen bzw. ihre Daten feststehen */
+  function termineEinreihen(){
+    schritte=schritte.filter(function(s){ return !s.termine; });
+    var nach=schritte.map(function(s){ return s.titel; }).indexOf("Anlagendaten");
+    schritte.splice.apply(schritte, [nach+1, 0].concat(terminSchritte()));
+  }
 
   if(stoer) schritte.push({titel:"Störungsauftrag", zeigen:function(){
     inhalt.innerHTML=frage("Lidl-Auftrag übernehmen");
@@ -9920,16 +10121,24 @@ function protokollAssistent(form, stoer){
     inhalt.appendChild(feldRahmen("Anlage betriebsbereit",
       chips([["ja","ja"],["eingeschränkt","eingeschränkt"],["nein","nein"]], br?br.value:"ja", function(v){
         var r=form.querySelector('input[name="bereit"][value="'+v+'"]'); if(r){ r.checked=true; formDirty=true; }
+        /* Widersprüche wie im Formular: die spätere Wahl gilt (ergebnisAbgleich) */
+        if(r && form._ergebnisAbgleich){ form._ergebnisAbgleich(r); if(!stoer) schritte[pos].zeigen(); }
       })));
     inhalt.appendChild(textFeld("Sofortmaßnahme","#f_sofort",false,"leer = keine"));
     if(!stoer){
       var box=el('<div class="chips"></div>');
       form.querySelectorAll('input[name="ergebnis"]').forEach(function(cb){
-        var b=el('<button class="chip" type="button" aria-pressed="'+cb.checked+'">'+esc(cb.nextElementSibling.textContent)+"</button>");
-        b.onclick=function(){ cb.checked=!cb.checked; formDirty=true; b.setAttribute("aria-pressed",String(cb.checked)); };
+        var b=el('<button class="chip" type="button" aria-pressed="'+cb.checked+'"'+(cb.disabled?' disabled style="opacity:.5"':"")+">"+esc(cb.nextElementSibling.textContent)+"</button>");
+        b.onclick=function(){
+          cb.checked=!cb.checked; formDirty=true;
+          if(form._ergebnisAbgleich) form._ergebnisAbgleich(cb);
+          schritte[pos].zeigen();   /* abgewählte bzw. gesperrte Aussagen gleich zeigen */
+        };
         box.appendChild(b);
       });
-      inhalt.appendChild(feldRahmen("Ergebnis", box));
+      var ergF=feldRahmen("Ergebnis", box), ergH=form.querySelector("#f_erghinweis");
+      if(ergH && !ergH.hidden) ergF.appendChild(el('<div class="muted" style="font-size:12.5px;margin-top:6px">'+esc(ergH.textContent)+"</div>"));
+      inhalt.appendChild(ergF);
     }
     inhalt.appendChild(textFeld("Bemerkungen","#f_bem",true));
   }});
@@ -10019,11 +10228,14 @@ function protokollAssistent(form, stoer){
        einen Schritt mehr); „Datum“ hat keinen: zurück ins Formular zum Feld */
     var zeile=function(k,v,schritt){ return '<div class="as-zeile" role="button" tabindex="0" style="cursor:pointer" data-schritt="'+esc(schritt)+'" title="Ändern">'+
       "<span>"+esc(k)+"</span><strong>"+esc(v||"–")+' <span class="muted" aria-hidden="true">›</span></strong></div>'; };
+    /* Anlagen, bei denen Inbetriebnahme bzw. Termine noch offen sind (übersprungen) */
+    var termOffen=terminSchritte().filter(function(x){ return schritte.some(function(y){ return y.titel===x.titel; }); });
     inhalt.innerHTML=frage("Passt so?")+
       '<div class="as-gruppe">'+
         zeile("Markt", st?stName(st):"–", "Markt")+
         zeile("Datum", dfmt(wert("#f_datum")), "#f_datum")+
         zeile(stoer?"Betroffen":"Gewartet", anlagen.join(", "), stoer?"Betroffene Anlagen":"Gewartete Anlagen")+
+        (termOffen.length?zeile("Inbetriebnahme / Termine", "noch offen bei "+termOffen.length+" Anlage"+(termOffen.length===1?"":"n"), termOffen[0].titel):"")+
         (stoer?zeile("Maßnahmen", wert("#s_massnahmen").slice(0,60), "Störungsbehebung"):zeile("Arbeiten", arbeiten+" angehakt", "Arbeiten"))+
         zeile("Mängel", maengel?maengel+" eingetragen":"keine", "Mängel")+
         zeile("Betriebsbereit", (form.querySelector('input[name="bereit"]:checked')||{}).value||"–", "Ergebnis")+
@@ -10060,6 +10272,17 @@ function protokollAssistent(form, stoer){
         zu();
         var b=form.querySelector("#save"); b.scrollIntoView({block:"center"}); b.click();
       });
+    } else if(s.termine){
+      /* Termine einer Anlage: überspringen (nichts gespeichert, beim nächsten
+         Besuch wird wieder gefragt) oder bestätigen (gleich gespeichert) */
+      knopf("Überspringen","ghost",function(){ if(pos<schritte.length-1){ pos++; zeige(); } });
+      var ok=knopf("Stimmt – weiter","",function(){
+        ok.disabled=true;
+        s.speichern().then(function(r){
+          ok.disabled=false;
+          if(r!==false && schritte[pos]===s && pos<schritte.length-1){ pos++; zeige(); }
+        }, function(){ ok.disabled=false; toast("Termine nicht gespeichert – bitte nochmals versuchen."); });
+      });
     } else {
       knopf("Weiter","",function(){ weiter(); });
     }
@@ -10080,8 +10303,12 @@ function protokollAssistent(form, stoer){
       inhalt.appendChild(n); n.scrollIntoView({block:"nearest"});
       toast(m); return;
     } }
+    /* die Anlagen stehen fest bzw. ihre Daten sind geprüft: jetzt entscheidet
+       sich, für welche Anlagen nach Inbetriebnahme und Terminen gefragt wird */
+    if(pos<=schritte.map(function(x){ return x.titel; }).indexOf("Anlagendaten")) termineEinreihen();
     if(pos<schritte.length-1){ pos++; zeige(); }
   }
+  termineEinreihen();
   zeige();
 }
 function viewProtokoll(){
@@ -10228,7 +10455,8 @@ function viewProtokoll(){
 
   '<fieldset><legend>'+(stoer?"Bemerkungen":"Ergebnis und Bemerkungen")+'</legend><div class="checks"'+(stoer?" hidden":"")+">"+
     ERGEBNISSE.map(function(a,i){ return '<label class="chk"><input type="checkbox" value="'+esc(a)+'" id="f_erg'+i+'" name="ergebnis"><span>'+esc(a)+"</span></label>"; }).join("")+
-  '</div><label class="fl" style="margin-top:10px"><span>Bemerkungen</span><textarea id="f_bem" rows="3"></textarea></label>'+
+  '</div><div class="muted" id="f_erghinweis" hidden style="font-size:12.5px;margin-top:6px"></div>'+
+  '<label class="fl" style="margin-top:10px"><span>Bemerkungen</span><textarea id="f_bem" rows="3"></textarea></label>'+
   /* Kältemittel bei der Wartung (Störungsprotokoll hat eigene Felder) – für die Kältemittel-Bilanz */
   (stoer?"":'<div class="rowflex" style="gap:8px;margin-top:10px;align-items:flex-end;flex-wrap:wrap">'+
     '<label class="fl"><span>Kältemittel</span><input id="f_kmArt" type="text" placeholder="z. B. R410A" style="width:110px"></label>'+
@@ -10448,6 +10676,44 @@ function viewProtokoll(){
     var r=[]; angehakt().forEach(function(id){ var p=posById[id]; if(!p) return; var l=anlageLeader(p); if(r.indexOf(l)<0) r.push(l); });
     return r;
   }
+  /* Termine sind Stammdaten, nicht Teil des Protokolls: sie gehen gleich raus,
+     mit eigenem Eintrag im Änderungsverlauf („Termine beim Protokoll geprüft“) –
+     aus dem Anlagen-Dialog wie aus dem Termine-Schritt des geführten Protokolls.
+     Liefert true (gespeichert), false (nicht gespeichert) oder null (nichts geändert). */
+  function termineSpeichern(p0, start, erg, name){
+    /* Kunde und Präsentation speichern nichts – die Präsentation zeigt es nur
+       bis zum Neuladen (stammSpeichern) */
+    if(nurLesen()) return Promise.resolve(false);
+    var ta=terminAenderungen(start, erg, name), rueckT={};
+    if(!ta.log.length) return Promise.resolve(null);
+    return positionenSchreiben(ta.proPos, "Termine beim Protokoll geprüft", rueckT).then(function(wo){
+      if(wo===false || !(ta.neu&&ta.neu.length)) return wo;
+      return termineNeuAnlegen(p0.standortId, p0.anlageId||p0.id, ta.neu, "Termin nach Standardregel angelegt", rueckT, true).then(function(ok){ return ok===false?false:wo; });
+    }).then(function(wo){
+      if(wo===false){ toast("Termine nicht gespeichert – bitte später nochmals prüfen."); return false; }
+      protokolliere({art:"stammdaten", standortId:p0.standortId, standortName:stName(byId[p0.standortId]||{}),
+        grund:"Termine beim Protokoll geprüft", felder:ta.log, rueck:rueckT});
+      toast(wo==="geraet" ? "Termine auf dem Gerät gespeichert – gehen raus, sobald Verbindung besteht." : "Termine gespeichert.");
+      /* Kürzel oder Termine haben sich geändert (etwa per Standardregel): die
+         Auswahl oben mit den neuen Terminen aufbauen – sonst zeigte sie die
+         alten, und gespeichert würde eine andere Art als angezeigt.
+         Angehakte Anlagen bleiben angehakt, „zählt als“ bleibt, wo der Termin noch da ist. */
+      if(selSt.value===p0.standortId){
+        var an=angehakteAnlagen().map(function(l){ return anlageVon(l).id; }), gewaehlt=angehakt();
+        fillPos(null);
+        posBox.querySelectorAll('input[name="posw"]').forEach(function(x){
+          x.checked=an.indexOf(x.dataset.anlage)>=0;
+          var sl=x.closest("label").querySelector(".posslot");
+          if(sl && x.checked) Array.prototype.forEach.call(sl.options, function(o){ if(gewaehlt.indexOf(o.value)>=0){ sl.value=o.value; x.value=o.value; } });
+        });
+        anlagenZeichnen();
+      }
+      return true;
+    });
+  }
+  /* für den Schritt-für-Schritt-Dialog: Ausgangswerte des Termine-Schritts und das Speichern */
+  form._termineStart=function(leader){ return Object.assign({kaeltemittelKg:anlageWerte(leader).kaeltemittelKg}, termineWerte(leader)); };
+  form._termineSpeichern=termineSpeichern;
   function anlagenKarte(id, name, w, neu){
     var l=anlageLuecken(w), markiert=neu||!!anlagenAend[id];
     var k=el('<div class="akarte">'+
@@ -10473,7 +10739,7 @@ function viewProtokoll(){
     k.querySelector('[data-a="los"]').onclick=function(ev, springe, weiter){
       /* bei einer bekannten Anlage auch die Termine zum Prüfen dazu */
       var p0=neu?null:posById[id];
-      var start=p0 ? Object.assign({}, w, {inbetriebnahme:anlageDaten(p0).inbetriebnahme||null, _termine:termineStart(p0), _leaderId:p0.id}) : Object.assign({}, w);
+      var start=p0 ? Object.assign({}, w, termineWerte(p0)) : Object.assign({}, w);
       start._springe=springe||null;
       /* Wechsel in die Claude-App: neues Protokoll (Entwurf) wie Korrektur (ihr eigener Entwurf) lassen sich fortsetzen */
       anlageAssistent(start, name, neu, false, {ort:{aufruf:"protokoll", karte:id, korrektur:bearb?bearb._id:null}, weiter:weiter||null}).then(function(erg){
@@ -10482,28 +10748,9 @@ function viewProtokoll(){
         /* Termine sind Stammdaten, nicht Teil des Protokolls: sie gehen
            gleich raus, mit eigenem Eintrag im Änderungsverlauf */
         if(p0){
-          var ta=terminAenderungen(start, erg, name), rueckT={};
-          if(ta.log.length) positionenSchreiben(ta.proPos, "Termine beim Protokoll geprüft", rueckT).then(function(wo){
-            if(wo===false || !(ta.neu&&ta.neu.length)) return wo;
-            return termineNeuAnlegen(p0.standortId, p0.anlageId||p0.id, ta.neu, "Termin nach Standardregel angelegt", rueckT, true).then(function(ok){ return ok===false?false:wo; });
-          }).then(function(wo){
-            if(wo===undefined) return;
-            if(wo===false){ toast("Termine nicht gespeichert – bitte später nochmals prüfen."); return; }
-            protokolliere({art:"stammdaten", standortId:p0.standortId, standortName:stName(byId[p0.standortId]||{}),
-              grund:"Termine beim Protokoll geprüft", felder:ta.log, rueck:rueckT});
-            toast(wo==="geraet" ? "Termine auf dem Gerät gespeichert – gehen raus, sobald Verbindung besteht." : "Termine gespeichert.");
-            /* Kürzel oder Termine haben sich geändert (etwa per Standardregel): die
-               Auswahl oben mit den neuen Terminen aufbauen – sonst zeigte sie die
-               alten, und gespeichert würde eine andere Art als angezeigt.
-               Angehakte Anlagen bleiben angehakt. */
-            if(selSt.value===p0.standortId){
-              var an=angehakteAnlagen().map(function(l){ return anlageVon(l).id; });
-              fillPos(null);
-              posBox.querySelectorAll('input[name="posw"]').forEach(function(x){ x.checked=an.indexOf(x.dataset.anlage)>=0; });
-              anlagenZeichnen();
-            }
-          });
+          termineSpeichern(p0, start, erg, name);
           erg=Object.assign({}, erg); delete erg._termine; delete erg.inbetriebnahme; delete erg._nachweiseNeu; delete erg._notizDazu; delete erg._leaderId;
+          delete erg.nurJW; delete erg.termineGeprueft; delete erg._termineOk;
         }
         if(neu){ neueAnlagen.forEach(function(n){ if(n.id===id) n.werte=erg; }); }
         else {
@@ -10655,9 +10902,45 @@ function viewProtokoll(){
       cb.checked = cb.value===ERGEBNISSE[0] || /§ 23 KAV/.test(cb.value);
     });
     var ja=form.querySelector("#f_bereit0"); if(ja) ja.checked=true;
+    ergebnisSperre();
     formDirty=true; form.dispatchEvent(new Event("change"));
     toast("Angehakt: alle Arbeiten, ohne Beanstandung, keine Bedenken (§ 23 KAV), betriebsbereit – bitte kurz prüfen.");
   };
+  /* ---- Ergebnis: Aussagen, die sich widersprechen, stehen nicht zusammen ----
+     (Büro 29.09.2026) „betriebsbereit: nein“ verträgt sich nicht mit „keine
+     Bedenken (§ 23 KAV)“ – die Aussage ist dann abgewählt und gesperrt;
+     „ohne wesentliche Beanstandung“ nicht mit „Mängel festgestellt“; „außer
+     Betrieb genommen / gesichert“ nicht mit „keine Bedenken“. Es gilt die
+     spätere Wahl, die andere wird abgewählt – mit Hinweis, nie still.
+     ERGEBNISSE: 0 ohne Beanstandung · 1 Mängel · 2 außer Betrieb · 4 § 23 KAV */
+  function ergebnisSperre(){
+    var b=form.querySelector("#f_erg4"), hin=form.querySelector("#f_erghinweis"); if(!b) return;
+    var nein=!!(form.querySelector('input[name="bereit"][value="nein"]')||{}).checked;
+    /* gesperrt nur ohne Haken – einer aus einem früheren Stand (Korrektur, Entwurf) bleibt abwählbar */
+    b.disabled = nein && !b.checked;
+    b.closest("label").style.opacity = b.disabled ? ".55" : "";
+    if(hin){
+      hin.hidden = !nein || stoer;
+      hin.textContent = b.checked ? "Widerspruch: „Anlage betriebsbereit: nein“ und „keine Bedenken (§ 23 KAV)“ – bitte eines von beiden ändern."
+                                  : "Bei „Anlage betriebsbereit: nein“ ist „keine Bedenken (§ 23 KAV)“ nicht wählbar.";
+    }
+  }
+  function ergebnisAbgleich(quelle){
+    var weg=[];
+    var ab=function(i){ var c=form.querySelector("#f_erg"+i); if(c && c.checked){ c.checked=false; weg.push(i===4 ? "keine Bedenken (§ 23 KAV)" : ERGEBNISSE[i].replace(/\.$/,"")); } };
+    if(quelle && quelle.name==="bereit"){ if(quelle.checked && quelle.value==="nein") ab(4); }
+    else if(quelle && quelle.name==="ergebnis" && quelle.checked){
+      var i=ERGEBNISSE.indexOf(quelle.value);
+      if(i===0) ab(1); else if(i===1) ab(0); else if(i===2) ab(4); else if(i===4) ab(2);
+    }
+    ergebnisSperre();
+    if(weg.length) toast("Abgewählt: „"+weg.join("“, „")+"“ – verträgt sich nicht mit der neuen Wahl.");
+  }
+  form.addEventListener("change", function(e){
+    if(e.target && (e.target.name==="bereit" || e.target.name==="ergebnis")) ergebnisAbgleich(e.target);
+  });
+  form._ergebnisAbgleich=ergebnisAbgleich;   /* für den Schritt-für-Schritt-Dialog */
+  form._ergebnisSperre=ergebnisSperre;       /* nach dem Einsetzen eines Entwurfs bzw. einer Korrektur */
 
   /* der Rapportbericht von Lidl – im Original, samt dem, was sich daraus lesen lässt.
      rapportLiest: wird gerade noch gelesen */
@@ -11183,6 +11466,7 @@ function viewProtokoll(){
     if(bearb.betriebsbereit){ var r3=form.querySelector('input[name="bereit"][value="'+bearb.betriebsbereit+'"]'); if(r3) r3.checked=true; }
     setz("f_sofort",bearb.sofortmassnahme);
     form.querySelectorAll('input[name="ergebnis"]').forEach(function(c){ c.checked=(bearb.ergebnis||[]).indexOf(c.value)>=0; });
+    ergebnisSperre();   /* nichts abwählen, was im Protokoll steht – nur sperren bzw. auf den Widerspruch hinweisen */
     setz("f_bem",bearb.bemerkungen); setz("f_name",bearb.nameTechniker); setz("f_agv",bearb.auftraggebervertreter);
     if(bearb.kaeltemittel){ var km=bearb.kaeltemittel; setz("f_kmArt",km.art); setz("f_kmNach",km.nach?String(km.nach).replace(".",","):""); setz("f_kmEnt",km.ent?String(km.ent).replace(".",","):"");
       kaeltemittelAnlagen(form, km.anlage); }
@@ -11403,6 +11687,7 @@ function viewProtokoll(){
     if(d.unterschrift) form._sig.setzen(d.unterschrift);
     S.stoerungAus=d.stoerungAus||null;
     if(form._ohneAnwenden) form._ohneAnwenden();
+    if(form._ergebnisSperre) form._ergebnisSperre();
     formDirty=true;
   }
   /* Nicht bei jedem Tastendruck schreiben – das Gerät hat anderes zu tun. */
@@ -14092,7 +14377,8 @@ var LABEL_POS={anlagentyp:"Anlagentyp", intervallCode:"Kürzel", inbetriebnahme:
   rueckkuehler:"Rückkühler", aktiv:"in Betrieb", notiz:"Notiz",
   pausiert:"zur Zeit nicht gewartet", pausiertGrund:"Grund (nicht gewartet)", vorOrtNeu:"vor Ort neu erfasst", anlageZu:"gehört zu Anlage",
   zusammengefuehrtIn:"zusammengeführt in",
-  nachweise:"Wartungen laut Prüfbuch"};
+  nachweise:"Wartungen laut Prüfbuch",
+  nurJW:"nur Jahreswartung (kein Halbjahrestermin)", termineGeprueft:"Termine vor Ort geprüft"};
 ANLAGE_FELDER.forEach(function(f){ if(!LABEL_POS[f.k]) LABEL_POS[f.k]=f.l; });
 function stammWert(feld, w){
   if(w===null||w===undefined||w==="") return "–";
@@ -14102,7 +14388,8 @@ function stammWert(feld, w){
   if(feld==="zugangPasswort" || istGeheim(feld)) return "••••••••";
   if(feld==="innengeraete") return innenText(w);
   if(feld==="nachweise") return Array.isArray(w)&&w.length ? w.map(function(n){ return dfmt(n.datum)+(n.techniker?" ("+n.techniker+")":""); }).join(", ") : "–";
-  if(feld==="aktiv"||feld==="pausiert"||feld==="vorOrtNeu") return w?"ja":"nein";
+  if(feld==="aktiv"||feld==="pausiert"||feld==="vorOrtNeu"||feld==="nurJW") return w?"ja":"nein";
+  if(feld==="termineGeprueft") return "am "+dfmt(String(w).split("|")[0]);
   if(feld==="monat") return MONATE_L[+w]||"–";
   if(feld==="inbetriebnahme") return dfmt(w);
   /* Verweise auf eine andere Zeile: beim Anlagennamen nennen, nicht die Kennung */
