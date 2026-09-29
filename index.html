@@ -9344,7 +9344,7 @@ function kundenStand(z){
     r.o=o;
     if(o && o.erledigt){ r.status="erledigt"; r.datum=tagLokal(o.erledigt); r.auto=true; }
     else if(o && o.termin && !z.geplant){ r.status="geplant"; r.datum=o.termin; r.auto=true; }
-  } else {
+  } else if(z.art==="wartung"){
     var p=posById[z.position_id]||null;
     r.p=p;
     if(p && p.anker && z.frist){
@@ -9361,26 +9361,31 @@ function kundenStand(z){
     else if(z.geplant){ r.status="geplant"; r.datum=z.geplant; r.auto=false; }
   }
   r.text = r.status==="erledigt" ? "erledigt am "+dfmt(r.datum) : r.status==="geplant" ? "geplant für "+dfmt(r.datum) : "offen";
+  /* „zu klären“ (Büro 29.09.2026): eine offene Frage zu dieser Zeile, die ein Mensch
+     beantworten muss – bleibt stehen, bis sie im Büro als geklärt abgehakt ist */
+  r.klaeren=!!String(z.klaeren||"").trim();
   return r;
 }
 /* in der Liste bleibt, was noch nicht beantwortet oder noch nicht erledigt ist */
 function kundenOffen(){ return kundenliste.filter(function(z){ return !z.gemeldet || kundenStand(z).status!=="erledigt"; }); }
-function kundenName(z){ var s=byId[z.standort_id]; return (z.filial_code?z.filial_code+" · ":"")+(s?stName(s):(z.markt_name||"Markt unbekannt")); }
+function kundenName(z){ var s=byId[z.standort_id]; if(z.art==="frage") return z.bezeichnung||"Anfrage von Lidl"; return (z.filial_code?z.filial_code+" · ":"")+(s?stName(s):(z.markt_name||"Markt unbekannt")); }
 function kundenKarte(){
   var l=kundenlisteAn() ? kundenOffen() : [], heute=isoLokal(new Date());
   if(!l.length) return el('<div id="kundenkarte" hidden></div>');
-  var n={offen:0, geplant:0, erledigt:0}, st=0, wa=0, ohneAntwort=0, frist=null;
+  var n={offen:0, geplant:0, erledigt:0}, st=0, wa=0, fr=0, kl=0, ohneAntwort=0, frist=null;
   l.forEach(function(z){
     var k=kundenStand(z); n[k.status]++;
-    if(z.art==="stoerung") st++; else wa++;
+    if(z.art==="stoerung") st++; else if(z.art==="frage") fr++; else wa++;
+    if(k.klaeren) kl++;
     if(!z.gemeldet){ ohneAntwort++; if(z.art==="stoerung" && z.frist && (!frist || z.frist<frist)) frist=z.frist; }
   });
   var c=el('<div class="card" id="kundenkarte" style="border-color:var(--crit)"><div class="pad stack" style="gap:8px">'+
     '<div class="rowflex" style="justify-content:space-between;gap:8px;align-items:flex-start"><div><h2>Rückfragen von Lidl</h2>'+
-      '<div class="sub">'+st+" Störungsauftr"+(st===1?"ag":"äge")+" · "+wa+" Wartung"+(wa===1?"":"en")+" – vom Kunden angefragt, mit Frist</div></div>"+
+      '<div class="sub">'+st+" Störungsauftr"+(st===1?"ag":"äge")+" · "+wa+" Wartung"+(wa===1?"":"en")+(fr?" · "+fr+" Anfrage"+(fr===1?"":"n"):"")+" – vom Kunden angefragt, mit Frist</div></div>"+
       '<button class="btn sm" type="button" data-a="auf">Liste öffnen</button></div>'+
     '<div class="rowflex" style="gap:6px;flex-wrap:wrap">'+
       /* die Zahlen führen in die Liste, gleich mit der passenden Auswahl */
+      (kl?'<button type="button" class="pill p-faellig pillknopf" data-ks="klaeren" style="font-weight:700">'+kl+" zu klären</button>":"")+
       (n.offen?'<button type="button" class="pill p-ueberfaellig pillknopf" data-ks="offen">'+n.offen+" offen</button>":"")+
       (n.geplant?'<button type="button" class="pill p-faellig pillknopf" data-ks="geplant">'+n.geplant+" geplant</button>":"")+
       (n.erledigt?'<button type="button" class="pill p-erledigt pillknopf" data-ks="erledigt">'+n.erledigt+" erledigt</button>":"")+
@@ -9432,16 +9437,19 @@ function kundenAnsicht(start){
     var d=el('<div class="posbox stack" style="gap:6px'+(k.status==="offen"?";border-color:var(--crit)":"")+'">'+
       '<div class="rowflex" style="justify-content:space-between;gap:8px;align-items:flex-start"><strong>'+kundenNameLink(z)+"</strong>"+
         '<span class="pill '+pill+'">'+esc(k.text)+"</span></div>"+
-      '<div style="font-size:13px">'+(z.art==="stoerung"?"Störungsauftrag ":"Wartung · IH-Nr. ")+"<strong>"+esc(z.nummer)+"</strong>"+
+      '<div style="font-size:13px">'+(z.art==="frage" ? "Anfrage" : (z.art==="stoerung"?"Störungsauftrag ":"Wartung · IH-Nr. ")+"<strong>"+esc(z.nummer)+"</strong>")+
         (z.bezeichnung?" · "+esc(z.bezeichnung):"")+(z.prio?" · <strong>"+esc(z.prio)+"</strong>":"")+"</div>"+
-      '<div style="font-size:13px'+(spaet?";color:var(--crit)":"")+'">'+(z.art==="stoerung"?"Rückmeldung bis ":"späteste Ausführung laut Lidl ")+
+      '<div style="font-size:13px'+(spaet?";color:var(--crit)":"")+'">'+(z.art==="wartung"?"späteste Ausführung laut Lidl ":"Rückmeldung bis ")+
         (z.frist?esc(dfmt(z.frist)):"–")+(spaet?" – überschritten":"")+" · Liste vom "+esc(dfmt(z.liste_vom))+"</div>"+
       (k.p ? '<div class="muted" style="font-size:12.5px">Bei uns: '+esc(anlagenName(anlageDaten(k.p)))+" · "+esc((k.p.intervall&&k.p.intervall.kurz)||k.p.intervallCode||"")+
         (k.termin?" · Termin "+esc(dfmt(k.termin)):"")+(k.p.letzte?" · zuletzt gewartet "+esc(dfmt(k.p.letzte)):" · keine Wartung bekannt")+
         (k.auto && k.status==="erledigt"?" · aus unseren Nachweisen":"")+"</div>" : "")+
       (z.art==="stoerung" ? '<div class="muted" style="font-size:12.5px">'+(k.o ? "Bei uns als Störung erfasst"+(k.o.problemtyp?": "+esc(k.o.problemtyp):"")
         : "Bei uns noch nicht als Störung erfasst – der Auftrag von Lidl fehlt")+"</div>" : "")+
-      (!s ? '<div class="note warnbox" style="font-size:12.5px">Der Markt ist in unserer Liste nicht eindeutig – bitte im Büro zuordnen.</div>' : "")+
+      ((!s && z.art!=="frage") ? '<div class="note warnbox" style="font-size:12.5px">Der Markt ist in unserer Liste nicht eindeutig – bitte im Büro zuordnen.</div>' : "")+
+      (k.klaeren ? '<div class="note warnbox" style="font-size:13px"><strong>Zu klären:</strong> '+esc(z.klaeren)+"</div>"
+        : (k.status==="offen" && z.art!=="frage" ? '<div class="muted" style="font-size:12.5px"><strong>Noch offen:</strong> Termin festlegen und eintragen.</div>' : ""))+
+      (z.geklaert ? '<div style="font-size:12.5px"><span class="muted">Geklärt:</span> '+esc(z.geklaert)+"</div>" : "")+
       (z.notiz?'<div style="font-size:12.5px"><span class="muted">Notiz:</span> '+esc(z.notiz)+"</div>":"")+
       (z.gemeldet?'<div class="muted" style="font-size:12.5px">An Lidl gemeldet am '+esc(dfmt(z.gemeldet))+"</div>":"")+
       '<div class="rowflex" data-knoepfe style="gap:6px;flex-wrap:wrap"></div>'+
@@ -9459,6 +9467,13 @@ function kundenAnsicht(start){
         lidlTyp:z.bezeichnung||"", zieltermin:z.frist||null, quelle:"kundenliste",
         beschreibung:"Laut Liste von Lidl vom "+dfmt(z.liste_vom)+" offen – der Auftrag selbst liegt uns nicht vor."});
     });
+    /* abhaken kann das Büro – mit dem Ergebnis, damit später nachvollziehbar ist, was entschieden wurde */
+    if(Admin.frei && k.klaeren) knopf("Geklärt – abhaken", function(){
+      var t=window.prompt("Was ist das Ergebnis? (kurz – steht danach bei dieser Zeile)", "");
+      if(t===null) return;
+      t=String(t).trim().slice(0,300);
+      speichern(z, {klaeren:null, geklaert:(t||"ohne Vermerk")+" ("+(meineAngaben().name||wer())+", "+dfmt(heute)+")"}).then(function(ok){ if(ok) toast("Als geklärt vermerkt."); });
+    });
     if(Admin.frei) knopf("Termin / Stand eintragen", function(){ var e=d.querySelector("[data-eintragen]"); e.hidden=!e.hidden; });
     var si=d.querySelector('[data-a="sichern"]');
     si.onclick=function(){
@@ -9473,36 +9488,62 @@ function kundenAnsicht(start){
     /* zwei Auswahlen: was (Störung, Wartung) und in welchem Stand. „erledigt“ zeigt auch,
        was schon beantwortet und damit sonst aus der Liste verschwunden ist */
     var alle = stand==="erledigt" ? kundenliste.slice() : kundenOffen();
-    var passtStand=function(z){ var k=kundenStand(z).status;
-      return stand==="alle" || (stand==="ohneantwort" ? !z.gemeldet : k===stand); };
+    var passtStand=function(z){ var ks=kundenStand(z), k=ks.status;
+      return stand==="alle" || (stand==="ohneantwort" ? !z.gemeldet : stand==="klaeren" ? ks.klaeren : k===stand); };
     var passtArt=function(z){ return filter==="alle" || z.art===filter; };
     var zahl=function(f){ return alle.filter(f).length; };
-    var F=[["alle","Alle"],["stoerung","Störungen"],["wartung","Wartungen"]];
+    var F=[["alle","Alle"],["stoerung","Störungen"],["wartung","Wartungen"],["frage","Anfragen"]];
     fb.innerHTML="";
     F.forEach(function(x){
       var n=zahl(function(z){ return (x[0]==="alle" || z.art===x[0]) && passtStand(z); });
       var b=el('<button class="chip" type="button" aria-pressed="'+(filter===x[0])+'">'+esc(x[1])+" ("+n+")</button>");
       b.onclick=function(){ filter=x[0]; zeichnen(); }; fb.appendChild(b);
     });
-    var ST_F=[["alle","jeder Stand"],["offen","offen"],["geplant","geplant"],["erledigt","erledigt"],["ohneantwort","ohne Antwort an Lidl"]];
+    var ST_F=[["alle","jeder Stand"],["klaeren","zu klären"],["offen","offen"],["geplant","geplant"],["erledigt","erledigt"],["ohneantwort","ohne Antwort an Lidl"]];
     sb.innerHTML="";
     ST_F.forEach(function(x){
       var basis = x[0]==="erledigt" ? kundenliste : kundenOffen();
-      var n=basis.filter(function(z){ var k=kundenStand(z).status;
-        return passtArt(z) && (x[0]==="alle" || (x[0]==="ohneantwort" ? !z.gemeldet : k===x[0])); }).length;
+      var n=basis.filter(function(z){ var ks=kundenStand(z), k=ks.status;
+        return passtArt(z) && (x[0]==="alle" || (x[0]==="ohneantwort" ? !z.gemeldet : x[0]==="klaeren" ? ks.klaeren : k===x[0])); }).length;
       var b=el('<button class="chip" type="button" aria-pressed="'+(stand===x[0])+'">'+esc(x[1])+" ("+n+")</button>");
       b.onclick=function(){ stand=x[0]; zeichnen(); }; sb.appendChild(b);
     });
     liste.innerHTML="";
     var l=alle.filter(function(z){ return passtArt(z) && passtStand(z); });
     /* Störungen zuerst (Prio 1 voran), dann Wartungen nach Frist */
-    var rang=function(z){ return (z.art==="stoerung" ? "0"+(/prio\s*1/i.test(z.prio||"")?"0":"1") : "1")+(z.frist||"9999")+z.nummer; };
+    /* Anfragen ganz oben, dann Störungen (Prio 1 voran), dann Wartungen nach Frist */
+    var rang=function(z){ return (z.art==="frage" ? "0" : z.art==="stoerung" ? "1"+(/prio\s*1/i.test(z.prio||"")?"0":"1") : "2")+(z.frist||"9999")+z.nummer; };
     l.sort(function(a,b){ return rang(a).localeCompare(rang(b)); });
     if(!l.length) liste.appendChild(el('<div class="muted">Nichts in dieser Auswahl.</div>'));
     l.forEach(function(z){ liste.appendChild(zeile(z)); });
   }
   zeichnen();
   var fuss=function(t, fn, art){ var b=el('<button class="btn'+(art===""?"":" ghost")+'" type="button">'+esc(t)+"</button>"); b.onclick=fn; v.fuss.appendChild(b); return b; };
+  /* auf Papier, etwa für die Besprechung: was gerade ausgewählt ist, als Tabelle */
+  fuss("Liste drucken", function(){
+    var l=(stand==="erledigt" ? kundenliste.slice() : kundenOffen()).filter(function(z){
+      var ks=kundenStand(z); return (filter==="alle" || z.art===filter) &&
+        (stand==="alle" || (stand==="ohneantwort" ? !z.gemeldet : stand==="klaeren" ? ks.klaeren : ks.status===stand)); });
+    var rg=function(z){ return (z.art==="frage" ? "0" : z.art==="stoerung" ? "1" : "2")+(z.frist||"9999")+z.nummer; };
+    l.sort(function(a,b){ return rg(a).localeCompare(rg(b)); });
+    var alt=document.getElementById("druckansicht"); if(alt) alt.remove();
+    var kl=l.filter(function(z){ return kundenStand(z).klaeren; }).length;
+    var dv=el('<div id="druckansicht"><div class="druckleiste">'+
+      '<button class="btn" type="button" id="d_druck">Drucken / als PDF sichern</button>'+
+      '<button class="btn ghost" type="button" id="d_zu" style="background:#fff">Schließen</button></div>'+
+      '<div class="blatt" style="font-size:11px">'+blattKopf("Rückfragen von Lidl", l.length+" Punkte"+(kl?" · "+kl+" zu klären":""))+
+      '<table><tr><th style="width:20%">Markt</th><th style="width:17%">Auftrag</th><th style="width:11%">Frist</th><th style="width:15%">Stand</th><th>Zu klären / Bemerkung</th></tr>'+
+      l.map(function(z){ var ks=kundenStand(z);
+        return "<tr><td>"+esc(z.art==="frage" ? "–" : kundenName(z))+"</td><td>"+esc(z.art==="frage" ? "Anfrage" : (z.art==="stoerung"?"Störung ":"Wartung ")+z.nummer)+
+          (z.bezeichnung?"<br>"+esc(z.bezeichnung):"")+(z.prio?"<br><strong>"+esc(z.prio)+"</strong>":"")+"</td><td>"+(z.frist?esc(dfmt(z.frist)):"–")+"</td><td>"+esc(ks.text)+
+          (ks.p && ks.p.letzte && ks.status!=="erledigt" ? "<br>zuletzt "+esc(dfmt(ks.p.letzte)) : "")+"</td><td>"+
+          (ks.klaeren ? "<strong>Zu klären:</strong> "+esc(z.klaeren) : (ks.status==="offen" && z.art!=="frage" ? "Termin festlegen" : ""))+
+          (z.geklaert ? "<br>Geklärt: "+esc(z.geklaert) : "")+(z.notiz ? "<br>Notiz: "+esc(z.notiz) : "")+
+          '<br><span style="color:#777">Entscheidung: ______________________________</span>'+"</td></tr>"; }).join("")+"</table></div></div>");
+    document.body.appendChild(dv); document.body.classList.add("druckmodus");
+    dv.querySelector("#d_zu").onclick=function(){ dv.remove(); document.body.classList.remove("druckmodus"); };
+    dv.querySelector("#d_druck").onclick=function(){ window.print(); };
+  });
   fuss("Tour aus der Liste", function(){
     var ids=[];
     kundenOffen().forEach(function(z){ var k=kundenStand(z); if(k.status!=="erledigt" && k.s && k.s.lat && ids.indexOf(k.s.id)<0) ids.push(k.s.id); });
