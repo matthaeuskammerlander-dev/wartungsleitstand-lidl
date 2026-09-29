@@ -49,7 +49,12 @@ grant select, insert, delete on public.chat to authenticated;
 -- ausgeführt, danach diese Datei erneut ausführen.)
 drop policy if exists "fotos ansehen" on storage.objects;
 create policy "fotos ansehen" on storage.objects for select to authenticated
-  using (bucket_id = 'protokollfotos' and (name not like 'chat/%' or public.darf_schreiben()));
+  -- Bilder zu Änderungswünschen (wunsch/…): nur Absender und Inhaber – dieselbe
+  -- Fassung wie in tools/wunsch-fotos.sql
+  using (bucket_id = 'protokollfotos'
+         and case when name like 'wunsch/%' then (owner = auth.uid() or public.ist_inhaber())
+                  when name like 'chat/%'   then public.darf_schreiben()
+                  else true end);
 
 -- Fotos einer gelöschten Nachricht aus dem Speicher nehmen: nur unter chat/…,
 -- nur die selbst hochgeladenen (Admins: alle). Protokollfotos bleiben unberührt.

@@ -113,6 +113,14 @@ declare
   a text; t text; x text; z text;
 begin
   if new.art = 'angelegt' then
+    -- Erst melden, wenn das Protokoll wirklich in der Datenbank ist (Büro
+    -- 29.09.2026): der Verlauf kommt oft früher an als das Protokoll selbst.
+    -- Fehlt es noch, meldet es push_aus_protokoll beim Eintreffen – nie doppelt.
+    if new.protokoll_id is null
+       or not exists (select 1 from public.protokolle p where p.client_id = new.protokoll_id::text)
+       or exists (select 1 from public.push_ereignisse e where e.art = 'protokoll' and e.ziel = 'protokoll:' || new.protokoll_id) then
+      return null;
+    end if;
     a := 'protokoll'; t := 'Neues Protokoll – ' || markt; x := 'von ' || wer;
     z := 'protokoll:' || coalesce(new.protokoll_id,'');
   elsif new.art in ('korrigiert','geloescht','wiederhergestellt') then
@@ -145,6 +153,27 @@ end $$;
 drop trigger if exists push_aus_verlauf on public.aenderungen;
 create trigger push_aus_verlauf after insert on public.aenderungen
   for each row execute function public.push_aus_verlauf();
+
+-- Protokoll in der Datenbank angekommen → „Neues Protokoll“, falls der Verlauf
+-- es nicht schon gemeldet hat (siehe oben)
+create or replace function public.push_aus_protokoll() returns trigger
+language plpgsql security definer set search_path = public as $$
+begin
+  if new.client_id is null or new.geloescht is not null
+     or exists (select 1 from public.push_ereignisse e where e.art = 'protokoll' and e.ziel = 'protokoll:' || new.client_id) then
+    return null;
+  end if;
+  insert into public.push_ereignisse (art, titel, text, ziel, von_user, daten)
+  values ('protokoll', left('Neues Protokoll – ' || coalesce(nullif(new.standort_name,''), 'ohne Markt'), 120),
+          left('von ' || coalesce(nullif(new.techniker,''), 'jemand'), 240), 'protokoll:' || new.client_id, new.erstellt_von,
+          jsonb_build_object('wer', new.techniker, 'protokoll', new.client_id, 'standort', new.standort_id));
+  return null;
+exception when others then
+  return null;
+end $$;
+drop trigger if exists push_aus_protokoll on public.protokolle;
+create trigger push_aus_protokoll after insert on public.protokolle
+  for each row execute function public.push_aus_protokoll();
 
 -- Änderungswünsche → Ereignis (nur für Inhaber): neu, Vorschau fertig, Fehler
 create or replace function public.push_aus_wunsch() returns trigger

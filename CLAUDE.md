@@ -71,10 +71,27 @@ Kammerlander Umwelt- und Klimatechnik (UKT) – oft kurz, vom Handy, im Feld.
   Vermerk „mit erledigt durch Wartung vom …“ (keine Warnung in Nachbessern).
   Ohne spätere Wartung bleibt ein versäumter Termin überfällig – auch wenn der
   nächste schon in der 30-Tage-Frist steht; „überfällig seit“ nennt dann den
-  ältesten in Folge versäumten Termin.
+  ältesten in Folge versäumten Termin – ist eine letzte Wartung bekannt, ohne
+  Grenze zurück (es soll zeigen, wie lange tatsächlich nichts gemacht wurde,
+  Büro 29.09.2026); ganz ohne Nachweis höchstens drei Jahre.
 - Eine aktuelle Wartung an EINEM Termin der Anlage erledigt auch einen
   versäumten ANDEREN Termin derselben Anlage mit (JW gemacht → offene HJI ist
   mit erledigt, egal wie lange sie zurückliegt; Büro 28.09.2026, Braunau).
+- Nur die Jahreswartung eingetragen und nie entschieden (`halbjahr` in
+  `termineOffen`): vor Ort wird gefragt – „Ja – Halbjahrestermin“ (Admins legen
+  ihn an, sonst Meldung ans Büro: `halbWunsch`, steht in Nachbessern) oder
+  „Nein – nur Jahreswartung“ (`nurJW`; dürfen auch Techniker, unter 30 kg auch
+  bei bekannter Füllmenge). Büro 29.09.2026.
+- Neuer Soll-Monat, der den Termin sofort überfällig machte (`sollMonatFolge`):
+  der Termine-Schritt warnt; „behalten – nach der nächsten Wartung umstellen“
+  lässt den alten Monat stehen und merkt die Umstellung als Notiz an der Anlage
+  vor (Nachbessern meldet sie, sobald seither gewartet wurde). Umgestellt wird
+  von Hand – nie automatisch.
+- Vor Ort bestätigter abweichender Soll-Monat (`termineGeprueft`): in
+  Nachbessern nur noch eine Notiz, kein Befund.
+- Monatsbericht: jeder Besuch steht drin. Zwei Wartungen für denselben Termin:
+  die erste zählt für die Frist, die spätere steht als „zusätzlich“ da.
+  Störungseinsätze sind eigene Einsätze und berühren die Wartungen nicht.
 - Wiederkehrende Störungen: ab 3 Störungen in 90 Tagen an derselben Anlage
   (`WIEDERKEHR_ANZAHL`, `WIEDERKEHR_TAGE`) – Markierung, kein Eingriff.
 - „Zählt als“ im Protokoll (`fillPos`): ist ein Termin versäumt und liegt der
