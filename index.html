@@ -10901,15 +10901,27 @@ function protokollAssistent(form, stoer){
   }
 
   if(stoer) schritte.push({titel:"Störungsauftrag", zeigen:function(){
-    inhalt.innerHTML=frage("Lidl-Auftrag übernehmen");
+    /* Auftrag schon da (Protokoll aus einer offenen Störung): nur bestätigen lassen –
+       das Hochladen bleibt als Nebenweg, falls doch ein anderer Auftrag gilt */
+    var da=form.dataset.auftragda||"";
+    inhalt.innerHTML=frage(da ? "Stimmen die Angaben zum Lidl-Auftrag?" : "Lidl-Auftrag übernehmen");
+    if(da==="datei"){
+      var schon=el('<div class="note" style="font-size:13px"><strong>Der Auftrag ist schon hinterlegt</strong> – aus der offenen Störung übernommen. Es muss nichts hochgeladen werden.</div>');
+      inhalt.appendChild(schon);
+    }
     var reihe=el('<div class="chips"></div>');
-    var pdf=el('<button class="btn" type="button">Auftrag-PDF öffnen</button>');
+    var pdf=el('<button class="btn'+(da?" ghost sm":"")+'" type="button">'+(da?"Anderen Auftrag öffnen (PDF)":"Auftrag-PDF öffnen")+"</button>");
     pdf.onclick=function(){ var l=form.querySelector('label[for="s_pdf"]'); if(l) l.click(); };
-    var qr=el('<button class="btn ghost" type="button">QR-Code scannen</button>');
+    var qr=el('<button class="btn ghost'+(da?" sm":"")+'" type="button">QR-Code scannen</button>');
     qr.onclick=function(){ var b=form.querySelector("#s_qr"); if(b) b.click(); };
+    if(da==="datei" && form._auftragAnsehen){
+      var an=el('<button class="btn" type="button">Auftrag ansehen</button>');
+      an.onclick=function(){ var b=form.querySelector("#s_bild"); if(form.querySelector("[data-auftragpdf]")) form._auftragAnsehen(); else if(b && !b.hidden){ toast("Der Auftrag steht als Bild im Formular unter „Lidl-Störungsauftrag“."); } };
+      reihe.appendChild(an);
+    }
     reihe.appendChild(pdf); reihe.appendChild(qr);
     inhalt.appendChild(reihe);
-    inhalt.appendChild(el('<div class="muted" style="font-size:12.5px">'+esc((form.querySelector("#s_info")||{}).textContent||"")+"</div>"));
+    if(da!=="datei") inhalt.appendChild(el('<div class="muted" style="font-size:12.5px">'+esc(((form.querySelector("#s_info")||{}).textContent||"").replace(/\s*Auftrag ansehen\s*$/,""))+"</div>"));
     inhalt.appendChild(textFeld("Lidl-Auftragsnummer", "#f_auftrag", false));
     ["s_auftragsdatum|Auftragsdatum","s_stoerungsnr|Störungsnummer","s_problemtyp|Problemtyp"].forEach(function(x){
       var t=x.split("|"); inhalt.appendChild(textFeld(t[1], "#"+t[0], false));
@@ -11579,7 +11591,11 @@ function viewProtokoll(){
   form._termineStart=function(leader){ return Object.assign({kaeltemittelKg:anlageWerte(leader).kaeltemittelKg}, termineWerte(leader)); };
   form._termineSpeichern=termineSpeichern;
   function anlagenKarte(id, name, w, neu){
-    var l=anlageLuecken(w), markiert=neu||!!anlagenAend[id];
+    /* Inbetriebnahme, Soll-Monat und Kürzel zuerst (wie im Reiter Anlagen) – sonst
+       stünde „vollständig“ da, obwohl für die Planung das Wichtigste fehlt */
+    var tl=(!neu && posById[id]) ? termineOffenVon(anlageLeader(posById[id])).filter(function(x){ return !x.weich; })
+      .map(function(x){ return {k:"termine", l:x.l}; }) : [];
+    var l=tl.concat(anlageLuecken(w)), markiert=neu||!!anlagenAend[id];
     var k=el('<div class="akarte">'+
       '<div class="rowflex" style="justify-content:space-between;gap:8px"><strong>'+esc(name)+"</strong>"+
         (neu?'<span class="tag st">neu erfasst</span>':markiert?'<span class="tag f30">wird aktualisiert</span>':"")+"</div>"+
@@ -11614,7 +11630,7 @@ function viewProtokoll(){
         if(p0){
           termineSpeichern(p0, start, erg, name);
           erg=Object.assign({}, erg); delete erg._termine; delete erg.inbetriebnahme; delete erg._nachweiseNeu; delete erg._notizDazu; delete erg._leaderId;
-          delete erg.nurJW; delete erg.termineGeprueft; delete erg._termineOk;
+          delete erg.nurJW; delete erg.halbWunsch; delete erg.termineGeprueft; delete erg._termineOk;
         }
         if(neu){ neueAnlagen.forEach(function(n){ if(n.id===id) n.werte=erg; }); }
         else {
@@ -12065,6 +12081,13 @@ function viewProtokoll(){
       if(vor.qrInhalt) qrRoh=vor.qrInhalt;
       if(vor.seiten && vor.seiten.length) auftragBildZeigen(vor.seiten);
       if(vor.pdfDaten) auftragPdf={name:vor.pdfName||"auftrag.pdf", datenUrl:vor.pdfDaten};
+      /* der Auftrag liegt schon bei der offenen Störung: nichts mehr hochzuladen */
+      if(vor.pdfDaten || (vor.seiten && vor.seiten.length) || vor.auftragsnummer){
+        form.dataset.auftragda = (vor.pdfDaten || (vor.seiten && vor.seiten.length)) ? "datei" : "nummer";
+        sInfo((form.dataset.auftragda==="datei" ? "Der Auftrag von Lidl ist schon hinterlegt (aus der offenen Störung) – nichts mehr hochzuladen."
+          : "Die Angaben zum Auftrag kommen aus der offenen Störung. Die PDF von Lidl ist dort nicht hinterlegt – sie lässt sich hier noch öffnen, muss aber nicht.")+
+          (vor.pdfDaten ? ' <a href="#" class="sprunglink" data-auftragpdf="1">Auftrag ansehen</a>' : ""));
+      }
       form._stoerBezug();
     };
     form._ausStoerung=function(vor){
