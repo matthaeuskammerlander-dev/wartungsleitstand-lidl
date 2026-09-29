@@ -1199,9 +1199,18 @@ function berechneFaelligkeiten(){
 
     var a=ankerFuer(p);
     p.anker=mitGiltAb(p, a);
+    var zu={}, benutzt={}, aktuell=null;
     if(!imPlan[p.id]){
       /* zur Zeit nicht gewartet (die Anlage oder der ganze Markt): kein Termin, nichts fällig */
       if(p.aktiv && (anlagePausiert(p) || marktPausiert(byId[p.standortId]))){ p.status="pausiert"; p.naechste=null; p.erledigtDurch=null; }
+      /* Nur für den Monatsbericht: welche Wartung für welchen Termin zählte, gilt
+         wie im Plan – sonst kippte ein Bericht von „verspätet“ auf „ja“, sobald
+         der Markt später ruht oder stillgelegt wird. Fälligkeit und Hinweise
+         bleiben unberührt. */
+      if(a){
+        aktuell=ankerIm(a,+bald.slice(0,4)); if(aktuell>bald) aktuell=ankerIm(a,+bald.slice(0,4)-1);
+        zuordnen(false); p.zugeordnet=zu;
+      }
       return;
     }
     if(!a){
@@ -1221,10 +1230,11 @@ function berechneFaelligkeiten(){
        drei Monate vor dem nächsten Termin liegt. Näher dran gilt sie als für
        den nächsten Termin vorgezogen (das ist bei uns üblich). Der Soll-Monat
        bleibt in jedem Fall derselbe. */
-    var j=+bald.slice(0,4), aktuell=ankerIm(a,j);
+    var j=+bald.slice(0,4);
+    aktuell=ankerIm(a,j);
     if(aktuell>bald) aktuell=ankerIm(a,j-1);
-    var zu={}, benutzt={};
-    (function(){
+    /* mitHinweis: eine zweite Wartung im selben Fenster vermerken (nur für Zeilen im Plan) */
+    function zuordnen(mitHinweis){
       var ab=termine.length ? Math.min(+termine[0].slice(0,4)-1, +aktuell.slice(0,4)-1) : +aktuell.slice(0,4)-1;
       for(var y=ab; y<=+aktuell.slice(0,4)+1; y++){
         var T=ankerIm(a,y), N=ankerIm(a,y+1), von=plusMonate(T,-6), bis=plusMonate(T,6), i, w=null;
@@ -1242,12 +1252,13 @@ function berechneFaelligkeiten(){
              für die letzten zwei Jahre als Hinweis merken */
           /* bei Halbjahresterminen nur ±3 Monate – sonst reicht das Fenster in den anderen Halbjahrestermin */
           var halbT=/^HJ/.test(p.intervall.kurz||""), vonD=plusMonate(T, halbT?-3:-6), bisD=plusMonate(T, halbT?3:6);
-          if(T>=plusMonate(heute,-24)) for(i=0;i<termine.length;i++){
+          if(mitHinweis && T>=plusMonate(heute,-24)) for(i=0;i<termine.length;i++){
             if(i!==w && !benutzt[i] && termine[i]>vonD && termine[i]<=bisD && !gleicherBesuch(termine[i],termine[w])){ p.doppeltImFenster=[termine[i], termine[w]].sort(); break; }
           }
         }
       }
-    })();
+    }
+    zuordnen(true);
     var erledigtFuer=function(termin){ return zu[termin]||null; };
     p.zugeordnet=zu;
 
@@ -1404,6 +1415,14 @@ function dfmt(iso){
 /* Zeitstempel stehen in Weltzeit. Kurz nach Mitternacht ist das bei uns
    schon der nächste Tag – also erst in Ortszeit umrechnen, dann anzeigen. */
 function tagFmt(zeitstempel){ return zeitstempel ? dfmt(isoLokal(new Date(zeitstempel))) : "–"; }
+/* Tag eines Zeitstempels in Ortszeit als JJJJ-MM-TT (zum Vergleichen und
+   Zählen in Berichten); ein reines Datum bleibt, wie es ist */
+function tagLokal(w){
+  var s=String(w||"");
+  if(!s || /^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+  var d=new Date(s);
+  return isNaN(d.getTime()) ? s.slice(0,10) : isoLokal(d);
+}
 function el(html){ var t=document.createElement("template"); t.innerHTML=html.trim(); return t.content.firstElementChild; }
 function pill(st){ return '<span class="pill p-'+st+'">'+STATUS_LABEL[st]+"</span>"; }
 function marktPill(s){
@@ -3619,6 +3638,13 @@ function tourPanel(){
     S.tour.startId=startSel.value;
     var v=parseFloat(c.querySelector("#t_std").value); if(v>=4&&v<=14) S.tour.stundenProTag=v;
     if(!tourKandidaten().length){ toast("Keine Standorte für diese Auswahl."); return; }
+    /* „Route vorschlagen“ rechnet neu aus Auswahl, Region und Suche, wie sie jetzt
+       stehen – eine Anpassung von Hand gilt nur für die stehende Route (sonst käme
+       trotz neuer Suche wieder die alte Route) */
+    if(S.tour.manuell || (S.tour.dazu||[]).length){
+      if(!window.confirm("Die Tour ist von Hand angepasst. „Route vorschlagen“ rechnet sie neu aus der Auswahl oben – die Anpassungen von Hand entfallen.\n\nNeu vorschlagen?")) return;
+      S.tour.manuell=null; S.tour.dazu=null;
+    }
 
     var rechnen=function(){
       goBtn.disabled=true; goBtn.textContent="Route wird berechnet …";
@@ -3737,7 +3763,8 @@ function tourErgebnis(T){
         '<td><strong>'+marktLink(st.standort)+"</strong>"+
           (stName(st.standort)===st.standort.adresse ? "" :
             '<br><span class="muted" style="font-size:12px">'+esc(st.standort.adresse)+"</span>")+
-          (ruht ? '<br><span class="pill p-pausiert">'+esc(ruht)+"</span>" : "")+"</td>"+
+          /* der Vermerk bricht um – ein längerer Grund machte die Spalte sonst sehr breit */
+          (ruht ? '<br><span class="pill p-pausiert" style="white-space:normal;display:inline-block;max-width:240px;border-radius:9px">'+esc(ruht)+"</span>" : "")+"</td>"+
         '<td class="mono">'+Math.round(st.km)+' km<br><span class="muted">'+stdFmt(st.fahrtH)+"</span></td>"+
         '<td class="mono">'+uhrFmt(minute,st.fahrtH)+'–'+uhrFmt(minute,st.fahrtH+st.arbeitH)+"</td>"+
         '<td>'+st.positionen.map(function(p){
@@ -4274,7 +4301,8 @@ function anlageNeuAnlegen(s, vorlage, weiter){
       if(w.weitere.length) termineNeuAnlegen(s.id, id, w.weitere, "Termin nach Standardregel angelegt", rueck).then(function(){ render(); });
       protokolliere({art:"stammdaten", standortId:s.id, standortName:stName(s), grund:"Anlage angelegt",
         felder:[{feld:"anlage", name:"Neue Anlage", alt:"–", neu:(felder.anlagentyp||"Anlage")+" · "+anlageKurz(felder)+
-          (felder.intervallCode?" · "+felder.intervallCode+(felder.monat?" "+MONATE_L[felder.monat]:""):"")}], rueck:rueck});
+          (felder.intervallCode?" · "+felder.intervallCode+(felder.monat?" "+MONATE_L[felder.monat]:""):"")+
+          (felder.nurJW && !w.weitere.length ? " · nur Jahreswartung, kein Halbjahrestermin" : "")}], rueck:rueck});
       toast(wo==="geraet" ? "Anlage auf dem Gerät gespeichert – wird übertragen, sobald Verbindung besteht." : "Anlage angelegt.");
       render();
     });
@@ -5693,7 +5721,12 @@ function verwaltungOffen(){ return verwaltungBearbeitet && S.view==="verwaltung"
 /* nie neu rendern, solange jemand das Protokoll ausfüllt oder in der
    Verwaltung etwas eingetragen hat – sonst sind die Eingaben weg (die
    Fälligkeiten rechnet storeNachRender trotzdem) */
-function darfRendern(){ return !(S.view==="protokoll" && formDirty) && !verwaltungOffen(); }
+/* Ebenso, solange der geführte Dialog über dem Protokoll offen ist: er schreibt
+   in das Formular darunter – die ersten Schritte („Weiter“, Termine prüfen)
+   setzen formDirty noch nicht, ein Neuzeichnen im Hintergrund (wieder online,
+   zurück in der App) baute das Formular neu, und alles danach Eingetragene
+   landete im alten, nicht mehr sichtbaren Formular. */
+function darfRendern(){ return !(S.view==="protokoll" && (formDirty || !!document.querySelector(".assistent[data-gefuehrt]"))) && !verwaltungOffen(); }
 /* Bevor der Markt-Editor verworfen wird (anderer Markt, Reiter, Neuladen,
    Dialog, der danach neu zeichnet): bei ungespeicherten Eingaben fragen. */
 var VERWALTUNG_UNGESPEICHERT="Hier im Markt gibt es noch nicht gespeicherte Änderungen – sie gehen dabei verloren.\n\nTrotzdem weiter? (Sonst „Abbrechen“ und zuerst speichern.)";
@@ -6987,6 +7020,10 @@ function sitzungParken(){
   var kiLief=!!kiVorgangSichern;
   if(kiVorgangSichern){ try{ kiVorgangSichern(); }catch(e){} kiVorgangSichern=null; }
   kiVorgangFortgesetzt=null;
+  /* der Team-Chat wird nicht zurückgelegt, sondern geschlossen (die angefangene
+     Nachricht bleibt als Entwurf): ein zurückgelegtes Fenster zeichnete sonst
+     für das nächste Konto weiter und merkte dessen Nachrichten als gelesen */
+  if(chatFenster){ chatFenster.zu(); chatFenster=null; }
   if(!kiLief) document.querySelectorAll(".assistent:not([data-konto])").forEach(function(d){ p.dialoge.push(d); d.remove(); });
   var ed=document.getElementById("adm_editor");
   if(verwaltungOffen() && ed && S.adm){
@@ -7037,10 +7074,13 @@ function hintergrundNachladen(){
    Meldungen kommen alle 90 s, die Daten dahinter sonst nur beim Zurückkehren
    in den Tab. Holt Protokolle und Stammdaten frisch (höchstens 10 s) und
    liefert danach ja/nein: wurde geladen? */
-function frischLaden(){
+function frischLaden(seit){
   if(Store.modus!=="supabase" || !Store.sb || !Store.benutzer || !Admin.geprueft || demo()) return Promise.resolve(false);
-  /* eben erst vollständig geladen (Start aus der Nachricht heraus): nicht noch einmal */
-  if(Date.now()-nachgeladenUm<15000 && stammGeladenKomplett && protokolleGeladen && !stammLaedt) return Promise.resolve(false);
+  /* eben erst vollständig geladen (Start aus der Nachricht heraus): nicht noch
+     einmal – außer die Meldung dahinter ist jünger als dieses Laden (seit: ihre
+     Zeit; true: die Nachricht wurde in der offenen App angetippt) */
+  var juenger=seit===true || (!!seit && Date.parse(seit)>nachgeladenUm-5000);
+  if(!juenger && Date.now()-nachgeladenUm<15000 && stammGeladenKomplett && protokolleGeladen && !stammLaedt) return Promise.resolve(false);
   nachgeladenUm=Date.now();
   return mitFrist(Promise.all([ladeProtokolle(), ladeStammdaten(true).then(storeNachRender)]), 10000)
     .then(function(){ return true; }, function(){ return false; });
@@ -7911,7 +7951,8 @@ function pushStart(){
   if(!pushMoeglich() || window.UKT_VORSCHAU) return;
   navigator.serviceWorker.register("sw.js").then(function(r){ pushReg=r; pushAbgleich(); }, function(e){ console.warn("Hintergrund-Helfer", e); });
   navigator.serviceWorker.addEventListener("message", function(e){
-    var d=e.data||{}; if(d.pushZiel!==undefined){ pushZiel(d.pushZiel); chatLaden(); }
+    /* in der offenen App angetippt: dahinter steht etwas Neues – frisch laden (true) */
+    var d=e.data||{}; if(d.pushZiel!==undefined){ pushZiel(d.pushZiel, 0, false, true); chatLaden(); }
     /* der Browser hat das Abo des Geräts erneuert (sw.js): neu eintragen */
     if(d.pushAbo && pushReg && pushAn() && lsGet("ukt_push_konto","")===Store.benutzer.email)
       pushReg.pushManager.getSubscription().then(function(s){ return s ? pushAboSpeichern(s, pushArtenGewaehlt()) : null; }).then(null, function(){});
@@ -7931,7 +7972,19 @@ function pushKontoFest(){ return Store.modus==="supabase" && !!Store.benutzer &&
 /* Gehört das Abo dieses Geräts noch zum angemeldeten Konto? Abgemeldet, Kunde
    oder Präsentation: das Gerät bekommt nichts mehr (sonst kämen weiter die
    Nachrichten des vorigen Kontos). Meldet sich danach wieder jemand aus Büro
-   oder Technik an, schaltet es sich von selbst wieder ein (ukt_push_wieder). */
+   oder Technik an, der es hier eingeschaltet hatte, schaltet es sich von selbst
+   wieder ein (pushWieder). */
+/* „Von selbst wieder einschalten“ gilt je Konto, nicht je Gerät: wer auf diesem
+   Gerät nie eingeschaltet hat, bekommt auch dann nichts, wenn vor ihm jemand
+   mit eingeschalteten Benachrichtigungen angemeldet war. (Der frühere Merker
+   ohne Konto gilt nur für Konten, die auf diesem Gerät schon gewählt hatten.) */
+function pushWieder(konto){
+  if(!konto) return false;
+  var v=lsGet("ukt_push_wieder:"+konto, null);
+  if(v!==null) return !!v;
+  return !!lsGet("ukt_push_wieder", 0) && Array.isArray(lsGet("ukt_push_arten:"+konto, null));
+}
+function pushWiederSetzen(konto, an){ if(konto) lsSet("ukt_push_wieder:"+konto, an?1:0); }
 function pushAbgleich(){
   if(!pushReg) return;
   var abgemeldet=Store.modus==="anmeldung" && !Store.benutzer;
@@ -7939,20 +7992,29 @@ function pushAbgleich(){
   var konto=Store.benutzer ? Store.benutzer.email : "";
   pushReg.pushManager.getSubscription().then(function(sub){
     if((Store.benutzer ? Store.benutzer.email : "")!==konto) return;   /* inzwischen gewechselt */
+    var abo=lsGet("ukt_push_konto","");   /* wem das Abo des Geräts gehört */
     if(abgemeldet){
       /* ohne Anmeldung lässt sich die Zeile in der Datenbank nicht mehr löschen – das
          Abo des Geräts endet hier, die Funktion „push“ räumt die Zeile dann weg */
-      if(sub){ lsSet("ukt_push_wieder", 1); sub.unsubscribe().then(function(){ lsSet("ukt_push_konto",""); }, function(){}); }
+      if(sub){ pushWiederSetzen(abo, true); sub.unsubscribe().then(function(){ lsSet("ukt_push_konto",""); }, function(){}); }
       return;
     }
-    if(!pushAn()){ if(sub){ lsSet("ukt_push_wieder", 1); pushAbmelden(sub).catch(function(){}); } return; }
+    if(!pushAn()){ if(sub){ pushWiederSetzen(abo, true); pushAbmelden(sub).catch(function(){}); } return; }
+    /* das Abo gehört noch dem vorigen Konto (Wechsel ohne Abmelden), und dieses
+       Konto hat hier nie eingeschaltet: es endet, statt still übernommen zu werden */
+    if(sub && abo && abo!==konto && !pushWieder(konto)){
+      pushWiederSetzen(abo, true);
+      pushAbmelden(sub).then(null, function(){ return sub.unsubscribe().then(function(){ lsSet("ukt_push_konto",""); }); })
+        .then(function(){ pushStandText(document.getElementById("k_pushstand")); }, function(){});
+      return;
+    }
     if(!sub){
-      if(lsGet("ukt_push_wieder", 0) && window.Notification && Notification.permission==="granted")
+      if(pushWieder(konto) && window.Notification && Notification.permission==="granted")
         pushEinschalten(pushArtenGewaehlt()).then(function(){ pushStandText(document.getElementById("k_pushstand")); }, function(){});
       return;
     }
     /* auch wenn seit dem Einschalten eine neue Art dazugekommen ist (sie gilt als gewählt) */
-    if(lsGet("ukt_push_konto","")!==Store.benutzer.email || pushArtenNeu().length){ pushAboSpeichern(sub, pushArtenGewaehlt()).catch(function(){}); return; }
+    if(abo!==konto || pushArtenNeu().length){ pushAboSpeichern(sub, pushArtenGewaehlt()).catch(function(){}); return; }
     pushAboPruefen(sub);
   }, function(){});
 }
@@ -7971,7 +8033,7 @@ function pushAboPruefen(sub){
     if(r.error || !Array.isArray(r.data) || r.data.length) return false;   /* bekannt – oder nicht feststellbar */
     if(!pushAn() || Store.benutzer.email!==konto) return false;
     var arten=pushArtenGewaehlt();
-    lsSet("ukt_push_wieder", 1); lsSet("ukt_push_konto","");
+    pushWiederSetzen(konto, true); lsSet("ukt_push_konto","");
     return sub.unsubscribe().then(function(){ return pushEinschalten(arten); })
       .then(function(){ zeigen(); return true; }, function(){ zeigen(); return true; });
   }, function(){ return false; }).then(ende, function(){ return ende(false); });
@@ -7982,7 +8044,8 @@ function pushVorAbmelden(){
   if(!pushReg || !Store.benutzer) return Promise.resolve();
   return mitFrist(pushReg.pushManager.getSubscription().then(function(sub){
     if(!sub) return;
-    lsSet("ukt_push_wieder", 1);
+    /* gemerkt für das Konto, dem das Abo gehört */
+    pushWiederSetzen(lsGet("ukt_push_konto","")||Store.benutzer.email, true);
     return pushAbmelden(sub);
   }), 4000).then(null, function(){});
 }
@@ -8015,7 +8078,7 @@ function pushArtenGewaehlt(){
 function pushAboSpeichern(sub, arten){
   var j=sub.toJSON();
   return Store.sb.rpc("push_abo_speichern", {p_endpoint:j.endpoint, p_p256dh:j.keys.p256dh, p_auth:j.keys.auth, p_geraet:pushGeraetName(), p_arten:arten})
-    .then(function(r){ if(r.error) throw new Error(r.error.message); lsSet("ukt_push_konto", Store.benutzer.email); pushArtenMerken(arten); lsSet("ukt_push_wieder", 0); });
+    .then(function(r){ if(r.error) throw new Error(r.error.message); lsSet("ukt_push_konto", Store.benutzer.email); pushArtenMerken(arten); pushWiederSetzen(Store.benutzer.email, false); });
 }
 function pushAbmelden(sub){
   return Store.sb.from("push_abos").delete().eq("endpoint", sub.endpoint).then(function(){ return sub.unsubscribe(); }).then(function(){ lsSet("ukt_push_konto",""); });
@@ -8112,7 +8175,7 @@ function pushDialog(){
   aus.onclick=function(){
     err.hidden=true;
     /* bewusst ausgeschaltet: nach dem nächsten Anmelden nicht von selbst wieder ein */
-    pushReg.pushManager.getSubscription().then(function(s){ return s ? pushAbmelden(s) : null; }).then(function(){ lsSet("ukt_push_wieder", 0); toast("Ausgeschaltet."); stand(); }, function(e){ fehl(e.message||String(e)); });
+    pushReg.pushManager.getSubscription().then(function(s){ return s ? pushAbmelden(s) : null; }).then(function(){ pushWiederSetzen(Store.benutzer&&Store.benutzer.email, false); toast("Ausgeschaltet."); stand(); }, function(e){ fehl(e.message||String(e)); });
   };
   test.onclick=function(){
     test.disabled=true; err.hidden=true;
@@ -8127,20 +8190,23 @@ function pushDialog(){
 }
 /* Antippen einer Nachricht: an die passende Stelle – sobald die Daten da sind */
 var pushWartet=null;   /* Sprungziel, das auf die Anmeldung wartet: {z, seit} */
-function pushZiel(z, versuch, frisch){
+function pushZiel(z, versuch, frisch, seit){
   versuch=versuch||0;
   if(!z) return;
   /* noch nicht angemeldet oder die Rolle noch nicht geprüft: das Ziel merken –
      es kommt dran, sobald das Konto feststeht (chatKnopf). Sonst hieße es
      „nicht (mehr) da“, obwohl nur noch nichts geladen ist. */
   if(Store.modus==="lade" || Store.modus==="anmeldung" || (Store.modus==="supabase" && !Admin.geprueft)){ pushWartet={z:z, seit:Date.now()}; return; }
-  if((!ST.length || (Store.modus==="supabase" && !protokolleGeladen)) && versuch<12){ setTimeout(function(){ pushZiel(z, versuch+1); }, 800); return; }
+  if((!ST.length || (Store.modus==="supabase" && !protokolleGeladen)) && versuch<12){ setTimeout(function(){ pushZiel(z, versuch+1, frisch, seit); }, 800); return; }
   var t=z.split(":"), art=t[0], id=t.slice(1).join(":");
   /* Störung, Markt oder Protokoll, die die offene App noch nicht kennt (eben
-     erst von jemand anderem angelegt): erst frisch laden, dann springen */
-  if(!frisch && (art==="stoerungen" || (art==="markt" && id && !byId[id]) ||
-      (art==="protokoll" && id && !alleProtokolle(true).some(function(x){ return x._id===id; })))){
-    frischLaden().then(function(){ pushZiel(z, 99, true); });
+     erst von jemand anderem angelegt): erst frisch laden, dann springen. Ein
+     Protokoll immer – es kann inzwischen korrigiert oder gelöscht sein, die
+     offene App zeigte sonst den alten Stand */
+  if(!frisch && (art==="stoerungen" || (art==="markt" && id && !byId[id]) || (art==="protokoll" && id))){
+    /* dauert das Laden (schwache Verbindung, höchstens 10 s), steht das da */
+    var hinweis=setTimeout(function(){ toast("Wird frisch geladen …"); }, 1500);
+    frischLaden(seit).then(function(){ clearTimeout(hinweis); pushZiel(z, 99, true); });
     return;
   }
   /* stoerungen:Markt – die Störung dieses Markts hervorheben */
@@ -8186,7 +8252,12 @@ function pushZiel(z, versuch, frisch){
    ================================================================ */
 var chatNachrichten=[], chatGeladen=false, chatTimer=null, chatFenster=null, chatBildUrls={}, chatKonto=null, chatTeam=null;
 var chatFehler="";                     /* warum sich der Chat nicht laden ließ */
-var chatEntwurf={text:"", fotos:[]};   /* angefangene Nachricht – bleibt, wenn das Fenster zugeht (Sprung aus einer Nachricht) */
+/* angefangene Nachricht – bleibt, wenn das Fenster zugeht (Sprung aus einer
+   Nachricht): Text und Fotos samt Empfänger und Bezug, sonst ginge eine als
+   persönlich begonnene Nachricht nach dem Wiederöffnen an alle */
+function chatEntwurfLeer(){ return {text:"", fotos:[], an:null, anName:null, bezug:null, konto:null}; }
+var chatEntwurf=chatEntwurfLeer();
+var chatSendet={};                     /* Nachrichten, die gerade übertragen werden (Kennung → Nachricht) */
 var pushKonto=null;                    /* für welchen Stand (Konto, Recht) das Abo des Geräts zuletzt abgeglichen wurde */
 /* wer im Team ist (Büro und Techniker) – für „An: Person“ (Funktion team_liste, tools/chat.sql) */
 function chatTeamLaden(){
@@ -8221,7 +8292,11 @@ function chatStart(){
 function chatKnopf(){
   var k=document.getElementById("chatbtn"); if(!k) return;
   var konto=chatAn() ? Store.benutzer.email : null;
-  if(konto!==chatKonto){ chatKonto=konto; chatNachrichten=[]; chatGeladen=false; chatFehler=""; chatBildUrls={}; chatTeam=null; chatEntwurf={text:"", fotos:[]};
+  if(konto!==chatKonto){ chatKonto=konto; chatNachrichten=[]; chatGeladen=false; chatFehler=""; chatBildUrls={}; chatTeam=null;
+    /* ein offenes Chat-Fenster gehört zum vorigen Konto */
+    if(chatFenster){ chatFenster.zu(); chatFenster=null; }
+    /* die angefangene Nachricht bleibt über eine Abmeldung hinweg nur für dasselbe Konto (im Speicher dieser Seite) */
+    if(konto && chatEntwurf.konto!==konto) chatEntwurf=chatEntwurfLeer();
     chatBezugAlt={}; chatBezugGeladen=false; chatMehr=false; chatLaden(); }
   /* Benachrichtigungen: bei jedem Wechsel nachsehen, ob das Abo des Geräts noch
      passt – auch nach dem Abmelden und bei Kunde/Präsentation (dort gibt es
@@ -8282,7 +8357,7 @@ function meldungEl(e){
     (e.text?'<div style="font-size:13px;white-space:pre-wrap">'+esc(e.text)+"</div>":"")+
     '<div class="muted" style="font-size:11.5px">'+(e.von_user===ich?"von dir ausgelöst – keine Nachricht an dich":(e.nur_user?"persönlich an dich":e.nur_rolle?"an "+esc(e.nur_rolle.replace(",", " und ")):"an alle mit eingeschalteter Benachrichtigung"))+
       (neu?' · <span class="tag f30">neu</span>':"")+"</div></div>");
-  d.onclick=function(){ if(e.ziel){ if(chatFenster){ chatFenster.zu(); chatFenster=null; } pushZiel(e.ziel); } };
+  d.onclick=function(){ if(e.ziel){ if(chatFenster){ chatFenster.zu(); chatFenster=null; } pushZiel(e.ziel, 0, false, e.erstellt); } };
   return d;
 }
 function chatLaden(){
@@ -8312,11 +8387,40 @@ function chatLaden(){
     if(voll) chatBezugLaden();
   }, function(){ fehl("keine Verbindung"); });
 }
-/* Persönliche Nachricht, deren Empfänger-Konto gelöscht wurde (an ist dann
-   leer, der Empfängername steht noch): sie bleibt persönlich – nur der
-   Absender sieht sie noch (dieselbe Regel in tools/chat-direkt.sql) */
+/* Persönliche Nachrichten sehen nur Absender und Empfänger – auch dann, wenn
+   die Datenbank einmal mehr liefert (Leseregel versehentlich zurückgesetzt).
+   Wurde das Konto des Empfängers gelöscht (an ist dann leer, der Empfängername
+   steht noch), bleibt sie persönlich: nur der Absender sieht sie noch
+   (dieselbe Regel in tools/chat-direkt.sql) */
 function chatSichtbar(m){
-  return !!m && (!!m.an || !m.an_name || m.von===(Store.benutzer&&Store.benutzer.id));
+  var ich=Store.benutzer&&Store.benutzer.id;
+  return !!m && ((!m.an && !m.an_name) || m.an===ich || m.von===ich);
+}
+/* Sprung zu einer Nachricht, die älter ist als die geladenen: gibt es sie noch,
+   alles von ihr bis zur ältesten geladenen nachholen (höchstens 1000).
+   Liefert "da", "weg" (gelöscht oder nicht für dieses Konto), "alt" (liegt
+   weiter zurück, als sich nachholen lässt) oder "fehler" (keine Verbindung) */
+function chatBisLaden(id){
+  if(!chatAn()) return Promise.resolve("fehler");
+  var konto=Store.benutzer.email, anders=function(){ return !chatAn() || Store.benutzer.email!==konto; };
+  var dazu=function(liste){
+    var da={}; chatNachrichten.forEach(function(m){ da[m.id]=1; });
+    chatNachrichten=liste.filter(function(m){ return !da[m.id] && chatSichtbar(m); }).concat(chatNachrichten)
+      .sort(function(a,b){ return String(a.erstellt).localeCompare(String(b.erstellt)); });
+  };
+  return mitFrist(Store.sb.from("chat").select("*").eq("id", id).limit(1), 15000).then(function(r){
+    if(r.error || anders()) return "fehler";
+    var z=(r.data||[])[0];
+    if(!z || !chatSichtbar(z)) return "weg";
+    var vor=chatNachrichten.length ? String(chatNachrichten[0].erstellt) : "";
+    if(!vor || String(z.erstellt)>=vor){ dazu([z]); return "da"; }
+    return mitFrist(Store.sb.from("chat").select("*").gte("erstellt", z.erstellt).lt("erstellt", vor).order("erstellt",{ascending:false}).limit(1000), 15000).then(function(r2){
+      if(r2.error || anders()) return "fehler";
+      if(!(r2.data||[]).some(function(m){ return m.id===id; })) return "alt";
+      dazu(r2.data);
+      return "da";
+    });
+  }).then(null, function(){ return "fehler"; });
 }
 /* Der Chat lädt nur die neuesten Nachrichten. Was zu einem Markt, einer Anlage,
    Störung oder einem Protokoll geschrieben wurde, soll dort aber dauerhaft
@@ -8367,8 +8471,11 @@ function chatBezugOeffnen(m, frisch){
      einmal frisch laden, dann öffnen */
   var da = m.bezug_art==="markt" ? !!byId[m.bezug_id] : m.bezug_art==="anlage" ? !!posById[m.bezug_id]
     : m.bezug_art==="stoerung" ? OFFENE.some(function(x){ return x._id===m.bezug_id; })
-    : m.bezug_art==="protokoll" ? alleProtokolle(true).some(function(x){ return x._id===m.bezug_id; }) : true;
-  if(!da && !frisch){ frischLaden().then(function(geladen){ chatBezugOeffnen(m, true); }); return; }
+    /* ein Protokoll immer frisch: es kann inzwischen korrigiert oder gelöscht sein */
+    : m.bezug_art==="protokoll" ? false : true;
+  if(!da && !frisch){
+    var hinweis=setTimeout(function(){ toast("Wird frisch geladen …"); }, 1500);
+    frischLaden().then(function(geladen){ clearTimeout(hinweis); chatBezugOeffnen(m, true); }); return; }
   if(m.bezug_art==="markt"){ if(byId[m.bezug_id]) marktAnsicht(m.bezug_id); else toast("Diesen Markt gibt es nicht mehr."); }
   /* Anlage: die bleibende, falls sie beim Zusammenführen in einer anderen aufgegangen ist */
   else if(m.bezug_art==="anlage"){ var p=posById[zeileWeiter(m.bezug_id)]; if(p) anlageHistorieAnsicht(anlageVon(p).leader||p); else toast("Diese Anlage gibt es nicht mehr."); }
@@ -8412,12 +8519,16 @@ function chatNachrichtEl(m, ohneBezug){
     '<div class="chatkopf"><span>'+esc(m.von_name||"Jemand")+
       /* persönliche Nachricht: nur Absender und Empfänger sehen sie */
       (m.an || m.an_name ? ' <span class="tag" title="Nur für den Empfänger sichtbar">🔒 '+(m.an===ich?"an dich":"an "+esc(m.an_name||"…"))+"</span>" : "")+
-      '</span><span>'+(m._wartet?(m._abgelehnt?"nicht gesendet":"wartet auf Verbindung"):esc(zeitFmt(m.erstellt)))+
-      (m.von===ich ? ' <a href="#" class="sprunglink" data-a="weg" title="Nachricht löschen">✕</a>' : "")+"</span></div>"+
+      /* wird gerade übertragen: kein ✕ – sie ginge trotzdem hinaus */
+      '</span><span>'+(m._wartet?(m._abgelehnt?"nicht gesendet":chatSendet[m.id]?"wird gesendet …":"wartet auf Verbindung"):esc(zeitFmt(m.erstellt)))+
+      (m.von===ich && !(m._wartet && chatSendet[m.id]) ? ' <a href="#" class="sprunglink" data-a="weg" title="Nachricht löschen">✕</a>' : "")+"</span></div>"+
     (m.bezug_art && !ohneBezug ? '<a href="#" class="chatbezug" data-a="bezug">'+esc(m.bezug_text||m.bezug_art)+"</a>" : "")+
     '<div class="chattext">'+esc(m.text||"")+"</div>"+
-    /* vom Server abgelehnt: geht auch später nicht raus – Grund nennen, löschen mit ✕ */
-    (m._abgelehnt ? '<div class="note warnbox" style="font-size:12.5px;margin-top:4px">Nicht gesendet: '+esc(m._abgelehnt)+" Mit ✕ löschen und neu schreiben.</div>" : "")+"</div>");
+    /* vom Server abgelehnt: geht auch später nicht raus – Grund nennen; zurück ins Textfeld oder löschen mit ✕ */
+    (m._abgelehnt ? '<div class="note warnbox" style="font-size:12.5px;margin-top:4px">Nicht gesendet: '+esc(m._abgelehnt)+
+      ' <a href="#" class="sprunglink" data-a="zurueck">Zum Ändern ins Textfeld holen</a> oder mit ✕ löschen.</div>' : "")+"</div>");
+  /* die Blässe der wartenden Nachricht gilt nicht für eine abgelehnte – der Grund soll gut lesbar sein */
+  if(m._abgelehnt) d.style.opacity="1";
   /* wartende Nachrichten haben ihre Fotos noch auf dem Gerät (_fotoDaten) */
   (m.fotos||(m._wartet?Object.keys(m._fotoDaten||{}):[])).forEach(function(pfad){
     var img=el('<img alt="Foto" loading="lazy">');
@@ -8436,7 +8547,19 @@ function chatNachrichtEl(m, ohneBezug){
     d.appendChild(img);
   });
   tippe(d.querySelector('[data-a="bezug"]'), function(){ chatBezugOeffnen(m); });
+  /* abgelehnte Nachricht zurück ins Textfeld (samt Fotos, Empfänger und Bezug) – aus der Warteschlange ist sie dann weg */
+  tippe(d.querySelector('[data-a="zurueck"]'), function(){
+    if((chatEntwurf.text || chatEntwurf.fotos.length) && chatEntwurf.konto===Store.benutzer.email &&
+       !window.confirm("Im Textfeld steht schon eine angefangene Nachricht. Durch diese ersetzen?")) return;
+    lsSet("ukt_chat_warte", lsGet("ukt_chat_warte",[]).filter(function(x){ return x.id!==m.id; }));
+    var bilder=Object.keys(m._fotoDaten||{}).map(function(k){ return m._fotoDaten[k]; });
+    chatEntwurf={text:(m.text==="📷" && bilder.length) ? "" : (m.text||""), fotos:bilder, an:m.an||null, anName:m.an_name||null,
+      bezug:m.bezug_art ? {art:m.bezug_art, id:m.bezug_id, text:m.bezug_text||m.bezug_art} : null, konto:Store.benutzer.email};
+    if(chatFenster && chatFenster.entwurf){ chatFenster.entwurf(); chatFenster.zeichnen(); }
+    else chatOeffnen();
+  });
   tippe(d.querySelector('[data-a="weg"]'), function(){
+    if(m._wartet && chatSendet[m.id]){ toast("Diese Nachricht wird gerade gesendet – danach lässt sie sich im Chat löschen."); return; }
     if(!window.confirm(m._wartet ? "Diese Nachricht ist noch nicht gesendet. Vom Gerät löschen?" : "Diese Nachricht löschen?")) return;
     /* noch in der Warteschlange: nur vom Gerät nehmen */
     if(m._wartet){ lsSet("ukt_chat_warte", lsGet("ukt_chat_warte",[]).filter(function(x){ return x.id!==m.id; })); d.remove(); return; }
@@ -8487,13 +8610,18 @@ function chatWarteSenden(){
   var weiter=function(){
     if(i>=w.length || !chatAn() || Store.benutzer.email!==konto){ fertig(); return; }
     var m=w[i++];
+    /* inzwischen mit ✕ vom Gerät gelöscht oder ins Textfeld zurückgeholt: nicht mehr senden */
+    if(!lsGet("ukt_chat_warte",[]).some(function(x){ return x.id===m.id; })){ weiter(); return; }
+    chatSendet[m.id]=m;
+    if(chatFenster) chatFenster.zeichnen();   /* dort steht jetzt „wird gesendet …“, ohne ✕ */
     chatSenden(m, true).then(function(r){
+      delete chatSendet[m.id];
       var alle=lsGet("ukt_chat_warte",[]);
       if(r.ok){ gesendet++; lsSet("ukt_chat_warte", alle.filter(function(x){ return x.id!==m.id; })); }
       else if(r.dauerhaft){ alle.forEach(function(x){ if(x.id===m.id) x._abgelehnt=r.grund; }); lsSet("ukt_chat_warte", alle); }
       else if(r.netz){ fertig(); return; }   /* keine Verbindung: alles wartet weiter */
       weiter();
-    }, function(){ fertig(); });
+    }, function(){ delete chatSendet[m.id]; fertig(); });
   };
   weiter();
 }
@@ -8543,16 +8671,24 @@ function chatOeffnen(opt){
   if(!chatAn()){ toast("Der Team-Chat ist nur für Büro und Techniker mit gemeinsamer Datenbank."); return; }
   if(chatFenster){ chatFenster.zu(); chatFenster=null; }
   var v=ansichtOeffnen("Team-Chat", function(){ chatFenster=null; });
-  var bezug=opt.bezug||null;
+  /* eine angefangene Nachricht dieses Kontos steht wieder da (chatEntwurf) – mit
+     ihrem Empfänger und Bezug; ein mitgegebener Bezug oder Empfänger geht vor */
+  var entw=(chatEntwurf.text || chatEntwurf.fotos.length) && chatEntwurf.konto===Store.benutzer.email ? chatEntwurf : null;
+  var bezug=opt.bezug || (entw && entw.bezug) || null;
+  var anVor=opt.an || (entw && entw.an) || null, anVorName=(entw && entw.an===anVor && entw.anName) || null;
+  if(entw && ((opt.bezug && !(entw.bezug && entw.bezug.art===opt.bezug.art && entw.bezug.id===opt.bezug.id)) || (opt.an && opt.an!==entw.an)))
+    toast("Die angefangene Nachricht steht wieder da – bitte Empfänger und Bezug prüfen.");
   var box=el('<div class="stack" style="gap:10px" data-chatfenster>'+
     '<div class="chips" data-reiter><button class="chip" type="button" data-r="chat" aria-pressed="true">Chat<span data-czahl></span></button>'+
       '<button class="chip" type="button" data-r="meldungen" aria-pressed="false">Meldungen<span data-mzahl></span></button></div>'+
     '<div class="stack" data-meldungen hidden style="gap:6px"></div>'+
     '<div class="chatliste" data-liste></div>'+
     '<div class="posbox stack" data-schreiben style="gap:6px;position:sticky;bottom:0;background:var(--surface)">'+
+      /* wer weiter oben liest, sieht Neues nicht – Hinweis statt stillem „gelesen“ */
+      '<button class="btn sm" type="button" data-a="neues" hidden style="align-self:center">↓ Neue Nachricht</button>'+
       /* „An“ und Bezug in einer Zeile, leere Foto-Zeile weg: mit offener Tastatur bleibt sonst kaum Platz für die Nachrichten */
-      '<div class="rowflex" style="gap:6px;font-size:12.5px"><span class="muted">An:</span><select data-an style="max-width:190px"><option value="">Alle im Team</option></select>'+
-        '<span data-bezug class="rowflex" style="gap:6px;min-width:0;flex-wrap:nowrap"></span></div>'+
+      '<div class="rowflex" style="gap:6px;font-size:12.5px;flex-wrap:nowrap"><span class="muted">An:</span><select data-an style="max-width:190px;min-width:0;flex:0 1 auto"><option value="">Alle im Team</option></select>'+
+        '<span data-bezug class="rowflex" style="gap:6px;min-width:0;flex:1 1 0;flex-wrap:nowrap"></span></div>'+
       '<textarea data-text rows="2" maxlength="4000" placeholder="Nachricht ans Team …" style="width:100%"></textarea>'+
       '<div data-fotos class="rowflex" style="gap:6px"></div>'+
       '<div class="rowflex" style="gap:6px"><button class="btn sm" type="button" data-a="senden">Senden</button>'+
@@ -8561,40 +8697,89 @@ function chatOeffnen(opt){
       '<div class="note warnbox" data-err hidden></div></div></div>');
   v.inhalt.appendChild(box);
   var li=box.querySelector("[data-liste]"), ta=box.querySelector("[data-text]"), bz=box.querySelector("[data-bezug]"), fo=box.querySelector("[data-fotos]"), err=box.querySelector("[data-err]");
-  /* eine angefangene Nachricht steht wieder da (chatEntwurf) */
-  var fotos=chatEntwurf.fotos.slice(), fotosOffen=0;
-  ta.value=chatEntwurf.text;
-  ta.oninput=function(){ chatEntwurf.text=ta.value; };
-  var bezugZeichnen=function(){
-    bz.innerHTML=""; if(!bezug){ bz.appendChild(el('<span class="muted" title="„Bezug wählen“: Markt, Anlage, Störung oder Protokoll">· ohne Bezug</span>')); return; }
-    bz.appendChild(el('<span class="chatbezug" style="display:inline-block;min-width:0;padding:1px 8px;border-radius:9px;border:1px solid var(--line)">Bezug: '+esc(bezug.text)+"</span>"));
-    var x=el('<button class="btn ghost sm" type="button" title="Bezug entfernen">✕</button>'); x.onclick=function(){ bezug=null; bezugZeichnen(); }; bz.appendChild(x);
+  var anSel=box.querySelector("[data-an]"), neues=box.querySelector('[data-a="neues"]');
+  var fotos=entw ? entw.fotos.slice() : [], fotosOffen=0, sendet=false;
+  ta.value=entw ? entw.text : "";
+  /* gehört dieses Fenster noch zum Chat? (nicht mehr nach Schließen und Wiederöffnen) */
+  var meins=function(){ return !!chatFenster && chatFenster.zeichnen===zeichnen; };
+  /* den Stand als Entwurf merken – nicht, während die Nachricht unterwegs ist */
+  var merken=function(){
+    if(sendet || !meins() || !chatAn()) return;
+    chatEntwurf={text:ta.value, fotos:fotos.slice(), an:anSel.value||null, anName:anSel.value ? anSel.options[anSel.selectedIndex].textContent : null,
+      bezug:bezug, konto:Store.benutzer.email};
   };
-  var fotosZeichnen=function(){ chatEntwurf.fotos=fotos.slice(); fo.innerHTML=""; fo.hidden=!fotos.length; fotos.forEach(function(f,i){ var im=el('<img alt="" style="height:54px;border-radius:6px;cursor:pointer" title="entfernen">'); im.src=f; im.onclick=function(){ fotos.splice(i,1); fotosZeichnen(); }; fo.appendChild(im); }); };
+  ta.oninput=merken; anSel.onchange=merken;
+  /* der Empfänger der angefangenen Nachricht steht sofort da – nicht erst, wenn die Liste des Teams geladen ist */
+  if(anVor && anVorName){ var vorOpt=document.createElement("option"); vorOpt.value=anVor; vorOpt.textContent=anVorName; anSel.appendChild(vorOpt); anSel.value=anVor; }
+  var bezugZeichnen=function(){
+    /* mit Bezug bekommt die Auswahl „An“ weniger Platz – beides bleibt in EINER Zeile */
+    anSel.style.maxWidth=bezug ? "130px" : "190px";
+    bz.innerHTML=""; if(!bezug){ bz.appendChild(el('<span class="muted" style="white-space:nowrap" title="„Bezug wählen“: Markt, Anlage, Störung oder Protokoll">· ohne Bezug</span>')); return; }
+    /* einzeilig mit Auslassung – ein langer Bezug machte den Schreibkasten sonst
+       bis zu drei Zeilen höher; antippen zeigt ihn ganz */
+    var chip=el('<span class="chatbezug" style="display:inline-block;min-width:0;padding:1px 8px;border-radius:9px;border:1px solid var(--line);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:pointer">Zu: '+esc(bezug.text)+"</span>");
+    chip.title="Bezug: "+bezug.text;
+    chip.onclick=function(){ toast("Bezug: "+bezug.text); };
+    bz.appendChild(chip);
+    var x=el('<button class="btn ghost sm" type="button" title="Bezug entfernen">✕</button>'); x.onclick=function(){ bezug=null; bezugZeichnen(); merken(); }; bz.appendChild(x);
+  };
+  var fotosZeichnen=function(){ fo.innerHTML=""; fo.hidden=!fotos.length; fotos.forEach(function(f,i){ var im=el('<img alt="" style="height:54px;border-radius:6px;cursor:pointer" title="entfernen">'); im.src=f; im.onclick=function(){ if(sendet) return; fotos.splice(i,1); fotosZeichnen(); merken(); }; fo.appendChild(im); }); };
+  /* eine zurückgeholte Nachricht (chatEntwurf) in die Felder dieses Fensters setzen */
+  var entwurfZeigen=function(){
+    ta.value=chatEntwurf.text; fotos=chatEntwurf.fotos.slice(); bezug=chatEntwurf.bezug||null;
+    if(chatEntwurf.an && !Array.prototype.some.call(anSel.options, function(o){ return o.value===chatEntwurf.an; })){
+      var o=document.createElement("option"); o.value=chatEntwurf.an; o.textContent=chatEntwurf.anName||"Unbekannt"; anSel.appendChild(o); }
+    anSel.value=chatEntwurf.an||"";
+    bezugZeichnen(); fotosZeichnen();
+    if(reiter!=="chat"){ reiter="chat"; reiterZeigen(); }
+    try{ ta.focus(); }catch(e){}
+  };
   /* Leseposition: wer am Ende steht, sieht Neues – wer weiter oben liest, bleibt
      an seiner Stelle (das Fenster zeichnet alle 90 s und nach jeder Nachricht neu) */
   /* amEnde folgt dem Schieben von Hand – nicht dem eigenen Neuzeichnen (baut)
      und nicht Bildern, die erst nachladen und die Liste länger machen */
-  var amEnde=true, baut=0, stand=false, zeigen=CHAT_SEITE;
+  var amEnde=true, baut=0, stand=false, zeigen=CHAT_SEITE, ersteId=null;
+  /* „↓ Neue Nachricht“: nur, wenn weiter oben gelesen wird und unten Ungelesenes steht */
+  var neuesZeigen=function(){ neues.hidden=!(reiter==="chat" && !amEnde && chatGeladen && chatUngelesen()>0); };
   var stelleMerken=function(){
     if(baut || !stand || reiter!=="chat") return;
+    var war=amEnde;
     amEnde=v.inhalt.scrollHeight-v.inhalt.scrollTop-v.inhalt.clientHeight<80;
+    /* am Ende angekommen: jetzt ist das Neue gesehen */
+    if(amEnde && !war && chatGeladen && box.isConnected) chatGelesen();
+    neuesZeigen();
   };
   v.inhalt.addEventListener("scroll", stelleMerken);
+  neues.onclick=function(){ amEnde=true; v.inhalt.scrollTop=v.inhalt.scrollHeight; if(chatGeladen) chatGelesen(); neuesZeigen(); zahlen(); };
   /* nachLaden: eben frisch geladen – erst dann steht fest, ob es die gesuchte Nachricht (opt.zu) noch gibt;
      wohin: "ende" (eigene Nachricht gesendet) oder "oben" (ältere dazugekommen – die Stelle bleibt) */
   var zeichnen=function(nachLaden, wohin){
+    /* das Fenster hängt nicht mehr in der Seite (von außen geschlossen): nichts zeichnen, nichts als gelesen merken */
+    if(!box.isConnected){ if(meins()) chatFenster=null; return; }
     var sc=v.inhalt, oben=sc.scrollTop, hoch=sc.scrollHeight;
     stelleMerken();
     if(wohin==="ende") amEnde=true;
     baut++;
     li.innerHTML="";
+    /* Sprung zu einer Nachricht, die geladen ist, aber vor den gezeigten liegt: so weit zurück zeigen */
+    if(opt.zu){
+      var zi=-1; chatNachrichten.forEach(function(m,i){ if(m.id===opt.zu) zi=i; });
+      if(zi>=0 && chatNachrichten.length-zi>zeigen) zeigen=Math.ceil((chatNachrichten.length-zi)/CHAT_SEITE)*CHAT_SEITE;
+    }
+    /* ab welcher Nachricht gezeigt wird: wer weiter oben liest, behält seine erste
+       Nachricht – sonst rutschte der Inhalt mit jeder neuen um eine weiter */
+    var ab=Math.max(0, chatNachrichten.length-zeigen);
+    if(!amEnde && ersteId && wohin!=="oben"){
+      var ei=-1; chatNachrichten.forEach(function(m,i){ if(m.id===ersteId) ei=i; });
+      if(ei>=0 && ei<ab){ ab=ei; zeigen=chatNachrichten.length-ab; }
+    }
+    ersteId=chatNachrichten.length>ab ? chatNachrichten[ab].id : null;
     if(!chatGeladen && chatFehler) li.appendChild(el('<div class="note warnbox">Der Chat ließ sich nicht laden ('+esc(chatFehler)+'). '+
       (/verbindung|fetch|zeit/i.test(chatFehler) ? "Sobald wieder Netz da ist, kommt er von selbst." : "Ist er in der Datenbank eingerichtet (tools/chat.sql)?")+"</div>"));
     else if(!chatGeladen) li.appendChild(el('<div class="muted">Nachrichten werden geladen …</div>'));
     else if(!chatNachrichten.length) li.appendChild(el('<div class="muted" style="font-size:13px">Noch keine Nachrichten. Die erste schreibt das Team.</div>'));
     /* weiter zurück: erst was schon geladen ist, dann seitenweise aus der Datenbank */
-    if(chatGeladen && (chatNachrichten.length>zeigen || chatMehr)){
+    if(chatGeladen && (ab>0 || chatMehr)){
       var mehr=el('<div style="text-align:center"><button class="btn ghost sm" type="button">Ältere Nachrichten</button></div>');
       mehr.querySelector("button").onclick=function(){
         var k=this; zeigen+=CHAT_SEITE;
@@ -8605,18 +8790,38 @@ function chatOeffnen(opt){
       };
       li.appendChild(mehr);
     }
-    chatNachrichten.slice(-zeigen).forEach(function(m){ li.appendChild(chatNachrichtEl(m)); });
-    lsGet("ukt_chat_warte",[]).forEach(function(m){ if(m.konto===Store.benutzer.email) li.appendChild(chatNachrichtEl(Object.assign({_wartet:true}, m))); });
-    /* gelesen ist nur, was zu sehen war – nicht, solange „Meldungen“ offen ist */
-    if(reiter==="chat") chatGelesen();
-    zahlen();
+    chatNachrichten.slice(ab).forEach(function(m){ li.appendChild(chatNachrichtEl(m)); });
+    var wartend={};
+    lsGet("ukt_chat_warte",[]).forEach(function(m){ if(m.konto===Store.benutzer.email){ wartend[m.id]=1; li.appendChild(chatNachrichtEl(Object.assign({_wartet:true}, m))); } });
+    /* eben abgeschickt und noch unterwegs (Fotos bei schwacher Verbindung) – auch
+       nach Schließen und Wiederöffnen des Fensters zu sehen, damit niemand doppelt sendet */
+    Object.keys(chatSendet).forEach(function(k){ var m=chatSendet[k];
+      if(m.konto===Store.benutzer.email && !wartend[k] && !chatNachrichten.some(function(x){ return x.id===k; })) li.appendChild(chatNachrichtEl(Object.assign({_wartet:true}, m))); });
     /* die Kennung nicht in einen Selektor bauen – ein Anführungszeichen darin bräche ihn */
     var ziel=opt.zu ? Array.prototype.filter.call(li.querySelectorAll("[data-chat]"), function(n){ return n.dataset.chat===opt.zu; })[0] : null;
-    if(opt.zu && !ziel && nachLaden){ opt.zu=null; toast("Diese Nachricht gibt es nicht mehr."); }
+    /* gelesen ist nur, was zu sehen war – nicht, solange „Meldungen“ offen ist, und
+       nicht, solange weiter oben gelesen wird (dann steht unten „↓ Neue Nachricht“) */
+    if(reiter==="chat" && amEnde && !ziel && chatGeladen) chatGelesen();
+    zahlen(); neuesZeigen();
+    /* nicht unter den geladenen: nachsehen, ob es sie noch gibt, und bis dorthin nachladen */
+    if(opt.zu && !ziel && nachLaden){
+      var zid=opt.zu; opt.zu=null;
+      chatBisLaden(zid).then(function(s){
+        if(!meins()) return;
+        if(s==="da"){ opt.zu=zid; zeichnen(false); }
+        else toast(s==="weg" ? "Diese Nachricht gibt es nicht mehr."
+          : s==="alt" ? "Diese Nachricht liegt weit zurück – bitte über „Ältere Nachrichten“ zurückblättern."
+          : "Die Nachricht ließ sich nicht laden – keine Verbindung?");
+      });
+    }
     /* das Leeren der Liste hat die Stelle verschoben – gleich wieder hin, damit nichts springt */
     if(reiter==="chat" && !amEnde && !ziel) sc.scrollTop=(wohin==="oben" ? oben+(sc.scrollHeight-hoch) : oben);
     setTimeout(function(){
-      if(ziel){ ziel.scrollIntoView({block:"center"}); sprungHervorheben(ziel,{}); opt.zu=null; amEnde=false; }
+      if(ziel){ ziel.scrollIntoView({block:"center"}); sprungHervorheben(ziel,{}); opt.zu=null;
+        /* steht damit auch das Ende im Bild (kurzer Verlauf), ist alles gesehen */
+        amEnde=sc.scrollHeight-sc.scrollTop-sc.clientHeight<80;
+        if(amEnde && reiter==="chat" && chatGeladen && box.isConnected) chatGelesen();
+        zahlen(); neuesZeigen(); }
       else if(reiter==="chat" && amEnde) sc.scrollTop=sc.scrollHeight;   /* unter „Meldungen“ bewegt sich nichts */
       /* das eigene Schieben ist erst einen Augenblick später durch */
       setTimeout(function(){ baut--; stand=true; }, 120);
@@ -8632,6 +8837,7 @@ function chatOeffnen(opt){
     mz.textContent=n?" ("+n+")":""; cz.textContent=c?" ("+c+")":"";
   };
   var meldungenZeichnen=function(){
+    if(!box.isConnected) return;
     zahlen();
     if(reiter!=="meldungen") return;
     /* neu gezeichnet wird alle 90 s – die Stelle, an der gerade gelesen wird, bleibt */
@@ -8639,7 +8845,8 @@ function chatOeffnen(opt){
     ml.innerHTML="";
     if(!meldungen.length){
       ml.appendChild(meldungenFehler
-        ? el('<div class="note warnbox">Die Meldungen ließen sich nicht laden ('+esc(meldungenFehler)+"). Sind sie in der Datenbank eingerichtet (tools/meldungen.sql)?</div>")
+        ? el('<div class="note warnbox">Die Meldungen ließen sich nicht laden ('+esc(meldungenFehler)+"). "+
+            (/verbindung|fetch|network|load failed|zeit/i.test(meldungenFehler) ? "Sobald wieder Netz da ist, kommen sie von selbst." : "Sind sie in der Datenbank eingerichtet (tools/meldungen.sql)?")+"</div>")
         : el('<div class="muted" style="font-size:13px">Noch keine Meldungen. Hier steht, was als Push-Nachricht verschickt wurde – auch was du selbst ausgelöst hast.</div>'));
       return; }
     meldungen.forEach(function(e){ ml.appendChild(meldungEl(e)); });
@@ -8650,58 +8857,93 @@ function chatOeffnen(opt){
     ml.hidden=reiter!=="meldungen"; li.hidden=reiter==="meldungen"; box.querySelector("[data-schreiben]").hidden=reiter==="meldungen";
     /* erst zeichnen (Neues bleibt markiert), dann als gelesen merken – die Zahl am Reiter ist danach weg */
     if(reiter==="meldungen"){ meldungenZeichnen(); meldungenGelesen(); zahlen(); v.inhalt.scrollTop=0; }
-    else { if(chatGeladen) chatGelesen(); zahlen(); amEnde=true; v.inhalt.scrollTop=v.inhalt.scrollHeight; }
+    /* (bei einem Sprung zu einer Nachricht gilt das Neue erst als gelesen, wenn das Ende im Bild war) */
+    else { if(chatGeladen && !opt.zu) chatGelesen(); zahlen(); amEnde=true; v.inhalt.scrollTop=v.inhalt.scrollHeight; neuesZeigen(); }
   };
   box.querySelectorAll("[data-r]").forEach(function(c){ c.onclick=function(){ reiter=c.dataset.r; reiterZeigen(); }; });
-  chatFenster={zu:v.zu, zeichnen:zeichnen, meldungen:meldungenZeichnen};
+  chatFenster={zu:v.zu, zeichnen:zeichnen, meldungen:meldungenZeichnen, entwurf:entwurfZeigen};
   bezugZeichnen(); fotosZeichnen(); zeichnen(); reiterZeigen(); chatLaden();   /* fotosZeichnen: Fotos einer angefangenen Nachricht stehen wieder da */
   chatTeamLaden().then(function(team){
-    var sel=box.querySelector("[data-an]");
-    team.forEach(function(t){ var o=document.createElement("option"); o.value=t.user_id; o.textContent=(t.name||"Unbekannt")+(t.rolle&&t.rolle!=="techniker"?" ("+t.rolle+")":""); sel.appendChild(o); });
-    if(opt.an && team.some(function(t){ return t.user_id===opt.an; })) sel.value=opt.an;
+    var gewaehlt=anSel.value;
+    team.forEach(function(t){
+      var name=(t.name||"Unbekannt")+(t.rolle&&t.rolle!=="techniker"?" ("+t.rolle+")":"");
+      /* schon da (Empfänger der angefangenen Nachricht): nicht doppelt */
+      var da=Array.prototype.filter.call(anSel.options, function(o){ return o.value===t.user_id; })[0];
+      if(da){ da.textContent=name; return; }
+      var o=document.createElement("option"); o.value=t.user_id; o.textContent=name; anSel.appendChild(o); });
+    if(opt.an && !gewaehlt && team.some(function(t){ return t.user_id===opt.an; })){ anSel.value=opt.an; merken(); }
+    /* der Empfänger der angefangenen Nachricht ist nicht mehr im Team: nicht still an alle */
+    if(gewaehlt && gewaehlt===anVor && team.length && !team.some(function(t){ return t.user_id===gewaehlt; })){
+      Array.prototype.forEach.call(anSel.options, function(o){ if(o.value===gewaehlt) o.remove(); });
+      anSel.value=""; merken();
+      toast((anVorName||"Der Empfänger")+" ist nicht mehr im Team – bitte den Empfänger neu wählen, sonst geht die Nachricht an alle.");
+    }
   });
   box.querySelector("[data-foto]").onchange=function(e){
     /* höchstens 4 Fotos je Nachricht – insgesamt, nicht je Auswahl */
-    var dateien=Array.prototype.slice.call(e.target.files||[]), frei=Math.max(0, 4-fotos.length-fotosOffen);
-    if(dateien.length>frei) toast("Höchstens 4 Fotos je Nachricht – "+(frei ? "nur die ersten "+frei+" wurden übernommen." : "es sind schon 4.")+" Weitere bitte in einer zweiten Nachricht.");
+    var dateien=Array.prototype.slice.call(e.target.files||[]), frei=sendet ? 0 : Math.max(0, 4-fotos.length-fotosOffen);
+    if(sendet) toast("Die Nachricht wird gerade gesendet – Fotos bitte danach in die nächste.");
+    else if(dateien.length>frei) toast("Höchstens 4 Fotos je Nachricht – "+(frei===1 ? "nur das erste wurde übernommen." : frei ? "nur die ersten "+frei+" wurden übernommen." : "es sind schon 4.")+" Weitere bitte in einer zweiten Nachricht.");
     dateien.slice(0,frei).forEach(function(datei){
       fotosOffen++;
-      verkleinere(datei).then(function(b){ fotosOffen--; fotos.push(b.datenUrl); fotosZeichnen(); }, function(){ fotosOffen--; toast("Bild nicht lesbar."); });
+      verkleinere(datei).then(function(b){ fotosOffen--; fotos.push(b.datenUrl); fotosZeichnen(); merken(); }, function(){ fotosOffen--; toast("Bild nicht lesbar."); });
     });
     e.target.value="";
   };
-  box.querySelector('[data-a="bezugwahl"]').onclick=function(){ chatBezugWahl(function(b){ bezug=b; bezugZeichnen(); }); };
+  box.querySelector('[data-a="bezugwahl"]').onclick=function(){ chatBezugWahl(function(b){ bezug=b; bezugZeichnen(); merken(); }); };
   box.querySelector('[data-a="senden"]').onclick=function(){
     var text=ta.value.trim(); err.hidden=true;
     if(!text && !fotos.length){ err.textContent="Bitte etwas schreiben."; err.hidden=false; return; }
     if(text.length>4000){ err.textContent="Die Nachricht ist zu lang ("+text.length+" Zeichen, höchstens 4000) – bitte kürzen oder auf zwei Nachrichten aufteilen."; err.hidden=false; return; }
     var id="c_"+Date.now().toString(36)+Math.random().toString(36).slice(2,8), fd={};
     fotos.forEach(function(u,i){ fd["chat/"+id+"/"+(i+1)+".jpg"]=u; });
-    var anSel=box.querySelector("[data-an]"), anId=anSel.value||null, anName=anId ? anSel.options[anSel.selectedIndex].textContent : null;
+    var anId=anSel.value||null, anName=anId ? anSel.options[anSel.selectedIndex].textContent : null;
     var m={id:id, text:text||"📷", bezug_art:bezug?bezug.art:null, bezug_id:bezug?bezug.id:null, bezug_text:bezug?bezug.text:null,
            an:anId, an_name:anName,
            von_name:meineAngaben().name||wer(), von:Store.benutzer.id, erstellt:new Date().toISOString(), konto:Store.benutzer.email, _fotoDaten:fd};
     var k=box.querySelector('[data-a="senden"]'); k.disabled=true;
     var nicht=function(t){ err.textContent=t; err.hidden=false; };
     k.textContent="Wird gesendet …";
-    var frei=function(){ k.disabled=false; k.textContent="Senden"; };
+    /* unterwegs: die Nachricht ist kein Entwurf mehr (sonst stünde sie nach Schließen
+       und Wiederöffnen mit freiem „Senden“ wieder da und ginge doppelt hinaus) */
+    var entwurfVorher={text:ta.value, fotos:fotos.slice(), an:anId, anName:anName, bezug:bezug, konto:Store.benutzer.email};
+    sendet=true; ta.disabled=true; chatSendet[id]=m; chatEntwurf=chatEntwurfLeer();
+    var frei=function(){ sendet=false; ta.disabled=false; delete chatSendet[id]; k.disabled=false; k.textContent="Senden"; };
+    /* nicht hinausgegangen und nicht abgelegt: die Nachricht steht noch im Feld – oder,
+       wenn dieses Fenster inzwischen zu ist, wieder als Entwurf im Chat */
+    var bleibt=function(t){
+      if(meins()){ nicht(t+" Der Text steht noch hier."); merken(); return; }
+      if(chatAn() && Store.benutzer.email===entwurfVorher.konto && !(chatEntwurf.text || chatEntwurf.fotos.length)){
+        chatEntwurf=entwurfVorher;
+        if(chatFenster && chatFenster.entwurf){ chatFenster.entwurf(); chatFenster.zeichnen(); }
+        toast(t+" Der Text steht wieder im Chat.");
+      }
+      else {
+        /* dort wird schon Neues geschrieben: mit dem Grund zu den wartenden Nachrichten – von dort lässt sie sich zurückholen */
+        var wl=lsGet("ukt_chat_warte",[]); wl.push(Object.assign({_abgelehnt:t}, m)); lsSet("ukt_chat_warte", wl);
+        if(chatFenster) chatFenster.zeichnen();
+        toast(t+" Die Nachricht steht im Chat unter den nicht gesendeten.");
+      }
+    };
     chatSenden(m).then(function(r){
       frei();
       /* abgelehnt (zu lang, keine Rechte, Tabelle fehlt): das geht auch später nicht raus – Text und Fotos bleiben stehen */
-      if(!r.ok && r.dauerhaft){ nicht("Nicht gesendet: "+r.grund+" Der Text steht noch hier."); return; }
+      if(!r.ok && r.dauerhaft){ bleibt("Nicht gesendet: "+r.grund); return; }
       if(!r.ok){
         var w=lsGet("ukt_chat_warte",[]); w.push(m);
         /* lässt sie sich nicht auf dem Gerät ablegen (Speicher voll, gesperrt), bleibt sie im Feld stehen */
         if(!lsSet("ukt_chat_warte",w)){
-          nicht("Keine Verbindung – und die Nachricht ließ sich nicht auf dem Gerät ablegen (Speicher voll?). Sie steht noch hier: bitte mit Netz nochmals senden"+(fotos.length?" oder die Fotos weglassen":"")+".");
+          bleibt("Keine Verbindung – und die Nachricht ließ sich nicht auf dem Gerät ablegen (Speicher voll?). Bitte mit Netz nochmals senden"+(fotos.length?" oder die Fotos weglassen":"")+".");
           return;
         }
         toast("Keine Verbindung – die Nachricht geht raus, sobald wieder Netz da ist.");
       }
       else { m.fotos=Object.keys(fd); chatNachrichten.push(m); }
-      ta.value=""; chatEntwurf.text=""; fotos=[]; fotosZeichnen(); bezug=opt.bezug||null; bezugZeichnen(); zeichnen(false, "ende");
+      /* dieses Fenster ist noch offen: Felder leeren. Sonst zeichnet das jetzt offene neu (dort steht die Nachricht dann in der Liste) */
+      if(meins()){ ta.value=""; fotos=[]; fotosZeichnen(); bezug=opt.bezug||null; bezugZeichnen(); zeichnen(false, "ende"); }
+      else if(chatFenster) chatFenster.zeichnen(false, "ende");
       if(r.ok){ chatKartenZeichnen(); chatLaden(); }
-    }, function(e){ frei(); nicht("Nicht gesendet: "+((e&&e.message)||e)); });
+    }, function(e){ frei(); bleibt("Nicht gesendet: "+((e&&e.message)||e)+"."); });
   };
 }
 /* Bezug aussuchen: Suche über Märkte, offene Störungen, Anlagen und die letzten Protokolle */
@@ -9838,6 +10080,7 @@ function protokollAssistent(form, stoer){
     '<div class="as-kopf"><div style="min-width:0"><div class="as-titel"></div><div class="as-schritt"></div></div>'+
       '<button class="btn ghost sm" type="button" data-as="zu">Schließen</button></div>'+
     '<div class="as-inhalt"></div><div class="as-fuss"></div></div></div>');
+  ov.dataset.gefuehrt="1";   /* solange er offen ist, wird das Formular darunter nicht neu gezeichnet (darfRendern) */
   document.body.appendChild(ov);
   document.body.style.overflow="hidden";
   var inhalt=ov.querySelector(".as-inhalt"), fuss=ov.querySelector(".as-fuss");
@@ -10202,7 +10445,10 @@ function protokollAssistent(form, stoer){
   var kmVor=stoer?"#s_km":"#f_km";
   var kmKurz=function(){
     var n=wert(kmVor+"Nach").trim(), e=wert(kmVor+"Ent").trim();
-    return [wert(kmVor+"Art").trim(), n?"nachgefüllt "+n+" kg":"", e?"zurückgewonnen "+e+" kg":""].filter(Boolean).join(" · ");
+    /* Wartung mit mehreren Anlagen: dazu, bei welcher Anlage die Menge gebucht wird */
+    var k=!stoer && (n||e) ? kaeltemittelAusForm(form) : null, ka=k && k.anlage && posById[zeileWeiter(k.anlage)];
+    return [wert(kmVor+"Art").trim(), n?"nachgefüllt "+n+" kg":"", e?"zurückgewonnen "+e+" kg":""].filter(Boolean).join(" · ")+
+      (ka ? " (für "+anlagenName(ka)+")" : "");
   };
   if(f(kmVor+"Nach")) schritte.push({titel:"Kältemittel", zeigen:function(){
     inhalt.innerHTML=frage("Kältemittel nachgefüllt oder zurückgewonnen?")+
@@ -10911,7 +11157,9 @@ function viewProtokoll(){
       var neuP=Object.assign({standortId:sid, aktiv:true, vorOrtNeu:true, neuAngelegt:new Date().toISOString(), anlageZu:n.id}, w.felder);
       recs.push({id:"position:"+n.id, felder:neuP, neu:true});
       felder.push({feld:"anlage", name:"Neue Anlage (vor Ort erfasst)", alt:"–", neu:(n.werte.anlagentyp||"Anlage")+" · "+anlageKurz(w.felder)+
-        (w.felder.intervallCode?" · "+w.felder.intervallCode+(w.felder.monat?" "+MONATE_L[w.felder.monat]:""):"")});
+        (w.felder.intervallCode?" · "+w.felder.intervallCode+(w.felder.monat?" "+MONATE_L[w.felder.monat]:""):"")+
+        /* die Entscheidung „nur Jahreswartung“ steht mit Name im Änderungsverlauf – auch bei einer neuen Anlage */
+        (w.felder.nurJW && !w.weitere.length ? " · nur Jahreswartung, kein Halbjahrestermin" : "")});
       if(w.weitere.length){
         weitere.push({id:n.id, liste:w.weitere});
         w.weitere.forEach(function(t){ felder.push({feld:"intervallCode", name:(n.werte.anlagentyp||"Anlage")+" – neuer Termin", alt:"–",
@@ -12502,7 +12750,7 @@ function blattInhalt(p){
       "<h2>Ergebnis und Bemerkungen</h2>"+
       '<div class="kaestchen" style="grid-template-columns:1fr">'+ERGEBNISSE.map(function(a){ return "<div>"+kreuz(gew(p.ergebnis,a))+" "+esc(a)+"</div>"; }).join("")+"</div>")+
       (p.bemerkungen?"<div style='margin-top:6px'><strong>Bemerkungen:</strong> "+esc(p.bemerkungen)+"</div>":"")+
-      (!st && p.kaeltemittel ? "<div style='margin-top:6px'><strong>Kältemittel:</strong> "+esc(kaeltemittelText(p.kaeltemittel))+"</div>":"")+
+      (!st && p.kaeltemittel ? "<div style='margin-top:6px'><strong>Kältemittel:</strong> "+esc(feldText("kaeltemittel", p.kaeltemittel))+"</div>":"")+
 
       '<div data-rolle="fotos"></div>'+
 
@@ -12985,7 +13233,8 @@ function protokollDetail(p){
     (p.bemerkungen?'<div><div class="l muted" style="font-size:11px;text-transform:uppercase;letter-spacing:.06em;margin-bottom:4px">Bemerkungen</div>'+
       '<div style="font-size:13px">'+esc(p.bemerkungen)+"</div></div>":"")+
     (!istStoerung(p) && p.kaeltemittel ? '<div><div class="l muted" style="font-size:11px;text-transform:uppercase;letter-spacing:.06em;margin-bottom:4px">Kältemittel</div>'+
-      '<div style="font-size:13px">'+esc(kaeltemittelText(p.kaeltemittel))+"</div></div>":"")+
+      /* samt der Anlage, für die nachgefüllt wurde (bei mehreren gewarteten Anlagen) */
+      '<div style="font-size:13px">'+esc(feldText("kaeltemittel", p.kaeltemittel))+"</div></div>":"")+
     '<div id="pauftrag"></div>'+
     '<div id="prapport"></div>'+
     '<div id="pfotos"></div>'+
@@ -13576,7 +13825,7 @@ function anlagenbuchHtml(leader){
     return "<tr><td>"+esc(dfmt(x.datum))+"</td><td>"+esc(x.art)+"</td><td>"+esc(x.techniker||"")+"</td><td>"+esc(x.quelle)+"</td><td>"+esc(mg)+"</td></tr>";
   }).join("");
   var offen=stoerungenDerAnlage(a).map(function(o){
-    return "<tr><td>"+esc(dfmt(String(o.erfasstAm||"").slice(0,10)))+"</td><td>"+esc(o.problemtyp||"")+"</td><td>"+esc(o.auftragsnummer||"")+"</td><td>"+(o.zieltermin?esc(dfmt(o.zieltermin)):"–")+"</td><td>"+esc(stoerungAlter(o).text)+"</td></tr>";
+    return "<tr><td>"+esc(dfmt(tagLokal(o.erfasstAm)))+"</td><td>"+esc(o.problemtyp||"")+"</td><td>"+esc(o.auftragsnummer||"")+"</td><td>"+(o.zieltermin?esc(dfmt(o.zieltermin)):"–")+"</td><td>"+esc(stoerungAlter(o).text)+"</td></tr>";
   }).join("");
   var km=kaeltemittelBewegungen().filter(function(b){ return b.anlageId===a.id; });
   var bil=kaeltemittelBilanz()[a.id], wk=WIEDERKEHR[a.id];
@@ -13609,8 +13858,8 @@ function stundenZahl(w){
 }
 /* Für welchen Termin zählt eine Wartung an dieser Termin-Zeile? So, wie
    berechneFaelligkeiten sie zugeordnet hat (auch über den Jahreswechsel,
-   vorgezogen oder verspätet). Ohne Zuordnung (Zeile ruht oder ist stillgelegt):
-   der Termin, der dem Datum am nächsten liegt. Zählt die Wartung für keinen
+   vorgezogen oder verspätet) – auch für Zeilen, die ruhen oder stillgelegt
+   sind. Nur ganz ohne Zuordnung: der Termin, der dem Datum am nächsten liegt. Zählt die Wartung für keinen
    Termin (zweite im selben Fenster, Datum in der Zukunft): null. */
 function terminZuWartung(z, datum){
   var zu=z.zugeordnet, t=null;
@@ -13643,7 +13892,8 @@ function monatsberichtDaten(monat, region){
             OFFENE.filter(function(x){ return nr && String(x.auftragsnummer||"").trim()===nr; })[0];
       /* erfasst: Auftragsdatum bzw. Eingang der Störung – ein Datum nach dem Einsatz ergibt keine Dauer.
          Es gilt das früheste: bei älteren Einträgen steht als „erfasst“ noch der Tag der letzten Änderung */
-      var erfasst=[o&&o.erfasstAm, o&&o.auftragsdatum, so.auftragsdatum].filter(Boolean).map(function(d){ return String(d).slice(0,10); })
+      /* Zeitstempel in Ortszeit – kurz nach Mitternacht erfasst stünde sonst der Vortag da */
+      var erfasst=[o&&o.erfasstAm, o&&o.auftragsdatum, so.auftragsdatum].filter(Boolean).map(tagLokal)
         .filter(function(d){ return d<=p.datum; }).sort()[0]||null;
       var tage=erfasst ? Math.round((new Date(p.datum+"T12:00:00")-new Date(erfasst+"T12:00:00"))/864e5) : null;
       stoerProt.push({p:p, s:s, problem:so.problemtyp||(o&&o.problemtyp)||"", auftrag:nr, erfasst:erfasst, tage:tage, stunden:stundenVon(p)});
@@ -13667,10 +13917,10 @@ function monatsberichtDaten(monat, region){
   /* Kältemittel wie in der Kältemittel-Bilanz: je Protokoll einmal */
   var imMonat={}; protos.forEach(function(p){ imMonat[p._id]=1; });
   var kmNach=kaeltemittelBewegungen().reduce(function(a,b){ return a+(imMonat[b.protokoll._id]?b.nach:0); },0);
-  var neuStoer=OFFENE.filter(function(o){ var d=String(o.erfasstAm||o.auftragsdatum||"").slice(0,10); return !o.geloescht && d>=von && d<bis && passtMarkt(byId[o.standortId]); });
+  var neuStoer=OFFENE.filter(function(o){ var d=tagLokal(o.erfasstAm||o.auftragsdatum||""); return !o.geloescht && d>=von && d<bis && passtMarkt(byId[o.standortId]); });
   /* Stand am Monatsende: damals schon erfasst und noch nicht erledigt (läuft der Monat noch: Stand heute) */
   var offenEnde=OFFENE.filter(function(o){
-    var d=String(o.erfasstAm||o.auftragsdatum||"").slice(0,10), e=o.erledigt ? String(o.erledigt).slice(0,10) : "";
+    var d=tagLokal(o.erfasstAm||o.auftragsdatum||""), e=o.erledigt ? tagLokal(o.erledigt) : "";
     return !o.geloescht && d<bis && (e ? e>=bis : passt(byId[o.standortId])) && passtMarkt(byId[o.standortId]); });
   var maerkte=ST.filter(passt);
   var ueberf=[]; maerkte.forEach(function(s){ s.pos.forEach(function(p){ if(p.status==="ueberfaellig") ueberf.push({s:s, p:p}); }); });
@@ -13687,31 +13937,34 @@ function monatsberichtHtml(monat, region, intern){
   var stdText=function(n){ return n!=null ? String(Math.round(n*10)/10).replace(".",",") : "–"; };
   /* Abrechnungsstand nicht geladen: nichts behaupten */
   var abgerText=function(p){ return !abrechnungGeladen ? "?" : abrechnung[p._id] ? "ja" : "nein"; };
+  var B_DATUM=86;   /* Spaltenbreite für ein Datum (px) – „01.09.2026“ in einer Zeile, auch in der Ersatzschrift */
   var kacheln=[["Märkte",D.maerkte.length],["Wartungen",D.wartungen.length],["davon fristgerecht",fristJa+(fristNein?" / "+fristNein+" verspätet":"")],
     ["Störungseinsätze",D.stoerProt.length],["neue Störungen",D.neuStoer.length],[D.laeuft?"offen (Stand heute)":"offen am Monatsende",D.offenEnde.length],
     ["Ø Erledigung",dauerMittel!=null?String(dauerMittel).replace(".",",")+" Tage":"–"],["Kältemittel nachgefüllt",kgFmt(kmSum)+" kg"]];
   var kHtml="<div style='display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:6px;margin-bottom:8px'>"+kacheln.map(function(k){
     return "<div style='border:1px solid #c9cfd3;padding:4px 6px'><div style='font-size:15px;font-weight:700'>"+esc(String(k[1]))+"</div><div style='font-size:9.5px;color:#555;text-transform:uppercase'>"+esc(k[0])+"</div></div>"; }).join("")+"</div>";
-  var wHtml=D.wartungen.length ? "<table><tr><th style='width:11%'>Datum</th><th>Markt</th><th>Anlage</th><th style='width:9%'>Art</th><th style='width:11%'>Termin</th><th style='width:10%'>fristgerecht</th><th style='width:8%'>Mängel</th>"+
-    (intern?"<th style='width:8%'>Std.</th><th style='width:9%'>abger.</th>":"")+"</tr>"+
+  /* feste Breiten für Datum, Art und Kurzspalten: kein Datum und kein „Halbjahreswartung“
+     bricht mitten im Wort – Markt und Anlage teilen sich den Rest */
+  var wHtml=D.wartungen.length ? "<table><tr><th style='width:"+B_DATUM+"px'>Datum</th><th>Markt</th><th>Anlage</th><th style='width:140px'>Art</th><th style='width:"+B_DATUM+"px'>Termin</th><th style='width:82px'>fristgerecht</th><th style='width:56px'>Mängel</th>"+
+    (intern?"<th style='width:44px'>Std.</th><th style='width:52px'>abger.</th>":"")+"</tr>"+
     D.wartungen.sort(function(a,b){ return a.p.datum.localeCompare(b.p.datum); }).map(function(w){
       return "<tr><td>"+esc(dfmt(w.p.datum))+"</td><td>"+esc(w.s?stName(w.s):"")+"</td><td>"+esc(w.name)+"</td><td>"+esc(w.art)+"</td><td>"+(w.termin?esc(dfmt(w.termin)):"–")+"</td><td>"+
         (w.frist==null?"–":w.frist?"ja":"verspätet")+"</td><td>"+w.maengel+"</td>"+
         /* Stunden und Abrechnung gelten je Protokoll: nur in dessen erster Zeile */
         (intern?"<td>"+(w.erste?stdText(w.stunden):"")+"</td><td>"+(w.erste?abgerText(w.p):"")+"</td>":"")+"</tr>"; }).join("")+"</table>"
     : "<div>Keine Wartungen in diesem Monat.</div>";
-  var sHtml=D.stoerProt.length ? "<table><tr><th style='width:11%'>Datum</th><th>Markt</th><th>Problem</th><th style='width:12%'>Auftrag</th><th style='width:11%'>erfasst</th><th style='width:10%'>Dauer</th>"+(intern?"<th style='width:8%'>Std.</th><th style='width:9%'>abger.</th>":"")+"</tr>"+
+  var sHtml=D.stoerProt.length ? "<table><tr><th style='width:"+B_DATUM+"px'>Datum</th><th>Markt</th><th>Problem</th><th style='width:96px'>Auftrag</th><th style='width:"+B_DATUM+"px'>erfasst</th><th style='width:66px'>Dauer</th>"+(intern?"<th style='width:44px'>Std.</th><th style='width:52px'>abger.</th>":"")+"</tr>"+
     D.stoerProt.sort(function(a,b){ return a.p.datum.localeCompare(b.p.datum); }).map(function(x){
       return "<tr><td>"+esc(dfmt(x.p.datum))+"</td><td>"+esc(x.s?stName(x.s):"")+"</td><td>"+esc(x.problem)+"</td><td>"+esc(x.auftrag)+"</td><td>"+(x.erfasst?esc(dfmt(x.erfasst)):"–")+"</td><td>"+
         (x.tage!=null?x.tage+(x.tage===1?" Tag":" Tage"):"–")+"</td>"+(intern?"<td>"+stdText(x.stunden)+"</td><td>"+abgerText(x.p)+"</td>":"")+"</tr>"; }).join("")+"</table>"
     : "<div>Keine Störungseinsätze in diesem Monat.</div>";
   /* Reparaturen und Sonstiges: gemacht, aber keine Wartung nach Plan */
-  var xHtml=D.weitere.length ? "<h2>Weitere Einsätze (keine Wartung)</h2><table><tr><th style='width:11%'>Datum</th><th>Markt</th><th>Anlage</th><th style='width:22%'>Art</th>"+(intern?"<th style='width:8%'>Std.</th><th style='width:9%'>abger.</th>":"")+"</tr>"+
+  var xHtml=D.weitere.length ? "<h2>Weitere Einsätze (keine Wartung)</h2><table><tr><th style='width:"+B_DATUM+"px'>Datum</th><th>Markt</th><th>Anlage</th><th style='width:22%'>Art</th>"+(intern?"<th style='width:44px'>Std.</th><th style='width:52px'>abger.</th>":"")+"</tr>"+
     D.weitere.sort(function(a,b){ return a.p.datum.localeCompare(b.p.datum); }).map(function(x){
       return "<tr><td>"+esc(dfmt(x.p.datum))+"</td><td>"+esc(x.s?stName(x.s):"")+"</td><td>"+esc(x.name)+"</td><td>"+esc(x.art)+"</td>"+(intern?"<td>"+stdText(x.stunden)+"</td><td>"+abgerText(x.p)+"</td>":"")+"</tr>"; }).join("")+"</table>"
     : "";
-  var oHtml=D.offenEnde.length ? "<table><tr><th style='width:11%'>erfasst</th><th>Markt</th><th>Problem</th><th style='width:12%'>Auftrag</th><th style='width:11%'>Zieltermin</th></tr>"+
-    D.offenEnde.map(function(o){ var s=byId[o.standortId]; return "<tr><td>"+esc(dfmt(String(o.erfasstAm||"").slice(0,10)))+"</td><td>"+esc(s?stName(s):"")+"</td><td>"+esc(o.problemtyp||"")+"</td><td>"+esc(o.auftragsnummer||"")+"</td><td>"+(o.zieltermin?esc(dfmt(o.zieltermin)):"–")+"</td></tr>"; }).join("")+"</table>"
+  var oHtml=D.offenEnde.length ? "<table><tr><th style='width:"+B_DATUM+"px'>erfasst</th><th>Markt</th><th>Problem</th><th style='width:96px'>Auftrag</th><th style='width:"+B_DATUM+"px'>Zieltermin</th></tr>"+
+    D.offenEnde.map(function(o){ var s=byId[o.standortId]; return "<tr><td>"+esc(dfmt(tagLokal(o.erfasstAm)))+"</td><td>"+esc(s?stName(s):"")+"</td><td>"+esc(o.problemtyp||"")+"</td><td>"+esc(o.auftragsnummer||"")+"</td><td>"+(o.zieltermin?esc(dfmt(o.zieltermin)):"–")+"</td></tr>"; }).join("")+"</table>"
     : "<div>Keine offene Störung.</div>";
   var internHtml="";
   if(intern){
@@ -13744,8 +13997,9 @@ function monatsberichtKarte(){
   k.appendChild(pdfKnopf("PDF für Lidl", function(){ return "Monatsbericht_"+mon()+(reg()?"_"+reg():"")+".pdf"; }, bauen(false)));
   if(istInhaber()) k.appendChild(pdfKnopf("PDF intern", function(){ return "Monatsbericht_"+mon()+(reg()?"_"+reg():"")+"_intern.pdf"; }, bauen(true)));
   var vs=pdfKnopf("Vorschau", function(){ return ""; }, function(){ return null; }); vs.onclick=function(){ var v=ansichtOeffnen("Monatsbericht – Vorschau");
-    /* am Handy: das Blatt behält seine Breite und lässt sich seitlich schieben – sonst zerhackt es die Tabellen */
-    v.inhalt.appendChild(el('<div class="scrollx"><div class="blatt" style="background:#fff;color:#111;padding:10px;font-size:12px;min-width:660px">'+monatsberichtHtml(mon(), reg(), false)+"</div></div>")); };
+    /* das Blatt in der Breite und Schrift des PDFs (A4, 794 px) – die Vorschau zeigt, was
+       hinausgeht; am Handy und in schmalen Fenstern lässt es sich seitlich schieben */
+    v.inhalt.appendChild(el('<div class="scrollx"><div class="blatt" style="background:#fff;color:#111;font:12.5px/1.45 \'IBM Plex Sans\',\'Segoe UI\',Arial,sans-serif;padding:4px 6px;box-sizing:border-box;width:794px">'+monatsberichtHtml(mon(), reg(), false)+"</div></div>")); };
   k.appendChild(vs);
   return c;
 }
@@ -14323,6 +14577,11 @@ function stammRueckgaengig(e){
     };
     if(s.loeschen){ delete stammUeber[s.id]; return stammLoeschen(s.id, rueck).then(zurueckStellen); }
     var rec=Object.assign({}, s.rec, {geaendert:zeit, von:wer(), grund:"Rückgängig: "+grund.trim()});
+    /* ältere Störung ohne „erfasst am“ in den Feldern: bisher galt dafür die letzte
+       Änderung – die springt hier auf jetzt. Den bisherigen Stand festhalten, sonst
+       gälte die Störung ab heute als neu erfasst (Monatsbericht, wiederkehrend) */
+    if(rec.typ==="stoerung" && rec.felder && !rec.felder.erfasstAm && s.rec.geaendert)
+      rec.felder=Object.assign({}, rec.felder, {erfasstAm:s.rec.geaendert, erfasstVon:rec.felder.erfasstVon||s.rec.von||""});
     delete rec.mitZugang;
     stammUeber[s.id]=rec;
     return stammSpeichern(rec, false, rueck).then(function(wo){ return stammUeber[s.id]===rec ? zurueckStellen(wo) : wo; });

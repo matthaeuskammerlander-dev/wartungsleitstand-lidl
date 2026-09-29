@@ -59,6 +59,11 @@ Liegengebliebenes, das älter als 24 Stunden ist, wird nicht mehr verschickt.
 neu deployen: Nachrichten mit „An: Person“ sehen nur Absender und
 Empfänger, die Push-Nachricht geht nur an den Empfänger (`nur_user`).
 
+Die Leseregel (nur Absender und Empfänger) und der Push-Auslöser stehen in
+beiden Dateien gleich – `chat.sql` lässt sich also jederzeit erneut ausführen,
+ohne dass persönliche Nachrichten für das Team lesbar werden. Die App zeigt
+persönliche Nachrichten zusätzlich von sich aus nur Absender und Empfänger.
+
 ## Wochenübersicht (Montag früh)
 
 `tools/wochenuebersicht.sql` ausführen (legt pg_cron, die Tabelle

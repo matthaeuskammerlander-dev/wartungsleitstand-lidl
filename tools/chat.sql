@@ -19,9 +19,21 @@ create table if not exists public.chat (
 );
 create index if not exists chat_erstellt_idx on public.chat (erstellt desc);
 create index if not exists chat_bezug_idx on public.chat (bezug_art, bezug_id);
+-- Persönliche Nachrichten („An: Person“, siehe tools/chat-direkt.sql): die
+-- Spalten und die enge Leseregel stehen auch hier – sonst setzte ein erneutes
+-- Ausführen dieser Datei die Leseregel zurück, und persönliche Nachrichten
+-- wären für das ganze Team lesbar.
+alter table public.chat add column if not exists an uuid references auth.users(id) on delete set null;
+alter table public.chat add column if not exists an_name text;
+create index if not exists chat_an_idx on public.chat (an);
+alter table public.push_ereignisse add column if not exists nur_user uuid;
 alter table public.chat enable row level security;
+-- an = null und an_name = null: an alle im Team. Sonst sehen nur Absender und
+-- Empfänger die Nachricht (wird das Konto des Empfängers gelöscht: nur noch der Absender).
 drop policy if exists "chat lesen" on public.chat;
-create policy "chat lesen" on public.chat for select to authenticated using (public.darf_schreiben());
+create policy "chat lesen" on public.chat for select to authenticated
+  using (public.darf_schreiben()
+         and ((an is null and an_name is null) or an = auth.uid() or von = auth.uid()));
 drop policy if exists "chat schreiben" on public.chat;
 create policy "chat schreiben" on public.chat for insert to authenticated
   with check (public.darf_schreiben() and von = auth.uid());
@@ -46,15 +58,19 @@ create policy "chatfotos loeschen" on storage.objects for delete to authenticate
   using (bucket_id = 'protokollfotos' and name like 'chat/%'
          and public.darf_schreiben() and (owner = auth.uid() or public.ist_admin()));
 
--- neue Nachricht → Push an alle anderen (Absender und Bezug im Titel)
+-- neue Nachricht → Push an alle anderen (Absender und Bezug im Titel); eine
+-- persönliche Nachricht nur an den Empfänger (nur_user – dieselbe Fassung wie
+-- in tools/chat-direkt.sql, damit ein erneutes Ausführen nichts zurücksetzt)
 create or replace function public.push_aus_chat() returns trigger
 language plpgsql security definer set search_path = public as $$
 begin
-  insert into public.push_ereignisse (art, titel, text, ziel, von_user)
+  insert into public.push_ereignisse (art, titel, text, ziel, von_user, nur_user)
   values ('chat',
-          left(coalesce(nullif(new.von_name,''),'Jemand') || case when coalesce(new.bezug_text,'') <> '' then ' · ' || new.bezug_text else '' end, 120),
+          left(coalesce(nullif(new.von_name,''),'Jemand')
+               || case when new.an is not null then ' · persönlich' else '' end
+               || case when coalesce(new.bezug_text,'') <> '' then ' · ' || new.bezug_text else '' end, 120),
           left(new.text, 240) || case when jsonb_array_length(new.fotos) > 0 then ' 📷' else '' end,
-          'chat:' || new.id, new.von);
+          'chat:' || new.id, new.von, new.an);
   return null;
 exception when others then
   return null;
