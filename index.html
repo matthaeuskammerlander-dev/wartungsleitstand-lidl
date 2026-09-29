@@ -267,6 +267,7 @@ body.nurlesen [data-schreiben], body.nurlesen .zugang{display:none!important}
   box-shadow:0 1px 4px rgba(0,0,0,.35);display:flex;align-items:center;justify-content:center;color:#fff;font:700 13px/1 system-ui,sans-serif}
 .stoerpin>span{transform:rotate(45deg)}
 .stoerpin.klein{display:inline-flex;width:14px;height:14px;font-size:9px;border-width:1.5px;margin-right:5px;vertical-align:-2px;transform:none;border-radius:50%}
+.stoerpin.lidl{background:#5B3E9B}
 /* Störungskalender */
 .kal-kopf,.kal-gitter{display:grid;grid-template-columns:repeat(7,1fr);gap:4px}
 .kal-kopf span{font-size:11px;color:var(--ink-3);text-align:center;text-transform:uppercase;letter-spacing:.05em}
@@ -3368,15 +3369,43 @@ function karteHinweiseAnbinden(card){
   });
   tippe(card.querySelector('[data-kh="faellig"]'), function(){ faelligSprung("stoerungen"); });
 }
+/* Was die Karte zeigt (Büro 29.09.2026): jede Kategorie lässt sich ein- und
+   ausblenden – die Auswahl ist zugleich die Legende. Märkte nach ihrem
+   dringlichsten Status, dazu die Zeichen „!“ (offene Störung) und „L“
+   (Rückfrage von Lidl). Die Auswahl bleibt, solange die App offen ist. */
+var KARTE_KAT=[["ueberfaellig","überfällig","--crit"],["faellig","fällig in "+VORLAUF_TAGE+" Tagen","--warn"],["plan","im Zeitplan","--good"],
+               ["sonst","ohne Termin / ruhend","--ink-3"],["stoerung","offene Störung",""],["lidl","Rückfrage von Lidl",""]];
+function karteKat(s){
+  if(marktPausiert(s)) return "sonst";
+  return s.status==="ueberfaellig"||s.status==="faellig" ? s.status : (s.status==="erledigt"||s.status==="geplant") ? "plan" : "sonst";
+}
+function karteFilter(){
+  if(!S.karteFilter){ S.karteFilter={}; KARTE_KAT.forEach(function(k){ S.karteFilter[k[0]]=true; }); }
+  return S.karteFilter;
+}
+function kundenMaerkte(){
+  var m={};
+  (kundenlisteAn()?kundenliste:[]).forEach(function(z){ var s=byId[z.standort_id]; if(s && s.lat && kundenStand(z).status!=="erledigt") m[s.id]=s; });
+  return Object.keys(m).map(function(id){ return m[id]; });
+}
 function karteOsm(withGeo){
   var T=S.tour.ergebnis;
   var card=el('<div class="card"><div class="pad stack">'+
     '<div><h2>Standortkarte</h2><div class="sub">'+withGeo.length+' Standorte auf OpenStreetMap. '+
       'Punktgröße = Anzahl Wartungspositionen, Farbe = dringlichster Status. Antippen öffnet Details und die Navigation.</div></div>'+
     stoerungAusserhalbHinweis(withGeo)+
-    '<div class="legend">'+["ueberfaellig","faellig","erledigt"].map(function(k){
-      return '<span><i style="background:var('+STATUS_VAR[k]+')"></i>'+STATUS_LABEL[k]+"</span>";
-    }).join("")+'<span><span class="stoerpin klein">!</span>'+(stoerungsMaerkte().length?'<a href="#" class="sprunglink" id="legendestoer">offene Störung</a>':"offene Störung")+"</span></div>"+
+    '<div class="stack" style="gap:4px"><div class="muted" style="font-size:12px">Anzeigen – antippen blendet ein oder aus:</div>'+
+    '<div class="chips" id="kartefilter">'+KARTE_KAT.map(function(k){
+      var n = k[0]==="stoerung" ? stoerungsMaerkte().length : k[0]==="lidl" ? kundenMaerkte().length
+            : withGeo.filter(function(s){ return karteKat(s)===k[0]; }).length;
+      /* ohne Rückfragen gibt es die Auswahl „L“ nicht */
+      if(k[0]==="lidl" && !n) return "";
+      return '<button class="chip" type="button" data-kf="'+k[0]+'" aria-pressed="'+(karteFilter()[k[0]]!==false)+'">'+
+        (k[2] ? '<i style="display:inline-block;box-sizing:border-box;width:13px;height:13px;border:1.5px solid #fff;border-radius:50%;margin-right:5px;vertical-align:-2px;background:var('+k[2]+')"></i>'
+              : '<span class="stoerpin klein'+(k[0]==="lidl"?" lidl":"")+'">'+(k[0]==="lidl"?"L":"!")+"</span>")+
+        esc(k[1])+" ("+n+")</button>";
+    }).join("")+
+    '<button class="btn ghost sm" type="button" data-kfalle="1">Alle</button><button class="btn ghost sm" type="button" data-kfalle="0">Keine</button></div></div>'+
     '<div id="osmkarte" style="height:min(68vh,560px);width:100%;border-radius:10px;overflow:hidden;'+
       'border:1px solid var(--line);background:var(--surface-2)"></div>'+
     '<div class="rowflex"><button class="btn ghost sm" type="button" id="kartealle">Alle Standorte zeigen</button>'+
@@ -3399,12 +3428,14 @@ function karteOsm(withGeo){
     var maxPos=1; withGeo.forEach(function(s){ if(s.pos.length>maxPos) maxPos=s.pos.length; });
     var bounds=[];
     var einzel=null, stoerMarker=[];   /* der eine Treffer der Suche; die Störungs-Zeichen */
+    /* je Kategorie eine Ebene – die Auswahl über der Karte blendet sie ein und aus */
+    var ebene={}; KARTE_KAT.forEach(function(k){ ebene[k[0]]=L.layerGroup(); }); ebene.lidlDazu=L.layerGroup();
     withGeo.forEach(function(s){
       var r=6+4*Math.sqrt((s.pos.length-1)/Math.max(1,maxPos-1));
       var m=L.circleMarker([s.lat,s.lon],{
         radius:r, color:tokenFarbe("--surface"), weight:1.8, opacity:1,
         fillColor:tokenFarbe(STATUS_VAR[s.status]), fillOpacity:1
-      }).addTo(karte);
+      }).addTo(ebene[karteKat(s)]);
       bounds.push([s.lat,s.lon]);
       m.bindPopup(function(){ return popupInhalt(s); },{minWidth:230,maxWidth:280});
       m.on("popupopen",function(){ S.sel=s.id; });
@@ -3417,22 +3448,36 @@ function karteOsm(withGeo){
       var n=stoerungVonMarkt(s.id).length; if(!n) return;
       var mk=L.marker([s.lat,s.lon],{zIndexOffset:1000, title:"Störung offen: "+stName(s),
         icon:L.divIcon({className:"", iconSize:[26,26], iconAnchor:[13,30],
-          html:'<div class="stoerpin"><span>'+(n>1?n:"!")+"</span></div>"})}).addTo(karte);
+          html:'<div class="stoerpin"><span>'+(n>1?n:"!")+"</span></div>"})}).addTo(ebene.stoerung);
       mk.bindPopup(function(){ return popupInhalt(s); },{minWidth:230,maxWidth:280});
       stoerMarker.push(mk);
       bounds.push([s.lat,s.lon]);   /* der Ausschnitt schließt die Störungen ein */
     });
     /* Rückfragen des Kunden (offene Wartung oder noch nicht erfasster
        Störungsauftrag): dasselbe Zeichen mit „L“, wo noch kein Störungszeichen steht */
-    var kundenM={};
-    (kundenlisteAn()?kundenliste:[]).forEach(function(z){ if(z.standort_id && kundenStand(z).status!=="erledigt") kundenM[z.standort_id]=1; });
-    Object.keys(kundenM).forEach(function(id){
-      var s=byId[id]; if(!s || !s.lat || stoerungVonMarkt(id).length) return;
+    /* steht am Markt schon das Störungszeichen, kommt das „L“ nur dazu, wenn die Störungen ausgeblendet sind */
+    kundenMaerkte().forEach(function(s){
       var mk=L.marker([s.lat,s.lon],{zIndexOffset:900, title:"Rückfrage von Lidl: "+stName(s),
         icon:L.divIcon({className:"", iconSize:[26,26], iconAnchor:[13,30],
-          html:'<div class="stoerpin"><span>L</span></div>'})}).addTo(karte);
+          html:'<div class="stoerpin lidl"><span>L</span></div>'})}).addTo(stoerungVonMarkt(s.id).length ? ebene.lidlDazu : ebene.lidl);
       mk.bindPopup(function(){ return popupInhalt(s); },{minWidth:230,maxWidth:280});
-      stoerMarker.push(mk);
+      bounds.push([s.lat,s.lon]);
+    });
+    var ebenenZeigen=function(){
+      var f=karteFilter();
+      Object.keys(ebene).forEach(function(k){
+        var an = k==="lidlDazu" ? (f.lidl!==false && f.stoerung===false) : f[k]!==false;
+        if(an && !karte.hasLayer(ebene[k])) ebene[k].addTo(karte);
+        if(!an && karte.hasLayer(ebene[k])) karte.removeLayer(ebene[k]);
+      });
+      card.querySelectorAll("[data-kf]").forEach(function(c){ c.setAttribute("aria-pressed", String(f[c.dataset.kf]!==false)); });
+    };
+    ebenenZeigen();
+    card.querySelectorAll("[data-kf]").forEach(function(c){
+      c.onclick=function(){ var f=karteFilter(); f[c.dataset.kf]=(f[c.dataset.kf]===false); karte.closePopup(); ebenenZeigen(); };
+    });
+    card.querySelectorAll("[data-kfalle]").forEach(function(c){
+      c.onclick=function(){ var f=karteFilter(); KARTE_KAT.forEach(function(k){ f[k[0]]=c.dataset.kfalle==="1"; }); karte.closePopup(); ebenenZeigen(); };
     });
 
     if(T){
@@ -3512,6 +3557,8 @@ function karteOsm(withGeo){
        bei genau einem gleich sein Fenster – mit Animation, nur auf Tipp */
     var stoerZeigen=function(){
       if(!stoerMarker.length) return;
+      /* ausgeblendet: wieder einblenden – sonst zeigte der Knopf auf leere Stellen */
+      if(karteFilter().stoerung===false){ karteFilter().stoerung=true; ebenenZeigen(); }
       if(stoerMarker.length===1){ karte.setView(stoerMarker[0].getLatLng(), 13, {animate:true}); stoerMarker[0].openPopup(); }
       else karte.fitBounds(stoerMarker.map(function(m){ return m.getLatLng(); }),{padding:[30,30], animate:true});
     };
