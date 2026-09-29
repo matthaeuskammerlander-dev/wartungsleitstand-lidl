@@ -1455,7 +1455,7 @@ function el(html){ var t=document.createElement("template"); t.innerHTML=html.tr
 function pill(st){ return '<span class="pill p-'+st+'">'+STATUS_LABEL[st]+"</span>"; }
 function marktPill(s){
   if(marktPausiert(s)) return '<span class="pill p-pausiert"'+(s.pausiertGrund?' title="'+esc(s.pausiertGrund)+'"':"")+">zur Zeit nicht betreut</span>";
-  return pill(s.status);
+  return pill(s.status)+kundenPill(kundenVonMarkt(s.id));
 }
 /* Status und Anlagenzahl eines Markts als Text (Karte: Titel, Tooltip, Popup) –
    ein nicht betreuter Markt heißt so und zählt seine ruhenden Anlagen mit */
@@ -2415,10 +2415,12 @@ function stoerungsKarte(){
     host.appendChild(el('<div class="note warnbox" style="font-size:13px"><strong>'+
       (stammLaedt ? "Offene Störungen werden geladen …" : "Offene Störungen konnten nicht vollständig geladen werden")+"</strong>"+
       (stammLaedt ? "" : " (Verbindung?) – es wird erneut versucht."+(offen.length?" Hier steht nur, was bisher angekommen ist.":""))+"</div>"));
-  } else if(!offen.length){
+  } else if(!offen.length && !kundenUnerfasst().length){
     host.appendChild(el('<div class="muted" style="font-size:13px">Zur Zeit keine offene Störung. '+
       "Kommt ein Auftrag von Lidl, hier erfassen – er erscheint dann an dieser Stelle.</div>"));
   }
+  /* vom Kunden als offen gemeldet, bei uns aber noch nicht erfasst: steht hier, damit es nicht untergeht */
+  kundenUnerfasst().forEach(function(z){ host.appendChild(kundenStoerEintrag(z)); });
   if(draussen){
     var hinweis=el('<div class="note" style="font-size:13px">'+draussen+" offene Störung"+(draussen===1?" liegt":"en liegen")+
       ' außerhalb der Auswahl oben (Suche bzw. Region) und '+(draussen===1?"steht":"stehen")+' trotzdem hier. '+
@@ -3058,7 +3060,7 @@ function viewFaellig(){
           (p.letzte?'<span class="tag">zuletzt '+dfmt(p.letzte)+(p.letzteAusApp?" (App)":"")+"</span>":'<span class="tag">keine Wartung erfasst</span>')+
         "</span>"+
       "</span>"+
-      '<span class="right">'+pill(p.status)+"</span>"+
+      '<span class="right">'+pill(p.status)+kundenPill(kundenVonPos(p.id))+"</span>"+
     "</button>");
     /* Kunde: kein Protokoll-Reiter – die Zeile zeigt den Markt (die Präsentation darf ins Protokoll) */
     r.onclick=function(){ if(nurLesen()) marktAnsicht(s.id); else protokollBeginnen(s.id, p.id, "wartung"); };
@@ -3420,6 +3422,18 @@ function karteOsm(withGeo){
       stoerMarker.push(mk);
       bounds.push([s.lat,s.lon]);   /* der Ausschnitt schließt die Störungen ein */
     });
+    /* Rückfragen des Kunden (offene Wartung oder noch nicht erfasster
+       Störungsauftrag): dasselbe Zeichen mit „L“, wo noch kein Störungszeichen steht */
+    var kundenM={};
+    (kundenlisteAn()?kundenliste:[]).forEach(function(z){ if(z.standort_id && kundenStand(z).status!=="erledigt") kundenM[z.standort_id]=1; });
+    Object.keys(kundenM).forEach(function(id){
+      var s=byId[id]; if(!s || !s.lat || stoerungVonMarkt(id).length) return;
+      var mk=L.marker([s.lat,s.lon],{zIndexOffset:900, title:"Rückfrage von Lidl: "+stName(s),
+        icon:L.divIcon({className:"", iconSize:[26,26], iconAnchor:[13,30],
+          html:'<div class="stoerpin"><span>L</span></div>'})}).addTo(karte);
+      mk.bindPopup(function(){ return popupInhalt(s); },{minWidth:230,maxWidth:280});
+      stoerMarker.push(mk);
+    });
 
     if(T){
       var punkte=[T.start].concat(T.reihenfolge).concat([T.start]);
@@ -3515,6 +3529,7 @@ function popupInhalt(s){
     '<div style="font-size:12.5px;color:var(--ink-3);margin-bottom:6px">'+esc(s.adresse)+"</div>"+
     '<div style="margin-bottom:8px">'+marktPill(s)+' <span class="tag">'+marktPosAnzahl(s)+" Position(en)</span></div>"+
     (marktPausiert(s)?'<div style="font-size:12.5px;margin-bottom:8px">Zur Zeit nicht betreut'+(s.pausiertGrund?": "+esc(s.pausiertGrund):"")+"</div>":"")+
+    kundenVermerk(s)+
     /* je offener Störung: der rote Kasten (antippen: „Ansehen / ändern“, nicht
        beim Kunden) und das passende Störungsprotokoll */
     stoerungVonMarkt(s.id).map(function(o){
@@ -3791,7 +3806,7 @@ function tourErgebnis(T){
         : marktPausiert(mJetzt) ? "zur Zeit nicht betreut"+(mJetzt.pausiertGrund?" – "+mJetzt.pausiertGrund:"")
         : (!(mJetzt.pos||[]).length ? "zur Zeit keine Anlage zu warten" : "");
       var r='<tr><td class="mono">'+(i+1)+'</td>'+
-        '<td><strong>'+marktLink(st.standort)+"</strong>"+
+        '<td><strong>'+marktLink(st.standort)+"</strong>"+kundenPill(kundenVonMarkt(st.standort.id))+
           (stName(st.standort)===st.standort.adresse ? "" :
             '<br><span class="muted" style="font-size:12px">'+esc(st.standort.adresse)+"</span>")+
           /* der Vermerk bricht um – ein längerer Grund machte die Spalte sonst sehr breit */
@@ -3887,6 +3902,7 @@ function standortDetail(s){
       "<dt>Geocodierung</dt><dd class='muted'>"+({adresse:"Adressgenau",strasse:"Straßenebene",ort:"Ortsebene",keine:"keine"}[s.genauigkeit]||s.genauigkeit)+"</dd>"+
     "</dl>"+
     marktVermerk(s)+
+    kundenVermerk(s)+
     '<div class="rowflex">'+
       (s.lat?'<a class="btn ghost sm" href="'+gmapsZiel(s)+'" target="_blank" rel="noopener">In Google Maps navigieren</a>':"")+
       '<button class="btn ghost sm" type="button" data-akt="historie">Wartungshistorie</button>'+
@@ -4757,9 +4773,9 @@ function posBox(p,s,imBlock){
   var b=el('<div class="posbox" data-status="'+esc(p.status)+'" data-pid="'+esc(p.id)+'">'+
     (imBlock
       ? '<details class="klapp"'+(auf?" open":"")+'><summary><span><strong style="font-size:14px">'+esc(p.intervall.art)+"</strong>"+
-          ' <span class="muted" style="font-size:12.5px;white-space:nowrap">· '+(p.naechste?"nächster "+dfmt(p.naechste):"ohne Termin")+"</span></span>"+pill(p.status)+"</summary>"
+          ' <span class="muted" style="font-size:12.5px;white-space:nowrap">· '+(p.naechste?"nächster "+dfmt(p.naechste):"ohne Termin")+"</span></span>"+pill(p.status)+kundenPill(kundenVonPos(p.id))+"</summary>"
       : '<div class="rowflex" style="justify-content:space-between;gap:8px">'+
-          '<strong style="font-size:14px">'+esc(anlagenName(p))+"</strong>"+pill(p.status)+
+          '<strong style="font-size:14px">'+esc(anlagenName(p))+"</strong>"+pill(p.status)+kundenPill(kundenVonPos(p.id))+
           (wiederkehrVon(p) ? ' <span class="pill p-ueberfaellig" title="'+esc(wiederkehrText(wiederkehrVon(p)))+'">⚠ wiederkehrende Störung</span>' : "")+"</div>")+
     '<dl class="dl">'+
       "<dt>Art</dt><dd>"+esc(p.intervall.art)+
@@ -9207,7 +9223,8 @@ function kundenlisteLaden(){
     if(!kundenlisteAn() || Store.benutzer.email!==konto || r.error || !Array.isArray(r.data)) return;
     var anders=!kundenlisteGeladen || JSON.stringify(r.data)!==JSON.stringify(kundenliste);
     kundenliste=r.data; kundenlisteGeladen=true;
-    if(anders) kundenKarteNeu();
+    /* die Markierungen stehen in vielen Übersichten – neu zeichnen, wo es nichts stört */
+    if(anders){ if(darfRendern() && !document.querySelector(".assistent")) render(); else kundenKarteNeu(); }
   }, function(){});
 }
 /* Stand einer Zeile aus den eigenen Daten. Wartung: der Termin der Anlage, der
@@ -9281,6 +9298,7 @@ function kundenAntwort(art){
 function kundenAnsicht(){
   var v=ansichtOeffnen("Rückfragen von Lidl");
   var ov=v.inhalt.closest(".assistent"); ov.setAttribute("data-konto","");
+  ov.setAttribute("data-kundenfenster","");
   v.schritt.textContent="vom Kunden angefragt – gesondert abarbeiten";
   var filter="alle", heute=isoLokal(new Date());
   var box=el('<div class="stack" style="gap:10px"><div class="chips" data-filter></div><div class="stack" data-liste style="gap:8px"></div></div>');
@@ -9397,6 +9415,68 @@ function kundenAnsicht(){
     fuss("Antwort: Störungen", function(){ antwort("stoerung"); }, "");
   }
 }
+/* Rückfragen des Kunden in den übrigen Übersichten (Büro 29.09.2026): die
+   eigene Liste ist zum Abarbeiten da – untergehen darf trotzdem nichts.
+   Deshalb stehen offene Rückfragen auch bei Fällig, am Markt, an der Anlage,
+   auf der Karte, in der Tour, bei den Störungen und in der Wochenübersicht. */
+function kundenVonMarkt(sid){
+  return kundenlisteAn() ? kundenliste.filter(function(z){ return z.standort_id===sid && kundenStand(z).status!=="erledigt"; }) : [];
+}
+function kundenVonPos(pid){
+  return kundenlisteAn() ? kundenliste.filter(function(z){ return z.art==="wartung" && z.position_id===pid && kundenStand(z).status!=="erledigt"; }) : [];
+}
+/* Störungsaufträge aus der Liste, die bei uns noch nicht als Störung erfasst sind */
+function kundenUnerfasst(){
+  return kundenlisteAn() ? kundenliste.filter(function(z){ var k=kundenStand(z); return z.art==="stoerung" && k.status!=="erledigt" && !k.o; }) : [];
+}
+function kundenOffenZahl(){ return kundenlisteAn() ? kundenliste.filter(function(z){ return kundenStand(z).status!=="erledigt"; }).length : 0; }
+function kundenKurz(z){
+  var k=kundenStand(z);
+  return (z.art==="stoerung"?"Störungsauftrag ":"Wartung IH-Nr. ")+z.nummer+(z.prio?" · "+z.prio:"")+
+    (z.frist?(z.art==="stoerung"?" · Rückmeldung bis ":" · spätestens ")+dfmt(z.frist):"")+(k.status==="geplant"?" · "+k.text:"");
+}
+function kundenPill(l){
+  if(!l.length) return "";
+  return ' <span class="pill p-ueberfaellig" data-kundenliste role="button" tabindex="0" title="'+esc(l.map(kundenKurz).join("\n"))+'">Lidl fragt nach'+
+    (l.length>1?" ("+l.length+")":"")+"</span>";
+}
+function kundenVermerk(s){
+  var l=kundenVonMarkt(s.id); if(!l.length) return "";
+  return '<div class="note warnbox" style="font-size:12.5px;margin-bottom:8px"><strong>Rückfrage von Lidl</strong>'+
+    l.map(function(z){ return "<br>"+esc(kundenKurz(z)); }).join("")+
+    '<br><a href="#" class="sprunglink" data-kundenliste>Zur Liste der Rückfragen</a></div>';
+}
+function kundenStoerEintrag(z){
+  var s=byId[z.standort_id];
+  var d=el('<div class="posbox stack" style="gap:6px;border-color:var(--crit)">'+
+    '<div class="rowflex" style="justify-content:space-between;gap:8px;align-items:flex-start"><strong>'+esc(kundenName(z))+"</strong>"+
+      '<span class="pill p-ueberfaellig">Lidl fragt nach</span></div>'+
+    '<div style="font-size:13px">Auftrag <strong>'+esc(z.nummer)+"</strong>"+(z.prio?" · <strong>"+esc(z.prio)+"</strong>":"")+
+      (z.frist?" · Rückmeldung bis "+esc(dfmt(z.frist)):"")+(z.geplant?" · geplant für "+esc(dfmt(z.geplant)):"")+"</div>"+
+    '<div class="muted" style="font-size:12.5px">Von Lidl als offen gemeldet (Liste vom '+esc(dfmt(z.liste_vom))+") – bei uns noch nicht als Störung erfasst.</div>"+
+    '<div class="rowflex" style="gap:6px;flex-wrap:wrap">'+
+      (s && !nurLesen()?'<button class="btn sm" type="button" data-a="anlegen" data-schreiben>Als Störung anlegen</button>':"")+
+      '<button class="btn ghost sm" type="button" data-kundenliste>Zur Liste der Rückfragen</button></div></div>');
+  var b=d.querySelector('[data-a="anlegen"]');
+  if(b) b.onclick=function(){
+    stoerungDialog(null, null, {standortId:s.id, auftragsnummer:z.nummer, filialCode:z.filial_code||"", prioritaet:z.prio||null,
+      lidlTyp:z.bezeichnung||"", zieltermin:z.frist||null, quelle:"kundenliste",
+      beschreibung:"Laut Liste von Lidl vom "+dfmt(z.liste_vom)+" offen – der Auftrag selbst liegt uns nicht vor."});
+  };
+  return d;
+}
+/* in der Einfangphase: die Markierung sitzt auch in Zeilen, die selbst antippbar sind */
+document.addEventListener("click", function(e){
+  var m=e.target && e.target.closest ? e.target.closest("[data-kundenliste]") : null;
+  if(!m) return;
+  e.preventDefault(); e.stopPropagation();
+  if(!document.querySelector(".assistent[data-kundenfenster]")) kundenAnsicht();
+}, true);
+document.addEventListener("keydown", function(e){
+  if(e.key!=="Enter") return;
+  var m=e.target && e.target.closest ? e.target.closest("span[data-kundenliste]") : null;
+  if(m){ e.preventDefault(); e.stopPropagation(); if(!document.querySelector(".assistent[data-kundenfenster]")) kundenAnsicht(); }
+}, true);
 function kontoKarte(){
   var mail=Store.benutzer&&Store.benutzer.email?Store.benutzer.email:"";
   var ich=meineAngaben();
@@ -14392,11 +14472,11 @@ function wochenZahlen(){
   var nachb=0; try{ nachb=pruefListe().filter(function(x){ return x.schwere==="Fehler"; }).length; }catch(e){}
   return {stand:heute, ueberfaellig:ueber.length, dieseWoche:woche.length, stoerungen:stoer.length,
     zieltermine:stoer.filter(function(o){ return o.zieltermin && o.zieltermin<=in7; }).length,
-    wiederkehrend:Object.keys(WIEDERKEHR).length, leck:lecks, fehler:nachb, ueber:ueber, woche:woche, stoer:stoer};
+    wiederkehrend:Object.keys(WIEDERKEHR).length, leck:lecks, rueckfragen:kundenOffenZahl(), fehler:nachb, ueber:ueber, woche:woche, stoer:stoer};
 }
 function wochenText(z){
   return [z.ueberfaellig+" überfällig", z.dieseWoche+" diese Woche fällig", z.stoerungen+" offene Störung"+(z.stoerungen===1?"":"en")+(z.zieltermine?" ("+z.zieltermine+" mit Zieltermin diese Woche)":""),
-    z.wiederkehrend?z.wiederkehrend+" wiederkehrend":"", z.leck?z.leck+" Leck-Verdacht":"", z.fehler?z.fehler+" Fehler unter Nachbessern":""].filter(Boolean).join(" · ");
+    z.rueckfragen?z.rueckfragen+" Rückfrage"+(z.rueckfragen===1?"":"n")+" von Lidl offen":"", z.wiederkehrend?z.wiederkehrend+" wiederkehrend":"", z.leck?z.leck+" Leck-Verdacht":"", z.fehler?z.fehler+" Fehler unter Nachbessern":""].filter(Boolean).join(" · ");
 }
 var kennzahlenZuletzt=0, kennzahlenVon="", kennzahlenTimer=null;
 function kennzahlenSchreiben(){
@@ -14420,7 +14500,7 @@ function kennzahlenJetzt(){
   kennzahlenZuletzt=Date.now(); kennzahlenVon=ich;
   var z=wochenZahlen();
   var werte={stand:z.stand, ueberfaellig:z.ueberfaellig, dieseWoche:z.dieseWoche, stoerungen:z.stoerungen, zieltermine:z.zieltermine,
-    wiederkehrend:z.wiederkehrend, leck:z.leck, fehler:z.fehler, text:wochenText(z)};
+    wiederkehrend:z.wiederkehrend, leck:z.leck, rueckfragen:z.rueckfragen, fehler:z.fehler, text:wochenText(z)};
   Store.sb.from("kennzahlen").upsert({id:1, stand:new Date().toISOString(), werte:werte},{onConflict:"id"}).then(function(r){
     /* nicht geschrieben: beim nächsten Anlass wieder versuchen */
     if(r && r.error) zurueck();
