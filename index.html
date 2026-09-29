@@ -1716,8 +1716,47 @@ function gmapsPunkt(p){
   if(p.plz && p.adresse) return encodeURIComponent(p.adresse+", Österreich");
   return p.lat+","+p.lon;
 }
-function gmapsZiel(p){
+/* Navigation mit der App der eigenen Wahl (Büro 29.09.2026): Google Maps, Waze
+   oder Apple Karten – je Gerät gemerkt. Noch nichts gewählt: beim ersten
+   Antippen wird gefragt. Die Route eines ganzen Tour-Tags mit Zwischenzielen
+   kann nur Google Maps übernehmen. */
+var NAVI_APPS=[["google","Google Maps"],["waze","Waze"],["apple","Apple Karten"]];
+function naviApp(){ var a=lsGet("ukt_navi",""); return NAVI_APPS.some(function(x){ return x[0]===a; }) ? a : ""; }
+function naviName(){ var a=naviApp(); return a ? NAVI_APPS.filter(function(x){ return x[0]===a; })[0][1] : "der Navi-App"; }
+function naviUrl(p, app){
+  /* wie bei Google: die Adresse, wo es eine gibt – die Kartenposition ist nicht überall adressgenau */
+  var adr=(p.plz && p.adresse) ? encodeURIComponent(p.adresse+", Österreich") : "";
+  if(app==="waze") return "https://waze.com/ul?"+((p.lat && (p.genauigkeit==="adresse" || !adr)) ? "ll="+p.lat+"%2C"+p.lon : "q="+adr)+"&navigate=yes";
+  if(app==="apple") return "https://maps.apple.com/?daddr="+(adr || (p.lat+","+p.lon))+"&dirflg=d";
   return "https://www.google.com/maps/dir/?api=1&travelmode=driving&destination="+gmapsPunkt(p);
+}
+function naviWahl(dann){
+  var v=ansichtOeffnen("Navigation");
+  v.schritt.textContent="Mit welcher App soll dieses Gerät navigieren?";
+  var box=el('<div class="stack">'+NAVI_APPS.map(function(x){
+      return '<button class="btn'+(naviApp()===x[0]?"":" ghost")+'" type="button" data-app="'+x[0]+'" style="text-align:left">'+esc(x[1])+(naviApp()===x[0]?" – gewählt":"")+"</button>"; }).join("")+
+    '<div class="muted" style="font-size:12.5px">Gilt für dieses Gerät. Ändern lässt es sich jederzeit im Reiter Protokoll unter „Konto“ '+
+    "oder in der Markt-Ansicht über „Navi-App“. Die Route eines ganzen Tour-Tags öffnet immer Google Maps – nur das kann Zwischenziele übernehmen.</div></div>");
+  v.inhalt.appendChild(box);
+  box.querySelectorAll("[data-app]").forEach(function(b){ b.onclick=function(){
+    lsSet("ukt_navi", b.dataset.app); v.zu(); toast("Navigation mit "+naviName()+".");
+    document.querySelectorAll("[data-naviname]").forEach(function(n){ n.textContent=naviName(); });
+    if(dann) dann();
+  }; });
+}
+function naviOeffnen(p){ window.open(naviUrl(p, naviApp()||"google"), "_blank", "noopener"); }
+/* alle Navi-Verweise (data-navi = Markt): immer die gerade gewählte App, auch wenn der Verweis älter ist */
+document.addEventListener("click", function(e){
+  var w=e.target && e.target.closest ? e.target.closest("[data-naviwahl]") : null;
+  if(w){ e.preventDefault(); e.stopPropagation(); naviWahl(); return; }
+  var a=e.target && e.target.closest ? e.target.closest("a[data-navi]") : null;
+  if(!a) return;
+  var p=byId[a.dataset.navi]; if(!p) return;
+  e.preventDefault(); e.stopPropagation();
+  if(!naviApp()) naviWahl(function(){ naviOeffnen(p); }); else naviOeffnen(p);
+}, true);
+function gmapsZiel(p){
+  return naviUrl(p, naviApp()||"google");
 }
 /* Google nimmt über die URL höchstens neun Zwischenziele entgegen */
 var GMAPS_MAX_WAYPOINTS=9;
@@ -3604,7 +3643,7 @@ function popupInhalt(s){
     }).join("")+
     '<div style="display:flex;flex-direction:column;gap:6px">'+
       '<a class="btn sm" style="text-align:center;text-decoration:none" href="'+gmapsZiel(s)+
-        '" target="_blank" rel="noopener">Mit Google Maps navigieren</a>'+
+        '" target="_blank" rel="noopener" data-navi="'+esc(s.id)+'">Mit <span data-naviname>'+esc(naviName())+'</span> navigieren</a>'+
       '<button class="btn ghost sm" type="button" data-akt="detail">Anlagen und Historie</button>'+
       '<button class="btn ghost sm" type="button" data-akt="proto" data-schreiben>Protokoll ausfüllen</button>'+
     "</div>";
@@ -3879,7 +3918,7 @@ function tourErgebnis(T){
             return '<span class="tag">'+esc(p.anlagentyp||"Anlage")+"</span>";
           }).join(" ")+"</td>"+
         /* am Stopp gleich das Protokoll (bzw. bei offener Störung das Störungsprotokoll) */
-        '<td><div class="rowflex" style="gap:4px;flex-wrap:nowrap"><a class="btn ghost sm" href="'+gmapsZiel(st.standort)+'" target="_blank" rel="noopener">Navi</a>'+
+        '<td><div class="rowflex" style="gap:4px;flex-wrap:nowrap"><a class="btn ghost sm" href="'+gmapsZiel(st.standort)+'" target="_blank" rel="noopener" data-navi="'+esc(st.standort.id)+'">Navi</a>'+
           '<button class="btn ghost sm" type="button" data-tourproto="'+esc(st.standort.id)+'" data-schreiben>Protokoll</button>'+
           '<button class="btn ghost sm" type="button" data-tourweg="'+esc(st.standort.id)+'" title="Aus der Tour nehmen – die Route wird neu gerechnet">✕</button>'+
           stoerungVonMarkt(st.standort.id).map(function(o){
@@ -3953,7 +3992,7 @@ function standortDetail(s){
     '<dl class="dl">'+
       /* Adresse antippen: losfahren (Google Maps, wie „navigieren“) */
       "<dt>Adresse</dt><dd>"+(s.adresse && (s.lat || s.plz)
-        ? '<a class="sprunglink" href="'+gmapsZiel(s)+'" target="_blank" rel="noopener" title="In Google Maps navigieren">'+esc(s.adresse)+"</a>"
+        ? '<a class="sprunglink" href="'+gmapsZiel(s)+'" target="_blank" rel="noopener" data-navi="'+esc(s.id)+'" title="Navigieren">'+esc(s.adresse)+"</a>"
         : esc(s.adresse))+"</dd>"+
       "<dt>FM-Region</dt><dd>"+esc(s.region||"nicht zugeordnet")+"</dd>"+
       (s.filiale?"<dt>Filiale</dt><dd class='mono'>"+esc(s.filiale)+"</dd>":"")+
@@ -3966,7 +4005,8 @@ function standortDetail(s){
     marktVermerk(s)+
     kundenVermerk(s)+
     '<div class="rowflex">'+
-      (s.lat?'<a class="btn ghost sm" href="'+gmapsZiel(s)+'" target="_blank" rel="noopener">In Google Maps navigieren</a>':"")+
+      (s.lat?'<a class="btn ghost sm" href="'+gmapsZiel(s)+'" target="_blank" rel="noopener" data-navi="'+esc(s.id)+'">Mit <span data-naviname>'+esc(naviName())+'</span> navigieren</a>'+
+        '<button class="btn ghost sm" type="button" data-naviwahl title="Google Maps, Waze oder Apple Karten">Navi-App</button>':"")+
       '<button class="btn ghost sm" type="button" data-akt="historie">Wartungshistorie</button>'+
       /* bearbeitet wird in der Verwaltung – nur für Admins */
       (Admin.frei?'<button class="btn ghost sm" type="button" data-akt="bearbeiten" data-schreiben>Daten bearbeiten</button>':"")+
@@ -4959,7 +4999,7 @@ function viewAnlagen(){
       if(inner.dataset.done) return;
       /* Hinfahren und offene Störungen gleich oben, vor den Anlagen */
       var kopf=el('<div class="rowflex" style="gap:8px;margin-bottom:10px">'+
-        (s.lat||s.plz?'<a class="btn sm" style="text-decoration:none" href="'+gmapsZiel(s)+'" target="_blank" rel="noopener">Mit Google Maps navigieren</a>':"")+
+        (s.lat||s.plz?'<a class="btn sm" style="text-decoration:none" href="'+gmapsZiel(s)+'" target="_blank" rel="noopener" data-navi="'+esc(s.id)+'">Mit <span data-naviname>'+esc(naviName())+'</span> navigieren</a>':"")+
         "</div>");
       if(kopf.children.length) inner.appendChild(kopf);
       if(marktPausiert(s)){ var vm=el(marktVermerk(s)); vm.style.marginBottom="10px"; inner.appendChild(vm); }
@@ -9563,6 +9603,7 @@ function kontoKarte(){
         (Admin.zentral?' <span class="tag f30">Admin</span>':"")+"</span>"+
       '<span class="rowflex">'+(demo()||nurLesen()?"":'<button class="btn ghost sm" type="button" id="k_angaben">Meine Angaben</button>')+
       (demo()||nurLesen()?"":'<button class="btn ghost sm" type="button" id="k_pw">Passwort ändern</button>')+
+      '<button class="btn ghost sm" type="button" data-naviwahl>Navi-App: <span data-naviname>'+esc(naviApp()?naviName():"wählen")+'</span></button>'+
       '<button class="btn ghost sm" type="button" id="k_ab">Abmelden</button></span>'+
     "</div>"+
     /* wer noch mit dem vom Büro vergebenen Startpasswort unterwegs ist, bekommt einen Hinweis */
