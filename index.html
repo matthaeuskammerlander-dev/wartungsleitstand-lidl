@@ -1947,14 +1947,15 @@ function stoerungAlter(o){
 function nachStoerungsDialog(){
   if(darfRendern()) render(); else stoerungEintraegeAuffrischen();
 }
-function stoerungDialog(vorhanden, weiter){
+/* vorlage (freiwillig): vorbelegte Angaben für eine NEUE Störung, etwa aus der Liste des Kunden */
+function stoerungDialog(vorhanden, weiter, vorlage){
   if(nurLesen()){ posteingangOffen=null; toast("Mit diesem Konto lässt sich nur ansehen."); return; }
   /* gemeinsame Datenbank, aber abgemeldet: nichts erfassen oder ändern – es
      ginge sonst später unter fremdem Namen in die Datenbank */
   if(!angemeldetOderLokal()){ posteingangOffen=null; toast("Dafür bitte zuerst anmelden."); return; }
   var o = weiter ? Object.assign({}, weiter.ort.o)
         : vorhanden ? Object.assign({}, vorhanden)
-                    : {_id:"st_"+Date.now().toString(36)+Math.random().toString(36).slice(2,6), seiten:[]};
+                    : Object.assign({_id:"st_"+Date.now().toString(36)+Math.random().toString(36).slice(2,6), seiten:[]}, vorlage||{});
   if(!o.seiten) o.seiten=[];
   /* der Auftrag kam aus dem Posteingang: nach dem Speichern dort erledigen */
   if(weiter && weiter.ort.posteingang && !posteingangOffen) posteingangOffen=weiter.ort.posteingang;
@@ -2972,6 +2973,8 @@ function viewFaellig(){
       "(Verbindung?) – Fälligkeiten sind vorläufig, es wird erneut versucht.</div>"));
 
   /* Offene Störungen stehen ganz oben – sie warten, nicht der Kalender. */
+  /* Rückfragen des Kunden mit Frist: noch vor allem anderen */
+  f.appendChild(kundenKarte());
   if(posteingangAn()) f.appendChild(posteingangKarte());
   /* Wochenübersicht fürs Büro – dieselben Zahlen wie die Montag-Nachricht */
   if(Admin.frei && !nurLesen()) f.appendChild(wochenKarte());
@@ -8491,6 +8494,7 @@ function meldungEl(e){
    die Zählung beim jetzigen Stand, obwohl das Konto noch Ungelesenes hat */
 function chatLaden(){ return gelesenLaden().then(chatLadenJetzt, chatLadenJetzt); }
 function chatLadenJetzt(){
+  kundenlisteLaden();
   abrechnungLaden(); meldungenLaden();
   if(!chatAn()){ chatNachrichten=[]; chatGeladen=false; if(document.getElementById("chatbtn")) document.getElementById("chatbtn").hidden=true; return Promise.resolve(); }
   /* nicht geladen: im Fenster steht, woran es liegt (statt für immer „wird geladen“) */
@@ -9184,6 +9188,214 @@ function abrechnungZeile(p){
   hk.onchange=speichern;
   no.onchange=function(){ if(hk.checked) speichern(); };
   return z;
+}
+/* ================================================================
+   Rückfragen des Kunden (Büro 29.09.2026): Lidl schickt Listen offener
+   Wartungen und Störungsaufträge mit Frist. Sie stehen in der Tabelle
+   kundenliste (tools/kundenliste.sql) und lassen sich gesondert vom Rest
+   abarbeiten: Stand je Zeile aus den eigenen Daten, Termin planen, Tour
+   aus der Liste, Antwort an den Kunden. An Fälligkeit und Soll-Monat
+   ändert die Liste nichts.
+   ================================================================ */
+var kundenliste=[], kundenlisteGeladen=false;
+function kundenlisteAn(){ return Store.modus==="supabase" && !!Store.sb && !!Store.benutzer && !nurLesen() && !demo(); }
+function kundenKarteNeu(){ var k=document.getElementById("kundenkarte"); if(k) k.replaceWith(kundenKarte()); }
+function kundenlisteLaden(){
+  if(!kundenlisteAn()){ kundenliste=[]; kundenlisteGeladen=false; return Promise.resolve(); }
+  var konto=Store.benutzer.email;
+  return Store.sb.from("kundenliste").select("*").order("frist").limit(500).then(function(r){
+    if(!kundenlisteAn() || Store.benutzer.email!==konto || r.error || !Array.isArray(r.data)) return;
+    var anders=!kundenlisteGeladen || JSON.stringify(r.data)!==JSON.stringify(kundenliste);
+    kundenliste=r.data; kundenlisteGeladen=true;
+    if(anders) kundenKarteNeu();
+  }, function(){});
+}
+/* Stand einer Zeile aus den eigenen Daten. Wartung: der Termin der Anlage, der
+   der Frist am nächsten liegt – erledigt, wenn ihm eine Wartung zugeordnet ist
+   (wie im Monatsbericht). Störung: die Störung mit derselben Auftragsnummer. */
+function kundenStand(z){
+  var s=byId[z.standort_id]||null, r={s:s, status:"offen", text:"offen", datum:null, auto:false, p:null, o:null, termin:null};
+  if(z.art==="stoerung"){
+    var o=OFFENE.filter(function(x){ return String(x.auftragsnummer||"").trim()===String(z.nummer).trim(); })[0]||null;
+    r.o=o;
+    if(o && o.erledigt){ r.status="erledigt"; r.datum=tagLokal(o.erledigt); r.auto=true; }
+    else if(o && o.termin && !z.geplant){ r.status="geplant"; r.datum=o.termin; r.auto=true; }
+  } else {
+    var p=posById[z.position_id]||null;
+    r.p=p;
+    if(p && p.anker && z.frist){
+      var y=+z.frist.slice(0,4), ab=Infinity;
+      [y-1,y,y+1].forEach(function(j){
+        var t=ankerIm(p.anker,j), d=Math.abs(new Date(t+"T12:00:00")-new Date(z.frist+"T12:00:00"));
+        if(d<ab){ ab=d; r.termin=t; }
+      });
+      if(r.termin && p.zugeordnet && p.zugeordnet[r.termin]){ r.status="erledigt"; r.datum=p.zugeordnet[r.termin]; r.auto=true; }
+    }
+  }
+  if(r.status!=="erledigt"){
+    if(z.erledigt){ r.status="erledigt"; r.datum=z.erledigt; r.auto=false; }
+    else if(z.geplant){ r.status="geplant"; r.datum=z.geplant; r.auto=false; }
+  }
+  r.text = r.status==="erledigt" ? "erledigt am "+dfmt(r.datum) : r.status==="geplant" ? "geplant für "+dfmt(r.datum) : "offen";
+  return r;
+}
+/* in der Liste bleibt, was noch nicht beantwortet oder noch nicht erledigt ist */
+function kundenOffen(){ return kundenliste.filter(function(z){ return !z.gemeldet || kundenStand(z).status!=="erledigt"; }); }
+function kundenName(z){ var s=byId[z.standort_id]; return (z.filial_code?z.filial_code+" · ":"")+(s?stName(s):(z.markt_name||"Markt unbekannt")); }
+function kundenKarte(){
+  var l=kundenlisteAn() ? kundenOffen() : [], heute=isoLokal(new Date());
+  if(!l.length) return el('<div id="kundenkarte" hidden></div>');
+  var n={offen:0, geplant:0, erledigt:0}, st=0, wa=0, ohneAntwort=0, frist=null;
+  l.forEach(function(z){
+    var k=kundenStand(z); n[k.status]++;
+    if(z.art==="stoerung") st++; else wa++;
+    if(!z.gemeldet){ ohneAntwort++; if(z.art==="stoerung" && z.frist && (!frist || z.frist<frist)) frist=z.frist; }
+  });
+  var c=el('<div class="card" id="kundenkarte" style="border-color:var(--crit)"><div class="pad stack" style="gap:8px">'+
+    '<div class="rowflex" style="justify-content:space-between;gap:8px;align-items:flex-start"><div><h2>Rückfragen von Lidl</h2>'+
+      '<div class="sub">'+st+" Störungsauftr"+(st===1?"ag":"äge")+" · "+wa+" Wartung"+(wa===1?"":"en")+" – vom Kunden angefragt, mit Frist</div></div>"+
+      '<button class="btn sm" type="button" data-a="auf">Liste öffnen</button></div>'+
+    '<div class="rowflex" style="gap:6px;flex-wrap:wrap">'+
+      (n.offen?'<span class="pill p-ueberfaellig">'+n.offen+" offen</span>":"")+
+      (n.geplant?'<span class="pill p-faellig">'+n.geplant+" geplant</span>":"")+
+      (n.erledigt?'<span class="pill p-erledigt">'+n.erledigt+" erledigt</span>":"")+
+      (ohneAntwort?'<span class="pill p-unbekannt">'+ohneAntwort+" noch ohne Antwort an Lidl</span>":"")+"</div>"+
+    (frist?'<div style="font-size:13px'+(frist<=heute?";color:var(--crit);font-weight:600":"")+'">Rückmeldung zu den Störungen bis '+esc(dfmt(frist))+
+      (frist<heute?" – Frist überschritten":frist===heute?" – heute":" (noch "+tageBis(frist)+" Tage)")+"</div>":"")+
+  "</div></div>");
+  c.querySelector('[data-a="auf"]').onclick=function(){ kundenAnsicht(); };
+  return c;
+}
+/* Antwort an den Kunden: je Zeile der Stand, zum Einfügen in die Mail */
+function kundenAntwort(art){
+  var l=kundenOffen().filter(function(z){ return z.art===art; }), vom={};
+  l.forEach(function(z){ vom[z.liste_vom]=1; });
+  var zeilen=l.map(function(z){
+    var k=kundenStand(z);
+    return (art==="stoerung"?"Auftrag ":"IH-Nr. ")+z.nummer+" · "+(z.filial_code||"")+" "+(z.markt_name||"")+
+      (z.bezeichnung?" · "+z.bezeichnung:"")+": "+(k.status==="offen" ? "Termin folgt" : k.text)+(z.notiz?" ("+z.notiz+")":"");
+  });
+  return "Sehr geehrte Damen und Herren,\n\nzu Ihrer Liste "+(art==="stoerung"?"offener Aufträge":"offener Wartungen")+" vom "+
+    Object.keys(vom).sort().map(dfmt).join(" / ")+":\n\n"+zeilen.join("\n")+"\n\nMit freundlichen Grüßen\n"+(meineAngaben().name||"");
+}
+function kundenAnsicht(){
+  var v=ansichtOeffnen("Rückfragen von Lidl");
+  var ov=v.inhalt.closest(".assistent"); ov.setAttribute("data-konto","");
+  v.schritt.textContent="vom Kunden angefragt – gesondert abarbeiten";
+  var filter="alle", heute=isoLokal(new Date());
+  var box=el('<div class="stack" style="gap:10px"><div class="chips" data-filter></div><div class="stack" data-liste style="gap:8px"></div></div>');
+  v.inhalt.appendChild(box);
+  var liste=box.querySelector("[data-liste]"), fb=box.querySelector("[data-filter]");
+  var speichern=function(z, d){
+    if(!Admin.frei){ toast("Eintragen kann das nur das Büro."); return Promise.resolve(false); }
+    d.geaendert=new Date().toISOString(); d.von=meineAngaben().name||wer();
+    return mitFrist(Store.sb.from("kundenliste").update(d).eq("id", z.id), 15000).then(function(r){
+      if(r.error){ toast("Nicht gespeichert: "+r.error.message); return false; }
+      Object.assign(z, d); zeichnen(); kundenKarteNeu();
+      return true;
+    }, function(){ toast("Nicht gespeichert – keine Verbindung."); return false; });
+  };
+  var zeile=function(z){
+    var k=kundenStand(z), s=k.s;
+    var pill=k.status==="erledigt"?"p-erledigt":k.status==="geplant"?"p-faellig":"p-ueberfaellig";
+    var spaet=z.frist && z.frist<heute && k.status!=="erledigt";
+    var d=el('<div class="posbox stack" style="gap:6px'+(k.status==="offen"?";border-color:var(--crit)":"")+'">'+
+      '<div class="rowflex" style="justify-content:space-between;gap:8px;align-items:flex-start"><strong>'+esc(kundenName(z))+"</strong>"+
+        '<span class="pill '+pill+'">'+esc(k.text)+"</span></div>"+
+      '<div style="font-size:13px">'+(z.art==="stoerung"?"Störungsauftrag ":"Wartung · IH-Nr. ")+"<strong>"+esc(z.nummer)+"</strong>"+
+        (z.bezeichnung?" · "+esc(z.bezeichnung):"")+(z.prio?" · <strong>"+esc(z.prio)+"</strong>":"")+"</div>"+
+      '<div style="font-size:13px'+(spaet?";color:var(--crit)":"")+'">'+(z.art==="stoerung"?"Rückmeldung bis ":"späteste Ausführung laut Lidl ")+
+        (z.frist?esc(dfmt(z.frist)):"–")+(spaet?" – überschritten":"")+" · Liste vom "+esc(dfmt(z.liste_vom))+"</div>"+
+      (k.p ? '<div class="muted" style="font-size:12.5px">Bei uns: '+esc(anlagenName(anlageDaten(k.p)))+" · "+esc((k.p.intervall&&k.p.intervall.kurz)||k.p.intervallCode||"")+
+        (k.termin?" · Termin "+esc(dfmt(k.termin)):"")+(k.p.letzte?" · zuletzt gewartet "+esc(dfmt(k.p.letzte)):" · keine Wartung bekannt")+
+        (k.auto && k.status==="erledigt"?" · aus unseren Nachweisen":"")+"</div>" : "")+
+      (z.art==="stoerung" ? '<div class="muted" style="font-size:12.5px">'+(k.o ? "Bei uns als Störung erfasst"+(k.o.problemtyp?": "+esc(k.o.problemtyp):"")
+        : "Bei uns noch nicht als Störung erfasst – der Auftrag von Lidl fehlt")+"</div>" : "")+
+      (!s ? '<div class="note warnbox" style="font-size:12.5px">Der Markt ist in unserer Liste nicht eindeutig – bitte im Büro zuordnen.</div>' : "")+
+      (z.notiz?'<div style="font-size:12.5px"><span class="muted">Notiz:</span> '+esc(z.notiz)+"</div>":"")+
+      (z.gemeldet?'<div class="muted" style="font-size:12.5px">An Lidl gemeldet am '+esc(dfmt(z.gemeldet))+"</div>":"")+
+      '<div class="rowflex" data-knoepfe style="gap:6px;flex-wrap:wrap"></div>'+
+      '<div class="stack" data-eintragen style="gap:6px" hidden>'+
+        '<label class="fl"><span>Geplant für</span><input type="date" data-f="geplant" value="'+esc(z.geplant||"")+'"></label>'+
+        '<label class="fl"><span>Erledigt am (falls bei uns kein Protokoll)</span><input type="date" data-f="erledigt" max="'+heute+'" value="'+esc(z.erledigt||"")+'"></label>'+
+        '<label class="fl"><span>Notiz für die Antwort</span><input type="text" data-f="notiz" maxlength="200" value="'+esc(z.notiz||"")+'"></label>'+
+        '<div><button class="btn sm" type="button" data-a="sichern">Speichern</button></div></div></div>');
+    var kn=d.querySelector("[data-knoepfe]"), knopf=function(t, fn){
+      var b=el('<button class="btn ghost sm" type="button">'+esc(t)+"</button>"); b.onclick=fn; kn.appendChild(b); return b; };
+    if(s) knopf("Markt öffnen", function(){ marktAnsicht(s.id); });
+    if(z.art==="stoerung" && k.o) knopf("Störung öffnen", function(){ stoerungDialog(k.o); });
+    if(z.art==="stoerung" && !k.o && s) knopf("Als Störung anlegen", function(){
+      stoerungDialog(null, null, {standortId:s.id, auftragsnummer:z.nummer, filialCode:z.filial_code||"", prioritaet:z.prio||null,
+        lidlTyp:z.bezeichnung||"", zieltermin:z.frist||null, quelle:"kundenliste",
+        beschreibung:"Laut Liste von Lidl vom "+dfmt(z.liste_vom)+" offen – der Auftrag selbst liegt uns nicht vor."});
+    });
+    if(Admin.frei) knopf("Termin / Stand eintragen", function(){ var e=d.querySelector("[data-eintragen]"); e.hidden=!e.hidden; });
+    var si=d.querySelector('[data-a="sichern"]');
+    si.onclick=function(){
+      var w=function(f){ return d.querySelector('[data-f="'+f+'"]').value.trim()||null; };
+      if(w("erledigt") && w("erledigt")>heute){ toast("„Erledigt am“ kann nicht in der Zukunft liegen."); return; }
+      si.disabled=true;
+      speichern(z, {geplant:w("geplant"), erledigt:w("erledigt"), notiz:w("notiz")}).then(function(ok){ si.disabled=false; if(ok) toast("Gespeichert."); });
+    };
+    return d;
+  };
+  function zeichnen(){
+    var alle=kundenOffen();
+    var zahl=function(f){ return alle.filter(f).length; };
+    var F=[["alle","Alle ("+alle.length+")"],["stoerung","Störungen ("+zahl(function(z){ return z.art==="stoerung"; })+")"],
+           ["wartung","Wartungen ("+zahl(function(z){ return z.art==="wartung"; })+")"],
+           ["offen","nur offene ("+zahl(function(z){ return kundenStand(z).status==="offen"; })+")"]];
+    fb.innerHTML="";
+    F.forEach(function(x){
+      var b=el('<button class="chip" type="button" aria-pressed="'+(filter===x[0])+'">'+esc(x[1])+"</button>");
+      b.onclick=function(){ filter=x[0]; zeichnen(); }; fb.appendChild(b);
+    });
+    liste.innerHTML="";
+    var l=alle.filter(function(z){ return filter==="alle" || (filter==="offen" ? kundenStand(z).status==="offen" : z.art===filter); });
+    /* Störungen zuerst (Prio 1 voran), dann Wartungen nach Frist */
+    var rang=function(z){ return (z.art==="stoerung" ? "0"+(/prio\s*1/i.test(z.prio||"")?"0":"1") : "1")+(z.frist||"9999")+z.nummer; };
+    l.sort(function(a,b){ return rang(a).localeCompare(rang(b)); });
+    if(!l.length) liste.appendChild(el('<div class="muted">Nichts in dieser Auswahl.</div>'));
+    l.forEach(function(z){ liste.appendChild(zeile(z)); });
+  }
+  zeichnen();
+  var fuss=function(t, fn, art){ var b=el('<button class="btn'+(art===""?"":" ghost")+'" type="button">'+esc(t)+"</button>"); b.onclick=fn; v.fuss.appendChild(b); return b; };
+  fuss("Tour aus der Liste", function(){
+    var ids=[];
+    kundenOffen().forEach(function(z){ var k=kundenStand(z); if(k.status!=="erledigt" && k.s && k.s.lat && ids.indexOf(k.s.id)<0) ids.push(k.s.id); });
+    if(!ids.length){ toast("Kein offener Markt mit Standort in der Liste."); return; }
+    S.tour.manuell=ids.slice(); S.tour.dazu=ids.slice(); S.view="karte";
+    v.zu(); toast("Tour mit "+ids.length+" Märkten aus der Liste wird berechnet …");
+    render();
+    tourRechnen().then(function(ok){
+      if(ok===false) return;
+      if(S.view==="karte" && darfRendern()){ render(); var t=document.getElementById("t_out"); if(t) t.scrollIntoView({behavior:"smooth", block:"start"}); }
+    }, function(){ toast("Die Route konnte nicht berechnet werden – bitte im Reiter Karte nochmals."); });
+  });
+  if(Admin.frei){
+    var antwort=function(art){
+      var a=ansichtOeffnen("Antwort an Lidl");
+      a.schritt.textContent=art==="stoerung"?"Störungsaufträge":"Wartungen";
+      var b=el('<div class="stack"><div class="muted" style="font-size:12.5px">Text prüfen, kopieren und in die Antwort-Mail einfügen. „Termin folgt“ steht überall, wo noch kein Termin eingetragen ist.</div>'+
+        '<textarea rows="14" style="width:100%;font-size:13px"></textarea></div>');
+      b.querySelector("textarea").value=kundenAntwort(art); a.inhalt.appendChild(b);
+      var ko=el('<button class="btn" type="button">Text kopieren</button>'), ge=el('<button class="btn ghost" type="button">Als beantwortet vermerken</button>');
+      ko.onclick=function(){ inZwischenablage(b.querySelector("textarea").value, "Antwort"); };
+      ge.onclick=function(){
+        if(!window.confirm("Bei allen "+(art==="stoerung"?"Störungsaufträgen":"Wartungen")+" der Liste „an Lidl gemeldet am "+dfmt(heute)+"“ vermerken?\n\nErledigte verschwinden danach aus der Liste.")) return;
+        var l=kundenOffen().filter(function(z){ return z.art===art; });
+        mitFrist(Store.sb.from("kundenliste").update({gemeldet:heute, geaendert:new Date().toISOString(), von:meineAngaben().name||wer()})
+          .in("id", l.map(function(z){ return z.id; })), 15000).then(function(r){
+          if(r.error){ toast("Nicht vermerkt: "+r.error.message); return; }
+          l.forEach(function(z){ z.gemeldet=heute; }); a.zu(); zeichnen(); kundenKarteNeu();
+          toast("Vermerkt.");
+        }, function(){ toast("Nicht vermerkt – keine Verbindung."); });
+      };
+      a.fuss.appendChild(ge); a.fuss.appendChild(ko);
+    };
+    fuss("Antwort: Wartungen", function(){ antwort("wartung"); });
+    fuss("Antwort: Störungen", function(){ antwort("stoerung"); }, "");
+  }
 }
 function kontoKarte(){
   var mail=Store.benutzer&&Store.benutzer.email?Store.benutzer.email:"";
