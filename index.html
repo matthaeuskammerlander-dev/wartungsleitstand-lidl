@@ -3209,6 +3209,8 @@ function tourKandidaten(){
   var raus=[], arten=tourArten(), bis=endeFolgemonat();
   filtered().forEach(function(s){
     if(!s.lat) return;
+    /* zur Zeit nicht betreut: auch Störungen und Rückfragen dort nicht einplanen (Büro 30.09.2026) */
+    if(marktPausiert(s)) return;
     if(S.tour.laender.length && S.tour.laender.indexOf(bundesland(s))<0) return;
     var pos=[], ids={}, dazu=function(p){ if(p && !ids[p.id]){ ids[p.id]=1; pos.push(p); } };
     if(arten.wartung) s.pos.forEach(function(p){
@@ -3246,7 +3248,7 @@ function tourRechnen(){
     ((S.tour.ergebnis||{}).tage||[]).forEach(function(t){ t.stopps.forEach(function(x){ if(x.standort) inRoute[x.standort.id]=x; }); });
     S.tour.manuell.forEach(function(id){
       var s=byId[id], x=inRoute[id];
-      if(!s || !s.lat || !x || (S.tour.dazu||[]).indexOf(id)>=0) return;
+      if(!s || !s.lat || !x || marktPausiert(s) || (S.tour.dazu||[]).indexOf(id)>=0) return;
       if(kandidaten.some(function(k){ return k.standort.id===id; })) return;
       var pos=(x.positionen||[]).map(function(p){ return posById[p.id]; }).filter(function(p){ return p && s.pos.indexOf(p)>=0; });
       if(pos.length) kandidaten.push({standort:s, positionen:pos});
@@ -3255,7 +3257,7 @@ function tourRechnen(){
   /* von Hand dazugenommene Märkte (auch ohne fälligen Termin): mit allen Anlagen des Markts –
      nicht, wenn dort zur Zeit nichts zu warten ist (Markt nicht betreut, alle Anlagen ruhen) */
   (S.tour.dazu||[]).forEach(function(id){
-    var s=byId[id]; if(!s || !s.lat || !s.pos.length) return;
+    var s=byId[id]; if(!s || !s.lat || !s.pos.length || marktPausiert(s)) return;
     if(kandidaten.some(function(k){ return k.standort.id===id; })) return;
     kandidaten.push({standort:s, positionen:s.pos.slice()});
   });
@@ -3874,10 +3876,17 @@ function tourAnpassen(wegId, dazuId){
   (T.tage||[]).forEach(function(t){ t.stopps.forEach(function(s){ if(s.standort && s.standort.id!==wegId && ids.indexOf(s.standort.id)<0) ids.push(s.standort.id); }); });
   /* wird gerade neu gerechnet (zweimal rasch hintereinander angepasst), zeigt die
      Route noch den Stand davor – dann gilt die Handauswahl, nicht die alte Route */
-  if(tourPasstAn && S.tour.manuell){
-    ids=ids.filter(function(i){ return S.tour.manuell.indexOf(i)>=0 || (S.tour.dazu||[]).indexOf(i)>=0; });
-    S.tour.manuell.concat(S.tour.dazu||[]).forEach(function(i){ if(i!==wegId && ids.indexOf(i)<0) ids.push(i); });
+  /* Gilt schon eine Handauswahl, zählt sie – nicht die angezeigte Route. Die kann
+     noch den Stand davor zeigen (Neuberechnung läuft noch oder ist fehlgeschlagen);
+     sonst käme ein eben entfernter Markt mit dem nächsten „✕“ wieder zurück
+     (Büro 30.09.2026: von zwei entfernten Märkten blieb einer drin) */
+  if(S.tour.manuell){
+    ids=S.tour.manuell.concat(S.tour.dazu||[]).filter(function(i,n,l){ return i!==wegId && l.indexOf(i)===n; });
   }
+  /* gleich zeigen, dass der Markt herausgenommen ist – die neue Route kommt nach */
+  if(wegId) document.querySelectorAll('[data-tourweg="'+wegId+'"]').forEach(function(b){
+    var tr=b.closest("tr"); if(tr){ tr.style.opacity=".4"; tr.style.textDecoration="line-through"; } b.disabled=true;
+  });
   S.tour.dazu=(S.tour.dazu||[]).filter(function(i){ return i!==wegId && i!==dazuId; });
   if(dazuId){ ids.push(dazuId); S.tour.dazu.push(dazuId); }
   S.tour.manuell=ids;
@@ -3921,6 +3930,42 @@ function tourMarktDazu(){
   inp.oninput=zeichnen; zeichnen(); setTimeout(function(){ inp.focus(); }, 50);
 }
 
+/* Tour auf Papier (Büro 30.09.2026): je Tag die Stopps mit Zeiten, Adresse, was zu tun
+   ist und Platz für Notizen – über den Druckdialog (dort auch „als PDF“) */
+function tourDrucken(T){
+  if(!T) return;
+  var alt=document.getElementById("druckansicht"); if(alt) alt.remove();
+  var uhr=function(min){ var h=Math.floor(min/60), m=Math.round(min%60); if(m===60){ h++; m=0; } return String(h).padStart(2,"0")+":"+String(m).padStart(2,"0"); };
+  var tage=T.tage.map(function(tag){
+    var minute=7*60;
+    var zeilen=tag.stopps.map(function(st,i){
+      var anf=minute+st.fahrtH*60, ende=anf+st.arbeitH*60; minute=ende;
+      var s=byId[st.standort.id]||st.standort;
+      var tun=(st.positionen||[]).map(function(p){
+        if(String(p.id).indexOf("stoer:")===0 || String(p.id).indexOf("lidl:")===0) return p.anlagentyp;
+        return anlagenName(p)+(p.intervall?" · "+p.intervall.kurz:"")+(p.status==="ueberfaellig"?" (überfällig)":"");
+      });
+      stoerungVonMarkt(s.id).forEach(function(o){ var t="Störung: "+(o.problemtyp||"offen"); if(tun.indexOf(t)<0) tun.push(t+" (offen)"); });
+      var lidl=kundenVonMarkt(s.id);
+      return "<tr><td>"+(i+1)+"</td><td><strong>"+esc(stName(s))+"</strong>"+(s.filiale && stName(s).indexOf(s.filiale)<0?" · Fil. "+esc(s.filiale):"")+"<br>"+esc(s.adresse||"")+
+        (s.notiz?"<br><em>"+esc(s.notiz)+"</em>":"")+"</td><td>"+uhr(anf)+"–"+uhr(ende)+"<br>"+Math.round(st.km)+" km</td><td>"+
+        tun.map(esc).join("<br>")+(lidl.length?"<br><strong>Lidl fragt nach:</strong> "+esc(lidl.map(function(z){ return (z.art==="stoerung"?"Auftrag ":"IH ")+z.nummer; }).join(", ")):"")+
+        "</td><td style='width:26%'>&nbsp;</td></tr>";
+    }).join("");
+    var zurueck=tag.rueckfahrtH ? "<div style='font-size:10px;margin-top:3px'>Rückfahrt "+Math.round(tag.rueckfahrtKm||0)+" km, ca. "+uhr(minute+tag.rueckfahrtH*60)+" zurück</div>" : "";
+    return "<h2 style='margin-top:12px'>Tag "+tag.nr+" · "+tag.stopps.length+" Stopps · "+Math.round(tag.km+(tag.rueckfahrtKm||0))+" km</h2>"+
+      "<table><tr><th style='width:22px'>#</th><th style='width:30%'>Markt</th><th style='width:13%'>Zeit</th><th>Zu tun</th><th>Notizen</th></tr>"+zeilen+"</table>"+zurueck;
+  }).join("");
+  var start=T.start ? (T.start.name||"Start")+(T.start.adresse?" · "+T.start.adresse:"") : "";
+  var dv=el('<div id="druckansicht"><div class="druckleiste">'+
+    '<button class="btn" type="button" id="d_druck">Drucken / als PDF sichern</button>'+
+    '<button class="btn ghost" type="button" id="d_zu" style="background:#fff">Schließen</button></div>'+
+    '<div class="blatt" style="font-size:11px">'+blattKopf("Tourenplan", T.anzahlStopps+" Stopps · "+Math.round(T.kmGesamt)+" km · "+T.tage.length+(T.tage.length===1?" Tag":" Tage"))+
+    (start?"<div style='margin-bottom:6px'>Start und Ziel: "+esc(start)+" · Beginn 07:00</div>":"")+tage+"</div></div>");
+  document.body.appendChild(dv); document.body.classList.add("druckmodus");
+  dv.querySelector("#d_zu").onclick=function(){ dv.remove(); document.body.classList.remove("druckmodus"); };
+  dv.querySelector("#d_druck").onclick=function(){ window.print(); };
+}
 function tourErgebnis(T){
   var box=document.createElement("div");
   box.className="stack";
@@ -3935,6 +3980,8 @@ function tourErgebnis(T){
   var anp=el('<div class="rowflex" style="gap:8px"><button class="btn ghost sm" type="button">+ Markt dazunehmen</button>'+
     '<span class="muted" style="font-size:12px">✕ an einem Stopp nimmt den Markt aus der Tour – die Route wird jeweils neu gerechnet.</span></div>');
   anp.querySelector("button").onclick=tourMarktDazu;
+  var dr=el('<button class="btn ghost sm" type="button">Tour drucken</button>'); dr.onclick=function(){ tourDrucken(T); };
+  anp.insertBefore(dr, anp.children[1]);
   box.appendChild(anp);
 
   T.tage.forEach(function(tag){
