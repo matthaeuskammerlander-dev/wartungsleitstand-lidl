@@ -5384,6 +5384,36 @@ function innenText(liste){
   }).join("; ");
 }
 function innenBelegt(g){ return g && INNEN_FELDER.some(function(f){ return !leerWert(g[f[0]]); }); }
+/* ein Innengerät als Eingabezeile (Verwaltung) */
+/* die Innengeräte aus den Eingabezeilen der Verwaltung – leere Zeilen fallen weg */
+function innenAusZeilen(il){
+  return [].map.call(il.querySelectorAll("[data-igzeile]"), function(z){
+    var g={};
+    z.querySelectorAll("[data-ig]").forEach(function(x){
+      var v=x.value.trim();
+      if(x.dataset.ig==="leistungKw"){ var n=zahlLesen(v); g.leistungKw = v==="" ? "" : (n!==n ? v : n); } else g[x.dataset.ig]=v;
+    });
+    return g;
+  }).filter(innenBelegt);
+}
+function innenZeileHtml(g){
+  g=g||{};
+  return '<div class="posbox" data-igzeile style="gap:6px"><div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:6px">'+
+    INNEN_FELDER.map(function(x){
+      var v=g[x[0]]; v=leerWert(v) ? "" : (x[0]==="leistungKw" ? String(v).replace(".",",") : String(v));
+      return '<label class="fl"><span>'+esc(x[1])+'</span><input type="text" data-ig="'+x[0]+'"'+(x[0]==="leistungKw"?' inputmode="decimal"':"")+
+        (x[0]==="seriennummer"?' autocapitalize="characters" spellcheck="false" autocorrect="off"':"")+' placeholder="'+esc(x[2])+'" value="'+esc(v)+'"></label>';
+    }).join("")+'</div><div><button class="btn ghost sm" type="button" data-igweg>entfernen</button></div></div>';
+}
+document.addEventListener("click", function(e){
+  var d=e.target && e.target.closest ? e.target.closest("[data-igdazu],[data-igweg]") : null; if(!d) return;
+  e.preventDefault();
+  if(d.hasAttribute("data-igdazu")){
+    var host=d.closest("[data-innenliste]").querySelector("[data-igzeilen]"), z=el(innenZeileHtml({}));
+    host.appendChild(z); var i=z.querySelector("input"); if(i) i.focus();
+  } else d.closest("[data-igzeile]").remove();
+  verwaltungBearbeitet=true;   /* per Knopf geändert – kein input/change */
+});
 /* Für den Änderungsverlauf: Zugangsdaten der Regelung (Adresse, Benutzer,
    Passwort) nie mit Wert – der Verlauf ist für alle Angemeldeten lesbar und
    lässt sich nicht löschen. Festgehalten wird nur, DASS sie geändert wurden. */
@@ -10113,7 +10143,7 @@ function anlagenFotosLaden(neu){
     anlagenFotosLaedt=false;
     if(!r || r.error || !Array.isArray(r.data)) return;
     anlagenFotos=r.data; anlagenFotosGeladen=true;
-    document.querySelectorAll("[data-fotozahl]").forEach(function(b){ var n=anlagenFotosVon(b.dataset.fotozahl).length; b.hidden=!n; b.textContent="📷 Prüfbuch/Typenschild ("+n+")"; });
+    document.querySelectorAll("[data-fotozahl]").forEach(function(b){ var n=anlagenFotosVon(b.dataset.fotozahl).length; if(b.dataset.a==="fotos") b.hidden=!n; b.textContent="📷 Prüfbuch/Typenschild ("+n+")"; });
   }, function(){ anlagenFotosLaedt=false; });
 }
 /* Fotos einer Anlage – über jede Zeile der Anlage (Leitzeile kann wechseln) */
@@ -10195,12 +10225,34 @@ function anlagenFotosSpeichern(a, art, bilder, info, bekannt){
     v.fuss.appendChild(nein); v.fuss.appendChild(ja);
   });
 }
+/* Verwaltung: ansehen und ohne KI Fotos dazulegen (Prüfbuch oder Typenschild) */
+function anlagenFotosVerwalten(leader){
+  var v=anlagenFotosAnsicht(leader.id, anlagenName(anlageDaten(leader)));
+  if(!anlagenFotosAn()) return;
+  var dazu=function(art){
+    kiFotosWaehlen().then(function(dateien){
+      if(!dateien.length) return;
+      if(dateien.length>20){ toast("Höchstens 20 Bilder auf einmal."); return; }
+      toast("Bilder werden vorbereitet …");
+      return Promise.all(dateien.map(function(f){ return verkleinere(f).then(function(b){ return b.datenUrl; }, function(){ return null; }); }))
+        .then(function(urls){
+          urls=urls.filter(Boolean);
+          if(!urls.length){ toast("Bilder nicht lesbar."); return; }
+          v.zu();
+          anlagenFotosSpeichern({_leaderId:leader.id, standortId:leader.standortId}, art, urls);
+        });
+    });
+  };
+  var p=el('<button class="btn ghost" type="button">+ Prüfbuch-Seiten</button>'), t=el('<button class="btn ghost" type="button">+ Typenschild</button>');
+  p.onclick=function(){ dazu("pruefbuch"); }; t.onclick=function(){ dazu("typenschild"); };
+  v.fuss.appendChild(t); v.fuss.appendChild(p);
+}
 /* ansehen: nach Datum und Art, antippen vergrößert */
 function anlagenFotosAnsicht(leaderId, titel){
   var l=anlagenFotosVon(leaderId).slice().reverse();
   var v=ansichtOeffnen("Prüfbuch und Typenschild");
   v.schritt.textContent=titel||"";
-  if(!l.length){ v.inhalt.appendChild(el('<div class="muted">Noch keine Fotos gespeichert.</div>')); return; }
+  if(!l.length){ v.inhalt.appendChild(el('<div class="muted">Noch keine Fotos gespeichert.</div>')); return v; }
   var gruppen={};
   l.forEach(function(f){ var k=tagLokal(f.erstellt)+"|"+f.art; (gruppen[k]=gruppen[k]||[]).push(f); });
   Object.keys(gruppen).forEach(function(k){
@@ -10215,6 +10267,7 @@ function anlagenFotosAnsicht(leaderId, titel){
     });
     v.inhalt.appendChild(box);
   });
+  return v;
 }
 function kontoKarte(){
   var mail=Store.benutzer&&Store.benutzer.email?Store.benutzer.email:"";
@@ -16710,14 +16763,33 @@ function verwaltungEditor(s){
       if(key==="kaeltemittelKg"||key==="leistungKw"){ var n=zahlLesen(v); w[key]= n!==n ? v : n; }
       else w[key]= (key==="kreislaeufe") ? (v===""?null:+v) : v;
     });
+    /* Innengeräte: je Zeile ein Gerät, leere Zeilen fallen weg */
+    var il=k.querySelector("[data-innenliste]");
+    if(il){
+      var ig=[].map.call(il.querySelectorAll("[data-igzeile]"), function(z){
+        var g={};
+        z.querySelectorAll("[data-ig]").forEach(function(x){
+          var v=x.value.trim();
+          if(x.dataset.ig==="leistungKw"){ var n=zahlLesen(v); g.leistungKw = v==="" ? "" : (n!==n ? v : n); } else g[x.dataset.ig]=v;
+        });
+        return g;
+      }).filter(innenBelegt);
+      /* vorher keine und jetzt keine: nichts ändern (sonst „geändert“ ohne Änderung) */
+      if(ig.length || il.dataset.hatte) w.innengeraete=ig;
+    }
     return w;
   }
   function datenFeld(f, w){
     var v=(w[f.k]==null?"":w[f.k]);
-    /* Innengeräte sind eine Liste – hier nur anzeigen (bearbeitet wird im
-       Anlagendialog); ohne data-a bleibt der gespeicherte Wert beim Speichern */
-    if(f.t==="innen") return '<div class="fl"><span>'+esc(f.l)+'</span><div class="muted" style="font-size:13px">'+
-      esc(innenText(w[f.k]))+' · bearbeiten über <a href="#" class="sprunglink" data-a2="innen">„Prüfen / aus Fotos (KI)“</a></div></div>';
+    /* Innengeräte sind eine Liste – hier direkt bearbeitbar (Büro 01.10.2026):
+       je Gerät eine Zeile, dazu „+ Innengerät“; Lesen aus Fotos bleibt über den Anlagendialog */
+    if(f.t==="innen"){
+      var igL=Array.isArray(w[f.k]) ? w[f.k] : [];
+      return '<div class="fl" data-innenliste data-hatte="'+(igL.length?"1":"")+'" style="grid-column:1/-1"><span>'+esc(f.l)+'</span>'+
+        '<div class="stack" data-igzeilen style="gap:8px">'+igL.map(innenZeileHtml).join("")+"</div>"+
+        '<div class="rowflex" style="gap:10px;margin-top:6px;align-items:center"><button class="btn ghost sm" type="button" data-igdazu>+ Innengerät</button>'+
+        '<a href="#" class="sprunglink" data-a2="innen" style="font-size:12.5px">oder aus Fotos lesen (KI)</a></div></div>';
+    }
     /* Dezimalzahlen mit Komma, Datum als Datum – sonst würden Text und
        Schein-Änderungen gespeichert und das CO₂e verschwände */
     /* Füllmenge und Leistung ebenso als Text: ein Zahlenfeld des Browsers
@@ -16784,6 +16856,8 @@ function verwaltungEditor(s){
         (anl?'<button class="btn ghost sm" type="button" data-a2="pruefen">Prüfen / aus Fotos (KI)</button>':"")+
         /* nicht an stillgelegten Anlagen – die würden sonst die aktive mitnehmen */
         (anl&&akt!=="still"?'<button class="btn ghost sm" type="button" data-a2="zusammen">Zusammenführen mit …</button>':"")+
+        /* Prüfbuch- und Typenschild-Fotos ohne KI dazulegen und ansehen (Büro 01.10.2026) */
+        (anl?'<button class="btn ghost sm" type="button" data-a2="fotos" data-fotozahl="'+esc(anl.leader.id)+'">📷 Prüfbuch/Typenschild ('+anlagenFotosVon(anl.leader.id).length+')</button>':"")+
         '</span></div>'+
       '<div class="grid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:10px">'+
         '<label class="fl"><span>Bezeichnung der Anlage</span><input type="text" data-a="anlagentyp" placeholder="z. B. VRV Verkaufsraum" value="'+esc(d.anlagentyp||"")+'"></label>'+
@@ -16820,6 +16894,8 @@ function verwaltungEditor(s){
       if(!verwaltungVerwerfenOk()) return;
       zusammenfuehrenWaehlen(anlageVon(anl.leader));
     };
+    var foK=k.querySelector('[data-a2="fotos"]');
+    if(foK){ anlagenFotosLaden(); foK.onclick=function(){ anlagenFotosVerwalten(anl.leader); }; }
     var prKnopf=k.querySelector('[data-a2="pruefen"]');
     if(prKnopf) prKnopf.onclick=function(){
       if(!verwaltungVerwerfenOk()) return;
@@ -17121,7 +17197,10 @@ function verwaltungEditor(s){
       if(!zeilen.length) return;
       /* stehen noch genau die Termine darin wie beim Aufbau (nichts verschoben)? */
       var karteWieVorher=k.getAttribute("data-basis")===zeilen.map(function(z){ return z.dataset.pid; }).join(",");
-      var la=function(key){ var x=k.querySelector('[data-a="'+key+'"]'); if(!x) return undefined;
+      var la=function(key){
+        /* Innengeräte: die Liste aus den Zeilen (vorher keine und jetzt keine: unverändert) */
+        if(key==="innengeraete"){ var il=k.querySelector("[data-innenliste]"); if(!il) return undefined; var ig=innenAusZeilen(il); return (ig.length||il.dataset.hatte) ? ig : undefined; }
+        var x=k.querySelector('[data-a="'+key+'"]'); if(!x) return undefined;
         return x.type==="checkbox"?x.checked:x.value.trim(); };
       var betrieb=la("betrieb"), ankerPid=zeilen[0].dataset.pid, ankerP0=posById[ankerPid];
       var kartenName=la("anlagentyp");
