@@ -5153,7 +5153,23 @@ function gelernteWerte(key){
   (lsGet("ukt_eigene",{})[key]||[]).forEach(function(v){ if(v) haeufig[v]=haeufig[v]||1; });
   return Object.keys(haeufig).sort(function(a,b){ return haeufig[b]-haeufig[a] || a.localeCompare(b,"de"); });
 }
+/* „Regelung betreut von“: die Firmennamen, die einmal unter „andere Firma“
+   eingetippt wurden, stehen beim nächsten Mal als Knopf da (Büro 30.09.2026) –
+   zwischen UKT und „andere Firma“, die häufigsten zuerst */
+function regelungFirmen(){
+  var l=gelernteWerte("regelungFirmaName");
+  gelernteWerte("regelungFirma").forEach(function(v){ if(v!=="UKT" && v!=="andere Firma" && l.indexOf(v)<0) l.push(v); });
+  return l;
+}
+/* Text für „betreut von“ – auch für ältere Einträge, bei denen der Name direkt im Feld steht */
+function regelungFirmaText(a){
+  if(!a.regelungFirma) return "";
+  if(a.regelungFirma==="UKT") return "UKT";
+  if(a.regelungFirma==="andere Firma") return a.regelungFirmaName||"andere Firma";
+  return a.regelungFirma;
+}
 function feldOptionen(f){
+  if(f.k==="regelungFirma") return ["UKT"].concat(regelungFirmen()).concat(["andere Firma"]);
   var o=(f.o||[]).slice();
   gelernteWerte(f.k).forEach(function(v){ if(o.indexOf(v)<0) o.push(v); });
   return o;
@@ -5219,7 +5235,7 @@ function anlageKurz(a){
   if(istWassergekuehlt(a) && (a.rkUkt||a.pumpeUkt))
     t.push("RK "+(a.rkUkt==="ja"?"UKT":"fremd")+" · Pumpen "+(a.pumpeUkt==="ja"?"UKT":"fremd"));
   if(a.regelung) t.push(a.regelung===OHNE_REGELUNG ? "ohne eigene Regelung"
-    : a.regelung+(a.regelungFirma?" ("+(a.regelungFirma==="UKT"?"UKT":(a.regelungFirmaName||"andere Firma"))+")":"")+
+    : a.regelung+(a.regelungFirma?" ("+regelungFirmaText(a)+")":"")+
       (a.fernzugriff?" · Fernzugriff "+a.fernzugriff:""));
   if(a.ortAussen) t.push("Außengeräte: "+a.ortAussen);
   return t.join(" · ");
@@ -5695,6 +5711,8 @@ function anlageAssistent(start, titel, neu, alles, vorgang){
         /* Vorauswahl (z. B. Prüfbuch im Technikordner 2 – fast immer so) */
         if(leerWert(w) && f.standard) w=a[f.k]=f.standard;
         var listeO=feldOptionen(f);
+        /* betreut von „andere Firma“ mit bekanntem Namen: der Namensknopf ist der gedrückte */
+        if(f.k==="regelungFirma" && w==="andere Firma" && a.regelungFirmaName && listeO.indexOf(a.regelungFirmaName)>=0) w=a.regelungFirmaName;
         var eigen=!leerWert(w) && listeO.indexOf(w)<0;
         h+='<div class="chips">'+listeO.map(function(o){ return chip(o,o,w===o); }).join("")+
           (f.frei?chip("__frei","andere …",eigen):"")+"</div>"+
@@ -5773,6 +5791,8 @@ function anlageAssistent(start, titel, neu, alles, vorgang){
             inhalt.querySelectorAll('.chip[data-f="'+k+'"]').forEach(function(x){ x.setAttribute("aria-pressed", String(x===c)); });
             return;
           }
+          /* Firmenname als Knopf: gespeichert wird wie beim Eintippen („andere Firma“ + Name) */
+          if(k==="regelungFirma" && w!=="UKT" && w!=="andere Firma"){ a.regelungFirma="andere Firma"; a.regelungFirmaName=w; gruppeZeigen(g); return; }
           a[k]= (k==="kreislaeufe") ? +w : w;
           if(frei){ frei.hidden=true; frei.value=""; }
           var zahlIn=inhalt.querySelector('[data-in="'+k+'"]'); if(zahlIn) zahlIn.value="";
@@ -5786,6 +5806,17 @@ function anlageAssistent(start, titel, neu, alles, vorgang){
         i.onchange=function(){ merkeWert(i.dataset.frei, i.value); };
       });
       inhalt.querySelectorAll("[data-in]").forEach(function(i){
+        /* eingetippter Firmenname: gleich als Knopf merken (auch vor dem Speichern) */
+        if(i.dataset.in==="regelungFirmaName"){
+          i.onchange=function(){ merkeWert("regelungFirmaName", i.value); };
+          /* beim Tippen: der Namensknopf ist nur gedrückt, solange der Name stimmt */
+          i.addEventListener("input", function(){
+            var v=i.value.trim();
+            inhalt.querySelectorAll('.chip[data-f="regelungFirma"]').forEach(function(c){
+              c.setAttribute("aria-pressed", String(c.dataset.w===v || (c.dataset.w==="andere Firma" && !inhalt.querySelector('.chip[data-f="regelungFirma"][data-w="'+v.replace(/"/g,"")+'"]'))));
+            });
+          });
+        }
         i.oninput=function(){
           var k=i.dataset.in, v=i.value.trim();
           if(k==="kaeltemittelKg"){ a[k]=zahlFeld(i, a[k]); kgHinweis(); }
@@ -13266,7 +13297,7 @@ function blattInhalt(p){
         z("Kältemittel / Füllmenge",[a.kaeltemittelArt, leerWert(a.kaeltemittelKg)?"":String(a.kaeltemittelKg).replace(".",",")+" kg"].filter(Boolean).join(" · "))+
         (istWassergekuehlt(a)?z("Rückkühler / Pumpenstation von UKT",[a.rkUkt?"Rückkühler: "+jn(a.rkUkt):"", a.pumpeUkt?"Pumpen: "+jn(a.pumpeUkt):""].filter(Boolean).join(" · ")):"")+
         z("Regelung", a.regelung===OHNE_REGELUNG ? "keine eigene Regelung" : [a.regelung,
-          a.regelungFirma?"betreut von "+(a.regelungFirma==="UKT"?"UKT":(a.regelungFirmaName||"anderer Firma")):"",
+          a.regelungFirma?"betreut von "+(regelungFirmaText(a)==="andere Firma"?"anderer Firma":regelungFirmaText(a)):"",
           a.fernzugriff?"Fernzugriff: "+jn(a.fernzugriff):""].filter(Boolean).join(" · "))+
         /* Typenschild und Prüfbuch gelten dem Außengerät */
         z("Außengerät Hersteller / Modell",[a.hersteller,a.modell].filter(Boolean).join(" / "))+
