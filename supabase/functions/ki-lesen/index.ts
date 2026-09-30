@@ -93,6 +93,9 @@ const SCHEMAS: Record<string, unknown> = {
       hinweise: text,
     }),
     hinweise: text,
+    // je Bild (in der gesendeten Reihenfolge, ab 1): welche Überprüfungen darauf stehen –
+    // damit die App Seiten ohne neuen Eintrag nicht nochmals speichern muss
+    bilder: liste({ nr: text, pruefungsdaten: { type: "array", items: text } }),
   }),
   // je unterschiedlichem Typenschild ein Eintrag – mehrere Innengeräte auf einmal gehen
   typenschild: objekt({
@@ -129,7 +132,10 @@ const ANWEISUNG: Record<string, string> = {
     "Die Fotos können Seiten MEHRERER Prüfbücher enthalten (je Anlage ein Buch). Lege je Prüfbuch " +
     "einen Eintrag in \"pruefbuecher\" an und ordne jede Seite dem richtigen Buch zu (Anlagenbezeichnung, " +
     "Seriennummer, Aufstellungsort, Handschrift, Stempel). Mische nie Angaben verschiedener Bücher. " +
-    "\"unsicher\" und \"hinweise\" gehören zum jeweiligen Buch; übergreifende Hinweise ins äußere \"hinweise\".",
+    "\"unsicher\" und \"hinweise\" gehören zum jeweiligen Buch; übergreifende Hinweise ins äußere \"hinweise\". " +
+    "Trage außerdem in \"bilder\" für JEDES Bild einen Eintrag ein: \"nr\" ist die Nummer des Bildes in der gesendeten " +
+    "Reihenfolge (\"1\", \"2\" …, steht vor jedem Bild), \"pruefungsdaten\" die Daten aller Überprüfungen, die auf DIESEM Bild " +
+    "eingetragen sind (TT.MM.JJJJ, leer bei Seiten ohne Überprüfungen, etwa Stammdaten).",
   typenschild:
     "Die Bilder zeigen Typenschilder von Klimageräten – Außengeräte (outdoor unit, Verflüssiger) " +
     "und/oder Innengeräte (indoor unit, Kassette, Wandgerät, Kanalgerät). Lege je unterschiedlichem " +
@@ -208,10 +214,11 @@ Deno.serve(async (req) => {
       messages: [{
         role: "user",
         content: [
-          ...bilder.map((b) => ({
+          // vor jedem Bild seine Nummer – für die Zuordnung in „bilder“
+          ...bilder.flatMap((b, i) => [{ type: "text" as const, text: `Bild ${i + 1}:` }, {
             type: "image" as const,
             source: { type: "base64" as const, media_type: b.media_type as "image/jpeg", data: b.data },
-          })),
+          }]),
           { type: "text" as const, text: ANWEISUNG[art] + (kontext
               ? "\n\nZur Einordnung (nur als Hilfe beim Entziffern, nichts davon ungelesen übernehmen): " + kontext
               : "") },

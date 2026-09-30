@@ -5803,7 +5803,9 @@ function anlageAssistent(start, titel, neu, alles, vorgang){
           return kiPruefen(art==="pruefbuch"?"Prüfbuch":"Typenschild Außengerät", gelesen, a, felder, unsP, hinweis).then(function(wahl){
             if(!wahl){ zurueck(); return; }
             /* die Fotos dazu an der Anlage speichern (nur aus der direkten Erkennung – beim Weg über die Claude-App liegen sie nicht in der App) */
-            if(erg && erg._bilder) setTimeout(function(){ anlagenFotosSpeichern(a, art, erg._bilder); }, 300);
+            /* was vorher schon bekannt war (Liste, Prüfbuch, App) – Seiten nur mit diesen Einträgen sind „nichts Neues“ */
+            var lpB=a._leaderId ? posById[a._leaderId] : null, bekannteBesuche=(lpB ? besucheDerAnlage(lpB) : []).concat((a._nachweiseNeu||[]).map(function(n){ return n.datum; }));
+            if(erg && erg._bilder) setTimeout(function(){ anlagenFotosSpeichern(a, art, erg._bilder, (erg.daten||{}).bilder, bekannteBesuche); }, 300);
             Object.keys(wahl).forEach(function(k){
               if(k==="_nachweise") a._nachweiseNeu=(a._nachweiseNeu||[]).concat(wahl[k]);
               else if(k==="_notizOhneTag") a._notizDazu=wahl[k];
@@ -10129,7 +10131,21 @@ function fotoPruefsumme(datenUrl){
   }catch(e){ return Promise.resolve(""); }
 }
 /* nach „Übernehmen“ der KI: fragen, welche Fotos an die Anlage kommen, dann speichern */
-function anlagenFotosSpeichern(a, art, bilder){
+/* info (nur Prüfbuch, von der KI): je Bild die Daten der Überprüfungen darauf;
+   bekannt: Wartungsdaten, die schon vorher bekannt waren. Daraus der Vorschlag je
+   Foto – beim ersten Mal alles, danach nur Seiten mit neuem Eintrag. */
+function fotoVorschlag(art, info, bekannt, i, ersteMal){
+  if(art!=="pruefbuch" || !Array.isArray(info)) return {an:true, text:""};
+  var e=info.filter(function(x){ return +x.nr===i+1; })[0];
+  if(!e) return {an:true, text:""};
+  var iso=(e.pruefungsdaten||[]).map(function(d){ var m=/^(\d{1,2})\.(\d{1,2})\.(\d{4})$/.exec(String(d).trim());
+    return m ? m[3]+"-"+("0"+m[2]).slice(-2)+"-"+("0"+m[1]).slice(-2) : null; }).filter(Boolean);
+  var neu=iso.filter(function(d){ return !(bekannt||[]).some(function(b){ return b && gleicherBesuch(b, d); }); });
+  if(neu.length) return {an:true, text:"neuer Eintrag "+neu.map(dfmt).join(", ")};
+  if(ersteMal) return {an:true, text:iso.length?"bekannte Einträge":"Stammdaten"};
+  return {an:false, text:iso.length?"nichts Neues":"keine Überprüfung"};
+}
+function anlagenFotosSpeichern(a, art, bilder, info, bekannt){
   if(!anlagenFotosAn() || !bilder || !bilder.length) return;
   var anlageId=a._leaderId||null, standortId=a.standortId||(anlageId&&posById[anlageId]&&posById[anlageId].standortId)||null;
   if(!anlageId && !standortId) return;
@@ -10139,20 +10155,24 @@ function anlagenFotosSpeichern(a, art, bilder){
   }).then(function(summen){
     var schon={}; (anlageId?anlagenFotosVon(anlageId):anlagenFotos.filter(function(f){ return !f.anlage_id && f.standort_id===standortId; }))
       .forEach(function(f){ if(f.pruefsumme) schon[f.pruefsumme]=1; });
-    var neu=bilder.map(function(u,i){ return {u:u, h:summen[i]}; }).filter(function(x){ return !x.h || !schon[x.h]; });
+    /* erstes Mal: an dieser Anlage liegt noch kein Foto dieser Art – dann alles vorschlagen */
+    var ersteMal=!(anlageId?anlagenFotosVon(anlageId):[]).some(function(f){ return f.art===art; });
+    var neu=bilder.map(function(u,i){ return {u:u, h:summen[i], v:fotoVorschlag(art, info, bekannt, i, ersteMal)}; }).filter(function(x){ return !x.h || !schon[x.h]; });
     if(!neu.length){ toast("Die Fotos sind an der Anlage schon gespeichert."); return; }
     var v=ansichtOeffnen(artName+"-Fotos speichern");
     v.schritt.textContent="an der Anlage – für den Nachweis und zum Nachsehen";
-    var box=el('<div class="stack"><div class="muted" style="font-size:12.5px">Antippen wählt ab. Seiten ohne neuen Eintrag müssen nicht nochmals gespeichert werden'+
+    var box=el('<div class="stack"><div class="muted" style="font-size:12.5px">Vorgewählt sind die Seiten mit neuem Eintrag – antippen wählt an oder ab'+
       (bilder.length>neu.length?" – "+(bilder.length-neu.length)+" Foto(s) sind schon gespeichert und fehlen hier":"")+".</div>"+
       '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(96px,1fr));gap:8px" data-bilder></div></div>');
-    var raster=box.querySelector("[data-bilder]"), wahl=neu.map(function(){ return true; });
+    var raster=box.querySelector("[data-bilder]"), wahl=neu.map(function(x){ return x.v.an; });
     neu.forEach(function(x,i){
       var f=el('<button type="button" style="position:relative;padding:0;border:2px solid var(--accent);border-radius:8px;overflow:hidden;background:none;cursor:pointer">'+
         '<img alt="Foto '+(i+1)+'" style="display:block;width:100%;aspect-ratio:3/4;object-fit:cover">'+
-        '<span style="position:absolute;top:4px;right:4px;background:var(--accent);color:#fff;border-radius:50%;width:22px;height:22px;font-size:13px;line-height:22px">✓</span></button>');
+        '<span style="position:absolute;top:4px;right:4px;background:var(--accent);color:#fff;border-radius:50%;width:22px;height:22px;font-size:13px;line-height:22px">✓</span>'+
+        (x.v.text?'<span style="position:absolute;left:0;right:0;bottom:0;background:rgba(0,0,0,.6);color:#fff;font-size:11px;padding:2px 4px;text-align:left">'+esc(x.v.text)+"</span>":"")+"</button>");
       f.querySelector("img").src=x.u;
-      f.onclick=function(){ wahl[i]=!wahl[i]; f.style.borderColor=wahl[i]?"var(--accent)":"var(--line)"; f.style.opacity=wahl[i]?"1":".45"; f.querySelector("span").hidden=!wahl[i]; };
+      var zeigen=function(){ f.style.borderColor=wahl[i]?"var(--accent)":"var(--line)"; f.style.opacity=wahl[i]?"1":".55"; f.querySelector("span").hidden=!wahl[i]; };
+      f.onclick=function(){ wahl[i]=!wahl[i]; zeigen(); }; zeigen();
       raster.appendChild(f);
     });
     v.inhalt.appendChild(box);
