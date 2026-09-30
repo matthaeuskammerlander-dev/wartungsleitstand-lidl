@@ -2138,7 +2138,8 @@ function stoerungDialog(vorhanden, weiter, vorlage){
       '<div class="grid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:10px;margin-top:10px">'+
         FELDER.map(function(f){
           return '<label class="fl"><span'+(f[3]?' class="req"':"")+">"+esc(f[1])+"</span>"+
-            '<input type="'+f[2]+'" data-s="'+f[0]+'" value="'+esc(o[f[0]]||"")+'"></label>';
+            (LERN_STOER.indexOf(f[0])>=0 ? lernChips(gelernteStoerWerte(f[0]), o[f[0]], '[data-s="'+f[0]+'"]', "st_"+f[0]) : "")+
+            '<input type="'+f[2]+'" data-s="'+f[0]+'" value="'+esc(o[f[0]]||"")+'"'+(LERN_STOER.indexOf(f[0])>=0?' data-merk="st_'+f[0]+'"':"")+'></label>';
         }).join("")+
       "</div>"+
       '<label class="fl" style="margin-top:10px"><span>Beschreibung laut Auftrag</span>'+
@@ -5168,6 +5169,50 @@ function regelungFirmaText(a){
   if(a.regelungFirma==="andere Firma") return a.regelungFirmaName||"andere Firma";
   return a.regelungFirma;
 }
+/* Lernende Textfelder (Büro 30.09.2026): was schon einmal eingetragen wurde,
+   steht als Knopf über dem Feld – antippen füllt es aus. Anlagen: Hersteller,
+   Modell, Aufsteller (aus den Anlagendaten). Störungen: Problemtyp, Typ,
+   Hersteller, Modell (aus offenen Störungen und Störungsprotokollen). */
+var LERN_ANLAGE=["hersteller","modell","aufsteller"], LERN_STOER=["problemtyp","lidlTyp","hersteller","lidlModell"];
+function gelernteStoerWerte(key){
+  var haeufig={}, zaehl=function(v){ v=String(v==null?"":v).trim(); if(v) haeufig[v]=(haeufig[v]||0)+1; };
+  (typeof OFFENE!=="undefined" ? OFFENE : []).forEach(function(o){ zaehl(o[key]); });
+  alleProtokolle().forEach(function(p){ if(p.stoerung) zaehl(p.stoerung[key]); });
+  (lsGet("ukt_eigene",{})["st_"+key]||[]).forEach(function(v){ if(v) haeufig[v]=haeufig[v]||1; });
+  return Object.keys(haeufig).sort(function(a,b){ return haeufig[b]-haeufig[a] || a.localeCompare(b,"de"); });
+}
+/* Knopfreihe zum Feld: ziel = Selektor des Eingabefelds; höchstens 6, kurze Werte */
+function lernChips(werte, aktuell, ziel, merkKey){
+  werte=(werte||[]).filter(function(v){ return v && v.length<=40; }).slice(0,6);
+  if(!werte.length) return "";
+  var a=String(aktuell==null?"":aktuell).trim();
+  return '<div class="chips" style="margin-bottom:4px">'+werte.map(function(v){
+    return '<button class="chip" type="button" data-lern="'+esc(ziel)+'" data-w="'+esc(v)+'"'+(merkKey?' data-merk="'+esc(merkKey)+'"':"")+' aria-pressed="'+(a===v)+'">'+esc(v)+"</button>"; }).join("")+"</div>";
+}
+document.addEventListener("click", function(e){
+  var c=e.target && e.target.closest ? e.target.closest(".chip[data-lern]") : null; if(!c) return;
+  e.preventDefault();
+  var wurzel=c.closest(".assistent, form, .card")||document, ziel=wurzel.querySelector(c.dataset.lern); if(!ziel) return;
+  ziel.value=c.dataset.w;
+  ziel.dispatchEvent(new Event("input",{bubbles:true})); ziel.dispatchEvent(new Event("change",{bubbles:true}));
+  c.parentNode.querySelectorAll(".chip").forEach(function(x){ x.setAttribute("aria-pressed", String(x===c)); });
+}, true);
+/* beim Tippen im Feld: gedrückt ist nur der passende Knopf; ein neuer Wert wird gemerkt */
+document.addEventListener("input", function(e){
+  var i=e.target; if(!i || !i.matches || !i.matches("input,textarea")) return;
+  var wurzel=i.closest(".assistent, form, .card")||document, v=String(i.value||"").trim();
+  wurzel.querySelectorAll(".chip[data-lern]").forEach(function(c){
+    var z=null; try{ z=wurzel.querySelector(c.dataset.lern); }catch(x){}
+    if(z===i) c.setAttribute("aria-pressed", String(c.dataset.w===v));
+  });
+}, true);
+document.addEventListener("change", function(e){
+  var i=e.target; if(!i || !i.matches || !i.matches("input,textarea")) return;
+  var wurzel=i.closest(".assistent, form, .card")||document;
+  var c=[].slice.call(wurzel.querySelectorAll(".chip[data-lern][data-merk]")).filter(function(x){ try{ return wurzel.querySelector(x.dataset.lern)===i; }catch(y){ return false; } })[0];
+  var merk=c ? c.dataset.merk : (i.dataset.merk||"");
+  if(merk) merkeWert(merk, i.value);
+}, true);
 function feldOptionen(f){
   if(f.k==="regelungFirma") return ["UKT"].concat(regelungFirmen()).concat(["andere Firma"]);
   var o=(f.o||[]).slice();
@@ -5752,7 +5797,8 @@ function anlageAssistent(start, titel, neu, alles, vorgang){
         h+='<input type="text" inputmode="url" data-in="'+f.k+'" autocapitalize="off" '+
           'spellcheck="false" placeholder="z. B. 192.168.1.50 oder https://…" value="'+esc(leerWert(w)?"":w)+'">';
       } else {
-        h+='<input type="text" data-in="'+f.k+'" value="'+esc(leerWert(w)?"":w)+'">';
+        if(LERN_ANLAGE.indexOf(f.k)>=0) h+=lernChips(gelernteWerte(f.k), w, '[data-in="'+f.k+'"]', f.k);
+        h+='<input type="text" data-in="'+f.k+'" value="'+esc(leerWert(w)?"":w)+'"'+(LERN_ANLAGE.indexOf(f.k)>=0?' data-merk="'+f.k+'"':"")+'>';
       }
       return h+"</div>";
     }
@@ -11280,7 +11326,8 @@ function viewProtokoll(){
   /* Wartung oder Störung – bei einer Korrektur bestimmt das gespeicherte Protokoll */
   var stoer = S.bearbeiten ? istStoerung(S.bearbeiten.x) : S.protoArt==="stoerung";
   var feldZeile=function(f){
-    return '<label class="fl"><span>'+esc(f[1])+'</span><input type="'+f[2]+'" id="s_'+f[0]+'"'+
+    return '<label class="fl"><span>'+esc(f[1])+'</span>'+(LERN_STOER.indexOf(f[0])>=0 ? lernChips(gelernteStoerWerte(f[0]), "", "#s_"+f[0], "st_"+f[0]) : "")+
+      '<input type="'+f[2]+'" id="s_'+f[0]+'"'+(LERN_STOER.indexOf(f[0])>=0?' data-merk="st_'+f[0]+'"':"")+
       (f[0].indexOf("km")===0&&f[0]!=="kmArt"?' inputmode="decimal"':"")+"></label>"; };
   var textFeld=function(k,name,pflicht){
     return '<label class="fl" style="margin-top:10px"><span'+(pflicht?' class="req"':"")+">"+esc(name)+'</span>'+
