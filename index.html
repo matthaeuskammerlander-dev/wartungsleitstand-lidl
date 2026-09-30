@@ -4842,7 +4842,7 @@ function anlagenBloecke(s, host){
       '<div class="rowflex" style="gap:6px"><button class="btn'+(l.length?" sm":" ghost sm")+'" type="button" data-a="daten" data-schreiben>'+
         (l.length?"Anlagendaten ergänzen":"Anlagendaten prüfen")+"</button>"+
         '<button class="btn ghost sm" type="button" data-a="hist">Historie der Anlage</button>'+
-        (nurLesen()?"":'<button class="btn ghost sm" type="button" data-a="fotos" data-fotozahl="'+esc(a.leader.id)+'"'+(anlagenFotosVon(a.leader.id).length?"":" hidden")+'>📷 Prüfbuch/Typenschild ('+anlagenFotosVon(a.leader.id).length+')</button>')+
+        (nurLesen()?"":'<button class="btn ghost sm" type="button" data-a="fotos" data-fotozahl="'+esc(a.leader.id)+'"'+'>📷 Fotos der Anlage ('+anlagenFotosVon(a.leader.id).length+')</button>')+
         (nurLesen()?"":'<button class="btn ghost sm" type="button" data-a="buch" title="Alles zu dieser Anlage als PDF">📄 Anlagenbuch</button>')+"</div>"+
       '<div class="stack" data-termine></div></div>');
     /* Dieselbe geführte Erfassung wie beim Protokoll, nur ohne Protokoll –
@@ -4851,7 +4851,7 @@ function anlagenBloecke(s, host){
       anlageDatenErgaenzen(a.leader);
     };
     blk.querySelector('[data-a="hist"]').onclick=function(){ anlageHistorieAnsicht(a.leader); };
-    var fotoK=blk.querySelector('[data-a="fotos"]'); if(fotoK) fotoK.onclick=function(){ anlagenFotosAnsicht(a.leader.id, anlagenName(d)); };
+    var fotoK=blk.querySelector('[data-a="fotos"]'); if(fotoK) fotoK.onclick=function(){ anlagenFotosVerwalten(a.leader); };
     anlagenFotosLaden();
     var buchK=blk.querySelector('[data-a="buch"]');
     if(buchK) buchK.onclick=function(){
@@ -6562,6 +6562,14 @@ function vergleiche(alt, neu){
     /* nur umsortierte Anlagen sind keine Änderung */
     if(k==="positionIds" ? gleich(sortiert(alt[k]),sortiert(neu[k])) : gleich(alt[k],neu[k])) return;
     if(k==="anlagen"){ anlagenUnterschiede(alt[k], neu[k]).forEach(function(x){ felder.push(x); }); return; }
+    /* Fotos: neue Bildunterschriften vorhandener Fotos einzeln nennen, dazugekommene als Anzahl */
+    if(k==="fotos"){
+      var fa=alt[k]||[], fn=neu[k]||[];
+      fa.forEach(function(f,i){ var n=fn[i]; if(n && (f.hinweis||"")!==(n.hinweis||""))
+        felder.push({feld:"fotos", name:"Bildunterschrift Foto "+(i+1), alt:f.hinweis||"–", neu:n.hinweis||"–"}); });
+      if(fn.length!==fa.length) felder.push({feld:k, name:FELDNAMEN[k], alt:feldText(k,fa,true), neu:feldText(k,fn,true)});
+      return;
+    }
     felder.push({feld:k, name:FELDNAMEN[k], alt:feldText(k,alt[k],true), neu:feldText(k,neu[k],true)});
   });
   /* Angaben zur Störung einzeln, damit der Verlauf zeigt, was genau geändert wurde */
@@ -10143,7 +10151,7 @@ function anlagenFotosLaden(neu){
     anlagenFotosLaedt=false;
     if(!r || r.error || !Array.isArray(r.data)) return;
     anlagenFotos=r.data; anlagenFotosGeladen=true;
-    document.querySelectorAll("[data-fotozahl]").forEach(function(b){ var n=anlagenFotosVon(b.dataset.fotozahl).length; if(b.dataset.a==="fotos") b.hidden=!n; b.textContent="📷 Prüfbuch/Typenschild ("+n+")"; });
+    document.querySelectorAll("[data-fotozahl]").forEach(function(b){ var n=anlagenFotosVon(b.dataset.fotozahl).length; b.textContent="📷 Fotos der Anlage ("+n+")"; });
   }, function(){ anlagenFotosLaedt=false; });
 }
 /* Fotos einer Anlage – über jede Zeile der Anlage (Leitzeile kann wechseln) */
@@ -10175,11 +10183,12 @@ function fotoVorschlag(art, info, bekannt, i, ersteMal){
   if(ersteMal) return {an:true, text:iso.length?"bekannte Einträge":"Stammdaten"};
   return {an:false, text:iso.length?"nichts Neues":"keine Überprüfung"};
 }
-function anlagenFotosSpeichern(a, art, bilder, info, bekannt){
+/* beschriftung: bei „anlage“ (allgemeine Fotos), was darauf zu sehen ist */
+function anlagenFotosSpeichern(a, art, bilder, info, bekannt, beschriftung){
   if(!anlagenFotosAn() || !bilder || !bilder.length) return;
   var anlageId=a._leaderId||null, standortId=a.standortId||(anlageId&&posById[anlageId]&&posById[anlageId].standortId)||null;
   if(!anlageId && !standortId) return;
-  var artName=art==="pruefbuch"?"Prüfbuch":"Typenschild";
+  var artName=art==="pruefbuch"?"Prüfbuch":art==="typenschild"?"Typenschild":"Anlagen";
   anlagenFotosLaden().then(function(){
     return Promise.all(bilder.map(fotoPruefsumme));
   }).then(function(summen){
@@ -10216,7 +10225,7 @@ function anlagenFotosSpeichern(a, art, bilder, info, bekannt){
         var pfad=ordner+art+"-"+stamp+"-"+(i+1)+".jpg";
         return mitFrist(Store.sb.storage.from("protokollfotos").upload(pfad, datenUrlZuBlob(x.u), {contentType:"image/jpeg", upsert:false}), 30000)
           .then(function(r){ if(r.error) throw new Error(r.error.message);
-            return mitFrist(Store.sb.from("anlagenfotos").insert({anlage_id:anlageId, standort_id:standortId, art:art, pfad:pfad, pruefsumme:x.h||null, von_name:ich}), 15000); })
+            return mitFrist(Store.sb.from("anlagenfotos").insert({anlage_id:anlageId, standort_id:standortId, art:art, pfad:pfad, pruefsumme:x.h||null, von_name:ich, beschriftung:beschriftung||null}), 15000); })
           .then(function(r){ if(r && r.error) throw new Error(r.error.message); });
       })).then(function(){ v.zu(); toast(l.length+" Foto"+(l.length===1?"":"s")+" an der Anlage gespeichert."); anlagenFotosLaden(true); },
         function(e){ ja.disabled=false; ja.textContent="Speichern";
@@ -10243,27 +10252,55 @@ function anlagenFotosVerwalten(leader){
         });
     });
   };
-  var p=el('<button class="btn ghost" type="button">+ Prüfbuch-Seiten</button>'), t=el('<button class="btn ghost" type="button">+ Typenschild</button>');
+  var p=el('<button class="btn ghost" type="button">+ Prüfbuch-Seiten</button>'), t=el('<button class="btn ghost" type="button">+ Typenschild</button>'),
+      an=el('<button class="btn" type="button">+ Foto der Anlage</button>');
   p.onclick=function(){ dazu("pruefbuch"); }; t.onclick=function(){ dazu("typenschild"); };
-  v.fuss.appendChild(t); v.fuss.appendChild(p);
+  /* allgemeine Fotos (Büro 01.10.2026): erst sagen, was darauf ist – dann Fotos wählen */
+  an.onclick=function(){
+    var w=ansichtOeffnen("Foto der Anlage");
+    w.schritt.textContent="Was ist auf den Fotos?";
+    var vorschlaege=["Außengerät","Typenschild Innengerät","Innengerät","Verrohrung","Kondensatleitung","Schaltschrank / Regelung","Fernbedienung","Kältemittelleitung Dämmung","Aufstellort"];
+    gelernteWerte("fotoBeschriftung").forEach(function(x){ if(vorschlaege.indexOf(x)<0) vorschlaege.push(x); });
+    var box=el('<div class="stack"><div class="chips" data-v></div><label class="fl"><span>oder eigene Beschriftung</span><input type="text" maxlength="80" placeholder="z. B. Verrohrung Dachdurchführung"></label></div>');
+    var inp=box.querySelector("input");
+    vorschlaege.forEach(function(x){ var c=el('<button class="chip" type="button" aria-pressed="false">'+esc(x)+"</button>");
+      c.onclick=function(){ inp.value=x; box.querySelectorAll(".chip").forEach(function(y){ y.setAttribute("aria-pressed", String(y===c)); }); }; box.querySelector("[data-v]").appendChild(c); });
+    w.inhalt.appendChild(box);
+    var los=el('<button class="btn" type="button">Fotos wählen</button>');
+    los.onclick=function(){
+      var besch=inp.value.trim(); if(!besch){ toast("Bitte kurz sagen, was auf den Fotos ist."); return; }
+      merkeWert("fotoBeschriftung", besch); w.zu();
+      kiFotosWaehlen().then(function(dateien){
+        if(!dateien.length) return;
+        if(dateien.length>20){ toast("Höchstens 20 Bilder auf einmal."); return; }
+        return Promise.all(dateien.map(function(f){ return verkleinere(f).then(function(b){ return b.datenUrl; }, function(){ return null; }); }))
+          .then(function(urls){ urls=urls.filter(Boolean); if(!urls.length){ toast("Bilder nicht lesbar."); return; }
+            v.zu(); anlagenFotosSpeichern({_leaderId:leader.id, standortId:leader.standortId}, "anlage", urls, null, null, besch); });
+      });
+    };
+    w.fuss.appendChild(los);
+  };
+  v.fuss.appendChild(t); v.fuss.appendChild(p); v.fuss.appendChild(an);
 }
+/* Name einer Fotogruppe: Prüfbuch, Typenschild oder die Beschriftung */
+function fotoArtName(art, beschriftung){ return art==="pruefbuch" ? "Prüfbuch" : art==="typenschild" ? "Typenschild" : (beschriftung||"Anlage"); }
 /* ansehen: nach Datum und Art, antippen vergrößert */
 function anlagenFotosAnsicht(leaderId, titel){
   var l=anlagenFotosVon(leaderId).slice().reverse();
-  var v=ansichtOeffnen("Prüfbuch und Typenschild");
+  var v=ansichtOeffnen("Fotos der Anlage");
   v.schritt.textContent=titel||"";
   if(!l.length){ v.inhalt.appendChild(el('<div class="muted">Noch keine Fotos gespeichert.</div>')); return v; }
   var gruppen={};
-  l.forEach(function(f){ var k=tagLokal(f.erstellt)+"|"+f.art; (gruppen[k]=gruppen[k]||[]).push(f); });
+  l.forEach(function(f){ var k=tagLokal(f.erstellt)+"|"+f.art+"|"+(f.beschriftung||""); (gruppen[k]=gruppen[k]||[]).push(f); });
   Object.keys(gruppen).forEach(function(k){
     var g=gruppen[k], t=k.split("|");
-    var box=el('<div class="stack" style="gap:6px;margin-bottom:12px"><div class="as-label">'+(t[1]==="pruefbuch"?"Prüfbuch":"Typenschild")+" · "+esc(dfmt(t[0]))+
+    var box=el('<div class="stack" style="gap:6px;margin-bottom:12px"><div class="as-label">'+esc(fotoArtName(t[1], t[2]))+" · "+esc(dfmt(t[0]))+
       (g[0].von_name?" · "+esc(g[0].von_name):"")+'</div><div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(110px,1fr));gap:8px" data-r></div></div>');
     g.forEach(function(f){
       var img=el('<img alt="Foto" style="width:100%;aspect-ratio:3/4;object-fit:cover;border-radius:8px;border:1px solid var(--line);cursor:pointer;background:var(--surface-2)">');
       box.querySelector("[data-r]").appendChild(img);
       chatBildUrl(f.pfad).then(function(u){ if(u) img.src=u; else img.alt="nicht ladbar"; });
-      img.onclick=function(){ if(img.src) bildAnsicht(img.src, (f.art==="pruefbuch"?"Prüfbuch":"Typenschild")+" · "+dfmt(tagLokal(f.erstellt))); };
+      img.onclick=function(){ if(img.src) bildAnsicht(img.src, fotoArtName(f.art, f.beschriftung)+" · "+dfmt(tagLokal(f.erstellt))); };
     });
     v.inhalt.appendChild(box);
   });
@@ -12874,6 +12911,7 @@ function viewProtokoll(){
 
   /* Fotos */
   var fotos=[], fotosInArbeit=0;   /* fotosInArbeit: werden gerade noch verkleinert */
+  var fotoHinweisAlt={};   /* Korrektur: neue Bildunterschriften der vorhandenen Fotos, je Stelle */
   var fotoHost=form.querySelector("#fotoliste");
   var fotoInfo=form.querySelector("#f_fotoinfo");
   var fotoEingabe=form.querySelector("#f_foto");
@@ -13098,6 +13136,20 @@ function viewProtokoll(){
     }
     if(bearb.fotos && bearb.fotos.length){
       fotoInfo.textContent=bearb.fotos.length+" vorhandene(s) Foto(s) bleiben erhalten – hier können weitere dazukommen";
+      /* Bildunterschriften der vorhandenen Fotos nachträglich ergänzen (Büro 01.10.2026) */
+      var altBox=el('<div class="stack" style="gap:8px;margin-bottom:8px"><div class="muted" style="font-size:12.5px">Vorhandene Fotos – Bildunterschrift ergänzen oder ändern:</div></div>');
+      fotoHost.parentNode.insertBefore(altBox, fotoHost);
+      ladeFotos(bearb).then(function(bilder){
+        bearb.fotos.forEach(function(f,i){
+          var b=bilder[i]||{};
+          var z=el('<div class="rowflex" style="align-items:flex-start;gap:10px;border:1px solid var(--line);border-radius:8px;padding:8px;background:var(--ground)">'+
+            (b.url?'<img alt="Foto" src="'+esc(b.url)+'" style="width:76px;height:76px;object-fit:cover;border-radius:6px;flex:none">':'<div class="muted" style="width:76px;font-size:11px">Foto '+(i+1)+'</div>')+
+            '<label class="fl" style="flex:1 1 160px"><span>Bildunterschrift</span><input type="text" placeholder="z. B. Mangel am Wärmetauscher"></label></div>');
+          var inp=z.querySelector("input"); inp.value=fotoHinweisAlt[i]!=null ? fotoHinweisAlt[i] : (f.hinweis||"");
+          inp.oninput=function(){ fotoHinweisAlt[i]=inp.value; formDirty=true; };
+          altBox.appendChild(z);
+        });
+      });
     }
     form.querySelector("#f_grundbox").hidden=false;
     form.querySelector("#f_grund").required=true;
@@ -13615,7 +13667,8 @@ function viewProtokoll(){
       /* nicht neu unterschrieben: die bisherige bleibt. Ist sie nicht sicher
          geladen, bleibt die Spalte unberührt (zuZeile schickt sie dann nicht mit) */
       if(!hasSig){ if(typeof bearb.unterschrift==="string") doc.unterschrift=bearb.unterschrift; else delete doc.unterschrift; }
-      doc.fotos=(bearb.fotos||[]).concat(doc.fotos);   /* Fotos kommen nur dazu, keines verschwindet */
+      /* Fotos kommen nur dazu, keines verschwindet – geänderte Bildunterschriften der vorhandenen gehen mit */
+      doc.fotos=(bearb.fotos||[]).map(function(f,i){ return fotoHinweisAlt[i]!=null && fotoHinweisAlt[i]!==(f.hinweis||"") ? Object.assign({}, f, {hinweis:fotoHinweisAlt[i].trim()}) : f; }).concat(doc.fotos);
       var felder=vergleiche(bearb, doc);
       if(!felder.length){
         /* nichts zu speichern: auch keinen Entwurf davon behalten – sonst hieße
@@ -16857,7 +16910,7 @@ function verwaltungEditor(s){
         /* nicht an stillgelegten Anlagen – die würden sonst die aktive mitnehmen */
         (anl&&akt!=="still"?'<button class="btn ghost sm" type="button" data-a2="zusammen">Zusammenführen mit …</button>':"")+
         /* Prüfbuch- und Typenschild-Fotos ohne KI dazulegen und ansehen (Büro 01.10.2026) */
-        (anl?'<button class="btn ghost sm" type="button" data-a2="fotos" data-fotozahl="'+esc(anl.leader.id)+'">📷 Prüfbuch/Typenschild ('+anlagenFotosVon(anl.leader.id).length+')</button>':"")+
+        (anl?'<button class="btn ghost sm" type="button" data-a2="fotos" data-fotozahl="'+esc(anl.leader.id)+'">📷 Fotos der Anlage ('+anlagenFotosVon(anl.leader.id).length+')</button>':"")+
         '</span></div>'+
       '<div class="grid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:10px">'+
         '<label class="fl"><span>Bezeichnung der Anlage</span><input type="text" data-a="anlagentyp" placeholder="z. B. VRV Verkaufsraum" value="'+esc(d.anlagentyp||"")+'"></label>'+

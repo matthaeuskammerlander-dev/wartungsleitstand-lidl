@@ -11,7 +11,7 @@ create table if not exists public.anlagenfotos (
   von_name    text,
   anlage_id   text,                         -- Leitzeile der Anlage (P…/NP…), leer bei noch nicht gespeicherter Anlage
   standort_id text,
-  art         text not null check (art in ('pruefbuch','typenschild')),
+  art         text not null check (art in ('pruefbuch','typenschild','anlage')),
   pfad        text not null unique,
   pruefsumme  text                          -- gleiches Foto nicht doppelt
 );
@@ -36,3 +36,8 @@ create policy "fotos ansehen" on storage.objects for select to authenticated
                   when name like 'chat/%'    then public.darf_schreiben()
                   when name like 'anlagen/%' then public.darf_schreiben()
                   else true end);
+
+-- seit 01.10.2026: allgemeine Fotos der Anlage mit Beschriftung (Außengerät, Verrohrung …)
+alter table public.anlagenfotos add column if not exists beschriftung text check (beschriftung is null or length(beschriftung) <= 80);
+alter table public.anlagenfotos drop constraint if exists anlagenfotos_art_check;
+alter table public.anlagenfotos add constraint anlagenfotos_art_check check (art in ('pruefbuch','typenschild','anlage'));
