@@ -9668,7 +9668,7 @@ function kundenAntwortZeile(z){
 function kundenAntwort(art, l){
   if(!l) l=kundenOffen().filter(function(z){ return z.art===art; });
   var vom={}; l.forEach(function(z){ vom[z.liste_vom]=1; });
-  return "Sehr geehrte Damen und Herren,\n\nzu Ihrer Liste "+(art==="stoerung"?"offener Aufträge":art==="frage"?"bzw. Anfrage":"offener Wartungen")+" vom "+
+  return "Sehr geehrte Damen und Herren,\n\nzu Ihrer Liste "+(art==="stoerung"?"offener Aufträge":art==="wartung"?"offener Wartungen":"offener Wartungen und Aufträge")+" vom "+
     Object.keys(vom).sort().map(dfmt).join(" / ")+":\n\n"+l.map(kundenAntwortZeile).join("\n")+"\n\nMit freundlichen Grüßen\n"+(meineAngaben().name||"");
 }
 /* start (freiwillig): {art, stand} – mit welcher Auswahl die Liste aufgeht */
@@ -9744,6 +9744,8 @@ function kundenAnsicht(start){
     });
     if(Admin.frei) knopf("Termin / Stand eintragen", function(){ var e=d.querySelector("[data-eintragen]"); e.hidden=!e.hidden; });
     /* abschließen: die Zeile ist für uns fertig und verschwindet aus der Liste (unter „abgeschlossen“ nachzulesen) */
+    /* Antwort nur zu dieser Zeile (die anderen stehen abgewählt darunter) */
+    if(Admin.frei && !z.abgeschlossen) knopf("Antwort an Lidl", function(){ if(antwort) antwort(null, [z.id]); });
     if(Admin.frei) knopf(z.abgeschlossen ? "Wieder öffnen" : "Abschließen", function(){
       if(!z.abgeschlossen && !window.confirm("„"+kundenName(z)+"“ abschließen?\n\nDie Zeile verschwindet aus der Liste und aus allen Übersichten. Unter „abgeschlossen“ bleibt sie nachzulesen.")) return;
       speichern(z, {abgeschlossen: z.abgeschlossen ? null : heute}).then(function(ok){ if(ok) toast(z.abgeschlossen ? "Abgeschlossen." : "Wieder geöffnet."); });
@@ -9824,20 +9826,26 @@ function kundenAnsicht(start){
   if(Admin.frei){
     /* Antwort an Lidl (Büro 30.09.2026): Zeilen einzeln wählen; jede Antwort wird je
        Zeile mit Datum und Wortlaut vermerkt – es kann beliebig viele geben */
-    var antwort=function(art){
+    /* art: "wartung" / "stoerung" (Knöpfe unten) oder null mit nurIds (Knopf an einer Zeile) */
+    var antwort=function(art, nurIds){
       var a=ansichtOeffnen("Antwort an Lidl");
-      a.schritt.textContent=art==="stoerung"?"Störungsaufträge und Anfragen":"Wartungen";
-      var kand=kundenOffen().filter(function(z){ return art==="stoerung" ? (z.art==="stoerung"||z.art==="frage") : z.art===art; });
-      var gew={}; kand.forEach(function(z){ gew[z.id]=true; });
-      var b=el('<div class="stack"><div class="as-feld"><div class="as-label">Was soll in diese Antwort? (antippen wählt ab)</div><div class="stack" data-wahl style="gap:4px"></div></div>'+
+      a.schritt.textContent=nurIds?"einzelne Zeilen – weitere lassen sich dazunehmen":art==="stoerung"?"Störungsaufträge und Anfragen":"Wartungen";
+      /* alle offenen Zeilen zur Wahl – vorgewählt sind die der Art bzw. die angetippte */
+      var rangA=function(z){ return (z.art==="frage"?"0":z.art==="stoerung"?"1":"2")+(z.frist||"9999")+z.nummer; };
+      var kand=kundenOffen().slice().sort(function(x,y){ return rangA(x).localeCompare(rangA(y)); });
+      var vorwahl=function(z){ return nurIds ? nurIds.indexOf(z.id)>=0 : art==="stoerung" ? (z.art==="stoerung"||z.art==="frage") : z.art===art; };
+      var gew={}; kand.forEach(function(z){ gew[z.id]=vorwahl(z); });
+      var b=el('<div class="stack"><div class="as-feld"><div class="as-label">Was soll in diese Antwort? Häkchen setzen oder entfernen</div><div class="stack" data-wahl style="gap:4px"></div></div>'+
         '<div class="muted" style="font-size:12.5px">Text prüfen, kopieren und in die Antwort-Mail einfügen. „Termin folgt“ steht überall, wo noch kein Termin eingetragen ist.</div>'+
         '<textarea rows="14" style="width:100%;font-size:13px"></textarea></div>');
       var ta=b.querySelector("textarea"), wahl=b.querySelector("[data-wahl]");
       var gewaehlt=function(){ return kand.filter(function(z){ return gew[z.id]; }); };
-      var textNeu=function(){ ta.value=kundenAntwort(art, gewaehlt()); };
+      /* Überschrift nach dem, was gewählt ist: nur Wartungen, nur Störungen, sonst beides */
+      var artVon=function(l){ var s={}; l.forEach(function(z){ s[z.art==="frage"?"stoerung":z.art]=1; }); var k=Object.keys(s); return k.length===1?k[0]:"gemischt"; };
+      var textNeu=function(){ var l=gewaehlt(); ta.value=kundenAntwort(artVon(l), l); };
       kand.forEach(function(z){
         var n=kundenAntworten(z).length;
-        var c=el('<label class="chk" style="align-items:flex-start"><input type="checkbox" checked><span style="font-size:13px">'+esc(kundenAntwortZeile(z))+
+        var c=el('<label class="chk" style="align-items:flex-start"><input type="checkbox"'+(gew[z.id]?" checked":"")+'><span style="font-size:13px">'+esc(kundenAntwortZeile(z))+
           (n?' <span class="muted">· schon '+n+"× beantwortet, zuletzt "+esc(dfmt(kundenAntworten(z)[n-1].datum))+"</span>":"")+"</span></label>");
         c.querySelector("input").onchange=function(e){ gew[z.id]=e.target.checked; textNeu(); };
         wahl.appendChild(c);
