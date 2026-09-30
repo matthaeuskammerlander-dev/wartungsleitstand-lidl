@@ -3201,17 +3201,28 @@ function faelligSprung(art, opt){
 /* ---------- View: Karte ---------- */
 /* Kandidaten für die Tour: Standorte, deren Termine zu den gewählten
    Fälligkeiten passen */
+/* Was die Tour einplant (Büro 30.09.2026): fällige Wartungen, offene Störungen und
+   Rückfragen von Lidl – einzeln an- und abwählbar. Störungen und Störungsaufträge
+   aus der Lidl-Liste zählen je eine Arbeitseinheit wie eine Wartungsposition. */
+function tourArten(){ if(!S.tour.arten) S.tour.arten={wartung:true, stoerung:false, lidl:false}; return S.tour.arten; }
 function tourKandidaten(){
-  var raus=[];
+  var raus=[], arten=tourArten(), bis=endeFolgemonat();
   filtered().forEach(function(s){
     if(!s.lat) return;
     if(S.tour.laender.length && S.tour.laender.indexOf(bundesland(s))<0) return;
-    var bis=endeFolgemonat();
-    var pos=s.pos.filter(function(p){
+    var pos=[], ids={}, dazu=function(p){ if(p && !ids[p.id]){ ids[p.id]=1; pos.push(p); } };
+    if(arten.wartung) s.pos.forEach(function(p){
       var st = p.status==="geplant" ? "erledigt" : p.status;
-      if(S.tour.status.indexOf(st)>=0) return true;
       /* auf Wunsch auch, was erst im nächsten Monat dran ist */
-      return S.tour.naechsterMonat && st!=="ueberfaellig" && p.naechste && p.naechste<=bis;
+      if(S.tour.status.indexOf(st)>=0 || (S.tour.naechsterMonat && st!=="ueberfaellig" && p.naechste && p.naechste<=bis)) dazu(p);
+    });
+    if(arten.stoerung) stoerungVonMarkt(s.id).forEach(function(o){
+      dazu({id:"stoer:"+o._id, anlagentyp:"Störung"+(o.problemtyp?": "+o.problemtyp:""), standortId:s.id});
+    });
+    if(arten.lidl) kundenVonMarkt(s.id).forEach(function(z){
+      if(z.art==="wartung" && posById[z.position_id]) dazu(posById[z.position_id]);
+      /* ein Störungsauftrag der Liste, der schon als Störung erfasst ist, steht nur einmal da */
+      else if(z.art==="stoerung" && !(arten.stoerung && kundenStand(z).o)) dazu({id:"lidl:"+z.id, anlagentyp:"Lidl fragt nach: Auftrag "+z.nummer, standortId:s.id});
     });
     if(pos.length) raus.push({standort:s, positionen:pos});
   });
@@ -3706,7 +3717,12 @@ function tourPanel(){
     '<div><h2>Tourenplanung</h2><div class="sub">Reihenfolge über kürzeste Wege, '+ARBEIT_H.toString().replace(".",",")+
       ' h Arbeitszeit je Wartungsposition. Ein Markt mit mehreren Positionen bindet entsprechend länger.</div></div>'+
 
-    '<div><div class="fl" style="margin-bottom:6px"><span>Welche Wartungen einplanen</span></div>'+
+    '<div><div class="fl" style="margin-bottom:6px"><span>Was einplanen</span></div>'+
+      '<div class="chips" id="t_arten">'+[["wartung","Wartungen"],["stoerung","offene Störungen",stoerungsMaerkte().length],["lidl","Rückfragen von Lidl",kundenMaerkte().length]].map(function(a){
+        if(a[0]==="lidl" && !a[2]) return "";
+        return '<button class="chip" type="button" data-art="'+a[0]+'" aria-pressed="'+(!!tourArten()[a[0]])+'">'+esc(a[1])+(a[2]!=null?' <span class="muted">'+a[2]+"</span>":"")+"</button>";
+      }).join("")+"</div></div>"+
+    '<div'+(tourArten().wartung?"":" hidden")+'><div class="fl" style="margin-bottom:6px"><span>Welche Wartungen einplanen</span></div>'+
       '<div class="chips" id="t_status">'+
         ["ueberfaellig","faellig","erledigt"].map(function(k){
           return '<button class="chip" type="button" data-s="'+k+'" aria-pressed="'+(S.tour.status.indexOf(k)>=0)+'">'+
@@ -3763,6 +3779,14 @@ function tourPanel(){
     b.onclick=function(){
       var k=b.dataset.s, i=S.tour.status.indexOf(k);
       if(i>=0){ if(S.tour.status.length>1) S.tour.status.splice(i,1); } else S.tour.status.push(k);
+      S.tour.manuell=null; S.tour.dazu=null; tourLauf++; render();
+    };
+  });
+  c.querySelectorAll("#t_arten .chip").forEach(function(b){
+    b.onclick=function(){
+      var a=tourArten(), k=b.dataset.art;
+      a[k]=!a[k];
+      if(!a.wartung && !a.stoerung && !a.lidl){ a[k]=true; toast("Mindestens eines muss eingeplant werden."); return; }
       S.tour.manuell=null; S.tour.dazu=null; tourLauf++; render();
     };
   });
