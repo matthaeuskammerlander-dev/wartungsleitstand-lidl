@@ -9591,14 +9591,39 @@ function kundenStand(z){
     else if(z.art==="frage" && z.geklaert){ r.status="erledigt"; r.datum=tagLokal(z.geaendert)||isoLokal(new Date()); r.auto=false; }
     else if(z.geplant){ r.status="geplant"; r.datum=z.geplant; r.auto=false; }
   }
-  r.text = r.status==="erledigt" ? "erledigt am "+dfmt(r.datum) : r.status==="geplant" ? "geplant für "+dfmt(r.datum) : "offen";
+  /* abgeschlossen (Büro): zählt überall wie erledigt, steht aber nicht mehr in der Liste */
+  if(z.abgeschlossen){ r.abgeschlossen=true; if(r.status!=="erledigt"){ r.status="erledigt"; r.datum=z.abgeschlossen; } }
+  r.text = r.abgeschlossen ? "abgeschlossen am "+dfmt(z.abgeschlossen)
+         : r.status==="erledigt" ? "erledigt am "+dfmt(r.datum) : r.status==="geplant" ? "geplant für "+dfmt(r.datum) : "offen";
   /* „zu klären“ (Büro 29.09.2026): eine offene Frage zu dieser Zeile, die ein Mensch
      beantworten muss – bleibt stehen, bis sie im Büro als geklärt abgehakt ist */
   r.klaeren=!!String(z.klaeren||"").trim();
   return r;
 }
 /* in der Liste bleibt, was noch nicht beantwortet oder noch nicht erledigt ist */
-function kundenOffen(){ return kundenliste.filter(function(z){ return !z.gemeldet || kundenStand(z).status!=="erledigt"; }); }
+/* in der Liste bleibt eine Zeile, bis sie abgeschlossen ist – oder bis sie erledigt
+   ist und Lidl danach (am selben Tag oder später) Bescheid bekommen hat */
+function kundenOffen(){ return kundenliste.filter(function(z){
+  if(z.abgeschlossen) return false;
+  var k=kundenStand(z);
+  return !z.gemeldet || k.status!=="erledigt" || String(z.gemeldet)<String(k.datum||""); }); }
+/* Auswahl in der Liste (Art und Stand) – dieselbe für Anzeige, Zähler und Druck.
+   „erledigt“ zeigt auch, was schon beantwortet ist; „abgeschlossen“ nur das. */
+function kundenAuswahl(art, stand){
+  var basis = stand==="abgeschlossen" ? kundenliste.filter(function(z){ return !!z.abgeschlossen; })
+            : stand==="erledigt" ? kundenliste.filter(function(z){ return !z.abgeschlossen; }) : kundenOffen();
+  return basis.filter(function(z){
+    if(art!=="alle" && z.art!==art) return false;
+    var ks=kundenStand(z);
+    return stand==="alle" || stand==="abgeschlossen" || (stand==="ohneantwort" ? !z.gemeldet : stand==="klaeren" ? ks.klaeren : ks.status===stand);
+  });
+}
+/* Rückmeldungen an Lidl zu einer Zeile – jede Antwort mit Datum und Wortlaut */
+function kundenAntworten(z){
+  var l=Array.isArray(z.antworten) ? z.antworten.slice() : [];
+  if(!l.length && z.gemeldet) l.push({datum:z.gemeldet, text:""});
+  return l;
+}
 function kundenName(z){ var s=byId[z.standort_id]; if(z.art==="frage") return z.bezeichnung||"Anfrage von Lidl"; return (z.filial_code?z.filial_code+" · ":"")+(s?stName(s):(z.markt_name||"Markt unbekannt")); }
 function kundenKarte(){
   var l=kundenlisteAn() ? kundenOffen() : [], heute=isoLokal(new Date());
@@ -9630,18 +9655,21 @@ function kundenKarte(){
   return c;
 }
 /* Antwort an den Kunden: je Zeile der Stand, zum Einfügen in die Mail */
-function kundenAntwort(art){
-  var l=kundenOffen().filter(function(z){ return z.art===art; }), vom={};
-  l.forEach(function(z){ vom[z.liste_vom]=1; });
-  var zeilen=l.map(function(z){
-    var k=kundenStand(z);
-    return (art==="stoerung"?"Auftrag ":"IH-Nr. ")+z.nummer+" · "+(z.filial_code||"")+" "+(z.markt_name||"")+
-      /* die Notiz ist die Aussage an den Kunden (etwa „Auftrag nicht erhalten“) – bei
-         offenen Punkten statt „Termin folgt“, sonst hinter dem Stand */
-      (z.bezeichnung?" · "+z.bezeichnung:"")+": "+(k.status==="offen" ? (z.notiz||"Termin folgt") : k.text+(z.notiz?" – "+z.notiz:""));
-  });
-  return "Sehr geehrte Damen und Herren,\n\nzu Ihrer Liste "+(art==="stoerung"?"offener Aufträge":"offener Wartungen")+" vom "+
-    Object.keys(vom).sort().map(dfmt).join(" / ")+":\n\n"+zeilen.join("\n")+"\n\nMit freundlichen Grüßen\n"+(meineAngaben().name||"");
+/* eine Zeile der Antwort – die Notiz ist die Aussage an den Kunden (etwa „Auftrag
+   nicht erhalten“): bei offenen Punkten statt „Termin folgt“, sonst hinter dem Stand */
+function kundenAntwortZeile(z){
+  var k=kundenStand(z);
+  var was = z.art==="frage" ? (z.bezeichnung||"Anfrage") : (z.art==="stoerung"?"Auftrag ":"IH-Nr. ")+z.nummer+" · "+(z.filial_code||"")+" "+(z.markt_name||"")+(z.bezeichnung?" · "+z.bezeichnung:"");
+  var stand = z.art==="frage" && z.geklaert ? String(z.geklaert).replace(/\s*\([^()]*\)\s*$/,"")
+            : k.status==="offen" ? (z.notiz||"Termin folgt") : k.text+(z.notiz?" – "+z.notiz:"");
+  return was+": "+stand;
+}
+/* Antwort an den Kunden für die gewählten Zeilen, zum Einfügen in die Mail */
+function kundenAntwort(art, l){
+  if(!l) l=kundenOffen().filter(function(z){ return z.art===art; });
+  var vom={}; l.forEach(function(z){ vom[z.liste_vom]=1; });
+  return "Sehr geehrte Damen und Herren,\n\nzu Ihrer Liste "+(art==="stoerung"?"offener Aufträge":art==="frage"?"bzw. Anfrage":"offener Wartungen")+" vom "+
+    Object.keys(vom).sort().map(dfmt).join(" / ")+":\n\n"+l.map(kundenAntwortZeile).join("\n")+"\n\nMit freundlichen Grüßen\n"+(meineAngaben().name||"");
 }
 /* start (freiwillig): {art, stand} – mit welcher Auswahl die Liste aufgeht */
 function kundenAnsicht(start){
@@ -9687,7 +9715,11 @@ function kundenAnsicht(start){
         : (k.status==="offen" && z.art!=="frage" ? '<div class="muted" style="font-size:12.5px"><strong>Noch offen:</strong> Termin festlegen und eintragen.</div>' : ""))+
       (z.geklaert ? '<div style="font-size:12.5px"><span class="muted">Geklärt:</span> '+esc(z.geklaert)+"</div>" : "")+
       (z.notiz?'<div style="font-size:12.5px"><span class="muted">Notiz:</span> '+esc(z.notiz)+"</div>":"")+
-      (z.gemeldet?'<div class="muted" style="font-size:12.5px">An Lidl gemeldet am '+esc(dfmt(z.gemeldet))+"</div>":"")+
+      /* jede Rückmeldung an Lidl mit Datum und Wortlaut (die letzten drei) */
+      (function(){ var aw=kundenAntworten(z); if(!aw.length) return "";
+        return '<div class="muted" style="font-size:12.5px">'+(aw.length>3?"… ":"")+aw.slice(-3).map(function(x){
+          return "An Lidl am "+esc(dfmt(x.datum))+(x.text?": „"+esc(String(x.text).replace(/^[^:]*:\s*/,""))+"“":""); }).join("<br>")+"</div>"; })()+
+      (z.abgeschlossen?'<div class="muted" style="font-size:12.5px">Abgeschlossen am '+esc(dfmt(z.abgeschlossen))+"</div>":"")+
       '<div class="rowflex" data-knoepfe style="gap:6px;flex-wrap:wrap"></div>'+
       '<div class="stack" data-eintragen style="gap:6px" hidden>'+
         '<label class="fl"><span>Geplant für</span><input type="date" data-f="geplant" value="'+esc(z.geplant||"")+'"></label>'+
@@ -9711,6 +9743,11 @@ function kundenAnsicht(start){
       speichern(z, {klaeren:null, geklaert:(t||"ohne Vermerk")+" ("+(meineAngaben().name||wer())+", "+dfmt(heute)+")"}).then(function(ok){ if(ok) toast("Als geklärt vermerkt."); });
     });
     if(Admin.frei) knopf("Termin / Stand eintragen", function(){ var e=d.querySelector("[data-eintragen]"); e.hidden=!e.hidden; });
+    /* abschließen: die Zeile ist für uns fertig und verschwindet aus der Liste (unter „abgeschlossen“ nachzulesen) */
+    if(Admin.frei) knopf(z.abgeschlossen ? "Wieder öffnen" : "Abschließen", function(){
+      if(!z.abgeschlossen && !window.confirm("„"+kundenName(z)+"“ abschließen?\n\nDie Zeile verschwindet aus der Liste und aus allen Übersichten. Unter „abgeschlossen“ bleibt sie nachzulesen.")) return;
+      speichern(z, {abgeschlossen: z.abgeschlossen ? null : heute}).then(function(ok){ if(ok) toast(z.abgeschlossen ? "Abgeschlossen." : "Wieder geöffnet."); });
+    });
     var si=d.querySelector('[data-a="sichern"]');
     si.onclick=function(){
       var w=function(f){ return d.querySelector('[data-f="'+f+'"]').value.trim()||null; };
@@ -9723,29 +9760,23 @@ function kundenAnsicht(start){
   function zeichnen(){
     /* zwei Auswahlen: was (Störung, Wartung) und in welchem Stand. „erledigt“ zeigt auch,
        was schon beantwortet und damit sonst aus der Liste verschwunden ist */
-    var alle = stand==="erledigt" ? kundenliste.slice() : kundenOffen();
-    var passtStand=function(z){ var ks=kundenStand(z), k=ks.status;
-      return stand==="alle" || (stand==="ohneantwort" ? !z.gemeldet : stand==="klaeren" ? ks.klaeren : k===stand); };
-    var passtArt=function(z){ return filter==="alle" || z.art===filter; };
-    var zahl=function(f){ return alle.filter(f).length; };
     var F=[["alle","Alle"],["stoerung","Störungen"],["wartung","Wartungen"],["frage","Anfragen"]];
     fb.innerHTML="";
     F.forEach(function(x){
-      var n=zahl(function(z){ return (x[0]==="alle" || z.art===x[0]) && passtStand(z); });
+      var n=kundenAuswahl(x[0], stand).length;
       var b=el('<button class="chip" type="button" aria-pressed="'+(filter===x[0])+'">'+esc(x[1])+" ("+n+")</button>");
       b.onclick=function(){ filter=x[0]; zeichnen(); }; fb.appendChild(b);
     });
-    var ST_F=[["alle","jeder Stand"],["klaeren","zu klären"],["offen","offen"],["geplant","geplant"],["erledigt","erledigt"],["ohneantwort","ohne Antwort an Lidl"]];
+    var ST_F=[["alle","jeder Stand"],["klaeren","zu klären"],["offen","offen"],["geplant","geplant"],["erledigt","erledigt"],
+              ["ohneantwort","ohne Antwort an Lidl"],["abgeschlossen","abgeschlossen"]];
     sb.innerHTML="";
     ST_F.forEach(function(x){
-      var basis = x[0]==="erledigt" ? kundenliste : kundenOffen();
-      var n=basis.filter(function(z){ var ks=kundenStand(z), k=ks.status;
-        return passtArt(z) && (x[0]==="alle" || (x[0]==="ohneantwort" ? !z.gemeldet : x[0]==="klaeren" ? ks.klaeren : k===x[0])); }).length;
+      var n=kundenAuswahl(filter, x[0]).length;
       var b=el('<button class="chip" type="button" aria-pressed="'+(stand===x[0])+'">'+esc(x[1])+" ("+n+")</button>");
       b.onclick=function(){ stand=x[0]; zeichnen(); }; sb.appendChild(b);
     });
     liste.innerHTML="";
-    var l=alle.filter(function(z){ return passtArt(z) && passtStand(z); });
+    var l=kundenAuswahl(filter, stand);
     /* Störungen zuerst (Prio 1 voran), dann Wartungen nach Frist */
     /* Anfragen ganz oben, dann Störungen (Prio 1 voran), dann Wartungen nach Frist */
     var rang=function(z){ return (z.art==="frage" ? "0" : z.art==="stoerung" ? "1"+(/prio\s*1/i.test(z.prio||"")?"0":"1") : "2")+(z.frist||"9999")+z.nummer; };
@@ -9757,9 +9788,7 @@ function kundenAnsicht(start){
   var fuss=function(t, fn, art){ var b=el('<button class="btn'+(art===""?"":" ghost")+'" type="button">'+esc(t)+"</button>"); b.onclick=fn; v.fuss.appendChild(b); return b; };
   /* auf Papier, etwa für die Besprechung: was gerade ausgewählt ist, als Tabelle */
   fuss("Liste drucken", function(){
-    var l=(stand==="erledigt" ? kundenliste.slice() : kundenOffen()).filter(function(z){
-      var ks=kundenStand(z); return (filter==="alle" || z.art===filter) &&
-        (stand==="alle" || (stand==="ohneantwort" ? !z.gemeldet : stand==="klaeren" ? ks.klaeren : ks.status===stand)); });
+    var l=kundenAuswahl(filter, stand);
     var rg=function(z){ return (z.art==="frage" ? "0" : z.art==="stoerung" ? "1" : "2")+(z.frist||"9999")+z.nummer; };
     l.sort(function(a,b){ return rg(a).localeCompare(rg(b)); });
     var alt=document.getElementById("druckansicht"); if(alt) alt.remove();
@@ -9793,24 +9822,41 @@ function kundenAnsicht(start){
     }, function(){ toast("Die Route konnte nicht berechnet werden – bitte im Reiter Karte nochmals."); });
   });
   if(Admin.frei){
+    /* Antwort an Lidl (Büro 30.09.2026): Zeilen einzeln wählen; jede Antwort wird je
+       Zeile mit Datum und Wortlaut vermerkt – es kann beliebig viele geben */
     var antwort=function(art){
       var a=ansichtOeffnen("Antwort an Lidl");
-      a.schritt.textContent=art==="stoerung"?"Störungsaufträge":"Wartungen";
-      var b=el('<div class="stack"><div class="muted" style="font-size:12.5px">Text prüfen, kopieren und in die Antwort-Mail einfügen. „Termin folgt“ steht überall, wo noch kein Termin eingetragen ist.</div>'+
+      a.schritt.textContent=art==="stoerung"?"Störungsaufträge und Anfragen":"Wartungen";
+      var kand=kundenOffen().filter(function(z){ return art==="stoerung" ? (z.art==="stoerung"||z.art==="frage") : z.art===art; });
+      var gew={}; kand.forEach(function(z){ gew[z.id]=true; });
+      var b=el('<div class="stack"><div class="as-feld"><div class="as-label">Was soll in diese Antwort? (antippen wählt ab)</div><div class="stack" data-wahl style="gap:4px"></div></div>'+
+        '<div class="muted" style="font-size:12.5px">Text prüfen, kopieren und in die Antwort-Mail einfügen. „Termin folgt“ steht überall, wo noch kein Termin eingetragen ist.</div>'+
         '<textarea rows="14" style="width:100%;font-size:13px"></textarea></div>');
-      b.querySelector("textarea").value=kundenAntwort(art); a.inhalt.appendChild(b);
+      var ta=b.querySelector("textarea"), wahl=b.querySelector("[data-wahl]");
+      var gewaehlt=function(){ return kand.filter(function(z){ return gew[z.id]; }); };
+      var textNeu=function(){ ta.value=kundenAntwort(art, gewaehlt()); };
+      kand.forEach(function(z){
+        var n=kundenAntworten(z).length;
+        var c=el('<label class="chk" style="align-items:flex-start"><input type="checkbox" checked><span style="font-size:13px">'+esc(kundenAntwortZeile(z))+
+          (n?' <span class="muted">· schon '+n+"× beantwortet, zuletzt "+esc(dfmt(kundenAntworten(z)[n-1].datum))+"</span>":"")+"</span></label>");
+        c.querySelector("input").onchange=function(e){ gew[z.id]=e.target.checked; textNeu(); };
+        wahl.appendChild(c);
+      });
+      if(!kand.length) wahl.appendChild(el('<div class="muted">Nichts offen.</div>'));
+      textNeu(); a.inhalt.appendChild(b);
       var ko=el('<button class="btn" type="button">Text kopieren</button>'), ge=el('<button class="btn ghost" type="button">Als beantwortet vermerken</button>');
-      ko.onclick=function(){ inZwischenablage(b.querySelector("textarea").value, "Antwort"); };
+      ko.onclick=function(){ inZwischenablage(ta.value, "Antwort"); };
       ge.onclick=function(){
         if(demo()){ toast("In der Vorschau wird nichts gespeichert."); return; }
-        if(!window.confirm("Bei allen "+(art==="stoerung"?"Störungsaufträgen":"Wartungen")+" der Liste „an Lidl gemeldet am "+dfmt(heute)+"“ vermerken?\n\nErledigte verschwinden danach aus der Liste.")) return;
-        var l=kundenOffen().filter(function(z){ return z.art===art; });
-        mitFrist(Store.sb.from("kundenliste").update({gemeldet:heute, geaendert:new Date().toISOString(), von:meineAngaben().name||wer()})
-          .in("id", l.map(function(z){ return z.id; })), 15000).then(function(r){
-          if(r.error){ toast("Nicht vermerkt: "+r.error.message); return; }
-          l.forEach(function(z){ z.gemeldet=heute; }); a.zu(); zeichnen(); kundenKarteNeu();
-          toast("Vermerkt.");
-        }, function(){ toast("Nicht vermerkt – keine Verbindung."); });
+        var l=gewaehlt(); if(!l.length){ toast("Keine Zeile gewählt."); return; }
+        if(!window.confirm("Bei "+l.length+(l.length===1?" Zeile":" Zeilen")+" „Antwort an Lidl am "+dfmt(heute)+"“ vermerken?\n\nDie Zeilen bleiben in der Liste, bis sie erledigt oder abgeschlossen sind.")) return;
+        var ich=meineAngaben().name||wer(), jetzt=new Date().toISOString();
+        Promise.all(l.map(function(z){
+          var neu=kundenAntworten(z).concat([{datum:heute, text:kundenAntwortZeile(z), von:ich}]);
+          return mitFrist(Store.sb.from("kundenliste").update({gemeldet:heute, antworten:neu, geaendert:jetzt, von:ich}).eq("id", z.id), 15000)
+            .then(function(r){ if(r.error) throw new Error(r.error.message); z.gemeldet=heute; z.antworten=neu; });
+        })).then(function(){ a.zu(); zeichnen(); kundenKarteNeu(); toast("Vermerkt."); },
+          function(x){ toast("Nicht (ganz) vermerkt: "+(x.message||x)); zeichnen(); });
       };
       a.fuss.appendChild(ge); a.fuss.appendChild(ko);
     };
