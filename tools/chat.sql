@@ -54,6 +54,7 @@ create policy "fotos ansehen" on storage.objects for select to authenticated
   using (bucket_id = 'protokollfotos'
          and case when name like 'wunsch/%' then (owner = auth.uid() or public.ist_inhaber())
                   when name like 'chat/%'   then public.darf_schreiben()
+                  when name like 'anlagen/%' then public.darf_schreiben()
                   else true end);
 
 -- Fotos einer gelöschten Nachricht aus dem Speicher nehmen: nur unter chat/…,
