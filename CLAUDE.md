@@ -58,6 +58,10 @@ Kammerlander Umwelt- und Klimatechnik (UKT) – oft kurz, vom Handy, im Feld.
   nach der Inbetriebnahme. Nie fast zwei Jahre ohne JW.
 - Ein nachträglich zu einer bestehenden Anlage angelegter Termin zählt ab dem
   Tag des Anlegens (Feld `giltAb`, `mitGiltAb`) – nicht rückwirkend.
+- Liegt der letzte Soll-Termin eines solchen neuen Termins höchstens 3 Monate
+  zurück, fragt die App beim Anlegen, ob er nachgeholt werden kann (`nachholen`,
+  `nachholenFragen`). Ja: nie von selbst überfällig, aber im Protokoll unter
+  „zählt als“ wählbar; wird dafür gewartet, gilt er als erledigt. Büro 30.09.2026.
 - Altlast-Bereinigung ohne bekannte Füllmenge: HJI. Beim Zusammenführen mit
   Zugangsdaten auf beiden Seiten: nachfragen, immer als ganzer Satz.
 - Den Soll-Monat nie automatisch ändern; vorgezogene Wartungen sind normal.

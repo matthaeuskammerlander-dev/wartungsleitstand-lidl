@@ -574,6 +574,8 @@ var STAMM_FELDER_POS = ["anlagentyp","intervallCode","inbetriebnahme","monat","m
                         "anlageZu",
                         /* nachträglich zu einer bestehenden Anlage dazugekommener Termin: zählt erst ab diesem Tag */
                         "giltAb",
+                        /* ein bis zu 3 Monate zurückliegender Termin, der beim Anlegen „nachholbar“ bleiben soll (Büro 30.09.2026) */
+                        "nachholen",
                         /* beim Zusammenführen stillgelegte Zeile: ihre Protokolle zählen für diese Zeile */
                         "zusammengefuehrtIn",
                         /* Wartungen laut Prüfbuch, die in der Excel-Liste fehlen: [{datum, techniker}] */
@@ -981,7 +983,25 @@ function regelText(r, nurJW){
    heute (erst der nächste Soll-Monat ist fällig), nicht rückwirkend ab dem
    Anker (vom Büro so festgelegt, 27.09.2026). Bei einer ganz neuen Anlage gilt
    wie immer die Inbetriebnahme. */
+/* Neuer Termin an einer bestehenden Anlage: liegt sein letzter Soll-Termin höchstens
+   3 Monate zurück, wird gefragt, ob er noch nachgeholt werden kann (Büro 30.09.2026).
+   Ja: im Protokoll wählbar, nie von selbst überfällig. Nein: erst der nächste zählt. */
+function nachholenFragen(liste, ib){
+  var heute=isoLokal(new Date()), grenze=plusMonate(heute,-3), tag=ib ? +String(ib).slice(8,10) : 15;
+  (liste||[]).forEach(function(t){
+    if(!+t.monat || t.nachholen!==undefined) return;
+    var a={monat:+t.monat, tag:tag}, j=+heute.slice(0,4), d=ankerIm(a,j);
+    if(d>heute) d=ankerIm(a,j-1);
+    if(d<grenze || d>heute){ t.nachholen=null; return; }
+    var art=(intervallArt(t.intervallCode).art)||"Termin";
+    t.nachholen = window.confirm(art+" – der Termin "+dfmt(d)+" liegt erst "+Math.max(1,Math.round((new Date(heute)-new Date(d))/864e5))+" Tage zurück.\n\n"+
+      "Soll er noch nachgeholt werden können (etwa heute)? Dann ist er im Protokoll unter „zählt als“ wählbar. Überfällig wird er nie.\n\n"+
+      "OK = nachholbar · Abbrechen = erst ab "+dfmt(ankerIm(a,+d.slice(0,4)+1))) ? d : null;
+  });
+  return liste;
+}
 function termineNeuAnlegen(standortId, anlageId, liste, grund, rueck, abHeute){
+  if(abHeute) nachholenFragen(liste, inbetriebnahmeVon(posById[anlageId]));
   /* Zu einer schon bestehenden Anlage: erst gegen den zentralen Stand prüfen –
      hat das Büro (oder ein anderes Gerät) den Termin inzwischen angelegt, kein
      zweites Mal (sonst zwei HJI, wenn dieses Gerät einen alten Stand hat) */
@@ -1016,6 +1036,7 @@ function termineNeuSchreiben(standortId, anlageId, liste, grund, rueck, abHeute)
     /* Wartungen laut Prüfbuch, die zu diesem Termin gehören (neue Anlage) */
     if(t.nachweise && t.nachweise.length) rec.felder.nachweise=t.nachweise;
     if(abHeute) rec.felder.giltAb=isoLokal(new Date());
+    if(abHeute && t.nachholen) rec.felder.nachholen=t.nachholen;
     stammUeber[rec.id]=rec;
     return stammSpeichern(rec, false, rueck);
   })).then(function(wo){ wendeStammdatenAn(); return wo.indexOf(false)>=0 ? false : true; });
@@ -1239,6 +1260,7 @@ function berechneFaelligkeiten(){
     /* abgeleitete Hinweise jedes Mal neu – sonst bliebe ein alter stehen,
        etwa wenn eine Zeile ihren Anker verliert oder pausiert wird */
     p.ausgelassen=null; p.ueberholtDurch=null; p.doppeltImFenster=null;
+    p.nachholbar=null;
     p.zugeordnet=null;   /* Termin → Wartungsdatum, für den Monatsbericht (terminZuWartung) */
     /* Einträge aus Liste, Prüfbuch und App, die höchstens BESUCH_TAGE
        auseinanderliegen, sind EIN Besuch – sonst erfüllte derselbe Besuch
@@ -1254,6 +1276,16 @@ function berechneFaelligkeiten(){
 
     var a=ankerFuer(p);
     p.anker=mitGiltAb(p, a);
+    /* Nachholbarer Termin (Büro 30.09.2026): beim Anlegen lag er bis 3 Monate zurück.
+       Er wird nie von selbst überfällig – nur wenn dafür gewartet wurde, gilt er
+       (dann ist er erledigt, der nächste Termin kommt ein Jahr später). Solange
+       nicht gewartet, bietet ihn das Protokoll unter „zählt als“ an. */
+    if(p.nachholen && p.anker){
+      var nh=String(p.nachholen);
+      var nachgeholt=termine.some(function(d){ return d>=plusMonate(nh,-3) && d<=plusMonate(nh,6); });
+      if(nachgeholt){ if(!p.anker.erster || nh<p.anker.erster) p.anker.erster=nh; }
+      else if(heute<=plusMonate(nh,6)) p.nachholbar=nh;
+    }
     var zu={}, benutzt={}, aktuell=null;
     if(!imPlan[p.id]){
       /* zur Zeit nicht gewartet (die Anlage oder der ganze Markt): kein Termin, nichts fällig */
@@ -11115,10 +11147,11 @@ function protokollAssistent(form, stoer){
          zählt für keinen Termin. */
       if(!stoer){
         var ts=(slot ? [].map.call(slot.options, function(o){ return posById[o.value]; }) : [posById[cb.value]]).filter(Boolean);
-        var kurzT=function(t){ return (t.intervall||intervallArt(t.intervallCode)).kurz+" · "+
-          (t.naechste ? dfmt(t.naechste) : (+t.monat ? MONATE_L[+t.monat] : "ohne Termin")); };
-        var langT=function(t){ return (t.intervall||intervallArt(t.intervallCode)).art+
-          (t.naechste ? " – Termin "+dfmt(t.naechste)+" ("+wannText(t).zusatz+")" : " – noch ohne Termin"); };
+        var kurzT=function(t){ return (t.intervall||intervallArt(t.intervallCode)).kurz+" · "+(t.nachholbar ? dfmt(t.nachholbar)+" nachholen" :
+          (t.naechste ? dfmt(t.naechste) : (+t.monat ? MONATE_L[+t.monat] : "ohne Termin"))); };
+        var langT=function(t){ return (t.intervall||intervallArt(t.intervallCode)).art+(t.nachholbar
+          ? " – Termin "+dfmt(t.nachholbar)+" nachholen (danach "+dfmt(t.naechste)+")"
+          : t.naechste ? " – Termin "+dfmt(t.naechste)+" ("+wannText(t).zusatz+")" : " – noch ohne Termin"); };
         if(ts.length){
           var lang=el('<div class="muted" style="font-size:12.5px;margin-top:4px"></div>');
           var zeigeLang=function(id){ var t=ts.filter(function(x){ return x.id===id; })[0]||ts[0]; lang.textContent=langT(t); };
@@ -11879,6 +11912,8 @@ function viewProtokoll(){
     /* Abstand zum nächstgelegenen Termin der Zeile – überfällig: der zuletzt
        verstrichene oder der anstehende, je nachdem, welcher näher liegt */
     var abst=function(t){
+      /* nachholbarer Termin: zählt mit seinem (vergangenen) Datum – so wird er vorgewählt */
+      if(t.nachholbar) return Math.min(tageBis(t.nachholbar), t.naechste?tageBis(t.naechste):9e15);
       var k=kommend(t); if(!k) return 9e15;
       if(t.status!=="ueberfaellig" || !t.anker) return tageBis(k);
       return Math.min(tageBis(k), tageBis(ankerIm(t.anker, +k.slice(0,4)-1)));
@@ -11925,7 +11960,8 @@ function viewProtokoll(){
                (!stoer && offen.length>0);
       var schlecht=ts.reduce(function(r,t){ return STATUS_RANK[t.status]<STATUS_RANK[r]?t.status:r; },
         ts.every(function(t){ return t.status==="pausiert"; })?"pausiert":"erledigt");   /* ruhend: nicht „im Plan“ zeigen */
-      var terminText=function(t){ var w=wannText(t); return (t.intervall||intervallArt(t.intervallCode)).art+(t.naechste?" · fällig "+dfmt(t.naechste)+" ("+w.zusatz+")":""); };
+      var terminText=function(t){ var w=wannText(t); return (t.intervall||intervallArt(t.intervallCode)).art+
+        (t.nachholbar ? " · "+dfmt(t.nachholbar)+" nachholen" : t.naechste?" · fällig "+dfmt(t.naechste)+" ("+w.zusatz+")":""); };
       var z=el('<label class="chk" style="border-color:var(--line);align-items:center">'+
         '<input type="checkbox" name="posw" value="'+esc(stoer?a.leader.id:wahl.id)+'" data-anlage="'+esc(a.id)+'" id="f_posw'+i+'"'+(an?" checked":"")+">"+
         '<span style="flex:1;min-width:0"><strong>'+esc(anlagenName(anlageDaten(a.leader)))+"</strong><br>"+
@@ -16909,7 +16945,11 @@ function verwaltungEditor(s){
         neuP.monatGrund = (vGrund===undefined) ? ((p0&&p0.monatGrund)||"") : vGrund;
         neuP.aktiv = betrieb!=="still" && !lt("entfaellt");
         /* neuer Termin an einer schon bestehenden Anlage: zählt ab heute, nicht rückwirkend */
-        if(istNeu && !istAnker && ankerP0 && !neuP.giltAb) neuP.giltAb=isoLokal(new Date());
+        if(istNeu && !istAnker && ankerP0 && !neuP.giltAb){
+          neuP.giltAb=isoLokal(new Date());
+          var nhT=nachholenFragen([{intervallCode:neuP.intervallCode, monat:neuP.monat}], neuP.inbetriebnahme)[0];
+          if(nhT.nachholen) neuP.nachholen=nhT.nachholen;
+        }
         /* Status und Anlagendaten hängen an der ersten Zeile der Anlage */
         neuP.pausiert = istAnker ? (betrieb==="pausiert") : (p0?p0.pausiert:false);
         neuP.pausiertGrund = istAnker ? (betrieb==="pausiert"?la("pausiertGrund"):"") : (p0?p0.pausiertGrund:"");
