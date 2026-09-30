@@ -148,6 +148,16 @@ section.view{display:grid;gap:18px}
 .card{background:var(--surface);border:1px solid var(--line);border-radius:var(--r);box-shadow:var(--shadow)}
 .card>.pad{padding:16px}
 .card h2{font-size:15px;letter-spacing:.06em;text-transform:uppercase;color:var(--ink-2)}
+/* Einklappbare Karten (Reiter Fällig, Büro 30.09.2026): die Überschrift klappt
+   zu und auf, der Zustand bleibt je Gerät. Zu: nur die Überschriftzeile bleibt. */
+.card.klappbar h2{cursor:pointer;user-select:none;display:inline-flex;align-items:center;gap:6px}
+.card.klappbar h2 .klapp{display:inline-block;transition:transform .15s;font-size:12px;color:var(--ink-3)}
+.card.klappbar.zu h2 .klapp{transform:rotate(-90deg)}
+.card.klappbar.zu .pad>*:not(:first-child){display:none!important}
+.card.klappbar.zu>*:not(.pad){display:none!important}
+.card.klappbar.zu .sub{display:none!important}
+.card.klappbar h2 .zusammen{font-size:12px;font-weight:500;letter-spacing:0;text-transform:none;color:var(--ink-3);display:none}
+.card.klappbar.zu h2 .zusammen{display:inline}
 .card .sub{font-size:12.5px;color:var(--ink-3);margin-top:3px}
 .kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px}
 .kpi{background:var(--surface);border:1px solid var(--line);border-radius:var(--r);padding:13px 14px;display:grid;gap:2px}
@@ -3036,12 +3046,12 @@ function viewFaellig(){
 
   /* Offene Störungen stehen ganz oben – sie warten, nicht der Kalender. */
   /* Rückfragen des Kunden mit Frist: noch vor allem anderen */
-  f.appendChild(kundenKarte());
-  if(posteingangAn()) f.appendChild(posteingangKarte());
+  f.appendChild(einklappbar(kundenKarte(), "lidl", kundenlisteAn() ? kundenOffenZahl()+" offen" : ""));
+  if(posteingangAn()) f.appendChild(einklappbar(posteingangKarte(), "posteingang"));
   /* Wochenübersicht fürs Büro – dieselben Zahlen wie die Montag-Nachricht */
-  if(Admin.frei && !nurLesen()) f.appendChild(wochenKarte());
-  f.appendChild(stoerungsKarte());
-  f.appendChild(stoerungsKalender());
+  if(Admin.frei && !nurLesen()) f.appendChild(einklappbar(wochenKarte(), "woche"));
+  f.appendChild(einklappbar(stoerungsKarte(), "stoerungen", stoerOffen.length+" offen"));
+  f.appendChild(einklappbar(stoerungsKalender(), "kalender"));
 
   /* Small multiples je Region */
   var bands=REGIONEN.map(function(r){
@@ -3082,7 +3092,7 @@ function viewFaellig(){
   chart.querySelectorAll("[data-rs]").forEach(function(a){
     tippe(a, function(){ faelligSprung(a.dataset.rs==="ueber"?"ueberfaellig":"liste", {region:a.closest("[data-region]").dataset.region}); });
   });
-  f.appendChild(chart);
+  f.appendChild(einklappbar(chart, "regionen"));
 
 
   /* Positionsliste: nach Fälligkeitsdatum, das dringendste zuerst */
@@ -3135,7 +3145,7 @@ function viewFaellig(){
     });
     card.appendChild(mehr);
   }
-  f.appendChild(card);
+  f.appendChild(einklappbar(card, "liste", show.length+" Positionen"));
   /* der Kunde hat keinen Protokoll-Reiter – dort stünde sonst das Abmelden */
   if(nurLesen() && Store.modus==="supabase" && Store.benutzer) f.appendChild(kontoKarte());
   return f;
@@ -9322,7 +9332,7 @@ function abrechnungZeile(p){
    ================================================================ */
 var kundenliste=[], kundenlisteGeladen=false;
 function kundenlisteAn(){ return Store.modus==="supabase" && !!Store.sb && !!Store.benutzer && !nurLesen() && !demo(); }
-function kundenKarteNeu(){ var k=document.getElementById("kundenkarte"); if(k) k.replaceWith(kundenKarte()); }
+function kundenKarteNeu(){ var k=document.getElementById("kundenkarte"); if(k) k.replaceWith(einklappbar(kundenKarte(), "lidl", kundenlisteAn() ? kundenOffenZahl()+" offen" : "")); }
 function kundenlisteLaden(){
   if(!kundenlisteAn()){ kundenliste=[]; kundenlisteGeladen=false; return Promise.resolve(); }
   var konto=Store.benutzer.email;
@@ -17245,10 +17255,32 @@ function befundAnlage(x, s){
    sonst "center" für einzelne Zeilen und Felder. opt.alle: weitere Treffer,
    die mit aufblinken (etwa alle überfälligen Zeilen) – gescrollt wird zum
    ersten. */
+/* Karte einklappbar machen: key = Merkname je Gerät (ukt_zu), zusammen = kurzer
+   Text, der im zugeklappten Zustand neben der Überschrift steht (etwa eine Zahl) */
+function einklappbar(card, key, zusammen){
+  if(!card || card.hidden) return card;
+  var h=card.querySelector("h2"); if(!h || card.classList.contains("klappbar")) return card;
+  card.classList.add("klappbar");
+  h.insertAdjacentHTML("beforeend", ' <span class="klapp" aria-hidden="true">▾</span>'+(zusammen?'<span class="zusammen">'+esc(zusammen)+'</span>':""));
+  h.setAttribute("role","button"); h.setAttribute("tabindex","0");
+  var stand=lsGet("ukt_zu",{});
+  var setzen=function(zu){ card.classList.toggle("zu", !!zu); h.setAttribute("aria-expanded", String(!zu)); h.title=zu?"Aufklappen":"Zuklappen"; };
+  setzen(!!stand[key]);
+  var wechsel=function(){ var s=lsGet("ukt_zu",{}); s[key]=!card.classList.contains("zu"); if(!s[key]) delete s[key]; lsSet("ukt_zu", s); setzen(!!s[key]); };
+  h.onclick=function(e){ if(e.target.closest("a,button,input,select")) return; wechsel(); };
+  h.onkeydown=function(e){ if(e.key==="Enter"||e.key===" "){ e.preventDefault(); wechsel(); } };
+  return card;
+}
+/* ein Sprungziel in einer zugeklappten Karte: die Karte geht auf (und bleibt auf) */
+function aufklappen(z){
+  var c=z && z.closest ? z.closest(".card.klappbar.zu") : null; if(!c) return;
+  var h=c.querySelector("h2"); if(h && h.onclick) h.onclick({target:h, closest:function(){ return null; }});
+}
 function sprungHervorheben(z, opt){
   if(!z) return;
   opt=opt||{};
   var d=z.closest("details"); if(d) d.open=true;
+  aufklappen(z);
   var box=z.closest(".terminzeile,.fl,.as-feld")||z;
   [box].concat(opt.alle||[]).forEach(function(b){ b.classList.remove("sprungziel"); void b.offsetWidth; b.classList.add("sprungziel"); });
   var block=opt.block||"center";
