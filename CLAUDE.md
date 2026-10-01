@@ -92,6 +92,12 @@ Kammerlander Umwelt- und Klimatechnik (UKT) – oft kurz, vom Handy, im Feld.
   App-Belege sind TEST (T-A-/T-R-Nummern), solange KPlus führt. Rechnung aus
   Angebot: Mengenvorschläge aus dem Baustellenbuch (`baubuchVorschlaege`).
   Echte Preise und Belege nie ins Repository – nur in Supabase.
+- Quellen (Büro 01.10.2026: „man soll immer alles von beiden Seiten finden“):
+  Schritte (`daten.quellen[schritt]`), Listeneinträge und Baustellenbuch führen
+  `quellen` – Pfad einer Projektdatei oder {name, hinweis}, solange nicht
+  hochgeladen (`quelleDatei` verknüpft am Namen). Dateien zeigen „gehört zu“
+  (`dateiGehoertZu`), die Synology-Mappe verlinkt relativ in den Projektordner.
+  Projekttyp in `daten.typ` (`PROJEKT_TYPEN` + eigene).
 - Synology-Ablage der Baustellen (`synology/ukt_archiv.py`, `projekte_abgleich`):
   je Projekt `{jahr}/Kunden/{kunde}/Baustellen/{Filiale Ort}_{Nummer}/` mit
   Unterordnern je Dateiart und Projektmappe (HTML + JSON). Das Archivkonto hat
