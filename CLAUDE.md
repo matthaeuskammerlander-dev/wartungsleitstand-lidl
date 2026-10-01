@@ -121,6 +121,10 @@ Kammerlander Umwelt- und Klimatechnik (UKT) – oft kurz, vom Handy, im Feld.
   `standardZu` am Handy, `klappLeiste` „Alles zu-/aufklappen“). Geführte Rundgänge
   (`RUNDGAENGE`, `rundgangStarten`: hebt echte Elemente hervor, trägt nie etwas ein) –
   bei neuen Funktionen den passenden Schritt und das Handbuch (`handbuchKarte`) ergänzen.
+- Angebot/Rechnung bearbeiten (`belegEditor`, Büro 01.10.2026 „gründlich überarbeiten“): großes
+  Fenster, Positionen als Tabelle (`.bpos`, am Handy Block), Bezeichnung wächst mit
+  (`feldHoehe`), Summe immer sichtbar im Fuß, Kopf/Texte einklappbar, Vorschau (PDF)
+  vor dem Speichern, Zeile kopieren/verschieben, Textzeilen.
 - Synology-Ablage der Baustellen (`synology/ukt_archiv.py`, `projekte_abgleich`):
   je Projekt `{jahr}/Kunden/{kunde}/Baustellen/{Filiale Ort}_{Nummer}/` mit
   Unterordnern je Dateiart und Projektmappe (HTML + JSON). Angebote und
