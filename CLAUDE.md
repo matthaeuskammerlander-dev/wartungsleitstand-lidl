@@ -92,6 +92,12 @@ Kammerlander Umwelt- und Klimatechnik (UKT) – oft kurz, vom Handy, im Feld.
   App-Belege sind TEST (T-A-/T-R-Nummern), solange KPlus führt. Rechnung aus
   Angebot: Mengenvorschläge aus dem Baustellenbuch (`baubuchVorschlaege`).
   Echte Preise und Belege nie ins Repository – nur in Supabase.
+- Synology-Ablage der Baustellen (`synology/ukt_archiv.py`, `projekte_abgleich`):
+  je Projekt `{jahr}/Kunden/{kunde}/Baustellen/{Filiale Ort}_{Nummer}/` mit
+  Unterordnern je Dateiart und Projektmappe (HTML + JSON). Das Archivkonto hat
+  die Rolle „archiv“ (tools/archiv-rolle.sql): liest wie ein Techniker plus
+  Belege und Büro-Dateien, schreibt nirgends (restriktive Regeln). Test:
+  `tools/archiv_test.py` läuft in der automatischen Prüfung.
 - Stempeluhr: von Hand eingetragene Zeit, die in die Stempelzeit fällt, zählt
   für die 10-/12-Stunden-Hinweise nicht dazu (wird beim Ausstempeln abgeglichen).
 - Termine vor Ort prüfen (`termineOffen`, `termineSchritt`): im geführten
