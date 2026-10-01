@@ -32,7 +32,7 @@ declare
   letzt public.stempel; ein public.stempel; s public.stempel; seg public.stempel;
   segs public.stempel[]; n integer; i integer;
   pause_ab timestamptz; pause_sek numeric; ende timestamptz := now(); seg_ende timestamptz;
-  quelle text := 'stempel'; min integer; neu_id uuid; ids uuid[] := '{}'; t text; letzter boolean; ort_ende jsonb;
+  v_quelle text := 'stempel'; min integer; neu_id uuid; ids uuid[] := '{}'; t text; letzter boolean; ort_ende jsonb;
 begin
   if auth.uid() is null or not public.darf_schreiben() then raise exception 'Stempeln ist mit diesem Konto nicht möglich'; end if;
   if p_art not in ('ein','pause','weiter','wechsel','aus') then raise exception 'unbekannte Stempelart'; end if;
@@ -70,7 +70,7 @@ begin
     ende := ((ein.zeit at time zone tz)::date + p_ende_hand::time) at time zone tz;
     if ende <= ein.zeit then ende := ende + interval '1 day'; end if;
     if ende > now() then raise exception 'Das Ende liegt in der Zukunft'; end if;
-    quelle := 'stempel_nachgetragen';
+    v_quelle := 'stempel_nachgetragen';
   end if;
   if extract(epoch from ende - ein.zeit) > 86400 then
     raise exception 'Länger als 24 Stunden eingestempelt – bitte das tatsächliche Ende angeben';
@@ -78,7 +78,7 @@ begin
   -- von Hand eingetragene Zeit, die durch die gestempelte ersetzt wird
   if p_ersetzen is not null then
     delete from public.arbeitszeiten
-     where id = any(p_ersetzen) and user_id = auth.uid() and quelle = 'hand' and bestaetigt is null;
+     where arbeitszeiten.id = any(p_ersetzen) and arbeitszeiten.user_id = auth.uid() and arbeitszeiten.quelle = 'hand' and arbeitszeiten.bestaetigt is null;
   end if;
   select array_agg(x order by x.zeit) into segs from public.stempel x
    where x.user_id = auth.uid() and x.zeit >= ein.zeit and x.zeit < ende and x.art in ('ein','wechsel');
@@ -107,7 +107,7 @@ begin
             to_char(seg.zeit at time zone tz, 'HH24:MI'), to_char(seg_ende at time zone tz, 'HH24:MI'),
             least(600, round(pause_sek / 60)), min, 'arbeit', t,
             coalesce(seg.standort_id, case when letzter then p_standort end),
-            coalesce(seg.projekt_id,  case when letzter then p_projekt end), quelle,
+            coalesce(seg.projekt_id,  case when letzter then p_projekt end), v_quelle,
             case when seg.ort is null and ort_ende is null then null else jsonb_build_object('ein', seg.ort, 'aus', ort_ende) end,
             seg.bereich)
     returning id into neu_id;
