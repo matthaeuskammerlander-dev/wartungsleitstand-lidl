@@ -2030,7 +2030,7 @@ function filteredPos(){ var ids={}; filtered().forEach(function(s){ids[s.id]=1;}
 /* Reihenfolge nach dem Arbeitsablauf (Büro 01.10.2026): was ansteht und was geplant ist,
    dann die Arbeit vor Ort (Protokoll, Anlagen, Karte, Stunden), dann das Büro */
 var VIEWS=[["faellig","Fällig"],["kalender","Kalender"],["protokoll","Protokoll"],["anlagen","Anlagen"],["karte","Karte"],["stunden","Stunden"],
-           ["projekte","Projekte"],["kunden","Kunden"],["belege","Rechnungen"],["verlauf","Verlauf"],["verwaltung","Verwaltung"],["daten","Datenbasis"]];
+           ["projekte","Projekte"],["kunden","Kunden & Kontakte"],["belege","Rechnungen"],["verlauf","Verlauf"],["verwaltung","Verwaltung"],["daten","Datenbasis"]];
 var tabsEl=document.getElementById("tabs");
 VIEWS.forEach(function(v){
   var b=document.createElement("button"); b.type="button"; b.textContent=v[1]; b.setAttribute("role","tab");
@@ -3233,9 +3233,10 @@ function viewFaellig(){
   if(!nurLesen() && !lsGet("ukt_rundgang_gesehen", false)){
     var rgH=el('<div class="note" style="border-left:3px solid var(--accent);font-size:13px"><strong>Neu: geführte Rundgänge.</strong> Die App zeigt Schritt für Schritt, '+
       "wie ein Einsatz mit Protokoll abläuft – und für das Büro Planung und Datenpflege. Sie trägt dabei nichts ein."+
-      '<div class="rowflex" style="gap:6px;margin-top:8px"><button class="btn sm" type="button" data-rg="los">▶ Rundgang starten</button>'+
-      '<button class="btn ghost sm" type="button" data-rg="weg">Nicht mehr zeigen</button></div></div>');
-    rgH.querySelector('[data-rg="los"]').onclick=function(){ rundgangStarten(istInhaber()?"inhaber":(Admin.frei||Rolle.name==="admin")?"admin":"techniker"); };
+      '<div data-rgwahl style="margin-top:8px"></div>'+
+      '<div class="rowflex" style="gap:6px;margin-top:6px"><button class="btn ghost sm" type="button" data-rg="weg">Nicht mehr zeigen</button></div></div>');
+    /* alle Rundgänge, die zur Rolle passen: Inhaber alle, Admin Techniker und Admin, Techniker den eigenen */
+    rgH.querySelector("[data-rgwahl]").appendChild(rundgangAuswahl());
     rgH.querySelector('[data-rg="weg"]').onclick=function(){ lsSet("ukt_rundgang_gesehen", true); rgH.remove(); };
     f.appendChild(rgH);
   }
@@ -6957,7 +6958,11 @@ function stoerungSpeichern(o, grund, rueck){
       if(altU) stammUeber[rec.id]=altU; else delete stammUeber[rec.id];
       if(altS) stammStand[rec.id]=altS; else delete stammStand[rec.id];
     }
-    wendeStammdatenAn(); stoerungEintraegeAuffrischen(); return wo;
+    wendeStammdatenAn(); stoerungEintraegeAuffrischen();
+    /* Kontakt bei Lidl aus dem Störungsauftrag: ins Adressbuch (still – passiert bei jedem Speichern) */
+    if(wo!==false && o.lidlKontakt && typeof kontaktErfassen==="function") kontaktErfassen({name:o.lidlKontakt, firma:"Lidl Österreich", funktion:"Kontakt Lidl", kategorie:"Lidl", telefon:o.lidlTelefon, mail:o.lidlMail},
+      {art:"stoerung", id:o._id, titel:"Störung "+(byId[o.standortId]?stName(byId[o.standortId]):"")+(o.auftragsnummer?" "+o.auftragsnummer:"")}, true);
+    return wo;
   });
 }
 /* Jede Statusänderung einer Störung (abgehakt, gelöscht, per Protokoll
@@ -18953,10 +18958,17 @@ function kartenOrdnen(host, regeln, praefix, mitLeiste, ausgleichen){
        Seite“): feste Karten in ihre Spalte, alle anderen in die gerade kürzere – gemessen. */
     var s=spaltenAnordnen([]); host.appendChild(s);
     var sh=s.querySelector(".sp-haupt"), sn=s.querySelector(".sp-neben");
+    /* einmal messen statt je Karte (jede Messung legt das ganze Fenster neu aus –
+       bei großen Projekten spürbar langsam): feste Karten an ihren Platz, die
+       übrigen zur Probe in die Nebenspalte, Höhen auf einmal lesen, dann verteilen */
+    mitte.forEach(function(t, i){ t[0].style.order=String(i); (t[2] && t[1]!=="neben" ? sh : sn).appendChild(t[0]); });
+    var hoch=mitte.map(function(t){ return t[0].offsetHeight; });
+    var hh=0, hn=0;
+    mitte.forEach(function(t, i){ if(t[2]){ if(t[1]==="neben") hn+=hoch[i]; else hh+=hoch[i]; } });
+    /* zur Probe in der schmalen Spalte gemessen – in der breiten Hauptspalte etwa 0,6 so hoch */
     mitte.forEach(function(t, i){
-      t[0].style.order=String(i);
-      var ziel = t[2] ? (t[1]==="neben" ? sn : sh) : (sn.offsetHeight < sh.offsetHeight ? sn : sh);
-      ziel.appendChild(t[0]);
+      if(t[2]) return;
+      if(hn<hh){ hn+=hoch[i]; } else { hh+=hoch[i]*0.6; sh.appendChild(t[0]); }
     });
     s.classList.toggle("einspaltig", !sn.children.length);
   } else host.appendChild(spaltenAnordnen(mitte));
@@ -18985,6 +18997,7 @@ var ANSICHT_ORDNUNG={
     {h:/^Letzte Änderungen/, seite:"haupt", key:"aenderungen"}],
   daten:[{h:/^So arbeitet/, seite:"haupt", key:"handbuch"}, {h:/^Zu klären/, seite:"haupt", key:"klaeren"}, {h:/^Export/, seite:"neben", key:"export"}],
   anlagen:[{h:/./, seite:"haupt", fest:true}],
+  kunden:[{h:/^Kontakte/, seite:"haupt", key:"kontakte"}, {h:/^Kunden/, seite:"neben", key:"kunden"}],
   /* Protokoll am PC: das Formular links, Konto und gespeicherte Protokolle rechts */
   protokoll:[
     {wenn:function(k){ return /^\s*Angemeldet als/.test(k.textContent||""); }, seite:"neben", fest:true},
@@ -21180,6 +21193,267 @@ function kundeZahlen(id){
 }
 
 /* ---------- Reiter „Kunden“ ---------- */
+/* ================================================================
+   Kontakte und Ansprechpartner (Büro 01.10.2026: „eine Möglichkeit,
+   Kontakte und Ansprechpartner zu pflegen. Sobald eine neue Person entdeckt
+   wird, soll sie mit ihren Daten hinzugefügt werden.“) – Tabelle kontakte
+   (tools/kontakte.sql). Neue Personen legt die App selbst an: Beteiligte im
+   Projekt, Ansprechpartner der Anfrage, Ansprechpartner eines Kunden,
+   Lidl-Kontakt im Störungsauftrag. Ist die Person schon da, werden nur
+   leere Angaben ergänzt – nie etwas überschrieben.
+   ================================================================ */
+var KONTAKT_KATEGORIEN=["Planer","Bauaufsicht","Kunde / Bauherr","Lidl","Marktleitung","Lieferant / Großhandel","Subunternehmer / Gewerk","Behörde / Prüfstelle","Sonstige"];
+var KONTAKT_FELDER=[["name","Name"],["firma","Firma"],["funktion","Funktion / Rolle"],["telefon","Telefon","tel"],["mobil","Mobil","tel"],["mail","E-Mail","email"],["adresse","Adresse"]];
+var KONTAKTE=[], kontakteGeladen=false, kontakteLaedt=false, kontakteStand=0, kontakteFehler="", kontakteNachgetragen=false;
+function kontakteAn(){ return betriebAn() || (demo() && !nurLesen()); }
+function kontakteLaden(){
+  if(demo()){ kontakteGeladen=true; return Promise.resolve(); }
+  if(!betriebAn()) return Promise.resolve();
+  kontakteLaedt=true;
+  return Store.sb.from("kontakte").select("*").order("name").limit(5000).then(function(r){
+    kontakteLaedt=false;
+    if(r.error){ kontakteFehler=/relation|does not exist/i.test(r.error.message)?"Kontakte sind in der Datenbank noch nicht eingerichtet (tools/kontakte.sql).":r.error.message; return; }
+    kontakteFehler=""; KONTAKTE=r.data||[]; kontakteGeladen=true;
+  }, function(e){ kontakteLaedt=false; kontakteFehler=(e&&e.message)||"keine Verbindung"; });
+}
+function kontakteNachladen(nachher){
+  if(!kontakteAn() || kontakteLaedt || Date.now()-kontakteStand<60000) return;
+  kontakteStand=Date.now();
+  kontakteLaden().then(function(){
+    if(nachher) nachher();
+    else if(S.view==="kunden" && darfRendern() && !document.querySelector(".assistent")) render();
+    /* einmal je Sitzung: Personen aus den vorhandenen Daten ins Adressbuch */
+    if(kontakteGeladen && !kontakteNachgetragen && projekteGeladen && betriebAn() && !demo()){ kontakteNachgetragen=true; kontakteNachtragen(); }
+  });
+}
+var kTelefon=function(t){ var d=String(t||"").replace(/\D/g,""); return d.length>=7 ? d.slice(-9) : ""; };
+function kontaktSchluessel(d){
+  return d.mail ? "m:"+String(d.mail).trim().toLowerCase() : "n:"+suchNorm(d.name||"")+"|"+suchNorm(d.firma||"");
+}
+/* dieselbe Person? E-Mail, sonst Telefonnummer, sonst Name (und Firma, wenn beide eine haben) */
+function kontaktFinden(d, ohne){
+  var mail=String(d.mail||"").trim().toLowerCase(), tel=[kTelefon(d.telefon), kTelefon(d.mobil)].filter(Boolean);
+  var n=suchNorm(d.name||""), f=suchNorm(d.firma||"");
+  var l=KONTAKTE.filter(function(k){ return k.id!==ohne; });
+  if(mail){ var a=l.filter(function(k){ return String(k.mail||"").toLowerCase()===mail; })[0]; if(a) return a; }
+  if(tel.length){ var b=l.filter(function(k){ return tel.indexOf(kTelefon(k.telefon))>=0 || tel.indexOf(kTelefon(k.mobil))>=0; })[0]; if(b && (!n || !b.name || suchNorm(b.name)===n)) return b; }
+  if(n) return l.filter(function(k){ return suchNorm(k.name||"")===n && (!f || !k.firma || suchNorm(k.firma)===f); })[0]||null;
+  if(f) return l.filter(function(k){ return !k.name && suchNorm(k.firma||"")===f; })[0]||null;
+  return null;
+}
+function kategorieAusRolle(r){
+  r=String(r||"");
+  if(/planer/i.test(r)) return "Planer";
+  if(/bauaufsicht|öba/i.test(r)) return "Bauaufsicht";
+  if(/kunde|bauherr/i.test(r)) return "Kunde / Bauherr";
+  if(/lidl/i.test(r)) return "Lidl";
+  if(/markt|filial/i.test(r)) return "Marktleitung";
+  if(/lieferant|großhandel/i.test(r)) return "Lieferant / Großhandel";
+  if(/generalunternehmer|kälte|elektro|baumeister|gewerk|sub/i.test(r)) return "Subunternehmer / Gewerk";
+  if(/behörde|prüf/i.test(r)) return "Behörde / Prüfstelle";
+  return "Sonstige";
+}
+/* eine Person aufnehmen oder ergänzen; herkunft {art, id, titel}. Liefert den Kontakt (oder null). */
+function kontaktErfassen(roh, herkunft, still){
+  var d={}; ["name","firma","funktion","telefon","mobil","mail","adresse","kategorie","kunde_id","notiz"].forEach(function(k){
+    var w=String(roh[k]==null?"":roh[k]).trim(); if(w && w!=="–" && w!=="-") d[k]=w.slice(0, k==="notiz"?2000:200); });
+  if(!d.name && !d.firma) return Promise.resolve(null);
+  if(!kontakteAn()) return Promise.resolve(null);
+  var los=function(){
+    var k=kontaktFinden(d), jetzt=new Date().toISOString();
+    var hk=herkunft ? {art:herkunft.art, id:String(herkunft.id||""), titel:herkunft.titel||"", zeit:jetzt} : null;
+    if(k){
+      var aend={};
+      ["firma","funktion","telefon","mobil","mail","adresse","kunde_id"].forEach(function(x){ if(d[x] && !k[x]) aend[x]=d[x]; });
+      if(!k.name && d.name) aend.name=d.name;
+      if(d.kategorie && (!k.kategorie || k.kategorie==="Sonstige") && d.kategorie!=="Sonstige") aend.kategorie=d.kategorie;
+      var hl=(k.herkunft||[]).slice();
+      if(hk && !hl.some(function(x){ return x.art===hk.art && x.id===hk.id; })){ hl.push(hk); aend.herkunft=hl; }
+      if(!Object.keys(aend).length) return Promise.resolve(k);
+      aend.geaendert=jetzt; aend.geaendert_von=meinName();
+      if(demo()){ Object.assign(k, aend); return Promise.resolve(k); }
+      return Store.sb.from("kontakte").update(aend).eq("id", k.id).select("*").then(function(r){
+        if(r.error || !r.data || !r.data.length) return k;
+        Object.assign(k, r.data[0]); return k;
+      }, function(){ return k; });
+    }
+    var zeile=Object.assign({kategorie:"Sonstige"}, d, {schluessel:kontaktSchluessel(d), herkunft:hk?[hk]:[], erstellt_von:meinName(), geaendert_von:meinName()});
+    var fertig=function(neu){ KONTAKTE.push(neu); if(!still) toast("Neuer Kontakt im Adressbuch: "+(neu.name||neu.firma)+"."); return neu; };
+    if(demo()) return Promise.resolve(fertig(Object.assign({id:neueKennung("kt")}, zeile)));
+    return Store.sb.from("kontakte").upsert(zeile, {onConflict:"schluessel", ignoreDuplicates:true}).select("*").then(function(r){
+      if(r.error) return null;
+      if(r.data && r.data.length) return fertig(r.data[0]);
+      /* gleichzeitig von einem anderen Gerät angelegt: den vorhandenen holen */
+      return Store.sb.from("kontakte").select("*").eq("schluessel", zeile.schluessel).then(function(r2){
+        var x=r2 && r2.data && r2.data[0]; if(x && !KONTAKTE.some(function(k){ return k.id===x.id; })) KONTAKTE.push(x); return x||null; });
+    }, function(){ return null; });
+  };
+  return (kontakteGeladen || demo() ? Promise.resolve() : kontakteLaden()).then(function(){ return kontakteFehler ? null : los(); });
+}
+/* was schon in der App steht, einmal ins Adressbuch – nacheinander, ohne Meldung */
+function kontakteNachtragen(){
+  var l=[];
+  PROJEKTE.forEach(function(p){
+    var d=p.daten||{}, h={art:"projekt", id:p.id, titel:projektTitel(p)};
+    (d.beteiligte||[]).forEach(function(b){ l.push([{name:b.name, firma:b.firma, funktion:b.rolle, kategorie:kategorieAusRolle(b.rolle), telefon:b.telefon, mail:b.mail}, h]); });
+    if(d.ansprechpartner) l.push([{name:d.ansprechpartner, telefon:d.telefon, funktion:"Ansprechpartner vor Ort"}, h]);
+  });
+  weitereKunden(true).forEach(function(k){ if(k.ansprechpartner) l.push([{name:k.ansprechpartner, firma:k.name, telefon:k.telefon, mail:k.email, kategorie:"Kunde / Bauherr", kunde_id:k.id}, {art:"kunde", id:k.id, titel:k.name}]); });
+  OFFENE.forEach(function(o){ if(o.lidlKontakt) l.push([{name:o.lidlKontakt, firma:"Lidl Österreich", funktion:"Kontakt Lidl", kategorie:"Lidl", telefon:o.lidlTelefon, mail:o.lidlMail},
+    {art:"stoerung", id:o._id, titel:"Störung "+(byId[o.standortId]?stName(byId[o.standortId]):"")+(o.auftragsnummer?" "+o.auftragsnummer:"")}]); });
+  var i=0, weiter=function(){ if(i>=l.length) return; var x=l[i++]; kontaktErfassen(x[0], x[1], true).then(weiter, weiter); };
+  weiter();
+}
+function kontaktHerkunftText(h){
+  return (h.art==="projekt"?"Projekt ":h.art==="stoerung"?"":h.art==="kunde"?"Kunde ":"")+(h.titel||"");
+}
+/* wo die Person vorkommt – aus den Daten (nicht nur aus der Herkunft) */
+function kontaktVorkommen(k){
+  var gleich=function(d){ var g=kontaktFinden(d); return g && g.id===k.id; };
+  var l=[];
+  PROJEKTE.forEach(function(p){ var d=p.daten||{};
+    (d.beteiligte||[]).forEach(function(b){ if(b.kontakt_id===k.id || gleich({name:b.name, firma:b.firma, telefon:b.telefon, mail:b.mail})) l.push({art:"projekt", p:p, text:(b.rolle?b.rolle+" – ":"")+projektTitel(p)}); });
+    if(d.ansprechpartner && gleich({name:d.ansprechpartner, telefon:d.telefon})) l.push({art:"projekt", p:p, text:"Ansprechpartner vor Ort – "+projektTitel(p)});
+  });
+  weitereKunden(true).forEach(function(x){ if(x.ansprechpartner && gleich({name:x.ansprechpartner, firma:x.name, telefon:x.telefon, mail:x.email})) l.push({art:"kunde", kid:x.id, text:"Ansprechpartner Kunde "+x.name}); });
+  OFFENE.forEach(function(o){ if(o.lidlKontakt && gleich({name:o.lidlKontakt, firma:"Lidl Österreich", telefon:o.lidlTelefon, mail:o.lidlMail})) l.push({art:"stoerung", o:o, text:"Störung "+(byId[o.standortId]?stName(byId[o.standortId]):"")+(o.auftragsnummer?" · "+o.auftragsnummer:"")+(o.erledigt?" (erledigt)":"")}); });
+  return l;
+}
+function kontaktZeileHtml(k){
+  var tel=k.mobil||k.telefon;
+  return '<div class="rowflex" style="justify-content:space-between;gap:8px;align-items:flex-start;flex-wrap:nowrap">'+
+    '<div style="min-width:0"><a href="#" class="sprunglink" data-kontakt="'+esc(k.id)+'"><strong>'+esc(k.name||k.firma)+"</strong></a>"+
+      '<br><span class="muted" style="font-size:12.5px">'+esc([k.name?k.firma:"", k.funktion, k.kategorie!=="Sonstige"?k.kategorie:""].filter(Boolean).join(" · "))+"</span></div>"+
+    '<div class="rowflex" style="gap:6px;flex-wrap:nowrap">'+
+      (tel?'<a class="btn ghost sm" href="tel:'+esc(String(tel).replace(/[^\d+]/g,""))+'" title="Anrufen">📞</a>':"")+
+      (k.mail?'<a class="btn ghost sm" href="mailto:'+esc(k.mail)+'" title="E-Mail schreiben">✉</a>':"")+"</div></div>";
+}
+function kontaktLinksVerdrahten(host){
+  host.querySelectorAll("[data-kontakt]").forEach(function(a){ a.onclick=function(e){ e.preventDefault(); e.stopPropagation();
+    var k=KONTAKTE.filter(function(x){ return x.id===a.dataset.kontakt; })[0]; if(k) kontaktAnsicht(k); }; });
+}
+/* Karte im Reiter „Kunden & Kontakte“ */
+function kontakteKarte(){
+  kontakteNachladen();
+  S.ktQ=S.ktQ||""; S.ktKat=S.ktKat||"";
+  var c=el('<div class="card"><div class="pad stack">'+
+    '<div class="rowflex" style="justify-content:space-between;align-items:flex-start;gap:12px">'+
+      '<div><h2>Kontakte und Ansprechpartner</h2><div class="sub">Planer, Bauaufsicht, Lidl, Marktleitung, Lieferanten, Gewerke … Neue Personen aus Projekten, Kunden und Störungsaufträgen kommen von selbst dazu.</div></div>'+
+      (betriebSchreiben()?'<button class="btn sm" type="button" data-neu data-schreiben>+ Kontakt</button>':"")+"</div>"+
+    (kontakteFehler?'<div class="note warnbox">'+esc(kontakteFehler)+"</div>":"")+
+    '<input class="search" type="search" data-q placeholder="Name, Firma, Telefon …" aria-label="Kontakte durchsuchen" value="'+esc(S.ktQ)+'" style="max-width:none">'+
+    '<div class="chips" data-kat></div><div class="stack" data-l style="gap:6px"></div></div></div>');
+  var kh=c.querySelector("[data-kat]"), lh=c.querySelector("[data-l]");
+  var zeichnen=function(){
+    kh.innerHTML=""; lh.innerHTML="";
+    var zahl={}; KONTAKTE.forEach(function(k){ zahl[k.kategorie||"Sonstige"]=(zahl[k.kategorie||"Sonstige"]||0)+1; });
+    [[""," Alle ("+KONTAKTE.length+")"]].concat(KONTAKT_KATEGORIEN.filter(function(x){ return zahl[x]; }).map(function(x){ return [x, x+" ("+zahl[x]+")"]; })).forEach(function(x){
+      var b=el('<button class="chip" type="button" aria-pressed="'+(S.ktKat===x[0])+'">'+esc(x[1].trim())+"</button>");
+      b.onclick=function(){ S.ktKat=x[0]; zeichnen(); }; kh.appendChild(b); });
+    var q=suchNorm(S.ktQ), qt=kTelefon(S.ktQ);
+    var l=KONTAKTE.filter(function(k){ return (!S.ktKat || (k.kategorie||"Sonstige")===S.ktKat) &&
+      (!q || suchNorm([k.name,k.firma,k.funktion,k.mail,k.adresse,k.notiz].join(" ")).indexOf(q)>=0 || (qt && (kTelefon(k.telefon)===qt || kTelefon(k.mobil)===qt))); })
+      .sort(function(a,b){ return String(a.name||a.firma).localeCompare(String(b.name||b.firma),"de"); });
+    if(!kontakteGeladen && !kontakteFehler) lh.appendChild(el('<div class="muted" style="font-size:13px">wird geladen …</div>'));
+    else if(!l.length) lh.appendChild(el('<div class="muted" style="font-size:13px">'+(KONTAKTE.length?"Nichts gefunden.":"Noch keine Kontakte – sie kommen von selbst aus Projekten, Kunden und Störungsaufträgen, oder mit „+ Kontakt“.")+"</div>"));
+    l.slice(0,300).forEach(function(k){ var z=el('<div style="border-top:1px solid var(--line);padding-top:6px">'+kontaktZeileHtml(k)+"</div>"); kontaktLinksVerdrahten(z); lh.appendChild(z); });
+    if(l.length>300) lh.appendChild(el('<div class="muted" style="font-size:12px">… '+(l.length-300)+" weitere – Suche eingrenzen.</div>"));
+  };
+  zeichnen();
+  var qi=c.querySelector("[data-q]"); qi.oninput=function(){ S.ktQ=qi.value; zeichnen(); };
+  var nb=c.querySelector("[data-neu]"); if(nb) nb.onclick=function(){ kontaktEditor(null, null, function(){ zeichnen(); }); };
+  c._neu=zeichnen;
+  return c;
+}
+function kontaktAnsicht(k){
+  var v=ansichtOeffnen(k.name||k.firma||"Kontakt");
+  v.schritt.textContent=[k.name?k.firma:"", k.funktion, k.kategorie].filter(Boolean).join(" · ");
+  var tel=function(t){ return t?'<a class="sprunglink" href="tel:'+esc(String(t).replace(/[^\d+]/g,""))+'">'+esc(t)+"</a>":""; };
+  v.inhalt.appendChild(el('<dl class="dl">'+
+    (k.name?"<dt>Name</dt><dd>"+esc(k.name)+"</dd>":"")+(k.firma?"<dt>Firma</dt><dd>"+esc(k.firma)+"</dd>":"")+
+    (k.funktion?"<dt>Funktion</dt><dd>"+esc(k.funktion)+"</dd>":"")+"<dt>Gruppe</dt><dd>"+esc(k.kategorie||"Sonstige")+"</dd>"+
+    (k.telefon?"<dt>Telefon</dt><dd>"+tel(k.telefon)+"</dd>":"")+(k.mobil?"<dt>Mobil</dt><dd>"+tel(k.mobil)+"</dd>":"")+
+    (k.mail?'<dt>E-Mail</dt><dd><a class="sprunglink" href="mailto:'+esc(k.mail)+'">'+esc(k.mail)+"</a></dd>":"")+
+    (k.adresse?"<dt>Adresse</dt><dd>"+esc(k.adresse)+"</dd>":"")+(k.kunde_id?"<dt>Kunde</dt><dd>"+kundeLink(k.kunde_id)+"</dd>":"")+
+    "</dl>"+(k.notiz?'<div class="note"><strong>Notiz:</strong> '+esc(k.notiz)+"</div>":"")));
+  /* wo kommt die Person vor? */
+  var vk=kontaktVorkommen(k);
+  var box=el('<div class="stack" style="gap:4px"><div style="font-weight:600;font-size:13px">Kommt vor in</div></div>');
+  if(!vk.length && !(k.herkunft||[]).length) box.appendChild(el('<div class="muted" style="font-size:13px">Nirgends verknüpft.</div>'));
+  vk.forEach(function(x){
+    var z=el('<a href="#" class="sprunglink" style="font-size:13px">'+esc(x.text)+"</a>");
+    z.onclick=function(e){ e.preventDefault(); if(x.p) projektAnsicht(x.p.id); else if(x.o) stoerungDialog(x.o); else if(x.kid) kundeAnsicht(x.kid); };
+    box.appendChild(z);
+  });
+  if(!vk.length) (k.herkunft||[]).forEach(function(h){ box.appendChild(el('<div class="muted" style="font-size:13px">'+esc(kontaktHerkunftText(h))+(h.zeit?" · seit "+esc(dfmt(tagLokal(h.zeit))):"")+"</div>")); });
+  v.inhalt.appendChild(box);
+  v.inhalt.appendChild(el('<div class="muted" style="font-size:12px">Angelegt '+esc(k.erstellt?dfmt(tagLokal(k.erstellt)):"")+(k.erstellt_von?" von "+esc(k.erstellt_von):"")+
+    (k.geaendert_von?" · zuletzt geändert von "+esc(k.geaendert_von):"")+"</div>"));
+  if((istInhaber()||Rolle.name==="admin") && !demo()){
+    var lo=el('<button class="btn ghost" type="button" style="color:var(--crit);border-color:var(--crit)">Löschen</button>');
+    lo.onclick=function(){
+      if(!window.confirm("Kontakt „"+(k.name||k.firma)+"“ aus dem Adressbuch löschen?\n\nIn Projekten und Störungen bleibt der Name stehen.")) return;
+      Store.sb.from("kontakte").delete().eq("id", k.id).select("id").then(function(r){
+        if(r.error || !r.data || !r.data.length){ toast("Nicht gelöscht"+(r.error?": "+r.error.message:"")+"."); return; }
+        KONTAKTE=KONTAKTE.filter(function(x){ return x.id!==k.id; }); v.zu(); toast("Kontakt gelöscht."); if(S.view==="kunden" && darfRendern()) render();
+      });
+    };
+    v.fuss.appendChild(lo);
+  }
+  if(betriebSchreiben()){
+    var be=el('<button class="btn" type="button">Bearbeiten</button>');
+    be.onclick=function(){ v.zu(); kontaktEditor(k, null, function(){ if(S.view==="kunden" && darfRendern()) render(); }); };
+    v.fuss.appendChild(be);
+  }
+}
+function kontaktEditor(k, vorgabe, fertig){
+  if(!kontakteAn()){ toast("Kontakte gehen nur mit Anmeldung."); return; }
+  var neu=!k, a=Object.assign({kategorie:"Sonstige"}, vorgabe||{}, k||{});
+  var v=ansichtOeffnen(neu?"Neuer Kontakt":"Kontakt bearbeiten");
+  var form=el('<form class="stack" autocomplete="off" style="max-width:640px"><div class="grid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px">'+
+    KONTAKT_FELDER.map(function(f){ return '<label class="fl"><span>'+esc(f[1])+'</span><input type="'+(f[2]||"text")+'" data-k="'+f[0]+'" value="'+esc(a[f[0]]||"")+'"></label>'; }).join("")+
+    '<label class="fl"><span>Gruppe</span><select data-k="kategorie">'+KONTAKT_KATEGORIEN.map(function(x){ return '<option'+(a.kategorie===x?" selected":"")+">"+esc(x)+"</option>"; }).join("")+"</select></label>"+
+    "</div>"+'<label class="fl"><span>Notiz</span><textarea data-k="notiz" rows="2">'+esc(a.notiz||"")+"</textarea></label>"+
+    '<div class="note warnbox" data-hinweis hidden></div></form>');
+  v.inhalt.appendChild(form);
+  var K=function(x){ return form.querySelector('[data-k="'+x+'"]'); };
+  /* schon im Adressbuch? (beim Tippen) */
+  var hinweis=form.querySelector("[data-hinweis]");
+  form.addEventListener("input", function(){
+    var g=kontaktFinden({name:K("name").value, firma:K("firma").value, telefon:K("telefon").value, mobil:K("mobil").value, mail:K("mail").value}, k&&k.id);
+    hinweis.hidden=!g; if(g) hinweis.innerHTML="Schon im Adressbuch: <strong>"+esc(g.name||g.firma)+"</strong>"+(g.firma&&g.name?" ("+esc(g.firma)+")":"")+" – lieber dort ergänzen.";
+  });
+  var ab=el('<button class="btn ghost" type="button">Abbrechen</button>'), ok=el('<button class="btn" type="button">Speichern</button>');
+  ab.onclick=function(){ v.zu(); };
+  v.fuss.appendChild(ab); v.fuss.appendChild(ok);
+  ok.onclick=function(){
+    var z={}; KONTAKT_FELDER.concat([["kategorie"],["notiz"]]).forEach(function(f){ z[f[0]]=K(f[0]).value.trim()||null; });
+    if(!z.name && !z.firma){ toast("Bitte Name oder Firma eintragen."); return; }
+    z.geaendert=new Date().toISOString(); z.geaendert_von=meinName();
+    ok.disabled=true;
+    var fertigK=function(x){ KONTAKTE=KONTAKTE.filter(function(y){ return y.id!==x.id; }).concat([x]); v.zu(); toast("Kontakt gespeichert."); if(fertig) fertig(x); };
+    if(demo()){ fertigK(Object.assign({id:k?k.id:neueKennung("kt")}, k||{}, z)); return; }
+    var anfrage = neu ? Store.sb.from("kontakte").insert(Object.assign(z, {schluessel:kontaktSchluessel(z)+"|"+Date.now().toString(36), erstellt_von:meinName(), herkunft:[]})).select("*")
+                      : Store.sb.from("kontakte").update(z).eq("id", k.id).select("*");
+    mitFrist(anfrage, 15000).then(function(r){
+      if(r.error) throw new Error(/relation|does not exist/i.test(r.error.message)?"Kontakte sind in der Datenbank noch nicht eingerichtet (tools/kontakte.sql).":r.error.message);
+      if(!r.data || !r.data.length) throw new Error("Nicht gespeichert – keine Berechtigung.");
+      fertigK(r.data[0]);
+    }).catch(function(e){ ok.disabled=false; toast("Nicht gespeichert: "+(e.message||e)); });
+  };
+}
+/* Auswahl aus dem Adressbuch (z. B. bei Beteiligten im Projekt) */
+function kontaktWahlFeld(nimm){
+  var id="kw_"+Math.random().toString(36).slice(2,7);
+  var box=el('<label class="fl"><span>Aus dem Adressbuch übernehmen</span><input type="search" list="'+id+'" placeholder="Name oder Firma tippen …">'+
+    '<datalist id="'+id+'">'+KONTAKTE.map(function(k){ return '<option value="'+esc((k.name||k.firma)+(k.name&&k.firma?" · "+k.firma:""))+'">'; }).join("")+"</datalist></label>");
+  var i=box.querySelector("input");
+  i.onchange=i.oninput=function(){
+    var k=KONTAKTE.filter(function(x){ return ((x.name||x.firma)+(x.name&&x.firma?" · "+x.firma:""))===i.value; })[0];
+    if(k){ nimm(k); i.value=""; }
+  };
+  return box;
+}
 function viewKunden(){
   var f=document.createDocumentFragment();
   var darf=Admin.frei && !nurLesen();
@@ -21217,6 +21491,8 @@ function viewKunden(){
   var qi=c.querySelector("#kd_q"); qi.oninput=function(){ S.kdQ=qi.value; zeichnen(); };
   var neu=c.querySelector("#kd_neu"); if(neu) neu.onclick=function(){ kundeEditor(null); };
   f.appendChild(c);
+  /* Adressbuch: Ansprechpartner aus Projekten, Kunden, Störungsaufträgen (Büro 01.10.2026) */
+  if(kontakteAn()) f.appendChild(kontakteKarte());
   return f;
 }
 
@@ -21327,6 +21603,8 @@ function kundeEditor(k){
       wendeStammdatenAn();
       protokolliere({art:"stammdaten", standortId:sid, standortName:felder.name, grund:grund,
         felder:[{feld:"kunde", name:"Kunde", alt:neu?"–":kundeTitel(ziel), neu:felder.name+(felder.aktiv===false?" (nicht mehr betreut)":"")}], rueck:rueck});
+      /* Ansprechpartner des Kunden: ins Adressbuch (Büro 01.10.2026) */
+      if(felder.ansprechpartner) kontaktErfassen({name:felder.ansprechpartner, firma:felder.name, telefon:felder.telefon, mail:felder.email, kategorie:"Kunde / Bauherr", kunde_id:ziel}, {art:"kunde", id:ziel, titel:felder.name});
       toast(neu?"Kunde angelegt"+(sid?" – samt Standort. Die Anlagen kommen über „Anlage anlegen“ dazu.":"."):"Gespeichert.");
       v.zu(); if(darfRendern()) render();
       /* Kartenposition für den neuen Standort aus der Adresse (wie „Aus Adresse ermitteln“) */
@@ -21693,7 +21971,10 @@ function projektAnsicht(id){
       if((selS.value||null)!==(p.standort_id||null)){ a.standort_id=selS.value||null; geaendert.push("Standort"); }
       if(!geaendert.length){ toast("Nichts geändert."); return; }
       sp.disabled=true;
-      projektSpeichern(p, a, "Angaben geändert").then(function(){ toast("Gespeichert."); aufbauen(); }, function(e){ sp.disabled=false; toast(e.message); });
+      projektSpeichern(p, a, "Angaben geändert").then(function(){ toast("Gespeichert."); aufbauen();
+        /* Ansprechpartner der Anfrage: ins Adressbuch (Büro 01.10.2026) */
+        if(nd.ansprechpartner) kontaktErfassen({name:nd.ansprechpartner, telefon:nd.telefon, funktion:"Ansprechpartner vor Ort"}, {art:"projekt", id:p.id, titel:projektTitel(p)});
+      }, function(e){ sp.disabled=false; toast(e.message); });
     };
     v.inhalt.appendChild(ang);
 
@@ -23024,7 +23305,15 @@ function projektDateienKarte(p, buero, schreiben, neuZeichnen){
     var det=z.closest("details"); if(det) det.open=true;
     sprungHervorheben(z);
   };
-  dateien.slice().reverse().forEach(function(x){
+  /* lange Listen (Büro 02.10.2026: Deutschlandsberg mit vielen Dateien): Filter nach Art,
+     zuerst die neuesten 25 – „alle zeigen“ darunter */
+  var artFilter="", alleZeigen=false;
+  var filterHost=el('<div class="chips"></div>'); l.parentNode.insertBefore(filterHost, l);
+  var zeichneListe=function(){
+    l.innerHTML="";
+    var liste=dateien.slice().reverse().filter(function(x){ return !artFilter || x.art===artFilter; });
+    if(!liste.length) l.appendChild(el('<div class="muted" style="font-size:13px">'+(dateien.length?"Keine Datei dieser Art.":"Noch keine Dateien.")+"</div>"));
+  (alleZeigen ? liste : liste.slice(0,25)).forEach(function(x){
     var zu=dateiGehoertZu(p, x);
     var z=el('<div style="font-size:13px"><a href="#" class="sprunglink">'+esc(x.name||"Datei")+"</a>"+
       '<span class="muted"> · '+esc(artName(x.art))+" · "+esc(dfmt(tagLokal(x.zeit)))+(x.von?" · "+esc(x.von):"")+(x.herkunft?" · aus „"+esc(x.herkunft)+"“":"")+"</span>"+
@@ -23042,6 +23331,18 @@ function projektDateienKarte(p, buero, schreiben, neuZeichnen){
     };
     l.appendChild(z);
   });
+    if(!alleZeigen && liste.length>25){
+      var mehr=el('<button class="btn ghost sm" type="button">Alle '+liste.length+" Dateien zeigen</button>");
+      mehr.onclick=function(){ alleZeigen=true; zeichneListe(); }; l.appendChild(mehr);
+    }
+  };
+  var zahl={}; dateien.forEach(function(x){ zahl[x.art]=(zahl[x.art]||0)+1; });
+  if(Object.keys(zahl).length>1) [["","Alle ("+dateien.length+")"]].concat(Object.keys(zahl).map(function(a){ return [a, artName(a)+" ("+zahl[a]+")"]; })).forEach(function(x){
+    var b=el('<button class="chip" type="button" aria-pressed="'+(artFilter===x[0])+'">'+esc(x[1])+"</button>");
+    b.onclick=function(){ artFilter=x[0]; alleZeigen=false; filterHost.querySelectorAll(".chip").forEach(function(c){ c.setAttribute("aria-pressed", String(c===b)); }); zeichneListe(); };
+    filterHost.appendChild(b);
+  });
+  zeichneListe();
   var inp=k.querySelector("[data-datei]");
   if(inp) inp.onchange=function(){
     var art=k.querySelector("[data-art]").value, liste=[].slice.call(inp.files||[]); inp.value="";
@@ -23129,12 +23430,24 @@ function projektAendern(p, aendern, tagebuchText){
    einmal am Projekt (und auf der Synology im Projektordner); bei jeder Datei
    steht, wozu sie gehört – so findet man alles von beiden Seiten. ---------- */
 function dateiNameNorm(n){ return String(n||"").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g,"").replace(/[^a-z0-9]+/g,""); }
+/* Verzeichnis der Projektdateien (Pfad und Name) – einmal je Stand der Projektdaten
+   berechnet (Büro 02.10.2026: „Deutschlandsberg ist langsam, hängt beim Scrollen“ –
+   vorher wurde für jede Quelle jeder Dateiname neu verglichen) */
+var PROJEKT_INDEX=(typeof WeakMap==="function") ? new WeakMap() : null;
+function projektIndex(p){
+  var d=p.daten||{}, c=PROJEKT_INDEX && PROJEKT_INDEX.get(d);
+  if(c) return c;
+  c={pfad:{}, norm:{}, zu:null};
+  (d.dateien||[]).forEach(function(x){ c.pfad[x.pfad]=x; var n=dateiNameNorm(x.name); if(!(n in c.norm)) c.norm[n]=x; });
+  if(PROJEKT_INDEX) PROJEKT_INDEX.set(d, c);
+  return c;
+}
 function quelleDatei(p, q){
-  p=PROJEKTE.filter(function(x){ return x.id===p.id; })[0]||p;   /* neuester Stand – auch gleich nach dem Hochladen */
-  var dd=(p.daten||{}).dateien||[], name=typeof q==="string" ? q : (q&&q.name);
+  for(var i=0;i<PROJEKTE.length;i++) if(PROJEKTE[i].id===p.id){ p=PROJEKTE[i]; break; }   /* neuester Stand – auch gleich nach dem Hochladen */
+  var name=typeof q==="string" ? q : (q&&q.name);
   if(!name) return null;
-  return dd.filter(function(x){ return x.pfad===name; })[0] ||
-         dd.filter(function(x){ return dateiNameNorm(x.name)===dateiNameNorm(name); })[0] || null;
+  var c=projektIndex(p);
+  return c.pfad[name] || c.norm[dateiNameNorm(name)] || null;
 }
 function quelleName(q){ return typeof q==="string" ? q.split("/").pop() : (q&&q.name)||""; }
 /* alle Stellen eines Projekts, die Quellen führen: [{bereich, id, titel, quellen}] */
@@ -23148,9 +23461,17 @@ function projektQuellenStellen(p){
   (d.baubuch||[]).forEach(function(x){ var q=(x.dateien||[]).concat(x.quellen||[]); if(q.length) l.push({bereich:"baubuch", id:x.id, titel:"Baustellenbuch "+dfmt(x.datum)+": "+baubuchArtName(x.art), quellen:q}); });
   return l;
 }
-/* wozu gehört eine Datei? (für die Dateienliste) */
+/* wozu gehört eine Datei? (für die Dateienliste) – einmal je Stand für alle Dateien */
 function dateiGehoertZu(p, f){
-  return projektQuellenStellen(p).filter(function(st){ return st.quellen.some(function(q){ var g=quelleDatei(p,q); return g && g.pfad===f.pfad; }); });
+  for(var i=0;i<PROJEKTE.length;i++) if(PROJEKTE[i].id===p.id){ p=PROJEKTE[i]; break; }
+  var c=projektIndex(p);
+  if(!c.zu){
+    c.zu={};
+    projektQuellenStellen(p).forEach(function(st){ st.quellen.forEach(function(q){
+      var g=quelleDatei(p,q); if(!g) return;
+      var l=c.zu[g.pfad]=c.zu[g.pfad]||[]; if(l.indexOf(st)<0) l.push(st); }); });
+  }
+  return c.zu[f.pfad]||[];
 }
 /* Quellen als Verweise: hochgeladene antippbar, fehlende grau mit „noch nicht hochgeladen“ */
 function quellenHtml(p, quellen, buero){
@@ -23256,6 +23577,11 @@ function projektListeKarte(p, cfg, schreiben, neuZeichnen){
     var z=el('<div style="font-size:13px;border-left:3px solid var(--line);padding-left:8px'+(schreiben?";cursor:pointer":"")+'"'+(schreiben?' role="button" tabindex="0" title="Ändern"':"")+
       ' data-stelle="'+esc(cfg.k+":"+x.id)+'">'+cfg.zeile(x)+quellenHtml(p, x.quellen, nurInhaber())+"</div>");
     quellenVerdrahten(z);
+    /* Beteiligte: zur Person im Adressbuch */
+    if(cfg.k==="beteiligte" && kontakteGeladen){
+      var kk=(x.kontakt_id && KONTAKTE.filter(function(y){ return y.id===x.kontakt_id; })[0]) || kontaktFinden({name:x.name, firma:x.firma, telefon:x.telefon, mail:x.mail});
+      if(kk){ z.insertAdjacentHTML("beforeend", ' <a href="#" class="sprunglink" style="font-size:12px" data-kontakt="'+esc(kk.id)+'">👤 im Adressbuch</a>'); kontaktLinksVerdrahten(z); }
+    }
     if(schreiben){ z.onclick=function(e){ if(e.target.closest("a")) return; projektListeEditor(p, cfg, x, neuZeichnen); };
       z.onkeydown=function(e){ if(e.key==="Enter") projektListeEditor(p, cfg, x, neuZeichnen); }; }
     host.appendChild(z);
@@ -23292,13 +23618,28 @@ function projektListeEditor(p, cfg, alt, neuZeichnen){
     projektAendern(p, function(d){ d[cfg.k]=aendern((d[cfg.k]||[]).slice()); }, text)
       .then(function(){ v.zu(); toast("Gespeichert."); neuZeichnen(); }, function(e){ ok.disabled=false; toast(e.message); });
   };
+  /* Beteiligte: aus dem Adressbuch übernehmen (Büro 01.10.2026) */
+  if(cfg.k==="beteiligte" && kontakteAn() && KONTAKTE.length) form.insertBefore(kontaktWahlFeld(function(k){
+    var F=function(x){ return form.querySelector('[data-f="'+x+'"]'); };
+    if(k.name) F("name").value=k.name; if(k.firma) F("firma").value=k.firma;
+    if(k.mobil||k.telefon) F("telefon").value=k.mobil||k.telefon; if(k.mail) F("mail").value=k.mail;
+    if(!F("rolle").value && k.kategorie && k.kategorie!=="Sonstige") F("rolle").value=k.funktion||k.kategorie;
+  }), form.firstChild);
   ok.onclick=function(){
     var n={id:a.id||neueKennung("pl")};
     form.querySelectorAll("[data-f]").forEach(function(i){ var w=i.type==="checkbox"?i.checked:i.value.trim(); if(w) n[i.dataset.f]=w; });
     if(Object.keys(n).length<2){ toast("Bitte etwas eintragen."); return; }
     if(quellen.length) n.quellen=quellen;
-    schreib(function(l){ return alt ? l.map(function(x){ return x.id===a.id ? n : x; }) : l.concat([n]); },
-      cfg.titel+": "+(alt?"geändert":"eingetragen")+" – "+(n.was||n.rolle||n.firma||n.name||""));
+    var los=function(){
+      schreib(function(l){ return alt ? l.map(function(x){ return x.id===a.id ? n : x; }) : l.concat([n]); },
+        cfg.titel+": "+(alt?"geändert":"eingetragen")+" – "+(n.was||n.rolle||n.firma||n.name||""));
+    };
+    /* neue Person: gleich ins Adressbuch (bekannte werden nur ergänzt) */
+    if(cfg.k==="beteiligte" && (n.name||n.firma)){
+      ok.disabled=true;
+      kontaktErfassen({name:n.name, firma:n.firma, funktion:n.rolle, kategorie:kategorieAusRolle(n.rolle), telefon:n.telefon, mail:n.mail},
+        {art:"projekt", id:p.id, titel:projektTitel(p)}).then(function(k){ if(k) n.kontakt_id=k.id; los(); }, los);
+    } else los();
   };
   if(weg) weg.onclick=function(){
     if(!window.confirm("Diesen Eintrag löschen?")) return;
@@ -25395,6 +25736,7 @@ function render(){
   setTimeout(stoerungenOhneVerknuepfungAbgleichen, 0);   /* Störung mit vorhandenem Protokoll (gleiche Auftragsnummer) erledigen */
   setTimeout(function(){ stempelNachladen(false).then(stempelReiterZeichen); }, 0);
   setTimeout(function(){ planungNachladen(); kalenderReiterZeichen(); }, 0);
+  setTimeout(function(){ kontakteNachladen(function(){}); }, 0);   /* Adressbuch: neue Personen aus vorhandenen Daten */
   /* Kopfzeile nachziehen – Märkte können angelegt oder stillgelegt worden sein */
   wunschLinkNeu();
   var standEl=document.getElementById("stand");
