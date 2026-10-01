@@ -955,6 +955,27 @@ In der Datenbank liegen die Angaben in der Spalte `stoerung` der Tabelle
 `protokolle`. Dafür `supabase-setup.sql` und danach `tools/rollen.sql` einmal
 erneut ausführen.
 
+## Handbuch und geführte Rundgänge
+
+Das Handbuch steht unten auf jeder Seite („📖 Handbuch“) und im Reiter
+Datenbasis. Es beginnt mit den **Arbeitsabläufen Schritt für Schritt** für
+Techniker, Büro/Admin und Inhaber.
+
+Dort starten auch die **geführten Rundgänge** (seit 01.10.2026). Ein Rundgang
+hebt die echten Knöpfe und Karten hervor und erklärt sie der Reihe nach. Er
+trägt nichts ein. Ohne Risiko üben lässt es sich mit dem Präsentationskonto.
+
+- **Techniker:** Fällig, Kalender, Markt, Protokoll Schritt für Schritt
+  (Anlagen, Anlagendaten ergänzen, Termine, „Heute gewartet als“, Fotos,
+  Abschluss), Stempeluhr und Stunden.
+- **Büro / Admin:** Rückfragen von Lidl, Posteingang, Störungsaufträge,
+  Wartungen einplanen, Termine und Aufgaben, Tourenplanung, Nachbessern,
+  Änderungsverlauf, Projekte.
+- **Inhaber:** Projekte von A bis Z, Angebote und Rechnungen, Stunden und
+  Lohn, Urlaub, Vermerke, Änderungswünsche.
+
+Beim ersten Öffnen weist „Fällig“ einmal je Gerät darauf hin.
+
 ## Kalender und Aufgaben
 
 Seit 01.10.2026 plant man alles im Reiter **Kalender** („Ich will alles hier

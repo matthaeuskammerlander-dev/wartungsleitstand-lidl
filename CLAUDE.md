@@ -118,7 +118,9 @@ Kammerlander Umwelt- und Klimatechnik (UKT) – oft kurz, vom Handy, im Feld.
   Spalten (`ANSICHT_ORDNUNG`, `ansichtOrdnen`, `kartenOrdnen`, `spaltenAnordnen` –
   schmal bleibt die Reihenfolge über `order`), breite Fenster für Projekt und Markt
   (`ansichtOeffnen(…, {breit:true})`); jede Karte einklappbar (`einklappbar` mit
-  `standardZu` am Handy, `klappLeiste` „Alles zu-/aufklappen“).
+  `standardZu` am Handy, `klappLeiste` „Alles zu-/aufklappen“). Geführte Rundgänge
+  (`RUNDGAENGE`, `rundgangStarten`: hebt echte Elemente hervor, trägt nie etwas ein) –
+  bei neuen Funktionen den passenden Schritt und das Handbuch (`handbuchKarte`) ergänzen.
 - Synology-Ablage der Baustellen (`synology/ukt_archiv.py`, `projekte_abgleich`):
   je Projekt `{jahr}/Kunden/{kunde}/Baustellen/{Filiale Ort}_{Nummer}/` mit
   Unterordnern je Dateiart und Projektmappe (HTML + JSON). Angebote und
