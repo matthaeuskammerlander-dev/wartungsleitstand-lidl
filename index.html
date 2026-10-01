@@ -425,6 +425,9 @@ input[aria-invalid="true"]{border-color:var(--crit);box-shadow:0 0 0 1px var(--c
 .as-fuss{display:flex;justify-content:flex-end;flex-wrap:wrap;gap:8px;padding:12px 16px;border-top:1px solid var(--line)}
 .as-gruppe{border:1px solid var(--line);border-radius:10px;padding:10px 12px;display:grid;gap:6px}
 .as-gkopf{display:flex;justify-content:space-between;align-items:center;font-weight:700;font-size:13px}
+/* Positionszeile im Angebot/Rechnung-Editor – am Handy umbrechend */
+.belegzeile{display:grid;grid-template-columns:52px 80px 64px 1fr 100px 90px;gap:6px;align-items:start}
+@media (max-width:700px){ .belegzeile{grid-template-columns:52px 1fr 70px} .belegzeile textarea{grid-column:1/-1;order:5} .belegzeile [data-f="preis"]{order:6} .belegzeile [data-betrag]{order:7;grid-column:span 2} }
 .as-zeile{display:flex;justify-content:space-between;gap:12px;font-size:13.5px}
 .as-zeile span{color:var(--ink-3)}
 .as-zeile strong{text-align:right;overflow-wrap:anywhere}
@@ -21082,6 +21085,9 @@ function projektAnsicht(id){
     /* Dateien */
     v.inhalt.appendChild(projektDateienKarte(p, buero, schreiben, aufbauen));
 
+    /* Angebote und Rechnungen – nur Inhaber, keine Admins (Büro 01.10.2026) */
+    if(buero && !demo()) v.inhalt.appendChild(belegeKarte(p));
+
     /* Stunden auf dieses Projekt (eigene; Inhaber: alle) */
     var hk=el('<div class="card" style="box-shadow:none;margin-top:12px"><div class="pad stack" style="gap:6px"><h2>Stunden</h2><div data-std class="muted" style="font-size:13px">werden geladen …</div>'+
       (betriebSchreiben()?'<div><button class="btn ghost sm" type="button" data-zeit>Stunden auf dieses Projekt erfassen</button></div>':"")+"</div></div>");
@@ -21127,6 +21133,485 @@ function projektAnsicht(id){
     }
   };
   aufbauen();
+}
+
+/* ================================================================
+   Angebote und Rechnungen – NUR Inhaber (Büro 01.10.2026: „keine Admins“).
+   Solange KPlus führt, schreibt die App TEST-Belege (Nummer T-…); echte
+   KPlus-Belege lassen sich als PDF einlesen (extern) – zum Vergleich und
+   als Quelle für den Positionskatalog. Preise stehen nur in den Tabellen
+   belege und katalog (RLS ist_inhaber), nie in projekte.daten.
+   ================================================================ */
+var BELEG_MWST=20;
+function geld(n){ return (Math.round((+n||0)*100)/100).toLocaleString("de-AT",{minimumFractionDigits:2, maximumFractionDigits:2}); }
+function geldLesen(t){ var s=String(t||"").trim().replace(/\s/g,""); if(!s) return null; s=s.replace(/\./g,"").replace(",","."); var n=+s; return isFinite(n)?n:NaN; }
+/* Summen eines Belegs: Alternativ- und Textpositionen zählen nicht */
+function belegSummen(pos){
+  var netto=0;
+  (pos||[]).forEach(function(x){ if(x.typ==="pos" && !x.alternativ) netto+=Math.round((+x.menge||0)*(+x.preis||0)*100)/100; });
+  netto=Math.round(netto*100)/100;
+  var mwst=Math.round(netto*BELEG_MWST)/100;
+  return {netto:netto, mwst:mwst, brutto:Math.round((netto+mwst)*100)/100, satz:BELEG_MWST};
+}
+var BELEGE_JE_PROJEKT={};
+function belegeLaden(pid){
+  if(!nurInhaber() || !Store.sb) return Promise.resolve([]);
+  return Store.sb.from("belege").select("*").eq("projekt_id", pid).order("datum").then(function(r){
+    if(r.error) throw new Error(/relation|does not exist/i.test(r.error.message)?"Belege sind in der Datenbank noch nicht eingerichtet (tools/projekte-ablauf.sql).":r.error.message);
+    BELEGE_JE_PROJEKT[pid]=r.data||[]; return BELEGE_JE_PROJEKT[pid];
+  });
+}
+/* Testnummer: T-A-2026-001 (Angebot) bzw. T-R-2026-001 (Rechnung) – getrennt von KPlus */
+function belegTestNummer(art){
+  var vor="T-"+(art==="rechnung"?"R":"A")+"-"+new Date().getFullYear()+"-";
+  return Store.sb.from("belege").select("nummer").eq("art",art).like("nummer", vor+"%").then(function(r){
+    var max=0; (r.data||[]).forEach(function(x){ var n=+String(x.nummer).slice(vor.length); if(n>max) max=n; });
+    return vor+("00"+(max+1)).slice(-3);
+  });
+}
+
+/* ---------- KPlus-PDF lesen (ohne KI: der Text liegt im PDF, die Spalten an
+   festen Stellen – Position links, Menge+Einheit, Bezeichnung, Preis,
+   Positionspreis bzw. „Alternativ“) ---------- */
+function kplusLesen(daten){
+  return ladePdfJs().then(function(){ return window.pdfjsLib.getDocument({data:daten}).promise; }).then(function(doc){
+    var seiten=[];
+    var lies=function(s){ return doc.getPage(s).then(function(pg){ var vp=pg.getViewport({scale:1});
+      return pg.getTextContent().then(function(tc){
+        seiten.push(tc.items.filter(function(it){ return it.str && it.str.trim(); }).map(function(it){
+          return {s:s, x:it.transform[4], y:vp.height-it.transform[5], w:it.width, t:it.str.trim(), f:it.fontName}; }));
+      }); }); };
+    var kette=Promise.resolve();
+    for(var s=1;s<=doc.numPages;s++) (function(s){ kette=kette.then(function(){ return lies(s); }); })(s);
+    return kette.then(function(){ return kplusAuswerten(seiten); });
+  });
+}
+function kplusAuswerten(seiten){
+  var alle=[].concat.apply([], seiten);
+  var titel=alle.filter(function(i){ return /^(Angebot|Rechnung|Gutschrift)$/.test(i.t) && i.x>250 && i.y<260; })[0];
+  if(!titel) throw new Error("Kein KPlus-Angebot bzw. keine KPlus-Rechnung erkannt.");
+  var fett=titel.f, art=titel.t==="Rechnung"?"rechnung":"angebot";
+  var zeileVon=function(i){ return alle.filter(function(x){ return x.s===i.s && Math.abs(x.y-i.y)<3 && x!==i; }); };
+  var wertNeben=function(lbl){ var l=alle.filter(function(i){ return i.s===1 && i.t===lbl && i.x>250; })[0]; if(!l) return ""; var r=zeileVon(l).filter(function(x){ return x.x>l.x+20; }); return r.length?r[r.length-1].t:""; };
+  var kopf={nummer:(zeileVon(titel).filter(function(x){ return x.x>titel.x+60; })[0]||{}).t||"", datum:wertNeben("Datum"), kundennummer:wertNeben("Kundennummer"), sachbearbeiter:wertNeben("Sachbearbeiter")};
+  kopf.empfaenger=alle.filter(function(i){ return i.s===1 && i.x<200 && i.y>150 && i.y<235; }).sort(function(a,b){ return a.y-b.y; }).map(function(i){ return i.t; });
+  /* Betreff: fett, links, über der Anrede */
+  var anrede=alle.filter(function(i){ return i.s===1 && /^Sehr geehrte/.test(i.t); })[0];
+  kopf.betreff=alle.filter(function(i){ return i.s===1 && i.f===fett && i.x<100 && anrede && i.y<anrede.y && i.y>titel.y+40; }).sort(function(a,b){ return a.y-b.y; }).map(function(i){ return i.t; });
+  var lz=alle.filter(function(i){ return /^Leistungszeitraum:/.test(i.t) && i.x<100; })[0];
+  if(lz) kopf.leistungszeitraum=(lz.t.replace(/^Leistungszeitraum:\s*/,"")+" "+zeileVon(lz).map(function(x){ return x.t; }).join(" ")).trim();
+  var datumIso=function(t){ var m=/(\d\d)\.(\d\d)\.(\d{4})/.exec(t||""); return m?m[3]+"-"+m[2]+"-"+m[1]:null; };
+  /* Positionen: Zeilen unter dem Tabellenkopf, bis „Netto-Summe“, ohne Fußzeile */
+  var pos=[], akt=null, letzteY=null, gruppe=null, ende=false, summen={};
+  seiten.forEach(function(items){
+    if(ende) return;
+    var kopfZ=items.filter(function(i){ return i.t==="Bezeichnung"; })[0];
+    var fuss=items.filter(function(i){ return /^A-\d{4} /.test(i.t) && i.x<60; })[0];
+    var yMin=kopfZ?kopfZ.y+5:0, yMax=fuss?fuss.y-3:9999;
+    /* Zeilen nach Abstand bilden (nicht durch Runden – Teile derselben Zeile
+       stehen oft Bruchteile eines Punkts versetzt) */
+    var zeilen=[];
+    items.filter(function(i){ return i.y>=yMin && i.y<=yMax; }).sort(function(a,b){ return a.y-b.y; }).forEach(function(i){
+      var z=zeilen[zeilen.length-1];
+      if(z && i.y-z[0].y<3) z.push(i); else zeilen.push([i]);
+    });
+    zeilen.forEach(function(z){
+      if(ende) return;
+      z.sort(function(a,b){ return a.x-b.x; }); var y=z[0].y;
+      if(z.some(function(i){ return /^Netto-Summe/.test(i.t); })){ ende=true; return; }
+      var nr=z.filter(function(i){ return i.x<90 && /^\d+(\.\d+)*$/.test(i.t); })[0];
+      var me=z.filter(function(i){ return i.x>=90 && i.x<150; })[0];
+      var txt=z.filter(function(i){ return i.x>=150 && i.x<395; });
+      var preis=z.filter(function(i){ return i.x>=395 && i.x<480 && /^-?[\d.]+,\d\d$/.test(i.t); })[0];
+      var betrag=z.filter(function(i){ return i.x>=480; })[0];
+      var text=txt.map(function(i){ return i.t; }).join(" ");
+      if(nr){
+        var m=/^(-?[\d.]+,\d+)\s*(\S*)/.exec(me?me.t:"");
+        akt={typ:"pos", nr:nr.t, menge:m?geldLesen(m[1]):null, eh:m?m[2]:"", text:text, preis:preis?geldLesen(preis.t):null,
+             betragPdf:betrag&&/[\d],\d\d$/.test(betrag.t)?geldLesen(betrag.t):null, alternativ:!!(betrag&&/Alternativ/i.test(betrag.t)), gruppe:gruppe};
+        pos.push(akt); letzteY=y; return;
+      }
+      /* Zeile ohne Text: Preis bzw. „Alternativ“ der Position, leicht versetzt gesetzt */
+      if(!text){
+        if(akt && akt.typ==="pos"){
+          if(betrag && /Alternativ/i.test(betrag.t)) akt.alternativ=true;
+          if(preis && akt.preis==null) akt.preis=geldLesen(preis.t);
+          if(betrag && /[\d],\d\d$/.test(betrag.t) && akt.betragPdf==null) akt.betragPdf=geldLesen(betrag.t);
+        }
+        return;
+      }
+      /* fette Zeile ohne Nummer: Gruppenüberschrift (z. B. „1. TK Zelle …“) */
+      if(txt.every(function(i){ return i.f===fett; })){
+        if(akt && akt.typ==="gruppe" && y-letzteY<16) akt.text+=" "+text;
+        else { akt={typ:"gruppe", text:text}; pos.push(akt); gruppe=text; }
+        letzteY=y; return;
+      }
+      /* Fortsetzung der Position – mit größerem Abstand ein eigener Textabsatz */
+      if(akt && (akt.typ!=="pos" || y-letzteY<16)){
+        akt.text+=(akt.typ==="pos"?"\n":" ")+text;
+        if(akt.typ==="pos"){ if(preis&&akt.preis==null) akt.preis=geldLesen(preis.t); if(betrag && /Alternativ/i.test(betrag.t)) akt.alternativ=true; }
+      }
+      else { akt={typ:"text", text:text, gruppe:gruppe}; pos.push(akt); }
+      letzteY=y;
+    });
+  });
+  /* Summen und Schlusstext */
+  var zahlRechts=function(lbl){ var l=alle.filter(function(i){ return lbl.test(i.t); })[0]; if(!l) return null; var r=zeileVon(l).filter(function(x){ return x.x>l.x && /^[\d.]+,\d\d$/.test(x.t); }); return r.length?geldLesen(r[r.length-1].t):null; };
+  summen.netto=zahlRechts(/^Netto-Summe/); summen.brutto=zahlRechts(/^Gesamt$/); summen.mwst=summen.netto!=null&&summen.brutto!=null?Math.round((summen.brutto-summen.netto)*100)/100:null;
+  var zb=alle.filter(function(i){ return /^Zahlungsbedingungen:/.test(i.t); })[0];
+  if(zb) kopf.zahlung=zeileVon(zb).map(function(x){ return x.t; }).join(" ");
+  var gb=alle.filter(function(i){ return /^Gültig bis:/.test(i.t); })[0];
+  if(gb) kopf.gueltigBis=datumIso(zeileVon(gb).map(function(x){ return x.t; }).join(" "));
+  var best=(kopf.betreff||[]).filter(function(t){ return /^Bestellung/i.test(t); })[0];
+  if(best) kopf.bestellung=best.replace(/^Bestellung\s*/i,"");
+  pos.forEach(function(x){ if(x.typ==="pos"){ x.text=x.text.trim(); } });
+  return {art:art, nummer:kopf.nummer, datum:datumIso(kopf.datum), kopf:kopf, positionen:pos, summenPdf:summen};
+}
+
+/* ---------- Karte am Projekt ---------- */
+function belegeKarte(p){
+  var k=el('<div class="card" style="box-shadow:none;margin-top:12px;border-color:var(--warn)"><div class="pad stack" style="gap:8px">'+
+    '<div class="rowflex" style="justify-content:space-between"><h2>Angebote und Rechnungen</h2><span class="tag f30">nur Inhaber</span></div>'+
+    '<div class="muted" style="font-size:12.5px">Solange KPlus führt, sind Belege aus der App <strong>Test-Belege</strong> (Nummer T-…). '+
+      "KPlus-PDFs lassen sich einlesen – zum Vergleich und für den Positionskatalog.</div>"+
+    '<div class="stack" data-liste style="gap:6px"><div class="muted" style="font-size:13px">wird geladen …</div></div>'+
+    '<div class="rowflex" style="gap:8px;flex-wrap:wrap">'+
+      '<label class="btn ghost sm" style="cursor:pointer">KPlus-PDF einlesen<input type="file" data-kplus accept="application/pdf,.pdf" hidden></label>'+
+      '<button class="btn ghost sm" type="button" data-neu="angebot">+ Test-Angebot</button>'+
+      '<button class="btn ghost sm" type="button" data-katalog>Positionskatalog</button>'+
+    "</div></div></div>");
+  var host=k.querySelector("[data-liste]");
+  var zeichnen=function(){
+    belegeLaden(p.id).then(function(l){
+      host.innerHTML="";
+      if(!l.length){ host.appendChild(el('<div class="muted" style="font-size:13px">Noch keine Angebote oder Rechnungen am Projekt.</div>')); return; }
+      l.forEach(function(b){
+        var s=b.summen||{}, bez=b.bezug_id && l.filter(function(x){ return x.id===b.bezug_id; })[0];
+        var z=el('<div style="font-size:13px;border-left:3px solid var(--line);padding-left:8px;cursor:pointer" role="button" tabindex="0">'+
+          "<strong>"+(b.art==="rechnung"?"Rechnung":"Angebot")+" "+esc(b.nummer)+"</strong> · "+esc(dfmt(b.datum))+" · "+
+          (b.extern?'<span class="tag">KPlus</span>':b.test?'<span class="tag f30">TEST</span>':"")+
+          " · netto <strong>"+geld(s.netto)+" €</strong>"+(bez?' <span class="muted">· zu '+(bez.art==="angebot"?"Angebot ":"")+esc(bez.nummer)+"</span>":"")+
+          '<br><span class="muted">'+esc(((b.kopf||{}).betreff||[]).join(" · ")||"")+"</span></div>");
+        z.onclick=function(){ belegAnsicht(p, b, zeichnen); };
+        z.onkeydown=function(e){ if(e.key==="Enter") belegAnsicht(p, b, zeichnen); };
+        host.appendChild(z);
+      });
+    }, function(e){ host.innerHTML=""; host.appendChild(el('<div class="note warnbox" style="font-size:12.5px">'+esc(e.message)+"</div>")); });
+  };
+  zeichnen();
+  k.querySelector("[data-kplus]").onchange=function(){
+    var f=this.files&&this.files[0]; this.value=""; if(!f) return;
+    toast("KPlus-PDF wird gelesen …");
+    f.arrayBuffer().then(function(buf){ return kplusLesen(new Uint8Array(buf)); }).then(function(erg){
+      kplusVorschau(p, erg, zeichnen);
+    }, function(e){ toast("Nicht lesbar: "+(e&&e.message||e)); });
+  };
+  k.querySelector('[data-neu="angebot"]').onclick=function(){ belegNeu(p, "angebot", null, zeichnen); };
+  k.querySelector("[data-katalog]").onclick=function(){ katalogAnsicht(); };
+  return k;
+}
+
+/* eingelesenes KPlus-PDF zeigen und übernehmen (als externer Beleg, Positionen in den Katalog) */
+function kplusVorschau(p, erg, fertig){
+  var v=ansichtOeffnen("KPlus "+(erg.art==="rechnung"?"Rechnung":"Angebot")+" "+erg.nummer);
+  var pos=erg.positionen.filter(function(x){ return x.typ==="pos"; });
+  var su=belegSummen(erg.positionen), passt=erg.summenPdf.netto==null || Math.abs(su.netto-erg.summenPdf.netto)<0.05;
+  v.schritt.textContent=dfmt(erg.datum)+" · "+pos.length+" Positionen";
+  v.inhalt.appendChild(el('<div class="note'+(passt?"":" warnbox")+'" style="font-size:13px">'+
+    "Netto laut PDF <strong>"+geld(erg.summenPdf.netto)+" €</strong>, nachgerechnet <strong>"+geld(su.netto)+" €</strong> – "+
+    (passt?"stimmt.":"weicht ab, bitte die Positionen prüfen.")+
+    ((erg.kopf.betreff||[]).length?"<br>"+esc(erg.kopf.betreff.join(" · ")):"")+
+    (erg.kopf.leistungszeitraum?"<br>Leistungszeitraum: "+esc(erg.kopf.leistungszeitraum):"")+"</div>"));
+  v.inhalt.appendChild(belegTabelle(erg.positionen, null));
+  var ab=el('<button class="btn ghost" type="button">Abbrechen</button>'), ok=el('<button class="btn" type="button">Am Projekt ablegen</button>');
+  var kat=el('<label class="chk" style="margin-right:auto"><input type="checkbox" checked><span>Neue Positionen in den Katalog</span></label>');
+  ab.onclick=function(){ v.zu(); };
+  v.fuss.appendChild(kat); v.fuss.appendChild(ab); v.fuss.appendChild(ok);
+  ok.onclick=function(){
+    ok.disabled=true;
+    var bestehend=(BELEGE_JE_PROJEKT[p.id]||[]);
+    var angebot=erg.art==="rechnung" ? bestehend.filter(function(b){ return b.art==="angebot"; })[0] : null;
+    var zeile={projekt_id:p.id, art:erg.art, nummer:erg.nummer, test:false, extern:true, datum:erg.datum||isoLokal(new Date()), status:erg.art==="rechnung"?"versendet":"angenommen",
+      bezug_id:angebot?angebot.id:null, kopf:erg.kopf, positionen:erg.positionen, summen:belegSummen(erg.positionen), geaendert_von:meinName()};
+    Store.sb.from("belege").upsert(zeile, {onConflict:"art,nummer"}).select("*").then(function(r){
+      if(r.error) throw new Error(r.error.message);
+      return kat.querySelector("input").checked ? katalogUebernehmen(erg) : 0;
+    }).then(function(n){
+      v.zu(); toast((erg.art==="rechnung"?"Rechnung ":"Angebot ")+erg.nummer+" abgelegt"+(n?" – "+n+" neue Position"+(n===1?"":"en")+" im Katalog":"")+".");
+      fertig();
+    }).catch(function(e){ ok.disabled=false; toast("Nicht abgelegt: "+e.message); });
+  };
+}
+/* Katalog: Positionen ohne gleichen Text+Einheit dazu; gleicher Text mit neuem Preis aktualisiert */
+var KATALOG=[], katalogGeladen=false;
+function katalogLaden(){
+  if(!nurInhaber() || !Store.sb) return Promise.resolve([]);
+  return Store.sb.from("katalog").select("*").order("text").limit(5000).then(function(r){ if(r.error) throw new Error(r.error.message); KATALOG=r.data||[]; katalogGeladen=true; return KATALOG; });
+}
+function katalogSchluessel(text, eh){ return String(text||"").toLowerCase().replace(/\s+/g," ").trim().slice(0,200)+"|"+String(eh||"").toLowerCase(); }
+function katalogUebernehmen(erg){
+  return katalogLaden().then(function(){
+    var da={}; KATALOG.forEach(function(x){ da[katalogSchluessel(x.text,x.eh)]=x; });
+    var neu=[], quelle="KPlus "+(erg.art==="rechnung"?"Rechnung ":"Angebot ")+erg.nummer;
+    erg.positionen.forEach(function(x){
+      if(x.typ!=="pos" || !x.text || x.preis==null) return;
+      var k=katalogSchluessel(x.text,x.eh); if(da[k]) return;
+      var fb=/FB\s*0?35\s*\/?\s*Pos\.?\s*([\d.]+)/i.exec(x.text);
+      da[k]={}; neu.push({text:x.text, eh:x.eh||"Stk", preis:x.preis, quelle:fb?"FB035/Pos."+fb[1]+" · "+quelle:quelle, kunde_id:fb?"lidl":null, gruppe:x.gruppe||null, geaendert_von:meinName()});
+    });
+    if(!neu.length) return 0;
+    return Store.sb.from("katalog").insert(neu).then(function(r){ if(r.error) throw new Error(r.error.message); return neu.length; });
+  });
+}
+
+/* ---------- Tabelle eines Belegs (Ansicht und Druck); vergleich: Positionen des Angebots ---------- */
+function belegTabelle(pos, vergleich, druck){
+  var vgl={};
+  (vergleich||[]).forEach(function(x){ if(x.typ==="pos" && x.nr) vgl[x.nr]=x; });
+  var t='<table class="'+(druck?"blatt-tab":"dt")+'" style="width:100%;font-size:'+(druck?"10.5px":"12.5px")+'">'+(druck?'<colgroup><col style="width:7%"><col style="width:9%"><col style="width:6%"><col style="width:52%"><col style="width:13%"><col style="width:13%"></colgroup>':'')+'<thead><tr><th>Pos.</th><th style="text-align:right">Menge</th><th>EH</th><th>Bezeichnung</th>'+
+    '<th style="text-align:right">Preis</th><th style="text-align:right">Betrag</th>'+(vergleich?'<th style="text-align:right">Angebot</th>':"")+"</tr></thead><tbody>";
+  (pos||[]).forEach(function(x){
+    if(x.typ==="gruppe"){ t+='<tr><td colspan="'+(vergleich?7:6)+'" style="font-weight:700;padding-top:8px">'+esc(x.text)+"</td></tr>"; return; }
+    if(x.typ==="text"){ t+='<tr><td></td><td colspan="'+(vergleich?6:5)+'" style="font-style:italic">'+esc(x.text).replace(/\n/g,"<br>")+"</td></tr>"; return; }
+    var b=Math.round((+x.menge||0)*(+x.preis||0)*100)/100, a=vgl[x.nr];
+    var anders=a && Math.abs((+a.menge||0)-(+x.menge||0))>0.0001;
+    t+="<tr"+(x.alternativ?' style="color:var(--muted,#777)"':"")+"><td>"+esc(x.nr||"")+'</td><td style="text-align:right">'+esc(geld(x.menge))+"</td><td>"+esc(x.eh||"")+"</td><td>"+
+      esc(x.text||"").replace(/\n/g,"<br>")+'</td><td style="text-align:right">'+(x.preis!=null?geld(x.preis):"")+'</td><td style="text-align:right">'+(x.alternativ?"<em>Alternativ</em>":geld(b))+"</td>"+
+      (vergleich?'<td style="text-align:right'+(anders?";font-weight:700;color:var(--warn,#b45309)":"")+'">'+(a?geld(a.menge)+(anders?" ("+((+x.menge||0)-(+a.menge||0)>0?"+":"")+geld((+x.menge||0)-(+a.menge||0))+")":""):"neu")+"</td>":"")+"</tr>";
+  });
+  var s=belegSummen(pos);
+  var sp=vergleich?6:5;
+  t+='</tbody><tfoot><tr><td colspan="'+sp+'" style="text-align:right">Netto-Summe</td><td style="text-align:right"><strong>'+geld(s.netto)+"</strong></td>"+(vergleich?"<td></td>":"")+"</tr>"+
+    '<tr><td colspan="'+sp+'" style="text-align:right">MwSt '+s.satz+' %</td><td style="text-align:right">'+geld(s.mwst)+"</td>"+(vergleich?"<td></td>":"")+"</tr>"+
+    '<tr><td colspan="'+sp+'" style="text-align:right"><strong>Gesamt EUR</strong></td><td style="text-align:right"><strong>'+geld(s.brutto)+"</strong></td>"+(vergleich?"<td></td>":"")+"</tr></tfoot></table>";
+  var w=el('<div style="overflow-x:auto"></div>'); w.innerHTML=t; return druck ? t : w;
+}
+
+/* ---------- ein Beleg: ansehen, bearbeiten (nur Test-Belege), Rechnung daraus, drucken ---------- */
+function belegAnsicht(p, b, fertig){
+  var v=ansichtOeffnen((b.art==="rechnung"?"Rechnung ":"Angebot ")+b.nummer);
+  var l=BELEGE_JE_PROJEKT[p.id]||[];
+  var angebot=b.bezug_id && l.filter(function(x){ return x.id===b.bezug_id; })[0];
+  var kopf=b.kopf||{};
+  v.schritt.textContent=dfmt(b.datum)+(b.extern?" · aus KPlus":b.test?" · TEST":"")+" · "+(b.status||"");
+  v.inhalt.appendChild(el('<div class="note" style="font-size:13px">'+
+    esc((kopf.betreff||[]).join(" · ")||projektTitel(p))+
+    (kopf.bestellung?"<br>Bestellung: "+esc(kopf.bestellung):"")+(kopf.leistungszeitraum?"<br>Leistungszeitraum: "+esc(kopf.leistungszeitraum):"")+
+    (angebot?"<br>Zum Angebot "+esc(angebot.nummer)+" – rechte Spalte: Menge im Angebot, fett = abweichend.":"")+"</div>"));
+  v.inhalt.appendChild(belegTabelle(b.positionen, angebot?angebot.positionen:null));
+  var knoepfe=[];
+  if(b.art==="angebot") knoepfe.push(["Test-Rechnung daraus", function(){ v.zu(); belegNeu(p, "rechnung", b, fertig); }]);
+  if(!b.extern) knoepfe.push(["Bearbeiten", function(){ v.zu(); belegEditor(p, b, fertig); }]);
+  knoepfe.push(["Drucken / PDF", function(){ belegDrucken(p, b); }]);
+  knoepfe.push(["Löschen", function(){
+    if(!window.confirm((b.art==="rechnung"?"Rechnung ":"Angebot ")+b.nummer+" aus der App löschen?"+(b.extern?"\n\nDas Original bleibt in KPlus.":""))) return;
+    Store.sb.from("belege").delete().eq("id", b.id).then(function(r){ if(r.error){ toast(r.error.message); return; } v.zu(); toast("Gelöscht."); fertig(); });
+  }, true]);
+  knoepfe.forEach(function(x){ var bt=el('<button class="btn'+(x[2]?' ghost" style="color:var(--crit);border-color:var(--crit)':' ghost')+'" type="button">'+esc(x[0])+"</button>"); bt.onclick=x[1]; v.fuss.appendChild(bt); });
+}
+/* neuer Test-Beleg – leer oder aus einem Angebot (Rechnung: Mengen-Vorschläge aus dem Baustellenbuch) */
+function belegNeu(p, art, vorlage, fertig){
+  belegTestNummer(art).then(function(nr){
+    var pos=vorlage ? JSON.parse(JSON.stringify(vorlage.positionen||[])) : [];
+    var kopf=vorlage ? JSON.parse(JSON.stringify(vorlage.kopf||{})) : {empfaenger:kundeAnschrift(p.kunde_id), betreff:[projektTitel(p)]};
+    if(art==="rechnung"){
+      var d=p.daten||{};
+      kopf.leistungszeitraum=[d.baustelleBeginn||d.beginn, d.baustelleEnde||d.ende].filter(Boolean).map(dfmt).join(" bis ")||kopf.leistungszeitraum||"";
+      if(d.auftragNr && !kopf.bestellung) kopf.bestellung=d.auftragNr;
+      delete kopf.gueltigBis;
+    }
+    var b={art:art, nummer:nr, test:true, extern:false, datum:isoLokal(new Date()), status:"entwurf", bezug_id:vorlage?vorlage.id:null, kopf:kopf, positionen:pos};
+    belegEditor(p, b, fertig, art==="rechnung" && vorlage ? baubuchVorschlaege(p, pos) : null);
+  }, function(e){ toast("Nicht möglich: "+e.message); });
+}
+function kundeAnschrift(kid){
+  if(!kid || kid==="lidl") return ["Lidl Österreich GmbH","Zentrale Dienste / Facility Management","Unter der Leiten 11","5020 Salzburg"];
+  var k=KUNDEN[kid]||{}; return [k.name, k.adresse, [k.plz,k.ort].filter(Boolean).join(" ")].filter(Boolean);
+}
+/* Mengen aus dem Baustellenbuch, die zu Positionen passen (Kältemittel kg, Std Samstag/Sonntag, Stück …) –
+   nur als Vorschlag neben der Position, übernommen wird erst mit einem Tipp */
+function baubuchVorschlaege(p, pos){
+  var bb=((p.daten||{}).baubuch||[]).filter(function(x){ return x.menge!=null; });
+  var vor={};
+  pos.forEach(function(x, i){
+    if(x.typ!=="pos" || x.alternativ) return;   /* Alternativpositionen werden nicht verrechnet */
+    var t=String(x.text||"").toLowerCase(), eh=String(x.eh||"").toLowerCase();
+    var treffer=bb.filter(function(e){
+      var et=String(e.text||"").toLowerCase(), ee=String(e.eh||"").toLowerCase();
+      if(ee && eh && ee.slice(0,2)!==eh.slice(0,2) && !(ee==="std"&&/std|stk/.test(eh))) return false;
+      if(e.art==="kaeltemittel") return /kältemittel/.test(t);
+      if(e.art==="wochenende") return (/samstag/.test(t) && /samstag/.test(et)) || (/sonntag/.test(t) && /sonntag/.test(et));
+      var w=et.split(/[^a-zäöüß0-9]+/).filter(function(w){ return w.length>=5; });
+      /* zwei gemeinsame Wörter – oder ein langes Fachwort (Kabeltasse, Zierblenden …) */
+      var gem=w.filter(function(x2){ return t.indexOf(x2)>=0; });
+      return gem.length>=2 || gem.some(function(x2){ return x2.length>=9; });
+    });
+    if(treffer.length===1 && Math.abs((+treffer[0].menge||0)-(+x.menge||0))>0.0001) vor[i]={menge:treffer[0].menge, text:baubuchArtName(treffer[0].art)+" "+dfmt(treffer[0].datum)+": "+treffer[0].text};
+  });
+  return vor;
+}
+
+/* Editor eines Test-Belegs: Kopf, Positionen (Menge, Einheit, Text, Preis, alternativ), Katalog */
+function belegEditor(p, b, fertig, vorschlaege){
+  var v=ansichtOeffnen((b.art==="rechnung"?"Test-Rechnung ":"Test-Angebot ")+b.nummer);
+  v.schritt.textContent="TEST – keine gültige "+(b.art==="rechnung"?"Rechnung":"Angebot")+" (KPlus führt)";
+  var kopf=JSON.parse(JSON.stringify(b.kopf||{})), pos=JSON.parse(JSON.stringify(b.positionen||[]));
+  var form=el('<div class="stack" style="gap:10px">'+
+    '<div class="grid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:10px">'+
+      '<label class="fl"><span>Datum</span><input type="date" data-k="datum" value="'+esc(b.datum||"")+'"></label>'+
+      '<label class="fl"><span>Betreff</span><input type="text" data-k="betreff" value="'+esc((kopf.betreff||[]).join(" · "))+'"></label>'+
+      '<label class="fl"><span>Bestellung</span><input type="text" data-k="bestellung" value="'+esc(kopf.bestellung||"")+'"></label>'+
+      (b.art==="rechnung"?'<label class="fl"><span>Leistungszeitraum</span><input type="text" data-k="leistungszeitraum" value="'+esc(kopf.leistungszeitraum||"")+'"></label>'
+        :'<label class="fl"><span>gültig bis</span><input type="date" data-k="gueltigBis" value="'+esc(kopf.gueltigBis||"")+'"></label>')+
+    "</div>"+
+    '<label class="fl"><span>Empfänger (je Zeile)</span><textarea data-k="empfaenger" rows="3">'+esc((kopf.empfaenger||[]).join("\n"))+"</textarea></label>"+
+    '<div data-pos class="stack" style="gap:6px"></div>'+
+    '<div class="rowflex" style="gap:8px;flex-wrap:wrap"><button class="btn ghost sm" type="button" data-plus>+ Position</button>'+
+      '<button class="btn ghost sm" type="button" data-kat>+ aus Katalog</button><button class="btn ghost sm" type="button" data-gr>+ Überschrift</button></div>'+
+    '<div class="note" data-summe style="font-size:13px"></div></div>');
+  v.inhalt.appendChild(form);
+  var host=form.querySelector("[data-pos]"), summe=form.querySelector("[data-summe]");
+  var rechnen=function(){ var s=belegSummen(pos); summe.innerHTML="Netto <strong>"+geld(s.netto)+" €</strong> · MwSt "+s.satz+" % "+geld(s.mwst)+" € · Gesamt <strong>"+geld(s.brutto)+" €</strong>"; };
+  var zeichnen=function(){
+    host.innerHTML="";
+    pos.forEach(function(x, i){
+      var z;
+      if(x.typ==="gruppe"||x.typ==="text"){
+        z=el('<div class="rowflex" style="gap:6px;align-items:flex-start;border-left:3px solid var(--line);padding-left:6px">'+
+          '<textarea rows="1" style="flex:1;'+(x.typ==="gruppe"?"font-weight:700":"font-style:italic")+'">'+esc(x.text||"")+"</textarea>"+
+          '<button class="btn ghost sm" type="button" data-weg title="entfernen">✕</button></div>');
+        z.querySelector("textarea").oninput=function(){ x.text=this.value; };
+      } else {
+        var vs=vorschlaege&&vorschlaege[i];
+        z=el('<div style="border:1px solid var(--line);border-radius:8px;padding:8px'+(x.alternativ?";opacity:.7":"")+'">'+
+          '<div class="belegzeile">'+
+            '<input type="text" data-f="nr" value="'+esc(x.nr||"")+'" title="Position">'+
+            '<input type="text" inputmode="decimal" data-f="menge" value="'+esc(x.menge!=null?geld(x.menge):"")+'" title="Menge">'+
+            '<input type="text" data-f="eh" value="'+esc(x.eh||"")+'" title="Einheit">'+
+            '<textarea data-f="text" rows="2">'+esc(x.text||"")+"</textarea>"+
+            '<input type="text" inputmode="decimal" data-f="preis" value="'+esc(x.preis!=null?geld(x.preis):"")+'" title="Einzelpreis">'+
+            '<div style="text-align:right;font-size:12.5px;padding-top:6px" data-betrag></div>'+
+          "</div>"+
+          '<div class="rowflex" style="gap:10px;margin-top:4px;font-size:12px">'+
+            '<label class="chk" style="margin:0"><input type="checkbox" data-f="alternativ"'+(x.alternativ?" checked":"")+"><span>Alternativ</span></label>"+
+            (vs?'<a href="#" class="sprunglink" data-vs>Baustellenbuch: '+esc(geld(vs.menge))+" übernehmen</a> <span class=\"muted\">("+esc(vs.text.slice(0,80))+")</span>":"")+
+            '<span style="margin-left:auto"></span><button class="btn ghost sm" type="button" data-hoch title="nach oben">↑</button><button class="btn ghost sm" type="button" data-weg title="entfernen">✕</button></div></div>');
+        var betrag=function(){ z.querySelector("[data-betrag]").textContent=x.alternativ?"Alternativ":geld((+x.menge||0)*(+x.preis||0)); rechnen(); };
+        z.querySelectorAll("[data-f]").forEach(function(inp){
+          inp.oninput=inp.onchange=function(){
+            var f=inp.dataset.f;
+            if(f==="alternativ"){ x.alternativ=inp.checked; z.style.opacity=x.alternativ?".7":""; }
+            else if(f==="menge"||f==="preis"){ var n=geldLesen(inp.value); inp.setAttribute("aria-invalid", String(n!==n)); if(n===n) x[f]=n; }
+            else x[f]=inp.value;
+            betrag();
+          };
+        });
+        var vsl=z.querySelector("[data-vs]"); if(vsl) tippe(vsl, function(){ x.menge=vs.menge; delete vorschlaege[i]; zeichnen(); });
+        var hoch=z.querySelector("[data-hoch]"); if(hoch) hoch.onclick=function(){ if(i>0){ pos.splice(i-1,0,pos.splice(i,1)[0]); zeichnen(); } };
+        betrag();
+      }
+      z.querySelector("[data-weg]").onclick=function(){ pos.splice(i,1); zeichnen(); };
+      host.appendChild(z);
+    });
+    rechnen();
+  };
+  zeichnen();
+  var naechsteNr=function(){ var m=0; pos.forEach(function(x){ var n=parseInt(x.nr,10); if(n>m) m=n; }); return String(m+1); };
+  form.querySelector("[data-plus]").onclick=function(){ pos.push({typ:"pos", nr:naechsteNr(), menge:1, eh:"Stk", text:"", preis:0}); zeichnen(); };
+  form.querySelector("[data-gr]").onclick=function(){ pos.push({typ:"gruppe", text:"Überschrift"}); zeichnen(); };
+  form.querySelector("[data-kat]").onclick=function(){ katalogWahl(function(k){ pos.push({typ:"pos", nr:naechsteNr(), menge:1, eh:k.eh, text:k.text, preis:+k.preis||0, katalog_id:k.id}); zeichnen(); }); };
+  var ab=el('<button class="btn ghost" type="button">Abbrechen</button>'), ok=el('<button class="btn" type="button">Speichern</button>');
+  ab.onclick=function(){ v.zu(); };
+  v.fuss.appendChild(ab); v.fuss.appendChild(ok);
+  ok.onclick=function(){
+    if(form.querySelector('[aria-invalid="true"]')){ toast("Menge bzw. Preis bitte als Zahl (z. B. 1.234,50)."); return; }
+    var K=function(k){ return form.querySelector('[data-k="'+k+'"]'); };
+    kopf.betreff=K("betreff").value.split("·").map(function(t){ return t.trim(); }).filter(Boolean);
+    kopf.bestellung=K("bestellung").value.trim();
+    kopf.empfaenger=K("empfaenger").value.split("\n").map(function(t){ return t.trim(); }).filter(Boolean);
+    if(K("leistungszeitraum")) kopf.leistungszeitraum=K("leistungszeitraum").value.trim();
+    if(K("gueltigBis")) kopf.gueltigBis=K("gueltigBis").value||null;
+    var zeile={projekt_id:p.id, art:b.art, nummer:b.nummer, test:true, extern:false, datum:K("datum").value||isoLokal(new Date()), status:b.status||"entwurf",
+      bezug_id:b.bezug_id||null, kopf:kopf, positionen:pos, summen:belegSummen(pos), geaendert:new Date().toISOString(), geaendert_von:meinName()};
+    ok.disabled=true;
+    (b.id ? Store.sb.from("belege").update(zeile).eq("id", b.id).select("*") : Store.sb.from("belege").insert(zeile).select("*")).then(function(r){
+      if(r.error) throw new Error(r.error.message);
+      v.zu(); toast((b.art==="rechnung"?"Test-Rechnung ":"Test-Angebot ")+b.nummer+" gespeichert."); fertig();
+    }).catch(function(e){ ok.disabled=false; toast("Nicht gespeichert: "+e.message); });
+  };
+}
+/* Position aus dem Katalog wählen */
+function katalogWahl(nimm){
+  var v=ansichtOeffnen("Positionskatalog");
+  v.schritt.textContent="Position wählen";
+  var q=el('<input type="search" placeholder="Suchen: Text, FB035-Nummer …" style="width:100%">'), l=el('<div class="stack" style="gap:6px;margin-top:8px"></div>');
+  v.inhalt.appendChild(q); v.inhalt.appendChild(l);
+  var zeichnen=function(){
+    var s=suchNorm(q.value); l.innerHTML="";
+    var t=KATALOG.filter(function(k){ return k.aktiv!==false && (!s || suchNorm([k.text,k.quelle,k.gruppe,k.nummer].join(" ")).indexOf(s)>=0); }).slice(0,80);
+    if(!t.length) l.appendChild(el('<div class="muted" style="font-size:13px">'+(KATALOG.length?"Nichts gefunden.":"Der Katalog ist noch leer – KPlus-PDFs einlesen füllt ihn.")+"</div>"));
+    t.forEach(function(k){
+      var z=el('<button class="btn ghost" type="button" style="text-align:left;display:block;width:100%;font-size:13px">'+esc(String(k.text).split("\n")[0])+
+        '<br><span class="muted">'+esc(k.eh)+" · "+geld(k.preis)+" €"+(k.quelle?" · "+esc(k.quelle):"")+"</span></button>");
+      z.onclick=function(){ v.zu(); nimm(k); };
+      l.appendChild(z);
+    });
+  };
+  q.oninput=zeichnen;
+  katalogLaden().then(zeichnen, function(e){ l.appendChild(el('<div class="note warnbox">'+esc(e.message)+"</div>")); });
+}
+/* Katalog pflegen: suchen, Preis/Text ändern, ausblenden */
+function katalogAnsicht(){
+  var v=ansichtOeffnen("Positionskatalog");
+  v.schritt.textContent="nur Inhaber · aus KPlus-PDFs und von Hand";
+  var q=el('<input type="search" placeholder="Suchen …" style="width:100%">'), l=el('<div class="stack" style="gap:6px;margin-top:8px"></div>');
+  v.inhalt.appendChild(q); v.inhalt.appendChild(l);
+  var zeichnen=function(){
+    var s=suchNorm(q.value); l.innerHTML="";
+    var t=KATALOG.filter(function(k){ return !s || suchNorm([k.text,k.quelle,k.gruppe].join(" ")).indexOf(s)>=0; });
+    l.appendChild(el('<div class="muted" style="font-size:12.5px">'+KATALOG.length+" Positionen</div>"));
+    t.slice(0,150).forEach(function(k){
+      var z=el('<div style="border:1px solid var(--line);border-radius:8px;padding:8px;font-size:13px'+(k.aktiv===false?";opacity:.5":"")+'">'+
+        '<textarea rows="2" style="width:100%">'+esc(k.text)+"</textarea>"+
+        '<div class="rowflex" style="gap:8px;margin-top:4px"><input type="text" style="width:70px" value="'+esc(k.eh)+'" data-eh>'+
+        '<input type="text" inputmode="decimal" style="width:110px" value="'+esc(geld(k.preis))+'" data-preis> €'+
+        '<span class="muted" style="flex:1">'+esc(k.quelle||"")+"</span>"+
+        '<button class="btn ghost sm" type="button" data-sp>Speichern</button><button class="btn ghost sm" type="button" data-aus>'+(k.aktiv===false?"wieder aktiv":"ausblenden")+"</button></div></div>");
+      var schreib=function(felder){ felder.geaendert=new Date().toISOString(); felder.geaendert_von=meinName();
+        Store.sb.from("katalog").update(felder).eq("id",k.id).then(function(r){ if(r.error){ toast(r.error.message); return; } Object.assign(k, felder); toast("Gespeichert."); zeichnen(); }); };
+      z.querySelector("[data-sp]").onclick=function(){
+        var pr=geldLesen(z.querySelector("[data-preis]").value); if(pr!==pr){ toast("Preis bitte als Zahl."); return; }
+        schreib({text:z.querySelector("textarea").value.trim(), eh:z.querySelector("[data-eh]").value.trim()||"Stk", preis:pr});
+      };
+      z.querySelector("[data-aus]").onclick=function(){ schreib({aktiv:k.aktiv===false}); };
+      l.appendChild(z);
+    });
+  };
+  q.oninput=zeichnen;
+  katalogLaden().then(zeichnen, function(e){ l.appendChild(el('<div class="note warnbox">'+esc(e.message)+"</div>")); });
+}
+/* Druck im Briefkopf – mit TEST-Vermerk, solange KPlus führt */
+function belegDrucken(p, b){
+  var alt=document.getElementById("druckansicht"); if(alt) alt.remove();
+  var kopf=b.kopf||{}, art=b.art==="rechnung"?"Rechnung":"Angebot";
+  var ov=document.createElement("div"); ov.id="druckansicht";
+  ov.innerHTML='<div class="druckleiste"><button class="btn" type="button" id="d_druck">Drucken / als PDF</button>'+
+    '<button class="btn ghost" type="button" id="d_zu" style="background:#fff">Schließen</button></div>'+
+    '<div class="blatt" style="font-size:11px;position:relative">'+
+      (b.test?'<div style="position:absolute;top:40%;left:0;right:0;text-align:center;font-size:64px;font-weight:700;color:rgba(200,0,0,.12);transform:rotate(-24deg);pointer-events:none">TEST</div>':"")+
+      blattKopf(art+" "+b.nummer, (b.test?"TEST – keine gültige "+art+" · ":"")+"Datum "+dfmt(b.datum))+
+      '<div style="display:flex;justify-content:space-between;gap:20px;margin:10px 0">'+
+        "<div>"+(kopf.empfaenger||[]).map(esc).join("<br>")+"</div>"+
+        '<div style="text-align:right">'+(kopf.kundennummer?"Kundennummer "+esc(kopf.kundennummer)+"<br>":"")+(kopf.leistungszeitraum?"Leistungszeitraum: "+esc(kopf.leistungszeitraum)+"<br>":"")+
+          (kopf.gueltigBis?"Gültig bis: "+esc(dfmt(kopf.gueltigBis)):"")+"</div></div>"+
+      "<p><strong>"+(kopf.betreff||[]).map(esc).join("<br>")+"</strong>"+(kopf.bestellung?"<br><strong>Bestellung "+esc(kopf.bestellung)+"</strong>":"")+"</p>"+
+      "<p>Sehr geehrte Damen und Herren!<br>"+(b.art==="rechnung"?"Gemäß Vereinbarung erlauben wir uns zu berechnen:":"Wir danken für die Einladung zur Angebotsabgabe und bieten an:")+"</p>"+
+      belegTabelle(b.positionen, null, true)+
+      "<p>Zahlungsbedingungen: "+esc(kopf.zahlung||"21 Tage netto")+"</p>"+
+    "</div>";
+  document.body.appendChild(ov); document.body.classList.add("druckmodus");
+  ov.querySelector("#d_zu").onclick=function(){ ov.remove(); document.body.classList.remove("druckmodus"); };
+  ov.querySelector("#d_druck").onclick=function(){ window.print(); };
 }
 
 /* Dateien eines Projekts: hochladen (mit Art), ansehen. Angebote und
