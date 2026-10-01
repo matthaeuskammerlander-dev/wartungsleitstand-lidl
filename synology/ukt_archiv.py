@@ -540,12 +540,13 @@ def projekte_abgleich(k, sb, stand):
         log("Projekte nicht lesbar (%s) – übersprungen" % e)
         return
     try:
-        belege_alle = sb.tabelle("belege", "id,projekt_id,art,nummer,test,extern,datum,status,bezug_id,kopf,positionen,summen", "datum.asc")
+        belege_alle = sb.tabelle("belege", "*", "datum.asc")
     except RuntimeError as e:
         log("Angebote/Rechnungen nicht lesbar – dafür braucht das Archivkonto die Rolle „archiv“ (%s)" % str(e)[:80])
         belege_alle = []
     kunden, standorte, anlagen = stammdaten_fuer_projekte(sb)
     neu_dateien = mappen = 0
+    ordner_je_projekt = {}
     for p in projekte:
         pid = p.get("id")
         if not pid:
@@ -595,7 +596,54 @@ def projekte_abgleich(k, sb, stand):
             s["kennung"] = kennung
             mappen += 1
         stand[schl] = s
+        ordner_je_projekt[pid] = ordner
     log("Projekte: %d, %d Dateien geholt, %d Mappen geschrieben" % (len(projekte), neu_dateien, mappen))
+    belege_pdfs(k, sb, stand, belege_alle, kunden, standorte, ordner_je_projekt)
+
+
+def belege_pdfs(k, sb, stand, belege, kunden, standorte, ordner_je_projekt):
+    """PDFs der Angebote und Rechnungen aus der App (pdf_pfad):
+    zu einem Projekt in dessen Ordner (Angebot/, Rechnung/), sonst – etwa die
+    Rechnung zu einem Wartungs- oder Störungseinsatz, mit dem Rapportbericht
+    von Lidl darin – nach {jahr}/Kunden/{kunde}/Rechnungen bzw. Angebote.
+    Test-Belege (solange KPlus führt) kommen in den Unterordner _Test."""
+    neu = 0
+    for b in belege:
+        pfad = b.get("pdf_pfad")
+        if not pfad or b.get("extern"):
+            continue
+        schl = "beleg:" + b["id"]
+        s = stand.get(schl) or {}
+        art = "Rechnung" if b.get("art") == "rechnung" else "Angebot"
+        st = standorte.get(b.get("standort_id")) or {}
+        markt = " ".join(str(x) for x in (st.get("filiale"), st.get("ort")) if x)
+        name = sauber_datei(("TEST_" if b.get("test") else "") + "%s_%s%s.pdf" % (art, b.get("nummer"), ("_" + markt) if markt else ""))
+        if b.get("projekt_id") in ordner_je_projekt:
+            ordner = os.path.join(ordner_je_projekt[b["projekt_id"]], art)
+        else:
+            jahr = str(b.get("datum") or "")[:4] or "ohne-Datum"
+            kunde = kunden.get(b.get("kunde_id") or "lidl") or "Kunde"
+            muster = k.get("unterordner_belege", "{jahr}/Kunden/{kunde}/{art}")
+            ordner = os.path.join(k["basis"], muster.format(jahr=jahr, kunde=sauber(kunde), art=art + ("en" if art == "Rechnung" else "e")))
+        if b.get("test"):
+            ordner = os.path.join(ordner, "_Test")
+        ziel = os.path.join(ordner, name)
+        if s.get("pfad") == pfad and s.get("datei") == ziel and os.path.exists(ziel):
+            continue
+        log("%s %s: %s" % (art, b.get("nummer"), os.path.relpath(ziel, k["basis"])))
+        if not PRUEFEN:
+            try:
+                schreibe(ziel, sb.datei("projektdateien", pfad))
+            except RuntimeError as e:
+                log("  nicht geholt (%s)" % str(e)[:120])
+                continue
+            # neuer Name (anderer Markt, Test → echt): alte eigene Datei weg
+            if s.get("datei") and s["datei"] != ziel and os.path.exists(s["datei"]):
+                os.remove(s["datei"])
+        stand[schl] = {"pfad": pfad, "datei": ziel}
+        neu += 1
+    if neu:
+        log("Belege: %d PDF geholt" % neu)
 
 
 def hash_text(t):

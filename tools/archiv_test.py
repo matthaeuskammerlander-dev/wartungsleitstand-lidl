@@ -35,6 +35,11 @@ PROJEKT = {
 BELEG = {"id": "b1", "projekt_id": PROJEKT["id"], "art": "angebot", "nummer": "900001", "test": False, "extern": True,
          "datum": "2026-05-29", "status": "angenommen", "bezug_id": None, "kopf": {}, "positionen": [],
          "summen": {"netto": 1234.5}}
+BELEG2 = dict(BELEG, id="b2", art="rechnung", nummer="T-R-2026-001", test=True, extern=False, status="entwurf",
+              pdf_pfad="buero/belege/2026/b2.pdf", standort_id="Ntest1", kunde_id="lidl")
+# Rechnung zu einem Einsatz (ohne Projekt) – mit Rapportbericht im PDF
+BELEG3 = dict(BELEG, id="b3", projekt_id=None, art="rechnung", nummer="420001", test=False, extern=False,
+              pdf_pfad="buero/belege/2026/b3.pdf", standort_id="Ntest1", kunde_id="lidl", protokoll_id="p_1")
 STAMM = [{"id": "standort:Ntest1", "typ": "standort", "ziel": "Ntest1", "felder": {"filiale": "123", "ort": "Musterort"}},
          {"id": "position:NPtest1", "typ": "position", "ziel": "NPtest1",
           "felder": {"anlagentyp": "VRV 1", "hersteller": "DAIKIN", "modell": "X1", "seriennummer": "S1",
@@ -56,7 +61,7 @@ def falsche_anfrage(methode, url, kopf=None, daten=None, roh=False):
     if "/rest/v1/belege" in url:
         if not zustand["belege_erlaubt"]:
             raise RuntimeError("HTTP 401 bei belege: permission denied")
-        return [BELEG] if "offset=0" in url else []
+        return [BELEG, BELEG2, BELEG3] if "offset=0" in url else []
     if "/rest/v1/stammdaten" in url:
         return STAMM if "offset=0" in url else []
     raise RuntimeError("unerwartet: " + url)
@@ -85,7 +90,10 @@ def main():
                   "Begehungsprotokoll fehlt.pdf – noch nicht hochgeladen", "Termin: Montage &lt;Samstag&gt;", "Anlagentausch / Umbau"):
             assert t in html, "nicht in der Mappe: " + t
         daten = json.load(open(os.path.join(ordner, "Projekt_P-2026-001.json"), encoding="utf-8"))
-        assert daten["projekt"]["nummer"] == "P-2026-001" and len(daten["belege"]) == 1
+        assert daten["projekt"]["nummer"] == "P-2026-001" and len(daten["belege"]) == 2
+        # Beleg-PDFs: Test-Rechnung im Projektordner unter _Test, Einsatz-Rechnung unter Kunden/Lidl/Rechnungen
+        assert os.path.exists(os.path.join(ordner, "Rechnung", "_Test", "TEST_Rechnung_T-R-2026-001_123-Musterort.pdf")), "Test-Rechnung fehlt"
+        assert os.path.exists(os.path.join(basis, "2026", "Kunden", "Lidl", "Rechnungen", "Rechnung_420001_123-Musterort.pdf")), "Einsatz-Rechnung fehlt"
 
         # zweiter Lauf: nichts Neues holen, Mappe nicht neu
         zustand["geholt"] = []
