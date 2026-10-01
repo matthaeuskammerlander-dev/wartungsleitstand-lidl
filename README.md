@@ -1007,23 +1007,29 @@ Projekte ab, je Projekt ein Ordner nach Jahr und Kunde:
 
 ```
 2026/Kunden/Lidl/Baustellen/123-Musterort_P-2026-001/
-    Angebot/  Rechnung/  Plaene/  Fotos/  Unterlagen/  Lieferscheine/  Protokolle/
+    Plaene/  Fotos/  Unterlagen/  Lieferscheine/  Protokolle/
     Projekt_P-2026-001.html   Mappe zum Lesen und Drucken
     Projekt_P-2026-001.json   dasselbe maschinenlesbar
 ```
 
 Die Mappe enthält Angaben je Schritt, Beteiligte, Termine, Bestellungen,
-Baustellenbuch, Anlagen, Dateien, Tagebuch und – nur mit der Rolle „archiv“ –
-die Angebote und Rechnungen mit Beträgen. Neue Dateien werden dazugeholt,
+Baustellenbuch, Anlagen, Dateien und Tagebuch. Neue Dateien werden dazugeholt,
 die Mappe wird bei jeder Änderung neu geschrieben. Den Ordnernamen legt
 `unterordner_projekt` in `ukt_archiv.json` fest.
+
+**Angebote und Rechnungen kommen vorerst NICHT auf die Synology** (Büro
+01.10.2026): den Projektordner sehen auch Techniker. Das Skript fragt keine
+Belege ab, holt keine Büro-Dateien (`buero/…`) und schreibt keine Beträge in
+Mappe oder JSON – eine Quelle aus dem Büro steht dort nur als Name mit
+„(nur Büro)“. Ein eigener, nur für das Büro freigegebener Ordner folgt
+später (Schalter `BUERO_AUF_SYNOLOGY` im Skript, derzeit aus).
 
 **Einmalig dazu:**
 
 1. `tools/archiv-rolle.sql` im SQL Editor ausführen.
 2. Den letzten (auskommentierten) Befehl dort mit der E-Mail des Archivkontos
-   ausführen. Das Archivkonto liest dann zusätzlich Angebote, Rechnungen und
-   die Büro-Dateien – und darf in der Datenbank **nichts mehr schreiben**.
+   ausführen. Das Archivkonto darf dann in der Datenbank **nichts mehr
+   schreiben** (nur lesen).
 3. Die neue `ukt_archiv.py` auf die Synology kopieren (die alte ersetzen) und
    in `ukt_archiv.json` die Zeile `unterordner_projekt` aus der Vorlage ergänzen.
 4. Einmal mit `--pruefen` laufen lassen und das Ergebnis ansehen.

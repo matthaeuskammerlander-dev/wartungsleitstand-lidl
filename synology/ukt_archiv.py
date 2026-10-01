@@ -308,6 +308,12 @@ def abgleich(k, sb, stand):
 # nur ein Konto mit der Rolle „archiv“ (tools/archiv-rolle.sql); sonst fehlen
 # sie in der Mappe, alles andere kommt trotzdem.
 
+# Angebote und Rechnungen (Projektdateien unter buero/, Beleg-PDFs) gehören NICHT
+# in die Projektordner – die sehen auch Techniker (Büro 01.10.2026). Sie kommen
+# später in einen eigenen, geschützten Ordner; bis dahin legt das Skript sie
+# gar nicht ab. Erst umstellen, wenn dieser Ordner eingerichtet ist.
+BUERO_AUF_SYNOLOGY = False
+
 PROJEKT_UNTERORDNER = {"angebot": "Angebot", "rechnung": "Rechnung", "plan": "Plaene", "foto": "Fotos",
                        "dokument": "Unterlagen", "besprechung": "Besprechungen", "mail": "Mails",
                        "lieferschein": "Lieferscheine", "protokoll": "Protokolle"}
@@ -426,6 +432,8 @@ def quellen_html(quellen, dateien, lokal, ordner):
         if f and lokal.get(f.get("pfad")):
             rel = os.path.relpath(lokal[f["pfad"]], ordner).replace(os.sep, "/")
             teile.append('<a href="%s">%s</a>%s' % (html_text(urllib.parse.quote(rel)), html_text(f.get("name")), zusatz))
+        elif f and str(f.get("pfad") or "").startswith("buero/"):
+            teile.append('<span class="m">%s%s (nur Büro)</span>' % (html_text(f.get("name")), zusatz))
         else:
             teile.append('<span class="m">%s%s%s</span>' % (html_text(f.get("name") if f else name.split("/")[-1]), zusatz,
                                                             "" if f else " – noch nicht hochgeladen"))
@@ -520,7 +528,7 @@ def projekt_mappe(p, belege, kunden, standorte, anlagen, lokal=None, ordner=""):
             return [t for t, q in stellen if any((isinstance(y, str) and y == x.get("pfad")) or
                                                   name_norm(y if isinstance(y, str) else (y or {}).get("name")) == name_norm(x.get("name")) for y in q)]
         h.append("<h2>Dateien</h2><table><tr><th>Datei</th><th>Art</th><th>gehört zu</th></tr>")
-        for x in dateien_p:
+        for x in [x for x in dateien_p if BUERO_AUF_SYNOLOGY or not str(x.get("pfad") or "").startswith("buero/")]:
             h.append("<tr><td>%s</td><td>%s</td><td>%s</td></tr>" % (
                 ql([x.get("pfad")]), html_text(PROJEKT_UNTERORDNER.get(x.get("art"), x.get("art"))),
                 html_text(" · ".join(gehoert(x))) or '<span class="m">–</span>'))
@@ -533,17 +541,30 @@ def projekt_mappe(p, belege, kunden, standorte, anlagen, lokal=None, ordner=""):
     return "\n".join(h)
 
 
+def ohne_buero(obj, namen):
+    """Verweise auf Büro-Dateien (Angebot/Rechnung) aus den Projektdaten nehmen –
+    nur der Name bleibt mit „(nur Büro)“; der Pfad kommt nicht auf die Synology"""
+    if isinstance(obj, dict):
+        return {a: ohne_buero(b, namen) for a, b in obj.items()}
+    if isinstance(obj, list):
+        return [ohne_buero(b, namen) for b in obj]
+    if isinstance(obj, str) and obj.startswith("buero/"):
+        return "%s (nur Büro)" % (namen.get(obj) or "Datei")
+    return obj
+
+
 def projekte_abgleich(k, sb, stand):
     try:
         projekte = sb.tabelle("projekte", "id,nummer,titel,kunde_id,standort_id,status,daten,verlauf,erstellt,geaendert", "erstellt.asc")
     except RuntimeError as e:
         log("Projekte nicht lesbar (%s) – übersprungen" % e)
         return
-    try:
-        belege_alle = sb.tabelle("belege", "*", "datum.asc")
-    except RuntimeError as e:
-        log("Angebote/Rechnungen nicht lesbar – dafür braucht das Archivkonto die Rolle „archiv“ (%s)" % str(e)[:80])
-        belege_alle = []
+    belege_alle = []
+    if BUERO_AUF_SYNOLOGY:
+        try:
+            belege_alle = sb.tabelle("belege", "*", "datum.asc")
+        except RuntimeError as e:
+            log("Angebote/Rechnungen nicht lesbar – dafür braucht das Archivkonto die Rolle „archiv“ (%s)" % str(e)[:80])
     kunden, standorte, anlagen = stammdaten_fuer_projekte(sb)
     neu_dateien = mappen = 0
     ordner_je_projekt = {}
@@ -568,6 +589,8 @@ def projekte_abgleich(k, sb, stand):
             pfad = x.get("pfad")
             if not pfad or (dateien.get(pfad) and os.path.exists(dateien[pfad])):
                 continue
+            if pfad.startswith("buero/") and not BUERO_AUF_SYNOLOGY:
+                continue   # Angebot/Rechnung: nicht in den Projektordner (den sehen auch Techniker)
             unter = os.path.join(ordner, PROJEKT_UNTERORDNER.get(x.get("art"), "Unterlagen"))
             # nie eine vorhandene Datei überschreiben – gleicher Name bekommt _2, _3 …
             ziel = freie_datei(unter, sauber_datei(x.get("name")), set())
@@ -591,14 +614,21 @@ def projekte_abgleich(k, sb, stand):
             if not PRUEFEN:
                 schreibe(os.path.join(ordner, name + ".html"),
                          projekt_mappe(p, belege, kunden, standorte, anlagen, dateien, ordner).encode("utf-8"))
+                # ohne Büro-Dateien (Angebote/Rechnungen) – den Ordner sehen auch Techniker
+                p_aus = p
+                if not BUERO_AUF_SYNOLOGY:
+                    alle_d = (p.get("daten") or {}).get("dateien") or []
+                    p_aus = dict(p, daten=dict(p.get("daten") or {}, dateien=[x for x in alle_d if not str(x.get("pfad") or "").startswith("buero/")]))
+                    p_aus = ohne_buero(p_aus, {x.get("pfad"): x.get("name") for x in alle_d})
                 schreibe(os.path.join(ordner, name + ".json"),
-                         json.dumps({"projekt": p, "belege": belege}, ensure_ascii=False, indent=1).encode("utf-8"))
+                         json.dumps({"projekt": p_aus, "belege": belege}, ensure_ascii=False, indent=1).encode("utf-8"))
             s["kennung"] = kennung
             mappen += 1
         stand[schl] = s
         ordner_je_projekt[pid] = ordner
     log("Projekte: %d, %d Dateien geholt, %d Mappen geschrieben" % (len(projekte), neu_dateien, mappen))
-    belege_pdfs(k, sb, stand, belege_alle, kunden, standorte, ordner_je_projekt)
+    if BUERO_AUF_SYNOLOGY:
+        belege_pdfs(k, sb, stand, belege_alle, kunden, standorte, ordner_je_projekt)
 
 
 def belege_pdfs(k, sb, stand, belege, kunden, standorte, ordner_je_projekt):

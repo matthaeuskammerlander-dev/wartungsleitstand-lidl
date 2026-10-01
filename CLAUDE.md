@@ -100,7 +100,10 @@ Kammerlander Umwelt- und Klimatechnik (UKT) – oft kurz, vom Handy, im Feld.
   Projekttyp in `daten.typ` (`PROJEKT_TYPEN` + eigene).
 - Synology-Ablage der Baustellen (`synology/ukt_archiv.py`, `projekte_abgleich`):
   je Projekt `{jahr}/Kunden/{kunde}/Baustellen/{Filiale Ort}_{Nummer}/` mit
-  Unterordnern je Dateiart und Projektmappe (HTML + JSON). Das Archivkonto hat
+  Unterordnern je Dateiart und Projektmappe (HTML + JSON). Angebote und
+  Rechnungen (Belege, Büro-Dateien `buero/…`, Beträge) kommen NICHT auf die
+  Synology – den Projektordner sehen auch Techniker (Büro 01.10.2026;
+  `BUERO_AUF_SYNOLOGY = False`, eigener Büro-Ordner später). Das Archivkonto hat
   die Rolle „archiv“ (tools/archiv-rolle.sql): liest wie ein Techniker plus
   Belege und Büro-Dateien, schreibt nirgends (restriktive Regeln). Test:
   `tools/archiv_test.py` läuft in der automatischen Prüfung.

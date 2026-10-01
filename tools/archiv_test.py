@@ -45,7 +45,7 @@ STAMM = [{"id": "standort:Ntest1", "typ": "standort", "ziel": "Ntest1", "felder"
           "felder": {"anlagentyp": "VRV 1", "hersteller": "DAIKIN", "modell": "X1", "seriennummer": "S1",
                      "kaeltemittelArt": "R410A", "kaeltemittelKg": 20.6, "inbetriebnahme": "2026-09-14"}}]
 
-zustand = {"belege_erlaubt": True, "geholt": []}
+zustand = {"belege_erlaubt": True, "geholt": [], "belege_gefragt": False}
 
 
 def falsche_anfrage(methode, url, kopf=None, daten=None, roh=False):
@@ -59,6 +59,7 @@ def falsche_anfrage(methode, url, kopf=None, daten=None, roh=False):
     if "/rest/v1/projekte" in url:
         return [PROJEKT] if "offset=0" in url else []
     if "/rest/v1/belege" in url:
+        zustand["belege_gefragt"] = True
         if not zustand["belege_erlaubt"]:
             raise RuntimeError("HTTP 401 bei belege: permission denied")
         return [BELEG, BELEG2, BELEG3] if "offset=0" in url else []
@@ -78,22 +79,28 @@ def main():
         stand = {}
         A.projekte_abgleich(k, sb, stand)
         ordner = os.path.join(basis, "2026", "Kunden", "Lidl", "Baustellen", "123-Musterort_P-2026-001")
-        erwartet = [os.path.join(ordner, "Angebot", "Angebot-900001.pdf"), os.path.join(ordner, "Plaene", "Grundriss-EG.pdf"),
+        erwartet = [os.path.join(ordner, "Plaene", "Grundriss-EG.pdf"),
                     os.path.join(ordner, "Fotos", "Dach.jpg"), os.path.join(ordner, "Projekt_P-2026-001.html"),
                     os.path.join(ordner, "Projekt_P-2026-001.json")]
         fehlt = [e for e in erwartet if not os.path.exists(e)]
-        assert not fehlt, "fehlt: %s\nvorhanden: %s" % (fehlt, [os.path.join(r, f) for r, _, fs in os.walk(basis) for f in fs])
+        alle = [os.path.join(r, f) for r, _, fs in os.walk(basis) for f in fs]
+        assert not fehlt, "fehlt: %s\nvorhanden: %s" % (fehlt, alle)
+        # Angebote/Rechnungen NICHT auf die Synology (Projektordner sehen auch Techniker; Büro 01.10.2026)
+        assert not zustand["belege_gefragt"], "Belege wurden abgefragt"
+        assert not [g for g in zustand["geholt"] if g.startswith("buero/")], "Büro-Datei geholt: %s" % zustand["geholt"]
+        assert not [f for f in alle if "Angebot" in f or "Rechnung" in f], "Beleg im Archiv: %s" % alle
         html = open(os.path.join(ordner, "Projekt_P-2026-001.html"), encoding="utf-8").read()
-        for t in ("Planer GmbH", "Montage &lt;Samstag&gt;", "Kran / Hebegerät", "1,5 Std", "VRV 1", "900001", "1.234,50", "Begehung am",
+        for t in ("Planer GmbH", "Montage &lt;Samstag&gt;", "Kran / Hebegerät", "1,5 Std", "VRV 1", "Begehung am",
                   # Quellen: Verweise in den Projektordner, Fehlendes mit Namen, Rückweg bei der Datei
-                  'href="Plaene/Grundriss-EG.pdf"', "(Seite 2)", 'href="Angebot/Angebot-900001.pdf"',
+                  'href="Plaene/Grundriss-EG.pdf"', "(Seite 2)", "Angebot 900001.pdf (nur Büro)",
                   "Begehungsprotokoll fehlt.pdf – noch nicht hochgeladen", "Termin: Montage &lt;Samstag&gt;", "Anlagentausch / Umbau"):
             assert t in html, "nicht in der Mappe: " + t
-        daten = json.load(open(os.path.join(ordner, "Projekt_P-2026-001.json"), encoding="utf-8"))
-        assert daten["projekt"]["nummer"] == "P-2026-001" and len(daten["belege"]) == 2
-        # Beleg-PDFs: Test-Rechnung im Projektordner unter _Test, Einsatz-Rechnung unter Kunden/Lidl/Rechnungen
-        assert os.path.exists(os.path.join(ordner, "Rechnung", "_Test", "TEST_Rechnung_T-R-2026-001_123-Musterort.pdf")), "Test-Rechnung fehlt"
-        assert os.path.exists(os.path.join(basis, "2026", "Kunden", "Lidl", "Rechnungen", "Rechnung_420001_123-Musterort.pdf")), "Einsatz-Rechnung fehlt"
+        for t in ("1.234,50", 'href="Angebot/', "buero/"):
+            assert t not in html, "darf nicht in die Mappe: " + t
+        roh = open(os.path.join(ordner, "Projekt_P-2026-001.json"), encoding="utf-8").read()
+        daten = json.loads(roh)
+        assert daten["projekt"]["nummer"] == "P-2026-001" and daten["belege"] == []
+        assert "buero/" not in roh, "Büro-Datei in der JSON"
 
         # zweiter Lauf: nichts Neues holen, Mappe nicht neu
         zustand["geholt"] = []
@@ -107,7 +114,7 @@ def main():
         assert zustand["geholt"] == ["x/foto-4-dach.jpg"], zustand["geholt"]
         assert os.path.exists(os.path.join(ordner, "Fotos", "Dach_2.jpg")), "gleicher Name: _2 erwartet"
 
-        # ohne Archivrolle: Belege fehlen, der Rest läuft trotzdem
+        # ohne Archivrolle (Belege gesperrt): läuft trotzdem
         zustand["belege_erlaubt"] = False
         PROJEKT["geaendert"] = "2026-10-03T10:00:00+00:00"
         A.projekte_abgleich(k, sb, stand)
