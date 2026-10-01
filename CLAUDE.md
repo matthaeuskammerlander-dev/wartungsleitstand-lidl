@@ -80,6 +80,18 @@ Kammerlander Umwelt- und Klimatechnik (UKT) – oft kurz, vom Handy, im Feld.
 - Eigene Tätigkeitsbereiche (`bereichListe`, `bereichNeu`, tools/bereiche-eigen.sql):
   unter „Sonstiges“ eintippen, danach für alle in der Auswahl (Datenbank-
   Funktion `bereiche_eigene`); Lohn: normale Arbeit (nicht Montage, nicht Fahrt).
+- Baustellen-Ablauf (Büro 01.10.2026, tools/projekte-ablauf.sql): Projekt-Schritte
+  Anfrage → Begehung → Konzept → Angebot → Auftrag → Vorbereitung → Baustelle →
+  Inbetriebnahme → Dokumentation → abgerechnet; Listen Beteiligte/Termine/
+  Bestellungen (`PROJEKT_LISTEN`), Baustellenbuch (`baubuchKarte`, Mengen, keine
+  Preise; `BAUBUCH_RECHNUNG` = was für die Rechnung zählt).
+- Angebote/Rechnungen NUR Inhaber (Tabellen `belege`, `katalog`): KPlus-PDFs
+  liest `kplusLesen` ohne KI aus dem PDF-Text nach Spaltenlage (Position x<90,
+  Menge+EH 90–150, Text 150–395, Preis 395–480, Betrag/„Alternativ“ ab 480;
+  Zeilen nach Abstand, nicht gerundet) und rechnet gegen die PDF-Summe nach.
+  App-Belege sind TEST (T-A-/T-R-Nummern), solange KPlus führt. Rechnung aus
+  Angebot: Mengenvorschläge aus dem Baustellenbuch (`baubuchVorschlaege`).
+  Echte Preise und Belege nie ins Repository – nur in Supabase.
 - Stempeluhr: von Hand eingetragene Zeit, die in die Stempelzeit fällt, zählt
   für die 10-/12-Stunden-Hinweise nicht dazu (wird beim Ausstempeln abgeglichen).
 - Termine vor Ort prüfen (`termineOffen`, `termineSchritt`): im geführten
