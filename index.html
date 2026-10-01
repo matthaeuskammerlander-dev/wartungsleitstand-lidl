@@ -5728,7 +5728,7 @@ function anlageAssistent(start, titel, neu, alles, vorgang){
     var geschlossen=false;   /* eine späte KI-Antwort nach dem Schließen nicht mehr „übernehmen“ */
     var schliessen=function(wert){
       geschlossen=true;
-      if(wert){ delete wert._springe; delete wert._ohneRegel; }   /* nur Steuerung des Dialogs, kein Anlagenwert */
+      if(wert){ delete wert._springe; delete wert._ohneRegel; delete wert._kiVorlage; }   /* nur Steuerung des Dialogs, kein Anlagenwert */
       ov.remove(); document.body.style.overflow=vorherOv; fertig(wert);
       /* weitere Prüfbücher aus derselben Fotoserie: nach dem Speichern anbieten */
       if(wert && kiRest && kiRest.liste.length) setTimeout(weitereAusPruefbuch, 400);
@@ -5745,7 +5745,7 @@ function anlageAssistent(start, titel, neu, alles, vorgang){
     var fortsetzen=vorgang && vorgang.weiter;   /* nicht „weiter“ – so heißt der Schritt vorwärts */
     if(fortsetzen){
       a=Object.assign({}, fortsetzen.ort.a);
-      if(fortsetzen.ort.kiRest) kiRest=fortsetzen.ort.kiRest;   /* weitere Prüfbücher derselben Fotoserie */
+      if(fortsetzen.ort.kiRest){ kiRest=fortsetzen.ort.kiRest; kiRestZiel(kiRest, vorgang); }   /* weitere Prüfbücher derselben Fotoserie */
     }
 
     /* Schritte: bei einer neuen Anlage zuerst die Bezeichnung, dann jede
@@ -5845,7 +5845,7 @@ function anlageAssistent(start, titel, neu, alles, vorgang){
             if(buecher.length>1 && !erg._gewaehlt){
               return kiBuchWaehlen(buecher, d.hinweise, a).then(function(i){
                 if(i===null){ zurueck(); return; }
-                kiRest={standortId:(kiMarkt()||{}).id||a.standortId, liste:buecher.filter(function(b,j){ return j!==i; })};
+                kiRest={standortId:(kiMarkt()||{}).id||a.standortId, liste:buecher.filter(function(b,j){ return j!==i; })}; kiRestZiel(kiRest, vorgang);
                 if(i<0){ toast(buecher.length+" Prüfbücher werden nach dem Übernehmen als weitere Anlagen angeboten."); uebersicht(); return; }
                 verarbeiten({daten:buecher[i], _gewaehlt:true});
               });
@@ -10870,15 +10870,27 @@ function kiBuchWaehlen(buecher, hinweise, a){
 /* Die übrigen Bücher: je Buch neu anlegen, einer vorhandenen Anlage des
    Markts zuordnen oder überspringen – danach der Reihe nach im geführten
    Dialog mit der Prüfansicht der KI */
+/* Aus dem Protokoll heraus gelesen: die weiteren Bücher gehören ins Protokoll
+   (vorhandene Anlage anhaken und ergänzen, neue als „vor Ort neu erfasst“) –
+   nicht still an ihm vorbei in die Anlagendaten (Büro 01.10.2026: Lücke beim
+   ersten Einsatz). Nicht aufzählbar: der Vorgang wird für die Claude-App als
+   JSON gesichert, die Rückrufe gehören nicht hinein. */
+function kiRestZiel(rest, vorgang){
+  if(!rest) return;
+  try{ Object.defineProperty(rest, "ziel", {value:(vorgang && vorgang.buchZiel) || null, enumerable:false, configurable:true, writable:true}); }catch(e){}
+}
 function weitereAusPruefbuch(){
   var rest=kiRest; kiRest=null;
   if(!rest || !rest.liste.length) return;
   var s=byId[rest.standortId];
   if(!s){ toast("Weitere Prüfbücher: Markt nicht gefunden."); return; }
+  /* das Protokoll muss noch offen sein – sonst wie bisher direkt in die Anlagendaten */
+  var ziel=(rest.ziel && rest.ziel.offen()) ? rest.ziel : null;
   var vorhandene=anlagenDesMarkts(s,false);
   var v=ansichtOeffnen("Weitere Prüfbücher");
   v.schritt.textContent=stName(s)+" · "+rest.liste.length+" weitere Anlage"+(rest.liste.length===1?"":"n");
-  v.inhalt.appendChild(el('<div class="note">Aus derselben Fotoserie stammen noch diese Prüfbücher. Wohin damit?</div>'));
+  v.inhalt.appendChild(el('<div class="note">Aus derselben Fotoserie stammen noch diese Prüfbücher. Wohin damit?'+
+    (ziel ? " Sie kommen <strong>ins Protokoll</strong>: eine vorhandene Anlage wird angehakt und ergänzt, eine neue als „vor Ort neu erfasst“ eingetragen." : "")+"</div>"));
   var vergebenIds=[];   /* eine alte Zeile nur einem Buch vorschlagen */
   var wahlen=rest.liste.map(function(b,i){
     /* Vorschlag: vorhandene Anlage mit gleicher Seriennummer oder Bezeichnung, sonst neu */
@@ -10915,16 +10927,22 @@ function weitereAusPruefbuch(){
   });
   var los=el('<button class="btn" type="button">Weiter</button>');
   var ab=el('<button class="btn ghost" type="button">Alle überspringen</button>');
-  ab.onclick=function(){ v.zu(); };
+  /* versehentlich getippt? Die Bücher wären weg – neu lesen kostet wieder */
+  ab.onclick=function(){
+    if(!window.confirm(rest.liste.length+" Prüfbuch"+(rest.liste.length===1?"":"er")+" wirklich nicht übernehmen?\n\nDie Fotos müssten sonst später nochmals gelesen werden.")) return;
+    v.zu();
+  };
   los.onclick=function(){
     var auftraege=rest.liste.map(function(b,i){ return {buch:b, ziel:wahlen[i].value}; })
       .filter(function(x){ return x.ziel!=="weg"; });
     v.zu();
     var naechstes=function(){
       var x=auftraege.shift(); if(!x) return;
-      var p = x.ziel==="neu" ? anlageNeuAnlegen(s, x.buch)
-            : anlageDatenErgaenzen(posById[x.ziel], x.buch);
-      Promise.resolve(p).then(function(){ setTimeout(naechstes, 400); });
+      /* aus dem Protokoll: ins Protokoll; ist es inzwischen zu, in die Anlagendaten */
+      var z=(ziel && ziel.offen()) ? ziel : null;
+      var p = x.ziel==="neu" ? (z ? z.neu(x.buch) : anlageNeuAnlegen(s, x.buch))
+            : (z ? z.vorhanden(x.ziel, x.buch) : anlageDatenErgaenzen(posById[x.ziel], x.buch));
+      Promise.resolve(p).then(function(){ setTimeout(naechstes, 400); }, function(){ setTimeout(naechstes, 400); });
     };
     naechstes();
   };
@@ -11649,13 +11667,15 @@ function protokollAssistent(form, stoer){
      Erst zählen, dann öffnen – sonst zählte der eben geöffnete Dialog schon
      zu „vorher“ und sein Schließen fiele nie auf. */
   function nachAnlagenDialog(oeffnen, titel){
-    var vorher=document.querySelectorAll(".assistent").length, gesehen=false, n=0;
+    var vorher=document.querySelectorAll(".assistent").length, gesehen=false, n=0, ruhig=0;
     oeffnen();
     var t=setInterval(function(){
       var jetzt=document.querySelectorAll(".assistent").length;
-      if(jetzt>vorher) gesehen=true;
-      /* ging gar kein Dialog auf: nach 15 s aufhören statt minutenlang weiterzuprüfen */
-      if((gesehen && jetzt<=vorher) || (!gesehen && n>50) || ++n>2000 || !document.body.contains(ov)){
+      if(jetzt>vorher){ gesehen=true; ruhig=0; } else if(gesehen) ruhig++;
+      /* erst wenn eine gute Sekunde lang keiner mehr offen ist – nach einem
+         Prüfbuch folgen weitere Dialoge (Weitere Prüfbücher) mit kurzer Pause.
+         Ging gar kein Dialog auf: nach 15 s aufhören statt minutenlang weiterzuprüfen */
+      if((gesehen && ruhig>=4) || (!gesehen && n>50) || ++n>2000 || !document.body.contains(ov)){
         clearInterval(t);
         if(gesehen && document.body.contains(ov) && schritte[pos].titel===titel) schritte[pos].zeigen();
       }
@@ -12708,13 +12728,13 @@ function viewProtokoll(){
     if(hk) hk.onclick=function(){ anlageHistorieAnsicht(posById[id]); };
     k.dataset.karte=id;   /* zum Wiederfinden nach dem Wechsel in die Claude-App */
     /* weiter: gesicherter Claude-Vorgang nach dem Neuladen (kiVorgangFortsetzen) */
-    k.querySelector('[data-a="los"]').onclick=function(ev, springe, weiter){
+    k.querySelector('[data-a="los"]').onclick=function(ev, springe, weiter, vorlage){
       /* bei einer bekannten Anlage auch die Termine zum Prüfen dazu */
       var p0=neu?null:posById[id];
       var start=p0 ? Object.assign({}, w, termineWerte(p0)) : Object.assign({}, w);
-      start._springe=springe||null;
+      start._springe=springe||null; start._kiVorlage=vorlage||null;   /* weiteres Prüfbuch derselben Fotoserie */
       /* Wechsel in die Claude-App: neues Protokoll (Entwurf) wie Korrektur (ihr eigener Entwurf) lassen sich fortsetzen */
-      anlageAssistent(start, name, neu, false, {ort:{aufruf:"protokoll", karte:id, korrektur:bearb?bearb._id:null}, weiter:weiter||null}).then(function(erg){
+      return anlageAssistent(start, name, neu, false, {ort:{aufruf:"protokoll", karte:id, korrektur:bearb?bearb._id:null}, weiter:weiter||null, buchZiel:buchZiel}).then(function(erg){
         if(!erg) return;
         formDirty=true;
         /* Termine sind Stammdaten, nicht Teil des Protokolls: sie gehen
@@ -12798,11 +12818,30 @@ function viewProtokoll(){
       if(los){ karte.scrollIntoView({block:"center"}); los.onclick(null, null); }
     });
   };
-  function neueAnlageErfassen(weiter){
+  /* weitere Prüfbücher aus derselben Fotoserie (weitereAusPruefbuch): ins
+     Protokoll – vorhandene Anlage anhaken und mit dem Buch ergänzen, neue als
+     „vor Ort neu erfasst“. Jeder Rückruf endet, wenn sein Dialog zu ist. */
+  var buchZiel={
+    offen:function(){ return document.body.contains(form) && !form.inert; },
+    neu:function(buch){ return neueAnlageErfassen(null, buch); },
+    vorhanden:function(leaderId, buch){
+      var p=posById[leaderId]; if(!p) return Promise.resolve();
+      var anl=anlageVon(p).id;
+      var cb=form.querySelector('input[name="posw"][data-anlage="'+String(anl).replace(/"/g,"")+'"]');
+      /* im Protokoll nicht wählbar (etwa zur Zeit nicht gewartet): wie bisher in die Anlagendaten */
+      if(!cb) return Promise.resolve(anlageDatenErgaenzen(p, buch));
+      if(!cb.checked){ cb.checked=true; cb.dispatchEvent(new Event("change",{bubbles:true})); formDirty=true; }
+      var karte=[].filter.call(anlagenHost.querySelectorAll(".akarte"), function(k){
+        var q=posById[k.dataset.karte]; return q && anlageVon(q).id===anl; })[0];
+      var los=karte && karte.querySelector('[data-a="los"]');
+      return los ? Promise.resolve(los.onclick(null, null, null, buch)) : Promise.resolve();
+    }
+  };
+  function neueAnlageErfassen(weiter, vorlage){
     /* Markt als Kontext für die KI; mit Termin wie bei „+ Anlage anlegen“ – so
        fragt der Dialog auch Inbetriebnahme, Kürzel und Soll-Monat */
-    anlageAssistent({standortId:selSt.value, _termine:[{id:"NEU", intervallCode:"JW", monat:0}], inbetriebnahme:null}, "Neue Anlage", true, false,
-        {ort:{aufruf:"protokoll", karte:null, korrektur:bearb?bearb._id:null}, weiter:weiter||null}).then(function(erg){
+    return anlageAssistent({standortId:selSt.value, _termine:[{id:"NEU", intervallCode:"JW", monat:0}], inbetriebnahme:null, _kiVorlage:vorlage||null}, "Neue Anlage", true, false,
+        {ort:{aufruf:"protokoll", karte:null, korrektur:bearb?bearb._id:null}, weiter:weiter||null, buchZiel:buchZiel}).then(function(erg){
       if(!erg) return;
       formDirty=true;
       neueAnlagen.push({id:"NP"+Date.now().toString(36)+Math.random().toString(36).slice(2,5), werte:erg});
@@ -14052,6 +14091,9 @@ function viewProtokoll(){
       if(uebertragen || demo()) stoerungErledigen();   /* Präsentation: nur im Speicher, wie bisher gleich */
       if(fertigSchon) return; fertigSchon=true;   /* nur einmal – auch wenn die Zeitgrenze schon abgeschlossen hat */
       toast(msg);
+      /* die Rückmeldung oben bleibt stehen (mit „Ansehen“), bis man sie ausblendet */
+      S.gespeichert={id:id, titel:(stoer?"Störungsprotokoll":"Wartungsprotokoll")+" gespeichert",
+        text:(doc.standortName||"")+" vom "+dfmt(doc.datum)+" – "+msg, laeuft:false, bis:Date.now()+15*60000};
       /* Die Übertragung kann bis zu 2 Minuten dauern. Inzwischen darf man
          weiterarbeiten, auch ein neues Protokoll beginnen – Formular,
          Entwurf und Auswahl gehören dann dem neuen und bleiben unangetastet.
@@ -14134,6 +14176,8 @@ function viewProtokoll(){
             var hier=document.body.contains(form);
             if(hier){ formDirty=false; S.bearbeiten=null; protokollAufklappen(kid); }
             toast("Korrektur gespeichert – "+felder.length+" Feld"+(felder.length===1?"":"er")+" geändert.");
+            S.gespeichert={id:kid, titel:"Korrektur gespeichert", text:(doc.standortName||"")+" vom "+dfmt(doc.datum)+" – "+
+              felder.length+" Feld"+(felder.length===1?"":"er")+" geändert.", laeuft:false, bis:Date.now()+15*60000};
             berechneFaelligkeiten(); if(hier) render(); else storeNachRender();
           });
         });
@@ -14163,6 +14207,14 @@ function viewProtokoll(){
          (der Entwurf selbst bleibt und wird beim nächsten Formular angeboten) */
       if(entwurfKasten && entwurfKasten.parentNode) entwurfKasten.parentNode.removeChild(entwurfKasten);
       btn.textContent="Auf dem Gerät gesichert – wird übertragen …";
+      /* oben sichtbar machen, was passiert – wer aus dem geführten Dialog kommt,
+         steht sonst am Ende des langen Formulars */
+      S.gespeichert={id:id, titel:(stoer?"Störungsprotokoll":"Wartungsprotokoll")+" "+(doc.standortName||"")+" vom "+dfmt(doc.datum),
+        text:"Auf dem Gerät gesichert – wird übertragen …", laeuft:true, bis:Date.now()+15*60000};
+      if(document.body.contains(head)){
+        var altK=document.getElementById("p_gespeichert"); if(altK) altK.remove();
+        var gk=gespeichertKarte(); if(gk){ head.parentNode.insertBefore(gk, head.parentNode.firstChild); window.scrollTo(0,0); }
+      }
       anlagenUebernehmen(doc, id);   /* vor Ort ergänzte Anlagendaten */
       lokaleProtokolle.unshift(eintrag);
       if(eintrag.rapport) posteingangErledigt("rapport", id, eintrag.rapport);
@@ -14184,16 +14236,16 @@ function viewProtokoll(){
         return (Store.fehler && !/fetch|network|netz|verbindung|timeout|zeit/i.test(Store.fehler))
           ? "Auf dem Gerät gespeichert – die Ablage lehnt es zur Zeit ab ("+Store.fehler+"). Bitte dem Büro melden." : wartet;
       };
-      if(fotos.length) btn.textContent="Fotos werden übertragen …";
+      if(fotos.length){ btn.textContent="Fotos werden übertragen …"; gespeichertStand(fotos.length+" Foto"+(fotos.length===1?"":"s")+" werden übertragen – das kann im Funknetz bis zu 2 Minuten dauern …"); }
       /* hängt die Übertragung, gilt es nach 2 Minuten als „auf dem Gerät“ – es liegt ja sicher in der Warteschlange */
       mitFrist(speichereFotos(id,fotos).then(function(fotosOk){
         if(!fotosOk){ fertig(wartet); return; }
-        if(eintrag.auftrag) btn.textContent="Auftrag wird übertragen …";
+        if(eintrag.auftrag){ btn.textContent="Auftrag wird übertragen …"; gespeichertStand(btn.textContent); }
         return speichereAuftragPdf(id, eintrag.auftrag).then(function(pdfOk){
           return pdfOk ? speichereRapportPdf(id, eintrag.rapport) : false;
         }).then(function(pdfOk){
           if(!pdfOk){ fertig(wartet); return; }
-          btn.textContent="Übertragen …";
+          btn.textContent="Übertragen …"; gespeichertStand("Protokoll wird übertragen …");
           return speichereProtokoll(id,doc).then(function(ok){
             if(!ok){ fertig(wartetMit()); return; }
             stoerungErledigen();   /* übertragen – auch wenn die Zeitgrenze schon „auf dem Gerät“ gemeldet hat */
@@ -14254,6 +14306,8 @@ function viewProtokoll(){
       formDirty=false; S.protoArt=ziel; S.stoerungAus=null; render(); window.scrollTo({top:0});
     };
   });
+  var gespK=gespeichertKarte();
+  if(gespK) f.appendChild(gespK);
   if(Store.modus==="supabase" && Store.sb && !bearb) f.appendChild(kontoKarte());
   f.appendChild(head);
   if(entwurfKasten) f.appendChild(entwurfKasten);
@@ -14377,7 +14431,12 @@ function viewProtokoll(){
         var ziel=gesp.querySelector("#pdetail");
         ziel.appendChild(protokollDetail(neu));
         /* hinschieben nur gleich nach dem Speichern – später liest man vielleicht schon woanders */
-        if(S.letztesBis-Date.now()>10000) setTimeout(function(){ ziel.scrollIntoView({behavior:"smooth",block:"start"}); },60);
+        /* steht oben die Rückmeldung „gespeichert“, dorthin (mit „Ansehen“) –
+           das Hinunterscrollen ging am iPhone nach dem Neuzeichnen verloren */
+        if(S.letztesBis-Date.now()>10000) setTimeout(function(){
+          if(document.getElementById("p_gespeichert")) window.scrollTo(0,0);
+          else ziel.scrollIntoView({behavior:"smooth",block:"start"});
+        },60);
       }
     }
   } else {
@@ -18680,6 +18739,34 @@ function protokollKorrigieren(p, setzen){
    Der Merker gilt einige Sekunden: gleich nach dem Speichern lädt die Liste
    neu und die Seite zeichnet nochmals – es klappte sonst sofort wieder zu. */
 function protokollAufklappen(id){ S.letztesProtokoll=id; S.letztesBis=Date.now()+15000; }
+/* Rückmeldung beim Speichern ganz oben im Reiter (Büro 01.10.2026: nach dem
+   geführten Dialog stand man am neuen, leeren Formular und sah nicht, ob und
+   wohin gespeichert wurde – das Protokoll lag tausende Pixel weiter unten).
+   S.gespeichert: {id, titel, text, laeuft, bis} – „laeuft“ solange übertragen wird. */
+function gespeichertKarte(){
+  var g=S.gespeichert;
+  if(!g || !(g.bis>Date.now())){ S.gespeichert=null; return null; }
+  var k=el('<div class="card" id="p_gespeichert" style="border-color:'+(g.laeuft?"var(--warn)":"var(--good)")+'"><div class="pad stack">'+
+    '<div><strong>'+(g.laeuft?"Wird gespeichert … ":"✓ ")+esc(g.titel)+'</strong><div class="sub" data-g="text">'+esc(g.text)+"</div></div>"+
+    (g.laeuft ? '<div class="muted" style="font-size:12.5px">Es liegt schon sicher auf dem Gerät. Bitte die App offen lassen, bis die Übertragung durch ist.</div>' :
+      '<div class="rowflex"><button class="btn sm" type="button" data-g="ansehen">Ansehen</button>'+
+      '<button class="btn ghost sm" type="button" data-g="zu">Ausblenden</button></div>')+
+    "</div></div>");
+  var an=k.querySelector('[data-g="ansehen"]');
+  if(an) an.onclick=function(){
+    var p=alleProtokolle(true).filter(function(x){ return x._id===g.id; })[0];
+    if(p) protokollFenster(p); else toast("Das Protokoll ist gerade nicht in der Liste – bitte gleich nochmals.");
+  };
+  var zu=k.querySelector('[data-g="zu"]');
+  if(zu) zu.onclick=function(){ S.gespeichert=null; k.remove(); };
+  return k;
+}
+/* während der Übertragung: oben zeigen bzw. den Stand nachführen (ohne Neuzeichnen) */
+function gespeichertStand(text){
+  if(!S.gespeichert || !S.gespeichert.laeuft) return;
+  S.gespeichert.text=text;
+  var t=document.querySelector('#p_gespeichert [data-g="text"]'); if(t) t.textContent=text;
+}
 /* Ein Protokoll zum Nachlesen – immer als Fenster, das Angefangene bleibt */
 /* Ein gelöschtes Protokoll sehen nur Admins (wie „gelöschte anzeigen“ in der
    Protokollliste) – auch nicht über eine Meldung, eine Nachricht oder eine
