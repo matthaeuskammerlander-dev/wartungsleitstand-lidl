@@ -615,7 +615,7 @@ Ein Auftrag von Lidl kommt herein, gearbeitet wird oft erst Tage später.
 Dazwischen steht die Störung im Reiter **Fällig** ganz oben — vor allen
 Wartungsterminen, denn sie wartet nicht auf den Kalender.
 
-**Erfassen:** Unter *Fällig* auf **+ Störung erfassen**. Dann entweder
+**Erfassen:** Unter *Fällig* auf **+ Störungsauftrag**. Dann entweder
 
 - **Auftrag-PDF öffnen** — die Datei aus der Lidl-Mail,
 - **Auftrag abfotografieren** — wenn nur ein Ausdruck da ist, oder
