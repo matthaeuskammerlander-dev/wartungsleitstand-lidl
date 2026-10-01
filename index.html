@@ -7769,7 +7769,7 @@ function zuZeile(doc,uid){
 function rapportVon(p){ return (p && (p.rapport || (p.stoerung && p.stoerung.rapportDatei))) || null; }
 function ausZeile(r){
   /* _id ist die Kennung aus der App – unter ihr liegen die Fotos */
-  return { _id:r.client_id||r.id, erstellt:r.erstellt, standortName:r.standort_name, adresse:r.adresse, region:r.region,
+  return { _id:r.client_id||r.id, erstellt:r.erstellt, erstelltVon:r.erstellt_von||null, standortName:r.standort_name, adresse:r.adresse, region:r.region,
     version:r.version||1, geaendert:r.geaendert, korrekturGrund:r.korrektur_grund,
     geloescht:r.geloescht||null, geloeschtVon:r.geloescht_von||null, loeschGrund:r.loesch_grund||null,
     firma:r.firma, kontakt:r.kontakt, subunternehmen:r.subunternehmen, zertUnternehmen:r.zert_unternehmen, zertPerson:r.zert_person,
@@ -18777,7 +18777,7 @@ function handbuchKarte(z){
           "Vorschläge kommen aus den eigenen Protokollen des Tages. Der Inhaber sieht alle, druckt die Monatsliste, gibt sie als Tabelle "+
           "für die Lohnverrechnung aus und bestätigt den Monat – danach ist er gesperrt.",
         "<strong>Stempeluhr</strong> (oben im Reiter Stunden): Einstempeln, Pause, Weiter, Ausstempeln – die Uhrzeit setzt der Server, nicht das Handy. "+
-          "Beim Ausstempeln entsteht der Eintrag von selbst. Wird ein gestempelter Eintrag nachträglich geändert, steht das für den Inhaber sichtbar dabei; "+
+          "Beim Ausstempeln entsteht der Eintrag von selbst – geht aus Protokollen, Projekt-Tagebuch oder der Angabe beim Einstempeln nicht hervor, was erledigt wurde, fragt die App danach. Wird ein gestempelter Eintrag nachträglich geändert, steht das für den Inhaber sichtbar dabei; "+
           "löschen kann ihn nur der Inhaber. Vergessen auszustempeln: nach 12 Stunden lässt sich das tatsächliche Ende nachtragen.",
         "<strong>Standort beim Stempeln</strong> ist ausgeschaltet, bis der Inhaber ihn einschaltet (Voraussetzung: Betriebsvereinbarung bzw. Zustimmung jeder Person, "+
           "Information nach DSGVO). Dann wird beim Ein- und Ausstempeln einmal die Position abgefragt und nur die Entfernung zum Markt bzw. Betrieb gespeichert – "+
@@ -21031,6 +21031,76 @@ function stempelDemo(w){
   return {stempel:s, eintrag:e};
 }
 
+/* Was seit dem Einstempeln schon belegt ist: eigene Protokolle, eigene Einträge
+   im Projekt-Tagebuch, die Angabe beim Einstempeln (Büro 01.10.2026) */
+function stempelErledigt(ein){
+  var ab=tagLokal(ein.zeit), bis=isoLokal(new Date()), uid=Store.benutzer && Store.benutzer.id, ich=suchNorm(meinName());
+  var l=[];
+  if(ein.taetigkeit) l.push({text:ein.taetigkeit, quelle:"beim Einstempeln"});
+  alleProtokolle().forEach(function(p){
+    if(p.geloescht || !p.datum || p.datum<ab || p.datum>bis) return;
+    var namen=[p.techniker].concat(p.mitarbeiter||[]).map(suchNorm);
+    if(!((uid && p.erstelltVon===uid) || (ich && namen.indexOf(ich)>=0))) return;
+    l.push({text:(istStoerung(p)?"Störung ":"Wartung ")+protoName(p), quelle:"Protokoll", standort_id:p.standortId});
+  });
+  PROJEKTE.forEach(function(pr){
+    (pr.verlauf||[]).forEach(function(e){
+      if(e.wer!==meinName() || !e.zeit || new Date(e.zeit)<new Date(ein.zeit) || /^(Stand:|Angaben geändert|Projekt angelegt|\d+ Datei)/.test(e.text||"")) return;
+      l.push({text:pr.titel+": "+e.text, quelle:"Projekt "+(pr.nummer||""), projekt_id:pr.id});
+    });
+  });
+  return l;
+}
+/* Ausstempeln: ist schon belegt, was heute erledigt wurde, nur kurz bestätigen (Ergänzung freiwillig) –
+   sonst danach fragen (Pflicht). opt.ende: vergessen auszustempeln, tatsächliches Ende */
+function ausstempelnFragen(opt, knopf){
+  opt=opt||{};
+  var z=stempelZustand(), ein=z.ein; if(!ein){ stempelDruecken("aus", opt, knopf); return; }
+  var belegt=stempelErledigt(ein);
+  var v=ansichtOeffnen("Ausstempeln");
+  var jetzt=Date.now(), pause=z.pauseMs+(z.pauseSeit?jetzt-new Date(z.pauseSeit):0);
+  v.schritt.textContent="seit "+zeitAus(ein.zeit)+(opt.ende?" bis "+opt.ende:" bis jetzt")+(opt.ende?"":" · "+stundenText(Math.max(0,Math.floor((jetzt-new Date(ein.zeit)-pause)/60000))));
+  var form=el('<div class="stack" style="max-width:560px"></div>');
+  if(belegt.length){
+    form.appendChild(el('<div class="note" style="font-size:13px"><strong>Heute erledigt</strong> – geht aus deinen Angaben hervor:<ul style="margin:6px 0 0 18px;padding:0">'+
+      belegt.map(function(x){ return "<li>"+esc(x.text)+' <span class="muted">('+esc(x.quelle)+")</span></li>"; }).join("")+"</ul></div>"));
+    form.appendChild(el('<label class="fl"><span>Noch etwas dazu? (freiwillig)</span><input type="text" data-was maxlength="200" placeholder="z. B. danach Material geholt, Werkstatt"></label>'));
+  } else {
+    form.appendChild(el('<div class="fl"><span class="req">Was hast du heute gemacht?</span></div>'));
+    var chips=el('<div class="chips"></div>');
+    ["Wartung","Störung","Montage / Baustelle","Werkstatt","Büro","Material holen","Fahrt","Schulung"].forEach(function(t){
+      var c=el('<button class="chip" type="button">'+esc(t)+"</button>");
+      c.onclick=function(){ var f=form.querySelector("[data-was]"); f.value=f.value ? f.value+", "+t : t; f.focus(); };
+      chips.appendChild(c);
+    });
+    form.appendChild(chips);
+    form.appendChild(el('<textarea data-was rows="3" maxlength="300" placeholder="Kurz, was gemacht wurde – z. B. Montage Innengeräte Büro, Material für Baustelle geholt"></textarea>'));
+    var stOpt=ST.slice().sort(function(a,b){ return stName(a).localeCompare(stName(b),"de"); });
+    form.appendChild(el('<div class="grid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:10px">'+
+      '<label class="fl"><span>Markt / Standort</span><select data-st><option value="">–</option>'+stOpt.map(function(s){
+        return '<option value="'+esc(s.id)+'"'+(ein.standort_id===s.id?" selected":"")+">"+esc(stName(s))+"</option>"; }).join("")+"</select></label>"+
+      '<label class="fl"><span>Projekt</span><select data-pr><option value="">–</option>'+PROJEKTE.filter(projektOffen).map(function(p){
+        return '<option value="'+esc(p.id)+'"'+(ein.projekt_id===p.id?" selected":"")+">"+esc(projektTitel(p))+"</option>"; }).join("")+"</select></label></div>"));
+  }
+  form.appendChild(el('<div class="note warnbox" data-err hidden></div>'));
+  v.inhalt.appendChild(form);
+  var ab=el('<button class="btn ghost" type="button">Abbrechen – weiter eingestempelt</button>'), ok=el('<button class="btn" type="button" style="background:var(--crit);border-color:var(--crit)">■ Ausstempeln</button>');
+  ab.onclick=function(){ v.zu(); };
+  v.fuss.appendChild(ab); v.fuss.appendChild(ok);
+  setTimeout(function(){ var f=form.querySelector("[data-was]"); if(f && !belegt.length) f.focus(); }, 60);
+  ok.onclick=function(){
+    var dazu=form.querySelector("[data-was]").value.trim();
+    if(!belegt.length && !dazu){ var e=form.querySelector("[data-err]"); e.textContent="Bitte kurz eintragen, was du heute gemacht hast."; e.hidden=false; return; }
+    /* die Tätigkeit des Eintrags: was belegt ist, dazu die Ergänzung */
+    var text=belegt.map(function(x){ return x.text; }).concat(dazu?[dazu]:[]).join("; ");
+    if(text.length>300) text=text.slice(0,297)+"…";
+    var o=Object.assign({}, opt, {taetigkeit:text||null});
+    if(!belegt.length){ o.standort_id=(form.querySelector("[data-st]")||{}).value||null; o.projekt_id=(form.querySelector("[data-pr]")||{}).value||null; }
+    v.zu();
+    stempelDruecken("aus", o, knopf);
+  };
+}
+
 /* ---------- Karte „Stempeluhr“ oben im Reiter Stunden ---------- */
 var stempelUhr=null;
 function stempelKarte(){
@@ -21087,7 +21157,7 @@ function stempelKarte(){
   knoepfe.appendChild(el('<button class="btn" type="button" data-a="aus" '+gross+' style="background:var(--crit);border-color:var(--crit)" data-schreiben>■ Ausstempeln</button>'));
   host.appendChild(knoepfe);
   knoepfe.querySelectorAll("[data-a]").forEach(function(b){ b.onclick=function(){
-    if(b.dataset.a==="aus" && !window.confirm("Jetzt ausstempeln?")) return;
+    if(b.dataset.a==="aus"){ ausstempelnFragen({}, b); return; }
     stempelDruecken(b.dataset.a, {}, b); }; });
   /* vergessen auszustempeln: über 12 Stunden – das tatsächliche Ende eintragen */
   var lang=Date.now()-new Date(ein.zeit)>12*3600000;
@@ -21097,7 +21167,7 @@ function stempelKarte(){
       '<div class="rowflex" style="margin-top:8px;gap:8px"><input type="time" data-ende style="max-width:130px"><button class="btn sm" type="button" data-schreiben>Mit diesem Ende ausstempeln</button></div></div>');
     v.querySelector("button").onclick=function(){
       var e=v.querySelector("[data-ende]").value; if(!e){ toast("Bitte die Uhrzeit eintragen, zu der du fertig warst."); return; }
-      stempelDruecken("aus", {ende:e}, this);
+      ausstempelnFragen({ende:e}, this);
     };
     host.appendChild(v);
   }
