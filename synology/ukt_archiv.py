@@ -157,6 +157,14 @@ def sauber(text):
     return t[:60]
 
 
+def ungleich(p):
+    """Name im Abschluss weicht von der Techniker/in oben ab – dann gibt es kein PDF
+    (Büro 01.10.2026: Protokolle immer nur unter eigenem Namen)"""
+    t = re.sub(r"[^a-z0-9äöüß]", "", str(p.get("techniker") or "").lower())
+    n = re.sub(r"[^a-z0-9äöüß]", "", str(p.get("name_techniker") or "").lower())
+    return bool(t and n and t != n)
+
+
 def dateiname(p):
     """2026-09-21_Seekirchen_Darko.pdf – der Markt so, wie UKT ihn nennt
     (Ort bzw. Ort + Straße, vergibt die App); Störungen sind gekennzeichnet:
@@ -168,7 +176,7 @@ def dateiname(p):
         teile.append("Filiale-" + sauber(p["filiale"]))
     if p.get("wartungsart") == "Störung":
         teile.append("Stoerung")
-    tech = p.get("name_techniker") or p.get("techniker")
+    tech = p.get("techniker") or p.get("name_techniker")
     if tech:
         teile.append(sauber(tech))
     return "_".join(t for t in teile if t) + ".pdf"
@@ -249,6 +257,24 @@ def abgleich(k, sb, stand):
                 verschoben += 1
             continue
 
+        # ungleiche Angaben (Name im Abschluss ≠ Techniker/in oben): kein gültiges
+        # Protokoll – nicht archivieren, eine schon abgelegte Datei nach _gesperrt
+        # (Büro 01.10.2026). Nach der Berichtigung („Korrigieren“) geht es normal weiter.
+        if ungleich(p):
+            if s and s.get("datei") and not s.get("gesperrt") and not s.get("geloescht"):
+                alt = s["datei"]
+                ziel = os.path.join(os.path.dirname(alt), "_gesperrt", os.path.basename(alt))
+                log("ungleiche Angaben, verschiebe: " + os.path.basename(alt))
+                if not PRUEFEN and os.path.exists(alt):
+                    os.makedirs(os.path.dirname(ziel), exist_ok=True)
+                    os.replace(alt, ziel)
+                s["datei"], s["gesperrt"] = ziel, True
+                verschoben += 1
+            elif not s:
+                log("ungleiche Angaben, nicht archiviert: %s vom %s" % (p.get("standort_name") or cid, p.get("datum")))
+                stand[cid] = {"version": 0, "gesperrt": True}
+            continue
+
         b = berichte.get(cid)
         if not b:
             ohne_pdf += 1
@@ -258,7 +284,7 @@ def abgleich(k, sb, stand):
         gewuenscht = os.path.join(ordner, dateiname(p))
         vorhanden = s and s.get("datei") and os.path.exists(s["datei"])
 
-        aktuell = (vorhanden and not s.get("geloescht") and int(s.get("version") or 0) >= version
+        aktuell = (vorhanden and not s.get("geloescht") and not s.get("gesperrt") and int(s.get("version") or 0) >= version
                    and os.path.dirname(s["datei"]) == ordner
                    and os.path.basename(s["datei"]).startswith(dateiname(p)[:-4]))
         if aktuell:

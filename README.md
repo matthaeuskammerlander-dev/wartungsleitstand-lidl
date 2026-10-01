@@ -355,6 +355,27 @@ Hauptperson gemerkt. Dafür einmal `supabase-setup.sql` erneut ausführen, es
 legt die Spalte `mitarbeiter` an – **danach immer auch `tools/rollen.sql`**,
 sonst gelten die Sperren für Kunde, Präsentation und Zugangsdaten nicht mehr.
 
+## Protokolle nur unter eigenem Namen
+
+Seit 01.10.2026 gilt: Wer angemeldet ist, ist die Techniker/in des Protokolls.
+Sie ist verantwortlich für die Arbeit und das Protokoll, schließt selbst ab und
+unterschreibt. Das gilt auch für das Büro.
+
+- **Techniker/in** kommt fest aus dem Konto und lässt sich nicht ändern. Der
+  Name im Abschluss ist immer derselbe. Wer sonst dabei war, kommt unter
+  „Weitere/r Techniker/in“.
+- **Ungleiche Angaben:** Weicht bei einem älteren Protokoll der Name im
+  Abschluss von der Techniker/in ab, entsteht **kein PDF**. Das gilt für
+  Drucken, Archiv-PDF und Synology. Dort wandert eine schon abgelegte Datei
+  nach `_gesperrt`. Berichtigt wird über „Korrigieren“. Danach gibt es wieder
+  ein PDF.
+- **Vermerk:** Der Inhaber kann ein Protokoll vermerken („Vermerk eintragen“
+  in der Protokollansicht). Das Protokoll bleibt dabei unverändert, der
+  Vermerk steht für alle Mitarbeiter sichtbar daneben. In der Protokollliste
+  sind solche Protokolle mit ⚠ markiert.
+- Einmalig: `tools/protokoll-techniker.sql` (Datenbank hält den Namen im
+  Abschluss gleich) und `tools/protokoll-vermerke.sql`.
+
 ## Protokoll Schritt für Schritt
 
 Über dem Formular steht **„Schritt für Schritt ausfüllen“**. Der Dialog führt

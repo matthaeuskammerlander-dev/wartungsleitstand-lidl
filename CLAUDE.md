@@ -71,7 +71,12 @@ Kammerlander Umwelt- und Klimatechnik (UKT) – oft kurz, vom Handy, im Feld.
   die Arbeit und das Protokoll“): `kontoTechName()` setzt Techniker/in fest
   (nicht änderbar), der Name im Abschluss ist immer derselbe (`verantwortlich`
   beim Speichern, Trigger tools/protokoll-techniker.sql). Korrektur: es bleibt,
-  wer es gemacht hat. Wer noch dabei war: Weitere/r Techniker/in. Nie lockern.
+  wer es gemacht hat. Wer noch dabei war: Weitere/r Techniker/in. Auch das Büro
+  schreibt nie im Namen eines anderen. Ungleiche Angaben (Abschluss ≠ Techniker,
+  `protokollUngleich`): KEIN PDF (`protokollPdfSperre` – Drucken, Archiv-PDF,
+  Synology `ungleich()` → `_gesperrt`). Vermerke des Inhabers in eigener Tabelle
+  (`protokoll_vermerke`, tools/protokoll-vermerke.sql), Protokoll bleibt unverändert.
+  Nie lockern.
 - Je Anlage ein Schritt (`anlageSchritte`, Büro 01.10.2026): der Termin gehört
   zur Anlage – Anlagendaten (Ergänzen auch per KI), Termine und „Heute
   gewartet als“ in einem Schritt. Neu erfasste Anlage mit zwei Terminen: die

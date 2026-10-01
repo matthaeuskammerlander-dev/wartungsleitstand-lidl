@@ -2677,7 +2677,7 @@ function stoerungsKalender(){
       var p=x.p;
       var r=el('<div class="posbox"><div class="rowflex" style="justify-content:space-between;gap:8px">'+
         '<div style="min-width:0"><strong style="font-size:14px">'+(byId[p.standortId]?marktLink(byId[p.standortId]):esc(protoName(p)||"Störungseinsatz"))+"</strong>"+
-          '<br><span class="muted" style="font-size:12.5px">erledigt'+(p.nameTechniker?" · "+esc(p.nameTechniker):"")+
+          '<br><span class="muted" style="font-size:12.5px">erledigt'+((p.techniker||p.nameTechniker)?" · "+esc(p.techniker||p.nameTechniker):"")+
           (p.auftragsnummer?" · Auftrag "+esc(p.auftragsnummer):"")+"</span></div>"+
         '<button class="btn ghost sm" type="button">Protokoll</button></div></div>');
       r.querySelector("button").onclick=function(){
@@ -2882,7 +2882,7 @@ function posteingangRapport(e){
         /* mit Auftrag und Anlagen – sonst sähen zwei Einsätze am selben Tag gleich aus */
         var anl=(p.anlagen||[]).map(function(a){ return a && a.name; }).filter(Boolean);
         var b=el('<button class="btn ghost" type="button" style="text-align:left">'+esc(dfmt(p.datum))+" · "+
-          esc(protoName(p))+" · "+esc(istStoerung(p)?"Störung":(p.wartungsart||"Wartung"))+(p.nameTechniker?" · "+esc(kanonName(p.nameTechniker)):"")+
+          esc(protoName(p))+" · "+esc(istStoerung(p)?"Störung":(p.wartungsart||"Wartung"))+((p.techniker||p.nameTechniker)?" · "+esc(kanonName(p.techniker||p.nameTechniker)):"")+
           (p.auftragsnummer?" · Auftrag "+esc(p.auftragsnummer):"")+
           (anl.length?'<br><span class="muted" style="font-size:12.5px">'+esc(anl.join(", "))+"</span>":"")+"</button>");
         b.onclick=function(){
@@ -5027,7 +5027,7 @@ function anlageHistorie(leader){
   prot.forEach(function(pr){
     var stoe=istStoerung(pr);
     z.push({datum:pr.datum, art:stoe?"Störung"+(pr.stoerung&&pr.stoerung.problemtyp?": "+pr.stoerung.problemtyp:""):(pr.wartungsart||"Wartung"),
-      stoerung:stoe, techniker:kanonName(pr.nameTechniker||pr.techniker||""), quelle:"Protokoll", protokoll:pr,
+      stoerung:stoe, techniker:kanonName(pr.techniker||pr.nameTechniker||""), quelle:"Protokoll", protokoll:pr,
       rapport:rapportVon(pr)});
   });
   a.termine.forEach(function(t){
@@ -7963,6 +7963,7 @@ function ladeProtokolle(){
     }
     storeNachRender();
     offeneBerichteNachholen();
+    vermerkeLaden();
   }, function(x){ protokolleNichtGeladen((x&&x.message)||String(x)); });
 }
 /* Laden der Protokolle gescheitert (etwa schlechter Empfang): Hinweis in
@@ -13551,7 +13552,7 @@ function viewProtokoll(){
     }
     alleProtokolle().slice().sort(function(a,b){ return String(b.erstellt||"").localeCompare(String(a.erstellt||"")); })
       .forEach(function(x){
-        if(kanonName(x.nameTechniker||x.techniker)!==k) return;
+        if(kanonName(x.techniker||x.nameTechniker)!==k) return;
         if(!r.zertp && x.zertPerson) r.zertp=x.zertPerson;
         if(!r.kontakt && x.kontakt) r.kontakt=x.kontakt;
       });
@@ -14506,7 +14507,7 @@ function viewProtokoll(){
     var tb=tbl.querySelector("tbody");
     alle.slice(0,60).forEach(function(x){
       var tr=el("<tr style='cursor:pointer"+(x.geloescht?";opacity:.55;text-decoration:line-through":"")+"'><td class='mono'>"+dfmt(x.datum)+"</td><td>"+esc(protoName(x)||"–")+
-        "</td><td>"+esc(kanonName(x.nameTechniker||x.techniker)||"–")+"</td><td>"+
+        "</td><td>"+esc(kanonName(x.techniker||x.nameTechniker)||"–")+(protokollUngleich(x)||protokollVermerke(x).length?' <span style="color:var(--crit)" title="Vermerk bzw. ungleiche Angaben – kein PDF">⚠</span>':"")+"</td><td>"+
         (istStoerung(x)?'<span class="tag st">Störung</span>':esc(x.wartungsart||"–"))+
         "</td><td class='mono'>"+((x.maengel||[]).length||"0")+"</td>"+
         "<td class='mono'>"+((x.fotos||[]).length||"0")+"</td>"+
@@ -14749,6 +14750,8 @@ function fotosEinsetzen(host, p, eingebettet){
 }
 
 function druckeProtokoll(p){
+  var sperre=protokollPdfSperre(p);
+  if(sperre){ var a=ansichtOeffnen("Kein PDF"); a.inhalt.appendChild(el('<div class="note warnbox">'+esc(sperre)+"</div>")); return; }
   /* Die Unterschrift steht nicht in der Liste – vor dem Blatt nachholen. */
   ladeUnterschrift(p).then(function(){ druckansichtZeigen(p); }, function(e){ toast(e.message); });
 }
@@ -14902,7 +14905,62 @@ function ladeWasserzeichen(){
     b.src="logo.png";
   });
 }
+/* Ungleiche Angaben (Büro 01.10.2026): der Name im Abschluss muss die Techniker/in oben
+   sein – Protokolle immer nur unter eigenem Namen. Sonst entsteht kein PDF (auch nicht
+   fürs Archiv); berichtigt wird über „Korrigieren“ (der Name folgt dann dem Techniker). */
+function protokollUngleich(p){
+  var t=kanonName(p.techniker||""), n=kanonName(p.nameTechniker||"");
+  return !!(t && n && t!==n);
+}
+function protokollPdfSperre(p){
+  return protokollUngleich(p) ? "Ungleiche Angaben: Techniker/in „"+(p.techniker||"")+"“, im Abschluss „"+(p.nameTechniker||"")+
+    "“. Dafür entsteht kein PDF – bitte über „Korrigieren“ berichtigen (die Techniker/in schließt selbst ab und unterschreibt)." : "";
+}
+/* Vermerke des Inhabers an Protokollen (tools/protokoll-vermerke.sql) – das Protokoll
+   selbst bleibt unverändert, der Vermerk steht sichtbar daneben */
+var VERMERKE={}, vermerkeStand=0;
+function vermerkeLaden(){
+  if(!Store.sb || Store.modus!=="supabase" || !Store.benutzer || nurLesen() || demo()) return Promise.resolve();
+  if(Date.now()-vermerkeStand<60000) return Promise.resolve();
+  vermerkeStand=Date.now();
+  return Store.sb.from("protokoll_vermerke").select("*").order("erstellt").limit(2000).then(function(r){
+    if(r.error) return;
+    VERMERKE={}; (r.data||[]).forEach(function(v){ (VERMERKE[v.client_id]=VERMERKE[v.client_id]||[]).push(v); });
+  }, function(){});
+}
+function protokollVermerke(p){ return (p && VERMERKE[p._id]) || []; }
+function vermerkKarte(p){
+  var l=protokollVermerke(p), sperre=protokollPdfSperre(p);
+  if(!l.length && !sperre && !istInhaber()) return null;
+  var c=el('<div class="stack" style="gap:6px"></div>');
+  l.forEach(function(v){
+    var z=el('<div class="note warnbox" style="font-size:13px"><strong>Vermerk</strong> vom '+esc(tagFmt(v.erstellt))+(v.von?" ("+esc(v.von)+")":"")+": "+esc(v.text)+
+      (istInhaber()?' <a href="#" class="sprunglink" style="margin-left:6px">entfernen</a>':"")+"</div>");
+    var a=z.querySelector("a");
+    if(a) a.onclick=function(e){ e.preventDefault(); if(!window.confirm("Diesen Vermerk entfernen?")) return;
+      Store.sb.from("protokoll_vermerke").delete().eq("id", v.id).select("id").then(function(r){
+        if(r.error || !r.data || !r.data.length){ toast("Nicht entfernt"+(r.error?": "+r.error.message:"")+"."); return; }
+        VERMERKE[p._id]=protokollVermerke(p).filter(function(x){ return x.id!==v.id; }); z.remove(); toast("Vermerk entfernt."); }); };
+    c.appendChild(z);
+  });
+  if(sperre) c.appendChild(el('<div class="note warnbox" style="font-size:13px"><strong>Kein PDF.</strong> '+esc(sperre)+"</div>"));
+  if(istInhaber() && betriebAn() && p._quelle!=="geraet"){
+    var b=el('<div><button class="btn ghost sm" type="button">Vermerk eintragen</button></div>');
+    b.querySelector("button").onclick=function(){
+      var t=window.prompt("Vermerk zu diesem Protokoll (für alle Mitarbeiter sichtbar):", ""); if(!t || !t.trim()) return;
+      Store.sb.from("protokoll_vermerke").insert({client_id:p._id, text:t.trim().slice(0,1000), von:meinName()}).select("*").then(function(r){
+        if(r.error || !r.data || !r.data.length){ toast("Nicht gespeichert"+(r.error?": "+(/relation|does not exist/i.test(r.error.message)?"tools/protokoll-vermerke.sql fehlt":r.error.message):"")+"."); return; }
+        (VERMERKE[p._id]=VERMERKE[p._id]||[]).push(r.data[0]);
+        b.insertAdjacentElement("beforebegin", el('<div class="note warnbox" style="font-size:13px"><strong>Vermerk</strong> vom '+esc(tagFmt(r.data[0].erstellt))+" ("+esc(meinName())+"): "+esc(r.data[0].text)+"</div>"));
+        toast("Vermerk gespeichert.");
+      });
+    };
+    c.appendChild(b);
+  }
+  return c;
+}
 function protokollPdfErzeugen(p){
+  var sperre=protokollPdfSperre(p); if(sperre) return Promise.reject(new Error(sperre));
   var titel=(istStoerung(p)?"Störungsprotokoll ":"Wartungsprotokoll ")+protoName(p);
   return ladeUnterschrift(p).then(function(){ return blattZuPdf({
     html:blattInhalt(p),
@@ -15033,6 +15091,8 @@ function blattZuPdf(opt){
 function berichtAblegen(p){
   if(demo()) return Promise.resolve(false);
   if(Store.modus!=="supabase" || !Store.sb || !p || !p._id) return Promise.resolve(false);
+  /* ungleiche Angaben: kein PDF – auch nicht später nachholen */
+  if(protokollPdfSperre(p)){ lsSet("ukt_pdf_offen", lsGet("ukt_pdf_offen",[]).filter(function(x){ return x!==p._id; })); return Promise.resolve(false); }
   /* läuft schon einer: bei derselben Fassung genügt der; ist inzwischen
      korrigiert worden, danach die neue Fassung ablegen – sonst bliebe im
      Archiv die alte */
@@ -15139,7 +15199,7 @@ function protokollDetail(p){
       '<div class="rowflex" style="margin-top:6px"><button class="btn ghost sm" type="button" data-akt="konfliktdruck">Korrektur vom Gerät ansehen</button>'+
       (nurLesen()||demo()?"":'<button class="btn ghost sm" type="button" data-akt="konfliktweg">Vom Gerät verwerfen</button>')+"</div></div>":"")+
     '<dl class="dl">'+
-      "<dt>Techniker/in</dt><dd>"+esc([p.nameTechniker||p.techniker].concat(p.mitarbeiter||[]).filter(Boolean).map(kanonName).join(", ")||"–")+"</dd>"+
+      "<dt>Techniker/in</dt><dd>"+esc([p.techniker||p.nameTechniker].concat(p.mitarbeiter||[]).filter(Boolean).map(kanonName).join(", ")||"–")+"</dd>"+
       "<dt>Wartungsart</dt><dd>"+esc(p.wartungsart||"–")+"</dd>"+
       /* welche Anlagen gewartet bzw. betroffen waren – antippen: ihre Historie */
       (function(){
@@ -15190,6 +15250,8 @@ function protokollDetail(p){
     '<div id="pfotos"></div>'+
   "</div></div>");
 
+  /* Vermerke des Inhabers und „kein PDF“ bei ungleichen Angaben – gleich unter dem Kopf */
+  var vk=vermerkKarte(p); if(vk){ var vst=d.querySelector(".stack"); vst.insertBefore(vk, vst.children[1]||null); }
   d.querySelector('[data-akt="druck"]').onclick=function(){ druckeProtokoll(p); };
   d.querySelectorAll("[data-anl]").forEach(function(a){ tippe(a, function(){ if(posById[a.dataset.anl]) anlageHistorieAnsicht(posById[a.dataset.anl]); }); });
   /* Team-Chat und „Abgerechnet“ (nur Inhaber) – beides nur bei zentral abgelegten Protokollen */
@@ -15426,7 +15488,7 @@ function historieEintraege(s){
     var zukunft=pr.datum>isoLokal(new Date());
     zeilen.push({datum:pr.datum, anlage:ids.length?feldText("positionIds",ids):"(Markt allgemein)",
       art:stoe ? ("Störung"+(pr.stoerung&&pr.stoerung.problemtyp?": "+pr.stoerung.problemtyp:"")) : (pr.wartungsart||""),
-      stoerung:stoe, wartung:zaehltAlsWartung(pr), zukunft:zukunft, techniker:kanonName(pr.nameTechniker||pr.techniker||""), quelle:"App", protokoll:pr});
+      stoerung:stoe, wartung:zaehltAlsWartung(pr), zukunft:zukunft, techniker:kanonName(pr.techniker||pr.nameTechniker||""), quelle:"App", protokoll:pr});
   });
   return zeilen.sort(function(a,b){ return b.datum.localeCompare(a.datum); });
 }
@@ -15533,7 +15595,7 @@ function berichtDaten(tageZurueck, tageVoraus, region){
     rueck.push({datum:p.datum, markt:protoName(p), filiale:s?s.filiale:p.filiale, region:s?s.region:(p.region||""),   /* wie der Filter: die Region des Markts */
       anlage:ids.length?feldText("positionIds",ids):"(Markt allgemein)",
       art:istStoerung(p)?("Störung"+(p.stoerung&&p.stoerung.problemtyp?": "+p.stoerung.problemtyp:"")):(p.wartungsart||"Wartung"),
-      techniker:kanonName(p.nameTechniker||p.techniker||""), maengel:(p.maengel||[]).length, quelle:"Protokoll"});
+      techniker:kanonName(p.techniker||p.nameTechniker||""), maengel:(p.maengel||[]).length, quelle:"Protokoll"});
   });
   /* Termine aus der Excel-Liste, zu denen es kein Wartungsprotokoll aus der App
      gibt (je Anlage, derselbe Besuch = ≤14 Tage) – auch Anlagen, die zur Zeit
@@ -19576,7 +19638,7 @@ function viewDaten(){
   };
   exp.querySelector("#expProto").onclick=function(){
     var head=["Datum","Uhrzeit","Standort","Adresse","Region","Techniker","Wartungsart","Auftragsnummer","Arbeiten","Maengel","Betriebsbereit","Bemerkungen"];
-    var rows=alleProtokolle().map(function(x){ return [x.datum,x.uhrzeit,protoName(x),x.adresse,x.region,kanonName(x.nameTechniker||x.techniker||""),x.wartungsart,
+    var rows=alleProtokolle().map(function(x){ return [x.datum,x.uhrzeit,protoName(x),x.adresse,x.region,kanonName(x.techniker||x.nameTechniker||""),x.wartungsart,
       x.auftragsnummer,(x.arbeiten||[]).join(" | "),(x.maengel||[]).map(function(m){return m.text+" ("+m.prio+")";}).join(" | "),
       x.betriebsbereit,x.bemerkungen]; });
     csv("protokolle_lidl.csv",head,rows);

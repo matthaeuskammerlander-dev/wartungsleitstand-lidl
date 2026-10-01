@@ -45,7 +45,7 @@ STAMM = [{"id": "standort:Ntest1", "typ": "standort", "ziel": "Ntest1", "felder"
           "felder": {"anlagentyp": "VRV 1", "hersteller": "DAIKIN", "modell": "X1", "seriennummer": "S1",
                      "kaeltemittelArt": "R410A", "kaeltemittelKg": 20.6, "inbetriebnahme": "2026-09-14"}}]
 
-zustand = {"belege_erlaubt": True, "geholt": [], "belege_gefragt": False}
+zustand = {"belege_erlaubt": True, "geholt": [], "belege_gefragt": False, "protokolle": [], "berichte": [], "berichte_geholt": []}
 
 
 def falsche_anfrage(methode, url, kopf=None, daten=None, roh=False):
@@ -54,8 +54,13 @@ def falsche_anfrage(methode, url, kopf=None, daten=None, roh=False):
     if "/storage/v1/object/projektdateien/" in url:
         zustand["geholt"].append(url.split("/projektdateien/")[1])
         return PDF
-    if "/rest/v1/protokolle" in url or "/rest/v1/berichte" in url:
-        return []
+    if "/storage/v1/object/berichte/" in url:
+        zustand["berichte_geholt"].append(url.split("/berichte/")[1])
+        return PDF
+    if "/rest/v1/protokolle" in url:
+        return zustand["protokolle"] if "offset=0" in url else []
+    if "/rest/v1/berichte" in url:
+        return zustand["berichte"] if "offset=0" in url else []
     if "/rest/v1/projekte" in url:
         return [PROJEKT] if "offset=0" in url else []
     if "/rest/v1/belege" in url:
@@ -126,6 +131,27 @@ def main():
         A.projekte_abgleich(k, sb, stand)
         neu = os.path.join(basis, "2026", "Kunden", "Lidl", "Baustellen", "123-Neuort_P-2026-001")
         assert os.path.exists(os.path.join(neu, "Plaene", "Grundriss-EG.pdf")) and not os.path.exists(ordner), "Umbenennen"
+
+        # Protokolle: ungleiche Angaben (Name im Abschluss ≠ Techniker/in) – kein PDF ins Archiv (Büro 01.10.2026)
+        assert A.ungleich({"techniker": "Darko Jekic", "name_techniker": "Tobias K<"})
+        assert not A.ungleich({"techniker": "Darko Jekic", "name_techniker": "Darko Jekic"})
+        assert not A.ungleich({"techniker": "Darko Jekic", "name_techniker": ""})
+        PR = {"client_id": "p_x", "datum": "2026-09-30", "standort_name": "Musterort", "standort_id": "Ntest1",
+              "techniker": "Max Muster", "name_techniker": "Spass Name", "wartungsart": "Störung", "version": 1, "geloescht": None}
+        zustand["protokolle"] = [PR]
+        zustand["berichte"] = [{"client_id": "p_x", "version": 1, "pfad": "2026/p_x.pdf"}]
+        st2 = {}
+        A.abgleich(k, sb, st2)
+        assert zustand["berichte_geholt"] == [] and st2["p_x"].get("gesperrt"), st2
+        # berichtigt (Fassung 2, gleiche Namen): jetzt ins Archiv
+        PR.update(name_techniker="Max Muster", version=2)
+        zustand["berichte"][0]["version"] = 2
+        A.abgleich(k, sb, st2)
+        assert zustand["berichte_geholt"] == ["2026/p_x.pdf"] and os.path.exists(st2["p_x"]["datei"]), st2
+        # schon archiviert und dann ungleich: Datei wandert nach _gesperrt
+        PR.update(name_techniker="Jemand Anderer", version=3)
+        A.abgleich(k, sb, st2)
+        assert "_gesperrt" in st2["p_x"]["datei"] and os.path.exists(st2["p_x"]["datei"]), st2
 
         # Dateinamen
         assert A.sauber_datei("Plan/EG: neu?.PDF") == "Plan-EG-neu.pdf", A.sauber_datei("Plan/EG: neu?.PDF")
