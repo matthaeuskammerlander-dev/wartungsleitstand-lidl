@@ -67,6 +67,18 @@ Kammerlander Umwelt- und Klimatechnik (UKT) – oft kurz, vom Handy, im Feld.
   Teilen zu 8 (`kiTeilLesen`, `kiTeileZusammen`; der Server nimmt 12 je Aufruf).
   Wartungspunkt „Kondensatwanne“ (früher „Kondensatwanne/-ablauf“, alte
   Protokolle über `arbeitenAktuell`).
+- Je Anlage ein Schritt (`anlageSchritte`, Büro 01.10.2026): der Termin gehört
+  zur Anlage – Anlagendaten (Ergänzen auch per KI), Termine und „Heute
+  gewartet als“ in einem Schritt. Neu erfasste Anlage mit zwei Terminen: die
+  Wahl (`_zaehltAls`) bestimmt, welcher Termin die erste Zeile wird
+  (`neueAnlageReihenfolge`) – nur sie steht im Protokoll und gilt als gewartet.
+  Kommt bei einer bestehenden Anlage ein Termin dazu, wird vor dem Weitergehen
+  nochmals nach „Heute gewartet als“ gefragt.
+- Nach dem Speichern oben „✓ … gespeichert“ (`S.gespeichert`,
+  `gespeichertKarte`); nach einer Störung mit fälligen Wartungen am Markt
+  „Wartung gleich mitmachen“ (`faelligeWartungen`).
+- Stempeluhr: von Hand eingetragene Zeit, die in die Stempelzeit fällt, zählt
+  für die 10-/12-Stunden-Hinweise nicht dazu (wird beim Ausstempeln abgeglichen).
 - Termine vor Ort prüfen (`termineOffen`, `termineSchritt`): im geführten
   Protokoll je Anlage ein Schritt „Stimmen Inbetriebnahme und Termine?“,
   solange Inbetriebnahme, Soll-Monat oder Kürzel fehlen oder ein Soll-Monat
