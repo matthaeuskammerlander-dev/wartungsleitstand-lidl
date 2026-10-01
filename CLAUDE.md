@@ -54,6 +54,19 @@ Kammerlander Umwelt- und Klimatechnik (UKT) – oft kurz, vom Handy, im Feld.
   andere Anlage (Feld `hjiMarkt`). Vor Ort bestätigt der Termine-Schritt den
   Monat: gleicher Besuch oder 6 Monate nach der JW. Ein Merker (typ „merker“)
   verhindert, dass ein zurückgenommener Termin wiederkommt.
+- Geführtes Protokoll im Einsatz (Büro 01.10.2026, nach dem ersten Härtetest):
+  bis 25 Fotos je Protokoll (`FOTO_MAX`, Dateien im Speicher), im Schritt
+  „Fotos und Rapport“ mit Notiz je Foto und Rapportbericht; Datum, Uhrzeit
+  und Korrekturgrund im Schritt „Abschluss“; die Übersicht zeigt alles und
+  führt zu jedem Schritt; gespeichert wird erst, wenn `form._fehltNoch()`
+  leer ist (sonst bleibt der Dialog offen). Auch „Korrigieren“ geht Schritt
+  für Schritt. „+ Anlage fehlt“ fragt zuerst, ob die Anlage schon in der
+  Liste steht (`anlageSchonDa`) – sonst bleibt die Zeile der alten Liste als
+  Doppel zurück. Bezeichnung jeder Anlage in der Übersicht des Anlagendialogs
+  änderbar. KI-Fotos: Prüfbuch und Typenschilder bis 30 Bilder, gelesen in
+  Teilen zu 8 (`kiTeilLesen`, `kiTeileZusammen`; der Server nimmt 12 je Aufruf).
+  Wartungspunkt „Kondensatwanne“ (früher „Kondensatwanne/-ablauf“, alte
+  Protokolle über `arbeitenAktuell`).
 - Termine vor Ort prüfen (`termineOffen`, `termineSchritt`): im geführten
   Protokoll je Anlage ein Schritt „Stimmen Inbetriebnahme und Termine?“,
   solange Inbetriebnahme, Soll-Monat oder Kürzel fehlen oder ein Soll-Monat
