@@ -111,6 +111,24 @@ Kammerlander Umwelt- und Klimatechnik (UKT) – oft kurz, vom Handy, im Feld.
   bereinigt (`altlastenFaelle`).
 - Nur planmäßige Wartung/Prüfung zählt als Wartung („nach § 22 KAV“).
 
+## Weitere Kunden, Projekte, Stunden (seit 01.10.2026)
+
+- **Weitere Kunden außer Lidl:** Kunde = Stammdaten-Eintrag typ „kunde“, ein
+  Markt/Standort gehört über `kundeId` zu ihm (leer = Lidl, `kundeVon`,
+  `istLidl`). Für sie geht alles wie für Lidl, nur ohne Lidl-Felder
+  (Filialnummer, FM-Region, Lidl-Auftrag, Rapport, Rechnungshinweis –
+  `data-nurlidl` im Protokoll). In den Übersichten vorgegeben nur Lidl,
+  dazuwählbar über `S.kunden` (`kundeImFilter` in `filtered()`). Offene
+  Störungen stehen immer alle da. Monatsbericht an Lidl: nur Lidl.
+- **Datenschutz:** Das Kunden-Konto (Lidl) sieht nie Daten anderer Kunden –
+  die Datenbank sperrt es (`kunde_sieht`, tools/kunden-projekte-stunden.sql),
+  die App filtert zusätzlich. Diese Grenze nie lockern.
+- **Projekte** (Tabelle `projekte`): Anfrage → Angebot → Auftrag → Baustelle →
+  Inbetriebnahme → abgeschlossen → abgerechnet. Dateien unter `buero/…`
+  (Angebot, Rechnung) nur für Admins/Inhaber.
+- **Arbeitszeiten** (Tabelle `arbeitszeiten`): jede Person sieht nur ihre
+  eigenen, der Inhaber alle; ein bestätigter Monat ist gesperrt.
+
 ## Rollen
 
 inhaber, admin, techniker, kunde, praesentation. Der Kunde darf nur ansehen

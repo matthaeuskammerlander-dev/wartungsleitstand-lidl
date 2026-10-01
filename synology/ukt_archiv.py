@@ -9,6 +9,9 @@ mit einem eigenen Konto an und legt neue und korrigierte PDFs ab unter
 
     <basis>/<jahr>/Lidl/Wartungen/2026-09-21_Seekirchen_Darko.pdf
 
+Protokolle weiterer Kunden (nicht Lidl) kommen nach <basis>/<jahr>/Kunden/<Kunde>/
+(änderbar mit "unterordner_kunde" in den Einstellungen).
+
 Gelöschte Protokolle wandern in den Unterordner "_geloescht". Das Skript
 schreibt nur in diese Ordner und fasst sonst nichts an.
 
@@ -115,12 +118,13 @@ class Supabase:
     def kopf(self):
         return {"apikey": self.key, "Authorization": "Bearer " + self.token}
 
-    def tabelle(self, name, spalten):
+    def tabelle(self, name, spalten, ordnung="client_id.asc", filter=None):
         """alle Zeilen, seitenweise zu je 1000"""
         alle, start = [], 0
         while True:
-            q = urllib.parse.urlencode({"select": spalten, "order": "client_id.asc",
-                                        "limit": 1000, "offset": start})
+            werte = {"select": spalten, "order": ordnung, "limit": 1000, "offset": start}
+            werte.update(filter or {})
+            q = urllib.parse.urlencode(werte)
             teil = anfrage("GET", self.url + "/rest/v1/" + name + "?" + q, self.kopf())
             alle.extend(teil)
             if len(teil) < 1000:
@@ -159,10 +163,29 @@ def dateiname(p):
     return "_".join(t for t in teile if t) + ".pdf"
 
 
-def zielordner(k, p):
+def kunden_je_standort(sb):
+    """Weitere Kunden außer Lidl (seit 01.10.2026): Standort -> Name des Kunden.
+    Lidl-Märkte fehlen in der Liste – sie bleiben im Lidl-Ordner."""
+    try:
+        zeilen = sb.tabelle("stammdaten", "id,typ,ziel,felder", "id.asc", {"typ": "in.(standort,kunde)"})
+    except RuntimeError as e:
+        log("Kunden nicht lesbar (%s) – alle Protokolle in den Lidl-Ordner" % e)
+        return {}
+    namen = {z["ziel"]: (z.get("felder") or {}).get("name") or "Kunde"
+             for z in zeilen if z.get("typ") == "kunde"}
+    return {z["ziel"]: namen.get((z.get("felder") or {}).get("kundeId"), "Kunde")
+            for z in zeilen if z.get("typ") == "standort" and (z.get("felder") or {}).get("kundeId")}
+
+
+def zielordner(k, p, kunden=None):
     jahr = str(p.get("datum") or "")[:4]
     if not re.match(r"^\d{4}$", jahr):
         jahr = "ohne-Datum"
+    kunde = (kunden or {}).get(p.get("standort_id"))
+    if kunde:
+        # weiterer Kunde: eigener Ordner je Kunde, z. B. 2026/Kunden/Muster-GmbH
+        muster = k.get("unterordner_kunde", "{jahr}/Kunden/{kunde}")
+        return os.path.join(k["basis"], muster.format(jahr=jahr, kunde=sauber(kunde)))
     return os.path.join(k["basis"], k["unterordner"].format(jahr=jahr))
 
 
@@ -188,9 +211,10 @@ def schreibe(pfad, inhalt):
 # ---------------------------------------------------------------- Ablauf
 
 def abgleich(k, sb, stand):
-    protokolle = sb.tabelle("protokolle", "client_id,datum,filiale,standort_name,"
+    protokolle = sb.tabelle("protokolle", "client_id,datum,filiale,standort_name,standort_id,"
                                           "techniker,name_techniker,wartungsart,version,geloescht")
     berichte = {b["client_id"]: b for b in sb.tabelle("berichte", "client_id,version,pfad")}
+    kunden = kunden_je_standort(sb)
     log("%d Protokolle, %d PDFs in der Datenbank" % (len(protokolle), len(berichte)))
 
     neu = erneuert = verschoben = ohne_pdf = 0
@@ -219,7 +243,7 @@ def abgleich(k, sb, stand):
             ohne_pdf += 1
             continue
         version = int(b.get("version") or 1)
-        ordner = zielordner(k, p)
+        ordner = zielordner(k, p, kunden)
         gewuenscht = os.path.join(ordner, dateiname(p))
         vorhanden = s and s.get("datei") and os.path.exists(s["datei"])
 
