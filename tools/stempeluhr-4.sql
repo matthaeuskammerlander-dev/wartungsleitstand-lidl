@@ -12,7 +12,7 @@ alter table public.arbeitszeiten add column if not exists pause_auto integer not
 alter table public.arbeitszeiten drop constraint if exists arbeitszeiten_pause_auto_check;
 alter table public.arbeitszeiten add constraint arbeitszeiten_pause_auto_check check (pause_auto between 0 and 600);
 insert into public.einstellungen (schluessel, wert) values
-  ('arbeitszeit', '{"wochenstunden": 38.5, "verteilung": [7.7, 7.7, 7.7, 7.7, 7.7, 0, 0], "autoPause": true}'::jsonb)
+  ('arbeitszeit', '{"wochenstunden": 38.5, "verteilung": [8, 8, 8, 8, 6.5, 0, 0], "autoPause": true}'::jsonb)
 on conflict (schluessel) do nothing;
 
 create or replace function public.stempeln(p_art text, p_standort text default null, p_projekt uuid default null,
