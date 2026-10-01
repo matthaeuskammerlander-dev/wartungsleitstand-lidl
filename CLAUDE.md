@@ -121,6 +121,9 @@ Kammerlander Umwelt- und Klimatechnik (UKT) – oft kurz, vom Handy, im Feld.
   `standardZu` am Handy, `klappLeiste` „Alles zu-/aufklappen“). Geführte Rundgänge
   (`RUNDGAENGE`, `rundgangStarten`: hebt echte Elemente hervor, trägt nie etwas ein) –
   bei neuen Funktionen den passenden Schritt und das Handbuch (`handbuchKarte`) ergänzen.
+- Schmale Navigationsleiste (`sprungleiste`, `seitenLeiste`, Büro 02.10.2026): rechts ein Punkt
+  je Abschnitt auf langen Seiten und in großen Fenstern; Protokoll-Abschnitte einklappbar
+  (`fieldsetsKlappbar`, `fs-zu`; Pflichtprüfung und Sprünge klappen von selbst auf).
 - Angebot/Rechnung bearbeiten (`belegEditor`, Büro 01.10.2026 „gründlich überarbeiten“): großes
   Fenster, Positionen als Tabelle (`.bpos`, am Handy Block), Bezeichnung wächst mit
   (`feldHoehe`), Summe immer sichtbar im Fuß, Kopf/Texte einklappbar, Vorschau (PDF)

@@ -487,6 +487,27 @@ input[aria-invalid="true"]{border-color:var(--crit);box-shadow:0 0 0 1px var(--c
 /* nach dem Antippen kein Rahmen um die Überschrift – nur bei Bedienung mit der Tastatur */
 .card.klappbar h2:focus{outline:none}
 .card.klappbar h2:focus-visible{outline:2px solid var(--accent);outline-offset:3px;border-radius:4px}
+/* schmale Navigationsleiste am rechten Rand (lange Seiten und Fenster) */
+.sleiste{position:fixed;right:3px;top:50%;transform:translateY(-50%);z-index:35;display:flex;flex-direction:column;align-items:center;gap:6px;
+  padding:6px 3px;border-radius:12px;background:color-mix(in srgb, var(--surface) 82%, transparent);border:1px solid var(--line);box-shadow:var(--shadow);max-height:72vh}
+.sleiste.im-fenster{position:absolute;right:4px;z-index:5}
+.as-karte{position:relative}
+.sleiste .sl-liste{appearance:none;border:0;background:none;color:var(--ink-3);font-size:14px;line-height:1;padding:2px;cursor:pointer}
+.sleiste .sl-punkte{display:flex;flex-direction:column;gap:5px;overflow:auto;scrollbar-width:none;align-items:center}
+.sleiste .sl-punkte::-webkit-scrollbar{display:none}
+.sleiste .sl-p{appearance:none;width:10px;height:10px;border-radius:5px;border:0;padding:0;background:var(--line-2);cursor:pointer;flex:none;position:relative}
+.sleiste .sl-p::after{content:"";position:absolute;inset:-6px -7px}   /* größere Tippfläche */
+.sleiste .sl-p.an{background:var(--accent);height:20px}
+.sleiste .sl-name{position:absolute;right:26px;top:0;white-space:nowrap;background:var(--ink);color:var(--ground);font-size:12.5px;padding:5px 9px;border-radius:7px;box-shadow:var(--shadow);max-width:70vw;overflow:hidden;text-overflow:ellipsis}
+@media print{ .sleiste{display:none!important} }
+@media (max-width:700px){ body.mit-sleiste #app{padding-right:18px} }
+.as-karte:has(> .sleiste) .as-inhalt{padding-right:30px}
+/* Protokoll: jeder Abschnitt klappt über seine Überschrift zu und auf */
+fieldset.klappfs>legend{cursor:pointer;user-select:none}
+fieldset.klappfs>legend::after{content:" ▾";color:var(--ink-3);font-size:11px}
+fieldset.klappfs.fs-zu>legend::after{content:" ▸"}
+fieldset.fs-zu>*:not(legend){display:none!important}
+fieldset.fs-zu{padding-block:4px 6px}
 /* geführter Rundgang: abgedunkelt, das Ziel ausgespart, die Erklärung daneben (am Handy unten) */
 #rundgang{position:fixed;inset:0;z-index:1300;pointer-events:none}
 #rundgang.rg-dunkel{background:rgba(8,14,16,.55)}
@@ -13841,6 +13862,8 @@ function viewProtokoll(){
     return l;
   };
   function pflichtPruefung(){
+    /* zugeklappte Abschnitte aufklappen – sonst sähe man nicht, was fehlt */
+    form.querySelectorAll("fieldset.fs-zu").forEach(function(fs){ fs.classList.remove("fs-zu"); });
     /* der Name im Abschluss ist fast immer der Techniker oben – nicht zweimal verlangen */
     var tf=form.querySelector("#f_tech"), nf=form.querySelector("#f_name");
     if(tf && nf && tf.value.trim() && !nf.value.trim()) nf.value=tf.value;
@@ -18938,6 +18961,98 @@ function klappLeiste(host){
    einklappbar, kommt in die Haupt- oder Nebenspalte und beginnt am Handy auf
    Wunsch zugeklappt. regeln: [{h:/^Überschrift/ (oder klasse:"…"), seite:"haupt"|"neben", fest:nicht einklappbar,
    key:"…", zusammen:"…", handyZu:true}] – nicht Erfasstes bleibt in der Hauptspalte. */
+/* ================================================================
+   Schmale Navigationsleiste (Büro 02.10.2026: „eine schmale vertikale
+   Navigationsleiste würde bei der Länge echt helfen“): am rechten Rand ein
+   Punkt je Abschnitt – der sichtbare hervorgehoben, Antippen springt hin und
+   zeigt kurz den Namen, „☰“ öffnet die Liste. Nur auf langen Seiten.
+   wurzel: das scrollende Element (null = die Seite), ort: wohin die Leiste
+   kommt (body oder das Fenster), ziele(): [{el, titel}]
+   ================================================================ */
+function abschnittTitel(el){
+  var h=el.querySelector && el.querySelector(":scope > .pad h2, :scope > .pad > .rowflex h2, :scope > .pad > div > h2, :scope > legend, h2, legend");
+  if(!h) return "";
+  var c=h.cloneNode(true); c.querySelectorAll(".klapp,.zusammen,.pill,.tag").forEach(function(x){ x.remove(); });
+  return c.textContent.replace(/\s+/g," ").trim();
+}
+function sprungleiste(wurzel, ort, ziele, opt){
+  opt=opt||{};
+  var alt=ort.querySelector(":scope > .sleiste"); if(alt && alt._weg) alt._weg();
+  var l=ziele().filter(function(z){ return z.el && z.titel; });
+  if(l.length<(opt.min||4)) return null;
+  var leiste=el('<nav class="sleiste'+(wurzel?" im-fenster":"")+'" aria-label="Abschnitte"><button type="button" class="sl-liste" title="Alle Abschnitte" aria-label="Alle Abschnitte">☰</button><div class="sl-punkte"></div><div class="sl-name" hidden></div></nav>');
+  var punkte=leiste.querySelector(".sl-punkte"), name=leiste.querySelector(".sl-name"), nameZeit=0;
+  var scroller=wurzel||window;
+  var oben=function(){ return wurzel ? wurzel.getBoundingClientRect().top : ((document.querySelector("header.app")||{}).offsetHeight||0)+(document.getElementById("demobanner")||{offsetHeight:0}).offsetHeight; };
+  var hin=function(z){
+    var fs=z.el.closest && z.el.closest("fieldset.fs-zu"); if(fs) fs.classList.remove("fs-zu");
+    var y=z.el.getBoundingClientRect().top-oben()-8;
+    if(wurzel) wurzel.scrollBy({top:y, behavior:"smooth"}); else window.scrollBy({top:y, behavior:"smooth"});
+    zeigeName(z.titel);
+  };
+  var zeigeName=function(t){ name.textContent=t; name.hidden=false; nameZeit=Date.now(); setTimeout(function(){ if(Date.now()-nameZeit>=1400) name.hidden=true; }, 1500); };
+  l.forEach(function(z, i){
+    var b=el('<button type="button" class="sl-p" aria-label="'+esc(z.titel)+'" title="'+esc(z.titel)+'"></button>');
+    b.onclick=function(){ hin(z); };
+    z.b=b; punkte.appendChild(b);
+  });
+  leiste.querySelector(".sl-liste").onclick=function(){
+    var v=ansichtOeffnen("Abschnitte");
+    var box=el('<div class="stack" style="gap:4px"></div>');
+    l.forEach(function(z){ var b=el('<button class="btn ghost" type="button" style="text-align:left;justify-content:flex-start">'+esc(z.titel)+"</button>");
+      b.onclick=function(){ v.zu(); setTimeout(function(){ hin(z); }, 30); }; box.appendChild(b); });
+    v.inhalt.appendChild(box);
+  };
+  /* welcher Abschnitt ist gerade oben? */
+  var rahmen=0;
+  var markieren=function(){
+    rahmen=0;
+    if(!document.body.contains(leiste)) return weg();
+    var o=oben()+40, akt=0;
+    l.forEach(function(z, i){ if(z.el.getBoundingClientRect().top<=o) akt=i; });
+    l.forEach(function(z, i){ z.b.classList.toggle("an", i===akt); });
+  };
+  var beimScroll=function(){ if(!rahmen) rahmen=requestAnimationFrame(markieren); };
+  var weg=function(){ scroller.removeEventListener("scroll", beimScroll); window.removeEventListener("resize", beimScroll); leiste.remove(); if(!wurzel) document.body.classList.remove("mit-sleiste"); };
+  leiste._weg=weg;
+  scroller.addEventListener("scroll", beimScroll, {passive:true});
+  window.addEventListener("resize", beimScroll);
+  ort.appendChild(leiste);
+  if(!wurzel) document.body.classList.add("mit-sleiste");
+  markieren();
+  return leiste;
+}
+/* Hauptseite: nach dem Zeichnen eines Reiters, wenn die Seite lang ist */
+function seitenLeiste(){
+  var alt=document.body.querySelector(":scope > .sleiste"); if(alt && alt._weg) alt._weg(); else document.body.classList.remove("mit-sleiste");
+  var sec=document.querySelector("#app section.view"); if(!sec) return;
+  setTimeout(function(){
+    if(document.documentElement.scrollHeight < window.innerHeight*2.2) return;
+    sprungleiste(null, document.body, function(){
+      var kand=[];
+      if(S.view==="protokoll"){
+        sec.querySelectorAll("form fieldset").forEach(function(fs){ if(fs.offsetParent!==null || fs.classList.contains("fs-zu")) kand.push(fs); });
+        sec.querySelectorAll(".card").forEach(function(c){ if(!c.querySelector("form") && c.querySelector("h2") && !c.closest("form")) kand.push(c); });
+      } else {
+        sec.querySelectorAll(".card").forEach(function(c){ if(c.querySelector("h2") && !c.parentElement.closest(".card")) kand.push(c); });
+      }
+      kand=kand.filter(function(x){ return x.offsetParent!==null; });
+      kand.sort(function(a,b){ return a.getBoundingClientRect().top-b.getBoundingClientRect().top; });
+      return kand.map(function(x){ return {el:x, titel:abschnittTitel(x)}; });
+    });
+  }, 60);
+}
+/* Fieldsets einklappbar (Protokoll): Überschrift antippen klappt zu/auf */
+function fieldsetsKlappbar(form){
+  form.querySelectorAll("fieldset").forEach(function(fs){
+    var lg=fs.querySelector(":scope > legend"); if(!lg || fs.classList.contains("klappfs")) return;
+    fs.classList.add("klappfs");
+    lg.setAttribute("role","button"); lg.setAttribute("tabindex","0"); lg.title="Zu- oder aufklappen";
+    var w=function(){ fs.classList.toggle("fs-zu"); };
+    lg.addEventListener("click", w);
+    lg.addEventListener("keydown", function(e){ if(e.key==="Enter"||e.key===" "){ e.preventDefault(); w(); } });
+  });
+}
 function kartenOrdnen(host, regeln, praefix, mitLeiste, ausgleichen){
   var schmal=schmalerBildschirm(), teile=[];
   Array.prototype.slice.call(host.children).forEach(function(k){
@@ -18974,6 +19089,17 @@ function kartenOrdnen(host, regeln, praefix, mitLeiste, ausgleichen){
   } else host.appendChild(spaltenAnordnen(mitte));
   /* seite "unten": über die ganze Breite nach den Spalten (breite Tabellen) */
   teile.filter(function(t){ return t[1]==="unten"; }).forEach(function(t){ host.appendChild(t[0]); });
+  /* im Fenster (Projekt, Markt …): schmale Navigationsleiste am rechten Rand */
+  if(host.classList && host.classList.contains("as-inhalt") && host.closest(".as-karte")){
+    setTimeout(function(){
+      if(host.scrollHeight < host.clientHeight*1.8) return;
+      sprungleiste(host, host.closest(".as-karte"), function(){
+        return Array.prototype.slice.call(host.querySelectorAll(".sp-haupt > .card, .sp-neben > .card"))
+          .sort(function(a,b){ return a.getBoundingClientRect().top-b.getBoundingClientRect().top; })
+          .map(function(c){ return {el:c, titel:abschnittTitel(c)}; });
+      });
+    }, 40);
+  }
 }
 /* Reiter am PC zweispaltig, jede Karte einklappbar (Büro 01.10.2026: „gründlich
    aufräumen“). Was keiner Regel entspricht, bleibt in der Hauptspalte. */
@@ -19030,6 +19156,7 @@ function sprungHervorheben(z, opt){
   if(!z) return;
   opt=opt||{};
   var d=z.closest("details"); if(d) d.open=true;
+  var fsz=z.closest("fieldset.fs-zu"); if(fsz) fsz.classList.remove("fs-zu");
   aufklappen(z);
   var box=z.closest(".terminzeile,.fl,.as-feld")||z;
   [box].concat(opt.alle||[]).forEach(function(b){ b.classList.remove("sprungziel"); void b.offsetWidth; b.classList.add("sprungziel"); });
@@ -19791,6 +19918,8 @@ function handbuchKarte(z){
       liste(["<strong>Reiter</strong> nach dem Arbeitsablauf: Fällig, Kalender, Protokoll, Anlagen, Karte, Stunden – dann die Büro-Reiter.",
         "<strong>Einklappen:</strong> jede Karte lässt sich über ihre Überschrift zu- und aufklappen; zugeklappt zeigt sie, wie viel drin ist. Am Handy beginnen lange Abschnitte zugeklappt. Die Wahl merkt sich jedes Gerät.",
         "<strong>Großer Bildschirm:</strong> zwei Spalten – links die Hauptsache, rechts das Begleitende; Projekt und Markt öffnen sich groß.",
+        "<strong>Navigationsleiste:</strong> auf langen Seiten und in großen Fenstern (Protokoll, Fällig, Projekt …) steht rechts eine schmale Leiste – ein Punkt je Abschnitt, der aktuelle ist hervorgehoben. Antippen springt hin, „☰“ zeigt alle Abschnitte mit Namen.",
+        "<strong>Protokoll:</strong> jeder Abschnitt (Einsatz, Anlagen, Arbeiten, Fotos, Abschluss …) klappt über seine Überschrift zu; oben „Alles zuklappen / aufklappen“. Beim Speichern öffnet die App von selbst, wo etwas fehlt.",
         "<strong>Rundgänge:</strong> oben in diesem Handbuch – sie zeigen die echten Knöpfe, tragen aber nichts ein."]))+
   "</div></div>"));
 }
@@ -25796,7 +25925,17 @@ function render(){
   /* aufgeräumt (Büro 01.10.2026): am PC zwei Spalten, Karten einklappbar */
   ansichtOrdnen(sec, S.view);
   host.appendChild(sec);
+  /* Protokoll: jeder Abschnitt einklappbar, dazu „Alles zu-/aufklappen“ (Büro 02.10.2026) */
+  var pform=sec.querySelector("form#proto");
+  if(pform && !pform._klapp){
+    pform._klapp=true; fieldsetsKlappbar(pform);
+    var fsl=el('<div class="klappleiste"><button class="btn ghost sm" type="button" data-k="zu">Alles zuklappen</button><button class="btn ghost sm" type="button" data-k="auf">Alles aufklappen</button></div>');
+    fsl.querySelectorAll("button").forEach(function(b){ b.onclick=function(){ var zu=b.dataset.k==="zu";
+      pform.querySelectorAll("fieldset.klappfs").forEach(function(fs){ fs.classList.toggle("fs-zu", zu); }); }; });
+    pform.insertBefore(fsl, pform.firstChild);
+  }
   host.setAttribute("data-reiter", S.view);
+  seitenLeiste();   /* schmale Navigationsleiste auf langen Seiten */
   if(scrollVorher!==null && Math.abs((window.pageYOffset||0)-scrollVorher)>1){
     try{ window.scrollTo({top:scrollVorher, behavior:"instant"}); }catch(e){ window.scrollTo(0, scrollVorher); }
   }
