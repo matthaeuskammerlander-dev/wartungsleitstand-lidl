@@ -22,7 +22,10 @@ PROJEKT = {
     "daten": {
         "angebotNr": "900001", "begehungDatum": "2026-05-28", "anlagen": ["NPtest1"],
         "beteiligte": [{"id": "a", "rolle": "Planer HKLS", "firma": "Planer GmbH", "name": "M. Muster"}],
-        "termine": [{"id": "b", "datum": "2026-09-12", "was": "Montage <Samstag>", "erledigt": True}],
+        "termine": [{"id": "b", "datum": "2026-09-12", "was": "Montage <Samstag>", "erledigt": True,
+                     "quellen": [{"name": "Grundriss EG.pdf", "hinweis": "Seite 2"}]}],
+        "quellen": {"begehung": [{"name": "Begehungsprotokoll fehlt.pdf"}], "angebot": ["buero/x/angebot-1-Angebot_900001.pdf"]},
+        "typ": "Anlagentausch / Umbau",
         "baubuch": [{"id": "c", "datum": "2026-09-12", "art": "kran", "text": "Autokran", "menge": 1.5, "eh": "Std"}],
         "dateien": [
             {"pfad": "buero/x/angebot-1-Angebot_900001.pdf", "name": "Angebot 900001.pdf", "art": "angebot", "zeit": "2026-10-01T10:00:00Z"},
@@ -76,7 +79,10 @@ def main():
         fehlt = [e for e in erwartet if not os.path.exists(e)]
         assert not fehlt, "fehlt: %s\nvorhanden: %s" % (fehlt, [os.path.join(r, f) for r, _, fs in os.walk(basis) for f in fs])
         html = open(os.path.join(ordner, "Projekt_P-2026-001.html"), encoding="utf-8").read()
-        for t in ("Planer GmbH", "Montage &lt;Samstag&gt;", "Kran / Hebegerät", "1,5 Std", "VRV 1", "900001", "1.234,50", "Begehung am"):
+        for t in ("Planer GmbH", "Montage &lt;Samstag&gt;", "Kran / Hebegerät", "1,5 Std", "VRV 1", "900001", "1.234,50", "Begehung am",
+                  # Quellen: Verweise in den Projektordner, Fehlendes mit Namen, Rückweg bei der Datei
+                  'href="Plaene/Grundriss-EG.pdf"', "(Seite 2)", 'href="Angebot/Angebot-900001.pdf"',
+                  "Begehungsprotokoll fehlt.pdf – noch nicht hochgeladen", "Termin: Montage &lt;Samstag&gt;", "Anlagentausch / Umbau"):
             assert t in html, "nicht in der Mappe: " + t
         daten = json.load(open(os.path.join(ordner, "Projekt_P-2026-001.json"), encoding="utf-8"))
         assert daten["projekt"]["nummer"] == "P-2026-001" and len(daten["belege"]) == 1

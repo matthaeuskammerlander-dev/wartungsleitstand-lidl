@@ -309,7 +309,8 @@ def abgleich(k, sb, stand):
 # sie in der Mappe, alles andere kommt trotzdem.
 
 PROJEKT_UNTERORDNER = {"angebot": "Angebot", "rechnung": "Rechnung", "plan": "Plaene", "foto": "Fotos",
-                       "dokument": "Unterlagen", "lieferschein": "Lieferscheine", "protokoll": "Protokolle"}
+                       "dokument": "Unterlagen", "besprechung": "Besprechungen", "mail": "Mails",
+                       "lieferschein": "Lieferscheine", "protokoll": "Protokolle"}
 PROJEKT_SCHRITTE = [("anfrage", "Anfrage"), ("begehung", "Bestand / Begehung"), ("konzept", "Konzept"),
                     ("angebot", "Angebot"), ("auftrag", "Auftrag"), ("vorbereitung", "Vorbereitung"),
                     ("baustelle", "Baustelle"), ("inbetriebnahme", "Inbetriebnahme"),
@@ -399,9 +400,46 @@ def html_text(t):
              .replace("\n", "<br>"))
 
 
-def projekt_mappe(p, belege, kunden, standorte, anlagen):
-    """HTML-Mappe eines Projekts – zum Lesen und Drucken auf der Synology"""
+SCHRITT_FELDER = {"anfrage": ["anfrageDatum", "anfrageVon", "ansprechpartner", "telefon", "beschreibung"],
+                  "begehung": ["begehungDatum", "bestand", "vorgaben"], "konzept": ["konzeptDatum", "konzept"],
+                  "angebot": ["angebotNr", "angebotDatum", "gueltigBis"], "auftrag": ["auftragNr", "auftragDatum", "auftragZusatz"],
+                  "vorbereitung": ["beginn", "ende", "monteure"], "baustelle": ["baustelleBeginn", "baustelleEnde"],
+                  "inbetriebnahme": ["ibDatum", "uebergabe"], "abgeschlossen": ["abschlussDatum"], "abgerechnet": ["rechnungNr", "rechnungDatum"]}
+
+
+def name_norm(n):
+    import unicodedata
+    t = unicodedata.normalize("NFD", str(n or "").lower())
+    return re.sub(r"[^a-z0-9]", "", "".join(c for c in t if unicodedata.category(c) != "Mn"))
+
+
+def quellen_html(quellen, dateien, lokal, ordner):
+    """Quellen einer Angabe als Verweise auf die Datei im Projektordner (relativ) –
+    noch nicht hochgeladene nur mit Namen"""
+    teile = []
+    for q in quellen or []:
+        name = q if isinstance(q, str) else (q or {}).get("name", "")
+        hinweis = "" if isinstance(q, str) else (q or {}).get("hinweis", "")
+        f = next((x for x in dateien if x.get("pfad") == name), None) or \
+            next((x for x in dateien if name_norm(x.get("name")) == name_norm(name)), None)
+        zusatz = (" (%s)" % html_text(hinweis)) if hinweis else ""
+        if f and lokal.get(f.get("pfad")):
+            rel = os.path.relpath(lokal[f["pfad"]], ordner).replace(os.sep, "/")
+            teile.append('<a href="%s">%s</a>%s' % (html_text(urllib.parse.quote(rel)), html_text(f.get("name")), zusatz))
+        else:
+            teile.append('<span class="m">%s%s%s</span>' % (html_text(f.get("name") if f else name.split("/")[-1]), zusatz,
+                                                            "" if f else " – noch nicht hochgeladen"))
+    return " · ".join(teile)
+
+
+def projekt_mappe(p, belege, kunden, standorte, anlagen, lokal=None, ordner=""):
+    """HTML-Mappe eines Projekts – zum Lesen und Drucken auf der Synology.
+    Bei jeder Angabe steht ihre Quelle als Verweis auf die Datei im Projektordner,
+    bei jeder Datei, wozu sie gehört – man findet alles von beiden Seiten."""
+    lokal = lokal or {}
     d = p.get("daten") or {}
+    dateien_p = d.get("dateien") or []
+    ql = lambda q: quellen_html(q, dateien_p, lokal, ordner)   # noqa: E731
     st = standorte.get(p.get("standort_id")) or {}
     status = dict(PROJEKT_SCHRITTE).get(p.get("status"), p.get("status") or "")
     h = ['<!doctype html><html lang="de"><head><meta charset="utf-8"><title>%s</title>' % html_text(p.get("nummer")),
@@ -414,20 +452,31 @@ def projekt_mappe(p, belege, kunden, standorte, anlagen):
              html_text(kunden.get(p.get("kunde_id") or "lidl", "")),
              html_text(" ".join(str(x) for x in (st.get("filiale") and "Filiale " + str(st.get("filiale")), st.get("adresse")) if x) or "–"),
              html_text(status), time.strftime("%d.%m.%Y %H:%M"))]
-    zeilen = [(l, d.get(s)) for s, l in PROJEKT_ANGABEN if d.get(s)]
-    if zeilen:
-        h.append("<h2>Angaben</h2><table>" + "".join(
-            "<tr><th style='width:30%%'>%s</th><td>%s</td></tr>" % (html_text(l), html_text(datum_de(w) if re.match(r"^\d{4}-\d\d-\d\d$", str(w)) else w))
-            for l, w in zeilen) + "</table>")
+    if d.get("typ"):
+        h.append('<p class="m">Projekttyp: <strong>%s</strong></p>' % html_text(d.get("typ")))
+    labels = dict(PROJEKT_ANGABEN)
+    qs = d.get("quellen") or {}
+    teil = []
+    for sk, sname in PROJEKT_SCHRITTE:
+        felder = [(labels.get(f, f), d.get(f)) for f in SCHRITT_FELDER.get(sk, []) if d.get(f)]
+        if not felder and not qs.get(sk):
+            continue
+        teil.append("<tr><th colspan='2' style='background:#dfe9ec'>%s</th></tr>" % html_text(sname))
+        teil.extend("<tr><th style='width:30%%'>%s</th><td>%s</td></tr>" % (
+            html_text(l), html_text(datum_de(w) if re.match(r"^\d{4}-\d\d-\d\d$", str(w)) else w)) for l, w in felder)
+        if qs.get(sk):
+            teil.append("<tr><th>Quelle</th><td>%s</td></tr>" % ql(qs.get(sk)))
+    if teil:
+        h.append("<h2>Angaben</h2><table>" + "".join(teil) + "</table>")
 
     def liste(titel, eintraege, spalten):
         if not eintraege:
             return
-        h.append("<h2>%s</h2><table><tr>%s</tr>" % (html_text(titel), "".join("<th>%s</th>" % html_text(s[1]) for s in spalten)))
+        h.append("<h2>%s</h2><table><tr>%s<th>Quelle</th></tr>" % (html_text(titel), "".join("<th>%s</th>" % html_text(s[1]) for s in spalten)))
         for e in eintraege:
-            h.append("<tr>%s</tr>" % "".join("<td>%s</td>" % html_text(
+            h.append("<tr>%s<td>%s</td></tr>" % ("".join("<td>%s</td>" % html_text(
                 ("ja" if e.get(s[0]) is True else datum_de(e.get(s[0])) if s[0] in ("datum", "bestellt", "liefertermin") else e.get(s[0]) or ""))
-                for s in spalten))
+                for s in spalten), ql(e.get("quellen"))))
         h.append("</table>")
 
     liste("Beteiligte", d.get("beteiligte"), [("rolle", "Rolle"), ("firma", "Firma"), ("name", "Name"), ("telefon", "Telefon"), ("mail", "E-Mail"), ("notiz", "Notiz")])
@@ -437,12 +486,12 @@ def projekt_mappe(p, belege, kunden, standorte, anlagen):
                                                   ("bestellt", "bestellt"), ("liefertermin", "Liefertermin"), ("geliefert", "geliefert"), ("notiz", "Notiz")])
     bb = sorted(d.get("baubuch") or [], key=lambda e: (str(e.get("datum") or ""), str(e.get("zeit") or "")))
     if bb:
-        h.append("<h2>Baustellenbuch</h2><table><tr><th>Datum</th><th>Art</th><th>Beschreibung</th><th class='r'>Menge</th><th>von</th></tr>")
+        h.append("<h2>Baustellenbuch</h2><table><tr><th>Datum</th><th>Art</th><th>Beschreibung</th><th class='r'>Menge</th><th>von</th><th>Quelle</th></tr>")
         for e in bb:
             menge = "" if e.get("menge") is None else (str(e.get("menge")).replace(".", ",") + " " + str(e.get("eh") or ""))
-            h.append("<tr><td>%s %s</td><td>%s</td><td>%s</td><td class='r'>%s</td><td>%s</td></tr>" % (
+            h.append("<tr><td>%s %s</td><td>%s</td><td>%s</td><td class='r'>%s</td><td>%s</td><td>%s</td></tr>" % (
                 datum_de(e.get("datum")), html_text(e.get("zeit") or ""), html_text(BAUBUCH_ARTEN.get(e.get("art"), e.get("art"))),
-                html_text(e.get("text")), html_text(menge), html_text(e.get("von") or "")))
+                html_text(e.get("text")), html_text(menge), html_text(e.get("von") or ""), ql((e.get("dateien") or []) + (e.get("quellen") or []))))
         h.append("</table>")
     an = [anlagen.get(i) for i in (d.get("anlagen") or []) if anlagen.get(i)]
     if an:
@@ -460,11 +509,22 @@ def projekt_mappe(p, belege, kunden, standorte, anlagen):
                 "Rechnung" if b.get("art") == "rechnung" else "Angebot", html_text(b.get("nummer")), datum_de(b.get("datum")),
                 "KPlus" if b.get("extern") else ("TEST (App)" if b.get("test") else "App"), geld((b.get("summen") or {}).get("netto"))))
         h.append("</table>")
-    dat = d.get("dateien") or []
-    if dat:
-        h.append("<h2>Dateien</h2><ul>" + "".join("<li>%s <span class='m'>(%s, %s)</span></li>" % (
-            html_text(x.get("name")), html_text(PROJEKT_UNTERORDNER.get(x.get("art"), x.get("art"))), datum_de(str(x.get("zeit") or "")[:10]))
-            for x in dat) + "</ul>")
+    if dateien_p:
+        # wozu gehört jede Datei? (Rückweg von der Datei zur Angabe)
+        stellen = [(dict(PROJEKT_SCHRITTE).get(sk, sk), q) for sk, q in qs.items()]
+        for k2, t2 in (("beteiligte", "Beteiligte"), ("termine", "Termin"), ("bestellungen", "Bestellung")):
+            stellen += [("%s: %s" % (t2, e.get("was") or e.get("firma") or e.get("name") or ""), e.get("quellen") or []) for e in d.get(k2) or []]
+        stellen += [("Baustellenbuch %s" % datum_de(e.get("datum")), (e.get("dateien") or []) + (e.get("quellen") or [])) for e in bb]
+
+        def gehoert(x):
+            return [t for t, q in stellen if any((isinstance(y, str) and y == x.get("pfad")) or
+                                                  name_norm(y if isinstance(y, str) else (y or {}).get("name")) == name_norm(x.get("name")) for y in q)]
+        h.append("<h2>Dateien</h2><table><tr><th>Datei</th><th>Art</th><th>gehört zu</th></tr>")
+        for x in dateien_p:
+            h.append("<tr><td>%s</td><td>%s</td><td>%s</td></tr>" % (
+                ql([x.get("pfad")]), html_text(PROJEKT_UNTERORDNER.get(x.get("art"), x.get("art"))),
+                html_text(" · ".join(gehoert(x))) or '<span class="m">–</span>'))
+        h.append("</table>")
     vl = p.get("verlauf") or []
     if vl:
         h.append("<h2>Tagebuch</h2><table>" + "".join("<tr><td style='width:18%%'>%s</td><td style='width:18%%'>%s</td><td>%s</td></tr>" % (
@@ -522,14 +582,14 @@ def projekte_abgleich(k, sb, stand):
             neu_dateien += 1
         # Mappe (HTML) und Daten (JSON) neu, wenn sich das Projekt oder seine Belege geändert haben
         belege = [b for b in belege_alle if b.get("projekt_id") == pid]
-        kennung = str(p.get("geaendert")) + "|" + json.dumps(belege, sort_keys=True, ensure_ascii=False)
+        kennung = str(p.get("geaendert")) + "|" + json.dumps(belege, sort_keys=True, ensure_ascii=False) + "|" + json.dumps(dateien, sort_keys=True)
         kennung = str(len(kennung)) + ":" + str(hash_text(kennung))
         if s.get("kennung") != kennung or not os.path.exists(os.path.join(ordner, "Projekt_%s.html" % sauber(p.get("nummer") or pid[:8]))):
             name = "Projekt_%s" % sauber(p.get("nummer") or pid[:8])
             log("Projekt %s: Mappe %s" % (p.get("nummer"), "neu" if not s.get("kennung") else "aktualisiert"))
             if not PRUEFEN:
                 schreibe(os.path.join(ordner, name + ".html"),
-                         projekt_mappe(p, belege, kunden, standorte, anlagen).encode("utf-8"))
+                         projekt_mappe(p, belege, kunden, standorte, anlagen, dateien, ordner).encode("utf-8"))
                 schreibe(os.path.join(ordner, name + ".json"),
                          json.dumps({"projekt": p, "belege": belege}, ensure_ascii=False, indent=1).encode("utf-8"))
             s["kennung"] = kennung

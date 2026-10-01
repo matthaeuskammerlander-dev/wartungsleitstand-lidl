@@ -20783,6 +20783,14 @@ var PROJEKT_SCHRITTE=[
   ["abgeschlossen","Dokumentation","Prüfbücher, Bestandsunterlagen und Übergabe vollständig."],
   ["abgerechnet","Abgerechnet","Rechnung gestellt."]];
 var PROJEKT_VERLOREN=["verloren","Nicht beauftragt","Angebot nicht angenommen oder Anfrage zurückgezogen."];
+/* Projekttyp (Büro 01.10.2026) – Vorschläge; eigene Typen kommen dazu, sobald sie verwendet werden */
+var PROJEKT_TYPEN=["Neuanlage","Anlagentausch / Umbau","Erweiterung","Sanierung / Reparatur","Gewerbekälte","Lüftung","Wärmepumpe / Heizung","Service / Regie","Sonstiges"];
+function projektTypen(){
+  var l=PROJEKT_TYPEN.slice();
+  PROJEKTE.forEach(function(p){ var t=String((p.daten||{}).typ||"").trim(); if(t && l.indexOf(t)<0) l.push(t); });
+  return l;
+}
+function projektTypListe(id){ return '<datalist id="'+id+'">'+projektTypen().map(function(t){ return '<option value="'+esc(t)+'">'; }).join("")+"</datalist>"; }
 /* Angaben je Schritt: [Schlüssel, Bezeichnung, Typ] – Typ „text“, „datum“, „lang“.
    Keine Preise hier – das sehen alle; Beträge nur in Angeboten/Rechnungen (nur Inhaber). */
 var PROJEKT_ANGABEN={
@@ -20808,8 +20816,9 @@ var BAUBUCH_ARTEN=[
 var BAUBUCH_RECHNUNG=["zusatz","kran","werkzeug","material","geholt","bestand","kaeltemittel","wochenende","erschwernis"];
 function baubuchArtName(a){ return (BAUBUCH_ARTEN.filter(function(x){ return x[0]===a; })[0]||[a,a])[1]; }
 /* Dateien: Art und ob nur das Büro sie sieht */
-var PROJEKT_DATEIARTEN=[["plan","Plan / Skizze"],["foto","Foto"],["dokument","Unterlage / Datenblatt"],["lieferschein","Lieferschein"],
-  ["protokoll","Protokoll / Übergabe"],["angebot","Angebot",true],["rechnung","Rechnung",true]];
+var PROJEKT_DATEIARTEN=[["plan","Plan / Skizze"],["foto","Foto"],["dokument","Unterlage / Datenblatt"],["besprechung","Besprechung / Begehung"],
+  ["mail","E-Mail / Schriftverkehr"],["lieferschein","Lieferschein"],
+  ["protokoll","Protokoll / Prüfbuch / Übergabe"],["angebot","Angebot",true],["rechnung","Rechnung",true]];
 var PROJEKTE=[], projekteGeladen=false, projekteLaedt=false, projekteVersuch=0, projekteKonto="";
 function projektSchritt(st){ return PROJEKT_SCHRITTE.filter(function(x){ return x[0]===st; })[0] || (st==="verloren"?PROJEKT_VERLOREN:PROJEKT_SCHRITTE[0]); }
 function projektOffen(p){ return ["abgeschlossen","abgerechnet","verloren"].indexOf(p.status)<0; }
@@ -20880,7 +20889,8 @@ function projektTagebuch(p, text){
 function projektZeile(p){
   var s=p.standort_id && byId[p.standort_id];
   var r=el('<div class="card" style="box-shadow:none;margin:0"><div class="pad" style="padding:10px 12px">'+
-    '<div class="rowflex" style="justify-content:space-between;gap:8px"><strong>'+projektLink(p)+"</strong>"+projektPill(p)+"</div>"+
+    '<div class="rowflex" style="justify-content:space-between;gap:8px"><strong>'+projektLink(p)+"</strong>"+
+      '<span class="rowflex" style="gap:6px">'+((p.daten||{}).typ?'<span class="tag">'+esc(p.daten.typ)+"</span>":"")+projektPill(p)+"</span></div>"+
     '<div class="muted" style="font-size:12.5px">'+[kundeTitel(p.kunde_id), s && stName(s)!==kundeTitel(p.kunde_id)?stName(s):"", "zuletzt "+dfmt(tagLokal(p.geaendert))+(p.geaendert_von?" · "+p.geaendert_von:"")].filter(Boolean).map(esc).join(" · ")+"</div>"+
   "</div></div>");
   return r;
@@ -20899,7 +20909,8 @@ function viewProjekte(){
       (betriebSchreiben()?'<button class="btn sm" type="button" id="pr_neu" data-schreiben>+ Neues Projekt</button>':"")+
     "</div>"+
     '<div class="chips" id="pr_chips"></div>'+
-    '<input class="search" type="search" id="pr_q" placeholder="Nummer, Titel, Kunde …" aria-label="Projekte durchsuchen" value="'+esc(S.prQ)+'">'+
+    '<div class="rowflex" style="gap:8px"><input class="search" type="search" id="pr_q" placeholder="Nummer, Titel, Kunde, Typ …" aria-label="Projekte durchsuchen" value="'+esc(S.prQ)+'" style="flex:1">'+
+      '<select id="pr_typ" aria-label="Projekttyp"><option value="">alle Typen</option>'+projektTypen().map(function(t){ return '<option value="'+esc(t)+'"'+(S.prTyp===t?" selected":"")+">"+esc(t)+"</option>"; }).join("")+"</select></div>"+
     '<div class="stack" id="pr_liste" style="gap:8px"></div>'+
   "</div></div>");
   var chips=c.querySelector("#pr_chips"), liste=c.querySelector("#pr_liste");
@@ -20914,13 +20925,15 @@ function viewProjekte(){
     var q=suchNorm(S.prQ);
     var l=PROJEKTE.filter(function(p){ return passt(p, S.prFilter); }).filter(function(p){
       var s=p.standort_id && byId[p.standort_id];
-      return !q || suchNorm([p.nummer, p.titel, kundeTitel(p.kunde_id), s?stName(s):""].join(" ")).indexOf(q)>=0; });
+      return !q || suchNorm([p.nummer, p.titel, kundeTitel(p.kunde_id), s?stName(s):"", (p.daten||{}).typ||""].join(" ")).indexOf(q)>=0; })
+      .filter(function(p){ return !S.prTyp || ((p.daten||{}).typ||"")===S.prTyp; });
     if(!projekteGeladen && betriebAn()) liste.appendChild(el('<div class="muted" style="font-size:13px">Projekte werden geladen …</div>'));
     else if(!l.length) liste.appendChild(el('<div class="muted" style="font-size:13px">'+(PROJEKTE.length?"Kein Projekt in dieser Auswahl.":"Noch keine Projekte. Ein neues beginnt mit „+ Neues Projekt“ – auch am Markt oder beim Kunden.")+"</div>"));
     l.forEach(function(p){ liste.appendChild(projektZeile(p)); });
   };
   zeichnen();
   var qi=c.querySelector("#pr_q"); qi.oninput=function(){ S.prQ=qi.value; zeichnen(); };
+  var ti=c.querySelector("#pr_typ"); ti.onchange=function(){ S.prTyp=ti.value; zeichnen(); };
   var nb=c.querySelector("#pr_neu"); if(nb) nb.onclick=function(){ projektNeu({}); };
   f.appendChild(c);
   return f;
@@ -20937,6 +20950,7 @@ function projektNeu(vorgabe){
     '<label class="fl"><span class="req">Titel</span><input type="text" id="pn_titel" required placeholder="z. B. Neue Klimaanlage Büro 1. Stock" value="'+esc(vorgabe.titel||"")+'"></label>'+
     '<label class="fl"><span>Kunde</span><select id="pn_kunde">'+kunden.map(function(k){ return '<option value="'+esc(k.id)+'"'+((vorgabe.kunde_id||"lidl")===k.id?" selected":"")+">"+esc(k.name)+"</option>"; }).join("")+"</select></label>"+
     '<label class="fl"><span>Standort</span><select id="pn_st"></select></label>'+
+    '<label class="fl"><span>Projekttyp</span><input type="text" id="pn_typ" list="pn_typen" placeholder="z. B. Neuanlage, Anlagentausch / Umbau" value="'+esc(vorgabe.typ||"")+'">'+projektTypListe("pn_typen")+"</label>"+
     '<label class="fl"><span>Was wird gebraucht?</span><textarea id="pn_text" rows="3">'+esc(vorgabe.text||"")+'</textarea></label>'+
     '<div class="note warnbox" id="pn_err" hidden></div>'+
   "</form>");
@@ -20958,7 +20972,7 @@ function projektNeu(vorgabe){
     if(!titel){ err.textContent="Bitte einen Titel eintragen."; err.hidden=false; return; }
     var jetzt=new Date().toISOString(), text=form.querySelector("#pn_text").value.trim();
     var zeile={nummer:projektNummerNeu(), titel:titel, kunde_id:selK.value, standort_id:selS.value||null, status:"anfrage",
-      daten:{anfrageDatum:isoLokal(new Date()), beschreibung:text}, verlauf:[{zeit:jetzt, wer:meinName(), text:"Projekt angelegt", status:"anfrage"}],
+      daten:Object.assign({anfrageDatum:isoLokal(new Date()), beschreibung:text}, form.querySelector("#pn_typ").value.trim()?{typ:form.querySelector("#pn_typ").value.trim()}:{}), verlauf:[{zeit:jetzt, wer:meinName(), text:"Projekt angelegt", status:"anfrage"}],
       geaendert:jetzt, geaendert_von:meinName()};
     ok.disabled=true; ok.textContent="wird angelegt …";
     var fertig=function(p){ PROJEKTE=[p].concat(PROJEKTE.filter(function(x){ return x.id!==p.id; })); v.zu(); toast("Projekt "+p.nummer+" angelegt."); if(S.view==="projekte" && darfRendern()) render(); projektAnsicht(p.id); };
@@ -21017,6 +21031,7 @@ function projektAnsicht(id){
         '<label class="fl"><span>Kunde</span><select data-p="kunde_id">'+[{id:"lidl",name:"Lidl"}].concat(weitereKunden(true)).map(function(k){
           return '<option value="'+esc(k.id)+'"'+((p.kunde_id||"lidl")===k.id?" selected":"")+">"+esc(k.name)+"</option>"; }).join("")+"</select></label>"+
         '<label class="fl"><span>Standort</span><select data-p="standort_id"></select></label>'+
+        '<label class="fl"><span>Projekttyp</span><input type="text" data-d="typ" list="pa_typen" value="'+esc(d.typ||"")+'" placeholder="wählen oder eintippen">'+projektTypListe("pa_typen")+"</label>"+
       "</div>"+
       PROJEKT_SCHRITTE.map(function(x,i){
         var felder=PROJEKT_ANGABEN[x[0]]||[];
@@ -21026,10 +21041,26 @@ function projektAnsicht(id){
             var wert=d[fd[0]]||"";
             if(fd[2]==="lang") return '<label class="fl" style="grid-column:1/-1"><span>'+esc(fd[1])+'</span><textarea data-d="'+fd[0]+'" rows="3">'+esc(wert)+"</textarea></label>";
             return '<label class="fl"><span>'+esc(fd[1])+'</span><input type="'+(fd[2]==="datum"?"date":"text")+'" data-d="'+fd[0]+'" value="'+esc(wert)+'"></label>';
-          }).join("")+"</div></details>";
+          }).join("")+"</div>"+
+          /* woher die Angaben dieses Schritts stammen (Begehungsprotokoll, Mail, Angebot …) */
+          '<div class="rowflex" style="gap:8px;align-items:flex-start;margin-top:6px" data-stelle="schritt:'+x[0]+'"><div style="flex:1" data-schrittq="'+x[0]+'"></div>'+
+            (schreiben?'<button class="btn ghost sm" type="button" data-schrittqk="'+x[0]+'">📎 Quellen</button>':"")+"</div></details>";
       }).join("")+
       (schreiben?'<div class="rowflex" style="justify-content:flex-end"><button class="btn sm" type="button" data-speichern>Angaben speichern</button></div>':"")+
     "</div></div>");
+    ang.querySelectorAll("[data-schrittq]").forEach(function(h){
+      var q=((d.quellen||{})[h.dataset.schrittq])||[];
+      h.innerHTML=quellenHtml(p, q, buero)||'<span class="muted" style="font-size:12px">Quelle: –</span>'; quellenVerdrahten(h);
+    });
+    ang.querySelectorAll("[data-schrittqk]").forEach(function(b){
+      b.onclick=function(){
+        var st=b.dataset.schrittqk, name=projektSchritt(st)[1];
+        quellenDialog(p, "Angaben: "+name, ((d.quellen||{})[st])||[], buero, function(q){
+          projektAendern(p, function(dd){ dd.quellen=Object.assign({}, dd.quellen||{}); if(q.length) dd.quellen[st]=q; else delete dd.quellen[st]; },
+            "Quellen zu „"+name+"“ geändert").then(function(){ aufbauen(); }, function(e){ toast(e.message); });
+        });
+      };
+    });
     var selK=ang.querySelector('[data-p="kunde_id"]'), selS=ang.querySelector('[data-p="standort_id"]');
     var stListe=function(){
       selS.innerHTML='<option value="">– noch keiner –</option>'+ST.filter(function(x){ return kundeVon(x)===selK.value; })
@@ -21627,17 +21658,30 @@ function projektDateienKarte(p, buero, schreiben, neuZeichnen){
   var arten=PROJEKT_DATEIARTEN.filter(function(x){ return !x[2] || buero; });
   var dateien=((p.daten||{}).dateien||[]).filter(function(x){ return buero || !/^buero\//.test(x.pfad); });
   var k=el('<div class="card" style="box-shadow:none;margin-top:12px"><div class="pad stack" style="gap:8px"><h2>Dateien</h2>'+
-    '<div class="stack" data-liste style="gap:4px"></div>'+
-    (schreiben?'<div class="rowflex" style="gap:8px"><select data-art>'+arten.map(function(x){ return '<option value="'+x[0]+'">'+esc(x[1])+(x[2]?" (nur Inhaber)":"")+"</option>"; }).join("")+"</select>"+
-      '<label class="btn ghost sm" style="cursor:pointer">Datei hinzufügen<input type="file" data-datei hidden multiple></label></div>'+
-      '<div class="muted" style="font-size:12px">PDF, Fotos, Word, Excel – bis 20 MB je Datei. Angebote und Rechnungen sehen nur die Inhaber.</div>':"")+
+    '<div class="muted" style="font-size:12.5px">Alle Dateien des Projekts – auf der Synology im Projektordner, nach Art sortiert. Bei jeder steht, wozu sie gehört.</div>'+
+    '<div class="stack" data-liste style="gap:6px"></div>'+
+    (schreiben?'<div class="rowflex" style="gap:8px;flex-wrap:wrap"><select data-art>'+arten.map(function(x){ return '<option value="'+x[0]+'">'+esc(x[1])+(x[2]?" (nur Inhaber)":"")+"</option>"; }).join("")+"</select>"+
+      '<label class="btn ghost sm" style="cursor:pointer">Datei hinzufügen<input type="file" data-datei hidden multiple></label>'+
+      '<label class="btn ghost sm" style="cursor:pointer" title="ganzen Projektordner vom PC – die App sortiert nach Art">Ganzen Ordner hochladen<input type="file" data-ordner hidden webkitdirectory multiple></label></div>'+
+      '<div class="muted" style="font-size:12px">PDF, Fotos, Pläne (auch DWG), E-Mails (.eml/.msg), Word, Excel – bis 20 MB je Datei. Angebote und Rechnungen sehen nur die Inhaber.</div>':"")+
   "</div></div>");
   var l=k.querySelector("[data-liste]");
   if(!dateien.length) l.appendChild(el('<div class="muted" style="font-size:13px">Noch keine Dateien.</div>'));
   var artName=function(a){ return (PROJEKT_DATEIARTEN.filter(function(x){ return x[0]===a; })[0]||[a,a])[1]; };
+  /* Sprung zur Stelle, zu der eine Datei gehört (Schritt aufklappen, hervorheben) */
+  var zurStelle=function(key){
+    var host=k.closest(".as-inhalt")||document, z=host.querySelector('[data-stelle="'+key.replace(/"/g,"")+'"]');
+    if(!z){ toast("Stelle nicht gefunden."); return; }
+    var det=z.closest("details"); if(det) det.open=true;
+    sprungHervorheben(z);
+  };
   dateien.slice().reverse().forEach(function(x){
-    var z=el('<div class="rowflex" style="justify-content:space-between;gap:8px;font-size:13px"><span><a href="#" class="sprunglink">'+esc(x.name||"Datei")+"</a>"+
-      '<span class="muted"> · '+esc(artName(x.art))+" · "+esc(dfmt(tagLokal(x.zeit)))+(x.von?" · "+esc(x.von):"")+"</span></span></div>");
+    var zu=dateiGehoertZu(p, x);
+    var z=el('<div style="font-size:13px"><a href="#" class="sprunglink">'+esc(x.name||"Datei")+"</a>"+
+      '<span class="muted"> · '+esc(artName(x.art))+" · "+esc(dfmt(tagLokal(x.zeit)))+(x.von?" · "+esc(x.von):"")+(x.herkunft?" · aus „"+esc(x.herkunft)+"“":"")+"</span>"+
+      (zu.length?'<br><span style="font-size:12px">gehört zu: '+zu.map(function(st){ return '<a href="#" class="sprunglink" data-zu="'+esc(st.bereich+":"+st.id)+'">'+esc(st.titel)+"</a>"; }).join(" · ")+"</span>"
+        :'<br><span class="muted" style="font-size:12px">noch keiner Angabe zugeordnet</span>')+"</div>");
+    z.querySelectorAll("[data-zu]").forEach(function(a){ tippe(a, function(){ zurStelle(a.dataset.zu); }); });
     z.querySelector("a").onclick=function(e){
       e.preventDefault();
       if(demo() && x._url){ window.open(x._url, "_blank"); return; }
@@ -21654,21 +21698,55 @@ function projektDateienKarte(p, buero, schreiben, neuZeichnen){
     var art=k.querySelector("[data-art]").value, liste=[].slice.call(inp.files||[]); inp.value="";
     projektDateienHochladen(p, art, liste).then(function(neue){ if(neue.length) neuZeichnen(); });
   };
+  /* ganzer Ordner: Art je Datei aus Ordner und Name; schon vorhandene (gleicher
+     Name) werden übersprungen; KPlus-Belege (6-stellige Nummer) nur für Inhaber */
+  var ord=k.querySelector("[data-ordner]");
+  if(ord) ord.onchange=function(){
+    var alle=[].slice.call(ord.files||[]); ord.value="";
+    var pa=PROJEKTE.filter(function(x){ return x.id===p.id; })[0]||p, da={};
+    ((pa.daten||{}).dateien||[]).forEach(function(x){ da[dateiNameNorm(x.name)]=1; });
+    var weg=[], kplus=[], liste=alle.filter(function(f){
+      if(/^\./.test(f.name) || /(^|\/)\./.test(f.webkitRelativePath||"")) return false;   /* .DS_Store usw. */
+      if(da[dateiNameNorm(f.name)]){ weg.push(f.name); return false; }
+      if(/^\d{6}\.pdf$/i.test(f.name)){ kplus.push(f); return false; }
+      return true;
+    });
+    var ordnerVon=function(f){ var t=String(f.webkitRelativePath||"").split("/"); return t.length>2 ? t.slice(1,-1).join("/") : ""; };
+    var artVon=function(f){ return dateiArtRaten(ordnerVon(f), f.name, f.type); };
+    /* KPlus-Belege: am Text erkennen, ob Angebot oder Rechnung – nur Inhaber (Preise) */
+    var kplusArten=Promise.resolve({});
+    if(kplus.length){
+      if(!buero){ toast(kplus.length+" Angebot/Rechnung (KPlus) übersprungen – die laden nur Inhaber hoch."); kplus=[]; }
+      else kplusArten=Promise.all(kplus.map(function(f){ return f.arrayBuffer().then(function(b){ return kplusLesen(new Uint8Array(b)); }).then(function(e){ return [f.name, e.art]; }, function(){ return [f.name, "dokument"]; }); }))
+        .then(function(l){ var m={}; l.forEach(function(x){ m[x[0]]=x[1]; }); return m; });
+    }
+    kplusArten.then(function(m){
+      var alleListe=liste.concat(kplus);
+      if(!alleListe.length){ toast(weg.length?"Alle Dateien sind schon am Projekt.":"Keine Dateien im Ordner."); return; }
+      if(!window.confirm(alleListe.length+" Datei"+(alleListe.length===1?"":"en")+" hochladen"+(weg.length?" ("+weg.length+" schon vorhanden, übersprungen)":"")+"?\n\n"+
+        alleListe.slice(0,25).map(function(f){ return "• "+f.name+" → "+artName(m[f.name]||artVon(f)); }).join("\n")+(alleListe.length>25?"\n…":""))) return;
+      projektDateienHochladen(p, function(f){ return m[f.name]||artVon(f); }, alleListe, function(f){ return ordnerVon(f); })
+        .then(function(neue){ if(neue.length) neuZeichnen(); });
+    });
+  };
   return k;
 }
 /* Dateien hochladen und am Projekt vermerken – für die Dateien-Karte und das
    Baustellenbuch. Liefert die vermerkten Einträge (leer, wenn nichts ging). */
-function projektDateienHochladen(p, art, liste){
+/* art: Dateiart oder Funktion(Datei) → Art; herkunft (frei): Funktion(Datei) → Ordner, aus dem sie kam */
+function projektDateienHochladen(p, art, liste, herkunft){
   if(!liste.length) return Promise.resolve([]);
   var zuGross=liste.filter(function(f){ return f.size>PROJEKT_DATEI_MAX; });
   if(zuGross.length){ toast("Zu groß (höchstens 20 MB): "+zuGross.map(function(f){ return f.name; }).join(", ")); return Promise.resolve([]); }
-  var artName=(PROJEKT_DATEIARTEN.filter(function(x){ return x[0]===art; })[0]||[art,art])[1];
+  var artVon=typeof art==="function" ? art : function(){ return art; };
+  var artName=typeof art==="function" ? "nach Art sortiert" : (PROJEKT_DATEIARTEN.filter(function(x){ return x[0]===art; })[0]||[art,art])[1];
   toast(liste.length+" Datei"+(liste.length===1?"":"en")+" wird hochgeladen …");
   var neue=[], fehler=[];
   var meldung=function(m){ return /mime|type/i.test(m)?"Dateityp geht nicht – bitte als PDF oder Foto":/bucket|not found/i.test(m)?"Ablage für Projektdateien noch nicht eingerichtet (tools/kunden-projekte-stunden.sql)":/row-level|policy|unauthor/i.test(m)?"keine Berechtigung":m; };
   /* jede Datei für sich: klappt eine nicht, bleiben die anderen trotzdem am Projekt */
   return Promise.all(liste.map(function(f){
-    var pfad=projektDateiPfad(p, art, f.name), eintrag={pfad:pfad, name:f.name, art:art, groesse:f.size, typ:f.type||"", von:meinName(), zeit:new Date().toISOString()};
+    var fa=artVon(f), pfad=projektDateiPfad(p, fa, f.name), eintrag={pfad:pfad, name:f.name, art:fa, groesse:f.size, typ:f.type||"", von:meinName(), zeit:new Date().toISOString()};
+    var hk=herkunft ? herkunft(f) : ""; if(hk) eintrag.herkunft=hk;
     if(demo()){ eintrag._url=URL.createObjectURL(f); neue.push(eintrag); return null; }
     return mitFrist(Store.sb.storage.from("projektdateien").upload(pfad, f, {contentType:f.type||"application/octet-stream", upsert:false}), 120000)
       .then(function(r){ if(r.error) throw new Error(r.error.message); neue.push(eintrag); })
@@ -21691,6 +21769,108 @@ function projektAendern(p, aendern, tagebuchText){
     if(demo() || !/inzwischen geändert/.test(e.message)) throw e;
     return Store.sb.from("projekte").select("*").eq("id",p.id).then(function(r){ var f=r.data&&r.data[0]; if(!f) throw e; return los(f); });
   });
+}
+
+/* ---------- Quellen und Anhänge (Büro 01.10.2026: „es wird nicht ersichtlich,
+   woher die einzelnen Daten sind“ – und anhängen ging nur an einer Stelle).
+   Jede Angabe (je Schritt), jeder Listeneintrag und jeder Eintrag im
+   Baustellenbuch führt „quellen“: Pfade hochgeladener Projektdateien oder –
+   solange noch nicht hochgeladen – {name, hinweis}. Beim Hochladen findet die
+   App die Datei am Namen und verknüpft sie von selbst. Die Datei selbst liegt
+   einmal am Projekt (und auf der Synology im Projektordner); bei jeder Datei
+   steht, wozu sie gehört – so findet man alles von beiden Seiten. ---------- */
+function dateiNameNorm(n){ return String(n||"").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g,"").replace(/[^a-z0-9]+/g,""); }
+function quelleDatei(p, q){
+  p=PROJEKTE.filter(function(x){ return x.id===p.id; })[0]||p;   /* neuester Stand – auch gleich nach dem Hochladen */
+  var dd=(p.daten||{}).dateien||[], name=typeof q==="string" ? q : (q&&q.name);
+  if(!name) return null;
+  return dd.filter(function(x){ return x.pfad===name; })[0] ||
+         dd.filter(function(x){ return dateiNameNorm(x.name)===dateiNameNorm(name); })[0] || null;
+}
+function quelleName(q){ return typeof q==="string" ? q.split("/").pop() : (q&&q.name)||""; }
+/* alle Stellen eines Projekts, die Quellen führen: [{bereich, id, titel, quellen}] */
+function projektQuellenStellen(p){
+  var d=p.daten||{}, l=[];
+  var qs=d.quellen||{};
+  PROJEKT_SCHRITTE.forEach(function(s){ if((qs[s[0]]||[]).length) l.push({bereich:"schritt", id:s[0], titel:"Angaben: "+s[1], quellen:qs[s[0]]}); });
+  ["beteiligte","termine","bestellungen"].forEach(function(k){
+    (d[k]||[]).forEach(function(x){ var q=(x.quellen||[]); if(q.length) l.push({bereich:k, id:x.id, titel:PROJEKT_LISTEN[k].titel.replace(/ \(.*\)$/,"")+": "+(x.was||x.rolle&&(x.rolle+" "+(x.firma||""))||x.name||""), quellen:q}); });
+  });
+  (d.baubuch||[]).forEach(function(x){ var q=(x.dateien||[]).concat(x.quellen||[]); if(q.length) l.push({bereich:"baubuch", id:x.id, titel:"Baustellenbuch "+dfmt(x.datum)+": "+baubuchArtName(x.art), quellen:q}); });
+  return l;
+}
+/* wozu gehört eine Datei? (für die Dateienliste) */
+function dateiGehoertZu(p, f){
+  return projektQuellenStellen(p).filter(function(st){ return st.quellen.some(function(q){ var g=quelleDatei(p,q); return g && g.pfad===f.pfad; }); });
+}
+/* Quellen als Verweise: hochgeladene antippbar, fehlende grau mit „noch nicht hochgeladen“ */
+function quellenHtml(p, quellen, buero){
+  if(!(quellen||[]).length) return "";
+  return '<div class="quellen" style="font-size:12px;margin-top:3px">📎 '+quellen.map(function(q){
+    var f=quelleDatei(p,q), hinweis=(q&&q.hinweis)?" ("+q.hinweis+")":"";
+    if(f && (/^buero\//.test(f.pfad) && !buero)) return '<span class="muted">'+esc(f.name)+" (nur Inhaber)</span>";
+    return f ? '<a href="#" class="sprunglink" data-quelle="'+esc(f.pfad)+'">'+esc(f.name)+"</a>"+esc(hinweis)
+             : '<span class="muted" title="Datei ist noch nicht am Projekt – beim Hochladen wird sie automatisch verknüpft">'+esc(quelleName(q))+esc(hinweis)+" · noch nicht hochgeladen</span>";
+  }).join(" · ")+"</div>";
+}
+function quellenVerdrahten(host){
+  host.querySelectorAll("[data-quelle]").forEach(function(a){ tippe(a, function(){ projektDateiOeffnen(a.dataset.quelle, a.textContent); }); });
+}
+function projektDateiOeffnen(pfad, name){
+  Store.sb.storage.from("projektdateien").createSignedUrl(pfad, 600).then(function(r){
+    var u=r && r.data && r.data.signedUrl;
+    if(!u){ toast("Datei nicht abrufbar"+(r&&r.error?" ("+r.error.message+")":"")+"."); return; }
+    if(/\.pdf$/i.test(name||pfad)) pdfAnsicht(u, name); else window.open(u, "_blank", "noopener");
+  });
+}
+/* Dialog: Quellen einer Stelle wählen – vorhandene Projektdateien anhaken
+   und/oder neue hochladen. fertig(neueQuellen) */
+function quellenDialog(p, titel, quellen, buero, fertig){
+  var v=ansichtOeffnen("Quellen / Anhänge");
+  v.schritt.textContent=titel;
+  var dd=((p.daten||{}).dateien||[]).filter(function(x){ return buero || !/^buero\//.test(x.pfad); });
+  var gewaehlt={}, offen=[];
+  (quellen||[]).forEach(function(q){ var f=quelleDatei(p,q); if(f) gewaehlt[f.pfad]=1; else offen.push(q); });
+  var artName=function(a){ return (PROJEKT_DATEIARTEN.filter(function(x){ return x[0]===a; })[0]||[a,a])[1]; };
+  v.inhalt.appendChild(el('<div class="note" style="font-size:12.5px">Woher stammen diese Angaben? Dateien des Projekts anhaken oder neue hochladen – '+
+    "Fotos, Pläne, Besprechungsprotokolle, E-Mails. Jede Datei liegt einmal am Projekt und auf der Synology im Projektordner.</div>"));
+  var liste=el('<div class="stack" style="gap:4px;margin-top:8px"></div>');
+  if(!dd.length) liste.appendChild(el('<div class="muted" style="font-size:13px">Am Projekt sind noch keine Dateien.</div>'));
+  dd.slice().reverse().forEach(function(f){
+    var z=el('<label class="chk"><input type="checkbox"'+(gewaehlt[f.pfad]?" checked":"")+"><span>"+esc(f.name)+' <span class="muted">· '+esc(artName(f.art))+"</span></span></label>");
+    z.querySelector("input").onchange=function(){ if(this.checked) gewaehlt[f.pfad]=1; else delete gewaehlt[f.pfad]; };
+    liste.appendChild(z);
+  });
+  v.inhalt.appendChild(liste);
+  if(offen.length) v.inhalt.appendChild(el('<div class="muted" style="font-size:12.5px;margin-top:8px">Noch nicht hochgeladen (wird beim Hochladen automatisch verknüpft): '+
+    esc(offen.map(function(q){ return quelleName(q)+((q&&q.hinweis)?" ("+q.hinweis+")":""); }).join(", "))+"</div>"));
+  var arten=PROJEKT_DATEIARTEN.filter(function(x){ return !x[2] || buero; });
+  var neuZeile=el('<div class="rowflex" style="gap:8px;margin-top:10px"><select data-art>'+arten.map(function(x){ return '<option value="'+x[0]+'">'+esc(x[1])+"</option>"; }).join("")+"</select>"+
+    '<label class="btn ghost sm" style="cursor:pointer">Neue Datei hochladen<input type="file" hidden multiple></label></div>');
+  v.inhalt.appendChild(neuZeile);
+  var ab=el('<button class="btn ghost" type="button">Abbrechen</button>'), ok=el('<button class="btn" type="button">Übernehmen</button>');
+  ab.onclick=function(){ v.zu(); };
+  v.fuss.appendChild(ab); v.fuss.appendChild(ok);
+  neuZeile.querySelector("input").onchange=function(){
+    var l=[].slice.call(this.files||[]); this.value="";
+    ok.disabled=true;
+    projektDateienHochladen(p, neuZeile.querySelector("[data-art]").value, l).then(function(neue){
+      ok.disabled=false;
+      neue.forEach(function(f){ gewaehlt[f.pfad]=1; liste.insertBefore(el('<label class="chk"><input type="checkbox" checked disabled><span>'+esc(f.name)+' <span class="muted">· neu</span></span></label>'), liste.firstChild); });
+    });
+  };
+  ok.onclick=function(){ v.zu(); fertig(Object.keys(gewaehlt).concat(offen)); };
+}
+/* Art einer Datei aus ihrem Ordner bzw. Namen raten (Ordner-Upload) */
+function dateiArtRaten(pfad, name, typ){
+  var t=(String(pfad||"")+"/"+String(name||"")).toLowerCase();
+  if(/^image\//.test(typ||"") || /\.(jpe?g|png|heic|heif|webp)$/.test(t)) return /plan|grundriss|schnitt/.test(t) ? "plan" : "foto";
+  if(/\.(eml|msg)$/.test(t) || /mail|schriftverkehr/.test(t)) return "mail";
+  if(/\.dwg$/.test(t) || /(^|[\/_\- ])(plan|plaene|pläne|grundriss|schnitt|ansicht)/.test(t) || /_(bp|gr|la|ap)_/.test(t)) return "plan";
+  if(/besprechung|begehung|protokoll.*bau/.test(t)) return "besprechung";
+  if(/pr(ü|ue|u)fb(ü|ue|u)ch|(^|\/)buw(\/|$)|inbetriebnahme|uebergabe|übergabe/.test(t)) return "protokoll";
+  if(/lieferschein/.test(t)) return "lieferschein";
+  return "dokument";
 }
 
 /* Listen am Projekt (Beteiligte, Termine, Bestellungen): Zeilen mit eigenem
@@ -21724,7 +21904,9 @@ function projektListeKarte(p, cfg, schreiben, neuZeichnen){
   var host=k.querySelector("[data-liste]");
   if(!liste.length) host.appendChild(el('<div class="muted" style="font-size:13px">'+esc(cfg.leer)+"</div>"));
   liste.forEach(function(x){
-    var z=el('<div style="font-size:13px;border-left:3px solid var(--line);padding-left:8px'+(schreiben?";cursor:pointer":"")+'"'+(schreiben?' role="button" tabindex="0" title="Ändern"':"")+">"+cfg.zeile(x)+"</div>");
+    var z=el('<div style="font-size:13px;border-left:3px solid var(--line);padding-left:8px'+(schreiben?";cursor:pointer":"")+'"'+(schreiben?' role="button" tabindex="0" title="Ändern"':"")+
+      ' data-stelle="'+esc(cfg.k+":"+x.id)+'">'+cfg.zeile(x)+quellenHtml(p, x.quellen, nurInhaber())+"</div>");
+    quellenVerdrahten(z);
     if(schreiben){ z.onclick=function(e){ if(e.target.closest("a")) return; projektListeEditor(p, cfg, x, neuZeichnen); };
       z.onkeydown=function(e){ if(e.key==="Enter") projektListeEditor(p, cfg, x, neuZeichnen); }; }
     host.appendChild(z);
@@ -21744,6 +21926,13 @@ function projektListeEditor(p, cfg, alt, neuZeichnen){
     return '<label class="fl"><span>'+esc(f[1])+'</span><input type="'+(f[2]||"text")+'" data-f="'+f[0]+'" value="'+esc(w||"")+'"></label>';
   }).join("")+"</form>");
   v.inhalt.appendChild(form);
+  /* Quellen / Anhänge dieses Eintrags (Besprechungsprotokoll, Mail, Foto …) */
+  var quellen=(a.quellen||[]).slice();
+  var qBox=el('<div style="margin-top:8px"><div data-q></div><button class="btn ghost sm" type="button" style="margin-top:4px">📎 Quellen / Anhänge</button></div>');
+  var qZeichnen=function(){ var h=qBox.querySelector("[data-q]"); h.innerHTML=quellenHtml(p, quellen, nurInhaber())||'<span class="muted" style="font-size:12px">Noch keine Quelle angegeben.</span>'; quellenVerdrahten(h); };
+  qZeichnen();
+  qBox.querySelector("button").onclick=function(){ quellenDialog(p, cfg.titel, quellen, nurInhaber(), function(q){ quellen=q; qZeichnen(); }); };
+  v.inhalt.appendChild(qBox);
   var weg=alt ? el('<button class="btn ghost" type="button" style="color:var(--crit);border-color:var(--crit)">Löschen</button>') : null;
   var ab=el('<button class="btn ghost" type="button">Abbrechen</button>'), ok=el('<button class="btn" type="button">Speichern</button>');
   ab.onclick=function(){ v.zu(); };
@@ -21758,6 +21947,7 @@ function projektListeEditor(p, cfg, alt, neuZeichnen){
     var n={id:a.id||neueKennung("pl")};
     form.querySelectorAll("[data-f]").forEach(function(i){ var w=i.type==="checkbox"?i.checked:i.value.trim(); if(w) n[i.dataset.f]=w; });
     if(Object.keys(n).length<2){ toast("Bitte etwas eintragen."); return; }
+    if(quellen.length) n.quellen=quellen;
     schreib(function(l){ return alt ? l.map(function(x){ return x.id===a.id ? n : x; }) : l.concat([n]); },
       cfg.titel+": "+(alt?"geändert":"eingetragen")+" – "+(n.was||n.rolle||n.firma||n.name||""));
   };
@@ -21783,20 +21973,15 @@ function baubuchKarte(p, schreiben, neuZeichnen){
     '<div class="stack" data-liste style="gap:6px"></div></div></div>');
   var host=k.querySelector("[data-liste]");
   if(!liste.length) host.appendChild(el('<div class="muted" style="font-size:13px">Noch keine Einträge.</div>'));
-  var dateien=(p.daten||{}).dateien||[];
   liste.forEach(function(x){
-    var anh=(x.dateien||[]).map(function(pf){ return dateien.filter(function(dd){ return dd.pfad===pf; })[0]; }).filter(Boolean);
-    var z=el('<div style="font-size:13px;border-left:3px solid '+(BAUBUCH_RECHNUNG.indexOf(x.art)>=0?"var(--warn)":"var(--line)")+';padding-left:8px">'+
+    var z=el('<div style="font-size:13px;border-left:3px solid '+(BAUBUCH_RECHNUNG.indexOf(x.art)>=0?"var(--warn)":"var(--line)")+';padding-left:8px" data-stelle="baubuch:'+esc(x.id)+'">'+
       '<span class="muted mono" style="font-size:11.5px">'+esc(dfmt(x.datum))+(x.zeit?" "+esc(x.zeit):"")+" · "+esc(x.von||"")+"</span> "+
       '<span class="tag'+(BAUBUCH_RECHNUNG.indexOf(x.art)>=0?" f30":"")+'">'+esc(baubuchArtName(x.art))+"</span>"+
-      (x.menge?" <strong>"+esc(String(x.menge).replace(".",","))+" "+esc(x.eh||"")+"</strong>":"")+
+      (x.menge!=null?" <strong>"+esc(String(x.menge).replace(".",","))+" "+esc(x.eh||"")+"</strong>":"")+
       "<br>"+esc(x.text||"")+
-      (anh.length?'<br><span class="muted">'+anh.map(function(dd){ return '<a href="#" class="sprunglink" data-pfad="'+esc(dd.pfad)+'">'+esc(dd.name)+"</a>"; }).join(" · ")+"</span>":"")+
+      quellenHtml(p, (x.dateien||[]).concat(x.quellen||[]), nurInhaber())+
       (schreiben?' <a href="#" class="sprunglink" data-aendern style="font-size:12px">ändern</a>':"")+"</div>");
-    z.querySelectorAll("[data-pfad]").forEach(function(a){ tippe(a, function(){
-      Store.sb.storage.from("projektdateien").createSignedUrl(a.dataset.pfad, 600).then(function(r){
-        var u=r && r.data && r.data.signedUrl; if(!u){ toast("Datei nicht abrufbar."); return; }
-        if(/\.pdf$/i.test(a.textContent)) pdfAnsicht(u, a.textContent); else window.open(u, "_blank", "noopener"); }); }); });
+    quellenVerdrahten(z);
     var ae=z.querySelector("[data-aendern]"); if(ae) tippe(ae, function(){ baubuchEditor(p, x, neuZeichnen); });
     host.appendChild(z);
   });
@@ -21832,6 +22017,13 @@ function baubuchEditor(p, alt, neuZeichnen){
   var dateien=[], di=form.querySelector("[data-dateien]"), info=form.querySelector("[data-dateiinfo]");
   di.onchange=function(){ dateien=dateien.concat([].slice.call(di.files||[])); di.value=""; info.textContent=dateien.length+" Datei"+(dateien.length===1?"":"en")+" ausgewählt: "+dateien.map(function(f){ return f.name; }).join(", "); };
   if(alt && (alt.dateien||[]).length) info.textContent="Bisher angehängt: "+alt.dateien.length+" Datei"+(alt.dateien.length===1?"":"en")+".";
+  /* Quellen: vorhandene Projektdateien verknüpfen (Arbeitsnachweis, Lieferschein, Foto …) */
+  var quellen=(a.quellen||[]).slice();
+  var qBox=el('<div><div data-q></div><button class="btn ghost sm" type="button" style="margin-top:4px">📎 Vorhandene Dateien als Quelle</button></div>');
+  var qZeichnen=function(){ var h=qBox.querySelector("[data-q]"); h.innerHTML=quellenHtml(p, (a.dateien||[]).concat(quellen), nurInhaber()); quellenVerdrahten(h); };
+  qZeichnen();
+  qBox.querySelector("button").onclick=function(){ quellenDialog(p, "Baustellenbuch", quellen, nurInhaber(), function(q){ quellen=q.filter(function(x){ return (a.dateien||[]).indexOf(x)<0; }); qZeichnen(); }); };
+  form.appendChild(qBox);
   var weg=alt ? el('<button class="btn ghost" type="button" style="color:var(--crit);border-color:var(--crit)">Löschen</button>') : null;
   var ab=el('<button class="btn ghost" type="button">Abbrechen</button>'), ok=el('<button class="btn" type="button">Speichern</button>');
   ab.onclick=function(){ if(dateien.length && !window.confirm("Ausgewählte Dateien verwerfen?")) return; v.zu(); };
@@ -21849,7 +22041,7 @@ function baubuchEditor(p, alt, neuZeichnen){
     projektDateienHochladen(p, dateiArt, dateien).then(function(neue){
       if(dateien.length && !neue.length){ ok.disabled=false; ok.textContent="Speichern"; return; }
       var n={id:a.id||neueKennung("bb"), datum:datum, zeit:F("zeit")||null, art:art, text:text, menge:mz, eh:F("eh")||null,
-        dateien:(a.dateien||[]).concat(neue.map(function(x){ return x.pfad; })), von:a.von||meinName(), erfasst:a.erfasst||new Date().toISOString()};
+        dateien:(a.dateien||[]).concat(neue.map(function(x){ return x.pfad; })), quellen:quellen.length?quellen:undefined, von:a.von||meinName(), erfasst:a.erfasst||new Date().toISOString()};
       return projektAendern(p, function(d){
         var l=(d.baubuch||[]).slice();
         d.baubuch = alt ? l.map(function(x){ return x.id===a.id ? n : x; }) : l.concat([n]);
