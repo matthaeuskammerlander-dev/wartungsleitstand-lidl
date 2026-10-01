@@ -160,7 +160,10 @@ Kammerlander Umwelt- und Klimatechnik (UKT) – oft kurz, vom Handy, im Feld.
   die App filtert zusätzlich. Diese Grenze nie lockern.
 - **Projekte** (Tabelle `projekte`): Anfrage → Angebot → Auftrag → Baustelle →
   Inbetriebnahme → abgeschlossen → abgerechnet. Dateien unter `buero/…`
-  (Angebot, Rechnung) nur für Admins/Inhaber.
+  (Angebot, Rechnung) NUR für Inhaber – keine Admins (`nurInhaber()`,
+  tools/nur-inhaber-buero.sql; Büro 01.10.2026). Preise, Angebote,
+  Rechnungen und Positionskatalog kommen nie in `projekte.daten` (das sehen
+  alle), sondern in eigene, nur für Inhaber lesbare Tabellen bzw. Dateien.
 - **Arbeitszeiten** (Tabelle `arbeitszeiten`): jede Person sieht nur ihre
   eigenen, der Inhaber alle; ein bestätigter Monat ist gesperrt.
 - **Stempeluhr** (Tabelle `stempel`, Funktion `stempeln()`, tools/stempeluhr.sql):

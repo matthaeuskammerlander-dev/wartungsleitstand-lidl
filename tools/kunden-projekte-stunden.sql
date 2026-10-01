@@ -10,7 +10,7 @@
 --    selbst – Lidl sieht nie etwas von anderen Kunden und umgekehrt.
 -- 2. Projekte (Anfrage → Angebot → Auftrag → Baustelle → Inbetriebnahme →
 --    abgeschlossen → abgerechnet) mit Tagebuch und Dateien. Angebote und
---    Rechnungen (Dateien unter buero/…) sehen nur Admins und Inhaber.
+--    Rechnungen (Dateien unter buero/…) sehen NUR Inhaber (01.10.2026: keine Admins).
 -- 3. Arbeitszeiten: jede Person erfasst ihre Stunden, sieht nur die eigenen.
 --    Inhaber sehen alle und bestätigen den Monat – danach ist er gesperrt.
 
@@ -114,15 +114,18 @@ on conflict (id) do nothing;
 drop policy if exists "projektdateien ansehen"   on storage.objects;
 drop policy if exists "projektdateien hochladen" on storage.objects;
 drop policy if exists "projektdateien loeschen"  on storage.objects;
--- buero/… (Angebote, Rechnungen): nur Admins und Inhaber
+-- buero/… (Angebote, Rechnungen, Preise): NUR Inhaber – keine Admins
+-- (Büro 01.10.2026: nur die Inhaber, auch keine Admins)
 create policy "projektdateien ansehen" on storage.objects for select to authenticated
   using (bucket_id = 'projektdateien' and public.darf_schreiben()
-         and (name not like 'buero/%' or public.ist_admin()));
+         and (name not like 'buero/%' or public.ist_inhaber()));
 create policy "projektdateien hochladen" on storage.objects for insert to authenticated
   with check (bucket_id = 'projektdateien' and public.darf_schreiben()
-              and (name not like 'buero/%' or public.ist_admin()));
+              and (name not like 'buero/%' or public.ist_inhaber()));
 create policy "projektdateien loeschen" on storage.objects for delete to authenticated
-  using (bucket_id = 'projektdateien' and (owner = auth.uid() or public.ist_admin()));
+  using (bucket_id = 'projektdateien'
+         and (case when name like 'buero/%' then public.ist_inhaber()
+                   else (owner = auth.uid() or public.ist_admin()) end));
 
 -- Team-Chat: Nachrichten können auch an einem Projekt hängen
 alter table public.chat drop constraint if exists chat_bezug_art_check;
