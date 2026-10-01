@@ -128,6 +128,11 @@ Kammerlander Umwelt- und Klimatechnik (UKT) – oft kurz, vom Handy, im Feld.
   (Angebot, Rechnung) nur für Admins/Inhaber.
 - **Arbeitszeiten** (Tabelle `arbeitszeiten`): jede Person sieht nur ihre
   eigenen, der Inhaber alle; ein bestätigter Monat ist gesperrt.
+- **Stempeluhr** (Tabelle `stempel`, Funktion `stempeln()`, tools/stempeluhr.sql):
+  Zeit vom Server, Eintrag beim Ausstempeln vom Server berechnet (Quelle
+  „stempel“); nachträglich geändert = „stempel_geaendert“. Standort nur, wenn
+  der Inhaber ihn eingeschaltet hat (`einstellungen`), und nur als Entfernung –
+  nie Koordinaten speichern, nie den Standort verfolgen. Diese Grenzen nie lockern.
 
 ## Rollen
 

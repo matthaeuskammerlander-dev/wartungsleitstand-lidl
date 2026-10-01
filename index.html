@@ -11476,6 +11476,8 @@ function protokollAssistent(form, stoer){
         });
     };
     suche.oninput=zeichne; zeichne();
+    /* der schnellste Weg vor Ort: die nächsten Märkte (antippen = gewählt, weiter) */
+    inhalt.appendChild(naeheAuswahl(function(s){ var sel=f("#f_standort"); sel.value=s.id; sel.onchange(); formDirty=true; weiter(); }));
     inhalt.appendChild(feldRahmen("Markt suchen", suche));
     inhalt.appendChild(liste);
     if(aktuell) inhalt.appendChild(el('<div class="muted" style="font-size:12.5px">Gewählt: <strong>'+
@@ -12242,6 +12244,9 @@ function viewProtokoll(){
 
   /* Standort-Auswahl */
   var selSt=form.querySelector("#f_standort");
+  /* Märkte in der Nähe: antippen wählt den Markt (Position nur zum Sortieren) */
+  var naeheZiel=form.querySelector("#f_marktweg");
+  if(naeheZiel && !nurLesen()) naeheZiel.parentNode.insertBefore(naeheAuswahl(function(s){ selSt.value=s.id; selSt.onchange(); formDirty=true; }), naeheZiel);
   selSt.appendChild(el('<option value="">– bitte wählen –</option>'));
   ST.slice().sort(function(a,b){ return stName(a).localeCompare(stName(b),"de"); }).forEach(function(x){
     var o=document.createElement("option"); o.value=x.id;
@@ -18770,7 +18775,14 @@ function handbuchKarte(z){
           "Büro und Inhaber. Bei der Inbetriebnahme wird die neue Anlage am Standort angelegt – dann läuft sie in der Wartung.",
         "<strong>Stunden</strong> ("+hbLink("Reiter Stunden","stunden")+"): jede Person erfasst ihre Arbeitszeit (von–bis, Pause, was, wo, Projekt) und sieht nur ihre eigene. "+
           "Vorschläge kommen aus den eigenen Protokollen des Tages. Der Inhaber sieht alle, druckt die Monatsliste, gibt sie als Tabelle "+
-          "für die Lohnverrechnung aus und bestätigt den Monat – danach ist er gesperrt."]))+
+          "für die Lohnverrechnung aus und bestätigt den Monat – danach ist er gesperrt.",
+        "<strong>Stempeluhr</strong> (oben im Reiter Stunden): Einstempeln, Pause, Weiter, Ausstempeln – die Uhrzeit setzt der Server, nicht das Handy. "+
+          "Beim Ausstempeln entsteht der Eintrag von selbst. Wird ein gestempelter Eintrag nachträglich geändert, steht das für den Inhaber sichtbar dabei; "+
+          "löschen kann ihn nur der Inhaber. Vergessen auszustempeln: nach 12 Stunden lässt sich das tatsächliche Ende nachtragen.",
+        "<strong>Standort beim Stempeln</strong> ist ausgeschaltet, bis der Inhaber ihn einschaltet (Voraussetzung: Betriebsvereinbarung bzw. Zustimmung jeder Person, "+
+          "Information nach DSGVO). Dann wird beim Ein- und Ausstempeln einmal die Position abgefragt und nur die Entfernung zum Markt bzw. Betrieb gespeichert – "+
+          "keine Koordinaten, keine Verfolgung danach.",
+        "<strong>Märkte in der Nähe:</strong> beim Einstempeln und bei der Marktwahl im Protokoll – zeigt die nächsten Märkte zum Antippen. Die Position dient nur zum Sortieren und wird nicht gespeichert."]))+
 
     abschnitt("9 · Schwachstellen und worauf zu achten ist",
       liste(["<strong>Die alte Liste ist nicht fehlerfrei:</strong> vertauschte Kürzel, zweimal JW, verschiedene Inbetriebnahmedaten je Zeile, "+
@@ -20618,6 +20630,9 @@ function viewStunden(){
     zeitenLaden().then(function(){ if(S.view==="stunden" && darfRendern() && !document.querySelector(".assistent")) render(); });
   }
   var heute=isoLokal(new Date());
+  /* Stempeluhr oben – der schnelle Weg wie bei einer Stempeluhr-App */
+  if(!stempelGeladen && !stempelLaedt) stempelNachladen(true).then(function(){ if(S.view==="stunden" && darfRendern() && !document.querySelector(".assistent")) render(); });
+  f.appendChild(stempelKarte());
   S.stWoche=S.stWoche||montagVon(heute);
   var mo=S.stWoche, so=plusTage(mo,6);
   var c=el('<div class="card"><div class="pad stack">'+
@@ -20670,8 +20685,10 @@ function zeitZeile(z){
     '<a href="#" class="sprunglink" data-bearb style="flex:1;min-width:0">'+
       (z.beginn&&z.ende?esc(z.beginn)+"–"+esc(z.ende)+(z.pause_min?" ("+z.pause_min+" min Pause)":"")+" · ":"")+
       esc(zeitArtName(z.art))+(z.taetigkeit?" · "+esc(z.taetigkeit):"")+"</a>"+
-    '<span class="mono muted" style="white-space:nowrap">'+stundenText(z.minuten)+(z.bestaetigt?" 🔒":"")+"</span></div>");
-  var bezug=[s?marktLink(s):"", p?projektLink(p):""].filter(Boolean).join(" · ");
+    '<span class="mono muted" style="white-space:nowrap" title="'+esc(QUELLE_TEXT[z.quelle||"hand"]||"")+'">'+stundenText(z.minuten)+
+      (/^stempel/.test(z.quelle||"")?(z.quelle==="stempel"?" ⏱":" ⏱✎"):"")+(z.bestaetigt?" 🔒":"")+"</span></div>");
+  var bezug=[s?marktLink(s):"", p?projektLink(p):"", z.quelle && z.quelle!=="stempel" && z.quelle!=="hand" ? '<span class="muted">'+esc(QUELLE_TEXT[z.quelle])+"</span>" : "",
+    z.ort ? '<span class="muted">'+esc(ortEintrag(z.ort))+"</span>" : ""].filter(Boolean).join(" · ");
   if(bezug) t.querySelector("[data-bearb]").insertAdjacentHTML("afterend", '<span style="font-size:12px">'+bezug+"</span>");
   t.querySelector("[data-bearb]").onclick=function(e){ e.preventDefault(); zeitEditor(z); };
   return t;
@@ -20694,7 +20711,8 @@ function zeitEditor(z, vorgabe){
   var neu=!z, a=Object.assign({datum:isoLokal(new Date()), art:"arbeit", pause_min:0}, vorgabe||{}, z||{});
   var gesperrt=!!(z && z.bestaetigt) && !istInhaber();
   var v=ansichtOeffnen(neu?"Zeit erfassen":"Zeit ändern");
-  v.schritt.textContent=gesperrt ? "Vom Büro bestätigt – nicht mehr änderbar" : meinName();
+  var gestempelt=!!(z && /^stempel/.test(z.quelle||""));
+  v.schritt.textContent=gesperrt ? "Vom Büro bestätigt – nicht mehr änderbar" : meinName()+(z && z.quelle ? " · "+(QUELLE_TEXT[z.quelle]||"") : "");
   var projekte=PROJEKTE.filter(function(p){ return projektOffen(p) || p.id===a.projekt_id; });
   var stListe=ST.slice().sort(function(x,y){ return stName(x).localeCompare(stName(y),"de"); });
   var form=el('<form class="stack" autocomplete="off" style="max-width:560px">'+
@@ -20721,6 +20739,8 @@ function zeitEditor(z, vorgabe){
     '<div class="note warnbox" data-err hidden></div>'+
   "</form>");
   v.inhalt.appendChild(form);
+  if(gestempelt && !gesperrt) form.insertBefore(el('<div class="note" style="font-size:12.5px">⏱ Gestempelt'+(z.ort?" · "+esc(ortEintrag(z.ort)):"")+
+    ". Ändern geht, wird aber als „nachträglich geändert“ vermerkt"+(istInhaber()?"":" und ist für das Büro sichtbar")+".</div>"), form.firstChild);
   var F=function(k){ return form.querySelector('[data-f="'+k+'"]'); };
   var ergebnis=form.querySelector("[data-ergebnis]");
   var rechnen=function(){
@@ -20754,7 +20774,7 @@ function zeitEditor(z, vorgabe){
   var err=form.querySelector("[data-err]");
   var fehler=function(t){ err.textContent=t; err.hidden=false; };
   if(!gesperrt){
-    if(!neu){
+    if(!neu && (!gestempelt || istInhaber())){
       var lo=el('<button class="btn ghost" type="button" style="color:var(--crit);border-color:var(--crit)">Löschen</button>');
       lo.onclick=function(){
         if(!window.confirm("Diesen Eintrag löschen?")) return;
@@ -20812,12 +20832,12 @@ function zeitenListeHtml(liste, name, monat){
   var sum=l.reduce(function(a,z){ return a+(z.minuten||0); },0);
   return blattKopf("Arbeitszeit "+MONATE_L[+monat.slice(5,7)]+" "+monat.slice(0,4), name)+
     '<table class="t" style="width:100%;border-collapse:collapse;font-size:11px"><thead><tr>'+
-      ["Datum","von","bis","Pause","Art","Was / wo","Stunden"].map(function(h){ return '<th style="text-align:left;border-bottom:1px solid #999;padding:3px 4px">'+h+"</th>"; }).join("")+"</tr></thead><tbody>"+
+      ["Datum","von","bis","Pause","Art","Was / wo","Erfasst","Stunden"].map(function(h){ return '<th style="text-align:left;border-bottom:1px solid #999;padding:3px 4px">'+h+"</th>"; }).join("")+"</tr></thead><tbody>"+
     l.map(function(z){
       var s=z.standort_id && byId[z.standort_id], p=z.projekt_id && PROJEKTE.filter(function(x){ return x.id===z.projekt_id; })[0];
       return "<tr>"+[WOCHENTAGE[(new Date(z.datum+"T12:00:00").getDay()+6)%7]+" "+dfmt(z.datum), z.beginn||"", z.ende||"", z.pause_min?z.pause_min+" min":"", zeitArtName(z.art),
-        [z.taetigkeit, s?stName(s):"", p?p.nummer:"", z.notiz].filter(Boolean).join(" · "), stundenDez(z.minuten)]
-        .map(function(x,i){ return '<td style="border-bottom:1px solid #ddd;padding:3px 4px'+(i===6?";text-align:right":"")+'">'+esc(x)+"</td>"; }).join("")+"</tr>";
+        [z.taetigkeit, s?stName(s):"", p?p.nummer:"", z.notiz].filter(Boolean).join(" · "), (QUELLE_TEXT[z.quelle||"hand"]||"")+(z.ort?" · "+ortEintrag(z.ort):""), stundenDez(z.minuten)]
+        .map(function(x,i){ return '<td style="border-bottom:1px solid #ddd;padding:3px 4px'+(i===7?";text-align:right":"")+'">'+esc(x)+"</td>"; }).join("")+"</tr>";
     }).join("")+
     "</tbody></table>"+
     '<div style="margin-top:10px;font-size:12px">'+Object.keys(je).map(function(k){ return esc(zeitArtName(k))+": <strong>"+stundenDez(je[k])+" h</strong>"; }).join(" · ")+
@@ -20836,6 +20856,7 @@ function zeitenInhaberKarte(){
         '<button class="btn ghost sm" type="button" data-m="1" aria-label="Folgemonat">›</button></div></div>'+
     '<div data-inhalt class="muted" style="font-size:13px">wird geladen …</div>'+
   "</div></div>");
+  k.querySelector(".stack").insertBefore(stempelOrtSchalter(), k.querySelector("[data-inhalt]"));
   k.querySelectorAll("[data-m]").forEach(function(b){ b.onclick=function(){ S.stMonat=plusMonate(S.stMonat+"-01", +b.dataset.m).slice(0,7); render(); }; });
   var von=S.stMonat+"-01", bis=plusMonate(von,1);
   Store.sb.from("arbeitszeiten").select("*").gte("datum", von).lt("datum", bis).order("datum").limit(5000).then(function(r){
@@ -20850,7 +20871,7 @@ function zeitenInhaberKarte(){
       var offen=z.filter(function(x){ return !x.bestaetigt; }).length;
       var tr=el("<tr><td>"+esc(n)+"</td><td class='mono'>"+stundenDez(summe(function(x){ return x.art==="arbeit"; }))+"</td><td class='mono'>"+stundenDez(summe(function(x){ return x.art==="urlaub"; }))+
         "</td><td class='mono'>"+stundenDez(summe(function(x){ return x.art==="krank"; }))+"</td><td class='mono'>"+stundenDez(summe(function(x){ return ["arbeit","urlaub","krank"].indexOf(x.art)<0; }))+
-        "</td><td class='mono'><strong>"+stundenDez(summe(function(){ return true; }))+"</strong></td><td>"+(offen?offen+" offen":"bestätigt 🔒")+"</td><td></td></tr>");
+        "</td><td class='mono'><strong>"+stundenDez(summe(function(){ return true; }))+"</strong></td><td>"+(offen?offen+" offen":"bestätigt 🔒")+stempelVermerk(z)+"</td><td></td></tr>");
       var zelle=tr.lastChild;
       zelle.appendChild(pdfKnopf("PDF", function(){ return "Arbeitszeit_"+n+"_"+S.stMonat+".pdf"; },
         function(){ return blattZuPdf({html:zeitenListeHtml(z, n, S.stMonat), fuss:"Arbeitszeit "+n+" – "+S.stMonat, titel:"Arbeitszeit "+n+" "+S.stMonat}); }));
@@ -20873,10 +20894,10 @@ function zeitenInhaberKarte(){
     /* alles als Tabelle für die Lohnverrechnung */
     var csv=el('<button class="btn ghost sm" type="button">Als Tabelle (CSV) für die Lohnverrechnung</button>');
     csv.onclick=function(){
-      var zeilen=[["Mitarbeiter","Datum","von","bis","Pause (min)","Art","Stunden","Was","Markt/Standort","Projekt","Notiz","bestätigt"]];
+      var zeilen=[["Mitarbeiter","Datum","von","bis","Pause (min)","Art","Stunden","Was","Markt/Standort","Projekt","Notiz","Erfasst","Ort beim Stempeln","bestätigt"]];
       l.forEach(function(z){
         var s=z.standort_id && byId[z.standort_id], p=z.projekt_id && PROJEKTE.filter(function(x){ return x.id===z.projekt_id; })[0];
-        zeilen.push([z.name||"", z.datum, z.beginn||"", z.ende||"", z.pause_min||0, zeitArtName(z.art), stundenDez(z.minuten), z.taetigkeit||"", s?stName(s):"", p?p.nummer:"", z.notiz||"", z.bestaetigt?dfmt(tagLokal(z.bestaetigt)):""]);
+        zeilen.push([z.name||"", z.datum, z.beginn||"", z.ende||"", z.pause_min||0, zeitArtName(z.art), stundenDez(z.minuten), z.taetigkeit||"", s?stName(s):"", p?p.nummer:"", z.notiz||"", QUELLE_TEXT[z.quelle||"hand"]||"", ortEintrag(z.ort), z.bestaetigt?dfmt(tagLokal(z.bestaetigt)):""]);
       });
       var text="﻿"+zeilen.map(function(r3){ return r3.map(function(x){ x=String(x); return /[;"\n]/.test(x) ? '"'+x.replace(/"/g,'""')+'"' : x; }).join(";"); }).join("\r\n");
       pdfHerunterladen(new Blob([text], {type:"text/csv;charset=utf-8"}), "Arbeitszeiten_"+S.stMonat+".csv");
@@ -20885,9 +20906,279 @@ function zeitenInhaberKarte(){
   });
   return k;
 }
+
+/* ================================================================
+   Stempeluhr (Büro 01.10.2026, wie früher Crewmeister): Ein- und
+   Ausstempeln, Pause. Die Zeit setzt der Server (Funktion stempeln(),
+   tools/stempeluhr.sql), beim Ausstempeln entsteht der Eintrag in den
+   Stunden von selbst. Standort nur, wenn der Inhaber ihn eingeschaltet hat:
+   dann EINMAL beim Stempeln abgefragt, gespeichert wird nur die Entfernung
+   zum Markt bzw. Betrieb – keine Koordinaten, keine Verfolgung.
+   ================================================================ */
+var STEMPEL=[], stempelGeladen=false, stempelLaedt=false, stempelKonto="", stempelStand=0, stempelFehler="";
+var STEMPEL_ORT_AN=false;
+function stempelNachladen(neu){
+  if(demo()){ stempelGeladen=true; return Promise.resolve(); }
+  if(!betriebAn() || stempelLaedt) return Promise.resolve();
+  var konto=Store.benutzer.email, uid=Store.benutzer.id;
+  if(konto!==stempelKonto){ stempelKonto=konto; STEMPEL=[]; stempelGeladen=false; stempelStand=0; }
+  if(!neu && Date.now()-stempelStand<60000) return Promise.resolve();
+  stempelStand=Date.now(); stempelLaedt=true;
+  return Promise.all([
+    Store.sb.from("stempel").select("*").eq("user_id", uid).order("zeit",{ascending:false}).limit(40),
+    Store.sb.from("einstellungen").select("*").eq("schluessel","stempel_standort")
+  ]).then(function(r){
+    stempelLaedt=false;
+    if(Store.benutzer.email!==konto) return;
+    if(r[0].error){ stempelFehler=/relation|does not exist/i.test(r[0].error.message)?"Die Stempeluhr ist in der Datenbank noch nicht eingerichtet (tools/stempeluhr.sql).":r[0].error.message; return; }
+    var vorher=JSON.stringify(STEMPEL);
+    stempelFehler=""; STEMPEL=r[0].data||[]; stempelGeladen=true;
+    STEMPEL_ORT_AN=!!(r[1] && !r[1].error && r[1].data && r[1].data[0] && r[1].data[0].wert && r[1].data[0].wert.an);
+    if(vorher!==JSON.stringify(STEMPEL)) stempelReiterZeichen();
+  }, function(e){ stempelLaedt=false; stempelFehler=(e&&e.message)||"keine Verbindung"; });
+}
+/* wo man gerade steht: nicht eingestempelt · eingestempelt · Pause */
+function stempelZustand(){
+  var l=STEMPEL[0]||null;
+  if(!l || l.art==="aus") return {art:"aus", letzt:l};
+  var ein=STEMPEL.filter(function(s){ return s.art==="ein"; })[0]||null;
+  var pause=0, ab=null;
+  STEMPEL.slice().reverse().forEach(function(s){
+    if(!ein || s.zeit<ein.zeit) return;
+    if(s.art==="pause") ab=s.zeit; else if(s.art==="weiter" && ab){ pause+=new Date(s.zeit)-new Date(ab); ab=null; }
+  });
+  return {art:l.art==="pause"?"pause":"ein", letzt:l, ein:ein, pauseMs:pause, pauseSeit:ab};
+}
+function stempelLaeuft(){ return stempelZustand().art!=="aus"; }
+function stempelReiterZeichen(){
+  var b=document.querySelector('#tabs [data-v="stunden"]'); if(!b) return;
+  var z=stempelZustand().art;
+  b.textContent="Stunden"+(z==="ein"?" ⏱":z==="pause"?" ⏸":"");
+}
+/* Entfernung beim Stempeln: zum gewählten Markt, sonst zum nächsten Markt bzw. Betrieb.
+   Gespeichert wird nur das Ergebnis, nie die Position selbst. */
+function stempelOrt(standortId){
+  if(!STEMPEL_ORT_AN) return Promise.resolve(null);
+  if(!navigator.geolocation) return Promise.resolve({status:"keine_position", grund:"nicht unterstützt"});
+  return new Promise(function(ok){
+    navigator.geolocation.getCurrentPosition(function(pos){
+      var hier={lat:pos.coords.latitude, lon:pos.coords.longitude}, gen=Math.round(pos.coords.accuracy||0);
+      var nah=function(m){ return m<=Math.max(300, gen); };
+      var r={genauigkeit:gen};
+      var s=standortId && byId[standortId];
+      if(s && s.lat!=null){ r.standort=s.id; r.entfernung=Math.round(luftlinie(hier, s)*1000); r.status=nah(r.entfernung)?"am_markt":"entfernt"; }
+      var orte=ST.filter(function(x){ return x.lat!=null; }).concat([BETRIEB]), best=null, dmin=Infinity;
+      orte.forEach(function(x){ var d=luftlinie(hier, x)*1000; if(d<dmin){ dmin=d; best=x; } });
+      if(best){ r.naechster=best.id; r.naechsterEntfernung=Math.round(dmin); }
+      if(!r.status) r.status = best && nah(dmin) ? (best===BETRIEB?"im_betrieb":"am_markt") : "unterwegs";
+      ok(r);
+    }, function(e){ ok({status:"keine_position", grund:e && e.code===1 ? "nicht erlaubt" : "nicht ermittelt"}); },
+    {enableHighAccuracy:true, timeout:15000, maximumAge:60000});
+  });
+}
+function ortName(id){ return id===BETRIEB.id ? "Betrieb" : (byId[id] ? stName(byId[id]) : "Markt"); }
+function ortKurz(o){
+  if(!o) return "";
+  var km=function(m){ return m<1000 ? m+" m" : (Math.round(m/100)/10).toString().replace(".",",")+" km"; };
+  if(o.status==="keine_position") return "📍 keine Position ("+(o.grund||"–")+")";
+  if(o.status==="am_markt") return "📍 am Markt"+(o.entfernung!=null?" ("+km(o.entfernung)+")":o.naechster?" "+ortName(o.naechster):"");
+  if(o.status==="im_betrieb") return "📍 im Betrieb";
+  if(o.status==="entfernt") return "📍 "+km(o.entfernung)+" vom gewählten Markt";
+  return "📍 unterwegs"+(o.naechster?" – "+km(o.naechsterEntfernung)+" von "+ortName(o.naechster):"");
+}
+/* Eintrag der Stunden: Ort beim Ein- und Ausstempeln */
+function ortEintrag(ort){
+  if(!ort) return "";
+  return [ort.ein?"ein: "+ortKurz(ort.ein).replace("📍 ",""):"", ort.aus?"aus: "+ortKurz(ort.aus).replace("📍 ",""):""].filter(Boolean).join(" · ");
+}
+var QUELLE_TEXT={stempel:"gestempelt", stempel_geaendert:"gestempelt, nachträglich geändert", stempel_nachgetragen:"gestempelt, Ende nachgetragen", hand:"von Hand"};
+
+function stempelDruecken(art, opt, knopf){
+  opt=opt||{};
+  if(knopf) knopf.disabled=true;
+  var z=stempelZustand();
+  var standort=opt.standort_id || (art!=="ein" && z.ein ? z.ein.standort_id : null);
+  return stempelOrt(standort).then(function(ort){
+    var werte={p_art:art, p_standort:opt.standort_id||null, p_projekt:opt.projekt_id||null, p_taetigkeit:opt.taetigkeit||null,
+      p_ort:ort, p_name:meinName(), p_ende_hand:opt.ende||null};
+    if(demo()) return stempelDemo(werte);
+    return mitFrist(Store.sb.rpc("stempeln", werte), 20000).then(function(r){
+      if(r.error) throw new Error(/function|does not exist/i.test(r.error.message)?"Die Stempeluhr ist in der Datenbank noch nicht eingerichtet.":r.error.message);
+      return r.data;
+    });
+  }).then(function(erg){
+    var s=erg && erg.stempel, e=erg && erg.eintrag;
+    if(s) STEMPEL=[s].concat(STEMPEL.filter(function(x){ return x.id!==s.id; }));
+    if(e) ZEITEN=ZEITEN.filter(function(x){ return x.id!==e.id; }).concat([e]);
+    toast({ein:"Eingestempelt", pause:"Pause", weiter:"Weiter – Pause beendet", aus:"Ausgestempelt"}[art]+
+      (e?" – "+stundenText(e.minuten)+" in den Stunden.":".")+(s && s.ort ? " "+ortKurz(s.ort) : ""));
+    stempelStand=0; stempelNachladen(true);
+    stempelReiterZeichen();
+    if(S.view==="stunden" && darfRendern() && !document.querySelector(".assistent")) render();
+  }).catch(function(e){ if(knopf) knopf.disabled=false; toast("Nicht gestempelt: "+(e.message||e)); stempelStand=0; stempelNachladen(true).then(function(){ if(S.view==="stunden") render(); }); });
+}
+/* Präsentation: dasselbe nur im Speicher */
+function stempelDemo(w){
+  var jetzt=new Date().toISOString(), z=stempelZustand();
+  var s={id:neueKennung("st"), art:w.p_art, zeit:jetzt, standort_id:w.p_standort||(z.ein&&w.p_art!=="ein"?z.ein.standort_id:null),
+    projekt_id:w.p_projekt||(z.ein&&w.p_art!=="ein"?z.ein.projekt_id:null), taetigkeit:w.p_taetigkeit||(z.ein&&w.p_art!=="ein"?z.ein.taetigkeit:null), ort:w.p_ort};
+  if(w.p_art!=="aus") return {stempel:s};
+  var ab=new Date(z.ein.zeit), ende=new Date(), pause=z.pauseMs+(z.pauseSeit?ende-new Date(z.pauseSeit):0);
+  var hm=function(d){ return ("0"+d.getHours()).slice(-2)+":"+("0"+d.getMinutes()).slice(-2); };
+  var e={id:neueKennung("z"), name:meinName(), datum:isoLokal(ab), beginn:hm(ab), ende:hm(ende), pause_min:Math.round(pause/60000),
+    minuten:Math.max(0, Math.floor((ende-ab-pause)/60000)), art:"arbeit", taetigkeit:s.taetigkeit, standort_id:s.standort_id, projekt_id:s.projekt_id,
+    quelle:"stempel", ort:(z.ein.ort||w.p_ort)?{ein:z.ein.ort||null, aus:w.p_ort||null}:null};
+  return {stempel:s, eintrag:e};
+}
+
+/* ---------- Karte „Stempeluhr“ oben im Reiter Stunden ---------- */
+var stempelUhr=null;
+function stempelKarte(){
+  var z=stempelZustand(), heute=isoLokal(new Date());
+  var k=el('<div class="card" id="stempelkarte" style="border-color:var(--accent)"><div class="pad stack" style="gap:10px">'+
+    '<div class="rowflex" style="justify-content:space-between"><h2>Stempeluhr</h2><span data-zustand></span></div>'+
+    (stempelFehler?'<div class="note warnbox">'+esc(stempelFehler)+"</div>":"")+
+    '<div data-inhalt class="stack" style="gap:10px"></div>'+
+    (STEMPEL_ORT_AN?'<div class="muted" style="font-size:12px">📍 Beim Ein- und Ausstempeln wird einmal der Standort abgefragt. Gespeichert wird nur die Entfernung zum Markt bzw. Betrieb – keine Koordinaten, keine Verfolgung danach.</div>':"")+
+  "</div></div>");
+  var host=k.querySelector("[data-inhalt]"), zst=k.querySelector("[data-zustand]");
+  if(!stempelGeladen && !demo()){ host.appendChild(el('<div class="muted" style="font-size:13px">wird geladen …</div>')); return k; }
+  var gross='style="font-size:17px;padding:14px 22px;min-width:150px"';
+  if(z.art==="aus"){
+    zst.innerHTML='<span class="pill">nicht eingestempelt</span>';
+    var stOpt=ST.slice().sort(function(a,b){ return stName(a).localeCompare(stName(b),"de"); });
+    var w=el('<div class="stack" style="gap:8px">'+
+      '<div class="grid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:10px">'+
+        '<label class="fl"><span>Wo? (Markt / Standort)</span><select data-st><option value="">– Betrieb, Werkstatt, unterwegs –</option>'+
+          stOpt.map(function(s){ return '<option value="'+esc(s.id)+'">'+esc(stName(s)+(istLidl(s)?"":" · "+kundeTitel(kundeVon(s))))+"</option>"; }).join("")+"</select></label>"+
+        '<label class="fl"><span>Projekt</span><select data-pr><option value="">–</option>'+PROJEKTE.filter(projektOffen).map(function(p){
+          return '<option value="'+esc(p.id)+'">'+esc(projektTitel(p))+"</option>"; }).join("")+"</select></label>"+
+      "</div>"+
+      '<label class="fl"><span>Was? (kann leer bleiben)</span><input type="text" data-was maxlength="300" placeholder="z. B. Wartung, Montage, Werkstatt"></label>'+
+      '<div><button class="btn" type="button" data-ein '+gross+' data-schreiben>▶ Einstempeln</button></div></div>');
+    /* Vorschlag: der Markt, an dem heute zuletzt eingestempelt wurde */
+    var zuletzt=STEMPEL.filter(function(s){ return s.art==="ein"; })[0];
+    if(zuletzt && zuletzt.standort_id && byId[zuletzt.standort_id] && tagLokal(zuletzt.zeit)===heute) w.querySelector("[data-st]").value=zuletzt.standort_id;
+    w.querySelector("[data-ein]").onclick=function(){
+      stempelDruecken("ein", {standort_id:w.querySelector("[data-st]").value||null, projekt_id:w.querySelector("[data-pr]").value||null,
+        taetigkeit:w.querySelector("[data-was]").value.trim()||null}, this);
+    };
+    /* die nächsten Märkte zur Auswahl (Position nur zum Sortieren, nicht gespeichert) */
+    w.insertBefore(naeheAuswahl(function(s){ w.querySelector("[data-st]").value=s.id; }), w.children[1]);
+    host.appendChild(w);
+    if(z.letzt && z.letzt.art==="aus" && tagLokal(z.letzt.zeit)===heute)
+      host.appendChild(el('<div class="muted" style="font-size:12.5px">Zuletzt ausgestempelt um '+esc(zeitAus(z.letzt.zeit))+".</div>"));
+    return k;
+  }
+  /* eingestempelt oder in der Pause */
+  if(!z.ein){ host.appendChild(el('<div class="note warnbox">Der Stempelverlauf ist unvollständig – bitte neu laden.</div>')); return k; }
+  var ein=z.ein, s=ein && ein.standort_id && byId[ein.standort_id], p=ein && ein.projekt_id && PROJEKTE.filter(function(x){ return x.id===ein.projekt_id; })[0];
+  zst.innerHTML = z.art==="pause" ? '<span class="pill p-faellig">Pause</span>' : '<span class="pill p-geplant">eingestempelt</span>';
+  var info=el('<div class="stack" style="gap:4px">'+
+    '<div style="font-size:34px;font-weight:700;font-family:var(--f-mono)" data-uhr>–</div>'+
+    '<div style="font-size:13.5px">seit '+esc(zeitAus(ein.zeit))+(tagLokal(ein.zeit)!==heute?" am "+esc(dfmt(tagLokal(ein.zeit))):"")+
+      (s?" · "+marktLink(s):"")+(p?" · "+projektLink(p):"")+(ein.taetigkeit?" · "+esc(ein.taetigkeit):"")+"</div>"+
+    (ein.ort?'<div class="muted" style="font-size:12.5px">'+esc(ortKurz(ein.ort))+"</div>":"")+
+    '<div class="muted" style="font-size:12.5px" data-pausetext></div></div>');
+  host.appendChild(info);
+  var knoepfe=el('<div class="rowflex" style="gap:10px"></div>');
+  if(z.art==="pause") knoepfe.appendChild(el('<button class="btn" type="button" data-a="weiter" '+gross+' data-schreiben>▶ Weiter</button>'));
+  else knoepfe.appendChild(el('<button class="btn ghost" type="button" data-a="pause" '+gross+' data-schreiben>⏸ Pause</button>'));
+  knoepfe.appendChild(el('<button class="btn" type="button" data-a="aus" '+gross+' style="background:var(--crit);border-color:var(--crit)" data-schreiben>■ Ausstempeln</button>'));
+  host.appendChild(knoepfe);
+  knoepfe.querySelectorAll("[data-a]").forEach(function(b){ b.onclick=function(){
+    if(b.dataset.a==="aus" && !window.confirm("Jetzt ausstempeln?")) return;
+    stempelDruecken(b.dataset.a, {}, b); }; });
+  /* vergessen auszustempeln: über 12 Stunden – das tatsächliche Ende eintragen */
+  var lang=Date.now()-new Date(ein.zeit)>12*3600000;
+  if(lang){
+    var v=el('<div class="note warnbox" style="font-size:13px"><strong>Seit über 12 Stunden eingestempelt</strong> – vergessen auszustempeln? '+
+      'Dann hier das tatsächliche Ende eintragen (steht als „Ende nachgetragen“ in den Stunden).'+
+      '<div class="rowflex" style="margin-top:8px;gap:8px"><input type="time" data-ende style="max-width:130px"><button class="btn sm" type="button" data-schreiben>Mit diesem Ende ausstempeln</button></div></div>');
+    v.querySelector("button").onclick=function(){
+      var e=v.querySelector("[data-ende]").value; if(!e){ toast("Bitte die Uhrzeit eintragen, zu der du fertig warst."); return; }
+      stempelDruecken("aus", {ende:e}, this);
+    };
+    host.appendChild(v);
+  }
+  /* die Uhr läuft mit (alle 20 Sekunden, solange die Karte zu sehen ist) */
+  var zeichnen=function(){
+    if(!k.isConnected){ clearInterval(stempelUhr); stempelUhr=null; return; }
+    var jetzt=Date.now(), pause=z.pauseMs+(z.pauseSeit?jetzt-new Date(z.pauseSeit):0);
+    var min=Math.max(0, Math.floor((jetzt-new Date(ein.zeit)-pause)/60000));
+    k.querySelector("[data-uhr]").textContent=stundenText(min);
+    k.querySelector("[data-pausetext]").textContent = [z.pauseSeit ? "Pause seit "+zeitAus(z.pauseSeit) : "", pause>=60000 ? "Pausen bisher: "+Math.round(pause/60000)+" min" : ""].filter(Boolean).join(" · ");
+  };
+  if(stempelUhr) clearInterval(stempelUhr);
+  stempelUhr=setInterval(zeichnen, 20000);
+  setTimeout(zeichnen, 0);
+  return k;
+}
+function zeitAus(iso){ var d=new Date(iso); return ("0"+d.getHours()).slice(-2)+":"+("0"+d.getMinutes()).slice(-2); }
+/* Inhaber-Übersicht: wie viele Einträge gestempelt und wie viele davon nachträglich geändert sind */
+function stempelVermerk(liste){
+  var st=liste.filter(function(x){ return /^stempel/.test(x.quelle||""); }).length, g=liste.filter(function(x){ return /^stempel_/.test(x.quelle||""); }).length;
+  return st ? '<br><span class="muted" style="font-size:12px">'+st+" gestempelt"+(g?", <strong>"+g+" geändert/nachgetragen</strong>":"")+"</span>" : "";
+}
+
+/* ---------- Märkte in der Nähe (Büro 01.10.2026) ----------
+   Einmal die Position abfragen und die nächsten Märkte zur Auswahl zeigen –
+   beim Einstempeln und bei der Marktwahl im Protokoll. Die Position bleibt auf
+   dem Gerät (nur zum Sortieren), gespeichert wird nichts. */
+function maerkteInDerNaehe(anzahl){
+  if(!navigator.geolocation) return Promise.reject(new Error("Dieses Gerät kann den Standort nicht bestimmen."));
+  return new Promise(function(ok, nok){
+    navigator.geolocation.getCurrentPosition(function(pos){
+      var hier={lat:pos.coords.latitude, lon:pos.coords.longitude};
+      ok(ST.filter(function(s){ return s.lat!=null; }).map(function(s){ return {s:s, m:Math.round(luftlinie(hier, s)*1000)}; })
+        .sort(function(a,b){ return a.m-b.m; }).slice(0, anzahl||6));
+    }, function(e){ nok(new Error(e && e.code===1 ? "Standort nicht erlaubt – in den Einstellungen des Handys für den Browser freigeben." : "Standort ließ sich nicht bestimmen.")); },
+    {enableHighAccuracy:true, timeout:15000, maximumAge:120000});
+  });
+}
+/* Knopf „📍 In der Nähe“ und darunter die Märkte als Chips; wahl(s) setzt die Auswahl */
+function naeheAuswahl(wahl){
+  var box=el('<div class="stack" style="gap:6px"><div><button class="btn ghost sm" type="button">📍 Märkte in der Nähe</button></div><div class="chips" data-naehe></div></div>');
+  var b=box.querySelector("button"), ch=box.querySelector("[data-naehe]");
+  b.onclick=function(){
+    b.disabled=true; b.textContent="Standort wird bestimmt …";
+    maerkteInDerNaehe(6).then(function(l){
+      b.disabled=false; b.textContent="📍 Märkte in der Nähe";
+      ch.innerHTML="";
+      if(!l.length){ ch.appendChild(el('<span class="muted" style="font-size:12.5px">Keine Märkte mit Kartenposition.</span>')); return; }
+      l.forEach(function(x){
+        var km=x.m<1000 ? x.m+" m" : (Math.round(x.m/100)/10).toString().replace(".",",")+" km";
+        var c=el('<button class="chip" type="button">'+esc(stName(x.s))+" · "+km+"</button>");
+        c.onclick=function(){ ch.querySelectorAll(".chip").forEach(function(o){ o.setAttribute("aria-pressed","false"); }); c.setAttribute("aria-pressed","true"); wahl(x.s); };
+        ch.appendChild(c);
+      });
+    }, function(e){ b.disabled=false; b.textContent="📍 Märkte in der Nähe"; toast(e.message); });
+  };
+  return box;
+}
+
+/* Inhaber: Standort beim Stempeln ein-/ausschalten – mit den Voraussetzungen */
+function stempelOrtSchalter(){
+  var k=el('<div class="note" style="font-size:13px"><label class="chk"><input type="checkbox" data-ort'+(STEMPEL_ORT_AN?" checked":"")+'><span><strong>Standort beim Stempeln erfassen</strong> – einmal beim Ein- und Ausstempeln, gespeichert wird nur die Entfernung zum Markt bzw. Betrieb.</span></label></div>');
+  var cb=k.querySelector("[data-ort]");
+  cb.onchange=function(){
+    var an=cb.checked;
+    if(an && !window.confirm("Standort beim Stempeln einschalten?\n\nVoraussetzungen (Österreich):\n"+
+      "• Betriebsvereinbarung – oder ohne Betriebsrat: Zustimmung jeder betroffenen Person\n"+
+      "• Information der Mitarbeiter nach DSGVO (wofür, wie lange, wer sieht es)\n"+
+      "• Datenschutz-Folgenabschätzung geprüft\n\nLiegt das vor?")){ cb.checked=false; return; }
+    if(demo()){ STEMPEL_ORT_AN=an; render(); return; }
+    Store.sb.from("einstellungen").upsert({schluessel:"stempel_standort", wert:{an:an}, geaendert:new Date().toISOString(), von:meinName()}).then(function(r){
+      if(r.error){ cb.checked=!an; toast("Nicht gespeichert: "+r.error.message); return; }
+      STEMPEL_ORT_AN=an; toast(an?"Standort beim Stempeln ist eingeschaltet.":"Standort beim Stempeln ist ausgeschaltet."); render();
+    });
+  };
+  return k;
+}
 function render(){
   setTimeout(kundenlisteNachladen, 0);
   setTimeout(projekteNachladen, 0);
+  setTimeout(function(){ stempelNachladen(false).then(stempelReiterZeichen); }, 0);
   /* Kopfzeile nachziehen – Märkte können angelegt oder stillgelegt worden sein */
   wunschLinkNeu();
   var standEl=document.getElementById("stand");
