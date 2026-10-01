@@ -650,6 +650,23 @@ def projekte_abgleich(k, sb, stand):
                          json.dumps({"projekt": p_aus, "belege": belege}, ensure_ascii=False, indent=1).encode("utf-8"))
             s["kennung"] = kennung
             mappen += 1
+        # Projekt als PDF (in der App abgelegt): die Fassung OHNE Angebote/Rechnungen
+        # kommt als Projekt_<Nummer>.pdf in den Projektordner; die Büro-Fassung nicht
+        # (den Ordner sehen auch Techniker – Büro 01.10.2026)
+        mp = ((p.get("daten") or {}).get("mappePdf") or {})
+        mpfad = str(mp.get("pfad") or "")
+        if mpfad and not mpfad.startswith("buero/") and s.get("mappe_pdf") != mpfad:
+            ziel = os.path.join(ordner, "Projekt_%s.pdf" % sauber(p.get("nummer") or pid[:8]))
+            log("Projekt %s: PDF %s" % (p.get("nummer"), os.path.relpath(ziel, k["basis"])))
+            if not PRUEFEN:
+                try:
+                    inhalt = sb.datei("projektdateien", mpfad)
+                    if not inhalt.startswith(b"%PDF"):
+                        raise RuntimeError("kein PDF")
+                    schreibe(ziel, inhalt)
+                    s["mappe_pdf"] = mpfad
+                except RuntimeError as e:
+                    log("  PDF nicht geholt (%s)" % str(e)[:120])
         stand[schl] = s
         ordner_je_projekt[pid] = ordner
     log("Projekte: %d, %d Dateien geholt, %d Mappen geschrieben" % (len(projekte), neu_dateien, mappen))

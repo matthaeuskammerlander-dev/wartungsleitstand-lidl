@@ -108,6 +108,10 @@ Kammerlander Umwelt- und Klimatechnik (UKT) – oft kurz, vom Handy, im Feld.
   hochgeladen (`quelleDatei` verknüpft am Namen). Dateien zeigen „gehört zu“
   (`dateiGehoertZu`), die Synology-Mappe verlinkt relativ in den Projektordner.
   Projekttyp in `daten.typ` (`PROJEKT_TYPEN` + eigene).
+- Projekt als PDF (`projektPdfDialog`, `projektPdfErzeugen`, Büro 01.10.2026): OHNE
+  Belege für alle (abgelegt `daten.mappePdf`, Synology → `Projekt_<Nr>.pdf`), MIT
+  Belegen nur Inhaber (Beträge, Stunden, Beleg-PDFs angehängt; abgelegt unter
+  `buero/` = `daten.mappePdfBuero`, nie in den Projektordner der Synology).
 - Synology-Ablage der Baustellen (`synology/ukt_archiv.py`, `projekte_abgleich`):
   je Projekt `{jahr}/Kunden/{kunde}/Baustellen/{Filiale Ort}_{Nummer}/` mit
   Unterordnern je Dateiart und Projektmappe (HTML + JSON). Angebote und

@@ -1074,6 +1074,19 @@ Projekte ab, je Projekt ein Ordner nach Jahr und Kunde:
     Projekt_P-2026-001.json   dasselbe maschinenlesbar
 ```
 
+**Projekt als PDF** (seit 01.10.2026, Knopf „Projekt als PDF“ unten im
+Projekt). Das ganze Projekt als PDF ansehen, drucken, herunterladen oder
+ablegen:
+
+- **ohne Angebote/Rechnungen:** Angaben je Schritt mit Quellen und Aufgaben,
+  Beteiligte, Termine, Bestellungen, Aufgaben und Termine aus dem Kalender,
+  Baustellenbuch (Mengen), Anlagen, Dateien, Fotos und Tagebuch. Auf Wunsch
+  hängen die PDF-Unterlagen hinten an. „Ablegen“ speichert es am Projekt, die
+  Synology holt es als `Projekt_<Nummer>.pdf` in den Projektordner.
+- **mit Angeboten/Rechnungen** (nur Inhaber): zusätzlich Belege mit Beträgen
+  und Stunden je Person, die Beleg-PDFs hängen hinten an. „Ablegen“ speichert
+  es nur im Büro-Bereich, **nicht** im Projektordner der Synology.
+
 Die Mappe enthält Angaben je Schritt, Beteiligte, Termine, Bestellungen,
 Baustellenbuch, Anlagen, Dateien und Tagebuch. Neue Dateien werden dazugeholt,
 die Mappe wird bei jeder Änderung neu geschrieben. Den Ordnernamen legt

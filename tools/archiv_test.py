@@ -26,6 +26,7 @@ PROJEKT = {
                      "quellen": [{"name": "Grundriss EG.pdf", "hinweis": "Seite 2"}]}],
         "quellen": {"begehung": [{"name": "Begehungsprotokoll fehlt.pdf"}], "angebot": ["buero/x/angebot-1-Angebot_900001.pdf"]},
         "typ": "Anlagentausch / Umbau",
+        "mappePdf": {"pfad": "x/mappe/Projekt_P-2026-001-a.pdf"}, "mappePdfBuero": {"pfad": "buero/x/mappe/Projekt_mit-a.pdf"},
         "baubuch": [{"id": "c", "datum": "2026-09-12", "art": "kran", "text": "Autokran", "menge": 1.5, "eh": "Std"}],
         "dateien": [
             {"pfad": "buero/x/angebot-1-Angebot_900001.pdf", "name": "Angebot 900001.pdf", "art": "angebot", "zeit": "2026-10-01T10:00:00Z"},
@@ -86,7 +87,7 @@ def main():
         ordner = os.path.join(basis, "2026", "Kunden", "Lidl", "Baustellen", "123-Musterort_P-2026-001")
         erwartet = [os.path.join(ordner, "Plaene", "Grundriss-EG.pdf"),
                     os.path.join(ordner, "Fotos", "Dach.jpg"), os.path.join(ordner, "Projekt_P-2026-001.html"),
-                    os.path.join(ordner, "Projekt_P-2026-001.json")]
+                    os.path.join(ordner, "Projekt_P-2026-001.json"), os.path.join(ordner, "Projekt_P-2026-001.pdf")]
         fehlt = [e for e in erwartet if not os.path.exists(e)]
         alle = [os.path.join(r, f) for r, _, fs in os.walk(basis) for f in fs]
         assert not fehlt, "fehlt: %s\nvorhanden: %s" % (fehlt, alle)

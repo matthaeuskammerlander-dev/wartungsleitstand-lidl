@@ -21270,6 +21270,11 @@ function projektAnsicht(id){
     /* Team-Chat: Nachrichten zu diesem Projekt */
     if(chatAn()) v.inhalt.appendChild(chatBezugKarte("projekt", p.id, chatBezugText("projekt", p)));
 
+    /* das ganze Projekt als PDF – mit oder ohne Angebote/Rechnungen; ablegen für die Synology */
+    var pdfK=el('<button class="btn sm" type="button">Projekt als PDF</button>');
+    pdfK.onclick=function(){ projektPdfDialog(PROJEKTE.filter(function(x){ return x.id===p.id; })[0]||p); };
+    v.fuss.appendChild(pdfK);
+
     /* Löschen: nur Inhaber (ein Projekt mit Unterlagen ist ein Nachweis) */
     if(istInhaber() && !demo()){
       var lo=el('<button class="btn ghost sm" type="button" style="color:var(--crit);border-color:var(--crit)">Projekt löschen</button>');
@@ -21284,6 +21289,255 @@ function projektAnsicht(id){
     }
   };
   aufbauen();
+}
+
+/* ================================================================
+   Projekt als PDF (Büro 01.10.2026: „das gesamte Projekt als PDF ausdrucken
+   bzw. für die Synology ablegen – mit und ohne Rechnungen/Angebote“).
+   * OHNE: Angaben je Schritt mit Quellen, Beteiligte, Termine, Bestellungen,
+     Aufgaben und Termine aus dem Kalender, Baustellenbuch (Mengen, keine
+     Preise), Anlagen, Dateien, Fotos, Tagebuch – darf jeder, der das Projekt
+     sieht; abgelegt im Projekt (daten.mappePdf), die Synology holt es als
+     Projekt_<Nummer>.pdf in den Projektordner.
+   * MIT (nur Inhaber): zusätzlich Angebote/Rechnungen mit Beträgen und Stunden
+     je Person, die Beleg-PDFs hinten angehängt; abgelegt nur unter buero/
+     (daten.mappePdfBuero) – NICHT im Projektordner der Synology, den auch
+     Techniker sehen (eigener Büro-Ordner später).
+   ================================================================ */
+/* Bild aus dem Speicher klein und als data-URL – damit es sicher ins PDF kommt */
+function bildFuerPdf(url, kante){
+  return fetch(url).then(function(r){ if(!r.ok) throw new Error("HTTP "+r.status); return r.blob(); }).then(function(b){
+    return new Promise(function(ok, nok){
+      var u=URL.createObjectURL(b), i=new Image();
+      i.onload=function(){
+        var f=Math.min(1, kante/Math.max(i.naturalWidth, i.naturalHeight)), c=document.createElement("canvas");
+        c.width=Math.round(i.naturalWidth*f); c.height=Math.round(i.naturalHeight*f);
+        c.getContext("2d").drawImage(i, 0, 0, c.width, c.height);
+        URL.revokeObjectURL(u); ok(c.toDataURL("image/jpeg", 0.8));
+      };
+      i.onerror=function(){ URL.revokeObjectURL(u); nok(new Error("Bild nicht lesbar")); };
+      i.src=u;
+    });
+  });
+}
+function projektDateiUrl(pfad){
+  return Store.sb.storage.from("projektdateien").createSignedUrl(pfad, 900).then(function(r){
+    var u=r && r.data && r.data.signedUrl; if(!u) throw new Error("Datei nicht abrufbar"); return u; });
+}
+function projektPdfDateiname(p, mit){
+  return "Projekt_"+String(p.nummer||p.id.slice(0,8)).replace(/[^A-Za-z0-9._-]+/g,"-")+"_"+
+    String(p.titel||"").normalize("NFD").replace(/[̀-ͯ]/g,"").replace(/[^A-Za-z0-9]+/g,"-").replace(/^-|-$/g,"").slice(0,40)+
+    (mit?"_mit-Belegen":"")+".pdf";
+}
+/* der Inhalt des Blatts; opt: {mit, fotos} – liefert {html, anhang:[{name, holen()}]} */
+function projektPdfInhalt(p, opt){
+  var d=p.daten||{}, s=p.standort_id && byId[p.standort_id], mit=!!opt.mit && nurInhaber();
+  var dateien=(d.dateien||[]).filter(function(f){ return mit || !/^buero\//.test(f.pfad); });
+  var qText=function(q){ return (q||[]).map(function(x){ var f=quelleDatei(p,x);
+    if(f && /^buero\//.test(f.pfad) && !mit) return f.name+" (nur Büro)";
+    return (f?f.name:quelleName(x)+" (noch nicht hochgeladen)")+(x&&x.hinweis?" ("+x.hinweis+")":""); }).join(" · "); };
+  var h=[];
+  h.push(blattKopf("Projekt "+(p.nummer||"")+" – "+(p.titel||""),
+    [kundeTitel(p.kunde_id||"lidl"), s?stName(s)+(s.adresse?" · "+s.adresse:""):"", "Stand: "+projektSchritt(p.status)[1], d.typ?"Typ: "+d.typ:""].filter(Boolean).join(" · ")));
+  if(mit) h.push("<div style='border:1px solid #b3261e;color:#b3261e;padding:4px 8px;margin-bottom:6px'><strong>Mit Angeboten und Rechnungen – nur für das Büro.</strong></div>");
+  /* Angaben je Schritt mit Quelle */
+  var ang="";
+  PROJEKT_SCHRITTE.forEach(function(x){
+    var felder=(PROJEKT_ANGABEN[x[0]]||[]).filter(function(f){ return d[f[0]]; });
+    var q=((d.quellen||{})[x[0]])||[];
+    var auf=PLANUNG.filter(function(e){ return e.art==="aufgabe" && e.projekt_id===p.id && e.projekt_schritt===x[0]; });
+    if(!felder.length && !q.length && !auf.length) return;
+    ang+="<tr><th colspan='2'>"+esc(x[1])+"</th></tr>"+felder.map(function(f){
+      var w=d[f[0]]; return tz(f[1], f[2]==="datum"?dfmt(w):w); }).join("")+
+      (auf.length?tz("Aufgaben", auf.map(function(e){ return (e.status==="erledigt"?"☑ ":"☐ ")+e.titel+(e.datum?" (fällig "+dfmt(e.datum)+")":"")+(planWerText(e)?" – "+planWerText(e):""); }).join("\n")):"")+
+      (q.length?tz("Quelle", qText(q)):"");
+  });
+  if(ang) h.push("<h2>Angaben</h2><table>"+ang+"</table>");
+  /* Listen */
+  var liste=function(titel, l, spalten){
+    if(!(l||[]).length) return;
+    h.push("<h2>"+esc(titel)+"</h2><table><tr>"+spalten.map(function(c){ return "<th>"+esc(c[1])+"</th>"; }).join("")+"<th>Quelle</th></tr>"+
+      l.map(function(x){ return "<tr>"+spalten.map(function(c){ var w=x[c[0]];
+        return "<td>"+esc(w===true?"ja":w===false?"":(c[2]==="d"?dfmt(w):w)||"")+"</td>"; }).join("")+"<td>"+esc(qText(x.quellen))+"</td></tr>"; }).join("")+"</table>");
+  };
+  liste("Beteiligte", d.beteiligte, [["rolle","Rolle"],["firma","Firma"],["name","Name"],["telefon","Telefon"],["mail","E-Mail"],["notiz","Notiz"]]);
+  liste("Termine (Bauzeitplan)", (d.termine||[]).slice().sort(PROJEKT_LISTEN.termine.sort), [["datum","Datum","d"],["zeit","Zeit"],["was","Was"],["wer","Wer"],["erledigt","erledigt"]]);
+  liste("Bestellungen", d.bestellungen, [["was","Was"],["menge","Menge"],["lieferant","Lieferant"],["bestellt","bestellt","d"],["liefertermin","Liefertermin","d"],["geliefert","geliefert"],["notiz","Notiz"]]);
+  /* Kalender: Termine und Aufgaben zum Projekt (Privates kommt hier nie vor) */
+  var plan=PLANUNG.filter(function(e){ return e.projekt_id===p.id && !e.privat; })
+    .sort(function(a,b){ return String(a.datum||"9").localeCompare(String(b.datum||"9")); });
+  if(plan.length) h.push("<h2>Aufgaben und Termine (Kalender)</h2><table><tr><th>Datum</th><th>Art</th><th>Was</th><th>Wer</th><th>Schritt</th><th>Stand</th></tr>"+
+    plan.map(function(e){ return "<tr><td>"+esc(e.datum?dfmt(e.datum)+(e.datum_bis&&e.datum_bis!==e.datum?"–"+dfmt(e.datum_bis):""):"–")+(e.beginn?" "+esc(planZeit(e)):"")+"</td><td>"+
+      esc(e.art==="aufgabe"?"Aufgabe":planKat(e.kategorie)[1])+"</td><td>"+esc(e.titel)+(e.details?"<br><span style='color:#555'>"+esc(e.details)+"</span>":"")+"</td><td>"+esc(planWerText(e))+"</td><td>"+
+      esc(e.projekt_schritt?projektSchritt(e.projekt_schritt)[1]:"")+"</td><td>"+esc(e.art==="aufgabe"?(e.status==="erledigt"?"erledigt"+(e.erledigt_von?" ("+e.erledigt_von+")":""):"offen"):"")+"</td></tr>"; }).join("")+"</table>");
+  /* Baustellenbuch: Mengen, keine Preise */
+  var bb=(d.baubuch||[]).slice().sort(function(a,b){ return (String(a.datum||"")+String(a.zeit||"")).localeCompare(String(b.datum||"")+String(b.zeit||"")); });
+  if(bb.length) h.push("<h2>Baustellenbuch</h2><table><tr><th style='width:12%'>Datum</th><th>Art</th><th>Beschreibung</th><th>Menge</th><th>von</th><th>Quelle</th></tr>"+
+    bb.map(function(e){ return "<tr><td>"+esc(dfmt(e.datum))+(e.zeit?" "+esc(e.zeit):"")+"</td><td>"+esc(baubuchArtName(e.art))+(BAUBUCH_RECHNUNG.indexOf(e.art)>=0?" €":"")+"</td><td>"+esc(e.text||"")+"</td><td>"+
+      esc(e.menge==null?"":String(e.menge).replace(".",",")+" "+(e.eh||""))+"</td><td>"+esc(e.von||"")+"</td><td>"+esc(qText((e.dateien||[]).concat(e.quellen||[])))+"</td></tr>"; }).join("")+
+    "</table><div style='font-size:10px;color:#555'>€ = zählt für die Rechnung</div>");
+  /* Anlagen aus dem Projekt */
+  var an=(d.anlagen||[]).map(function(id){ return ANLAGEN[id] || (posById[id] && anlageVon(posById[id])); }).filter(Boolean);
+  if(an.length) h.push("<h2>Anlagen aus diesem Projekt</h2><table><tr><th>Anlage</th><th>Gerät</th><th>Seriennummer</th><th>Kältemittel</th><th>Inbetriebnahme</th><th>Termine</th></tr>"+
+    an.map(function(a){ var x=anlageDaten(a.leader);
+      return "<tr><td>"+esc(anlagenName(x))+"</td><td>"+esc([x.hersteller,x.modell].filter(Boolean).join(" "))+"</td><td>"+esc(x.seriennummer||"")+"</td><td>"+
+        esc([x.kaeltemittelArt, x.kaeltemittelKg?String(x.kaeltemittelKg).replace(".",",")+" kg":""].filter(Boolean).join(" "))+"</td><td>"+esc(dfmt(inbetriebnahmeVon(a.leader)))+"</td><td>"+
+        esc(a.termine.map(terminKurz).join(", "))+"</td></tr>"; }).join("")+"</table>");
+  /* Dateien und wozu sie gehören */
+  if(dateien.length) h.push("<h2>Dateien</h2><table><tr><th>Datei</th><th>Art</th><th>gehört zu</th><th>hochgeladen</th></tr>"+
+    dateien.map(function(f){ return "<tr><td>"+esc(f.name)+"</td><td>"+esc((PROJEKT_DATEIARTEN.filter(function(x){ return x[0]===f.art; })[0]||[f.art,f.art||""])[1])+"</td><td>"+
+      esc(dateiGehoertZu(p,f).map(function(st){ return st.titel; }).join(" · "))+"</td><td>"+esc(f.zeit?dfmt(tagLokal(f.zeit)):"")+(f.von?" · "+esc(f.von):"")+"</td></tr>"; }).join("")+"</table>");
+  h.push("<div data-rolle='belege'></div><div data-rolle='stunden'></div>");
+  /* Fotos (eingefügt in vorbereiten) */
+  if(opt.fotos && dateien.some(function(f){ return f.art==="foto" || /\.(jpe?g|png)$/i.test(f.name||""); })) h.push("<div data-rolle='fotos'></div>");
+  /* Tagebuch */
+  var vl=p.verlauf||[];
+  if(vl.length) h.push("<h2>Tagebuch</h2><table>"+vl.map(function(e){ return "<tr><td style='width:14%'>"+esc(dfmt(tagLokal(e.zeit)))+"</td><td style='width:18%'>"+esc(e.wer||"")+"</td><td>"+esc(e.text||"")+"</td></tr>"; }).join("")+"</table>");
+  return {html:h.join(""), dateien:dateien, mit:mit};
+}
+/* das ganze PDF; opt: {mit, fotos, unterlagen} */
+function projektPdfErzeugen(p, opt, fortschritt){
+  var inh=projektPdfInhalt(p, opt), mit=inh.mit, belege=[], melde=fortschritt||function(){};
+  var titel="Projekt "+(p.nummer||"")+" "+(p.titel||"");
+  return (mit ? belegeLaden(p.id).then(function(l){ belege=l||[]; }) : Promise.resolve()).then(function(){
+    melde("Blatt wird gesetzt …");
+    return blattZuPdf({html:inh.html, titel:titel, fuss:titel+(mit?" – mit Angeboten/Rechnungen (nur Büro)":""), betreff:"Projektmappe "+(p.nummer||""),
+      vorbereiten:function(blatt){
+        var auf=[];
+        /* Angebote und Rechnungen, Stunden je Person – nur in der Büro-Fassung */
+        if(mit){
+          var bh=blatt.querySelector('[data-rolle="belege"]');
+          if(belege.length){
+            var summe={angebot:0, rechnung:0};
+            belege.forEach(function(b){ if(!b.test) summe[b.art]=(summe[b.art]||0)+((b.summen||{}).netto||0); });
+            bh.innerHTML="<h2>Angebote und Rechnungen</h2><table><tr><th>Beleg</th><th>Datum</th><th>Herkunft</th><th>Stand</th><th style='text-align:right'>netto €</th><th style='text-align:right'>brutto €</th></tr>"+
+              belege.map(function(b){ var su=b.summen||{};
+                return "<tr><td>"+esc((b.art==="rechnung"?"Rechnung ":"Angebot ")+(b.nummer||""))+"</td><td>"+esc(dfmt(b.datum))+"</td><td>"+esc(b.extern?"KPlus":b.test?"TEST (App)":"App")+"</td><td>"+
+                  esc(belegStatusText(b))+"</td><td style='text-align:right'>"+esc(geldPdf(su.netto))+"</td><td style='text-align:right'>"+esc(su.brutto!=null?geldPdf(su.brutto):"")+"</td></tr>"; }).join("")+
+              "<tr><th colspan='4'>Summe Angebote / Rechnungen (ohne TEST)</th><th colspan='2' style='text-align:right'>"+esc(geldPdf(summe.angebot))+" / "+esc(geldPdf(summe.rechnung))+"</th></tr></table>"+
+              (opt.belegePdf?"<div style='font-size:10px;color:#555'>Die Belege selbst folgen hinten.</div>":"");
+          }
+          auf.push(zeitenFuerProjekt(p.id).then(function(l){
+            if(!l.length) return;
+            var je={}, sum=0; l.forEach(function(z){ sum+=z.minuten||0; je[z.name||"?"]=(je[z.name||"?"]||0)+(z.minuten||0); });
+            blatt.querySelector('[data-rolle="stunden"]').innerHTML="<h2>Stunden</h2><table>"+Object.keys(je).sort().map(function(n){ return tz(n, stundenText(je[n])); }).join("")+tz("Summe", stundenText(sum))+"</table>";
+          }));
+        }
+        /* Fotos: verkleinert aus dem Speicher */
+        var fh=blatt.querySelector('[data-rolle="fotos"]');
+        if(fh){
+          var fl=inh.dateien.filter(function(f){ return f.art==="foto" || /\.(jpe?g|png)$/i.test(f.name||""); }).slice(0,80);
+          melde("Fotos werden geholt ("+fl.length+") …");
+          auf.push(Promise.all(fl.map(function(f){
+            return projektDateiUrl(f.pfad).then(function(u){ return bildFuerPdf(u, 900); }).then(function(src){
+              var g=dateiGehoertZu(p,f).map(function(st){ return st.titel; }).join(" · ");
+              return "<figure><img alt='' src='"+src+"'><figcaption>"+esc(f.name)+(g?" – "+esc(g):"")+"</figcaption></figure>"; }, function(){ return ""; });
+          })).then(function(teile){ fh.innerHTML="<h2>Fotos</h2><div class='fotos'>"+teile.join("")+"</div>"; }));
+        }
+        return Promise.all(auf);
+      }});
+  }).then(function(blob){
+    /* hinten anhängen: Beleg-PDFs (nur MIT) und auf Wunsch die PDF-Unterlagen */
+    var anhang=[];
+    if(mit && opt.belegePdf) belege.forEach(function(b){
+      if(b.extern){
+        var f=inh.dateien.filter(function(x){ return /\.pdf$/i.test(x.name||"") && x.name.indexOf(String(b.nummer))===0; })[0];
+        if(f) anhang.push({name:f.name, pfad:f.pfad});
+      } else if(b.pdf_pfad) anhang.push({name:b.nummer+".pdf", pfad:b.pdf_pfad});
+      else anhang.push({name:b.nummer+".pdf", erzeugen:function(){ return belegPdfErzeugen(b, kontextProjekt(p)); }});
+    });
+    if(opt.unterlagen) inh.dateien.forEach(function(f){
+      if(!/\.pdf$/i.test(f.name||"") || anhang.some(function(a){ return a.pfad===f.pfad; })) return;
+      if(/^buero\//.test(f.pfad) && !mit) return;
+      anhang.push({name:f.name, pfad:f.pfad});
+    });
+    if(!anhang.length) return blob;
+    melde("Anhänge werden angefügt ("+anhang.length+") …");
+    var fehlt=[];
+    return (window.PDFLib ? Promise.resolve() : ladeSkript(PDF_LIB)).then(function(){
+      var L=window.PDFLib;
+      return blob.arrayBuffer().then(function(b0){ return L.PDFDocument.load(b0); }).then(function(doc){
+        return anhang.reduce(function(kette, a){
+          return kette.then(function(){
+            var holen = a.erzeugen ? a.erzeugen().then(function(x){ return x.arrayBuffer(); })
+              : projektDateiUrl(a.pfad).then(function(u){ return fetch(u); }).then(function(r){ if(!r.ok) throw new Error("HTTP "+r.status); return r.arrayBuffer(); });
+            return holen.then(function(buf){ return L.PDFDocument.load(buf, {ignoreEncryption:true}); })
+              .then(function(src){ return doc.copyPages(src, src.getPageIndices()); })
+              .then(function(seiten){ seiten.forEach(function(s2){ doc.addPage(s2); }); }, function(){ fehlt.push(a.name); });
+          });
+        }, Promise.resolve()).then(function(){ return doc.save(); });
+      });
+    }).then(function(bytes){
+      if(fehlt.length) toast("Nicht angehängt (nicht lesbar): "+fehlt.join(", "));
+      return new Blob([bytes], {type:"application/pdf"});
+    });
+  });
+}
+/* ablegen: OHNE im Projekt (Synology holt es), MIT nur unter buero/ */
+function projektPdfAblegen(p, mit, blob){
+  var pfad=(mit?"buero/":"")+p.id+"/mappe/"+projektPdfDateiname(p, mit).replace(/\.pdf$/,"")+"-"+Date.now().toString(36)+".pdf";
+  var feld=mit?"mappePdfBuero":"mappePdf", alt=((p.daten||{})[feld]||{}).pfad;
+  return mitFrist(Store.sb.storage.from("projektdateien").upload(pfad, blob, {contentType:"application/pdf", upsert:false}), 180000).then(function(r){
+    if(r.error) throw new Error(r.error.message);
+    return projektAendern(p, function(d){ d[feld]={pfad:pfad, zeit:new Date().toISOString(), von:meinName(), groesse:blob.size}; },
+      "Projekt als PDF abgelegt"+(mit?" (mit Angeboten/Rechnungen – nur Büro)":""));
+  }).then(function(){
+    /* die vorige Fassung im Speicher wegräumen (darf nicht jeder – dann bleibt sie eben) */
+    if(alt && alt!==pfad) Store.sb.storage.from("projektdateien").remove([alt]).then(function(){}, function(){});
+    return pfad;
+  });
+}
+function projektPdfDialog(p){
+  var buero=nurInhaber() && !demo();
+  var v=ansichtOeffnen("Projekt als PDF");
+  v.schritt.textContent=projektTitel(p);
+  var d=p.daten||{};
+  var abgelegt=function(f, text){ return f && f.pfad ? '<div class="muted" style="font-size:12px">'+esc(text)+" zuletzt abgelegt am "+esc(dfmt(tagLokal(f.zeit)))+(f.von?" von "+esc(f.von):"")+"</div>" : ""; };
+  var box=el('<div class="stack">'+
+    '<div class="fl"><span>Fassung</span><div class="chips" data-art>'+
+      '<button class="chip" type="button" data-m="ohne" aria-pressed="true">ohne Angebote/Rechnungen</button>'+
+      (buero?'<button class="chip" type="button" data-m="mit" aria-pressed="false">mit Angeboten/Rechnungen (nur Büro)</button>':"")+"</div></div>"+
+    '<label class="fl"><span><input type="checkbox" data-o="fotos" checked> Fotos einfügen</span></label>'+
+    '<label class="fl"><span><input type="checkbox" data-o="unterlagen"> PDF-Unterlagen hinten anhängen (Pläne, Protokolle, Lieferscheine …)</span></label>'+
+    '<label class="fl" data-belegepdf hidden><span><input type="checkbox" data-o="belegePdf" checked> Angebote und Rechnungen als PDF hinten anhängen</span></label>'+
+    '<div class="note" data-hinweis style="font-size:12.5px"></div>'+
+    abgelegt(d.mappePdf, "Ohne Angebote/Rechnungen:")+(buero?abgelegt(d.mappePdfBuero, "Mit Angeboten/Rechnungen:"):"")+
+    '<div class="muted" data-stand style="font-size:12.5px"></div>'+
+  "</div>");
+  v.inhalt.appendChild(box);
+  var mit=false;
+  var hinweis=function(){
+    box.querySelector("[data-belegepdf]").hidden=!mit;
+    box.querySelector("[data-hinweis]").innerHTML = mit
+      ? "<strong>Mit Angeboten und Rechnungen:</strong> Beträge, Stunden je Person und die Beleg-PDFs. „Ablegen“ speichert es nur im Büro-Bereich der App – <strong>nicht</strong> im Projektordner der Synology (den sehen auch Techniker)."
+      : "<strong>Ohne Angebote und Rechnungen:</strong> alles Übrige zum Projekt. „Ablegen“ speichert es am Projekt; die Synology holt es als Projekt_"+esc(p.nummer||"")+".pdf in den Projektordner.";
+  };
+  box.querySelectorAll("[data-m]").forEach(function(b){ b.onclick=function(){ mit=b.dataset.m==="mit"; box.querySelectorAll("[data-m]").forEach(function(x){ x.setAttribute("aria-pressed", String(x===b)); }); hinweis(); }; });
+  hinweis();
+  var opt=function(){ var o={mit:mit}; box.querySelectorAll("[data-o]").forEach(function(c){ o[c.dataset.o]=c.checked; }); return o; };
+  var stand=box.querySelector("[data-stand]");
+  var knoepfe=[];
+  var los=function(knopf, was){
+    knoepfe.forEach(function(k){ k.disabled=true; });
+    var text=knopf.textContent; knopf.textContent="wird erstellt …";
+    var o=opt();
+    projektPdfErzeugen(p, o, function(t){ stand.textContent=t; }).then(function(blob){
+      stand.textContent="";
+      if(was==="ansehen"){ var u=URL.createObjectURL(blob); pdfAnsicht(u, projektPdfDateiname(p, o.mit)); setTimeout(function(){ URL.revokeObjectURL(u); }, 600000); }
+      else if(was==="laden"){ var u2=URL.createObjectURL(blob), a=document.createElement("a"); a.href=u2; a.download=projektPdfDateiname(p, o.mit);
+        document.body.appendChild(a); a.click(); a.remove(); setTimeout(function(){ URL.revokeObjectURL(u2); }, 4000); toast("PDF erstellt."); }
+      else return projektPdfAblegen(p, o.mit, blob).then(function(){
+        toast(o.mit ? "Abgelegt – nur im Büro-Bereich (nicht im Projektordner der Synology)." : "Abgelegt – die Synology holt es beim nächsten Lauf in den Projektordner.");
+        v.zu();
+      });
+    }).catch(function(e){ stand.textContent=""; toast("PDF ließ sich nicht erstellen: "+(e&&e.message||e)); })
+      .then(function(){ knoepfe.forEach(function(k){ k.disabled=false; }); knopf.textContent=text; });
+  };
+  [["Ansehen / Drucken","ansehen",""],["Herunterladen","laden","ghost "]].concat(betriebAn() && !demo() ? [["Ablegen (Synology)","ablegen",""]] : []).forEach(function(k){
+    var b=el('<button class="btn '+k[2]+'" type="button">'+esc(k[0])+"</button>");
+    b.onclick=function(){ los(b, k[1]); };
+    knoepfe.push(b); v.fuss.appendChild(b);
+  });
 }
 
 /* ================================================================
