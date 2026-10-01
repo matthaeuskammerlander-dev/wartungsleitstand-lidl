@@ -518,6 +518,9 @@ fieldset.fs-zu{padding-block:4px 6px}
 #rundgang .rg-text{font-size:14px;line-height:1.5}
 #rundgang .rg-knoepfe{display:flex;gap:6px;align-items:center}
 @media (max-width:639px){ #rundgang .rg-karte{width:auto;max-height:46vh} }
+/* Nachbessern: Märkte am PC in zwei Spalten */
+.nb-liste{display:grid;grid-template-columns:minmax(0,1fr);gap:12px;align-items:start}
+@media (min-width:1100px){ .nb-liste{grid-template-columns:repeat(2,minmax(0,1fr))} }
 /* große Bildschirme: die Seite nutzt die Breite */
 @media (min-width:1400px){ .wrap{max-width:1560px} }
 /* das Protokoll bleibt lesbar schmal */
@@ -17342,9 +17345,18 @@ function viewVerwaltung(){
       }).join("")+
     "</tr></thead><tbody></tbody></table></div>"+
     '<div class="muted" style="font-size:12px">'+sicht.length+" von "+zeilen.length+" Märkten</div>"+
+    '<div data-mehr></div>'+
   "</div></div>");
   var tb=ue.querySelector("tbody");
-  sicht.forEach(function(z){
+  /* lange Liste (Büro 02.10.2026: Verwaltung überarbeiten): zuerst 40 – bei Suche alle
+     Treffer, der gerade bearbeitete Markt immer */
+  var zeigeZ=(A.alleMaerkte || q) ? sicht : sicht.filter(function(z, i){ return i<40 || z.s.id===A.sel; });
+  if(zeigeZ.length<sicht.length){
+    var mb=el('<button class="btn ghost sm" type="button">Alle '+sicht.length+" Märkte zeigen</button>");
+    mb.onclick=function(){ A.alleMaerkte=true; listeNeu(); };
+    ue.querySelector("[data-mehr]").appendChild(mb);
+  }
+  zeigeZ.forEach(function(z){
     var s=z.s, kz={}; s.pos.forEach(function(p){ if(p.intervall) kz[p.intervall.kurz]=1; });
     var tr=el("<tr style='cursor:pointer"+(A.sel===s.id?";background:var(--accent-soft)":"")+(s.aktiv?"":";opacity:.55")+"'>"+
       /* Schilder und Pille (data-ziel): der Editor öffnet gleich an der passenden Stelle */
@@ -19065,7 +19077,7 @@ function kartenOrdnen(host, regeln, praefix, mitLeiste, ausgleichen){
     var h=k.querySelector && k.querySelector("h2"), t=h ? h.textContent.trim() : "";
     var r=regeln.filter(function(x){ return x.wenn ? x.wenn(k, t) : x.klasse ? !!(k.classList && k.classList.contains(x.klasse)) : x.h.test(t); })[0]||null;
     if(k.classList && k.classList.contains("card") && h && !(r && r.fest))
-      einklappbar(k, praefix+":"+(r && r.key || t.slice(0,30)), r && r.zusammen, !!(r && r.handyZu && schmal));
+      einklappbar(k, praefix+":"+(r && r.key || t.slice(0,30)), r && r.zusammen, !!(r && (r.zu || (r.handyZu && schmal))));
     teile.push([k, r ? r.seite : "haupt", !!(r && r.fix)]);
   });
   host.innerHTML="";
@@ -19127,7 +19139,8 @@ var ANSICHT_ORDNUNG={
     {h:/^Liste herunterladen/, seite:"neben", key:"liste", handyZu:true}, {h:/^Kältemittel/, seite:"neben", key:"kaeltemittel", handyZu:true},
     {h:/^Monatsbericht/, seite:"neben", key:"monatsbericht", handyZu:true}, {h:/^Wartungshistorie/, seite:"haupt", key:"historie"},
     {h:/^Letzte Änderungen/, seite:"haupt", key:"aenderungen"}],
-  daten:[{h:/^So arbeitet/, seite:"haupt", key:"handbuch"}, {h:/^Zu klären/, seite:"haupt", key:"klaeren"}, {h:/^Export/, seite:"neben", key:"export"}],
+  daten:[{h:/^Zu klären/, seite:"haupt", key:"klaeren"}, {h:/^Export/, seite:"neben", key:"export"},
+    {h:/^So arbeitet/, seite:"haupt", key:"handbuch2", zu:true, zusammen:"Handbuch – 15 Abschnitte und die Rundgänge"}],
   anlagen:[{h:/./, seite:"haupt", fest:true}],
   kunden:[{h:/^Kontakte/, seite:"haupt", key:"kontakte"}, {h:/^Kunden/, seite:"neben", key:"kunden"}],
   /* Protokoll am PC: das Formular links, Konto und gespeicherte Protokolle rechts */
@@ -19499,8 +19512,10 @@ function springeZu(x, s){
 function nachbessernAnsicht(liste){
   var f=document.createDocumentFragment();
   var A=S.adm;
-  var dk=doppelKarte(); if(dk) f.appendChild(dk);
-  var alt=altlastKarte(); if(alt) f.appendChild(alt);
+  /* aufgeräumt (Büro 02.10.2026: „der Reiter Verwaltung kann auch mal überarbeitet werden“):
+     lange Karten einklappbar, je Markt nur eine Zeile – die Befunde klappen auf */
+  var dk=doppelKarte(); if(dk) f.appendChild(einklappbar(dk, "nb:doppel", "", schmalerBildschirm()));
+  var alt=altlastKarte(); if(alt) f.appendChild(einklappbar(alt, "nb:altlast", "", schmalerBildschirm()));
   A.nbThema=A.nbThema||"alle";
   var themen=["alle"].concat(liste.map(function(x){ return x.thema; }).filter(function(t,i,a){ return a.indexOf(t)===i; }).sort());
   if(themen.indexOf(A.nbThema)<0) A.nbThema="alle";   /* etwa per Sprung gesetzt, aber nichts mehr offen */
@@ -19573,14 +19588,23 @@ function nachbessernAnsicht(liste){
     f.appendChild(ok);
   });
   var zeige=A.nbAlle ? maerkte : maerkte.slice(0,40);
+  /* am PC zwei Spalten nebeneinander */
+  var nbListe=el('<div class="nb-liste"></div>');
   zeige.forEach(function(m){
     var s=m.s, stufe=m.punkte>=60?"hoch":m.punkte>=25?"mittel":"gering";
+    /* Kurzfassung für die zugeklappte Zeile: Anzahl je Schwere, die häufigsten Themen */
+    var je={}; m.l.forEach(function(x){ je[x.schwere]=(je[x.schwere]||0)+1; });
+    var th=[]; m.l.forEach(function(x){ if(th.indexOf(x.thema)<0) th.push(x.thema); });
+    var kurz=[["Fehler","Fehler","Fehler"],["Hinweis","Hinweis","Hinweise"],["Lücke","Lücke","Lücken"]].filter(function(k){ return je[k[0]]; })
+      .map(function(k){ return je[k[0]]+" "+(je[k[0]]===1?k[1]:k[2]); }).join(" · ")+(th.length?" – "+th.slice(0,3).join(", ")+(th.length>3?" …":""):"");
     var c=el('<div class="card"><div class="pad stack">'+
       '<div class="rowflex" style="justify-content:space-between;gap:8px;align-items:flex-start">'+
-        "<div><strong style=\"font-size:15px\">"+marktLink(s)+"</strong>"+(s.filiale?' <span class="muted mono">'+esc(s.filiale)+"</span>":"")+
-          '<br><span class="muted" style="font-size:12.5px">'+esc(s.adresse||"")+"</span></div>"+
-        '<span class="rowflex" style="gap:4px">'+marktPill(s)+'<span class="pill '+
+        '<div style="min-width:0"><h2 style="text-transform:none;letter-spacing:0;font-size:15px;color:var(--ink);display:inline-flex;flex-wrap:wrap;gap:4px 6px;align-items:baseline">'+
+          marktLink(s)+(s.filiale?' <span class="muted mono" style="font-size:12px">'+esc(s.filiale)+"</span>":"")+"</h2>"+
+          '<div class="muted" style="font-size:12.5px">'+esc(kurz)+"</div></div>"+
+        '<span class="rowflex" style="gap:4px;flex:none">'+marktPill(s)+'<span class="pill '+
           (stufe==="hoch"?"p-ueberfaellig":stufe==="mittel"?"p-faellig":"p-unbekannt")+'">Chaos '+stufe+" · "+m.punkte+"</span></span></div>"+
+      '<div class="muted" style="font-size:12.5px">'+esc(s.adresse||"")+"</div>"+
       '<div class="stack" data-befunde></div>'+
       '<div class="rowflex" style="gap:6px" data-knoepfe>'+
         '<button class="btn sm" type="button" data-a="edit">Markt, Anlagen und Termine bearbeiten</button>'+
@@ -19597,6 +19621,8 @@ function nachbessernAnsicht(liste){
       bh.appendChild(zb);
     });
     c.dataset.sid=s.id;   /* „← zurück zu Nachbessern“ findet die Karte wieder */
+    /* zugeklappt beginnen – der Markt, an dem man zuletzt war, ist offen */
+    einklappbar(c, "nb:m:"+s.id, "", !(A.nbZuletzt && A.nbZuletzt===s.id));
     c.querySelector('[data-a="edit"]').onclick=function(){
       A.tab="maerkte"; A.sel=s.id; A.entwurf=null; A.vonNachbessern=true; nbMerken(s.id); render();
       setTimeout(function(){ var e=document.getElementById("adm_editor"); if(e) e.scrollIntoView({behavior:"smooth"}); },60);
@@ -19609,8 +19635,9 @@ function nachbessernAnsicht(liste){
       b.onclick=function(){ anlageDatenErgaenzen(a.leader); };
       kh.appendChild(b);
     });
-    f.appendChild(c);
+    nbListe.appendChild(c);
   });
+  if(zeige.length) f.appendChild(nbListe);
   if(!maerkte.length && !ohne.length) f.appendChild(el('<div class="card"><div class="pad muted">Nichts nachzubessern.</div></div>'));
   if(!A.nbAlle && maerkte.length>40){
     var mehr=el('<div class="card"><div class="pad"><button class="btn ghost" type="button">Alle '+maerkte.length+" Märkte zeigen</button></div></div>");
@@ -20183,7 +20210,9 @@ function viewDaten(){
   var doppelAdr={}; ST.forEach(function(s){ var k=(s.adresse||"").toLowerCase().replace(/[^a-zäöüß0-9]/g,""); if(k){ (doppelAdr[k]=doppelAdr[k]||[]).push(s); } });
   var dupes=Object.keys(doppelAdr).filter(function(k){return doppelAdr[k].length>1;}).map(function(k){return doppelAdr[k];});
 
-  f.appendChild(handbuchKarte({ohneGeo:ohneGeo, grobGeo:grobGeo, ohneIB:ohneIB, ohneHist:ohneHist, ohneKm:ohneKm, ohneMonat:ohneMonat}));
+  /* Datenbasis aufgeräumt (Büro 02.10.2026): zuerst, was zu klären ist, dann Export – das
+     Handbuch steht danach und beginnt zugeklappt (es ist auch unten auf jeder Seite) */
+  var hbKarte=handbuchKarte({ohneGeo:ohneGeo, grobGeo:grobGeo, ohneIB:ohneIB, ohneHist:ohneHist, ohneKm:ohneKm, ohneMonat:ohneMonat});
 
   /* antippbar: Überschriften nach Nachbessern, genannte Märkte in den Editor
      (ohne Verwaltungsrecht die Markt-Ansicht) – Handler am Ende (data-dz) */
@@ -20287,6 +20316,7 @@ function viewDaten(){
     csv("protokolle_lidl.csv",head,rows);
   };
   f.appendChild(exp);
+  f.appendChild(hbKarte);
   return f;
 }
 function csv(name,head,rows){

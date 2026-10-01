@@ -124,6 +124,10 @@ Kammerlander Umwelt- und Klimatechnik (UKT) – oft kurz, vom Handy, im Feld.
 - Schmale Navigationsleiste (`sprungleiste`, `seitenLeiste`, Büro 02.10.2026): rechts ein Punkt
   je Abschnitt auf langen Seiten und in großen Fenstern; Protokoll-Abschnitte einklappbar
   (`fieldsetsKlappbar`, `fs-zu`; Pflichtprüfung und Sprünge klappen von selbst auf).
+  „Alles zu-/aufklappen“ nur als ⊟/⊞ unten in der Leiste (keine Knopfzeilen – Büro 02.10.2026).
+- Verwaltung/Datenbasis aufgeräumt (Büro 02.10.2026): Nachbessern je Markt eine zugeklappte
+  Zeile mit Kurzfassung (am PC zwei Spalten, `.nb-liste`), Marktliste zuerst 40 (`A.alleMaerkte`),
+  Datenbasis: Zu klären → Export → Handbuch (zugeklappt).
 - Angebot/Rechnung bearbeiten (`belegEditor`, Büro 01.10.2026 „gründlich überarbeiten“): großes
   Fenster, Positionen als Tabelle (`.bpos`, am Handy Block), Bezeichnung wächst mit
   (`feldHoehe`), Summe immer sichtbar im Fuß, Kopf/Texte einklappbar, Vorschau (PDF)
