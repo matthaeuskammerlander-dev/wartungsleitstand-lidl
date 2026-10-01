@@ -108,10 +108,17 @@ Kammerlander Umwelt- und Klimatechnik (UKT) – oft kurz, vom Handy, im Feld.
   hochgeladen (`quelleDatei` verknüpft am Namen). Dateien zeigen „gehört zu“
   (`dateiGehoertZu`), die Synology-Mappe verlinkt relativ in den Projektordner.
   Projekttyp in `daten.typ` (`PROJEKT_TYPEN` + eigene).
-- Projekt als PDF (`projektPdfDialog`, `projektPdfErzeugen`, Büro 01.10.2026): OHNE
-  Belege für alle (abgelegt `daten.mappePdf`, Synology → `Projekt_<Nr>.pdf`), MIT
-  Belegen nur Inhaber (Beträge, Stunden, Beleg-PDFs angehängt; abgelegt unter
-  `buero/` = `daten.mappePdfBuero`, nie in den Projektordner der Synology).
+- Projektzusammenfassung als PDF (`projektPdfDialog`, `projektPdfErzeugen`, Büro
+  01.10.2026): Eckdaten und alle Angaben, KEINE Anhänge (Dokumente liegen auf der
+  Synology); abgelegt `daten.mappePdf`, Synology → `Projekt_<Nr>.pdf`. Zum Testen
+  MIT Belegen nur Inhaber (Beträge, Stunden, Beleg-PDFs auf Wunsch; abgelegt nur
+  unter `buero/` = `daten.mappePdfBuero`, nie in den Projektordner der Synology).
+- Aufgeräumt (Büro 01.10.2026): Reiter Fällig, Kalender, Protokoll, Anlagen, Karte,
+  Stunden, Projekte, Kunden, Rechnungen, Verlauf, Verwaltung, Datenbasis. Am PC zwei
+  Spalten (`ANSICHT_ORDNUNG`, `ansichtOrdnen`, `kartenOrdnen`, `spaltenAnordnen` –
+  schmal bleibt die Reihenfolge über `order`), breite Fenster für Projekt und Markt
+  (`ansichtOeffnen(…, {breit:true})`); jede Karte einklappbar (`einklappbar` mit
+  `standardZu` am Handy, `klappLeiste` „Alles zu-/aufklappen“).
 - Synology-Ablage der Baustellen (`synology/ukt_archiv.py`, `projekte_abgleich`):
   je Projekt `{jahr}/Kunden/{kunde}/Baustellen/{Filiale Ort}_{Nummer}/` mit
   Unterordnern je Dateiart und Projektmappe (HTML + JSON). Angebote und
