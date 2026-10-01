@@ -478,9 +478,6 @@ input[aria-invalid="true"]{border-color:var(--crit);box-shadow:0 0 0 1px var(--c
 @media (min-width:1100px){ .as-inhalt .spalten>.sp-haupt,.as-inhalt .spalten>.sp-neben{gap:12px} }
 /* im Fenster gestapelte Karten: kein Abstand obendrauf (das macht das Raster) */
 .as-inhalt .spalten .card{margin-top:0!important}
-/* alles auf-/zuklappen (lange Ansichten) */
-.klappleiste{display:flex;gap:6px;justify-content:flex-end;flex-wrap:wrap}
-.klappleiste button{font-size:12px}
 /* zugeklappte Karte: kompakt, nur die Kopfzeile */
 .card.klappbar.zu>.pad{padding-block:11px}
 .card.klappbar h2{max-width:100%}
@@ -492,7 +489,8 @@ input[aria-invalid="true"]{border-color:var(--crit);box-shadow:0 0 0 1px var(--c
   padding:6px 3px;border-radius:12px;background:color-mix(in srgb, var(--surface) 82%, transparent);border:1px solid var(--line);box-shadow:var(--shadow);max-height:72vh}
 .sleiste.im-fenster{position:absolute;right:4px;z-index:5}
 .as-karte{position:relative}
-.sleiste .sl-liste{appearance:none;border:0;background:none;color:var(--ink-3);font-size:14px;line-height:1;padding:2px;cursor:pointer}
+.sleiste .sl-liste,.sleiste .sl-klapp{appearance:none;border:0;background:none;color:var(--ink-3);font-size:14px;line-height:1;padding:2px;cursor:pointer}
+.sleiste .sl-klapp{font-size:15px;border-top:1px solid var(--line);padding-top:5px;margin-top:1px}
 .sleiste .sl-punkte{display:flex;flex-direction:column;gap:5px;overflow:auto;scrollbar-width:none;align-items:center}
 .sleiste .sl-punkte::-webkit-scrollbar{display:none}
 .sleiste .sl-p{appearance:none;width:10px;height:10px;border-radius:5px;border:0;padding:0;background:var(--line-2);cursor:pointer;flex:none;position:relative}
@@ -18947,16 +18945,6 @@ function einklappbar(card, key, zusammen, standardZu){
 }
 /* schmaler Bildschirm (Handy): dort lange Ansichten eher zugeklappt beginnen */
 function schmalerBildschirm(){ return !!(window.matchMedia && window.matchMedia("(max-width: 700px)").matches); }
-/* „Alles zuklappen / aufklappen“ für die einklappbaren Karten in host */
-function klappLeiste(host){
-  var l=el('<div class="klappleiste"><button class="btn ghost sm" type="button" data-k="zu">Alles zuklappen</button>'+
-    '<button class="btn ghost sm" type="button" data-k="auf">Alles aufklappen</button></div>');
-  l.querySelectorAll("button").forEach(function(b){ b.onclick=function(){
-    var zu=b.dataset.k==="zu";
-    host.querySelectorAll(".card.klappbar").forEach(function(c){ if(c._klapp) c._klapp(zu); else c.classList.toggle("zu", zu); });
-  }; });
-  return l;
-}
 /* Karten einer langen Ansicht ordnen: jede Karte (nach ihrer Überschrift) wird
    einklappbar, kommt in die Haupt- oder Nebenspalte und beginnt am Handy auf
    Wunsch zugeklappt. regeln: [{h:/^Überschrift/ (oder klasse:"…"), seite:"haupt"|"neben", fest:nicht einklappbar,
@@ -18975,12 +18963,23 @@ function abschnittTitel(el){
   var c=h.cloneNode(true); c.querySelectorAll(".klapp,.zusammen,.pill,.tag").forEach(function(x){ x.remove(); });
   return c.textContent.replace(/\s+/g," ").trim();
 }
+/* alle einklappbaren Abschnitte in host: zu oder auf (Karten und Protokoll-Abschnitte) */
+function allesKlappen(host, zu){
+  host.querySelectorAll(".card.klappbar").forEach(function(c){ if(c._klapp) c._klapp(zu); else c.classList.toggle("zu", zu); });
+  host.querySelectorAll("fieldset.klappfs").forEach(function(fs){ fs.classList.toggle("fs-zu", zu); });
+}
+/* sind mehr Abschnitte offen als zu? Dann klappt der Knopf zu, sonst auf */
+function mehrOffen(host){
+  var k=host.querySelectorAll(".card.klappbar, fieldset.klappfs"), z=host.querySelectorAll(".card.klappbar.zu, fieldset.klappfs.fs-zu");
+  return k.length && (k.length-z.length) >= z.length;
+}
 function sprungleiste(wurzel, ort, ziele, opt){
   opt=opt||{};
   var alt=ort.querySelector(":scope > .sleiste"); if(alt && alt._weg) alt._weg();
   var l=ziele().filter(function(z){ return z.el && z.titel; });
   if(l.length<(opt.min||4)) return null;
-  var leiste=el('<nav class="sleiste'+(wurzel?" im-fenster":"")+'" aria-label="Abschnitte"><button type="button" class="sl-liste" title="Alle Abschnitte" aria-label="Alle Abschnitte">☰</button><div class="sl-punkte"></div><div class="sl-name" hidden></div></nav>');
+  var leiste=el('<nav class="sleiste'+(wurzel?" im-fenster":"")+'" aria-label="Abschnitte"><button type="button" class="sl-liste" title="Alle Abschnitte" aria-label="Alle Abschnitte">☰</button><div class="sl-punkte"></div>'+
+    (opt.klapp ? '<button type="button" class="sl-klapp" title="Alles zu- oder aufklappen" aria-label="Alles zu- oder aufklappen"></button>' : "")+'<div class="sl-name" hidden></div></nav>');
   var punkte=leiste.querySelector(".sl-punkte"), name=leiste.querySelector(".sl-name"), nameZeit=0;
   var scroller=wurzel||window;
   var oben=function(){ return wurzel ? wurzel.getBoundingClientRect().top : ((document.querySelector("header.app")||{}).offsetHeight||0)+(document.getElementById("demobanner")||{offsetHeight:0}).offsetHeight; };
@@ -19003,6 +19002,12 @@ function sprungleiste(wurzel, ort, ziele, opt){
       b.onclick=function(){ v.zu(); setTimeout(function(){ hin(z); }, 30); }; box.appendChild(b); });
     v.inhalt.appendChild(box);
   };
+  /* „Alles zu-/aufklappen“ – unten in der Leiste statt einer Knopfzeile (Büro 02.10.2026) */
+  var kb=leiste.querySelector(".sl-klapp");
+  var kbZeichen=function(){ if(!kb) return; var zu=mehrOffen(opt.klapp); kb.textContent=zu?"⊟":"⊞"; kb.title=zu?"Alles zuklappen":"Alles aufklappen"; kb.setAttribute("aria-label", kb.title); };
+  if(kb) kb.onclick=function(){ var zu=mehrOffen(opt.klapp); allesKlappen(opt.klapp, zu); kbZeichen(); zeigeName(zu?"Alles zugeklappt":"Alles aufgeklappt"); beimScroll(); };
+  kbZeichen();
+  if(kb) opt.klapp.addEventListener("click", function(){ setTimeout(kbZeichen, 0); });
   /* welcher Abschnitt ist gerade oben? */
   var rahmen=0;
   var markieren=function(){
@@ -19027,7 +19032,8 @@ function seitenLeiste(){
   var alt=document.body.querySelector(":scope > .sleiste"); if(alt && alt._weg) alt._weg(); else document.body.classList.remove("mit-sleiste");
   var sec=document.querySelector("#app section.view"); if(!sec) return;
   setTimeout(function(){
-    if(document.documentElement.scrollHeight < window.innerHeight*2.2) return;
+    /* nur auf langen Seiten – oder wo es viel zum Aufklappen gibt */
+    if(document.documentElement.scrollHeight < window.innerHeight*2.2 && sec.querySelectorAll(".card.klappbar, fieldset.klappfs").length<4) return;
     sprungleiste(null, document.body, function(){
       var kand=[];
       if(S.view==="protokoll"){
@@ -19039,7 +19045,7 @@ function seitenLeiste(){
       kand=kand.filter(function(x){ return x.offsetParent!==null; });
       kand.sort(function(a,b){ return a.getBoundingClientRect().top-b.getBoundingClientRect().top; });
       return kand.map(function(x){ return {el:x, titel:abschnittTitel(x)}; });
-    });
+    }, {klapp:sec.querySelectorAll(".card.klappbar, fieldset.klappfs").length>1 ? sec : null});
   }, 60);
 }
 /* Fieldsets einklappbar (Protokoll): Überschrift antippen klappt zu/auf */
@@ -19064,7 +19070,7 @@ function kartenOrdnen(host, regeln, praefix, mitLeiste, ausgleichen){
   });
   host.innerHTML="";
   /* nur wo es mehrere einklappbare Karten gibt */
-  if(mitLeiste && teile.filter(function(t){ return t[0].classList && t[0].classList.contains("klappbar"); }).length>1) host.appendChild(klappLeiste(host));
+  /* „Alles zu-/aufklappen“ steht in der schmalen Navigationsleiste (Büro 02.10.2026: die Knopfzeile störte das Layout) */
   /* seite "oben": über beiden Spalten (etwa die Kennzahlen) */
   teile.filter(function(t){ return t[1]==="oben"; }).forEach(function(t){ host.appendChild(t[0]); });
   var mitte=teile.filter(function(t){ return t[1]!=="oben" && t[1]!=="unten"; });
@@ -19092,12 +19098,12 @@ function kartenOrdnen(host, regeln, praefix, mitLeiste, ausgleichen){
   /* im Fenster (Projekt, Markt …): schmale Navigationsleiste am rechten Rand */
   if(host.classList && host.classList.contains("as-inhalt") && host.closest(".as-karte")){
     setTimeout(function(){
-      if(host.scrollHeight < host.clientHeight*1.8) return;
+      if(host.scrollHeight < host.clientHeight*1.8 && host.querySelectorAll(".card.klappbar").length<4) return;
       sprungleiste(host, host.closest(".as-karte"), function(){
         return Array.prototype.slice.call(host.querySelectorAll(".sp-haupt > .card, .sp-neben > .card"))
           .sort(function(a,b){ return a.getBoundingClientRect().top-b.getBoundingClientRect().top; })
           .map(function(c){ return {el:c, titel:abschnittTitel(c)}; });
-      });
+      }, {klapp:host});
     }, 40);
   }
 }
@@ -19890,7 +19896,7 @@ function handbuchKarte(z){
           "Material (auch vom Service geholt), Umbau am Bestand, Samstag/Sonntag. Mengen, keine Preise.",
         "<strong>Aufgaben an jedem Schritt</strong> („+ Aufgabe bei …“) mit Zuständigen und Fälligkeit; sie stehen auch im Kalender.",
         "<strong>Zusammenfassung (PDF):</strong> das Projekt auf einen Blick mit Eckdaten – „Ablegen“ legt sie auf die Synology in den Projektordner.",
-        "Am PC steht das Projekt in zwei Spalten; jede Karte lässt sich zuklappen („Alles zuklappen“ oben)."]))+
+        "Am PC steht das Projekt in zwei Spalten; jede Karte lässt sich zuklappen (alle auf einmal: ⊟/⊞ unten in der schmalen Leiste rechts)."]))+
 
     abschnitt("11 · Kalender und Aufgaben",
       liste(["<strong>Termine:</strong> Wartung, Störung, Baustelle, Büro, Werkstatt, Besprechung, Urlaub, Krankenstand, Schule, privat – mit einer oder mehreren Personen, "+
@@ -19918,8 +19924,8 @@ function handbuchKarte(z){
       liste(["<strong>Reiter</strong> nach dem Arbeitsablauf: Fällig, Kalender, Protokoll, Anlagen, Karte, Stunden – dann die Büro-Reiter.",
         "<strong>Einklappen:</strong> jede Karte lässt sich über ihre Überschrift zu- und aufklappen; zugeklappt zeigt sie, wie viel drin ist. Am Handy beginnen lange Abschnitte zugeklappt. Die Wahl merkt sich jedes Gerät.",
         "<strong>Großer Bildschirm:</strong> zwei Spalten – links die Hauptsache, rechts das Begleitende; Projekt und Markt öffnen sich groß.",
-        "<strong>Navigationsleiste:</strong> auf langen Seiten und in großen Fenstern (Protokoll, Fällig, Projekt …) steht rechts eine schmale Leiste – ein Punkt je Abschnitt, der aktuelle ist hervorgehoben. Antippen springt hin, „☰“ zeigt alle Abschnitte mit Namen.",
-        "<strong>Protokoll:</strong> jeder Abschnitt (Einsatz, Anlagen, Arbeiten, Fotos, Abschluss …) klappt über seine Überschrift zu; oben „Alles zuklappen / aufklappen“. Beim Speichern öffnet die App von selbst, wo etwas fehlt.",
+        "<strong>Navigationsleiste:</strong> auf langen Seiten und in großen Fenstern (Protokoll, Fällig, Projekt …) steht rechts eine schmale Leiste – ein Punkt je Abschnitt, der aktuelle ist hervorgehoben. Antippen springt hin, „☰“ zeigt alle Abschnitte mit Namen, ⊟/⊞ klappt alles zu bzw. auf.",
+        "<strong>Protokoll:</strong> jeder Abschnitt (Einsatz, Anlagen, Arbeiten, Fotos, Abschluss …) klappt über seine Überschrift zu; alle auf einmal mit ⊟/⊞ unten in der schmalen Leiste rechts. Beim Speichern öffnet die App von selbst, wo etwas fehlt.",
         "<strong>Rundgänge:</strong> oben in diesem Handbuch – sie zeigen die echten Knöpfe, tragen aber nichts ein."]))+
   "</div></div>"));
 }
@@ -25925,14 +25931,10 @@ function render(){
   /* aufgeräumt (Büro 01.10.2026): am PC zwei Spalten, Karten einklappbar */
   ansichtOrdnen(sec, S.view);
   host.appendChild(sec);
-  /* Protokoll: jeder Abschnitt einklappbar, dazu „Alles zu-/aufklappen“ (Büro 02.10.2026) */
+  /* Protokoll: jeder Abschnitt einklappbar (Büro 02.10.2026); „Alles zu-/aufklappen“ in der Navigationsleiste */
   var pform=sec.querySelector("form#proto");
   if(pform && !pform._klapp){
     pform._klapp=true; fieldsetsKlappbar(pform);
-    var fsl=el('<div class="klappleiste"><button class="btn ghost sm" type="button" data-k="zu">Alles zuklappen</button><button class="btn ghost sm" type="button" data-k="auf">Alles aufklappen</button></div>');
-    fsl.querySelectorAll("button").forEach(function(b){ b.onclick=function(){ var zu=b.dataset.k==="zu";
-      pform.querySelectorAll("fieldset.klappfs").forEach(function(fs){ fs.classList.toggle("fs-zu", zu); }); }; });
-    pform.insertBefore(fsl, pform.firstChild);
   }
   host.setAttribute("data-reiter", S.view);
   seitenLeiste();   /* schmale Navigationsleiste auf langen Seiten */
