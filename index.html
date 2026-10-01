@@ -595,7 +595,9 @@ var STAMM_FELDER_POS = ["anlagentyp","intervallCode","inbetriebnahme","monat","m
                         /* Halbjahrestermin fehlt – vor Ort gemeldet (Kürzel), das Büro legt ihn an (Büro 29.09.2026) */
                         "halbWunsch",
                         /* Inbetriebnahme und Termine vor Ort bestätigt: „Tag|Stand“ – gilt nur für genau diesen Stand (terminStand) */
-                        "termineGeprueft"];
+                        "termineGeprueft",
+                        /* automatisch angelegter Halbjahrestermin: folgt dem Halbjahrestermin dieser Anlage am Markt (Büro 01.10.2026) */
+                        "hjiMarkt"];
 var ABGELEITET_POS   = ["kaeltemittelText","ueber30kg","baujahr"];
 function auswahl(o, felder){
   var r={}; felder.forEach(function(k){ r[k]=(o[k]===undefined?null:o[k]); }); return r;
@@ -1028,6 +1030,7 @@ function termineNeuSchreiben(standortId, anlageId, liste, grund, rueck, abHeute)
              felder:{standortId:standortId, intervallCode:t.intervallCode||"", monat:+t.monat||0, monatGrund:t.monatGrund||"", aktiv:true, anlageZu:anlageId}};
     /* Wartungen laut Prüfbuch, die zu diesem Termin gehören (neue Anlage) */
     if(t.nachweise && t.nachweise.length) rec.felder.nachweise=t.nachweise;
+    if(t.hjiMarkt) rec.felder.hjiMarkt=t.hjiMarkt;
     if(abHeute) rec.felder.giltAb=isoLokal(new Date());
     if(abHeute && t.nachholen) rec.felder.nachholen=t.nachholen;
     stammUeber[rec.id]=rec;
@@ -2417,7 +2420,6 @@ function stoerungDialog(vorhanden, weiter, vorlage){
     }, function(){ melde(""); warnen("Das Bild ließ sich nicht verarbeiten."); });
   }
 
-  var doppeltOk=false;   /* „Trotzdem neu anlegen“ bei gleicher Auftragsnummer gewählt */
   function fussNeu(){
     fuss.innerHTML="";
     var b=el('<button class="btn" type="button">'+(vorhanden?"Änderung speichern":"Störung anlegen")+"</button>");
@@ -2440,16 +2442,17 @@ function stoerungDialog(vorhanden, weiter, vorlage){
       if(o.qrInhalt && !qrPasst(o.qrInhalt, o.auftragsnummer)) delete o.qrInhalt;
       if(o.terminTechniker) o.terminTechniker=kanonName(o.terminTechniker);   /* „Tobi“ → voller Name */
       /* derselbe Lidl-Auftrag schon offen (etwa doppelt gemailt)? */
-      var gleicheNr=!vorhanden && o.auftragsnummer ? offeneStoerungen(true).filter(function(x){ return x._id!==o._id && String(x.auftragsnummer||"")===String(o.auftragsnummer); })[0] : null;
-      /* statt einer blinden Rückfrage: die vorhandene öffnen oder bewusst neu anlegen */
-      if(gleicheNr && !doppeltOk){
-        box.innerHTML="Auftrag <strong>"+esc(o.auftragsnummer)+"</strong> ist schon als offene Störung erfasst ("+esc(stName(byId[gleicheNr.standortId]||{})||"ohne Markt")+"). "+
+      /* Eine Auftragsnummer gibt es nur EINMAL als Störung – offen oder erledigt (Büro 01.10.2026:
+         die Daten kommen aus verschiedenen Quellen – Mail, PDF, Liste, von Hand; die Datenbank
+         sperrt es zusätzlich). Statt neu anzulegen: die vorhandene öffnen. */
+      var gleicheNr=!vorhanden && stoerungNr(o) ? OFFENE.filter(function(x){ return x._id!==o._id && !x.geloescht && stoerungNr(x)===stoerungNr(o); })[0] : null;
+      if(gleicheNr){
+        box.innerHTML="Auftrag <strong>"+esc(o.auftragsnummer)+"</strong> ist schon als Störung erfasst"+(gleicheNr.erledigt?" und <strong>erledigt</strong>":"")+
+          " ("+esc(stName(byId[gleicheNr.standortId]||{})||"ohne Markt")+(gleicheNr.problemtyp?" · "+esc(gleicheNr.problemtyp):"")+"). Doppelt anlegen geht nicht. "+
           "Beim Öffnen der vorhandenen gehen die Eingaben hier verloren"+(meinEingang?"; der Eintrag bleibt im Posteingang (dort verwerfen)":"")+"."+
-          '<div class="rowflex" style="gap:6px;margin-top:6px"><button class="btn sm" type="button" data-a="vorh">Vorhandene öffnen</button>'+
-          '<button class="btn ghost sm" type="button" data-a="neu">Trotzdem neu anlegen</button></div>';
+          '<div class="rowflex" style="gap:6px;margin-top:6px"><button class="btn sm" type="button" data-a="vorh">Vorhandene öffnen</button></div>';
         box.hidden=false; box.scrollIntoView({behavior:"smooth",block:"center"});
         box.querySelector('[data-a="vorh"]').onclick=function(){ zu(); stoerungDialog(gleicheNr); };
-        box.querySelector('[data-a="neu"]').onclick=function(){ doppeltOk=true; box.hidden=true; b.click(); };
         return;
       }
       /* geändert: nur die Änderungen des Dialogs auf den jetzigen Stand legen */
@@ -4318,7 +4321,7 @@ function zugangBox(d){
 /* Termine einer Anlage für den Dialog: je aktiver Zeile Kürzel und Soll-Monat */
 function termineStart(leader){
   return anlageVon(leader).termine.filter(function(t){ return t.aktiv!==false; }).map(function(t){
-    return {id:t.id, intervallCode:t.intervallCode||"", monat:+t.monat||0, monatGrund:t.monatGrund||"", naechste:t.naechste||null};
+    return {id:t.id, intervallCode:t.intervallCode||"", monat:+t.monat||0, monatGrund:t.monatGrund||"", naechste:t.naechste||null, hjiMarkt:t.hjiMarkt||null};
   });
 }
 /* Inbetriebnahme und Termine einer gespeicherten Anlage, wie sie der
@@ -4365,6 +4368,10 @@ function termineOffen(a){
     });
     if(ab) l.push({k:"abweichung", l:"Soll-Monat weicht von der Regel ab", weich:true});
   }
+  /* automatisch angelegter Halbjahrestermin (wie die andere Anlage am Markt): den Monat
+     vor Ort bestätigen – gleicher Besuch oder 6 Monate nach der JW (Büro 01.10.2026) */
+  if(tl.some(function(t){ return t.hjiMarkt; }) && !termineBestaetigt(a) && !l.some(function(x){ return x.k==="abweichung"; }))
+    l.push({k:"hjimarkt", l:"Monat des automatisch angelegten Halbjahrestermins bestätigen", weich:true});
   return l;
 }
 function termineOffenVon(leader){ return termineOffen(termineWerte(leader)); }
@@ -5531,6 +5538,7 @@ function termineSchritt(inhalt, a){
         MONATE_L.slice(1).map(function(m,j){ return '<option value="'+(j+1)+'"'+(+t.monat===j+1?" selected":"")+">Soll-Monat "+m+"</option>"; }).join("")+
       "</select>"+
       '<div class="as-hinweis" data-regel></div>'+
+      '<div data-markthj></div>'+
       '<input type="text" data-grund placeholder="Warum abweichend? z. B. passt besser in die Tour" value="'+esc(t.monatGrund||"")+'" hidden style="margin-top:6px">'+
     "</div>";
   });
@@ -5603,6 +5611,33 @@ function termineSchritt(inhalt, a){
                     : regelText(r, a.nurJW));
     });
   };
+  /* Halbjahrestermin einer weiteren Anlage am Markt (Büro 01.10.2026): gleicher Besuch wie die
+     andere Anlage mit Halbjahrestermin – oder sechs Monate nach der eigenen Jahreswartung. Vor Ort gewählt. */
+  var marktHjHinweise=function(){
+    var lead=a._leaderId && posById[a._leaderId], st=lead && byId[lead.standortId];
+    inhalt.querySelectorAll("[data-ti]").forEach(function(box){
+      var t=a._termine[+box.dataset.ti], ziel=box.querySelector("[data-markthj]"); ziel.innerHTML="";
+      var c=normCode(t.intervallCode); if(!st || (c!=="HJI" && c!=="HJW")) return;
+      var andere=anlagenDesMarkts(st,false).filter(function(x){ return x.leader.id!==a._leaderId; }).map(function(x){
+        var h=x.termine.filter(function(y){ return y.aktiv!==false && /^HJ/.test(intervallArt(y.intervallCode).kurz) && +y.monat; })[0];
+        return h ? {name:anlagenName(x.leader), m:+h.monat} : null; }).filter(Boolean);
+      var jw=a._termine.filter(function(x){ return normCode(x.intervallCode)==="JW" && +x.monat; })[0], jw6=jw ? ((+jw.monat+5)%12)+1 : 0;
+      var monate={}; andere.forEach(function(x){ if(x.m!==jw6) monate[x.m]=monate[x.m]||x.name; });
+      if(!Object.keys(monate).length) return;
+      var w=el('<div class="note" style="font-size:12.5px;margin-top:6px">'+(t.hjiMarkt?"<strong>Automatisch angelegt</strong> – am Markt gibt es schon einen Halbjahrestermin. ":"")+'Wann soll dieser Halbjahrestermin sein?<div class="chips" style="margin-top:6px"></div></div>');
+      var ch=w.querySelector(".chips");
+      Object.keys(monate).forEach(function(m){
+        var b=el('<button class="chip" type="button" aria-pressed="'+(+t.monat===+m)+'">Gleicher Besuch wie '+esc(monate[m])+" ("+MONATE_L[+m]+")</button>");
+        b.onclick=function(){ t.monat=+m; t.monatGrund="Markt wird an einem Tag gewartet – gleicher Besuch wie "+monate[m]; box.querySelector("[data-monat]").value=String(m);
+          var g=box.querySelector("[data-grund]"); if(g) g.value=t.monatGrund; hinweise(); };
+        ch.appendChild(b);
+      });
+      if(jw6){ var b6=el('<button class="chip" type="button" aria-pressed="'+(+t.monat===jw6)+'">6 Monate nach der Jahreswartung ('+MONATE_L[jw6]+")</button>");
+        b6.onclick=function(){ t.monat=jw6; t.monatGrund=""; box.querySelector("[data-monat]").value=String(jw6); var g=box.querySelector("[data-grund]"); if(g) g.value=""; hinweise(); };
+        ch.appendChild(b6); }
+      ziel.appendChild(w);
+    });
+  };
   var hinweise=function(){
     inhalt.querySelectorAll("[data-ti]").forEach(function(box){
       var t=a._termine[+box.dataset.ti], regel=terminRegelMonat(a, t), m=+t.monat||0;
@@ -5648,6 +5683,7 @@ function termineSchritt(inhalt, a){
       var n=hin.querySelector("[data-nehmen]");
       if(n) n.onclick=function(){ t.monat=regel; box.querySelector("[data-monat]").value=String(regel); hinweise(); };
     });
+    marktHjHinweise();
   };
   inhalt.querySelector("[data-ib]").onchange=function(){
     var v=this.value;
@@ -6871,6 +6907,34 @@ function stoerungDurchProtokoll(sid, pid, doc){
   lauf.then(ende, ende);
   return lauf;
 }
+/* Störungsprotokoll ohne Verknüpfung (Büro 01.10.2026): wurde das Protokoll nicht über
+   „Störungsprotokoll erstellen“ bzw. den Hinweis unter der Marktwahl geschrieben, blieb die
+   Störung offen, obwohl ein Protokoll mit derselben Auftragsnummer am selben Markt da ist.
+   Beim Laden: solche Störungen mit diesem Protokoll erledigen (Eintrag im Änderungsverlauf,
+   rücknehmbar). Nur übertragene Protokolle, nur wer schreiben darf, nicht in der Präsentation. */
+var stoerAbgleichZuletzt=0, stoerAbgleichLaeuft=false;
+function stoerungenOhneVerknuepfungAbgleichen(){
+  if(stoerAbgleichLaeuft || demo() || nurLesen() || !angemeldetOderLokal() || Store.modus!=="supabase") return;
+  if(typeof protokolleGeladen!=="undefined" && !protokolleGeladen) return;
+  if(!stammVollstaendig || Date.now()-stoerAbgleichZuletzt<60000) return;
+  stoerAbgleichZuletzt=Date.now();
+  var faelle=[];
+  OFFENE.forEach(function(x){
+    if(x.erledigt || x.geloescht || !stoerungNr(x) || !x.standortId) return;
+    var q=alleProtokolle().filter(function(p){ return p._quelle!=="geraet" && stoerungPasst(x, p) && stoerungNr(p)===stoerungNr(x); })
+      .sort(function(a,b){ return String(a.datum).localeCompare(String(b.datum)); })[0];
+    if(q) faelle.push({x:x, q:q});
+  });
+  if(!faelle.length) return;
+  stoerAbgleichLaeuft=true;
+  var i=0, ok=0;
+  var weiter=function(){
+    if(i>=faelle.length){ stoerAbgleichLaeuft=false; if(ok) toast(ok+" offene Störung"+(ok===1?"":"en")+" mit vorhandenem Störungsprotokoll (gleiche Auftragsnummer) als erledigt verknüpft."); return; }
+    var f=faelle[i++];
+    stoerungDurchProtokoll(f.x._id, f.q._id, f.q).then(function(r){ if(r) ok++; weiter(); }, weiter);
+  };
+  weiter();
+}
 var STOER_OFFEN_FELDER=["auftragsnummer","stoerungsnr","filialCode","problemtyp","beschreibung",
   "zieltermin","auftragsdatum","prioritaet","lidlTyp","lidlModell","hersteller","lin","seriennummer",
   "lidlKontakt","lidlTelefon","lidlMail","notiz","seiten","pdfName","pdfDaten","termin","terminZeit","terminTechniker","ohneAuftrag","positionId","qrInhalt",
@@ -6902,7 +6966,7 @@ function wendeStammdatenAn(){
       OFFENE.push(so);
       return;
     }
-    if(r.typ==="altlast") return;   /* nur Merker der Altlast-Bereinigung (altlastMerken) */
+    if(r.typ==="altlast" || r.typ==="merker") return;   /* nur Merker (Altlast-Bereinigung, Halbjahrestermin wie am Markt) */
     /* weitere Kunden außer Lidl: eigene Einträge, hängen an keinem Markt */
     /* Das Kunden-Konto (Lidl) sieht nichts von anderen Kunden – das sperrt die Datenbank
        (stammdaten_lesen); hier zusätzlich, falls die Sperre einmal fehlt */
@@ -7123,6 +7187,14 @@ function stammSpeichern(rec, nachtragen, puffer){
         if(r.error && /42501|row-level security|permission denied/i.test((r.error.code||"")+" "+(r.error.message||""))){
           if(alt0) stammStand[rec.id]=alt0; else delete stammStand[rec.id];
           Store.fehler="Keine Berechtigung ("+(r.error.message||r.error.code)+")";
+          return false;
+        }
+        /* schon vorhanden (Datenbank-Sperre gegen doppelte Störungen mit derselben
+           Auftragsnummer): nicht aufs Gerät – das ergäbe nur endlose Nachtrag-Versuche */
+        if(r.error && /23505|duplicate key|unique/i.test((r.error.code||"")+" "+(r.error.message||""))){
+          if(alt0) stammStand[rec.id]=alt0; else delete stammStand[rec.id];
+          Store.fehler=rec.typ==="stoerung" ? "Diese Auftragsnummer ist schon als Störung erfasst – bitte die vorhandene öffnen" : "Schon vorhanden ("+(r.error.message||r.error.code)+")";
+          if(nachtragen==="geraet") toast(Store.fehler+".");
           return false;
         }
         return r.error ? lokal() : "gemeinsam";
@@ -7652,7 +7724,7 @@ function initSupabase(){
     /* bis die Rolle geprüft ist: die engste (nur ansehen, keine Zugangsdaten) */
     if(sess){ Store.benutzer=sess.user; Store.modus="supabase"; rolleVorlaeufig(); nachgeladenUm=Date.now(); ladeProtokolle();   /* übertragen erst nach der Rollenprüfung */
       adminPruefen().then(function(){ flushQueue(); return ladeStammdaten(); }).then(storeNachRender)
-        .then(function(){ setTimeout(altlastenAutomatisch, 1500); setTimeout(kiVorgangFortsetzen, 300); }); }   /* Altlasten der alten Liste bereinigen (nur Admins); ein Claude-Vorgang von vor dem Neuladen geht weiter */
+        .then(function(){ setTimeout(altlastenAutomatisch, 1500); setTimeout(hjMarktAutomatisch, 4000); setTimeout(kiVorgangFortsetzen, 300); }); }   /* Altlasten der alten Liste bereinigen, Halbjahrestermine wie am Markt üblich (nur Admins); ein Claude-Vorgang von vor dem Neuladen geht weiter */
     else { Store.modus="anmeldung"; }
     storeNachRender();
   });
@@ -7715,7 +7787,7 @@ function initSupabase(){
     /* bis die Rolle geprüft ist: die engste (nur ansehen, keine Zugangsdaten) */
     if(sess){ Store.benutzer=sess.user; Store.modus="supabase"; rolleVorlaeufig(); nachgeladenUm=Date.now(); ladeProtokolle();   /* übertragen erst nach der Rollenprüfung */
       adminPruefen().then(function(){ flushQueue(); return ladeStammdaten(); }).then(storeNachRender).then(sitzungZurueck)
-        .then(function(){ setTimeout(altlastenAutomatisch, 1500); setTimeout(kiVorgangFortsetzen, 300); }); }   /* Altlasten der alten Liste bereinigen (nur Admins); ein Claude-Vorgang von vor dem Neuladen geht weiter */
+        .then(function(){ setTimeout(altlastenAutomatisch, 1500); setTimeout(hjMarktAutomatisch, 4000); setTimeout(kiVorgangFortsetzen, 300); }); }   /* Altlasten der alten Liste bereinigen, Halbjahrestermine wie am Markt üblich (nur Admins); ein Claude-Vorgang von vor dem Neuladen geht weiter */
     else {
       Store.benutzer=null; Store.modus="anmeldung"; protokolle=[]; protokolleGeladen=false; Admin.zentral=false; Admin.frei=false;
       /* abgemeldet: nichts von dem, was nur Angemeldete sehen dürfen, bleibt
@@ -13714,6 +13786,20 @@ function viewProtokoll(){
     /* die offene Störung dieses Formulars – bis die Übertragung durch ist,
        kann längst ein anderes Formular (mit anderer Störung) offen sein */
     var stoerungDesFormulars=S.stoerungAus, ausStoerung=stoer ? S.stoerungAus : null;   /* erledigt wird nur aus dem Störungsformular */
+    /* Die eingetragene Auftragsnummer gehört zu einer ANDEREN offenen Störung am Markt
+       (Büro 01.10.2026: Protokoll bei der falschen Störung begonnen, Lidl-Auftrag von Hand
+       eingetragen – erledigt wurde die falsche, die richtige blieb offen): fragen */
+    if(stoer && doc.standortId && stoerungNr(doc)){
+      var vorS=ausStoerung ? OFFENE.filter(function(x){ return x._id===ausStoerung; })[0] : null;
+      var passend=OFFENE.filter(function(x){ return !x.erledigt && !x.geloescht && x._id!==ausStoerung && x.standortId===doc.standortId && stoerungNr(x)===stoerungNr(doc); })[0];
+      if(passend && (!vorS || stoerungNr(vorS)!==stoerungNr(doc))){
+        var stTxt=function(x){ return (x.problemtyp||x.beschreibung||"Störung")+(stoerungNr(x)?" (Auftrag "+stoerungNr(x)+")":" (ohne Auftragsnummer)"); };
+        if(window.confirm("Auftrag "+stoerungNr(doc)+" gehört zur offenen Störung „"+stTxt(passend)+"“."+
+            (vorS?"\n\nBegonnen wurde dieses Protokoll aber bei der Störung „"+stTxt(vorS)+"“.":"")+
+            "\n\nOK = „"+stTxt(passend)+"“ ist erledigt"+(vorS?" (die andere bleibt offen)":"")+
+            "\nAbbrechen = "+(vorS?"„"+stTxt(vorS)+"“ ist erledigt":"keine Störung abhaken"))) ausStoerung=passend._id;
+      }
+    }
     /* Die Störung erledigt erst das übertragene Protokoll (stoerungDurchProtokoll):
        ohne gemeinsame Ablage bzw. in der Präsentation gleich, sonst nach der
        Übertragung – auch wenn die erst die Warteschlange schafft */
@@ -16205,7 +16291,8 @@ var LABEL_POS={anlagentyp:"Anlagentyp", intervallCode:"Kürzel", inbetriebnahme:
   pausiert:"zur Zeit nicht gewartet", pausiertGrund:"Grund (nicht gewartet)", vorOrtNeu:"vor Ort neu erfasst", anlageZu:"gehört zu Anlage",
   zusammengefuehrtIn:"zusammengeführt in",
   nachweise:"Wartungen laut Prüfbuch",
-  nurJW:"nur Jahreswartung (kein Halbjahrestermin)", halbWunsch:"Halbjahrestermin fehlt (vor Ort gemeldet)", termineGeprueft:"Termine vor Ort geprüft"};
+  nurJW:"nur Jahreswartung (kein Halbjahrestermin)", halbWunsch:"Halbjahrestermin fehlt (vor Ort gemeldet)", termineGeprueft:"Termine vor Ort geprüft",
+  hjiMarkt:"Halbjahrestermin wie andere Anlage am Markt"};
 ANLAGE_FELDER.forEach(function(f){ if(!LABEL_POS[f.k]) LABEL_POS[f.k]=f.l; });
 function stammWert(feld, w){
   if(feld==="nurJW") return w?"ja":"nein";   /* zurückgenommen = leer */
@@ -16222,7 +16309,7 @@ function stammWert(feld, w){
   if(feld==="monat") return MONATE_L[+w]||"–";
   if(feld==="inbetriebnahme") return dfmt(w);
   /* Verweise auf eine andere Zeile: beim Anlagennamen nennen, nicht die Kennung */
-  if((feld==="anlageZu"||feld==="zusammengefuehrtIn") && posById[w]) return anlagenName(posById[w])+" ("+intervallArt(posById[w].intervallCode).kurz+")";
+  if((feld==="anlageZu"||feld==="zusammengefuehrtIn"||feld==="hjiMarkt") && posById[w]) return anlagenName(posById[w])+" ("+intervallArt(posById[w].intervallCode).kurz+")";
   return String(w);
 }
 function objDiff(vorher, nachher, felder){
@@ -16561,7 +16648,7 @@ function viewVerwaltung(){
   /* ---- Kopf ---- */
   var gemeinsam=(Store.modus==="supabase"&&Admin.zentral)||Store.modus==="claude";
   /* Merker der Altlast-Bereinigung ändern keine Stammdaten – nicht mitzählen */
-  var anzGeaendert=Object.keys(stammUeber).filter(function(k){ return ["altlast","kunde"].indexOf(stammUeber[k].typ)<0; }).length;
+  var anzGeaendert=Object.keys(stammUeber).filter(function(k){ return ["altlast","kunde","merker"].indexOf(stammUeber[k].typ)<0; }).length;
   var kopf=el('<div class="card"><div class="pad stack">'+
     '<div class="rowflex" style="justify-content:space-between"><div><h2>Verwaltung</h2>'+
       '<div class="sub">'+(demo()?"Präsentation: Änderungen gelten nur bis zum Neuladen.":gemeinsam?"Änderungen gelten für alle Geräte.":"Änderungen gelten vorerst nur auf diesem Gerät.")+
@@ -18032,6 +18119,82 @@ function altlastenAutomatisch(){
   };
   weiter();
 }
+/* ================================================================
+   Halbjahrestermin wie am Markt üblich (Büro 01.10.2026): Hat eine Anlage am
+   Markt einen Halbjahrestermin (HJI oder HJW), bekommen die weiteren Anlagen
+   dort, die nur die Jahreswartung haben, ebenfalls einen – beim selben Besuch
+   werden Filter und Kühllamellen gereinigt, abgerechnet ganz normal als HJI.
+   Automatisch angelegt (ab 30 kg HJW, sonst HJI), zählt ab heute; Monat wie der
+   Halbjahrestermin der anderen Anlage – vor Ort wird er bestätigt (gleicher
+   Besuch oder 6 Monate nach der JW). Jeder Schritt steht im Änderungsverlauf
+   und ist rücknehmbar; ein Merker verhindert, dass ein zurückgenommener Termin
+   wiederkommt. Gaswarnanlagen sind keine Klimaanlagen – ausgenommen.
+   ================================================================ */
+function hjMarktMerkerId(leaderId){ return "merker:hjimarkt:"+leaderId; }
+function hjMarktFaelle(){
+  var faelle=[];
+  ST.forEach(function(s){
+    if(marktPausiert(s)) return;
+    var anl=anlagenDesMarkts(s,false); if(anl.length<2) return;
+    var mitHj=anl.map(function(a){
+      var h=a.termine.filter(function(t){ return t.aktiv!==false && /^HJ/.test(intervallArt(t.intervallCode).kurz) && +t.monat; })[0];
+      return h ? {a:a, h:h} : null; }).filter(Boolean);
+    if(!mitHj.length) return;
+    /* Vorbild: die Anlage mit der größten Füllmenge (meist die VRV) */
+    mitHj.sort(function(x,y){ return (+y.a.leader.kaeltemittelKg||0)-(+x.a.leader.kaeltemittelKg||0); });
+    var vorbild=mitHj[0];
+    anl.forEach(function(a){
+      if(mitHj.some(function(x){ return x.a===a; })) return;
+      var tl=a.termine.filter(function(t){ return t.aktiv!==false; });
+      if(!tl.length || !tl.every(function(t){ return intervallArt(t.intervallCode).kurz==="JW"; })) return;
+      if(/gas\s*-?\s*warn/i.test(String(a.leader.anlagentyp||"")+" "+anlagenName(a.leader))) return;
+      if(stammUeber[hjMarktMerkerId(a.leader.id)]) return;
+      if(ALLE_POS.some(function(p){ return p.hjiMarkt && p.anlageZu===a.leader.id; })) return;
+      var kg=+a.leader.kaeltemittelKg;
+      faelle.push({s:s, a:a, vorbild:vorbild, code:(isFinite(kg) && kg>=30) ? "HJW" : "HJI", monat:+vorbild.h.monat});
+    });
+  });
+  return faelle;
+}
+function hjMarktAnlegen(f){
+  var rueck={}, name=anlagenName(f.a.leader), vb=anlagenName(f.vorbild.a.leader), leader=f.a.leader;
+  var grundT="Markt wird an einem Tag gewartet – gleicher Besuch wie "+vb+" (automatisch angelegt, vor Ort bestätigen)";
+  return termineNeuSchreiben(f.s.id, leader.id, [{intervallCode:f.code, monat:f.monat, monatGrund:grundT, hjiMarkt:f.vorbild.a.leader.id}],
+    "Halbjahrestermin wie am Markt üblich", rueck, true).then(function(ok){
+    if(ok===false) return false;
+    /* „nur Jahreswartung“ bzw. die Meldung „Halbjahrestermin fehlt“ sind damit erledigt */
+    var weiter = (leader.nurJW || leader.halbWunsch) ? (function(){ var pro={}; pro[leader.id]={nurJW:null, halbWunsch:""};
+      return positionenSchreiben(pro, "Halbjahrestermin wie am Markt üblich", rueck); })() : Promise.resolve();
+    return weiter.then(function(){
+      protokolliere({art:"stammdaten", standortId:f.s.id, standortName:stName(f.s),
+        grund:"Halbjahrestermin wie am Markt üblich: "+name+" bekommt "+f.code+" "+MONATE_L[f.monat]+" (gleicher Besuch wie "+vb+")",
+        felder:[{feld:"intervallCode", name:name+" – neuer Termin", alt:"nur Jahreswartung", neu:f.code+" "+MONATE_L[f.monat]+" (vor Ort bestätigen)"}], rueck:rueck});
+      var m={id:hjMarktMerkerId(leader.id), typ:"merker", ziel:"hjimarkt:"+leader.id, felder:{ergebnis:"angelegt", code:f.code, monat:f.monat},
+             neu:false, geaendert:new Date().toISOString(), von:wer(), grund:"Halbjahrestermin wie am Markt üblich – angelegt"};
+      stammUeber[m.id]=m;
+      return stammSpeichern(m, true).then(function(){ return true; }, function(){ return true; });
+    });
+  });
+}
+var hjMarktLaeuft=false;
+function hjMarktAutomatisch(){
+  if(hjMarktLaeuft || !Admin.frei || demo() || nurLesen() || Store.modus!=="supabase" || !stammVollstaendig) return;
+  var faelle=hjMarktFaelle();
+  if(!faelle.length) return;
+  hjMarktLaeuft=true;
+  var i=0, ok=0;
+  var weiter=function(){
+    if(i>=faelle.length){
+      hjMarktLaeuft=false; berechneFaelligkeiten();
+      if(ok) toast(ok+" Halbjahrestermin"+(ok===1?"":"e")+" wie am Markt üblich angelegt (weitere Anlagen am Markt) – siehe Änderungsverlauf; der Monat wird vor Ort bestätigt.");
+      storeNachRender(); return;
+    }
+    var f=faelle[i++];
+    if(verwaltungOffen() && S.adm && S.adm.sel===f.s.id){ weiter(); return; }
+    hjMarktAnlegen(f).then(function(x){ if(x) ok++; weiter(); }, weiter);
+  };
+  weiter();
+}
 /* Nachbessern: was die App nicht selbst bereinigen kann */
 function altlastKarte(){
   var faelle=altlastenFaelle().filter(function(f){ return !f.vorschlag; });
@@ -18595,7 +18758,7 @@ function handbuchKarte(z){
   var anl=anzahlAnlagen(), prot=alleProtokolle().filter(function(p){ return !p.geloescht; }), heute=isoLokal(new Date());
   /* wie die Fälligkeit: ein Datum in der Zukunft zählt noch nicht */
   var wart=prot.filter(function(p){ return zaehltAlsWartung(p) && p.datum && p.datum<=heute; }).length, stoer=offeneStoerungen(true).length;
-  var ueber=Object.keys(stammUeber).filter(function(k){ return ["altlast","kunde"].indexOf(stammUeber[k].typ)<0; }).length;   /* ohne Altlast-Merker */
+  var ueber=Object.keys(stammUeber).filter(function(k){ return ["altlast","kunde","merker"].indexOf(stammUeber[k].typ)<0; }).length;   /* ohne Altlast-Merker */
   /* Kacheln führen hin (data-hb) – eine Kachel mit 0 bleibt Anzeige */
   var kpi=function(n,l,art,hb){
     return (n && hb) ? '<button type="button" class="kpi'+(art?" "+art:"")+'" data-hb="'+hb+'"><span class="n">'+n+'</span><span class="l">'+l+"</span></button>"
@@ -18793,8 +18956,8 @@ function handbuchKarte(z){
           "30 Minuten Pause – fehlt sie, ergänzt die App sie beim Ausstempeln bzw. Speichern (abschaltbar beim Inhaber); höchstens 12 Stunden am Tag und 60 in der "+
           "Woche (⚠); 11 Stunden Ruhezeit (Hinweis beim Einstempeln). Normalarbeitszeit 38,5 Stunden, Verteilung auf die Tage stellt der Inhaber ein; "+
           "Feiertage in Österreich rechnet die App selbst.",
-        "<strong>Lohnverrechnung</strong> (Inhaber, Reiter Stunden): je Person Soll, Ist, Differenz, Überstunden 50 % und 100 % nach KV (ab der 3. Überstunde am Tag, "+
-          "Samstag ab der 11. Stunde, über 50 Stunden in der Woche und zwischen 20 und 6 Uhr 100 %), Samstag, Sonntag, Feiertag, Montagestunden "+
+        "<strong>Lohnverrechnung</strong> (Inhaber, Reiter Stunden): je Person Soll, Ist (Arbeit Mo–Fr, Urlaub, Krankenstand), Überstunden bzw. Minusstunden "+
+          "als <em>Monatsbilanz</em> (so vom Büro festgelegt, nicht je Tag), getrennt davon Samstag, Sonntag, Feiertag, Montagestunden "+
           "(Montage, Wartung, Störung beim Kunden – Montagezulage; Fahrt ist Wegzeit, keine Zulage), Urlaub, Krankenstand und Tage mit Abwesenheit über 6 bzw. 11 Stunden "+
           "(Entfernungszulage). Als Tabelle (CSV) zum Weitergeben – ein Vorschlag, die Lohnverrechnung prüft.",
         "<strong>Märkte in der Nähe:</strong> beim Einstempeln und bei der Marktwahl im Protokoll – zeigt die nächsten Märkte zum Antippen. Die Position dient nur zum Sortieren und wird nicht gespeichert."]))+
@@ -20858,12 +21021,11 @@ function zeitEditor(z, vorgabe){
    Gesetz (AZG): Ruhepause über 6 h mind. 30 min (§ 11), höchstens 12 h am Tag
    und 60 h in der Woche (§ 9), 11 h Ruhezeit zwischen zwei Arbeitstagen (§ 12).
    Kollektivvertrag Metallgewerbe (gilt für Kälte- und Klimatechnik): Normal-
-   arbeitszeit 38,5 h; Mehrarbeit und Überstunden 50 %, ab der 3. Überstunde
-   am Tag 100 %, am sonst arbeitsfreien Tag (Samstag) 100 % ab der 11. Stunde,
-   über 50 h in der Woche 100 %, Überstunden zwischen 20 und 6 Uhr 100 %,
-   Sonntag 100 %; Montagezulage für Arbeiten außerhalb des Betriebs an Anlagen
-   (Montage, Wartung, Reparatur) – nicht für Wegzeiten; Entfernungszulage bei
-   Abwesenheit über 6 bzw. 11 Stunden. Die App rechnet einen VORSCHLAG – die
+   arbeitszeit 38,5 h; Sonntag 100 %; Montagezulage für Arbeiten außerhalb
+   des Betriebs an Anlagen (Montage, Wartung, Reparatur) – nicht für Wegzeiten;
+   Entfernungszulage bei Abwesenheit über 6 bzw. 11 Stunden. Überstunden als
+   MONATSBILANZ (Büro 01.10.2026), Samstag/Sonntag/Feiertag getrennt – die
+   Zuschläge setzt die Lohnverrechnung. Die App rechnet einen VORSCHLAG – die
    Lohnverrechnung prüft und entscheidet.
    ================================================================ */
 /* UKT: Mo–Do 8 h, Fr 6,5 h (Büro 01.10.2026) – gilt bis die Einstellung aus der Datenbank geladen ist */
@@ -20893,18 +21055,15 @@ function sollMinutenMonat(monat){
   while(t<ende){ s+=sollMinutenTag(t); t=plusTage(t,1); }
   return s;
 }
-/* Minuten eines Eintrags, die zwischen 20 und 6 Uhr liegen (für Überstunden 100 %) */
-function nachtMinuten(z){
-  var sp=zeitSpanne(z); if(!sp) return 0;
-  var n=0, ueberlapp=function(a,b){ return Math.max(0, Math.min(sp[1],b)-Math.max(sp[0],a)); };
-  n+=ueberlapp(0,360)+ueberlapp(1200,1440+360)+ueberlapp(1440+1200,2880);
-  return Math.min(n, z.minuten||0);
-}
-/* Auswertung eines Monats für EINE Person (Einträge dieser Person) */
+/* Auswertung eines Monats für EINE Person (Einträge dieser Person).
+   Überstunden als MONATSBILANZ (Büro 01.10.2026: nur monatsweise, nicht je Tag):
+   Ist an Arbeitstagen (laut Verteilung, ohne Feiertage) plus Urlaub, Krankenstand
+   und Schule gegen das Soll des Monats. Samstag, Sonntag und Feiertage werden
+   getrennt abgerechnet und laufen NICHT in die Bilanz. */
 function lohnAuswertung(liste, monat){
-  var r={soll:sollMinutenMonat(monat), ist:0, arbeit:0, urlaub:0, krank:0, schule:0, za:0, sonst:0,
-    ue50:0, ue100:0, samstag:0, sonntag:0, feiertagStd:0, montage:0, fahrt:0, ohneBereich:0, pauseAuto:0,
-    entf6:0, entf11:0, ueber12:[], ueber60:[], kurzeRuhe:0, tage:{}};
+  var r={soll:sollMinutenMonat(monat), ist:0, werktag:0, arbeit:0, urlaub:0, krank:0, schule:0, za:0, sonst:0,
+    ueberstunden:0, minus:0, diff:0, samstag:0, sonntag:0, feiertagStd:0, montage:0, fahrt:0, ohneBereich:0, pauseAuto:0,
+    entf6:0, entf11:0, ueber12:[], ueber60:[], tage:{}};
   var jeTag={};
   liste.forEach(function(z){
     if(String(z.datum).slice(0,7)!==monat) return;
@@ -20919,26 +21078,15 @@ function lohnAuswertung(liste, monat){
     else if(z.art==="urlaub") r.urlaub+=m; else if(z.art==="krank") r.krank+=m; else if(z.art==="schule") r.schule+=m;
     else if(z.art==="zeitausgleich") r.za+=m; else if(z.art!=="feiertag") r.sonst+=m;
   });
-  r.ist=r.arbeit+r.urlaub+r.krank+r.schule;
-  /* je Tag: Überstunden nach KV, Samstag/Sonntag/Feiertag, 12 h, Entfernungszulage */
   var woche={};
   Object.keys(jeTag).sort().forEach(function(tag){
-    var l=jeTag[tag], w=l.reduce(function(a,z){ return a+(z.minuten||0); },0), wt=wochentagIdx(tag), ft=feiertag(tag);
-    var soll=sollMinutenTag(tag), u50=0, u100=0;
-    if(ft){ r.feiertagStd+=w; }
-    else if(wt===6){ r.sonntag+=w; }
-    else if(soll===0){ /* sonst arbeitsfreier Tag (Samstag): 50 %, ab der 11. Stunde 100 % */
-      r.samstag+=w; u50=Math.min(w,600); u100=w-u50; }
-    else {
-      var mehr=Math.max(0, w-soll);
-      u50=Math.min(mehr,120); u100=mehr-u50;   /* ab der 3. Über-/Mehrstunde am Tag 100 % */
-      var nacht=l.reduce(function(a,z){ return a+nachtMinuten(z); },0);
-      var verschieben=Math.min(u50, Math.min(nacht, mehr));   /* Überstunden zwischen 20 und 6 Uhr: 100 % */
-      u50-=verschieben; u100+=verschieben;
-    }
-    r.ue50+=u50; r.ue100+=u100;
+    var l=jeTag[tag], w=l.reduce(function(a,z){ return a+(z.minuten||0); },0), wt=wochentagIdx(tag);
+    if(feiertag(tag)) r.feiertagStd+=w;
+    else if(wt===6) r.sonntag+=w;
+    else if(sollMinutenTag(tag)===0) r.samstag+=w;   /* sonst arbeitsfreier Tag (Samstag) */
+    else r.werktag+=w;
     if(w>720) r.ueber12.push(tag);
-    var kw=montagVon(tag); woche[kw]=woche[kw]||{min:0, u50:0}; woche[kw].min+=w; woche[kw].u50+=u50;
+    var kw=montagVon(tag); woche[kw]=(woche[kw]||0)+w;
     /* Abwesenheit vom Betrieb (Fahrt, Montage, Wartung, Störung): ca. von–bis */
     var draussen=l.filter(function(z){ return z.bereich==="fahrt" || MONTAGE_BEREICHE.indexOf(z.bereich)>=0; }).map(zeitSpanne).filter(Boolean);
     if(draussen.length){
@@ -20949,13 +21097,10 @@ function lohnAuswertung(liste, monat){
     }
     r.tage[tag]=w;
   });
-  /* über 50 h in der Woche: weitere Überstunden 100 % */
-  Object.keys(woche).forEach(function(kw){
-    var x=woche[kw];
-    if(x.min>3600) r.ueber60.push(kw);
-    var drueber=Math.max(0, x.min-3000), s=Math.min(drueber, x.u50);
-    r.ue50-=s; r.ue100+=s;
-  });
+  Object.keys(woche).forEach(function(kw){ if(woche[kw]>3600) r.ueber60.push(kw); });
+  r.ist=r.werktag+r.urlaub+r.krank+r.schule;
+  r.diff=r.ist-r.soll;
+  r.ueberstunden=Math.max(0, r.diff); r.minus=Math.max(0, -r.diff);
   return r;
 }
 
@@ -20978,8 +21123,8 @@ function zeitenListeHtml(liste, name, monat){
     }).join("")+
     "</tbody></table>"+
     '<table style="margin-top:12px;border-collapse:collapse;font-size:11.5px">'+
-      [["Soll ("+String(ARBEITSZEIT.wochenstunden).replace(".",",")+" h/Woche, ohne Feiertage)", h(a.soll)],["Ist (Arbeit, Urlaub, Krankenstand, Schule)", h(a.ist)],
-       ["Differenz", h(a.ist-a.soll)],["Überstunden/Mehrarbeit 50 % (Vorschlag)", h(a.ue50)],["Überstunden 100 % (Vorschlag)", h(a.ue100)],
+      [["Soll ("+String(ARBEITSZEIT.wochenstunden).replace(".",",")+" h/Woche, ohne Feiertage)", h(a.soll)],["Ist (Arbeit Mo–Fr, Urlaub, Krankenstand, Schule)", h(a.ist)],
+       ["Überstunden (Monatsbilanz)", h(a.ueberstunden)],["Minusstunden", h(a.minus)],
        ["Samstag", h(a.samstag)],["Sonntag (100 %)", h(a.sonntag)],["an Feiertagen", h(a.feiertagStd)],
        ["Montagestunden (Montage, Wartung, Störung)", h(a.montage)],["Wegzeit (Fahrt)", h(a.fahrt)],["ohne Bereich", h(a.ohneBereich)],
        ["Urlaub", h(a.urlaub)],["Krankenstand", h(a.krank)],["Zeitausgleich", h(a.za)],
@@ -20989,7 +21134,7 @@ function zeitenListeHtml(liste, name, monat){
     ((a.ueber12.length||a.ueber60.length)?'<div style="margin-top:8px;font-size:11px;color:#b00">'+
       (a.ueber12.length?"Über 12 Stunden am Tag (§ 9 AZG): "+a.ueber12.map(dfmt).join(", ")+". ":"")+
       (a.ueber60.length?"Über 60 Stunden in der Woche ab "+a.ueber60.map(dfmt).join(", ")+".":"")+"</div>":"")+
-    '<div style="margin-top:6px;font-size:10px;color:#555">Überstunden nach Kollektivvertrag Metallgewerbe als Vorschlag – die Lohnverrechnung prüft.</div>'+
+    '<div style="margin-top:6px;font-size:10px;color:#555">Überstunden als Monatsbilanz (Ist gegen Soll); Samstag, Sonntag und Feiertage getrennt – ein Vorschlag, die Lohnverrechnung prüft.</div>'+
     '<div style="margin-top:28px;display:flex;gap:40px;font-size:11px"><div style="border-top:1px solid #333;padding-top:3px;width:220px">Datum, Unterschrift Mitarbeiter/in</div>'+
       '<div style="border-top:1px solid #333;padding-top:3px;width:220px">Datum, Unterschrift Firma</div></div>';
 }
@@ -21041,7 +21186,7 @@ function zeitenInhaberKarte(){
     var nameVon={};
     l.forEach(function(z){ var key=z.user_id||z.name||"?"; (je[key]=je[key]||[]).push(z); if(z.name) nameVon[key]=z.name; });
     if(!l.length){ host.appendChild(el('<div class="muted" style="font-size:13px">In diesem Monat ist noch nichts erfasst.</div>')); return; }
-    var spalten=[["Soll","soll"],["Ist","ist"],["Diff.","diff"],["ÜS 50 %","ue50"],["ÜS 100 %","ue100"],["Sa","samstag"],["So","sonntag"],["Feiert.","feiertagStd"],
+    var spalten=[["Soll","soll"],["Ist","ist"],["Diff.","diff"],["Überst.","ueberstunden"],["Sa","samstag"],["So","sonntag"],["Feiert.","feiertagStd"],
       ["Montage","montage"],["Fahrt","fahrt"],["Urlaub","urlaub"],["Krank","krank"]];
     var tab=el('<div class="scrollx"><table class="t" style="width:100%;font-size:12.5px"><thead><tr><th>Mitarbeiter</th>'+spalten.map(function(s){ return "<th>"+s[0]+"</th>"; }).join("")+
       '<th title="Tage mit Abwesenheit vom Betrieb über 6 h / über 11 h (Entfernungszulage, ca.)">Entf. 6/11</th><th>Stand</th><th></th></tr></thead><tbody></tbody></table></div>');
@@ -21079,7 +21224,7 @@ function zeitenInhaberKarte(){
       tab.querySelector("tbody").appendChild(tr);
     });
     host.appendChild(tab);
-    host.appendChild(el('<div class="muted" style="font-size:12px;margin-top:6px">Soll: '+String(ARBEITSZEIT.wochenstunden).replace(".",",")+" h/Woche, ohne Feiertage · ÜS = Überstunden bzw. Mehrarbeit nach Kollektivvertrag Metallgewerbe (Vorschlag) · "+
+    host.appendChild(el('<div class="muted" style="font-size:12px;margin-top:6px">Soll: '+String(ARBEITSZEIT.wochenstunden).replace(".",",")+" h/Woche, ohne Feiertage · Ist = Arbeit Mo–Fr + Urlaub, Krankenstand, Schule · Überst. = Monatsbilanz Ist gegen Soll (Samstag, Sonntag, Feiertag getrennt) · "+
       "Montage = Montage, Wartung, Störung außerhalb des Betriebs (Montagezulage, ohne Wegzeit) · Entf. = Tage mit Abwesenheit über 6 / 11 h (ca.)</div>"));
     var csvText=function(zeilen){ return "﻿"+zeilen.map(function(r3){ return r3.map(function(x){ x=String(x); return /[;"\n]/.test(x) ? '"'+x.replace(/"/g,'""')+'"' : x; }).join(";"); }).join("\r\n"); };
     /* für die Lohnverrechnung: je Person die Summen */
@@ -21634,6 +21779,7 @@ function stempelOrtSchalter(){
 function render(){
   setTimeout(kundenlisteNachladen, 0);
   setTimeout(projekteNachladen, 0);
+  setTimeout(stoerungenOhneVerknuepfungAbgleichen, 0);   /* Störung mit vorhandenem Protokoll (gleiche Auftragsnummer) erledigen */
   setTimeout(function(){ stempelNachladen(false).then(stempelReiterZeichen); }, 0);
   /* Kopfzeile nachziehen – Märkte können angelegt oder stillgelegt worden sein */
   wunschLinkNeu();

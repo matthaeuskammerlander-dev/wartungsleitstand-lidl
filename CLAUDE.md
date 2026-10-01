@@ -47,6 +47,13 @@ Kammerlander Umwelt- und Klimatechnik (UKT) – oft kurz, vom Handy, im Feld.
   kein Halbjahrestermin angelegt, die Anlage gilt nicht als lückenhaft; die
   Entscheidung steht mit Name im Änderungsverlauf und ist in der Verwaltung
   rücknehmbar. Ab 30 kg bleibt die HJW Pflicht (`anlagenOhneHJW`).
+- Halbjahrestermin wie am Markt üblich (`hjMarktFaelle`, `hjMarktAutomatisch`,
+  Büro 01.10.2026): Hat eine Anlage am Markt einen Halbjahrestermin (HJI oder
+  HJW), bekommen die weiteren Anlagen dort mit nur JW automatisch einen (ab
+  30 kg HJW, sonst HJI; Gaswarnanlagen nicht), zählt ab heute, Monat wie die
+  andere Anlage (Feld `hjiMarkt`). Vor Ort bestätigt der Termine-Schritt den
+  Monat: gleicher Besuch oder 6 Monate nach der JW. Ein Merker (typ „merker“)
+  verhindert, dass ein zurückgenommener Termin wiederkommt.
 - Termine vor Ort prüfen (`termineOffen`, `termineSchritt`): im geführten
   Protokoll je Anlage ein Schritt „Stimmen Inbetriebnahme und Termine?“,
   solange Inbetriebnahme, Soll-Monat oder Kürzel fehlen oder ein Soll-Monat
@@ -141,8 +148,16 @@ Kammerlander Umwelt- und Klimatechnik (UKT) – oft kurz, vom Handy, im Feld.
   60 h/Woche, 11 h Ruhezeit als Hinweis; Soll aus `einstellungen.arbeitszeit`
   (38,5 h, Verteilung je Wochentag) ohne österreichische Feiertage
   (`feiertageAT`). `lohnAuswertung` ist ein Vorschlag für die Lohnverrechnung
-  (Überstunden 50/100 %, Samstag, Sonntag, Montage = Montage/Wartung/Störung,
+  (Überstunden als MONATSBILANZ Ist Mo–Fr gegen Soll – nicht je Tag; Samstag,
+  Sonntag, Feiertag getrennt; Montage = Montage/Wartung/Störung,
   Fahrt = Wegzeit, Entfernungszulage ca.) – Regeln nur auf Anweisung ändern.
+- **Störungen nie doppelt** (Büro 01.10.2026): eine Lidl-Auftragsnummer gibt es
+  nur einmal als Störung (Datenbank-Index `stoerung_auftrag_einmal`,
+  tools/stoerung-eindeutig.sql; im Dialog „Vorhandene öffnen“ statt neu).
+  Nennt ein Störungsprotokoll die Auftragsnummer einer ANDEREN offenen Störung
+  am Markt, fragt die App, welche erledigt ist; offene Störungen mit passendem
+  Protokoll (gleicher Markt, gleiche Nummer) werden beim Laden verknüpft
+  (`stoerungenOhneVerknuepfungAbgleichen`).
 
 ## Rollen
 
