@@ -472,6 +472,7 @@ input[aria-invalid="true"]{border-color:var(--crit);box-shadow:0 0 0 1px var(--c
 @media (min-width:1100px){
   .spalten{grid-template-columns:minmax(0,1.7fr) minmax(320px,1fr)}
   .spalten>.sp-haupt,.spalten>.sp-neben{display:grid;gap:18px;align-content:start;min-width:0}
+  .spalten.einspaltig{grid-template-columns:minmax(0,1fr)}
 }
 .as-inhalt .spalten{gap:12px}
 @media (min-width:1100px){ .as-inhalt .spalten>.sp-haupt,.as-inhalt .spalten>.sp-neben{gap:12px} }
@@ -483,6 +484,9 @@ input[aria-invalid="true"]{border-color:var(--crit);box-shadow:0 0 0 1px var(--c
 /* zugeklappte Karte: kompakt, nur die Kopfzeile */
 .card.klappbar.zu>.pad{padding-block:11px}
 .card.klappbar h2{max-width:100%}
+/* nach dem Antippen kein Rahmen um die Überschrift – nur bei Bedienung mit der Tastatur */
+.card.klappbar h2:focus{outline:none}
+.card.klappbar h2:focus-visible{outline:2px solid var(--accent);outline-offset:3px;border-radius:4px}
 /* geführter Rundgang: abgedunkelt, das Ziel ausgespart, die Erklärung daneben (am Handy unten) */
 #rundgang{position:fixed;inset:0;z-index:1300;pointer-events:none}
 #rundgang.rg-dunkel{background:rgba(8,14,16,.55)}
@@ -579,7 +583,7 @@ table.dt td{padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:
   <div class="wrap hbar">
     <div class="kopfzeile">
     <img class="logo" src="logo.png" alt="Kammerlander Umwelt- und Klimatechnik GmbH" width="223" height="64">
-    <div class="mark"><b>Leitstand</b><span>Wartung · Störungen · Projekte</span></div>
+    <div class="mark"><b>Leitstand</b><span>Wartungen · Störungen · Projekte</span></div>
     <div class="hspace"></div>
     <span class="kopfknoepfe"><button class="btn ghost icon" type="button" id="neuladen" hidden title="Daten und App neu laden" aria-label="Aktualisieren">↻</button>
     <button class="btn ghost icon" type="button" id="fragebtn" hidden title="Claude fragen – Kältetechnik, Vorschriften, die App" aria-label="Claude fragen">✦</button>
@@ -889,6 +893,27 @@ function anlageDaten(p){
 indexNeuAufbauen();
 
 var KARTE_MODUS = "svg";   // wird beim Start auf "osm" gesetzt, wenn Kacheln laden
+/* Kachelserver erreichbar? Innerhalb von Claude sind externe Bilder gesperrt, dort
+   bleibt die gezeichnete Übersichtskarte. Bei langsamem Netz (Büro 02.10.2026: „die
+   Karte geht nicht mehr“) nicht für immer aufgeben: 8 s warten, beim Öffnen des
+   Reiters Karte erneut versuchen (höchstens alle 30 s), dazu ein Knopf. */
+var kachelVersuch=0, kachelLaeuft=false;
+function kachelnPruefen(gezielt){
+  if(!window.L){ KARTE_MODUS="svg"; return; }
+  if(kachelLaeuft || KARTE_MODUS==="osm") return;
+  kachelLaeuft=true; kachelVersuch=Date.now();
+  var bild=new Image(), erledigt=false;
+  var fertig=function(ok){
+    if(erledigt) return; erledigt=true; kachelLaeuft=false;
+    KARTE_MODUS = ok ? "osm" : "svg";
+    if(ok && S.view==="karte" && darfRendern()) render();
+    else if(!ok && gezielt) toast("Die Straßenkarte (OpenStreetMap) ist gerade nicht erreichbar – es bleibt die Übersichtskarte.");
+  };
+  var t=setTimeout(function(){ fertig(false); }, 8000);
+  bild.onload=function(){ clearTimeout(t); fertig(true); };
+  bild.onerror=function(){ clearTimeout(t); fertig(false); };
+  bild.src="https://tile.openstreetmap.org/0/0/0.png?p="+Date.now();
+}
 var HEUTE = new Date();
 var JAHR = HEUTE.getFullYear();
 var MONATE = ["","Jän","Feb","Mär","Apr","Mai","Jun","Jul","Aug","Sep","Okt","Nov","Dez"];
@@ -3043,11 +3068,11 @@ function marktAnsicht(sid){
   a.inhalt.appendChild(h);
   /* PC: Anlagen und Historie links, Planung und Nachrichten rechts; jede Karte einklappbar */
   kartenOrdnen(a.inhalt, [
-    {klasse:"detail", seite:"haupt", fest:true},
+    {klasse:"detail", seite:"haupt", fest:true, fix:true},
     {h:/^Geplant an diesem Markt/, seite:"neben", key:"plan"},
     {h:/Nachrichten/, seite:"neben", key:"chat", handyZu:true},
     {h:/^Wartungs- und Störungshistorie/, seite:"haupt", key:"historie", handyZu:true}
-  ], "markt", false);
+  ], "markt", false, true);
   /* führt ein Knopf woandershin (Protokoll, Verwaltung), geht die Ansicht zu */
   /* auch wenn man schon im Protokoll-Reiter ist: ein neu begonnenes Protokoll
      (anderer Markt/Termin/Störung) – sonst läge die Ansicht über dem Formular
@@ -3487,6 +3512,9 @@ function viewKarte(){
     return f;
   }
 
+  /* Straßenkarte noch nicht da: erneut versuchen (das Netz war beim Start vielleicht nur langsam) */
+  if(window.L && !kachelLaeuft && Date.now()-kachelVersuch>30000) kachelnPruefen();
+
   var lo=[9.5,17.2], la=[46.35,49.05];
   var k=Math.cos(47.7*Math.PI/180);
   var W=1000, pad=18;
@@ -3552,7 +3580,8 @@ function viewKarte(){
   }).join("");
 
   var card=el('<div class="card"><div class="pad stack">'+
-    '<div><h2>Standortkarte Österreich</h2><div class="sub">'+withGeo.length+' Standorte mit Koordinaten. Punktgröße = Anzahl Wartungspositionen, Farbe = dringlichster Status am Standort. Antippen für Details.</div></div>'+
+    '<div class="rowflex" style="justify-content:space-between;align-items:flex-start;gap:10px"><div><h2>Standortkarte Österreich</h2><div class="sub">'+withGeo.length+' Standorte mit Koordinaten. Punktgröße = Anzahl Wartungspositionen, Farbe = dringlichster Status am Standort. Antippen für Details.</div></div>'+
+      (window.L?'<button class="btn ghost sm" type="button" data-strassenkarte title="Die zoombare Straßenkarte (OpenStreetMap) erneut laden">Straßenkarte laden</button>':"")+"</div>"+
     stoerungAusserhalbHinweis(withGeo)+
     '<div class="legend">'+["ueberfaellig","faellig","erledigt"].map(function(k2){
       return '<span><i style="background:var('+STATUS_VAR[k2]+')"></i>'+STATUS_LABEL[k2]+"</span>";
@@ -3563,6 +3592,7 @@ function viewKarte(){
     '<div id="mapdetail"></div>'+
   "</div></div>");
 
+  var skBtn=card.querySelector("[data-strassenkarte]"); if(skBtn) skBtn.onclick=function(){ skBtn.disabled=true; skBtn.textContent="wird geladen …"; kachelnPruefen(true); setTimeout(function(){ if(document.body.contains(skBtn)){ skBtn.disabled=false; skBtn.textContent="Straßenkarte laden"; } }, 9000); };
   var det=card.querySelector("#mapdetail");
   /* nachTipp: das Detail ins Bild holen – am Handy liegt es unter der Karte
      und es sähe aus, als passiere nichts (nicht beim ersten Zeichnen) */
@@ -18875,7 +18905,9 @@ function einklappbar(card, key, zusammen, standardZu){
   h.insertAdjacentHTML("beforeend", ' <span class="klapp" aria-hidden="true">▾</span>'+(zusammen?'<span class="zusammen">'+esc(zusammen)+'</span>':""));
   h.setAttribute("role","button"); h.setAttribute("tabindex","0");
   var stand=lsGet("ukt_zu",{});
-  var setzen=function(zu){ card.classList.toggle("zu", !!zu); h.setAttribute("aria-expanded", String(!zu)); h.title=zu?"Aufklappen":"Zuklappen"; };
+  var setzen=function(zu){ card.classList.toggle("zu", !!zu); h.setAttribute("aria-expanded", String(!zu)); h.title=zu?"Aufklappen":"Zuklappen";
+    /* mitwachsende Textfelder: erst aufgeklappt lässt sich ihre Höhe messen */
+    if(!zu) card.querySelectorAll("textarea[data-wachsen]").forEach(function(t){ feldHoehe(t); }); };
   setzen(key in stand ? !!stand[key] : !!standardZu);
   /* gemerkt wird nur, was vom Standard abweicht */
   var merken=function(zu){ var s=lsGet("ukt_zu",{}); if(zu===!!standardZu) delete s[key]; else s[key]=zu; lsSet("ukt_zu", s); setzen(zu); };
@@ -18901,20 +18933,33 @@ function klappLeiste(host){
    einklappbar, kommt in die Haupt- oder Nebenspalte und beginnt am Handy auf
    Wunsch zugeklappt. regeln: [{h:/^Überschrift/ (oder klasse:"…"), seite:"haupt"|"neben", fest:nicht einklappbar,
    key:"…", zusammen:"…", handyZu:true}] – nicht Erfasstes bleibt in der Hauptspalte. */
-function kartenOrdnen(host, regeln, praefix, mitLeiste){
+function kartenOrdnen(host, regeln, praefix, mitLeiste, ausgleichen){
   var schmal=schmalerBildschirm(), teile=[];
   Array.prototype.slice.call(host.children).forEach(function(k){
     var h=k.querySelector && k.querySelector("h2"), t=h ? h.textContent.trim() : "";
-    var r=regeln.filter(function(x){ return x.klasse ? !!(k.classList && k.classList.contains(x.klasse)) : x.h.test(t); })[0]||null;
+    var r=regeln.filter(function(x){ return x.wenn ? x.wenn(k, t) : x.klasse ? !!(k.classList && k.classList.contains(x.klasse)) : x.h.test(t); })[0]||null;
     if(k.classList && k.classList.contains("card") && h && !(r && r.fest))
       einklappbar(k, praefix+":"+(r && r.key || t.slice(0,30)), r && r.zusammen, !!(r && r.handyZu && schmal));
-    teile.push([k, r ? r.seite : "haupt"]);
+    teile.push([k, r ? r.seite : "haupt", !!(r && r.fix)]);
   });
   host.innerHTML="";
-  if(mitLeiste) host.appendChild(klappLeiste(host));
+  /* nur wo es mehrere einklappbare Karten gibt */
+  if(mitLeiste && teile.filter(function(t){ return t[0].classList && t[0].classList.contains("klappbar"); }).length>1) host.appendChild(klappLeiste(host));
   /* seite "oben": über beiden Spalten (etwa die Kennzahlen) */
   teile.filter(function(t){ return t[1]==="oben"; }).forEach(function(t){ host.appendChild(t[0]); });
-  host.appendChild(spaltenAnordnen(teile.filter(function(t){ return t[1]!=="oben" && t[1]!=="unten"; })));
+  var mitte=teile.filter(function(t){ return t[1]!=="oben" && t[1]!=="unten"; });
+  if(ausgleichen){
+    /* ausgleichen (Fenster mit vielen Karten, Büro 02.10.2026: „ab der Hälfte nur noch auf einer
+       Seite“): feste Karten in ihre Spalte, alle anderen in die gerade kürzere – gemessen. */
+    var s=spaltenAnordnen([]); host.appendChild(s);
+    var sh=s.querySelector(".sp-haupt"), sn=s.querySelector(".sp-neben");
+    mitte.forEach(function(t, i){
+      t[0].style.order=String(i);
+      var ziel = t[2] ? (t[1]==="neben" ? sn : sh) : (sn.offsetHeight < sh.offsetHeight ? sn : sh);
+      ziel.appendChild(t[0]);
+    });
+    s.classList.toggle("einspaltig", !sn.children.length);
+  } else host.appendChild(spaltenAnordnen(mitte));
   /* seite "unten": über die ganze Breite nach den Spalten (breite Tabellen) */
   teile.filter(function(t){ return t[1]==="unten"; }).forEach(function(t){ host.appendChild(t[0]); });
 }
@@ -18939,11 +18984,16 @@ var ANSICHT_ORDNUNG={
     {h:/^Monatsbericht/, seite:"neben", key:"monatsbericht", handyZu:true}, {h:/^Wartungshistorie/, seite:"haupt", key:"historie"},
     {h:/^Letzte Änderungen/, seite:"haupt", key:"aenderungen"}],
   daten:[{h:/^So arbeitet/, seite:"haupt", key:"handbuch"}, {h:/^Zu klären/, seite:"haupt", key:"klaeren"}, {h:/^Export/, seite:"neben", key:"export"}],
-  anlagen:[{h:/^Inbetriebnahme der Anlagen/, seite:"haupt", key:"ib", handyZu:true}, {h:/./, seite:"haupt", fest:true}]
+  anlagen:[{h:/./, seite:"haupt", fest:true}],
+  /* Protokoll am PC: das Formular links, Konto und gespeicherte Protokolle rechts */
+  protokoll:[
+    {wenn:function(k){ return /^\s*Angemeldet als/.test(k.textContent||""); }, seite:"neben", fest:true},
+    {h:/^Gespeicherte Protokolle/, seite:"neben", key:"gespeichert"},
+    {wenn:function(k){ return true; }, seite:"haupt", fest:true}]
 };
 function ansichtOrdnen(sec, view){
   var r=ANSICHT_ORDNUNG[view]; if(!r) return;
-  kartenOrdnen(sec, r, "ansicht:"+view, false);
+  kartenOrdnen(sec, r, "ansicht:"+view, true);
 }
 /* Karten in zwei Spalten (große Bildschirme): teile = [[element, "haupt"|"neben"], …];
    schmal bleibt die Reihenfolge der Liste */
@@ -18954,6 +19004,8 @@ function spaltenAnordnen(teile){
     t[0].style.order=String(i);
     s.querySelector(t[1]==="neben" ? ".sp-neben" : ".sp-haupt").appendChild(t[0]);
   });
+  /* nichts für die Nebenspalte: die Hauptspalte nimmt die ganze Breite */
+  s.classList.toggle("einspaltig", !s.querySelector(".sp-neben").children.length);
   return s;
 }
 /* ein Sprungziel in einer zugeklappten Karte: die Karte geht auf (und bleibt auf) */
@@ -21717,9 +21769,9 @@ function projektAnsicht(id){
     var anz=function(l, eins, mehr){ l=l||[]; return l.length ? l.length+" "+(l.length===1?eins:mehr) : "leer"; };
     var offeneAufg=PLANUNG.filter(function(e){ return e.projekt_id===p.id && e.art==="aufgabe" && e.status!=="erledigt"; }).length;
     kartenOrdnen(v.inhalt, [
-      {h:/^Stand/, seite:"haupt", key:"stand"},
-      {h:/^Aufgaben und Termine/, seite:"neben", key:"plan", zusammen:offeneAufg?offeneAufg+(offeneAufg===1?" Aufgabe":" Aufgaben")+" offen":""},
-      {h:/^Angaben/, seite:"haupt", key:"angaben", handyZu:true, zusammen:d.typ||""},
+      {h:/^Stand/, seite:"haupt", key:"stand", fix:true},
+      {h:/^Aufgaben und Termine/, seite:"neben", key:"plan", fix:true, zusammen:offeneAufg?offeneAufg+(offeneAufg===1?" Aufgabe":" Aufgaben")+" offen":""},
+      {h:/^Angaben/, seite:"haupt", key:"angaben", fix:true, handyZu:true, zusammen:d.typ||""},
       {h:/^Beteiligte/, seite:"neben", key:"beteiligte", handyZu:true, zusammen:anz(d.beteiligte,"Eintrag","Einträge")},
       {h:/^Termine/, seite:"neben", key:"termine", zusammen:anz(d.termine,"Termin","Termine")},
       {h:/^Bestellungen/, seite:"haupt", key:"bestellungen", handyZu:true, zusammen:anz(d.bestellungen,"Bestellung","Bestellungen")},
@@ -21730,7 +21782,7 @@ function projektAnsicht(id){
       {h:/^Stunden/, seite:"neben", key:"stunden", handyZu:true},
       {h:/^Tagebuch/, seite:"neben", key:"tagebuch", handyZu:true, zusammen:anz(p.verlauf,"Eintrag","Einträge")},
       {h:/Nachrichten/, seite:"neben", key:"chat", handyZu:true}
-    ], "projekt", true);
+    ], "projekt", true, true);
 
     /* Projektzusammenfassung als PDF – ansehen, drucken, für die Synology ablegen */
     var pdfK=el('<button class="btn sm" type="button">Zusammenfassung (PDF)</button>');
@@ -25399,9 +25451,8 @@ function render(){
   else if(S.view==="verlauf") sec.appendChild(viewVerlauf());
   else if(S.view==="verwaltung") sec.appendChild(viewVerwaltung());
   else sec.appendChild(viewDaten());
-  /* aufgeräumt (Büro 01.10.2026): am PC zwei Spalten, Karten einklappbar; das Protokoll bleibt schmal */
+  /* aufgeräumt (Büro 01.10.2026): am PC zwei Spalten, Karten einklappbar */
   ansichtOrdnen(sec, S.view);
-  sec.classList.toggle("schmal", S.view==="protokoll");
   host.appendChild(sec);
   host.setAttribute("data-reiter", S.view);
   if(scrollVorher!==null && Math.abs((window.pageYOffset||0)-scrollVorher)>1){
@@ -25543,19 +25594,7 @@ idbOeffnen()
 
 /* Kachelserver erreichbar? Innerhalb von Claude sind externe Bilder gesperrt,
    dort bleibt die gezeichnete Übersichtskarte. */
-(function(){
-  if(!window.L){ KARTE_MODUS="svg"; return; }
-  var bild=new Image(), erledigt=false;
-  var fertig=function(ok){
-    if(erledigt) return; erledigt=true;
-    KARTE_MODUS = ok ? "osm" : "svg";
-    if(S.view==="karte") render();
-  };
-  var t=setTimeout(function(){ fertig(false); },3000);
-  bild.onload=function(){ clearTimeout(t); fertig(true); };
-  bild.onerror=function(){ clearTimeout(t); fertig(false); };
-  bild.src="https://tile.openstreetmap.org/0/0/0.png?p="+Date.now();
-})();
+kachelnPruefen();
 }
 
 /* ----------------------------------------------------------------
