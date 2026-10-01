@@ -1,4 +1,4 @@
--- Baustellen-Ablauf A–Z (Büro 01.10.2026, am Projekt Deutschlandsberg):
+-- Baustellen-Ablauf A–Z (Büro 01.10.2026, an einem abgeschlossenen Projekt):
 -- Anfrage (Planer) → Begehung/Bestand → Konzept → Angebot → Auftrag →
 -- Vorbereitung (Bestellungen, Termine) → Baustelle → Inbetriebnahme →
 -- Dokumentation (Prüfbücher) → abgerechnet.
