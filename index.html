@@ -18781,6 +18781,7 @@ function handbuchKarte(z){
           "löschen kann ihn nur der Inhaber. Vergessen auszustempeln: nach 12 Stunden lässt sich das tatsächliche Ende nachtragen.",
         "<strong>Bereich und Umstempeln:</strong> beim Einstempeln den Bereich wählen (Fahrt, Baustelle, Wartung, Störung, Werkstatt, Büro). "+
           "„⇄ Umstempeln“ wechselt Bereich, Markt oder Projekt, ohne auszustempeln – beim Ausstempeln entsteht je Abschnitt ein Eintrag. "+
+          "Beim Um- und Ausstempeln fragt die App nach der erledigten Arbeit im endenden Abschnitt, wenn sie nicht schon aus Angaben, Protokollen oder Projekt-Tagebuch hervorgeht. "+
           "Die Inhaber-Übersicht zeigt die Fahrtzeit getrennt.",
         "<strong>Doppelt erfasst:</strong> Ist für die gestempelte Zeit schon Arbeitszeit von Hand eingetragen, warnt die App beim Einstempeln und fragt beim "+
           "Ausstempeln, was gilt (gestempelte Zeit ersetzt den Eintrag von Hand – oder beide bleiben). Überschneidungen sind mit ⚠ markiert, "+
@@ -21075,7 +21076,8 @@ function stempelDruecken(art, opt, knopf){
   var standort=opt.standort_id || (art!=="ein" && z.seg ? z.seg.standort_id : null);
   return stempelOrt(standort).then(function(ort){
     var werte={p_art:art, p_standort:opt.standort_id||null, p_projekt:opt.projekt_id||null, p_taetigkeit:opt.taetigkeit||null,
-      p_ort:ort, p_name:meinName(), p_ende_hand:opt.ende||null, p_bereich:opt.bereich||null, p_ersetzen:(opt.ersetzen&&opt.ersetzen.length)?opt.ersetzen:null};
+      p_ort:ort, p_name:meinName(), p_ende_hand:opt.ende||null, p_bereich:opt.bereich||null, p_ersetzen:(opt.ersetzen&&opt.ersetzen.length)?opt.ersetzen:null,
+      p_erledigt:art==="wechsel" ? (opt.erledigt||null) : null};
     if(demo()) return stempelDemo(werte);
     return mitFrist(Store.sb.rpc("stempeln", werte), 20000).then(function(r){
       if(r.error) throw new Error(/function|does not exist/i.test(r.error.message)?"Die Stempeluhr ist in der Datenbank noch nicht eingerichtet.":r.error.message);
@@ -21100,7 +21102,7 @@ function stempelDemo(w){
   var jetzt=new Date(), z=stempelZustand(), erb=w.p_art==="pause"||w.p_art==="weiter";
   var s={id:neueKennung("st"), art:w.p_art, zeit:jetzt.toISOString(), ort:w.p_ort,
     standort_id:w.p_standort||(erb&&z.seg?z.seg.standort_id:null), projekt_id:w.p_projekt||(erb&&z.seg?z.seg.projekt_id:null),
-    taetigkeit:w.p_taetigkeit||(erb&&z.seg?z.seg.taetigkeit:null), bereich:w.p_bereich||(erb&&z.seg?z.seg.bereich:null)};
+    taetigkeit:w.p_taetigkeit||(erb&&z.seg?z.seg.taetigkeit:null), bereich:w.p_bereich||(erb&&z.seg?z.seg.bereich:null), erledigt:w.p_art==="wechsel"?(w.p_erledigt||null):null};
   if(w.p_art!=="aus") return {stempel:s};
   var hm=function(d){ return ("0"+d.getHours()).slice(-2)+":"+("0"+d.getMinutes()).slice(-2); };
   var segs=z.abschnitte, ee=[];
@@ -21112,45 +21114,78 @@ function stempelDemo(w){
     var min=Math.max(0, Math.floor((bis-ab-pause)/60000));
     if(!min && !(letzter && !ee.length)) return;
     ee.push({id:neueKennung("z"), name:meinName(), datum:isoLokal(ab), beginn:hm(ab), ende:hm(bis), pause_min:Math.round(pause/60000), minuten:min, art:"arbeit",
-      taetigkeit:letzter&&w.p_taetigkeit ? [g.taetigkeit, w.p_taetigkeit].filter(Boolean).join("; ") : g.taetigkeit, bereich:g.bereich,
+      taetigkeit:[g.taetigkeit, letzter ? w.p_taetigkeit : segs[i+1].erledigt].filter(Boolean).join("; ")||null, bereich:g.bereich,
       standort_id:g.standort_id||(letzter?w.p_standort:null), projekt_id:g.projekt_id||(letzter?w.p_projekt:null), quelle:"stempel",
       ort:(g.ort||(letzter?w.p_ort:segs[i+1].ort))?{ein:g.ort||null, aus:letzter?w.p_ort||null:segs[i+1].ort||null}:null});
   });
   return {stempel:s, eintraege:ee, ersetzt:w.p_ersetzen||[]};
 }
 
-/* Was seit dem Einstempeln schon belegt ist: eigene Protokolle, eigene Einträge
-   im Projekt-Tagebuch, Angaben beim Ein- und Umstempeln (Büro 01.10.2026) */
-function stempelErledigt(z){
-  var ein=z.ein, ab=tagLokal(ein.zeit), bis=isoLokal(new Date()), uid=Store.benutzer && Store.benutzer.id, ich=suchNorm(meinName());
+/* Was im laufenden Abschnitt (seit dem Ein- bzw. letzten Umstempeln) schon belegt ist:
+   Angaben beim Stempeln (Tätigkeit oder Projekt), eigene Protokolle und eigene Einträge
+   im Projekt-Tagebuch seit Beginn des Abschnitts (Büro 01.10.2026) */
+function stempelErledigt(seg){
+  var ab=new Date(seg.zeit), tagAb=tagLokal(seg.zeit), bis=isoLokal(new Date()), uid=Store.benutzer && Store.benutzer.id, ich=suchNorm(meinName());
   var l=[];
-  /* Angaben beim Stempeln zählen, wenn etwas Greifbares dabei ist (Tätigkeit oder Projekt) */
-  (z.abschnitte||[ein]).forEach(function(g){
-    var pr=g.projekt_id && PROJEKTE.filter(function(x){ return x.id===g.projekt_id; })[0];
-    if(!g.taetigkeit && !pr) return;
-    l.push({text:[g.bereich?bereichName(g.bereich):"", pr?pr.titel:"", g.taetigkeit||""].filter(Boolean).join(": "), quelle:"beim Stempeln", stempel:true});
-  });
+  var pr=seg.projekt_id && PROJEKTE.filter(function(x){ return x.id===seg.projekt_id; })[0];
+  if(seg.taetigkeit || pr) l.push({text:[seg.bereich?bereichName(seg.bereich):"", pr?pr.titel:"", seg.taetigkeit||""].filter(Boolean).join(": "), quelle:"beim Stempeln", stempel:true});
   alleProtokolle().forEach(function(p){
-    if(p.geloescht || !p.datum || p.datum<ab || p.datum>bis) return;
+    if(p.geloescht || !p.datum || p.datum<tagAb || p.datum>bis) return;
+    if(p.erstellt && new Date(p.erstellt)<ab) return;   /* vor diesem Abschnitt geschrieben */
     var namen=[p.techniker].concat(p.mitarbeiter||[]).map(suchNorm);
     if(!((uid && p.erstelltVon===uid) || (ich && namen.indexOf(ich)>=0))) return;
     l.push({text:(istStoerung(p)?"Störung ":"Wartung ")+protoName(p), quelle:"Protokoll", standort_id:p.standortId});
   });
-  PROJEKTE.forEach(function(pr){
-    (pr.verlauf||[]).forEach(function(e){
-      if(e.wer!==meinName() || !e.zeit || new Date(e.zeit)<new Date(ein.zeit) || /^(Stand:|Angaben geändert|Projekt angelegt|\d+ Datei)/.test(e.text||"")) return;
-      l.push({text:pr.titel+": "+e.text, quelle:"Projekt "+(pr.nummer||""), projekt_id:pr.id});
+  PROJEKTE.forEach(function(pr2){
+    (pr2.verlauf||[]).forEach(function(e){
+      if(e.wer!==meinName() || !e.zeit || new Date(e.zeit)<ab || /^(Stand:|Angaben geändert|Projekt angelegt|\d+ Datei)/.test(e.text||"")) return;
+      l.push({text:pr2.titel+": "+e.text, quelle:"Projekt "+(pr2.nummer||""), projekt_id:pr2.id});
     });
   });
   return l;
 }
-/* Ausstempeln: ist schon belegt, was heute erledigt wurde, nur kurz bestätigen (Ergänzung freiwillig) –
-   sonst danach fragen (Pflicht). Überschneidet sich die gestempelte Zeit mit Einträgen von Hand:
-   ersetzen (empfohlen) oder beide behalten. opt.ende: vergessen auszustempeln, tatsächliches Ende */
+/* Abfrage „erledigte Arbeit“ für einen Abschnitt – beim Um- und beim Ausstempeln.
+   Belegt: nur zeigen, Ergänzung freiwillig. Nichts belegt: Pflicht.
+   text(): was zum Eintrag dazukommt (ohne die Angaben beim Stempeln – die stehen schon dort) */
+function erledigtAbfrage(belegt, frage){
+  var box=el('<div class="stack" style="gap:8px"></div>');
+  if(belegt.length){
+    box.appendChild(el('<div class="note" style="font-size:13px"><strong>Erledigt</strong> – geht aus deinen Angaben hervor:<ul style="margin:6px 0 0 18px;padding:0">'+
+      belegt.map(function(x){ return "<li>"+esc(x.text)+' <span class="muted">('+esc(x.quelle)+")</span></li>"; }).join("")+"</ul></div>"));
+    box.appendChild(el('<label class="fl"><span>Noch etwas dazu? (freiwillig)</span><input type="text" data-was maxlength="200" placeholder="z. B. Material geholt, Werkstatt"></label>'));
+  } else {
+    box.appendChild(el('<div class="fl"><span class="req">'+esc(frage)+"</span></div>"));
+    var chips=el('<div class="chips"></div>');
+    ["Wartung","Störung","Montage / Baustelle","Werkstatt","Büro","Material holen","Fahrt","Schulung"].forEach(function(t){
+      var c=el('<button class="chip" type="button">'+esc(t)+"</button>");
+      c.onclick=function(){ var f=box.querySelector("[data-was]"); f.value=f.value ? f.value+", "+t : t; f.focus(); };
+      chips.appendChild(c);
+    });
+    box.appendChild(chips);
+    box.appendChild(el('<textarea data-was rows="3" maxlength="300" placeholder="Kurz, was gemacht wurde – z. B. Montage Innengeräte Büro, Material für Baustelle geholt"></textarea>'));
+  }
+  box.appendChild(el('<div class="note warnbox" data-err hidden></div>'));
+  return {el:box,
+    fehlt:function(){
+      var dazu=box.querySelector("[data-was]").value.trim();
+      if(belegt.length || dazu) return false;
+      var e=box.querySelector("[data-err]"); e.textContent="Bitte kurz eintragen, was du gemacht hast."; e.hidden=false; box.querySelector("[data-was]").focus(); return true;
+    },
+    text:function(){
+      var dazu=box.querySelector("[data-was]").value.trim();
+      var t=belegt.filter(function(x){ return !x.stempel; }).map(function(x){ return x.text; }).concat(dazu?[dazu]:[]).join("; ");
+      return t.length>300 ? t.slice(0,297)+"…" : t;
+    },
+    fokus:function(){ if(!belegt.length) box.querySelector("[data-was]").focus(); }};
+}
+function abschnittText(g){ return (bereichName(g.bereich)||"ohne Bereich")+(g.standort_id&&byId[g.standort_id]?" · "+stName(byId[g.standort_id]):""); }
+/* Ausstempeln: erledigte Arbeit im letzten Abschnitt (siehe erledigtAbfrage). Überschneidet sich die
+   gestempelte Zeit mit Einträgen von Hand: ersetzen (empfohlen) oder beide behalten.
+   opt.ende: vergessen auszustempeln, tatsächliches Ende */
 function ausstempelnFragen(opt, knopf){
   opt=opt||{};
   var z=stempelZustand(), ein=z.ein; if(!ein){ stempelDruecken("aus", opt, knopf); return; }
-  var belegt=stempelErledigt(z);
+  var seg=z.seg||ein, belegt=stempelErledigt(seg);
   var v=ansichtOeffnen("Ausstempeln");
   var jetzt=Date.now(), pause=z.pauseMs+(z.pauseSeit?jetzt-new Date(z.pauseSeit):0);
   v.schritt.textContent="seit "+zeitAus(ein.zeit)+(opt.ende?" bis "+opt.ende:" bis jetzt")+(opt.ende?"":" · "+stundenText(Math.max(0,Math.floor((jetzt-new Date(ein.zeit)-pause)/60000))))+
@@ -21158,22 +21193,11 @@ function ausstempelnFragen(opt, knopf){
   var form=el('<div class="stack" style="max-width:560px"></div>');
   if(z.abschnitte.length>1) form.appendChild(el('<div class="note" style="font-size:13px"><strong>Abschnitte</strong> – je Abschnitt entsteht ein Eintrag:<br>'+
     z.abschnitte.map(function(g,i){ var bis=i<z.abschnitte.length-1 ? zeitAus(z.abschnitte[i+1].zeit) : (opt.ende||"jetzt");
-      return esc(zeitAus(g.zeit)+"–"+bis+" · "+(bereichName(g.bereich)||"ohne Bereich")+(g.standort_id&&byId[g.standort_id]?" · "+stName(byId[g.standort_id]):"")); }).join("<br>")+"</div>"));
-  if(belegt.length){
-    form.appendChild(el('<div class="note" style="font-size:13px"><strong>Heute erledigt</strong> – geht aus deinen Angaben hervor:<ul style="margin:6px 0 0 18px;padding:0">'+
-      belegt.map(function(x){ return "<li>"+esc(x.text)+' <span class="muted">('+esc(x.quelle)+")</span></li>"; }).join("")+"</ul></div>"));
-    form.appendChild(el('<label class="fl"><span>Noch etwas dazu? (freiwillig)</span><input type="text" data-was maxlength="200" placeholder="z. B. danach Material geholt, Werkstatt"></label>'));
-  } else {
-    form.appendChild(el('<div class="fl"><span class="req">Was hast du heute gemacht?</span></div>'));
-    var chips=el('<div class="chips"></div>');
-    ["Wartung","Störung","Montage / Baustelle","Werkstatt","Büro","Material holen","Fahrt","Schulung"].forEach(function(t){
-      var c=el('<button class="chip" type="button">'+esc(t)+"</button>");
-      c.onclick=function(){ var f=form.querySelector("[data-was]"); f.value=f.value ? f.value+", "+t : t; f.focus(); };
-      chips.appendChild(c);
-    });
-    form.appendChild(chips);
-    form.appendChild(el('<textarea data-was rows="3" maxlength="300" placeholder="Kurz, was gemacht wurde – z. B. Montage Innengeräte Büro, Material für Baustelle geholt"></textarea>'));
-    var stOpt=ST.slice().sort(function(a,b){ return stName(a).localeCompare(stName(b),"de"); }), seg=z.seg||ein;
+      return esc(zeitAus(g.zeit)+"–"+bis+" · "+abschnittText(g)); }).join("<br>")+"</div>"));
+  var ab=erledigtAbfrage(belegt, z.abschnitte.length>1 ? "Was hast du seit "+zeitAus(seg.zeit)+" gemacht ("+(bereichName(seg.bereich)||"letzter Abschnitt")+")?" : "Was hast du heute gemacht?");
+  form.appendChild(ab.el);
+  if(!belegt.length){
+    var stOpt=ST.slice().sort(function(a,b){ return stName(a).localeCompare(stName(b),"de"); });
     form.appendChild(el('<div class="grid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:10px">'+
       '<label class="fl"><span>Markt / Standort</span><select data-st><option value="">–</option>'+stOpt.map(function(s){
         return '<option value="'+esc(s.id)+'"'+(seg.standort_id===s.id?" selected":"")+">"+esc(stName(s))+"</option>"; }).join("")+"</select></label>"+
@@ -21192,19 +21216,14 @@ function ausstempelnFragen(opt, knopf){
         '<label class="chk"><input type="radio" name="doppelt" value="behalten"><span>Beide behalten – war wirklich andere Arbeit (wird für das Büro markiert)</span></label>'+
       "</div></div>"));
   }
-  form.appendChild(el('<div class="note warnbox" data-err hidden></div>'));
   v.inhalt.appendChild(form);
-  var ab=el('<button class="btn ghost" type="button">Abbrechen – weiter eingestempelt</button>'), ok=el('<button class="btn" type="button" style="background:var(--crit);border-color:var(--crit)">■ Ausstempeln</button>');
-  ab.onclick=function(){ v.zu(); };
-  v.fuss.appendChild(ab); v.fuss.appendChild(ok);
-  setTimeout(function(){ var f=form.querySelector("[data-was]"); if(f && !belegt.length) f.focus(); }, 60);
+  var abbr=el('<button class="btn ghost" type="button">Abbrechen – weiter eingestempelt</button>'), ok=el('<button class="btn" type="button" style="background:var(--crit);border-color:var(--crit)">■ Ausstempeln</button>');
+  abbr.onclick=function(){ v.zu(); };
+  v.fuss.appendChild(abbr); v.fuss.appendChild(ok);
+  setTimeout(ab.fokus, 60);
   ok.onclick=function(){
-    var dazu=form.querySelector("[data-was]").value.trim();
-    if(!belegt.length && !dazu){ var e=form.querySelector("[data-err]"); e.textContent="Bitte kurz eintragen, was du heute gemacht hast."; e.hidden=false; return; }
-    /* zum letzten Abschnitt: was belegt ist (ohne die Angaben beim Stempeln – die stehen schon dort), dazu die Ergänzung */
-    var text=belegt.filter(function(x){ return !x.stempel; }).map(function(x){ return x.text; }).concat(dazu?[dazu]:[]).join("; ");
-    if(text.length>300) text=text.slice(0,297)+"…";
-    var o=Object.assign({}, opt, {taetigkeit:text||null});
+    if(ab.fehlt()) return;
+    var o=Object.assign({}, opt, {taetigkeit:ab.text()||null});
     if(!belegt.length){ o.standort_id=(form.querySelector("[data-st]")||{}).value||null; o.projekt_id=(form.querySelector("[data-pr]")||{}).value||null; }
     var wahl=form.querySelector('input[name="doppelt"]:checked');
     if(doppelt.length && wahl && wahl.value==="ersetzen") o.ersetzen=doppelt.map(function(x){ return x.id; });
@@ -21212,14 +21231,18 @@ function ausstempelnFragen(opt, knopf){
     stempelDruecken("aus", o, knopf);
   };
 }
-/* Umstempeln: Bereich, Markt oder Projekt wechseln – der laufende Abschnitt endet, ein neuer beginnt */
+/* Umstempeln: Bereich, Markt oder Projekt wechseln – der laufende Abschnitt endet, ein neuer beginnt.
+   Vorher: was im endenden Abschnitt erledigt wurde (wie beim Ausstempeln, Büro 01.10.2026) */
 function umstempelnDialog(knopf){
   var z=stempelZustand(), seg=z.seg||z.ein||{};
   var v=ansichtOeffnen("Umstempeln");
   v.schritt.textContent="jetzt: "+[bereichName(seg.bereich)||"ohne Bereich", seg.standort_id&&byId[seg.standort_id]?stName(byId[seg.standort_id]):"", seg.taetigkeit||""].filter(Boolean).join(" · ")+" seit "+zeitAus(seg.zeit);
+  var abfrage=erledigtAbfrage(stempelErledigt(seg), "Was hast du seit "+zeitAus(seg.zeit)+" gemacht ("+(bereichName(seg.bereich)||"bisheriger Abschnitt")+")?");
   var bw=bereichWahl(null);
   var stOpt=ST.slice().sort(function(a,b){ return stName(a).localeCompare(stName(b),"de"); });
   var form=el('<div class="stack" style="max-width:560px">'+
+    '<div data-erledigt></div>'+
+    '<h2 style="margin-top:6px">Weiter mit …</h2>'+
     '<div class="fl"><span>Neuer Bereich</span></div><div data-bw></div>'+
     '<div class="grid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:10px">'+
       '<label class="fl"><span>Wo? (Markt / Standort)</span><select data-st><option value="">– Betrieb, Werkstatt, unterwegs –</option>'+stOpt.map(function(s){
@@ -21227,19 +21250,22 @@ function umstempelnDialog(knopf){
       '<label class="fl"><span>Projekt</span><select data-pr><option value="">–</option>'+PROJEKTE.filter(projektOffen).map(function(p){
         return '<option value="'+esc(p.id)+'"'+(seg.projekt_id===p.id?" selected":"")+">"+esc(projektTitel(p))+"</option>"; }).join("")+"</select></label>"+
     "</div>"+
-    '<label class="fl"><span>Was? (kann leer bleiben)</span><input type="text" data-was maxlength="300" placeholder="z. B. Montage Außengerät"></label>'+
-    '<div class="note warnbox" data-err hidden></div></div>');
+    '<label class="fl"><span>Was als Nächstes? (kann leer bleiben)</span><input type="text" data-neuwas maxlength="300" placeholder="z. B. Montage Außengerät"></label>'+
+    '<div class="note warnbox" data-err2 hidden></div></div>');
+  form.querySelector("[data-erledigt]").appendChild(abfrage.el);
   form.querySelector("[data-bw]").appendChild(bw.el);
   form.insertBefore(naeheAuswahl(function(s){ form.querySelector("[data-st]").value=s.id; }), form.querySelector(".grid"));
   v.inhalt.appendChild(form);
-  var ab=el('<button class="btn ghost" type="button">Abbrechen</button>'), ok=el('<button class="btn" type="button">⇄ Umstempeln</button>');
-  ab.onclick=function(){ v.zu(); };
-  v.fuss.appendChild(ab); v.fuss.appendChild(ok);
+  var abbr=el('<button class="btn ghost" type="button">Abbrechen</button>'), ok=el('<button class="btn" type="button">⇄ Umstempeln</button>');
+  abbr.onclick=function(){ v.zu(); };
+  v.fuss.appendChild(abbr); v.fuss.appendChild(ok);
+  setTimeout(abfrage.fokus, 60);
   ok.onclick=function(){
+    if(abfrage.fehlt()) return;
     var o={bereich:bw.wert(), standort_id:form.querySelector("[data-st]").value||null, projekt_id:form.querySelector("[data-pr]").value||null,
-      taetigkeit:form.querySelector("[data-was]").value.trim()||null};
+      taetigkeit:form.querySelector("[data-neuwas]").value.trim()||null, erledigt:abfrage.text()||null};
     if(o.bereich===(seg.bereich||null) && o.standort_id===(seg.standort_id||null) && o.projekt_id===(seg.projekt_id||null) && o.taetigkeit===(seg.taetigkeit||null)){
-      var e=form.querySelector("[data-err]"); e.textContent="Es ist nichts anders als jetzt – bitte Bereich, Markt, Projekt oder Tätigkeit ändern."; e.hidden=false; return;
+      var e=form.querySelector("[data-err2]"); e.textContent="Es ist nichts anders als jetzt – bitte Bereich, Markt, Projekt oder Tätigkeit ändern."; e.hidden=false; return;
     }
     v.zu();
     stempelDruecken("wechsel", o, knopf);
