@@ -3233,6 +3233,8 @@ function viewFaellig(){
           '<span class="tag">'+esc(p.intervall.art)+"</span>"+
           (p.kaeltemittelText?'<span class="tag f30">'+esc(p.kaeltemittelText)+" Kältemittel</span>":"")+
           (p.letzte?'<span class="tag">zuletzt '+dfmt(p.letzte)+(p.letzteAusApp?" (App)":"")+"</span>":'<span class="tag">keine Wartung erfasst</span>')+
+          /* im Kalender eingeplant (Wartung einplanen) */
+          (function(){ var pl=planungGeladen && planFuerPosition(p.id); return pl ? '<span class="tag" style="border-color:var(--good);color:var(--good)">📅 '+esc(planEingeplantText(pl))+"</span>" : ""; })()+
         "</span>"+
       "</span>"+
       '<span class="right">'+pill(p.status)+kundenPill(kundenVonPos(p.id))+"</span>"+
@@ -22734,6 +22736,9 @@ function planTage(e){
 function planBezugText(e){
   var t=[];
   var s=e.standort_id && byId[e.standort_id]; if(s) t.push(stName(s));
+  /* eingeplante Wartungstermine (Wartung einplanen) – nur wenn der Titel sie nicht schon nennt */
+  var wt=(e.position_ids||[]).map(function(pid){ return posById[pid]; }).filter(Boolean).map(terminKurz);
+  if(wt.length && String(e.titel||"").indexOf(wt[0])<0) t.push(wt.slice(0,6).join(", ")+(wt.length>6?" …":""));
   var p=e.projekt_id && PROJEKTE.filter(function(x){ return x.id===e.projekt_id; })[0];
   if(p) t.push(projektTitel(p)+(e.projekt_schritt?" · "+projektSchritt(e.projekt_schritt)[1]:""));
   var o=e.stoerung_id && OFFENE.filter(function(x){ return x._id===e.stoerung_id; })[0];
@@ -22779,8 +22784,8 @@ function kalenderEintraege(von, bis, wahl){
       return;
     }
     planTage(e).forEach(function(tag){
-      dazu(tag, {art:"termin", e:e, zeit:e.beginn||"", farbe:k[2], grau:e.status==="abgelehnt",
-        titel:planTitel(e)+(e.kategorie==="urlaub" && e.status!=="genehmigt" ? " ("+(URLAUB_STATUS[e.status]||e.status)+")" : ""),
+      dazu(tag, {art:"termin", e:e, zeit:e.beginn||"", farbe:k[2], grau:e.status==="abgelehnt" || planWartungErledigt(e),
+        titel:(planWartungErledigt(e)?"✓ gewartet – ":"")+planTitel(e)+(e.kategorie==="urlaub" && e.status!=="genehmigt" ? " ("+(URLAUB_STATUS[e.status]||e.status)+")" : ""),
         unter:[planZeit(e), planWerText(e), planBezugText(e)].filter(Boolean).join(" · ")});
     });
   });
@@ -22830,6 +22835,29 @@ function kalEintragZeile(x, ohneTag){
 }
 
 /* fällige Wartungen eines Monats je Markt – zum Einplanen */
+/* ---------- Wartungstermine einplanen (Büro 01.10.2026) ----------
+   Eingeplant werden die Wartungstermine der Anlagen (JW, HJI, HJW) – nicht ein
+   loser Termin: planung.position_ids. Ein eingeplanter Termin gilt als erledigt,
+   sobald seit dem geplanten Tag (abzüglich BESUCH_TAGE – derselbe Besuch)
+   gewartet wurde. */
+function terminKurz(p){ var iv=p.intervall||intervallArt(p.intervallCode); return (anlagenName(p)||"Anlage")+(iv && iv.kurz && !iv.unklar ? " "+iv.kurz : ""); }
+function planPosErledigt(e, pid){ var p=posById[pid]; return !!(p && p.letzte && e.datum && p.letzte>=plusTage(e.datum, -BESUCH_TAGE)); }
+function planWartungErledigt(e){ var l=e.position_ids||[]; return l.length>0 && l.every(function(pid){ return planPosErledigt(e, pid); }); }
+/* der offene Plan, in dem dieser Termin eingeplant ist */
+function planFuerPosition(pid, ohne){
+  var grenze=plusTage(isoLokal(new Date()), -BESUCH_TAGE);
+  return PLANUNG.filter(function(e){
+    return e.art==="termin" && e.kategorie==="wartung" && e.id!==ohne && e.status!=="abgelehnt" && e.datum &&
+      (e.position_ids||[]).indexOf(pid)>=0 && !planPosErledigt(e, pid) && (e.datum_bis||e.datum)>=grenze;
+  }).sort(function(a,b){ return a.datum.localeCompare(b.datum); })[0]||null;
+}
+function planEingeplantText(e){ return "eingeplant "+dfmt(e.datum)+(planWerText(e)?" · "+planWerText(e):""); }
+/* die Wartungstermine eines Markts: dringende zuerst */
+function wartungsTermineAm(sid){
+  var rang={ueberfaellig:0, faellig:1, unbekannt:2, geplant:3, erledigt:3};
+  return POS.filter(function(p){ return p.standortId===sid && p.aktiv!==false && p.status!=="pausiert"; })
+    .sort(function(a,b){ return (rang[a.status]!=null?rang[a.status]:4)-(rang[b.status]!=null?rang[b.status]:4) || String(a.naechste||"9").localeCompare(String(b.naechste||"9")); });
+}
 function wartungenImMonat(monat){
   var heute=isoLokal(new Date()), jetzt=heute.slice(0,7), je={};
   POS.forEach(function(p){
@@ -22842,9 +22870,11 @@ function wartungenImMonat(monat){
   });
   return Object.keys(je).map(function(k){
     var e=je[k];
-    /* schon eingeplant? ein offener Wartungstermin an diesem Markt ab heute (bzw. im Monat) */
-    e.plan=PLANUNG.filter(function(x){ return x.art==="termin" && x.kategorie==="wartung" && x.standort_id===k && x.datum && x.datum>=(monat+"-01"<heute?monat+"-01":heute) && x.status!=="erledigt"; })
-      .sort(function(a,b){ return a.datum.localeCompare(b.datum); })[0]||null;
+    /* je Termin: schon eingeplant? Der Markt gilt als eingeplant, wenn alle fälligen Termine es sind */
+    e.plaene=[]; e.offen=[];
+    e.pos.forEach(function(p){ var pl=planFuerPosition(p.id); if(pl){ if(e.plaene.indexOf(pl)<0) e.plaene.push(pl); } else e.offen.push(p); });
+    e.plaene.sort(function(a,b){ return a.datum.localeCompare(b.datum); });
+    e.plan=e.offen.length ? null : e.plaene[0]||null;
     return e;
   }).sort(function(a,b){ return (a.plan?1:0)-(b.plan?1:0) || (b.ueber?1:0)-(a.ueber?1:0) || stName(a.s).localeCompare(stName(b.s),"de"); });
 }
@@ -23027,8 +23057,10 @@ function wartungenEinplanenKarte(monat){
   var h=c.querySelector("[data-l]");
   l.slice(0,60).forEach(function(e){
     var z=el('<div class="rowflex" style="justify-content:space-between;gap:8px;border-top:1px solid var(--line);padding-top:6px">'+
-      '<span style="font-size:13px;min-width:0">'+marktLink(e.s)+' <span class="muted">· '+e.pos.length+" Termin"+(e.pos.length===1?"":"e")+(e.ueber?' · <span style="color:var(--crit)">überfällig</span>':"")+"</span>"+
-        (e.plan?'<br><span style="font-size:12px;color:var(--good)">✓ eingeplant '+esc(dfmt(e.plan.datum))+(e.plan.wer_namen&&e.plan.wer_namen.length?" · "+esc(e.plan.wer_namen.join(", ")):"")+"</span>":"")+"</span>"+
+      '<span style="font-size:13px;min-width:0">'+marktLink(e.s)+' <span class="muted">· '+e.pos.map(terminKurz).slice(0,4).map(esc).join(", ")+(e.pos.length>4?" …":"")+
+        (e.ueber?' · <span style="color:var(--crit)">überfällig</span>':"")+"</span>"+
+        e.plaene.map(function(pl){ return '<br><span style="font-size:12px;color:var(--good)">✓ '+esc(planEingeplantText(pl))+"</span>"; }).join("")+
+        (e.plaene.length && e.offen.length?'<br><span style="font-size:12px;color:var(--warn)">noch nicht eingeplant: '+esc(e.offen.map(terminKurz).join(", "))+"</span>":"")+"</span>"+
       '<button class="btn '+(e.plan?"ghost ":"")+'sm" type="button">'+(e.plan?"ansehen":"einplanen")+"</button></div>");
     z.querySelector("button").onclick=function(){ if(e.plan) planEditor(e.plan); else wartungEinplanen(e.s.id, monat); };
     h.appendChild(z);
@@ -23036,14 +23068,17 @@ function wartungenEinplanenKarte(monat){
   if(l.length>60) h.appendChild(el('<div class="muted" style="font-size:12px">… und '+(l.length-60)+" weitere (Fällig zeigt alle).</div>"));
   return c;
 }
-/* Wartung an einem Markt einplanen: Titel mit den fälligen Anlagen */
+/* Wartung an einem Markt einplanen: die fälligen / anstehenden Wartungstermine der
+   Anlagen sind angekreuzt (was schon eingeplant ist, nicht) – Büro 01.10.2026 */
 function wartungEinplanen(sid, monat){
   var s=byId[sid]; if(!s) return;
-  var heute=isoLokal(new Date());
-  var pos=POS.filter(function(p){ return p.standortId===sid && (p.status==="ueberfaellig"||p.status==="faellig"||(monat && p.naechste && p.naechste.slice(0,7)===monat)); });
+  var heute=isoLokal(new Date()), bald=plusTage(heute, 45);
+  var wahl=wartungsTermineAm(sid).filter(function(p){
+    if(planFuerPosition(p.id)) return false;
+    return p.status==="ueberfaellig" || p.status==="faellig" || (monat && p.naechste && p.naechste.slice(0,7)===monat) || (!monat && p.naechste && p.naechste<=bald);
+  }).map(function(p){ return p.id; });
   var datum = monat && monat+"-01">heute ? monat+"-01" : heute;
-  planEditor(null, {art:"termin", kategorie:"wartung", standort_id:sid, datum:datum, beginn:"07:00", ende:"15:00", wer:[meineKennung()],
-    titel:"Wartung "+stName(s), details:pos.length ? "Fällig: "+pos.map(function(p){ return (p.anlagentyp||"Anlage")+(p.intervallCode?" ("+intervallArt(p.intervallCode).kurz+")":""); }).slice(0,30).join(", ") : ""});
+  planEditor(null, {art:"termin", kategorie:"wartung", standort_id:sid, position_ids:wahl, datum:datum, beginn:"07:00", ende:"15:00", wer:[meineKennung()], titel:""});
 }
 
 /* ---------- Termin / Aufgabe anlegen und ändern ---------- */
@@ -23097,6 +23132,8 @@ function planEditor(e, vorgabe){
           var s=byId[o.standortId]; return '<option value="'+esc(o._id)+'"'+(a.stoerung_id===o._id?" selected":"")+">"+esc((s?stName(s):o.filialCode||"")+(o.auftragsnummer?" · "+o.auftragsnummer:"")+(o.problemtyp?" · "+o.problemtyp:""))+"</option>"; }).join("")+"</select></label>"+
       "</div>"+
     "</div>"+
+    /* Wartung: welche Wartungstermine der Anlagen eingeplant werden (Büro 01.10.2026) */
+    '<div class="fl" data-wtermine hidden><span>Welche Wartungstermine?</span><div class="stack" data-wliste style="gap:4px"></div></div>'+
     '<label class="fl"><span data-detaillabel>Details</span><textarea data-f="details" rows="4" maxlength="4000">'+esc(a.details||"")+"</textarea></label>"+
     '<div data-urlaub></div>'+
     '<div class="note warnbox" data-err hidden></div>'+
@@ -23123,8 +23160,47 @@ function planEditor(e, vorgabe){
   if(!planTeam) planTeamLaden().then(werZeichnen);
   var art=a.art;
   form.querySelectorAll("[data-a]").forEach(function(b){ b.onclick=function(){ art=b.dataset.a; form.querySelectorAll("[data-a]").forEach(function(x){ x.setAttribute("aria-pressed", String(x===b)); }); zeigen(); }; });
+  /* Wartungstermine: Auswahl merken; der Titel folgt ihr, solange er nicht von Hand geändert wurde */
+  var posWahl=(a.position_ids||[]).slice(), wSid=null, autoTitel=null;
+  var wTitel=function(){
+    var s=byId[F("standort_id").value]; if(!s) return "";
+    var l=posWahl.map(function(pid){ return posById[pid]; }).filter(Boolean).map(terminKurz);
+    return "Wartung "+stName(s)+(l.length?": "+l.slice(0,4).join(", ")+(l.length>4?" …":""):"");
+  };
+  var titelNachziehen=function(){
+    var t=F("titel"), w=wTitel();
+    if(w && (!t.value.trim() || t.value===autoTitel)){ t.value=w; autoTitel=w; }
+  };
+  var wTermineZeichnen=function(){
+    var box=form.querySelector("[data-wtermine]"), sid=F("standort_id").value;
+    var an=art==="termin" && F("kategorie").value==="wartung" && !!sid && !F("privat").checked;
+    box.hidden=!an; if(!an) return;
+    if(sid===wSid) return;
+    if(wSid!==null) posWahl=[];   /* anderer Markt: neu wählen */
+    wSid=sid;
+    var h=box.querySelector("[data-wliste]"); h.innerHTML="";
+    var l=wartungsTermineAm(sid);
+    if(!l.length){ h.appendChild(el('<div class="muted" style="font-size:12.5px">An diesem Markt sind keine Wartungstermine hinterlegt.</div>')); return; }
+    l.forEach(function(p){
+      var anderswo=planFuerPosition(p.id, e && e.id);
+      var z=el('<label style="display:flex;gap:8px;align-items:flex-start;border:1px solid var(--line);border-radius:8px;padding:6px 8px;font-size:13px">'+
+        '<input type="checkbox" style="margin-top:3px"'+(posWahl.indexOf(p.id)>=0?" checked":"")+">"+
+        '<span style="flex:1;min-width:0"><strong>'+esc(terminKurz(p))+"</strong> "+pill(p.status)+
+          '<br><span class="muted" style="font-size:12px">'+(p.naechste?"Termin "+esc(dfmt(p.naechste)):"ohne Termin")+(p.letzte?" · zuletzt "+esc(dfmt(p.letzte)):"")+"</span>"+
+          (anderswo?'<br><span style="font-size:12px;color:var(--warn)">📅 schon '+esc(planEingeplantText(anderswo))+"</span>":"")+"</span></label>");
+      z.querySelector("input").onchange=function(ev){
+        ev.stopPropagation();
+        var i=posWahl.indexOf(p.id);
+        if(this.checked && i<0) posWahl.push(p.id); else if(!this.checked && i>=0) posWahl.splice(i,1);
+        titelNachziehen();
+      };
+      h.appendChild(z);
+    });
+    titelNachziehen();
+  };
   var zeigen=function(){
     var termin=art==="termin", priv=termin && (F("privat").checked || F("kategorie").value==="privat");
+    wTermineZeichnen();
     if(F("kategorie").value==="privat") F("privat").checked=true;
     form.querySelector("[data-privatzeile]").hidden=!termin;
     form.querySelector("[data-biszeile]").hidden=!termin;
@@ -23191,6 +23267,12 @@ function planEditor(e, vorgabe){
     };
     v.fuss.appendChild(lo);
   }
+  /* eingeplante Wartung: gleich das Protokoll dazu beginnen */
+  if(!neu && a.kategorie==="wartung" && a.standort_id && byId[a.standort_id] && betriebSchreiben() && !planWartungErledigt(a)){
+    var pb=el('<button class="btn ghost" type="button">Protokoll beginnen</button>');
+    pb.onclick=function(){ v.zu(); protokollBeginnen(a.standort_id, (a.position_ids||[]).filter(function(pid){ return posById[pid] && !planPosErledigt(a, pid); })[0]||"", "wartung"); };
+    v.fuss.appendChild(pb);
+  }
   if(!neu && a.art==="termin"){
     var ics=el('<button class="btn ghost" type="button" title="In den Kalender am Handy übernehmen">📅 Handy</button>');
     ics.onclick=function(){ planIcs(a); };
@@ -23220,12 +23302,16 @@ function planEditor(e, vorgabe){
     if(!ganz && termin && !beginn){ fehler("Bitte die Uhrzeit eintragen – oder „ganztägig“ ankreuzen."); return; }
     if(beginn && ende && zeitMin(ende)<=zeitMin(beginn) && (!bis || bis===datum)){ fehler("„bis“ liegt vor „von“."); return; }
     if(!wer.length && !window.confirm("Niemand ist eingetragen – trotzdem speichern? (Dann gilt es als deins.)")) return;
+    var wartung=termin && kat==="wartung" && !priv && !!F("standort_id").value;
+    var posIds=wartung ? posWahl.filter(function(pid){ return posById[pid] && posById[pid].standortId===F("standort_id").value; }) : [];
+    if(wartung && !posIds.length && wartungsTermineAm(F("standort_id").value).length &&
+       !window.confirm("Kein Wartungstermin angekreuzt – dann ist im Kalender nichts eingeplant, was in „Fällig“ zählt. Trotzdem speichern?")) return;
     var zeile={art:art, kategorie:priv?"privat":kat, titel:priv?"Abwesend":titel, details:priv?null:(F("details").value.trim()||null),
       datum:datum||null, datum_bis:termin && bis && bis!==datum ? bis : null, beginn:beginn||null, ende:(beginn && ende)||null,
       wer:wer.slice(), wer_namen:wer.map(function(id){ return werNamen[id]||planPersonName(id)||""; }), privat:priv,
       standort_id:priv?null:(F("standort_id").value||null), projekt_id:priv?null:(F("projekt_id").value||null),
       projekt_schritt:priv||!F("projekt_id").value?null:(F("projekt_schritt").value||null), stoerung_id:priv?null:(F("stoerung_id").value||null),
-      geaendert_von:meinName()};
+      position_ids:posIds, geaendert_von:meinName()};
     if(kat==="urlaub" && termin){ if(neu) zeile.status=istInhaber()?"genehmigt":"beantragt"; }
     else if(neu || a.kategorie==="urlaub") zeile.status = a.status==="erledigt" ? "erledigt" : "offen";
     if(neu) zeile.erstellt_name=meinName();

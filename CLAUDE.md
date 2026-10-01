@@ -228,7 +228,10 @@ Kammerlander Umwelt- und Klimatechnik (UKT) – oft kurz, vom Handy, im Feld.
   Trigger `planung_pruefen` erzwingt es). Urlaub genehmigt nur der Inhaber
   (Trigger). Der Kalender zeigt dazu Störungen (Einsatztag bleibt in der
   Störung), Projekttermine, erledigte Protokolle und fällige Wartungen zum
-  Einplanen (`wartungenImMonat`). Stunden: geplante Termine am Tag, „erfassen“
+  Einplanen (`wartungenImMonat`; eingeplant werden die Wartungstermine der
+  Anlagen: `planung.position_ids`, `wartungEinplanen`, `planFuerPosition`, in
+  Fällig „📅 eingeplant“; erledigt, sobald seit dem Tag − `BESUCH_TAGE` gewartet).
+  Stunden: geplante Termine am Tag, „erfassen“
   → `arbeitszeiten.planung_id`. Neu Eingetragene bekommen eine Chat-Nachricht
   (nicht bei Privatem). Diese Grenzen nie lockern.
 - **Störungen nie doppelt** (Büro 01.10.2026): eine Lidl-Auftragsnummer gibt es

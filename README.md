@@ -978,9 +978,14 @@ drinnen planen können“):
 - **Was schon anderswo geplant ist,** steht mit im Kalender: Störungen mit
   Einsatztag (geplant wird weiterhin in der Störung), Projekttermine und
   erledigte Einsätze (grau).
-- **Wartungen planen:** Unter dem Kalender stehen die Märkte mit fälligen
-  Wartungen im Monat, jeweils mit „einplanen“. Dasselbe geht beim Markt mit
-  „Wartung einplanen“.
+- **Wartungen planen:** Eingeplant werden die Wartungstermine der Anlagen
+  (JW, HJI, HJW), kein loser Termin. „Wartung einplanen“ beim Markt und
+  „einplanen“ in der Monatsliste unter dem Kalender zeigen die Termine des
+  Markts zum Ankreuzen. Überfällige, fällige und bald anstehende sind
+  vorgewählt, schon eingeplante nicht. In *Fällig* steht dann „📅 eingeplant
+  am … · wer“. Ist seit dem geplanten Tag gewartet worden, gilt die Planung als
+  erledigt. Aus dem Termin heraus beginnt „Protokoll beginnen“ gleich das
+  Wartungsprotokoll.
 - **Stunden:** Geplante Termine stehen im Reiter Stunden am jeweiligen Tag.
   „erfassen“ macht daraus die Arbeitszeit und verknüpft sie mit dem Termin.
   Mit 📅 plant man die eigene Arbeitszeit im Voraus.

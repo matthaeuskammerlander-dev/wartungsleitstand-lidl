@@ -127,6 +127,9 @@ end $$;
 revoke all on public.planung, public.planung_privat from anon;
 grant select, insert, update, delete on public.planung, public.planung_privat to authenticated;
 
+-- Wartung einplanen: welche Wartungstermine (Positionen der Anlagen) eingeplant sind (Büro 01.10.2026)
+alter table public.planung add column if not exists position_ids text[] not null default '{}';
+
 -- Stunden ↔ Termin
 alter table public.arbeitszeiten add column if not exists planung_id uuid;
 create index if not exists arbeitszeiten_planung_idx on public.arbeitszeiten (planung_id);
