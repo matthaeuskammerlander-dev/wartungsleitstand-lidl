@@ -67,6 +67,11 @@ Kammerlander Umwelt- und Klimatechnik (UKT) – oft kurz, vom Handy, im Feld.
   Teilen zu 8 (`kiTeilLesen`, `kiTeileZusammen`; der Server nimmt 12 je Aufruf).
   Wartungspunkt „Kondensatwanne“ (früher „Kondensatwanne/-ablauf“, alte
   Protokolle über `arbeitenAktuell`).
+- Techniker/in = angemeldetes Konto (Büro 01.10.2026: „er ist verantwortlich für
+  die Arbeit und das Protokoll“): `kontoTechName()` setzt Techniker/in fest
+  (nicht änderbar), der Name im Abschluss ist immer derselbe (`verantwortlich`
+  beim Speichern, Trigger tools/protokoll-techniker.sql). Korrektur: es bleibt,
+  wer es gemacht hat. Wer noch dabei war: Weitere/r Techniker/in. Nie lockern.
 - Je Anlage ein Schritt (`anlageSchritte`, Büro 01.10.2026): der Termin gehört
   zur Anlage – Anlagendaten (Ergänzen auch per KI), Termine und „Heute
   gewartet als“ in einem Schritt. Neu erfasste Anlage mit zwei Terminen: die
