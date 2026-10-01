@@ -209,6 +209,18 @@ Kammerlander Umwelt- und Klimatechnik (UKT) – oft kurz, vom Handy, im Feld.
   (Überstunden als MONATSBILANZ Ist Mo–Fr gegen Soll – nicht je Tag; Samstag,
   Sonntag, Feiertag getrennt; Montage = Montage/Wartung/Störung,
   Fahrt = Wegzeit, Entfernungszulage ca.) – Regeln nur auf Anweisung ändern.
+- **Kalender und Aufgaben** (Büro 01.10.2026, tools/planung.sql, Reiter
+  „Kalender“): Tabelle `planung` mit Terminen (`PLAN_KAT`: Wartung, Störung,
+  Baustelle, Büro, Werkstatt, Besprechung, Urlaub, Krank, Schule, privat,
+  Sonstiges; Personen `wer`, mehrtägig `datum_bis`) und Aufgaben (Zuständige,
+  fällig, Bezug Projekt+Schritt/Markt/Störung, erledigt). PRIVAT: andere sehen
+  nur „Abwesend“, Titel/Details in `planung_privat` (nur die Person selbst –
+  Trigger `planung_pruefen` erzwingt es). Urlaub genehmigt nur der Inhaber
+  (Trigger). Der Kalender zeigt dazu Störungen (Einsatztag bleibt in der
+  Störung), Projekttermine, erledigte Protokolle und fällige Wartungen zum
+  Einplanen (`wartungenImMonat`). Stunden: geplante Termine am Tag, „erfassen“
+  → `arbeitszeiten.planung_id`. Neu Eingetragene bekommen eine Chat-Nachricht
+  (nicht bei Privatem). Diese Grenzen nie lockern.
 - **Störungen nie doppelt** (Büro 01.10.2026): eine Lidl-Auftragsnummer gibt es
   nur einmal als Störung (Datenbank-Index `stoerung_auftrag_einmal`,
   tools/stoerung-eindeutig.sql; im Dialog „Vorhandene öffnen“ statt neu).

@@ -1937,7 +1937,7 @@ function filteredPos(){ var ids={}; filtered().forEach(function(s){ids[s.id]=1;}
 
 /* ---------- Tabs ---------- */
 /* Stunden, Projekte, Kunden: seit 01.10.2026 (weitere Kunden, Projekte bis zur Rechnung, Arbeitszeit) */
-var VIEWS=[["faellig","Fällig"],["karte","Karte"],["anlagen","Anlagen"],["protokoll","Protokoll"],["stunden","Stunden"],["projekte","Projekte"],["belege","Rechnungen"],["kunden","Kunden"],
+var VIEWS=[["faellig","Fällig"],["karte","Karte"],["anlagen","Anlagen"],["protokoll","Protokoll"],["kalender","Kalender"],["stunden","Stunden"],["projekte","Projekte"],["belege","Rechnungen"],["kunden","Kunden"],
            ["verlauf","Verlauf"],["verwaltung","Verwaltung"],["daten","Datenbasis"]];
 var tabsEl=document.getElementById("tabs");
 VIEWS.forEach(function(v){
@@ -2965,6 +2965,12 @@ function marktAnsicht(sid){
   var h=el('<div class="card" style="box-shadow:none;margin-top:12px" data-historie><div class="pad stack">'+
     '<h2>Wartungs- und Störungshistorie</h2></div></div>');
   h.querySelector(".stack").appendChild(historieAnsicht(s));
+  /* Kalender: Wartung einplanen, Aufgaben und Termine an diesem Markt */
+  if(planungAn()){
+    planungNachladen(function(){});
+    a.inhalt.appendChild(planBezugKarte("Geplant an diesem Markt", function(e){ return e.standort_id===sid; }, {standort_id:sid},
+      [["Wartung einplanen", function(){ wartungEinplanen(sid); }],["+ Aufgabe",{art:"aufgabe"}],["+ Termin",{art:"termin"}]]));
+  }
   /* Team-Chat: Nachrichten zu diesem Markt (auch zu seinen Anlagen, Störungen, Protokollen) – vor der Historie, damit man sie findet */
   if(chatAn()) a.inhalt.appendChild(chatBezugKarte("markt", s.id, chatBezugText("markt", s)));
   a.inhalt.appendChild(h);
@@ -3124,6 +3130,8 @@ function viewFaellig(){
   '</div>');
   kpis.querySelectorAll("[data-sprung]").forEach(function(b){ b.onclick=function(){ faelligSprung(b.dataset.sprung); }; });
   f.appendChild(kpis);
+  /* Kalender: was heute für mich ansteht */
+  if(!nurLesen()){ var hfm=heuteFuerMichKarte(); if(hfm) f.appendChild(hfm); }
   /* Protokolle nicht geladen: die Wartungen darin fehlen – Termine erschienen
      sonst ohne Hinweis überfällig */
   if(Store.modus==="supabase" && Store.benutzer && !protokolleGeladen && protokolleFehler)
@@ -6358,7 +6366,7 @@ function wechselnOk(ziel, neu){
 function reiterErlaubt(v){
   if(nurLesen()) return ["faellig","karte","anlagen","verlauf"].indexOf(v)>=0;
   /* Stunden und Projekte brauchen die gemeinsame Datenbank (oder die Präsentation) */
-  if((v==="stunden"||v==="projekte") && !(Store.modus==="supabase"||demo())) return false;
+  if((v==="stunden"||v==="projekte"||v==="kalender") && !(Store.modus==="supabase"||demo())) return false;
   if(v==="kunden" && Store.modus==="anmeldung") return false;
   /* Rechnungen und Angebote: nur Inhaber – keine Admins (Büro 01.10.2026) */
   if(v==="belege") return nurInhaber() && Store.modus==="supabase";
@@ -21027,6 +21035,13 @@ function projektAnsicht(id){
     stufen.querySelectorAll("[data-st]").forEach(function(b){ b.onclick=function(){ if(schreiben) umstellen(b.dataset.st); }; });
     var w=stufen.querySelector("[data-weiter]"); if(w) w.onclick=function(){ umstellen(PROJEKT_SCHRITTE[idx+1][0]); };
     v.inhalt.appendChild(stufen);
+    /* Planung: Aufgaben und Termine des Projekts (Kalender) */
+    if(planungAn()){
+      planungNachladen(function(){});
+      v.inhalt.appendChild(planBezugKarte("Aufgaben und Termine", function(e){ return e.projekt_id===p.id; },
+        {projekt_id:p.id, standort_id:p.standort_id||null, kategorie:"projekt"},
+        schreiben ? [["+ Aufgabe",{art:"aufgabe", projekt_schritt:p.status}],["Einplanen",{art:"termin", titel:projektTitel(p), beginn:"07:00", ende:"15:00"}]] : []));
+    }
 
     /* Angaben je Schritt – bis zum aktuellen offen, die späteren eingeklappt */
     var ang=el('<div class="card" style="box-shadow:none;margin-top:12px"><div class="pad stack" style="gap:10px"><h2>Angaben</h2>'+
@@ -21048,10 +21063,13 @@ function projektAnsicht(id){
           }).join("")+"</div>"+
           /* woher die Angaben dieses Schritts stammen (Begehungsprotokoll, Mail, Angebot …) */
           '<div class="rowflex" style="gap:8px;align-items:flex-start;margin-top:6px" data-stelle="schritt:'+x[0]+'"><div style="flex:1" data-schrittq="'+x[0]+'"></div>'+
-            (schreiben?'<button class="btn ghost sm" type="button" data-schrittqk="'+x[0]+'">📎 Quellen</button>':"")+"</div></details>";
+            (schreiben?'<button class="btn ghost sm" type="button" data-schrittqk="'+x[0]+'">📎 Quellen</button>':"")+"</div>"+
+          /* Aufgaben bei diesem Schritt (Büro 01.10.2026: „an verschiedenen Punkten“) */
+          '<div data-schrittaufg="'+x[0]+'"></div></details>';
       }).join("")+
       (schreiben?'<div class="rowflex" style="justify-content:flex-end"><button class="btn sm" type="button" data-speichern>Angaben speichern</button></div>':"")+
     "</div></div>");
+    ang.querySelectorAll("[data-schrittaufg]").forEach(function(h){ h.appendChild(projektSchrittAufgaben(p, h.dataset.schrittaufg, schreiben)); });
     ang.querySelectorAll("[data-schrittq]").forEach(function(h){
       var q=((d.quellen||{})[h.dataset.schrittq])||[];
       h.innerHTML=quellenHtml(p, q, buero)||'<span class="muted" style="font-size:12px">Quelle: –</span>'; quellenVerdrahten(h);
@@ -22523,6 +22541,768 @@ function baubuchEditor(p, alt, neuZeichnen){
 }
 
 /* ================================================================
+   Kalender und Aufgaben (Büro 01.10.2026: „Ich will alles hier drinnen
+   planen können“). Tabelle planung (tools/planung.sql):
+   * Termine – Wartung, Störung, Baustelle, Büro, Werkstatt, Besprechung,
+     Urlaub, Krankenstand, Schule, privat (abwesend), Sonstiges – mit
+     Person(en), Datum (auch mehrtägig), von–bis oder ganztägig
+   * Aufgaben (ToDo) – Zuständige, Details, fällig am, Bezug (Projekt mit
+     Schritt, Markt, Störung), erledigt
+   * PRIVAT: die anderen sehen nur „Abwesend“ und die Zeit; Titel und
+     Details stehen in planung_privat und sind nur für die Person lesbar
+   * Urlaub beantragt jeder, genehmigt nur der Inhaber (prüft die Datenbank)
+   Der Kalender zeigt dazu, was schon anderswo geplant ist: Störungen mit
+   Einsatztag (die bleiben in der Störung), Projekttermine, erledigte
+   Einsätze (grau) und die fälligen Wartungen des Monats zum Einplanen.
+   Stunden: geplante Termine stehen am Tag und werden mit einem Griff zur
+   erfassten Zeit (arbeitszeiten.planung_id).
+   ================================================================ */
+var PLAN_KAT=[
+  ["wartung","Wartung","#0c8a8a","arbeit","wartung"],
+  ["stoerung","Störung","#d64545","arbeit","stoerung"],
+  ["projekt","Baustelle / Projekt","#7a5af8","arbeit","baustelle"],
+  ["buero","Büro","#64748b","arbeit","buero"],
+  ["werkstatt","Werkstatt","#a16207","arbeit","werkstatt"],
+  ["besprechung","Besprechung / Termin","#2563eb","arbeit","buero"],
+  ["urlaub","Urlaub","#16a34a","urlaub",""],
+  ["krank","Krankenstand","#db2777","krank",""],
+  ["schule","Berufsschule / Kurs","#0891b2","schule",""],
+  ["privat","Privat (abwesend)","#94a3b8","",""],
+  ["sonstiges","Sonstiges","#6b7280","arbeit","sonstiges"]
+];
+function planKat(k){ return PLAN_KAT.filter(function(x){ return x[0]===k; })[0] || PLAN_KAT[PLAN_KAT.length-1]; }
+/* ganze Tage nicht als Arbeit: Urlaub, Krankenstand, privat */
+function planAbwesend(e){ return ["urlaub","krank","privat"].indexOf(e.kategorie)>=0; }
+var URLAUB_STATUS={beantragt:"beantragt", genehmigt:"genehmigt", abgelehnt:"abgelehnt"};
+
+var PLANUNG=[], PLAN_PRIVAT={}, planungGeladen=false, planungLaedt=false, planungStand=0, planungKonto="", planungFehler="";
+function planungAn(){ return betriebAn() || (demo() && !nurLesen()); }
+function meineKennung(){ return (Store.benutzer && Store.benutzer.id) || "ich"; }
+function planungLaden(){
+  if(demo()){ planungGeladen=true; return Promise.resolve(); }
+  if(!betriebAn()) return Promise.resolve();
+  var konto=Store.benutzer.email;
+  if(konto!==planungKonto){ planungKonto=konto; PLANUNG=[]; PLAN_PRIVAT={}; planungGeladen=false; }
+  planungLaedt=true;
+  return Promise.all([
+    Store.sb.from("planung").select("*").order("datum").limit(5000),
+    Store.sb.from("planung_privat").select("*").limit(5000)
+  ]).then(function(r){
+    planungLaedt=false;
+    if(Store.benutzer.email!==konto) return;
+    if(r[0].error){ planungFehler=/relation|does not exist/i.test(r[0].error.message)?"Kalender und Aufgaben sind in der Datenbank noch nicht eingerichtet (tools/planung.sql).":r[0].error.message; return; }
+    planungFehler=""; PLANUNG=r[0].data||[]; planungGeladen=true;
+    PLAN_PRIVAT={}; (r[1].data||[]).forEach(function(x){ PLAN_PRIVAT[x.planung_id]=x; });
+    kalenderReiterZeichen();
+  }, function(e){ planungLaedt=false; planungFehler=(e&&e.message)||"keine Verbindung"; });
+}
+/* höchstens jede Minute frisch – danach die Ansicht neu, wenn sie es braucht */
+function planungNachladen(nachher){
+  if(!planungAn() || planungLaedt) return;
+  if(betriebAn() && Store.benutzer.email!==planungKonto){ planungStand=0; }
+  if(Date.now()-planungStand<60000) return;
+  planungStand=Date.now();
+  var zumErsten=!planungGeladen;
+  planungLaden().then(function(){
+    if(nachher) nachher();
+    /* Fällig nur beim ersten Laden neu zeichnen („Heute für dich“) – sonst springt die Liste beim Lesen */
+    else if((["kalender","stunden"].indexOf(S.view)>=0 || (S.view==="faellig" && zumErsten && planungGeladen)) && darfRendern() && !document.querySelector(".assistent")) render();
+    document.querySelectorAll("[data-planbezug]").forEach(function(h){ if(h._neu) h._neu(); });
+  });
+}
+/* betrifft mich: eingetragen – oder niemand eingetragen und von mir angelegt */
+function planIstMeins(e){
+  var ich=meineKennung();
+  return (e.wer||[]).indexOf(ich)>=0 || (!(e.wer||[]).length && e.erstellt_von===ich);
+}
+/* privat: Titel und Details sieht nur die Person selbst */
+function planTitel(e){
+  if(e.privat || e.kategorie==="privat"){
+    var p=PLAN_PRIVAT[e.id];
+    return planIstMeins(e) || e.erstellt_von===meineKennung() ? "🔒 "+((p && p.titel) || "Privat") : "Abwesend";
+  }
+  return e.titel||"";
+}
+function planDetails(e){
+  if(e.privat || e.kategorie==="privat"){ var p=PLAN_PRIVAT[e.id]; return (planIstMeins(e) && p && p.details) || ""; }
+  return e.details||"";
+}
+function planZeit(e){ return e.beginn ? e.beginn+(e.ende?"–"+e.ende:"") : "ganztägig"; }
+/* die Tage eines Termins (mehrtägig: alle, höchstens 3 Monate) */
+function planTage(e){
+  if(!e.datum) return [];
+  var l=[e.datum], bis=e.datum_bis && e.datum_bis>e.datum ? e.datum_bis : e.datum, t=e.datum;
+  while(t<bis && l.length<93){ t=plusTage(t,1); l.push(t); }
+  return l;
+}
+function planBezugText(e){
+  var t=[];
+  var s=e.standort_id && byId[e.standort_id]; if(s) t.push(stName(s));
+  var p=e.projekt_id && PROJEKTE.filter(function(x){ return x.id===e.projekt_id; })[0];
+  if(p) t.push(projektTitel(p)+(e.projekt_schritt?" · "+projektSchritt(e.projekt_schritt)[1]:""));
+  var o=e.stoerung_id && OFFENE.filter(function(x){ return x._id===e.stoerung_id; })[0];
+  if(o) t.push("Störung"+(o.auftragsnummer?" "+o.auftragsnummer:""));
+  return t.join(" · ");
+}
+function planWerText(e){ return (e.wer_namen||[]).filter(Boolean).join(", "); }
+
+/* ---------- wer: Person(en) im Kalender ----------
+   S.kalWer: "ich", "alle" oder die Kennung einer Person aus dem Team */
+var planTeam=null;
+function planTeamLaden(){
+  if(planTeam) return Promise.resolve(planTeam);
+  if(!betriebAn()) return Promise.resolve([]);
+  return chatTeamLaden().then(function(t){ planTeam=t||[]; return planTeam; });
+}
+function planPersonName(id){
+  if(id===meineKennung()) return meinName();
+  var p=(planTeam||[]).filter(function(x){ return x.user_id===id; })[0];
+  return p ? p.name : "";
+}
+function kalWerStandard(){ return (Rolle.name==="inhaber"||Rolle.name==="admin"||istInhaber()) ? "alle" : "ich"; }
+/* passt ein Eintrag zur Personenwahl? namen: freie Namen (Störung, Projekttermin, Protokoll) */
+function kalWerPasst(wahl, ids, namen){
+  if(wahl==="alle") return true;
+  var id = wahl==="ich" ? meineKennung() : wahl;
+  if((ids||[]).indexOf(id)>=0) return true;
+  var n=suchNorm(wahl==="ich" ? meinName() : planPersonName(wahl));
+  return !!n && (namen||[]).some(function(x){ var y=suchNorm(x); return y && (y===n || y.indexOf(n)>=0 || n.indexOf(y)>=0); });
+}
+
+/* ---------- alle Einträge eines Zeitraums, je Tag ----------
+   {tag, zeit, titel, unter, farbe, grau, art, e|o|p, oeffnen} */
+function kalenderEintraege(von, bis, wahl){
+  var m={}, dazu=function(tag, x){ if(!tag || tag<von || tag>bis) return; x.tag=tag; (m[tag]=m[tag]||[]).push(x); };
+  PLANUNG.forEach(function(e){
+    if(!kalWerPasst(wahl, (e.wer||[]).length ? e.wer : [e.erstellt_von], e.wer_namen)) return;
+    var k=planKat(e.kategorie);
+    if(e.art==="aufgabe"){
+      if(!e.datum) return;
+      dazu(e.datum, {art:"aufgabe", e:e, zeit:e.beginn||"", farbe:k[2], grau:e.status==="erledigt",
+        titel:(e.status==="erledigt"?"☑ ":"☐ ")+planTitel(e), unter:[planWerText(e), planBezugText(e)].filter(Boolean).join(" · ")});
+      return;
+    }
+    planTage(e).forEach(function(tag){
+      dazu(tag, {art:"termin", e:e, zeit:e.beginn||"", farbe:k[2], grau:e.status==="abgelehnt",
+        titel:planTitel(e)+(e.kategorie==="urlaub" && e.status!=="genehmigt" ? " ("+(URLAUB_STATUS[e.status]||e.status)+")" : ""),
+        unter:[planZeit(e), planWerText(e), planBezugText(e)].filter(Boolean).join(" · ")});
+    });
+  });
+  /* Störungen: geplanter Einsatz steht in der Störung selbst */
+  offeneStoerungen(true).forEach(function(o){
+    var s=o.standortId && byId[o.standortId];
+    if(o.termin && kalWerPasst(wahl, [], [o.terminTechniker])) dazu(o.termin, {art:"stoerung", o:o, zeit:o.terminZeit||"", farbe:planKat("stoerung")[2],
+      titel:"Störung "+(s?stName(s):(o.filialCode||"")), unter:[o.terminZeit||"ganztägig", o.terminTechniker?kanonName(o.terminTechniker):"", o.problemtyp||""].filter(Boolean).join(" · ")});
+    else if(!o.termin && o.zieltermin && wahl==="alle") dazu(o.zieltermin, {art:"ziel", o:o, zeit:"", farbe:planKat("stoerung")[2], rand:true,
+      titel:"Zieltermin Störung "+(s?stName(s):(o.filialCode||"")), unter:"noch kein Einsatz geplant"});
+  });
+  /* Projekttermine (Liste im Projekt) */
+  PROJEKTE.forEach(function(p){
+    ((p.daten||{}).termine||[]).forEach(function(t){
+      if(!t.datum || !kalWerPasst(wahl, [], [t.wer])) return;
+      dazu(t.datum, {art:"projekttermin", p:p, zeit:t.zeit||"", farbe:planKat("projekt")[2], grau:!!t.erledigt,
+        titel:(t.was||"Termin")+" – "+projektTitel(p), unter:[t.zeit||"", t.wer||""].filter(Boolean).join(" · ")});
+    });
+  });
+  /* erledigte Einsätze (grau) */
+  alleProtokolle().forEach(function(p){
+    if(p.geloescht || !p.datum || p.datum<von || p.datum>bis) return;
+    if(!kalWerPasst(wahl, p.erstelltVon?[p.erstelltVon]:[], [p.techniker].concat(p.mitarbeiter||[]))) return;
+    var s=byId[p.standortId];
+    dazu(p.datum, {art:"protokoll", pr:p, zeit:p.uhrzeit||"", farbe:"var(--ink-3)", grau:true,
+      titel:(istStoerung(p)?"Störung ":"Wartung ")+(s?stName(s):protoName(p)||""), unter:"erledigt"+(p.techniker?" · "+p.techniker:"")});
+  });
+  Object.keys(m).forEach(function(t){ m[t].sort(function(a,b){ return String(a.zeit||"").localeCompare(String(b.zeit||"")) || (a.grau?1:0)-(b.grau?1:0); }); });
+  return m;
+}
+/* einen Kalendereintrag öffnen – je nach Herkunft */
+function kalEintragOeffnen(x){
+  if(x.e) planEditor(x.e);
+  else if(x.o) stoerungDialog(x.o);
+  else if(x.p) projektAnsicht(x.p.id);
+  else if(x.pr){ var a=ansichtOeffnen(istStoerung(x.pr)?"Störungsprotokoll":"Wartungsprotokoll"); a.inhalt.appendChild(protokollDetail(x.pr)); }
+}
+function kalEintragZeile(x, ohneTag){
+  var r=el('<button type="button" class="row" style="display:flex;gap:10px;align-items:stretch;text-align:left;width:100%;padding:8px 10px'+(x.grau?";opacity:.6":"")+'">'+
+    '<span style="width:5px;border-radius:3px;flex:none;'+(x.rand?"border:2px solid "+x.farbe:"background:"+x.farbe)+'"></span>'+
+    '<span style="flex:1;min-width:0"><strong style="font-size:13.5px'+(x.grau && x.art==="aufgabe"?";text-decoration:line-through":"")+'">'+esc(x.titel)+"</strong>"+
+      (x.unter?'<br><span class="muted" style="font-size:12px">'+esc(x.unter)+"</span>":"")+"</span>"+
+    (ohneTag?"":'<span class="mono muted" style="font-size:12px;white-space:nowrap">'+esc(dfmt(x.tag).slice(0,6))+"</span>")+
+  "</button>");
+  r.onclick=function(){ kalEintragOeffnen(x); };
+  return r;
+}
+
+/* fällige Wartungen eines Monats je Markt – zum Einplanen */
+function wartungenImMonat(monat){
+  var heute=isoLokal(new Date()), jetzt=heute.slice(0,7), je={};
+  POS.forEach(function(p){
+    if(!p.standortId || !byId[p.standortId] || p.status==="pausiert") return;
+    var dran = p.naechste && p.naechste.slice(0,7)===monat;
+    if(monat===jetzt && (p.status==="ueberfaellig"||p.status==="faellig")) dran=true;
+    if(!dran) return;
+    var e=je[p.standortId]=je[p.standortId]||{s:byId[p.standortId], pos:[], ueber:false};
+    e.pos.push(p); if(p.status==="ueberfaellig") e.ueber=true;
+  });
+  return Object.keys(je).map(function(k){
+    var e=je[k];
+    /* schon eingeplant? ein offener Wartungstermin an diesem Markt ab heute (bzw. im Monat) */
+    e.plan=PLANUNG.filter(function(x){ return x.art==="termin" && x.kategorie==="wartung" && x.standort_id===k && x.datum && x.datum>=(monat+"-01"<heute?monat+"-01":heute) && x.status!=="erledigt"; })
+      .sort(function(a,b){ return a.datum.localeCompare(b.datum); })[0]||null;
+    return e;
+  }).sort(function(a,b){ return (a.plan?1:0)-(b.plan?1:0) || (b.ueber?1:0)-(a.ueber?1:0) || stName(a.s).localeCompare(stName(b.s),"de"); });
+}
+
+/* ---------- Reiter „Kalender“ ---------- */
+function kalenderReiterZeichen(){
+  var b=document.querySelector('#tabs [data-v="kalender"]'); if(!b) return;
+  var heute=isoLokal(new Date());
+  var n=PLANUNG.filter(function(e){ return e.art==="aufgabe" && e.status!=="erledigt" && e.datum && e.datum<=heute && planIstMeins(e); }).length;
+  if(istInhaber()) n+=PLANUNG.filter(function(e){ return e.kategorie==="urlaub" && e.status==="beantragt"; }).length;
+  b.textContent="Kalender"+(n?" ("+n+")":"");
+}
+function viewKalender(){
+  var f=document.createDocumentFragment();
+  if(!planungAn()){
+    f.appendChild(el('<div class="card"><div class="pad"><h2>Kalender</h2><div class="note">Kalender und Aufgaben gehen nur mit Anmeldung.</div></div></div>'));
+    return f;
+  }
+  planungNachladen();
+  if(!planTeam) planTeamLaden().then(function(){ if(S.view==="kalender" && darfRendern() && !document.querySelector(".assistent")) render(); });
+  var heute=isoLokal(new Date());
+  S.kalModus=S.kalModus||"woche";
+  S.kalWer=S.kalWer||kalWerStandard();
+  S.kalWoche=S.kalWoche||montagVon(heute);
+  S.kMonat=S.kMonat||heute.slice(0,7);
+  var offenAufg=PLANUNG.filter(function(e){ return e.art==="aufgabe" && e.status!=="erledigt" && kalWerPasst(S.kalWer, (e.wer||[]).length?e.wer:[e.erstellt_von], e.wer_namen); });
+  var c=el('<div class="card" id="kal_karte"><div class="pad stack">'+
+    '<div class="rowflex" style="justify-content:space-between;align-items:flex-start;gap:10px">'+
+      '<div><h2>Kalender</h2><div class="sub">Termine, Urlaub, Aufgaben – und was schon geplant ist: Störungen, Projekttermine, fällige Wartungen. Privates sehen die anderen nur als „Abwesend“.</div></div>'+
+      '<div class="rowflex" style="gap:6px"><button class="btn sm" type="button" data-neu="termin">+ Termin</button><button class="btn ghost sm" type="button" data-neu="aufgabe">+ Aufgabe</button></div>'+
+    "</div>"+
+    (planungFehler?'<div class="note warnbox">'+esc(planungFehler)+"</div>":"")+
+    '<div class="chips" data-modus>'+[["woche","Woche"],["monat","Monat"],["aufgaben","Aufgaben"+(offenAufg.length?" ("+offenAufg.length+")":"")]].map(function(x){
+      return '<button class="chip" type="button" data-m="'+x[0]+'" aria-pressed="'+(S.kalModus===x[0])+'">'+esc(x[1])+"</button>"; }).join("")+"</div>"+
+    '<div class="chips" data-wer></div>'+
+    '<div data-inhalt class="stack"></div>'+
+  "</div></div>");
+  /* Personen: ich, alle, jede Person aus dem Team */
+  var werHost=c.querySelector("[data-wer]");
+  [["ich","Ich"],["alle","Alle"]].concat((planTeam||[]).map(function(p){ return [p.user_id, p.name||"–"]; })).forEach(function(x){
+    var b=el('<button class="chip" type="button" aria-pressed="'+(S.kalWer===x[0])+'">'+esc(x[1])+"</button>");
+    b.onclick=function(){ S.kalWer=x[0]; render(); };
+    werHost.appendChild(b);
+  });
+  c.querySelectorAll("[data-m]").forEach(function(b){ b.onclick=function(){ S.kalModus=b.dataset.m; render(); }; });
+  c.querySelectorAll("[data-neu]").forEach(function(b){ b.onclick=function(){
+    planEditor(null, {art:b.dataset.neu, datum:b.dataset.neu==="termin"?(S.kalModus==="woche" && S.kalWoche>heute ? S.kalWoche : heute):"",
+      wer:S.kalWer==="alle"||S.kalWer==="ich" ? [meineKennung()] : [S.kalWer]}); }; });
+  var inhalt=c.querySelector("[data-inhalt]");
+  if(S.kalModus==="aufgaben") inhalt.appendChild(aufgabenListe(S.kalWer));
+  else if(S.kalModus==="monat") inhalt.appendChild(kalMonat(heute));
+  else inhalt.appendChild(kalWoche(heute));
+  f.appendChild(c);
+  /* fällige Wartungen des gezeigten Monats – zum Einplanen */
+  if(S.kalModus!=="aufgaben") f.appendChild(wartungenEinplanenKarte(S.kalModus==="monat" ? S.kMonat : plusTage(S.kalWoche,3).slice(0,7)));
+  /* Urlaubsanträge für den Inhaber */
+  if(istInhaber()){
+    var antr=PLANUNG.filter(function(e){ return e.kategorie==="urlaub" && e.status==="beantragt"; });
+    if(antr.length){
+      var u=el('<div class="card"><div class="pad stack" style="gap:6px"><h2>Urlaubsanträge</h2><div class="sub">Antippen zum Genehmigen oder Ablehnen.</div></div></div>');
+      antr.forEach(function(e){ u.querySelector(".stack").appendChild(kalEintragZeile({e:e, tag:e.datum, farbe:planKat("urlaub")[2],
+        titel:planWerText(e)+": "+dfmt(e.datum)+(e.datum_bis&&e.datum_bis!==e.datum?" – "+dfmt(e.datum_bis):""), unter:e.titel||"Urlaub"}, true)); });
+      f.insertBefore(u, f.firstChild);
+    }
+  }
+  return f;
+}
+function kalWoche(heute){
+  var mo=S.kalWoche, so=plusTage(mo,6);
+  var box=el('<div class="stack" style="gap:8px">'+
+    '<div class="rowflex" style="justify-content:space-between;gap:8px">'+
+      '<div class="rowflex" style="gap:6px;flex-wrap:nowrap"><button class="btn ghost sm" type="button" data-w="-7" aria-label="Vorwoche">‹</button>'+
+        '<strong style="min-width:150px;text-align:center">'+dfmt(mo).slice(0,6)+" – "+dfmt(so)+"</strong>"+
+        '<button class="btn ghost sm" type="button" data-w="7" aria-label="Folgewoche">›</button></div>'+
+      (mo!==montagVon(heute)?'<button class="btn ghost sm" type="button" data-w="0">Diese Woche</button>':"")+
+    "</div><div class=\"stack\" data-tage style=\"gap:6px\"></div></div>");
+  var m=kalenderEintraege(mo, so, S.kalWer);
+  var tage=box.querySelector("[data-tage]");
+  for(var i=0;i<7;i++){
+    (function(tag, i){
+      var l=m[tag]||[];
+      var z=el('<div style="border:1px solid var(--line);border-radius:8px;padding:8px 10px'+(tag===heute?";border-color:var(--accent)":"")+'">'+
+        '<div class="rowflex" style="justify-content:space-between;gap:8px"><strong style="font-size:13.5px">'+WOCHENTAGE[i]+" "+dfmt(tag).slice(0,6)+
+          (feiertag(tag)?' <span class="muted" style="font-weight:400">'+esc(feiertag(tag))+"</span>":"")+"</strong>"+
+          '<button class="btn ghost sm" type="button" data-plus aria-label="Termin am '+esc(dfmt(tag))+'">+</button></div>'+
+        '<div class="stack" data-e style="gap:4px;margin-top:4px"></div></div>');
+      var h=z.querySelector("[data-e]");
+      if(!l.length) h.appendChild(el('<div class="muted" style="font-size:12.5px">–</div>'));
+      l.forEach(function(x){ h.appendChild(kalEintragZeile(x, true)); });
+      z.querySelector("[data-plus]").onclick=function(){ planEditor(null, {art:"termin", datum:tag, wer:S.kalWer==="alle"||S.kalWer==="ich" ? [meineKennung()] : [S.kalWer]}); };
+      tage.appendChild(z);
+    })(plusTage(mo,i), i);
+  }
+  box.querySelectorAll("[data-w]").forEach(function(b){ b.onclick=function(){ var n=+b.dataset.w; S.kalWoche = n ? plusTage(S.kalWoche, n) : montagVon(heute); render(); }; });
+  return box;
+}
+function kalMonat(heute){
+  if(!S.kTag) S.kTag=heute;
+  var j=+S.kMonat.slice(0,4), mo=+S.kMonat.slice(5,7), tage=new Date(j,mo,0).getDate();
+  var von=S.kMonat+"-01", bis=S.kMonat+"-"+String(tage).padStart(2,"0");
+  var m=kalenderEintraege(von, bis, S.kalWer);
+  var box=el('<div class="stack" style="gap:8px">'+
+    '<div class="rowflex" style="justify-content:space-between;gap:8px">'+
+      '<div class="rowflex" style="gap:6px;flex-wrap:nowrap"><button class="btn ghost sm" type="button" data-k="-1" aria-label="Vormonat">‹</button>'+
+        '<strong style="min-width:118px;text-align:center">'+esc(MONATE_L[mo]+" "+j)+"</strong>"+
+        '<button class="btn ghost sm" type="button" data-k="1" aria-label="Folgemonat">›</button></div>'+
+      (S.kMonat!==heute.slice(0,7)?'<button class="btn ghost sm" type="button" data-k="0">Heute</button>':"")+
+    '</div><div class="kal"></div><div class="stack kal-tag" style="gap:4px"></div></div>');
+  var versatz=(new Date(j,mo-1,1).getDay()+6)%7;
+  var h='<div class="kal-kopf">'+WOCHENTAGE.map(function(t){ return "<span>"+t+"</span>"; }).join("")+'</div><div class="kal-gitter">';
+  for(var i=0;i<versatz;i++) h+='<span class="kal-leer"></span>';
+  for(var d=1;d<=tage;d++){
+    var iso=S.kMonat+"-"+String(d).padStart(2,"0"), e=m[iso]||[];
+    var punkte=e.slice(0,4).map(function(x){ return '<i class="kal-p" style="'+(x.rand?"border:2px solid "+x.farbe+";box-sizing:border-box":"background:"+x.farbe)+(x.grau?";opacity:.5":"")+'"></i>'; }).join("")+(e.length>4?"<b>+"+(e.length-4)+"</b>":"");
+    h+='<button type="button" class="kal-t'+(iso===heute?" heute":"")+(iso===S.kTag?" gewaehlt":"")+'" data-t="'+iso+'" aria-label="'+d+". "+MONATE_L[mo]+(e.length?", "+e.length+" Einträge":"")+'">'+
+      "<span>"+d+'</span><span class="kal-ps">'+punkte+"</span></button>";
+  }
+  box.querySelector(".kal").innerHTML=h+"</div>";
+  var tagBox=box.querySelector(".kal-tag");
+  var tagZeigen=function(){
+    tagBox.innerHTML="";
+    if(S.kTag.slice(0,7)!==S.kMonat) return;
+    var l=m[S.kTag]||[];
+    var kopf=el('<div class="rowflex" style="justify-content:space-between"><strong style="font-size:13px">'+esc(dfmt(S.kTag))+(l.length?"":' <span class="muted" style="font-weight:400">– nichts eingetragen</span>')+"</strong>"+
+      '<button class="btn ghost sm" type="button">+ Termin</button></div>');
+    kopf.querySelector("button").onclick=function(){ planEditor(null, {art:"termin", datum:S.kTag, wer:S.kalWer==="alle"||S.kalWer==="ich" ? [meineKennung()] : [S.kalWer]}); };
+    tagBox.appendChild(kopf);
+    l.forEach(function(x){ tagBox.appendChild(kalEintragZeile(x, true)); });
+  };
+  box.querySelectorAll(".kal-t").forEach(function(b){ b.onclick=function(){
+    S.kTag=b.dataset.t; box.querySelectorAll(".kal-t").forEach(function(x){ x.classList.toggle("gewaehlt", x===b); }); tagZeigen(); kalTagZeigen(box); }; });
+  box.querySelectorAll("[data-k]").forEach(function(b){ b.onclick=function(){
+    var n=+b.dataset.k;
+    if(!n){ S.kMonat=heute.slice(0,7); S.kTag=heute; render(); return; }
+    var jj=j, mm=mo-1+n; jj+=Math.floor(mm/12); mm=((mm%12)+12)%12;
+    S.kMonat=jj+"-"+String(mm+1).padStart(2,"0"); render(); }; });
+  tagZeigen();
+  return box;
+}
+/* Aufgaben: überfällig, heute, diese Woche, später, ohne Datum – erledigte auf Wunsch */
+function aufgabenListe(wahl, filter){
+  var heute=isoLokal(new Date()), so=plusTage(montagVon(heute),6);
+  var alle=PLANUNG.filter(function(e){ return e.art==="aufgabe" && (!filter || filter(e)) &&
+    (filter || kalWerPasst(wahl, (e.wer||[]).length?e.wer:[e.erstellt_von], e.wer_namen)); });
+  var box=el('<div class="stack" style="gap:8px"></div>');
+  var gruppen=[["Überfällig",function(e){ return e.datum && e.datum<heute; },"var(--crit)"],["Heute",function(e){ return e.datum===heute; },""],
+    ["Diese Woche",function(e){ return e.datum>heute && e.datum<=so; },""],["Später",function(e){ return e.datum>so; },""],["Ohne Datum",function(e){ return !e.datum; },""]];
+  var offen=alle.filter(function(e){ return e.status!=="erledigt"; }).sort(function(a,b){ return String(a.datum||"9").localeCompare(String(b.datum||"9")); });
+  if(!offen.length) box.appendChild(el('<div class="muted" style="font-size:13px">Keine offenen Aufgaben'+(filter?"":wahl==="ich"?" für dich":"")+".</div>"));
+  gruppen.forEach(function(g){
+    var l=offen.filter(g[1]); if(!l.length) return;
+    box.appendChild(el('<div style="font-size:12.5px;font-weight:600;'+(g[2]?"color:"+g[2]:"")+'">'+esc(g[0])+" ("+l.length+")</div>"));
+    l.forEach(function(e){ box.appendChild(aufgabeZeile(e)); });
+  });
+  var erl=alle.filter(function(e){ return e.status==="erledigt"; }).sort(function(a,b){ return String(b.erledigt||"").localeCompare(String(a.erledigt||"")); });
+  if(erl.length){
+    var d=el('<details><summary style="cursor:pointer;font-size:12.5px;font-weight:600">Erledigt ('+erl.length+")</summary><div class=\"stack\" style=\"gap:4px;margin-top:6px\"></div></details>");
+    erl.slice(0,60).forEach(function(e){ d.querySelector(".stack").appendChild(aufgabeZeile(e)); });
+    box.appendChild(d);
+  }
+  return box;
+}
+function aufgabeZeile(e){
+  var heute=isoLokal(new Date()), fertig=e.status==="erledigt";
+  var z=el('<div class="rowflex" style="gap:8px;align-items:flex-start;flex-wrap:nowrap;border:1px solid var(--line);border-radius:8px;padding:6px 8px'+(fertig?";opacity:.65":"")+'">'+
+    '<button class="btn ghost sm" type="button" data-ab aria-label="'+(fertig?"wieder öffnen":"erledigt")+'" style="min-width:36px;font-size:16px;padding:2px 6px">'+(fertig?"☑":"☐")+"</button>"+
+    '<a href="#" class="sprunglink" style="flex:1;min-width:0;font-size:13.5px;text-decoration:none;color:inherit"><strong'+(fertig?' style="text-decoration:line-through"':"")+">"+esc(planTitel(e))+"</strong>"+
+      '<br><span class="muted" style="font-size:12px">'+[e.datum?'<span'+(!fertig && e.datum<heute?' style="color:var(--crit)"':"")+">fällig "+esc(dfmt(e.datum))+(e.beginn?" "+esc(e.beginn):"")+"</span>":"",
+        esc(planWerText(e)), esc(planBezugText(e)), fertig && e.erledigt_von?"erledigt von "+esc(e.erledigt_von):""].filter(Boolean).join(" · ")+"</span></a></div>");
+  z.querySelector("a").onclick=function(ev){ ev.preventDefault(); planEditor(e); };
+  z.querySelector("[data-ab]").onclick=function(){ planAbhaken(e, !fertig); };
+  return z;
+}
+function wartungenEinplanenKarte(monat){
+  var l=wartungenImMonat(monat), offen=l.filter(function(e){ return !e.plan; });
+  var c=el('<div class="card"><div class="pad stack" style="gap:6px">'+
+    '<div><h2>Wartungen '+esc(MONATE_L[+monat.slice(5,7)]+" "+monat.slice(0,4))+'</h2><div class="sub">'+
+      (l.length ? l.length+" Märkte mit fälligen Terminen"+(offen.length?", davon "+offen.length+" noch nicht eingeplant":", alle eingeplant")+"." : "Keine fälligen Wartungen in diesem Monat.")+
+    "</div></div><div class=\"stack\" data-l style=\"gap:4px\"></div></div></div>");
+  var h=c.querySelector("[data-l]");
+  l.slice(0,60).forEach(function(e){
+    var z=el('<div class="rowflex" style="justify-content:space-between;gap:8px;border-top:1px solid var(--line);padding-top:6px">'+
+      '<span style="font-size:13px;min-width:0">'+marktLink(e.s)+' <span class="muted">· '+e.pos.length+" Termin"+(e.pos.length===1?"":"e")+(e.ueber?' · <span style="color:var(--crit)">überfällig</span>':"")+"</span>"+
+        (e.plan?'<br><span style="font-size:12px;color:var(--good)">✓ eingeplant '+esc(dfmt(e.plan.datum))+(e.plan.wer_namen&&e.plan.wer_namen.length?" · "+esc(e.plan.wer_namen.join(", ")):"")+"</span>":"")+"</span>"+
+      '<button class="btn '+(e.plan?"ghost ":"")+'sm" type="button">'+(e.plan?"ansehen":"einplanen")+"</button></div>");
+    z.querySelector("button").onclick=function(){ if(e.plan) planEditor(e.plan); else wartungEinplanen(e.s.id, monat); };
+    h.appendChild(z);
+  });
+  if(l.length>60) h.appendChild(el('<div class="muted" style="font-size:12px">… und '+(l.length-60)+" weitere (Fällig zeigt alle).</div>"));
+  return c;
+}
+/* Wartung an einem Markt einplanen: Titel mit den fälligen Anlagen */
+function wartungEinplanen(sid, monat){
+  var s=byId[sid]; if(!s) return;
+  var heute=isoLokal(new Date());
+  var pos=POS.filter(function(p){ return p.standortId===sid && (p.status==="ueberfaellig"||p.status==="faellig"||(monat && p.naechste && p.naechste.slice(0,7)===monat)); });
+  var datum = monat && monat+"-01">heute ? monat+"-01" : heute;
+  planEditor(null, {art:"termin", kategorie:"wartung", standort_id:sid, datum:datum, beginn:"07:00", ende:"15:00", wer:[meineKennung()],
+    titel:"Wartung "+stName(s), details:pos.length ? "Fällig: "+pos.map(function(p){ return (p.anlagentyp||"Anlage")+(p.intervallCode?" ("+intervallArt(p.intervallCode).kurz+")":""); }).slice(0,30).join(", ") : ""});
+}
+
+/* ---------- Termin / Aufgabe anlegen und ändern ---------- */
+function planEditor(e, vorgabe){
+  if(!planungAn()){ toast("Kalender und Aufgaben gehen nur mit Anmeldung."); return; }
+  var neu=!e, ich=meineKennung();
+  /* Aufgaben ohne vorgegebenes Datum: ohne Fälligkeit (sonst stünde jede gleich unter „Heute“) */
+  var a=Object.assign({art:"termin", kategorie:"sonstiges", titel:"", datum:((vorgabe&&vorgabe.art)||(e&&e.art))==="aufgabe" ? "" : isoLokal(new Date()), wer:[ich], wer_namen:[meinName()], status:"offen"}, vorgabe||{}, e||{});
+  if(vorgabe && vorgabe.wer && !vorgabe.wer_namen) a.wer_namen=vorgabe.wer.map(planPersonName);
+  var privatFremd=!neu && (a.privat||a.kategorie==="privat") && !planIstMeins(a) && a.erstellt_von!==ich;
+  var pv=PLAN_PRIVAT[a.id]||{};
+  if(a.privat||a.kategorie==="privat"){ a.titel=pv.titel||""; a.details=pv.details||""; }
+  var v=ansichtOeffnen(neu ? (a.art==="aufgabe"?"Neue Aufgabe":"Neuer Termin") : (a.art==="aufgabe"?"Aufgabe":"Termin"));
+  if(privatFremd){
+    v.schritt.textContent="Privat";
+    v.inhalt.appendChild(el('<div class="note">'+esc(planWerText(a)||"Diese Person")+" ist "+esc(dfmt(a.datum))+(a.datum_bis&&a.datum_bis!==a.datum?" – "+esc(dfmt(a.datum_bis)):"")+" ("+esc(planZeit(a))+") abwesend. Einzelheiten sieht nur die Person selbst.</div>"));
+    return;
+  }
+  v.schritt.textContent = neu ? "" : "angelegt von "+(a.erstellt_name||"–")+(a.geaendert_von?" · zuletzt geändert von "+a.geaendert_von:"");
+  var projekte=PROJEKTE.filter(function(p){ return projektOffen(p) || p.id===a.projekt_id; });
+  var stListe=ST.slice().sort(function(x,y){ return stName(x).localeCompare(stName(y),"de"); });
+  var stoer=offeneStoerungen(true).filter(function(o){ return true; });
+  if(a.stoerung_id && !stoer.some(function(o){ return o._id===a.stoerung_id; })){ var alt=OFFENE.filter(function(o){ return o._id===a.stoerung_id; })[0]; if(alt) stoer.push(alt); }
+  var form=el('<form class="stack" autocomplete="off" style="max-width:600px">'+
+    '<div class="chips" data-art>'+[["termin","Termin"],["aufgabe","Aufgabe (ToDo)"]].map(function(x){
+      return '<button class="chip" type="button" data-a="'+x[0]+'" aria-pressed="'+(a.art===x[0])+'">'+esc(x[1])+"</button>"; }).join("")+"</div>"+
+    '<label class="fl"><span>Was für ein Termin?</span><select data-f="kategorie">'+PLAN_KAT.map(function(k){
+      return '<option value="'+k[0]+'"'+(a.kategorie===k[0]?" selected":"")+">"+esc(k[1])+"</option>"; }).join("")+"</select></label>"+
+    '<label class="fl" data-privatzeile><span><input type="checkbox" data-f="privat"'+(a.privat||a.kategorie==="privat"?" checked":"")+'> Privat – die anderen sehen nur „Abwesend“ und die Zeit</span></label>'+
+    '<label class="fl"><span class="req" data-titellabel>Titel</span><input type="text" data-f="titel" maxlength="200" value="'+esc(a.titel||"")+'"></label>'+
+    '<div class="grid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px">'+
+      '<label class="fl"><span data-datumlabel>Datum</span><input type="date" data-f="datum" value="'+esc(a.datum||"")+'"></label>'+
+      '<label class="fl" data-biszeile><span>bis (mehrtägig)</span><input type="date" data-f="datum_bis" value="'+esc(a.datum_bis||"")+'"></label>'+
+    "</div>"+
+    '<label class="fl" data-ganzzeile><span><input type="checkbox" data-f="ganz"'+(!a.beginn?" checked":"")+"> ganztägig</span></label>"+
+    '<div class="grid" style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px" data-zeiten>'+
+      '<label class="fl"><span>von</span><input type="time" data-f="beginn" value="'+esc(a.beginn||"")+'"></label>'+
+      '<label class="fl"><span>bis</span><input type="time" data-f="ende" value="'+esc(a.ende||"")+'"></label>'+
+    "</div>"+
+    '<div class="fl"><span>Wer?</span><div class="chips" data-wer><span class="muted">wird geladen …</span></div></div>'+
+    '<div class="note warnbox" data-konflikt hidden style="font-size:12.5px"></div>'+
+    '<div class="stack" data-bezug style="gap:10px">'+
+      '<div class="grid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:10px">'+
+        '<label class="fl"><span>Markt / Standort</span><select data-f="standort_id"><option value="">–</option>'+stListe.map(function(s){
+          return '<option value="'+esc(s.id)+'"'+(a.standort_id===s.id?" selected":"")+">"+esc(stName(s)+(istLidl(s)?"":" · "+kundeTitel(kundeVon(s))))+"</option>"; }).join("")+"</select></label>"+
+        '<label class="fl"><span>Projekt</span><select data-f="projekt_id"><option value="">–</option>'+projekte.map(function(p){
+          return '<option value="'+esc(p.id)+'"'+(a.projekt_id===p.id?" selected":"")+">"+esc(projektTitel(p))+"</option>"; }).join("")+"</select></label>"+
+        '<label class="fl" data-schrittzeile><span>bei Schritt</span><select data-f="projekt_schritt"><option value="">–</option>'+PROJEKT_SCHRITTE.map(function(x){
+          return '<option value="'+x[0]+'"'+(a.projekt_schritt===x[0]?" selected":"")+">"+esc(x[1])+"</option>"; }).join("")+"</select></label>"+
+        '<label class="fl"><span>Störung</span><select data-f="stoerung_id"><option value="">–</option>'+stoer.map(function(o){
+          var s=byId[o.standortId]; return '<option value="'+esc(o._id)+'"'+(a.stoerung_id===o._id?" selected":"")+">"+esc((s?stName(s):o.filialCode||"")+(o.auftragsnummer?" · "+o.auftragsnummer:"")+(o.problemtyp?" · "+o.problemtyp:""))+"</option>"; }).join("")+"</select></label>"+
+      "</div>"+
+    "</div>"+
+    '<label class="fl"><span data-detaillabel>Details</span><textarea data-f="details" rows="4" maxlength="4000">'+esc(a.details||"")+"</textarea></label>"+
+    '<div data-urlaub></div>'+
+    '<div class="note warnbox" data-err hidden></div>'+
+  "</form>");
+  v.inhalt.appendChild(form);
+  var F=function(k){ return form.querySelector('[data-f="'+k+'"]'); };
+  /* Personen: ich und das Team, mehrere möglich */
+  var wer=(a.wer||[]).slice(), werNamen={}; (a.wer||[]).forEach(function(id,i){ werNamen[id]=(a.wer_namen||[])[i]||planPersonName(id); });
+  var werZeichnen=function(team){
+    var h=form.querySelector("[data-wer]"); h.innerHTML="";
+    var liste=[{user_id:ich, name:meinName()+" (ich)"}].concat(team||[]);
+    (a.wer||[]).forEach(function(id){ if(!liste.some(function(p){ return p.user_id===id; })) liste.push({user_id:id, name:werNamen[id]||"–"}); });
+    liste.forEach(function(p){
+      var b=el('<button class="chip" type="button" aria-pressed="'+(wer.indexOf(p.user_id)>=0)+'">'+esc(p.name||"–")+"</button>");
+      b.onclick=function(){
+        var i=wer.indexOf(p.user_id);
+        if(i>=0) wer.splice(i,1); else { wer.push(p.user_id); werNamen[p.user_id]=String(p.name||"").replace(/ \(ich\)$/,""); }
+        b.setAttribute("aria-pressed", String(wer.indexOf(p.user_id)>=0)); konflikte();
+      };
+      h.appendChild(b);
+    });
+  };
+  werZeichnen(planTeam||[]);
+  if(!planTeam) planTeamLaden().then(werZeichnen);
+  var art=a.art;
+  form.querySelectorAll("[data-a]").forEach(function(b){ b.onclick=function(){ art=b.dataset.a; form.querySelectorAll("[data-a]").forEach(function(x){ x.setAttribute("aria-pressed", String(x===b)); }); zeigen(); }; });
+  var zeigen=function(){
+    var termin=art==="termin", priv=termin && (F("privat").checked || F("kategorie").value==="privat");
+    if(F("kategorie").value==="privat") F("privat").checked=true;
+    form.querySelector("[data-privatzeile]").hidden=!termin;
+    form.querySelector("[data-biszeile]").hidden=!termin;
+    form.querySelector("[data-bezug]").hidden=priv;
+    form.querySelector("[data-schrittzeile]").hidden=!F("projekt_id").value;
+    form.querySelector("[data-titellabel]").textContent = priv ? "Titel (nur für dich sichtbar)" : "Titel";
+    form.querySelector("[data-detaillabel]").textContent = priv ? "Details (nur für dich sichtbar)" : "Details";
+    form.querySelector("[data-datumlabel]").textContent = termin ? "Datum" : "fällig am (freiwillig)";
+    form.querySelector("[data-zeiten]").hidden=F("ganz").checked;
+    form.querySelector('[data-f="kategorie"]').closest("label").querySelector("span").textContent = termin ? "Was für ein Termin?" : "Bereich";
+    /* Urlaub: Stand und – für den Inhaber – genehmigen / ablehnen */
+    var u=form.querySelector("[data-urlaub]"); u.innerHTML="";
+    if(termin && F("kategorie").value==="urlaub"){
+      var st=neu ? (istInhaber()?"genehmigt":"beantragt") : a.status;
+      u.appendChild(el('<div class="note" style="font-size:12.5px">Urlaub: <strong>'+esc(URLAUB_STATUS[st]||"beantragt")+"</strong>"+
+        (istInhaber()?"":" – genehmigt wird er vom Inhaber. Ändert sich der Zeitraum, ist er wieder beantragt.")+"</div>"));
+      if(!neu && istInhaber() && a.status!=="genehmigt"){
+        var g=el('<button class="btn sm" type="button" style="margin-top:6px">Genehmigen</button>');
+        g.onclick=function(){ planStatus(e, "genehmigt").then(function(){ v.zu(); }); };
+        u.appendChild(g);
+      }
+      if(!neu && istInhaber() && a.status!=="abgelehnt"){
+        var ab2=el('<button class="btn ghost sm" type="button" style="margin-top:6px;margin-left:6px">Ablehnen</button>');
+        ab2.onclick=function(){ planStatus(e, "abgelehnt").then(function(){ v.zu(); }); };
+        u.appendChild(ab2);
+      }
+    }
+    konflikte();
+  };
+  /* Überschneidungen der gewählten Personen: Urlaub, abwesend, andere Termine – nur ein Hinweis */
+  var konflikte=function(){
+    var k=form.querySelector("[data-konflikt]");
+    var d=F("datum").value; if(art!=="termin" || !d || !wer.length){ k.hidden=true; return; }
+    var bis=F("datum_bis").value && F("datum_bis").value>d ? F("datum_bis").value : d;
+    var b0=F("ganz").checked ? 0 : (zeitMin(F("beginn").value)||0), e0=F("ganz").checked ? 1440 : (zeitMin(F("ende").value)||1440);
+    var treffer=[];
+    PLANUNG.forEach(function(x){
+      if(x.art!=="termin" || (e && x.id===e.id) || x.status==="abgelehnt") return;
+      var xt=planTage(x); if(!xt.length || xt[xt.length-1]<d || xt[0]>bis) return;
+      var b1=x.beginn ? zeitMin(x.beginn) : 0, e1=x.beginn ? (zeitMin(x.ende)||1440) : 1440;
+      if(!(b0<e1 && b1<e0)) return;
+      var wen=(x.wer||[]).filter(function(id){ return wer.indexOf(id)>=0; });
+      if(!wen.length) return;
+      treffer.push(wen.map(function(id){ return werNamen[id]||planPersonName(id)||"–"; }).join(", ")+": "+planTitel(x)+" ("+dfmt(x.datum)+(x.datum_bis&&x.datum_bis!==x.datum?"–"+dfmt(x.datum_bis):"")+", "+planZeit(x)+")");
+    });
+    k.hidden=!treffer.length;
+    k.innerHTML=treffer.length ? "<strong>Schon verplant:</strong><br>"+treffer.slice(0,8).map(esc).join("<br>") : "";
+  };
+  form.addEventListener("change", zeigen);
+  form.addEventListener("input", function(ev){ if(ev.target.type==="time"||ev.target.type==="date") konflikte(); });
+  zeigen();
+  var err=form.querySelector("[data-err]"), fehler=function(t){ err.textContent=t; err.hidden=false; };
+  var darfLoeschen=!neu && (a.erstellt_von===ich || planIstMeins(a) || (!a.privat && (istInhaber()||Rolle.name==="admin")));
+  if(darfLoeschen){
+    var lo=el('<button class="btn ghost" type="button" style="color:var(--crit);border-color:var(--crit)">Löschen</button>');
+    lo.onclick=function(){
+      if(!window.confirm((a.art==="aufgabe"?"Diese Aufgabe":"Diesen Termin")+" löschen?")) return;
+      var weg=function(){ PLANUNG=PLANUNG.filter(function(x){ return x.id!==e.id; }); delete PLAN_PRIVAT[e.id]; v.zu(); toast("Gelöscht."); planGeaendert(); };
+      if(demo()){ weg(); return; }
+      mitFrist(Store.sb.from("planung").delete().eq("id", e.id).select("id"), 15000).then(function(r){
+        if(r.error || !r.data || !r.data.length){ fehler("Nicht gelöscht"+(r.error?" ("+r.error.message+")":" – keine Berechtigung")+"."); return; }
+        weg();
+      }, function(){ fehler("Nicht gelöscht – keine Verbindung."); });
+    };
+    v.fuss.appendChild(lo);
+  }
+  if(!neu && a.art==="termin"){
+    var ics=el('<button class="btn ghost" type="button" title="In den Kalender am Handy übernehmen">📅 Handy</button>');
+    ics.onclick=function(){ planIcs(a); };
+    v.fuss.appendChild(ics);
+  }
+  if(!neu && a.art==="aufgabe"){
+    var abh=el('<button class="btn ghost" type="button">'+(a.status==="erledigt"?"Wieder öffnen":"✓ Erledigt")+"</button>");
+    abh.onclick=function(){ planAbhaken(e, a.status!=="erledigt").then(function(ok){ if(ok) v.zu(); }); };
+    v.fuss.appendChild(abh);
+  }
+  var abb=el('<button class="btn ghost" type="button">Abbrechen</button>'), ok=el('<button class="btn" type="button">Speichern</button>');
+  abb.onclick=function(){ v.zu(); };
+  v.fuss.appendChild(abb); v.fuss.appendChild(ok);
+  ok.onclick=function(){
+    err.hidden=true;
+    var termin=art==="termin", kat=F("kategorie").value, priv=termin && (F("privat").checked || kat==="privat");
+    var titel=F("titel").value.trim(), datum=F("datum").value, bis=F("datum_bis").value, ganz=F("ganz").checked;
+    var beginn=ganz?"":F("beginn").value, ende=ganz?"":F("ende").value;
+    if(!titel && !priv){
+      /* ohne Titel: aus Art und Bezug – im Stress nicht am Pflichtfeld scheitern */
+      var s0=F("standort_id").value && byId[F("standort_id").value];
+      titel=planKat(kat)[1]+(s0?" "+stName(s0):"");
+      if(kat==="sonstiges" && !s0){ fehler("Bitte einen Titel eintragen."); F("titel").focus(); return; }
+    }
+    if(termin && !datum){ fehler("Bitte das Datum eintragen."); return; }
+    if(bis && datum && bis<datum){ fehler("„bis“ liegt vor dem Datum."); return; }
+    if(!ganz && termin && !beginn){ fehler("Bitte die Uhrzeit eintragen – oder „ganztägig“ ankreuzen."); return; }
+    if(beginn && ende && zeitMin(ende)<=zeitMin(beginn) && (!bis || bis===datum)){ fehler("„bis“ liegt vor „von“."); return; }
+    if(!wer.length && !window.confirm("Niemand ist eingetragen – trotzdem speichern? (Dann gilt es als deins.)")) return;
+    var zeile={art:art, kategorie:priv?"privat":kat, titel:priv?"Abwesend":titel, details:priv?null:(F("details").value.trim()||null),
+      datum:datum||null, datum_bis:termin && bis && bis!==datum ? bis : null, beginn:beginn||null, ende:(beginn && ende)||null,
+      wer:wer.slice(), wer_namen:wer.map(function(id){ return werNamen[id]||planPersonName(id)||""; }), privat:priv,
+      standort_id:priv?null:(F("standort_id").value||null), projekt_id:priv?null:(F("projekt_id").value||null),
+      projekt_schritt:priv||!F("projekt_id").value?null:(F("projekt_schritt").value||null), stoerung_id:priv?null:(F("stoerung_id").value||null),
+      geaendert_von:meinName()};
+    if(kat==="urlaub" && termin){ if(neu) zeile.status=istInhaber()?"genehmigt":"beantragt"; }
+    else if(neu || a.kategorie==="urlaub") zeile.status = a.status==="erledigt" ? "erledigt" : "offen";
+    if(neu) zeile.erstellt_name=meinName();
+    var privDaten = priv ? {titel:titel||null, details:F("details").value.trim()||null} : null;
+    ok.disabled=true; ok.textContent="wird gespeichert …";
+    var fertig=function(gesp){
+      PLANUNG=PLANUNG.filter(function(x){ return x.id!==gesp.id; }).concat([gesp]);
+      if(privDaten) PLAN_PRIVAT[gesp.id]=Object.assign({planung_id:gesp.id, user_id:ich}, privDaten); else delete PLAN_PRIVAT[gesp.id];
+      v.zu();
+      toast((art==="aufgabe"?"Aufgabe":"Termin")+" gespeichert"+(gesp.kategorie==="urlaub" && gesp.status==="beantragt"?" – Urlaub beantragt":"")+".");
+      /* neu Eingetragene bekommen eine Nachricht (mit Push) – nicht bei Privatem */
+      if(!demo() && !priv) planBenachrichtigen(gesp, wer.filter(function(id){ return id!==ich && (a.wer||[]).indexOf(id)<0; }), neu);
+      planGeaendert();
+    };
+    if(demo()){ fertig(Object.assign({id:e?e.id:neueKennung("pl"), erstellt_von:ich, erstellt:new Date().toISOString(), status:"offen"}, e||{}, zeile, {geaendert:new Date().toISOString()})); return; }
+    var anfrage = neu ? Store.sb.from("planung").insert(zeile).select("*") : Store.sb.from("planung").update(zeile).eq("id", e.id).select("*");
+    mitFrist(anfrage, 20000).then(function(r){
+      if(r.error) throw new Error(/relation|does not exist/i.test(r.error.message)?"Kalender und Aufgaben sind in der Datenbank noch nicht eingerichtet (tools/planung.sql).":r.error.message);
+      if(!r.data || !r.data.length) throw new Error("Nicht gespeichert – keine Berechtigung.");
+      var gesp=r.data[0];
+      var nachher = privDaten ? Store.sb.from("planung_privat").upsert(Object.assign({planung_id:gesp.id, user_id:ich}, privDaten), {onConflict:"planung_id"}).select("*")
+                  : (!neu && (a.privat||a.kategorie==="privat") ? Store.sb.from("planung_privat").delete().eq("planung_id", gesp.id) : null);
+      return (nachher ? mitFrist(nachher, 15000) : Promise.resolve({})).then(function(r2){
+        if(r2 && r2.error) toast("Der private Teil ist nicht gespeichert: "+r2.error.message);
+        fertig(gesp);
+      });
+    }).catch(function(x){ ok.disabled=false; ok.textContent="Speichern"; fehler(x.message||String(x)); });
+  };
+}
+/* nach jeder Änderung: Reiterzeichen und offene Ansicht neu */
+function planGeaendert(){
+  kalenderReiterZeichen();
+  if(["kalender","stunden","faellig"].indexOf(S.view)>=0 && darfRendern()) render();
+  document.querySelectorAll("[data-planbezug]").forEach(function(h){ if(h._neu) h._neu(); });
+}
+function planAbhaken(e, erledigt){
+  var felder={status:erledigt?"erledigt":"offen", erledigt:erledigt?new Date().toISOString():null, erledigt_von:erledigt?meinName():null, geaendert_von:meinName()};
+  var fertig=function(gesp){ PLANUNG=PLANUNG.filter(function(x){ return x.id!==gesp.id; }).concat([gesp]); toast(erledigt?"Erledigt.":"Wieder offen."); planGeaendert(); return true; };
+  if(demo()) return Promise.resolve(fertig(Object.assign({}, e, felder)));
+  return mitFrist(Store.sb.from("planung").update(felder).eq("id", e.id).select("*"), 15000).then(function(r){
+    if(r.error || !r.data || !r.data.length){ toast("Nicht gespeichert"+(r.error?": "+r.error.message:" – keine Berechtigung")+"."); return false; }
+    return fertig(r.data[0]);
+  }, function(){ toast("Nicht gespeichert – keine Verbindung."); return false; });
+}
+function planStatus(e, status){
+  var fertig=function(gesp){ PLANUNG=PLANUNG.filter(function(x){ return x.id!==gesp.id; }).concat([gesp]); toast("Urlaub "+(URLAUB_STATUS[status]||status)+"."); planGeaendert();
+    if(!demo()) planBenachrichtigen(gesp, (gesp.wer||[]).filter(function(id){ return id!==meineKennung(); }), false, "Urlaub "+URLAUB_STATUS[status]); };
+  if(demo()){ fertig(Object.assign({}, e, {status:status})); return Promise.resolve(); }
+  return mitFrist(Store.sb.from("planung").update({status:status, geaendert_von:meinName()}).eq("id", e.id).select("*"), 15000).then(function(r){
+    if(r.error || !r.data || !r.data.length){ toast("Nicht gespeichert"+(r.error?": "+r.error.message:"")+"."); return; }
+    fertig(r.data[0]);
+  }, function(){ toast("Nicht gespeichert – keine Verbindung."); });
+}
+/* Nachricht an die eingetragenen Personen (Team-Chat, mit Push) */
+function planBenachrichtigen(e, an, neu, betreff){
+  if(!an || !an.length || !chatAn()) return;
+  var ich=meinName();
+  var text=((betreff ? "📅 "+betreff+": " : e.art==="aufgabe" ? "☑ "+(neu?"Neue ":"")+"Aufgabe für dich: " : "📅 "+(neu?"Neuer ":"")+"Termin für dich: ")+e.titel+
+    (e.datum?" – "+dfmt(e.datum)+(e.datum_bis&&e.datum_bis!==e.datum?" bis "+dfmt(e.datum_bis):"")+(e.beginn?", "+planZeit(e):""):"")+
+    (planBezugText(e)?"\n"+planBezugText(e):"")+(e.details?"\n\n"+e.details:"")+"\n\nÖffnen: Reiter Kalender").slice(0,3900);
+  an.forEach(function(id, i){
+    var name=(e.wer_namen||[])[(e.wer||[]).indexOf(id)]||planPersonName(id)||"";
+    mitFrist(Store.sb.from("chat").insert({id:"c_"+Date.now().toString(36)+i+Math.random().toString(36).slice(2,8),
+      von:Store.benutzer.id, von_name:ich, text:text, an:id, an_name:name, fotos:[]}), 15000).then(function(){}, function(){});
+  });
+}
+/* Termin für den Kalender des Handys (.ics) */
+function planIcs(e){
+  var tx=function(t){ return String(t||"").replace(/\\/g,"\\\\").replace(/\n/g,"\\n").replace(/([,;])/g,"\\$1"); };
+  var utc=function(x){ return x.toISOString().replace(/[-:]/g,"").replace(/\.\d+/,""); };
+  var zeilen;
+  if(e.beginn){
+    var von=new Date(e.datum+"T"+e.beginn+":00"), bis=new Date((e.datum_bis||e.datum)+"T"+(e.ende||e.beginn)+":00");
+    if(bis<=von) bis=new Date(von.getTime()+3600000);
+    zeilen=["DTSTART:"+utc(von), "DTEND:"+utc(bis)];
+  } else {
+    zeilen=["DTSTART;VALUE=DATE:"+e.datum.replace(/-/g,""), "DTEND;VALUE=DATE:"+plusTage(e.datum_bis||e.datum,1).replace(/-/g,"")];
+  }
+  var s=e.standort_id && byId[e.standort_id];
+  var ics=["BEGIN:VCALENDAR","VERSION:2.0","PRODID:-//UKT//Wartungsleitstand//DE","CALSCALE:GREGORIAN","BEGIN:VEVENT",
+    "UID:"+e.id+"@wartungsleitstand", "DTSTAMP:"+utc(new Date())].concat(zeilen)
+    .concat(["SUMMARY:"+tx(planTitel(e).replace(/^🔒 /,"")), s?"LOCATION:"+tx(s.adresse):"",
+      "DESCRIPTION:"+tx([planDetails(e), planWerText(e), planBezugText(e)].filter(Boolean).join("\n")), "END:VEVENT","END:VCALENDAR"])
+    .filter(Boolean).join("\r\n");
+  var l=document.createElement("a");
+  l.href=URL.createObjectURL(new Blob([ics],{type:"text/calendar;charset=utf-8"}));
+  l.download="termin-"+e.datum+".ics";
+  document.body.appendChild(l); l.click();
+  setTimeout(function(){ URL.revokeObjectURL(l.href); l.remove(); },1500);
+}
+
+/* ---------- Aufgaben und Termine an einem Ort (Projekt, Markt) ----------
+   filter: welche Einträge; vorgabe: was ein neuer mitbekommt */
+function planBezugKarte(titel, filter, vorgabe, knoepfe){
+  var c=el('<div class="card" style="box-shadow:none;margin-top:12px" data-planbezug><div class="pad stack" style="gap:8px">'+
+    '<div class="rowflex" style="justify-content:space-between;gap:8px"><h2>'+esc(titel)+'</h2><span class="rowflex" style="gap:6px" data-k></span></div>'+
+    '<div data-l class="stack" style="gap:6px"></div></div></div>');
+  (knoepfe||[["+ Aufgabe",{art:"aufgabe"}],["+ Termin",{art:"termin"}]]).forEach(function(k){
+    var b=el('<button class="btn ghost sm" type="button">'+esc(k[0])+"</button>");
+    b.onclick=function(){ if(typeof k[1]==="function") k[1](); else planEditor(null, Object.assign({wer:[meineKennung()]}, vorgabe, k[1])); };
+    c.querySelector("[data-k]").appendChild(b);
+  });
+  var heute=isoLokal(new Date());
+  c._neu=function(){
+    var h=c.querySelector("[data-l]"); h.innerHTML="";
+    if(planungFehler){ h.appendChild(el('<div class="muted" style="font-size:12.5px">'+esc(planungFehler)+"</div>")); return; }
+    var aufg=PLANUNG.filter(function(e){ return e.art==="aufgabe" && filter(e); });
+    var term=PLANUNG.filter(function(e){ return e.art==="termin" && filter(e) && (e.datum_bis||e.datum)>=heute; }).sort(function(a,b){ return a.datum.localeCompare(b.datum); });
+    if(!aufg.length && !term.length){ h.appendChild(el('<div class="muted" style="font-size:12.5px">Noch nichts geplant.</div>')); return; }
+    if(term.length){
+      h.appendChild(el('<div style="font-size:12.5px;font-weight:600">Geplant</div>'));
+      term.forEach(function(e){ h.appendChild(kalEintragZeile({e:e, tag:e.datum, farbe:planKat(e.kategorie)[2], titel:planTitel(e),
+        unter:[dfmt(e.datum)+(e.datum_bis&&e.datum_bis!==e.datum?" – "+dfmt(e.datum_bis):""), planZeit(e), planWerText(e)].filter(Boolean).join(" · ")}, true)); });
+    }
+    if(aufg.length){
+      h.appendChild(el('<div style="font-size:12.5px;font-weight:600">Aufgaben</div>'));
+      h.appendChild(aufgabenListe("alle", filter));
+    }
+  };
+  c._neu();
+  return c;
+}
+/* Aufgaben eines Projektschritts – im Schritt selbst („an verschiedenen Punkten“) */
+function projektSchrittAufgaben(p, schritt, schreiben){
+  var h=el('<div class="stack" style="gap:4px;margin-top:6px" data-planbezug></div>');
+  h._neu=function(){
+    h.innerHTML="";
+    var l=PLANUNG.filter(function(e){ return e.art==="aufgabe" && e.projekt_id===p.id && e.projekt_schritt===schritt; })
+      .sort(function(a,b){ return (a.status==="erledigt"?1:0)-(b.status==="erledigt"?1:0) || String(a.datum||"9").localeCompare(String(b.datum||"9")); });
+    l.forEach(function(e){ h.appendChild(aufgabeZeile(e)); });
+    if(schreiben && planungAn()){
+      var b=el('<div><button class="btn ghost sm" type="button">+ Aufgabe bei „'+esc(projektSchritt(schritt)[1])+"“</button></div>");
+      b.querySelector("button").onclick=function(){ planEditor(null, {art:"aufgabe", projekt_id:p.id, projekt_schritt:schritt, standort_id:p.standort_id||null, kategorie:"projekt", wer:[meineKennung()]}); };
+      h.appendChild(b);
+    }
+  };
+  h._neu();
+  return h;
+}
+/* Fällig: was heute für mich ansteht (Termine, fällige Aufgaben) */
+function heuteFuerMichKarte(){
+  if(!planungAn() || !planungGeladen) return null;
+  var heute=isoLokal(new Date());
+  var m=kalenderEintraege(heute, heute, "ich")[heute]||[];
+  m=m.filter(function(x){ return !x.grau && x.art!=="protokoll"; });
+  var ueber=PLANUNG.filter(function(e){ return e.art==="aufgabe" && e.status!=="erledigt" && e.datum && e.datum<heute && planIstMeins(e); });
+  if(!m.length && !ueber.length) return null;
+  var c=el('<div class="card"><div class="pad stack" style="gap:6px"><div class="rowflex" style="justify-content:space-between"><h2>Heute für dich</h2>'+
+    '<button class="btn ghost sm" type="button">Kalender</button></div></div></div>');
+  c.querySelector("button").onclick=function(){ S.kalModus="woche"; S.kalWer="ich"; S.kalWoche=montagVon(heute); springe({reiter:"kalender", block:"start"}); };
+  m.forEach(function(x){ c.querySelector(".stack").appendChild(kalEintragZeile(x, true)); });
+  if(ueber.length){
+    c.querySelector(".stack").appendChild(el('<div style="font-size:12.5px;font-weight:600;color:var(--crit)">Überfällige Aufgaben ('+ueber.length+")</div>"));
+    ueber.slice(0,8).forEach(function(e){ c.querySelector(".stack").appendChild(aufgabeZeile(e)); });
+  }
+  return c;
+}
+/* Stunden: was ich an einem Tag geplant habe (Termine mit mir) */
+function meinePlanungAm(tag){
+  return PLANUNG.filter(function(e){ return e.art==="termin" && e.status!=="abgelehnt" && planIstMeins(e) && planTage(e).indexOf(tag)>=0; })
+    .sort(function(a,b){ return String(a.beginn||"").localeCompare(String(b.beginn||"")); });
+}
+/* aus einem geplanten Termin die Vorgabe für „Zeit erfassen“ */
+function zeitAusPlanung(e, tag){
+  var k=planKat(e.kategorie);
+  var v={datum:tag, planung_id:e.id, art:k[3]||"arbeit", bereich:k[4]||null, taetigkeit:planTitel(e).replace(/^🔒 /,""),
+    standort_id:e.standort_id||null, projekt_id:e.projekt_id||null, beginn:e.beginn||"", ende:e.ende||""};
+  /* ganztägig abwesend (Urlaub, Krankenstand, Schule): das Tagessoll */
+  if(!e.beginn && v.art!=="arbeit"){ var min=sollMinutenTag(tag); if(min) v.minuten=min; }
+  return v;
+}
+
+/* ================================================================
    Arbeitszeiten: jede Person erfasst ihre Stunden (von–bis, Pause, was,
    wo). Sie sieht nur ihre eigenen; der Inhaber sieht alle, druckt die
    Monatsliste und bestätigt den Monat – danach ist er gesperrt (das
@@ -22578,6 +23358,7 @@ function viewStunden(){
   }
   /* anderes Konto: nie die Einträge des vorigen zeigen; sonst höchstens jede Minute frisch laden */
   if(betriebAn() && !demo() && Store.benutzer.email!==zeitenKonto){ ZEITEN=[]; zeitenGeladen=false; zeitenFehler=""; zeitenStand=0; }
+  planungNachladen();   /* geplante Termine am Tag (Kalender) */
   if(!zeitenLaedt && Date.now()-zeitenStand>60000){
     zeitenStand=Date.now();
     zeitenLaden().then(function(){ if(S.view==="stunden" && darfRendern() && !document.querySelector(".assistent")) render(); });
@@ -22613,11 +23394,28 @@ function viewStunden(){
       var zeile=el('<div style="border:1px solid var(--line);border-radius:8px;padding:8px 10px'+(tag===heute?";border-color:var(--accent)":"")+'">'+
         '<div class="rowflex" style="justify-content:space-between;gap:8px"><strong style="font-size:13.5px">'+WOCHENTAGE[i]+" "+dfmt(tag).slice(0,6)+(feiertag(tag)?' <span class="muted" style="font-weight:400">'+esc(feiertag(tag))+'</span>':'')+(sum>720?' <span style="color:var(--crit)" title="Über 12 Stunden – gesetzliche Höchstgrenze (§ 9 AZG)">⚠ über 12 h</span>':'')+"</strong>"+
           '<span class="rowflex" style="gap:8px"><span class="mono" style="font-size:13px">'+(sum?stundenText(sum):"")+"</span>"+
+          (planungAn()?'<button class="btn ghost sm" type="button" data-planen title="Arbeit für diesen Tag planen" aria-label="'+esc(dfmt(tag))+' planen">📅</button>':"")+
           '<button class="btn ghost sm" type="button" data-plus title="Zeit für diesen Tag" aria-label="Zeit für '+esc(dfmt(tag))+' erfassen" data-schreiben>+</button></span></div>'+
         '<div class="stack" data-e style="gap:4px;margin-top:4px"></div></div>');
       var host=zeile.querySelector("[data-e]");
       l.forEach(function(z){ host.appendChild(zeitZeile(z, ueberschneidung)); });
       zeile.querySelector("[data-plus]").onclick=function(){ zeitEditor(null, {datum:tag}); };
+      /* geplant (Kalender): bis heute mit einem Griff als Zeit erfassen */
+      var pl=planungAn() ? meinePlanungAm(tag) : [];
+      pl.forEach(function(e){
+        var erfasst=ZEITEN.some(function(z){ return z.planung_id===e.id && z.datum===tag; });
+        var k=planKat(e.kategorie);
+        var pz=el('<div class="rowflex" style="gap:8px;justify-content:space-between;font-size:12.5px;flex-wrap:nowrap">'+
+          '<a href="#" class="sprunglink muted" style="flex:1;min-width:0"><span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:'+k[2]+';margin-right:4px"></span>geplant: '+
+            esc(planZeit(e))+" · "+esc(planTitel(e))+(e.kategorie==="urlaub" && e.status!=="genehmigt"?" ("+esc(URLAUB_STATUS[e.status]||e.status)+")":"")+"</a>"+
+          (erfasst?'<span style="color:var(--good);white-space:nowrap">✓ erfasst</span>':
+            tag<=heute && e.kategorie!=="privat" && betriebSchreiben()?'<button class="btn ghost sm" type="button" data-erf>erfassen</button>':"")+"</div>");
+        pz.querySelector("a").onclick=function(ev){ ev.preventDefault(); planEditor(e); };
+        var eb=pz.querySelector("[data-erf]"); if(eb) eb.onclick=function(){ zeitEditor(null, zeitAusPlanung(e, tag)); };
+        host.appendChild(pz);
+      });
+      var pb=zeile.querySelector("[data-planen]");
+      if(pb) pb.onclick=function(){ planEditor(null, {art:"termin", kategorie:"sonstiges", datum:tag, beginn:"07:00", ende:wochentagIdx(tag)===4?"13:30":"15:30", wer:[meineKennung()], titel:"Arbeit"}); };
       tage.appendChild(zeile);
     })(plusTage(mo,i), i);
   }
@@ -22664,6 +23462,7 @@ function zeitVorschlaege(tag){
 function zeitEditor(z, vorgabe){
   if(!betriebSchreiben()){ toast("Die Arbeitszeit lässt sich nur mit Anmeldung erfassen."); return; }
   var neu=!z, a=Object.assign({datum:isoLokal(new Date()), art:"arbeit", pause_min:0}, vorgabe||{}, z||{});
+  var planungId=a.planung_id||null;   /* Zeit zu einem geplanten Termin (Kalender) */
   var gesperrt=!!(z && z.bestaetigt) && !istInhaber();
   var v=ansichtOeffnen(neu?"Zeit erfassen":"Zeit ändern");
   var gestempelt=!!(z && /^stempel/.test(z.quelle||""));
@@ -22720,6 +23519,26 @@ function zeitEditor(z, vorgabe){
   var vorschlagZeigen=function(){
     var host=form.querySelector("[data-vorschlag]"); host.innerHTML="";
     if(!neu) return;
+    /* geplant (Kalender): antippen übernimmt und verknüpft die Zeit mit dem Termin */
+    var pl=planungAn() ? meinePlanungAm(F("datum").value).filter(function(e){ return e.kategorie!=="privat"; }) : [];
+    if(pl.length){
+      host.appendChild(el('<div class="muted" style="font-size:12.5px">Laut Kalender geplant – antippen übernimmt:</div>'));
+      var cp=el('<div class="chips"></div>');
+      pl.forEach(function(e){
+        var b=el('<button class="chip" type="button" aria-pressed="'+(planungId===e.id)+'">📅 '+esc(planTitel(e))+" · "+esc(planZeit(e))+"</button>");
+        b.onclick=function(){
+          var x=zeitAusPlanung(e, F("datum").value); planungId=e.id;
+          F("art").value=x.art; if(x.bereich && F("bereich").querySelector('option[value="'+x.bereich+'"]')) F("bereich").value=x.bereich;
+          F("taetigkeit").value=x.taetigkeit; if(x.standort_id) F("standort_id").value=x.standort_id; if(x.projekt_id && F("projekt_id").querySelector('option[value="'+x.projekt_id+'"]')) F("projekt_id").value=x.projekt_id;
+          if(x.beginn && !F("beginn").value) F("beginn").value=x.beginn; if(x.ende && !F("ende").value) F("ende").value=x.ende;
+          if(x.minuten && !F("beginn").value) F("dauer").value=stundenText(x.minuten).replace(" h","");
+          cp.querySelectorAll(".chip").forEach(function(y){ y.setAttribute("aria-pressed", String(y===b)); });
+          rechnen();
+        };
+        cp.appendChild(b);
+      });
+      host.appendChild(cp);
+    }
     var l=zeitVorschlaege(F("datum").value); if(!l.length) return;
     host.appendChild(el('<div class="muted" style="font-size:12.5px">Laut deinen Protokollen an diesem Tag – antippen übernimmt:</div>'));
     var ch=el('<div class="chips"></div>');
@@ -22770,6 +23589,7 @@ function zeitEditor(z, vorgabe){
         taetigkeit:F("taetigkeit").value.trim()||null, standort_id:F("standort_id").value||null, projekt_id:F("projekt_id").value||null,
         notiz:F("notiz").value.trim()||null, geaendert:new Date().toISOString(),
         bereich:F("art").value==="arbeit" ? ((F("bereich").value==="sonstiges" && F("bereichfrei").value.trim()) ? bereichNeu(F("bereichfrei").value) : (F("bereich").value||null)) : null};
+      if(planungId) zeile.planung_id=planungId;
       /* Ruhepause (§ 11 AZG): über 6 Stunden mindestens 30 Minuten – fehlt sie, wird sie ergänzt */
       var pauseErgaenzt=0;
       if(ARBEITSZEIT.autoPause && zeile.art==="arbeit" && beginn && ende && zeile.minuten>360 && zeile.pause_min<30){
@@ -23607,6 +24427,7 @@ function render(){
   setTimeout(projekteNachladen, 0);
   setTimeout(stoerungenOhneVerknuepfungAbgleichen, 0);   /* Störung mit vorhandenem Protokoll (gleiche Auftragsnummer) erledigen */
   setTimeout(function(){ stempelNachladen(false).then(stempelReiterZeichen); }, 0);
+  setTimeout(function(){ planungNachladen(); kalenderReiterZeichen(); }, 0);
   /* Kopfzeile nachziehen – Märkte können angelegt oder stillgelegt worden sein */
   wunschLinkNeu();
   var standEl=document.getElementById("stand");
@@ -23650,9 +24471,10 @@ function render(){
     ab.querySelector("button").onclick=function(){ S.view="protokoll"; render(); window.scrollTo({top:0}); };
     host.appendChild(ab);
   }
-  if(["protokoll","daten","verlauf","verwaltung","pruefen","stunden","projekte","kunden","belege"].indexOf(S.view)<0) host.appendChild(filterBar());
+  if(["protokoll","daten","verlauf","verwaltung","pruefen","stunden","projekte","kunden","belege","kalender"].indexOf(S.view)<0) host.appendChild(filterBar());
   if(S.view==="faellig") sec.appendChild(viewFaellig());
   else if(S.view==="stunden") sec.appendChild(viewStunden());
+  else if(S.view==="kalender") sec.appendChild(viewKalender());
   else if(S.view==="projekte") sec.appendChild(viewProjekte());
   else if(S.view==="kunden") sec.appendChild(viewKunden());
   else if(S.view==="belege") sec.appendChild(viewBelege());

@@ -934,6 +934,42 @@ In der Datenbank liegen die Angaben in der Spalte `stoerung` der Tabelle
 `protokolle`. Dafür `supabase-setup.sql` und danach `tools/rollen.sql` einmal
 erneut ausführen.
 
+## Kalender und Aufgaben
+
+Seit 01.10.2026 plant man alles im Reiter **Kalender** („Ich will alles hier
+drinnen planen können“):
+
+- **Termine:** Wartung, Störung, Baustelle/Projekt, Büro, Werkstatt,
+  Besprechung, Urlaub, Krankenstand, Berufsschule/Kurs, privat und Sonstiges.
+  Jeder Termin hat eine oder mehrere Personen, ein Datum (auch mehrtägig) und
+  von–bis oder „ganztägig“. Wer eingetragen wird, bekommt eine Nachricht mit
+  Push. Ein Termin lässt sich mit „📅 Handy“ in den Kalender am Handy übernehmen.
+- **Privat:** Die anderen sehen nur „Abwesend“ und die Zeit. Titel und
+  Details stehen in einer eigenen Tabelle, die nur die Person selbst lesen
+  kann. Die Datenbank erzwingt das.
+- **Urlaub:** Wer nicht Inhaber ist, beantragt Urlaub. Der Inhaber sieht die
+  Anträge oben im Kalender und genehmigt oder lehnt ab. Ändert sich ein
+  genehmigter Zeitraum, ist der Urlaub wieder beantragt.
+- **Aufgaben (ToDo):** Zuständige, Details, „fällig am“ und ein Bezug
+  (Projekt mit Schritt, Markt, Störung). Gruppiert nach überfällig, heute,
+  diese Woche, später und ohne Datum. Erledigt wird mit einem Tipp. Im Projekt
+  hat jeder Schritt seine Aufgaben („+ Aufgabe bei …“).
+- **Was schon anderswo geplant ist,** steht mit im Kalender: Störungen mit
+  Einsatztag (geplant wird weiterhin in der Störung), Projekttermine und
+  erledigte Einsätze (grau).
+- **Wartungen planen:** Unter dem Kalender stehen die Märkte mit fälligen
+  Wartungen im Monat, jeweils mit „einplanen“. Dasselbe geht beim Markt mit
+  „Wartung einplanen“.
+- **Stunden:** Geplante Termine stehen im Reiter Stunden am jeweiligen Tag.
+  „erfassen“ macht daraus die Arbeitszeit und verknüpft sie mit dem Termin.
+  Mit 📅 plant man die eigene Arbeitszeit im Voraus.
+- **Fällig:** Oben steht „Heute für dich“ mit den Terminen von heute und den
+  überfälligen Aufgaben. Am Reiter steht die Zahl der fälligen Aufgaben.
+
+**Einmalig nötig:** `tools/planung.sql` im SQL Editor ausführen. Das legt die
+Tabellen `planung` und `planung_privat` an, dazu die Regeln und
+`arbeitszeiten.planung_id`.
+
 ## Archiv auf der Synology
 
 > Vorbereitet, aber noch nicht eingerichtet: Auf der Synology fehlen noch die
