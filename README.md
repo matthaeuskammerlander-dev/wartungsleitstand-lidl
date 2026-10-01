@@ -960,7 +960,7 @@ und die Fassung.
 5. Wird ein Protokoll gelöscht, wandert sein PDF nach `_geloescht/`. Wird es
    wiederhergestellt, kommt das PDF zurück.
 
-Das Skript meldet sich mit einem eigenen Konto an (`kammer.m@icloud.com`). Die
+Das Skript meldet sich mit einem eigenen Konto an (dem Archivkonto). Die
 Synology muss dafür nicht aus dem Internet erreichbar sein, denn sie holt die
 Dateien selbst ab. Das Skript schreibt nur Dateien, die es selbst angelegt
 hat. Andere Dateien im Ordner fasst es nicht an.
@@ -975,7 +975,7 @@ hat. Andere Dateien im Ordner fasst es nicht an.
    Danach `tools/rollen.sql` erneut ausführen – `supabase-setup.sql` setzt die
    Zugriffsregeln auf den Stand ohne Rollen zurück (Kunde, Präsentation, Zugangsdaten).
 2. **Konto:** In Supabase unter Authentication → Users muss
-   `kammer.m@icloud.com` stehen, mit „Auto Confirm User“.
+   (E-Mail des Archivkontos) stehen, mit „Auto Confirm User“.
 3. **Skriptordner auf der Synology:** Legen Sie einen Ordner an, den nur
    Administratoren sehen, zum Beispiel `/volume1/homes/<admin>/ukt-archiv`.
    Nehmen Sie **nicht** den Ukt-Ordner, denn in die Einstellungen kommt das
@@ -999,11 +999,40 @@ hat. Andere Dateien im Ordner fasst es nicht an.
    was das Skript tun würde. Es schreibt dabei nichts. Löschen Sie die
    Testaufgabe danach wieder.
 
+### Baustellen (Projekte) auf der Synology
+
+Die endgültige Ablage ist die Synology – die App ist nur Zwischenlösung und
+Organisation für unterwegs. Seit 01.10.2026 holt dasselbe Skript auch die
+Projekte ab, je Projekt ein Ordner nach Jahr und Kunde:
+
+```
+2026/Kunden/Lidl/Baustellen/123-Musterort_P-2026-001/
+    Angebot/  Rechnung/  Plaene/  Fotos/  Unterlagen/  Lieferscheine/  Protokolle/
+    Projekt_P-2026-001.html   Mappe zum Lesen und Drucken
+    Projekt_P-2026-001.json   dasselbe maschinenlesbar
+```
+
+Die Mappe enthält Angaben je Schritt, Beteiligte, Termine, Bestellungen,
+Baustellenbuch, Anlagen, Dateien, Tagebuch und – nur mit der Rolle „archiv“ –
+die Angebote und Rechnungen mit Beträgen. Neue Dateien werden dazugeholt,
+die Mappe wird bei jeder Änderung neu geschrieben. Den Ordnernamen legt
+`unterordner_projekt` in `ukt_archiv.json` fest.
+
+**Einmalig dazu:**
+
+1. `tools/archiv-rolle.sql` im SQL Editor ausführen.
+2. Den letzten (auskommentierten) Befehl dort mit der E-Mail des Archivkontos
+   ausführen. Das Archivkonto liest dann zusätzlich Angebote, Rechnungen und
+   die Büro-Dateien – und darf in der Datenbank **nichts mehr schreiben**.
+3. Die neue `ukt_archiv.py` auf die Synology kopieren (die alte ersetzen) und
+   in `ukt_archiv.json` die Zeile `unterordner_projekt` aus der Vorlage ergänzen.
+4. Einmal mit `--pruefen` laufen lassen und das Ergebnis ansehen.
+
 Jeder Lauf schreibt ins Protokoll `ukt_archiv.log` im Skriptordner. Ein
 Beispiel:
 
 ```
-angemeldet als kammer.m@icloud.com
+angemeldet als <E-Mail des Archivkontos>
 37 Protokolle, 37 PDFs in der Datenbank
 neu: 2026/Lidl/Wartungen/2026-09-21_Seekirchen_Darko.pdf
 fertig: 1 neu, 0 erneuert, 0 nach _geloescht, 0 noch ohne PDF

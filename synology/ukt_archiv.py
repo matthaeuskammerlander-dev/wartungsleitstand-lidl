@@ -12,6 +12,14 @@ mit einem eigenen Konto an und legt neue und korrigierte PDFs ab unter
 Protokolle weiterer Kunden (nicht Lidl) kommen nach <basis>/<jahr>/Kunden/<Kunde>/
 (änderbar mit "unterordner_kunde" in den Einstellungen).
 
+Baustellen (Projekte) bekommen je einen Ordner mit Angebot, Rechnung, Plänen,
+Fotos, Unterlagen und einer Projektmappe (HTML + JSON), nach Jahr und Kunde:
+
+    <basis>/<jahr>/Kunden/Lidl/Baustellen/123-Musterort_P-2026-001/
+
+(Einstellung "unterordner_projekt"; Angebote/Rechnungen nur mit Rolle "archiv",
+siehe tools/archiv-rolle.sql).
+
 Gelöschte Protokolle wandern in den Unterordner "_geloescht". Das Skript
 schreibt nur in diese Ordner und fasst sonst nichts an.
 
@@ -132,7 +140,10 @@ class Supabase:
             start += 1000
 
     def pdf(self, pfad):
-        return anfrage("GET", self.url + "/storage/v1/object/berichte/" +
+        return self.datei("berichte", pfad)
+
+    def datei(self, eimer, pfad):
+        return anfrage("GET", self.url + "/storage/v1/object/" + eimer + "/" +
                        urllib.parse.quote(pfad), self.kopf(), roh=True)
 
 
@@ -281,6 +292,258 @@ def abgleich(k, sb, stand):
         % (neu, erneuert, verschoben, ohne_pdf))
 
 
+# ---------------------------------------------------------------- Baustellen (Projekte)
+#
+# Seit 01.10.2026: jedes Projekt bekommt einen eigenen Ordner, nach Jahr und
+# Kunde (Einstellung „unterordner_projekt“):
+#
+#     <basis>/2026/Kunden/Lidl/Baustellen/123-Musterort_P-2026-001/
+#         Angebot/  Rechnung/  Plaene/  Fotos/  Unterlagen/  Lieferscheine/  Protokolle/
+#         Projekt_P-2026-001.html   (Mappe: Angaben, Beteiligte, Termine,
+#                                    Bestellungen, Baustellenbuch, Tagebuch, Belege)
+#         Projekt_P-2026-001.json   (dasselbe maschinenlesbar)
+#
+# Die App ist nur Zwischenlösung und Organisation für unterwegs – die
+# endgültige Ablage ist hier. Angebote/Rechnungen und ihre Positionen liest
+# nur ein Konto mit der Rolle „archiv“ (tools/archiv-rolle.sql); sonst fehlen
+# sie in der Mappe, alles andere kommt trotzdem.
+
+PROJEKT_UNTERORDNER = {"angebot": "Angebot", "rechnung": "Rechnung", "plan": "Plaene", "foto": "Fotos",
+                       "dokument": "Unterlagen", "lieferschein": "Lieferscheine", "protokoll": "Protokolle"}
+PROJEKT_SCHRITTE = [("anfrage", "Anfrage"), ("begehung", "Bestand / Begehung"), ("konzept", "Konzept"),
+                    ("angebot", "Angebot"), ("auftrag", "Auftrag"), ("vorbereitung", "Vorbereitung"),
+                    ("baustelle", "Baustelle"), ("inbetriebnahme", "Inbetriebnahme"),
+                    ("abgeschlossen", "Dokumentation"), ("abgerechnet", "Abgerechnet"), ("verloren", "Nicht beauftragt")]
+PROJEKT_ANGABEN = [("anfrageDatum", "Anfrage vom"), ("anfrageVon", "Angefragt von"), ("ansprechpartner", "Ansprechpartner"),
+                   ("telefon", "Telefon"), ("beschreibung", "Was wird gebraucht?"), ("begehungDatum", "Begehung am"),
+                   ("bestand", "Bestand"), ("vorgaben", "Bauliche Vorgaben"), ("konzeptDatum", "Konzept an den Planer am"),
+                   ("konzept", "Konzept"), ("angebotNr", "Angebotsnummer"), ("angebotDatum", "Angebot vom"),
+                   ("gueltigBis", "gültig bis"), ("auftragNr", "Bestellung des Kunden"), ("auftragDatum", "Auftrag vom"),
+                   ("auftragZusatz", "Weitere Bestellungen"), ("beginn", "Montage ab"), ("ende", "Montage bis"),
+                   ("monteure", "Monteure"), ("baustelleBeginn", "Baustelle begonnen"), ("baustelleEnde", "Baustelle fertig"),
+                   ("ibDatum", "Inbetriebnahme am"), ("uebergabe", "Übergabe an"), ("abschlussDatum", "Dokumentation vollständig am"),
+                   ("rechnungNr", "Rechnungsnummer(n)"), ("rechnungDatum", "Rechnung vom")]
+BAUBUCH_ARTEN = {"arbeit": "Arbeit / Fortschritt", "foto": "Fotos", "plan": "Planänderung", "zusatz": "Zusatzleistung / zusätzliche Anlage",
+                 "kran": "Kran / Hebegerät", "werkzeug": "Spezialwerkzeug", "material": "Material verbraucht",
+                 "geholt": "Material geholt", "bestand": "Umbau / Demontage Bestand", "kaeltemittel": "Kältemittel",
+                 "wochenende": "Samstag / Sonntag / Nacht", "erschwernis": "Erschwernis", "sonst": "Sonstiges"}
+
+
+def sauber_datei(name):
+    """Dateiname mit Endung: die Endung bleibt, der Rest wie sauber()"""
+    stamm, endung = os.path.splitext(str(name or "datei"))
+    endung = re.sub(r"[^A-Za-z0-9.]", "", endung)[:10]
+    return (sauber(stamm)[:80] or "datei") + endung.lower()
+
+
+def freie_datei(ordner, name, eigene):
+    """wie freier_name, für jede Endung: name_2.pdf, name_3.pdf …"""
+    stamm, endung = os.path.splitext(name)
+    kandidat, n = name, 1
+    while True:
+        voll = os.path.join(ordner, kandidat)
+        if not os.path.exists(voll) or voll in eigene:
+            return voll
+        n += 1
+        kandidat = "%s_%d%s" % (stamm, n, endung)
+
+
+def datum_de(t):
+    m = re.match(r"^(\d{4})-(\d\d)-(\d\d)", str(t or ""))
+    return "%s.%s.%s" % (m.group(3), m.group(2), m.group(1)) if m else str(t or "")
+
+
+def geld(n):
+    try:
+        s = "{:,.2f}".format(float(n or 0))
+    except (TypeError, ValueError):
+        return ""
+    return s.replace(",", " ").replace(".", ",").replace(" ", ".")
+
+
+def stammdaten_fuer_projekte(sb):
+    """Kundennamen, Märkte (Filiale, Ort) und Anlagennamen für die Projektordner"""
+    try:
+        zeilen = sb.tabelle("stammdaten", "id,typ,ziel,felder", "id.asc", {"typ": "in.(standort,kunde,position)"})
+    except RuntimeError as e:
+        log("Stammdaten nicht lesbar (%s) – Projektordner nur mit Titel" % e)
+        zeilen = []
+    kunden = {"lidl": "Lidl"}
+    standorte, anlagen = {}, {}
+    for z in zeilen:
+        f = z.get("felder") or {}
+        if z.get("typ") == "kunde":
+            kunden[z["ziel"]] = f.get("name") or "Kunde"
+        elif z.get("typ") == "standort":
+            standorte[z["ziel"]] = f
+        elif z.get("typ") == "position" and f.get("anlagentyp"):
+            anlagen[z["ziel"]] = f
+    return kunden, standorte, anlagen
+
+
+def projekt_ordner(k, p, kunden, standorte):
+    jahr = str(p.get("erstellt") or "")[:4]
+    if not re.match(r"^\d{4}$", jahr):
+        jahr = "ohne-Datum"
+    kunde = kunden.get(p.get("kunde_id") or "lidl") or "Kunde"
+    st = standorte.get(p.get("standort_id")) or {}
+    markt = " ".join(str(x) for x in (st.get("filiale"), st.get("ort")) if x)
+    name = sauber(markt or p.get("titel") or "Projekt")[:50] + "_" + sauber(p.get("nummer") or p.get("id", "")[:8])
+    muster = k.get("unterordner_projekt", "{jahr}/Kunden/{kunde}/Baustellen/{projekt}")
+    return os.path.join(k["basis"], muster.format(jahr=jahr, kunde=sauber(kunde), projekt=name))
+
+
+def html_text(t):
+    t = str(t if t is not None else "")
+    return (t.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace('"', "&quot;")
+             .replace("\n", "<br>"))
+
+
+def projekt_mappe(p, belege, kunden, standorte, anlagen):
+    """HTML-Mappe eines Projekts – zum Lesen und Drucken auf der Synology"""
+    d = p.get("daten") or {}
+    st = standorte.get(p.get("standort_id")) or {}
+    status = dict(PROJEKT_SCHRITTE).get(p.get("status"), p.get("status") or "")
+    h = ['<!doctype html><html lang="de"><head><meta charset="utf-8"><title>%s</title>' % html_text(p.get("nummer")),
+         "<style>body{font:13px/1.45 Arial,sans-serif;max-width:900px;margin:24px auto;color:#111}"
+         "h1{font-size:20px;margin:0}h2{font-size:15px;margin:22px 0 6px;border-bottom:2px solid #0c8a8a}"
+         "table{border-collapse:collapse;width:100%}td,th{border:1px solid #ccc;padding:3px 6px;vertical-align:top;text-align:left}"
+         "th{background:#eef2f4}.r{text-align:right}.m{color:#666}</style></head><body>",
+         "<h1>%s · %s</h1>" % (html_text(p.get("nummer")), html_text(p.get("titel"))),
+         '<p class="m">Kunde: %s · Standort: %s · Stand: <strong>%s</strong> · aus dem Leitstand, %s</p>' % (
+             html_text(kunden.get(p.get("kunde_id") or "lidl", "")),
+             html_text(" ".join(str(x) for x in (st.get("filiale") and "Filiale " + str(st.get("filiale")), st.get("adresse")) if x) or "–"),
+             html_text(status), time.strftime("%d.%m.%Y %H:%M"))]
+    zeilen = [(l, d.get(s)) for s, l in PROJEKT_ANGABEN if d.get(s)]
+    if zeilen:
+        h.append("<h2>Angaben</h2><table>" + "".join(
+            "<tr><th style='width:30%%'>%s</th><td>%s</td></tr>" % (html_text(l), html_text(datum_de(w) if re.match(r"^\d{4}-\d\d-\d\d$", str(w)) else w))
+            for l, w in zeilen) + "</table>")
+
+    def liste(titel, eintraege, spalten):
+        if not eintraege:
+            return
+        h.append("<h2>%s</h2><table><tr>%s</tr>" % (html_text(titel), "".join("<th>%s</th>" % html_text(s[1]) for s in spalten)))
+        for e in eintraege:
+            h.append("<tr>%s</tr>" % "".join("<td>%s</td>" % html_text(
+                ("ja" if e.get(s[0]) is True else datum_de(e.get(s[0])) if s[0] in ("datum", "bestellt", "liefertermin") else e.get(s[0]) or ""))
+                for s in spalten))
+        h.append("</table>")
+
+    liste("Beteiligte", d.get("beteiligte"), [("rolle", "Rolle"), ("firma", "Firma"), ("name", "Name"), ("telefon", "Telefon"), ("mail", "E-Mail"), ("notiz", "Notiz")])
+    liste("Termine", sorted(d.get("termine") or [], key=lambda e: str(e.get("datum") or "9")),
+          [("datum", "Datum"), ("zeit", "Zeit"), ("was", "Was"), ("wer", "Wer"), ("erledigt", "erledigt")])
+    liste("Bestellungen", d.get("bestellungen"), [("was", "Was"), ("menge", "Menge"), ("lieferant", "Lieferant"),
+                                                  ("bestellt", "bestellt"), ("liefertermin", "Liefertermin"), ("geliefert", "geliefert"), ("notiz", "Notiz")])
+    bb = sorted(d.get("baubuch") or [], key=lambda e: (str(e.get("datum") or ""), str(e.get("zeit") or "")))
+    if bb:
+        h.append("<h2>Baustellenbuch</h2><table><tr><th>Datum</th><th>Art</th><th>Beschreibung</th><th class='r'>Menge</th><th>von</th></tr>")
+        for e in bb:
+            menge = "" if e.get("menge") is None else (str(e.get("menge")).replace(".", ",") + " " + str(e.get("eh") or ""))
+            h.append("<tr><td>%s %s</td><td>%s</td><td>%s</td><td class='r'>%s</td><td>%s</td></tr>" % (
+                datum_de(e.get("datum")), html_text(e.get("zeit") or ""), html_text(BAUBUCH_ARTEN.get(e.get("art"), e.get("art"))),
+                html_text(e.get("text")), html_text(menge), html_text(e.get("von") or "")))
+        h.append("</table>")
+    an = [anlagen.get(i) for i in (d.get("anlagen") or []) if anlagen.get(i)]
+    if an:
+        h.append("<h2>Anlagen aus diesem Projekt</h2><table><tr><th>Anlage</th><th>Gerät</th><th>Seriennummer</th><th>Kältemittel</th><th>Inbetriebnahme</th></tr>")
+        for a in an:
+            h.append("<tr><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td>%s</td></tr>" % (
+                html_text(a.get("anlagentyp")), html_text(" ".join(str(x) for x in (a.get("hersteller"), a.get("modell")) if x)),
+                html_text(a.get("seriennummer") or ""), html_text(" ".join(str(x) for x in (a.get("kaeltemittelArt"), a.get("kaeltemittelKg") and str(a.get("kaeltemittelKg")).replace(".", ",") + " kg") if x)),
+                datum_de(a.get("inbetriebnahme"))))
+        h.append("</table>")
+    if belege:
+        h.append("<h2>Angebote und Rechnungen</h2><table><tr><th>Beleg</th><th>Datum</th><th>Herkunft</th><th class='r'>netto €</th></tr>")
+        for b in belege:
+            h.append("<tr><td>%s %s</td><td>%s</td><td>%s</td><td class='r'>%s</td></tr>" % (
+                "Rechnung" if b.get("art") == "rechnung" else "Angebot", html_text(b.get("nummer")), datum_de(b.get("datum")),
+                "KPlus" if b.get("extern") else ("TEST (App)" if b.get("test") else "App"), geld((b.get("summen") or {}).get("netto"))))
+        h.append("</table>")
+    dat = d.get("dateien") or []
+    if dat:
+        h.append("<h2>Dateien</h2><ul>" + "".join("<li>%s <span class='m'>(%s, %s)</span></li>" % (
+            html_text(x.get("name")), html_text(PROJEKT_UNTERORDNER.get(x.get("art"), x.get("art"))), datum_de(str(x.get("zeit") or "")[:10]))
+            for x in dat) + "</ul>")
+    vl = p.get("verlauf") or []
+    if vl:
+        h.append("<h2>Tagebuch</h2><table>" + "".join("<tr><td style='width:18%%'>%s</td><td style='width:18%%'>%s</td><td>%s</td></tr>" % (
+            datum_de(str(e.get("zeit") or "")[:10]), html_text(e.get("wer") or ""), html_text(e.get("text"))) for e in vl) + "</table>")
+    h.append("</body></html>")
+    return "\n".join(h)
+
+
+def projekte_abgleich(k, sb, stand):
+    try:
+        projekte = sb.tabelle("projekte", "id,nummer,titel,kunde_id,standort_id,status,daten,verlauf,erstellt,geaendert", "erstellt.asc")
+    except RuntimeError as e:
+        log("Projekte nicht lesbar (%s) – übersprungen" % e)
+        return
+    try:
+        belege_alle = sb.tabelle("belege", "id,projekt_id,art,nummer,test,extern,datum,status,bezug_id,kopf,positionen,summen", "datum.asc")
+    except RuntimeError as e:
+        log("Angebote/Rechnungen nicht lesbar – dafür braucht das Archivkonto die Rolle „archiv“ (%s)" % str(e)[:80])
+        belege_alle = []
+    kunden, standorte, anlagen = stammdaten_fuer_projekte(sb)
+    neu_dateien = mappen = 0
+    for p in projekte:
+        pid = p.get("id")
+        if not pid:
+            continue
+        schl = "projekt:" + pid
+        s = stand.get(schl) or {}
+        ordner = projekt_ordner(k, p, kunden, standorte)
+        # Ordner hat sich geändert (Titel, Markt, Kunde): einmal umbenennen
+        alt = s.get("ordner")
+        if alt and alt != ordner and os.path.isdir(alt) and not os.path.exists(ordner):
+            log("Projektordner umbenannt: %s -> %s" % (os.path.relpath(alt, k["basis"]), os.path.relpath(ordner, k["basis"])))
+            if not PRUEFEN:
+                os.makedirs(os.path.dirname(ordner), exist_ok=True)
+                os.replace(alt, ordner)
+                s["dateien"] = {pf: v.replace(alt, ordner, 1) for pf, v in (s.get("dateien") or {}).items()}
+        s["ordner"] = ordner
+        dateien = s.setdefault("dateien", {})
+        for x in (p.get("daten") or {}).get("dateien") or []:
+            pfad = x.get("pfad")
+            if not pfad or (dateien.get(pfad) and os.path.exists(dateien[pfad])):
+                continue
+            unter = os.path.join(ordner, PROJEKT_UNTERORDNER.get(x.get("art"), "Unterlagen"))
+            # nie eine vorhandene Datei überschreiben – gleicher Name bekommt _2, _3 …
+            ziel = freie_datei(unter, sauber_datei(x.get("name")), set())
+            log("Projekt %s: %s" % (p.get("nummer"), os.path.relpath(ziel, k["basis"])))
+            if not PRUEFEN:
+                try:
+                    schreibe(ziel, sb.datei("projektdateien", pfad))
+                except RuntimeError as e:
+                    # Büro-Datei ohne Archivrolle: nicht abbrechen, beim nächsten Lauf wieder versuchen
+                    log("  nicht geholt (%s)" % str(e)[:120])
+                    continue
+            dateien[pfad] = ziel
+            neu_dateien += 1
+        # Mappe (HTML) und Daten (JSON) neu, wenn sich das Projekt oder seine Belege geändert haben
+        belege = [b for b in belege_alle if b.get("projekt_id") == pid]
+        kennung = str(p.get("geaendert")) + "|" + json.dumps(belege, sort_keys=True, ensure_ascii=False)
+        kennung = str(len(kennung)) + ":" + str(hash_text(kennung))
+        if s.get("kennung") != kennung or not os.path.exists(os.path.join(ordner, "Projekt_%s.html" % sauber(p.get("nummer") or pid[:8]))):
+            name = "Projekt_%s" % sauber(p.get("nummer") or pid[:8])
+            log("Projekt %s: Mappe %s" % (p.get("nummer"), "neu" if not s.get("kennung") else "aktualisiert"))
+            if not PRUEFEN:
+                schreibe(os.path.join(ordner, name + ".html"),
+                         projekt_mappe(p, belege, kunden, standorte, anlagen).encode("utf-8"))
+                schreibe(os.path.join(ordner, name + ".json"),
+                         json.dumps({"projekt": p, "belege": belege}, ensure_ascii=False, indent=1).encode("utf-8"))
+            s["kennung"] = kennung
+            mappen += 1
+        stand[schl] = s
+    log("Projekte: %d, %d Dateien geholt, %d Mappen geschrieben" % (len(projekte), neu_dateien, mappen))
+
+
+def hash_text(t):
+    """stabile Prüfsumme (hash() ist je Lauf zufällig)"""
+    import hashlib
+    return hashlib.sha1(t.encode("utf-8")).hexdigest()
+
+
 def sperren():
     """verhindert, dass sich zwei Läufe überholen"""
     try:
@@ -309,6 +572,11 @@ def main():
         log("angemeldet als " + k["email"])
         try:
             abgleich(k, sb, stand)
+            # Baustellen (Projekte): eigener Schritt – ein Fehler dort hält die Protokolle nicht auf
+            try:
+                projekte_abgleich(k, sb, stand)
+            except Exception as e:
+                log("FEHLER bei den Projekten: %s" % e)
         finally:
             speichere_stand(stand)
     finally:
