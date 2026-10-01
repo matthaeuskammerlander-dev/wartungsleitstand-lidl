@@ -77,6 +77,9 @@ Kammerlander Umwelt- und Klimatechnik (UKT) – oft kurz, vom Handy, im Feld.
 - Nach dem Speichern oben „✓ … gespeichert“ (`S.gespeichert`,
   `gespeichertKarte`); nach einer Störung mit fälligen Wartungen am Markt
   „Wartung gleich mitmachen“ (`faelligeWartungen`).
+- Eigene Tätigkeitsbereiche (`bereichListe`, `bereichNeu`, tools/bereiche-eigen.sql):
+  unter „Sonstiges“ eintippen, danach für alle in der Auswahl (Datenbank-
+  Funktion `bereiche_eigene`); Lohn: normale Arbeit (nicht Montage, nicht Fahrt).
 - Stempeluhr: von Hand eingetragene Zeit, die in die Stempelzeit fällt, zählt
   für die 10-/12-Stunden-Hinweise nicht dazu (wird beim Ausstempeln abgeglichen).
 - Termine vor Ort prüfen (`termineOffen`, `termineSchritt`): im geführten

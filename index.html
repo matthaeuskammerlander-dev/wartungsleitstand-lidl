@@ -21192,6 +21192,7 @@ function zeitenLaden(){
   var konto=Store.benutzer.email, uid=Store.benutzer.id;
   if(konto!==zeitenKonto){ zeitenKonto=konto; ZEITEN=[]; zeitenGeladen=false; }
   zeitenLaedt=true;
+  bereicheEigenLaden();   /* eigene Bereiche für die Auswahl (Zeit-Editor, Stempeluhr) */
   return Store.sb.from("arbeitszeiten").select("*").eq("user_id", uid).gte("datum", plusMonate(isoLokal(new Date()),-14)).order("datum").limit(3000)
     .then(function(r){
       zeitenLaedt=false;
@@ -21314,8 +21315,9 @@ function zeitEditor(z, vorgabe){
       '<label class="fl"><span class="req">Datum</span><input type="date" data-f="datum" value="'+esc(a.datum)+'" required></label>'+
       '<label class="fl"><span>Art</span><select data-f="art">'+ZEIT_ARTEN.map(function(x){ return '<option value="'+x[0]+'"'+(a.art===x[0]?" selected":"")+">"+esc(x[1])+"</option>"; }).join("")+"</select></label>"+
       /* Bereich nur bei Arbeit (Fahrt, Baustelle …) */
-      '<label class="fl" data-bereichzeile><span>Bereich</span><select data-f="bereich"><option value="">–</option>'+BEREICHE.map(function(x){
-        return '<option value="'+x[0]+'"'+(a.bereich===x[0]?" selected":"")+">"+esc(x[1])+"</option>"; }).join("")+"</select></label>"+
+      '<label class="fl" data-bereichzeile><span>Bereich</span><select data-f="bereich"><option value="">–</option>'+bereichListe(a.bereich).map(function(x){
+        return '<option value="'+esc(x[0])+'"'+(a.bereich===x[0]?" selected":"")+">"+esc(x[1])+"</option>"; }).join("")+"</select></label>"+
+      '<label class="fl" data-bereichfrei hidden><span>Neuer Bereich</span><input type="text" data-f="bereichfrei" maxlength="40" placeholder="z. B. Datenbank, Schulung"></label>'+
     "</div>"+
     '<div class="grid" style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px" data-vonbis>'+
       '<label class="fl"><span>von</span><input type="time" data-f="beginn" value="'+esc(a.beginn||"")+'"></label>'+
@@ -21342,6 +21344,8 @@ function zeitEditor(z, vorgabe){
   var ergebnis=form.querySelector("[data-ergebnis]");
   var rechnen=function(){
     form.querySelector("[data-bereichzeile]").hidden = F("art").value!=="arbeit";
+    /* „Sonstiges“: neuen Bereich eintippen – er steht danach in der Auswahl (Büro 01.10.2026) */
+    form.querySelector("[data-bereichfrei]").hidden = F("art").value!=="arbeit" || F("bereich").value!=="sonstiges";
     var min=zeitDauer(F("beginn").value, F("ende").value, F("pause_min").value, F("dauer").value);
     var vb=F("beginn").value && F("ende").value;
     form.querySelector("[data-dauerzeile]").style.opacity = vb ? ".5" : "1";
@@ -21405,7 +21409,7 @@ function zeitEditor(z, vorgabe){
       var zeile={datum:datum, art:F("art").value, beginn:beginn||null, ende:ende||null, pause_min:beginn?(+F("pause_min").value||0):0, minuten:min,
         taetigkeit:F("taetigkeit").value.trim()||null, standort_id:F("standort_id").value||null, projekt_id:F("projekt_id").value||null,
         notiz:F("notiz").value.trim()||null, geaendert:new Date().toISOString(),
-        bereich:F("art").value==="arbeit" ? (F("bereich").value||null) : null};
+        bereich:F("art").value==="arbeit" ? ((F("bereich").value==="sonstiges" && F("bereichfrei").value.trim()) ? bereichNeu(F("bereichfrei").value) : (F("bereich").value||null)) : null};
       /* Ruhepause (§ 11 AZG): über 6 Stunden mindestens 30 Minuten – fehlt sie, wird sie ergänzt */
       var pauseErgaenzt=0;
       if(ARBEITSZEIT.autoPause && zeile.art==="arbeit" && beginn && ende && zeile.minuten>360 && zeile.pause_min<30){
@@ -21678,17 +21682,58 @@ var STEMPEL=[], stempelGeladen=false, stempelLaedt=false, stempelKonto="", stemp
 var STEMPEL_ORT_AN=false;
 /* Tätigkeitsbereich (Büro 01.10.2026) – an Stempel und Stunden, etwa um Fahrtzeit getrennt auszuweisen */
 var BEREICHE=[["fahrt","Fahrt"],["baustelle","Montage / Baustelle"],["wartung","Wartung"],["stoerung","Störung"],["werkstatt","Werkstatt"],["buero","Büro"],["sonstiges","Sonstiges"]];
-function bereichName(b){ return (BEREICHE.filter(function(x){ return x[0]===b; })[0]||[b,""])[1]; }
-/* Bereich als Chips zum Antippen (einer gewählt oder keiner); liefert {el, wert()} */
+/* eigene Bereiche (Büro 01.10.2026): unter „Sonstiges“ eingetippt, danach in
+   der Auswahl – für alle aus der Datenbank (bereiche_eigene), dazu, was auf
+   diesem Gerät eingetippt wurde. In der Lohnverrechnung normale Arbeit. */
+var BEREICHE_EIGEN=[];
+function bereicheEigenLaden(){
+  if(demo() || !betriebAn() || !Store.sb) return Promise.resolve();
+  return Store.sb.rpc("bereiche_eigene").then(function(r){
+    if(!r.error && Array.isArray(r.data)) BEREICHE_EIGEN=r.data.map(function(x){ return x.bereich; }).filter(Boolean);
+  }, function(){});
+}
+function bereichListe(mit){
+  var fest=BEREICHE.map(function(x){ return x[0]; }), eigen=[];
+  BEREICHE_EIGEN.concat(lsGet("ukt_eigene",{}).bereich||[]).concat(mit?[mit]:[]).forEach(function(b){
+    b=String(b||"").trim(); if(b && fest.indexOf(b)<0 && eigen.indexOf(b)<0) eigen.push(b); });
+  eigen.sort(function(a,b){ return a.localeCompare(b,"de"); });
+  /* „Sonstiges“ bleibt zuletzt – dort lässt sich ein neuer Bereich eintippen */
+  return BEREICHE.filter(function(x){ return x[0]!=="sonstiges"; })
+    .concat(eigen.map(function(b){ return [b,b]; })).concat([["sonstiges","Sonstiges – neuen Bereich eintippen …"]]);
+}
+function bereichName(b){ return (BEREICHE.filter(function(x){ return x[0]===b; })[0]||[b,b])[1]; }
+/* eingetippter Bereich: gekürzt, gemerkt (auch vor dem Speichern) */
+function bereichNeu(text){
+  var t=String(text||"").trim().replace(/\s+/g," ").slice(0,40);
+  if(!t) return null;
+  var fest=BEREICHE.filter(function(x){ return x[1].toLowerCase()===t.toLowerCase() || x[0]===t.toLowerCase(); })[0];
+  if(fest) return fest[0];   /* „Werkstatt“ eingetippt = der feste Bereich */
+  merkeWert("bereich", t);
+  if(BEREICHE_EIGEN.indexOf(t)<0) BEREICHE_EIGEN.push(t);
+  return t;
+}
+/* Bereich als Chips zum Antippen (einer gewählt oder keiner); liefert {el, wert()}.
+   „Sonstiges“ klappt ein Feld für einen neuen Bereich auf. */
 function bereichWahl(vorgabe){
   var w=vorgabe||"";
+  var liste=bereichListe(w);
+  var host=el('<div class="stack" style="gap:6px"></div>');
   var box=el('<div class="chips" role="group" aria-label="Tätigkeitsbereich"></div>');
-  BEREICHE.forEach(function(x){
-    var c=el('<button class="chip" type="button" data-b="'+x[0]+'" aria-pressed="'+(w===x[0])+'">'+esc(x[1])+"</button>");
-    c.onclick=function(){ w = w===x[0] ? "" : x[0]; box.querySelectorAll(".chip").forEach(function(o){ o.setAttribute("aria-pressed", String(o.dataset.b===w)); }); };
+  var frei=el('<input type="text" maxlength="40" placeholder="Neuer Bereich, z. B. Schulung" hidden>');
+  liste.forEach(function(x){
+    var c=el('<button class="chip" type="button" aria-pressed="'+(w===x[0])+'">'+esc(x[0]==="sonstiges"?"Sonstiges …":x[1])+"</button>");
+    c.dataset.b=x[0];
+    c.onclick=function(){
+      w = w===x[0] ? "" : x[0];
+      box.querySelectorAll(".chip").forEach(function(o){ o.setAttribute("aria-pressed", String(o.dataset.b===w)); });
+      frei.hidden = w!=="sonstiges"; if(!frei.hidden) frei.focus();
+    };
     box.appendChild(c);
   });
-  return {el:box, wert:function(){ return w||null; }};
+  host.appendChild(box); host.appendChild(frei);
+  return {el:host, wert:function(){
+    if(w==="sonstiges" && frei.value.trim()) return bereichNeu(frei.value);
+    return w||null; }};
 }
 function stempelNachladen(neu){
   if(demo()){ stempelGeladen=true; return Promise.resolve(); }
