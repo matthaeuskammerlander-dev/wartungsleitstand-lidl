@@ -136,6 +136,13 @@ Kammerlander Umwelt- und Klimatechnik (UKT) – oft kurz, vom Handy, im Feld.
   Umstempeln (art „wechsel“, tools/stempeluhr-2.sql): je Abschnitt ein Eintrag
   mit Bereich; überschneidende Einträge von Hand ersetzt nur die Funktion
   `stempeln()` (p_ersetzen), sonst bleiben beide und sind mit ⚠ markiert.
+- **Arbeitszeitgesetz und KV Metallgewerbe** (Büro 01.10.2026): Pause über 6 h
+  mind. 30 min wird ergänzt (`pause_auto`, tools/stempeluhr-4.sql), 12 h/Tag,
+  60 h/Woche, 11 h Ruhezeit als Hinweis; Soll aus `einstellungen.arbeitszeit`
+  (38,5 h, Verteilung je Wochentag) ohne österreichische Feiertage
+  (`feiertageAT`). `lohnAuswertung` ist ein Vorschlag für die Lohnverrechnung
+  (Überstunden 50/100 %, Samstag, Sonntag, Montage = Montage/Wartung/Störung,
+  Fahrt = Wegzeit, Entfernungszulage ca.) – Regeln nur auf Anweisung ändern.
 
 ## Rollen
 
