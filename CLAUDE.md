@@ -133,6 +133,9 @@ Kammerlander Umwelt- und Klimatechnik (UKT) – oft kurz, vom Handy, im Feld.
   „stempel“); nachträglich geändert = „stempel_geaendert“. Standort nur, wenn
   der Inhaber ihn eingeschaltet hat (`einstellungen`), und nur als Entfernung –
   nie Koordinaten speichern, nie den Standort verfolgen. Diese Grenzen nie lockern.
+  Umstempeln (art „wechsel“, tools/stempeluhr-2.sql): je Abschnitt ein Eintrag
+  mit Bereich; überschneidende Einträge von Hand ersetzt nur die Funktion
+  `stempeln()` (p_ersetzen), sonst bleiben beide und sind mit ⚠ markiert.
 
 ## Rollen
 
