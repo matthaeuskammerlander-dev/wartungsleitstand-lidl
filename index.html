@@ -8169,6 +8169,8 @@ function zuZeile(doc,uid){
   /* ebenso das Kältemittel: ohne Angabe geht das Protokoll auch an eine
      Datenbank, in der die Spalte noch fehlt (tools/update-2026-09-26.sql) */
   if(doc.kaeltemittel) zeile.kaeltemittel=doc.kaeltemittel;
+  /* im Auftrag erfasst (tools/protokoll-im-auftrag.sql) – nur mitschicken, wenn es so ist */
+  if(doc.erfasstVon) zeile.erfasst_von=doc.erfasstVon;
   return zeile;
 }
 /* Der Rapportbericht eines Protokolls. Anfangs lag er nur bei Störungen in
@@ -8189,7 +8191,8 @@ function ausZeile(r){
     bemerkungen:r.bemerkungen, filiale:r.filiale, fotos:r.fotos||[],
     anlagen:r.anlagen||[], ergebnis:r.ergebnis||[], unterschrift:r.unterschrift,
     sofortmassnahme:r.sofortmassnahme, auftraggebervertreter:r.auftraggebervertreter,
-    stoerung:r.stoerung||null, mitarbeiter:r.mitarbeiter||[], rapport:r.rapport||null, kaeltemittel:r.kaeltemittel||null };
+    stoerung:r.stoerung||null, mitarbeiter:r.mitarbeiter||[], rapport:r.rapport||null, kaeltemittel:r.kaeltemittel||null,
+    erfasstVon:r.erfasst_von||null };
 }
 /* Alle Spalten außer der Unterschrift. Die ist ein PNG als Text, rund 25 KB
    je Protokoll – bei tausend Protokollen wären das 25 MB bei jedem Start der
@@ -8201,7 +8204,7 @@ var PROTOKOLL_SPALTEN=["id","client_id","erstellt","erstellt_von","standort_id",
   "firma","techniker","kontakt","subunternehmen","zert_unternehmen","zert_person","anlagen","arbeiten",
   "arbeiten_sonstiges","maengel","betriebsbereit","sofortmassnahme","ergebnis","bemerkungen","name_techniker",
   "auftraggebervertreter","fotos","version","geaendert","korrektur_grund","geloescht","geloescht_von",
-  "loesch_grund","stoerung","mitarbeiter"].join(",");
+  "loesch_grund","stoerung","mitarbeiter","erfasst_von"].join(",");
 /* Die Spalte rapport kommt mit einer späteren Fassung von supabase-setup.sql.
    Fehlt sie noch, lädt die App ohne sie weiter, statt gar nichts zu zeigen. */
 var rapportSpalte=true;
@@ -12483,8 +12486,16 @@ function protokollAssistent(form, stoer){
     if(tfE && tfE.readOnly && tfE.value){
       inhalt.appendChild(el('<div class="as-feld"><div class="as-label">Techniker/in – verantwortlich, unterschreibt</div>'+
         '<div style="font-size:16px;font-weight:600">'+esc(tfE.value)+"</div>"+
-        '<div class="muted" style="font-size:12px">'+(S.bearbeiten?"hat das Protokoll gemacht – bleibt bei der Korrektur":"aus deinem Konto")+
+        '<div class="muted" style="font-size:12px">'+(S.bearbeiten?"hat das Protokoll gemacht – bleibt bei der Korrektur":(f("#f_fuer")&&f("#f_fuer").value?"im Auftrag – erfasst von dir":"aus deinem Konto"))+
         ". Wer noch dabei war, gehört unten zu „Weitere/r Techniker/in“.</div></div>"));
+      /* Admin/Inhaber: für jemand anderen ausfüllen – dieselbe Auswahl wie im Formular */
+      var echt=f("#f_fuer");
+      if(echt && !S.bearbeiten){
+        var kopie=echt.cloneNode(true); kopie.removeAttribute("id"); kopie.value=echt.value;
+        var fb=el('<label class="fl" style="margin-top:6px"><span>Ausgefüllt für</span></label>'); fb.appendChild(kopie);
+        kopie.onchange=function(){ echt.value=kopie.value; echt.dispatchEvent(new Event("change")); var w=inhalt.querySelector(".as-feld div[style*='font-size:16px']"); if(w) w.textContent=f("#f_tech").value; };
+        inhalt.appendChild(fb);
+      }
     } else {
       var nameFeld=textFeld("Techniker/in – verantwortlich, unterschreibt","#f_tech",false), nameEin=nameFeld.querySelector("input");
       nameEin.oninput=function(){ setz("#f_tech",nameEin.value); setz("#f_name",nameEin.value); };
@@ -13875,6 +13886,30 @@ function viewProtokoll(){
   /* verantwortlich ist das Konto: Techniker/in oben fest, der Name im Abschluss immer derselbe (Büro 01.10.2026) */
   var kontoName=kontoTechName();
   if(kontoName && !bearb){ form.querySelector("#f_tech").value=kontoName; form.querySelector("#f_tech").readOnly=true; form.querySelector("#f_tech").title="aus deinem Konto – du bist verantwortlich und schließt ab"; }
+  /* Admins und Inhaber dürfen für andere ausfüllen (Büro 02.10.2026: „Darko sollte die Möglichkeit
+     haben, für andere Techniker die Protokolle zu erstellen – z. B. für Manfred oder Matthäus“, ohne
+     Bestätigung). Techniker/in = wer gearbeitet hat; im Protokoll und PDF steht „erfasst von … im
+     Auftrag“ (Spalte erfasst_von). Techniker füllen weiter nur für sich selbst aus. */
+  if(kontoName && !bearb && (istInhaber() || Rolle.name==="admin")){
+    var fuerBox=el('<label class="fl"><span>Ausgefüllt für</span><select id="f_fuer"><option value="">'+esc(kontoName)+' (ich selbst)</option></select>'+
+      '<span class="muted" data-fuerhinweis style="font-size:12px;text-transform:none;letter-spacing:0" hidden></span></label>');
+    var tLab=form.querySelector("#f_tech").closest("label");
+    tLab.parentNode.insertBefore(fuerBox, tLab);
+    var fuerSel=fuerBox.querySelector("select");
+    chatTeamLaden().then(function(t){
+      (t||[]).filter(function(x){ return x.name && kanonName(x.name)!==kontoName && !/kunde|praesentation|archiv/.test(String(x.rolle||"")); })
+        .map(function(x){ return kanonName(x.name); }).filter(function(n, i, l){ return n && l.indexOf(n)===i; })
+        .sort(function(a,b){ return a.localeCompare(b,"de"); })
+        .forEach(function(n){ var o=document.createElement("option"); o.value=n; o.textContent=n; fuerSel.appendChild(o); });
+      if(fuerSel.dataset.wunsch){ fuerSel.value=fuerSel.dataset.wunsch; fuerSel.dispatchEvent(new Event("change")); }
+    }, function(){});
+    fuerSel.addEventListener("change", function(){
+      var n=fuerSel.value||kontoName, h=fuerBox.querySelector("[data-fuerhinweis]");
+      form.querySelector("#f_tech").value=n; form.querySelector("#f_name").value=n;
+      form.querySelector("#f_tech").dispatchEvent(new Event("change",{bubbles:true}));
+      h.hidden=!fuerSel.value; h.textContent=fuerSel.value?"Im Protokoll und PDF steht: erfasst von "+kontoName+" im Auftrag.":"";
+    });
+  }
   form.querySelector("#f_name").value=form.querySelector("#f_tech").value;
   form.querySelector("#f_name").readOnly=true; form.querySelector("#f_name").tabIndex=-1;
   form.querySelector("#f_tech").addEventListener("input",function(e){ form.querySelector("#f_name").value=e.target.value; });
@@ -14445,7 +14480,10 @@ function viewProtokoll(){
     });
     var stSel=byId[v("f_standort")];
     /* verantwortlich ist das angemeldete Konto (Büro 01.10.2026) – bei einer Korrektur bleibt, wer es gemacht hat */
-    var verantwortlich=(!bearb && kontoTechName()) || kanonName(v("f_tech")||v("f_name"));
+    var fuer=(!bearb && form.querySelector("#f_fuer") && (istInhaber() || Rolle.name==="admin")) ? kanonName(form.querySelector("#f_fuer").value) : "";
+    var verantwortlich=(!bearb && (fuer || kontoTechName())) || kanonName(v("f_tech")||v("f_name"));
+    /* im Auftrag erfasst: wer es eingetragen hat – bei einer Korrektur bleibt es stehen */
+    var erfasstVon=fuer ? kontoTechName() : ((bearb && bearb.erfasstVon) || "");
     var doc={
       standortId:v("f_standort"),
       positionIds:angehakt().concat(behalten).concat(neueAnlagen.map(function(n){ return n.id; })),
@@ -14468,7 +14506,7 @@ function viewProtokoll(){
       bemerkungen:v("f_bem"),
       kaeltemittel:kaeltemittelAusForm(form),
       /* Abschluss = derselbe Techniker wie oben – nie ein anderer Name */
-      nameTechniker:verantwortlich, auftraggebervertreter:v("f_agv"),
+      nameTechniker:verantwortlich, erfasstVon:erfasstVon||undefined, auftraggebervertreter:v("f_agv"),
       unterschrift:hasSig?cv.toDataURL("image/png"):"",
       /* die Bilddaten liegen getrennt, im Protokoll steht nur der Verweis */
       fotos:fotos.map(function(f){ return {id:f.id, name:f.name, hinweis:f.hinweis, bytes:f.bytes}; }),
@@ -15032,7 +15070,7 @@ function blattInhalt(p){
 
       "<h2>Wartungsunternehmen</h2><table>"+
         zeile("Firma / Vertragspartner",p.firma)+
-        zeile("Techniker/in",[p.techniker].concat(p.mitarbeiter||[]).filter(Boolean).map(kanonName).join(", "))+
+        zeile("Techniker/in",[p.techniker].concat(p.mitarbeiter||[]).filter(Boolean).map(kanonName).join(", ")+(p.erfasstVon?" (erfasst von "+kanonName(p.erfasstVon)+" im Auftrag)":""))+
         zeile("Telefon / E-Mail",p.kontakt)+
         zeile("Subunternehmen",p.subunternehmen||"nein")+
         zeile("F-Gase-Unternehmenszertifikat Nr.",p.zertUnternehmen)+
@@ -15559,7 +15597,8 @@ function protokollDetail(p){
       '<div class="rowflex" style="margin-top:6px"><button class="btn ghost sm" type="button" data-akt="konfliktdruck">Korrektur vom Gerät ansehen</button>'+
       (nurLesen()||demo()?"":'<button class="btn ghost sm" type="button" data-akt="konfliktweg">Vom Gerät verwerfen</button>')+"</div></div>":"")+
     '<dl class="dl">'+
-      "<dt>Techniker/in</dt><dd>"+esc([p.techniker||p.nameTechniker].concat(p.mitarbeiter||[]).filter(Boolean).map(kanonName).join(", ")||"–")+"</dd>"+
+      "<dt>Techniker/in</dt><dd>"+esc([p.techniker||p.nameTechniker].concat(p.mitarbeiter||[]).filter(Boolean).map(kanonName).join(", ")||"–")+
+        (p.erfasstVon?' <span class="muted" style="font-size:12.5px">· erfasst von '+esc(kanonName(p.erfasstVon))+" im Auftrag</span>":"")+"</dd>"+
       "<dt>Wartungsart</dt><dd>"+esc(p.wartungsart||"–")+"</dd>"+
       /* welche Anlagen gewartet bzw. betroffen waren – antippen: ihre Historie */
       (function(){
