@@ -49,9 +49,9 @@ Durchsicht der Abläufe. Nach Nutzen sortiert – oben das, was im Alltag am mei
 1. ✓ **umgesetzt 03.10.2026** – `viewProtokoll`: `protokollFormHtml` + 12 Teile `protoTeil…`; geprüft mit `tools/ab-vergleich.mjs`. Plan war: (a) Formular-HTML bauen, (b) Rapport-Teil (`rapZeigen`, `rapTextRein` …), (c) Störung/Material/QR,
    (d) Entwurf merken/wiederherstellen, (e) Speichern (`pflichtPruefung`, Sammeln, `speichereProtokoll`). Teile bekommen das
    Formular als Parameter statt über die gemeinsame Funktion.
-2. `verwaltungEditor`: Markt-Teil, Anlagen-Teil, Speichern (Abgleich mit dem Ausgangsstand) trennen.
-3. `protokollAssistent`/`anlageAssistent`: je Schritt eine eigene Funktion (`schritte.push({…})` ist schon die Naht).
-4. `stoerungDialog`: Auftrag lesen (PDF/QR), Formular, Speichern.
+2. ✓ **umgesetzt 03.10.2026** – `verwaltungEditor`: 4 Teile. Plan war: Markt-Teil, Anlagen-Teil, Speichern (Abgleich mit dem Ausgangsstand) trennen.
+3. ✓ **umgesetzt 03.10.2026** – `protokollAssistent` (5 Teile), `anlageAssistent` (Dialog + 3 Teile). Plan war: je Schritt eine eigene Funktion (`schritte.push({…})` ist schon die Naht).
+4. ✓ **umgesetzt 03.10.2026** – `stoerungDialog` (3 Teile). Plan war: Auftrag lesen (PDF/QR), Formular, Speichern.
 
 ### 3. Bedienung uneinheitlich – Textabfragen und Hinweisfenster umgesetzt (`textAbfrage`), Bestätigungen bewusst belassen (E8)
 - **Native Browser-Abfragen**: 76× `confirm`, 8× `prompt`, 4× `alert` – sehen am iPhone anders aus als

@@ -23,14 +23,14 @@ Die Fachregeln (Termine, Rechte, Datenschutz) stehen ausführlich in **CLAUDE.md
 | Kalender / Aufgaben | `viewKalender` | `kalenderEintraege`, `planEditor`, `zeitRaster`, `planungPruefen` |
 | Karte / Tour | `viewKarte` | `planeTour`, `arbeitStunden` (gelernte Zeit), `tourPanel` |
 | Protokoll | `viewProtokoll` (setzt 12 Teile `protoTeilMarkt` … `protoTeilSpeichern` zusammen), `protokollFormHtml`, `protokollAssistent` (geführt) | `speichereProtokoll`, `rapTextRein`, `kaeltemittelAusForm` |
-| Anlagen / Markt | `viewAnlagen`, `marktAnsicht` | `anlagenDesMarkts`, `verbundenKarte`, `anlageAssistent` |
+| Anlagen / Markt | `viewAnlagen`, `marktAnsicht` | `anlagenDesMarkts`, `verbundenKarte`, `anlageAssistent` → `anlageAssistentDialog` (Teile `anlageDialogTeilKi`, `…Felder`, `…Schritte`) |
 | Stunden / Stempeluhr | `viewStunden` | `zeitEditor`, `stempeln` (Datenbank), `lohnAuswertung` |
 | Fahrzeuge | `viewFahrzeuge` | `fzEditor`, `fzEintragEditor`, `fzGpsImport` |
 | Projekte | `viewProjekte`, `projektAnsicht` | `projektNeu`, `folgeKarte`, Baustellenbuch |
 | Rechnungen (nur Inhaber) | `viewBelege` | `belegEditor`, `einsatzPositionen`, `fahrtZone`, `katalogLernen` |
 | Kunden & Kontakte | `viewKunden` | `kontaktErfassen` (lernt neue Personen), `kontaktAusProtokoll` |
 | Verlauf | `viewVerlauf` | `stammRueckgaengig`, `korrekturRueckgaengig` |
-| Verwaltung | `viewVerwaltung` | `verwaltungEditor`, Nachbessern, `datenpflegeAnsicht` |
+| Verwaltung | `viewVerwaltung` | `verwaltungEditor` (Teile `verwaltungTeilAnlagen`, `…Bedienung`, `…Entfernen`, `…Speichern`), Nachbessern, `datenpflegeAnsicht` |
 | Spielwiese | `spielwieseOeffnen` | `schattenClient` (Schattendatenbank), `vorschauSchutz` |
 | Gemeinsame Bausteine | „Helper“ | `textAbfrage`, `fussKnoepfe`, `nachMarktname`, `nurAnsehenAbweisen`, `technikDeutsch`, `diktatKnopf` |
 
@@ -57,11 +57,20 @@ Jeder Teil bekommt den Kontext `P` (Formular, Markt, Korrektur …). Ablauf: ers
 Funktionen in `P` an (`P.fillPos=fillPos`), dann baut jeder Teil in der ursprünglichen Reihenfolge auf
 (die zurückgegebene Funktion). So existiert jede Funktion vor jedem Aufbau, und gemeinsamer Zustand
 (`P.fotos`, `P.auftragPdf` …) ist bis zu seiner Zuweisung `undefined` – genau wie vorher in der einen großen Funktion.
-Nur was ein anderer Teil braucht, steht in `P`; alles andere bleibt im Teil.
+Nur was ein anderer Teil braucht, steht in `P`; alles andere bleibt im Teil. Werte aus dem Anfang der Funktion
+bekommt jeder Teil als Kopie (`var form=P.form`) – außer sie werden später neu zugewiesen, dann liest der Teil
+sie über einen Getter frisch (`P.geschlossen`). So zerlegt: `viewProtokoll` (`protoTeil…`), `verwaltungEditor`
+(`verwaltungTeil…`), `protokollAssistent` (`protoAssistentTeil…`), `anlageAssistentDialog` (`anlageDialogTeil…`),
+`stoerungDialog` (`stoerungTeil…`).
+
+**Zerlegen selbst:** `node tools/zerlege.mjs plan.json` baut maschinell über den Syntaxbaum um (Plan: Funktion,
+letzte Zeile des Anfangs, Teile mit Zeilenbereichen) und bricht ab, wenn etwas nicht sicher geht (z. B. ein Teil
+verändert eine Variable des Anfangs). Braucht `npm install --no-save --no-package-lock playwright@1 acorn acorn-walk`.
 
 **Umbauten ohne Verhaltensänderung prüfen:** `node tools/ab-vergleich.mjs` spielt die Protokoll-Abläufe
-(Wartung, Störung, Pflichtfelder, Entwurf, Korrektur, aus offener Störung, Fotos, Leeren, Anlage fehlt,
-Schritt für Schritt, Ausgefüllt für) mit fester Uhrzeit auf dem letzten Commit und dem Arbeitsstand durch und
+(Protokoll: Wartung, Störung, Pflichtfelder, Entwurf, Korrektur, aus offener Störung, Fotos, Leeren, Anlage fehlt,
+Schritt für Schritt für Wartung/Störung/Korrektur, Ausgefüllt für; Verwaltung: Markt bearbeiten, Anlage dazu, Termin
+und Status, entfernen/zurücksetzen, neuer Markt; Anlagendaten-Dialog; Störungsauftrag: anlegen, Termin, abhaken, löschen) mit fester Uhrzeit auf dem letzten Commit und dem Arbeitsstand durch und
 vergleicht Formular, Feldwerte, gespeicherte Datensätze, Meldungen und globale Variablen. Keine Abweichung = gleiches Verhalten.
 
 ## Neue Funktion – Checkliste
