@@ -309,6 +309,8 @@ body.nurlesen [data-schreiben], body.nurlesen .zugang{display:none!important}
 .kal-rz-zeit{position:relative}
 .kal-rz-tag{position:relative;border-left:1px solid var(--line);cursor:copy;touch-action:pan-y;background:repeating-linear-gradient(to bottom,var(--line) 0 1px,transparent 1px 54px)}
 .kal-rz-tag.heute{background-color:var(--accent-soft)}
+.diktat{padding:1px 8px;margin-left:8px;font-size:13px;vertical-align:middle}
+.diktat.hoert{background:var(--crit);color:#fff;border-color:var(--crit)}
 .kal-rz-eng .kal-rz-zeile{grid-template-columns:34px repeat(var(--n),minmax(0,1fr))}
 .kal-rz-eng .kal-tl-b{font-size:10.5px;padding:2px 3px;line-height:1.15}
 .kal-rz-eng .kal-tl-b small,.kal-rz-eng .kal-tl-b [data-z]{display:none}
@@ -12095,6 +12097,7 @@ function protokollAssistent(form, stoer){
     var n=d.querySelector("textarea,input");
     n.value=wert(sel); if(platzhalter) n.placeholder=platzhalter;
     n.oninput=function(){ setz(sel,n.value); };
+    if(mehrzeilig) d.querySelector(".as-label").appendChild(diktatKnopf(n));
     if(art!=="text") n.onchange=n.oninput;
     return d;
   }
@@ -13654,6 +13657,8 @@ function viewProtokoll(){
     } else rapInfo.textContent="noch keiner angehängt";
   };
   form._rapportZeigen=rapZeigen;
+  form.querySelectorAll("#f_bem, #s_fehlerbild, #s_ursache, #s_massnahmen").forEach(function(t){
+    var sp=t.parentElement && t.parentElement.querySelector("span"); if(sp) sp.appendChild(diktatKnopf(t)); });
   /* Ausgeführte Arbeiten aus dem Rapport zusätzlich ins Protokoll (Büro 02.10.2026: „damit der Techniker
      nicht zweimal schreiben muss“ – nur zusätzlich, kein Feld fällt weg): Störung → „Durchgeführte
      Maßnahmen“, Wartung → „Bemerkungen“. Immer angehängt, nie ersetzt; schon enthaltener Text kommt
@@ -20295,6 +20300,7 @@ function handbuchKarte(z){
         "<strong>Je Anlage:</strong> Anlagendaten ergänzen (Typenschild und Prüfbuch des Außengeräts, Kältemittel und Füllmenge aus dem Prüfbuch; Fotos kann die KI lesen), "+
           "Inbetriebnahme und Termine bestätigen, „Heute gewartet als“ wählen – bei einer neuen Anlage mit zwei Terminen bestimmt das, welcher Termin heute erledigt ist.",
         "<strong>Arbeiten, Mängel, Ergebnis, Kältemittel</strong> – bei der Störung Störungsbehebung und Material.",
+        "<strong>🎤 Diktieren:</strong> neben Bemerkungen, Fehlerbild, Ursache und Maßnahmen – sprechen statt tippen, der Text wird angehängt (Spracherkennung des Handys, keine KI). Geht es nicht, das Mikrofon der Tastatur nehmen.",
         "<strong>Fotos und Rapport:</strong> bis 25 Fotos mit Notiz, bei Lidl den Rapportbericht anhängen (oder später nachreichen) – die ausgeführten Arbeiten daraus kommen zusätzlich in „Durchgeführte Maßnahmen“ (Störung) bzw. „Bemerkungen“ (Wartung).",
         "<strong>Abschluss:</strong> Datum, Uhrzeit, wer noch dabei war, Unterschrift. Das Protokoll läuft immer unter deinem Namen – du bist verantwortlich.",
         "<strong>Übersicht prüfen und speichern.</strong> Oben steht „✓ gespeichert“. Nach einer Störung bietet die App fällige Wartungen am selben Markt gleich mit an.",
@@ -23700,6 +23706,43 @@ function katalogFinde(re, kid){
    Bundesland aus der Postleitzahl; in Nordtirol entscheidet die Lage: Innsbruck und westlich
    davon Zone 2, östlich (Hall, Schwaz, Wörgl, Kufstein, Kitzbühel …) Zone 1. Ein am Markt
    eingetragenes Feld fahrtZone (1/2) geht vor. Unbekannt (keine PLZ) → null. */
+/* ---- Diktieren (Büro 02.10.2026: „nur Sprache zu Text“, keine KI): 🎤 neben den Textfeldern des
+   Protokolls. Nutzt die Spracherkennung des Browsers – nichts geht an uns oder an eine KI. Wo der Browser
+   es nicht kann (etwa manche installierte iPhone-App), erklärt der Knopf das Mikrofon der Tastatur.
+   Gesprochenes wird angehängt, nie ersetzt; sichtbar „hört zu …“, nochmals tippen beendet, nach einer
+   Pause endet es von selbst. Wird das Feld ausgeblendet (anderer Schritt), hört es auf. */
+var DIKTAT=null;
+function diktatKnopf(feld){
+  var b=el('<button type="button" class="btn ghost sm diktat" title="Diktieren – Gesprochenes wird angehängt" aria-label="Diktieren">🎤</button>');
+  b.onclick=function(ev){ ev.preventDefault(); ev.stopPropagation(); diktatUmschalten(feld, b); };
+  return b;
+}
+function diktatUmschalten(feld, b){
+  if(DIKTAT){ var war=DIKTAT; war.stop(); if(war.feld===feld) return; }
+  var SR=window.SpeechRecognition || window.webkitSpeechRecognition;
+  if(!SR){ toast("Diktieren geht hier über die Tastatur: ins Feld tippen, dann das Mikrofon unten auf der Tastatur."); try{ feld.focus(); }catch(e){} return; }
+  var r=new SR(), basis=feld.value||"", fertig="";
+  r.lang="de-AT"; r.continuous=true; r.interimResults=true;
+  var lauf={feld:feld, stop:function(){ try{ r.stop(); }catch(e){} }};
+  var setze=function(zwischen){
+    if(!document.body.contains(feld)){ lauf.stop(); return; }
+    var t=(fertig+" "+(zwischen||"")).replace(/\s+/g," ").trim();
+    feld.value=basis.trim() ? basis.replace(/\s+$/,"")+(t?" "+t:"") : t;
+    feld.dispatchEvent(new Event("input", {bubbles:true}));
+  };
+  r.onresult=function(ev){
+    var zw="";
+    for(var i=ev.resultIndex; i<ev.results.length; i++){ var x=ev.results[i]; if(x.isFinal) fertig=(fertig+" "+x[0].transcript).trim(); else zw+=x[0].transcript; }
+    setze(zw);
+  };
+  r.onerror=function(ev){
+    if(ev.error==="not-allowed" || ev.error==="service-not-allowed") toast("Mikrofon nicht freigegeben – im Browser erlauben oder das Mikrofon der Tastatur nehmen.");
+    else if(ev.error!=="no-speech" && ev.error!=="aborted") toast("Diktieren unterbrochen ("+ev.error+").");
+  };
+  r.onend=function(){ b.classList.remove("hoert"); b.textContent="🎤"; if(DIKTAT===lauf) DIKTAT=null; if(document.body.contains(feld)) setze(""); };
+  try{ r.start(); }catch(e){ toast("Diktieren ließ sich nicht starten."); return; }
+  DIKTAT=lauf; b.classList.add("hoert"); b.textContent="⏹ hört zu …";
+}
 var FAHRT_TIROL_LON=11.45;
 function fahrtZone(s){
   if(!s) return null;
