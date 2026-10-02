@@ -703,8 +703,8 @@ var STAMM_FELDER_POS = ["anlagentyp","intervallCode","inbetriebnahme","monat","m
                         "termineGeprueft",
                         /* automatisch angelegter Halbjahrestermin: folgt dem Halbjahrestermin dieser Anlage am Markt (Büro 01.10.2026) */
                         "hjiMarkt",
-                        /* Gerät, das in einer Sammelzeile der alten Liste steckt (Büro 02.10.2026, Gerasdorferstraße):
-                           Kennung der Sammelzeile – Datenblatt ohne eigene Termine, bis aufgeteilt wird */
+                        /* Gerät aus einer Sammelzeile der alten Liste (Büro 02.10.2026, Gerasdorferstraße): Kennung der
+                           Sammelzeile – eigene Anlage mit eigenen Terminen, die Sammelzeile bleibt für den Rest */
                         "teilVon"];
 var ABGELEITET_POS   = ["kaeltemittelText","ueber30kg","baujahr"];
 function auswahl(o, felder){
@@ -13031,15 +13031,25 @@ function viewProtokoll(){
       v.inhalt.appendChild(el('<div class="note">Steht diese Anlage vielleicht schon in der Liste – etwa unter einem anderen Namen? '+
         "Dann hier wählen: ihre Angaben werden ergänzt bzw. überschrieben (auch per KI aus Fotos), die Bezeichnung lässt sich in der Übersicht ändern. "+
         "</div>"));
-      /* Sammelzeile („1xMini-VRV, 12 x IG, 2 x Multi …“): ein Gerät daraus wird als Teil erfasst –
-         Datenblatt ja, eigene Termine erst beim Aufteilen in der Verwaltung, sonst doppelte Wartung */
+      /* Sammelzeile („1xMini-VRV, 12 x IG, 2 x Multi …“): ein Gerät daraus wird eigene Anlage – mit eigenen
+         Terminen, die jedes Mal geprüft werden („Termine müssen immer geprüft werden“, Büro 02.10.2026);
+         vorgeschlagen wie die Sammelzeile, der Techniker bestätigt bzw. ändert sie */
       boxen.forEach(function(cb){
         var an=ANLAGEN[cb.dataset.anlage]; if(!an) return;
         var nm=anlagenName(anlageDaten(an.leader)); if(!istSammelzeile(nm)) return;
         var b=el('<button class="btn" type="button" style="text-align:left;display:block;width:100%;margin-top:8px;white-space:normal">'+
           "Gehört zu „"+esc(nm)+"“ – Gerät einzeln erfassen"+
-          '<br><span style="font-size:13px;font-weight:400">Datenblatt mit Kältemittel, Seriennummer usw. Gewartet wird weiter mit dieser Zeile – keine doppelten Termine.</span></button>');
-        b.onclick=function(){ ende({teil:an.leader.id, name:nm}); };
+          '<br><span style="font-size:13px;font-weight:400">Eigene Anlage mit eigenen Terminen – vorgeschlagen wie bei dieser Zeile. Die Zeile bleibt für die noch nicht erfassten Geräte.</span></button>');
+        b.onclick=function(){
+          var letzte=[];
+          an.termine.forEach(function(t){
+            var d=(t.historie||[]).concat((t.nachweise||[]).map(function(n){ return n && n.datum; })).concat(t.letzte?[t.letzte]:[]).filter(Boolean).sort().pop();
+            if(d) letzte.push({datum:d, art:intervallArt(t.intervallCode).kurz||""});
+          });
+          ende({teil:an.leader.id, name:nm, letzte:letzte, termine:an.termine.slice(0,2).map(function(t,i){
+            return i===0 ? {id:"NEU", intervallCode:t.intervallCode||"JW", monat:+t.monat||0}
+                         : {id:null, _neu:true, monatGrund:"", intervallCode:t.intervallCode||"", monat:+t.monat||0}; })});
+        };
         v.inhalt.appendChild(b);
       });
       boxen.forEach(function(cb){
@@ -13098,14 +13108,33 @@ function viewProtokoll(){
   function neueAnlageErfassen(weiter, vorlage, geprueft, teil){
     /* Markt als Kontext für die KI; mit Termin wie bei „+ Anlage anlegen“ – so
        fragt der Dialog auch Inbetriebnahme, Kürzel und Soll-Monat */
-    return anlageAssistent({standortId:selSt.value, _termine:[{id:"NEU", intervallCode:"JW", monat:0}], inbetriebnahme:null, _kiVorlage:vorlage||null}, "Neue Anlage", true, false,
+    return anlageAssistent({standortId:selSt.value, _termine:(teil&&teil.termine&&teil.termine.length)?teil.termine:[{id:"NEU", intervallCode:"JW", monat:0}], inbetriebnahme:null, _kiVorlage:vorlage||null}, "Neue Anlage", true, false,
         {ort:{aufruf:"protokoll", karte:null, korrektur:bearb?bearb._id:null}, weiter:weiter||null, buchZiel:buchZiel}).then(function(erg){
       if(!erg) return;
       formDirty=true;
       if(geprueft) erg.doppelGeprueft=true;   /* vor Ort beantwortet: steht nicht in der Liste */
-      if(teil){ erg.teilVon=teil.teil; erg.pausiert=true; erg.pausiertGrund="Teil der Sammelzeile „"+teil.name+"“ – wird mit ihr gewartet"; }
-      neueAnlagen.push({id:"NP"+Date.now().toString(36)+Math.random().toString(36).slice(2,5), werte:erg});
-      anlagenZeichnen();
+      var dazu=function(){
+        neueAnlagen.push({id:"NP"+Date.now().toString(36)+Math.random().toString(36).slice(2,5), werte:erg});
+        anlagenZeichnen();
+      };
+      if(!teil){ dazu(); return; }
+      erg.teilVon=teil.teil;
+      /* letzte Wartung: nur wenn der Techniker bestätigt, dass das Gerät damals mitgewartet wurde –
+         sonst ist es sofort fällig und wird jetzt bzw. beim nächsten Besuch geprüft */
+      var schon=(erg._nachweiseNeu||[]).map(function(n){ return n.datum; });
+      var vorschlag=(teil.letzte||[]).filter(function(n){ return schon.indexOf(n.datum)<0; });
+      if(!vorschlag.length){ dazu(); return; }
+      return new Promise(function(fertig){
+        var v=ansichtOeffnen("Letzte Wartung", function(){ dazu(); fertig(); });
+        v.schritt.textContent=erg.anlagentyp||"Neue Anlage";
+        v.inhalt.appendChild(el('<div class="note">Wurde dieses Gerät bei der letzten Wartung der Sammelzeile mitgewartet? '+
+          "Laut Liste: <strong>"+esc(vorschlag.map(function(n){ return (n.art?n.art+" ":"")+dfmt(n.datum); }).join(", "))+"</strong>.<br><br>"+
+          "Ja: diese Wartung zählt auch für dieses Gerät. Nein oder unklar: das Gerät ist sofort fällig und wird geprüft.</div>"));
+        var nein=el('<button class="btn ghost" type="button">Nein / weiß nicht – sofort fällig</button>'), ja=el('<button class="btn" type="button">Ja, mitgewartet</button>');
+        nein.onclick=function(){ v.zu(); };
+        ja.onclick=function(){ erg._nachweiseNeu=(erg._nachweiseNeu||[]).concat(vorschlag.map(function(n){ return {datum:n.datum}; })); v.zu(); };
+        v.fuss.appendChild(nein); v.fuss.appendChild(ja);
+      });
     });
   }
   /* Stand der Anlagen zum Zeitpunkt des Protokolls – für Druck und Archiv.
@@ -18939,8 +18968,8 @@ function sammelKarte(){
     if(istSammelzeile(anlagenName(anlageDaten(a.leader)))) l.push({s:s, a:a, teile:sammelTeile(a.leader.id)}); }); });
   if(!l.length) return null;
   var c=el('<div class="card"><div class="pad stack"><div><h2>Sammelzeilen ('+l.length+')</h2><div class="sub">Zeilen der alten Liste, die für mehrere Geräte stehen. '+
-    "Vor Ort erfasst der Techniker über „+ Anlage fehlt“ jedes Gerät als Teil (Datenblatt, gewartet mit der Sammelzeile). "+
-    "Hier bekommen die Teile dann eigene Termine – mit der letzten Wartung der Sammelzeile.</div></div></div></div>");
+    "Vor Ort erfasst der Techniker über „+ Anlage fehlt“ jedes Gerät einzeln – mit eigenen Terminen. "+
+    "Sind alle Geräte erfasst, wird die Sammelzeile hier stillgelegt.</div></div></div></div>");
   var host=c.querySelector(".stack");
   l.forEach(function(x){
     var nm=anlagenName(anlageDaten(x.a.leader));
@@ -18948,12 +18977,8 @@ function sammelKarte(){
       '<span class="muted" style="font-size:12.5px">'+x.a.termine.length+" Termin"+(x.a.termine.length===1?"":"e")+" · "+
       (x.teile.length ? x.teile.length+" Gerät"+(x.teile.length===1?"":"e")+" als Teil erfasst: "+esc(x.teile.map(function(t){ return anlagenName(anlageDaten(t.leader)); }).join(", "))
                       : "noch kein Gerät einzeln erfasst")+"</span></div>"+
-      (x.teile.length?'<div class="rowflex" style="gap:6px;flex-wrap:wrap"><button class="btn ghost sm" type="button" data-a="teile">Teile bekommen eigene Termine</button>'+
-        '<button class="btn ghost sm" type="button" data-a="alle">alle Geräte erfasst – Sammelzeile stilllegen</button></div>':"")+"</div>");
-    if(x.teile.length){
-      b.querySelector('[data-a="teile"]').onclick=function(){ sammelAufteilen(x, false); };
-      b.querySelector('[data-a="alle"]').onclick=function(){ sammelAufteilen(x, true); };
-    }
+      (x.teile.length?'<div class="rowflex" style="gap:6px;flex-wrap:wrap"><button class="btn ghost sm" type="button" data-a="alle">alle Geräte erfasst – Sammelzeile stilllegen</button></div>':"")+"</div>");
+    if(x.teile.length) b.querySelector('[data-a="alle"]').onclick=function(){ sammelAufteilen(x, true); };
     host.appendChild(b);
   });
   return c;
@@ -18961,7 +18986,7 @@ function sammelKarte(){
 function sammelAufteilen(x, stilllegen){
   var nm=anlagenName(anlageDaten(x.a.leader));
   if(!window.confirm(stilllegen
-    ? "„"+nm+"“ in "+stName(x.s)+" aufteilen und stilllegen?\n\n"+x.teile.length+" Gerät(e) bekommen eigene Termine mit der letzten Wartung der Sammelzeile. Die Sammelzeile hat danach keine Termine mehr (ihr Verlauf bleibt).\n\nNur wenn ALLE Geräte dort einzeln erfasst sind."
+    ? "„"+nm+"“ in "+stName(x.s)+" stilllegen?\n\n"+x.teile.length+" Gerät(e) sind einzeln erfasst. Die Sammelzeile hat danach keine Termine mehr (ihr Verlauf bleibt).\n\nNur wenn ALLE Geräte dort einzeln erfasst sind."
     : x.teile.length+" Gerät(e) aus „"+nm+"“ bekommen eigene Termine mit der letzten Wartung der Sammelzeile.\n\nDie Sammelzeile bleibt für die noch nicht erfassten Geräte mit ihren Terminen stehen.")) return;
   var kurz=function(t){ var ia=intervallArt(t.intervallCode); return ia.unklar ? "" : ia.kurz; };
   var letzteVon=function(t){ return (t.historie||[]).concat((t.nachweise||[]).map(function(n){ return n && n.datum; })).concat(t.letzte?[t.letzte]:[]).filter(Boolean).sort().pop()||""; };
