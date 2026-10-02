@@ -3096,6 +3096,9 @@ function posteingangZuProjekt(g, fertig){
         if(demo()){ v.zu(); if(fertig) fertig(); return; }
         return posteingangGruppeSetzen(g, {status:"erledigt", bezug:"projekt:"+p.id}).then(function(){
           v.zu(); if(fertig) fertig(); toast("In "+(p.nummer||"das Projekt")+" abgelegt: "+files.length+" Datei"+(files.length===1?"":"en")+".");
+          /* der Absender kommt ins Adressbuch (Büro 02.10.2026: „sobald ein neuer auftaucht, wird er gespeichert“) */
+          var ab=kontaktAusAbsender(mail.absender);
+          if(ab) kontaktErfassen(ab, {art:"projekt", id:p.id, titel:projektTitel(p)}, false);
         });
       });
     }, function(x){ ok.disabled=false; ok.textContent="Ins Projekt legen"; toast("Datei nicht abrufbar: "+(x.message||x)); });
@@ -8778,6 +8781,8 @@ function speichereProtokoll(id,doc,eintrag){
       }
       if(r.data && r.data.length){
         ladeProtokolle();
+        /* wer am Markt unterschrieben hat, kommt ins Adressbuch */
+        var kx=kontaktAusProtokoll(Object.assign({}, doc, {_id:id})); if(kx) kontaktErfassen(kx[0], kx[1], true);
         /* Archiv-PDF im Hintergrund – das Speichern wartet nicht darauf */
         berichtAblegen(Object.assign({}, doc, {_id:id, version:fassung}));
         return true;
@@ -22745,9 +22750,30 @@ function kontaktErfassen(roh, herkunft, still){
   };
   return (kontakteGeladen || demo() ? Promise.resolve() : kontakteLaden()).then(function(){ return kontakteFehler ? null : los(); });
 }
+/* „Max Muster <max@firma.at>“ bzw. nur die Adresse → {name, mail, firma}; die eigene Firma nicht */
+function kontaktAusAbsender(a){
+  a=String(a||"").trim(); if(!a) return null;
+  var m=/^\s*"?([^"<]*?)"?\s*<([^>]+)>\s*$/.exec(a), name=m ? m[1].trim() : "", mail=(m ? m[2] : a).trim().toLowerCase();
+  if(!/^[^@\s]+@[^@\s]+\.[a-z]{2,}$/.test(mail) || /(^|\.)ukt\.at$|kammerlander/.test(mail.split("@")[1])) return null;
+  if(/no-?reply|noreply|mailer-daemon/.test(mail)) return null;
+  var dom=mail.split("@")[1].split("."); dom=dom.length>1 ? dom[dom.length-2] : dom[0];
+  var frei=/^(gmx|gmail|yahoo|hotmail|outlook|live|icloud|me|aon|chello|web|a1)$/.test(dom);
+  return {name:name||"", mail:mail, firma:frei ? "" : dom.charAt(0).toUpperCase()+dom.slice(1), kategorie:"Sonstige"};
+}
+/* wer am Markt unterschreibt (Auftraggebervertreter im Protokoll) – kein Platzhalter, nicht unsere Techniker */
+function kontaktAusProtokoll(p){
+  var n=String(p.auftraggebervertreter||"").trim();
+  if(n.length<3 || !/[a-zäöüß]{2}/i.test(n) || /^(unterschrift|keine?|nicht anwesend|niemand|–|-)$/i.test(n)) return null;
+  if(EIGENE_TECHNIKER.some(function(t){ return kanonName(t)===kanonName(n); })) return null;
+  var s=byId[p.standortId], lidl=!s || istLidl(s);
+  return [{name:n, firma:s ? (lidl ? "Lidl "+stName(s) : stName(s)) : "", funktion:lidl ? "Marktleitung / Auftraggebervertreter" : "Auftraggebervertreter",
+    kategorie:lidl ? "Marktleitung" : "Kunde / Bauherr", kunde_id:s && !lidl ? kundeVon(s) : null},
+    {art:"protokoll", id:p._id, titel:"Protokoll "+protoName(p)+" "+dfmt(p.datum)}];
+}
 /* was schon in der App steht, einmal ins Adressbuch – nacheinander, ohne Meldung */
 function kontakteNachtragen(){
   var l=[];
+  alleProtokolle().forEach(function(p){ if(p.geloescht || !p._id) return; var x=kontaktAusProtokoll(p); if(x) l.push(x); });
   PROJEKTE.forEach(function(p){
     var d=p.daten||{}, h={art:"projekt", id:p.id, titel:projektTitel(p)};
     (d.beteiligte||[]).forEach(function(b){ l.push([{name:b.name, firma:b.firma, funktion:b.rolle, kategorie:kategorieAusRolle(b.rolle), telefon:b.telefon, mail:b.mail}, h]); });
@@ -25436,7 +25462,9 @@ function planungWiederVersuchen(){
 }
 window.addEventListener("online", function(){ if(planungFehler){ planungStand=0; planungNachladen(); } if(planTeam && !planTeam.length) planTeam=null; });
 function planungLaden(){
-  if(demo()){ planungGeladen=true; return Promise.resolve(); }
+  /* auch in der Präsentation das Konto merken – sonst setzt planungNachladen den Zeitstempel bei jedem
+     Zeichnen zurück, lädt wieder, zeichnet wieder … und die App hängt (Büro 02.10.2026) */
+  if(demo()){ planungGeladen=true; if(Store.benutzer) planungKonto=Store.benutzer.email; return Promise.resolve(); }
   if(!betriebAn()) return Promise.resolve();
   var konto=Store.benutzer.email;
   if(konto!==planungKonto){ planungKonto=konto; PLANUNG=[]; PLAN_PRIVAT={}; planungGeladen=false; }
