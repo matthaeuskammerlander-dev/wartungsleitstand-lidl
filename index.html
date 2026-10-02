@@ -1784,7 +1784,75 @@ function tipShow(e,html){ TIP.innerHTML=html; TIP.style.display="block";
 function tipHide(){ TIP.style.display="none"; }
 
 /* ---------- Tourenplanung ---------- */
-var ARBEIT_H = 1.25;        // Richtwert je Wartungsposition
+var ARBEIT_H = 1.25;        // Richtwert je Wartungsposition – solange es keine Erfahrung gibt
+/* ---- Gelernte Arbeitszeit vor Ort (Büro 02.10.2026: „so handsome to optimize everything for the future“) ----
+   Quelle 1: die Zeiten aus dem Lidl-Rapport am Protokoll (von–bis abzüglich Pause; Wartung je Anlage
+   geteilt durch die gewarteten Anlagen), bei Störungen ohne Rapport Ankunft–Fertig. Quelle 2: Stunden mit
+   Markt und Tätigkeit „Wartung …“/„Störung …“ – Datenbank-Funktion einsatz_dauern (tools/einsatz-dauern.sql)
+   gibt nur den Median je Markt zurück, keine Personen. Tour: gelernte Minuten je Anlage am Markt ×
+   Positionen; ohne Erfahrung am Markt der Median aller Märkte (ab 5 Märkten), sonst der Richtwert. */
+var DAUER_GELERNT={}, dauerStand=0;
+function dauernLaden(){
+  if(typeof betriebAn!=="function" || !betriebAn() || Date.now()-dauerStand<600000) return Promise.resolve();
+  dauerStand=Date.now();
+  return Store.sb.rpc("einsatz_dauern").then(function(r){
+    if(r.error || !r.data) return;
+    var d={}; r.data.forEach(function(z){ (d[z.standort_id]=d[z.standort_id]||{})[z.art]={anzahl:z.anzahl, minuten:z.minuten}; });
+    DAUER_GELERNT=d;
+  }, function(){});
+}
+var lernProto={n:-1, w:{}, st:{}};
+function hmMin(t){ var m=/^(\d{1,2}):(\d\d)$/.exec(String(t||"").trim()); return m ? (+m[1])*60+(+m[2]) : null; }
+/* aus den Protokollen: w[Markt] = Minuten je Anlage (Wartung), st[Markt] = Minuten je Störungseinsatz */
+function lernAusProtokollen(){
+  var pr=alleProtokolle();
+  if(lernProto.n===pr.length) return lernProto;
+  var w={}, st={};
+  pr.forEach(function(p){
+    if(p.geloescht || !p.standortId) return;
+    var dauer=null, r=rapportVon(p), z=r && r.daten && r.daten.zeilen;
+    if(z && z.length){
+      var sum=0, ok=false;
+      z.forEach(function(x){ var a=hmMin(x.von), e=hmMin(x.bis); if(a==null || e==null) return;
+        sum+=(e<a ? e+1440 : e)-a-(hmMin(x.pause)||0); ok=true; });
+      if(ok) dauer=sum;
+    }
+    var so=p.stoerung;
+    if(dauer==null && so){ var a2=hmMin(so.ankunft), e2=hmMin(so.ende); if(a2!=null && e2!=null) dauer=(e2<a2 ? e2+1440 : e2)-a2; }
+    if(dauer==null || dauer<15 || dauer>720) return;
+    if(istStoerung(p)) (st[p.standortId]=st[p.standortId]||[]).push(dauer);
+    else (w[p.standortId]=w[p.standortId]||[]).push(dauer/Math.max(1, (p.anlagen||[]).length));
+  });
+  lernProto={n:pr.length, w:w, st:st};
+  return lernProto;
+}
+function median(l){ l=l.slice().sort(function(a,b){ return a-b; }); return l.length ? (l.length%2 ? l[(l.length-1)/2] : (l[l.length/2-1]+l[l.length/2])/2) : null; }
+function lernMinJeAnlage(sid){
+  var s=byId[sid]; if(!s) return null;
+  var l=(lernAusProtokollen().w[sid]||[]).slice(), g=DAUER_GELERNT[sid] && DAUER_GELERNT[sid].wartung;
+  if(g){ var je=g.minuten/Math.max(1, anlagenDesMarkts(s,false).length); for(var i=0;i<Math.min(g.anzahl,10);i++) l.push(je); }
+  return l.length ? {min:median(l), anzahl:l.length} : null;
+}
+function lernMinJeAnlageAlle(){
+  var l=[], ids={};
+  Object.keys(DAUER_GELERNT).concat(Object.keys(lernAusProtokollen().w)).forEach(function(sid){ if(ids[sid]) return; ids[sid]=1; var x=lernMinJeAnlage(sid); if(x) l.push(x.min); });
+  if(l.length<5) return null;
+  l.sort(function(a,b){ return a-b; }); return l[Math.floor(l.length/2)];
+}
+/* Arbeitszeit für einen Tour-Stopp: {h, quelle} */
+function arbeitStunden(standort, positionen){
+  var n=Math.max(1, (positionen||[]).length), x=standort ? lernMinJeAnlage(standort.id) : null;
+  if(x) return {h:Math.max(0.5, Math.round(x.min*n/15)*15/60), quelle:"aus "+x.anzahl+" Einsätzen hier"};
+  var alle=lernMinJeAnlageAlle();
+  if(alle) return {h:Math.max(0.5, Math.round(alle*n/15)*15/60), quelle:"Erfahrung aller Märkte"};
+  return {h:n*ARBEIT_H, quelle:"Richtwert"};
+}
+/* Dauer eines Störungseinsatzes am Markt in Minuten: Rapport/Ankunft–Fertig und Stunden, sonst 2 h */
+function stoerDauerMin(sid){
+  var l=(lernAusProtokollen().st[sid]||[]).slice(), g=DAUER_GELERNT[sid] && DAUER_GELERNT[sid].stoerung;
+  if(g) for(var i=0;i<Math.min(g.anzahl,10);i++) l.push(g.minuten);
+  return l.length ? Math.round(median(l)/15)*15 || 120 : 120;
+}
 var TEMPO_KMH = 70;         // Reisegeschwindigkeit im Mittel
 var UMWEG = 1.3;            // Zuschlag Luftlinie -> Straße
 var BETRIEB = { id:"__betrieb", name:"Betrieb St. Johann i. T.",
@@ -1903,7 +1971,7 @@ function planeTour(opt){
       var zielIdx=folge[n];
       var eintrag=stopps[zielIdx-1];
       var fahrt=dauerH(hierIdx,zielIdx), km=distKm(hierIdx,zielIdx);
-      var arbeit=eintrag.positionen.length*ARBEIT_H;
+      var aw=arbeitStunden(eintrag.standort, eintrag.positionen), arbeit=aw.h;
       if(!tag || (tag.stunden + fahrt + arbeit) > opt.stundenProTag){
         if(tag) tage.push(tag);
         /* ein neuer Tag beginnt dort, wo der vorige endete (Übernachtung) */
@@ -1915,7 +1983,7 @@ function planeTour(opt){
       if(fahrt + arbeit > opt.stundenProTag) tag.zuLang=true;
       tag.km += km; kmGesamt += km;
       tag.stopps.push({standort:punkte[zielIdx], positionen:eintrag.positionen,
-                       fahrtH:fahrt, km:km, arbeitH:arbeit});
+                       fahrtH:fahrt, km:km, arbeitH:arbeit, arbeitQuelle:aw.quelle});
       hierIdx=zielIdx;
     }
     if(tag) tage.push(tag);
@@ -4126,8 +4194,8 @@ function tourPanel(){
 
   var c=el('<div class="card"><div class="pad stack">'+
     tourenFuerMichKarte()+
-    '<div><h2>Tourenplanung</h2><div class="sub">Reihenfolge über kürzeste Wege, '+ARBEIT_H.toString().replace(".",",")+
-      ' h Arbeitszeit je Wartungsposition. Ein Markt mit mehreren Positionen bindet entsprechend länger.</div></div>'+
+    '<div><h2>Tourenplanung</h2><div class="sub">Reihenfolge über kürzeste Wege. Arbeitszeit je Markt aus Erfahrung (erfasste Stunden „Wartung …“ mit Markt) – '+
+      'ohne Erfahrung '+ARBEIT_H.toString().replace(".",",")+' h je Wartungsposition. Je mehr Stunden mit Markt erfasst werden, desto genauer.</div></div>'+
 
     '<div><div class="fl" style="margin-bottom:6px"><span>Für wen?</span></div><div class="chips" id="t_fuer">'+
       [["","alle"]].concat((planTeam||[]).map(function(p){ return [p.user_id, p.name||"–"]; })).concat(planTeam && !planTeam.some(function(p){ return p.user_id===meineKennung(); }) ? [[meineKennung(), meinName()+" (ich)"]] : [])
@@ -4427,7 +4495,8 @@ function tourErgebnis(T){
           /* der Vermerk bricht um – ein längerer Grund machte die Spalte sonst sehr breit */
           (ruht ? '<br><span class="pill p-pausiert" style="white-space:normal;display:inline-block;max-width:240px;border-radius:9px">'+esc(ruht)+"</span>" : "")+"</td>"+
         '<td class="mono">'+Math.round(st.km)+' km<br><span class="muted">'+stdFmt(st.fahrtH)+"</span></td>"+
-        '<td class="mono">'+uhrFmt(minute,st.fahrtH)+'–'+uhrFmt(minute,st.fahrtH+st.arbeitH)+"</td>"+
+        '<td class="mono">'+uhrFmt(minute,st.fahrtH)+'–'+uhrFmt(minute,st.fahrtH+st.arbeitH)+
+          (st.arbeitQuelle && st.arbeitQuelle!=="Richtwert" ? '<br><span class="muted" style="font-size:11.5px;font-family:inherit" title="gelernt aus den erfassten Stunden">⏱ '+esc(st.arbeitQuelle)+"</span>" : "")+"</td>"+
         '<td>'+st.positionen.map(function(p){
             return '<span class="tag">'+esc(p.anlagentyp||"Anlage")+"</span>";
           }).join(" ")+"</td>"+
@@ -22180,7 +22249,7 @@ function schattenClient(echt){
     from:function(t){ return new Q(t); },
     /* nur lesende Funktionen gehen durch (vorschauSchutz lässt genau diese zu) */
     rpc:function(name, args){
-      if(/^(team_liste|bereiche_eigene)$/.test(name)) return echt.rpc(name, args);
+      if(/^(team_liste|bereiche_eigene|einsatz_dauern)$/.test(name)) return echt.rpc(name, args);
       return Promise.resolve({data:null, error:{message:"function "+name+": in der Spielwiese nicht verfügbar"}});
     },
     functions:{invoke:function(){ return Promise.resolve({data:null, error:{message:"In der Spielwiese keine KI und keine Server-Funktionen."}}); }},
@@ -22207,7 +22276,7 @@ function vorschauSchutz(supa){
     var pfad=""; try{ pfad=new URL(String(u||""), W.location.href).pathname; }catch(e){}
     if(m==="POST" && /\/storage\/v1\/object\/sign\//.test(pfad)) return false;
     /* reine Lese-Funktionen (Teamliste, eigene Tätigkeitsbereiche) */
-    if(m==="POST" && /\/rest\/v1\/rpc\/(team_liste|bereiche_eigene)$/.test(pfad)) return false;
+    if(m==="POST" && /\/rest\/v1\/rpc\/(team_liste|bereiche_eigene|einsatz_dauern)$/.test(pfad)) return false;
     return m!=="GET" && m!=="HEAD" && zuSupabase(u); };
   var f=W.fetch;
   W.fetch=function(u, o){
@@ -25372,7 +25441,7 @@ function planungLaden(){
   var konto=Store.benutzer.email;
   if(konto!==planungKonto){ planungKonto=konto; PLANUNG=[]; PLAN_PRIVAT={}; planungGeladen=false; }
   planungLaedt=true;
-  startpunkteLaden(); gelerntLaden();
+  startpunkteLaden(); gelerntLaden(); dauernLaden();
   return Promise.all([
     Store.sb.from("planung").select("*").order("datum").limit(5000),
     Store.sb.from("planung_privat").select("*").limit(5000)
@@ -25842,7 +25911,8 @@ function kalWoche(heute){
    anderen Tag (Woche). Raster 15 Minuten; vor dem Speichern Doppelbuchung prüfen. */
 var KAL_PX=0.9;
 function kalHm(m){ return String(Math.floor(m/60)).padStart(2,"0")+":"+String(m%60).padStart(2,"0"); }
-function kalBis(x){ var b=zeitMin(x.zeit); return x.e && zeitMin(x.e.ende) ? zeitMin(x.e.ende) : x.o ? b+120 : b+60; }
+/* Störungseinsatz ohne Ende: so lange, wie Einsätze an diesem Markt erfahrungsgemäß dauern (stoerDauerMin) */
+function kalBis(x){ var b=zeitMin(x.zeit); return x.e && zeitMin(x.e.ende) ? zeitMin(x.e.ende) : x.o ? b+stoerDauerMin(x.o.standortId) : b+60; }
 function kalDarfZiehen(x){
   if(nurLesen() || demo()) return false;
   if(x.art==="termin" && x.e) return !(x.e.datum_bis && x.e.datum_bis!==x.e.datum) && (istInhaber() || Rolle.name==="admin" ||
