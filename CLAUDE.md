@@ -268,6 +268,9 @@ Kammerlander Umwelt- und Klimatechnik (UKT) – oft kurz, vom Handy, im Feld.
   tools/posteingang_test.py); in der App eine Karte je Mail (`posteingangMailBox`), „Zu Projekt
   legen“ (`posteingangZuProjekt`, Vorschlag `posteingangProjektPunkte`) – erledigt erst, wenn alle
   Dateien hochgeladen sind. Angebot/Rechnung als Art nur für den Inhaber.
+- **Katalog lernt mit** (`katalogLernen`, Büro 02.10.2026, nur Inhaber): neue Positionen aus KPlus-PDFs und
+  aus gespeicherten App-Belegen kommen dazu (Herkunft in `quelle`, ohne Preis nichts); Preise bestehender
+  Positionen ändert nur KPlus (alter Preis in der Herkunft). „+ Neue Position“ im Katalog; Auswahl nach Häufigkeit.
 - **Folgeaufträge** (Büro 02.10.2026, nur Inhaber): Mängel und „Folgeauftrag erforderlich“ aus
   Protokollen stehen in Projekte als „Folgeaufträge – Angebot?“ (`folgeOffen`); erledigt durch ein Projekt
   mit `daten.ausProtokoll` oder „Kein Angebot“ mit Grund (Merker `folge:<Protokoll>`).

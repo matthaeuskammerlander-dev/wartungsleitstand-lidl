@@ -24094,20 +24094,49 @@ function katalogLaden(){
   return Store.sb.from("katalog").select("*").order("text").limit(5000).then(function(r){ if(r.error) throw new Error(r.error.message); KATALOG=r.data||[]; katalogGeladen=true; return KATALOG; });
 }
 function katalogSchluessel(text, eh){ return String(text||"").toLowerCase().replace(/\s+/g," ").trim().slice(0,200)+"|"+String(eh||"").toLowerCase(); }
-function katalogUebernehmen(erg){
+/* Der Katalog lernt mit (Büro 02.10.2026: „wird der Positionskatalog bei Rechnungen automatisch
+   erweitert?“): neue Positionen (Text + Einheit) aus KPlus-PDFs UND aus in der App gespeicherten
+   Angeboten/Rechnungen kommen dazu – mit Herkunft. Preise bestehender Positionen ändert nur KPlus
+   (dort gilt der Preis; in einer einzelnen App-Rechnung kann es ein Sonderpreis sein) – der alte Preis
+   steht dann in der Herkunft. Ohne Preis (0) wird nichts gelernt. Nur Inhaber. */
+function katalogLernen(positionen, quelle, opt){
+  opt=opt||{};
+  if(!nurInhaber()) return Promise.resolve({neu:0, preise:0});
   return katalogLaden().then(function(){
     var da={}; KATALOG.forEach(function(x){ da[katalogSchluessel(x.text,x.eh)]=x; });
-    var neu=[], quelle="KPlus "+(erg.art==="rechnung"?"Rechnung ":"Angebot ")+erg.nummer;
-    erg.positionen.forEach(function(x){
-      if(x.typ!=="pos" || !x.text || x.preis==null) return;
-      var k=katalogSchluessel(x.text,x.eh); if(da[k]) return;
+    var neu=[], preisNeu=[];
+    (positionen||[]).forEach(function(x){
+      var text=String(x.text||"").replace(/\s*–\s*Preis fehlt im Katalog\s*$/,"").trim();
+      if(x.typ!=="pos" || !text || !(+x.preis>0)) return;
+      var k=katalogSchluessel(text,x.eh), alt=da[k];
+      if(alt){ if(opt.preiseAktualisieren && alt.id && Math.abs((+alt.preis||0)-(+x.preis))>=0.005) preisNeu.push({k:alt, preis:+x.preis}); return; }
       /* „FB035/Pos.38“, „FB035/Pos 21“, „FB 035, Pos. 9.1“ – Lidl-Rahmenvertrag */
-      var fb=/FB\s*0?35\s*[\/,]?\s*Pos\.?\s*(\d+(?:\.\d+)?)/i.exec(x.text);
-      da[k]={}; neu.push({text:x.text, eh:x.eh||"Stk", preis:x.preis, quelle:fb?"FB035/Pos."+fb[1]+" · "+quelle:quelle, kunde_id:fb?"lidl":null, gruppe:x.gruppe||null, geaendert_von:meinName()});
+      var fb=/FB\s*0?35\s*[\/,]?\s*Pos\.?\s*(\d+(?:\.\d+)?)/i.exec(text);
+      da[k]={}; neu.push({text:text, eh:x.eh||"Stk", preis:+x.preis, quelle:fb?"FB035/Pos."+fb[1]+" · "+quelle:quelle,
+        kunde_id:fb?"lidl":(opt.kundeId||null), gruppe:x.gruppe||null, geaendert_von:meinName()});
     });
-    if(!neu.length) return 0;
-    return Store.sb.from("katalog").insert(neu).then(function(r){ if(r.error) throw new Error(r.error.message); return neu.length; });
+    var jobs=[];
+    if(neu.length) jobs.push(Store.sb.from("katalog").insert(neu).select("*").then(function(r){
+      if(r.error) throw new Error(r.error.message); KATALOG=KATALOG.concat(r.data||[]); }));
+    preisNeu.forEach(function(u){
+      var f={preis:u.preis, quelle:(quelle+" (vorher "+geld(u.k.preis)+" €)").slice(0,300), geaendert:new Date().toISOString(), geaendert_von:meinName()};
+      jobs.push(Store.sb.from("katalog").update(f).eq("id", u.k.id).then(function(r){ if(!r.error) Object.assign(u.k, f); }));
+    });
+    return Promise.all(jobs).then(function(){ return {neu:neu.length, preise:preisNeu.length}; });
   });
+}
+function katalogUebernehmen(erg){
+  return katalogLernen(erg.positionen, "KPlus "+(erg.art==="rechnung"?"Rechnung ":"Angebot ")+erg.nummer, {preiseAktualisieren:true}).then(function(x){
+    if(x.preise) setTimeout(function(){ toast(x.preise+" Katalog-Preis"+(x.preise===1?"":"e")+" nach KPlus aktualisiert (der alte Preis steht bei der Herkunft)."); }, 2500);
+    return x.neu;
+  });
+}
+/* wie oft eine Katalog-Position in Belegen vorkommt – häufige zuerst anbieten */
+function katalogNutzung(){
+  var n={};
+  (BELEGE_ALLE||[]).forEach(function(b){ (b.positionen||[]).forEach(function(x){
+    if(x.typ!=="pos") return; var k=katalogSchluessel(x.text,x.eh); n[k]=(n[k]||0)+1; }); });
+  return n;
 }
 
 /* ---------- Tabelle eines Belegs (Ansicht und Druck); vergleich: Positionen des Angebots ---------- */
@@ -24485,6 +24514,8 @@ function belegEditor(kx, b, fertig, vorschlaege){
       if(r.error) throw new Error(r.error.message);
       v.zu(); toast(titel+" gespeichert."); fertig();
       belegAnsicht(kx, r.data[0], fertig);
+      katalogLernen(zeile.positionen, (zeile.test?"Test-":"")+(zeile.art==="rechnung"?"Rechnung ":"Angebot ")+(zeile.nummer||""), {kundeId:zeile.kunde_id||null})
+        .then(function(x){ if(x.neu) setTimeout(function(){ toast(x.neu+" neue Position"+(x.neu===1?"":"en")+" in den Katalog übernommen."); }, 2200); }, function(){});
     }).catch(function(e){ ok.disabled=false; toast("Nicht gespeichert: "+e.message); });
   };
 }
@@ -24496,7 +24527,9 @@ function katalogWahl(nimm){
   v.inhalt.appendChild(q); v.inhalt.appendChild(l);
   var zeichnen=function(){
     var s=suchNorm(q.value); l.innerHTML="";
-    var t=KATALOG.filter(function(k){ return k.aktiv!==false && (!s || suchNorm([k.text,k.quelle,k.gruppe,k.nummer].join(" ")).indexOf(s)>=0); }).slice(0,80);
+    var nutz=katalogNutzung();
+    var t=KATALOG.filter(function(k){ return k.aktiv!==false && (!s || suchNorm([k.text,k.quelle,k.gruppe,k.nummer].join(" ")).indexOf(s)>=0); })
+      .sort(function(a,b){ return (nutz[katalogSchluessel(b.text,b.eh)]||0)-(nutz[katalogSchluessel(a.text,a.eh)]||0); }).slice(0,80);
     if(!t.length) l.appendChild(el('<div class="muted" style="font-size:13px">'+(KATALOG.length?"Nichts gefunden.":"Der Katalog ist noch leer – KPlus-PDFs einlesen füllt ihn.")+"</div>"));
     t.forEach(function(k){
       var z=el('<button class="btn ghost" type="button" style="text-align:left;display:block;width:100%;font-size:13px">'+esc(String(k.text).split("\n")[0])+
@@ -24506,14 +24539,34 @@ function katalogWahl(nimm){
     });
   };
   q.oninput=zeichnen;
-  katalogLaden().then(zeichnen, function(e){ l.appendChild(el('<div class="note warnbox">'+esc(e.message)+"</div>")); });
+  var belegeDa=belegeAlleGeladen ? Promise.resolve() : (typeof belegeAlleLaden==="function" ? belegeAlleLaden().then(function(){}, function(){}) : Promise.resolve());
+  Promise.all([katalogLaden(), belegeDa]).then(zeichnen, function(e){ l.appendChild(el('<div class="note warnbox">'+esc(e.message)+"</div>")); });
 }
 /* Katalog pflegen: suchen, Preis/Text ändern, ausblenden */
 function katalogAnsicht(){
   var v=ansichtOeffnen("Positionskatalog");
-  v.schritt.textContent="nur Inhaber · aus KPlus-PDFs und von Hand";
+  v.schritt.textContent="nur Inhaber · aus KPlus-PDFs, aus App-Belegen und von Hand";
   var q=el('<input type="search" placeholder="Suchen …" style="width:100%">'), l=el('<div class="stack" style="gap:6px;margin-top:8px"></div>');
-  v.inhalt.appendChild(q); v.inhalt.appendChild(l);
+  var neuK=el('<details style="margin-bottom:8px"><summary class="btn sm" style="display:inline-block;cursor:pointer">+ Neue Position</summary>'+
+    '<div class="stack" style="gap:6px;margin-top:8px;border:1px solid var(--line);border-radius:8px;padding:8px">'+
+    '<textarea rows="2" data-n="text" placeholder="Text der Position (z. B. Fahrtpauschale Zone 1 … FB 035, Pos. 11)"></textarea>'+
+    '<div class="rowflex" style="gap:8px;flex-wrap:wrap"><input type="text" data-n="eh" value="Stk" style="width:70px" aria-label="Einheit">'+
+    '<input type="text" inputmode="decimal" data-n="preis" placeholder="Preis €" style="width:110px">'+
+    '<select data-n="kunde"><option value="">für alle Kunden</option><option value="lidl">nur Lidl</option></select>'+
+    '<button class="btn sm" type="button" data-n="ok">Anlegen</button></div></div></details>');
+  neuK.querySelector('[data-n="ok"]').onclick=function(){
+    var g=function(n){ return neuK.querySelector('[data-n="'+n+'"]').value.trim(); };
+    var text=g("text"), pr=geldLesen(g("preis"));
+    if(!text){ toast("Bitte den Text der Position eintragen."); return; }
+    if(pr!==pr || !(pr>=0)){ toast("Preis bitte als Zahl (z. B. 447,30)."); return; }
+    if(KATALOG.some(function(k){ return katalogSchluessel(k.text,k.eh)===katalogSchluessel(text, g("eh")||"Stk"); })){ toast("Diese Position steht schon im Katalog – dort den Preis ändern."); return; }
+    var z={text:text, eh:g("eh")||"Stk", preis:pr, quelle:"von Hand ("+meinName()+")", kunde_id:g("kunde")||null, geaendert_von:meinName()};
+    Store.sb.from("katalog").insert(z).select("*").then(function(r){
+      if(r.error || !(r.data||[]).length){ toast("Nicht angelegt: "+((r.error&&r.error.message)||"keine Berechtigung")); return; }
+      KATALOG=KATALOG.concat(r.data); neuK.open=false; neuK.querySelectorAll("textarea,input[data-n=preis]").forEach(function(i){ i.value=""; });
+      toast("Position angelegt."); q.value=text.slice(0,20); zeichnen(); }, function(){ toast("Keine Verbindung."); });
+  };
+  v.inhalt.appendChild(neuK); v.inhalt.appendChild(q); v.inhalt.appendChild(l);
   var zeichnen=function(){
     var s=suchNorm(q.value); l.innerHTML="";
     var t=KATALOG.filter(function(k){ return !s || suchNorm([k.text,k.quelle,k.gruppe].join(" ")).indexOf(s)>=0; });
