@@ -295,8 +295,57 @@ test("Keine Verbindung beim Speichern: sichtbare Meldung, kein hängender Knopf,
   await a.zu();
 });
 
+/* Gründlich (nur mit --gruendlich, dauert einige Minuten): jeden Knopf in jedem Reiter je Rolle antippen,
+   im aufgehenden Dialog den Hauptknopf – und melden, was abstürzt, hängt, NaN zeigt oder sich endlos neu zeichnet */
+if (process.argv.includes("--gruendlich")) test("Gründlich: jeden Knopf in jedem Reiter antippen (Inhaber, Techniker, Präsentation)", async () => {
+  const befunde = [];
+  for (const rolle of ["inhaber", "techniker", "praesentation"]) {
+    const a = await oeffnen(KONTEN[rolle]);
+    await a.x(RENDER_ZAEHLER);
+    await a.seite.evaluate(() => { window.print = () => {}; window.open = () => null; });
+    const reiter = JSON.parse(await a.x("JSON.stringify(VIEWS.map(function(v){ return v[0]; }).filter(reiterErlaubt))"));
+    for (const r of reiter) {
+      for (let i = 0; i < 40; i++) {
+        const erg = await a.seite.evaluate(async ([r, i]) => {
+          const x = window.__t.x, warte = (ms) => new Promise((f) => setTimeout(f, ms));
+          try { x("ansichtenSchliessen()"); } catch (e) {}
+          document.body.style.overflow = "";
+          x("formDirty=false; S.view='" + r + "'; render(); 1"); await warte(150);
+          const verboten = /Abmelden|Navi|Drucken|PDF|Export|herunterladen|Datei|Foto|Kamera|QR|scannen|Mikrofon|🎤|Spielwiese|Vorschau/i;
+          const kn = [...document.querySelectorAll("#app button")].filter((b) => b.offsetParent && !b.disabled && !verboten.test(b.textContent + (b.title || "")));
+          if (i >= kn.length) return { ende: true };
+          const b = kn[i], name = (b.textContent || b.title || "").trim().replace(/\s+/g, " ").slice(0, 40);
+          window.__rz.n = 0;
+          b.click(); await warte(500);
+          const d = [...document.querySelectorAll(".assistent")].pop();
+          let haupt = "";
+          if (d) {
+            const k = [...d.querySelectorAll(".as-fuss button")].filter((y) => y.offsetParent && !y.disabled && !/Abbrechen|Schließen|zurück/i.test(y.textContent) && !verboten.test(y.textContent)).pop();
+            if (k) { haupt = k.textContent.trim().slice(0, 30); k.click(); await warte(900); }
+          }
+          const haengt = [...document.querySelectorAll("button")].filter((y) => y.disabled && y.offsetParent && /wird |lädt/.test(y.textContent)).map((y) => y.textContent.trim());
+          const nan = (document.body.innerText.match(/.{0,25}\b(NaN|undefined|\[object Object\])\b.{0,25}/g) || []).slice(0, 2);
+          const gesperrt = document.body.style.overflow === "hidden" && !document.querySelector(".assistent, .vorschau-rahmen");
+          return { name, haupt, haengt, nan, gesperrt, schleife: window.__rz.n > 30 };
+        }, [r, i]);
+        if (erg.ende) break;
+        const wo = rolle + "/" + r + " „" + erg.name + "“" + (erg.haupt ? " → „" + erg.haupt + "“" : "");
+        if (erg.haengt.length) befunde.push(wo + ": Knopf hängt (" + erg.haengt.join(", ") + ")");
+        if (erg.nan.length) befunde.push(wo + ": zeigt " + erg.nan.join(" … "));
+        if (erg.gesperrt) befunde.push(wo + ": Bildschirm gesperrt");
+        if (erg.schleife) befunde.push(wo + ": Endlosschleife");
+      }
+    }
+    if (a.fehler.length) befunde.push(rolle + ": Laufzeitfehler: " + [...new Set(a.fehler)].slice(0, 5).join("; "));
+    await a.zu();
+  }
+  if (befunde.length) console.log("      " + befunde.join("\n      "));
+  pruefe(!befunde.length, befunde.length + " Befunde (siehe oben)");
+});
+
 /* ================================================================ Ablauf ================================================================ */
-const filter = process.argv[2] ? new RegExp(process.argv[2], "i") : null;
+const filterText = process.argv.slice(2).find((x) => !x.startsWith("--"));
+const filter = filterText ? new RegExp(filterText, "i") : null;
 const seite = testfassung();
 const srv = server(seite).listen(0);
 PORT = srv.address().port;
