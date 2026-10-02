@@ -3287,12 +3287,19 @@ function marktAnsicht(sid){
   }
   /* Team-Chat: Nachrichten zu diesem Markt (auch zu seinen Anlagen, Störungen, Protokollen) – vor der Historie, damit man sie findet */
   if(chatAn()) a.inhalt.appendChild(chatBezugKarte("markt", s.id, chatBezugText("markt", s)));
+  var vb=verbundenKarte(sid); if(vb) a.inhalt.appendChild(vb);
+  /* Kontakte noch nicht geladen: nachher dazustellen */
+  if(kontakteAn() && !kontakteGeladen) kontakteLaden().then(function(){
+    if(!document.body.contains(a.inhalt) || a.inhalt.querySelector("[data-verbunden]")) return;
+    var vb2=verbundenKarte(sid); if(!vb2) return;
+    var neben=a.inhalt.querySelector(".sp-neben")||a.inhalt; neben.appendChild(vb2); });
   a.inhalt.appendChild(h);
   /* PC: Anlagen und Historie links, Planung und Nachrichten rechts; jede Karte einklappbar */
   kartenOrdnen(a.inhalt, [
     {klasse:"detail", seite:"haupt", fest:true, fix:true},
     {h:/^Geplant an diesem Markt/, seite:"neben", key:"plan"},
     {h:/Nachrichten/, seite:"neben", key:"chat", handyZu:true},
+    {h:/^Projekte und Kontakte/, seite:"neben", key:"verbunden"},
     {h:/^Wartungs- und Störungshistorie/, seite:"haupt", key:"historie", handyZu:true}
   ], "markt", false, true);
   /* führt ein Knopf woandershin (Protokoll, Verwaltung), geht die Ansicht zu */
@@ -3306,6 +3313,27 @@ function marktAnsicht(sid){
     setTimeout(function(){ if(stand()!==vorher) a.zu(); }, 60);
   });
   return a;
+}
+/* Vernetzung (Überarbeitung 02.10.2026): was sonst zu diesem Markt gehört – Projekte (Baustellen,
+   Folgeaufträge) und Kontakte, die hier vorkamen (Marktleitung aus Protokollen, Lidl-Kontakt aus
+   Störungen, Beteiligte der Projekte). Alles anklickbar; vom Kontakt und vom Projekt führt es zurück. */
+function marktKontakte(sid){
+  var prot={}, stoer={}, proj={};
+  alleProtokolle().forEach(function(p){ if(p.standortId===sid) prot[p._id]=1; });
+  OFFENE.forEach(function(o){ if(o.standortId===sid) stoer[o._id]=1; });
+  PROJEKTE.forEach(function(p){ if(p.standort_id===sid) proj[p.id]=1; });
+  return KONTAKTE.filter(function(k){ return (k.herkunft||[]).some(function(h){
+    return (h.art==="protokoll" && prot[h.id]) || (h.art==="stoerung" && stoer[h.id]) || (h.art==="projekt" && proj[h.id]); }); });
+}
+function verbundenKarte(sid){
+  var pr=PROJEKTE.filter(function(p){ return p.standort_id===sid; }).sort(function(a,b){ return String(b.geaendert||"").localeCompare(String(a.geaendert||"")); });
+  var ko=(kontakteAn() && kontakteGeladen) ? marktKontakte(sid) : [];
+  if(!pr.length && !ko.length) return null;
+  var c=el('<div class="card" data-verbunden style="box-shadow:none;margin-top:12px"><div class="pad stack" style="gap:8px"><h2>Projekte und Kontakte</h2></div></div>');
+  var h=c.querySelector(".stack");
+  if(pr.length) h.appendChild(el('<div class="stack" style="gap:4px">'+pr.map(function(p){ return '<div style="font-size:13px">'+projektLink(p)+" "+projektPill(p)+"</div>"; }).join("")+"</div>"));
+  if(ko.length){ var kh=el('<div class="stack" style="gap:6px"></div>'); ko.forEach(function(k){ kh.appendChild(el(kontaktZeileHtml(k))); }); kontaktLinksVerdrahten(kh); h.appendChild(kh); }
+  return c;
 }
 /* in der Einfangphase: sonst öffnete die Zeile darunter (etwa das
    Protokoll) zuerst ihr eigenes Ziel */
@@ -16003,7 +16031,9 @@ function protokollDetail(p){
     zk.onclick=function(){ zeitEditor(null, {datum:p.datum, standort_id:p.standortId||null, taetigkeit:(istStoerung(p)?"Störung ":"Wartung ")+protoName(p),
       beginn:so0.ankunft||p.uhrzeit||"", ende:so0.ende||""}); };
     weiter.appendChild(zk);
-    if(so0.folgeauftrag){
+    var prAus=PROJEKTE.filter(function(x){ return (x.daten||{}).ausProtokoll===p._id; })[0];
+    if(prAus) weiter.appendChild(el('<span style="font-size:13px">Folgeauftrag: '+projektLink(prAus)+" "+projektPill(prAus)+"</span>"));
+    else if(so0.folgeauftrag || (nurInhaber() && folgeMaengel(p).length)){
       var pk=el('<button class="btn ghost sm" type="button">Folgeauftrag als Projekt anlegen</button>');
       pk.onclick=function(){ projektNeu({standort_id:p.standortId||null, kunde_id:st0?kundeVon(st0):"lidl", ausProtokoll:p._id,
         titel:so0.folgeText||("Folgeauftrag "+protoName(p)), text:"Aus dem Störungseinsatz vom "+dfmt(p.datum)+(so0.massnahmen?": "+so0.massnahmen:"")}); };
@@ -23434,6 +23464,10 @@ function projektAnsicht(id){
     v.inhalt.innerHTML=""; v.fuss.innerHTML="";
     var s=p.standort_id && byId[p.standort_id];
     v.schritt.innerHTML=kundeLink(p.kunde_id)+(s?" · "+marktLink(s, stName(s)===kundeTitel(p.kunde_id)?"Standort":null):"");
+    /* Folgeauftrag: zurück zum Protokoll, aus dem das Projekt entstand */
+    var ausP=(p.daten||{}).ausProtokoll ? alleProtokolle().filter(function(x){ return x._id===p.daten.ausProtokoll; })[0] : null;
+    if(ausP){ var al=el('<span> · <a href="#" class="sprunglink">aus dem Protokoll vom '+esc(dfmt(ausP.datum))+"</a></span>");
+      al.querySelector("a").onclick=function(e){ e.preventDefault(); protokollFenster(ausP); }; v.schritt.appendChild(al); }
     var d=p.daten||{};
 
     /* Schritte: wo das Projekt steht – antippen stellt um (mit Tagebuch-Eintrag) */
