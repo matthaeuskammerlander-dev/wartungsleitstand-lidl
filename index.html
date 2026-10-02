@@ -5664,7 +5664,7 @@ function gelernteWerte(key){
     if(key==="ortPruefbuch" && v===PRUEFBUCH_ORT_ALT) v=PRUEFBUCH_ORT;   /* alter Standard = neuer */
     if(typeof v==="string" && v.trim()) haeufig[v.trim()]=(haeufig[v.trim()]||0)+1;
   });
-  (lsGet("ukt_eigene",{})[key]||[]).forEach(function(v){ if(v) haeufig[v]=haeufig[v]||1; });
+  eigeneWerte(key).forEach(function(v){ if(v) haeufig[v]=haeufig[v]||1; });
   return Object.keys(haeufig).sort(function(a,b){ return haeufig[b]-haeufig[a] || a.localeCompare(b,"de"); });
 }
 /* „Regelung betreut von“: die Firmennamen, die einmal unter „andere Firma“
@@ -5699,7 +5699,7 @@ function gelernteStoerWerte(key){
   var haeufig={}, zaehl=function(v){ v=String(v==null?"":v).trim(); if(v) haeufig[v]=(haeufig[v]||0)+1; };
   (typeof OFFENE!=="undefined" ? OFFENE : []).forEach(function(o){ zaehl(o[key]); });
   alleProtokolle().forEach(function(p){ if(p.stoerung) zaehl(p.stoerung[key]); });
-  (lsGet("ukt_eigene",{})["st_"+key]||[]).forEach(function(v){ if(v) haeufig[v]=haeufig[v]||1; });
+  eigeneWerte("st_"+key).forEach(function(v){ if(v) haeufig[v]=haeufig[v]||1; });
   return Object.keys(haeufig).sort(function(a,b){ return haeufig[b]-haeufig[a] || a.localeCompare(b,"de"); });
 }
 /* Knopfreihe zum Feld: ziel = Selektor des Eingabefelds; höchstens 6, kurze Werte */
@@ -5746,6 +5746,41 @@ function merkeWert(key, wert){
   if(!wert) return;
   var m=lsGet("ukt_eigene",{}) || {}, liste=m[key]||[];
   if(liste.indexOf(wert)<0){ liste.push(wert); m[key]=liste.slice(-30); lsSet("ukt_eigene",m); }
+  gelerntTeilen([{schluessel:key, wert:wert}]);
+}
+/* Gemeinsam gelernt (Büro 02.10.2026: „should be shared“, tools/gelernte-werte.sql): selbst Eingetipptes
+   (Material, Foto-Beschriftung, eigene Werte in Auswahllisten, Firmennamen, Tätigkeitsbereiche) steht
+   danach bei allen als Vorschlag. Was ein Gerät schon gelernt hat, geht einmal mit. Zugangsdaten nie. */
+var GELERNT={}, gelerntStand=0, gelerntLaedt=null;
+function gelerntLaden(){
+  if(gelerntLaedt || !betriebAn() || demo() || Date.now()-gelerntStand<120000) return gelerntLaedt||Promise.resolve();
+  gelerntLaedt=Store.sb.from("gelernte_werte").select("schluessel,wert").limit(5000).then(function(r){
+    gelerntLaedt=null; gelerntStand=Date.now();
+    if(r.error) return;
+    GELERNT={}; (r.data||[]).forEach(function(z){ (GELERNT[z.schluessel]=GELERNT[z.schluessel]||[]).push(z.wert); });
+    /* einmal je Gerät: das bisher nur hier Gelernte teilen */
+    if(!lsGet("ukt_eigene_geteilt", false)){
+      var m=lsGet("ukt_eigene",{})||{}, l=[];
+      Object.keys(m).forEach(function(k){ (m[k]||[]).forEach(function(w){ if(w && (GELERNT[k]||[]).indexOf(w)<0) l.push({schluessel:k, wert:String(w).trim()}); }); });
+      gelerntTeilen(l, function(){ lsSet("ukt_eigene_geteilt", true); });
+    }
+  }, function(){ gelerntLaedt=null; gelerntStand=Date.now(); });
+  return gelerntLaedt;
+}
+function gelerntTeilen(liste, fertig){
+  liste=(liste||[]).filter(function(z){ return z.schluessel && z.wert && !istGeheim(z.schluessel) && z.wert.length<=200 && z.schluessel.length<=60; });
+  liste.forEach(function(z){ var a=GELERNT[z.schluessel]=GELERNT[z.schluessel]||[]; if(a.indexOf(z.wert)<0) a.push(z.wert); });
+  if(!liste.length || !betriebAn() || demo()){ if(fertig && !liste.length) fertig(); return; }
+  var von=meinName();
+  Store.sb.from("gelernte_werte").upsert(liste.slice(0,500).map(function(z){ return {schluessel:z.schluessel, wert:z.wert, von:von}; }),
+    {onConflict:"schluessel,wert", ignoreDuplicates:true}).then(function(r){ if(!r.error && fertig) fertig(); }, function(){});
+}
+/* eigene Werte zu einem Schlüssel: gemeinsam gelernt + auf diesem Gerät */
+function eigeneWerte(key){
+  gelerntLaden();
+  var l=(GELERNT[key]||[]).slice();
+  ((lsGet("ukt_eigene",{})||{})[key]||[]).forEach(function(v){ if(v && l.indexOf(v)<0) l.push(v); });
+  return l;
 }
 function feldGilt(f, a){ return (!f.gruppe.wenn || f.gruppe.wenn(a)) && (!f.wenn || f.wenn(a)); }
 /* was an Pflichtangaben noch fehlt */
@@ -12434,7 +12469,7 @@ function protokollAssistent(form, stoer){
     /* was bei Störungen schon eingesetzt wurde – antippen legt eine Zeile an */
     var haeufig={};
     alleProtokolle().forEach(function(p){ ((p.stoerung&&p.stoerung.material)||[]).forEach(function(m){ var t=String(m&&m.text||"").trim(); if(t) haeufig[t]=(haeufig[t]||0)+1; }); });
-    (lsGet("ukt_eigene",{}).st_material||[]).forEach(function(t){ if(t) haeufig[t]=haeufig[t]||1; });
+    eigeneWerte("st_material").forEach(function(t){ if(t) haeufig[t]=haeufig[t]||1; });
     var bekannt=Object.keys(haeufig).sort(function(a,b){ return haeufig[b]-haeufig[a] || a.localeCompare(b,"de"); }).filter(function(t){ return t.length<=40; }).slice(0,8);
     var liste=el('<div class="stack" style="gap:8px"></div>');
     var zeichnen=function(){
@@ -25299,7 +25334,7 @@ function planungLaden(){
   var konto=Store.benutzer.email;
   if(konto!==planungKonto){ planungKonto=konto; PLANUNG=[]; PLAN_PRIVAT={}; planungGeladen=false; }
   planungLaedt=true;
-  startpunkteLaden();
+  startpunkteLaden(); gelerntLaden();
   return Promise.all([
     Store.sb.from("planung").select("*").order("datum").limit(5000),
     Store.sb.from("planung_privat").select("*").limit(5000)
@@ -27455,7 +27490,7 @@ function bereicheEigenLaden(){
 }
 function bereichListe(mit){
   var fest=BEREICHE.map(function(x){ return x[0]; }), eigen=[];
-  BEREICHE_EIGEN.concat(lsGet("ukt_eigene",{}).bereich||[]).concat(mit?[mit]:[]).forEach(function(b){
+  BEREICHE_EIGEN.concat(eigeneWerte("bereich")).concat(mit?[mit]:[]).forEach(function(b){
     b=String(b||"").trim(); if(b && fest.indexOf(b)<0 && eigen.indexOf(b)<0) eigen.push(b); });
   eigen.sort(function(a,b){ return a.localeCompare(b,"de"); });
   /* „Sonstiges“ bleibt zuletzt – dort lässt sich ein neuer Bereich eintippen */
