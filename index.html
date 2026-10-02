@@ -24498,6 +24498,48 @@ function planDetails(e){
   return e.details||"";
 }
 function planZeit(e){ return e.beginn ? e.beginn+(e.ende?"–"+e.ende:"") : "ganztägig"; }
+/* ---- Fahrzeiten zwischen Einsätzen (Büro 02.10.2026: „mit automatischer Fahrzeitberechnung“) ----
+   Zwischen zwei Einsätzen einer Person an verschiedenen Orten: wie lange dauert die Fahrt, reicht die
+   Zeit dazwischen? Sofort geschätzt (Luftlinie × Umweg), dann über das Straßenrouting genau (FAHR_CACHE). */
+var FAHR_CACHE={}, fahrLaedt={};
+function fahrtSchaetzMin(a,b){ return Math.max(5, Math.round(fahrH(a,b)*60/5)*5); }
+function einsatzOrtZeit(x){
+  var sid=x.e ? x.e.standort_id : x.o ? x.o.standortId : null, s=sid && byId[sid];
+  if(!s || s.lat==null || s.lon==null) return null;
+  var b=x.e ? zeitMin(x.e.beginn) : x.o ? zeitMin(x.o.terminZeit) : null; if(b==null) return null;
+  var en=x.e ? (zeitMin(x.e.ende)||b+60) : b+120;
+  return {s:s, b:b, e:en, titel:x.titel||"", neu:!!x._neu};
+}
+/* Einträge EINES Tages einer Person → Fahrten zwischen aufeinanderfolgenden Einsätzen */
+function fahrtHinweise(eintraege){
+  var l=eintraege.map(einsatzOrtZeit).filter(Boolean).sort(function(a,b){ return a.b-b.b; }), r=[];
+  for(var i=1;i<l.length;i++){
+    var a=l[i-1], b=l[i]; if(a.s.id===b.s.id) continue;
+    var k=a.s.id+">"+b.s.id, genau=FAHR_CACHE[k]!=null, min=genau ? FAHR_CACHE[k] : fahrtSchaetzMin(a.s, b.s);
+    r.push({von:a, nach:b, min:min, genau:genau, luecke:b.b-a.e, knapp:(b.b-a.e)<min});
+  }
+  return r;
+}
+function fahrtText(f){
+  var hm=function(m){ return String(Math.floor(m/60)).padStart(2,"0")+":"+String(m%60).padStart(2,"0"); };
+  return "🚗 "+stName(f.von.s)+" (bis "+hm(f.von.e)+") → "+stName(f.nach.s)+" (ab "+hm(f.nach.b)+"): "+(f.genau?"":"ca. ")+f.min+" min Fahrt, "+
+    (f.luecke<0 ? "Termine überschneiden sich" : f.luecke+" min Zeit")+(f.knapp?" – zu knapp":"");
+}
+/* genaue Straßenfahrzeiten für diese Orte holen (einmal je Ortsgruppe), danach fertig() */
+function fahrtenGenau(orte, fertig){
+  var punkte=[], gesehen={};
+  orte.forEach(function(s){ if(s && s.lat!=null && !gesehen[s.id]){ gesehen[s.id]=1; punkte.push(s); } });
+  if(punkte.length<2) return;
+  var fehlt=false; punkte.forEach(function(a){ punkte.forEach(function(b){ if(a!==b && FAHR_CACHE[a.id+">"+b.id]==null) fehlt=true; }); });
+  var schl=punkte.map(function(p){ return p.id; }).sort().join(",");
+  if(!fehlt || fahrLaedt[schl]) return;
+  fahrLaedt[schl]=1;
+  strassenMatrix(punkte).then(function(m){
+    if(!m || !m.dauer) return;
+    punkte.forEach(function(a,i){ punkte.forEach(function(b,j){ if(i!==j && m.dauer[i] && m.dauer[i][j]!=null) FAHR_CACHE[a.id+">"+b.id]=Math.max(1, Math.round(m.dauer[i][j]/60)); }); });
+    if(fertig) fertig();
+  }, function(){});
+}
 /* Doppelbuchung (Büro 02.10.2026: „warnt der Kalender vor einer Doppelbuchung – Darko ist z. B. schon
    verplant“): Kalendertermine UND Störungseinsätze der Personen im Zeitraum. ids = Konten, namen =
    Namen (Störungen kennen nur den Namen). Ohne Uhrzeit = ganzer Tag; Störung mit Uhrzeit ≈ 2 Stunden. */
@@ -24776,6 +24818,13 @@ function kalWoche(heute){
       var h=z.querySelector("[data-e]");
       if(!l.length) h.appendChild(el('<div class="muted" style="font-size:12.5px">–</div>'));
       l.forEach(function(x){ h.appendChild(kalEintragZeile(x, true)); });
+      /* Fahrzeiten zwischen den Einsätzen – nur für eine Person sinnvoll */
+      if(S.kalWer!=="alle"){
+        var fh=fahrtHinweise(l);
+        fh.forEach(function(f){ h.appendChild(el('<div style="font-size:12px;'+(f.knapp?"color:var(--crit);font-weight:600":"color:var(--ink-3)")+'">'+esc(fahrtText(f))+"</div>")); });
+        if(fh.some(function(f){ return !f.genau; })) fahrtenGenau(l.map(function(x){ var o=einsatzOrtZeit(x); return o&&o.s; }), function(){
+          if(S.view==="kalender" && S.kalModus==="woche" && darfRendern() && !document.querySelector(".assistent")) render(); });
+      }
       z.querySelector("[data-plus]").onclick=function(){ planEditor(null, {art:"termin", datum:tag, wer:S.kalWer==="alle"||S.kalWer==="ich" ? [meineKennung()] : [S.kalWer]}); };
       tage.appendChild(z);
     })(plusTage(mo,i), i);
@@ -25134,9 +25183,21 @@ function planEditor(e, vorgabe){
     var bis=F("datum_bis").value && F("datum_bis").value>d ? F("datum_bis").value : d;
     var b0=F("ganz").checked ? 0 : (zeitMin(F("beginn").value)||0), e0=F("ganz").checked ? 1440 : (zeitMin(F("ende").value)||1440);
     var treffer=verplantPruefen(wer, wer.map(function(id){ return werNamen[id]||planPersonName(id)||""; }), d, bis, b0, e0, e?e.id:null, null);
-    k.hidden=!treffer.length;
-    k.innerHTML=treffer.length ? "<strong>Schon verplant:</strong><br>"+treffer.slice(0,8).map(esc).join("<br>") : "";
-    return treffer;
+    /* Fahrzeiten: dieser Termin (mit Ort und Uhrzeit) zwischen den anderen Einsätzen derselben Person am Tag */
+    var fahrten=[], knapp=[];
+    if(!F("ganz").checked && F("beginn").value && F("standort_id") && F("standort_id").value){
+      var dieser={_neu:true, titel:"dieser Termin", e:{standort_id:F("standort_id").value, beginn:F("beginn").value, ende:F("ende").value||""}};
+      wer.forEach(function(id){
+        var tag=(kalenderEintraege(d, d, id)[d]||[]).filter(function(x){ return !(e && x.e && x.e.id===e.id); }).concat([dieser]);
+        fahrtHinweise(tag).filter(function(f){ return f.von.neu || f.nach.neu; }).forEach(function(f){
+          var t=(werNamen[id]||planPersonName(id)||"")+": "+fahrtText(f); fahrten.push({t:t, knapp:f.knapp}); if(f.knapp) knapp.push(t); });
+        fahrtenGenau(tag.map(function(x){ var o=einsatzOrtZeit(x); return o&&o.s; }), function(){ if(document.body.contains(form)) konflikte(); });
+      });
+    }
+    k.hidden=!treffer.length && !fahrten.length;
+    k.innerHTML=(treffer.length ? "<strong>Schon verplant:</strong><br>"+treffer.slice(0,8).map(esc).join("<br>") : "")+
+      (fahrten.length ? (treffer.length?"<br>":"")+"<strong>Fahrzeiten:</strong><br>"+fahrten.map(function(f){ return f.knapp?'<span style="color:var(--crit);font-weight:600">'+esc(f.t)+"</span>":esc(f.t); }).join("<br>") : "");
+    return treffer.concat(knapp);
   };
   form.addEventListener("change", zeigen);
   form.addEventListener("input", function(ev){ if(ev.target.type==="time"||ev.target.type==="date") konflikte(); });
@@ -25193,7 +25254,7 @@ function planEditor(e, vorgabe){
     if(!wer.length && !window.confirm("Niemand ist eingetragen – trotzdem speichern? (Dann gilt es als deins.)")) return;
     /* Doppelbuchung: vor dem Speichern noch einmal ausdrücklich fragen */
     var doppelt=konflikte()||[];
-    if(doppelt.length && !window.confirm("Schon verplant:\n\n"+doppelt.slice(0,8).join("\n")+"\n\nTrotzdem so speichern?")) return;
+    if(doppelt.length && !window.confirm("Schon verplant bzw. zu knapp:\n\n"+doppelt.slice(0,8).join("\n")+"\n\nTrotzdem so speichern?")) return;
     var wartung=termin && kat==="wartung" && !priv && !!F("standort_id").value;
     var posIds=wartung ? posWahl.filter(function(pid){ return posById[pid] && posById[pid].standortId===F("standort_id").value; }) : [];
     if(wartung && !posIds.length && wartungsTermineAm(F("standort_id").value).length &&
