@@ -24672,10 +24672,11 @@ function viewKalender(){
   if(S.kalModus==="monat") inhalt.appendChild(kalMonat(heute));
   else inhalt.appendChild(kalWoche(heute));
   f.appendChild(c);
+  var offenTodo=offenAufg.length+einsatzListe(S.kalWer).filter(function(e){ return !einsatzErledigt(e); }).length;
   var td=el('<div class="card" id="kal_todo"><div class="pad stack" style="gap:8px">'+
-    '<div class="rowflex" style="justify-content:space-between;gap:8px"><h2>To-do'+(offenAufg.length?" ("+offenAufg.length+" offen)":"")+"</h2>"+
+    '<div class="rowflex" style="justify-content:space-between;gap:8px"><h2>To-do'+(offenTodo?" ("+offenTodo+" offen)":"")+"</h2>"+
     '<button class="btn sm" type="button">+ Aufgabe</button></div>'+
-    '<div class="sub">☐ antippen hakt ab, der Text öffnet die Aufgabe. Personen wie oben gewählt.</div></div></div>');
+    '<div class="sub">Aufgaben und geplante Einsätze. ☐ antippen hakt ab – eine Wartung hakt das Protokoll ab. Personen wie oben gewählt.</div></div></div>');
   td.querySelector("button").onclick=function(){ planEditor(null, {art:"aufgabe", datum:"", wer:S.kalWer==="alle"||S.kalWer==="ich" ? [meineKennung()] : [S.kalWer]}); };
   td.querySelector(".stack").appendChild(aufgabenListe(S.kalWer));
   f.appendChild(td);
@@ -24769,24 +24770,61 @@ function kalMonat(heute){
   return box;
 }
 /* Aufgaben: überfällig, heute, diese Woche, später, ohne Datum – erledigte auf Wunsch */
+/* Geplante Einsätze im To-do (Büro 02.10.2026: „diese Termine sind noch nicht in der To-do“):
+   Wartung, Störung, Baustelle der gewählten Person. Eine Wartung ist erledigt, sobald für alle
+   eingeplanten Termine ein Protokoll da ist – abgehakt wird sie also mit dem Protokoll. */
+var EINSATZ_KAT=["wartung","stoerung","baustelle"];
+function einsatzErledigt(e){
+  if(e.status==="erledigt") return true;
+  if(e.kategorie==="wartung" && (e.position_ids||[]).length) return e.position_ids.every(function(pid){ return planPosErledigt(e, pid); });
+  return false;
+}
+function einsatzListe(wahl){
+  var grenze=plusTage(isoLokal(new Date()), -30);
+  return PLANUNG.filter(function(e){ return e.art==="termin" && EINSATZ_KAT.indexOf(e.kategorie)>=0 && !e.privat && e.status!=="abgelehnt" &&
+    e.datum && (e.datum_bis||e.datum)>=grenze && kalWerPasst(wahl, (e.wer||[]).length?e.wer:[e.erstellt_von], e.wer_namen); });
+}
+function einsatzZeile(e){
+  var heute=isoLokal(new Date()), fertig=einsatzErledigt(e), wartung=e.kategorie==="wartung" && (e.position_ids||[]).length;
+  var z=el('<div class="rowflex" style="gap:8px;align-items:flex-start;flex-wrap:nowrap;border:1px solid var(--line);border-left:4px solid '+planKat(e.kategorie)[2]+';border-radius:8px;padding:6px 8px'+(fertig?";opacity:.65":"")+'">'+
+    '<button class="btn ghost sm" type="button" data-ab style="min-width:36px;font-size:16px;padding:2px 6px" title="'+(wartung?"wird mit dem Protokoll abgehakt":(fertig?"wieder öffnen":"erledigt"))+'">'+(fertig?"☑":"☐")+"</button>"+
+    '<a href="#" class="sprunglink" style="flex:1;min-width:0;font-size:13.5px;text-decoration:none;color:inherit"><strong'+(fertig?' style="text-decoration:line-through"':"")+">"+esc(planTitel(e))+"</strong>"+
+      '<br><span class="muted" style="font-size:12px">'+[ '<span'+(!fertig && (e.datum_bis||e.datum)<heute?' style="color:var(--crit)"':"")+">"+esc(planKat(e.kategorie)[1])+" "+esc(dfmt(e.datum))+(e.beginn?" "+esc(e.beginn):"")+"</span>",
+        esc(planWerText(e)), esc(planBezugText(e))].filter(Boolean).join(" · ")+"</span></a>"+
+    (wartung && !fertig && e.standort_id && !nurLesen() ? '<button class="btn sm" type="button" data-proto style="flex:none">Protokoll</button>' : "")+"</div>");
+  z.querySelector("a").onclick=function(ev){ ev.preventDefault(); planEditor(e); };
+  z.querySelector("[data-ab]").onclick=function(){
+    if(wartung){ toast(fertig?"Erledigt – das Protokoll ist gespeichert.":"Eine Wartung ist erledigt, sobald das Protokoll gespeichert ist – „Protokoll“ antippen."); return; }
+    planAbhaken(e, !fertig);
+  };
+  var pb=z.querySelector("[data-proto]");
+  if(pb) pb.onclick=function(){
+    var offen=(e.position_ids||[]).filter(function(pid){ return !planPosErledigt(e, pid); });
+    protokollBeginnen(e.standort_id, offen[0]||e.position_ids[0], "wartung");
+  };
+  return z;
+}
 function aufgabenListe(wahl, filter){
   var heute=isoLokal(new Date()), so=plusTage(montagVon(heute),6);
   var alle=PLANUNG.filter(function(e){ return e.art==="aufgabe" && (!filter || filter(e)) &&
     (filter || kalWerPasst(wahl, (e.wer||[]).length?e.wer:[e.erstellt_von], e.wer_namen)); });
+  /* im To-do des Kalenders auch die geplanten Einsätze – in Projekt und Markt stehen sie eigens */
+  if(!filter) alle=alle.concat(einsatzListe(wahl).map(function(e){ return Object.assign({}, e, {_einsatz:true, status:einsatzErledigt(e)?"erledigt":"offen", erledigt:e.erledigt||e.datum}); }));
   var box=el('<div class="stack" style="gap:8px"></div>');
   var gruppen=[["Überfällig",function(e){ return e.datum && e.datum<heute; },"var(--crit)"],["Heute",function(e){ return e.datum===heute; },""],
     ["Diese Woche",function(e){ return e.datum>heute && e.datum<=so; },""],["Später",function(e){ return e.datum>so; },""],["Ohne Datum",function(e){ return !e.datum; },""]];
   var offen=alle.filter(function(e){ return e.status!=="erledigt"; }).sort(function(a,b){ return String(a.datum||"9").localeCompare(String(b.datum||"9")); });
-  if(!offen.length) box.appendChild(el('<div class="muted" style="font-size:13px">Keine offenen Aufgaben'+(filter?"":wahl==="ich"?" für dich":"")+".</div>"));
+  if(!offen.length) box.appendChild(el('<div class="muted" style="font-size:13px">Nichts offen'+(filter?"":wahl==="ich"?" für dich":"")+".</div>"));
+  var zeileVon=function(e){ return e._einsatz ? einsatzZeile(PLANUNG.filter(function(x){ return x.id===e.id; })[0]||e) : aufgabeZeile(e); };
   gruppen.forEach(function(g){
     var l=offen.filter(g[1]); if(!l.length) return;
     box.appendChild(el('<div style="font-size:12.5px;font-weight:600;'+(g[2]?"color:"+g[2]:"")+'">'+esc(g[0])+" ("+l.length+")</div>"));
-    l.forEach(function(e){ box.appendChild(aufgabeZeile(e)); });
+    l.forEach(function(e){ box.appendChild(zeileVon(e)); });
   });
   var erl=alle.filter(function(e){ return e.status==="erledigt"; }).sort(function(a,b){ return String(b.erledigt||"").localeCompare(String(a.erledigt||"")); });
   if(erl.length){
     var d=el('<details><summary style="cursor:pointer;font-size:12.5px;font-weight:600">Erledigt ('+erl.length+")</summary><div class=\"stack\" style=\"gap:4px;margin-top:6px\"></div></details>");
-    erl.slice(0,60).forEach(function(e){ d.querySelector(".stack").appendChild(aufgabeZeile(e)); });
+    erl.slice(0,60).forEach(function(e){ d.querySelector(".stack").appendChild(zeileVon(e)); });
     box.appendChild(d);
   }
   return box;
