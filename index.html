@@ -2109,7 +2109,7 @@ function filteredPos(){ var ids={}; filtered().forEach(function(s){ids[s.id]=1;}
 /* Stunden, Projekte, Kunden: seit 01.10.2026 (weitere Kunden, Projekte bis zur Rechnung, Arbeitszeit) */
 /* Reihenfolge nach dem Arbeitsablauf (Büro 01.10.2026, Karte neben Kalender 02.10.2026): was ansteht, was geplant ist und wo,
    dann die Arbeit vor Ort (Protokoll, Anlagen, Stunden), dann das Büro */
-var VIEWS=[["faellig","Fällig"],["kalender","Kalender"],["karte","Karte"],["protokoll","Protokoll"],["anlagen","Anlagen"],["stunden","Stunden"],
+var VIEWS=[["faellig","Fällig"],["kalender","Kalender"],["karte","Karte"],["protokoll","Protokoll"],["anlagen","Anlagen"],["stunden","Stunden"],["fahrzeuge","Fahrzeuge"],
            ["projekte","Projekte"],["kunden","Kunden & Kontakte"],["belege","Rechnungen"],["verlauf","Verlauf"],["verwaltung","Verwaltung"],["daten","Datenbasis"]];
 var tabsEl=document.getElementById("tabs");
 VIEWS.forEach(function(v){
@@ -6680,7 +6680,7 @@ function wechselnOk(ziel, neu){
 function reiterErlaubt(v){
   if(nurLesen()) return ["faellig","karte","anlagen","verlauf"].indexOf(v)>=0;
   /* Stunden und Projekte brauchen die gemeinsame Datenbank (oder die Präsentation) */
-  if((v==="stunden"||v==="projekte"||v==="kalender") && !(Store.modus==="supabase"||demo())) return false;
+  if((v==="stunden"||v==="projekte"||v==="kalender"||v==="fahrzeuge") && !(Store.modus==="supabase"||demo())) return false;
   if(v==="kunden" && Store.modus==="anmeldung") return false;
   /* Rechnungen und Angebote: nur Inhaber – keine Admins (Büro 01.10.2026) */
   if(v==="belege") return nurInhaber() && Store.modus==="supabase";
@@ -17623,6 +17623,374 @@ function archivKarte(){
   return c;
 }
 
+/* ===================== Fahrzeuge (Büro 02.10.2026) =====================
+   Je Fahrzeug Kilometer, Pickerl (§ 57a), Service, Reparaturen und Schäden (tools/fahrzeuge.sql).
+   Techniker sehen nur ihr zugeteiltes Fahrzeug und tragen km-Stand und Schäden ein; Inhaber und Admins
+   sehen alle und tragen Service, Pickerl, Reparaturen ein; Beträge nur der Inhaber (fahrzeug_kosten).
+   GPS (X-GPS): Import einer Bericht-Datei (CSV/Excel) – übernommen werden NUR Kilometer je Tag
+   (Inhaber 02.10.2026). Orte, Uhrzeiten und Fahrten bleiben in der Datei: ein Fahrtenbuch mit Orten
+   wäre Standortüberwachung der Mitarbeiter (erst nach Zustimmung/Betriebsvereinbarung, ArbVG § 96). */
+var FZ=[], FZ_E=[], FZ_K={}, fzGeladen=false, fzFehlt=false, fzFehler="", fzLaedt=null, fzStand=0;
+var FZ_ARTEN={km:"km-Stand", service:"Service", pickerl:"Pickerl (§ 57a)", reparatur:"Reparatur", schaden:"Schaden", reifen:"Reifen", sonstiges:"Sonstiges"};
+function fzBuero(){ return istInhaber() || Rolle.name==="admin"; }
+function fzNorm(t){ return String(t||"").toUpperCase().replace(/[^A-Z0-9]/g,""); }
+/* lädt höchstens einmal je Minute; true, wenn wirklich geladen wurde */
+function fzLaden(neu){
+  if(demo() || Store.modus!=="supabase" || !Store.sb){ fzGeladen=true; return Promise.resolve(false); }
+  if(fzLaedt) return fzLaedt;
+  if(!neu && fzGeladen && Date.now()-fzStand<60000) return Promise.resolve(false);
+  var ab=isoLokal(new Date(Date.now()-430*864e5));
+  fzLaedt=Promise.all([
+    Store.sb.from("fahrzeuge").select("*").order("kennzeichen"),
+    Store.sb.from("fahrzeug_eintraege").select("*").gte("datum", ab).order("datum", {ascending:false}).limit(8000),
+    nurInhaber() ? Store.sb.from("fahrzeug_kosten").select("*") : Promise.resolve({data:[]})
+  ]).then(function(r){
+    if(r[0].error){ fzFehlt=/does not exist|schema cache|relation/i.test(r[0].error.message||""); fzFehler=fzFehlt?"":r[0].error.message; }
+    else { FZ=r[0].data||[]; FZ_E=r[1].data||[]; FZ_K={}; (r[2].data||[]).forEach(function(k){ FZ_K[k.eintrag_id]=k; }); fzFehlt=false; fzFehler=""; }
+    fzGeladen=true; fzStand=Date.now(); fzLaedt=null; return true;
+  }, function(){ fzFehler="Keine Verbindung – Fahrzeuge nicht geladen."; fzGeladen=true; fzStand=Date.now(); fzLaedt=null; return true; });
+  return fzLaedt;
+}
+function fzEintraege(f){ return FZ_E.filter(function(e){ return e.fahrzeug_id===f.id; })
+  .sort(function(a,b){ return String(b.datum).localeCompare(String(a.datum)) || String(b.erstellt||"").localeCompare(String(a.erstellt||"")); }); }
+function fzKmStand(f){ return fzEintraege(f).filter(function(e){ return e.km!=null; })[0] || null; }
+function fzStrecke(f, ym){
+  var l=fzEintraege(f).filter(function(e){ return String(e.datum).slice(0,7)===ym && e.strecke!=null; });
+  return l.length ? Math.round(l.reduce(function(s,e){ return s+(+e.strecke||0); },0)) : null;
+}
+/* was am Fahrzeug ansteht: Pickerl und Service (Datum: 30 Tage vorher, km: 1000 km vorher), offene Schäden */
+function fzFaellig(f){
+  var heute=isoLokal(new Date()), r=[], st=fzKmStand(f);
+  var tage=function(d){ return Math.round((new Date(d+"T12:00:00")-new Date(heute+"T12:00:00"))/864e5); };
+  if(f.pickerl_bis){ var t=tage(f.pickerl_bis); if(t<=30) r.push({art:t<0?"crit":"warn", text:"Pickerl "+(t<0?"überfällig seit ":"fällig ")+dfmt(f.pickerl_bis)}); }
+  if(f.service_bis){ var t2=tage(f.service_bis); if(t2<=30) r.push({art:t2<0?"crit":"warn", text:"Service "+(t2<0?"überfällig seit ":"fällig ")+dfmt(f.service_bis)}); }
+  if(f.service_km && st){ var rest=f.service_km-st.km; if(rest<=1000) r.push({art:rest<0?"crit":"warn", text:"Service bei "+f.service_km.toLocaleString("de-AT")+" km"+(rest<0?" – überschritten":" – noch "+rest.toLocaleString("de-AT")+" km")}); }
+  var sch=fzEintraege(f).filter(function(e){ return e.art==="schaden" && !e.erledigt; }).length;
+  if(sch) r.push({art:"warn", text:sch+" offene"+(sch===1?"r Schaden":" Schäden")});
+  return r;
+}
+function viewFahrzeuge(){
+  var f=document.createDocumentFragment();
+  fzLaden().then(function(neu){ if(neu && S.view==="fahrzeuge" && darfRendern() && !document.querySelector(".assistent")) render(); });
+  if(!planTeam) planTeamLaden();
+  var buero=fzBuero() && !nurLesen();
+  var kopf=el('<div class="card"><div class="pad stack" style="gap:8px">'+
+    '<div class="rowflex" style="justify-content:space-between;align-items:flex-start;gap:10px"><div><h2>Fahrzeuge</h2>'+
+      '<div class="sub">Kilometer, Pickerl, Service, Reparaturen und Schäden je Fahrzeug. '+(buero?"Techniker sehen ihr eigenes Fahrzeug und tragen km-Stand und Schäden ein.":"Hier steht dein Fahrzeug – km-Stand eintragen, Schäden melden.")+"</div></div>"+
+      (buero?'<div class="rowflex" style="gap:6px"><button class="btn sm" type="button" data-fz="neu">+ Fahrzeug</button><button class="btn ghost sm" type="button" data-fz="gps">GPS-Daten einlesen</button></div>':"")+
+    "</div>"+
+    (fzFehlt?'<div class="note warnbox">Die Fahrzeug-Tabellen fehlen noch in der Datenbank'+(istInhaber()?" – tools/fahrzeuge.sql einmal im Supabase SQL Editor ausführen.":" – das richtet der Inhaber ein.")+"</div>":"")+
+    (fzFehler?'<div class="note warnbox">'+esc(fzFehler)+"</div>":"")+
+  "</div></div>");
+  var nb=kopf.querySelector('[data-fz="neu"]'); if(nb) nb.onclick=function(){ fzEditor(null); };
+  var gb=kopf.querySelector('[data-fz="gps"]'); if(gb) gb.onclick=fzGpsImport;
+  f.appendChild(kopf);
+  if(!fzGeladen){ f.appendChild(el('<div class="card"><div class="pad muted">Fahrzeuge werden geladen …</div></div>')); return f; }
+  var liste=FZ.filter(function(x){ return x.aktiv!==false; });
+  if(!liste.length && !fzFehlt) f.appendChild(el('<div class="card"><div class="pad muted" style="font-size:13px">'+
+    (buero?"Noch kein Fahrzeug. „+ Fahrzeug“ legt eines an – mit Kennzeichen und Fahrer.":"Dir ist noch kein Fahrzeug zugeteilt – das macht das Büro.")+"</div></div>"));
+  liste.forEach(function(x){ f.appendChild(fzKarte(x)); });
+  var alt=FZ.filter(function(x){ return x.aktiv===false; });
+  if(alt.length && buero) f.appendChild(el('<div class="muted" style="font-size:12.5px;padding:0 4px">Nicht mehr im Einsatz: '+alt.map(function(x){ return esc(x.kennzeichen); }).join(", ")+" (unter „Bearbeiten“ wieder aktiv stellen)</div>"));
+  return f;
+}
+function fzKarte(x){
+  var buero=fzBuero() && !nurLesen(), st=fzKmStand(x), jetzt=new Date();
+  var ym=isoLokal(jetzt).slice(0,7), vm=isoLokal(new Date(jetzt.getFullYear(), jetzt.getMonth()-1, 15)).slice(0,7);
+  var sm=fzStrecke(x, ym), sv=fzStrecke(x, vm), fae=fzFaellig(x), ein=fzEintraege(x);
+  var kpi=function(n,l){ return '<div class="kpi"><div class="n" style="font-size:18px">'+n+'</div><div class="l">'+l+"</div></div>"; };
+  var c=el('<div class="card" data-fzid="'+esc(x.id)+'"><div class="pad stack" style="gap:8px">'+
+    '<div class="rowflex" style="justify-content:space-between;gap:8px"><h2 style="letter-spacing:.04em">'+esc(x.kennzeichen)+"</h2>"+
+      '<span class="muted" style="font-size:13px">'+esc([x.bezeichnung, (x.fahrer_namen||[]).join(", ")].filter(Boolean).join(" · "))+"</span></div>"+
+    '<div class="kpis">'+kpi(st?st.km.toLocaleString("de-AT"):"–", "km-Stand"+(st?" ("+dfmt(st.datum)+")":""))+
+      kpi(sm!=null?sm.toLocaleString("de-AT"):"–", "km diesen Monat")+kpi(sv!=null?sv.toLocaleString("de-AT"):"–", "km Vormonat")+
+      kpi(x.pickerl_bis?dfmt(x.pickerl_bis).slice(3):"–", "Pickerl bis")+"</div>"+
+    (fae.length?'<div class="rowflex" style="gap:6px;flex-wrap:wrap">'+fae.map(function(a){ return '<span class="tag" style="'+(a.art==="crit"?"background:var(--crit);color:#fff":"background:var(--warn-soft,#fdf1d8)")+'">'+esc(a.text)+"</span>"; }).join("")+"</div>":"")+
+    '<div class="rowflex" style="gap:6px;flex-wrap:wrap"><button class="btn sm" type="button" data-e="km">km-Stand eintragen</button>'+
+      '<button class="btn ghost sm" type="button" data-e="schaden">Schaden melden</button>'+
+      (buero?'<button class="btn ghost sm" type="button" data-e="service">Service / Reparatur …</button><button class="btn ghost sm" type="button" data-e="bearb">Bearbeiten</button>':"")+"</div>"+
+    '<details><summary class="muted" style="cursor:pointer;font-size:13px">Verlauf ('+ein.length+")</summary><div data-verlauf></div></details>"+
+  "</div></div>");
+  c.querySelector('[data-e="km"]').onclick=function(){ fzEintragEditor(x, "km"); };
+  c.querySelector('[data-e="schaden"]').onclick=function(){ fzEintragEditor(x, "schaden"); };
+  var sb=c.querySelector('[data-e="service"]'); if(sb) sb.onclick=function(){ fzEintragEditor(x, "service"); };
+  var bb=c.querySelector('[data-e="bearb"]'); if(bb) bb.onclick=function(){ fzEditor(x); };
+  var vl=c.querySelector("[data-verlauf]");
+  c.querySelector("details").addEventListener("toggle", function(){ if(vl.childNodes.length) return;
+    if(!ein.length){ vl.appendChild(el('<div class="muted" style="font-size:13px;margin-top:6px">Noch keine Einträge.</div>')); return; }
+    var t=el('<div class="scrollx" style="margin-top:6px"><table class="dt"><thead><tr><th>Datum</th><th>Art</th><th>km-Stand</th><th>gefahren</th><th>Text</th>'+
+      (nurInhaber()?"<th>Betrag</th>":"")+"<th></th></tr></thead><tbody></tbody></table></div>");
+    var tb=t.querySelector("tbody");
+    ein.slice(0,300).forEach(function(e){
+      var k=FZ_K[e.id];
+      var tr=el("<tr><td class='mono'>"+esc(dfmt(e.datum))+"</td><td>"+esc(FZ_ARTEN[e.art]||e.art)+(e.quelle==="gps"?' <span class="tag">GPS</span>':"")+
+        (e.art==="schaden"?(e.erledigt?' <span class="tag">behoben</span>':' <span class="tag f30">offen</span>'):"")+"</td>"+
+        "<td class='mono'>"+(e.km!=null?e.km.toLocaleString("de-AT"):"")+"</td><td class='mono'>"+(e.strecke!=null?(+e.strecke).toLocaleString("de-AT"):"")+"</td>"+
+        "<td>"+esc(e.text||"")+(e.erstellt_name?' <span class="muted" style="font-size:12px">· '+esc(e.erstellt_name)+"</span>":"")+"</td>"+
+        (nurInhaber()?"<td class='mono'>"+(k&&k.betrag!=null?esc((+k.betrag).toLocaleString("de-AT",{minimumFractionDigits:2}))+" €":"")+"</td>":"")+
+        "<td></td></tr>");
+      var zelle=tr.lastChild;
+      if(buero && e.art==="schaden" && !e.erledigt){ var bh=el('<button class="btn ghost sm" type="button">behoben</button>'); bh.onclick=function(){ fzSchadenBehoben(e); }; zelle.appendChild(bh); }
+      var eigenFrisch=e.erstellt_von===meineKennung() && (Date.now()-new Date(e.erstellt||0))<864e5;
+      if(buero || eigenFrisch){ var lb=el('<button class="btn ghost sm" type="button" title="Eintrag löschen">✕</button>'); lb.onclick=function(){ fzEintragLoeschen(e); }; zelle.appendChild(lb); }
+      tb.appendChild(tr);
+    });
+    vl.appendChild(t);
+  });
+  return c;
+}
+/* Fahrzeug anlegen/ändern (Inhaber, Admins) */
+function fzEditor(x){
+  if(!fzBuero() || nurLesen()){ toast("Fahrzeuge legt das Büro an."); return; }
+  var v=ansichtOeffnen(x?"Fahrzeug "+x.kennzeichen:"Neues Fahrzeug");
+  var team=(planTeam||[]).filter(function(p){ return p.user_id; }), wahl=(x&&x.fahrer||[]).slice();
+  var form=el('<form class="stack" autocomplete="off" style="max-width:560px">'+
+    '<label class="fl"><span class="req">Kennzeichen</span><input type="text" id="fz_k" autocapitalize="characters" value="'+esc(x?x.kennzeichen:"")+'"></label>'+
+    '<label class="fl"><span>Bezeichnung (Marke, Modell)</span><input type="text" id="fz_b" value="'+esc(x&&x.bezeichnung||"")+'"></label>'+
+    '<div class="fl"><span>Fahrer (sehen das Fahrzeug)</span></div><div class="chips" id="fz_f"></div>'+
+    '<div class="grid"><label class="fl"><span>Pickerl (§ 57a) fällig</span><input type="date" id="fz_p" value="'+esc(x&&x.pickerl_bis||"")+'"></label>'+
+      '<label class="fl"><span>Erstzulassung</span><input type="date" id="fz_z" value="'+esc(x&&x.erstzulassung||"")+'"></label></div>'+
+    '<div class="grid"><label class="fl"><span>Nächstes Service am</span><input type="date" id="fz_sd" value="'+esc(x&&x.service_bis||"")+'"></label>'+
+      '<label class="fl"><span>… oder bei km</span><input type="text" inputmode="numeric" id="fz_sk" value="'+esc(x&&x.service_km!=null?String(x.service_km):"")+'"></label></div>'+
+    '<label class="fl"><span>Kennung im GPS-Portal (X-GPS)</span><input type="text" id="fz_t" placeholder="wird beim ersten Import gesetzt" value="'+esc(x&&x.tracker_id||"")+'"></label>'+
+    '<label class="fl"><span>Notiz</span><textarea id="fz_n" rows="2">'+esc(x&&x.notiz||"")+"</textarea></label>"+
+    (x?'<label class="chk"><input type="checkbox" id="fz_a"'+(x.aktiv===false?"":" checked")+"><span>im Einsatz</span></label>":"")+
+    '<div class="note warnbox" id="fz_err" hidden></div></form>');
+  var fh=form.querySelector("#fz_f");
+  var chipsZeichnen=function(){ fh.innerHTML="";
+    if(!team.length) fh.appendChild(el('<span class="muted" style="font-size:12.5px">Team wird geladen …</span>'));
+    team.forEach(function(p){ var b=el('<button class="chip" type="button" aria-pressed="'+(wahl.indexOf(p.user_id)>=0)+'">'+esc(p.name||"–")+"</button>");
+      b.onclick=function(){ var i=wahl.indexOf(p.user_id); if(i>=0) wahl.splice(i,1); else wahl.push(p.user_id); chipsZeichnen(); }; fh.appendChild(b); }); };
+  chipsZeichnen();
+  if(!team.length) planTeamLaden().then(function(t){ team=(t||[]).filter(function(p){ return p.user_id; }); chipsZeichnen(); });
+  v.inhalt.appendChild(form);
+  var ab=el('<button class="btn ghost" type="button">Abbrechen</button>'), ok=el('<button class="btn" type="button">Speichern</button>');
+  ab.onclick=function(){ v.zu(); }; v.fuss.appendChild(ab); v.fuss.appendChild(ok);
+  ok.onclick=function(){
+    var err=form.querySelector("#fz_err"), fehl=function(t){ err.textContent=t; err.hidden=false; };
+    var k=form.querySelector("#fz_k").value.trim().toUpperCase();
+    if(!k){ fehl("Bitte das Kennzeichen eintragen."); return; }
+    if(FZ.some(function(y){ return (!x || y.id!==x.id) && fzNorm(y.kennzeichen)===fzNorm(k); })){ fehl("Dieses Kennzeichen gibt es schon."); return; }
+    var skT=form.querySelector("#fz_sk").value.trim(), sk=skT ? zahlLesen(skT) : null;
+    if(skT && !(sk>=0)){ fehl("„Service bei km“: bitte eine Zahl."); return; }
+    var z={kennzeichen:k, bezeichnung:form.querySelector("#fz_b").value.trim()||null, fahrer:wahl,
+      fahrer_namen:wahl.map(function(id){ return planPersonName(id)||""; }).filter(Boolean),
+      pickerl_bis:form.querySelector("#fz_p").value||null, erstzulassung:form.querySelector("#fz_z").value||null,
+      service_bis:form.querySelector("#fz_sd").value||null, service_km:sk==null?null:Math.round(sk),
+      tracker_id:form.querySelector("#fz_t").value.trim()||null, notiz:form.querySelector("#fz_n").value.trim()||null,
+      aktiv:x ? form.querySelector("#fz_a").checked : true, geaendert:new Date().toISOString(), geaendert_von:meinName()};
+    if(demo()){ var neuX=Object.assign({id:x?x.id:neueKennung("fz")}, x||{}, z); FZ=FZ.filter(function(y){ return y.id!==neuX.id; }).concat([neuX]); v.zu(); toast("Fahrzeug gespeichert (Präsentation, nicht gespeichert)."); render(); return; }
+    ok.disabled=true; ok.textContent="wird gespeichert …";
+    var q=x ? Store.sb.from("fahrzeuge").update(z).eq("id", x.id).select("*") : Store.sb.from("fahrzeuge").insert(z).select("*");
+    mitFrist(q, 15000).then(function(r){
+      ok.disabled=false; ok.textContent="Speichern";
+      if(r.error || !(r.data||[]).length){ fehl("Nicht gespeichert: "+((r.error&&r.error.message)||"keine Berechtigung")); return; }
+      var g=r.data[0]; FZ=FZ.filter(function(y){ return y.id!==g.id; }).concat([g]).sort(function(a,b){ return a.kennzeichen.localeCompare(b.kennzeichen); });
+      v.zu(); toast("Fahrzeug "+g.kennzeichen+" gespeichert."); render();
+    }, function(){ ok.disabled=false; ok.textContent="Speichern"; fehl("Keine Verbindung – bitte nochmals."); });
+  };
+}
+/* Eintrag: km-Stand, Schaden (auch Techniker), Service/Pickerl/Reparatur/Reifen/Sonstiges (Büro) */
+function fzEintragEditor(x, art){
+  var buero=fzBuero() && !nurLesen();
+  if(nurLesen()){ toast("Mit diesem Konto lässt sich nur ansehen."); return; }
+  var arten=buero ? Object.keys(FZ_ARTEN) : ["km","schaden"];
+  if(arten.indexOf(art)<0) art=arten[0];
+  var st=fzKmStand(x);
+  var v=ansichtOeffnen(x.kennzeichen+" – Eintrag");
+  var form=el('<form class="stack" autocomplete="off" style="max-width:520px">'+
+    '<label class="fl"><span>Art</span><select id="fe_a">'+arten.map(function(a){ return '<option value="'+a+'"'+(a===art?" selected":"")+">"+esc(FZ_ARTEN[a])+"</option>"; }).join("")+"</select></label>"+
+    '<div class="grid"><label class="fl"><span class="req">Datum</span><input type="date" id="fe_d" value="'+isoLokal(new Date())+'"></label>'+
+      '<label class="fl"><span id="fe_kml">km-Stand</span><input type="text" inputmode="numeric" id="fe_km" placeholder="'+(st?"zuletzt "+st.km.toLocaleString("de-AT"):"")+'"></label></div>'+
+    '<label class="fl"><span id="fe_tl">Was?</span><textarea id="fe_t" rows="3"></textarea></label>'+
+    '<div class="grid" data-nur="service pickerl"><label class="fl"><span id="fe_nl">Nächstes Service am</span><input type="date" id="fe_n"></label>'+
+      '<label class="fl" data-nur="service"><span>… oder bei km</span><input type="text" inputmode="numeric" id="fe_nk"></label></div>'+
+    (nurInhaber()?'<div class="grid" data-nur="service pickerl reparatur reifen sonstiges schaden"><label class="fl"><span>Betrag € (nur Inhaber)</span><input type="text" inputmode="decimal" id="fe_b"></label>'+
+      '<label class="fl"><span>Rechnung</span><input type="text" id="fe_r"></label></div>':"")+
+    '<div class="note warnbox" id="fe_err" hidden></div></form>');
+  var tx=form.querySelector("#fe_t"); form.querySelector("#fe_tl").appendChild(diktatKnopf(tx));
+  var sel=form.querySelector("#fe_a");
+  var zeigen=function(){ var a=sel.value;
+    form.querySelectorAll("[data-nur]").forEach(function(n){ n.hidden=n.dataset.nur.split(" ").indexOf(a)<0; });
+    form.querySelector("#fe_kml").className=a==="km"?"req":"";
+    form.querySelector("#fe_nl").textContent=a==="pickerl"?"Nächstes Pickerl fällig":"Nächstes Service am";
+    tx.placeholder=a==="schaden"?"Was ist kaputt? Wo? (z. B. Delle hinten links, Kontrollleuchte Öl)":a==="km"?"(optional)":"Was wurde gemacht?"; };
+  sel.onchange=zeigen; zeigen();
+  v.inhalt.appendChild(form);
+  var ab=el('<button class="btn ghost" type="button">Abbrechen</button>'), ok=el('<button class="btn" type="button">Speichern</button>');
+  ab.onclick=function(){ v.zu(); }; v.fuss.appendChild(ab); v.fuss.appendChild(ok);
+  ok.onclick=function(){
+    var err=form.querySelector("#fe_err"), fehl=function(t){ err.textContent=t; err.hidden=false; };
+    var a=sel.value, d=form.querySelector("#fe_d").value, kmT=form.querySelector("#fe_km").value.trim(), km=kmT?zahlLesen(kmT):null, t=tx.value.trim();
+    if(!d){ fehl("Bitte das Datum eintragen."); return; }
+    if(d>isoLokal(new Date())){ fehl("Das Datum liegt in der Zukunft."); return; }
+    if(kmT && !(km>=0)){ fehl("km-Stand: bitte eine Zahl (ohne „km“)."); return; }
+    if(a==="km" && km==null){ fehl("Bitte den km-Stand eintragen."); return; }
+    if(a==="schaden" && !t){ fehl("Bitte kurz beschreiben, was kaputt ist."); return; }
+    /* vertippt? kleiner als der letzte Stand – nachfragen statt still speichern */
+    if(km!=null && st && km<st.km && d>=st.datum && !window.confirm("Der km-Stand "+Math.round(km).toLocaleString("de-AT")+" ist kleiner als der letzte ("+st.km.toLocaleString("de-AT")+" am "+dfmt(st.datum)+"). Trotzdem speichern?")) return;
+    if(km!=null && st && km-st.km>20000 && !window.confirm("Seit "+dfmt(st.datum)+" über 20.000 km mehr – stimmt "+Math.round(km).toLocaleString("de-AT")+"?")) return;
+    var z={fahrzeug_id:x.id, art:a, datum:d, km:km==null?null:Math.round(km), text:t||null, quelle:"hand", erstellt_name:meinName()};
+    var fzNeu={};
+    if(buero && (a==="service"||a==="pickerl")){
+      var n=form.querySelector("#fe_n").value, nkT=(form.querySelector("#fe_nk")||{}).value||"", nk=nkT.trim()?zahlLesen(nkT):null;
+      if(a==="pickerl" && n) fzNeu.pickerl_bis=n;
+      if(a==="service"){ if(n) fzNeu.service_bis=n; if(nk>=0 && nk!=null) fzNeu.service_km=Math.round(nk); }
+    }
+    var bT=nurInhaber() ? (form.querySelector("#fe_b").value||"").trim() : "", betrag=bT?zahlLesen(bT):null;
+    if(bT && !(betrag===betrag && betrag!=null)){ fehl("Betrag: bitte eine Zahl."); return; }
+    if(demo()){ FZ_E=[Object.assign({id:neueKennung("fe"), erstellt:new Date().toISOString(), erstellt_von:meineKennung()}, z)].concat(FZ_E); Object.assign(x, fzNeu); v.zu(); toast(FZ_ARTEN[a]+" eingetragen (Präsentation, nicht gespeichert)."); render(); return; }
+    ok.disabled=true; ok.textContent="wird gespeichert …";
+    mitFrist(Store.sb.from("fahrzeug_eintraege").insert(z).select("*"), 15000).then(function(r){
+      if(r.error || !(r.data||[]).length){ ok.disabled=false; ok.textContent="Speichern"; fehl("Nicht gespeichert: "+((r.error&&r.error.message)||"keine Berechtigung")); return; }
+      var g=r.data[0]; FZ_E=[g].concat(FZ_E);
+      var weiter=[];
+      if(Object.keys(fzNeu).length) weiter.push(Store.sb.from("fahrzeuge").update(Object.assign({geaendert:new Date().toISOString(), geaendert_von:meinName()}, fzNeu)).eq("id", x.id).select("*")
+        .then(function(r2){ if(!r2.error && r2.data && r2.data[0]) FZ=FZ.map(function(y){ return y.id===x.id ? r2.data[0] : y; }); else toast("Fälligkeit am Fahrzeug nicht geändert."); }));
+      if(bT) weiter.push(Store.sb.from("fahrzeug_kosten").insert({eintrag_id:g.id, betrag:betrag, rechnung:(form.querySelector("#fe_r").value||"").trim()||null}).select("*")
+        .then(function(r3){ if(!r3.error && r3.data && r3.data[0]) FZ_K[g.id]=r3.data[0]; else toast("Betrag nicht gespeichert."); }));
+      Promise.all(weiter).then(function(){ v.zu(); toast(FZ_ARTEN[a]+" für "+x.kennzeichen+" gespeichert."); render(); });
+    }, function(){ ok.disabled=false; ok.textContent="Speichern"; fehl("Keine Verbindung – bitte nochmals."); });
+  };
+}
+function fzSchadenBehoben(e){
+  if(!window.confirm("Schaden als behoben markieren?\n\n„"+(e.text||"")+"“")) return;
+  if(demo()){ e.erledigt=true; render(); return; }
+  Store.sb.from("fahrzeug_eintraege").update({erledigt:true}).eq("id", e.id).select("*").then(function(r){
+    if(r.error || !(r.data||[]).length){ toast("Nicht geändert: "+((r.error&&r.error.message)||"keine Berechtigung")); return; }
+    e.erledigt=true; toast("Schaden behoben."); render(); }, function(){ toast("Keine Verbindung."); });
+}
+function fzEintragLoeschen(e){
+  if(!window.confirm("Diesen Eintrag löschen?\n\n"+dfmt(e.datum)+" · "+(FZ_ARTEN[e.art]||e.art)+(e.km!=null?" · "+e.km+" km":"")+(e.text?"\n„"+e.text+"“":""))) return;
+  if(demo()){ FZ_E=FZ_E.filter(function(y){ return y!==e; }); render(); return; }
+  Store.sb.from("fahrzeug_eintraege").delete().eq("id", e.id).select("id").then(function(r){
+    if(r.error || !(r.data||[]).length){ toast("Nicht gelöscht: "+((r.error&&r.error.message)||"keine Berechtigung")); return; }
+    FZ_E=FZ_E.filter(function(y){ return y.id!==e.id; }); toast("Eintrag gelöscht."); render(); }, function(){ toast("Keine Verbindung."); });
+}
+/* ---- GPS-Import: Bericht-Datei aus dem X-GPS-Portal (CSV oder Excel) – nur Kilometer je Tag ---- */
+function fzDatum(w){
+  if(w instanceof Date && !isNaN(w)) return isoLokal(w);
+  if(typeof w==="number" && w>20000 && w<80000) return isoLokal(new Date(Math.round((w-25569)*864e5)+12*36e5));
+  var t=String(w==null?"":w).trim(), m;
+  if((m=/^(\d{1,2})\.(\d{1,2})\.(\d{2,4})/.exec(t))) return (m[3].length===2?"20"+m[3]:m[3])+"-"+m[2].padStart(2,"0")+"-"+m[1].padStart(2,"0");
+  if((m=/^(\d{4})-(\d{2})-(\d{2})/.exec(t))) return m[1]+"-"+m[2]+"-"+m[3];
+  if((m=/^(\d{1,2})\/(\d{1,2})\/(\d{4})/.exec(t))) return m[3]+"-"+m[2].padStart(2,"0")+"-"+m[1].padStart(2,"0");
+  return null;
+}
+function fzZahl(w){ if(typeof w==="number") return w; var t=String(w==null?"":w).replace(/km|m\b/gi,"").trim(); var n=zahlLesen(t); return (n===n && n!=null) ? n : null; }
+function fzCsv(text){
+  var zeilen=text.replace(/^﻿/,"").split(/\r?\n/).filter(function(z){ return z.trim(); });
+  var probe=zeilen.slice(0,10).join("\n"), sep=[";","\t",","].map(function(c){ return [c, probe.split(c).length]; }).sort(function(a,b){ return b[1]-a[1]; })[0][0];
+  return zeilen.map(function(z){
+    var out=[], cur="", q=false;
+    for(var i=0;i<z.length;i++){ var ch=z[i];
+      if(q){ if(ch==='"'){ if(z[i+1]==='"'){ cur+='"'; i++; } else q=false; } else cur+=ch; }
+      else if(ch==='"') q=true; else if(ch===sep){ out.push(cur); cur=""; } else cur+=ch; }
+    out.push(cur); return out;
+  });
+}
+/* Spalten erkennen: Fahrzeug, Datum, gefahrene Strecke, km-Stand – alles andere (Adressen, Orte,
+   Koordinaten, Uhrzeiten) wird nicht gelesen */
+function fzSpalten(zeilen){
+  var best=null;
+  zeilen.slice(0,30).forEach(function(z, i){
+    var s={zeile:i, fz:-1, datum:-1, strecke:-1, stand:-1, meter:false};
+    z.forEach(function(h, j){ h=String(h||"").trim().toLowerCase(); if(!h) return;
+      if(s.stand<0 && /kilometerstand|km-stand|kmstand|odometer|tacho|zählerstand|zaehlerstand|endstand|km ende/.test(h)) s.stand=j;
+      else if(s.strecke<0 && /distanz|distance|strecke|gefahren|fahrleistung|mileage|kilometer|^km$|\(km\)|länge|laenge/.test(h)){ s.strecke=j; s.meter=/\(m\)|meter/.test(h) && !/kilo/.test(h); }
+      else if(s.datum<0 && /datum|date|^tag$|start|beginn/.test(h)) s.datum=j;
+      else if(s.fz<0 && /fahrzeug|kennzeichen|objekt|ger(ä|ae)t|device|vehicle|tracker|^name$|asset/.test(h)) s.fz=j; });
+    var p=(s.datum>=0?2:0)+(s.strecke>=0||s.stand>=0?2:0)+(s.fz>=0?1:0);
+    if(p>=4 && (!best || p>best.p)) best=Object.assign(s, {p:p});
+  });
+  return best;
+}
+function fzGpsImport(){
+  if(!fzBuero() || nurLesen()){ toast("GPS-Daten liest das Büro ein."); return; }
+  if(fzFehlt){ toast("Erst die Fahrzeug-Tabellen einrichten (tools/fahrzeuge.sql)."); return; }
+  var v=ansichtOeffnen("GPS-Daten einlesen");
+  v.schritt.textContent="Bericht-Datei aus dem X-GPS-Portal (CSV oder Excel)";
+  var box=el('<div class="stack" style="max-width:640px">'+
+    '<div class="note">Im Portal des GPS-Anbieters einen Bericht mit <strong>Datum</strong> und <strong>Kilometern</strong> (gefahrene Strecke oder km-Stand) je Fahrzeug herunterladen '+
+      "(CSV oder Excel) und hier wählen. Übernommen werden <strong>nur die Kilometer je Tag</strong> – Orte, Uhrzeiten und einzelne Fahrten werden nicht gespeichert "+
+      "(ein Fahrtenbuch mit Orten erst nach Zustimmung bzw. Betriebsvereinbarung). Schon eingelesene Tage werden ersetzt, nicht doppelt gezählt.</div>"+
+    '<label class="btn sm" style="cursor:pointer;align-self:flex-start">Datei wählen<input type="file" accept=".csv,.txt,.xlsx,.xls,text/csv" hidden></label>'+
+    '<div data-erg class="stack" style="gap:8px"></div></div>');
+  v.inhalt.appendChild(box);
+  var erg=box.querySelector("[data-erg]");
+  box.querySelector("input").onchange=function(ev){
+    var datei=ev.target.files&&ev.target.files[0]; ev.target.value=""; if(!datei) return;
+    erg.innerHTML='<div class="muted">wird gelesen …</div>';
+    var lesen = /\.xlsx?$/i.test(datei.name)
+      ? ladeSkript("https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js").then(function(){ return datei.arrayBuffer(); }).then(function(b){
+          var wb=window.XLSX.read(b, {type:"array", cellDates:true}), alle=[];
+          wb.SheetNames.forEach(function(n){ alle=alle.concat(window.XLSX.utils.sheet_to_json(wb.Sheets[n], {header:1, raw:true, defval:""})); });
+          return alle; })
+      : datei.text().then(fzCsv);
+    lesen.then(function(zeilen){ fzGpsVorschau(zeilen, erg, v); }, function(e){ erg.innerHTML=""; erg.appendChild(el('<div class="note warnbox">Datei ließ sich nicht lesen: '+esc(e&&e.message||String(e))+"</div>")); });
+  };
+}
+function fzGpsVorschau(zeilen, erg, v){
+  erg.innerHTML="";
+  var sp=fzSpalten(zeilen);
+  if(!sp){ erg.appendChild(el('<div class="note warnbox">In der Datei fehlen erkennbare Spalten für Datum und Kilometer. Bitte einen Bericht mit „Datum“ und „Distanz“ bzw. „Kilometerstand“ wählen.</div>')); return; }
+  var tage={};   /* name → datum → {strecke, stand} */
+  zeilen.slice(sp.zeile+1).forEach(function(z){
+    var d=fzDatum(z[sp.datum]); if(!d) return;
+    var name=sp.fz>=0 ? String(z[sp.fz]||"").trim() : "(Datei)";
+    if(!name) return;
+    var st=sp.stand>=0 ? fzZahl(z[sp.stand]) : null, str=sp.strecke>=0 ? fzZahl(z[sp.strecke]) : null;
+    if(str!=null && sp.meter) str=str/1000;
+    if(st==null && str==null) return;
+    var t=((tage[name]=tage[name]||{})[d]=tage[name][d]||{strecke:null, stand:null});
+    if(str!=null && str>=0) t.strecke=(t.strecke||0)+str;
+    if(st!=null && st>=0) t.stand=Math.max(t.stand||0, st);
+  });
+  var namen=Object.keys(tage);
+  if(!namen.length){ erg.appendChild(el('<div class="note warnbox">Keine Zeilen mit Datum und Kilometern gefunden.</div>')); return; }
+  var aktive=FZ.filter(function(x){ return x.aktiv!==false; });
+  var zuordnung={};
+  namen.forEach(function(n){ var nn=fzNorm(n);
+    var tr=aktive.filter(function(x){ return (x.tracker_id && fzNorm(x.tracker_id)===nn) || (nn && fzNorm(x.kennzeichen) && nn.indexOf(fzNorm(x.kennzeichen))>=0); })[0];
+    zuordnung[n]=tr ? tr.id : ""; });
+  erg.appendChild(el('<div style="font-size:13px">Erkannt: '+esc(["Datum", sp.strecke>=0?"gefahrene Strecke":"", sp.stand>=0?"km-Stand":"", sp.fz>=0?"Fahrzeug":""].filter(Boolean).join(", "))+
+    ". Bitte jedem Eintrag aus der Datei das Fahrzeug zuordnen.</div>"));
+  namen.forEach(function(n){
+    var ds=Object.keys(tage[n]).sort(), sum=ds.reduce(function(s,d){ return s+(tage[n][d].strecke||0); },0);
+    var row=el('<div class="posbox stack" style="gap:6px"><div class="rowflex" style="justify-content:space-between;gap:8px"><strong>'+esc(n)+"</strong>"+
+      '<span class="muted" style="font-size:12.5px">'+ds.length+" Tag"+(ds.length===1?"":"e")+" · "+dfmt(ds[0])+" – "+dfmt(ds[ds.length-1])+(sum?" · "+Math.round(sum).toLocaleString("de-AT")+" km":"")+"</span></div>"+
+      '<select><option value="">– nicht übernehmen –</option>'+aktive.map(function(x){ return '<option value="'+esc(x.id)+'"'+(zuordnung[n]===x.id?" selected":"")+">"+esc(x.kennzeichen+(x.bezeichnung?" · "+x.bezeichnung:""))+"</option>"; }).join("")+"</select></div>");
+    row.querySelector("select").onchange=function(e2){ zuordnung[n]=e2.target.value; };
+    erg.appendChild(row);
+  });
+  if(!aktive.length) erg.appendChild(el('<div class="note warnbox">Es ist noch kein Fahrzeug angelegt – erst „+ Fahrzeug“, dann einlesen.</div>'));
+  var ok=el('<button class="btn" type="button">Kilometer übernehmen</button>');
+  v.fuss.innerHTML=""; v.fuss.appendChild(ok);
+  ok.onclick=function(){
+    var jobs=namen.filter(function(n){ return zuordnung[n]; });
+    if(!jobs.length){ toast("Kein Fahrzeug zugeordnet – nichts übernommen."); return; }
+    if(demo()){ v.zu(); toast("Präsentation – nichts übernommen."); return; }
+    ok.disabled=true; ok.textContent="wird übernommen …";
+    var anzahl=0, fehler=[];
+    var reihe=jobs.reduce(function(p, n){ return p.then(function(){
+      var fid=zuordnung[n], ds=Object.keys(tage[n]).sort();
+      var zeilenNeu=ds.map(function(d){ var t=tage[n][d];
+        return {fahrzeug_id:fid, art:"km", datum:d, km:t.stand!=null?Math.round(t.stand):null,
+          strecke:t.strecke!=null?Math.min(5000, Math.round(t.strecke*10)/10):null, quelle:"gps", erstellt_name:"GPS-Import ("+meinName()+")"}; });
+      return Store.sb.from("fahrzeug_eintraege").delete().eq("fahrzeug_id", fid).eq("quelle","gps").in("datum", ds).then(function(r0){
+        if(r0.error) throw r0.error;
+        return Store.sb.from("fahrzeug_eintraege").insert(zeilenNeu).select("id");
+      }).then(function(r1){
+        if(r1.error) throw r1.error; anzahl+=(r1.data||[]).length;
+        var x=FZ.filter(function(y){ return y.id===fid; })[0];
+        if(x && n!=="(Datei)" && !x.tracker_id) return Store.sb.from("fahrzeuge").update({tracker_id:n}).eq("id", fid);
+      }).catch(function(e){ fehler.push(n+": "+(e&&e.message||e)); });
+    }); }, Promise.resolve());
+    reihe.then(function(){ return fzLaden(true); }).then(function(){
+      v.zu(); toast(anzahl+" Tag"+(anzahl===1?"":"e")+" mit Kilometern übernommen."+(fehler.length?" Fehler: "+fehler.join("; "):""));
+      if(S.view==="fahrzeuge") render(); });
+  };
+}
 /* ---- Datenpflege (Büro 02.10.2026): Märkte „zur Zeit nicht betreut“ wegen Datenpflege – je Markt,
    was noch fehlt, bis er wieder betreut werden kann (Adresse, Kartenlage, je Anlage Termine und
    Füllmenge). „Wieder betreuen“ öffnet den Markt in der Verwaltung – dort Status und die einzeln
@@ -20558,7 +20926,9 @@ function handbuchKarte(z){
         "Der Inhaber kann ein Protokoll <strong>vermerken</strong> – für alle sichtbar, das Protokoll selbst bleibt unverändert; in der Liste mit ⚠ markiert."]))+
 
     abschnitt("14 · Bedienung am Handy und am PC",
-      liste(["<strong>Reiter</strong> nach dem Arbeitsablauf: Fällig, Kalender, Karte, Protokoll, Anlagen, Stunden – dann die Büro-Reiter.",
+      liste(["<strong>Reiter</strong> nach dem Arbeitsablauf: Fällig, Kalender, Karte, Protokoll, Anlagen, Stunden, Fahrzeuge – dann die Büro-Reiter.",
+        "<strong>Fahrzeuge:</strong> je Fahrzeug km-Stand, Kilometer je Monat, Pickerl, Service, Reparaturen und Schäden. Techniker sehen ihr Fahrzeug und tragen km-Stand und Schäden ein; "+
+          "das Büro legt Fahrzeuge an und liest die GPS-Berichte (X-GPS, CSV/Excel) ein – nur Kilometer je Tag, keine Orte. Pickerl und Service stehen 30 Tage vorher im To-do; Beträge sieht nur der Inhaber.",
         "<strong>Einklappen:</strong> jede Karte lässt sich über ihre Überschrift zu- und aufklappen; zugeklappt zeigt sie, wie viel drin ist. Am Handy beginnen lange Abschnitte zugeklappt. Die Wahl merkt sich jedes Gerät.",
         "<strong>Großer Bildschirm:</strong> zwei Spalten – links die Hauptsache, rechts das Begleitende; Projekt und Markt öffnen sich groß.",
         "<strong>Navigationsleiste:</strong> auf langen Seiten und in großen Fenstern (Protokoll, Fällig, Projekt …) steht rechts eine schmale Leiste – ein Punkt je Abschnitt, der aktuelle ist hervorgehoben. Antippen springt hin, „☰“ zeigt alle Abschnitte mit Namen, ⊟/⊞ klappt alles zu bzw. auf.",
@@ -25098,6 +25468,11 @@ function viewKalender(){
     '<button class="btn sm" type="button">+ Aufgabe</button></div>'+
     '<div class="sub">Aufgaben und geplante Einsätze. ☐ antippen hakt ab – eine Wartung hakt das Protokoll ab. Personen wie oben gewählt.</div></div></div>');
   td.querySelector("button").onclick=function(){ planEditor(null, {art:"aufgabe", datum:"", wer:S.kalWer==="alle"||S.kalWer==="ich" ? [meineKennung()] : [S.kalWer]}); };
+  if(fzBuero() && fzGeladen) FZ.filter(function(x){ return x.aktiv!==false; }).forEach(function(x){
+    fzFaellig(x).filter(function(a){ return !/Schaden|Schäden/.test(a.text); }).forEach(function(a){
+      var fb=el('<button type="button" class="note warnbox" style="text-align:left;cursor:pointer;font:inherit">🚐 '+esc(x.kennzeichen)+": "+esc(a.text)+"</button>");
+      fb.onclick=function(){ springe({reiter:"fahrzeuge"}); }; td.querySelector(".stack").appendChild(fb); }); });
+  else if(fzBuero() && !fzGeladen) fzLaden().then(function(neu){ if(neu && S.view==="kalender" && darfRendern() && !document.querySelector(".assistent")) render(); });
   var fo=folgeOffen().length;
   if(fo){ var fz=el('<button type="button" class="note warnbox" style="text-align:left;cursor:pointer;font:inherit">💶 '+fo+" Folgeauftr"+(fo===1?"ag wartet":"äge warten")+
       " auf deine Entscheidung (Angebot?) – zu den Projekten</button>");
@@ -27488,6 +27863,7 @@ function render(){
   if(["protokoll","daten","verlauf","verwaltung","pruefen","stunden","projekte","kunden","belege","kalender"].indexOf(S.view)<0) host.appendChild(filterBar());
   if(S.view==="faellig") sec.appendChild(viewFaellig());
   else if(S.view==="stunden") sec.appendChild(viewStunden());
+  else if(S.view==="fahrzeuge") sec.appendChild(viewFahrzeuge());
   else if(S.view==="kalender") sec.appendChild(viewKalender());
   else if(S.view==="projekte") sec.appendChild(viewProjekte());
   else if(S.view==="kunden") sec.appendChild(viewKunden());
