@@ -15844,7 +15844,7 @@ function protokollDetail(p){
     weiter.appendChild(zk);
     if(so0.folgeauftrag){
       var pk=el('<button class="btn ghost sm" type="button">Folgeauftrag als Projekt anlegen</button>');
-      pk.onclick=function(){ projektNeu({standort_id:p.standortId||null, kunde_id:st0?kundeVon(st0):"lidl",
+      pk.onclick=function(){ projektNeu({standort_id:p.standortId||null, kunde_id:st0?kundeVon(st0):"lidl", ausProtokoll:p._id,
         titel:so0.folgeText||("Folgeauftrag "+protoName(p)), text:"Aus dem Störungseinsatz vom "+dfmt(p.datum)+(so0.massnahmen?": "+so0.massnahmen:"")}); };
       weiter.appendChild(pk);
     }
@@ -17618,6 +17618,57 @@ function archivKarte(){
   return c;
 }
 
+/* ---- Datenpflege (Büro 02.10.2026): Märkte „zur Zeit nicht betreut“ wegen Datenpflege – je Markt,
+   was noch fehlt, bis er wieder betreut werden kann (Adresse, Kartenlage, je Anlage Termine und
+   Füllmenge). „Wieder betreuen“ öffnet den Markt in der Verwaltung – dort Status und die einzeln
+   ruhenden Anlagen umstellen. Einzeln ruhende Anlagen mit eigenem Grund (etwa eine Lüftung, die wir
+   nicht warten) zählen nicht mit. */
+function datenpflegeMaerkte(){ return ST.filter(function(s){ return marktPausiert(s) && /datenpflege/i.test(s.pausiertGrund||""); }); }
+function datenpflegePunkte(s){
+  var p=[{l:"Adresse (PLZ, Ort)", ok:!!(s.plz && s.ort)}, {l:"Lage auf der Karte (Adresse)", ok:s.lat!=null && s.genauigkeit==="adresse"}];
+  var ruhen=0;
+  anlagenDesMarkts(s,true).forEach(function(a){
+    var l=a.leader;
+    if(l.pausiert && l.pausiertGrund && !/datenpflege/i.test(l.pausiertGrund)) return;
+    if(a.termine.some(function(t){ return t.pausiert; })) ruhen++;
+    var name=anlagenName(anlageDaten(l)), d=anlageDaten(l), offen=termineOffenVon(l).filter(function(x){ return !x.weich; });
+    var ohneKm=/gas\s*-?\s*warn|l(ü|ue)ftung/i.test(String(d.anlagentyp||"")+" "+name);
+    p.push({l:name+": Inbetriebnahme", ok:!!inbetriebnahmeVon(l)});
+    var offenT=offen.filter(function(x){ return !/inbetrieb/i.test(x.l); });
+    p.push({l:name+": Termine geprüft", ok:!offenT.length, info:offenT.map(function(x){ return x.l; }).join(", ")});
+    if(!ohneKm) p.push({l:name+": Füllmenge (kg)", ok:+d.kaeltemittelKg>0 || d.kaeltemittelKg===0});
+  });
+  return {punkte:p, ruhen:ruhen};
+}
+function datenpflegeAnsicht(){
+  var l=datenpflegeMaerkte();
+  var c=el('<div class="card"><div class="pad stack" style="gap:10px"><h2>Datenpflege ('+l.length+")</h2>"+
+    '<div class="sub">Märkte, die wegen Datenpflege zur Zeit nicht betreut werden – was je Markt noch fehlt. Sind alle Punkte erledigt, '+
+      "„Wieder betreuen“ öffnet den Markt: Status auf „betreut“ stellen, ebenso die einzeln ruhenden Anlagen.</div></div></div>");
+  var host=c.querySelector(".stack");
+  if(!l.length) host.appendChild(el('<div class="muted" style="font-size:13px">Kein Markt in Datenpflege. Einen Markt nimmt man auf, indem man ihn in „Märkte &amp; Anlagen“ auf „zur Zeit nicht betreut“ stellt, Grund „Datenpflege“.</div>'));
+  l.sort(function(a,b){ return stName(a).localeCompare(stName(b),"de"); }).forEach(function(s){
+    var dp=datenpflegePunkte(s), fertig=dp.punkte.filter(function(x){ return x.ok; }).length, alle=dp.punkte.length, pz=alle?Math.round(fertig/alle*100):100;
+    var z=el('<details class="posbox"><summary style="cursor:pointer;list-style:none"><div class="rowflex" style="justify-content:space-between;gap:8px">'+
+        "<strong>"+esc(stName(s))+(s.adresse&&s.adresse!==stName(s)?' <span class="muted" style="font-weight:400;font-size:12.5px">'+esc(s.adresse)+"</span>":"")+"</strong>"+
+        '<span class="mono" style="font-size:12.5px">'+fertig+"/"+alle+(fertig===alle?" ✓":"")+"</span></div>"+
+        '<div style="height:6px;border-radius:3px;background:var(--line);margin-top:6px;overflow:hidden"><div style="height:100%;width:'+pz+'%;background:'+(fertig===alle?"var(--good)":"var(--accent)")+'"></div></div></summary>'+
+      '<div class="stack" style="gap:4px;margin-top:8px;font-size:13px">'+dp.punkte.map(function(x){
+        return "<div>"+(x.ok?'<span style="color:var(--good)">✓</span>':'<span style="color:var(--warn)">○</span>')+" "+esc(x.l)+(x.info&&!x.ok?' <span class="muted">('+esc(x.info)+")</span>":"")+"</div>"; }).join("")+
+      (dp.ruhen?'<div class="muted" style="font-size:12.5px">'+dp.ruhen+" Anlage"+(dp.ruhen===1?" ruht":"n ruhen")+" zusätzlich einzeln – beim Wieder-Betreuen mit umstellen.</div>":"")+
+      '<div class="rowflex" style="gap:6px;margin-top:4px"><button class="btn ghost sm" type="button" data-d="anl">Anlagen ansehen</button>'+
+        '<button class="btn sm" type="button" data-d="betreuen"'+(fertig===alle?"":' title="Es fehlt noch etwas – trotzdem möglich"')+">Wieder betreuen …</button></div></div></details>");
+    z.querySelector('[data-d="anl"]').onclick=function(){ marktAnsicht(s.id); };
+    z.querySelector('[data-d="betreuen"]').onclick=function(){
+      if(fertig<alle && !window.confirm("Bei „"+stName(s)+"“ fehlt noch etwas ("+(alle-fertig)+" Punkt"+(alle-fertig===1?"":"e")+"). Trotzdem öffnen, um ihn wieder zu betreuen?")) return;
+      var A=S.adm; A.tab="maerkte"; A.sel=s.id; render();
+      setTimeout(function(){ var e=document.getElementById("adm_editor"); if(e) e.scrollIntoView({behavior:"smooth"}); }, 60);
+      toast("Status auf „betreut“ stellen – und die einzeln ruhenden Anlagen ebenso.");
+    };
+    host.appendChild(z);
+  });
+  return c;
+}
 function viewVerwaltung(){
   var f=document.createDocumentFragment();
   if(!Admin.frei){ f.appendChild(verwaltungSperre()); return f; }
@@ -17638,6 +17689,7 @@ function viewVerwaltung(){
   if(A.tab==="wuensche" && demo()) A.tab="nachbessern";
   var menue=el('<div class="card"><div class="pad"><div class="chips" role="tablist" style="gap:8px">'+
     [["nachbessern","Nachbessern"+(fehlerZahl?" · "+fehlerZahl+" Fehler":"")],["maerkte","Märkte & Anlagen"]]
+      .concat(datenpflegeMaerkte().length ? [["datenpflege","Datenpflege · "+datenpflegeMaerkte().length]] : [])
       /* Änderungswünsche: was auf eine Entscheidung wartet, steht als Zahl dran */
       /* nicht in der Vorschau/Präsentation (demo): dort dürfen die Wünsche weder
          geladen noch abgeglichen werden – der Reiter stünde nur leer da */
@@ -17651,6 +17703,7 @@ function viewVerwaltung(){
     render(); window.scrollTo({top:0}); }; });
   f.appendChild(menue);
   if(A.tab==="nachbessern"){ f.appendChild(nachbessernAnsicht(liste)); return f; }
+  if(A.tab==="datenpflege"){ f.appendChild(datenpflegeAnsicht()); return f; }
   if(A.tab==="wuensche"){
     try{ f.appendChild(wuenscheAnsicht()); }catch(e){ console.error(e); }
     return f;
@@ -22566,8 +22619,65 @@ function viewProjekte(){
   var qi=c.querySelector("#pr_q"); qi.oninput=function(){ S.prQ=qi.value; zeichnen(); };
   var ti=c.querySelector("#pr_typ"); ti.onchange=function(){ S.prTyp=ti.value; zeichnen(); };
   var nb=c.querySelector("#pr_neu"); if(nb) nb.onclick=function(){ projektNeu({}); };
+  var fk=nurInhaber() ? folgeKarte() : null; if(fk) f.appendChild(fk);
   f.appendChild(c);
   return f;
+}
+
+/* ---- Folgeaufträge (Büro 02.10.2026: „bringt Geld“): Mängel und „Folgeauftrag erforderlich“ aus
+   den Protokollen landen beim Inhaber – „Angebot?“. Erledigt, sobald aus dem Protokoll ein Projekt
+   angelegt ist (daten.ausProtokoll) oder der Inhaber „kein Angebot“ mit Grund wählt (Merker
+   „folge:<Protokoll>“, rücknehmbar im Änderungsverlauf). Nur Inhaber – Angebote sind Inhaber-Sache. */
+function folgeMerkerId(pid){ return "merker:folge:"+pid; }
+function folgeMaengel(p){ return (p.maengel||[]).filter(function(m){ return m && String(m.text||"").trim(); }); }
+function folgeOffen(){
+  if(!nurInhaber()) return [];
+  var mitProjekt={};
+  PROJEKTE.forEach(function(pr){ var a=(pr.daten||{}).ausProtokoll; if(a) mitProjekt[a]=true; });
+  return alleProtokolle().filter(function(p){
+    if(p.geloescht || !p._id) return false;
+    if(!(p.stoerung||{}).folgeauftrag && !folgeMaengel(p).length) return false;
+    return !mitProjekt[p._id] && !stammUeber[folgeMerkerId(p._id)];
+  }).sort(function(a,b){ return String(b.datum||"").localeCompare(String(a.datum||"")); });
+}
+function folgeKarte(){
+  var l=folgeOffen();
+  if(!l.length) return null;
+  var c=el('<div class="card" id="folge_karte"><div class="pad stack" style="gap:8px">'+
+    "<h2>Folgeaufträge – Angebot? ("+l.length+")</h2>"+
+    '<div class="sub">Aus den Protokollen: festgestellte Mängel und „Folgeauftrag erforderlich“. „Projekt anlegen“ führt weiter zu Angebot und Rechnung; '+
+      "„Kein Angebot“ fragt nach dem Grund. Nur für den Inhaber sichtbar.</div></div></div>");
+  var host=c.querySelector(".stack");
+  l.forEach(function(p){
+    var so=p.stoerung||{}, st=byId[p.standortId];
+    var was=(so.folgeauftrag ? ["Folgeauftrag: "+(so.folgeText||"erforderlich")] : [])
+      .concat(folgeMaengel(p).map(function(m){ return "Mangel: "+m.text+(m.prio?" ("+m.prio+")":"")+(m.massnahme?" → "+m.massnahme:""); }));
+    var z=el('<div class="posbox stack" style="gap:6px">'+
+      '<div class="rowflex" style="justify-content:space-between;gap:8px"><strong>'+esc(protoName(p))+"</strong>"+
+        '<span class="muted" style="font-size:12.5px">'+esc((istStoerung(p)?"Störung":"Wartung")+" "+dfmt(p.datum)+(p.techniker?" · "+p.techniker:""))+"</span></div>"+
+      '<div style="font-size:13px">'+was.map(function(w){ return "• "+esc(w); }).join("<br>")+"</div>"+
+      '<div class="rowflex" style="gap:6px"><button class="btn sm" type="button" data-f="projekt">Projekt anlegen</button>'+
+        '<button class="btn ghost sm" type="button" data-f="ansehen">Protokoll ansehen</button>'+
+        '<button class="btn ghost sm" type="button" data-f="kein">Kein Angebot</button></div></div>');
+    z.querySelector('[data-f="projekt"]').onclick=function(){
+      projektNeu({standort_id:p.standortId||null, kunde_id:st?kundeVon(st):"lidl", ausProtokoll:p._id,
+        titel:(so.folgeauftrag && so.folgeText) || ("Folgeauftrag "+protoName(p)),
+        text:"Aus dem "+(istStoerung(p)?"Störungseinsatz":"Wartungsprotokoll")+" vom "+dfmt(p.datum)+":\n"+was.join("\n")+(so.massnahmen?"\nMaßnahmen: "+so.massnahmen:"")});
+    };
+    z.querySelector('[data-f="ansehen"]').onclick=function(){ protokollFenster(p); };
+    z.querySelector('[data-f="kein"]').onclick=function(){
+      var g=window.prompt("Warum kein Angebot? (z. B. „schon erledigt“, „Lidl macht selbst“)");
+      if(g===null) return;
+      g=g.trim(); if(!g){ toast("Ohne Grund nicht abgelegt."); return; }
+      var m={id:folgeMerkerId(p._id), typ:"merker", ziel:"folge:"+p._id, felder:{ergebnis:"kein Angebot", grund:g},
+             neu:false, geaendert:new Date().toISOString(), von:wer(), grund:"Folgeauftrag ohne Angebot: "+g};
+      stammUeber[m.id]=m;
+      stammSpeichern(m).then(function(){ toast("Abgelegt – kein Angebot ("+g+")."); render(); },
+        function(){ delete stammUeber[m.id]; toast("Nicht gespeichert – keine Verbindung."); render(); });
+    };
+    host.appendChild(z);
+  });
+  return c;
 }
 
 /* ---------- neues Projekt ---------- */
@@ -22603,7 +22713,7 @@ function projektNeu(vorgabe){
     if(!titel){ err.textContent="Bitte einen Titel eintragen."; err.hidden=false; return; }
     var jetzt=new Date().toISOString(), text=form.querySelector("#pn_text").value.trim();
     var zeile={nummer:projektNummerNeu(), titel:titel, kunde_id:selK.value, standort_id:selS.value||null, status:"anfrage",
-      daten:Object.assign({anfrageDatum:isoLokal(new Date()), beschreibung:text}, form.querySelector("#pn_typ").value.trim()?{typ:form.querySelector("#pn_typ").value.trim()}:{}), verlauf:[{zeit:jetzt, wer:meinName(), text:"Projekt angelegt", status:"anfrage"}],
+      daten:Object.assign({anfrageDatum:isoLokal(new Date()), beschreibung:text}, vorgabe.ausProtokoll?{ausProtokoll:vorgabe.ausProtokoll}:{}, form.querySelector("#pn_typ").value.trim()?{typ:form.querySelector("#pn_typ").value.trim()}:{}), verlauf:[{zeit:jetzt, wer:meinName(), text:"Projekt angelegt", status:"anfrage"}],
       geaendert:jetzt, geaendert_von:meinName()};
     ok.disabled=true; ok.textContent="wird angelegt …";
     var fertig=function(p){ PROJEKTE=[p].concat(PROJEKTE.filter(function(x){ return x.id!==p.id; })); v.zu(); toast("Projekt "+p.nummer+" angelegt."); if(S.view==="projekte" && darfRendern()) render(); projektAnsicht(p.id); };
@@ -24924,6 +25034,11 @@ function viewKalender(){
     '<button class="btn sm" type="button">+ Aufgabe</button></div>'+
     '<div class="sub">Aufgaben und geplante Einsätze. ☐ antippen hakt ab – eine Wartung hakt das Protokoll ab. Personen wie oben gewählt.</div></div></div>');
   td.querySelector("button").onclick=function(){ planEditor(null, {art:"aufgabe", datum:"", wer:S.kalWer==="alle"||S.kalWer==="ich" ? [meineKennung()] : [S.kalWer]}); };
+  var fo=folgeOffen().length;
+  if(fo){ var fz=el('<button type="button" class="note warnbox" style="text-align:left;cursor:pointer;font:inherit">💶 '+fo+" Folgeauftr"+(fo===1?"ag wartet":"äge warten")+
+      " auf deine Entscheidung (Angebot?) – zu den Projekten</button>");
+    fz.onclick=function(){ springe({reiter:"projekte", finde:function(){ return document.getElementById("folge_karte"); }, block:"start"}); };
+    td.querySelector(".stack").appendChild(fz); }
   td.querySelector(".stack").appendChild(aufgabenListe(S.kalWer));
   f.appendChild(td);
   /* fällige Wartungen des gezeigten Monats – zum Einplanen */
