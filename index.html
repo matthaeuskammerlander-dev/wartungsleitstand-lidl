@@ -3613,7 +3613,10 @@ function tourRechnen(){
     kandidaten.push({standort:s, positionen:s.pos.slice()});
   });
   var start=BETRIEB;
-  if(S.tour.startId==="__gps"){
+  if(S.tour.startId==="__person" && tourFuer()){
+    var spT=startpunktFuer(tourFuer(), werktagAb(plusTage(isoLokal(new Date()),1)));
+    if(spT.ort) start=Object.assign({adresse:spT.quelle}, spT.ort);
+  } else if(S.tour.startId==="__gps"){
     if(S.tour.gps) start={ id:"__gps", name:"Aktueller Standort",
       adresse:"Position des Technikers", lat:S.tour.gps.lat, lon:S.tour.gps.lon };
     /* ohne Positionsfreigabe bleibt der Betrieb als Ausgangspunkt */
@@ -4135,6 +4138,9 @@ function tourPanel(){
   "</div></div>");
 
   var startSel=c.querySelector("#t_start");
+  if(tourFuer()){ var spT=startpunktFuer(tourFuer(), werktagAb(plusTage(isoLokal(new Date()),1)));
+    var oP=document.createElement("option"); oP.value="__person"; oP.textContent="Startpunkt von "+(tourFuerName()||"der Person")+": "+(spT.ort?spT.ort.name+" ("+spT.quelle+")":"unbekannt – bitte festlegen");
+    startSel.appendChild(oP); }
   var oG=document.createElement("option"); oG.value="__gps";
   oG.textContent="Aktueller Standort des Technikers"; startSel.appendChild(oG);
   var o0=document.createElement("option"); o0.value="__betrieb";
@@ -4153,7 +4159,7 @@ function tourPanel(){
   });
   if(!planTeam && typeof planTeamLaden==="function") planTeamLaden().then(function(){ if(planTeam && S.view==="karte" && darfRendern() && !document.querySelector(".assistent")) render(); });
   c.querySelectorAll("#t_fuer .chip").forEach(function(b){
-    b.onclick=function(){ S.tour.fuer=b.dataset.fuer; S.tour.manuell=null; S.tour.dazu=null; S.tour.fest=null; S.tour.vonBuero=null; tourLauf++; render(); };
+    b.onclick=function(){ S.tour.fuer=b.dataset.fuer; if(S.tour.fuer) S.tour.startId="__person"; else if(S.tour.startId==="__person") S.tour.startId="__betrieb"; S.tour.manuell=null; S.tour.dazu=null; S.tour.fest=null; S.tour.vonBuero=null; tourLauf++; render(); };
   });
   c.querySelectorAll("#t_arten .chip").forEach(function(b){
     b.onclick=function(){
@@ -24498,6 +24504,7 @@ function planungLaden(){
   var konto=Store.benutzer.email;
   if(konto!==planungKonto){ planungKonto=konto; PLANUNG=[]; PLAN_PRIVAT={}; planungGeladen=false; }
   planungLaedt=true;
+  startpunkteLaden();
   return Promise.all([
     Store.sb.from("planung").select("*").order("datum").limit(5000),
     Store.sb.from("planung_privat").select("*").limit(5000)
@@ -24913,6 +24920,7 @@ function kalWoche(heute){
       l.forEach(function(x){ h.appendChild(kalEintragZeile(x, true)); });
       /* Fahrzeiten zwischen den Einsätzen – nur für eine Person sinnvoll */
       if(S.kalWer!=="alle"){
+        var sfz=startFahrtZeile(S.kalWer, tag, l); if(sfz) h.insertBefore(sfz, h.firstChild);
         var fh=fahrtHinweise(l);
         fh.forEach(function(f){ h.appendChild(el('<div style="font-size:12px;'+(f.knapp?"color:var(--crit);font-weight:600":"color:var(--ink-3)")+'">'+esc(fahrtText(f))+"</div>")); });
         if(fh.some(function(f){ return !f.genau; })) fahrtenGenau(l.map(function(x){ var o=einsatzOrtZeit(x); return o&&o.s; }), function(){
@@ -25042,29 +25050,133 @@ function kalVerschieben(x, tag, b, dauer){
     stoerungSpeichern(o, "Einsatz verschoben").then(function(wo){ toast(wo===false?"Nicht verschoben.":"Einsatz verschoben auf "+dfmt(tag)+", "+kalHm(b)+"."); render(); });
   }
 }
+/* ---- Startpunkt je Person und Tag (Büro 02.10.2026: „Startpunkt ist ganz wichtig – automatisch aus der
+   letzten Info des Technikers, sonst nach Standort ermitteln oder nachfragen“) ----
+   Reihenfolge: (1) für den Tag festgelegt, (2) Übernachtung beim letzten Einsatz des Vortags, wenn der weit
+   (> 90 min) von zu Hause bzw. vom Betrieb weg war, (3) fester Startpunkt (Betrieb oder Zuhause – nur Ort/PLZ),
+   (4) unbekannt → fragen. Gespeichert in einstellungen „startpunkt:<Konto>“ – nie Koordinaten einer Wohnung,
+   der aktuelle Standort wird auf den nächsten Markt gerundet. */
+var STARTPUNKTE={}, startpunkteGeladen=false;
+function startpunkteLaden(){
+  if(demo() || !betriebAn()) return Promise.resolve();
+  return Store.sb.from("einstellungen").select("schluessel,wert").like("schluessel","startpunkt:%").then(function(r){
+    if(r.error) return; STARTPUNKTE={}; (r.data||[]).forEach(function(z){ STARTPUNKTE[z.schluessel.slice(11)]=z.wert||{}; }); startpunkteGeladen=true;
+  }, function(){});
+}
+function startpunktSpeichern(uid, wert){
+  STARTPUNKTE[uid]=wert;
+  if(demo()) return Promise.resolve(true);
+  return Store.sb.from("einstellungen").upsert({schluessel:"startpunkt:"+uid, wert:wert, geaendert:new Date().toISOString(), von:meinName()}).then(function(r){
+    if(r.error){ toast("Startpunkt nicht gespeichert: "+r.error.message); return false; } return true; }, function(){ toast("Startpunkt nicht gespeichert – keine Verbindung."); return false; });
+}
+function kontoVon(wahl){ return wahl==="ich" ? meineKennung() : wahl; }
+function startpunktVortag(uid, tag){
+  var sp=STARTPUNKTE[uid]||{};
+  for(var i=1;i<=4;i++){
+    var t=plusTage(tag,-i);
+    var l=(kalenderEintraege(t,t,uid,"")[t]||[]).map(function(x){
+      var sid=x.e ? x.e.standort_id : x.o ? x.o.standortId : x.pr ? x.pr.standortId : null;
+      return {s:sid && byId[sid], z:zeitMin(x.zeit)||0}; }).filter(function(o){ return o.s && o.s.lat!=null; });
+    if(!l.length) continue;
+    l.sort(function(a,b){ return a.z-b.z; });
+    var L=l[l.length-1].s, heim=sp.heimat || (sp.betrieb ? BETRIEB : null);
+    if(fahrtSchaetzMin(L, heim||BETRIEB)>90)
+      return {ort:{id:L.id, name:stName(L), lat:L.lat, lon:L.lon}, quelle:"letzter Einsatz "+WOCHENTAGE[(new Date(t+"T12:00:00").getDay()+6)%7]+" "+dfmt(t).slice(0,6)+" – Übernachtung angenommen"};
+    return null;
+  }
+  return null;
+}
+function startpunktFuer(wahl, tag){
+  var uid=kontoVon(wahl), sp=STARTPUNKTE[uid]||{}, fest=(sp.tage||{})[tag];
+  if(fest) return {ort:fest, quelle:"für diesen Tag festgelegt"};
+  var v=startpunktVortag(uid, tag); if(v) return v;
+  if(sp.heimat) return {ort:sp.heimat, quelle:"fester Startpunkt"};
+  if(sp.betrieb) return {ort:BETRIEB, quelle:"fester Startpunkt (Betrieb)"};
+  return {ort:null, quelle:"unbekannt"};
+}
+function startpunktWaehlen(wahl, tag, fertig){
+  var uid=kontoVon(wahl), sp=JSON.parse(JSON.stringify(STARTPUNKTE[uid]||{})), vort=startpunktVortag(uid, tag);
+  var v=ansichtOeffnen("Startpunkt festlegen");
+  v.schritt.textContent=(planPersonName(uid)||meinName())+" · "+dfmt(tag);
+  var box=el('<div class="stack" style="gap:8px;max-width:560px">'+
+    '<div class="note" style="font-size:13px">Von wo fährt die Person an diesem Tag los? Davon hängen die erste Fahrt, die Abfahrtszeit und die beste Reihenfolge ab.</div>'+
+    '<div class="stack" data-wahl style="gap:6px"></div>'+
+    '<label class="fl"><span>Markt</span><select data-markt><option value="">– Markt wählen –</option>'+ST.filter(function(x){ return x.lat; }).sort(function(a,b){ return stName(a).localeCompare(stName(b),"de"); })
+      .map(function(x){ return '<option value="'+esc(x.id)+'">'+esc(stName(x))+"</option>"; }).join("")+"</select></label>"+
+    '<div class="rowflex" style="gap:8px;align-items:flex-end"><label class="fl" style="flex:1"><span>oder Ort / PLZ (z. B. Hotel in Linz, 1100 Wien)</span><input type="text" data-ort maxlength="80"></label>'+
+      '<button class="btn ghost sm" type="button" data-suchen>suchen</button></div>'+
+    '<label class="chk"><input type="checkbox" data-fest><span>Als <strong>festen Startpunkt</strong> merken (gilt für alle Tage ohne eigene Angabe)</span></label>'+
+    '<div class="muted" style="font-size:12px">Datenschutz: gespeichert wird nur Ort bzw. PLZ oder der nächste Markt – keine Wohnadresse, keine genaue Position.</div></div>');
+  var h=box.querySelector("[data-wahl]");
+  var nimm=function(ort, hinweis){
+    var fest=box.querySelector("[data-fest]").checked;
+    if(fest){ if(ort===BETRIEB){ sp.betrieb=true; delete sp.heimat; } else { sp.heimat=ort; delete sp.betrieb; } if(sp.tage) delete sp.tage[tag]; }
+    else { sp.tage=sp.tage||{}; sp.tage[tag]=ort; }
+    /* alte Tage aufräumen */
+    if(sp.tage) Object.keys(sp.tage).forEach(function(t){ if(t<plusTage(isoLokal(new Date()),-30)) delete sp.tage[t]; });
+    startpunktSpeichern(uid, sp).then(function(ok){ if(ok){ v.zu(); toast("Startpunkt: "+ort.name+(hinweis?" ("+hinweis+")":"")+"."); if(fertig) fertig(); } });
+  };
+  var knopf=function(t, fn){ var b=el('<button class="btn ghost" type="button" style="text-align:left;justify-content:flex-start;white-space:normal">'+t+"</button>"); b.onclick=fn; h.appendChild(b); };
+  if(vort) knopf("🌙 "+esc(vort.ort.name)+' <span class="muted" style="font-size:12px">'+esc(vort.quelle)+"</span>", function(){ nimm(vort.ort); });
+  knopf("🏢 Betrieb – "+esc(BETRIEB.name), function(){ nimm(BETRIEB); });
+  if(sp.heimat) knopf("🏠 "+esc(sp.heimat.name), function(){ nimm(sp.heimat); });
+  if(uid===meineKennung() && navigator.geolocation) knopf("📍 Mein aktueller Standort (auf den nächsten Markt gerundet)", function(){
+    navigator.geolocation.getCurrentPosition(function(pos){
+      var hier={lat:pos.coords.latitude, lon:pos.coords.longitude}, best=null, d=Infinity;
+      ST.forEach(function(x){ if(!x.lat) return; var k=luftlinie(hier, x); if(k<d){ d=k; best=x; } });
+      if(best && d<=30) nimm({id:best.id, name:"nahe "+stName(best), lat:best.lat, lon:best.lon}, Math.round(d)+" km entfernt");
+      else toast("Kein Markt in der Nähe – bitte Ort oder PLZ eingeben.");
+    }, function(){ toast("Standort nicht freigegeben – bitte Ort oder PLZ eingeben."); }, {timeout:15000, maximumAge:300000});
+  });
+  box.querySelector("[data-markt]").onchange=function(){ var x=byId[this.value]; if(x) nimm({id:x.id, name:stName(x), lat:x.lat, lon:x.lon}); };
+  box.querySelector("[data-suchen]").onclick=function(){
+    var q=box.querySelector("[data-ort]").value.trim(); if(!q) return;
+    fetch("https://nominatim.openstreetmap.org/search?format=jsonv2&limit=1&countrycodes=at&q="+encodeURIComponent(q)).then(function(x){ return x.json(); }).then(function(j){
+      if(!j || !j[0]){ toast("„"+q+"“ nicht gefunden."); return; }
+      /* auf ca. 1 km gerundet – keine genaue Adresse */
+      nimm({id:"ort:"+q.toLowerCase(), name:q, lat:Math.round(+j[0].lat*100)/100, lon:Math.round(+j[0].lon*100)/100});
+    }, function(){ toast("Ortssuche nicht erreichbar."); });
+  };
+  v.inhalt.appendChild(box);
+  var ab=el('<button class="btn ghost" type="button">Abbrechen</button>'); ab.onclick=function(){ v.zu(); }; v.fuss.appendChild(ab);
+}
+/* Kalender: erste Fahrt des Tages (Start → erster Einsatz mit Ort und Uhrzeit) */
+function startFahrtZeile(wahl, tag, l){
+  var sp=startpunktFuer(wahl, tag), erste=l.map(einsatzOrtZeit).filter(Boolean).sort(function(a,b){ return a.b-b.b; })[0];
+  if(!erste) return null;
+  if(!sp.ort){ var z=el('<div style="font-size:12px;color:var(--warn)">⚠ Startpunkt unbekannt – <a href="#">festlegen</a></div>');
+    z.querySelector("a").onclick=function(ev){ ev.preventDefault(); startpunktWaehlen(wahl, tag, function(){ render(); }); }; return z; }
+  var min=fahrtMinZw(sp.ort, erste.s), ab=erste.b-min;
+  var z2=el('<div style="font-size:12px;color:'+(ab<5*60+30?"var(--crit)":"var(--ink-3)")+'">🚗 Start '+esc(sp.ort.name)+' <span class="muted">('+esc(sp.quelle)+')</span> → '+esc(stName(erste.s))+": ca. "+min+" min – losfahren "+kalHm(Math.max(0,ab))+' · <a href="#">ändern</a></div>');
+  z2.querySelector("a").onclick=function(ev){ ev.preventDefault(); startpunktWaehlen(wahl, tag, function(){ render(); }); };
+  return z2;
+}
 /* ---- Planung prüfen (Büro 02.10.2026: „wenn sich jemand einen Tag oder eine Woche selber geplant hat,
    prüft die App die Effizienz der Tour und dass keine offene Störung oder Wartung übersehen wurde“) ----
    Je Tag: (1) bessere Reihenfolge der Märkte (Fahrzeit), (2) Überschneidungen / zu knapp, (3) am selben
    Markt noch fällig bzw. offene Störung, (4) in der Nähe (kleiner Umweg) offene Störung / überfällige Wartung. */
 function fahrtMinZw(a,b){ if(!a || !b || a.id===b.id) return 0; var k=a.id+">"+b.id; return FAHR_CACHE[k]!=null ? FAHR_CACHE[k] : fahrtSchaetzMin(a,b); }
 function wegMin(orte){ var t=0; for(var i=1;i<orte.length;i++) t+=fahrtMinZw(orte[i-1], orte[i]); return t; }
-function besteReihenfolge(orte){
-  if(orte.length<3) return orte.slice();
-  var best=orte.slice(), bestW=wegMin(orte);
+/* beste Reihenfolge der Märkte – mit festem Startpunkt (zählt die erste Fahrt mit), sonst offen */
+function besteReihenfolge(orte, start){
+  var kosten=function(l){ return wegMin(start ? [start].concat(l) : l); };
+  if(orte.length<2 || (!start && orte.length<3)) return orte.slice();
+  var best=orte.slice(), bestW=kosten(orte);
   if(orte.length<=7){
-    var perm=function(rest, weg){ if(!rest.length){ var w=wegMin(weg); if(w<bestW){ bestW=w; best=weg.slice(); } return; }
-      for(var i=0;i<rest.length;i++) perm(rest.slice(0,i).concat(rest.slice(i+1)), weg.concat([rest[i]])); };
+    var perm=function(rest, weg){
+      if(!rest.length){ var w=kosten(weg); if(w<bestW){ bestW=w; best=weg.slice(); } return; }
+      for(var i=0;i<rest.length;i++) perm(rest.slice(0,i).concat(rest.slice(i+1)), weg.concat([rest[i]]));
+    };
     perm(orte, []);
-  } else {
-    /* viele Märkte: 2-opt */
-    var cur=orte.slice(), besser=true;
-    while(besser){ besser=false;
-      for(var i=0;i<cur.length-1;i++) for(var j=i+1;j<cur.length;j++){
-        var neu=cur.slice(0,i).concat(cur.slice(i,j+1).reverse(), cur.slice(j+1));
-        if(wegMin(neu)<wegMin(cur)-0.5){ cur=neu; besser=true; } } }
-    best=cur; bestW=wegMin(cur);
+    return best;
   }
-  return best;
+  /* viele Märkte: 2-opt */
+  var cur=orte.slice(), besser=true;
+  while(besser){ besser=false;
+    for(var i=0;i<cur.length-1;i++) for(var j=i+1;j<cur.length;j++){
+      var neu=cur.slice(0,i).concat(cur.slice(i,j+1).reverse(), cur.slice(j+1));
+      if(kosten(neu)<kosten(cur)-0.5){ cur=neu; besser=true; } } }
+  return cur;
 }
 function planungPruefen(wahl, von, bis){
   var m=kalenderEintraege(von, bis, wahl, ""), tage=[];
@@ -25077,10 +25189,13 @@ function planungPruefen(wahl, von, bis){
     if(!l.length){ continue; }
     /* (1) Reihenfolge – nur die Einsätze mit Ort und Uhrzeit */
     var orte=[]; orteZ.forEach(function(o){ if(!orte.length || orte[orte.length-1].id!==o.s.id) orte.push(o.s); });
-    if(orte.length>=3){
-      var best=besteReihenfolge(orte), jetzt=wegMin(orte), dann=wegMin(best);
+    tag.start=startpunktFuer(wahl, t);
+    var st0=tag.start.ort;
+    if(orte.length>=(st0?2:3)){
+      var best=besteReihenfolge(orte, st0), mit=function(l){ return st0 ? [st0].concat(l) : l; }, jetzt=wegMin(mit(orte)), dann=wegMin(mit(best));
       if(jetzt-dann>=10) tag.reihenfolge={jetzt:jetzt, dann:dann, orte:orte, best:best, ez:orteZ};
     }
+    if(st0 && orteZ.length){ var f0=fahrtMinZw(st0, orteZ[0].s); tag.ersteFahrt={min:f0, ab:orteZ[0].b-f0, nach:orteZ[0].s}; }
     /* (2) Zeit */
     tag.knapp=fahrtHinweise(l).filter(function(f){ return f.knapp; });
     /* (3) am selben Markt */
@@ -25131,9 +25246,17 @@ function planungPruefenAnsicht(wahl, von, bis){
     var alleOrte=[];
     tage.forEach(function(tg){
       tg.orte.forEach(function(o){ alleOrte.push(o); });
+      if(tg.start && tg.start.ort) alleOrte.push(tg.start.ort);
       var k=el('<div class="card" style="box-shadow:none;margin:0"><div class="pad stack" style="gap:6px"><h2 style="font-size:15px">'+esc(WOCHENTAGE[(new Date(tg.tag+"T12:00:00").getDay()+6)%7]+" "+dfmt(tg.tag))+
         ' <span class="muted" style="font-weight:400;font-size:12.5px">'+tg.eintraege.length+" Einträge</span></h2></div></div>");
       var h=k.querySelector(".stack"), gut=true;
+      /* Startpunkt */
+      var sz;
+      if(!tg.start.ort){ gut=false; probleme++; sz=el('<div class="note warnbox" style="font-size:13px">⚠ <strong>Startpunkt unbekannt</strong> – erste Fahrt und Reihenfolge ohne Start gerechnet. <button class="btn sm" type="button">festlegen</button></div>'); }
+      else { var ef=tg.ersteFahrt; sz=el('<div style="font-size:13px'+(ef && ef.ab<5*60+30?";color:var(--crit);font-weight:600":"")+'">🚗 Start: <strong>'+esc(tg.start.ort.name)+'</strong> <span class="muted">('+esc(tg.start.quelle)+")</span>"+
+        (ef?" → "+esc(stName(ef.nach))+": "+(FAHR_CACHE[(tg.start.ort.id||"")+">"+ef.nach.id]!=null?"":"ca. ")+ef.min+" min, losfahren "+kalHm(Math.max(0,ef.ab)):"")+' <button class="btn ghost sm" type="button">ändern</button></div>'); }
+      sz.querySelector("button").onclick=function(){ startpunktWaehlen(wahl, tg.tag, zeichne); };
+      h.appendChild(sz);
       if(tg.reihenfolge){
         gut=false; probleme++;
         var rf=tg.reihenfolge;
@@ -25228,6 +25351,7 @@ function kalTagAnsicht(heute){
   /* Fahrzeiten (eine Person gewählt) */
   if(S.kalWer!=="alle"){
     var fh=fahrtHinweise(l), fb=box.querySelector("[data-fahrt]");
+    var sfz=startFahrtZeile(S.kalWer, tag, l); if(sfz) fb.appendChild(sfz);
     fh.forEach(function(f){ fb.appendChild(el('<div style="font-size:12px;'+(f.knapp?"color:var(--crit);font-weight:600":"color:var(--ink-3)")+'">'+esc(fahrtText(f))+"</div>")); });
     if(fh.some(function(f){ return !f.genau; })) fahrtenGenau(l.map(function(x){ var o=einsatzOrtZeit(x); return o&&o.s; }), function(){
       if(S.view==="kalender" && S.kalModus==="tag" && darfRendern() && !document.querySelector(".assistent")) render(); });
