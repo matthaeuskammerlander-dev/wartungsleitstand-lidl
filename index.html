@@ -713,7 +713,9 @@ var STAMM_FELDER_POS = ["anlagentyp","intervallCode","inbetriebnahme","monat","m
                         "hjiMarkt",
                         /* Gerät aus einer Sammelzeile der alten Liste (Büro 02.10.2026, Gerasdorferstraße): Kennung der
                            Sammelzeile – eigene Anlage mit eigenen Terminen, die Sammelzeile bleibt für den Rest */
-                        "teilVon"];
+                        "teilVon",
+                        /* Einträge der alten Liste, die vor Ort als falsch zurückgenommen wurden (Büro 02.10.2026) */
+                        "historieWeg"];
 var ABGELEITET_POS   = ["kaeltemittelText","ueber30kg","baujahr"];
 function auswahl(o, felder){
   var r={}; felder.forEach(function(k){ r[k]=(o[k]===undefined?null:o[k]); }); return r;
@@ -5327,6 +5329,12 @@ function posBox(p,s,imBlock){
     '<div data-schreiben class="rowflex" style="gap:6px;align-items:center"><button class="btn ghost sm" type="button" data-akt="proto">Protokoll ausfüllen</button></div>'+
   "</div>");
   b.querySelector('[data-akt="proto"]').onclick=function(){ protokollBeginnen(s.id, p.id, "wartung"); };
+  /* erledigte Wartungen selbst richtigstellen – Admin/Inhaber, auch vor Ort (Büro 02.10.2026) */
+  if((istInhaber() || Rolle.name==="admin") && !nurLesen() && !demo()){
+    var wa=el('<button class="btn ghost sm" type="button">Wartungen anpassen</button>');
+    wa.onclick=function(){ wartungenAnpassen(p); };
+    b.querySelector("[data-schreiben]").appendChild(wa);
+  }
   /* fälliger/überfälliger Termin: gleich hier einplanen (Büro 02.10.2026: „den überfälligen Termin
      für Darko einplanen“ – der Knopf stand nur rechts in „Geplant an diesem Markt“) */
   if(planungAn() && (p.status==="ueberfaellig" || p.status==="faellig")){
@@ -7285,11 +7293,12 @@ function wendeStammdatenAn(){
        fehlen. Sie zählen wie ein Eintrag der Liste – für die Fälligkeit und
        in der Historie. Der Excel-Stand bleibt darunter unverändert. */
     if(!p._historieExcel) p._historieExcel=(p.historie||[]).slice();
+    var weg=Array.isArray(p.historieWeg) ? p.historieWeg : [];
     var nw=Array.isArray(p.nachweise) ? p.nachweise.filter(function(n){ return n && /^\d{4}-\d\d-\d\d$/.test(n.datum||""); }) : [];
     /* derselbe Besuch nicht doppelt: liegt ein Listeneintrag höchstens
        BESUCH_TAGE neben einem Prüfbuch-Eintrag, gilt das Prüfbuch */
     var nwTage=nw.map(function(n){ return n.datum; });
-    var tage={}; p._historieExcel.filter(function(d){ return !nwTage.some(function(n){ return gleicherBesuch(d,n); }); })
+    var tage={}; p._historieExcel.filter(function(d){ return weg.indexOf(d)<0 && !nwTage.some(function(n){ return gleicherBesuch(d,n); }); })
       .concat(nwTage).forEach(function(d){ if(d) tage[d]=1; });
     p.historie=Object.keys(tage).sort();
     p.techniker=p.techniker||{};
@@ -24913,6 +24922,73 @@ function wartungenEinplanenKarte(monat){
   }
   if(l.length>60) h.appendChild(el('<div class="muted" style="font-size:12px">… und '+(l.length-60)+" weitere (Fällig zeigt alle).</div>"));
   return c;
+}
+/* ---- Durchgeführte Wartungen eines Termins anpassen (Büro 02.10.2026: „die Möglichkeit, dass Darko die
+   erledigten Termine anpassen kann, damit er so ein Problem auch selber im Einsatz beheben kann“) ----
+   Zurücknehmen: ein Nachweis (Prüfbuch, nachgetragen) oder ein Eintrag der alten Liste (historieWeg).
+   Nachtragen: Datum (+ wer). Protokolle der App bleiben – die nimmt man über das Protokoll zurück.
+   Alles mit Namen im Änderungsverlauf und rücknehmbar. */
+function wartungenAnpassen(p){
+  var kurz=(intervallArt(p.intervallCode)||{}).kurz||p.intervallCode||"";
+  var nw=(Array.isArray(p.nachweise)?p.nachweise:[]).map(function(n){ return Object.assign({}, n); });
+  var weg=(Array.isArray(p.historieWeg)?p.historieWeg:[]).slice();
+  var excel=(p._historieExcel||[]).slice();
+  var proto=alleProtokolle().filter(function(x){ return !x.geloescht && ((x.positionIds||[]).indexOf(p.id)>=0 || x.positionId===p.id); }).map(function(x){ return x.datum; });
+  var v=ansichtOeffnen("Wartungen anpassen");
+  v.schritt.textContent=anlagenName(anlageDaten(anlageLeader(p)))+" · "+kurz+" · "+stName(byId[p.standortId]||{});
+  var box=el('<div class="stack" style="gap:8px;max-width:620px">'+
+    '<div class="note" style="font-size:13px">Was hier als erledigt steht, bestimmt die Fälligkeit. Ist ein Eintrag falsch – etwa der heutige Besuch, den das Prüfbuch schon als erledigt gezeigt hat – hier zurücknehmen, dann das Protokoll schreiben.</div>'+
+    '<div class="stack" data-l style="gap:4px"></div>'+
+    '<div class="rowflex" style="gap:8px;flex-wrap:wrap;align-items:flex-end"><label class="fl"><span>Wartung nachtragen am</span><input type="date" data-neu max="'+isoLokal(new Date())+'"></label>'+
+    '<label class="fl" style="flex:1;min-width:160px"><span>wer (optional)</span><input type="text" data-wer maxlength="80" placeholder="z. B. Firma laut Prüfbuch"></label>'+
+    '<button class="btn ghost sm" type="button" data-dazu>nachtragen</button></div></div>');
+  var l=box.querySelector("[data-l]");
+  var zeichne=function(){
+    l.innerHTML="";
+    var zeilen=[];
+    excel.forEach(function(d){ if(weg.indexOf(d)<0 && !nw.some(function(n){ return gleicherBesuch(d,n.datum); })) zeilen.push({d:d, q:"alte Liste", art:"excel"}); });
+    nw.forEach(function(n, i){ zeilen.push({d:n.datum, q:"Prüfbuch / nachgetragen"+(n.techniker?" · "+n.techniker:""), art:"nw", i:i}); });
+    proto.forEach(function(d){ zeilen.push({d:d, q:"Protokoll der App", art:"proto"}); });
+    zeilen.sort(function(a,b){ return b.d.localeCompare(a.d); });
+    if(!zeilen.length) l.appendChild(el('<div class="muted" style="font-size:13px">Keine Wartung bekannt.</div>'));
+    zeilen.forEach(function(z){
+      var r=el('<div class="rowflex" style="justify-content:space-between;gap:8px;border-top:1px solid var(--line);padding-top:4px;flex-wrap:nowrap">'+
+        '<span style="font-size:13.5px"><strong class="mono">'+esc(dfmt(z.d))+'</strong> <span class="muted" style="font-size:12px">'+esc(z.q)+"</span></span>"+
+        (z.art==="proto" ? '<span class="muted" style="font-size:12px">über das Protokoll</span>' : '<button class="btn ghost sm" type="button">✕ zurücknehmen</button>')+"</div>");
+      var k=r.querySelector("button");
+      if(k) k.onclick=function(){ if(z.art==="nw") nw.splice(z.i,1); else weg.push(z.d); zeichne(); };
+      l.appendChild(r);
+    });
+  };
+  box.querySelector("[data-dazu]").onclick=function(){
+    var d=box.querySelector("[data-neu]").value; if(!d){ toast("Bitte das Datum der Wartung eintragen."); return; }
+    if(d>isoLokal(new Date())){ toast("Eine Wartung kann nicht in der Zukunft liegen."); return; }
+    var w=box.querySelector("[data-wer]").value.trim();
+    nw.push(Object.assign({datum:d, kuerzel:kurz}, w?{techniker:w}:{})); weg=weg.filter(function(x){ return x!==d; });
+    box.querySelector("[data-neu]").value=""; box.querySelector("[data-wer]").value=""; zeichne();
+  };
+  zeichne();
+  v.inhalt.appendChild(box);
+  var ab=el('<button class="btn ghost" type="button">Abbrechen</button>'), ok=el('<button class="btn" type="button">Speichern</button>');
+  ab.onclick=function(){ v.zu(); };
+  v.fuss.appendChild(ab); v.fuss.appendChild(ok);
+  ok.onclick=function(){
+    var altNw=JSON.stringify(Array.isArray(p.nachweise)?p.nachweise:[]), altWeg=JSON.stringify(Array.isArray(p.historieWeg)?p.historieWeg:[]);
+    nw.sort(function(a,b){ return a.datum.localeCompare(b.datum); });
+    if(JSON.stringify(nw)===altNw && JSON.stringify(weg)===altWeg){ v.zu(); return; }
+    var vorher=(p.historie||[]).filter(function(d){ return d.slice(0,4)>=String(JAHR-1); }).map(dfmt).join(", ")||"–";
+    ok.disabled=true;
+    var pro={}, rueck={}; pro[p.id]={nachweise:nw, historieWeg:weg.length?weg:null};
+    positionenSchreiben(pro, "Durchgeführte Wartungen angepasst", rueck).then(function(wo){
+      if(wo===false){ ok.disabled=false; toast("Nicht gespeichert – bitte nochmals versuchen."); return; }
+      berechneFaelligkeiten();
+      var nachher=(posById[p.id]&&posById[p.id].historie||[]).filter(function(d){ return d.slice(0,4)>=String(JAHR-1); }).map(dfmt).join(", ")||"–";
+      protokolliere({art:"stammdaten", standortId:p.standortId, standortName:stName(byId[p.standortId]||{}), grund:"Durchgeführte Wartungen angepasst ("+kurz+")",
+        felder:[{feld:"nachweise", name:anlagenName(anlageDaten(anlageLeader(p)))+" – "+kurz, alt:vorher, neu:nachher}], rueck:rueck});
+      v.zu(); toast("Gespeichert – "+kurz+" ist jetzt "+((posById[p.id]||{}).status==="ueberfaellig"?"überfällig":(posById[p.id]||{}).status==="faellig"?"fällig":"im Zeitplan")+".");
+      render();
+    });
+  };
 }
 /* Wartung an einem Markt einplanen: die fälligen / anstehenden Wartungstermine der
    Anlagen sind angekreuzt (was schon eingeplant ist, nicht) – Büro 01.10.2026 */
