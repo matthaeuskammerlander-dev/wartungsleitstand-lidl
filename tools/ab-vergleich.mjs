@@ -398,6 +398,67 @@ const ABLAEUFE = [
     const schritte = await A.durchklicken(40);
     return { schritte, anl: A.html(document.getElementById("proto").querySelector("#anlagen")), toasts: A.toasts };
   } },
+  /* ---- Störungsauftrag-Dialog ---- */
+  { name: "stoerung-neu-anlegen", konto: "admin", code: async () => {
+    const x = window.__t.x, A = window.__ab;
+    const stand = A.dbStand();
+    x("stoerungDialog(null, null, {standortId:'TS2'})"); await A.warte(600);
+    const d = [...document.querySelectorAll(".assistent")].pop();
+    const leer = A.html(d.querySelector(".as-karte"));
+    const k0 = [...d.querySelectorAll(".as-fuss button")].filter((b) => /anlegen|speichern/i.test(b.textContent)).pop();
+    if (k0) k0.click(); await A.warte(400);
+    const ohneNr = A.sichtbar(d);
+    [].forEach.call(d.querySelectorAll(".as-karte input, .as-karte textarea, .as-karte select"), (e, i) => {
+      if (e.type === "file" || e.type === "checkbox" || e.type === "hidden" || e.value) return;
+      if (e.tagName === "SELECT") { if (e.options.length > 1) e.selectedIndex = 1; }
+      else if (e.type === "date") e.value = "2026-06-20"; else if (e.type === "time") e.value = "08:30"; else e.value = "T" + i;
+      e.dispatchEvent(new Event("input", { bubbles: true })); e.dispatchEvent(new Event("change", { bubbles: true })); });
+    const voll = A.werte(d);
+    const k = [...d.querySelectorAll(".as-fuss button")].filter((b) => /anlegen|speichern/i.test(b.textContent)).pop();
+    if (k) k.click(); await A.warte(1500);
+    return { leer, ohneNr, voll, db: A.dbNeu(stand), offen: !!document.body.contains(d), toasts: A.toasts };
+  } },
+  { name: "stoerung-bearbeiten-termin", konto: "admin", code: async () => {
+    const x = window.__t.x, A = window.__ab;
+    x("stoerungSpeichern({_id:'stb1', standortId:'TS3', auftragsnummer:'ST-9', problemtyp:'Kühlung', erfasstAm:'2026-06-14T08:00:00.000Z', status:'offen'}, 'Test')"); await A.warte(500);
+    const stand = A.dbStand();
+    x("stoerungDialog(OFFENE.filter(function(o){ return o._id==='stb1'; })[0])"); await A.warte(600);
+    const d = [...document.querySelectorAll(".assistent")].pop();
+    const vorher = A.html(d.querySelector(".as-karte"));
+    const setzeF = (k, w) => { const e = d.querySelector('[data-s="' + k + '"]'); if (e) { e.value = w; e.dispatchEvent(new Event("input", { bubbles: true })); e.dispatchEvent(new Event("change", { bubbles: true })); return 1; } return 0; };
+    const gesetzt = [setzeF("termin", "2026-06-18"), setzeF("terminZeit", "07:30"), setzeF("terminTechniker", "Testtechniker")];
+    const k = [...d.querySelectorAll(".as-fuss button")].filter((b) => /speichern/i.test(b.textContent)).pop();
+    if (k) k.click(); await A.warte(1500);
+    return { vorher, gesetzt, db: A.dbNeu(stand), toasts: A.toasts };
+  } },
+  { name: "stoerung-erledigt-und-loeschen", konto: "admin", code: async () => {
+    const x = window.__t.x, A = window.__ab;
+    x("stoerungSpeichern({_id:'stc1', standortId:'TS4', auftragsnummer:'ST-10', erfasstAm:'2026-06-14T08:00:00.000Z', status:'offen'}, 'Test')");
+    x("stoerungSpeichern({_id:'stc2', standortId:'TS4', auftragsnummer:'ST-11', erfasstAm:'2026-06-14T08:00:00.000Z', status:'offen'}, 'Test')"); await A.warte(500);
+    const stand = A.dbStand();
+    x("stoerungDialog(OFFENE.filter(function(o){ return o._id==='stc1'; })[0])"); await A.warte(600);
+    let d = [...document.querySelectorAll(".assistent")].pop();
+    const erl = [...d.querySelectorAll("button")].filter((b) => /erledigt abhaken/.test(b.textContent))[0];
+    if (erl) erl.click(); await A.warte(1500);
+    const nachErledigt = { db: A.dbNeu(stand), toasts: A.toasts.slice(), dialoge: window.__dialoge.slice() };
+    x("ansichtenSchliessen()"); await A.warte(200);
+    x("stoerungDialog(OFFENE.filter(function(o){ return o._id==='stc2'; })[0])"); await A.warte(600);
+    d = [...document.querySelectorAll(".assistent")].pop();
+    const weg = [...d.querySelectorAll("button")].filter((b) => /Eintrag löschen/.test(b.textContent))[0];
+    if (weg) weg.click(); await A.warte(800);
+    /* Grund-Abfrage der App (textAbfrage) ausfüllen, falls sie kommt */
+    const q = [...document.querySelectorAll(".assistent")].pop(); const qt = q && q.querySelector("textarea, input[type=text]");
+    if (q && q !== d && qt) { qt.value = "doppelt erfasst"; qt.dispatchEvent(new Event("input", { bubbles: true })); const ok = [...q.querySelectorAll(".as-fuss button")].pop(); if (ok) ok.click(); }
+    await A.warte(1500);
+    return { erlDa: !!erl, wegDa: !!weg, nachErledigt, db: A.dbNeu(stand), toasts: A.toasts, offene: x("OFFENE").map((o) => [o._id, !!o.erledigt, !!o.geloescht]) };
+  } },
+  { name: "stoerung-techniker-ansehen", konto: "techniker", code: async () => {
+    const x = window.__t.x, A = window.__ab;
+    x("stoerungSpeichern({_id:'std1', standortId:'TS1', auftragsnummer:'ST-12', erfasstAm:'2026-06-14T08:00:00.000Z', status:'offen'}, 'Test')"); await A.warte(500);
+    x("stoerungDialog(OFFENE.filter(function(o){ return o._id==='std1'; })[0])"); await A.warte(600);
+    const d = [...document.querySelectorAll(".assistent")].pop();
+    return { html: d ? A.html(d.querySelector(".as-karte")) : null, toasts: A.toasts };
+  } },
   { name: "protokoll-ausgefuellt-fuer", konto: "admin", code: async () => {
     const x = window.__t.x, A = window.__ab;
     x("formDirty=false; S.protoArt='wartung'; S.bearbeiten=null; S.protoStandort='TS3'; S.protoPos=null; S.view='protokoll'; render(); 1");

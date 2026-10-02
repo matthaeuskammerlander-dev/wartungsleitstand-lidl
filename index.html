@@ -2394,97 +2394,11 @@ document.addEventListener("click", function(e){
   if(leafletKarte) try{ leafletKarte.closePopup(); }catch(x){}
   stoerungDialog(null, null, {standortId:k.dataset.stoerneu});
 }, true);
-function stoerungDialog(vorhanden, weiter, vorlage){
-  if(nurLesen()){ posteingangOffen=null; toast("Mit diesem Konto lässt sich nur ansehen."); return; }
-  /* gemeinsame Datenbank, aber abgemeldet: nichts erfassen oder ändern – es
-     ginge sonst später unter fremdem Namen in die Datenbank */
-  if(!angemeldetOderLokal()){ posteingangOffen=null; toast("Dafür bitte zuerst anmelden."); return; }
-  var o = weiter ? Object.assign({}, weiter.ort.o)
-        : vorhanden ? Object.assign({}, vorhanden)
-                    : Object.assign({_id:"st_"+Date.now().toString(36)+Math.random().toString(36).slice(2,6), seiten:[]}, vorlage||{});
-  if(!o.seiten) o.seiten=[];
-  /* der Auftrag kam aus dem Posteingang: nach dem Speichern dort erledigen */
-  if(weiter && weiter.ort.posteingang && !posteingangOffen) posteingangOffen=weiter.ort.posteingang;
-  /* genau dieser Eingang gehört zu diesem Dialog (nicht zu einem zweiten, später geöffneten) */
-  var meinEingang=(!vorhanden && posteingangOffen && posteingangOffen.art==="auftrag") ? posteingangOffen : null;
-  var ov=el('<div class="assistent" role="dialog" aria-modal="true"><div class="as-karte">'+
-    '<div class="as-kopf"><div style="min-width:0"><div class="as-titel">'+
-      (vorhanden?"Offene Störung":"Störungsauftrag erfassen")+'</div>'+
-      '<div class="as-schritt">Auftrag von Lidl</div></div>'+
-      '<button class="btn ghost sm" type="button" data-a="zu">Schließen</button></div>'+
-    '<div class="as-inhalt"></div><div class="as-fuss"></div></div></div>');
-  if(vorhanden) ov.dataset.stoerung=o._id;   /* chatBezugOeffnen findet den offenen Dialog daran */
-  document.body.appendChild(ov);
-  /* Scroll-Sperre der Ansicht darunter (etwa der Markt-Ansicht) beim Schließen zurückgeben */
-  var vorherOv=document.body.style.overflow;
-  document.body.style.overflow="hidden";
-  var inhalt=ov.querySelector(".as-inhalt"), fuss=ov.querySelector(".as-fuss");
-  /* Team-Chat: Nachrichten zu dieser Störung unter dem Formular (erst nach
-     dem Aufbau anhängen – der Dialog füllt inhalt gleich darunter) */
-  if(vorhanden) setTimeout(function(){ if(ov.isConnected && chatAn()) inhalt.appendChild(chatBezugKarte("stoerung", o._id, chatBezugText("stoerung", o))); }, 0);
-  var zu=function(){
-    ov.remove(); document.body.style.overflow=vorherOv;
-    /* ein aus dem Posteingang geöffneter Auftrag gilt nur für diesen Dialog –
-       abgebrochen bleibt er im Posteingang stehen */
-    if(meinEingang && posteingangOffen===meinEingang) posteingangOffen=null;
-  };
-  var anfang=weiter ? "" : JSON.stringify(o);   /* wiederhergestellt: gilt als eingegeben */
-  /* Stand beim Öffnen – gespeichert wird nur, was im Dialog geändert wurde,
-     und zwar auf den JETZT geltenden Stand (aufAktuell): ein länger offenes
-     Fenster (etwa die Markt-Ansicht) holt sonst Überschriebenes, Erledigtes
-     oder Gelöschtes zurück */
-  var basisStand=vorhanden ? JSON.parse(JSON.stringify(vorhanden)) : null;
-  var aufAktuell=function(extra){
-    var jetzt=OFFENE.filter(function(x){ return x._id===o._id; })[0];
-    if(!jetzt || jetzt.erledigt || jetzt.geloescht) return null;
-    var z=Object.assign({}, jetzt);
-    STOER_OFFEN_FELDER.forEach(function(k){ if(!gleich(basisStand[k], o[k])) z[k]=o[k]; });
-    if(o.standortId!==basisStand.standortId) z.standortId=o.standortId;
-    return Object.assign(z, extra||{});
-  };
-  /* für das Neuladen bzw. Schließen der Seite (beforeunload): noch nicht gespeichert? */
-  ov._ungespeichert=function(){ return document.body.contains(ov) && JSON.stringify(o)!==anfang; };
-  ov._zu=zu;   /* ansichtenSchliessen: ohne ungespeicherte Eingaben darf er zu */
-  ov.querySelector('[data-a="zu"]').onclick=function(){
-    /* abgetippte oder eingelesene Angaben nicht still wegwerfen */
-    if(JSON.stringify(o)!==anfang &&
-       !window.confirm("Die Eingaben zu dieser Störung sind noch nicht gespeichert.\n\nDialog trotzdem schließen?")) return;
-    zu();
-  };
-
-  /* Verweise in Meldungen und im Hinweis „Es fehlt noch“ (data-stsprung):
-     zum Feld springen bzw. den laut Filial-Nr. passenden Markt übernehmen.
-     Einmal am Dialog – die Meldungen überleben das Neuzeichnen (melde). */
-  ov.addEventListener("click", function(e){
-    var a=e.target.closest ? e.target.closest("[data-stsprung]") : null; if(!a) return;
-    e.preventDefault();
-    var was=a.dataset.stsprung;
-    if(was.indexOf("nimm:")===0){
-      var st=byId[was.slice(5)]; if(!st) return;
-      o.standortId=st.id; o.positionId=null; o._marktAuto=false;
-      melde("Markt übernommen: <strong>"+esc(stName(st))+"</strong>.");
-      zeichne(); fussNeu(); sprungHervorheben(inhalt.querySelector("#st_markt")); return;
-    }
-    sprungHervorheben(inhalt.querySelector(was==="markt" ? "#st_markt" : was==="ohne" ? "#st_ohne" : '[data-s="auftragsnummer"]'));
-  });
-  var FELDER=[
-    ["auftragsnummer","Auftragsnummer","text",true],
-    ["filialCode","Filial-Nr. laut Auftrag","text",false],
-    ["stoerungsnr","Störungsnummer","text",false],
-    ["problemtyp","Problemtyp","text",false],
-    ["zieltermin","Zieltermin","date",false],
-    /* wann jemand hinfährt – steht im Störungskalender */
-    ["termin","Einsatz geplant am","date",false],
-    ["terminZeit","Uhrzeit","time",false],
-    ["terminTechniker","Wer fährt hin","text",false],
-    ["auftragsdatum","Auftragsdatum","date",false],
-    ["lidlTyp","Typ","text",false],
-    ["hersteller","Hersteller","text",false],
-    ["lidlModell","Modell","text",false],
-    ["lin","LIN","text",false],
-    ["lidlKontakt","Kontakt bei Lidl","text",false],
-    ["lidlTelefon","Telefon Lidl","text",false]
-  ];
+/* Störungsauftrag-Dialog, Teil Formular: Felder, Markt und Anlage, Auftrag als Bild */
+function stoerungTeilFormular(P){
+  var o=P.o, inhalt=P.inhalt, anfang=P.anfang, FELDER=P.FELDER;
+  /* für die anderen Teile */
+  P.zeichne=zeichne;
 
   function zeichne(){
     inhalt.innerHTML=
@@ -2528,9 +2442,9 @@ function stoerungDialog(vorhanden, weiter, vorlage){
         "<span>Ausnahme: kein Lidl-Auftrag (z. B. telefonisch beauftragt) – Auftragsnummer folgt oder entfällt</span></label>"+
       '<div class="note warnbox" id="st_fehlt" hidden style="margin-top:10px"></div>';
 
-    bilderZeigen();
-    if(meldung) melde(meldung);
-    if(warnung) warnen(warnung);
+    P.bilderZeigen();
+    if(P.meldung) P.melde(P.meldung);
+    if(P.warnung) P.warnen(P.warnung);
     var anlWahl=function(){
       var sel=inhalt.querySelector("#st_anlage"), s=o.standortId?byId[o.standortId]:null;
       sel.innerHTML='<option value="">– noch unklar –</option>'+(s?anlagenDesMarkts(s,true).map(function(a){   /* auch zur Zeit nicht gewartete Anlagen können gestört sein */
@@ -2550,7 +2464,7 @@ function stoerungDialog(vorhanden, weiter, vorlage){
     anlWahl();
     inhalt.querySelector("#st_markt").onchange=function(){ o.standortId=this.value||null; o.positionId=null; o._marktAuto=false; anlWahl();
       /* von Hand gewählt: eine Meldung zur Markterkennung stimmt nicht mehr */
-      if(/Markt erkannt|kein Markt bekannt|Markt laut Auftrag/.test(meldung)) melde(""); };
+      if(/Markt erkannt|kein Markt bekannt|Markt laut Auftrag/.test(P.meldung)) P.melde(""); };
     inhalt.querySelector("#st_ohne").onchange=function(){ o.ohneAuftrag=this.checked; };
     inhalt.querySelectorAll("[data-s]").forEach(function(i){
       i.oninput=function(){
@@ -2564,7 +2478,7 @@ function stoerungDialog(vorhanden, weiter, vorlage){
             if(st.id!==o.standortId) o.positionId=null;
             o.standortId=st.id; o._marktAuto=true;
             if(w) w.value=st.id; anlWahl();
-            melde("Markt erkannt: <strong>"+esc(stName(st))+"</strong>.");
+            P.melde("Markt erkannt: <strong>"+esc(stName(st))+"</strong>.");
           } else {
             /* die Nummer passt zu keinem Markt (mehr): der nur aus ihr erkannte
                Markt gilt nicht mehr – sonst hinge die Störung am falschen */
@@ -2573,25 +2487,35 @@ function stoerungDialog(vorhanden, weiter, vorlage){
               if(w) w.value=""; anlWahl();
             }
             /* auch ohne vorher erkannten Markt sagen, dass die Nummer nicht passt (leer: Meldung weg) */
-            melde(i.value.trim() ? "Zur Filial-Nr. „"+esc(i.value.trim())+"“ ist kein Markt bekannt – bitte den <a href=\"#\" class=\"sprunglink\" data-stsprung=\"markt\">Markt wählen</a>." : "");
+            P.melde(i.value.trim() ? "Zur Filial-Nr. „"+esc(i.value.trim())+"“ ist kein Markt bekannt – bitte den <a href=\"#\" class=\"sprunglink\" data-stsprung=\"markt\">Markt wählen</a>." : "");
           }
         }
       };
     });
-    inhalt.querySelector("#st_pdf").onchange=function(){ pdfLesen(this); };
-    inhalt.querySelector("#st_foto").onchange=function(){ fotoNehmen(this); };
+    inhalt.querySelector("#st_pdf").onchange=function(){ P.pdfLesen(this); };
+    inhalt.querySelector("#st_foto").onchange=function(){ P.fotoNehmen(this); };
     var kiKnopf=inhalt.querySelector("#st_ki");
-    if(kiKnopf) kiKnopf.onclick=function(){ kiAuslesen(null); };
+    if(kiKnopf) kiKnopf.onclick=function(){ P.kiAuslesen(null); };
     inhalt.querySelector("#st_qr").onclick=function(){
       scanneQr().then(function(wert){
         if(!wert) return;
         var nr=(/\d{5,}/.exec(wert)||[String(wert).trim()])[0];
         o.auftragsnummer=nr; o.quelle="qr"; o.qrInhalt=String(wert);
         var e=inhalt.querySelector('[data-s="auftragsnummer"]'); if(e) e.value=nr;
-        melde("Auftragsnummer <strong>"+esc(nr)+"</strong> gescannt.");
+        P.melde("Auftragsnummer <strong>"+esc(nr)+"</strong> gescannt.");
       });
     };
   }
+  /* Aufbau – läuft, wenn alle Teile angemeldet sind, in der ursprünglichen Reihenfolge */
+  return function(){
+
+  };
+}
+/* Störungsauftrag-Dialog, Teil Auftrag lesen: PDF auslesen, Foto, KI, Hinweise und Warnungen */
+function stoerungTeilAuftragLesen(P){
+  var o=P.o, meinEingang=P.meinEingang, inhalt=P.inhalt, FELDER=P.FELDER, vorhanden=P.vorhanden;
+  /* für die anderen Teile */
+  P.kiAuslesen=kiAuslesen; P.melde=melde; P.warnen=warnen; P.bilderZeigen=bilderZeigen; P.pdfLesen=pdfLesen; P.fotoNehmen=fotoNehmen;
   /* eingescannter oder abfotografierter Auftrag: die KI liest ihn, die Werte
      kommen zur Kontrolle, dann in die Felder. weiter: nach dem Neuladen gleich
      zurück in den Kopier-Weg (Wechsel in die Claude-App). */
@@ -2649,15 +2573,13 @@ function stoerungDialog(vorhanden, weiter, vorlage){
           }
           o.quelle="ki";
         }
-        zeichne(); fussNeu();
+        P.zeichne(); P.fussNeu();
       });
     }).catch(function(e){ toast(e&&e.message||"KI-Erkennung fehlgeschlagen"); knopfZurueck(); });
   }
-  /* Die Meldungen ueberleben das Neuzeichnen des Dialogs. */
-  var meldung="", warnung="";
-  function melde(html){ meldung=html; var e=inhalt.querySelector("#st_info"); if(e) e.innerHTML=html; }
-  function warnen(html){ warnung=html||""; var e=inhalt.querySelector("#st_warn"); if(!e) return;
-    e.innerHTML=warnung; e.hidden=!warnung; }
+  function melde(html){ P.meldung=html; var e=inhalt.querySelector("#st_info"); if(e) e.innerHTML=html; }
+  function warnen(html){ P.warnung=html||""; var e=inhalt.querySelector("#st_warn"); if(!e) return;
+    e.innerHTML=P.warnung; e.hidden=!P.warnung; }
   function bilderZeigen(){
     var box=inhalt.querySelector("#st_bild"); if(!box) return;
     box.innerHTML = (o.pdfDaten ? '<button class="btn ghost sm" type="button" data-a="pdf" style="margin-bottom:8px">'+
@@ -2703,7 +2625,7 @@ function stoerungDialog(vorhanden, weiter, vorlage){
         melde("Übernommen aus dem Auftrag"+(st?", Markt erkannt: <strong>"+esc(stName(st))+"</strong>":"")+
               ". Bitte kurz gegenprüfen."+(ohneMarkt?" Zur Filial-Nr. „"+esc(a.kostenstelle)+"“ ist kein Markt bekannt – bitte den <a href=\"#\" class=\"sprunglink\" data-stsprung=\"markt\">Markt wählen</a>.":""));
       }
-      zeichne(); fussNeu();
+      P.zeichne(); P.fussNeu();
     }, function(e){ melde(""); warnen("Die PDF konnte nicht gelesen werden: "+esc(e&&e.message||String(e))); });
   }
   function fotoNehmen(ein){
@@ -2713,10 +2635,21 @@ function stoerungDialog(vorhanden, weiter, vorlage){
     verkleinere(datei).then(function(k){
       o.seiten=o.seiten.concat([k.datenUrl||k]); o.quelle=o.quelle||"foto";
       melde("Bild übernommen. Bitte die Felder danach ausfüllen.");
-      zeichne(); fussNeu();
+      P.zeichne(); P.fussNeu();
     }, function(){ melde(""); warnen("Das Bild ließ sich nicht verarbeiten."); });
   }
 
+  /* Aufbau – läuft, wenn alle Teile angemeldet sind, in der ursprünglichen Reihenfolge */
+  return function(){
+    /* Die Meldungen ueberleben das Neuzeichnen des Dialogs. */
+    P.meldung="", P.warnung="";
+  };
+}
+/* Störungsauftrag-Dialog, Teil Speichern: anlegen bzw. ändern, Protokoll erstellen, abhaken, löschen */
+function stoerungTeilSpeichern(P){
+  var o=P.o, meinEingang=P.meinEingang, inhalt=P.inhalt, fuss=P.fuss, zu=P.zu, anfang=P.anfang, aufAktuell=P.aufAktuell, vorhanden=P.vorhanden;
+  /* für die anderen Teile */
+  P.fussNeu=fussNeu;
   function fussNeu(){
     fuss.innerHTML="";
     var b=el('<button class="btn" type="button">'+(vorhanden?"Änderung speichern":"Störungsauftrag anlegen")+"</button>");
@@ -2834,8 +2767,110 @@ function stoerungDialog(vorhanden, weiter, vorlage){
       }
     }
   }
-  zeichne(); fussNeu();
-  if(weiter) kiAuslesen(weiter);
+  /* Aufbau – läuft, wenn alle Teile angemeldet sind, in der ursprünglichen Reihenfolge */
+  return function(){
+
+  };
+}
+function stoerungDialog(vorhanden, weiter, vorlage){
+  if(nurLesen()){ posteingangOffen=null; toast("Mit diesem Konto lässt sich nur ansehen."); return; }
+  /* gemeinsame Datenbank, aber abgemeldet: nichts erfassen oder ändern – es
+     ginge sonst später unter fremdem Namen in die Datenbank */
+  if(!angemeldetOderLokal()){ posteingangOffen=null; toast("Dafür bitte zuerst anmelden."); return; }
+  var o = weiter ? Object.assign({}, weiter.ort.o)
+        : vorhanden ? Object.assign({}, vorhanden)
+                    : Object.assign({_id:"st_"+Date.now().toString(36)+Math.random().toString(36).slice(2,6), seiten:[]}, vorlage||{});
+  if(!o.seiten) o.seiten=[];
+  /* der Auftrag kam aus dem Posteingang: nach dem Speichern dort erledigen */
+  if(weiter && weiter.ort.posteingang && !posteingangOffen) posteingangOffen=weiter.ort.posteingang;
+  /* genau dieser Eingang gehört zu diesem Dialog (nicht zu einem zweiten, später geöffneten) */
+  var meinEingang=(!vorhanden && posteingangOffen && posteingangOffen.art==="auftrag") ? posteingangOffen : null;
+  var ov=el('<div class="assistent" role="dialog" aria-modal="true"><div class="as-karte">'+
+    '<div class="as-kopf"><div style="min-width:0"><div class="as-titel">'+
+      (vorhanden?"Offene Störung":"Störungsauftrag erfassen")+'</div>'+
+      '<div class="as-schritt">Auftrag von Lidl</div></div>'+
+      '<button class="btn ghost sm" type="button" data-a="zu">Schließen</button></div>'+
+    '<div class="as-inhalt"></div><div class="as-fuss"></div></div></div>');
+  if(vorhanden) ov.dataset.stoerung=o._id;   /* chatBezugOeffnen findet den offenen Dialog daran */
+  document.body.appendChild(ov);
+  /* Scroll-Sperre der Ansicht darunter (etwa der Markt-Ansicht) beim Schließen zurückgeben */
+  var vorherOv=document.body.style.overflow;
+  document.body.style.overflow="hidden";
+  var inhalt=ov.querySelector(".as-inhalt"), fuss=ov.querySelector(".as-fuss");
+  /* Team-Chat: Nachrichten zu dieser Störung unter dem Formular (erst nach
+     dem Aufbau anhängen – der Dialog füllt inhalt gleich darunter) */
+  if(vorhanden) setTimeout(function(){ if(ov.isConnected && chatAn()) inhalt.appendChild(chatBezugKarte("stoerung", o._id, chatBezugText("stoerung", o))); }, 0);
+  var zu=function(){
+    ov.remove(); document.body.style.overflow=vorherOv;
+    /* ein aus dem Posteingang geöffneter Auftrag gilt nur für diesen Dialog –
+       abgebrochen bleibt er im Posteingang stehen */
+    if(meinEingang && posteingangOffen===meinEingang) posteingangOffen=null;
+  };
+  var anfang=weiter ? "" : JSON.stringify(o);   /* wiederhergestellt: gilt als eingegeben */
+  /* Stand beim Öffnen – gespeichert wird nur, was im Dialog geändert wurde,
+     und zwar auf den JETZT geltenden Stand (aufAktuell): ein länger offenes
+     Fenster (etwa die Markt-Ansicht) holt sonst Überschriebenes, Erledigtes
+     oder Gelöschtes zurück */
+  var basisStand=vorhanden ? JSON.parse(JSON.stringify(vorhanden)) : null;
+  var aufAktuell=function(extra){
+    var jetzt=OFFENE.filter(function(x){ return x._id===o._id; })[0];
+    if(!jetzt || jetzt.erledigt || jetzt.geloescht) return null;
+    var z=Object.assign({}, jetzt);
+    STOER_OFFEN_FELDER.forEach(function(k){ if(!gleich(basisStand[k], o[k])) z[k]=o[k]; });
+    if(o.standortId!==basisStand.standortId) z.standortId=o.standortId;
+    return Object.assign(z, extra||{});
+  };
+  /* für das Neuladen bzw. Schließen der Seite (beforeunload): noch nicht gespeichert? */
+  ov._ungespeichert=function(){ return document.body.contains(ov) && JSON.stringify(o)!==anfang; };
+  ov._zu=zu;   /* ansichtenSchliessen: ohne ungespeicherte Eingaben darf er zu */
+  ov.querySelector('[data-a="zu"]').onclick=function(){
+    /* abgetippte oder eingelesene Angaben nicht still wegwerfen */
+    if(JSON.stringify(o)!==anfang &&
+       !window.confirm("Die Eingaben zu dieser Störung sind noch nicht gespeichert.\n\nDialog trotzdem schließen?")) return;
+    zu();
+  };
+
+  /* Verweise in Meldungen und im Hinweis „Es fehlt noch“ (data-stsprung):
+     zum Feld springen bzw. den laut Filial-Nr. passenden Markt übernehmen.
+     Einmal am Dialog – die Meldungen überleben das Neuzeichnen (melde). */
+  ov.addEventListener("click", function(e){
+    var a=e.target.closest ? e.target.closest("[data-stsprung]") : null; if(!a) return;
+    e.preventDefault();
+    var was=a.dataset.stsprung;
+    if(was.indexOf("nimm:")===0){
+      var st=byId[was.slice(5)]; if(!st) return;
+      o.standortId=st.id; o.positionId=null; o._marktAuto=false;
+      P.melde("Markt übernommen: <strong>"+esc(stName(st))+"</strong>.");
+      P.zeichne(); P.fussNeu(); sprungHervorheben(inhalt.querySelector("#st_markt")); return;
+    }
+    sprungHervorheben(inhalt.querySelector(was==="markt" ? "#st_markt" : was==="ohne" ? "#st_ohne" : '[data-s="auftragsnummer"]'));
+  });
+  var FELDER=[
+    ["auftragsnummer","Auftragsnummer","text",true],
+    ["filialCode","Filial-Nr. laut Auftrag","text",false],
+    ["stoerungsnr","Störungsnummer","text",false],
+    ["problemtyp","Problemtyp","text",false],
+    ["zieltermin","Zieltermin","date",false],
+    /* wann jemand hinfährt – steht im Störungskalender */
+    ["termin","Einsatz geplant am","date",false],
+    ["terminZeit","Uhrzeit","time",false],
+    ["terminTechniker","Wer fährt hin","text",false],
+    ["auftragsdatum","Auftragsdatum","date",false],
+    ["lidlTyp","Typ","text",false],
+    ["hersteller","Hersteller","text",false],
+    ["lidlModell","Modell","text",false],
+    ["lin","LIN","text",false],
+    ["lidlKontakt","Kontakt bei Lidl","text",false],
+    ["lidlTelefon","Telefon Lidl","text",false]
+  ];
+  /* Die Teile (je eine Funktion stoerungTeil…): erst melden alle ihre Funktionen an, dann bauen sie
+     in der ursprünglichen Reihenfolge auf – Gemeinsames liegt im Kontext P */
+  var P={vorhanden:vorhanden, weiter:weiter, vorlage:vorlage, o:o, meinEingang:meinEingang, ov:ov, vorherOv:vorherOv, inhalt:inhalt, fuss:fuss, zu:zu, anfang:anfang, basisStand:basisStand, aufAktuell:aufAktuell, FELDER:FELDER};
+  [stoerungTeilFormular(P),
+   stoerungTeilAuftragLesen(P),
+   stoerungTeilSpeichern(P)].forEach(function(aufbau){ aufbau(); });
+  P.zeichne(); P.fussNeu();
+  if(weiter) P.kiAuslesen(weiter);
   return ov;
 }
 function stoerungsKarte(){
@@ -6238,7 +6273,7 @@ function anlageAssistent(start, titel, neu, alles, vorgang){
 /* der Dialog selbst – fertig(werte|null) beendet ihn (aus anlageAssistent herausgelöst, 03.10.2026) */
 /* Anlagendaten-Dialog, Teil KI: Typenschild oder Prüfbuch fotografieren, lesen lassen, Angehaktes übernehmen */
 function anlageDialogTeilKi(P){
-  var a=P.a, geschlossen=P.geschlossen, gruppenMitLuecke=P.gruppenMitLuecke, alleGruppen=P.alleGruppen, termineZeigenNoetig=P.termineZeigenNoetig, neu=P.neu, alles=P.alles, vorgang=P.vorgang;
+  var a=P.a, gruppenMitLuecke=P.gruppenMitLuecke, alleGruppen=P.alleGruppen, termineZeigenNoetig=P.termineZeigenNoetig, neu=P.neu, alles=P.alles, vorgang=P.vorgang;
   var ortStand;
   /* für die anderen Teile */
   P.kiEinlesen=kiEinlesen; P.kiArt=kiArt;
@@ -6298,7 +6333,7 @@ function anlageDialogTeilKi(P){
       });
     }); }
     function verarbeiten(erg){
-        if(geschlossen){ toast("Der Dialog war schon geschlossen – das Ergebnis der KI wurde verworfen."); return; }
+        if(P.geschlossen){ toast("Der Dialog war schon geschlossen – das Ergebnis der KI wurde verworfen."); return; }
         var d=erg.daten||{};
         /* Prüfbuch: eine Fotoserie kann mehrere Bücher (Anlagen) enthalten –
            eins gehört zu dieser Anlage, die anderen werden danach angeboten */
@@ -6816,7 +6851,7 @@ function anlageAssistentDialog(fertig, start, titel, neu, alles, vorgang){
     a._termine.some(function(t){ return !t.intervallCode || !+t.monat; })); };
   /* Die Teile (je eine Funktion anlageDialogTeil…): erst melden alle ihre Funktionen an, dann bauen sie
      in der ursprünglichen Reihenfolge auf – Gemeinsames liegt im Kontext P */
-  var P={fertig:fertig, start:start, titel:titel, neu:neu, alles:alles, vorgang:vorgang, a:a, ov:ov, vorherOv:vorherOv, inhalt:inhalt, fuss:fuss, geschlossen:geschlossen, schliessen:schliessen, anfangA:anfangA, fortsetzen:fortsetzen, gruppenMitLuecke:gruppenMitLuecke, alleGruppen:alleGruppen, termineZeigenNoetig:termineZeigenNoetig};
+  var P={fertig:fertig, start:start, titel:titel, neu:neu, alles:alles, vorgang:vorgang, a:a, ov:ov, vorherOv:vorherOv, inhalt:inhalt, fuss:fuss, get geschlossen(){ return geschlossen; }, schliessen:schliessen, anfangA:anfangA, fortsetzen:fortsetzen, gruppenMitLuecke:gruppenMitLuecke, alleGruppen:alleGruppen, termineZeigenNoetig:termineZeigenNoetig};
   [anlageDialogTeilKi(P),
    anlageDialogTeilFelder(P),
    anlageDialogTeilSchritte(P)].forEach(function(aufbau){ aufbau(); });
