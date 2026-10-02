@@ -238,6 +238,26 @@ const ABLAEUFE = [
     const d = [...document.querySelectorAll(".assistent")].pop();
     return { anl, dialog: d ? A.html(d) : null, toasts: A.toasts };
   } },
+  { name: "protokoll-schritt-fuer-schritt", konto: "techniker", code: async () => {
+    const x = window.__t.x, A = window.__ab;
+    x("formDirty=false; S.protoArt='wartung'; S.bearbeiten=null; S.protoStandort='TS1'; S.protoPos='TP1'; S.view='protokoll'; render(); 1");
+    await A.warte(500);
+    document.getElementById("p_gefuehrt").click(); await A.warte(500);
+    const schritte = [];
+    for (let i = 0; i < 25; i++) {
+      const d = [...document.querySelectorAll(".assistent")].pop(); if (!d) break;
+      schritte.push(A.html(d.querySelector(".as-karte") || d));
+      /* in jedem Schritt etwas eintragen, was dort geht */
+      const ta = d.querySelector("textarea"); if (ta && !ta.value) { ta.value = "Schritt " + i; ta.dispatchEvent(new Event("input", { bubbles: true })); }
+      const cb = d.querySelector('input[type=checkbox]:not(:checked)'); if (cb) cb.click();
+      const weiter = [...d.querySelectorAll("button")].filter((b) => !b.disabled && b.offsetParent && /Stimmt – weiter/.test(b.textContent))[0] ||
+        [...d.querySelectorAll(".as-fuss button")].filter((b) => !b.disabled && /Weiter|Fertig|Übernehmen|Speichern/.test(b.textContent)).pop();
+      if (!weiter) break;
+      weiter.click(); await A.warte(400);
+    }
+    const form = document.getElementById("proto");
+    return { schritte, werte: form ? A.werte(form) : null, toasts: A.toasts, protokolle: A.db("protokolle") };
+  } },
   { name: "protokoll-ausgefuellt-fuer", konto: "admin", code: async () => {
     const x = window.__t.x, A = window.__ab;
     x("formDirty=false; S.protoArt='wartung'; S.bearbeiten=null; S.protoStandort='TS3'; S.protoPos=null; S.view='protokoll'; render(); 1");
@@ -293,7 +313,9 @@ async function laufen(html, browser, port) {
     await seite.addScriptTag({ content: SEITENHILFEN });
     let r;
     try { r = await seite.evaluate(`(${ab.code.toString()})()`); } catch (e) { r = { abbruch: e.message.split("\n")[0] }; }
-    erg[ab.name] = glatt({ ...r, laufzeitfehler: fehler });
+    /* versehentlich entstandene globale Variablen (etwa durch ein fehlendes var) */
+    const globale = await seite.evaluate(() => Object.keys(window).filter((k) => !/^__/.test(k)).sort());
+    erg[ab.name] = glatt({ ...r, laufzeitfehler: fehler, globale });
     await kontext.close();
   }
   return erg;

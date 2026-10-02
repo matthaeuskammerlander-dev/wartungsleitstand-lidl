@@ -45,8 +45,8 @@ Durchsicht der Abläufe. Nach Nutzen sortiert – oben das, was im Alltag am mei
 | `anlageAssistent` | 585 | Anlagendaten-Dialog |
 | `stoerungDialog` | 444 | Störungsauftrag |
 | weitere 20 Funktionen | 170–300 | Detailansichten, Editoren |
-**Zerlegungsplan** (noch nicht umgesetzt – siehe ENTSCHEIDUNGEN E9), je Schritt erst ein eigener Test:
-1. `viewProtokoll`: (a) Formular-HTML bauen, (b) Rapport-Teil (`rapZeigen`, `rapTextRein` …), (c) Störung/Material/QR,
+**Zerlegungsplan** (siehe ENTSCHEIDUNGEN E9/E13), je Schritt erst ein eigener Test:
+1. ✓ **umgesetzt 03.10.2026** – `viewProtokoll`: `protokollFormHtml` + 12 Teile `protoTeil…`; geprüft mit `tools/ab-vergleich.mjs`. Plan war: (a) Formular-HTML bauen, (b) Rapport-Teil (`rapZeigen`, `rapTextRein` …), (c) Störung/Material/QR,
    (d) Entwurf merken/wiederherstellen, (e) Speichern (`pflichtPruefung`, Sammeln, `speichereProtokoll`). Teile bekommen das
    Formular als Parameter statt über die gemeinsame Funktion.
 2. `verwaltungEditor`: Markt-Teil, Anlagen-Teil, Speichern (Abgleich mit dem Ausgangsstand) trennen.

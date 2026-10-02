@@ -22,7 +22,7 @@ Die Fachregeln (Termine, Rechte, Datenschutz) stehen ausführlich in **CLAUDE.md
 | Reiter Fällig | `viewFaellig` | offene Störungen, Wochenübersicht, Folgeaufträge-Hinweis |
 | Kalender / Aufgaben | `viewKalender` | `kalenderEintraege`, `planEditor`, `zeitRaster`, `planungPruefen` |
 | Karte / Tour | `viewKarte` | `planeTour`, `arbeitStunden` (gelernte Zeit), `tourPanel` |
-| Protokoll | `viewProtokoll` (sehr groß), `protokollAssistent` (geführt) | `speichereProtokoll`, `rapTextRein`, `kaeltemittelAusForm` |
+| Protokoll | `viewProtokoll` (setzt 12 Teile `protoTeilMarkt` … `protoTeilSpeichern` zusammen), `protokollFormHtml`, `protokollAssistent` (geführt) | `speichereProtokoll`, `rapTextRein`, `kaeltemittelAusForm` |
 | Anlagen / Markt | `viewAnlagen`, `marktAnsicht` | `anlagenDesMarkts`, `verbundenKarte`, `anlageAssistent` |
 | Stunden / Stempeluhr | `viewStunden` | `zeitEditor`, `stempeln` (Datenbank), `lohnAuswertung` |
 | Fahrzeuge | `viewFahrzeuge` | `fzEditor`, `fzEintragEditor`, `fzGpsImport` |
@@ -49,6 +49,20 @@ node tests/app-tests.mjs --gruendlich     # zusätzlich jeden Knopf in jedem Rei
 - Testkonten: `inhaber@`, `admin@`, `tech@`, `kunde@`, `praes@test.at`, Passwort `test123`.
 - `window.__netzWeg=true` in der Attrappe lässt Schreiben scheitern wie ohne Netz.
 - Die GitHub-Prüfung („App prüfen“) führt `pruefen.mjs` und `tests/app-tests.mjs` bei jedem Stand aus.
+
+## Große Formulare: Teile mit gemeinsamem Kontext
+
+Sehr große Funktionen sind in Teile zerlegt (z. B. `viewProtokoll` → `protoTeilMarkt`, `protoTeilAnlagen`, … `protoTeilSpeichern`).
+Jeder Teil bekommt den Kontext `P` (Formular, Markt, Korrektur …). Ablauf: erst melden **alle** Teile ihre
+Funktionen in `P` an (`P.fillPos=fillPos`), dann baut jeder Teil in der ursprünglichen Reihenfolge auf
+(die zurückgegebene Funktion). So existiert jede Funktion vor jedem Aufbau, und gemeinsamer Zustand
+(`P.fotos`, `P.auftragPdf` …) ist bis zu seiner Zuweisung `undefined` – genau wie vorher in der einen großen Funktion.
+Nur was ein anderer Teil braucht, steht in `P`; alles andere bleibt im Teil.
+
+**Umbauten ohne Verhaltensänderung prüfen:** `node tools/ab-vergleich.mjs` spielt die Protokoll-Abläufe
+(Wartung, Störung, Pflichtfelder, Entwurf, Korrektur, aus offener Störung, Fotos, Leeren, Anlage fehlt,
+Schritt für Schritt, Ausgefüllt für) mit fester Uhrzeit auf dem letzten Commit und dem Arbeitsstand durch und
+vergleicht Formular, Feldwerte, gespeicherte Datensätze, Meldungen und globale Variablen. Keine Abweichung = gleiches Verhalten.
 
 ## Neue Funktion – Checkliste
 
