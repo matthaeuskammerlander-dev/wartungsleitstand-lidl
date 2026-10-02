@@ -3038,9 +3038,11 @@ function posteingangMailBox(g){
   z.querySelector('[data-a="projekt"]').onclick=function(){ posteingangZuProjekt(g, function(){ z.remove(); }); };
   z.querySelector('[data-a="weg"]').onclick=function(){
     if(demo()){ z.remove(); toast("Präsentation: verworfen – gespeichert wurde nichts."); return; }
-    var gr=window.prompt("Warum wird die Mail „"+(mail.betreff||"")+"“ verworfen?",""); if(gr===null) return;
+    textAbfrage("Warum wird die Mail „"+(mail.betreff||"")+"“ verworfen?", {titel:"Mail verwerfen", feld:"Grund", ok:"Verwerfen",
+      pflicht:"Bitte einen Grund angeben – der Eingang bleibt sonst nicht nachvollziehbar."}).then(function(gr){ if(gr===null) return;
     if(!gr.trim()){ toast("Bitte einen Grund angeben – der Eingang bleibt sonst nicht nachvollziehbar."); return; }
     posteingangGruppeSetzen(g, {status:"verworfen", notiz:gr}).then(function(ok){ if(ok){ z.remove(); toast("Verworfen."); } });
+    });
   };
   return z;
 }
@@ -3115,13 +3117,15 @@ function posteingangZuProjekt(g, fertig){
    zuordnen“ heraus, etwa bei einer doppelt gemailten Rapportnummer) */
 function posteingangVerwerfen(e, fertig){
   if(demo()){ if(fertig) fertig(); toast("Präsentation: verworfen – gespeichert wurde nichts."); return; }
-  var g=window.prompt("Warum wird „"+e.dateiname+"“ verworfen?",""); if(g===null) return;
+  textAbfrage("Warum wird „"+e.dateiname+"“ verworfen?", {titel:"Eingang verwerfen", feld:"Grund", ok:"Verwerfen",
+    pflicht:"Bitte einen Grund angeben – der Eingang bleibt sonst nicht nachvollziehbar."}).then(function(g){ if(g===null) return;
   if(!g.trim()){ toast("Bitte einen Grund angeben – der Eingang bleibt sonst nicht nachvollziehbar."); return; }
   Store.sb.from("posteingang").update({status:"verworfen", notiz:g, erledigt_von:wer(), erledigt_am:new Date().toISOString()})
     .eq("id",e.id).select("id").then(function(r){
       /* keine Zeile geändert = abgelehnt (Rechte) – dann bleibt der Eintrag stehen */
       if(r.error || !(r.data||[]).length){ toast("Nicht verworfen"+(r.error?" ("+r.error.message+")":" – keine Berechtigung")+"."); return; }
       if(fertig) fertig(); toast("Verworfen."); }, function(){ toast("Keine Verbindung – nicht verworfen."); });
+  });
 }
 /* ein Protokoll nur zum Ansehen – ohne „Korrigieren“ (das verlöre den
    gerade zuzuordnenden Eingang aus dem Posteingang) */
@@ -10537,10 +10541,11 @@ function kundenAnsicht(start){
     });
     /* abhaken kann das Büro – mit dem Ergebnis, damit später nachvollziehbar ist, was entschieden wurde */
     if(Admin.frei && k.klaeren) knopf("Geklärt – abhaken", function(){
-      var t=window.prompt("Was ist das Ergebnis? (kurz – steht danach bei dieser Zeile)", "");
+      textAbfrage("Was ist das Ergebnis? Es steht danach bei dieser Zeile.", {titel:"Geklärt", feld:"Ergebnis", ok:"Abhaken", max:300}).then(function(t){
       if(t===null) return;
       t=String(t).trim().slice(0,300);
       speichern(z, {klaeren:null, geklaert:(t||"ohne Vermerk")+" ("+(meineAngaben().name||wer())+", "+dfmt(heute)+")"}).then(function(ok){ if(ok) toast("Als geklärt vermerkt."); });
+      });
     });
     if(Admin.frei) knopf("Termin / Stand eintragen", function(){ var e=d.querySelector("[data-eintragen]"); e.hidden=!e.hidden; });
     /* abschließen: die Zeile ist für uns fertig und verschwindet aus der Liste (unter „abgeschlossen“ nachzulesen) */
@@ -11350,6 +11355,33 @@ function dialogeSchliessen(){
   };
   if(document.body) start(); else document.addEventListener("DOMContentLoaded", start);
 }());
+/* Text erfragen statt window.prompt (Überarbeitung 02.10.2026: am Handy klein, fremd, ohne Diktat).
+   Liefert ein Promise mit dem eingegebenen Text – null bei Abbrechen/Schließen.
+   opt: titel, feld (Beschriftung), ok (Knopftext), vorgabe, max, pflicht (true oder eigene Meldung). */
+function textAbfrage(frage, opt){
+  opt=opt||{};
+  return new Promise(function(fertig){
+    var erledigt=false, v;
+    var ende=function(w){ if(erledigt) return; erledigt=true; v.zu(); fertig(w); };
+    v=ansichtOeffnen(opt.titel||"Bitte angeben", function(){ if(!erledigt){ erledigt=true; fertig(null); } });
+    var box=el('<div class="stack" style="max-width:560px">'+(frage?'<div style="white-space:pre-line">'+esc(frage)+"</div>":"")+
+      '<label class="fl"><span>'+esc(opt.feld||"Text")+'</span><textarea rows="3" maxlength="'+(opt.max||1000)+'"></textarea></label>'+
+      '<div class="note warnbox" hidden></div></div>');
+    var ta=box.querySelector("textarea"), err=box.querySelector(".warnbox");
+    ta.value=opt.vorgabe||"";
+    box.querySelector("label span").appendChild(diktatKnopf(ta));
+    v.inhalt.appendChild(box);
+    var ab=el('<button class="btn ghost" type="button">Abbrechen</button>'), ok=el('<button class="btn" type="button">'+esc(opt.ok||"OK")+"</button>");
+    ab.onclick=function(){ ende(null); };
+    ok.onclick=function(){
+      var t=ta.value.trim();
+      if(opt.pflicht && !t){ err.textContent=opt.pflicht===true ? "Bitte etwas eintragen." : opt.pflicht; err.hidden=false; ta.focus(); return; }
+      ende(t);
+    };
+    v.fuss.appendChild(ab); v.fuss.appendChild(ok);
+    setTimeout(function(){ try{ ta.focus(); }catch(e){} }, 60);
+  });
+}
 /* beimSchliessen: läuft zusätzlich, wenn oben „Schließen“ getippt wird – etwa
    um ein wartendes Ergebnis als abgebrochen (null) zu beenden; sonst hinge der
    Aufrufer (KI-Knopf „KI liest …“) für immer */
@@ -15705,12 +15737,14 @@ function vermerkKarte(p){
   if(istInhaber() && betriebAn() && p._quelle!=="geraet"){
     var b=el('<div><button class="btn ghost sm" type="button">Vermerk eintragen</button></div>');
     b.querySelector("button").onclick=function(){
-      var t=window.prompt("Vermerk zu diesem Protokoll (für alle Mitarbeiter sichtbar):", ""); if(!t || !t.trim()) return;
+      textAbfrage("Für alle Mitarbeiter sichtbar. Das Protokoll selbst bleibt unverändert.", {titel:"Vermerk zum Protokoll", feld:"Vermerk", ok:"Vermerk speichern", pflicht:true}).then(function(t){
+      if(!t || !t.trim()) return;
       Store.sb.from("protokoll_vermerke").insert({client_id:p._id, text:t.trim().slice(0,1000), von:meinName()}).select("*").then(function(r){
         if(r.error || !r.data || !r.data.length){ toast("Nicht gespeichert"+(r.error?": "+(/relation|does not exist/i.test(r.error.message)?"tools/protokoll-vermerke.sql fehlt":r.error.message):"")+"."); return; }
         (VERMERKE[p._id]=VERMERKE[p._id]||[]).push(r.data[0]);
         b.insertAdjacentElement("beforebegin", el('<div class="note warnbox" style="font-size:13px"><strong>Vermerk</strong> vom '+esc(tagFmt(r.data[0].erstellt))+" ("+esc(meinName())+"): "+esc(r.data[0].text)+"</div>"));
         toast("Vermerk gespeichert.");
+      });
       });
     };
     c.appendChild(b);
@@ -16116,9 +16150,10 @@ function protokollDetail(p){
     /* eine damit erledigte Störung geht wieder auf – das vorher sagen */
     var erl=OFFENE.filter(function(x){ return x.protokollId===p._id && x.erledigt && !x.geloescht; });
     if(protokolle.some(function(x){ return x._id===p._id && !x.geloescht; })) erl=[];   /* zentral liegt es noch */
-    var grund=window.prompt("Dieses Protokoll liegt nur auf diesem Gerät und wird endgültig gelöscht."+
-                            (erl.length?" Die damit erledigte Störung ist danach wieder offen.":"")+"\n\n"+
-                            "Bitte kurz den Grund angeben – er wird im Änderungsverlauf festgehalten:");
+    textAbfrage("Dieses Protokoll liegt nur auf diesem Gerät und wird endgültig gelöscht."+
+                (erl.length?" Die damit erledigte Störung ist danach wieder offen.":"")+"\n\n"+
+                "Der Grund wird im Änderungsverlauf festgehalten.", {titel:"Protokoll vom Gerät löschen", feld:"Grund", ok:"Endgültig löschen",
+                pflicht:"Ohne Grund wird nicht gelöscht."}).then(function(grund){
     if(grund===null) return;
     if(!grund.trim()){ toast("Ohne Grund wird nicht gelöscht."); return; }
     idbLoeschen(p._id).then(function(){
@@ -16130,6 +16165,7 @@ function protokollDetail(p){
       stoerungenAbgleichen(p._id, alleProtokolle().filter(function(x){ return x._id===p._id; })[0]||null, "Störungsprotokoll vom Gerät gelöscht");
       toast("Protokoll vom Gerät gelöscht."); berechneFaelligkeiten(); render();
     },function(){ toast("Löschen fehlgeschlagen."); });
+    });
   };
 
   /* Das Auftrags-PDF von Lidl – im Original, nicht als Bild. Der Link gilt
@@ -17385,7 +17421,8 @@ function stammRueckgaengig(e){
       x.n+" Protokoll(e) hängen daran."; }).join("\n"):"")+
     (weg.length?"\n\n"+weg.length+" betroffene Störung(en) wurde(n) inzwischen gelöscht und bleiben gelöscht.":"");
   if(!window.confirm(frage)) return;
-  var grund=window.prompt("Warum wird die Änderung zurückgenommen?","");
+  textAbfrage("Der Grund steht danach im Änderungsverlauf.", {titel:"Änderung zurücknehmen", feld:"Grund", ok:"Zurücknehmen",
+    pflicht:"Ohne Grund wird nichts zurückgenommen."}).then(function(grund){
   if(grund===null) return;
   if(!grund.trim()){ toast("Ohne Grund wird nichts zurückgenommen."); return; }
   var zeit=new Date().toISOString(), rueck={};
@@ -17431,6 +17468,7 @@ function stammRueckgaengig(e){
                  : "Änderung zurückgenommen"+(erg.indexOf("geraet")>=0?" (vorerst nur auf diesem Gerät)":"")+".")+
       (ohneZugang?" Zugangsdaten der Regelung bitte neu eintragen.":""));
   });
+  });
 }
 /* Eine Korrektur zurücknehmen: die Datenbank hat vor jeder Korrektur die
    ganze Fassung gesichert (protokoll_fassungen). Die wird als neue Fassung
@@ -17445,7 +17483,8 @@ function korrekturRueckgaengig(e, p){
     return;
   }
   if(!window.confirm("Die Korrektur vom "+zeitFmt(e.zeit)+" zurücknehmen? Das Protokoll bekommt wieder den Stand davor, als neue Fassung.")) return;
-  var grund=window.prompt("Warum wird die Korrektur zurückgenommen?","");
+  textAbfrage("Der Grund steht danach im Änderungsverlauf.", {titel:"Korrektur zurücknehmen", feld:"Grund", ok:"Zurücknehmen",
+    pflicht:"Ohne Grund wird nichts zurückgenommen."}).then(function(grund){
   if(grund===null) return;
   if(!grund.trim()){ toast("Ohne Grund wird nichts zurückgenommen."); return; }
   /* genau die Fassung vor DIESER Korrektur (sie hat Fassung e.rueck.version
@@ -17496,6 +17535,7 @@ function korrekturRueckgaengig(e, p){
         toast("Zurücknehmen nicht möglich – "+((e2 && e2.message) || "die Unterschrift ließ sich nicht laden")+". Bitte später nochmals versuchen.");
       });
     }, function(){ toast("Die vorherige Fassung ließ sich nicht laden (keine Verbindung)."); });
+  });
 }
 /* Knopf „Rückgängig machen“ und die Sperre prüfen dasselbe: das Protokoll steht
    noch auf genau der Fassung, die e erzeugt hat. Jede spätere Änderung (auch
@@ -22414,7 +22454,7 @@ function spielwieseOeffnen(){
     .then(function(r){ if(!r.ok) throw new Error("Seite nicht erreichbar ("+r.status+")."); return r.text(); })
     .then(function(html){
       vorschauEinbetten(html, "Spielwiese", "<strong>Spielwiese</strong> – alles ausprobieren und speichern, nur in dieser Kopie", "Spielwiese schließen – alles verwerfen");
-    }).catch(function(e){ window.alert("Spielwiese ließ sich nicht öffnen: "+(e&&e.message||e)); })
+    }).catch(function(e){ toast("Spielwiese ließ sich nicht öffnen: "+(e&&e.message||e)); })
     .then(function(){ spielwieseOeffnen.laeuft=false; });
 }
 function wunschVorschau(w){
@@ -22436,7 +22476,7 @@ function wunschVorschau(w){
       if(html.indexOf("UKT_VORSCHAU")<0 && !window.confirm("Diese Vorschau stammt aus einer älteren Fassung der App. Gespeichert wird nichts, "+
         "Knöpfe zum Speichern melden dort aber vielleicht einen Fehler.\n\nTrotzdem öffnen?")) return;
       vorschauEinbetten(html, "W-"+w.id, "<strong>Vorschau W-"+esc(w.id)+"</strong> – gespeichert wird nichts", "Vorschau schließen");
-    }).catch(function(e){ window.alert("Vorschau ließ sich nicht laden: "+(e&&e.message||e)); })
+    }).catch(function(e){ toast("Vorschau ließ sich nicht laden: "+(e&&e.message||e)); })
     .then(function(){ wunschVorschau.laeuft=false; });   /* nach Erfolg, Abbruch und Fehler wieder frei */
 }
 function wunschKarte(w, neuLaden){
@@ -22516,7 +22556,7 @@ function wunschKarte(w, neuLaden){
     return wunschFunktion(body).then(function(){ delete WUNSCH_LAEUFT[w.id]; toast(erfolg); if(vorher) vorher(); neuLaden(false); return null; },
       function(e){ sperren(false); b.textContent=t; neuLaden(false); return e.message||String(e); });
   };
-  var meldeFehler=function(f){ if(f) window.alert(f); };
+  var meldeFehler=function(f){ if(f) toast(f); };
   /* Text abfragen und damit den Schritt ausführen: aktion(text) liefert einen
      Hinweis (Text zu kurz …) oder ein Promise mit null bzw. der Fehlermeldung.
      Der Dialog bleibt offen, bis der Schritt geklappt hat; der Text bleibt
@@ -22544,7 +22584,7 @@ function wunschKarte(w, neuLaden){
       p.then(function(f){
         if(!f){ delete WUNSCH_TEXTE[schluessel]; v.zu(); return; }
         /* Dialog inzwischen geschlossen: den Fehler trotzdem melden */
-        if(!box.isConnected){ window.alert(titel+" hat nicht geklappt: "+f+"\n\nDer Text bleibt gemerkt."); return; }
+        if(!box.isConnected){ toast(titel+" hat nicht geklappt: "+f+" – der Text bleibt gemerkt."); return; }
         ok.disabled=ab.disabled=false; ok.textContent=knopfText;
         fe.textContent=f+" – der Text bleibt hier stehen."; fe.hidden=false;
       });
@@ -23386,7 +23426,7 @@ function folgeKarte(){
     };
     z.querySelector('[data-f="ansehen"]').onclick=function(){ protokollFenster(p); };
     z.querySelector('[data-f="kein"]').onclick=function(){
-      var g=window.prompt("Warum kein Angebot? (z. B. „schon erledigt“, „Lidl macht selbst“)");
+      textAbfrage("Warum kein Angebot? Zum Beispiel „schon erledigt“ oder „Lidl macht selbst“.", {titel:"Kein Angebot", feld:"Grund", ok:"Ablegen", pflicht:"Ohne Grund wird nicht abgelegt."}).then(function(g){
       if(g===null) return;
       g=g.trim(); if(!g){ toast("Ohne Grund nicht abgelegt."); return; }
       var m={id:folgeMerkerId(p._id), typ:"merker", ziel:"folge:"+p._id, felder:{ergebnis:"kein Angebot", grund:g},
@@ -23394,6 +23434,7 @@ function folgeKarte(){
       stammUeber[m.id]=m;
       stammSpeichern(m).then(function(){ toast("Abgelegt – kein Angebot ("+g+")."); render(); },
         function(){ delete stammUeber[m.id]; toast("Nicht gespeichert – keine Verbindung."); render(); });
+      });
     };
     host.appendChild(z);
   });
