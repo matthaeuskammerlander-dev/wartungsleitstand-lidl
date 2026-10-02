@@ -20174,7 +20174,7 @@ function handbuchKarte(z){
 
     abschnitt("0 · Arbeitsabläufe Schritt für Schritt",
       "<p><strong>Techniker – ein Einsatz</strong></p>"+liste([
-        "<strong>Was steht an?</strong> Reiter <em>Fällig</em>: „Heute für dich“ (Kalender), offene Störungen, anstehende Wartungen. Reiter <em>Kalender</em>: Monat, Woche, Tag oder Liste – in Tag und Woche in eine freie Zeit tippen legt dort einen Termin an, einen Termin ziehen verschiebt ihn (am Handy kurz halten, dann ziehen), wischen wechselt den Tag; „nur Störungen“ zeigt Einsätze und Lidl-Zieltermine; eine geschickte Tour steht mit Uhrzeiten im Kalender des Technikers, und die Tour kann Termine, Aufgaben und Projekte mit einplanen; Fahrzeiten zwischen den Einsätzen stehen dabei.",
+        "<strong>Was steht an?</strong> Reiter <em>Fällig</em>: „Heute für dich“ (Kalender), offene Störungen, anstehende Wartungen. Reiter <em>Kalender</em>: Monat, Woche, Tag oder Liste – in Tag und Woche in eine freie Zeit tippen legt dort einen Termin an, einen Termin ziehen verschiebt ihn (am Handy kurz halten, dann ziehen), wischen wechselt den Tag; „nur Störungen“ zeigt Einsätze und Lidl-Zieltermine; eine geschickte Tour steht mit Uhrzeiten im Kalender des Technikers, und die Tour kann Termine, Aufgaben und Projekte mit einplanen; „🔍 Planung prüfen“ (Person wählen) zeigt eine kürzere Reihenfolge, zu knappe Fahrten und übersehene Wartungen/Störungen am Markt und in der Nähe; Fahrzeiten zwischen den Einsätzen stehen dabei.",
         "<strong>Protokoll beginnen:</strong> Wartungszeile oder Störung antippen – oder Reiter <em>Protokoll</em> → „Schritt für Schritt ausfüllen“.",
         "<strong>Markt und Anlagen:</strong> gewartete (bzw. betroffene) Anlagen anhaken. Fehlt eine, „+ Anlage fehlt“ – erst prüfen, ob sie nicht doch in der Liste steht.",
         "<strong>Je Anlage:</strong> Anlagendaten ergänzen (Typenschild und Prüfbuch des Außengeräts, Kältemittel und Füllmenge aus dem Prüfbuch; Fotos kann die KI lesen), "+
@@ -24793,6 +24793,18 @@ function viewKalender(){
   });
   c.querySelectorAll("[data-m]").forEach(function(b){ b.onclick=function(){ S.kalModus=b.dataset.m; render(); }; });
   c.querySelector("[data-nur]").onclick=function(){ S.kalNur = S.kalNur==="stoerung" ? "" : "stoerung"; render(); };
+  /* Planung prüfen (Büro 02.10.2026): Reihenfolge, Zeit, Übersehenes – für die gewählte Person */
+  if(S.kalWer!=="alle" && !nurLesen()){
+    var pk=el('<button class="chip" type="button" title="Reihenfolge, Fahrzeiten und übersehene Wartungen/Störungen prüfen">🔍 Planung prüfen</button>');
+    pk.onclick=function(){
+      var von, bis;
+      if(S.kalModus==="tag"){ von=bis=S.kTag||heute; }
+      else if(S.kalModus==="woche"){ von=S.kalWoche; bis=plusTage(S.kalWoche,6); }
+      else { von=montagVon(S.kTag && S.kTag.slice(0,7)===S.kMonat ? S.kTag : heute); bis=plusTage(von,6); }
+      planungPruefenAnsicht(S.kalWer, von, bis);
+    };
+    c.querySelector("[data-modus]").appendChild(pk);
+  }
   var nl=c.querySelector("[data-neuladen]");
   if(nl) nl.onclick=function(){ nl.disabled=true; nl.textContent="lädt …"; planTeamZeit=0; planungStand=0; planungNachladen(); };
   c.querySelectorAll("[data-neu]").forEach(function(b){ b.onclick=function(){
@@ -25006,6 +25018,163 @@ function kalVerschieben(x, tag, b, dauer){
     if(d2.length && !window.confirm((o.terminTechniker||"")+" ist da schon verplant:\n\n"+d2.slice(0,8).join("\n")+"\n\nTrotzdem dorthin verschieben?")){ render(); return; }
     stoerungSpeichern(o, "Einsatz verschoben").then(function(wo){ toast(wo===false?"Nicht verschoben.":"Einsatz verschoben auf "+dfmt(tag)+", "+kalHm(b)+"."); render(); });
   }
+}
+/* ---- Planung prüfen (Büro 02.10.2026: „wenn sich jemand einen Tag oder eine Woche selber geplant hat,
+   prüft die App die Effizienz der Tour und dass keine offene Störung oder Wartung übersehen wurde“) ----
+   Je Tag: (1) bessere Reihenfolge der Märkte (Fahrzeit), (2) Überschneidungen / zu knapp, (3) am selben
+   Markt noch fällig bzw. offene Störung, (4) in der Nähe (kleiner Umweg) offene Störung / überfällige Wartung. */
+function fahrtMinZw(a,b){ if(!a || !b || a.id===b.id) return 0; var k=a.id+">"+b.id; return FAHR_CACHE[k]!=null ? FAHR_CACHE[k] : fahrtSchaetzMin(a,b); }
+function wegMin(orte){ var t=0; for(var i=1;i<orte.length;i++) t+=fahrtMinZw(orte[i-1], orte[i]); return t; }
+function besteReihenfolge(orte){
+  if(orte.length<3) return orte.slice();
+  var best=orte.slice(), bestW=wegMin(orte);
+  if(orte.length<=7){
+    var perm=function(rest, weg){ if(!rest.length){ var w=wegMin(weg); if(w<bestW){ bestW=w; best=weg.slice(); } return; }
+      for(var i=0;i<rest.length;i++) perm(rest.slice(0,i).concat(rest.slice(i+1)), weg.concat([rest[i]])); };
+    perm(orte, []);
+  } else {
+    /* viele Märkte: 2-opt */
+    var cur=orte.slice(), besser=true;
+    while(besser){ besser=false;
+      for(var i=0;i<cur.length-1;i++) for(var j=i+1;j<cur.length;j++){
+        var neu=cur.slice(0,i).concat(cur.slice(i,j+1).reverse(), cur.slice(j+1));
+        if(wegMin(neu)<wegMin(cur)-0.5){ cur=neu; besser=true; } } }
+    best=cur; bestW=wegMin(cur);
+  }
+  return best;
+}
+function planungPruefen(wahl, von, bis){
+  var m=kalenderEintraege(von, bis, wahl, ""), tage=[];
+  var alleGeplantPos={}; PLANUNG.forEach(function(e){ if(e.kategorie==="wartung") (e.position_ids||[]).forEach(function(p){ alleGeplantPos[p]=1; }); });
+  for(var t=von; t<=bis; t=plusTage(t,1)){
+    var l=(m[t]||[]).filter(function(x){ return !x.grau && x.art!=="protokoll"; });
+    var orteZ=l.map(function(x){ var o=einsatzOrtZeit(x); return o ? Object.assign(o, {x:x}) : null; }).filter(Boolean).sort(function(a,b){ return a.b-b.b; });
+    var markte=[]; l.forEach(function(x){ var sid=x.e ? x.e.standort_id : x.o ? x.o.standortId : null; var s=sid && byId[sid]; if(s && s.lat!=null && markte.indexOf(s)<0) markte.push(s); });
+    var tag={tag:t, eintraege:l, hinweise:[]};
+    if(!l.length){ continue; }
+    /* (1) Reihenfolge – nur die Einsätze mit Ort und Uhrzeit */
+    var orte=[]; orteZ.forEach(function(o){ if(!orte.length || orte[orte.length-1].id!==o.s.id) orte.push(o.s); });
+    if(orte.length>=3){
+      var best=besteReihenfolge(orte), jetzt=wegMin(orte), dann=wegMin(best);
+      if(jetzt-dann>=10) tag.reihenfolge={jetzt:jetzt, dann:dann, orte:orte, best:best, ez:orteZ};
+    }
+    /* (2) Zeit */
+    tag.knapp=fahrtHinweise(l).filter(function(f){ return f.knapp; });
+    /* (3) am selben Markt */
+    var geplantHeute={}; l.forEach(function(x){ if(x.e) (x.e.position_ids||[]).forEach(function(p){ geplantHeute[p]=1; }); });
+    var stHeute={}; l.forEach(function(x){ if(x.o) stHeute[x.o._id]=1; if(x.e && x.e.stoerung_id) stHeute[x.e.stoerung_id]=1; });
+    tag.amMarkt=[];
+    markte.forEach(function(s){
+      s.pos.forEach(function(p){
+        if(geplantHeute[p.id] || alleGeplantPos[p.id]) return;
+        if(p.status==="ueberfaellig" || p.status==="faellig" || (p.naechste && p.naechste<=plusTage(bis,30)))
+          tag.amMarkt.push({art:"wartung", s:s, p:p, text:anlagenName(anlageDaten(anlageLeader(p)))+" "+((p.intervall&&p.intervall.kurz)||p.intervallCode||"")+" – "+(p.status==="ueberfaellig"?"überfällig":p.status==="faellig"?"fällig":"fällig ab "+dfmt(p.naechste))});
+      });
+      stoerungVonMarkt(s.id).forEach(function(o){ if(o.erledigt || stHeute[o._id]) return;
+        tag.amMarkt.push({art:"stoerung", s:s, o:o, text:"offene Störung"+(o.problemtyp?": "+o.problemtyp:"")+(o.termin?" (geplant "+dfmt(o.termin)+")":" – noch nicht eingeplant")}); });
+    });
+    /* (4) in der Nähe – kleiner Umweg (≤ 20 min) */
+    tag.naehe=[];
+    if(markte.length){
+      var umweg=function(z){
+        var best=Infinity, seq=orte.length?orte:markte;
+        for(var i=0;i<seq.length;i++){ var a=seq[i], b=seq[i+1]; var u = b ? fahrtMinZw(a,z)+fahrtMinZw(z,b)-fahrtMinZw(a,b) : fahrtMinZw(a,z); if(u<best) best=u; }
+        return best; };
+      ST.forEach(function(s){
+        if(markte.indexOf(s)>=0 || !s.lat || marktPausiert(s)) return;
+        var offenS=stoerungVonMarkt(s.id).filter(function(o){ return !o.erledigt && !o.termin; });
+        var ueber=s.pos.filter(function(p){ return p.status==="ueberfaellig" && !alleGeplantPos[p.id]; });
+        if(!offenS.length && !ueber.length) return;
+        if(luftlinie(markte[0], s)>60) return;   /* grob vorfiltern */
+        var u=umweg(s); if(u>20) return;
+        tag.naehe.push({s:s, umweg:u, text:[offenS.length?offenS.length+" offene Störung"+(offenS.length>1?"en":""):"", ueber.length?ueber.length+" überfällige Wartung"+(ueber.length>1?"en":""):""].filter(Boolean).join(", "), offenS:offenS});
+      });
+      tag.naehe.sort(function(a,b){ return a.umweg-b.umweg; }); tag.naehe=tag.naehe.slice(0,6);
+    }
+    tag.orte=markte;
+    tage.push(tag);
+  }
+  return tage;
+}
+function planungPruefenAnsicht(wahl, von, bis){
+  var v=ansichtOeffnen("Planung prüfen", null, {breit:true});
+  var wer=wahl==="ich" ? meinName() : (planPersonName(wahl)||"");
+  v.schritt.textContent=(wer?wer+" · ":"")+(von===bis?dfmt(von):dfmt(von)+" – "+dfmt(bis));
+  var host=el('<div class="stack" style="gap:12px"></div>'); v.inhalt.appendChild(host);
+  var zeichne=function(){
+    host.innerHTML="";
+    var tage=planungPruefen(wahl, von, bis), probleme=0;
+    if(!tage.length){ host.appendChild(el('<div class="muted">In diesem Zeitraum ist für '+esc(wer||"diese Person")+" nichts geplant.</div>")); return; }
+    var alleOrte=[];
+    tage.forEach(function(tg){
+      tg.orte.forEach(function(o){ alleOrte.push(o); });
+      var k=el('<div class="card" style="box-shadow:none;margin:0"><div class="pad stack" style="gap:6px"><h2 style="font-size:15px">'+esc(WOCHENTAGE[(new Date(tg.tag+"T12:00:00").getDay()+6)%7]+" "+dfmt(tg.tag))+
+        ' <span class="muted" style="font-weight:400;font-size:12.5px">'+tg.eintraege.length+" Einträge</span></h2></div></div>");
+      var h=k.querySelector(".stack"), gut=true;
+      if(tg.reihenfolge){
+        gut=false; probleme++;
+        var rf=tg.reihenfolge;
+        var z=el('<div class="note warnbox" style="font-size:13px"><strong>Kürzere Reihenfolge:</strong> '+esc(rf.best.map(stName).join(" → "))+
+          "<br>statt "+esc(rf.orte.map(stName).join(" → "))+" – spart ca. "+(rf.jetzt-rf.dann)+" min Fahrt."+
+          '<div style="margin-top:6px"><button class="btn sm" type="button">Reihenfolge übernehmen</button></div></div>');
+        z.querySelector("button").onclick=function(){ reihenfolgeUebernehmen(tg, rf).then(zeichne); };
+        h.appendChild(z);
+      }
+      tg.knapp.forEach(function(f){ gut=false; probleme++; h.appendChild(el('<div style="font-size:13px;color:var(--crit);font-weight:600">'+esc(fahrtText(f))+"</div>")); });
+      if(tg.amMarkt.length){
+        gut=false; probleme+=tg.amMarkt.length;
+        h.appendChild(el('<div style="font-size:13px;font-weight:600">Am selben Markt noch offen:</div>'));
+        tg.amMarkt.forEach(function(a){
+          var z=el('<div class="rowflex" style="justify-content:space-between;gap:8px;flex-wrap:nowrap;font-size:13px"><span>'+esc(stName(a.s))+" · "+esc(a.text)+'</span><button class="btn ghost sm" type="button" style="flex:none">'+(a.art==="wartung"?"mit einplanen":"öffnen")+"</button></div>");
+          z.querySelector("button").onclick=function(){ if(a.art==="wartung") mitEinplanen(tg, a).then(zeichne); else stoerungDialog(a.o); };
+          h.appendChild(z);
+        });
+      }
+      if(tg.naehe.length){
+        h.appendChild(el('<div style="font-size:13px;font-weight:600;margin-top:4px">In der Nähe, kleiner Umweg:</div>'));
+        tg.naehe.forEach(function(n){
+          var z=el('<div class="rowflex" style="justify-content:space-between;gap:8px;flex-wrap:nowrap;font-size:13px"><span>'+esc(stName(n.s))+" · "+esc(n.text)+' <span class="muted">(ca. '+n.umweg+' min Umweg)</span></span><button class="btn ghost sm" type="button" style="flex:none">Markt öffnen</button></div>');
+          z.querySelector("button").onclick=function(){ marktAnsicht(n.s.id); };
+          h.appendChild(z);
+        });
+      }
+      if(gut && !tg.naehe.length) h.appendChild(el('<div style="font-size:13px;color:var(--good)">✓ Reihenfolge passt, genug Zeit, nichts übersehen.</div>'));
+      host.appendChild(k);
+    });
+    host.insertBefore(el('<div class="note" style="font-size:13px">'+(probleme ? "<strong>"+probleme+" Punkt"+(probleme===1?"":"e")+"</strong> zum Anschauen." : "✓ Alles stimmig.")+
+      " Fahrzeiten aus dem Straßenrouting (ohne „ca.“) bzw. geschätzt.</div>"), host.firstChild);
+    fahrtenGenau(alleOrte, function(){ if(document.body.contains(host)) zeichne(); });
+  };
+  zeichne();
+  var zu=el('<button class="btn" type="button">Fertig</button>'); zu.onclick=function(){ v.zu(); render(); }; v.fuss.appendChild(zu);
+}
+/* neue Reihenfolge übernehmen: Beginn des ersten Einsatzes bleibt, Dauer je Einsatz bleibt, dazwischen die Fahrt */
+function reihenfolgeUebernehmen(tg, rf){
+  if(!window.confirm("Uhrzeiten an diesem Tag nach der kürzeren Reihenfolge neu setzen?\n\n"+rf.best.map(stName).join(" → ")+"\n\nDie Personen bekommen eine Nachricht.")) return Promise.resolve();
+  var start=Math.min.apply(null, rf.ez.map(function(o){ return o.b; })), cur=start, prev=null, aufg=[];
+  rf.best.forEach(function(s){
+    rf.ez.filter(function(o){ return o.s.id===s.id; }).forEach(function(o){
+      if(prev) cur+=fahrtMinZw(prev, s); prev=s;
+      var dauer=o.e-o.b, b=cur, e=cur+dauer; cur=e;
+      var x=o.x;
+      if(x.e) aufg.push(Store.sb.from("planung").update({beginn:kalHm(b), ende:kalHm(Math.min(24*60-1,e)), geaendert_von:meinName()}).eq("id", x.e.id).select("*").then(function(r){
+        (r.data||[]).forEach(function(g){ PLANUNG=PLANUNG.filter(function(y){ return y.id!==g.id; }).concat([g]); planBenachrichtigen(g, (g.wer||[]).filter(function(id){ return id!==meineKennung(); }), false, "Uhrzeit geändert (kürzere Reihenfolge)"); }); }));
+      else if(x.o) aufg.push(stoerungSpeichern(Object.assign({}, x.o, {terminZeit:kalHm(b)}), "Reihenfolge des Tages geändert"));
+    });
+  });
+  return Promise.all(aufg).then(function(){ toast("Reihenfolge übernommen."); planGeaendert(); });
+}
+/* fällige Wartung am Markt in den Einsatz dieses Tages aufnehmen (Termin dort erweitern, sonst einplanen) */
+function mitEinplanen(tg, a){
+  var e=tg.eintraege.filter(function(x){ return x.e && x.e.standort_id===a.s.id && x.e.kategorie==="wartung"; })[0];
+  if(!e){ wartungEinplanen(a.s.id); return Promise.resolve(); }
+  var ids=(e.e.position_ids||[]).concat([a.p.id]);
+  return Store.sb.from("planung").update({position_ids:ids, geaendert_von:meinName()}).eq("id", e.e.id).select("*").then(function(r){
+    if(r.error || !(r.data||[]).length){ toast("Nicht gespeichert: "+((r.error&&r.error.message)||"keine Berechtigung")); return; }
+    var g=r.data[0]; PLANUNG=PLANUNG.filter(function(y){ return y.id!==g.id; }).concat([g]);
+    toast("Mit eingeplant: "+anlagenName(anlageDaten(anlageLeader(a.p))));
+    planGeaendert();
+  });
 }
 /* ---- Tag: Zeitleiste ---- */
 function kalTagAnsicht(heute){
