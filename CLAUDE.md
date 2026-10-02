@@ -260,6 +260,11 @@ Kammerlander Umwelt- und Klimatechnik (UKT) – oft kurz, vom Handy, im Feld.
   Stunden: geplante Termine am Tag, „erfassen“
   → `arbeitszeiten.planung_id`. Neu Eingetragene bekommen eine Chat-Nachricht
   (nicht bei Privatem). Diese Grenzen nie lockern.
+- **Posteingang → Projekt** (Büro 02.10.2026): weitergeleitete Mails (nicht Lidl-Auftrag/Rapport)
+  kommen mit `.eml` (art „mail“, `eintraege` in synology/ukt_posteingang.py, Test
+  tools/posteingang_test.py); in der App eine Karte je Mail (`posteingangMailBox`), „Zu Projekt
+  legen“ (`posteingangZuProjekt`, Vorschlag `posteingangProjektPunkte`) – erledigt erst, wenn alle
+  Dateien hochgeladen sind. Angebot/Rechnung als Art nur für den Inhaber.
 - **Störungen nie doppelt** (Büro 01.10.2026): eine Lidl-Auftragsnummer gibt es
   nur einmal als Störung (Datenbank-Index `stoerung_auftrag_einmal`,
   tools/stoerung-eindeutig.sql; im Dialog „Vorhandene öffnen“ statt neu).

@@ -40,7 +40,14 @@ LOG = os.path.join(HIER, "ukt_posteingang.log")
 SPERRE = os.path.join(HIER, "ukt_posteingang.sperre")
 
 PRUEFEN = "--pruefen" in sys.argv
-ARTEN = {".pdf": "application/pdf", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png"}
+ARTEN = {".pdf": "application/pdf", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png",
+         # weitergeleitete Mails zu Projekten (Büro 02.10.2026): auch Word, Excel, Pläne, Mails
+         ".heic": "image/heic", ".webp": "image/webp", ".txt": "text/plain", ".csv": "text/csv",
+         ".doc": "application/msword", ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+         ".xls": "application/vnd.ms-excel", ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+         ".zip": "application/zip", ".eml": "message/rfc822", ".msg": "application/vnd.ms-outlook",
+         ".dwg": "image/vnd.dwg", ".dxf": "application/octet-stream"}
+GROESSTE = 20 * 1048576   # wie bei den Projektdateien
 
 
 def log(text):
@@ -182,6 +189,18 @@ def sauber(name):
     return re.sub(r"[^A-Za-z0-9._-]+", "_", name)[:90]
 
 
+def eintraege(nachricht, roh, betreff):
+    """Was aus einer Mail in den Posteingang kommt: [(name, inhalt, typ, art)].
+    Lidl-Aufträge und Rapporte wie bisher nur die Anhänge. Jede andere Mail –
+    etwa eine weitergeleitete Anfrage zu einem Projekt – zusätzlich als .eml,
+    damit Text und Absender mit ins Projekt gehen (auch ganz ohne Anhang)."""
+    liste = [(n, i, t, art_von(n, betreff)) for n, i, t in anhaenge(nachricht) if len(i) <= GROESSTE]
+    if not any(a in ("rapport", "auftrag") for _, _, _, a in liste) and len(roh) <= GROESSTE:
+        name = (re.sub(r"\s+", " ", re.sub(r'[\\/:*?"<>|]+', " ", betreff or "")).strip()[:80] or "Mail") + ".eml"
+        liste.append((name, roh, "message/rfc822", "mail"))
+    return liste
+
+
 def abholen(k):
     db = None if PRUEFEN else Supabase(k)
     imap = imaplib.IMAP4_SSL(k["imap_server"], int(k["imap_port"]))
@@ -203,14 +222,14 @@ def abholen(k):
             nid = entschluesseln(nachricht.get("Message-ID")) or ("ohne-id-" + uid.decode())
             betreff = entschluesseln(nachricht.get("Subject"))
             absender = email.utils.parseaddr(entschluesseln(nachricht.get("From")))[1]
-            gefunden = list(anhaenge(nachricht))
+            gefunden = eintraege(nachricht, teile[0][1], betreff)
             if not gefunden:
-                log("ohne PDF, bleibt liegen: %s – %s" % (absender, betreff))
+                log("nichts Verwertbares, bleibt liegen: %s – %s" % (absender, betreff))
                 continue
             alles_ok = True
-            for name, inhalt, mime in gefunden:
+            for name, inhalt, mime, art in gefunden:
                 if PRUEFEN:
-                    log("würde ablegen: %s (%s, %d KB) aus „%s“" % (name, art_von(name, betreff), len(inhalt) // 1024, betreff))
+                    log("würde ablegen: %s (%s, %d KB) aus „%s“" % (name, art, len(inhalt) // 1024, betreff))
                     continue
                 try:
                     if db.schon_da(nid, name):
@@ -218,10 +237,9 @@ def abholen(k):
                     pfad = time.strftime("%Y/%m/") + uuid.uuid4().hex[:12] + "_" + sauber(name)
                     db.ablegen(pfad, inhalt, mime)
                     db.eintragen({"nachricht_id": nid, "absender": absender, "betreff": betreff,
-                                  "dateiname": name, "pfad": pfad, "bytes": len(inhalt),
-                                  "art": art_von(name, betreff)})
+                                  "dateiname": name, "pfad": pfad, "bytes": len(inhalt), "art": art})
                     neu += 1
-                    log("neu: %s (%s)" % (name, art_von(name, betreff)))
+                    log("neu: %s (%s)" % (name, art))
                 except Exception as e:                   # noqa: BLE001 – nächste Datei versuchen
                     alles_ok = False
                     log("FEHLER bei %s: %s" % (name, e))

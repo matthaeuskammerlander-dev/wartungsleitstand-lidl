@@ -20,6 +20,14 @@ legt die PDFs in den **Posteingang** der App. Alles ist vorbereitet und
      Auftrag schon eingelesen.
    - **verwerfen:** mit Grund; bleibt nachvollziehbar in der Tabelle.
    Erledigt ist ein Eingang erst, wenn Protokoll bzw. Störung gespeichert sind.
+4. **Weitergeleitete Mails zu Projekten** (seit 02.10.2026): Jede Mail, die kein
+   Lidl-Auftrag oder Rapport ist, kommt zusätzlich als `.eml` mit – auch ganz ohne
+   Anhang. Anhänge dürfen auch Word, Excel, DWG, ZIP usw. sein (bis 20 MB). In der
+   App steht sie als **eine** Karte mit allen Dateien: **Zu Projekt legen** schlägt
+   das Projekt vor (Projektnummer im Betreff, Kunde, Absender-Domain eines
+   Beteiligten), die Art jeder Datei ist vorgewählt (Mail, Plan, Unterlage …).
+   Erst wenn alle Dateien im Projekt liegen, ist die Mail im Posteingang erledigt.
+   Dafür einmal `tools/posteingang-projekte.sql` ausführen (erledigt am 02.10.2026).
 
 ## Einrichten (einmalig)
 

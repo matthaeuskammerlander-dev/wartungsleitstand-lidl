@@ -2876,7 +2876,7 @@ function posteingangDatei(e){
 }
 function posteingangKarte(){
   var c=el('<div class="card"><div class="pad stack"><div><h2>Posteingang</h2><div class="sub">'+
-    "Aus dem Datenbank-Postfach: Aufträge und Rapportberichte von Lidl. Antippen ordnet sie zu.</div></div>"+
+    "Aus dem Datenbank-Postfach: Aufträge und Rapportberichte von Lidl – und weitergeleitete Mails, die mit allen Anhängen in ein Projekt kommen. Antippen ordnet sie zu.</div></div>"+
     '<div class="stack" data-liste><div class="muted">wird geladen …</div></div></div></div>');
   var host=c.querySelector("[data-liste]");
   ladePosteingang().then(function(liste){
@@ -2884,7 +2884,15 @@ function posteingangKarte(){
     host.innerHTML="";
     if(liste===null){ host.appendChild(el('<div class="note warnbox" style="font-size:13px">Der Posteingang konnte nicht geladen werden (Verbindung?) – später nochmals öffnen.</div>')); return; }
     if(!liste.length){ host.appendChild(el('<div class="muted" style="font-size:13px">Nichts Neues im Postfach.</div>')); return; }
+    /* weitergeleitete Mail (mit .eml): eine Karte je Mail, „Zu Projekt legen“ (Büro 02.10.2026) */
+    var mailGr={}, gezeigt={};
+    liste.forEach(function(e){ if(e.art==="mail") mailGr[e.nachricht_id||e.id]=1; });
     liste.forEach(function(e){
+      var gk=e.nachricht_id||e.id;
+      if(mailGr[gk]){
+        if(!gezeigt[gk]){ gezeigt[gk]=1; host.appendChild(posteingangMailBox(liste.filter(function(x){ return (x.nachricht_id||x.id)===gk; }))); }
+        return;
+      }
       var info=werteRapport("", e.dateiname) || {};
       var s=info.filiale ? ST.filter(function(x){ return String(x.filiale||"").replace(/^0+/,"")===info.filiale; })[0] : null;
       var z=el('<div class="posbox"><div class="rowflex" style="justify-content:space-between;gap:8px">'+
@@ -2932,6 +2940,105 @@ function posteingangKarte(){
     });
   });
   return c;
+}
+/* ---- Weitergeleitete Mail → Projekt (Büro 02.10.2026: „warum kannst du die Mail nicht selber
+   hochladen – das wäre sehr praktisch“): Mail an das Datenbank-Postfach weiterleiten, hier
+   „Zu Projekt legen“ – die Mail (.eml) und alle Anhänge kommen in die Projektdateien, mit
+   vorgeschlagenem Projekt und vorgewählter Art. Erledigt erst, wenn ALLES hochgeladen ist. */
+function posteingangMailBox(g){
+  var mail=g.filter(function(x){ return x.art==="mail"; })[0]||g[0];
+  var dateien=g.slice().sort(function(a,b){ return (a.art==="mail")-(b.art==="mail"); });
+  var z=el('<div class="posbox"><div class="rowflex" style="justify-content:space-between;gap:8px;flex-wrap:nowrap">'+
+    '<div style="min-width:0"><strong>✉ '+esc(mail.betreff||"(ohne Betreff)")+"</strong><br>"+
+      '<span class="muted" style="font-size:12.5px">'+esc(zeitFmt(mail.eingang))+(mail.absender?" · "+esc(mail.absender):"")+"</span></div>"+
+    '<span class="tag">Mail</span></div><div class="stack" data-d style="gap:2px;margin:4px 0"></div>'+
+    '<div class="rowflex" style="gap:6px"><button class="btn sm" type="button" data-a="projekt">Zu Projekt legen</button>'+
+    '<button class="btn ghost sm" type="button" data-a="weg">verwerfen</button></div></div>');
+  var dh=z.querySelector("[data-d]");
+  dateien.forEach(function(e){
+    var d=el('<div style="font-size:13px">'+(e.art==="mail"?"Mail selbst: ":"")+'<a href="#">'+esc(e.dateiname)+"</a>"+
+      (e.bytes?' <span class="muted">('+Math.max(1,Math.round(e.bytes/1024))+" KB)</span>":"")+"</div>");
+    d.querySelector("a").onclick=function(ev){ ev.preventDefault();
+      posteingangDatei(e).then(function(f){
+        var u=URL.createObjectURL(f);
+        if(/pdf/.test(f.type)) pdfAnsicht(u, e.dateiname);
+        else if(/^image\//.test(f.type)) bildAnsicht(u, e.dateiname);
+        else { var a=document.createElement("a"); a.href=u; a.download=e.dateiname; document.body.appendChild(a); a.click(); a.remove(); }
+      }, function(x){ toast(x.message); }); };
+    dh.appendChild(d);
+  });
+  z.querySelector('[data-a="projekt"]').onclick=function(){ posteingangZuProjekt(g, function(){ z.remove(); }); };
+  z.querySelector('[data-a="weg"]').onclick=function(){
+    if(demo()){ z.remove(); toast("Präsentation: verworfen – gespeichert wurde nichts."); return; }
+    var gr=window.prompt("Warum wird die Mail „"+(mail.betreff||"")+"“ verworfen?",""); if(gr===null) return;
+    if(!gr.trim()){ toast("Bitte einen Grund angeben – der Eingang bleibt sonst nicht nachvollziehbar."); return; }
+    posteingangGruppeSetzen(g, {status:"verworfen", notiz:gr}).then(function(ok){ if(ok){ z.remove(); toast("Verworfen."); } });
+  };
+  return z;
+}
+/* alle Einträge einer Mail auf einmal – zählt nur, wenn wirklich jede Zeile geändert wurde */
+function posteingangGruppeSetzen(g, felder){
+  var ids=g.map(function(x){ return x.id; });
+  return Store.sb.from("posteingang").update(Object.assign({erledigt_von:wer(), erledigt_am:new Date().toISOString()}, felder))
+    .in("id", ids).select("id").then(function(r){
+      if(r.error || (r.data||[]).length!==ids.length){ toast("Posteingang nicht geändert"+(r.error?" ("+r.error.message+")":" – keine Berechtigung")+"."); return false; }
+      POSTEINGANG=POSTEINGANG.filter(function(x){ return ids.indexOf(x.id)<0; }); return true;
+    }, function(){ toast("Keine Verbindung – Posteingang nicht geändert."); return false; });
+}
+/* welches Projekt passt? Nummer im Betreff, Kunde, Titelwörter, Absender-Domain eines Beteiligten */
+function posteingangProjektPunkte(p, g){
+  var mail=g.filter(function(x){ return x.art==="mail"; })[0]||g[0];
+  var t=suchNorm([mail.betreff, mail.absender].concat(g.map(function(x){ return x.dateiname; })).join(" "));
+  var n=0, d=p.daten||{};
+  if(p.nummer && t.indexOf(suchNorm(p.nummer))>=0) n+=20;
+  suchNorm(kundeTitel(p.kunde_id)||"").split(" ").forEach(function(w){ if(w.length>=4 && w!=="lidl" && t.indexOf(w)>=0) n+=4; });
+  suchNorm(p.titel||"").split(" ").forEach(function(w){ if(w.length>=5 && t.indexOf(w)>=0) n+=1; });
+  var dom=String(mail.absender||"").toLowerCase().split("@")[1]||"";
+  if(dom && !/^(gmail|gmx|yahoo|hotmail|outlook|icloud|aon|a1|live|web)\./.test(dom) && dom!=="ukt.at")
+    (d.beteiligte||[]).forEach(function(b){ if(String(b.mail||"").toLowerCase().split("@")[1]===dom) n+=6; });
+  return n;
+}
+function posteingangZuProjekt(g, fertig){
+  var mail=g.filter(function(x){ return x.art==="mail"; })[0]||g[0];
+  var liste=PROJEKTE.map(function(p){ return {p:p, n:posteingangProjektPunkte(p, g)}; })
+    .sort(function(a,b){ return (b.n-a.n) || (projektOffen(b.p)-projektOffen(a.p)) || String(b.p.geaendert||"").localeCompare(String(a.p.geaendert||"")); });
+  if(!liste.length){ toast("Es ist noch kein Projekt da – zuerst unter Projekte anlegen."); return; }
+  var v=ansichtOeffnen("Zu Projekt legen");
+  v.schritt.textContent=mail.betreff||"Mail";
+  var arten=PROJEKT_DATEIARTEN.filter(function(x){ return !x[2] || nurInhaber(); });
+  var form=el('<div class="stack" style="max-width:640px"><label class="fl"><span class="req">Projekt</span><select data-p>'+
+    liste.map(function(x, i){ return '<option value="'+esc(x.p.id)+'">'+esc(projektTitel(x.p))+(i===0 && x.n>0?" – Vorschlag":"")+(projektOffen(x.p)?"":" (abgeschlossen)")+"</option>"; }).join("")+
+    "</select></label>"+
+    (liste[0].n>0?"":'<div class="note" style="font-size:13px">Kein Projekt passt eindeutig – bitte wählen.</div>')+
+    '<div class="fl"><span>Dateien und ihre Art</span></div><div class="stack" data-d style="gap:6px"></div>'+
+    '<div class="muted" style="font-size:12.5px">Danach liegt alles in den Dateien des Projekts, die Mail verschwindet aus dem Posteingang.</div></div>');
+  var dh=form.querySelector("[data-d]"), wahl={};
+  g.forEach(function(e){
+    var vor=e.art==="mail" ? "mail" : dateiArtRaten("", e.dateiname, "");
+    var z=el('<div class="rowflex" style="gap:8px;flex-wrap:nowrap;justify-content:space-between"><span style="font-size:13px;min-width:0;overflow-wrap:anywhere">'+esc(e.dateiname)+"</span>"+
+      '<select style="max-width:210px">'+arten.map(function(a){ return '<option value="'+a[0]+'"'+(a[0]===vor?" selected":"")+">"+esc(a[1])+"</option>"; }).join("")+"</select></div>");
+    wahl[e.id]=z.querySelector("select"); dh.appendChild(z);
+  });
+  v.inhalt.appendChild(form);
+  var ab=el('<button class="btn ghost" type="button">Abbrechen</button>'), ok=el('<button class="btn" type="button">Ins Projekt legen</button>');
+  ab.onclick=function(){ v.zu(); };
+  v.fuss.appendChild(ab); v.fuss.appendChild(ok);
+  ok.onclick=function(){
+    var p=PROJEKTE.filter(function(x){ return x.id===form.querySelector("[data-p]").value; })[0];
+    if(!p) return;
+    ok.disabled=true; ok.textContent="wird abgelegt …";
+    var artJe={};
+    Promise.all(g.map(function(e){ return posteingangDatei(e).then(function(f){ artJe[f.name]=wahl[e.id].value; return f; }); })).then(function(files){
+      var herkunft="E-Mail „"+(mail.betreff||"")+"“"+(mail.absender?" von "+mail.absender:"")+", "+dfmt(tagLokal(mail.eingang));
+      return projektDateienHochladen(p, function(f){ return artJe[f.name]||"dokument"; }, files, function(){ return herkunft; }).then(function(neue){
+        if(neue.length!==files.length){ ok.disabled=false; ok.textContent="Ins Projekt legen"; toast("Nicht alles hochgeladen – die Mail bleibt im Posteingang. Bitte nochmals versuchen."); return; }
+        if(demo()){ v.zu(); if(fertig) fertig(); return; }
+        return posteingangGruppeSetzen(g, {status:"erledigt", bezug:"projekt:"+p.id}).then(function(){
+          v.zu(); if(fertig) fertig(); toast("In "+(p.nummer||"das Projekt")+" abgelegt: "+files.length+" Datei"+(files.length===1?"":"en")+".");
+        });
+      });
+    }, function(x){ ok.disabled=false; ok.textContent="Ins Projekt legen"; toast("Datei nicht abrufbar: "+(x.message||x)); });
+  };
 }
 /* Einen Eingang im Postfach verwerfen – immer mit Grund (auch aus „Rapport
    zuordnen“ heraus, etwa bei einer doppelt gemailten Rapportnummer) */
