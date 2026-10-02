@@ -116,7 +116,7 @@ Kammerlander Umwelt- und Klimatechnik (UKT) – oft kurz, vom Handy, im Feld.
   Synology); abgelegt `daten.mappePdf`, Synology → `Projekt_<Nr>.pdf`. Zum Testen
   MIT Belegen nur Inhaber (Beträge, Stunden, Beleg-PDFs auf Wunsch; abgelegt nur
   unter `buero/` = `daten.mappePdfBuero`, nie in den Projektordner der Synology).
-- Aufgeräumt (Büro 01.10.2026): Reiter Fällig, Kalender, Protokoll, Anlagen, Karte,
+- Aufgeräumt (Büro 01.10.2026): Reiter Fällig, Kalender, Karte, Protokoll, Anlagen,
   Stunden, Projekte, Kunden, Rechnungen, Verlauf, Verwaltung, Datenbasis. Am PC zwei
   Spalten (`ANSICHT_ORDNUNG`, `ansichtOrdnen`, `kartenOrdnen`, `spaltenAnordnen` –
   schmal bleibt die Reihenfolge über `order`), breite Fenster für Projekt und Markt
