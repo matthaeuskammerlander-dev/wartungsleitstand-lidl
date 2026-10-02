@@ -7145,11 +7145,34 @@ function stoerungSpeichern(o, grund, rueck){
       if(altS) stammStand[rec.id]=altS; else delete stammStand[rec.id];
     }
     wendeStammdatenAn(); stoerungEintraegeAuffrischen();
+    /* Einsatz geplant oder verschoben: der eingetragene Techniker bekommt eine Nachricht (Büro 02.10.2026:
+       „Manfred hat einen Störungsauftrag eingefügt und den Einsatz für Darko geplant – hat Darko eine
+       Nachricht bekommen?“) */
+    if(wo!==false && o.terminTechniker && o.termin && !o.erledigt){
+      var vorher=(altU && altU.felder) || {};
+      if(vorher.termin!==o.termin || (vorher.terminZeit||"")!==(o.terminZeit||"") || kanonName(vorher.terminTechniker||"")!==kanonName(o.terminTechniker))
+        stoerungEinsatzMelden(o, !vorher.termin);
+    }
     /* Kontakt bei Lidl aus dem Störungsauftrag: ins Adressbuch (still – passiert bei jedem Speichern) */
     if(wo!==false && o.lidlKontakt && typeof kontaktErfassen==="function") kontaktErfassen({name:o.lidlKontakt, firma:"Lidl Österreich", funktion:"Kontakt Lidl", kategorie:"Lidl", telefon:o.lidlTelefon, mail:o.lidlMail},
       {art:"stoerung", id:o._id, titel:"Störung "+(byId[o.standortId]?stName(byId[o.standortId]):"")+(o.auftragsnummer?" "+o.auftragsnummer:"")}, true);
     return wo;
   });
+}
+function stoerungEinsatzMelden(o, neu){
+  if(typeof chatAn!=="function" || !chatAn()) return;
+  var name=kanonName(o.terminTechniker||""); if(!name || name===kanonName(meinName())) return;
+  chatTeamLaden().then(function(t){
+    var p=(t||[]).filter(function(x){ return kanonName(x.name||"")===name; })[0]; if(!p) return;
+    var s=byId[o.standortId];
+    var text=("🔧 "+(neu?"Störungseinsatz für dich":"Störungseinsatz geändert")+": "+(s?stName(s):(o.filialCode||"Störung"))+
+      " – "+dfmt(o.termin)+(o.terminZeit?", "+o.terminZeit+" Uhr":"")+
+      (s&&s.adresse?"\n"+s.adresse:"")+(o.problemtyp?"\n"+o.problemtyp:"")+(o.prioritaet?" · "+o.prioritaet:"")+
+      (o.auftragsnummer?"\nLidl-Auftrag "+o.auftragsnummer:"")+(o.beschreibung?"\n\n"+o.beschreibung:"")+
+      "\n\nÖffnen: Reiter Fällig → Offene Störungen (auch im Kalender und in deiner To-do-Liste)").slice(0,3900);
+    mitFrist(Store.sb.from("chat").insert({id:"c_"+Date.now().toString(36)+Math.random().toString(36).slice(2,8),
+      von:Store.benutzer.id, von_name:meinName(), text:text, an:p.user_id, an_name:p.name||name, fotos:[]}), 15000).then(function(){}, function(){});
+  }, function(){});
 }
 /* Jede Statusänderung einer Störung (abgehakt, gelöscht, per Protokoll
    erledigt) bekommt ihren eigenen Eintrag im Änderungsverlauf. So nimmt
@@ -24672,7 +24695,7 @@ function viewKalender(){
   if(S.kalModus==="monat") inhalt.appendChild(kalMonat(heute));
   else inhalt.appendChild(kalWoche(heute));
   f.appendChild(c);
-  var offenTodo=offenAufg.length+einsatzListe(S.kalWer).filter(function(e){ return !einsatzErledigt(e); }).length;
+  var offenTodo=offenAufg.length+einsatzListe(S.kalWer).filter(function(e){ return !einsatzErledigt(e); }).length+stoerEinsaetze(S.kalWer).length;
   var td=el('<div class="card" id="kal_todo"><div class="pad stack" style="gap:8px">'+
     '<div class="rowflex" style="justify-content:space-between;gap:8px"><h2>To-do'+(offenTodo?" ("+offenTodo+" offen)":"")+"</h2>"+
     '<button class="btn sm" type="button">+ Aufgabe</button></div>'+
@@ -24804,18 +24827,37 @@ function einsatzZeile(e){
   };
   return z;
 }
+/* geplante Störungseinsätze (Einsatztag steht in der Störung) der gewählten Person */
+function stoerEinsaetze(wahl){
+  return (typeof OFFENE!=="undefined" ? OFFENE : []).filter(function(o){
+    return o.termin && !o.erledigt && !o.geloescht && kalWerPasst(wahl, [], [o.terminTechniker]); });
+}
+function stoerEinsatzZeile(o){
+  var heute=isoLokal(new Date()), s=byId[o.standortId];
+  var z=el('<div class="rowflex" style="gap:8px;align-items:flex-start;flex-wrap:nowrap;border:1px solid var(--line);border-left:4px solid '+planKat("stoerung")[2]+';border-radius:8px;padding:6px 8px">'+
+    '<button class="btn ghost sm" type="button" data-ab style="min-width:36px;font-size:16px;padding:2px 6px" title="wird mit dem Störungsprotokoll abgehakt">☐</button>'+
+    '<a href="#" class="sprunglink" style="flex:1;min-width:0;font-size:13.5px;text-decoration:none;color:inherit"><strong>Störung '+esc(s?stName(s):(o.filialCode||""))+"</strong>"+
+      '<br><span class="muted" style="font-size:12px"><span'+(o.termin<heute?' style="color:var(--crit)"':"")+">Störung "+esc(dfmt(o.termin))+(o.terminZeit?" "+esc(o.terminZeit):"")+"</span>"+
+      (o.terminTechniker?" · "+esc(kanonName(o.terminTechniker)):"")+(o.problemtyp?" · "+esc(o.problemtyp):"")+(o.auftragsnummer?" · Auftrag "+esc(o.auftragsnummer):"")+"</span></a>"+
+    (nurLesen()?"":'<button class="btn sm" type="button" data-proto style="flex:none">Störungsprotokoll</button>')+"</div>");
+  z.querySelector("a").onclick=function(ev){ ev.preventDefault(); stoerungDialog(o); };
+  z.querySelector("[data-ab]").onclick=function(){ toast("Eine Störung ist erledigt, sobald das Störungsprotokoll gespeichert ist – „Störungsprotokoll“ antippen."); };
+  var pb=z.querySelector("[data-proto]"); if(pb) pb.onclick=function(){ protokollBeginnen(o.standortId, null, "stoerung", o._id); };
+  return z;
+}
 function aufgabenListe(wahl, filter){
   var heute=isoLokal(new Date()), so=plusTage(montagVon(heute),6);
   var alle=PLANUNG.filter(function(e){ return e.art==="aufgabe" && (!filter || filter(e)) &&
     (filter || kalWerPasst(wahl, (e.wer||[]).length?e.wer:[e.erstellt_von], e.wer_namen)); });
   /* im To-do des Kalenders auch die geplanten Einsätze – in Projekt und Markt stehen sie eigens */
-  if(!filter) alle=alle.concat(einsatzListe(wahl).map(function(e){ return Object.assign({}, e, {_einsatz:true, status:einsatzErledigt(e)?"erledigt":"offen", erledigt:e.erledigt||e.datum}); }));
+  if(!filter) alle=alle.concat(einsatzListe(wahl).map(function(e){ return Object.assign({}, e, {_einsatz:true, status:einsatzErledigt(e)?"erledigt":"offen", erledigt:e.erledigt||e.datum}); }))
+    .concat(stoerEinsaetze(wahl).map(function(o){ return {id:"st:"+o._id, _st:o, datum:o.termin, status:"offen"}; }));
   var box=el('<div class="stack" style="gap:8px"></div>');
   var gruppen=[["Überfällig",function(e){ return e.datum && e.datum<heute; },"var(--crit)"],["Heute",function(e){ return e.datum===heute; },""],
     ["Diese Woche",function(e){ return e.datum>heute && e.datum<=so; },""],["Später",function(e){ return e.datum>so; },""],["Ohne Datum",function(e){ return !e.datum; },""]];
   var offen=alle.filter(function(e){ return e.status!=="erledigt"; }).sort(function(a,b){ return String(a.datum||"9").localeCompare(String(b.datum||"9")); });
   if(!offen.length) box.appendChild(el('<div class="muted" style="font-size:13px">Nichts offen'+(filter?"":wahl==="ich"?" für dich":"")+".</div>"));
-  var zeileVon=function(e){ return e._einsatz ? einsatzZeile(PLANUNG.filter(function(x){ return x.id===e.id; })[0]||e) : aufgabeZeile(e); };
+  var zeileVon=function(e){ return e._st ? stoerEinsatzZeile(e._st) : e._einsatz ? einsatzZeile(PLANUNG.filter(function(x){ return x.id===e.id; })[0]||e) : aufgabeZeile(e); };
   gruppen.forEach(function(g){
     var l=offen.filter(g[1]); if(!l.length) return;
     box.appendChild(el('<div style="font-size:12.5px;font-weight:600;'+(g[2]?"color:"+g[2]:"")+'">'+esc(g[0])+" ("+l.length+")</div>"));
