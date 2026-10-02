@@ -6233,581 +6233,618 @@ function termineSchritt(inhalt, a){
    Dialog kommt (für den Wechsel in die Claude-App gesichert); weiter ist der
    gesicherte Claude-Vorgang nach dem Neuladen (kiVorgangFortsetzen) */
 function anlageAssistent(start, titel, neu, alles, vorgang){
-  return new Promise(function(fertig){
-    var a=Object.assign({}, start);
-    /* eigene Kopie der Termine – der Vergleich mit dem Stand vorher braucht das Original */
-    if(start._termine) a._termine=start._termine.map(function(t){ return Object.assign({}, t); });
-    var ov=el('<div class="assistent" role="dialog" aria-modal="true"><div class="as-karte">'+
-      '<div class="as-kopf"><div style="min-width:0"><div class="as-titel"></div><div class="as-schritt"></div></div>'+
-        '<button class="btn ghost sm" type="button" data-as="zu">Abbrechen</button></div>'+
-      '<div class="as-inhalt"></div><div class="as-fuss"></div></div></div>');
-    document.body.appendChild(ov);
-    /* Scroll-Sperre der Ansicht darunter (etwa der Markt-Ansicht) beim Schließen zurückgeben */
-    var vorherOv=document.body.style.overflow;
-    document.body.style.overflow="hidden";
-    var inhalt=ov.querySelector(".as-inhalt"), fuss=ov.querySelector(".as-fuss");
-    var geschlossen=false;   /* eine späte KI-Antwort nach dem Schließen nicht mehr „übernehmen“ */
-    var schliessen=function(wert){
-      geschlossen=true;
-      if(wert){ delete wert._springe; delete wert._ohneRegel; delete wert._kiVorlage; }   /* nur Steuerung des Dialogs, kein Anlagenwert */
-      ov.remove(); document.body.style.overflow=vorherOv; fertig(wert);
-      /* weitere Prüfbücher aus derselben Fotoserie: nach dem Speichern anbieten */
-      if(wert && kiRest && kiRest.liste.length) setTimeout(weitereAusPruefbuch, 400);
-      else if(!wert) kiRest=null;
-    };
-    var anfangA=JSON.stringify(a);
-    ov.querySelector('[data-as="zu"]').onclick=function(){
-      /* Eingetragenes (auch von der KI Übernommenes) nicht still wegwerfen */
-      if(JSON.stringify(a)!==anfangA && !window.confirm("Die eingetragenen Anlagendaten verwerfen?")) return;
-      schliessen(null);
-    };
-    /* zurück aus der Claude-App (Seite neu geladen): die Eingaben von vorher –
-       verglichen wird weiter mit dem Stand, den der Aufrufer übergeben hat */
-    var fortsetzen=vorgang && vorgang.weiter;   /* nicht „weiter“ – so heißt der Schritt vorwärts */
-    if(fortsetzen){
-      a=Object.assign({}, fortsetzen.ort.a);
-      if(fortsetzen.ort.kiRest){ kiRest=fortsetzen.ort.kiRest; kiRestZiel(kiRest, vorgang); }   /* weitere Prüfbücher derselben Fotoserie */
-    }
+  return new Promise(function(fertig){ anlageAssistentDialog(fertig, start, titel, neu, alles, vorgang); });
+}
+/* der Dialog selbst – fertig(werte|null) beendet ihn (aus anlageAssistent herausgelöst, 03.10.2026) */
+/* Anlagendaten-Dialog, Teil KI: Typenschild oder Prüfbuch fotografieren, lesen lassen, Angehaktes übernehmen */
+function anlageDialogTeilKi(P){
+  var a=P.a, geschlossen=P.geschlossen, gruppenMitLuecke=P.gruppenMitLuecke, alleGruppen=P.alleGruppen, termineZeigenNoetig=P.termineZeigenNoetig, neu=P.neu, alles=P.alles, vorgang=P.vorgang;
+  var ortStand;
+  /* für die anderen Teile */
+  P.kiEinlesen=kiEinlesen; P.kiArt=kiArt;
 
-    /* Schritte: bei einer neuen Anlage zuerst die Bezeichnung, dann jede
-       Gruppe, in der eine Pflichtangabe fehlt */
-    var gruppenMitLuecke=function(){
-      var fehl=anlageLuecken(a);
-      var pflicht=ANLAGE_GRUPPEN.filter(function(g){ return fehl.some(function(f){ return f.gruppe===g; }); });
-      /* Freiwilliges zum Schluss: wer gerade vor dem Typenschild steht, soll
-         es eintragen können, ohne dafür in die Verwaltung zu wechseln.
-         Überspringen geht in jedem Schritt. */
-      var frei=ANLAGE_GRUPPEN.filter(function(g){
-        return g.optional && (!g.wenn || g.wenn(a)) && g.felder.some(function(f){
-          return feldGilt(Object.assign({gruppe:g}, f), a) && leerWert(a[f.k]); });
-      });
-      return pflicht.concat(frei);
+  /* Prüfbuch oder Typenschild fotografieren und lesen lassen. Was die KI
+     findet, wird angezeigt und nur übernommen, was angehakt bleibt; die
+     Übernahme landet im Dialog, gespeichert wird wie sonst auch erst mit
+     „Übernehmen“. Prüfungen aus dem Prüfbuch werden zu Wartungen laut
+     Prüfbuch. */
+  /* der Markt der Anlage – für die Einordnung durch die KI */
+  function kiMarkt(){
+    var lp=a._leaderId ? ALLE_POS.filter(function(x){ return x.id===a._leaderId; })[0] : null;
+    return byId[a.standortId] || (lp && byId[lp.standortId]) || null;
+  }
+  function kiEinlesen(){
+    var w=ansichtOeffnen("Aus Fotos lesen");
+    w.schritt.textContent="Was ist auf den Fotos?";
+    var reihe=el('<div class="stack"><button class="btn" type="button" data-kiart="pruefbuch">Prüfbuch – eine oder mehrere Seiten</button>'+
+      '<button class="btn" type="button" data-kiart="typenschild" data-geraet="aussen">Typenschild Außengerät</button>'+
+      '<button class="btn ghost" type="button" data-kiart="typenschild" data-geraet="innen">Typenschilder Innengeräte – eins oder mehrere</button>'+
+      '<div class="muted" style="font-size:12.5px">Prüfbuch-Seiten dürfen in einem Rutsch fotografiert werden (bis '+KI_MAX_FOTOS+' Bilder, mehrere Anlagen gehen auch). '+
+      "Die Füllmenge der Anlage kommt aus dem Prüfbuch – auf dem Typenschild steht nur die Werksfüllung.</div></div>");
+    reihe.querySelectorAll("[data-kiart]").forEach(function(b){ b.onclick=function(){ w.zu(); kiArt(b.dataset.kiart, b.dataset.geraet); }; });
+    w.inhalt.appendChild(reihe);
+  }
+  /* abgebrochen oder nichts übernommen: zurück, wo man war – im Schritt
+     (bei einer neuen Anlage etwa die Bezeichnung) oder in der Übersicht */
+  function zurueck(){ if(P.zurUebersicht) P.uebersicht(); else P.schrittZeigen(); }
+  function kiArt(art, geraet, vorgabe, weiterKi){
+    /* schon gelesenes Prüfbuch (weiteres Buch aus derselben Fotoserie) */
+    if(vorgabe){ verarbeiten({daten:vorgabe, _gewaehlt:true}); return; }
+    var kopie=function(w){
+      kiKopierweg(art, kiKontext(kiMarkt(), a), {ort:ortStand, geraet:geraet||null, weiter:w||null})
+        .then(function(d){ if(d) return verarbeiten({daten:d}); else zurueck(); })
+        .catch(function(e){ toast("Antwort nicht verwertbar: "+(e&&e.message||e)); zurueck(); });
     };
-    /* „alles“: der Aufruf kommt nicht aus einem Protokoll, sondern vom Knopf an
-       der Anlage. Dann geht es ums Prüfen und Korrigieren, nicht nur ums
-       Nachtragen – also jede Gruppe zeigen, die zur Anlage passt. */
-    var alleGruppen=function(){
-      return ANLAGE_GRUPPEN.filter(function(g){ return !g.wenn || g.wenn(a); });
-    };
-    /* Termine als eigener Schritt: beim Prüfen immer, beim Ergänzen, solange
-       dort etwas nicht sauber ist (Inbetriebnahme, Soll-Monat oder Kürzel fehlt,
-       unbestätigte Abweichung von der Standardregel) – sonst stehen sie in der Übersicht */
-    var termineZeigenNoetig=function(){ return !!a._termine && (alles || !a.inbetriebnahme || termineOffen(a).length>0 ||
-      a._termine.some(function(t){ return !t.intervallCode || !+t.monat; })); };
-    var schritte=(neu?["name"]:[]).concat(alles?alleGruppen():gruppenMitLuecke()).concat(termineZeigenNoetig()?["termine"]:[]);
-    var pos=0, zurUebersicht=false;
-
-    /* Prüfbuch oder Typenschild fotografieren und lesen lassen. Was die KI
-       findet, wird angezeigt und nur übernommen, was angehakt bleibt; die
-       Übernahme landet im Dialog, gespeichert wird wie sonst auch erst mit
-       „Übernehmen“. Prüfungen aus dem Prüfbuch werden zu Wartungen laut
-       Prüfbuch. */
-    /* der Markt der Anlage – für die Einordnung durch die KI */
-    function kiMarkt(){
-      var lp=a._leaderId ? ALLE_POS.filter(function(x){ return x.id===a._leaderId; })[0] : null;
-      return byId[a.standortId] || (lp && byId[lp.standortId]) || null;
-    }
-    function kiEinlesen(){
-      var w=ansichtOeffnen("Aus Fotos lesen");
-      w.schritt.textContent="Was ist auf den Fotos?";
-      var reihe=el('<div class="stack"><button class="btn" type="button" data-kiart="pruefbuch">Prüfbuch – eine oder mehrere Seiten</button>'+
-        '<button class="btn" type="button" data-kiart="typenschild" data-geraet="aussen">Typenschild Außengerät</button>'+
-        '<button class="btn ghost" type="button" data-kiart="typenschild" data-geraet="innen">Typenschilder Innengeräte – eins oder mehrere</button>'+
-        '<div class="muted" style="font-size:12.5px">Prüfbuch-Seiten dürfen in einem Rutsch fotografiert werden (bis '+KI_MAX_FOTOS+' Bilder, mehrere Anlagen gehen auch). '+
-        "Die Füllmenge der Anlage kommt aus dem Prüfbuch – auf dem Typenschild steht nur die Werksfüllung.</div></div>");
-      reihe.querySelectorAll("[data-kiart]").forEach(function(b){ b.onclick=function(){ w.zu(); kiArt(b.dataset.kiart, b.dataset.geraet); }; });
-      w.inhalt.appendChild(reihe);
-    }
-    /* abgebrochen oder nichts übernommen: zurück, wo man war – im Schritt
-       (bei einer neuen Anlage etwa die Bezeichnung) oder in der Übersicht */
-    function zurueck(){ if(zurUebersicht) uebersicht(); else schrittZeigen(); }
-    /* Stand des Dialogs für den Wechsel in die Claude-App (nur mit bekanntem Aufrufer) */
-    var ortStand = vorgang && vorgang.ort ? function(){
-      return Object.assign({typ:"anlage"}, vorgang.ort, {a:a, pos:pos, zurUebersicht:zurUebersicht, kiRest:kiRest});
-    } : null;
-    function kiArt(art, geraet, vorgabe, weiterKi){
-      /* schon gelesenes Prüfbuch (weiteres Buch aus derselben Fotoserie) */
-      if(vorgabe){ verarbeiten({daten:vorgabe, _gewaehlt:true}); return; }
-      var kopie=function(w){
-        kiKopierweg(art, kiKontext(kiMarkt(), a), {ort:ortStand, geraet:geraet||null, weiter:w||null})
-          .then(function(d){ if(d) return verarbeiten({daten:d}); else zurueck(); })
-          .catch(function(e){ toast("Antwort nicht verwertbar: "+(e&&e.message||e)); zurueck(); });
-      };
-      /* nach dem Neuladen: gleich wieder im Kopier-Weg */
-      if(weiterKi){ kopie(weiterKi); return; }
-      /* Weg wählen: direkt in der App oder über die eigene Claude-App
-         (Kopier-Weg) – gleiche Prüfansicht */
-      kiWegWaehlen(art).then(function(weg){
-        if(weg==="kopie") kopie();
-        else if(weg==="direkt") direkt();
-        else if(weg==="beispiel") verarbeiten({daten:kiBeispiel(art)});
+    /* nach dem Neuladen: gleich wieder im Kopier-Weg */
+    if(weiterKi){ kopie(weiterKi); return; }
+    /* Weg wählen: direkt in der App oder über die eigene Claude-App
+       (Kopier-Weg) – gleiche Prüfansicht */
+    kiWegWaehlen(art).then(function(weg){
+      if(weg==="kopie") kopie();
+      else if(weg==="direkt") direkt();
+      else if(weg==="beispiel") verarbeiten({daten:kiBeispiel(art)});
+      else zurueck();
+    });
+    function direkt(){ kiFotosWaehlen().then(function(dateien){
+      if(!dateien.length) return;
+      if(dateien.length>kiMaxFotos(art)){ toast("Höchstens "+kiMaxFotos(art)+" Bilder auf einmal."); return; }
+      P.kopf("KI liest "+dateien.length+" Bild"+(dateien.length===1?"":"er")+" …", "bitte warten");
+      /* mit Zeitgrenze: eine hängende Anfrage darf den Dialog nicht ewig sperren */
+      return kiLesen(art, dateien, kiKontext(kiMarkt(), a)).then(verarbeiten, function(e){
+        if(e && e.message==="abgebrochen"){ zurueck(); return; }
+        /* direkt nicht erreichbar (nicht eingerichtet, Limit, Netz): Kopier-Weg anbieten */
+        if(window.confirm("Die KI-Erkennung hat nicht geklappt:\n"+(e&&e.message||e)+"\n\nStattdessen über die Claude-App lesen (Auftrag kopieren, Antwort einfügen)?")) kopie();
         else zurueck();
       });
-      function direkt(){ kiFotosWaehlen().then(function(dateien){
-        if(!dateien.length) return;
-        if(dateien.length>kiMaxFotos(art)){ toast("Höchstens "+kiMaxFotos(art)+" Bilder auf einmal."); return; }
-        kopf("KI liest "+dateien.length+" Bild"+(dateien.length===1?"":"er")+" …", "bitte warten");
-        /* mit Zeitgrenze: eine hängende Anfrage darf den Dialog nicht ewig sperren */
-        return kiLesen(art, dateien, kiKontext(kiMarkt(), a)).then(verarbeiten, function(e){
-          if(e && e.message==="abgebrochen"){ zurueck(); return; }
-          /* direkt nicht erreichbar (nicht eingerichtet, Limit, Netz): Kopier-Weg anbieten */
-          if(window.confirm("Die KI-Erkennung hat nicht geklappt:\n"+(e&&e.message||e)+"\n\nStattdessen über die Claude-App lesen (Auftrag kopieren, Antwort einfügen)?")) kopie();
-          else zurueck();
-        });
-      }); }
-      function verarbeiten(erg){
-          if(geschlossen){ toast("Der Dialog war schon geschlossen – das Ergebnis der KI wurde verworfen."); return; }
-          var d=erg.daten||{};
-          /* Prüfbuch: eine Fotoserie kann mehrere Bücher (Anlagen) enthalten –
-             eins gehört zu dieser Anlage, die anderen werden danach angeboten */
-          if(art==="pruefbuch"){
-            var buecher=kiPruefbuecher(d);
-            if(!buecher.length){ toast("Auf den Fotos wurde kein Prüfbuch erkannt."); zurueck(); return; }
-            if(buecher.length>1 && !erg._gewaehlt){
-              return kiBuchWaehlen(buecher, d.hinweise, a).then(function(i){
-                if(i===null){ zurueck(); return; }
-                kiRest={standortId:(kiMarkt()||{}).id||a.standortId, liste:buecher.filter(function(b,j){ return j!==i; })}; kiRestZiel(kiRest, vorgang);
-                if(i<0){ toast(buecher.length+" Prüfbücher werden nach dem Übernehmen als weitere Anlagen angeboten."); uebersicht(); return; }
-                verarbeiten({daten:buecher[i], _gewaehlt:true});
-              });
-            }
-            d=buecher[0];
-          }
-          if(art==="typenschild" && geraet==="innen") return kiInnen(d);
-          /* Außengerät: das Schild, das die KI als außen erkennt, sonst das erste */
-          if(art==="typenschild"){
-            var gl=Array.isArray(d.geraete)?d.geraete:[];
-            var ag=gl.filter(function(x){ return x.art==="aussen"; })[0] || gl.filter(function(x){ return x.art!=="innen"; })[0] || null;
-            /* nur Innengeräte auf den Fotos: nicht als Außengerät übernehmen */
-            if(!ag){ toast(gl.length ? "Auf den Fotos ist nur ein Innengerät-Typenschild – bitte „Typenschilder Innengeräte“ wählen." : "Kein Typenschild erkannt."); zurueck(); return; }
-            /* unsicher „geraet N: feld“ gilt nur, wenn N das Außengerät ist */
-            var agNr=gl.indexOf(ag)+1;
-            var unsA=(d.unsicher||[]).map(function(u){ var m=/geraet\s*(\d+)\s*:\s*(\w+)/i.exec(u); return m ? (+m[1]===agNr ? m[2] : null) : u; }).filter(Boolean);
-            /* Werksfüllung ist nicht die Füllmenge der Anlage – die bleibt dem Prüfbuch */
-            d={anlage:{hersteller:ag.hersteller, modell:ag.modell, seriennummer:ag.seriennummer, kaeltemittelArt:ag.kaeltemittelArt,
-               leistungKw:ag.leistungKw, psBar:ag.psBar}, unsicher:unsA,
-               hinweise:[d.hinweise, gl.length>1?"Auf den Fotos sind "+gl.length+" Typenschilder – übernommen wird das Außengerät; Innengeräte über „Typenschilder Innengeräte“.":"",
-                 ag.werksfuellungKg?"Werksfüllung laut Schild: "+ag.werksfuellungKg+" kg (nicht die Füllmenge der Anlage).":""].filter(Boolean).join(" ")};
-          }
-          var gelesen=kiAnlage(d.anlage);
-          var felder=ANLAGE_FELDER.filter(function(f){ return !f.gruppe.geheim; }).map(function(f){
-            return {k:f.k, l:f.l, zeige:function(w){ return anlageWertText(f,w); }}; });
-          felder.unshift({k:"anlagentyp", l:"Bezeichnung"});
-          if(a._termine) felder.push({k:"inbetriebnahme", l:"Inbetriebnahme", zeige:dfmt});
-          var nw=kiNachweise(d.pruefungen);
-          /* nur anbieten, was die Anlage noch nicht hat (derselbe Besuch zählt einmal) */
-          var lp=a._leaderId ? ALLE_POS.filter(function(x){ return x.id===a._leaderId; })[0] : null;
-          if(lp){
-            var schon=besucheDerAnlage(lp);
-            /* auch innerhalb der Antwort denselben Besuch nur einmal anbieten */
-            nw.voll=nw.voll.filter(function(n){
-              if(schon.some(function(dd){ return gleicherBesuch(dd,n.datum); })) return false;
-              schon.push(n.datum); return true; });
-          }
-          /* Im Protokoll: der Prüfbuch-Eintrag vom HEUTIGEN Besuch (±14 Tage) ist die Wartung, die
-             dieses Protokoll gerade dokumentiert – nicht als „Wartung laut Prüfbuch“ übernehmen, sonst
-             gilt der Termin als erledigt, bevor das Protokoll fertig ist (Büro 02.10.2026, Gerasdorferstraße) */
-          if(vorgang && vorgang.ort && vorgang.ort.aufruf==="protokoll"){
-            var protTag=vorgang.ort.datum || isoLokal(new Date());
-            var heuteWeg=nw.voll.filter(function(n){ return gleicherBesuch(protTag, n.datum); });
-            if(heuteWeg.length){
-              nw.voll=nw.voll.filter(function(n){ return !gleicherBesuch(protTag, n.datum); });
-              toast("Prüfbuch: der Eintrag vom "+heuteWeg.map(function(n){ return dfmt(n.datum); }).join(", ")+
-                " ist dieser Besuch – er zählt über das Protokoll, nicht als Nachweis.");
-            }
-          }
-          /* Angaben ohne Tag: als eigene Zeile zum Abhaken – nicht an die Zeile
-             der Wartungen gekoppelt (die fehlt, wenn alle schon bekannt sind) */
-          if(nw.ohneTag.length){
-            gelesen._notizOhneTag="Laut Prüfbuch außerdem (ohne Tag): "+nw.ohneTag.join(", ")+".";
-            felder.push({k:"_notizOhneTag", l:"Notiz (Prüfungen ohne Tag)", q:"pruefungen", zeige:function(t){ return String(t||""); }});
-          }
-          if(nw.voll.length){
-            gelesen._nachweise=nw.voll;
-            felder.push({k:"_nachweise", l:"Wartungen laut Prüfbuch", q:"pruefungen", zeige:function(l){
-              return (l||[]).map(function(n){ return dfmt(n.datum)+(n.techniker?" ("+n.techniker+")":""); }).join(", "); }});
-          }
-          /* Wartungsintervall laut Prüfbuch gegen die Termine: 12 Monate = eine
-             Jahreswartung. Nur das Kürzel wird angeboten – der Soll-Monat bleibt,
-             Termine dazunehmen oder streichen geht in der Verwaltung. */
-          var intervallHinweis="";
-          var mon=kiZahl(d.anlage && d.anlage.wartungsintervallMonate);
-          if(art==="pruefbuch" && mon && a._termine){
-            var tl=a._termine;
-            if(mon===12 && tl.length===1 && tl[0].intervallCode!=="JW"){
-              gelesen._intervall="JW";
-              felder.push({k:"_intervall", l:"Termin laut Prüfbuch", q:"wartungsintervallMonate",
-                zeige:function(){ return "Jahreswartung (JW) – im Prüfbuch alle 12 Monate; der Soll-Monat bleibt"; }});
-            } else if(mon===12 && tl.length>1){
-              intervallHinweis="Laut Prüfbuch jährlich (12 Monate), eingetragen sind aber "+tl.length+" Termine – bitte in der Verwaltung prüfen.";
-            } else if(mon===6 && tl.length<2){
-              intervallHinweis="Laut Prüfbuch halbjährlich (6 Monate), eingetragen ist nur ein Termin – den zweiten bitte in der Verwaltung anlegen.";
-            }
-          }
-          var verworfen=gelesen._verworfen||[]; delete gelesen._verworfen;
-          var hinweis=[d.hinweise, intervallHinweis,
-            verworfen.length?"Nicht übernommen (ungültiges Datum oder in der Zukunft): "+verworfen.join(", ")+".":"",
-            nw.ungueltig.length?"Nicht übernommen (Datum in der Zukunft oder ungültig): "+nw.ungueltig.join(", ")+".":""].filter(Boolean).join(" ");
-          /* „unsicher“ auf die Schlüssel der Prüfansicht bringen: Pfade („anlage.x“,
-             „pruefungen[1].datum“) und einzelne Prüfungsfelder zählen für die Zeile */
-          var unsP=(d.unsicher||[]).map(function(u){ u=String(u).trim();
-            return /^(pruefungen|datum|techniker|firma|maengel)\b/i.test(u) ? "pruefungen" : u.replace(/^anlage\s*[.:]\s*/i,"").replace(/\[\d+\]/g,""); });
-          return kiPruefen(art==="pruefbuch"?"Prüfbuch":"Typenschild Außengerät", gelesen, a, felder, unsP, hinweis).then(function(wahl){
-            if(!wahl){ zurueck(); return; }
-            /* die Fotos dazu an der Anlage speichern (nur aus der direkten Erkennung – beim Weg über die Claude-App liegen sie nicht in der App) */
-            /* was vorher schon bekannt war (Liste, Prüfbuch, App) – Seiten nur mit diesen Einträgen sind „nichts Neues“ */
-            var lpB=a._leaderId ? posById[a._leaderId] : null, bekannteBesuche=(lpB ? besucheDerAnlage(lpB) : []).concat((a._nachweiseNeu||[]).map(function(n){ return n.datum; }));
-            if(erg && erg._bilder) setTimeout(function(){ anlagenFotosSpeichern(a, art, erg._bilder, (erg.daten||{}).bilder, bekannteBesuche); }, 300);
-            Object.keys(wahl).forEach(function(k){
-              if(k==="_nachweise") a._nachweiseNeu=(a._nachweiseNeu||[]).concat(wahl[k]);
-              else if(k==="_notizOhneTag") a._notizDazu=wahl[k];
-              else if(k==="_intervall") a._termine.forEach(function(t){ t.intervallCode=wahl[k]; });
-              else a[k]=wahl[k];
+    }); }
+    function verarbeiten(erg){
+        if(geschlossen){ toast("Der Dialog war schon geschlossen – das Ergebnis der KI wurde verworfen."); return; }
+        var d=erg.daten||{};
+        /* Prüfbuch: eine Fotoserie kann mehrere Bücher (Anlagen) enthalten –
+           eins gehört zu dieser Anlage, die anderen werden danach angeboten */
+        if(art==="pruefbuch"){
+          var buecher=kiPruefbuecher(d);
+          if(!buecher.length){ toast("Auf den Fotos wurde kein Prüfbuch erkannt."); zurueck(); return; }
+          if(buecher.length>1 && !erg._gewaehlt){
+            return kiBuchWaehlen(buecher, d.hinweise, a).then(function(i){
+              if(i===null){ zurueck(); return; }
+              kiRest={standortId:(kiMarkt()||{}).id||a.standortId, liste:buecher.filter(function(b,j){ return j!==i; })}; kiRestZiel(kiRest, vorgang);
+              if(i<0){ toast(buecher.length+" Prüfbücher werden nach dem Übernehmen als weitere Anlagen angeboten."); P.uebersicht(); return; }
+              verarbeiten({daten:buecher[i], _gewaehlt:true});
             });
-            toast(Object.keys(wahl).length+" Angabe"+(Object.keys(wahl).length===1?"":"n")+" übernommen – bitte prüfen und dann „Übernehmen“.");
-            uebersicht();
-            /* gehen Inbetriebnahme oder Termine aus dem Prüfbuch nicht hervor:
-               gleich danach fragen – für die Planung das Wichtigste */
-            if(art==="pruefbuch" && a._termine && termineOffen(a).some(function(x){ return !x.weich; })) termineEinzeln("Noch offen","Zur Übersicht");
+          }
+          d=buecher[0];
+        }
+        if(art==="typenschild" && geraet==="innen") return kiInnen(d);
+        /* Außengerät: das Schild, das die KI als außen erkennt, sonst das erste */
+        if(art==="typenschild"){
+          var gl=Array.isArray(d.geraete)?d.geraete:[];
+          var ag=gl.filter(function(x){ return x.art==="aussen"; })[0] || gl.filter(function(x){ return x.art!=="innen"; })[0] || null;
+          /* nur Innengeräte auf den Fotos: nicht als Außengerät übernehmen */
+          if(!ag){ toast(gl.length ? "Auf den Fotos ist nur ein Innengerät-Typenschild – bitte „Typenschilder Innengeräte“ wählen." : "Kein Typenschild erkannt."); zurueck(); return; }
+          /* unsicher „geraet N: feld“ gilt nur, wenn N das Außengerät ist */
+          var agNr=gl.indexOf(ag)+1;
+          var unsA=(d.unsicher||[]).map(function(u){ var m=/geraet\s*(\d+)\s*:\s*(\w+)/i.exec(u); return m ? (+m[1]===agNr ? m[2] : null) : u; }).filter(Boolean);
+          /* Werksfüllung ist nicht die Füllmenge der Anlage – die bleibt dem Prüfbuch */
+          d={anlage:{hersteller:ag.hersteller, modell:ag.modell, seriennummer:ag.seriennummer, kaeltemittelArt:ag.kaeltemittelArt,
+             leistungKw:ag.leistungKw, psBar:ag.psBar}, unsicher:unsA,
+             hinweise:[d.hinweise, gl.length>1?"Auf den Fotos sind "+gl.length+" Typenschilder – übernommen wird das Außengerät; Innengeräte über „Typenschilder Innengeräte“.":"",
+               ag.werksfuellungKg?"Werksfüllung laut Schild: "+ag.werksfuellungKg+" kg (nicht die Füllmenge der Anlage).":""].filter(Boolean).join(" ")};
+        }
+        var gelesen=kiAnlage(d.anlage);
+        var felder=ANLAGE_FELDER.filter(function(f){ return !f.gruppe.geheim; }).map(function(f){
+          return {k:f.k, l:f.l, zeige:function(w){ return anlageWertText(f,w); }}; });
+        felder.unshift({k:"anlagentyp", l:"Bezeichnung"});
+        if(a._termine) felder.push({k:"inbetriebnahme", l:"Inbetriebnahme", zeige:dfmt});
+        var nw=kiNachweise(d.pruefungen);
+        /* nur anbieten, was die Anlage noch nicht hat (derselbe Besuch zählt einmal) */
+        var lp=a._leaderId ? ALLE_POS.filter(function(x){ return x.id===a._leaderId; })[0] : null;
+        if(lp){
+          var schon=besucheDerAnlage(lp);
+          /* auch innerhalb der Antwort denselben Besuch nur einmal anbieten */
+          nw.voll=nw.voll.filter(function(n){
+            if(schon.some(function(dd){ return gleicherBesuch(dd,n.datum); })) return false;
+            schon.push(n.datum); return true; });
+        }
+        /* Im Protokoll: der Prüfbuch-Eintrag vom HEUTIGEN Besuch (±14 Tage) ist die Wartung, die
+           dieses Protokoll gerade dokumentiert – nicht als „Wartung laut Prüfbuch“ übernehmen, sonst
+           gilt der Termin als erledigt, bevor das Protokoll fertig ist (Büro 02.10.2026, Gerasdorferstraße) */
+        if(vorgang && vorgang.ort && vorgang.ort.aufruf==="protokoll"){
+          var protTag=vorgang.ort.datum || isoLokal(new Date());
+          var heuteWeg=nw.voll.filter(function(n){ return gleicherBesuch(protTag, n.datum); });
+          if(heuteWeg.length){
+            nw.voll=nw.voll.filter(function(n){ return !gleicherBesuch(protTag, n.datum); });
+            toast("Prüfbuch: der Eintrag vom "+heuteWeg.map(function(n){ return dfmt(n.datum); }).join(", ")+
+              " ist dieser Besuch – er zählt über das Protokoll, nicht als Nachweis.");
+          }
+        }
+        /* Angaben ohne Tag: als eigene Zeile zum Abhaken – nicht an die Zeile
+           der Wartungen gekoppelt (die fehlt, wenn alle schon bekannt sind) */
+        if(nw.ohneTag.length){
+          gelesen._notizOhneTag="Laut Prüfbuch außerdem (ohne Tag): "+nw.ohneTag.join(", ")+".";
+          felder.push({k:"_notizOhneTag", l:"Notiz (Prüfungen ohne Tag)", q:"pruefungen", zeige:function(t){ return String(t||""); }});
+        }
+        if(nw.voll.length){
+          gelesen._nachweise=nw.voll;
+          felder.push({k:"_nachweise", l:"Wartungen laut Prüfbuch", q:"pruefungen", zeige:function(l){
+            return (l||[]).map(function(n){ return dfmt(n.datum)+(n.techniker?" ("+n.techniker+")":""); }).join(", "); }});
+        }
+        /* Wartungsintervall laut Prüfbuch gegen die Termine: 12 Monate = eine
+           Jahreswartung. Nur das Kürzel wird angeboten – der Soll-Monat bleibt,
+           Termine dazunehmen oder streichen geht in der Verwaltung. */
+        var intervallHinweis="";
+        var mon=kiZahl(d.anlage && d.anlage.wartungsintervallMonate);
+        if(art==="pruefbuch" && mon && a._termine){
+          var tl=a._termine;
+          if(mon===12 && tl.length===1 && tl[0].intervallCode!=="JW"){
+            gelesen._intervall="JW";
+            felder.push({k:"_intervall", l:"Termin laut Prüfbuch", q:"wartungsintervallMonate",
+              zeige:function(){ return "Jahreswartung (JW) – im Prüfbuch alle 12 Monate; der Soll-Monat bleibt"; }});
+          } else if(mon===12 && tl.length>1){
+            intervallHinweis="Laut Prüfbuch jährlich (12 Monate), eingetragen sind aber "+tl.length+" Termine – bitte in der Verwaltung prüfen.";
+          } else if(mon===6 && tl.length<2){
+            intervallHinweis="Laut Prüfbuch halbjährlich (6 Monate), eingetragen ist nur ein Termin – den zweiten bitte in der Verwaltung anlegen.";
+          }
+        }
+        var verworfen=gelesen._verworfen||[]; delete gelesen._verworfen;
+        var hinweis=[d.hinweise, intervallHinweis,
+          verworfen.length?"Nicht übernommen (ungültiges Datum oder in der Zukunft): "+verworfen.join(", ")+".":"",
+          nw.ungueltig.length?"Nicht übernommen (Datum in der Zukunft oder ungültig): "+nw.ungueltig.join(", ")+".":""].filter(Boolean).join(" ");
+        /* „unsicher“ auf die Schlüssel der Prüfansicht bringen: Pfade („anlage.x“,
+           „pruefungen[1].datum“) und einzelne Prüfungsfelder zählen für die Zeile */
+        var unsP=(d.unsicher||[]).map(function(u){ u=String(u).trim();
+          return /^(pruefungen|datum|techniker|firma|maengel)\b/i.test(u) ? "pruefungen" : u.replace(/^anlage\s*[.:]\s*/i,"").replace(/\[\d+\]/g,""); });
+        return kiPruefen(art==="pruefbuch"?"Prüfbuch":"Typenschild Außengerät", gelesen, a, felder, unsP, hinweis).then(function(wahl){
+          if(!wahl){ zurueck(); return; }
+          /* die Fotos dazu an der Anlage speichern (nur aus der direkten Erkennung – beim Weg über die Claude-App liegen sie nicht in der App) */
+          /* was vorher schon bekannt war (Liste, Prüfbuch, App) – Seiten nur mit diesen Einträgen sind „nichts Neues“ */
+          var lpB=a._leaderId ? posById[a._leaderId] : null, bekannteBesuche=(lpB ? besucheDerAnlage(lpB) : []).concat((a._nachweiseNeu||[]).map(function(n){ return n.datum; }));
+          if(erg && erg._bilder) setTimeout(function(){ anlagenFotosSpeichern(a, art, erg._bilder, (erg.daten||{}).bilder, bekannteBesuche); }, 300);
+          Object.keys(wahl).forEach(function(k){
+            if(k==="_nachweise") a._nachweiseNeu=(a._nachweiseNeu||[]).concat(wahl[k]);
+            else if(k==="_notizOhneTag") a._notizDazu=wahl[k];
+            else if(k==="_intervall") a._termine.forEach(function(t){ t.intervallCode=wahl[k]; });
+            else a[k]=wahl[k];
           });
-      }
+          toast(Object.keys(wahl).length+" Angabe"+(Object.keys(wahl).length===1?"":"n")+" übernommen – bitte prüfen und dann „Übernehmen“.");
+          P.uebersicht();
+          /* gehen Inbetriebnahme oder Termine aus dem Prüfbuch nicht hervor:
+             gleich danach fragen – für die Planung das Wichtigste */
+          if(art==="pruefbuch" && a._termine && termineOffen(a).some(function(x){ return !x.weich; })) P.termineEinzeln("Noch offen","Zur Übersicht");
+        });
     }
-    /* Innengeräte vom Typenschild: je Gerät ein Haken. Schon erfasste
-       Seriennummern werden nicht doppelt angeboten; übernommen wird ans Ende
-       der Liste, den Raum trägt man danach ein. */
-    function kiInnen(d){
-      /* Nummern wie in der Antwort der KI („geraet 3“), auch wenn Außengeräte wegfallen */
-      var gl=(Array.isArray(d.geraete)?d.geraete:[]).map(function(x){ return x.art==="aussen" ? null : x; });
-      /* schon erfasst (zählt als „schon erfasst“) und schon in dieser Antwort
-         gesehen (dasselbe Schild zweimal: still nur einmal) – zwei Listen */
-      var da=(Array.isArray(a.innengeraete)?a.innengeraete:[]).map(function(g){ return String(g.seriennummer||"").trim().toUpperCase(); }).filter(Boolean);
-      var gesehen=[];
-      var gelesen={}, felder=[], doppelt=0;
-      gl.forEach(function(x, i){
-        if(!x) return;
-        var sn=String(x.seriennummer||"").trim();
-        if(sn && gesehen.indexOf(sn.toUpperCase())>=0) return;
-        if(sn) gesehen.push(sn.toUpperCase());
-        if(sn && da.indexOf(sn.toUpperCase())>=0){ doppelt++; return; }
-        var g={hersteller:String(x.hersteller||"").trim(), modell:String(x.modell||"").trim(), seriennummer:sn,
-               leistungKw:kiZahl(x.leistungKw)};
-        if(!innenBelegt(g)) return;
-        gelesen["_innen"+i]=g;
-        felder.push({k:"_innen"+i, l:"Innengerät "+(felder.length+1), q:"geraet "+(i+1),
-          zeige:function(w){ return innenText([w]).replace(/^Innengerät 1: /,""); }});
-      });
-      /* alles schon da: kein leerer Prüfschirm mit „nichts Verwertbares gefunden“ */
-      if(!felder.length && doppelt){
-        toast(doppelt===1 ? "Das Gerät ist schon erfasst (gleiche Seriennummer)." : "Alle "+doppelt+" Geräte sind schon erfasst (gleiche Seriennummer).");
-        zurueck(); return;
-      }
-      var hinweis=[d.hinweise, doppelt?doppelt+" Gerät"+(doppelt===1?" ist":"e sind")+" schon erfasst (gleiche Seriennummer).":""].filter(Boolean).join(" ");
-      /* unsichere Angaben je Gerät („geraet 2: seriennummer“) markieren das ganze Gerät */
-      var alleNr=gl.map(function(x,i){ return x ? "geraet "+(i+1) : null; }).filter(Boolean);
-      var uns=[];
-      (d.unsicher||[]).forEach(function(u){
-        var m=/geraet\s*(\d+)/i.exec(u);
-        /* ohne Gerätenummer: bei einem Gerät dieses, sonst sicherheitshalber alle */
-        if(m) uns.push("geraet "+m[1]); else uns=uns.concat(alleNr);
-      });
-      return kiPruefen("Typenschilder Innengeräte", gelesen, {}, felder, uns, hinweis).then(function(wahl){
-        if(wahl && Object.keys(wahl).length){
-          a.innengeraete=(Array.isArray(a.innengeraete)?a.innengeraete:[]).map(function(g){ return Object.assign({},g); })
-            .concat(Object.keys(wahl).sort(function(x,y){ return +x.slice(6)-+y.slice(6); }).map(function(k){ return wahl[k]; }));
-          toast(Object.keys(wahl).length+" Innengerät"+(Object.keys(wahl).length===1?"":"e")+" übernommen – Raum bitte ergänzen, dann „Übernehmen“.");
-          uebersicht();
-        } else zurueck();   /* nichts übernommen */
-      });
+  }
+  /* Innengeräte vom Typenschild: je Gerät ein Haken. Schon erfasste
+     Seriennummern werden nicht doppelt angeboten; übernommen wird ans Ende
+     der Liste, den Raum trägt man danach ein. */
+  function kiInnen(d){
+    /* Nummern wie in der Antwort der KI („geraet 3“), auch wenn Außengeräte wegfallen */
+    var gl=(Array.isArray(d.geraete)?d.geraete:[]).map(function(x){ return x.art==="aussen" ? null : x; });
+    /* schon erfasst (zählt als „schon erfasst“) und schon in dieser Antwort
+       gesehen (dasselbe Schild zweimal: still nur einmal) – zwei Listen */
+    var da=(Array.isArray(a.innengeraete)?a.innengeraete:[]).map(function(g){ return String(g.seriennummer||"").trim().toUpperCase(); }).filter(Boolean);
+    var gesehen=[];
+    var gelesen={}, felder=[], doppelt=0;
+    gl.forEach(function(x, i){
+      if(!x) return;
+      var sn=String(x.seriennummer||"").trim();
+      if(sn && gesehen.indexOf(sn.toUpperCase())>=0) return;
+      if(sn) gesehen.push(sn.toUpperCase());
+      if(sn && da.indexOf(sn.toUpperCase())>=0){ doppelt++; return; }
+      var g={hersteller:String(x.hersteller||"").trim(), modell:String(x.modell||"").trim(), seriennummer:sn,
+             leistungKw:kiZahl(x.leistungKw)};
+      if(!innenBelegt(g)) return;
+      gelesen["_innen"+i]=g;
+      felder.push({k:"_innen"+i, l:"Innengerät "+(felder.length+1), q:"geraet "+(i+1),
+        zeige:function(w){ return innenText([w]).replace(/^Innengerät 1: /,""); }});
+    });
+    /* alles schon da: kein leerer Prüfschirm mit „nichts Verwertbares gefunden“ */
+    if(!felder.length && doppelt){
+      toast(doppelt===1 ? "Das Gerät ist schon erfasst (gleiche Seriennummer)." : "Alle "+doppelt+" Geräte sind schon erfasst (gleiche Seriennummer).");
+      zurueck(); return;
     }
+    var hinweis=[d.hinweise, doppelt?doppelt+" Gerät"+(doppelt===1?" ist":"e sind")+" schon erfasst (gleiche Seriennummer).":""].filter(Boolean).join(" ");
+    /* unsichere Angaben je Gerät („geraet 2: seriennummer“) markieren das ganze Gerät */
+    var alleNr=gl.map(function(x,i){ return x ? "geraet "+(i+1) : null; }).filter(Boolean);
+    var uns=[];
+    (d.unsicher||[]).forEach(function(u){
+      var m=/geraet\s*(\d+)/i.exec(u);
+      /* ohne Gerätenummer: bei einem Gerät dieses, sonst sicherheitshalber alle */
+      if(m) uns.push("geraet "+m[1]); else uns=uns.concat(alleNr);
+    });
+    return kiPruefen("Typenschilder Innengeräte", gelesen, {}, felder, uns, hinweis).then(function(wahl){
+      if(wahl && Object.keys(wahl).length){
+        a.innengeraete=(Array.isArray(a.innengeraete)?a.innengeraete:[]).map(function(g){ return Object.assign({},g); })
+          .concat(Object.keys(wahl).sort(function(x,y){ return +x.slice(6)-+y.slice(6); }).map(function(k){ return wahl[k]; }));
+        toast(Object.keys(wahl).length+" Innengerät"+(Object.keys(wahl).length===1?"":"e")+" übernommen – Raum bitte ergänzen, dann „Übernehmen“.");
+        P.uebersicht();
+      } else zurueck();   /* nichts übernommen */
+    });
+  }
+  /* Aufbau – läuft, wenn alle Teile angemeldet sind, in der ursprünglichen Reihenfolge */
+  return function(){
+    P.schritte=(neu?["name"]:[]).concat(alles?alleGruppen():gruppenMitLuecke()).concat(termineZeigenNoetig()?["termine"]:[]);
+    P.pos=0, P.zurUebersicht=false;
+    /* Stand des Dialogs für den Wechsel in die Claude-App (nur mit bekanntem Aufrufer) */
+    ortStand = vorgang && vorgang.ort ? function(){
+      return Object.assign({typ:"anlage"}, vorgang.ort, {a:a, pos:P.pos, zurUebersicht:P.zurUebersicht, kiRest:kiRest});
+    } : null;
+  };
+}
+/* Anlagendaten-Dialog, Teil Felder: Termine, Kopf, Eingabefelder, Zahlen und Kältemittel-Hinweise */
+function anlageDialogTeilFelder(P){
+  var a=P.a, ov=P.ov, inhalt=P.inhalt, fuss=P.fuss, titel=P.titel;
+  /* für die anderen Teile */
+  P.terminRegel=terminRegel; P.termineZeigen=termineZeigen; P.termineEinzeln=termineEinzeln; P.feldHtml=feldHtml; P.kgHinweis=kgHinweis; P.zahlFeld=zahlFeld;
+  function terminRegel(t){ return terminRegelMonat(a, t); }
+  function termineZeigen(){ termineSchritt(inhalt, a); }
+  /* Termine außerhalb der Schrittfolge zeigen (aus der Übersicht, als Sprung,
+     nach einer KI-Übernahme); wer von dort weitergeht, hat sie bestätigt */
+  function termineEinzeln(kopfText, knopfText){
+    fuss.innerHTML=""; P.kopf(kopfText,"Termine"); termineZeigen();
+    P.knopf(knopfText,"",function(){ a._termineOk=true; P.uebersicht(); });
+    inhalt.scrollTop=0;
+  }
+
+  function feldHtml(f){
+    var w=a[f.k], h='<div class="as-feld"><div class="as-label">'+esc(f.l)+"</div>";
+    var chip=function(wert, text, an){
+      return '<button class="chip" type="button" data-f="'+f.k+'" data-w="'+esc(wert)+'" aria-pressed="'+(!!an)+'">'+esc(text)+"</button>"; };
+    if(f.t==="wahl"){
+      /* Vorauswahl (z. B. Prüfbuch im Technikordner 2 – fast immer so) */
+      if(leerWert(w) && f.standard) w=a[f.k]=f.standard;
+      var listeO=feldOptionen(f);
+      /* betreut von „andere Firma“ mit bekanntem Namen: der Namensknopf ist der gedrückte */
+      if(f.k==="regelungFirma" && w==="andere Firma" && a.regelungFirmaName && listeO.indexOf(a.regelungFirmaName)>=0) w=a.regelungFirmaName;
+      var eigen=!leerWert(w) && listeO.indexOf(w)<0;
+      h+='<div class="chips">'+listeO.map(function(o){ return chip(o,o,w===o); }).join("")+
+        (f.frei?chip("__frei","andere …",eigen):"")+"</div>"+
+        (f.frei?'<input type="text" class="as-frei" data-frei="'+f.k+'" placeholder="Bezeichnung eingeben" value="'+esc(eigen?w:"")+'"'+(eigen?"":" hidden")+">":"");
+    } else if(f.t==="jn"){
+      h+='<div class="chips">'+chip("ja","ja",w==="ja")+chip("nein","nein",w==="nein")+(f.extra||[]).map(function(x){ return chip(x,x,w===x); }).join("")+chip("","weiß nicht",leerWert(w))+"</div>";
+    } else if(f.t==="zahl"){
+      h+='<div class="chips">'+[1,2,3,4].map(function(n){ return chip(n,String(n),+w===n); }).join("")+"</div>"+
+        '<input type="number" min="1" max="99" inputmode="numeric" data-in="'+f.k+'" placeholder="andere Anzahl" value="'+esc(+w>4?w:"")+'">';
+    } else if(f.t==="dez"){
+      h+='<input type="text" inputmode="decimal" data-in="'+f.k+'" placeholder="'+esc(f.h||(f.e?"in "+f.e:""))+'" value="'+esc(leerWert(w)?"":String(w).replace(".",","))+'">'+
+        '<div class="as-hinweis" data-hinweis="'+f.k+'"></div>';
+    } else if(f.t==="datum"){
+      h+='<input type="date" data-in="'+f.k+'" max="'+isoLokal(new Date())+'" value="'+esc(leerWert(w)?"":w)+'">';
+    } else if(f.t==="kg"||f.t==="kw"){
+      h+='<input type="text" inputmode="decimal" data-in="'+f.k+'" placeholder="'+(f.t==="kw"?"z. B. 35":"z. B. 12,5")+'" value="'+esc(leerWert(w)?"":String(w).replace(".",","))+'">'+
+        '<div class="as-hinweis" data-hinweis="'+f.k+'"></div>';
+    } else if(f.t==="innen"){
+      var liste=Array.isArray(w)?w:[];
+      h+=liste.map(function(g,i){
+        return '<div class="posbox" style="margin-bottom:8px"><div class="rowflex" style="justify-content:space-between">'+
+          "<strong>Innengerät "+(i+1)+'</strong><button class="btn ghost sm" type="button" data-innenweg="'+i+'">entfernen</button></div>'+
+          '<div class="grid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px;margin-top:6px">'+
+          INNEN_FELDER.map(function(x){
+            return '<label class="fl"><span>'+esc(x[1])+'</span><input type="text" data-innen="'+i+"|"+x[0]+'"'+
+              (x[0]==="leistungKw"?' inputmode="decimal"':"")+(x[0]==="seriennummer"?' autocapitalize="characters" spellcheck="false" autocorrect="off"':"")+
+              ' placeholder="'+esc(x[2])+'" value="'+esc(leerWert(g[x[0]])?"":String(g[x[0]]).replace(x[0]==="leistungKw"?".":"\u0000",","))+'"></label>';
+          }).join("")+"</div></div>";
+      }).join("")+
+        '<button class="btn ghost sm" type="button" data-innendazu>+ Innengerät</button>';
+    } else if(f.t==="geheim"){
+      /* Beim Eintippen sichtbar – man überträgt es meist von einem Zettel
+         und will sehen, was dasteht. Angezeigt wird es später verdeckt. */
+      h+='<input type="text" data-in="'+f.k+'" autocomplete="off" autocapitalize="off" '+
+        'autocorrect="off" spellcheck="false" value="'+esc(leerWert(w)?"":w)+'">';
+    } else if(f.k==="zugangLink"){
+      h+='<input type="text" inputmode="url" data-in="'+f.k+'" autocapitalize="off" '+
+        'spellcheck="false" placeholder="z. B. 192.168.1.50 oder https://…" value="'+esc(leerWert(w)?"":w)+'">';
+    } else {
+      if(LERN_ANLAGE.indexOf(f.k)>=0) h+=lernChips(gelernteWerte(f.k), w, '[data-in="'+f.k+'"]', f.k);
+      h+='<input type="text" data-in="'+f.k+'" value="'+esc(leerWert(w)?"":w)+'"'+(LERN_ANLAGE.indexOf(f.k)>=0?' data-merk="'+f.k+'"':"")+'>';
+    }
+    return h+"</div>";
+  }
+  function kgHinweis(){
+    var n=inhalt.querySelector('[data-hinweis="kaeltemittelKg"]'); if(!n) return;
+    var i=inhalt.querySelector('[data-in="kaeltemittelKg"]'), t=i ? zahlHinweisText(i) : "";
+    n.textContent = (i && i.getAttribute("aria-invalid")==="true") ? t
+      : [t, +a.kaeltemittelKg>=30 ? "Ab 30 kg ist eine Halbjahreswartung (HJW) vorgeschrieben." : ""].filter(Boolean).join(" · ");
+  }
+  /* Zahlenfeld: nicht lesbar → rot und Hinweis (Weiter geht erst nach der
+     Korrektur); mit Punkt eingegeben → sagen, wie die Zahl gelesen wurde */
+  function zahlHinweisText(i){
+    var n=zahlLesen(i.value);
+    if(n!==n) return "„"+i.value.trim()+"“ ist keine lesbare Zahl – bitte z. B. 12,5 eingeben.";
+    return (n!=null && i.value.indexOf(".")>=0) ? "gelesen als "+String(n).replace(".",",") : "";
+  }
+  function zahlFeld(i, alt){
+    var n=zahlLesen(i.value);
+    i.setAttribute("aria-invalid", String(n!==n));
+    var h=inhalt.querySelector('[data-hinweis="'+i.dataset.in+'"]');
+    if(h && i.dataset.in!=="kaeltemittelKg") h.textContent=zahlHinweisText(i);
+    return n!==n ? alt : n;
+  }
+  /* Aufbau – läuft, wenn alle Teile angemeldet sind, in der ursprünglichen Reihenfolge */
+  return function(){
     /* Termine prüfen: der Schritt selbst steht in termineSchritt (derselbe
        wie im geführten Protokoll) */
-    var normCode=kuerzelNorm;
-    function terminRegel(t){ return terminRegelMonat(a, t); }
-    function termineZeigen(){ termineSchritt(inhalt, a); }
-    /* Termine außerhalb der Schrittfolge zeigen (aus der Übersicht, als Sprung,
-       nach einer KI-Übernahme); wer von dort weitergeht, hat sie bestätigt */
-    function termineEinzeln(kopfText, knopfText){
-      fuss.innerHTML=""; kopf(kopfText,"Termine"); termineZeigen();
-      knopf(knopfText,"",function(){ a._termineOk=true; uebersicht(); });
-      inhalt.scrollTop=0;
-    }
+    P.normCode=kuerzelNorm;
 
-    var kopf=function(text, schritt){
+    P.kopf=function(text, schritt){
       ov.querySelector(".as-titel").textContent=titel||"Anlage";
       ov.querySelector(".as-schritt").textContent=text+(schritt?" · "+schritt:"");
     };
-    var knopf=function(text, art, fn){
+    P.knopf=function(text, art, fn){
       var b=el('<button class="btn'+(art?" "+art:"")+'" type="button">'+esc(text)+"</button>"); b.onclick=fn; fuss.appendChild(b); return b;
     };
-
-    function feldHtml(f){
-      var w=a[f.k], h='<div class="as-feld"><div class="as-label">'+esc(f.l)+"</div>";
-      var chip=function(wert, text, an){
-        return '<button class="chip" type="button" data-f="'+f.k+'" data-w="'+esc(wert)+'" aria-pressed="'+(!!an)+'">'+esc(text)+"</button>"; };
-      if(f.t==="wahl"){
-        /* Vorauswahl (z. B. Prüfbuch im Technikordner 2 – fast immer so) */
-        if(leerWert(w) && f.standard) w=a[f.k]=f.standard;
-        var listeO=feldOptionen(f);
-        /* betreut von „andere Firma“ mit bekanntem Namen: der Namensknopf ist der gedrückte */
-        if(f.k==="regelungFirma" && w==="andere Firma" && a.regelungFirmaName && listeO.indexOf(a.regelungFirmaName)>=0) w=a.regelungFirmaName;
-        var eigen=!leerWert(w) && listeO.indexOf(w)<0;
-        h+='<div class="chips">'+listeO.map(function(o){ return chip(o,o,w===o); }).join("")+
-          (f.frei?chip("__frei","andere …",eigen):"")+"</div>"+
-          (f.frei?'<input type="text" class="as-frei" data-frei="'+f.k+'" placeholder="Bezeichnung eingeben" value="'+esc(eigen?w:"")+'"'+(eigen?"":" hidden")+">":"");
-      } else if(f.t==="jn"){
-        h+='<div class="chips">'+chip("ja","ja",w==="ja")+chip("nein","nein",w==="nein")+(f.extra||[]).map(function(x){ return chip(x,x,w===x); }).join("")+chip("","weiß nicht",leerWert(w))+"</div>";
-      } else if(f.t==="zahl"){
-        h+='<div class="chips">'+[1,2,3,4].map(function(n){ return chip(n,String(n),+w===n); }).join("")+"</div>"+
-          '<input type="number" min="1" max="99" inputmode="numeric" data-in="'+f.k+'" placeholder="andere Anzahl" value="'+esc(+w>4?w:"")+'">';
-      } else if(f.t==="dez"){
-        h+='<input type="text" inputmode="decimal" data-in="'+f.k+'" placeholder="'+esc(f.h||(f.e?"in "+f.e:""))+'" value="'+esc(leerWert(w)?"":String(w).replace(".",","))+'">'+
-          '<div class="as-hinweis" data-hinweis="'+f.k+'"></div>';
-      } else if(f.t==="datum"){
-        h+='<input type="date" data-in="'+f.k+'" max="'+isoLokal(new Date())+'" value="'+esc(leerWert(w)?"":w)+'">';
-      } else if(f.t==="kg"||f.t==="kw"){
-        h+='<input type="text" inputmode="decimal" data-in="'+f.k+'" placeholder="'+(f.t==="kw"?"z. B. 35":"z. B. 12,5")+'" value="'+esc(leerWert(w)?"":String(w).replace(".",","))+'">'+
-          '<div class="as-hinweis" data-hinweis="'+f.k+'"></div>';
-      } else if(f.t==="innen"){
-        var liste=Array.isArray(w)?w:[];
-        h+=liste.map(function(g,i){
-          return '<div class="posbox" style="margin-bottom:8px"><div class="rowflex" style="justify-content:space-between">'+
-            "<strong>Innengerät "+(i+1)+'</strong><button class="btn ghost sm" type="button" data-innenweg="'+i+'">entfernen</button></div>'+
-            '<div class="grid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px;margin-top:6px">'+
-            INNEN_FELDER.map(function(x){
-              return '<label class="fl"><span>'+esc(x[1])+'</span><input type="text" data-innen="'+i+"|"+x[0]+'"'+
-                (x[0]==="leistungKw"?' inputmode="decimal"':"")+(x[0]==="seriennummer"?' autocapitalize="characters" spellcheck="false" autocorrect="off"':"")+
-                ' placeholder="'+esc(x[2])+'" value="'+esc(leerWert(g[x[0]])?"":String(g[x[0]]).replace(x[0]==="leistungKw"?".":"\u0000",","))+'"></label>';
-            }).join("")+"</div></div>";
-        }).join("")+
-          '<button class="btn ghost sm" type="button" data-innendazu>+ Innengerät</button>';
-      } else if(f.t==="geheim"){
-        /* Beim Eintippen sichtbar – man überträgt es meist von einem Zettel
-           und will sehen, was dasteht. Angezeigt wird es später verdeckt. */
-        h+='<input type="text" data-in="'+f.k+'" autocomplete="off" autocapitalize="off" '+
-          'autocorrect="off" spellcheck="false" value="'+esc(leerWert(w)?"":w)+'">';
-      } else if(f.k==="zugangLink"){
-        h+='<input type="text" inputmode="url" data-in="'+f.k+'" autocapitalize="off" '+
-          'spellcheck="false" placeholder="z. B. 192.168.1.50 oder https://…" value="'+esc(leerWert(w)?"":w)+'">';
-      } else {
-        if(LERN_ANLAGE.indexOf(f.k)>=0) h+=lernChips(gelernteWerte(f.k), w, '[data-in="'+f.k+'"]', f.k);
-        h+='<input type="text" data-in="'+f.k+'" value="'+esc(leerWert(w)?"":w)+'"'+(LERN_ANLAGE.indexOf(f.k)>=0?' data-merk="'+f.k+'"':"")+'>';
-      }
-      return h+"</div>";
-    }
-    function kgHinweis(){
-      var n=inhalt.querySelector('[data-hinweis="kaeltemittelKg"]'); if(!n) return;
-      var i=inhalt.querySelector('[data-in="kaeltemittelKg"]'), t=i ? zahlHinweisText(i) : "";
-      n.textContent = (i && i.getAttribute("aria-invalid")==="true") ? t
-        : [t, +a.kaeltemittelKg>=30 ? "Ab 30 kg ist eine Halbjahreswartung (HJW) vorgeschrieben." : ""].filter(Boolean).join(" · ");
-    }
-    /* Zahlenfeld: nicht lesbar → rot und Hinweis (Weiter geht erst nach der
-       Korrektur); mit Punkt eingegeben → sagen, wie die Zahl gelesen wurde */
-    function zahlHinweisText(i){
-      var n=zahlLesen(i.value);
-      if(n!==n) return "„"+i.value.trim()+"“ ist keine lesbare Zahl – bitte z. B. 12,5 eingeben.";
-      return (n!=null && i.value.indexOf(".")>=0) ? "gelesen als "+String(n).replace(".",",") : "";
-    }
-    function zahlFeld(i, alt){
-      var n=zahlLesen(i.value);
-      i.setAttribute("aria-invalid", String(n!==n));
-      var h=inhalt.querySelector('[data-hinweis="'+i.dataset.in+'"]');
-      if(h && i.dataset.in!=="kaeltemittelKg") h.textContent=zahlHinweisText(i);
-      return n!==n ? alt : n;
-    }
-    function gruppeZeigen(g){
-      inhalt.innerHTML='<div class="as-frage">'+esc(g.frage)+"</div>"+
-        (g.geheim?'<div class="note">Diese Angaben stehen bei der Anlage, nicht im Protokoll: '+
-          "sie erscheinen weder auf dem Blatt für Lidl noch im Archiv. Sehen kann sie jede "+
-          "angemeldete Kollegin und jeder angemeldete Kollege.</div>":"")+
-        g.felder.filter(function(f){ return feldGilt(Object.assign({gruppe:g},f),a); }).map(feldHtml).join("");
-      inhalt.querySelectorAll(".chip[data-f]").forEach(function(c){
-        c.onclick=function(){
-          var k=c.dataset.f, w=c.dataset.w, frei=inhalt.querySelector('[data-frei="'+k+'"]');
-          if(w==="__frei"){
-            /* Eingabefeld aufklappen – ohne Neuaufbau, sonst verschwände es gleich wieder */
-            if(frei){ frei.hidden=false; frei.focus(); a[k]=frei.value.trim(); }
-            inhalt.querySelectorAll('.chip[data-f="'+k+'"]').forEach(function(x){ x.setAttribute("aria-pressed", String(x===c)); });
-            return;
-          }
-          /* Firmenname als Knopf: gespeichert wird wie beim Eintippen („andere Firma“ + Name) */
-          if(k==="regelungFirma" && w!=="UKT" && w!=="andere Firma"){ a.regelungFirma="andere Firma"; a.regelungFirmaName=w; gruppeZeigen(g); return; }
-          a[k]= (k==="kreislaeufe") ? +w : w;
-          if(frei){ frei.hidden=true; frei.value=""; }
-          var zahlIn=inhalt.querySelector('[data-in="'+k+'"]'); if(zahlIn) zahlIn.value="";
-          /* abhängige Fragen (z. B. Firmenname) sofort ein- oder ausblenden */
-          gruppeZeigen(g);
-        };
-      });
-      inhalt.querySelectorAll("[data-frei]").forEach(function(i){
-        i.oninput=function(){ a[i.dataset.frei]=i.value.trim(); };
-        /* eingetippte Bezeichnung merken – sie steht dann als Knopf zur Auswahl */
-        i.onchange=function(){ merkeWert(i.dataset.frei, i.value); };
-      });
-      inhalt.querySelectorAll("[data-in]").forEach(function(i){
-        /* eingetippter Firmenname: gleich als Knopf merken (auch vor dem Speichern) */
-        if(i.dataset.in==="regelungFirmaName"){
-          i.onchange=function(){ merkeWert("regelungFirmaName", i.value); };
-          /* beim Tippen: der Namensknopf ist nur gedrückt, solange der Name stimmt */
-          i.addEventListener("input", function(){
-            var v=i.value.trim();
-            inhalt.querySelectorAll('.chip[data-f="regelungFirma"]').forEach(function(c){
-              c.setAttribute("aria-pressed", String(c.dataset.w===v || (c.dataset.w==="andere Firma" && !inhalt.querySelector('.chip[data-f="regelungFirma"][data-w="'+v.replace(/"/g,"")+'"]'))));
-            });
+  };
+}
+/* Anlagendaten-Dialog, Teil Schritte: je Gruppe ein Schritt, Name, Weiter, Übersicht */
+function anlageDialogTeilSchritte(P){
+  var a=P.a, inhalt=P.inhalt, fuss=P.fuss, schliessen=P.schliessen, gruppenMitLuecke=P.gruppenMitLuecke, alleGruppen=P.alleGruppen, termineZeigenNoetig=P.termineZeigenNoetig, start=P.start, neu=P.neu, alles=P.alles;
+  /* für die anderen Teile */
+  P.gruppeZeigen=gruppeZeigen; P.schrittZeigen=schrittZeigen; P.uebersicht=uebersicht;
+  function gruppeZeigen(g){
+    inhalt.innerHTML='<div class="as-frage">'+esc(g.frage)+"</div>"+
+      (g.geheim?'<div class="note">Diese Angaben stehen bei der Anlage, nicht im Protokoll: '+
+        "sie erscheinen weder auf dem Blatt für Lidl noch im Archiv. Sehen kann sie jede "+
+        "angemeldete Kollegin und jeder angemeldete Kollege.</div>":"")+
+      g.felder.filter(function(f){ return feldGilt(Object.assign({gruppe:g},f),a); }).map(P.feldHtml).join("");
+    inhalt.querySelectorAll(".chip[data-f]").forEach(function(c){
+      c.onclick=function(){
+        var k=c.dataset.f, w=c.dataset.w, frei=inhalt.querySelector('[data-frei="'+k+'"]');
+        if(w==="__frei"){
+          /* Eingabefeld aufklappen – ohne Neuaufbau, sonst verschwände es gleich wieder */
+          if(frei){ frei.hidden=false; frei.focus(); a[k]=frei.value.trim(); }
+          inhalt.querySelectorAll('.chip[data-f="'+k+'"]').forEach(function(x){ x.setAttribute("aria-pressed", String(x===c)); });
+          return;
+        }
+        /* Firmenname als Knopf: gespeichert wird wie beim Eintippen („andere Firma“ + Name) */
+        if(k==="regelungFirma" && w!=="UKT" && w!=="andere Firma"){ a.regelungFirma="andere Firma"; a.regelungFirmaName=w; gruppeZeigen(g); return; }
+        a[k]= (k==="kreislaeufe") ? +w : w;
+        if(frei){ frei.hidden=true; frei.value=""; }
+        var zahlIn=inhalt.querySelector('[data-in="'+k+'"]'); if(zahlIn) zahlIn.value="";
+        /* abhängige Fragen (z. B. Firmenname) sofort ein- oder ausblenden */
+        gruppeZeigen(g);
+      };
+    });
+    inhalt.querySelectorAll("[data-frei]").forEach(function(i){
+      i.oninput=function(){ a[i.dataset.frei]=i.value.trim(); };
+      /* eingetippte Bezeichnung merken – sie steht dann als Knopf zur Auswahl */
+      i.onchange=function(){ merkeWert(i.dataset.frei, i.value); };
+    });
+    inhalt.querySelectorAll("[data-in]").forEach(function(i){
+      /* eingetippter Firmenname: gleich als Knopf merken (auch vor dem Speichern) */
+      if(i.dataset.in==="regelungFirmaName"){
+        i.onchange=function(){ merkeWert("regelungFirmaName", i.value); };
+        /* beim Tippen: der Namensknopf ist nur gedrückt, solange der Name stimmt */
+        i.addEventListener("input", function(){
+          var v=i.value.trim();
+          inhalt.querySelectorAll('.chip[data-f="regelungFirma"]').forEach(function(c){
+            c.setAttribute("aria-pressed", String(c.dataset.w===v || (c.dataset.w==="andere Firma" && !inhalt.querySelector('.chip[data-f="regelungFirma"][data-w="'+v.replace(/"/g,"")+'"]'))));
           });
-        }
-        i.oninput=function(){
-          var k=i.dataset.in, v=i.value.trim();
-          if(k==="kaeltemittelKg"){ a[k]=zahlFeld(i, a[k]); kgHinweis(); }
-          else if(k==="leistungKw" || i.inputMode==="decimal") a[k]=zahlFeld(i, a[k]);
-          else if(k==="kreislaeufe"){ a[k]= v===""?a[k]:+v; inhalt.querySelectorAll('.chip[data-f="kreislaeufe"]').forEach(function(c){ c.setAttribute("aria-pressed","false"); }); }
-          else a[k]=v;
-        };
-      });
-      /* Innengeräte: eigene Kopie der Liste bearbeiten, nie den gespeicherten Stand */
-      var innen=function(){ a.innengeraete=(Array.isArray(a.innengeraete)?a.innengeraete:[]).map(function(g){ return Object.assign({},g); }); return a.innengeraete; };
-      var dazu=inhalt.querySelector("[data-innendazu]");
-      if(dazu) dazu.onclick=function(){ innen().push({}); gruppeZeigen(g);
-        var l=inhalt.querySelectorAll("[data-innen]"); if(l.length) l[l.length-INNEN_FELDER.length].focus(); };
-      inhalt.querySelectorAll("[data-innenweg]").forEach(function(b){
-        b.onclick=function(){ innen().splice(+b.dataset.innenweg,1); gruppeZeigen(g); };
-      });
-      inhalt.querySelectorAll("[data-innen]").forEach(function(i){
-        i.oninput=function(){
-          var t=i.dataset.innen.split("|"), liste=innen(), v=i.value.trim();
-          if(t[1]==="leistungKw"){ var n=zahlLesen(v); i.setAttribute("aria-invalid", String(n!==n)); v= n!==n ? liste[+t[0]][t[1]] : n; }
-          liste[+t[0]][t[1]]=v;
-        };
-      });
-      kgHinweis();
-    }
-    function nameZeigen(){
-      inhalt.innerHTML='<div class="as-frage">Wie heißt die Anlage, damit sie jeder wiederfindet?</div>'+
-        '<div class="as-feld"><div class="as-label">Bezeichnung</div><input type="text" data-in="anlagentyp" '+
-        'placeholder="z. B. VRV Verkaufsraum, Split Serverraum" value="'+esc(a.anlagentyp||"")+'"></div>';
-      var i=inhalt.querySelector("input"); i.oninput=function(){ a.anlagentyp=i.value.trim(); }; setTimeout(function(){ i.focus(); },50);
-    }
-    function schrittZeigen(){
-      fuss.innerHTML="";
-      var s=schritte[pos];
-      kopf("Schritt "+(pos+1)+" von "+schritte.length, s==="name"?"Bezeichnung":s==="termine"?"Termine":s.titel);
-      if(s==="name") nameZeigen(); else if(s==="termine") termineZeigen(); else gruppeZeigen(s);
-      /* mit KI-Zugang automatisch, sonst über die Claude-App (Kopier-Weg) */
-      if(pos===0 && !nurLesen()) knopf("Aus Fotos lesen (KI)","ghost",kiEinlesen);
-      if(pos>0 && !zurUebersicht) knopf("Zurück","ghost",function(){ pos--; schrittZeigen(); });
-      if(s!=="name" && !zurUebersicht) knopf("Überspringen","ghost",function(){ weiter(); });
-      knopf(zurUebersicht?"Fertig":"Weiter","",function(){
-        if(s==="name" && !a.anlagentyp){ toast("Bitte eine Bezeichnung eingeben."); return; }
-        /* eine nicht lesbare Zahl nicht still durch den alten Wert ersetzen */
-        var unlesbar=inhalt.querySelector('[aria-invalid="true"]');
-        if(unlesbar){ toast("„"+unlesbar.value.trim()+"“ ist keine lesbare Zahl – bitte korrigieren (z. B. 12,5)."); unlesbar.focus(); return; }
-        if(s==="termine") a._termineOk=true;   /* mit „Weiter“ verlassen = bestätigt (Überspringen nicht) */
-        weiter();
-      });
-      inhalt.scrollTop=0;
-    }
-    function weiter(){
-      if(zurUebersicht){ uebersicht(); return; }
-      /* die restlichen Schritte neu bestimmen – eine Antwort kann Fragen
-         hinzufügen (wassergekühlt -> Rückkühler) oder überflüssig machen */
-      var akt=schritte[pos], ab=akt==="name"?-1:akt==="termine"?ANLAGE_GRUPPEN.length:ANLAGE_GRUPPEN.indexOf(akt);
-      var rest=(alles?alleGruppen():gruppenMitLuecke()).filter(function(g){ return ANLAGE_GRUPPEN.indexOf(g)>ab; });
-      /* die Termine kommen immer zuletzt */
-      schritte=schritte.slice(0,pos+1).concat(rest).concat(termineZeigenNoetig() && akt!=="termine" ? ["termine"] : []);
-      if(pos>=schritte.length-1){ uebersicht(); return; }
-      pos++; schrittZeigen();
-    }
-    function uebersicht(){
-      zurUebersicht=true; fuss.innerHTML="";
-      var fehl=anlageLuecken(a);
-      kopf(fehl.length ? fehl.length+" Angabe"+(fehl.length===1?"":"n")+" noch offen" : "Alle Angaben vorhanden", "Übersicht");
-      inhalt.innerHTML='<div class="as-frage">'+(fehl.length?"Offenes kann auch später ergänzt werden.":"Stimmt noch alles?")+"</div>"+
-        /* Bezeichnung auch bei bestehenden Anlagen änderbar – etwa wenn der
-           Name aus der alten Liste nach dem Ergänzen nicht mehr passt (Büro 01.10.2026) */
-        '<div class="as-gruppe"><div class="as-gkopf"><span>Bezeichnung</span>'+
-          (nurLesen()?"":'<button class="btn ghost sm" type="button" data-g="name">ändern</button>')+"</div>"+
-          '<div class="as-zeile"><span>Name der Anlage</span><strong'+(String(a.anlagentyp||"").trim()?"":' class="as-offen"')+">"+
-            esc(String(a.anlagentyp||"").trim()||"offen")+"</strong></div></div>"+
-        ANLAGE_GRUPPEN.filter(function(g){ return !g.wenn || g.wenn(a); }).map(function(g,i){
-          var zeilen=g.felder.filter(function(f){ return feldGilt(Object.assign({gruppe:g},f),a); }).map(function(f){
-            var w=a[f.k];
-            return '<div class="as-zeile"><span>'+esc(f.l)+"</span><strong"+(leerWert(w)&&!g.optional?' class="as-offen"':"")+">"+
-              esc(leerWert(w)?(g.optional?"–":"offen"):anlageWertText(f,w))+"</strong></div>";
-          }).join("");
-          return '<div class="as-gruppe"><div class="as-gkopf"><span>'+esc(g.titel)+"</span>"+
-            '<button class="btn ghost sm" type="button" data-g="'+ANLAGE_GRUPPEN.indexOf(g)+'">ändern</button></div>'+zeilen+"</div>";
+        });
+      }
+      i.oninput=function(){
+        var k=i.dataset.in, v=i.value.trim();
+        if(k==="kaeltemittelKg"){ a[k]=P.zahlFeld(i, a[k]); P.kgHinweis(); }
+        else if(k==="leistungKw" || i.inputMode==="decimal") a[k]=P.zahlFeld(i, a[k]);
+        else if(k==="kreislaeufe"){ a[k]= v===""?a[k]:+v; inhalt.querySelectorAll('.chip[data-f="kreislaeufe"]').forEach(function(c){ c.setAttribute("aria-pressed","false"); }); }
+        else a[k]=v;
+      };
+    });
+    /* Innengeräte: eigene Kopie der Liste bearbeiten, nie den gespeicherten Stand */
+    var innen=function(){ a.innengeraete=(Array.isArray(a.innengeraete)?a.innengeraete:[]).map(function(g){ return Object.assign({},g); }); return a.innengeraete; };
+    var dazu=inhalt.querySelector("[data-innendazu]");
+    if(dazu) dazu.onclick=function(){ innen().push({}); gruppeZeigen(g);
+      var l=inhalt.querySelectorAll("[data-innen]"); if(l.length) l[l.length-INNEN_FELDER.length].focus(); };
+    inhalt.querySelectorAll("[data-innenweg]").forEach(function(b){
+      b.onclick=function(){ innen().splice(+b.dataset.innenweg,1); gruppeZeigen(g); };
+    });
+    inhalt.querySelectorAll("[data-innen]").forEach(function(i){
+      i.oninput=function(){
+        var t=i.dataset.innen.split("|"), liste=innen(), v=i.value.trim();
+        if(t[1]==="leistungKw"){ var n=zahlLesen(v); i.setAttribute("aria-invalid", String(n!==n)); v= n!==n ? liste[+t[0]][t[1]] : n; }
+        liste[+t[0]][t[1]]=v;
+      };
+    });
+    P.kgHinweis();
+  }
+  function nameZeigen(){
+    inhalt.innerHTML='<div class="as-frage">Wie heißt die Anlage, damit sie jeder wiederfindet?</div>'+
+      '<div class="as-feld"><div class="as-label">Bezeichnung</div><input type="text" data-in="anlagentyp" '+
+      'placeholder="z. B. VRV Verkaufsraum, Split Serverraum" value="'+esc(a.anlagentyp||"")+'"></div>';
+    var i=inhalt.querySelector("input"); i.oninput=function(){ a.anlagentyp=i.value.trim(); }; setTimeout(function(){ i.focus(); },50);
+  }
+  function schrittZeigen(){
+    fuss.innerHTML="";
+    var s=P.schritte[P.pos];
+    P.kopf("Schritt "+(P.pos+1)+" von "+P.schritte.length, s==="name"?"Bezeichnung":s==="termine"?"Termine":s.titel);
+    if(s==="name") nameZeigen(); else if(s==="termine") P.termineZeigen(); else gruppeZeigen(s);
+    /* mit KI-Zugang automatisch, sonst über die Claude-App (Kopier-Weg) */
+    if(P.pos===0 && !nurLesen()) P.knopf("Aus Fotos lesen (KI)","ghost",P.kiEinlesen);
+    if(P.pos>0 && !P.zurUebersicht) P.knopf("Zurück","ghost",function(){ P.pos--; schrittZeigen(); });
+    if(s!=="name" && !P.zurUebersicht) P.knopf("Überspringen","ghost",function(){ weiter(); });
+    P.knopf(P.zurUebersicht?"Fertig":"Weiter","",function(){
+      if(s==="name" && !a.anlagentyp){ toast("Bitte eine Bezeichnung eingeben."); return; }
+      /* eine nicht lesbare Zahl nicht still durch den alten Wert ersetzen */
+      var unlesbar=inhalt.querySelector('[aria-invalid="true"]');
+      if(unlesbar){ toast("„"+unlesbar.value.trim()+"“ ist keine lesbare Zahl – bitte korrigieren (z. B. 12,5)."); unlesbar.focus(); return; }
+      if(s==="termine") a._termineOk=true;   /* mit „Weiter“ verlassen = bestätigt (Überspringen nicht) */
+      weiter();
+    });
+    inhalt.scrollTop=0;
+  }
+  function weiter(){
+    if(P.zurUebersicht){ uebersicht(); return; }
+    /* die restlichen Schritte neu bestimmen – eine Antwort kann Fragen
+       hinzufügen (wassergekühlt -> Rückkühler) oder überflüssig machen */
+    var akt=P.schritte[P.pos], ab=akt==="name"?-1:akt==="termine"?ANLAGE_GRUPPEN.length:ANLAGE_GRUPPEN.indexOf(akt);
+    var rest=(alles?alleGruppen():gruppenMitLuecke()).filter(function(g){ return ANLAGE_GRUPPEN.indexOf(g)>ab; });
+    /* die Termine kommen immer zuletzt */
+    P.schritte=P.schritte.slice(0,P.pos+1).concat(rest).concat(termineZeigenNoetig() && akt!=="termine" ? ["termine"] : []);
+    if(P.pos>=P.schritte.length-1){ uebersicht(); return; }
+    P.pos++; schrittZeigen();
+  }
+  function uebersicht(){
+    P.zurUebersicht=true; fuss.innerHTML="";
+    var fehl=anlageLuecken(a);
+    P.kopf(fehl.length ? fehl.length+" Angabe"+(fehl.length===1?"":"n")+" noch offen" : "Alle Angaben vorhanden", "Übersicht");
+    inhalt.innerHTML='<div class="as-frage">'+(fehl.length?"Offenes kann auch später ergänzt werden.":"Stimmt noch alles?")+"</div>"+
+      /* Bezeichnung auch bei bestehenden Anlagen änderbar – etwa wenn der
+         Name aus der alten Liste nach dem Ergänzen nicht mehr passt (Büro 01.10.2026) */
+      '<div class="as-gruppe"><div class="as-gkopf"><span>Bezeichnung</span>'+
+        (nurLesen()?"":'<button class="btn ghost sm" type="button" data-g="name">ändern</button>')+"</div>"+
+        '<div class="as-zeile"><span>Name der Anlage</span><strong'+(String(a.anlagentyp||"").trim()?"":' class="as-offen"')+">"+
+          esc(String(a.anlagentyp||"").trim()||"offen")+"</strong></div></div>"+
+      ANLAGE_GRUPPEN.filter(function(g){ return !g.wenn || g.wenn(a); }).map(function(g,i){
+        var zeilen=g.felder.filter(function(f){ return feldGilt(Object.assign({gruppe:g},f),a); }).map(function(f){
+          var w=a[f.k];
+          return '<div class="as-zeile"><span>'+esc(f.l)+"</span><strong"+(leerWert(w)&&!g.optional?' class="as-offen"':"")+">"+
+            esc(leerWert(w)?(g.optional?"–":"offen"):anlageWertText(f,w))+"</strong></div>";
+        }).join("");
+        return '<div class="as-gruppe"><div class="as-gkopf"><span>'+esc(g.titel)+"</span>"+
+          '<button class="btn ghost sm" type="button" data-g="'+ANLAGE_GRUPPEN.indexOf(g)+'">ändern</button></div>'+zeilen+"</div>";
+      }).join("")+
+      (a._termine ? '<div class="as-gruppe"><div class="as-gkopf"><span>Termine</span>'+
+        '<button class="btn ghost sm" type="button" data-g="termine">ändern</button></div>'+
+        '<div class="as-zeile"><span>Inbetriebnahme</span><strong'+(a.inbetriebnahme?"":' class="as-offen"')+">"+
+          esc(a.inbetriebnahme?dfmt(a.inbetriebnahme):"offen")+"</strong></div>"+
+        a._termine.map(function(t){
+          var c=P.normCode(t.intervallCode), regel=P.terminRegel(t);
+          return '<div class="as-zeile"><span>'+esc(c?c+" · "+(KURZ_TEXT[c]||""):"Kürzel fehlt")+"</span><strong"+(+t.monat?"":' class="as-offen"')+">"+
+            esc(+t.monat?MONATE_L[+t.monat]:"Soll-Monat offen")+
+            (regel && +t.monat && regel!==+t.monat ? '<br><span class="muted" style="font-weight:400;font-size:12px">'+
+              esc("Regel: "+MONATE_L[regel]+(t.monatGrund?" · "+t.monatGrund:" · ohne Begründung"))+"</span>":"")+
+            "</strong></div>";
         }).join("")+
-        (a._termine ? '<div class="as-gruppe"><div class="as-gkopf"><span>Termine</span>'+
-          '<button class="btn ghost sm" type="button" data-g="termine">ändern</button></div>'+
-          '<div class="as-zeile"><span>Inbetriebnahme</span><strong'+(a.inbetriebnahme?"":' class="as-offen"')+">"+
-            esc(a.inbetriebnahme?dfmt(a.inbetriebnahme):"offen")+"</strong></div>"+
-          a._termine.map(function(t){
-            var c=normCode(t.intervallCode), regel=terminRegel(t);
-            return '<div class="as-zeile"><span>'+esc(c?c+" · "+(KURZ_TEXT[c]||""):"Kürzel fehlt")+"</span><strong"+(+t.monat?"":' class="as-offen"')+">"+
-              esc(+t.monat?MONATE_L[+t.monat]:"Soll-Monat offen")+
-              (regel && +t.monat && regel!==+t.monat ? '<br><span class="muted" style="font-weight:400;font-size:12px">'+
-                esc("Regel: "+MONATE_L[regel]+(t.monatGrund?" · "+t.monatGrund:" · ohne Begründung"))+"</span>":"")+
-              "</strong></div>";
-          }).join("")+
-          (a.nurJW && a._termine.length<2 ? '<div class="as-zeile"><span>Halbjahrestermin</span><strong>keiner – nur Jahreswartung</strong></div>' : "")+
-          "</div>" : "");
-      inhalt.querySelectorAll("[data-g]").forEach(function(b){
-        b.onclick=function(){
-          if(b.dataset.g==="termine"){ termineEinzeln("Ändern","Zurück zur Übersicht"); return; }
-          if(b.dataset.g==="name"){ fuss.innerHTML=""; kopf("Ändern","Bezeichnung"); nameZeigen(); knopf("Zurück zur Übersicht","",uebersicht); return; }
-          var g=ANLAGE_GRUPPEN[+b.dataset.g];
-          fuss.innerHTML=""; kopf("Ändern", g.titel); gruppeZeigen(g);
-          knopf("Zurück zur Übersicht","",uebersicht);
-        };
-      });
-      if(!nurLesen()) knopf("Aus Fotos lesen (KI)","ghost",kiEinlesen);
-      knopf("Übernehmen","",function(){
-        /* eine neue Anlage braucht ihre Bezeichnung – auch wenn ein KI-Abbruch
-           oder ein KI-Ergebnis ohne Bezeichnung direkt hierher geführt hat;
-           eine bestehende verliert ihren Namen nicht durch Leeren */
-        if(!String(a.anlagentyp||"").trim() && (neu || String(start.anlagentyp||"").trim())){
-          toast("Bitte eine Bezeichnung eingeben.");
-          fuss.innerHTML=""; kopf("Ändern","Bezeichnung"); nameZeigen(); knopf("Zurück zur Übersicht","",uebersicht);
-          return;
-        }
-        /* wie in der Verwaltung: ohne Kürzel ist unklar, welche Wartung fällig
-           ist – ein neuer oder bisher gesetzter Termin wird nicht ohne Kürzel gespeichert */
-        var ohne=(a._termine||[]).filter(function(t,i){
-          return !String(t.intervallCode||"").trim() && (t._neu || String(((start._termine||[])[i]||{}).intervallCode||"").trim()); });
-        if(ohne.length){
-          toast("Bitte bei den Terminen JW, HJW oder HJI wählen – ohne Kürzel ist unklar, welche Wartung fällig ist.");
-          termineEinzeln("Ändern","Zurück zur Übersicht");
-          return;
-        }
-        schliessen(a);
-      });
-      inhalt.scrollTop=0;
-    }
-    /* aus Nachbessern: gleich zur Frage mit der fehlenden Angabe */
-    var sprung=start._springe && ANLAGE_GRUPPEN.filter(function(g){ return g.felder.some(function(f){ return f.k===start._springe; }); })[0];
-    if(fortsetzen){
-      /* zurück aus der Claude-App: dieselbe Stelle, dann gleich der Kopier-Weg
-         mit Auftrag und schon eingefügter Antwort */
-      zurUebersicht=!!fortsetzen.ort.zurUebersicht;
-      if(zurUebersicht || !schritte.length) uebersicht();
-      else { pos=Math.max(0, Math.min(+fortsetzen.ort.pos||0, schritte.length-1)); schrittZeigen(); }
-      setTimeout(function(){ kiArt(fortsetzen.art, fortsetzen.geraet, null, fortsetzen); }, 50);
-    }
-    /* Inbetriebnahme, Soll-Monat oder Kürzel fehlt: gleich zum Termine-Schritt */
-    else if(start._springe==="termine" && a._termine){ uebersicht(); termineEinzeln("Ergänzen","Zur Übersicht"); }
-    else if(sprung){
-      uebersicht(); fuss.innerHTML=""; kopf("Ergänzen", sprung.titel); gruppeZeigen(sprung);
-      knopf("Zur Übersicht","",uebersicht);
-      setTimeout(function(){
-        var z=inhalt.querySelector('[data-in="'+start._springe+'"],[data-f="'+start._springe+'"]');
-        if(!z) return;
-        var feld=z.closest(".as-feld")||z; feld.classList.add("sprungziel"); feld.scrollIntoView({block:"center"});
-        if(z.tagName==="INPUT") z.focus();
-      },80);
-    }
-    else if(schritte.length) schrittZeigen(); else uebersicht();
-    /* ein weiteres Buch aus derselben Fotoserie: gleich zur Prüfansicht */
-    if(start._kiVorlage) setTimeout(function(){ kiArt("pruefbuch", null, start._kiVorlage); }, 50);
-  });
+        (a.nurJW && a._termine.length<2 ? '<div class="as-zeile"><span>Halbjahrestermin</span><strong>keiner – nur Jahreswartung</strong></div>' : "")+
+        "</div>" : "");
+    inhalt.querySelectorAll("[data-g]").forEach(function(b){
+      b.onclick=function(){
+        if(b.dataset.g==="termine"){ P.termineEinzeln("Ändern","Zurück zur Übersicht"); return; }
+        if(b.dataset.g==="name"){ fuss.innerHTML=""; P.kopf("Ändern","Bezeichnung"); nameZeigen(); P.knopf("Zurück zur Übersicht","",uebersicht); return; }
+        var g=ANLAGE_GRUPPEN[+b.dataset.g];
+        fuss.innerHTML=""; P.kopf("Ändern", g.titel); gruppeZeigen(g);
+        P.knopf("Zurück zur Übersicht","",uebersicht);
+      };
+    });
+    if(!nurLesen()) P.knopf("Aus Fotos lesen (KI)","ghost",P.kiEinlesen);
+    P.knopf("Übernehmen","",function(){
+      /* eine neue Anlage braucht ihre Bezeichnung – auch wenn ein KI-Abbruch
+         oder ein KI-Ergebnis ohne Bezeichnung direkt hierher geführt hat;
+         eine bestehende verliert ihren Namen nicht durch Leeren */
+      if(!String(a.anlagentyp||"").trim() && (neu || String(start.anlagentyp||"").trim())){
+        toast("Bitte eine Bezeichnung eingeben.");
+        fuss.innerHTML=""; P.kopf("Ändern","Bezeichnung"); nameZeigen(); P.knopf("Zurück zur Übersicht","",uebersicht);
+        return;
+      }
+      /* wie in der Verwaltung: ohne Kürzel ist unklar, welche Wartung fällig
+         ist – ein neuer oder bisher gesetzter Termin wird nicht ohne Kürzel gespeichert */
+      var ohne=(a._termine||[]).filter(function(t,i){
+        return !String(t.intervallCode||"").trim() && (t._neu || String(((start._termine||[])[i]||{}).intervallCode||"").trim()); });
+      if(ohne.length){
+        toast("Bitte bei den Terminen JW, HJW oder HJI wählen – ohne Kürzel ist unklar, welche Wartung fällig ist.");
+        P.termineEinzeln("Ändern","Zurück zur Übersicht");
+        return;
+      }
+      schliessen(a);
+    });
+    inhalt.scrollTop=0;
+  }
+  /* Aufbau – läuft, wenn alle Teile angemeldet sind, in der ursprünglichen Reihenfolge */
+  return function(){
+
+  };
+}
+function anlageAssistentDialog(fertig, start, titel, neu, alles, vorgang){
+  var a=Object.assign({}, start);
+  /* eigene Kopie der Termine – der Vergleich mit dem Stand vorher braucht das Original */
+  if(start._termine) a._termine=start._termine.map(function(t){ return Object.assign({}, t); });
+  var ov=el('<div class="assistent" role="dialog" aria-modal="true"><div class="as-karte">'+
+    '<div class="as-kopf"><div style="min-width:0"><div class="as-titel"></div><div class="as-schritt"></div></div>'+
+      '<button class="btn ghost sm" type="button" data-as="zu">Abbrechen</button></div>'+
+    '<div class="as-inhalt"></div><div class="as-fuss"></div></div></div>');
+  document.body.appendChild(ov);
+  /* Scroll-Sperre der Ansicht darunter (etwa der Markt-Ansicht) beim Schließen zurückgeben */
+  var vorherOv=document.body.style.overflow;
+  document.body.style.overflow="hidden";
+  var inhalt=ov.querySelector(".as-inhalt"), fuss=ov.querySelector(".as-fuss");
+  var geschlossen=false;   /* eine späte KI-Antwort nach dem Schließen nicht mehr „übernehmen“ */
+  var schliessen=function(wert){
+    geschlossen=true;
+    if(wert){ delete wert._springe; delete wert._ohneRegel; delete wert._kiVorlage; }   /* nur Steuerung des Dialogs, kein Anlagenwert */
+    ov.remove(); document.body.style.overflow=vorherOv; fertig(wert);
+    /* weitere Prüfbücher aus derselben Fotoserie: nach dem Speichern anbieten */
+    if(wert && kiRest && kiRest.liste.length) setTimeout(weitereAusPruefbuch, 400);
+    else if(!wert) kiRest=null;
+  };
+  var anfangA=JSON.stringify(a);
+  ov.querySelector('[data-as="zu"]').onclick=function(){
+    /* Eingetragenes (auch von der KI Übernommenes) nicht still wegwerfen */
+    if(JSON.stringify(a)!==anfangA && !window.confirm("Die eingetragenen Anlagendaten verwerfen?")) return;
+    schliessen(null);
+  };
+  /* zurück aus der Claude-App (Seite neu geladen): die Eingaben von vorher –
+     verglichen wird weiter mit dem Stand, den der Aufrufer übergeben hat */
+  var fortsetzen=vorgang && vorgang.weiter;   /* nicht „weiter“ – so heißt der Schritt vorwärts */
+  if(fortsetzen){
+    a=Object.assign({}, fortsetzen.ort.a);
+    if(fortsetzen.ort.kiRest){ kiRest=fortsetzen.ort.kiRest; kiRestZiel(kiRest, vorgang); }   /* weitere Prüfbücher derselben Fotoserie */
+  }
+
+  /* Schritte: bei einer neuen Anlage zuerst die Bezeichnung, dann jede
+     Gruppe, in der eine Pflichtangabe fehlt */
+  var gruppenMitLuecke=function(){
+    var fehl=anlageLuecken(a);
+    var pflicht=ANLAGE_GRUPPEN.filter(function(g){ return fehl.some(function(f){ return f.gruppe===g; }); });
+    /* Freiwilliges zum Schluss: wer gerade vor dem Typenschild steht, soll
+       es eintragen können, ohne dafür in die Verwaltung zu wechseln.
+       Überspringen geht in jedem Schritt. */
+    var frei=ANLAGE_GRUPPEN.filter(function(g){
+      return g.optional && (!g.wenn || g.wenn(a)) && g.felder.some(function(f){
+        return feldGilt(Object.assign({gruppe:g}, f), a) && leerWert(a[f.k]); });
+    });
+    return pflicht.concat(frei);
+  };
+  /* „alles“: der Aufruf kommt nicht aus einem Protokoll, sondern vom Knopf an
+     der Anlage. Dann geht es ums Prüfen und Korrigieren, nicht nur ums
+     Nachtragen – also jede Gruppe zeigen, die zur Anlage passt. */
+  var alleGruppen=function(){
+    return ANLAGE_GRUPPEN.filter(function(g){ return !g.wenn || g.wenn(a); });
+  };
+  /* Termine als eigener Schritt: beim Prüfen immer, beim Ergänzen, solange
+     dort etwas nicht sauber ist (Inbetriebnahme, Soll-Monat oder Kürzel fehlt,
+     unbestätigte Abweichung von der Standardregel) – sonst stehen sie in der Übersicht */
+  var termineZeigenNoetig=function(){ return !!a._termine && (alles || !a.inbetriebnahme || termineOffen(a).length>0 ||
+    a._termine.some(function(t){ return !t.intervallCode || !+t.monat; })); };
+  /* Die Teile (je eine Funktion anlageDialogTeil…): erst melden alle ihre Funktionen an, dann bauen sie
+     in der ursprünglichen Reihenfolge auf – Gemeinsames liegt im Kontext P */
+  var P={fertig:fertig, start:start, titel:titel, neu:neu, alles:alles, vorgang:vorgang, a:a, ov:ov, vorherOv:vorherOv, inhalt:inhalt, fuss:fuss, geschlossen:geschlossen, schliessen:schliessen, anfangA:anfangA, fortsetzen:fortsetzen, gruppenMitLuecke:gruppenMitLuecke, alleGruppen:alleGruppen, termineZeigenNoetig:termineZeigenNoetig};
+  [anlageDialogTeilKi(P),
+   anlageDialogTeilFelder(P),
+   anlageDialogTeilSchritte(P)].forEach(function(aufbau){ aufbau(); });
+  /* aus Nachbessern: gleich zur Frage mit der fehlenden Angabe */
+  var sprung=start._springe && ANLAGE_GRUPPEN.filter(function(g){ return g.felder.some(function(f){ return f.k===start._springe; }); })[0];
+  if(fortsetzen){
+    /* zurück aus der Claude-App: dieselbe Stelle, dann gleich der Kopier-Weg
+       mit Auftrag und schon eingefügter Antwort */
+    P.zurUebersicht=!!fortsetzen.ort.zurUebersicht;
+    if(P.zurUebersicht || !P.schritte.length) P.uebersicht();
+    else { P.pos=Math.max(0, Math.min(+fortsetzen.ort.pos||0, P.schritte.length-1)); P.schrittZeigen(); }
+    setTimeout(function(){ P.kiArt(fortsetzen.art, fortsetzen.geraet, null, fortsetzen); }, 50);
+  }
+  /* Inbetriebnahme, Soll-Monat oder Kürzel fehlt: gleich zum Termine-Schritt */
+  else if(start._springe==="termine" && a._termine){ P.uebersicht(); P.termineEinzeln("Ergänzen","Zur Übersicht"); }
+  else if(sprung){
+    P.uebersicht(); fuss.innerHTML=""; P.kopf("Ergänzen", sprung.titel); P.gruppeZeigen(sprung);
+    P.knopf("Zur Übersicht","",P.uebersicht);
+    setTimeout(function(){
+      var z=inhalt.querySelector('[data-in="'+start._springe+'"],[data-f="'+start._springe+'"]');
+      if(!z) return;
+      var feld=z.closest(".as-feld")||z; feld.classList.add("sprungziel"); feld.scrollIntoView({block:"center"});
+      if(z.tagName==="INPUT") z.focus();
+    },80);
+  }
+  else if(P.schritte.length) P.schrittZeigen(); else P.uebersicht();
+  /* ein weiteres Buch aus derselben Fotoserie: gleich zur Prüfansicht */
+  if(start._kiVorlage) setTimeout(function(){ P.kiArt("pruefbuch", null, start._kiVorlage); }, 50);
 }
 var ARBEITEN=["Sicht-/Sicherheitsprüfung","Betriebszustand/Fehlerspeicher","Filter geprüft/gereinigt/getauscht",
   "Wärmetauscher geprüft/gereinigt","Kondensatwanne","Ventilatoren/Motoren/Luftführung",

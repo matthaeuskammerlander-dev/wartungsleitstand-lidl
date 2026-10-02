@@ -370,6 +370,34 @@ const ABLAEUFE = [
     c.querySelector("#a_speichern").click(); await A.warte(1500);
     return { leer, db: A.dbNeu(stand), toasts: A.toasts, fehler: A.sichtbar(document.getElementById("adm_editor") || document.body) };
   } },
+  /* ---- Anlagendaten-Dialog ---- */
+  { name: "anlagendialog-bestehend-alles", konto: "techniker", code: async () => {
+    const x = window.__t.x, A = window.__ab;
+    window.__erg = "offen";
+    x("anlageAssistent(Object.assign({}, anlageDaten(posById.TP1), {_leaderId:'TP1'}), 'Testanlage', false, true).then(function(w){ window.__erg=w; })");
+    await A.warte(500);
+    const schritte = await A.durchklicken(40);
+    return { schritte, erg: window.__erg, toasts: A.toasts };
+  } },
+  { name: "anlagendialog-neu", konto: "techniker", code: async () => {
+    const x = window.__t.x, A = window.__ab;
+    window.__erg = "offen";
+    x("anlageAssistent({}, 'Neue Anlage', true, false).then(function(w){ window.__erg=w; })");
+    await A.warte(500);
+    const schritte = await A.durchklicken(40);
+    return { schritte, erg: window.__erg, toasts: A.toasts };
+  } },
+  { name: "anlagendialog-aus-protokoll-ergaenzen", konto: "techniker", code: async () => {
+    const x = window.__t.x, A = window.__ab;
+    x("formDirty=false; S.protoArt='wartung'; S.bearbeiten=null; S.protoStandort='TS1'; S.protoPos='TP1'; S.view='protokoll'; render(); 1");
+    await A.warte(500);
+    const form = document.getElementById("proto");
+    const k = [].filter.call(form.querySelectorAll("#anlagen button"), (b) => /Ergänzen|Prüfen/.test(b.textContent))[0];
+    if (!k) return { fehler: "kein Ergänzen-Knopf", anl: A.html(form.querySelector("#anlagen")) };
+    k.click(); await A.warte(500);
+    const schritte = await A.durchklicken(40);
+    return { schritte, anl: A.html(document.getElementById("proto").querySelector("#anlagen")), toasts: A.toasts };
+  } },
   { name: "protokoll-ausgefuellt-fuer", konto: "admin", code: async () => {
     const x = window.__t.x, A = window.__ab;
     x("formDirty=false; S.protoArt='wartung'; S.bearbeiten=null; S.protoStandort='TS3'; S.protoPos=null; S.view='protokoll'; render(); 1");
