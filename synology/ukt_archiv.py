@@ -8,17 +8,21 @@ der Synology (Systemsteuerung -> Aufgabenplaner, alle 15 Minuten), meldet sich
 mit einem eigenen Konto an und legt neue und korrigierte PDFs ab unter
 
     <basis>/<jahr>/Lidl/Wartungen/2026-09-21_Seekirchen_Darko.pdf
+    <basis>/<jahr>/Lidl/Störungen/…            (Störungsprotokolle, Büro 02.10.2026)
 
-Protokolle weiterer Kunden (nicht Lidl) kommen nach <basis>/<jahr>/Kunden/<Kunde>/
-(änderbar mit "unterordner_kunde" in den Einstellungen).
+Protokolle weiterer Kunden (nicht Lidl) kommen nach
+<basis>/<jahr>/Kunden/<Kunde>/Wartungen bzw. …/Störungen.
 
-Baustellen (Projekte) bekommen je einen Ordner mit Angebot, Rechnung, Plänen,
-Fotos, Unterlagen und einer Projektmappe (HTML + JSON), nach Jahr und Kunde:
+Baustellen (Projekte) bekommen je einen Ordner mit Plänen, Fotos, Unterlagen
+und einer Projektmappe (HTML + JSON), nach Jahr und Kunde:
 
-    <basis>/<jahr>/Kunden/Lidl/Baustellen/123-Musterort_P-2026-001/
+    <basis>/<jahr>/Lidl/Baustellen/123-Musterort_P-2026-001/
+    <basis>/<jahr>/Kunden/<Kunde>/Baustellen/…
 
-(Einstellung "unterordner_projekt"; Angebote/Rechnungen nur mit Rolle "archiv",
-siehe tools/archiv-rolle.sql).
+Angebote und Rechnungen NIE dorthin (den Ordner sehen auch Techniker), sondern
+in den Büro-Ordner, den nur der Chef sieht (Einstellung "buero_basis", gleiche
+Gliederung darunter). Dafür braucht das Archivkonto die Rolle "archiv"
+(tools/archiv-rolle.sql). Ohne "buero_basis" werden sie gar nicht abgelegt.
 
 Gelöschte Protokolle wandern in den Unterordner "_geloescht". Das Skript
 schreibt nur in diese Ordner und fasst sonst nichts an.
@@ -78,6 +82,17 @@ def lade_konfig():
     k["supabase_url"] = k["supabase_url"].rstrip("/")
     k.setdefault("unterordner", "{jahr}/Lidl/Wartungen")
     return k
+
+
+def buero_an(k):
+    """Büro-Ordner (nur Chef) eingerichtet? Erst dann werden Angebote/Rechnungen abgelegt."""
+    b = str(k.get("buero_basis") or "")
+    return bool(b) and "HIER" not in b
+
+
+def buero_ordner(k, ordner):
+    """derselbe Ordner wie im Archiv, aber unter dem Büro-Ordner"""
+    return os.path.join(k["buero_basis"], os.path.relpath(ordner, k["basis"]))
 
 
 def lade_stand():
@@ -201,11 +216,20 @@ def zielordner(k, p, kunden=None):
     if not re.match(r"^\d{4}$", jahr):
         jahr = "ohne-Datum"
     kunde = (kunden or {}).get(p.get("standort_id"))
+    # Wartungen und Störungen getrennt (Büro 02.10.2026): …/Wartungen bzw. …/Störungen
+    art = "Störungen" if str(p.get("wartungsart") or "").strip().lower().startswith("stör") else "Wartungen"
     if kunde:
-        # weiterer Kunde: eigener Ordner je Kunde, z. B. 2026/Kunden/Muster-GmbH
+        # weiterer Kunde: eigener Ordner je Kunde, z. B. 2026/Kunden/Muster-GmbH/Wartungen
         muster = k.get("unterordner_kunde", "{jahr}/Kunden/{kunde}")
-        return os.path.join(k["basis"], muster.format(jahr=jahr, kunde=sauber(kunde)))
-    return os.path.join(k["basis"], k["unterordner"].format(jahr=jahr))
+    else:
+        muster = k["unterordner"]
+    teile = [t for t in muster.format(jahr=jahr, kunde=sauber(kunde) if kunde else "", art=art).replace("\\", "/").split("/") if t]
+    if "{art}" not in muster:
+        if teile and teile[-1] in ("Wartungen", "Störungen"):
+            teile[-1] = art
+        else:
+            teile.append(art)
+    return os.path.join(k["basis"], *teile)
 
 
 def freier_name(ordner, name, eigene):
@@ -335,10 +359,10 @@ def abgleich(k, sb, stand):
 # sie in der Mappe, alles andere kommt trotzdem.
 
 # Angebote und Rechnungen (Projektdateien unter buero/, Beleg-PDFs) gehören NICHT
-# in die Projektordner – die sehen auch Techniker (Büro 01.10.2026). Sie kommen
-# später in einen eigenen, geschützten Ordner; bis dahin legt das Skript sie
-# gar nicht ab. Erst umstellen, wenn dieser Ordner eingerichtet ist.
-BUERO_AUF_SYNOLOGY = False
+# in die Projektordner – die sehen auch Techniker (Büro 01.10.2026). Sie kommen in
+# den Büro-Ordner, den nur der Chef sieht (Einstellung "buero_basis", Büro
+# 02.10.2026: „dazu gibt es bereits einen Ordner auf der Synology, den nur der
+# Chef sehen kann“). Ohne diese Einstellung legt das Skript sie gar nicht ab.
 
 PROJEKT_UNTERORDNER = {"angebot": "Angebot", "rechnung": "Rechnung", "plan": "Plaene", "foto": "Fotos",
                        "dokument": "Unterlagen", "besprechung": "Besprechungen", "mail": "Mails",
@@ -423,7 +447,11 @@ def projekt_ordner(k, p, kunden, standorte):
     markt = " ".join(str(x) for x in (st.get("filiale"), st.get("ort")) if x)
     name = sauber(markt or p.get("titel") or "Projekt")[:50] + "_" + sauber(p.get("nummer") or p.get("id", "")[:8])
     muster = k.get("unterordner_projekt", "{jahr}/Kunden/{kunde}/Baustellen/{projekt}")
-    return os.path.join(k["basis"], muster.format(jahr=jahr, kunde=sauber(kunde), projekt=name))
+    teile = [t for t in muster.format(jahr=jahr, kunde=sauber(kunde), projekt=name).replace("\\", "/").split("/") if t]
+    # Lidl direkt unter dem Jahr: 2026/Lidl/Baustellen/… (Büro 02.10.2026), weitere Kunden unter Kunden/
+    if (p.get("kunde_id") or "lidl") == "lidl" and len(teile) > 2 and teile[1] == "Kunden" and teile[2] == sauber(kunde):
+        del teile[1]
+    return os.path.join(k["basis"], *teile)
 
 
 def html_text(t):
@@ -554,7 +582,7 @@ def projekt_mappe(p, belege, kunden, standorte, anlagen, lokal=None, ordner=""):
             return [t for t, q in stellen if any((isinstance(y, str) and y == x.get("pfad")) or
                                                   name_norm(y if isinstance(y, str) else (y or {}).get("name")) == name_norm(x.get("name")) for y in q)]
         h.append("<h2>Dateien</h2><table><tr><th>Datei</th><th>Art</th><th>gehört zu</th></tr>")
-        for x in [x for x in dateien_p if BUERO_AUF_SYNOLOGY or not str(x.get("pfad") or "").startswith("buero/")]:
+        for x in [x for x in dateien_p if not str(x.get("pfad") or "").startswith("buero/")]:
             h.append("<tr><td>%s</td><td>%s</td><td>%s</td></tr>" % (
                 ql([x.get("pfad")]), html_text(PROJEKT_UNTERORDNER.get(x.get("art"), x.get("art"))),
                 html_text(" · ".join(gehoert(x))) or '<span class="m">–</span>'))
@@ -586,7 +614,7 @@ def projekte_abgleich(k, sb, stand):
         log("Projekte nicht lesbar (%s) – übersprungen" % e)
         return
     belege_alle = []
-    if BUERO_AUF_SYNOLOGY:
+    if buero_an(k):
         try:
             belege_alle = sb.tabelle("belege", "*", "datum.asc")
         except RuntimeError as e:
@@ -609,18 +637,28 @@ def projekte_abgleich(k, sb, stand):
                 os.makedirs(os.path.dirname(ordner), exist_ok=True)
                 os.replace(alt, ordner)
                 s["dateien"] = {pf: v.replace(alt, ordner, 1) for pf, v in (s.get("dateien") or {}).items()}
+                # der Büro-Ordner des Projekts wandert mit
+                if buero_an(k) and os.path.isdir(buero_ordner(k, alt)) and not os.path.exists(buero_ordner(k, ordner)):
+                    os.makedirs(os.path.dirname(buero_ordner(k, ordner)), exist_ok=True)
+                    os.replace(buero_ordner(k, alt), buero_ordner(k, ordner))
+                    s["dateien"] = {pf: v.replace(buero_ordner(k, alt), buero_ordner(k, ordner), 1) for pf, v in s["dateien"].items()}
         s["ordner"] = ordner
         dateien = s.setdefault("dateien", {})
         for x in (p.get("daten") or {}).get("dateien") or []:
             pfad = x.get("pfad")
             if not pfad or (dateien.get(pfad) and os.path.exists(dateien[pfad])):
                 continue
-            if pfad.startswith("buero/") and not BUERO_AUF_SYNOLOGY:
-                continue   # Angebot/Rechnung: nicht in den Projektordner (den sehen auch Techniker)
-            unter = os.path.join(ordner, PROJEKT_UNTERORDNER.get(x.get("art"), "Unterlagen"))
+            if pfad.startswith("buero/"):
+                # Angebot/Rechnung: nie in den Projektordner (den sehen auch Techniker) –
+                # nur in den Büro-Ordner, wenn er eingerichtet ist
+                if not buero_an(k):
+                    continue
+                unter = os.path.join(buero_ordner(k, ordner), PROJEKT_UNTERORDNER.get(x.get("art"), "Unterlagen"))
+            else:
+                unter = os.path.join(ordner, PROJEKT_UNTERORDNER.get(x.get("art"), "Unterlagen"))
             # nie eine vorhandene Datei überschreiben – gleicher Name bekommt _2, _3 …
             ziel = freie_datei(unter, sauber_datei(x.get("name")), set())
-            log("Projekt %s: %s" % (p.get("nummer"), os.path.relpath(ziel, k["basis"])))
+            log("Projekt %s: %s" % (p.get("nummer"), ("Büro: " + os.path.relpath(ziel, k["buero_basis"])) if pfad.startswith("buero/") else os.path.relpath(ziel, k["basis"])))
             if not PRUEFEN:
                 try:
                     schreibe(ziel, sb.datei("projektdateien", pfad))
@@ -639,15 +677,13 @@ def projekte_abgleich(k, sb, stand):
             log("Projekt %s: Mappe %s" % (p.get("nummer"), "neu" if not s.get("kennung") else "aktualisiert"))
             if not PRUEFEN:
                 schreibe(os.path.join(ordner, name + ".html"),
-                         projekt_mappe(p, belege, kunden, standorte, anlagen, dateien, ordner).encode("utf-8"))
-                # ohne Büro-Dateien (Angebote/Rechnungen) – den Ordner sehen auch Techniker
-                p_aus = p
-                if not BUERO_AUF_SYNOLOGY:
-                    alle_d = (p.get("daten") or {}).get("dateien") or []
-                    p_aus = dict(p, daten=dict(p.get("daten") or {}, dateien=[x for x in alle_d if not str(x.get("pfad") or "").startswith("buero/")]))
-                    p_aus = ohne_buero(p_aus, {x.get("pfad"): x.get("name") for x in alle_d})
+                         projekt_mappe(p, [], kunden, standorte, anlagen, dateien, ordner).encode("utf-8"))
+                # ohne Büro-Dateien und Belege (Angebote/Rechnungen) – den Ordner sehen auch Techniker
+                alle_d = (p.get("daten") or {}).get("dateien") or []
+                p_aus = dict(p, daten=dict(p.get("daten") or {}, dateien=[x for x in alle_d if not str(x.get("pfad") or "").startswith("buero/")]))
+                p_aus = ohne_buero(p_aus, {x.get("pfad"): x.get("name") for x in alle_d})
                 schreibe(os.path.join(ordner, name + ".json"),
-                         json.dumps({"projekt": p_aus, "belege": belege}, ensure_ascii=False, indent=1).encode("utf-8"))
+                         json.dumps({"projekt": p_aus, "belege": []}, ensure_ascii=False, indent=1).encode("utf-8"))
             s["kennung"] = kennung
             mappen += 1
         # Projekt als PDF (in der App abgelegt): die Fassung OHNE Angebote/Rechnungen
@@ -667,10 +703,24 @@ def projekte_abgleich(k, sb, stand):
                     s["mappe_pdf"] = mpfad
                 except RuntimeError as e:
                     log("  PDF nicht geholt (%s)" % str(e)[:120])
+        # die Fassung MIT Angeboten/Rechnungen nur in den Büro-Ordner
+        mb = str(((p.get("daten") or {}).get("mappePdfBuero") or {}).get("pfad") or "")
+        if buero_an(k) and mb and s.get("mappe_pdf_buero") != mb:
+            ziel = os.path.join(buero_ordner(k, ordner), "Projekt_%s_mit_Angeboten_Rechnungen.pdf" % sauber(p.get("nummer") or pid[:8]))
+            log("Projekt %s: Büro-PDF %s" % (p.get("nummer"), os.path.relpath(ziel, k["buero_basis"])))
+            if not PRUEFEN:
+                try:
+                    inhalt = sb.datei("projektdateien", mb)
+                    if not inhalt.startswith(b"%PDF"):
+                        raise RuntimeError("kein PDF")
+                    schreibe(ziel, inhalt)
+                    s["mappe_pdf_buero"] = mb
+                except RuntimeError as e:
+                    log("  Büro-PDF nicht geholt (%s)" % str(e)[:120])
         stand[schl] = s
         ordner_je_projekt[pid] = ordner
     log("Projekte: %d, %d Dateien geholt, %d Mappen geschrieben" % (len(projekte), neu_dateien, mappen))
-    if BUERO_AUF_SYNOLOGY:
+    if buero_an(k):
         belege_pdfs(k, sb, stand, belege_alle, kunden, standorte, ordner_je_projekt)
 
 
@@ -691,19 +741,21 @@ def belege_pdfs(k, sb, stand, belege, kunden, standorte, ordner_je_projekt):
         st = standorte.get(b.get("standort_id")) or {}
         markt = " ".join(str(x) for x in (st.get("filiale"), st.get("ort")) if x)
         name = sauber_datei(("TEST_" if b.get("test") else "") + "%s_%s%s.pdf" % (art, b.get("nummer"), ("_" + markt) if markt else ""))
+        # nur in den Büro-Ordner (nur Chef) – gleiche Gliederung wie im Archiv
         if b.get("projekt_id") in ordner_je_projekt:
-            ordner = os.path.join(ordner_je_projekt[b["projekt_id"]], art)
+            ordner = os.path.join(buero_ordner(k, ordner_je_projekt[b["projekt_id"]]), art)
         else:
             jahr = str(b.get("datum") or "")[:4] or "ohne-Datum"
             kunde = kunden.get(b.get("kunde_id") or "lidl") or "Kunde"
-            muster = k.get("unterordner_belege", "{jahr}/Kunden/{kunde}/{art}")
-            ordner = os.path.join(k["basis"], muster.format(jahr=jahr, kunde=sauber(kunde), art=art + ("en" if art == "Rechnung" else "e")))
+            lidl = (b.get("kunde_id") or "lidl") == "lidl"
+            muster = k.get("unterordner_belege", "{jahr}/Lidl/{art}" if lidl else "{jahr}/Kunden/{kunde}/{art}")
+            ordner = os.path.join(k["buero_basis"], muster.format(jahr=jahr, kunde=sauber(kunde), art=art + ("en" if art == "Rechnung" else "e")))
         if b.get("test"):
             ordner = os.path.join(ordner, "_Test")
         ziel = os.path.join(ordner, name)
         if s.get("pfad") == pfad and s.get("datei") == ziel and os.path.exists(ziel):
             continue
-        log("%s %s: %s" % (art, b.get("nummer"), os.path.relpath(ziel, k["basis"])))
+        log("%s %s: Büro: %s" % (art, b.get("nummer"), os.path.relpath(ziel, k["buero_basis"])))
         if not PRUEFEN:
             try:
                 schreibe(ziel, sb.datei("projektdateien", pfad))

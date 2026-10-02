@@ -1025,8 +1025,9 @@ Tabellen `planung` und `planung_privat` an, dazu die Regeln und
 > nichts, und alles andere funktioniert unverändert.
 
 Jedes Protokoll landet automatisch als PDF auf der Synology, im Ordner
-`Ukt/<Jahr>/Lidl/Wartungen`, zum Beispiel
-`2026-09-21_Seekirchen_Darko.pdf`. Das PDF sieht aus wie der Ausdruck aus der
+`Ukt/<Jahr>/Lidl/Wartungen` bzw. – Störungsprotokolle, seit 02.10.2026 –
+`Ukt/<Jahr>/Lidl/Störungen`, zum Beispiel `2026-09-21_Seekirchen_Darko.pdf`.
+Weitere Kunden: `Ukt/<Jahr>/Kunden/<Kunde>/Wartungen` bzw. `…/Störungen`. Das PDF sieht aus wie der Ausdruck aus der
 App, samt Fotos und Unterschrift. In der Fußzeile stehen die Protokollkennung
 und die Fassung.
 
@@ -1089,7 +1090,8 @@ Organisation für unterwegs. Seit 01.10.2026 holt dasselbe Skript auch die
 Projekte ab, je Projekt ein Ordner nach Jahr und Kunde:
 
 ```
-2026/Kunden/Lidl/Baustellen/123-Musterort_P-2026-001/
+2026/Lidl/Baustellen/123-Musterort_P-2026-001/          (Lidl direkt unter dem Jahr)
+2026/Kunden/Michael Kors/Baustellen/…_P-2026-002/        (weitere Kunden unter Kunden/)
     Plaene/  Fotos/  Unterlagen/  Lieferscheine/  Protokolle/
     Projekt_P-2026-001.html   Mappe zum Lesen und Drucken
     Projekt_P-2026-001.json   dasselbe maschinenlesbar
@@ -1113,12 +1115,24 @@ Baustellenbuch, Anlagen, Dateien und Tagebuch. Neue Dateien werden dazugeholt,
 die Mappe wird bei jeder Änderung neu geschrieben. Den Ordnernamen legt
 `unterordner_projekt` in `ukt_archiv.json` fest.
 
-**Angebote und Rechnungen kommen vorerst NICHT auf die Synology** (Büro
-01.10.2026): den Projektordner sehen auch Techniker. Das Skript fragt keine
-Belege ab, holt keine Büro-Dateien (`buero/…`) und schreibt keine Beträge in
-Mappe oder JSON – eine Quelle aus dem Büro steht dort nur als Name mit
-„(nur Büro)“. Ein eigener, nur für das Büro freigegebener Ordner folgt
-später (Schalter `BUERO_AUF_SYNOLOGY` im Skript, derzeit aus).
+**Angebote und Rechnungen kommen NIE in den Projektordner** (Büro 01.10.2026):
+den sehen auch Techniker. Mappe und JSON dort enthalten keine Beträge und keine
+Büro-Dateien – eine Quelle aus dem Büro steht nur als Name mit „(nur Büro)“.
+
+**Büro-Ordner (nur Chef, seit 02.10.2026):** Angebote und Rechnungen gehen in
+den Ordner auf der Synology, den nur der Chef sieht – Einstellung
+`buero_basis` in `ukt_archiv.json`, darunter dieselbe Gliederung:
+
+```
+<Büro-Ordner>/2026/Lidl/Baustellen/123-Musterort_P-2026-001/
+    Angebot/  Rechnung/  (_Test/ für Test-Belege der App)
+    Projekt_P-2026-001_mit_Angeboten_Rechnungen.pdf
+<Büro-Ordner>/2026/Lidl/Rechnungen/        Rechnungen ohne Projekt (Einsätze)
+<Büro-Ordner>/2026/Kunden/<Kunde>/…        weitere Kunden
+```
+
+Dafür braucht das Archivkonto die Rolle „archiv“ (tools/archiv-rolle.sql).
+Ohne `buero_basis` legt das Skript Angebote und Rechnungen gar nicht ab.
 
 **Einmalig dazu:**
 

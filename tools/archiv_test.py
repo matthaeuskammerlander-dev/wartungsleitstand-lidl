@@ -84,7 +84,7 @@ def main():
         sb = A.Supabase(k)
         stand = {}
         A.projekte_abgleich(k, sb, stand)
-        ordner = os.path.join(basis, "2026", "Kunden", "Lidl", "Baustellen", "123-Musterort_P-2026-001")
+        ordner = os.path.join(basis, "2026", "Lidl", "Baustellen", "123-Musterort_P-2026-001")
         erwartet = [os.path.join(ordner, "Plaene", "Grundriss-EG.pdf"),
                     os.path.join(ordner, "Fotos", "Dach.jpg"), os.path.join(ordner, "Projekt_P-2026-001.html"),
                     os.path.join(ordner, "Projekt_P-2026-001.json"), os.path.join(ordner, "Projekt_P-2026-001.pdf")]
@@ -130,7 +130,7 @@ def main():
         # Markt umbenannt: Ordner wandert mit, Dateien bleiben
         STAMM[0]["felder"]["ort"] = "Neuort"
         A.projekte_abgleich(k, sb, stand)
-        neu = os.path.join(basis, "2026", "Kunden", "Lidl", "Baustellen", "123-Neuort_P-2026-001")
+        neu = os.path.join(basis, "2026", "Lidl", "Baustellen", "123-Neuort_P-2026-001")
         assert os.path.exists(os.path.join(neu, "Plaene", "Grundriss-EG.pdf")) and not os.path.exists(ordner), "Umbenennen"
 
         # Protokolle: ungleiche Angaben (Name im Abschluss ≠ Techniker/in) – kein PDF ins Archiv (Büro 01.10.2026)
@@ -149,10 +149,43 @@ def main():
         zustand["berichte"][0]["version"] = 2
         A.abgleich(k, sb, st2)
         assert zustand["berichte_geholt"] == ["2026/p_x.pdf"] and os.path.exists(st2["p_x"]["datei"]), st2
+        # Störungsprotokoll: eigener Ordner …/Lidl/Störungen (Büro 02.10.2026)
+        assert os.path.dirname(st2["p_x"]["datei"]) == os.path.join(basis, "2026", "Lidl", "Störungen"), st2
         # schon archiviert und dann ungleich: Datei wandert nach _gesperrt
         PR.update(name_techniker="Jemand Anderer", version=3)
         A.abgleich(k, sb, st2)
         assert "_gesperrt" in st2["p_x"]["datei"] and os.path.exists(st2["p_x"]["datei"]), st2
+
+        # Ordner: Wartungen/Störungen je Kunde, Baustellen weiterer Kunden unter Kunden/
+        assert A.zielordner(k, {"datum": "2026-09-01", "wartungsart": "planmäßige Wartung"}) == os.path.join(basis, "2026", "Lidl", "Wartungen")
+        k_alt = dict(k, unterordner_kunde="{jahr}/Kunden/{kunde}")
+        assert A.zielordner(k_alt, {"datum": "2026-09-01", "standort_id": "N9", "wartungsart": "Störung"}, {"N9": "Muster"}) == \
+            os.path.join(basis, "2026", "Kunden", "Muster", "Störungen")
+        assert A.zielordner(k, {"datum": "2026-09-01", "standort_id": "N9", "wartungsart": "Wartung"}, {"N9": "Muster"}) == \
+            os.path.join(basis, "2026", "Kunden", "Muster", "Wartungen")
+        po = A.projekt_ordner(k, {"erstellt": "2026-10-02", "kunde_id": "K1", "nummer": "P-2026-009", "titel": "X"}, {"lidl": "Lidl", "K1": "Muster"}, {})
+        assert po == os.path.join(basis, "2026", "Kunden", "Muster", "Baustellen", "X_P-2026-009"), po
+
+        # Büro-Ordner (nur Chef): Angebote, Rechnungen und Büro-PDF NUR dort, nie im Archiv
+        buero = tempfile.mkdtemp(prefix="ukt-buero-test-")
+        try:
+            kb = dict(k, buero_basis=buero)
+            zustand["belege_erlaubt"], zustand["geholt"] = True, []
+            stb = {}
+            A.projekte_abgleich(kb, sb, stb)
+            bo = os.path.join(buero, "2026", "Lidl", "Baustellen", "123-Neuort_P-2026-001")
+            b_alle = [os.path.join(r, f) for r, _, fs in os.walk(buero) for f in fs]
+            for e in (os.path.join(bo, "Angebot", "Angebot-900001.pdf"),
+                      os.path.join(bo, "Projekt_P-2026-001_mit_Angeboten_Rechnungen.pdf")):
+                assert os.path.exists(e), "Büro fehlt: %s\nvorhanden: %s" % (e, b_alle)
+            assert [f for f in b_alle if f.startswith(os.path.join(bo, "Rechnung", "_Test"))], "Test-Rechnung fehlt: %s" % b_alle
+            assert [f for f in b_alle if f.startswith(os.path.join(buero, "2026", "Lidl", "Rechnungen"))], "Rechnung ohne Projekt fehlt: %s" % b_alle
+            a_alle = [os.path.join(r, f) for r, _, fs in os.walk(basis) for f in fs]
+            assert not [f for f in a_alle if os.sep + "Angebot" in f or os.sep + "Rechnung" in f or "mit_Angeboten" in f], "Beleg im Archiv: %s" % a_alle
+            roh = open(os.path.join(basis, "2026", "Lidl", "Baustellen", "123-Neuort_P-2026-001", "Projekt_P-2026-001.json"), encoding="utf-8").read()
+            assert "buero/" not in roh and json.loads(roh)["belege"] == [], "Büro-Daten in der Archiv-Mappe"
+        finally:
+            shutil.rmtree(buero, ignore_errors=True)
 
         # Dateinamen
         assert A.sauber_datei("Plan/EG: neu?.PDF") == "Plan-EG-neu.pdf", A.sauber_datei("Plan/EG: neu?.PDF")
