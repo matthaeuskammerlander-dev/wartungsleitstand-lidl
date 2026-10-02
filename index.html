@@ -5320,13 +5320,22 @@ function viewAnlagen(){
   /* offene Störungen außerhalb von Suche/Region: trotzdem zeigen, nie still weggefiltert */
   var drinM={}; filtered().forEach(function(s){ drinM[s.id]=1; });
   var draussenSt=offeneStoerungen(true).filter(function(o){ return !o.standortId || !drinM[o.standortId]; });
+  /* Büro 02.10.2026: „unter Anlagen werden immer oben die offenen Störungen gezeigt, was nervig ist –
+     wenn man eine Anlage sucht“ – nur noch eine schmale Zeile; die Störungen selbst erst auf Tipp
+     (nie still weggefiltert, aber nicht im Weg) */
   if(draussenSt.length){
-    var kSt=el('<div class="card"><div class="pad stack"><div class="note warnbox" style="font-size:13px"><strong>'+draussenSt.length+
-      " offene Störung"+(draussenSt.length===1?"":"en")+"</strong> außerhalb der Auswahl (Suche, Region, Kunde): "+
-      '<button class="btn ghost sm" type="button" data-a="aufheben" style="margin-left:6px">Auswahl aufheben</button></div></div></div>');
+    var kSt=el('<div class="note warnbox" style="font-size:13px;margin-bottom:12px;display:flex;flex-wrap:wrap;gap:6px 10px;align-items:center">'+
+      "<span><strong>"+draussenSt.length+" offene Störung"+(draussenSt.length===1?"":"en")+"</strong> außerhalb der Suche bzw. Auswahl</span>"+
+      '<button class="btn ghost sm" type="button" data-a="zeigen">zeigen</button>'+
+      '<button class="btn ghost sm" type="button" data-a="aufheben">Auswahl aufheben</button>'+
+      '<div data-liste class="stack" style="flex-basis:100%;gap:6px" hidden></div></div>');
     /* wie auf „Fällig“: ein Tipp statt Suchfeld leeren und Region zurücksetzen */
     kSt.querySelector('[data-a="aufheben"]').onclick=function(){ stoerAuswahlAufheben(); render(); };
-    draussenSt.forEach(function(o){ kSt.querySelector(".pad").appendChild(stoerungEintrag(o)); });
+    var stL=kSt.querySelector("[data-liste]"), stZ=kSt.querySelector('[data-a="zeigen"]');
+    stZ.onclick=function(){
+      if(!stL.childNodes.length) draussenSt.forEach(function(o){ stL.appendChild(stoerungEintrag(o)); });
+      stL.hidden=!stL.hidden; stZ.textContent=stL.hidden?"zeigen":"ausblenden";
+    };
     f.appendChild(kSt);
   }
 
@@ -24169,6 +24178,19 @@ var URLAUB_STATUS={beantragt:"beantragt", genehmigt:"genehmigt", abgelehnt:"abge
 var PLANUNG=[], PLAN_PRIVAT={}, planungGeladen=false, planungLaedt=false, planungStand=0, planungKonto="", planungFehler="";
 function planungAn(){ return betriebAn() || (demo() && !nurLesen()); }
 function meineKennung(){ return (Store.benutzer && Store.benutzer.id) || "ich"; }
+/* Netz kurz weg („TypeError: Failed to fetch“, Büro 02.10.2026): verständlich sagen und von selbst
+   neu laden – nach 15 s und sobald das Gerät wieder online ist */
+function netzFehlerText(m){
+  m=String(m||"");
+  return /failed to fetch|networkerror|load failed|network request failed|keine Verbindung/i.test(m)
+    ? "Keine Verbindung zum Server – der Kalender lädt von selbst neu, sobald sie wieder da ist." : m;
+}
+var planungWiederTakt=0;
+function planungWiederVersuchen(){
+  if(planungWiederTakt) return;
+  planungWiederTakt=setTimeout(function(){ planungWiederTakt=0; planungStand=0; planungNachladen(); }, 15000);
+}
+window.addEventListener("online", function(){ if(planungFehler){ planungStand=0; planungNachladen(); } if(planTeam && !planTeam.length) planTeam=null; });
 function planungLaden(){
   if(demo()){ planungGeladen=true; return Promise.resolve(); }
   if(!betriebAn()) return Promise.resolve();
@@ -24181,11 +24203,12 @@ function planungLaden(){
   ]).then(function(r){
     planungLaedt=false;
     if(Store.benutzer.email!==konto) return;
-    if(r[0].error){ planungFehler=/relation|does not exist/i.test(r[0].error.message)?"Kalender und Aufgaben sind in der Datenbank noch nicht eingerichtet (tools/planung.sql).":r[0].error.message; return; }
+    if(r[0].error){ planungFehler=/relation|does not exist/i.test(r[0].error.message)?"Kalender und Aufgaben sind in der Datenbank noch nicht eingerichtet (tools/planung.sql).":netzFehlerText(r[0].error.message);
+      if(/Keine Verbindung/.test(planungFehler)) planungWiederVersuchen(); return; }
     planungFehler=""; PLANUNG=r[0].data||[]; planungGeladen=true;
     PLAN_PRIVAT={}; (r[1].data||[]).forEach(function(x){ PLAN_PRIVAT[x.planung_id]=x; });
     kalenderReiterZeichen();
-  }, function(e){ planungLaedt=false; planungFehler=(e&&e.message)||"keine Verbindung"; });
+  }, function(e){ planungLaedt=false; planungFehler=netzFehlerText((e&&e.message)||"keine Verbindung"); planungWiederVersuchen(); });
 }
 /* höchstens jede Minute frisch – danach die Ansicht neu, wenn sie es braucht */
 function planungNachladen(nachher){
@@ -24242,11 +24265,14 @@ function planWerText(e){ return (e.wer_namen||[]).filter(Boolean).join(", "); }
 
 /* ---------- wer: Person(en) im Kalender ----------
    S.kalWer: "ich", "alle" oder die Kennung einer Person aus dem Team */
-var planTeam=null;
+var planTeam=null, planTeamZeit=0;
 function planTeamLaden(){
   if(planTeam) return Promise.resolve(planTeam);
   if(!betriebAn()) return Promise.resolve([]);
-  return chatTeamLaden().then(function(t){ planTeam=t||[]; return planTeam; });
+  /* ohne Netz nicht bei jedem Zeichnen neu fragen */
+  if(Date.now()-planTeamZeit<15000) return Promise.resolve([]);
+  planTeamZeit=Date.now();
+  return chatTeamLaden().then(function(t){ planTeam=(t&&t.length)?t:null; return t||[]; });
 }
 function planPersonName(id){
   if(id===meineKennung()) return meinName();
@@ -24387,7 +24413,7 @@ function viewKalender(){
     return f;
   }
   planungNachladen();
-  if(!planTeam) planTeamLaden().then(function(){ if(S.view==="kalender" && darfRendern() && !document.querySelector(".assistent")) render(); });
+  if(!planTeam) planTeamLaden().then(function(){ if(planTeam && S.view==="kalender" && darfRendern() && !document.querySelector(".assistent")) render(); });
   var heute=isoLokal(new Date());
   /* Monat zuerst (Büro 02.10.2026: „klassische Kalenderansicht wie bei Störungen“); die To-do-Liste
      steht immer daneben bzw. darunter statt hinter einem eigenen Knopf */
@@ -24401,7 +24427,7 @@ function viewKalender(){
       '<div><h2>Kalender</h2><div class="sub">Termine, Urlaub, Aufgaben – und was schon geplant ist: Störungen, Projekttermine, fällige Wartungen. Privates sehen die anderen nur als „Abwesend“.</div></div>'+
       '<div class="rowflex" style="gap:6px"><button class="btn sm" type="button" data-neu="termin">+ Termin</button><button class="btn ghost sm" type="button" data-neu="aufgabe">+ Aufgabe</button></div>'+
     "</div>"+
-    (planungFehler?'<div class="note warnbox">'+esc(planungFehler)+"</div>":"")+
+    (planungFehler?'<div class="note warnbox rowflex" style="justify-content:space-between;gap:8px"><span>'+esc(planungFehler)+'</span><button class="btn ghost sm" type="button" data-neuladen>Neu laden</button></div>':"")+
     '<div class="chips" data-modus>'+[["monat","Monat"],["woche","Woche"]].map(function(x){
       return '<button class="chip" type="button" data-m="'+x[0]+'" aria-pressed="'+(S.kalModus===x[0])+'">'+esc(x[1])+"</button>"; }).join("")+"</div>"+
     '<div class="chips" data-wer></div>'+
@@ -24415,6 +24441,8 @@ function viewKalender(){
     werHost.appendChild(b);
   });
   c.querySelectorAll("[data-m]").forEach(function(b){ b.onclick=function(){ S.kalModus=b.dataset.m; render(); }; });
+  var nl=c.querySelector("[data-neuladen]");
+  if(nl) nl.onclick=function(){ nl.disabled=true; nl.textContent="lädt …"; planTeamZeit=0; planungStand=0; planungNachladen(); };
   c.querySelectorAll("[data-neu]").forEach(function(b){ b.onclick=function(){
     planEditor(null, {art:b.dataset.neu, datum:b.dataset.neu==="termin"?(S.kalModus==="woche" && S.kalWoche>heute ? S.kalWoche : heute):"",
       wer:S.kalWer==="alle"||S.kalWer==="ich" ? [meineKennung()] : [S.kalWer]}); }; });
