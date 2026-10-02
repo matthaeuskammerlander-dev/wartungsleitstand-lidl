@@ -269,20 +269,21 @@ Kammerlander Umwelt- und Klimatechnik (UKT) – oft kurz, vom Handy, im Feld.
   legen“ (`posteingangZuProjekt`, Vorschlag `posteingangProjektPunkte`) – erledigt erst, wenn alle
   Dateien hochgeladen sind. Angebot/Rechnung als Art nur für den Inhaber.
 - **Folgeaufträge** (Büro 02.10.2026, nur Inhaber): Mängel und „Folgeauftrag erforderlich“ aus
-  Protokollen stehen in Projekte als „Folgeaufträge – Angebot?“ (); erledigt durch ein Projekt
-  mit  oder „Kein Angebot“ mit Grund (Merker ).
+  Protokollen stehen in Projekte als „Folgeaufträge – Angebot?“ (`folgeOffen`); erledigt durch ein Projekt
+  mit `daten.ausProtokoll` oder „Kein Angebot“ mit Grund (Merker `folge:<Protokoll>`).
 - **Datenpflege** (Verwaltung, Büro 02.10.2026): Märkte „zur Zeit nicht betreut“ mit Grund „Datenpflege“
-  samt Fortschritt (); „Wieder betreuen“ öffnet nur den Markt-Editor.
-- **Diktieren** (): Spracherkennung des Browsers, keine KI, Text wird angehängt.
-- **Rapport-Text** (): ausgeführte Arbeiten aus dem Lidl-Rapport zusätzlich in
+  samt Fortschritt (`datenpflegePunkte`); „Wieder betreuen“ öffnet nur den Markt-Editor.
+- **Diktieren** (`diktatKnopf`): Spracherkennung des Browsers, keine KI, Text wird angehängt.
+- **Rapport-Text** (`rapTextRein`): ausgeführte Arbeiten aus dem Lidl-Rapport zusätzlich in
   „Durchgeführte Maßnahmen“ bzw. „Bemerkungen“ – nie ersetzen, kein Feld fällt weg.
-- **Fahrtpauschale** (, Büro 02.10.2026): Zone 2 = Kärnten, Steiermark, Vorarlberg, Tirol ab
-  Innsbruck, Osttirol; sonst Zone 1.  nimmt die Katalog-Position der Zone. Nur auf Anweisung ändern.
+- **Fahrtpauschale** (`fahrtZone`, Büro 02.10.2026): Zone 2 = Kärnten, Steiermark, Vorarlberg, Tirol ab
+  Innsbruck, Osttirol; sonst Zone 1. `einsatzPositionen` nimmt die Katalog-Position der Zone. Nur auf Anweisung ändern.
 - **Fahrzeuge** (tools/fahrzeuge.sql, Büro 02.10.2026): km, Pickerl, Service, Reparatur, Schaden; Techniker nur
-  ihr Fahrzeug (km-Stand, Schaden), Beträge nur Inhaber (). GPS-Import (X-GPS, CSV/Excel):
+  ihr Fahrzeug (km-Stand, Schaden), Beträge nur Inhaber (`fahrzeug_kosten`). GPS-Import (X-GPS, CSV/Excel):
   NUR Kilometer je Tag – nie Orte, Uhrzeiten oder Fahrten speichern (Fahrtenbuch mit Orten erst nach
   Zustimmung/Betriebsvereinbarung). Diese Grenze nie lockern.
-- **Spielwiese** (, nur Inhaber): eigene App im geschützten Vollbild, vorschauSchutz sperrt alles Schreibende.
+- **Spielwiese** (`spielwieseOeffnen`, nur Inhaber): eigene App im geschützten Vollbild, `vorschauSchutz`
+  sperrt alles Schreibende.
 - **Störungen nie doppelt** (Büro 01.10.2026): eine Lidl-Auftragsnummer gibt es
   nur einmal als Störung (Datenbank-Index `stoerung_auftrag_einmal`,
   tools/stoerung-eindeutig.sql; im Dialog „Vorhandene öffnen“ statt neu).
