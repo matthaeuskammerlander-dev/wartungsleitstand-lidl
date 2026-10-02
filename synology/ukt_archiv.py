@@ -368,13 +368,15 @@ PROJEKT_UNTERORDNER = {"angebot": "Angebot", "rechnung": "Rechnung", "plan": "Pl
                        "dokument": "Unterlagen", "besprechung": "Besprechungen", "mail": "Mails",
                        "lieferschein": "Lieferscheine", "protokoll": "Protokolle"}
 PROJEKT_SCHRITTE = [("anfrage", "Anfrage"), ("begehung", "Bestand / Begehung"), ("konzept", "Konzept"),
-                    ("angebot", "Angebot"), ("auftrag", "Auftrag"), ("vorbereitung", "Vorbereitung"),
+                    ("einreichung", "Einreichung"), ("angebot", "Angebot"), ("auftrag", "Auftrag"), ("vorbereitung", "Vorbereitung"),
                     ("baustelle", "Baustelle"), ("inbetriebnahme", "Inbetriebnahme"),
                     ("abgeschlossen", "Dokumentation"), ("abgerechnet", "Abgerechnet"), ("verloren", "Nicht beauftragt")]
 PROJEKT_ANGABEN = [("anfrageDatum", "Anfrage vom"), ("anfrageVon", "Angefragt von"), ("ansprechpartner", "Ansprechpartner"),
                    ("telefon", "Telefon"), ("beschreibung", "Was wird gebraucht?"), ("begehungDatum", "Begehung am"),
                    ("bestand", "Bestand"), ("vorgaben", "Bauliche Vorgaben"), ("konzeptDatum", "Konzept an den Planer am"),
-                   ("konzept", "Konzept"), ("angebotNr", "Angebotsnummer"), ("angebotDatum", "Angebot vom"),
+                   ("konzept", "Konzept"), ("einreichDatum", "Eingereicht am"), ("einreichungBei", "Eingereicht bei"),
+                   ("einreichung", "Eingereicht"), ("freigabeDatum", "Freigabe / Rückmeldung am"), ("freigabe", "Rückmeldung, Auflagen"),
+                   ("angebotNr", "Angebotsnummer"), ("angebotDatum", "Angebot vom"),
                    ("gueltigBis", "gültig bis"), ("auftragNr", "Bestellung des Kunden"), ("auftragDatum", "Auftrag vom"),
                    ("auftragZusatz", "Weitere Bestellungen"), ("beginn", "Montage ab"), ("ende", "Montage bis"),
                    ("monteure", "Monteure"), ("baustelleBeginn", "Baustelle begonnen"), ("baustelleEnde", "Baustelle fertig"),
@@ -462,6 +464,7 @@ def html_text(t):
 
 SCHRITT_FELDER = {"anfrage": ["anfrageDatum", "anfrageVon", "ansprechpartner", "telefon", "beschreibung"],
                   "begehung": ["begehungDatum", "bestand", "vorgaben"], "konzept": ["konzeptDatum", "konzept"],
+                  "einreichung": ["einreichDatum", "einreichungBei", "einreichung", "freigabeDatum", "freigabe"],
                   "angebot": ["angebotNr", "angebotDatum", "gueltigBis"], "auftrag": ["auftragNr", "auftragDatum", "auftragZusatz"],
                   "vorbereitung": ["beginn", "ende", "monteure"], "baustelle": ["baustelleBeginn", "baustelleEnde"],
                   "inbetriebnahme": ["ibDatum", "uebergabe"], "abgeschlossen": ["abschlussDatum"], "abgerechnet": ["rechnungNr", "rechnungDatum"]}

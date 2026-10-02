@@ -94,7 +94,7 @@ Kammerlander Umwelt- und Klimatechnik (UKT) – oft kurz, vom Handy, im Feld.
   unter „Sonstiges“ eintippen, danach für alle in der Auswahl (Datenbank-
   Funktion `bereiche_eigene`); Lohn: normale Arbeit (nicht Montage, nicht Fahrt).
 - Baustellen-Ablauf (Büro 01.10.2026, tools/projekte-ablauf.sql): Projekt-Schritte
-  Anfrage → Begehung → Konzept → Angebot → Auftrag → Vorbereitung → Baustelle →
+  Anfrage → Begehung → Konzept → Einreichung (Büro 02.10.2026, tools/projekt-einreichung.sql) → Angebot → Auftrag → Vorbereitung → Baustelle →
   Inbetriebnahme → Dokumentation → abgerechnet; Listen Beteiligte/Termine/
   Bestellungen (`PROJEKT_LISTEN`), Baustellenbuch (`baubuchKarte`, Mengen, keine
   Preise; `BAUBUCH_RECHNUNG` = was für die Rechnung zählt).
