@@ -10139,15 +10139,42 @@ function kundenStand(z){
     /* eine Anfrage ohne Auftrag (etwa die Router-Frage) ist mit dem Abhaken als geklärt erledigt */
     else if(z.art==="frage" && z.geklaert){ r.status="erledigt"; r.datum=tagLokal(z.geaendert)||isoLokal(new Date()); r.auto=false; }
     else if(z.geplant){ r.status="geplant"; r.datum=z.geplant; r.auto=false; }
+    /* im Kalender eingeplant (Markt „📅 einplanen“, Kalender) – zählt auch hier (Büro 02.10.2026) */
+    else if(r.p && typeof planFuerPosition==="function"){ var pl=planFuerPosition(r.p.id); if(pl){ r.status="geplant"; r.datum=pl.datum; r.auto=true; } }
   }
+  if(r.p && typeof planFuerPosition==="function"){ r.plan=planFuerPosition(r.p.id)||null; }
   /* abgeschlossen (Büro): zählt überall wie erledigt, steht aber nicht mehr in der Liste */
   if(z.abgeschlossen){ r.abgeschlossen=true; if(r.status!=="erledigt"){ r.status="erledigt"; r.datum=z.abgeschlossen; } }
   r.text = r.abgeschlossen ? "abgeschlossen am "+dfmt(z.abgeschlossen)
-         : r.status==="erledigt" ? "erledigt am "+dfmt(r.datum) : r.status==="geplant" ? "geplant für "+dfmt(r.datum) : "offen";
+         : r.status==="erledigt" ? "erledigt am "+dfmt(r.datum) : r.status==="geplant" ? "geplant für "+dfmt(r.datum)+(r.plan && planWerText(r.plan)?" · "+planWerText(r.plan):"") : "offen";
   /* „zu klären“ (Büro 29.09.2026): eine offene Frage zu dieser Zeile, die ein Mensch
      beantworten muss – bleibt stehen, bis sie im Büro als geklärt abgehakt ist */
   r.klaeren=!!String(z.klaeren||"").trim();
   return r;
+}
+/* Wartung aus der Lidl-Liste im Kalender einplanen: vorhandenen Plan der Anlage verschieben, sonst neu –
+   eingeplant werden der Termin der Liste und die übrigen fälligen Termine derselben Anlage */
+function kundenWartungEinplanen(z, k, datum, werId, werName){
+  var s=k.s||byId[k.p.standortId], alt=planFuerPosition(k.p.id);
+  var pids=[k.p.id].concat(anlageVon(k.p).termine.filter(function(t){ return t.id!==k.p.id && (t.status==="ueberfaellig"||t.status==="faellig") && !planFuerPosition(t.id); })
+    .map(function(t){ return t.id; }));
+  var zeile={datum:datum, geaendert_von:meinName()};
+  if(werId){ zeile.wer=[werId]; zeile.wer_namen=[werName||planPersonName(werId)||""]; }
+  if(!alt) Object.assign(zeile, {art:"termin", kategorie:"wartung", titel:"Wartung "+anlagenName(anlageDaten(k.p))+(s?" – "+stName(s):""),
+    details:"Lidl IH-Nr. "+z.nummer+(z.notiz?" – "+z.notiz:""), standort_id:s?s.id:k.p.standortId, position_ids:pids,
+    wer:zeile.wer||[], wer_namen:zeile.wer_namen||[], status:"offen", privat:false, erstellt_name:meinName()});
+  else zeile.position_ids=(alt.position_ids||[]).concat(pids.filter(function(p){ return (alt.position_ids||[]).indexOf(p)<0; }));
+  if(demo()){ toast("Präsentation: im Kalender eingeplant – gespeichert wurde nichts."); return Promise.resolve(); }
+  var anfrage=alt ? Store.sb.from("planung").update(zeile).eq("id", alt.id).select("*") : Store.sb.from("planung").insert(zeile).select("*");
+  return mitFrist(anfrage, 20000).then(function(r){
+    if(r.error || !(r.data||[]).length){ toast("In der Liste gespeichert, aber nicht im Kalender: "+((r.error&&r.error.message)||"keine Berechtigung")); return; }
+    var g=r.data[0];
+    PLANUNG=PLANUNG.filter(function(x){ return x.id!==g.id; }).concat([g]);
+    var neuDabei=(g.wer||[]).filter(function(id){ return id!==meineKennung() && (!alt || (alt.wer||[]).indexOf(id)<0); });
+    planBenachrichtigen(g, neuDabei, !alt);
+    planGeaendert();
+    toast("Gespeichert – "+(alt?"Kalendertermin verschoben":"im Kalender eingeplant")+(g.wer_namen&&g.wer_namen.length?" für "+g.wer_namen.join(", "):"")+".");
+  }, function(){ toast("In der Liste gespeichert, Kalender nicht erreicht – keine Verbindung."); });
 }
 /* in der Liste bleibt, was noch nicht beantwortet oder noch nicht erledigt ist */
 /* in der Liste bleibt eine Zeile, bis sie abgeschlossen ist – oder bis sie erledigt
@@ -10222,13 +10249,14 @@ function kundenAntwort(art, l){
 }
 /* start (freiwillig): {art, stand} – mit welcher Auswahl die Liste aufgeht */
 function kundenAnsicht(start){
-  var v=ansichtOeffnen("Rückfragen von Lidl");
+  /* am PC breit und in Spalten (Büro 02.10.2026: „hier wird auch Platz verschwendet“) */
+  var v=ansichtOeffnen("Rückfragen von Lidl", null, {breit:true});
   var ov=v.inhalt.closest(".assistent"); ov.setAttribute("data-konto","");
   ov.setAttribute("data-kundenfenster","");
   v.schritt.textContent="vom Kunden angefragt – gesondert abarbeiten";
   var filter=(start&&start.art)||"alle", stand=(start&&start.stand)||"alle", heute=isoLokal(new Date());
   var box=el('<div class="stack" style="gap:10px"><div class="stack" style="gap:6px"><div class="chips" data-filter></div><div class="chips" data-stand></div></div>'+
-    '<div class="stack" data-liste style="gap:8px"></div></div>');
+    '<div data-liste style="display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,430px),1fr));gap:8px;align-items:start"></div></div>');
   v.inhalt.appendChild(box);
   var liste=box.querySelector("[data-liste]"), fb=box.querySelector("[data-filter]"), sb=box.querySelector("[data-stand]");
   var speichern=function(z, d){
@@ -10271,7 +10299,8 @@ function kundenAnsicht(start){
       (z.abgeschlossen?'<div class="muted" style="font-size:12.5px">Abgeschlossen am '+esc(dfmt(z.abgeschlossen))+"</div>":"")+
       '<div class="rowflex" data-knoepfe style="gap:6px;flex-wrap:wrap"></div>'+
       '<div class="stack" data-eintragen style="gap:6px" hidden>'+
-        '<label class="fl"><span>Geplant für</span><input type="date" data-f="geplant" value="'+esc(z.geplant||"")+'"></label>'+
+        '<label class="fl"><span>Geplant für</span><input type="date" data-f="geplant" value="'+esc(z.geplant||(k.plan&&k.plan.datum)||"")+'"></label>'+
+        (z.art==="wartung" && k.p && planungAn() ? '<label class="fl"><span>Wer macht es? (kommt in seinen Kalender)</span><select data-wer><option value="">– niemand Bestimmtes –</option></select></label>' : "")+
         '<label class="fl"><span>Erledigt am (falls bei uns kein Protokoll)</span><input type="date" data-f="erledigt" max="'+heute+'" value="'+esc(z.erledigt||"")+'"></label>'+
         '<label class="fl"><span>Notiz für die Antwort</span><input type="text" data-f="notiz" maxlength="200" value="'+esc(z.notiz||"")+'"></label>'+
         '<div><button class="btn sm" type="button" data-a="sichern">Speichern</button></div></div></div>');
@@ -10299,12 +10328,26 @@ function kundenAnsicht(start){
       if(!z.abgeschlossen && !window.confirm("„"+kundenName(z)+"“ abschließen?\n\nDie Zeile verschwindet aus der Liste und aus allen Übersichten. Unter „abgeschlossen“ bleibt sie nachzulesen.")) return;
       speichern(z, {abgeschlossen: z.abgeschlossen ? null : heute}).then(function(ok){ if(ok) toast(z.abgeschlossen ? "Abgeschlossen." : "Wieder geöffnet."); });
     });
+    var werSel=d.querySelector("[data-wer]");
+    if(werSel) planTeamLaden().then(function(t){
+      [{user_id:meineKennung(), name:meinName()+" (ich)"}].concat(t||[]).forEach(function(x){
+        var o=document.createElement("option"); o.value=x.user_id; o.textContent=x.name||"–"; werSel.appendChild(o); });
+      if(k.plan && (k.plan.wer||[])[0]) werSel.value=k.plan.wer[0];
+    });
     var si=d.querySelector('[data-a="sichern"]');
     si.onclick=function(){
       var w=function(f){ return d.querySelector('[data-f="'+f+'"]').value.trim()||null; };
       if(w("erledigt") && w("erledigt")>heute){ toast("„Erledigt am“ kann nicht in der Zukunft liegen."); return; }
       si.disabled=true;
-      speichern(z, {geplant:w("geplant"), erledigt:w("erledigt"), notiz:w("notiz")}).then(function(ok){ si.disabled=false; if(ok) toast("Gespeichert."); });
+      speichern(z, {geplant:w("geplant"), erledigt:w("erledigt"), notiz:w("notiz")}).then(function(ok){
+        si.disabled=false; if(!ok) return;
+        /* Wartung mit Anlage und Datum: im Kalender einplanen bzw. verschieben – mit Person und den
+           fälligen Terminen dieser Anlage (Büro 02.10.2026: „diese sollen dann auch für die zugehörigen
+           Wartungstermine gelten und in Kalender und To-do korrekt angezeigt werden“) */
+        if(z.art==="wartung" && k.p && w("geplant") && !w("erledigt") && planungAn())
+          kundenWartungEinplanen(z, k, w("geplant"), werSel && werSel.value ? werSel.value : "", werSel && werSel.value ? werSel.selectedOptions[0].textContent.replace(/ \(ich\)$/,"") : "");
+        else toast("Gespeichert.");
+      });
     };
     return d;
   };
