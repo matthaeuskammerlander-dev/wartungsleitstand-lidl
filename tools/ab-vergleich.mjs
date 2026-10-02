@@ -177,6 +177,67 @@ const ABLAEUFE = [
     await A.warte(1200);
     return { geladen, html: null, protokolle: A.db("protokolle"), korrekturen: A.db("korrekturen"), aenderungen: A.db("aenderungen"), toasts: A.toasts };
   } },
+  { name: "protokoll-aus-offener-stoerung", konto: "techniker", code: async () => {
+    const x = window.__t.x, A = window.__ab;
+    x("stoerungSpeichern({_id:'stab1', standortId:'TS2', auftragsnummer:'ST-777', problemtyp:'Kühlung', beschreibung:'Raum zu warm', ansprechpartner:'Marktleitung', erfasstAm:'2026-06-14T08:00:00.000Z', status:'offen'}, 'Test')");
+    await A.warte(500);
+    x("protokollBeginnen('TS2', null, 'stoerung', 'stab1')"); await A.warte(800);
+    const form = document.getElementById("proto");
+    const vorher = { werte: A.werte(form), html: A.html(form), fehlt: form._fehltNoch ? form._fehltNoch() : null };
+    form.querySelectorAll("fieldset.fs-zu").forEach((f) => f.classList.remove("fs-zu"));
+    A.setze(form, "#s_massnahmen", "Lüfter getauscht");
+    const pos = form.querySelector('input[name="posw"]'); if (pos && !pos.checked) pos.click();
+    A.unterschreiben(form);
+    const n = window.__db.tabellen.protokolle.length;
+    document.getElementById("save").click();
+    for (let i = 0; i < 40 && window.__db.tabellen.protokolle.length === n; i++) await A.warte(250);
+    await A.warte(1500);
+    return { vorher, protokolle: A.db("protokolle"), stoerungen: A.db("stoerungen"), offene: x("OFFENE").map((o) => [o._id, !!o.erledigt]), toasts: A.toasts };
+  } },
+  { name: "protokoll-fotos", konto: "techniker", code: async () => {
+    const x = window.__t.x, A = window.__ab;
+    x("formDirty=false; S.protoArt='wartung'; S.bearbeiten=null; S.protoStandort='TS1'; S.protoPos='TP1'; S.view='protokoll'; render(); 1");
+    await A.warte(500);
+    const form = document.getElementById("proto");
+    const bild = (farbe) => new Promise((r) => { const c = document.createElement("canvas"); c.width = 1600; c.height = 1200; const g = c.getContext("2d");
+      g.fillStyle = farbe; g.fillRect(0, 0, 1600, 1200); g.fillStyle = "#fff"; g.fillRect(100, 100, 400, 300); c.toBlob((b) => r(new File([b], farbe.slice(1) + ".png", { type: "image/png" })), "image/png"); });
+    const dt = new DataTransfer(); dt.items.add(await bild("#aa3355")); dt.items.add(await bild("#3355aa"));
+    const inp = form.querySelector("#f_galerie"); inp.files = dt.files; inp.dispatchEvent(new Event("change", { bubbles: true }));
+    for (let i = 0; i < 40 && form._fotos.liste().length < 2; i++) await A.warte(200);
+    await A.warte(300);
+    const liste = form._fotos.liste().map((f) => [f.name, f.bytes > 0, f.hinweis, f.datenUrl.slice(0, 22)]);
+    const unterschrift = form.querySelector("#fotoliste input"); if (unterschrift) { unterschrift.value = "Typenschild"; unterschrift.dispatchEvent(new Event("input", { bubbles: true })); }
+    const knopf = form.querySelectorAll("#fotoliste button")[1]; if (knopf) knopf.click(); await A.warte(200);
+    const nachEntfernen = form._fotos.liste().map((f) => [f.name, f.hinweis]);
+    document.getElementById("f_allesok").click(); A.unterschreiben(form);
+    const n = window.__db.tabellen.protokolle.length;
+    document.getElementById("save").click();
+    for (let i = 0; i < 40 && window.__db.tabellen.protokolle.length === n; i++) await A.warte(250);
+    await A.warte(1500);
+    const p = A.db("protokolle")[0] || {};
+    return { liste, nachEntfernen, info: form.querySelector("#f_fotoinfo") ? form.querySelector("#f_fotoinfo").textContent : null,
+      fotosGespeichert: (p.fotos || []).map((f) => [f.name, f.hinweis, !!(f.pfad || f.datenUrl || f.url)]), fotoTabelle: A.db("fotos").length, toasts: A.toasts };
+  } },
+  { name: "protokoll-formular-leeren", konto: "techniker", code: async () => {
+    const x = window.__t.x, A = window.__ab;
+    x("formDirty=false; S.protoArt='wartung'; S.bearbeiten=null; S.protoStandort='TS1'; S.protoPos='TP1'; S.view='protokoll'; render(); 1");
+    await A.warte(500);
+    let form = document.getElementById("proto");
+    A.setze(form, "#f_bem", "weg damit"); form.querySelector("#addMangel").click(); A.unterschreiben(form); await A.warte(200);
+    document.getElementById("reset").click(); await A.warte(800);
+    form = document.getElementById("proto");
+    return { werte: A.werte(form), html: A.html(form), toasts: A.toasts };
+  } },
+  { name: "protokoll-anlage-fehlt-dialog", konto: "techniker", code: async () => {
+    const x = window.__t.x, A = window.__ab;
+    x("formDirty=false; S.protoArt='wartung'; S.bearbeiten=null; S.protoStandort='TS1'; S.protoPos='TP1'; S.view='protokoll'; render(); 1");
+    await A.warte(500);
+    const form = document.getElementById("proto");
+    const anl = A.html(form.querySelector("#anlagen"));
+    form.querySelector("#addAnlage").click(); await A.warte(600);
+    const d = [...document.querySelectorAll(".assistent")].pop();
+    return { anl, dialog: d ? A.html(d) : null, toasts: A.toasts };
+  } },
   { name: "protokoll-ausgefuellt-fuer", konto: "admin", code: async () => {
     const x = window.__t.x, A = window.__ab;
     x("formDirty=false; S.protoArt='wartung'; S.bearbeiten=null; S.protoStandort='TS3'; S.protoPos=null; S.view='protokoll'; render(); 1");
