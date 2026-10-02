@@ -59,6 +59,9 @@ window.__ab = {
     try{ ev("pointerdown",20,20); ev("pointermove",60,40); ev("pointermove",120,30); ev("pointerup",120,30); }catch(e){} },
   db: function(t){ return JSON.parse(JSON.stringify((window.__db.tabellen[t]||[]))); },
   toasts: [],
+  /* Datenbank-Stand je Tabelle; dbNeu gibt nur die seitdem geänderten Tabellen zurück */
+  dbStand: function(){ var o={}; Object.keys(window.__db.tabellen).forEach(function(t){ o[t]=JSON.stringify(window.__db.tabellen[t]); }); return o; },
+  dbNeu: function(st){ var o={}; Object.keys(window.__db.tabellen).forEach(function(t){ var j=JSON.stringify(window.__db.tabellen[t]); if(j!==st[t]) o[t]=JSON.parse(j); }); return o; },
 };
 (function(){ var t=document.getElementById("toast"); if(!t) return; new MutationObserver(function(){ var x=t.textContent.trim(); if(x && window.__ab.toasts[window.__ab.toasts.length-1]!==x) window.__ab.toasts.push(x); }).observe(t,{childList:true,subtree:true,characterData:true}); })();
 `;
@@ -258,6 +261,82 @@ const ABLAEUFE = [
     const form = document.getElementById("proto");
     return { schritte, werte: form ? A.werte(form) : null, toasts: A.toasts, protokolle: A.db("protokolle") };
   } },
+  /* ---- Verwaltung: Markt- und Anlagen-Editor ---- */
+  { name: "verwaltung-editor-anzeigen", konto: "admin", code: async () => {
+    const x = window.__t.x, A = window.__ab;
+    x("S.view='verwaltung'; S.adm={tab:'maerkte', suche:'', filter:'alle', sort:'filiale', auf:true, sel:'TS1', entwurf:null}; render(); 1"); await A.warte(600);
+    const c = document.getElementById("adm_editor");
+    return { html: A.html(c), werte: c ? A.werte(c) : null };
+  } },
+  { name: "verwaltung-markt-bearbeiten-speichern", konto: "admin", code: async () => {
+    const x = window.__t.x, A = window.__ab;
+    x("S.view='verwaltung'; S.adm={tab:'maerkte', suche:'', filter:'alle', sort:'filiale', auf:true, sel:'TS2', entwurf:null}; render(); 1"); await A.warte(600);
+    const c = document.getElementById("adm_editor"), stand = A.dbStand();
+    A.setze(c, "#a_name", "Testfiliale 902 Neu"); A.setze(c, "#a_notiz", "Schlüssel beim Marktleiter");
+    c.querySelector("#a_speichern").click(); await A.warte(500);
+    const ohneGrund = A.sichtbar(c);
+    A.setze(c, "#a_grund", "Name korrigiert");
+    c.querySelector("#a_speichern").click(); await A.warte(1500);
+    return { ohneGrund, db: A.dbNeu(stand), toasts: A.toasts, nachher: A.html(document.getElementById("adm_editor")) };
+  } },
+  { name: "verwaltung-anlage-dazu-speichern", konto: "admin", code: async () => {
+    const x = window.__t.x, A = window.__ab;
+    x("S.view='verwaltung'; S.adm={tab:'maerkte', suche:'', filter:'alle', sort:'filiale', auf:true, sel:'TS3', entwurf:null}; render(); 1"); await A.warte(600);
+    const c = document.getElementById("adm_editor"), stand = A.dbStand();
+    c.querySelector("#a_plus").click(); await A.warte(400);
+    const karten = c.querySelectorAll("#a_anlagen > *"), neu = karten[karten.length - 1];
+    const vorher = A.html(neu);
+    [].forEach.call(neu ? neu.querySelectorAll("input[type=text]") : [], (e, i) => { if (!e.value) { e.value = i === 0 ? "Split Büro" : (/kg|kW|zahl/i.test(e.id + e.className) ? "2" : "T" + i); e.dispatchEvent(new Event("input", { bubbles: true })); e.dispatchEvent(new Event("change", { bubbles: true })); } });
+    [].forEach.call(neu ? neu.querySelectorAll("select") : [], (e) => { if (e.options.length > 1 && !e.value) { e.selectedIndex = 1; e.dispatchEvent(new Event("change", { bubbles: true })); } });
+    A.setze(c, "#a_grund", "Anlage vor Ort gefunden");
+    c.querySelector("#a_speichern").click(); await A.warte(1500);
+    return { vorher, db: A.dbNeu(stand), toasts: A.toasts, fehler: A.sichtbar(document.getElementById("adm_editor") || document.body) };
+  } },
+  { name: "verwaltung-termin-und-status", konto: "admin", code: async () => {
+    const x = window.__t.x, A = window.__ab;
+    x("S.view='verwaltung'; S.adm={tab:'maerkte', suche:'', filter:'alle', sort:'filiale', auf:true, sel:'TS4', entwurf:null}; render(); 1"); await A.warte(600);
+    const c = document.getElementById("adm_editor"), stand = A.dbStand();
+    const sel = [].filter.call(c.querySelectorAll("#a_anlagen select"), (s) => s.options.length > 3)[0];
+    if (sel) { sel.selectedIndex = (sel.selectedIndex + 2) % sel.options.length; sel.dispatchEvent(new Event("change", { bubbles: true })); }
+    const st = c.querySelector("#a_status"); const opts = st ? [].map.call(st.options, (o) => o.value) : [];
+    if (st) { st.value = opts.filter((v) => v !== st.value)[0]; st.dispatchEvent(new Event("change", { bubbles: true })); }
+    await A.warte(200);
+    const mitStatus = A.html(c);
+    A.setze(c, "#a_grund", "Termin verschoben");
+    const pg = c.querySelector("#a_pausiertGrund"); if (pg) A.setze(c, "#a_pausiertGrund", "Umbau");
+    c.querySelector("#a_speichern").click(); await A.warte(1500);
+    return { opts, mitStatus, db: A.dbNeu(stand), toasts: A.toasts };
+  } },
+  { name: "verwaltung-entfernen-und-zurueck", konto: "admin", code: async () => {
+    const x = window.__t.x, A = window.__ab;
+    x("S.view='verwaltung'; S.adm={tab:'maerkte', suche:'', filter:'alle', sort:'filiale', auf:true, sel:'TS5', entwurf:null}; render(); 1"); await A.warte(600);
+    let c = document.getElementById("adm_editor"); const stand = A.dbStand();
+    A.setze(c, "#a_grund", "Markt geschlossen"); c.querySelector("#a_weg").click(); await A.warte(1500);
+    const nachWeg = { db: A.dbNeu(stand), sel: x("S.adm.sel"), toasts: A.toasts.slice() };
+    x("S.adm.sel='TS5'; render(); 1"); await A.warte(600);
+    c = document.getElementById("adm_editor");
+    const zur = c && c.querySelector("#a_zurueck");
+    if (zur) { A.setze(c, "#a_grund", "doch wieder offen"); zur.click(); await A.warte(1500); }
+    const c2 = document.getElementById("adm_editor"), reset = c2 && c2.querySelector("#a_reset");
+    let nachReset = null;
+    if (reset) { A.setze(c2, "#a_grund", "alles zurück"); reset.click(); await A.warte(1500); nachReset = A.dbNeu(stand); }
+    return { nachWeg, zurueckDa: !!zur, db: A.dbNeu(stand), resetDa: !!reset, nachReset, toasts: A.toasts };
+  } },
+  { name: "verwaltung-neuer-markt", konto: "admin", code: async () => {
+    const x = window.__t.x, A = window.__ab;
+    x("S.view='verwaltung'; S.adm={tab:'maerkte', suche:'', filter:'alle', sort:'filiale', auf:true, sel:null, entwurf:null}; render(); 1"); await A.warte(600);
+    const stand = A.dbStand();
+    document.getElementById("adm_neu").click(); await A.warte(600);
+    const c = document.getElementById("adm_editor");
+    const leer = A.html(c);
+    const werte = { a_filiale: "999", a_name: "Neuer Testmarkt", a_adresse: "1010 Testhausen, Neugasse 9", a_plz: "1010", a_ort: "Testhausen" };
+    Object.keys(werte).forEach((k) => { if (c.querySelector("#" + k)) A.setze(c, "#" + k, werte[k]); });
+    [].forEach.call(c.querySelectorAll("#a_anlagen select"), (e) => { if (e.options.length > 1 && !e.value) { e.selectedIndex = 1; e.dispatchEvent(new Event("change", { bubbles: true })); } });
+    [].forEach.call(c.querySelectorAll("#a_anlagen input[type=text]"), (e, i) => { if (!e.value && i === 0) { e.value = "Split Kasse"; e.dispatchEvent(new Event("input", { bubbles: true })); } });
+    A.setze(c, "#a_grund", "neu übernommen");
+    c.querySelector("#a_speichern").click(); await A.warte(1500);
+    return { leer, db: A.dbNeu(stand), toasts: A.toasts, fehler: A.sichtbar(document.getElementById("adm_editor") || document.body) };
+  } },
   { name: "protokoll-ausgefuellt-fuer", konto: "admin", code: async () => {
     const x = window.__t.x, A = window.__ab;
     x("formDirty=false; S.protoArt='wartung'; S.bearbeiten=null; S.protoStandort='TS3'; S.protoPos=null; S.view='protokoll'; render(); 1");
@@ -269,13 +348,18 @@ const ABLAEUFE = [
 
 /* Zufällige/zeitabhängige Teile vereinheitlichen, damit nur echte Unterschiede auffallen */
 function glatt(o) {
-  return JSON.parse(JSON.stringify(o, (k, v) => {
+  /* Zeichenketten: Zeitstempel, Millisekunden, Bilddaten und zufällige Kennungen vereinheitlichen */
+  const text = (v) => v.replace(/\b20\d\d-\d\d-\d\dT\d\d:\d\d:\d\d(\.\d+)?Z\b/g, "ZEIT").replace(/\b1[78]\d{11}\b/g, "MS").replace(/data:[a-z/+.-]+;base64,[A-Za-z0-9+/=]+/g, "data:…")
+    .replace(/\b(p|c|e|n|N|t|NP|st|m|f|k|z|a|w)_?(?=[0-9a-z]*\d)[0-9a-z]{7,}\b/g, "$1_ID");
+  const geh = (v, k) => {
     /* vergebene Kennungen und Zeitstempel (die Uhr läuft ab der festen Startzeit weiter) */
     if (typeof v === "string" && /^(id|_id|client_id|protokoll_id|zeit|erstellt|geaendert|created_at|updated_at|gespeichert|am)$/.test(k)) return v ? "·" : v;
-    if (typeof v === "string") return v.replace(/\b20\d\d-\d\d-\d\dT\d\d:\d\d:\d\d(\.\d+)?Z\b/g, "ZEIT").replace(/\b1[78]\d{11}\b/g, "MS").replace(/data:[a-z/+.-]+;base64,[A-Za-z0-9+/=]+/g, "data:…")
-      .replace(/\b(p|c|e|n|t|NP|st|m|f|k|z|a|w)_?(?=[0-9a-z]*\d)[0-9a-z]{8,}\b/g, "$1_ID");
+    if (typeof v === "string") return text(v);
+    if (Array.isArray(v)) return v.map((x) => geh(x, ""));
+    if (v && typeof v === "object") { const o = {}; for (const kk of Object.keys(v)) o[text(kk)] = geh(v[kk], kk); return o; }
     return v;
-  }));
+  };
+  return geh(JSON.parse(JSON.stringify(o)), "");
 }
 
 function unterschiede(a, b, pfad = "", aus = []) {
