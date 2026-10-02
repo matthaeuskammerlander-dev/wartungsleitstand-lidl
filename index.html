@@ -7763,7 +7763,8 @@ function angemeldetOderLokal(){ return Store.modus!=="anmeldung"; }
    Die Datenbank sperrt das Schreiben für diese Rolle zusätzlich. */
 /* Präsentation – und die Vorschau eines Änderungswunsches (UKT_VORSCHAU): alles
    bedienbar, gespeichert wird nichts */
-function demo(){ return Rolle.name==="praesentation" || !!window.UKT_VORSCHAU; }
+function demo(){ return Rolle.name==="praesentation" || (!!window.UKT_VORSCHAU && window.UKT_VORSCHAU!=="Spielwiese"); }
+function spielwiese(){ return window.UKT_VORSCHAU==="Spielwiese"; }
 /* solange die Rollen-Tabelle fehlt, haben Admins die Inhaber-Rechte */
 function istInhaber(){ return Rolle.name==="inhaber" || (!Rolle.da && Admin.frei); }
 /* streng: nur die Rolle Inhaber (Preise, Angebote, Rechnungen) – kein Rückfall auf Admins */
@@ -8101,6 +8102,7 @@ function initSupabase(){
     ? window.supabase.createClient(CFG.supabaseUrl,CFG.supabaseAnonKey,{auth:{autoRefreshToken:false, persistSession:true, detectSessionInUrl:false,
         storage:{getItem:function(k){ try{ return localStorage.getItem(k); }catch(e){ return null; } }, setItem:function(){}, removeItem:function(){}}}})
     : window.supabase.createClient(CFG.supabaseUrl,CFG.supabaseAnonKey);
+  if(spielwiese()) Store.sb=schattenClient(Store.sb);
   Store.sb.auth.getSession().then(function(r){
     var sess=r&&r.data?r.data.session:null;
     /* bis die Rolle geprüft ist: die engste (nur ansehen, keine Zugangsdaten) */
@@ -17040,10 +17042,10 @@ function demoBannerHoehe(){
 window.addEventListener("resize", demoBannerHoehe);
 function demoBanner(){
   var b=document.getElementById("demobanner");
-  if(!demo()){ if(b) b.remove(); demoBannerHoehe(); return; }
+  if(!demo() && !spielwiese()){ if(b) b.remove(); demoBannerHoehe(); return; }
   if(b){ demoBannerHoehe(); return; }
   b=el('<div id="demobanner" role="status">'+(window.UKT_VORSCHAU==="Spielwiese"
-    ? "<strong>Spielwiese</strong> – alles lässt sich als Inhaber ausprobieren, <strong>gespeichert wird nichts</strong>. Oben „Spielwiese schließen“ führt zurück."
+    ? "<strong>Spielwiese</strong> – alles ausprobieren und speichern, auch Protokolle: die Wirkung siehst du in Fällig, Verlauf und Kalender. Gespeichert wird nur in dieser Kopie – „Spielwiese schließen“ verwirft alles. Keine KI, kein Stempeln, keine Nachrichten an andere."
     : window.UKT_VORSCHAU
     ? "<strong>Vorschau "+esc(String(window.UKT_VORSCHAU))+"</strong> – so sähe die App mit der Änderung aus. Alles lässt sich ausprobieren, <strong>gespeichert wird nichts</strong>."
     : "Präsentation – alles lässt sich ausprobieren, <strong>gespeichert wird nichts</strong>. Nach dem Neuladen ist alles wie vorher.")+"</div>");
@@ -20827,8 +20829,8 @@ function handbuchKarte(z){
         "<strong>Kunde</strong> – nur ansehen (Fällig, Karte, Anlagen, Verlauf), keine internen Daten.",
         "<strong>Präsentation</strong> – Spielwiese zum Vorführen: alles bedienbar wie als Admin, nichts wird gespeichert, keine KI-Kosten "+
           "(KI und „Claude fragen“ nur über die eigene Claude-App bzw. mit Beispieldaten).",
-        "<strong>🧪 Spielwiese</strong> (nur Inhaber, unter „Konto“) – die App mit dem eigenen Inhaber-Konto zum Ausprobieren: alles sichtbar wie gewohnt, "+
-          "auch Preise und Rechnungen, aber nichts wird gespeichert (die Datenbank bekommt nichts Schreibendes, auch keine KI-Aufrufe). Schließen führt zurück.",
+        "<strong>🧪 Spielwiese</strong> (nur Inhaber, unter „Konto“) – die App mit dem eigenen Inhaber-Konto auf einer Kopie der Daten: alles bis zum Speichern durchspielen "+
+          "(Protokolle, Termine, Projekte, Rechnungen) und die Wirkung in Fällig, Verlauf und Kalender sehen. Die echte Datenbank bekommt nichts, keine KI, kein Stempeln. Schließen verwirft alles.",
         "Die Rechte prüft die Datenbank selbst – ein verstecktes Menü allein wäre kein Schutz."]))+
 
     abschnitt("7 · Rückfragen von Lidl und die Karte",
@@ -21991,6 +21993,131 @@ function wunschAenderungen(w){
    bleiben unberührt. Gegen absichtlich bösartigen Code (Zugriff über
    window.parent) hilft das nicht – die Zweige legt nur Claude auf Auftrag
    des Inhabers an. */
+/* ---- Schattendatenbank der Spielwiese (Büro 02.10.2026: „alle Schritte bis zum Abschluss und
+   Speichern machen und den Einfluss auf die Daten und Änderungen sehen – beim Verlassen alles zurück“).
+   Gelesen wird aus der echten Datenbank: jede Tabelle beim ersten Zugriff ganz in den Speicher. Alles
+   Schreibende (anlegen, ändern, löschen, Dateien) geschieht nur dort – Fälligkeiten, Verlauf, Kalender
+   zeigen die Wirkung. Server-Regeln, KI, Stempeln und Benachrichtigungen laufen nicht. Schließen wirft
+   den Speicher weg. vorschauSchutz sperrt zusätzlich jedes Schreiben im Netz. */
+var SCHATTEN_SCHLUESSEL={einstellungen:"schluessel", planung_privat:"planung_id", fahrzeug_kosten:"eintrag_id", rollen:"user_id", admins:"user_id", gelesen:"user_id", abrechnung:"protokoll_id"};
+function schattenClient(echt){
+  var T={}, DATEI={};
+  var ich=function(){ return (Store.benutzer && Store.benutzer.id) || null; };
+  var kopie=function(x){ return x==null ? x : JSON.parse(JSON.stringify(x)); };
+  var pk=function(t){ return SCHATTEN_SCHLUESSEL[t] || "id"; };
+  var laden=function(t){
+    if(T[t]) return T[t].bereit;
+    var e={zeilen:[]}; T[t]=e;
+    var seite=function(ab, mitOrdnung){
+      var q=echt.from(t).select("*"); if(mitOrdnung) q=q.order(pk(t));
+      return q.range(ab, ab+999).then(function(r){
+        if(r.error){ if(mitOrdnung && /column|spalte/i.test(r.error.message||"")) return seite(ab, false); e.fehler=r.error; return; }
+        e.zeilen=e.zeilen.concat(r.data||[]);
+        if((r.data||[]).length===1000) return seite(ab+1000, mitOrdnung);
+      }, function(x){ e.fehler={message:"Keine Verbindung"}; });
+    };
+    e.bereit=seite(0, true);
+    return e.bereit;
+  };
+  var gleich=function(a, b){ return a!=null && b!=null && String(a)===String(b); };
+  var vergl=function(a, b){ if(typeof a==="number" && typeof b==="number") return a-b; a=String(a); b=String(b); return a<b ? -1 : a>b ? 1 : 0; };
+  var passt=function(r, f){ return f.every(function(x){ var v=r[x.s];
+    if(x.a==="eq") return gleich(v, x.w);
+    if(x.a==="is") return x.w===null ? v==null : v===x.w;
+    if(x.a==="nichtIs") return x.w===null ? v!=null : v!==x.w;
+    if(x.a==="in") return (x.w||[]).some(function(w){ return gleich(v, w); });
+    if(x.a==="gte") return v!=null && vergl(v, x.w)>=0;
+    if(x.a==="lt") return v!=null && vergl(v, x.w)<0;
+    if(x.a==="like") return new RegExp("^"+String(x.w).split("%").map(function(t){ return t.replace(/[-\/\\^$*+?.()|[\]{}]/g, "\\$&"); }).join(".*")+"$").test(String(v==null?"":v));
+    return true; }); };
+  var vorgabe=function(t, r){
+    var e=T[t], muster=e.zeilen[0]||{}, k=pk(t), jetzt=new Date().toISOString();
+    if(k==="id" && r.id==null) r.id = e.zeilen.some(function(z){ return typeof z.id==="number"; })
+      ? e.zeilen.reduce(function(m, z){ return Math.max(m, +z.id||0); }, 0)+1
+      : (window.crypto && crypto.randomUUID ? crypto.randomUUID() : neueKennung("s"));
+    if(r.erstellt==null && ("erstellt" in muster || !e.zeilen.length)) r.erstellt=jetzt;
+    if(r.erstellt_von==null && "erstellt_von" in muster) r.erstellt_von=ich();
+    if(r.geaendert==null && "geaendert" in muster) r.geaendert=jetzt;
+    if(r.version==null && "version" in muster) r.version=1;
+    return r;
+  };
+  function Q(t){ this.t=t; this.a="select"; this.f=[]; this.ords=[]; this.mitSel=false; this.sp=null; }
+  Q.prototype.select=function(sp){ this.mitSel=true; if(typeof sp==="string" && sp.trim() && sp.trim()!=="*") this.sp=sp.split(",").map(function(x){ return x.trim(); }); return this; };
+  Q.prototype.insert=function(d){ this.a="insert"; this.d=d; return this; };
+  Q.prototype.upsert=function(d, o){ this.a="upsert"; this.d=d; this.o=o||{}; return this; };
+  Q.prototype.update=function(d){ this.a="update"; this.d=d; return this; };
+  Q.prototype["delete"]=function(){ this.a="delete"; return this; };
+  ["eq","is","gte","lt","like"].forEach(function(m){ Q.prototype[m]=function(sp, w){ this.f.push({a:m, s:sp, w:w}); return this; }; });
+  Q.prototype["in"]=function(sp, w){ this.f.push({a:"in", s:sp, w:w}); return this; };
+  Q.prototype.not=function(sp, op, w){ if(op==="is") this.f.push({a:"nichtIs", s:sp, w:w}); return this; };
+  Q.prototype.order=function(sp, o){ this.ords.push({s:sp, auf:!(o && o.ascending===false)}); return this; };
+  Q.prototype.limit=function(n){ this.lim=n; return this; };
+  Q.prototype.range=function(a, b){ this.rng=[a, b]; return this; };
+  Q.prototype.raus=function(l){ var sp=this.sp; return (this.mitSel || this.a==="select") ? l.map(function(r){ r=kopie(r);
+    if(!sp) return r; var o={}; sp.forEach(function(k){ o[k]=r[k]; }); return o; }) : null; };
+  Q.prototype.lauf=function(){
+    var self=this, e=T[this.t], tab=e.zeilen;
+    if(e.fehler) return {data:null, error:e.fehler};
+    if(this.a==="select"){
+      var l=tab.filter(function(r){ return passt(r, self.f); });
+      if(this.ords.length) l.sort(function(a, b){ for(var i=0;i<self.ords.length;i++){ var o=self.ords[i], x=a[o.s], y=b[o.s];
+        if(x==null && y==null) continue; if(x==null) return o.auf?1:-1; if(y==null) return o.auf?-1:1;
+        var c=vergl(x, y)*(o.auf?1:-1); if(c) return c; } return 0; });
+      if(this.rng) l=l.slice(this.rng[0], this.rng[1]+1);
+      if(this.lim!=null) l=l.slice(0, this.lim);
+      return {data:this.raus(l.slice(0, 1000)), error:null};
+    }
+    if(this.a==="insert"){
+      var neu=[].concat(this.d).map(function(d){ return vorgabe(self.t, kopie(d)); });
+      neu.forEach(function(r){ tab.push(r); });
+      return {data:this.raus(neu), error:null};
+    }
+    if(this.a==="upsert"){
+      var ks=String(this.o.onConflict || pk(this.t)).split(","), raus=[];
+      [].concat(this.d).forEach(function(d){
+        d=kopie(d);
+        var alt=tab.filter(function(r){ return ks.every(function(k){ return gleich(r[k], d[k]); }); })[0];
+        if(alt){ if(self.o.ignoreDuplicates) return; Object.assign(alt, d); raus.push(alt); }
+        else { var r=vorgabe(self.t, d); tab.push(r); raus.push(r); }
+      });
+      return {data:this.raus(raus), error:null};
+    }
+    if(this.a==="update"){
+      var b=tab.filter(function(r){ return passt(r, self.f); }), d=kopie(this.d);
+      b.forEach(function(r){ Object.assign(r, d); });
+      return {data:this.raus(b), error:null};
+    }
+    if(this.a==="delete"){
+      var weg=tab.filter(function(r){ return passt(r, self.f); });
+      e.zeilen=tab.filter(function(r){ return weg.indexOf(r)<0; });
+      return {data:this.raus(weg), error:null};
+    }
+    return {data:[], error:null};
+  };
+  Q.prototype.then=function(ok, nok){ var self=this;
+    return laden(this.t).then(function(){ return self.lauf(); }).then(ok, nok); };
+  Q.prototype["catch"]=function(nok){ return this.then(null, nok); };
+  return {
+    auth:echt.auth,
+    from:function(t){ return new Q(t); },
+    /* nur lesende Funktionen gehen durch (vorschauSchutz lässt genau diese zu) */
+    rpc:function(name, args){
+      if(/^(team_liste|bereiche_eigene)$/.test(name)) return echt.rpc(name, args);
+      return Promise.resolve({data:null, error:{message:"function "+name+": in der Spielwiese nicht verfügbar"}});
+    },
+    functions:{invoke:function(){ return Promise.resolve({data:null, error:{message:"In der Spielwiese keine KI und keine Server-Funktionen."}}); }},
+    storage:{from:function(b){ var es=echt.storage.from(b); return {
+      upload:function(p, blob){ DATEI[b+"/"+p]=blob; return Promise.resolve({data:{path:p}, error:null}); },
+      createSignedUrl:function(p, sek, o){ var x=DATEI[b+"/"+p];
+        if(x) return Promise.resolve({data:{signedUrl:URL.createObjectURL(x)}, error:null});
+        if(x===null) return Promise.resolve({data:null, error:{message:"Datei gelöscht (Spielwiese)"}});
+        return es.createSignedUrl(p, sek, o); },
+      download:function(p){ var x=DATEI[b+"/"+p]; return x ? Promise.resolve({data:x, error:null}) : es.download(p); },
+      remove:function(l){ (l||[]).forEach(function(p){ DATEI[b+"/"+p]=null; }); return Promise.resolve({data:[], error:null}); },
+      list:function(){ return es.list.apply(es, arguments); }
+    }; }}
+  };
+}
 function vorschauSchutz(supa){
   var W=window;
   var zuSupabase=function(u){ u=String(u||""); var c=(W.UKT_CONFIG||{}).supabaseUrl; return (!!supa && u.indexOf(supa)===0) || (!!c && u.indexOf(c)===0); };
@@ -22001,6 +22128,8 @@ function vorschauSchutz(supa){
     /* nur POST und nur im Pfad – nicht irgendwo in der Abfrage (?x=/storage/…) */
     var pfad=""; try{ pfad=new URL(String(u||""), W.location.href).pathname; }catch(e){}
     if(m==="POST" && /\/storage\/v1\/object\/sign\//.test(pfad)) return false;
+    /* reine Lese-Funktionen (Teamliste, eigene Tätigkeitsbereiche) */
+    if(m==="POST" && /\/rest\/v1\/rpc\/(team_liste|bereiche_eigene)$/.test(pfad)) return false;
     return m!=="GET" && m!=="HEAD" && zuSupabase(u); };
   var f=W.fetch;
   W.fetch=function(u, o){
@@ -22087,7 +22216,7 @@ function vorschauEinbetten(html, kennung, balken, schliessen){
    geschützten Vollbild – alles sichtbar wie als Inhaber, auch Preise und
    Rechnungen, aber nichts Schreibendes erreicht die Datenbank (vorschauSchutz
    sperrt es im Netz, nicht nur über demo()). Kein eigenes Konto, kein Passwort. */
-function spielwieseDarf(){ return nurInhaber() && !demo() && Store.modus==="supabase" && !!Store.benutzer; }
+function spielwieseDarf(){ return nurInhaber() && !demo() && !window.UKT_VORSCHAU && Store.modus==="supabase" && !!Store.benutzer; }
 function spielwieseOeffnen(){
   if(!spielwieseDarf() || spielwieseOeffnen.laeuft || document.querySelector(".vorschau-rahmen")) return;
   spielwieseOeffnen.laeuft=true;
@@ -22095,7 +22224,7 @@ function spielwieseOeffnen(){
   fetch(location.href.split("#")[0], {cache:"no-store"})
     .then(function(r){ if(!r.ok) throw new Error("Seite nicht erreichbar ("+r.status+")."); return r.text(); })
     .then(function(html){
-      vorschauEinbetten(html, "Spielwiese", "<strong>Spielwiese</strong> – als Inhaber ausprobieren, gespeichert wird nichts", "Spielwiese schließen");
+      vorschauEinbetten(html, "Spielwiese", "<strong>Spielwiese</strong> – alles ausprobieren und speichern, nur in dieser Kopie", "Spielwiese schließen – alles verwerfen");
     }).catch(function(e){ window.alert("Spielwiese ließ sich nicht öffnen: "+(e&&e.message||e)); })
     .then(function(){ spielwieseOeffnen.laeuft=false; });
 }
