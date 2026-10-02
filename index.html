@@ -23695,6 +23695,24 @@ function katalogFinde(re, kid){
   var l=KATALOG.filter(function(k){ return k.aktiv!==false && re.test(k.text||""); });
   return l.filter(function(k){ return k.kunde_id===(kid||"lidl"); })[0] || l[0] || null;
 }
+/* Fahrtpauschale nach Zone (Büro 02.10.2026, „zum Rechnungschreiben wichtig, automatisch“):
+   Zone 2 = Kärnten, Steiermark, Vorarlberg, Tirol ab Innsbruck und Osttirol; der Rest Zone 1.
+   Bundesland aus der Postleitzahl; in Nordtirol entscheidet die Lage: Innsbruck und westlich
+   davon Zone 2, östlich (Hall, Schwaz, Wörgl, Kufstein, Kitzbühel …) Zone 1. Ein am Markt
+   eingetragenes Feld fahrtZone (1/2) geht vor. Unbekannt (keine PLZ) → null. */
+var FAHRT_TIROL_LON=11.45;
+function fahrtZone(s){
+  if(!s) return null;
+  if(+s.fahrtZone===1 || +s.fahrtZone===2) return +s.fahrtZone;
+  var m=String(s.plz||"").match(/\d{4}/) || String(s.adresse||"").match(/\b\d{4}\b/), plz=m ? +m[0] : 0;
+  if(!plz) return null;
+  if(plz>=9000) return 2;                          /* Kärnten, Osttirol (99xx) */
+  if(plz>=8380 && plz<=8389) return 1;             /* Jennersdorf – Burgenland */
+  if(plz>=8000) return 2;                          /* Steiermark */
+  if(plz>=6700 && plz<7000) return 2;              /* Vorarlberg */
+  if(plz>=6000 && plz<6700) return s.lon!=null ? (+s.lon<=FAHRT_TIROL_LON ? 2 : 1) : null;   /* Nordtirol */
+  return 1;
+}
 /* Rechnung zu einem Einsatz: Positionen aus dem Protokoll vorschlagen – Wartung
    je Anlage, Störung mit Regiestunden (Ankunft bis Fertig × Monteure), Material,
    Kältemittel; Preise aus dem Katalog, wo eine passende Position steht. */
@@ -23720,7 +23738,10 @@ function einsatzPositionen(pk, kid){
   }
   var km=stoer ? {art:so.kmArt, nach:zahlLesen(so.kmNach)} : (pk.kaeltemittel||{});
   if(km && +km.nach>0) add(+km.nach, "kg", "Kältemittel "+(km.art||""), katalogFinde(new RegExp("k(ä|ae)ltemittel\\s*"+String(km.art||"").replace(/[^A-Za-z0-9]/g,"").replace(/^R/i,"R\\s*")+"\\b","i"), kid));
-  add(1, "psh", "Fahrtpauschale", katalogFinde(/fahrtpauschale/i, kid));
+  /* Fahrtpauschale der Zone des Markts – fehlt sie im Katalog, steht die Zeile ohne Preis da */
+  var zone=fahrtZone(byId[pk.standortId]), fk=zone ? katalogFinde(new RegExp("fahrtpauschale\\s*zone\\s*"+zone, "i"), kid) : null;
+  if(fk) add(1, "psh", "", fk);
+  else add(1, "psh", zone ? "Fahrtpauschale Zone "+zone+" – Preis fehlt im Katalog" : "Fahrtpauschale – Zone unbekannt (Markt ohne Postleitzahl), bitte Zone 1 oder 2 wählen", null);
   return pos;
 }
 /* neuer Beleg – leer, aus einem Angebot (Mengen aus dem Baustellenbuch) oder zu einem Einsatz (Protokoll) */
