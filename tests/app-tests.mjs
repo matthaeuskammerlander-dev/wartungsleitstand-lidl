@@ -361,6 +361,70 @@ test("Bedienung: Eingabe-Dialog statt Browser-Abfrage – leer geht nicht, Abbre
   await a.zu();
 });
 
+test("Tour → Kalender: für sich selbst und andere; Störung bekommt „Einsatz geplant“; Techniker nur für sich und nimmt an", async () => {
+  const a = await oeffnen(KONTEN.inhaber);
+  const r = await a.seite.evaluate(async () => {
+    const x = window.__t.x, warte = (ms) => new Promise((f) => setTimeout(f, ms)), db = window.__db.tabellen;
+    /* eine offene Störung an TS2 */
+    await x("stoerungSpeichern({_id:'stt1', standortId:'TS2', auftragsnummer:'T-1', erfasstAm:new Date().toISOString(), status:'offen'}, 'Test')");
+    await warte(300);
+    window.__T = { tage: [{ nr: 1, stopps: [
+      { standort: x("byId.TS1"), positionen: [x("posById.TP1")], fahrtH: 0.5, arbeitH: 1 },
+      { standort: x("byId.TS2"), positionen: [{ id: "stoer:stt1", anlagentyp: "Störung" }], fahrtH: 0.5, arbeitH: 1 } ] }], anzahlStopps: 2, kmGesamt: 40, stundenProTag: 8 };
+    const schicken = async (wahl) => {
+      x("ansichtenSchliessen()"); x("tourSchicken(window.__T)"); await warte(500);
+      const d = [...document.querySelectorAll(".assistent")].pop();
+      const chips = [...d.querySelectorAll("[data-an] .chip")];
+      const c = chips.find((b) => wahl.test(b.textContent)); if (!c) return { fehler: "keine Auswahl " + wahl + ": " + chips.map((b) => b.textContent).join(",") };
+      c.click(); await warte(100);
+      const knopf = [...d.querySelectorAll(".as-fuss button")].pop(), text = knopf.textContent;
+      knopf.click(); await warte(1500);
+      return { chips: chips.map((b) => b.textContent), knopf: text };
+    };
+    const vorPlan = db.planung.length;
+    const selbst = await schicken(/^Ich/);
+    const meine = db.planung.slice(vorPlan);
+    const stoer = x("(OFFENE.filter(function(o){ return o._id==='stt1'; })[0]||{})");
+    const eingeplant = !!x("planFuerPosition('TP1')");
+    const vorTouren = db.touren.length;
+    const fremd = await schicken(/Testtechniker|tech/i);
+    return { selbst, fremd, meineAnzahl: meine.length, meineWer: meine.map((p) => (p.wer || []).join()), ich: x("meineKennung()"),
+      stoerTermin: stoer.termin || null, stoerTechniker: stoer.terminTechniker || null, eingeplant, touren: db.touren.length - vorTouren,
+      tourenFuerTech: db.touren.filter((t) => t.an === "u_tech_test_at").length };
+  });
+  pruefe(!r.selbst.fehler && !r.fremd.fehler, (r.selbst.fehler || "") + (r.fremd.fehler || ""));
+  pruefe(/^Ich/.test(r.selbst.chips[0]) && r.selbst.chips.length >= 3, "Auswahl falsch: " + r.selbst.chips.join(", "));
+  pruefe(r.selbst.knopf === "In meinen Kalender", "Für sich selbst steht „" + r.selbst.knopf + "“ am Knopf");
+  pruefe(r.meineAnzahl === 2 && r.meineWer.every((w) => w === r.ich), "eigene Kalendereinträge falsch: " + JSON.stringify(r));
+  pruefe(r.eingeplant, "Wartungstermin gilt nicht als eingeplant");
+  pruefe(r.stoerTermin && /Testinhaber|Inhaber/i.test(r.stoerTechniker || ""), "Störung ohne „Einsatz geplant“: " + r.stoerTermin + " / " + r.stoerTechniker);
+  pruefe(r.tourenFuerTech === 1, "Tour an den Techniker nicht gespeichert: " + JSON.stringify(r));
+  pruefe(!a.fehler.length, "Laufzeitfehler: " + a.fehler.join("; "));
+  await a.zu();
+  /* Techniker: nur für sich, nimmt die Tour an */
+  const t = await oeffnen(KONTEN.techniker);
+  const rt = await t.seite.evaluate(async () => {
+    const x = window.__t.x, warte = (ms) => new Promise((f) => setTimeout(f, ms)), db = window.__db.tabellen;
+    window.__T = { tage: [{ nr: 1, stopps: [{ standort: x("byId.TS1"), positionen: [x("posById.TP1")], fahrtH: 0.5, arbeitH: 1 }] }], anzahlStopps: 1, kmGesamt: 10, stundenProTag: 8 };
+    x("tourSchicken(window.__T)"); await warte(400);
+    const d = [...document.querySelectorAll(".assistent")].pop();
+    const chips = [...d.querySelectorAll("[data-an] .chip")].map((b) => b.textContent);
+    x("ansichtenSchliessen()");
+    /* jedes Testfenster hat seine eigene Datenbank – die Tour vom Büro hier anlegen */
+    db.touren.push({ id: "tt1", an: "u_tech_test_at", an_name: "Testtechniker", von: "u_inhaber_test_at", von_name: "Testinhaber", titel: "Testtour",
+      daten: { stopps: [], anzahl: 1, km: 10 }, erstellt: new Date().toISOString() });
+    x("tourenVersuch=0; tourenLaden()"); await warte(600);
+    x("S.view='karte'; render()"); await warte(400);
+    const an = document.querySelector("[data-tourannehmen]");
+    if (an) { an.click(); await warte(800); }
+    return { chips, annehmenDa: !!an, angenommen: db.touren.filter((z) => z.an === "u_tech_test_at").some((z) => (z.daten || {}).angenommen) };
+  });
+  pruefe(rt.chips.length === 1 && /^Ich/.test(rt.chips[0]), "Techniker kann für andere planen: " + rt.chips.join(", "));
+  pruefe(rt.annehmenDa && rt.angenommen, "Techniker kann die Tour nicht annehmen: " + JSON.stringify(rt));
+  pruefe(!t.fehler.length, "Laufzeitfehler (Techniker): " + t.fehler.join("; "));
+  await t.zu();
+});
+
 /* Gründlich (nur mit --gruendlich, dauert einige Minuten): jeden Knopf in jedem Reiter je Rolle antippen,
    im aufgehenden Dialog den Hauptknopf – und melden, was abstürzt, hängt, NaN zeigt oder sich endlos neu zeichnet */
 if (process.argv.includes("--gruendlich")) test("Gründlich: jeden Knopf in jedem Reiter antippen (Inhaber, Techniker, Präsentation)", async () => {

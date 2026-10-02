@@ -271,6 +271,10 @@ Kammerlander Umwelt- und Klimatechnik (UKT) – oft kurz, vom Handy, im Feld.
 - **Katalog lernt mit** (`katalogLernen`, Büro 02.10.2026, nur Inhaber): neue Positionen aus KPlus-PDFs und
   aus gespeicherten App-Belegen kommen dazu (Herkunft in `quelle`, ohne Preis nichts); Preise bestehender
   Positionen ändert nur KPlus (alter Preis in der Herkunft). „+ Neue Position“ im Katalog; Auswahl nach Häufigkeit.
+- **Tour → Kalender** (`tourSchicken`, `tourBuero`, Büro 03.10.2026): Inhaber und Admins planen für sich und alle
+  (Admins auch für den Inhaber), Techniker nur für sich selbst; für sich selbst nur Kalendereinträge, für andere
+  zusätzlich Tour + Nachricht, die Person nimmt sie unter „Touren für dich“ an (`tourAnnehmen`). Störungen der Tour
+  bekommen „Einsatz geplant am“ (ohne zweite Nachricht, `_ohneMeldung`), Wartungen stehen in Fällig als „📅 eingeplant“.
 - **Arbeitszeit lernt** (`arbeitStunden`, `stoerDauerMin`, Büro 02.10.2026): Tour und Kalender rechnen mit der
   tatsächlichen Zeit vor Ort – Lidl-Rapport (von–bis), Störung Ankunft–Fertig, Stunden mit Markt (`einsatz_dauern`,
   tools/einsatz-dauern.sql: nur Median je Markt, keine Personen); ohne Erfahrung `ARBEIT_H`.

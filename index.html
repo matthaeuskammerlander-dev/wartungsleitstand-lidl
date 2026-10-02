@@ -4525,7 +4525,10 @@ function tourErgebnis(T){
   anp.querySelector("button").onclick=tourMarktDazu;
   var dr=el('<button class="btn ghost sm" type="button">Tour drucken</button>'); dr.onclick=function(){ tourDrucken(T); };
   /* das Büro schickt die Tour an einen Techniker (Nachricht mit Push) */
-  if(Admin.frei && tourenAn()){ var sk=el('<button class="btn sm" type="button">An Techniker schicken</button>'); sk.onclick=function(){ tourSchicken(T); }; anp.insertBefore(sk, anp.firstChild); }
+  /* Büro 03.10.2026: Inhaber und Admins planen für sich und alle (Admins auch für den Inhaber),
+     Techniker nur für sich selbst – jeweils mit Kalendereinträgen */
+  if(tourenAn()){ var sk=el('<button class="btn sm" type="button">'+(tourBuero()?"Tour verteilen / in den Kalender":"In meinen Kalender")+"</button>");
+    sk.onclick=function(){ tourSchicken(T); }; anp.insertBefore(sk, anp.firstChild); }
   anp.insertBefore(dr, anp.children[1]);
   box.appendChild(anp);
 
@@ -7352,7 +7355,7 @@ function stoerungSpeichern(o, grund, rueck){
     /* Einsatz geplant oder verschoben: der eingetragene Techniker bekommt eine Nachricht (Büro 02.10.2026:
        „Manfred hat einen Störungsauftrag eingefügt und den Einsatz für Darko geplant – hat Darko eine
        Nachricht bekommen?“) */
-    if(wo!==false && o.terminTechniker && o.termin && !o.erledigt){
+    if(wo!==false && o.terminTechniker && o.termin && !o.erledigt && !o._ohneMeldung){
       var vorher=(altU && altU.felder) || {};
       if(vorher.termin!==o.termin || (vorher.terminZeit||"")!==(o.terminZeit||"") || kanonName(vorher.terminTechniker||"")!==kanonName(o.terminTechniker))
         stoerungEinsatzMelden(o, !vorher.termin);
@@ -10846,6 +10849,17 @@ function tourErledigt(t){
     tourenFuerMich=tourenFuerMich.filter(function(x){ return x.id!==t.id; }); render();
   }, function(){ toast("Nicht gespeichert – keine Verbindung."); });
 }
+/* Techniker nimmt eine Tour an (Büro 03.10.2026): vermerkt an der Tour, wer sie geschickt hat, bekommt eine Nachricht */
+function tourAnnehmen(t, knopf){
+  if(knopf){ knopf.disabled=true; knopf.textContent="wird angenommen …"; }
+  var d=Object.assign({}, t.daten||{}, {angenommen:new Date().toISOString(), angenommenVon:meinName()});
+  mitFrist(Store.sb.from("touren").update({daten:d}).eq("id", t.id).select("id"), 15000).then(function(r){
+    if(r.error || !(r.data||[]).length){ if(knopf){ knopf.disabled=false; knopf.textContent="Annehmen"; } toast("Nicht angenommen: "+((r.error&&r.error.message)||"keine Berechtigung")); return; }
+    t.daten=d; toast("Tour angenommen – "+(t.von_name||"das Büro")+" bekommt Bescheid."); render();
+    if(t.von && typeof chatAn==="function" && chatAn()) Store.sb.from("chat").insert({id:"c_"+Date.now().toString(36)+Math.random().toString(36).slice(2,8),
+      von:Store.benutzer.id, von_name:meinName(), text:"✓ Tour „"+(t.titel||"Tour")+"“ angenommen.", an:t.von, an_name:t.von_name||"", fotos:[]}).then(function(){}, function(){});
+  }, function(){ if(knopf){ knopf.disabled=false; knopf.textContent="Annehmen"; } toast("Nicht angenommen – keine Verbindung."); });
+}
 function tourenFuerMichKarte(){
   tourenLaden();
   if(!tourenFuerMich.length) return "";
@@ -10854,16 +10868,18 @@ function tourenFuerMichKarte(){
       return '<div class="rowflex" style="justify-content:space-between;gap:8px;margin-top:6px;flex-wrap:wrap"><span style="font-size:13px">'+
         esc(t.titel||"Tour")+' <span class="muted">· von '+esc(t.von_name||"Büro")+(t.erstellt?" am "+esc(dfmt(isoLokal(new Date(t.erstellt)))):"")+
         " · "+(d.anzahl||(d.stopps||[]).length)+" Stopps"+(d.km?" · "+d.km+" km":"")+"</span>"+(t.notiz?'<br>'+esc(t.notiz):"")+"</span>"+
-        '<span class="rowflex" style="gap:6px"><button class="btn sm" type="button" data-touroeffnen="'+esc(t.id)+'">Tour öffnen</button>'+
+        '<span class="rowflex" style="gap:6px">'+(d.angenommen ? '<span class="tag" style="border-color:var(--good);color:var(--good)">✓ angenommen</span>' :
+          '<button class="btn sm" type="button" data-tourannehmen="'+esc(t.id)+'">Annehmen</button>')+
+          '<button class="btn ghost sm" type="button" data-touroeffnen="'+esc(t.id)+'">Tour öffnen</button>'+
         '<button class="btn ghost sm" type="button" data-tourfertig="'+esc(t.id)+'">erledigt</button></span></div>';
     }).join("")+"</div>";
 }
 document.addEventListener("click", function(e){
-  var o=e.target && e.target.closest ? e.target.closest("[data-touroeffnen],[data-tourfertig]") : null; if(!o) return;
-  var id=o.dataset.touroeffnen||o.dataset.tourfertig, t=tourenFuerMich.filter(function(x){ return String(x.id)===String(id); })[0];
+  var o=e.target && e.target.closest ? e.target.closest("[data-touroeffnen],[data-tourfertig],[data-tourannehmen]") : null; if(!o) return;
+  var id=o.dataset.touroeffnen||o.dataset.tourfertig||o.dataset.tourannehmen, t=tourenFuerMich.filter(function(x){ return String(x.id)===String(id); })[0];
   if(!t) return;
   e.preventDefault();
-  if(o.dataset.touroeffnen) tourOeffnen(t); else tourErledigt(t);
+  if(o.dataset.tourannehmen) tourAnnehmen(t, o); else if(o.dataset.touroeffnen) tourOeffnen(t); else tourErledigt(t);
 });
 /* nächster Werktag ab einem Tag (Sa, So, Feiertag überspringen) */
 function werktagAb(t){ var x=t; for(var i=0;i<14;i++){ var wd=new Date(x+"T12:00:00").getDay(); if(wd!==0 && wd!==6 && !feiertag(x)) return x; x=plusTage(x,1); } return t; }
@@ -10903,34 +10919,47 @@ function tourInKalender(T, an, anName, titel, ab, start){
   return auf.then(function(r){
     if(r.error) throw new Error("Kalender: "+r.error.message);
     (r.data||[]).forEach(function(g){ PLANUNG.push(g); });
+    /* Störung: der geplante Einsatz steht auch am Störungsauftrag („Einsatz geplant am“) – ohne eigene
+       Nachricht, die Tour bringt schon eine (Büro 03.10.2026) */
+    zeilen.forEach(function(z){ if(!z.stoerung_id) return;
+      var o=OFFENE.filter(function(x){ return x._id===z.stoerung_id && !x.erledigt && !x.geloescht; })[0]; if(!o) return;
+      stoerungSpeichern(Object.assign({}, o, {termin:z.datum, terminZeit:z.beginn, terminTechniker:anName, _ohneMeldung:true}), "Einsatz geplant (Tour)"); });
     return Promise.all(updates.map(function(u){ return Store.sb.from("planung").update({datum:u.datum, beginn:u.beginn, ende:u.ende, geaendert_von:meinName()}).eq("id", u.id).select("*")
       .then(function(r2){ (r2.data||[]).forEach(function(g){ PLANUNG=PLANUNG.filter(function(x){ return x.id!==g.id; }).concat([g]); }); }); }));
   }).then(function(){ planGeaendert(); return {tage:tage, anzahl:zeilen.length+updates.length}; });
 }
+/* wer Touren für andere planen darf: Inhaber und Admins (Techniker nur für sich) */
+function tourBuero(){ return istInhaber() || Rolle.name==="admin"; }
 function tourSchicken(T){
   if(!tourenAn()){ toast("Dafür bitte anmelden."); return; }
-  var v=ansichtOeffnen("Tour schicken");
+  var buero=tourBuero(), ichId=meineKennung(), ichName=meinName();
+  var v=ansichtOeffnen(buero ? "Tour verteilen" : "Tour in meinen Kalender");
   v.schritt.textContent=T.anzahlStopps+" Stopps · "+Math.round(T.kmGesamt)+" km · "+T.tage.length+(T.tage.length===1?" Tag":" Tage");
   var box=el('<div class="stack">'+
-    '<div class="as-feld"><div class="as-label">An wen?</div><div class="chips" data-an><span class="muted">wird geladen …</span></div></div>'+
+    '<div class="as-feld"><div class="as-label">Für wen?</div><div class="chips" data-an><span class="muted">wird geladen …</span></div></div>'+
     '<label class="fl"><span>Titel</span><input type="text" data-a="titel" maxlength="80" value="Tour ab '+esc(dfmt(isoLokal(new Date(Date.now()+864e5))))+'"></label>'+
     '<label class="fl"><span>Hinweis (freiwillig)</span><textarea data-a="notiz" rows="3" maxlength="500" placeholder="z. B. Schlüssel in Krems beim Marktleiter holen"></textarea></label>'+
-    (planungAn() ? '<div class="note" style="font-size:13px"><label class="chk"><input type="checkbox" data-a="kal" checked><span><strong>In seinen Kalender eintragen</strong> – jeder Stopp als Termin mit Uhrzeit (aus Fahrzeit und Arbeitsdauer), Wochenenden und Feiertage übersprungen. Steht dann auch in seiner To-do-Liste.</span></label>'+
+    (planungAn() ? '<div class="note" style="font-size:13px"><label class="chk"><input type="checkbox" data-a="kal" checked><span><strong>In den Kalender eintragen</strong> – jeder Stopp als Termin mit Uhrzeit (aus Fahrzeit und Arbeitsdauer), Wochenenden und Feiertage übersprungen. Steht dann auch in seiner To-do-Liste.</span></label>'+
       '<div class="rowflex" style="gap:8px;margin-top:6px"><label class="fl"><span>Erster Tag</span><input type="date" data-a="ab" value="'+esc(werktagAb(plusTage(isoLokal(new Date()),1)))+'"></label>'+
       '<label class="fl"><span>Arbeitsbeginn</span><input type="time" data-a="start" value="07:00"></label></div></div>' : "")+
-    '<div class="muted" style="font-size:12.5px">Die Person bekommt eine Nachricht mit Benachrichtigung und findet die Tour im Reiter Karte unter „Touren für dich“. '+
+    '<div class="muted" style="font-size:12.5px" data-a="hinweis">Für jemand anderen: die Person bekommt eine Nachricht mit Benachrichtigung, findet die Tour im Reiter Karte unter „Touren für dich“ und nimmt sie dort an. Für dich selbst: nur die Kalendereinträge. '+
       "Dort öffnet sie sie mit einem Tipp – mit genau diesen Märkten und Arbeiten, gerechnet ab "+esc(S.tour.startId==="__gps"?"dem Betrieb":"dem gewählten Startpunkt")+".</div>"+
     '<div class="note warnbox" data-a="fehler" hidden></div></div>');
   v.inhalt.appendChild(box);
   var an=null, anName="", fe=box.querySelector('[data-a="fehler"]');
-  chatTeamLaden().then(function(team){
+  var kalCb0=box.querySelector('[data-a="kal"]');
+  /* für sich selbst geht es nur um den Kalender – das Häkchen bleibt an */
+  var waehle=function(){ if(kalCb0){ var selbst=an===ichId; if(selbst) kalCb0.checked=true; kalCb0.disabled=selbst; }
+    los.textContent = an===ichId ? "In meinen Kalender" : "Tour schicken"; };
+  (buero ? chatTeamLaden() : Promise.resolve([])).then(function(team){
     var h=box.querySelector("[data-an]"); h.innerHTML="";
-    if(!team.length){ h.innerHTML='<span class="muted">Keine Kolleginnen und Kollegen gefunden.</span>'; return; }
+    /* Ich zuerst – Techniker sehen nur sich selbst */
+    team=[{user_id:ichId, name:"Ich ("+ichName+")"}].concat(buero ? team : []);
     team.forEach(function(p){
       var b=el('<button class="chip" type="button" aria-pressed="false">'+esc(p.name||"Unbekannt")+"</button>");
-      b.onclick=function(){ an=p.user_id; anName=p.name||""; h.querySelectorAll(".chip").forEach(function(x){ x.setAttribute("aria-pressed", String(x===b)); }); };
+      b.onclick=function(){ an=p.user_id; anName=p.user_id===ichId ? ichName : (p.name||""); h.querySelectorAll(".chip").forEach(function(x){ x.setAttribute("aria-pressed", String(x===b)); }); waehle(); };
       h.appendChild(b);
-      if(tourFuer() && p.user_id===tourFuer()) b.onclick();
+      if((tourFuer() && p.user_id===tourFuer()) || (!buero && p.user_id===ichId)) b.onclick();
     });
   });
   var los=el('<button class="btn" type="button">Tour schicken</button>'), ab=el('<button class="btn ghost" type="button">Abbrechen</button>');
@@ -10939,6 +10968,15 @@ function tourSchicken(T){
     if(!an){ fe.textContent="Bitte auswählen, an wen die Tour geht."; fe.hidden=false; return; }
     var titel=box.querySelector('[data-a="titel"]').value.trim()||"Tour", notiz=box.querySelector('[data-a="notiz"]').value.trim();
     var d=tourDaten(T), ich=meineAngaben().name||wer();
+    if(an===ichId){
+      if(!planungAn()){ fe.textContent="Der Kalender ist nicht verfügbar."; fe.hidden=false; return; }
+      los.disabled=true; los.textContent="wird eingetragen …"; fe.hidden=true;
+      tourInKalender(T, an, anName, titel, box.querySelector('[data-a="ab"]').value, box.querySelector('[data-a="start"]').value||"07:00").then(function(kal){
+        v.zu(); toast(kal.anzahl+" Termin"+(kal.anzahl===1?"":"e")+" in deinem Kalender – ab "+dfmt(kal.tage[0]||"")+".");
+      }).catch(function(x){ los.disabled=false; los.textContent="In meinen Kalender"; fe.textContent="Nicht eingetragen: "+technikDeutsch(x.message||x); fe.hidden=false; });
+      return;
+    }
+    if(!buero){ fe.textContent="Touren für andere plant das Büro."; fe.hidden=false; return; }
     los.disabled=true; los.textContent="wird geschickt …"; fe.hidden=true;
     mitFrist(Store.sb.from("touren").insert({an:an, an_name:anName, von:Store.benutzer.id, von_name:ich, titel:titel, notiz:notiz||null, daten:d}), 15000).then(function(r){
       if(r.error) throw new Error(/relation|does not exist/i.test(r.error.message)?"Touren sind in der Datenbank noch nicht eingerichtet.":r.error.message);
@@ -10957,7 +10995,7 @@ function tourSchicken(T){
         if(typeof chatLaden==="function") chatLaden();
       });
       });
-    }).catch(function(x){ los.disabled=false; los.textContent="Tour schicken"; fe.textContent="Nicht geschickt: "+(x.message||x); fe.hidden=false; });
+    }).catch(function(x){ los.disabled=false; los.textContent="Tour schicken"; fe.textContent="Nicht geschickt: "+technikDeutsch(x.message||x); fe.hidden=false; });
   };
   v.fuss.appendChild(ab); v.fuss.appendChild(los);
 }
