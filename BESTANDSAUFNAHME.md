@@ -45,22 +45,28 @@ Durchsicht der Abläufe. Nach Nutzen sortiert – oben das, was im Alltag am mei
 | `anlageAssistent` | 585 | Anlagendaten-Dialog |
 | `stoerungDialog` | 444 | Störungsauftrag |
 | weitere 20 Funktionen | 170–300 | Detailansichten, Editoren |
-Empfehlung: nur mit Tests im Rücken und in kleinen Schritten zerlegen (benannte Teilschritte).
+**Zerlegungsplan** (noch nicht umgesetzt – siehe ENTSCHEIDUNGEN E9), je Schritt erst ein eigener Test:
+1. `viewProtokoll`: (a) Formular-HTML bauen, (b) Rapport-Teil (`rapZeigen`, `rapTextRein` …), (c) Störung/Material/QR,
+   (d) Entwurf merken/wiederherstellen, (e) Speichern (`pflichtPruefung`, Sammeln, `speichereProtokoll`). Teile bekommen das
+   Formular als Parameter statt über die gemeinsame Funktion.
+2. `verwaltungEditor`: Markt-Teil, Anlagen-Teil, Speichern (Abgleich mit dem Ausgangsstand) trennen.
+3. `protokollAssistent`/`anlageAssistent`: je Schritt eine eigene Funktion (`schritte.push({…})` ist schon die Naht).
+4. `stoerungDialog`: Auftrag lesen (PDF/QR), Formular, Speichern.
 
-### 3. Bedienung uneinheitlich
+### 3. Bedienung uneinheitlich – Textabfragen und Hinweisfenster umgesetzt (`textAbfrage`), Bestätigungen bewusst belassen (E8)
 - **Native Browser-Abfragen**: 76× `confirm`, 8× `prompt`, 4× `alert` – sehen am iPhone anders aus als
   die App, `prompt` ist am Handy unhandlich (z. B. „Kein Angebot – Grund?“).
 - **Vier eigene Dialog-Bauweisen** neben `ansichtOeffnen` (Störung, Anlage, Protokoll-Assistent, Ansicht).
 - **Fußzeile „Abbrechen / Speichern“** neunmal fast gleich von Hand gebaut.
 - 1 330 Inline-Stile – Abstände und Schriftgrößen weichen leicht voneinander ab.
 
-### 4. Vernetzung (siehe Etappe 4)
+### 4. Vernetzung – umgesetzt: Markt zeigt Projekte und Kontakte, Projekt ↔ Protokoll in beide Richtungen
 - Gut: Markt ↔ Anlagen ↔ Termine ↔ Protokolle, Störung ↔ Protokoll, Projekt ↔ Dateien/Belege.
-- Lücken: Fahrzeug ↔ Fahrer (Stunden/Kalender), Kontakt ↔ Herkunft ist da, aber vom Markt aus nicht
-  sichtbar; Folgeauftrag ↔ Projekt nur in eine Richtung.
+- Neu: Markt → Kontakte (Marktleitung, Lidl-Kontakt, Beteiligte), Folgeauftrag ↔ Projekt in beide Richtungen.
+- Noch offen: Fahrzeug ↔ Fahrer in Stunden/Kalender (geringer Nutzen, später).
 
 ### 5. Kleinkram
 - 57 Schreibzugriffe ohne Fehlerzweig in derselben Zeile – Stichproben zeigen: Fehlerzweig meist in der
   Folgezeile vorhanden; die wichtigen Dialoge sind per Test geprüft.
-- 2 ungenutzte Funktionen.
-- Wiederholte Zeilen (z. B. „Mit diesem Konto lässt sich nur ansehen.“ 5×, Sortierung nach Marktname 3×).
+- 2 ungenutzte Funktionen – entfernt.
+- Wiederholte Zeilen (Hinweis „nur ansehen“ 5×, Sortierung nach Marktname 11×, Dialog-Fuß 3×) – zu Hilfen zusammengeführt.
