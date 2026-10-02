@@ -3522,11 +3522,19 @@ function tourArten(){ if(!S.tour.arten) S.tour.arten={wartung:true, stoerung:fal
 /* Kalender und Projekte in der Tour (Büro 02.10.2026: „verbinde Tourenplanung und Kalender – es fehlen
    die To-dos und andere Kalendereinträge, auch aus Projekten“): offene Termine und Aufgaben mit Markt,
    Projektaufgaben und offene Projekttermine am Projektstandort – je eine Arbeitseinheit */
+/* Für wen wird die Tour geplant? (Büro 02.10.2026: „kann man die Tourenplanung personenabhängig machen“)
+   leer = alle. Gewählt: nur eigene Termine/Aufgaben/Projekteinträge, keine Störung oder Wartung,
+   die schon jemand anderem zugeteilt ist; beim Eintragen in den Kalender Abwesenheiten überspringen. */
+function tourFuer(){ return S.tour.fuer||""; }
+function tourFuerName(){ var p=(planTeam||[]).filter(function(x){ return x.user_id===tourFuer(); })[0]; return p ? (p.name||"") : (tourFuer()===meineKennung() ? meinName() : ""); }
+function tourPasstPlan(e){ var f=tourFuer(); if(!f) return true; return kalWerPasst(f, (e.wer||[]).length ? e.wer : [e.erstellt_von], e.wer_namen); }
+function tourPasstStoerung(o){ var f=tourFuer(); if(!f || !o.terminTechniker) return true; return kanonName(o.terminTechniker)===kanonName(tourFuerName()); }
+function tourPasstWartung(p){ var f=tourFuer(); if(!f) return true; var pl=planFuerPosition(p.id); return !pl || (pl.wer||[]).indexOf(f)>=0; }
 function tourPlanStopps(art){
   var heute=isoLokal(new Date()), bis=endeFolgemonat(), je={};
   var dazu=function(sid, x){ if(!sid || !byId[sid]) return; (je[sid]=je[sid]||[]).push(x); };
   if(art==="kalender") PLANUNG.forEach(function(e){
-    if(e.privat || e.status==="erledigt" || e.status==="abgelehnt" || !e.standort_id || e.projekt_id) return;
+    if(e.privat || e.status==="erledigt" || e.status==="abgelehnt" || !e.standort_id || e.projekt_id || !tourPasstPlan(e)) return;
     if(["urlaub","krank","schule","privat"].indexOf(e.kategorie)>=0) return;
     if(e.art==="termin" && (!e.datum || e.datum<heute || e.datum>bis)) return;
     if(e.art==="termin" && e.kategorie==="wartung" && (e.position_ids||[]).length) return;   /* die Wartungstermine plant die Tour ohnehin */
@@ -3535,10 +3543,11 @@ function tourPlanStopps(art){
   });
   if(art==="projekt") PROJEKTE.filter(projektOffen).forEach(function(p){
     var sid=p.standort_id; if(!sid || !byId[sid]) return;
-    PLANUNG.forEach(function(e){ if(e.projekt_id!==p.id || e.status==="erledigt" || e.privat) return;
+    PLANUNG.forEach(function(e){ if(e.projekt_id!==p.id || e.status==="erledigt" || e.privat || !tourPasstPlan(e)) return;
       if(e.datum && (e.datum<heute || e.datum>bis) && e.art==="termin") return;
       dazu(e.standort_id||sid, {id:"plan:"+e.id, anlagentyp:"Projekt "+(p.nummer||"")+": "+planTitel(e), standortId:e.standort_id||sid}); });
     ((p.daten||{}).termine||[]).forEach(function(t){ if(t.erledigt || !t.datum || t.datum<heute || t.datum>bis) return;
+      if(tourFuer() && t.wer && !kalWerPasst(tourFuer(), [], [t.wer])) return;
       dazu(sid, {id:"ptermin:"+p.id+":"+(t.id||t.datum), anlagentyp:"Projekt "+(p.nummer||"")+": "+(t.was||"Termin")+" ("+dfmt(t.datum)+")", standortId:sid}); });
   });
   return je;
@@ -3554,9 +3563,10 @@ function tourKandidaten(){
     if(arten.wartung) s.pos.forEach(function(p){
       var st = p.status==="geplant" ? "erledigt" : p.status;
       /* auf Wunsch auch, was erst im nächsten Monat dran ist */
+      if(!tourPasstWartung(p)) return;
       if(S.tour.status.indexOf(st)>=0 || (S.tour.naechsterMonat && st!=="ueberfaellig" && p.naechste && p.naechste<=bis)) dazu(p);
     });
-    if(arten.stoerung) stoerungVonMarkt(s.id).forEach(function(o){
+    if(arten.stoerung) stoerungVonMarkt(s.id).filter(tourPasstStoerung).forEach(function(o){
       dazu({id:"stoer:"+o._id, anlagentyp:"Störung"+(o.problemtyp?": "+o.problemtyp:""), standortId:s.id});
     });
     if(arten.kalender) (tourPlanStopps("kalender")[s.id]||[]).forEach(dazu);
@@ -4072,6 +4082,9 @@ function tourPanel(){
     '<div><h2>Tourenplanung</h2><div class="sub">Reihenfolge über kürzeste Wege, '+ARBEIT_H.toString().replace(".",",")+
       ' h Arbeitszeit je Wartungsposition. Ein Markt mit mehreren Positionen bindet entsprechend länger.</div></div>'+
 
+    '<div><div class="fl" style="margin-bottom:6px"><span>Für wen?</span></div><div class="chips" id="t_fuer">'+
+      [["","alle"]].concat((planTeam||[]).map(function(p){ return [p.user_id, p.name||"–"]; })).concat(planTeam && !planTeam.some(function(p){ return p.user_id===meineKennung(); }) ? [[meineKennung(), meinName()+" (ich)"]] : [])
+        .map(function(x){ return '<button class="chip" type="button" data-fuer="'+esc(x[0])+'" aria-pressed="'+(tourFuer()===x[0])+'">'+esc(x[1])+"</button>"; }).join("")+"</div></div>"+
     '<div><div class="fl" style="margin-bottom:6px"><span>Was einplanen</span></div>'+
       '<div class="chips" id="t_arten">'+[["wartung","Wartungen"],["stoerung","offene Störungen",stoerungsMaerkte().length],["lidl","Rückfragen von Lidl",kundenMaerkte().length],
         ["kalender","Termine & Aufgaben",Object.keys(tourPlanStopps("kalender")).length],["projekt","Projekte",Object.keys(tourPlanStopps("projekt")).length]].map(function(a){
@@ -4137,6 +4150,10 @@ function tourPanel(){
       if(i>=0){ if(S.tour.status.length>1) S.tour.status.splice(i,1); } else S.tour.status.push(k);
       S.tour.manuell=null; S.tour.dazu=null; S.tour.fest=null; S.tour.vonBuero=null; tourLauf++; render();
     };
+  });
+  if(!planTeam && typeof planTeamLaden==="function") planTeamLaden().then(function(){ if(planTeam && S.view==="karte" && darfRendern() && !document.querySelector(".assistent")) render(); });
+  c.querySelectorAll("#t_fuer .chip").forEach(function(b){
+    b.onclick=function(){ S.tour.fuer=b.dataset.fuer; S.tour.manuell=null; S.tour.dazu=null; S.tour.fest=null; S.tour.vonBuero=null; tourLauf++; render(); };
   });
   c.querySelectorAll("#t_arten .chip").forEach(function(b){
     b.onclick=function(){
@@ -10643,10 +10660,15 @@ function werktagAb(t){ var x=t; for(var i=0;i<14;i++){ var wd=new Date(x+"T12:00
 /* Tour in den Kalender der Person: je Stopp ein Termin. Wartungen mit ihren Terminen verbunden
    (schon eingeplante Termine nicht doppelt), Störungen mit der Störung; Kalender-/Projekteinträge
    stehen schon im Kalender – die bekommen Tag und Uhrzeit der Tour */
+function tourAbwesend(an, tag){
+  return PLANUNG.some(function(e){ return e.art==="termin" && (e.wer||[]).indexOf(an)>=0 && e.status!=="abgelehnt" &&
+    (["urlaub","krank","schule"].indexOf(e.kategorie)>=0 || ((e.privat||e.kategorie==="privat") && !e.beginn)) && planTage(e).indexOf(tag)>=0; });
+}
+function tourTagFrei(an, t){ var x=werktagAb(t); for(var i=0;i<60 && tourAbwesend(an, x);i++) x=werktagAb(plusTage(x,1)); return x; }
 function tourInKalender(T, an, anName, titel, ab, start){
-  var tage=[], tag=werktagAb(ab||plusTage(isoLokal(new Date()),1)), zeilen=[], updates=[];
+  var tage=[], tag=tourTagFrei(an, ab||plusTage(isoLokal(new Date()),1)), zeilen=[], updates=[];
   T.tage.forEach(function(tg, i){
-    if(i>0) tag=werktagAb(plusTage(tag,1));
+    if(i>0) tag=tourTagFrei(an, plusTage(tag,1));
     tage.push(tag);
     var m=zeitMin(start)||7*60;
     tg.stopps.forEach(function(st){
@@ -10698,6 +10720,7 @@ function tourSchicken(T){
       var b=el('<button class="chip" type="button" aria-pressed="false">'+esc(p.name||"Unbekannt")+"</button>");
       b.onclick=function(){ an=p.user_id; anName=p.name||""; h.querySelectorAll(".chip").forEach(function(x){ x.setAttribute("aria-pressed", String(x===b)); }); };
       h.appendChild(b);
+      if(tourFuer() && p.user_id===tourFuer()) b.onclick();
     });
   });
   var los=el('<button class="btn" type="button">Tour schicken</button>'), ab=el('<button class="btn ghost" type="button">Abbrechen</button>');
