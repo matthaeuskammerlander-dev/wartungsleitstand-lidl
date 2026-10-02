@@ -328,6 +328,39 @@ test("Vernetzung: Markt zeigt Projekte und Kontakte, Projekt führt zum Protokol
   await a.zu();
 });
 
+test("Bedienung: Eingabe-Dialog statt Browser-Abfrage – leer geht nicht, Abbrechen speichert nichts, mit Grund wird gespeichert", async () => {
+  const a = await oeffnen(KONTEN.inhaber);
+  const r = await a.seite.evaluate(async () => {
+    const x = window.__t.x, warte = (ms) => new Promise((f) => setTimeout(f, ms)), db = window.__db.tabellen;
+    db.protokolle.push({ id: "pa1", client_id: "pa1", standort_id: "TS2", datum: "2026-01-12", wartungsart: "Wartung", techniker: "Testtechniker",
+      anlagen: [], maengel: [{ text: "Isolierung schadhaft" }], version: 1, erstellt: new Date().toISOString(), erstellt_von: "u_tech_test_at" });
+    await x("ladeProtokolle()"); await warte(300);
+    const kein = () => { x("S.view='projekte'; render(); 1"); return [...document.querySelectorAll('#folge_karte [data-f="kein"]')][0]; };
+    let k = kein(); if (!k) return { fehler: "Folgeauftrag-Karte fehlt" };
+    k.click(); await warte(300);
+    let d = [...document.querySelectorAll(".assistent")].pop();
+    const dialog = !!(d && d.querySelector("textarea"));
+    [...d.querySelectorAll(".as-fuss button")].find((b) => /Ablegen/.test(b.textContent)).click(); await warte(200);
+    const leerMeldung = !d.querySelector(".warnbox").hidden && document.body.contains(d);
+    [...d.querySelectorAll(".as-fuss button")].find((b) => /Abbrechen/.test(b.textContent)).click(); await warte(400);
+    const nachAbbrechen = db.stammdaten.filter((z) => z.id === "merker:folge:pa1").length;
+    k = kein(); k.click(); await warte(300);
+    d = [...document.querySelectorAll(".assistent")].pop();
+    d.querySelector("textarea").value = "schon erledigt";
+    [...d.querySelectorAll(".as-fuss button")].find((b) => /Ablegen/.test(b.textContent)).click(); await warte(800);
+    const gespeichert = db.stammdaten.filter((z) => z.id === "merker:folge:pa1").map((z) => (z.felder || {}).grund)[0];
+    return { dialog, leerMeldung, nachAbbrechen, gespeichert, offen: !!document.querySelector(".assistent") };
+  });
+  pruefe(!r.fehler, r.fehler);
+  pruefe(r.dialog, "kein Eingabe-Dialog der App");
+  pruefe(r.leerMeldung, "leere Eingabe wurde nicht abgefangen");
+  pruefe(r.nachAbbrechen === 0, "Abbrechen hat gespeichert");
+  pruefe(r.gespeichert === "schon erledigt", "Grund nicht gespeichert: " + JSON.stringify(r));
+  pruefe(!r.offen, "Dialog bleibt nach dem Speichern offen");
+  pruefe(!a.fehler.length, "Laufzeitfehler: " + a.fehler.join("; "));
+  await a.zu();
+});
+
 /* Gründlich (nur mit --gruendlich, dauert einige Minuten): jeden Knopf in jedem Reiter je Rolle antippen,
    im aufgehenden Dialog den Hauptknopf – und melden, was abstürzt, hängt, NaN zeigt oder sich endlos neu zeichnet */
 if (process.argv.includes("--gruendlich")) test("Gründlich: jeden Knopf in jedem Reiter antippen (Inhaber, Techniker, Präsentation)", async () => {

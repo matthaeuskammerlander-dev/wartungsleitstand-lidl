@@ -11,3 +11,5 @@ Jede Entscheidung steht in einem eigenen Commit (Commit-Nachricht nennt sie).
 | E4 | **Fehlermeldungen bleiben 6,5 s statt 3,2 s stehen** | Fehler muss man lesen können, Bestätigungen nicht | Zeitwert in `toast` |
 | E5 | `node_modules/` in `.gitignore` | Playwright nur zum Testen, nicht Teil der App | – |
 | E6 | **Zwei nachweislich ungenutzte Funktionen entfernt** (`planAbwesend`, `stempelLaeuft`) | Nirgends aufgerufen (auch nicht aus Tests, Python oder HTML) | aus der Git-Geschichte wiederherstellen |
+| E7 | **Eingabe-Dialog der App statt Browser-Abfrage** (`textAbfrage`: großes Feld, 🎤, Pflichtprüfung im Dialog) für alle 8 Textabfragen; die 4 Browser-Hinweisfenster als Meldung der App | Am iPhone waren die Browser-Fenster klein, ohne Diktat, und sahen nicht nach der App aus | `textAbfrage` durch `window.prompt` ersetzen |
+| E8 | **Bestätigungsfragen (confirm, 76×) bleiben Browser-Fenster** | Sie halten den Ablauf an der richtigen Stelle an; ein Umbau aller 76 Stellen auf asynchrone Dialoge wäre ein großes Risiko ohne spürbaren Gewinn – sie sind kurz, klar und am iPhone gut bedienbar | – |
