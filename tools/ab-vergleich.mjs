@@ -59,6 +59,24 @@ window.__ab = {
     try{ ev("pointerdown",20,20); ev("pointermove",60,40); ev("pointermove",120,30); ev("pointerup",120,30); }catch(e){} },
   db: function(t){ return JSON.parse(JSON.stringify((window.__db.tabellen[t]||[]))); },
   toasts: [],
+  /* geführten Dialog Schritt für Schritt durchgehen: je Schritt etwas eintragen, dann weiter; am Ende speichern */
+  durchklicken: async function(max){
+    var A=window.__ab, schritte=[];
+    for (var i=0; i<(max||30); i++) {
+      var d=[].slice.call(document.querySelectorAll(".assistent")).pop(); if(!d) break;
+      schritte.push(A.html(d.querySelector(".as-karte")||d));
+      [].forEach.call(d.querySelectorAll("textarea"), function(ta, j){ if(!ta.value && ta.offsetParent){ ta.value="Schritt "+i+"."+j; ta.dispatchEvent(new Event("input",{bubbles:true})); } });
+      [].forEach.call(d.querySelectorAll(".as-karte input[type=text]"), function(e){ if(!e.value && !e.readOnly && e.offsetParent){
+        e.value=(e.inputMode==="decimal" || e.inputMode==="numeric" || /km|kg|menge/i.test(e.id+" "+(e.getAttribute("data-k")||"")+" "+(e.placeholder||""))) ? "0,5" : "T"+i; e.dispatchEvent(new Event("input",{bubbles:true})); e.dispatchEvent(new Event("change",{bubbles:true})); } });
+      var cb=d.querySelector("input[type=checkbox]:not(:checked)"); if(cb) cb.click();
+      var weiter=[].filter.call(d.querySelectorAll("button"), function(b){ return !b.disabled && b.offsetParent && /Stimmt – weiter/.test(b.textContent); })[0] ||
+        [].filter.call(d.querySelectorAll(".as-fuss button"), function(b){ return !b.disabled && /weiter|fertig|übernehmen|speichern/i.test(b.textContent); }).pop();
+      if(!weiter) break;
+      weiter.click(); await A.warte(450);
+    }
+    await A.warte(1500);
+    return schritte;
+  },
   /* Datenbank-Stand je Tabelle; dbNeu gibt nur die seitdem geänderten Tabellen zurück */
   dbStand: function(){ var o={}; Object.keys(window.__db.tabellen).forEach(function(t){ o[t]=JSON.stringify(window.__db.tabellen[t]); }); return o; },
   dbNeu: function(st){ var o={}; Object.keys(window.__db.tabellen).forEach(function(t){ var j=JSON.stringify(window.__db.tabellen[t]); if(j!==st[t]) o[t]=JSON.parse(j); }); return o; },
@@ -246,20 +264,35 @@ const ABLAEUFE = [
     x("formDirty=false; S.protoArt='wartung'; S.bearbeiten=null; S.protoStandort='TS1'; S.protoPos='TP1'; S.view='protokoll'; render(); 1");
     await A.warte(500);
     document.getElementById("p_gefuehrt").click(); await A.warte(500);
-    const schritte = [];
-    for (let i = 0; i < 25; i++) {
-      const d = [...document.querySelectorAll(".assistent")].pop(); if (!d) break;
-      schritte.push(A.html(d.querySelector(".as-karte") || d));
-      /* in jedem Schritt etwas eintragen, was dort geht */
-      const ta = d.querySelector("textarea"); if (ta && !ta.value) { ta.value = "Schritt " + i; ta.dispatchEvent(new Event("input", { bubbles: true })); }
-      const cb = d.querySelector('input[type=checkbox]:not(:checked)'); if (cb) cb.click();
-      const weiter = [...d.querySelectorAll("button")].filter((b) => !b.disabled && b.offsetParent && /Stimmt – weiter/.test(b.textContent))[0] ||
-        [...d.querySelectorAll(".as-fuss button")].filter((b) => !b.disabled && /Weiter|Fertig|Übernehmen|Speichern/.test(b.textContent)).pop();
-      if (!weiter) break;
-      weiter.click(); await A.warte(400);
-    }
+    const schritte = await A.durchklicken();
     const form = document.getElementById("proto");
     return { schritte, werte: form ? A.werte(form) : null, toasts: A.toasts, protokolle: A.db("protokolle") };
+  } },
+  { name: "protokoll-schritt-stoerung", konto: "techniker", code: async () => {
+    const x = window.__t.x, A = window.__ab;
+    x("formDirty=false; S.protoArt='stoerung'; S.bearbeiten=null; S.protoStandort='TS2'; S.protoPos=null; S.view='protokoll'; render(); 1");
+    await A.warte(500);
+    document.getElementById("p_gefuehrt").click(); await A.warte(500);
+    const schritte = await A.durchklicken();
+    const form = document.getElementById("proto");
+    return { schritte, werte: form ? A.werte(form) : null, toasts: A.toasts, protokolle: A.db("protokolle") };
+  } },
+  { name: "protokoll-schritt-korrektur", konto: "admin", code: async () => {
+    const x = window.__t.x, A = window.__ab;
+    x("formDirty=false; S.protoArt='wartung'; S.bearbeiten=null; S.protoStandort='TS1'; S.protoPos='TP1'; S.view='protokoll'; render(); 1");
+    await A.warte(500);
+    let form = document.getElementById("proto");
+    document.getElementById("f_allesok").click(); A.setze(form, "#f_bem", "Erste Fassung"); A.unterschreiben(form);
+    const n = window.__db.tabellen.protokolle.length;
+    document.getElementById("save").click();
+    for (let i = 0; i < 40 && window.__db.tabellen.protokolle.length === n; i++) await A.warte(250);
+    await A.warte(1000);
+    window.__gesp = x("alleProtokolle()")[0];
+    x("formDirty=false; S.bearbeiten={x:window.__gesp}; S.view='protokoll'; render(); 1"); await A.warte(800);
+    A.setze(document.getElementById("proto"), "#f_grund", "Ergänzt");
+    document.getElementById("p_gefuehrt").click(); await A.warte(500);
+    const schritte = await A.durchklicken();
+    return { schritte, toasts: A.toasts, protokolle: A.db("protokolle"), aenderungen: A.db("aenderungen") };
   } },
   /* ---- Verwaltung: Markt- und Anlagen-Editor ---- */
   { name: "verwaltung-editor-anzeigen", konto: "admin", code: async () => {

@@ -12316,6 +12316,686 @@ function scanneQr(){
    Knöpfe, am Ende eine Übersicht. Der Dialog füllt das Formular darunter
    aus – gespeichert wird also genau wie bisher, mit Fotos, Anlagendaten
    und Unterschrift. */
+/* Geführtes Protokoll (Schritt für Schritt), Teil Markt und Anlagen: Markt wählen, gewartete bzw. betroffene Anlagen */
+function protoAssistentTeilMarkt(P){
+  var ov=P.ov, inhalt=P.inhalt, f=P.f, frage=P.frage, chips=P.chips, form=P.form, stoer=P.stoer;
+  /* für die anderen Teile */
+  P.feldRahmen=feldRahmen; P.nachAnlagenDialog=nachAnlagenDialog; P.zaehltAlsFeld=zaehltAlsFeld;
+  function feldRahmen(label, n){ var d=el('<div class="as-feld"><div class="as-label">'+esc(label)+'</div></div>'); d.appendChild(n); return d; }
+
+  /* nach einem Anlagendialog den Schritt neu zeigen (neuer Stand der Karten).
+     Erst zählen, dann öffnen – sonst zählte der eben geöffnete Dialog schon
+     zu „vorher“ und sein Schließen fiele nie auf. */
+  function nachAnlagenDialog(oeffnen, titel){
+    var vorher=document.querySelectorAll(".assistent").length, gesehen=false, n=0, ruhig=0;
+    oeffnen();
+    var t=setInterval(function(){
+      var jetzt=document.querySelectorAll(".assistent").length;
+      if(jetzt>vorher){ gesehen=true; ruhig=0; } else if(gesehen) ruhig++;
+      /* erst wenn eine gute Sekunde lang keiner mehr offen ist – nach einem
+         Prüfbuch folgen weitere Dialoge (Weitere Prüfbücher) mit kurzer Pause.
+         Ging gar kein Dialog auf: nach 15 s aufhören statt minutenlang weiterzuprüfen */
+      if((gesehen && ruhig>=4) || (!gesehen && n>50) || ++n>2000 || !document.body.contains(ov)){
+        clearInterval(t);
+        if(gesehen && document.body.contains(ov) && P.schritte[P.pos].titel===titel) P.schritte[P.pos].zeigen();
+      }
+    },300);
+  }
+  /* „+ Anlage fehlt“ auch im geführten Dialog (Büro 01.10.2026): Anlagen lassen
+     sich so in mehreren Durchgängen erfassen – je Durchgang die Fotos einer
+     Anlage für die KI, bevor das Protokoll fertig ist */
+  function anlageFehltKnopf(host, titel){
+    if(nurLesen()) return;
+    var b=el('<button class="btn ghost sm" type="button" style="margin-top:10px">+ Anlage fehlt in der Liste (auch per KI aus Fotos)</button>');
+    b.onclick=function(){ nachAnlagenDialog(function(){ form.querySelector("#addAnlage").click(); }, titel); };
+    host.appendChild(b);
+  }
+  /* Wartung: bei einer Anlage zeigen, WELCHER Termin gewartet wird (Kürzel
+     und Datum des Termins) – bei zwei Terminen zum Wählen. Die Störung
+     zählt für keinen Termin. cb: Haken der Anlage im Formular. */
+  function zaehltAlsFeld(cb){
+    if(stoer || !cb) return null;
+    var slot=cb.closest("label") && cb.closest("label").querySelector(".posslot");
+    var ts=(slot ? [].map.call(slot.options, function(o){ return posById[o.value]; }) : [posById[cb.value]]).filter(Boolean);
+    if(!ts.length) return null;
+    var kurzT=function(t){ return (t.intervall||intervallArt(t.intervallCode)).kurz+" · "+(t.nachholbar ? dfmt(t.nachholbar)+" nachholen" :
+      (t.naechste ? dfmt(t.naechste) : (+t.monat ? MONATE_L[+t.monat] : "ohne Termin"))); };
+    var langT=function(t){ return (t.intervall||intervallArt(t.intervallCode)).art+(t.nachholbar
+      ? " – Termin "+dfmt(t.nachholbar)+" nachholen (danach "+dfmt(t.naechste)+")"
+      : t.naechste ? " – Termin "+dfmt(t.naechste)+" ("+wannText(t).zusatz+")" : " – noch ohne Termin"); };
+    var lang=el('<div class="muted" style="font-size:12.5px;margin-top:4px"></div>');
+    var zeigeLang=function(id){ var t=ts.filter(function(x){ return x.id===id; })[0]||ts[0]; lang.textContent=langT(t); };
+    var fr=feldRahmen("Heute gewartet als", ts.length>1
+      ? chips(ts.map(function(t){ return [t.id, kurzT(t)]; }), slot.value, function(v){
+          slot.value=v; slot.dispatchEvent(new Event("change")); formDirty=true; zeigeLang(v); })
+      : el('<div style="font-size:14px"><strong>'+esc(kurzT(ts[0]))+"</strong></div>"));
+    fr.appendChild(lang); zeigeLang(slot ? slot.value : ts[0].id);
+    return fr;
+  }
+  /* Aufbau – läuft, wenn alle Teile angemeldet sind, in der ursprünglichen Reihenfolge */
+  return function(){
+    /* ---- Schritte ---- */
+    P.schritte=[];
+
+    P.schritte.push({titel:"Markt", zeigen:function(){
+      var aktuell=f("#f_standort").value;
+      inhalt.innerHTML=frage("In welchem Markt sind Sie?");
+      var suche=el('<input type="search" placeholder="Filiale, Ort oder Adresse suchen …" style="width:100%">');
+      var liste=el('<div class="stack" style="max-height:46vh;overflow:auto"></div>');
+      var zeichne=function(){
+        var q=suche.value.trim().toLowerCase();
+        liste.innerHTML="";
+        ST.filter(function(s){ return !q || (stName(s)+" "+(s.filiale||"")+" "+s.adresse).toLowerCase().indexOf(q)>=0; })
+          .sort(nachMarktname)
+          .slice(0,40).forEach(function(s){
+            var b=el('<button class="chip" type="button" style="display:block;width:100%;text-align:left;padding:10px 12px"'+
+              (s.id===f("#f_standort").value?' aria-pressed="true"':"")+"><strong>"+esc(stName(s))+"</strong>"+
+              '<br><span class="muted" style="font-size:12px">'+esc(s.adresse)+(s.filiale?" · Filiale "+esc(s.filiale):"")+"</span></button>");
+            b.onclick=function(){
+              var sel=f("#f_standort"); sel.value=s.id; sel.onchange(); formDirty=true;
+              P.weiter();
+            };
+            liste.appendChild(b);
+          });
+      };
+      suche.oninput=zeichne; zeichne();
+      /* der schnellste Weg vor Ort: die nächsten Märkte (antippen = gewählt, weiter) */
+      inhalt.appendChild(naeheAuswahl(function(s){ var sel=f("#f_standort"); sel.value=s.id; sel.onchange(); formDirty=true; P.weiter(); }));
+      inhalt.appendChild(feldRahmen("Markt suchen", suche));
+      inhalt.appendChild(liste);
+      if(aktuell) inhalt.appendChild(el('<div class="muted" style="font-size:12.5px">Gewählt: <strong>'+
+        esc(byId[aktuell]?stName(byId[aktuell]):aktuell)+"</strong> – weiter mit „Weiter“.</div>"));
+    }, pruefen:function(){ return f("#f_standort").value ? "" : "Bitte einen Markt wählen."; }});
+    P.schritte.push({titel:stoer?"Betroffene Anlagen":"Gewartete Anlagen", zeigen:function(){
+      inhalt.innerHTML=frage(stoer?"Welche Anlage war betroffen?":"Welche Anlagen haben Sie gewartet?");
+      var box=el('<div class="stack"></div>');
+      var zeilen=form.querySelectorAll('#f_posbox label.chk');
+      if(!zeilen.length && !(form._neueAnlagen && form._neueAnlagen().length)) box.appendChild(el('<div class="muted">Für diesen Markt ist keine wählbare Anlage eingetragen (zur Zeit nicht gewartete zählen für eine Wartung nicht).</div>'));
+      zeilen.forEach(function(z){
+        var cb=z.querySelector('input[name="posw"]'), slot=z.querySelector(".posslot");
+        var name=(form._nameJetzt && form._nameJetzt(cb.dataset.anlage)) || z.querySelector("strong").textContent;
+        var k=el('<div class="as-gruppe"><div class="as-gkopf"><span>'+esc(name)+"</span>"+
+          '<button class="chip" type="button" aria-pressed="'+cb.checked+'">'+(cb.checked?(stoer?"betroffen":"gewartet"):"nicht dabei")+"</button></div></div>");
+        var b=k.querySelector(".chip");
+        b.onclick=function(){ cb.checked=!cb.checked; cb.dispatchEvent(new Event("change",{bubbles:true}));
+          b.setAttribute("aria-pressed",String(cb.checked)); b.textContent=cb.checked?(stoer?"betroffen":"gewartet"):"nicht dabei"; };
+        var za=zaehltAlsFeld(cb);
+        if(za) k.appendChild(za);
+        box.appendChild(k);
+      });
+      /* vor Ort neu erfasste Anlagen zählen mit – sie haben keinen Haken */
+      (form._neueAnlagen ? form._neueAnlagen() : []).forEach(function(n){
+        box.appendChild(el('<div class="as-gruppe"><div class="as-gkopf"><span>'+esc((n.werte&&n.werte.anlagentyp)||"Neue Anlage")+
+          '</span><span class="tag">vor Ort neu erfasst</span></div></div>'));
+      });
+      inhalt.appendChild(box);
+      anlageFehltKnopf(inhalt, stoer?"Betroffene Anlagen":"Gewartete Anlagen");
+    }, pruefen:function(){
+      return (form.querySelectorAll('input[name="posw"]:checked').length || (form._neueAnlagen && form._neueAnlagen().length)) ? "" :
+        (stoer ? "Bitte die Anlage wählen, an der die Störung vorliegt." : "Bitte mindestens eine Anlage wählen.");
+    }});
+  };
+}
+/* Geführtes Protokoll, Teil Anlagendaten: je Anlage ein Schritt mit Daten und Terminen, „Heute gewartet als“ */
+function protoAssistentTeilAnlagen(P){
+  var inhalt=P.inhalt, f=P.f, frage=P.frage, chips=P.chips, form=P.form, stoer=P.stoer;
+  var terminMerker, hart, terminSchritte;
+  /* für die anderen Teile */
+  P.termineEinreihen=termineEinreihen;
+  /* Daten der Anlage aus ihrer Karte im Formular: Kurzangaben, Fehlendes, Knopf „Ergänzen/Prüfen“ */
+  function datenKasten(kartenId, titel, z){
+    var k=[].filter.call(form.querySelectorAll("#anlagen .akarte"), function(x){ return x.dataset.karte===kartenId; })[0];
+    if(!k) return null;
+    var fehlen=[].slice.call(k.querySelectorAll("[data-spring]")).filter(function(x){ return x.dataset.spring!=="termine"; });
+    var d=el('<div class="as-gruppe"><div class="as-gkopf"><span>Anlagendaten</span>'+
+      '<button class="btn ghost sm" type="button">'+(fehlen.length?"Ergänzen":"Prüfen")+" (auch per KI)</button></div>"+
+      '<div style="font-size:13px">'+esc(k.querySelectorAll("div")[1]?k.querySelectorAll("div")[1].textContent:"")+"</div>"+
+      (fehlen.length ? '<div style="font-size:12.5px;color:var(--warn)">Fehlt: '+fehlen.map(function(x){
+          return '<a href="#" class="sprunglink" data-spring="'+esc(x.dataset.spring)+'">'+esc(x.textContent)+"</a>"; }).join(", ")+"</div>"
+        : '<div style="font-size:12.5px;color:var(--good)">vollständig</div>')+"</div>");
+    /* der Anlagen-Dialog prüft die Termine mit – danach den Schritt mit dem gespeicherten Stand neu zeigen */
+    var oeffne=function(springe, e){
+      var los=k.querySelector('[data-a="los"]'); if(!los) return;
+      z.a=null; z.start=null;
+      P.nachAnlagenDialog(function(){ los.onclick(e||null, springe||null); }, titel);
+    };
+    d.querySelector("button").onclick=function(){ oeffne(null); };
+    d.querySelectorAll("[data-spring]").forEach(function(x){ tippe(x, function(e){ oeffne(x.dataset.spring, e); }); });
+    return d;
+  }
+  function anlageSchritte(){
+    var l=[], st=byId[f("#f_standort").value];
+    if(!st) return l;
+    var termineDa=!nurLesen() && !!form._termineStart;
+    var dabei=[];
+    form.querySelectorAll('input[name="posw"]:checked').forEach(function(cb){ var p=posById[cb.value]; if(p && dabei.indexOf(anlageVon(p).id)<0) dabei.push(anlageVon(p).id); });
+    var marktAnlagen=anlagenDesMarkts(st, true);
+    var vorhanden=function(an, an0){
+      var lid=an.leader.id, name=anlagenName(anlageDaten(an.leader));
+      var titel=(an0?"Anlage · ":"Andere Anlage · ")+name;
+      var z=terminMerker[lid]=terminMerker[lid]||{};
+      var cb=function(){ return form.querySelector('input[name="posw"][data-anlage="'+String(an.id).replace(/"/g,"")+'"]'); };
+      var slotZahl=function(){ var c=cb(), s=c && c.closest("label") && c.closest("label").querySelector(".posslot"); return s ? s.options.length : 1; };
+      return {titel:titel, termine:true, anlageId:an.id, zeigen:function(){
+        var ld=posById[lid]; if(!ld){ inhalt.innerHTML='<div class="muted">Die Anlage ist nicht mehr geladen.</div>'; return; }
+        var aktName=(form._nameJetzt && form._nameJetzt(an.id)) || name;
+        inhalt.innerHTML=frage(an0 ? (stoer ? "Betroffene Anlage: "+aktName : "Gewartet: "+aktName) : "Andere Anlage am Markt: "+aktName);
+        if(an0){ var dk=datenKasten(lid, titel, z); if(dk) inhalt.appendChild(dk); }
+        if(termineDa){
+          if(!z.a){ z.start=form._termineStart(ld); z.a=JSON.parse(JSON.stringify(z.start)); }
+          var jetzt=termineOffen(z.a).filter(function(x){ return an0 || hart(x); });
+          var tg=el('<div class="as-gruppe"><div class="as-gkopf"><span>Termine</span></div>'+
+            '<div class="muted" style="font-size:12.5px">'+(jetzt.length ? "Noch offen: <strong>"+esc(jetzt.map(function(x){ return x.l; }).join(", "))+"</strong>. " : "")+
+            (an0 ? "Bitte prüfen (Typenschild, Prüfbuch) – mit „Stimmt – weiter“ gespeichert." : "Nur, wer es hier nachsehen kann – sonst „Überspringen“.")+"</div></div>");
+          var host=el("<div></div>"); tg.appendChild(host);
+          inhalt.appendChild(tg);
+          termineSchritt(host, z.a);
+        }
+        /* als welcher Termin heute gewartet wird – unter den Terminen, damit beides zusammen geprüft ist */
+        if(an0){ var za=P.zaehltAlsFeld(cb()); if(za) inhalt.appendChild(za); }
+      }, speichern:function(){
+        var ld=posById[lid]; if(!ld || !z.a) return Promise.resolve(null);
+        /* wie im Anlagen-Dialog: ein neuer oder bisher gesetzter Termin nicht ohne Kürzel */
+        if(z.a._termine.some(function(t,i){
+            return !String(t.intervallCode||"").trim() && (t._neu || String(((z.start._termine||[])[i]||{}).intervallCode||"").trim()); })){
+          toast("Bitte bei den Terminen JW, HJW oder HJI wählen – ohne Kürzel ist unklar, welche Wartung fällig ist.");
+          return Promise.resolve(false);
+        }
+        var vorher=slotZahl();
+        var erg=Object.assign({}, z.a, {_termineOk:true});
+        return form._termineSpeichern(ld, z.start, erg, name).then(function(r){
+          if(r===false) return false;
+          var rest=termineOffen(erg).filter(hart);
+          if(rest.length) toast("Noch offen: "+rest.map(function(x){ return x.l; }).join(", ")+" – beim nächsten Besuch wird wieder gefragt.");
+          z.a=null; z.start=null;   /* beim Zurückgehen: der gespeicherte Stand */
+          /* ein Termin dazugekommen: erst wählen lassen, als welcher heute gewartet wurde */
+          if(an0 && !stoer && slotZahl()>vorher){ toast("Termin gespeichert – bitte noch wählen, als welcher Termin heute gewartet wurde."); return "nochmal"; }
+          return r;
+        });
+      }};
+    };
+    marktAnlagen.forEach(function(an){ if(dabei.indexOf(an.id)>=0) l.push(vorhanden(an, true)); });
+    /* vor Ort neu erfasst: Termine und „Heute gewartet als“ gehen mit dem Protokoll in die Anlagendaten */
+    (form._neueAnlagen ? form._neueAnlagen() : []).forEach(function(n){
+      var titel="Neue Anlage · "+((n.werte&&n.werte.anlagentyp)||"Neue Anlage"), z=terminMerker[n.id]=terminMerker[n.id]||{};
+      l.push({titel:titel, termine:true, zeigen:function(){
+        var w=n.werte||{};
+        inhalt.innerHTML=frage((stoer?"Betroffen":"Gewartet")+" (vor Ort neu erfasst): "+(w.anlagentyp||"Neue Anlage"));
+        var dk=datenKasten(n.id, titel, z); if(dk) inhalt.appendChild(dk);
+        if(!z.a) z.a=JSON.parse(JSON.stringify({inbetriebnahme:w.inbetriebnahme||null, _termine:w._termine||[{id:"NEU", intervallCode:"JW", monat:0}],
+          kaeltemittelKg:w.kaeltemittelKg, nurJW:!!w.nurJW}));
+        var tg=el('<div class="as-gruppe"><div class="as-gkopf"><span>Termine</span></div>'+
+          '<div class="muted" style="font-size:12.5px">Inbetriebnahme und Termine bitte gleich eintragen (Typenschild, Prüfbuch).</div></div>');
+        var host=el("<div></div>"); tg.appendChild(host); inhalt.appendChild(tg);
+        termineSchritt(host, z.a);
+        /* zwei Termine (etwa JW und HJI): als welcher zählt der heutige Besuch? */
+        var zeichneWahl=function(){
+          var alt=inhalt.querySelector("[data-zaehlt]"); if(alt) alt.remove();
+          if(stoer) return;
+          var tl=(z.a._termine||[]).filter(function(t){ return String(t.intervallCode||"").trim(); });
+          if(tl.length<2) return;
+          var idx=Math.min(+w._zaehltAls||0, tl.length-1);
+          var fr=P.feldRahmen("Heute gewartet als", chips(tl.map(function(t,i){
+            return [String(i), intervallArt(t.intervallCode).kurz+(+t.monat?" · "+MONATE_L[+t.monat]:"")]; }), String(idx), function(v){
+              n.werte._zaehltAls=+v; formDirty=true; }));
+          fr.setAttribute("data-zaehlt","");
+          inhalt.appendChild(fr);
+        };
+        zeichneWahl();
+        /* Kürzel oder Termine geändert: die Wahl mit den neuen Terminen zeigen */
+        host.addEventListener("click", function(){ setTimeout(zeichneWahl, 0); });
+        host.addEventListener("change", function(){ setTimeout(zeichneWahl, 0); });
+      }, speichern:function(){
+        if(!z.a) return Promise.resolve(null);
+        n.werte.inbetriebnahme=z.a.inbetriebnahme||null; n.werte._termine=z.a._termine;
+        if(z.a.nurJW) n.werte.nurJW=true; else delete n.werte.nurJW;
+        formDirty=true; z.a=null;
+        return Promise.resolve(true);
+      }});
+    });
+    /* andere Anlagen des Markts: nur bei fehlenden Termin-Angaben */
+    if(termineDa) marktAnlagen.forEach(function(an){
+      if(dabei.indexOf(an.id)>=0) return;
+      if(anlagePausiert(an.leader) || marktPausiert(st)) return;   /* zur Zeit nicht gewartet: keine Termine */
+      if(!termineOffenVon(an.leader).filter(hart).length) return;
+      l.push(vorhanden(an, false));
+    });
+    return l;
+  }
+  function termineEinreihen(){
+    P.schritte=P.schritte.filter(function(s){ return !s.termine; });
+    var nach=P.schritte.map(function(s){ return s.titel; }).indexOf(stoer?"Betroffene Anlagen":"Gewartete Anlagen");
+    P.schritte.splice.apply(P.schritte, [nach+1, 0].concat(anlageSchritte()));
+  }
+
+  /* Aufbau – läuft, wenn alle Teile angemeldet sind, in der ursprünglichen Reihenfolge */
+  return function(){
+    /* ---- Je Anlage ein Schritt: Daten UND Termine (Büro 01.10.2026) ----
+       Der Termin gehört zur Anlage – geprüft wird beides zusammen, und gleich
+       darunter, als welcher Termin der heutige Besuch zählt. So stimmt die
+       Fälligkeit auch, wenn Anlage und Termine erst heute angelegt werden.
+         – angehakte Anlagen: immer (Daten prüfen, Termine prüfen, „Heute gewartet als“),
+         – vor Ort neu erfasste: immer (Termine, bei zwei Terminen „Heute gewartet als“),
+         – die ANDEREN Anlagen des Markts nur, wenn Inbetriebnahme, Soll-Monat
+           oder Kürzel fehlen (nur Termine, „Überspringen“ jederzeit).
+       Termine sind Stammdaten und gehen mit „Stimmt – weiter“ gleich raus (mit
+       Eintrag „Termine beim Protokoll geprüft“ im Änderungsverlauf); die
+       Anlagendaten gehen mit dem Protokoll in die Anlagendaten. */
+    terminMerker={};   /* Anlage → angefangene Eingaben, solange der Dialog offen ist */
+    hart=function(x){ return !x.weich; };
+    /* die Anlagen-Schritte stehen gleich nach der Auswahl der Anlagen; neu
+       bestimmt wird, sobald die Auswahl feststeht */
+    terminSchritte=anlageSchritte;   /* Übersicht: was an Terminen noch offen ist */
+  };
+}
+/* Geführtes Protokoll, Teil Arbeiten: Störungsauftrag, Arbeiten bzw. Störungsbehebung, Material, Mängel, Ergebnis */
+function protoAssistentTeilArbeiten(P){
+  var inhalt=P.inhalt, frage=P.frage, chips=P.chips, textFeld=P.textFeld, form=P.form, stoer=P.stoer;
+  function textFeldRoh(label, ziel){
+    var d=el('<div class="as-feld"><div class="as-label">'+esc(label)+'</div><input type="text"></div>');
+    var n=d.querySelector("input"); n.value=ziel.value;
+    n.oninput=function(){ ziel.value=n.value; formDirty=true; };
+    return d;
+  }
+  /* Aufbau – läuft, wenn alle Teile angemeldet sind, in der ursprünglichen Reihenfolge */
+  return function(){
+    if(stoer) P.schritte.push({titel:"Störungsauftrag", zeigen:function(){
+      /* Auftrag schon da (Protokoll aus einer offenen Störung): nur bestätigen lassen –
+         das Hochladen bleibt als Nebenweg, falls doch ein anderer Auftrag gilt */
+      var da=form.dataset.auftragda||"";
+      /* weiterer Kunde: kein Lidl-Auftrag, kein PDF/QR – nur Nummer (falls es eine gibt) und Beschreibung */
+      var lidlA=!form._istLidl || form._istLidl();
+      inhalt.innerHTML=frage(!lidlA ? "Angaben zum Auftrag" : da ? "Stimmen die Angaben zum Lidl-Auftrag?" : "Lidl-Auftrag übernehmen");
+      if(!lidlA){
+        inhalt.appendChild(textFeld("Auftrags- / Bestellnummer des Kunden (falls vorhanden)", "#f_auftrag", false));
+        inhalt.appendChild(textFeld("Was wurde gemeldet?", "#s_beschreibung", true));
+        return;
+      }
+      if(da==="datei"){
+        var schon=el('<div class="note" style="font-size:13px"><strong>Der Auftrag ist schon hinterlegt</strong> – aus der offenen Störung übernommen. Es muss nichts hochgeladen werden.</div>');
+        inhalt.appendChild(schon);
+      }
+      var reihe=el('<div class="chips"></div>');
+      var pdf=el('<button class="btn'+(da?" ghost sm":"")+'" type="button">'+(da?"Anderen Auftrag öffnen (PDF)":"Auftrag-PDF öffnen")+"</button>");
+      pdf.onclick=function(){ var l=form.querySelector('label[for="s_pdf"]'); if(l) l.click(); };
+      var qr=el('<button class="btn ghost'+(da?" sm":"")+'" type="button">QR-Code scannen</button>');
+      qr.onclick=function(){ var b=form.querySelector("#s_qr"); if(b) b.click(); };
+      if(da==="datei" && form._auftragAnsehen){
+        var an=el('<button class="btn" type="button">Auftrag ansehen</button>');
+        an.onclick=function(){ var b=form.querySelector("#s_bild"); if(form.querySelector("[data-auftragpdf]")) form._auftragAnsehen(); else if(b && !b.hidden){ toast("Der Auftrag steht als Bild im Formular unter „Lidl-Störungsauftrag“."); } };
+        reihe.appendChild(an);
+      }
+      reihe.appendChild(pdf); reihe.appendChild(qr);
+      inhalt.appendChild(reihe);
+      if(da!=="datei") inhalt.appendChild(el('<div class="muted" style="font-size:12.5px">'+esc(((form.querySelector("#s_info")||{}).textContent||"").replace(/\s*Auftrag ansehen\s*$/,""))+"</div>"));
+      inhalt.appendChild(textFeld("Lidl-Auftragsnummer", "#f_auftrag", false));
+      ["s_auftragsdatum|Auftragsdatum","s_stoerungsnr|Störungsnummer","s_problemtyp|Problemtyp"].forEach(function(x){
+        var t=x.split("|"); inhalt.appendChild(textFeld(t[1], "#"+t[0], false));
+      });
+      inhalt.appendChild(textFeld("Beschreibung laut Auftrag", "#s_beschreibung", true));
+    }});
+
+    P.schritte.push({titel:stoer?"Störungsbehebung":"Arbeiten", zeigen:function(){
+      if(stoer){
+        inhalt.innerHTML=frage("Was war los und was haben Sie gemacht?");
+        inhalt.appendChild(textFeld("Fehlerbild vor Ort","#s_fehlerbild",true));
+        inhalt.appendChild(textFeld("Ursache","#s_ursache",true));
+        inhalt.appendChild(textFeld("Durchgeführte Maßnahmen","#s_massnahmen",true));
+        return;
+      }
+      inhalt.innerHTML=frage("Was haben Sie gemacht?");
+      var box=el('<div class="chips"></div>');
+      form.querySelectorAll('input[name="arbeit"]').forEach(function(cb){
+        var b=el('<button class="chip" type="button" aria-pressed="'+cb.checked+'">'+esc(cb.nextElementSibling.textContent)+"</button>");
+        b.onclick=function(){ cb.checked=!cb.checked; formDirty=true; b.setAttribute("aria-pressed",String(cb.checked)); };
+        box.appendChild(b);
+      });
+      inhalt.appendChild(P.feldRahmen("Antippen, was zutrifft", box));
+      var alle=el('<button class="btn ghost sm" type="button">alle auswählen</button>');
+      alle.onclick=function(){
+        form.querySelectorAll('input[name="arbeit"]').forEach(function(cb){ cb.checked=true; });
+        formDirty=true; P.schritte[P.pos].zeigen(); P.fussNeu();
+      };
+      var ok=el('<button class="btn sm" type="button">Alles erledigt, keine Mängel</button>');
+      ok.onclick=function(){ var b=form.querySelector("#f_allesok"); if(b) b.click(); P.schritte[P.pos].zeigen(); P.fussNeu(); };
+      inhalt.appendChild(ok);
+      inhalt.appendChild(alle);
+      inhalt.appendChild(textFeld("Sonstiges","#f_arb_sonst",false,"weitere Arbeiten"));
+    }});
+
+    /* Störung: Material und Folgeauftrag (Büro 30.09.2026) – dieselben Zeilen wie im
+       Formular unter „Material / Ersatzteile“, hier nur bequemer zu füllen */
+    if(stoer) P.schritte.push({titel:"Material", zeigen:function(){
+      inhalt.innerHTML=frage("Welches Material oder welche Ersatzteile haben Sie eingesetzt?");
+      var host=form.querySelector("#s_material"), neu=form.querySelector("#s_addmat");
+      var zeilen=function(){ return [].slice.call(host.children); };
+      /* was bei Störungen schon eingesetzt wurde – antippen legt eine Zeile an */
+      var haeufig={};
+      alleProtokolle().forEach(function(p){ ((p.stoerung&&p.stoerung.material)||[]).forEach(function(m){ var t=String(m&&m.text||"").trim(); if(t) haeufig[t]=(haeufig[t]||0)+1; }); });
+      eigeneWerte("st_material").forEach(function(t){ if(t) haeufig[t]=haeufig[t]||1; });
+      var bekannt=Object.keys(haeufig).sort(function(a,b){ return haeufig[b]-haeufig[a] || a.localeCompare(b,"de"); }).filter(function(t){ return t.length<=40; }).slice(0,8);
+      var liste=el('<div class="stack" style="gap:8px"></div>');
+      var zeichnen=function(){
+        liste.innerHTML="";
+        zeilen().forEach(function(z){
+          var t=z.querySelector(".mt-t"), m=z.querySelector(".mt-m");
+          if(!t) return;
+          var r=el('<div style="display:grid;grid-template-columns:minmax(0,1fr) 90px auto;gap:6px;align-items:center">'+
+            '<input type="text" placeholder="z. B. Kondensatpumpe" value="'+esc(t.value)+'">'+
+            '<input type="text" placeholder="1 Stk" value="'+esc(m.value)+'">'+
+            '<button class="btn ghost sm" type="button" aria-label="Zeile entfernen">×</button></div>');
+          var it=r.querySelectorAll("input");
+          it[0].oninput=function(){ t.value=it[0].value; formDirty=true; };
+          it[0].onchange=function(){ merkeWert("st_material", it[0].value); };
+          it[1].oninput=function(){ m.value=it[1].value; formDirty=true; };
+          r.querySelector("button").onclick=function(){ z.remove(); formDirty=true; zeichnen(); };
+          liste.appendChild(r);
+        });
+        if(!liste.children.length) liste.appendChild(el('<div class="muted" style="font-size:13px">Noch kein Material eingetragen – kein Material eingesetzt? Dann einfach „Weiter“.</div>'));
+      };
+      var dazu=function(text){
+        /* eine leere Zeile im Formular wiederverwenden, sonst eine neue anlegen */
+        var leer=zeilen().filter(function(z){ var t=z.querySelector(".mt-t"); return t && !t.value.trim(); })[0];
+        if(!leer){ neu.click(); leer=zeilen()[zeilen().length-1]; }
+        if(leer && text){ leer.querySelector(".mt-t").value=text; var mm=leer.querySelector(".mt-m"); if(mm && !mm.value) mm.value="1 Stk"; }
+        formDirty=true; zeichnen();
+        if(!text){ var ins=liste.querySelectorAll('input[type="text"]'); var l=ins[ins.length-2]; if(l) l.focus(); }
+      };
+      if(bekannt.length){
+        var chips=el('<div class="chips"></div>');
+        bekannt.forEach(function(t){ var b=el('<button class="chip" type="button">+ '+esc(t)+"</button>"); b.onclick=function(){ dazu(t); }; chips.appendChild(b); });
+        inhalt.appendChild(P.feldRahmen("Schon öfter eingesetzt – antippen", chips));
+      }
+      inhalt.appendChild(P.feldRahmen("Material / Ersatzteile · Menge", liste));
+      var plus=el('<button class="btn ghost sm" type="button">+ Material</button>'); plus.onclick=function(){ dazu(""); };
+      inhalt.appendChild(plus);
+      /* Folgeauftrag gleich mit – was noch zu tun ist, gehört zum Material dazu */
+      var fa=form.querySelector("#s_folgeauftrag"), ft=form.querySelector("#s_folgeText");
+      if(fa){
+        var box=el('<div class="as-feld"><div class="as-label">Folgeauftrag / Angebot erforderlich?</div><div class="chips">'+
+          '<button class="chip" type="button" data-fa="1" aria-pressed="'+fa.checked+'">ja</button>'+
+          '<button class="chip" type="button" data-fa="0" aria-pressed="'+(!fa.checked)+'">nein</button></div></div>');
+        inhalt.appendChild(box);
+        var was=textFeld("Was ist noch zu tun?","#s_folgeText",false,"z. B. Verdichter tauschen – Angebot an Lidl");
+        was.hidden=!fa.checked; inhalt.appendChild(was);
+        box.querySelectorAll("[data-fa]").forEach(function(b){ b.onclick=function(){
+          fa.checked=b.dataset.fa==="1"; fa.dispatchEvent(new Event("change",{bubbles:true})); formDirty=true;
+          box.querySelectorAll("[data-fa]").forEach(function(x){ x.setAttribute("aria-pressed", String(x===b)); });
+          was.hidden=!fa.checked;
+        }; });
+      }
+      zeichnen();
+    }});
+
+    P.schritte.push({titel:"Mängel", zeigen:function(){
+      inhalt.innerHTML=frage("Gibt es Mängel?");
+      var liste=el('<div class="stack"></div>');
+      var zeichne=function(){
+        liste.innerHTML="";
+        var zeilen=[].slice.call(form.querySelectorAll(".mangelrow"));
+        var mit=zeilen.filter(function(z){ return z.querySelector(".m-t").value.trim(); });
+        if(!mit.length) liste.appendChild(el('<div class="muted" style="font-size:13px">Noch kein Mangel eingetragen.</div>'));
+        zeilen.forEach(function(z){
+          var t=z.querySelector(".m-t"), p=z.querySelector(".m-p"), m=z.querySelector(".m-m");
+          if(!t.value.trim() && zeilen.length>1 && z!==zeilen[zeilen.length-1]) return;
+          var g=el('<div class="as-gruppe"></div>');
+          g.appendChild(textFeldRoh("Mangel / Feststellung", t));
+          var prio=chips([["","–"],["niedrig","niedrig"],["mittel","mittel"],["hoch","hoch"],["sofort","sofort"]], p.value, function(v){ p.value=v; formDirty=true; });
+          g.appendChild(P.feldRahmen("Priorität", prio));
+          g.appendChild(textFeldRoh("Empfohlene Maßnahme / Frist", m));
+          liste.appendChild(g);
+        });
+      };
+      var neu=el('<button class="btn ghost sm" type="button">+ weiterer Mangel</button>');
+      neu.onclick=function(){ form._mangelHinzu(); zeichne(); };
+      inhalt.appendChild(liste); inhalt.appendChild(neu);
+      zeichne();
+    }});
+
+    P.schritte.push({titel:"Ergebnis", zeigen:function(){
+      inhalt.innerHTML=frage("Wie ist der Stand nach dem Einsatz?");
+      var br=form.querySelector('input[name="bereit"]:checked');
+      inhalt.appendChild(P.feldRahmen("Anlage betriebsbereit",
+        chips([["ja","ja"],["eingeschränkt","eingeschränkt"],["nein","nein"]], br?br.value:"ja", function(v){
+          var r=form.querySelector('input[name="bereit"][value="'+v+'"]'); if(r){ r.checked=true; formDirty=true; }
+          /* Widersprüche wie im Formular: die spätere Wahl gilt (ergebnisAbgleich) */
+          if(r && form._ergebnisAbgleich){ form._ergebnisAbgleich(r); if(!stoer) P.schritte[P.pos].zeigen(); }
+        })));
+      inhalt.appendChild(textFeld("Sofortmaßnahme","#f_sofort",false,"leer = keine"));
+      if(!stoer){
+        var box=el('<div class="chips"></div>');
+        form.querySelectorAll('input[name="ergebnis"]').forEach(function(cb){
+          var b=el('<button class="chip" type="button" aria-pressed="'+cb.checked+'"'+(cb.disabled?' disabled style="opacity:.5"':"")+">"+esc(cb.nextElementSibling.textContent)+"</button>");
+          b.onclick=function(){
+            cb.checked=!cb.checked; formDirty=true;
+            if(form._ergebnisAbgleich) form._ergebnisAbgleich(cb);
+            P.schritte[P.pos].zeigen();   /* abgewählte bzw. gesperrte Aussagen gleich zeigen */
+          };
+          box.appendChild(b);
+        });
+        var ergF=P.feldRahmen("Ergebnis", box), ergH=form.querySelector("#f_erghinweis");
+        if(ergH && !ergH.hidden) ergF.appendChild(el('<div class="muted" style="font-size:12.5px;margin-top:6px">'+esc(ergH.textContent)+"</div>"));
+        inhalt.appendChild(ergF);
+      }
+      inhalt.appendChild(textFeld("Bemerkungen","#f_bem",true));
+    }});
+  };
+}
+/* Geführtes Protokoll, Teil Kältemittel, Fotos und Rapport */
+function protoAssistentTeilFotos(P){
+  var ov=P.ov, inhalt=P.inhalt, f=P.f, wert=P.wert, frage=P.frage, textFeld=P.textFeld, form=P.form, stoer=P.stoer;
+  var fotoSchritt;
+  /* Aufbau – läuft, wenn alle Teile angemeldet sind, in der ursprünglichen Reihenfolge */
+  return function(){
+    /* Kältemittel: dieselben Felder wie im Formular (Wartung f_km…, Störung
+       s_km…) – sonst fehlte in der Kältemittel-Bilanz, was nur hier erfasst wird */
+    P.kmVor=stoer?"#s_km":"#f_km";
+    P.kmKurz=function(){
+      var n=wert(P.kmVor+"Nach").trim(), e=wert(P.kmVor+"Ent").trim();
+      /* Wartung mit mehreren Anlagen: dazu, bei welcher Anlage die Menge gebucht wird */
+      var k=!stoer && (n||e) ? kaeltemittelAusForm(form) : null, ka=k && k.anlage && posById[zeileWeiter(k.anlage)];
+      return [wert(P.kmVor+"Art").trim(), n?"nachgefüllt "+n+" kg":"", e?"zurückgewonnen "+e+" kg":""].filter(Boolean).join(" · ")+
+        (ka ? " (für "+anlagenName(ka)+")" : "");
+    };
+    if(f(P.kmVor+"Nach")) P.schritte.push({titel:"Kältemittel", zeigen:function(){
+      inhalt.innerHTML=frage("Kältemittel nachgefüllt oder zurückgewonnen?")+
+        '<div class="muted" style="font-size:12.5px">Nichts nachgefüllt und nichts zurückgewonnen: leer lassen und weiter.</div>';
+      inhalt.appendChild(textFeld("Kältemittel", P.kmVor+"Art", false, "z. B. R410A"));
+      [["Nach","nachgefüllt (kg)"],["Ent","zurückgewonnen (kg)"]].forEach(function(x){
+        var d=textFeld(x[1], P.kmVor+x[0], false, "0");
+        d.querySelector("input").setAttribute("inputmode","decimal");
+        inhalt.appendChild(d);
+      });
+      /* „für Anlage“ nur bei der Wartung und nur, wenn mehrere angehakt sind */
+      var ziel=f("#f_kmAnlage");
+      if(ziel){
+        kaeltemittelAnlagen(form);
+        if(ziel.options.length>2){
+          var s2=el('<select style="width:100%"></select>');
+          s2.innerHTML=ziel.innerHTML; s2.value=ziel.value;
+          s2.onchange=function(){ ziel.value=s2.value; formDirty=true; };
+          inhalt.appendChild(P.feldRahmen("für Anlage", s2));
+        }
+      }
+    }, pruefen:function(){
+      return kgGueltig(wert(P.kmVor+"Nach")) && kgGueltig(wert(P.kmVor+"Ent")) ? "" : "Bitte die Menge in kg nur als Zahl eintragen (z. B. 2,5).";
+    }});
+
+    /* Fotos und Rapport: die Liste mit Vorschau, Bildunterschrift (Notiz) und
+       „entfernen“ steht hier wie im Formular – vorher sah man nur die Zahl
+       (Büro 01.10.2026) */
+    fotoSchritt=function(){ return document.body.contains(ov) && P.schritte[P.pos] && P.schritte[P.pos].titel==="Fotos und Rapport"; };
+    form._nachFotos=function(){ if(fotoSchritt() && !inhalt.contains(document.activeElement)) P.schritte[P.pos].zeigen(); };
+    form._nachRapport=function(){ if(fotoSchritt()) P.schritte[P.pos].zeigen(); };
+    P.schritte.push({titel:"Fotos und Rapport", zeigen:function(){
+      var F=form._fotos, liste=F?F.liste():[], voll=liste.length>=FOTO_MAX;
+      inhalt.innerHTML=frage("Fotos vom Einsatz (freiwillig)");
+      var reihe=el('<div class="chips"></div>');
+      var a=el('<button class="btn" type="button">Foto aufnehmen</button>');
+      a.onclick=function(){ form.querySelector("#f_foto").click(); };
+      var b=el('<button class="btn ghost" type="button">Aus Galerie wählen</button>');
+      b.onclick=function(){ form.querySelector("#f_galerie").click(); };
+      if(voll){ a.disabled=b.disabled=true; }
+      reihe.appendChild(a); reihe.appendChild(b);
+      inhalt.appendChild(reihe);
+      inhalt.appendChild(el('<div class="muted" style="font-size:12.5px">'+
+        esc((form.querySelector("#f_fotoinfo")||{}).textContent||"")+
+        (F && F.inArbeit()>0 ? " · "+F.inArbeit()+" werden noch verkleinert …" : "")+
+        (voll ? " – mehr gehen nicht. Prüfbuch- und Typenschild-Fotos gehören zur Anlage: bei „Anlagendaten“ über „Aus Fotos lesen“." : "")+"</div>"));
+      liste.forEach(function(ft,i){
+        var z=el('<div class="rowflex" style="align-items:flex-start;gap:10px;border:1px solid var(--line);border-radius:8px;padding:8px;margin-top:8px">'+
+          '<img alt="Foto '+(i+1)+'" src="'+bildUrl(ft.datenUrl)+'" style="width:64px;height:64px;object-fit:cover;border-radius:6px;flex:none">'+
+          '<label class="fl" style="flex:1 1 140px"><span>Notiz zum Foto</span><input type="text" placeholder="z. B. Mangel am Wärmetauscher"></label>'+
+          '<button class="btn ghost sm" type="button">entfernen</button></div>');
+        var ein=z.querySelector("input"); ein.value=ft.hinweis||"";
+        ein.oninput=function(){ F.hinweis(i, ein.value); };
+        ein.onchange=function(){ F.zeichnen(); };   /* Formular darunter nachziehen */
+        z.querySelector("button").onclick=function(){ F.weg(i); P.schritte[P.pos].zeigen(); };
+        inhalt.appendChild(z);
+      });
+      /* Rapportbericht von Lidl (bei Wartung und Störung) – im Formular ein eigener Kasten */
+      var rapIn=form.querySelector("#s_rapport");
+      if(rapIn && (!form._istLidl || form._istLidl())){
+        var info=form.querySelector("#s_rapportinfo");
+        var r=el('<div class="as-feld" style="margin-top:14px"><div class="as-label">Rapportbericht von Lidl</div>'+
+          '<div style="font-size:13px" data-rapinfo></div>'+
+          '<button class="btn ghost sm" type="button" style="margin-top:6px">Rapportbericht (PDF) anhängen</button>'+
+          '<div class="muted" style="font-size:12px;margin-top:4px">Kommt er erst später per Mail, lässt er sich am gespeicherten Protokoll nachreichen.</div></div>');
+        r.querySelector("[data-rapinfo]").textContent=info ? info.textContent : "";
+        r.querySelector("button").onclick=function(){ rapIn.click(); };
+        inhalt.appendChild(r);
+      }
+    }});
+  };
+}
+/* Geführtes Protokoll, Teil Abschluss und Übersicht: Techniker/in, Unterschrift, alles auf einen Blick, Speichern */
+function protoAssistentTeilAbschluss(P){
+  var inhalt=P.inhalt, zu=P.zu, f=P.f, setz=P.setz, wert=P.wert, frage=P.frage, textFeld=P.textFeld, form=P.form, stoer=P.stoer;
+  /* Aufbau – läuft, wenn alle Teile angemeldet sind, in der ursprünglichen Reihenfolge */
+  return function(){
+    P.schritte.push({titel:"Abschluss", zeigen:function(){
+      inhalt.innerHTML=frage("Wer war vor Ort?");
+      /* verantwortlich ist das angemeldete Konto – es schließt ab und unterschreibt (Büro 01.10.2026);
+         nur ohne Namen im Konto einmal eintippen. Der Name gilt für beide Felder. */
+      var tfE=f("#f_tech");
+      if(tfE && tfE.readOnly && tfE.value){
+        inhalt.appendChild(el('<div class="as-feld"><div class="as-label">Techniker/in – verantwortlich, unterschreibt</div>'+
+          '<div style="font-size:16px;font-weight:600">'+esc(tfE.value)+"</div>"+
+          '<div class="muted" style="font-size:12px">'+(S.bearbeiten?"hat das Protokoll gemacht – bleibt bei der Korrektur":(f("#f_fuer")&&f("#f_fuer").value?"im Auftrag – erfasst von dir":"aus deinem Konto"))+
+          ". Wer noch dabei war, gehört unten zu „Weitere/r Techniker/in“.</div></div>"));
+        /* Admin/Inhaber: für jemand anderen ausfüllen – dieselbe Auswahl wie im Formular */
+        var echt=f("#f_fuer");
+        if(echt && !S.bearbeiten){
+          var kopie=echt.cloneNode(true); kopie.removeAttribute("id"); kopie.value=echt.value;
+          var fb=el('<label class="fl" style="margin-top:6px"><span>Ausgefüllt für</span></label>'); fb.appendChild(kopie);
+          kopie.onchange=function(){ echt.value=kopie.value; echt.dispatchEvent(new Event("change")); var w=inhalt.querySelector(".as-feld div[style*='font-size:16px']"); if(w) w.textContent=f("#f_tech").value; };
+          inhalt.appendChild(fb);
+        }
+      } else {
+        var nameFeld=textFeld("Techniker/in – verantwortlich, unterschreibt","#f_tech",false), nameEin=nameFeld.querySelector("input");
+        nameEin.oninput=function(){ setz("#f_tech",nameEin.value); setz("#f_name",nameEin.value); };
+        nameEin.onchange=function(){ var t=f("#f_tech"); if(t) t.dispatchEvent(new Event("change",{bubbles:true})); };
+        inhalt.appendChild(nameFeld);
+      }
+      inhalt.appendChild(textFeld("Weitere/r Techniker/in","#f_tech2",false,"leer = allein"));
+      inhalt.appendChild(textFeld("Dritte/r Techniker/in","#f_tech3",false));
+      /* Datum hier änderbar (Büro 01.10.2026: im Dialog ging es nicht) – als
+         echtes Datumsfeld wie im Formular, nicht in der Zukunft */
+      var df=el('<div class="as-feld"><div class="as-label">'+(stoer?"Datum des Einsatzes":"Datum der Wartung")+'</div><input type="date"></div>'), di=df.querySelector("input");
+      di.max=isoLokal(new Date()); di.value=wert("#f_datum");
+      di.oninput=di.onchange=function(){ if(di.value){ setz("#f_datum", di.value); var fd=f("#f_datum"); if(fd) fd.dispatchEvent(new Event("change",{bubbles:true})); } };
+      inhalt.appendChild(df);
+      /* Uhrzeit als echtes Zeitfeld – „8:30“ als Text würde das Formular still leeren */
+      var zf=el('<div class="as-feld"><div class="as-label">Uhrzeit</div><input type="time"></div>'), zi=zf.querySelector("input");
+      zi.value=wert("#f_zeit"); zi.oninput=zi.onchange=function(){ if(zi.value) setz("#f_zeit", zi.value); };
+      inhalt.appendChild(zf);
+      /* Korrektur: der Grund gehört dazu */
+      var gb=f("#f_grundbox");
+      if(gb && !gb.hidden) inhalt.appendChild(textFeld("Grund der Korrektur","#f_grund",false,"z. B. Anlagen und Fotos ergänzt"));
+      var d=el('<div class="as-feld"><div class="as-label">Unterschrift</div>'+
+        '<canvas class="sig" width="900" height="300" style="width:100%;height:120px;border:1px solid var(--line-2);border-radius:8px;background:#fff;touch-action:none"></canvas>'+
+        '<div class="rowflex" style="margin-top:6px"><button class="btn ghost sm" type="button">löschen</button>'+
+        '<span class="muted" style="font-size:12px">Mit dem Finger unterschreiben.</span></div></div>');
+      var cv=d.querySelector("canvas"), ctx=cv.getContext("2d"), malt=false, etwas=false;
+      ctx.lineWidth=3.2; ctx.lineCap="round"; ctx.lineJoin="round"; ctx.strokeStyle="#111"; // feste dunkle Tinte auf weißer Fläche (auch im Dunkelmodus, Blatt/PDF)
+      var pt=function(e){ var r=cv.getBoundingClientRect(); return [(e.clientX-r.left)*cv.width/r.width,(e.clientY-r.top)*cv.height/r.height]; };
+      cv.addEventListener("pointerdown",function(e){ e.preventDefault(); cv.setPointerCapture(e.pointerId); malt=true;
+        var q=pt(e); ctx.beginPath(); ctx.moveTo(q[0],q[1]); });
+      cv.addEventListener("pointermove",function(e){ if(!malt) return; etwas=true; var q=pt(e); ctx.lineTo(q[0],q[1]); ctx.stroke(); });
+      cv.addEventListener("pointerup",function(){ malt=false; if(etwas) form._sig.setzen(cv.toDataURL("image/png")); });
+      cv.addEventListener("pointerleave",function(){ if(malt){ malt=false; if(etwas) form._sig.setzen(cv.toDataURL("image/png")); } });
+      d.querySelector("button").onclick=function(){ ctx.clearRect(0,0,cv.width,cv.height); etwas=false; form._sig.leeren(); };
+      inhalt.appendChild(d);
+    }});
+
+    P.schritte.push({titel:"Übersicht", uebersicht:true, zeigen:function(){
+      var st=byId[f("#f_standort").value];
+      var anlagen=[].slice.call(form.querySelectorAll('input[name="posw"]:checked')).map(function(cb){
+        var nm=(form._nameJetzt && form._nameJetzt(cb.dataset.anlage)) || cb.closest("label").querySelector("strong").textContent;
+        /* als welcher Termin heute gewartet – in der Übersicht nachprüfbar */
+        var t=!stoer && posById[cb.value];
+        return nm+(t ? " ("+(t.intervall||intervallArt(t.intervallCode)).kurz+")" : ""); });
+      var arbeiten=[].slice.call(form.querySelectorAll('input[name="arbeit"]:checked')).length;
+      var maengel=[].slice.call(form.querySelectorAll(".mangelrow")).filter(function(z){ return z.querySelector(".m-t").value.trim(); }).length;
+      /* jede Zeile führt zu ihrem Schritt (Index über den Titel – die Störung hat
+         einen Schritt mehr); „Datum“ hat keinen: zurück ins Formular zum Feld */
+      var zeile=function(k,v,schritt){ return '<div class="as-zeile" role="button" tabindex="0" style="cursor:pointer" data-schritt="'+esc(schritt)+'" title="Ändern">'+
+        "<span>"+esc(k)+"</span><strong>"+esc(v||"–")+' <span class="muted" aria-hidden="true">›</span></strong></div>'; };
+      /* Anlagen, bei denen Inbetriebnahme bzw. Termine noch offen sind (übersprungen) */
+      var termOffen=P.schritte.filter(function(x){
+        var an=x.anlageId && ANLAGEN[x.anlageId];
+        return an && termineOffenVon(an.leader).filter(function(y){ return !y.weich; }).length; });
+      var ersterAnlageSchritt=(P.schritte.filter(function(x){ return x.termine; })[0]||{}).titel||(stoer?"Betroffene Anlagen":"Gewartete Anlagen");
+      /* alles vor dem Abschluss noch einmal sehen und ändern können (Büro 01.10.2026) */
+      var karten=[].slice.call(form.querySelectorAll("#anlagen .akarte"));
+      var nNeu=karten.filter(function(k){ return k.querySelector(".tag.st"); }).length,
+          nAkt=karten.filter(function(k){ return k.querySelector(".tag.f30"); }).length,
+          nFehlt=karten.filter(function(k){ return k.querySelector("[data-spring]"); }).length;
+      var anlText=[nAkt?nAkt+" werden aktualisiert":"", nNeu?nNeu+" neu erfasst":"", nFehlt?"bei "+nFehlt+" fehlt noch etwas":""].filter(Boolean).join(" · ")||"unverändert";
+      var ergebnisse=[].slice.call(form.querySelectorAll('input[name="ergebnis"]:checked')).map(function(cb){ return cb.nextElementSibling.textContent; });
+      var mit=[wert("#f_tech2"), wert("#f_tech3")].filter(function(x){ return x.trim(); });
+      var rapInfo=form.querySelector("#s_rapportinfo"), rapDa=form.querySelector("#s_rapport") && (!form._istLidl || form._istLidl());
+      var gb=f("#f_grundbox");
+      var fehlt=form._fehltNoch ? form._fehltNoch() : [];
+      inhalt.innerHTML=frage("Passt so?")+
+        (fehlt.length ? '<div class="note warnbox">Vor dem Speichern fehlt noch: <strong>'+esc(fehlt.join(", "))+"</strong></div>" : "")+
+        '<div class="as-gruppe">'+
+          zeile("Markt", st?stName(st):"–", "Markt")+
+          zeile("Datum", dfmt(wert("#f_datum"))+(wert("#f_zeit")?" · "+wert("#f_zeit"):""), "Abschluss")+
+          (gb && !gb.hidden ? zeile("Grund der Korrektur", wert("#f_grund")||"fehlt", "Abschluss") : "")+
+          zeile(stoer?"Betroffen":"Gewartet", anlagen.concat((form._neueAnlagen?form._neueAnlagen():[]).map(function(n){ var t0=neueAnlageReihenfolge(n.werte||{})[0]; return ((n.werte&&n.werte.anlagentyp)||"Neue Anlage")+" (neu"+(!stoer && t0 && String(t0.intervallCode||"").trim() ? ", "+intervallArt(t0.intervallCode).kurz : "")+")"; })).join(", "), stoer?"Betroffene Anlagen":"Gewartete Anlagen")+
+          zeile("Anlagendaten", anlText, ersterAnlageSchritt)+
+          (termOffen.length?zeile("Inbetriebnahme / Termine", "noch offen bei "+termOffen.length+" Anlage"+(termOffen.length===1?"":"n"), termOffen[0].titel):"")+
+          (stoer?zeile("Maßnahmen", wert("#s_massnahmen").slice(0,60), "Störungsbehebung"):zeile("Arbeiten", arbeiten+" angehakt", "Arbeiten"))+
+          zeile("Mängel", maengel?maengel+" eingetragen":"keine", "Mängel")+
+          zeile("Betriebsbereit", (form.querySelector('input[name="bereit"]:checked')||{}).value||"–", "Ergebnis")+
+          (wert("#f_sofort").trim()?zeile("Sofortmaßnahme", wert("#f_sofort").slice(0,60), "Ergebnis"):"")+
+          (!stoer?zeile("Ergebnis", ergebnisse.join(" · ").slice(0,90)||"–", "Ergebnis"):"")+
+          zeile("Bemerkungen", wert("#f_bem").trim().slice(0,80)||"keine", "Ergebnis")+
+          (f(P.kmVor+"Nach")?zeile("Kältemittel", P.kmKurz()||"keines", "Kältemittel"):"")+
+          zeile("Fotos", (form.querySelector("#f_fotoinfo")||{}).textContent||"–", "Fotos und Rapport")+
+          (rapDa?zeile("Rapportbericht", rapInfo?rapInfo.textContent.slice(0,60):"–", "Fotos und Rapport"):"")+
+          zeile("Techniker/in", wert("#f_tech")+(mit.length?" + "+mit.join(", "):""), "Abschluss")+
+          zeile("Unterschrift", form._sig.vorhanden()?"vorhanden":"fehlt", "Abschluss")+
+        "</div>"+
+        '<div class="muted" style="font-size:12.5px">Eine Zeile antippen führt zu ihrem Schritt. Mit „Protokoll speichern“ geht es in die gemeinsame Ablage; '+
+        "Änderungen und Ergänzungen sind danach über „Korrigieren“ möglich – auch wieder Schritt für Schritt.</div>";
+      inhalt.querySelectorAll("[data-schritt]").forEach(function(z){
+        var los=function(){
+          var ziel=z.dataset.schritt;
+          if(ziel.charAt(0)==="#"){
+            /* die Werte stehen schon im Formular – ohne Rückfrage schließen */
+            zu(); sprungHervorheben(form.querySelector(ziel)); return;
+          }
+          var i=P.schritte.map(function(x){ return x.titel; }).indexOf(ziel);
+          if(i>=0){ P.pos=i; P.zeige(); }
+        };
+        z.onclick=los;
+        z.onkeydown=function(e){ if(e.key==="Enter"){ e.preventDefault(); los(); } };
+      });
+    }});
+  };
+}
 function protokollAssistent(form, stoer){
   var ov=el('<div class="assistent" role="dialog" aria-modal="true"><div class="as-karte">'+
     '<div class="as-kopf"><div style="min-width:0"><div class="as-titel"></div><div class="as-schritt"></div></div>'+
@@ -12368,656 +13048,23 @@ function protokollAssistent(form, stoer){
   function knopf(text, art, fn){
     var b=el('<button class="btn'+(art?" "+art:"")+'" type="button">'+esc(text)+"</button>"); b.onclick=fn; fuss.appendChild(b); return b;
   }
-
-  /* ---- Schritte ---- */
-  var schritte=[];
-
-  schritte.push({titel:"Markt", zeigen:function(){
-    var aktuell=f("#f_standort").value;
-    inhalt.innerHTML=frage("In welchem Markt sind Sie?");
-    var suche=el('<input type="search" placeholder="Filiale, Ort oder Adresse suchen …" style="width:100%">');
-    var liste=el('<div class="stack" style="max-height:46vh;overflow:auto"></div>');
-    var zeichne=function(){
-      var q=suche.value.trim().toLowerCase();
-      liste.innerHTML="";
-      ST.filter(function(s){ return !q || (stName(s)+" "+(s.filiale||"")+" "+s.adresse).toLowerCase().indexOf(q)>=0; })
-        .sort(nachMarktname)
-        .slice(0,40).forEach(function(s){
-          var b=el('<button class="chip" type="button" style="display:block;width:100%;text-align:left;padding:10px 12px"'+
-            (s.id===f("#f_standort").value?' aria-pressed="true"':"")+"><strong>"+esc(stName(s))+"</strong>"+
-            '<br><span class="muted" style="font-size:12px">'+esc(s.adresse)+(s.filiale?" · Filiale "+esc(s.filiale):"")+"</span></button>");
-          b.onclick=function(){
-            var sel=f("#f_standort"); sel.value=s.id; sel.onchange(); formDirty=true;
-            weiter();
-          };
-          liste.appendChild(b);
-        });
-    };
-    suche.oninput=zeichne; zeichne();
-    /* der schnellste Weg vor Ort: die nächsten Märkte (antippen = gewählt, weiter) */
-    inhalt.appendChild(naeheAuswahl(function(s){ var sel=f("#f_standort"); sel.value=s.id; sel.onchange(); formDirty=true; weiter(); }));
-    inhalt.appendChild(feldRahmen("Markt suchen", suche));
-    inhalt.appendChild(liste);
-    if(aktuell) inhalt.appendChild(el('<div class="muted" style="font-size:12.5px">Gewählt: <strong>'+
-      esc(byId[aktuell]?stName(byId[aktuell]):aktuell)+"</strong> – weiter mit „Weiter“.</div>"));
-  }, pruefen:function(){ return f("#f_standort").value ? "" : "Bitte einen Markt wählen."; }});
-  function feldRahmen(label, n){ var d=el('<div class="as-feld"><div class="as-label">'+esc(label)+'</div></div>'); d.appendChild(n); return d; }
-
-  /* nach einem Anlagendialog den Schritt neu zeigen (neuer Stand der Karten).
-     Erst zählen, dann öffnen – sonst zählte der eben geöffnete Dialog schon
-     zu „vorher“ und sein Schließen fiele nie auf. */
-  function nachAnlagenDialog(oeffnen, titel){
-    var vorher=document.querySelectorAll(".assistent").length, gesehen=false, n=0, ruhig=0;
-    oeffnen();
-    var t=setInterval(function(){
-      var jetzt=document.querySelectorAll(".assistent").length;
-      if(jetzt>vorher){ gesehen=true; ruhig=0; } else if(gesehen) ruhig++;
-      /* erst wenn eine gute Sekunde lang keiner mehr offen ist – nach einem
-         Prüfbuch folgen weitere Dialoge (Weitere Prüfbücher) mit kurzer Pause.
-         Ging gar kein Dialog auf: nach 15 s aufhören statt minutenlang weiterzuprüfen */
-      if((gesehen && ruhig>=4) || (!gesehen && n>50) || ++n>2000 || !document.body.contains(ov)){
-        clearInterval(t);
-        if(gesehen && document.body.contains(ov) && schritte[pos].titel===titel) schritte[pos].zeigen();
-      }
-    },300);
-  }
-  /* „+ Anlage fehlt“ auch im geführten Dialog (Büro 01.10.2026): Anlagen lassen
-     sich so in mehreren Durchgängen erfassen – je Durchgang die Fotos einer
-     Anlage für die KI, bevor das Protokoll fertig ist */
-  function anlageFehltKnopf(host, titel){
-    if(nurLesen()) return;
-    var b=el('<button class="btn ghost sm" type="button" style="margin-top:10px">+ Anlage fehlt in der Liste (auch per KI aus Fotos)</button>');
-    b.onclick=function(){ nachAnlagenDialog(function(){ form.querySelector("#addAnlage").click(); }, titel); };
-    host.appendChild(b);
-  }
-  /* Wartung: bei einer Anlage zeigen, WELCHER Termin gewartet wird (Kürzel
-     und Datum des Termins) – bei zwei Terminen zum Wählen. Die Störung
-     zählt für keinen Termin. cb: Haken der Anlage im Formular. */
-  function zaehltAlsFeld(cb){
-    if(stoer || !cb) return null;
-    var slot=cb.closest("label") && cb.closest("label").querySelector(".posslot");
-    var ts=(slot ? [].map.call(slot.options, function(o){ return posById[o.value]; }) : [posById[cb.value]]).filter(Boolean);
-    if(!ts.length) return null;
-    var kurzT=function(t){ return (t.intervall||intervallArt(t.intervallCode)).kurz+" · "+(t.nachholbar ? dfmt(t.nachholbar)+" nachholen" :
-      (t.naechste ? dfmt(t.naechste) : (+t.monat ? MONATE_L[+t.monat] : "ohne Termin"))); };
-    var langT=function(t){ return (t.intervall||intervallArt(t.intervallCode)).art+(t.nachholbar
-      ? " – Termin "+dfmt(t.nachholbar)+" nachholen (danach "+dfmt(t.naechste)+")"
-      : t.naechste ? " – Termin "+dfmt(t.naechste)+" ("+wannText(t).zusatz+")" : " – noch ohne Termin"); };
-    var lang=el('<div class="muted" style="font-size:12.5px;margin-top:4px"></div>');
-    var zeigeLang=function(id){ var t=ts.filter(function(x){ return x.id===id; })[0]||ts[0]; lang.textContent=langT(t); };
-    var fr=feldRahmen("Heute gewartet als", ts.length>1
-      ? chips(ts.map(function(t){ return [t.id, kurzT(t)]; }), slot.value, function(v){
-          slot.value=v; slot.dispatchEvent(new Event("change")); formDirty=true; zeigeLang(v); })
-      : el('<div style="font-size:14px"><strong>'+esc(kurzT(ts[0]))+"</strong></div>"));
-    fr.appendChild(lang); zeigeLang(slot ? slot.value : ts[0].id);
-    return fr;
-  }
-  schritte.push({titel:stoer?"Betroffene Anlagen":"Gewartete Anlagen", zeigen:function(){
-    inhalt.innerHTML=frage(stoer?"Welche Anlage war betroffen?":"Welche Anlagen haben Sie gewartet?");
-    var box=el('<div class="stack"></div>');
-    var zeilen=form.querySelectorAll('#f_posbox label.chk');
-    if(!zeilen.length && !(form._neueAnlagen && form._neueAnlagen().length)) box.appendChild(el('<div class="muted">Für diesen Markt ist keine wählbare Anlage eingetragen (zur Zeit nicht gewartete zählen für eine Wartung nicht).</div>'));
-    zeilen.forEach(function(z){
-      var cb=z.querySelector('input[name="posw"]'), slot=z.querySelector(".posslot");
-      var name=(form._nameJetzt && form._nameJetzt(cb.dataset.anlage)) || z.querySelector("strong").textContent;
-      var k=el('<div class="as-gruppe"><div class="as-gkopf"><span>'+esc(name)+"</span>"+
-        '<button class="chip" type="button" aria-pressed="'+cb.checked+'">'+(cb.checked?(stoer?"betroffen":"gewartet"):"nicht dabei")+"</button></div></div>");
-      var b=k.querySelector(".chip");
-      b.onclick=function(){ cb.checked=!cb.checked; cb.dispatchEvent(new Event("change",{bubbles:true}));
-        b.setAttribute("aria-pressed",String(cb.checked)); b.textContent=cb.checked?(stoer?"betroffen":"gewartet"):"nicht dabei"; };
-      var za=zaehltAlsFeld(cb);
-      if(za) k.appendChild(za);
-      box.appendChild(k);
-    });
-    /* vor Ort neu erfasste Anlagen zählen mit – sie haben keinen Haken */
-    (form._neueAnlagen ? form._neueAnlagen() : []).forEach(function(n){
-      box.appendChild(el('<div class="as-gruppe"><div class="as-gkopf"><span>'+esc((n.werte&&n.werte.anlagentyp)||"Neue Anlage")+
-        '</span><span class="tag">vor Ort neu erfasst</span></div></div>'));
-    });
-    inhalt.appendChild(box);
-    anlageFehltKnopf(inhalt, stoer?"Betroffene Anlagen":"Gewartete Anlagen");
-  }, pruefen:function(){
-    return (form.querySelectorAll('input[name="posw"]:checked').length || (form._neueAnlagen && form._neueAnlagen().length)) ? "" :
-      (stoer ? "Bitte die Anlage wählen, an der die Störung vorliegt." : "Bitte mindestens eine Anlage wählen.");
-  }});
-
-  /* ---- Je Anlage ein Schritt: Daten UND Termine (Büro 01.10.2026) ----
-     Der Termin gehört zur Anlage – geprüft wird beides zusammen, und gleich
-     darunter, als welcher Termin der heutige Besuch zählt. So stimmt die
-     Fälligkeit auch, wenn Anlage und Termine erst heute angelegt werden.
-       – angehakte Anlagen: immer (Daten prüfen, Termine prüfen, „Heute gewartet als“),
-       – vor Ort neu erfasste: immer (Termine, bei zwei Terminen „Heute gewartet als“),
-       – die ANDEREN Anlagen des Markts nur, wenn Inbetriebnahme, Soll-Monat
-         oder Kürzel fehlen (nur Termine, „Überspringen“ jederzeit).
-     Termine sind Stammdaten und gehen mit „Stimmt – weiter“ gleich raus (mit
-     Eintrag „Termine beim Protokoll geprüft“ im Änderungsverlauf); die
-     Anlagendaten gehen mit dem Protokoll in die Anlagendaten. */
-  var terminMerker={};   /* Anlage → angefangene Eingaben, solange der Dialog offen ist */
-  var hart=function(x){ return !x.weich; };
-  /* Daten der Anlage aus ihrer Karte im Formular: Kurzangaben, Fehlendes, Knopf „Ergänzen/Prüfen“ */
-  function datenKasten(kartenId, titel, z){
-    var k=[].filter.call(form.querySelectorAll("#anlagen .akarte"), function(x){ return x.dataset.karte===kartenId; })[0];
-    if(!k) return null;
-    var fehlen=[].slice.call(k.querySelectorAll("[data-spring]")).filter(function(x){ return x.dataset.spring!=="termine"; });
-    var d=el('<div class="as-gruppe"><div class="as-gkopf"><span>Anlagendaten</span>'+
-      '<button class="btn ghost sm" type="button">'+(fehlen.length?"Ergänzen":"Prüfen")+" (auch per KI)</button></div>"+
-      '<div style="font-size:13px">'+esc(k.querySelectorAll("div")[1]?k.querySelectorAll("div")[1].textContent:"")+"</div>"+
-      (fehlen.length ? '<div style="font-size:12.5px;color:var(--warn)">Fehlt: '+fehlen.map(function(x){
-          return '<a href="#" class="sprunglink" data-spring="'+esc(x.dataset.spring)+'">'+esc(x.textContent)+"</a>"; }).join(", ")+"</div>"
-        : '<div style="font-size:12.5px;color:var(--good)">vollständig</div>')+"</div>");
-    /* der Anlagen-Dialog prüft die Termine mit – danach den Schritt mit dem gespeicherten Stand neu zeigen */
-    var oeffne=function(springe, e){
-      var los=k.querySelector('[data-a="los"]'); if(!los) return;
-      z.a=null; z.start=null;
-      nachAnlagenDialog(function(){ los.onclick(e||null, springe||null); }, titel);
-    };
-    d.querySelector("button").onclick=function(){ oeffne(null); };
-    d.querySelectorAll("[data-spring]").forEach(function(x){ tippe(x, function(e){ oeffne(x.dataset.spring, e); }); });
-    return d;
-  }
-  function anlageSchritte(){
-    var l=[], st=byId[f("#f_standort").value];
-    if(!st) return l;
-    var termineDa=!nurLesen() && !!form._termineStart;
-    var dabei=[];
-    form.querySelectorAll('input[name="posw"]:checked').forEach(function(cb){ var p=posById[cb.value]; if(p && dabei.indexOf(anlageVon(p).id)<0) dabei.push(anlageVon(p).id); });
-    var marktAnlagen=anlagenDesMarkts(st, true);
-    var vorhanden=function(an, an0){
-      var lid=an.leader.id, name=anlagenName(anlageDaten(an.leader));
-      var titel=(an0?"Anlage · ":"Andere Anlage · ")+name;
-      var z=terminMerker[lid]=terminMerker[lid]||{};
-      var cb=function(){ return form.querySelector('input[name="posw"][data-anlage="'+String(an.id).replace(/"/g,"")+'"]'); };
-      var slotZahl=function(){ var c=cb(), s=c && c.closest("label") && c.closest("label").querySelector(".posslot"); return s ? s.options.length : 1; };
-      return {titel:titel, termine:true, anlageId:an.id, zeigen:function(){
-        var ld=posById[lid]; if(!ld){ inhalt.innerHTML='<div class="muted">Die Anlage ist nicht mehr geladen.</div>'; return; }
-        var aktName=(form._nameJetzt && form._nameJetzt(an.id)) || name;
-        inhalt.innerHTML=frage(an0 ? (stoer ? "Betroffene Anlage: "+aktName : "Gewartet: "+aktName) : "Andere Anlage am Markt: "+aktName);
-        if(an0){ var dk=datenKasten(lid, titel, z); if(dk) inhalt.appendChild(dk); }
-        if(termineDa){
-          if(!z.a){ z.start=form._termineStart(ld); z.a=JSON.parse(JSON.stringify(z.start)); }
-          var jetzt=termineOffen(z.a).filter(function(x){ return an0 || hart(x); });
-          var tg=el('<div class="as-gruppe"><div class="as-gkopf"><span>Termine</span></div>'+
-            '<div class="muted" style="font-size:12.5px">'+(jetzt.length ? "Noch offen: <strong>"+esc(jetzt.map(function(x){ return x.l; }).join(", "))+"</strong>. " : "")+
-            (an0 ? "Bitte prüfen (Typenschild, Prüfbuch) – mit „Stimmt – weiter“ gespeichert." : "Nur, wer es hier nachsehen kann – sonst „Überspringen“.")+"</div></div>");
-          var host=el("<div></div>"); tg.appendChild(host);
-          inhalt.appendChild(tg);
-          termineSchritt(host, z.a);
-        }
-        /* als welcher Termin heute gewartet wird – unter den Terminen, damit beides zusammen geprüft ist */
-        if(an0){ var za=zaehltAlsFeld(cb()); if(za) inhalt.appendChild(za); }
-      }, speichern:function(){
-        var ld=posById[lid]; if(!ld || !z.a) return Promise.resolve(null);
-        /* wie im Anlagen-Dialog: ein neuer oder bisher gesetzter Termin nicht ohne Kürzel */
-        if(z.a._termine.some(function(t,i){
-            return !String(t.intervallCode||"").trim() && (t._neu || String(((z.start._termine||[])[i]||{}).intervallCode||"").trim()); })){
-          toast("Bitte bei den Terminen JW, HJW oder HJI wählen – ohne Kürzel ist unklar, welche Wartung fällig ist.");
-          return Promise.resolve(false);
-        }
-        var vorher=slotZahl();
-        var erg=Object.assign({}, z.a, {_termineOk:true});
-        return form._termineSpeichern(ld, z.start, erg, name).then(function(r){
-          if(r===false) return false;
-          var rest=termineOffen(erg).filter(hart);
-          if(rest.length) toast("Noch offen: "+rest.map(function(x){ return x.l; }).join(", ")+" – beim nächsten Besuch wird wieder gefragt.");
-          z.a=null; z.start=null;   /* beim Zurückgehen: der gespeicherte Stand */
-          /* ein Termin dazugekommen: erst wählen lassen, als welcher heute gewartet wurde */
-          if(an0 && !stoer && slotZahl()>vorher){ toast("Termin gespeichert – bitte noch wählen, als welcher Termin heute gewartet wurde."); return "nochmal"; }
-          return r;
-        });
-      }};
-    };
-    marktAnlagen.forEach(function(an){ if(dabei.indexOf(an.id)>=0) l.push(vorhanden(an, true)); });
-    /* vor Ort neu erfasst: Termine und „Heute gewartet als“ gehen mit dem Protokoll in die Anlagendaten */
-    (form._neueAnlagen ? form._neueAnlagen() : []).forEach(function(n){
-      var titel="Neue Anlage · "+((n.werte&&n.werte.anlagentyp)||"Neue Anlage"), z=terminMerker[n.id]=terminMerker[n.id]||{};
-      l.push({titel:titel, termine:true, zeigen:function(){
-        var w=n.werte||{};
-        inhalt.innerHTML=frage((stoer?"Betroffen":"Gewartet")+" (vor Ort neu erfasst): "+(w.anlagentyp||"Neue Anlage"));
-        var dk=datenKasten(n.id, titel, z); if(dk) inhalt.appendChild(dk);
-        if(!z.a) z.a=JSON.parse(JSON.stringify({inbetriebnahme:w.inbetriebnahme||null, _termine:w._termine||[{id:"NEU", intervallCode:"JW", monat:0}],
-          kaeltemittelKg:w.kaeltemittelKg, nurJW:!!w.nurJW}));
-        var tg=el('<div class="as-gruppe"><div class="as-gkopf"><span>Termine</span></div>'+
-          '<div class="muted" style="font-size:12.5px">Inbetriebnahme und Termine bitte gleich eintragen (Typenschild, Prüfbuch).</div></div>');
-        var host=el("<div></div>"); tg.appendChild(host); inhalt.appendChild(tg);
-        termineSchritt(host, z.a);
-        /* zwei Termine (etwa JW und HJI): als welcher zählt der heutige Besuch? */
-        var zeichneWahl=function(){
-          var alt=inhalt.querySelector("[data-zaehlt]"); if(alt) alt.remove();
-          if(stoer) return;
-          var tl=(z.a._termine||[]).filter(function(t){ return String(t.intervallCode||"").trim(); });
-          if(tl.length<2) return;
-          var idx=Math.min(+w._zaehltAls||0, tl.length-1);
-          var fr=feldRahmen("Heute gewartet als", chips(tl.map(function(t,i){
-            return [String(i), intervallArt(t.intervallCode).kurz+(+t.monat?" · "+MONATE_L[+t.monat]:"")]; }), String(idx), function(v){
-              n.werte._zaehltAls=+v; formDirty=true; }));
-          fr.setAttribute("data-zaehlt","");
-          inhalt.appendChild(fr);
-        };
-        zeichneWahl();
-        /* Kürzel oder Termine geändert: die Wahl mit den neuen Terminen zeigen */
-        host.addEventListener("click", function(){ setTimeout(zeichneWahl, 0); });
-        host.addEventListener("change", function(){ setTimeout(zeichneWahl, 0); });
-      }, speichern:function(){
-        if(!z.a) return Promise.resolve(null);
-        n.werte.inbetriebnahme=z.a.inbetriebnahme||null; n.werte._termine=z.a._termine;
-        if(z.a.nurJW) n.werte.nurJW=true; else delete n.werte.nurJW;
-        formDirty=true; z.a=null;
-        return Promise.resolve(true);
-      }});
-    });
-    /* andere Anlagen des Markts: nur bei fehlenden Termin-Angaben */
-    if(termineDa) marktAnlagen.forEach(function(an){
-      if(dabei.indexOf(an.id)>=0) return;
-      if(anlagePausiert(an.leader) || marktPausiert(st)) return;   /* zur Zeit nicht gewartet: keine Termine */
-      if(!termineOffenVon(an.leader).filter(hart).length) return;
-      l.push(vorhanden(an, false));
-    });
-    return l;
-  }
-  /* die Anlagen-Schritte stehen gleich nach der Auswahl der Anlagen; neu
-     bestimmt wird, sobald die Auswahl feststeht */
-  var terminSchritte=anlageSchritte;   /* Übersicht: was an Terminen noch offen ist */
-  function termineEinreihen(){
-    schritte=schritte.filter(function(s){ return !s.termine; });
-    var nach=schritte.map(function(s){ return s.titel; }).indexOf(stoer?"Betroffene Anlagen":"Gewartete Anlagen");
-    schritte.splice.apply(schritte, [nach+1, 0].concat(anlageSchritte()));
-  }
-
-  if(stoer) schritte.push({titel:"Störungsauftrag", zeigen:function(){
-    /* Auftrag schon da (Protokoll aus einer offenen Störung): nur bestätigen lassen –
-       das Hochladen bleibt als Nebenweg, falls doch ein anderer Auftrag gilt */
-    var da=form.dataset.auftragda||"";
-    /* weiterer Kunde: kein Lidl-Auftrag, kein PDF/QR – nur Nummer (falls es eine gibt) und Beschreibung */
-    var lidlA=!form._istLidl || form._istLidl();
-    inhalt.innerHTML=frage(!lidlA ? "Angaben zum Auftrag" : da ? "Stimmen die Angaben zum Lidl-Auftrag?" : "Lidl-Auftrag übernehmen");
-    if(!lidlA){
-      inhalt.appendChild(textFeld("Auftrags- / Bestellnummer des Kunden (falls vorhanden)", "#f_auftrag", false));
-      inhalt.appendChild(textFeld("Was wurde gemeldet?", "#s_beschreibung", true));
-      return;
-    }
-    if(da==="datei"){
-      var schon=el('<div class="note" style="font-size:13px"><strong>Der Auftrag ist schon hinterlegt</strong> – aus der offenen Störung übernommen. Es muss nichts hochgeladen werden.</div>');
-      inhalt.appendChild(schon);
-    }
-    var reihe=el('<div class="chips"></div>');
-    var pdf=el('<button class="btn'+(da?" ghost sm":"")+'" type="button">'+(da?"Anderen Auftrag öffnen (PDF)":"Auftrag-PDF öffnen")+"</button>");
-    pdf.onclick=function(){ var l=form.querySelector('label[for="s_pdf"]'); if(l) l.click(); };
-    var qr=el('<button class="btn ghost'+(da?" sm":"")+'" type="button">QR-Code scannen</button>');
-    qr.onclick=function(){ var b=form.querySelector("#s_qr"); if(b) b.click(); };
-    if(da==="datei" && form._auftragAnsehen){
-      var an=el('<button class="btn" type="button">Auftrag ansehen</button>');
-      an.onclick=function(){ var b=form.querySelector("#s_bild"); if(form.querySelector("[data-auftragpdf]")) form._auftragAnsehen(); else if(b && !b.hidden){ toast("Der Auftrag steht als Bild im Formular unter „Lidl-Störungsauftrag“."); } };
-      reihe.appendChild(an);
-    }
-    reihe.appendChild(pdf); reihe.appendChild(qr);
-    inhalt.appendChild(reihe);
-    if(da!=="datei") inhalt.appendChild(el('<div class="muted" style="font-size:12.5px">'+esc(((form.querySelector("#s_info")||{}).textContent||"").replace(/\s*Auftrag ansehen\s*$/,""))+"</div>"));
-    inhalt.appendChild(textFeld("Lidl-Auftragsnummer", "#f_auftrag", false));
-    ["s_auftragsdatum|Auftragsdatum","s_stoerungsnr|Störungsnummer","s_problemtyp|Problemtyp"].forEach(function(x){
-      var t=x.split("|"); inhalt.appendChild(textFeld(t[1], "#"+t[0], false));
-    });
-    inhalt.appendChild(textFeld("Beschreibung laut Auftrag", "#s_beschreibung", true));
-  }});
-
-  schritte.push({titel:stoer?"Störungsbehebung":"Arbeiten", zeigen:function(){
-    if(stoer){
-      inhalt.innerHTML=frage("Was war los und was haben Sie gemacht?");
-      inhalt.appendChild(textFeld("Fehlerbild vor Ort","#s_fehlerbild",true));
-      inhalt.appendChild(textFeld("Ursache","#s_ursache",true));
-      inhalt.appendChild(textFeld("Durchgeführte Maßnahmen","#s_massnahmen",true));
-      return;
-    }
-    inhalt.innerHTML=frage("Was haben Sie gemacht?");
-    var box=el('<div class="chips"></div>');
-    form.querySelectorAll('input[name="arbeit"]').forEach(function(cb){
-      var b=el('<button class="chip" type="button" aria-pressed="'+cb.checked+'">'+esc(cb.nextElementSibling.textContent)+"</button>");
-      b.onclick=function(){ cb.checked=!cb.checked; formDirty=true; b.setAttribute("aria-pressed",String(cb.checked)); };
-      box.appendChild(b);
-    });
-    inhalt.appendChild(feldRahmen("Antippen, was zutrifft", box));
-    var alle=el('<button class="btn ghost sm" type="button">alle auswählen</button>');
-    alle.onclick=function(){
-      form.querySelectorAll('input[name="arbeit"]').forEach(function(cb){ cb.checked=true; });
-      formDirty=true; schritte[pos].zeigen(); fussNeu();
-    };
-    var ok=el('<button class="btn sm" type="button">Alles erledigt, keine Mängel</button>');
-    ok.onclick=function(){ var b=form.querySelector("#f_allesok"); if(b) b.click(); schritte[pos].zeigen(); fussNeu(); };
-    inhalt.appendChild(ok);
-    inhalt.appendChild(alle);
-    inhalt.appendChild(textFeld("Sonstiges","#f_arb_sonst",false,"weitere Arbeiten"));
-  }});
-
-  /* Störung: Material und Folgeauftrag (Büro 30.09.2026) – dieselben Zeilen wie im
-     Formular unter „Material / Ersatzteile“, hier nur bequemer zu füllen */
-  if(stoer) schritte.push({titel:"Material", zeigen:function(){
-    inhalt.innerHTML=frage("Welches Material oder welche Ersatzteile haben Sie eingesetzt?");
-    var host=form.querySelector("#s_material"), neu=form.querySelector("#s_addmat");
-    var zeilen=function(){ return [].slice.call(host.children); };
-    /* was bei Störungen schon eingesetzt wurde – antippen legt eine Zeile an */
-    var haeufig={};
-    alleProtokolle().forEach(function(p){ ((p.stoerung&&p.stoerung.material)||[]).forEach(function(m){ var t=String(m&&m.text||"").trim(); if(t) haeufig[t]=(haeufig[t]||0)+1; }); });
-    eigeneWerte("st_material").forEach(function(t){ if(t) haeufig[t]=haeufig[t]||1; });
-    var bekannt=Object.keys(haeufig).sort(function(a,b){ return haeufig[b]-haeufig[a] || a.localeCompare(b,"de"); }).filter(function(t){ return t.length<=40; }).slice(0,8);
-    var liste=el('<div class="stack" style="gap:8px"></div>');
-    var zeichnen=function(){
-      liste.innerHTML="";
-      zeilen().forEach(function(z){
-        var t=z.querySelector(".mt-t"), m=z.querySelector(".mt-m");
-        if(!t) return;
-        var r=el('<div style="display:grid;grid-template-columns:minmax(0,1fr) 90px auto;gap:6px;align-items:center">'+
-          '<input type="text" placeholder="z. B. Kondensatpumpe" value="'+esc(t.value)+'">'+
-          '<input type="text" placeholder="1 Stk" value="'+esc(m.value)+'">'+
-          '<button class="btn ghost sm" type="button" aria-label="Zeile entfernen">×</button></div>');
-        var it=r.querySelectorAll("input");
-        it[0].oninput=function(){ t.value=it[0].value; formDirty=true; };
-        it[0].onchange=function(){ merkeWert("st_material", it[0].value); };
-        it[1].oninput=function(){ m.value=it[1].value; formDirty=true; };
-        r.querySelector("button").onclick=function(){ z.remove(); formDirty=true; zeichnen(); };
-        liste.appendChild(r);
-      });
-      if(!liste.children.length) liste.appendChild(el('<div class="muted" style="font-size:13px">Noch kein Material eingetragen – kein Material eingesetzt? Dann einfach „Weiter“.</div>'));
-    };
-    var dazu=function(text){
-      /* eine leere Zeile im Formular wiederverwenden, sonst eine neue anlegen */
-      var leer=zeilen().filter(function(z){ var t=z.querySelector(".mt-t"); return t && !t.value.trim(); })[0];
-      if(!leer){ neu.click(); leer=zeilen()[zeilen().length-1]; }
-      if(leer && text){ leer.querySelector(".mt-t").value=text; var mm=leer.querySelector(".mt-m"); if(mm && !mm.value) mm.value="1 Stk"; }
-      formDirty=true; zeichnen();
-      if(!text){ var ins=liste.querySelectorAll('input[type="text"]'); var l=ins[ins.length-2]; if(l) l.focus(); }
-    };
-    if(bekannt.length){
-      var chips=el('<div class="chips"></div>');
-      bekannt.forEach(function(t){ var b=el('<button class="chip" type="button">+ '+esc(t)+"</button>"); b.onclick=function(){ dazu(t); }; chips.appendChild(b); });
-      inhalt.appendChild(feldRahmen("Schon öfter eingesetzt – antippen", chips));
-    }
-    inhalt.appendChild(feldRahmen("Material / Ersatzteile · Menge", liste));
-    var plus=el('<button class="btn ghost sm" type="button">+ Material</button>'); plus.onclick=function(){ dazu(""); };
-    inhalt.appendChild(plus);
-    /* Folgeauftrag gleich mit – was noch zu tun ist, gehört zum Material dazu */
-    var fa=form.querySelector("#s_folgeauftrag"), ft=form.querySelector("#s_folgeText");
-    if(fa){
-      var box=el('<div class="as-feld"><div class="as-label">Folgeauftrag / Angebot erforderlich?</div><div class="chips">'+
-        '<button class="chip" type="button" data-fa="1" aria-pressed="'+fa.checked+'">ja</button>'+
-        '<button class="chip" type="button" data-fa="0" aria-pressed="'+(!fa.checked)+'">nein</button></div></div>');
-      inhalt.appendChild(box);
-      var was=textFeld("Was ist noch zu tun?","#s_folgeText",false,"z. B. Verdichter tauschen – Angebot an Lidl");
-      was.hidden=!fa.checked; inhalt.appendChild(was);
-      box.querySelectorAll("[data-fa]").forEach(function(b){ b.onclick=function(){
-        fa.checked=b.dataset.fa==="1"; fa.dispatchEvent(new Event("change",{bubbles:true})); formDirty=true;
-        box.querySelectorAll("[data-fa]").forEach(function(x){ x.setAttribute("aria-pressed", String(x===b)); });
-        was.hidden=!fa.checked;
-      }; });
-    }
-    zeichnen();
-  }});
-
-  schritte.push({titel:"Mängel", zeigen:function(){
-    inhalt.innerHTML=frage("Gibt es Mängel?");
-    var liste=el('<div class="stack"></div>');
-    var zeichne=function(){
-      liste.innerHTML="";
-      var zeilen=[].slice.call(form.querySelectorAll(".mangelrow"));
-      var mit=zeilen.filter(function(z){ return z.querySelector(".m-t").value.trim(); });
-      if(!mit.length) liste.appendChild(el('<div class="muted" style="font-size:13px">Noch kein Mangel eingetragen.</div>'));
-      zeilen.forEach(function(z){
-        var t=z.querySelector(".m-t"), p=z.querySelector(".m-p"), m=z.querySelector(".m-m");
-        if(!t.value.trim() && zeilen.length>1 && z!==zeilen[zeilen.length-1]) return;
-        var g=el('<div class="as-gruppe"></div>');
-        g.appendChild(textFeldRoh("Mangel / Feststellung", t));
-        var prio=chips([["","–"],["niedrig","niedrig"],["mittel","mittel"],["hoch","hoch"],["sofort","sofort"]], p.value, function(v){ p.value=v; formDirty=true; });
-        g.appendChild(feldRahmen("Priorität", prio));
-        g.appendChild(textFeldRoh("Empfohlene Maßnahme / Frist", m));
-        liste.appendChild(g);
-      });
-    };
-    var neu=el('<button class="btn ghost sm" type="button">+ weiterer Mangel</button>');
-    neu.onclick=function(){ form._mangelHinzu(); zeichne(); };
-    inhalt.appendChild(liste); inhalt.appendChild(neu);
-    zeichne();
-  }});
-  function textFeldRoh(label, ziel){
-    var d=el('<div class="as-feld"><div class="as-label">'+esc(label)+'</div><input type="text"></div>');
-    var n=d.querySelector("input"); n.value=ziel.value;
-    n.oninput=function(){ ziel.value=n.value; formDirty=true; };
-    return d;
-  }
-
-  schritte.push({titel:"Ergebnis", zeigen:function(){
-    inhalt.innerHTML=frage("Wie ist der Stand nach dem Einsatz?");
-    var br=form.querySelector('input[name="bereit"]:checked');
-    inhalt.appendChild(feldRahmen("Anlage betriebsbereit",
-      chips([["ja","ja"],["eingeschränkt","eingeschränkt"],["nein","nein"]], br?br.value:"ja", function(v){
-        var r=form.querySelector('input[name="bereit"][value="'+v+'"]'); if(r){ r.checked=true; formDirty=true; }
-        /* Widersprüche wie im Formular: die spätere Wahl gilt (ergebnisAbgleich) */
-        if(r && form._ergebnisAbgleich){ form._ergebnisAbgleich(r); if(!stoer) schritte[pos].zeigen(); }
-      })));
-    inhalt.appendChild(textFeld("Sofortmaßnahme","#f_sofort",false,"leer = keine"));
-    if(!stoer){
-      var box=el('<div class="chips"></div>');
-      form.querySelectorAll('input[name="ergebnis"]').forEach(function(cb){
-        var b=el('<button class="chip" type="button" aria-pressed="'+cb.checked+'"'+(cb.disabled?' disabled style="opacity:.5"':"")+">"+esc(cb.nextElementSibling.textContent)+"</button>");
-        b.onclick=function(){
-          cb.checked=!cb.checked; formDirty=true;
-          if(form._ergebnisAbgleich) form._ergebnisAbgleich(cb);
-          schritte[pos].zeigen();   /* abgewählte bzw. gesperrte Aussagen gleich zeigen */
-        };
-        box.appendChild(b);
-      });
-      var ergF=feldRahmen("Ergebnis", box), ergH=form.querySelector("#f_erghinweis");
-      if(ergH && !ergH.hidden) ergF.appendChild(el('<div class="muted" style="font-size:12.5px;margin-top:6px">'+esc(ergH.textContent)+"</div>"));
-      inhalt.appendChild(ergF);
-    }
-    inhalt.appendChild(textFeld("Bemerkungen","#f_bem",true));
-  }});
-
-  /* Kältemittel: dieselben Felder wie im Formular (Wartung f_km…, Störung
-     s_km…) – sonst fehlte in der Kältemittel-Bilanz, was nur hier erfasst wird */
-  var kmVor=stoer?"#s_km":"#f_km";
-  var kmKurz=function(){
-    var n=wert(kmVor+"Nach").trim(), e=wert(kmVor+"Ent").trim();
-    /* Wartung mit mehreren Anlagen: dazu, bei welcher Anlage die Menge gebucht wird */
-    var k=!stoer && (n||e) ? kaeltemittelAusForm(form) : null, ka=k && k.anlage && posById[zeileWeiter(k.anlage)];
-    return [wert(kmVor+"Art").trim(), n?"nachgefüllt "+n+" kg":"", e?"zurückgewonnen "+e+" kg":""].filter(Boolean).join(" · ")+
-      (ka ? " (für "+anlagenName(ka)+")" : "");
-  };
-  if(f(kmVor+"Nach")) schritte.push({titel:"Kältemittel", zeigen:function(){
-    inhalt.innerHTML=frage("Kältemittel nachgefüllt oder zurückgewonnen?")+
-      '<div class="muted" style="font-size:12.5px">Nichts nachgefüllt und nichts zurückgewonnen: leer lassen und weiter.</div>';
-    inhalt.appendChild(textFeld("Kältemittel", kmVor+"Art", false, "z. B. R410A"));
-    [["Nach","nachgefüllt (kg)"],["Ent","zurückgewonnen (kg)"]].forEach(function(x){
-      var d=textFeld(x[1], kmVor+x[0], false, "0");
-      d.querySelector("input").setAttribute("inputmode","decimal");
-      inhalt.appendChild(d);
-    });
-    /* „für Anlage“ nur bei der Wartung und nur, wenn mehrere angehakt sind */
-    var ziel=f("#f_kmAnlage");
-    if(ziel){
-      kaeltemittelAnlagen(form);
-      if(ziel.options.length>2){
-        var s2=el('<select style="width:100%"></select>');
-        s2.innerHTML=ziel.innerHTML; s2.value=ziel.value;
-        s2.onchange=function(){ ziel.value=s2.value; formDirty=true; };
-        inhalt.appendChild(feldRahmen("für Anlage", s2));
-      }
-    }
-  }, pruefen:function(){
-    return kgGueltig(wert(kmVor+"Nach")) && kgGueltig(wert(kmVor+"Ent")) ? "" : "Bitte die Menge in kg nur als Zahl eintragen (z. B. 2,5).";
-  }});
-
-  /* Fotos und Rapport: die Liste mit Vorschau, Bildunterschrift (Notiz) und
-     „entfernen“ steht hier wie im Formular – vorher sah man nur die Zahl
-     (Büro 01.10.2026) */
-  var fotoSchritt=function(){ return document.body.contains(ov) && schritte[pos] && schritte[pos].titel==="Fotos und Rapport"; };
-  form._nachFotos=function(){ if(fotoSchritt() && !inhalt.contains(document.activeElement)) schritte[pos].zeigen(); };
-  form._nachRapport=function(){ if(fotoSchritt()) schritte[pos].zeigen(); };
-  schritte.push({titel:"Fotos und Rapport", zeigen:function(){
-    var F=form._fotos, liste=F?F.liste():[], voll=liste.length>=FOTO_MAX;
-    inhalt.innerHTML=frage("Fotos vom Einsatz (freiwillig)");
-    var reihe=el('<div class="chips"></div>');
-    var a=el('<button class="btn" type="button">Foto aufnehmen</button>');
-    a.onclick=function(){ form.querySelector("#f_foto").click(); };
-    var b=el('<button class="btn ghost" type="button">Aus Galerie wählen</button>');
-    b.onclick=function(){ form.querySelector("#f_galerie").click(); };
-    if(voll){ a.disabled=b.disabled=true; }
-    reihe.appendChild(a); reihe.appendChild(b);
-    inhalt.appendChild(reihe);
-    inhalt.appendChild(el('<div class="muted" style="font-size:12.5px">'+
-      esc((form.querySelector("#f_fotoinfo")||{}).textContent||"")+
-      (F && F.inArbeit()>0 ? " · "+F.inArbeit()+" werden noch verkleinert …" : "")+
-      (voll ? " – mehr gehen nicht. Prüfbuch- und Typenschild-Fotos gehören zur Anlage: bei „Anlagendaten“ über „Aus Fotos lesen“." : "")+"</div>"));
-    liste.forEach(function(ft,i){
-      var z=el('<div class="rowflex" style="align-items:flex-start;gap:10px;border:1px solid var(--line);border-radius:8px;padding:8px;margin-top:8px">'+
-        '<img alt="Foto '+(i+1)+'" src="'+bildUrl(ft.datenUrl)+'" style="width:64px;height:64px;object-fit:cover;border-radius:6px;flex:none">'+
-        '<label class="fl" style="flex:1 1 140px"><span>Notiz zum Foto</span><input type="text" placeholder="z. B. Mangel am Wärmetauscher"></label>'+
-        '<button class="btn ghost sm" type="button">entfernen</button></div>');
-      var ein=z.querySelector("input"); ein.value=ft.hinweis||"";
-      ein.oninput=function(){ F.hinweis(i, ein.value); };
-      ein.onchange=function(){ F.zeichnen(); };   /* Formular darunter nachziehen */
-      z.querySelector("button").onclick=function(){ F.weg(i); schritte[pos].zeigen(); };
-      inhalt.appendChild(z);
-    });
-    /* Rapportbericht von Lidl (bei Wartung und Störung) – im Formular ein eigener Kasten */
-    var rapIn=form.querySelector("#s_rapport");
-    if(rapIn && (!form._istLidl || form._istLidl())){
-      var info=form.querySelector("#s_rapportinfo");
-      var r=el('<div class="as-feld" style="margin-top:14px"><div class="as-label">Rapportbericht von Lidl</div>'+
-        '<div style="font-size:13px" data-rapinfo></div>'+
-        '<button class="btn ghost sm" type="button" style="margin-top:6px">Rapportbericht (PDF) anhängen</button>'+
-        '<div class="muted" style="font-size:12px;margin-top:4px">Kommt er erst später per Mail, lässt er sich am gespeicherten Protokoll nachreichen.</div></div>');
-      r.querySelector("[data-rapinfo]").textContent=info ? info.textContent : "";
-      r.querySelector("button").onclick=function(){ rapIn.click(); };
-      inhalt.appendChild(r);
-    }
-  }});
-
-  schritte.push({titel:"Abschluss", zeigen:function(){
-    inhalt.innerHTML=frage("Wer war vor Ort?");
-    /* verantwortlich ist das angemeldete Konto – es schließt ab und unterschreibt (Büro 01.10.2026);
-       nur ohne Namen im Konto einmal eintippen. Der Name gilt für beide Felder. */
-    var tfE=f("#f_tech");
-    if(tfE && tfE.readOnly && tfE.value){
-      inhalt.appendChild(el('<div class="as-feld"><div class="as-label">Techniker/in – verantwortlich, unterschreibt</div>'+
-        '<div style="font-size:16px;font-weight:600">'+esc(tfE.value)+"</div>"+
-        '<div class="muted" style="font-size:12px">'+(S.bearbeiten?"hat das Protokoll gemacht – bleibt bei der Korrektur":(f("#f_fuer")&&f("#f_fuer").value?"im Auftrag – erfasst von dir":"aus deinem Konto"))+
-        ". Wer noch dabei war, gehört unten zu „Weitere/r Techniker/in“.</div></div>"));
-      /* Admin/Inhaber: für jemand anderen ausfüllen – dieselbe Auswahl wie im Formular */
-      var echt=f("#f_fuer");
-      if(echt && !S.bearbeiten){
-        var kopie=echt.cloneNode(true); kopie.removeAttribute("id"); kopie.value=echt.value;
-        var fb=el('<label class="fl" style="margin-top:6px"><span>Ausgefüllt für</span></label>'); fb.appendChild(kopie);
-        kopie.onchange=function(){ echt.value=kopie.value; echt.dispatchEvent(new Event("change")); var w=inhalt.querySelector(".as-feld div[style*='font-size:16px']"); if(w) w.textContent=f("#f_tech").value; };
-        inhalt.appendChild(fb);
-      }
-    } else {
-      var nameFeld=textFeld("Techniker/in – verantwortlich, unterschreibt","#f_tech",false), nameEin=nameFeld.querySelector("input");
-      nameEin.oninput=function(){ setz("#f_tech",nameEin.value); setz("#f_name",nameEin.value); };
-      nameEin.onchange=function(){ var t=f("#f_tech"); if(t) t.dispatchEvent(new Event("change",{bubbles:true})); };
-      inhalt.appendChild(nameFeld);
-    }
-    inhalt.appendChild(textFeld("Weitere/r Techniker/in","#f_tech2",false,"leer = allein"));
-    inhalt.appendChild(textFeld("Dritte/r Techniker/in","#f_tech3",false));
-    /* Datum hier änderbar (Büro 01.10.2026: im Dialog ging es nicht) – als
-       echtes Datumsfeld wie im Formular, nicht in der Zukunft */
-    var df=el('<div class="as-feld"><div class="as-label">'+(stoer?"Datum des Einsatzes":"Datum der Wartung")+'</div><input type="date"></div>'), di=df.querySelector("input");
-    di.max=isoLokal(new Date()); di.value=wert("#f_datum");
-    di.oninput=di.onchange=function(){ if(di.value){ setz("#f_datum", di.value); var fd=f("#f_datum"); if(fd) fd.dispatchEvent(new Event("change",{bubbles:true})); } };
-    inhalt.appendChild(df);
-    /* Uhrzeit als echtes Zeitfeld – „8:30“ als Text würde das Formular still leeren */
-    var zf=el('<div class="as-feld"><div class="as-label">Uhrzeit</div><input type="time"></div>'), zi=zf.querySelector("input");
-    zi.value=wert("#f_zeit"); zi.oninput=zi.onchange=function(){ if(zi.value) setz("#f_zeit", zi.value); };
-    inhalt.appendChild(zf);
-    /* Korrektur: der Grund gehört dazu */
-    var gb=f("#f_grundbox");
-    if(gb && !gb.hidden) inhalt.appendChild(textFeld("Grund der Korrektur","#f_grund",false,"z. B. Anlagen und Fotos ergänzt"));
-    var d=el('<div class="as-feld"><div class="as-label">Unterschrift</div>'+
-      '<canvas class="sig" width="900" height="300" style="width:100%;height:120px;border:1px solid var(--line-2);border-radius:8px;background:#fff;touch-action:none"></canvas>'+
-      '<div class="rowflex" style="margin-top:6px"><button class="btn ghost sm" type="button">löschen</button>'+
-      '<span class="muted" style="font-size:12px">Mit dem Finger unterschreiben.</span></div></div>');
-    var cv=d.querySelector("canvas"), ctx=cv.getContext("2d"), malt=false, etwas=false;
-    ctx.lineWidth=3.2; ctx.lineCap="round"; ctx.lineJoin="round"; ctx.strokeStyle="#111"; // feste dunkle Tinte auf weißer Fläche (auch im Dunkelmodus, Blatt/PDF)
-    var pt=function(e){ var r=cv.getBoundingClientRect(); return [(e.clientX-r.left)*cv.width/r.width,(e.clientY-r.top)*cv.height/r.height]; };
-    cv.addEventListener("pointerdown",function(e){ e.preventDefault(); cv.setPointerCapture(e.pointerId); malt=true;
-      var q=pt(e); ctx.beginPath(); ctx.moveTo(q[0],q[1]); });
-    cv.addEventListener("pointermove",function(e){ if(!malt) return; etwas=true; var q=pt(e); ctx.lineTo(q[0],q[1]); ctx.stroke(); });
-    cv.addEventListener("pointerup",function(){ malt=false; if(etwas) form._sig.setzen(cv.toDataURL("image/png")); });
-    cv.addEventListener("pointerleave",function(){ if(malt){ malt=false; if(etwas) form._sig.setzen(cv.toDataURL("image/png")); } });
-    d.querySelector("button").onclick=function(){ ctx.clearRect(0,0,cv.width,cv.height); etwas=false; form._sig.leeren(); };
-    inhalt.appendChild(d);
-  }});
-
-  schritte.push({titel:"Übersicht", uebersicht:true, zeigen:function(){
-    var st=byId[f("#f_standort").value];
-    var anlagen=[].slice.call(form.querySelectorAll('input[name="posw"]:checked')).map(function(cb){
-      var nm=(form._nameJetzt && form._nameJetzt(cb.dataset.anlage)) || cb.closest("label").querySelector("strong").textContent;
-      /* als welcher Termin heute gewartet – in der Übersicht nachprüfbar */
-      var t=!stoer && posById[cb.value];
-      return nm+(t ? " ("+(t.intervall||intervallArt(t.intervallCode)).kurz+")" : ""); });
-    var arbeiten=[].slice.call(form.querySelectorAll('input[name="arbeit"]:checked')).length;
-    var maengel=[].slice.call(form.querySelectorAll(".mangelrow")).filter(function(z){ return z.querySelector(".m-t").value.trim(); }).length;
-    /* jede Zeile führt zu ihrem Schritt (Index über den Titel – die Störung hat
-       einen Schritt mehr); „Datum“ hat keinen: zurück ins Formular zum Feld */
-    var zeile=function(k,v,schritt){ return '<div class="as-zeile" role="button" tabindex="0" style="cursor:pointer" data-schritt="'+esc(schritt)+'" title="Ändern">'+
-      "<span>"+esc(k)+"</span><strong>"+esc(v||"–")+' <span class="muted" aria-hidden="true">›</span></strong></div>'; };
-    /* Anlagen, bei denen Inbetriebnahme bzw. Termine noch offen sind (übersprungen) */
-    var termOffen=schritte.filter(function(x){
-      var an=x.anlageId && ANLAGEN[x.anlageId];
-      return an && termineOffenVon(an.leader).filter(function(y){ return !y.weich; }).length; });
-    var ersterAnlageSchritt=(schritte.filter(function(x){ return x.termine; })[0]||{}).titel||(stoer?"Betroffene Anlagen":"Gewartete Anlagen");
-    /* alles vor dem Abschluss noch einmal sehen und ändern können (Büro 01.10.2026) */
-    var karten=[].slice.call(form.querySelectorAll("#anlagen .akarte"));
-    var nNeu=karten.filter(function(k){ return k.querySelector(".tag.st"); }).length,
-        nAkt=karten.filter(function(k){ return k.querySelector(".tag.f30"); }).length,
-        nFehlt=karten.filter(function(k){ return k.querySelector("[data-spring]"); }).length;
-    var anlText=[nAkt?nAkt+" werden aktualisiert":"", nNeu?nNeu+" neu erfasst":"", nFehlt?"bei "+nFehlt+" fehlt noch etwas":""].filter(Boolean).join(" · ")||"unverändert";
-    var ergebnisse=[].slice.call(form.querySelectorAll('input[name="ergebnis"]:checked')).map(function(cb){ return cb.nextElementSibling.textContent; });
-    var mit=[wert("#f_tech2"), wert("#f_tech3")].filter(function(x){ return x.trim(); });
-    var rapInfo=form.querySelector("#s_rapportinfo"), rapDa=form.querySelector("#s_rapport") && (!form._istLidl || form._istLidl());
-    var gb=f("#f_grundbox");
-    var fehlt=form._fehltNoch ? form._fehltNoch() : [];
-    inhalt.innerHTML=frage("Passt so?")+
-      (fehlt.length ? '<div class="note warnbox">Vor dem Speichern fehlt noch: <strong>'+esc(fehlt.join(", "))+"</strong></div>" : "")+
-      '<div class="as-gruppe">'+
-        zeile("Markt", st?stName(st):"–", "Markt")+
-        zeile("Datum", dfmt(wert("#f_datum"))+(wert("#f_zeit")?" · "+wert("#f_zeit"):""), "Abschluss")+
-        (gb && !gb.hidden ? zeile("Grund der Korrektur", wert("#f_grund")||"fehlt", "Abschluss") : "")+
-        zeile(stoer?"Betroffen":"Gewartet", anlagen.concat((form._neueAnlagen?form._neueAnlagen():[]).map(function(n){ var t0=neueAnlageReihenfolge(n.werte||{})[0]; return ((n.werte&&n.werte.anlagentyp)||"Neue Anlage")+" (neu"+(!stoer && t0 && String(t0.intervallCode||"").trim() ? ", "+intervallArt(t0.intervallCode).kurz : "")+")"; })).join(", "), stoer?"Betroffene Anlagen":"Gewartete Anlagen")+
-        zeile("Anlagendaten", anlText, ersterAnlageSchritt)+
-        (termOffen.length?zeile("Inbetriebnahme / Termine", "noch offen bei "+termOffen.length+" Anlage"+(termOffen.length===1?"":"n"), termOffen[0].titel):"")+
-        (stoer?zeile("Maßnahmen", wert("#s_massnahmen").slice(0,60), "Störungsbehebung"):zeile("Arbeiten", arbeiten+" angehakt", "Arbeiten"))+
-        zeile("Mängel", maengel?maengel+" eingetragen":"keine", "Mängel")+
-        zeile("Betriebsbereit", (form.querySelector('input[name="bereit"]:checked')||{}).value||"–", "Ergebnis")+
-        (wert("#f_sofort").trim()?zeile("Sofortmaßnahme", wert("#f_sofort").slice(0,60), "Ergebnis"):"")+
-        (!stoer?zeile("Ergebnis", ergebnisse.join(" · ").slice(0,90)||"–", "Ergebnis"):"")+
-        zeile("Bemerkungen", wert("#f_bem").trim().slice(0,80)||"keine", "Ergebnis")+
-        (f(kmVor+"Nach")?zeile("Kältemittel", kmKurz()||"keines", "Kältemittel"):"")+
-        zeile("Fotos", (form.querySelector("#f_fotoinfo")||{}).textContent||"–", "Fotos und Rapport")+
-        (rapDa?zeile("Rapportbericht", rapInfo?rapInfo.textContent.slice(0,60):"–", "Fotos und Rapport"):"")+
-        zeile("Techniker/in", wert("#f_tech")+(mit.length?" + "+mit.join(", "):""), "Abschluss")+
-        zeile("Unterschrift", form._sig.vorhanden()?"vorhanden":"fehlt", "Abschluss")+
-      "</div>"+
-      '<div class="muted" style="font-size:12.5px">Eine Zeile antippen führt zu ihrem Schritt. Mit „Protokoll speichern“ geht es in die gemeinsame Ablage; '+
-      "Änderungen und Ergänzungen sind danach über „Korrigieren“ möglich – auch wieder Schritt für Schritt.</div>";
-    inhalt.querySelectorAll("[data-schritt]").forEach(function(z){
-      var los=function(){
-        var ziel=z.dataset.schritt;
-        if(ziel.charAt(0)==="#"){
-          /* die Werte stehen schon im Formular – ohne Rückfrage schließen */
-          zu(); sprungHervorheben(form.querySelector(ziel)); return;
-        }
-        var i=schritte.map(function(x){ return x.titel; }).indexOf(ziel);
-        if(i>=0){ pos=i; zeige(); }
-      };
-      z.onclick=los;
-      z.onkeydown=function(e){ if(e.key==="Enter"){ e.preventDefault(); los(); } };
-    });
-  }});
+  /* Die Teile (je eine Funktion protoAssistentTeil…): erst melden alle ihre Funktionen an, dann bauen sie
+     in der ursprünglichen Reihenfolge auf – Gemeinsames liegt im Kontext P */
+  var P={form:form, stoer:stoer, ov:ov, inhalt:inhalt, fuss:fuss, zu:zu, merken:merken, f:f, setz:setz, wert:wert, frage:frage, feld:feld, chips:chips, textFeld:textFeld, knopf:knopf};
+  /* Ablauf-Funktionen dieses Hauptteils, die die Teile aufrufen */
+  P.fussNeu=fussNeu; P.zeige=zeige; P.weiter=weiter;
+  [protoAssistentTeilMarkt(P),
+   protoAssistentTeilAnlagen(P),
+   protoAssistentTeilArbeiten(P),
+   protoAssistentTeilFotos(P),
+   protoAssistentTeilAbschluss(P)].forEach(function(aufbau){ aufbau(); });
 
   /* ---- Ablauf ---- */
-  var pos=0;
+  P.pos=0;
   function fussNeu(){
     fuss.innerHTML="";
-    if(pos>0) knopf("Zurück","ghost",function(){ pos--; zeige(); });
-    var s=schritte[pos];
+    if(P.pos>0) knopf("Zurück","ghost",function(){ P.pos--; zeige(); });
+    var s=P.schritte[P.pos];
     if(s.uebersicht){
       knopf(f("#f_grundbox") && !f("#f_grundbox").hidden ? "Korrektur speichern" : "Protokoll speichern","",function(){
         /* fehlt noch etwas: im Dialog bleiben und es nennen, statt zu schließen
@@ -13030,13 +13077,13 @@ function protokollAssistent(form, stoer){
     } else if(s.termine){
       /* Termine einer Anlage: überspringen (nichts gespeichert, beim nächsten
          Besuch wird wieder gefragt) oder bestätigen (gleich gespeichert) */
-      knopf("Überspringen","ghost",function(){ if(pos<schritte.length-1){ pos++; zeige(); } });
+      knopf("Überspringen","ghost",function(){ if(P.pos<P.schritte.length-1){ P.pos++; zeige(); } });
       var ok=knopf("Stimmt – weiter","",function(){
         ok.disabled=true;
         s.speichern().then(function(r){
           ok.disabled=false;
-          if(r==="nochmal" && schritte[pos]===s){ zeige(); return; }   /* neuer Termin: erst „Heute gewartet als“ wählen */
-          if(r!==false && schritte[pos]===s && pos<schritte.length-1){ pos++; zeige(); }
+          if(r==="nochmal" && P.schritte[P.pos]===s){ zeige(); return; }   /* neuer Termin: erst „Heute gewartet als“ wählen */
+          if(r!==false && P.schritte[P.pos]===s && P.pos<P.schritte.length-1){ P.pos++; zeige(); }
         }, function(){ ok.disabled=false; toast("Termine nicht gespeichert – bitte nochmals versuchen."); });
       });
     } else {
@@ -13044,13 +13091,13 @@ function protokollAssistent(form, stoer){
     }
   }
   function zeige(){
-    var s=schritte[pos];
+    var s=P.schritte[P.pos];
     ov.querySelector(".as-titel").textContent=(stoer?"Störungsprotokoll":"Wartungsprotokoll");
-    ov.querySelector(".as-schritt").textContent="Schritt "+(pos+1)+" von "+schritte.length+" · "+s.titel;
+    ov.querySelector(".as-schritt").textContent="Schritt "+(P.pos+1)+" von "+P.schritte.length+" · "+s.titel;
     s.zeigen(); fussNeu(); inhalt.scrollTop=0;
   }
   function weiter(){
-    var s=schritte[pos];
+    var s=P.schritte[P.pos];
     if(s.pruefen){ var m=s.pruefen(); if(m){
       /* Der Hinweis gehört dorthin, wo hingeschaut wird – ein Einblender am
          unteren Rand wird auf dem Handy leicht übersehen. */
@@ -13061,10 +13108,10 @@ function protokollAssistent(form, stoer){
     } }
     /* die Anlagen stehen fest bzw. ihre Daten sind geprüft: jetzt entscheidet
        sich, für welche Anlagen nach Inbetriebnahme und Terminen gefragt wird */
-    if(pos<=schritte.map(function(x){ return x.titel; }).indexOf(stoer?"Betroffene Anlagen":"Gewartete Anlagen")) termineEinreihen();
-    if(pos<schritte.length-1){ pos++; zeige(); }
+    if(P.pos<=P.schritte.map(function(x){ return x.titel; }).indexOf(stoer?"Betroffene Anlagen":"Gewartete Anlagen")) P.termineEinreihen();
+    if(P.pos<P.schritte.length-1){ P.pos++; zeige(); }
   }
-  termineEinreihen();
+  P.termineEinreihen();
   zeige();
 }
 /* Protokoll-Formular: das HTML für Wartung bzw. Störung (s = gewählter Markt, für die FM-Region).
