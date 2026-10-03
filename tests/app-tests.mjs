@@ -715,6 +715,39 @@ test("Kundenauswahl gilt überall: Störungen, Rückfragen, Projekte in Fällig,
   await a.zu();
 });
 
+test("Spielwiese für Inhaber, Admins und Techniker – nicht für Kunde und Präsentation", async () => {
+  const erg = {};
+  for (const [name, konto] of [["inhaber", KONTEN.inhaber], ["admin", KONTEN.admin], ["techniker", KONTEN.techniker], ["kunde", KONTEN.kunde], ["praes", KONTEN.praesentation]]) {
+    const a = await oeffnen(konto);
+    erg[name] = await a.seite.evaluate(async () => {
+      const x = window.__t.x;
+      x("S.view='protokoll'; render(); 1"); await new Promise((f) => setTimeout(f, 500));
+      return { darf: !!x("spielwieseDarf()"), knopf: !!document.getElementById("k_spiel") };
+    });
+    await a.zu();
+  }
+  /* Techniker öffnet die Spielwiese: darin als Techniker, Speichern bleibt in der Kopie */
+  const t = await oeffnen(KONTEN.techniker);
+  const rs = await t.seite.evaluate(async () => {
+    const warte = (ms) => new Promise((f) => setTimeout(f, ms));
+    const vorher = window.__db.tabellen.planung.length;
+    window.__t.x("spielwieseOeffnen()");
+    let w = null;
+    for (let i = 0; i < 60 && !(w && w.__t && w.__t.x("Rolle.da")); i++) { await warte(500); const f = document.querySelector(".vorschau-rahmen iframe"); w = f && f.contentWindow; }
+    if (!w || !w.__t) return { fehler: "Spielwiese nicht geöffnet" };
+    const innen = { rolle: w.__t.x("Rolle.name"), spiel: w.__t.x("spielwiese()") };
+    const dbVorher = w.__db.tabellen.planung.length;
+    await w.__t.x("Store.sb.from('planung').insert({art:'aufgabe', titel:'nur Spielwiese', datum:'2026-01-05', wer:[]})");
+    await warte(300);
+    const innenZahl = (await w.__t.x("Store.sb.from('planung').select('id').eq('titel','nur Spielwiese')")).data.length;
+    return Object.assign(innen, { innenZahl, dbVorher, dbNachher: w.__db.tabellen.planung.length, echtVorher: vorher, echtNachher: window.__db.tabellen.planung.length });
+  });
+  pruefe(!rs.fehler && rs.rolle === "techniker" && rs.spiel && rs.innenZahl === 1 && rs.dbVorher === rs.dbNachher && rs.echtVorher === rs.echtNachher, "Spielwiese des Technikers: " + JSON.stringify(rs));
+  await t.zu();
+  for (const n of ["inhaber", "admin", "techniker"]) pruefe(erg[n].darf && erg[n].knopf, "Spielwiese fehlt für " + n + ": " + JSON.stringify(erg[n]));
+  for (const n of ["kunde", "praes"]) pruefe(!erg[n].darf && !erg[n].knopf, "Spielwiese für " + n + " sichtbar: " + JSON.stringify(erg[n]));
+});
+
 /* Gründlich (nur mit --gruendlich, dauert einige Minuten): jeden Knopf in jedem Reiter je Rolle antippen,
    im aufgehenden Dialog den Hauptknopf – und melden, was abstürzt, hängt, NaN zeigt oder sich endlos neu zeichnet */
 if (process.argv.includes("--gruendlich")) test("Gründlich: jeden Knopf in jedem Reiter antippen (Inhaber, Techniker, Präsentation)", async () => {

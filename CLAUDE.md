@@ -314,7 +314,8 @@ Kammerlander Umwelt- und Klimatechnik (UKT) – oft kurz, vom Handy, im Feld.
   ihr Fahrzeug (km-Stand, Schaden), Beträge nur Inhaber (`fahrzeug_kosten`). GPS-Import (X-GPS, CSV/Excel):
   NUR Kilometer je Tag – nie Orte, Uhrzeiten oder Fahrten speichern (Fahrtenbuch mit Orten erst nach
   Zustimmung/Betriebsvereinbarung). Diese Grenze nie lockern.
-- **Spielwiese** (`spielwieseOeffnen`, nur Inhaber): eigene App im geschützten Vollbild; darin
+- **Spielwiese** (`spielwieseOeffnen`, `spielwieseDarf`: Inhaber, Admins und Techniker – je mit dem eigenen Konto und
+  dessen Rechten, Büro 03.10.2026; nie Kunde/Präsentation): eigene App im geschützten Vollbild; darin
   `spielwiese()` statt `demo()` – alles läuft echt gegen die Schattendatenbank (`schattenClient`: Tabellen
   beim ersten Zugriff in den Speicher, Schreiben nur dort, keine KI/RPC außer Teamliste). `vorschauSchutz`
   sperrt zusätzlich jedes Schreiben im Netz. Schließen verwirft alles.
