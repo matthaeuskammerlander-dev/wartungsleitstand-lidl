@@ -1,7 +1,7 @@
 /* Nachgebaute Supabase-Schnittstelle für die automatischen Tests (tests/app-tests.mjs) – nur Code, Startbestand aus seed.json (erfunden). */
 (function(){
   "use strict";
-  var T=["gelernte_werte","fahrzeuge","fahrzeug_eintraege","fahrzeug_kosten","kontakte","protokoll_vermerke","planung","planung_privat","belege","katalog","stempel","einstellungen","projekte","arbeitszeiten","anlagenfotos","touren","kundenliste","gelesen","push_ereignisse","kennzahlen","chat","abrechnung","push_abos","protokolle","aenderungen","stammdaten","admins","berichte","protokoll_fassungen","rollen","ki_nutzung","posteingang","stammdaten_lesen","aenderungswuensche"];
+  var T=["gelernte_werte","fahrzeuge","fahrzeug_eintraege","fahrzeug_kosten","kontakte","protokoll_vermerke","planung","planung_privat","belege","katalog","stempel","einstellungen","projekte","arbeitszeiten","anlagenfotos","touren","kundenliste","gelesen","push_ereignisse","kennzahlen","chat","abrechnung","push_abos","protokolle","aenderungen","stammdaten","admins","berichte","protokoll_fassungen","rollen","ki_nutzung","posteingang","stammdaten_lesen","aenderungswuensche","vor_ort_fragen"];
   var DB; try{ DB=JSON.parse(localStorage.getItem("attrappe_db")||"null"); }catch(e){ DB=null; }
   /* leerer Speicher (neuer Port, nach __db.zuruecksetzen()): Startbestand aus seed.json */
   if(!DB){ DB={}; try{ var x=new XMLHttpRequest(); x.open("GET","seed.json?"+Date.now(),false); x.send();
@@ -58,6 +58,16 @@
     if(tab==="planung" && (art==="update"||art==="delete") && alt && alt.privat && alt.erstellt_von!==uid() && (alt.wer||[]).indexOf(uid())<0) return "planung: privat";
     if(tab==="planung" && art==="update" && alt && alt.kategorie==="urlaub" && rolle!=="inhaber" && zeile && (zeile.status==="genehmigt"||zeile.status==="abgelehnt") && zeile.status!==alt.status) return "Urlaub genehmigt nur der Inhaber";
     if(tab==="aenderungen" && art!=="insert" && art!=="select") return "aenderungen: unveraenderlich";
+    /* wie vor-ort-fragen.sql: Büro stellt und erledigt, alle (die schreiben dürfen) antworten */
+    if(tab==="vor_ort_fragen"){
+      var buero=admin() || rolle==="inhaber";
+      if((art==="insert"||art==="delete") && !buero) return "vor_ort_fragen: nur Buero";
+      if(art==="update" && !buero){
+        var nurAntwort=Object.keys(zeile||{}).every(function(k){ return ["antwort","beantwortet","beantwortet_von"].indexOf(k)>=0; });
+        if(!nurAntwort) return "vor_ort_fragen: Frage und Erledigt nur Buero";
+        if(alt && alt.erledigt) return "vor_ort_fragen: schon erledigt";
+      }
+    }
     return null;
   }
   /* wie der Trigger planung_pruefen (planung.sql): privat nur „Abwesend“, Urlaub genehmigt nur der Inhaber */
@@ -119,6 +129,7 @@
         if(self.t==="protokolle"){ if(r.version==null) r.version=1; if(r.erstellt==null) r.erstellt=new Date().toISOString(); }
         if(self.t==="arbeitszeiten"){ if(!r.user_id) r.user_id=uid(); if(r.pause_min==null) r.pause_min=0; r.erstellt=r.erstellt||new Date().toISOString(); }
         if(self.t==="planung") planPruefen(r, null);
+        if(self.t==="vor_ort_fragen") r.angelegt=r.angelegt||new Date().toISOString();
         if(self.t==="projekte"){ r.erstellt=r.erstellt||new Date().toISOString(); r.geaendert=r.geaendert||r.erstellt; r.daten=r.daten||{}; r.verlauf=r.verlauf||[]; }
         return r; });
       neu.forEach(function(r){ tab.push(r); }); sichern(); return {data:neu,error:null};
@@ -175,12 +186,13 @@
   E.prototype.upload=function(p,b,o){ var k=this.n+"/"+p;
     if(DATEIEN[k]&&!(o&&o.upsert)) return Promise.resolve({data:null,error:{message:"exists"}});
     /* wie im echten Bucket: nur die erlaubten Typen */
-    var erlaubt=this.n==="projektdateien" ? ["image/jpeg","image/png","application/pdf","text/plain","text/csv","application/vnd.openxmlformats-officedocument.wordprocessingml.document","application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"] : ["image/jpeg","image/png","application/pdf"];
-    if(b && b.type && erlaubt.indexOf(b.type)<0)
+    var erlaubt=this.n==="sicherungen" ? null : this.n==="projektdateien" ? ["image/jpeg","image/png","application/pdf","text/plain","text/csv","application/vnd.openxmlformats-officedocument.wordprocessingml.document","application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"] : ["image/jpeg","image/png","application/pdf"];
+    if(erlaubt && b && b.type && erlaubt.indexOf(b.type)<0)
       return Promise.resolve({data:null,error:{message:"mime type "+b.type+" is not supported"}});
     DATEIEN[k]=b; return Promise.resolve({data:{path:p},error:null}); };
   E.prototype.createSignedUrl=function(p){ var b=DATEIEN[this.n+"/"+p];
     return Promise.resolve(b?{data:{signedUrl:URL.createObjectURL(b)},error:null}:{data:null,error:{message:"weg"}}); };
+  E.prototype.download=function(p){ var b=DATEIEN[this.n+"/"+p]; return Promise.resolve(b?{data:b,error:null}:{data:null,error:{message:"weg"}}); };
   E.prototype.remove=function(){ return Promise.resolve({data:[],error:null}); };
   E.prototype.list=function(){ return Promise.resolve({data:[],error:null}); };
   window.supabase={createClient:function(){ return {

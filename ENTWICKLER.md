@@ -20,17 +20,17 @@ Die Fachregeln (Termine, Rechte, Datenschutz) stehen ausführlich in **CLAUDE.md
 |---|---|---|
 | Fälligkeit | „Fälligkeit“ | `berechneFaelligkeiten`, `termineOffen`, `standardRegel` |
 | Reiter Fällig | `viewFaellig` | offene Störungen, Wochenübersicht, Folgeaufträge-Hinweis |
-| Kalender / Aufgaben | `viewKalender` | `kalenderEintraege`, `planEditor`, `zeitRaster`, `planungPruefen` |
+| Kalender / Aufgaben | `viewKalender` | `kalenderEintraege`, `planEditor`, `zeitRaster`, `planungPruefen`, `auslastungKarte` (Büro) |
 | Karte / Tour | `viewKarte` | `planeTour`, `arbeitStunden` (gelernte Zeit), `tourPanel` |
 | Protokoll | `viewProtokoll` (setzt 12 Teile `protoTeilMarkt` … `protoTeilSpeichern` zusammen), `protokollFormHtml`, `protokollAssistent` (geführt) | `speichereProtokoll`, `rapTextRein`, `kaeltemittelAusForm` |
 | Anlagen / Markt | `viewAnlagen`, `marktAnsicht` | `anlagenDesMarkts`, `verbundenKarte`, `anlageAssistent` → `anlageAssistentDialog` (Teile `anlageDialogTeilKi`, `…Felder`, `…Schritte`) |
 | Stunden / Stempeluhr | `viewStunden` | `zeitEditor`, `stempeln` (Datenbank), `lohnAuswertung` |
 | Fahrzeuge | `viewFahrzeuge` | `fzEditor`, `fzEintragEditor`, `fzGpsImport` |
 | Projekte | `viewProjekte`, `projektAnsicht` | `projektNeu`, `folgeKarte`, Baustellenbuch |
-| Rechnungen (nur Inhaber) | `viewBelege` | `belegEditor`, `einsatzPositionen`, `fahrtZone`, `katalogLernen` |
+| Rechnungen (nur Inhaber) | `viewBelege` | `belegEditor`, `einsatzPositionen`, `fahrtZone`, `katalogLernen`, `angebotAusFolge` |
 | Kunden & Kontakte | `viewKunden` | `kontaktErfassen` (lernt neue Personen), `kontaktAusProtokoll` |
 | Verlauf | `viewVerlauf` | `stammRueckgaengig`, `korrekturRueckgaengig` |
-| Verwaltung | `viewVerwaltung` | `verwaltungEditor` (Teile `verwaltungTeilAnlagen`, `…Bedienung`, `…Entfernen`, `…Speichern`), Nachbessern, `datenpflegeAnsicht` |
+| Verwaltung | `viewVerwaltung` | `verwaltungEditor` (Teile `verwaltungTeilAnlagen`, `…Bedienung`, `…Entfernen`, `…Speichern`), Nachbessern, `datenpflegeAnsicht`, `vorOrtUebersichtKarte` / `vorOrtKasten` (Vor Ort klären), `altlisteKarte`, `sicherungKarte` (Inhaber) |
 | Spielwiese | `spielwieseOeffnen` | `schattenClient` (Schattendatenbank), `vorschauSchutz` |
 | Gemeinsame Bausteine | „Helper“ | `textAbfrage`, `fussKnoepfe`, `nachMarktname`, `nurAnsehenAbweisen`, `technikDeutsch`, `diktatKnopf` |
 

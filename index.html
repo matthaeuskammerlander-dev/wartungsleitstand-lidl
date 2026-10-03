@@ -3337,6 +3337,12 @@ function marktAnsicht(sid){
   /* Team-Chat: Nachrichten zu diesem Markt (auch zu seinen Anlagen, Störungen, Protokollen) – vor der Historie, damit man sie findet */
   if(chatAn()) a.inhalt.appendChild(chatBezugKarte("markt", s.id, chatBezugText("markt", s)));
   var vb=verbundenKarte(sid); if(vb) a.inhalt.appendChild(vb);
+  /* Vor Ort klären: offene Fragen an diesem Markt; das Büro stellt hier auch neue (Büro 03.10.2026) */
+  if(vorOrtAn()){
+    vorOrtLaden();
+    var vk=vorOrtKasten(sid, {mitNeu:true});
+    if(vk){ var vc=el('<div class="card" style="box-shadow:none;margin-top:12px"><div class="pad stack" style="gap:8px"><h2>Vor Ort klären</h2></div></div>'); vc.querySelector(".stack").appendChild(vk); a.inhalt.appendChild(vc); }
+  }
   /* Kontakte noch nicht geladen: nachher dazustellen */
   if(kontakteAn() && !kontakteGeladen) kontakteLaden().then(function(){
     if(!document.body.contains(a.inhalt) || a.inhalt.querySelector("[data-verbunden]")) return;
@@ -3349,6 +3355,7 @@ function marktAnsicht(sid){
     {h:/^Geplant an diesem Markt/, seite:"neben", key:"plan"},
     {h:/Nachrichten/, seite:"neben", key:"chat", handyZu:true},
     {h:/^Projekte und Kontakte/, seite:"neben", key:"verbunden"},
+    {h:/^Vor Ort klären/, seite:"neben", key:"vorort"},
     {h:/^Wartungs- und Störungshistorie/, seite:"haupt", key:"historie", handyZu:true}
   ], "markt", false, true);
   /* führt ein Knopf woandershin (Protokoll, Verwaltung), geht die Ansicht zu */
@@ -3553,6 +3560,8 @@ function viewFaellig(){
   if(posteingangAn()) f.appendChild(einklappbar(posteingangKarte(), "posteingang"));
   /* Wochenübersicht fürs Büro – dieselben Zahlen wie die Montag-Nachricht */
   if(Admin.frei && !nurLesen()) f.appendChild(einklappbar(wochenKarte(), "woche"));
+  /* Inhaber: Sicherung herunterladen, wenn die letzte Datei älter als eine Woche ist (Büro 03.10.2026) */
+  var sek=sicherungErinnerungKarte(); if(sek) f.appendChild(sek);
   f.appendChild(einklappbar(stoerungsKarte(), "stoerungen", stoerOffen.length+" offen"));
   /* der Störungskalender ist in den Kalender-Reiter gewandert (Schalter „nur Störungen“, Büro 02.10.2026) */
   /* laufende Projekte (Auftrag, Baustelle, Inbetriebnahme) – damit sie neben den Wartungen nicht untergehen */
@@ -13275,6 +13284,8 @@ function protokollFormHtml(stoer, s){
   /* folgt der Marktwahl: Markt ansehen (Fenster) und offene Störungen am Markt */
   '<div class="rowflex" id="f_marktweg" style="margin-top:6px;gap:10px;font-size:13px"></div>'+
   '<div id="f_stoermarkt" class="stack" style="margin-top:6px"></div>'+
+  /* offene Fragen „Vor Ort klären“ an diesem Markt – nur wenn es welche gibt */
+  '<div id="f_vorort" class="stack" style="margin-top:6px"></div>'+
   '<div id="f_posbox" class="stack" style="margin-top:12px"></div>'+
   '<label class="fl" style="margin-top:12px"><span>Adresse</span><input type="text" id="f_adresse"></label>'+
   /* im Störungsmodus steht die Art fest */
@@ -13534,7 +13545,8 @@ function protoTeilMarkt(P){
       /* Hinweis zur offenen Störung folgt dem Markt (anderer Markt: sie bleibt offen) */
       if(form._stoerBezug) form._stoerBezug();
       if(form._stoerMarkt) form._stoerMarkt();
-      if(form._lidlAnpassen) form._lidlAnpassen(); };
+      if(form._lidlAnpassen) form._lidlAnpassen();
+    if(form._vorOrt) form._vorOrt(); };
     /* weiterer Kunde statt Lidl (Büro 01.10.2026): die Lidl-Teile ausblenden – Lidl-Auftrag
        als Pflicht, Auftrag-PDF und QR-Code, Rapportbericht, FM-Region, Rechnungshinweis */
     form._istLidl=function(){ var s0=byId[P.selSt.value]; return !s0 || istLidl(s0); };
@@ -13549,6 +13561,15 @@ function protoTeilMarkt(P){
     fillPos(p?p.id:null);
     /* erst wenn alles gesetzt ist (auch bei einer Korrektur) */
     setTimeout(function(){ if(form._lidlAnpassen) form._lidlAnpassen(); }, 0);
+    /* offene Fragen „Vor Ort klären“ zum gewählten Markt (Büro 03.10.2026) – nicht bei einer Korrektur */
+    form._vorOrt=function(){
+      var h=form.querySelector("#f_vorort"); if(!h) return;
+      h.innerHTML="";
+      if(P.bearb || !P.selSt.value) return;
+      var k=vorOrtKasten(P.selSt.value); if(k) h.appendChild(k);
+    };
+    form._vorOrt();
+    vorOrtLaden();
   };
 }
 /* Protokoll-Formular, Teil Anlagendaten: je angehakter Anlage eine Karte, Ergänzen, neue Anlage, Termine, Übernahme in die Anlagendaten */
@@ -18512,6 +18533,576 @@ function fzGpsVorschau(zeilen, erg, v){
    Füllmenge). „Wieder betreuen“ öffnet den Markt in der Verwaltung – dort Status und die einzeln
    ruhenden Anlagen umstellen. Einzeln ruhende Anlagen mit eigenem Grund (etwa eine Lüftung, die wir
    nicht warten) zählen nicht mit. */
+/* ---------- Vor Ort klären (Büro 03.10.2026) ----------
+   Fragen, die sich nur vor Ort beantworten lassen (welche Straße, dieselbe Anlage?, Baujahr …).
+   Das Büro (Inhaber, Admins) stellt sie je Markt – im Markt-Fenster, in der Datenpflege oder aus
+   einem Fund der alten Liste. Wer an dem Markt ein Protokoll beginnt, sieht sie oben im Formular
+   und antwortet gleich; das Büro hakt die Antwort ab. Techniker sehen nur etwas, wenn wirklich
+   eine Frage offen ist. Tabelle vor_ort_fragen (tools/vor-ort-fragen.sql). */
+var VOR_ORT=[], vorOrtGeladen=false, vorOrtLaedt=null, vorOrtStand=0, vorOrtFehler="";
+function vorOrtAn(){ return betriebAn() && !demo(); }
+function vorOrtBuero(){ return istInhaber() || Rolle.name==="admin"; }
+function vorOrtLaden(sofort){
+  if(!vorOrtAn()) return Promise.resolve();
+  if(vorOrtLaedt) return vorOrtLaedt;
+  if(!sofort && Date.now()-vorOrtStand<60000) return Promise.resolve();
+  vorOrtStand=Date.now();
+  vorOrtLaedt=Store.sb.from("vor_ort_fragen").select("*").is("erledigt", null).order("angelegt").limit(2000).then(function(r){
+    vorOrtLaedt=null;
+    if(r.error){ vorOrtFehler=/relation|does not exist|schema cache/i.test(r.error.message) ? "nicht eingerichtet" : netzFehlerText(r.error.message); return; }
+    vorOrtFehler=""; VOR_ORT=r.data||[]; vorOrtGeladen=true;
+    /* ein schon offenes Protokoll zeigt die Fragen nachträglich */
+    var f=document.getElementById("proto"); if(f && f._vorOrt) f._vorOrt();
+  }, function(){ vorOrtLaedt=null; });
+  return vorOrtLaedt;
+}
+function vorOrtFragen(sid){ return VOR_ORT.filter(function(f){ return f.standort_id===sid && !f.erledigt; }); }
+function vorOrtOffen(){ return VOR_ORT.filter(function(f){ return !f.erledigt && byId[f.standort_id]; }); }
+function vorOrtFehlerText(r, e){ return technikDeutsch((r && r.error && r.error.message) || (e && e.message) || (r ? "keine Berechtigung" : "keine Verbindung")); }
+function vorOrtNeu(sid, opt){
+  opt=opt||{};
+  var s=byId[sid]; if(!s) return;
+  if(!vorOrtAn() || !vorOrtBuero()){ toast("Fragen für vor Ort stellt das Büro."); return; }
+  textAbfrage("Was soll beim nächsten Besuch in „"+stName(s)+"“ geklärt werden? Wer dort ein Protokoll beginnt, sieht die Frage oben im Formular und antwortet gleich.",
+    {titel:"Vor Ort klären", feld:"Frage", ok:"Frage stellen", pflicht:"Bitte die Frage eintragen.", vorgabe:opt.vorgabe||""}).then(function(t){
+    if(t===null) return;
+    t=String(t).trim(); if(t.length<3){ toast("Ohne Frage nicht gespeichert."); return; }
+    var z={standort_id:sid, position_id:opt.position_id||null, frage:t.slice(0,1000), herkunft:opt.herkunft||null, angelegt_von:meinName()};
+    mitFrist(Store.sb.from("vor_ort_fragen").insert(z).select("*"), 15000).then(function(r){
+      if(r.error || !(r.data||[]).length){ toast("Nicht gespeichert: "+vorOrtFehlerText(r)); return; }
+      VOR_ORT.push(r.data[0]);
+      toast("Frage gespeichert – sie erscheint beim nächsten Protokoll an diesem Markt.");
+      if(opt.fertig) opt.fertig(r.data[0]); else if(darfRendern()) render();
+    }, function(e){ toast("Nicht gespeichert: "+vorOrtFehlerText(null, e)); });
+  });
+}
+function vorOrtAendern(f, felder, knopf, text, ok){
+  var vorher=knopf ? knopf.textContent : "";
+  if(knopf){ knopf.disabled=true; knopf.textContent="wird gespeichert …"; }
+  var zurueck=function(){ if(knopf){ knopf.disabled=false; knopf.textContent=vorher; } };
+  mitFrist(Store.sb.from("vor_ort_fragen").update(felder).eq("id", f.id).select("*"), 15000).then(function(r){
+    if(r.error || !(r.data||[]).length){ zurueck(); toast("Nicht gespeichert: "+vorOrtFehlerText(r)); return; }
+    Object.assign(f, r.data[0]); toast(text); if(ok) ok();
+  }, function(e){ zurueck(); toast("Nicht gespeichert: "+vorOrtFehlerText(null, e)); });
+}
+/* die offenen Fragen eines Markts zum Beantworten; mitNeu: „+ Frage“ fürs Büro */
+function vorOrtKasten(sid, opt){
+  opt=opt||{};
+  var l=vorOrtFragen(sid), buero=vorOrtBuero();
+  if(!l.length && !(opt.mitNeu && buero && vorOrtAn())) return null;
+  var c=el('<div class="stack" style="gap:8px" data-vorort></div>');
+  /* Eingaben hier sind keine Protokoll-Eingaben: kein „ungespeichert“, kein Entwurf */
+  ["input","change","keydown"].forEach(function(ev){ c.addEventListener(ev, function(e){ e.stopPropagation(); }); });
+  var neu=function(){ var n=vorOrtKasten(sid, opt); if(n) c.replaceWith(n); else c.remove(); if(opt.nachher) opt.nachher(); };
+  l.forEach(function(f){
+    var z=el('<div class="note'+(f.antwort?"":" warnbox")+'" style="font-size:13px">'+
+      "<div><strong>Vor Ort klären:</strong> "+esc(f.frage)+"</div>"+
+      '<div class="muted" style="font-size:12.5px">gefragt von '+esc(f.angelegt_von||"Büro")+" am "+esc(dfmt(String(f.angelegt||"").slice(0,10)))+(f.herkunft?" · "+esc(f.herkunft):"")+"</div>"+
+      (f.antwort ? '<div style="margin-top:4px"><strong>Antwort:</strong> '+esc(f.antwort)+' <span class="muted" style="font-size:12.5px">('+
+        esc([f.beantwortet_von, f.beantwortet?dfmt(String(f.beantwortet).slice(0,10)):""].filter(Boolean).join(", "))+")</span></div>" : "")+
+      '<div class="rowflex" style="gap:6px;margin-top:6px;align-items:flex-end">'+
+        '<label class="fl" style="flex:1 1 220px"><span>'+(f.antwort?"Antwort ändern":"Antwort")+'</span><input type="text" maxlength="2000" data-v="antwort"></label>'+
+        '<button class="btn sm" type="button" data-v="speichern">Antwort speichern</button>'+
+        (buero ? '<button class="btn ghost sm" type="button" data-v="erledigt">'+(f.antwort?"Erledigt":"Zurückziehen")+"</button>" : "")+
+      "</div></div>");
+    var inp=z.querySelector('[data-v="antwort"]'), sp=z.querySelector('[data-v="speichern"]');
+    sp.onclick=function(){
+      var t=String(inp.value||"").trim();
+      if(!t){ toast("Bitte erst die Antwort eintragen."); inp.focus(); return; }
+      vorOrtAendern(f, {antwort:t.slice(0,2000), beantwortet:new Date().toISOString(), beantwortet_von:meinName()}, sp, "Antwort gespeichert – das Büro sieht sie.", neu);
+    };
+    inp.addEventListener("keydown", function(e){ if(e.key==="Enter"){ e.preventDefault(); sp.click(); } });
+    var erl=z.querySelector('[data-v="erledigt"]');
+    if(erl) erl.onclick=function(){
+      vorOrtAendern(f, {erledigt:new Date().toISOString(), erledigt_von:meinName()}, erl, f.antwort?"Als erledigt abgehakt.":"Frage zurückgezogen.", neu);
+    };
+    c.appendChild(z);
+  });
+  if(opt.mitNeu && buero && vorOrtAn()){
+    var b=el('<div><button class="btn ghost sm" type="button">+ Frage für vor Ort</button></div>');
+    b.querySelector("button").onclick=function(){ vorOrtNeu(sid, {fertig:neu}); };
+    c.appendChild(b);
+  }
+  return c;
+}
+/* Verwaltung › Datenpflege: alle offenen Fragen, beantwortete zuerst */
+function vorOrtUebersichtKarte(){
+  vorOrtLaden();
+  var l=vorOrtOffen();
+  var c=el('<div class="card"><div class="pad stack" style="gap:10px"><h2>Vor Ort klären ('+l.length+")</h2>"+
+    '<div class="sub">Fragen, die sich nur vor Ort beantworten lassen. Wer an dem Markt ein Protokoll beginnt, sieht sie oben im Formular und antwortet gleich; '+
+      "hier hakt das Büro die Antwort ab. Eine neue Frage geht auch im Markt-Fenster.</div></div></div>");
+  var h=c.querySelector(".stack");
+  if(vorOrtFehler==="nicht eingerichtet") h.appendChild(el('<div class="note warnbox">In der Datenbank noch nicht eingerichtet (tools/vor-ort-fragen.sql).</div>'));
+  var neu=el('<div class="rowflex" style="gap:6px"><select data-v="markt" aria-label="Markt"><option value="">– Markt wählen –</option>'+
+    ST.slice().sort(nachMarktname).map(function(s){ return '<option value="'+esc(s.id)+'">'+esc(stName(s))+"</option>"; }).join("")+
+    '</select><button class="btn ghost sm" type="button">+ Frage</button></div>');
+  neu.querySelector("button").onclick=function(){
+    var sid=neu.querySelector("select").value; if(!sid){ toast("Bitte zuerst den Markt wählen."); return; }
+    vorOrtNeu(sid);
+  };
+  if(vorOrtAn() && vorOrtBuero()) h.appendChild(neu);
+  var maerkte=[];
+  l.forEach(function(f){ if(maerkte.indexOf(f.standort_id)<0) maerkte.push(f.standort_id); });
+  maerkte.sort(function(a,b){
+    var x=vorOrtFragen(a).some(function(f){ return f.antwort; }), y=vorOrtFragen(b).some(function(f){ return f.antwort; });
+    return x!==y ? (x?-1:1) : nachMarktname(byId[a], byId[b]); });
+  if(!maerkte.length) h.appendChild(el('<div class="muted" style="font-size:12.5px">Keine offene Frage.</div>'));
+  maerkte.forEach(function(sid){
+    var s=byId[sid], z=el('<div class="posbox stack" style="gap:6px"><div><a href="#" class="sprunglink" data-markt="'+esc(sid)+'"><strong>'+esc(stName(s))+"</strong></a></div></div>");
+    var k=vorOrtKasten(sid, {nachher:function(){ if(!z.querySelector("[data-vorort]")) z.remove(); }});
+    if(k) z.appendChild(k);
+    h.appendChild(z);
+  });
+  return c;
+}
+
+/* ---------- Alte Liste prüfen (Büro 03.10.2026) ----------
+   Einmaliger Suchlauf über die alte Excel-Liste – was dort wie ein Versehen aussieht und die übrigen
+   Prüfungen (Nachbessern, Zu klären) nicht finden: Hinweise auf weitere Anlagen in Nebenfeldern,
+   Einträge, die kein Datum sind, Inbetriebnahme nach der ersten Wartung, zwei Märkte an derselben
+   Adresse, Lidl-Märkte ohne Filialnummer. Je Fund: ansehen, als Frage für vor Ort weitergeben oder
+   „passt so“ (Merker in den Stammdaten – der Fund kommt dann nicht wieder). */
+function altlisteMerkerId(key){ return "merker:altliste:"+key; }
+function altlisteFunde(){
+  var L=[], jahr=new Date().getFullYear();
+  var dazu=function(key, s, art, text, pid){ if(stammUeber[altlisteMerkerId(key)]) return; L.push({key:key, s:s, art:art, text:text, pid:pid||null}); };
+  var WEITERE=/l(ü|ue)ftung|gas\s*-?\s*warn|w(ä|ae)rmepumpe|k(ü|ue)hlzelle|tiefk(ü|ue)hl|sozialraum|seminar/i;
+  var werte=function(o){ return Object.keys(o||{}).map(function(k){ return o[k]; }); };
+  var zwei=function(n){ return ("0"+n).slice(-2); };
+  ALLE_POS.forEach(function(p){
+    var s=byId[p.standortId]; if(!s || p.aktiv===false || s.aktiv===false) return;
+    var a=anlageVon(p), l=a.leader, name=anlagenName(anlageDaten(l));
+    /* 1. Hinweis auf eine weitere Anlage in einem Nebenfeld (Rückkühler, Kältemittel, Notizen der Liste) */
+    var typ=String(anlageDaten(p).anlagentyp||"")+" "+name, treffer=null;
+    [p.rueckkuehler, p.kaeltemittelText].concat(werte(p.wartungenRaw), werte(p.techniker)).forEach(function(t){
+      var m=WEITERE.exec(String(t||"")); if(m && !treffer) treffer={wort:m[0], text:String(t)}; });
+    if(treffer && !WEITERE.test(typ))
+      dazu("text:"+p.id, s, "Weitere Anlage?", name+": in der alten Liste steht „"+treffer.text.slice(0,80)+"“ – gibt es dort eine weitere Anlage ("+treffer.wort+"), die noch fehlt?", p.id);
+    /* 2. Einträge der alten Liste, die kein Datum sind („-“ heißt: in dem Jahr nicht gewartet) */
+    var hist=p.historie||[];
+    Object.keys(p.wartungenRaw||{}).forEach(function(j){
+      var w=String(p.wartungenRaw[j]||"").trim();
+      if(!w || /^[\/\s\-–]*$/.test(w)) return;
+      var t=/^(\d{1,2})[.\-](\d{1,2})[.\-](\d{2}|\d{4})$/.exec(w);
+      if(t){ var y=+t[3]; if(y<100) y+=2000;
+        var iso=y+"-"+zwei(t[2])+"-"+zwei(t[1]);
+        if(y>=1990 && y<=jahr+1 && hist.indexOf(iso)>=0) return;   /* nur anders geschrieben, steht schon in der Historie */
+        if(y>=1990 && y<=jahr+1 && +t[2]>=1 && +t[2]<=12 && +t[1]>=1 && +t[1]<=31){
+          dazu("roh:"+p.id+":"+j, s, "Eintrag unklar", name+" – Spalte "+j+" der alten Liste: „"+w+"“ – das Datum fehlt in der Wartungshistorie. War das eine Wartung (dann als Nachweis eintragen)?", p.id);
+          return; } }
+      dazu("roh:"+p.id+":"+j, s, "Eintrag unklar", name+" – Spalte "+j+" der alten Liste: „"+w.slice(0,60)+"“. Was war gemeint (Datum, Umbau, keine Wartung)?", p.id);
+    });
+    /* 3. Inbetriebnahme nach der ersten Wartung – je Anlage einmal */
+    if(l===p){
+      var ib=inbetriebnahmeVon(l), erste=null;
+      a.termine.forEach(function(t){ (t.historie||[]).forEach(function(d){ if(d && (!erste || d<erste)) erste=d; }); });
+      if(ib && erste && ib>erste)
+        dazu("ib:"+l.id, s, "Inbetriebnahme", name+": Inbetriebnahme "+dfmt(ib)+" liegt nach der ersten Wartung ("+dfmt(erste)+") – wurde die Anlage getauscht, oder stimmt das Datum nicht?", l.id);
+    }
+  });
+  /* 4. zwei Märkte an derselben Adresse (nur genau verortete) */
+  var genau=ST.filter(function(s){ return s.aktiv!==false && s.lat!=null && s.lon!=null && s.genauigkeit==="adresse"; });
+  for(var i=0;i<genau.length;i++) for(var k=i+1;k<genau.length;k++){
+    var x=genau[i], y=genau[k];
+    var fx=String(x.filiale||"").trim(), fy=String(y.filiale||"").trim();
+    if(fx && fy && fx!==fy) continue;   /* verschiedene Filialnummern: gewollt (Markt und Lager, Doppelfiliale) */
+    if(luftlinie(x, y)*1000<60)
+      dazu("doppelt:"+[x.id, y.id].sort().join("+"), x, "Doppelt?", "„"+stName(x)+"“ und „"+stName(y)+"“ liegen an derselben Adresse – derselbe Markt doppelt? "+
+        "(Zwei Märkte an einer Adresse gibt es, etwa Filiale und Seminarräume – dann „passt so“.)");
+  }
+  /* 5. Lidl-Markt ohne Filialnummer */
+  ST.forEach(function(s){
+    if(s.aktiv===false || !istLidl(s) || String(s.filiale||"").trim()) return;
+    dazu("ohnefil:"+s.id, s, "Filialnummer", "„"+stName(s)+"“ hat keine Filialnummer – für Lidl-Rechnungen nötig. Eigener Markt (Nummer nachtragen) oder Teil einer anderen Filiale?");
+  });
+  var ORD=["Weitere Anlage?","Doppelt?","Eintrag unklar","Inbetriebnahme","Filialnummer"];
+  return L.sort(function(a,b){ return ORD.indexOf(a.art)-ORD.indexOf(b.art) || nachMarktname(a.s, b.s); });
+}
+function altlisteAblegen(f, ergebnis){
+  var m={id:altlisteMerkerId(f.key), typ:"merker", ziel:"altliste:"+f.key, felder:{ergebnis:ergebnis},
+         neu:false, geaendert:new Date().toISOString(), von:wer(), grund:"Alte Liste: "+ergebnis+" – "+f.text.slice(0,160)};
+  stammUeber[m.id]=m;
+  return stammSpeichern(m).then(function(){ toast(ergebnis==="passt so" ? "Abgelegt – „passt so“." : "Abgelegt – "+ergebnis+"."); if(darfRendern()) render(); },
+    function(){ delete stammUeber[m.id]; toast("Nicht gespeichert – keine Verbindung."); if(darfRendern()) render(); });
+}
+function altlisteKarte(){
+  var l=altlisteFunde();
+  var c=el('<div class="card"><div class="pad stack" style="gap:10px"><h2>Alte Liste prüfen ('+l.length+")</h2>"+
+    '<div class="sub">Suchlauf über die alte Excel-Liste: Stellen, die wie ein Versehen aussehen. Je Fund ansehen, als Frage für vor Ort weitergeben '+
+      "oder „passt so“ – dann kommt er nicht wieder.</div></div></div>");
+  var h=c.querySelector(".stack");
+  if(!l.length){ h.appendChild(el('<div class="muted" style="font-size:12.5px">Nichts Auffälliges (mehr).</div>')); return c; }
+  var arten=[]; l.forEach(function(f){ if(arten.indexOf(f.art)<0) arten.push(f.art); });
+  arten.forEach(function(art){
+    var g=l.filter(function(f){ return f.art===art; });
+    var d=el('<details class="posbox"'+(l.length<=12?" open":"")+'><summary style="cursor:pointer"><strong>'+esc(art)+"</strong> · "+g.length+"</summary>"+
+      '<div class="stack" style="gap:8px;margin-top:8px"></div></details>');
+    var dh=d.querySelector(".stack");
+    g.forEach(function(f){
+      var z=el('<div class="stack" style="gap:6px;border-top:1px solid var(--line);padding-top:8px">'+
+        '<div style="font-size:13px"><a href="#" class="sprunglink" data-markt="'+esc(f.s.id)+'"><strong>'+esc(stName(f.s))+"</strong></a> – "+esc(f.text)+"</div>"+
+        '<div class="rowflex" style="gap:6px"><button class="btn ghost sm" type="button" data-a="ansehen">Ansehen</button>'+
+          (vorOrtAn() && vorOrtBuero() ? '<button class="btn ghost sm" type="button" data-a="vorort">Vor Ort klären</button>' : "")+
+          '<button class="btn ghost sm" type="button" data-a="ok">Passt so</button></div></div>');
+      z.querySelector('[data-a="ansehen"]').onclick=function(){
+        if(f.pid && verwaltungDarf()) verwaltungSprung(f.s, function(ed){ return ed.querySelector('.terminzeile[data-pid="'+f.pid+'"]') || ed; });
+        else marktAnsicht(f.s.id);
+      };
+      var vo=z.querySelector('[data-a="vorort"]');
+      if(vo) vo.onclick=function(){ vorOrtNeu(f.s.id, {vorgabe:f.text, herkunft:"Prüfung der alten Liste", position_id:f.pid,
+        fertig:function(){ altlisteAblegen(f, "als Frage für vor Ort weitergegeben"); }}); };
+      z.querySelector('[data-a="ok"]').onclick=function(){ altlisteAblegen(f, "passt so"); };
+      dh.appendChild(z);
+    });
+    h.appendChild(d);
+  });
+  return c;
+}
+
+/* ---------- Auslastung (Büro 03.10.2026) ----------
+   Fällige Wartungen der nächsten 12 Monate gegen die freie Arbeitszeit der gewählten Personen.
+   Bedarf je Markt-Besuch: gelernte Arbeitszeit (arbeitStunden) + Hin- und Rückfahrt ab dem Betrieb;
+   dazu Störungen im Schnitt der letzten 12 Monate. Frei: Sollzeit je Tag (Arbeitszeit-Regel, ohne
+   Feiertage) ohne Urlaub, Krankenstand und ganztägig Privates laut Kalender. Nur fürs Büro. */
+function auslastungFahrtH(s){ return (s && s.lat!=null) ? 2*fahrH(BETRIEB, s) : 1; }
+/* Fahrt eines Monats: je FM-Region eine Rundfahrt ab dem Betrieb über alle fälligen Märkte dort
+   (nächster Markt zuerst, wie die Tourplanung; mehrtägig mit Übernachtung) – so wie tatsächlich gefahren wird */
+function auslastungFahrtMonat(sids){
+  var nachRegion={}, ohneLage=0;
+  sids.forEach(function(sid){ var s=byId[sid]; if(!s || s.lat==null){ ohneLage++; return; } (nachRegion[s.region||"?"]=nachRegion[s.region||"?"]||[]).push(s); });
+  var h=ohneLage;
+  Object.keys(nachRegion).forEach(function(r){
+    var punkte=[BETRIEB].concat(nachRegion[r]), folge=reihenfolgeIdx(function(i,j){ return fahrH(punkte[i], punkte[j]); }, punkte.length), hier=0;
+    folge.forEach(function(z){ h+=fahrH(punkte[hier], punkte[z]); hier=z; });
+    h+=fahrH(punkte[hier], BETRIEB);
+  });
+  return h;
+}
+function auslastungRechnen(personen){
+  var heute=isoLokal(new Date()), MON=[];
+  for(var i=0;i<12;i++){ var d=new Date(+heute.slice(0,4), +heute.slice(5,7)-1+i, 1); MON.push(isoLokal(d).slice(0,7)); }
+  var anfang=MON[0]+"-01", ende=plusMonate(MON[11]+"-01", 1);
+  var R={}; MON.forEach(function(m){ R[m]={monat:m, besuche:{}, wartungen:0, arbeitH:0, fahrtH:0, stoerH:0, freiH:0}; });
+  var dazu=function(m, p){ if(!R[m]) return; (R[m].besuche[p.standortId]=R[m].besuche[p.standortId]||[]).push(p); R[m].wartungen++; };
+  POS.forEach(function(p){
+    if(!p.naechste) return;
+    var x=p.naechste;
+    if(x<anfang){ dazu(MON[0], p); while(x<anfang) x=plusMonate(x, 12); }   /* überfällig: diesen Monat nachholen */
+    for(var n=0; n<3 && x<ende; n++){ dazu(x.slice(0,7), p); x=plusMonate(x, 12); }
+  });
+  MON.forEach(function(m){
+    var r=R[m];
+    Object.keys(r.besuche).forEach(function(sid){ r.arbeitH+=arbeitStunden(byId[sid], r.besuche[sid]).h; });
+    r.fahrtH=auslastungFahrtMonat(Object.keys(r.besuche));
+  });
+  /* Störungen: Schnitt der letzten 12 Monate je Monat */
+  var vor=plusTage(heute, -365), stoerH=0;
+  alleProtokolle().forEach(function(p){
+    if(p.geloescht || !istStoerung(p) || !p.datum || p.datum<vor || p.datum>heute) return;
+    stoerH+=stoerDauerMin(p.standortId)/60+auslastungFahrtH(byId[p.standortId]);
+  });
+  MON.forEach(function(m){ R[m].stoerH=stoerH/12; });
+  /* frei: Sollzeit der gewählten Personen ohne Abwesenheiten */
+  MON.forEach(function(m){
+    var t=m+"-01", r=R[m];
+    while(t.slice(0,7)===m){
+      var soll=sollMinutenTag(t)/60;
+      if(soll>0) personen.forEach(function(p){ if(!tourAbwesend(p.user_id, t)) r.freiH+=soll; });
+      t=plusTage(t, 1);
+    }
+  });
+  return MON.map(function(m){ return R[m]; });
+}
+function auslastungKarte(){
+  if(!tourBuero() || !planungAn()) return null;
+  var c=el('<div class="card"><div class="pad stack" style="gap:8px"><h2>Auslastung – die nächsten 12 Monate</h2>'+
+    '<div class="sub">Fällige Wartungen je Monat (gelernte Arbeitszeit je Markt und Fahrt) und Störungen (Schnitt der letzten 12 Monate) gegen die Sollzeit '+
+      "der gewählten Personen ohne Urlaub, Krankenstand und Feiertage. Eine Schätzung – Baustellen und Büro kommen noch dazu. "+
+      "Einen Monat antippen: welche Märkte fällig sind.</div>"+
+    '<div class="chips" data-wer><span class="muted">wird geladen …</span></div><div class="stack" style="gap:6px" data-monate></div></div></div>');
+  var werHost=c.querySelector("[data-wer]"), monHost=c.querySelector("[data-monate]");
+  var zeichnen=function(team){
+    var ohne=lsGet("ukt_auslastung_ohne", null);
+    /* vorgegeben: alle außer Test-, Präsentations- und Sammelkonten („Inhaber“, „Admin“ …) – das eigene Konto immer */
+    if(!Array.isArray(ohne)) ohne=team.filter(function(p){ return p.user_id!==meineKennung() && /test|pr(ä|ae)sentation|demo|^(inhaber|admin|techniker|kunde)$/i.test(String(p.name||"").trim()); }).map(function(p){ return p.user_id; });
+    var personen=team.filter(function(p){ return ohne.indexOf(p.user_id)<0; });
+    werHost.innerHTML="";
+    team.forEach(function(p){
+      var b=el('<button class="chip" type="button" aria-pressed="'+(ohne.indexOf(p.user_id)<0)+'">'+esc(p.name||"?")+"</button>");
+      b.onclick=function(){ var i=ohne.indexOf(p.user_id); if(i>=0) ohne.splice(i,1); else ohne.push(p.user_id); lsSet("ukt_auslastung_ohne", ohne); zeichnen(team); };
+      werHost.appendChild(b);
+    });
+    monHost.innerHTML="";
+    if(!personen.length){ monHost.appendChild(el('<div class="muted" style="font-size:12.5px">Bitte oben mindestens eine Person wählen.</div>')); return; }
+    auslastungRechnen(personen).forEach(function(r){
+      var bedarf=r.arbeitH+r.fahrtH+r.stoerH, pz=r.freiH ? Math.round(bedarf/r.freiH*100) : (bedarf?999:0);
+      var farbe=pz>=80 ? "var(--crit)" : pz>=60 ? "var(--warn)" : "var(--good)";
+      var maerkte=Object.keys(r.besuche).sort(function(a,b){ return nachMarktname(byId[a], byId[b]); });
+      var d=el('<details class="posbox"><summary style="cursor:pointer;list-style:none">'+
+          '<div class="rowflex" style="justify-content:space-between;gap:8px;flex-wrap:wrap"><strong>'+esc(MONATE_L[+r.monat.slice(5,7)]+" "+r.monat.slice(0,4))+"</strong>"+
+          '<span class="mono" style="font-size:12.5px">'+r.wartungen+" Wartung"+(r.wartungen===1?"":"en")+" · "+maerkte.length+" Märkte · ~"+Math.round(bedarf)+" h von "+Math.round(r.freiH)+" h · "+
+          (pz>=999?"keine freie Zeit":pz+" %")+"</span></div>"+
+          '<div style="height:6px;border-radius:3px;background:var(--line);margin-top:6px;overflow:hidden"><div style="height:100%;width:'+Math.min(100,pz)+"%;background:"+farbe+'"></div></div></summary>'+
+        '<div class="muted" style="font-size:12.5px;margin-top:6px">Arbeit ~'+Math.round(r.arbeitH)+" h · Fahrt ~"+Math.round(r.fahrtH)+" h · Störungen ~"+Math.round(r.stoerH)+" h</div>"+
+        '<div class="stack" style="gap:2px;margin-top:6px;font-size:13px">'+maerkte.map(function(sid){
+          var s=byId[sid], n=r.besuche[sid].length;
+          return '<div><a href="#" class="sprunglink" data-markt="'+esc(sid)+'">'+esc(stName(s))+"</a> – "+n+" Termin"+(n===1?"":"e")+"</div>"; }).join("")+"</div></details>");
+      monHost.appendChild(d);
+    });
+  };
+  chatTeamLaden().then(function(team){
+    zeichnen([{user_id:meineKennung(), name:meinName()+" (ich)"}].concat(team||[]));
+  });
+  return c;
+}
+
+/* ---------- Sicherung (Büro 03.10.2026) ----------
+   Einmal pro Woche (beim ersten Öffnen der App durch den Inhaber) legt die App den ganzen
+   Datenbestand gepackt im privaten Bereich „sicherungen“ ab (tools/sicherung.sql); am PC kopiert
+   sie auch neue Dateien (Fotos, PDFs, Projektdateien) dorthin. Zusätzlich erinnert sie den Inhaber,
+   die Sicherung herunterzuladen – das ist die Kopie außerhalb von Supabase, bis die Synology sie
+   abholt. Stand im Merker merker:sicherung. Nur Inhaber. */
+var SICHER_TABELLEN=[["protokolle","client_id"],["protokoll_fassungen",""],["protokoll_vermerke",""],["berichte","client_id"],["stammdaten","id"],
+  ["aenderungen",""],["planung","id"],["arbeitszeiten","id"],["stempel","id"],["projekte","id"],["kontakte","id"],["kundenliste",""],
+  ["belege","id"],["belegnummern",""],["katalog","id"],["abrechnung",""],["fahrzeuge","id"],["fahrzeug_eintraege","id"],["fahrzeug_kosten","id"],
+  ["touren","id"],["posteingang","id"],["aenderungswuensche","id"],["gelernte_werte",""],["anlagenfotos",""],["einstellungen",""],
+  ["rollen",""],["admins",""],["kennzahlen",""],["chat","id"],["vor_ort_fragen","id"]];
+var SICHER_BEREICHE=["protokollfotos","projektdateien","berichte","posteingang"];
+var sicherungLaeuft=false, sicherungGeprueft=false;
+function sicherungAn(){ return istInhaber() && betriebAn() && !demo() && !spielwiese() && !window.UKT_VORSCHAU; }
+function sicherungStand(){ return ((stammUeber["merker:sicherung"]||{}).felder)||{}; }
+function sicherungMerken(felder){
+  var alt=stammUeber["merker:sicherung"];
+  var m={id:"merker:sicherung", typ:"merker", ziel:"sicherung", felder:Object.assign({}, (alt&&alt.felder)||{}, felder),
+         neu:false, geaendert:new Date().toISOString(), von:wer(), grund:"Sicherung"};
+  stammUeber[m.id]=m;
+  return stammSpeichern(m).then(function(){}, function(){});
+}
+/* eine Tabelle vollständig (seitenweise); ohne passende Spalte zum Ordnen ungeordnet */
+function sicherungTabelle(t, schl){
+  var bau=function(mitOrdnung){ return function(){ var q=Store.sb.from(t).select("*"); return mitOrdnung ? q.order(schl) : q; }; };
+  return alleSeiten(bau(!!schl), schl||null).then(function(r){
+    if(r.error && schl) return alleSeiten(bau(false), null);
+    return r;
+  });
+}
+function sicherungErstellen(fortschritt){
+  var aus={art:"UKT-Leitstand-Sicherung", version:1, erstellt:new Date().toISOString(), von:meinName(), tabellen:{}};
+  var i=0, zeilen=0;
+  var weiter=function(){
+    if(i>=SICHER_TABELLEN.length){ aus.zeilen=zeilen; return Promise.resolve(aus); }
+    var t=SICHER_TABELLEN[i++];
+    if(fortschritt) fortschritt("Tabelle "+i+" von "+SICHER_TABELLEN.length+" – "+t[0]+" …");
+    return sicherungTabelle(t[0], t[1]).then(function(r){
+      if(r.error) aus.tabellen[t[0]]={fehler:r.error.message};
+      else { aus.tabellen[t[0]]={zeilen:r.data||[]}; zeilen+=(r.data||[]).length; }
+    }, function(e){ aus.tabellen[t[0]]={fehler:(e&&e.message)||"keine Verbindung"}; }).then(weiter);
+  };
+  return weiter();
+}
+function sicherungGepackt(text){
+  if(typeof CompressionStream==="undefined" || typeof Response==="undefined") return Promise.resolve(null);
+  try{ return new Response(new Blob([text]).stream().pipeThrough(new CompressionStream("gzip"))).blob(); }catch(e){ return Promise.resolve(null); }
+}
+/* den Datenbestand im privaten Bereich ablegen */
+function sicherungAblegen(fortschritt){
+  if(sicherungLaeuft) return Promise.reject(new Error("Eine Sicherung läuft schon."));
+  sicherungLaeuft=true;
+  var heute=isoLokal(new Date()), daten;
+  return sicherungErstellen(fortschritt).then(function(d){
+    daten=d;
+    if(fortschritt) fortschritt("wird gepackt …");
+    var text=JSON.stringify(d);
+    return sicherungGepackt(text).then(function(gz){
+      var blob=gz || new Blob([text], {type:"application/json"}), pfad="datenbank/"+heute+(gz?".json.gz":".json");
+      if(fortschritt) fortschritt("wird abgelegt ("+Math.round(blob.size/1024)+" KB) …");
+      return mitFrist(Store.sb.storage.from("sicherungen").upload(pfad, blob, {contentType:gz?"application/gzip":"application/json", upsert:true}), 120000);
+    });
+  }).then(function(r){
+    sicherungLaeuft=false;
+    if(r.error) throw new Error(/bucket|not found/i.test(r.error.message) ? "Der Bereich „sicherungen“ ist noch nicht eingerichtet (tools/sicherung.sql)." : r.error.message);
+    var fehlt=Object.keys(daten.tabellen).filter(function(t){ return daten.tabellen[t].fehler; });
+    sicherungMerken({abgelegt:new Date().toISOString(), zeilen:daten.zeilen, fehlend:fehlt});
+    return {zeilen:daten.zeilen, fehlend:fehlt};
+  }, function(e){ sicherungLaeuft=false; throw e; });
+}
+/* die Sicherung als Datei herunterladen (die Kopie außerhalb von Supabase) */
+function sicherungHerunterladen(knopf, fortschritt){
+  if(sicherungLaeuft){ toast("Eine Sicherung läuft gerade – bitte gleich noch einmal."); return; }
+  sicherungLaeuft=true;
+  if(knopf) knopf.disabled=true;
+  sicherungErstellen(fortschritt).then(function(d){
+    sicherungLaeuft=false; if(knopf) knopf.disabled=false;
+    var name="UKT-Sicherung-"+isoLokal(new Date())+".json";
+    var url=URL.createObjectURL(new Blob([JSON.stringify(d)], {type:"application/json"}));
+    var a=document.createElement("a"); a.href=url; a.download=name; document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(function(){ URL.revokeObjectURL(url); }, 30000);
+    sicherungMerken({heruntergeladen:new Date().toISOString()});
+    if(fortschritt) fortschritt("Heruntergeladen: "+name+" ("+d.zeilen+" Datensätze).");
+    toast("Sicherung heruntergeladen – bitte an einem sicheren Ort aufheben (enthält auch Zugangsdaten der Regelungen).");
+  }, function(e){ sicherungLaeuft=false; if(knopf) knopf.disabled=false; toast("Sicherung nicht erstellt: "+technikDeutsch((e&&e.message)||"keine Verbindung")); });
+}
+/* Dateien (Fotos, PDFs, Projektdateien) in den privaten Bereich kopieren – nur was noch fehlt */
+function sicherungListe(bereich, pfad){
+  var alle=[];
+  var seite=function(off){
+    return Store.sb.storage.from(bereich).list(pfad||"", {limit:1000, offset:off}).then(function(r){
+      if(r.error) throw new Error(r.error.message);
+      var l=r.data||[], unter=[];
+      l.forEach(function(x){ var p=(pfad?pfad+"/":"")+x.name; if(x.id==null && !x.metadata) unter.push(p); else alle.push(p); });
+      var weiter=l.length===1000 ? seite(off+1000) : Promise.resolve();
+      return weiter.then(function(){ return unter.reduce(function(pr, u){ return pr.then(function(){ return sicherungListe(bereich, u).then(function(x){ alle=alle.concat(x); }); }); }, Promise.resolve()); });
+    });
+  };
+  return seite(0).then(function(){ return alle; });
+}
+function sicherungDateien(fortschritt, hoechstens){
+  hoechstens=hoechstens||300;
+  var kopiert=0, fehler=0, offen=0;
+  return SICHER_BEREICHE.reduce(function(pr, b){
+    return pr.then(function(){
+      if(fortschritt) fortschritt("Dateien in „"+b+"“ werden gesucht …");
+      return Promise.all([sicherungListe(b, "").catch(function(){ return []; }), sicherungListe("sicherungen", "dateien/"+b).catch(function(){ return []; })]).then(function(x){
+        var da={}; x[1].forEach(function(p){ da[p.slice(("dateien/"+b+"/").length)]=1; });
+        var fehlt=x[0].filter(function(p){ return !da[p]; });
+        offen+=fehlt.length;
+        return fehlt.reduce(function(pr2, p){ return pr2.then(function(){
+          if(kopiert+fehler>=hoechstens) return;
+          if(fortschritt) fortschritt("Datei "+(kopiert+fehler+1)+" – "+b+"/"+p);
+          return Store.sb.storage.from(b).download(p).then(function(r){
+            if(r.error || !r.data) throw new Error(r.error ? r.error.message : "leer");
+            return Store.sb.storage.from("sicherungen").upload("dateien/"+b+"/"+p, r.data, {contentType:r.data.type||"application/octet-stream", upsert:true});
+          }).then(function(r){ if(r && r.error) throw new Error(r.error.message); kopiert++; offen--; }, function(){ fehler++; });
+        }); }, Promise.resolve());
+      });
+    });
+  }, Promise.resolve()).then(function(){
+    sicherungMerken({dateienKopiert:new Date().toISOString(), dateienOffen:Math.max(0, offen)});
+    return {kopiert:kopiert, fehler:fehler, offen:Math.max(0, offen)};
+  });
+}
+/* wöchentlich, still im Hintergrund: einmal je Sitzung prüfen; mehrere offene Fenster sichern nicht doppelt */
+function sicherungAutomatisch(){
+  if(sicherungGeprueft || !sicherungAn() || !stammdatenGeladenFuerSicherung()) return;
+  sicherungGeprueft=true;
+  var st=sicherungStand(), alt=st.abgelegt ? (Date.now()-new Date(st.abgelegt).getTime())/864e5 : 99;
+  if(alt<7) return;
+  var sperre=lsGet("ukt_sicherung_sperre", 0);
+  if(Date.now()-sperre<3600000) return;
+  lsSet("ukt_sicherung_sperre", Date.now());
+  setTimeout(function(){
+    if(!sicherungAn()) return;
+    sicherungAblegen().then(function(e){
+      toast("Wöchentliche Sicherung abgelegt ("+e.zeilen+" Datensätze)"+(e.fehlend.length?" – nicht lesbar: "+e.fehlend.join(", "):"")+".");
+      /* am PC auch die neuen Dateien – am Handy nicht (Datenvolumen) */
+      if(!schmalerBildschirm()) sicherungDateien(null, 300).then(function(){}, function(){});
+    }, function(e){ console.warn("Sicherung", e); });
+  }, 20000);
+}
+function stammdatenGeladenFuerSicherung(){ return stammGeladenKomplett && !stammLaedt; }
+function sicherungAlterText(iso){
+  if(!iso) return "noch nie";
+  var t=Math.floor((Date.now()-new Date(iso).getTime())/864e5);
+  return t<=0 ? "heute" : t===1 ? "gestern" : "vor "+t+" Tagen";
+}
+/* Erinnerung in „Fällig“: herunterladen, wenn die letzte Datei älter als eine Woche ist */
+function sicherungErinnerungKarte(){
+  if(!sicherungAn() || !stammdatenGeladenFuerSicherung()) return null;
+  var st=sicherungStand();
+  if(st.heruntergeladen && Date.now()-new Date(st.heruntergeladen).getTime()<7*864e5) return null;
+  var c=el('<div class="card"><div class="pad stack" style="gap:8px"><h2>Sicherung herunterladen</h2>'+
+    '<div class="sub">Zuletzt heruntergeladen: '+esc(sicherungAlterText(st.heruntergeladen))+". Die Datei ist die Kopie außerhalb von Supabase – "+
+      "bitte auf dem PC bzw. der Synology aufheben.</div>"+
+    '<div class="rowflex" style="gap:6px"><button class="btn sm" type="button">Jetzt herunterladen</button><span class="muted" style="font-size:12.5px" data-st></span></div></div></div>');
+  var st2=c.querySelector("[data-st]");
+  c.querySelector("button").onclick=function(){ sicherungHerunterladen(this, function(t){ st2.textContent=t; }); };
+  return c;
+}
+/* Verwaltung › Inhaber: Stand und Knöpfe */
+function sicherungKarte(){
+  if(!sicherungAn()) return null;
+  var st=sicherungStand();
+  var c=el('<div class="card"><div class="pad stack" style="gap:8px"><h2>Sicherung</h2>'+
+    '<div class="sub">Einmal pro Woche legt die App den ganzen Datenbestand im privaten Bereich „sicherungen“ ab, am PC auch neue Fotos und PDFs. '+
+      "Dazu die Datei zum Herunterladen – die Kopie außerhalb von Supabase. Sobald die Synology erreichbar ist, holt sie die Sicherung ab.</div>"+
+    '<div style="font-size:13px">Abgelegt: <strong>'+esc(sicherungAlterText(st.abgelegt))+"</strong>"+(st.zeilen?" ("+st.zeilen+" Datensätze)":"")+
+      (st.fehlend && st.fehlend.length ? ' <span class="muted">– nicht lesbar: '+esc(st.fehlend.join(", "))+"</span>" : "")+
+      "<br>Heruntergeladen: <strong>"+esc(sicherungAlterText(st.heruntergeladen))+"</strong>"+
+      "<br>Dateien kopiert: <strong>"+esc(sicherungAlterText(st.dateienKopiert))+"</strong>"+(st.dateienOffen?" ("+st.dateienOffen+" noch offen)":"")+"</div>"+
+    '<div class="rowflex" style="gap:6px;flex-wrap:wrap"><button class="btn sm" type="button" data-s="ablegen">Jetzt sichern</button>'+
+      '<button class="btn ghost sm" type="button" data-s="laden">Herunterladen</button>'+
+      '<button class="btn ghost sm" type="button" data-s="dateien">Dateien sichern</button></div>'+
+    '<div class="muted" style="font-size:12.5px" data-st></div></div></div>');
+  var info=c.querySelector("[data-st]"), f=function(t){ info.textContent=t; };
+  var knoepfe=function(an){ c.querySelectorAll("[data-s]").forEach(function(b){ b.disabled=!an; }); };
+  c.querySelector('[data-s="ablegen"]').onclick=function(){
+    knoepfe(false);
+    sicherungAblegen(f).then(function(e){ knoepfe(true); f("Abgelegt: "+e.zeilen+" Datensätze"+(e.fehlend.length?" – nicht lesbar: "+e.fehlend.join(", "):"")+".");
+      toast("Sicherung abgelegt."); },
+      function(e){ knoepfe(true); f("Nicht abgelegt: "+technikDeutsch((e&&e.message)||"keine Verbindung")); });
+  };
+  c.querySelector('[data-s="laden"]').onclick=function(){ sicherungHerunterladen(this, f); };
+  c.querySelector('[data-s="dateien"]').onclick=function(){
+    knoepfe(false);
+    sicherungDateien(f, 2000).then(function(e){ knoepfe(true);
+      f(e.kopiert+" Dateien kopiert"+(e.fehler?", "+e.fehler+" nicht":"")+(e.offen?", "+e.offen+" noch offen (nochmals tippen)":"")+"."); },
+      function(e){ knoepfe(true); f("Nicht kopiert: "+technikDeutsch((e&&e.message)||"keine Verbindung")); });
+  };
+  return c;
+}
+
+/* ---------- Angebot aus dem Folgeauftrag (Büro 03.10.2026) ----------
+   Aus den Mängeln eines Protokolls ein Angebotsentwurf: Betreff mit Markt und Anlage, eine Textzeile
+   mit dem Befund (Fotos im Protokoll), je Mangel eine Position – mit Katalog-Vorschlag, wenn ein
+   Katalogtext dazu passt, sonst ohne Preis –, dazu die Fahrtpauschale der Zone. Nur Inhaber. */
+function katalogVorschlag(text, kid){
+  var woerter=String(text||"").toLowerCase().split(/[^a-zäöüß0-9]+/).filter(function(w){ return w.length>=5; });
+  if(!woerter.length) return null;
+  var best=null, bestW=0;
+  KATALOG.forEach(function(k){
+    if(k.kunde_id && k.kunde_id!==kid) return;
+    var t=String(k.text||"").toLowerCase();
+    if(/fahrtpauschale|regiestunden/.test(t) || !(+k.preis>0)) return;
+    var gem=woerter.filter(function(w){ return t.indexOf(w.slice(0, Math.max(5, w.length-2)))>=0; });
+    var wert=gem.length+(gem.some(function(w){ return w.length>=9; }) ? 1 : 0);
+    if(wert>bestW){ best=k; bestW=wert; }
+  });
+  return bestW>=2 ? best : null;
+}
+function angebotAusFolge(p){
+  if(!nurInhaber()){ toast("Angebote erstellt nur der Inhaber."); return; }
+  var st=byId[p.standortId], kid=st ? kundeVon(st) : "lidl", so=p.stoerung||{};
+  katalogLaden().catch(function(){ return []; }).then(function(){
+    var mangel=(so.folgeauftrag ? [{text:so.folgeText||"Folgeauftrag", prio:""}] : []).concat(folgeMaengel(p));
+    var anl=(p.anlagen||[]).map(function(a){ return a.name; }).filter(Boolean).join(", ");
+    var pos=[{typ:"text", text:"Lt. "+(istStoerung(p)?"Störungseinsatz":"Wartungsprotokoll")+" vom "+dfmt(p.datum)+(p.techniker?" ("+p.techniker+")":"")+
+      (anl?" – Anlage: "+anl:"")+" festgestellt:\n"+mangel.map(function(m){ return "• "+m.text+(m.prio?" ("+m.prio+")":"")+(m.massnahme?" → "+m.massnahme:""); }).join("\n")+
+      ((p.fotos||[]).length ? "\nFotos: im Protokoll." : "")}];
+    var nr=0;
+    mangel.forEach(function(m){
+      var k=katalogVorschlag(m.text+" "+(m.massnahme||""), kid); nr++;
+      pos.push({typ:"pos", nr:String(nr), menge:1, eh:k?k.eh:"Stk", text:k ? k.text : (m.massnahme||m.text)+" – Preis fehlt im Katalog",
+        preis:k?+k.preis:0, katalog_id:k?k.id:null, alternativ:false});
+    });
+    var zone=fahrtZone(st), fk=zone ? katalogFinde(new RegExp("fahrtpauschale\\s*zone\\s*"+zone, "i"), kid) : null;
+    nr++;
+    pos.push(fk ? {typ:"pos", nr:String(nr), menge:1, eh:fk.eh, text:fk.text, preis:+fk.preis, katalog_id:fk.id, alternativ:false}
+                : {typ:"pos", nr:String(nr), menge:1, eh:"psh", text:zone ? "Fahrtpauschale Zone "+zone+" – Preis fehlt im Katalog" : "Fahrtpauschale – Zone unbekannt (Markt ohne Postleitzahl)", preis:0, katalog_id:null, alternativ:false});
+    var kopf={empfaenger:kundeAnschrift(kid), betreff:[(st&&st.filiale?"Filiale "+st.filiale+" ":"")+(st?stName(st):p.standortName||"")+", Angebot zu "+
+      (mangel.length===1?"einem Mangel":mangel.length+" Mängeln")+" aus "+(istStoerung(p)?"dem Störungseinsatz":"der Wartung")+" vom "+dfmt(p.datum)]};
+    belegNeu({projekt:null, protokoll:null, kunde_id:kid, standort_id:p.standortId||null, ausProtokoll:p._id}, "angebot", {kopf:kopf, positionen:pos}, function(){
+      /* gespeichert: der Folgeauftrag ist erledigt (Angebot liegt bei den Belegen) */
+      var m={id:folgeMerkerId(p._id), typ:"merker", ziel:"folge:"+p._id, felder:{ergebnis:"Angebot entworfen"},
+             neu:false, geaendert:new Date().toISOString(), von:wer(), grund:"Folgeauftrag: Angebot entworfen"};
+      stammUeber[m.id]=m;
+      stammSpeichern(m).then(function(){ if(darfRendern()) render(); }, function(){ delete stammUeber[m.id]; });
+    });
+  });
+}
+
+/* Zahl am Reiter Datenpflege: pausierte Märkte, offene Fragen für vor Ort, Funde der alten Liste */
+function datenpflegeZahl(){ return datenpflegeMaerkte().length+vorOrtOffen().length+altlisteFunde().length; }
 function datenpflegeMaerkte(){ return ST.filter(function(s){ return marktPausiert(s) && /datenpflege/i.test(s.pausiertGrund||""); }); }
 function datenpflegePunkte(s){
   var p=[{l:"Adresse (PLZ, Ort)", ok:!!(s.plz && s.ort)}, {l:"Lage auf der Karte (Adresse)", ok:s.lat!=null && s.genauigkeit==="adresse"}];
@@ -18578,7 +19169,7 @@ function viewVerwaltung(){
   if(A.tab==="wuensche" && demo()) A.tab="nachbessern";
   var menue=el('<div class="card"><div class="pad"><div class="chips" role="tablist" style="gap:8px">'+
     [["nachbessern","Nachbessern"+(fehlerZahl?" · "+fehlerZahl+" Fehler":"")],["maerkte","Märkte & Anlagen"]]
-      .concat(datenpflegeMaerkte().length ? [["datenpflege","Datenpflege · "+datenpflegeMaerkte().length]] : [])
+      .concat(datenpflegeZahl() ? [["datenpflege","Datenpflege · "+datenpflegeZahl()]] : [])
       /* Änderungswünsche: was auf eine Entscheidung wartet, steht als Zahl dran */
       /* nicht in der Vorschau/Präsentation (demo): dort dürfen die Wünsche weder
          geladen noch abgeglichen werden – der Reiter stünde nur leer da */
@@ -18592,7 +19183,7 @@ function viewVerwaltung(){
     render(); window.scrollTo({top:0}); }; });
   f.appendChild(menue);
   if(A.tab==="nachbessern"){ f.appendChild(nachbessernAnsicht(liste)); return f; }
-  if(A.tab==="datenpflege"){ f.appendChild(datenpflegeAnsicht()); return f; }
+  if(A.tab==="datenpflege"){ f.appendChild(vorOrtUebersichtKarte()); f.appendChild(altlisteKarte()); f.appendChild(datenpflegeAnsicht()); return f; }
   if(A.tab==="wuensche"){
     try{ f.appendChild(wuenscheAnsicht()); }catch(e){ console.error(e); }
     return f;
@@ -18600,6 +19191,7 @@ function viewVerwaltung(){
   if(A.tab==="inhaber"){
     /* ein Fehler in der Inhaber-Karte darf die Verwaltung nie blockieren */
     try{ f.appendChild(inhaberKarte()); }catch(e){ console.error(e); }
+    try{ var sk=sicherungKarte(); if(sk) f.appendChild(sk); }catch(e){ console.error(e); }
     return f;
   }
   if(A.vonNachbessern){
@@ -20663,13 +21255,13 @@ var ANSICHT_ORDNUNG={
   faellig:[
     {klasse:"kpis", seite:"oben", fest:true},
     {h:/^Heute für dich/, seite:"haupt", key:"heute"},
-    {h:/^Rückfragen/, seite:"neben"}, {h:/^Posteingang/, seite:"neben"}, {h:/^Diese Woche/, seite:"neben"},
+    {h:/^Rückfragen/, seite:"neben"}, {h:/^Posteingang/, seite:"neben"}, {h:/^Diese Woche/, seite:"neben"}, {h:/^Sicherung herunterladen/, seite:"neben"},
     {h:/^Offene Störungen/, seite:"haupt"},
     {h:/^Laufende Projekte/, seite:"neben"}, {h:/^Fälligkeiten nach/, seite:"neben", handyZu:true},
     {h:/./, seite:"haupt"}],
   kalender:[
     {h:/^Urlaubsanträge/, seite:"neben", key:"urlaub"}, {h:/^Kalender/, seite:"haupt", fest:true}, {h:/^To-do/, seite:"neben", key:"todo"},
-    {h:/^Wartungen /, seite:"neben", key:"wartungen", handyZu:true}],
+    {h:/^Wartungen /, seite:"neben", key:"wartungen", handyZu:true}, {h:/^Auslastung/, seite:"neben", key:"auslastung", handyZu:true}],
   stunden:[
     {h:/^Stempeluhr/, seite:"neben", key:"stempel"}, {h:/^Meine Arbeitszeit/, seite:"haupt", fest:true},
     {h:/^Alle Mitarbeiter/, seite:"unten", key:"alle"}],
@@ -21228,6 +21820,7 @@ function handbuchKarte(z){
       "<p><strong>Techniker – ein Einsatz</strong></p>"+liste([
         "<strong>Was steht an?</strong> Reiter <em>Fällig</em>: „Heute für dich“ (Kalender), offene Störungen, anstehende Wartungen. Reiter <em>Kalender</em>: Monat, Woche, Tag oder Liste (die Woche am Handy wie am iPhone: 3 Tage nebeneinander, wählbar 7 Tage oder Liste) – in Tag und Woche in eine freie Zeit tippen legt dort einen Termin an, einen Termin ziehen verschiebt ihn (am Handy kurz halten, dann ziehen), wischen wechselt den Tag; „nur Störungen“ zeigt Einsätze und Lidl-Zieltermine; eine geschickte Tour steht mit Uhrzeiten im Kalender des Technikers, und die Tour kann Termine, Aufgaben und Projekte mit einplanen; „🔍 Planung prüfen“ (Person wählen) zeigt eine kürzere Reihenfolge, zu knappe Fahrten und übersehene Wartungen/Störungen am Markt und in der Nähe; Fahrzeiten zwischen den Einsätzen stehen dabei.",
         "<strong>Protokoll beginnen:</strong> Wartungszeile oder Störung antippen – oder Reiter <em>Protokoll</em> → „Schritt für Schritt ausfüllen“.",
+        "<strong>Vor Ort klären:</strong> steht oben im Protokoll eine Frage des Büros (etwa „Welche Hausnummer?“, „Dieselbe Anlage?“), bitte kurz antworten – sie erscheint nur, wenn es an diesem Markt eine gibt.",
         "<strong>Markt und Anlagen:</strong> gewartete (bzw. betroffene) Anlagen anhaken. Fehlt eine, „+ Anlage fehlt“ – erst prüfen, ob sie nicht doch in der Liste steht.",
         "<strong>Je Anlage:</strong> Anlagendaten ergänzen (Typenschild und Prüfbuch des Außengeräts, Kältemittel und Füllmenge aus dem Prüfbuch; Fotos kann die KI lesen), "+
           "Inbetriebnahme und Termine bestätigen, „Heute gewartet als“ wählen – bei einer neuen Anlage mit zwei Terminen bestimmt das, welcher Termin heute erledigt ist.",
@@ -21243,9 +21836,12 @@ function handbuchKarte(z){
           "größere Runden über die <em>Tourenplanung</em> (Reiter Karte) an einen Techniker schicken.",
         "<strong>Daten pflegen:</strong> <em>Verwaltung</em> → Nachbessern (Widersprüche und Lücken, das Dringendste zuerst), Doppelanlagen zusammenführen, Märkte und Anlagen ändern. "+
           "Was Techniker vor Ort ergänzt haben, steht im Änderungsverlauf und lässt sich dort zurücknehmen.",
+        "<strong>Vor Ort klären und alte Liste:</strong> <em>Verwaltung</em> → Datenpflege: Fragen für den nächsten Besuch stellen (auch im Markt-Fenster), Antworten abhaken; „Alte Liste prüfen“ zeigt, was in der Excel-Liste wie ein Versehen aussieht – ansehen, als Frage weitergeben oder „passt so“.",
+        "<strong>Auslastung:</strong> <em>Kalender</em> → „Auslastung“: fällige Wartungen der nächsten 12 Monate (Arbeit, Fahrt je Region, Störungen) gegen die freie Zeit der gewählten Personen – Engpässe früh sehen.",
         "<strong>Berichte:</strong> <em>Verlauf</em> → Monatsbericht für Lidl, Kältemittel-Bilanz, Export."])+
       "<p><strong>Inhaber</strong></p>"+liste([
-        "<strong>Projekte</strong> von der Anfrage bis zur Rechnung, Angebote und Rechnungen (nur du), Zusammenfassung als PDF.",
+        "<strong>Projekte</strong> von der Anfrage bis zur Rechnung, Angebote und Rechnungen (nur du), Zusammenfassung als PDF. Folgeaufträge aus Protokollen: „Angebot entwerfen“ füllt das Angebot mit Befund, passenden Katalogpositionen und Fahrtpauschale.",
+        "<strong>Sicherung:</strong> einmal pro Woche automatisch im privaten Speicher; <em>Fällig</em> erinnert ans Herunterladen (die Kopie außerhalb von Supabase). Stand und Knöpfe: <em>Verwaltung</em> → Inhaber.",
         "<strong>Stunden:</strong> Monatsübersicht aller, Lohnauswertung, Monat bestätigen. <strong>Urlaub</strong> genehmigen im Kalender.",
         "<strong>Freigaben:</strong> Änderungswünsche, Vermerke an Protokollen, Rollen und Einstellungen."])+
       "<div class='rg-hb' data-rg-auswahl></div>", true)+
@@ -23733,7 +24329,7 @@ function folgeKarte(){
   if(!l.length) return null;
   var c=el('<div class="card" id="folge_karte"><div class="pad stack" style="gap:8px">'+
     "<h2>Folgeaufträge – Angebot? ("+l.length+")</h2>"+
-    '<div class="sub">Aus den Protokollen: festgestellte Mängel und „Folgeauftrag erforderlich“. „Projekt anlegen“ führt weiter zu Angebot und Rechnung; '+
+    '<div class="sub">Aus den Protokollen: festgestellte Mängel und „Folgeauftrag erforderlich“. „Angebot entwerfen“ füllt ein Angebot mit dem Befund und passenden Katalogpositionen; „Projekt anlegen“ führt über das Projekt zu Angebot und Rechnung; '+
       "„Kein Angebot“ fragt nach dem Grund. Nur für den Inhaber sichtbar.</div></div></div>");
   var host=c.querySelector(".stack");
   l.forEach(function(p){
@@ -23744,7 +24340,8 @@ function folgeKarte(){
       '<div class="rowflex" style="justify-content:space-between;gap:8px"><strong>'+esc(protoName(p))+"</strong>"+
         '<span class="muted" style="font-size:12.5px">'+esc((istStoerung(p)?"Störung":"Wartung")+" "+dfmt(p.datum)+(p.techniker?" · "+p.techniker:""))+"</span></div>"+
       '<div style="font-size:13px">'+was.map(function(w){ return "• "+esc(w); }).join("<br>")+"</div>"+
-      '<div class="rowflex" style="gap:6px"><button class="btn sm" type="button" data-f="projekt">Projekt anlegen</button>'+
+      '<div class="rowflex" style="gap:6px"><button class="btn sm" type="button" data-f="angebot">Angebot entwerfen</button>'+
+        '<button class="btn ghost sm" type="button" data-f="projekt">Projekt anlegen</button>'+
         '<button class="btn ghost sm" type="button" data-f="ansehen">Protokoll ansehen</button>'+
         '<button class="btn ghost sm" type="button" data-f="kein">Kein Angebot</button></div></div>');
     z.querySelector('[data-f="projekt"]').onclick=function(){
@@ -23752,6 +24349,7 @@ function folgeKarte(){
         titel:(so.folgeauftrag && so.folgeText) || ("Folgeauftrag "+protoName(p)),
         text:"Aus dem "+(istStoerung(p)?"Störungseinsatz":"Wartungsprotokoll")+" vom "+dfmt(p.datum)+":\n"+was.join("\n")+(so.massnahmen?"\nMaßnahmen: "+so.massnahmen:"")});
     };
+    z.querySelector('[data-f="angebot"]').onclick=function(){ angebotAusFolge(p); };
     z.querySelector('[data-f="ansehen"]').onclick=function(){ protokollFenster(p); };
     z.querySelector('[data-f="kein"]').onclick=function(){
       textAbfrage("Warum kein Angebot? Zum Beispiel „schon erledigt“ oder „Lidl macht selbst“.", {titel:"Kein Angebot", feld:"Grund", ok:"Ablegen", pflicht:"Ohne Grund wird nicht abgelegt."}).then(function(g){
@@ -24929,7 +25527,7 @@ function belegNeu(kx, art, vorlage, fertig){
     if(art==="rechnung") delete kopf.gueltigBis;
     else if(!kopf.gueltigBis) kopf.gueltigBis=isoLokal(new Date(Date.now()+60*864e5));
     var b={art:art, nummer:nr, test:BELEG_EINST.modus!=="echt", extern:false, datum:isoLokal(new Date()), status:"entwurf", bezug_id:vorlage&&vorlage.id||null,
-      kopf:kopf, positionen:pos, projekt_id:kx.projekt?kx.projekt.id:null, protokoll_id:kx.protokoll?kx.protokoll._id:null, kunde_id:kx.kunde_id, standort_id:kx.standort_id};
+      kopf:kopf, positionen:pos, projekt_id:kx.projekt?kx.projekt.id:null, protokoll_id:kx.protokoll?kx.protokoll._id:(kx.ausProtokoll||null), kunde_id:kx.kunde_id, standort_id:kx.standort_id};
     belegEditor(kx, b, fertig, art==="rechnung" && vorlage && kx.projekt ? baubuchVorschlaege(kx.projekt, pos) : null);
   }, function(e){ toast("Nicht möglich: "+e.message); });
 }
@@ -25876,7 +26474,8 @@ function planungLaden(){
   var konto=Store.benutzer.email;
   if(konto!==planungKonto){ planungKonto=konto; PLANUNG=[]; PLAN_PRIVAT={}; planungGeladen=false; }
   planungLaedt=true;
-  startpunkteLaden(); gelerntLaden(); dauernLaden();
+  startpunkteLaden(); gelerntLaden(); dauernLaden(); vorOrtLaden();
+  try{ sicherungAutomatisch(); }catch(e){ console.warn("Sicherung", e); }
   return Promise.all([
     Store.sb.from("planung").select("*").order("datum").limit(5000),
     Store.sb.from("planung_privat").select("*").limit(5000)
@@ -26251,6 +26850,8 @@ function viewKalender(){
   td.querySelector(".stack").appendChild(aufgabenListe(S.kalWer));
   f.appendChild(td);
   /* fällige Wartungen des gezeigten Monats – zum Einplanen */
+  /* Büro: wie voll die nächsten 12 Monate werden (Büro 03.10.2026) */
+  var ausl=auslastungKarte(); if(ausl) f.appendChild(ausl);
   f.appendChild(wartungenEinplanenKarte(S.kalModus==="monat" ? S.kMonat : S.kalModus==="tag" ? (S.kTag||heute).slice(0,7) : S.kalModus==="liste" ? heute.slice(0,7) : plusTage(S.kalWoche,3).slice(0,7)));
   /* Urlaubsanträge für den Inhaber */
   if(istInhaber()){
