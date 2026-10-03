@@ -127,6 +127,9 @@ Kammerlander Umwelt- und Klimatechnik (UKT) – oft kurz, vom Handy, im Feld.
   Je Schritt ein Kasten „Im Hintergrund“ (`RG_HG`: was die App dort selbst übernimmt, speichert, weiterreicht),
   dazu der Rundgang „hintergrund“ (Daten, Verknüpfungen, Fälligkeit, Automatik, Lernen, Nachrichten, Rechte; Büro 03.10.2026).
   Neue Automatik dort mit eintragen.
+  Themen-Rundgänge (`thema:true`, `fuer()`; Büro 03.10.2026 „noch detaillierter“): Kalender und Wochenplanung, Protokoll,
+  Störungen, Tourenplanung, Stunden/Fahrzeuge, Projekte/Kontakte, Märkte/Anlagen/Verlauf, Verwaltung, Rechnungen – Auswahl
+  „Nach Rolle“ / „Nach Thema“ (`rundgangAuswahl`). Der Test klickt jeden angebotenen Rundgang je Rolle durch.
 - Schmale Navigationsleiste (`sprungleiste`, `seitenLeiste`, Büro 02.10.2026): rechts ein Punkt
   je Abschnitt auf langen Seiten und in großen Fenstern; Protokoll-Abschnitte einklappbar
   (`fieldsetsKlappbar`, `fs-zu`; Pflichtprüfung und Sprünge klappen von selbst auf).

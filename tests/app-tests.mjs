@@ -598,15 +598,19 @@ test("Angebot aus dem Folgeauftrag: Befund, Katalog-Vorschlag und Fahrtpauschale
 });
 
 test("Rundgänge: jeder Rundgang läuft in jeder Rolle bis zum Ende, die gezeigten Stellen werden gefunden", async () => {
-  for (const [konto, arten] of [[KONTEN.inhaber, ["techniker", "admin", "inhaber", "hintergrund"]], [KONTEN.techniker, ["techniker", "hintergrund"]]]) {
+  for (const konto of [KONTEN.inhaber, KONTEN.admin, KONTEN.techniker]) {
     const a = await oeffnen(konto);
+    /* genau die Rundgänge, die diese Rolle angeboten bekommt (nach Rolle und nach Thema) */
+    const arten = await a.seite.evaluate(() => { const x = window.__t.x, R = x("RUNDGAENGE"), l = ["techniker"];
+      if (x("rundgangBuero()")) l.push("admin"); if (x("istInhaber()||demo()")) l.push("inhaber"); l.push("hintergrund");
+      Object.keys(R).forEach((k) => { if (R[k].thema && (!R[k].fuer || R[k].fuer())) l.push(k); }); return l; });
     const r = await a.seite.evaluate(async (arten) => {
       const x = window.__t.x, warte = (ms) => new Promise((f) => setTimeout(f, ms)), erg = {};
       for (const art of arten) {
         x("rundgangStarten('" + art + "')"); await warte(300);
         const schritte = [];
         for (let i = 0; i < 40; i++) {
-          await warte(900);
+          await warte(600);
           const R = x("RUNDGANG"); if (!R) break;
           const s = R.schritte[R.i];
           schritte.push({ titel: s.titel, mitZiel: !!s.ziel, gefunden: !!R.el, text: (document.querySelector("#rundgang .rg-text") || {}).textContent || "" });
