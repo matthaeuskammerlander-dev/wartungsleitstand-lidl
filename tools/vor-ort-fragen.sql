@@ -37,7 +37,8 @@ create policy "vor ort loeschen"  on public.vor_ort_fragen for delete to authent
 create or replace function public.vor_ort_pruefen() returns trigger
 language plpgsql security invoker set search_path = public as $$
 begin
-  if not (public.ist_admin() or public.ist_inhaber()) then
+  -- ohne Anmeldung (SQL-Editor, Server) ist es Wartung durch das Büro
+  if auth.uid() is not null and not (public.ist_admin() or public.ist_inhaber()) then
     if new.frage is distinct from old.frage or new.standort_id is distinct from old.standort_id
        or new.position_id is distinct from old.position_id or new.herkunft is distinct from old.herkunft
        or new.angelegt is distinct from old.angelegt or new.angelegt_von is distinct from old.angelegt_von
