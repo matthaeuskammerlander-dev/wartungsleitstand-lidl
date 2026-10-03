@@ -124,6 +124,9 @@ Kammerlander Umwelt- und Klimatechnik (UKT) – oft kurz, vom Handy, im Feld.
   `standardZu` am Handy, `klappLeiste` „Alles zu-/aufklappen“). Geführte Rundgänge
   (`RUNDGAENGE`, `rundgangStarten`: hebt echte Elemente hervor, trägt nie etwas ein) –
   bei neuen Funktionen den passenden Schritt und das Handbuch (`handbuchKarte`) ergänzen.
+  Je Schritt ein Kasten „Im Hintergrund“ (`RG_HG`: was die App dort selbst übernimmt, speichert, weiterreicht),
+  dazu der Rundgang „hintergrund“ (Daten, Verknüpfungen, Fälligkeit, Automatik, Lernen, Nachrichten, Rechte; Büro 03.10.2026).
+  Neue Automatik dort mit eintragen.
 - Schmale Navigationsleiste (`sprungleiste`, `seitenLeiste`, Büro 02.10.2026): rechts ein Punkt
   je Abschnitt auf langen Seiten und in großen Fenstern; Protokoll-Abschnitte einklappbar
   (`fieldsetsKlappbar`, `fs-zu`; Pflichtprüfung und Sprünge klappen von selbst auf).

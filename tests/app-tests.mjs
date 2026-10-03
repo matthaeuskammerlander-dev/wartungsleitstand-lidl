@@ -597,6 +597,39 @@ test("Angebot aus dem Folgeauftrag: Befund, Katalog-Vorschlag und Fahrtpauschale
   await a.zu();
 });
 
+test("Rundgänge: jeder Rundgang läuft in jeder Rolle bis zum Ende, die gezeigten Stellen werden gefunden", async () => {
+  for (const [konto, arten] of [[KONTEN.inhaber, ["techniker", "admin", "inhaber", "hintergrund"]], [KONTEN.techniker, ["techniker", "hintergrund"]]]) {
+    const a = await oeffnen(konto);
+    const r = await a.seite.evaluate(async (arten) => {
+      const x = window.__t.x, warte = (ms) => new Promise((f) => setTimeout(f, ms)), erg = {};
+      for (const art of arten) {
+        x("rundgangStarten('" + art + "')"); await warte(300);
+        const schritte = [];
+        for (let i = 0; i < 40; i++) {
+          await warte(900);
+          const R = x("RUNDGANG"); if (!R) break;
+          const s = R.schritte[R.i];
+          schritte.push({ titel: s.titel, mitZiel: !!s.ziel, gefunden: !!R.el, text: (document.querySelector("#rundgang .rg-text") || {}).textContent || "" });
+          document.querySelector('#rundgang [data-rg="weiter"]').click();
+        }
+        erg[art] = { schritte, offen: !!x("RUNDGANG") };
+        x("rundgangEnde()"); x("ansichtenSchliessen()");
+      }
+      return erg;
+    }, arten);
+    for (const art of arten) {
+      const g = r[art];
+      pruefe(g && g.schritte.length >= 5 && !g.offen, "Rundgang " + art + " läuft nicht durch: " + JSON.stringify(g && g.schritte.map((s) => s.titel)));
+      pruefe(g.schritte.every((s) => s.text.length > 20 && !/undefined|NaN/.test(s.text)), "Rundgang " + art + ": leerer oder kaputter Text");
+      const fehlt = g.schritte.filter((s) => s.mitZiel && !s.gefunden).map((s) => s.titel);
+      /* ein, zwei Stellen dürfen fehlen (etwa leere Listen in den Testdaten) – mehr heißt: der Rundgang zeigt ins Leere */
+      pruefe(fehlt.length <= 2, "Rundgang " + art + " (" + konto + "): Stelle nicht gefunden bei " + fehlt.join(", "));
+    }
+    pruefe(!a.fehler.length, "Laufzeitfehler (" + konto + "): " + a.fehler.join("; "));
+    await a.zu();
+  }
+});
+
 /* Gründlich (nur mit --gruendlich, dauert einige Minuten): jeden Knopf in jedem Reiter je Rolle antippen,
    im aufgehenden Dialog den Hauptknopf – und melden, was abstürzt, hängt, NaN zeigt oder sich endlos neu zeichnet */
 if (process.argv.includes("--gruendlich")) test("Gründlich: jeden Knopf in jedem Reiter antippen (Inhaber, Techniker, Präsentation)", async () => {
