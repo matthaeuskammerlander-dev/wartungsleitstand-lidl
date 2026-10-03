@@ -900,6 +900,13 @@ test("Störungsauftrag: breit genug am Laptop, Ausnahme bei der Auftragsnummer, 
       ohneBeiNummer: !!d.querySelector('[data-s="auftragsnummer"]').closest(".stack")?.querySelector("#st_ohne") };
     const fl = d.querySelector('[data-s="terminTechniker"]').closest("label"), nr = d.querySelector('[data-s="auftragsnummer"]').closest("label");
     voll.chipsBreiter = fl.getBoundingClientRect().width > nr.getBoundingClientRect().width * 1.5;
+    /* Knöpfe statt doppelt: Textfeld zu, „jemand anderes …“ öffnet es, ein Knopf schließt es wieder */
+    const tf = d.querySelector('[data-s="terminTechniker"]'), wl = tf.closest("[data-wahl]");
+    const zu1 = tf.style.display === "none";
+    [...wl.querySelectorAll(".chip")].pop().click(); await warte(50);
+    const auf = tf.style.display !== "none";
+    const k1 = wl.querySelector(".chip[data-lern]"); k1.click(); await warte(50);
+    voll.wahl = zu1 && auf && tf.style.display === "none" && tf.value === k1.dataset.w;
     d.querySelector('[data-s="auftragsnummer"]').scrollIntoView({ block: "start" });
     return voll;
   });
@@ -917,7 +924,8 @@ test("Störungsauftrag: breit genug am Laptop, Ausnahme bei der Auftragsnummer, 
   pruefe(!r.voll.ki && r.leer.ki, "KI-Knopf falsch: " + JSON.stringify(r));
   pruefe(r.voll.breite >= 850, "Dialog zu schmal: " + r.voll.breite);
   pruefe(r.voll.ohneBeiNummer, "Ausnahme steht nicht bei der Auftragsnummer");
-  pruefe(r.voll.chipsBreiter, "Felder mit Knöpfen nicht über zwei Spalten");
+  pruefe(r.voll.chipsBreiter, "Felder mit Knöpfen nicht über die ganze Breite");
+  pruefe(r.voll.wahl, "Auswahl-Knöpfe und Textfeld arbeiten nicht zusammen");
   pruefe(!a.fehler.length, "Laufzeitfehler: " + a.fehler.join("; "));
   await a.zu();
 });

@@ -518,7 +518,14 @@ input[aria-invalid="true"]{border-color:var(--crit);box-shadow:0 0 0 1px var(--c
 .as-karte.breit{width:min(1180px,100%)}
 /* Störungsauftrag (Büro 03.10.2026: „am Laptop sehr schmal“): mittelbreit; Felder mit Auswahl-Knöpfen über zwei Spalten */
 .as-karte.mittel{width:min(920px,100%)}
-@media (min-width:700px){ .st-zwei{grid-column:span 2} }
+.st-gruppe{border-top:1px solid var(--line);margin-top:14px;padding-top:10px}
+.st-gruppe>h3{margin:0 0 8px;font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--accent)}
+.st-raster{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px 14px;align-items:start}
+.st-raster.zwei{grid-template-columns:repeat(2,minmax(0,1fr))}
+.st-raster select{width:100%}
+.st-voll{grid-column:1/-1}
+@media (max-width:640px){ .st-raster{grid-template-columns:repeat(2,minmax(0,1fr))} .st-raster.zwei{grid-template-columns:1fr} }
+@media (max-width:380px){ .st-raster{grid-template-columns:1fr} }
 @media (min-width:900px){ .as-karte.breit{height:min(94vh,1400px)} }
 @media (min-width:1500px){ .as-karte.breit{width:min(1440px,100%)} }
 /* zwei Spalten auf großen Bildschirmen: Hauptsache links, Begleitendes rechts.
@@ -2425,8 +2432,48 @@ function stoerungAngabenFehlen(o){
   return [["auftragsnummer","Auftragsnummer"],["filialCode","Filial-Nr."],["problemtyp","Problemtyp"],["zieltermin","Zieltermin"],["beschreibung","Beschreibung"]]
     .filter(function(x){ return !String(o[x[0]]||"").trim() && !(x[0]==="filialCode" && o.standortId) && !(x[0]==="auftragsnummer" && o.ohneAuftrag); }).map(function(x){ return x[1]; });
 }
+/* Abschnitte des Störungsauftrags: Titel und Felder (Schlüssel aus FELDER bzw. beschreibung/notiz) */
+var STOER_GRUPPEN=[
+  ["Auftrag", ["auftragsnummer","filialCode","stoerungsnr","auftragsdatum","zieltermin"]],
+  ["Problem", ["problemtyp","beschreibung"]],
+  ["Einsatz", ["termin","terminZeit","terminTechniker"]],
+  ["Gerät laut Lidl", ["lin","hersteller","lidlTyp","lidlModell"]],
+  ["Kontakt und Notiz", ["lidlKontakt","lidlTelefon","notiz"]]
+];
 function stoerungTeilFormular(P){
   var o=P.o, inhalt=P.inhalt, anfang=P.anfang, FELDER=P.FELDER;
+  /* ein Feld: mit Auswahl-Knöpfen über die ganze Breite – das Textfeld erst bei „anderer …“ */
+  function stoerFeldHtml(k){
+    if(k==="beschreibung") return '<label class="fl st-voll"><span>Beschreibung laut Auftrag</span><textarea data-s="beschreibung" rows="3">'+esc(o.beschreibung||"")+"</textarea></label>";
+    if(k==="notiz") return '<label class="fl st-voll"><span>Notiz</span><input type="text" data-s="notiz" value="'+esc(o.notiz||"")+'" placeholder="z. B. Schlüssel beim Marktleiter"></label>';
+    var f=FELDER.filter(function(x){ return x[0]===k; })[0]; if(!f) return "";
+    var knoepfe=(LERN_STOER.indexOf(k)>=0 ? lernChips(gelernteStoerWerte(k), o[k], '[data-s="'+k+'"]', "st_"+k) : "")+
+      /* „Wer fährt hin“: die eigenen Leute zuerst, dann wer zuletzt gefahren ist */
+      (k==="terminTechniker" ? lernChips(technikerVorschlaege(), o[k], '[data-s="terminTechniker"]', "st_terminTechniker") : "");
+    var feld='<label class="fl'+(knoepfe?' st-voll" data-wahl="'+(k==="terminTechniker"?"jemand anderes":"anderer")+'"':'"')+'><span'+(f[3]?' class="req"':"")+">"+esc(f[1])+"</span>"+knoepfe+
+      '<input type="'+f[2]+'" data-s="'+k+'" value="'+esc(o[k]||"")+'"'+(LERN_STOER.indexOf(k)>=0?' data-merk="st_'+k+'"':"")+"></label>";
+    /* die Ausnahme gehört zur Auftragsnummer (Büro 03.10.2026) */
+    if(k==="auftragsnummer") return '<div class="stack" style="gap:4px">'+feld+
+      '<label class="chk" style="font-size:12.5px" title="Ausnahme, z. B. telefonisch beauftragt – die Auftragsnummer folgt oder entfällt"><input type="checkbox" id="st_ohne"'+(o.ohneAuftrag?" checked":"")+">"+
+      "<span>ohne Lidl-Auftrag (telefonisch)</span></label></div>";
+    return feld;
+  }
+  /* Knöpfe statt doppelt: passt der Wert zu einem Knopf (oder ist leer), bleibt das Textfeld zu */
+  function wahlFelder(){
+    inhalt.querySelectorAll("[data-wahl]").forEach(function(l){
+      var inp=l.querySelector("input"), box=l.querySelector(".chips"), knoepfe=[].slice.call(box.querySelectorAll(".chip[data-lern]"));
+      var andere=el('<button class="chip" type="button">'+esc(l.dataset.wahl)+" …</button>");
+      box.appendChild(andere);
+      var frei=function(an){ inp.style.display=an?"":"none"; andere.setAttribute("aria-pressed", String(an)); };
+      var v=inp.value.trim();
+      frei(!!v && !knoepfe.some(function(c){ return c.dataset.w===v; }));
+      andere.onclick=function(){
+        if(inp.style.display!=="none"){ inp.focus(); return; }
+        frei(true); inp.value=""; inp.dispatchEvent(new Event("input",{bubbles:true}));
+        knoepfe.forEach(function(c){ c.setAttribute("aria-pressed","false"); }); inp.focus(); };
+      knoepfe.forEach(function(c){ c.addEventListener("click", function(){ frei(false); }); });
+    });
+  }
   /* für die anderen Teile */
   P.zeichne=zeichne;
 
@@ -2446,35 +2493,26 @@ function stoerungTeilFormular(P){
         "und die paar Angaben werden abgetippt.</div>"+
       '<div class="note warnbox" id="st_warn" hidden style="margin-top:8px"></div>'+
       '<div id="st_bild" style="margin-top:10px"></div>'+
-      '<div class="as-feld"><div class="as-label">Markt</div>'+
-        '<select id="st_markt" style="width:100%"><option value="">– bitte wählen –</option>'+
+      /* geordnet in Abschnitte (Büro 03.10.2026: „unordentlich und unübersichtlich“) */
+      '<div class="st-gruppe"><h3>Wo?</h3><div class="st-raster zwei">'+
+        '<label class="fl"><span>Markt</span><select id="st_markt"><option value="">– bitte wählen –</option>'+
         ST.slice().sort(nachMarktname).map(function(s){
           return '<option value="'+esc(s.id)+'"'+(o.standortId===s.id?" selected":"")+">"+
             esc(stName(s))+(s.filiale?" · Filiale "+esc(s.filiale):"")+"</option>"; }).join("")+
-        "</select></div>"+
-      /* welche Anlage betroffen ist – freiwillig, oft weiß man es erst vor Ort */
-      '<div class="as-feld"><div class="as-label">Betroffene Anlage (falls bekannt) '+
-        '<a href="#" class="sprunglink" id="st_anlsehen" hidden style="font-weight:400">Anlage ansehen</a></div>'+
-        '<select id="st_anlage" style="width:100%"></select></div>'+
-      '<div class="grid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:10px;margin-top:10px">'+
-        FELDER.map(function(f){
-          var knoepfe=(LERN_STOER.indexOf(f[0])>=0 ? lernChips(gelernteStoerWerte(f[0]), o[f[0]], '[data-s="'+f[0]+'"]', "st_"+f[0]) : "")+
-            /* „Wer fährt hin“: die eigenen Leute zuerst, dann wer zuletzt gefahren ist */
-            (f[0]==="terminTechniker" ? lernChips(technikerVorschlaege(), o[f[0]], '[data-s="terminTechniker"]', "st_terminTechniker") : "");
-          return (f[0]==="auftragsnummer" ? '<div class="stack" style="gap:4px">' : "")+'<label class="fl'+(knoepfe?" st-zwei":"")+'"><span'+(f[3]?' class="req"':"")+">"+esc(f[1])+"</span>"+
-            knoepfe+
-            '<input type="'+f[2]+'" data-s="'+f[0]+'" value="'+esc(o[f[0]]||"")+'"'+(LERN_STOER.indexOf(f[0])>=0?' data-merk="st_'+f[0]+'"':"")+'></label>'+
-            /* die Ausnahme gehört zur Auftragsnummer (Büro 03.10.2026) */
-            (f[0]==="auftragsnummer" ? '<label class="chk" style="font-size:12.5px" title="Ausnahme, z. B. telefonisch beauftragt – die Auftragsnummer folgt oder entfällt"><input type="checkbox" id="st_ohne"'+(o.ohneAuftrag?" checked":"")+'>'+
-              "<span>ohne Lidl-Auftrag (telefonisch)</span></label></div>" : "");
-        }).join("")+
-      "</div>"+
-      '<label class="fl" style="margin-top:10px"><span>Beschreibung laut Auftrag</span>'+
-        '<textarea data-s="beschreibung" rows="3">'+esc(o.beschreibung||"")+"</textarea></label>"+
-      '<label class="fl" style="margin-top:10px"><span>Notiz</span>'+
-        '<input type="text" data-s="notiz" value="'+esc(o.notiz||"")+'" placeholder="z. B. Schlüssel beim Marktleiter"></label>'+
+        "</select></label>"+
+        /* welche Anlage betroffen ist – freiwillig, oft weiß man es erst vor Ort */
+        '<label class="fl"><span>Betroffene Anlage (falls bekannt) '+
+          '<a href="#" class="sprunglink" id="st_anlsehen" hidden style="font-weight:400;text-transform:none;letter-spacing:0">Anlage ansehen</a></span>'+
+          '<select id="st_anlage"></select></label>'+
+      "</div></div>"+
+      STOER_GRUPPEN.map(function(g, gi){
+        var schluessel=g[1].concat(gi===STOER_GRUPPEN.length-1 ? FELDER.map(function(x){ return x[0]; }).filter(function(k){
+          return !STOER_GRUPPEN.some(function(y){ return y[1].indexOf(k)>=0; }); }) : []);
+        return '<div class="st-gruppe"><h3>'+esc(g[0])+'</h3><div class="st-raster">'+schluessel.map(stoerFeldHtml).join("")+"</div></div>";
+      }).join("")+
       '<div class="note warnbox" id="st_fehlt" hidden style="margin-top:10px"></div>';
 
+    wahlFelder();
     P.bilderZeigen();
     if(P.meldung) P.melde(P.meldung);
     if(P.warnung) P.warnen(P.warnung);
