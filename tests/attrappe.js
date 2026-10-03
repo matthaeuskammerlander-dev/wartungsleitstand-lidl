@@ -52,7 +52,7 @@
       if(zeile && zeile.bestaetigt) return "arbeitszeiten: nur Inhaber bestaetigt";
     }
     if(tab==="projekte" && art==="delete" && rolle!=="inhaber") return "projekte: loeschen nur Inhaber";
-    if(tab==="arbeitszeiten" && art==="delete" && rolle!=="inhaber" && alt && /^stempel/.test(alt.quelle||"")) return "arbeitszeiten: gestempelt";
+    if(tab==="arbeitszeiten" && art==="delete" && rolle!=="inhaber" && alt && /^stempel|^kalender/.test(alt.quelle||"")) return "arbeitszeiten: gestempelt oder aus dem Kalender";
     if(tab==="arbeitszeiten" && art==="insert" && rolle!=="inhaber" && zeile && zeile.quelle && zeile.quelle!=="hand") return "arbeitszeiten: nur von Hand";
     if(tab==="einstellungen" && art!=="select" && rolle!=="inhaber") return "einstellungen: nur Inhaber";
     if(tab==="planung" && (art==="update"||art==="delete") && alt && alt.privat && alt.erstellt_von!==uid() && (alt.wer||[]).indexOf(uid())<0) return "planung: privat";
@@ -82,6 +82,32 @@
     if(!alt){ r.erstellt_von=uid(); r.erstellt=new Date().toISOString(); r.status=r.status||"offen"; r.wer=r.wer||[]; r.wer_namen=r.wer_namen||[]; r.position_ids=r.position_ids||[]; }
     else { r.erstellt_von=alt.erstellt_von; r.erstellt=alt.erstellt; }
     r.geaendert=new Date().toISOString();
+  }
+  /* wie der Trigger planung_stunden (stunden-kalender.sql): Urlaub (genehmigt), Krankenstand, Schule,
+     Zeitausgleich je Arbeitstag mit dem Tagessoll in die Stunden – anlegen nur für sich selbst oder als Büro */
+  function stundenSync(id){
+    var p=DB.planung.filter(function(x){ return x.id===id; })[0], zart=null, personen=[], bis=null;
+    var rl=(DB.rollen.filter(function(x){ return x.user_id===uid(); })[0]||{}).rolle;
+    var soll=function(d){ return typeof window.sollMinutenTag==='function' ? window.sollMinutenTag(d) : ([480,480,480,480,390,0,0])[(new Date(d+'T12:00:00').getDay()+6)%7]; };
+    var plus=function(d){ var x=new Date(d+'T12:00:00'); x.setDate(x.getDate()+1); return x.getFullYear()+'-'+('0'+(x.getMonth()+1)).slice(-2)+'-'+('0'+x.getDate()).slice(-2); };
+    if(p && p.art==='termin' && p.datum && p.status!=='abgelehnt' && ['urlaub','krank','schule','zeitausgleich'].indexOf(p.kategorie)>=0 && (p.kategorie!=='urlaub' || p.status==='genehmigt')){
+      zart=p.kategorie; personen=(p.wer&&p.wer.length)?p.wer:[p.erstellt_von]; bis=p.datum_bis&&p.datum_bis>p.datum?p.datum_bis:p.datum; }
+    for(var i=DB.arbeitszeiten.length-1;i>=0;i--){ var az=DB.arbeitszeiten[i];
+      if(az.planung_id===id && az.quelle==='kalender' && !az.bestaetigt && (!zart || personen.indexOf(az.user_id)<0 || az.datum<p.datum || az.datum>bis || !soll(az.datum))) DB.arbeitszeiten.splice(i,1); }
+    if(!zart) return;
+    personen.forEach(function(u, k){
+      if(!(u===uid() || rl==='inhaber' || admin())) return;
+      for(var d=p.datum, n=0; d<=bis && n<93; d=plus(d), n++){
+        var sm=soll(d); if(!sm) continue;
+        var min=sm;
+        if(bis===p.datum && p.beginn && p.ende){ var sp=(+p.ende.slice(0,2)*60 + +p.ende.slice(3))-(+p.beginn.slice(0,2)*60 + +p.beginn.slice(3)); if(sp>0) min=Math.min(sp, sm); }
+        var da=DB.arbeitszeiten.filter(function(x){ return x.planung_id===id && x.quelle==='kalender' && x.user_id===u && x.datum===d; })[0];
+        if(da){ if(!da.bestaetigt){ da.art=zart; da.minuten=min; da.taetigkeit=p.titel; } continue; }
+        if(DB.arbeitszeiten.some(function(x){ return x.user_id===u && x.datum===d && (x.art===zart || x.planung_id===id); })) continue;
+        DB.arbeitszeiten.push({id:'x'+Date.now().toString(36)+(++z), user_id:u, name:(p.wer_namen||[])[k]||null, datum:d, minuten:min, art:zart, taetigkeit:p.titel,
+          quelle:'kalender', planung_id:id, pause_min:0, erstellt:new Date().toISOString()});
+      }
+    });
   }
   function Q(t){ this.t=t; this.a="select"; this.f=[]; this.d=null; this.o={}; this.ord=null; this.lim=null; this.sp=null; }
   Q.prototype.select=function(s){ if(typeof s==="string"&&s&&s!=="*") this.sp=s.split(",").map(function(x){return x.trim();}); return this; };
@@ -132,7 +158,7 @@
         if(self.t==="vor_ort_fragen") r.angelegt=r.angelegt||new Date().toISOString();
         if(self.t==="projekte"){ r.erstellt=r.erstellt||new Date().toISOString(); r.geaendert=r.geaendert||r.erstellt; r.daten=r.daten||{}; r.verlauf=r.verlauf||[]; }
         return r; });
-      neu.forEach(function(r){ tab.push(r); }); sichern(); return {data:neu,error:null};
+      neu.forEach(function(r){ tab.push(r); }); if(self.t==="planung") neu.forEach(function(r){ stundenSync(r.id); }); sichern(); return {data:neu,error:null};
     }
     if(this.a==="upsert"){
       var sp=this.o.onConflict||"id", raus=[];
@@ -164,7 +190,8 @@
           var altR=JSON.parse(JSON.stringify(r));
           Object.assign(r,self.d);
           if(self.t==="planung") planPruefen(r, altR);
-          if(self.t==="arbeitszeiten") r.quelle=(zg && /^stempel(_nachgetragen)?$/.test(qv||"")) ? "stempel_geaendert" : (qv||"hand");
+          if(self.t==="arbeitszeiten") r.quelle=(zg && /^stempel(_nachgetragen)?$/.test(qv||"")) ? "stempel_geaendert" : (zg||("art" in self.d && self.d.art!==altR.art)) && qv==="kalender" ? "hand" : (qv||"hand");
+          if(self.t==="planung") stundenSync(r.id);
         }
         erg.push(r); });
       sichern(); return {data:erg,error:null};
@@ -174,6 +201,7 @@
       w.forEach(function(r){ v=v||darf(self.t,"delete",null,r); });
       if(v){ window.__abgelehnt.push(v); return {data:null,error:{message:v}}; }
       for(var i=tab.length-1;i>=0;i--) if(passt(tab[i],self.f)){ erg.push(tab[i]); tab.splice(i,1); }
+      if(self.t==="planung") erg.forEach(function(r){ stundenSync(r.id); });
       sichern(); return {data:erg,error:null};
     }
     return {data:[],error:null};

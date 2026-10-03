@@ -832,6 +832,61 @@ if (process.argv.includes("--gruendlich")) test("Gründlich: jeden Knopf in jede
   pruefe(!befunde.length, befunde.length + " Befunde (siehe oben)");
 });
 
+test("Stunden ↔ Kalender: Abwesenheit von selbst in den Stunden, Soll je Tag/Woche, Stempeluhr kennt den Plan, Lücken vor dem Bestätigen", async () => {
+  const a = await oeffnen(KONTEN.techniker);
+  const r = await a.seite.evaluate(async () => {
+    const x = window.__t.x, warte = (ms) => new Promise((f) => setTimeout(f, ms)), db = window.__db.tabellen;
+    const ich = x("meineKennung()"), mo = x("plusTage(montagVon(isoLokal(new Date())),7)"), so = x("plusTage(montagVon(isoLokal(new Date())),13)");
+    const einf = (z) => x("Store.sb.from('planung').insert(" + JSON.stringify(z) + ").select('*')");
+    const k = (await einf({ art: "termin", kategorie: "krank", titel: "Krankenstand", datum: mo, datum_bis: so, wer: [ich], wer_namen: ["Test"] })).data[0];
+    let soll = 0; for (let i = 0; i < 7; i++) soll += x("sollMinutenTag(plusTage('" + mo + "'," + i + "))");
+    const krank = db.arbeitszeiten.filter((z) => z.planung_id === k.id);
+    const u = (await einf({ art: "termin", kategorie: "urlaub", titel: "Urlaub", datum: mo, wer: [ich], wer_namen: ["Test"], status: "genehmigt" })).data[0];
+    const urlaub = { status: u.status, eintraege: db.arbeitszeiten.filter((z) => z.planung_id === u.id).length };
+    /* kürzen: nur noch Montag */
+    await x("Store.sb.from('planung').update({datum_bis:null}).eq('id','" + k.id + "').select('*')");
+    const gekuerzt = db.arbeitszeiten.filter((z) => z.planung_id === k.id).length;
+    /* Kalender-Eintrag in den Stunden löschen darf der Techniker nicht */
+    const loeschen = await x("Store.sb.from('arbeitszeiten').delete().eq('planung_id','" + k.id + "').select('id')");
+    /* heute geplante Wartung → Stempeluhr schlägt sie vor */
+    const heute = x("isoLokal(new Date())");
+    await einf({ art: "termin", kategorie: "wartung", titel: "Wartung Testmarkt", datum: heute, beginn: "07:00", ende: "09:00", standort_id: "TS1", wer: [ich], wer_namen: ["Test"] });
+    x("planungStand=0; planungNachladen()"); await warte(800);
+    x("zeitenStand=0; zeitenLaden()"); await warte(500);
+    x("S.view='stunden'; S.stWoche='" + mo + "'; render()"); await warte(800);
+    const text = document.body.innerText;
+    const krankZeile = [...document.querySelectorAll("[data-tage] a.sprunglink")].some((l) => /Krankenstand/.test(l.textContent));
+    const erfassenBeiKrank = [...document.querySelectorAll("[data-tage] [data-erf]")].length;
+    const sollDa = document.querySelectorAll("[data-tage] [data-soll]").length, wocheSoll = !!document.querySelector("[data-wochesoll]");
+    x("S.stWoche=montagVon(isoLokal(new Date())); render()"); await warte(600);
+    const karte = document.getElementById("stempelkarte");
+    const chip = [...karte.querySelectorAll(".chip")].find((c) => /Wartung Testmarkt/.test(c.textContent));
+    if (chip) chip.click(); await warte(100);
+    const st = karte.querySelector("[data-st]"), was = karte.querySelector("[data-was]");
+    const bereich = [...karte.querySelectorAll('.chip[aria-pressed="true"]')].map((c) => c.dataset.b);
+    /* Zeitausgleich als Art im Kalender, gilt als abwesend */
+    const za = x("planKat('zeitausgleich')[1]"), zaAbw = x("PLAN_ABWESEND.indexOf('zeitausgleich')>=0");
+    /* Lücken: ein Monat ohne Einträge hat Arbeitstage ohne Eintrag */
+    const vorher = x("plusMonate(isoLokal(new Date()),-1).slice(0,7)");
+    const luecken = x("monatLueckenText(monatLuecken([], '" + ich + "', '" + vorher + "'))");
+    return { soll, krank: { n: krank.length, sum: krank.reduce((s, z) => s + z.minuten, 0), quelle: [...new Set(krank.map((z) => z.quelle))], art: [...new Set(krank.map((z) => z.art))] },
+      urlaub, gekuerzt, loeschenFehler: !!loeschen.error, nachLoeschen: db.arbeitszeiten.filter((z) => z.planung_id === k.id).length,
+      krankZeile, erfassenBeiKrank, sollDa, wocheSoll, nachGenehmigung: /nach Genehmigung/.test(text), erfasst: /✓ erfasst/.test(text),
+      chip: !!chip, st: st && st.value, was: was && was.value, bereich, za, zaAbw, luecken };
+  });
+  pruefe(r.krank.sum === r.soll && r.krank.quelle.join() === "kalender" && r.krank.art.join() === "krank", "Krankenstand ≠ Wochensoll: " + JSON.stringify(r));
+  pruefe(r.urlaub.status === "beantragt" && r.urlaub.eintraege === 0, "beantragter Urlaub steht schon in den Stunden: " + JSON.stringify(r.urlaub));
+  pruefe(r.gekuerzt <= 1, "gekürzter Krankenstand: Stunden nicht angepasst (" + r.gekuerzt + ")");
+  pruefe(r.loeschenFehler && r.nachLoeschen === r.gekuerzt, "Techniker konnte Kalender-Stunden löschen");
+  pruefe(r.krankZeile && r.erfassenBeiKrank === 0 && r.nachGenehmigung && r.erfasst, "Stunden zeigen Abwesenheit falsch: " + JSON.stringify(r));
+  pruefe(r.sollDa > 0 && r.wocheSoll, "Soll je Tag/Woche fehlt");
+  pruefe(r.chip && r.st === "TS1" && /Wartung Testmarkt/.test(r.was) && r.bereich.join() === "wartung", "Stempeluhr-Vorschlag falsch: " + JSON.stringify(r));
+  pruefe(r.za === "Zeitausgleich" && r.zaAbw, "Zeitausgleich fehlt im Kalender");
+  pruefe(r.luecken.length && /ohne Eintrag/.test(r.luecken[0]), "Lücken vor dem Bestätigen nicht erkannt: " + JSON.stringify(r.luecken));
+  pruefe(!a.fehler.length, "Laufzeitfehler: " + a.fehler.join("; "));
+  await a.zu();
+});
+
 /* ================================================================ Ablauf ================================================================ */
 const filterText = process.argv.slice(2).find((x) => !x.startsWith("--"));
 const filter = filterText ? new RegExp(filterText, "i") : null;

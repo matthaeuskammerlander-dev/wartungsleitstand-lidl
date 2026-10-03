@@ -259,7 +259,7 @@ Kammerlander Umwelt- und Klimatechnik (UKT) – oft kurz, vom Handy, im Feld.
   Fahrt = Wegzeit, Entfernungszulage ca.) – Regeln nur auf Anweisung ändern.
 - **Kalender und Aufgaben** (Büro 01.10.2026, tools/planung.sql, Reiter
   „Kalender“): Tabelle `planung` mit Terminen (`PLAN_KAT`: Wartung, Störung,
-  Baustelle, Büro, Werkstatt, Besprechung, Urlaub, Krank, Schule, privat,
+  Baustelle, Büro, Werkstatt, Besprechung, Urlaub, Krank, Schule, Zeitausgleich, privat,
   Sonstiges; Personen `wer`, mehrtägig `datum_bis`) und Aufgaben (Zuständige,
   fällig, Bezug Projekt+Schritt/Markt/Störung, erledigt). PRIVAT: andere sehen
   nur „Abwesend“, Titel/Details in `planung_privat` (nur die Person selbst –
@@ -270,7 +270,15 @@ Kammerlander Umwelt- und Klimatechnik (UKT) – oft kurz, vom Handy, im Feld.
   Anlagen: `planung.position_ids`, `wartungEinplanen`, `planFuerPosition`, in
   Fällig „📅 eingeplant“; erledigt, sobald seit dem Tag − `BESUCH_TAGE` gewartet).
   Stunden: geplante Termine am Tag, „erfassen“
-  → `arbeitszeiten.planung_id`. Neu Eingetragene bekommen eine Chat-Nachricht
+  → `arbeitszeiten.planung_id`. Abwesenheit (`PLAN_ABWESEND`: Urlaub erst GENEHMIGT, Krankenstand, Schule,
+  Zeitausgleich) legt die Datenbank selbst in die Stunden (tools/stunden-kalender.sql, Trigger `planung_stunden`,
+  Quelle „kalender“): je Arbeitstag das Tagessoll (`soll_minuten`, `feiertag_at` wie `sollMinutenTag`/`feiertageAT`),
+  angepasst/entfernt mit dem Kalendereintrag, nie im bestätigten Monat; anlegen für eine Person nur sie selbst oder
+  das Büro; selbst geändert → „hand“. Zeitausgleich zählt nicht als Ist (baut Überstunden ab). Stempeluhr: „📅 Heute
+  geplant“ (`stempelPlanChips`), nach dem Ausstempeln Verknüpfung mit dem Termin (`zeitenMitPlanungVerknuepfen`).
+  Soll je Tag/Woche in „Meine Arbeitszeit“ (`sollIstTag`) nur zur Info – Überstunden bleiben MONATSBILANZ.
+  Vor dem Bestätigen: `monatLuecken` (Tage ohne Eintrag, Abwesenheit ohne Stunden, Geplantes nicht erfasst) mit
+  „Nachricht an …“. Büro 03.10.2026. Neu Eingetragene bekommen eine Chat-Nachricht
   (nicht bei Privatem). Diese Grenzen nie lockern.
 - **Posteingang → Projekt** (Büro 02.10.2026): weitergeleitete Mails (nicht Lidl-Auftrag/Rapport)
   kommen mit `.eml` (art „mail“, `eintraege` in synology/ukt_posteingang.py, Test
