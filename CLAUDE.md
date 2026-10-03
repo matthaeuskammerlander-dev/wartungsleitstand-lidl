@@ -222,8 +222,11 @@ Kammerlander Umwelt- und Klimatechnik (UKT) – oft kurz, vom Handy, im Feld.
   `istLidl`). Für sie geht alles wie für Lidl, nur ohne Lidl-Felder
   (Filialnummer, FM-Region, Lidl-Auftrag, Rapport, Rechnungshinweis –
   `data-nurlidl` im Protokoll). In den Übersichten vorgegeben nur Lidl,
-  dazuwählbar über `S.kunden` (`kundeImFilter` in `filtered()`). Offene
-  Störungen stehen immer alle da. Monatsbericht an Lidl: nur Lidl.
+  dazuwählbar über `S.kunden` (`kundeImFilter` in `filtered()`). Die Kundenauswahl gilt
+  auch für offene Störungen, „Lidl fragt nach“, Rückfragen von Lidl und laufende Projekte in Fällig, Karte und Anlagen
+  (`offeneStoerungenKunde`, `lidlInAuswahl`, `kundeIdImFilter`; Büro 03.10.2026) – Störungen anderer Kunden nur als Hinweis
+  mit „Alle Kunden zeigen“. Suche und Region blenden offene Störungen nie aus (markiert „außerhalb der Auswahl“).
+  „Diese Woche“ (Montag-Nachricht) zählt alle Kunden. Monatsbericht an Lidl: nur Lidl.
 - **Datenschutz:** Das Kunden-Konto (Lidl) sieht nie Daten anderer Kunden –
   die Datenbank sperrt es (`kunde_sieht`, tools/kunden-projekte-stunden.sql),
   die App filtert zusätzlich. Diese Grenze nie lockern.

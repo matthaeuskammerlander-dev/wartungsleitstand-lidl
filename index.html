@@ -2176,19 +2176,37 @@ function weitereKunden(mitInaktiven){
     .filter(function(k){ return mitInaktiven || k.aktiv!==false; })
     .sort(function(a,b){ return String(a.name||"").localeCompare(String(b.name||""),"de"); });
 }
-function kundeImFilter(s){
-  var k=kundeVon(s), w=S.kunden||"lidl";
+function kundeImFilter(s){ return kundeIdImFilter(kundeVon(s)); }
+/* dasselbe für eine Kunden-Kennung (Projekte tragen kunde_id; leer = Lidl) */
+function kundeIdImFilter(k){
+  k=k||"lidl"; var w=S.kunden||"lidl";
   if(w==="alle") return true;
   if(w==="lidl") return k==="lidl";
   if(w==="weitere") return k!=="lidl";
   return k===w;
 }
 function kundenWahlSetzen(w){ S.kunden=w||"lidl"; lsSet("ukt_kundenwahl", S.kunden); }
-/* „Auswahl aufheben“ bei offenen Störungen außerhalb der Auswahl: Suche und Region weg –
-   und liegt eine davon bei einem Kunden, der gerade nicht gewählt ist, alle Kunden zeigen */
+/* Die Kundenauswahl oben gilt auch für offene Störungen (Büro 03.10.2026: unter „Nur weitere Kunden“
+   standen Lidl-Störungen in Fällig). Suche und Region blenden offene Störungen dagegen nie aus – die
+   stehen dann markiert „außerhalb der Auswahl“. Störungen ohne bekannten Markt zeigen immer. */
+function stoerungKundeDrin(o){ var st=o && o.standortId && byId[o.standortId]; return !st || kundeImFilter(st); }
+function offeneStoerungenKunde(){ return offeneStoerungen(true).filter(stoerungKundeDrin); }
+function lidlInAuswahl(){ var w=S.kunden||"lidl"; return w==="lidl" || w==="alle"; }
+/* knapper Hinweis statt der Einträge: offene Störungen bei Kunden, die oben nicht gewählt sind */
+function stoerungAndereKundenHinweis(){
+  var n=offeneStoerungen(true).filter(function(o){ return !stoerungKundeDrin(o); }).length;
+  if(!n) return null;
+  var kunden=[];
+  offeneStoerungen(true).forEach(function(o){ if(stoerungKundeDrin(o)) return; var t=kundeTitel(kundeVon(byId[o.standortId])); if(kunden.indexOf(t)<0) kunden.push(t); });
+  var h=el('<div class="note" style="font-size:13px">'+n+" weitere offene Störung"+(n===1?"":"en")+" bei "+esc(kunden.join(", "))+
+    ' – oben nicht ausgewählt. <button class="btn ghost sm" type="button">Alle Kunden zeigen</button></div>');
+  h.querySelector("button").onclick=function(){ kundenWahlSetzen("alle"); render(); };
+  return h;
+}
+/* „Auswahl aufheben“ bei offenen Störungen außerhalb der Auswahl: Suche und Region weg (der Kunde bleibt –
+   Störungen anderer Kunden stehen nur als Hinweis da, stoerungAndereKundenHinweis) */
 function stoerAuswahlAufheben(){
   S.q=""; S.region="alle";
-  if(S.kunden!=="alle" && offeneStoerungen(true).some(function(o){ var s=byId[o.standortId]; return s && !kundeImFilter(s); })) kundenWahlSetzen("alle");
 }
 function filtered(){
   var q=suchNorm(S.q.trim());
@@ -2879,13 +2897,13 @@ function stoerungDialog(vorhanden, weiter, vorlage){
 }
 function stoerungsKarte(){
   /* Offene Störungen stehen IMMER alle da – auch wenn oben nach Region oder
-     Markt gefiltert ist. Eine Störung ist dringend; still weggefiltert sah
+     Markt gefiltert ist (nur die Kundenauswahl gilt, Büro 03.10.2026). Eine Störung ist dringend; still weggefiltert sah
      es aus, als gäbe es keine. Was außerhalb der Auswahl liegt, ist markiert. */
   var inAuswahl=function(o){
     if(!o.standortId || !byId[o.standortId]) return true;
     return filtered().some(function(x){ return x.id===o.standortId; });
   };
-  var alle=offeneStoerungen(true);
+  var alle=offeneStoerungenKunde();
   var offen=alle.filter(inAuswahl).concat(alle.filter(function(o){ return !inAuswahl(o); }));
   var draussen=alle.filter(function(o){ return !inAuswahl(o); }).length;
   var c=el('<div class="card" id="st_karte"><div class="pad stack">'+
@@ -2913,15 +2931,16 @@ function stoerungsKarte(){
     host.appendChild(el('<div class="note warnbox" style="font-size:13px"><strong>'+
       (stammLaedt ? "Offene Störungen werden geladen …" : "Offene Störungen konnten nicht vollständig geladen werden")+"</strong>"+
       (stammLaedt ? "" : " (Verbindung?) – es wird erneut versucht."+(offen.length?" Hier steht nur, was bisher angekommen ist.":""))+"</div>"));
-  } else if(!offen.length && !kundenUnerfasst().length){
+  } else if(!offen.length && !(lidlInAuswahl() && kundenUnerfasst().length)){
     host.appendChild(el('<div class="muted" style="font-size:12.5px">Zur Zeit keine offene Störung. '+
       "Kommt ein Auftrag von Lidl, hier erfassen – er erscheint dann an dieser Stelle.</div>"));
   }
   /* vom Kunden als offen gemeldet, bei uns aber noch nicht erfasst: steht hier, damit es nicht untergeht */
-  kundenUnerfasst().forEach(function(z){ host.appendChild(kundenStoerEintrag(z)); });
+  if(lidlInAuswahl()) kundenUnerfasst().forEach(function(z){ host.appendChild(kundenStoerEintrag(z)); });
+  var andere=stoerungAndereKundenHinweis(); if(andere) host.appendChild(andere);
   if(draussen){
     var hinweis=el('<div class="note" style="font-size:13px">'+draussen+" offene Störung"+(draussen===1?" liegt":"en liegen")+
-      ' außerhalb der Auswahl oben (Suche, Region, Kunde) und '+(draussen===1?"steht":"stehen")+' trotzdem hier. '+
+      ' außerhalb der Auswahl oben (Suche, Region) und '+(draussen===1?"steht":"stehen")+' trotzdem hier. '+
       '<button class="btn ghost sm" type="button">Auswahl aufheben</button></div>');
     hinweis.querySelector("button").onclick=function(){ stoerAuswahlAufheben(); render(); };
     host.appendChild(hinweis);
@@ -3524,7 +3543,7 @@ function viewFaellig(){
   var maerkte=filtered();
   var f=document.createDocumentFragment();
 
-  var stoerOffen=offeneStoerungen(true);
+  var stoerOffen=offeneStoerungenKunde();
   /* Kacheln führen hin (antippen): eine Kachel mit 0 bleibt reine Anzeige */
   var kachel=function(klasse, n, text, sprung){
     return n ? '<button type="button" class="kpi'+(klasse?" "+klasse:"")+'" data-sprung="'+sprung+'"><span class="n">'+n+'</span><span class="l">'+text+"</span></button>"
@@ -3560,7 +3579,7 @@ function viewFaellig(){
 
   /* Offene Störungen stehen ganz oben – sie warten, nicht der Kalender. */
   /* Rückfragen des Kunden mit Frist: noch vor allem anderen */
-  f.appendChild(einklappbar(kundenKarte(), "lidl", kundenlisteAn() ? kundenOffenZahl()+" offen" : ""));
+  if(lidlInAuswahl()) f.appendChild(einklappbar(kundenKarte(), "lidl", kundenlisteAn() ? kundenOffenZahl()+" offen" : ""));
   if(posteingangAn()) f.appendChild(einklappbar(posteingangKarte(), "posteingang"));
   /* Wochenübersicht fürs Büro – dieselben Zahlen wie die Montag-Nachricht */
   if(Admin.frei && !nurLesen()) f.appendChild(einklappbar(wochenKarte(), "woche"));
@@ -3569,13 +3588,17 @@ function viewFaellig(){
   f.appendChild(einklappbar(stoerungsKarte(), "stoerungen", stoerOffen.length+" offen"));
   /* der Störungskalender ist in den Kalender-Reiter gewandert (Schalter „nur Störungen“, Büro 02.10.2026) */
   /* laufende Projekte (Auftrag, Baustelle, Inbetriebnahme) – damit sie neben den Wartungen nicht untergehen */
-  var laufend=nurLesen()?[]:PROJEKTE.filter(function(p){ return ["auftrag","baustelle","inbetriebnahme"].indexOf(p.status)>=0; });
-  if(laufend.length){
+  var laufendAlle=nurLesen()?[]:PROJEKTE.filter(function(p){ return ["auftrag","baustelle","inbetriebnahme"].indexOf(p.status)>=0; });
+  /* nur die oben gewählten Kunden (Büro 03.10.2026) – die übrigen als kurzer Hinweis */
+  var laufend=laufendAlle.filter(function(p){ return kundeIdImFilter(p.kunde_id); }), laufendSonst=laufendAlle.length-laufend.length;
+  if(laufend.length || laufendSonst){
     var pk=el('<div class="card" id="pr_karte"><div class="pad stack" style="gap:8px">'+
       '<div class="rowflex" style="justify-content:space-between"><div><h2>Laufende Projekte</h2><div class="sub">Beauftragt, auf der Baustelle oder vor der Inbetriebnahme.</div></div>'+
         '<button class="btn ghost sm" type="button" data-alle>Alle Projekte</button></div>'+
       '<div class="stack" data-l style="gap:8px"></div></div></div>');
     laufend.slice(0,8).forEach(function(p){ pk.querySelector("[data-l]").appendChild(projektZeile(p)); });
+    if(laufendSonst){ var ph=el('<div class="muted" style="font-size:12.5px">'+laufendSonst+" weitere"+(laufendSonst===1?"s laufendes Projekt":" laufende Projekte")+" bei Kunden, die oben nicht ausgewählt sind. "+
+      '<a href="#" class="sprunglink">Alle Kunden zeigen</a></div>'); tippe(ph.querySelector("a"), function(){ kundenWahlSetzen("alle"); render(); }); pk.querySelector("[data-l]").appendChild(ph); }
     pk.querySelector("[data-alle]").onclick=function(){ S.prFilter="offen"; springe({reiter:"projekte", block:"start"}); };
     f.appendChild(einklappbar(pk, "projekte", laufend.length+" laufend"));
   }
@@ -3690,7 +3713,7 @@ function faelligSprung(art, opt){
       var k=document.getElementById("st_karte"); if(!k) return null;
       /* genau eine Störung: gleich ihren Eintrag; opt.markt (aus einer Nachricht):
          die Störungen dieses Markts */
-      var st=offeneStoerungen(true);
+      var st=offeneStoerungenKunde();
       var vomMarkt=opt.markt ? st.filter(function(o){ return o.standortId===opt.markt; }) : [];
       if(vomMarkt.length){
         var z=Array.prototype.filter.call(k.querySelectorAll(".stoerbox[data-sid]"), function(b){ return vomMarkt.some(function(o){ return o._id===b.dataset.sid; }); });
@@ -3995,7 +4018,7 @@ function tokenFarbe(name){
    ohneLage: stattdessen die ohne Koordinaten (stehen unter „Ohne Kartenposition“) */
 function stoerungsMaerkte(ohneLage){
   var ids={};
-  offeneStoerungen(true).forEach(function(o){ if(o.standortId) ids[o.standortId]=1; });
+  offeneStoerungenKunde().forEach(function(o){ if(o.standortId) ids[o.standortId]=1; });
   return Object.keys(ids).map(function(id){ return byId[id]; }).filter(function(s){ return s && (ohneLage ? !s.lat : s.lat); });
 }
 /* Hinweis, wenn offene Störungen außerhalb der aktuellen Auswahl liegen –
@@ -4003,7 +4026,7 @@ function stoerungsMaerkte(ohneLage){
 function stoerungAusserhalbHinweis(withGeo){
   var drin={}; withGeo.forEach(function(s){ drin[s.id]=1; });
   var aussen=0, ohne=0;
-  offeneStoerungen(true).forEach(function(o){
+  offeneStoerungenKunde().forEach(function(o){
     var s=o.standortId && byId[o.standortId];
     if(!s || !s.lat) ohne++; else if(!drin[s.id]) aussen++;
   });
@@ -5660,7 +5683,7 @@ function viewAnlagen(){
   var pos=filteredPos();
   /* offene Störungen außerhalb von Suche/Region: trotzdem zeigen, nie still weggefiltert */
   var drinM={}; filtered().forEach(function(s){ drinM[s.id]=1; });
-  var draussenSt=offeneStoerungen(true).filter(function(o){ return !o.standortId || !drinM[o.standortId]; });
+  var draussenSt=offeneStoerungenKunde().filter(function(o){ return !o.standortId || !drinM[o.standortId]; });
   /* Büro 02.10.2026: „unter Anlagen werden immer oben die offenen Störungen gezeigt, was nervig ist –
      wenn man eine Anlage sucht“ – nur noch eine schmale Zeile; die Störungen selbst erst auf Tipp
      (nie still weggefiltert, aber nicht im Weg) */
@@ -17238,7 +17261,7 @@ function wochenKarte(){
       (liste.length>8?'<div class="muted" style="font-size:12.5px">… und '+(liste.length-8)+" weitere</div>":"")+"</div>";
   };
   var c=el('<div class="card" id="wochenkarte"><div class="pad stack">'+
-    '<div class="rowflex" style="justify-content:space-between"><h2>Diese Woche</h2><span class="muted" style="font-size:12.5px">Stand '+dfmt(z.stand)+' · geht Montag früh als Nachricht ans Büro</span></div>'+
+    '<div class="rowflex" style="justify-content:space-between"><h2>Diese Woche</h2><span class="muted" style="font-size:12.5px">Stand '+dfmt(z.stand)+' · alle Kunden · geht Montag früh als Nachricht ans Büro</span></div>'+
     '<div class="sub">'+esc(wochenText(z))+"</div>"+
     '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px">'+
       '<div><strong style="font-size:13px">Überfällig ('+z.ueberfaellig+')</strong>'+zeile(z.ueber,"ueber")+"</div>"+
