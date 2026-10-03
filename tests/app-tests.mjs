@@ -96,8 +96,8 @@ test("Start: App startet am PC und am Handy ohne Laufzeitfehler", async () => {
 
 test("Rechte: jede Rolle sieht genau ihre Reiter", async () => {
   const erwartet = {
-    kunde: { sieht: ["faellig", "karte", "anlagen", "verlauf"], nicht: ["protokoll", "belege", "verwaltung", "stunden", "fahrzeuge"] },
-    techniker: { sieht: ["faellig", "kalender", "protokoll", "stunden", "fahrzeuge"], nicht: ["belege"] },
+    kunde: { sieht: ["faellig", "karte", "anlagen", "verlauf"], nicht: ["protokoll", "belege", "verwaltung", "stunden", "fahrzeuge", "werkzeug"] },
+    techniker: { sieht: ["faellig", "kalender", "protokoll", "stunden", "fahrzeuge", "werkzeug"], nicht: ["belege"] },
     admin: { sieht: ["faellig", "protokoll", "verwaltung"], nicht: ["belege"] },
     inhaber: { sieht: ["belege", "verwaltung", "fahrzeuge"], nicht: [] },
     praesentation: { sieht: ["faellig", "protokoll"], nicht: ["belege"] },
@@ -926,6 +926,74 @@ test("Störungsauftrag: breit genug am Laptop, Ausnahme bei der Auftragsnummer, 
   pruefe(r.voll.ohneBeiNummer, "Ausnahme steht nicht bei der Auftragsnummer");
   pruefe(r.voll.chipsBreiter, "Felder mit Knöpfen nicht über die ganze Breite");
   pruefe(r.voll.wahl, "Auswahl-Knöpfe und Textfeld arbeiten nicht zusammen");
+  pruefe(!a.fehler.length, "Laufzeitfehler: " + a.fehler.join("; "));
+  await a.zu();
+});
+
+test("Werkzeug und Material: Standort, Bedarf am Termin, Erinnerung in „Heute für dich“ und „Planung prüfen“, Packliste ohne Doppel", async () => {
+  const a = await oeffnen(KONTEN.techniker);
+  const r = await a.seite.evaluate(async () => {
+    const x = window.__t.x, warte = (ms) => new Promise((f) => setTimeout(f, ms)), db = window.__db.tabellen;
+    const dlg = () => [...document.querySelectorAll(".assistent")].pop();
+    const ich = x("meineKennung()"), morgen = x("plusTage(isoLokal(new Date()),1)");
+    x("S.view='werkzeug'; render()"); await warte(600);
+    const reiter = !!document.querySelector('#tabs [data-v="werkzeug"]') && /Werkzeug und Geräte/i.test(document.body.innerText);
+    /* Werkzeug anlegen: in Reparatur */
+    x("wzEditor(null)"); await warte(400);
+    let d = dlg();
+    d.querySelector('[data-f="name"]').value = "Vakuumpumpe Test";
+    [...d.querySelectorAll("[data-ort] .chip")].find((c) => c.dataset.w === "reparatur").click();
+    d.querySelector('[data-f="standort_text"]').value = "Fa. Reparatur";
+    [...d.querySelectorAll(".as-fuss button")].pop().click(); await warte(800);
+    const w = JSON.parse(JSON.stringify(db.werkzeug.find((z) => z.name === "Vakuumpumpe Test") || {}));
+    /* Termin morgen am Markt, darin „+ Material / Werkzeug“ */
+    const t = (await x("Store.sb.from('planung').insert(" + JSON.stringify({ art: "termin", kategorie: "wartung", titel: "Wartung Test", datum: morgen, beginn: "08:00", ende: "10:00", standort_id: "TS1", wer: [ich], wer_namen: ["Test"] }) + ").select('*')")).data[0];
+    x("planungStand=0; planungNachladen()"); await warte(600);
+    x("ansichtenSchliessen(); planEditor(PLANUNG.filter(function(e){ return e.id==='" + t.id + "'; })[0])"); await warte(500);
+    d = dlg();
+    const plus = [...d.querySelectorAll("[data-bedarfkasten] button")].find((b) => /Material \/ Werkzeug/.test(b.textContent));
+    if (plus) plus.click(); await warte(400);
+    d = dlg();
+    [...d.querySelectorAll("[data-art] .chip")].find((c) => c.dataset.w === "werkzeug").click();
+    const sel = d.querySelector('[data-f="werkzeug_id"]'); sel.value = w.id; sel.dispatchEvent(new Event("change"));
+    [...d.querySelectorAll("[data-weg] .chip")].find((c) => c.dataset.w === "abholen").click();
+    d.querySelector('[data-f="bezugsquelle"]').value = "Fa. Reparatur";
+    const hinweisImDialog = d.querySelector("[data-wzhinweis]").textContent;
+    [...d.querySelectorAll(".as-fuss button")].pop().click(); await warte(800);
+    const b = JSON.parse(JSON.stringify(db.bedarf.find((z) => z.planung_id === t.id) || {}));
+    const imTermin = !!(dlg() && dlg().querySelector('[data-bedarfkasten] [data-bedarf="' + b.id + '"]'));
+    x("ansichtenSchliessen()");
+    /* Erinnerungen */
+    x("S.view='faellig'; render()"); await warte(600);
+    const heute = /Mitnehmen, abholen, bestellen – für heute und morgen/i.test(document.body.innerText);
+    const pruefen = x("planungPruefen('ich','" + morgen + "','" + morgen + "').map(function(t){ return t.material.length; })");
+    const zeile = x("(function(){ var m=kalenderEintraege('" + morgen + "','" + morgen + "','ich')['" + morgen + "']||[]; return m.map(function(y){ return kalEintragZeile(y,true).textContent; }).join(' | '); })()");
+    const warnung = x("bedarfWerkzeugHinweis(BEDARF.filter(function(b){ return b.id==='" + b.id + "'; })[0])");
+    /* „Ich hab’s“ – Rückfrage (Reparatur) wird bestätigt */
+    x("wzOrtSchnell(WZ.filter(function(y){ return y.id==='" + w.id + "'; })[0], 'ich')"); await warte(600);
+    const w2 = db.werkzeug.find((z) => z.id === w.id) || {};
+    const loeschen = await x("Store.sb.from('werkzeug').delete().eq('id','" + w.id + "').select('id')");
+    /* Packliste zweimal übernehmen: nichts doppelt */
+    window.__pl = { id: "pl1", name: "Split-Montage", eintraege: [{ art: "material", text: "Kupferrohr" }, { art: "werkzeug", text: "Vakuumpumpe Test", werkzeug_id: w.id }] };
+    x("PACKLISTEN=[window.__pl]");
+    await x("packlisteUebernehmen({projekt_id:'P-T'}, window.__pl)"); await x("packlisteUebernehmen({projekt_id:'P-T'}, window.__pl)");
+    const pl = db.bedarf.filter((z) => z.projekt_id === "P-T").length;
+    return { reiter, w: { art: w.standort_art, text: w.standort_text }, b: { werkzeug: b.werkzeug_id === w.id, weg: b.beschaffung, quelle: b.bezugsquelle }, hinweisImDialog, imTermin,
+      heute, pruefen, zeile, warnung, w2: { art: w2.standort_art, person: w2.person_id === ich }, verlauf: db.werkzeug_verlauf.filter((v) => v.werkzeug_id === w.id).length,
+      loeschenFehler: !!loeschen.error, pl };
+  });
+  if (process.env.FOTO) { await a.seite.evaluate(() => { window.__t.x("ansichtenSchliessen(); S.view='werkzeug'; render()"); }); await a.seite.waitForTimeout(700); await a.seite.screenshot({ path: process.env.FOTO }); }
+  pruefe(r.reiter, "Reiter Werkzeug fehlt");
+  pruefe(r.w.art === "reparatur" && r.w.text === "Fa. Reparatur", "Werkzeug nicht als „in Reparatur“ gespeichert: " + JSON.stringify(r.w));
+  pruefe(r.b.werkzeug && r.b.weg === "abholen" && r.b.quelle === "Fa. Reparatur" && /Reparatur/.test(r.hinweisImDialog), "Bedarf am Termin falsch: " + JSON.stringify(r));
+  pruefe(r.imTermin, "Bedarf steht nicht im Termin");
+  pruefe(r.heute, "„Heute für dich“ erinnert nicht ans Abholen");
+  pruefe(r.pruefen.join() === "1", "„Planung prüfen“ zeigt den Bedarf nicht: " + JSON.stringify(r.pruefen));
+  pruefe(/🧰 Vakuumpumpe Test/.test(r.zeile), "Kalenderzeile ohne 🧰: " + r.zeile);
+  pruefe(/Reparatur/.test(r.warnung || ""), "keine Warnung „in Reparatur“: " + r.warnung);
+  pruefe(r.w2.art === "person" && r.w2.person && r.verlauf >= 1, "„Ich hab’s“ falsch: " + JSON.stringify(r));
+  pruefe(r.loeschenFehler, "Techniker konnte Werkzeug löschen");
+  pruefe(r.pl === 2, "Packliste doppelt übernommen: " + r.pl);
   pruefe(!a.fehler.length, "Laufzeitfehler: " + a.fehler.join("; "));
   await a.zu();
 });

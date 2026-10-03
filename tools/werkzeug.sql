@@ -43,13 +43,14 @@ create index if not exists werkzeug_projekt_idx on public.werkzeug (projekt_id);
 create table if not exists public.werkzeug_verlauf (
   id           uuid primary key default gen_random_uuid(),
   werkzeug_id  uuid not null references public.werkzeug(id) on delete cascade,
-  zeit         timestamptz not null default now(),
+  zeit         timestamptz not null default clock_timestamp(),   -- mehrere Wechsel in einem Zug: richtige Reihenfolge
   von          uuid,
   von_name     text,
   standort     text,
   zustand      text,
   notiz        text
 );
+alter table public.werkzeug_verlauf alter column zeit set default clock_timestamp();
 create index if not exists werkzeug_verlauf_idx on public.werkzeug_verlauf (werkzeug_id, zeit desc);
 
 -- Standort als Text (für den Verlauf)

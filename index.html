@@ -2237,7 +2237,7 @@ function filteredPos(){ var ids={}; filtered().forEach(function(s){ids[s.id]=1;}
 /* Stunden, Projekte, Kunden: seit 01.10.2026 (weitere Kunden, Projekte bis zur Rechnung, Arbeitszeit) */
 /* Reihenfolge nach dem Arbeitsablauf (Büro 01.10.2026, Karte neben Kalender 02.10.2026): was ansteht, was geplant ist und wo,
    dann die Arbeit vor Ort (Protokoll, Anlagen, Stunden), dann das Büro */
-var VIEWS=[["faellig","Fällig"],["kalender","Kalender"],["karte","Karte"],["protokoll","Protokoll"],["anlagen","Anlagen"],["stunden","Stunden"],["fahrzeuge","Fahrzeuge"],
+var VIEWS=[["faellig","Fällig"],["kalender","Kalender"],["karte","Karte"],["protokoll","Protokoll"],["anlagen","Anlagen"],["stunden","Stunden"],["fahrzeuge","Fahrzeuge"],["werkzeug","Werkzeug"],
            ["projekte","Projekte"],["kunden","Kunden & Kontakte"],["belege","Rechnungen"],["verlauf","Verlauf"],["verwaltung","Verwaltung"],["daten","Datenbasis"]];
 var tabsEl=document.getElementById("tabs");
 VIEWS.forEach(function(v){
@@ -2870,7 +2870,10 @@ function stoerungDialog(vorhanden, weiter, vorlage){
   var inhalt=ov.querySelector(".as-inhalt"), fuss=ov.querySelector(".as-fuss");
   /* Team-Chat: Nachrichten zu dieser Störung unter dem Formular (erst nach
      dem Aufbau anhängen – der Dialog füllt inhalt gleich darunter) */
-  if(vorhanden) setTimeout(function(){ if(ov.isConnected && chatAn()) inhalt.appendChild(chatBezugKarte("stoerung", o._id, chatBezugText("stoerung", o))); }, 0);
+  if(vorhanden) setTimeout(function(){ if(!ov.isConnected) return;
+    /* Werkzeug und Material für diesen Einsatz (Büro 04.10.2026) */
+    if(wzAn()) inhalt.appendChild(bedarfKarte("Material und Werkzeug für den Einsatz", {stoerung_id:o._id, standort_id:o.standortId}, {leer:"Nichts Besonderes – „+ Material / Werkzeug“, wenn etwas mit muss oder abzuholen ist."}));
+    if(chatAn()) inhalt.appendChild(chatBezugKarte("stoerung", o._id, chatBezugText("stoerung", o))); }, 0);
   var zu=function(){
     ov.remove(); document.body.style.overflow=vorherOv;
     /* ein aus dem Posteingang geöffneter Auftrag gilt nur für diesen Dialog –
@@ -3409,6 +3412,11 @@ function marktAnsicht(sid){
   /* Team-Chat: Nachrichten zu diesem Markt (auch zu seinen Anlagen, Störungen, Protokollen) – vor der Historie, damit man sie findet */
   if(chatAn()) a.inhalt.appendChild(chatBezugKarte("markt", s.id, chatBezugText("markt", s)));
   var vb=verbundenKarte(sid); if(vb) a.inhalt.appendChild(vb);
+  /* Material für den nächsten Besuch; Werkzeug, das gerade dort ist (Büro 04.10.2026) */
+  if(wzAn()){ var mk=bedarfKarte("Material und Werkzeug für den nächsten Besuch", {standort_id:sid}, {leer:"Nichts vorgemerkt – z. B. besondere Filter oder Ersatzteile für diesen Markt."});
+    var amM=WZ.filter(function(w){ return w.aktiv!==false && w.standort_art==="baustelle" && w.standort_id===sid; });
+    if(amM.length) mk.querySelector(".stack").appendChild(el('<div class="muted" style="font-size:12.5px">📍 Liegt am Markt: '+amM.map(function(w){ return esc(w.name); }).join(", ")+"</div>"));
+    a.inhalt.appendChild(mk); }
   /* Vor Ort klären: offene Fragen an diesem Markt; das Büro stellt hier auch neue (Büro 03.10.2026) */
   if(vorOrtAn()){
     vorOrtLaden();
@@ -3428,6 +3436,7 @@ function marktAnsicht(sid){
     {h:/Nachrichten/, seite:"neben", key:"chat", handyZu:true},
     {h:/^Projekte und Kontakte/, seite:"neben", key:"verbunden"},
     {h:/^Vor Ort klären/, seite:"neben", key:"vorort"},
+    {h:/^Material und Werkzeug/, seite:"neben", key:"material", handyZu:true},
     {h:/^Wartungs- und Störungshistorie/, seite:"haupt", key:"historie", handyZu:true}
   ], "markt", false, true);
   /* führt ein Knopf woandershin (Protokoll, Verwaltung), geht die Ansicht zu */
@@ -7033,7 +7042,7 @@ function wechselnOk(ziel, neu){
 function reiterErlaubt(v){
   if(nurLesen()) return ["faellig","karte","anlagen","verlauf"].indexOf(v)>=0;
   /* Stunden und Projekte brauchen die gemeinsame Datenbank (oder die Präsentation) */
-  if((v==="stunden"||v==="projekte"||v==="kalender"||v==="fahrzeuge") && !(Store.modus==="supabase"||demo())) return false;
+  if((v==="stunden"||v==="projekte"||v==="kalender"||v==="fahrzeuge"||v==="werkzeug") && !(Store.modus==="supabase"||demo())) return false;
   if(v==="kunden" && Store.modus==="anmeldung") return false;
   /* Rechnungen und Angebote: nur Inhaber – keine Admins (Büro 01.10.2026) */
   if(v==="belege") return nurInhaber() && Store.modus==="supabase";
@@ -18238,6 +18247,570 @@ function archivKarte(){
   return c;
 }
 
+/* ===================== Werkzeug und Material (Büro 04.10.2026) =====================
+   „Dass man nichts vergisst“: was für einen Einsatz gebraucht wird (Werkzeug oder Material) –
+   mitnehmen, irgendwo abholen oder bestellen – und wo das Werkzeug gerade ist (Lager, Fahrzeug,
+   bei einer Person, Baustelle/Markt, in Reparatur). tools/werkzeug.sql: werkzeug (+ Verlauf, den
+   schreibt nur der Server), bedarf (Bezug Projekt, Störung, Kalendertermin oder Markt), packlisten.
+   Vernetzt: Kalender (Termin, „🔍 Planung prüfen“, To-do), „Heute für dich“, Störung, Projekt,
+   Markt, Fahrzeug. Keine Preise. Kein Lagerbestand – nur der Bedarf je Einsatz. */
+var WZ=[], BEDARF=[], PACKLISTEN=[], wzGeladen=false, wzFehlt=false, wzFehler="", wzLaedt=null, wzStand=0;
+var WZ_ORTE=[["lager","Lager"],["fahrzeug","Fahrzeug"],["person","bei Person"],["baustelle","Baustelle / Markt"],["reparatur","in Reparatur"],["sonst","sonst wo"]];
+var BEDARF_WEGE=[["mitnehmen","mitnehmen","🧰"],["abholen","abholen","🏪"],["bestellen","bestellen","🛒"]];
+var BEDARF_STATUS=[["offen","offen"],["bestellt","bestellt"],["abholbereit","abholbereit / geliefert"],["erledigt","erledigt – dabei"]];
+function wzAn(){ return demo() || (Store.modus==="supabase" && !!Store.sb && !!Store.benutzer && !nurLesen()); }
+function wzBuero(){ return istInhaber() || Rolle.name==="admin"; }
+/* lädt höchstens einmal je Minute; true, wenn wirklich geladen wurde */
+function wzLaden(neu){
+  if(demo() || !wzAn()){ wzGeladen=true; return Promise.resolve(false); }
+  if(wzLaedt) return wzLaedt;
+  if(!neu && wzGeladen && Date.now()-wzStand<60000) return Promise.resolve(false);
+  var alt=new Date(Date.now()-60*864e5).toISOString();
+  wzLaedt=Promise.all([
+    Store.sb.from("werkzeug").select("*").order("name").limit(3000),
+    Store.sb.from("bedarf").select("*").in("status", ["offen","bestellt","abholbereit"]).limit(3000),
+    Store.sb.from("bedarf").select("*").eq("status", "erledigt").gte("erledigt", alt).limit(2000),
+    Store.sb.from("packlisten").select("*").order("name")
+  ]).then(function(r){
+    if(r[0].error){ wzFehlt=/does not exist|schema cache|relation/i.test(r[0].error.message||""); wzFehler=wzFehlt?"":r[0].error.message; }
+    else { WZ=r[0].data||[]; BEDARF=(r[1].data||[]).concat(r[2].data||[]); PACKLISTEN=r[3].data||[]; wzFehlt=false; wzFehler=""; }
+    wzGeladen=true; wzStand=Date.now(); wzLaedt=null; return true;
+  }, function(){ wzFehler="Keine Verbindung – Werkzeug und Material nicht geladen."; wzGeladen=true; wzStand=Date.now(); wzLaedt=null; return true; });
+  return wzLaedt;
+}
+/* nach dem Laden die offene Ansicht neu zeichnen (nicht, solange ein Dialog offen ist) */
+function wzNachladen(){
+  wzLaden().then(function(neu){ if(neu && ["werkzeug","kalender","faellig","fahrzeuge"].indexOf(S.view)>=0 && darfRendern() && !document.querySelector(".assistent")) render();
+    document.querySelectorAll("[data-bedarfkasten]").forEach(function(h){ if(h._neu) h._neu(); }); });
+}
+function wzGeaendert(){
+  if(["werkzeug","kalender","faellig","fahrzeuge"].indexOf(S.view)>=0 && darfRendern() && !document.querySelector(".assistent")) render();
+  document.querySelectorAll("[data-bedarfkasten]").forEach(function(h){ if(h._neu) h._neu(); });
+}
+function wzZeileSetzen(liste, z){ return liste.filter(function(x){ return x.id!==z.id; }).concat([z]); }
+function wzOrtName(a){ return (WZ_ORTE.filter(function(x){ return x[0]===a; })[0]||[a,a])[1]; }
+/* wo das Werkzeug gerade ist – als Satz */
+function wzOrtText(w){
+  var t;
+  if(w.standort_art==="fahrzeug") t="Fahrzeug "+(w.fahrzeug_name||"?");
+  else if(w.standort_art==="person") t=w.person_id===meineKennung() ? "bei dir" : "bei "+(w.person_name||"?");
+  else if(w.standort_art==="baustelle"){
+    var p=w.projekt_id && PROJEKTE.filter(function(x){ return x.id===w.projekt_id; })[0], s=w.standort_id && byId[w.standort_id];
+    t=p ? "Baustelle "+projektTitel(p) : s ? "Markt "+stName(s) : "Baustelle / Markt";
+  }
+  else if(w.standort_art==="reparatur") t="in Reparatur";
+  else t=wzOrtName(w.standort_art);
+  if(w.standort_text) t+=" – "+w.standort_text;
+  if(w.zurueck_am && (w.standort_art==="reparatur" || w.standort_art==="sonst")) t+=" (zurück ca. "+dfmt(w.zurueck_am)+")";
+  return t;
+}
+/* hat es die Person (oder liegt es in ihrem Fahrzeug)? */
+function wzBei(w, uid){
+  if(w.standort_art==="person") return w.person_id===uid;
+  if(w.standort_art==="fahrzeug"){ var f=FZ.filter(function(x){ return x.id===w.fahrzeug_id; })[0]; return !!(f && (f.fahrer||[]).indexOf(uid)>=0); }
+  return false;
+}
+/* was beim Werkzeug zu beachten ist: Reparatur, defekt, Prüfung, zurück überfällig */
+function wzHinweise(w){
+  var heute=isoLokal(new Date()), r=[];
+  if(w.zustand==="defekt") r.push({art:"crit", text:"defekt"});
+  if(w.zustand==="verloren") r.push({art:"crit", text:"verloren"});
+  if(w.standort_art==="reparatur") r.push({art:w.zurueck_am && w.zurueck_am<heute ? "crit" : "warn", text:"in Reparatur"+(w.zurueck_am?(w.zurueck_am<heute?" – sollte seit "+dfmt(w.zurueck_am)+" zurück sein":" bis ca. "+dfmt(w.zurueck_am)):"")});
+  if(w.pruefen_bis){ var t=Math.round((new Date(w.pruefen_bis+"T12:00:00")-new Date(heute+"T12:00:00"))/864e5);
+    if(t<=30) r.push({art:t<0?"crit":"warn", text:"Prüfung "+(t<0?"abgelaufen seit ":"fällig ")+dfmt(w.pruefen_bis)}); }
+  return r;
+}
+function wzHinweisTags(w){ return wzHinweise(w).map(function(a){ return ' <span class="tag" style="'+(a.art==="crit"?"background:var(--crit);color:#fff":"background:var(--warn-soft,#fdf1d8)")+'">'+esc(a.text)+"</span>"; }).join(""); }
+
+/* ---------- Bedarf: was für einen Einsatz gebraucht wird ---------- */
+function bedarfWeg(b){ return BEDARF_WEGE.filter(function(x){ return x[0]===b.beschaffung; })[0]||BEDARF_WEGE[0]; }
+function bedarfOffen(b){ return b.status!=="erledigt"; }
+/* Bedarf zu einem Bezug: Projekt, Störung, Termin; am Markt nur, was an keinem anderen Bezug hängt */
+function bedarfZu(bz){
+  return BEDARF.filter(function(b){
+    return (bz.planung_id && b.planung_id===bz.planung_id) || (bz.stoerung_id && b.stoerung_id===bz.stoerung_id) ||
+      (bz.projekt_id && b.projekt_id===bz.projekt_id && (!b.planung_id || b.planung_id===bz.planung_id || !bz.planung_id)) ||
+      (bz.standort_id && b.standort_id===bz.standort_id && !b.projekt_id && !b.stoerung_id && !b.planung_id);
+  });
+}
+/* Bedarf zu einem Kalendereintrag (Termin, Störungseinsatz, Projekttermin) – nur offener, der bis zu diesem Tag gebraucht wird */
+function bedarfFuerEinsatz(x, tag){
+  var bz = x.e ? {planung_id:x.e.id, projekt_id:x.e.projekt_id, stoerung_id:x.e.stoerung_id, standort_id:x.e.standort_id}
+         : x.o ? {stoerung_id:x.o._id, standort_id:x.o.standortId}
+         : x.p ? {projekt_id:x.p.id} : null;
+  if(!bz) return [];
+  return bedarfZu(bz).filter(function(b){ return bedarfOffen(b) && (!b.benoetigt_am || !tag || b.benoetigt_am<=tag); });
+}
+/* wann und für wen: eigenes Datum, sonst der Termin bzw. Störungseinsatz, sonst der nächste Termin des Projekts */
+function bedarfWann(b){
+  if(b.benoetigt_am) return b.benoetigt_am;
+  var e=b.planung_id && PLANUNG.filter(function(x){ return x.id===b.planung_id; })[0]; if(e && e.datum) return e.datum;
+  var o=b.stoerung_id && OFFENE.filter(function(x){ return x._id===b.stoerung_id; })[0]; if(o && o.termin) return o.termin;
+  var heute=isoLokal(new Date());
+  if(b.projekt_id){
+    var d=PLANUNG.filter(function(x){ return x.projekt_id===b.projekt_id && x.art==="termin" && x.datum && x.datum>=heute; }).map(function(x){ return x.datum; })
+      .concat(PROJEKTE.filter(function(p){ return p.id===b.projekt_id; }).map(function(p){ return ((p.daten||{}).termine||[]).filter(function(t){ return t.datum && t.datum>=heute && !t.erledigt; }).map(function(t){ return t.datum; }); })[0]||[]).sort();
+    if(d.length) return d[0];
+  }
+  if(b.standort_id && !b.projekt_id && !b.stoerung_id && !b.planung_id){
+    var d2=PLANUNG.filter(function(x){ return x.standort_id===b.standort_id && x.art==="termin" && x.datum && x.datum>=heute; }).map(function(x){ return x.datum; })
+      .concat(OFFENE.filter(function(o){ return o.standortId===b.standort_id && o.termin && o.termin>=heute && !o.erledigt; }).map(function(o){ return o.termin; })).sort();
+    if(d2.length) return d2[0];
+  }
+  return null;
+}
+/* wer sich kümmert: eingetragen, sonst wer beim Termin bzw. Störungseinsatz ist */
+function bedarfWer(b){
+  if(b.wer) return {ids:[b.wer], namen:[b.wer_name||planPersonName(b.wer)||""]};
+  var e=b.planung_id && PLANUNG.filter(function(x){ return x.id===b.planung_id; })[0]; if(e) return {ids:(e.wer||[]).length?e.wer:[e.erstellt_von], namen:e.wer_namen||[]};
+  var o=b.stoerung_id && OFFENE.filter(function(x){ return x._id===b.stoerung_id; })[0]; if(o && o.terminTechniker) return {ids:[], namen:[o.terminTechniker]};
+  return {ids:[], namen:[]};
+}
+function bedarfIstMeins(b){
+  var w=bedarfWer(b), ich=meineKennung(), n=kanonName(meinName()||"");
+  return w.ids.indexOf(ich)>=0 || (!!n && w.namen.some(function(x){ return kanonName(x||"")===n; })) || (!w.ids.length && !w.namen.length && b.erstellt_von===ich);
+}
+/* wofür – als kurzer Text */
+function bedarfBezugText(b){
+  var t=[];
+  var e=b.planung_id && PLANUNG.filter(function(x){ return x.id===b.planung_id; })[0]; if(e) t.push(planTitel(e)+(e.datum?" ("+dfmt(e.datum).slice(0,6)+")":""));
+  var o=b.stoerung_id && OFFENE.filter(function(x){ return x._id===b.stoerung_id; })[0]; if(o) t.push("Störung "+(byId[o.standortId]?stName(byId[o.standortId]):(o.auftragsnummer||"")));
+  var p=b.projekt_id && PROJEKTE.filter(function(x){ return x.id===b.projekt_id; })[0]; if(p && !e) t.push(projektTitel(p));
+  var s=b.standort_id && byId[b.standort_id]; if(s && !o && !p && !e) t.push(stName(s));
+  return t.join(" · ");
+}
+/* wo das gebrauchte Werkzeug ist: Warnung (⚠), wenn es in Reparatur, defekt oder bei jemand anderem ist;
+   nur ein Hinweis (📍), solange niemand eingetragen ist; nichts, wenn es die Person schon hat */
+function bedarfWerkzeugInfo(b){
+  var w=b.werkzeug_id && WZ.filter(function(x){ return x.id===b.werkzeug_id; })[0]; if(!w) return null;
+  var h=wzHinweise(w).filter(function(a){ return a.art==="crit" || /Reparatur/.test(a.text); }).map(function(a){ return a.text; });
+  var wer=bedarfWer(b), ids=wer.ids.length ? wer.ids : [meineKennung()];
+  if(!h.length && ids.some(function(id){ return wzBei(w, id); })) return null;
+  var text=[wzOrtText(w)].concat(h).filter(function(x, i, l){ return l.indexOf(x)===i; }).join(" · ");
+  return {text:text, warnen:h.length>0 || wer.ids.length>0};
+}
+function bedarfWerkzeugHinweis(b){ var i=bedarfWerkzeugInfo(b); return i ? i.text : ""; }
+/* eine Zeile: ☐ abhaken, Text, Weg, Status, wofür, Werkzeug-Hinweis; antippen öffnet */
+function bedarfZeile(b, opt){
+  opt=opt||{};
+  var wg=bedarfWeg(b), hw=bedarfWerkzeugInfo(b), wann=opt.mitWann ? bedarfWann(b) : null, wer=bedarfWer(b);
+  var z=el('<div class="rowflex" style="gap:8px;align-items:flex-start;flex-wrap:nowrap;font-size:13px'+(bedarfOffen(b)?"":";opacity:.6")+'" data-bedarf="'+esc(b.id)+'">'+
+    '<input type="checkbox" style="margin-top:3px;flex:none" aria-label="erledigt"'+(bedarfOffen(b)?"":" checked")+(nurLesen()?" disabled":"")+'>'+
+    '<a href="#" class="sprunglink" style="flex:1;min-width:0;color:inherit"><strong'+(bedarfOffen(b)?"":' style="text-decoration:line-through"')+'>'+wg[2]+" "+esc(b.text)+"</strong>"+(b.menge?" · "+esc(b.menge):"")+
+      ' <span class="muted">– '+esc(wg[1])+(b.bezugsquelle?" bei "+esc(b.bezugsquelle):"")+(b.status==="bestellt"||b.status==="abholbereit"?" · "+esc(b.status==="bestellt"?"bestellt":"abholbereit"):"")+"</span>"+
+      (wann||opt.mitBezug||opt.mitWer?'<br><span class="muted" style="font-size:12px">'+esc([wann?dfmt(wann).slice(0,6):"", opt.mitBezug?bedarfBezugText(b):"", opt.mitWer?wer.namen.filter(Boolean).join(", "):""].filter(Boolean).join(" · "))+"</span>":"")+
+      (hw && bedarfOffen(b)?'<br><span style="font-size:12px'+(hw.warnen?";color:var(--crit)":"")+'">'+(hw.warnen?"⚠ ":"📍 ")+esc(hw.text)+"</span>":"")+"</a></div>");
+  z.querySelector("a").onclick=function(ev){ ev.preventDefault(); bedarfEditor(b); };
+  z.querySelector("input").onchange=function(){ var cb=this; bedarfStatus(b, cb.checked ? "erledigt" : "offen").catch(function(){ cb.checked=!cb.checked; }); };
+  return z;
+}
+function bedarfSpeichern(b, felder){
+  felder=Object.assign({geaendert:new Date().toISOString()}, felder);
+  if(felder.status==="erledigt") felder.erledigt_von=meinName();
+  if(demo()){ var n=Object.assign({}, b||{id:neueKennung("bd"), erstellt_von:meineKennung(), erstellt:new Date().toISOString()}, felder);
+    if(n.status==="erledigt" && !n.erledigt) n.erledigt=new Date().toISOString(); BEDARF=wzZeileSetzen(BEDARF, n); wzGeaendert(); return Promise.resolve(n); }
+  var q=b ? Store.sb.from("bedarf").update(felder).eq("id", b.id).select("*") : Store.sb.from("bedarf").insert(Object.assign({erstellt_name:meinName()}, felder)).select("*");
+  return mitFrist(q, 15000).then(function(r){
+    if(r.error) throw new Error(/does not exist|schema cache|relation/i.test(r.error.message)?"Werkzeug und Material sind in der Datenbank noch nicht eingerichtet (tools/werkzeug.sql).":r.error.message);
+    if(!r.data || !r.data.length) throw new Error("Nicht gespeichert – keine Berechtigung.");
+    BEDARF=wzZeileSetzen(BEDARF, r.data[0]); wzGeaendert(); return r.data[0];
+  });
+}
+function bedarfStatus(b, status){
+  return bedarfSpeichern(b, {status:status}).then(function(n){ toast(status==="erledigt" ? "Erledigt: "+n.text+"." : "Wieder offen: "+n.text+"."); return n; },
+    function(e){ toast("Nicht gespeichert: "+technikDeutsch(e.message||String(e))); throw e; });
+}
+/* anlegen / ändern. vorgabe: Bezug (projekt_id, stoerung_id, planung_id, standort_id), art, text … */
+function bedarfEditor(b, vorgabe){
+  if(!wzAn()){ toast("Werkzeug und Material gehen nur mit Anmeldung."); return; }
+  if(!planTeam) planTeamLaden();
+  var a=Object.assign({art:"material", beschaffung:"mitnehmen", status:"offen"}, vorgabe||{}, b||{});
+  var v=ansichtOeffnen(b ? "Material / Werkzeug" : "Was wird gebraucht?");
+  var bezugT=bedarfBezugText(a); v.schritt.textContent=bezugT ? "für "+bezugT : "ohne Bezug – wird in der Übersicht unter „ohne Termin“ geführt";
+  var quellen=[]; BEDARF.forEach(function(x){ if(x.bezugsquelle && quellen.indexOf(x.bezugsquelle)<0) quellen.push(x.bezugsquelle); });
+  var wzListe=WZ.filter(function(w){ return w.aktiv!==false; });
+  var team=(planTeam||[]).filter(function(p){ return p.user_id; });
+  var form=el('<form class="stack" autocomplete="off" style="max-width:600px">'+
+    '<div class="chips" data-art>'+[["material","Material"],["werkzeug","Werkzeug / Gerät"]].map(function(x){ return '<button class="chip" type="button" data-w="'+x[0]+'" aria-pressed="'+(a.art===x[0])+'">'+x[1]+"</button>"; }).join("")+"</div>"+
+    '<label class="fl" data-wzwahl><span>Welches Werkzeug?</span><select data-f="werkzeug_id"><option value="">– aus der Liste wählen oder unten eintippen –</option>'+
+      wzListe.map(function(w){ return '<option value="'+esc(w.id)+'"'+(a.werkzeug_id===w.id?" selected":"")+">"+esc(w.name+(w.nummer?" ("+w.nummer+")":"")+" · "+wzOrtText(w))+"</option>"; }).join("")+"</select></label>"+
+    '<div class="grid" style="display:grid;grid-template-columns:2fr 1fr;gap:10px">'+
+      '<label class="fl"><span class="req">Was?</span><input type="text" data-f="text" maxlength="200" value="'+esc(a.text||"")+'" placeholder="z. B. Kupferrohr 3/8, Vakuumpumpe, Kondensatpumpe"></label>'+
+      '<label class="fl"><span>Menge</span><input type="text" data-f="menge" maxlength="40" value="'+esc(a.menge||"")+'" placeholder="z. B. 2 Stk, 10 m"></label></div>'+
+    '<div class="fl"><span>Wie kommt es mit?</span></div><div class="chips" data-weg>'+BEDARF_WEGE.map(function(x){ return '<button class="chip" type="button" data-w="'+x[0]+'" aria-pressed="'+(a.beschaffung===x[0])+'">'+x[2]+" "+x[1]+"</button>"; }).join("")+"</div>"+
+    '<label class="fl" data-quelle><span>Wo abholen / bei wem bestellen?</span><input type="text" data-f="bezugsquelle" maxlength="200" list="bd_quellen" value="'+esc(a.bezugsquelle||"")+'" placeholder="z. B. Großhandel Salzburg, Werkstatt, Lieferant">'+
+      '<datalist id="bd_quellen">'+quellen.map(function(q){ return '<option value="'+esc(q)+'">'; }).join("")+"</datalist></label>"+
+    '<div class="grid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:10px">'+
+      '<label class="fl"><span>Gebraucht am</span><input type="date" data-f="benoetigt_am" value="'+esc(a.benoetigt_am||"")+'"></label>'+
+      '<label class="fl"><span>Wer kümmert sich?</span><select data-f="wer"><option value="">– wer beim Einsatz ist –</option>'+team.map(function(p){
+        return '<option value="'+esc(p.user_id)+'"'+(a.wer===p.user_id?" selected":"")+">"+esc(p.name||"–")+"</option>"; }).join("")+
+        (a.wer && !team.some(function(p){ return p.user_id===a.wer; })?'<option value="'+esc(a.wer)+'" selected>'+esc(a.wer_name||"–")+"</option>":"")+"</select></label>"+
+      '<label class="fl"><span>Stand</span><select data-f="status">'+BEDARF_STATUS.map(function(x){ return '<option value="'+x[0]+'"'+(a.status===x[0]?" selected":"")+">"+esc(x[1])+"</option>"; }).join("")+"</select></label></div>"+
+    '<label class="fl"><span>Notiz</span><input type="text" data-f="notiz" maxlength="500" value="'+esc(a.notiz||"")+'"></label>'+
+    '<div class="note" data-wzhinweis hidden style="font-size:12.5px"></div>'+
+    '<div class="note warnbox" data-err hidden></div></form>');
+  var F=function(k){ return form.querySelector('[data-f="'+k+'"]'); };
+  var art=a.art, weg=a.beschaffung;
+  var zeigen=function(){
+    form.querySelector("[data-wzwahl]").hidden = art!=="werkzeug" || !wzListe.length;
+    form.querySelector("[data-quelle]").hidden = weg==="mitnehmen";
+    var w=F("werkzeug_id").value && WZ.filter(function(x){ return x.id===F("werkzeug_id").value; })[0], h=form.querySelector("[data-wzhinweis]");
+    h.hidden=!(art==="werkzeug" && w);
+    if(w) h.innerHTML="📍 Liegt gerade: <strong>"+esc(wzOrtText(w))+"</strong>"+wzHinweisTags(w);
+  };
+  form.querySelectorAll("[data-art] .chip").forEach(function(c){ c.onclick=function(){ art=c.dataset.w; form.querySelectorAll("[data-art] .chip").forEach(function(x){ x.setAttribute("aria-pressed", String(x===c)); }); zeigen(); }; });
+  form.querySelectorAll("[data-weg] .chip").forEach(function(c){ c.onclick=function(){ weg=c.dataset.w; form.querySelectorAll("[data-weg] .chip").forEach(function(x){ x.setAttribute("aria-pressed", String(x===c)); }); zeigen(); }; });
+  F("werkzeug_id").onchange=function(){ var w=WZ.filter(function(x){ return x.id===F("werkzeug_id").value; })[0]; if(w) F("text").value=w.name; zeigen(); };
+  zeigen();
+  v.inhalt.appendChild(form);
+  var err=form.querySelector("[data-err]"), fehler=function(t){ err.textContent=technikDeutsch(t); err.hidden=false; };
+  if(b && (b.erstellt_von===meineKennung() || wzBuero()) && !demo()){
+    var lo=el('<button class="btn ghost" type="button" style="color:var(--crit);border-color:var(--crit)">Löschen</button>');
+    lo.onclick=function(){
+      if(!window.confirm("„"+b.text+"“ löschen?\n\nWenn es nur erledigt ist: lieber abhaken – dann bleibt es nachvollziehbar.")) return;
+      Store.sb.from("bedarf").delete().eq("id", b.id).select("id").then(function(r){
+        if(r.error || !r.data || !r.data.length){ fehler("Nicht gelöscht"+(r.error?" ("+r.error.message+")":" – keine Berechtigung")+"."); return; }
+        BEDARF=BEDARF.filter(function(x){ return x.id!==b.id; }); v.zu(); toast("Gelöscht."); wzGeaendert(); });
+    };
+    v.fuss.appendChild(lo);
+  }
+  var fk=fussKnoepfe(v, "Speichern"), ok=fk.ok;
+  ok.onclick=function(){
+    err.hidden=true;
+    var text=F("text").value.trim();
+    if(!text){ fehler("Bitte eintragen, was gebraucht wird."); F("text").focus(); return; }
+    if(weg!=="mitnehmen" && !F("bezugsquelle").value.trim() && !window.confirm("Ohne Angabe, wo abholen bzw. bei wem bestellen.\n\nTrotzdem speichern?")) return;
+    var wer=F("wer").value||null;
+    var felder={art:art, text:text, menge:F("menge").value.trim()||null, werkzeug_id:art==="werkzeug" ? (F("werkzeug_id").value||null) : null,
+      beschaffung:weg, bezugsquelle:weg==="mitnehmen" ? null : (F("bezugsquelle").value.trim()||null), benoetigt_am:F("benoetigt_am").value||null,
+      wer:wer, wer_name:wer ? (planPersonName(wer)||a.wer_name||null) : null, status:F("status").value, notiz:F("notiz").value.trim()||null};
+    if(!b) ["projekt_id","stoerung_id","planung_id","standort_id"].forEach(function(k){ if(a[k]) felder[k]=a[k]; });
+    ok.disabled=true; ok.textContent="wird gespeichert …";
+    bedarfSpeichern(b, felder).then(function(n){ v.zu(); wzGeaendert(); toast("Gespeichert: "+n.text+" – "+bedarfWeg(n)[1]+"."); },
+      function(e){ ok.disabled=false; ok.textContent="Speichern"; fehler(e.message||String(e)); });
+  };
+  setTimeout(function(){ try{ F("text").focus(); }catch(e){} }, 60);
+}
+/* Kasten für Projekt, Störung, Termin, Markt: die Liste und „+ Material / Werkzeug“, „Packliste übernehmen“ */
+function bedarfKasten(bz, opt){
+  opt=opt||{};
+  var h=el('<div class="stack" style="gap:6px" data-bedarfkasten></div>');
+  h._neu=function(){
+    h.innerHTML="";
+    if(wzFehlt){ h.appendChild(el('<div class="muted" style="font-size:12.5px">Werkzeug und Material sind in der Datenbank noch nicht eingerichtet (tools/werkzeug.sql).</div>')); return; }
+    var l=bedarfZu(bz).sort(function(x,y){ return (bedarfOffen(x)?0:1)-(bedarfOffen(y)?0:1) || String(x.erstellt||"").localeCompare(String(y.erstellt||"")); });
+    if(!l.length) h.appendChild(el('<div class="muted" style="font-size:12.5px">'+esc(opt.leer||"Nichts Besonderes eingetragen.")+"</div>"));
+    l.slice(0,40).forEach(function(b){ h.appendChild(bedarfZeile(b, {mitWer:true})); });
+    if(nurLesen()) return;
+    var r=el('<div class="rowflex" style="gap:6px;flex-wrap:wrap"><button class="btn ghost sm" type="button" data-n>+ Material / Werkzeug</button>'+
+      (PACKLISTEN.length?'<button class="btn ghost sm" type="button" data-p>Packliste übernehmen</button>':"")+"</div>");
+    r.querySelector("[data-n]").onclick=function(){ bedarfEditor(null, Object.assign({}, bz)); };
+    var pk=r.querySelector("[data-p]"); if(pk) pk.onclick=function(){ packlisteWaehlen(bz); };
+    h.appendChild(r);
+  };
+  if(!wzGeladen) wzLaden().then(function(){ if(h.isConnected) h._neu(); });
+  h._neu();
+  return h;
+}
+function bedarfKarte(titel, bz, opt){
+  var c=el('<div class="card" style="box-shadow:none;margin-top:12px"><div class="pad stack" style="gap:8px"><h2>'+esc(titel)+"</h2></div></div>");
+  c.querySelector(".stack").appendChild(bedarfKasten(bz, opt));
+  return c;
+}
+
+/* ---------- Packlisten: wiederkehrende Listen (z. B. für eine VRV-Montage) ---------- */
+function packlisteWaehlen(bz){
+  var v=ansichtOeffnen("Packliste übernehmen");
+  v.schritt.textContent="Die Einträge kommen als „mitnehmen“ dazu – was schon drinsteht, nicht doppelt.";
+  PACKLISTEN.forEach(function(pl){
+    var b=el('<button type="button" class="row" style="display:block;width:100%;text-align:left;padding:10px"><strong>'+esc(pl.name)+'</strong><br><span class="muted" style="font-size:12.5px">'+
+      esc((pl.eintraege||[]).map(function(x){ return x.text; }).slice(0,12).join(", "))+"</span></button>");
+    b.onclick=function(){ v.zu(); packlisteUebernehmen(bz, pl); };
+    v.inhalt.appendChild(b);
+  });
+  var ab=el('<button class="btn ghost" type="button">Abbrechen</button>'); ab.onclick=function(){ v.zu(); }; v.fuss.appendChild(ab);
+}
+function packlisteUebernehmen(bz, pl){
+  var da=bedarfZu(bz).filter(bedarfOffen).map(function(b){ return suchNorm(b.text); });
+  var neu=(pl.eintraege||[]).filter(function(x){ return x.text && da.indexOf(suchNorm(x.text))<0; });
+  if(!neu.length){ toast("Alles aus „"+pl.name+"“ steht schon drin."); return Promise.resolve(); }
+  var kette=Promise.resolve(), n=0;
+  neu.forEach(function(x){ kette=kette.then(function(){
+    var f={art:x.werkzeug_id?"werkzeug":(x.art||"material"), text:x.text, menge:x.menge||null, werkzeug_id:x.werkzeug_id||null, beschaffung:"mitnehmen", status:"offen"};
+    ["projekt_id","stoerung_id","planung_id","standort_id"].forEach(function(k){ if(bz[k]) f[k]=bz[k]; });
+    return bedarfSpeichern(null, f).then(function(){ n++; }); }); });
+  return kette.then(function(){ toast(n+" aus „"+pl.name+"“ übernommen."); }, function(e){ toast("Nur "+n+" übernommen: "+technikDeutsch(e.message||String(e))); });
+}
+/* Packliste anlegen/ändern: je Zeile ein Eintrag; ein Name aus der Werkzeugliste wird mit ihr verknüpft */
+function packlisteEditor(pl){
+  var v=ansichtOeffnen(pl ? "Packliste „"+pl.name+"“" : "Neue Packliste");
+  var form=el('<form class="stack" autocomplete="off" style="max-width:560px">'+
+    '<label class="fl"><span class="req">Name</span><input type="text" data-f="name" maxlength="80" value="'+esc(pl?pl.name:"")+'" placeholder="z. B. VRV-Montage, Split-Montage, Störung Kälte"></label>'+
+    '<label class="fl"><span>Einträge – je Zeile einer</span><textarea data-f="eintraege" rows="10" placeholder="Vakuumpumpe&#10;Bördelgerät&#10;Kältemittelflasche R32&#10;Kupferrohr 1/4 und 3/8">'+
+      esc(((pl&&pl.eintraege)||[]).map(function(x){ return x.text; }).join("\n"))+"</textarea></label>"+
+    (WZ.length?'<div class="muted" style="font-size:12.5px">Aus der Werkzeugliste antippen fügt eine Zeile an:</div><div class="chips" data-wz></div>':"")+
+    '<div class="note warnbox" data-err hidden></div></form>');
+  var ta=form.querySelector('[data-f="eintraege"]');
+  WZ.filter(function(w){ return w.aktiv!==false; }).slice(0,60).forEach(function(w){
+    var c=el('<button class="chip" type="button">'+esc(w.name)+"</button>");
+    c.onclick=function(){ ta.value=(ta.value.trim()?ta.value.replace(/\s+$/,"")+"\n":"")+w.name; };
+    form.querySelector("[data-wz]").appendChild(c);
+  });
+  v.inhalt.appendChild(form);
+  var err=form.querySelector("[data-err]");
+  if(pl && wzBuero() && !demo()){
+    var lo=el('<button class="btn ghost" type="button" style="color:var(--crit);border-color:var(--crit)">Löschen</button>');
+    lo.onclick=function(){ if(!window.confirm("Packliste „"+pl.name+"“ löschen?")) return;
+      Store.sb.from("packlisten").delete().eq("id", pl.id).select("id").then(function(r){
+        if(r.error || !r.data || !r.data.length){ err.textContent="Nicht gelöscht."; err.hidden=false; return; }
+        PACKLISTEN=PACKLISTEN.filter(function(x){ return x.id!==pl.id; }); v.zu(); toast("Gelöscht."); wzGeaendert(); }); };
+    v.fuss.appendChild(lo);
+  }
+  var ok=fussKnoepfe(v, "Speichern").ok;
+  ok.onclick=function(){
+    var name=form.querySelector('[data-f="name"]').value.trim();
+    if(!name){ err.textContent="Bitte einen Namen eintragen."; err.hidden=false; return; }
+    var ein=ta.value.split("\n").map(function(t){ return t.trim(); }).filter(Boolean).slice(0,80).map(function(t){
+      var w=WZ.filter(function(x){ return suchNorm(x.name)===suchNorm(t); })[0];
+      return w ? {art:"werkzeug", text:w.name, werkzeug_id:w.id} : {art:"material", text:t.slice(0,200)}; });
+    if(!ein.length){ err.textContent="Bitte mindestens einen Eintrag."; err.hidden=false; return; }
+    var z={name:name, eintraege:ein, geaendert:new Date().toISOString(), geaendert_von:meinName()};
+    if(demo()){ PACKLISTEN=wzZeileSetzen(PACKLISTEN, Object.assign({id:pl?pl.id:neueKennung("pl")}, pl||{}, z)); v.zu(); wzGeaendert(); return; }
+    ok.disabled=true;
+    var q=pl ? Store.sb.from("packlisten").update(z).eq("id", pl.id).select("*") : Store.sb.from("packlisten").insert(z).select("*");
+    mitFrist(q, 15000).then(function(r){
+      if(r.error || !r.data || !r.data.length) throw new Error(r.error ? r.error.message : "keine Berechtigung");
+      PACKLISTEN=wzZeileSetzen(PACKLISTEN, r.data[0]); v.zu(); toast("Packliste gespeichert ("+ein.length+" Einträge)."); wzGeaendert();
+    }).catch(function(e){ ok.disabled=false; err.textContent="Nicht gespeichert: "+technikDeutsch(e.message||String(e)); err.hidden=false; });
+  };
+}
+
+/* ---------- Werkzeug: anlegen, umsetzen ---------- */
+function wzSpeichern(w, felder){
+  felder=Object.assign({geaendert_von:meinName()}, felder);
+  if(demo()){ var n=Object.assign({}, w||{id:neueKennung("wz"), aktiv:true, zustand:"ok", standort_art:"lager"}, felder, {geaendert:new Date().toISOString()});
+    WZ=wzZeileSetzen(WZ, n); wzGeaendert(); return Promise.resolve(n); }
+  var q=w ? Store.sb.from("werkzeug").update(felder).eq("id", w.id).select("*") : Store.sb.from("werkzeug").insert(felder).select("*");
+  return mitFrist(q, 15000).then(function(r){
+    if(r.error) throw new Error(/does not exist|schema cache|relation/i.test(r.error.message)?"Werkzeug und Material sind in der Datenbank noch nicht eingerichtet (tools/werkzeug.sql).":r.error.message);
+    if(!r.data || !r.data.length) throw new Error("Nicht gespeichert – keine Berechtigung.");
+    WZ=wzZeileSetzen(WZ, r.data[0]); wzGeaendert(); return r.data[0];
+  });
+}
+/* schnell umsetzen: „Ich hab’s“, „In mein Auto“, „Ins Lager“ */
+function wzOrtSchnell(w, ziel){
+  var f;
+  if(ziel==="ich") f={standort_art:"person", person_id:meineKennung(), person_name:meinName(), standort_text:null};
+  else if(ziel==="lager") f={standort_art:"lager", standort_text:null};
+  else if(ziel && ziel.fahrzeug) f={standort_art:"fahrzeug", fahrzeug_id:ziel.fahrzeug.id, fahrzeug_name:ziel.fahrzeug.kennzeichen, standort_text:null};
+  if(!f) return;
+  if(w.standort_art==="reparatur" && !window.confirm("„"+w.name+"“ steht als „in Reparatur“.\n\nIst es zurück?")) return;
+  f.zurueck_am=null;
+  wzSpeichern(w, f).then(function(n){ toast(n.name+": jetzt "+wzOrtText(n)+"."); }, function(e){ toast("Nicht gespeichert: "+technikDeutsch(e.message||String(e))); });
+}
+function meinFahrzeug(){ var ich=meineKennung(); return FZ.filter(function(f){ return f.aktiv!==false && (f.fahrer||[]).indexOf(ich)>=0; })[0]||null; }
+function wzEditor(w){
+  if(!wzAn()){ toast("Werkzeug geht nur mit Anmeldung."); return; }
+  if(!planTeam) planTeamLaden();
+  if(!fzGeladen) fzLaden();
+  var a=Object.assign({standort_art:"lager", zustand:"ok"}, w||{});
+  var v=ansichtOeffnen(w ? w.name : "Neues Werkzeug / Gerät");
+  if(w) v.schritt.textContent="jetzt: "+wzOrtText(w);
+  var gruppen=[]; WZ.forEach(function(x){ if(x.gruppe && gruppen.indexOf(x.gruppe)<0) gruppen.push(x.gruppe); });
+  var team=(planTeam||[]).filter(function(p){ return p.user_id; });
+  var form=el('<form class="stack" autocomplete="off" style="max-width:620px">'+
+    '<div class="grid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:10px">'+
+      '<label class="fl" style="grid-column:1/-1"><span class="req">Bezeichnung</span><input type="text" data-f="name" maxlength="120" value="'+esc(a.name||"")+'" placeholder="z. B. Vakuumpumpe Rothenberger, Lecksuchgerät, Bohrhammer"></label>'+
+      '<label class="fl"><span>Inventar-Nr.</span><input type="text" data-f="nummer" maxlength="40" value="'+esc(a.nummer||"")+'"></label>'+
+      '<label class="fl"><span>Gruppe</span><input type="text" data-f="gruppe" maxlength="60" list="wz_gruppen" value="'+esc(a.gruppe||"")+'" placeholder="z. B. Messgerät, Kälte, Elektro">'+
+        '<datalist id="wz_gruppen">'+gruppen.map(function(g){ return '<option value="'+esc(g)+'">'; }).join("")+"</datalist></label>"+
+      '<label class="fl"><span>Seriennummer</span><input type="text" data-f="seriennummer" maxlength="80" value="'+esc(a.seriennummer||"")+'"></label></div>'+
+    '<div class="fl"><span>Wo ist es gerade?</span></div><div class="chips" data-ort>'+WZ_ORTE.map(function(x){ return '<button class="chip" type="button" data-w="'+x[0]+'" aria-pressed="'+(a.standort_art===x[0])+'">'+esc(x[1])+"</button>"; }).join("")+"</div>"+
+    '<div class="grid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:10px">'+
+      '<label class="fl" data-nur="fahrzeug"><span>Fahrzeug</span><select data-f="fahrzeug_id"><option value="">–</option>'+FZ.filter(function(f){ return f.aktiv!==false || f.id===a.fahrzeug_id; }).map(function(f){
+        return '<option value="'+esc(f.id)+'"'+(a.fahrzeug_id===f.id?" selected":"")+">"+esc(f.kennzeichen+((f.fahrer_namen||[]).length?" · "+f.fahrer_namen.join(", "):""))+"</option>"; }).join("")+
+        (a.fahrzeug_id && !FZ.some(function(f){ return f.id===a.fahrzeug_id; })?'<option value="'+esc(a.fahrzeug_id)+'" selected>'+esc(a.fahrzeug_name||"?")+"</option>":"")+"</select></label>"+
+      '<label class="fl" data-nur="person"><span>Bei wem?</span><select data-f="person_id"><option value="">–</option>'+team.map(function(p){
+        return '<option value="'+esc(p.user_id)+'"'+(a.person_id===p.user_id?" selected":"")+">"+esc(p.name||"–")+"</option>"; }).join("")+
+        (a.person_id && !team.some(function(p){ return p.user_id===a.person_id; })?'<option value="'+esc(a.person_id)+'" selected>'+esc(a.person_name||"?")+"</option>":"")+"</select></label>"+
+      '<label class="fl" data-nur="baustelle"><span>Projekt / Baustelle</span><select data-f="projekt_id"><option value="">–</option>'+PROJEKTE.filter(function(p){ return projektOffen(p) || p.id===a.projekt_id; }).map(function(p){
+        return '<option value="'+esc(p.id)+'"'+(a.projekt_id===p.id?" selected":"")+">"+esc(projektTitel(p))+"</option>"; }).join("")+"</select></label>"+
+      '<label class="fl" data-nur="baustelle"><span>… oder Markt</span><select data-f="standort_id"><option value="">–</option>'+ST.slice().sort(nachMarktname).map(function(s){
+        return '<option value="'+esc(s.id)+'"'+(a.standort_id===s.id?" selected":"")+">"+esc(stName(s))+"</option>"; }).join("")+"</select></label>"+
+      '<label class="fl" data-standorttext><span data-standorttextlabel>Wo genau?</span><input type="text" data-f="standort_text" maxlength="200" value="'+esc(a.standort_text||"")+'"></label>'+
+      '<label class="fl" data-nur="reparatur sonst"><span>Zurück ca. am</span><input type="date" data-f="zurueck_am" value="'+esc(a.zurueck_am||"")+'"></label></div>'+
+    '<div class="grid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:10px">'+
+      '<label class="fl"><span>Zustand</span><select data-f="zustand">'+[["ok","in Ordnung"],["defekt","defekt"],["verloren","verloren"]].map(function(x){ return '<option value="'+x[0]+'"'+(a.zustand===x[0]?" selected":"")+">"+x[1]+"</option>"; }).join("")+"</select></label>"+
+      '<label class="fl"><span>Prüfung / Kalibrierung fällig</span><input type="date" data-f="pruefen_bis" value="'+esc(a.pruefen_bis||"")+'"></label></div>'+
+    '<label class="fl"><span>Notiz</span><textarea data-f="notiz" rows="2" maxlength="1000">'+esc(a.notiz||"")+"</textarea></label>"+
+    (w?'<label class="chk"><input type="checkbox" data-f="aktiv"'+(w.aktiv===false?"":" checked")+"><span>im Bestand (abwählen, wenn es ausgeschieden ist – der Verlauf bleibt)</span></label>"+
+      '<details data-verlauf><summary class="muted" style="cursor:pointer;font-size:12.5px">Verlauf – wo es war</summary><div class="stack" style="gap:2px;margin-top:6px"></div></details>':"")+
+    '<div class="note warnbox" data-err hidden></div></form>');
+  var F=function(k){ return form.querySelector('[data-f="'+k+'"]'); };
+  var ort=a.standort_art;
+  var zeigen=function(){
+    form.querySelectorAll("[data-nur]").forEach(function(l){ l.hidden=l.dataset.nur.split(" ").indexOf(ort)<0; });
+    form.querySelector("[data-standorttextlabel]").textContent={lager:"Wo im Lager? (Regal, Fach)", fahrzeug:"Wo im Fahrzeug? (kann leer bleiben)", person:"Notiz (kann leer bleiben)",
+      baustelle:"Wo genau? (kann leer bleiben)", reparatur:"Reparatur bei wem?", sonst:"Wo?"}[ort]||"Wo genau?";
+  };
+  form.querySelectorAll("[data-ort] .chip").forEach(function(c){ c.onclick=function(){ ort=c.dataset.w; form.querySelectorAll("[data-ort] .chip").forEach(function(x){ x.setAttribute("aria-pressed", String(x===c)); }); zeigen(); }; });
+  zeigen();
+  var vl=form.querySelector("[data-verlauf]");
+  if(vl) vl.addEventListener("toggle", function(){
+    var h=vl.querySelector(".stack"); if(h.childNodes.length || demo()) return;
+    h.appendChild(el('<div class="muted" style="font-size:12.5px">wird geladen …</div>'));
+    Store.sb.from("werkzeug_verlauf").select("*").eq("werkzeug_id", w.id).order("zeit", {ascending:false}).limit(50).then(function(r){
+      h.innerHTML="";
+      (r.data||[]).forEach(function(x){ h.appendChild(el('<div style="font-size:12.5px"><span class="mono muted">'+esc(dfmt(tagLokal(x.zeit)))+" "+esc(zeitAus(x.zeit))+"</span> "+esc(x.standort||"")+
+        (x.zustand && x.zustand!=="ok"?" · "+esc(x.zustand):"")+(x.von_name?' <span class="muted">· '+esc(x.von_name)+"</span>":"")+"</div>")); });
+      if(!(r.data||[]).length) h.appendChild(el('<div class="muted" style="font-size:12.5px">Noch kein Verlauf.</div>'));
+    });
+  });
+  v.inhalt.appendChild(form);
+  var err=form.querySelector("[data-err]"), fehler=function(t){ err.textContent=technikDeutsch(t); err.hidden=false; };
+  var ok=fussKnoepfe(v, "Speichern").ok;
+  ok.onclick=function(){
+    err.hidden=true;
+    var name=F("name").value.trim();
+    if(!name){ fehler("Bitte die Bezeichnung eintragen."); return; }
+    var f={name:name, nummer:F("nummer").value.trim()||null, gruppe:F("gruppe").value.trim()||null, seriennummer:F("seriennummer").value.trim()||null,
+      standort_art:ort, standort_text:F("standort_text").value.trim()||null, zustand:F("zustand").value, pruefen_bis:F("pruefen_bis").value||null,
+      notiz:F("notiz").value.trim()||null, zurueck_am:(ort==="reparatur"||ort==="sonst") ? (F("zurueck_am").value||null) : null,
+      fahrzeug_id:null, fahrzeug_name:null, person_id:null, person_name:null, projekt_id:null, standort_id:null};
+    if(ort==="fahrzeug"){ var fz=F("fahrzeug_id").value; if(!fz){ fehler("Bitte das Fahrzeug wählen."); return; }
+      f.fahrzeug_id=fz; var fo=FZ.filter(function(x){ return x.id===fz; })[0]; f.fahrzeug_name=fo ? fo.kennzeichen : (a.fahrzeug_name||null); }
+    if(ort==="person"){ var pid=F("person_id").value; if(!pid){ fehler("Bitte wählen, bei wem es ist."); return; }
+      f.person_id=pid; f.person_name=planPersonName(pid)||a.person_name||null; }
+    if(ort==="baustelle"){ f.projekt_id=F("projekt_id").value||null; f.standort_id=F("standort_id").value||null;
+      if(!f.projekt_id && !f.standort_id && !f.standort_text){ fehler("Bitte Projekt, Markt oder „Wo genau?“ angeben."); return; } }
+    if(ort==="reparatur" && !f.standort_text && !window.confirm("Ohne Angabe, wo es repariert wird.\n\nTrotzdem speichern?")) return;
+    if(w) f.aktiv=F("aktiv").checked;
+    ok.disabled=true; ok.textContent="wird gespeichert …";
+    wzSpeichern(w, f).then(function(n){ v.zu(); wzGeaendert(); toast(n.name+" gespeichert – "+wzOrtText(n)+"."); },
+      function(e){ ok.disabled=false; ok.textContent="Speichern"; fehler(e.message||String(e)); });
+  };
+}
+
+/* ---------- Übersicht: was ansteht (mitnehmen, abholen, bestellen) ---------- */
+function bedarfGruppen(liste){
+  var heute=isoLokal(new Date()), morgen=plusTage(heute,1), so=plusTage(montagVon(heute),6);
+  var g=[["Heute oder schon vorbei",[]],["Morgen",[]],["Diese Woche",[]],["Später",[]],["Ohne Termin",[]]];
+  liste.forEach(function(b){ var w=bedarfWann(b);
+    (!w ? g[4] : w<=heute ? g[0] : w===morgen ? g[1] : w<=so ? g[2] : g[3])[1].push(b); });
+  g.forEach(function(x){ x[1].sort(function(a,b){ return String(bedarfWann(a)||"9").localeCompare(String(bedarfWann(b)||"9")); }); });
+  return g.filter(function(x){ return x[1].length; });
+}
+function bedarfUebersichtKarte(){
+  var buero=wzBuero();
+  if(S.bdAlle==null) S.bdAlle=buero;
+  var offen=BEDARF.filter(bedarfOffen), meine=offen.filter(bedarfIstMeins), l=S.bdAlle ? offen : meine;
+  var c=el('<div class="card"><div class="pad stack" style="gap:8px">'+
+    '<div class="rowflex" style="justify-content:space-between;gap:8px"><h2>Mitnehmen, abholen, bestellen'+(l.length?" ("+l.length+")":"")+"</h2>"+
+      '<button class="btn sm" type="button" data-neu>+ Was wird gebraucht?</button></div>'+
+    '<div class="chips"><button class="chip" type="button" data-w="0" aria-pressed="'+!S.bdAlle+'">Meine ('+meine.length+')</button><button class="chip" type="button" data-w="1" aria-pressed="'+!!S.bdAlle+'">Alle ('+offen.length+")</button></div>"+
+    '<div class="stack" data-l style="gap:6px"></div></div></div>');
+  c.querySelector("[data-neu]").onclick=function(){ bedarfEditor(null, {}); };
+  c.querySelectorAll(".chips .chip").forEach(function(b){ b.onclick=function(){ S.bdAlle=b.dataset.w==="1"; render(); }; });
+  var h=c.querySelector("[data-l]");
+  if(!l.length) h.appendChild(el('<div class="muted" style="font-size:12.5px">'+(S.bdAlle?"Nichts offen.":"Für dich ist nichts offen.")+
+    " Eintragen geht hier, im Kalendertermin, in der Störung, im Projekt oder am Markt.</div>"));
+  bedarfGruppen(l).forEach(function(g){
+    h.appendChild(el('<div style="font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--accent);margin-top:4px">'+esc(g[0])+"</div>"));
+    g[1].forEach(function(b){ h.appendChild(bedarfZeile(b, {mitWann:true, mitBezug:true, mitWer:S.bdAlle})); });
+  });
+  var fertig=BEDARF.filter(function(b){ return !bedarfOffen(b); }).sort(function(a,b){ return String(b.erledigt||"").localeCompare(String(a.erledigt||"")); });
+  if(fertig.length){
+    var d=el('<details><summary class="muted" style="cursor:pointer;font-size:12.5px">Zuletzt erledigt ('+fertig.length+")</summary><div class=\"stack\" style=\"gap:4px;margin-top:6px\"></div></details>");
+    fertig.slice(0,30).forEach(function(b){ d.querySelector(".stack").appendChild(bedarfZeile(b, {mitBezug:true})); });
+    c.querySelector(".pad").appendChild(d);
+  }
+  return c;
+}
+function wzListeKarte(){
+  var such=S.wzSuche||"", filt=S.wzFilter||"alle", heute=isoLokal(new Date());
+  var aktiv=WZ.filter(function(w){ return w.aktiv!==false; });
+  var filter=[["alle","Alle"],["meins","Bei mir"],["lager","Lager"],["fahrzeug","Fahrzeuge"],["person","bei Personen"],["baustelle","Baustelle / Markt"],["reparatur","Reparatur"],["achtung","Prüfung / defekt"]];
+  var passt=function(w){
+    if(filt==="meins") return wzBei(w, meineKennung());
+    if(filt==="achtung") return wzHinweise(w).length>0;
+    return filt==="alle" || w.standort_art===filt;
+  };
+  var n=suchNorm(such);
+  var l=aktiv.filter(passt).filter(function(w){ return !n || suchNorm([w.name, w.nummer, w.gruppe, w.seriennummer, wzOrtText(w)].join(" ")).indexOf(n)>=0; })
+    .sort(function(a,b){ return String(a.gruppe||"").localeCompare(String(b.gruppe||""),"de") || String(a.name).localeCompare(String(b.name),"de"); });
+  var c=el('<div class="card"><div class="pad stack" style="gap:8px">'+
+    '<div class="rowflex" style="justify-content:space-between;gap:8px"><h2>Werkzeug und Geräte ('+aktiv.length+")</h2>"+
+      '<button class="btn sm" type="button" data-neu>+ Werkzeug</button></div>'+
+    '<input type="search" data-such placeholder="Suchen: Name, Nummer, Gruppe, wo …" value="'+esc(such)+'">'+
+    '<div class="chips">'+filter.map(function(x){ return '<button class="chip" type="button" data-w="'+x[0]+'" aria-pressed="'+(filt===x[0])+'">'+esc(x[1])+"</button>"; }).join("")+"</div>"+
+    '<div class="stack" data-l style="gap:0"></div></div></div>');
+  c.querySelector("[data-neu]").onclick=function(){ wzEditor(null); };
+  var si=c.querySelector("[data-such]");
+  si.oninput=function(){ S.wzSuche=si.value; clearTimeout(si._t); si._t=setTimeout(function(){ render(); setTimeout(function(){ var x=document.querySelector("[data-such]"); if(x){ x.focus(); x.setSelectionRange(x.value.length, x.value.length); } }, 0); }, 350); };
+  c.querySelectorAll(".chips .chip").forEach(function(b){ b.onclick=function(){ S.wzFilter=b.dataset.w; render(); }; });
+  var h=c.querySelector("[data-l]");
+  if(!aktiv.length) h.appendChild(el('<div class="muted" style="font-size:12.5px">Noch kein Werkzeug eingetragen. „+ Werkzeug“ – Bezeichnung und wo es gerade ist; der Rest kann später kommen.</div>'));
+  else if(!l.length) h.appendChild(el('<div class="muted" style="font-size:12.5px">Nichts gefunden.</div>'));
+  var mf=meinFahrzeug(), ich=meineKennung();
+  l.slice(0,300).forEach(function(w){
+    var beiMir=wzBei(w, ich);
+    var z=el('<div class="rowflex" style="justify-content:space-between;gap:8px;padding:7px 0;border-bottom:1px solid var(--line);flex-wrap:wrap" data-wz="'+esc(w.id)+'">'+
+      '<a href="#" class="sprunglink" style="flex:1;min-width:200px;color:inherit"><strong>'+esc(w.name)+"</strong>"+(w.nummer?' <span class="mono muted">'+esc(w.nummer)+"</span>":"")+
+        (w.gruppe?' <span class="muted" style="font-size:12px">· '+esc(w.gruppe)+"</span>":"")+'<br><span style="font-size:12.5px">📍 '+esc(wzOrtText(w))+"</span>"+wzHinweisTags(w)+"</a>"+
+      '<span class="rowflex" style="gap:4px;flex-wrap:wrap"></span></div>');
+    z.querySelector("a").onclick=function(ev){ ev.preventDefault(); wzEditor(w); };
+    var k=z.querySelector("span.rowflex");
+    var knopf=function(t, ziel){ var b=el('<button class="btn ghost sm" type="button">'+esc(t)+"</button>"); b.onclick=function(){ wzOrtSchnell(w, ziel); }; k.appendChild(b); };
+    if(!nurLesen()){
+      if(!beiMir) knopf("Ich hab’s", "ich");
+      if(mf && !(w.standort_art==="fahrzeug" && w.fahrzeug_id===mf.id)) knopf("In mein Auto", {fahrzeug:mf});
+      if(w.standort_art!=="lager") knopf("Ins Lager", "lager");
+    }
+    h.appendChild(z);
+  });
+  if(l.length>300) h.appendChild(el('<div class="muted" style="font-size:12.5px;margin-top:6px">… und '+(l.length-300)+" weitere – bitte suchen.</div>"));
+  return c;
+}
+function packlistenKarte(){
+  var c=el('<div class="card"><div class="pad stack" style="gap:8px">'+
+    '<div class="rowflex" style="justify-content:space-between;gap:8px"><h2>Packlisten ('+PACKLISTEN.length+")</h2>"+
+      '<button class="btn ghost sm" type="button" data-neu>+ Packliste</button></div>'+
+    '<div class="sub">Was man für eine Art Einsatz immer wieder braucht – im Projekt, in der Störung oder im Termin mit „Packliste übernehmen“ auf einmal eintragen.</div>'+
+    '<div class="stack" data-l style="gap:4px"></div></div></div>');
+  c.querySelector("[data-neu]").onclick=function(){ packlisteEditor(null); };
+  PACKLISTEN.forEach(function(pl){
+    var b=el('<a href="#" class="sprunglink" style="font-size:13px"><strong>'+esc(pl.name)+'</strong> <span class="muted">– '+(pl.eintraege||[]).length+" Einträge</span></a>");
+    b.onclick=function(ev){ ev.preventDefault(); packlisteEditor(pl); };
+    c.querySelector("[data-l]").appendChild(b);
+  });
+  if(!PACKLISTEN.length) c.querySelector("[data-l]").appendChild(el('<div class="muted" style="font-size:12.5px">Noch keine Packliste.</div>'));
+  return c;
+}
+function viewWerkzeug(){
+  var f=document.createDocumentFragment();
+  wzNachladen();
+  if(!fzGeladen) fzLaden().then(function(neu){ if(neu && S.view==="werkzeug" && darfRendern() && !document.querySelector(".assistent")) render(); });
+  planungNachladen();
+  if(!planTeam) planTeamLaden();
+  if(wzFehlt) f.appendChild(el('<div class="card"><div class="pad"><h2>Werkzeug und Material</h2><div class="note warnbox">Die Tabellen fehlen noch in der Datenbank'+
+    (istInhaber()?" – tools/werkzeug.sql einmal im Supabase SQL Editor ausführen.":" – das richtet der Inhaber ein.")+"</div></div></div>"));
+  if(wzFehler) f.appendChild(el('<div class="card"><div class="pad"><div class="note warnbox">'+esc(wzFehler)+"</div></div></div>"));
+  if(!wzGeladen){ f.appendChild(el('<div class="card"><div class="pad muted">Werkzeug und Material werden geladen …</div></div>')); return f; }
+  f.appendChild(bedarfUebersichtKarte());
+  f.appendChild(wzListeKarte());
+  f.appendChild(packlistenKarte());
+  return f;
+}
+/* Büro: was beim Werkzeug ansteht (Reparatur überfällig, Prüfung, defekt) und was noch zu bestellen ist – für das To-do */
+function wzToDo(){
+  var r=[];
+  WZ.filter(function(w){ return w.aktiv!==false; }).forEach(function(w){
+    wzHinweise(w).forEach(function(a){ if(a.art==="crit" || /Prüfung/.test(a.text)) r.push("🧰 "+w.name+": "+a.text); }); });
+  var best=BEDARF.filter(function(b){ return b.beschaffung==="bestellen" && b.status==="offen"; }).length;
+  if(best) r.push("🛒 "+best+(best===1?" Sache":" Sachen")+" noch zu bestellen");
+  return r;
+}
+
 /* ===================== Fahrzeuge (Büro 02.10.2026) =====================
    Je Fahrzeug Kilometer, Pickerl (§ 57a), Service, Reparaturen und Schäden (tools/fahrzeuge.sql).
    Techniker sehen nur ihr zugeteiltes Fahrzeug und tragen km-Stand und Schäden ein; Inhaber und Admins
@@ -18287,6 +18860,7 @@ function fzFaellig(f){
 function viewFahrzeuge(){
   var f=document.createDocumentFragment();
   fzLaden().then(function(neu){ if(neu && S.view==="fahrzeuge" && darfRendern() && !document.querySelector(".assistent")) render(); });
+  if(wzAn()) wzNachladen();   /* was in den Fahrzeugen liegt */
   if(!planTeam) planTeamLaden();
   var buero=fzBuero() && !nurLesen();
   var kopf=el('<div class="card"><div class="pad stack" style="gap:8px">'+
@@ -18324,6 +18898,8 @@ function fzKarte(x){
     '<div class="rowflex" style="gap:6px;flex-wrap:wrap"><button class="btn sm" type="button" data-e="km">km-Stand eintragen</button>'+
       '<button class="btn ghost sm" type="button" data-e="schaden">Schaden melden</button>'+
       (buero?'<button class="btn ghost sm" type="button" data-e="service">Service / Reparatur …</button><button class="btn ghost sm" type="button" data-e="bearb">Bearbeiten</button>':"")+"</div>"+
+    (function(){ var drin=WZ.filter(function(w){ return w.aktiv!==false && w.standort_art==="fahrzeug" && w.fahrzeug_id===x.id; });
+      return drin.length ? '<div style="font-size:12.5px">🧰 Im Fahrzeug: '+drin.map(function(w){ return esc(w.name); }).join(", ")+"</div>" : ""; })()+
     '<details><summary class="muted" style="cursor:pointer;font-size:12.5px">Verlauf ('+ein.length+")</summary><div data-verlauf></div></details>"+
   "</div></div>");
   c.querySelector('[data-e="km"]').onclick=function(){ fzEintragEditor(x, "km"); };
@@ -21338,6 +21914,7 @@ var ANSICHT_ORDNUNG={
   kalender:[
     {h:/^Urlaubsanträge/, seite:"neben", key:"urlaub"}, {h:/^Kalender/, seite:"haupt", fest:true}, {h:/^To-do/, seite:"neben", key:"todo"},
     {h:/^Wartungen /, seite:"neben", key:"wartungen", handyZu:true}, {h:/^Auslastung/, seite:"neben", key:"auslastung", handyZu:true}],
+  werkzeug:[{h:/^Mitnehmen, abholen/, seite:"neben", key:"bedarf"}, {h:/^Werkzeug und Geräte/, seite:"haupt", key:"liste", fest:true}, {h:/^Packlisten/, seite:"neben", key:"packlisten", handyZu:true}],
   stunden:[
     {h:/^Stempeluhr/, seite:"neben", key:"stempel"}, {h:/^Meine Arbeitszeit/, seite:"haupt", fest:true},
     {h:/^Alle Mitarbeiter/, seite:"unten", key:"alle"}],
@@ -21905,6 +22482,7 @@ function handbuchKarte(z){
         "<strong>Fotos und Rapport:</strong> bis 25 Fotos mit Notiz, bei Lidl den Rapportbericht anhängen (oder später nachreichen) – die ausgeführten Arbeiten daraus kommen zusätzlich in „Durchgeführte Maßnahmen“ (Störung) bzw. „Bemerkungen“ (Wartung).",
         "<strong>Abschluss:</strong> Datum, Uhrzeit, wer noch dabei war, Unterschrift. Das Protokoll läuft immer unter deinem Namen – du bist verantwortlich.",
         "<strong>Übersicht prüfen und speichern.</strong> Oben steht „✓ gespeichert“. Nach einer Störung bietet die App fällige Wartungen am selben Markt gleich mit an.",
+        "<strong>Werkzeug und Material:</strong> Reiter <em>Werkzeug</em> – was mitzunehmen, abzuholen oder zu bestellen ist (im Termin, in der Störung, im Projekt, am Markt eintragen; „Heute für dich“ und „Planung prüfen“ erinnern) und wo jedes Werkzeug gerade ist („Ich hab’s“, „In mein Auto“, „Ins Lager“, Reparatur, Prüfung).",
         "<strong>Stunden:</strong> ein-, um- und ausstempeln (Reiter <em>Stunden</em>; „📅 Heute geplant“ füllt Bereich und Markt) – oder geplante Termine dort mit „erfassen“ übernehmen. "+
         "Urlaub (genehmigt), Krankenstand, Schule und Zeitausgleich im Kalender stehen von selbst in den Stunden; je Tag und Woche steht der Abstand zum Soll (nur zur Info – Überstunden zählen je Monat)."])+
       "<p><strong>Büro / Admin – Aufträge, Planung, Datenpflege</strong></p>"+liste([
@@ -22443,6 +23021,7 @@ var RUNDGAENGE={
       "<strong>Besuche</strong> kommen aus drei Quellen: alte Liste, Prüfbuch (Nachweise), Protokolle aus der App. Einträge höchstens 14 Tage auseinander gelten als derselbe Besuch.",
       "<strong>Störung</strong> ↔ Störungsprotokoll ↔ Lidl-Rapport ↔ Rechnung zum Einsatz.",
       "<strong>Protokoll</strong> → Mängel → Folgeauftrag → Angebot oder Projekt (das Projekt zeigt „aus dem Protokoll vom …“ und umgekehrt).",
+      "<strong>Werkzeug und Material</strong> ↔ Termin, Störung, Projekt, Markt (was gebraucht wird) und Fahrzeug, Person, Baustelle (wo das Werkzeug ist); Erinnerung in „Heute für dich“ und „Planung prüfen“.",
       "<strong>Kalender</strong> ↔ Wartungstermine der Anlagen, Störungen („Einsatz geplant am“), Projektschritte; ↔ Stunden („erfassen“; Urlaub, Krankenstand, Schule, Zeitausgleich von selbst; Stempeluhr verknüpft den passenden Termin).",
       "<strong>Kontakte</strong> ← Protokolle (wer unterschrieben hat), Störungen (Lidl-Kontakt), Projekte (Beteiligte); der Markt zeigt sie unter „Projekte und Kontakte“.",
       "Alles ist <strong>von beiden Seiten</strong> erreichbar: vom Markt zum Protokoll, vom Protokoll zum Projekt, von der Datei zur Angabe."])},
@@ -22557,7 +23136,7 @@ Object.assign(RUNDGAENGE, {
         "Für eine andere Person: dazu eine Tour und Nachricht – sie nimmt sie unter Karte → „Touren für dich“ an."])},
     {reiter:"kalender", ziel:function(){ return rgEl('#kal_karte button[title^="Reihenfolge, Fahrzeiten"]') || rgEl("#kal_karte [data-wer]"); },
       vorher:function(){ rgKalender("woche", "ich"); }, titel:"Eine geplante Woche prüfen und verbessern",
-      text:"<strong>„🔍 Planung prüfen“</strong> (bei gewählter Person) prüft den Tag bzw. die Woche, die du siehst – auch wenn sie von Hand geplant ist. Je Tag:"+RG_LISTE([
+      text:"<strong>„🔍 Planung prüfen“</strong> (bei gewählter Person) prüft den Tag bzw. die Woche, die du siehst – auch wenn sie von Hand geplant ist. Je Tag (dazu „🧰 Vorher besorgen“: Material und Werkzeug, das für die Einsätze noch offen ist – abholen, bestellen, mitnehmen):"+RG_LISTE([
         "Startpunkt und erste Fahrt (rot, wenn man vor 05:30 losfahren müsste).",
         "<strong>„Kürzere Reihenfolge“</strong>, wenn sie mindestens 10 Minuten spart – mit „Reihenfolge übernehmen“.",
         "Fahrten, die zwischen zwei Terminen zu knapp sind.",
@@ -22770,6 +23349,28 @@ Object.assign(RUNDGAENGE, {
       RG_HG(["Pickerl und Service werden 30 Tage vorher gelb, überfällig rot (Service nach km ab 1.000 km Rest) und stehen fürs Büro im To-do (🚐).",
         "GPS: <strong>nur Kilometer je Tag</strong> – keine Orte, Uhrzeiten oder Fahrten; dieselbe Datei zweimal zählt nicht doppelt.",
         "Beträge (Kosten) sieht und speichert nur der Inhaber."])}
+  ]},
+  werkzeug:{thema:true, titel:"Werkzeug und Material", fuer:function(){ return reiterErlaubt("werkzeug"); }, schritte:[
+    {titel:"Werkzeug und Material", text:"Damit nichts vergessen wird: was für einen Einsatz gebraucht wird – <strong>mitnehmen</strong>, irgendwo <strong>abholen</strong> oder <strong>bestellen</strong> – und wo das Werkzeug gerade ist."+
+      RG_KETTE(["Termin / Störung / Projekt / Markt", "„+ Material / Werkzeug“", "Erinnerung (Heute für dich, Planung prüfen)", "abhaken"])},
+    {reiter:"werkzeug", ziel:function(){ return rgKarte(/^Mitnehmen, abholen/); }, titel:"Mitnehmen, abholen, bestellen",
+      text:RG_LISTE(["Alles Offene nach Tag: heute, morgen, diese Woche, später, ohne Termin – „Meine“ oder „Alle“.",
+        "☐ antippen hakt ab; Zeile antippen öffnet: Was, Menge, Werkzeug aus der Liste, <strong>wie es mitkommt</strong> (mitnehmen, abholen bei …, bestellen bei …), gebraucht am, wer sich kümmert, Stand (offen, bestellt, abholbereit, erledigt)."])+
+      RG_HG(["Datum und Person kommen vom Termin, vom Störungseinsatz oder vom nächsten Projekttermin – eintragen muss man sie nur, wenn es anders ist.",
+        "Liegt das gebrauchte Werkzeug nicht bei der Person (anderes Auto, Lager, Reparatur, defekt), steht ein ⚠ dabei."])},
+    {reiter:"werkzeug", ziel:function(){ return rgKarte(/^Werkzeug und Geräte/); }, titel:"Wo ist das Werkzeug?",
+      text:RG_LISTE(["Suchen und filtern: bei mir, Lager, Fahrzeuge, bei Personen, Baustelle/Markt, Reparatur, Prüfung/defekt.",
+        "<strong>„Ich hab’s“</strong>, <strong>„In mein Auto“</strong>, <strong>„Ins Lager“</strong> – ein Griff, wenn man es nimmt oder zurücklegt.",
+        "Antippen öffnet: Standort genau (Fahrzeug, Person, Projekt/Markt, Reparatur bei wem und zurück am), Zustand, Prüfung/Kalibrierung fällig, Verlauf."])+
+      RG_HG(["Jeder Standortwechsel steht mit Zeit und Name im Verlauf – den schreibt die Datenbank, nicht die App.",
+        "Reparatur überfällig, Prüfung fällig, defekt und „noch zu bestellen“ stehen fürs Büro im Kalender-To-do (🧰, 🛒).",
+        "Das Fahrzeug zeigt, was drin liegt; das Projekt und der Markt, was dort liegt. Keine Preise, kein Lagerbestand."])},
+    {reiter:"werkzeug", ziel:function(){ return rgKarte(/^Packlisten/); }, titel:"Packlisten",
+      text:"Was man für eine Art Einsatz immer wieder braucht (z. B. VRV-Montage). Im Projekt, in der Störung oder im Termin trägt <strong>„Packliste übernehmen“</strong> alles auf einmal ein – was schon drinsteht, nicht doppelt."},
+    {titel:"Wo es überall auftaucht", text:RG_LISTE(["<strong>Kalendertermin</strong> (gespeichert): Kasten „Material und Werkzeug“; im Kalender steht 🧰 beim Einsatz.",
+        "<strong>„🔍 Planung prüfen“</strong>: je Tag „Vorher besorgen bzw. mitnehmen“ – auch abholen und bestellen für die Woche.",
+        "<strong>„Heute für dich“</strong> (Fällig): was du für heute und morgen besorgen musst.",
+        "<strong>Störung</strong>, <strong>Projekt</strong> und <strong>Markt</strong> (für den nächsten Besuch): je ein Kasten zum Eintragen."])}
   ]},
   projekte:{thema:true, titel:"Projekte und Kontakte", fuer:function(){ return reiterErlaubt("projekte"); }, schritte:[
     {reiter:"projekte", ziel:function(){ return rgEl("#pr_neu"); }, titel:"Projekt anlegen",
@@ -25245,6 +25846,11 @@ function projektAnsicht(id){
     v.inhalt.appendChild(tb);
 
     /* Team-Chat: Nachrichten zu diesem Projekt */
+    /* Werkzeug und Material für die Baustelle; dazu, welches Werkzeug gerade dort ist (Büro 04.10.2026) */
+    if(wzAn()){ var bk=bedarfKarte("Werkzeug und Material", {projekt_id:p.id}, {leer:"Noch nichts – „+ Material / Werkzeug“ oder „Packliste übernehmen“."});
+      var dort=WZ.filter(function(w){ return w.aktiv!==false && w.standort_art==="baustelle" && w.projekt_id===p.id; });
+      if(dort.length) bk.querySelector(".stack").appendChild(el('<div class="muted" style="font-size:12.5px">📍 Auf der Baustelle: '+dort.map(function(w){ return esc(w.name); }).join(", ")+"</div>"));
+      v.inhalt.appendChild(bk); }
     if(chatAn()) v.inhalt.appendChild(chatBezugKarte("projekt", p.id, chatBezugText("projekt", p)));
 
     /* aufräumen (Büro 01.10.2026): zwei Spalten am PC, jede Karte einklappbar, am Handy
@@ -25258,6 +25864,7 @@ function projektAnsicht(id){
       {h:/^Beteiligte/, seite:"neben", key:"beteiligte", handyZu:true, zusammen:anz(d.beteiligte,"Eintrag","Einträge")},
       {h:/^Termine/, seite:"neben", key:"termine", zusammen:anz(d.termine,"Termin","Termine")},
       {h:/^Bestellungen/, seite:"haupt", key:"bestellungen", handyZu:true, zusammen:anz(d.bestellungen,"Bestellung","Bestellungen")},
+      {h:/^Werkzeug und Material/, seite:"neben", key:"material", handyZu:true, zusammen:anz(BEDARF.filter(function(b){ return b.projekt_id===p.id && bedarfOffen(b); }),"offen","offen")},
       {h:/^Anlagen/, seite:"haupt", key:"anlagen", handyZu:true, zusammen:anz(d.anlagen,"zugeordnet","zugeordnet")},
       {h:/^Baustellenbuch/, seite:"haupt", key:"baubuch", zusammen:anz(d.baubuch,"Eintrag","Einträge")},
       {h:/^Dateien/, seite:"haupt", key:"dateien", handyZu:true, zusammen:anz((d.dateien||[]).filter(function(x){ return buero || !/^buero\//.test(x.pfad); }),"Datei","Dateien")},
@@ -27383,7 +27990,8 @@ function kalEintragZeile(x, ohneTag){
   var r=el('<button type="button" class="row" style="display:flex;gap:10px;align-items:stretch;text-align:left;width:100%;padding:8px 10px'+(x.grau?";opacity:.6":"")+'">'+
     '<span style="width:5px;border-radius:3px;flex:none;'+(x.rand?"border:2px solid "+x.farbe:"background:"+x.farbe)+'"></span>'+
     '<span style="flex:1;min-width:0"><strong style="font-size:13.5px'+(x.grau && x.art==="aufgabe"?";text-decoration:line-through":"")+'">'+esc(x.titel)+"</strong>"+
-      (x.unter?'<br><span class="muted" style="font-size:12.5px">'+esc(x.unter)+"</span>":"")+"</span>"+
+      (x.unter?'<br><span class="muted" style="font-size:12.5px">'+esc(x.unter)+"</span>":"")+
+      (function(){ var bd=x.grau ? [] : bedarfFuerEinsatz(x, x.tag); return bd.length ? '<br><span style="font-size:12px" title="Material / Werkzeug für diesen Einsatz">🧰 '+esc(bd.slice(0,3).map(function(b){ return b.text; }).join(", ")+(bd.length>3?" …":""))+"</span>" : ""; })()+"</span>"+
     (ohneTag?"":'<span class="mono muted" style="font-size:12px;white-space:nowrap">'+esc(dfmt(x.tag).slice(0,6))+"</span>")+
   "</button>");
   r.onclick=function(){ kalEintragOeffnen(x); };
@@ -27528,6 +28136,9 @@ function viewKalender(){
       var fb=el('<button type="button" class="note warnbox" style="text-align:left;cursor:pointer;font:inherit">🚐 '+esc(x.kennzeichen)+": "+esc(a.text)+"</button>");
       fb.onclick=function(){ springe({reiter:"fahrzeuge"}); }; td.querySelector(".stack").appendChild(fb); }); });
   else if(fzBuero() && !fzGeladen) fzLaden().then(function(neu){ if(neu && S.view==="kalender" && darfRendern() && !document.querySelector(".assistent")) render(); });
+  if(fzBuero() && wzAn()){ if(!wzGeladen) wzNachladen();
+    wzToDo().forEach(function(t){ var wb=el('<button type="button" class="note warnbox" style="text-align:left;cursor:pointer;font:inherit">'+esc(t)+"</button>");
+      wb.onclick=function(){ springe({reiter:"werkzeug"}); }; td.querySelector(".stack").appendChild(wb); }); }
   var fo=folgeOffen().length;
   if(fo){ var fz=el('<button type="button" class="note warnbox" style="text-align:left;cursor:pointer;font:inherit">💶 '+fo+" Folgeauftr"+(fo===1?"ag wartet":"äge warten")+
       " auf deine Entscheidung (Angebot?) – zu den Projekten</button>");
@@ -27875,7 +28486,7 @@ function besteReihenfolge(orte, start){
   return cur;
 }
 function planungPruefen(wahl, von, bis){
-  var m=kalenderEintraege(von, bis, wahl, ""), tage=[];
+  var m=kalenderEintraege(von, bis, wahl, ""), tage=[], schonGezeigt={};
   var alleGeplantPos={}; PLANUNG.forEach(function(e){ if(e.kategorie==="wartung") (e.position_ids||[]).forEach(function(p){ alleGeplantPos[p]=1; }); });
   for(var t=von; t<=bis; t=plusTage(t,1)){
     var l=(m[t]||[]).filter(function(x){ return !x.grau && x.art!=="protokoll"; });
@@ -27925,6 +28536,9 @@ function planungPruefen(wahl, von, bis){
       });
       tag.naehe.sort(function(a,b){ return a.umweg-b.umweg; }); tag.naehe=tag.naehe.slice(0,6);
     }
+    /* (5) Material und Werkzeug: was für die Einsätze des Tages noch offen ist (Büro 04.10.2026: „erinnern, dass man vorher noch Werkzeug abholen muss“) */
+    var bdGes={}; tag.material=[];
+    l.forEach(function(x){ bedarfFuerEinsatz(x, t).forEach(function(b){ if(bdGes[b.id] || schonGezeigt[b.id]) return; bdGes[b.id]=schonGezeigt[b.id]=1; tag.material.push(b); }); });
     tag.orte=markte;
     tage.push(tag);
   }
@@ -27979,6 +28593,11 @@ function planungPruefenAnsicht(wahl, von, bis){
           z.querySelector("button").onclick=function(){ marktAnsicht(n.s.id); };
           h.appendChild(z);
         });
+      }
+      if(tg.material.length){
+        gut=false; probleme+=tg.material.length;
+        h.appendChild(el('<div style="font-size:13px;font-weight:600;margin-top:4px">🧰 Vorher besorgen bzw. mitnehmen:</div>'));
+        tg.material.forEach(function(b){ h.appendChild(bedarfZeile(b, {mitBezug:true})); });
       }
       if(gut && !tg.naehe.length) h.appendChild(el('<div style="font-size:13px;color:var(--good)">✓ Reihenfolge passt, genug Zeit, nichts übersehen.</div>'));
       host.appendChild(k);
@@ -28377,6 +28996,10 @@ function planEditor(e, vorgabe){
     '<div class="note warnbox" data-err hidden></div>'+
   "</form>");
   v.inhalt.appendChild(form);
+  /* Material und Werkzeug für diesen Termin (Büro 04.10.2026) – erst, wenn er gespeichert ist; nicht bei Abwesenheit und Privatem */
+  if(!neu && a.art==="termin" && !a.privat && a.kategorie!=="privat" && PLAN_ABWESEND.indexOf(a.kategorie)<0 && wzAn() && !privatFremd)
+    v.inhalt.appendChild(bedarfKarte("Material und Werkzeug", {planung_id:a.id, projekt_id:a.projekt_id, stoerung_id:a.stoerung_id, standort_id:a.standort_id},
+      {leer:"Nichts Besonderes – „+ Material / Werkzeug“, wenn etwas mit muss, abzuholen oder zu bestellen ist."}));
   var F=function(k){ return form.querySelector('[data-f="'+k+'"]'); };
   /* Störung: nur offene Störungen des gewählten Markts; ohne Markt alle – die Wahl trägt dann den Markt ein */
   var stoerSid=null;
@@ -28739,7 +29362,10 @@ function heuteFuerMichKarte(){
   var m=kalenderEintraege(heute, heute, "ich")[heute]||[];
   m=m.filter(function(x){ return !x.grau && x.art!=="protokoll"; });
   var ueber=PLANUNG.filter(function(e){ return e.art==="aufgabe" && e.status!=="erledigt" && e.datum && e.datum<heute && planIstMeins(e); });
-  if(!m.length && !ueber.length) return null;
+  /* Material und Werkzeug für heute und morgen (Büro 04.10.2026) */
+  if(wzAn() && !wzGeladen) wzNachladen();
+  var morgen=plusTage(heute,1), besorgen=BEDARF.filter(function(b){ var w=bedarfWann(b); return bedarfOffen(b) && w && w<=morgen && bedarfIstMeins(b); });
+  if(!m.length && !ueber.length && !besorgen.length) return null;
   var c=el('<div class="card"><div class="pad stack" style="gap:6px"><div class="rowflex" style="justify-content:space-between"><h2>Heute für dich</h2>'+
     '<button class="btn ghost sm" type="button">Kalender</button></div></div></div>');
   c.querySelector("button").onclick=function(){ S.kalModus="woche"; S.kalWer="ich"; S.kalWoche=montagVon(heute); springe({reiter:"kalender", block:"start"}); };
@@ -28747,6 +29373,10 @@ function heuteFuerMichKarte(){
   if(ueber.length){
     c.querySelector(".stack").appendChild(el('<div style="font-size:12.5px;font-weight:600;color:var(--crit)">Überfällige Aufgaben ('+ueber.length+")</div>"));
     ueber.slice(0,8).forEach(function(e){ c.querySelector(".stack").appendChild(aufgabeZeile(e)); });
+  }
+  if(besorgen.length){
+    c.querySelector(".stack").appendChild(el('<div style="font-size:12.5px;font-weight:600">🧰 Mitnehmen, abholen, bestellen – für heute und morgen ('+besorgen.length+")</div>"));
+    besorgen.slice(0,10).forEach(function(b){ c.querySelector(".stack").appendChild(bedarfZeile(b, {mitWann:true, mitBezug:true})); });
   }
   return c;
 }
@@ -30047,10 +30677,11 @@ function render(){
     ab.querySelector("button").onclick=function(){ S.view="protokoll"; render(); window.scrollTo({top:0}); };
     host.appendChild(ab);
   }
-  if(["protokoll","daten","verlauf","verwaltung","pruefen","stunden","projekte","kunden","belege","kalender"].indexOf(S.view)<0) host.appendChild(filterBar());
+  if(["protokoll","daten","verlauf","verwaltung","pruefen","stunden","projekte","kunden","belege","kalender","fahrzeuge","werkzeug"].indexOf(S.view)<0) host.appendChild(filterBar());
   if(S.view==="faellig") sec.appendChild(viewFaellig());
   else if(S.view==="stunden") sec.appendChild(viewStunden());
   else if(S.view==="fahrzeuge") sec.appendChild(viewFahrzeuge());
+  else if(S.view==="werkzeug") sec.appendChild(viewWerkzeug());
   else if(S.view==="kalender") sec.appendChild(viewKalender());
   else if(S.view==="projekte") sec.appendChild(viewProjekte());
   else if(S.view==="kunden") sec.appendChild(viewKunden());
