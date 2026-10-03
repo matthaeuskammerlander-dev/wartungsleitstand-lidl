@@ -300,6 +300,8 @@ Kammerlander Umwelt- und Klimatechnik (UKT) – oft kurz, vom Handy, im Feld.
   Herunterladen (Kopie außerhalb von Supabase). Stand im Merker `sicherung`. Später holt die Synology ab.
 - **Angebot aus dem Folgeauftrag** (`angebotAusFolge`, nur Inhaber): Befund als Textzeile, je Mangel Katalog-Vorschlag
   (`katalogVorschlag`) oder Position ohne Preis, Fahrtpauschale der Zone; gespeichert → Merker `folge:<Protokoll>`.
+- **Bezahl-Code auf Rechnungen** (`epcQrText`, `epcQrBild`, Büro 03.10.2026): EPC-QR („Zahlen mit Code“) neben den Summen jeder
+  Rechnung – Empfänger, IBAN, BIC, Betrag, „Rechnung <Nummer>“; nur mit gültiger IBAN (Prüfziffer, `ibanGueltig`) und Betrag ≥ 0,01 €; Umlaute umschrieben.
 - **Diktieren** (`diktatKnopf`): Spracherkennung des Browsers, keine KI, Text wird angehängt.
 - **Rapport-Text** (`rapTextRein`): ausgeführte Arbeiten aus dem Lidl-Rapport zusätzlich in
   „Durchgeführte Maßnahmen“ bzw. „Bemerkungen“ – nie ersetzen, kein Feld fällt weg.
