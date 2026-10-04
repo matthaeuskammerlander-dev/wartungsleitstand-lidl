@@ -18476,6 +18476,13 @@ function bedarfEditor(b, vorgabe){
     };
     v.fuss.appendChild(lo);
   }
+  /* im Geschäft mit eigenem Geld bezahlt: gleich den Beleg erfassen (Reisekosten) – danach ist der Eintrag erledigt */
+  if(b && bedarfOffen(b) && b.beschaffung!=="mitnehmen" && akAn() && !nurLesen()){
+    var sb=el('<button class="btn ghost" type="button">🧾 Selbst bezahlt – Beleg erfassen</button>');
+    sb.onclick=function(){ v.zu(); akEditor(null, {art:"beleg", text:(b.bezugsquelle?b.bezugsquelle+" – ":"")+b.text, kategorie:b.art==="werkzeug"?"werkzeug":"material",
+      projekt_id:b.projekt_id||null, standort_id:bedarfMarkt(b)||null, bedarf_id:b.id}); };
+    v.fuss.appendChild(sb);
+  }
   var fk=fussKnoepfe(v, "Speichern"), ok=fk.ok;
   ok.onclick=function(){
     err.hidden=true;
@@ -18828,7 +18835,7 @@ function wzAufnehmenFragen(b){
       var k=el('<button class="btn" type="button">'+esc(x[0])+"</button>");
       k.onclick=function(){ k.disabled=true;
         wzSpeichern(null, Object.assign({name:b.text.slice(0,120)}, x[1])).then(function(w){
-          return bedarfSpeichern(b, {werkzeug_id:w.id, art:"werkzeug"}).then(function(){ v.zu(); wzGeaendert(); toast("„"+w.name+"“ steht jetzt in der Werkzeugliste – "+wzOrtText(w)+"."); });
+          return (b.id ? bedarfSpeichern(b, {werkzeug_id:w.id, art:"werkzeug"}) : Promise.resolve()).then(function(){ v.zu(); wzGeaendert(); toast("„"+w.name+"“ steht jetzt in der Werkzeugliste – "+wzOrtText(w)+"."); });
         }).catch(function(e){ k.disabled=false; toast("Nicht gespeichert: "+technikDeutsch(e.message||String(e))); }); };
       r.appendChild(k);
     });
@@ -19084,7 +19091,7 @@ function fzKarte(x){
   var kpi=function(n,l){ return '<div class="kpi"><div class="n" style="font-size:18px">'+n+'</div><div class="l">'+l+"</div></div>"; };
   var c=el('<div class="card" data-fzid="'+esc(x.id)+'"><div class="pad stack" style="gap:8px">'+
     '<div class="rowflex" style="justify-content:space-between;gap:8px"><h2 style="letter-spacing:.04em">'+esc(x.kennzeichen)+"</h2>"+
-      '<span class="muted" style="font-size:12.5px">'+esc([x.bezeichnung, (x.fahrer_namen||[]).join(", ")].filter(Boolean).join(" · "))+"</span></div>"+
+      '<span class="muted" style="font-size:12.5px">'+esc([x.bezeichnung, (x.fahrer_namen||[]).join(", "), x.privat_von ? "Privatauto (Kilometergeld: "+(x.privat_name||"?")+")" : ""].filter(Boolean).join(" · "))+"</span></div>"+
     '<div class="kpis">'+kpi(st?st.km.toLocaleString("de-AT"):"–", "km-Stand"+(st?" ("+dfmt(st.datum)+")":""))+
       kpi(sm!=null?sm.toLocaleString("de-AT"):"–", "km diesen Monat")+kpi(sv!=null?sv.toLocaleString("de-AT"):"–", "km Vormonat")+
       kpi(x.pickerl_bis?dfmt(x.pickerl_bis).slice(3):"–", "Pickerl bis")+"</div>"+
@@ -19137,12 +19144,18 @@ function fzEditor(x){
       '<label class="fl"><span>Erstzulassung</span><input type="date" id="fz_z" value="'+esc(x&&x.erstzulassung||"")+'"></label></div>'+
     '<div class="grid"><label class="fl"><span>Nächstes Service am</span><input type="date" id="fz_sd" value="'+esc(x&&x.service_bis||"")+'"></label>'+
       '<label class="fl"><span>… oder bei km</span><input type="text" inputmode="numeric" id="fz_sk" value="'+esc(x&&x.service_km!=null?String(x.service_km):"")+'"></label></div>'+
+    '<div class="grid"><label class="chk"><input type="checkbox" id="fz_pv"'+(x&&x.privat_von?" checked":"")+'><span>Privatauto – Kilometergeld an:</span></label>'+
+      '<select id="fz_pvw"><option value="">– Person –</option></select></div>'+
+    '<div class="muted" style="font-size:12px;margin-top:-6px">Nur ein Privatauto bekommt Kilometergeld (Reisekosten), kein Firmenfahrzeug.</div>'+
     '<label class="fl"><span>Kennung im GPS-Portal (X-GPS)</span><input type="text" id="fz_t" placeholder="wird beim ersten Import gesetzt" value="'+esc(x&&x.tracker_id||"")+'"></label>'+
     '<label class="fl"><span>Notiz</span><textarea id="fz_n" rows="2">'+esc(x&&x.notiz||"")+"</textarea></label>"+
     (x?'<label class="chk"><input type="checkbox" id="fz_a"'+(x.aktiv===false?"":" checked")+"><span>im Einsatz</span></label>":"")+
     '<div class="note warnbox" id="fz_err" hidden></div></form>');
   var fh=form.querySelector("#fz_f");
-  var chipsZeichnen=function(){ fh.innerHTML="";
+  var pvFuellen=function(){ var sel=form.querySelector("#fz_pvw"), alt=sel.value||(x&&x.privat_von)||"";
+    sel.innerHTML='<option value="">– Person –</option>'+team.map(function(p){ return '<option value="'+esc(p.user_id)+'"'+(alt===p.user_id?" selected":"")+">"+esc(p.name||"–")+"</option>"; }).join("")+
+      (alt && !team.some(function(p){ return p.user_id===alt; }) ? '<option value="'+esc(alt)+'" selected>'+esc((x&&x.privat_name)||"?")+"</option>" : ""); };
+  var chipsZeichnen=function(){ pvFuellen(); fh.innerHTML="";
     if(!team.length) fh.appendChild(el('<span class="muted" style="font-size:12.5px">Team wird geladen …</span>'));
     team.forEach(function(p){ var b=el('<button class="chip" type="button" aria-pressed="'+(wahl.indexOf(p.user_id)>=0)+'">'+esc(p.name||"–")+"</button>");
       b.onclick=function(){ var i=wahl.indexOf(p.user_id); if(i>=0) wahl.splice(i,1); else wahl.push(p.user_id); chipsZeichnen(); }; fh.appendChild(b); }); };
@@ -19163,6 +19176,11 @@ function fzEditor(x){
       service_bis:form.querySelector("#fz_sd").value||null, service_km:sk==null?null:Math.round(sk),
       tracker_id:form.querySelector("#fz_t").value.trim()||null, notiz:form.querySelector("#fz_n").value.trim()||null,
       aktiv:x ? form.querySelector("#fz_a").checked : true, geaendert:new Date().toISOString(), geaendert_von:meinName()};
+    /* Privatauto: Kilometergeld an diese Person – sie ist dann auch Fahrer (sonst sieht sie das Fahrzeug nicht) */
+    var pv=form.querySelector("#fz_pv").checked ? form.querySelector("#fz_pvw").value : "";
+    if(form.querySelector("#fz_pv").checked && !pv){ fehl("Privatauto: bitte wählen, wem es gehört."); return; }
+    z.privat_von=pv||null; z.privat_name=pv ? (planPersonName(pv)||(x&&x.privat_name)||null) : null;
+    if(pv && z.fahrer.indexOf(pv)<0){ z.fahrer=z.fahrer.concat([pv]); z.fahrer_namen=z.fahrer.map(function(id){ return planPersonName(id)||""; }).filter(Boolean); }
     if(demo()){ var neuX=Object.assign({id:x?x.id:neueKennung("fz")}, x||{}, z); FZ=FZ.filter(function(y){ return y.id!==neuX.id; }).concat([neuX]); v.zu(); toast("Fahrzeug gespeichert (Präsentation, nicht gespeichert)."); render(); return; }
     ok.disabled=true; ok.textContent="wird gespeichert …";
     var q=x ? Store.sb.from("fahrzeuge").update(z).eq("id", x.id).select("*") : Store.sb.from("fahrzeuge").insert(z).select("*");
@@ -22111,7 +22129,7 @@ var ANSICHT_ORDNUNG={
   werkzeug:[{h:/^Mitnehmen, abholen/, seite:"neben", key:"bedarf"}, {h:/^Werkzeug und Geräte/, seite:"haupt", key:"liste", fest:true}, {h:/^Packlisten/, seite:"neben", key:"packlisten", handyZu:true}],
   stunden:[
     {h:/^Stempeluhr/, seite:"neben", key:"stempel"}, {h:/^Meine Arbeitszeit/, seite:"haupt", fest:true},
-    {h:/^Alle Mitarbeiter/, seite:"unten", key:"alle"}],
+    {h:/^Alle Mitarbeiter/, seite:"unten", key:"alle"}, {h:/^Reisekosten und Kilometergeld/, seite:"neben", key:"reisekosten"}, {h:/^Reisekosten aller/, seite:"unten", key:"reisekostenalle"}],
   verlauf:[
     {h:/^Liste herunterladen/, seite:"neben", key:"liste", handyZu:true}, {h:/^Kältemittel/, seite:"neben", key:"kaeltemittel", handyZu:true},
     {h:/^Monatsbericht/, seite:"neben", key:"monatsbericht", handyZu:true}, {h:/^Wartungshistorie/, seite:"haupt", key:"historie"},
@@ -22676,6 +22694,7 @@ function handbuchKarte(z){
         "<strong>Fotos und Rapport:</strong> bis 25 Fotos mit Notiz, bei Lidl den Rapportbericht anhängen (oder später nachreichen) – die ausgeführten Arbeiten daraus kommen zusätzlich in „Durchgeführte Maßnahmen“ (Störung) bzw. „Bemerkungen“ (Wartung).",
         "<strong>Abschluss:</strong> Datum, Uhrzeit, wer noch dabei war, Unterschrift. Das Protokoll läuft immer unter deinem Namen – du bist verantwortlich.",
         "<strong>Übersicht prüfen und speichern.</strong> Oben steht „✓ gespeichert“. Nach einer Störung bietet die App fällige Wartungen am selben Markt gleich mit an.",
+        "<strong>Reisekosten und Kilometergeld:</strong> Reiter <em>Stunden</em> – selbst bezahlte Belege mit Foto und Kilometer mit dem Privatauto; am Monatsende „Monat abgeben“, der Chef zahlt aus und hakt „ausbezahlt“ ab.",
         "<strong>Werkzeug und Material:</strong> Reiter <em>Werkzeug</em> – was mitzunehmen, abzuholen oder zu bestellen ist (im Termin, in der Störung, im Projekt, am Markt eintragen; „Heute für dich“ und „Planung prüfen“ erinnern) und wo jedes Werkzeug gerade ist („Ich hab’s“, „In mein Auto“, „Ins Lager“, Reparatur, Prüfung). Lernt mit: Vorschläge je Projekttyp und je Markt, Material aus dem Angebot, neues Werkzeug kommt auf Nachfrage in die Liste, nach dem Einsatz „Wo ist das Werkzeug jetzt?“.",
         "<strong>Stunden:</strong> ein-, um- und ausstempeln (Reiter <em>Stunden</em>; „📅 Heute geplant“ füllt Bereich und Markt) – oder geplante Termine dort mit „erfassen“ übernehmen. "+
         "Urlaub (genehmigt), Krankenstand, Schule und Zeitausgleich im Kalender stehen von selbst in den Stunden; je Tag und Woche steht der Abstand zum Soll (nur zur Info – Überstunden zählen je Monat)."])+
@@ -23531,10 +23550,20 @@ Object.assign(RUNDGAENGE, {
         "Ab 6 h ohne 30 min Pause ergänzt die App die Pause; höchstens 16 h je Eintrag; Überschneidungen nur nach Rückfrage.",
         "Gestempelte Einträge ändern geht – die Datenbank kennzeichnet sie dann als geändert; löschen kann sie nur der Inhaber.",
         "Einträge „aus dem Kalender“ passt die Datenbank an, wenn sich der Kalendereintrag ändert, und entfernt sie, wenn er gelöscht wird (nie in einem bestätigten Monat). Änderst du so einen Eintrag selbst, gilt er als von Hand."])},
+    {reiter:"stunden", ziel:function(){ return rgKarte(/^Reisekosten und Kilometergeld/); }, wenn:function(){ return akAn(); }, titel:"Reisekosten und Kilometergeld",
+      text:RG_LISTE(["<strong>📷 + Beleg</strong>: mit eigenem Geld bezahlt (Bauhaus, Parken, Maut, Tanken, Nächtigung …) – Foto vom Beleg (Pflicht; sonst „Kein Beleg vorhanden“ mit Grund), Datum, wo/was, Betrag, wofür, Projekt/Markt.",
+        "<strong>🚗 + Kilometer</strong>: Fahrt mit dem Privatauto – Datum, Strecke (Vorschlag aus dem Kalender), km; die App rechnet das Kilometergeld (0,50 € je km).",
+        "Am Monatsende <strong>„Monat abgeben“</strong> – danach ändert nur noch der Chef. „PDF“ wie das bisherige Blatt (Barbelege, Kilometer mit Privatauto, zu zahlen) mit allen Belegfotos.",
+        "Unten „Konto für die Auszahlung“ (IBAN) einmal eintragen."])+
+      RG_HG(["Nur du und der Inhaber sehen deine Reisekosten – keine Admins, keine Kollegen.",
+        "Beim Abgeben bekommt der Inhaber eine Nachricht; im Kalender-To-do steht „Reisekosten … – auszahlen“.",
+        "Werkzeug und Material: bei „abholen“/„bestellen“ führt „🧾 Selbst bezahlt – Beleg erfassen“ hierher und hakt den Eintrag danach ab; gekauftes Werkzeug kann gleich in die Werkzeugliste.",
+        "Kilometergeld nur fürs Privatauto (beim Fahrzeug: „Privatauto – Kilometergeld an …“), nicht fürs Firmenfahrzeug."])},
     {reiter:"stunden", ziel:function(){ return rgKarte(/^Alle Mitarbeiter/); }, wenn:function(){ return istInhaber(); }, titel:"Alle Mitarbeiter und Lohn (Inhaber)",
       text:"Monatstabelle je Person (Soll, Ist, Differenz, Überstunden, Sa, So, Feiertag, Montage, Fahrt, Urlaub, Krank, Entfernung), „Lohnverrechnung (CSV)“, „Bestätigen“, „Arbeitszeitregeln“, Schalter „Standort beim Stempeln“."+
       RG_HG(["Soll Mo–Do 8 h, Fr 6,5 h (38,5 h), Feiertage 0. Überstunden als <strong>Monatsbilanz</strong>, nicht je Tag; Samstag, Sonntag, Feiertag getrennt; Montage = Baustelle, Wartung, Störung; Fahrt = Wegzeit.",
         "„Bestätigen“ sperrt den Monat – danach ändert nur noch der Inhaber (prüft die Datenbank).",
+        "Darunter <strong>„Reisekosten aller“</strong>: je Person Belege, km, Kilometergeld, zu zahlen, Konto – PDF mit allen Belegen, „ausbezahlt“, „zurückgeben“, CSV; der Kilometergeld-Satz ist dort einstellbar.",
         "Vorher zeigt die Zeile in Rot, was fehlt: Arbeitstage ohne Eintrag, Abwesenheit im Kalender ohne Stunden, Geplantes ohne passenden Eintrag – mit „Nachricht an …“ (fertiger Text im Chat)."])},
     {reiter:"fahrzeuge", ziel:function(){ return rgReiter("fahrzeuge"); }, wenn:function(){ return reiterErlaubt("fahrzeuge"); }, titel:"Fahrzeuge",
       text:RG_LISTE(["<strong>Techniker</strong> sehen ihr Fahrzeug: „km-Stand eintragen“, „Schaden melden“ (eigene Einträge 24 h löschbar).",
@@ -26053,7 +26082,11 @@ function projektAnsicht(id){
       var dort=WZ.filter(function(w){ return w.aktiv!==false && w.standort_art==="baustelle" && w.projekt_id===p.id; });
       if(dort.length) bk.querySelector(".stack").appendChild(el('<div style="font-size:12.5px'+(projektOffen(p)?"":";color:var(--crit)")+'">📍 Auf der Baustelle: '+dort.map(function(w){ return esc(w.name); }).join(", ")+
         (projektOffen(p)?"":" – Projekt abgeschlossen: bitte zurückholen")+"</div>"));
-      if(nurInhaber()){ var ak=el('<button class="btn ghost sm" type="button" style="align-self:flex-start">Material aus dem Angebot übernehmen</button>'); ak.onclick=function(){ bedarfAusAngebot(p); }; bk.querySelector(".stack").appendChild(ak); }
+      if(nurInhaber()){ var ak=el('<button class="btn ghost sm" type="button" style="align-self:flex-start">Material aus dem Angebot übernehmen</button>'); ak.onclick=function(){ bedarfAusAngebot(p); }; bk.querySelector(".stack").appendChild(ak);
+        /* selbst bezahlte Belege der Mitarbeiter für dieses Projekt (zum Weiterverrechnen) – nur Inhaber */
+        var akz=el('<div class="muted" style="font-size:12.5px"></div>'); bk.querySelector(".stack").appendChild(akz);
+        Store.sb.from("auslagen").select("betrag,art,name").eq("projekt_id", p.id).then(function(r2){ var l2=(r2&&r2.data)||[]; if(!l2.length) return;
+          akz.textContent="🧾 Selbst bezahlt dafür (Reisekosten der Mitarbeiter): "+geld(l2.reduce(function(a2,z2){ return a2+(+z2.betrag||0); },0))+" € ("+l2.length+(l2.length===1?" Eintrag)":" Einträge)"); }, function(){}); }
       v.inhalt.appendChild(bk); }
     if(chatAn()) v.inhalt.appendChild(chatBezugKarte("projekt", p.id, chatBezugText("projekt", p)));
 
@@ -28340,6 +28373,11 @@ function viewKalender(){
       var fb=el('<button type="button" class="note warnbox" style="text-align:left;cursor:pointer;font:inherit">🚐 '+esc(x.kennzeichen)+": "+esc(a.text)+"</button>");
       fb.onclick=function(){ springe({reiter:"fahrzeuge"}); }; td.querySelector(".stack").appendChild(fb); }); });
   else if(fzBuero() && !fzGeladen) fzLaden().then(function(neu){ if(neu && S.view==="kalender" && darfRendern() && !document.querySelector(".assistent")) render(); });
+  if(istInhaber() && betriebAn()){
+    if(AK_ABGEGEBEN===null){ AK_ABGEGEBEN=[]; akAbgegebenLaden().then(function(l){ if(l.length && S.view==="kalender" && darfRendern() && !document.querySelector(".assistent")) render(); }); }
+    akAbgegebenText().forEach(function(t){ var rb=el('<button type="button" class="note warnbox" style="text-align:left;cursor:pointer;font:inherit">'+esc(t)+"</button>");
+      rb.onclick=function(){ springe({reiter:"stunden", finde:function(){ return [].slice.call(document.querySelectorAll(".card h2")).filter(function(h){ return /^Reisekosten aller/.test(h.textContent); }).map(function(h){ return h.closest(".card"); })[0]; }, block:"start"}); };
+      td.querySelector(".stack").appendChild(rb); }); }
   if(fzBuero() && wzAn()){ if(!wzGeladen) wzNachladen();
     wzToDo().forEach(function(t){ var wb=el('<button type="button" class="note warnbox" style="text-align:left;cursor:pointer;font:inherit">'+esc(t)+"</button>");
       wb.onclick=function(){ springe({reiter:"werkzeug"}); }; td.querySelector(".stack").appendChild(wb); }); }
@@ -29750,7 +29788,10 @@ function viewStunden(){
   c.querySelectorAll("[data-w]").forEach(function(b){ b.onclick=function(){ var n=+b.dataset.w; S.stWoche = n ? plusTage(S.stWoche, n) : montagVon(heute); render(); }; });
   c.querySelector("[data-neu]").onclick=function(){ zeitEditor(null, {datum:(heute>=mo && heute<=so)?heute:mo}); };
   f.appendChild(c);
+  /* Reisekosten und Kilometergeld (Büro 04.10.2026) */
+  if(akAn()) f.appendChild(akMeineKarte());
   if(istInhaber() && betriebAn()) f.appendChild(zeitenInhaberKarte());
+  if(istInhaber() && betriebAn()) f.appendChild(akInhaberKarte());
   return f;
 }
 function zeitZeile(z, ueber){
@@ -30226,6 +30267,443 @@ function zeitenInhaberKarte(){
     host.appendChild(reihe);
   });
   return k;
+}
+
+/* ================================================================
+   Reisekosten und Kilometergeld (Büro 04.10.2026) – wie die bisherigen Excel-Blätter
+   „UKT Reisekosten: Barbelege“ und „Kilometer mit Privatauto“: mit eigenem Geld bezahlt
+   (Bauhaus, Parken, Maut …) mit FOTO vom Beleg; Kilometer mit dem Privatauto (Strecke, km ×
+   Kilometergeld). Am Monatsende „Monat abgeben“ → der Inhaber bekommt eine Nachricht, sieht die
+   Liste je Person (PDF mit Belegfotos) und hakt „ausbezahlt“ ab. Jede Person sieht nur ihre
+   eigenen, der Inhaber alle (keine Admins). tools/reisekosten.sql: Tabelle auslagen (Trigger
+   auslagen_pruefen rechnet das Kilometergeld, sperrt Abgegebenes), auslagen_konto (IBAN),
+   Speicher „auslagen“ (<user_id>/…), fahrzeuge.privat_von (Privatauto).
+   ================================================================ */
+var AUSLAGEN=[], AK_KONTO=null, akGeladen=false, akLaedt=null, akFehlt=false, akFehler="", akStand=0, akKonto="", KM_SATZ=0.50;
+var AUSLAGE_KAT=[["material","Material"],["werkzeug","Werkzeug"],["tanken","Tanken"],["parken","Parken"],["maut","Maut / Vignette"],
+  ["naechtigung","Nächtigung"],["oeffis","Bahn / Öffis"],["post","Post"],["sonstiges","Sonstiges"]];
+var AK_STATUS={offen:"offen", eingereicht:"abgegeben", ausbezahlt:"ausbezahlt"};
+function akKatName(k){ return (AUSLAGE_KAT.filter(function(x){ return x[0]===k; })[0]||[k,k||""])[1]; }
+function akAn(){ return betriebSchreiben(); }
+/* Betrag lesen: „23,85“, „23.85“, „1.234,50“ – ein Punkt mit zwei Stellen dahinter ist das Komma */
+function akBetragLesen(t){
+  var s=String(t||"").trim().replace(/\s|€/g,""); if(!s) return null;
+  if(s.indexOf(",")>=0) s=s.replace(/\./g,"").replace(",",".");
+  else if((s.match(/\./g)||[]).length>1 || /\.\d{3}$/.test(s)) s=s.replace(/\./g,"");
+  var n=+s; return isFinite(n) ? Math.round(n*100)/100 : NaN;
+}
+function akLaden(neu){
+  if(demo()){ akGeladen=true; return Promise.resolve(false); }
+  if(!betriebAn()) return Promise.resolve(false);
+  var konto=Store.benutzer.email, uid=Store.benutzer.id;
+  if(konto!==akKonto){ akKonto=konto; AUSLAGEN=[]; AK_KONTO=null; akGeladen=false; }
+  if(akLaedt) return akLaedt;
+  if(!neu && akGeladen && Date.now()-akStand<60000) return Promise.resolve(false);
+  akLaedt=Promise.all([
+    Store.sb.from("auslagen").select("*").eq("user_id", uid).gte("datum", plusMonate(isoLokal(new Date()),-14)).order("datum").limit(3000),
+    Store.sb.from("auslagen_konto").select("*").eq("user_id", uid),
+    Store.sb.from("einstellungen").select("*").eq("schluessel", "kilometergeld")
+  ]).then(function(r){
+    akLaedt=null; akStand=Date.now(); akGeladen=true;
+    if(Store.benutzer.email!==konto) return false;
+    if(r[0].error){ akFehlt=/does not exist|schema cache|relation/i.test(r[0].error.message||""); akFehler=akFehlt?"":r[0].error.message; return true; }
+    akFehlt=false; akFehler=""; AUSLAGEN=r[0].data||[]; AK_KONTO=(r[1].data||[])[0]||null;
+    var e=(r[2].data||[])[0]; if(e && e.wert && +e.wert.satz>0) KM_SATZ=+e.wert.satz;
+    return true;
+  }, function(){ akLaedt=null; akStand=Date.now(); akGeladen=true; akFehler="Keine Verbindung – Reisekosten nicht geladen."; return true; });
+  return akLaedt;
+}
+function akNeuZeichnen(){ if(S.view==="stunden" && darfRendern() && !document.querySelector(".assistent")) render(); }
+function akImMonat(liste, monat){ return liste.filter(function(z){ return String(z.datum).slice(0,7)===monat; })
+  .sort(function(a,b){ return String(a.datum).localeCompare(String(b.datum)) || String(a.erstellt||"").localeCompare(String(b.erstellt||"")); }); }
+function akSummen(l){
+  var b=l.filter(function(z){ return z.art==="beleg"; }), k=l.filter(function(z){ return z.art==="km"; });
+  var sb=b.reduce(function(s,z){ return s+(+z.betrag||0); },0), km=k.reduce(function(s,z){ return s+(+z.km||0); },0), sk=k.reduce(function(s,z){ return s+(+z.betrag||0); },0);
+  return {belege:b, kms:k, summeBelege:Math.round(sb*100)/100, km:Math.round(km*10)/10, summeKm:Math.round(sk*100)/100, gesamt:Math.round((sb+sk)*100)/100};
+}
+/* meine Privatautos (das Büro stellt beim Fahrzeug „Privatauto – Kilometergeld an …“ ein) */
+function meinePrivatautos(){ var ich=meineKennung(); return FZ.filter(function(f){ return f.privat_von===ich && f.aktiv!==false; }); }
+/* Vorschlag für die Strecke eines Tages: Startpunkt – Orte der eigenen Einsätze – zurück */
+function akStreckeVorschlag(tag){
+  var orte=[], dazu=function(s){ if(!s) return; var n=s.ort||stName(s); if(n && orte[orte.length-1]!==n) orte.push(n); };
+  var m=(planungAn() ? kalenderEintraege(tag, tag, "ich")[tag] : [])||[];
+  m.filter(function(x){ return x.art!=="aufgabe"; }).forEach(function(x){ dazu(byId[x.e ? x.e.standort_id : x.o ? x.o.standortId : x.pr ? x.pr.standortId : null]); });
+  ZEITEN.filter(function(z){ return z.datum===tag && z.standort_id; }).forEach(function(z){ dazu(byId[z.standort_id]); });
+  if(!orte.length) return "";
+  var st=null; try{ var sp=startpunktFuer("ich", tag); st=sp && sp.ort ? (sp.ort.name||"") : ""; }catch(e){}
+  return (st ? [st].concat(orte).concat([st]) : orte).join(" – ");
+}
+function akKmVorschlag(tag, fid){
+  var e=FZ_E.filter(function(x){ return x.fahrzeug_id===fid && x.datum===tag && x.strecke!=null; });
+  return e.length ? Math.round(e.reduce(function(s,x){ return s+(+x.strecke||0); },0)) : null;
+}
+/* Belegfoto: verkleinert hochladen (PDF so, wie es ist) */
+function akFotoHochladen(datei){
+  var uid=Store.benutzer.id, pdf=/pdf/i.test(datei.type||"") || /\.pdf$/i.test(datei.name||"");
+  var pfad=uid+"/"+isoLokal(new Date())+"_"+Math.random().toString(36).slice(2,10)+(pdf?".pdf":".jpg");
+  var blob=pdf ? Promise.resolve(datei) : verkleinere(datei).then(function(v){ return datenUrlZuBlob(v.datenUrl, "image/jpeg"); });
+  return blob.then(function(b){
+    if(pdf && b.size>8*1024*1024) throw new Error("Die PDF ist größer als 8 MB.");
+    return mitFrist(Store.sb.storage.from("auslagen").upload(pfad, b, {contentType:pdf?"application/pdf":"image/jpeg", upsert:false}), 45000);
+  }).then(function(r){ if(r.error) throw new Error(r.error.message); return pfad; });
+}
+function akFotoUrl(pfad){
+  return Store.sb.storage.from("auslagen").createSignedUrl(pfad, 600).then(function(r){ if(r.error || !r.data) throw new Error(r.error?r.error.message:"nicht gefunden"); return r.data.signedUrl; });
+}
+/* ---------- erfassen / ändern ---------- */
+function akEditor(z, vorgabe){
+  if(!akAn()){ toast("Reisekosten gehen nur mit Anmeldung."); return; }
+  if(!fzGeladen) fzLaden();
+  var a=Object.assign({art:"beleg", datum:isoLokal(new Date()), kategorie:"material"}, vorgabe||{}, z||{});
+  var gesperrt=!!z && z.status!=="offen" && !istInhaber();
+  var km=a.art==="km";
+  var v=ansichtOeffnen(z ? (km?"Kilometer Privatauto":"Beleg") : (km?"Kilometer mit Privatauto":"Selbst bezahlt – Beleg"));
+  v.schritt.textContent=gesperrt ? "Schon abgegeben ("+AK_STATUS[z.status]+") – ändern kann das nur der Inhaber" : (km ? "Kilometergeld "+geld(KM_SATZ)+" € je km" : "mit Foto vom Beleg – der Chef zahlt am Monatsende aus");
+  var autos=meinePrivatautos();
+  var projekte=PROJEKTE.filter(function(p){ return projektOffen(p) || p.id===a.projekt_id; });
+  var form=el('<form class="stack" autocomplete="off" style="max-width:560px">'+
+    (km ? "" :
+      '<div class="stack" style="gap:6px"><div class="fl"><span class="req">Foto vom Beleg</span></div>'+
+        '<div class="rowflex" style="gap:8px;flex-wrap:wrap"><label class="btn sm" style="cursor:pointer">📷 Beleg fotografieren<input type="file" accept="image/*" capture="environment" data-foto hidden></label>'+
+        '<label class="btn ghost sm" style="cursor:pointer">Bild / PDF wählen<input type="file" accept="image/*,application/pdf" data-foto hidden></label></div>'+
+        '<div data-vorschau class="muted" style="font-size:12.5px">'+(a.foto?"Foto ist gespeichert – wird geladen …":"Noch kein Foto.")+"</div>"+
+        '<label class="chk" style="font-size:12.5px"><input type="checkbox" data-ohne'+(a.ohne_beleg?" checked":"")+"><span>Kein Beleg vorhanden</span></label>"+
+        '<label class="fl" data-ohnegrund'+(a.ohne_beleg?"":" hidden")+'><span>Warum kein Beleg?</span><input type="text" data-f="ohne_beleg" maxlength="300" value="'+esc(a.ohne_beleg||"")+'" placeholder="z. B. Parkautomat ohne Beleg"></label></div>')+
+    '<div class="grid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px">'+
+      '<label class="fl"><span class="req">Datum</span><input type="date" data-f="datum" value="'+esc(a.datum)+'"></label>'+
+      (km ? '<label class="fl"><span class="req">Gefahrene km</span><input type="text" inputmode="decimal" data-f="km" value="'+esc(a.km!=null?String(a.km).replace(".",","):"")+'"></label>'
+          : '<label class="fl"><span class="req">Betrag (€)</span><input type="text" inputmode="decimal" data-f="betrag" value="'+esc(a.betrag!=null?geld(a.betrag):"")+'" placeholder="z. B. 23,85"></label>')+
+    "</div>"+
+    (km ? '<label class="fl"><span class="req">Strecke</span><input type="text" data-f="text" maxlength="300" value="'+esc(a.text||"")+'" placeholder="z. B. Salzburg – Saalfelden – St. Johann i. T. – Salzburg"></label>'+
+          '<div data-vorschlag class="chips"></div>'+
+          '<label class="fl"><span>Fahrzeug</span><select data-f="fahrzeug_id"><option value="">– Privatauto –</option>'+autos.map(function(f){
+            return '<option value="'+esc(f.id)+'"'+(a.fahrzeug_id===f.id || (!a.fahrzeug_id && autos.length===1)?" selected":"")+">"+esc(f.kennzeichen+(f.bezeichnung?" · "+f.bezeichnung:""))+"</option>"; }).join("")+"</select></label>"+
+          '<div class="note" data-kmbetrag style="font-size:13px"></div>'
+        : '<label class="fl"><span class="req">Wo / was?</span><input type="text" data-f="text" maxlength="300" value="'+esc(a.text||"")+'" placeholder="z. B. Bauhaus – Silikon und Schrauben"></label>'+
+          '<div class="fl"><span>Wofür?</span></div><div class="chips" data-kat>'+AUSLAGE_KAT.map(function(x){ return '<button class="chip" type="button" data-w="'+x[0]+'" aria-pressed="'+(a.kategorie===x[0])+'">'+esc(x[1])+"</button>"; }).join("")+"</div>")+
+    '<div class="grid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:10px">'+
+      '<label class="fl"><span>Projekt (falls dafür)</span><select data-f="projekt_id"><option value="">–</option>'+projekte.map(function(p){
+        return '<option value="'+esc(p.id)+'"'+(a.projekt_id===p.id?" selected":"")+">"+esc(projektTitel(p))+"</option>"; }).join("")+"</select></label>"+
+      '<label class="fl"><span>Markt (falls dafür)</span><select data-f="standort_id"><option value="">–</option>'+ST.slice().sort(nachMarktname).map(function(s){
+        return '<option value="'+esc(s.id)+'"'+(a.standort_id===s.id?" selected":"")+">"+esc(stName(s))+"</option>"; }).join("")+"</select></label></div>"+
+    '<label class="fl"><span>Notiz</span><input type="text" data-f="notiz" maxlength="500" value="'+esc(a.notiz||"")+'"></label>'+
+    '<div class="note warnbox" data-err hidden></div></form>');
+  var F=function(k){ return form.querySelector('[data-f="'+k+'"]'); };
+  var err=form.querySelector("[data-err]"), fehler=function(t){ err.textContent=technikDeutsch(t); err.hidden=false; };
+  var kat=a.kategorie, datei=null;
+  if(!km){
+    form.querySelectorAll("[data-kat] .chip").forEach(function(c){ c.onclick=function(){ kat=c.dataset.w; form.querySelectorAll("[data-kat] .chip").forEach(function(x){ x.setAttribute("aria-pressed", String(x===c)); }); }; });
+    var vs=form.querySelector("[data-vorschau]");
+    var zeigeBild=function(url, pdf){ vs.innerHTML=pdf ? '<a href="'+esc(url)+'" target="_blank" rel="noopener">📄 PDF ansehen</a>' : '<img alt="Beleg" src="'+esc(url)+'" style="max-width:100%;max-height:260px;border:1px solid var(--line);border-radius:8px">'; };
+    form.querySelectorAll("[data-foto]").forEach(function(inp){ inp.onchange=function(){ if(!inp.files || !inp.files[0]) return; datei=inp.files[0];
+      var pdf=/pdf/i.test(datei.type||""); zeigeBild(URL.createObjectURL(datei), pdf); form.querySelector("[data-ohne]").checked=false; form.querySelector("[data-ohnegrund]").hidden=true; }; });
+    form.querySelector("[data-ohne]").onchange=function(){ form.querySelector("[data-ohnegrund]").hidden=!this.checked; };
+    if(a.foto && !demo()) akFotoUrl(a.foto).then(function(u){ zeigeBild(u, /\.pdf$/i.test(a.foto)); }, function(){ vs.textContent="Foto nicht geladen."; });
+  } else {
+    var kb=form.querySelector("[data-kmbetrag]");
+    var rechne=function(){ var k=akBetragLesen(F("km").value); kb.textContent = k>0 ? String(k).replace(".",",")+" km × "+geld(KM_SATZ)+" € = "+geld(Math.round(k*KM_SATZ*100)/100)+" €" : "Kilometergeld "+geld(KM_SATZ)+" € je km."; };
+    F("km").addEventListener("input", rechne); rechne();
+    var vorschlag=function(){
+      var h=form.querySelector("[data-vorschlag]"); h.innerHTML="";
+      var s=akStreckeVorschlag(F("datum").value), kv=F("fahrzeug_id").value ? akKmVorschlag(F("datum").value, F("fahrzeug_id").value) : null;
+      if(s){ var c=el('<button class="chip" type="button">laut Kalender: '+esc(s)+"</button>"); c.onclick=function(){ F("text").value=s; }; h.appendChild(c); }
+      if(kv){ var c2=el('<button class="chip" type="button">'+kv+" km laut Fahrzeug</button>"); c2.onclick=function(){ F("km").value=String(kv); rechne(); }; h.appendChild(c2); }
+    };
+    F("datum").addEventListener("change", vorschlag); F("fahrzeug_id").addEventListener("change", vorschlag); vorschlag();
+    if(!autos.length) form.insertBefore(el('<div class="note" style="font-size:12.5px">Kilometergeld gibt es nur für das <strong>Privatauto</strong>, nicht für ein Firmenfahrzeug. '+
+      "Ist dein Auto noch nicht als Privatauto eingetragen, macht das das Büro unter Fahrzeuge → Bearbeiten.</div>"), form.firstChild);
+  }
+  v.inhalt.appendChild(form);
+  if(gesperrt){ form.querySelectorAll("input,select,button").forEach(function(x){ if(!x.closest("[data-vorschau]")) x.disabled=true; }); return; }
+  if(z && (z.status==="offen" || istInhaber()) && !demo()){
+    var lo=el('<button class="btn ghost" type="button" style="color:var(--crit);border-color:var(--crit)">Löschen</button>');
+    lo.onclick=function(){ if(!window.confirm("Diesen Eintrag löschen?")) return;
+      Store.sb.from("auslagen").delete().eq("id", z.id).select("id").then(function(r){
+        if(r.error || !r.data || !r.data.length){ fehler("Nicht gelöscht"+(r.error?" ("+r.error.message+")":" – vielleicht schon abgegeben")+"."); return; }
+        if(z.foto) Store.sb.storage.from("auslagen").remove([z.foto]).then(function(){}, function(){});
+        AUSLAGEN=AUSLAGEN.filter(function(x){ return x.id!==z.id; }); v.zu(); toast("Gelöscht."); akNeuZeichnen(); }); };
+    v.fuss.appendChild(lo);
+  }
+  var ok=fussKnoepfe(v, "Speichern").ok;
+  ok.onclick=function(){
+    err.hidden=true;
+    var datum=F("datum").value, text=F("text").value.trim();
+    if(!datum){ fehler("Bitte das Datum eintragen."); return; }
+    if(datum>isoLokal(new Date())){ fehler("Das Datum liegt in der Zukunft – bitte prüfen."); return; }
+    if(!text){ fehler(km ? "Bitte die Strecke eintragen (von – über – nach)." : "Bitte eintragen, wo bzw. was gekauft wurde."); F("text").focus(); return; }
+    var zeile={art:a.art, datum:datum, text:text, projekt_id:F("projekt_id").value||null, standort_id:F("standort_id").value||null, notiz:F("notiz").value.trim()||null};
+    if(!z) zeile.name=meinName();   /* der Inhaber ändert fremde Einträge – der Name bleibt der der Person */
+    if(km){
+      var k=akBetragLesen(F("km").value);
+      if(!(k>0)){ fehler("Bitte die gefahrenen Kilometer als Zahl eintragen."); F("km").focus(); return; }
+      if(k>1500 && !window.confirm(k+" km an einem Tag – stimmt das?")) return;
+      var fid=F("fahrzeug_id").value||null, fo=fid && FZ.filter(function(f){ return f.id===fid; })[0];
+      Object.assign(zeile, {km:k, fahrzeug_id:fid, fahrzeug_name:fo?fo.kennzeichen:null});
+    } else {
+      var b=akBetragLesen(F("betrag").value);
+      if(!(b>0)){ fehler("Bitte den Betrag eintragen, z. B. 23,85."); F("betrag").focus(); return; }
+      if(b>2000 && !window.confirm(geld(b)+" € – stimmt der Betrag?")) return;
+      var ohne=form.querySelector("[data-ohne]").checked;
+      if(!datei && !a.foto && !ohne){ fehler("Bitte den Beleg fotografieren – oder „Kein Beleg vorhanden“ mit Grund."); return; }
+      if(ohne && !F("ohne_beleg").value.trim() && !datei && !a.foto){ fehler("Bitte kurz eintragen, warum es keinen Beleg gibt."); F("ohne_beleg").focus(); return; }
+      Object.assign(zeile, {betrag:b, kategorie:kat, ohne_beleg:(ohne && !datei) ? F("ohne_beleg").value.trim() : null});
+    }
+    if(a.bedarf_id) zeile.bedarf_id=a.bedarf_id;
+    ok.disabled=true; ok.textContent=datei ? "Foto wird hochgeladen …" : "wird gespeichert …";
+    var fertig=function(n){
+      AUSLAGEN=AUSLAGEN.filter(function(x){ return x.id!==n.id; }).concat([n]);
+      v.zu(); toast("Gespeichert: "+(n.art==="km" ? String(n.km).replace(".",",")+" km = " : "")+geld(n.betrag)+" €.");
+      S.akMonat=String(n.datum).slice(0,7); akNeuZeichnen();
+      /* dafür besorgt (Werkzeug und Material): der Bedarf ist erledigt */
+      var bd=a.bedarf_id && BEDARF.filter(function(x){ return x.id===a.bedarf_id; })[0];
+      if(bd && bedarfOffen(bd)) bedarfSpeichern(bd, {status:"erledigt"}).then(function(){ toast("„"+bd.text+"“ ist als erledigt abgehakt."); }, function(){});
+      /* Werkzeug gekauft, das noch nicht in der Liste steht: einmal fragen */
+      if(!z && n.kategorie==="werkzeug" && !(bd && bd.werkzeug_id) && wzAn()) wzAufnehmenFragen({text:String(n.text).replace(/^.*?–\s*/,"")});
+    };
+    if(demo()){ fertig(Object.assign({id:neueKennung("ak"), status:"offen", betrag:km?Math.round(zeile.km*KM_SATZ*100)/100:zeile.betrag}, z||{}, zeile)); return; }
+    (datei ? akFotoHochladen(datei) : Promise.resolve(null)).then(function(pfad){
+      if(pfad){ zeile.foto=pfad; zeile.ohne_beleg=null; }
+      var q=z ? Store.sb.from("auslagen").update(zeile).eq("id", z.id).select("*") : Store.sb.from("auslagen").insert(zeile).select("*");
+      return mitFrist(q, 20000).then(function(r){
+        if(r.error) throw new Error(/does not exist|schema cache|relation/i.test(r.error.message)?"Reisekosten sind in der Datenbank noch nicht eingerichtet (tools/reisekosten.sql).":r.error.message);
+        if(!r.data || !r.data.length) throw new Error("Nicht gespeichert – vielleicht schon abgegeben.");
+        if(pfad && z && z.foto) Store.sb.storage.from("auslagen").remove([z.foto]).then(function(){}, function(){});
+        fertig(r.data[0]);
+      });
+    }).catch(function(e){ ok.disabled=false; ok.textContent="Speichern"; fehler(e.message||String(e)); });
+  };
+}
+/* ---------- Monat abgeben: alles Offene → abgegeben, Nachricht an den Inhaber ---------- */
+function akAbgeben(monat){
+  var l=akImMonat(AUSLAGEN, monat).filter(function(z){ return z.status==="offen"; }), s=akSummen(l);
+  if(!l.length){ toast("In diesem Monat ist nichts offen."); return; }
+  if(!AK_KONTO || !AK_KONTO.iban){ if(!window.confirm("Es ist noch kein Konto für die Auszahlung eingetragen (unten „Konto für die Auszahlung“).\n\nTrotzdem abgeben?")) return; }
+  if(!window.confirm("Reisekosten "+MONATE_L[+monat.slice(5,7)]+" abgeben?\n\n"+s.belege.length+" Belege: "+geld(s.summeBelege)+" €\n"+
+    (s.kms.length?String(s.km).replace(".",",")+" km Privatauto: "+geld(s.summeKm)+" €\n":"")+"zusammen: "+geld(s.gesamt)+" €\n\nDanach ändern kann es nur noch der Chef.")) return;
+  var von=monat+"-01", bis=plusMonate(von,1);
+  Store.sb.from("auslagen").update({status:"eingereicht"}).eq("user_id", Store.benutzer.id).eq("status","offen").gte("datum", von).lt("datum", bis).select("*").then(function(r){
+    if(r.error){ toast("Nicht abgegeben: "+technikDeutsch(r.error.message)); return; }
+    (r.data||[]).forEach(function(n){ AUSLAGEN=AUSLAGEN.filter(function(x){ return x.id!==n.id; }).concat([n]); });
+    toast("Abgegeben – "+geld(s.gesamt)+" €. Der Chef bekommt eine Nachricht.");
+    akNeuZeichnen();
+    /* Nachricht an den Inhaber (nur an ihn – Beträge sieht sonst niemand) */
+    if(chatAn() && !istInhaber()) chatTeamLaden().then(function(t){
+      var text="🧾 Reisekosten "+MONATE_L[+monat.slice(5,7)]+" "+monat.slice(0,4)+" abgegeben: "+s.belege.length+" Belege "+geld(s.summeBelege)+" €"+
+        (s.kms.length?", "+String(s.km).replace(".",",")+" km Privatauto "+geld(s.summeKm)+" €":"")+" – zusammen "+geld(s.gesamt)+" €.\n\nBitte auszahlen: Reiter Stunden → Reisekosten aller.";
+      (t||[]).filter(function(p){ return p.rolle==="inhaber"; }).forEach(function(p, i){
+        mitFrist(Store.sb.from("chat").insert({id:"c_"+Date.now().toString(36)+i+Math.random().toString(36).slice(2,8), von:Store.benutzer.id, von_name:meinName(), text:text, an:p.user_id, an_name:p.name||"", fotos:[]}), 15000).then(function(){}, function(){});
+      });
+    });
+  });
+}
+/* ---------- PDF wie das bisherige Blatt (Barbelege, Kilometer mit Privatauto, Konto) und dahinter die Belegfotos ---------- */
+function akPdfHtml(l, name, monat, konto, fotos){
+  var s=akSummen(l), zelle='style="border-bottom:1px solid #ddd;padding:3px 5px"', th='style="text-align:left;border-bottom:1px solid #999;padding:3px 5px;background:#eee"';
+  var h=blattKopf("Reisekosten "+MONATE_L[+monat.slice(5,7)]+" "+monat.slice(0,4), name)+
+    '<table style="border-collapse:collapse;font-size:12px;margin-bottom:10px"><tr><td style="padding:2px 14px 2px 0">Mitarbeiter</td><td><strong>'+esc(name)+"</strong></td></tr>"+
+    '<tr><td style="padding:2px 14px 2px 0">Monat / Jahr</td><td>'+esc(MONATE_L[+monat.slice(5,7)]+" "+monat.slice(0,4))+"</td></tr>"+
+    '<tr><td style="padding:2px 14px 2px 0">Betreff</td><td>REISESPESEN</td></tr></table>'+
+    '<div style="font-weight:700;margin:6px 0 4px">Ausgaben Barbelege</div>'+
+    '<table style="width:100%;border-collapse:collapse;font-size:11.5px"><thead><tr><th '+th+'>Beleg-Nr.</th><th '+th+'>Datum</th><th '+th+'>Text</th><th '+th+'>wofür</th><th '+th+' align="right">Betrag</th></tr></thead><tbody>'+
+    (s.belege.length ? s.belege.map(function(z, i){ return "<tr><td "+zelle+">"+(i+1)+"</td><td "+zelle+">"+esc(dfmt(z.datum))+"</td><td "+zelle+">"+esc(z.text||"")+
+      (z.ohne_beleg?' <em style="color:#b00">(ohne Beleg: '+esc(z.ohne_beleg)+")</em>":"")+"</td><td "+zelle+">"+esc([akKatName(z.kategorie), z.projekt_id?((PROJEKTE.filter(function(p){ return p.id===z.projekt_id; })[0]||{}).nummer||""):""].filter(Boolean).join(" · "))+
+      "</td><td "+zelle+' align="right">'+geld(z.betrag)+" €</td></tr>"; }).join("") : "<tr><td "+zelle+' colspan="5">keine</td></tr>')+
+    "<tr><td colspan=\"4\" "+zelle+"><strong>Summe Barbelege</strong></td><td "+zelle+' align="right"><strong>'+geld(s.summeBelege)+" €</strong></td></tr></tbody></table>"+
+    '<div style="font-weight:700;margin:14px 0 4px">Kilometer mit Privatauto</div>'+
+    '<table style="width:100%;border-collapse:collapse;font-size:11.5px"><thead><tr><th '+th+'>Datum</th><th '+th+'>Strecke</th><th '+th+'>Fahrzeug</th><th '+th+' align="right">km</th><th '+th+' align="right">Betrag</th></tr></thead><tbody>'+
+    (s.kms.length ? s.kms.map(function(z){ return "<tr><td "+zelle+">"+esc(dfmt(z.datum))+"</td><td "+zelle+">"+esc(z.text||"")+"</td><td "+zelle+">"+esc(z.fahrzeug_name||"")+"</td><td "+zelle+' align="right">'+
+      esc(String(z.km).replace(".",","))+"</td><td "+zelle+' align="right">'+geld(z.betrag)+" €</td></tr>"; }).join("") : "<tr><td "+zelle+' colspan="5">keine</td></tr>')+
+    "<tr><td colspan=\"3\" "+zelle+"><strong>Gesamt</strong> (€ pro km: "+geld(s.kms.length?s.kms[0].km_satz||KM_SATZ:KM_SATZ)+")</td><td "+zelle+' align="right"><strong>'+esc(String(s.km).replace(".",","))+"</strong></td><td "+zelle+' align="right"><strong>'+geld(s.summeKm)+" €</strong></td></tr></tbody></table>"+
+    '<table class="zusammen" style="margin-top:14px;border-collapse:collapse;font-size:12.5px">'+
+      '<tr><td style="padding:3px 18px 3px 0">Ausgaben Barbelege</td><td align="right">'+geld(s.summeBelege)+" €</td></tr>"+
+      '<tr><td style="padding:3px 18px 3px 0">Kilometergeld</td><td align="right">'+geld(s.summeKm)+" €</td></tr>"+
+      '<tr><td style="padding:3px 18px 3px 0;border-top:2px solid #333"><strong>zu zahlen</strong></td><td align="right" style="border-top:2px solid #333"><strong>'+geld(s.gesamt)+" €</strong></td></tr></table>"+
+    '<div style="margin-top:10px;font-size:12px">Überweisen auf: '+(konto && konto.iban ? "<strong>"+esc(konto.kontoinhaber||name)+"</strong> · "+esc(konto.iban) : "<em>kein Konto eingetragen</em>")+"</div>"+
+    '<div style="margin-top:26px;display:flex;gap:40px;font-size:11px"><div style="border-top:1px solid #333;padding-top:3px;width:220px">Datum, Unterschrift Mitarbeiter/in</div>'+
+      '<div style="border-top:1px solid #333;padding-top:3px;width:220px">ausbezahlt am, Unterschrift</div></div>';
+  (fotos||[]).forEach(function(f){ h+='<figure style="margin:18px 0 0;page-break-inside:avoid"><figcaption style="font-size:11.5px;font-weight:700;margin-bottom:4px">Beleg '+f.nr+" – "+esc(dfmt(f.z.datum))+" · "+esc(f.z.text||"")+" · "+geld(f.z.betrag)+" €</figcaption>"+
+    (f.url ? '<img src="'+f.url+'" style="max-width:100%;max-height:900px;border:1px solid #ccc">' : '<div style="color:#777">'+esc(f.hinweis||"Foto nicht verfügbar")+"</div>")+"</figure>"; });
+  return h;
+}
+/* die Fotos als Daten-URL (damit sie im PDF landen); PDF-Belege werden genannt, nicht eingebettet */
+function akFotosFuerPdf(l){
+  var belege=l.filter(function(z){ return z.art==="beleg"; });
+  return Promise.all(belege.map(function(z, i){
+    var f={nr:i+1, z:z};
+    if(!z.foto){ f.hinweis="kein Foto"+(z.ohne_beleg?" – "+z.ohne_beleg:""); return Promise.resolve(f); }
+    if(/\.pdf$/i.test(z.foto)){ f.hinweis="Beleg als PDF – in der App unter dem Eintrag"; return Promise.resolve(f); }
+    return Store.sb.storage.from("auslagen").download(z.foto).then(function(r){
+      if(r.error || !r.data) { f.hinweis="Foto nicht geladen"; return f; }
+      return new Promise(function(ok){ var fr=new FileReader(); fr.onload=function(){ f.url=fr.result; ok(f); }; fr.onerror=function(){ f.hinweis="Foto nicht lesbar"; ok(f); }; fr.readAsDataURL(r.data); });
+    }, function(){ f.hinweis="Foto nicht geladen"; return f; });
+  }));
+}
+function akPdf(l, name, monat, konto){
+  return (demo() ? Promise.resolve([]) : akFotosFuerPdf(l)).then(function(fotos){
+    return blattZuPdf({html:akPdfHtml(l, name, monat, konto, fotos), fuss:"Reisekosten "+name+" – "+monat, titel:"Reisekosten "+monat});
+  });
+}
+/* ---------- Karte im Reiter Stunden: meine Reisekosten ---------- */
+function akMeineKarte(){
+  if(!akGeladen && !akLaedt) akLaden().then(function(neu){ if(neu) akNeuZeichnen(); });
+  if(!fzGeladen) fzLaden().then(function(neu){ if(neu) akNeuZeichnen(); });
+  var heute=isoLokal(new Date());
+  S.akMonat=S.akMonat||heute.slice(0,7);
+  var monat=S.akMonat, l=akImMonat(AUSLAGEN, monat), s=akSummen(l), offen=l.filter(function(z){ return z.status==="offen"; });
+  var c=el('<div class="card"><div class="pad stack" style="gap:8px">'+
+    '<div class="rowflex" style="justify-content:space-between;align-items:flex-start;gap:10px"><div><h2>Reisekosten und Kilometergeld</h2>'+
+      '<div class="sub">Mit eigenem Geld bezahlt (Beleg mit Foto) und Kilometer mit dem Privatauto. Am Monatsende abgeben – der Chef zahlt aus. Nur du und der Inhaber sehen das.</div></div>'+
+      '<div class="rowflex" style="gap:6px;flex-wrap:wrap"><button class="btn sm" type="button" data-n="beleg" data-schreiben>📷 + Beleg</button><button class="btn ghost sm" type="button" data-n="km" data-schreiben>🚗 + Kilometer</button></div></div>'+
+    (akFehlt?'<div class="note warnbox">Reisekosten sind in der Datenbank noch nicht eingerichtet'+(istInhaber()?" – tools/reisekosten.sql einmal im Supabase SQL Editor ausführen.":" – das richtet der Inhaber ein.")+"</div>":"")+
+    (akFehler?'<div class="note warnbox">'+esc(akFehler)+"</div>":"")+
+    '<div class="rowflex" style="gap:6px;flex-wrap:nowrap"><button class="btn ghost sm" type="button" data-m="-1" aria-label="Vormonat">‹</button>'+
+      '<strong style="min-width:130px;text-align:center">'+esc(MONATE_L[+monat.slice(5,7)]+" "+monat.slice(0,4))+'</strong><button class="btn ghost sm" type="button" data-m="1" aria-label="Folgemonat">›</button></div>'+
+    '<div class="stack" data-l style="gap:4px"></div>'+
+    '<div class="rowflex" style="justify-content:space-between;gap:8px;border-top:1px solid var(--line);padding-top:8px;flex-wrap:wrap" data-summe></div>'+
+  "</div></div>");
+  c.querySelectorAll("[data-n]").forEach(function(b){ b.onclick=function(){ akEditor(null, {art:b.dataset.n, datum:monat===heute.slice(0,7)?heute:monat+"-01"}); }; });
+  c.querySelectorAll("[data-m]").forEach(function(b){ b.onclick=function(){ S.akMonat=plusMonate(monat+"-01", +b.dataset.m).slice(0,7); render(); }; });
+  var h=c.querySelector("[data-l]");
+  if(!l.length) h.appendChild(el('<div class="muted" style="font-size:12.5px">In diesem Monat nichts eingetragen.</div>'));
+  var zeile=function(z, nr){
+    var r=el('<a href="#" class="sprunglink" style="display:flex;gap:8px;justify-content:space-between;font-size:13px;color:inherit;padding:3px 0;border-bottom:1px dashed var(--line)">'+
+      '<span style="flex:1;min-width:0">'+(z.art==="km" ? "🚗 " : "🧾 "+nr+". ")+esc(dfmt(z.datum).slice(0,6))+" · "+esc(z.text||"")+
+        '<span class="muted" style="font-size:12px">'+(z.art==="km" ? " · "+esc(String(z.km).replace(".",","))+" km" : " · "+esc(akKatName(z.kategorie))+(z.foto?" · 📎":z.ohne_beleg?" · ohne Beleg":" · ⚠ Foto fehlt"))+
+        (z.status!=="offen"?" · "+esc(AK_STATUS[z.status]):"")+"</span></span>"+
+      '<span class="mono" style="white-space:nowrap">'+geld(z.betrag)+" €</span></a>");
+    r.onclick=function(ev){ ev.preventDefault(); akEditor(z); };
+    return r;
+  };
+  s.belege.forEach(function(z, i){ h.appendChild(zeile(z, i+1)); });
+  s.kms.forEach(function(z){ h.appendChild(zeile(z)); });
+  var su=c.querySelector("[data-summe]");
+  su.appendChild(el('<span style="font-size:13px">Belege <strong>'+geld(s.summeBelege)+" €</strong>"+(s.kms.length?" · "+esc(String(s.km).replace(".",","))+" km = <strong>"+geld(s.summeKm)+" €</strong>":"")+
+    " · zu zahlen <strong>"+geld(s.gesamt)+" €</strong></span>"));
+  var knoepfe=el('<span class="rowflex" style="gap:6px;flex-wrap:wrap"></span>');
+  if(offen.length && !demo()){
+    /* abgeben erst am Monatsende (ab dem 25.) oder für einen vergangenen Monat */
+    var darf=monat<heute.slice(0,7) || +heute.slice(8,10)>=25;
+    var ab=el('<button class="btn sm" type="button" data-schreiben'+(darf?"":' title="ab dem 25. des Monats"')+'>Monat abgeben ('+offen.length+")</button>");
+    ab.onclick=function(){ if(!darf && !window.confirm("Der Monat ist noch nicht zu Ende – trotzdem schon abgeben?")) return; akAbgeben(monat); };
+    knoepfe.appendChild(ab);
+  }
+  if(l.length) knoepfe.appendChild(pdfKnopf("PDF", function(){ return "Reisekosten_"+meinName()+"_"+monat+".pdf"; }, function(){ return akPdf(l, meinName(), monat, AK_KONTO); }));
+  su.appendChild(knoepfe);
+  var st=l.length && !offen.length ? (l.every(function(z){ return z.status==="ausbezahlt"; }) ? "✓ ausbezahlt" : "abgegeben – wartet auf die Auszahlung") : "";
+  if(st) c.querySelector(".pad").appendChild(el('<div style="font-size:12.5px;color:var(--good)">'+esc(st)+"</div>"));
+  /* Konto für die Auszahlung */
+  var kd=el('<details><summary class="muted" style="cursor:pointer;font-size:12.5px">Konto für die Auszahlung'+(AK_KONTO&&AK_KONTO.iban?": "+esc(AK_KONTO.iban):" – noch nicht eingetragen")+"</summary>"+
+    '<div class="grid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:8px;margin-top:6px">'+
+      '<label class="fl"><span>Kontoinhaber</span><input type="text" data-k="kontoinhaber" maxlength="120" value="'+esc((AK_KONTO&&AK_KONTO.kontoinhaber)||meinName())+'"></label>'+
+      '<label class="fl"><span>IBAN</span><input type="text" data-k="iban" maxlength="40" autocapitalize="characters" value="'+esc((AK_KONTO&&AK_KONTO.iban)||"")+'"></label></div>'+
+    '<button class="btn ghost sm" type="button" style="margin-top:6px" data-schreiben>Konto speichern</button></details>');
+  kd.querySelector("button").onclick=function(){
+    var iban=kd.querySelector('[data-k="iban"]').value.replace(/\s/g,"").toUpperCase();
+    if(iban && !ibanGueltig(iban)){ toast("Die IBAN stimmt nicht (Prüfziffer) – bitte prüfen."); return; }
+    var zz={user_id:Store.benutzer.id, kontoinhaber:kd.querySelector('[data-k="kontoinhaber"]').value.trim()||null, iban:iban ? iban.replace(/(.{4})/g,"$1 ").trim() : null, geaendert:new Date().toISOString()};
+    if(demo()){ AK_KONTO=zz; toast("Gespeichert (Präsentation)."); return; }
+    Store.sb.from("auslagen_konto").upsert(zz, {onConflict:"user_id"}).select("*").then(function(r){
+      if(r.error){ toast("Nicht gespeichert: "+technikDeutsch(r.error.message)); return; }
+      AK_KONTO=(r.data||[])[0]||zz; toast("Konto gespeichert."); akNeuZeichnen(); });
+  };
+  c.querySelector(".pad").appendChild(kd);
+  return c;
+}
+/* ---------- Inhaber: Reisekosten aller, je Person, ausbezahlt ---------- */
+var AK_ALLE={monat:"", liste:[], konten:{}, laedt:false, fehler:""}, AK_ABGEGEBEN=null;
+function akAlleLaden(monat){
+  AK_ALLE.laedt=true;
+  var von=monat+"-01", bis=plusMonate(von,1);
+  return Promise.all([Store.sb.from("auslagen").select("*").gte("datum", von).lt("datum", bis).order("datum").limit(5000), Store.sb.from("auslagen_konto").select("*")]).then(function(r){
+    AK_ALLE.laedt=false; AK_ALLE.monat=monat;
+    if(r[0].error){ AK_ALLE.fehler=r[0].error.message; return; }
+    AK_ALLE.fehler=""; AK_ALLE.liste=r[0].data||[]; AK_ALLE.konten={}; (r[1].data||[]).forEach(function(k){ AK_ALLE.konten[k.user_id]=k; });
+  }, function(){ AK_ALLE.laedt=false; AK_ALLE.fehler="Keine Verbindung."; });
+}
+/* abgegeben, noch nicht ausbezahlt (alle Monate) – fürs To-do des Inhabers */
+function akAbgegebenLaden(){
+  if(!istInhaber() || !betriebAn()) return Promise.resolve([]);
+  return Store.sb.from("auslagen").select("user_id,name,datum,betrag,status").eq("status","eingereicht").limit(3000).then(function(r){ AK_ABGEGEBEN=r.error ? [] : (r.data||[]); return AK_ABGEGEBEN; }, function(){ return []; });
+}
+function akAbgegebenText(){
+  var je={}; (AK_ABGEGEBEN||[]).forEach(function(z){ var k=z.user_id+"|"+String(z.datum).slice(0,7); (je[k]=je[k]||{name:z.name||"?", monat:String(z.datum).slice(0,7), summe:0}).summe+=+z.betrag||0; });
+  return Object.keys(je).map(function(k){ var x=je[k]; return "🧾 Reisekosten "+x.name+" "+MONATE_L[+x.monat.slice(5,7)]+": "+geld(x.summe)+" € – auszahlen"; });
+}
+function akInhaberKarte(){
+  S.akMonatAlle=S.akMonatAlle||isoLokal(new Date()).slice(0,7);
+  var monat=S.akMonatAlle;
+  if(AK_ALLE.monat!==monat && !AK_ALLE.laedt) akAlleLaden(monat).then(akNeuZeichnen);
+  var c=el('<div class="card"><div class="pad stack" style="gap:8px">'+
+    '<div class="rowflex" style="justify-content:space-between;gap:10px"><div><h2>Reisekosten aller</h2><div class="sub">Nur für Inhaber. Barbelege (mit Foto) und Kilometergeld je Person – PDF mit allen Belegen, „ausbezahlt“ abhaken.</div></div>'+
+      '<div class="rowflex" style="gap:6px;flex-wrap:nowrap"><button class="btn ghost sm" type="button" data-m="-1" aria-label="Vormonat">‹</button>'+
+        '<strong style="min-width:120px;text-align:center">'+esc(MONATE_L[+monat.slice(5,7)]+" "+monat.slice(0,4))+'</strong><button class="btn ghost sm" type="button" data-m="1" aria-label="Folgemonat">›</button></div></div>'+
+    '<div data-inhalt style="font-size:12.5px"></div>'+
+    '<details class="note" style="font-size:12.5px"><summary style="cursor:pointer">Kilometergeld je km: <strong>'+geld(KM_SATZ)+' €</strong></summary><div class="rowflex" style="gap:6px;margin-top:6px">'+
+      '<input type="text" inputmode="decimal" data-satz value="'+esc(geld(KM_SATZ))+'" style="max-width:100px"><button class="btn ghost sm" type="button" data-satzok>speichern</button></div>'+
+      '<div class="muted" style="margin-top:4px">Amtliches Kilometergeld (seit 2025: 0,50 €). Gilt für neue Einträge – schon erfasste behalten ihren Satz.</div></details>'+
+  "</div></div>");
+  c.querySelectorAll("[data-m]").forEach(function(b){ b.onclick=function(){ S.akMonatAlle=plusMonate(monat+"-01", +b.dataset.m).slice(0,7); AK_ALLE.monat=""; render(); }; });
+  c.querySelector("[data-satzok]").onclick=function(){
+    var n=akBetragLesen(c.querySelector("[data-satz]").value);
+    if(!(n>0 && n<5)){ toast("Bitte einen Satz wie 0,50 eintragen."); return; }
+    Store.sb.from("einstellungen").upsert({schluessel:"kilometergeld", wert:{satz:n}, geaendert:new Date().toISOString(), von:meinName()}).then(function(r){
+      if(r.error){ toast("Nicht gespeichert: "+r.error.message); return; } KM_SATZ=n; toast("Kilometergeld "+geld(n)+" € je km gespeichert."); render(); });
+  };
+  var host=c.querySelector("[data-inhalt]");
+  if(AK_ALLE.laedt || AK_ALLE.monat!==monat){ host.appendChild(el('<div class="muted">wird geladen …</div>')); return c; }
+  if(AK_ALLE.fehler){ host.appendChild(el('<div class="note warnbox">'+esc(AK_ALLE.fehler)+"</div>")); return c; }
+  var je={}, namen={};
+  AK_ALLE.liste.forEach(function(z){ (je[z.user_id]=je[z.user_id]||[]).push(z); if(z.name) namen[z.user_id]=z.name; });
+  var keys=Object.keys(je).sort(function(a,b){ return String(namen[a]||"").localeCompare(String(namen[b]||""),"de"); });
+  if(!keys.length){ host.appendChild(el('<div class="muted">In diesem Monat hat niemand Reisekosten eingetragen.</div>')); return c; }
+  var tab=el('<div class="scrollx"><table class="t" style="width:100%;font-size:12.5px"><thead><tr><th>Mitarbeiter</th><th>Belege</th><th>km</th><th>Kilometergeld</th><th>zu zahlen</th><th>Stand</th><th></th></tr></thead><tbody></tbody></table></div>');
+  var csv=[["Mitarbeiter","Monat","Belege (Anzahl)","Belege (€)","km","Kilometergeld (€)","zu zahlen (€)","Stand","Kontoinhaber","IBAN"]];
+  keys.forEach(function(uid){
+    var l=je[uid], s=akSummen(l), n=namen[uid]||"?", konto=AK_ALLE.konten[uid];
+    var st={offen:0, eingereicht:0, ausbezahlt:0}; l.forEach(function(z){ st[z.status]++; });
+    var stand=[st.offen?st.offen+" offen":"", st.eingereicht?st.eingereicht+" abgegeben":"", st.ausbezahlt?st.ausbezahlt+" ausbezahlt":""].filter(Boolean).join(", ");
+    var ohneFoto=s.belege.filter(function(z){ return !z.foto; }).length;
+    var tr=el("<tr><td>"+esc(n)+(konto&&konto.iban?'<br><span class="muted mono" style="font-size:11.5px">'+esc(konto.iban)+"</span>":'<br><span class="muted" style="font-size:11.5px">kein Konto eingetragen</span>')+
+      (ohneFoto?'<br><span style="font-size:12px;color:var(--crit)">⚠ '+ohneFoto+" ohne Foto</span>":"")+"</td>"+
+      "<td class='mono'>"+s.belege.length+" · "+geld(s.summeBelege)+" €</td><td class='mono'>"+esc(String(s.km).replace(".",","))+"</td><td class='mono'>"+geld(s.summeKm)+" €</td>"+
+      "<td class='mono'><strong>"+geld(s.gesamt)+" €</strong></td><td>"+esc(stand)+"</td><td></td></tr>");
+    var zk=tr.lastChild;
+    zk.appendChild(pdfKnopf("PDF", function(){ return "Reisekosten_"+n+"_"+monat+".pdf"; }, function(){ return akPdf(l, n, monat, konto); }));
+    var auszahlbar=l.filter(function(z){ return z.status!=="ausbezahlt"; });
+    if(auszahlbar.length){
+      var az=el('<button class="btn ghost sm" type="button">ausbezahlt</button>');
+      az.onclick=function(){
+        var su=akSummen(auszahlbar).gesamt;
+        if(!window.confirm(n+": "+geld(su)+" € als ausbezahlt abhaken?"+(st.offen?"\n\nAchtung: "+st.offen+" Einträge sind noch nicht abgegeben.":""))) return;
+        az.disabled=true;
+        Store.sb.from("auslagen").update({status:"ausbezahlt", ausbezahlt_von:meinName()}).in("id", auszahlbar.map(function(z){ return z.id; })).select("id").then(function(r){
+          if(r.error){ az.disabled=false; toast("Nicht gespeichert: "+r.error.message); return; }
+          toast("Ausbezahlt abgehakt."); AK_ALLE.monat=""; AK_ABGEGEBEN=null; render(); });
+      };
+      zk.appendChild(az);
+    }
+    if(st.eingereicht){
+      var zr=el('<button class="btn ghost sm" type="button" title="zum Ändern an die Person zurück">zurückgeben</button>');
+      zr.onclick=function(){ if(!window.confirm("Die abgegebenen Einträge von "+n+" zum Ändern zurückgeben?")) return;
+        Store.sb.from("auslagen").update({status:"offen"}).in("id", l.filter(function(z){ return z.status==="eingereicht"; }).map(function(z){ return z.id; })).select("id").then(function(r){
+          if(r.error){ toast("Nicht gespeichert: "+r.error.message); return; } toast("Zurückgegeben."); AK_ALLE.monat=""; AK_ABGEGEBEN=null; render(); }); };
+      zk.appendChild(zr);
+    }
+    /* die Einträge einzeln (Fotos ansehen) */
+    var det=el('<tr><td colspan="7" style="padding:0 0 6px"><details><summary class="muted" style="cursor:pointer;font-size:12px">Einträge ('+l.length+")</summary><div class=\"stack\" style=\"gap:2px;margin-top:4px\"></div></details></td></tr>");
+    l.slice().sort(function(a,b){ return String(a.datum).localeCompare(String(b.datum)); }).forEach(function(z){
+      var r=el('<a href="#" class="sprunglink" style="font-size:12.5px">'+esc(dfmt(z.datum))+" · "+(z.art==="km"?"🚗 "+esc(z.text||"")+" · "+esc(String(z.km).replace(".",","))+" km":"🧾 "+esc(z.text||"")+" · "+esc(akKatName(z.kategorie))+(z.foto?" · 📎":""))+" · "+geld(z.betrag)+" € · "+esc(AK_STATUS[z.status])+"</a>");
+      r.onclick=function(ev){ ev.preventDefault(); akEditor(z); };
+      det.querySelector(".stack").appendChild(r);
+    });
+    tab.querySelector("tbody").appendChild(tr); tab.querySelector("tbody").appendChild(det);
+    csv.push([n, monat, s.belege.length, geld(s.summeBelege), String(s.km).replace(".",","), geld(s.summeKm), geld(s.gesamt), stand, konto?konto.kontoinhaber||"":"", konto?konto.iban||"":""]);
+  });
+  host.appendChild(tab);
+  var cb=el('<button class="btn ghost sm" type="button" style="margin-top:6px">Liste (CSV)</button>');
+  cb.onclick=function(){ pdfHerunterladen(new Blob(["﻿"+csv.map(function(r){ return r.map(function(x){ x=String(x); return /[;"\n]/.test(x) ? '"'+x.replace(/"/g,'""')+'"' : x; }).join(";"); }).join("\r\n")], {type:"text/csv;charset=utf-8"}), "Reisekosten_"+monat+".csv"); };
+  host.appendChild(cb);
+  return c;
 }
 
 /* ================================================================

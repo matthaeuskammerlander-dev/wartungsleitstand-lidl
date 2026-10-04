@@ -330,6 +330,13 @@ Kammerlander Umwelt- und Klimatechnik (UKT) – oft kurz, vom Handy, im Feld.
   Angebot nur Inhaber ohne Preise (`bedarfAusAngebot`), unbekanntes Werkzeug → `wzAufnehmenFragen`, nach dem Einsatz
   `wzNachfragen` („Wo ist das Werkzeug jetzt?“, Spalte `bedarf.nachgefragt`), Werkzeug auf abgeschlossener Baustelle im To-do.
   Werkzeugstandort NIE automatisch aus Stempeluhr/GPS ändern.
+- **Reisekosten und Kilometergeld** (tools/reisekosten.sql, Reiter Stunden, Büro 04.10.2026; wie die Excel-Blätter „UKT Reisekosten:
+  Barbelege“ und „Kilometer mit Privatauto“): Tabelle `auslagen` – art „beleg“ (Foto Pflicht, sonst „Kein Beleg“ mit Grund; Speicher
+  „auslagen“ unter `<user_id>/`) oder „km“ (Strecke, km; Betrag = km × Satz rechnet der Trigger `auslagen_pruefen`, Satz aus
+  `einstellungen.kilometergeld`, Standard 0,50 €). offen → eingereicht („Monat abgeben“, Nachricht nur an Inhaber) → ausbezahlt (nur Inhaber);
+  Abgegebenes ändert nur der Inhaber. Jede Person sieht nur ihre eigenen, der Inhaber alle – KEINE Admins. Konto in `auslagen_konto`.
+  Kilometergeld nur fürs Privatauto (`fahrzeuge.privat_von`). PDF `akPdf` mit Belegfotos; Inhaber: „Reisekosten aller“, To-do
+  (`akAbgegebenText`), Projekt zeigt die Summe (nur Inhaber); Bedarf „abholen/bestellen“ → „Selbst bezahlt – Beleg erfassen“. Nie lockern.
 - **Diktieren** (`diktatKnopf`): Spracherkennung des Browsers, keine KI, Text wird angehängt.
 - **Rapport-Text** (`rapTextRein`): ausgeführte Arbeiten aus dem Lidl-Rapport zusätzlich in
   „Durchgeführte Maßnahmen“ bzw. „Bemerkungen“ – nie ersetzen, kein Feld fällt weg.

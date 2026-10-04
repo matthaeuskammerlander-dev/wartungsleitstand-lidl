@@ -1,7 +1,7 @@
 /* Nachgebaute Supabase-Schnittstelle für die automatischen Tests (tests/app-tests.mjs) – nur Code, Startbestand aus seed.json (erfunden). */
 (function(){
   "use strict";
-  var T=["gelernte_werte","fahrzeuge","fahrzeug_eintraege","fahrzeug_kosten","kontakte","protokoll_vermerke","planung","planung_privat","belege","katalog","stempel","einstellungen","projekte","arbeitszeiten","anlagenfotos","touren","kundenliste","gelesen","push_ereignisse","kennzahlen","chat","abrechnung","push_abos","protokolle","aenderungen","stammdaten","admins","berichte","protokoll_fassungen","rollen","ki_nutzung","posteingang","stammdaten_lesen","aenderungswuensche","vor_ort_fragen","werkzeug","werkzeug_verlauf","bedarf","packlisten"];
+  var T=["gelernte_werte","fahrzeuge","fahrzeug_eintraege","fahrzeug_kosten","kontakte","protokoll_vermerke","planung","planung_privat","belege","katalog","stempel","einstellungen","projekte","arbeitszeiten","anlagenfotos","touren","kundenliste","gelesen","push_ereignisse","kennzahlen","chat","abrechnung","push_abos","protokolle","aenderungen","stammdaten","admins","berichte","protokoll_fassungen","rollen","ki_nutzung","posteingang","stammdaten_lesen","aenderungswuensche","vor_ort_fragen","werkzeug","werkzeug_verlauf","bedarf","packlisten","auslagen","auslagen_konto"];
   var DB; try{ DB=JSON.parse(localStorage.getItem("attrappe_db")||"null"); }catch(e){ DB=null; }
   /* leerer Speicher (neuer Port, nach __db.zuruecksetzen()): Startbestand aus seed.json */
   if(!DB){ DB={}; try{ var x=new XMLHttpRequest(); x.open("GET","seed.json?"+Date.now(),false); x.send();
@@ -59,6 +59,13 @@
     if((tab==="werkzeug"||tab==="packlisten") && art==="delete" && !(admin() || rolle==="inhaber")) return tab+": loeschen nur Buero";
     if(tab==="bedarf" && art==="delete" && !(admin() || rolle==="inhaber" || (alt && alt.erstellt_von===uid()))) return "bedarf: loeschen nur eigene";
     if(tab==="werkzeug_verlauf" && art!=="select") return "werkzeug_verlauf: nur der Server";
+    /* wie reisekosten.sql: eigene (der Inhaber alle); abgegeben ändert nur der Inhaber; ausbezahlt setzt nur er */
+    if((tab==="auslagen"||tab==="auslagen_konto") && art!=="select" && rolle!=="inhaber"){
+      var az=alt||zeile||{};
+      if(az.user_id && az.user_id!==uid()) return tab+": fremd";
+      if(tab==="auslagen" && alt && alt.status!=="offen") return "auslagen: schon abgegeben";
+      if(tab==="auslagen" && zeile && zeile.status==="ausbezahlt") return "auslagen: ausbezahlt nur Inhaber";
+    }
     if(tab==="planung" && (art==="update"||art==="delete") && alt && alt.privat && alt.erstellt_von!==uid() && (alt.wer||[]).indexOf(uid())<0) return "planung: privat";
     if(tab==="planung" && art==="update" && alt && alt.kategorie==="urlaub" && rolle!=="inhaber" && zeile && (zeile.status==="genehmigt"||zeile.status==="abgelehnt") && zeile.status!==alt.status) return "Urlaub genehmigt nur der Inhaber";
     if(tab==="aenderungen" && art!=="insert" && art!=="select") return "aenderungen: unveraenderlich";
@@ -140,7 +147,7 @@
       erg=tab.filter(function(r){ return passt(r,self.f); });
       if(this.t==="admins") erg=erg.filter(function(r){ return r.user_id===uid(); });
       if(this.t==="planung_privat") erg=erg.filter(function(r){ return r.user_id===uid(); });   /* wie die Regel: nur die eigenen */
-      if(this.t==="arbeitszeiten"){ var rl=(DB.rollen.filter(function(r){ return r.user_id===uid(); })[0]||{}).rolle; if(rl!=="inhaber") erg=erg.filter(function(r){ return r.user_id===uid(); }); }
+      if(this.t==="arbeitszeiten"||this.t==="auslagen"||this.t==="auslagen_konto"){ var rl=(DB.rollen.filter(function(r){ return r.user_id===uid(); })[0]||{}).rolle; if(rl!=="inhaber") erg=erg.filter(function(r){ return r.user_id===uid(); }); }
       if(this.ords) erg.sort(function(a,b){ for(var i=0;i<self.ords.length;i++){ var o=self.ords[i],x=a[o.s],y=b[o.s]; var c=(x<y?-1:x>y?1:0)*(o.auf?1:-1); if(c) return c; } return 0; });
       if(this.lim!=null) erg=erg.slice(0,this.lim);
       if(this.rng) erg=erg.slice(this.rng[0], this.rng[1]+1);
@@ -160,6 +167,8 @@
         if(self.t==="arbeitszeiten"){ if(!r.user_id) r.user_id=uid(); if(r.pause_min==null) r.pause_min=0; r.erstellt=r.erstellt||new Date().toISOString(); }
         if(self.t==="planung") planPruefen(r, null);
         if(self.t==="vor_ort_fragen") r.angelegt=r.angelegt||new Date().toISOString();
+        if(self.t==="auslagen"){ r.user_id=r.user_id||uid(); r.status=r.status||"offen"; r.erstellt=new Date().toISOString(); if(r.art==="km"){ r.km_satz=r.km_satz||0.5; r.betrag=Math.round(r.km*r.km_satz*100)/100; } }
+        if(self.t==="auslagen_konto") r.user_id=r.user_id||uid();
         if(self.t==="werkzeug"||self.t==="bedarf"){ r.erstellt_von=uid(); r.erstellt=new Date().toISOString(); r.aktiv=r.aktiv==null?true:r.aktiv; if(self.t==="bedarf"){ r.status=r.status||"offen"; r.beschaffung=r.beschaffung||"mitnehmen"; if(r.status==="erledigt") r.erledigt=new Date().toISOString(); } else { r.zustand=r.zustand||"ok"; r.standort_art=r.standort_art||"lager"; } }
         if(self.t==="projekte"){ r.erstellt=r.erstellt||new Date().toISOString(); r.geaendert=r.geaendert||r.erstellt; r.daten=r.daten||{}; r.verlauf=r.verlauf||[]; }
         return r; });
@@ -197,6 +206,7 @@
           if(self.t==="planung") planPruefen(r, altR);
           if(self.t==="arbeitszeiten") r.quelle=(zg && /^stempel(_nachgetragen)?$/.test(qv||"")) ? "stempel_geaendert" : (zg||("art" in self.d && self.d.art!==altR.art)) && qv==="kalender" ? "hand" : (qv||"hand");
           if(self.t==="planung") stundenSync(r.id);
+          if(self.t==="auslagen" && r.art==="km") r.betrag=Math.round(r.km*(r.km_satz||0.5)*100)/100;
           if(self.t==="bedarf") r.erledigt = r.status==="erledigt" ? (altR.status==="erledigt" ? altR.erledigt : new Date().toISOString()) : null;
           if(self.t==="werkzeug" && r.standort_art!==altR.standort_art || self.t==="werkzeug" && r.person_id!==altR.person_id) DB.werkzeug_verlauf.push({id:"x"+(++z), werkzeug_id:r.id, zeit:new Date().toISOString(), standort:r.standort_art+(r.person_name?" "+r.person_name:""), von_name:r.geaendert_von});
         }
@@ -221,7 +231,7 @@
   E.prototype.upload=function(p,b,o){ var k=this.n+"/"+p;
     if(DATEIEN[k]&&!(o&&o.upsert)) return Promise.resolve({data:null,error:{message:"exists"}});
     /* wie im echten Bucket: nur die erlaubten Typen */
-    var erlaubt=this.n==="sicherungen" ? null : this.n==="projektdateien" ? ["image/jpeg","image/png","application/pdf","text/plain","text/csv","application/vnd.openxmlformats-officedocument.wordprocessingml.document","application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"] : ["image/jpeg","image/png","application/pdf"];
+    var erlaubt=this.n==="sicherungen" ? null : this.n==="auslagen" ? ["image/jpeg","image/png","application/pdf"] : this.n==="projektdateien" ? ["image/jpeg","image/png","application/pdf","text/plain","text/csv","application/vnd.openxmlformats-officedocument.wordprocessingml.document","application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"] : ["image/jpeg","image/png","application/pdf"];
     if(erlaubt && b && b.type && erlaubt.indexOf(b.type)<0)
       return Promise.resolve({data:null,error:{message:"mime type "+b.type+" is not supported"}});
     DATEIEN[k]=b; return Promise.resolve({data:{path:p},error:null}); };

@@ -1073,6 +1073,89 @@ test("Werkzeug lernt mit: je Projekttyp, je Markt, aus dem Angebot, unbekanntes 
   await a.zu();
 });
 
+test("Reisekosten: Beleg mit Foto, Kilometer Privatauto, Monat abgeben, Chef zahlt aus", async () => {
+  const a = await oeffnen(KONTEN.techniker);
+  const r = await a.seite.evaluate(async () => {
+    const x = window.__t.x, warte = (ms) => new Promise((f) => setTimeout(f, ms)), db = window.__db.tabellen;
+    const dlg = () => [...document.querySelectorAll(".assistent")].pop();
+    const ich = x("meineKennung()");
+    x("S.view='stunden'; render()"); await warte(800);
+    const karte = /Reisekosten und Kilometergeld/i.test(document.body.innerText);
+    /* ohne Foto: geht nicht */
+    x("akEditor(null, {art:'beleg'})"); await warte(400);
+    let d = dlg();
+    d.querySelector('[data-f="text"]').value = "Bauhaus – Akkuschrauber";
+    d.querySelector('[data-f="betrag"]').value = "23.85";
+    [...d.querySelectorAll(".as-fuss button")].pop().click(); await warte(400);
+    const ohneFoto = { fehler: d.querySelector("[data-err]").textContent, zeilen: db.auslagen.length };
+    /* mit Foto */
+    const cv = document.createElement("canvas"); cv.width = 40; cv.height = 60; cv.getContext("2d").fillRect(0, 0, 20, 20);
+    const blob = await new Promise((f) => cv.toBlob(f, "image/png"));
+    const dt = new DataTransfer(); dt.items.add(new File([blob], "beleg.png", { type: "image/png" }));
+    const inp = d.querySelector("[data-foto]"); inp.files = dt.files; inp.dispatchEvent(new Event("change"));
+    [...d.querySelectorAll("[data-kat] .chip")].find((c) => c.dataset.w === "werkzeug").click();
+    [...d.querySelectorAll(".as-fuss button")].pop().click(); await warte(1500);
+    const beleg = JSON.parse(JSON.stringify(db.auslagen.find((z) => z.art === "beleg") || {}));
+    d = dlg();
+    const wzFrage = !!d && /In die Werkzeugliste/.test(d.textContent);
+    if (d) { const nein = [...d.querySelectorAll("button")].find((b) => /Nein/.test(b.textContent)); if (nein) nein.click(); }
+    await warte(300);
+    /* Kilometer */
+    x("akEditor(null, {art:'km'})"); await warte(400);
+    d = dlg();
+    d.querySelector('[data-f="text"]').value = "Salzburg – Saalfelden – Salzburg";
+    d.querySelector('[data-f="km"]').value = "175";
+    [...d.querySelectorAll(".as-fuss button")].pop().click(); await warte(900);
+    const km = JSON.parse(JSON.stringify(db.auslagen.find((z) => z.art === "km") || {}));
+    /* PDF-Blatt wie das bisherige Excel */
+    const html = x("akPdfHtml(AUSLAGEN, 'Test', S.akMonat, {iban:'AT00 TEST'}, [])");
+    /* Monat abgeben → Nachricht an den Inhaber, danach gesperrt */
+    x("akAbgeben(S.akMonat)"); await warte(1200);
+    const stand = db.auslagen.map((z) => z.status).join();
+    const nachricht = db.chat.filter((c) => /Reisekosten/.test(c.text || "")).map((c) => c.an);
+    const aendern = await x("Store.sb.from('auslagen').update({betrag:999}).eq('id','" + beleg.id + "').select('id')");
+    /* Bedarf: abholen → „Selbst bezahlt – Beleg erfassen“ */
+    await x("wzLaden(true)");
+    const bd = (await x("Store.sb.from('bedarf').insert({art:'material', text:'Silikon', beschaffung:'abholen', bezugsquelle:'Bauhaus', status:'offen'}).select('*')")).data[0];
+    await x("wzLaden(true)");
+    x("ansichtenSchliessen(); bedarfEditor(BEDARF.filter(function(b){ return b.id==='" + bd.id + "'; })[0])"); await warte(400);
+    const selbst = !![...dlg().querySelectorAll(".as-fuss button")].find((b) => /Selbst bezahlt/.test(b.textContent));
+    return { karte, ohneFoto, beleg: { betrag: beleg.betrag, foto: beleg.foto, eigen: (beleg.foto || "").indexOf(ich + "/") === 0, kat: beleg.kategorie }, wzFrage,
+      km: { betrag: km.betrag, text: km.text }, html: ["Barbelege", "Kilometer mit Privatauto", "zu zahlen", "AT00 TEST", "Akkuschrauber"].filter((t) => html.indexOf(t) < 0),
+      stand, nachricht, aendernFehler: !!aendern.error, selbst, ich };
+  });
+  pruefe(r.karte, "Karte Reisekosten fehlt im Reiter Stunden");
+  pruefe(/fotografieren/.test(r.ohneFoto.fehler) && r.ohneFoto.zeilen === 0, "Beleg ohne Foto gespeichert: " + JSON.stringify(r.ohneFoto));
+  pruefe(r.beleg.betrag === 23.85 && r.beleg.eigen && r.beleg.kat === "werkzeug", "Beleg falsch: " + JSON.stringify(r.beleg));
+  pruefe(r.wzFrage, "gekauftes Werkzeug: keine Frage nach der Werkzeugliste");
+  pruefe(r.km.betrag === 87.5, "Kilometergeld falsch: " + JSON.stringify(r.km));
+  pruefe(!r.html.length, "PDF-Blatt unvollständig: " + r.html.join(", "));
+  pruefe(r.stand === "eingereicht,eingereicht" && r.nachricht.length >= 1 && r.aendernFehler, "Abgeben falsch: " + JSON.stringify(r));
+  pruefe(r.selbst, "„Selbst bezahlt – Beleg erfassen“ fehlt beim Abholen");
+  if (process.env.FOTO) { await a.seite.evaluate(() => { window.__t.x("ansichtenSchliessen(); S.view='stunden'; render()"); }); await a.seite.waitForTimeout(800);
+    await a.seite.evaluate(() => { const h = [...document.querySelectorAll(".card h2")].find((x) => /^Reisekosten und/.test(x.textContent)); if (h) h.scrollIntoView({ block: "start" }); }); await a.seite.screenshot({ path: process.env.FOTO }); }
+  pruefe(!a.fehler.length, "Laufzeitfehler: " + a.fehler.join("; "));
+  await a.zu();
+  /* der Inhaber sieht es, bekommt es ins To-do und zahlt aus */
+  const b = await oeffnen(KONTEN.inhaber);
+  const r2 = await b.seite.evaluate(async () => {
+    const x = window.__t.x, warte = (ms) => new Promise((f) => setTimeout(f, ms)), db = window.__db.tabellen;
+    const m = x("isoLokal(new Date())");
+    db.auslagen.push({ id: "ak1", user_id: "u_tech_test_at", name: "Techniker", art: "beleg", datum: m, text: "Bauhaus", kategorie: "material", betrag: 23.85, foto: "u_tech_test_at/x.jpg", status: "eingereicht" },
+      { id: "ak2", user_id: "u_tech_test_at", name: "Techniker", art: "km", datum: m, text: "Salzburg – Saalfelden", km: 175, km_satz: 0.5, betrag: 87.5, status: "eingereicht" });
+    await x("akAbgegebenLaden()");
+    const todo = x("akAbgegebenText()");
+    x("S.view='stunden'; AK_ALLE.monat=''; render()"); await warte(1200);
+    const knopf = [...document.querySelectorAll("button")].find((k) => k.textContent === "ausbezahlt");
+    if (knopf) knopf.click(); await warte(900);
+    return { todo, knopf: !!knopf, stand: db.auslagen.map((z) => z.status).join() };
+  });
+  pruefe(r2.todo.length === 1 && /auszahlen/.test(r2.todo[0]), "To-do des Inhabers fehlt: " + JSON.stringify(r2.todo));
+  pruefe(r2.knopf && r2.stand === "ausbezahlt,ausbezahlt", "Auszahlen falsch: " + JSON.stringify(r2));
+  pruefe(!b.fehler.length, "Laufzeitfehler (Inhaber): " + b.fehler.join("; "));
+  await b.zu();
+});
+
 /* ================================================================ Ablauf ================================================================ */
 const filterText = process.argv.slice(2).find((x) => !x.startsWith("--"));
 const filter = filterText ? new RegExp(filterText, "i") : null;
