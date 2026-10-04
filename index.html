@@ -3254,15 +3254,28 @@ function mailBruecke(){
   var b=lsGet("ukt_mailbruecke", null);
   return b && b.schluessel && b.konto===wer() ? b : null;
 }
+/* Adresse des Mail-Programms auf diesem Gerät: am PC localhost, am Handy die Tailscale-Adresse des PCs (…ts.net) */
+function mailUrl(){ var b=lsGet("ukt_mailbruecke", null); return (b && b.url) || MAILBRUECKE_URL; }
+function mailAdresse(t){
+  t=String(t||"").trim().replace(/\/+$/, "");
+  if(!t) return MAILBRUECKE_URL;
+  if(!/^https?:\/\//i.test(t)) t=(/^(localhost|127\.)/i.test(t) ? "http://" : "https://")+t;
+  return t;
+}
+function mailNichtErreichbar(url){
+  return /localhost|127\./.test(url) ? "Das Mail-Programm am PC antwortet nicht – ist es gestartet (Symbol „Mail mit Claude“)?"
+    : "Das Mail-Programm am PC ist nicht erreichbar – ist am Handy Tailscale verbunden und der PC eingeschaltet?";
+}
 function mailHolen(pfad, opt){
   var b=mailBruecke(); opt=opt||{};
   if(!b) return Promise.reject(new Error("Das Mail-Programm ist nicht verbunden."));
   var h={"x-mail-app":"1", "x-mail-schluessel":b.schluessel}; if(opt.body) h["Content-Type"]="application/json";
-  return mitFrist(fetch(MAILBRUECKE_URL+pfad, {method:opt.body?"POST":"GET", headers:h, body:opt.body?JSON.stringify(opt.body):undefined}), opt.frist||30000)
+  var url=mailUrl();
+  return mitFrist(fetch(url+pfad, {method:opt.body?"POST":"GET", headers:h, body:opt.body?JSON.stringify(opt.body):undefined}), opt.frist||30000)
     .then(function(r){
       if(!r.ok) return r.json().then(function(j){ throw new Error(j.fehler||("Fehler "+r.status)); }, function(){ throw new Error("Fehler "+r.status); });
       return opt.blob ? r.blob() : r.json();
-    }, function(e){ throw new Error(/fetch|network|load/i.test(e&&e.message||"") ? "Das Mail-Programm am PC antwortet nicht – ist es gestartet (Symbol „Mail mit Claude“)?" : (e&&e.message||String(e))); });
+    }, function(e){ throw new Error(/fetch|network|load/i.test(e&&e.message||"") ? mailNichtErreichbar(url) : (e&&e.message||String(e))); });
 }
 /* #mail=… (Mail übernehmen) oder #mailkopplung=… (verbinden) aus dem Mail-Programm */
 function mailBrueckeHash(){
@@ -3307,33 +3320,36 @@ function mailAbholenStarten(){
 /* Verwaltung › Inhaber: Mail-Programm am PC per Code verbinden oder trennen */
 function mailKoppelnKasten(){
   if(Store.modus!=="supabase" || demo() || spielwiese() || !nurInhaber()) return null;
-  var k=el('<div class="stack" style="gap:6px;border-top:1px solid var(--line);padding-top:10px"><h3 style="margin:0;font-size:15px">Mail-Programm am PC</h3>'+
+  var k=el('<div class="stack" style="gap:6px;border-top:1px solid var(--line);padding-top:10px"><h3 style="margin:0;font-size:15px">Mail-Programm (am PC, auch vom Handy aus)</h3>'+
     '<div data-s style="font-size:13px"></div><div class="rowflex" data-f style="gap:6px"></div></div>');
   var zeigen=function(){
     var b=mailBruecke(), s=k.querySelector("[data-s]"), f=k.querySelector("[data-f]");
     f.innerHTML="";
     if(b){
-      s.innerHTML="✓ Verbunden seit "+esc(dfmt(tagLokal(b.seit)))+" – nur für dein Konto auf diesem Gerät. Mails übernimmst du im Mail-Programm mit „↗ Leitstand“; bei Projekt, Kunde und Markt steht „Mails dazu“.";
+      s.innerHTML="✓ Verbunden seit "+esc(dfmt(tagLokal(b.seit)))+" über <span class='mono'>"+esc(mailUrl().replace(/^https?:\/\//,""))+"</span> – nur für dein Konto auf diesem Gerät. Mails übernimmst du im Mail-Programm mit „↗ Leitstand“; bei Projekt, Kunde und Markt steht „Mails dazu“.";
       var t=el('<button class="btn ghost sm" type="button">Trennen</button>');
       t.onclick=function(){ try{ localStorage.removeItem("ukt_mailbruecke"); }catch(e){} mailBrueckeStatus=null; toast("Mail-Programm getrennt."); zeigen(); };
       f.appendChild(t);
     } else {
-      s.innerHTML='<span class="muted">Nicht verbunden. Im Mail-Programm „Mail mit Claude“ unten links „Mit Leitstand verbinden“ klicken und den Code hier eintippen.</span>';
+      var handy=window.matchMedia && matchMedia("(pointer: coarse)").matches;
+      s.innerHTML='<span class="muted">Nicht verbunden. Im Mail-Programm „Mail mit Claude“ unten links „Mit Leitstand verbinden“ – den Code hier eintippen.'+
+        (handy?" Am Handy dazu die Adresse aus dem Mail-Programm (…ts.net; Tailscale muss verbunden sein).":"")+"</span>";
+      var adr=el('<input type="text" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="Adresse, z. B. pc-name.….ts.net" style="min-width:220px;flex:1" value="'+(handy?"":"localhost:4317")+'">');
       var ein=el('<input type="text" inputmode="numeric" autocomplete="off" maxlength="7" placeholder="Code (6 Ziffern)" style="max-width:170px">'), ok=el('<button class="btn sm" type="button">Verbinden</button>');
       ok.onclick=function(){
-        var code=ein.value.replace(/\D/g,"");
+        var code=ein.value.replace(/\D/g,""), url=mailAdresse(adr.value);
         if(code.length!==6){ toast("Bitte den 6-stelligen Code aus dem Mail-Programm eintippen."); ein.focus(); return; }
         ok.disabled=true; ok.textContent="wird verbunden …";
-        mitFrist(fetch(MAILBRUECKE_URL+"/api/koppeln", {method:"POST", headers:{"x-mail-app":"1","Content-Type":"application/json"}, body:JSON.stringify({code:code})}), 15000)
+        mitFrist(fetch(url+"/api/koppeln", {method:"POST", headers:{"x-mail-app":"1","Content-Type":"application/json"}, body:JSON.stringify({code:code})}), 15000)
           .then(function(r){ return r.json().then(function(j){ if(!r.ok) throw new Error(j.fehler||("Fehler "+r.status)); return j; }); },
-            function(){ throw new Error("Das Mail-Programm am PC antwortet nicht – ist es gestartet (Symbol „Mail mit Claude“)?"); })
+            function(){ throw new Error(mailNichtErreichbar(url)); })
           .then(function(j){
-            lsSet("ukt_mailbruecke", {schluessel:j.schluessel, konto:wer(), seit:new Date().toISOString()});
+            lsSet("ukt_mailbruecke", {schluessel:j.schluessel, konto:wer(), url:url, seit:new Date().toISOString()});
             mailBrueckeStatus=null; mailAbholenPause=0; toast("Mail-Programm verbunden – nur für dein Konto auf diesem Gerät."); zeigen();
           }).catch(function(e){ ok.disabled=false; ok.textContent="Verbinden"; toast(e.message); });
       };
       ein.addEventListener("keydown", function(e){ if(e.key==="Enter"){ e.preventDefault(); ok.click(); } });
-      f.appendChild(ein); f.appendChild(ok);
+      f.style.flexWrap="wrap"; f.appendChild(adr); f.appendChild(ein); f.appendChild(ok);
     }
   };
   zeigen();
@@ -3558,7 +3574,7 @@ function mailsDazuKarte(begriffe, opt){
         (m.gesendet?"↗ ":"")+esc(wer2)+" · <strong>"+esc(m.betreff||"(ohne Betreff)")+"</strong></span>"+
         '<span class="rowflex" style="gap:4px;flex-wrap:nowrap"><button class="btn ghost sm" type="button" data-o>öffnen</button>'+
         (drin.indexOf(m.messageId)>=0 ? '<span class="tag">✓ im Projekt</span>' : '<button class="btn ghost sm" type="button" data-p>'+(opt.projekt?"ins Projekt":"zu Projekt …")+"</button>")+"</span></div>");
-      z.querySelector("[data-o]").onclick=function(){ window.open(MAILBRUECKE_URL+"/#oeffne="+encodeURIComponent(m.konto+"|"+m.ordner+"|"+m.uid), "ukt-mail"); };
+      z.querySelector("[data-o]").onclick=function(){ window.open(mailUrl()+"/#oeffne="+encodeURIComponent(m.konto+"|"+m.ordner+"|"+m.uid), "ukt-mail"); };
       var pb=z.querySelector("[data-p]");
       if(pb) pb.onclick=function(){ mailUebernehmen({k:m.konto, o:m.ordner, u:m.uid, a:"zuprojekt", p:opt.projekt?opt.projekt.id:null}); };
       host.appendChild(z);

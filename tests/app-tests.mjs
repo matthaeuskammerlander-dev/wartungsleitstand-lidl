@@ -364,11 +364,11 @@ test("Mail-Programm am PC: nur das verbundene Inhaber-Konto, Projekt aus Mail mi
     const ohne = x("mailBruecke()===null");
     /* verbinden mit dem Code aus dem Mail-Programm (Verwaltung › Inhaber) – erst falsch, dann richtig */
     const kasten = x("(function(){ var k=mailKoppelnKasten(); k.id='mkTest'; document.body.appendChild(k); return 1; })()") && document.getElementById("mkTest");
-    const ein = kasten.querySelector("input"), knopfV = [...kasten.querySelectorAll("button")].filter((b) => /Verbinden/.test(b.textContent))[0];
+    const ein = kasten.querySelector('input[inputmode="numeric"]'), knopfV = [...kasten.querySelectorAll("button")].filter((b) => /Verbinden/.test(b.textContent))[0];
     ein.value = "111111"; knopfV.click(); await warte(400);
     const falschAbgelehnt = x("mailBruecke()===null");
     const kasten2 = document.getElementById("mkTest");
-    kasten2.querySelector("input").value = "123 456"; [...kasten2.querySelectorAll("button")].filter((b) => /Verbinden/.test(b.textContent))[0].click(); await warte(400);
+    kasten2.querySelector('input[inputmode="numeric"]').value = "123 456"; [...kasten2.querySelectorAll("button")].filter((b) => /Verbinden/.test(b.textContent))[0].click(); await warte(400);
     const mit = x("!!mailBruecke()") && /Verbunden seit/.test(document.getElementById("mkTest").textContent);
     document.getElementById("mkTest").remove();
     /* ein anderes Konto auf demselben Gerät: nichts */

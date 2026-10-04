@@ -296,7 +296,8 @@ Kammerlander Umwelt- und Klimatechnik (UKT) – oft kurz, vom Handy, im Feld.
   `#mailkopplung=<Schlüssel>` – localStorage `ukt_mailbruecke` mit Konto, gilt nur für das Inhaber-Konto, das ihn
   angenommen hat (`nurInhaber()`), nie in Präsentation/Spielwiese. „↗ Leitstand“ im Mail-Programm legt einen Auftrag
   bereit, den der offene Leitstand alle 3 s abholt (`mailAbholenStarten`, `/api/leitstand/abholen`; ohne Antwort 30 s
-  Pause); `#mail=…` geht ebenso. Geöffnet wird „Projekt aus Mail“ (Titel/Datum/Absender vorbelegt, „✦ Mit Claude
+  Pause). Am Handy erreicht der Leitstand das Mail-Programm über Tailscale: Adresse je Gerät in `ukt_mailbruecke.url`
+  (`mailUrl`, `mailAdresse`; am PC localhost:4317); Aufträge vom Handy holt nur der Leitstand am Handy ab; `#mail=…` geht ebenso. Geöffnet wird „Projekt aus Mail“ (Titel/Datum/Absender vorbelegt, „✦ Mit Claude
   ausfüllen“ über das Mail-Programm), „Mail zu Projekt legen“ oder die Störungserfassung. Mail (.eml) + gewählte
   Anhänge → Projektdateien (Herkunft), Verweis in `daten.mails`, bei neuer Anfrage `.eml` als Quelle
   (`daten.quellen.anfrage`), Absender ins Adressbuch. „Mails dazu“ bei Projekt, Kunde (nicht Lidl) und Markt – ohne
