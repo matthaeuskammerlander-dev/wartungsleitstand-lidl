@@ -1156,6 +1156,26 @@ test("Reisekosten: Beleg mit Foto, Kilometer Privatauto, Monat abgeben, Chef zah
   await b.zu();
 });
 
+test("Fahrzeug am Handy: man selbst als Fahrer und Privatauto wählbar, Datumsfelder passen in die Breite", async () => {
+  const a = await oeffnen(KONTEN.inhaber, { handy: true });
+  const r = await a.seite.evaluate(async () => {
+    const x = window.__t.x, warte = (ms) => new Promise((f) => setTimeout(f, ms));
+    await x("planTeamLaden()");
+    x("fzEditor(null)"); await warte(500);
+    const d = [...document.querySelectorAll(".assistent")].pop();
+    const ich = x("meinName()"), id = x("meineKennung()");
+    const chip = [...d.querySelectorAll("#fz_f .chip")].some((c) => c.textContent === ich);
+    const pv = [...d.querySelectorAll("#fz_pvw option")].some((o) => o.value === id);
+    const inhalt = d.querySelector(".as-inhalt"), rechts = inhalt.getBoundingClientRect().right;
+    const zuBreit = [...d.querySelectorAll("input,select")].filter((e) => e.getBoundingClientRect().right > rechts + 1).map((e) => e.id || e.type);
+    return { chip, pv, zuBreit };
+  });
+  pruefe(r.chip && r.pv, "man selbst fehlt in der Auswahl: " + JSON.stringify(r));
+  pruefe(!r.zuBreit.length, "Felder ragen über den Rand: " + r.zuBreit.join(", "));
+  pruefe(!a.fehler.length, "Laufzeitfehler: " + a.fehler.join("; "));
+  await a.zu();
+});
+
 /* ================================================================ Ablauf ================================================================ */
 const filterText = process.argv.slice(2).find((x) => !x.startsWith("--"));
 const filter = filterText ? new RegExp(filterText, "i") : null;

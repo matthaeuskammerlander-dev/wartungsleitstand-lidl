@@ -345,7 +345,11 @@ body.nurlesen [data-schreiben], body.nurlesen .zugang{display:none!important}
 .legend i{box-sizing:border-box}
 
 /* ---- form ---- */
-form .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px}
+form .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(200px,100%),1fr));gap:12px}
+/* iPhone (Büro 04.10.2026): Datums- und Zeitfelder ragten über den Rand – sie dürfen schmaler werden als ihr Inhalt */
+.grid>*,.fl{min-width:0}
+.fl input[type=date],.fl input[type=time],.fl input[type=datetime-local]{display:block;width:100%;max-width:100%;min-width:0;box-sizing:border-box;text-align:left}
+.fl input[type=date]::-webkit-date-and-time-value,.fl input[type=time]::-webkit-date-and-time-value{text-align:left}
 /* align-content:start – ist die Nachbarzelle höher (Vorschlagsknöpfe), bleibt das Feld so hoch wie es ist (Büro 02.10.2026) */
 label.fl{display:grid;gap:4px;align-content:start;font-size:12px;color:var(--ink-3);text-transform:uppercase;letter-spacing:.06em}
 label.fl .chips{align-items:flex-start}
@@ -18431,7 +18435,7 @@ function bedarfEditor(b, vorgabe){
   var bezugT=bedarfBezugText(a); v.schritt.textContent=bezugT ? "für "+bezugT : "ohne Bezug – wird in der Übersicht unter „ohne Termin“ geführt";
   var quellen=[]; BEDARF.forEach(function(x){ if(x.bezugsquelle && quellen.indexOf(x.bezugsquelle)<0) quellen.push(x.bezugsquelle); });
   var wzListe=WZ.filter(function(w){ return w.aktiv!==false; });
-  var team=(planTeam||[]).filter(function(p){ return p.user_id; });
+  var team=planTeamMitMir();
   var form=el('<form class="stack" autocomplete="off" style="max-width:600px">'+
     '<div class="chips" data-art>'+[["material","Material"],["werkzeug","Werkzeug / Gerät"]].map(function(x){ return '<button class="chip" type="button" data-w="'+x[0]+'" aria-pressed="'+(a.art===x[0])+'">'+x[1]+"</button>"; }).join("")+"</div>"+
     '<label class="fl" data-wzwahl><span>Welches Werkzeug?</span><select data-f="werkzeug_id"><option value="">– aus der Liste wählen oder unten eintippen –</option>'+
@@ -18634,7 +18638,7 @@ function wzEditor(w){
   var v=ansichtOeffnen(w ? w.name : "Neues Werkzeug / Gerät");
   if(w) v.schritt.textContent="jetzt: "+wzOrtText(w);
   var gruppen=[]; WZ.forEach(function(x){ if(x.gruppe && gruppen.indexOf(x.gruppe)<0) gruppen.push(x.gruppe); });
-  var team=(planTeam||[]).filter(function(p){ return p.user_id; });
+  var team=planTeamMitMir();
   var form=el('<form class="stack" autocomplete="off" style="max-width:620px">'+
     '<div class="grid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:10px">'+
       '<label class="fl" style="grid-column:1/-1"><span class="req">Bezeichnung</span><input type="text" data-f="name" maxlength="120" value="'+esc(a.name||"")+'" placeholder="z. B. Vakuumpumpe Rothenberger, Lecksuchgerät, Bohrhammer"></label>'+
@@ -19135,7 +19139,7 @@ function fzKarte(x){
 function fzEditor(x){
   if(!fzBuero() || nurLesen()){ toast("Fahrzeuge legt das Büro an."); return; }
   var v=ansichtOeffnen(x?"Fahrzeug "+x.kennzeichen:"Neues Fahrzeug");
-  var team=(planTeam||[]).filter(function(p){ return p.user_id; }), wahl=(x&&x.fahrer||[]).slice();
+  var team=planTeamMitMir(), wahl=(x&&x.fahrer||[]).slice();
   var form=el('<form class="stack" autocomplete="off" style="max-width:560px">'+
     '<label class="fl"><span class="req">Kennzeichen</span><input type="text" id="fz_k" autocapitalize="characters" value="'+esc(x?x.kennzeichen:"")+'"></label>'+
     '<label class="fl"><span>Bezeichnung (Marke, Modell)</span><input type="text" id="fz_b" value="'+esc(x&&x.bezeichnung||"")+'"></label>'+
@@ -19160,7 +19164,7 @@ function fzEditor(x){
     team.forEach(function(p){ var b=el('<button class="chip" type="button" aria-pressed="'+(wahl.indexOf(p.user_id)>=0)+'">'+esc(p.name||"–")+"</button>");
       b.onclick=function(){ var i=wahl.indexOf(p.user_id); if(i>=0) wahl.splice(i,1); else wahl.push(p.user_id); chipsZeichnen(); }; fh.appendChild(b); }); };
   chipsZeichnen();
-  if(!team.length) planTeamLaden().then(function(t){ team=(t||[]).filter(function(p){ return p.user_id; }); chipsZeichnen(); });
+  if(team.length<2) planTeamLaden().then(function(t){ team=planTeamMitMir(t); chipsZeichnen(); });
   v.inhalt.appendChild(form);
   var fk=fussKnoepfe(v, "Speichern"), ab=fk.ab, ok=fk.ok;
   ok.onclick=function(){
@@ -28150,6 +28154,13 @@ function planTeamLaden(){
   if(Date.now()-planTeamZeit<15000) return Promise.resolve([]);
   planTeamZeit=Date.now();
   return chatTeamLaden().then(function(t){ planTeam=(t&&t.length)?t:null; return t||[]; });
+}
+/* Team zum Auswählen (Fahrer, Werkzeug „bei wem“, „wer kümmert sich“) – mit dem eigenen Konto: die Teamliste des Chats
+   lässt einen selbst weg (Büro 04.10.2026: „ich kann mich nicht selbst als Fahrer wählen“) */
+function planTeamMitMir(t){
+  var l=(t||planTeam||[]).filter(function(p){ return p.user_id; }), ich=meineKennung();
+  if(Store.benutzer && Store.benutzer.id && !l.some(function(p){ return p.user_id===ich; })) l=[{user_id:ich, name:meinName(), rolle:Rolle.name}].concat(l);
+  return l;
 }
 function planPersonName(id){
   if(id===meineKennung()) return meinName();
