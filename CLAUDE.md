@@ -130,6 +130,8 @@ Kammerlander Umwelt- und Klimatechnik (UKT) – oft kurz, vom Handy, im Feld.
   Themen-Rundgänge (`thema:true`, `fuer()`; Büro 03.10.2026 „noch detaillierter“): Kalender und Wochenplanung, Protokoll,
   Störungen, Tourenplanung, Stunden/Fahrzeuge, Projekte/Kontakte, Märkte/Anlagen/Verlauf, Verwaltung, Rechnungen – Auswahl
   „Nach Rolle“ / „Nach Thema“ (`rundgangAuswahl`). Der Test klickt jeden angebotenen Rundgang je Rolle durch.
+  Knopf „🧭 Rundgänge“ unten neben „Handbuch“ (`rundgangAuswahlFenster`); nach „Fertig“ gleich die Auswahl mit ✓ und „Weiter mit …“
+  (`rundgangFertig`, `rundgangNaechster`; Büro 04.10.2026).
 - Schmale Navigationsleiste (`sprungleiste`, `seitenLeiste`, Büro 02.10.2026): rechts ein Punkt
   je Abschnitt auf langen Seiten und in großen Fenstern; Protokoll-Abschnitte einklappbar
   (`fieldsetsKlappbar`, `fs-zu`; Pflichtprüfung und Sprünge klappen von selbst auf).

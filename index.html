@@ -701,7 +701,8 @@ table.dt td{padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:
 
 <main class="wrap"><div id="app"></div></main>
 <div class="wrap" style="text-align:center;padding-top:18px"><button class="btn ghost sm" type="button" id="wunschlink" hidden>💡 Änderung vorschlagen</button>
-  <button class="btn ghost sm" type="button" id="handbuchlink" hidden>📖 Handbuch</button></div>
+  <button class="btn ghost sm" type="button" id="handbuchlink" hidden>📖 Handbuch</button>
+  <button class="btn ghost sm" type="button" id="rundganglink" hidden>🧭 Rundgänge</button></div>
 <div class="wrap" id="appversion" style="font-size:10.5px;color:var(--ink-2);opacity:.6;text-align:center;padding:14px 0 calc(10px + env(safe-area-inset-bottom,0px))"></div>
 <script>
 /* App-Version, ganz klein unten: Stand der Datei, wie sie der Server ausliefert
@@ -23728,7 +23729,8 @@ function rundgangStarten(art){
   RUNDGANG.ov=ov;
   ov.querySelector('[data-rg="ende"]').onclick=rundgangEnde;
   ov.querySelector('[data-rg="zurueck"]').onclick=function(){ if(RUNDGANG.i>0){ RUNDGANG.i--; rundgangZeigen(); } };
-  ov.querySelector('[data-rg="weiter"]').onclick=function(){ if(RUNDGANG.i<RUNDGANG.schritte.length-1){ RUNDGANG.i++; rundgangZeigen(); } else rundgangEnde(); };
+  ov.querySelector('[data-rg="weiter"]').onclick=function(){ if(RUNDGANG.i<RUNDGANG.schritte.length-1){ RUNDGANG.i++; rundgangZeigen(); }
+    else { var fertig=RUNDGANG.art; rundgangEnde(); rundgangFertig(fertig); } };
   RUNDGANG.platz=function(){ if(RUNDGANG && !RUNDGANG.rahmen) RUNDGANG.rahmen=requestAnimationFrame(function(){ if(RUNDGANG){ RUNDGANG.rahmen=0; rundgangPlatzieren(); } }); };
   RUNDGANG.taste=function(e){ if(e.key==="Escape") rundgangEnde(); };
   window.addEventListener("scroll", RUNDGANG.platz, true);
@@ -23799,19 +23801,53 @@ function rundgangPlatzieren(){
    im Detail, Büro 03.10.2026: „noch detaillierter – wie funktioniert der Kalender, wie plant man die Woche“).
    Themen-Rundgang: RUNDGAENGE[x].thema=true, fuer() bestimmt, wer ihn sieht. */
 function rundgangBuero(){ return Admin.frei || Rolle.name==="admin" || istInhaber() || demo(); }
+/* fertig angesehene Rundgänge (je Gerät) – in der Auswahl mit ✓ */
+function rundgaengeFertig(){ return lsGet("ukt_rundgaenge_fertig", {})||{}; }
+function rundgangFertig(art){
+  var f=rundgaengeFertig(); f[art]=isoLokal(new Date()); lsSet("ukt_rundgaenge_fertig", f);
+  /* gleich weiter (Büro 04.10.2026: „lästig, die Rundgänge danach wieder zu suchen“) */
+  rundgangAuswahlFenster(art);
+}
+/* die Auswahl als Fenster – vom Knopf unten neben „Handbuch“ und nach jedem fertigen Rundgang */
+function rundgangAuswahlFenster(fertig){
+  var v=ansichtOeffnen("Geführte Rundgänge");
+  if(fertig && RUNDGAENGE[fertig]){
+    v.schritt.textContent="✓ „"+RUNDGAENGE[fertig].titel+"“ fertig";
+    var naechster=rundgangNaechster(fertig);
+    if(naechster){
+      var n=el('<div class="note" style="font-size:13.5px;border-left:3px solid var(--accent)">Weiter mit <strong>„'+esc(RUNDGAENGE[naechster].titel)+'“</strong>?'+
+        '<div class="rowflex" style="gap:6px;margin-top:8px"><button class="btn sm" type="button">▶ Weiter</button></div></div>');
+      n.querySelector("button").onclick=function(){ rundgangStarten(naechster); };
+      v.inhalt.appendChild(n);
+    } else v.inhalt.appendChild(el('<div class="note" style="font-size:13.5px">Alle Rundgänge sind angesehen. Hier lässt sich jeder nochmals starten.</div>'));
+  } else v.schritt.textContent="Antippen startet – ✓ = schon angesehen";
+  v.inhalt.appendChild(rundgangAuswahl());
+  var zu=el('<button class="btn ghost" type="button">Schließen</button>'); zu.onclick=function(){ v.zu(); }; v.fuss.appendChild(zu);
+}
+/* Vorschlag: der nächste noch nicht angesehene in der Reihenfolge der Auswahl (erst Rolle, dann Thema) */
+function rundgangNaechster(nach){
+  var l=rundgangListe(), f=rundgaengeFertig(), i=l.map(function(x){ return x[0]; }).indexOf(nach);
+  var rest=l.slice(i+1).concat(l.slice(0, Math.max(0,i)));
+  var x=rest.filter(function(y){ return !f[y[0]]; })[0];
+  return x ? x[0] : null;
+}
+function rundgangListe(){
+  var rollen=[["techniker","Techniker – Einsatz, Protokoll, Anlagendaten, Stunden","rolle"]];
+  if(rundgangBuero()) rollen.push(["admin","Büro / Admin – Aufträge, Planung, Datenpflege","rolle"]);
+  if(istInhaber() || demo()) rollen.push(["inhaber","Inhaber – Projekte, Rechnungen, Freigaben","rolle"]);
+  rollen.push(["hintergrund","Im Hintergrund – wie die App mit den Daten arbeitet","rolle"]);
+  return rollen.concat(Object.keys(RUNDGAENGE).filter(function(k){ var r=RUNDGAENGE[k]; return r.thema && (!r.fuer || r.fuer()); })
+    .map(function(k){ return [k, RUNDGAENGE[k].titel, "thema"]; }));
+}
 function rundgangAuswahl(){
-  var rollen=[["techniker","Techniker – Einsatz, Protokoll, Anlagendaten, Stunden"]];
-  if(rundgangBuero()) rollen.push(["admin","Büro / Admin – Aufträge, Planung, Datenpflege"]);
-  if(istInhaber() || demo()) rollen.push(["inhaber","Inhaber – Projekte, Rechnungen, Freigaben"]);
-  rollen.push(["hintergrund","Im Hintergrund – wie die App mit den Daten arbeitet"]);
-  var themen=Object.keys(RUNDGAENGE).filter(function(k){ var r=RUNDGAENGE[k]; return r.thema && (!r.fuer || r.fuer()); })
-    .map(function(k){ return [k, RUNDGAENGE[k].titel]; });
+  var alle=rundgangListe(), fertig=rundgaengeFertig();
+  var rollen=alle.filter(function(x){ return x[2]==="rolle"; }), themen=alle.filter(function(x){ return x[2]==="thema"; });
   var box=el('<div class="stack" style="gap:8px"><div class="muted" style="font-size:12.5px">Der Rundgang zeigt die echten Knöpfe und erklärt sie – er trägt nichts ein. '+
     "Üben ohne Risiko: mit der 🧪 Spielwiese (unter „Konto“) oder dem Präsentationskonto.</div>"+
     '<div class="muted" style="font-size:12px;text-transform:uppercase;letter-spacing:.04em">Nach Rolle – der Arbeitsablauf</div><div class="rowflex" style="gap:6px;flex-wrap:wrap" data-l="rolle"></div>'+
     (themen.length ? '<div class="muted" style="font-size:12px;text-transform:uppercase;letter-spacing:.04em">Nach Thema – ein Bereich im Detail</div><div class="rowflex" style="gap:6px;flex-wrap:wrap" data-l="thema"></div>' : "")+
     "</div>");
-  var knopf=function(x, wo, ghost){ var b=el('<button class="btn sm'+(ghost?" ghost":"")+'" type="button">▶ '+esc(x[1])+"</button>"); b.onclick=function(){ rundgangStarten(x[0]); }; box.querySelector('[data-l="'+wo+'"]').appendChild(b); };
+  var knopf=function(x, wo, ghost){ var b=el('<button class="btn sm'+(ghost?" ghost":"")+'" type="button" data-rgart="'+esc(x[0])+'">'+(fertig[x[0]]?"✓ ":"▶ ")+esc(x[1])+"</button>"); b.onclick=function(){ rundgangStarten(x[0]); }; box.querySelector('[data-l="'+wo+'"]').appendChild(b); };
   rollen.forEach(function(x){ knopf(x, "rolle", false); });
   themen.forEach(function(x){ knopf(x, "thema", true); });
   return box;
@@ -24344,6 +24380,9 @@ function wunschLinkNeu(){ var e=document.getElementById("wunschlink"); if(e) e.h
      Kunden, auch für Admins (die haben es zusätzlich im Reiter Datenbasis) */
   var h=document.getElementById("handbuchlink");
   if(h) h.hidden=!(Store.modus==="supabase" && Store.benutzer && !nurLesen());
+  /* Rundgänge daneben (Büro 04.10.2026: „sehr versteckt“) – auch in der Präsentation */
+  var rg=document.getElementById("rundganglink");
+  if(rg){ rg.hidden=nurLesen() || !((Store.modus==="supabase" && Store.benutzer) || demo()); rg.onclick=function(){ rundgangAuswahlFenster(); }; }
 }
 /* Handbuch auf Papier (Büro 29.09.2026): dieselben Abschnitte, alle aufgeklappt,
    als Blatt – gedruckt wird über den Druckdialog des Geräts (dort auch „als PDF“) */

@@ -1176,6 +1176,35 @@ test("Fahrzeug am Handy: man selbst als Fahrer und Privatauto wählbar, Datumsfe
   await a.zu();
 });
 
+test("Rundgänge: Knopf neben dem Handbuch, nach dem Ende gleich der nächste mit ✓", async () => {
+  const a = await oeffnen(KONTEN.techniker);
+  const r = await a.seite.evaluate(async () => {
+    const x = window.__t.x, warte = (ms) => new Promise((f) => setTimeout(f, ms));
+    x("render()"); await warte(300);
+    const knopf = document.getElementById("rundganglink");
+    const sichtbar = !!knopf && !knopf.hidden;
+    if (knopf) knopf.click(); await warte(400);
+    const fenster = [...document.querySelectorAll(".assistent")].pop();
+    const auswahl = !!fenster && /Geführte Rundgänge/.test(fenster.textContent) && fenster.querySelectorAll("[data-rgart]").length > 3;
+    /* einen Rundgang bis „Fertig“ durchklicken */
+    const start = fenster.querySelector('[data-rgart="stunden"]') || fenster.querySelector("[data-rgart]");
+    const art = start.dataset.rgart; start.click(); await warte(500);
+    for (let i = 0; i < 30 && document.getElementById("rundgang"); i++) { document.querySelector('#rundgang [data-rg="weiter"]').click(); await warte(450); }
+    const danach = [...document.querySelectorAll(".assistent")].pop();
+    const weiter = !!danach && /Weiter mit/.test(danach.textContent);
+    const haken = !!danach && /^✓/.test((danach.querySelector('[data-rgart="' + art + '"]') || {}).textContent || "");
+    const naechster = danach && [...danach.querySelectorAll("button")].find((b) => /▶ Weiter/.test(b.textContent));
+    if (naechster) naechster.click(); await warte(500);
+    const laeuft = !!document.getElementById("rundgang") && x("RUNDGANG && RUNDGANG.art") !== art;
+    x("rundgangEnde()");
+    return { sichtbar, auswahl, weiter, haken, laeuft };
+  });
+  pruefe(r.sichtbar && r.auswahl, "Knopf „Rundgänge“ fehlt oder öffnet keine Auswahl: " + JSON.stringify(r));
+  pruefe(r.weiter && r.haken && r.laeuft, "nach dem Ende kein nächster Rundgang: " + JSON.stringify(r));
+  pruefe(!a.fehler.length, "Laufzeitfehler: " + a.fehler.join("; "));
+  await a.zu();
+});
+
 /* ================================================================ Ablauf ================================================================ */
 const filterText = process.argv.slice(2).find((x) => !x.startsWith("--"));
 const filter = filterText ? new RegExp(filterText, "i") : null;
