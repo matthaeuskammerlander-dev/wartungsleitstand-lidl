@@ -286,7 +286,10 @@ Kammerlander Umwelt- und Klimatechnik (UKT) – oft kurz, vom Handy, im Feld.
   Stempeluhr hat VORRANG (Büro 04.10.2026): Abgleich mit dem Kalender (`abgleichDialog`, `abgleichTeile`, Funktion `stempel_abgleich`,
   tools/stempel-abgleich.sql) teilt nur die gestempelte Zeit auf – Blöcke lückenlos und genau, Summe/Pause unverändert, Quelle
   „stempel_abgeglichen“; nach dem Ausstempeln angeboten, beim Tag „⇆ Mit Kalender abgleichen“, beim Termin „⏱ abgleichen“ statt
-  „erfassen“ (nie doppelt). Umstempeln mit Vorgabe aus dem Termin (`geplantFuerMich`, „⇄ Dorthin umstempeln“). Neu Eingetragene bekommen eine Chat-Nachricht
+  „erfassen“ (nie doppelt). Umstempeln mit Vorgabe aus dem Termin (`geplantFuerMich`, „⇄ Dorthin umstempeln“).
+  Abwesenheit und Arbeit am selben Tag (`abwesenheitPruefen`, tools/abwesenheit-arbeit.sql, `planung.ausnahmen`): beim Einstempeln und
+  Erfassen fragen – „eingesprungen“ (beides zählt), Urlaub „zurückgeben“ (Inhaber nimmt den Tag heraus: `planTagHerausnehmen`, To-do),
+  Krankenstand/Schule/ZA „für diesen Tag beenden“; ungeklärt ⚠ beim Tag und in `monatLuecken`. Urlaub ändert nur der Inhaber. Neu Eingetragene bekommen eine Chat-Nachricht
   (nicht bei Privatem). Diese Grenzen nie lockern.
 - **Posteingang → Projekt** (Büro 02.10.2026): weitergeleitete Mails (nicht Lidl-Auftrag/Rapport)
   kommen mit `.eml` (art „mail“, `eintraege` in synology/ukt_posteingang.py, Test

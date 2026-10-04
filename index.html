@@ -23925,6 +23925,7 @@ Object.assign(RUNDGAENGE, {
       text:RG_LISTE(["Woche mit Einträgen, Feiertagen und „⚠ über 12 h“; ‹ › blättern, „Monatsliste (PDF)“.",
         "<strong>+ Zeit erfassen</strong>: Art (Arbeit, Urlaub, Krankenstand, Feiertag, Zeitausgleich, Schule …), Bereich, von/bis/Pause oder Dauer, Was, Markt, Projekt – Vorschläge „laut Kalender“ und „laut deinen Protokollen“.",
         "Geplante Termine: <strong>„erfassen“</strong>; 📅 plant die Arbeit im Voraus. Urlaub, Krankenstand, Schule, Zeitausgleich: „automatisch“ bzw. „nach Genehmigung“.",
+        "<strong>Urlaub, Krankenstand, Schule oder Zeitausgleich und trotzdem Arbeit?</strong> Beim Einstempeln bzw. Erfassen fragt die App gleich: „Nur kurz eingesprungen“ (beides zählt), „Urlaubstag zurückgeben“ (der Chef nimmt ihn heraus) oder „für diesen Tag beenden“. Ungeklärt: ⚠ beim Tag.",
         "Gestempelt und geplant, aber nicht zugeordnet: beim Tag <strong>„⇆ Mit Kalender abgleichen“</strong>; beim Termin steht dann „⏱ abgleichen“ statt „erfassen“ – so wird nichts doppelt erfasst.",
         "<strong>Abstand zum Soll</strong>: je Tag „+0:30“, „−1:00“ oder heute „noch 2:00“; unten die Woche („bis gestern …, noch … bis zum Wochensoll“). Nur zur Info – Überstunden zählen als Monatsbilanz."])+
       RG_HG(["Zeichen: ⏱ gestempelt, ⏱✎ geändert/nachgetragen, 🔒 bestätigt, ⚠ Überschneidung.",
@@ -28839,6 +28840,10 @@ function viewKalender(){
     akAbgegebenText().forEach(function(t){ var rb=el('<button type="button" class="note warnbox" style="text-align:left;cursor:pointer;font:inherit">'+esc(t)+"</button>");
       rb.onclick=function(){ springe({reiter:"stunden", finde:function(){ return [].slice.call(document.querySelectorAll(".card h2")).filter(function(h){ return /^Reisekosten aller/.test(h.textContent); }).map(function(h){ return h.closest(".card"); })[0]; }, block:"start"}); };
       td.querySelector(".stack").appendChild(rb); }); }
+  if(istInhaber()) PLANUNG.forEach(function(e){ if(e.kategorie!=="urlaub") return;
+    Object.keys(e.ausnahmen||{}).filter(function(t){ return e.ausnahmen[t].art==="zurueck"; }).forEach(function(t){
+      var ub=el('<button type="button" class="note warnbox" style="text-align:left;cursor:pointer;font:inherit">🗓 '+esc(planWerText(e)||"")+": Urlaubstag "+esc(dfmt(t))+" zurückgegeben – im Urlaub herausnehmen</button>");
+      ub.onclick=function(){ planEditor(e); }; td.querySelector(".stack").appendChild(ub); }); });
   if(fzBuero() && wzAn()){ if(!wzGeladen) wzNachladen();
     wzToDo().forEach(function(t){ var wb=el('<button type="button" class="note warnbox" style="text-align:left;cursor:pointer;font:inherit">'+esc(t)+"</button>");
       wb.onclick=function(){ springe({reiter:"werkzeug"}); }; td.querySelector(".stack").appendChild(wb); }); }
@@ -29706,6 +29711,20 @@ function planEditor(e, vorgabe){
     '<div class="note warnbox" data-err hidden></div>'+
   "</form>");
   v.inhalt.appendChild(form);
+  /* Abwesenheit: einzelne Tage herausnehmen (gearbeitet, Urlaubstag zurückgegeben) – Urlaub nur der Inhaber */
+  if(!neu && a.art==="termin" && PLAN_ABWESEND.indexOf(a.kategorie)>=0 && !demo() && (istInhaber() || (a.kategorie!=="urlaub" && (planIstMeins(a) || Rolle.name==="admin")))){
+    var tk=el('<div class="card" style="box-shadow:none;margin-top:12px"><div class="pad stack" style="gap:8px"><h2>Einzelne Tage herausnehmen</h2>'+
+      '<div class="muted" style="font-size:12.5px">Wurde an einem Tag doch gearbeitet: den Tag herausnehmen – die Stunden passen sich an.</div></div></div>');
+    var zu=Object.keys(a.ausnahmen||{}).filter(function(t){ return a.ausnahmen[t].art==="zurueck"; }).sort();
+    zu.forEach(function(t){ var b=el('<button class="btn sm" type="button" style="align-self:flex-start">'+esc(dfmt(t))+" herausnehmen (zurückgegeben von "+esc(a.ausnahmen[t].von||"")+")</button>");
+      b.onclick=function(){ b.disabled=true; planTagHerausnehmen(a, t).then(function(ok){ if(ok) v.zu(); else b.disabled=false; }, function(x){ b.disabled=false; toast("Nicht geändert: "+technikDeutsch(x.message||String(x))); }); };
+      tk.querySelector(".stack").appendChild(b); });
+    var hr=el('<div class="rowflex" style="gap:6px"><input type="date" style="width:auto" min="'+esc(a.datum)+'" max="'+esc(a.datum_bis||a.datum)+'"><button class="btn ghost sm" type="button">Tag herausnehmen</button></div>');
+    hr.querySelector("button").onclick=function(){ var t=hr.querySelector("input").value; if(!t || t<a.datum || t>(a.datum_bis||a.datum)){ toast("Bitte einen Tag aus dem Zeitraum wählen."); return; }
+      var b2=this; b2.disabled=true; planTagHerausnehmen(a, t).then(function(ok){ if(ok) v.zu(); else b2.disabled=false; }, function(x){ b2.disabled=false; toast("Nicht geändert: "+technikDeutsch(x.message||String(x))); }); };
+    tk.querySelector(".stack").appendChild(hr);
+    v.inhalt.appendChild(tk);
+  }
   /* Material und Werkzeug für diesen Termin (Büro 04.10.2026) – erst, wenn er gespeichert ist; nicht bei Abwesenheit und Privatem */
   if(!neu && a.art==="termin" && !a.privat && a.kategorie!=="privat" && PLAN_ABWESEND.indexOf(a.kategorie)<0 && wzAn() && !privatFremd)
     v.inhalt.appendChild(bedarfKarte("Material und Werkzeug", {planung_id:a.id, projekt_id:a.projekt_id, stoerung_id:a.stoerung_id, standort_id:a.standort_id},
@@ -30095,6 +30114,92 @@ function heuteFuerMichKarte(){
   }
   return c;
 }
+/* ---------- Abwesenheit und Arbeit am selben Tag (Büro 04.10.2026: „für sowas sollte man vorbereitet sein“) ----------
+   Beim Einstempeln und beim Erfassen von Arbeit an einem Tag mit Urlaub, Krankenstand, Schule oder Zeitausgleich
+   fragt die App gleich: kurz eingesprungen (beides zählt) – Urlaubstag zurückgeben (der Inhaber nimmt ihn heraus) –
+   Krankenstand/Schule/Zeitausgleich für diesen Tag beenden. Die Antwort steht je Tag in planung.ausnahmen
+   (tools/abwesenheit-arbeit.sql). Was ungeklärt bleibt: ⚠ beim Tag und in der Prüfung vor dem Bestätigen. */
+function abwesenheitAm(tag, uid){
+  uid=uid||meineKennung();
+  return PLANUNG.filter(function(e){ return planStundenAuto(e) && planTage(e).indexOf(tag)>=0 &&
+    ((e.wer||[]).indexOf(uid)>=0 || (!(e.wer||[]).length && e.erstellt_von===uid)); });
+}
+function abwesenheitAusnahme(e, tag){ return ((e.ausnahmen||{})[tag])||null; }
+function abwesenheitOffen(tag, uid){ return abwesenheitAm(tag, uid).filter(function(e){ return !abwesenheitAusnahme(e, tag); }); }
+function abwesenheitAusnahmeSetzen(e, tag, art){
+  var a=Object.assign({}, e.ausnahmen||{}); a[tag]={art:art, von:meinName(), zeit:new Date().toISOString()};
+  if(demo()){ e.ausnahmen=a; return Promise.resolve(e); }
+  return mitFrist(Store.sb.from("planung").update({ausnahmen:a}).eq("id", e.id).select("*"), 15000).then(function(r){
+    if(r.error || !(r.data||[]).length) throw new Error(r.error ? r.error.message : "keine Berechtigung");
+    var g=r.data[0]; PLANUNG=PLANUNG.filter(function(y){ return y.id!==g.id; }).concat([g]); return g; });
+}
+/* einen Tag aus einer (mehrtägigen) Abwesenheit herausnehmen – die Stunden passt der Trigger an */
+function planTagHerausnehmen(e, tag){
+  var bis=e.datum_bis && e.datum_bis>e.datum ? e.datum_bis : e.datum, q;
+  var a=Object.assign({}, e.ausnahmen||{}); delete a[tag];
+  if(e.datum===bis){
+    if(!window.confirm(planKat(e.kategorie)[1]+" am "+dfmt(tag)+" ganz löschen?")) return Promise.resolve(false);
+    q=Store.sb.from("planung").delete().eq("id", e.id).select("id");
+  }
+  else if(tag===e.datum){ var n=plusTage(tag,1); q=Store.sb.from("planung").update({datum:n, datum_bis:n===bis?null:bis, ausnahmen:a, geaendert_von:meinName()}).eq("id", e.id).select("*"); }
+  else if(tag===bis){ var v=plusTage(tag,-1); q=Store.sb.from("planung").update({datum_bis:v===e.datum?null:v, ausnahmen:a, geaendert_von:meinName()}).eq("id", e.id).select("*"); }
+  else {
+    /* in der Mitte: der erste Teil bis zum Vortag, ein zweiter ab dem Folgetag */
+    var vt=plusTage(tag,-1), ft=plusTage(tag,1), a2={};
+    Object.keys(a).forEach(function(k){ if(k>tag){ a2[k]=a[k]; delete a[k]; } });
+    var kopie={art:e.art, kategorie:e.kategorie, titel:e.titel, details:e.details||null, datum:ft, datum_bis:ft===bis?null:bis, beginn:e.beginn||null, ende:e.ende||null,
+      wer:e.wer||[], wer_namen:e.wer_namen||[], status:e.status, privat:false, ausnahmen:a2, erstellt_name:meinName(), geaendert_von:meinName()};
+    q=Store.sb.from("planung").update({datum_bis:vt===e.datum?null:vt, ausnahmen:a, geaendert_von:meinName()}).eq("id", e.id).select("*")
+      .then(function(r){ if(r.error || !(r.data||[]).length) return r; return Store.sb.from("planung").insert(kopie).select("*").then(function(r2){ return r2.error ? r2 : {data:(r.data||[]).concat(r2.data||[]), error:null}; }); });
+  }
+  if(demo()){ toast("In der Präsentation wird nichts gespeichert."); return Promise.resolve(false); }
+  return mitFrist(Promise.resolve(q), 20000).then(function(r){
+    if(r.error) throw new Error(r.error.message);
+    if(!(r.data||[]).length) throw new Error("Nicht geändert – keine Berechtigung.");
+    PLANUNG=PLANUNG.filter(function(y){ return y.id!==e.id; }).concat((r.data||[]).filter(function(g){ return g.kategorie; }));
+    toast(planKat(e.kategorie)[1]+": "+dfmt(tag)+" herausgenommen – die Stunden werden angepasst."); planGeaendert(); return true;
+  });
+}
+/* vor dem Einstempeln / Erfassen von Arbeit: ist an diesem Tag Abwesenheit eingetragen? Dann fragen, sonst gleich weiter */
+function abwesenheitPruefen(tag, weiter){
+  var offen=abwesenheitOffen(tag);
+  if(!offen.length || nurLesen()){ weiter(); return; }
+  var e=offen[0], k=planKat(e.kategorie), urlaub=e.kategorie==="urlaub";
+  var v=ansichtOeffnen(k[1]+" eingetragen");
+  v.schritt.textContent=WOCHENTAGE[wochentagIdx(tag)]+" "+dfmt(tag)+" · "+planTitel(e)+(e.datum_bis&&e.datum_bis!==e.datum?" ("+dfmt(e.datum)+"–"+dfmt(e.datum_bis)+")":"");
+  v.inhalt.appendChild(el('<div class="note" style="font-size:13.5px">An diesem Tag ist <strong>'+esc(k[1])+"</strong> eingetragen – und er steht schon mit dem Tagessoll in den Stunden. "+
+    "Wenn du jetzt Arbeit erfasst, zählt sonst beides. Was trifft zu?</div>"));
+  var r=el('<div class="stack" style="gap:8px;max-width:440px"></div>');
+  var knopf=function(text, klasse, tun){ var b=el('<button class="btn'+(klasse?" "+klasse:"")+'" type="button" style="text-align:left">'+text+"</button>");
+    b.onclick=function(){ r.querySelectorAll("button").forEach(function(x){ x.disabled=true; });
+      Promise.resolve().then(tun).then(function(ok){ if(ok===false){ r.querySelectorAll("button").forEach(function(x){ x.disabled=false; }); return; } v.zu(); weiter(); },
+        function(x){ r.querySelectorAll("button").forEach(function(y){ y.disabled=false; }); toast("Nicht gespeichert: "+technikDeutsch(x.message||String(x))); }); };
+    r.appendChild(b); };
+  knopf("<strong>Nur kurz eingesprungen</strong><br><span style=\"font-weight:400;font-size:12.5px\">"+esc(k[1])+" bleibt, die Arbeit kommt dazu</span>", "ghost",
+    function(){ return abwesenheitAusnahmeSetzen(e, tag, "eingesprungen"); });
+  if(urlaub){
+    knopf("<strong>Ich arbeite – Urlaubstag zurückgeben</strong><br><span style=\"font-weight:400;font-size:12.5px\">"+(istInhaber()?"der Tag wird aus dem Urlaub genommen":"der Chef bekommt eine Nachricht und nimmt den Tag aus dem Urlaub")+"</span>", "ghost",
+      function(){
+        if(istInhaber()) return planTagHerausnehmen(e, tag);
+        return abwesenheitAusnahmeSetzen(e, tag, "zurueck").then(function(){
+          if(chatAn()) chatTeamLaden().then(function(t){ (t||[]).filter(function(p){ return p.rolle==="inhaber"; }).forEach(function(p, i){
+            mitFrist(Store.sb.from("chat").insert({id:"c_"+Date.now().toString(36)+i+Math.random().toString(36).slice(2,8), von:Store.benutzer.id, von_name:meinName(),
+              text:"🗓 Ich arbeite am "+dfmt(tag)+" – den Urlaubstag gebe ich zurück. Bitte im Kalender aus dem Urlaub nehmen (Urlaubseintrag öffnen → „Tag herausnehmen“).",
+              an:p.user_id, an_name:p.name||"", fotos:[]}), 15000).then(function(){}, function(){}); }); });
+          toast("Der Chef bekommt eine Nachricht – bis er den Tag herausnimmt, zählt beides.");
+        });
+      });
+  } else knopf("<strong>"+esc(k[1])+" für diesen Tag beenden</strong><br><span style=\"font-weight:400;font-size:12.5px\">der Tag wird aus dem Eintrag genommen, die Stunden passen sich an</span>", "ghost",
+    function(){ return planTagHerausnehmen(e, tag); });
+  var ab=el('<button class="btn ghost" type="button">Abbrechen</button>'); ab.onclick=function(){ v.zu(); }; v.fuss.appendChild(ab);
+  v.inhalt.appendChild(r);
+}
+/* ⚠ beim Tag (Meine Arbeitszeit): Abwesenheit und Arbeit, nicht geklärt */
+function abwesenheitKonflikt(tag, liste, uid){
+  if(!(liste||[]).some(function(z){ return z.datum===tag && z.art==="arbeit"; })) return [];
+  return abwesenheitOffen(tag, uid);
+}
+
 /* Stunden: was ich an einem Tag geplant habe (Termine mit mir) */
 function meinePlanungAm(tag){
   return PLANUNG.filter(function(e){ return e.art==="termin" && e.status!=="abgelehnt" && planIstMeins(e) && planTage(e).indexOf(tag)>=0; })
@@ -30217,6 +30322,12 @@ function viewStunden(){
       zeile.querySelector("[data-plus]").onclick=function(){ zeitEditor(null, {datum:tag}); };
       /* geplant (Kalender): bis heute mit einem Griff als Zeit erfassen */
       var pl=planungAn() ? meinePlanungAm(tag) : [];
+      var konflikt=abwesenheitKonflikt(tag, ZEITEN);
+      if(konflikt.length && !nurLesen()){
+        var kw=el('<div class="note warnbox" style="font-size:12.5px">⚠ '+esc(planKat(konflikt[0].kategorie)[1])+' und Arbeit am selben Tag – noch nicht geklärt. <button class="btn ghost sm" type="button" data-schreiben>klären</button></div>');
+        kw.querySelector("button").onclick=function(){ abwesenheitPruefen(tag, function(){ render(); }); };
+        host.appendChild(kw);
+      }
       var offenAb=abgleichOffen(tag);
       if(offenAb.length && !nurLesen()){
         var ab=el('<button class="btn ghost sm" type="button" style="align-self:flex-start;margin-top:4px" data-schreiben>⇆ Mit Kalender abgleichen ('+offenAb.length+")</button>");
@@ -30435,6 +30546,8 @@ function zeitEditor(z, vorgabe){
         pauseErgaenzt=30-zeile.pause_min;
         zeile.pause_min=30; zeile.minuten-=pauseErgaenzt; zeile.pause_auto=pauseErgaenzt;
       }
+      /* an diesem Tag Urlaub, Krankenstand …? erst klären – dann geht es mit demselben Knopf weiter */
+      if(zeile.art==="arbeit" && !form._abwOk && abwesenheitOffen(datum).length){ abwesenheitPruefen(datum, function(){ form._abwOk=true; ok.click(); }); return; }
       ok.disabled=true; ok.textContent="wird gespeichert …";
       var fertig=function(gesp){
         ZEITEN=ZEITEN.filter(function(x){ return x.id!==gesp.id; }).concat([gesp]);
@@ -30499,7 +30612,7 @@ function sollIstTag(liste, tag){
    Abwesenheit im Kalender ohne Stunden, geplante Arbeit ohne passenden Eintrag (gleicher Termin, Markt
    oder Projekt). Nur bis gestern; ein Hinweis – bestätigt wird trotzdem, wenn der Inhaber will. */
 function monatLuecken(liste, uid, monat){
-  var heute=isoLokal(new Date()), t=monat+"-01", ende=plusMonate(t,1), r={ohne:[], abwesend:[], geplant:[]};
+  var heute=isoLokal(new Date()), t=monat+"-01", ende=plusMonate(t,1), r={ohne:[], abwesend:[], geplant:[], doppelt:[], zurueck:[]};
   var amTag=function(tag){ return liste.filter(function(z){ return z.datum===tag; }); };
   var meins=function(e){ return (e.wer||[]).indexOf(uid)>=0 || (!(e.wer||[]).length && e.erstellt_von===uid); };
   var pl=PLANUNG.filter(function(e){ return e.art==="termin" && e.status!=="abgelehnt" && meins(e); });
@@ -30509,6 +30622,9 @@ function monatLuecken(liste, uid, monat){
       var abw=pl.filter(function(e){ return planStundenAuto(e) && planTage(e).indexOf(tag)>=0; });
       if(!z.length && !abw.length && !pl.some(function(e){ return (e.privat||e.kategorie==="privat") && !e.beginn && planTage(e).indexOf(tag)>=0; })) r.ohne.push(tag);
       abw.forEach(function(e){ if(!z.some(function(x){ return x.art===e.kategorie || x.planung_id===e.id; })) r.abwesend.push(tag+" "+planKat(e.kategorie)[1]); });
+      /* Abwesenheit und Arbeit am selben Tag: geklärt (eingesprungen) – sonst Hinweis; Urlaubstag zurückgegeben: der Kalender muss noch angepasst werden */
+      if(z.some(function(x){ return x.art==="arbeit"; })) abw.forEach(function(e){ var au=abwesenheitAusnahme(e, tag);
+        if(!au) r.doppelt.push(tag+" "+planKat(e.kategorie)[1]); else if(au.art==="zurueck") r.zurueck.push(tag); });
     }
     pl.forEach(function(e){
       if(planKat(e.kategorie)[3]!=="arbeit" || e.privat || planTage(e).indexOf(tag)<0) return;
@@ -30523,7 +30639,9 @@ function monatLueckenText(r){
   var tage=function(l){ return l.slice(0,8).map(function(x){ return dfmt(x.slice(0,10)).slice(0,6)+(x.length>10?" "+x.slice(11):""); }).join(", ")+(l.length>8?" …":""); };
   return [r.ohne.length ? r.ohne.length+" Arbeitstag(e) ohne Eintrag: "+tage(r.ohne) : "",
     r.abwesend.length ? r.abwesend.length+"× Abwesenheit im Kalender ohne Stunden: "+tage(r.abwesend) : "",
-    r.geplant.length ? r.geplant.length+"× geplant, aber nichts dazu erfasst: "+tage(r.geplant) : ""].filter(Boolean);
+    r.geplant.length ? r.geplant.length+"× geplant, aber nichts dazu erfasst: "+tage(r.geplant) : "",
+    r.doppelt.length ? r.doppelt.length+"× Abwesenheit und Arbeit am selben Tag, nicht geklärt: "+tage(r.doppelt) : "",
+    r.zurueck.length ? r.zurueck.length+"× Urlaubstag zurückgegeben – im Kalender herausnehmen: "+tage(r.zurueck) : ""].filter(Boolean);
 }
 function sollMinutenMonat(monat){
   var t=monat+"-01", ende=plusMonate(t,1), s=0;
@@ -31833,8 +31951,10 @@ function stempelKarte(){
     w.querySelector("[data-ein]").onclick=function(){
       if(!bw.wert()){ toast("Bitte den Bereich wählen – die Lohnverrechnung braucht ihn (Montage, Fahrt, Werkstatt …)."); return; }
       if(jetztSchon.length && !window.confirm("Für jetzt ist schon Arbeitszeit von Hand eingetragen ("+jetztSchon.map(zeitKurz).join(", ")+").\n\nTrotzdem einstempeln? Beim Ausstempeln kannst du wählen, was gilt.")) return;
-      stempelDruecken("ein", {bereich:bw.wert(), standort_id:w.querySelector("[data-st]").value||null, projekt_id:w.querySelector("[data-pr]").value||null,
-        taetigkeit:w.querySelector("[data-was]").value.trim()||null}, this);
+      var einKnopf=this, einWerte={bereich:bw.wert(), standort_id:w.querySelector("[data-st]").value||null, projekt_id:w.querySelector("[data-pr]").value||null,
+        taetigkeit:w.querySelector("[data-was]").value.trim()||null};
+      /* heute Urlaub, Krankenstand …? erst klären (Büro 04.10.2026) */
+      abwesenheitPruefen(heute, function(){ stempelDruecken("ein", einWerte, einKnopf); });
     };
     /* die nächsten Märkte zur Auswahl (Position nur zum Sortieren, nicht gespeichert) */
     w.insertBefore(naeheAuswahl(function(s){ w.querySelector("[data-st]").value=s.id; }), w.querySelector(".grid"));
