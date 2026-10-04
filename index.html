@@ -3404,7 +3404,8 @@ function mailKopfKarte(m, arten){
     artVon:function(f, i){ return i===0 ? mailZeile.querySelector("select").value : (this.gewaehlt()[i-1]||{z:mailZeile}).z.querySelector("select").value; }};
 }
 /* Mail und Anhänge ins Projekt, Verweis in daten.mails, Absender ins Adressbuch */
-function mailInsProjekt(p, m, k, quelleSchritt){
+/* mehr(daten, emlPfad): weitere Änderungen im selben Speichern (z. B. Beteiligte) */
+function mailInsProjekt(p, m, k, quelleSchritt, mehr){
   var gew=k.gewaehlt();
   return mailDateien(m, gew.map(function(x){ return x.a; })).then(function(files){
     var artJe=new Map(); files.forEach(function(f, i){ artJe.set(f, k.artVon(f, i)); });
@@ -3414,6 +3415,7 @@ function mailInsProjekt(p, m, k, quelleSchritt){
         var vw=mailVerweis(m); d.mails=(d.mails||[]).filter(function(x){ return !vw.id || x.id!==vw.id; }).concat([vw]);
         /* Quelle der Anfrage (Büro 01.10.2026: „man soll immer alles von beiden Seiten finden“) */
         if(quelleSchritt && eml){ d.quellen=d.quellen||{}; d.quellen[quelleSchritt]=(d.quellen[quelleSchritt]||[]).concat([eml.pfad]); }
+        if(mehr) mehr(d, eml ? eml.pfad : null);
       }, "E-Mail übernommen: „"+(m.betreff||"")+"“").then(function(){
         var ab=kontaktAusAbsender(mailAbsender(m));
         if(ab) kontaktErfassen(ab, {art:"projekt", id:p.id, titel:projektTitel(p)}, false);
@@ -3437,24 +3439,37 @@ function mailProjektNeu(m){
   if(demo()){ toast("Präsentation: hier wird nichts angelegt."); return; }
   var v=ansichtOeffnen("Projekt aus Mail", null, {breit:true});
   v.schritt.textContent="Angaben prüfen – gespeichert wird erst mit „Projekt anlegen“";
-  var kunden=[{id:"lidl", name:"Lidl"}].concat(weitereKunden()), kVor=mailKundeRaten(m)||"lidl";
-  var titelVor=String(m.betreff||"").replace(/^\s*((re|aw|wg|fwd?|antw)\s*:\s*)+/i, "").trim();
-  var von=(m.von||[])[0]||{};
-  var arten=PROJEKT_DATEIARTEN.filter(function(x){ return !x[2] || nurInhaber(); }), k=mailKopfKarte(m, arten);
+  /* Weitergeleitet von UKT selbst (Chef, Büro): der Absender ist NICHT der Anfragende – Kunde kommt aus der Mail (Claude) */
+  var von=(m.von||[])[0]||{}, eigen=/(^|\.)ukt\.at$/i.test(String(von.address||"").split("@")[1]||"") || /kammerlander/i.test((von.name||"")+" "+(von.address||""));
+  var kunden=function(){ return [{id:"lidl", name:"Lidl"}].concat(weitereKunden()); }, kVor=mailKundeRaten(m);
+  var titelVor=String(m.betreff||"").replace(/^\s*((re|aw|wg|wtr|fwd?|antw)\s*:\s*)+/i, "").trim();
+  var arten=PROJEKT_DATEIARTEN.filter(function(x){ return !x[2] || nurInhaber(); }), k=mailKopfKarte(m, arten), ki=null;
+  var kundeOptionen=function(wahl){ return '<option value="">– bitte wählen –</option>'+kunden().map(function(x){ return '<option value="'+esc(x.id)+'"'+(x.id===wahl?" selected":"")+">"+esc(x.name)+"</option>"; }).join(""); };
   var form=el('<form class="stack" autocomplete="off" style="max-width:640px">'+
-    '<div class="rowflex" data-claude hidden><button class="btn sm" type="button">✦ Mit Claude ausfüllen</button><span class="muted" style="font-size:12.5px">liest Kunde, Ansprechpartner, Telefon und Beschreibung aus der Mail</span></div>'+
+    '<div class="rowflex" data-claude hidden style="gap:8px"><button class="btn sm" type="button">✦ Mit Claude ausfüllen</button><span class="muted" data-claudetext style="font-size:12.5px">liest Kunde, Ansprechpartner, Telefon und Beschreibung aus der Mail</span></div>'+
     '<label class="fl"><span class="req">Titel</span><input type="text" data-f="titel" value="'+esc(titelVor)+'"></label>'+
-    '<label class="fl"><span>Kunde</span><select data-f="kunde">'+kunden.map(function(x){ return '<option value="'+esc(x.id)+'"'+(x.id===kVor?" selected":"")+">"+esc(x.name)+"</option>"; }).join("")+"</select></label>"+
+    '<div class="fl"><span class="req">Kunde</span><div class="rowflex" style="gap:6px;flex-wrap:nowrap"><select data-f="kunde" style="flex:1">'+kundeOptionen(kVor)+"</select>"+
+      (Admin.frei && !nurLesen()?'<button class="btn ghost sm" type="button" data-neukunde>+ Neuer Kunde</button>':"")+"</div></div>"+
     '<div class="note" data-neuk hidden style="font-size:12.5px"></div>'+
     '<label class="fl"><span>Standort</span><select data-f="standort"></select></label>'+
     '<label class="fl"><span>Projekttyp</span><input type="text" data-f="typ" list="pm_typen">'+projektTypListe("pm_typen")+"</label>"+
     '<label class="fl"><span>Anfrage vom</span><input type="date" data-f="anfrageDatum" value="'+esc(m.datum?isoLokal(new Date(m.datum)).slice(0,10):isoLokal(new Date()).slice(0,10))+'"></label>'+
-    '<label class="fl"><span>Wer hat angefragt? (Planer, Kunde)</span><input type="text" data-f="anfrageVon" value="'+esc(von.name||von.address||"")+'"></label>'+
+    '<label class="fl"><span>Wer hat angefragt? (Planer, Kunde)</span><input type="text" data-f="anfrageVon" value="'+esc(eigen?"":(von.name||von.address||""))+'"></label>'+
     '<label class="fl"><span>Ansprechpartner vor Ort</span><input type="text" data-f="ansprechpartner"></label>'+
     '<label class="fl"><span>Telefon</span><input type="text" data-f="telefon"></label>'+
-    '<label class="fl"><span>Was wird gebraucht?</span><textarea rows="4" data-f="beschreibung">'+esc(String(m.text||"").slice(0,1500))+"</textarea></label>"+
+    '<label class="fl"><span>Was wird gebraucht?</span><textarea rows="4" data-f="beschreibung">'+esc(String(m.text||"").replace(/^[ \t]*(>[ \t]?)+/gm, "").slice(0,1500))+"</textarea></label>"+
     '<div class="note warnbox" data-err hidden></div></form>');
   var f=function(n){ return form.querySelector('[data-f="'+n+'"]'); };
+  /* neuer Kunde gleich aus den Angaben der Mail (Claude) – danach ist er hier ausgewählt, samt Standort */
+  var neuKunde=function(){
+    var vorlage=ki ? {name:ki.kunde||"", adresse:ki.adresse||"", plz:ki.plz||"", ort:ki.ort||"", ansprechpartner:ki.ansprechpartner||"", telefon:ki.telefon||"", email:ki.email||""} : {};
+    kundeEditor(null, {vorlage:vorlage, fertig:function(ziel, sid){
+      if(!form.isConnected) return;
+      f("kunde").innerHTML=kundeOptionen(ziel); standorte(); if(sid) f("standort").value=sid;
+      form.querySelector("[data-neuk]").hidden=true; toast("Kunde angelegt und ausgewählt – jetzt „Projekt anlegen“.");
+    }});
+  };
+  var nk=form.querySelector("[data-neukunde]"); if(nk) nk.onclick=neuKunde;
   var standorte=function(){
     f("standort").innerHTML='<option value="">– noch keiner / neu –</option>'+ST.filter(function(s){ return kundeVon(s)===f("kunde").value; }).sort(nachMarktname)
       .map(function(s){ return '<option value="'+esc(s.id)+'">'+esc(stName(s)+(s.adresse&&s.adresse!==stName(s)?" · "+s.adresse:""))+"</option>"; }).join("");
@@ -3462,27 +3477,32 @@ function mailProjektNeu(m){
   standorte(); f("kunde").onchange=standorte;
   v.inhalt.appendChild(k.kopf); v.inhalt.appendChild(form); v.inhalt.appendChild(k.liste);
   v.inhalt.appendChild(el('<div class="muted" style="font-size:12.5px;margin-top:6px">Die Mail kommt als Quelle zur Anfrage in die Projektdateien, der Absender ins Adressbuch.</div>'));
-  /* Claude liest die Angaben aus (am PC über das Mail-Programm); alles bleibt zum Prüfen stehen */
+  /* Claude liest die Angaben gleich beim Öffnen aus (Büro 04.10.2026: „die Angaben sind nicht KI-geprüft, der Chef
+     steht als Auftraggeber drin“) – am PC über das Mail-Programm; alles bleibt zum Prüfen stehen, orange = von Claude */
   mailStatus().then(function(s){
     if(!s.claude) return;
-    var cz=form.querySelector("[data-claude]"); cz.hidden=false;
-    var cb=cz.querySelector("button");
-    cb.onclick=function(){
-      cb.disabled=true; cb.textContent="✦ Claude liest …";
-      mailHolen("/api/extrahieren", {frist:150000, body:{konto:m.konto, ordner:m.ordner, uid:m.uid, typen:projektTypen(), kunden:kunden.map(function(x){ return x.name; })}}).then(function(r){
-        cb.disabled=false; cb.textContent="✦ Nochmals ausfüllen";
+    var cz=form.querySelector("[data-claude]"), cb=cz.querySelector("button"), ct=cz.querySelector("[data-claudetext]"); cz.hidden=false;
+    var lesen=function(){
+      cb.disabled=true; cb.textContent="✦ Claude liest die Mail …"; ct.textContent="dauert etwa 10–20 Sekunden – die Felder füllen sich dann von selbst";
+      mailHolen("/api/extrahieren", {frist:150000, body:{konto:m.konto, ordner:m.ordner, uid:m.uid, typen:projektTypen(), kunden:kunden().map(function(x){ return x.name; })}}).then(function(r){
+        if(!form.isConnected) return;
+        ki=r; cb.disabled=false; cb.textContent="✦ Nochmals auslesen"; ct.textContent="✓ von Claude ausgefüllt – orange Felder bitte prüfen";
         var setzen=function(n, w){ w=String(w||"").trim(); if(!w) return; f(n).value=w; f(n).style.background="var(--accent-soft, #fbeee8)"; };
-        setzen("titel", r.titel); setzen("typ", r.typ); setzen("ansprechpartner", r.ansprechpartner);
-        setzen("telefon", r.telefon); setzen("anfrageVon", r.kunde && r.ansprechpartner && r.kunde!==r.ansprechpartner ? r.kunde : (r.kunde||""));
+        setzen("titel", r.titel); setzen("typ", r.typ); setzen("ansprechpartner", r.ansprechpartner); setzen("telefon", r.telefon);
+        setzen("anfrageVon", r.kunde||r.ansprechpartner);
         var ort=[r.adresse, [r.plz, r.ort].filter(Boolean).join(" ")].filter(Boolean).join(", ");
         setzen("beschreibung", [r.beschreibung, ort?"Ort: "+ort:"", r.wunschtermin?"Wunschtermin: "+r.wunschtermin:"", r.email?"Mail: "+r.email:""].filter(Boolean).join("\n"));
-        var treffer=kunden.filter(function(x){ return r.kundeTreffer && x.name===r.kundeTreffer; })[0];
+        var treffer=kunden().filter(function(x){ return r.kundeTreffer && x.name===r.kundeTreffer; })[0];
         var hin=form.querySelector("[data-neuk]");
         if(treffer){ f("kunde").value=treffer.id; standorte(); hin.hidden=true; }
-        else if(r.kunde){ hin.hidden=false; hin.textContent="Neuer Kunde? „"+r.kunde+"“ steht noch nicht in der Kundenliste – bei Bedarf unter Kunden anlegen (bis dahin bleibt die Auswahl oben)."; }
-        toast("Von Claude ausgefüllt – bitte prüfen (orange hinterlegt).");
-      }, function(e){ cb.disabled=false; cb.textContent="✦ Mit Claude ausfüllen"; toast("Claude: "+e.message); });
+        else if(r.kunde && !f("kunde").value){
+          hin.hidden=false; hin.innerHTML="„"+esc(r.kunde)+"“ steht noch nicht in der Kundenliste."+(nk?' <button class="btn sm" type="button" data-alsneu>Als neuen Kunden anlegen</button>':" Bitte unter Kunden anlegen.");
+          var an=hin.querySelector("[data-alsneu]"); if(an) an.onclick=neuKunde;
+        }
+      }, function(e){ if(!form.isConnected) return; cb.disabled=false; cb.textContent="✦ Mit Claude ausfüllen"; ct.textContent="Claude: "+e.message; });
     };
+    cb.onclick=lesen;
+    lesen();
   }, function(){});
   var ab=el('<button class="btn ghost" type="button">Abbrechen</button>'), ok=el('<button class="btn" type="button">Projekt anlegen</button>');
   ab.onclick=function(){ v.zu(); };
@@ -3490,6 +3510,7 @@ function mailProjektNeu(m){
   ok.onclick=function(){
     var err=form.querySelector("[data-err]"), titel=f("titel").value.trim();
     if(!titel){ err.textContent="Bitte einen Titel eintragen."; err.hidden=false; f("titel").focus(); return; }
+    if(!f("kunde").value){ err.textContent="Bitte den Kunden wählen"+(nk?" – oder „+ Neuer Kunde“.":"."); err.hidden=false; f("kunde").focus(); return; }
     var jetzt=new Date().toISOString(), daten={};
     ["anfrageDatum","anfrageVon","ansprechpartner","telefon","beschreibung","typ"].forEach(function(n){ var w=f(n).value.trim(); if(w) daten[n]=w; });
     if(!daten.anfrageDatum) daten.anfrageDatum=isoLokal(new Date()).slice(0,10);
@@ -3506,7 +3527,16 @@ function mailProjektNeu(m){
     versuch(0).then(function(p){
       PROJEKTE=[p].concat(PROJEKTE.filter(function(x){ return x.id!==p.id; }));
       ok.textContent="Mail wird abgelegt …";
-      return mailInsProjekt(p, m, k, "anfrage").then(function(r){
+      /* der Ansprechpartner aus der Mail kommt zu den Beteiligten (mit der Mail als Quelle) und ins Adressbuch */
+      var person={name:f("ansprechpartner").value.trim(), telefon:f("telefon").value.trim(), mail:(ki&&ki.email)||(eigen?"":String(von.address||"")),
+        firma:p.kunde_id!=="lidl" ? kundeTitel(p.kunde_id) : ((ki&&ki.kunde)||"")};
+      var mitPerson=!!(person.name || person.telefon || person.mail);
+      return mailInsProjekt(p, m, k, "anfrage", mitPerson ? function(d, emlPfad){
+        d.beteiligte=(d.beteiligte||[]).concat([{id:neueKennung("bt"), rolle:"Kunde / Bauherr", firma:person.firma, name:person.name, telefon:person.telefon, mail:person.mail,
+          notiz:"aus der Anfrage-Mail", quellen:emlPfad?[emlPfad]:[]}]);
+      } : null).then(function(r){
+        if(mitPerson && person.name) kontaktErfassen({name:person.name, firma:person.firma, telefon:person.telefon, mail:person.mail, kategorie:"Kunde / Bauherr",
+          kunde_id:p.kunde_id!=="lidl"?p.kunde_id:""}, {art:"projekt", id:p.id, titel:projektTitel(p)}, false);
         v.zu(); if(S.view==="projekte" && darfRendern()) render(); projektAnsicht(p.id);
         toast("Projekt "+p.nummer+" angelegt"+(r.neue===r.alle?" – Mail und "+(r.alle-1)+" Anhang/Anhänge abgelegt.":" – ACHTUNG: nur "+r.neue+" von "+r.alle+" Dateien abgelegt, bitte prüfen."));
       }, function(e){ v.zu(); projektAnsicht(p.id); toast("Projekt "+p.nummer+" angelegt, aber die Mail ist nicht abgelegt: "+e.message+" – im Mail-Programm nochmals „Zu bestehendem Projekt“."); });
@@ -25960,11 +25990,13 @@ function kundeAnsicht(id){
 var KUNDE_FELDER=[["name","Name / Firma","text",true],["adresse","Straße und Hausnummer","text"],["plz","PLZ","text"],["ort","Ort","text"],
   ["ansprechpartner","Ansprechpartner","text"],["telefon","Telefon","tel"],["email","E-Mail","email"],
   ["kundennummer","Kundennummer (z. B. aus KPlus)","text"]];
-function kundeEditor(k){
+/* opt (neuer Kunde): vorlage = vorbelegte Felder, fertig(ziel, standortId) statt die Kundenansicht zu öffnen */
+function kundeEditor(k, opt){
   if(!Admin.frei || nurLesen()){ toast("Kunden legt das Büro an (Verwaltung freischalten)."); return; }
+  opt=opt||{};
   var neu=!k, v=ansichtOeffnen(neu?"Neuer Kunde":"Kunde bearbeiten");
   v.schritt.textContent=neu?"Für Kunden außer Lidl":kundeTitel(k.id);
-  var a=k||{};
+  var a=k||opt.vorlage||{};
   var form=el('<form class="stack" autocomplete="off" style="max-width:560px">'+
     KUNDE_FELDER.map(function(x){ return '<label class="fl"><span'+(x[3]?' class="req"':"")+">"+esc(x[1])+'</span><input type="'+x[2]+'" data-k="'+x[0]+'" value="'+esc(a[x[0]]||"")+'"'+(x[3]?" required":"")+"></label>"; }).join("")+
     '<label class="fl"><span>Notiz</span><textarea data-k="notiz" rows="2">'+esc(a.notiz||"")+"</textarea></label>"+
@@ -26010,7 +26042,7 @@ function kundeEditor(k){
       v.zu(); if(darfRendern()) render();
       /* Kartenposition für den neuen Standort aus der Adresse (wie „Aus Adresse ermitteln“) */
       if(sid) standortVerorten(sid);
-      kundeAnsicht(ziel);
+      if(opt.fertig) opt.fertig(ziel, sid); else kundeAnsicht(ziel);
     });
   };
 }
