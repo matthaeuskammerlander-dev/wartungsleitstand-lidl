@@ -123,6 +123,8 @@ create table if not exists public.bedarf (
   erstellt_name  text,
   geaendert      timestamptz not null default now()
 );
+-- nach dem Einsatz einmal gefragt: „Wo ist das Werkzeug jetzt?“ (Büro 04.10.2026)
+alter table public.bedarf add column if not exists nachgefragt timestamptz;
 create index if not exists bedarf_projekt_idx on public.bedarf (projekt_id);
 create index if not exists bedarf_planung_idx on public.bedarf (planung_id);
 create index if not exists bedarf_stoerung_idx on public.bedarf (stoerung_id);

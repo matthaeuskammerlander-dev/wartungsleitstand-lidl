@@ -18254,7 +18254,7 @@ function archivKarte(){
    schreibt nur der Server), bedarf (Bezug Projekt, Störung, Kalendertermin oder Markt), packlisten.
    Vernetzt: Kalender (Termin, „🔍 Planung prüfen“, To-do), „Heute für dich“, Störung, Projekt,
    Markt, Fahrzeug. Keine Preise. Kein Lagerbestand – nur der Bedarf je Einsatz. */
-var WZ=[], BEDARF=[], PACKLISTEN=[], wzGeladen=false, wzFehlt=false, wzFehler="", wzLaedt=null, wzStand=0;
+var WZ=[], BEDARF=[], BEDARF_ALLE=[], PACKLISTEN=[], wzGeladen=false, wzFehlt=false, wzFehler="", wzLaedt=null, wzStand=0;
 var WZ_ORTE=[["lager","Lager"],["fahrzeug","Fahrzeug"],["person","bei Person"],["baustelle","Baustelle / Markt"],["reparatur","in Reparatur"],["sonst","sonst wo"]];
 var BEDARF_WEGE=[["mitnehmen","mitnehmen","🧰"],["abholen","abholen","🏪"],["bestellen","bestellen","🛒"]];
 var BEDARF_STATUS=[["offen","offen"],["bestellt","bestellt"],["abholbereit","abholbereit / geliefert"],["erledigt","erledigt – dabei"]];
@@ -18270,10 +18270,12 @@ function wzLaden(neu){
     Store.sb.from("werkzeug").select("*").order("name").limit(3000),
     Store.sb.from("bedarf").select("*").in("status", ["offen","bestellt","abholbereit"]).limit(3000),
     Store.sb.from("bedarf").select("*").eq("status", "erledigt").gte("erledigt", alt).limit(2000),
-    Store.sb.from("packlisten").select("*").order("name")
+    Store.sb.from("packlisten").select("*").order("name"),
+    /* zum Lernen (je Projekttyp, je Markt): alles, was je eingetragen wurde – nur die nötigen Spalten */
+    Store.sb.from("bedarf").select("id,art,text,werkzeug_id,projekt_id,standort_id").limit(8000)
   ]).then(function(r){
     if(r[0].error){ wzFehlt=/does not exist|schema cache|relation/i.test(r[0].error.message||""); wzFehler=wzFehlt?"":r[0].error.message; }
-    else { WZ=r[0].data||[]; BEDARF=(r[1].data||[]).concat(r[2].data||[]); PACKLISTEN=r[3].data||[]; wzFehlt=false; wzFehler=""; }
+    else { WZ=r[0].data||[]; BEDARF=(r[1].data||[]).concat(r[2].data||[]); PACKLISTEN=r[3].data||[]; BEDARF_ALLE=(r[4]&&r[4].data)||BEDARF.slice(); wzFehlt=false; wzFehler=""; }
     wzGeladen=true; wzStand=Date.now(); wzLaedt=null; return true;
   }, function(){ wzFehler="Keine Verbindung – Werkzeug und Material nicht geladen."; wzGeladen=true; wzStand=Date.now(); wzLaedt=null; return true; });
   return wzLaedt;
@@ -18408,12 +18410,12 @@ function bedarfSpeichern(b, felder){
   felder=Object.assign({geaendert:new Date().toISOString()}, felder);
   if(felder.status==="erledigt") felder.erledigt_von=meinName();
   if(demo()){ var n=Object.assign({}, b||{id:neueKennung("bd"), erstellt_von:meineKennung(), erstellt:new Date().toISOString()}, felder);
-    if(n.status==="erledigt" && !n.erledigt) n.erledigt=new Date().toISOString(); BEDARF=wzZeileSetzen(BEDARF, n); wzGeaendert(); return Promise.resolve(n); }
+    if(n.status==="erledigt" && !n.erledigt) n.erledigt=new Date().toISOString(); BEDARF=wzZeileSetzen(BEDARF, n); BEDARF_ALLE=wzZeileSetzen(BEDARF_ALLE, n); wzGeaendert(); return Promise.resolve(n); }
   var q=b ? Store.sb.from("bedarf").update(felder).eq("id", b.id).select("*") : Store.sb.from("bedarf").insert(Object.assign({erstellt_name:meinName()}, felder)).select("*");
   return mitFrist(q, 15000).then(function(r){
     if(r.error) throw new Error(/does not exist|schema cache|relation/i.test(r.error.message)?"Werkzeug und Material sind in der Datenbank noch nicht eingerichtet (tools/werkzeug.sql).":r.error.message);
     if(!r.data || !r.data.length) throw new Error("Nicht gespeichert – keine Berechtigung.");
-    BEDARF=wzZeileSetzen(BEDARF, r.data[0]); wzGeaendert(); return r.data[0];
+    BEDARF=wzZeileSetzen(BEDARF, r.data[0]); BEDARF_ALLE=wzZeileSetzen(BEDARF_ALLE, r.data[0]); wzGeaendert(); return r.data[0];
   });
 }
 function bedarfStatus(b, status){
@@ -18485,8 +18487,12 @@ function bedarfEditor(b, vorgabe){
       beschaffung:weg, bezugsquelle:weg==="mitnehmen" ? null : (F("bezugsquelle").value.trim()||null), benoetigt_am:F("benoetigt_am").value||null,
       wer:wer, wer_name:wer ? (planPersonName(wer)||a.wer_name||null) : null, status:F("status").value, notiz:F("notiz").value.trim()||null};
     if(!b) ["projekt_id","stoerung_id","planung_id","standort_id"].forEach(function(k){ if(a[k]) felder[k]=a[k]; });
+    /* steht genau so in der Werkzeugliste: verknüpfen (dann sieht man, wo es ist) */
+    var gleich=!felder.werkzeug_id && WZ.filter(function(w){ return w.aktiv!==false && suchNorm(w.name)===suchNorm(text); })[0];
+    if(gleich){ felder.werkzeug_id=gleich.id; felder.art="werkzeug"; }
+    var fragen=felder.art==="werkzeug" && !felder.werkzeug_id;
     ok.disabled=true; ok.textContent="wird gespeichert …";
-    bedarfSpeichern(b, felder).then(function(n){ v.zu(); wzGeaendert(); toast("Gespeichert: "+n.text+" – "+bedarfWeg(n)[1]+"."); },
+    bedarfSpeichern(b, felder).then(function(n){ v.zu(); wzGeaendert(); toast("Gespeichert: "+n.text+" – "+bedarfWeg(n)[1]+"."); if(fragen) wzAufnehmenFragen(n); },
       function(e){ ok.disabled=false; ok.textContent="Speichern"; fehler(e.message||String(e)); });
   };
   setTimeout(function(){ try{ F("text").focus(); }catch(e){} }, 60);
@@ -18502,6 +18508,10 @@ function bedarfKasten(bz, opt){
     if(!l.length) h.appendChild(el('<div class="muted" style="font-size:12.5px">'+esc(opt.leer||"Nichts Besonderes eingetragen.")+"</div>"));
     l.slice(0,40).forEach(function(b){ h.appendChild(bedarfZeile(b, {mitWer:true})); });
     if(nurLesen()) return;
+    /* gelernt: je Projekttyp (vom Projekt mitgegeben), je Markt */
+    var vp=opt.vorschlag ? opt.vorschlag() : null; if(vp) h.appendChild(vp);
+    if(bz.standort_id && !opt.ohneMarkt){ var vm=bedarfVorschlagLeiste("An diesem Markt schon gebraucht – antippen trägt ein:", bedarfGelerntMarkt(bz.standort_id, l.filter(bedarfOffen)), bz,
+      "markt:"+bz.standort_id+":"+(bz.planung_id||bz.stoerung_id||"markt"), false); if(vm) h.appendChild(vm); }
     var r=el('<div class="rowflex" style="gap:6px;flex-wrap:wrap"><button class="btn ghost sm" type="button" data-n>+ Material / Werkzeug</button>'+
       (PACKLISTEN.length?'<button class="btn ghost sm" type="button" data-p>Packliste übernehmen</button>':"")+"</div>");
     r.querySelector("[data-n]").onclick=function(){ bedarfEditor(null, Object.assign({}, bz)); };
@@ -18691,12 +18701,185 @@ function wzEditor(w){
   };
 }
 
+/* ---------- Werkzeug und Material lernt mit (Büro 04.10.2026: „überlege, was sinnvoll ist“ – „genauso“) ----------
+   Grundsatz: die App schlägt vor, man bestätigt mit einem Tippen – nichts wird still angelegt.
+   (1) je Projekttyp: was in mindestens 2 früheren Projekten desselben Typs gebraucht wurde (Bedarf und
+       Baustellenbuch: Spezialwerkzeug, Material, geholt, Kran) – `bedarfGelerntProjekt`
+   (2) je Markt: was dort schon gebraucht wurde – `bedarfGelerntMarkt`, auch in „Planung prüfen“
+   (3) aus dem Angebot (nur Inhaber): Geräte- und Materialpositionen ohne Preise als „bestellen“ – `bedarfAusAngebot`
+   (4) unbekanntes Werkzeug im Bedarf: einmal fragen, ob es in die Werkzeugliste kommt – `wzAufnehmenFragen`
+   (5) nach dem Einsatz: „Wo ist das Werkzeug jetzt?“ (`wzNachfragen`), Werkzeug auf abgeschlossener Baustelle
+       (To-do), vergangene Termine mit Offenem (Übersicht „Termin vorbei – noch offen?“) */
+function bedarfSchluessel(t){ return suchNorm(String(t||"").replace(/\s+/g," ").trim()); }
+function bedarfVorschlagAus(art){ try{ return !!lsGet("ukt-bdvorschlag-aus:"+art); }catch(e){ return false; } }
+function bedarfGelerntProjekt(p){
+  var typ=String((p.daten||{}).typ||"").trim(); if(!typ) return {typ:"", projekte:0, l:[]};
+  var andere=PROJEKTE.filter(function(x){ return x.id!==p.id && String((x.daten||{}).typ||"").trim().toLowerCase()===typ.toLowerCase(); });
+  var je={};
+  var dazu=function(pid, text, art, wid){
+    text=String(text||"").split("\n")[0].trim(); var k=bedarfSchluessel(text); if(!k) return;
+    var e=je[k]||(je[k]={text:text.slice(0,200), art:art, werkzeug_id:null, p:{}});
+    e.p[pid]=1; if(wid && !e.werkzeug_id) e.werkzeug_id=wid; if(art==="werkzeug") e.art="werkzeug";
+  };
+  andere.forEach(function(x){
+    BEDARF_ALLE.forEach(function(b){ if(b.projekt_id===x.id) dazu(x.id, b.text, b.art, b.werkzeug_id); });
+    ((x.daten||{}).baubuch||[]).forEach(function(e){
+      if(["werkzeug","kran","material","geholt"].indexOf(e.art)>=0 && e.text) dazu(x.id, e.text, e.art==="werkzeug"||e.art==="kran" ? "werkzeug" : "material", null); });
+  });
+  var schon=bedarfZu({projekt_id:p.id}).map(function(b){ return bedarfSchluessel(b.text); });
+  var l=Object.keys(je).map(function(k){ var e=je[k]; e.n=Object.keys(e.p).length; return e; })
+    .filter(function(e){ return e.n>=2 && schon.indexOf(bedarfSchluessel(e.text))<0; })
+    .sort(function(a,b){ return b.n-a.n || a.text.localeCompare(b.text,"de"); }).slice(0,25);
+  return {typ:typ, projekte:andere.length, l:l};
+}
+/* am Markt schon gebraucht (gleich welcher Einsatz) – ohne das, was hier schon steht */
+function bedarfGelerntMarkt(sid, schonListe){
+  if(!sid) return [];
+  var je={}, schon=(schonListe||[]).map(function(b){ return bedarfSchluessel(b.text); });
+  BEDARF_ALLE.forEach(function(b){
+    if(b.standort_id!==sid) return;
+    var k=bedarfSchluessel(b.text); if(!k || schon.indexOf(k)>=0) return;
+    var e=je[k]||(je[k]={text:String(b.text).trim(), art:b.art, werkzeug_id:b.werkzeug_id||null, n:0});
+    e.n++; if(b.art==="werkzeug") e.art="werkzeug"; if(b.werkzeug_id) e.werkzeug_id=b.werkzeug_id;
+  });
+  return Object.keys(je).map(function(k){ return je[k]; }).sort(function(a,b){ return b.n-a.n || a.text.localeCompare(b.text,"de"); }).slice(0,8);
+}
+/* Vorschläge als Knöpfe: einzeln antippen legt an; bei mehreren „Ausgewählte übernehmen“ */
+function bedarfVorschlagLeiste(titel, l, bz, aus, mehrfach){
+  if(!l.length || nurLesen() || bedarfVorschlagAus(aus)) return null;
+  var box=el('<div class="note" style="font-size:12.5px"><div class="rowflex" style="justify-content:space-between;gap:8px;flex-wrap:nowrap"><span>💡 '+titel+'</span>'+
+    '<button class="btn ghost sm" type="button" data-aus title="Diese Vorschläge hier nicht mehr zeigen" style="flex:none">ausblenden</button></div><div class="chips" style="margin-top:6px"></div></div>');
+  var chips=box.querySelector(".chips"), wahl={};
+  l.forEach(function(e, i){
+    var c=el('<button class="chip" type="button" aria-pressed="'+(!!mehrfach)+'">'+(e.art==="werkzeug"?"🔧 ":"")+esc(e.text)+(e.n>1?' <span class="muted">('+e.n+"×)</span>":"")+"</button>");
+    if(mehrfach) wahl[i]=true;
+    c.onclick=function(){
+      if(mehrfach){ wahl[i]=!wahl[i]; c.setAttribute("aria-pressed", String(!!wahl[i])); zaehlen(); return; }
+      c.disabled=true; bedarfAusVorschlag([e], bz).then(function(){}, function(){ c.disabled=false; });
+    };
+    chips.appendChild(c);
+  });
+  var ok;
+  var zaehlen=function(){ if(!ok) return; var n=Object.keys(wahl).filter(function(k){ return wahl[k]; }).length; ok.textContent="Ausgewählte übernehmen ("+n+")"; ok.disabled=!n; };
+  if(mehrfach){
+    ok=el('<button class="btn sm" type="button" style="margin-top:6px"></button>'); zaehlen();
+    ok.onclick=function(){ ok.disabled=true; bedarfAusVorschlag(l.filter(function(e, i){ return wahl[i]; }), bz).then(function(){}, function(){ ok.disabled=false; }); };
+    box.appendChild(ok);
+  }
+  box.querySelector("[data-aus]").onclick=function(){ lsSet("ukt-bdvorschlag-aus:"+aus, "1"); box.remove(); };
+  return box;
+}
+function bedarfAusVorschlag(l, bz){
+  var kette=Promise.resolve(), n=0;
+  l.forEach(function(e){ kette=kette.then(function(){
+    var f={art:e.werkzeug_id ? "werkzeug" : (e.art||"material"), text:e.text, werkzeug_id:e.werkzeug_id||null, menge:e.menge||null,
+      beschaffung:e.beschaffung||"mitnehmen", status:"offen", notiz:e.notiz||null};
+    ["projekt_id","stoerung_id","planung_id","standort_id"].forEach(function(k){ if(bz[k]) f[k]=bz[k]; });
+    return bedarfSpeichern(null, f).then(function(b){ n++; BEDARF_ALLE=wzZeileSetzen(BEDARF_ALLE, b); }); }); });
+  return kette.then(function(){ toast(n===1 ? "Eingetragen: "+l[0].text+"." : n+" Einträge übernommen."); },
+    function(e){ toast("Nur "+n+" übernommen: "+technikDeutsch(e.message||String(e))); throw e; });
+}
+/* (3) Angebot → bestellen (nur Inhaber): Geräte und Material, ohne Preise; Arbeit, Fahrt u. Ä. nicht vorgewählt */
+var BEDARF_NICHT_MATERIAL=/(arbeitszeit|monteur|techniker|stunde|regie|fahrt|anfahrt|pauschale|montage\b|^montage|inbetriebnahme|einregulier|dokumentation|planung|entsorgung|wartung|prüfung|überprüfung)/i;
+function bedarfAusAngebot(p){
+  if(!nurInhaber()){ toast("Das Angebot sieht nur der Inhaber."); return; }
+  belegeLaden(p.id).then(function(l){
+    var ang=(l||[]).filter(function(b){ return b.art==="angebot"; }).sort(function(a,b){ return String(b.datum||"").localeCompare(String(a.datum||"")); });
+    if(!ang.length){ toast("Zu diesem Projekt gibt es noch kein Angebot."); return; }
+    var v=ansichtOeffnen("Material aus dem Angebot");
+    var wahlB=ang[0], zeichne=function(){
+      v.inhalt.innerHTML="";
+      v.schritt.textContent="Angebot "+(wahlB.nummer||"")+" – kommt als „bestellen“ in den Bedarf, OHNE Preise (den sehen alle)";
+      if(ang.length>1){ var ch=el('<div class="chips"></div>'); ang.forEach(function(b){ var c=el('<button class="chip" type="button" aria-pressed="'+(b===wahlB)+'">'+esc((b.nummer||"Angebot")+(b.datum?" · "+dfmt(b.datum):""))+"</button>"); c.onclick=function(){ wahlB=b; zeichne(); }; ch.appendChild(c); }); v.inhalt.appendChild(ch); }
+      var schon=bedarfZu({projekt_id:p.id}).map(function(b){ return bedarfSchluessel(b.text); });
+      var pos=(wahlB.positionen||[]).filter(function(x){ return x.typ==="pos" && !x.alternativ && String(x.text||"").trim(); });
+      if(!pos.length) v.inhalt.appendChild(el('<div class="muted">Keine Positionen.</div>'));
+      pos.forEach(function(x, i){
+        var text=String(x.text).split("\n")[0].trim().slice(0,200), da=schon.indexOf(bedarfSchluessel(text))>=0, an=!da && !BEDARF_NICHT_MATERIAL.test(text) && !/^(h|std|psh|pausch)/i.test(String(x.eh||""));
+        var z=el('<label class="chk" style="font-size:13px"><input type="checkbox" data-i="'+i+'"'+(an?" checked":"")+(da?" disabled":"")+"><span>"+esc(text)+
+          ' <span class="muted">'+esc([x.menge!=null?String(x.menge).replace(".",",")+" "+(x.eh||""):"", da?"steht schon drin":""].filter(Boolean).join(" · "))+"</span></span></label>");
+        v.inhalt.appendChild(z);
+      });
+      v.inhalt._pos=pos;
+    };
+    zeichne();
+    var ok=fussKnoepfe(v, "Übernehmen").ok;
+    ok.onclick=function(){
+      var pos=v.inhalt._pos||[];
+      var l2=[].slice.call(v.inhalt.querySelectorAll("input[data-i]:checked")).map(function(c){ var x=pos[+c.dataset.i];
+        return {text:String(x.text).split("\n")[0].trim().slice(0,200), art:"material", menge:x.menge!=null ? (String(x.menge).replace(".",",")+" "+(x.eh||"")).trim().slice(0,40) : null,
+          beschaffung:"bestellen", notiz:"aus Angebot "+(wahlB.nummer||"")}; });
+      if(!l2.length){ toast("Nichts ausgewählt."); return; }
+      ok.disabled=true;
+      bedarfAusVorschlag(l2, {projekt_id:p.id}).then(function(){ v.zu(); wzGeaendert(); }, function(){ ok.disabled=false; });
+    };
+  }, function(e){ toast("Angebote nicht geladen: "+technikDeutsch(e.message||String(e))); });
+}
+/* (4) Werkzeug, das noch nicht in der Liste steht: einmal fragen, ob es dazukommt (und wo es ist) */
+function wzAufnehmenFragen(b){
+  var v=ansichtOeffnen("In die Werkzeugliste?");
+  v.schritt.textContent="„"+b.text+"“ steht noch nicht in der Werkzeugliste";
+  v.inhalt.appendChild(el('<div class="note" style="font-size:13px">Steht es in der Liste, sieht jeder, wo es gerade ist – und die App warnt, wenn es in Reparatur oder bei jemand anderem ist. Wo ist es jetzt?</div>'));
+  var r=el('<div class="stack" style="gap:8px;max-width:360px"></div>');
+  var mf=meinFahrzeug();
+  [["Ja – im Lager", {standort_art:"lager"}], ["Ja – bei mir", {standort_art:"person", person_id:meineKennung(), person_name:meinName()}]]
+    .concat(mf ? [["Ja – in meinem Auto ("+mf.kennzeichen+")", {standort_art:"fahrzeug", fahrzeug_id:mf.id, fahrzeug_name:mf.kennzeichen}]] : [])
+    .forEach(function(x){
+      var k=el('<button class="btn" type="button">'+esc(x[0])+"</button>");
+      k.onclick=function(){ k.disabled=true;
+        wzSpeichern(null, Object.assign({name:b.text.slice(0,120)}, x[1])).then(function(w){
+          return bedarfSpeichern(b, {werkzeug_id:w.id, art:"werkzeug"}).then(function(){ v.zu(); wzGeaendert(); toast("„"+w.name+"“ steht jetzt in der Werkzeugliste – "+wzOrtText(w)+"."); });
+        }).catch(function(e){ k.disabled=false; toast("Nicht gespeichert: "+technikDeutsch(e.message||String(e))); }); };
+      r.appendChild(k);
+    });
+  var nein=el('<button class="btn ghost" type="button">Nein, nicht aufnehmen</button>'); nein.onclick=function(){ v.zu(); };
+  r.appendChild(nein);
+  v.inhalt.appendChild(r);
+}
+/* (5) nach dem Einsatz: Werkzeug aus meinem Bedarf, Termin vorbei (bis 14 Tage) oder heute mit gespeichertem Protokoll am Markt,
+   noch nicht gefragt und nicht im Lager → „Wo ist es jetzt?“ */
+function bedarfMarkt(b){
+  if(b.standort_id) return b.standort_id;
+  var e=b.planung_id && PLANUNG.filter(function(x){ return x.id===b.planung_id; })[0]; if(e && e.standort_id) return e.standort_id;
+  var o=b.stoerung_id && OFFENE.filter(function(x){ return x._id===b.stoerung_id; })[0]; return o ? o.standortId : null;
+}
+function wzNachfragen(){
+  var heute=isoLokal(new Date()), grenze=plusTage(heute,-14), gesehen={};
+  return BEDARF.filter(function(b){
+    if(!b.werkzeug_id || b.nachgefragt || !bedarfIstMeins(b)) return false;
+    var w=WZ.filter(function(x){ return x.id===b.werkzeug_id; })[0]; if(!w || w.standort_art==="lager" || w.aktiv===false || gesehen[w.id]) return false;
+    var d=bedarfWann(b); if(!d || d<grenze || d>heute) return false;
+    if(d===heute){ var sid=bedarfMarkt(b); if(!sid || !alleProtokolle().some(function(p){ return p.datum===heute && p.standortId===sid && !p.geloescht; })) return false; }
+    gesehen[w.id]=1; return true;
+  });
+}
+function wzNachfrageZeile(b){
+  var w=WZ.filter(function(x){ return x.id===b.werkzeug_id; })[0]; if(!w) return null;
+  var z=el('<div class="stack" style="gap:4px;font-size:13px;border-top:1px dashed var(--line);padding-top:6px"><div>🔧 <strong>'+esc(w.name)+"</strong>"+
+    ' <span class="muted">('+esc(bedarfBezugText(b)||dfmt(bedarfWann(b)||""))+") – jetzt: "+esc(wzOrtText(w))+"</span></div>"+
+    '<div class="rowflex" style="gap:6px;flex-wrap:wrap"></div></div>');
+  var k=z.querySelector(".rowflex");
+  var setze=function(felder){
+    var p=felder ? wzSpeichern(w, Object.assign({zurueck_am:null}, felder)) : Promise.resolve(w);
+    return p.then(function(){ return bedarfSpeichern(b, Object.assign({nachgefragt:new Date().toISOString()}, bedarfOffen(b) ? {status:"erledigt"} : {})); })
+      .then(function(){ toast(w.name+": "+(felder ? "Standort gespeichert." : "bleibt so.")); }, function(e){ toast("Nicht gespeichert: "+technikDeutsch(e.message||String(e))); });
+  };
+  var knopf=function(t, felder){ var x=el('<button class="btn ghost sm" type="button">'+esc(t)+"</button>"); x.onclick=function(){ x.disabled=true; setze(felder); }; k.appendChild(x); };
+  knopf("passt so", null);
+  if(!wzBei(w, meineKennung())) knopf("bei mir", {standort_art:"person", person_id:meineKennung(), person_name:meinName()});
+  var sid=bedarfMarkt(b);
+  if(b.projekt_id) knopf("auf der Baustelle", {standort_art:"baustelle", projekt_id:b.projekt_id, standort_id:null});
+  else if(sid) knopf("am Markt gelassen", {standort_art:"baustelle", standort_id:sid, projekt_id:null});
+  knopf("zurück ins Lager", {standort_art:"lager", standort_text:null});
+  return z;
+}
+
 /* ---------- Übersicht: was ansteht (mitnehmen, abholen, bestellen) ---------- */
 function bedarfGruppen(liste){
   var heute=isoLokal(new Date()), morgen=plusTage(heute,1), so=plusTage(montagVon(heute),6);
-  var g=[["Heute oder schon vorbei",[]],["Morgen",[]],["Diese Woche",[]],["Später",[]],["Ohne Termin",[]]];
+  var g=[["Termin vorbei – noch offen?",[]],["Heute",[]],["Morgen",[]],["Diese Woche",[]],["Später",[]],["Ohne Termin",[]]];
   liste.forEach(function(b){ var w=bedarfWann(b);
-    (!w ? g[4] : w<=heute ? g[0] : w===morgen ? g[1] : w<=so ? g[2] : g[3])[1].push(b); });
+    (!w ? g[5] : w<heute ? g[0] : w===heute ? g[1] : w===morgen ? g[2] : w<=so ? g[3] : g[4])[1].push(b); });
   g.forEach(function(x){ x[1].sort(function(a,b){ return String(bedarfWann(a)||"9").localeCompare(String(bedarfWann(b)||"9")); }); });
   return g.filter(function(x){ return x[1].length; });
 }
@@ -18717,6 +18900,14 @@ function bedarfUebersichtKarte(){
   bedarfGruppen(l).forEach(function(g){
     h.appendChild(el('<div style="font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--accent);margin-top:4px">'+esc(g[0])+"</div>"));
     g[1].forEach(function(b){ h.appendChild(bedarfZeile(b, {mitWann:true, mitBezug:true, mitWer:S.bdAlle})); });
+    /* vorbei: mit einem Griff alles abhaken */
+    if(/^Termin vorbei/.test(g[0]) && g[1].length>1 && !nurLesen()){
+      var ae=el('<button class="btn ghost sm" type="button" style="align-self:flex-start">Alle '+g[1].length+" als erledigt abhaken</button>");
+      ae.onclick=function(){ if(!window.confirm(g[1].length+" Einträge für vergangene Termine als erledigt abhaken?")) return; ae.disabled=true;
+        var k=Promise.resolve(); g[1].forEach(function(b){ k=k.then(function(){ return bedarfSpeichern(b, {status:"erledigt"}); }); });
+        k.then(function(){ toast("Abgehakt."); }, function(e){ ae.disabled=false; toast("Nicht alle abgehakt: "+technikDeutsch(e.message||String(e))); }); };
+      h.appendChild(ae);
+    }
   });
   var fertig=BEDARF.filter(function(b){ return !bedarfOffen(b); }).sort(function(a,b){ return String(b.erledigt||"").localeCompare(String(a.erledigt||"")); });
   if(fertig.length){
@@ -18806,6 +18997,9 @@ function wzToDo(){
   var r=[];
   WZ.filter(function(w){ return w.aktiv!==false; }).forEach(function(w){
     wzHinweise(w).forEach(function(a){ if(a.art==="crit" || /Prüfung/.test(a.text)) r.push("🧰 "+w.name+": "+a.text); }); });
+  WZ.filter(function(w){ return w.aktiv!==false && w.standort_art==="baustelle" && w.projekt_id; }).forEach(function(w){
+    var p=PROJEKTE.filter(function(x){ return x.id===w.projekt_id; })[0];
+    if(p && !projektOffen(p)) r.push("🧰 "+w.name+" liegt noch auf der Baustelle "+projektTitel(p)+" (abgeschlossen)"); });
   var best=BEDARF.filter(function(b){ return b.beschaffung==="bestellen" && b.status==="offen"; }).length;
   if(best) r.push("🛒 "+best+(best===1?" Sache":" Sachen")+" noch zu bestellen");
   return r;
@@ -22482,7 +22676,7 @@ function handbuchKarte(z){
         "<strong>Fotos und Rapport:</strong> bis 25 Fotos mit Notiz, bei Lidl den Rapportbericht anhängen (oder später nachreichen) – die ausgeführten Arbeiten daraus kommen zusätzlich in „Durchgeführte Maßnahmen“ (Störung) bzw. „Bemerkungen“ (Wartung).",
         "<strong>Abschluss:</strong> Datum, Uhrzeit, wer noch dabei war, Unterschrift. Das Protokoll läuft immer unter deinem Namen – du bist verantwortlich.",
         "<strong>Übersicht prüfen und speichern.</strong> Oben steht „✓ gespeichert“. Nach einer Störung bietet die App fällige Wartungen am selben Markt gleich mit an.",
-        "<strong>Werkzeug und Material:</strong> Reiter <em>Werkzeug</em> – was mitzunehmen, abzuholen oder zu bestellen ist (im Termin, in der Störung, im Projekt, am Markt eintragen; „Heute für dich“ und „Planung prüfen“ erinnern) und wo jedes Werkzeug gerade ist („Ich hab’s“, „In mein Auto“, „Ins Lager“, Reparatur, Prüfung).",
+        "<strong>Werkzeug und Material:</strong> Reiter <em>Werkzeug</em> – was mitzunehmen, abzuholen oder zu bestellen ist (im Termin, in der Störung, im Projekt, am Markt eintragen; „Heute für dich“ und „Planung prüfen“ erinnern) und wo jedes Werkzeug gerade ist („Ich hab’s“, „In mein Auto“, „Ins Lager“, Reparatur, Prüfung). Lernt mit: Vorschläge je Projekttyp und je Markt, Material aus dem Angebot, neues Werkzeug kommt auf Nachfrage in die Liste, nach dem Einsatz „Wo ist das Werkzeug jetzt?“.",
         "<strong>Stunden:</strong> ein-, um- und ausstempeln (Reiter <em>Stunden</em>; „📅 Heute geplant“ füllt Bereich und Markt) – oder geplante Termine dort mit „erfassen“ übernehmen. "+
         "Urlaub (genehmigt), Krankenstand, Schule und Zeitausgleich im Kalender stehen von selbst in den Stunden; je Tag und Woche steht der Abstand zum Soll (nur zur Info – Überstunden zählen je Monat)."])+
       "<p><strong>Büro / Admin – Aufträge, Planung, Datenpflege</strong></p>"+liste([
@@ -23367,6 +23561,13 @@ Object.assign(RUNDGAENGE, {
         "Das Fahrzeug zeigt, was drin liegt; das Projekt und der Markt, was dort liegt. Keine Preise, kein Lagerbestand."])},
     {reiter:"werkzeug", ziel:function(){ return rgKarte(/^Packlisten/); }, titel:"Packlisten",
       text:"Was man für eine Art Einsatz immer wieder braucht (z. B. VRV-Montage). Im Projekt, in der Störung oder im Termin trägt <strong>„Packliste übernehmen“</strong> alles auf einmal ein – was schon drinsteht, nicht doppelt."},
+    {titel:"Lernt mit", text:"Die App <strong>schlägt vor</strong>, man bestätigt mit einem Tippen – angelegt wird nichts von selbst."+RG_LISTE([
+        "<strong>Je Projekttyp</strong>: im Projekt „Bei früheren Projekten … gebraucht“ – was in mindestens 2 Projekten desselben Typs eingetragen war (auch Spezialwerkzeug, Kran und Material aus dem Baustellenbuch). „Ausgewählte übernehmen“.",
+        "<strong>Je Markt</strong>: im Termin, in der Störung und am Markt „An diesem Markt schon gebraucht“; „Planung prüfen“ erinnert daran (💡).",
+        "<strong>Aus dem Angebot</strong> (nur Inhaber): „Material aus dem Angebot übernehmen“ – Geräte und Material als „bestellen“, ohne Preise; Arbeitszeit, Fahrt u. Ä. sind nicht vorgewählt.",
+        "<strong>Neues Werkzeug</strong>: steht es noch nicht in der Liste, fragt die App einmal „In die Werkzeugliste? Wo ist es jetzt?“ – so wächst die Liste nebenbei.",
+        "<strong>Nach dem Einsatz</strong>: in „Heute für dich“ „Wo ist das Werkzeug jetzt?“ (passt so, bei mir, Baustelle/Markt, Lager); Werkzeug auf einer abgeschlossenen Baustelle steht im To-do; „Termin vorbei – noch offen?“ mit „alle abhaken“."])+
+      RG_HG(["Gelernt wird aus allem, was je eingetragen wurde (auch Erledigtem). „ausblenden“ blendet die Vorschläge an dieser Stelle aus (auf diesem Gerät)."])},
     {titel:"Wo es überall auftaucht", text:RG_LISTE(["<strong>Kalendertermin</strong> (gespeichert): Kasten „Material und Werkzeug“; im Kalender steht 🧰 beim Einsatz.",
         "<strong>„🔍 Planung prüfen“</strong>: je Tag „Vorher besorgen bzw. mitnehmen“ – auch abholen und bestellen für die Woche.",
         "<strong>„Heute für dich“</strong> (Fällig): was du für heute und morgen besorgen musst.",
@@ -25847,9 +26048,12 @@ function projektAnsicht(id){
 
     /* Team-Chat: Nachrichten zu diesem Projekt */
     /* Werkzeug und Material für die Baustelle; dazu, welches Werkzeug gerade dort ist (Büro 04.10.2026) */
-    if(wzAn()){ var bk=bedarfKarte("Werkzeug und Material", {projekt_id:p.id}, {leer:"Noch nichts – „+ Material / Werkzeug“ oder „Packliste übernehmen“."});
+    if(wzAn()){ var bk=bedarfKarte("Werkzeug und Material", {projekt_id:p.id}, {leer:"Noch nichts – „+ Material / Werkzeug“ oder „Packliste übernehmen“.",
+        vorschlag:function(){ var g=bedarfGelerntProjekt(p); return bedarfVorschlagLeiste("Bei früheren Projekten „"+esc(g.typ)+"“ gebraucht (Anzahl Projekte):", g.l, {projekt_id:p.id}, "projekt:"+p.id, true); }});
       var dort=WZ.filter(function(w){ return w.aktiv!==false && w.standort_art==="baustelle" && w.projekt_id===p.id; });
-      if(dort.length) bk.querySelector(".stack").appendChild(el('<div class="muted" style="font-size:12.5px">📍 Auf der Baustelle: '+dort.map(function(w){ return esc(w.name); }).join(", ")+"</div>"));
+      if(dort.length) bk.querySelector(".stack").appendChild(el('<div style="font-size:12.5px'+(projektOffen(p)?"":";color:var(--crit)")+'">📍 Auf der Baustelle: '+dort.map(function(w){ return esc(w.name); }).join(", ")+
+        (projektOffen(p)?"":" – Projekt abgeschlossen: bitte zurückholen")+"</div>"));
+      if(nurInhaber()){ var ak=el('<button class="btn ghost sm" type="button" style="align-self:flex-start">Material aus dem Angebot übernehmen</button>'); ak.onclick=function(){ bedarfAusAngebot(p); }; bk.querySelector(".stack").appendChild(ak); }
       v.inhalt.appendChild(bk); }
     if(chatAn()) v.inhalt.appendChild(chatBezugKarte("projekt", p.id, chatBezugText("projekt", p)));
 
@@ -28539,6 +28743,9 @@ function planungPruefen(wahl, von, bis){
     /* (5) Material und Werkzeug: was für die Einsätze des Tages noch offen ist (Büro 04.10.2026: „erinnern, dass man vorher noch Werkzeug abholen muss“) */
     var bdGes={}; tag.material=[];
     l.forEach(function(x){ bedarfFuerEinsatz(x, t).forEach(function(b){ if(bdGes[b.id] || schonGezeigt[b.id]) return; bdGes[b.id]=schonGezeigt[b.id]=1; tag.material.push(b); }); });
+    tag.marktTipp=[];
+    markte.forEach(function(s){ var lt=bedarfGelerntMarkt(s.id, tag.material.concat(BEDARF.filter(function(b){ return bedarfOffen(b) && bedarfMarkt(b)===s.id; })));
+      if(lt.length) tag.marktTipp.push({s:s, l:lt}); });
     tag.orte=markte;
     tage.push(tag);
   }
@@ -28599,6 +28806,8 @@ function planungPruefenAnsicht(wahl, von, bis){
         h.appendChild(el('<div style="font-size:13px;font-weight:600;margin-top:4px">🧰 Vorher besorgen bzw. mitnehmen:</div>'));
         tg.material.forEach(function(b){ h.appendChild(bedarfZeile(b, {mitBezug:true})); });
       }
+      tg.marktTipp.forEach(function(x){ h.appendChild(el('<div class="muted" style="font-size:12.5px">💡 Am Markt '+esc(stName(x.s))+" wurde schon gebraucht: "+
+        esc(x.l.map(function(e){ return e.text+(e.n>1?" ("+e.n+"×)":""); }).join(", "))+" – bei Bedarf im Termin eintragen.</div>")); });
       if(gut && !tg.naehe.length) h.appendChild(el('<div style="font-size:13px;color:var(--good)">✓ Reihenfolge passt, genug Zeit, nichts übersehen.</div>'));
       host.appendChild(k);
     });
@@ -29364,8 +29573,9 @@ function heuteFuerMichKarte(){
   var ueber=PLANUNG.filter(function(e){ return e.art==="aufgabe" && e.status!=="erledigt" && e.datum && e.datum<heute && planIstMeins(e); });
   /* Material und Werkzeug für heute und morgen (Büro 04.10.2026) */
   if(wzAn() && !wzGeladen) wzNachladen();
-  var morgen=plusTage(heute,1), besorgen=BEDARF.filter(function(b){ var w=bedarfWann(b); return bedarfOffen(b) && w && w<=morgen && bedarfIstMeins(b); });
-  if(!m.length && !ueber.length && !besorgen.length) return null;
+  var morgen=plusTage(heute,1), besorgen=BEDARF.filter(function(b){ var w=bedarfWann(b); return bedarfOffen(b) && w && w>=heute && w<=morgen && bedarfIstMeins(b); });
+  var nachher=wzAn() ? wzNachfragen() : [];
+  if(!m.length && !ueber.length && !besorgen.length && !nachher.length) return null;
   var c=el('<div class="card"><div class="pad stack" style="gap:6px"><div class="rowflex" style="justify-content:space-between"><h2>Heute für dich</h2>'+
     '<button class="btn ghost sm" type="button">Kalender</button></div></div></div>');
   c.querySelector("button").onclick=function(){ S.kalModus="woche"; S.kalWer="ich"; S.kalWoche=montagVon(heute); springe({reiter:"kalender", block:"start"}); };
@@ -29377,6 +29587,10 @@ function heuteFuerMichKarte(){
   if(besorgen.length){
     c.querySelector(".stack").appendChild(el('<div style="font-size:12.5px;font-weight:600">🧰 Mitnehmen, abholen, bestellen – für heute und morgen ('+besorgen.length+")</div>"));
     besorgen.slice(0,10).forEach(function(b){ c.querySelector(".stack").appendChild(bedarfZeile(b, {mitWann:true, mitBezug:true})); });
+  }
+  if(nachher.length){
+    c.querySelector(".stack").appendChild(el('<div style="font-size:12.5px;font-weight:600">🔧 Nach dem Einsatz – wo ist das Werkzeug jetzt?</div>'));
+    nachher.slice(0,6).forEach(function(b){ var z=wzNachfrageZeile(b); if(z) c.querySelector(".stack").appendChild(z); });
   }
   return c;
 }

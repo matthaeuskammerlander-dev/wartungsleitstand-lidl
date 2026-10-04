@@ -998,6 +998,81 @@ test("Werkzeug und Material: Standort, Bedarf am Termin, Erinnerung in „Heute 
   await a.zu();
 });
 
+test("Werkzeug lernt mit: je Projekttyp, je Markt, aus dem Angebot, unbekanntes Werkzeug aufnehmen, nach dem Einsatz nachfragen", async () => {
+  const a = await oeffnen(KONTEN.inhaber);
+  const r = await a.seite.evaluate(async () => {
+    const x = window.__t.x, warte = (ms) => new Promise((f) => setTimeout(f, ms)), db = window.__db.tabellen;
+    const dlg = () => [...document.querySelectorAll(".assistent")].pop();
+    const ich = x("meineKennung()"), heute = x("isoLokal(new Date())"), gestern = x("plusTage(isoLokal(new Date()),-1)");
+    /* drei Projekte „VRV-Montage“: zwei mit Bedarf, eins neu */
+    ["PL1", "PL2", "PL3"].forEach((id, i) => db.projekte.push({ id, nummer: "P-T-" + i, titel: "Test " + i, status: "auftrag", daten: { typ: "VRV-Montage" }, verlauf: [], erstellt: new Date().toISOString(), geaendert: new Date().toISOString() }));
+    db.bedarf.push({ id: "b1", art: "werkzeug", text: "Vakuumpumpe", projekt_id: "PL1", status: "erledigt", beschaffung: "mitnehmen" },
+      { id: "b2", art: "werkzeug", text: "Vakuumpumpe", projekt_id: "PL2", status: "erledigt", beschaffung: "mitnehmen" },
+      { id: "b3", art: "material", text: "Nur einmal", projekt_id: "PL1", status: "erledigt", beschaffung: "mitnehmen" },
+      { id: "b4", art: "werkzeug", text: "Hubsteiger", standort_id: "TS1", status: "erledigt", beschaffung: "abholen" });
+    await x("projekteLaden()"); await x("wzLaden(true)");
+    const gelernt = x("bedarfGelerntProjekt(PROJEKTE.filter(function(p){ return p.id==='PL3'; })[0]).l.map(function(e){ return e.text+':'+e.n; })");
+    /* im Projekt: Vorschlag antippen → übernehmen */
+    x("projektAnsicht('PL3')"); await warte(800);
+    let d = dlg();
+    const knopf = [...d.querySelectorAll("[data-bedarfkasten] button")].find((b) => /Ausgewählte übernehmen/.test(b.textContent));
+    if (knopf) knopf.click(); await warte(800);
+    const uebernommen = db.bedarf.filter((b) => b.projekt_id === "PL3").map((b) => b.text);
+    x("ansichtenSchliessen()");
+    /* am Markt: Hubsteiger als Vorschlag im Termin */
+    const t = (await x("Store.sb.from('planung').insert(" + JSON.stringify({ art: "termin", kategorie: "wartung", titel: "Wartung Markt", datum: heute, standort_id: "TS1", wer: [ich], wer_namen: ["Inhaber"] }) + ").select('*')")).data[0];
+    x("planungStand=0; planungNachladen()"); await warte(500);
+    x("planEditor(PLANUNG.filter(function(e){ return e.id==='" + t.id + "'; })[0])"); await warte(500);
+    d = dlg();
+    const chipMarkt = [...d.querySelectorAll("[data-bedarfkasten] .chip")].find((c) => /Hubsteiger/.test(c.textContent));
+    if (chipMarkt) chipMarkt.click(); await warte(600);
+    const marktEintrag = db.bedarf.find((b) => b.planung_id === t.id && b.text === "Hubsteiger");
+    const tipp = x("planungPruefen('ich','" + heute + "','" + heute + "').map(function(t){ return t.marktTipp.length; }).join()");
+    x("ansichtenSchliessen()");
+    /* unbekanntes Werkzeug: nach dem Speichern fragen, aufnehmen, verknüpfen */
+    x("bedarfEditor(null, {projekt_id:'PL3'})"); await warte(400);
+    d = dlg();
+    [...d.querySelectorAll("[data-art] .chip")].find((c) => c.dataset.w === "werkzeug").click();
+    d.querySelector('[data-f="text"]').value = "Bördelgerät";
+    [...d.querySelectorAll(".as-fuss button")].pop().click(); await warte(800);
+    d = dlg();
+    const frage = d && /In die Werkzeugliste/.test(d.textContent);
+    const ja = d && [...d.querySelectorAll("button")].find((b) => /Ja – bei mir/.test(b.textContent));
+    if (ja) ja.click(); await warte(800);
+    const wz = JSON.parse(JSON.stringify(db.werkzeug.find((w) => w.name === "Bördelgerät") || {}));
+    const verknuepft = (db.bedarf.find((b) => b.text === "Bördelgerät") || {}).werkzeug_id === wz.id;
+    /* nach dem Einsatz (gestern): wo ist es jetzt? → zurück ins Lager */
+    const t2 = (await x("Store.sb.from('planung').insert(" + JSON.stringify({ art: "termin", kategorie: "wartung", titel: "Einsatz gestern", datum: gestern, standort_id: "TS1", wer: [ich], wer_namen: ["Inhaber"] }) + ").select('*')")).data[0];
+    await x("Store.sb.from('bedarf').insert(" + JSON.stringify({ art: "werkzeug", text: "Bördelgerät", werkzeug_id: wz.id, planung_id: t2.id, status: "offen", beschaffung: "mitnehmen" }) + ").select('*')");
+    x("planungStand=0; planungNachladen()"); await warte(400); await x("wzLaden(true)");
+    x("ansichtenSchliessen(); S.view='faellig'; render()"); await warte(700);
+    const nachfrage = /wo ist das Werkzeug jetzt/i.test(document.body.innerText);
+    const lager = [...document.querySelectorAll("button")].find((b) => /zurück ins Lager/.test(b.textContent));
+    if (lager) lager.click(); await warte(800);
+    const wz2 = db.werkzeug.find((w) => w.id === wz.id) || {};
+    const b2 = db.bedarf.find((b) => b.planung_id === t2.id) || {};
+    /* Angebot → bestellen (ohne Arbeitszeit) */
+    db.belege.push({ id: "be1", art: "angebot", nummer: "T-A-1", projekt_id: "PL3", datum: heute, positionen: [
+      { typ: "pos", menge: 1, eh: "Stk", text: "Außengerät VRV 14 kW", preis: 9000 }, { typ: "pos", menge: 16, eh: "h", text: "Montage Arbeitszeit", preis: 70 },
+      { typ: "pos", menge: 2, eh: "Stk", text: "Alternativ Gerät", preis: 1, alternativ: true }] });
+    x("bedarfAusAngebot(PROJEKTE.filter(function(p){ return p.id==='PL3'; })[0])"); await warte(700);
+    d = dlg();
+    const haken = [...d.querySelectorAll("input[data-i]")].map((c) => c.checked);
+    [...d.querySelectorAll(".as-fuss button")].pop().click(); await warte(800);
+    const best = db.bedarf.filter((b) => b.projekt_id === "PL3" && b.beschaffung === "bestellen").map((b) => b.text + "|" + b.menge + "|" + (b.preis === undefined));
+    return { gelernt, uebernommen, marktEintrag: !!marktEintrag, tipp, frage, wz: { art: wz.standort_art, person: wz.person_id === ich }, verknuepft,
+      nachfrage, wz2: wz2.standort_art, b2: { status: b2.status, gefragt: !!b2.nachgefragt }, haken, best };
+  });
+  pruefe(r.gelernt.join() === "Vakuumpumpe:2", "je Projekttyp falsch gelernt: " + JSON.stringify(r.gelernt));
+  pruefe(r.uebernommen.join() === "Vakuumpumpe", "Vorschlag im Projekt nicht übernommen: " + JSON.stringify(r.uebernommen));
+  pruefe(r.marktEintrag, "Vorschlag am Markt fehlt oder nicht übernommen");
+  pruefe(r.frage && r.wz.art === "person" && r.wz.person && r.verknuepft, "unbekanntes Werkzeug nicht aufgenommen: " + JSON.stringify(r));
+  pruefe(r.nachfrage && r.wz2 === "lager" && r.b2.status === "erledigt" && r.b2.gefragt, "Nachfrage nach dem Einsatz falsch: " + JSON.stringify(r));
+  pruefe(r.haken.join() === "true,false" && r.best.length === 1 && /Außengerät/.test(r.best[0]) && /1 Stk/.test(r.best[0]), "Angebot → bestellen falsch: " + JSON.stringify(r));
+  pruefe(!a.fehler.length, "Laufzeitfehler: " + a.fehler.join("; "));
+  await a.zu();
+});
+
 /* ================================================================ Ablauf ================================================================ */
 const filterText = process.argv.slice(2).find((x) => !x.startsWith("--"));
 const filter = filterText ? new RegExp(filterText, "i") : null;

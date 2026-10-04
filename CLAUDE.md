@@ -325,6 +325,11 @@ Kammerlander Umwelt- und Klimatechnik (UKT) – oft kurz, vom Handy, im Feld.
   (`wzToDo`). Kästen in Termin (gespeichert, nicht Abwesenheit/Privat), Störung, Projekt, Markt; Fahrzeug zeigt, was drin liegt.
   Alle, die mitarbeiten, lesen und schreiben; Werkzeug/Packliste löschen nur Büro, Bedarf wer ihn angelegt hat oder Büro.
   Keine Preise, kein Lagerbestand. Kunde sieht nichts davon.
+  Lernt mit (Büro 04.10.2026, Grundsatz: vorschlagen, mit einem Tippen bestätigen – nie still anlegen): je Projekttyp ab 2
+  Projekten (`bedarfGelerntProjekt`, auch Baustellenbuch), je Markt (`bedarfGelerntMarkt`, auch „Planung prüfen“ 💡), aus dem
+  Angebot nur Inhaber ohne Preise (`bedarfAusAngebot`), unbekanntes Werkzeug → `wzAufnehmenFragen`, nach dem Einsatz
+  `wzNachfragen` („Wo ist das Werkzeug jetzt?“, Spalte `bedarf.nachgefragt`), Werkzeug auf abgeschlossener Baustelle im To-do.
+  Werkzeugstandort NIE automatisch aus Stempeluhr/GPS ändern.
 - **Diktieren** (`diktatKnopf`): Spracherkennung des Browsers, keine KI, Text wird angehängt.
 - **Rapport-Text** (`rapTextRein`): ausgeführte Arbeiten aus dem Lidl-Rapport zusätzlich in
   „Durchgeführte Maßnahmen“ bzw. „Bemerkungen“ – nie ersetzen, kein Feld fällt weg.
