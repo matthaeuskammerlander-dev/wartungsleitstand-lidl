@@ -231,7 +231,7 @@
   E.prototype.upload=function(p,b,o){ var k=this.n+"/"+p;
     if(DATEIEN[k]&&!(o&&o.upsert)) return Promise.resolve({data:null,error:{message:"exists"}});
     /* wie im echten Bucket: nur die erlaubten Typen */
-    var erlaubt=this.n==="sicherungen" ? null : this.n==="auslagen" ? ["image/jpeg","image/png","application/pdf"] : this.n==="projektdateien" ? ["image/jpeg","image/png","application/pdf","text/plain","text/csv","application/vnd.openxmlformats-officedocument.wordprocessingml.document","application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"] : ["image/jpeg","image/png","application/pdf"];
+    var erlaubt=this.n==="sicherungen" ? null : this.n==="auslagen" ? ["image/jpeg","image/png","application/pdf"] : this.n==="projektdateien" ? ["application/pdf","image/jpeg","image/png","image/heic","image/heif","image/webp","text/plain","text/csv","application/msword","application/vnd.openxmlformats-officedocument.wordprocessingml.document","application/vnd.ms-excel","application/vnd.openxmlformats-officedocument.spreadsheetml.sheet","application/zip","message/rfc822","application/vnd.ms-outlook","image/vnd.dwg","application/acad","application/x-acad","application/autocad_dwg","application/dwg","application/x-dwg","application/x-autocad","application/octet-stream"] : ["image/jpeg","image/png","application/pdf"];
     if(erlaubt && b && b.type && erlaubt.indexOf(b.type)<0)
       return Promise.resolve({data:null,error:{message:"mime type "+b.type+" is not supported"}});
     DATEIEN[k]=b; return Promise.resolve({data:{path:p},error:null}); };

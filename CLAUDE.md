@@ -289,6 +289,19 @@ Kammerlander Umwelt- und Klimatechnik (UKT) – oft kurz, vom Handy, im Feld.
   tools/posteingang_test.py); in der App eine Karte je Mail (`posteingangMailBox`), „Zu Projekt
   legen“ (`posteingangZuProjekt`, Vorschlag `posteingangProjektPunkte`) – erledigt erst, wenn alle
   Dateien hochgeladen sind. Angebot/Rechnung als Art nur für den Inhaber.
+- **Mail-Programm am PC** (Büro 04.10.2026, `mailBruecke`, `mailUebernehmen`, `mailProjektNeu`, `mailZuProjekt`,
+  `mailStoerung`, `mailsDazuKarte`): das Programm „Mail mit Claude“ läuft NUR auf dem PC des Inhabers
+  (http://localhost:4317, nicht in diesem Repository). Verbunden per 6-stelligem Code aus dem Mail-Programm unter
+  Verwaltung › Inhaber › „Mail-Programm am PC“ (`mailKoppelnKasten`; Links öffnen nie die installierte App) oder
+  `#mailkopplung=<Schlüssel>` – localStorage `ukt_mailbruecke` mit Konto, gilt nur für das Inhaber-Konto, das ihn
+  angenommen hat (`nurInhaber()`), nie in Präsentation/Spielwiese. „↗ Leitstand“ im Mail-Programm legt einen Auftrag
+  bereit, den der offene Leitstand alle 3 s abholt (`mailAbholenStarten`, `/api/leitstand/abholen`; ohne Antwort 30 s
+  Pause); `#mail=…` geht ebenso. Geöffnet wird „Projekt aus Mail“ (Titel/Datum/Absender vorbelegt, „✦ Mit Claude
+  ausfüllen“ über das Mail-Programm), „Mail zu Projekt legen“ oder die Störungserfassung. Mail (.eml) + gewählte
+  Anhänge → Projektdateien (Herkunft), Verweis in `daten.mails`, bei neuer Anfrage `.eml` als Quelle
+  (`daten.quellen.anfrage`), Absender ins Adressbuch. „Mails dazu“ bei Projekt, Kunde (nicht Lidl) und Markt – ohne
+  Verbindung gar keine Karte. Der Leitstand darf dort nur lesen/suchen (das Mail-Programm sperrt Senden,
+  Verschieben, Löschen). Mailinhalte nie ins Repository. Test: „Mail-Programm am PC …“.
 - **Katalog lernt mit** (`katalogLernen`, Büro 02.10.2026, nur Inhaber): neue Positionen aus KPlus-PDFs und
   aus gespeicherten App-Belegen kommen dazu (Herkunft in `quelle`, ohne Preis nichts); Preise bestehender
   Positionen ändert nur KPlus (alter Preis in der Herkunft). „+ Neue Position“ im Katalog; Auswahl nach Häufigkeit.

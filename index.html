@@ -3241,6 +3241,353 @@ function posteingangZuProjekt(g, fertig){
     }, function(x){ ok.disabled=false; ok.textContent="Ins Projekt legen"; toast("Datei nicht abrufbar: "+(x.message||x)); });
   };
 }
+/* ---- Mail-Programm am PC (Büro 04.10.2026: „über die Mail auch Projekte einpflegen“) ----
+   Das Mail-Programm „Mail mit Claude“ läuft nur auf dem PC des Inhabers (http://localhost:4317).
+   Die Mails bleiben dort – in den Leitstand kommt nur, was man hier ausdrücklich übernimmt
+   (neues Projekt, Dateien zu einem Projekt, Störung). Verbunden wird mit einem Schlüssel, den das
+   Mail-Programm beim Klick auf „Mit Leitstand verbinden“ mitschickt (#mailkopplung=…); er gilt nur
+   für das Inhaber-Konto, das ihn angenommen hat, und nur auf diesem Gerät. Andere Konten sehen nichts. */
+var MAILBRUECKE_URL="http://localhost:4317", mailWartet=null, mailBrueckeStatus=null;
+var MAIL_FREI=/^(gmail|gmx|yahoo|hotmail|outlook|icloud|me|aon|a1|live|web|chello)\./;
+function mailBruecke(){
+  if(Store.modus!=="supabase" || !Store.benutzer || demo() || spielwiese() || !nurInhaber()) return null;
+  var b=lsGet("ukt_mailbruecke", null);
+  return b && b.schluessel && b.konto===wer() ? b : null;
+}
+function mailHolen(pfad, opt){
+  var b=mailBruecke(); opt=opt||{};
+  if(!b) return Promise.reject(new Error("Das Mail-Programm ist nicht verbunden."));
+  var h={"x-mail-app":"1", "x-mail-schluessel":b.schluessel}; if(opt.body) h["Content-Type"]="application/json";
+  return mitFrist(fetch(MAILBRUECKE_URL+pfad, {method:opt.body?"POST":"GET", headers:h, body:opt.body?JSON.stringify(opt.body):undefined}), opt.frist||30000)
+    .then(function(r){
+      if(!r.ok) return r.json().then(function(j){ throw new Error(j.fehler||("Fehler "+r.status)); }, function(){ throw new Error("Fehler "+r.status); });
+      return opt.blob ? r.blob() : r.json();
+    }, function(e){ throw new Error(/fetch|network|load/i.test(e&&e.message||"") ? "Das Mail-Programm am PC antwortet nicht – ist es gestartet (Symbol „Mail mit Claude“)?" : (e&&e.message||String(e))); });
+}
+/* #mail=… (Mail übernehmen) oder #mailkopplung=… (verbinden) aus dem Mail-Programm */
+function mailBrueckeHash(){
+  var h=location.hash||"", m=/[#&]mailkopplung=([0-9a-f]{20,})/.exec(h), n=/[#&]mail=([^&]+)/.exec(h);
+  if(!m && !n) return;
+  history.replaceState(null, "", location.pathname+location.search);
+  if(m) mailWartet={art:"kopplung", wert:m[1], seit:Date.now()};
+  else { var a=null; try{ a=JSON.parse(decodeURIComponent(n[1])); }catch(e){ toast("Mail-Verweis unlesbar."); return; }
+    mailWartet={art:"mail", wert:a, seit:Date.now()}; }
+  mailBrueckeWeiter();
+}
+window.addEventListener("hashchange", mailBrueckeHash);
+/* wartet wie die Sprungziele aus Nachrichten auf Anmeldung und Rollenprüfung (aus chatKnopf) */
+function mailBrueckeWeiter(){
+  if(!mailWartet || Store.modus==="lade" || Store.modus==="anmeldung" || (Store.modus==="supabase" && !Admin.geprueft)) return;
+  var w=mailWartet; mailWartet=null;
+  if(Date.now()-w.seit>900000) return;
+  if(w.art==="kopplung"){
+    if(Store.modus!=="supabase" || demo() || spielwiese() || !nurInhaber()){ toast("Das Mail-Programm lässt sich nur mit einem Inhaber-Konto verbinden."); return; }
+    lsSet("ukt_mailbruecke", {schluessel:w.wert, konto:wer(), seit:new Date().toISOString()});
+    mailBrueckeStatus=null;
+    mailHolen("/api/status").then(function(s){ mailBrueckeStatus=s;
+      toast("Mail-Programm verbunden ("+s.konten.map(function(k){ return k.adresse; }).join(", ")+") – nur für dein Konto auf diesem Gerät."); },
+      function(e){ toast("Verbunden, aber noch keine Antwort: "+e.message); });
+    return;
+  }
+  if(!mailBruecke()){ toast(nurInhaber() ? "Das Mail-Programm ist noch nicht verbunden – Verwaltung › Inhaber › Mail-Programm am PC." : "Mails übernehmen geht nur mit dem Inhaber-Konto, das das Mail-Programm verbunden hat."); return; }
+  mailUebernehmen(w.wert);
+}
+/* „↗ Leitstand“ im Mail-Programm legt den Auftrag bereit; der offene Leitstand holt ihn hier ab
+   (ein Link würde nie die installierte App treffen, sondern ein neues Browserfenster öffnen).
+   Läuft das Mail-Programm nicht, wird seltener nachgesehen. */
+var mailAbholenAn=false, mailAbholenPause=0;
+function mailAbholenStarten(){
+  if(mailAbholenAn) return; mailAbholenAn=true;
+  setInterval(function(){
+    if(!mailBruecke() || document.visibilityState!=="visible" || Date.now()<mailAbholenPause) return;
+    mailHolen("/api/leitstand/abholen", {frist:4000}).then(function(r){ if(r && r.auftrag){ try{ window.focus(); }catch(e){} mailUebernehmen(r.auftrag); } },
+      function(){ mailAbholenPause=Date.now()+30000; });
+  }, 3000);
+}
+/* Verwaltung › Inhaber: Mail-Programm am PC per Code verbinden oder trennen */
+function mailKoppelnKasten(){
+  if(Store.modus!=="supabase" || demo() || spielwiese() || !nurInhaber()) return null;
+  var k=el('<div class="stack" style="gap:6px;border-top:1px solid var(--line);padding-top:10px"><h3 style="margin:0;font-size:15px">Mail-Programm am PC</h3>'+
+    '<div data-s style="font-size:13px"></div><div class="rowflex" data-f style="gap:6px"></div></div>');
+  var zeigen=function(){
+    var b=mailBruecke(), s=k.querySelector("[data-s]"), f=k.querySelector("[data-f]");
+    f.innerHTML="";
+    if(b){
+      s.innerHTML="✓ Verbunden seit "+esc(dfmt(tagLokal(b.seit)))+" – nur für dein Konto auf diesem Gerät. Mails übernimmst du im Mail-Programm mit „↗ Leitstand“; bei Projekt, Kunde und Markt steht „Mails dazu“.";
+      var t=el('<button class="btn ghost sm" type="button">Trennen</button>');
+      t.onclick=function(){ try{ localStorage.removeItem("ukt_mailbruecke"); }catch(e){} mailBrueckeStatus=null; toast("Mail-Programm getrennt."); zeigen(); };
+      f.appendChild(t);
+    } else {
+      s.innerHTML='<span class="muted">Nicht verbunden. Im Mail-Programm „Mail mit Claude“ unten links „Mit Leitstand verbinden“ klicken und den Code hier eintippen.</span>';
+      var ein=el('<input type="text" inputmode="numeric" autocomplete="off" maxlength="7" placeholder="Code (6 Ziffern)" style="max-width:170px">'), ok=el('<button class="btn sm" type="button">Verbinden</button>');
+      ok.onclick=function(){
+        var code=ein.value.replace(/\D/g,"");
+        if(code.length!==6){ toast("Bitte den 6-stelligen Code aus dem Mail-Programm eintippen."); ein.focus(); return; }
+        ok.disabled=true; ok.textContent="wird verbunden …";
+        mitFrist(fetch(MAILBRUECKE_URL+"/api/koppeln", {method:"POST", headers:{"x-mail-app":"1","Content-Type":"application/json"}, body:JSON.stringify({code:code})}), 15000)
+          .then(function(r){ return r.json().then(function(j){ if(!r.ok) throw new Error(j.fehler||("Fehler "+r.status)); return j; }); },
+            function(){ throw new Error("Das Mail-Programm am PC antwortet nicht – ist es gestartet (Symbol „Mail mit Claude“)?"); })
+          .then(function(j){
+            lsSet("ukt_mailbruecke", {schluessel:j.schluessel, konto:wer(), seit:new Date().toISOString()});
+            mailBrueckeStatus=null; mailAbholenPause=0; toast("Mail-Programm verbunden – nur für dein Konto auf diesem Gerät."); zeigen();
+          }).catch(function(e){ ok.disabled=false; ok.textContent="Verbinden"; toast(e.message); });
+      };
+      ein.addEventListener("keydown", function(e){ if(e.key==="Enter"){ e.preventDefault(); ok.click(); } });
+      f.appendChild(ein); f.appendChild(ok);
+    }
+  };
+  zeigen();
+  return k;
+}
+function mailStatus(){
+  if(mailBrueckeStatus) return Promise.resolve(mailBrueckeStatus);
+  return mailHolen("/api/status").then(function(s){ mailBrueckeStatus=s; return s; });
+}
+function mailAbsender(m){ var a=(m.von||[])[0]||{}; return a.address ? (a.name ? a.name+" <"+a.address+">" : a.address) : ""; }
+function mailHerkunft(m){ return "E-Mail „"+(m.betreff||"")+"“"+(mailAbsender(m)?" von "+mailAbsender(m):"")+(m.datum?", "+dfmt(tagLokal(m.datum)):""); }
+function mailVerweis(m){ return {id:m.messageId||"", konto:m.konto, betreff:m.betreff||"", von:mailAbsender(m), datum:m.datum||null}; }
+/* Mail (.eml) und gewählte Anhänge als Dateien zum Hochladen. Typen, die der Speicher nicht kennt
+   (tools/projektdateien-typen.sql), gehen als „application/octet-stream“ – sonst würde die Datei abgewiesen. */
+var MAIL_DATEITYPEN=["application/pdf","image/jpeg","image/png","image/heic","image/heif","image/webp","text/plain","text/csv","application/msword",
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document","application/vnd.ms-excel","application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  "application/zip","message/rfc822","application/vnd.ms-outlook","image/vnd.dwg","application/octet-stream"];
+function mailDateiTyp(t){ t=String(t||"").toLowerCase().split(";")[0].trim(); return MAIL_DATEITYPEN.indexOf(t)>=0 ? t : "application/octet-stream"; }
+function mailDateien(m, anhaenge){
+  var name=(String(m.betreff||"Mail").replace(/[\\/:*?"<>|]+/g," ").replace(/\s+/g," ").trim().slice(0,80)||"Mail")+".eml";
+  var q=function(extra){ return "konto="+encodeURIComponent(m.konto)+"&ordner="+encodeURIComponent(m.ordner)+"&uid="+m.uid+(extra||""); };
+  return Promise.all([mailHolen("/api/roh?"+q(), {blob:true, frist:60000}).then(function(b){ return new File([b], name, {type:"message/rfc822"}); })]
+    .concat(anhaenge.map(function(a){ return mailHolen("/api/anhang?"+q("&i="+a.i), {blob:true, frist:120000}).then(function(b){ return new File([b], a.name, {type:mailDateiTyp(a.typ||b.type)}); }); })));
+}
+function mailUebernehmen(a){
+  if(!a || !a.k || !a.u){ toast("Mail-Verweis unvollständig."); return; }
+  toast("Mail wird aus dem Mail-Programm geholt …");
+  var q="/api/mail?konto="+encodeURIComponent(a.k)+"&ordner="+encodeURIComponent(a.o||"INBOX")+"&uid="+encodeURIComponent(a.u)+"&lesen=0";
+  Promise.all([mailHolen(q), projekteLaden(), kontakteAn() && !kontakteGeladen ? kontakteLaden() : null]).then(function(r){
+    var m=r[0];
+    if(a.a==="stoerung") mailStoerung(m);
+    else if(a.a==="zuprojekt") mailZuProjekt(m, a.p);
+    else mailProjektNeu(m);
+  }, function(e){ toast("Mail nicht geholt: "+e.message); });
+}
+/* Kopf mit Absender, Datum, Text (zum Aufklappen) und den Anhängen zum Ankreuzen */
+function mailKopfKarte(m, arten){
+  var c=el('<div class="note" style="font-size:13px"><strong>✉ '+esc(m.betreff||"(ohne Betreff)")+"</strong><br>"+
+    '<span class="muted">'+esc(mailAbsender(m))+(m.datum?" · "+esc(zeitFmt(m.datum)):"")+"</span>"+
+    '<details style="margin-top:6px"><summary>Text der Mail</summary><div style="white-space:pre-wrap;max-height:240px;overflow:auto;margin-top:6px">'+esc(String(m.text||"").slice(0,6000))+"</div></details></div>");
+  var liste=el('<div class="stack" style="gap:6px"><div class="fl"><span>Dateien und ihre Art</span></div></div>');
+  var zeile=function(name, vor, mitHaken){
+    var z=el('<div class="rowflex" style="gap:8px;flex-wrap:nowrap;justify-content:space-between"><label style="font-size:13px;min-width:0;overflow-wrap:anywhere;display:flex;gap:6px;align-items:center">'+
+      (mitHaken?'<input type="checkbox" checked>':"")+"<span>"+esc(name)+"</span></label>"+
+      '<select style="max-width:210px">'+arten.map(function(x){ return '<option value="'+x[0]+'"'+(x[0]===vor?" selected":"")+">"+esc(x[1])+"</option>"; }).join("")+"</select></div>");
+    liste.appendChild(z); return z;
+  };
+  var mailZeile=zeile("Mail selbst (.eml)", "mail", false);
+  var anh=(m.anhaenge||[]).map(function(x){ var z=zeile(x.name+" ("+Math.max(1,Math.round((x.groesse||0)/1024))+" KB)", dateiArtRaten("", x.name, x.typ||""), true); return {a:x, z:z}; });
+  return {kopf:c, liste:liste,
+    gewaehlt:function(){ return anh.filter(function(x){ return x.z.querySelector("input").checked; }); },
+    artVon:function(f, i){ return i===0 ? mailZeile.querySelector("select").value : (this.gewaehlt()[i-1]||{z:mailZeile}).z.querySelector("select").value; }};
+}
+/* Mail und Anhänge ins Projekt, Verweis in daten.mails, Absender ins Adressbuch */
+function mailInsProjekt(p, m, k, quelleSchritt){
+  var gew=k.gewaehlt();
+  return mailDateien(m, gew.map(function(x){ return x.a; })).then(function(files){
+    var artJe=new Map(); files.forEach(function(f, i){ artJe.set(f, k.artVon(f, i)); });
+    return projektDateienHochladen(p, function(f){ return artJe.get(f)||"dokument"; }, files, function(){ return mailHerkunft(m); }).then(function(neue){
+      var eml=neue.filter(function(x){ return /\.eml$/i.test(x.name); })[0];
+      return projektAendern(p, function(d){
+        var vw=mailVerweis(m); d.mails=(d.mails||[]).filter(function(x){ return !vw.id || x.id!==vw.id; }).concat([vw]);
+        /* Quelle der Anfrage (Büro 01.10.2026: „man soll immer alles von beiden Seiten finden“) */
+        if(quelleSchritt && eml){ d.quellen=d.quellen||{}; d.quellen[quelleSchritt]=(d.quellen[quelleSchritt]||[]).concat([eml.pfad]); }
+      }, "E-Mail übernommen: „"+(m.betreff||"")+"“").then(function(){
+        var ab=kontaktAusAbsender(mailAbsender(m));
+        if(ab) kontaktErfassen(ab, {art:"projekt", id:p.id, titel:projektTitel(p)}, false);
+        return {neue:neue.length, alle:files.length};
+      });
+    });
+  });
+}
+function mailKundeRaten(m){
+  var adr=String(((m.von||[])[0]||{}).address||"").toLowerCase(), dom=adr.split("@")[1]||"";
+  var k=(KONTAKTE||[]).filter(function(c){ return c.kunde_id && String(c.mail||"").toLowerCase()===adr; })[0];
+  if(k) return k.kunde_id;
+  if(dom && !MAIL_FREI.test(dom)){
+    var t=Object.keys(KUNDEN).filter(function(id){ return String(KUNDEN[id].email||"").toLowerCase().split("@")[1]===dom; })[0];
+    if(t) return t;
+    if(/(^|\.)lidl\./.test(dom)) return "lidl";
+  }
+  return "";
+}
+function mailProjektNeu(m){
+  if(demo()){ toast("Präsentation: hier wird nichts angelegt."); return; }
+  var v=ansichtOeffnen("Projekt aus Mail", null, {breit:true});
+  v.schritt.textContent="Angaben prüfen – gespeichert wird erst mit „Projekt anlegen“";
+  var kunden=[{id:"lidl", name:"Lidl"}].concat(weitereKunden()), kVor=mailKundeRaten(m)||"lidl";
+  var titelVor=String(m.betreff||"").replace(/^\s*((re|aw|wg|fwd?|antw)\s*:\s*)+/i, "").trim();
+  var von=(m.von||[])[0]||{};
+  var arten=PROJEKT_DATEIARTEN.filter(function(x){ return !x[2] || nurInhaber(); }), k=mailKopfKarte(m, arten);
+  var form=el('<form class="stack" autocomplete="off" style="max-width:640px">'+
+    '<div class="rowflex" data-claude hidden><button class="btn sm" type="button">✦ Mit Claude ausfüllen</button><span class="muted" style="font-size:12.5px">liest Kunde, Ansprechpartner, Telefon und Beschreibung aus der Mail</span></div>'+
+    '<label class="fl"><span class="req">Titel</span><input type="text" data-f="titel" value="'+esc(titelVor)+'"></label>'+
+    '<label class="fl"><span>Kunde</span><select data-f="kunde">'+kunden.map(function(x){ return '<option value="'+esc(x.id)+'"'+(x.id===kVor?" selected":"")+">"+esc(x.name)+"</option>"; }).join("")+"</select></label>"+
+    '<div class="note" data-neuk hidden style="font-size:12.5px"></div>'+
+    '<label class="fl"><span>Standort</span><select data-f="standort"></select></label>'+
+    '<label class="fl"><span>Projekttyp</span><input type="text" data-f="typ" list="pm_typen">'+projektTypListe("pm_typen")+"</label>"+
+    '<label class="fl"><span>Anfrage vom</span><input type="date" data-f="anfrageDatum" value="'+esc(m.datum?isoLokal(new Date(m.datum)).slice(0,10):isoLokal(new Date()).slice(0,10))+'"></label>'+
+    '<label class="fl"><span>Wer hat angefragt? (Planer, Kunde)</span><input type="text" data-f="anfrageVon" value="'+esc(von.name||von.address||"")+'"></label>'+
+    '<label class="fl"><span>Ansprechpartner vor Ort</span><input type="text" data-f="ansprechpartner"></label>'+
+    '<label class="fl"><span>Telefon</span><input type="text" data-f="telefon"></label>'+
+    '<label class="fl"><span>Was wird gebraucht?</span><textarea rows="4" data-f="beschreibung">'+esc(String(m.text||"").slice(0,1500))+"</textarea></label>"+
+    '<div class="note warnbox" data-err hidden></div></form>');
+  var f=function(n){ return form.querySelector('[data-f="'+n+'"]'); };
+  var standorte=function(){
+    f("standort").innerHTML='<option value="">– noch keiner / neu –</option>'+ST.filter(function(s){ return kundeVon(s)===f("kunde").value; }).sort(nachMarktname)
+      .map(function(s){ return '<option value="'+esc(s.id)+'">'+esc(stName(s)+(s.adresse&&s.adresse!==stName(s)?" · "+s.adresse:""))+"</option>"; }).join("");
+  };
+  standorte(); f("kunde").onchange=standorte;
+  v.inhalt.appendChild(k.kopf); v.inhalt.appendChild(form); v.inhalt.appendChild(k.liste);
+  v.inhalt.appendChild(el('<div class="muted" style="font-size:12.5px;margin-top:6px">Die Mail kommt als Quelle zur Anfrage in die Projektdateien, der Absender ins Adressbuch.</div>'));
+  /* Claude liest die Angaben aus (am PC über das Mail-Programm); alles bleibt zum Prüfen stehen */
+  mailStatus().then(function(s){
+    if(!s.claude) return;
+    var cz=form.querySelector("[data-claude]"); cz.hidden=false;
+    var cb=cz.querySelector("button");
+    cb.onclick=function(){
+      cb.disabled=true; cb.textContent="✦ Claude liest …";
+      mailHolen("/api/extrahieren", {frist:150000, body:{konto:m.konto, ordner:m.ordner, uid:m.uid, typen:projektTypen(), kunden:kunden.map(function(x){ return x.name; })}}).then(function(r){
+        cb.disabled=false; cb.textContent="✦ Nochmals ausfüllen";
+        var setzen=function(n, w){ w=String(w||"").trim(); if(!w) return; f(n).value=w; f(n).style.background="var(--accent-soft, #fbeee8)"; };
+        setzen("titel", r.titel); setzen("typ", r.typ); setzen("ansprechpartner", r.ansprechpartner);
+        setzen("telefon", r.telefon); setzen("anfrageVon", r.kunde && r.ansprechpartner && r.kunde!==r.ansprechpartner ? r.kunde : (r.kunde||""));
+        var ort=[r.adresse, [r.plz, r.ort].filter(Boolean).join(" ")].filter(Boolean).join(", ");
+        setzen("beschreibung", [r.beschreibung, ort?"Ort: "+ort:"", r.wunschtermin?"Wunschtermin: "+r.wunschtermin:"", r.email?"Mail: "+r.email:""].filter(Boolean).join("\n"));
+        var treffer=kunden.filter(function(x){ return r.kundeTreffer && x.name===r.kundeTreffer; })[0];
+        var hin=form.querySelector("[data-neuk]");
+        if(treffer){ f("kunde").value=treffer.id; standorte(); hin.hidden=true; }
+        else if(r.kunde){ hin.hidden=false; hin.textContent="Neuer Kunde? „"+r.kunde+"“ steht noch nicht in der Kundenliste – bei Bedarf unter Kunden anlegen (bis dahin bleibt die Auswahl oben)."; }
+        toast("Von Claude ausgefüllt – bitte prüfen (orange hinterlegt).");
+      }, function(e){ cb.disabled=false; cb.textContent="✦ Mit Claude ausfüllen"; toast("Claude: "+e.message); });
+    };
+  }, function(){});
+  var ab=el('<button class="btn ghost" type="button">Abbrechen</button>'), ok=el('<button class="btn" type="button">Projekt anlegen</button>');
+  ab.onclick=function(){ v.zu(); };
+  v.fuss.appendChild(ab); v.fuss.appendChild(ok);
+  ok.onclick=function(){
+    var err=form.querySelector("[data-err]"), titel=f("titel").value.trim();
+    if(!titel){ err.textContent="Bitte einen Titel eintragen."; err.hidden=false; f("titel").focus(); return; }
+    var jetzt=new Date().toISOString(), daten={};
+    ["anfrageDatum","anfrageVon","ansprechpartner","telefon","beschreibung","typ"].forEach(function(n){ var w=f(n).value.trim(); if(w) daten[n]=w; });
+    if(!daten.anfrageDatum) daten.anfrageDatum=isoLokal(new Date()).slice(0,10);
+    var zeile={nummer:projektNummerNeu(), titel:titel, kunde_id:f("kunde").value, standort_id:f("standort").value||null, status:"anfrage", daten:daten,
+      verlauf:[{zeit:jetzt, wer:meinName(), text:"Projekt aus E-Mail angelegt: "+mailHerkunft(m), status:"anfrage"}], geaendert:jetzt, geaendert_von:meinName()};
+    ok.disabled=true; ok.textContent="wird angelegt …"; err.hidden=true;
+    var versuch=function(n){
+      return mitFrist(Store.sb.from("projekte").insert(zeile).select("*"), 20000).then(function(r){
+        if(r.error && /duplicate|unique/i.test(r.error.message) && n<3) return projekteLaden().then(function(){ zeile.nummer=projektNummerNeu(); return versuch(n+1); });
+        if(r.error) throw new Error(r.error.message);
+        return r.data[0];
+      });
+    };
+    versuch(0).then(function(p){
+      PROJEKTE=[p].concat(PROJEKTE.filter(function(x){ return x.id!==p.id; }));
+      ok.textContent="Mail wird abgelegt …";
+      return mailInsProjekt(p, m, k, "anfrage").then(function(r){
+        v.zu(); if(S.view==="projekte" && darfRendern()) render(); projektAnsicht(p.id);
+        toast("Projekt "+p.nummer+" angelegt"+(r.neue===r.alle?" – Mail und "+(r.alle-1)+" Anhang/Anhänge abgelegt.":" – ACHTUNG: nur "+r.neue+" von "+r.alle+" Dateien abgelegt, bitte prüfen."));
+      }, function(e){ v.zu(); projektAnsicht(p.id); toast("Projekt "+p.nummer+" angelegt, aber die Mail ist nicht abgelegt: "+e.message+" – im Mail-Programm nochmals „Zu bestehendem Projekt“."); });
+    }).catch(function(e){ ok.disabled=false; ok.textContent="Projekt anlegen"; err.textContent="Nicht angelegt: "+technikDeutsch(e.message); err.hidden=false; });
+  };
+}
+function mailZuProjekt(m, vorId){
+  if(demo()){ toast("Präsentation: hier wird nichts abgelegt."); return; }
+  var g=[{art:"mail", betreff:m.betreff, absender:String(((m.von||[])[0]||{}).address||""), dateiname:""}].concat((m.anhaenge||[]).map(function(a){ return {art:"datei", dateiname:a.name}; }));
+  var liste=PROJEKTE.map(function(p){ return {p:p, n:p.id===vorId?999:posteingangProjektPunkte(p, g)}; })
+    .sort(function(a,b){ return (b.n-a.n) || (projektOffen(b.p)-projektOffen(a.p)) || String(b.p.geaendert||"").localeCompare(String(a.p.geaendert||"")); });
+  if(!liste.length){ toast("Es ist noch kein Projekt da – „Als neues Projekt“ wählen."); return; }
+  var v=ansichtOeffnen("Mail zu Projekt legen");
+  v.schritt.textContent=m.betreff||"Mail";
+  var arten=PROJEKT_DATEIARTEN.filter(function(x){ return !x[2] || nurInhaber(); }), k=mailKopfKarte(m, arten);
+  var form=el('<div class="stack" style="max-width:640px"><label class="fl"><span class="req">Projekt</span><select data-p>'+
+    liste.map(function(x, i){ return '<option value="'+esc(x.p.id)+'">'+esc(projektTitel(x.p))+(i===0 && x.n>0?" – Vorschlag":"")+(projektOffen(x.p)?"":" (abgeschlossen)")+"</option>"; }).join("")+
+    "</select></label>"+(liste[0].n>0?"":'<div class="note" style="font-size:13px">Kein Projekt passt eindeutig – bitte wählen.</div>')+"</div>");
+  v.inhalt.appendChild(k.kopf); v.inhalt.appendChild(form); v.inhalt.appendChild(k.liste);
+  var ab=el('<button class="btn ghost" type="button">Abbrechen</button>'), ok=el('<button class="btn" type="button">Ins Projekt legen</button>');
+  ab.onclick=function(){ v.zu(); };
+  v.fuss.appendChild(ab); v.fuss.appendChild(ok);
+  ok.onclick=function(){
+    var p=PROJEKTE.filter(function(x){ return x.id===form.querySelector("[data-p]").value; })[0];
+    if(!p) return;
+    var schon=((p.daten||{}).mails||[]).some(function(x){ return m.messageId && x.id===m.messageId; });
+    if(schon && !confirm("Diese Mail liegt schon in "+(p.nummer||"diesem Projekt")+". Nochmals ablegen?")) return;
+    ok.disabled=true; ok.textContent="wird abgelegt …";
+    mailInsProjekt(p, m, k, null).then(function(r){
+      v.zu(); projektAnsicht(p.id);
+      toast(r.neue===r.alle ? "In "+(p.nummer||"das Projekt")+" abgelegt: "+r.alle+" Datei"+(r.alle===1?"":"en")+"." : "Nur "+r.neue+" von "+r.alle+" Dateien abgelegt – bitte prüfen.");
+    }, function(e){ ok.disabled=false; ok.textContent="Ins Projekt legen"; toast("Nicht abgelegt: "+e.message); });
+  };
+}
+function mailStoerung(m){
+  var ov=stoerungDialog(null, null, {quelle:"mail", beschreibung:(m.betreff?m.betreff+"\n\n":"")+String(m.text||"").slice(0,2000)});
+  if(!ov) return;
+  /* eine PDF (z. B. Lidl-Auftrag) gleich einlesen, sonst ein Foto – wie aus dem Posteingang */
+  var pdf=(m.anhaenge||[]).filter(function(a){ return /pdf/i.test(a.typ||"") || /\.pdf$/i.test(a.name); })[0];
+  var bild=(m.anhaenge||[]).filter(function(a){ return /^image\//i.test(a.typ||""); })[0];
+  var a=pdf||bild; if(!a) return;
+  mailHolen("/api/anhang?konto="+encodeURIComponent(m.konto)+"&ordner="+encodeURIComponent(m.ordner)+"&uid="+m.uid+"&i="+a.i, {blob:true, frist:120000}).then(function(b){
+    if(!ov.isConnected) return;
+    var datei=new File([b], a.name, {type:a.typ||b.type}), ein=ov.querySelector(pdf?"#st_pdf":"#st_foto");
+    if(ein){ var dt=new DataTransfer(); dt.items.add(datei); ein.files=dt.files; ein.dispatchEvent(new Event("change")); }
+  }, function(e){ toast("Anhang nicht geholt: "+e.message); });
+}
+/* „Mails dazu“ bei Projekt, Kunde und Markt – nur mit verbundenem Mail-Programm (sonst gar keine Karte) */
+function mailsDazuKarte(begriffe, opt){
+  if(!mailBruecke()) return null;
+  opt=opt||{};
+  var c=el('<div class="card" style="box-shadow:none;margin-top:12px"><div class="pad stack" style="gap:8px"><h2>Mails dazu</h2>'+
+    '<div class="muted" style="font-size:12.5px" data-l>werden im Mail-Programm gesucht …</div></div></div>');
+  var host=c.querySelector("[data-l]");
+  begriffe=begriffe.filter(function(b){ return b && String(b.text||"").trim().length>=3; });
+  if(!begriffe.length){ host.textContent="Nichts zum Suchen (keine Mail-Adresse oder Projektnummer)."; return c; }
+  mailHolen("/api/suche", {frist:60000, body:{begriffe:begriffe, anzahl:25}}).then(function(r){
+    host.innerHTML=""; host.className="stack"; host.style.gap="4px";
+    if(!r.mails.length){ host.appendChild(el('<div class="muted" style="font-size:12.5px">Keine passenden Mails in den letzten zwei Jahren.</div>')); return; }
+    var drin=opt.projekt ? ((opt.projekt.daten||{}).mails||[]).map(function(x){ return x.id; }) : [];
+    r.mails.forEach(function(m){
+      var wer2=m.gesendet ? "an "+((m.an||[])[0]||{}).address : (((m.von||[])[0]||{}).name || ((m.von||[])[0]||{}).address || "");
+      var z=el('<div class="rowflex" style="gap:8px;flex-wrap:nowrap;justify-content:space-between;font-size:13px;border-bottom:1px solid var(--line);padding:3px 0">'+
+        '<span style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"><span class="muted mono" style="font-size:11.5px">'+esc(dfmt(tagLokal(m.datum)))+"</span> "+
+        (m.gesendet?"↗ ":"")+esc(wer2)+" · <strong>"+esc(m.betreff||"(ohne Betreff)")+"</strong></span>"+
+        '<span class="rowflex" style="gap:4px;flex-wrap:nowrap"><button class="btn ghost sm" type="button" data-o>öffnen</button>'+
+        (drin.indexOf(m.messageId)>=0 ? '<span class="tag">✓ im Projekt</span>' : '<button class="btn ghost sm" type="button" data-p>'+(opt.projekt?"ins Projekt":"zu Projekt …")+"</button>")+"</span></div>");
+      z.querySelector("[data-o]").onclick=function(){ window.open(MAILBRUECKE_URL+"/#oeffne="+encodeURIComponent(m.konto+"|"+m.ordner+"|"+m.uid), "ukt-mail"); };
+      var pb=z.querySelector("[data-p]");
+      if(pb) pb.onclick=function(){ mailUebernehmen({k:m.konto, o:m.ordner, u:m.uid, a:"zuprojekt", p:opt.projekt?opt.projekt.id:null}); };
+      host.appendChild(z);
+    });
+  }, function(e){ host.textContent=e.message; });
+  return c;
+}
+function mailBegriffeProjekt(p){
+  var d=p.daten||{}, l=[{text:p.nummer, inhalt:true}];
+  (d.beteiligte||[]).forEach(function(b){ if(b.mail) l.push({text:b.mail}); });
+  (KONTAKTE||[]).forEach(function(c){ if(c.mail && (c.herkunft||[]).some(function(h){ return h.art==="projekt" && h.id===p.id; })) l.push({text:c.mail}); });
+  if(p.kunde_id && p.kunde_id!=="lidl" && KUNDEN[p.kunde_id] && KUNDEN[p.kunde_id].email) l.push({text:KUNDEN[p.kunde_id].email});
+  return mailBegriffeEinmal(l);
+}
+function mailBegriffeKunde(id){
+  var k=KUNDEN[id]||{}, l=[];
+  if(k.email){ l.push({text:k.email}); var dom=String(k.email).toLowerCase().split("@")[1]; if(dom && !MAIL_FREI.test(dom)) l.push({text:"@"+dom}); }
+  (KONTAKTE||[]).forEach(function(c){ if(c.mail && c.kunde_id===id) l.push({text:c.mail}); });
+  PROJEKTE.filter(function(p){ return (p.kunde_id||"lidl")===id; }).slice(0,6).forEach(function(p){ l.push({text:p.nummer, inhalt:true}); });
+  return mailBegriffeEinmal(l);
+}
+function mailBegriffeMarkt(s){
+  var l=[];
+  if(s.filiale) l.push({text:"Filiale "+s.filiale}, {text:"Fil. "+s.filiale});
+  else if(stName(s).length>=5) l.push({text:stName(s)});
+  PROJEKTE.filter(function(p){ return p.standort_id===s.id; }).slice(0,6).forEach(function(p){ l.push({text:p.nummer, inhalt:true}); });
+  return mailBegriffeEinmal(l);
+}
+function mailBegriffeEinmal(l){ var g={}; return l.filter(function(b){ var s=String(b.text||"").toLowerCase().trim(); if(!s || g[s]) return false; g[s]=1; return true; }).slice(0,12); }
 /* Einen Eingang im Postfach verwerfen – immer mit Grund (auch aus „Rapport
    zuordnen“ heraus, etwa bei einer doppelt gemailten Rapportnummer) */
 function posteingangVerwerfen(e, fertig){
@@ -3436,11 +3783,14 @@ function marktAnsicht(sid){
     if(!document.body.contains(a.inhalt) || a.inhalt.querySelector("[data-verbunden]")) return;
     var vb2=verbundenKarte(sid); if(!vb2) return;
     var neben=a.inhalt.querySelector(".sp-neben")||a.inhalt; neben.appendChild(vb2); });
+  /* Mails dazu – nur mit dem verbundenen Mail-Programm am PC des Inhabers (Büro 04.10.2026) */
+  var mdk=mailsDazuKarte(mailBegriffeMarkt(s)); if(mdk) a.inhalt.appendChild(mdk);
   a.inhalt.appendChild(h);
   /* PC: Anlagen und Historie links, Planung und Nachrichten rechts; jede Karte einklappbar */
   kartenOrdnen(a.inhalt, [
     {klasse:"detail", seite:"haupt", fest:true, fix:true},
     {h:/^Geplant an diesem Markt/, seite:"neben", key:"plan"},
+    {h:/^Mails dazu/, seite:"neben", key:"mails", handyZu:true},
     {h:/Nachrichten/, seite:"neben", key:"chat", handyZu:true},
     {h:/^Projekte und Kontakte/, seite:"neben", key:"verbunden"},
     {h:/^Vor Ort klären/, seite:"neben", key:"vorort"},
@@ -9696,6 +10046,8 @@ function chatKnopf(){
     var pw=pushWartet; pushWartet=null;
     if(Date.now()-pw.seit<900000) setTimeout(function(){ pushZiel(pw.z); }, 0);
   }
+  /* eine Mail aus dem Mail-Programm am PC, die auf Anmeldung und Rollenprüfung gewartet hat */
+  if(mailWartet) setTimeout(mailBrueckeWeiter, 0);
   k.hidden=!chatAn();
   /* Zahl am Knopf: ungelesene Chat-Nachrichten und neue Meldungen zusammen */
   var z=document.getElementById("chatzahl"), n=chatAn()?chatUngelesen()+meldungenNeu():0;
@@ -17655,6 +18007,7 @@ function inhaberKarte(){
       '<tr><td colspan="2" class="muted">alle anderen Konten: Techniker</td></tr></tbody></table></div>'));
   });
   kiKostenAnsicht(kih);
+  var mk=mailKoppelnKasten(); if(mk) c.querySelector(".pad").appendChild(mk);
   return c;
 }
 /* Dauerhafter Hinweis in der Präsentation – niemand soll glauben, dort
@@ -23479,7 +23832,8 @@ Object.assign(RUNDGAENGE, {
         "<strong>Auftrag</strong> → „Als Störungsauftrag erfassen“ (liest die PDF gleich ein).",
         "<strong>Rapport</strong> → „Rapport zuordnen“: die App sucht das Protokoll am selben Markt und Besuchstag (gleiche Auftragsnummer zuerst) und öffnet „Korrigieren“ mit angehängtem Rapport.",
         "<strong>Weitergeleitete Mail</strong> → „Zu Projekt legen“ (Projekt wird vorgeschlagen).",
-        "„verwerfen“ nur mit Grund."])+
+        "„verwerfen“ nur mit Grund.",
+        "Ohne Weiterleiten (nur Inhaber, am eigenen PC): im Mail-Programm „Mail mit Claude“ bei der Mail „↗ Leitstand“ – als neues Projekt, zu einem Projekt oder als Störung. Bei Projekt, Kunde und Markt steht dann „Mails dazu“."])+
       RG_HG("Ein Eintrag ist erledigt, sobald der Auftrag angelegt bzw. alle Dateien hochgeladen sind; hängt dieselbe Rapportnummer schon an, bietet die App „verwerfen“ an.")},
     {reiter:"faellig", ziel:function(){ return rgKarte(/^Rückfragen von Lidl/) || rgReiter("faellig"); }, titel:"Rückfragen von Lidl",
       text:"Listen offener Aufträge und Wartungen von Lidl mit Frist. Die Zahlen „zu klären / offen / geplant / erledigt / ohne Antwort“ sind antippbar; „Liste öffnen“ filtert nach Art und Stand."+
@@ -25578,6 +25932,8 @@ function kundeAnsicht(id){
     so.forEach(function(o){ stk.querySelector(".stack").appendChild(stoerungEintrag(o,true)); });
     v.inhalt.appendChild(stk);
   }
+  /* Mails dazu – nur mit dem verbundenen Mail-Programm am PC des Inhabers; bei Lidl zu viele, daher nicht */
+  if(id!=="lidl"){ var mdk=mailsDazuKarte(mailBegriffeKunde(id)); if(mdk) v.inhalt.appendChild(mdk); }
 }
 
 /* ---------- Kunde anlegen / bearbeiten (Büro) ---------- */
@@ -26104,6 +26460,9 @@ function projektAnsicht(id){
     /* Dateien */
     v.inhalt.appendChild(projektDateienKarte(p, buero, schreiben, aufbauen));
 
+    /* Mails dazu – nur mit dem verbundenen Mail-Programm am PC des Inhabers (Büro 04.10.2026) */
+    var mdk=mailsDazuKarte(mailBegriffeProjekt(p), {projekt:p}); if(mdk) v.inhalt.appendChild(mdk);
+
     /* Angebote und Rechnungen – nur Inhaber, keine Admins (Büro 01.10.2026) */
     if(buero && !demo()) v.inhalt.appendChild(belegeKarte(p));
 
@@ -26174,6 +26533,7 @@ function projektAnsicht(id){
       {h:/^Baustellenbuch/, seite:"haupt", key:"baubuch", zusammen:anz(d.baubuch,"Eintrag","Einträge")},
       {h:/^Dateien/, seite:"haupt", key:"dateien", handyZu:true, zusammen:anz((d.dateien||[]).filter(function(x){ return buero || !/^buero\//.test(x.pfad); }),"Datei","Dateien")},
       {h:/^Angebote und Rechnungen/, seite:"haupt", key:"belege", handyZu:true},
+      {h:/^Mails dazu/, seite:"neben", key:"mails", handyZu:true, zusammen:anz(d.mails,"übernommen","übernommen")},
       {h:/^Stunden/, seite:"neben", key:"stunden", handyZu:true},
       {h:/^Tagebuch/, seite:"neben", key:"tagebuch", handyZu:true, zusammen:anz(p.verlauf,"Eintrag","Einträge")},
       {h:/Nachrichten/, seite:"neben", key:"chat", handyZu:true}
@@ -31601,6 +31961,8 @@ document.getElementById("neuladen").onclick=function(){
 ansichtHolen();
 render();
 initStore();
+mailBrueckeHash();   /* #mail=… / #mailkopplung=… aus dem Mail-Programm am PC – wartet auf Anmeldung */
+mailAbholenStarten();   /* „↗ Leitstand“ im Mail-Programm: Auftrag abholen (nur verbunden, nur Inhaber) */
 idbOeffnen()
   /* die alte Warteschlange: ein Fehler dort ist kein Gerätefehler */
   .then(function(){ return altlastUebernehmen().catch(function(){}); })
