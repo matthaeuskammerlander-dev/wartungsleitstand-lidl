@@ -27193,6 +27193,54 @@ function kplusAuswerten(seiten){
   pos.forEach(function(x){ if(x.typ==="pos"){ x.text=x.text.trim(); } });
   return {art:art, nummer:kopf.nummer, datum:datumIso(kopf.datum), kopf:kopf, positionen:pos, summenPdf:summen};
 }
+/* ---- Positionen prüfen (Büro 05.10.2026: „in der Klammer steht 3 h, als Anzahl aber nur 1 h und auch als Preis
+   nur eine Stunde – da stimmt was nicht“). Nennt der Text eine Menge (z. B. „(3 h)“, „3 Mann a 10 Std“), muss sie
+   zur Menge der Position passen; Stunden-Positionen brauchen die Einheit Std; der PDF-Betrag muss Menge × Preis sein.
+   Nur Hinweise – geändert wird nichts von selbst. ---- */
+function textZahl(t){ return +String(t).replace(",", "."); }
+function mengeText(n){ return String(Math.round((+n||0)*100)/100).replace(".", ","); }
+function textMenge(text){
+  var t=String(text||"").replace(/\s+/g, " ");
+  var m=/(\d+(?:[,.]\d+)?)\s*(?:mann|monteure?|techniker|personen|pers\.)\s*(?:a|à|á|je|x|zu|mal)\s*(\d+(?:[,.]\d+)?)\s*(?:std\.?|stunden|h)(?![a-zäöü])/i.exec(t);
+  if(m) return {menge:textZahl(m[1])*textZahl(m[2]), eh:"Std", fund:m[0].trim()};
+  /* „(3 h)“, „(ca. 2,5 Std.)“, „3 Stunden“ – nicht „8 l/h“ oder „kWh“ */
+  var re=/(\d+(?:[,.]\d+)?)\s*(std\.?|stunden|h)(?![a-zäöü\/])/gi, x;
+  while((x=re.exec(t))){
+    var vor=t.charAt(x.index-1);
+    if(vor==="/" || /[a-z]/i.test(vor)) continue;
+    if(/^h$/i.test(x[2]) && /\/\s*$/.test(t.slice(0, x.index))) continue;
+    return {menge:textZahl(x[1]), eh:"Std", fund:x[0].trim()};
+  }
+  return null;
+}
+function positionPruefen(p){
+  if(!p || p.typ!=="pos") return [];
+  var w=[], tm=textMenge(p.text), eh=String(p.eh||"").toLowerCase().replace(/\.$/, ""), stunden=/^(std|h|stunden?|stunde)$/.test(eh);
+  /* nur Arbeits-/Stundenpositionen – ein Gerätetext mit „5 Stunden“ (etwa Laufzeit) ist keine Mengenangabe */
+  if(tm && p.menge!=null && Math.abs(tm.menge-(+p.menge))>0.01 && (stunden || /regie|stundensatz|zuschlag|arbeitszeit|arbeitsstunde|montagestunde|facharbeiter|techniker|monteur/i.test(p.text)))
+    w.push("Text nennt "+mengeText(tm.menge)+" Std („"+tm.fund+"“), Menge ist "+mengeText(p.menge)+" "+(p.eh||""));
+  if(/regiestunde|stundensatz|zuschlag stunde|arbeitsstunde/i.test(p.text) && eh && !stunden) w.push("Stunden-Position mit Einheit „"+p.eh+"“ statt Std");
+  if(p.betragPdf!=null && p.menge!=null && p.preis!=null && Math.abs(p.betragPdf-Math.round((+p.menge)*(+p.preis)*100)/100)>0.05)
+    w.push("Betrag im PDF ("+geld(p.betragPdf)+" €) ist nicht Menge × Preis ("+geld(Math.round((+p.menge)*(+p.preis)*100)/100)+" €)");
+  return w;
+}
+function positionenPruefen(positionen){
+  var l=[]; (positionen||[]).forEach(function(p){ positionPruefen(p).forEach(function(t){ l.push({nr:p.nr, text:t, pos:p}); }); }); return l;
+}
+function pruefHinweisBox(positionen, wofuer){
+  var l=positionenPruefen(positionen);
+  if(!l.length) return null;
+  return el('<div class="note warnbox" style="font-size:13px"><strong>⚠ '+l.length+" Auffälligkeit"+(l.length===1?"":"en")+(wofuer?" "+esc(wofuer):"")+"</strong> – bitte prüfen:<ul style=\"margin:4px 0 0 18px;padding:0\">"+
+    l.map(function(x){ return "<li>Pos. "+esc(x.nr||"?")+": "+esc(x.text)+'<br><span class="muted">'+esc(String(x.pos.text||"").replace(/\n/g, " / ").slice(0,120))+"</span></li>"; }).join("")+"</ul></div>");
+}
+/* Für den Katalog: Mengenangaben eines einzelnen Auftrags gehören nicht in den allgemeinen Text
+   („Zuschlag Samstag (3 Mann a 10 Std)“ → „Zuschlag Samstag“) – sonst stehen sie in jeder späteren Rechnung */
+function katalogTextOhneMenge(text){
+  return String(text||"")
+    .replace(/\(\s*\d+(?:[,.]\d+)?\s*(?:mann|monteure?|techniker|personen|pers\.)\s*(?:a|à|á|je|x|zu|mal)\s*\d+(?:[,.]\d+)?\s*(?:std\.?|stunden|h)\s*\)/gi, "")
+    .replace(/\(\s*(?:ca\.?\s*)?\d+(?:[,.]\d+)?\s*(?:std\.?|stunden|h)\s*\)/gi, "")
+    .replace(/[ \t]+\n/g, "\n").replace(/[ \t]{2,}/g, " ").trim();
+}
 
 /* ---------- Karte am Projekt ---------- */
 function belegeKarte(p){
@@ -27229,7 +27277,7 @@ function belegeKarte(p){
     var f=this.files&&this.files[0]; this.value=""; if(!f) return;
     toast("KPlus-PDF wird gelesen …");
     f.arrayBuffer().then(function(buf){ return kplusLesen(new Uint8Array(buf)); }).then(function(erg){
-      kplusVorschau(p, erg, zeichnen);
+      kplusVorschau(p, erg, zeichnen, f);
     }, function(e){ toast("Nicht lesbar: "+(e&&e.message||e)); });
   };
   k.querySelector('[data-neu="angebot"]').onclick=function(){ belegNeu(kontextProjekt(p), "angebot", null, zeichnen); };
@@ -27238,35 +27286,106 @@ function belegeKarte(p){
 }
 
 /* eingelesenes KPlus-PDF zeigen und übernehmen (als externer Beleg, Positionen in den Katalog) */
-function kplusVorschau(p, erg, fertig){
-  var v=ansichtOeffnen("KPlus "+(erg.art==="rechnung"?"Rechnung":"Angebot")+" "+erg.nummer);
+/* ziel: ein Projekt ODER ein Kontext {projekt, protokoll, kunde_id, standort_id} (KPlus-Rechnung zu einem Einsatz,
+   Büro 05.10.2026: „statt die Rechnung zu schreiben das KPlus-PDF hochladen, das der Chef geschrieben hat – damit die
+   App das Rechnungschreiben lernt“). datei: das Original-PDF (wird beim Beleg abgelegt). */
+function kplusVorschau(ziel, erg, fertig, datei){
+  var kx=("protokoll" in ziel) ? ziel : kontextProjekt(ziel), p=kx.projekt, pk=kx.protokoll;
+  var v=ansichtOeffnen("KPlus "+(erg.art==="rechnung"?"Rechnung":"Angebot")+" "+erg.nummer, null, pk?{breit:true}:null);
   var pos=erg.positionen.filter(function(x){ return x.typ==="pos"; });
   var su=belegSummen(erg.positionen), passt=erg.summenPdf.netto==null || Math.abs(su.netto-erg.summenPdf.netto)<0.05;
-  v.schritt.textContent=dfmt(erg.datum)+" · "+pos.length+" Positionen";
+  v.schritt.textContent=dfmt(erg.datum)+" · "+pos.length+" Positionen · "+kontextTitel(kx);
   v.inhalt.appendChild(el('<div class="note'+(passt?"":" warnbox")+'" style="font-size:13px">'+
     "Netto laut PDF <strong>"+geld(erg.summenPdf.netto)+" €</strong>, nachgerechnet <strong>"+geld(su.netto)+" €</strong> – "+
     (passt?"stimmt.":"weicht ab, bitte die Positionen prüfen.")+
     ((erg.kopf.betreff||[]).length?"<br>"+esc(erg.kopf.betreff.join(" · ")):"")+
     (erg.kopf.leistungszeitraum?"<br>Leistungszeitraum: "+esc(erg.kopf.leistungszeitraum):"")+"</div>"));
+  var hinweis=pruefHinweisBox(erg.positionen, "im KPlus-PDF"); if(hinweis) v.inhalt.appendChild(hinweis);
+  /* Einsatz: so hätte die App gerechnet – die Unterschiede sind das, was sie lernen soll */
+  var lernen=pk ? einsatzVergleich(pk, kx.kunde_id, erg) : null;
+  if(lernen) v.inhalt.appendChild(einsatzVergleichKarte(lernen));
   v.inhalt.appendChild(belegTabelle(erg.positionen, null));
-  var ab=el('<button class="btn ghost" type="button">Abbrechen</button>'), ok=el('<button class="btn" type="button">Am Projekt ablegen</button>');
+  var ab=el('<button class="btn ghost" type="button">Abbrechen</button>'), ok=el('<button class="btn" type="button">'+(pk?"Beim Einsatz ablegen":"Am Projekt ablegen")+"</button>");
   var kat=el('<label class="chk" style="margin-right:auto"><input type="checkbox" checked><span>Neue Positionen in den Katalog</span></label>');
   ab.onclick=function(){ v.zu(); };
   v.fuss.appendChild(kat); v.fuss.appendChild(ab); v.fuss.appendChild(ok);
   ok.onclick=function(){
-    ok.disabled=true;
-    var bestehend=(BELEGE_JE_PROJEKT[p.id]||[]);
+    ok.disabled=true; ok.textContent="wird abgelegt …";
+    var bestehend=p ? (BELEGE_JE_PROJEKT[p.id]||[]) : [];
     var angebot=erg.art==="rechnung" ? bestehend.filter(function(b){ return b.art==="angebot"; })[0] : null;
-    var zeile={projekt_id:p.id, kunde_id:p.kunde_id||"lidl", standort_id:p.standort_id||null, art:erg.art, nummer:erg.nummer, test:false, extern:true, datum:erg.datum||isoLokal(new Date()), status:erg.art==="rechnung"?"versendet":"angenommen",
-      bezug_id:angebot?angebot.id:null, kopf:erg.kopf, positionen:erg.positionen, summen:belegSummen(erg.positionen), geaendert_von:meinName()};
+    var kopf=Object.assign({}, erg.kopf, lernen?{lernen:lernen.speichern}:{});
+    var zeile={projekt_id:p?p.id:null, protokoll_id:pk?pk._id:null, kunde_id:kx.kunde_id||"lidl", standort_id:kx.standort_id||null, art:erg.art, nummer:erg.nummer, test:false, extern:true,
+      datum:erg.datum||isoLokal(new Date()), status:erg.art==="rechnung"?"versendet":"angenommen",
+      bezug_id:angebot?angebot.id:null, kopf:kopf, positionen:erg.positionen, summen:belegSummen(erg.positionen), geaendert_von:meinName()};
+    var beleg=null;
     Store.sb.from("belege").upsert(zeile, {onConflict:"art,nummer"}).select("*").then(function(r){
       if(r.error) throw new Error(r.error.message);
-      return kat.querySelector("input").checked ? katalogUebernehmen(erg) : 0;
+      beleg=(r.data||[])[0]||null;
+      /* das Original-PDF zum Beleg (nur Inhaber, Büro-Ordner) – ein Fehler hier hält das Ablegen nicht auf */
+      var pdf=datei && beleg ? belegPdfAblegen(beleg, kx, datei).catch(function(e){ toast("PDF nicht abgelegt: "+e.message); }) : null;
+      /* Einsatz mit KPlus-Rechnung gilt als abgerechnet */
+      var abg=pk && erg.art==="rechnung" ? Store.sb.from("abrechnung").upsert({protokoll_id:pk._id, abgerechnet:new Date().toISOString(), von:meinName(), notiz:"KPlus-Rechnung "+erg.nummer},{onConflict:"protokoll_id"})
+        .then(function(){ return abrechnungLaden(); }, function(){}) : null;
+      return Promise.all([pdf, abg]).then(function(){ return kat.querySelector("input").checked ? katalogUebernehmen(erg) : 0; });
     }).then(function(n){
-      v.zu(); toast((erg.art==="rechnung"?"Rechnung ":"Angebot ")+erg.nummer+" abgelegt"+(n?" – "+n+" neue Position"+(n===1?"":"en")+" im Katalog":"")+".");
+      v.zu(); toast((erg.art==="rechnung"?"Rechnung ":"Angebot ")+erg.nummer+" abgelegt"+(pk&&erg.art==="rechnung"?", Einsatz als abgerechnet vermerkt":"")+(n?" – "+n+" neue Position"+(n===1?"":"en")+" im Katalog":"")+".");
       fertig();
-    }).catch(function(e){ ok.disabled=false; toast("Nicht abgelegt: "+e.message); });
+    }).catch(function(e){ ok.disabled=false; ok.textContent=pk?"Beim Einsatz ablegen":"Am Projekt ablegen"; toast("Nicht abgelegt: "+e.message); });
   };
+}
+/* KPlus-Rechnung gegen den Vorschlag der App (einsatzPositionen): was fehlte, was zu viel war, wo Menge/Preis abweichen */
+function einsatzVergleich(pk, kid, erg){
+  var app=einsatzPositionen(pk, kid).filter(function(x){ return x.typ==="pos"; }), kp=erg.positionen.filter(function(x){ return x.typ==="pos" && !x.alternativ; });
+  var norm=function(x){ return suchNorm(katalogTextOhneMenge(String(x.text||"").split("\n")[0])).slice(0,40); };
+  var aehnlich=function(a, b){ var na=norm(a), nb=norm(b); if(!na || !nb) return false; if(na===nb) return true;
+    var wa=na.split(" ").filter(function(w){ return w.length>=5; }); return wa.length && wa.filter(function(w){ return nb.indexOf(w)>=0; }).length>=Math.min(2, wa.length); };
+  var frei=app.slice(), zeilen=[];
+  kp.forEach(function(k){
+    var i=-1; frei.some(function(a, j){ if(aehnlich(a, k)){ i=j; return true; } return false; });
+    if(i<0){ zeilen.push({art:"fehlte", k:k}); return; }
+    var a=frei.splice(i,1)[0], d=[];
+    if(Math.abs((+a.menge||0)-(+k.menge||0))>0.01) d.push("Menge App "+mengeText(a.menge)+" "+(a.eh||"")+" · KPlus "+mengeText(k.menge)+" "+(k.eh||""));
+    if((+a.preis||0)>0 && Math.abs((+a.preis||0)-(+k.preis||0))>=0.005) d.push("Preis App "+geld(a.preis)+" · KPlus "+geld(k.preis));
+    if(!(+a.preis>0)) d.push("Preis fehlte in der App (KPlus "+geld(k.preis)+")");
+    zeilen.push({art:d.length?"anders":"gleich", k:k, a:a, d:d});
+  });
+  frei.forEach(function(a){ zeilen.push({art:"zuviel", a:a}); });
+  var appNetto=belegSummen(app).netto, kpNetto=belegSummen(kp).netto;
+  return {zeilen:zeilen, appNetto:appNetto, kpNetto:kpNetto,
+    speichern:{zeit:new Date().toISOString(), appNetto:appNetto, kplusNetto:kpNetto, art:istStoerung(pk)?"stoerung":"wartung",
+      fehlte:zeilen.filter(function(z){ return z.art==="fehlte"; }).map(function(z){ return {text:z.k.text, eh:z.k.eh, menge:z.k.menge, preis:z.k.preis}; }),
+      zuviel:zeilen.filter(function(z){ return z.art==="zuviel"; }).map(function(z){ return {text:z.a.text, eh:z.a.eh, menge:z.a.menge}; }),
+      anders:zeilen.filter(function(z){ return z.art==="anders"; }).map(function(z){ return {text:z.k.text, d:z.d}; })}};
+}
+function einsatzVergleichKarte(l){
+  var farbe={gleich:"var(--ok)", anders:"var(--warn)", fehlte:"var(--crit)", zuviel:"var(--crit)"};
+  var text={gleich:"✓ wie die App", anders:"≠ anders", fehlte:"+ fehlte in der App", zuviel:"− hätte die App zusätzlich"};
+  var c=el('<div class="card" style="box-shadow:none;margin:8px 0"><div class="pad stack" style="gap:6px"><h2>So hätte die App gerechnet</h2>'+
+    '<div class="muted" style="font-size:12.5px">App-Vorschlag netto <strong>'+geld(l.appNetto)+" €</strong> · KPlus netto <strong>"+geld(l.kpNetto)+" €</strong>. "+
+    "Die Unterschiede werden mit dem Beleg gespeichert – künftige Rechnungsvorschläge zu Einsätzen ergänzen, was der Chef regelmäßig dazuschreibt.</div></div></div>");
+  var s=c.querySelector(".stack");
+  l.zeilen.forEach(function(z){
+    var t=(z.k||z.a).text;
+    s.appendChild(el('<div style="font-size:13px;border-left:3px solid '+farbe[z.art]+';padding-left:8px"><strong>'+text[z.art]+"</strong> · "+esc(String(t||"").split("\n")[0].slice(0,90))+
+      (z.d&&z.d.length?'<br><span class="muted">'+esc(z.d.join(" · "))+"</span>":"")+"</div>"));
+  });
+  return c;
+}
+/* Gelernt aus KPlus-Rechnungen zu früheren Einsätzen: Positionen, die der Chef bei dieser Art Einsatz (am selben Markt
+   zuerst, sonst beim selben Kunden) mindestens zweimal dazugeschrieben hat und die der App-Vorschlag noch nicht hat */
+function einsatzGelernt(pk, kid, schon){
+  var art=istStoerung(pk)?"stoerung":"wartung", zaehl={}, belege=(BELEGE_ALLE||[]).filter(function(b){
+    var l=(b.kopf||{}).lernen; return b.extern && b.art==="rechnung" && b.protokoll_id && b.protokoll_id!==pk._id && l && l.art===art && (b.standort_id===pk.standortId || (b.kunde_id||"lidl")===(kid||"lidl")); });
+  belege.forEach(function(b){
+    var gesehen={};
+    (b.kopf.lernen.fehlte||[]).forEach(function(x){
+      var k=katalogSchluessel(katalogTextOhneMenge(x.text), x.eh); if(gesehen[k]) return; gesehen[k]=1;
+      var e=zaehl[k]||(zaehl[k]={x:x, n:0, mengen:[], amMarkt:0}); e.n++; e.mengen.push(+x.menge||0); if(b.standort_id===pk.standortId) e.amMarkt++; e.x=x;
+    });
+  });
+  var hat=(schon||[]).map(function(x){ return katalogSchluessel(katalogTextOhneMenge(String(x.text||"").split("\n")[0]), x.eh); });
+  return Object.keys(zaehl).map(function(k){ return zaehl[k]; }).filter(function(e){ return (e.n>=2 || e.amMarkt>=1) && hat.indexOf(katalogSchluessel(katalogTextOhneMenge(e.x.text), e.x.eh))<0; })
+    .map(function(e){ var m=e.mengen.slice().sort(function(a,b){ return a-b; }); return {text:katalogTextOhneMenge(e.x.text), eh:e.x.eh, preis:+e.x.preis||0, menge:m[Math.floor(m.length/2)]||1, n:e.n, amMarkt:e.amMarkt}; });
 }
 /* Katalog: Positionen ohne gleichen Text+Einheit dazu; gleicher Text mit neuem Preis aktualisiert */
 var KATALOG=[], katalogGeladen=false;
@@ -27285,10 +27404,13 @@ function katalogLernen(positionen, quelle, opt){
   if(!nurInhaber()) return Promise.resolve({neu:0, preise:0});
   return katalogLaden().then(function(){
     var da={}; KATALOG.forEach(function(x){ da[katalogSchluessel(x.text,x.eh)]=x; });
-    var neu=[], preisNeu=[];
+    var neu=[], preisNeu=[], unklar=0;
     (positionen||[]).forEach(function(x){
-      var text=String(x.text||"").replace(/\s*–\s*Preis fehlt im Katalog\s*$/,"").trim();
+      /* Mengen eines einzelnen Auftrags („(3 Mann a 10 Std)“, „(3 h)“) nicht in den allgemeinen Katalogtext */
+      var text=katalogTextOhneMenge(String(x.text||"").replace(/\s*–\s*Preis fehlt im Katalog\s*$/,"").trim());
       if(x.typ!=="pos" || !text || !(+x.preis>0)) return;
+      /* auffällige Position (Einheit passt nicht, Betrag ≠ Menge × Preis): nicht lernen, bis sie geklärt ist */
+      if(positionPruefen(x).some(function(t){ return /Einheit|Betrag/.test(t); })){ unklar++; return; }
       var k=katalogSchluessel(text,x.eh), alt=da[k];
       if(alt){ if(opt.preiseAktualisieren && alt.id && Math.abs((+alt.preis||0)-(+x.preis))>=0.005) preisNeu.push({k:alt, preis:+x.preis}); return; }
       /* „FB035/Pos.38“, „FB035/Pos 21“, „FB 035, Pos. 9.1“ – Lidl-Rahmenvertrag */
@@ -27303,12 +27425,13 @@ function katalogLernen(positionen, quelle, opt){
       var f={preis:u.preis, quelle:(quelle+" (vorher "+geld(u.k.preis)+" €)").slice(0,300), geaendert:new Date().toISOString(), geaendert_von:meinName()};
       jobs.push(Store.sb.from("katalog").update(f).eq("id", u.k.id).then(function(r){ if(!r.error) Object.assign(u.k, f); }));
     });
-    return Promise.all(jobs).then(function(){ return {neu:neu.length, preise:preisNeu.length}; });
+    return Promise.all(jobs).then(function(){ return {neu:neu.length, preise:preisNeu.length, unklar:unklar}; });
   });
 }
 function katalogUebernehmen(erg){
   return katalogLernen(erg.positionen, "KPlus "+(erg.art==="rechnung"?"Rechnung ":"Angebot ")+erg.nummer, {preiseAktualisieren:true}).then(function(x){
     if(x.preise) setTimeout(function(){ toast(x.preise+" Katalog-Preis"+(x.preise===1?"":"e")+" nach KPlus aktualisiert (der alte Preis steht bei der Herkunft)."); }, 2500);
+    if(x.unklar) setTimeout(function(){ toast(x.unklar+" auffällige Position"+(x.unklar===1?"":"en")+" nicht in den Katalog übernommen – erst klären (Einheit bzw. Betrag)."); }, 5000);
     return x.neu;
   });
 }
@@ -27363,6 +27486,7 @@ function belegAnsicht(kx, b, fertig){
       (kopf.bestellung?"<br>Bestellung: "+esc(kopf.bestellung):"")+(kopf.leistungszeitraum?"<br>Leistungszeitraum: "+esc(kopf.leistungszeitraum):"")+
       (b.art==="rechnung"&&kx.protokoll?"<br>"+(rap?"📎 Rapportbericht von Lidl wird hinten angehängt.":'<strong style="color:var(--warn)">Zum Einsatz liegt noch kein Rapportbericht vor</strong> – am Protokoll nachreichen, dann kommt er ins PDF.'):"")+
       (angebot?"<br>Zum Angebot "+esc(angebot.nummer)+" – rechte Spalte: Menge im Angebot, fett = abweichend.":"")+"</div>"));
+    var ph=pruefHinweisBox(b.positionen); if(ph) v.inhalt.appendChild(ph);
     v.inhalt.appendChild(belegTabelle(b.positionen, angebot?angebot.positionen:null));
     /* Status (nur eigene Belege; KPlus-Belege führt KPlus) */
     if(!b.extern){
@@ -27481,11 +27605,14 @@ function fahrtZone(s){
    Kältemittel; Preise aus dem Katalog, wo eine passende Position steht. */
 function einsatzPositionen(pk, kid){
   var pos=[], nr=0, stoer=istStoerung(pk), so=pk.stoerung||{};
-  var add=function(menge, eh, text, kat){ nr++; pos.push({typ:"pos", nr:String(nr), menge:menge, eh:(kat&&kat.eh)||eh, text:kat?kat.text:text, preis:kat?+kat.preis:0, katalog_id:kat?kat.id:null, alternativ:false}); };
+  /* zusatz: was zu genau diesem Einsatz gehört (Uhrzeit, Mannschaft) – bleibt auch beim Katalogtext stehen. Mengen aus
+     einem alten Auftrag im Katalogtext („(3 Mann a 10 Std)“) fallen weg (Büro 05.10.2026: „da stimmt was nicht“) */
+  var add=function(menge, eh, text, kat, zusatz){ nr++; pos.push({typ:"pos", nr:String(nr), menge:menge, eh:(kat&&kat.eh)||eh,
+    text:(kat?katalogTextOhneMenge(kat.text):text)+(zusatz?"\n"+zusatz:""), preis:kat?+kat.preis:0, katalog_id:kat?kat.id:null, alternativ:false}); };
   if(!stoer){
     (pk.anlagen||[]).forEach(function(a){
       var kat=katalogFinde(/wartung/i, kid);
-      nr++; pos.push({typ:"pos", nr:String(nr), menge:1, eh:"Stk", text:"Wartung"+(a.termin?" ("+a.termin+")":"")+": "+(a.name||"Anlage")+"\nlt. Wartungsprotokoll vom "+dfmt(pk.datum)+(kat?"\n"+kat.text:""),
+      nr++; pos.push({typ:"pos", nr:String(nr), menge:1, eh:"Stk", text:"Wartung"+(a.termin?" ("+a.termin+")":"")+": "+(a.name||"Anlage")+"\nlt. Wartungsprotokoll vom "+dfmt(pk.datum)+(kat?"\n"+katalogTextOhneMenge(kat.text):""),
         preis:kat?+kat.preis:0, katalog_id:kat?kat.id:null, alternativ:false});
     });
   } else {
@@ -27495,7 +27622,8 @@ function einsatzPositionen(pk, kid){
     var b0=zeitMin(so.ankunft), e0=zeitMin(so.ende);
     if(b0!=null && e0!=null){
       var std=Math.round(((e0<b0?e0+1440:e0)-b0)/60*mann*4)/4;
-      add(std, "Std", "Regiestunden Techniker ("+so.ankunft+"–"+so.ende+(mann>1?", "+mann+" Mann":"")+")", katalogFinde(/regiestunden/i, kid));
+      var rk=katalogFinde(/regiestunden/i, kid), zeit=so.ankunft+"–"+so.ende+(mann>1?", "+mann+" Mann":"");
+      add(std, "Std", "Regiestunden Techniker ("+zeit+")", rk, rk ? "Einsatz "+zeit : "");
     }
     (so.material||[]).forEach(function(m){ add(zahlLesen(m.menge)===zahlLesen(m.menge) && zahlLesen(m.menge)!=null ? zahlLesen(m.menge) : 1, "Stk", m.text, null); });
   }
@@ -27509,7 +27637,7 @@ function einsatzPositionen(pk, kid){
 }
 /* neuer Beleg – leer, aus einem Angebot (Mengen aus dem Baustellenbuch) oder zu einem Einsatz (Protokoll) */
 function belegNeu(kx, art, vorlage, fertig){
-  Promise.all([belegNummer(art), belegEinstLaden(), katalogLaden().catch(function(){ return []; })]).then(function(x){
+  Promise.all([belegNummer(art), belegEinstLaden(), katalogLaden().catch(function(){ return []; }), kx.protokoll ? belegeAlleLaden().catch(function(){ return []; }) : null]).then(function(x){
     var nr=x[0], kd=kundeBelegDaten(kx.kunde_id), F=BELEG_EINST.firma||{};
     var pos=vorlage ? JSON.parse(JSON.stringify(vorlage.positionen||[])).map(function(p){ delete p.betragPdf; return p; }) : [];
     var kopf=vorlage ? JSON.parse(JSON.stringify(vorlage.kopf||{})) : {empfaenger:kundeAnschrift(kx.kunde_id), betreff:[kontextTitel(kx)]};
@@ -27525,6 +27653,15 @@ function belegNeu(kx, art, vorlage, fertig){
     if(kx.protokoll){
       var pk=kx.protokoll, so=pk.stoerung||{};
       pos=einsatzPositionen(pk, kx.kunde_id);
+      /* was der Chef bei solchen Einsätzen in KPlus regelmäßig dazuschreibt (aus hochgeladenen KPlus-Rechnungen) */
+      var gel=einsatzGelernt(pk, kx.kunde_id, pos);
+      if(gel.length){
+        var fahrtIdx=pos.map(function(x){ return /fahrtpauschale/i.test(x.text||""); }).lastIndexOf(true);
+        var neuePos=[{typ:"text", text:"Ergänzt aus früheren KPlus-Rechnungen – bitte prüfen"}].concat(gel.map(function(g){
+          return {typ:"pos", nr:"", menge:g.menge, eh:g.eh, text:g.text, preis:g.preis, katalog_id:null, alternativ:false, gelernt:g.amMarkt?"am Markt":g.n+"× bei ähnlichen Einsätzen"}; }));
+        pos=fahrtIdx>=0 ? pos.slice(0, fahrtIdx).concat(neuePos, pos.slice(fahrtIdx)) : pos.concat(neuePos);
+        var n2=0; pos.forEach(function(x){ if(x.typ==="pos") x.nr=String(++n2); });
+      }
       kopf.betreff=[(st&&st.filiale?"Filiale "+st.filiale+" ":"")+(st?stName(st):pk.standortName||"")+", "+(istStoerung(pk)?"Störung"+(so.problemtyp?" "+so.problemtyp:""):"Wartung "+(pk.wartungsart||""))];
       kopf.bestellung=pk.auftragsnummer||pk.bestellnummer||"";
       kopf.leistungszeitraum=dfmt(pk.datum);
@@ -27748,12 +27885,27 @@ function katalogAnsicht(){
       toast("Position angelegt."); q.value=text.slice(0,20); zeichnen(); }, function(){ toast("Keine Verbindung."); });
   };
   v.inhalt.appendChild(neuK); v.inhalt.appendChild(q); v.inhalt.appendChild(l);
+  /* Katalog prüfen (Büro 05.10.2026): Mengen eines alten Auftrags im Text („(3 h)“, „3 Mann a 10 Std“) landen sonst in
+     jeder Rechnung; Stunden-Positionen brauchen die Einheit Std */
+  var auffaellig=function(k){ var w=[];
+    if(katalogTextOhneMenge(k.text)!==String(k.text||"").trim()) w.push("Menge eines einzelnen Auftrags im Text");
+    else if(textMenge(k.text) && /stunde|std|regie|zuschlag/i.test(k.text)) w.push("Text nennt Stunden („"+textMenge(k.text).fund+"“)");
+    if(/regiestunde|stundensatz|zuschlag stunde|arbeitsstunde/i.test(k.text||"") && !/^(std|h|stunden?)\.?$/i.test(String(k.eh||""))) w.push("Stunden-Position mit Einheit „"+(k.eh||"")+"“");
+    return w; };
+  var nurAuff=false;
   var zeichnen=function(){
     var s=suchNorm(q.value); l.innerHTML="";
-    var t=KATALOG.filter(function(k){ return !s || suchNorm([k.text,k.quelle,k.gruppe].join(" ")).indexOf(s)>=0; });
-    l.appendChild(el('<div class="muted" style="font-size:12.5px">'+KATALOG.length+" Positionen</div>"));
+    var anzAuff=KATALOG.filter(function(k){ return k.aktiv!==false && auffaellig(k).length; }).length;
+    var t=KATALOG.filter(function(k){ return (!s || suchNorm([k.text,k.quelle,k.gruppe].join(" ")).indexOf(s)>=0) && (!nurAuff || auffaellig(k).length); });
+    var kopfz=el('<div class="rowflex" style="gap:8px;justify-content:space-between;flex-wrap:wrap"><span class="muted" style="font-size:12.5px">'+KATALOG.length+" Positionen</span>"+
+      (anzAuff||nurAuff?'<button class="chip" type="button" aria-pressed="'+nurAuff+'" data-auff>⚠ zu prüfen · '+anzAuff+"</button>":"")+"</div>");
+    var ab=kopfz.querySelector("[data-auff]"); if(ab) ab.onclick=function(){ nurAuff=!nurAuff; zeichnen(); };
+    l.appendChild(kopfz);
     t.slice(0,150).forEach(function(k){
-      var z=el('<div style="border:1px solid var(--line);border-radius:8px;padding:8px;font-size:13px'+(k.aktiv===false?";opacity:.5":"")+'">'+
+      var w=auffaellig(k), ohne=katalogTextOhneMenge(k.text);
+      var z=el('<div style="border:1px solid '+(w.length?"var(--warn)":"var(--line)")+';border-radius:8px;padding:8px;font-size:13px'+(k.aktiv===false?";opacity:.5":"")+'">'+
+        (w.length?'<div style="color:var(--warn);font-size:12.5px;margin-bottom:4px">⚠ '+esc(w.join(" · "))+
+          (ohne!==String(k.text||"").trim()?' <button class="btn ghost sm" type="button" data-ohne>Menge aus dem Text entfernen</button>':"")+"</div>":"")+
         '<textarea rows="2" style="width:100%">'+esc(k.text)+"</textarea>"+
         '<div class="rowflex" style="gap:8px;margin-top:4px"><input type="text" style="width:70px" value="'+esc(k.eh)+'" data-eh>'+
         '<input type="text" inputmode="decimal" style="width:110px" value="'+esc(geld(k.preis))+'" data-preis> €'+
@@ -27766,6 +27918,9 @@ function katalogAnsicht(){
         schreib({text:z.querySelector("textarea").value.trim(), eh:z.querySelector("[data-eh]").value.trim()||"Stk", preis:pr});
       };
       z.querySelector("[data-aus]").onclick=function(){ schreib({aktiv:k.aktiv===false}); };
+      var oh=z.querySelector("[data-ohne]");
+      if(oh) oh.onclick=function(){ if(KATALOG.some(function(x){ return x.id!==k.id && katalogSchluessel(x.text,x.eh)===katalogSchluessel(ohne,k.eh); })){ toast("Ohne Mengenangabe gibt es diese Position schon – diese hier bitte ausblenden."); return; }
+        schreib({text:ohne, quelle:((k.quelle||"")+" · Menge aus dem Text entfernt").slice(0,300)}); };
       l.appendChild(z);
     });
   };
@@ -27856,8 +28011,11 @@ function viewBelege(){
 }
 /* im Protokoll: Rechnung(en) zu diesem Einsatz und „Rechnung schreiben“ */
 function einsatzBelegeZeile(pk){
-  var z=el('<div class="posbox stack" style="gap:6px"><div class="rowflex" style="justify-content:space-between;gap:8px">'+
-    '<strong>Rechnung zu diesem Einsatz</strong><button class="btn ghost sm" type="button">Rechnung schreiben</button></div>'+
+  var z=el('<div class="posbox stack" style="gap:6px"><div class="rowflex" style="justify-content:space-between;gap:8px;flex-wrap:wrap">'+
+    '<strong>Rechnung zu diesem Einsatz</strong><span class="rowflex" style="gap:6px">'+
+    /* solange KPlus führt: die Rechnung des Chefs hochladen statt selbst schreiben – die App lernt daraus (Büro 05.10.2026) */
+    '<label class="btn ghost sm" style="cursor:pointer" title="Die in KPlus geschriebene Rechnung als PDF hochladen – die App vergleicht sie mit ihrem Vorschlag und lernt daraus">KPlus-Rechnung hochladen<input type="file" data-kplus accept="application/pdf,.pdf" hidden></label>'+
+    '<button class="btn ghost sm" type="button" data-schreiben>Rechnung schreiben</button></span></div>'+
     '<div data-l class="muted" style="font-size:12.5px">wird geladen …</div></div>');
   var l=z.querySelector("[data-l]");
   var laden=function(){
@@ -27873,7 +28031,16 @@ function einsatzBelegeZeile(pk){
       });
     });
   };
-  z.querySelector("button").onclick=function(){ belegNeu(kontextProtokoll(pk), "rechnung", null, laden); };
+  z.querySelector("[data-schreiben]").onclick=function(){ belegNeu(kontextProtokoll(pk), "rechnung", null, laden); };
+  z.querySelector("[data-kplus]").onchange=function(){
+    var f=this.files&&this.files[0]; this.value=""; if(!f) return;
+    toast("KPlus-PDF wird gelesen …");
+    Promise.all([f.arrayBuffer().then(function(buf){ return kplusLesen(new Uint8Array(buf)); }), katalogLaden().catch(function(){ return []; })]).then(function(x){
+      var erg=x[0];
+      if(erg.art!=="rechnung" && !window.confirm("Das ist ein KPlus-"+(erg.art==="angebot"?"Angebot":"Beleg")+", keine Rechnung. Trotzdem beim Einsatz ablegen?")) return;
+      kplusVorschau(kontextProtokoll(pk), erg, laden, f);
+    }, function(e){ toast("Nicht lesbar: "+(e&&e.message||e)); });
+  };
   laden();
   return z;
 }

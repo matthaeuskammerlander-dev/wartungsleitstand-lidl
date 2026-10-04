@@ -102,6 +102,13 @@ Kammerlander Umwelt- und Klimatechnik (UKT) – oft kurz, vom Handy, im Feld.
   liest `kplusLesen` ohne KI aus dem PDF-Text nach Spaltenlage (Position x<90,
   Menge+EH 90–150, Text 150–395, Preis 395–480, Betrag/„Alternativ“ ab 480;
   Zeilen nach Abstand, nicht gerundet) und rechnet gegen die PDF-Summe nach.
+  Positionsprüfung (Büro 05.10.2026: „in der Klammer steht 3 h, als Anzahl nur 1 h – da stimmt was nicht“,
+  `positionPruefen`, `textMenge`): nennt der Text einer Arbeits-/Stundenposition eine Menge („(3 h)“, „4 Mann a 10 Std“),
+  muss sie zur Menge passen; Stunden mit Einheit ≠ Std und PDF-Betrag ≠ Menge × Preis werden gemeldet (KPlus-Vorschau,
+  Beleg, Katalog „⚠ zu prüfen“) – nur Hinweise. Katalogtexte ohne Auftrags-Mengen (`katalogTextOhneMenge`; auffällige
+  Positionen lernt der Katalog nicht). KPlus-Rechnung zum Einsatz (`einsatzBelegeZeile` → `kplusVorschau(kontext)`):
+  Vergleich mit dem App-Vorschlag (`einsatzVergleich`, gespeichert in `kopf.lernen`), Original-PDF beim Beleg, Einsatz
+  abgerechnet; `einsatzGelernt` ergänzt künftige Vorschläge um das, was der Chef ≥2× (am Markt ≥1×) dazuschrieb.
   App-Belege sind TEST (T-A-/T-R-Nummern), solange KPlus führt. Rechnung aus
   Angebot: Mengenvorschläge aus dem Baustellenbuch (`baubuchVorschlaege`).
   Echte Preise und Belege nie ins Repository – nur in Supabase.
