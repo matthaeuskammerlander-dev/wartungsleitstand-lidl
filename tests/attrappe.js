@@ -267,6 +267,33 @@
       if(name==="bereiche_eigene"){ var fest=["fahrt","baustelle","wartung","stoerung","werkstatt","buero","sonstiges"], n={};
         (DB.arbeitszeiten||[]).concat(DB.stempel||[]).forEach(function(z){ var b=String(z.bereich||"").trim(); if(b && fest.indexOf(b)<0) n[b]=(n[b]||0)+1; });
         return Promise.resolve({data:Object.keys(n).sort(function(a,b){ return n[b]-n[a]; }).map(function(b){ return {bereich:b, anzahl:n[b]}; }), error:null}); }
+      /* wie public.stempel_abgleich() (stempel-abgleich.sql): gestempelte Blöcke lückenlos und genau aufteilen */
+      if(name==="stempel_abgleich"){
+        var fe=function(m){ return Promise.resolve({data:null,error:{message:m}}); };
+        var mm=function(t){ var x=/^(\d\d):(\d\d)$/.exec(t||""); return x ? (+x[1])*60+(+x[2]) : null; };
+        var hh=function(m){ return ("0"+Math.floor(m/60)).slice(-2)+":"+("0"+(m%60)).slice(-2); };
+        var eig=DB.arbeitszeiten.filter(function(z){ return z.user_id===uid() && z.datum===w.p_datum && z.art==="arbeit" && /^stempel/.test(z.quelle||"") && !z.bestaetigt && mm(z.ende)>mm(z.beginn); })
+          .sort(function(x,y){ return mm(x.beginn)-mm(y.beginn); });
+        var bl=[]; eig.forEach(function(z){ var l2=bl[bl.length-1]; if(l2 && mm(z.beginn)===l2.e){ l2.z.push(z); l2.e=mm(z.ende); } else bl.push({b:mm(z.beginn), e:mm(z.ende), z:[z]}); });
+        if(!bl.length) return fe("An diesem Tag gibt es keine gestempelte Zeit, die sich aufteilen lässt");
+        var erg=[], weg=[];
+        for(var bi=0; bi<bl.length; bi++){ var B=bl[bi];
+          var tt=(w.p_teile||[]).filter(function(t){ return mm(t.beginn)>=B.b && mm(t.ende)<=B.e; }).sort(function(x,y){ return mm(x.beginn)-mm(y.beginn); });
+          if(!tt.length) continue;
+          var cur=B.b, lang=-1, li=0;
+          for(var i=0;i<tt.length;i++){ if(mm(tt[i].beginn)!==cur) return fe("Die Abschnitte müssen lückenlos sein"); if(mm(tt[i].ende)<=cur) return fe("Abschnitt ohne Dauer");
+            if(mm(tt[i].ende)-cur>lang){ lang=mm(tt[i].ende)-cur; li=i; } cur=mm(tt[i].ende); }
+          if(cur!==B.e) return fe("Die Abschnitte müssen genau die gestempelte Zeit ergeben");
+          var smin=B.z.reduce(function(x,z){ return x+(z.minuten||0); },0), sp=B.z.reduce(function(x,z){ return x+(z.pause_min||0); },0);
+          var andere=0; tt.forEach(function(t,i){ if(i!==li) andere+=mm(t.ende)-mm(t.beginn); });
+          tt.forEach(function(t,i){ var n={id:"x"+(++z), user_id:uid(), name:B.z[0].name, datum:w.p_datum, beginn:t.beginn, ende:t.ende, pause_min:i===li?sp:0, pause_auto:0,
+            minuten:i===li?smin-andere:mm(t.ende)-mm(t.beginn), art:"arbeit", taetigkeit:t.taetigkeit||null, standort_id:t.standort_id||null, projekt_id:t.projekt_id||null,
+            planung_id:t.planung_id||null, quelle:"stempel_abgeglichen", bereich:t.bereich||null, erstellt:new Date().toISOString()}; DB.arbeitszeiten.push(n); erg.push(n); });
+          B.z.forEach(function(z0){ weg.push(z0.id); });
+        }
+        for(var wi=DB.arbeitszeiten.length-1; wi>=0; wi--) if(weg.indexOf(DB.arbeitszeiten[wi].id)>=0) DB.arbeitszeiten.splice(wi,1); sichern();
+        return Promise.resolve({data:{eintraege:JSON.parse(JSON.stringify(erg)), ersetzt:weg}, error:null});
+      }
       if(name!=="stempeln") return Promise.resolve({data:null,error:null});
       /* wie public.stempeln() (stempeluhr-2.sql): Zeit vom „Server“, Reihenfolge prüfen,
          Umstempeln, beim Ausstempeln je Abschnitt ein Eintrag, Einträge von Hand ersetzen */

@@ -282,7 +282,11 @@ Kammerlander Umwelt- und Klimatechnik (UKT) – oft kurz, vom Handy, im Feld.
   geplant“ (`stempelPlanChips`), nach dem Ausstempeln Verknüpfung mit dem Termin (`zeitenMitPlanungVerknuepfen`).
   Soll je Tag/Woche in „Meine Arbeitszeit“ (`sollIstTag`) nur zur Info – Überstunden bleiben MONATSBILANZ.
   Vor dem Bestätigen: `monatLuecken` (Tage ohne Eintrag, Abwesenheit ohne Stunden, Geplantes nicht erfasst) mit
-  „Nachricht an …“. Büro 03.10.2026. Neu Eingetragene bekommen eine Chat-Nachricht
+  „Nachricht an …“. Büro 03.10.2026.
+  Stempeluhr hat VORRANG (Büro 04.10.2026): Abgleich mit dem Kalender (`abgleichDialog`, `abgleichTeile`, Funktion `stempel_abgleich`,
+  tools/stempel-abgleich.sql) teilt nur die gestempelte Zeit auf – Blöcke lückenlos und genau, Summe/Pause unverändert, Quelle
+  „stempel_abgeglichen“; nach dem Ausstempeln angeboten, beim Tag „⇆ Mit Kalender abgleichen“, beim Termin „⏱ abgleichen“ statt
+  „erfassen“ (nie doppelt). Umstempeln mit Vorgabe aus dem Termin (`geplantFuerMich`, „⇄ Dorthin umstempeln“). Neu Eingetragene bekommen eine Chat-Nachricht
   (nicht bei Privatem). Diese Grenzen nie lockern.
 - **Posteingang → Projekt** (Büro 02.10.2026): weitergeleitete Mails (nicht Lidl-Auftrag/Rapport)
   kommen mit `.eml` (art „mail“, `eintraege` in synology/ukt_posteingang.py, Test
