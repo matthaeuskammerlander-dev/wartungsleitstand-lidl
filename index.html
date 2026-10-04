@@ -3382,6 +3382,11 @@ function mailUebernehmen(a){
     var m=r[0];
     if(a.a==="stoerung") mailStoerung(m);
     else if(a.a==="zuprojekt") mailZuProjekt(m, a.p);
+    else if(a.a==="verlauf"){
+      /* Stichwort-Vorschlag: der letzte Teil des Betreffs (meist Kunde/Ort), ohne Fwd:/AW: */
+      var b=String(m.betreff||"").replace(/^\s*((re|aw|wg|wtr|fwd?|antw)\s*:\s*)+/i, "").trim(), teile=b.split(/\s*[,–\-|:]\s*/).filter(function(t){ return t.length>=4; });
+      mailVerlaufDialog({suche:teile.length ? teile[teile.length-1] : b, mail:{k:m.konto, o:m.ordner, u:m.uid, betreff:m.betreff}, projektId:a.p||""});
+    }
     else mailProjektNeu(m);
   }, function(e){ toast("Mail nicht geholt: "+e.message); });
 }
@@ -3584,6 +3589,246 @@ function mailStoerung(m){
     if(ein){ var dt=new DataTransfer(); dt.items.add(datei); ein.files=dt.files; ein.dispatchEvent(new Event("change")); }
   }, function(e){ toast("Anhang nicht geholt: "+e.message); });
 }
+/* ---- Projekt aus Mailverlauf nachtragen (Büro 05.10.2026: „der Chef schickt mir alle Unterlagen zu einem Projekt
+   zum Einpflegen – direkt über die Mail ist es am einfachsten“): Mails suchen und wählen → Claude baut den Verlauf
+   (Schritte mit Datum, Beteiligte, Termine, Tagebuch – je mit der Mail als Quelle) → prüfen → anlegen: alle Mails und
+   Anhänge in die Projektdateien, KPlus-PDFs als Angebot/Rechnung samt Positionen (nur Inhaber). ---- */
+function mailVerlaufDialog(vorgabe){
+  vorgabe=vorgabe||{};
+  if(demo()){ toast("Präsentation: hier wird nichts angelegt."); return; }
+  if(!mailBruecke()){ toast("Das Mail-Programm ist nicht verbunden – Verwaltung › Inhaber › Mail-Programm."); return; }
+  var v=ansichtOeffnen("Projekt aus Mailverlauf", null, {breit:true});
+  v.schritt.textContent="1. Mails wählen · 2. Claude wertet aus · 3. prüfen und anlegen";
+  var offen=PROJEKTE.slice().sort(function(a,b){ return String(b.geaendert||"").localeCompare(String(a.geaendert||"")); });
+  var form=el('<div class="stack" style="gap:8px;max-width:820px">'+
+    '<div class="muted" style="font-size:12.5px">Stichwörter – Kunde, Ort, Projekt- oder Angebotsnummer, Absender; mehrere mit Komma. Gesucht wird in beiden Postfächern (Eingang und Gesendet), fünf Jahre zurück.</div>'+
+    '<div class="rowflex" style="gap:6px;flex-wrap:nowrap"><input type="search" data-q style="flex:1" value="'+esc(vorgabe.suche||"")+'" placeholder="z. B. Rosenhof, 413951"><button class="btn sm" type="button" data-s>Suchen</button></div>'+
+    '<label class="fl"><span>Wohin?</span><select data-ziel><option value="">Neues Projekt anlegen</option>'+
+      offen.map(function(p){ return '<option value="'+esc(p.id)+'"'+(vorgabe.projektId===p.id?" selected":"")+">in "+esc(projektTitel(p))+"</option>"; }).join("")+"</select></label>"+
+    '<div class="rowflex" data-alle hidden style="gap:8px"><button class="chip" type="button" data-a="alle">alle</button><button class="chip" type="button" data-a="keine">keine</button><span class="muted" data-n style="font-size:12.5px"></span></div>'+
+    '<div class="stack" data-l style="gap:2px"></div></div>');
+  v.inhalt.appendChild(form);
+  var liste=form.querySelector("[data-l]"), treffer=[];
+  var zaehlen=function(){ var n=liste.querySelectorAll("input:checked").length; form.querySelector("[data-n]").textContent=n+" von "+treffer.length+" gewählt"; los.disabled=!n; los.textContent="✦ Mit Claude auswerten ("+n+" Mail"+(n===1?"":"s")+")"; };
+  var suchen=function(){
+    var begriffe=form.querySelector("[data-q]").value.split(/[,;]/).map(function(t){ return {text:t.trim(), inhalt:/\d{4,}|^p-/i.test(t.trim())}; }).filter(function(b){ return b.text.length>=3; });
+    if(!begriffe.length){ toast("Bitte ein Stichwort mit mindestens 3 Zeichen."); return; }
+    liste.innerHTML='<div class="muted" style="font-size:12.5px">wird gesucht …</div>';
+    mailHolen("/api/suche", {frist:90000, body:{begriffe:begriffe, tage:1830, anzahl:60}}).then(function(r){
+      treffer=r.mails.slice().sort(function(a,b){ return String(a.datum||"").localeCompare(String(b.datum||"")); });
+      if(vorgabe.mail && !treffer.some(function(m){ return m.konto===vorgabe.mail.k && m.uid===vorgabe.mail.u && m.ordner===vorgabe.mail.o; }))
+        treffer.unshift({konto:vorgabe.mail.k, ordner:vorgabe.mail.o, uid:vorgabe.mail.u, betreff:vorgabe.mail.betreff||"(die gewählte Mail)", datum:null, von:[], an:[]});
+      liste.innerHTML="";
+      form.querySelector("[data-alle]").hidden=!treffer.length;
+      if(!treffer.length){ liste.appendChild(el('<div class="muted" style="font-size:12.5px">Nichts gefunden – anderes Stichwort versuchen.</div>')); zaehlen(); return; }
+      treffer.forEach(function(m, i){
+        var wer2=m.gesendet ? "↗ an "+(((m.an||[])[0]||{}).address||"") : (((m.von||[])[0]||{}).name || ((m.von||[])[0]||{}).address || "");
+        var z=el('<label style="display:flex;gap:8px;align-items:flex-start;font-size:13px;border-bottom:1px solid var(--line);padding:4px 0;cursor:pointer"><input type="checkbox" checked data-i="'+i+'" style="margin-top:3px">'+
+          '<span style="min-width:0"><span class="muted mono" style="font-size:11.5px">'+esc(m.datum?dfmt(tagLokal(m.datum)):"")+"</span> "+esc(wer2)+"<br><strong>"+esc(m.betreff||"(ohne Betreff)")+"</strong></span></label>");
+        z.querySelector("input").onchange=zaehlen; liste.appendChild(z);
+      });
+      zaehlen();
+    }, function(e){ liste.innerHTML=""; liste.appendChild(el('<div class="note warnbox" style="font-size:12.5px">'+esc(e.message)+"</div>")); });
+  };
+  form.querySelector("[data-s]").onclick=suchen;
+  form.querySelector("[data-q]").addEventListener("keydown", function(e){ if(e.key==="Enter"){ e.preventDefault(); suchen(); } });
+  form.querySelector('[data-a="alle"]').onclick=function(){ liste.querySelectorAll("input").forEach(function(c){ c.checked=true; }); zaehlen(); };
+  form.querySelector('[data-a="keine"]').onclick=function(){ liste.querySelectorAll("input").forEach(function(c){ c.checked=false; }); zaehlen(); };
+  var ab=el('<button class="btn ghost" type="button">Abbrechen</button>'), los=el('<button class="btn" type="button" disabled>✦ Mit Claude auswerten</button>');
+  ab.onclick=function(){ v.zu(); };
+  v.fuss.appendChild(ab); v.fuss.appendChild(los);
+  los.onclick=function(){
+    var gew=[].map.call(liste.querySelectorAll("input:checked"), function(c){ var m=treffer[+c.dataset.i]; return {konto:m.konto, ordner:m.ordner, uid:m.uid}; });
+    if(!gew.length) return;
+    var angaben=[]; Object.keys(PROJEKT_ANGABEN).forEach(function(s){ PROJEKT_ANGABEN[s].forEach(function(a){ angaben.push(a[0]+" = "+a[1]+(a[2]==="datum"?" (Datum)":"")); }); });
+    los.disabled=true; los.textContent="✦ Claude liest "+gew.length+" Mails …";
+    v.schritt.textContent="Claude liest den Verlauf – je nach Menge 1 bis 3 Minuten. Das Fenster kann offen bleiben.";
+    mailHolen("/api/verlauf", {frist:330000, body:{mails:gew, angaben:angaben, schritte:PROJEKT_SCHRITTE.map(function(s){ return s[0]; }),
+      rollen:PROJEKT_LISTEN.beteiligte.felder[0][3], dateiarten:PROJEKT_DATEIARTEN.map(function(a){ return a[0]; }), typen:projektTypen(),
+      kunden:[{id:"lidl", name:"Lidl"}].concat(weitereKunden()).map(function(k){ return k.name; })}}).then(function(r){
+      if(!document.body.contains(v.inhalt)) return;
+      mailVerlaufVorschlag(v, r, form.querySelector("[data-ziel]").value);
+    }, function(e){ los.disabled=false; zaehlen(); v.schritt.textContent="Nicht ausgewertet: "+e.message; toast("Claude: "+e.message); });
+  };
+  if(vorgabe.suche) suchen();
+}
+/* Schritt 3: der Vorschlag zum Prüfen; gespeichert wird erst mit „anlegen“ */
+function mailVerlaufVorschlag(v, r, zielId){
+  var vs=r.vorschlag||{}, mails=r.mails||[], ziel=zielId ? PROJEKTE.filter(function(p){ return p.id===zielId; })[0] : null;
+  /* Absender wie bei einer einzelnen Mail (Liste von {name, address}) – für Herkunft und Verweis */
+  mails.forEach(function(m){ if(!Array.isArray(m.von)) m.von=m.vonListe||[]; });
+  var schrittVon={}; Object.keys(PROJEKT_ANGABEN).forEach(function(s){ PROJEKT_ANGABEN[s].forEach(function(a){ schrittVon[a[0]]={schritt:s, name:a[1], typ:a[2]}; }); });
+  var mailText=function(i){ var m=mails[i]; return m ? dfmt(tagLokal(m.datum))+" · "+String(m.betreff||"").slice(0,60) : ""; };
+  var arten=PROJEKT_DATEIARTEN.filter(function(x){ return !x[2] || nurInhaber(); });
+  var kunden=function(){ return [{id:"lidl", name:"Lidl"}].concat(weitereKunden()); };
+  var kVor=ziel ? ziel.kunde_id : (kunden().filter(function(k){ return vs.kundeTreffer && k.name===vs.kundeTreffer; })[0]||{}).id||"";
+  v.inhalt.innerHTML=""; v.fuss.innerHTML="";
+  v.schritt.textContent=(ziel?"In "+projektTitel(ziel):"Neues Projekt")+" · "+mails.length+" Mails ausgewertet – orange = von Claude, bitte prüfen";
+  var w=el('<div class="stack" style="gap:10px;max-width:900px"></div>'); v.inhalt.appendChild(w);
+  /* Eckdaten */
+  var kopf=el('<div class="card" style="box-shadow:none;margin:0"><div class="pad stack" style="gap:8px"><h2>Eckdaten</h2>'+
+    (ziel?'<div class="muted" style="font-size:12.5px">Die Angaben kommen zum bestehenden Projekt dazu – vorhandene werden nur ergänzt, nie überschrieben.</div>':
+    '<label class="fl"><span class="req">Titel</span><input type="text" data-k="titel" value="'+esc(vs.titel||"")+'" style="background:var(--accent-soft,#fbeee8)"></label>'+
+    '<div class="fl"><span class="req">Kunde</span><div class="rowflex" style="gap:6px;flex-wrap:nowrap"><select data-k="kunde" style="flex:1"></select>'+(Admin.frei?'<button class="btn ghost sm" type="button" data-neukunde>+ Neuer Kunde</button>':"")+"</div></div>"+
+    (vs.kunde && !kVor?'<div class="note" style="font-size:12.5px">Claude erkennt als Kunden „'+esc(vs.kunde)+"“ – noch nicht in der Kundenliste.</div>":"")+
+    '<label class="fl"><span>Standort</span><select data-k="standort"></select></label>'+
+    '<label class="fl"><span>Projekttyp</span><input type="text" data-k="typ" list="pv_typen" value="'+esc(vs.typ||"")+'">'+projektTypListe("pv_typen")+"</label>")+
+    '<label class="fl"><span>Stand</span><select data-k="status">'+PROJEKT_SCHRITTE.map(function(s){ return '<option value="'+s[0]+'"'+(s[0]===(vs.status||(ziel?ziel.status:"anfrage"))?" selected":"")+">"+esc(s[1])+"</option>"; }).join("")+"</select></label>"+
+    '<div class="note warnbox" data-err hidden></div></div></div>');
+  w.appendChild(kopf);
+  var kf=function(n){ return kopf.querySelector('[data-k="'+n+'"]'); };
+  var standorte=function(sel){ if(!kf("standort")) return; kf("standort").innerHTML='<option value="">– noch keiner / neu –</option>'+ST.filter(function(s){ return kundeVon(s)===kf("kunde").value; }).sort(nachMarktname)
+    .map(function(s){ return '<option value="'+esc(s.id)+'"'+(s.id===sel?" selected":"")+">"+esc(stName(s)+(s.adresse&&s.adresse!==stName(s)?" · "+s.adresse:""))+"</option>"; }).join(""); };
+  var kundenFuellen=function(wahl){ if(!kf("kunde")) return; kf("kunde").innerHTML='<option value="">– bitte wählen –</option>'+kunden().map(function(k){ return '<option value="'+esc(k.id)+'"'+(k.id===wahl?" selected":"")+">"+esc(k.name)+"</option>"; }).join(""); standorte(); };
+  kundenFuellen(kVor); if(kf("kunde")) kf("kunde").onchange=function(){ standorte(); };
+  var nk=kopf.querySelector("[data-neukunde]");
+  if(nk) nk.onclick=function(){ kundeEditor(null, {vorlage:{name:vs.kunde||"", adresse:vs.adresse||"", plz:vs.plz||"", ort:vs.ort||""}, fertig:function(id, sid){
+    if(!kopf.isConnected) return; kundenFuellen(id); standorte(sid); toast("Kunde angelegt und ausgewählt."); }}); };
+  /* Angaben je Schritt */
+  /* je Schlüssel eine Zeile: Texte (z. B. mehrere Rechnungsnummern) zusammen, bei Daten zählt die erste Nennung */
+  var ang=[], jeKey={};
+  (vs.angaben||[]).forEach(function(a){
+    var w=String(a.wert||"").trim(); if(!schrittVon[a.key] || !w) return;
+    var da=jeKey[a.key];
+    if(!da){ da=jeKey[a.key]={key:a.key, wert:w, mail:a.mail}; ang.push(da); return; }
+    if(schrittVon[a.key].typ!=="datum" && da.wert.indexOf(w)<0) da.wert+=", "+w;
+  });
+  var angK=el('<div class="card" style="box-shadow:none;margin:0"><div class="pad stack" style="gap:6px"><h2>Angaben zu den Schritten ('+ang.length+")</h2></div></div>");
+  if(!ang.length) angK.querySelector(".stack").appendChild(el('<div class="muted" style="font-size:12.5px">Claude hat keine Angaben gefunden.</div>'));
+  ang.forEach(function(a, i){
+    var s=schrittVon[a.key], wert=String(a.wert).trim(), alt=ziel && (ziel.daten||{})[a.key];
+    var z=el('<div style="display:grid;grid-template-columns:auto minmax(150px,220px) 1fr;gap:8px;align-items:start;font-size:13px">'+
+      '<input type="checkbox" checked data-ang="'+i+'"'+(alt?" disabled":"")+">"+
+      "<span><strong>"+esc(s.name)+'</strong><br><span class="muted" style="font-size:11.5px">'+esc(projektSchritt(s.schritt)[1])+"</span></span>"+
+      "<span>"+(s.typ==="lang"?'<textarea rows="2" data-wert style="width:100%;background:var(--accent-soft,#fbeee8)">'+esc(wert)+"</textarea>"
+        :'<input type="'+(s.typ==="datum"&&/^\d{4}-\d\d-\d\d$/.test(wert)?"date":"text")+'" data-wert value="'+esc(wert)+'" style="width:100%;background:var(--accent-soft,#fbeee8)">')+
+      '<br><span class="muted" style="font-size:11.5px">'+(alt?"steht schon im Projekt: "+esc(String(alt).slice(0,60))+" – bleibt":"Quelle: "+esc(mailText(a.mail)))+"</span></span></div>");
+    angK.querySelector(".stack").appendChild(z);
+  });
+  w.appendChild(angK);
+  /* Beteiligte, Termine, Tagebuch – je abhakbar */
+  var liste=function(titel, eintraege, zeile){
+    var c=el('<div class="card" style="box-shadow:none;margin:0"><div class="pad stack" style="gap:4px"><h2>'+esc(titel)+" ("+eintraege.length+")</h2></div></div>");
+    if(!eintraege.length) c.querySelector(".stack").appendChild(el('<div class="muted" style="font-size:12.5px">keine</div>'));
+    eintraege.forEach(function(x, i){ c.querySelector(".stack").appendChild(el('<label style="display:flex;gap:8px;font-size:13px;align-items:flex-start"><input type="checkbox" checked data-i="'+i+'" style="margin-top:3px"><span>'+zeile(x)+
+      '<br><span class="muted" style="font-size:11.5px">Quelle: '+esc(mailText(x.mail))+"</span></span></label>")); });
+    w.appendChild(c); return c;
+  };
+  var bet=(vs.beteiligte||[]).filter(function(b){ return b.name || b.firma; });
+  var betK=liste("Beteiligte", bet, function(b){ return "<strong>"+esc(b.rolle||"Sonstige")+"</strong> · "+esc([b.firma,b.name].filter(Boolean).join(", "))+(b.telefon?" · "+esc(b.telefon):"")+(b.mail_adresse?" · "+esc(b.mail_adresse):""); });
+  var ter=(vs.termine||[]).filter(function(t){ return t.text; });
+  var terK=liste("Termine", ter, function(t){ return '<span class="mono">'+esc(t.datum?dfmt(t.datum):"ohne Datum")+"</span> · "+esc(t.text); });
+  var tag=(vs.tagebuch||[]).filter(function(t){ return t.text; }).sort(function(a,b){ return String(a.datum||"").localeCompare(String(b.datum||"")); });
+  var tagK=liste("Tagebuch (Verlauf)", tag, function(t){ return '<span class="mono">'+esc(t.datum?dfmt(t.datum):"")+"</span> · "+esc(t.text); });
+  /* Dateien: je Mail die Mail selbst und die Anhänge mit Art; PDFs werden beim Anlegen auf KPlus geprüft */
+  var dateiK=el('<div class="card" style="box-shadow:none;margin:0"><div class="pad stack" style="gap:6px"><h2>Mails und Anhänge</h2>'+
+    '<div class="muted" style="font-size:12.5px">Alles kommt in die Projektdateien (mit Herkunft). KPlus-PDFs (Angebot/Rechnung) erkennt die App beim Anlegen und liest die Positionen ein'+(nurInhaber()?"":" – nur für Inhaber")+".</div></div></div>");
+  var artVorschlag=function(i, name, typ){ var d=(vs.dateien||[]).filter(function(x){ return +x.mail===i && x.name===name; })[0]; var a=d && arten.some(function(x){ return x[0]===d.art; }) ? d.art : dateiArtRaten("", name, typ||""); return a; };
+  var wahlen=[];
+  mails.forEach(function(m, i){
+    var block=el('<div style="border-left:3px solid var(--line);padding-left:8px;font-size:13px"><strong>'+esc(mailText(i))+'</strong><div class="stack" style="gap:3px;margin-top:3px"></div></div>');
+    var host=block.querySelector(".stack");
+    var zeile=function(name, vor, a){
+      var z=el('<div class="rowflex" style="gap:8px;flex-wrap:nowrap;justify-content:space-between"><label style="display:flex;gap:6px;align-items:center;min-width:0"><input type="checkbox" checked><span style="overflow-wrap:anywhere">'+esc(name)+"</span></label>"+
+        '<select style="max-width:200px">'+arten.map(function(x){ return '<option value="'+x[0]+'"'+(x[0]===vor?" selected":"")+">"+esc(x[1])+"</option>"; }).join("")+"</select></div>");
+      host.appendChild(z); wahlen.push({mail:i, a:a, z:z});
+    };
+    zeile("Mail selbst (.eml)", "mail", null);
+    (m.anhaenge||[]).forEach(function(a){ zeile(a.name+" ("+Math.max(1,Math.round((a.groesse||0)/1024))+" KB)", artVorschlag(i, a.name, a.typ), a); });
+    dateiK.querySelector(".stack").appendChild(block);
+  });
+  w.appendChild(dateiK);
+  var fortschritt=el('<div class="note" hidden style="font-size:13px"></div>'); w.appendChild(fortschritt);
+  var ab=el('<button class="btn ghost" type="button">Abbrechen</button>'), ok=el('<button class="btn" type="button">'+(ziel?"Ins Projekt übernehmen":"Projekt anlegen")+"</button>");
+  ab.onclick=function(){ v.zu(); };
+  v.fuss.appendChild(ab); v.fuss.appendChild(ok);
+  ok.onclick=function(){
+    var err=kopf.querySelector("[data-err]"); err.hidden=true;
+    if(!ziel){
+      if(!kf("titel").value.trim()){ err.textContent="Bitte einen Titel eintragen."; err.hidden=false; return; }
+      if(!kf("kunde").value){ err.textContent="Bitte den Kunden wählen"+(nk?" – oder „+ Neuer Kunde“.":"."); err.hidden=false; return; }
+    }
+    var gewaehlt=function(k){ return [].filter.call(k.querySelectorAll("input[data-i]"), function(c){ return c.checked; }).map(function(c){ return +c.dataset.i; }); };
+    var angaben=[]; angK.querySelectorAll("[data-ang]").forEach(function(c){ if(!c.checked || c.disabled) return; var a=ang[+c.dataset.ang], f=c.parentNode.querySelector("[data-wert]"); angaben.push({key:a.key, wert:f.value.trim(), mail:a.mail}); });
+    var bGew=gewaehlt(betK).map(function(i){ return bet[i]; }), tGew=gewaehlt(terK).map(function(i){ return ter[i]; }), tbGew=gewaehlt(tagK).map(function(i){ return tag[i]; });
+    var dGew=wahlen.filter(function(x){ return x.z.querySelector("input").checked; });
+    ok.disabled=true; ab.disabled=true; fortschritt.hidden=false;
+    var melde=function(t){ fortschritt.textContent=t; };
+    var jetzt=new Date().toISOString();
+    var anlegen=ziel ? Promise.resolve(ziel) : (function(){
+      var zeile={nummer:projektNummerNeu(), titel:kf("titel").value.trim(), kunde_id:kf("kunde").value, standort_id:kf("standort").value||null, status:kf("status").value,
+        daten:Object.assign({anfrageDatum:isoLokal(new Date()).slice(0,10)}, kf("typ").value.trim()?{typ:kf("typ").value.trim()}:{}),
+        verlauf:[{zeit:jetzt, wer:meinName(), text:"Projekt aus dem Mailverlauf nachgetragen ("+mails.length+" Mails)", status:kf("status").value}], geaendert:jetzt, geaendert_von:meinName()};
+      melde("Projekt wird angelegt …");
+      var versuch=function(n){ return mitFrist(Store.sb.from("projekte").insert(zeile).select("*"), 20000).then(function(x){
+        if(x.error && /duplicate|unique/i.test(x.error.message) && n<3) return projekteLaden().then(function(){ zeile.nummer=projektNummerNeu(); return versuch(n+1); });
+        if(x.error) throw new Error(x.error.message);
+        PROJEKTE=[x.data[0]].concat(PROJEKTE.filter(function(p){ return p.id!==x.data[0].id; })); return x.data[0]; }); };
+      return versuch(0);
+    })();
+    var emlPfad={}, kplus=[];
+    anlegen.then(function(p){
+      /* Mail für Mail hochladen (Mail + gewählte Anhänge) */
+      var kette=Promise.resolve();
+      mails.forEach(function(m, i){
+        var hier=dGew.filter(function(x){ return x.mail===i; }); if(!hier.length) return;
+        kette=kette.then(function(){
+          melde("Mail "+(i+1)+" von "+mails.length+" wird abgelegt …");
+          var mitEml=hier.some(function(x){ return !x.a; }), anh=hier.filter(function(x){ return x.a; });
+          return mailDateien(m, anh.map(function(x){ return x.a; })).then(function(files){
+            if(!mitEml) files=files.slice(1);
+            var artJe=new Map(), liste2=mitEml ? [null].concat(anh) : anh;
+            files.forEach(function(f, j){ var x=liste2[j]; artJe.set(f, x ? x.z.querySelector("select").value : hier.filter(function(y){ return !y.a; })[0].z.querySelector("select").value); });
+            /* PDFs: KPlus-Angebot/Rechnung? dann Art danach und Positionen einlesen (nur Inhaber) */
+            var pruefen=nurInhaber() ? files.filter(function(f){ return /pdf/i.test(f.type) || /\.pdf$/i.test(f.name); }).map(function(f){
+              return f.arrayBuffer().then(function(b){ return kplusLesen(new Uint8Array(b)); }).then(function(erg){ artJe.set(f, erg.art); kplus.push({erg:erg, datei:f}); }, function(){}); }) : [];
+            return Promise.all(pruefen).then(function(){
+              return projektDateienHochladen(p, function(f){ return artJe.get(f)||"dokument"; }, files, function(){ return mailHerkunft(m); });
+            }).then(function(neue){ var e=neue.filter(function(x){ return /\.eml$/i.test(x.name); })[0]; if(e) emlPfad[i]=e.pfad; });
+          });
+        });
+      });
+      return kette.then(function(){ return p; });
+    }).then(function(p){
+      melde("Angaben, Beteiligte, Termine und Tagebuch werden eingetragen …");
+      var q=function(i){ return emlPfad[i] ? [emlPfad[i]] : []; };
+      return projektAendern(p, function(d){
+        /* bestehendes Projekt: nur ergänzen; neues Projekt: die Angabe aus der Mail gilt (statt „Anfrage vom heute“) */
+        angaben.forEach(function(a){ if(d[a.key] && ziel) return; d[a.key]=a.wert; var s=schrittVon[a.key].schritt;
+          if(emlPfad[a.mail]){ d.quellen=d.quellen||{}; d.quellen[s]=(d.quellen[s]||[]); if(d.quellen[s].indexOf(emlPfad[a.mail])<0) d.quellen[s].push(emlPfad[a.mail]); } });
+        if(!ziel && kf("typ") && kf("typ").value.trim()) d.typ=kf("typ").value.trim();
+        d.beteiligte=(d.beteiligte||[]).concat(bGew.map(function(b){ return {id:neueKennung("bt"), rolle:b.rolle||"Sonstige", firma:b.firma||"", name:b.name||"", telefon:b.telefon||"", mail:b.mail_adresse||"", notiz:"aus dem Mailverlauf", quellen:q(b.mail)}; }));
+        d.termine=(d.termine||[]).concat(tGew.map(function(t){ return {id:neueKennung("tm"), datum:t.datum||"", zeit:"", was:t.text, wer:"", erledigt:!!(t.datum && t.datum<isoLokal(new Date())), quellen:q(t.mail)}; }));
+        d.mails=(d.mails||[]).concat(mails.map(mailVerweis).filter(function(x){ return !(d.mails||[]).some(function(y){ return y.id && y.id===x.id; }); }));
+      }, "Aus dem Mailverlauf übernommen: "+angaben.length+" Angaben, "+bGew.length+" Beteiligte, "+tGew.length+" Termine").then(function(){
+        /* Tagebuch: je Eintrag mit dem Datum aus der Mail, damit der Verlauf stimmt */
+        var pa=PROJEKTE.filter(function(x){ return x.id===p.id; })[0]||p;
+        var neu=(pa.verlauf||[]).concat(tbGew.map(function(t){ return {zeit:(t.datum||isoLokal(new Date()))+"T12:00:00.000Z", wer:"aus Mail", text:t.text}; }))
+          .sort(function(a,b){ return String(a.zeit||"").localeCompare(String(b.zeit||"")); });
+        return tbGew.length ? projektSpeichern(pa, {verlauf:neu, status:kf("status").value}) : (ziel && kf("status").value!==ziel.status ? projektSpeichern(pa, {status:kf("status").value}) : null);
+      }).then(function(){ return p; });
+    }).then(function(p){
+      /* KPlus-Belege am Projekt (Positionen, Original-PDF, Katalog) */
+      var k2=Promise.resolve(), ok2=0;
+      kplus.forEach(function(x){ k2=k2.then(function(){
+        melde("KPlus "+(x.erg.art==="rechnung"?"Rechnung ":"Angebot ")+x.erg.nummer+" wird eingelesen …");
+        var pa=PROJEKTE.filter(function(y){ return y.id===p.id; })[0]||p;
+        var zeile={projekt_id:pa.id, kunde_id:pa.kunde_id||"lidl", standort_id:pa.standort_id||null, art:x.erg.art, nummer:x.erg.nummer, test:false, extern:true, datum:x.erg.datum||isoLokal(new Date()),
+          status:x.erg.art==="rechnung"?"versendet":"angenommen", kopf:x.erg.kopf, positionen:x.erg.positionen, summen:belegSummen(x.erg.positionen), geaendert_von:meinName()};
+        return Store.sb.from("belege").upsert(zeile, {onConflict:"art,nummer"}).select("*").then(function(rr){
+          if(rr.error) throw new Error(rr.error.message); ok2++;
+          return Promise.all([belegPdfAblegen(rr.data[0], kontextProjekt(pa), x.datei).catch(function(){}), katalogUebernehmen(x.erg).catch(function(){})]);
+        }).catch(function(e){ toast("KPlus "+x.erg.nummer+" nicht abgelegt: "+e.message); });
+      }); });
+      return k2.then(function(){ return {p:p, kplus:ok2}; });
+    }).then(function(x){
+      var hinweise=kplus.reduce(function(n, k){ return n+positionenPruefen(k.erg.positionen).length; }, 0);
+      v.zu(); projektAnsicht(x.p.id);
+      toast((ziel?"Übernommen":"Projekt "+x.p.nummer+" angelegt")+": "+Object.keys(emlPfad).length+" Mails, "+angaben.length+" Angaben"+(x.kplus?", "+x.kplus+" KPlus-Beleg"+(x.kplus===1?"":"e"):"")+"."+
+        (hinweise?" ⚠ "+hinweise+" Auffälligkeit"+(hinweise===1?"":"en")+" in den KPlus-Positionen – unter „Angebote und Rechnungen“ ansehen.":""));
+    }).catch(function(e){ ok.disabled=false; ab.disabled=false; melde("Abgebrochen: "+e.message+" – was schon abgelegt ist, bleibt im Projekt."); toast("Nicht fertig: "+e.message); });
+  };
+}
 /* „Mails dazu“ bei Projekt, Kunde und Markt – nur mit verbundenem Mail-Programm (sonst gar keine Karte) */
 function mailsDazuKarte(begriffe, opt){
   if(!mailBruecke()) return null;
@@ -3595,6 +3840,12 @@ function mailsDazuKarte(begriffe, opt){
   if(!begriffe.length){ host.textContent="Nichts zum Suchen (keine Mail-Adresse oder Projektnummer)."; return c; }
   mailHolen("/api/suche", {frist:60000, body:{begriffe:begriffe, anzahl:25}}).then(function(r){
     host.innerHTML=""; host.className="stack"; host.style.gap="4px";
+    /* alle auf einmal: Projekt aus dem Mailverlauf ergänzen (Angaben, Beteiligte, Termine, Dateien, KPlus) */
+    if(opt.projekt && r.mails.length){
+      var alle=el('<button class="btn ghost sm" type="button" style="align-self:flex-start">✦ Verlauf übernehmen (mehrere Mails, Claude wertet aus)</button>');
+      alle.onclick=function(){ mailVerlaufDialog({projektId:opt.projekt.id, suche:begriffe.map(function(b){ return b.text; }).join(", ")}); };
+      host.appendChild(alle);
+    }
     if(!r.mails.length){ host.appendChild(el('<div class="muted" style="font-size:12.5px">Keine passenden Mails in den letzten zwei Jahren.</div>')); return; }
     var drin=opt.projekt ? ((opt.projekt.daten||{}).mails||[]).map(function(x){ return x.id; }) : [];
     r.mails.forEach(function(m){
@@ -24017,6 +24268,7 @@ Object.assign(RUNDGAENGE, {
   projekte:{thema:true, titel:"Projekte und Kontakte", fuer:function(){ return reiterErlaubt("projekte"); }, schritte:[
     {reiter:"projekte", ziel:function(){ return rgEl("#pr_neu"); }, titel:"Projekt anlegen",
       text:"„+ Neues Projekt“ – oder „+ Projekt“ am Markt bzw. beim Kunden, aus einem Folgeauftrag oder aus einer Mail im Posteingang. Titel, Kunde, Standort, Typ, „Was wird gebraucht?“."+
+        " Inhaber mit verbundenem Mail-Programm: „✦ Aus Mails nachtragen“ – alle Mails zu einem (auch vergangenen) Projekt wählen, Claude trägt Schritte, Beteiligte, Termine, Tagebuch, Dateien und KPlus-Belege ein (vorher prüfen)."+
       RG_HG("Nummer P-Jahr-NNN, Stand „Anfrage“ mit heutigem Datum, Tagebuch „Projekt angelegt“ – dann öffnet sich das Projekt.")},
     {reiter:"projekte", ziel:function(){ return rgEl("#pr_chips"); }, titel:"Die Schritte",
       text:"Anfrage → Bestand/Begehung → Konzept → Einreichung → Angebot → Auftrag → Vorbereitung → Baustelle → Inbetriebnahme → Dokumentation → Abgerechnet (oder „Nicht beauftragt“). Die Chips oben filtern danach."+
@@ -26225,7 +26477,10 @@ function viewProjekte(){
     '<div class="rowflex" style="justify-content:space-between;align-items:flex-start;gap:12px">'+
       '<div><h2>Projekte</h2><div class="sub">Neue Anlagen und Umbauten – von der Anfrage über Angebot, Auftrag und Baustelle bis zur Inbetriebnahme und Rechnung. '+
         "Mit Tagebuch, Dateien und Stunden.</div></div>"+
-      (betriebSchreiben()?'<button class="btn sm" type="button" id="pr_neu" data-schreiben>+ Neues Projekt</button>':"")+
+      '<span class="rowflex" style="gap:6px">'+
+      /* nur mit verbundenem Mail-Programm (Inhaber, eigener PC/Handy) */
+      (mailBruecke()?'<button class="btn ghost sm" type="button" id="pr_mails" title="Alle Mails zu einem (auch vergangenen) Projekt auswählen – Claude trägt Schritte, Beteiligte, Termine, Dateien und KPlus-Belege nach">✦ Aus Mails nachtragen</button>':"")+
+      (betriebSchreiben()?'<button class="btn sm" type="button" id="pr_neu" data-schreiben>+ Neues Projekt</button>':"")+"</span>"+
     "</div>"+
     '<div class="chips" id="pr_chips"></div>'+
     '<div class="rowflex" style="gap:8px"><input class="search" type="search" id="pr_q" placeholder="Nummer, Titel, Kunde, Typ …" aria-label="Projekte durchsuchen" value="'+esc(S.prQ)+'" style="flex:1">'+
@@ -26254,6 +26509,7 @@ function viewProjekte(){
   var qi=c.querySelector("#pr_q"); qi.oninput=function(){ S.prQ=qi.value; zeichnen(); };
   var ti=c.querySelector("#pr_typ"); ti.onchange=function(){ S.prTyp=ti.value; zeichnen(); };
   var nb=c.querySelector("#pr_neu"); if(nb) nb.onclick=function(){ projektNeu({}); };
+  var mb=c.querySelector("#pr_mails"); if(mb) mb.onclick=function(){ mailVerlaufDialog({}); };
   var fk=nurInhaber() ? folgeKarte() : null; if(fk) f.appendChild(fk);
   f.appendChild(c);
   return f;
