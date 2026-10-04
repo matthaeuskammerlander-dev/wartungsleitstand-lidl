@@ -1292,7 +1292,8 @@ test("Rundgänge: Knopf neben dem Handbuch, nach dem Ende gleich der nächste mi
 
 test("Rundgänge am Handy: die gezeigte Stelle ist nie von der Erklärung verdeckt, die Knöpfe bleiben sichtbar", async () => {
   const verdeckt = [];
-  for (const konto of [KONTEN.inhaber, KONTEN.admin, KONTEN.techniker]) {
+  /* normal nur der Inhaber (hat alle Rundgänge) – alle drei Rollen mit --gruendlich (sonst dauert die Prüfung auf GitHub zu lang) */
+  for (const konto of process.argv.includes("--gruendlich") ? [KONTEN.inhaber, KONTEN.admin, KONTEN.techniker] : [KONTEN.inhaber]) {
     const a = await oeffnen(konto, { handy: true });
     if (process.env.RG_NUR) await a.seite.evaluate((n) => { window.__rgNur = n; }, process.env.RG_NUR);
     const r = await a.seite.evaluate(async () => {
