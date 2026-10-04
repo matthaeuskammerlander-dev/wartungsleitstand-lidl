@@ -132,6 +132,8 @@ Kammerlander Umwelt- und Klimatechnik (UKT) – oft kurz, vom Handy, im Feld.
   „Nach Rolle“ / „Nach Thema“ (`rundgangAuswahl`). Der Test klickt jeden angebotenen Rundgang je Rolle durch.
   Knopf „🧭 Rundgänge“ unten neben „Handbuch“ (`rundgangAuswahlFenster`); nach „Fertig“ gleich die Auswahl mit ✓ und „Weiter mit …“
   (`rundgangFertig`, `rundgangNaechster`; Büro 04.10.2026).
+  Am Handy darf die Erklärung die gezeigte Stelle nie verdecken (`rundgangPlatzieren`: unten, oben oder niedriger; `rundgangPlatzUnten`
+  schafft Platz zum Scrollen; Knöpfe angeheftet) – der Test „Rundgänge am Handy“ prüft jeden Schritt jeder Rolle.
 - Schmale Navigationsleiste (`sprungleiste`, `seitenLeiste`, Büro 02.10.2026): rechts ein Punkt
   je Abschnitt auf langen Seiten und in großen Fenstern; Protokoll-Abschnitte einklappbar
   (`fieldsetsKlappbar`, `fs-zu`; Pflichtprüfung und Sprünge klappen von selbst auf).

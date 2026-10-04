@@ -1205,6 +1205,43 @@ test("Rundgänge: Knopf neben dem Handbuch, nach dem Ende gleich der nächste mi
   await a.zu();
 });
 
+test("Rundgänge am Handy: die gezeigte Stelle ist nie von der Erklärung verdeckt, die Knöpfe bleiben sichtbar", async () => {
+  const verdeckt = [];
+  for (const konto of [KONTEN.inhaber, KONTEN.admin, KONTEN.techniker]) {
+    const a = await oeffnen(konto, { handy: true });
+    if (process.env.RG_NUR) await a.seite.evaluate((n) => { window.__rgNur = n; }, process.env.RG_NUR);
+    const r = await a.seite.evaluate(async () => {
+      const x = window.__t.x, warte = (ms) => new Promise((f) => setTimeout(f, ms)), fehler = [];
+      const arten = x("rundgangListe()").map((y) => y[0]).filter((y) => !window.__rgNur || y === window.__rgNur);
+      for (const art of arten) {
+        x("rundgangStarten('" + art + "')"); await warte(300);
+        for (let i = 0; i < 40; i++) {
+          await warte(1300);
+          const R = x("RUNDGANG"); if (!R) break;
+          const titel = R.schritte[R.i].titel, z = R.el;
+          const k = document.querySelector("#rundgang .rg-karte").getBoundingClientRect();
+          const w = document.querySelector('#rundgang [data-rg="weiter"]').getBoundingClientRect();
+          if (w.bottom > innerHeight + 1 || w.top < 0) fehler.push(art + " / " + titel + ": Knöpfe außerhalb");
+          if (z && document.body.contains(z)) {
+            const t = z.getBoundingClientRect(), seg = Math.min(t.height, 40);
+            if (t.width > 2 && t.top >= -1 && t.top + seg <= innerHeight + 1) {
+              const ueber = !(t.top + seg <= k.top + 1 || t.top >= k.bottom - 1);
+              if (ueber) fehler.push(art + " / " + titel + ": verdeckt (Ziel " + Math.round(t.top) + "–" + Math.round(t.top + seg) + ", Karte " + Math.round(k.top) + "–" + Math.round(k.bottom) + ")");
+            } else if (t.width > 2) fehler.push(art + " / " + titel + ": Ziel nicht im Bild (" + Math.round(t.top) + ")");
+          }
+          document.querySelector('#rundgang [data-rg="weiter"]').click();
+        }
+        x("rundgangEnde()"); x("ansichtenSchliessen()");
+      }
+      return fehler;
+    });
+    r.forEach((f) => verdeckt.push(konto + ": " + f));
+    pruefe(!a.fehler.length, "Laufzeitfehler (" + konto + "): " + a.fehler.join("; "));
+    await a.zu();
+  }
+  pruefe(!verdeckt.length, verdeckt.length + " Schritte verdeckt:\n      " + verdeckt.join("\n      "));
+});
+
 /* ================================================================ Ablauf ================================================================ */
 const filterText = process.argv.slice(2).find((x) => !x.startsWith("--"));
 const filter = filterText ? new RegExp(filterText, "i") : null;
