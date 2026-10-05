@@ -3088,12 +3088,17 @@ var POSTEINGANG=[], posteingangOffen=null;
 /* „Zu Projekt legen“: offener Dialog je Mail (nie zwei) und je Eintrag das Projekt, in das er schon hochgeladen ist –
    auch wenn der Erledigt-Vermerk danach scheiterte (dann nur noch vermerken, nichts doppelt; Tiefentest 05.10.2026) */
 var posteingangDialoge={}, posteingangAbgelegt={};
-function posteingangAn(){ return !!(window.UKT_CONFIG && window.UKT_CONFIG.posteingangAktiv) && Store.modus==="supabase" && !!Store.sb && !!Store.benutzer && !nurLesen(); }
+/* Wer den Posteingang sieht (Inhaber 05.10.2026): Projektmails (weitergeleitete Mails, Anhänge) NUR der Inhaber, die
+   Lidl-Aufträge und Rapporte (art „auftrag“/„rapport“) Inhaber und Admins, Techniker gar nicht. Die Datenbank sperrt es
+   ebenso (tools/rechte-2026-10-05.sql) – die App filtert zusätzlich. "alles" | "lidl" | "" */
+function posteingangRolle(){ return nurInhaber() ? "alles" : (Rolle.name==="admin" || demo()) ? "lidl" : ""; }
+function posteingangSieht(e){ var r=posteingangRolle(); return r==="alles" || (r==="lidl" && !!e && (e.art==="auftrag" || e.art==="rapport")); }
+function posteingangAn(){ return !!(window.UKT_CONFIG && window.UKT_CONFIG.posteingangAktiv) && Store.modus==="supabase" && !!Store.sb && !!Store.benutzer && !nurLesen() && !!posteingangRolle(); }
 function ladePosteingang(){
   if(!posteingangAn()) return Promise.resolve([]);
   return Store.sb.from("posteingang").select("*").eq("status","neu").order("eingang",{ascending:false}).limit(100)
     /* null = nicht ladbar – nicht dasselbe wie „nichts Neues“ */
-    .then(function(r){ if(r.error) return null; POSTEINGANG=r.data||[]; return POSTEINGANG; }, function(){ return null; });
+    .then(function(r){ if(r.error) return null; POSTEINGANG=(r.data||[]).filter(posteingangSieht); return POSTEINGANG; }, function(){ return null; });
 }
 /* rapport: der tatsächlich gespeicherte Rapport – erledigt ist der Eingang nur,
    wenn es seine PDF ist (nicht ein später stattdessen angehängter Rapport) */
@@ -3124,7 +3129,8 @@ function posteingangDatei(e){
 }
 function posteingangKarte(){
   var c=el('<div class="card"><div class="pad stack"><div><h2>Posteingang</h2><div class="sub">'+
-    "Aus dem Datenbank-Postfach: Aufträge und Rapportberichte von Lidl – und weitergeleitete Mails, die mit allen Anhängen in ein Projekt kommen. Antippen ordnet sie zu.</div></div>"+
+    (posteingangRolle()==="alles" ? "Aus dem Datenbank-Postfach: Aufträge und Rapportberichte von Lidl – und weitergeleitete Mails, die mit allen Anhängen in ein Projekt kommen (die siehst nur du). Antippen ordnet sie zu."
+      : "Aus dem Datenbank-Postfach: Aufträge und Rapportberichte von Lidl. Antippen ordnet sie zu.")+"</div></div>"+
     '<div class="stack" data-liste><div class="muted">wird geladen …</div></div></div></div>');
   var host=c.querySelector("[data-liste]");
   ladePosteingang().then(function(liste){
@@ -3134,11 +3140,13 @@ function posteingangKarte(){
     if(!liste.length){ host.appendChild(el('<div class="muted" style="font-size:12.5px">Nichts Neues im Postfach.</div>')); return; }
     /* weitergeleitete Mail (mit .eml): eine Karte je Mail, „Zu Projekt legen“ (Büro 02.10.2026) */
     var mailGr={}, gezeigt={};
-    liste.forEach(function(e){ if(e.art==="mail") mailGr[e.nachricht_id||e.id]=1; });
+    liste.forEach(function(e){ if(e.art==="mail" && !posteingangOhneDatei(e)) mailGr[e.nachricht_id||e.id]=1; });
     liste.forEach(function(e){
+      /* Anhang bzw. Mail zu groß (Synology, Inhaber 05.10.2026): nur ein Hinweis ohne Datei – eigene Karte, nie in „Zu Projekt legen“ */
+      if(posteingangOhneDatei(e)){ host.appendChild(posteingangHinweisBox(e)); return; }
       var gk=e.nachricht_id||e.id;
       if(mailGr[gk]){
-        if(!gezeigt[gk]){ gezeigt[gk]=1; host.appendChild(posteingangMailBox(liste.filter(function(x){ return (x.nachricht_id||x.id)===gk; }))); }
+        if(!gezeigt[gk]){ gezeigt[gk]=1; host.appendChild(posteingangMailBox(liste.filter(function(x){ return (x.nachricht_id||x.id)===gk && !posteingangOhneDatei(x); }))); }
         return;
       }
       var info=werteRapport("", e.dateiname) || {};
@@ -3184,7 +3192,7 @@ function posteingangKarte(){
       /* weitergeleitete Mail ohne .eml (Rohmail zu groß): die Anhänge lassen sich trotzdem einem Projekt zuordnen –
          zusammen mit den anderen Anhängen derselben Mail (Tiefentest 05.10.2026: sonst gab es keinen Weg ins Projekt) */
       if(e.art!=="rapport" && e.art!=="auftrag"){
-        var gruppe=liste.filter(function(y){ return (y.nachricht_id||y.id)===(e.nachricht_id||e.id) && y.art!=="rapport" && y.art!=="auftrag"; });
+        var gruppe=liste.filter(function(y){ return (y.nachricht_id||y.id)===(e.nachricht_id||e.id) && y.art!=="rapport" && y.art!=="auftrag" && !posteingangOhneDatei(y); });
         var pb=el('<button class="btn sm" type="button">Zu Projekt legen</button>');
         pb.onclick=function(){ posteingangZuProjekt(gruppe, function(rest){ var bleibt=(rest||[]).map(function(y){ return y.id; });
           gruppe.forEach(function(y){ var c=bleibt.indexOf(y.id)<0 && host.querySelector('[data-pe="'+y.id+'"]'); if(c) c.remove(); }); }); };
@@ -3197,6 +3205,24 @@ function posteingangKarte(){
     });
   });
   return c;
+}
+/* Eintrag ohne Datei: das Synology-Skript meldet so einen Anhang (oder eine Mail), der größer als der Speicher erlaubt
+   (20 MB) ist – statt ihn still wegzulassen (Inhaber 05.10.2026). Der Inhaber holt ihn von Hand aus dem Postfach. */
+function posteingangOhneDatei(e){ return !!e && !e.pfad; }
+function posteingangHinweisBox(e){
+  var z=el('<div class="posbox" data-pe="'+esc(e.id)+'"><div class="rowflex" style="justify-content:space-between;gap:8px">'+
+    '<div style="min-width:0"><strong style="word-break:break-all">⚠ '+esc(e.dateiname)+"</strong><br>"+
+      '<span class="muted" style="font-size:12.5px">'+esc(zeitFmt(e.eingang))+(e.betreff?" · "+esc(e.betreff):"")+(e.absender?" · "+esc(e.absender):"")+"</span></div>"+
+    '<span class="tag f30">nicht abgeholt</span></div>'+
+    '<div class="note warnbox" style="font-size:13px;margin:4px 0">'+esc(e.notiz||"Zu groß – bitte von Hand aus dem Postfach holen.")+"</div>"+
+    '<div class="rowflex" style="gap:6px"><button class="btn sm" type="button" data-a="erl">Von Hand geholt – erledigt</button>'+
+    '<button class="btn ghost sm" type="button" data-a="weg">verwerfen</button></div></div>');
+  z.querySelector('[data-a="erl"]').onclick=function(){
+    if(demo()){ z.remove(); toast("Präsentation: abgehakt – gespeichert wurde nichts."); return; }
+    posteingangGruppeSetzen([e], {status:"erledigt"}).then(function(ok){ if(ok){ z.remove(); toast("Als erledigt vermerkt."); } });
+  };
+  z.querySelector('[data-a="weg"]').onclick=function(){ posteingangVerwerfen(e, function(){ z.remove(); }); };
+  return z;
 }
 /* ---- Weitergeleitete Mail → Projekt (Büro 02.10.2026: „warum kannst du die Mail nicht selber
    hochladen – das wäre sehr praktisch“): Mail an das Datenbank-Postfach weiterleiten, hier
@@ -3302,6 +3328,9 @@ function posteingangZuProjekt(g, fertig, hinweis){
     var z=el('<div class="rowflex" style="gap:8px;flex-wrap:nowrap;justify-content:space-between"><span style="font-size:13px;min-width:0;overflow-wrap:anywhere">'+esc(e.dateiname)+"</span>"+
       '<select style="max-width:210px">'+arten.map(function(a){ return '<option value="'+a[0]+'"'+(a[0]===vor?" selected":"")+">"+esc(a[1])+"</option>"; }).join("")+"</select></div>");
     wahl[e.id]=z.querySelector("select"); dh.appendChild(z);
+    /* Preise im Text der Mail (Inhaber 05.10.2026): schon hier sagen, dass sie nur beim Inhaber liegt */
+    if(e.art==="mail" && !demo()) posteingangDatei(e).then(mailPreisDatei).then(function(ja){ if(ja && z.isConnected)
+      z.insertAdjacentElement("afterend", el('<div class="muted" style="font-size:12px">⚠ '+esc(e.dateiname)+" enthält Preise – "+(nurInhaber()?"nur für den Inhaber abgelegt":"legt nur der Inhaber ab")+"</div>")); }, function(){});
   });
   /* Inhaber: KPlus-PDFs gleich am Text als Angebot bzw. Rechnung erkennen (dann Büro-Ordner) */
   var kplusFertig=Promise.all(g.filter(function(e){ return nurInhaber() && kplusDateiname(e.dateiname) && wahl[e.id]; }).map(function(e){
@@ -3345,7 +3374,7 @@ function posteingangZuProjekt(g, fertig, hinweis){
             if(hinweis) hinweis(t); toast(t); return; }
           teil.forEach(function(e){ delete posteingangAbgelegt[e.id]; });
           v.zu(); if(fertig) fertig(rest); toast("In "+(p.nummer||"das Projekt")+" abgelegt: "+teil.length+" Datei"+(teil.length===1?"":"en")+"."+
-            (rest.length?" Angebot/Rechnung (KPlus) und die Mail dazu bleiben für den Inhaber im Posteingang.":""));
+            (rest.length?" Angebot/Rechnung (KPlus) und die Mail dazu bleiben für den Inhaber im Posteingang.":"")+preisHinweis(neue));
           /* der Absender kommt ins Adressbuch (Büro 02.10.2026: „sobald ein neuer auftaucht, wird er gespeichert“) */
           var ab=kontaktAusAbsender(mail.absender);
           if(ab) kontaktErfassen(ab, {art:"projekt", id:p.id, titel:projektTitel(p)}, false);
@@ -3499,6 +3528,65 @@ function kplusDateiname(n){ return /^\d{6}\.pdf$/i.test(String(n||"").trim()); }
 function mailMitBeleg(namen, arten){
   return arten.some(function(a){ return a==="angebot" || a==="rechnung"; }) || namen.some(kplusDateiname);
 }
+/* Preise im TEXT einer Mail (Inhaber 05.10.2026): ein Betrag mit € bzw. EUR („4.800 € netto“, „EUR 1.234,50“, auch „350 Euro“) –
+   dann liegt die Mail (.eml) wie eine KPlus-Rechnung nur beim Inhaber unter buero/ (mit Hinweis); andere legen sie nicht ab.
+   Geprüft beim Hochladen (projektDateienHochladen) – gilt so für Mail-Programm, Mailverlauf, Posteingang und Dateien-Karte. */
+var MAIL_PREIS=/(\d{1,3}(?:[.' ]\d{3})+|\d+)(?:,\d{1,2}|,-{1,2}|\.\d{2})?\s*(?:€|EUR\b|Euro\b)|(?:€|\bEUR)\s*\d/i;
+/* Signatur und Impressum zählen nicht (Inhaber 05.10.2026): Zeilen mit Stammkapital, Firmenbuch, FN, UID … und alles nach dem
+   Signatur-Trenner „-- “ – bis eine zitierte bzw. weitergeleitete Mail beginnt (deren Preise zählen wieder) */
+var MAIL_IMPRESSUM=/stammkapital|grundkapital|gesellschaftskapital|firmenbuch|firmengericht|handelsregister|\bFN\b|\bUID\b|USt-?Id|\bHRB\b|\bATU\d/i;
+var MAIL_ZITAT=/^\s*(>|(von|from|gesendet|sent)\s*:|-{2,}\s*(original|ursprüngliche|weitergeleitete|forwarded))/i;
+function mailTextMitPreis(t){
+  var sig=false;
+  return String(t||"").replace(/\u00a0/g, " ").split(/\r?\n/).some(function(z){
+    if(/^--\s*$/.test(z)){ sig=true; return false; }
+    if(sig && MAIL_ZITAT.test(z)) sig=false;
+    return !sig && !MAIL_IMPRESSUM.test(z) && MAIL_PREIS.test(z);
+  });
+}
+/* Text einer Mail (.eml): alle Teile text/plain und text/html (ohne Tags), auch eine weitergeleitete Mail darin, dekodiert
+   (base64, quoted-printable, Zeichensatz) – Anhänge nicht. roh: Text oder Bytes (Uint8Array/ArrayBuffer) */
+function emlText(roh){
+  var bin=function(u8){ var s=""; for(var i=0;i<u8.length;i+=8192) s+=String.fromCharCode.apply(null, u8.subarray(i, i+8192)); return s; };
+  var s=typeof roh==="string" ? bin(new TextEncoder().encode(roh)) : bin(roh instanceof Uint8Array ? roh : new Uint8Array(roh||0));
+  var teile=[];
+  var lies=function(t, tiefe){
+    var m=/\r?\n\r?\n/.exec(t), kopf=m ? t.slice(0, m.index) : t, rumpf=m ? t.slice(m.index+m[0].length) : "";
+    kopf=kopf.replace(/\r?\n[ \t]+/g, " ");
+    var feld=function(n){ var x=new RegExp("^"+n+":[ \\t]*(.*)$", "im").exec(kopf); return x ? x[1] : ""; };
+    var typ=feld("Content-Type"), art=(typ.split(";")[0].trim()||"text/plain").toLowerCase(), enc=feld("Content-Transfer-Encoding").trim().toLowerCase();
+    if(tiefe>8) return;
+    if(/^multipart\//.test(art)){
+      var gr=/boundary="?([^";]+)"?/i.exec(typ); if(!gr) return;
+      rumpf.split("--"+gr[1]).slice(1).forEach(function(teil){ if(!/^--/.test(teil)) lies(teil.replace(/^\r?\n/, ""), tiefe+1); });
+      return;
+    }
+    if(/^\s*attachment/i.test(feld("Content-Disposition"))) return;
+    if(art==="message/rfc822"){ lies(rumpf, tiefe+1); return; }
+    if(!/^text\/(plain|html)$/.test(art)) return;
+    var b=rumpf;
+    if(enc==="base64"){ try{ b=atob(rumpf.replace(/[^A-Za-z0-9+\/=]/g, "")); }catch(e){ return; } }
+    else if(enc==="quoted-printable") b=rumpf.replace(/=\r?\n/g, "").replace(/=([0-9A-F]{2})/gi, function(_, h){ return String.fromCharCode(parseInt(h, 16)); });
+    var cs=((/charset="?([^";\s]+)"?/i.exec(typ)||[])[1]||"utf-8").toLowerCase(), u8=new Uint8Array(b.length);
+    for(var i=0;i<b.length;i++) u8[i]=b.charCodeAt(i)&255;
+    var text; try{ text=new TextDecoder(cs).decode(u8); }catch(e){ text=new TextDecoder("utf-8").decode(u8); }
+    if(art==="text/html") text=text.replace(/<br\s*\/?>|<\/(p|div|tr|li|h\d)>/gi, "\n").replace(/<[^>]*>/g, " ").replace(/&euro;|&#8364;|&#x20ac;/gi, "€").replace(/&nbsp;|&#160;/gi, " ").replace(/&amp;/gi, "&");
+    teile.push(text);
+  };
+  lies(s, 0);
+  return teile.join("\n");
+}
+function istEmlDatei(f){ return !!f && (/\.eml$/i.test(f.name||"") || /message\/rfc822/i.test(f.type||"")); }
+/* Promise<boolean>: eine Mail-Datei (.eml) mit Preisen im Text */
+function mailPreisDatei(f){
+  if(!istEmlDatei(f) || typeof f.arrayBuffer!=="function") return Promise.resolve(false);
+  return f.arrayBuffer().then(function(b){ return mailTextMitPreis(emlText(b)); }, function(){ return false; });
+}
+/* Zusatz für die Erfolgsmeldung: welche abgelegten Mails Preise enthalten (stehen nur beim Inhaber) */
+function preisHinweis(neue){
+  var n=(neue||[]).filter(function(x){ return x && x.preise; }).length;
+  return n ? " "+(n===1 ? "Die Mail enthält" : n+" Mails enthalten")+" Preise – nur für den Inhaber abgelegt." : "";
+}
 /* KPlus-PDFs (6-stellige Nummer) am Text als Angebot bzw. Rechnung erkennen – nur Inhaber; artJe: Map Datei → Art */
 function kplusArtenPruefen(files, artJe){
   if(!nurInhaber()) return Promise.resolve();
@@ -3544,7 +3632,8 @@ function mailKopfKarte(m, arten){
       '<select style="max-width:210px">'+arten.map(function(x){ return '<option value="'+x[0]+'"'+(x[0]===vor?" selected":"")+">"+esc(x[1])+"</option>"; }).join("")+"</select></div>");
     liste.appendChild(z); return z;
   };
-  var mailZeile=zeile("Mail selbst (.eml)", "mail", false);
+  /* Preise im Text (Inhaber 05.10.2026): die Mail liegt dann nur beim Inhaber – schon hier sagen */
+  var mailZeile=zeile("Mail selbst (.eml)"+(mailTextMitPreis((m.betreff||"")+" | "+(m.text||"")) ? (nurInhaber() ? " – enthält Preise – nur für den Inhaber abgelegt" : " – enthält Preise – legt nur der Inhaber ab") : ""), "mail", false);
   var anh=(m.anhaenge||[]).map(function(x){ var z=zeile(x.name+" ("+Math.max(1,Math.round((x.groesse||0)/1024))+" KB)"+(kplusDateiname(x.name)?" – KPlus: wird als Angebot/Rechnung erkannt (nur Inhaber)":""),
     dateiArtRaten("", x.name, x.typ||""), true); return {a:x, z:z}; });
   return {kopf:c, liste:liste,
@@ -3571,7 +3660,7 @@ function mailInsProjekt(p, m, k, quelleSchritt, mehr){
       }, "E-Mail übernommen: „"+(m.betreff||"")+"“").then(function(){
         var ab=kontaktAusAbsender(mailAbsender(m));
         if(ab) kontaktErfassen(ab, {art:"projekt", id:p.id, titel:projektTitel(p)}, false);
-        return {neue:neue.length, alle:files.length};
+        return {neue:neue.length, alle:files.length, hinweis:preisHinweis(neue)};
       });
     });
   });
@@ -3706,7 +3795,7 @@ function mailProjektNeu(m){
         if(mitPerson && person.name) kontaktErfassen({name:person.name, firma:person.firma, telefon:person.telefon, mail:person.mail, kategorie:"Kunde / Bauherr",
           kunde_id:p.kunde_id!=="lidl"?p.kunde_id:""}, {art:"projekt", id:p.id, titel:projektTitel(p)}, false);
         v.zu(); if(S.view==="projekte" && darfRendern()) render(); projektAnsicht(p.id);
-        toast("Projekt "+p.nummer+" angelegt"+(r.neue===r.alle?" – Mail und "+(r.alle-1)+" Anhang/Anhänge abgelegt.":" – ACHTUNG: nur "+r.neue+" von "+r.alle+" Dateien abgelegt, bitte prüfen."));
+        toast("Projekt "+p.nummer+" angelegt"+(r.neue===r.alle?" – Mail und "+(r.alle-1)+" Anhang/Anhänge abgelegt.":" – ACHTUNG: nur "+r.neue+" von "+r.alle+" Dateien abgelegt, bitte prüfen.")+r.hinweis);
       }, function(e){ v.zu(); projektAnsicht(p.id); toast("Projekt "+p.nummer+" angelegt, aber die Mail ist nicht abgelegt: "+e.message+" – im Mail-Programm nochmals „Zu bestehendem Projekt“."); });
     }).catch(function(e){ ok.disabled=false; ok.textContent="Projekt anlegen"; err.textContent="Nicht angelegt: "+technikDeutsch(e.message); err.hidden=false; });
   };
@@ -3736,7 +3825,7 @@ function mailZuProjekt(m, vorId){
     ok.disabled=true; ok.textContent="wird abgelegt …";
     mailInsProjekt(p, m, k, null).then(function(r){
       v.zu(); projektAnsicht(p.id);
-      toast(r.neue===r.alle ? "In "+(p.nummer||"das Projekt")+" abgelegt: "+r.alle+" Datei"+(r.alle===1?"":"en")+"." : "Nur "+r.neue+" von "+r.alle+" Dateien abgelegt – bitte prüfen.");
+      toast((r.neue===r.alle ? "In "+(p.nummer||"das Projekt")+" abgelegt: "+r.alle+" Datei"+(r.alle===1?"":"en")+"." : "Nur "+r.neue+" von "+r.alle+" Dateien abgelegt – bitte prüfen.")+r.hinweis);
     }, function(e){ ok.disabled=false; ok.textContent="Ins Projekt legen"; toast("Nicht abgelegt: "+e.message); });
   };
 }
@@ -4027,6 +4116,7 @@ function mailVerlaufVorschlag(v, r, zielId){
             }).then(function(neue){
               /* abgelegt ist, was hochgeladen UND am Projekt vermerkt ist */
               files.forEach(function(f, j){ if(neue.some(function(n){ return n.name===f.name; })) stand.abgelegt[dateiSchluessel(liste2[j]||emlZeile)]=true; });
+              stand.preise=(stand.preise||[]).concat(neue.filter(function(n){ return n.preise; }));
               var e=neue.filter(function(x){ return /\.eml$/i.test(x.name); })[0]; if(e) emlPfad[i]=e.pfad; });
           });
         });
@@ -4081,8 +4171,9 @@ function mailVerlaufVorschlag(v, r, zielId){
           if(rv.error) throw new Error(rv.error.message);
           var da=(rv.data||[])[0];
           if(da){ x.fertig=true; stand.kplusSchon++; return da.pdf_pfad ? null : belegPdfAblegen(da, kontextProjekt(pa), x.datei).catch(function(){}); }
+          /* neu eingelesen: Rechnung UND Angebot „versendet“ (Inhaber 05.10.2026; vorher Angebot „angenommen“) */
           var zeile={projekt_id:pa.id, kunde_id:pa.kunde_id||"lidl", standort_id:pa.standort_id||null, art:x.erg.art, nummer:x.erg.nummer, test:false, extern:true, datum:x.erg.datum||isoLokal(new Date()),
-            status:x.erg.art==="rechnung"?"versendet":"angenommen", kopf:x.erg.kopf, positionen:x.erg.positionen, summen:belegSummen(x.erg.positionen), geaendert_von:meinName()};
+            status:"versendet", kopf:x.erg.kopf, positionen:x.erg.positionen, summen:belegSummen(x.erg.positionen), geaendert_von:meinName()};
           return Store.sb.from("belege").insert(zeile).select("*").then(function(rr){
             if(rr.error) throw new Error(rr.error.message); x.fertig=true; stand.kplusNeu++;
             return Promise.all([belegPdfAblegen(rr.data[0], kontextProjekt(pa), x.datei).catch(function(){}), katalogUebernehmen(x.erg).catch(function(){})]);
@@ -4095,7 +4186,7 @@ function mailVerlaufVorschlag(v, r, zielId){
       v.zu(); projektAnsicht(x.p.id);
       toast((ziel?"Übernommen":"Projekt "+x.p.nummer+" angelegt")+": "+Object.keys(emlPfad).length+" Mails, "+angaben.length+" Angaben"+(x.kplus?", "+x.kplus+" KPlus-Beleg"+(x.kplus===1?"":"e"):"")+
         (x.schon?", "+x.schon+" KPlus-Beleg"+(x.schon===1?"":"e")+" schon vorhanden – unverändert":"")+"."+
-        (hinweise?" ⚠ "+hinweise+" Auffälligkeit"+(hinweise===1?"":"en")+" in den KPlus-Positionen – unter „Angebote und Rechnungen“ ansehen.":""));
+        (hinweise?" ⚠ "+hinweise+" Auffälligkeit"+(hinweise===1?"":"en")+" in den KPlus-Positionen – unter „Angebote und Rechnungen“ ansehen.":"")+preisHinweis(stand.preise));
     }).catch(function(e){
       ok.disabled=false; ab.disabled=false;
       /* in Klartext – und ehrlich: ist das Projekt schon angelegt, stimmt „nichts gespeichert“ nicht */
@@ -10426,6 +10517,9 @@ function pushArtenSchluessel(){ return "ukt_push_arten:"+((Store.benutzer&&Store
    der Stand der ersten Fassung (alles außer der Wochenübersicht). */
 var PUSH_ARTEN_ANFANG=["stoerung","protokoll","korrektur","stammdaten","chat","wunsch","posteingang"];
 function pushArtenBekanntSchluessel(){ return "ukt_push_arten_bekannt:"+((Store.benutzer&&Store.benutzer.email)||""); }
+/* Änderungswünsche nur Inhaber; Posteingang nur, wer ihn sieht (Inhaber, Admins – Inhaber 05.10.2026; die Datenbank schickt
+   Posteingangs-Nachrichten ohnehin nur an diese Rollen: push_ereignisse.nur_rolle) */
+function pushArtSichtbar(k){ return (k!=="wunsch" || istInhaber()) && (k!=="posteingang" || !!posteingangRolle()); }
 function pushArtenMerken(arten){ lsSet(pushArtenSchluessel(), arten); lsSet(pushArtenBekanntSchluessel(), PUSH_ARTEN.map(function(x){ return x[0]; })); }
 function pushArtenGemerkt(){
   var a=lsGet(pushArtenSchluessel(), null);
@@ -10435,13 +10529,13 @@ function pushArtenGemerkt(){
 function pushArtenNeu(){
   if(!pushArtenGemerkt()) return [];
   var b=lsGet(pushArtenBekanntSchluessel(), null); if(!Array.isArray(b)) b=PUSH_ARTEN_ANFANG;
-  return PUSH_ARTEN.map(function(x){ return x[0]; }).filter(function(k){ return b.indexOf(k)<0 && (k!=="wunsch" || istInhaber()); });
+  return PUSH_ARTEN.map(function(x){ return x[0]; }).filter(function(k){ return b.indexOf(k)<0 && pushArtSichtbar(k); });
 }
 function pushArtenGewaehlt(){
   var a=pushArtenGemerkt();
   if(!a) a=PUSH_ARTEN.map(function(x){ return x[0]; });
   else a=a.concat(pushArtenNeu().filter(function(k){ return a.indexOf(k)<0; }));
-  return a.filter(function(k){ return k!=="wunsch" || istInhaber(); });
+  return a.filter(pushArtSichtbar);
 }
 function pushAboSpeichern(sub, arten){
   var j=sub.toJSON();
@@ -10487,7 +10581,7 @@ function pushDialog(){
   var f=el('<div class="stack">'+
     '<div class="muted" style="font-size:12.5px">Sie bekommen eine Nachricht aufs Gerät, wenn jemand anderer etwas geändert hat – was Sie selbst eintragen, löst keine aus. Jedes Gerät (Handy, PC) wird eigens eingeschaltet.</div>'+
     '<div class="posbox stack" style="gap:6px"><strong>Worüber?</strong>'+
-    PUSH_ARTEN.filter(function(x){ return x[0]!=="wunsch" || istInhaber(); }).map(function(x){
+    PUSH_ARTEN.filter(function(x){ return pushArtSichtbar(x[0]); }).map(function(x){
       return '<label class="chk"><input type="checkbox" data-art="'+x[0]+'"'+(arten.indexOf(x[0])>=0?" checked":"")+'> <span>'+esc(x[1])+"</span></label>"; }).join("")+
     "</div>"+
     '<div class="rowflex"><button class="btn sm" type="button" data-a="an">Auf diesem Gerät einschalten</button>'+
@@ -20367,20 +20461,26 @@ function viewFahrzeuge(){
   var kopf=el('<div class="card"><div class="pad stack" style="gap:8px">'+
     '<div class="rowflex" style="justify-content:space-between;align-items:flex-start;gap:10px"><div><h2>Fahrzeuge</h2>'+
       '<div class="sub">Kilometer, Pickerl, Service, Reparaturen und Schäden je Fahrzeug. '+(buero?"Techniker sehen ihr eigenes Fahrzeug und tragen km-Stand und Schäden ein.":"Hier steht dein Fahrzeug – km-Stand eintragen, Schäden melden.")+"</div></div>"+
-      (buero?'<div class="rowflex" style="gap:6px"><button class="btn sm" type="button" data-fz="neu">+ Fahrzeug</button><button class="btn ghost sm" type="button" data-fz="gps">GPS-Daten einlesen</button></div>':"")+
+      (nurLesen()?"":'<div class="rowflex" style="gap:6px">'+(buero?'<button class="btn sm" type="button" data-fz="neu">+ Fahrzeug</button>':"")+
+        '<button class="btn '+(buero?"ghost ":"")+'sm" type="button" data-fz="privat">+ Mein Privatauto</button>'+(buero?'<button class="btn ghost sm" type="button" data-fz="gps">GPS-Daten einlesen</button>':"")+"</div>")+
     "</div>"+
     (fzFehlt?'<div class="note warnbox">Die Fahrzeug-Tabellen fehlen noch in der Datenbank'+(istInhaber()?" – tools/fahrzeuge.sql einmal im Supabase SQL Editor ausführen.":" – das richtet der Inhaber ein.")+"</div>":"")+
     (fzFehler?'<div class="note warnbox">'+esc(fzFehler)+"</div>":"")+
   "</div></div>");
   var nb=kopf.querySelector('[data-fz="neu"]'); if(nb) nb.onclick=function(){ fzEditor(null); };
   var gb=kopf.querySelector('[data-fz="gps"]'); if(gb) gb.onclick=fzGpsImport;
+  var pb=kopf.querySelector('[data-fz="privat"]'); if(pb) pb.onclick=function(){ privatautoEditor(null); };
   f.appendChild(kopf);
   if(!fzGeladen){ f.appendChild(el('<div class="card"><div class="pad muted">Fahrzeuge werden geladen …</div></div>')); return f; }
   var liste=FZ.filter(function(x){ return x.aktiv!==false; });
   if(!liste.length && !fzFehlt) f.appendChild(el('<div class="card"><div class="pad muted" style="font-size:13px">'+
-    (buero?"Noch kein Fahrzeug. „+ Fahrzeug“ legt eines an – mit Kennzeichen und Fahrer.":"Dir ist noch kein Fahrzeug zugeteilt – das macht das Büro.")+"</div></div>"));
+    (buero?"Noch kein Fahrzeug. „+ Fahrzeug“ legt eines an – mit Kennzeichen und Fahrer.":"Dir ist noch kein Fahrzeug zugeteilt – das macht das Büro. Dein Privatauto (Kilometergeld) trägst du mit „+ Mein Privatauto“ selbst ein.")+"</div></div>"));
   liste.forEach(function(x){ f.appendChild(fzKarte(x)); });
   var alt=FZ.filter(function(x){ return x.aktiv===false; });
+  /* eigene, nicht mehr verwendete Privatautos: wieder aktiv stellen über Bearbeiten */
+  var altMein=alt.filter(function(x){ return !buero && x.privat_von===meineKennung(); });
+  if(altMein.length){ var am=el('<div class="muted rowflex" style="font-size:12.5px;padding:0 4px;gap:6px">Nicht mehr verwendet:</div>');
+    altMein.forEach(function(x){ var b=el('<button class="btn ghost sm" type="button">'+esc(x.kennzeichen)+"</button>"); b.onclick=function(){ privatautoEditor(x); }; am.appendChild(b); }); f.appendChild(am); }
   if(alt.length && buero) f.appendChild(el('<div class="muted" style="font-size:12.5px;padding:0 4px">Nicht mehr im Einsatz: '+alt.map(function(x){ return esc(x.kennzeichen); }).join(", ")+" (unter „Bearbeiten“ wieder aktiv stellen)</div>"));
   return f;
 }
@@ -20406,7 +20506,8 @@ function fzKarte(x){
     (fae.length?'<div class="rowflex" style="gap:6px;flex-wrap:wrap">'+fae.map(function(a){ return '<span class="tag" style="'+(a.art==="crit"?"background:var(--crit);color:#fff":"background:var(--warn-soft,#fdf1d8)")+'">'+esc(a.text)+"</span>"; }).join("")+"</div>":"")+
     '<div class="rowflex" style="gap:6px;flex-wrap:wrap"><button class="btn sm" type="button" data-e="km">km-Stand eintragen</button>'+
       '<button class="btn ghost sm" type="button" data-e="schaden">Schaden melden</button>'+
-      (buero?'<button class="btn ghost sm" type="button" data-e="service">Service / Reparatur …</button><button class="btn ghost sm" type="button" data-e="bearb">Bearbeiten</button>':"")+"</div>"+
+      (buero?'<button class="btn ghost sm" type="button" data-e="service">Service / Reparatur …</button><button class="btn ghost sm" type="button" data-e="bearb">Bearbeiten</button>':
+        (x.privat_von===meineKennung() && !nurLesen() ? '<button class="btn ghost sm" type="button" data-e="privat">Bearbeiten</button>' : ""))+"</div>"+
     (function(){ var drin=WZ.filter(function(w){ return w.aktiv!==false && w.standort_art==="fahrzeug" && w.fahrzeug_id===x.id; });
       return drin.length ? '<div style="font-size:12.5px">🧰 Im Fahrzeug: '+drin.map(function(w){ return esc(w.name); }).join(", ")+"</div>" : ""; })()+
     '<details><summary class="muted" style="cursor:pointer;font-size:12.5px">Verlauf ('+ein.length+")</summary><div data-verlauf></div></details>"+
@@ -20415,6 +20516,7 @@ function fzKarte(x){
   c.querySelector('[data-e="schaden"]').onclick=function(){ fzEintragEditor(x, "schaden"); };
   var sb=c.querySelector('[data-e="service"]'); if(sb) sb.onclick=function(){ fzEintragEditor(x, "service"); };
   var bb=c.querySelector('[data-e="bearb"]'); if(bb) bb.onclick=function(){ fzEditor(x); };
+  var pe=c.querySelector('[data-e="privat"]'); if(pe) pe.onclick=function(){ privatautoEditor(x); };
   var vl=c.querySelector("[data-verlauf]");
   c.querySelector("details").addEventListener("toggle", function(){ if(vl.childNodes.length) return;
     if(!ein.length){ vl.appendChild(el('<div class="muted" style="font-size:12.5px;margin-top:6px">Noch keine Einträge.</div>')); return; }
@@ -20502,6 +20604,43 @@ function fzEditor(x){
       var g=r.data[0]; FZ=FZ.filter(function(y){ return y.id!==g.id; }).concat([g]).sort(function(a,b){ return a.kennzeichen.localeCompare(b.kennzeichen); });
       v.zu(); toast("Fahrzeug "+g.kennzeichen+" gespeichert."); render();
     }, function(){ ok.disabled=false; ok.textContent="Speichern"; fehl("Keine Verbindung – bitte nochmals."); });
+  };
+}
+/* Mein Privatauto (Inhaber 05.10.2026): jede Person legt ihre EIGENEN Privatautos selbst an und bearbeitet sie – auch mehrere
+   (Kennzeichen, Bezeichnung, noch in Verwendung; Kilometergeld an sie selbst, sie ist Fahrer). Fremde und Firmenfahrzeuge,
+   Fristen, GPS und Kosten nur das Büro – die Datenbank lässt Nicht-Büro nur privat_von = sie selbst zu und behält alle anderen
+   Spalten (Regeln und Trigger fahrzeuge_privat_pruefen, tools/rechte-2026-10-05.sql). fertig(fahrzeug): danach weiter */
+function privatautoEditor(x, fertig){
+  if(nurAnsehenAbweisen()) return;
+  var ich=meineKennung();
+  if(x && x.privat_von!==ich){ toast("Das ist nicht dein Privatauto – ändern kann es das Büro."); return; }
+  var v=ansichtOeffnen(x ? "Privatauto "+x.kennzeichen : "Mein Privatauto");
+  v.schritt.textContent="Für Fahrten mit diesem Auto gibt es Kilometergeld (Reiter Stunden › Reisekosten) – Firmenfahrzeuge trägt das Büro ein";
+  var form=el('<form class="stack" autocomplete="off" style="max-width:480px">'+
+    '<label class="fl"><span class="req">Kennzeichen</span><input type="text" data-f="kennzeichen" autocapitalize="characters" maxlength="20" value="'+esc(x?x.kennzeichen:"")+'"></label>'+
+    '<label class="fl"><span>Bezeichnung (Marke, Modell)</span><input type="text" data-f="bezeichnung" maxlength="100" value="'+esc(x&&x.bezeichnung||"")+'"></label>'+
+    (x?'<label class="chk"><input type="checkbox" data-f="aktiv"'+(x.aktiv===false?"":" checked")+"><span>noch in Verwendung</span></label>":"")+
+    '<div class="note warnbox" data-err hidden></div></form>');
+  var F=function(k){ return form.querySelector('[data-f="'+k+'"]'); }, err=form.querySelector("[data-err]");
+  v.inhalt.appendChild(form);
+  var ok=fussKnoepfe(v, "Speichern").ok;
+  ok.onclick=function(){
+    err.hidden=true;
+    var k=F("kennzeichen").value.trim().toUpperCase();
+    if(!k){ err.textContent="Bitte das Kennzeichen eintragen."; err.hidden=false; F("kennzeichen").focus(); return; }
+    if(FZ.some(function(y){ return (!x || y.id!==x.id) && fzNorm(y.kennzeichen)===fzNorm(k); })){ err.textContent="Dieses Kennzeichen gibt es schon."; err.hidden=false; return; }
+    var z={kennzeichen:k, bezeichnung:F("bezeichnung").value.trim()||null, privat_von:ich, privat_name:meinName(), geaendert:new Date().toISOString(), geaendert_von:meinName()};
+    if(x) z.aktiv=F("aktiv").checked; else { z.fahrer=[ich]; z.fahrer_namen=[meinName()]; z.aktiv=true; }
+    var fertigMit=function(g){ FZ=FZ.filter(function(y){ return y.id!==g.id; }).concat([g]).sort(function(a,b){ return a.kennzeichen.localeCompare(b.kennzeichen); });
+      v.zu(); toast("Privatauto "+g.kennzeichen+" gespeichert."); if(fertig) fertig(g); else if(darfRendern()) render(); };
+    if(demo()){ fertigMit(Object.assign({id:x?x.id:neueKennung("fz")}, x||{}, z)); return; }
+    ok.disabled=true; ok.textContent="wird gespeichert …";
+    var q=x ? Store.sb.from("fahrzeuge").update(z).eq("id", x.id).select("*") : Store.sb.from("fahrzeuge").insert(z).select("*");
+    mitFrist(q, 15000).then(function(r){
+      ok.disabled=false; ok.textContent="Speichern";
+      if(r.error || !(r.data||[]).length){ err.textContent="Nicht gespeichert: "+technikDeutsch((r.error&&r.error.message)||"keine Berechtigung"); err.hidden=false; return; }
+      fertigMit(r.data[0]);
+    }, function(){ ok.disabled=false; ok.textContent="Speichern"; err.textContent="Keine Verbindung – bitte nochmals."; err.hidden=false; });
   };
 }
 /* Eintrag: km-Stand, Schaden (auch Techniker), Service/Pickerl/Reparatur/Reifen/Sonstiges (Büro) */
@@ -24056,7 +24195,7 @@ function handbuchKarte(z){
           "Jede Korrektur braucht einen Grund, alte Fassungen bleiben erhalten.",
         "<strong>Prüfbuch-Nachweise</strong> – aus Prüfbuch-Fotos gelesene Wartungen (per KI oder von Hand), "+nw+" Einträge. Sie zählen wie Besuche.",
         "<strong>"+zuVerl+"</strong> – jede Änderung mit Person, Zeit, alt → neu und Grund; dort lässt sich vieles zurücknehmen.",
-        "<strong>Posteingang</strong> – Aufträge und Rapporte von Lidl per E-Mail (Synology holt sie ab), erscheinen unter „Fällig“.",
+        "<strong>Posteingang</strong> – Aufträge und Rapporte von Lidl per E-Mail (Synology holt sie ab), erscheinen unter „Fällig“ für Inhaber und Admins; weitergeleitete Mails zu Projekten sieht nur der Inhaber, Techniker sehen den Posteingang nicht.",
         "<strong>Archiv</strong> – jedes gespeicherte Protokoll wird zusätzlich als PDF auf die Synology abgelegt, Baustellen in einen Projektordner je Jahr und Kunde "+
           "(mit Mappe und Zusammenfassung). Angebote und Rechnungen kommen dort nicht hin – den Projektordner sehen auch Techniker."]))+
 
@@ -24141,7 +24280,7 @@ function handbuchKarte(z){
           "„Übernehmen“ ändert die echte App. Hat Claude eine Rückfrage, beantwortest du sie mit „Claude antworten …“. "+
           "Jede Übernahme lässt sich rückgängig machen (Aufträge höchstens 4000 Zeichen).",
         "<strong>🔔 Benachrichtigungen:</strong> unter „Angemeldet als“ → „Benachrichtigungen“ je Gerät einschalten und wählen, worüber "+
-          "(Störungen, Protokolle, Korrekturen, Markt-/Anlagendaten, Team-Chat, Posteingang; Änderungswünsche nur Inhaber). Die Nachricht "+
+          "(Störungen, Protokolle, Korrekturen, Markt-/Anlagendaten, Team-Chat, Posteingang nur Inhaber und Admins; Änderungswünsche nur Inhaber). Die Nachricht "+
           "nennt gleich das Wichtigste (Anlagen, Mängel, Störung, geänderte Felder) und führt beim Antippen hin. Was du selbst einträgst, "+
           "löst keine aus. Am iPhone nur als installierte App (Teilen → „Zum Home-Bildschirm“). Kunde und Präsentation bekommen nichts.",
         "<strong>💬 Team-Chat:</strong> Sprechblase in der Kopfzeile (Zahl = ungelesen). Mit „An: Person“ geht eine Nachricht nur an eine Person – nur Absender und Empfänger sehen sie (🔒). Eine Nachricht kann sich auf einen Markt, eine "+
@@ -24463,7 +24602,7 @@ var RUNDGAENGE={
       text:"Aufträge und Rapporte von Lidl per E-Mail. Ein Auftrag wird zum Störungsauftrag, ein Rapport hängt sich an das passende Protokoll."+
       RG_HG(["Die Synology im Büro holt die Mails aus dem Postfach und legt sie hier ab – die App liest Auftragsnummer, Markt und Zieltermin aus dem PDF.",
         "Ein Rapport findet sein Protokoll über Markt, Datum und Auftrag; die ausgeführten Arbeiten kommen zusätzlich ins Protokoll.",
-        "Andere weitergeleitete Mails lassen sich mit ihren Anhängen zu einem Projekt legen."])},
+        "Andere weitergeleitete Mails (zu Projekten) sieht nur der Inhaber – er legt sie mit ihren Anhängen zu einem Projekt; Techniker sehen den Posteingang nicht."])},
     {reiter:"faellig", ziel:function(){ return rgEl("#st_neu"); }, titel:"+ Störungsauftrag",
       text:"Einen Lidl-Auftrag erfassen – PDF öffnen oder abfotografieren, die App liest Markt, Auftragsnummer und Zieltermin. Im Auftrag lassen sich Einsatztag und Techniker eintragen."+
       RG_HG(["Jede Auftragsnummer gibt es nur einmal – die Datenbank lehnt ein Doppel ab, die App bietet „Vorhandene öffnen“ an.",
@@ -24817,11 +24956,12 @@ Object.assign(RUNDGAENGE, {
       RG_HG(["Abgehakt wird <strong>von selbst</strong>, sobald das Protokoll übertragen ist – bei gleichem Markt und gleicher Auftragsnummer.",
         "Nennt das Protokoll die Nummer einer anderen offenen Störung am Markt, fragt die App, welche erledigt ist; wird das Protokoll gelöscht oder korrigiert, öffnet sich die Störung wieder.",
         "Ab 3 Störungen in 90 Tagen an derselben Anlage: „⚠ wiederkehrende Störung – Ursache prüfen“ (nur Markierung)."])},
-    {reiter:"faellig", ziel:function(){ return rgKarte(/^Posteingang/) || rgKarte(/^Offene Störungen/); }, titel:"Posteingang",
+    {reiter:"faellig", ziel:function(){ return rgKarte(/^Posteingang/) || rgKarte(/^Offene Störungen/); }, wenn:function(){ return !!posteingangRolle(); }, titel:"Posteingang",
       text:"Die Synology legt Mails aus dem Postfach hier ab:"+RG_LISTE([
         "<strong>Auftrag</strong> → „Als Störungsauftrag erfassen“ (liest die PDF gleich ein).",
         "<strong>Rapport</strong> → „Rapport zuordnen“: die App sucht das Protokoll am selben Markt und Besuchstag (gleiche Auftragsnummer zuerst) und öffnet „Korrigieren“ mit angehängtem Rapport.",
-        "<strong>Weitergeleitete Mail</strong> → „Zu Projekt legen“ (Projekt wird vorgeschlagen; auch für Anhänge, deren Mail zu groß war – alle Anhänge der Mail zusammen). Angebot/Rechnung (KPlus-PDF) und die Mail dazu legt nur der Inhaber ab – für alle anderen bleiben sie im Posteingang.",
+        "<strong>Weitergeleitete Mail</strong> (nur Inhaber) → „Zu Projekt legen“ (Projekt wird vorgeschlagen; auch für Anhänge, deren Mail zu groß war – alle Anhänge der Mail zusammen). Angebot/Rechnung (KPlus-PDF) und die Mail dazu legt nur der Inhaber ab – für alle anderen bleiben sie im Posteingang.",
+        "<strong>⚠ … nicht abgeholt</strong> (nur Inhaber): ein Anhang oder eine Mail über 20 MB passt nicht in den Speicher – die Synology meldet ihn statt ihn wegzulassen. Von Hand aus dem Postfach holen, dann „Von Hand geholt – erledigt“.",
         "„verwerfen“ nur mit Grund.",
         "Ohne Weiterleiten (nur Inhaber, am eigenen PC): im Mail-Programm „Mail mit Claude“ bei der Mail „↗ Leitstand“ – als neues Projekt, zu einem Projekt oder als Störung. Bei Projekt, Kunde und Markt steht dann „Mails dazu“."])+
       RG_HG("Ein Eintrag ist erledigt, sobald der Auftrag angelegt bzw. alle Dateien hochgeladen und im Posteingang vermerkt sind – nochmals versuchen lädt nur hoch, was noch fehlt (nie doppelt); hängt dieselbe Rapportnummer schon an, bietet die App „verwerfen“ an.")},
@@ -24836,7 +24976,8 @@ Object.assign(RUNDGAENGE, {
         "„Text kopieren“, in die Mail einfügen – die App verschickt nichts selbst.",
         "„Als beantwortet vermerken“ – erledigte, beantwortete Zeilen verschwinden."])},
     {titel:"Rechte und Stolperfallen", text:RG_LISTE(["Techniker: erfassen, ändern, abhaken, Protokolle – kein Löschen, Rückfragen nur lesen.",
-        "Admin und Inhaber: zusätzlich löschen und Rückfragen bearbeiten; Angebot/Rechnung im Posteingang nur der Inhaber."])+
+        "Admin und Inhaber: zusätzlich löschen und Rückfragen bearbeiten.",
+        "Posteingang: Lidl-Aufträge und Rapporte Inhaber und Admins, weitergeleitete Mails (Projekte) nur der Inhaber; Techniker sehen ihn nicht."])+
       RG_ACHTUNG(["„Vorhandene öffnen“ verwirft die Eingaben im Dialog.",
         "„Störungsprotokoll erstellen“ im Dialog erst nach „Änderung speichern“.",
         "Bei Lidl ist die Auftragsnummer Pflicht – sonst „Ausnahme“ ankreuzen.",
@@ -24908,21 +25049,22 @@ Object.assign(RUNDGAENGE, {
         "Einträge „aus dem Kalender“ passt die Datenbank an, wenn sich der Kalendereintrag ändert, und entfernt sie, wenn er gelöscht wird (nie in einem bestätigten Monat). Änderst du so einen Eintrag selbst, gilt er als von Hand."])},
     {reiter:"stunden", ziel:function(){ return rgKarte(/^Reisekosten und Kilometergeld/); }, wenn:function(){ return akAn(); }, titel:"Reisekosten und Kilometergeld",
       text:RG_LISTE(["<strong>📷 + Beleg</strong>: mit eigenem Geld bezahlt (Bauhaus, Parken, Maut, Tanken, Nächtigung …) – Foto vom Beleg (Pflicht; sonst „Kein Beleg vorhanden“ mit Grund), Datum, wo/was, Betrag, wofür, Projekt/Markt.",
-        "<strong>🚗 + Kilometer</strong>: Fahrt mit dem Privatauto – Datum, Strecke (Vorschlag aus dem Kalender), km; die App rechnet das Kilometergeld (km × Satz, den der Chef einstellt).",
-        "Am Monatsende <strong>„Monat abgeben“</strong> – danach ändert nur noch der Chef. „PDF“ wie das bisherige Blatt (Barbelege, Kilometer mit Privatauto, zu zahlen) mit allen Belegfotos.",
+        "<strong>🚗 + Kilometer</strong>: Fahrt mit dem Privatauto – Datum, Strecke (Vorschlag aus dem Kalender), km, Privatauto; die App rechnet das Kilometergeld (km × Satz, den der Chef einstellt). Ohne eingetragenes Privatauto geht es nicht – „+ Mein Privatauto“ (gleich im Hinweis oder im Reiter Fahrzeuge) trägt es ein, auch mehrere; dann wählst du beim Kilometergeld das Auto.",
+        "Am Monatsende <strong>„Monat abgeben“</strong> – danach ändert nur noch der Chef, auch das Belegfoto. „PDF“ wie das bisherige Blatt (Barbelege, Kilometer mit Privatauto, zu zahlen) mit allen Belegfotos.",
         "Unten „Konto für die Auszahlung“ (IBAN) einmal eintragen."])+
       RG_HG(["Nur du und der Inhaber sehen deine Reisekosten – keine Admins, keine Kollegen.",
         "Beim Abgeben bekommt der Inhaber eine Nachricht; im Kalender-To-do steht „Reisekosten … – auszahlen“.",
         "Werkzeug und Material: bei „abholen“/„bestellen“ führt „🧾 Selbst bezahlt – Beleg erfassen“ hierher und hakt den Eintrag danach ab; gekauftes Werkzeug kann gleich in die Werkzeugliste.",
-        "Kilometergeld nur fürs Privatauto (beim Fahrzeug: „Privatauto – Kilometergeld an …“), nicht fürs Firmenfahrzeug."])},
+        "Kilometergeld nur mit eingetragenem Privatauto (beim Fahrzeug: „Privatauto – Kilometergeld an …“), nie fürs Firmenfahrzeug – das prüft auch die Datenbank."])},
     {reiter:"stunden", ziel:function(){ return rgKarte(/^Alle Mitarbeiter/); }, wenn:function(){ return istInhaber(); }, titel:"Alle Mitarbeiter und Lohn (Inhaber)",
       text:"Monatstabelle je Person (Soll, Ist, Differenz, Überstunden, Sa, So, Feiertag, Montage, Fahrt, Urlaub, Krank, Entfernung), „Lohnverrechnung (CSV)“, „Bestätigen“, „Arbeitszeitregeln“, Schalter „Standort beim Stempeln“."+
       RG_HG(["Soll Mo–Do 8 h, Fr 6,5 h (38,5 h), Feiertage 0. Überstunden als <strong>Monatsbilanz</strong>, nicht je Tag; Samstag, Sonntag, Feiertag getrennt; Montage = Baustelle, Wartung, Störung; Fahrt = Wegzeit.",
         "„Bestätigen“ sperrt den Monat – auch für Neues (von Hand, Stempeln, Abgleich); danach trägt nur noch der Inhaber ein oder ändert (prüft die Datenbank). „Wieder öffnen“ hebt die Sperre auf. Ist die Person noch eingestempelt, warnt die Rückfrage vorher.",
-        "Darunter <strong>„Reisekosten aller“</strong>: je Person Belege, km, Kilometergeld, zu zahlen, Konto – PDF mit allen Belegen, „ausbezahlt“, „zurückgeben“, CSV; der Kilometergeld-Satz ist dort einstellbar. Einträge anderer lassen sich dort ändern – das Belegfoto ersetzt nur die Person selbst (dazu „zurückgeben“).",
+        "Darunter <strong>„Reisekosten aller“</strong>: je Person Belege, km, Kilometergeld, zu zahlen, Konto – PDF mit allen Belegen, „ausbezahlt“, „zurückgeben“, CSV; der Kilometergeld-Satz ist dort einstellbar. Einträge anderer lassen sich dort ändern, auch das Belegfoto (das neue liegt im Ordner der Person, das alte wird erst nach dem Speichern entfernt).",
         "Vorher zeigt die Zeile in Rot, was fehlt: Arbeitstage ohne Eintrag, Abwesenheit im Kalender ohne Stunden, Geplantes ohne passenden Eintrag – mit „Nachricht an …“ (fertiger Text im Chat)."])},
     {reiter:"fahrzeuge", ziel:function(){ return rgReiter("fahrzeuge"); }, wenn:function(){ return reiterErlaubt("fahrzeuge"); }, titel:"Fahrzeuge",
       text:RG_LISTE(["<strong>Techniker</strong> sehen ihr Fahrzeug: „km-Stand eintragen“, „Schaden melden“ (eigene Einträge 24 h löschbar).",
+        "<strong>+ Mein Privatauto</strong> (alle): eigene Privatautos selbst eintragen und bearbeiten – Kennzeichen, Bezeichnung; dafür gibt es Kilometergeld. Firmenfahrzeuge, Fristen und fremde Autos trägt das Büro ein.",
         "<strong>Büro</strong>: „+ Fahrzeug“, Bearbeiten (Fahrer, Pickerl, Service am/bei km, GPS-Kennung), „Service / Reparatur …“, Schaden „behoben“.",
         "<strong>GPS-Daten einlesen</strong> (X-GPS, CSV/Excel): Vorschau je Fahrzeug, „Kilometer übernehmen“.",
         "Je Monat: <strong>gefahren laut km-Stand</strong> neben <strong>„geplante Einsatzfahrten ≈ … km“</strong> – eine Schätzung, Umwege und Fahrten am Einsatzort sind nicht enthalten."])+
@@ -24966,7 +25108,7 @@ Object.assign(RUNDGAENGE, {
   projekte:{thema:true, titel:"Projekte und Kontakte", fuer:function(){ return reiterErlaubt("projekte"); }, schritte:[
     {reiter:"projekte", ziel:function(){ return rgEl("#pr_neu"); }, titel:"Projekt anlegen",
       text:"„+ Neues Projekt“ – oder „+ Projekt“ am Markt bzw. beim Kunden, aus einem Folgeauftrag oder (Inhaber am PC) aus einer Mail im Mail-Programm („↗ Leitstand“ → als neues Projekt). Titel, Kunde, Standort, Typ, „Was wird gebraucht?“."+
-        " Weitergeleitete Mails im Posteingang kommen mit „Zu Projekt legen“ zu einem bestehenden Projekt."+
+        " Weitergeleitete Mails im Posteingang (nur Inhaber) kommen mit „Zu Projekt legen“ zu einem bestehenden Projekt."+
         " Inhaber mit verbundenem Mail-Programm: „✦ Aus Mails nachtragen“ – alle Mails zu einem (auch vergangenen) Projekt wählen, Claude trägt Schritte, Beteiligte, Termine, Tagebuch, Dateien und KPlus-Belege ein (vorher prüfen). In ein bestehendes Projekt wird nur ergänzt: der Stand bleibt, schon Übernommenes kommt nicht doppelt."+
       RG_HG("Nummer P-Jahr-NNN, Stand „Anfrage“ mit heutigem Datum, Tagebuch „Projekt angelegt“ – dann öffnet sich das Projekt.")},
     {reiter:"projekte", ziel:function(){ return rgEl("#pr_chips"); }, titel:"Die Schritte",
@@ -24985,7 +25127,7 @@ Object.assign(RUNDGAENGE, {
       "<strong>Dateien</strong>: Art wird erkannt; „Ganzen Ordner hochladen“ überspringt Gleichnamiges; höchstens 20 MB je Datei.",
       "<strong>Stunden</strong> auf das Projekt, <strong>Tagebuch</strong>, <strong>Nachrichten</strong>.",
       "<strong>Zusammenfassung (PDF)</strong>: Eckdaten, Angaben mit Quellen, Listen, Baustellenbuch, Dateiliste, Tagebuch – „Ablegen“ für die Synology."])+
-      RG_HG(["Angebot und Rechnung als Dateiart (unter „buero/“) nur für den Inhaber – ebenso eine Mail (.eml), die ein Angebot/eine Rechnung als Anhang enthält; auf der Synology nur im Büro-Ordner, nie im Projektordner, den Techniker sehen.",
+      RG_HG(["Angebot und Rechnung als Dateiart (unter „buero/“) nur für den Inhaber – ebenso eine Mail (.eml), die ein Angebot/eine Rechnung als Anhang oder einen Preis im Text enthält (z. B. „4.800 € netto“; bei der Datei steht dann „enthält Preise“, andere legen sie nicht ab); auf der Synology nur im Büro-Ordner, nie im Projektordner, den Techniker sehen.",
         "Bei der Rechnung aus dem Angebot schlägt die App Mengen aus dem Baustellenbuch vor."])+
       RG_ACHTUNG(["Hat ein anderes Gerät das Projekt inzwischen geändert, wird nicht gespeichert – die App lädt neu, dann noch einmal eintragen.",
         "Beim Löschen eines Projekts (nur Inhaber) bleiben die Dateien."])},
@@ -25068,7 +25210,7 @@ Object.assign(RUNDGAENGE, {
     {reiter:"belege", ziel:function(){ return rgReiter("belege"); }, titel:"Status, Folgeaufträge, KPlus",
       text:RG_LISTE(["Status: versendet (setzt das Zahlungsziel, Vorgabe 21 Tage), bezahlt, storniert; Angebote: versendet, angenommen, abgelehnt; „Rechnung daraus“.",
         "<strong>Folgeaufträge</strong> (Projekte): „Angebot entwerfen“ mit Befund, Katalogvorschlag je Mangel und Fahrtpauschale.",
-        "<strong>KPlus-PDF einlesen</strong> am Projekt: die App rechnet gegen die Summe im PDF nach, neue Positionen auf Wunsch in den Katalog.",
+        "<strong>KPlus-PDF einlesen</strong> am Projekt: die App rechnet gegen die Summe im PDF nach, neue Positionen auf Wunsch in den Katalog. Neu eingelesen steht ein KPlus-Angebot wie eine Rechnung auf „versendet“; einen schon vorhandenen Beleg (gleiche Nummer) ändert das Einlesen im Stand nicht.",
         "<strong>KPlus-Rechnung hochladen</strong> beim Einsatz (Protokoll › „Rechnung zu diesem Einsatz“): „So hätte die App gerechnet“ zeigt, was gleich war, was fehlte und was zu viel war."])+
       RG_HG(["Eine echte Rechnung zu einem Einsatz – auch eine hochgeladene KPlus-Rechnung – vermerkt das Protokoll als abgerechnet; das Original-PDF liegt beim Beleg.",
         "Aus hochgeladenen KPlus-Rechnungen lernt die App: was der Chef bei solchen Einsätzen mindestens zweimal (am selben Markt einmal) dazuschreibt, steht künftig im Vorschlag unter „Ergänzt aus früheren KPlus-Rechnungen – bitte prüfen“."])}
@@ -28309,7 +28451,7 @@ function kplusVorschau(ziel, erg, fertig, datei){
     var angebot=erg.art==="rechnung" ? bestehend.filter(function(b){ return b.art==="angebot"; })[0] : null;
     var kopf=Object.assign({}, erg.kopf, lernen?{lernen:lernen.speichern}:{});
     var zeile={projekt_id:p?p.id:null, protokoll_id:pk?pk._id:null, kunde_id:kx.kunde_id||"lidl", standort_id:kx.standort_id||null, art:erg.art, nummer:erg.nummer, test:false, extern:true,
-      datum:erg.datum||isoLokal(new Date()), status:erg.art==="rechnung"?"versendet":"angenommen",
+      datum:erg.datum||isoLokal(new Date()), status:"versendet",   /* neu eingelesen: Rechnung UND Angebot „versendet“ (Inhaber 05.10.2026) */
       bezug_id:angebot?angebot.id:null, kopf:kopf, positionen:erg.positionen, summen:belegSummen(erg.positionen), geaendert_von:meinName()};
     var beleg=null, abgFehler=null, katFehler=null;
     var kurz=function(e){ var m=String((e&&e.message)||e||""); return /fetch|network|load failed/i.test(m) ? "keine Verbindung" : m; };
@@ -28324,6 +28466,8 @@ function kplusVorschau(ziel, erg, fertig, datei){
           !window.confirm("KPlus-"+(erg.art==="rechnung"?"Rechnung ":"Angebot ")+erg.nummer+" liegt schon bei: "+wo+".\n\nHierher umhängen? Dort fehlt sie danach.")) throw {abbruch:true};
         if(!p) zeile.projekt_id=alt.projekt_id||null;
         if(!pk) zeile.protokoll_id=alt.protokoll_id||null;
+        /* vorhandene Belege bleiben, wie sie sind (Inhaber 05.10.2026): der Stand (bezahlt, angenommen …) bleibt – früher wurde er still wieder „versendet“ */
+        if(alt.status) zeile.status=alt.status;
         if(!zeile.bezug_id) zeile.bezug_id=alt.bezug_id||null;
       }
       return Store.sb.from("belege").upsert(zeile, {onConflict:"art,nummer"}).select("*");
@@ -29230,6 +29374,7 @@ function projektDateienKarte(p, buero, schreiben, neuZeichnen){
     var zu=dateiGehoertZu(p, x);
     var z=el('<div style="font-size:13px"><a href="#" class="sprunglink">'+esc(x.name||"Datei")+"</a>"+
       '<span class="muted"> · '+esc(artName(x.art))+" · "+esc(dfmt(tagLokal(x.zeit)))+(x.von?" · "+esc(x.von):"")+(x.herkunft?" · aus „"+esc(x.herkunft)+"“":"")+"</span>"+
+      (x.preise?' <span class="tag" style="font-size:11.5px">enthält Preise – nur für den Inhaber abgelegt</span>':"")+
       (zu.length?'<br><span style="font-size:12px">gehört zu: '+zu.map(function(st){ return '<a href="#" class="sprunglink" data-zu="'+esc(st.bereich+":"+st.id)+'">'+esc(st.titel)+"</a>"; }).join(" · ")+"</span>"
         :'<br><span class="muted" style="font-size:12.5px">noch keiner Angabe zugeordnet</span>')+"</div>");
     z.querySelectorAll("[data-zu]").forEach(function(a){ tippe(a, function(){ zurStelle(a.dataset.zu); }); });
@@ -29305,6 +29450,20 @@ function projektDateienHochladen(p, art, liste, herkunft, nurBuero){
   if(!liste.length) return Promise.resolve([]);
   var zuGross=liste.filter(function(f){ return f.size>PROJEKT_DATEI_MAX; });
   if(zuGross.length){ toast("Zu groß (höchstens 20 MB): "+zuGross.map(function(f){ return f.name; }).join(", ")); return Promise.resolve([]); }
+  /* Mail mit Preisen im Text (Inhaber 05.10.2026): beim Inhaber nur unter buero/ (Hinweis bei der Datei und in der Meldung),
+     alle anderen legen sie nicht ab – wie eine KPlus-Rechnung */
+  var preise=[];
+  return Promise.all(liste.map(function(f){ return mailPreisDatei(f).then(function(ja){ if(ja) preise.push(f); }); })).then(function(){
+    var hinweis="";
+    if(preise.length && !nurInhaber()){
+      hinweis=preise.map(function(f){ return "„"+f.name+"“"; }).join(", ")+(preise.length===1?" enthält":" enthalten")+" Preise – ablegen darf das nur der Inhaber, nicht abgelegt.";
+      liste=liste.filter(function(f){ return preise.indexOf(f)<0; });
+      if(!liste.length){ toast(hinweis); return []; }
+    }
+    return projektDateienAblegen(p, art, liste, herkunft, function(f){ return preise.indexOf(f)>=0 || !!(nurBuero && nurBuero(f)); }, preise, hinweis);
+  });
+}
+function projektDateienAblegen(p, art, liste, herkunft, nurBuero, preise, hinweis){
   var artVon=typeof art==="function" ? art : function(){ return art; };
   var artName=typeof art==="function" ? "nach Art sortiert" : (PROJEKT_DATEIARTEN.filter(function(x){ return x[0]===art; })[0]||[art,art])[1];
   toast(liste.length+" Datei"+(liste.length===1?"":"en")+" wird hochgeladen …");
@@ -29314,6 +29473,7 @@ function projektDateienHochladen(p, art, liste, herkunft, nurBuero){
   return Promise.all(liste.map(function(f){
     var fa=artVon(f), pfad=projektDateiPfad(p, fa, f.name, nurBuero && nurBuero(f)), eintrag={pfad:pfad, name:f.name, art:fa, groesse:f.size, typ:f.type||"", von:meinName(), zeit:new Date().toISOString()};
     var hk=herkunft ? herkunft(f) : ""; if(hk) eintrag.herkunft=hk;
+    if(preise && preise.indexOf(f)>=0) eintrag.preise=true;   /* Mail mit Preisen im Text – Hinweis bei der Datei */
     if(demo()){ eintrag._url=URL.createObjectURL(f); neue.push(eintrag); return null; }
     return mitFrist(Store.sb.storage.from("projektdateien").upload(pfad, f, {contentType:f.type||"application/octet-stream", upsert:false}), 120000)
       .then(function(r){ if(r.error) throw new Error(r.error.message); neue.push(eintrag); })
@@ -29322,8 +29482,9 @@ function projektDateienHochladen(p, art, liste, herkunft, nurBuero){
     if(!neue.length) return;
     return projektAendern(p, function(d){ d.dateien=(d.dateien||[]).concat(neue); }, neue.length+" Datei"+(neue.length===1?"":"en")+" hinzugefügt ("+artName+")");
   }).then(function(){
-    if(fehler.length) toast((neue.length?neue.length+" hochgeladen, ":"")+"nicht hochgeladen – "+fehler.join("; "));
-    else if(neue.length) toast("Hochgeladen.");
+    if(fehler.length) toast((neue.length?neue.length+" hochgeladen, ":"")+"nicht hochgeladen – "+fehler.join("; ")+(hinweis?" – "+hinweis:""));
+    else if(neue.length) toast("Hochgeladen."+(hinweis?" "+hinweis:"")+preisHinweis(neue));
+    else if(hinweis) toast(hinweis);
     return neue;
   }, function(e){ toast("Hochgeladen, aber nicht am Projekt vermerkt: "+e.message); return []; });
 }
@@ -32542,6 +32703,12 @@ function akSummen(l){
 }
 /* meine Privatautos (das Büro stellt beim Fahrzeug „Privatauto – Kilometergeld an …“ ein) */
 function meinePrivatautos(){ var ich=meineKennung(); return FZ.filter(function(f){ return f.privat_von===ich && f.aktiv!==false; }); }
+/* Kilometergeld nur MIT eingetragenem Privatauto (Inhaber 05.10.2026; die Datenbank prüft es ebenso – Trigger
+   auslagen_pruefen_privatauto: fahrzeug_id eines Fahrzeugs mit privat_von = Person des Eintrags) */
+function akOhneAutoText(fremdName){
+  if(fremdName) return "Zuerst im Reiter Fahrzeuge das Privatauto von "+fremdName+" eintragen (beim Fahrzeug „Privatauto – Kilometergeld an …“).";
+  return "Zuerst im Reiter Fahrzeuge dein Privatauto eintragen („+ Mein Privatauto“ – das geht gleich hier).";
+}
 /* Vorschlag für die Strecke eines Tages: Startpunkt – Orte der eigenen Einsätze – zurück */
 function akStreckeVorschlag(tag){
   var orte=[], dazu=function(s){ if(!s) return; var n=s.ort||stName(s); if(n && orte[orte.length-1]!==n) orte.push(n); };
@@ -32556,9 +32723,10 @@ function akKmVorschlag(tag, fid){
   var e=FZ_E.filter(function(x){ return x.fahrzeug_id===fid && x.datum===tag && x.strecke!=null; });
   return e.length ? Math.round(e.reduce(function(s,x){ return s+(+x.strecke||0); },0)) : null;
 }
-/* Belegfoto: verkleinert hochladen (PDF so, wie es ist) */
-function akFotoHochladen(datei){
-  var uid=Store.benutzer.id, pdf=/pdf/i.test(datei.type||"") || /\.pdf$/i.test(datei.name||"");
+/* Belegfoto: verkleinert hochladen (PDF so, wie es ist) – immer in den Ordner der Person, der der Eintrag gehört
+   (fuer: ihre Kennung, wenn der Inhaber den Eintrag einer anderen Person ändert; Inhaber 05.10.2026) */
+function akFotoHochladen(datei, fuer){
+  var uid=fuer||Store.benutzer.id, pdf=/pdf/i.test(datei.type||"") || /\.pdf$/i.test(datei.name||"");
   var pfad=uid+"/"+isoLokal(new Date())+"_"+Math.random().toString(36).slice(2,10)+(pdf?".pdf":".jpg");
   var blob=pdf ? Promise.resolve(datei) : verkleinere(datei).then(function(v){ return datenUrlZuBlob(v.datenUrl, "image/jpeg"); });
   return blob.then(function(b){
@@ -32572,6 +32740,8 @@ function akFotoUrl(pfad){
 /* ---------- erfassen / ändern ---------- */
 function akEditor(z, vorgabe){
   if(!akAn()){ toast("Reisekosten gehen nur mit Anmeldung."); return; }
+  /* neuer km-Eintrag: erst die Fahrzeuge kennen (ohne Privatauto kein Kilometergeld) – danach öffnet sich der Dialog */
+  if(!fzGeladen && !z && (vorgabe||{}).art==="km" && !demo()){ toast("Fahrzeuge werden geladen …"); fzLaden().then(function(){ if(fzGeladen) akEditor(z, vorgabe); }); return; }
   if(!fzGeladen) fzLaden();
   var a=Object.assign({art:"beleg", datum:isoLokal(new Date()), kategorie:"material"}, vorgabe||{}, z||{});
   var gesperrt=!!z && z.status!=="offen" && !istInhaber();
@@ -32587,13 +32757,24 @@ function akEditor(z, vorgabe){
   var autos=fremd ? FZ.filter(function(f){ return f.privat_von===z.user_id && f.aktiv!==false; }) : meinePrivatautos();
   if(a.fahrzeug_id && !autos.some(function(f){ return f.id===a.fahrzeug_id; }))
     autos=autos.concat([FZ.filter(function(f){ return f.id===a.fahrzeug_id; })[0] || {id:a.fahrzeug_id, kennzeichen:a.fahrzeug_name||""}]);
+  /* Kilometergeld nur MIT eingetragenem Privatauto (Inhaber 05.10.2026): ohne eigenes Privatauto gar kein neuer km-Eintrag,
+     nur der Hinweis (die Präsentation zeigt den Ablauf trotzdem – sie speichert nichts und legt keine Fahrzeuge an) */
+  if(km && !z && !autos.length && !demo()){
+    v.schritt.textContent="Kilometergeld nur mit Privatauto";
+    v.inhalt.appendChild(el('<div class="note warnbox" style="max-width:560px;font-size:13.5px">'+(fzFehler ? esc(fzFehler)+" Bitte später nochmals." :
+      "<strong>"+esc(akOhneAutoText())+"</strong><br>Kilometergeld gibt es nur für ein eingetragenes Privatauto, nicht für ein Firmenfahrzeug.")+"</div>"));
+    /* gleich hier das eigene Privatauto anlegen (Inhaber 05.10.2026) – danach geht es mit dem Kilometergeld weiter */
+    if(!nurLesen() && !fzFehler){ var zf=el('<button class="btn" type="button">+ Mein Privatauto</button>'); zf.onclick=function(){ v.zu(); privatautoEditor(null, function(){ akEditor(z, vorgabe); }); }; v.fuss.appendChild(zf); }
+    return;
+  }
   var projekte=PROJEKTE.filter(function(p){ return projektOffen(p) || p.id===a.projekt_id; });
   var form=el('<form class="stack" autocomplete="off" style="max-width:560px">'+
     (km ? "" :
       '<div class="stack" style="gap:6px"><div class="fl"><span class="req">Foto vom Beleg</span></div>'+
-        /* Fotos liegen im Ordner der Person (Speicher „auslagen“ unter <user_id>/) – der Inhaber darf dort nicht
-           ablegen; ein neues Foto landete in seinem Ordner und die Person sähe ihren Beleg nicht mehr */
-        (fremd ? '<div class="muted" style="font-size:12.5px">Das Foto ersetzen kann nur '+esc(a.name||"die Person")+" selbst – dazu „zurückgeben“.</div>" :
+        /* Inhaber 05.10.2026: nach der Abgabe ersetzt bzw. entfernt das Foto nur noch der Inhaber (Speicher-Regel in der
+           Datenbank); ersetzt er das Foto eines fremden Eintrags, liegt das neue im Ordner der Person (Speicher „auslagen“
+           unter <user_id>/) – sonst sähe sie ihren Beleg nicht mehr –, das alte wird erst nach dem Speichern entfernt */
+        (gesperrt ? '<div class="muted" style="font-size:12.5px">Schon abgegeben – das Foto ersetzen oder entfernen kann nur noch der Chef (oder er gibt den Monat zurück).</div>' :
         '<div class="rowflex" style="gap:8px;flex-wrap:wrap"><label class="btn sm" style="cursor:pointer">📷 Beleg fotografieren<input type="file" accept="image/*" capture="environment" data-foto hidden></label>'+
         '<label class="btn ghost sm" style="cursor:pointer">Bild / PDF wählen<input type="file" accept="image/*,application/pdf" data-foto hidden></label></div>')+
         '<div data-vorschau class="muted" style="font-size:12.5px">'+(a.foto?"Foto ist gespeichert – wird geladen …":"Noch kein Foto.")+"</div>"+
@@ -32606,7 +32787,7 @@ function akEditor(z, vorgabe){
     "</div>"+
     (km ? '<label class="fl"><span class="req">Strecke</span><input type="text" data-f="text" maxlength="300" value="'+esc(a.text||"")+'" placeholder="z. B. Salzburg – Saalfelden – St. Johann i. T. – Salzburg"></label>'+
           '<div data-vorschlag class="chips"></div>'+
-          '<label class="fl"><span>Fahrzeug</span><select data-f="fahrzeug_id"><option value="">– Privatauto –</option>'+autos.map(function(f){
+          '<label class="fl"><span'+(demo()?"":' class="req"')+'>Privatauto</span><select data-f="fahrzeug_id"><option value="">– bitte wählen –</option>'+autos.map(function(f){
             return '<option value="'+esc(f.id)+'"'+(a.fahrzeug_id===f.id || (!a.fahrzeug_id && autos.length===1 && !fremd)?" selected":"")+">"+esc((f.kennzeichen||"gespeichertes Fahrzeug")+(f.bezeichnung?" · "+f.bezeichnung:""))+"</option>"; }).join("")+"</select></label>"+
           '<div class="note" data-kmbetrag style="font-size:13px"></div>'
         : '<label class="fl"><span class="req">Wo / was?</span><input type="text" data-f="text" maxlength="300" value="'+esc(a.text||"")+'" placeholder="z. B. Bauhaus – Silikon und Schrauben"></label>'+
@@ -32643,8 +32824,9 @@ function akEditor(z, vorgabe){
       if(kv){ var c2=el('<button class="chip" type="button">'+kv+" km laut Fahrzeug</button>"); c2.onclick=function(){ F("km").value=String(kv); rechne(); }; h.appendChild(c2); }
     };
     F("datum").addEventListener("change", vorschlag); F("fahrzeug_id").addEventListener("change", vorschlag); vorschlag();
-    if(!autos.length) form.insertBefore(el('<div class="note" style="font-size:12.5px">Kilometergeld gibt es nur für das <strong>Privatauto</strong>, nicht für ein Firmenfahrzeug. '+
-      "Ist dein Auto noch nicht als Privatauto eingetragen, macht das das Büro unter Fahrzeuge → Bearbeiten.</div>"), form.firstChild);
+    /* gespeicherter Eintrag ohne Privatauto (vor der Regel erfasst) bzw. Präsentation: ändern geht erst mit Privatauto */
+    if(!autos.length) form.insertBefore(el('<div class="note warnbox" style="font-size:12.5px">Kilometergeld gibt es nur mit eingetragenem <strong>Privatauto</strong>, nicht für ein Firmenfahrzeug. '+
+      esc(demo() ? "Präsentation: im echten Betrieb zuerst im Reiter Fahrzeuge das Privatauto eintragen." : akOhneAutoText(fremd ? (a.name||"der Person") : ""))+"</div>"), form.firstChild);
   }
   v.inhalt.appendChild(form);
   if(gesperrt){ form.querySelectorAll("input,select,button").forEach(function(x){ if(!x.closest("[data-vorschau]")) x.disabled=true; }); return; }
@@ -32673,6 +32855,8 @@ function akEditor(z, vorgabe){
       if(k>5000){ fehler("Mehr als 5.000 km an einem Tag gehen nicht – bitte die Kilometer prüfen."); F("km").focus(); return; }
       if(k>1500 && !window.confirm(k+" km an einem Tag – stimmt das?")) return;
       var fid=F("fahrzeug_id").value||null, fo=fid && autos.filter(function(f){ return f.id===fid; })[0];
+      /* ohne Privatauto kein Kilometergeld (Inhaber 05.10.2026) – die Datenbank lehnt es sonst ab */
+      if(!fid && !demo()){ fehler(autos.length ? "Bitte das Privatauto wählen." : akOhneAutoText(fremd ? (a.name||"der Person") : "")); F("fahrzeug_id").focus(); return; }
       Object.assign(zeile, {km:k, fahrzeug_id:fid, fahrzeug_name:fo?fo.kennzeichen||null:null});
     } else {
       var b=akBetragLesen(F("betrag").value);
@@ -32703,7 +32887,7 @@ function akEditor(z, vorgabe){
     /* Präsentation: Betrag nach dem Zusammenführen rechnen (sonst bliebe der alte stehen), gewähltes Foto nur vermerken */
     if(demo()){ if(datei) zeile.foto="praesentation/"+(datei.name||"beleg");
       fertig(Object.assign({id:neueKennung("ak"), status:"offen"}, z||{}, zeile, km ? {km_satz:satz, betrag:Math.round(zeile.km*satz*100)/100} : {})); return; }
-    (datei ? akFotoHochladen(datei) : Promise.resolve(null)).then(function(pfad){
+    (datei ? akFotoHochladen(datei, fremd ? z.user_id : null) : Promise.resolve(null)).then(function(pfad){
       if(pfad){ zeile.foto=pfad; zeile.ohne_beleg=null; }
       var q=z ? Store.sb.from("auslagen").update(zeile).eq("id", z.id).select("*") : Store.sb.from("auslagen").insert(zeile).select("*");
       return mitFrist(q, 20000).then(function(r){

@@ -115,6 +115,8 @@ Kammerlander Umwelt- und Klimatechnik (UKT) – oft kurz, vom Handy, im Feld.
   abgerechnet; `einsatzGelernt` ergänzt künftige Vorschläge um das, was der Chef ≥2× (am Markt ≥1×) dazuschrieb.
   App-Belege sind TEST (T-A-/T-R-Nummern), solange KPlus führt. Rechnung aus
   Angebot: Mengenvorschläge aus dem Baustellenbuch (`baubuchVorschlaege`).
+  Neu eingelesene KPlus-Belege (`kplusVorschau`, Mailverlauf) stehen auf „versendet“ – Rechnung UND Angebot (Inhaber 05.10.2026);
+  ein schon vorhandener Beleg (Art + Nummer) behält seinen Stand.
   Echte Preise und Belege nie ins Repository – nur in Supabase.
 - Quellen (Büro 01.10.2026: „man soll immer alles von beiden Seiten finden“):
   Schritte (`daten.quellen[schritt]`), Listeneinträge und Baustellenbuch führen
@@ -327,8 +329,20 @@ Kammerlander Umwelt- und Klimatechnik (UKT) – oft kurz, vom Handy, im Feld.
   Dateien hochgeladen sind. Angebot/Rechnung als Art nur für den Inhaber. KPlus-PDFs (6-stellig, `kplusDateiname`; Tiefentest
   05.10.2026): beim Inhaber als Angebot/Rechnung erkannt (buero/), andere legen sie und die Mail dazu nicht ab (bleiben im
   Posteingang). Eine Mail mit Angebot/Rechnung (`mailMitBeleg`) liegt auch als .eml nur unter buero/ – ebenso aus dem Mail-Programm.
+  Ebenso eine Mail mit Preisen im TEXT (Inhaber 05.10.2026: Betrag mit €/EUR, `mailTextMitPreis`, `emlText` liest die .eml): beim
+  Inhaber nur unter buero/ mit Hinweis „enthält Preise – nur für den Inhaber abgelegt“ (`preise` an der Datei, `preisHinweis`), alle
+  anderen legen sie nicht ab – geprüft in `projektDateienHochladen`, gilt so für Posteingang, Mail-Programm, Mailverlauf und Dateien-Karte.
+  Signatur/Impressum zählen nicht (`MAIL_IMPRESSUM`: Stammkapital, Firmenbuch, FN, UID …; nach dem Trenner „-- “ bis zu einer zitierten Mail).
   Anhänge ohne .eml (Rohmail zu groß, art „unbekannt“): „Zu Projekt legen“ an der Einzelkarte, für alle Anhänge derselben Mail.
+  Zu Großes (über 20 MB, Anhang oder Mail) meldet das Skript als Eintrag OHNE Datei (art „unbekannt“, `pfad` leer, Hinweis in `notiz`;
+  Inhaber 05.10.2026) – Karte „⚠ … nicht abgeholt“ (`posteingangOhneDatei`, `posteingangHinweisBox`), nie in „Zu Projekt legen“.
+  Lidl-Auftrag/Rapport erkennt das Skript an Betreff, Dateiname („rapport“, „auftrag“, „störung“) und Absender (allgemein `lidl.<Endung>`
+  und `lidl_domains` in ukt_posteingang.json): eine PDF von Lidl, die kein Rapport ist, ist ein Auftrag.
   Je Mail ein Dialog (`posteingangDialoge`); schon Hochgeladenes merkt `posteingangAbgelegt` – nochmals lädt nur den Rest bzw. vermerkt nur.
+  Wer was sieht (Inhaber 05.10.2026, `posteingangRolle`, `posteingangSieht`): Projektmails (alles außer art „auftrag“/„rapport“)
+  NUR der Inhaber, Lidl-Aufträge und Rapporte Inhaber und Admins, Techniker gar nicht (Karte, Benachrichtigung, Datenbank:
+  Sperrregeln für Tabelle und Speicher, Push `nur_rolle` – tools/rechte-2026-10-05.sql). Das Synology-Konto legt ab, ohne lesen
+  zu können (`ablage_pfad` fest je Mail und Datei, `on_conflict` + `ignore-duplicates`, return=minimal). Nie lockern.
 - **Mail-Programm am PC** (Büro 04.10.2026, `mailBruecke`, `mailUebernehmen`, `mailProjektNeu`, `mailZuProjekt`,
   `mailStoerung`, `mailsDazuKarte`): das Programm „Mail mit Claude“ läuft NUR auf dem PC des Inhabers
   (http://localhost:4317, nicht in diesem Repository). Verbunden per 6-stelligem Code aus dem Mail-Programm unter
@@ -414,17 +428,23 @@ Kammerlander Umwelt- und Klimatechnik (UKT) – oft kurz, vom Handy, im Feld.
   „auslagen“ unter `<user_id>/`) oder „km“ (Strecke, km; Betrag = km × Satz rechnet der Trigger `auslagen_pruefen`, Satz aus
   `einstellungen.kilometergeld`, Standard 0,50 €). offen → eingereicht („Monat abgeben“, Nachricht nur an Inhaber) → ausbezahlt (nur Inhaber);
   Abgegebenes ändert nur der Inhaber. Jede Person sieht nur ihre eigenen, der Inhaber alle – KEINE Admins. Konto in `auslagen_konto`.
-  Kilometergeld nur fürs Privatauto (`fahrzeuge.privat_von`). PDF `akPdf` mit Belegfotos; Inhaber: „Reisekosten aller“, To-do
+  Kilometergeld nur MIT eingetragenem Privatauto (Pflicht, Inhaber 05.10.2026: `fahrzeuge.privat_von` = Person des Eintrags; `akOhneAutoText`,
+  Trigger `auslagen_pruefen_privatauto` in tools/rechte-2026-10-05.sql; reine Statusänderung alter Einträge ohne Fahrzeug geht weiter). PDF `akPdf` mit Belegfotos; Inhaber: „Reisekosten aller“, To-do
   (`akAbgegebenText`), Projekt zeigt die Summe (nur Inhaber); Bedarf „abholen/bestellen“ → „Selbst bezahlt – Beleg erfassen“.
-  Fremde Einträge ändert der Inhaber ohne Belegfoto (das liegt im Ordner der Person, ersetzen nur sie – „zurückgeben“). Nie lockern.
+  Belegfoto (Inhaber 05.10.2026, tools/rechte-2026-10-05.sql): nach der Abgabe ersetzt/entfernt es nur noch der Inhaber (Speicher-Regel; nach
+  „zurückgeben“ wieder die Person); ersetzt er das Foto eines fremden Eintrags, liegt das neue im Ordner der Person (`akFotoHochladen(datei, fuer)`),
+  das alte wird erst nach dem Speichern entfernt. Nie lockern.
 - **Diktieren** (`diktatKnopf`): Spracherkennung des Browsers, keine KI, Text wird angehängt.
 - **Rapport-Text** (`rapTextRein`): ausgeführte Arbeiten aus dem Lidl-Rapport zusätzlich in
   „Durchgeführte Maßnahmen“ bzw. „Bemerkungen“ – nie ersetzen, kein Feld fällt weg.
 - **Fahrtpauschale** (`fahrtZone`, Büro 02.10.2026): Zone 2 = Kärnten, Steiermark, Vorarlberg, Tirol westlich von
   Innsbruck (Innsbruck selbst Zone 1), Osttirol; sonst Zone 1. `einsatzPositionen` nimmt die Katalog-Position der Zone. Nur auf Anweisung ändern.
 - **Fahrzeuge** (tools/fahrzeuge.sql, Büro 02.10.2026): km, Pickerl, Service, Reparatur, Schaden; Techniker nur
-  ihr Fahrzeug (km-Stand, Schaden), Beträge nur Inhaber (`fahrzeug_kosten`). GPS-Import (X-GPS, CSV/Excel):
-  NUR Kilometer je Tag – nie Orte, Uhrzeiten oder Fahrten speichern. Diese Grenze nie lockern. Keine direkte
+  ihr Fahrzeug (km-Stand, Schaden), Beträge nur Inhaber (`fahrzeug_kosten`). Eigene Privatautos (auch mehrere) trägt jede Person
+  selbst ein (`privatautoEditor`, „+ Mein Privatauto“, Inhaber 05.10.2026): nur Kennzeichen, Bezeichnung, „in Verwendung“; Datenbank:
+  Regeln + Trigger `fahrzeuge_privat_pruefen` (tools/rechte-2026-10-05.sql) – Nicht-Büro nie fremde/Firmenfahrzeuge, nie Fristen/GPS.
+  GPS-Import (X-GPS, CSV/Excel): NUR Kilometer je Tag – nie Orte, Uhrzeiten oder Fahrten speichern (Fahrtenbuch mit Orten erst nach
+  Zustimmung/Betriebsvereinbarung). Diese Grenze nie lockern. Keine direkte
   X-GPS-Anbindung (Inhaber 05.10.2026: „zu kompliziert und unnötig“) – stattdessen je Fahrzeug und Monat
   „gefahren laut km-Stand“ (`fzKmLautStand`) neben „geplante Einsatzfahrten ≈ X km“ (`fzEinsatzKm`: je Fahrer und Tag
   Startpunkt → Einsätze laut Kalender → zurück, Übernachtung wie beim Startpunkt; Straßen-km aus `FAHR_KM` von Kalender/Tour,

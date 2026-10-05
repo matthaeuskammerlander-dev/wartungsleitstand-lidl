@@ -84,6 +84,12 @@
     if((tab==="werkzeug"||tab==="packlisten") && art==="delete" && !(admin() || rolle==="inhaber")) return tab+": loeschen nur Buero";
     if(tab==="bedarf" && art==="delete" && !(admin() || rolle==="inhaber" || (alt && alt.erstellt_von===uid()))) return "bedarf: loeschen nur eigene";
     if(tab==="werkzeug_verlauf" && art!=="select") return "werkzeug_verlauf: nur der Server";
+    /* wie fahrzeuge.sql und die Antworten vom 05.10.2026: Fahrzeuge schreibt das Büro, sonst jede Person nur ihre EIGENEN Privatautos */
+    if(tab==="fahrzeuge" && (art==="insert"||art==="update") && !(admin() || rolle==="inhaber")){
+      if(alt && alt.privat_von!==uid()) return "fahrzeuge: nur das eigene Privatauto";
+      if(zeile && (!alt || ("privat_von" in zeile)) && zeile.privat_von!==uid()) return "fahrzeuge: nur das eigene Privatauto";
+    }
+    if(tab==="fahrzeuge" && art==="delete" && rolle!=="inhaber") return "fahrzeuge: loeschen nur Inhaber";
     /* wie reisekosten.sql: eigene (der Inhaber alle); abgegeben ändert nur der Inhaber; ausbezahlt setzt nur er */
     if((tab==="auslagen"||tab==="auslagen_konto") && art!=="select" && rolle!=="inhaber"){
       var az=alt||zeile||{};
@@ -223,6 +229,24 @@
     if(r.notiz!=null && String(r.notiz).length>500) return weg("notiz");
     return null;
   }
+  /* wie der Trigger auslagen_pruefen_privatauto (Antworten 05.10.2026): Kilometergeld nur mit einem Privatauto der Person
+     des Eintrags; eine reine Statusänderung (abgeben, zurückgeben, ausbezahlt) eines gespeicherten km-Eintrags prüft er nicht */
+  function kmOhneAuto(n, alt){
+    if(n.art!=="km") return null;
+    if(alt && alt.art==="km" && ["fahrzeug_id","user_id","km","datum","text"].every(function(k){ return (n[k]==null?null:n[k])===(alt[k]==null?null:alt[k]); })) return null;
+    var inh=rolleVon()==="inhaber", wer=!alt ? (inh ? (n.user_id||uid()) : uid()) : (inh ? n.user_id : alt.user_id);
+    return n.fahrzeug_id && DB.fahrzeuge.some(function(f){ return f.id===n.fahrzeug_id && f.privat_von===wer; }) ? null
+      : "Kilometergeld nur mit eingetragenem Privatauto – zuerst im Reiter Fahrzeuge das Privatauto eintragen";
+  }
+  /* wie der Trigger fahrzeuge_privat_pruefen (Antworten 05.10.2026): Nicht-Büro setzt am eigenen Privatauto nur Kennzeichen,
+     Bezeichnung, Namen und „in Verwendung“ – Fahrer ist die Person selbst, Fristen/GPS/Notiz bleiben bzw. sind leer */
+  function fzPrivatMerken(r, alt){
+    var rl=rolleVon(); if(admin() || rl==="inhaber") return;
+    var frei=["kennzeichen","bezeichnung","privat_name","aktiv","geaendert","geaendert_von"];
+    if(alt){ Object.keys(r).forEach(function(k){ if(frei.indexOf(k)<0) r[k]=alt[k]; }); Object.keys(alt).forEach(function(k){ if(!(k in r)) r[k]=alt[k]; }); return; }
+    ["erstzulassung","pickerl_bis","service_bis","service_km","tracker_id","notiz"].forEach(function(k){ r[k]=null; });
+    r.fahrer=[uid()]; r.fahrer_namen=[r.privat_name||""]; if(r.aktiv==null) r.aktiv=true; r.erstellt_von=uid();
+  }
   function Q(t){ this.t=t; this.a="select"; this.f=[]; this.d=null; this.o={}; this.ord=null; this.lim=null; this.sp=null; }
   Q.prototype.select=function(s){ if(typeof s==="string"&&s&&s!=="*") this.sp=s.split(",").map(function(x){return x.trim();}); return this; };
   Q.prototype.insert=function(d){ this.a="insert"; this.d=d; return this; };
@@ -251,6 +275,8 @@
       if(this.t==="admins") erg=erg.filter(function(r){ return r.user_id===uid(); });
       if(this.t==="protokolle") erg=erg.filter(function(r){ return kundeSieht(r.standort_id); });   /* wie „angemeldete lesen alle protokolle“ */
       if(this.t==="planung_privat") erg=erg.filter(function(r){ return r.user_id===uid(); });   /* wie die Regel: nur die eigenen */
+      /* wie die Sperrregel vom 05.10.2026 (rechte-2026-10-05.sql): Inhaber alles, Admins nur Lidl-Aufträge und Rapporte, sonst nichts */
+      if(this.t==="posteingang") erg=erg.filter(postSieht);
       if(this.t==="arbeitszeiten"||this.t==="auslagen"||this.t==="auslagen_konto"){ var rl=(DB.rollen.filter(function(r){ return r.user_id===uid(); })[0]||{}).rolle; if(rl!=="inhaber") erg=erg.filter(function(r){ return r.user_id===uid(); }); }
       /* wie „fahrzeuge lesen“ (fahrzeuge.sql): Büro alle, sonst nur das Fahrzeug, in dem man Fahrer ist */
       if(this.t==="fahrzeuge"){ var rf=(DB.rollen.filter(function(r){ return r.user_id===uid(); })[0]||{}).rolle; if(!(admin() || rf==="inhaber")) erg=erg.filter(function(r){ return (r.fahrer||[]).indexOf(uid())>=0; }); }
@@ -285,8 +311,9 @@
         if(self.t==="werkzeug"||self.t==="bedarf"){ r.erstellt_von=uid(); r.erstellt=new Date().toISOString(); r.aktiv=r.aktiv==null?true:r.aktiv; if(self.t==="bedarf"){ r.status=r.status||"offen"; r.beschaffung=r.beschaffung||"mitnehmen"; if(r.status==="erledigt") r.erledigt=new Date().toISOString(); } else { r.zustand=r.zustand||"ok"; r.standort_art=r.standort_art||"lager"; } }
         if(self.t==="projekte"){ r.erstellt=r.erstellt||new Date().toISOString(); r.geaendert=r.geaendert||r.erstellt; r.daten=r.daten||{}; r.verlauf=r.verlauf||[]; }
         return r; });
-      if(self.t==="auslagen"){ neu.forEach(function(r){ v=v||auslagenCheck(r); }); if(v){ window.__abgelehnt.push(v); return {data:null,error:{message:v}}; } }
+      if(self.t==="auslagen"){ neu.forEach(function(r){ v=v||kmOhneAuto(r, null)||auslagenCheck(r); }); if(v){ window.__abgelehnt.push(v); return {data:null,error:{message:v}}; } }
       if(self.t==="werkzeug") neu.forEach(function(r){ wzMerken(r); });
+      if(self.t==="fahrzeuge") neu.forEach(function(r){ fzPrivatMerken(r, null); });
       neu.forEach(function(r){ tab.push(r); }); if(self.t==="planung") neu.forEach(function(r){ stundenSync(r.id); });
       if(self.t==="werkzeug") neu.forEach(function(r){ wzVerlauf(r, null); });
       sichern(); return {data:aus(neu),error:null};
@@ -313,10 +340,12 @@
     }
     if(this.a==="update"){
       var b=tab.filter(function(r){ return passt(r,self.f); }).filter(sichtbar(self.t));   /* wie Postgres: was man nicht lesen darf, trifft kein update mit Bedingung */
+      /* wie die Sperrregel vom 05.10.2026: im Posteingang ändert man nur, was man sehen darf (sonst: nichts geändert) */
+      if(self.t==="posteingang") b=b.filter(postSieht);
       b.forEach(function(r){ v=v||darf(self.t,"update",self.d,r)||bisVorDatum(Object.assign({}, r, self.d)); });
       /* Prüfregeln vor dem Ändern – scheitert eine Zeile, bleibt alles, wie es war */
       if(!v && self.t==="auslagen") b.forEach(function(r){ var n=Object.assign({},r,self.d); if(n.km!=null) n.km=kmSpalte(n.km);
-        if(n.art==="km") n.betrag=Math.round(n.km*(n.km_satz||0.5)*100)/100; v=v||auslagenCheck(n); });
+        if(n.art==="km") n.betrag=Math.round(n.km*(n.km_satz||0.5)*100)/100; v=v||kmOhneAuto(n, r)||auslagenCheck(n); });
       if(v){ window.__abgelehnt.push(v); return {data:null,error:{message:v}}; }
       b.forEach(function(r){ if(self.t==="protokolle"){ var u=r.erstellt_von,g2=r.erstellt;
           DB.protokoll_fassungen.push({client_id:r.client_id,version:r.version,gesichert:new Date().toISOString(),daten:JSON.parse(JSON.stringify(r))});
@@ -333,6 +362,7 @@
           if(self.t==="auslagen" && r.art==="km") r.betrag=Math.round(r.km*(r.km_satz||0.5)*100)/100;
           if(self.t==="bedarf") r.erledigt = r.status==="erledigt" ? (altR.status==="erledigt" ? altR.erledigt : new Date().toISOString()) : null;
           if(self.t==="werkzeug"){ wzMerken(r); wzVerlauf(r, altR); }
+          if(self.t==="fahrzeuge") fzPrivatMerken(r, altR);
         }
         erg.push(r); });
       sichern(); return {data:aus(erg),error:null};
@@ -366,13 +396,21 @@
     var erlaubt=this.n==="sicherungen" ? null : this.n==="auslagen" ? ["image/jpeg","image/png","application/pdf"] : this.n==="projektdateien" ? ["application/pdf","image/jpeg","image/png","image/heic","image/heif","image/webp","text/plain","text/csv","application/msword","application/vnd.openxmlformats-officedocument.wordprocessingml.document","application/vnd.ms-excel","application/vnd.openxmlformats-officedocument.spreadsheetml.sheet","application/zip","message/rfc822","application/vnd.ms-outlook","image/vnd.dwg","application/acad","application/x-acad","application/autocad_dwg","application/dwg","application/x-dwg","application/x-autocad","application/octet-stream"] : ["image/jpeg","image/png","application/pdf"];
     if(erlaubt && b && b.type && erlaubt.indexOf(b.type)<0)
       return Promise.resolve({data:null,error:{message:"mime type "+b.type+" is not supported"}});
+    /* wie reisekosten.sql und die Antworten vom 05.10.2026: Belegfotos legt jede Person in ihren Ordner <user_id>/, der Inhaber auch in fremde */
+    if(this.n==="auslagen" && String(p).split("/")[0]!==uid() && rolleVon()!=="inhaber")
+      return Promise.resolve({data:null,error:{message:"new row violates row-level security policy"}});
     DATEIEN[k]=b; BESITZER[k]=uid(); return Promise.resolve({data:{path:p},error:null}); };
-  /* wie posteingang-lesen.sql: Dateien im Bucket „posteingang“ nur mit darf_schreiben() (nicht Kunde, nicht Präsentation);
+  /* wie posteingang-lesen.sql: Dateien im Bucket „posteingang“ nur mit darf_schreiben() (nicht Kunde, nicht Präsentation)
+     … und seit dem 05.10.2026 (rechte-2026-10-05.sql): Inhaber alles, Admins nur die Dateien der Lidl-Aufträge und Rapporte
+     (Pfad über posteingang.pfad), Techniker nichts;
      wie „fotos ansehen“ (anlagenfotos.sql = chat.sql = wunsch-fotos.sql) im Bucket „protokollfotos“: wunsch/… nur Absender
      und Inhaber, chat/… und anlagen/… nur wer mitarbeitet, alles übrige (<client_id>/…) ein Kunde nur zu Protokollen,
      die er lesen darf */
+  function postSieht(r){ var rl=rolleVon(); return rl==="inhaber" || (admin() && (rl==="admin"||rl==="inhaber") && (r.art==="auftrag" || r.art==="rapport")); }
   function eimerGesperrt(n, p){ var rl=(DB.rollen.filter(function(r){ return r.user_id===uid(); })[0]||{}).rolle;
-    if(n==="posteingang") return !sitzung || rl==="kunde" || rl==="praesentation";
+    if(n==="posteingang"){
+      if(!sitzung || rl==="kunde" || rl==="praesentation") return true;
+      return !(rl==="inhaber" || DB.posteingang.some(function(r){ return r.pfad===p && postSieht(r); })); }
     if(n!=="protokollfotos") return false;
     if(!sitzung) return true;
     if(/^wunsch\//.test(p)) return !(BESITZER[n+"/"+p]===uid() || rl==="inhaber");
@@ -381,7 +419,18 @@
   E.prototype.createSignedUrl=function(p){ var b=eimerGesperrt(this.n, p) ? null : DATEIEN[this.n+"/"+p];
     return Promise.resolve(b?{data:{signedUrl:URL.createObjectURL(b)},error:null}:{data:null,error:{message:"weg"}}); };
   E.prototype.download=function(p){ var b=eimerGesperrt(this.n, p) ? null : DATEIEN[this.n+"/"+p]; return Promise.resolve(b?{data:b,error:null}:{data:null,error:{message:"weg"}}); };
-  E.prototype.remove=function(){ return Promise.resolve({data:[],error:null}); };
+  /* Speicher „auslagen“ wie die Regeln (reisekosten.sql, Antworten 05.10.2026): entfernen im eigenen Ordner – aber nicht
+     das Foto eines abgegebenen oder ausbezahlten Eintrags –, der Inhaber überall; was die Regel nicht erlaubt, bleibt still
+     liegen (wie Supabase: keine Fehlermeldung, nur nichts entfernt). Andere Bereiche: wie bisher (nichts entfernt). */
+  E.prototype.remove=function(pfade){
+    if(this.n!=="auslagen" || !sitzung) return Promise.resolve({data:[],error:null});
+    var n=this.n, inh=rolleVon()==="inhaber", weg=[];
+    (pfade||[]).forEach(function(p){
+      var gesperrt=DB.auslagen.some(function(a){ return a.foto===p && a.status!=="offen"; });
+      if(!DATEIEN[n+"/"+p] || !(inh || (String(p).split("/")[0]===uid() && !gesperrt))) return;
+      delete DATEIEN[n+"/"+p]; weg.push({name:p});
+    });
+    return Promise.resolve({data:weg,error:null}); };
   E.prototype.list=function(){ return Promise.resolve({data:[],error:null}); };
   window.supabase={createClient:function(){ return {
     auth:{ getSession:function(){ return Promise.resolve({data:{session:sitzung},error:null}); },

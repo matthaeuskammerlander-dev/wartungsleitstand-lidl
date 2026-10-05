@@ -1326,7 +1326,9 @@ test("Reisekosten: Beleg mit Foto, Kilometer Privatauto, Monat abgeben, Chef zah
     const wzFrage = !!d && /In die Werkzeugliste/.test(d.textContent);
     if (d) { const nein = [...d.querySelectorAll("button")].find((b) => /Nein/.test(b.textContent)); if (nein) nein.click(); }
     await warte(300);
-    /* Kilometer */
+    /* Kilometer – nur mit eingetragenem Privatauto (Inhaber 05.10.2026) */
+    db.fahrzeuge.push({ id: "fzRk", kennzeichen: "S-RK 1", fahrer: [ich], fahrer_namen: ["Testtechniker"], privat_von: ich, privat_name: "Testtechniker", aktiv: true });
+    await x("fzLaden(true)");
     x("akEditor(null, {art:'km'})"); await warte(400);
     d = dlg();
     d.querySelector('[data-f="text"]').value = "Salzburg – Saalfelden – Salzburg";
@@ -3254,8 +3256,10 @@ test("Tiefentest reisekosten: Inhaber ändert fremde Einträge – Privatauto bl
     speichern(d); await warte(900);
     const b = db.auslagen.find((q) => q.id === "akB");
     p(b.betrag === 30, "RK-05/06 Betrag nicht gespeichert: " + b.betrag);
-    /* Speicher-Regel „auslagen fotos lesen“ (tools/reisekosten.sql): die Person liest nur ihren eigenen Ordner */
-    p(String(b.foto || "").indexOf("u_tech_test_at/") === 0 && !window.__entfernt.length, "RK-05 Belegfoto liegt im Ordner des Inhabers / Original entfernt: " + JSON.stringify({ foto: b.foto, entfernt: window.__entfernt }));
+    /* Speicher-Regel „auslagen fotos lesen“ (tools/reisekosten.sql): die Person liest nur ihren eigenen Ordner – der Inhaber ersetzt
+       das Foto dort (Antwort des Inhabers 05.10.2026, statt RK-05 „nur die Person“); das alte wird erst nach dem Speichern entfernt */
+    p(String(b.foto || "").indexOf("u_tech_test_at/") === 0 && b.foto !== "u_tech_test_at/b.jpg" && window.__entfernt.length === 1 && /u_tech_test_at\/b\.jpg/.test(window.__entfernt[0]),
+      "RK-05 Belegfoto liegt nicht im Ordner der Person bzw. das alte nicht (genau einmal) entfernt: " + JSON.stringify({ foto: b.foto, entfernt: window.__entfernt }));
     const eigene = (karte(/^Reisekosten und Kilometergeld/) || {}).textContent || "";
     p(!/Baumarkt Fremd|Linz/.test(eigene) && x("AUSLAGEN.filter(function(z){ return z.user_id!==meineKennung(); }).length") === 0, "RK-06 fremde Einträge in der eigenen Reisekosten-Karte des Inhabers");
     const alleText = (karte(/^Reisekosten aller/) || {}).textContent || "";
@@ -3318,6 +3322,9 @@ test("Tiefentest reisekosten: Erfassen – Vorschau wie gespeichert, Grenzen der
     };
     /* RK-11: alter Eintrag mit 0,42 €/km – die Vorschau nennt den Satz, mit dem gespeichert wird */
     db.auslagen.push({ id: "tkK1", user_id: "u_tech_test_at", name: "Testtechniker", art: "km", datum: heute, text: "Salzburg – Hallein – Salzburg", km: 100, km_satz: 0.42, betrag: 42, status: "offen", erstellt: new Date().toISOString() });
+    /* Kilometergeld nur mit eingetragenem Privatauto (Inhaber 05.10.2026) */
+    db.fahrzeuge.push({ id: "fzTk", kennzeichen: "S-TK 1", fahrer: ["u_tech_test_at"], fahrer_namen: ["Testtechniker"], privat_von: "u_tech_test_at", privat_name: "Testtechniker", aktiv: true });
+    await x("fzLaden(true)");
     x("S.view='stunden'; render()"); await warte(700);
     x("akEditor(AUSLAGEN.filter(function(z){ return z.id==='tkK1'; })[0])"); await warte(300);
     let d = dlg();
@@ -3536,7 +3543,7 @@ test("Tiefentest mail: Rechte – Posteingang nur für Mitarbeiter, KPlus-PDFs u
     p(dp.length === 2 && dp.every((f) => /\|buero\//.test(f)), "M3/M4 Posteingang (Inhaber): Rechnung bzw. Mail dazu nicht im Büro-Ordner: " + JSON.stringify(dp));
     k.remove(); x("ansichtenSchliessen()"); tm.ende();
 
-    /* als Admin: Mail und Rechnung aus dem Mailverlauf sind nicht zu sehen; aus dem Posteingang legt er nur den Plan ab */
+    /* als Admin: Mail und Rechnung aus dem Mailverlauf sind nicht zu sehen; Projektmails im Posteingang auch nicht */
     await tm.anmelden("admin@test.at", "admin"); tm.toastSpion(); await x("projekteLaden()");
     x("projektAnsicht('" + pv.id + "')"); await tm.bis(() => tm.dlg() && /Dateien/.test(tm.dlg().textContent));
     const karte = [...tm.dlg().querySelectorAll(".card")].find((c) => /^Dateien/.test((c.querySelector("h2") || {}).textContent || ""));
@@ -3550,22 +3557,11 @@ test("Tiefentest mail: Rechte – Posteingang nur für Mitarbeiter, KPlus-PDFs u
     await sbA.storage.from("posteingang").upload("2026/10/tm4d_413956.pdf", new Blob(["%PDF-1.4 KPlus 413956"], { type: "application/pdf" }));
     db.posteingang.push(pe("tm4c1", "tm4c", "mail", "Fwd Unterlagen P-2026-903.eml", "2026/10/tm4c_mail.eml"), pe("tm4c2", "tm4c", "unbekannt", "413955.pdf", "2026/10/tm4c_413955.pdf"),
       pe("tm4c3", "tm4c", "unbekannt", "Plan OG.pdf", "2026/10/tm4c_plan.pdf"), pe("tm4d1", "tm4d", "mail", "Fwd Rechnung 413956.eml", "2026/10/tm4c_mail.eml"), pe("tm4d2", "tm4d", "unbekannt", "413956.pdf", "2026/10/tm4d_413956.pdf"));
-    k = x("posteingangKarte()"); document.body.appendChild(k); await tm.bis(() => k.querySelectorAll(".posbox").length >= 2);
-    const box = (re) => [...k.querySelectorAll(".posbox")].find((b) => re.test(b.textContent));
-    /* nur Mail + KPlus-Rechnung: gar kein Dialog, sichtbarer Hinweis */
-    window.__toasts = []; tm.knopf(box(/413956/), /Zu Projekt legen/).click(); await tm.warte(300);
-    p(!document.querySelector(".assistent") && window.__toasts.some((t) => /nur der Inhaber/.test(t)), "M4 Admin: Mail nur mit KPlus-Rechnung – kein Hinweis bzw. Dialog offen: " + JSON.stringify(window.__toasts));
-    /* Mail + KPlus + Plan: der Plan kommt ins Projekt, Mail und KPlus bleiben für den Inhaber im Posteingang */
-    tm.knopf(box(/413955/), /Zu Projekt legen/).click(); await tm.bis(() => tm.fuss(/Ins Projekt legen/));
-    d = tm.dlg();
-    p(/nur der Inhaber/.test(d.textContent), "M4 Admin: Dialog sagt nicht, dass Angebot/Rechnung nur der Inhaber ablegt");
-    d.querySelector("[data-p]").value = "tmp_r3"; window.__toasts = [];
-    tm.fuss(/Ins Projekt legen/).click(); await tm.toastBis(/abgelegt|^Nicht/);
-    const da = (db.projekte.find((q) => q.id === "tmp_r3").daten.dateien || []).filter((f) => /Fwd Unterlagen|413955|Plan OG/.test(f.name)).map((f) => f.art + "|" + f.name);
-    p(da.length === 1 && da[0] === "plan|Plan OG.pdf", "M4 Admin hat Angebot/Rechnung bzw. die Mail dazu abgelegt: " + JSON.stringify(da));
-    p(["tm4c1", "tm4c2"].every((id) => db.posteingang.find((e) => e.id === id).status === "neu") && db.posteingang.find((e) => e.id === "tm4c3").status === "erledigt",
-      "M4 Posteingang nach dem Ablegen durch den Admin: " + JSON.stringify(db.posteingang.filter((e) => /^tm4c/.test(e.id)).map((e) => e.id + ":" + e.status)));
-    p(window.__toasts.some((t) => /bleiben für den Inhaber/.test(t)) && /413955/.test(k.textContent), "M4 Admin: kein Hinweis bzw. die Karte für den Inhaber fehlt: " + JSON.stringify(window.__toasts));
+    /* Antwort des Inhabers 05.10.2026: weitergeleitete Mails (Projekte) samt Anhängen sieht NUR der Inhaber – der Admin
+       bekommt sie weder aus der Datenbank noch als Karte (früher legte er hier den Plan ab, Angebot/Rechnung blieben liegen) */
+    const zeilenA = ((await sbA.from("posteingang").select("*")).data || []).filter((e) => /^tm4[cd]/.test(e.id));
+    k = x("posteingangKarte()"); document.body.appendChild(k); await tm.bis(() => !/wird geladen/.test(k.textContent));
+    p(!zeilenA.length && !/413955|413956|Plan OG|Fwd Unterlagen/.test(k.textContent), "M4 Admin sieht Projektmails im Posteingang: " + JSON.stringify(zeilenA.map((e) => e.id)) + " " + k.textContent.slice(0, 200));
     k.remove();
     return { fehlt };
   });
@@ -5111,6 +5107,361 @@ test("Antworten kern: Fahrzeuge – geplante Einsatzfahrten als km-Schätzung ne
   pruefe(r.schaetzung === r.mitHeim && r.hinweis, "Schätzung „geplante Einsatzfahrten ≈ … km“ fehlt bzw. falsch (Start → Einsätze → zurück): " + JSON.stringify(r));
   pruefe(r.mitUebernachtung === r.ohneHeim, "Übernachtung am letzten Markt: Heimfahrt trotzdem gezählt: " + JSON.stringify(r));
   pruefe(!r.gpsText, "GPS-Import kündigt noch ein Fahrtenbuch mit Orten an");
+  pruefe(!a.fehler.length, "Laufzeitfehler: " + a.fehler.join("; "));
+  await a.zu();
+});
+
+/* Antworten des Inhabers vom 05.10.2026 (Reisekosten, Kilometergeld, Posteingang, Preise in Mails, KPlus-Stand) */
+test("Antworten post: Reisekosten – Belegfoto nach der Abgabe nur noch der Inhaber; er ersetzt ein fremdes Foto im Ordner der Person", async () => {
+  const a = await rkSeite(KONTEN.inhaber);
+  const r = await a.seite.evaluate(async () => {
+    const x = window.__t.x, db = window.__db.tabellen, dat = window.__db.dateien, { warte, dlg, speichern } = window.__rk;
+    const heute = x("isoLokal(new Date())"), fehlt = [], p = (bed, text) => { if (!bed) fehlt.push(text); };
+    const bild = async () => { const cv = document.createElement("canvas"); cv.width = 40; cv.height = 60; cv.getContext("2d").fillRect(0, 0, 20, 20);
+      const b = await new Promise((f) => cv.toBlob(f, "image/png")); const dt = new DataTransfer(); dt.items.add(new File([b], "neu.png", { type: "image/png" })); return dt.files; };
+    const oeffne = async (id) => { x("ansichtenSchliessen(); akEditor(" + JSON.stringify(db.auslagen.find((z) => z.id === id)) + ")"); await warte(400); return dlg(); };
+    dat["auslagen/u_tech_test_at/alt.jpg"] = new Blob(["alt"], { type: "image/jpeg" });
+    dat["auslagen/u_tech_test_at/offen.jpg"] = new Blob(["offen"], { type: "image/jpeg" });
+    db.auslagen.push({ id: "apB", user_id: "u_tech_test_at", name: "Testtechniker", art: "beleg", datum: heute, text: "Baumarkt abgegeben", kategorie: "material", betrag: 12.5, foto: "u_tech_test_at/alt.jpg", status: "eingereicht", erstellt: new Date().toISOString() },
+      { id: "apO", user_id: "u_tech_test_at", name: "Testtechniker", art: "beleg", datum: heute, text: "Baumarkt offen", kategorie: "material", betrag: 3, foto: "u_tech_test_at/offen.jpg", status: "offen", erstellt: new Date().toISOString() });
+    x("S.view='stunden'; AK_ALLE.monat=''; render()"); await warte(600);
+    /* Speichern scheitert: das alte Foto bleibt (entfernt wird erst nach Erfolg) */
+    let d = await oeffne("apB"), inp = d.querySelector("[data-foto]");
+    p(!!inp, "Inhaber: beim fremden Beleg kein Knopf, um das Foto zu ersetzen");
+    if (inp) {
+      inp.files = await bild(); inp.dispatchEvent(new Event("change"));
+      window.__netzWeg = "antwort"; speichern(d); await warte(700); window.__netzWeg = false;
+      p(db.auslagen.find((z) => z.id === "apB").foto === "u_tech_test_at/alt.jpg" && !!dat["auslagen/u_tech_test_at/alt.jpg"], "Speichern gescheitert, altes Foto trotzdem entfernt");
+      d = await oeffne("apB"); inp = d.querySelector("[data-foto]");
+      inp.files = await bild(); inp.dispatchEvent(new Event("change"));
+      speichern(d); await warte(900);
+    }
+    const b = db.auslagen.find((z) => z.id === "apB");
+    p(/^u_tech_test_at\//.test(b.foto) && b.foto !== "u_tech_test_at/alt.jpg" && !!dat["auslagen/" + b.foto], "neues Foto nicht im Ordner der Person: " + b.foto);
+    p(!dat["auslagen/u_tech_test_at/alt.jpg"], "altes Foto nach dem Ersetzen nicht entfernt");
+    /* die Person selbst: nach der Abgabe weder ersetzen noch entfernen – vorher schon */
+    await window.__rk.anmelden("tech@test.at", "techniker");
+    d = await oeffne("apB"); inp = d.querySelector("[data-foto]");
+    p((!inp || inp.disabled) && /nur (noch )?der Chef/.test(d.textContent), "Techniker: abgegebenes Belegfoto lässt sich ersetzen bzw. kein Hinweis");
+    x("ansichtenSchliessen()");
+    const sb = x("Store.sb");
+    await sb.storage.from("auslagen").remove([b.foto]);
+    p(!!dat["auslagen/" + b.foto], "Techniker hat das Foto eines abgegebenen Belegs entfernt");
+    await sb.storage.from("auslagen").remove(["u_tech_test_at/offen.jpg"]);
+    p(!dat["auslagen/u_tech_test_at/offen.jpg"], "Techniker kann das Foto eines offenen Belegs nicht entfernen");
+    const fremd = await sb.storage.from("auslagen").upload("u_inhaber_test_at/x.jpg", new Blob(["x"], { type: "image/jpeg" }));
+    p(!!fremd.error && !dat["auslagen/u_inhaber_test_at/x.jpg"], "Techniker legt ein Foto in einen fremden Ordner");
+    return { fehlt };
+  });
+  pruefe(!r.fehlt.length, r.fehlt.join(" | "));
+  pruefe(!a.fehler.length, "Laufzeitfehler: " + a.fehler.join("; "));
+  await a.zu();
+});
+
+test("Antworten post: Kilometergeld nur mit eingetragenem Privatauto – App und Datenbank, Abgeben alter Einträge geht weiter, Inhaber ändert fremde", async () => {
+  const a = await rkSeite(KONTEN.techniker);
+  const r = await a.seite.evaluate(async () => {
+    const x = window.__t.x, db = window.__db.tabellen, { warte, dlg, speichern } = window.__rk;
+    const heute = x("isoLokal(new Date())"), fehlt = [], p = (bed, text) => { if (!bed) fehlt.push(text); };
+    const sb = () => x("Store.sb");
+    /* ein alter km-Eintrag ohne Fahrzeug (vor der Regel erfasst) */
+    db.auslagen.push({ id: "kmAlt", user_id: "u_tech_test_at", name: "Testtechniker", art: "km", datum: heute, text: "Salzburg – Golling – Salzburg", km: 60, km_satz: 0.5, betrag: 30, status: "offen", erstellt: new Date().toISOString() });
+    db.fahrzeuge.push({ id: "fzFirma", kennzeichen: "S-FI 1", fahrer: ["u_tech_test_at"], fahrer_namen: ["Testtechniker"], aktiv: true },
+      { id: "fzAndere", kennzeichen: "S-AN 2", fahrer: ["u_admin_test_at"], fahrer_namen: ["Testadmin"], privat_von: "u_admin_test_at", privat_name: "Testadmin", aktiv: true });
+    await x("fzLaden(true)");
+    x("S.view='stunden'; render()"); await warte(500);
+    /* App: ohne eigenes Privatauto kein neuer km-Eintrag, sondern der Hinweis */
+    x("akEditor(null, {art:'km'})"); await warte(300);
+    let d = dlg();
+    p(/Zuerst im Reiter Fahrzeuge dein Privatauto eintragen/.test(d.textContent) && !d.querySelector('[data-f="km"]') && ![...d.querySelectorAll(".as-fuss button")].some((b) => /^Speichern$/.test(b.textContent.trim())),
+      "ohne Privatauto: km-Eintrag möglich bzw. kein Hinweis: " + d.textContent.slice(0, 160));
+    x("ansichtenSchliessen()");
+    /* Datenbank: ohne Fahrzeug, mit Firmenfahrzeug oder fremdem Privatauto abgelehnt */
+    for (const [fz, was] of [[null, "ohne Fahrzeug"], ["fzFirma", "Firmenfahrzeug"], ["fzAndere", "Privatauto einer anderen Person"]]) {
+      const e = await sb().from("auslagen").insert({ art: "km", datum: heute, text: "Test " + was, km: 10, fahrzeug_id: fz }).select("*");
+      p(!!e.error && /Privatauto/.test(e.error.message) && !db.auslagen.some((z) => z.text === "Test " + was), "Datenbank nimmt km-Eintrag " + was + " an: " + JSON.stringify(e.error));
+    }
+    /* reine Statusänderung (Monat abgeben) an einem alten Eintrag ohne Fahrzeug geht weiter */
+    const ab = await sb().from("auslagen").update({ status: "eingereicht" }).eq("id", "kmAlt").select("id");
+    p(!ab.error && db.auslagen.find((z) => z.id === "kmAlt").status === "eingereicht", "alter km-Eintrag ohne Fahrzeug lässt sich nicht abgeben: " + JSON.stringify(ab.error));
+    /* mit eigenem Privatauto: vorgewählt, gespeichert mit Fahrzeug */
+    db.fahrzeuge.push({ id: "fzMeins", kennzeichen: "S-PV 3", fahrer: ["u_tech_test_at"], fahrer_namen: ["Testtechniker"], privat_von: "u_tech_test_at", privat_name: "Testtechniker", aktiv: true });
+    await x("fzLaden(true)");
+    x("akEditor(null, {art:'km'})"); await warte(300);
+    d = dlg();
+    p(d.querySelector('[data-f="fahrzeug_id"]').value === "fzMeins", "eigenes Privatauto nicht vorgewählt");
+    d.querySelector('[data-f="text"]').value = "Salzburg – Werfen – Salzburg"; d.querySelector('[data-f="km"]').value = "80";
+    speichern(d); await warte(600);
+    const neu = db.auslagen.find((z) => z.text === "Salzburg – Werfen – Salzburg");
+    p(neu && neu.fahrzeug_id === "fzMeins" && neu.betrag === 40, "km-Eintrag mit Privatauto nicht gespeichert: " + JSON.stringify(neu));
+    /* Inhaber ändert den fremden Eintrag: mit dem Privatauto der Person ja, mit einem anderen nein */
+    await window.__rk.anmelden("inhaber@test.at", "inhaber");
+    await x("fzLaden(true)");
+    x("akEditor(" + JSON.stringify(neu) + ")"); await warte(300);
+    d = dlg(); d.querySelector('[data-f="km"]').value = "90"; speichern(d); await warte(600);
+    p(db.auslagen.find((z) => z.id === neu.id).km === 90, "Inhaber kann den fremden km-Eintrag nicht ändern: " + ((dlg() || {}).textContent || "").slice(0, 120));
+    const falsch = await sb().from("auslagen").update({ fahrzeug_id: "fzAndere", km: 95 }).eq("id", neu.id).select("id");
+    p(!!falsch.error && db.auslagen.find((z) => z.id === neu.id).km === 90, "Inhaber: fremder km-Eintrag mit dem Privatauto einer anderen Person gespeichert");
+    x("ansichtenSchliessen(); akEditor(null, {art:'km'})"); await warte(300);
+    p(/Zuerst im Reiter Fahrzeuge dein Privatauto eintragen/.test(dlg().textContent) && !!dlg().querySelector(".as-fuss button") && /Mein Privatauto/.test(dlg().querySelector(".as-fuss").textContent),
+      "Inhaber ohne eigenes Privatauto: kein Hinweis bzw. kein Knopf „+ Mein Privatauto“");
+    return { fehlt };
+  });
+  pruefe(!r.fehlt.length, r.fehlt.join(" | "));
+  pruefe(!a.fehler.length, "Laufzeitfehler: " + a.fehler.join("; "));
+  await a.zu();
+});
+
+test("Antworten post: Privatauto – Techniker legen ihre eigenen (auch mehrere) selbst an, aus dem Kilometergeld-Hinweis; fremde und Firmenfahrzeuge nur das Büro", async () => {
+  const a = await rkSeite(KONTEN.techniker);
+  const r = await a.seite.evaluate(async () => {
+    const x = window.__t.x, db = window.__db.tabellen, { warte, dlg, speichern } = window.__rk;
+    const fehlt = [], p = (bed, text) => { if (!bed) fehlt.push(text); }, ich = x("meineKennung()"), sb = () => x("Store.sb");
+    db.fahrzeuge.push({ id: "fzAdm", kennzeichen: "S-AD 9", fahrer: ["u_admin_test_at", ich], fahrer_namen: ["Testadmin", "Testtechniker"], privat_von: "u_admin_test_at", privat_name: "Testadmin", aktiv: true });
+    await x("fzLaden(true)");
+    /* aus dem Kilometergeld-Hinweis: „+ Mein Privatauto“, danach geht es mit dem Kilometer-Dialog weiter */
+    x("S.view='stunden'; render(); akEditor(null, {art:'km'})"); await warte(300);
+    const kn = [...dlg().querySelectorAll(".as-fuss button")].find((b) => /Mein Privatauto/.test(b.textContent));
+    p(!!kn, "Kilometergeld-Hinweis ohne „+ Mein Privatauto“");
+    if (kn) {
+      kn.click(); await warte(300);
+      let d = dlg(); d.querySelector('[data-f="kennzeichen"]').value = "s-pv 11"; d.querySelector('[data-f="bezeichnung"]').value = "Kombi";
+      speichern(d); await warte(700);
+      const neu = db.fahrzeuge.find((f) => f.kennzeichen === "S-PV 11") || {};
+      p(neu.privat_von === ich && (neu.fahrer || []).indexOf(ich) >= 0, "Privatauto nicht als eigenes gespeichert: " + JSON.stringify(neu));
+      d = dlg();
+      p(d && d.querySelector('[data-f="km"]') && d.querySelector('[data-f="fahrzeug_id"]').value === neu.id, "nach dem Anlegen kein Kilometer-Dialog mit dem neuen Auto");
+      x("ansichtenSchliessen()");
+    }
+    /* ein zweites im Reiter Fahrzeuge – dann muss beim Kilometergeld gewählt werden */
+    x("S.view='fahrzeuge'; render()"); await warte(500);
+    const kf = [...document.querySelectorAll("button")].find((b) => /Mein Privatauto/.test(b.textContent));
+    p(!!kf, "Reiter Fahrzeuge ohne „+ Mein Privatauto“");
+    if (kf) { kf.click(); await warte(300); const d = dlg(); d.querySelector('[data-f="kennzeichen"]').value = "S-PV 12"; speichern(d); await warte(700); }
+    x("ansichtenSchliessen(); akEditor(null, {art:'km'})"); await warte(300);
+    let d = dlg(), sel = d.querySelector('[data-f="fahrzeug_id"]');
+    p(sel && sel.options.length === 3 && sel.value === "", "zwei Privatautos: keine Auswahl bzw. eines still vorgewählt: " + (sel ? sel.options.length + "/" + sel.value : "-"));
+    d.querySelector('[data-f="text"]').value = "Salzburg – Lofer – Salzburg"; d.querySelector('[data-f="km"]').value = "90";
+    speichern(d); await warte(400);
+    p(/Privatauto wählen/.test(d.querySelector("[data-err]").textContent) && !db.auslagen.some((z) => /Lofer/.test(z.text)), "ohne Auswahl gespeichert");
+    const zweit = db.fahrzeuge.find((f) => f.kennzeichen === "S-PV 12") || {};
+    sel.value = zweit.id; speichern(d); await warte(600);
+    p((db.auslagen.find((z) => /Lofer/.test(z.text)) || {}).fahrzeug_id === zweit.id, "Kilometergeld mit dem gewählten Privatauto nicht gespeichert");
+    /* eigenes Privatauto bearbeiten: Kennzeichen ja, Fristen nein */
+    await sb().from("fahrzeuge").update({ bezeichnung: "Kombi neu", pickerl_bis: "2027-01-01", tracker_id: "x" }).eq("id", zweit.id).select("id");
+    const z2 = db.fahrzeuge.find((f) => f.id === zweit.id);
+    p(z2.bezeichnung === "Kombi neu" && !z2.pickerl_bis && !z2.tracker_id, "Techniker ändert Fristen/GPS am Privatauto: " + JSON.stringify(z2));
+    /* Datenbank: Firmenfahrzeug, fremdes Privatauto, fremdes Fahrzeug ändern, privat_von umhängen – alles nein */
+    const e1 = await sb().from("fahrzeuge").insert({ kennzeichen: "S-FI 77", fahrer: [ich] }).select("id");
+    const e2 = await sb().from("fahrzeuge").insert({ kennzeichen: "S-FR 78", privat_von: "u_admin_test_at", fahrer: [ich] }).select("id");
+    await sb().from("fahrzeuge").update({ kennzeichen: "S-XX 1" }).eq("id", "fzAdm").select("id");
+    await sb().from("fahrzeuge").update({ privat_von: "u_admin_test_at" }).eq("id", zweit.id).select("id");
+    p(!!e1.error && !!e2.error && !db.fahrzeuge.some((f) => /S-FI 77|S-FR 78/.test(f.kennzeichen)), "Techniker legt Firmen- bzw. fremdes Privatauto an");
+    p(db.fahrzeuge.find((f) => f.id === "fzAdm").kennzeichen === "S-AD 9" && db.fahrzeuge.find((f) => f.id === zweit.id).privat_von === ich, "Techniker ändert fremdes Fahrzeug bzw. hängt sein Privatauto um");
+    return { fehlt };
+  });
+  pruefe(!r.fehlt.length, r.fehlt.join(" | "));
+  pruefe(!a.fehler.length, "Laufzeitfehler: " + a.fehler.join("; "));
+  await a.zu();
+});
+
+test("Antworten post: Posteingang – Projektmails nur der Inhaber, Lidl-Aufträge und Rapporte auch Admins, Techniker gar nicht", async () => {
+  const a = await tmSeite(KONTEN.inhaber);
+  const r = await a.seite.evaluate(async () => {
+    const x = window.__t.x, db = window.__db.tabellen, tm = window.__tm, jetzt = new Date().toISOString(), fehlt = [], p = (bed, text) => { if (!bed) fehlt.push(text); };
+    window.UKT_CONFIG.posteingangAktiv = true;
+    const pe = (id, art, name) => ({ id, nachricht_id: "<" + id + "@test>", art, dateiname: name, pfad: "2026/10/" + id + "_" + name.replace(/\W+/g, "_"), status: "neu", betreff: "Betreff " + id, absender: "a@test-firma.at", eingang: jetzt, bytes: 300 });
+    const zeilen = [pe("ppA", "auftrag", "Auftrag 4711.pdf"), pe("ppR", "rapport", "4711_rapport.pdf"), pe("ppM", "mail", "Anfrage Hotel.eml"), pe("ppU", "unbekannt", "Plan Hotel.pdf")];
+    for (const z of zeilen) { await x("Store.sb").storage.from("posteingang").upload(z.pfad, new Blob(["%PDF-1.4 " + z.id], { type: "application/pdf" })); db.posteingang.push(z); }
+    const sicht = async () => {
+      const sb = x("Store.sb"), l = ((await sb.from("posteingang").select("*")).data || []).map((e) => e.id).sort().join();
+      const dat = []; for (const z of zeilen) { const u = await sb.storage.from("posteingang").createSignedUrl(z.pfad, 600); if (u.data) dat.push(z.id); }
+      x("S.view='faellig'; render()"); await tm.warte(700);
+      const k = [...document.querySelectorAll(".card")].find((c) => /^Posteingang/.test((c.querySelector("h2") || {}).textContent || ""));
+      return { l, dat: dat.sort().join(), karte: k ? k.textContent : null, push: x("pushArtenGewaehlt().indexOf('posteingang')>=0") };
+    };
+    const inh = await sicht();
+    p(inh.l === "ppA,ppM,ppR,ppU" && inh.dat === "ppA,ppM,ppR,ppU" && /Anfrage Hotel/.test(inh.karte || "") && /Auftrag 4711/.test(inh.karte || "") && inh.push, "Inhaber sieht nicht alles: " + JSON.stringify(inh));
+    await tm.anmelden("admin@test.at", "admin");
+    const adm = await sicht();
+    p(adm.l === "ppA,ppR" && adm.dat === "ppA,ppR", "Admin liest Projektmails (Tabelle bzw. Dateien): " + JSON.stringify({ l: adm.l, dat: adm.dat }));
+    p(adm.karte && /Auftrag 4711/.test(adm.karte) && /4711_rapport/.test(adm.karte) && !/Anfrage Hotel|Plan Hotel|weitergeleitete Mails/.test(adm.karte) && adm.push,
+      "Admin: Karte zeigt nicht genau Aufträge und Rapporte: " + (adm.karte || "(keine Karte)").slice(0, 300));
+    await tm.anmelden("tech@test.at", "techniker");
+    const tec = await sicht();
+    p(!tec.l && !tec.dat && tec.karte === null && !tec.push && !x("posteingangAn()"), "Techniker sieht den Posteingang: " + JSON.stringify(tec));
+    return { fehlt };
+  });
+  pruefe(!r.fehlt.length, r.fehlt.join(" | "));
+  pruefe(!a.fehler.length, "Laufzeitfehler: " + a.fehler.join("; "));
+  await a.zu();
+});
+
+test("Antworten post: Mail mit Preisen im Text – die .eml liegt nur beim Inhaber (Büro-Ordner) mit Hinweis, andere legen sie nicht ab", async () => {
+  const a = await tmSeite(KONTEN.inhaber);
+  const r = await a.seite.evaluate(async () => {
+    const x = window.__t.x, db = window.__db.tabellen, tm = window.__tm, jetzt = new Date().toISOString(), fehlt = [], p = (bed, text) => { if (!bed) fehlt.push(text); };
+    /* Erkennung: ein Betrag mit € bzw. EUR (auch „Euro“ hinter der Zahl) */
+    const faelle = { "Pauschal 4.800 € netto": true, "EUR 1.234,50 zzgl. USt": true, "Summe 1234,50 EUR": true, "€ 980,-": true, "Kosten: 350 Euro": true, "4800€": true,
+      "Abgasnorm Euro 6": false, "netto 1.000,00": false, "Filiale 4711, Auftrag 123456": false, "": false };
+    const falsch = Object.keys(faelle).filter((t) => x("mailTextMitPreis(" + JSON.stringify(t) + ")") !== faelle[t]);
+    p(!falsch.length, "Preis-Erkennung falsch bei: " + JSON.stringify(falsch));
+    /* Text der .eml: base64, quoted-printable, HTML – Anhänge zählen nicht */
+    const b64 = btoa(unescape(encodeURIComponent("Guten Tag,\r\nunser Angebot: 4.800 € netto.\r\n")));
+    const emlB64 = "From: a@planer-test.at\r\nSubject: Angebot Hotel\r\nMIME-Version: 1.0\r\nContent-Type: multipart/mixed; boundary=\"xx\"\r\n\r\n--xx\r\nContent-Type: text/plain; charset=utf-8\r\n" +
+      "Content-Transfer-Encoding: base64\r\n\r\n" + b64 + "\r\n--xx\r\nContent-Type: application/pdf; name=\"Plan.pdf\"\r\nContent-Disposition: attachment; filename=\"Plan.pdf\"\r\nContent-Transfer-Encoding: base64\r\n\r\nJVBERi0xLjQ=\r\n--xx--\r\n";
+    const emlQp = "From: a@planer-test.at\r\nSubject: Wartung\r\nContent-Type: text/html; charset=iso-8859-1\r\nContent-Transfer-Encoding: quoted-printable\r\n\r\n<p>Preis: EUR&nbsp;1.234,=\r\n50 f=FCr die Wartung</p>\r\n";
+    const emlAnhang = "From: a@planer-test.at\r\nSubject: Plan\r\nContent-Type: multipart/mixed; boundary=\"yy\"\r\n\r\n--yy\r\nContent-Type: text/plain\r\n\r\nAnbei der Plan.\r\n--yy\r\nContent-Type: text/plain; name=\"Liste.txt\"\r\nContent-Disposition: attachment; filename=\"Liste.txt\"\r\n\r\nSumme 500 EUR\r\n--yy--\r\n";
+    const emlOhne = "From: a@planer-test.at\r\nSubject: Termin\r\n\r\nBitte um Termin am 12.10. in Filiale 4711.\r\n";
+    const liest = [emlB64, emlQp, emlAnhang, emlOhne].map((t) => x("mailTextMitPreis(emlText(" + JSON.stringify(t) + "))"));
+    p(JSON.stringify(liest) === "[true,true,false,false]", "Text der .eml falsch gelesen (base64, quoted-printable/HTML, nur im Anhang, ohne): " + JSON.stringify(liest));
+    const eml = (t) => new Blob([t], { type: "message/rfc822" });
+    db.projekte.push({ id: "tmp_p4", nummer: "P-2026-904", titel: "Preise Hotel", kunde_id: "lidl", status: "anfrage", daten: {}, verlauf: [], erstellt: jetzt, geaendert: jetzt });
+    await x("projekteLaden()");
+    const dateien = () => (db.projekte.find((q) => q.id === "tmp_p4").daten.dateien || []).map((f) => f.art + "|" + f.pfad + "|" + f.name);
+    tm.verbinden(); tm.toastSpion();
+    /* 1. Mail-Programm „Mail zu Projekt legen“: Preis im Text → .eml unter buero/, Hinweis im Dialog und in der Meldung */
+    const MZ = (uid, text) => ({ konto: "gmx", ordner: "INBOX", uid, messageId: "<pp" + uid + "@test>", datum: "2026-10-01T08:00:00.000Z", betreff: "Mail " + uid, von: [{ name: "Planer", address: "a@planer-test.at" }], an: [], text, anhaenge: [] });
+    for (const [uid, text, roh] of [[71, "Unser Angebot: 4.800 € netto", emlB64], [72, "Bitte um Termin", emlOhne]]) {
+      tm.programm({ mail: MZ(uid, text), roh: () => eml(roh) }); window.__toasts = [];
+      x("ansichtenSchliessen()"); x("mailUebernehmen({k:'gmx', o:'INBOX', u:" + uid + ", a:'zuprojekt', p:'tmp_p4'})");
+      await tm.bis(() => tm.fuss(/Ins Projekt legen/));
+      const hinweis = /enthält Preise/.test(tm.dlg().textContent);
+      p(uid === 71 ? hinweis : !hinweis, "Mail zu Projekt " + uid + ": Hinweis „enthält Preise“ " + (hinweis ? "ohne Preis" : "fehlt"));
+      tm.fuss(/Ins Projekt legen/).click(); await tm.toastBis(/abgelegt|^Nicht/);
+      if (uid === 71) p(window.__toasts.some((t) => /enthält Preise – nur für den Inhaber abgelegt/.test(t)), "Mail zu Projekt: Meldung ohne Hinweis auf die Preise: " + JSON.stringify(window.__toasts));
+    }
+    let d1 = dateien();
+    p(d1.some((f) => /^mail\|buero\/.*Mail 71\.eml$/.test(f)) && d1.some((f) => /^mail\|tmp_p4\/.*Mail 72\.eml$/.test(f)), "Mail zu Projekt: .eml mit Preisen nicht (nur) im Büro-Ordner: " + JSON.stringify(d1));
+    const eintrag = (db.projekte.find((q) => q.id === "tmp_p4").daten.dateien || []).find((f) => /Mail 71/.test(f.name)) || {};
+    x("ansichtenSchliessen(); projektAnsicht('tmp_p4')"); await tm.bis(() => tm.dlg() && /Mail 71/.test(tm.dlg().textContent));
+    const zeile = [...tm.dlg().querySelectorAll("[data-liste] div")].find((z) => /Mail 71/.test(z.textContent));
+    p(eintrag.preise && zeile && /enthält Preise/.test(zeile.textContent), "Projektdateien: kein sichtbarer Hinweis bei der Mail mit Preisen: " + (zeile ? zeile.textContent : "(keine Zeile)"));
+    x("ansichtenSchliessen()");
+    /* 2. Posteingang (Inhaber): Preis im HTML-Teil – Hinweis schon im Dialog, .eml unter buero/, der Plan ins Projekt */
+    window.UKT_CONFIG.posteingangAktiv = true;
+    const sb = x("Store.sb"), pe = (id, art, name, pfad) => ({ id, nachricht_id: "<pp9@test>", art, dateiname: name, pfad, status: "neu", betreff: "Fwd: P-2026-904 Wartung", absender: "a@planer-test.at", eingang: jetzt, bytes: 300 });
+    await sb.storage.from("posteingang").upload("2026/10/pp9_mail.eml", new Blob([emlQp]));
+    await sb.storage.from("posteingang").upload("2026/10/pp9_plan.pdf", new Blob(["%PDF-1.4 Plan"], { type: "application/pdf" }));
+    db.posteingang.push(pe("pp9a", "mail", "Fwd P-2026-904 Wartung.eml", "2026/10/pp9_mail.eml"), pe("pp9b", "unbekannt", "Plan Keller.pdf", "2026/10/pp9_plan.pdf"));
+    const k = x("posteingangKarte()"); document.body.appendChild(k); await tm.bis(() => k.querySelector(".posbox"));
+    tm.knopf(k, /Zu Projekt legen/).click(); await tm.bis(() => tm.fuss(/Ins Projekt legen/));
+    await tm.bis(() => /enthält Preise/.test(tm.dlg().textContent), 2000);
+    p(/enthält Preise – nur für den Inhaber abgelegt/.test(tm.dlg().textContent), "Posteingang: Dialog ohne Hinweis auf die Preise");
+    tm.dlg().querySelector("[data-p]").value = "tmp_p4"; window.__toasts = [];
+    tm.fuss(/Ins Projekt legen/).click(); await tm.toastBis(/abgelegt|^Nicht/);
+    d1 = dateien();
+    p(d1.some((f) => /^mail\|buero\/.*Fwd P-2026-904 Wartung\.eml$/.test(f)) && d1.some((f) => /^plan\|tmp_p4\/.*Plan Keller\.pdf$/.test(f)), "Posteingang: .eml mit Preisen nicht im Büro-Ordner bzw. Plan fehlt: " + JSON.stringify(d1));
+    k.remove(); x("ansichtenSchliessen()");
+    /* 3. Mailverlauf: die Mail mit Preisen liegt nur beim Inhaber */
+    const MV = { konto: "gmx", ordner: "INBOX", uid: 73, messageId: "<pp73@test>", datum: "2026-09-20T08:00:00.000Z", betreff: "Angebot Kälte", von: [{ name: "Planer", address: "a@planer-test.at" }], an: [], anhaenge: [] };
+    tm.programm({ mails: [MV], vorschlag: { titel: "Preise Verlauf", kunde: "Lidl", kundeTreffer: "Lidl", status: "angebot", angaben: [], beteiligte: [], termine: [], tagebuch: [], dateien: [] }, roh: () => eml(emlB64) });
+    await tm.verlauf({ suche: "Kälte" }); window.__toasts = [];
+    tm.fuss(/Projekt anlegen/).click(); await tm.toastBis(/angelegt:|^Nicht fertig/);
+    const pv = db.projekte.find((q) => q.titel === "Preise Verlauf"), dv = ((pv && pv.daten.dateien) || []).map((f) => f.art + "|" + f.pfad);
+    p(dv.length === 1 && /^mail\|buero\//.test(dv[0]) && window.__toasts.some((t) => /enthält Preise/.test(t)), "Mailverlauf: .eml mit Preisen nicht im Büro-Ordner bzw. ohne Hinweis: " + JSON.stringify({ dv, t: window.__toasts }));
+    tm.ende();
+    /* 4. Techniker: eine .eml mit Preisen wird nicht abgelegt (Hinweis), eine ohne Preise schon */
+    await tm.anmelden("tech@test.at", "techniker"); tm.toastSpion(); await x("projekteLaden()");
+    window.__datei = [new File([emlB64], "Angebot Hotel.eml", { type: "message/rfc822" }), new File([emlOhne], "Termin.eml", { type: "message/rfc822" })];
+    const neu = await x("projektDateienHochladen(PROJEKTE.filter(function(q){ return q.id==='tmp_p4'; })[0], 'mail', window.__datei)");
+    d1 = dateien();
+    p(!d1.some((f) => /Angebot Hotel/.test(f)) && d1.some((f) => /^mail\|tmp_p4\/.*Termin\.eml$/.test(f)) && (neu || []).length === 1, "Techniker: .eml mit Preisen abgelegt bzw. die ohne nicht: " + JSON.stringify(d1));
+    p(window.__toasts.some((t) => /Angebot Hotel\.eml.*enthält Preise.*nur der Inhaber/.test(t)), "Techniker: kein Hinweis, warum die Mail nicht abgelegt wurde: " + JSON.stringify(window.__toasts));
+    return { fehlt };
+  });
+  pruefe(!r.fehlt.length, r.fehlt.join(" | "));
+  pruefe(!a.fehler.length, "Laufzeitfehler: " + a.fehler.join("; "));
+  await a.zu();
+});
+
+test("Antworten post: Preis-Erkennung – Beträge in Signatur und Impressum zählen nicht, eine zitierte Mail darunter schon", async () => {
+  const a = await oeffnen(KONTEN.inhaber);
+  const r = await a.seite.evaluate(() => {
+    const x = window.__t.x;
+    const faelle = [
+      ["Mit freundlichen Grüßen\nMuster GmbH\nStammkapital EUR 35.000\nFN 123456a, Firmenbuchgericht Salzburg", false],
+      ["Danke!\nTest GmbH · Gesellschaftskapital: 70.000 € · UID ATU12345678", false],
+      ["Bitte um Termin.\n-- \nTest GmbH\nAktion: Klimacheck ab 99 € im Shop", false],
+      ["Unser Angebot: 4.800 € netto\n-- \nTest GmbH\nStammkapital EUR 35.000", true],
+      ["Passt so.\n-- \nTest GmbH\n\n> Von: planer@test.example\n> Preis: 1.200 € netto", true],
+    ];
+    const falsch = faelle.filter((f) => x("mailTextMitPreis(" + JSON.stringify(f[0]) + ")") !== f[1]).map((f) => f[0].slice(0, 40));
+    /* auch im HTML-Teil einer .eml: Zeilenumbrüche (<br>) bleiben Zeilen */
+    const eml = "From: a@test.example\r\nContent-Type: text/html; charset=utf-8\r\n\r\n<p>Termin passt.</p><p>Test GmbH<br>Stammkapital EUR 35.000<br>FN 123456a</p>\r\n";
+    return { falsch, html: x("mailTextMitPreis(emlText(" + JSON.stringify(eml) + "))") };
+  });
+  pruefe(!r.falsch.length && r.html === false, "Signatur zählt als Preis: " + JSON.stringify(r));
+  pruefe(!a.fehler.length, "Laufzeitfehler: " + a.fehler.join("; "));
+  await a.zu();
+});
+
+test("Antworten post: KPlus-Beleg neu eingelesen – Rechnung und Angebot „versendet“, vorhandene Belege bleiben, wie sie sind", async () => {
+  const a = await tmSeite(KONTEN.inhaber);
+  const r = await a.seite.evaluate(async () => {
+    const x = window.__t.x, db = window.__db.tabellen, tm = window.__tm, jetzt = new Date().toISOString(), fehlt = [], p = (bed, text) => { if (!bed) fehlt.push(text); };
+    const erg = (art, nr) => ({ art, nummer: nr, datum: "2026-09-30", kopf: {}, positionen: [{ typ: "pos", nr: "1", menge: 1, eh: "Stk", text: "Testposition", preis: 100 }], summenPdf: { netto: 100 } });
+    db.projekte.push({ id: "tmp_p5", nummer: "P-2026-905", titel: "KPlus Stand", kunde_id: "lidl", status: "angebot", daten: {}, verlauf: [], erstellt: jetzt, geaendert: jetzt });
+    db.belege.push({ id: "bAlt", art: "rechnung", nummer: "413981", status: "bezahlt", bezahlt: "2026-09-15", projekt_id: "tmp_p5", kunde_id: "lidl", test: false, extern: true, datum: "2026-09-01", kopf: {}, positionen: [], summen: {} });
+    await x("projekteLaden()"); tm.toastSpion();
+    const ablegen = async (e) => {
+      x("ansichtenSchliessen(); kplusVorschau(PROJEKTE.filter(function(q){ return q.id==='tmp_p5'; })[0], " + JSON.stringify(e) + ", function(){})");
+      await tm.bis(() => tm.fuss(/Am Projekt ablegen/)); window.__toasts = [];
+      tm.fuss(/Am Projekt ablegen/).click(); await tm.toastBis(/abgelegt/);
+    };
+    await ablegen(erg("angebot", "413980")); await ablegen(erg("rechnung", "413982")); await ablegen(erg("rechnung", "413981"));
+    const st = (nr) => (db.belege.find((b) => b.nummer === nr) || {}).status;
+    p(st("413980") === "versendet", "KPlus-Vorschau: neues Angebot steht auf „" + st("413980") + "“ statt „versendet“");
+    p(st("413982") === "versendet", "KPlus-Vorschau: neue Rechnung steht auf „" + st("413982") + "“");
+    p(st("413981") === "bezahlt", "KPlus-Vorschau: vorhandene bezahlte Rechnung wurde „" + st("413981") + "“");
+    /* Mailverlauf: neues KPlus-Angebot ebenso „versendet“ */
+    tm.verbinden();
+    x("kplusLesen=function(d){ var t=new TextDecoder().decode(d), nr=(/4139\\d\\d/.exec(t)||[''])[0]; if(!nr) return Promise.reject(new Error('kein KPlus')); return Promise.resolve({art:'angebot', nummer:nr, datum:'2026-09-20', kopf:{}, positionen:[{typ:'pos', nr:'1', menge:1, eh:'Stk', text:'Testposition', preis:1000}], summenPdf:{netto:1000}}); }");
+    const MV = { konto: "gmx", ordner: "INBOX", uid: 83, messageId: "<kp83@test>", datum: "2026-09-20T08:00:00.000Z", betreff: "Angebot 413983", von: [{ name: "Büro", address: "buero@test-firma.at" }], an: [],
+      anhaenge: [{ i: 0, name: "413983.pdf", typ: "application/pdf", groesse: 4096 }] };
+    tm.programm({ mails: [MV], vorschlag: { titel: "KPlus Verlauf", kunde: "Lidl", kundeTreffer: "Lidl", status: "angebot", angaben: [], beteiligte: [], termine: [], tagebuch: [], dateien: [] },
+      anhang: () => new Blob(["%PDF-1.4 KPlus 413983"], { type: "application/pdf" }) });
+    await tm.verlauf({ suche: "413983" }); window.__toasts = [];
+    tm.fuss(/Projekt anlegen/).click(); await tm.toastBis(/angelegt:|^Nicht fertig/);
+    p(st("413983") === "versendet", "Mailverlauf: neues KPlus-Angebot steht auf „" + st("413983") + "“ statt „versendet“");
+    tm.ende();
+    return { fehlt };
+  });
+  pruefe(!r.fehlt.length, r.fehlt.join(" | "));
+  pruefe(!a.fehler.length, "Laufzeitfehler: " + a.fehler.join("; "));
+  await a.zu();
+});
+
+test("Antworten post: Synology-Posteingang – ein zu großer Anhang steht als Hinweis da (ohne Datei), die Mail lässt sich trotzdem ablegen", async () => {
+  /* das Skript selbst (zu große Anhänge, Lidl am Dateinamen und Absender, Konto ohne Leserecht) prüft tools/posteingang_test.py */
+  const a = await tmSeite(KONTEN.inhaber);
+  const r = await a.seite.evaluate(async () => {
+    const x = window.__t.x, db = window.__db.tabellen, tm = window.__tm, jetzt = new Date().toISOString(), fehlt = [], p = (bed, text) => { if (!bed) fehlt.push(text); };
+    window.UKT_CONFIG.posteingangAktiv = true; tm.toastSpion();
+    const sb = x("Store.sb");
+    db.projekte.push({ id: "tmp_p6", nummer: "P-2026-906", titel: "Große Pläne", kunde_id: "lidl", status: "anfrage", daten: {}, verlauf: [], erstellt: jetzt, geaendert: jetzt });
+    await x("projekteLaden()");
+    await sb.storage.from("posteingang").upload("2026/10/gr1_mail.eml", new Blob(["From: a@planer-test.at\r\nSubject: P-2026-906 Pläne\r\n\r\nAnbei die Pläne."]));
+    const zeile = (id, art, name, pfad, notiz) => ({ id, nachricht_id: "<gr1@test>", art, dateiname: name, pfad, status: "neu", betreff: "Fwd: P-2026-906 Pläne", absender: "a@planer-test.at", eingang: jetzt, bytes: null, notiz: notiz || null });
+    db.posteingang.push(zeile("gr1a", "mail", "Fwd P-2026-906 Pläne.eml", "2026/10/gr1_mail.eml"),
+      zeile("gr1b", "unbekannt", "Plan riesig.pdf", "", "Anhang zu groß (25,3 MB) – bitte von Hand aus dem Postfach holen"));
+    const k = x("posteingangKarte()"); document.body.appendChild(k); await tm.bis(() => k.querySelectorAll(".posbox").length >= 2);
+    const boxen = [...k.querySelectorAll(".posbox")], hinweis = boxen.find((b) => /Plan riesig/.test(b.textContent) && /zu groß/.test(b.textContent)), mailBox = boxen.find((b) => /✉/.test(b.textContent));
+    p(!!hinweis && /25,3 MB/.test(hinweis.textContent) && !/ansehen|Rapport zuordnen|Störungsauftrag/.test(hinweis.textContent), "zu großer Anhang: kein eigener Hinweis bzw. Knöpfe für eine Datei, die es nicht gibt: " + (hinweis ? hinweis.textContent : "(keiner)"));
+    p(mailBox && !/Plan riesig/.test(mailBox.textContent), "die Mail-Karte führt den nicht abgeholten Anhang als Datei: " + (mailBox ? mailBox.textContent : "(keine)"));
+    /* die Mail ins Projekt – der Hinweis bleibt stehen, bis er erledigt ist */
+    tm.knopf(mailBox, /Zu Projekt legen/).click(); await tm.bis(() => tm.fuss(/Ins Projekt legen/));
+    tm.dlg().querySelector("[data-p]").value = "tmp_p6"; window.__toasts = [];
+    tm.fuss(/Ins Projekt legen/).click(); await tm.toastBis(/abgelegt|^Nicht/);
+    const st = (id) => db.posteingang.find((e) => e.id === id).status;
+    p(st("gr1a") === "erledigt" && st("gr1b") === "neu" && window.__toasts.some((t) => /abgelegt: 1 Datei/.test(t)), "Ablegen mit Hinweis-Zeile: " + JSON.stringify({ a: st("gr1a"), b: st("gr1b"), t: window.__toasts }));
+    const erl = hinweis && tm.knopf(hinweis, /erledigt/);
+    if (erl) { erl.click(); await tm.bis(() => st("gr1b") !== "neu", 2000); }
+    p(erl && st("gr1b") === "erledigt" && !k.contains(hinweis), "Hinweis lässt sich nicht als erledigt abhaken: " + st("gr1b"));
+    k.remove(); x("ansichtenSchliessen()");
+    return { fehlt };
+  });
+  pruefe(!r.fehlt.length, r.fehlt.join(" | "));
   pruefe(!a.fehler.length, "Laufzeitfehler: " + a.fehler.join("; "));
   await a.zu();
 });
