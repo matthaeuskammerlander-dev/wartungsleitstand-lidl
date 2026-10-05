@@ -2081,7 +2081,7 @@ test("Tiefentest mail: Rechte – Posteingang nur für Mitarbeiter, KPlus-PDFs u
   await a.zu();
 });
 
-test("Tiefentest mail: Projekt aus Mailverlauf – vorhandene KPlus-Belege bleiben, wie sie sind", async () => {
+test("Tiefentest mail: Projekt aus Mailverlauf – vorhandene KPlus-Belege bleiben, nach einem Abbruch „Weiter ablegen“ ohne zweites Projekt", async () => {
   const a = await tmSeite(KONTEN.inhaber);
   const r = await a.seite.evaluate(async () => {
     const x = window.__t.x, db = window.__db.tabellen, tm = window.__tm, jetzt = new Date().toISOString(), fehlt = [], p = (bed, text) => { if (!bed) fehlt.push(text); };
@@ -2108,6 +2108,30 @@ test("Tiefentest mail: Projekt aus Mailverlauf – vorhandene KPlus-Belege bleib
     p(b("413961") === "abgelehnt|tmp_anderes|", "M6 abgelehntes Angebot (anderes Projekt) überschrieben: " + b("413961"));
     p(db.belege.filter((y) => /^41396/.test(y.nummer)).length === 2, "M6 Belege doppelt");
     p(window.__toasts.some((t) => /schon vorhanden/.test(t)), "M6 Meldung nennt die schon vorhandenen Belege nicht: " + JSON.stringify(window.__toasts));
+
+    /* M1/M2: das Ablegen bricht ab (erst ist das Mail-Programm kurz weg, dann die Verbindung zur Datenbank) – die Meldung nennt das
+       schon angelegte Projekt in Klartext, „Weiter ablegen“ setzt es fort: kein zweites Projekt, nichts doppelt */
+    let rohSchritt = 0;
+    tm.programm({ mails: [M(21, "2026-03-02T08:00:00.000Z", "Anfrage Doppeltest")], vorschlag: Object.assign({ titel: "Doppeltest Kälte", kunde: "Lidl", kundeTreffer: "Lidl", status: "anfrage" }, leer),
+      roh: () => { rohSchritt++; if (rohSchritt === 1) return Promise.reject(new TypeError("Failed to fetch")); if (rohSchritt === 2) window.__netzWeg = true;
+        return new Blob(["From: p@planer-test.at\r\n\r\nText"], { type: "message/rfc822" }); } });
+    d = await tm.verlauf({ suche: "Doppeltest" });
+    const fort = () => [...d.querySelectorAll(".note")].map((n) => n.textContent).filter((t) => /abgebrochen|Abgebrochen/.test(t)).join(" ");
+    const weiter = () => tm.fuss(/Weiter ablegen|Projekt anlegen/);
+    tm.fuss(/Projekt anlegen/).click();
+    await tm.bis(() => fort() && !weiter().disabled);
+    const m1 = { fort: fort(), knopf: weiter().textContent };
+    window.__toasts = []; weiter().click();
+    await tm.bis(() => window.__netzWeg && !weiter().disabled && window.__toasts.some((t) => /abgebrochen|^Nicht fertig/.test(t)));
+    window.__netzWeg = false;
+    const m2 = { fort: fort(), toast: window.__toasts.filter((t) => /abgebrochen|^Nicht fertig/.test(t)).pop() || "" };
+    window.__toasts = []; weiter().click();
+    await tm.toastBis(/angelegt:|^Übernommen|abgebrochen|^Nicht fertig/);
+    const doppel = db.projekte.filter((q) => q.titel === "Doppeltest Kälte"), dd = ((doppel[0] || {}).daten || {});
+    p(/P-20\d\d-\d+/.test(m1.fort) && /angelegt/.test(m1.fort) && /Weiter ablegen/.test(m1.knopf), "M1 nach dem Abbruch: Projekt nicht genannt bzw. kein „Weiter ablegen“: " + JSON.stringify(m1));
+    p(!/nichts gespeichert|Failed to fetch/.test(m2.toast + " " + m2.fort) && /P-20\d\d-\d+/.test(m2.toast), "M2 Meldung passt nicht zum Stand (Projekt ist angelegt): " + JSON.stringify(m2));
+    p(doppel.length === 1, "M1 „Weiter ablegen“ legt ein weiteres Projekt an: " + doppel.map((q) => q.nummer).join(", "));
+    p((dd.mails || []).length === 1 && (dd.dateien || []).filter((f) => /\.eml$/.test(f.name)).length === 1, "M1 nach „Weiter ablegen“: Mail fehlt oder doppelt: " + JSON.stringify({ mails: (dd.mails || []).length, dateien: (dd.dateien || []).map((f) => f.name) }));
     tm.ende(); x("ansichtenSchliessen()");
     return { fehlt };
   });
