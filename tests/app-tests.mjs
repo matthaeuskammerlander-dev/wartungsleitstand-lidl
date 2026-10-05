@@ -2260,6 +2260,16 @@ test("Tiefentest kalender: Planung prüfen – Reihenfolge übernehmen", async (
     return { ohneNetz, toast: tt.toasts.slice(-1)[0] || "", gespeichert: db.einstellungen.some((e) => e.schluessel === "startpunkt:" + ich), offen: document.body.contains(d2) };
   });
   if (!r15.gespeichert || r15.offen || r15.ohneNetz.gilt !== "null") fehl.push("TT-KAL-15 Startpunkt nicht gespeichert bzw. gilt trotz Fehler: " + JSON.stringify(r15));
+  /* TT-10: halber Tag Zeitausgleich mit Uhrzeit – die Frage nennt die eingetragenen Stunden, nicht „das Tagessoll“ (ob überhaupt gefragt wird, entscheidet das Büro) */
+  const rT10 = await a.seite.evaluate(async () => {
+    const tt = window.__tt, x = window.__t.x, db = window.__db.tabellen; tt.leeren(); const T = tt.werktag(1);
+    await tt.termine([{ kategorie: "zeitausgleich", titel: "Zeitausgleich", datum: T, beginn: "12:00", ende: "15:30" }]);
+    const za = db.arbeitszeiten.filter((z) => z.datum === T && z.art === "zeitausgleich").map((z) => z.minuten).join();
+    x("abwesenheitPruefen('" + T + "', function(){})"); await tt.warte(150);
+    const d = tt.dialog(), frage = d ? d.innerText.replace(/\s+/g, " ") : "";
+    return { za, frage: frage.slice(0, 260) };
+  });
+  if (rT10.za !== "210" || /Tagessoll/.test(rT10.frage) || !/3:30 h/.test(rT10.frage)) fehl.push("TT-10 Frage nennt nicht die eingetragenen Stunden: " + JSON.stringify(rT10));
   if (a.fehler.length) fehl.push("Laufzeitfehler: " + a.fehler.join("; "));
   await a.zu();
   pruefe(!fehl.length, fehl.join(" | "));
