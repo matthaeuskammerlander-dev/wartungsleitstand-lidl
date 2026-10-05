@@ -1600,6 +1600,367 @@ test("Abwesenheit und Arbeit am selben Tag: die App fragt sofort – eingesprung
   await b.zu();
 });
 
+/* ---- Tiefentest Werkzeug und Material (Prüflauf 05.10.2026): je Test werden alle Abweichungen gesammelt und zusammen gemeldet ---- */
+test("Tiefentest werkzeug: Erinnerung und Hinweise – Projekttermin, mehrtägig, eigenes Auto, Störung, Neuladen im Kalender", async () => {
+  const a = await oeffnen(KONTEN.techniker);
+  const r = await a.seite.evaluate(async () => {
+    const x = window.__t.x, warte = (ms) => new Promise((f) => setTimeout(f, ms)), db = window.__db.tabellen, f = [], soll = (bed, text) => { if (!bed) f.push(text); };
+    const dlg = () => [...document.querySelectorAll(".assistent")].pop(), app = () => document.getElementById("app").innerText;
+    const ich = x("meineKennung()"), heute = x("isoLokal(new Date())"), gestern = x("plusTage(isoLokal(new Date()),-1)"), morgen = x("plusTage(isoLokal(new Date()),1)");
+    const neuTermin = async (z) => (await x("Store.sb.from('planung').insert(" + JSON.stringify(Object.assign({ art: "termin", wer: [ich], wer_namen: ["Testtechniker"] }, z)) + ").select('*')")).data[0];
+    const neuBedarf = async (z) => (await x("Store.sb.from('bedarf').insert(" + JSON.stringify(Object.assign({ status: "offen", beschaffung: "mitnehmen" }, z)) + ").select('*')")).data[0];
+    const bd = (id) => "BEDARF.filter(function(b){ return b.id==='" + id + "'; })[0]";
+    db.fahrzeuge.push({ id: "FZTV4", kennzeichen: "T-TV 4", fahrer: [ich], fahrer_namen: ["Testtechniker"], aktiv: true }, { id: "FZF5", kennzeichen: "T-FREMD 5", fahrer: ["u_admin_test_at"], aktiv: true });
+    db.werkzeug.push({ id: "WTV4", name: "Vakuumpumpe TV4", standort_art: "fahrzeug", fahrzeug_id: "FZTV4", fahrzeug_name: "T-TV 4", zustand: "ok", aktiv: true },
+      { id: "WTV5", name: "Bördelgerät TV5", standort_art: "fahrzeug", fahrzeug_id: "FZF5", fahrzeug_name: "T-FREMD 5", zustand: "ok", aktiv: true });
+    /* Attrappe wie fahrzeuge.sql: Techniker lesen nur ihr eigenes Fahrzeug */
+    const fremdeFz = ((await x("Store.sb.from('fahrzeuge').select('*')")).data || []).map((z) => z.id).filter((id) => id !== "FZTV4");
+    soll(!fremdeFz.length, "Attrappe: Techniker liest fremdes Fahrzeug " + JSON.stringify(fremdeFz));
+    /* Projekt-Bedarf ohne Person, Projekttermin morgen mit mir */
+    db.projekte.push({ id: "PTV2", nummer: "P-TV-2", titel: "Baustelle TV2", status: "baustelle", daten: {}, verlauf: [], erstellt: new Date().toISOString(), geaendert: new Date().toISOString() });
+    await x("projekteLaden()");
+    await neuTermin({ kategorie: "baustelle", titel: "Montage TV2", datum: morgen, beginn: "07:00", ende: "15:00", projekt_id: "PTV2" });
+    db.bedarf.push({ id: "BTV2", art: "material", text: "Kondensatpumpe TV2", projekt_id: "PTV2", beschaffung: "abholen", bezugsquelle: "Großhandel", status: "offen", erstellt_von: "u_inhaber_test_at", erstellt: new Date().toISOString() });
+    /* Werkzeug im eigenen Auto, Termin heute */
+    const t4 = await neuTermin({ kategorie: "wartung", titel: "Wartung TV4", datum: heute, beginn: "10:00", ende: "12:00", standort_id: "TS1" });
+    await neuBedarf({ art: "werkzeug", text: "Vakuumpumpe TV4", werkzeug_id: "WTV4", planung_id: t4.id, standort_id: "TS1" });
+    /* mehrtägig gestern bis morgen, Werkzeug im fremden Auto */
+    const t5 = await neuTermin({ kategorie: "baustelle", titel: "Montage TV5", datum: gestern, datum_bis: morgen, standort_id: "TS1" });
+    const b5 = await neuBedarf({ art: "werkzeug", text: "Bördelgerät TV5", werkzeug_id: "WTV5", planung_id: t5.id, standort_id: "TS1" });
+    /* Störung heute für mich, Werkzeug im fremden Auto */
+    db.bedarf.push({ id: "BTV24S", art: "werkzeug", text: "Bördelgerät TV5", werkzeug_id: "WTV5", stoerung_id: "STV24", standort_id: "TS1", status: "offen", beschaffung: "mitnehmen" });
+    x("planungStand=0; planungNachladen()"); await warte(500);
+    x("FZ=[]; fzGeladen=false; 1");   /* Fahrzeuge noch nicht geladen – Fällig lädt sie nicht */
+    await x("wzLaden(true)");
+    x("OFFENE.push({_id:'STV24', standortId:'TS1', termin:'" + heute + "', terminTechniker:meinName(), erledigt:false}); 1");
+    const wer2 = x("JSON.stringify(bedarfWer(" + bd("BTV2") + "))");
+    soll(x("bedarfWann(" + bd("BTV2") + ")") === morgen && x("bedarfIstMeins(" + bd("BTV2") + ")"), "Projekt-Bedarf: Techniker des Projekttermins nicht erkannt " + wer2);
+    const st = JSON.parse(x("JSON.stringify(bedarfWerkzeugInfo(" + bd("BTV24S") + "))"));
+    soll(st && st.warnen, "Störung: Werkzeug im fremden Auto nur 📍 statt ⚠ " + JSON.stringify(st));
+    x("OFFENE=OFFENE.filter(function(o){ return o._id!=='STV24'; }); 1");
+    const gruppe5 = x("bedarfGruppen([" + bd(b5.id) + "]).map(function(g){ return g[0]; }).join()");
+    soll(!/vorbei/.test(gruppe5), "mehrtägiger Termin gilt am 2. Tag als vorbei: " + gruppe5);
+    soll(!x("wzNachfragen().some(function(b){ return b.werkzeug_id==='WTV5'; })"), "Nachfrage „wo ist das Werkzeug jetzt?“ mitten im mehrtägigen Einsatz");
+    x("ansichtenSchliessen(); S.view='faellig'; render()"); await warte(800);
+    const faellig = app();
+    soll(/Kondensatpumpe TV2/.test(faellig), "„Heute für dich“ erinnert den Techniker des Projekttermins nicht");
+    soll(/Bördelgerät TV5/.test(faellig) && !/wo ist das Werkzeug jetzt/i.test(faellig), "„Heute für dich“: mehrtägiger Einsatz falsch (fehlt oder „wo ist das Werkzeug jetzt?“)");
+    soll(!/⚠ Fahrzeug T-TV 4/.test(faellig), "⚠ für Werkzeug im eigenen Auto, solange die Fahrzeuge nicht geladen sind");
+    x("wzAufnehmenFragen({text:'Etwas TV4'})"); await warte(300);
+    const knoepfe4 = [...dlg().querySelectorAll("button")].map((b) => b.textContent).join(" | ");
+    soll(/in meinem Auto/.test(knoepfe4), "„Ja – in meinem Auto“ fehlt: " + knoepfe4);
+    x("ansichtenSchliessen(); S.bdAlle=false; S.view='werkzeug'; render()"); await warte(600);
+    soll(/Kondensatpumpe TV2/.test(app()), "Werkzeug „Meine“ zeigt den Projekt-Bedarf nicht");
+    /* Bedarf heute – danach im Kalender neu laden */
+    const t3 = await neuTermin({ kategorie: "wartung", titel: "Wartung TV3", datum: heute, beginn: "09:00", ende: "10:00", standort_id: "TS1" });
+    await neuBedarf({ art: "material", text: "Kondensatpumpe TV3", planung_id: t3.id, standort_id: "TS1", beschaffung: "abholen", bezugsquelle: "Großhandel" });
+    x("S.view='kalender'; render()"); await warte(300);
+    sessionStorage.setItem("ukt_ansicht", JSON.stringify({ view: "kalender", tab: "", region: "alle" }));
+    return { f, heute };
+  });
+  await a.seite.reload({ waitUntil: "load" });
+  await a.seite.waitForFunction(() => !!window.__t, null, { timeout: 30000 });
+  await a.seite.evaluate((m) => window.__t.x(`Store.sb.auth.signInWithPassword({email:'${m}',password:'test123'})`), KONTEN.techniker);
+  await a.seite.waitForFunction(() => window.__t.x("Rolle.da && Store.modus==='supabase'"), null, { timeout: 15000 });
+  await a.seite.waitForFunction(() => window.__t.x("wzGeladen && planungGeladen"), null, { timeout: 4000 }).catch(() => {});
+  const r2 = await a.seite.evaluate(async (heute) => {
+    const x = window.__t.x, warte = (ms) => new Promise((f) => setTimeout(f, ms)), f = [], soll = (bed, text) => { if (!bed) f.push(text); };
+    const zeile = x("(kalenderEintraege('" + heute + "','" + heute + "','ich')['" + heute + "']||[]).map(function(y){ return kalEintragZeile(y,true).textContent; }).join(' | ')");
+    const material = x("planungPruefen('ich','" + heute + "','" + heute + "').map(function(t){ return t.material.map(function(b){ return b.text; }).join(','); }).join('|')");
+    soll(x("S.view") === "kalender", "Kalender nach dem Neuladen nicht wiederhergestellt");
+    soll(/Kondensatpumpe TV3/.test(zeile) && /Kondensatpumpe TV3/.test(material), "nach dem Neuladen im Kalender: 🧰 bzw. „Vorher besorgen“ fehlt: " + JSON.stringify({ geladen: x("wzGeladen"), zeile, material }));
+    /* „Planung prüfen“ lädt Werkzeug und Material selbst */
+    x("BEDARF=[]; wzGeladen=false; 1");
+    x("planungPruefenAnsicht('ich','" + heute + "','" + heute + "')"); await warte(800);
+    const d = [...document.querySelectorAll(".assistent")].pop();
+    soll(d && /Kondensatpumpe TV3/.test(d.innerText), "„Planung prüfen“ ohne geladenes Material: „Vorher besorgen“ fehlt");
+    x("ansichtenSchliessen()");
+    return f;
+  }, r.heute);
+  const alle = r.f.concat(r2);
+  pruefe(!alle.length, alle.join(" | "));
+  pruefe(!a.fehler.length, "Laufzeitfehler: " + a.fehler.join("; "));
+  await a.zu();
+});
+
+test("Tiefentest werkzeug: privater Termin, Störung fürs Büro, verliehen überfällig, Lernen ohne 1000er-Grenze, Attrappe wie die Datenbank", async () => {
+  const a = await oeffnen(KONTEN.techniker);
+  const daten = await a.seite.evaluate(async () => {
+    const x = window.__t.x, warte = (ms) => new Promise((f) => setTimeout(f, ms)), db = window.__db.tabellen;
+    const dlg = () => [...document.querySelectorAll(".assistent")].pop(), kopie = (o) => JSON.parse(JSON.stringify(o));
+    const ich = x("meineKennung()"), morgen = x("plusTage(isoLokal(new Date()),1)"), uebermorgen = x("plusTage(isoLokal(new Date()),2)");
+    const neuTermin = async (z) => (await x("Store.sb.from('planung').insert(" + JSON.stringify(Object.assign({ art: "termin", kategorie: "sonstiges", wer: [ich], wer_namen: ["Testtechniker"] }, z)) + ").select('*')")).data[0];
+    const tA = await neuTermin({ titel: "Arzt TV01", datum: morgen, beginn: "08:00", ende: "09:00", standort_id: "TS1" });
+    const tB = await neuTermin({ titel: "Termin TV01B", datum: uebermorgen, beginn: "10:00", ende: "11:00" });
+    x("planungStand=0; planungNachladen()"); await warte(500); await x("wzLaden(true)");
+    const oeffne = async (t) => { x("ansichtenSchliessen(); planEditor(PLANUNG.filter(function(e){ return e.id==='" + t.id + "'; })[0])"); await warte(500); return dlg(); };
+    const eintragen = async (t, text) => {
+      let d = await oeffne(t);
+      [...d.querySelectorAll("[data-bedarfkasten] button")].find((b) => /Material \/ Werkzeug/.test(b.textContent)).click(); await warte(300);
+      d = dlg(); d.querySelector('[data-f="text"]').value = text;
+      [...d.querySelectorAll(".as-fuss button")].pop().click(); await warte(600);
+    };
+    const privatSpeichern = async (t, antwort) => {
+      const d = await oeffne(t);
+      const cb = d.querySelector('[data-f="privat"]'); cb.checked = true; cb.dispatchEvent(new Event("change", { bubbles: true })); await warte(150);
+      const vorher = window.__dialoge.length; window.__antwort.confirm = antwort;
+      [...d.querySelectorAll(".as-fuss button")].find((b) => /Speichern/.test(b.textContent)).click(); await warte(1000);
+      window.__antwort.confirm = true;
+      return window.__dialoge.slice(vorher).map((z) => z[1]).join(" | ");
+    };
+    await eintragen(tA, "Überweisung Kardiologie TV01");
+    await eintragen(tB, "Rezept TV01B");
+    const frageA = await privatSpeichern(tA, false);
+    const frageB = await privatSpeichern(tB, true);
+    x("ansichtenSchliessen()");
+    return { planung: kopie(db.planung.filter((p) => p.id === tA.id)), bedarf: kopie(db.bedarf.filter((b) => b.planung_id === tA.id)), frageA, frageB,
+      bleibtB: db.bedarf.filter((b) => b.planung_id === tB.id).map((b) => b.text), morgen };
+  });
+  pruefe(!a.fehler.length, "Laufzeitfehler (Techniker): " + a.fehler.join("; "));
+  await a.zu();
+  const f = [], soll = (bed, text) => { if (!bed) f.push(text); };
+  soll(daten.planung.length === 1 && daten.planung[0].privat && daten.planung[0].titel === "Abwesend" && daten.bedarf.length === 1, "Ausgangslage falsch: " + JSON.stringify(daten));
+  soll(/Material/.test(daten.frageA) && /Material/.test(daten.frageB) && !daten.bleibtB.length, "nachträglich privat: keine Frage bzw. Material nicht gelöscht " + JSON.stringify({ frageA: daten.frageA, frageB: daten.frageB, bleibtB: daten.bleibtB }));
+  const b = await oeffnen(KONTEN.inhaber);
+  const r = await b.seite.evaluate(async (d) => {
+    const x = window.__t.x, warte = (ms) => new Promise((f) => setTimeout(f, ms)), db = window.__db.tabellen, f = [], soll = (bed, text) => { if (!bed) f.push(text); };
+    const app = () => document.getElementById("app").innerText, bd = (id) => "BEDARF.filter(function(b){ return b.id==='" + id + "'; })[0]";
+    const ich = x("meineKennung()"), heute = x("isoLokal(new Date())"), vorgestern = x("plusTage(isoLokal(new Date()),-2)");
+    db.planung.push(...d.planung); db.bedarf.push(...d.bedarf);
+    db.fahrzeuge.push({ id: "FZI24", kennzeichen: "T-CHEF 24", fahrer: [ich], aktiv: true });
+    db.werkzeug.push({ id: "WTV24B", name: "Pumpe TV24B", standort_art: "fahrzeug", fahrzeug_id: "FZI24", fahrzeug_name: "T-CHEF 24", zustand: "ok", aktiv: true },
+      { id: "WTV21", name: "Vakuumpumpe TV21", standort_art: "sonst", standort_text: "verliehen an Subfirma", zurueck_am: vorgestern, zustand: "ok", aktiv: true },
+      { id: "WTV21R", name: "Rohrzange TV21", standort_art: "reparatur", standort_text: "Fa. Rep", zurueck_am: vorgestern, zustand: "ok", aktiv: true });
+    db.bedarf.push({ id: "BTV24B", art: "werkzeug", text: "Pumpe TV24B", werkzeug_id: "WTV24B", stoerung_id: "STV24B", standort_id: "TS1", status: "offen", beschaffung: "mitnehmen" });
+    x("planungStand=0; planungNachladen()"); await warte(500); await x("fzLaden(true)"); await x("wzLaden(true)");
+    /* privater Termin des Technikers: der Inhaber sieht nur „Abwesend“ */
+    const zeile = x("(kalenderEintraege('" + d.morgen + "','" + d.morgen + "','alle')['" + d.morgen + "']||[]).map(function(y){ return kalEintragZeile(y,true).textContent; }).join(' | ')");
+    soll(/Abwesend/.test(zeile) && !/Kardiologie/.test(zeile), "Inhaber sieht im Kalender beim privaten Termin: " + zeile);
+    soll(!x("bedarfGelerntMarkt('TS1',[]).some(function(e){ return /Kardiologie/.test(e.text); })"), "Eintrag des privaten Termins als „An diesem Markt schon gebraucht“");
+    x("S.bdAlle=true; S.view='werkzeug'; render()"); await warte(600);
+    soll(!/Kardiologie/.test(app()), "Inhaber sieht den Eintrag des privaten Termins im Reiter Werkzeug unter „Alle“");
+    /* Störung für den Techniker, Werkzeug im Büro-Auto: ⚠ (nicht „hat der Betrachter“) */
+    x("OFFENE.push({_id:'STV24B', standortId:'TS1', termin:'" + heute + "', terminTechniker:'Testtechniker', erledigt:false}); 1");
+    const info = JSON.parse(x("JSON.stringify(bedarfWerkzeugInfo(" + bd("BTV24B") + "))"));
+    x("OFFENE=OFFENE.filter(function(o){ return o._id!=='STV24B'; }); 1");
+    soll(info && info.warnen, "Büro: Werkzeug im eigenen Auto, Störung für den Techniker – kein ⚠: " + JSON.stringify(info));
+    /* verliehen („sonst wo“) und überfällig: Hinweis und To-do wie bei Reparatur */
+    const todo = x("wzToDo()");
+    soll(todo.some((t) => /Rohrzange TV21/.test(t)), "Vergleich: Reparatur fehlt im To-do " + JSON.stringify(todo));
+    soll(x("wzHinweise(WZ.filter(function(w){ return w.id==='WTV21'; })[0]).length") > 0 && todo.some((t) => /Vakuumpumpe TV21/.test(t)), "verliehen und überfällig ohne Hinweis/To-do: " + JSON.stringify(todo));
+    /* Attrappe wie werkzeug.sql / planung.sql */
+    const t26 = (await x("Store.sb.from('planung').insert(" + JSON.stringify({ art: "termin", kategorie: "wartung", titel: "Wartung TV26", datum: heute, standort_id: "TS1", wer: [ich], wer_namen: ["Inhaber"] }) + ").select('*')")).data[0];
+    const b26 = (await x("Store.sb.from('bedarf').insert(" + JSON.stringify({ art: "material", text: "Filter TV26", planung_id: t26.id, standort_id: "TS1", status: "offen", beschaffung: "mitnehmen" }) + ").select('*')")).data[0];
+    await x("Store.sb.from('planung').delete().eq('id','" + t26.id + "').select('id')");
+    soll(db.bedarf.find((z) => z.id === b26.id).planung_id == null, "Attrappe: Termin gelöscht, bedarf.planung_id bleibt (SQL: on delete set null)");
+    const w26 = (await x("Store.sb.from('werkzeug').insert(" + JSON.stringify({ name: "Zange TV26", standort_art: "person", person_id: ich, person_name: "Inhaber" }) + ").select('*')")).data[0];
+    const vl = () => db.werkzeug_verlauf.filter((v) => v.werkzeug_id === w26.id).length;
+    soll(vl() === 1, "Attrappe: kein Verlauf beim Anlegen (" + vl() + ")");
+    await x("Store.sb.from('werkzeug').update({standort_art:'lager'}).eq('id','" + w26.id + "').select('*')");
+    soll(db.werkzeug.find((z) => z.id === w26.id).person_id == null, "Attrappe: person_id bleibt nach „Lager“ (SQL: werkzeug_merken räumt auf)");
+    const vor = vl();
+    await x("Store.sb.from('werkzeug').update({zustand:'defekt'}).eq('id','" + w26.id + "').select('*')");
+    soll(vl() === vor + 1, "Attrappe: kein Verlauf beim Zustandswechsel");
+    /* Lernen und Listen: mehr als 1000 Zeilen */
+    for (let i = 0; i < 1000; i++) db.bedarf.push({ id: "alt" + i, art: "material", text: "Altbedarf " + i, standort_id: "TS2", status: "erledigt", erledigt: "2025-01-01T00:00:00Z", beschaffung: "mitnehmen" });
+    db.bedarf.push({ id: "h10a", art: "werkzeug", text: "Hubsteiger TV10", standort_id: "TS1", status: "erledigt", erledigt: "2025-02-01T00:00:00Z", beschaffung: "abholen" },
+      { id: "h10b", art: "werkzeug", text: "Hubsteiger TV10", standort_id: "TS1", status: "erledigt", erledigt: "2025-03-01T00:00:00Z", beschaffung: "abholen" });
+    await x("wzLaden(true)");
+    const alleN = x("BEDARF_ALLE.filter(function(b){ return /^Altbedarf |^Hubsteiger TV10$/.test(b.text); }).length");
+    soll(alleN === 1002 && x("bedarfGelerntMarkt('TS1',[]).some(function(e){ return e.text==='Hubsteiger TV10'; })"), "nur ein Teil gelernt (" + alleN + " von 1002)");
+    return f;
+  }, daten);
+  const alle = f.concat(r);
+  pruefe(!alle.length, alle.join(" | "));
+  pruefe(!b.fehler.length, "Laufzeitfehler (Inhaber): " + b.fehler.join("; "));
+  await b.zu();
+});
+
+test("Tiefentest werkzeug: Bedienung – nichts doppelt, keine Verbindung, Klartext, Ort und Zustand passen", async () => {
+  const a = await oeffnen(KONTEN.techniker);
+  const r = await a.seite.evaluate(async () => {
+    const x = window.__t.x, warte = (ms) => new Promise((f) => setTimeout(f, ms)), db = window.__db.tabellen, f = [], soll = (bed, text) => { if (!bed) f.push(text); };
+    const dlg = () => [...document.querySelectorAll(".assistent")].pop(), app = () => document.getElementById("app").innerText, toast = () => document.getElementById("toast").textContent;
+    const knopfIn = (wurzel, text) => [...wurzel.querySelectorAll("button")].find((b) => b.textContent.trim() === text);
+    const speichern = (d) => [...d.querySelectorAll(".as-fuss button")].pop().click();
+    const ich = x("meineKennung()"), heute = x("isoLokal(new Date())"), gestern = x("plusTage(isoLokal(new Date()),-1)");
+    const sb = x("Store.sb"), from = sb.from;
+    const kaputt = () => { const q = { then: (ok, nok) => Promise.resolve({ data: null, error: { message: "TypeError: Failed to fetch" } }).then(ok, nok) };
+      ["select", "order", "limit", "in", "eq", "gte", "range"].forEach((m) => { q[m] = () => q; }); return q; };
+    /* Laden ohne Verbindung: Klartext, nicht „Noch kein Werkzeug eingetragen“ */
+    sb.from = function (t) { return ["werkzeug", "bedarf", "packlisten"].includes(t) ? kaputt() : from.call(sb, t); };
+    await x("wzLaden(true)"); x("S.view='werkzeug'; render()"); await warte(500);
+    sb.from = from;
+    soll(!/Failed to fetch/.test(app()) && !/Noch kein Werkzeug eingetragen/.test(app()), "Reiter Werkzeug ohne Verbindung: rohe Meldung bzw. „Noch kein Werkzeug eingetragen“");
+    /* Bestand */
+    db.werkzeug.push({ id: "WTV6", name: "Lecksucher TV6", standort_art: "sonst", standort_text: "Keller Testfirma", zustand: "ok", aktiv: true },
+      { id: "WTV7", name: "Waage TV7", standort_art: "person", person_id: ich, person_name: "Testtechniker", zustand: "ok", aktiv: true },
+      { id: "WTV16", name: "Altes Messgerät TV16", standort_art: "lager", zustand: "ok", aktiv: false },
+      { id: "WTV18", name: "Waage TV18", standort_art: "lager", zustand: "ok", aktiv: true },
+      { id: "WTV22", name: "Manometer TV22", standort_art: "reparatur", standort_text: "Fa. Kältereparatur", zustand: "ok", aktiv: true },
+      { id: "WTV23", name: "Lecksucher TV23", standort_art: "lager", zustand: "verloren", aktiv: true });
+    db.werkzeug_verlauf.push({ id: "v18", werkzeug_id: "WTV18", zeit: new Date().toISOString(), standort: "Lager", von_name: "Test" });
+    db.packlisten.push({ id: "PLTV9", name: "Störung Kälte TV9", eintraege: [{ art: "material", text: "Kältemittel R32" }, { art: "material", text: "Lecksuchspray" }, { art: "material", text: "Filtertrockner" }] });
+    db.bedarf.push({ id: "BTV16", art: "werkzeug", text: "Altes Messgerät TV16", werkzeug_id: "WTV16", projekt_id: "P-TV16", status: "offen", beschaffung: "mitnehmen", erstellt_von: ich, erstellt: new Date().toISOString() });
+    const tG = (await x("Store.sb.from('planung').insert(" + JSON.stringify({ art: "termin", kategorie: "wartung", titel: "Wartung TV6", datum: gestern, standort_id: "TS1", wer: [ich], wer_namen: ["Testtechniker"] }) + ").select('*')")).data[0];
+    for (const w of ["WTV6", "WTV7"]) await x("Store.sb.from('bedarf').insert(" + JSON.stringify({ art: "werkzeug", text: w, werkzeug_id: w, planung_id: tG.id, standort_id: "TS1", status: "offen", beschaffung: "mitnehmen" }) + ").select('*')");
+    const t14 = (await x("Store.sb.from('planung').insert(" + JSON.stringify({ art: "termin", kategorie: "wartung", titel: "Wartung TV14", datum: heute, beginn: "08:00", ende: "10:00", standort_id: "TS1", wer: [ich], wer_namen: ["Testtechniker"] }) + ").select('*')")).data[0];
+    const t9 = (await x("Store.sb.from('planung').insert(" + JSON.stringify({ art: "termin", kategorie: "stoerung", titel: "Störung TV9", datum: heute, beginn: "13:00", ende: "15:00", standort_id: "TS1", wer: [ich], wer_namen: ["Testtechniker"] }) + ").select('*')")).data[0];
+    x("planungStand=0; planungNachladen()"); await warte(500); await x("wzLaden(true)");
+    /* „Wo ist das Werkzeug jetzt?“: ohne Verbindung bleibt der Knopf bedienbar; „bei mir“ ersetzt den alten Ortstext */
+    x("ansichtenSchliessen(); S.view='faellig'; render()"); await warte(700);
+    const zeileVon = (name, text) => [...document.querySelectorAll("button")].find((b) => b.textContent === text && b.closest(".stack") && b.closest(".stack").textContent.includes(name));
+    const lager7 = zeileVon("Waage TV7", "zurück ins Lager");
+    window.__netzWeg = true; if (lager7) lager7.click(); await warte(600);
+    const meldung = toast(); window.__netzWeg = false; await warte(300);
+    soll(lager7 && /Nicht gespeichert/.test(meldung) && lager7.isConnected && !lager7.disabled, "keine Verbindung: Knopf bleibt gesperrt bzw. keine Meldung " + JSON.stringify({ meldung, da: !!lager7 && lager7.isConnected, gesperrt: !!lager7 && lager7.disabled }));
+    const beiMir6 = zeileVon("Lecksucher TV6", "bei mir"); if (beiMir6) beiMir6.click(); await warte(700);
+    const w6 = db.werkzeug.find((z) => z.id === "WTV6");
+    soll(beiMir6 && w6.standort_art === "person" && !w6.standort_text, "„bei mir“ behält den alten Ortstext: " + JSON.stringify({ art: w6.standort_art, text: w6.standort_text }));
+    /* verlorenes Werkzeug „Ich hab’s“ */
+    x("S.view='werkzeug'; S.wzFilter='alle'; S.wzSuche=''; render()"); await warte(500);
+    let vorher = window.__dialoge.length;
+    const hab = [...document.querySelectorAll('[data-wz="WTV23"] button')].find((b) => /Ich hab/.test(b.textContent)); if (hab) hab.click(); await warte(600);
+    const w23 = db.werkzeug.find((z) => z.id === "WTV23");
+    soll(hab && w23.standort_art === "person" && w23.zustand !== "verloren" && window.__dialoge.slice(vorher).some((z) => /verloren/.test(z[1])), "verlorenes Werkzeug „Ich hab’s“: " + JSON.stringify({ art: w23.standort_art, zustand: w23.zustand }));
+    /* Werkzeug-Editor: Ort wechseln → „Wo genau?“ des alten Orts nicht übernehmen */
+    x("wzEditor(WZ.filter(function(w){ return w.id==='WTV22'; })[0])"); await warte(400);
+    let d = dlg();
+    [...d.querySelectorAll("[data-ort] .chip")].find((c) => c.dataset.w === "lager").click(); await warte(100);
+    const feld22 = d.querySelector('[data-f="standort_text"]').value;
+    speichern(d); await warte(700);
+    const w22 = db.werkzeug.find((z) => z.id === "WTV22");
+    soll(w22.standort_art === "lager" && w22.standort_text !== "Fa. Kältereparatur", "Reparaturfirma als Lagerplatz gespeichert: " + JSON.stringify({ feld22, text: w22.standort_text }));
+    /* Verlauf: Ladefehler melden und beim nächsten Aufklappen neu laden */
+    x("ansichtenSchliessen(); wzEditor(WZ.filter(function(w){ return w.id==='WTV18'; })[0])"); await warte(400);
+    const det = dlg().querySelector("[data-verlauf]");
+    sb.from = function (t) { return t === "werkzeug_verlauf" ? kaputt() : from.call(sb, t); };
+    det.open = true; await warte(400);
+    const vText1 = det.innerText;
+    sb.from = from;
+    det.open = false; await warte(150); det.open = true; await warte(400);
+    const vText2 = det.innerText.replace(/Verlauf – wo es war/, "");
+    soll(!/Noch kein Verlauf/.test(vText1) && /Lager/.test(vText2), "Verlauf: Ladefehler als „Noch kein Verlauf.“ bzw. kein neuer Versuch " + JSON.stringify({ vText1, vText2 }));
+    x("ansichtenSchliessen()");
+    /* „In die Werkzeugliste?“: zwei Antworten schnell hintereinander – ein Werkzeug */
+    x("bedarfEditor(null, {projekt_id:'P-TV11'})"); await warte(300);
+    d = dlg();
+    [...d.querySelectorAll("[data-art] .chip")].find((c) => c.dataset.w === "werkzeug").click();
+    d.querySelector('[data-f="text"]').value = "Rohrabschneider TV11";
+    speichern(d); await warte(600);
+    d = dlg();
+    const ja1 = d && [...d.querySelectorAll("button")].find((b) => /Ja – im Lager/.test(b.textContent)), ja2 = d && [...d.querySelectorAll("button")].find((b) => /Ja – bei mir/.test(b.textContent));
+    if (ja1) ja1.click(); if (ja2) ja2.click(); await warte(800);
+    const wz11 = db.werkzeug.filter((w) => w.name === "Rohrabschneider TV11").map((w) => w.standort_art);
+    soll(ja1 && wz11.length === 1, "Werkzeug doppelt angelegt: " + JSON.stringify(wz11));
+    x("ansichtenSchliessen()");
+    /* nach „Nein“ nicht bei jedem Speichern wieder fragen */
+    x("bedarfEditor(null, {projekt_id:'P-TV15'})"); await warte(300);
+    d = dlg();
+    [...d.querySelectorAll("[data-art] .chip")].find((c) => c.dataset.w === "werkzeug").click();
+    d.querySelector('[data-f="text"]').value = "Pressmaschine TV15";
+    speichern(d); await warte(600);
+    d = dlg(); const frage15a = !!d && /In die Werkzeugliste/.test(d.textContent);
+    if (d) [...d.querySelectorAll("button")].find((b) => /Nein, nicht aufnehmen/.test(b.textContent)).click(); await warte(200);
+    x("bedarfEditor(BEDARF.filter(function(b){ return b.text==='Pressmaschine TV15'; })[0])"); await warte(300);
+    d = dlg(); d.querySelector('[data-f="menge"]').value = "1 Stk"; speichern(d); await warte(600);
+    d = dlg(); const frage15b = !!d && /In die Werkzeugliste/.test(d.textContent);
+    soll(frage15a && !frage15b, "„In die Werkzeugliste?“ kommt nach „Nein“ wieder: " + JSON.stringify({ frage15a, frage15b }));
+    x("ansichtenSchliessen()");
+    /* Bedarf mit ausgeschiedenem Werkzeug: Verknüpfung bleibt */
+    x("bedarfEditor(BEDARF.filter(function(b){ return b.id==='BTV16'; })[0])"); await warte(300);
+    d = dlg(); d.querySelector('[data-f="menge"]').value = "1 Stk"; speichern(d); await warte(600);
+    const b16 = db.bedarf.find((z) => z.id === "BTV16"), frage16 = !!dlg() && /In die Werkzeugliste/.test(dlg().textContent);
+    soll(b16.menge === "1 Stk" && b16.werkzeug_id === "WTV16" && !frage16, "Verknüpfung mit ausgeschiedenem Werkzeug still entfernt: " + JSON.stringify({ menge: b16.menge, werkzeug_id: b16.werkzeug_id, frage16 }));
+    x("ansichtenSchliessen()");
+    /* Bedarf löschen ohne Verbindung: sichtbare Meldung */
+    const b20 = (await x("Store.sb.from('bedarf').insert(" + JSON.stringify({ art: "material", text: "Dichtband TV20", projekt_id: "P-TV20", status: "offen", beschaffung: "mitnehmen" }) + ").select('*')")).data[0];
+    await x("wzLaden(true)");
+    x("bedarfEditor(BEDARF.filter(function(y){ return y.id==='" + b20.id + "'; })[0])"); await warte(300);
+    d = dlg();
+    const t = document.getElementById("toast"); t.textContent = ""; t.style.display = "none";
+    const fv = window.__fehler.length;
+    window.__netzWeg = true; knopfIn(d, "Löschen").click(); await warte(800); window.__netzWeg = false;
+    const err20 = d.querySelector("[data-err]");
+    soll((err20 && !err20.hidden && /Nicht gelöscht/.test(err20.textContent)) || (t.style.display === "block" && /Nicht gelöscht/.test(t.textContent)), "Löschen ohne Verbindung: keine sichtbare Meldung " + JSON.stringify(window.__fehler.slice(fv)));
+    x("ansichtenSchliessen()");
+    /* gelöschter Bedarf am Markt nicht als „schon gebraucht“ */
+    x("marktAnsicht('TS1')"); await warte(800);
+    d = dlg();
+    [...d.querySelectorAll("[data-bedarfkasten] button")].find((b) => /Material \/ Werkzeug/.test(b.textContent)).click(); await warte(300);
+    d = dlg(); d.querySelector('[data-f="text"]').value = "Spezialfilter TV13 (vertippt)"; speichern(d); await warte(600);
+    d = dlg();
+    [...d.querySelectorAll("[data-bedarfkasten] [data-bedarf]")].find((z) => /Spezialfilter TV13/.test(z.textContent)).querySelector("a").click(); await warte(300);
+    knopfIn(dlg(), "Löschen").click(); await warte(600);
+    d = dlg();
+    const chips13 = [...d.querySelectorAll("[data-bedarfkasten] .chip")].map((c) => c.textContent);
+    soll(!db.bedarf.some((z) => /Spezialfilter TV13/.test(z.text)), "Spezialfilter TV13 nicht gelöscht");
+    soll(!chips13.some((c) => /Spezialfilter TV13/.test(c)) && !x("bedarfGelerntMarkt('TS1',[]).some(function(e){ return /Spezialfilter TV13/.test(e.text); })"), "Gelöschtes wird als „schon gebraucht“ vorgeschlagen");
+    x("ansichtenSchliessen()");
+    /* im Termin abgehakt: nicht gleich wieder vorgeschlagen */
+    x("planEditor(PLANUNG.filter(function(e){ return e.id==='" + t14.id + "'; })[0])"); await warte(500);
+    d = dlg();
+    [...d.querySelectorAll("[data-bedarfkasten] button")].find((b) => /Material \/ Werkzeug/.test(b.textContent)).click(); await warte(300);
+    d = dlg(); d.querySelector('[data-f="text"]').value = "Taschenfilter TV14"; speichern(d); await warte(600);
+    d = dlg();
+    const cb = [...d.querySelectorAll("[data-bedarfkasten] [data-bedarf]")].find((z) => /Taschenfilter TV14/.test(z.textContent)).querySelector("input[type=checkbox]");
+    cb.checked = true; cb.dispatchEvent(new Event("change")); await warte(600);
+    d = dlg();
+    const chips14 = [...d.querySelectorAll("[data-bedarfkasten] .chip")].map((c) => c.textContent);
+    const tipp14 = x("planungPruefen('ich','" + heute + "','" + heute + "').map(function(t){ return t.marktTipp.map(function(m){ return m.l.map(function(e){ return e.text; }).join(','); }).join(';'); }).join('|')");
+    soll((db.bedarf.find((z) => z.text === "Taschenfilter TV14") || {}).status === "erledigt", "Taschenfilter TV14 nicht abgehakt");
+    soll(!chips14.some((c) => /Taschenfilter TV14/.test(c)) && !/Taschenfilter TV14/.test(tipp14), "abgehakter Eintrag sofort wieder vorgeschlagen: " + JSON.stringify({ chips14, tipp14 }));
+    x("ansichtenSchliessen()");
+    /* Packliste mit gleicher Zeile mehrfach; zweimal schnell übernommen */
+    x("packlisteEditor(null)"); await warte(300);
+    d = dlg(); d.querySelector('[data-f="name"]').value = "Leitern TV12"; d.querySelector('[data-f="eintraege"]').value = "Leiter\nKabelbinder\nleiter\nLeiter ";
+    speichern(d); await warte(600);
+    await x("packlisteUebernehmen({projekt_id:'P-TV12'}, PACKLISTEN.filter(function(p){ return p.name==='Leitern TV12'; })[0])");
+    const leiter = db.bedarf.filter((z) => z.projekt_id === "P-TV12" && /leiter/i.test(z.text)).length;
+    soll(leiter === 1, "Leiter " + leiter + "× übernommen");
+    x("ansichtenSchliessen(); planEditor(PLANUNG.filter(function(e){ return e.id==='" + t9.id + "'; })[0])"); await warte(500);
+    const pk = () => [...document.querySelectorAll("[data-bedarfkasten] button")].find((b) => /Packliste übernehmen/.test(b.textContent));
+    const waehle = () => [...dlg().querySelectorAll("button.row")].find((b) => /Störung Kälte TV9/.test(b.textContent)).click();
+    pk().click(); waehle(); pk().click(); waehle(); await warte(1000);
+    const pl9 = db.bedarf.filter((z) => z.planung_id === t9.id).map((z) => z.text);
+    soll(pl9.length === 3, "Packliste doppelt übernommen: " + JSON.stringify(pl9));
+    x("ansichtenSchliessen()");
+    return f;
+  });
+  pruefe(!r.length, r.join(" | "));
+  pruefe(!a.fehler.length, "Laufzeitfehler: " + a.fehler.join("; "));
+  await a.zu();
+});
+
+test("Tiefentest werkzeug: Präsentation meldet nie echtes Speichern; Kunde liest kein Werkzeug", async () => {
+  const a = await oeffnen(KONTEN.praesentation);
+  const r = await a.seite.evaluate(async () => {
+    const x = window.__t.x, warte = (ms) => new Promise((f) => setTimeout(f, ms)), db = window.__db.tabellen;
+    const dlg = () => [...document.querySelectorAll(".assistent")].pop(), toast = () => document.getElementById("toast").textContent;
+    x("WZ=[{id:'WTV19', name:'Leiter TV19', standort_art:'person', person_id:'u_admin_test_at', person_name:'Testadmin', zustand:'ok', aktiv:true}]; BEDARF=[{id:'BTV19', art:'material', text:'Silikon TV19', projekt_id:'P-TV19', status:'offen', beschaffung:'mitnehmen'}]; wzGeladen=true; 1");
+    x("wzOrtSchnell(WZ[0], 'ich')"); await warte(150); const t1 = toast();
+    x("wzOrtSchnell(WZ[0], 'lager')"); await warte(150); const t2 = toast();
+    await x("bedarfStatus(BEDARF[0], 'erledigt')"); await warte(100); const t3 = toast();
+    await x("bedarfAusVorschlag([{text:'Kabel TV19', art:'material'}], {projekt_id:'P-TV19'})"); await warte(100); const t4 = toast();
+    document.getElementById("toast").textContent = "";
+    x("packlisteEditor(null)"); await warte(300);
+    const d = dlg(); d.querySelector('[data-f="name"]').value = "Präsi TV19"; d.querySelector('[data-f="eintraege"]').value = "Leiter";
+    [...d.querySelectorAll(".as-fuss button")].pop().click(); await warte(300);
+    return { t: [t1, t2, t3, t4, toast()], db: db.werkzeug.length + db.bedarf.length + db.packlisten.length };
+  });
+  pruefe(r.db === 0, "Präsentation hat gespeichert: " + JSON.stringify(r));
+  pruefe(r.t.every((t) => /Präsentation/.test(t)), "Meldung ohne „Präsentation, nicht gespeichert“: " + JSON.stringify(r.t));
+  pruefe(!a.fehler.length, "Laufzeitfehler: " + a.fehler.join("; "));
+  await a.zu();
+  /* Attrappe wie werkzeug.sql: der Kunde liest weder Werkzeug noch Bedarf */
+  const k = await oeffnen(KONTEN.kunde);
+  const kunde = await k.seite.evaluate(async () => { const db = window.__db.tabellen;
+    db.werkzeug.push({ id: "WK26", name: "Geheim TV26", standort_art: "lager", aktiv: true }); db.bedarf.push({ id: "BK26", art: "material", text: "Geheim TV26", status: "offen" });
+    return ((await window.__t.x("Store.sb.from('werkzeug').select('*')")).data || []).length + ((await window.__t.x("Store.sb.from('bedarf').select('*')")).data || []).length; });
+  await k.zu();
+  pruefe(kunde === 0, "Attrappe: Kunde liest Werkzeug bzw. Bedarf (" + kunde + ")");
+});
+
 /* ================================================================ Ablauf ================================================================ */
 const filterText = process.argv.slice(2).find((x) => !x.startsWith("--"));
 const filter = filterText ? new RegExp(filterText, "i") : null;
