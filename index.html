@@ -19433,8 +19433,11 @@ function meinFahrzeug(){ var ich=meineKennung(); return FZ.filter(function(f){ r
 function wzEditor(w){
   if(!wzAn()){ toast("Werkzeug geht nur mit Anmeldung."); return; }
   if(!planTeam) planTeamLaden();
-  if(!fzGeladen) fzLaden();
+  var fzWarten=fzGeladen ? null : fzLaden();
   var a=Object.assign({standort_art:"lager", zustand:"ok"}, w||{});
+  var fzOptHtml=function(wahl){ return '<option value="">–</option>'+FZ.filter(function(f){ return f.aktiv!==false || f.id===a.fahrzeug_id; }).map(function(f){
+        return '<option value="'+esc(f.id)+'"'+(wahl===f.id?" selected":"")+">"+esc(f.kennzeichen+((f.fahrer_namen||[]).length?" · "+f.fahrer_namen.join(", "):""))+"</option>"; }).join("")+
+        (a.fahrzeug_id && !FZ.some(function(f){ return f.id===a.fahrzeug_id; })?'<option value="'+esc(a.fahrzeug_id)+'"'+(wahl===a.fahrzeug_id?" selected":"")+">"+esc(a.fahrzeug_name||"?")+"</option>":""); };
   var v=ansichtOeffnen(w ? w.name : "Neues Werkzeug / Gerät");
   if(w) v.schritt.textContent="jetzt: "+wzOrtText(w);
   var gruppen=[]; WZ.forEach(function(x){ if(x.gruppe && gruppen.indexOf(x.gruppe)<0) gruppen.push(x.gruppe); });
@@ -19448,9 +19451,7 @@ function wzEditor(w){
       '<label class="fl"><span>Seriennummer</span><input type="text" data-f="seriennummer" maxlength="80" value="'+esc(a.seriennummer||"")+'"></label></div>'+
     '<div class="fl"><span>Wo ist es gerade?</span></div><div class="chips" data-ort>'+WZ_ORTE.map(function(x){ return '<button class="chip" type="button" data-w="'+x[0]+'" aria-pressed="'+(a.standort_art===x[0])+'">'+esc(x[1])+"</button>"; }).join("")+"</div>"+
     '<div class="grid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:10px">'+
-      '<label class="fl" data-nur="fahrzeug"><span>Fahrzeug</span><select data-f="fahrzeug_id"><option value="">–</option>'+FZ.filter(function(f){ return f.aktiv!==false || f.id===a.fahrzeug_id; }).map(function(f){
-        return '<option value="'+esc(f.id)+'"'+(a.fahrzeug_id===f.id?" selected":"")+">"+esc(f.kennzeichen+((f.fahrer_namen||[]).length?" · "+f.fahrer_namen.join(", "):""))+"</option>"; }).join("")+
-        (a.fahrzeug_id && !FZ.some(function(f){ return f.id===a.fahrzeug_id; })?'<option value="'+esc(a.fahrzeug_id)+'" selected>'+esc(a.fahrzeug_name||"?")+"</option>":"")+"</select></label>"+
+      '<label class="fl" data-nur="fahrzeug"><span>Fahrzeug</span><select data-f="fahrzeug_id">'+fzOptHtml(a.fahrzeug_id)+"</select></label>"+
       '<label class="fl" data-nur="person"><span>Bei wem?</span><select data-f="person_id"><option value="">–</option>'+team.map(function(p){
         return '<option value="'+esc(p.user_id)+'"'+(a.person_id===p.user_id?" selected":"")+">"+esc(p.name||"–")+"</option>"; }).join("")+
         (a.person_id && !team.some(function(p){ return p.user_id===a.person_id; })?'<option value="'+esc(a.person_id)+'" selected>'+esc(a.person_name||"?")+"</option>":"")+"</select></label>"+
@@ -19479,6 +19480,18 @@ function wzEditor(w){
     if(c.dataset.w!==ort) F("standort_text").value = c.dataset.w===a.standort_art ? (a.standort_text||"") : "";
     ort=c.dataset.w; form.querySelectorAll("[data-ort] .chip").forEach(function(x){ x.setAttribute("aria-pressed", String(x===c)); }); zeigen(); }; });
   zeigen();
+  /* „Fahrzeug“ nur anbieten, wenn eines zur Wahl steht (Techniker sehen nur das eigene – fahrzeuge.sql);
+     sonst führte es zu „Bitte das Fahrzeug wählen“, das sich nicht erfüllen lässt */
+  var fzChip=form.querySelector('[data-ort] .chip[data-w="fahrzeug"]');
+  var fzHinweis=el('<div class="muted" style="font-size:12.5px" hidden>Kein Fahrzeug zur Wahl (dir ist keines zugeteilt) – liegt es in einem Auto, „bei Person“ wählen.</div>');
+  form.querySelector("[data-ort]").insertAdjacentElement("afterend", fzHinweis);
+  var fzPruefen=function(){
+    var leer=fzGeladen && !fzFehler && F("fahrzeug_id").options.length<=1;
+    fzChip.hidden=leer && ort!=="fahrzeug"; fzHinweis.hidden=!fzChip.hidden;
+  };
+  fzPruefen();
+  /* Fahrzeuge erst jetzt geladen: die Auswahl nachziehen */
+  if(fzWarten) fzWarten.then(function(){ if(!form.isConnected) return; var sel=F("fahrzeug_id"); sel.innerHTML=fzOptHtml(sel.value||a.fahrzeug_id); fzPruefen(); });
   var vl=form.querySelector("[data-verlauf]");
   if(vl) vl.addEventListener("toggle", function(){
     /* nach einem Ladefehler beim nächsten Aufklappen neu versuchen (Prüflauf 05.10.2026: stand sonst für immer „Noch kein Verlauf.“) */
@@ -19506,7 +19519,7 @@ function wzEditor(w){
       standort_art:ort, standort_text:F("standort_text").value.trim()||null, zustand:F("zustand").value, pruefen_bis:F("pruefen_bis").value||null,
       notiz:F("notiz").value.trim()||null, zurueck_am:(ort==="reparatur"||ort==="sonst") ? (F("zurueck_am").value||null) : null,
       fahrzeug_id:null, fahrzeug_name:null, person_id:null, person_name:null, projekt_id:null, standort_id:null};
-    if(ort==="fahrzeug"){ var fz=F("fahrzeug_id").value; if(!fz){ fehler("Bitte das Fahrzeug wählen."); return; }
+    if(ort==="fahrzeug"){ var fz=F("fahrzeug_id").value; if(!fz){ fehler(F("fahrzeug_id").options.length<=1 ? "Kein Fahrzeug zur Wahl – liegt es in einem Auto, bitte „bei Person“ wählen." : "Bitte das Fahrzeug wählen."); return; }
       f.fahrzeug_id=fz; var fo=FZ.filter(function(x){ return x.id===fz; })[0]; f.fahrzeug_name=fo ? fo.kennzeichen : (a.fahrzeug_name||null); }
     if(ort==="person"){ var pid=F("person_id").value; if(!pid){ fehler("Bitte wählen, bei wem es ist."); return; }
       f.person_id=pid; f.person_name=planPersonName(pid)||a.person_name||null; }

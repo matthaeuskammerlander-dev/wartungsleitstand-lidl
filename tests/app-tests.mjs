@@ -2168,7 +2168,7 @@ test("Tiefentest kern: Vor Ort klären ohne Netz, alte Liste erkennt Filiale „
   await a.zu();
 });
 
-test("Tiefentest kern: Werkzeug ausscheiden – Rückfrage, auffindbar, zurückholbar", async () => {
+test("Tiefentest kern: Werkzeug ausscheiden – Rückfrage, auffindbar, zurückholbar; „Fahrzeug“ nur, wenn eines wählbar ist", async () => {
   const a = await oeffnen(KONTEN.techniker);
   const r = await a.seite.evaluate(async () => {
     const x = window.__t.x, warte = (ms) => new Promise((f) => setTimeout(f, ms)), db = window.__db.tabellen;
@@ -2197,12 +2197,27 @@ test("Tiefentest kern: Werkzeug ausscheiden – Rückfrage, auffindbar, zurückh
       erg.zurueckOhneFrage = window.__dialoge.length === vorher; }
     erg.zurueck = db.werkzeug.find((w) => w.id === "WTV8").aktiv;
     x("ansichtenSchliessen(); S.wzFilter='alle'; S.wzSuche=''; render()");
+    /* Techniker ohne eigenes Fahrzeug (sieht nur das eigene): „Fahrzeug“ ist keine Sackgasse */
+    const fahrzeugWahl = async (nachladen) => {
+      if (nachladen) x("fzGeladen=false; 1"); else await x("fzLaden(true)");   /* nachladen: Fahrzeuge kommen erst, während das Fenster offen ist */
+      x("ansichtenSchliessen(); wzEditor(WZ.filter(function(w){ return w.id==='WTV8'; })[0])"); await warte(300);
+      const dd = dlg(), chip = dd.querySelector('[data-ort] .chip[data-w="fahrzeug"]');
+      return { fz: x("FZ.length"), chip: !!chip && !chip.hidden, hinweis: [...dd.querySelectorAll(".muted")].some((m) => !m.hidden && /Kein Fahrzeug zur Wahl/.test(m.textContent)),
+        optionen: dd.querySelectorAll('[data-f="fahrzeug_id"] option').length };
+    };
+    erg.ohneAuto = await fahrzeugWahl();
+    /* mit eigenem Fahrzeug: wählbar wie bisher */
+    db.fahrzeuge.push({ id: "FTV25", kennzeichen: "T-TV25", fahrer: ["u_tech_test_at"], fahrer_namen: ["Testtechniker"], aktiv: true });
+    erg.mitAuto = await fahrzeugWahl(true);
+    x("ansichtenSchliessen()");
     return erg;
   });
   pruefe(!r.chipVorher, "Filter „Ausgeschieden“ ohne ausgeschiedenes Werkzeug sichtbar");
   pruefe(/ausgeschieden/.test(r.abgebrochen.frage) && r.abgebrochen.aktiv !== false && r.abgebrochen.offen, "keine Rückfrage beim Ausscheiden bzw. trotz „Abbrechen“ gespeichert: " + JSON.stringify(r.abgebrochen));
   pruefe(r.aktiv === false && !r.inAlle && r.inWeg, "ausgeschiedenes Werkzeug nicht unter „Ausgeschieden“ zu finden: " + JSON.stringify(r));
   pruefe(r.zurueck === true && r.zurueckOhneFrage, "Werkzeug lässt sich nicht zurückholen: " + JSON.stringify(r));
+  pruefe(r.ohneAuto.fz === 0 && !r.ohneAuto.chip && r.ohneAuto.hinweis, "Techniker ohne Fahrzeug: „Fahrzeug“ wählbar, Liste leer: " + JSON.stringify(r.ohneAuto));
+  pruefe(r.mitAuto.fz === 1 && r.mitAuto.chip && !r.mitAuto.hinweis && r.mitAuto.optionen === 2, "Techniker mit eigenem Fahrzeug: " + JSON.stringify(r.mitAuto));
   pruefe(!a.fehler.length, "Laufzeitfehler: " + a.fehler.join("; "));
   await a.zu();
 });
