@@ -4447,6 +4447,47 @@ test("Tiefentest werkzeug: verletzte Prüfregel beim Speichern meldet nicht „n
   await a.zu();
 });
 
+/* ---------------- Antworten des Inhabers 05.10.2026 zu Angeboten und Rechnungen ---------------- */
+const AR_HILFEN = `window.__ar = {
+  warte: (ms) => new Promise((f) => setTimeout(f, ms)),
+  bis: async (f, max = 3000) => { const t0 = Date.now(); for (;;) { let v = null; try { v = f(); } catch (e) {} if (v || Date.now() - t0 > max) return v; await window.__ar.warte(20); } },
+  dlgs: () => [...document.querySelectorAll(".assistent")],
+  knopf: (d, re) => [...(d || document).querySelectorAll("button")].filter((b) => re.test(b.textContent.trim()))[0] || null,
+}; 1`;
+test("Antworten rechnung: Nummer erst beim Speichern – Abbrechen verbraucht keine, Doppeltipp öffnet einen Editor, nie dieselbe Nummer", async () => {
+  const a = await oeffnen(KONTEN.inhaber);
+  await a.seite.evaluate((h) => eval(h), AR_HILFEN);
+  const r = await a.seite.evaluate(async () => {
+    const x = window.__t.x, db = window.__db.tabellen, A = window.__ar, jahr = new Date().getFullYear();
+    x("S.view='belege'; render(); 1"); await A.warte(300);
+    const plus = document.querySelector('[data-a="frei"]');
+    plus.click(); plus.click();                                   /* Doppeltipp auf „+ Rechnung“ */
+    await A.bis(() => A.dlgs().length && A.dlgs()[0].querySelector("[data-plus]")); await A.warte(400);
+    const editoren = A.dlgs().length, d0 = A.dlgs()[0];
+    const kopf = d0.querySelector(".as-titel").textContent + " | " + d0.querySelector(".as-schritt").textContent;
+    A.knopf(d0, /^Abbrechen$/).click(); x("ansichtenSchliessen()");
+    const speichern = async () => {
+      x("belegNeu({projekt:null, protokoll:null, kunde_id:'lidl', standort_id:null}, 'rechnung', null, function(){})");
+      const d = await A.bis(() => { const d = A.dlgs().pop(); return d && d.querySelector("[data-plus]") && d; });
+      const n0 = db.belege.length; A.knopf(d, /^Speichern$/).click();
+      await A.bis(() => db.belege.length > n0); await A.warte(100); x("ansichtenSchliessen()");
+      return db.belege.length > n0 ? db.belege[db.belege.length - 1].nummer : null;
+    };
+    const n1 = await speichern();
+    /* die nächste Nummer ist schon vergeben (anderes Gerät, Nummernkreis ohne Zähler der Datenbank): nie doppelt speichern */
+    db.belege.push({ id: "ar_fremd", art: "rechnung", nummer: "T-R-" + jahr + "-002", test: true, extern: false, datum: "2026-06-01", status: "entwurf", kopf: {}, positionen: [], summen: {} });
+    const n2 = await speichern();
+    const nummern = db.belege.filter((b) => b.art === "rechnung").map((b) => b.nummer);
+    return { editoren, kopf, n1, n2, jahr, doppelt: nummern.length !== new Set(nummern).size };
+  });
+  pruefe(r.editoren === 1, "Doppeltipp auf „+ Rechnung“ öffnet " + r.editoren + " Editoren");
+  pruefe(/Nummer wird beim Speichern vergeben/.test(r.kopf) && !/T-R-/.test(r.kopf), "Editor zeigt vor dem Speichern schon eine Nummer: " + r.kopf);
+  pruefe(r.n1 === "T-R-" + r.jahr + "-001", "Abbrechen hat eine Nummer verbraucht – erste gespeicherte: " + r.n1);
+  pruefe(r.n2 === "T-R-" + r.jahr + "-003" && !r.doppelt, "Vergebene Nummer nicht übersprungen: " + r.n2 + (r.doppelt ? " (doppelt)" : ""));
+  pruefe(!a.fehler.length, "Laufzeitfehler: " + a.fehler.join("; "));
+  await a.zu();
+});
+
 /* ================================================================ Ablauf ================================================================ */
 const filterText = process.argv.slice(2).find((x) => !x.startsWith("--"));
 const filter = filterText ? new RegExp(filterText, "i") : null;

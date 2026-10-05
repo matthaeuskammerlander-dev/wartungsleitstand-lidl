@@ -153,7 +153,10 @@ Kammerlander Umwelt- und Klimatechnik (UKT) – oft kurz, vom Handy, im Feld.
 - Angebot/Rechnung bearbeiten (`belegEditor`, Büro 01.10.2026 „gründlich überarbeiten“): großes
   Fenster, Positionen als Tabelle (`.bpos`, am Handy Block), Bezeichnung wächst mit
   (`feldHoehe`), Summe immer sichtbar im Fuß, Kopf/Texte einklappbar, Vorschau (PDF)
-  vor dem Speichern, Zeile kopieren/verschieben, Textzeilen.
+  vor dem Speichern, Zeile kopieren/verschieben, Textzeilen. Nummer erst beim Speichern (Inhaber 05.10.2026: keine Lücken
+  im Nummernkreis): `belegNeu` zieht keine, der Editor zeigt „Nummer wird beim Speichern vergeben“, `belegNummer` (Funktion
+  `beleg_nummer`, atomar) erst im Speichern – gescheitert bleibt sie für den nächsten Versuch, schon vergeben (unique art+nummer)
+  → nächste; ein Doppeltipp öffnet nur einen Editor (`belegNeuLaeuft`).
 - Synology-Ablage der Baustellen (`synology/ukt_archiv.py`, `projekte_abgleich`):
   je Projekt `{jahr}/Lidl/Baustellen/…` bzw. `{jahr}/Kunden/{kunde}/Baustellen/{Filiale Ort}_{Nummer}/`
   (Protokolle `…/Wartungen` und `…/Störungen` getrennt, Büro 02.10.2026) mit

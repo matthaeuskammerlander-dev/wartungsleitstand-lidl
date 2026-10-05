@@ -24117,6 +24117,7 @@ function handbuchKarte(z){
     abschnitt("12 · Angebote und Rechnungen (nur Inhaber)",
       liste(["Solange KPlus Angebote und Rechnungen schreibt, sind Belege aus der App <strong>Test-Belege</strong> (Nummer T-…). KPlus-PDFs lassen sich einlesen – "+
           "zum Vergleich und für den Positionskatalog.",
+        "Die Nummer bekommt ein neuer Beleg erst beim <strong>Speichern</strong> (bis dahin „Nummer wird beim Speichern vergeben“) – Abbrechen lässt keine Lücke im Nummernkreis.",
         "Rechnung aus dem Angebot: die Mengen schlägt das Baustellenbuch vor. Rechnungen gibt es auch für Wartungs- und Störungseinsätze – mit dem Lidl-Rapport angehängt.",
         "<strong>KPlus-Rechnung hochladen</strong> beim Einsatz (im Protokoll unter „Rechnung zu diesem Einsatz“): statt selbst zu schreiben, das PDF aus KPlus – die App vergleicht es mit ihrem Vorschlag („So hätte die App gerechnet“), legt das Original beim Beleg ab, vermerkt den Einsatz als abgerechnet und lernt daraus für künftige Vorschläge.",
         "Status mit Datum (versendet, fällig, bezahlt); überfällige Rechnungen sind markiert.",
@@ -24885,7 +24886,8 @@ Object.assign(RUNDGAENGE, {
     {reiter:"belege", ziel:function(){ return rgReiter("belege"); }, titel:"Der Beleg-Editor",
       text:RG_LISTE(["Kopf, Positionen, Texte – Positionen: + Position / + aus Katalog / + Überschrift / + Textzeile; ↑↓, ⧉ kopieren, ✕, „Alt.“ (Alternative, zählt nicht zur Summe).",
         "Die Summe steht immer unten; „Vorschau (PDF)“ ohne zu speichern."])+
-      RG_HG(["Beim Speichern lernt der Katalog neue Positionen (mit Herkunft); Preise bestehender ändert nur KPlus.",
+      RG_HG(["Die <strong>Nummer</strong> vergibt erst das Speichern – aus dem Nummernkreis der Datenbank, zwei Geräte bekommen nie dieselbe; Abbrechen verbraucht keine (keine Lücken).",
+        "Beim Speichern lernt der Katalog neue Positionen (mit Herkunft); Preise bestehender ändert nur KPlus.",
         "Jede Rechnung bekommt einen <strong>Bezahl-Code</strong> (QR nach EPC-Standard) – die Banking-App übernimmt Empfänger, IBAN, Betrag, Rechnungsnummer. Nur mit gültiger IBAN im Briefkopf."])},
     {reiter:"belege", ziel:function(){ return rgReiter("belege"); }, titel:"Status, Folgeaufträge, KPlus",
       text:RG_LISTE(["Status: versendet (setzt das Zahlungsziel, Vorgabe 21 Tage), bezahlt, storniert; Angebote: versendet, angenommen, abgelehnt; „Rechnung daraus“.",
@@ -27639,7 +27641,8 @@ function belegeLaden(pid){
 }
 /* Belegnummer aus dem Nummernkreis der Datenbank (beleg_nummer – zwei Geräte
    bekommen nie dieselbe). Test: T-A-2026-001 / T-R-2026-001, getrennt von KPlus.
-   Echt erst, wenn der Inhaber umstellt (Einstellungen → Nummernkreis). */
+   Echt erst, wenn der Inhaber umstellt (Einstellungen → Nummernkreis). Gezogen erst beim Speichern im
+   belegEditor (Inhaber 05.10.2026: keine Lücken). */
 function belegNummer(art){
   var test=BELEG_EINST.modus!=="echt";
   return Store.sb.rpc("beleg_nummer", {p_art:art, p_test:test}).then(function(r){
@@ -28500,10 +28503,16 @@ function einsatzPositionen(pk, kid){
   else add(1, "psh", zone ? "Fahrtpauschale Zone "+zone+" – Preis fehlt im Katalog" : "Fahrtpauschale – Zone unbekannt ("+fahrtZoneFehltText(byId[pk.standortId])+"), bitte Zone 1 oder 2 wählen", null);
   return pos;
 }
-/* neuer Beleg – leer, aus einem Angebot (Mengen aus dem Baustellenbuch) oder zu einem Einsatz (Protokoll) */
+/* neuer Beleg – leer, aus einem Angebot (Mengen aus dem Baustellenbuch) oder zu einem Einsatz (Protokoll).
+   Die Nummer kommt erst beim Speichern (Inhaber 05.10.2026: keine Lücken im Nummernkreis – Abbrechen verbraucht keine).
+   Solange ein Editor aufgeht, zählt ein weiterer Tipp nicht – ein Doppeltipp öffnete sonst zwei. */
+var belegNeuLaeuft=false;
 function belegNeu(kx, art, vorlage, fertig){
-  Promise.all([belegNummer(art), belegEinstLaden(), katalogLaden().catch(function(){ return []; }), kx.protokoll ? belegeAlleLaden().catch(function(){ return []; }) : null]).then(function(x){
-    var nr=x[0], kd=kundeBelegDaten(kx.kunde_id), F=BELEG_EINST.firma||{};
+  if(belegNeuLaeuft) return;
+  belegNeuLaeuft=true;
+  Promise.all([belegEinstLaden(), katalogLaden().catch(function(){ return []; }), kx.protokoll ? belegeAlleLaden().catch(function(){ return []; }) : null]).then(function(x){
+    belegNeuLaeuft=false;
+    var kd=kundeBelegDaten(kx.kunde_id), F=BELEG_EINST.firma||{};
     var pos=vorlage ? JSON.parse(JSON.stringify(vorlage.positionen||[])).map(function(p){ delete p.betragPdf; return p; }) : [];
     var kopf=vorlage ? JSON.parse(JSON.stringify(vorlage.kopf||{})) : {empfaenger:kundeAnschrift(kx.kunde_id), betreff:[kontextTitel(kx)]};
     ["nummer","datum"].forEach(function(k){ delete kopf[k]; });
@@ -28533,10 +28542,10 @@ function belegNeu(kx, art, vorlage, fertig){
     }
     if(art==="rechnung") delete kopf.gueltigBis;
     else if(!kopf.gueltigBis) kopf.gueltigBis=isoLokal(new Date(Date.now()+60*864e5));
-    var b={art:art, nummer:nr, test:BELEG_EINST.modus!=="echt", extern:false, datum:isoLokal(new Date()), status:"entwurf", bezug_id:vorlage&&vorlage.id||null,
+    var b={art:art, nummer:null, test:BELEG_EINST.modus!=="echt", extern:false, datum:isoLokal(new Date()), status:"entwurf", bezug_id:vorlage&&vorlage.id||null,
       kopf:kopf, positionen:pos, projekt_id:kx.projekt?kx.projekt.id:null, protokoll_id:kx.protokoll?kx.protokoll._id:(kx.ausProtokoll||null), kunde_id:kx.kunde_id, standort_id:kx.standort_id};
     belegEditor(kx, b, fertig, art==="rechnung" && vorlage && kx.projekt ? baubuchVorschlaege(kx.projekt, pos) : null);
-  }, function(e){ toast("Nicht möglich: "+e.message); });
+  }, function(e){ belegNeuLaeuft=false; toast("Nicht möglich: "+e.message); });
 }
 /* Mengen aus dem Baustellenbuch, die zu Positionen passen (Kältemittel kg, Std Samstag/Sonntag, Stück …) –
    nur als Vorschlag neben der Position, übernommen wird erst mit einem Tipp */
@@ -28567,9 +28576,11 @@ function feldHoehe(t){ if(!t) return; t.style.height="auto"; t.style.height=Math
 /* Angebot/Rechnung bearbeiten (Büro 01.10.2026: „gründlich überarbeiten“) – großes Fenster,
    Positionen als Tabelle, Summe immer sichtbar, Kopf und Texte einklappbar, Vorschau als PDF */
 function belegEditor(kx, b, fertig, vorschlaege){
-  var titel=(b.test?"Test-":"")+(b.art==="rechnung"?"Rechnung ":"Angebot ")+b.nummer;
+  var titelVon=function(nr){ return (b.test?"Test-":"")+(b.art==="rechnung"?"Rechnung ":"Angebot ")+nr; };
+  /* neuer Beleg: die Nummer vergibt erst das Speichern (Inhaber 05.10.2026) */
+  var titel=b.nummer ? titelVon(b.nummer) : (b.art==="rechnung"?"Neue ":"Neues ")+(b.test?"Test-":"")+(b.art==="rechnung"?"Rechnung":"Angebot");
   var v=ansichtOeffnen(titel, null, {breit:true});
-  v.schritt.textContent=(b.test?"TEST – keine gültige "+(b.art==="rechnung"?"Rechnung":"Angebot")+" (KPlus führt) · ":"")+kontextTitel(kx);
+  v.schritt.textContent=(b.nummer?"":"Nummer wird beim Speichern vergeben · ")+(b.test?"TEST – keine gültige "+(b.art==="rechnung"?"Rechnung":"Angebot")+" (KPlus führt) · ":"")+kontextTitel(kx);
   var kopf=JSON.parse(JSON.stringify(b.kopf||{})), pos=JSON.parse(JSON.stringify(b.positionen||[]));
   /* Baustellenbuch-Vorschläge hängen an der Position selbst, nicht an der Zeilennummer – sonst rutschen sie nach
      Löschen, Verschieben oder Kopieren auf eine andere Zeile (ein Tipp setzte dann z. B. die Fahrtpauschale auf 5) */
@@ -28685,7 +28696,7 @@ function belegEditor(kx, b, fertig, vorschlaege){
   vor.onclick=function(){
     if(form.querySelector('[aria-invalid="true"]')){ toast("Menge bzw. Preis bitte als Zahl (z. B. 1.234,50)."); return; }
     vor.disabled=true; var t=vor.textContent; vor.textContent="wird erstellt …";
-    belegPdfErzeugen(Object.assign({}, b, sammeln()), kx).then(function(blob){
+    belegPdfErzeugen(Object.assign({}, b, sammeln(), b.nummer ? {} : {nummer:"(wird vergeben)"}), kx).then(function(blob){
       var u=URL.createObjectURL(blob); pdfAnsicht(u, "Vorschau "+titel); setTimeout(function(){ URL.revokeObjectURL(u); }, 300000);
     }, function(e){ toast("Vorschau nicht möglich: "+(e&&e.message||e)); }).then(function(){ vor.disabled=false; vor.textContent=t; });
   };
@@ -28694,18 +28705,31 @@ function belegEditor(kx, b, fertig, vorschlaege){
   v.fuss.appendChild(vor); v.fuss.appendChild(ab); v.fuss.appendChild(ok);
   ok.onclick=function(){
     if(form.querySelector('[aria-invalid="true"]')){ toast("Menge bzw. Preis bitte als Zahl (z. B. 1.234,50)."); return; }
-    var zeile=sammeln();
+    var zeile=sammeln(), versuche=0;
     ok.disabled=true;
-    (b.id ? Store.sb.from("belege").update(zeile).eq("id", b.id).select("*") : Store.sb.from("belege").insert(zeile).select("*")).then(function(r){
+    /* neuer Beleg: erst jetzt die Nummer aus dem Nummernkreis der Datenbank (beleg_nummer – zwei Geräte bekommen nie
+       dieselbe). Scheitert das Speichern, bleibt die gezogene Nummer für den nächsten Versuch (keine Lücke). Ist sie
+       schon vergeben (Nummernkreis ohne Zähler der Datenbank, zwei Geräte gleichzeitig): die nächste ziehen. */
+    var speichern=function(){
+      return (b.id || b.nummer ? Promise.resolve(b.nummer) : belegNummer(b.art).then(function(n){ b.nummer=n; return n; })).then(function(n){
+        zeile.nummer=n;
+        return b.id ? Store.sb.from("belege").update(zeile).eq("id", b.id).select("*") : Store.sb.from("belege").insert(zeile).select("*");
+      }).then(function(r){
+        if(r.error && !b.id && (r.error.code==="23505" || /duplicate key|unique/i.test(r.error.message||"")) && ++versuche<3){ b.nummer=null; return speichern(); }
+        return r;
+      });
+    };
+    speichern().then(function(r){
       if(r.error) throw new Error(r.error.message);
       /* inzwischen gelöscht (anderes Gerät): die Datenbank liefert keine Zeile – Editor mit den Eingaben offen lassen,
          erst nach geprüfter Antwort „gespeichert“ melden */
       if(!(r.data||[]).length) throw new Error("der Beleg wurde inzwischen gelöscht (anderes Gerät?) – die Eingaben bleiben im Fenster");
-      v.zu(); toast(titel+" gespeichert."); fertig();
+      v.zu(); toast(titelVon(zeile.nummer)+" gespeichert."); fertig();
       belegAnsicht(kx, r.data[0], fertig);
       katalogLernen(zeile.positionen, (zeile.test?"Test-":"")+(zeile.art==="rechnung"?"Rechnung ":"Angebot ")+(zeile.nummer||""), {kundeId:zeile.kunde_id||null})
         .then(function(x){ if(x.neu) setTimeout(function(){ toast(x.neu+" neue Position"+(x.neu===1?"":"en")+" in den Katalog übernommen."); }, 2200); }, function(){});
-    }).catch(function(e){ ok.disabled=false; toast("Nicht gespeichert: "+e.message); });
+    }).catch(function(e){ ok.disabled=false;
+      toast("Nicht gespeichert: "+e.message+(!b.id && b.nummer ? " – die Nummer "+b.nummer+" bleibt für den nächsten Versuch" : "")); });
   };
 }
 /* Position aus dem Katalog wählen */
