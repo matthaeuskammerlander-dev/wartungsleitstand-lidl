@@ -2172,6 +2172,30 @@ test("Tiefentest mail: Projekt aus Mailverlauf – vorhandene KPlus-Belege bleib
     window.__toasts = []; tm.fuss(/Ins Projekt übernehmen/).click(); await tm.toastBis(/^Übernommen|^Nicht fertig/);
     p914 = db.projekte.find((q) => q.id === "tmp_914");
     p(p914.status === "inbetriebnahme" && p914.verlauf.some((v) => /^Stand: Inbetriebnahme/.test(v.text)), "M7 bewusst gewählter Stand nicht gespeichert bzw. ohne Tagebuch: " + p914.status + " " + JSON.stringify(p914.verlauf.map((v) => v.text)));
+
+    /* M8/M22: neues (vergangenes) Projekt – Claude liefert Daten als TT.MM.JJJJ: umgewandelt, nichts unsichtbar oder später still gelöscht;
+       ein Termin mit unklarem Datum ist nicht vorgehakt; „Anfrage vom“ ohne Angabe = Datum der ältesten Mail (mit ihr als Quelle), nicht heute */
+    tm.programm({ mails: [M(221, "2024-05-06T08:00:00.000Z", "Anfrage Altbau Datumtest"), M(222, "2024-05-20T08:00:00.000Z", "Angebot Altbau Datumtest")],
+      vorschlag: Object.assign({}, leer, { titel: "Altbau Datumtest", kunde: "Lidl", kundeTreffer: "Lidl", status: "abgerechnet", angaben: [{ key: "angebotDatum", wert: "20.05.2024", mail: 1 }],
+        termine: [{ datum: "10.06.2024", text: "Begehung Altbau", mail: 1 }, { datum: "demnächst", text: "Montage irgendwann", mail: 1 }],
+        tagebuch: [{ datum: "20.05.2024", text: "Angebot geschickt", mail: 1 }, { datum: "Mitte Mai", text: "Rückruf Planer", mail: 0 }] }) });
+    d = await tm.verlauf({ suche: "Altbau Datumtest" });
+    const unklar8 = [...d.querySelectorAll("label")].find((l) => /Montage irgendwann/.test(l.textContent));
+    p(unklar8 && !unklar8.querySelector("input").checked && /unklar/.test(unklar8.textContent), "M8 Termin mit unklarem Datum vorgehakt bzw. nicht markiert: " + (unklar8 ? unklar8.textContent : "fehlt"));
+    window.__toasts = []; tm.fuss(/Projekt anlegen/).click(); await tm.toastBis(/angelegt:|abgebrochen|^Nicht fertig/);
+    const p22 = db.projekte.find((q) => q.titel === "Altbau Datumtest"), d22 = (p22 && p22.daten) || {};
+    p(d22.angebotDatum === "2024-05-20", "M8 „Angebot vom“ nicht als JJJJ-MM-TT gespeichert: " + d22.angebotDatum);
+    p((d22.termine || []).map((t) => t.datum + "|" + t.was).join() === "2024-06-10|Begehung Altbau", "M8 Termine: " + JSON.stringify(d22.termine));
+    p(p22.verlauf.some((v) => /^2024-05-20T/.test(v.zeit) && v.text === "Angebot geschickt") && p22.verlauf.some((v) => /^2024-05-06T/.test(v.zeit) && v.text === "Rückruf Planer"),
+      "M8 Tagebuch-Datum: " + JSON.stringify(p22.verlauf.map((v) => v.zeit + "|" + v.text)));
+    p(d22.anfrageDatum === "2024-05-06" && ((d22.quellen || {}).anfrage || []).length === 1, "M22 „Anfrage vom“ " + d22.anfrageDatum + " (heute statt älteste Mail?), Quelle " + JSON.stringify((d22.quellen || {}).anfrage));
+    /* im Projekt sichtbar – und nach „Angaben speichern“ (nur der Titel geändert) noch da */
+    x("ansichtenSchliessen()"); x("projektAnsicht('" + p22.id + "')"); await tm.bis(() => tm.dlg() && tm.dlg().querySelector('[data-d="angebotDatum"]'));
+    const v22 = tm.dlg();
+    p(v22.querySelector('[data-d="angebotDatum"]').value === "2024-05-20", "M8 „Angebot vom“ im Projekt nicht sichtbar: " + v22.querySelector('[data-d="angebotDatum"]').value);
+    v22.querySelector('[data-p="titel"]').value = "Altbau Datumtest neu"; v22.querySelector("[data-speichern]").click();
+    await tm.bis(() => db.projekte.find((q) => q.id === p22.id).titel === "Altbau Datumtest neu", 2000);
+    p(db.projekte.find((q) => q.id === p22.id).daten.angebotDatum === "2024-05-20", "M8 „Angaben speichern“ hat „Angebot vom“ gelöscht");
     tm.ende(); x("ansichtenSchliessen()");
     return { fehlt };
   });

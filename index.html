@@ -3406,6 +3406,15 @@ function kplusArtenPruefen(files, artJe){
   return Promise.all(files.filter(function(f){ return kplusDateiname(f.name); }).map(function(f){
     return f.arrayBuffer().then(function(b){ return kplusLesen(new Uint8Array(b)); }).then(function(erg){ artJe.set(f, erg.art); }, function(){}); }));
 }
+/* Datum aus Claudes Vorschlag als JJJJ-MM-TT (auch „20.03.2026“, „20.3.26“) – sonst "" (Tiefentest 05.10.2026: „20.03.2026“
+   stand roh im Projekt, war dort unsichtbar und verschwand beim nächsten „Angaben speichern“) */
+function mailDatumIso(t){
+  t=String(t||"").trim(); if(!t) return "";
+  var m=/^(\d{4})-(\d\d)-(\d\d)(T|\s|$)/.exec(t), iso=m ? m[1]+"-"+m[2]+"-"+m[3] : kiDatum(t, true, false);
+  if(!iso) return "";
+  var d=new Date(iso+"T12:00:00");
+  return !isNaN(d) && isoLokal(d)===iso ? iso : "";
+}
 function mailUebernehmen(a){
   if(!a || !a.k || !a.u){ toast("Mail-Verweis unvollständig."); return; }
   toast("Mail wird aus dem Mail-Programm geholt …");
@@ -3739,8 +3748,11 @@ function mailVerlaufVorschlag(v, r, zielId){
   var ang=[], jeKey={};
   (vs.angaben||[]).forEach(function(a){
     var w=String(a.wert||"").trim(); if(!schrittVon[a.key] || !w) return;
+    /* Daten immer als JJJJ-MM-TT – ein unklares Datum ist nicht vorgehakt */
+    var unklar=false; if(schrittVon[a.key].typ==="datum"){ var iso=mailDatumIso(w); if(iso) w=iso; else unklar=true; }
     var da=jeKey[a.key];
-    if(!da){ da=jeKey[a.key]={key:a.key, wert:w, mail:a.mail}; ang.push(da); return; }
+    if(!da){ da=jeKey[a.key]={key:a.key, wert:w, mail:a.mail, unklar:unklar}; ang.push(da); return; }
+    if(da.unklar && !unklar){ da.wert=w; da.mail=a.mail; da.unklar=false; return; }
     if(schrittVon[a.key].typ!=="datum" && da.wert.indexOf(w)<0) da.wert+=", "+w;
   });
   var angK=el('<div class="card" style="box-shadow:none;margin:0"><div class="pad stack" style="gap:6px"><h2>Angaben zu den Schritten ('+ang.length+")</h2></div></div>");
@@ -3748,11 +3760,11 @@ function mailVerlaufVorschlag(v, r, zielId){
   ang.forEach(function(a, i){
     var s=schrittVon[a.key], wert=String(a.wert).trim(), alt=ziel && (ziel.daten||{})[a.key];
     var z=el('<div style="display:grid;grid-template-columns:auto minmax(150px,220px) 1fr;gap:8px;align-items:start;font-size:13px">'+
-      '<input type="checkbox" checked data-ang="'+i+'"'+(alt?" disabled":"")+">"+
+      '<input type="checkbox"'+(a.unklar?"":" checked")+' data-ang="'+i+'"'+(alt?" disabled":"")+">"+
       "<span><strong>"+esc(s.name)+'</strong><br><span class="muted" style="font-size:11.5px">'+esc(projektSchritt(s.schritt)[1])+"</span></span>"+
       "<span>"+(s.typ==="lang"?'<textarea rows="2" data-wert style="width:100%;background:var(--accent-soft,#fbeee8)">'+esc(wert)+"</textarea>"
         :'<input type="'+(s.typ==="datum"&&/^\d{4}-\d\d-\d\d$/.test(wert)?"date":"text")+'" data-wert value="'+esc(wert)+'" style="width:100%;background:var(--accent-soft,#fbeee8)">')+
-      '<br><span class="muted" style="font-size:11.5px">'+(alt?"steht schon im Projekt: "+esc(String(alt).slice(0,60))+" – bleibt":"Quelle: "+esc(mailText(a.mail)))+"</span></span></div>");
+      '<br><span class="muted" style="font-size:11.5px">'+(alt?"steht schon im Projekt: "+esc(String(alt).slice(0,60))+" – bleibt":(a.unklar && !alt?"Datum unklar – als TT.MM.JJJJ eintragen oder weglassen · ":"")+"Quelle: "+esc(mailText(a.mail)))+"</span></span></div>");
     angK.querySelector(".stack").appendChild(z);
   });
   w.appendChild(angK);
@@ -3767,18 +3779,24 @@ function mailVerlaufVorschlag(v, r, zielId){
   var liste=function(titel, eintraege, zeile, schon){
     var c=el('<div class="card" style="box-shadow:none;margin:0"><div class="pad stack" style="gap:4px"><h2>'+esc(titel)+" ("+eintraege.length+")</h2></div></div>");
     if(!eintraege.length) c.querySelector(".stack").appendChild(el('<div class="muted" style="font-size:12.5px">keine</div>'));
-    eintraege.forEach(function(x, i){ var da=!!(schon && schon(x)); c.querySelector(".stack").appendChild(el('<label style="display:flex;gap:8px;font-size:13px;align-items:flex-start"><input type="checkbox"'+(da?"":" checked")+' data-i="'+i+'" style="margin-top:3px"><span>'+zeile(x)+
-      '<br><span class="muted" style="font-size:11.5px">'+(da?"steht schon im Projekt – kommt nicht doppelt · ":"")+"Quelle: "+esc(mailText(x.mail))+"</span></span></label>")); });
+    /* schon(x): Grund, warum der Eintrag nicht vorgehakt ist (steht schon da, Datum unklar) – sonst leer */
+    eintraege.forEach(function(x, i){ var da=schon && schon(x); c.querySelector(".stack").appendChild(el('<label style="display:flex;gap:8px;font-size:13px;align-items:flex-start"><input type="checkbox"'+(da?"":" checked")+' data-i="'+i+'" style="margin-top:3px"><span>'+zeile(x)+
+      '<br><span class="muted" style="font-size:11.5px">'+(da?esc(da)+" · ":"")+"Quelle: "+esc(mailText(x.mail))+"</span></span></label>")); });
     w.appendChild(c); return c;
   };
   var zd=(ziel && ziel.daten)||{};
   var bet=(vs.beteiligte||[]).filter(function(b){ return b.name || b.firma; });
   var betK=liste("Beteiligte", bet, function(b){ return "<strong>"+esc(b.rolle||"Sonstige")+"</strong> · "+esc([b.firma,b.name].filter(Boolean).join(", "))+(b.telefon?" · "+esc(b.telefon):"")+(b.mail_adresse?" · "+esc(b.mail_adresse):""); },
-    function(b){ return betDa(b, zd.beteiligte); });
-  var ter=(vs.termine||[]).filter(function(t){ return t.text; });
-  var terK=liste("Termine", ter, function(t){ return '<span class="mono">'+esc(t.datum?dfmt(t.datum):"ohne Datum")+"</span> · "+esc(t.text); }, function(t){ return terDa(t, zd.termine); });
-  var tag=(vs.tagebuch||[]).filter(function(t){ return t.text; }).sort(function(a,b){ return String(a.datum||"").localeCompare(String(b.datum||"")); });
-  var tagK=liste("Tagebuch (Verlauf)", tag, function(t){ return '<span class="mono">'+esc(t.datum?dfmt(t.datum):"")+"</span> · "+esc(t.text); }, function(t){ return ziel && tagDa(t, ziel.verlauf); });
+    function(b){ return betDa(b, zd.beteiligte) ? "steht schon im Projekt – kommt nicht doppelt" : ""; });
+  /* Termine: Datum als JJJJ-MM-TT; ein unklares bleibt im Text stehen (roh) und ist nicht vorgehakt */
+  var ter=(vs.termine||[]).filter(function(t){ return t.text; }).map(function(t){ var iso=mailDatumIso(t.datum); return Object.assign({}, t, {datum:iso, roh:iso||!t.datum ? "" : String(t.datum).trim()}); });
+  var terK=liste("Termine", ter, function(t){ return '<span class="mono">'+esc(t.datum?dfmt(t.datum):t.roh?"Datum unklar: „"+t.roh+"“":"ohne Datum")+"</span> · "+esc(t.text); },
+    function(t){ return terDa(t, zd.termine) ? "steht schon im Projekt – kommt nicht doppelt" : t.roh ? "Datum unklar – nur bewusst übernehmen (der Text aus der Mail bleibt dabei)" : ""; });
+  /* Tagebuch: Datum als JJJJ-MM-TT; fehlt es oder ist es unklar, gilt das Datum der Mail, aus der der Eintrag stammt */
+  var tag=(vs.tagebuch||[]).filter(function(t){ return t.text; }).map(function(t){ var iso=mailDatumIso(t.datum), m=mails[t.mail], mt=m && m.datum ? tagLokal(m.datum) : "";
+    return Object.assign({}, t, {datum:iso||mt, ausMail:!iso && !!mt}); }).sort(function(a,b){ return String(a.datum||"").localeCompare(String(b.datum||"")); });
+  var tagK=liste("Tagebuch (Verlauf)", tag, function(t){ return '<span class="mono">'+esc(t.datum?dfmt(t.datum):"")+"</span>"+(t.ausMail?' <span class="muted">(Datum der Mail)</span>':"")+" · "+esc(t.text); },
+    function(t){ return ziel && tagDa(t, ziel.verlauf) ? "steht schon im Projekt – kommt nicht doppelt" : ""; });
   /* Dateien: je Mail die Mail selbst und die Anhänge mit Art; PDFs werden beim Anlegen auf KPlus geprüft */
   var dateiK=el('<div class="card" style="box-shadow:none;margin:0"><div class="pad stack" style="gap:6px"><h2>Mails und Anhänge</h2>'+
     '<div class="muted" style="font-size:12.5px">Alles kommt in die Projektdateien (mit Herkunft). KPlus-PDFs (Angebot/Rechnung) erkennt die App beim Anlegen und liest die Positionen ein'+(nurInhaber()?" – schon vorhandene Belege bleiben unverändert":" – nur für Inhaber")+".</div></div></div>");
@@ -3811,6 +3829,12 @@ function mailVerlaufVorschlag(v, r, zielId){
         ") – bleibt unverändert, höchstens die PDF kommt dazu.</div>"), x.z.nextSibling);
     }); });
   }, function(){});
+  /* neues (auch vergangenes) Projekt ohne Angabe von Claude: „Anfrage vom“ = Datum der ältesten Mail, mit ihr als Quelle –
+     nicht heute (Tiefentest 05.10.2026) */
+  var aelteste=-1; mails.forEach(function(m, i){ if(m.datum && (aelteste<0 || String(m.datum)<String(mails[aelteste].datum))) aelteste=i; });
+  var anfrageVor=aelteste>=0 ? tagLokal(mails[aelteste].datum) : isoLokal(new Date());
+  if(!ziel && aelteste>=0 && !ang.some(function(a){ return a.key==="anfrageDatum"; }))
+    kopf.querySelector(".stack").insertBefore(el('<div class="muted" style="font-size:12.5px">„Anfrage vom“: '+esc(dfmt(anfrageVor))+" – Datum der ältesten Mail („"+esc(String(mails[aelteste].betreff||"").slice(0,60))+"“, als Quelle).</div>"), kopf.querySelector("[data-err]"));
   var fortschritt=el('<div class="note" hidden style="font-size:13px"></div>'); w.appendChild(fortschritt);
   var ab=el('<button class="btn ghost" type="button">Abbrechen</button>'), ok=el('<button class="btn" type="button">'+(ziel?"Ins Projekt übernehmen":"Projekt anlegen")+"</button>");
   ab.onclick=function(){ v.zu(); };
@@ -3826,7 +3850,11 @@ function mailVerlaufVorschlag(v, r, zielId){
       if(!kf("kunde").value){ err.textContent="Bitte den Kunden wählen"+(nk?" – oder „+ Neuer Kunde“.":"."); err.hidden=false; return; }
     }
     var gewaehlt=function(k){ return [].filter.call(k.querySelectorAll("input[data-i]"), function(c){ return c.checked; }).map(function(c){ return +c.dataset.i; }); };
-    var angaben=[]; angK.querySelectorAll("[data-ang]").forEach(function(c){ if(!c.checked || c.disabled) return; var a=ang[+c.dataset.ang], f=c.parentNode.querySelector("[data-wert]"); angaben.push({key:a.key, wert:f.value.trim(), mail:a.mail}); });
+    /* ein Datum nur als JJJJ-MM-TT – ein unklares wird nicht still übernommen */
+    var angaben=[], unklar=[]; angK.querySelectorAll("[data-ang]").forEach(function(c){ if(!c.checked || c.disabled) return; var a=ang[+c.dataset.ang], f=c.parentNode.querySelector("[data-wert]"), wert=f.value.trim();
+      if(schrittVon[a.key].typ==="datum" && wert){ var iso=mailDatumIso(wert); if(!iso){ unklar.push(schrittVon[a.key].name); return; } wert=iso; }
+      angaben.push({key:a.key, wert:wert, mail:a.mail}); });
+    if(unklar.length){ err.textContent="Datum unklar bei „"+unklar.join("“, „")+"“ – bitte als TT.MM.JJJJ eintragen oder den Haken wegnehmen."; err.hidden=false; toast(err.textContent); return; }
     var bGew=gewaehlt(betK).map(function(i){ return bet[i]; }), tGew=gewaehlt(terK).map(function(i){ return ter[i]; }), tbGew=gewaehlt(tagK).map(function(i){ return tag[i]; });
     var dGew=wahlen.filter(function(x){ return x.z.querySelector("input").checked; });
     ok.disabled=true; ab.disabled=true; fortschritt.hidden=false;
@@ -3834,7 +3862,7 @@ function mailVerlaufVorschlag(v, r, zielId){
     var jetzt=new Date().toISOString();
     var anlegen=ziel ? Promise.resolve(ziel) : stand.p ? Promise.resolve(stand.p) : (function(){
       var zeile={nummer:projektNummerNeu(), titel:kf("titel").value.trim(), kunde_id:kf("kunde").value, standort_id:kf("standort").value||null, status:kf("status").value,
-        daten:Object.assign({anfrageDatum:isoLokal(new Date()).slice(0,10)}, kf("typ").value.trim()?{typ:kf("typ").value.trim()}:{}),
+        daten:Object.assign({anfrageDatum:anfrageVor}, kf("typ").value.trim()?{typ:kf("typ").value.trim()}:{}),
         verlauf:[{zeit:jetzt, wer:meinName(), text:"Projekt aus dem Mailverlauf nachgetragen ("+mails.length+" Mails)", status:kf("status").value}], geaendert:jetzt, geaendert_von:meinName()};
       melde("Projekt wird angelegt …");
       var versuch=function(n){ return mitFrist(Store.sb.from("projekte").insert(zeile).select("*"), 20000).then(function(x){
@@ -3887,10 +3915,13 @@ function mailVerlaufVorschlag(v, r, zielId){
         angaben.forEach(function(a){ if(d[a.key] && ziel) return; d[a.key]=a.wert; var s=schrittVon[a.key].schritt;
           if(emlPfad[a.mail]){ d.quellen=d.quellen||{}; d.quellen[s]=(d.quellen[s]||[]); if(d.quellen[s].indexOf(emlPfad[a.mail])<0) d.quellen[s].push(emlPfad[a.mail]); } });
         if(!ziel && kf("typ") && kf("typ").value.trim()) d.typ=kf("typ").value.trim();
+        /* „Anfrage vom“ aus der ältesten Mail: sie ist die Quelle */
+        if(!ziel && aelteste>=0 && emlPfad[aelteste] && !angaben.some(function(a){ return a.key==="anfrageDatum"; }) && d.anfrageDatum===anfrageVor){
+          d.quellen=d.quellen||{}; d.quellen.anfrage=d.quellen.anfrage||[]; if(d.quellen.anfrage.indexOf(emlPfad[aelteste])<0) d.quellen.anfrage.push(emlPfad[aelteste]); }
         bNeu.forEach(function(b){ if(betDa(b, d.beteiligte)) return;
           d.beteiligte=(d.beteiligte||[]).concat([{id:neueKennung("bt"), rolle:b.rolle||"Sonstige", firma:b.firma||"", name:b.name||"", telefon:b.telefon||"", mail:b.mail_adresse||"", notiz:"aus dem Mailverlauf", quellen:q(b.mail)}]); });
         tNeu.forEach(function(t){ if(terDa(t, d.termine)) return;
-          d.termine=(d.termine||[]).concat([{id:neueKennung("tm"), datum:t.datum||"", zeit:"", was:t.text, wer:"", erledigt:!!(t.datum && t.datum<isoLokal(new Date())), quellen:q(t.mail)}]); });
+          d.termine=(d.termine||[]).concat([{id:neueKennung("tm"), datum:t.datum||"", zeit:"", was:t.text+(t.roh?" (Datum laut Mail: "+t.roh+")":""), wer:"", erledigt:!!(t.datum && t.datum<isoLokal(new Date())), quellen:q(t.mail)}]); });
         d.mails=(d.mails||[]).concat(mails.map(mailVerweis).filter(function(x){ return !(d.mails||[]).some(function(y){ return y.id && y.id===x.id; }); }));
       }, "Aus dem Mailverlauf übernommen: "+angaben.length+" Angaben, "+bNeu.length+" Beteiligte, "+tNeu.length+" Termine").then(function(){ stand.eingetragen=true; })).then(function(){
         if(stand.tagebuch) return null;
