@@ -2275,6 +2275,40 @@ test("Tiefentest kalender: Planung prüfen – Reihenfolge übernehmen", async (
   pruefe(!fehl.length, fehl.join(" | "));
 });
 
+test("Tiefentest kalender: Tour – Teilerfolg ehrlich gemeldet, Störung nie doppelt im Kalender", async () => {
+  const fehl = [];
+  const a = await tkOeffnen(KONTEN.inhaber);
+  /* TT-KAL-06: Tour → „In meinen Kalender“: Anlegen klappt, danach (Termin der Aufgabe verschieben) reißt die Verbindung ab */
+  const r06 = await a.seite.evaluate(async () => {
+    const tt = window.__tt, x = window.__t.x, db = window.__db.tabellen; tt.leeren();
+    await x("stoerungSpeichern({_id:'stk1', standortId:'TS2', auftragsnummer:'T-K1', erfasstAm:new Date().toISOString(), status:'offen'}, 'Test')");
+    const auf = await tt.termin({ art: "aufgabe", kategorie: "sonstiges", titel: "Aufgabe TS1", standort_id: "TS1" }); await tt.laden();
+    window.__T = { tage: [{ nr: 1, stopps: [
+      { standort: x("byId.TS1"), positionen: [{ id: "plan:" + auf.id, anlagentyp: "Aufgabe" }], fahrtH: 0.5, arbeitH: 1 },
+      { standort: x("byId.TS2"), positionen: [{ id: "stoer:stk1", anlagentyp: "Störung" }], fahrtH: 0.5, arbeitH: 1 }] }], anzahlStopps: 2, kmGesamt: 40, stundenProTag: 8 };
+    const schicken = async (netzWegBeimVerschieben) => {
+      x("tourSchicken(window.__T)"); await tt.warte(300);
+      const d = tt.dialog(); tt.knopf(d, /^Ich/).click(); await tt.warte(50);
+      const sb = x("Store.sb"), alt = sb.from;
+      if (netzWegBeimVerschieben) sb.from = function (t) { const q = alt.call(this, t); if (t === "planung") { const up = q.update; q.update = function () { window.__netzWeg = true; return up.apply(q, arguments); }; } return q; };
+      const knopf = tt.ok(d); tt.toasts.length = 0; knopf.click(); await tt.warte(500);
+      sb.from = alt; window.__netzWeg = false;
+      const meldung = (document.body.contains(d) ? d.querySelector("[data-a=fehler]").textContent + " " : "") + tt.toasts.join(" ");
+      /* nochmals tippen, falls der Knopf wieder frei ist */
+      if (document.body.contains(d) && !knopf.disabled) { knopf.click(); await tt.warte(500); }
+      x("ansichtenSchliessen()");
+      return { meldung, stoerung: db.planung.filter((p) => p.stoerung_id === "stk1").length };
+    };
+    const erst = await schicken(true), nochmal = await schicken(false);
+    return { erst, nochmal, aufgabe: tt.zeit("Aufgabe TS1"), stoerZeit: db.planung.filter((p) => p.stoerung_id === "stk1").map((p) => p.datum + " " + p.beginn) };
+  });
+  if (r06.erst.stoerung !== 1 || !/1 Termin.*nicht/.test(r06.erst.meldung) || /nichts gespeichert/.test(r06.erst.meldung) || r06.nochmal.stoerung !== 1)
+    fehl.push("TT-KAL-06 Teilerfolg nicht ehrlich gemeldet bzw. Störung doppelt im Kalender: " + JSON.stringify(r06));
+  if (a.fehler.length) fehl.push("Laufzeitfehler: " + a.fehler.join("; "));
+  await a.zu();
+  pruefe(!fehl.length, fehl.join(" | "));
+});
+
 test("Tiefentest kalender: Präsentation – Reihenfolge übernehmen, mit einplanen und Tag beenden schicken nichts an die Datenbank", async () => {
   const a = await tkOeffnen(KONTEN.praesentation);
   const r = await a.seite.evaluate(async () => {

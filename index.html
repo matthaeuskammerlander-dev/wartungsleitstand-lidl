@@ -11729,7 +11729,7 @@ function tourZuSpaet(T, start){
 }
 function tourInKalender(T, an, anName, titel, ab, start){
   var zuSpaet=tourZuSpaet(T, start); if(zuSpaet) return Promise.reject(new Error(zuSpaet));
-  var tage=[], tag=tourTagFrei(an, ab||plusTage(isoLokal(new Date()),1)), zeilen=[], updates=[];
+  var tage=[], tag=tourTagFrei(an, ab||plusTage(isoLokal(new Date()),1)), zeilen=[], updates=[], vermerke=[];
   T.tage.forEach(function(tg, i){
     if(i>0) tag=tourTagFrei(an, plusTage(tag,1));
     tage.push(tag);
@@ -11744,6 +11744,10 @@ function tourInKalender(T, an, anName, titel, ab, start){
         else if(id.indexOf("plan:")===0) plan.push(id.slice(5));
         else if(posById[id] && !planFuerPosition(id)) pos.push(id); });
       plan.forEach(function(pid){ updates.push({id:pid, datum:tag, beginn:kalHm(b), ende:kalHm(e)}); });
+      /* die Störung steht für diese Person schon im Kalender (früher eingeplant, etwa ein halb gelungener Versuch):
+         nicht doppelt anlegen – der Termin bekommt Tag und Uhrzeit der Tour */
+      var schon=stoer && PLANUNG.filter(function(x){ return x.art==="termin" && x.stoerung_id===stoer && x.status!=="abgelehnt" && x.status!=="erledigt" && planPersonen(x).indexOf(an)>=0; })[0];
+      if(schon){ updates.push({id:schon.id, datum:tag, beginn:kalHm(b), ende:kalHm(e)}); vermerke.push({stoerung_id:stoer, datum:tag, beginn:kalHm(b)}); stoer=null; }
       if(!pos.length && !stoer) return;
       var namen=(st.positionen||[]).filter(function(p){ return String(p.id||"").indexOf("plan:")!==0; }).map(function(p){ return p.anlagentyp||""; }).filter(Boolean);
       zeilen.push({art:"termin", kategorie:stoer && !pos.length ? "stoerung" : "wartung", titel:(stoer && !pos.length ? "Störung " : "Wartung ")+stName(st.standort),
@@ -11758,12 +11762,17 @@ function tourInKalender(T, an, anName, titel, ab, start){
     (r.data||[]).forEach(function(g){ PLANUNG.push(g); });
     /* Störung: der geplante Einsatz steht auch am Störungsauftrag („Einsatz geplant am“) – ohne eigene
        Nachricht, die Tour bringt schon eine (Büro 03.10.2026) */
-    zeilen.forEach(function(z){ if(!z.stoerung_id) return;
+    zeilen.concat(vermerke).forEach(function(z){ if(!z.stoerung_id) return;
       var o=OFFENE.filter(function(x){ return x._id===z.stoerung_id && !x.erledigt && !x.geloescht; })[0]; if(!o) return;
       stoerungSpeichern(Object.assign({}, o, {termin:z.datum, terminZeit:z.beginn, terminTechniker:anName, _ohneMeldung:true}), "Einsatz geplant (Tour)"); });
-    return Promise.all(updates.map(function(u){ return Store.sb.from("planung").update({datum:u.datum, beginn:u.beginn, ende:u.ende, geaendert_von:meinName()}).eq("id", u.id).select("*")
-      .then(function(r2){ (r2.data||[]).forEach(function(g){ PLANUNG=PLANUNG.filter(function(x){ return x.id!==g.id; }).concat([g]); }); }); }));
-  }).then(function(){ planGeaendert(); return {tage:tage, anzahl:zeilen.length+updates.length}; });
+    /* vorhandene Einträge verschieben: jeder zählt einzeln – die neuen Termine stehen schon, ein Fehler hier ist ein
+       Teilerfolg (nicht „nichts gespeichert“; nochmals tippen legte sonst alles doppelt an) */
+    var fehlt=0;
+    return Promise.all(updates.map(function(u){ return mitFrist(Store.sb.from("planung").update({datum:u.datum, beginn:u.beginn, ende:u.ende, geaendert_von:meinName()}).eq("id", u.id).select("*"), 15000)
+      .then(function(r2){ if(r2.error || !(r2.data||[]).length){ fehlt++; return; } r2.data.forEach(function(g){ PLANUNG=PLANUNG.filter(function(x){ return x.id!==g.id; }).concat([g]); }); },
+        function(){ fehlt++; }); }))
+      .then(function(){ return fehlt; });
+  }).then(function(fehlt){ planGeaendert(); return {tage:tage, anzahl:zeilen.length+updates.length-fehlt, fehlt:fehlt}; });
 }
 /* wer Touren für andere planen darf: Inhaber und Admins (Techniker nur für sich) */
 function tourBuero(){ return istInhaber() || Rolle.name==="admin"; }
@@ -11813,7 +11822,8 @@ function tourSchicken(T){
       if(!planungAn()){ fe.textContent="Der Kalender ist nicht verfügbar."; fe.hidden=false; return; }
       los.disabled=true; los.textContent="wird eingetragen …"; fe.hidden=true;
       tourInKalender(T, an, anName, titel, box.querySelector('[data-a="ab"]').value, box.querySelector('[data-a="start"]').value||"07:00").then(function(kal){
-        v.zu(); toast(kal.anzahl+" Termin"+(kal.anzahl===1?"":"e")+" in deinem Kalender – ab "+dfmt(kal.tage[0]||"")+".");
+        v.zu(); toast(kal.anzahl+" Termin"+(kal.anzahl===1?"":"e")+" in deinem Kalender – ab "+dfmt(kal.tage[0]||"")+"."+
+          (kal.fehlt?" "+kal.fehlt+" Termin"+(kal.fehlt===1?"":"e")+" nicht verschoben – bitte im Kalender prüfen.":""));
       }).catch(function(x){ los.disabled=false; los.textContent="In meinen Kalender"; fe.textContent="Nicht eingetragen: "+technikDeutsch(x.message||x); fe.hidden=false; });
       return;
     }
@@ -11832,7 +11842,7 @@ function tourSchicken(T){
       return mitFrist(Store.sb.from("chat").insert({id:"c_"+Date.now().toString(36)+Math.random().toString(36).slice(2,8),
         von:Store.benutzer.id, von_name:ich, text:text, an:an, an_name:anName, fotos:[]}), 15000).then(function(r2){
         v.zu();
-        toast(r2 && r2.error ? "Tour gespeichert – die Nachricht ging nicht hinaus ("+r2.error.message+")." : "Tour an "+anName+" geschickt"+(kal?" – "+kal.anzahl+" Termine in seinem Kalender":"")+".");
+        toast(r2 && r2.error ? "Tour gespeichert – die Nachricht ging nicht hinaus ("+r2.error.message+")." : "Tour an "+anName+" geschickt"+(kal?" – "+kal.anzahl+" Termine in seinem Kalender"+(kal.fehlt?", "+kal.fehlt+" nicht verschoben (bitte im Kalender prüfen)":""):"")+".");
         if(typeof chatLaden==="function") chatLaden();
       });
       });
