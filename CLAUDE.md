@@ -410,8 +410,11 @@ Kammerlander Umwelt- und Klimatechnik (UKT) – oft kurz, vom Handy, im Feld.
   Innsbruck (Innsbruck selbst Zone 1), Osttirol; sonst Zone 1. `einsatzPositionen` nimmt die Katalog-Position der Zone. Nur auf Anweisung ändern.
 - **Fahrzeuge** (tools/fahrzeuge.sql, Büro 02.10.2026): km, Pickerl, Service, Reparatur, Schaden; Techniker nur
   ihr Fahrzeug (km-Stand, Schaden), Beträge nur Inhaber (`fahrzeug_kosten`). GPS-Import (X-GPS, CSV/Excel):
-  NUR Kilometer je Tag – nie Orte, Uhrzeiten oder Fahrten speichern (Fahrtenbuch mit Orten erst nach
-  Zustimmung/Betriebsvereinbarung). Diese Grenze nie lockern.
+  NUR Kilometer je Tag – nie Orte, Uhrzeiten oder Fahrten speichern. Diese Grenze nie lockern. Keine direkte
+  X-GPS-Anbindung (Inhaber 05.10.2026: „zu kompliziert und unnötig“) – stattdessen je Fahrzeug und Monat
+  „gefahren laut km-Stand“ (`fzKmLautStand`) neben „geplante Einsatzfahrten ≈ X km“ (`fzEinsatzKm`: je Fahrer und Tag
+  Startpunkt → Einsätze laut Kalender → zurück, Übernachtung wie beim Startpunkt; Straßen-km aus `FAHR_KM` von Kalender/Tour,
+  sonst Luftlinie × `UMWEG`; keine eigene Netzabfrage, nichts gespeichert). Sichtbar wie die km im Reiter Fahrzeuge.
 - **Spielwiese** (`spielwieseOeffnen`, `spielwieseDarf`: Inhaber, Admins und Techniker – je mit dem eigenen Konto und
   dessen Rechten, Büro 03.10.2026; nie Kunde/Präsentation): eigene App im geschützten Vollbild; darin
   `spielwiese()` statt `demo()` – alles läuft echt gegen die Schattendatenbank (`schattenClient`: Tabellen

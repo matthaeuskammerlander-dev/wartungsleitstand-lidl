@@ -2014,6 +2014,7 @@ function planeTour(opt){
 
   return strassenMatrix(punkte, opt.melde).then(function(M){
     var echteStrasse = !!M;
+    if(M) fahrKmMerken(punkte, M);   /* Straßen-km auch für die Schätzung bei den Fahrzeugen (fzEinsatzKm) */
     /* findet der Dienst für ein Paar keine Straße, steht dort null –
        das wäre sonst 0 km / 0 h; dann für dieses Paar die Luftlinie */
     var dauerH = M ? function(i,j){ var d=M.dauer[i][j]; return d==null ? fahrH(punkte[i],punkte[j]) : d/3600; }
@@ -20261,8 +20262,10 @@ function wzToDo(){
    Techniker sehen nur ihr zugeteiltes Fahrzeug und tragen km-Stand und Schäden ein; Inhaber und Admins
    sehen alle und tragen Service, Pickerl, Reparaturen ein; Beträge nur der Inhaber (fahrzeug_kosten).
    GPS (X-GPS): Import einer Bericht-Datei (CSV/Excel) – übernommen werden NUR Kilometer je Tag
-   (Inhaber 02.10.2026). Orte, Uhrzeiten und Fahrten bleiben in der Datei: ein Fahrtenbuch mit Orten
-   wäre Standortüberwachung der Mitarbeiter (erst nach Zustimmung/Betriebsvereinbarung, ArbVG § 96). */
+   (Inhaber 02.10.2026). Orte, Uhrzeiten und Fahrten bleiben in der Datei – ein Fahrtenbuch mit Orten
+   wäre Standortüberwachung der Mitarbeiter (ArbVG § 96). Eine direkte X-GPS-Anbindung gibt es nicht (Inhaber
+   05.10.2026: „zu kompliziert und unnötig“); stattdessen schätzt die App die km der geplanten Einsatzfahrten
+   (fzEinsatzKm) und stellt sie den km laut km-Stand gegenüber (fzKmLautStand). */
 var FZ=[], FZ_E=[], FZ_K={}, fzGeladen=false, fzFehlt=false, fzFehler="", fzLaedt=null, fzStand=0;
 var FZ_ARTEN={km:"km-Stand", service:"Service", pickerl:"Pickerl (§ 57a)", reparatur:"Reparatur", schaden:"Schaden", reifen:"Reifen", sonstiges:"Sonstiges"};
 function fzBuero(){ return istInhaber() || Rolle.name==="admin"; }
@@ -20292,6 +20295,54 @@ function fzStrecke(f, ym){
   var l=fzEintraege(f).filter(function(e){ return String(e.datum).slice(0,7)===ym && e.strecke!=null; });
   return l.length ? Math.round(l.reduce(function(s,e){ return s+(+e.strecke||0); },0)) : null;
 }
+/* gefahrene km eines Monats laut km-Stand: letzter Stand im Monat minus letzter Stand davor (sonst der erste im Monat) */
+function fzKmLautStand(f, ym){
+  var von=ym+"-01", vor=null, erst=null, letzt=null;
+  fzEintraege(f).filter(function(e){ return e.km!=null; }).reverse().forEach(function(e){
+    var d=String(e.datum);
+    if(d<von) vor=e; else if(d.slice(0,7)===ym){ if(!erst) erst=e; letzt=e; }
+  });
+  var ab=vor||erst;
+  return (ab && letzt && ab!==letzt && letzt.km>=ab.km) ? {km:letzt.km-ab.km, von:ab.datum, bis:letzt.datum} : null;
+}
+/* ---- km der geplanten Einsatzfahrten (Inhaber 05.10.2026, statt einer X-GPS-Anbindung: „Verbinde lieber die km mit
+   den geplanten Einsatzfahrten, damit man eine ungefähre Schätzung bekommt. Es wird Diskrepanzen geben aufgrund von
+   Umwegen oder Fahrten während eines Einsatzes (z. B. Material holen), damit muss man halt leben.“) ----
+   Je Fahrer des Fahrzeugs und Tag (bis heute): Startpunkt → Einsätze des Tages laut Kalender (Termine, Störungseinsätze,
+   Projekttermine, erledigte Einsätze; je Markt einmal, nach Uhrzeit) → zurück nach Hause bzw. zum Betrieb – außer die
+   Person übernachtet dort (wie beim Startpunkt: am nächsten Tag geht es vom letzten Einsatz weiter). Straßen-km aus dem,
+   was Kalender und Tour schon abgefragt haben (FAHR_KM), sonst Luftlinie × UMWEG wie in der Tour. Keine eigene
+   Netzabfrage, keine Orte gespeichert. Fahren zwei denselben Weg am selben Tag (gemeinsam), zählt er einmal. */
+function fzEinsatzKm(f, ym){
+  var heute=isoLokal(new Date()), von=ym+"-01", ende=isoLokal(new Date(+ym.slice(0,4), +ym.slice(5,7), 0)), bis=ende<heute ? ende : heute;
+  if(von>heute || !(f.fahrer||[]).length) return null;
+  var km=0, tage={}, wege={};
+  var projOrt=function(pid){ var p=pid && PROJEKTE.filter(function(x){ return x.id===pid; })[0]; return p ? p.standort_id : null; };
+  f.fahrer.forEach(function(uid){
+    /* einmal je Person: der Monat samt 4 Tagen davor (Übernachtung) und dem Tag danach (Heimfahrt?) */
+    var m=kalenderEintraege(plusTage(von,-4), plusTage(bis,1), uid, ""), sp=STARTPUNKTE[uid]||{}, heim=sp.heimat||BETRIEB;
+    var orte=function(t){
+      var l=[];
+      (m[t]||[]).forEach(function(x){
+        if(x.art==="aufgabe" || x.art==="ziel" || (x.e && (x.e.status==="abgelehnt" || x.e.privat))) return;
+        var sid=x.e ? (x.e.standort_id||projOrt(x.e.projekt_id)) : x.o ? x.o.standortId : x.pr ? x.pr.standortId : x.p ? x.p.standort_id : null, s=sid && byId[sid];
+        if(s && s.lat!=null && s.lon!=null && l.indexOf(s)<0) l.push(s);
+      });
+      return l;
+    };
+    for(var t=von; t<=bis; t=plusTage(t,1)){
+      var o=orte(t); if(!o.length) continue;
+      var weg=[startpunktFuer(uid, t, m).ort||heim].concat(o), morgen=plusTage(t,1);
+      var naechster=orte(morgen).length ? startpunktFuer(uid, morgen, m) : null;
+      if(!(naechster && naechster.ort && naechster.ort.id===o[o.length-1].id)) weg.push(heim);
+      var schl=t+":"+weg.map(function(p){ return p.id||(p.lat+","+p.lon); }).join(">");
+      if(wege[schl]) continue;
+      wege[schl]=1; tage[t]=1;
+      for(var i=1;i<weg.length;i++) km+=fahrKmZw(weg[i-1], weg[i]);
+    }
+  });
+  return {km:Math.round(km), tage:Object.keys(tage).length};
+}
 /* was am Fahrzeug ansteht: Pickerl und Service (Datum: 30 Tage vorher, km: 1000 km vorher), offene Schäden */
 function fzFaellig(f){
   var heute=isoLokal(new Date()), r=[], st=fzKmStand(f);
@@ -20308,6 +20359,8 @@ function viewFahrzeuge(){
   fzLaden().then(function(neu){ if(neu && S.view==="fahrzeuge" && darfRendern() && !document.querySelector(".assistent")) render(); });
   if(wzAn()) wzNachladen();   /* was in den Fahrzeugen liegt */
   if(!planTeam) planTeamLaden();
+  /* Kalender und Startpunkte für die km-Schätzung (fzEinsatzKm) – höchstens einmal je Minute */
+  planungNachladen(function(){ if(S.view==="fahrzeuge" && darfRendern() && !document.querySelector(".assistent")) render(); });
   var buero=fzBuero() && !nurLesen();
   var kopf=el('<div class="card"><div class="pad stack" style="gap:8px">'+
     '<div class="rowflex" style="justify-content:space-between;align-items:flex-start;gap:10px"><div><h2>Fahrzeuge</h2>'+
@@ -20340,6 +20393,14 @@ function fzKarte(x){
     '<div class="kpis">'+kpi(st?st.km.toLocaleString("de-AT"):"–", "km-Stand"+(st?" ("+dfmt(st.datum)+")":""))+
       kpi(sm!=null?sm.toLocaleString("de-AT"):"–", "km diesen Monat")+kpi(sv!=null?sv.toLocaleString("de-AT"):"–", "km Vormonat")+
       kpi(x.pickerl_bis?dfmt(x.pickerl_bis).slice(3):"–", "Pickerl bis")+"</div>"+
+    /* gefahren laut km-Stand neben der Schätzung aus den geplanten Einsatzfahrten (Inhaber 05.10.2026, statt GPS) */
+    ((x.fahrer||[]).length ? '<div data-kmschaetzung style="font-size:12.5px">'+[[ym, "Diesen Monat"], [vm, MONATE_L[+vm.slice(5,7)]]].map(function(z){
+      var g=fzKmLautStand(x, z[0]), e=fzEinsatzKm(x, z[0]);
+      return "<div>"+esc(z[1])+": gefahren laut km-Stand <strong>"+(g?g.km.toLocaleString("de-AT")+" km":"–")+"</strong>"+
+        (g?' <span class="muted">('+esc(dfmt(g.von).slice(0,6))+"–"+esc(dfmt(g.bis).slice(0,6))+")</span>":"")+
+        " · geplante Einsatzfahrten ≈ <strong>"+(e?e.km.toLocaleString("de-AT")+" km":"–")+"</strong>"+
+        (e&&e.tage?' <span class="muted">('+e.tage+" Tag"+(e.tage===1?"":"e")+")</span>":"")+"</div>"; }).join("")+
+      '<div class="muted">Schätzung – Umwege und Fahrten am Einsatzort nicht enthalten.</div></div>' : "")+
     (fae.length?'<div class="rowflex" style="gap:6px;flex-wrap:wrap">'+fae.map(function(a){ return '<span class="tag" style="'+(a.art==="crit"?"background:var(--crit);color:#fff":"background:var(--warn-soft,#fdf1d8)")+'">'+esc(a.text)+"</span>"; }).join("")+"</div>":"")+
     '<div class="rowflex" style="gap:6px;flex-wrap:wrap"><button class="btn sm" type="button" data-e="km">km-Stand eintragen</button>'+
       '<button class="btn ghost sm" type="button" data-e="schaden">Schaden melden</button>'+
@@ -20562,8 +20623,9 @@ function fzGpsImport(){
   v.schritt.textContent="Bericht-Datei aus dem X-GPS-Portal (CSV oder Excel)";
   var box=el('<div class="stack" style="max-width:640px">'+
     '<div class="note">Im Portal des GPS-Anbieters einen Bericht mit <strong>Datum</strong> und <strong>Kilometern</strong> (gefahrene Strecke oder km-Stand) je Fahrzeug herunterladen '+
-      "(CSV oder Excel) und hier wählen. Übernommen werden <strong>nur die Kilometer je Tag</strong> – Orte, Uhrzeiten und einzelne Fahrten werden nicht gespeichert "+
-      "(ein Fahrtenbuch mit Orten erst nach Zustimmung bzw. Betriebsvereinbarung). Schon eingelesene Tage werden ersetzt, nicht doppelt gezählt.</div>"+
+      "(CSV oder Excel) und hier wählen. Übernommen werden <strong>nur die Kilometer je Tag</strong> – Orte, Uhrzeiten und einzelne Fahrten werden nicht gespeichert. "+
+      "Schon eingelesene Tage werden ersetzt, nicht doppelt gezählt. Eine direkte Verbindung zum GPS-Portal gibt es nicht – zum Vergleich steht bei jedem "+
+      "Fahrzeug die Schätzung aus den geplanten Einsatzfahrten.</div>"+
     '<label class="btn sm" style="cursor:pointer;align-self:flex-start">Datei wählen<input type="file" accept=".csv,.txt,.xlsx,.xls,text/csv" hidden></label>'+
     '<div data-erg class="stack" style="gap:8px"></div></div>');
   v.inhalt.appendChild(box);
@@ -24219,7 +24281,9 @@ function handbuchKarte(z){
     abschnitt("14 · Bedienung am Handy und am PC",
       liste(["<strong>Reiter</strong> nach dem Arbeitsablauf: Fällig, Kalender, Karte, Protokoll, Anlagen, Stunden, Fahrzeuge – dann die Büro-Reiter.",
         "<strong>Fahrzeuge:</strong> je Fahrzeug km-Stand, Kilometer je Monat, Pickerl, Service, Reparaturen und Schäden. Techniker sehen ihr Fahrzeug und tragen km-Stand und Schäden ein; "+
-          "das Büro legt Fahrzeuge an und liest die GPS-Berichte (X-GPS, CSV/Excel) ein – nur Kilometer je Tag, keine Orte. Pickerl und Service stehen 30 Tage vorher im To-do; Beträge sieht nur der Inhaber.",
+          "das Büro legt Fahrzeuge an und kann GPS-Berichte (X-GPS, CSV/Excel) einlesen – nur Kilometer je Tag, keine Orte. Je Monat steht „gefahren laut km-Stand“ neben "+
+          "„geplante Einsatzfahrten ≈ … km“: eine Schätzung aus dem Kalender der Fahrer (Startpunkt → Einsätze → zurück) – Umwege und Fahrten am Einsatzort sind nicht enthalten. "+
+          "Pickerl und Service stehen 30 Tage vorher im To-do; Beträge sieht nur der Inhaber.",
         "<strong>Einklappen:</strong> jede Karte lässt sich über ihre Überschrift zu- und aufklappen; zugeklappt zeigt sie, wie viel drin ist. Am Handy beginnen lange Abschnitte zugeklappt. Die Wahl merkt sich jedes Gerät.",
         "<strong>Großer Bildschirm:</strong> zwei Spalten – links die Hauptsache, rechts das Begleitende; Projekt und Markt öffnen sich groß.",
         "<strong>Navigationsleiste:</strong> auf langen Seiten und in großen Fenstern (Protokoll, Fällig, Projekt …) steht rechts eine schmale Leiste – ein Punkt je Abschnitt, der aktuelle ist hervorgehoben. Antippen springt hin, „☰“ zeigt alle Abschnitte mit Namen, ⊟/⊞ klappt alles zu bzw. auf.",
@@ -24844,9 +24908,11 @@ Object.assign(RUNDGAENGE, {
     {reiter:"fahrzeuge", ziel:function(){ return rgReiter("fahrzeuge"); }, wenn:function(){ return reiterErlaubt("fahrzeuge"); }, titel:"Fahrzeuge",
       text:RG_LISTE(["<strong>Techniker</strong> sehen ihr Fahrzeug: „km-Stand eintragen“, „Schaden melden“ (eigene Einträge 24 h löschbar).",
         "<strong>Büro</strong>: „+ Fahrzeug“, Bearbeiten (Fahrer, Pickerl, Service am/bei km, GPS-Kennung), „Service / Reparatur …“, Schaden „behoben“.",
-        "<strong>GPS-Daten einlesen</strong> (X-GPS, CSV/Excel): Vorschau je Fahrzeug, „Kilometer übernehmen“."])+
+        "<strong>GPS-Daten einlesen</strong> (X-GPS, CSV/Excel): Vorschau je Fahrzeug, „Kilometer übernehmen“.",
+        "Je Monat: <strong>gefahren laut km-Stand</strong> neben <strong>„geplante Einsatzfahrten ≈ … km“</strong> – eine Schätzung, Umwege und Fahrten am Einsatzort sind nicht enthalten."])+
       RG_HG(["Pickerl und Service werden 30 Tage vorher gelb, überfällig rot (Service nach km ab 1.000 km Rest) und stehen fürs Büro im To-do (🚐).",
-        "GPS: <strong>nur Kilometer je Tag</strong> – keine Orte, Uhrzeiten oder Fahrten; dieselbe Datei zweimal zählt nicht doppelt.",
+        "GPS: <strong>nur Kilometer je Tag</strong> – keine Orte, Uhrzeiten oder Fahrten; dieselbe Datei zweimal zählt nicht doppelt. Eine direkte GPS-Anbindung gibt es nicht.",
+        "Die Schätzung rechnet je Fahrer und Tag aus dem Kalender: Startpunkt → Einsätze → zurück (bei Übernachtung am letzten Markt keine Heimfahrt); Straßen-km, soweit Kalender oder Tour sie schon kennen, sonst Luftlinie mit Umweg-Zuschlag. Nichts wird dafür gespeichert.",
         "Beträge (Kosten) sieht und speichert nur der Inhaber."])}
   ]},
   werkzeug:{thema:true, titel:"Werkzeug und Material", fuer:function(){ return reiterErlaubt("werkzeug"); }, schritte:[
@@ -29694,6 +29760,13 @@ function planZeit(e){ return e.beginn ? e.beginn+(e.ende?"–"+e.ende:"") : "gan
    Zwischen zwei Einsätzen einer Person an verschiedenen Orten: wie lange dauert die Fahrt, reicht die
    Zeit dazwischen? Sofort geschätzt (Luftlinie × Umweg), dann über das Straßenrouting genau (FAHR_CACHE). */
 var FAHR_CACHE={}, fahrLaedt={};
+/* Straßen-km derselben Abfragen (Kalender und Tour) – für die km-Schätzung der Fahrzeuge (fzEinsatzKm); nur im Speicher */
+var FAHR_KM={};
+function fahrKmMerken(punkte, m){
+  if(!m || !m.distanz) return;
+  punkte.forEach(function(a,i){ punkte.forEach(function(b,j){ if(i!==j && a && b && a.id && b.id && m.distanz[i] && m.distanz[i][j]!=null) FAHR_KM[a.id+">"+b.id]=m.distanz[i][j]/1000; }); });
+}
+function fahrKmZw(a,b){ if(!a || !b || a.id===b.id) return 0; var k=FAHR_KM[a.id+">"+b.id]; return k!=null ? k : fahrKm(a,b); }
 function fahrtSchaetzMin(a,b){ return Math.max(5, Math.round(fahrH(a,b)*60/5)*5); }
 function einsatzOrtZeit(x){
   var sid=x.e ? x.e.standort_id : x.o ? x.o.standortId : null, s=sid && byId[sid];
@@ -29729,6 +29802,7 @@ function fahrtenGenau(orte, fertig){
   strassenMatrix(punkte).then(function(m){
     if(!m || !m.dauer) return;
     punkte.forEach(function(a,i){ punkte.forEach(function(b,j){ if(i!==j && m.dauer[i] && m.dauer[i][j]!=null) FAHR_CACHE[a.id+">"+b.id]=Math.max(1, Math.round(m.dauer[i][j]/60)); }); });
+    fahrKmMerken(punkte, m);
     if(fertig) fertig();
   }, function(){});
 }
@@ -30287,11 +30361,13 @@ function startpunktSpeichern(uid, wert){
     if(r.error){ toast("Startpunkt nicht gespeichert: "+r.error.message); return zurueck(); } return true; }, function(){ toast("Startpunkt nicht gespeichert – keine Verbindung."); return zurueck(); });
 }
 function kontoVon(wahl){ return wahl==="ich" ? meineKennung() : wahl; }
-function startpunktVortag(uid, tag){
+/* m (freiwillig): schon geholte Kalendereinträge dieser Person je Tag (kalenderEintraege über den Zeitraum) – spart die
+   Abfrage je Tag, etwa bei der km-Schätzung eines ganzen Monats (fzEinsatzKm) */
+function startpunktVortag(uid, tag, m){
   var sp=STARTPUNKTE[uid]||{};
   for(var i=1;i<=4;i++){
     var t=plusTage(tag,-i);
-    var l=(kalenderEintraege(t,t,uid,"")[t]||[]).map(function(x){
+    var l=((m||kalenderEintraege(t,t,uid,""))[t]||[]).map(function(x){
       var sid=x.e ? x.e.standort_id : x.o ? x.o.standortId : x.pr ? x.pr.standortId : null;
       return {s:sid && byId[sid], z:zeitMin(x.zeit)||0}; }).filter(function(o){ return o.s && o.s.lat!=null; });
     if(!l.length) continue;
@@ -30303,10 +30379,10 @@ function startpunktVortag(uid, tag){
   }
   return null;
 }
-function startpunktFuer(wahl, tag){
+function startpunktFuer(wahl, tag, m){
   var uid=kontoVon(wahl), sp=STARTPUNKTE[uid]||{}, fest=(sp.tage||{})[tag];
   if(fest) return {ort:fest, quelle:"für diesen Tag festgelegt"};
-  var v=startpunktVortag(uid, tag); if(v) return v;
+  var v=startpunktVortag(uid, tag, m); if(v) return v;
   if(sp.heimat) return {ort:sp.heimat, quelle:"fester Startpunkt"};
   if(sp.betrieb) return {ort:BETRIEB, quelle:"fester Startpunkt (Betrieb)"};
   return {ort:null, quelle:"unbekannt"};

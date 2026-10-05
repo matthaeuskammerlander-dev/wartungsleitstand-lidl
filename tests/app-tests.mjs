@@ -4640,6 +4640,46 @@ test("Antworten kern: Material am privaten Termin sperrt die Datenbank selbst �
   await a.zu();
 });
 
+test("Antworten kern: Fahrzeuge – geplante Einsatzfahrten als km-Schätzung neben den km laut km-Stand, ohne GPS-Anbindung", async () => {
+  const a = await oeffnen(KONTEN.techniker);
+  const r = await a.seite.evaluate(async () => {
+    const x = window.__t.x, w = (ms) => new Promise((f) => setTimeout(f, ms)), db = window.__db.tabellen, TECH = "u_tech_test_at";
+    const heute = x("isoLokal(new Date())"), morgen = x("plusTage(isoLokal(new Date()),1)"), vormonat = x("isoLokal(new Date(new Date().getFullYear(), new Date().getMonth()-1, 28))");
+    db.fahrzeuge.push({ id: "FKM1", kennzeichen: "T-KM1", fahrer: [TECH], fahrer_namen: ["Testtechniker"], aktiv: true });
+    db.fahrzeug_eintraege.push({ id: "FKE1", fahrzeug_id: "FKM1", art: "km", datum: vormonat, km: 10000, quelle: "hand" },
+      { id: "FKE2", fahrzeug_id: "FKM1", art: "km", datum: heute, km: 10500, quelle: "hand" });
+    db.einstellungen.push({ schluessel: "startpunkt:" + TECH, wert: { betrieb: true } });
+    const termin = (id, tag, sid, b, e) => ({ id, art: "termin", kategorie: "wartung", titel: "Einsatz " + sid, datum: tag, beginn: b, ende: e, standort_id: sid, wer: [TECH], wer_namen: ["Testtechniker"], erstellt_von: TECH, status: "offen" });
+    db.planung.push(termin("PKM1", heute, "TS1", "08:00", "09:00"), termin("PKM2", heute, "TS2", "11:00", "12:00"));
+    x("try{ FAHR_KM={}; }catch(e){} STARTPUNKTE={}; startpunkteGeladen=false; PLANUNG=[]; planungGeladen=false; planungStand=0; 1");
+    const karte = async () => { x("ansichtenSchliessen(); fzGeladen=false; S.view='fahrzeuge'; render(); 1"); await w(1200); x("render()"); await w(300);
+      const c = document.querySelector('#app [data-fzid="FKM1"]'); return c ? c.innerText.replace(/\s+/g, " ") : ""; };
+    const zahl = (t, re) => { const m = re.exec(t); return m ? +m[1].replace(/\D/g, "") : null; };
+    const erg = {};
+    erg.mitHeim = x("Math.round(fahrKm(BETRIEB,byId.TS1)+fahrKm(byId.TS1,byId.TS2)+fahrKm(byId.TS2,BETRIEB))");
+    erg.ohneHeim = x("Math.round(fahrKm(BETRIEB,byId.TS1)+fahrKm(byId.TS1,byId.TS2))");
+    let t = await karte();
+    erg.text = t;
+    erg.schaetzung = zahl(t, /geplante Einsatzfahrten ≈ ([\d.   ]*\d) km/);
+    erg.kmStand = zahl(t, /laut km-Stand ([\d.   ]*\d) km/);
+    erg.hinweis = /Schätzung – Umwege und Fahrten am Einsatzort nicht enthalten/.test(t);
+    /* morgen geht es vom letzten Markt weiter (weit weg – Übernachtung): heute keine Heimfahrt */
+    db.planung.push(termin("PKM3", morgen, "TS2", "08:00", "09:00"));
+    x("planungStand=0; 1");
+    t = await karte();
+    erg.mitUebernachtung = zahl(t, /geplante Einsatzfahrten ≈ ([\d.   ]*\d) km/);
+    /* die Texte kündigen keine direkte X-GPS-Anbindung bzw. kein Fahrtenbuch mit Orten mehr an */
+    erg.gpsText = /Fahrtenbuch mit Orten erst/.test(String(x("fzGpsImport")));
+    return erg;
+  });
+  pruefe(r.kmStand === 500, "gefahrene km laut km-Stand fehlen: " + JSON.stringify(r));
+  pruefe(r.schaetzung === r.mitHeim && r.hinweis, "Schätzung „geplante Einsatzfahrten ≈ … km“ fehlt bzw. falsch (Start → Einsätze → zurück): " + JSON.stringify(r));
+  pruefe(r.mitUebernachtung === r.ohneHeim, "Übernachtung am letzten Markt: Heimfahrt trotzdem gezählt: " + JSON.stringify(r));
+  pruefe(!r.gpsText, "GPS-Import kündigt noch ein Fahrtenbuch mit Orten an");
+  pruefe(!a.fehler.length, "Laufzeitfehler: " + a.fehler.join("; "));
+  await a.zu();
+});
+
 /* ================================================================ Ablauf ================================================================ */
 const filterText = process.argv.slice(2).find((x) => !x.startsWith("--"));
 const filter = filterText ? new RegExp(filterText, "i") : null;
