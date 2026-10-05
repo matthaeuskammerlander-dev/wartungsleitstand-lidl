@@ -2129,6 +2129,33 @@ test("Tiefentest kern: Störungsauftrag – weiterer Kunde ohne Lidl, KI-Knopf f
   await a.zu();
 });
 
+test("Tiefentest kern: Vor Ort klären ohne Netz", async () => {
+  const a = await oeffnen(KONTEN.inhaber, { handy: true });
+  const r = await a.seite.evaluate(async () => {
+    const x = window.__t.x, w = (ms) => new Promise((f) => setTimeout(f, ms)), db = window.__db.tabellen;
+    const erg = {};
+    /* „Frage für vor Ort“ ohne Netz: die getippte Frage geht nicht verloren, mit Netz wird sie gespeichert */
+    x("vorOrtNeu('TS1')"); await w(300);
+    let d = [...document.querySelectorAll(".assistent")].pop(), ta = d.querySelector("textarea");
+    ta.value = "Wo ist der Zugang zum Dach?"; ta.dispatchEvent(new Event("input", { bubbles: true }));
+    window.__netzWeg = true;
+    [...d.querySelectorAll(".as-fuss button")].pop().click(); await w(600);
+    window.__netzWeg = false;
+    d = [...document.querySelectorAll(".assistent")].pop();
+    erg.offen = !!d && [...d.querySelectorAll("textarea")].some((t) => /Zugang zum Dach/.test(t.value));
+    erg.toast = document.getElementById("toast").textContent;
+    erg.zeilenOhneNetz = db.vor_ort_fragen.length;
+    if (erg.offen) { [...d.querySelectorAll(".as-fuss button")].pop().click(); await w(500); }
+    erg.gespeichert = db.vor_ort_fragen.map((f) => f.frage);
+    return erg;
+  });
+  pruefe(r.zeilenOhneNetz === 0 && /Nicht gespeichert|Verbindung/.test(r.toast), "Ausgangslage anders: " + JSON.stringify(r));
+  pruefe(r.offen, "Dialog zu, eingetippte Frage weg, obwohl nicht gespeichert: " + JSON.stringify(r));
+  pruefe(r.gespeichert.length === 1 && /Zugang zum Dach/.test(r.gespeichert[0]), "Frage nach erneutem Tippen nicht gespeichert: " + JSON.stringify(r.gespeichert));
+  pruefe(!a.fehler.length, "Laufzeitfehler: " + a.fehler.join("; "));
+  await a.zu();
+});
+
 /* ================================================================ Ablauf ================================================================ */
 const filterText = process.argv.slice(2).find((x) => !x.startsWith("--"));
 const filter = filterText ? new RegExp(filterText, "i") : null;
