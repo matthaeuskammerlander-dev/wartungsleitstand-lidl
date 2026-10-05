@@ -4707,6 +4707,27 @@ test("Antworten post: Mail mit Preisen im Text – die .eml liegt nur beim Inhab
   await a.zu();
 });
 
+test("Antworten post: Preis-Erkennung – Beträge in Signatur und Impressum zählen nicht, eine zitierte Mail darunter schon", async () => {
+  const a = await oeffnen(KONTEN.inhaber);
+  const r = await a.seite.evaluate(() => {
+    const x = window.__t.x;
+    const faelle = [
+      ["Mit freundlichen Grüßen\nMuster GmbH\nStammkapital EUR 35.000\nFN 123456a, Firmenbuchgericht Salzburg", false],
+      ["Danke!\nTest GmbH · Gesellschaftskapital: 70.000 € · UID ATU12345678", false],
+      ["Bitte um Termin.\n-- \nTest GmbH\nAktion: Klimacheck ab 99 € im Shop", false],
+      ["Unser Angebot: 4.800 € netto\n-- \nTest GmbH\nStammkapital EUR 35.000", true],
+      ["Passt so.\n-- \nTest GmbH\n\n> Von: planer@test.example\n> Preis: 1.200 € netto", true],
+    ];
+    const falsch = faelle.filter((f) => x("mailTextMitPreis(" + JSON.stringify(f[0]) + ")") !== f[1]).map((f) => f[0].slice(0, 40));
+    /* auch im HTML-Teil einer .eml: Zeilenumbrüche (<br>) bleiben Zeilen */
+    const eml = "From: a@test.example\r\nContent-Type: text/html; charset=utf-8\r\n\r\n<p>Termin passt.</p><p>Test GmbH<br>Stammkapital EUR 35.000<br>FN 123456a</p>\r\n";
+    return { falsch, html: x("mailTextMitPreis(emlText(" + JSON.stringify(eml) + "))") };
+  });
+  pruefe(!r.falsch.length && r.html === false, "Signatur zählt als Preis: " + JSON.stringify(r));
+  pruefe(!a.fehler.length, "Laufzeitfehler: " + a.fehler.join("; "));
+  await a.zu();
+});
+
 test("Antworten post: KPlus-Beleg neu eingelesen – Rechnung und Angebot „versendet“, vorhandene Belege bleiben, wie sie sind", async () => {
   const a = await tmSeite(KONTEN.inhaber);
   const r = await a.seite.evaluate(async () => {
