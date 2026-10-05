@@ -4361,6 +4361,26 @@ test("Tiefentest zusammenführung: KPlus-Gutschrift aus Mail und Posteingang lie
   await a.zu();
 });
 
+/* Zusammenführung: Werkzeug und Material liest die Präsentation nie (Werkzeug-Zweig) – auch nicht nach einem Kontowechsel ohne
+   Neuladen, bei dem Reisekosten und Fahrzeuge schon aufgeräumt werden (Reisekosten-Zweig) */
+test("Tiefentest zusammenführung: nach dem Kontowechsel zur Präsentation kein Werkzeug und Material des vorigen Kontos", async () => {
+  const a = await rkSeite(KONTEN.inhaber);
+  const r = await a.seite.evaluate(async () => {
+    const x = window.__t.x, db = window.__db.tabellen, { warte } = window.__rk;
+    db.werkzeug.push({ id: "WZK1", name: "TT-Wechsel Pumpe", standort_art: "lager", zustand: "ok", aktiv: true });
+    db.bedarf.push({ id: "BZK1", art: "material", text: "TT-Wechsel Material", status: "offen", beschaffung: "mitnehmen" });
+    await x("wzLaden(true)");
+    const vorher = x("WZ.length+'/'+BEDARF.length");
+    await window.__rk.anmelden("praes@test.at", "praesentation");
+    x("ansichtenSchliessen(); S.view='werkzeug'; render()"); await warte(400);
+    return { vorher, rolle: x("Rolle.name"), nachher: x("WZ.length+'/'+BEDARF.length+'/'+BEDARF_ALLE.length"), sichtbar: /TT-Wechsel/.test(document.getElementById("app").innerText) };
+  });
+  pruefe(r.vorher !== "0/0" && r.rolle === "praesentation", "Aufbau falsch: " + JSON.stringify(r));
+  pruefe(r.nachher === "0/0/0" && !r.sichtbar, "Präsentation sieht Werkzeug/Material des vorigen Kontos: " + JSON.stringify(r));
+  pruefe(!a.fehler.length, "Laufzeitfehler: " + a.fehler.join("; "));
+  await a.zu();
+});
+
 /* ================================================================ Ablauf ================================================================ */
 const filterText = process.argv.slice(2).find((x) => !x.startsWith("--"));
 const filter = filterText ? new RegExp(filterText, "i") : null;
