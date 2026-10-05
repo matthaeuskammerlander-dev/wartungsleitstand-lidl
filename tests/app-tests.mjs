@@ -2248,6 +2248,18 @@ test("Tiefentest kalender: Planung prüfen – Reihenfolge übernehmen", async (
       tourTag: x("tourTagFrei(meineKennung(), '" + t7 + "')"), doppelt: x("verplantPruefen([meineKennung()], [meinName()], '" + t7 + "', '" + t7 + "', 600, 660).length") };
   });
   if (r08.abwesenheitAm !== 1 || !r08.tourAbwesend || r08.tourTag === r08.t7 || !r08.doppelt) fehl.push("TT-KAL-08 Krankenstand ohne „Wer“ zählt nicht für Tour/Doppelbuchung: " + JSON.stringify(r08));
+  /* TT-KAL-15: Techniker speichert seinen Startpunkt (Nachbildung wie tools/startpunkte.sql); nicht gespeichert = gilt auch nicht */
+  const r15 = await a.seite.evaluate(async () => {
+    const tt = window.__tt, x = window.__t.x, db = window.__db.tabellen; tt.leeren(); const ich = tt.ich(), tag = tt.tag2();
+    x("STARTPUNKTE={}");
+    const waehlen = async () => { x("startpunktWaehlen('ich', '" + tag + "')"); await tt.warte(150); const d = tt.dialog(); tt.knopf(d, /Betrieb/).click(); await tt.warte(300); return d; };
+    window.__netzWeg = true; const d1 = await waehlen(); window.__netzWeg = false;
+    const ohneNetz = { gilt: JSON.stringify(x("STARTPUNKTE[meineKennung()]") || null), toast: tt.toasts.slice(-1)[0] || "" };
+    d1.remove(); x("ansichtenSchliessen()");
+    const d2 = await waehlen();
+    return { ohneNetz, toast: tt.toasts.slice(-1)[0] || "", gespeichert: db.einstellungen.some((e) => e.schluessel === "startpunkt:" + ich), offen: document.body.contains(d2) };
+  });
+  if (!r15.gespeichert || r15.offen || r15.ohneNetz.gilt !== "null") fehl.push("TT-KAL-15 Startpunkt nicht gespeichert bzw. gilt trotz Fehler: " + JSON.stringify(r15));
   if (a.fehler.length) fehl.push("Laufzeitfehler: " + a.fehler.join("; "));
   await a.zu();
   pruefe(!fehl.length, fehl.join(" | "));
