@@ -4512,7 +4512,12 @@ test("Antworten rechnung: Vorschlag zum Einsatz – Wartungspreis je JW/HJW/HJI,
     x("belegNeu")(x("kontextProtokoll")(reparatur), "rechnung", null, function () {});
     const d2 = await A.bis(() => { const d = A.dlgs().pop(); return d && d.querySelector(".bpos") && d; });
     const betreff = d2 ? d2.querySelector('[data-k="betreff"]').value : ""; x("ansichtenSchliessen()");
-    return { w, editor, rep, pruef, betreff };
+    /* Kältemittel nachgefüllt: ohne Sorte nie irgendeine Sorte samt Preis, mit Sorte wie bisher */
+    db.katalog.push(kat("arkm", "Kältemittel R410A (Test)", "kg", 60)); await x("katalogLaden()");
+    const km = (o) => zeilen(o).filter((p) => /lte?mittel/i.test(p.text))[0] || {};
+    const kmOhne = km(pk({ kaeltemittel: { art: null, nach: 2.5 } })), kmMit = km(pk({ kaeltemittel: { art: "R410A", nach: 2.5 } }));
+    const kmStoer = km(pk({ wartungsart: "Störung", stoerung: { kmArt: "", kmNach: "1,5" } }));
+    return { w, editor, rep, pruef, betreff, kmOhne, kmMit, kmStoer };
   });
   const anl = (n) => r.w.filter((p) => new RegExp("Anlage " + n).test(p.text))[0] || {};
   pruefe(anl("A").preis === 210 && /Jahreswartung Klimaanlage/.test(anl("A").text), "JW nicht zum JW-Preis: " + JSON.stringify(anl("A")));
@@ -4530,6 +4535,9 @@ test("Antworten rechnung: Vorschlag zum Einsatz – Wartungspreis je JW/HJW/HJI,
   const regieP = r.pruef.filter((p) => /Regiestunde/.test(p.text))[0] || {};
   pruefe(regieP.hinweis && !regieP.menge, "Prüfung ohne Zeiten: Regiestunden ohne Hinweis bzw. mit Menge: " + kurz(r.pruef));
   pruefe(/Reparatur/.test(r.betreff) && !/Wartung/.test(r.betreff), "Betreff der Reparatur-Rechnung: " + r.betreff);
+  for (const [was, k, menge] of [["Wartung", r.kmOhne, 2.5], ["Störung", r.kmStoer, 1.5]])
+    pruefe(/^Kältemittel – Sorte fehlt/.test(k.text || "") && !k.preis && k.hinweis && k.menge === menge, was + ": Kältemittel ohne Sorte: " + JSON.stringify(k));
+  pruefe(r.kmMit.preis === 60 && /R410A/.test(r.kmMit.text) && !r.kmMit.hinweis, "Kältemittel mit Sorte nicht wie bisher: " + JSON.stringify(r.kmMit));
   pruefe(!a.fehler.length, "Laufzeitfehler: " + a.fehler.join("; "));
   await a.zu();
 });

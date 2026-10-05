@@ -117,7 +117,8 @@ Kammerlander Umwelt- und Klimatechnik (UKT) – oft kurz, vom Handy, im Feld.
   Positionsprüfung, solange die Zeile keinen Betrag hat); nie der Preis einer anderen Art. Je Anlage verrechnet wird nur
   die planmäßige Wartung (`einsatzArt`, Inhaber 05.10.2026): Reparatur, Prüfung, Sonstiges wie eine Störung nach Aufwand –
   Textzeile, Regiestunden (Ankunft–Fertig, sonst verrechenbare Stunden des Lidl-Rapports, sonst Zeile „Stunden eintragen“),
-  Material, Kältemittel, Fahrtpauschale.
+  Material, Kältemittel, Fahrtpauschale. Kältemittel nachgefüllt ohne Sorte im Protokoll: „Kältemittel – Sorte fehlt“ ohne
+  Preis mit Hinweis (nie irgendeine Sorte samt Preis; Inhaber 05.10.2026), mit Sorte die Katalogposition dieser Sorte.
   App-Belege sind TEST (T-A-/T-R-Nummern), solange KPlus führt. Rechnung aus
   Angebot: Mengenvorschläge aus dem Baustellenbuch (`baubuchVorschlaege`).
   Echte Preise und Belege nie ins Repository – nur in Supabase.
