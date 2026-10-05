@@ -1600,6 +1600,84 @@ test("Abwesenheit und Arbeit am selben Tag: die App fragt sofort – eingesprung
   await b.zu();
 });
 
+/* ---- Tiefentest Stunden: Hilfen im Browser (eine Seite für mehrere Fälle – kurze Laufzeit) ---- */
+async function ttHilfen(a) {
+  await a.seite.evaluate(() => {
+    const x = window.__t.x, db = window.__db.tabellen;
+    const tt = window.__tt = {
+      warte: (ms) => new Promise((f) => setTimeout(f, ms)),
+      ich: () => x("meineKennung()"),
+      /* n-ter Werktag vor heute (1 = der letzte) */
+      werktag: (n) => { let t = x("plusTage(isoLokal(new Date()),-1)"), k = 0; for (;;) { if (x("sollMinutenTag('" + t + "')") > 0 && ++k === (n || 1)) return t; t = x("plusTage('" + t + "',-1)"); } },
+      /* jeder Fall beginnt leer: kein Dialog, keine Termine, keine Stunden */
+      leeren: () => { x("ansichtenSchliessen()"); document.querySelectorAll(".assistent").forEach((d) => d.remove()); document.body.style.overflow = "";
+        db.arbeitszeiten.length = 0; db.planung.length = 0; db.stempel.length = 0; x("ZEITEN=[]; PLANUNG=[]; 1"); window.__dialoge.length = 0; tt.toasts.length = 0; },
+      termin: async (z) => (await x("Store.sb.from('planung').insert(" + JSON.stringify(Object.assign({ art: "termin", wer: [tt.ich()], wer_namen: ["T"] }, z)) + ").select('*')")).data[0],
+      gestempelt: (z) => db.arbeitszeiten.push(Object.assign({ id: "tt" + Math.random().toString(36).slice(2, 8), user_id: tt.ich(), name: "T", pause_min: 0, art: "arbeit", quelle: "stempel" }, z)),
+      laden: async () => { await x("planungLaden()"); await x("zeitenLaden()"); },
+      dialog: () => [...document.querySelectorAll(".assistent")].pop(),
+      ok: (d) => [...d.querySelectorAll(".as-fuss button")].pop(),
+      /* die Stunden eines Tages kurz: „von-bis Bereich Markt Projekt Minuten“ */
+      teile: (tag) => db.arbeitszeiten.filter((z) => z.user_id === tt.ich() && z.datum === tag).sort((p, q) => String(p.beginn).localeCompare(String(q.beginn)))
+        .map((z) => z.beginn + "-" + z.ende + " " + z.bereich + " " + (z.standort_id || "-") + " " + (z.projekt_id || "-") + " " + z.minuten),
+      toasts: [],
+    };
+    const altToast = x("toast"); x("toast=function(m){ window.__tt.toasts.push(String(m)); return window.__ttAltToast.apply(this, arguments); }; 1");
+    window.__ttAltToast = altToast;
+  });
+}
+
+test("Tiefentest stunden: Abgleich mit dem Kalender – Lücken behalten Markt und Projekt, Termin im Termin, Vorschau wie gestempelt", async () => {
+  const a = await oeffnen(KONTEN.techniker);
+  await ttHilfen(a);
+  const fehl = [];
+  /* TT-12: Lücken behalten, was dort gestempelt war (Bereich, Markt, Projekt) – nur die Besprechung wird Büro */
+  const r12 = await a.seite.evaluate(async () => {
+    const tt = window.__tt, x = window.__t.x; tt.leeren(); const T = tt.werktag(1);
+    tt.gestempelt({ datum: T, beginn: "07:00", ende: "08:00", minuten: 60, bereich: "fahrt" });
+    tt.gestempelt({ datum: T, beginn: "08:00", ende: "16:00", minuten: 450, pause_min: 30, bereich: "baustelle", standort_id: "TS1", projekt_id: "pr12" });
+    await tt.termin({ kategorie: "besprechung", titel: "Baubesprechung", datum: T, beginn: "12:00", ende: "13:00" });
+    await tt.laden();
+    const fahrtVorher = x("lohnAuswertung(ZEITEN, '" + T.slice(0, 7) + "')").fahrt;
+    x("abgleichDialog('" + T + "', false)"); await tt.warte(200);
+    tt.ok(tt.dialog()).click(); await tt.warte(600);
+    return { teile: tt.teile(T), fahrtVorher, fahrtNachher: x("lohnAuswertung(ZEITEN, '" + T.slice(0, 7) + "')").fahrt };
+  });
+  if (JSON.stringify(r12.teile) !== JSON.stringify(["07:00-08:00 fahrt - - 60", "08:00-12:00 baustelle TS1 pr12 210", "12:00-13:00 buero - - 60", "13:00-16:00 baustelle TS1 pr12 180"]) || r12.fahrtNachher !== r12.fahrtVorher)
+    fehl.push("TT-12 Lücken verlieren Bereich/Markt/Projekt: " + JSON.stringify(r12));
+  /* TT-30: Termin ganz innerhalb eines anderen – bekommt seinen Abschnitt, bleibt nicht still offen */
+  const r30 = await a.seite.evaluate(async () => {
+    const tt = window.__tt, x = window.__t.x; tt.leeren(); const T = tt.werktag(1);
+    tt.gestempelt({ datum: T, beginn: "07:00", ende: "15:30", minuten: 480, pause_min: 30, bereich: "wartung" });
+    await tt.termin({ kategorie: "wartung", titel: "Wartung lang", datum: T, beginn: "08:00", ende: "12:00", standort_id: "TS1" });
+    await tt.termin({ kategorie: "besprechung", titel: "Telefonkonferenz", datum: T, beginn: "09:00", ende: "10:00" });
+    await tt.laden();
+    x("abgleichDialog('" + T + "', false)"); await tt.warte(200);
+    tt.ok(tt.dialog()).click(); await tt.warte(600);
+    return { teile: tt.teile(T), offen: x("abgleichOffen('" + T + "')").map((i) => i.titel) };
+  });
+  if (r30.offen.length || JSON.stringify(r30.teile) !== JSON.stringify(["07:00-08:00 fahrt - - 60", "08:00-09:00 wartung TS1 - 60", "09:00-10:00 buero - - 60", "10:00-12:00 wartung TS1 - 120", "12:00-15:30 wartung - - 180"]))
+    fehl.push("TT-30 Termin im Termin: " + JSON.stringify(r30));
+  /* TT-15: die Vorschau „So wird die gestempelte Zeit aufgeteilt“ ergibt die gestempelte Summe (Pause abgezogen) */
+  const r15 = await a.seite.evaluate(async () => {
+    const tt = window.__tt, x = window.__t.x; tt.leeren(); const T = tt.werktag(1);
+    tt.gestempelt({ datum: T, beginn: "07:00", ende: "12:00", minuten: 285, pause_min: 15, bereich: "wartung" });
+    tt.gestempelt({ datum: T, beginn: "13:00", ende: "17:00", minuten: 240, bereich: "wartung" });
+    await tt.termin({ kategorie: "stoerung", titel: "Störung", datum: T, beginn: "09:00", ende: "10:00", standort_id: "TS2" });
+    await tt.termin({ kategorie: "projekt", titel: "Projekttermin", datum: T, beginn: "14:00", ende: "15:00", standort_id: "TS3" });
+    await tt.laden();
+    x("abgleichDialog('" + T + "', false)"); await tt.warte(200);
+    const d = tt.dialog(), hm = (t) => { const m = /(\d+):(\d\d)/.exec(t); return m ? +m[1] * 60 + +m[2] : 0; };
+    const zeilen = [...d.querySelectorAll(".rowflex .mono.muted")].map((s) => s.textContent.trim());
+    tt.ok(d).click(); await tt.warte(600);
+    return { zeilen, vorschau: zeilen.reduce((s, t) => s + hm(t), 0), gespeichert: window.__db.tabellen.arbeitszeiten.filter((z) => z.datum === T).reduce((s, z) => s + z.minuten, 0) };
+  });
+  if (r15.vorschau !== 525 || r15.gespeichert !== 525) fehl.push("TT-15 Vorschau " + r15.vorschau + " / gespeichert " + r15.gespeichert + " statt 525: " + JSON.stringify(r15.zeilen));
+  if (a.fehler.length) fehl.push("Laufzeitfehler: " + a.fehler.join("; "));
+  await a.zu();
+  pruefe(!fehl.length, fehl.join(" | "));
+});
+
 /* ================================================================ Ablauf ================================================================ */
 const filterText = process.argv.slice(2).find((x) => !x.startsWith("--"));
 const filter = filterText ? new RegExp(filterText, "i") : null;

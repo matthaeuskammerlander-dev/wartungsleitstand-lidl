@@ -24201,7 +24201,7 @@ Object.assign(RUNDGAENGE, {
         "Über 6 h Arbeit und weniger als 30 min Pause: die fehlende Pause zieht er im längsten Abschnitt ab.",
         "Hinweise bei über 10 h und über 12 h am Tag.",
         "Passt ein Abschnitt zu einem heute geplanten Termin (gleicher Markt oder gleiches Projekt), verknüpft die App ihn – im Termin steht dann „✓ erfasst“.",
-        "<strong>Abgleich mit dem Kalender</strong>: Ist Geplantes noch nicht erfasst (etwa nur ein- und ausgestempelt), bietet die App nach dem Ausstempeln an, die gestempelte Zeit nach den Terminen aufzuteilen – dazwischen Fahrt. Die Stempeluhr hat Vorrang: Summe und Pause bleiben genau gleich (prüft die Datenbank). Nicht Gemachtes bleibt offen oder wird auf den nächsten Arbeitstag verschoben."])},
+        "<strong>Abgleich mit dem Kalender</strong>: Ist Geplantes noch nicht erfasst (etwa nur ein- und ausgestempelt), bietet die App nach dem Ausstempeln an, die gestempelte Zeit nach den Terminen aufzuteilen – dazwischen Fahrt bzw. was dort gestempelt war (Bereich, Markt, Projekt); ein Termin mitten in einem anderen unterbricht ihn. Die Stempeluhr hat Vorrang: Summe und Pause bleiben genau gleich (prüft die Datenbank, die Vorschau zeigt die Stunden ohne Pause). Nicht Gemachtes bleibt offen oder wird auf den nächsten Arbeitstag verschoben."])},
     {reiter:"stunden", ziel:function(){ return rgKarte(/^Meine Arbeitszeit/); }, titel:"Meine Arbeitszeit",
       text:RG_LISTE(["Woche mit Einträgen, Feiertagen und „⚠ über 12 h“; ‹ › blättern, „Monatsliste (PDF)“.",
         "<strong>+ Zeit erfassen</strong>: Art (Arbeit, Urlaub, Krankenstand, Feiertag, Zeitausgleich, Schule …), Bereich, von/bis/Pause oder Dauer, Was, Markt, Projekt – Vorschläge „laut Kalender“ und „laut deinen Protokollen“.",
@@ -32031,24 +32031,53 @@ function abgleichOffen(tag){
   var bl=stempelBloecke(tag); if(!bl.length) return [];
   return geplantFuerMich(tag).filter(function(it){ return it.beginn!=null && !geplantErfasst(it, tag); });
 }
-/* Vorschlag für einen Block: Termine in ihrer Zeit (auf den Block begrenzt), dazwischen Fahrt bzw. der gestempelte Bereich */
+/* Vorschlag für einen Block: Termine in ihrer Zeit (auf den Block begrenzt), dazwischen Fahrt bzw. was dort gestempelt war */
 function abgleichTeile(block, termine){
-  var urBereich=block.eintraege[0].bereich||"sonstiges", urWas=block.eintraege[0].taetigkeit||"";
   var l=termine.map(function(t){ return Object.assign({}, t, {s:Math.max(block.beginn, t.s), e:Math.min(block.ende, t.e)}); })
     .filter(function(t){ return t.e>t.s; }).sort(function(a,b){ return a.s-b.s; });
   var teile=[], cur=block.beginn, ortVorher=null, erste=true;
+  var terminTeil=function(t, s, e){ return {beginn:s, ende:e, bereich:t.bereich, taetigkeit:t.taetigkeit, standort_id:t.standort_id, projekt_id:t.projekt_id, planung_id:t.planung_id, schluessel:t.schluessel, titel:t.titel}; };
   var luecke=function(von, bis, ortDanach){
     var fahrt=(bis-von)<=150 && ((ortDanach && ortDanach!==ortVorher) || (!ortDanach && ortVorher && !erste));
-    teile.push({beginn:von, ende:bis, bereich:fahrt?"fahrt":urBereich, taetigkeit:fahrt?"Fahrt":urWas, standort_id:null, projekt_id:null, planung_id:null, luecke:true});
+    if(fahrt){ teile.push({beginn:von, ende:bis, bereich:"fahrt", taetigkeit:"Fahrt", standort_id:null, projekt_id:null, planung_id:null, luecke:true}); return; }
+    /* sonst je Abschnitt, was dort gestempelt war – Bereich, Was, Markt, Projekt (nicht der erste Abschnitt für alles:
+       aus Montage an der Baustelle wurde sonst Fahrt, und die Projektstunden gingen verloren) */
+    block.eintraege.forEach(function(z){
+      var s=Math.max(von, zeitMin(z.beginn)), e=Math.min(bis, zeitMin(z.ende)); if(e<=s) return;
+      teile.push({beginn:s, ende:e, bereich:z.bereich||"sonstiges", taetigkeit:z.taetigkeit||"", standort_id:z.standort_id||null, projekt_id:z.projekt_id||null, planung_id:null, luecke:true});
+    });
   };
   l.forEach(function(t){
+    /* ganz in einem früheren Termin (etwa eine Besprechung während der Wartung): unterbricht ihn –
+       sonst fiele er still weg und bliebe beim Tag dauerhaft „offen“ */
+    var vor=teile[teile.length-1];
+    if(vor && !vor.luecke && t.s<cur && t.e<=cur && t.s>=vor.beginn && (t.s>vor.beginn || t.e<cur)){
+      var rest=Object.assign({}, vor, {beginn:t.e});
+      vor.ende=t.s; if(vor.ende<=vor.beginn) teile.pop();
+      teile.push(terminTeil(t, t.s, t.e));
+      if(rest.ende>rest.beginn) teile.push(rest);
+      return;
+    }
     if(t.s<cur) t.s=cur; if(t.e<=t.s) return;
     if(t.s>cur) luecke(cur, t.s, t.standort_id);
-    teile.push({beginn:t.s, ende:t.e, bereich:t.bereich, taetigkeit:t.taetigkeit, standort_id:t.standort_id, projekt_id:t.projekt_id, planung_id:t.planung_id, schluessel:t.schluessel, titel:t.titel});
+    teile.push(terminTeil(t, t.s, t.e));
     cur=t.e; if(t.standort_id) ortVorher=t.standort_id; erste=false;
   });
   if(cur<block.ende) luecke(cur, block.ende, null);
   return teile;
+}
+/* angerechnete Minuten je Teil wie stempel_abgleich: Summe und Pause des Blocks bleiben, die Pause kommt zum längsten Teil */
+function abgleichMinuten(alle, bloecke){
+  bloecke.forEach(function(b, bi){
+    var tl=alle.filter(function(x){ return x.block===bi; }); if(!tl.length) return;
+    var summe=b.eintraege.reduce(function(s,z){ return s+(z.minuten||0); },0), lang=tl[0], andere=0;
+    tl.forEach(function(x){ if(x.ende-x.beginn>lang.ende-lang.beginn) lang=x; });
+    tl.forEach(function(x){ x.min=x.ende-x.beginn; x.pause=0; x.pauseAuto=0; if(x!==lang) andere+=x.min; });
+    lang.min=summe-andere;
+    lang.pause=b.eintraege.reduce(function(s,z){ return s+(z.pause_min||0); },0);
+    lang.pauseAuto=b.eintraege.reduce(function(s,z){ return s+(z.pause_auto||0); },0);
+  });
+  return alle;
 }
 function abgleichDialog(tag, nachAusstempeln){
   var bloecke=stempelBloecke(tag);
@@ -32102,15 +32131,17 @@ function abgleichDialog(tag, nachAusstempeln){
       });
       host.appendChild(pl);
     }
-    /* die Aufteilung, wie sie gespeichert wird */
-    var alle=teileAlle();
+    /* die Aufteilung, wie sie gespeichert wird – mit den angerechneten Minuten (Pause abgezogen, wie gespeichert) */
+    var alle=abgleichMinuten(teileAlle(), bloecke);
     var tl=el('<div class="stack" style="gap:4px"><div style="font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--accent)">So wird die gestempelte Zeit aufgeteilt</div></div>');
     if(!alle.length) tl.appendChild(el('<div class="muted" style="font-size:13px">Nichts aufzuteilen – kein gemachter Termin liegt in der gestempelten Zeit.</div>'));
     alle.forEach(function(x){
+      var lst=x.luecke && x.standort_id && byId[x.standort_id];
       var r=el('<div class="rowflex" style="gap:8px;flex-wrap:nowrap;font-size:13px;padding:4px 0;border-bottom:1px dashed var(--line)"><span class="mono" style="white-space:nowrap">'+esc(kalHm(x.beginn)+"–"+kalHm(x.ende))+"</span>"+
-        '<span style="flex:1;min-width:0">'+(x.luecke ? '<select data-lb style="width:auto">'+bereichListe(x.bereich).map(function(y){ return '<option value="'+esc(y[0])+'"'+(y[0]===x.bereich?" selected":"")+">"+esc(y[1])+"</option>"; }).join("")+"</select>"
+        '<span style="flex:1;min-width:0">'+(x.luecke ? '<select data-lb style="width:auto">'+bereichListe(x.bereich).map(function(y){ return '<option value="'+esc(y[0])+'"'+(y[0]===x.bereich?" selected":"")+">"+esc(y[1])+"</option>"; }).join("")+"</select>"+
+            (lst ? ' <span class="muted">· '+esc(stName(lst))+"</span>" : "")
           : "<strong>"+esc(bereichName(x.bereich))+"</strong> · "+esc(x.titel||""))+"</span>"+
-        '<span class="mono muted" style="white-space:nowrap">'+stundenText(x.ende-x.beginn)+"</span></div>");
+        '<span class="mono muted" style="white-space:nowrap"'+(x.pause?' title="ohne die Pause von '+x.pause+' min"':"")+">"+stundenText(x.min)+(x.pause?" ⏸":"")+"</span></div>");
       var lb=r.querySelector("[data-lb]"); if(lb) lb.onchange=function(){ lueckenBereich[x.lk]=lb.value; zeichne(); };
       tl.appendChild(r);
     });
@@ -32128,6 +32159,8 @@ function abgleichDialog(tag, nachAusstempeln){
     /* Zeiten prüfen: in der Stempelzeit, nicht überlappend (abgleichTeile begrenzt schon – hier die Rückmeldung) */
     var falsch=plan.filter(function(it){ var w=wahl[it.schluessel]; return w.an && !(w.e>w.s); });
     if(falsch.length){ err.textContent="„"+falsch[0].titel+"“: das Ende muss nach dem Beginn liegen."; err.hidden=false; return; }
+    /* wie die Datenbank: die Pause muss in den längsten Abschnitt passen */
+    if(abgleichMinuten(alle, bloecke).some(function(x){ return x.min<0; })){ err.textContent="Die Pause passt in keinen Abschnitt – bitte einen Abschnitt länger machen."; err.hidden=false; return; }
     var teile=alle.map(function(x){ return {beginn:kalHm(x.beginn), ende:kalHm(x.ende), bereich:x.bereich||null, taetigkeit:(x.taetigkeit||"").slice(0,300),
       standort_id:x.standort_id||"", projekt_id:x.projekt_id||"", planung_id:x.planung_id||""}; });
     var verschieben=plan.filter(function(it){ var w=wahl[it.schluessel]; return !w.an && w.verschieben && it.planung_id; });
