@@ -18,3 +18,23 @@ Jede Entscheidung steht in einem eigenen Commit (Commit-Nachricht nennt sie).
 | E11 | **Entwickler-Anleitung** ENTWICKLER.md | Aufbau, Wo-liegt-was, Testen, Checkliste für neue Funktionen | – |
 | E13 | **Riesenfunktionen zerlegt** (Inhaber 03.10.: „fang mit dem Protokoll-Formular an und mache dann mit dem ganzen Rest weiter“): Teile mit Kontext `P`, zwei Phasen (anmelden, dann aufbauen) – maschinell über den Syntaxbaum umgebaut, nicht von Hand | Gleiches Verhalten nachgewiesen: Vergleichslauf alt/neu ohne Abweichung (Formular, Datensätze, Entwürfe, Meldungen, globale Variablen), alle App-Tests grün | Commit zurücknehmen |
 | E12 | **Adressen nachgetragen** (14 Märkte) aus der Lidl-Filialsuche bzw. Pressemitteilungen, Kartenlage über OpenStreetMap; zwei Leerzeilen der alten Liste („Jahreswartung Lüftung“) stillgelegt | Inhaber 03.10.: ja – ohne PLZ keine Fahrtzone, keine genaue Karte | im Änderungsverlauf je Markt zurücknehmen |
+
+## Tiefentest (05.10.2026)
+
+148 bestätigte Funde in 7 Bereichen; 143 behoben, je mit Test („Tiefentest …“ in tests/app-tests.mjs). Fachfragen stehen in OFFENE-FRAGEN.md (F6–F33). Die wichtigsten Entscheidungen dabei:
+
+| # | Entscheidung | Warum | Zurücknehmen |
+|---|---|---|---|
+| E14 | **Posteingang nur für Mitarbeiter lesbar** (tools/posteingang-lesen.sql, auch in ki-und-posteingang.sql) | Regel: Kunden-Konto sieht nie fremde Daten; Präsentation keine echten | Regeln wieder auf `true` bzw. nur bucket_id |
+| E15 | **KPlus-PDF, Gutschrift und Mail mit Rechnung/Angebot** aus Posteingang und „Mail zu Projekt“ nur für den Inhaber (Büro-Ordner); Admin/Techniker legen sie nicht ab, sie bleiben für den Inhaber im Posteingang | Regel: Rechnungen und Preise nur Inhaber | `kplusDateiArt` |
+| E16 | **Mailverlauf überschreibt keine vorhandenen Belege** – gleiche Art und Nummer: nur fehlende PDF dazu, Status und Projekt bleiben | Bezahlte Rechnung wurde wieder „versendet“ | insert → upsert |
+| E17 | **Abgleich**: Lücken behalten Bereich, Markt und Projekt der gestempelten Zeit; Termin innerhalb eines anderen unterbricht ihn; mehrtägige Termine werden nie verschoben; Ziel beim Verschieben ist der nächste Arbeitstag ab heute | Montage wurde Fahrt, Projektstunden verschwanden | `abgleichTeile` |
+| E18 | **planung.ausnahmen je Person** (`ausnahmen[Tag][user_id]`); ältere Antworten gelten weiter für alle; „Tag herausnehmen“ bei mehreren Personen mit Auswahl „für alle / nur …“ | Eine Antwort klärte den Tag für alle, „beenden“ nahm allen den Tag | Format zurück auf `ausnahmen[Tag]` |
+| E19 | **Zeit erfassen**: Urlaub/Krankenstand nur als Hinweis, nicht antippbar; ungültige Dauer („-3“, „7:75“) abgelehnt; nur Notiz geändert → Minuten bleiben | Doppelter Krankenstand, beantragter Urlaub als Ist | `zeitEditor` |
+| E20 | **Reisekosten**: Chef ersetzt kein fremdes Belegfoto mehr (nur die Person); fremder km-Eintrag behält das Privatauto; Server-Antworten höchstens 20 s; CSV mit Formelschutz | Foto landete im Ordner des Chefs, Privatauto ging verloren | `akEditor`, `akInhaberKarte` |
+| E21 | **Werkzeug**: Termin auf „Privat“ → Rückfrage, ob Material mitgelöscht wird; Packliste übernehmen in einer Warteschlange (keine Doppel); Ausscheiden mit Rückfrage und Filter „Ausgeschieden“ | Andere sahen Material am privaten Termin; Doppel bei schnellem Tippen | `planEditor`, `packlisteUebernehmen`, `viewWerkzeug` |
+| E22 | **Rechnungen**: kaufmännische Rundung je Position (`centRund`/`posBetrag`); Dezimalpunkt wird nicht mehr als Tausenderpunkt gelesen; jede Auffälligkeit sperrt Katalog-Lernen und Preisänderung; IBAN mit falscher Prüfziffer abgelehnt; „+ Neue Position“ verlangt einen Preis | 0,005 € wurde abgerundet, 1.5 wurde 15 | `posBetrag`, `geldLesen` |
+| E23 | **Route**: 15 s gelten für die ganze Anfrage über alle Dienste (`ROUTER_FRIST`), nicht je Dienst | Knopf war bis 45 s gesperrt | `ROUTER_FRIST` |
+| E24 | **Tag mitten aus einer Abwesenheit herausnehmen**: scheitert der zweite Schritt, nimmt die App den ersten zurück | Eintrag war sonst halb gekürzt | eigene SQL-Funktion (offen, technisch) |
+| E25 | **Präsentation**: Abgleich, „Reihenfolge übernehmen“, „mit einplanen“ und „Tag herausnehmen“ schreiben nicht in die Datenbank; Meldungen sagen „nicht gespeichert“ | Präsentation speichert nie | `demo()`-Abfragen |
+| E26 | **Testattrappe** näher an der echten Datenbank (Kopien bei Schreiben, Prüfregeln von auslagen, Werkzeug-Verlauf, Startpunkte, Lesesperren für Kunde/Präsentation) | Tests prüften teils anderes Verhalten | tests/attrappe.js |
