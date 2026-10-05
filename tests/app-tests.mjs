@@ -1975,6 +1975,33 @@ const TM_HILFEN = `
   }; 1`;
 async function tmSeite(konto) { const a = await oeffnen(konto); await a.seite.evaluate((h) => eval(h), TM_HILFEN); return a; }
 
+test("Tiefentest mail: Rechte – Posteingang nur für Mitarbeiter, KPlus-PDFs und Mails mit Angebot/Rechnung nur für den Inhaber", async () => {
+  /* M5: alle Datenbank-Regeln zum Posteingang (Tabelle und Dateien) lesen nur mit darf_schreiben() – nie für jedes Konto */
+  const { readdirSync } = await import("node:fs");
+  const sql = readdirSync(join(WURZEL, "tools")).filter((f) => f.endsWith(".sql")).map((f) => readFileSync(join(WURZEL, "tools", f), "utf8")).join("\n") + "\n" + readFileSync(join(WURZEL, "supabase-setup.sql"), "utf8");
+  const regeln = [...sql.matchAll(/create policy "posteingang (lesen|ansehen)"[^;]*;/gi)].map((m) => m[0].replace(/\s+/g, " "));
+  pruefe(regeln.length >= 4 && regeln.every((t) => /darf_schreiben\(\)/.test(t) && !/using \(true\)/.test(t)), "M5 Posteingang für jedes angemeldete Konto lesbar: " + regeln.join(" | "));
+  const a = await tmSeite(KONTEN.inhaber);
+  const r = await a.seite.evaluate(async () => {
+    const x = window.__t.x, db = window.__db.tabellen, tm = window.__tm, jetzt = new Date().toISOString(), fehlt = [], p = (bed, text) => { if (!bed) fehlt.push(text); };
+    const sb = x("Store.sb");
+    /* M5: weitergeleitete Mail eines anderen Kunden im Posteingang – das Kunden-Konto und die Präsentation bekommen nichts davon */
+    await sb.storage.from("posteingang").upload("2026/10/tm5_mail.eml", new Blob(["From: a@anderer-kunde-test.at\r\n\r\nText"]));
+    db.posteingang.push({ id: "tm5a", nachricht_id: "<tm5@test>", art: "mail", dateiname: "Anfrage anderer Kunde.eml", pfad: "2026/10/tm5_mail.eml", status: "neu", betreff: "Anfrage anderer Kunde", absender: "a@anderer-kunde-test.at", eingang: jetzt, bytes: 300 });
+    for (const [konto, rolle] of [["kunde@test.at", "kunde"], ["praes@test.at", "praesentation"]]) {
+      await tm.anmelden(konto, rolle);
+      const zeilen = await x("Store.sb").from("posteingang").select("*"), datei = await x("Store.sb").storage.from("posteingang").createSignedUrl("2026/10/tm5_mail.eml", 600);
+      p(!(zeilen.data || []).length && !datei.data, "M5 " + rolle + " liest den Posteingang: " + (zeilen.data || []).length + " Zeilen, Datei " + (datei.data ? "abrufbar" : "gesperrt"));
+    }
+    await tm.anmelden("inhaber@test.at", "inhaber");
+    p(((await x("Store.sb").from("posteingang").select("*")).data || []).length >= 1, "M5 Inhaber liest den Posteingang nicht mehr");
+    return { fehlt };
+  });
+  pruefe(!r.fehlt.length, r.fehlt.join(" | "));
+  pruefe(!a.fehler.length, "Laufzeitfehler: " + a.fehler.join("; "));
+  await a.zu();
+});
+
 test("Tiefentest mail: Projekt aus Mailverlauf – vorhandene KPlus-Belege bleiben, wie sie sind", async () => {
   const a = await tmSeite(KONTEN.inhaber);
   const r = await a.seite.evaluate(async () => {

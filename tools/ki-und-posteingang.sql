@@ -56,7 +56,9 @@ alter table public.posteingang enable row level security;
 drop policy if exists "posteingang lesen"    on public.posteingang;
 drop policy if exists "posteingang anlegen"  on public.posteingang;
 drop policy if exists "posteingang erledigen" on public.posteingang;
-create policy "posteingang lesen"     on public.posteingang for select to authenticated using (true);
+-- lesen nur, wer mitarbeitet (darf_schreiben): Kunde und Präsentation sehen weitergeleitete Mails
+-- anderer Kunden nie (Tiefentest 05.10.2026, nachträglich: tools/posteingang-lesen.sql)
+create policy "posteingang lesen"     on public.posteingang for select to authenticated using (public.darf_schreiben());
 create policy "posteingang anlegen"   on public.posteingang for insert to authenticated with check (public.darf_schreiben());
 create policy "posteingang erledigen" on public.posteingang for update to authenticated
   using (public.darf_schreiben()) with check (public.darf_schreiben());
@@ -72,7 +74,7 @@ drop policy if exists "posteingang ansehen"   on storage.objects;
 create policy "posteingang hochladen" on storage.objects for insert to authenticated
   with check (bucket_id = 'posteingang' and public.darf_schreiben());
 create policy "posteingang ansehen"   on storage.objects for select to authenticated
-  using (bucket_id = 'posteingang');
+  using (bucket_id = 'posteingang' and public.darf_schreiben());
 
 -- Kontrolle: zwei Tabellen und ein Bucket
 select 'tabelle' as was, table_name as name from information_schema.tables

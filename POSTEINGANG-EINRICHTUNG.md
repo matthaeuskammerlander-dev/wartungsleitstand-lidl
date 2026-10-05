@@ -28,6 +28,9 @@ legt die PDFs in den **Posteingang** der App. Alles ist vorbereitet und
    Beteiligten), die Art jeder Datei ist vorgewählt (Mail, Plan, Unterlage …).
    Erst wenn alle Dateien im Projekt liegen, ist die Mail im Posteingang erledigt.
    Dafür einmal `tools/posteingang-projekte.sql` ausführen (erledigt am 02.10.2026).
+   Lesen dürfen den Posteingang (Liste und Dateien) nur Inhaber, Admins und Techniker –
+   nie das Kunden-Konto oder die Präsentation: dafür einmal `tools/posteingang-lesen.sql`
+   ausführen (05.10.2026, noch offen).
 
 ## Einrichten (einmalig)
 

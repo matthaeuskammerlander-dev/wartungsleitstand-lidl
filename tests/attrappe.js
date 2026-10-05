@@ -31,6 +31,8 @@
     var rolle=(DB.rollen.filter(function(r){ return r.user_id===uid(); })[0]||{}).rolle||"techniker";
     if(art!=="select" && (rolle==="kunde"||rolle==="praesentation") && !(tab==="aenderungswuensche" && art==="insert" && rolle==="praesentation")) return "nur lesen ("+rolle+")";
     if(art==="select" && (rolle==="kunde"||rolle==="praesentation") && (tab==="stammdaten"||tab==="aenderungen")) return "nur lesen: "+tab;
+    /* wie posteingang-lesen.sql: den Posteingang (weitergeleitete Mails auch anderer Kunden) liest nur, wer mitarbeitet */
+    if(art==="select" && (rolle==="kunde"||rolle==="praesentation") && tab==="posteingang") return "nur lesen: posteingang gesperrt";
     if(tab==="stammdaten"){
       var typ=(zeile&&zeile.typ)||(alt&&alt.typ);
       if(art==="delete" && !admin()) return "stammdaten: Loeschen nur fuer Admins";
@@ -252,9 +254,11 @@
     if(erlaubt && b && b.type && erlaubt.indexOf(b.type)<0)
       return Promise.resolve({data:null,error:{message:"mime type "+b.type+" is not supported"}});
     DATEIEN[k]=b; return Promise.resolve({data:{path:p},error:null}); };
-  E.prototype.createSignedUrl=function(p){ var b=DATEIEN[this.n+"/"+p];
+  /* wie posteingang-lesen.sql: Dateien im Bucket „posteingang“ nur mit darf_schreiben() (nicht Kunde, nicht Präsentation) */
+  function eimerGesperrt(n){ var rl=(DB.rollen.filter(function(r){ return r.user_id===uid(); })[0]||{}).rolle; return n==="posteingang" && (!sitzung || rl==="kunde" || rl==="praesentation"); }
+  E.prototype.createSignedUrl=function(p){ var b=eimerGesperrt(this.n) ? null : DATEIEN[this.n+"/"+p];
     return Promise.resolve(b?{data:{signedUrl:URL.createObjectURL(b)},error:null}:{data:null,error:{message:"weg"}}); };
-  E.prototype.download=function(p){ var b=DATEIEN[this.n+"/"+p]; return Promise.resolve(b?{data:b,error:null}:{data:null,error:{message:"weg"}}); };
+  E.prototype.download=function(p){ var b=eimerGesperrt(this.n) ? null : DATEIEN[this.n+"/"+p]; return Promise.resolve(b?{data:b,error:null}:{data:null,error:{message:"weg"}}); };
   E.prototype.remove=function(){ return Promise.resolve({data:[],error:null}); };
   E.prototype.list=function(){ return Promise.resolve({data:[],error:null}); };
   window.supabase={createClient:function(){ return {
