@@ -1686,6 +1686,11 @@ reSchritt("eingaben", "R08", async (a) => {
   return r[0] === "Kondensatpumpe: 2 Stk" && r[1] === "Kupferrohr 12 mm: 3 m" && r[2] === "Isolierband: 0.5 Rolle" && /^Dichtung .*„etwas“.*: 1 Stk$/.test(r[3] || "")
     ? "" : "Material „2 Stk“ / „3 m“ / „0,5 Rolle“ / „etwas“ im Vorschlag: " + JSON.stringify(r);
 });
+/* Tiroler Markt mit Postleitzahl, aber ohne Kartenlage: der Hinweis nennt die echte Ursache */
+reSchritt("eingaben", "R20", async (a) => {
+  const r = await a.x("(function(){ var alt=byId.TS4.lon; byId.TS4.lon=null; try{ return einsatzPositionen({standortId:'TS4',datum:'2026-01-01',anlagen:[{name:'VRV'}]},'lidl').pop().text; } finally { byId.TS4.lon=alt; } })()");
+  return !/ohne Postleitzahl/.test(r) && /Lage/.test(r) ? "" : "Fahrtpauschale für PLZ 6460 ohne Kartenlage: " + r;
+});
 /* Katalog lernt eine Position ohne Einheit nur einmal (gespeichert wird sie mit „Stk“) */
 reSchritt("eingaben", "R18", async (a) => {
   const r = await a.seite.evaluate(async () => {
