@@ -2129,7 +2129,7 @@ test("Tiefentest kern: Störungsauftrag – weiterer Kunde ohne Lidl, KI-Knopf f
   await a.zu();
 });
 
-test("Tiefentest kern: Vor Ort klären ohne Netz", async () => {
+test("Tiefentest kern: Vor Ort klären ohne Netz, alte Liste erkennt Filiale „0901“ = „901“", async () => {
   const a = await oeffnen(KONTEN.inhaber, { handy: true });
   const r = await a.seite.evaluate(async () => {
     const x = window.__t.x, w = (ms) => new Promise((f) => setTimeout(f, ms)), db = window.__db.tabellen;
@@ -2147,11 +2147,23 @@ test("Tiefentest kern: Vor Ort klären ohne Netz", async () => {
     erg.zeilenOhneNetz = db.vor_ort_fragen.length;
     if (erg.offen) { [...d.querySelectorAll(".as-fuss button")].pop().click(); await w(500); }
     erg.gespeichert = db.vor_ort_fragen.map((f) => f.frage);
+    /* Alte Liste prüfen: zweiter Markt ~20 m neben TS1 („Probegasse 1a“) – „0901“ und „901“ sind dieselbe Filialnummer */
+    const lauf = async (fil) => {
+      db.stammdaten = db.stammdaten.filter((s) => s.id !== "standort:NS1");
+      db.stammdaten.push({ id: "standort:NS1", typ: "standort", ziel: "NS1", neu: true, geaendert: new Date().toISOString(), von: "Test", grund: "Test",
+        felder: { filiale: fil, name: "Testfiliale Zwei", adresse: "1100 Musterstadt, Probegasse 1a", plz: "1100", ort: "Musterstadt", region: "Wien", lat: 48.1702, lon: 16.38, genauigkeit: "adresse", aktiv: true } });
+      delete x("stammUeber")["standort:NS1"];
+      await x("ladeStammdaten(true)"); await w(300);
+      return x("altlisteFunde().filter(function(f){ return f.art==='Doppelt?'; }).length");
+    };
+    erg.doppelt = { mit901: await lauf("901"), mit0901: await lauf("0901"), mit902: await lauf("902") };
     return erg;
   });
   pruefe(r.zeilenOhneNetz === 0 && /Nicht gespeichert|Verbindung/.test(r.toast), "Ausgangslage anders: " + JSON.stringify(r));
   pruefe(r.offen, "Dialog zu, eingetippte Frage weg, obwohl nicht gespeichert: " + JSON.stringify(r));
   pruefe(r.gespeichert.length === 1 && /Zugang zum Dach/.test(r.gespeichert[0]), "Frage nach erneutem Tippen nicht gespeichert: " + JSON.stringify(r.gespeichert));
+  pruefe(r.doppelt.mit901 === 1 && r.doppelt.mit902 === 0, "Kontrolle (901 bzw. 902) anders: " + JSON.stringify(r.doppelt));
+  pruefe(r.doppelt.mit0901 === 1, "Filiale „0901“ neben „901“ nicht als „Doppelt?“ gefunden: " + JSON.stringify(r.doppelt));
   pruefe(!a.fehler.length, "Laufzeitfehler: " + a.fehler.join("; "));
   await a.zu();
 });
