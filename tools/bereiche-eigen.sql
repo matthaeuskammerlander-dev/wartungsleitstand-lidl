@@ -15,7 +15,9 @@ alter table public.arbeitszeiten drop constraint if exists arbeitszeiten_bereich
 alter table public.arbeitszeiten add constraint arbeitszeiten_bereich_check
   check (bereich is null or length(btrim(bereich)) between 1 and 40);
 
--- 2. Stempeln: dieselbe Regel (die Funktion bleibt sonst unverändert)
+-- 2. Stempeln: dieselbe Regel (die Funktion bleibt sonst unverändert). Seit
+--    05.10.2026 legt stempeluhr-4.sql stempeln() schon so an – dann ändert
+--    sich hier nichts („schon umgestellt“).
 do $$
 declare d text; n integer;
 begin

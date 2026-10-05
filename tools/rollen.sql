@@ -1,6 +1,9 @@
 -- Rollen: Inhaber, Admin, Techniker, Kunde, Präsentation.
 -- Einmal im Supabase SQL Editor ausführen (nach update-2026-09-26.sql).
--- Mehrfach ausführen schadet nicht.
+-- Mehrfach ausführbar – auch nach kunden-projekte-stunden.sql (Stand
+-- 05.10.2026): die Sicht stammdaten_lesen legt es nur an, wenn sie fehlt, die
+-- Kunden-Sperre von dort bleibt. Ersteinrichtung: danach
+-- kunden-projekte-stunden.sql ausführen.
 --
 --   inhaber       Manfred, Matthäus – alles, dazu Rückgängig, KI-Kosten, Kontenübersicht
 --   admin         Darko             – Verwaltung, Protokolle löschen/wiederherstellen
@@ -72,12 +75,22 @@ create policy "stammdaten zuruecksetzen" on public.stammdaten for delete to auth
 -- Eine View läuft mit den Rechten ihres Besitzers (umgeht also die RLS der
 -- Tabelle). Deshalb: nur für Angemeldete, und nur lesen – die Standardrechte
 -- (auch anon, auch insert/update/delete) werden ausdrücklich entzogen.
-create or replace view public.stammdaten_lesen as
-  select id, typ, ziel,
-         felder - 'zugangLink' - 'zugangBenutzer' - 'zugangPasswort' as felder,
-         neu, geaendert, von, grund
-    from public.stammdaten
-   where auth.uid() is not null;
+-- Angelegt wird die Sicht hier NUR, wenn es sie noch nicht gibt: die heutige
+-- Fassung steht in kunden-projekte-stunden.sql (dazu die Kunden-Sperre – ein
+-- Kunden-Konto sieht nur seine eigenen Standorte). Bis 05.10.2026 ersetzte
+-- dieses Skript sie bei jedem Lauf durch die Fassung ohne Kunden-Sperre – das
+-- Lidl-Konto hätte dann wieder die Stammdaten aller Kunden gesehen.
+do $$
+begin
+  if to_regclass('public.stammdaten_lesen') is null then
+    create view public.stammdaten_lesen as
+      select id, typ, ziel,
+             felder - 'zugangLink' - 'zugangBenutzer' - 'zugangPasswort' as felder,
+             neu, geaendert, von, grund
+        from public.stammdaten
+       where auth.uid() is not null;
+  end if;
+end $$;
 revoke all on public.stammdaten_lesen from public, anon, authenticated;
 grant select on public.stammdaten_lesen to authenticated;
 

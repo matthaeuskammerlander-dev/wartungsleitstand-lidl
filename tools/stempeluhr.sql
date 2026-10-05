@@ -3,9 +3,10 @@
 -- Mehrfach ausführbar – auch nach den späteren Skripten (stempeluhr-2/-3/-4,
 -- bereiche-eigen, stunden-kalender, stempel-abgleich; Stand 05.10.2026):
 -- erlaubte Quellen und Trigger unten stehen auf deren Stand. Die Funktion
--- stempeln() legt dieses Skript NICHT mehr an – sie steht heute in
--- stempeluhr-4.sql (Bereichsprüfung aus bereiche-eigen.sql). Ersteinrichtung:
--- danach stempeluhr-2.sql, -3, -4 und bereiche-eigen.sql ausführen.
+-- stempeln() legt dieses Skript NICHT mehr an – sie steht heute nur in
+-- stempeluhr-4.sql (seit 05.10.2026 mit der Bereichsprüfung aus
+-- bereiche-eigen.sql). Ersteinrichtung: danach stempeluhr-2.sql, -3, -4 und
+-- bereiche-eigen.sql ausführen.
 --
 -- * Die Zeit eines Stempels setzt die Datenbank (now()) – nicht das Handy. Wer
 --   die Uhr am Handy verstellt, ändert nichts.
@@ -111,8 +112,8 @@ create trigger arbeitszeit_stempel_merken before update on public.arbeitszeiten
 -- ---------------------------------------------------------------------------
 -- stempeln(): der einzige Weg zu einem Stempel. Prüft die Reihenfolge, nimmt
 -- die Zeit vom Server und legt beim Ausstempeln den Eintrag an.
--- Die Funktion steht heute in stempeluhr-4.sql (Bereichsprüfung aus
--- bereiche-eigen.sql). Dieses Skript legte bis 05.10.2026 eine erste Fassung
+-- Die Funktion steht heute nur in stempeluhr-4.sql (seit 05.10.2026 mit der
+-- Bereichsprüfung aus bereiche-eigen.sql). Dieses Skript legte bis 05.10.2026 eine erste Fassung
 -- mit 7 Angaben an, die stempeluhr-2.sql entfernt und ersetzt hat. Erneut
 -- angelegt läge sie als zweite, veraltete Fassung neben der heutigen
 -- (ohne Umstempeln, Bereich und automatische Pause; bereiche-eigen.sql
@@ -121,7 +122,7 @@ create trigger arbeitszeit_stempel_merken before update on public.arbeitszeiten
 -- ---------------------------------------------------------------------------
 drop function if exists public.stempeln(text, text, uuid, text, jsonb, text, text);
 
--- Kontrolle (stempeln_fassungen: 1 – bei der Ersteinrichtung 0, bis stempeluhr-2.sql gelaufen ist)
+-- Kontrolle (stempeln_fassungen: 1 – bei der Ersteinrichtung 0, bis stempeluhr-4.sql gelaufen ist)
 select (select count(*) from public.stempel) as stempel,
        (select wert from public.einstellungen where schluessel = 'stempel_standort') as standort,
        (select count(*) from pg_proc p join pg_namespace s on s.oid = p.pronamespace

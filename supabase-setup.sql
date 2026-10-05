@@ -3,7 +3,16 @@
 -- Das Skript lässt sich jederzeit erneut ausführen; bereits Vorhandenes bleibt.
 -- ACHTUNG: Dieses Skript setzt die Zugriffsregeln auf den Grundstand OHNE
 -- Rollen zurück (Kunde/Präsentation könnten dann wieder mehr). Nach JEDEM
--- Lauf deshalb tools/rollen.sql erneut ausführen.
+-- Lauf deshalb in dieser Reihenfolge erneut ausführen (Stand 05.10.2026):
+--   1. tools/rollen.sql – Schreibrechte, Stammdaten, Verlauf, Fotos/Berichte
+--      hochladen (Kunde und Präsentation schreiben nichts)
+--   2. tools/kunden-projekte-stunden.sql – Kunden-Sperre: „angemeldete lesen
+--      alle protokolle“, „fassungen lesen“, „berichte lesen“, „berichte
+--      ansehen“ (sonst sieht das Lidl-Konto Protokolle aller Kunden)
+--   3. tools/anlagenfotos.sql – „fotos ansehen“ (Chat-, Anlagen- und
+--      Wunsch-Fotos nur für Mitarbeitende; dieselbe Fassung steht in
+--      tools/chat.sql und tools/wunsch-fotos.sql)
+-- tools/rollen.sql allein reicht NICHT.
 -- Ganz unten stehen die Tabellenrechte für die Data API – seit 30.10.2026
 -- vergibt Supabase sie nicht mehr von selbst (siehe Erklärung dort).
 
@@ -393,7 +402,8 @@ grant usage, select on all sequences in schema public to authenticated, service_
 
 
 -- ---------------------------------------------------------------------------
--- DANACH: tools/rollen.sql erneut ausführen. Dieses Skript kennt die Rollen
--- (Kunde, Präsentation, Inhaber) nicht und hat eben deren Sperren durch die
--- Grundregeln ersetzt.
-select 'Fertig – jetzt tools/rollen.sql erneut ausführen!' as naechster_schritt;
+-- DANACH: tools/rollen.sql, tools/kunden-projekte-stunden.sql und
+-- tools/anlagenfotos.sql erneut ausführen (siehe Kopf). Dieses Skript kennt
+-- die Rollen (Kunde, Präsentation, Inhaber) und die Kunden-Sperre nicht und
+-- hat eben deren Sperren durch die Grundregeln ersetzt.
+select 'Fertig – jetzt tools/rollen.sql, dann tools/kunden-projekte-stunden.sql, dann tools/anlagenfotos.sql erneut ausführen!' as naechster_schritt;

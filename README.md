@@ -355,8 +355,10 @@ Neben der Technikerin oder dem Techniker haben zwei weitere Felder Platz für
 Kolleginnen und Kollegen, die mitgearbeitet haben. Sie stehen im Protokoll,
 auf dem Druckblatt und im Export. Die Zertifikatsnummer wird weiter für die
 Hauptperson gemerkt. Dafür einmal `supabase-setup.sql` erneut ausführen, es
-legt die Spalte `mitarbeiter` an – **danach immer auch `tools/rollen.sql`**,
-sonst gelten die Sperren für Kunde, Präsentation und Zugangsdaten nicht mehr.
+legt die Spalte `mitarbeiter` an – **danach immer auch `tools/rollen.sql`,
+`tools/kunden-projekte-stunden.sql` und `tools/anlagenfotos.sql`** (so steht
+es im Kopf von `supabase-setup.sql`), sonst gelten die Sperren für Kunde,
+Präsentation und Zugangsdaten nicht mehr.
 
 ## Protokolle nur unter eigenem Namen
 
@@ -667,9 +669,10 @@ Offene Störungen liegen wie die Anlagendaten in `stammdaten` (`typ`
 `stoerung`) und stehen damit auf allen Geräten. Jede angemeldete Person darf
 sie anlegen und ändern — der Auftrag kommt herein, bevor jemand vor Ort war.
 
-**Dafür einmal `supabase-setup.sql` und danach `tools/rollen.sql` erneut
+**Dafür einmal `supabase-setup.sql` und danach `tools/rollen.sql`,
+`tools/kunden-projekte-stunden.sql` und `tools/anlagenfotos.sql` erneut
 ausführen.** Es erweitert die Zugriffsregel auf `stammdaten` um den neuen Typ
-(ohne `tools/rollen.sql` wären die Rollensperren danach aufgehoben). Bis dahin bleibt eine
+(ohne die drei Skripte danach wären Rollensperren und Kunden-Sperre aufgehoben). Bis dahin bleibt eine
 erfasste Störung auf dem Gerät und geht von selbst raus, sobald die Regel
 da ist.
 
@@ -916,7 +919,8 @@ Dazu drei Punkte:
 Die Datei liegt im selben Speicher wie die Fotos, unter
 `<protokollkennung>/auftrag.pdf`. Damit sie angenommen wird, muss
 `supabase-setup.sql` einmal neu ausgeführt werden (danach `tools/rollen.sql`,
-sonst sind die Rollensperren aufgehoben) – ohne das weist die Ablage
+`tools/kunden-projekte-stunden.sql` und `tools/anlagenfotos.sql`, sonst sind
+Rollensperren und Kunden-Sperre aufgehoben) – ohne das weist die Ablage
 sie mit „mime type not supported" ab, und das Protokoll bleibt so lange auf
 dem Gerät.
 
@@ -955,7 +959,8 @@ erscheint der Einsatz mit rotem „Störung“-Etikett und dem Problemtyp. Dort
 stehen Wartungen und Störungen getrennt gezählt.
 
 In der Datenbank liegen die Angaben in der Spalte `stoerung` der Tabelle
-`protokolle`. Dafür `supabase-setup.sql` und danach `tools/rollen.sql` einmal
+`protokolle`. Dafür `supabase-setup.sql` und danach `tools/rollen.sql`,
+`tools/kunden-projekte-stunden.sql` und `tools/anlagenfotos.sql` einmal
 erneut ausführen.
 
 ## Handbuch und geführte Rundgänge
@@ -1059,8 +1064,10 @@ hat. Andere Dateien im Ordner fasst es nicht an.
 
 1. **Supabase:** `supabase-setup.sql` im SQL Editor noch einmal ausführen. Das
    legt den Abschnitt „Archiv“ an. Bestehende Daten bleiben unverändert.
-   Danach `tools/rollen.sql` erneut ausführen – `supabase-setup.sql` setzt die
-   Zugriffsregeln auf den Stand ohne Rollen zurück (Kunde, Präsentation, Zugangsdaten).
+   Danach `tools/rollen.sql`, `tools/kunden-projekte-stunden.sql` und
+   `tools/anlagenfotos.sql` erneut ausführen – `supabase-setup.sql` setzt die
+   Zugriffsregeln auf den Stand ohne Rollen und ohne Kunden-Sperre zurück
+   (Kunde, Präsentation, Zugangsdaten, Fotos).
 2. **Konto:** In Supabase unter Authentication → Users muss
    (E-Mail des Archivkontos) stehen, mit „Auto Confirm User“.
 3. **Skriptordner auf der Synology:** Legen Sie einen Ordner an, den nur

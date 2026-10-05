@@ -6,7 +6,14 @@
 -- Spalte pause_auto. Abschalten: einstellungen 'arbeitszeit' → {"autoPause": false}.
 -- Gerechnet wird je Tag: frühere gestempelte Einträge desselben Tages und die
 -- Lücke seit dem letzten Ausstempeln zählen mit.
--- Nach stempeluhr-3.sql einmal ausführen; mehrfach ausführen schadet nicht.
+-- Nach stempeluhr-3.sql einmal ausführen. Mehrfach ausführbar – auch nach
+-- bereiche-eigen.sql (Stand 05.10.2026): stempeln() steht hier auf dem
+-- heutigen Stand, mit der Bereichsprüfung aus bereiche-eigen.sql (eigene
+-- Bereiche, 1–40 Zeichen; bis 05.10.2026 legte dieses Skript nur die festen
+-- Bereiche an, ein erneuter Lauf hätte eigene Bereiche wieder abgelehnt).
+-- Das ist die einzige Fassung von stempeln() – ältere (7 bzw. 9 Angaben)
+-- werden entfernt. Ersteinrichtung: danach bereiche-eigen.sql ausführen
+-- (ändert an stempeln() dann nichts mehr).
 
 alter table public.arbeitszeiten add column if not exists pause_auto integer not null default 0;
 alter table public.arbeitszeiten drop constraint if exists arbeitszeiten_pause_auto_check;
@@ -15,6 +22,8 @@ insert into public.einstellungen (schluessel, wert) values
   ('arbeitszeit', '{"wochenstunden": 38.5, "verteilung": [8, 8, 8, 8, 6.5, 0, 0], "autoPause": true}'::jsonb)
 on conflict (schluessel) do nothing;
 
+drop function if exists public.stempeln(text, text, uuid, text, jsonb, text, text);
+drop function if exists public.stempeln(text, text, uuid, text, jsonb, text, text, text, uuid[]);
 create or replace function public.stempeln(p_art text, p_standort text default null, p_projekt uuid default null,
   p_taetigkeit text default null, p_ort jsonb default null, p_name text default null, p_ende_hand text default null,
   p_bereich text default null, p_ersetzen uuid[] default null, p_erledigt text default null)
@@ -30,7 +39,7 @@ declare
 begin
   if auth.uid() is null or not public.darf_schreiben() then raise exception 'Stempeln ist mit diesem Konto nicht möglich'; end if;
   if p_art not in ('ein','pause','weiter','wechsel','aus') then raise exception 'unbekannte Stempelart'; end if;
-  if p_bereich is not null and p_bereich not in ('fahrt','baustelle','wartung','stoerung','werkstatt','buero','sonstiges') then
+  if p_bereich is not null and length(btrim(p_bereich)) not between 1 and 40 then
     raise exception 'unbekannter Bereich';
   end if;
   if p_ort is not null and (p_ort ? 'lat' or p_ort ? 'lon' or p_ort ? 'latitude' or p_ort ? 'longitude') then
@@ -152,4 +161,7 @@ end $$;
 revoke all on function public.stempeln(text, text, uuid, text, jsonb, text, text, text, uuid[], text) from public, anon;
 grant execute on function public.stempeln(text, text, uuid, text, jsonb, text, text, text, uuid[], text) to authenticated;
 
-select 'ok' as stempeluhr_teil_4;
+-- Kontrolle (stempeln_fassungen: 1)
+select 'ok' as stempeluhr_teil_4,
+       (select count(*) from pg_proc p join pg_namespace s on s.oid = p.pronamespace
+         where s.nspname = 'public' and p.proname = 'stempeln') as stempeln_fassungen;
