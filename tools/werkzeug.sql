@@ -1,3 +1,4 @@
+-- Nach einem erneuten Lauf gelten zusätzlich die Sperren aus tools/rechte-2026-10-05.sql (eigene Namen, werden hier nicht entfernt).
 -- Werkzeug und Material (Büro 04.10.2026): „dass man nichts vergisst – womöglich muss man es noch irgendwo
 -- abholen; Werkzeug in Reparatur; für Projekte immer wieder dieselben Werkzeuge; wo liegt es gerade –
 -- bei Darko im Auto, im Lager oder sonst wo“.

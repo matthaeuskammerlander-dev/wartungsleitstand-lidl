@@ -1,3 +1,4 @@
+-- Nach einem erneuten Lauf gelten zusätzlich die Sperren aus tools/rechte-2026-10-05.sql (eigene Namen, werden hier nicht entfernt).
 -- Reisekosten und Kilometergeld (Büro 04.10.2026): „Techniker kaufen manchmal im Bauhaus mit privatem Geld
 -- Material oder Werkzeug – mit Foto vom Beleg erfassen, am Monatsende als Liste an den Chef, damit er es
 -- auszahlen kann“ und „die Abrechnung für Kilometer mit Privatauto“. Wie die bisherigen Excel-Blätter

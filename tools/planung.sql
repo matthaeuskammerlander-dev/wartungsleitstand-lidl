@@ -1,3 +1,4 @@
+-- Nach einem erneuten Lauf gelten zusätzlich die Sperren aus tools/rechte-2026-10-05.sql (eigene Namen, werden hier nicht entfernt).
 -- Kalender und Aufgaben (Büro 01.10.2026): „Ich will alles hier drinnen planen können“.
 --   * Termine: Wartung, Störung, Projekt/Baustelle, Büro, Werkstatt, Besprechung,
 --     Urlaub, Krankenstand, Schule, privat (OOO), Sonstiges – mit Person(en),

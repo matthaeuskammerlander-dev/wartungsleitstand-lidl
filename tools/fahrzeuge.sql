@@ -1,3 +1,4 @@
+-- Nach einem erneuten Lauf gelten zusätzlich die Sperren aus tools/rechte-2026-10-05.sql (eigene Namen, werden hier nicht entfernt).
 -- Fahrzeuge (Büro 02.10.2026): Kilometer je Fahrzeug, Pickerl (§ 57a), Service, Reparaturen, Schäden.
 --   * fahrzeuge: Kennzeichen, Bezeichnung, zugeteilte Fahrer, nächstes Pickerl/Service,
 --     tracker_id = Kennung des Fahrzeugs im Portal des GPS-Anbieters (X-GPS) für den Import
