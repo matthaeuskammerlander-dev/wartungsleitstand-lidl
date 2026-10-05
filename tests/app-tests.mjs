@@ -4681,6 +4681,22 @@ test("Antworten stunden: bestätigter Monat sperrt auch neue Einträge – von H
   pruefe(!fehl.length, fehl.join(" | "));
 });
 
+test("Antworten stunden: Arbeit planen (📅) schlägt freitags 07:00–14:00 vor – mit 30 min Pause das Tagessoll von 6:30 h", async () => {
+  const a = await oeffnen(KONTEN.techniker);
+  const r = await a.seite.evaluate(async () => {
+    const x = window.__t.x, warte = (ms) => new Promise((f) => setTimeout(f, ms));
+    x("S.view='stunden'; S.stWoche=montagVon(isoLokal(new Date())); render()"); await warte(600);
+    const tage = [...document.querySelectorAll("[data-tage] > div")];
+    const vorschlag = (i) => { tage[i].querySelector("[data-planen]").click(); const d = [...document.querySelectorAll(".assistent")].pop();
+      const v = d.querySelector('[data-f="beginn"]').value + "–" + d.querySelector('[data-f="ende"]').value; x("ansichtenSchliessen()"); return v; };
+    return { montag: vorschlag(0), freitag: vorschlag(4), rundgang: JSON.stringify(x("RUNDGAENGE")).match(/Vorschlag 07:00[^)]*\)/g) };
+  });
+  pruefe(r.montag === "07:00–15:30" && r.freitag === "07:00–14:00", "Vorschlag beim Planen: " + JSON.stringify(r));
+  pruefe(JSON.stringify(r.rundgang) === JSON.stringify(["Vorschlag 07:00–15:30, freitags bis 14:00)"]), "Rundgang nennt die Freitag-Vorgabe falsch: " + JSON.stringify(r.rundgang));
+  pruefe(!a.fehler.length, "Laufzeitfehler: " + a.fehler.join("; "));
+  await a.zu();
+});
+
 /* ================================================================ Ablauf ================================================================ */
 const filterText = process.argv.slice(2).find((x) => !x.startsWith("--"));
 const filter = filterText ? new RegExp(filterText, "i") : null;
