@@ -30214,7 +30214,7 @@ function planEditor(e, vorgabe){
     /* zurückgegebene Tage: je Person, nur solange der Tag noch im Zeitraum liegt – herausgenommen nur für diese Person */
     var zu=abwesenheitAusnahmen(a).filter(function(x){ return x.art==="zurueck" && planTage(a).indexOf(x.tag)>=0; });
     zu.forEach(function(x){ var b=el('<button class="btn sm" type="button" style="align-self:flex-start">'+esc(dfmt(x.tag))+" herausnehmen (zurückgegeben von "+esc(x.von||"")+")</button>");
-      b.onclick=function(){ b.disabled=true; planTagHerausnehmen(a, x.tag, x.uid).then(function(ok){ if(ok) v.zu(); else b.disabled=false; }, function(y){ b.disabled=false; toast("Nicht geändert: "+technikDeutsch(y.message||String(y))); }); };
+      b.onclick=function(){ b.disabled=true; planTagHerausnehmen(a, x.tag, x.uid).then(function(ok){ if(ok) v.zu(); else b.disabled=false; }, function(y){ b.disabled=false; toast(y.teilweise ? y.message : "Nicht geändert: "+technikDeutsch(y.message||String(y))); }); };
       tk.querySelector(".stack").appendChild(b); });
     /* mehrere Personen: für wen? Büro wie bisher „für alle“, sonst nur für sich selbst */
     var tkPers=(a.wer||[]).length>1 ? a.wer : [], tkBuero=istInhaber() || Rolle.name==="admin", tkIch=meineKennung();
@@ -30224,7 +30224,7 @@ function planEditor(e, vorgabe){
       '<button class="btn ghost sm" type="button">Tag herausnehmen</button></div>');
     hr.querySelector("button").onclick=function(){ var t=hr.querySelector("input").value; if(!t || t<a.datum || t>(a.datum_bis||a.datum)){ toast("Bitte einen Tag aus dem Zeitraum wählen."); return; }
       var fuer=hr.querySelector("[data-fuer]");
-      var b2=this; b2.disabled=true; planTagHerausnehmen(a, t, fuer ? fuer.value||null : null).then(function(ok){ if(ok) v.zu(); else b2.disabled=false; }, function(x){ b2.disabled=false; toast("Nicht geändert: "+technikDeutsch(x.message||String(x))); }); };
+      var b2=this; b2.disabled=true; planTagHerausnehmen(a, t, fuer ? fuer.value||null : null).then(function(ok){ if(ok) v.zu(); else b2.disabled=false; }, function(x){ b2.disabled=false; toast(x.teilweise ? x.message : "Nicht geändert: "+technikDeutsch(x.message||String(x))); }); };
     tk.querySelector(".stack").appendChild(hr);
     v.inhalt.appendChild(tk);
   }
@@ -30685,7 +30685,20 @@ function planTagHerausnehmen(e, tag, uid){
       wer:(e.wer||[]).length ? e.wer : [e.erstellt_von], wer_namen:(e.wer||[]).length ? (e.wer_namen||[]) : [e.erstellt_name||""],
       status:e.status, privat:false, ausnahmen:a2, erstellt_name:meinName(), geaendert_von:meinName()};
     q=Store.sb.from("planung").update({datum_bis:vt===e.datum?null:vt, ausnahmen:a, geaendert_von:meinName()}).eq("id", e.id).select("*")
-      .then(function(r){ if(r.error || !(r.data||[]).length) return r; return Store.sb.from("planung").insert(kopie).select("*").then(function(r2){ return r2.error ? r2 : {data:(r.data||[]).concat(r2.data||[]), error:null}; }); });
+      .then(function(r){ if(r.error || !(r.data||[]).length) return r;
+        /* scheitert der zweite Schritt, den ersten zurücknehmen – sonst fehlte der Teil ab dem Folgetag (samt Stunden),
+           während „nichts gespeichert“ gemeldet wird. Geht auch das nicht: ehrlich melden, was jetzt gilt (nochmals
+           tippen holt den zweiten Teil nach). Die Reihenfolge bleibt: erst kürzen, dann anlegen (sonst fehlen die Stunden) */
+        var zurueck=function(grund){
+          var halb=function(){ var g=r.data[0]; PLANUNG=PLANUNG.filter(function(y){ return y.id!==g.id; }).concat([g]); planGeaendert();
+            var x=new Error(planKat(e.kategorie)[1]+" nur zum Teil geändert: endet jetzt am "+dfmt(vt)+", der Teil ab "+dfmt(ft)+" fehlt noch ("+
+              (/fetch|network|load failed/i.test(grund)?"keine Verbindung":grund)+"). Bitte nochmals „Tag herausnehmen“ tippen oder den Teil ab "+dfmt(ft)+" neu eintragen.");
+            x.teilweise=true; throw x; };
+          return Store.sb.from("planung").update({datum_bis:e.datum_bis||null, ausnahmen:e.ausnahmen||{}, geaendert_von:meinName()}).eq("id", e.id).select("*")
+            .then(function(r3){ if(r3.error || !(r3.data||[]).length) halb(); return {data:null, error:{message:grund}}; }, halb);
+        };
+        return Store.sb.from("planung").insert(kopie).select("*").then(function(r2){ return r2.error ? zurueck(r2.error.message) : {data:(r.data||[]).concat(r2.data||[]), error:null}; },
+          function(x){ return zurueck(String((x&&x.message)||x)); }); });
   }
   return planHerausnehmenFertig(e, tag, q);
 }
@@ -30739,7 +30752,7 @@ function abwesenheitPruefen(tag, weiter){
   var knopf=function(text, klasse, tun){ var b=el('<button class="btn'+(klasse?" "+klasse:"")+'" type="button" style="text-align:left">'+text+"</button>");
     b.onclick=function(){ r.querySelectorAll("button").forEach(function(x){ x.disabled=true; });
       Promise.resolve().then(tun).then(function(ok){ if(ok===false){ r.querySelectorAll("button").forEach(function(x){ x.disabled=false; }); return; } v.zu(); weiter(); },
-        function(x){ r.querySelectorAll("button").forEach(function(y){ y.disabled=false; }); toast("Nicht gespeichert: "+technikDeutsch(x.message||String(x))); }); };
+        function(x){ r.querySelectorAll("button").forEach(function(y){ y.disabled=false; }); toast(x.teilweise ? x.message : "Nicht gespeichert: "+technikDeutsch(x.message||String(x))); }); };
     r.appendChild(b); };
   knopf("<strong>Nur kurz eingesprungen</strong><br><span style=\"font-weight:400;font-size:12.5px\">"+esc(k[1])+" bleibt, die Arbeit kommt dazu</span>", "ghost",
     function(){ return abwesenheitAusnahmeSetzen(e, tag, "eingesprungen"); });

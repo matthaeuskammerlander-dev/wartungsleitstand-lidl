@@ -2203,6 +2203,33 @@ test("Tiefentest kalender: Planung prüfen – Reihenfolge übernehmen", async (
     return erg;
   });
   if (Object.keys(r04).length) fehl.push("TT-KAL-04 ohne Netz keine Meldung bzw. unbehandelter Fehler: " + JSON.stringify(r04));
+  /* TT-KAL-05: Einzelne Tage herausnehmen (Mitte) – reißt die Verbindung beim zweiten Schritt ab: ganz oder gar nicht, sonst ehrlich „nur zum Teil“ */
+  const r05 = await a.seite.evaluate(async () => {
+    const tt = window.__tt, x = window.__t.x, db = window.__db.tabellen, h = (n) => x("plusTage(isoLokal(new Date())," + n + ")"), erg = {};
+    const teile = (l) => l.filter((p) => p.titel === "Krank TV").map((p) => p.datum + ".." + (p.datum_bis || p.datum)).sort().join(" ");
+    for (const modus of ["einmal", "weg"]) {
+      tt.leeren();
+      await tt.termine([{ kategorie: "krank", titel: "Krank TV", datum: h(14), datum_bis: h(18) }]);
+      x("planEditor(PLANUNG.filter(function(e){ return e.titel==='Krank TV'; })[0])"); await tt.warte(200);
+      const karte = [...tt.dialog().querySelectorAll(".card")].find((c) => /Einzelne Tage herausnehmen/.test(c.textContent));
+      if (!karte) return { fehler: "Karte „Einzelne Tage herausnehmen“ fehlt" };
+      karte.querySelector("input[type=date]").value = h(16);
+      /* das Kürzen klappt, beim Anlegen des zweiten Teils reißt die Verbindung ab – „einmal“: gleich danach ist sie wieder da */
+      const sb = x("Store.sb"), alt = sb.from;
+      sb.from = function (t) { if (modus === "einmal" && window.__netzWeg) window.__netzWeg = false;
+        const q = alt.call(this, t); if (t === "planung") { const ins = q.insert; q.insert = function () { window.__netzWeg = true; return ins.apply(q, arguments); }; } return q; };
+      const knopf = [...karte.querySelectorAll("button")].find((b) => /Tag herausnehmen/.test(b.textContent));
+      tt.toasts.length = 0; knopf.click(); await tt.warte(400);
+      sb.from = alt; window.__netzWeg = false;
+      erg[modus] = { db: teile(db.planung), lokal: teile(x("PLANUNG")), toast: tt.toasts.join(" ") };
+      /* nochmals tippen, die Verbindung ist wieder da: fertig */
+      if (modus === "weg" && !knopf.disabled) { knopf.click(); await tt.warte(400); erg.nochmals = teile(db.planung); }
+    }
+    erg.vorher = h(14) + ".." + h(18); erg.halb = h(14) + ".." + h(15); erg.fertig = h(14) + ".." + h(15) + " " + h(17) + ".." + h(18);
+    return erg;
+  });
+  if (r05.fehler || r05.einmal.db !== r05.vorher || !/^Nicht geändert/.test(r05.einmal.toast) || r05.weg.db !== r05.halb || r05.weg.lokal !== r05.halb || !/nur zum Teil/.test(r05.weg.toast) || r05.nochmals !== r05.fertig)
+    fehl.push("TT-KAL-05 Tag herausnehmen halb gespeichert bzw. Meldung falsch: " + JSON.stringify(r05));
   if (a.fehler.length) fehl.push("Laufzeitfehler: " + a.fehler.join("; "));
   await a.zu();
   pruefe(!fehl.length, fehl.join(" | "));
