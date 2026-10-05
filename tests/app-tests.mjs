@@ -2066,6 +2066,37 @@ test("Tiefentest kern: geführtes Protokoll am Handy – Vor-Ort-Frage, Mangel n
   await a.zu();
 });
 
+test("Tiefentest kern: Störungsauftrag – weiterer Kunde ohne Lidl", async () => {
+  const a = await oeffnen(KONTEN.admin);
+  const r = await a.seite.evaluate(async () => {
+    const x = window.__t.x, w = (ms) => new Promise((f) => setTimeout(f, ms)), db = window.__db.tabellen, t0 = new Date().toISOString();
+    const dlg = () => [...document.querySelectorAll(".assistent")].pop();
+    const fussKnopf = (d, re) => [...d.querySelectorAll(".as-fuss button")].find((b) => re.test(b.textContent));
+    const erg = {};
+    /* weiterer Kunde: Kontakt mit der Firma des Kunden ins Adressbuch, Dialog ohne Lidl-Texte */
+    db.stammdaten.push({ id: "kunde:KT1", typ: "kunde", ziel: "KT1", felder: { name: "Testkunde Eins", aktiv: true }, neu: true, geaendert: t0, von: "Test", grund: "Test" });
+    db.stammdaten.push({ id: "standort:TS5", typ: "standort", ziel: "TS5", felder: { kundeId: "KT1" }, neu: false, geaendert: t0, von: "Test", grund: "Test" });
+    await x("ladeStammdaten(true)"); await w(300);
+    x("ansichtenSchliessen(); stoerungDialog(null, null, {standortId:'TS5'})"); await w(300);
+    let d = dlg();
+    erg.texte = [d.querySelector(".as-schritt").textContent, d.querySelector('[data-s="lidlKontakt"]').closest("label").querySelector("span").textContent,
+      d.querySelector('[data-s="lidlTelefon"]').closest("label").querySelector("span").textContent, d.querySelector("#st_ohne + span").textContent].join(" | ");
+    const k = d.querySelector('[data-s="lidlKontakt"]'); k.value = "Frau Beispielkontakt"; k.dispatchEvent(new Event("input", { bubbles: true }));
+    const nr = d.querySelector('[data-s="auftragsnummer"]'); nr.value = "K-4711"; nr.dispatchEvent(new Event("input", { bubbles: true }));
+    fussKnopf(d, /Störungsauftrag anlegen/).click(); await w(1200);
+    erg.lidl = x("istLidl(byId.TS5)");
+    erg.stoerung = db.stammdaten.filter((s) => s.typ === "stoerung").map((s) => s.ziel);
+    erg.kontakte = db.kontakte.filter((c) => /Beispielkontakt/.test(c.name || "")).map((c) => ({ firma: c.firma, kategorie: c.kategorie, kunde_id: c.kunde_id || null }));
+    return erg;
+  });
+  pruefe(r.lidl === false && r.stoerung.indexOf("TS5") >= 0, "Ausgangslage anders: " + JSON.stringify(r));
+  pruefe(r.kontakte.length === 1 && r.kontakte[0].firma === "Testkunde Eins" && r.kontakte[0].kategorie === "Kunde / Bauherr" && r.kontakte[0].kunde_id === "KT1",
+    "Kontakt des weiteren Kunden landet als Lidl im Adressbuch: " + JSON.stringify(r.kontakte));
+  pruefe(!/Lidl/.test(r.texte), "Dialog nennt beim weiteren Kunden Lidl: " + r.texte);
+  pruefe(!a.fehler.length, "Laufzeitfehler: " + a.fehler.join("; "));
+  await a.zu();
+});
+
 /* ================================================================ Ablauf ================================================================ */
 const filterText = process.argv.slice(2).find((x) => !x.startsWith("--"));
 const filter = filterText ? new RegExp(filterText, "i") : null;

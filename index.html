@@ -2482,6 +2482,16 @@ function stoerungTeilFormular(P){
       knoepfe.forEach(function(c){ c.addEventListener("click", function(){ frei(false); }); });
     });
   }
+  /* weiterer Kunde (alles wie bei Lidl, nur ohne Lidl-Texte): Untertitel und
+     Beschriftungen folgen dem gewählten Markt */
+  function lidlTexte(){
+    var s=o.standortId?byId[o.standortId]:null, lidl=!s || istLidl(s);
+    var u=P.ov.querySelector(".as-schritt"); if(u) u.textContent="Auftrag von "+(lidl?"Lidl":kundeTitel(kundeVon(s)));
+    var t={lidlKontakt:lidl?"Kontakt bei Lidl":"Kontakt beim Kunden", lidlTelefon:lidl?"Telefon Lidl":"Telefon Kontakt"};
+    Object.keys(t).forEach(function(k){ var i=inhalt.querySelector('[data-s="'+k+'"]'), sp=i && i.closest("label") && i.closest("label").querySelector("span"); if(sp) sp.textContent=t[k]; });
+    var oh=inhalt.querySelector("#st_ohne + span"); if(oh) oh.textContent=lidl?"ohne Lidl-Auftrag (telefonisch)":"ohne Auftrag (telefonisch)";
+    inhalt.querySelectorAll(".st-gruppe h3").forEach(function(h){ if(/^Gerät laut/.test(h.textContent)) h.textContent=lidl?"Gerät laut Lidl":"Gerät laut Auftrag"; });
+  }
   /* für die anderen Teile */
   P.zeichne=zeichne;
 
@@ -2540,8 +2550,8 @@ function stoerungTeilFormular(P){
       sehen.onclick=function(e){ e.preventDefault(); if(posById[o.positionId]) anlageHistorieAnsicht(posById[o.positionId], o._id); };
       sehenNeu();
     };
-    anlWahl();
-    inhalt.querySelector("#st_markt").onchange=function(){ o.standortId=this.value||null; o.positionId=null; o._marktAuto=false; anlWahl();
+    anlWahl(); lidlTexte();
+    inhalt.querySelector("#st_markt").onchange=function(){ o.standortId=this.value||null; o.positionId=null; o._marktAuto=false; anlWahl(); lidlTexte();
       /* von Hand gewählt: eine Meldung zur Markterkennung stimmt nicht mehr */
       if(/Markt erkannt|kein Markt bekannt|Markt laut Auftrag/.test(P.meldung)) P.melde(""); };
     inhalt.querySelector("#st_ohne").onchange=function(){ o.ohneAuftrag=this.checked; };
@@ -2556,7 +2566,7 @@ function stoerungTeilFormular(P){
           if(st){
             if(st.id!==o.standortId) o.positionId=null;
             o.standortId=st.id; o._marktAuto=true;
-            if(w) w.value=st.id; anlWahl();
+            if(w) w.value=st.id; anlWahl(); lidlTexte();
             P.melde("Markt erkannt: <strong>"+esc(stName(st))+"</strong>.");
           } else {
             /* die Nummer passt zu keinem Markt (mehr): der nur aus ihr erkannte
@@ -8186,11 +8196,18 @@ function stoerungSpeichern(o, grund, rueck){
       if(vorher.termin!==o.termin || (vorher.terminZeit||"")!==(o.terminZeit||"") || kanonName(vorher.terminTechniker||"")!==kanonName(o.terminTechniker))
         stoerungEinsatzMelden(o, !vorher.termin);
     }
-    /* Kontakt bei Lidl aus dem Störungsauftrag: ins Adressbuch (still – passiert bei jedem Speichern) */
-    if(wo!==false && o.lidlKontakt && typeof kontaktErfassen==="function") kontaktErfassen({name:o.lidlKontakt, firma:"Lidl Österreich", funktion:"Kontakt Lidl", kategorie:"Lidl", telefon:o.lidlTelefon, mail:o.lidlMail},
+    /* Kontakt aus dem Störungsauftrag: ins Adressbuch (still – passiert bei jedem Speichern) */
+    if(wo!==false && o.lidlKontakt && typeof kontaktErfassen==="function") kontaktErfassen(stoerungKontakt(o),
       {art:"stoerung", id:o._id, titel:"Störung "+(byId[o.standortId]?stName(byId[o.standortId]):"")+(o.auftragsnummer?" "+o.auftragsnummer:"")}, true);
     return wo;
   });
+}
+/* Kontakt aus dem Störungsauftrag fürs Adressbuch: bei Lidl „Lidl Österreich“, bei
+   weiteren Kunden die Firma des Kunden (wie kontaktAusProtokoll) */
+function stoerungKontakt(o){
+  var s=byId[o.standortId], lidl=!s || istLidl(s);
+  return {name:o.lidlKontakt, firma:lidl ? "Lidl Österreich" : kundeTitel(kundeVon(s)), funktion:lidl ? "Kontakt Lidl" : "Kontakt Kunde",
+    kategorie:lidl ? "Lidl" : "Kunde / Bauherr", telefon:o.lidlTelefon, mail:o.lidlMail, kunde_id:lidl ? null : kundeVon(s)};
 }
 function stoerungEinsatzMelden(o, neu){
   if(typeof chatAn!=="function" || !chatAn()) return;
@@ -26108,7 +26125,7 @@ function kontakteNachtragen(){
     if(d.ansprechpartner) l.push([{name:d.ansprechpartner, telefon:d.telefon, funktion:"Ansprechpartner vor Ort"}, h]);
   });
   weitereKunden(true).forEach(function(k){ if(k.ansprechpartner) l.push([{name:k.ansprechpartner, firma:k.name, telefon:k.telefon, mail:k.email, kategorie:"Kunde / Bauherr", kunde_id:k.id}, {art:"kunde", id:k.id, titel:k.name}]); });
-  OFFENE.forEach(function(o){ if(o.lidlKontakt) l.push([{name:o.lidlKontakt, firma:"Lidl Österreich", funktion:"Kontakt Lidl", kategorie:"Lidl", telefon:o.lidlTelefon, mail:o.lidlMail},
+  OFFENE.forEach(function(o){ if(o.lidlKontakt) l.push([stoerungKontakt(o),
     {art:"stoerung", id:o._id, titel:"Störung "+(byId[o.standortId]?stName(byId[o.standortId]):"")+(o.auftragsnummer?" "+o.auftragsnummer:"")}]); });
   var i=0, weiter=function(){ if(i>=l.length) return; var x=l[i++]; kontaktErfassen(x[0], x[1], true).then(weiter, weiter); };
   weiter();
@@ -26125,7 +26142,7 @@ function kontaktVorkommen(k){
     if(d.ansprechpartner && gleich({name:d.ansprechpartner, telefon:d.telefon})) l.push({art:"projekt", p:p, text:"Ansprechpartner vor Ort – "+projektTitel(p)});
   });
   weitereKunden(true).forEach(function(x){ if(x.ansprechpartner && gleich({name:x.ansprechpartner, firma:x.name, telefon:x.telefon, mail:x.email})) l.push({art:"kunde", kid:x.id, text:"Ansprechpartner Kunde "+x.name}); });
-  OFFENE.forEach(function(o){ if(o.lidlKontakt && gleich({name:o.lidlKontakt, firma:"Lidl Österreich", telefon:o.lidlTelefon, mail:o.lidlMail})) l.push({art:"stoerung", o:o, text:"Störung "+(byId[o.standortId]?stName(byId[o.standortId]):"")+(o.auftragsnummer?" · "+o.auftragsnummer:"")+(o.erledigt?" (erledigt)":"")}); });
+  OFFENE.forEach(function(o){ var sk=o.lidlKontakt && stoerungKontakt(o); if(sk && gleich({name:sk.name, firma:sk.firma, telefon:sk.telefon, mail:sk.mail})) l.push({art:"stoerung", o:o, text:"Störung "+(byId[o.standortId]?stName(byId[o.standortId]):"")+(o.auftragsnummer?" · "+o.auftragsnummer:"")+(o.erledigt?" (erledigt)":"")}); });
   return l;
 }
 function kontaktZeileHtml(k){
