@@ -1753,6 +1753,48 @@ test("Tiefentest stunden: Abgleich mit dem Kalender – Lücken behalten Markt u
   pruefe(!fehl.length, fehl.join(" | "));
 });
 
+test("Tiefentest stunden: Zeit erfassen – Kalender-Vorschlag ohne Abwesenheit, Verknüpfung nur am Tag des Termins", async () => {
+  const a = await oeffnen(KONTEN.techniker);
+  await ttHilfen(a);
+  const fehl = [];
+  /* TT-08: Krankenstand/Urlaub kommen von selbst – als Vorschlag zum Antippen gäbe es sie doppelt bzw. beantragten Urlaub schon als Urlaub */
+  const r8 = await a.seite.evaluate(async () => {
+    const tt = window.__tt, x = window.__t.x, db = window.__db.tabellen; tt.leeren(); const T1 = tt.werktag(1), T2 = tt.werktag(2);
+    await tt.termin({ kategorie: "krank", titel: "Krankenstand", datum: T1 });
+    await tt.termin({ kategorie: "urlaub", titel: "Urlaub", datum: T2 });
+    await tt.laden();
+    const erfassen = async (tag, muster) => {
+      x("zeitEditor(null, {datum:'" + tag + "'})"); await tt.warte(150);
+      const d = tt.dialog(), chip = [...d.querySelectorAll("[data-vorschlag] .chip")].find((c) => muster.test(c.textContent));
+      if (!chip) { x("ansichtenSchliessen()"); return "kein Vorschlag"; }
+      chip.click(); tt.ok(d).click(); await tt.warte(500); x("ansichtenSchliessen()");
+      return chip.textContent;
+    };
+    const chipK = await erfassen(T1, /Krankenstand/), chipU = await erfassen(T2, /Urlaub/);
+    const am = (t) => db.arbeitszeiten.filter((z) => z.datum === t).map((z) => z.art + " " + z.minuten + " " + (z.quelle || "hand"));
+    return { chipK, chipU, krank: am(T1), urlaub: am(T2) };
+  });
+  if (r8.krank.filter((s) => /^krank/.test(s)).length > 1 || r8.urlaub.some((s) => /^urlaub/.test(s)) || r8.chipK !== "kein Vorschlag" || r8.chipU !== "kein Vorschlag")
+    fehl.push("TT-08 Abwesenheit als Vorschlag: " + JSON.stringify(r8));
+  /* TT-24: Vorschlag gewählt, dann das Datum geändert – keine Verknüpfung mit dem Termin des anderen Tages */
+  const r24 = await a.seite.evaluate(async () => {
+    const tt = window.__tt, x = window.__t.x; tt.leeren(); const T1 = tt.werktag(1), T2 = tt.werktag(2);
+    const w = await tt.termin({ kategorie: "wartung", titel: "Wartung Eins", datum: T1, beginn: "08:00", ende: "10:00", standort_id: "TS1" });
+    await tt.laden();
+    x("zeitEditor(null, {datum:'" + T1 + "'})"); await tt.warte(150);
+    const d = tt.dialog();
+    [...d.querySelectorAll("[data-vorschlag] .chip")].find((c) => /Wartung Eins/.test(c.textContent)).click();
+    const dat = d.querySelector('[data-f="datum"]'); dat.value = T2; dat.dispatchEvent(new Event("change", { bubbles: true }));
+    tt.ok(d).click(); await tt.warte(500);
+    const z = window.__db.tabellen.arbeitszeiten.find((y) => y.datum === T2);
+    return { gespeichert: !!z, planung_id: z && z.planung_id, termin: w.id };
+  });
+  if (!r24.gespeichert || r24.planung_id === r24.termin) fehl.push("TT-24 mit dem Termin des anderen Tages verknüpft: " + JSON.stringify(r24));
+  if (a.fehler.length) fehl.push("Laufzeitfehler: " + a.fehler.join("; "));
+  await a.zu();
+  pruefe(!fehl.length, fehl.join(" | "));
+});
+
 /* ================================================================ Ablauf ================================================================ */
 const filterText = process.argv.slice(2).find((x) => !x.startsWith("--"));
 const filter = filterText ? new RegExp(filterText, "i") : null;
