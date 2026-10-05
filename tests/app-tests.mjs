@@ -4541,6 +4541,29 @@ test("Antworten rechnung: Vorschlag zum Einsatz – Wartungspreis je JW/HJW/HJI,
   pruefe(!a.fehler.length, "Laufzeitfehler: " + a.fehler.join("; "));
   await a.zu();
 });
+test("Antworten rechnung: Wartungspreis je Art und Anlagentyp – nie der Preis eines anderen Typs", async () => {
+  const a = await oeffnen(KONTEN.inhaber);
+  const r = await a.seite.evaluate(async () => {
+    const x = window.__t.x, db = window.__db.tabellen;
+    const kat = (id, text, preis) => ({ id, text, eh: "Stk", preis, kunde_id: "lidl", aktiv: true, quelle: "Test" });
+    db.katalog.push(kat("at1", "Jahreswartung Split (Test)", 180), kat("at2", "Jahreswartung VRV (Test)", 300), kat("at3", "Jahreswartung allgemein (Test)", 99),
+      kat("at4", "Halbjahreswartung (Test)", 150), kat("at5", "HJI Split (Test)", 80));
+    await x("katalogLaden()");
+    const anl = [["A", "Jahreswartung", { bauart: "Split" }], ["B", "Jahreswartung", { name: "Anlage B VRV Verkaufsraum" }], ["C", "Jahreswartung", { bauart: "Multi-Split" }],
+      ["D", "Jahreswartung", {}], ["E", "Halbjahreswartung", { bauart: "Split" }], ["F", "Halbjahresinspektion", { bauart: "VRV luftgekühlt" }]]
+      .map(([n, t, o]) => Object.assign({ name: "Anlage " + n, termin: t }, o));
+    return x("einsatzPositionen")({ _id: "at", standortId: "TS1", datum: "2026-06-01", wartungsart: "planmäßig", anlagen: anl }, "lidl")
+      .filter((p) => /^Wartung/.test(p.text)).map((p) => ({ n: (/Anlage (\w)/.exec(p.text) || [])[1], preis: p.preis, hinweis: p.hinweis || "" }));
+  });
+  const z = (n) => r.filter((p) => p.n === n)[0] || {};
+  pruefe(z("A").preis === 180 && z("B").preis === 300, "Art+Typ nicht gefunden: " + JSON.stringify([z("A"), z("B")]));
+  pruefe(!z("C").preis && /Preis für JW Multi-Split fehlt/.test(z("C").hinweis), "Multi-Split bekam einen fremden Preis: " + JSON.stringify(z("C")));
+  pruefe(!z("D").preis && z("D").hinweis, "Anlage ohne Typ bekam trotz typ-eigener Positionen einen Preis: " + JSON.stringify(z("D")));
+  pruefe(z("E").preis === 150, "HJW ohne typ-eigene Position nicht zum allgemeinen Preis: " + JSON.stringify(z("E")));
+  pruefe(!z("F").preis && /Preis für HJI VRV fehlt/.test(z("F").hinweis), "VRV bekam den HJI-Preis von Split: " + JSON.stringify(z("F")));
+  pruefe(!a.fehler.length, "Laufzeitfehler: " + a.fehler.join("; "));
+  await a.zu();
+});
 test("Antworten rechnung: KPlus-Rechnung umgehängt – der vorige Einsatz ist wieder „noch nicht abgerechnet“; die App lernt Streichen nach 3 Rechnungen", async () => {
   const a = await oeffnen(KONTEN.inhaber);
   await a.seite.evaluate((h) => eval(h), AR_HILFEN);

@@ -119,7 +119,10 @@ Kammerlander Umwelt- und Klimatechnik (UKT) – oft kurz, vom Handy, im Feld.
   Wartungspreis je Art (Inhaber 05.10.2026, `katalogWartung`, `wartungArten`): je Anlage die Katalogposition, deren Text
   genau ihre Termin-Art nennt (Jahreswartung/JW, Halbjahreswartung/HJW, Halbjahresinspektion/HJI; je Stück/pauschal) – sonst
   ohne Preis mit `hinweis` „Preis für JW fehlt – alte KPlus-Rechnung mit dieser Position hochladen“ (im Editor und in der
-  Positionsprüfung, solange die Zeile keinen Betrag hat); nie der Preis einer anderen Art. Je Anlage verrechnet wird nur
+  Positionsprüfung, solange die Zeile keinen Betrag hat); nie der Preis einer anderen Art. Dazu je Anlagentyp (Inhaber
+  05.10.2026, `anlageTyp`, `wartungTypen`: Split, Multi-Split, VRV/VRF, Kaltwassersatz, Kühlung, Lüftung, Wärmepumpe – aus
+  Bauart, sonst Bezeichnung): erst Art+Typ, eine Position nur mit der Art nur, wenn es für diese Art keine typ-eigenen gibt,
+  sonst ohne Preis („Preis für JW Split fehlt …“); nie der Preis eines anderen Typs. Je Anlage verrechnet wird nur
   die planmäßige Wartung (`einsatzArt`, Inhaber 05.10.2026): Reparatur, Prüfung, Sonstiges wie eine Störung nach Aufwand –
   Textzeile, Regiestunden (Ankunft–Fertig, sonst verrechenbare Stunden des Lidl-Rapports, sonst Zeile „Stunden eintragen“),
   Material, Kältemittel, Fahrtpauschale. Kältemittel nachgefüllt ohne Sorte im Protokoll: „Kältemittel – Sorte fehlt“ ohne
