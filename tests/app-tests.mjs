@@ -1827,6 +1827,46 @@ reSchritt("kplus", "R21", async (a) => {
   return r.beleg && r.abger && !r.offen && r.toasts.some((t) => /Katalog/.test(t) && /abgelegt/.test(t)) && !r.toasts.some((t) => /Nicht abgelegt/.test(t))
     ? "" : `Beleg gespeichert: ${r.beleg}, abgerechnet: ${r.abger}, Fenster offen: ${r.offen}, Meldungen ${JSON.stringify(r.toasts)}`;
 });
+/* KPlus-PDF ohne erkannte Nummer: nicht ohne Nummer ablegen (sonst überschreibt die nächste solche Rechnung die erste) */
+reSchritt("kplus", "R14", async (a) => {
+  const r = await a.seite.evaluate(async () => {
+    const x = window.__t.x, db = window.__db.tabellen, R = window.__re, it = (xx, y, t, f) => ({ s: 1, x: xx, y, w: 20, t, f: f || "F2" });
+    /* Rechnungsnummer eine Zeile unter dem Titel – kplusAuswerten findet sie nicht */
+    const erg = x("kplusAuswerten")([[it(330, 150, "Rechnung", "F1"), it(480, 165, "900801", "F1"), it(150, 300, "Bezeichnung"),
+      it(60, 320, "1"), it(100, 320, "1,00 psh"), it(160, 320, "Fahrtpauschale Zone 1 (Testtext)"), it(420, 320, "50,00"), it(500, 320, "50,00"), it(300, 400, "Netto-Summe"), it(500, 400, "50,00")]]);
+    await R.stoerung("p141", "2026-06-01"); await R.stoerung("p142", "2026-06-09");
+    const n0 = db.belege.length;
+    let d = R.vorschau("p141", JSON.parse(JSON.stringify(erg)));
+    R.toasts.length = 0; await R.ablegen(d);
+    const ohne = db.belege.length - n0, meldung = R.toasts.slice(-1)[0], feld = d.querySelector("[data-nummer]");
+    if (feld) { R.setze(feld, "900801"); await R.ablegen(d); }
+    x("ansichtenSchliessen()");
+    d = R.vorschau("p142", JSON.parse(JSON.stringify(erg)));
+    const feld2 = d.querySelector("[data-nummer]"); if (feld2) R.setze(feld2, "900802");
+    await R.ablegen(d);
+    return { nummer: erg.nummer, ohne, meldung, belege: db.belege.slice(n0).map((b) => [b.nummer, b.protokoll_id]) };
+  });
+  return r.ohne === 0 && /nummer/i.test(r.meldung || "") && JSON.stringify(r.belege) === '[["900801","p141"],["900802","p142"]]'
+    ? "" : `Nummer „${r.nummer}“; ohne Nummer abgelegt: ${r.ohne} (${r.meldung}); danach Belege ${JSON.stringify(r.belege)}`;
+});
+/* KPlus beim Einsatz: liegt dieselbe Rechnung schon am Projekt, bleibt der Projektbezug; an einem anderen Einsatz erst nach Rückfrage */
+reSchritt("kplus", "R22", async (a) => {
+  const r = await a.seite.evaluate(async () => {
+    const db = window.__db.tabellen, R = window.__re;
+    db.belege.push({ id: "b22", art: "rechnung", nummer: "900700", extern: true, test: false, datum: "2026-06-01", status: "versendet", projekt_id: "prt1", kunde_id: "lidl", kopf: {}, positionen: [], summen: { netto: 0 } },
+      { id: "b22b", art: "rechnung", nummer: "900701", extern: true, test: false, datum: "2026-06-01", status: "versendet", protokoll_id: "pkAnders", kunde_id: "lidl", kopf: {}, positionen: [], summen: { netto: 0 } });
+    await R.stoerung("pk22", "2026-06-01");
+    R.confirms.length = 0;
+    await R.ablegen(R.vorschau("pk22", R.erg("900700")));
+    const b1 = db.belege.filter((q) => q.nummer === "900700").map((q) => [q.projekt_id, q.protokoll_id]);
+    R.ja = false;                                         /* „schon bei einem anderen Einsatz – hierher?“ → nein */
+    const d = R.vorschau("pk22", R.erg("900701")); await R.ablegen(d);
+    const b2 = db.belege.filter((q) => q.nummer === "900701").map((q) => q.protokoll_id);
+    return { b1, b2, confirms: R.confirms.slice(), offen: document.body.contains(d) };
+  });
+  return JSON.stringify(r.b1) === '[["prt1","pk22"]]' && JSON.stringify(r.b2) === '["pkAnders"]' && r.confirms.some((m) => /900701/.test(m)) && r.offen
+    ? "" : `am Projekt: ${JSON.stringify(r.b1)}; am anderen Einsatz: ${JSON.stringify(r.b2)}; Rückfragen ${JSON.stringify(r.confirms)}, Fenster offen ${r.offen}`;
+});
 /* KPlus-Beleg: „PDF ansehen“ zeigt das abgelegte Original – ohne Original nie ein App-PDF mit Briefkopf */
 reSchritt("kplus", "R10", async (a) => {
   const r = await a.seite.evaluate(async () => {
