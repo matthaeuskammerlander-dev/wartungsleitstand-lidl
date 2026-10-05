@@ -2000,7 +2000,7 @@ test("Tiefentest kern: „Zählt als“ folgt dem geänderten Protokolldatum, vo
   await a.zu();
 });
 
-test("Tiefentest kern: geführtes Protokoll am Handy – Vor-Ort-Frage, Mangel nur mit Maßnahme, Ausnahme ohne Lidl-Auftrag", async () => {
+test("Tiefentest kern: geführtes Protokoll am Handy – Vor-Ort-Frage, Mangel nur mit Maßnahme, Ausnahme ohne Lidl-Auftrag, ab 30 kg kein „nur JW“", async () => {
   const a = await oeffnen(KONTEN.techniker, { handy: true });
   const r = await a.seite.evaluate(async () => {
     const x = window.__t.x, w = (ms) => new Promise((f) => setTimeout(f, ms)), db = window.__db.tabellen;
@@ -2047,10 +2047,17 @@ test("Tiefentest kern: geführtes Protokoll am Handy – Vor-Ort-Frage, Mangel n
     for (let i = 0; i < 30 && !db.protokolle.length; i++) await w(200);
     erg.stoer = db.protokolle.map((p) => ({ nr: p.auftragsnummer || "", ohne: !!(p.stoerung || {}).ohneAuftrag }));
     erg.gesehen = gesehen;
+    /* bekannte Füllmenge ab 30 kg: „Nein – nur Jahreswartung“ wird nicht angeboten (HJW bleibt Pflicht) */
+    x("posById.TP4.kaeltemittelKg=35; posById.TP4.ueber30kg=true; posById.TP4.kaeltemittelText='35 kg'; berechneFaelligkeiten(); 1");
+    await oeffne("wartung", "TS3", "TP4");
+    await bis(/· Anlage · /);
+    erg.nurJwAngeboten = !!ov().querySelector("[data-halbnein]");
+    erg.hjwKnopf = (ov().querySelector("[data-halbja]") || {}).textContent || "";
     return erg;
   });
   pruefe(r.gesehen.length > 0 && r.antwort === "ja, im Lager", "offene Vor-Ort-Frage im geführten Dialog nicht gezeigt bzw. nicht beantwortbar: " + JSON.stringify([r.gesehen, r.antwort]));
   pruefe(r.nochSichtbar, "Maßnahme nach „+ weiterer Mangel“ nicht mehr im Dialog sichtbar");
+  pruefe(!r.nurJwAngeboten && /HJW/.test(r.hjwKnopf), "bei 35 kg wird „Nein – nur Jahreswartung“ angeboten bzw. kein HJW-Knopf: " + JSON.stringify([r.nurJwAngeboten, r.hjwKnopf]));
   pruefe(/Mangel beschreiben.*Filter tauschen/.test(r.warn) && /ohne Beschreibung/.test(r.zeileMaengel), "Übersicht nennt den unvollständigen Mangel nicht: " + JSON.stringify(r));
   pruefe(r.dialogOffen && r.gespeichert === 0, "Dialog geschlossen bzw. unvollständig gespeichert: " + JSON.stringify(r));
   pruefe(r.ausnahme, "Schritt „Störungsauftrag“ bietet die Ausnahme „kein Lidl-Auftrag“ nicht an: " + r.warnStoer);
