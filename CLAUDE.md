@@ -277,7 +277,9 @@ Kammerlander Umwelt- und Klimatechnik (UKT) – oft kurz, vom Handy, im Feld.
   Sonstiges; Personen `wer`, mehrtägig `datum_bis`) und Aufgaben (Zuständige,
   fällig, Bezug Projekt+Schritt/Markt/Störung, erledigt). PRIVAT: andere sehen
   nur „Abwesend“, Titel/Details in `planung_privat` (nur die Person selbst –
-  Trigger `planung_pruefen` erzwingt es). Urlaub genehmigt nur der Inhaber
+  Trigger `planung_pruefen` erzwingt es). KRANKENSTAND anderer: Kollegen sehen nur „Abwesend“ (grau, ohne Titel/Details;
+  `planKrankVerborgen`, `planKatSicht`, `planTitel`) – die Art nur der Inhaber und die Person selbst (Gesundheitsdaten,
+  Inhaber 05.10.2026; nur in der App, die Datenbank-Zeile bleibt lesbar). Urlaub genehmigt nur der Inhaber
   (Trigger); schon genehmigten löscht nur er – die Person „Urlaub zurückziehen“ (Rückfrage, Nachricht an den Inhaber,
   `chatAnInhaber`; Sperrregel „genehmigter urlaub loeschen nur inhaber“; Inhaber 05.10.2026). Der Kalender zeigt dazu Störungen (Einsatztag bleibt in der
   Störung), Projekttermine, erledigte Protokolle und fällige Wartungen zum

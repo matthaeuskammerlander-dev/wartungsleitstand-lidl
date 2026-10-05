@@ -4577,6 +4577,43 @@ test("Antworten stunden: genehmigten Urlaub löscht nur der Inhaber – die Pers
   pruefe(!fehl.length, fehl.join(" | "));
 });
 
+test("Antworten stunden: Krankenstand anderer sehen Kollegen nur als „Abwesend“ – die Art nur der Inhaber und die Person selbst", async () => {
+  const fehl = [];
+  const sicht = async (konto) => {
+    const a = await oeffnen(konto);
+    await ttHilfen(a);
+    const r = await a.seite.evaluate(async () => {
+      const tt = window.__tt, x = window.__t.x, db = window.__db.tabellen, e = {}; tt.leeren();
+      const adm = "u_admin_test_at", t1 = x("werktagAb(plusTage(isoLokal(new Date()),7))"), t2 = x("plusTage('" + t1 + "',1)");
+      const z = { art: "termin", wer: [adm], wer_namen: ["Testadmin"], erstellt_von: "u_inhaber_test_at", erstellt: new Date().toISOString(), privat: false, ausnahmen: {}, status: "offen" };
+      db.planung.push(Object.assign({ id: "aw3k", kategorie: "krank", titel: "Grippe Testadmin", details: "Arztbrief folgt", datum: t1 }, z));
+      db.planung.push(Object.assign({ id: "aw3s", kategorie: "schule", titel: "Kältekurs", datum: t2 }, z));
+      await tt.laden();
+      e.kal = Object.values(x("kalenderEintraege('" + t1 + "', '" + t2 + "', 'alle')")).flat().filter((y) => y.e).map((y) => y.titel + "|" + y.farbe).sort();
+      e.grau = x("planKat('privat')[2]"); e.krank = x("planKat('krank')[2]"); e.schule = x("planKat('schule')[2]");
+      x("planEditor(PLANUNG.filter(function(p){ return p.id==='aw3k'; })[0])"); await tt.warte(200);
+      const d = tt.dialog();
+      e.editor = (d.innerText + " " + [...d.querySelectorAll("input, textarea")].map((f) => f.value).join(" ") + " " +
+        [...d.querySelectorAll("select")].map((f) => (f.options[f.selectedIndex] || {}).text || "").join(" ")).replace(/\s+/g, " "); x("ansichtenSchliessen()");
+      e.verplant = x("verplantPruefen(['" + adm + "'], ['Testadmin'], '" + t1 + "', '" + t1 + "', 0, 1440)").join(" ");
+      x("S.view='kalender'; S.kalModus='monat'; S.kMonat='" + t1.slice(0, 7) + "'; S.kalWer='alle'; S.kalNur=''; render()"); await tt.warte(500);
+      e.reiter = /Grippe/.test(document.body.innerText);
+      return e;
+    });
+    if (a.fehler.length) fehl.push("Laufzeitfehler (" + konto + "): " + a.fehler.join("; "));
+    await a.zu();
+    return r;
+  };
+  const t = await sicht(KONTEN.techniker);
+  if (JSON.stringify(t.kal) !== JSON.stringify(["Abwesend|" + t.grau, "Kältekurs|" + t.schule]) || /Grippe|Krankenstand|Arztbrief/.test(t.editor) || !/abwesend/.test(t.editor) ||
+      /Grippe/.test(t.verplant) || !/Abwesend/.test(t.verplant) || t.reiter) fehl.push("Techniker sieht den Krankenstand: " + JSON.stringify(t));
+  const i = await sicht(KONTEN.inhaber), s = await sicht(KONTEN.admin);
+  [["Inhaber", i], ["Person selbst", s]].forEach(([wer, r]) => {
+    if (JSON.stringify(r.kal) !== JSON.stringify(["Grippe Testadmin|" + r.krank, "Kältekurs|" + r.schule]) || !/Grippe/.test(r.editor) || !r.reiter) fehl.push(wer + " sieht den Krankenstand nicht: " + JSON.stringify(r));
+  });
+  pruefe(!fehl.length, fehl.join(" | "));
+});
+
 /* ================================================================ Ablauf ================================================================ */
 const filterText = process.argv.slice(2).find((x) => !x.startsWith("--"));
 const filter = filterText ? new RegExp(filterText, "i") : null;
