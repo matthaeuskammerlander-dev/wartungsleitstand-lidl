@@ -1697,6 +1697,32 @@ reSchritt("editor", "R04", async (a) => {
   return bei(r.nachLoeschen) === '["Kältemittel R410A"]' && bei(r.nachVerschieben) === '["Kältemittel R410A"]' && km[1] === "5,00" && fp[1] === "1,00"
     ? "" : `Vorschlag vorher bei ${bei(r.vorher)}, nach dem Löschen bei ${bei(r.nachLoeschen)}, nach dem Verschieben bei ${bei(r.nachVerschieben)}; nach dem Tipp: Kältemittel ${km[1]}, Fahrtpauschale ${fp[1]}`;
 });
+/* Katalog lernt aus Einsatz-Rechnungen keine Texte mit Uhrzeit oder Protokolldatum */
+reSchritt("editor", "R06", async (a) => {
+  const r = await a.seite.evaluate(async () => {
+    const x = window.__t.x, db = window.__db.tabellen, R = window.__re;
+    const prot = (id, d, o) => Object.assign({ id, client_id: id, standort_id: "TS1", datum: d, wartungsart: "Wartung", techniker: "Testtechniker", anlagen: [{ name: "VRV Anlage R06", termin: "JW" }],
+      version: 1, erstellt: new Date().toISOString(), erstellt_von: "u_tech_test_at" }, o || {});
+    db.katalog.push({ id: "kw6", text: "Wartung Klimaanlage lt. Rahmenvertrag (Test)", eh: "Stk", preis: 210, kunde_id: "lidl", aktiv: true, quelle: "Test" });
+    db.protokolle.push(prot("s61", "2026-06-01", { wartungsart: "Störung", anlagen: [], stoerung: { ankunft: "08:00", ende: "10:00", problemtyp: "Kühlung" } }),
+      prot("s62", "2026-06-08", { wartungsart: "Störung", anlagen: [], stoerung: { ankunft: "13:00", ende: "14:30", problemtyp: "Kühlung" } }),
+      prot("w61", "2026-06-05"), prot("w62", "2026-07-05"));
+    await x("Promise.all([ladeProtokolle(), katalogLaden()])");
+    const vorher = db.katalog.length;
+    for (const id of ["s61", "s62", "w61"]) {
+      x("belegNeu(kontextProtokoll(window.__re.pk('" + id + "')), 'rechnung', null, function(){})");
+      const d = await R.bis(() => { const d = R.dlg(); return d && d.querySelector(".bpos") && R.knopf(d, /^Speichern$/) && d; });
+      const n0 = db.belege.length; R.knopf(d, /^Speichern$/).click();
+      await R.bis(() => db.belege.length > n0); await R.warte(200);   /* der Katalog lernt nach dem Speichern */
+      x("ansichtenSchliessen()");
+    }
+    const neu = db.katalog.slice(vorher).map((k) => k.text.replace(/\n/g, " / "));
+    await x("katalogLaden()");
+    const w2 = x("einsatzPositionen(window.__re.pk('w62'), 'lidl')").filter((p) => /wartung/i.test(p.text))[0];
+    return { neu, w2: w2 ? w2.text.replace(/\n/g, " / ") : null };
+  });
+  return !r.neu.length && !/05\.06\.2026/.test(r.w2 || "") ? "" : `${r.neu.length} neue Katalogpositionen aus Einsatz-Rechnungen: ${JSON.stringify(r.neu)}; Vorschlag zur Wartung vom 05.07.2026: „${r.w2}“`;
+});
 /* KPlus: Gutschrift wird nicht als Angebot abgelegt; ohne erkannte PDF-Summe steht kein „stimmt“ */
 reSchritt("kplus", "R03", async (a) => {
   const r = await a.seite.evaluate(async () => {

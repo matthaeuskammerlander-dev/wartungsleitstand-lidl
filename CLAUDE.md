@@ -327,7 +327,8 @@ Kammerlander Umwelt- und Klimatechnik (UKT) – oft kurz, vom Handy, im Feld.
   Verbindung gar keine Karte. Der Leitstand darf dort nur lesen/suchen (das Mail-Programm sperrt Senden,
   Verschieben, Löschen). Mailinhalte nie ins Repository. Test: „Mail-Programm am PC …“.
 - **Katalog lernt mit** (`katalogLernen`, Büro 02.10.2026, nur Inhaber): neue Positionen aus KPlus-PDFs und
-  aus gespeicherten App-Belegen kommen dazu (Herkunft in `quelle`, ohne Preis nichts); Preise bestehender
+  aus gespeicherten App-Belegen kommen dazu (Herkunft in `quelle`, ohne Preis nichts; Wartung/Regiestunden eines Einsatzes
+  mit Uhrzeit bzw. Protokolldatum nie – Merker `einsatz` aus `einsatzPositionen`); Preise bestehender
   Positionen ändert nur KPlus (alter Preis in der Herkunft). „+ Neue Position“ im Katalog; Auswahl nach Häufigkeit.
 - **Tour → Kalender** (`tourSchicken`, `tourBuero`, Büro 03.10.2026): Inhaber und Admins planen für sich und alle
   (Admins auch für den Inhaber), Techniker nur für sich selbst; für sich selbst nur Kalendereinträge, für andere
