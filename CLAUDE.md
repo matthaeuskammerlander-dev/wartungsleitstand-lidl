@@ -285,7 +285,8 @@ Kammerlander Umwelt- und Klimatechnik (UKT) – oft kurz, vom Handy, im Feld.
   `planKrankVerborgen`, `planKatSicht`, `planTitel`) – die Art nur der Inhaber und die Person selbst (Gesundheitsdaten,
   Inhaber 05.10.2026; nur in der App, die Datenbank-Zeile bleibt lesbar). Urlaub genehmigt nur der Inhaber
   (Trigger); schon genehmigten löscht nur er – die Person „Urlaub zurückziehen“ (Rückfrage, Nachricht an den Inhaber,
-  `chatAnInhaber`; Sperrregel „genehmigter urlaub loeschen nur inhaber“; Inhaber 05.10.2026). Der Kalender zeigt dazu Störungen (Einsatztag bleibt in der
+  `chatAnInhaber`; Sperrregel „genehmigter urlaub loeschen nur inhaber“; Inhaber 05.10.2026); ändert sie ihn (→ wieder
+  beantragt), bekommt der Inhaber von selbst „Urlaub geändert – bitte neu genehmigen“ (`urlaubGeaendertMelden`). Der Kalender zeigt dazu Störungen (Einsatztag bleibt in der
   Störung), Projekttermine, erledigte Protokolle und fällige Wartungen zum
   Einplanen (`wartungenImMonat`; eingeplant werden die Wartungstermine der
   Anlagen: `planung.position_ids`, `wartungEinplanen`, `planFuerPosition`, in

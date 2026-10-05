@@ -24553,6 +24553,7 @@ Object.assign(RUNDGAENGE, {
       RG_HG(["Titel und Details privater Einträge liegen in einer eigenen Tabelle, die nur du lesen kannst; die Datenbank setzt den Titel für alle anderen auf „Abwesend“ und verwirft Bezüge.",
         "Urlaub genehmigt nur der Inhaber (prüft die Datenbank); ändert jemand anders Zeitraum oder Personen, ist er wieder „beantragt“.",
         "Genehmigten Urlaub löscht nur der Inhaber: statt „Löschen“ steht „Urlaub zurückziehen“ – nach einer Rückfrage bekommt der Chef eine Nachricht; bis er ihn löscht, bleibt der Urlaub stehen.",
+        "Ändert die Person die Tage eines genehmigten Urlaubs, ist er wieder „beantragt“ – der Chef bekommt von selbst eine Nachricht „Urlaub geändert – bitte neu genehmigen“.",
         "Genehmigter Urlaub, Krankenstand und ganztägig Privates zählen bei Tour, Auslastung und Planung als abwesend."])},
     {reiter:"kalender", ziel:function(){ return rgKarte(/^Auslastung/); }, wenn:function(){ return tourBuero(); }, titel:"Auslastung (Büro)",
       text:"Wie voll die nächsten 12 Monate werden – Monat antippen zeigt die fälligen Märkte. Oben antippen, wer mitzählt."+
@@ -30191,7 +30192,7 @@ function kalVerschieben(x, tag, b, dauer){
       if(r.error || !(r.data||[]).length){ toast("Nicht verschoben: "+((r.error&&r.error.message)||"keine Berechtigung")); render(); return; }
       var g=r.data[0]; PLANUNG=PLANUNG.filter(function(y){ return y.id!==g.id; }).concat([g]);
       planBenachrichtigen(g, (g.wer||[]).filter(function(id){ return id!==meineKennung(); }), false, "Termin verschoben");
-      toast("Verschoben auf "+dfmt(tag)+", "+kalHm(b)+"–"+kalHm(e)+"."); planGeaendert(); render();
+      toast("Verschoben auf "+dfmt(tag)+", "+kalHm(b)+"–"+kalHm(e)+"."); urlaubGeaendertMelden(a, g); planGeaendert(); render();
     }, function(){ toast("Nicht verschoben – keine Verbindung."); render(); });
   } else if(x.art==="stoerung" && x.o){
     var o=Object.assign({}, x.o, {termin:tag, terminZeit:kalHm(b)});
@@ -31175,6 +31176,7 @@ function planEditor(e, vorgabe){
       toast((art==="aufgabe"?"Aufgabe":"Termin")+" gespeichert"+(gesp.kategorie==="urlaub" && gesp.status==="beantragt"?" – Urlaub beantragt":"")+".");
       /* neu Eingetragene bekommen eine Nachricht (mit Push) – nicht bei Privatem */
       if(!demo() && !priv) planBenachrichtigen(gesp, wer.filter(function(id){ return id!==ich && (a.wer||[]).indexOf(id)<0; }), neu);
+      if(!neu) urlaubGeaendertMelden(a, gesp);
       planGeaendert();
     };
     if(demo()){ fertig(Object.assign({id:e?e.id:neueKennung("pl"), erstellt_von:ich, erstellt:new Date().toISOString(), status:"offen"}, e||{}, zeile, {geaendert:new Date().toISOString()})); return; }
@@ -31236,6 +31238,14 @@ function planBenachrichtigen(e, an, neu, betreff){
     mitFrist(Store.sb.from("chat").insert({id:"c_"+Date.now().toString(36)+i+Math.random().toString(36).slice(2,8),
       von:Store.benutzer.id, von_name:ich, text:text, an:id, an_name:name, fotos:[]}), 15000).then(function(){}, function(){});
   });
+}
+/* genehmigten Urlaub selbst geändert – die Datenbank setzt ihn wieder auf „beantragt“ (planung_pruefen): der Inhaber bekommt
+   von selbst eine Nachricht zum neu Genehmigen (Inhaber 05.10.2026) */
+function urlaubGeaendertMelden(alt, gesp){
+  if(demo() || nurInhaber() || !alt || !gesp || alt.kategorie!=="urlaub" || alt.status!=="genehmigt" || gesp.kategorie!=="urlaub" || gesp.status!=="beantragt") return;
+  var zr=function(e){ return dfmt(e.datum)+(e.datum_bis && e.datum_bis!==e.datum ? "–"+dfmt(e.datum_bis) : ""); };
+  chatAnInhaber("🗓 Urlaub geändert – bitte neu genehmigen: "+(planWerText(gesp)||meinName())+", jetzt "+zr(gesp)+" (genehmigt war "+zr(alt)+").").then(function(n){
+    toast(n ? "Urlaub geändert – wieder beantragt, der Chef bekommt eine Nachricht zum neu Genehmigen." : "Urlaub wieder beantragt – die Nachricht an den Chef ging nicht raus, bitte direkt Bescheid geben."); });
 }
 /* Nachricht an den bzw. die Inhaber (Team-Chat, mit Push) – liefert, an wie viele sie ging (0: nicht gesendet) */
 function chatAnInhaber(text){
