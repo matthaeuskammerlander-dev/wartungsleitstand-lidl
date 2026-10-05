@@ -1753,7 +1753,7 @@ test("Tiefentest stunden: Abgleich mit dem Kalender – Lücken behalten Markt u
   pruefe(!fehl.length, fehl.join(" | "));
 });
 
-test("Tiefentest stunden: Zeit erfassen – Kalender-Vorschlag ohne Abwesenheit, Verknüpfung nur am Tag des Termins", async () => {
+test("Tiefentest stunden: Zeit erfassen – Kalender-Vorschlag ohne Abwesenheit, Verknüpfung nur am Tag des Termins, nur Notiz bleibt gestempelt", async () => {
   const a = await oeffnen(KONTEN.techniker);
   await ttHilfen(a);
   const fehl = [];
@@ -1790,6 +1790,26 @@ test("Tiefentest stunden: Zeit erfassen – Kalender-Vorschlag ohne Abwesenheit,
     return { gespeichert: !!z, planung_id: z && z.planung_id, termin: w.id };
   });
   if (!r24.gespeichert || r24.planung_id === r24.termin) fehl.push("TT-24 mit dem Termin des anderen Tages verknüpft: " + JSON.stringify(r24));
+  /* TT-07: gestempelt (Sekunden zählen), dann nur die Notiz geändert – Minuten und „gestempelt“ bleiben */
+  const r7 = await a.seite.evaluate(async () => {
+    const tt = window.__tt, x = window.__t.x, db = window.__db.tabellen; tt.leeren();
+    const ein = new Date(Date.now() - 20 * 60000); ein.setSeconds(50, 0);
+    const aus = new Date(ein.getTime() + 19 * 60000 + 15000);   /* 19 min 15 s später: Ende-Sekunden kleiner als Beginn-Sekunden */
+    db.stempel.push({ id: "stt07", user_id: tt.ich(), name: "T", art: "ein", zeit: ein.toISOString(), bereich: "werkstatt" });
+    window.__stempelVersatz = aus.getTime() - Date.now();
+    x("stempelStand=0"); await x("stempelNachladen(true)"); await x("zeitenLaden()");
+    await x("stempelDruecken('aus', {taetigkeit:'Werkstatt'})"); window.__stempelVersatz = 0; await tt.warte(100);
+    x("ansichtenSchliessen()");
+    const z0 = db.arbeitszeiten.find((z) => /^stempel/.test(z.quelle || ""));
+    if (!z0) return { fehlt: true };
+    const vorher = { min: z0.minuten, quelle: z0.quelle };
+    x("zeitEditor(ZEITEN.filter(function(z){ return z.id==='" + z0.id + "'; })[0])"); await tt.warte(150);
+    const d = tt.dialog(), n = d.querySelector('[data-f="notiz"]'); n.value = "Material vergessen"; n.dispatchEvent(new Event("input", { bubbles: true }));
+    tt.ok(d).click(); await tt.warte(500);
+    const z1 = db.arbeitszeiten.find((z) => z.id === z0.id);
+    return { vorher, nachher: { min: z1.minuten, quelle: z1.quelle, notiz: z1.notiz } };
+  });
+  if (r7.fehlt || r7.nachher.notiz !== "Material vergessen" || r7.nachher.min !== r7.vorher.min || r7.nachher.quelle !== r7.vorher.quelle) fehl.push("TT-07 nur Notiz geändert: " + JSON.stringify(r7));
   if (a.fehler.length) fehl.push("Laufzeitfehler: " + a.fehler.join("; "));
   await a.zu();
   pruefe(!fehl.length, fehl.join(" | "));
