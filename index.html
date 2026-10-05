@@ -2161,8 +2161,9 @@ function bundesland(s){
   return n>=9900 ? "Tirol" : "Kärnten";
 }
 /* letzter Tag des Folgemonats – für „auch nächsten Monat mitnehmen“ */
-function endeFolgemonat(){
-  var h=new Date(), d=new Date(h.getFullYear(), h.getMonth()+2, 0);
+/* Ende des nächsten Monats – mit weiter=1 des übernächsten (Tour, Büro 06.10.2026: Termine werden gern zusammengefasst) */
+function endeFolgemonat(weiter){
+  var h=new Date(), d=new Date(h.getFullYear(), h.getMonth()+2+(weiter||0), 0);
   return isoLokal(d);
 }
 
@@ -4751,7 +4752,12 @@ function viewFaellig(){
     return (a.naechste||"9999").localeCompare(b.naechste||"9999");
   });
   var offen=list.filter(function(p){ return p.status==="ueberfaellig"||p.status==="faellig"; });
-  var show=offen.length?offen:list, titel=offen.length?"Anstehende Wartungen":"Alle Positionen";
+  /* „+ 31–60 Tage“ (Büro 06.10.2026: Termine aus mehreren Monaten werden gern zusammengefasst): nimmt die
+     Termine des übernächsten Monats dazu – nur Anzeige, an der Fälligkeit ändert es nichts */
+  var baldGrenze=isoLokal(new Date(Date.now()+KARTE_BALD_TAGE*86400000));
+  var bald=list.filter(function(p){ return (p.status==="erledigt"||p.status==="geplant") && p.naechste && p.naechste<baldGrenze; });
+  if(S.faelligBald) offen=offen.concat(bald);
+  var show=offen.length?offen:list, titel=offen.length?(S.faelligBald?"Anstehende Wartungen – bis "+KARTE_BALD_TAGE+" Tage":"Anstehende Wartungen"):"Alle Positionen";
   /* Umschalter aus den Kacheln bzw. dem Diagramm: Termine im Plan, ein Monat */
   if(S.faelligListe==="plan"){
     show=list.filter(function(p){ return p.status==="erledigt"||p.status==="geplant"; }); titel="Termine im Zeitplan";
@@ -4765,7 +4771,10 @@ function viewFaellig(){
     (nurLesen() ? "Tippen zeigt den Markt."
       : "Tippen öffnet das Wartungsprotokoll – ein gespeichertes Protokoll schiebt die nächste Fälligkeit sofort weiter.")+"</div>"+
     (S.faelligListe?'<div class="rowflex" style="margin-top:8px"><button class="btn ghost sm" type="button" data-a="zurueck">← zurück zu anstehenden Wartungen</button></div>':"")+
+    (!S.faelligListe && (bald.length || S.faelligBald)?'<div class="rowflex" style="margin-top:8px"><button class="chip" type="button" data-a="bald" aria-pressed="'+(!!S.faelligBald)+'">+ fällig in '+(VORLAUF_TAGE+1)+"–"+KARTE_BALD_TAGE+" Tagen ("+bald.length+")</button></div>":"")+
     '</div><div class="rows" id="dulist"></div></div>');
+  var bk=card.querySelector('[data-a="bald"]');
+  if(bk) bk.onclick=function(){ S.faelligBald=!S.faelligBald; render(); };
   var zk=card.querySelector('[data-a="zurueck"]');
   if(zk) zk.onclick=function(){ faelligSprung("liste", {liste:""}); };
   var rows=card.querySelector("#dulist");
@@ -4889,7 +4898,7 @@ function tourPlanStopps(art){
   return je;
 }
 function tourKandidaten(){
-  var raus=[], arten=tourArten(), bis=endeFolgemonat();
+  var raus=[], arten=tourArten(), bis=endeFolgemonat(S.tour.uebernaechster?1:0);
   filtered().forEach(function(s){
     if(!s.lat) return;
     /* zur Zeit nicht betreut: auch Störungen und Rückfragen dort nicht einplanen (Büro 30.09.2026) */
@@ -4900,7 +4909,7 @@ function tourKandidaten(){
       var st = p.status==="geplant" ? "erledigt" : p.status;
       /* auf Wunsch auch, was erst im nächsten Monat dran ist */
       if(!tourPasstWartung(p)) return;
-      if(S.tour.status.indexOf(st)>=0 || (S.tour.naechsterMonat && st!=="ueberfaellig" && p.naechste && p.naechste<=bis)) dazu(p);
+      if(S.tour.status.indexOf(st)>=0 || ((S.tour.naechsterMonat||S.tour.uebernaechster) && st!=="ueberfaellig" && p.naechste && p.naechste<=bis)) dazu(p);
     });
     if(arten.stoerung) stoerungVonMarkt(s.id).filter(tourPasstStoerung).forEach(function(o){
       dazu({id:"stoer:"+o._id, anlagentyp:"Störung"+(o.problemtyp?": "+o.problemtyp:""), standortId:s.id});
@@ -5160,11 +5169,18 @@ function karteHinweiseAnbinden(card){
    ausblenden – die Auswahl ist zugleich die Legende. Märkte nach ihrem
    dringlichsten Status, dazu die Zeichen „!“ (offene Störung) und „L“
    (Rückfrage von Lidl). Die Auswahl bleibt, solange die App offen ist. */
-var KARTE_KAT=[["ueberfaellig","überfällig","--crit"],["faellig","fällig in "+VORLAUF_TAGE+" Tagen","--warn"],["plan","im Zeitplan","--good"],
+/* „fällig in 31–60 Tagen“ (Büro 06.10.2026: „Termine aus mehreren Monaten werden gern zusammengefasst“): nur eine
+   Auswahl auf der Karte – an der Fälligkeit (VORLAUF_TAGE) ändert sie nichts */
+var KARTE_BALD_TAGE=60;
+var KARTE_KAT=[["ueberfaellig","überfällig","--crit"],["faellig","fällig in "+VORLAUF_TAGE+" Tagen","--warn"],
+               ["bald","fällig in "+(VORLAUF_TAGE+1)+"–"+KARTE_BALD_TAGE+" Tagen","--plan"],["plan","im Zeitplan","--good"],
                ["sonst","ohne Termin / ruhend","--ink-3"],["stoerung","offene Störung",""],["lidl","Rückfrage von Lidl",""]];
 function karteKat(s){
   if(marktPausiert(s)) return "sonst";
-  return s.status==="ueberfaellig"||s.status==="faellig" ? s.status : (s.status==="erledigt"||s.status==="geplant") ? "plan" : "sonst";
+  if(s.status==="ueberfaellig"||s.status==="faellig") return s.status;
+  if(s.status!=="erledigt" && s.status!=="geplant") return "sonst";
+  var grenze=isoLokal(new Date(Date.now()+KARTE_BALD_TAGE*86400000));
+  return (s.pos||[]).some(function(p){ return p.naechste && p.naechste<grenze; }) ? "bald" : "plan";
 }
 function karteFilter(){
   if(!S.karteFilter){ S.karteFilter={}; KARTE_KAT.forEach(function(k){ S.karteFilter[k[0]]=true; }); }
@@ -5225,7 +5241,7 @@ function karteOsm(withGeo){
       var ruht=marktPausiert(s);
       var m=L.circleMarker([s.lat,s.lon],{
         radius:ruht?7:r, color:ruht?"#5f6b6a":tokenFarbe("--surface"), weight:ruht?1.5:1.8, opacity:1, dashArray:ruht?"3 2":null,
-        fillColor:ruht?"#b9c2c1":tokenFarbe(STATUS_VAR[s.status]), fillOpacity:ruht?.75:1
+        fillColor:ruht?"#b9c2c1":tokenFarbe(karteKat(s)==="bald"?"--plan":STATUS_VAR[s.status]), fillOpacity:ruht?.75:1
       }).addTo(ebene[karteKat(s)]);
       if(ruht) m.bringToBack();
       bounds.push([s.lat,s.lon]);
@@ -5453,8 +5469,10 @@ function tourPanel(){
         }).join("")+
         '<button class="chip" type="button" id="t_folge" aria-pressed="'+(!!S.tour.naechsterMonat)+'">'+
           "bis Ende nächsten Monats – "+dfmt(endeFolgemonat())+"</button>"+
+        '<button class="chip" type="button" id="t_folge2" aria-pressed="'+(!!S.tour.uebernaechster)+'">'+
+          "bis Ende übernächsten Monats – "+dfmt(endeFolgemonat(1))+"</button>"+
       "</div>"+
-      '<div class="muted" style="font-size:12.5px;margin-top:6px">„Bis Ende nächsten Monats“ nimmt mit, was bald ansteht. '+
+      '<div class="muted" style="font-size:12.5px;margin-top:6px">„Bis Ende nächsten Monats“ nimmt mit, was bald ansteht, „übernächsten“ noch einen Monat mehr. '+
         "„Später fällige – alle“ nimmt jeden noch nicht fälligen Termin dazu, auch einen in elf Monaten, "+
         "und schließt den Monat damit ein.</div></div>"+
 
@@ -5534,6 +5552,10 @@ function tourPanel(){
   c.querySelector("#t_folge").onclick=function(){
     if(!auswahlAendern()) return;
     S.tour.naechsterMonat=!S.tour.naechsterMonat; render();
+  };
+  c.querySelector("#t_folge2").onclick=function(){
+    if(!auswahlAendern()) return;
+    S.tour.uebernaechster=!S.tour.uebernaechster; render();
   };
   c.querySelectorAll("#t_land .chip").forEach(function(b){
     b.onclick=function(){
@@ -24348,7 +24370,7 @@ function handbuchKarte(z){
           "Störungsprotokoll, Nachricht ans Team) wird er erst mit „Als Störungsauftrag anlegen“ – das macht bewusst ein Mensch.",
         "<strong>Antwort an Lidl:</strong> das Büro trägt Termine ein und lässt sich den Antworttext für die Mail erzeugen; "+
           "„Termin folgt“ steht überall, wo noch kein Termin eingetragen ist.",
-        "<strong>Karte:</strong> über der Karte lässt sich wählen, was sie zeigt – überfällig, fällig, im Zeitplan, ohne Termin, "+
+        "<strong>Karte:</strong> über der Karte lässt sich wählen, was sie zeigt – überfällig, fällig, fällig in 31–60 Tagen (zum Zusammenfassen), im Zeitplan, ohne Termin, "+
           "offene Störung („!“), Rückfrage von Lidl („L“). Die Auswahl ist zugleich die Legende."]))+
 
     abschnitt("8 · Weitere Kunden, Projekte und Stunden",

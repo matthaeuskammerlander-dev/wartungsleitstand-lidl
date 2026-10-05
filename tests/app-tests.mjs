@@ -5666,6 +5666,45 @@ test("Störung aus dem Kalender: schon eingelesener Auftrag zeigt „QR-Code zei
   await a.zu();
 });
 
+test("Karte: Auswahl „fällig in 31–60 Tagen“ – Märkte mit einem Termin im übernächsten Monat lassen sich dazunehmen", async () => {
+  const a = await oeffnen(KONTEN.admin);
+  const r = await a.seite.evaluate(() => {
+    const x = window.__t.x;
+    const heute = new Date(), g30 = x("isoLokal(new Date(Date.now()+VORLAUF_TAGE*86400000))"), g60 = x("isoLokal(new Date(Date.now()+KARTE_BALD_TAGE*86400000))");
+    const maerkte = x("ST.filter(function(s){ return !marktPausiert(s) && (s.status==='erledigt'||s.status==='geplant'); }).map(function(s){ return {id:s.id, kat:karteKat(s), n:s.pos.map(function(p){ return p.naechste; }).filter(Boolean).sort()[0]||''}; })");
+    const falsch = maerkte.filter((m) => (m.kat === "bald") !== (m.n && m.n >= g30 && m.n < g60) && !(m.kat === "plan" && (!m.n || m.n >= g60)));
+    return { kat: x("KARTE_KAT.map(function(k){ return k[0]+'|'+k[1]; })"), falsch, bald: maerkte.filter((m) => m.kat === "bald").length, faelligUnveraendert: x("VORLAUF_TAGE") };
+  });
+  pruefe(r.kat.some((k) => /^bald\|fällig in 31–60 Tagen$/.test(k)), "keine Auswahl „fällig in 31–60 Tagen“: " + JSON.stringify(r.kat));
+  pruefe(!r.falsch.length, "Märkte falsch eingeteilt: " + JSON.stringify(r.falsch));
+  pruefe(r.faelligUnveraendert === 30, "Fälligkeit selbst verändert: " + r.faelligUnveraendert);
+  /* dieselbe Auswahl in der Fällig-Liste */
+  const l = await a.seite.evaluate(async () => {
+    const x = window.__t.x, w = (ms) => new Promise((f) => setTimeout(f, ms));
+    x("ansichtenSchliessen(); S.view='faellig'; S.faelligListe=''; S.faelligBald=false; render()"); await w(300);
+    const zeilen = () => document.querySelectorAll("#dulist > *").length;
+    const knopf = document.querySelector('#du_karte [data-a="bald"]'), vorher = zeilen();
+    const n = x("ALLE_POS.filter(function(p){ return POS.indexOf(p)>=0 && (p.status==='erledigt'||p.status==='geplant') && p.naechste && p.naechste<isoLokal(new Date(Date.now()+KARTE_BALD_TAGE*86400000)); }).length");
+    if (knopf) knopf.click(); await w(300);
+    const nachher = zeilen(), titel = document.querySelector("#du_karte h2").textContent;
+    x("S.faelligBald=false; render()");
+    return { knopf: !!knopf, n, vorher, nachher, titel };
+  });
+  /* und in der Tourenplanung: „bis Ende übernächsten Monats“ nimmt mehr Termine mit als „nächsten Monats“ */
+  const t = await a.seite.evaluate(() => {
+    const x = window.__t.x;
+    x("S.tour.status=['ueberfaellig','faellig']; S.tour.naechsterMonat=true; S.tour.uebernaechster=false");
+    const n1 = x("tourKandidaten().reduce(function(a,k){ return a+k.positionen.length; },0)");
+    x("S.tour.uebernaechster=true");
+    const n2 = x("tourKandidaten().reduce(function(a,k){ return a+k.positionen.length; },0)");
+    const bis = x("endeFolgemonat(1)"); x("S.tour.uebernaechster=false; S.tour.naechsterMonat=false");
+    return { n1, n2, bis };
+  });
+  pruefe(t.n2 >= t.n1 && /^\d{4}-\d\d-\d\d$/.test(t.bis), "Tour: „übernächsten Monats“ nimmt weniger mit: " + JSON.stringify(t));
+  pruefe(!l.n || (l.knopf && l.nachher > l.vorher && /bis 60 Tage/.test(l.titel)), "Fällig-Liste: „+ fällig in 31–60 Tagen“ fehlt oder wirkt nicht: " + JSON.stringify(l));
+  await a.zu();
+});
+
 /* ================================================================ Ablauf ================================================================ */
 const filterText = process.argv.slice(2).find((x) => !x.startsWith("--"));
 const filter = filterText ? new RegExp(filterText, "i") : null;
