@@ -27342,9 +27342,11 @@ function belegPdfAblegen(b, kx, blob){
 /* Wozu gehört ein Beleg? Projekt (Baustelle) oder Protokoll (Wartung/Störung) */
 function kontextProjekt(p){ return {projekt:p, protokoll:null, kunde_id:p.kunde_id||"lidl", standort_id:p.standort_id||null}; }
 function kontextProtokoll(pk){ var st=byId[pk.standortId]; return {projekt:null, protokoll:pk, kunde_id:st?kundeVon(st):"lidl", standort_id:pk.standortId||null}; }
-function belegKontext(b){
+/* pkNach (frei): Protokolle nach _id, einmal je Liste gebildet – sonst kopiert jede Zeile alle Protokolle (Suche im Reiter
+   Rechnungen brauchte bei vielen Belegen Sekunden je Tastendruck) */
+function belegKontext(b, pkNach){
   var pr=b.projekt_id ? PROJEKTE.filter(function(x){ return x.id===b.projekt_id; })[0] : null;
-  var pk=b.protokoll_id ? alleProtokolle(true).filter(function(x){ return x._id===b.protokoll_id; })[0] : null;
+  var pk=b.protokoll_id ? (pkNach ? pkNach[b.protokoll_id] : alleProtokolle(true).filter(function(x){ return x._id===b.protokoll_id; })[0]) : null;
   return {projekt:pr||null, protokoll:pk||null, kunde_id:b.kunde_id||(pr&&pr.kunde_id)||"lidl",
           standort_id:b.standort_id||(pr&&pr.standort_id)||(pk&&pk.standortId)||null};
 }
@@ -28305,13 +28307,17 @@ function viewBelege(){
       return '<button class="chip" type="button" data-f="'+x[0]+'" aria-pressed="'+(S.blFilter===x[0])+'">'+esc(x[1])+(n?" · "+n:"")+"</button>"; }).join("");
     chips.querySelectorAll("[data-f]").forEach(function(b){ b.onclick=function(){ S.blFilter=b.dataset.f; zeichnen(); }; });
     var q=suchNorm(S.blQ);
+    /* Kontext je Beleg nur einmal je Zeichnen, die Protokolle einmal nach _id */
+    var pkNach={}, kxVon={};
+    alleProtokolle(true).forEach(function(p){ if(!(p._id in pkNach)) pkNach[p._id]=p; });
+    var kontext=function(b){ return kxVon[b.id] || (kxVon[b.id]=belegKontext(b, pkNach)); };
     var l=BELEGE_ALLE.filter(function(b){ return passt(b, S.blFilter); }).filter(function(b){
-      var kx=belegKontext(b), st=kx.standort_id&&byId[kx.standort_id];
+      var kx=kontext(b), st=kx.standort_id&&byId[kx.standort_id];
       return !q || suchNorm([b.nummer, ((b.kopf||{}).betreff||[]).join(" "), (b.kopf||{}).bestellung, st?stName(st):"", kontextTitel(kx)].join(" ")).indexOf(q)>=0; });
     liste.innerHTML="";
     if(!l.length){ liste.appendChild(el('<div class="muted" style="font-size:12.5px">Nichts in dieser Auswahl.</div>')); return; }
     l.forEach(function(b){
-      var kx=belegKontext(b), s=b.summen||{};
+      var kx=kontext(b), s=b.summen||{};
       var z=el('<div class="card" style="box-shadow:none;margin:0;cursor:pointer" role="button" tabindex="0"><div class="pad" style="padding:10px 12px">'+
         '<div class="rowflex" style="justify-content:space-between;gap:8px"><strong>'+(b.art==="rechnung"?"Rechnung ":"Angebot ")+esc(b.nummer)+"</strong>"+
           '<span class="rowflex" style="gap:6px">'+(b.extern?'<span class="tag">KPlus</span>':b.test?'<span class="tag f30">TEST</span>':"")+

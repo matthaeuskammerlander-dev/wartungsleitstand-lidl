@@ -1914,6 +1914,24 @@ reSchritt("kplus", "R05", async (a) => {
   return w.length === 1 && !/fehlte in der App · Jahreswartung/.test(r.vgl) ? "" : `1 Anlage, aber ${w.length} Wartungspositionen im Vorschlag: ${JSON.stringify(r.pos)} – ${r.summe}. Vergleich beim Ablegen: ${r.vgl}`;
 });
 
+/* Reiter Rechnungen: die Suche bleibt bei vielen Protokollen und Belegen schnell */
+reSchritt("tempo", "R15", async (a) => {
+  const r = await a.seite.evaluate(async () => {
+    const x = window.__t.x, db = window.__db.tabellen, R = window.__re, st = ["TS1", "TS2", "TS3", "TS4", "TS5"];
+    for (let i = 0; i < 1500; i++) db.protokolle.push({ id: "pp" + i, client_id: "pp" + i, standort_id: st[i % 5], datum: "2025-" + String(1 + (i % 12)).padStart(2, "0") + "-" + String(1 + (i % 28)).padStart(2, "0"),
+      wartungsart: "Wartung", techniker: "Testtechniker", anlagen: [{ name: "VRV Anlage" }], version: 1, erstellt: new Date().toISOString(), erstellt_von: "u_tech_test_at" });
+    for (let i = 0; i < 600; i++) db.belege.push({ id: "bb" + i, art: "rechnung", nummer: String(900000 + i), extern: true, test: false, datum: "2025-06-01", status: "versendet",
+      protokoll_id: "pp" + i, kunde_id: "lidl", standort_id: st[i % 5], kopf: { betreff: ["Filiale Störung"] }, positionen: [], summen: { netto: 100, brutto: 120 } });
+    await x("ladeProtokolle()");
+    x("S.blFilter='alle'; S.view='belege'; render(); 1");
+    const qi = await R.bis(() => document.querySelectorAll("[data-liste] .card").length > 100 && [...document.querySelectorAll("input.search")].filter((i) => /Nummer, Betreff/.test(i.placeholder))[0], 20000);
+    const zeiten = [];
+    for (const w of ["9", "90", "900"]) { const t0 = performance.now(); qi.value = w; qi.dispatchEvent(new Event("input", { bubbles: true })); zeiten.push(Math.round(performance.now() - t0)); }
+    return { zeiten, prot: x("alleProtokolle(true).length"), belege: x("BELEGE_ALLE.length") };
+  });
+  return Math.max(...r.zeiten) < 1000 ? "" : `${r.prot} Protokolle, ${r.belege} Belege: ${JSON.stringify(r.zeiten)} ms je Tastendruck`;
+});
+
 /* ================================================================ Ablauf ================================================================ */
 const filterText = process.argv.slice(2).find((x) => !x.startsWith("--"));
 const filter = filterText ? new RegExp(filterText, "i") : null;
