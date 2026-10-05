@@ -1672,6 +1672,31 @@ reSchritt("eingaben", "R01", async (a) => {
   });
   return r.menge === 1.5 && r.preis === 78.81 && r.kPreis === 447.3 ? "" : `„1.5“ × „78.81“ gespeichert als ${r.menge} × ${r.preis} (netto ${r.netto}); Katalog „447.30“ als ${r.kPreis}`;
 });
+/* Rechnung aus Angebot: der Baustellenbuch-Vorschlag bleibt beim Kältemittel, auch nach Löschen und Verschieben */
+reSchritt("editor", "R04", async (a) => {
+  const r = await a.seite.evaluate(async () => {
+    const x = window.__t.x, R = window.__re;
+    window.__p4 = { id: "prt4", titel: "Testprojekt R04", kunde_id: "lidl", standort_id: "TS1", status: "baustelle",
+      daten: { baubuch: [{ art: "kaeltemittel", menge: 5, eh: "kg", text: "R410A nachgefüllt", datum: "2026-06-01" }] } };
+    window.__a4 = { id: "ang4", art: "angebot", nummer: "T-A-2026-904", kopf: { betreff: ["Test"] }, positionen: [
+      { typ: "pos", nr: "1", menge: 1, eh: "psh", text: "Montage", preis: 100 },
+      { typ: "pos", nr: "2", menge: 2, eh: "kg", text: "Kältemittel R410A", preis: 60 },
+      { typ: "pos", nr: "3", menge: 1, eh: "psh", text: "Fahrtpauschale", preis: 50 }] };
+    x("belegNeu(kontextProjekt(window.__p4), 'rechnung', window.__a4, function(){})");
+    const d = await R.bis(() => { const d = R.dlg(); return d && d.querySelectorAll(".bpos").length === 3 && d; });
+    const zeilen = () => [...d.querySelectorAll(".bpos")].map((z) => [z.querySelector('[data-f="text"]').value, z.querySelector('[data-f="menge"]').value, !!z.querySelector("[data-vs]")]);
+    const vorher = zeilen();
+    d.querySelector(".bpos [data-weg]").click();          /* „Montage“ entfernen (Rückfrage: ja) */
+    const nachLoeschen = zeilen();
+    d.querySelector(".bpos [data-runter]").click();       /* Kältemittel nach unten */
+    const nachVerschieben = zeilen();
+    const link = d.querySelector("[data-vs]"); if (link) link.click();
+    return { vorher, nachLoeschen, nachVerschieben, nachTipp: zeilen() };
+  });
+  const bei = (l) => JSON.stringify(l.filter((z) => z[2]).map((z) => z[0])), km = r.nachTipp.filter((z) => /Kältemittel/.test(z[0]))[0] || [], fp = r.nachTipp.filter((z) => /Fahrtpauschale/.test(z[0]))[0] || [];
+  return bei(r.nachLoeschen) === '["Kältemittel R410A"]' && bei(r.nachVerschieben) === '["Kältemittel R410A"]' && km[1] === "5,00" && fp[1] === "1,00"
+    ? "" : `Vorschlag vorher bei ${bei(r.vorher)}, nach dem Löschen bei ${bei(r.nachLoeschen)}, nach dem Verschieben bei ${bei(r.nachVerschieben)}; nach dem Tipp: Kältemittel ${km[1]}, Fahrtpauschale ${fp[1]}`;
+});
 /* KPlus: Gutschrift wird nicht als Angebot abgelegt; ohne erkannte PDF-Summe steht kein „stimmt“ */
 reSchritt("kplus", "R03", async (a) => {
   const r = await a.seite.evaluate(async () => {
