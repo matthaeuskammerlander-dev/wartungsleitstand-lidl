@@ -1600,6 +1600,79 @@ test("Abwesenheit und Arbeit am selben Tag: die App fragt sofort – eingesprung
   await b.zu();
 });
 
+/* ---------------- Tiefentest rechnungen: Angebote, Rechnungen, Katalog, KPlus ----------------
+   Je Fund ein Schritt (reSchritt); die Schritte einer Gruppe laufen nacheinander auf derselben Seite (spart
+   Zeit), jeder mit eigenen erfundenen Daten. Gemeldet werden alle fehlgeschlagenen Schritte zusammen. */
+const RE_GRUPPEN = { eingaben: [], editor: [], kplus: [], tempo: [] };
+const reSchritt = (gruppe, id, fn) => RE_GRUPPEN[gruppe].push({ id, fn });
+async function reGruppe(gruppe) {
+  if (!RE_GRUPPEN[gruppe].length) return;
+  const a = await oeffnen(KONTEN.inhaber);
+  await a.seite.evaluate(async () => {
+    const x = window.__t.x, db = window.__db.tabellen, warte = (ms) => new Promise((f) => setTimeout(f, ms));
+    const R = (window.__re = {
+      warte, toasts: [], confirms: [], ja: true,
+      /* warten, bis f() etwas liefert (höchstens max ms) */
+      bis: async (f, max = 3000) => { const t0 = Date.now(); for (;;) { let v = null; try { v = f(); } catch (e) {} if (v || Date.now() - t0 > max) return v; await warte(20); } },
+      dlg: () => [...document.querySelectorAll(".assistent")].pop() || null,
+      knopf: (d, re) => [...(d || document).querySelectorAll("button")].filter((b) => re.test(b.textContent.trim()))[0] || null,
+      setze: (i, w) => { i.value = w; i.dispatchEvent(new Event("input", { bubbles: true })); },
+      pk: (id) => x("alleProtokolle(true)").filter((p) => p._id === id)[0],
+      stoerung: async (id, datum) => {
+        db.protokolle.push({ id, client_id: id, standort_id: "TS1", datum, wartungsart: "Störung", techniker: "Testtechniker", anlagen: [],
+          stoerung: { ankunft: "08:00", ende: "09:00" }, version: 1, erstellt: new Date().toISOString(), erstellt_von: "u_tech_test_at" });
+        await x("ladeProtokolle()");
+      },
+      /* KPlus-Rechnung wie aus kplusAuswerten: Fahrtpauschale und ggf. weitere Positionen */
+      erg: (nr, mehr) => { const pos = [{ typ: "pos", nr: "1", menge: 1, eh: "psh", preis: 50, betragPdf: 50, text: "Fahrtpauschale Zone 1 (Testtext)" }].concat(mehr || []);
+        return { art: "rechnung", nummer: nr, datum: "2026-06-02", kopf: { betreff: ["Test"] }, summenPdf: { netto: x("belegSummen")(pos).netto }, positionen: pos }; },
+      vorschau: (pkId, erg, datei) => { x("kplusVorschau")(x("kontextProtokoll")(R.pk(pkId)), erg, function () {}, datei); return R.dlg(); },
+      /* „Beim Einsatz ablegen“ tippen und warten, bis es fertig ist (jede Antwort endet mit einer Meldung) */
+      ablegen: async (d) => { const n = R.toasts.length, k = R.knopf(d, /ablegen$/); k.click();
+        await R.bis(() => R.toasts.length > n && (!document.body.contains(d) || !/wird abgelegt/.test(k.textContent)), 5000); await warte(80); },
+    });
+    x("(function(){ var alt=toast; toast=function(m){ window.__re.toasts.push(technikDeutsch(m)); return alt.apply(this, arguments); }; return 1; })()");
+    window.confirm = (m) => { R.confirms.push(String(m)); return R.ja; };
+    await x("Promise.all([ladeProtokolle(), katalogLaden(), abrechnungLaden(), belegeAlleLaden()])");
+  });
+  const fehler = [];
+  for (const s of RE_GRUPPEN[gruppe]) {
+    try { const f = await s.fn(a); if (f) fehler.push(s.id + ": " + f); }
+    catch (e) { fehler.push(s.id + ": " + String(e.message || e).split("\n")[0]); }
+    await a.x("(function(){ ansichtenSchliessen(); window.__re.ja=true; return 1; })()").catch(() => {});
+  }
+  if (a.fehler.length) fehler.push("Laufzeitfehler: " + a.fehler.join("; "));
+  await a.zu();
+  pruefe(!fehler.length, fehler.join(" | "));
+}
+test("Tiefentest rechnungen: Eingaben, Rundung, Positionsvorschläge, Katalog pflegen", () => reGruppe("eingaben"));
+test("Tiefentest rechnungen: Beleg-Editor, Rechnung zum Einsatz, Status, Briefkopf", () => reGruppe("editor"));
+test("Tiefentest rechnungen: KPlus-PDF lesen, beim Einsatz ablegen, daraus lernen", () => reGruppe("kplus"));
+test("Tiefentest rechnungen: Reiter Rechnungen bleibt mit vielen Belegen schnell", () => reGruppe("tempo"));
+
+/* Dezimalpunkt: „1.5“ und „78.81“ sind 1,5 und 78,81 – nie 15 und 7881 (Beleg-Editor und Katalog) */
+reSchritt("eingaben", "R01", async (a) => {
+  const r = await a.seite.evaluate(async () => {
+    const x = window.__t.x, db = window.__db.tabellen, R = window.__re;
+    x("belegNeu({projekt:null, protokoll:null, kunde_id:'lidl', standort_id:null}, 'rechnung', null, function(){})");
+    const d = await R.bis(() => { const d = R.dlg(); return d && d.querySelector("[data-plus]") && d; });
+    d.querySelector("[data-plus]").click();
+    const z = [...d.querySelectorAll(".bpos")].pop();
+    R.setze(z.querySelector('[data-f="text"]'), "Montage Dezimalpunkt"); R.setze(z.querySelector('[data-f="menge"]'), "1.5"); R.setze(z.querySelector('[data-f="preis"]'), "78.81");
+    const n0 = db.belege.length; R.knopf(d, /^Speichern$/).click();
+    await R.bis(() => db.belege.length > n0);
+    const b = db.belege[db.belege.length - 1] || {}, p = (b.positionen || []).filter((q) => /Dezimalpunkt/.test(q.text || ""))[0] || {};
+    x("ansichtenSchliessen()");
+    x("katalogAnsicht()");
+    const det = await R.bis(() => R.dlg() && R.dlg().querySelector("details")); det.open = true;
+    det.querySelector('[data-n="text"]').value = "Dezimalpunkt Testposition"; det.querySelector('[data-n="preis"]').value = "447.30";
+    det.querySelector('[data-n="ok"]').click();
+    const k = await R.bis(() => db.katalog.filter((q) => q.text === "Dezimalpunkt Testposition")[0]);
+    return { menge: p.menge, preis: p.preis, netto: (b.summen || {}).netto, kPreis: k ? k.preis : null };
+  });
+  return r.menge === 1.5 && r.preis === 78.81 && r.kPreis === 447.3 ? "" : `„1.5“ × „78.81“ gespeichert als ${r.menge} × ${r.preis} (netto ${r.netto}); Katalog „447.30“ als ${r.kPreis}`;
+});
+
 /* ================================================================ Ablauf ================================================================ */
 const filterText = process.argv.slice(2).find((x) => !x.startsWith("--"));
 const filter = filterText ? new RegExp(filterText, "i") : null;
