@@ -2219,7 +2219,7 @@ test("Tiefentest mail: Projekt aus Mailverlauf – vorhandene KPlus-Belege bleib
   await a.zu();
 });
 
-test("Tiefentest mail: Projekt aus Mail und Mails dazu – leere Antwort von Claude in Klartext, eigene Eingaben bleiben", async () => {
+test("Tiefentest mail: Projekt aus Mail und Mails dazu – leere Antwort von Claude in Klartext, eigene Eingaben bleiben, dieselbe Mail nicht still doppelt", async () => {
   const a = await tmSeite(KONTEN.inhaber);
   const r = await a.seite.evaluate(async () => {
     const x = window.__t.x, db = window.__db.tabellen, tm = window.__tm, fehlt = [], p = (bed, text) => { if (!bed) fehlt.push(text); };
@@ -2245,6 +2245,20 @@ test("Tiefentest mail: Projekt aus Mail und Mails dazu – leere Antwort von Cla
     await tm.bis(() => !/liest/.test(d.querySelector("[data-claude] button").textContent), 2500);
     const m9 = { liest9, tel: fd("telefon").value, ap: fd("ansprechpartner").value, titel: fd("titel").value };
     p(m9.liest9 && m9.tel === "0664 1234567" && m9.ap === "Selbst getippt" && m9.titel === "Claude Titel", "M9 eigene Eingaben während des Lesens ersetzt (bzw. Claude füllt nichts): " + JSON.stringify(m9));
+
+    /* M10: dieselbe Mail ein zweites Mal „als neues Projekt“ – Hinweis auf das vorhandene Projekt, ein zweites nur nach Rückfrage */
+    tm.programm({ mail: MAIL(61, "Anfrage Zweimaltest"), extrahieren: {} });
+    d = await oeffne(61); d.querySelector('[data-f="kunde"]').value = "lidl";
+    window.__toasts = []; tm.fuss(/Projekt anlegen/).click(); await tm.toastBis(/angelegt/);
+    d = await oeffne(61);
+    const hinweis10 = d.querySelector(".as-inhalt").innerText.replace(/Anfrage Zweimaltest/g, "");
+    d.querySelector('[data-f="kunde"]').value = "lidl";
+    window.__antwort.confirm = false; window.__dialoge.length = 0;
+    tm.fuss(/Projekt anlegen/).click(); await tm.warte(500);
+    window.__antwort.confirm = true;
+    const proj10 = db.projekte.filter((q) => ((q.daten || {}).mails || []).some((m) => m.id === "<tp61@test>")).map((q) => q.nummer);
+    p(/liegt schon in P-20\d\d-\d+/.test(hinweis10) && window.__dialoge.some((z) => /schon/.test(z[1])) && proj10.length === 1,
+      "M10 dieselbe Mail ergibt " + proj10.length + " Projekte (Hinweis: " + /liegt schon/.test(hinweis10) + ", Rückfragen: " + JSON.stringify(window.__dialoge) + ")");
     tm.ende(); x("ansichtenSchliessen()");
     return { fehlt };
   });
