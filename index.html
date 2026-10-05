@@ -29297,9 +29297,11 @@ function viewKalender(){
       fb.onclick=function(){ springe({reiter:"fahrzeuge"}); }; td.querySelector(".stack").appendChild(fb); }); });
   else if(fzBuero() && !fzGeladen) fzLaden().then(function(neu){ if(neu && S.view==="kalender" && darfRendern() && !document.querySelector(".assistent")) render(); });
   if(istInhaber() && betriebAn()){
-    if(AK_ABGEGEBEN===null){ AK_ABGEGEBEN=[]; akAbgegebenLaden().then(function(l){ if(l.length && S.view==="kalender" && darfRendern() && !document.querySelector(".assistent")) render(); }); }
-    akAbgegebenText().forEach(function(t){ var rb=el('<button type="button" class="note warnbox" style="text-align:left;cursor:pointer;font:inherit">'+esc(t)+"</button>");
-      rb.onclick=function(){ springe({reiter:"stunden", finde:function(){ return [].slice.call(document.querySelectorAll(".card h2")).filter(function(h){ return /^Reisekosten aller/.test(h.textContent); }).map(function(h){ return h.closest(".card"); })[0]; }, block:"start"}); };
+    /* neu Abgegebenes kommt ohne Neuladen der Seite: höchstens einmal je Minute nachsehen, nur bei Änderung neu zeichnen */
+    if(AK_ABGEGEBEN===null || Date.now()-akAbgegebenStand>60000){ var akVorher=akAbgegebenText().join("|"); if(AK_ABGEGEBEN===null) AK_ABGEGEBEN=[];
+      akAbgegebenLaden().then(function(){ if(akAbgegebenText().join("|")!==akVorher && S.view==="kalender" && darfRendern() && !document.querySelector(".assistent")) render(); }); }
+    akAbgegebenJe().forEach(function(x){ var rb=el('<button type="button" class="note warnbox" style="text-align:left;cursor:pointer;font:inherit">'+esc(x.text)+"</button>");
+      rb.onclick=function(){ springe({reiter:"stunden", vorher:function(){ if(S.akMonatAlle!==x.monat){ S.akMonatAlle=x.monat; AK_ALLE.monat=""; } }, finde:function(){ return [].slice.call(document.querySelectorAll(".card h2")).filter(function(h){ return /^Reisekosten aller/.test(h.textContent); }).map(function(h){ return h.closest(".card"); })[0]; }, block:"start"}); };
       td.querySelector(".stack").appendChild(rb); }); }
   if(istInhaber()) PLANUNG.forEach(function(e){ if(e.kategorie!=="urlaub") return;
     Object.keys(e.ausnahmen||{}).filter(function(t){ return e.ausnahmen[t].art==="zurueck"; }).forEach(function(t){
@@ -31699,7 +31701,7 @@ function akMeineKarte(){
   return c;
 }
 /* ---------- Inhaber: Reisekosten aller, je Person, ausbezahlt ---------- */
-var AK_ALLE={monat:"", liste:[], konten:{}, laedt:false, fehler:""}, AK_ABGEGEBEN=null;
+var AK_ALLE={monat:"", liste:[], konten:{}, laedt:false, fehler:""}, AK_ABGEGEBEN=null, akAbgegebenStand=0;
 /* ein Eintrag wurde geändert oder gelöscht: „Reisekosten aller“ und das To-do beim nächsten Zeichnen neu laden */
 function akAlleVeraltet(){ if(istInhaber()){ AK_ALLE.monat=""; AK_ABGEGEBEN=null; } }
 function akAlleLaden(monat){
@@ -31709,20 +31711,23 @@ function akAlleLaden(monat){
   var von=monat+"-01", bis=plusMonate(von,1);
   return Promise.all([Store.sb.from("auslagen").select("*").gte("datum", von).lt("datum", bis).order("datum").limit(5000), Store.sb.from("auslagen_konto").select("*")]).then(function(r){
     ziel.laedt=false; ziel.monat=monat;
-    if(r[0].error){ ziel.fehler=r[0].error.message; return; }
+    if(r[0].error){ ziel.fehler=akLadeFehler(r[0].error.message); return; }
     ziel.fehler=""; ziel.liste=r[0].data||[]; ziel.konten={}; (r[1].data||[]).forEach(function(k){ ziel.konten[k.user_id]=k; });
-  }, function(){ ziel.laedt=false; ziel.fehler="Keine Verbindung."; });
+  }, function(){ ziel.laedt=false; ziel.monat=monat; ziel.fehler="Keine Verbindung – Reisekosten nicht geladen."; });   /* Monat auch hier merken – sonst lädt akInhaberKarte bei jedem Zeichnen neu (endlos) */
 }
 /* abgegeben, noch nicht ausbezahlt (alle Monate) – fürs To-do des Inhabers */
 function akAbgegebenLaden(){
   if(!istInhaber() || !betriebAn()) return Promise.resolve([]);
+  akAbgegebenStand=Date.now();
   var konto=meineKennung();   /* inzwischen ein anderes Konto: nichts übernehmen */
   return Store.sb.from("auslagen").select("user_id,name,datum,betrag,status").eq("status","eingereicht").limit(3000).then(function(r){ if(meineKennung()!==konto) return []; AK_ABGEGEBEN=r.error ? [] : (r.data||[]); return AK_ABGEGEBEN; }, function(){ return []; });
 }
-function akAbgegebenText(){
+/* je Person und Monat ein To-do – mit dem Monat, damit der Klick „Reisekosten aller“ in diesem Monat öffnet */
+function akAbgegebenJe(){
   var je={}; (AK_ABGEGEBEN||[]).forEach(function(z){ var k=z.user_id+"|"+String(z.datum).slice(0,7); (je[k]=je[k]||{name:z.name||"?", monat:String(z.datum).slice(0,7), summe:0}).summe+=+z.betrag||0; });
-  return Object.keys(je).map(function(k){ var x=je[k]; return "🧾 Reisekosten "+x.name+" "+MONATE_L[+x.monat.slice(5,7)]+": "+geld(x.summe)+" € – auszahlen"; });
+  return Object.keys(je).map(function(k){ var x=je[k]; return {monat:x.monat, text:"🧾 Reisekosten "+x.name+" "+MONATE_L[+x.monat.slice(5,7)]+": "+geld(x.summe)+" € – auszahlen"}; });
 }
+function akAbgegebenText(){ return akAbgegebenJe().map(function(x){ return x.text; }); }
 function akInhaberKarte(){
   S.akMonatAlle=S.akMonatAlle||isoLokal(new Date()).slice(0,7);
   var monat=S.akMonatAlle;
@@ -31749,7 +31754,8 @@ function akInhaberKarte(){
   };
   var host=c.querySelector("[data-inhalt]");
   if(AK_ALLE.laedt || AK_ALLE.monat!==monat){ host.appendChild(el('<div class="muted">wird geladen …</div>')); return c; }
-  if(AK_ALLE.fehler){ host.appendChild(el('<div class="note warnbox">'+esc(AK_ALLE.fehler)+"</div>")); return c; }
+  if(AK_ALLE.fehler){ host.appendChild(el('<div class="note warnbox">'+esc(AK_ALLE.fehler)+"</div>"));
+    var nl=el('<button class="btn ghost sm" type="button" style="margin-top:6px">Nochmals laden</button>'); nl.onclick=function(){ AK_ALLE.monat=""; render(); }; host.appendChild(nl); return c; }
   var je={}, namen={};
   AK_ALLE.liste.forEach(function(z){ (je[z.user_id]=je[z.user_id]||[]).push(z); if(z.name) namen[z.user_id]=z.name; });
   var keys=Object.keys(je).sort(function(a,b){ return String(namen[a]||"").localeCompare(String(namen[b]||""),"de"); });

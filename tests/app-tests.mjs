@@ -1782,6 +1782,40 @@ test("Tiefentest reisekosten: Inhaber ändert fremde Einträge – Privatauto bl
   await a.zu();
 });
 
+test("Tiefentest reisekosten: To-do „Reisekosten … – auszahlen“ aktualisiert sich und führt in den Monat der Abgabe; Ladefehler bei „Reisekosten aller“ ohne Endlosschleife", async () => {
+  const a = await rkSeite(KONTEN.inhaber);
+  const r = await a.seite.evaluate(async () => {
+    const x = window.__t.x, db = window.__db.tabellen, { warte, karte } = window.__rk;
+    const fehlt = [], p = (bed, text) => { if (!bed) fehlt.push(text); };
+    const todos = () => [...document.querySelectorAll("#kal_todo button")].filter((b) => /Reisekosten/.test(b.textContent));
+    x("S.view='kalender'; render()"); await warte(800);
+    const vorher = todos().length;
+    /* RK-08: der Techniker gibt den Vormonat ab, während der Kalender des Inhabers offen ist */
+    const vm = x("plusMonate(isoLokal(new Date()),-1).slice(0,7)");
+    db.auslagen.push({ id: "tkV1", user_id: "u_tech_test_at", name: "Testtechniker", art: "beleg", datum: vm + "-28", text: "Baumarkt Test", kategorie: "material", betrag: 55, foto: "u_tech_test_at/v.jpg", status: "eingereicht", erstellt: new Date().toISOString() });
+    x("typeof akAbgegebenStand==='undefined' || (akAbgegebenStand=0)");   /* gedrosselt: eine Minute später */
+    for (let i = 0; i < 2; i++) { x("S.view='faellig'; render()"); await warte(150); x("S.view='kalender'; render()"); await warte(500); }
+    const nachher = todos().map((b) => b.textContent);
+    p(vorher === 0 && nachher.length === 1, "RK-08 To-do zeigt die neue Abgabe erst nach Neuladen der Seite: " + JSON.stringify({ vorher, nachher }));
+    /* RK-03: der Klick führt in den Monat der Abgabe */
+    x("S.akMonatAlle=isoLokal(new Date()).slice(0,7)");
+    if (todos()[0]) todos()[0].click();
+    await warte(900);
+    const ka = karte(/^Reisekosten aller/), inhalt = ka ? ka.querySelector("[data-inhalt]") : null;
+    p(x("S.akMonatAlle") === vm && inhalt && /Testtechniker/.test(inhalt.textContent), "RK-03 To-do führt nicht in den abgegebenen Monat: " + JSON.stringify({ monat: x("S.akMonatAlle"), vm, inhalt: inhalt ? inhalt.textContent.slice(0, 80) : null }));
+    /* TTQ-19: wirft die Abfrage (Netz weg beim Lesen), zeichnet sich der Reiter nicht endlos neu */
+    x("(function(){ var sb=Store.sb, alt=sb.from.bind(sb); sb.from=function(t){ var q=alt(t); if(t==='auslagen') q.then=function(ok,nok){ return Promise.reject(new TypeError('Failed to fetch')).then(ok,nok); }; return q; }; return 1; })()");
+    x("(function(){ window.__rz={n:0}; var alt=render; render=function(){ window.__rz.n++; if(window.__rz.n>200) return; return alt.apply(this, arguments); }; return 1; })()");
+    x("S.view='stunden'; AK_ALLE.monat=''; render()"); await warte(1000);
+    const n = x("window.__rz.n"), alleText = (karte(/^Reisekosten aller/) || {}).textContent || "";
+    p(n < 10 && /Verbindung/.test(alleText), "TTQ-19 Ladefehler bei „Reisekosten aller“: " + n + " Neuzeichnungen in 1 s; Karte: " + alleText.slice(-80));
+    return { fehlt };
+  });
+  pruefe(!r.fehlt.length, r.fehlt.join(" | "));
+  pruefe(!a.fehler.length, "Laufzeitfehler: " + a.fehler.join("; "));
+  await a.zu();
+});
+
 /* ================================================================ Ablauf ================================================================ */
 const filterText = process.argv.slice(2).find((x) => !x.startsWith("--"));
 const filter = filterText ? new RegExp(filterText, "i") : null;
