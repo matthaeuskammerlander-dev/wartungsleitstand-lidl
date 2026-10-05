@@ -87,6 +87,8 @@
       var nurInhaber="planung: Abwesenheit anderer nur der Inhaber";
       if(art==="insert" && abw(zeile) && !eigen(zeile, uid())) return nurInhaber;
       if(art==="delete" && abw(alt) && !eigen(alt, alt.erstellt_von)) return nurInhaber;
+      /* schon genehmigten Urlaub löscht nur der Inhaber – auch nicht die Person selbst */
+      if(art==="delete" && abw(alt) && alt.kategorie==="urlaub" && alt.status==="genehmigt") return "planung: genehmigten Urlaub löscht nur der Inhaber";
       if(art==="update" && alt){
         var nz=JSON.parse(JSON.stringify(Object.assign({}, alt, zeile||{})));
         if(!abw(alt) || eigen(alt, alt.erstellt_von)){ if(abw(nz) && !eigen(nz, alt.erstellt_von)) return nurInhaber; }

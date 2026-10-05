@@ -278,7 +278,8 @@ Kammerlander Umwelt- und Klimatechnik (UKT) – oft kurz, vom Handy, im Feld.
   fällig, Bezug Projekt+Schritt/Markt/Störung, erledigt). PRIVAT: andere sehen
   nur „Abwesend“, Titel/Details in `planung_privat` (nur die Person selbst –
   Trigger `planung_pruefen` erzwingt es). Urlaub genehmigt nur der Inhaber
-  (Trigger). Der Kalender zeigt dazu Störungen (Einsatztag bleibt in der
+  (Trigger); schon genehmigten löscht nur er – die Person „Urlaub zurückziehen“ (Rückfrage, Nachricht an den Inhaber,
+  `chatAnInhaber`; Sperrregel „genehmigter urlaub loeschen nur inhaber“; Inhaber 05.10.2026). Der Kalender zeigt dazu Störungen (Einsatztag bleibt in der
   Störung), Projekttermine, erledigte Protokolle und fällige Wartungen zum
   Einplanen (`wartungenImMonat`; eingeplant werden die Wartungstermine der
   Anlagen: `planung.position_ids`, `wartungEinplanen`, `planFuerPosition`, in

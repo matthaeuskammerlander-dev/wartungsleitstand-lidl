@@ -24104,7 +24104,8 @@ function handbuchKarte(z){
       liste(["<strong>Termine:</strong> Wartung, Störung, Baustelle, Büro, Werkstatt, Besprechung, Urlaub, Krankenstand, Schule, Zeitausgleich, privat, Sonstiges – mit einer oder mehreren Personen, "+
           "auch mehrtägig. Wer eingetragen wird, bekommt eine Nachricht. „📅 Handy“ übernimmt einen Termin in den Handykalender.",
         "<strong>Privat:</strong> die anderen sehen nur „Abwesend“ und die Zeit – Titel und Einzelheiten nur du (das prüft die Datenbank).",
-        "<strong>Urlaub</strong> wird beantragt und vom Inhaber genehmigt; ändert sich der Zeitraum, ist er wieder beantragt.",
+        "<strong>Urlaub</strong> wird beantragt und vom Inhaber genehmigt; ändert sich der Zeitraum, ist er wieder beantragt. Schon genehmigten Urlaub löscht nur der Inhaber – "+
+          "die Person tippt „Urlaub zurückziehen“, der Chef bekommt eine Nachricht und nimmt ihn heraus.",
         "<strong>Abwesenheit anderer</strong> (Urlaub, Krankenstand, Schule, Zeitausgleich) legt nur der Inhaber an, ändert, kürzt oder löscht sie – auch gemeinsame wie "+
           "Betriebsurlaub oder Kurs. Jede Person trägt ihre eigene selbst ein (Admins wie Techniker); aus einem gemeinsamen Eintrag nimmt man nur sich selbst heraus. "+
           "Sonst ist der Eintrag schreibgeschützt („ändert nur der Inhaber“) – das prüft auch die Datenbank.",
@@ -24545,6 +24546,7 @@ Object.assign(RUNDGAENGE, {
           "Fremde Einträge sind schreibgeschützt; aus einem gemeinsamen nimmst du nur dich selbst heraus."])+
       RG_HG(["Titel und Details privater Einträge liegen in einer eigenen Tabelle, die nur du lesen kannst; die Datenbank setzt den Titel für alle anderen auf „Abwesend“ und verwirft Bezüge.",
         "Urlaub genehmigt nur der Inhaber (prüft die Datenbank); ändert jemand anders Zeitraum oder Personen, ist er wieder „beantragt“.",
+        "Genehmigten Urlaub löscht nur der Inhaber: statt „Löschen“ steht „Urlaub zurückziehen“ – nach einer Rückfrage bekommt der Chef eine Nachricht; bis er ihn löscht, bleibt der Urlaub stehen.",
         "Genehmigter Urlaub, Krankenstand und ganztägig Privates zählen bei Tour, Auslastung und Planung als abwesend."])},
     {reiter:"kalender", ziel:function(){ return rgKarte(/^Auslastung/); }, wenn:function(){ return tourBuero(); }, titel:"Auslastung (Büro)",
       text:"Wie voll die nächsten 12 Monate werden – Monat antippen zeigt die fälligen Märkte. Oben antippen, wer mitzählt."+
@@ -31056,7 +31058,25 @@ function planEditor(e, vorgabe){
       " – ändert nur der Inhaber"+(planIstMeins(a)?" (aus einem gemeinsamen Eintrag kannst du unten nur dich selbst herausnehmen)":"")+".</div>"), form.firstChild);
   }
   var err=form.querySelector("[data-err]"), fehler=function(t){ err.textContent=technikDeutsch(t); err.hidden=false; };
-  var darfLoeschen=!neu && (planAbwesenheit(a) ? planAbwesenheitDarf(a) : (a.erstellt_von===ich || planIstMeins(a) || (!a.privat && (istInhaber()||Rolle.name==="admin"))));
+  /* schon genehmigten Urlaub löscht nur der Inhaber – auch nicht die Person selbst (Inhaber 05.10.2026); sie zieht ihn zurück:
+     Nachricht an den Chef, der ihn dann löscht */
+  var urlaubZurueck=!neu && !abwFremd && planAbwesenheit(a) && a.kategorie==="urlaub" && a.status==="genehmigt" && !nurInhaber();
+  var darfLoeschen=!neu && !urlaubZurueck && (planAbwesenheit(a) ? planAbwesenheitDarf(a) : (a.erstellt_von===ich || planIstMeins(a) || (!a.privat && (istInhaber()||Rolle.name==="admin"))));
+  if(urlaubZurueck){
+    var zr=el('<button class="btn ghost" type="button" style="color:var(--crit);border-color:var(--crit)">Urlaub zurückziehen</button>');
+    zr.onclick=function(){
+      var wann=a.datum_bis && a.datum_bis!==a.datum ? "vom "+dfmt(a.datum)+" bis "+dfmt(a.datum_bis) : "am "+dfmt(a.datum);
+      if(!window.confirm("Genehmigten Urlaub "+wann+" zurückziehen?\n\nLöschen kann ihn nur der Inhaber – er bekommt eine Nachricht und nimmt ihn heraus. "+
+        "Bis dahin bleibt der Urlaub stehen (auch in den Stunden).")) return;
+      if(demo()){ toast("In der Präsentation wird keine Nachricht geschickt."); return; }
+      zr.disabled=true;
+      chatAnInhaber("🗓 Ich ziehe meinen genehmigten Urlaub "+wann+" zurück. Bitte im Kalender löschen (Urlaubseintrag öffnen → „Löschen“).").then(function(n){
+        if(n){ v.zu(); toast("Der Chef bekommt eine Nachricht – bis er den Urlaub löscht, bleibt er stehen."); }
+        else { zr.disabled=false; toast("Nicht gesendet – bitte dem Chef direkt Bescheid geben."); }
+      });
+    };
+    v.fuss.appendChild(zr);
+  }
   if(darfLoeschen){
     var lo=el('<button class="btn ghost" type="button" style="color:var(--crit);border-color:var(--crit)">Löschen</button>');
     lo.onclick=function(){
@@ -31200,6 +31220,16 @@ function planBenachrichtigen(e, an, neu, betreff){
     mitFrist(Store.sb.from("chat").insert({id:"c_"+Date.now().toString(36)+i+Math.random().toString(36).slice(2,8),
       von:Store.benutzer.id, von_name:ich, text:text, an:id, an_name:name, fotos:[]}), 15000).then(function(){}, function(){});
   });
+}
+/* Nachricht an den bzw. die Inhaber (Team-Chat, mit Push) – liefert, an wie viele sie ging (0: nicht gesendet) */
+function chatAnInhaber(text){
+  if(!chatAn()) return Promise.resolve(0);
+  return chatTeamLaden().then(function(t){
+    return Promise.all((t||[]).filter(function(p){ return p.rolle==="inhaber"; }).map(function(p, i){
+      return mitFrist(Store.sb.from("chat").insert({id:"c_"+Date.now().toString(36)+i+Math.random().toString(36).slice(2,8), von:Store.benutzer.id, von_name:meinName(),
+        text:text, an:p.user_id, an_name:p.name||"", fotos:[]}), 15000).then(function(r){ return r && !r.error ? 1 : 0; }, function(){ return 0; });
+    })).then(function(l){ return l.reduce(function(s, n){ return s+n; }, 0); });
+  }, function(){ return 0; });
 }
 /* Termin für den Kalender des Handys (.ics) */
 function planIcs(e){

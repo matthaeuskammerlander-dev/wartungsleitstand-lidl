@@ -4525,6 +4525,58 @@ test("Antworten stunden: Abwesenheiten anderer nur der Inhaber – Admin wie Tec
   pruefe(!fehl.length, fehl.join(" | "));
 });
 
+test("Antworten stunden: genehmigten Urlaub löscht nur der Inhaber – die Person zieht ihn zurück, der Chef bekommt eine Nachricht", async () => {
+  const fehl = [];
+  const a = await oeffnen(KONTEN.techniker);
+  await ttHilfen(a);
+  const r = await a.seite.evaluate(async () => {
+    const tt = window.__tt, x = window.__t.x, db = window.__db.tabellen, sb = x("Store.sb"), e = {}; tt.leeren();
+    const ich = tt.ich(), t1 = x("werktagAb(plusTage(isoLokal(new Date()),14))"), t3 = x("plusTage('" + t1 + "',2)");
+    const nein = (q) => (q.error || !(q.data || []).length ? "abgelehnt" : "angenommen");
+    ["genehmigt", "beantragt"].forEach((st) => db.planung.push({ id: "aw2" + st, art: "termin", kategorie: "urlaub", titel: "Urlaub", datum: t1, datum_bis: t3, wer: [ich], wer_namen: ["Testtechniker"], status: st,
+      erstellt_von: ich, erstellt: new Date().toISOString(), privat: false, ausnahmen: {} }));
+    await tt.laden();
+    const oeffne = async (id) => { x("planEditor(PLANUNG.filter(function(p){ return p.id==='" + id + "'; })[0])"); await tt.warte(200); return [...tt.dialog().querySelectorAll(".as-fuss button")]; };
+    let kn = await oeffne("aw2genehmigt");
+    e.genehmigt = kn.map((b) => b.textContent.trim());
+    const zk = kn.find((b) => /zurückziehen/.test(b.textContent)), chatVorher = db.chat.length;
+    window.__dialoge.length = 0;
+    if (zk) { zk.click(); await tt.warte(600); }
+    e.rueckfrage = window.__dialoge.filter((d) => d[0] === "confirm").map((d) => d[1]).join(" | ");
+    e.nachricht = db.chat.slice(chatVorher).map((c) => c.an + ": " + c.text);
+    e.toast = tt.toasts.join(" | ");
+    e.nochDa = db.planung.some((p) => p.id === "aw2genehmigt" && p.status === "genehmigt");
+    x("ansichtenSchliessen()");
+    e.beantragt = (await oeffne("aw2beantragt")).map((b) => b.textContent.trim()); x("ansichtenSchliessen()");
+    e.loeschenGenehmigt = nein(await sb.from("planung").delete().eq("id", "aw2genehmigt").select("id"));
+    e.loeschenBeantragt = nein(await sb.from("planung").delete().eq("id", "aw2beantragt").select("id"));
+    return e;
+  });
+  if (r.genehmigt.includes("Löschen") || !r.genehmigt.includes("Urlaub zurückziehen")) fehl.push("Knöpfe bei genehmigtem Urlaub: " + JSON.stringify(r.genehmigt));
+  if (!/zurückziehen/.test(r.rueckfrage) || r.nachricht.length !== 1 || !/^u_inhaber_test_at: .*zurück/.test(r.nachricht[0]) || !/Der Chef bekommt eine Nachricht/.test(r.toast) || !r.nochDa)
+    fehl.push("Zurückziehen: " + JSON.stringify({ rueckfrage: r.rueckfrage, nachricht: r.nachricht, toast: r.toast, nochDa: r.nochDa }));
+  if (!r.beantragt.includes("Löschen") || r.beantragt.includes("Urlaub zurückziehen")) fehl.push("Knöpfe bei beantragtem Urlaub: " + JSON.stringify(r.beantragt));
+  if (r.loeschenGenehmigt !== "abgelehnt" || r.loeschenBeantragt !== "angenommen") fehl.push("Datenbank: " + JSON.stringify([r.loeschenGenehmigt, r.loeschenBeantragt]));
+  if (a.fehler.length) fehl.push("Laufzeitfehler (Techniker): " + a.fehler.join("; "));
+  await a.zu();
+  const b = await oeffnen(KONTEN.inhaber);
+  await ttHilfen(b);
+  const r2 = await b.seite.evaluate(async () => {
+    const tt = window.__tt, x = window.__t.x, db = window.__db.tabellen, sb = x("Store.sb"); tt.leeren();
+    const t1 = x("werktagAb(plusTage(isoLokal(new Date()),14))");
+    db.planung.push({ id: "aw2i", art: "termin", kategorie: "urlaub", titel: "Urlaub", datum: t1, wer: ["u_tech_test_at"], wer_namen: ["Testtechniker"], status: "genehmigt", erstellt_von: "u_tech_test_at", erstellt: new Date().toISOString(), privat: false, ausnahmen: {} });
+    await tt.laden();
+    x("planEditor(PLANUNG.filter(function(p){ return p.id==='aw2i'; })[0])"); await tt.warte(200);
+    const kn = [...tt.dialog().querySelectorAll(".as-fuss button")].map((k) => k.textContent.trim()); x("ansichtenSchliessen()");
+    const del = await sb.from("planung").delete().eq("id", "aw2i").select("id");
+    return { kn, geloescht: !del.error && (del.data || []).length === 1 };
+  });
+  if (!r2.kn.includes("Löschen") || r2.kn.includes("Urlaub zurückziehen") || !r2.geloescht) fehl.push("Inhaber löscht genehmigten Urlaub nicht: " + JSON.stringify(r2));
+  if (b.fehler.length) fehl.push("Laufzeitfehler (Inhaber): " + b.fehler.join("; "));
+  await b.zu();
+  pruefe(!fehl.length, fehl.join(" | "));
+});
+
 /* ================================================================ Ablauf ================================================================ */
 const filterText = process.argv.slice(2).find((x) => !x.startsWith("--"));
 const filter = filterText ? new RegExp(filterText, "i") : null;
