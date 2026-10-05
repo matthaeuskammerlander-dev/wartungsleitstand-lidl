@@ -1743,6 +1743,29 @@ reSchritt("editor", "R06", async (a) => {
   });
   return !r.neu.length && !/05\.06\.2026/.test(r.w2 || "") ? "" : `${r.neu.length} neue Katalogpositionen aus Einsatz-Rechnungen: ${JSON.stringify(r.neu)}; Vorschlag zur Wartung vom 05.07.2026: „${r.w2}“`;
 });
+/* ein Angebot zum Einsatz macht ihn nicht „schon verrechnet“ – er bleibt in „nur ohne Rechnung“ */
+reSchritt("editor", "R09", async (a) => {
+  const r = await a.seite.evaluate(async () => {
+    const x = window.__t.x, db = window.__db.tabellen, R = window.__re;
+    db.protokolle.push({ id: "pf9", client_id: "pf9", standort_id: "TS1", datum: "2026-05-11", wartungsart: "Wartung", techniker: "Testtechniker", anlagen: [{ name: "VRV Anlage" }],
+      maengel: [{ text: "Kondensatpumpe defekt", prio: "hoch" }], version: 1, erstellt: new Date().toISOString(), erstellt_von: "u_tech_test_at" });
+    await x("Promise.all([ladeProtokolle(), belegeAlleLaden()])");
+    const liste = async (ohneFilter) => {
+      x("einsatzWaehlen(function(){})");
+      const d = await R.bis(() => { const d = R.dlg(); return d && /Rechnung zu einem Einsatz/.test(d.querySelector(".as-titel").textContent) && d; });
+      if (ohneFilter) { const cb = d.querySelector("input[type=checkbox]"); cb.checked = false; cb.onchange(); }
+      const t = [...d.querySelectorAll(".as-inhalt button")].map((b) => b.textContent).filter((t) => /11\.05\.2026/.test(t)); x("ansichtenSchliessen()"); return t; };
+    const vorher = await liste(false);
+    x("angebotAusFolge(window.__re.pk('pf9'))");
+    const d = await R.bis(() => { const d = R.dlg(); return d && /Angebot/.test(d.querySelector(".as-titel").textContent) && R.knopf(d, /^Speichern$/) && d; });
+    const n0 = db.belege.length; R.knopf(d, /^Speichern$/).click(); await R.bis(() => db.belege.length > n0); await R.warte(100);
+    x("ansichtenSchliessen()");
+    await x("belegeAlleLaden()");
+    return { vorher, nachher: await liste(false), ohneFilter: await liste(true) };
+  });
+  return r.vorher.length === 1 && r.nachher.length === 1 && r.ohneFilter.some((t) => /Angebot T-A-/.test(t)) && !r.ohneFilter.some((t) => /schon Rechnung/.test(t))
+    ? "" : `vor dem Angebot ${r.vorher.length}×, danach ${r.nachher.length}× in „nur ohne Rechnung“; ohne Filter: ${JSON.stringify(r.ohneFilter)}`;
+});
 /* KPlus: Gutschrift wird nicht als Angebot abgelegt; ohne erkannte PDF-Summe steht kein „stimmt“ */
 reSchritt("kplus", "R03", async (a) => {
   const r = await a.seite.evaluate(async () => {
