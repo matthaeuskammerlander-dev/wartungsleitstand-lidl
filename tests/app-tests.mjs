@@ -1861,6 +1861,41 @@ test("Tiefentest stunden: Zeit erfassen – Kalender-Vorschlag ohne Abwesenheit,
   pruefe(!fehl.length, fehl.join(" | "));
 });
 
+test("Tiefentest stunden: Hinweise über 12 h / 60 h zählen nur Arbeit, auch über den Monatswechsel", async () => {
+  const a = await oeffnen(KONTEN.inhaber);
+  await ttHilfen(a);
+  const fehl = [];
+  /* TT-09: Urlaub Mo–Fr aus dem Kalender, Fr zusätzlich 6 h Arbeit, Sa und So je 11 h – weder „über 12 h“ noch „über 60 h“ */
+  const r9 = await a.seite.evaluate(async () => {
+    const tt = window.__tt, x = window.__t.x, db = window.__db.tabellen; tt.leeren();
+    const mo = x("plusTage(montagVon(isoLokal(new Date())),-7)"), tag = (i) => x("plusTage('" + mo + "'," + i + ")");
+    for (let i = 0; i < 5; i++) db.arbeitszeiten.push({ id: "t9u" + i, user_id: tt.ich(), name: "I", datum: tag(i), minuten: i === 4 ? 390 : 480, art: "urlaub", quelle: "kalender", pause_min: 0 });
+    tt.gestempelt({ datum: tag(4), beginn: "07:00", ende: "13:30", minuten: 360, pause_min: 30, quelle: "hand", bereich: "werkstatt" });
+    tt.gestempelt({ datum: tag(5), beginn: "06:00", ende: "17:30", minuten: 660, pause_min: 30, quelle: "hand", bereich: "werkstatt" });
+    tt.gestempelt({ datum: tag(6), beginn: "06:00", ende: "17:30", minuten: 660, pause_min: 30, quelle: "hand", bereich: "werkstatt" });
+    await tt.laden();
+    x("S.view='stunden'; S.stWoche='" + mo + "'; render()"); await tt.warte(300);
+    return { ueber12: [...document.querySelectorAll("[data-tage] strong")].filter((s) => /über 12 h/.test(s.textContent)).map((s) => s.textContent.slice(0, 9)),
+      woche: ((document.querySelector("[data-summen]") || {}).textContent || "").slice(0, 80) };
+  });
+  if (r9.ueber12.length || /über 60 h/.test(r9.woche)) fehl.push("TT-09 Urlaub zählt bei 12 h / 60 h mit: " + JSON.stringify(r9));
+  /* TT-35: 5 × 12,5 h von Mo 28.09. bis Fr 02.10. – über 60 h in der Woche, auch wenn sie über den Monatswechsel geht (Auswertung und Tabelle des Inhabers) */
+  const r35 = await a.seite.evaluate(async () => {
+    const tt = window.__tt, x = window.__t.x, db = window.__db.tabellen; tt.leeren();
+    const l = ["2026-09-28", "2026-09-29", "2026-09-30", "2026-10-01", "2026-10-02"].map((d, i) => ({ id: "t35" + i, user_id: "u_tech_test_at", name: "Testtechniker", datum: d, beginn: "06:00", ende: "19:00", pause_min: 30, minuten: 750, art: "arbeit", quelle: "hand", bereich: "werkstatt" }));
+    window.__l35 = l; l.forEach((z) => db.arbeitszeiten.push(Object.assign({}, z)));
+    const sep = x("lohnAuswertung(window.__l35, '2026-09')").ueber60, okt = x("lohnAuswertung(window.__l35, '2026-10')").ueber60;
+    x("S.view='stunden'; S.stMonat='2026-10'; render()"); await tt.warte(500);
+    const karte = [...document.querySelectorAll(".card h2")].find((h) => /^Alle Mitarbeiter/.test(h.textContent));
+    const zeile = karte && [...karte.closest(".card").querySelectorAll("tbody tr")].find((r) => /Testtechniker/.test(r.textContent));
+    return { sep, okt, tabelle: zeile ? /über 60 h/.test(zeile.textContent) : null };
+  });
+  if (!r35.sep.length || !r35.okt.length || !r35.tabelle) fehl.push("TT-35 Woche über 60 h über den Monatswechsel nicht gemeldet: " + JSON.stringify(r35));
+  if (a.fehler.length) fehl.push("Laufzeitfehler: " + a.fehler.join("; "));
+  await a.zu();
+  pruefe(!fehl.length, fehl.join(" | "));
+});
+
 /* ================================================================ Ablauf ================================================================ */
 const filterText = process.argv.slice(2).find((x) => !x.startsWith("--"));
 const filter = filterText ? new RegExp(filterText, "i") : null;
