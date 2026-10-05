@@ -4654,6 +4654,42 @@ test("Antworten post: Mail mit Preisen im Text – die .eml liegt nur beim Inhab
   await a.zu();
 });
 
+test("Antworten post: KPlus-Beleg neu eingelesen – Rechnung und Angebot „versendet“, vorhandene Belege bleiben, wie sie sind", async () => {
+  const a = await tmSeite(KONTEN.inhaber);
+  const r = await a.seite.evaluate(async () => {
+    const x = window.__t.x, db = window.__db.tabellen, tm = window.__tm, jetzt = new Date().toISOString(), fehlt = [], p = (bed, text) => { if (!bed) fehlt.push(text); };
+    const erg = (art, nr) => ({ art, nummer: nr, datum: "2026-09-30", kopf: {}, positionen: [{ typ: "pos", nr: "1", menge: 1, eh: "Stk", text: "Testposition", preis: 100 }], summenPdf: { netto: 100 } });
+    db.projekte.push({ id: "tmp_p5", nummer: "P-2026-905", titel: "KPlus Stand", kunde_id: "lidl", status: "angebot", daten: {}, verlauf: [], erstellt: jetzt, geaendert: jetzt });
+    db.belege.push({ id: "bAlt", art: "rechnung", nummer: "413981", status: "bezahlt", bezahlt: "2026-09-15", projekt_id: "tmp_p5", kunde_id: "lidl", test: false, extern: true, datum: "2026-09-01", kopf: {}, positionen: [], summen: {} });
+    await x("projekteLaden()"); tm.toastSpion();
+    const ablegen = async (e) => {
+      x("ansichtenSchliessen(); kplusVorschau(PROJEKTE.filter(function(q){ return q.id==='tmp_p5'; })[0], " + JSON.stringify(e) + ", function(){})");
+      await tm.bis(() => tm.fuss(/Am Projekt ablegen/)); window.__toasts = [];
+      tm.fuss(/Am Projekt ablegen/).click(); await tm.toastBis(/abgelegt/);
+    };
+    await ablegen(erg("angebot", "413980")); await ablegen(erg("rechnung", "413982")); await ablegen(erg("rechnung", "413981"));
+    const st = (nr) => (db.belege.find((b) => b.nummer === nr) || {}).status;
+    p(st("413980") === "versendet", "KPlus-Vorschau: neues Angebot steht auf „" + st("413980") + "“ statt „versendet“");
+    p(st("413982") === "versendet", "KPlus-Vorschau: neue Rechnung steht auf „" + st("413982") + "“");
+    p(st("413981") === "bezahlt", "KPlus-Vorschau: vorhandene bezahlte Rechnung wurde „" + st("413981") + "“");
+    /* Mailverlauf: neues KPlus-Angebot ebenso „versendet“ */
+    tm.verbinden();
+    x("kplusLesen=function(d){ var t=new TextDecoder().decode(d), nr=(/4139\\d\\d/.exec(t)||[''])[0]; if(!nr) return Promise.reject(new Error('kein KPlus')); return Promise.resolve({art:'angebot', nummer:nr, datum:'2026-09-20', kopf:{}, positionen:[{typ:'pos', nr:'1', menge:1, eh:'Stk', text:'Testposition', preis:1000}], summenPdf:{netto:1000}}); }");
+    const MV = { konto: "gmx", ordner: "INBOX", uid: 83, messageId: "<kp83@test>", datum: "2026-09-20T08:00:00.000Z", betreff: "Angebot 413983", von: [{ name: "Büro", address: "buero@test-firma.at" }], an: [],
+      anhaenge: [{ i: 0, name: "413983.pdf", typ: "application/pdf", groesse: 4096 }] };
+    tm.programm({ mails: [MV], vorschlag: { titel: "KPlus Verlauf", kunde: "Lidl", kundeTreffer: "Lidl", status: "angebot", angaben: [], beteiligte: [], termine: [], tagebuch: [], dateien: [] },
+      anhang: () => new Blob(["%PDF-1.4 KPlus 413983"], { type: "application/pdf" }) });
+    await tm.verlauf({ suche: "413983" }); window.__toasts = [];
+    tm.fuss(/Projekt anlegen/).click(); await tm.toastBis(/angelegt:|^Nicht fertig/);
+    p(st("413983") === "versendet", "Mailverlauf: neues KPlus-Angebot steht auf „" + st("413983") + "“ statt „versendet“");
+    tm.ende();
+    return { fehlt };
+  });
+  pruefe(!r.fehlt.length, r.fehlt.join(" | "));
+  pruefe(!a.fehler.length, "Laufzeitfehler: " + a.fehler.join("; "));
+  await a.zu();
+});
+
 /* ================================================================ Ablauf ================================================================ */
 const filterText = process.argv.slice(2).find((x) => !x.startsWith("--"));
 const filter = filterText ? new RegExp(filterText, "i") : null;

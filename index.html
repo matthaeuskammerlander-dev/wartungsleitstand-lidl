@@ -4139,8 +4139,9 @@ function mailVerlaufVorschlag(v, r, zielId){
           if(rv.error) throw new Error(rv.error.message);
           var da=(rv.data||[])[0];
           if(da){ x.fertig=true; stand.kplusSchon++; return da.pdf_pfad ? null : belegPdfAblegen(da, kontextProjekt(pa), x.datei).catch(function(){}); }
+          /* neu eingelesen: Rechnung UND Angebot „versendet“ (Inhaber 05.10.2026; vorher Angebot „angenommen“) */
           var zeile={projekt_id:pa.id, kunde_id:pa.kunde_id||"lidl", standort_id:pa.standort_id||null, art:x.erg.art, nummer:x.erg.nummer, test:false, extern:true, datum:x.erg.datum||isoLokal(new Date()),
-            status:x.erg.art==="rechnung"?"versendet":"angenommen", kopf:x.erg.kopf, positionen:x.erg.positionen, summen:belegSummen(x.erg.positionen), geaendert_von:meinName()};
+            status:"versendet", kopf:x.erg.kopf, positionen:x.erg.positionen, summen:belegSummen(x.erg.positionen), geaendert_von:meinName()};
           return Store.sb.from("belege").insert(zeile).select("*").then(function(rr){
             if(rr.error) throw new Error(rr.error.message); x.fertig=true; stand.kplusNeu++;
             return Promise.all([belegPdfAblegen(rr.data[0], kontextProjekt(pa), x.datei).catch(function(){}), katalogUebernehmen(x.erg).catch(function(){})]);
@@ -24953,7 +24954,7 @@ Object.assign(RUNDGAENGE, {
     {reiter:"belege", ziel:function(){ return rgReiter("belege"); }, titel:"Status, Folgeaufträge, KPlus",
       text:RG_LISTE(["Status: versendet (setzt das Zahlungsziel, Vorgabe 21 Tage), bezahlt, storniert; Angebote: versendet, angenommen, abgelehnt; „Rechnung daraus“.",
         "<strong>Folgeaufträge</strong> (Projekte): „Angebot entwerfen“ mit Befund, Katalogvorschlag je Mangel und Fahrtpauschale.",
-        "<strong>KPlus-PDF einlesen</strong> am Projekt: die App rechnet gegen die Summe im PDF nach, neue Positionen auf Wunsch in den Katalog.",
+        "<strong>KPlus-PDF einlesen</strong> am Projekt: die App rechnet gegen die Summe im PDF nach, neue Positionen auf Wunsch in den Katalog. Neu eingelesen steht ein KPlus-Angebot wie eine Rechnung auf „versendet“; einen schon vorhandenen Beleg (gleiche Nummer) ändert das Einlesen im Stand nicht.",
         "<strong>KPlus-Rechnung hochladen</strong> beim Einsatz (Protokoll › „Rechnung zu diesem Einsatz“): „So hätte die App gerechnet“ zeigt, was gleich war, was fehlte und was zu viel war."])+
       RG_HG(["Eine echte Rechnung zu einem Einsatz – auch eine hochgeladene KPlus-Rechnung – vermerkt das Protokoll als abgerechnet; das Original-PDF liegt beim Beleg.",
         "Aus hochgeladenen KPlus-Rechnungen lernt die App: was der Chef bei solchen Einsätzen mindestens zweimal (am selben Markt einmal) dazuschreibt, steht künftig im Vorschlag unter „Ergänzt aus früheren KPlus-Rechnungen – bitte prüfen“."])}
@@ -28194,7 +28195,7 @@ function kplusVorschau(ziel, erg, fertig, datei){
     var angebot=erg.art==="rechnung" ? bestehend.filter(function(b){ return b.art==="angebot"; })[0] : null;
     var kopf=Object.assign({}, erg.kopf, lernen?{lernen:lernen.speichern}:{});
     var zeile={projekt_id:p?p.id:null, protokoll_id:pk?pk._id:null, kunde_id:kx.kunde_id||"lidl", standort_id:kx.standort_id||null, art:erg.art, nummer:erg.nummer, test:false, extern:true,
-      datum:erg.datum||isoLokal(new Date()), status:erg.art==="rechnung"?"versendet":"angenommen",
+      datum:erg.datum||isoLokal(new Date()), status:"versendet",   /* neu eingelesen: Rechnung UND Angebot „versendet“ (Inhaber 05.10.2026) */
       bezug_id:angebot?angebot.id:null, kopf:kopf, positionen:erg.positionen, summen:belegSummen(erg.positionen), geaendert_von:meinName()};
     var beleg=null, abgFehler=null, katFehler=null;
     var kurz=function(e){ var m=String((e&&e.message)||e||""); return /fetch|network|load failed/i.test(m) ? "keine Verbindung" : m; };
@@ -28209,6 +28210,8 @@ function kplusVorschau(ziel, erg, fertig, datei){
           !window.confirm("KPlus-"+(erg.art==="rechnung"?"Rechnung ":"Angebot ")+erg.nummer+" liegt schon bei: "+wo+".\n\nHierher umhängen? Dort fehlt sie danach.")) throw {abbruch:true};
         if(!p) zeile.projekt_id=alt.projekt_id||null;
         if(!pk) zeile.protokoll_id=alt.protokoll_id||null;
+        /* vorhandene Belege bleiben, wie sie sind (Inhaber 05.10.2026): der Stand (bezahlt, angenommen …) bleibt – früher wurde er still wieder „versendet“ */
+        if(alt.status) zeile.status=alt.status;
         if(!zeile.bezug_id) zeile.bezug_id=alt.bezug_id||null;
       }
       return Store.sb.from("belege").upsert(zeile, {onConflict:"art,nummer"}).select("*");

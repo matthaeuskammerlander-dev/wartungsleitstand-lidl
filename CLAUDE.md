@@ -113,6 +113,8 @@ Kammerlander Umwelt- und Klimatechnik (UKT) – oft kurz, vom Handy, im Feld.
   abgerechnet; `einsatzGelernt` ergänzt künftige Vorschläge um das, was der Chef ≥2× (am Markt ≥1×) dazuschrieb.
   App-Belege sind TEST (T-A-/T-R-Nummern), solange KPlus führt. Rechnung aus
   Angebot: Mengenvorschläge aus dem Baustellenbuch (`baubuchVorschlaege`).
+  Neu eingelesene KPlus-Belege (`kplusVorschau`, Mailverlauf) stehen auf „versendet“ – Rechnung UND Angebot (Inhaber 05.10.2026);
+  ein schon vorhandener Beleg (Art + Nummer) behält seinen Stand.
   Echte Preise und Belege nie ins Repository – nur in Supabase.
 - Quellen (Büro 01.10.2026: „man soll immer alles von beiden Seiten finden“):
   Schritte (`daten.quellen[schritt]`), Listeneinträge und Baustellenbuch führen
