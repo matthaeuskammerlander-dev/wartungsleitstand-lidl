@@ -51,7 +51,9 @@ Kammerlander Umwelt- und Klimatechnik (UKT) – oft kurz, vom Handy, im Feld.
   Büro 01.10.2026): Hat eine Anlage am Markt einen Halbjahrestermin (HJI oder
   HJW), bekommen die weiteren Anlagen dort mit nur JW automatisch einen (ab
   30 kg HJW, sonst HJI; Gaswarnanlagen nicht), zählt ab heute, Monat wie die
-  andere Anlage (Feld `hjiMarkt`). Vor Ort bestätigt der Termine-Schritt den
+  andere Anlage (Feld `hjiMarkt`). Bewusst „nur Jahreswartung“ (`nurJW`) geht vor
+  (Inhaber 05.10.2026): kein automatischer Halbjahrestermin, `nurJW` bleibt, bis es
+  jemand in der Verwaltung zurücknimmt. Vor Ort bestätigt der Termine-Schritt den
   Monat: gleicher Besuch oder 6 Monate nach der JW. Ein Merker (typ „merker“)
   verhindert, dass ein zurückgenommener Termin wiederkommt.
 - Geführtes Protokoll im Einsatz (Büro 01.10.2026, nach dem ersten Härtetest):

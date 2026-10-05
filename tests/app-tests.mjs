@@ -4447,6 +4447,29 @@ test("Tiefentest werkzeug: verletzte Prüfregel beim Speichern meldet nicht „n
   await a.zu();
 });
 
+/* Antworten des Inhabers vom 05.10.2026 (Teil kern) */
+test("Antworten kern: „Nur Jahreswartung“ sperrt den Halbjahrestermin wie am Markt üblich – bleibt, bis die Verwaltung es zurücknimmt", async () => {
+  const a = await oeffnen(KONTEN.admin);
+  const r = await a.seite.evaluate(async () => {
+    const x = window.__t.x, w = (ms) => new Promise((f) => setTimeout(f, ms)), db = window.__db.tabellen, t0 = new Date().toISOString();
+    /* am Markt TS1 hat die Anlage TP1/TP2 eine HJI; dazu zwei kleine Anlagen nur mit JW – eine bewusst „nur Jahreswartung“ */
+    const anlage = (id, nurJW) => ({ id: "position:" + id, typ: "position", ziel: id, neu: true, geaendert: t0, von: "Test", grund: "Test",
+      felder: Object.assign({ standortId: "TS1", intervallCode: "JW", monat: 3, aktiv: true, anlageZu: id, anlagentyp: "Split " + id, kaeltemittelKg: 2, inbetriebnahme: "2020-03-01" }, nurJW ? { nurJW: true } : {}) });
+    db.stammdaten.push(anlage("NJW1", true), anlage("NJW2", false));
+    await x("ladeStammdaten(true)"); await w(300);
+    const faelle = x("hjMarktFaelle().map(function(f){ return f.a.leader.id; })");
+    for (let i = 0; i < 40; i++) { if (!x("hjMarktLaeuft")) x("hjMarktAutomatisch()"); await w(200);
+      if (!x("hjMarktLaeuft") && x("ALLE_POS.some(function(p){ return p.anlageZu==='NJW2' && p.hjiMarkt; })")) break; }
+    await w(300);
+    const hj = (id) => x("ALLE_POS.filter(function(p){ return p.anlageZu==='" + id + "' && p.id!=='" + id + "' && p.aktiv!==false; }).map(function(p){ return p.intervallCode; })");
+    return { faelle, njw1: hj("NJW1"), njw2: hj("NJW2"), nurJW1: !!x("anlageDaten(posById.NJW1).nurJW") };
+  });
+  pruefe(r.faelle.indexOf("NJW2") >= 0 && r.njw2.length === 1, "Kontrolle: Anlage ohne Entscheidung bekommt keinen Halbjahrestermin: " + JSON.stringify(r));
+  pruefe(r.faelle.indexOf("NJW1") < 0 && !r.njw1.length && r.nurJW1, "„Nur Jahreswartung“ trotzdem mit Halbjahrestermin bzw. aufgehoben: " + JSON.stringify(r));
+  pruefe(!a.fehler.length, "Laufzeitfehler: " + a.fehler.join("; "));
+  await a.zu();
+});
+
 /* ================================================================ Ablauf ================================================================ */
 const filterText = process.argv.slice(2).find((x) => !x.startsWith("--"));
 const filter = filterText ? new RegExp(filterText, "i") : null;
