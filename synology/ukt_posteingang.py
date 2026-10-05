@@ -14,6 +14,13 @@ Die Mail bleibt im Postfach erhalten (nur verschoben), nichts wird gelöscht.
 Dieselbe Mail kommt nie doppelt an: Message-ID und Dateiname sind in der
 Datenbank eindeutig.
 
+Das Konto des Skripts muss den Posteingang NICHT lesen können (Inhaber
+05.10.2026: lesen dürfen nur Inhaber und – Lidl-Aufträge/Rapporte – Admins).
+Deshalb liegt jede Datei unter einem festen Pfad (aus Message-ID und
+Dateiname): ein zweiter Lauf nach einem Teilfehler legt nichts doppelt ab
+(„schon vorhanden“ gilt als erledigt), und die Zeile wird mit „on conflict do
+nothing“ und ohne Rückgabe (return=minimal) eingetragen.
+
 Benötigt nur Python 3 (bei DSM 7 vorhanden), keine Zusatzpakete.
 
 Aufruf:
@@ -23,6 +30,7 @@ Aufruf:
 import email
 import email.header
 import email.utils
+import hashlib
 import imaplib
 import json
 import os
@@ -32,7 +40,6 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
-import uuid
 
 HIER = os.path.dirname(os.path.abspath(__file__))
 KONFIG = os.path.join(HIER, "ukt_posteingang.json")
@@ -83,6 +90,13 @@ def lade_konfig():
 
 # ---------------------------------------------------------------- Supabase
 
+class HttpFehler(RuntimeError):
+    """Antwort mit Fehlercode – mit Code und Text, damit „schon vorhanden“ erkennbar ist"""
+    def __init__(self, code, url, text):
+        RuntimeError.__init__(self, "HTTP %s bei %s: %s" % (code, url.split("?")[0], text))
+        self.code, self.text = code, text
+
+
 def anfrage(methode, url, kopf=None, daten=None, roh_daten=None, typ=None):
     if roh_daten is not None:
         body = roh_daten
@@ -96,7 +110,7 @@ def anfrage(methode, url, kopf=None, daten=None, roh_daten=None, typ=None):
             inhalt = r.read()
     except urllib.error.HTTPError as e:
         text = e.read().decode("utf-8", "replace")[:300]
-        raise RuntimeError("HTTP %s bei %s: %s" % (e.code, url.split("?")[0], text))
+        raise HttpFehler(e.code, url, text)
     try:
         return json.loads(inhalt.decode("utf-8") or "null")
     except ValueError:
@@ -117,17 +131,27 @@ class Supabase:
         return h
 
     def schon_da(self, nachricht_id, dateiname):
+        """nur eine Abkürzung: ein Konto ohne Leserecht bekommt nie etwas zurück – dann
+        sorgen fester Pfad und „on conflict do nothing“ dafür, dass nichts doppelt ankommt"""
         q = urllib.parse.urlencode({"select": "id", "nachricht_id": "eq." + nachricht_id,
                                     "dateiname": "eq." + dateiname, "limit": 1})
         return bool(anfrage("GET", self.url + "/rest/v1/posteingang?" + q, self.kopf()))
 
     def ablegen(self, pfad, inhalt, typ):
-        anfrage("POST", self.url + "/storage/v1/object/posteingang/" + urllib.parse.quote(pfad),
-                self.kopf({"x-upsert": "false"}), roh_daten=inhalt, typ=typ)
+        """False, wenn die Datei unter diesem Pfad schon liegt (voriger Lauf) – das ist kein Fehler"""
+        try:
+            anfrage("POST", self.url + "/storage/v1/object/posteingang/" + urllib.parse.quote(pfad),
+                    self.kopf({"x-upsert": "false"}), roh_daten=inhalt, typ=typ)
+        except HttpFehler as e:
+            if e.code == 409 or "Duplicate" in e.text or "already exists" in e.text:
+                return False
+            raise
+        return True
 
     def eintragen(self, zeile):
-        anfrage("POST", self.url + "/rest/v1/posteingang",
-                self.kopf({"Prefer": "return=minimal"}), zeile)
+        # ohne Rückgabe (das Konto braucht kein Leserecht) und ohne Fehler, wenn es die Zeile schon gibt
+        anfrage("POST", self.url + "/rest/v1/posteingang?on_conflict=nachricht_id,dateiname",
+                self.kopf({"Prefer": "return=minimal,resolution=ignore-duplicates"}), zeile)
 
 
 # ---------------------------------------------------------------- Mails
@@ -201,6 +225,42 @@ def eintraege(nachricht, roh, betreff):
     return liste
 
 
+def mail_monat(nachricht):
+    """Jahr/Monat aus dem Datum der Mail (für den Ablageordner) – in jedem Lauf gleich"""
+    try:
+        d = email.utils.parsedate_to_datetime(entschluesseln(nachricht.get("Date")))
+        return d.strftime("%Y/%m") if d else None
+    except Exception:                                     # noqa: BLE001
+        return None
+
+
+def ablage_pfad(nid, name, monat=None):
+    """fester Pfad je Mail und Datei: derselbe in jedem Lauf – eine schon abgelegte Datei
+    kommt nie ein zweites Mal (der Speicher meldet „schon vorhanden“)"""
+    kennung = hashlib.sha1((nid + "|" + name).encode("utf-8")).hexdigest()[:12]
+    return (monat or "ohne-datum") + "/" + kennung + "_" + sauber(name)
+
+
+def ablegen_mail(db, nid, absender, betreff, gefunden, monat=None):
+    """Was aus einer Mail kommt, in den Posteingang – mehrfach ausführbar: nach einem Teilfehler
+    legt der nächste Lauf nur ab, was fehlt, auch ohne Leserecht des Kontos. (neu, alles_ok)"""
+    neu, alles_ok = 0, True
+    for name, inhalt, mime, art in gefunden:
+        try:
+            if db.schon_da(nid, name):
+                continue
+            pfad = ablage_pfad(nid, name, monat)
+            db.ablegen(pfad, inhalt, mime)
+            db.eintragen({"nachricht_id": nid, "absender": absender, "betreff": betreff,
+                          "dateiname": name, "pfad": pfad, "bytes": len(inhalt), "art": art})
+            neu += 1
+            log("neu: %s (%s)" % (name, art))
+        except Exception as e:                           # noqa: BLE001 – nächste Datei versuchen
+            alles_ok = False
+            log("FEHLER bei %s: %s" % (name, e))
+    return neu, alles_ok
+
+
 def abholen(k):
     db = None if PRUEFEN else Supabase(k)
     imap = imaplib.IMAP4_SSL(k["imap_server"], int(k["imap_port"]))
@@ -226,23 +286,12 @@ def abholen(k):
             if not gefunden:
                 log("nichts Verwertbares, bleibt liegen: %s – %s" % (absender, betreff))
                 continue
-            alles_ok = True
-            for name, inhalt, mime, art in gefunden:
-                if PRUEFEN:
+            if PRUEFEN:
+                for name, inhalt, mime, art in gefunden:
                     log("würde ablegen: %s (%s, %d KB) aus „%s“" % (name, art, len(inhalt) // 1024, betreff))
-                    continue
-                try:
-                    if db.schon_da(nid, name):
-                        continue
-                    pfad = time.strftime("%Y/%m/") + uuid.uuid4().hex[:12] + "_" + sauber(name)
-                    db.ablegen(pfad, inhalt, mime)
-                    db.eintragen({"nachricht_id": nid, "absender": absender, "betreff": betreff,
-                                  "dateiname": name, "pfad": pfad, "bytes": len(inhalt), "art": art})
-                    neu += 1
-                    log("neu: %s (%s)" % (name, art))
-                except Exception as e:                   # noqa: BLE001 – nächste Datei versuchen
-                    alles_ok = False
-                    log("FEHLER bei %s: %s" % (name, e))
+                continue
+            n, alles_ok = ablegen_mail(db, nid, absender, betreff, gefunden, mail_monat(nachricht))
+            neu += n
             # erst wenn alles drin ist, die Mail aus dem Eingang nehmen
             if alles_ok and not PRUEFEN:
                 if imap.uid("copy", uid, k["ordner_erledigt"])[0] == "OK":

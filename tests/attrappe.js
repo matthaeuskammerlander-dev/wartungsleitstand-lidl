@@ -205,6 +205,8 @@
       erg=tab.filter(function(r){ return passt(r,self.f); });
       if(this.t==="admins") erg=erg.filter(function(r){ return r.user_id===uid(); });
       if(this.t==="planung_privat") erg=erg.filter(function(r){ return r.user_id===uid(); });   /* wie die Regel: nur die eigenen */
+      /* wie die Sperrregel vom 05.10.2026 (rechte-2026-10-05.sql): Inhaber alles, Admins nur Lidl-Aufträge und Rapporte, sonst nichts */
+      if(this.t==="posteingang") erg=erg.filter(postSieht);
       if(this.t==="arbeitszeiten"||this.t==="auslagen"||this.t==="auslagen_konto"){ var rl=(DB.rollen.filter(function(r){ return r.user_id===uid(); })[0]||{}).rolle; if(rl!=="inhaber") erg=erg.filter(function(r){ return r.user_id===uid(); }); }
       /* wie „fahrzeuge lesen“ (fahrzeuge.sql): Büro alle, sonst nur das Fahrzeug, in dem man Fahrer ist */
       if(this.t==="fahrzeuge"){ var rf=(DB.rollen.filter(function(r){ return r.user_id===uid(); })[0]||{}).rolle; if(!(admin() || rf==="inhaber")) erg=erg.filter(function(r){ return (r.fahrer||[]).indexOf(uid())>=0; }); }
@@ -266,6 +268,8 @@
     }
     if(this.a==="update"){
       var b=tab.filter(function(r){ return passt(r,self.f); });
+      /* wie die Sperrregel vom 05.10.2026: im Posteingang ändert man nur, was man sehen darf (sonst: nichts geändert) */
+      if(self.t==="posteingang") b=b.filter(postSieht);
       b.forEach(function(r){ v=v||darf(self.t,"update",self.d,r)||bisVorDatum(Object.assign({}, r, self.d)); });
       /* Prüfregeln vor dem Ändern – scheitert eine Zeile, bleibt alles, wie es war */
       if(!v && self.t==="auslagen") b.forEach(function(r){ var n=Object.assign({},r,self.d); if(n.km!=null) n.km=kmSpalte(n.km);
@@ -324,10 +328,16 @@
       return Promise.resolve({data:null,error:{message:"new row violates row-level security policy"}});
     DATEIEN[k]=b; return Promise.resolve({data:{path:p},error:null}); };
   /* wie posteingang-lesen.sql: Dateien im Bucket „posteingang“ nur mit darf_schreiben() (nicht Kunde, nicht Präsentation) */
-  function eimerGesperrt(n){ var rl=(DB.rollen.filter(function(r){ return r.user_id===uid(); })[0]||{}).rolle; return n==="posteingang" && (!sitzung || rl==="kunde" || rl==="praesentation"); }
-  E.prototype.createSignedUrl=function(p){ var b=eimerGesperrt(this.n) ? null : DATEIEN[this.n+"/"+p];
+  /* … und seit dem 05.10.2026 (rechte-2026-10-05.sql): Inhaber alles, Admins nur die Dateien der Lidl-Aufträge und Rapporte
+     (Pfad über posteingang.pfad), Techniker nichts */
+  function postSieht(r){ var rl=rolleJetzt(); return rl==="inhaber" || (admin() && (rl==="admin"||rl==="inhaber") && (r.art==="auftrag" || r.art==="rapport")); }
+  function eimerGesperrt(n, p){ var rl=(DB.rollen.filter(function(r){ return r.user_id===uid(); })[0]||{}).rolle;
+    if(n!=="posteingang") return false;
+    if(!sitzung || rl==="kunde" || rl==="praesentation") return true;
+    return !(rl==="inhaber" || DB.posteingang.some(function(r){ return r.pfad===p && postSieht(r); })); }
+  E.prototype.createSignedUrl=function(p){ var b=eimerGesperrt(this.n, p) ? null : DATEIEN[this.n+"/"+p];
     return Promise.resolve(b?{data:{signedUrl:URL.createObjectURL(b)},error:null}:{data:null,error:{message:"weg"}}); };
-  E.prototype.download=function(p){ var b=eimerGesperrt(this.n) ? null : DATEIEN[this.n+"/"+p]; return Promise.resolve(b?{data:b,error:null}:{data:null,error:{message:"weg"}}); };
+  E.prototype.download=function(p){ var b=eimerGesperrt(this.n, p) ? null : DATEIEN[this.n+"/"+p]; return Promise.resolve(b?{data:b,error:null}:{data:null,error:{message:"weg"}}); };
   /* Speicher „auslagen“ wie die Regeln (reisekosten.sql, Antworten 05.10.2026): entfernen im eigenen Ordner – aber nicht
      das Foto eines abgegebenen oder ausbezahlten Eintrags –, der Inhaber überall; was die Regel nicht erlaubt, bleibt still
      liegen (wie Supabase: keine Fehlermeldung, nur nichts entfernt). Andere Bereiche: wie bisher (nichts entfernt). */

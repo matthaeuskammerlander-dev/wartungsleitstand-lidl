@@ -3543,7 +3543,7 @@ test("Tiefentest mail: Rechte – Posteingang nur für Mitarbeiter, KPlus-PDFs u
     p(dp.length === 2 && dp.every((f) => /\|buero\//.test(f)), "M3/M4 Posteingang (Inhaber): Rechnung bzw. Mail dazu nicht im Büro-Ordner: " + JSON.stringify(dp));
     k.remove(); x("ansichtenSchliessen()"); tm.ende();
 
-    /* als Admin: Mail und Rechnung aus dem Mailverlauf sind nicht zu sehen; aus dem Posteingang legt er nur den Plan ab */
+    /* als Admin: Mail und Rechnung aus dem Mailverlauf sind nicht zu sehen; Projektmails im Posteingang auch nicht */
     await tm.anmelden("admin@test.at", "admin"); tm.toastSpion(); await x("projekteLaden()");
     x("projektAnsicht('" + pv.id + "')"); await tm.bis(() => tm.dlg() && /Dateien/.test(tm.dlg().textContent));
     const karte = [...tm.dlg().querySelectorAll(".card")].find((c) => /^Dateien/.test((c.querySelector("h2") || {}).textContent || ""));
@@ -3557,22 +3557,11 @@ test("Tiefentest mail: Rechte – Posteingang nur für Mitarbeiter, KPlus-PDFs u
     await sbA.storage.from("posteingang").upload("2026/10/tm4d_413956.pdf", new Blob(["%PDF-1.4 KPlus 413956"], { type: "application/pdf" }));
     db.posteingang.push(pe("tm4c1", "tm4c", "mail", "Fwd Unterlagen P-2026-903.eml", "2026/10/tm4c_mail.eml"), pe("tm4c2", "tm4c", "unbekannt", "413955.pdf", "2026/10/tm4c_413955.pdf"),
       pe("tm4c3", "tm4c", "unbekannt", "Plan OG.pdf", "2026/10/tm4c_plan.pdf"), pe("tm4d1", "tm4d", "mail", "Fwd Rechnung 413956.eml", "2026/10/tm4c_mail.eml"), pe("tm4d2", "tm4d", "unbekannt", "413956.pdf", "2026/10/tm4d_413956.pdf"));
-    k = x("posteingangKarte()"); document.body.appendChild(k); await tm.bis(() => k.querySelectorAll(".posbox").length >= 2);
-    const box = (re) => [...k.querySelectorAll(".posbox")].find((b) => re.test(b.textContent));
-    /* nur Mail + KPlus-Rechnung: gar kein Dialog, sichtbarer Hinweis */
-    window.__toasts = []; tm.knopf(box(/413956/), /Zu Projekt legen/).click(); await tm.warte(300);
-    p(!document.querySelector(".assistent") && window.__toasts.some((t) => /nur der Inhaber/.test(t)), "M4 Admin: Mail nur mit KPlus-Rechnung – kein Hinweis bzw. Dialog offen: " + JSON.stringify(window.__toasts));
-    /* Mail + KPlus + Plan: der Plan kommt ins Projekt, Mail und KPlus bleiben für den Inhaber im Posteingang */
-    tm.knopf(box(/413955/), /Zu Projekt legen/).click(); await tm.bis(() => tm.fuss(/Ins Projekt legen/));
-    d = tm.dlg();
-    p(/nur der Inhaber/.test(d.textContent), "M4 Admin: Dialog sagt nicht, dass Angebot/Rechnung nur der Inhaber ablegt");
-    d.querySelector("[data-p]").value = "tmp_r3"; window.__toasts = [];
-    tm.fuss(/Ins Projekt legen/).click(); await tm.toastBis(/abgelegt|^Nicht/);
-    const da = (db.projekte.find((q) => q.id === "tmp_r3").daten.dateien || []).filter((f) => /Fwd Unterlagen|413955|Plan OG/.test(f.name)).map((f) => f.art + "|" + f.name);
-    p(da.length === 1 && da[0] === "plan|Plan OG.pdf", "M4 Admin hat Angebot/Rechnung bzw. die Mail dazu abgelegt: " + JSON.stringify(da));
-    p(["tm4c1", "tm4c2"].every((id) => db.posteingang.find((e) => e.id === id).status === "neu") && db.posteingang.find((e) => e.id === "tm4c3").status === "erledigt",
-      "M4 Posteingang nach dem Ablegen durch den Admin: " + JSON.stringify(db.posteingang.filter((e) => /^tm4c/.test(e.id)).map((e) => e.id + ":" + e.status)));
-    p(window.__toasts.some((t) => /bleiben für den Inhaber/.test(t)) && /413955/.test(k.textContent), "M4 Admin: kein Hinweis bzw. die Karte für den Inhaber fehlt: " + JSON.stringify(window.__toasts));
+    /* Antwort des Inhabers 05.10.2026: weitergeleitete Mails (Projekte) samt Anhängen sieht NUR der Inhaber – der Admin
+       bekommt sie weder aus der Datenbank noch als Karte (früher legte er hier den Plan ab, Angebot/Rechnung blieben liegen) */
+    const zeilenA = ((await sbA.from("posteingang").select("*")).data || []).filter((e) => /^tm4[cd]/.test(e.id));
+    k = x("posteingangKarte()"); document.body.appendChild(k); await tm.bis(() => !/wird geladen/.test(k.textContent));
+    p(!zeilenA.length && !/413955|413956|Plan OG|Fwd Unterlagen/.test(k.textContent), "M4 Admin sieht Projektmails im Posteingang: " + JSON.stringify(zeilenA.map((e) => e.id)) + " " + k.textContent.slice(0, 200));
     k.remove();
     return { fehlt };
   });
@@ -4548,6 +4537,38 @@ test("Antworten post: Kilometergeld nur mit eingetragenem Privatauto – App und
     x("ansichtenSchliessen(); akEditor(null, {art:'km'})"); await warte(300);
     p(/Zuerst im Reiter Fahrzeuge dein Privatauto eintragen/.test(dlg().textContent) && !!dlg().querySelector(".as-fuss button") && /Fahrzeuge/.test(dlg().querySelector(".as-fuss").textContent),
       "Inhaber ohne eigenes Privatauto: kein Hinweis bzw. kein Weg zum Reiter Fahrzeuge");
+    return { fehlt };
+  });
+  pruefe(!r.fehlt.length, r.fehlt.join(" | "));
+  pruefe(!a.fehler.length, "Laufzeitfehler: " + a.fehler.join("; "));
+  await a.zu();
+});
+
+test("Antworten post: Posteingang – Projektmails nur der Inhaber, Lidl-Aufträge und Rapporte auch Admins, Techniker gar nicht", async () => {
+  const a = await tmSeite(KONTEN.inhaber);
+  const r = await a.seite.evaluate(async () => {
+    const x = window.__t.x, db = window.__db.tabellen, tm = window.__tm, jetzt = new Date().toISOString(), fehlt = [], p = (bed, text) => { if (!bed) fehlt.push(text); };
+    window.UKT_CONFIG.posteingangAktiv = true;
+    const pe = (id, art, name) => ({ id, nachricht_id: "<" + id + "@test>", art, dateiname: name, pfad: "2026/10/" + id + "_" + name.replace(/\W+/g, "_"), status: "neu", betreff: "Betreff " + id, absender: "a@test-firma.at", eingang: jetzt, bytes: 300 });
+    const zeilen = [pe("ppA", "auftrag", "Auftrag 4711.pdf"), pe("ppR", "rapport", "4711_rapport.pdf"), pe("ppM", "mail", "Anfrage Hotel.eml"), pe("ppU", "unbekannt", "Plan Hotel.pdf")];
+    for (const z of zeilen) { await x("Store.sb").storage.from("posteingang").upload(z.pfad, new Blob(["%PDF-1.4 " + z.id], { type: "application/pdf" })); db.posteingang.push(z); }
+    const sicht = async () => {
+      const sb = x("Store.sb"), l = ((await sb.from("posteingang").select("*")).data || []).map((e) => e.id).sort().join();
+      const dat = []; for (const z of zeilen) { const u = await sb.storage.from("posteingang").createSignedUrl(z.pfad, 600); if (u.data) dat.push(z.id); }
+      x("S.view='faellig'; render()"); await tm.warte(700);
+      const k = [...document.querySelectorAll(".card")].find((c) => /^Posteingang/.test((c.querySelector("h2") || {}).textContent || ""));
+      return { l, dat: dat.sort().join(), karte: k ? k.textContent : null, push: x("pushArtenGewaehlt().indexOf('posteingang')>=0") };
+    };
+    const inh = await sicht();
+    p(inh.l === "ppA,ppM,ppR,ppU" && inh.dat === "ppA,ppM,ppR,ppU" && /Anfrage Hotel/.test(inh.karte || "") && /Auftrag 4711/.test(inh.karte || "") && inh.push, "Inhaber sieht nicht alles: " + JSON.stringify(inh));
+    await tm.anmelden("admin@test.at", "admin");
+    const adm = await sicht();
+    p(adm.l === "ppA,ppR" && adm.dat === "ppA,ppR", "Admin liest Projektmails (Tabelle bzw. Dateien): " + JSON.stringify({ l: adm.l, dat: adm.dat }));
+    p(adm.karte && /Auftrag 4711/.test(adm.karte) && /4711_rapport/.test(adm.karte) && !/Anfrage Hotel|Plan Hotel|weitergeleitete Mails/.test(adm.karte) && adm.push,
+      "Admin: Karte zeigt nicht genau Aufträge und Rapporte: " + (adm.karte || "(keine Karte)").slice(0, 300));
+    await tm.anmelden("tech@test.at", "techniker");
+    const tec = await sicht();
+    p(!tec.l && !tec.dat && tec.karte === null && !tec.push && !x("posteingangAn()"), "Techniker sieht den Posteingang: " + JSON.stringify(tec));
     return { fehlt };
   });
   pruefe(!r.fehlt.length, r.fehlt.join(" | "));

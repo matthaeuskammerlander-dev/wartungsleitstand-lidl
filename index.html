@@ -3087,12 +3087,17 @@ var POSTEINGANG=[], posteingangOffen=null;
 /* „Zu Projekt legen“: offener Dialog je Mail (nie zwei) und je Eintrag das Projekt, in das er schon hochgeladen ist –
    auch wenn der Erledigt-Vermerk danach scheiterte (dann nur noch vermerken, nichts doppelt; Tiefentest 05.10.2026) */
 var posteingangDialoge={}, posteingangAbgelegt={};
-function posteingangAn(){ return !!(window.UKT_CONFIG && window.UKT_CONFIG.posteingangAktiv) && Store.modus==="supabase" && !!Store.sb && !!Store.benutzer && !nurLesen(); }
+/* Wer den Posteingang sieht (Inhaber 05.10.2026): Projektmails (weitergeleitete Mails, Anhänge) NUR der Inhaber, die
+   Lidl-Aufträge und Rapporte (art „auftrag“/„rapport“) Inhaber und Admins, Techniker gar nicht. Die Datenbank sperrt es
+   ebenso (tools/rechte-2026-10-05.sql) – die App filtert zusätzlich. "alles" | "lidl" | "" */
+function posteingangRolle(){ return nurInhaber() ? "alles" : (Rolle.name==="admin" || demo()) ? "lidl" : ""; }
+function posteingangSieht(e){ var r=posteingangRolle(); return r==="alles" || (r==="lidl" && !!e && (e.art==="auftrag" || e.art==="rapport")); }
+function posteingangAn(){ return !!(window.UKT_CONFIG && window.UKT_CONFIG.posteingangAktiv) && Store.modus==="supabase" && !!Store.sb && !!Store.benutzer && !nurLesen() && !!posteingangRolle(); }
 function ladePosteingang(){
   if(!posteingangAn()) return Promise.resolve([]);
   return Store.sb.from("posteingang").select("*").eq("status","neu").order("eingang",{ascending:false}).limit(100)
     /* null = nicht ladbar – nicht dasselbe wie „nichts Neues“ */
-    .then(function(r){ if(r.error) return null; POSTEINGANG=r.data||[]; return POSTEINGANG; }, function(){ return null; });
+    .then(function(r){ if(r.error) return null; POSTEINGANG=(r.data||[]).filter(posteingangSieht); return POSTEINGANG; }, function(){ return null; });
 }
 /* rapport: der tatsächlich gespeicherte Rapport – erledigt ist der Eingang nur,
    wenn es seine PDF ist (nicht ein später stattdessen angehängter Rapport) */
@@ -3123,7 +3128,8 @@ function posteingangDatei(e){
 }
 function posteingangKarte(){
   var c=el('<div class="card"><div class="pad stack"><div><h2>Posteingang</h2><div class="sub">'+
-    "Aus dem Datenbank-Postfach: Aufträge und Rapportberichte von Lidl – und weitergeleitete Mails, die mit allen Anhängen in ein Projekt kommen. Antippen ordnet sie zu.</div></div>"+
+    (posteingangRolle()==="alles" ? "Aus dem Datenbank-Postfach: Aufträge und Rapportberichte von Lidl – und weitergeleitete Mails, die mit allen Anhängen in ein Projekt kommen (die siehst nur du). Antippen ordnet sie zu."
+      : "Aus dem Datenbank-Postfach: Aufträge und Rapportberichte von Lidl. Antippen ordnet sie zu.")+"</div></div>"+
     '<div class="stack" data-liste><div class="muted">wird geladen …</div></div></div></div>');
   var host=c.querySelector("[data-liste]");
   ladePosteingang().then(function(liste){
@@ -10423,6 +10429,9 @@ function pushArtenSchluessel(){ return "ukt_push_arten:"+((Store.benutzer&&Store
    der Stand der ersten Fassung (alles außer der Wochenübersicht). */
 var PUSH_ARTEN_ANFANG=["stoerung","protokoll","korrektur","stammdaten","chat","wunsch","posteingang"];
 function pushArtenBekanntSchluessel(){ return "ukt_push_arten_bekannt:"+((Store.benutzer&&Store.benutzer.email)||""); }
+/* Änderungswünsche nur Inhaber; Posteingang nur, wer ihn sieht (Inhaber, Admins – Inhaber 05.10.2026; die Datenbank schickt
+   Posteingangs-Nachrichten ohnehin nur an diese Rollen: push_ereignisse.nur_rolle) */
+function pushArtSichtbar(k){ return (k!=="wunsch" || istInhaber()) && (k!=="posteingang" || !!posteingangRolle()); }
 function pushArtenMerken(arten){ lsSet(pushArtenSchluessel(), arten); lsSet(pushArtenBekanntSchluessel(), PUSH_ARTEN.map(function(x){ return x[0]; })); }
 function pushArtenGemerkt(){
   var a=lsGet(pushArtenSchluessel(), null);
@@ -10432,13 +10441,13 @@ function pushArtenGemerkt(){
 function pushArtenNeu(){
   if(!pushArtenGemerkt()) return [];
   var b=lsGet(pushArtenBekanntSchluessel(), null); if(!Array.isArray(b)) b=PUSH_ARTEN_ANFANG;
-  return PUSH_ARTEN.map(function(x){ return x[0]; }).filter(function(k){ return b.indexOf(k)<0 && (k!=="wunsch" || istInhaber()); });
+  return PUSH_ARTEN.map(function(x){ return x[0]; }).filter(function(k){ return b.indexOf(k)<0 && pushArtSichtbar(k); });
 }
 function pushArtenGewaehlt(){
   var a=pushArtenGemerkt();
   if(!a) a=PUSH_ARTEN.map(function(x){ return x[0]; });
   else a=a.concat(pushArtenNeu().filter(function(k){ return a.indexOf(k)<0; }));
-  return a.filter(function(k){ return k!=="wunsch" || istInhaber(); });
+  return a.filter(pushArtSichtbar);
 }
 function pushAboSpeichern(sub, arten){
   var j=sub.toJSON();
@@ -10484,7 +10493,7 @@ function pushDialog(){
   var f=el('<div class="stack">'+
     '<div class="muted" style="font-size:12.5px">Sie bekommen eine Nachricht aufs Gerät, wenn jemand anderer etwas geändert hat – was Sie selbst eintragen, löst keine aus. Jedes Gerät (Handy, PC) wird eigens eingeschaltet.</div>'+
     '<div class="posbox stack" style="gap:6px"><strong>Worüber?</strong>'+
-    PUSH_ARTEN.filter(function(x){ return x[0]!=="wunsch" || istInhaber(); }).map(function(x){
+    PUSH_ARTEN.filter(function(x){ return pushArtSichtbar(x[0]); }).map(function(x){
       return '<label class="chk"><input type="checkbox" data-art="'+x[0]+'"'+(arten.indexOf(x[0])>=0?" checked":"")+'> <span>'+esc(x[1])+"</span></label>"; }).join("")+
     "</div>"+
     '<div class="rowflex"><button class="btn sm" type="button" data-a="an">Auf diesem Gerät einschalten</button>'+
@@ -23903,7 +23912,7 @@ function handbuchKarte(z){
           "Jede Korrektur braucht einen Grund, alte Fassungen bleiben erhalten.",
         "<strong>Prüfbuch-Nachweise</strong> – aus Prüfbuch-Fotos gelesene Wartungen (per KI oder von Hand), "+nw+" Einträge. Sie zählen wie Besuche.",
         "<strong>"+zuVerl+"</strong> – jede Änderung mit Person, Zeit, alt → neu und Grund; dort lässt sich vieles zurücknehmen.",
-        "<strong>Posteingang</strong> – Aufträge und Rapporte von Lidl per E-Mail (Synology holt sie ab), erscheinen unter „Fällig“.",
+        "<strong>Posteingang</strong> – Aufträge und Rapporte von Lidl per E-Mail (Synology holt sie ab), erscheinen unter „Fällig“ für Inhaber und Admins; weitergeleitete Mails zu Projekten sieht nur der Inhaber, Techniker sehen den Posteingang nicht.",
         "<strong>Archiv</strong> – jedes gespeicherte Protokoll wird zusätzlich als PDF auf die Synology abgelegt, Baustellen in einen Projektordner je Jahr und Kunde "+
           "(mit Mappe und Zusammenfassung). Angebote und Rechnungen kommen dort nicht hin – den Projektordner sehen auch Techniker."]))+
 
@@ -23988,7 +23997,7 @@ function handbuchKarte(z){
           "„Übernehmen“ ändert die echte App. Hat Claude eine Rückfrage, beantwortest du sie mit „Claude antworten …“. "+
           "Jede Übernahme lässt sich rückgängig machen (Aufträge höchstens 4000 Zeichen).",
         "<strong>🔔 Benachrichtigungen:</strong> unter „Angemeldet als“ → „Benachrichtigungen“ je Gerät einschalten und wählen, worüber "+
-          "(Störungen, Protokolle, Korrekturen, Markt-/Anlagendaten, Team-Chat, Posteingang; Änderungswünsche nur Inhaber). Die Nachricht "+
+          "(Störungen, Protokolle, Korrekturen, Markt-/Anlagendaten, Team-Chat, Posteingang nur Inhaber und Admins; Änderungswünsche nur Inhaber). Die Nachricht "+
           "nennt gleich das Wichtigste (Anlagen, Mängel, Störung, geänderte Felder) und führt beim Antippen hin. Was du selbst einträgst, "+
           "löst keine aus. Am iPhone nur als installierte App (Teilen → „Zum Home-Bildschirm“). Kunde und Präsentation bekommen nichts.",
         "<strong>💬 Team-Chat:</strong> Sprechblase in der Kopfzeile (Zahl = ungelesen). Mit „An: Person“ geht eine Nachricht nur an eine Person – nur Absender und Empfänger sehen sie (🔒). Eine Nachricht kann sich auf einen Markt, eine "+
@@ -24299,7 +24308,7 @@ var RUNDGAENGE={
       text:"Aufträge und Rapporte von Lidl per E-Mail. Ein Auftrag wird zum Störungsauftrag, ein Rapport hängt sich an das passende Protokoll."+
       RG_HG(["Die Synology im Büro holt die Mails aus dem Postfach und legt sie hier ab – die App liest Auftragsnummer, Markt und Zieltermin aus dem PDF.",
         "Ein Rapport findet sein Protokoll über Markt, Datum und Auftrag; die ausgeführten Arbeiten kommen zusätzlich ins Protokoll.",
-        "Andere weitergeleitete Mails lassen sich mit ihren Anhängen zu einem Projekt legen."])},
+        "Andere weitergeleitete Mails (zu Projekten) sieht nur der Inhaber – er legt sie mit ihren Anhängen zu einem Projekt; Techniker sehen den Posteingang nicht."])},
     {reiter:"faellig", ziel:function(){ return rgEl("#st_neu"); }, titel:"+ Störungsauftrag",
       text:"Einen Lidl-Auftrag erfassen – PDF öffnen oder abfotografieren, die App liest Markt, Auftragsnummer und Zieltermin. Im Auftrag lassen sich Einsatztag und Techniker eintragen."+
       RG_HG(["Jede Auftragsnummer gibt es nur einmal – die Datenbank lehnt ein Doppel ab, die App bietet „Vorhandene öffnen“ an.",
@@ -24642,11 +24651,11 @@ Object.assign(RUNDGAENGE, {
       RG_HG(["Abgehakt wird <strong>von selbst</strong>, sobald das Protokoll übertragen ist – bei gleichem Markt und gleicher Auftragsnummer.",
         "Nennt das Protokoll die Nummer einer anderen offenen Störung am Markt, fragt die App, welche erledigt ist; wird das Protokoll gelöscht oder korrigiert, öffnet sich die Störung wieder.",
         "Ab 3 Störungen in 90 Tagen an derselben Anlage: „⚠ wiederkehrende Störung – Ursache prüfen“ (nur Markierung)."])},
-    {reiter:"faellig", ziel:function(){ return rgKarte(/^Posteingang/) || rgKarte(/^Offene Störungen/); }, titel:"Posteingang",
+    {reiter:"faellig", ziel:function(){ return rgKarte(/^Posteingang/) || rgKarte(/^Offene Störungen/); }, wenn:function(){ return !!posteingangRolle(); }, titel:"Posteingang",
       text:"Die Synology legt Mails aus dem Postfach hier ab:"+RG_LISTE([
         "<strong>Auftrag</strong> → „Als Störungsauftrag erfassen“ (liest die PDF gleich ein).",
         "<strong>Rapport</strong> → „Rapport zuordnen“: die App sucht das Protokoll am selben Markt und Besuchstag (gleiche Auftragsnummer zuerst) und öffnet „Korrigieren“ mit angehängtem Rapport.",
-        "<strong>Weitergeleitete Mail</strong> → „Zu Projekt legen“ (Projekt wird vorgeschlagen; auch für Anhänge, deren Mail zu groß war – alle Anhänge der Mail zusammen). Angebot/Rechnung (KPlus-PDF) und die Mail dazu legt nur der Inhaber ab – für alle anderen bleiben sie im Posteingang.",
+        "<strong>Weitergeleitete Mail</strong> (nur Inhaber) → „Zu Projekt legen“ (Projekt wird vorgeschlagen; auch für Anhänge, deren Mail zu groß war – alle Anhänge der Mail zusammen). Angebot/Rechnung (KPlus-PDF) und die Mail dazu legt nur der Inhaber ab – für alle anderen bleiben sie im Posteingang.",
         "„verwerfen“ nur mit Grund.",
         "Ohne Weiterleiten (nur Inhaber, am eigenen PC): im Mail-Programm „Mail mit Claude“ bei der Mail „↗ Leitstand“ – als neues Projekt, zu einem Projekt oder als Störung. Bei Projekt, Kunde und Markt steht dann „Mails dazu“."])+
       RG_HG("Ein Eintrag ist erledigt, sobald der Auftrag angelegt bzw. alle Dateien hochgeladen und im Posteingang vermerkt sind – nochmals versuchen lädt nur hoch, was noch fehlt (nie doppelt); hängt dieselbe Rapportnummer schon an, bietet die App „verwerfen“ an.")},
@@ -24661,7 +24670,8 @@ Object.assign(RUNDGAENGE, {
         "„Text kopieren“, in die Mail einfügen – die App verschickt nichts selbst.",
         "„Als beantwortet vermerken“ – erledigte, beantwortete Zeilen verschwinden."])},
     {titel:"Rechte und Stolperfallen", text:RG_LISTE(["Techniker: erfassen, ändern, abhaken, Protokolle – kein Löschen, Rückfragen nur lesen.",
-        "Admin und Inhaber: zusätzlich löschen und Rückfragen bearbeiten; Angebot/Rechnung im Posteingang nur der Inhaber."])+
+        "Admin und Inhaber: zusätzlich löschen und Rückfragen bearbeiten.",
+        "Posteingang: Lidl-Aufträge und Rapporte Inhaber und Admins, weitergeleitete Mails (Projekte) nur der Inhaber; Techniker sehen ihn nicht."])+
       RG_ACHTUNG(["„Vorhandene öffnen“ verwirft die Eingaben im Dialog.",
         "„Störungsprotokoll erstellen“ im Dialog erst nach „Änderung speichern“.",
         "Bei Lidl ist die Auftragsnummer Pflicht – sonst „Ausnahme“ ankreuzen.",
@@ -24788,7 +24798,7 @@ Object.assign(RUNDGAENGE, {
   projekte:{thema:true, titel:"Projekte und Kontakte", fuer:function(){ return reiterErlaubt("projekte"); }, schritte:[
     {reiter:"projekte", ziel:function(){ return rgEl("#pr_neu"); }, titel:"Projekt anlegen",
       text:"„+ Neues Projekt“ – oder „+ Projekt“ am Markt bzw. beim Kunden, aus einem Folgeauftrag oder (Inhaber am PC) aus einer Mail im Mail-Programm („↗ Leitstand“ → als neues Projekt). Titel, Kunde, Standort, Typ, „Was wird gebraucht?“."+
-        " Weitergeleitete Mails im Posteingang kommen mit „Zu Projekt legen“ zu einem bestehenden Projekt."+
+        " Weitergeleitete Mails im Posteingang (nur Inhaber) kommen mit „Zu Projekt legen“ zu einem bestehenden Projekt."+
         " Inhaber mit verbundenem Mail-Programm: „✦ Aus Mails nachtragen“ – alle Mails zu einem (auch vergangenen) Projekt wählen, Claude trägt Schritte, Beteiligte, Termine, Tagebuch, Dateien und KPlus-Belege ein (vorher prüfen). In ein bestehendes Projekt wird nur ergänzt: der Stand bleibt, schon Übernommenes kommt nicht doppelt."+
       RG_HG("Nummer P-Jahr-NNN, Stand „Anfrage“ mit heutigem Datum, Tagebuch „Projekt angelegt“ – dann öffnet sich das Projekt.")},
     {reiter:"projekte", ziel:function(){ return rgEl("#pr_chips"); }, titel:"Die Schritte",
