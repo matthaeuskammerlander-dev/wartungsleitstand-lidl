@@ -3119,6 +3119,8 @@ test("Tiefentest reisekosten: Kontowechsel und Nachladen – keine fremden Reise
     db.auslagen_konto.push({ user_id: "u_inhaber_test_at", kontoinhaber: "Testinhaber", iban: "AT88 0000 0000 0000 0001" });
     db.fahrzeuge.push({ id: "fzF", kennzeichen: "S-FREMD 1", fahrer: ["u_admin_test_at"], fahrer_namen: ["Testadmin"], privat_von: "u_admin_test_at", privat_name: "Testadmin", aktiv: true },
       { id: "fzS", kennzeichen: "S-TECH 1", fahrer: ["u_tech_test_at"], fahrer_namen: ["Testtechniker"], aktiv: true });
+    /* die Fahrzeuge lädt die App schon beim Start (mit Werkzeug und Material) – die eben eingefügten erst mit neuem Laden */
+    await x("fzLaden(true)");
     x("S.view='fahrzeuge'; render()"); await warte(600);
     x("S.view='stunden'; render()"); await warte(700);
     const inhaberSieht = /TT-Geheim/.test(rk()) && x("FZ.length") >= 2;
