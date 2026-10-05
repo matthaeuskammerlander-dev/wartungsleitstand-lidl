@@ -55,8 +55,9 @@ legt die PDFs in den **Posteingang** der App. Alles ist vorbereitet und
    - **keine Rolle eintragen** (es zählt dann als Techniker): es darf ablegen, den Posteingang aber
      nicht lesen. Das Skript braucht seit 05.10.2026 kein Leserecht mehr (fester Ablagepfad je Mail
      und Datei, „on conflict do nothing“, keine Rückgabe) – ein zweiter Lauf legt nichts doppelt ab.
-   - Es erscheint in Team-Listen (Chat, Kalender) wie ein Techniker – den Namen deshalb eindeutig
-     wählen (Adresse `posteingang@…` bzw. in `rollen.name` „Posteingang (Synology)“).
+   - Es erscheint sonst in Team-Listen (Chat, Kalender) wie ein Techniker – deshalb unter
+     Verwaltung › Inhaber beim Konto den Haken „ausblenden“ setzen (Inhaber 05.10.2026); den Namen
+     trotzdem eindeutig wählen (Adresse `posteingang@…`).
 4. **Testen:** Aufgabe mit `python3 …/ukt_posteingang.py --pruefen` einmal
    ausführen – zeigt, was abgeholt würde, schreibt nichts.
 5. **Aufgabenplaner:** Benutzer `root`, alle 5 Minuten,
