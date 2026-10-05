@@ -27100,11 +27100,15 @@ function geld(n){ return (Math.round((+n||0)*100)/100).toLocaleString("de-AT",{m
 /* Betrag/Menge von Hand wie zahlLesen: „78.81“ = 78,81 und „1.5“ = 1,5 – Tausenderpunkt nur mit echter Dreiergruppe
    („1.975“, „92.333,78“). Früher fiel jeder Punkt weg: aus 1.5 × 78.81 wurde still 15 × 7881. */
 function geldLesen(t){ var s=String(t||"").trim().replace(/\s/g,""); if(!s) return null; return zahlLesen(s); }
+/* Cent kaufmännisch runden: erst das Gleitkomma-Rauschen weg (1,5 × 39,41 ergibt im Rechner 59,114999…), dann auf
+   Cent – 59,12, nicht 59,11. Für Summe, Tabelle, Editor und PDF gleich (posBetrag). */
+function centRund(n){ var c=+((+n||0)*100).toFixed(6); return (c<0 ? -Math.round(-c) : Math.round(c))/100; }
+function posBetrag(x){ return centRund((+x.menge||0)*(+x.preis||0)); }
 /* Summen eines Belegs: Alternativ- und Textpositionen zählen nicht */
 function belegSummen(pos){
   var netto=0;
-  (pos||[]).forEach(function(x){ if(x.typ==="pos" && !x.alternativ) netto+=Math.round((+x.menge||0)*(+x.preis||0)*100)/100; });
-  netto=Math.round(netto*100)/100;
+  (pos||[]).forEach(function(x){ if(x.typ==="pos" && !x.alternativ) netto+=posBetrag(x); });
+  netto=centRund(netto);
   var mwst=Math.round(netto*BELEG_MWST)/100;
   return {netto:netto, mwst:mwst, brutto:Math.round((netto+mwst)*100)/100, satz:BELEG_MWST};
 }
@@ -27271,7 +27275,7 @@ function belegPdfErzeugen(b, kx){
       doc.text(T(geldPdf(p.menge)), 47, y, {align:"right"}); doc.text(T(p.eh||""), 48.5, y);
       if(p.preis!=null) doc.text(T(geldPdf(p.preis)), 160, y, {align:"right"});
       if(p.alternativ){ doc.setTextColor(140); schrift(9, false, true); doc.setTextColor(140); doc.text("Alternativ", R-1.5, y, {align:"right"}); schrift(9); }
-      else doc.text(T(geldPdf(Math.round((+p.menge||0)*(+p.preis||0)*100)/100)), R-1.5, y, {align:"right"});
+      else doc.text(T(geldPdf(posBetrag(p))), R-1.5, y, {align:"right"});
       zeilen.forEach(function(t){ if(y>UNTEN){ neueSeite(); schrift(9); } doc.text(t, 55, y); y+=4.1; });
       y+=2;
     });
@@ -27491,8 +27495,8 @@ function positionPruefen(p){
   if(tm && p.menge!=null && Math.abs(tm.menge-(+p.menge))>0.01 && (stunden || /regie|stundensatz|zuschlag|arbeitszeit|arbeitsstunde|montagestunde|facharbeiter|techniker|monteur/i.test(p.text)))
     w.push("Text nennt "+mengeText(tm.menge)+" Std („"+tm.fund+"“), Menge ist "+mengeText(p.menge)+" "+(p.eh||""));
   if(/regiestunde|stundensatz|zuschlag stunde|arbeitsstunde/i.test(p.text) && eh && !stunden) w.push("Stunden-Position mit Einheit „"+p.eh+"“ statt Std");
-  if(p.betragPdf!=null && p.menge!=null && p.preis!=null && Math.abs(p.betragPdf-Math.round((+p.menge)*(+p.preis)*100)/100)>0.05)
-    w.push("Betrag im PDF ("+geld(p.betragPdf)+" €) ist nicht Menge × Preis ("+geld(Math.round((+p.menge)*(+p.preis)*100)/100)+" €)");
+  if(p.betragPdf!=null && p.menge!=null && p.preis!=null && Math.abs(p.betragPdf-posBetrag(p))>0.05)
+    w.push("Betrag im PDF ("+geld(p.betragPdf)+" €) ist nicht Menge × Preis ("+geld(posBetrag(p))+" €)");
   return w;
 }
 function positionenPruefen(positionen){
@@ -27767,7 +27771,7 @@ function belegTabelle(pos, vergleich, druck){
   (pos||[]).forEach(function(x){
     if(x.typ==="gruppe"){ t+='<tr><td colspan="'+(vergleich?7:6)+'" style="font-weight:700;padding-top:8px">'+esc(x.text)+"</td></tr>"; return; }
     if(x.typ==="text"){ t+='<tr><td></td><td colspan="'+(vergleich?6:5)+'" style="font-style:italic">'+esc(x.text).replace(/\n/g,"<br>")+"</td></tr>"; return; }
-    var b=Math.round((+x.menge||0)*(+x.preis||0)*100)/100, a=vgl[x.nr];
+    var b=posBetrag(x), a=vgl[x.nr];
     var anders=a && Math.abs((+a.menge||0)-(+x.menge||0))>0.0001;
     t+="<tr"+(x.alternativ?' style="color:var(--muted,#777)"':"")+"><td>"+esc(x.nr||"")+'</td><td style="text-align:right">'+esc(geld(x.menge))+"</td><td>"+esc(x.eh||"")+"</td><td>"+
       esc(x.text||"").replace(/\n/g,"<br>")+'</td><td style="text-align:right">'+(x.preis!=null?geld(x.preis):"")+'</td><td style="text-align:right">'+(x.alternativ?"<em>Alternativ</em>":geld(b))+"</td>"+
@@ -28092,7 +28096,7 @@ function belegEditor(kx, b, fertig, vorschlaege){
             akt+'<button class="btn ghost sm" type="button" data-kopie title="Zeile kopieren">⧉</button><button class="btn ghost sm" type="button" data-weg title="entfernen">✕</button></div>'+
           (vs?'<div class="vs"><a href="#" class="sprunglink" data-vs>Baustellenbuch: '+esc(geld(vs.menge))+" übernehmen</a> <span class=\"muted\">("+esc(vs.text.slice(0,120))+")</span></div>":"")+
         "</div>");
-        var betrag=function(){ z.querySelector("[data-betrag]").textContent=x.alternativ?"Alternativ":geld((+x.menge||0)*(+x.preis||0)); rechnen(); };
+        var betrag=function(){ z.querySelector("[data-betrag]").textContent=x.alternativ?"Alternativ":geld(posBetrag(x)); rechnen(); };
         z.querySelectorAll("[data-f]").forEach(function(inp){
           inp.oninput=inp.onchange=function(){
             var f=inp.dataset.f;

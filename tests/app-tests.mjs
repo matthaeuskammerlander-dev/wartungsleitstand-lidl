@@ -1672,6 +1672,12 @@ reSchritt("eingaben", "R01", async (a) => {
   });
   return r.menge === 1.5 && r.preis === 78.81 && r.kPreis === 447.3 ? "" : `„1.5“ × „78.81“ gespeichert als ${r.menge} × ${r.preis} (netto ${r.netto}); Katalog „447.30“ als ${r.kPreis}`;
 });
+/* Cent kaufmännisch: 1,5 × 39,41 = 59,115 → 59,12 (nicht 59,11 wegen Gleitkomma) – Summe und Tabelle */
+reSchritt("eingaben", "R02", async (a) => {
+  const r = JSON.parse(await a.x("JSON.stringify([belegSummen([{typ:'pos',menge:1.5,preis:39.41}]).netto, belegSummen([{typ:'pos',menge:0.5,preis:40.41}]).netto, belegSummen([{typ:'pos',menge:0.25,preis:16.06}]).netto])"));
+  const t = await a.x("belegTabelle([{typ:'pos',nr:'1',menge:1.5,eh:'Std',text:'Test',preis:39.41}], null).querySelector('tbody').textContent");
+  return r.join("/") === "59.12/20.21/4.02" && /59,12/.test(t) ? "" : "nicht kaufmännisch gerundet (erwartet 59.12/20.21/4.02): " + JSON.stringify(r) + " · Tabelle: " + t;
+});
 /* Material aus dem Protokoll: „2 Stk“ und „3 m“ bleiben 2 Stk und 3 m; Unlesbares wird sichtbar markiert */
 reSchritt("eingaben", "R08", async (a) => {
   const r = JSON.parse(await a.x(`JSON.stringify(einsatzPositionen({_id:'tm8',standortId:'TS1',datum:'2026-06-01',wartungsart:'Störung',stoerung:{ankunft:'08:00',ende:'09:00',
