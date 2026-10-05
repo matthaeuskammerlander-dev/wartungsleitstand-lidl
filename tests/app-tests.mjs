@@ -2066,7 +2066,7 @@ test("Tiefentest kern: geführtes Protokoll am Handy – Vor-Ort-Frage, Mangel n
   await a.zu();
 });
 
-test("Tiefentest kern: Störungsauftrag – weiterer Kunde ohne Lidl, KI-Knopf folgt dem Abtippen", async () => {
+test("Tiefentest kern: Störungsauftrag – weiterer Kunde ohne Lidl, KI-Knopf folgt dem Abtippen, vergebene Nummer beim Ändern", async () => {
   const a = await oeffnen(KONTEN.admin);
   const r = await a.seite.evaluate(async () => {
     const x = window.__t.x, w = (ms) => new Promise((f) => setTimeout(f, ms)), db = window.__db.tabellen, t0 = new Date().toISOString();
@@ -2099,6 +2099,22 @@ test("Tiefentest kern: Störungsauftrag – weiterer Kunde ohne Lidl, KI-Knopf f
     erg.kiNachher = !!d.querySelector("#st_ki");
     setz("beschreibung", "");
     erg.kiWieder = !!d.querySelector("#st_ki");
+    /* Ändern auf eine schon vergebene Auftragsnummer: Prüfung im Dialog wie beim Anlegen („Vorhandene öffnen“) */
+    x("ansichtenSchliessen(); document.querySelectorAll('.assistent').forEach(function(d){ d.remove(); })");
+    await x("stoerungSpeichern({_id:'sd1', standortId:'TS1', auftragsnummer:'600001', status:'offen'}, 'Test')");
+    await x("stoerungSpeichern({_id:'sd2', standortId:'TS2', auftragsnummer:'600002', status:'offen'}, 'Test')");
+    const aendern = async (neu) => {
+      x("document.querySelectorAll('.assistent').forEach(function(d){ d.remove(); }); stoerungDialog(OFFENE.filter(function(o){ return o._id==='sd2'; })[0])"); await w(300);
+      d = dlg(); const nr = d.querySelector('[data-s="auftragsnummer"]'); nr.value = neu; nr.dispatchEvent(new Event("input", { bubbles: true }));
+      fussKnopf(d, /Änderung speichern/).click(); await w(800);
+      const box = d.querySelector("#st_fehlt");
+      return { meldung: box && !box.hidden ? box.textContent : "", vorhandeneOeffnen: !!d.querySelector('#st_fehlt [data-a="vorh"]'), offen: d.isConnected };
+    };
+    erg.vergeben = await aendern("600001");
+    /* die App kennt die andere Störung nicht (etwa gerade auf einem anderen Gerät erfasst): die Datenbank lehnt ab – kein „später nochmals“ */
+    db.stammdaten.push({ id: "sd9", typ: "stoerung", ziel: "TS3", felder: { auftragsnummer: "600009", status: "offen" }, neu: false, geaendert: t0, von: "Test", grund: "Test" });
+    erg.dbSperre = await aendern("600009");
+    erg.nrSd2 = (db.stammdaten.find((s) => s.typ === "stoerung" && /sd2$/.test(s.id)) || { felder: {} }).felder.auftragsnummer;
     return erg;
   });
   pruefe(r.lidl === false && r.stoerung.indexOf("TS5") >= 0, "Ausgangslage anders: " + JSON.stringify(r));
@@ -2106,6 +2122,9 @@ test("Tiefentest kern: Störungsauftrag – weiterer Kunde ohne Lidl, KI-Knopf f
     "Kontakt des weiteren Kunden landet als Lidl im Adressbuch: " + JSON.stringify(r.kontakte));
   pruefe(!/Lidl/.test(r.texte), "Dialog nennt beim weiteren Kunden Lidl: " + r.texte);
   pruefe(r.kiVorher && r.kiTitel === "Fehlt: Beschreibung" && !r.kiNachher && r.kiWieder, "KI-Knopf folgt dem Abtippen nicht: " + JSON.stringify([r.kiVorher, r.kiTitel, r.kiNachher, r.kiWieder]));
+  pruefe(r.vergeben.vorhandeneOeffnen && r.vergeben.offen, "keine Prüfung im Dialog („Vorhandene öffnen“) beim Ändern auf eine vergebene Nummer: " + JSON.stringify(r.vergeben));
+  pruefe(r.dbSperre.offen && /schon als Störung erfasst/.test(r.dbSperre.meldung) && !/später nochmals/.test(r.dbSperre.meldung) && r.nrSd2 === "600002",
+    "Ablehnung der Datenbank: " + JSON.stringify([r.dbSperre, r.nrSd2]));
   pruefe(!a.fehler.length, "Laufzeitfehler: " + a.fehler.join("; "));
   await a.zu();
 });

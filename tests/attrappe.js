@@ -136,6 +136,15 @@
     DB.werkzeug_verlauf.push({id:"x"+(++z), werkzeug_id:r.id, zeit:new Date().toISOString(), von:uid(), von_name:r.geaendert_von||null,
       standort:ort+(r.standort_text&&String(r.standort_text).trim()?" – "+r.standort_text:""), zustand:r.zustand});
   }
+  /* wie der Index stoerung_auftrag_einmal (stoerung-eindeutig.sql): eine Auftragsnummer nur einmal als
+     (nicht gelöschte) Störung – sonst lehnt die Datenbank mit 23505 ab */
+  function stoerNrDoppelt(tname, d){
+    if(tname!=="stammdaten" || !d || d.typ!=="stoerung") return null;
+    var nr=function(r){ var f=r.felder||{}; return (f.geloescht && f.geloescht!=="false") ? "" : String(f.auftragsnummer||"").trim(); };
+    var n=nr(d); if(!n) return null;
+    return DB.stammdaten.some(function(r){ return r.id!==d.id && r.typ==="stoerung" && nr(r)===n; })
+      ? {code:"23505", message:'duplicate key value violates unique constraint "stoerung_auftrag_einmal"'} : null;
+  }
   function Q(t){ this.t=t; this.a="select"; this.f=[]; this.d=null; this.o={}; this.ord=null; this.lim=null; this.sp=null; }
   Q.prototype.select=function(s){ if(typeof s==="string"&&s&&s!=="*") this.sp=s.split(",").map(function(x){return x.trim();}); return this; };
   Q.prototype.insert=function(d){ this.a="insert"; this.d=d; return this; };
@@ -178,6 +187,8 @@
     if(this.a==="insert"){
       [].concat(this.d).forEach(function(d){ v=v||darf(self.t,"insert",d,null); });
       if(v){ window.__abgelehnt.push(v); return {data:null,error:{message:v}}; }
+      var dpI=null; [].concat(this.d).forEach(function(d){ dpI=dpI||stoerNrDoppelt(self.t, d); });
+      if(dpI) return {data:null,error:dpI};
       var neu=[].concat(this.d).map(function(d){ var r=Object.assign({},d);
         if(r.id==null) r.id="x"+Date.now().toString(36)+(++z);
         if(self.t==="aenderungswuensche"){ r.id=++z; r.von=uid(); r.erstellt=new Date().toISOString(); r.status=r.status||"neu"; r.verlauf=r.verlauf||[]; }
@@ -197,6 +208,8 @@
     }
     if(this.a==="upsert"){
       var sp=this.o.onConflict||"id", raus=[];
+      var dpU=null; [].concat(this.d).forEach(function(d){ dpU=dpU||stoerNrDoppelt(self.t, d); });
+      if(dpU) return {data:null,error:dpU};
       [].concat(this.d).forEach(function(d){
         var sps=sp.split(","); var i=null; for(var k=0;k<tab.length;k++){ if(sps.every(function(s2){ return tab[k][s2]!=null && tab[k][s2]===d[s2]; })){ i=k; break; } }
         /* wie Postgres ON CONFLICT DO NOTHING: vorhandene Zeile bleibt, keine Regelprüfung, nichts zurück */

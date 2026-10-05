@@ -397,7 +397,7 @@ Kammerlander Umwelt- und Klimatechnik (UKT) – oft kurz, vom Handy, im Feld.
   sperrt zusätzlich jedes Schreiben im Netz. Schließen verwirft alles.
 - **Störungen nie doppelt** (Büro 01.10.2026): eine Lidl-Auftragsnummer gibt es
   nur einmal als Störung (Datenbank-Index `stoerung_auftrag_einmal`,
-  tools/stoerung-eindeutig.sql; im Dialog „Vorhandene öffnen“ statt neu).
+  tools/stoerung-eindeutig.sql; im Dialog „Vorhandene öffnen“ statt neu – auch beim Ändern der Nummer).
   Nennt ein Störungsprotokoll die Auftragsnummer einer ANDEREN offenen Störung
   am Markt, fragt die App, welche erledigt ist; offene Störungen mit passendem
   Protokoll (gleicher Markt, gleiche Nummer) werden beim Laden verknüpft
