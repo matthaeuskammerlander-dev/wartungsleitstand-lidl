@@ -2422,6 +2422,35 @@ test("Tiefentest kalender: Woche zeigt den Startpunkt wie der Rundgang; Rundgän
     if (a.fehler.length) fehl.push("Laufzeitfehler: " + a.fehler.join("; "));
     await a.zu();
   }
+  /* TT-KAL-11: Rundgang am Handy im Querformat (844×390) – die gezeigte Stelle (obere 40 px) ist nie von der Erklärung verdeckt */
+  {
+    const a = await oeffnen(KONTEN.techniker, { handy: true });
+    await a.seite.setViewportSize({ width: 844, height: 390 });
+    await a.seite.waitForTimeout(300);
+    const r = await a.seite.evaluate(async () => {
+      const x = window.__t.x, warte = (ms) => new Promise((f) => setTimeout(f, ms)), fehler = [];
+      x("rundgangStarten('techniker')"); await warte(300);
+      let n = 0;
+      for (let i = 0; i < 40; i++) {
+        await warte(900);
+        const R = x("RUNDGANG"); if (!R) break; n++;
+        const titel = R.schritte[R.i].titel, z = R.el, k = document.querySelector("#rundgang .rg-karte").getBoundingClientRect();
+        const w = document.querySelector("#rundgang [data-rg=weiter]").getBoundingClientRect();
+        if (w.bottom > innerHeight + 1 || w.top < 0) fehler.push(titel + ": Knöpfe außerhalb");
+        if (z && document.body.contains(z)) {
+          const t = z.getBoundingClientRect(), seg = Math.min(t.height, 40);
+          if (t.width > 2 && t.top >= -1 && t.top + seg <= innerHeight + 1 && !(t.top + seg <= k.top + 1 || t.top >= k.bottom - 1))
+            fehler.push(titel + " (Ziel " + Math.round(t.top) + "–" + Math.round(t.top + seg) + ", Karte " + Math.round(k.top) + "–" + Math.round(k.bottom) + ")");
+        }
+        document.querySelector("#rundgang [data-rg=weiter]").click();
+      }
+      x("rundgangEnde()");
+      return { n, fehler };
+    });
+    if (r.n < 5 || r.fehler.length) fehl.push("TT-KAL-11 Rundgang quer: " + r.fehler.length + " von " + r.n + " Schritten verdeckt: " + r.fehler.join("; "));
+    if (a.fehler.length) fehl.push("Laufzeitfehler: " + a.fehler.join("; "));
+    await a.zu();
+  }
   pruefe(!fehl.length, fehl.join(" | "));
 });
 
