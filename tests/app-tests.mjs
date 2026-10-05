@@ -4381,6 +4381,40 @@ test("Tiefentest zusammenführung: nach dem Kontowechsel zur Präsentation kein 
   await a.zu();
 });
 
+/* Tiefentest 05.10.: die CSV der Arbeitszeiten (Inhaber) schützt Zellen wie csv() und die Reisekosten-CSV – Name, Was und Notiz
+   tippt jede Person selbst; „=“, „+“, „-“, „@“ am Anfang würde Excel als Formel ausführen. Zahlen (auch negative) bleiben Zahlen. */
+test("Tiefentest stunden: CSV Lohnverrechnung und Alle Einträge – selbst getippte Felder werden keine Excel-Formel, negative Stunden bleiben Zahlen", async () => {
+  const a = await oeffnen(KONTEN.inhaber);
+  await ttHilfen(a);
+  const r = await a.seite.evaluate(async () => {
+    const tt = window.__tt, x = window.__t.x, db = window.__db.tabellen; tt.leeren();
+    const z = { user_id: "u_tech_test_at", name: "+Testtechniker", art: "arbeit", quelle: "hand", bereich: "werkstatt" };
+    db.arbeitszeiten.push(Object.assign({ id: "tcsv1", datum: "2026-09-01", beginn: "07:00", ende: "15:30", pause_min: 30, minuten: 480, taetigkeit: "=1+1", notiz: "@SUMME(A1:A2)" }, z),
+      Object.assign({ id: "tcsv2", datum: "2026-09-02", minuten: -30, pause_min: 0, taetigkeit: "Korrektur", notiz: "-Ausgleich" }, z));
+    window.__csvs = {};
+    x("(function(){ pdfHerunterladen=function(b,n){ window.__csvs[n]=b; }; return 1; })()");
+    x("S.view='stunden'; S.stMonat='2026-09'; render()");
+    let karte = null;
+    for (let i = 0; i < 40 && !karte; i++) { await tt.warte(100);
+      const h = [...document.querySelectorAll(".card h2")].find((h) => /^Alle Mitarbeiter/.test(h.textContent));
+      karte = h && [...h.closest(".card").querySelectorAll("button")].some((b) => /Lohnverrechnung/.test(b.textContent)) ? h.closest(".card") : null; }
+    if (!karte) return { fehlt: "Karte „Alle Mitarbeiter“ ohne CSV-Knöpfe" };
+    for (const t of ["Lohnverrechnung (CSV)", "Alle Einträge (CSV)"]) [...karte.querySelectorAll("button")].find((b) => b.textContent === t).click();
+    await tt.warte(200);
+    const zeilen = async (n) => window.__csvs[n] ? (await window.__csvs[n].text()).split("\r\n").slice(1) : [];
+    return { lohn: await zeilen("Lohnverrechnung_2026-09.csv"), alle: await zeilen("Arbeitszeiten_2026-09.csv") };
+  });
+  pruefe(!r.fehlt, "Aufbau falsch: " + r.fehlt);
+  const lohn = r.lohn[0] || "", alle = r.alle.join(" | ");
+  pruefe(/^'\+Testtechniker;2026-09;/.test(lohn), "Lohnverrechnung: selbst getippter Name als Excel-Formel: " + lohn);
+  pruefe(/;-\d+,\d\d;/.test(lohn) && lohn.indexOf("'-") < 0, "Lohnverrechnung: negative Stunden (Diff.) verfälscht: " + lohn);
+  pruefe(alle.indexOf(";'=1+1;") >= 0 && alle.indexOf(";'@SUMME(A1:A2);") >= 0 && alle.indexOf(";'-Ausgleich;") >= 0 && /^'\+Testtechniker;/.test(r.alle[0] || ""),
+    "Alle Einträge: Was/Notiz/Name als Excel-Formel: " + alle);
+  pruefe(alle.indexOf(";-0,50;") >= 0 && alle.indexOf("'-0,50") < 0, "Alle Einträge: negative Stunden verfälscht: " + alle);
+  pruefe(!a.fehler.length, "Laufzeitfehler: " + a.fehler.join("; "));
+  await a.zu();
+});
+
 /* ================================================================ Ablauf ================================================================ */
 const filterText = process.argv.slice(2).find((x) => !x.startsWith("--"));
 const filter = filterText ? new RegExp(filterText, "i") : null;
