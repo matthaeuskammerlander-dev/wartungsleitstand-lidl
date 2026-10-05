@@ -27585,18 +27585,22 @@ function kplusVorschau(ziel, erg, fertig, datei){
     var zeile={projekt_id:p?p.id:null, protokoll_id:pk?pk._id:null, kunde_id:kx.kunde_id||"lidl", standort_id:kx.standort_id||null, art:erg.art, nummer:erg.nummer, test:false, extern:true,
       datum:erg.datum||isoLokal(new Date()), status:erg.art==="rechnung"?"versendet":"angenommen",
       bezug_id:angebot?angebot.id:null, kopf:kopf, positionen:erg.positionen, summen:belegSummen(erg.positionen), geaendert_von:meinName()};
-    var beleg=null;
+    var beleg=null, abgFehler=null, katFehler=null;
+    var kurz=function(e){ var m=String((e&&e.message)||e||""); return /fetch|network|load failed/i.test(m) ? "keine Verbindung" : m; };
     Store.sb.from("belege").upsert(zeile, {onConflict:"art,nummer"}).select("*").then(function(r){
       if(r.error) throw new Error(r.error.message);
       beleg=(r.data||[])[0]||null;
       /* das Original-PDF zum Beleg (nur Inhaber, Büro-Ordner) – ein Fehler hier hält das Ablegen nicht auf */
       var pdf=datei && beleg ? belegPdfAblegen(beleg, kx, datei).catch(function(e){ toast("PDF nicht abgelegt: "+e.message); }) : null;
-      /* Einsatz mit KPlus-Rechnung gilt als abgerechnet */
+      /* Einsatz mit KPlus-Rechnung gilt als abgerechnet – scheitert der Vermerk, sagt es die Meldung (früher hieß es trotzdem „vermerkt“) */
       var abg=pk && erg.art==="rechnung" ? Store.sb.from("abrechnung").upsert({protokoll_id:pk._id, abgerechnet:new Date().toISOString(), von:meinName(), notiz:"KPlus-Rechnung "+erg.nummer},{onConflict:"protokoll_id"})
-        .then(function(){ return abrechnungLaden(); }, function(){}) : null;
-      return Promise.all([pdf, abg]).then(function(){ return kat.querySelector("input").checked ? katalogUebernehmen(erg) : 0; });
+        .then(function(r){ if(r && r.error){ abgFehler=kurz(r.error); return; } return Promise.resolve(abrechnungLaden()).catch(function(){}); }, function(e){ abgFehler=kurz(e); }) : null;
+      /* der Katalog zuletzt: scheitert nur er, ist der Beleg trotzdem abgelegt (früher „Nicht abgelegt – nichts gespeichert“) */
+      return Promise.all([pdf, abg]).then(function(){ return kat.querySelector("input").checked ? katalogUebernehmen(erg).catch(function(e){ katFehler=kurz(e); return 0; }) : 0; });
     }).then(function(n){
-      v.zu(); toast((erg.art==="rechnung"?"Rechnung ":"Angebot ")+erg.nummer+" abgelegt"+(pk&&erg.art==="rechnung"?", Einsatz als abgerechnet vermerkt":"")+(n?" – "+n+" neue Position"+(n===1?"":"en")+" im Katalog":"")+".");
+      v.zu(); toast((erg.art==="rechnung"?"Rechnung ":"Angebot ")+erg.nummer+" abgelegt"+
+        (pk&&erg.art==="rechnung" ? (abgFehler ? " – der Einsatz ist aber NICHT als abgerechnet vermerkt (nicht gespeichert: "+abgFehler+"). Bitte die KPlus-Rechnung nochmals hochladen" : ", Einsatz als abgerechnet vermerkt") : "")+
+        (katFehler ? " – Katalog nicht ergänzt ("+katFehler+")" : n ? " – "+n+" neue Position"+(n===1?"":"en")+" im Katalog" : "")+".");
       fertig();
     }).catch(function(e){ ok.disabled=false; ok.textContent=pk?"Beim Einsatz ablegen":"Am Projekt ablegen"; toast("Nicht abgelegt: "+e.message); });
   };

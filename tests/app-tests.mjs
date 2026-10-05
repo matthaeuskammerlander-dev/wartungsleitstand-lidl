@@ -1798,6 +1798,35 @@ reSchritt("kplus", "R03", async (a) => {
   return /^gutschrift, Fenster 0, Belege [+]0, Meldung: .*Gutschrift/.test(r.gutschrift) && r.minus === -50 && r.netto == null && !/stimmt/.test(r.note) && /nicht erkannt/.test(r.note)
     ? "" : `Gutschrift ${r.gutschrift}; Netto-Summe „-50,00“ gelesen als ${r.minus}; ohne Summe: ${r.netto}, Hinweis „${r.note}“`;
 });
+/* KPlus beim Einsatz: scheitert der Abrechnungs-Vermerk, sagt die Meldung das */
+reSchritt("kplus", "R13", async (a) => {
+  const r = await a.seite.evaluate(async () => {
+    const x = window.__t.x, db = window.__db.tabellen, R = window.__re;
+    await R.stoerung("pk13", "2026-06-01");
+    const sb = x("Store.sb"), altFrom = sb.from;   /* nur das Schreiben in abrechnung scheitert – wie supabase-js es meldet ({error}, kein Wurf) */
+    sb.from = function (t) { const q = altFrom.apply(sb, arguments); if (t === "abrechnung") q.upsert = function () { return Promise.resolve({ data: null, error: { message: "TypeError: Failed to fetch" } }); }; return q; };
+    try { R.toasts.length = 0; await R.ablegen(R.vorschau("pk13", R.erg("900555"))); } finally { sb.from = altFrom; }
+    return { toasts: R.toasts.slice(), abger: db.abrechnung.some((z) => z.protokoll_id === "pk13"), beleg: db.belege.some((b) => b.nummer === "900555") };
+  });
+  return r.beleg && !r.abger && r.toasts.some((t) => /NICHT als abgerechnet/.test(t)) && !r.toasts.some((t) => /Einsatz als abgerechnet vermerkt/.test(t))
+    ? "" : `Beleg gespeichert: ${r.beleg}, abgerechnet: ${r.abger}, Meldungen ${JSON.stringify(r.toasts)}`;
+});
+/* KPlus beim Einsatz: scheitert nur der Katalog, heißt es „abgelegt – Katalog nicht ergänzt“ und das Fenster schließt */
+reSchritt("kplus", "R21", async (a) => {
+  const r = await a.seite.evaluate(async () => {
+    const x = window.__t.x, db = window.__db.tabellen, R = window.__re;
+    await R.stoerung("pk21", "2026-06-01");
+    const sb = x("Store.sb"), altFrom = sb.from;
+    sb.from = function (t) { const q = altFrom.apply(sb, arguments);
+      if (t === "katalog") q.insert = function () { return { select: function () { return Promise.resolve({ data: null, error: { message: "TypeError: Failed to fetch" } }); } }; };
+      return q; };
+    const d = R.vorschau("pk21", R.erg("900621", [{ typ: "pos", nr: "2", menge: 1, eh: "psh", preis: 30, betragPdf: 30, text: "Kleinmaterial pauschal R21" }]));
+    try { R.toasts.length = 0; await R.ablegen(d); } finally { sb.from = altFrom; }
+    return { toasts: R.toasts.slice(), beleg: db.belege.some((b) => b.nummer === "900621"), abger: db.abrechnung.some((z) => z.protokoll_id === "pk21"), offen: document.body.contains(d) };
+  });
+  return r.beleg && r.abger && !r.offen && r.toasts.some((t) => /Katalog/.test(t) && /abgelegt/.test(t)) && !r.toasts.some((t) => /Nicht abgelegt/.test(t))
+    ? "" : `Beleg gespeichert: ${r.beleg}, abgerechnet: ${r.abger}, Fenster offen: ${r.offen}, Meldungen ${JSON.stringify(r.toasts)}`;
+});
 /* KPlus-Beleg: „PDF ansehen“ zeigt das abgelegte Original – ohne Original nie ein App-PDF mit Briefkopf */
 reSchritt("kplus", "R10", async (a) => {
   const r = await a.seite.evaluate(async () => {
