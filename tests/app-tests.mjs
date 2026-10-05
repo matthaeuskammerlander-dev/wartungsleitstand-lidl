@@ -4504,6 +4504,49 @@ test("Antworten kern: Protokoll am Handy – offene Vor-Ort-Fragen ganz oben als
   await a.zu();
 });
 
+test("Antworten kern: Testkonten aus den Personenlisten ausblenden – Haken in der Kontenübersicht, Konto bleibt, nur der Inhaber stellt es ein", async () => {
+  const a = await rkSeite(KONTEN.inhaber);
+  const r = await a.seite.evaluate(async () => {
+    const x = window.__t.x, rk = window.__rk, w = rk.warte, db = window.__db.tabellen, ADM = "u_admin_test_at";
+    const erg = {};
+    const zuInhaber = async () => { x("ansichtenSchliessen(); S.view='verwaltung'; S.adm=S.adm||{suche:'',filter:'alle',sort:'filiale',auf:true,sel:null,entwurf:null}; S.adm.tab='inhaber'; render(); 1"); await w(700); };
+    const haken = () => document.querySelector('#app [data-ausblenden="' + ADM + '"]');
+    const team = async () => { await x("planTeamLaden()"); return x("(planTeam||[]).map(function(p){ return p.user_id; })"); };
+    const wzPersonen = async () => { x("wzEditor(null)"); await w(300); const d = rk.dlg(); const l = [...d.querySelectorAll('[data-f="person_id"] option')].map((o) => o.value); x("ansichtenSchliessen()"); return l; };
+    await zuInhaber();
+    erg.vorher = { haken: !!haken() && !haken().checked, team: await team() };
+    if (haken()) { haken().click(); await w(700); }
+    erg.einstellung = (db.einstellungen.find((e) => e.schluessel === "personen_ausblenden") || {}).wert || null;
+    await zuInhaber();
+    erg.kontoNochDa = /Testadmin/.test((haken() || { closest: () => null }).closest("tr") ? haken().closest("tr").textContent : "") && haken().checked;
+    erg.team = await team();
+    erg.wz = await wzPersonen();
+    x("formDirty=false; S.protoArt='wartung'; S.bearbeiten=null; S.protoStandort='TS1'; S.protoPos=null; S.view='protokoll'; render(); 1"); await w(700);
+    erg.fuer = [...document.querySelectorAll("#f_fuer option")].map((o) => o.textContent);
+    erg.auslastung = await x("chatTeamLaden().then(function(t){ return t.map(function(p){ return p.user_id; }); })");
+    /* wieder einblenden und wieder ausblenden */
+    await zuInhaber(); haken().click(); await w(700);
+    erg.wieder = await team();
+    await zuInhaber(); haken().click(); await w(700);
+    /* Techniker: sieht die Liste ebenso ohne das Konto, darf die Einstellung aber nicht ändern */
+    await rk.anmelden("tech@test.at", "techniker");
+    x("chatTeam=null; planTeam=null; planTeamZeit=0; 1");
+    erg.tech = await team();
+    const v = await x("Store.sb.from('einstellungen').upsert({schluessel:'personen_ausblenden', wert:{ids:[]}})");
+    erg.techSchreibt = !(v && v.error);
+    erg.nachTech = ((db.einstellungen.find((e) => e.schluessel === "personen_ausblenden") || {}).wert || {}).ids || [];
+    return erg;
+  });
+  pruefe(r.vorher.haken && r.vorher.team.indexOf("u_admin_test_at") >= 0, "Ausgangslage: kein Haken „in Personenlisten ausblenden“ in der Kontenübersicht: " + JSON.stringify(r.vorher));
+  pruefe(r.einstellung && (r.einstellung.ids || []).indexOf("u_admin_test_at") >= 0 && r.kontoNochDa, "Einstellung nicht gespeichert bzw. Konto nicht mehr in der Übersicht: " + JSON.stringify(r));
+  pruefe(r.team.indexOf("u_admin_test_at") < 0 && r.wz.indexOf("u_admin_test_at") < 0 && !r.fuer.some((n) => /Testadmin/.test(n)) && r.auslastung.indexOf("u_admin_test_at") < 0,
+    "ausgeblendetes Konto steht noch in einer Personenliste: " + JSON.stringify([r.team, r.wz, r.fuer, r.auslastung]));
+  pruefe(r.wieder.indexOf("u_admin_test_at") >= 0, "nach dem Einblenden fehlt das Konto: " + JSON.stringify(r.wieder));
+  pruefe(r.tech.indexOf("u_admin_test_at") < 0 && !r.techSchreibt && r.nachTech.indexOf("u_admin_test_at") >= 0, "Techniker: Liste bzw. Recht falsch: " + JSON.stringify([r.tech, r.techSchreibt, r.nachTech]));
+  pruefe(!a.fehler.length, "Laufzeitfehler: " + a.fehler.join("; "));
+  await a.zu();
+});
+
 /* ================================================================ Ablauf ================================================================ */
 const filterText = process.argv.slice(2).find((x) => !x.startsWith("--"));
 const filter = filterText ? new RegExp(filterText, "i") : null;

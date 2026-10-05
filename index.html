@@ -9351,6 +9351,8 @@ function kontowechselAufraeumen(){
   AUSLAGEN=[]; AK_KONTO=null; akGeladen=false; akLaedt=null; akKonto=""; akFehler=""; akStand=0;
   AK_ALLE={monat:"", liste:[], konten:{}, laedt:false, fehler:""}; AK_ABGEGEBEN=null;
   FZ=[]; FZ_E=[]; FZ_K={}; fzGeladen=false; fzLaedt=null; fzStand=0; fzFehler="";
+  /* Personenauswahl: die Teamliste des vorigen Kontos ließe das neue Konto doppelt bzw. das alte weg */
+  planTeam=null; planTeamZeit=0; PERSONEN_AUS=[];
   /* ebenso Werkzeug und Material: die Präsentation lädt sie nie (darf sie nicht lesen) und sähe sonst die des vorigen Kontos */
   WZ=[]; BEDARF=[]; BEDARF_ALLE=[]; PACKLISTEN=[]; wzGeladen=false; wzLaedt=null; wzStand=0; wzFehler="";
   /* Änderungsverlauf und Posteingang gehören zum alten Konto – die
@@ -10624,12 +10626,26 @@ function chatEntwurfLeer(){ return {text:"", fotos:[], an:null, anName:null, bez
 var chatEntwurf=chatEntwurfLeer();
 var chatSendet={};                     /* Nachrichten, die gerade übertragen werden (Kennung → Nachricht) */
 var pushKonto=null;                    /* für welchen Stand (Konto, Recht) das Abo des Geräts zuletzt abgeglichen wurde */
-/* wer im Team ist (Büro und Techniker) – für „An: Person“ (Funktion team_liste, tools/chat.sql) */
+/* Konten, die in keiner Personenauswahl erscheinen – etwa Testkonten (Inhaber 05.10.2026: „Ja, ausblenden“):
+   einstellungen „personen_ausblenden“ {ids:[…]}, lesen alle Mitarbeiter, ändern nur der Inhaber (Haken in der
+   Kontenübersicht, inhaberKarte). Die Konten bleiben bestehen; wer schon eingetragen ist, bleibt es. */
+var PERSONEN_AUS=[];
+function personenAusLaden(){
+  if(!Store.sb) return Promise.resolve(PERSONEN_AUS);
+  return Store.sb.from("einstellungen").select("wert").eq("schluessel","personen_ausblenden").then(function(r){
+    var w=!r.error && r.data && r.data[0] && r.data[0].wert;
+    PERSONEN_AUS=(w && Array.isArray(w.ids)) ? w.ids.slice() : [];
+    return PERSONEN_AUS;
+  }, function(){ return PERSONEN_AUS; });   /* keine Verbindung: der letzte bekannte Stand gilt */
+}
+/* wer im Team ist (Büro und Techniker) – für „An: Person“ und jede Personenauswahl (Funktion team_liste, tools/chat.sql);
+   ohne die ausgeblendeten Konten (PERSONEN_AUS) */
 function chatTeamLaden(){
   if(chatTeam) return Promise.resolve(chatTeam);
-  return Store.sb.rpc("team_liste").then(function(r){
+  return Promise.all([Store.sb.rpc("team_liste"), personenAusLaden()]).then(function(rr){
+    var r=rr[0];
     if(r.error || !Array.isArray(r.data)) return [];
-    chatTeam=r.data.filter(function(t){ return t.user_id!==(Store.benutzer&&Store.benutzer.id); })
+    chatTeam=r.data.filter(function(t){ return t.user_id!==(Store.benutzer&&Store.benutzer.id) && PERSONEN_AUS.indexOf(t.user_id)<0; })
       .sort(function(a,b){ return String(a.name||"").localeCompare(String(b.name||""), "de"); });
     return chatTeam;
   }, function(){ return []; });
@@ -18718,13 +18734,39 @@ function inhaberKarte(){
     '<div data-ki class="stack"></div></div></div>');
   var kh=c.querySelector("[data-konten]"), kih=c.querySelector("[data-ki]");
   var TEXT={inhaber:"Inhaber", admin:"Admin", techniker:"Techniker", kunde:"Kunde (nur lesen)", praesentation:"Präsentation (Spielwiese, nichts wird gespeichert)"};
-  Store.sb.from("rollen").select("rolle,name").then(function(r){
+  /* dazu die Teamliste (auch Techniker ohne Eintrag in rollen) – je Konto der Haken „in Personenlisten ausblenden“
+     (Testkonten, Inhaber 05.10.2026); Kunde und Präsentation stehen ohnehin in keiner Personenauswahl */
+  Promise.all([Store.sb.from("rollen").select("user_id,rolle,name"),
+    Store.sb.rpc("team_liste").then(function(t){ return t; }, function(){ return {data:[]}; }), personenAusLaden()]).then(function(rr){
+    var r=rr[0], team=(rr[1] && !rr[1].error && Array.isArray(rr[1].data)) ? rr[1].data : [];
     kh.innerHTML="";
     if(r.error){ kh.appendChild(el('<div class="muted">Rollen noch nicht eingerichtet – tools/rollen.sql ausführen.</div>')); return; }
-    var l=(r.data||[]).slice().sort(function(a,b){ return String(a.rolle).localeCompare(b.rolle) || String(a.name).localeCompare(b.name); });
-    kh.appendChild(el('<div class="scrollx"><table class="dt"><thead><tr><th>Name</th><th>Rolle</th></tr></thead><tbody>'+
-      l.map(function(x){ return "<tr><td>"+esc(x.name||"–")+"</td><td>"+esc(TEXT[x.rolle]||x.rolle)+"</td></tr>"; }).join("")+
-      '<tr><td colspan="2" class="muted">alle anderen Konten: Techniker</td></tr></tbody></table></div>'));
+    var l=(r.data||[]).map(function(x){ return {user_id:x.user_id, rolle:x.rolle, name:x.name}; });
+    team.forEach(function(t){ var da=l.filter(function(x){ return x.user_id===t.user_id; })[0];
+      if(!da) l.push({user_id:t.user_id, rolle:t.rolle||"techniker", name:t.name}); else if(!da.name) da.name=t.name; });
+    l.sort(function(a,b){ return String(a.rolle).localeCompare(b.rolle) || String(a.name).localeCompare(b.name); });
+    var tab=el('<div class="scrollx"><table class="dt"><thead><tr><th>Name</th><th>Rolle</th><th>In Personenlisten</th></tr></thead><tbody>'+
+      l.map(function(x){ var wahl=x.user_id && ["inhaber","admin","techniker"].indexOf(x.rolle)>=0;
+        return "<tr><td>"+esc(x.name||"–")+"</td><td>"+esc(TEXT[x.rolle]||x.rolle)+"</td><td>"+(wahl
+          ? '<label class="chk" style="font-size:12.5px"><input type="checkbox" data-ausblenden="'+esc(x.user_id)+'"'+(PERSONEN_AUS.indexOf(x.user_id)>=0?" checked":"")+"><span>ausblenden</span></label>"
+          : '<span class="muted">–</span>')+"</td></tr>"; }).join("")+
+      '<tr><td colspan="3" class="muted">alle anderen Konten: Techniker</td></tr></tbody></table></div>');
+    kh.appendChild(tab);
+    kh.appendChild(el('<div class="muted" style="font-size:12.5px">„ausblenden“ (etwa für Testkonten): das Konto erscheint in keiner Personenauswahl mehr – Kalender „Wer?“, Tour, '+
+      "„Ausgefüllt für“, Werkzeug „bei wem“, Fahrer, Auslastung, Nachricht an … Es bleibt bestehen, Anmelden geht weiter, wo es schon eingetragen ist, bleibt es.</div>"));
+    tab.querySelectorAll("[data-ausblenden]").forEach(function(cb){
+      var id=cb.dataset.ausblenden, name=(l.filter(function(x){ return x.user_id===id; })[0]||{}).name||"Das Konto";
+      cb.onchange=function(){
+        var an=cb.checked, ids=PERSONEN_AUS.filter(function(i){ return i!==id; }).concat(an?[id]:[]);
+        var zurueck=function(t){ cb.disabled=false; cb.checked=!an; toast(t); };
+        cb.disabled=true;
+        mitFrist(Store.sb.from("einstellungen").upsert({schluessel:"personen_ausblenden", wert:{ids:ids}, geaendert:new Date().toISOString(), von:meinName()}), 15000).then(function(r2){
+          if(r2 && r2.error){ zurueck("Nicht gespeichert: "+technikDeutsch(r2.error.message)); return; }
+          cb.disabled=false; PERSONEN_AUS=ids; chatTeam=null; planTeam=null; planTeamZeit=0;
+          toast(an ? name+" erscheint in keiner Personenauswahl mehr – das Konto bleibt." : name+" steht wieder in den Personenlisten.");
+        }, function(e){ zurueck("Nicht gespeichert: "+technikDeutsch((e&&e.message)||"keine Verbindung")); });
+      };
+    });
   });
   kiKostenAnsicht(kih);
   var mk=mailKoppelnKasten(); if(mk) c.querySelector(".pad").appendChild(mk);
@@ -20337,9 +20379,13 @@ function fzEditor(x){
   var pvFuellen=function(){ var sel=form.querySelector("#fz_pvw"), alt=sel.value||(x&&x.privat_von)||"";
     sel.innerHTML='<option value="">– Person –</option>'+team.map(function(p){ return '<option value="'+esc(p.user_id)+'"'+(alt===p.user_id?" selected":"")+">"+esc(p.name||"–")+"</option>"; }).join("")+
       (alt && !team.some(function(p){ return p.user_id===alt; }) ? '<option value="'+esc(alt)+'" selected>'+esc((x&&x.privat_name)||"?")+"</option>" : ""); };
+  /* schon eingetragene Fahrer bleiben sichtbar, auch wenn sie nicht (mehr) in der Personenauswahl stehen (ausgeblendete
+     Testkonten, Inhaber 05.10.2026) – sonst blieben sie ungesehen gewählt */
+  var altName=function(id){ var i=((x&&x.fahrer)||[]).indexOf(id); return i>=0 ? ((x.fahrer_namen||[])[i]||"") : ""; };
   var chipsZeichnen=function(){ pvFuellen(); fh.innerHTML="";
     if(!team.length) fh.appendChild(el('<span class="muted" style="font-size:12.5px">Team wird geladen …</span>'));
-    team.forEach(function(p){ var b=el('<button class="chip" type="button" aria-pressed="'+(wahl.indexOf(p.user_id)>=0)+'">'+esc(p.name||"–")+"</button>");
+    team.concat(wahl.filter(function(id){ return !team.some(function(p){ return p.user_id===id; }); }).map(function(id){ return {user_id:id, name:altName(id)||"?"}; }))
+      .forEach(function(p){ var b=el('<button class="chip" type="button" aria-pressed="'+(wahl.indexOf(p.user_id)>=0)+'">'+esc(p.name||"–")+"</button>");
       b.onclick=function(){ var i=wahl.indexOf(p.user_id); if(i>=0) wahl.splice(i,1); else wahl.push(p.user_id); chipsZeichnen(); }; fh.appendChild(b); }); };
   chipsZeichnen();
   if(team.length<2) planTeamLaden().then(function(t){ team=planTeamMitMir(t); chipsZeichnen(); });
@@ -20353,7 +20399,7 @@ function fzEditor(x){
     var skT=form.querySelector("#fz_sk").value.trim(), sk=skT ? zahlLesen(skT) : null;
     if(skT && !(sk>=0)){ fehl("„Service bei km“: bitte eine Zahl."); return; }
     var z={kennzeichen:k, bezeichnung:form.querySelector("#fz_b").value.trim()||null, fahrer:wahl,
-      fahrer_namen:wahl.map(function(id){ return planPersonName(id)||""; }).filter(Boolean),
+      fahrer_namen:wahl.map(function(id){ return planPersonName(id)||altName(id)||""; }).filter(Boolean),
       pickerl_bis:form.querySelector("#fz_p").value||null, erstzulassung:form.querySelector("#fz_z").value||null,
       service_bis:form.querySelector("#fz_sd").value||null, service_km:sk==null?null:Math.round(sk),
       tracker_id:form.querySelector("#fz_t").value.trim()||null, notiz:form.querySelector("#fz_n").value.trim()||null,
@@ -20362,7 +20408,7 @@ function fzEditor(x){
     var pv=form.querySelector("#fz_pv").checked ? form.querySelector("#fz_pvw").value : "";
     if(form.querySelector("#fz_pv").checked && !pv){ fehl("Privatauto: bitte wählen, wem es gehört."); return; }
     z.privat_von=pv||null; z.privat_name=pv ? (planPersonName(pv)||(x&&x.privat_name)||null) : null;
-    if(pv && z.fahrer.indexOf(pv)<0){ z.fahrer=z.fahrer.concat([pv]); z.fahrer_namen=z.fahrer.map(function(id){ return planPersonName(id)||""; }).filter(Boolean); }
+    if(pv && z.fahrer.indexOf(pv)<0){ z.fahrer=z.fahrer.concat([pv]); z.fahrer_namen=z.fahrer.map(function(id){ return planPersonName(id)||altName(id)||""; }).filter(Boolean); }
     if(demo()){ var neuX=Object.assign({id:x?x.id:neueKennung("fz")}, x||{}, z); FZ=FZ.filter(function(y){ return y.id!==neuX.id; }).concat([neuX]); v.zu(); toast("Fahrzeug gespeichert (Präsentation, nicht gespeichert)."); render(); return; }
     ok.disabled=true; ok.textContent="wird gespeichert …";
     var q=x ? Store.sb.from("fahrzeuge").update(z).eq("id", x.id).select("*") : Store.sb.from("fahrzeuge").insert(z).select("*");
@@ -24034,7 +24080,7 @@ function handbuchKarte(z){
           "filtert mit „noch nicht abgerechnet“. Techniker und Kunde sehen davon nichts."]))+
 
     abschnitt("6 · Rollen",
-      liste(["<strong>Inhaber</strong> – alles, dazu Rollenübersicht, KI-Kosten, Änderungswünsche freigeben und <strong>nur der Inhaber</strong>: Angebote, Rechnungen, Preise, Positionskatalog, Stunden aller, Urlaub genehmigen, Vermerke.",
+      liste(["<strong>Inhaber</strong> – alles, dazu Rollenübersicht (mit „in Personenlisten ausblenden“ für Testkonten), KI-Kosten, Änderungswünsche freigeben und <strong>nur der Inhaber</strong>: Angebote, Rechnungen, Preise, Positionskatalog, Stunden aller, Urlaub genehmigen, Vermerke.",
         "<strong>Admin</strong> – Verwaltung und Datenbasis, Märkte und Anlagen ändern, Nachbessern, Planung – keine Preise, Angebote oder Rechnungen.",
         "<strong>Techniker</strong> – Protokolle, Störungen, Anlagendaten ergänzen und Termine prüfen (Soll-Monat, Kürzel – neue "+
           "Termine legt das Büro an), Wünsche schicken, Claude fragen.",
@@ -24404,6 +24450,11 @@ var RUNDGAENGE={
       text:"Protokolle laufen immer unter dem Namen dessen, der angemeldet ist. Stimmen Techniker und Name im Abschluss nicht überein, gibt es kein PDF. "+
       "In einem Protokoll kannst du einen <strong>Vermerk</strong> eintragen – für alle sichtbar, das Protokoll bleibt unverändert. „€ abgerechnet“ setzt du beim Protokoll."+
       RG_HG("Jede Korrektur legt die alte Fassung ab (mit Grund und Name) und ersetzt das Archiv-PDF – das alte bleibt nachvollziehbar.")},
+    {reiter:"verwaltung", ziel:function(){ return rgKarte(/^Inhaber$/); }, wenn:function(){ return istInhaber() && reiterErlaubt("verwaltung") && Store.modus==="supabase"; },
+      vorher:function(){ rgVerwaltung("inhaber"); }, titel:"Konten und Rollen",
+      text:"Wer welche Rolle hat. Je Konto der Haken <strong>„in Personenlisten ausblenden“</strong> – etwa für Testkonten: sie stehen dann in keiner Auswahl mehr "+
+        "(Kalender „Wer?“, Tour, „Ausgefüllt für“, Werkzeug „bei wem“, Fahrer, Auslastung, Nachricht an …)."+
+      RG_HG("Das Konto bleibt bestehen und kann sich weiter anmelden; wo es schon eingetragen ist, bleibt es stehen. Die Einstellung gilt für alle Geräte, ändern kann sie nur der Inhaber.")},
     {reiter:"verwaltung", ziel:function(){ return rgKarte(/^Sicherung/); }, wenn:function(){ return istInhaber() && reiterErlaubt("verwaltung") && Store.modus==="supabase"; },
       vorher:function(){ rgVerwaltung("inhaber"); }, titel:"Sicherung",
       text:"Stand der Sicherung und Knöpfe: jetzt sichern, herunterladen, Dateien sichern."+

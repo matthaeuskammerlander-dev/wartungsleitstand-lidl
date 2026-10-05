@@ -236,7 +236,8 @@
       sichern(); return {data:aus(neu),error:null};
     }
     if(this.a==="upsert"){
-      var sp=this.o.onConflict||"id", raus=[];
+      /* ohne onConflict gilt wie in Postgres der Primärschlüssel – bei einstellungen „schluessel“ */
+      var sp=this.o.onConflict||(self.t==="einstellungen"?"schluessel":"id"), raus=[];
       var dpU=null; [].concat(this.d).forEach(function(d){ dpU=dpU||stoerNrDoppelt(self.t, d); });
       if(dpU) return {data:null,error:dpU};
       [].concat(this.d).forEach(function(d){

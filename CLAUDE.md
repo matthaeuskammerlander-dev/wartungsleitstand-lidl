@@ -422,7 +422,10 @@ Kammerlander Umwelt- und Klimatechnik (UKT) – oft kurz, vom Handy, im Feld.
 
 ## Rollen
 
-inhaber, admin, techniker, kunde, praesentation. Der Kunde darf nur ansehen
+inhaber, admin, techniker, kunde, praesentation. Testkonten ausblenden (Inhaber 05.10.2026): Haken „in
+Personenlisten ausblenden“ in der Kontenübersicht (Verwaltung › Inhaber) → `einstellungen.personen_ausblenden`
+{ids}; `chatTeamLaden` lässt sie in jeder Personenauswahl weg (`PERSONEN_AUS`), das Konto bleibt bestehen,
+schon Eingetragenes bleibt sichtbar. Keine Namen oder Kennungen in den Code. Der Kunde darf nur ansehen
 (`nurLesen()`). Die Präsentation darf alles bedienen wie ein Admin, gespeichert
 wird aber nichts (`demo()` – jedes Speichern muss `demo()` abfangen; die
 Vorschau eines Änderungswunsches läuft genauso). Verwaltung nur Admins
