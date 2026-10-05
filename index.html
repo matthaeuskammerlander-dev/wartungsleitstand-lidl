@@ -19514,6 +19514,9 @@ function wzEditor(w){
       if(!f.projekt_id && !f.standort_id && !f.standort_text){ fehler("Bitte Projekt, Markt oder „Wo genau?“ angeben."); return; } }
     if(ort==="reparatur" && !f.standort_text && !window.confirm("Ohne Angabe, wo es repariert wird.\n\nTrotzdem speichern?")) return;
     if(w) f.aktiv=F("aktiv").checked;
+    /* „im Bestand“ abgewählt: einmal nachfragen (Fehlbedienung einplanen) und sagen, wie es zurückkommt */
+    if(w && w.aktiv!==false && f.aktiv===false &&
+       !window.confirm("„"+name+"“ als ausgeschieden markieren?\n\nEs verschwindet aus den Listen. Unter Werkzeug › „Ausgeschieden“ lässt es sich wieder öffnen und zurückholen – der Verlauf bleibt.")) return;
     ok.disabled=true; ok.textContent="wird gespeichert …";
     wzSpeichern(w, f).then(function(n){ v.zu(); wzGeaendert(); toast(n.name+" gespeichert – "+wzOrtText(n)+"."); },
       function(e){ ok.disabled=false; ok.textContent="Speichern"; fehler(e.message||String(e)); });
@@ -19748,13 +19751,17 @@ function wzListeKarte(){
   var such=S.wzSuche||"", filt=S.wzFilter||"alle", heute=isoLokal(new Date());
   var aktiv=WZ.filter(function(w){ return w.aktiv!==false; });
   var filter=[["alle","Alle"],["meins","Bei mir"],["lager","Lager"],["fahrzeug","Fahrzeuge"],["person","bei Personen"],["baustelle","Baustelle / Markt"],["reparatur","Reparatur"],["achtung","Prüfung / defekt"]];
+  /* ausgeschiedenes Werkzeug bleibt auffindbar (Verlauf ansehen, zurückholen) – der Filter erscheint nur, wenn es welches gibt */
+  var weg=WZ.filter(function(w){ return w.aktiv===false; });
+  if(weg.length || filt==="weg") filter.push(["weg","Ausgeschieden ("+weg.length+")"]);
   var passt=function(w){
+    if(filt==="weg") return true;
     if(filt==="meins") return wzBei(w, meineKennung());
     if(filt==="achtung") return wzHinweise(w).length>0;
     return filt==="alle" || w.standort_art===filt;
   };
   var n=suchNorm(such);
-  var l=aktiv.filter(passt).filter(function(w){ return !n || suchNorm([w.name, w.nummer, w.gruppe, w.seriennummer, wzOrtText(w)].join(" ")).indexOf(n)>=0; })
+  var l=(filt==="weg"?weg:aktiv).filter(passt).filter(function(w){ return !n || suchNorm([w.name, w.nummer, w.gruppe, w.seriennummer, wzOrtText(w)].join(" ")).indexOf(n)>=0; })
     .sort(function(a,b){ return String(a.gruppe||"").localeCompare(String(b.gruppe||""),"de") || String(a.name).localeCompare(String(b.name),"de"); });
   var c=el('<div class="card"><div class="pad stack" style="gap:8px">'+
     '<div class="rowflex" style="justify-content:space-between;gap:8px"><h2>Werkzeug und Geräte ('+aktiv.length+")</h2>"+
@@ -19767,7 +19774,7 @@ function wzListeKarte(){
   si.oninput=function(){ S.wzSuche=si.value; clearTimeout(si._t); si._t=setTimeout(function(){ render(); setTimeout(function(){ var x=document.querySelector("[data-such]"); if(x){ x.focus(); x.setSelectionRange(x.value.length, x.value.length); } }, 0); }, 350); };
   c.querySelectorAll(".chips .chip").forEach(function(b){ b.onclick=function(){ S.wzFilter=b.dataset.w; render(); }; });
   var h=c.querySelector("[data-l]");
-  if(!aktiv.length) h.appendChild(el('<div class="muted" style="font-size:12.5px">'+(wzFehler ? "Nicht geladen – siehe oben. Später nochmals öffnen." :
+  if(!aktiv.length && filt!=="weg") h.appendChild(el('<div class="muted" style="font-size:12.5px">'+(wzFehler ? "Nicht geladen – siehe oben. Später nochmals öffnen." :
     "Noch kein Werkzeug eingetragen. „+ Werkzeug“ – Bezeichnung und wo es gerade ist; der Rest kann später kommen.")+"</div>"));
   else if(!l.length) h.appendChild(el('<div class="muted" style="font-size:12.5px">Nichts gefunden.</div>'));
   var mf=meinFahrzeug(), ich=meineKennung();
@@ -19775,12 +19782,12 @@ function wzListeKarte(){
     var beiMir=wzBei(w, ich);
     var z=el('<div class="rowflex" style="justify-content:space-between;gap:8px;padding:7px 0;border-bottom:1px solid var(--line);flex-wrap:wrap" data-wz="'+esc(w.id)+'">'+
       '<a href="#" class="sprunglink" style="flex:1;min-width:200px;color:inherit"><strong>'+esc(w.name)+"</strong>"+(w.nummer?' <span class="mono muted">'+esc(w.nummer)+"</span>":"")+
-        (w.gruppe?' <span class="muted" style="font-size:12px">· '+esc(w.gruppe)+"</span>":"")+'<br><span style="font-size:12.5px">📍 '+esc(wzOrtText(w))+"</span>"+wzHinweisTags(w)+"</a>"+
+        (w.gruppe?' <span class="muted" style="font-size:12px">· '+esc(w.gruppe)+"</span>":"")+(w.aktiv===false?' <span class="tag">ausgeschieden</span>':"")+'<br><span style="font-size:12.5px">📍 '+esc(wzOrtText(w))+"</span>"+wzHinweisTags(w)+"</a>"+
       '<span class="rowflex" style="gap:4px;flex-wrap:wrap"></span></div>');
     z.querySelector("a").onclick=function(ev){ ev.preventDefault(); wzEditor(w); };
     var k=z.querySelector("span.rowflex");
     var knopf=function(t, ziel){ var b=el('<button class="btn ghost sm" type="button">'+esc(t)+"</button>"); b.onclick=function(){ wzOrtSchnell(w, ziel); }; k.appendChild(b); };
-    if(!nurLesen()){
+    if(!nurLesen() && w.aktiv!==false){   /* ausgeschieden: erst im Fenster zurückholen */
       if(!beiMir) knopf("Ich hab’s", "ich");
       if(mf && !(w.standort_art==="fahrzeug" && w.fahrzeug_id===mf.id)) knopf("In mein Auto", {fahrzeug:mf});
       if(w.standort_art!=="lager") knopf("Ins Lager", "lager");
@@ -24416,7 +24423,8 @@ Object.assign(RUNDGAENGE, {
     {reiter:"werkzeug", ziel:function(){ return rgKarte(/^Werkzeug und Geräte/); }, titel:"Wo ist das Werkzeug?",
       text:RG_LISTE(["Suchen und filtern: bei mir, Lager, Fahrzeuge, bei Personen, Baustelle/Markt, Reparatur, Prüfung/defekt.",
         "<strong>„Ich hab’s“</strong>, <strong>„In mein Auto“</strong>, <strong>„Ins Lager“</strong> – ein Griff, wenn man es nimmt oder zurücklegt.",
-        "Antippen öffnet: Standort genau (Fahrzeug, Person, Projekt/Markt, Reparatur bei wem und zurück am), Zustand, Prüfung/Kalibrierung fällig, Verlauf."])+
+        "Antippen öffnet: Standort genau (Fahrzeug, Person, Projekt/Markt, Reparatur bei wem und zurück am), Zustand, Prüfung/Kalibrierung fällig, Verlauf.",
+        "„im Bestand“ abwählen fragt nach; Ausgeschiedenes steht unter „Ausgeschieden“ – von dort öffnen und den Haken wieder setzen holt es zurück."])+
       RG_HG(["Jeder Standortwechsel steht mit Zeit und Name im Verlauf – den schreibt die Datenbank, nicht die App.",
         "Reparatur bzw. Verliehenes überfällig („zurück am“ vorbei), Prüfung fällig, defekt, verloren und „noch zu bestellen“ stehen fürs Büro im Kalender-To-do (🧰, 🛒). „Ich hab’s“ bei verlorenem Werkzeug fragt „Wieder gefunden?“.",
         "Das Fahrzeug zeigt, was drin liegt; das Projekt und der Markt, was dort liegt. Keine Preise, kein Lagerbestand."])},

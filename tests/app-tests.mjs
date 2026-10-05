@@ -2168,6 +2168,45 @@ test("Tiefentest kern: Vor Ort klären ohne Netz, alte Liste erkennt Filiale „
   await a.zu();
 });
 
+test("Tiefentest kern: Werkzeug ausscheiden – Rückfrage, auffindbar, zurückholbar", async () => {
+  const a = await oeffnen(KONTEN.techniker);
+  const r = await a.seite.evaluate(async () => {
+    const x = window.__t.x, warte = (ms) => new Promise((f) => setTimeout(f, ms)), db = window.__db.tabellen;
+    const dlg = () => [...document.querySelectorAll(".assistent")].pop(), app = () => document.getElementById("app").innerText;
+    const erg = {};
+    /* „im Bestand“ abwählen: Rückfrage; danach unter „Ausgeschieden“ zu finden und zurückzuholen */
+    db.werkzeug.push({ id: "WTV8", name: "Bohrhammer TV8", standort_art: "lager", zustand: "ok", aktiv: true });
+    await x("wzLaden(true)"); x("S.view='werkzeug'; S.wzFilter='alle'; S.wzSuche=''; render()"); await warte(400);
+    erg.chipVorher = !!document.querySelector('#app .chip[data-w="weg"]');
+    x("wzEditor(WZ.filter(function(w){ return w.id==='WTV8'; })[0])"); await warte(300);
+    let d = dlg(); d.querySelector('[data-f="aktiv"]').checked = false;
+    window.__antwort.confirm = false;   /* erst „Abbrechen“: nichts gespeichert */
+    let vorher = window.__dialoge.length;
+    [...d.querySelectorAll(".as-fuss button")].pop().click(); await warte(400);
+    erg.abgebrochen = { frage: window.__dialoge.slice(vorher).map((q) => q[1]).join(" "), aktiv: db.werkzeug.find((w) => w.id === "WTV8").aktiv, offen: d.isConnected };
+    window.__antwort.confirm = true;
+    [...d.querySelectorAll(".as-fuss button")].pop().click(); await warte(600);
+    erg.aktiv = db.werkzeug.find((w) => w.id === "WTV8").aktiv;
+    x("ansichtenSchliessen(); S.wzFilter='alle'; S.wzSuche='Bohrhammer'; render()"); await warte(250);
+    erg.inAlle = /Bohrhammer TV8/.test(app());
+    x("S.wzFilter='weg'; render()"); await warte(250);
+    erg.inWeg = /Bohrhammer TV8/.test(app());
+    const link = [...document.querySelectorAll('#app [data-wz="WTV8"] a')][0];
+    if (link) { link.click(); await warte(300); d = dlg(); d.querySelector('[data-f="aktiv"]').checked = true;
+      vorher = window.__dialoge.length; [...d.querySelectorAll(".as-fuss button")].pop().click(); await warte(600);
+      erg.zurueckOhneFrage = window.__dialoge.length === vorher; }
+    erg.zurueck = db.werkzeug.find((w) => w.id === "WTV8").aktiv;
+    x("ansichtenSchliessen(); S.wzFilter='alle'; S.wzSuche=''; render()");
+    return erg;
+  });
+  pruefe(!r.chipVorher, "Filter „Ausgeschieden“ ohne ausgeschiedenes Werkzeug sichtbar");
+  pruefe(/ausgeschieden/.test(r.abgebrochen.frage) && r.abgebrochen.aktiv !== false && r.abgebrochen.offen, "keine Rückfrage beim Ausscheiden bzw. trotz „Abbrechen“ gespeichert: " + JSON.stringify(r.abgebrochen));
+  pruefe(r.aktiv === false && !r.inAlle && r.inWeg, "ausgeschiedenes Werkzeug nicht unter „Ausgeschieden“ zu finden: " + JSON.stringify(r));
+  pruefe(r.zurueck === true && r.zurueckOhneFrage, "Werkzeug lässt sich nicht zurückholen: " + JSON.stringify(r));
+  pruefe(!a.fehler.length, "Laufzeitfehler: " + a.fehler.join("; "));
+  await a.zu();
+});
+
 /* ================================================================ Ablauf ================================================================ */
 const filterText = process.argv.slice(2).find((x) => !x.startsWith("--"));
 const filter = filterText ? new RegExp(filterText, "i") : null;
