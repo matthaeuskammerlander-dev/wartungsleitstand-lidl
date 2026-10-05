@@ -2000,7 +2000,7 @@ test("Tiefentest kern: „Zählt als“ folgt dem geänderten Protokolldatum, vo
   await a.zu();
 });
 
-test("Tiefentest kern: geführtes Protokoll am Handy – Mangel nur mit Maßnahme", async () => {
+test("Tiefentest kern: geführtes Protokoll am Handy – Mangel nur mit Maßnahme, Ausnahme ohne Lidl-Auftrag", async () => {
   const a = await oeffnen(KONTEN.techniker, { handy: true });
   const r = await a.seite.evaluate(async () => {
     const x = window.__t.x, w = (ms) => new Promise((f) => setTimeout(f, ms)), db = window.__db.tabellen;
@@ -2025,11 +2025,26 @@ test("Tiefentest kern: geführtes Protokoll am Handy – Mangel nur mit Maßnahm
     erg.zeileMaengel = ([...ov().querySelectorAll(".as-zeile")].find((z) => /^Mängel/.test(z.textContent)) || {}).textContent || "";
     knopf(/Protokoll speichern/).click(); await w(800);
     erg.dialogOffen = !!ov(); erg.gespeichert = db.protokolle.length;
+    /* Lidl-Störung ohne Auftragsnummer: die Ausnahme „kein Lidl-Auftrag“ ist auch im Dialog wählbar, dann wird gespeichert */
+    await oeffne("stoerung", "TS1", "TP1");
+    await bis(/· Störungsauftrag$/);
+    const aus = [...ov().querySelectorAll(".as-inhalt label.chk")].find((l) => /kein Lidl-Auftrag/.test(l.textContent));
+    erg.ausnahme = !!aus;
+    if (aus) { aus.querySelector("input").click(); await w(100); }
+    await bis(/· Störungsbehebung$/);
+    ov().querySelectorAll(".as-inhalt textarea").forEach((t, i) => { t.value = ["zu warm", "Filter zu", "Filter getauscht"][i] || "x"; t.dispatchEvent(new Event("input", { bubbles: true })); });
+    await bis(/· Übersicht$/);
+    erg.warnStoer = (ov().querySelector(".warnbox") || {}).textContent || "";
+    knopf(/Protokoll speichern/).click();
+    for (let i = 0; i < 30 && !db.protokolle.length; i++) await w(200);
+    erg.stoer = db.protokolle.map((p) => ({ nr: p.auftragsnummer || "", ohne: !!(p.stoerung || {}).ohneAuftrag }));
     return erg;
   });
   pruefe(r.nochSichtbar, "Maßnahme nach „+ weiterer Mangel“ nicht mehr im Dialog sichtbar");
   pruefe(/Mangel beschreiben.*Filter tauschen/.test(r.warn) && /ohne Beschreibung/.test(r.zeileMaengel), "Übersicht nennt den unvollständigen Mangel nicht: " + JSON.stringify(r));
   pruefe(r.dialogOffen && r.gespeichert === 0, "Dialog geschlossen bzw. unvollständig gespeichert: " + JSON.stringify(r));
+  pruefe(r.ausnahme, "Schritt „Störungsauftrag“ bietet die Ausnahme „kein Lidl-Auftrag“ nicht an: " + r.warnStoer);
+  pruefe(!/Lidl-Auftragsnummer/.test(r.warnStoer) && r.stoer.length === 1 && r.stoer[0].ohne, "Störung ohne Lidl-Auftrag im Dialog nicht gespeichert: " + JSON.stringify(r));
   pruefe(!a.fehler.length, "Laufzeitfehler: " + a.fehler.join("; "));
   await a.zu();
 });
