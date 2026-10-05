@@ -1686,6 +1686,14 @@ reSchritt("eingaben", "R08", async (a) => {
   return r[0] === "Kondensatpumpe: 2 Stk" && r[1] === "Kupferrohr 12 mm: 3 m" && r[2] === "Isolierband: 0.5 Rolle" && /^Dichtung .*„etwas“.*: 1 Stk$/.test(r[3] || "")
     ? "" : "Material „2 Stk“ / „3 m“ / „0,5 Rolle“ / „etwas“ im Vorschlag: " + JSON.stringify(r);
 });
+/* Katalog lernt eine Position ohne Einheit nur einmal (gespeichert wird sie mit „Stk“) */
+reSchritt("eingaben", "R18", async (a) => {
+  const r = await a.seite.evaluate(async () => {
+    for (const q of ["A", "B", "C"]) await window.__t.x("katalogLernen([{typ:'pos',text:'Dichtband ohne Einheit',eh:'',preis:5}],'Test-Rechnung " + q + "',{})");
+    return window.__db.tabellen.katalog.filter((k) => k.text === "Dichtband ohne Einheit").map((k) => k.eh + " · " + k.quelle);
+  });
+  return r.length === 1 ? "" : `${r.length} Katalogeinträge für dieselbe Position: ${JSON.stringify(r)}`;
+});
 /* auffällige KPlus-Position („(3 h)“ bei Menge 1) ändert den Katalog-Preis nicht */
 reSchritt("eingaben", "R07", async (a) => {
   const r = await a.seite.evaluate(async () => {
