@@ -19161,9 +19161,13 @@ function bedarfEditor(b, vorgabe){
     var lo=el('<button class="btn ghost" type="button" style="color:var(--crit);border-color:var(--crit)">Löschen</button>');
     lo.onclick=function(){
       if(!window.confirm("„"+b.text+"“ löschen?\n\nWenn es nur erledigt ist: lieber abhaken – dann bleibt es nachvollziehbar.")) return;
-      Store.sb.from("bedarf").delete().eq("id", b.id).select("id").then(function(r){
-        if(r.error || !r.data || !r.data.length){ fehler("Nicht gelöscht"+(r.error?" ("+r.error.message+")":" – keine Berechtigung")+"."); return; }
-        BEDARF=BEDARF.filter(function(x){ return x.id!==b.id; }); v.zu(); toast("Gelöscht."); wzGeaendert(); });
+      /* mit Frist und Fehlerzweig wie beim Speichern – ohne Verbindung stand sonst nichts da (Prüflauf 05.10.2026) */
+      lo.disabled=true;
+      mitFrist(Store.sb.from("bedarf").delete().eq("id", b.id).select("id"), 15000).then(function(r){
+        if(r.error || !r.data || !r.data.length){ lo.disabled=false; fehler("Nicht gelöscht"+(r.error?" ("+r.error.message+")":" – keine Berechtigung")+"."); return; }
+        /* auch aus dem Gelernten – sonst stünde es gleich wieder als „schon gebraucht“ da */
+        BEDARF=BEDARF.filter(function(x){ return x.id!==b.id; }); BEDARF_ALLE=BEDARF_ALLE.filter(function(x){ return x.id!==b.id; }); v.zu(); toast("Gelöscht."); wzGeaendert();
+      }, function(e){ lo.disabled=false; fehler("Nicht gelöscht: "+(e.message||String(e))); });
     };
     v.fuss.appendChild(lo);
   }
@@ -19238,16 +19242,26 @@ function packlisteWaehlen(bz){
   });
   var ab=el('<button class="btn ghost" type="button">Abbrechen</button>'); ab.onclick=function(){ v.zu(); }; v.fuss.appendChild(ab);
 }
+/* je Bezug nacheinander (Prüflauf 05.10.2026): zweimal schnell getippt, während die erste Übernahme noch speichert, legte alles doppelt an */
+var PACKLISTE_LAEUFT={};
 function packlisteUebernehmen(bz, pl){
-  var da=bedarfZu(bz).filter(bedarfOffen).map(function(b){ return suchNorm(b.text); });
-  var neu=(pl.eintraege||[]).filter(function(x){ return x.text && da.indexOf(suchNorm(x.text))<0; });
-  if(!neu.length){ toast("Alles aus „"+pl.name+"“ steht schon drin."); return Promise.resolve(); }
-  var kette=Promise.resolve(), n=0;
-  neu.forEach(function(x){ kette=kette.then(function(){
-    var f={art:x.werkzeug_id?"werkzeug":(x.art||"material"), text:x.text, menge:x.menge||null, werkzeug_id:x.werkzeug_id||null, beschaffung:"mitnehmen", status:"offen"};
-    ["projekt_id","stoerung_id","planung_id","standort_id"].forEach(function(k){ if(bz[k]) f[k]=bz[k]; });
-    return bedarfSpeichern(null, f).then(function(){ n++; }); }); });
-  return kette.then(function(){ toast(n+" aus „"+pl.name+"“ übernommen."); }, function(e){ toast("Nur "+n+" übernommen: "+technikDeutsch(e.message||String(e))); });
+  var schl=["projekt_id","stoerung_id","planung_id","standort_id"].map(function(k){ return bz[k]||""; }).join("|");
+  var lauf=(PACKLISTE_LAEUFT[schl]||Promise.resolve()).then(function(){
+    var da=bedarfZu(bz).filter(bedarfOffen).map(function(b){ return suchNorm(b.text); });
+    /* auch eine Zeile, die in der Packliste mehrfach steht, nur einmal */
+    var neu=(pl.eintraege||[]).filter(function(x){ var k=x.text && suchNorm(x.text); if(!k || da.indexOf(k)>=0) return false; da.push(k); return true; });
+    if(!neu.length){ toast("Alles aus „"+pl.name+"“ steht schon drin."); return; }
+    toast("„"+pl.name+"“ wird übernommen …");
+    var kette=Promise.resolve(), n=0;
+    neu.forEach(function(x){ kette=kette.then(function(){
+      var f={art:x.werkzeug_id?"werkzeug":(x.art||"material"), text:x.text, menge:x.menge||null, werkzeug_id:x.werkzeug_id||null, beschaffung:"mitnehmen", status:"offen"};
+      ["projekt_id","stoerung_id","planung_id","standort_id"].forEach(function(k){ if(bz[k]) f[k]=bz[k]; });
+      return bedarfSpeichern(null, f).then(function(){ n++; }); }); });
+    return kette.then(function(){ toast(n+" aus „"+pl.name+"“ übernommen."); }, function(e){ toast("Nur "+n+" übernommen: "+technikDeutsch(e.message||String(e))); });
+  });
+  PACKLISTE_LAEUFT[schl]=lauf;
+  lauf.then(function(){ if(PACKLISTE_LAEUFT[schl]===lauf) delete PACKLISTE_LAEUFT[schl]; });
+  return lauf;
 }
 /* Packliste anlegen/ändern: je Zeile ein Eintrag; ein Name aus der Werkzeugliste wird mit ihr verknüpft */
 function packlisteEditor(pl){
@@ -19269,9 +19283,11 @@ function packlisteEditor(pl){
   if(pl && wzBuero() && !demo()){
     var lo=el('<button class="btn ghost" type="button" style="color:var(--crit);border-color:var(--crit)">Löschen</button>');
     lo.onclick=function(){ if(!window.confirm("Packliste „"+pl.name+"“ löschen?")) return;
-      Store.sb.from("packlisten").delete().eq("id", pl.id).select("id").then(function(r){
-        if(r.error || !r.data || !r.data.length){ err.textContent="Nicht gelöscht."; err.hidden=false; return; }
-        PACKLISTEN=PACKLISTEN.filter(function(x){ return x.id!==pl.id; }); v.zu(); toast("Gelöscht."); wzGeaendert(); }); };
+      lo.disabled=true;
+      mitFrist(Store.sb.from("packlisten").delete().eq("id", pl.id).select("id"), 15000).then(function(r){
+        if(r.error || !r.data || !r.data.length){ lo.disabled=false; err.textContent="Nicht gelöscht"+(r.error?" ("+technikDeutsch(r.error.message)+")":" – keine Berechtigung")+"."; err.hidden=false; return; }
+        PACKLISTEN=PACKLISTEN.filter(function(x){ return x.id!==pl.id; }); v.zu(); toast("Gelöscht."); wzGeaendert();
+      }, function(e){ lo.disabled=false; err.textContent="Nicht gelöscht: "+technikDeutsch(e.message||String(e)); err.hidden=false; }); };
     v.fuss.appendChild(lo);
   }
   var ok=fussKnoepfe(v, "Speichern").ok;
@@ -19520,14 +19536,16 @@ function wzAufnehmenFragen(b){
   v.inhalt.appendChild(el('<div class="note" style="font-size:13px">Steht es in der Liste, sieht jeder, wo es gerade ist – und die App warnt, wenn es in Reparatur oder bei jemand anderem ist. Wo ist es jetzt?</div>'));
   var r=el('<div class="stack" style="gap:8px;max-width:360px"></div>');
   var mf=meinFahrzeug();
+  /* während gespeichert wird, alle Antworten sperren – zwei schnelle Tipper legten das Werkzeug doppelt an (Prüflauf 05.10.2026) */
+  var sperren=function(an){ r.querySelectorAll("button").forEach(function(x){ x.disabled=an; }); };
   [["Ja – im Lager", {standort_art:"lager"}], ["Ja – bei mir", {standort_art:"person", person_id:meineKennung(), person_name:meinName()}]]
     .concat(mf ? [["Ja – in meinem Auto ("+mf.kennzeichen+")", {standort_art:"fahrzeug", fahrzeug_id:mf.id, fahrzeug_name:mf.kennzeichen}]] : [])
     .forEach(function(x){
       var k=el('<button class="btn" type="button">'+esc(x[0])+"</button>");
-      k.onclick=function(){ k.disabled=true;
+      k.onclick=function(){ sperren(true);
         wzSpeichern(null, Object.assign({name:b.text.slice(0,120)}, x[1])).then(function(w){
           return (b.id ? bedarfSpeichern(b, {werkzeug_id:w.id, art:"werkzeug"}) : Promise.resolve()).then(function(){ v.zu(); wzGeaendert(); toast("„"+w.name+"“ steht jetzt in der Werkzeugliste – "+wzOrtText(w)+"."); });
-        }).catch(function(e){ k.disabled=false; toast("Nicht gespeichert: "+technikDeutsch(e.message||String(e))); }); };
+        }).catch(function(e){ sperren(false); toast("Nicht gespeichert: "+technikDeutsch(e.message||String(e))); }); };
       r.appendChild(k);
     });
   var nein=el('<button class="btn ghost" type="button">Nein, nicht aufnehmen</button>'); nein.onclick=function(){ v.zu(); };
@@ -19561,9 +19579,13 @@ function wzNachfrageZeile(b){
   var setze=function(felder){
     var p=felder ? wzSpeichern(w, Object.assign({zurueck_am:null}, felder)) : Promise.resolve(w);
     return p.then(function(){ return bedarfSpeichern(b, Object.assign({nachgefragt:new Date().toISOString()}, bedarfOffen(b) ? {status:"erledigt"} : {})); })
-      .then(function(){ toast(w.name+": "+(felder ? "Standort gespeichert." : "bleibt so.")); }, function(e){ toast("Nicht gespeichert: "+technikDeutsch(e.message||String(e))); });
+      .then(function(){ toast(w.name+": "+(felder ? "Standort gespeichert." : "bleibt so.")); return true; }, function(e){ toast("Nicht gespeichert: "+technikDeutsch(e.message||String(e))); return false; });
   };
-  var knopf=function(t, felder){ var x=el('<button class="btn ghost sm" type="button">'+esc(t)+"</button>"); x.onclick=function(){ x.disabled=true; setze(felder); }; k.appendChild(x); };
+  /* während gespeichert wird, sind alle Knöpfe der Zeile gesperrt; ging es nicht, wieder frei (Prüflauf 05.10.2026: blieb gesperrt) */
+  var knopf=function(t, felder){ var x=el('<button class="btn ghost sm" type="button">'+esc(t)+"</button>");
+    x.onclick=function(){ var alle=k.querySelectorAll("button"); alle.forEach(function(y){ y.disabled=true; });
+      setze(felder).then(function(ok){ if(!ok) alle.forEach(function(y){ y.disabled=false; }); }); };
+    k.appendChild(x); };
   knopf("passt so", null);
   if(!wzBei(w, meineKennung())) knopf("bei mir", {standort_art:"person", person_id:meineKennung(), person_name:meinName()});
   var sid=bedarfMarkt(b);
