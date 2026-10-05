@@ -2275,6 +2275,72 @@ test("Tiefentest mail: Projekt aus Mail und Mails dazu – leere Antwort von Cla
   await a.zu();
 });
 
+test("Tiefentest mail: Posteingang – „Zu Projekt legen“ legt nichts doppelt ab und meldet ehrlich, was gespeichert ist", async () => {
+  const a = await tmSeite(KONTEN.inhaber);
+  const r = await a.seite.evaluate(async () => {
+    const x = window.__t.x, db = window.__db.tabellen, tm = window.__tm, jetzt = new Date().toISOString(), fehlt = [], p = (bed, text) => { if (!bed) fehlt.push(text); };
+    tm.toastSpion(); window.UKT_CONFIG.posteingangAktiv = true;
+    const sb = x("Store.sb");
+    const pe = (id, gr, art, name, betreff, absender) => ({ id, nachricht_id: "<" + gr + "@test>", art, dateiname: name, pfad: "2026/10/" + id + "_" + name.replace(/\W+/g, "_"), status: "neu", betreff,
+      absender: absender || "a@planer-test.at", eingang: jetzt, bytes: 400 });
+    const ablegen = async (...eintraege) => { for (const e of eintraege) { await sb.storage.from("posteingang").upload(e.pfad, new Blob(["Inhalt " + e.dateiname])); db.posteingang.push(e); } };
+    const projekt = (id, nr, titel) => db.projekte.push({ id, nummer: nr, titel, kunde_id: "lidl", status: "baustelle", daten: {}, verlauf: [], erstellt: jetzt, geaendert: jetzt });
+    const karte = async () => { document.querySelectorAll("#tmPe").forEach((k) => k.remove()); const k = x("posteingangKarte()"); k.id = "tmPe"; document.body.appendChild(k);
+      await tm.bis(() => !/wird geladen/.test(k.textContent)); return k; };
+    const box = (k, re) => [...k.querySelectorAll(".posbox")].find((b) => re.test(b.textContent));
+    const namen = (pid) => ((db.projekte.find((q) => q.id === pid).daten || {}).dateien || []).map((f) => f.name);
+    projekt("tmp_911", "P-2026-911", "Doppelklick Kälte"); projekt("tmp_912", "P-2026-912", "Teilfehler Kälte"); projekt("tmp_913", "P-2026-913", "Vermerk Kälte");
+    await x("projekteLaden()");
+
+    /* M11: Doppelklick auf „Zu Projekt legen“ – nur ein Dialog, nichts doppelt */
+    await ablegen(pe("pe11a", "pe11", "mail", "Plan P-2026-911.eml", "Plan P-2026-911"), pe("pe11b", "pe11", "unbekannt", "Plan EG.pdf", "Plan P-2026-911"));
+    let k = await karte();
+    const kn = tm.knopf(box(k, /P-2026-911/), /Zu Projekt legen/); kn.click(); kn.click(); await tm.warte(300);
+    const dlg11 = [...document.querySelectorAll(".assistent")].filter((d) => /Zu Projekt legen/.test(d.querySelector(".as-titel").textContent));
+    for (const d of dlg11) { window.__toasts = []; tm.knopf(d.querySelector(".as-fuss"), /Ins Projekt legen/).click(); await tm.toastBis(/abgelegt|^Nicht|schon/); }
+    p(dlg11.length === 1 && namen("tmp_911").length === 2, "M11 Doppelklick: " + dlg11.length + " Dialoge, Dateien " + JSON.stringify(namen("tmp_911")));
+    x("ansichtenSchliessen()");
+
+    /* M12: eine Datei scheitert einmal – „nochmals“ lädt nur hoch, was noch fehlt */
+    await ablegen(pe("pe12a", "pe12", "mail", "Unterlagen P-2026-912.eml", "Unterlagen P-2026-912"), pe("pe12b", "pe12", "unbekannt", "Plan Teilfehler.pdf", "Unterlagen P-2026-912"),
+      pe("pe12c", "pe12", "unbekannt", "Datenblatt.pdf", "Unterlagen P-2026-912"));
+    const altFrom = sb.storage.from; let einmal = 1;
+    sb.storage.from = function (n) { const e = altFrom.call(this, n); if (n === "projektdateien") { const up = e.upload.bind(e);
+      e.upload = (pf, b, o) => (/Teilfehler/.test(pf) && einmal-- > 0) ? Promise.resolve({ data: null, error: { message: "Zeitüberschreitung" } }) : up(pf, b, o); } return e; };
+    k = await karte();
+    tm.knopf(box(k, /P-2026-912/), /Zu Projekt legen/).click(); await tm.bis(() => tm.fuss(/Ins Projekt legen/));
+    window.__toasts = []; tm.fuss(/Ins Projekt legen/).click(); await tm.toastBis(/Nicht alles|abgelegt/);
+    const m12 = window.__toasts.slice();
+    await tm.bis(() => !tm.fuss(/Ins Projekt legen/).disabled, 1000);
+    window.__toasts = []; tm.fuss(/Ins Projekt legen/).click(); await tm.toastBis(/Nicht alles|abgelegt/);
+    sb.storage.from = altFrom;
+    p(m12.some((t) => /Nicht alles hochgeladen/.test(t)) && namen("tmp_912").length === 3, "M12 nach „nochmals“: " + JSON.stringify(namen("tmp_912")) + " (erste Meldungen " + JSON.stringify(m12) + ")");
+    x("ansichtenSchliessen()");
+
+    /* M13: der Erledigt-Vermerk scheitert – keine reine Erfolgsmeldung, die Karte bleibt mit Hinweis; nochmals legt nichts doppelt ab */
+    await ablegen(pe("pe13a", "pe13", "mail", "Plan P-2026-913.eml", "Plan P-2026-913"), pe("pe13b", "pe13", "unbekannt", "Plan OG.pdf", "Plan P-2026-913"));
+    k = await karte();
+    const altF = sb.from;
+    sb.from = function (t) { const q = altF.call(this, t); if (t === "posteingang") { const u = q.update.bind(q);
+      q.update = function (dd) { u(dd); q.then = (ok2, nok) => Promise.resolve({ data: null, error: { message: "Zeitüberschreitung" } }).then(ok2, nok); return q; }; } return q; };
+    tm.knopf(box(k, /P-2026-913/), /Zu Projekt legen/).click(); await tm.bis(() => tm.fuss(/Ins Projekt legen/));
+    window.__toasts = []; tm.fuss(/Ins Projekt legen/).click(); await tm.toastBis(/abgelegt|^Nicht/i); await tm.warte(200);
+    sb.from = altF;
+    const m13 = { toasts: window.__toasts.slice(), karte: !!box(k, /P-2026-913/), hinweis: /nicht als erledigt/.test((box(k, /P-2026-913/) || {}).textContent || "") };
+    x("ansichtenSchliessen()");
+    if (box(k, /P-2026-913/)) { tm.knopf(box(k, /P-2026-913/), /Zu Projekt legen/).click(); await tm.bis(() => tm.fuss(/Ins Projekt legen|vermerken/));
+      window.__toasts = []; tm.fuss(/Ins Projekt legen|vermerken/).click(); await tm.toastBis(/abgelegt|^Nicht/); }
+    p(!m13.toasts.some((t) => /^In P-2026-913 abgelegt: /.test(t)) && m13.karte && m13.hinweis, "M13 Vermerk gescheitert: " + JSON.stringify(m13));
+    p(namen("tmp_913").length === 2 && db.posteingang.filter((e) => /^pe13/.test(e.id)).every((e) => e.status === "erledigt"),
+      "M13 nach dem zweiten Versuch: Dateien " + JSON.stringify(namen("tmp_913")) + ", Posteingang " + JSON.stringify(db.posteingang.filter((e) => /^pe13/.test(e.id)).map((e) => e.status)));
+    x("ansichtenSchliessen()"); document.querySelectorAll("#tmPe").forEach((kk) => kk.remove());
+    return { fehlt };
+  });
+  pruefe(!r.fehlt.length, r.fehlt.join(" | "));
+  pruefe(!a.fehler.length, "Laufzeitfehler: " + a.fehler.join("; "));
+  await a.zu();
+});
+
 /* ================================================================ Ablauf ================================================================ */
 const filterText = process.argv.slice(2).find((x) => !x.startsWith("--"));
 const filter = filterText ? new RegExp(filterText, "i") : null;

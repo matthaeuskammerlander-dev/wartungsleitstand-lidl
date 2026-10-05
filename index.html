@@ -3036,6 +3036,9 @@ function kalenderSprung(tag){
    im Rapport), ein Auftrag wird zur offenen Störung. Was davon kam, gilt
    danach als erledigt – erst wenn es wirklich gespeichert ist. */
 var POSTEINGANG=[], posteingangOffen=null;
+/* „Zu Projekt legen“: offener Dialog je Mail (nie zwei) und je Eintrag das Projekt, in das er schon hochgeladen ist –
+   auch wenn der Erledigt-Vermerk danach scheiterte (dann nur noch vermerken, nichts doppelt; Tiefentest 05.10.2026) */
+var posteingangDialoge={}, posteingangAbgelegt={};
 function posteingangAn(){ return !!(window.UKT_CONFIG && window.UKT_CONFIG.posteingangAktiv) && Store.modus==="supabase" && !!Store.sb && !!Store.benutzer && !nurLesen(); }
 function ladePosteingang(){
   if(!posteingangAn()) return Promise.resolve([]);
@@ -3148,6 +3151,7 @@ function posteingangMailBox(g){
     '<div style="min-width:0"><strong>✉ '+esc(mail.betreff||"(ohne Betreff)")+"</strong><br>"+
       '<span class="muted" style="font-size:12.5px">'+esc(zeitFmt(mail.eingang))+(mail.absender?" · "+esc(mail.absender):"")+"</span></div>"+
     '<span class="tag">Mail</span></div><div class="stack" data-d style="gap:2px;margin:4px 0"></div>'+
+    '<div class="note warnbox" data-warn hidden style="font-size:12.5px;margin:4px 0"></div>'+
     '<div class="rowflex" style="gap:6px"><button class="btn sm" type="button" data-a="projekt">Zu Projekt legen</button>'+
     '<button class="btn ghost sm" type="button" data-a="weg">verwerfen</button></div></div>');
   var dh=z.querySelector("[data-d]");
@@ -3163,8 +3167,13 @@ function posteingangMailBox(g){
       }, function(x){ toast(x.message); }); };
     dh.appendChild(d);
   });
+  /* schon hochgeladen, aber nicht als erledigt vermerkt: steht an der Karte */
+  var warn=function(t){ var h=z.querySelector("[data-warn]"); h.textContent=t||""; h.hidden=!t; };
+  var schonP=g.map(function(e){ return posteingangAbgelegt[e.id]; }).filter(Boolean)[0];
+  if(schonP){ var sp=PROJEKTE.filter(function(x){ return x.id===schonP; })[0];
+    warn("Schon in "+(sp?sp.nummer||projektTitel(sp):"einem Projekt")+" abgelegt, aber im Posteingang nicht als erledigt vermerkt – „Zu Projekt legen“ vermerkt es nur noch (nichts doppelt), sonst verwerfen."); }
   /* was im Posteingang bleibt (Angebot/Rechnung für den Inhaber), steht danach als eigene Karte da */
-  z.querySelector('[data-a="projekt"]').onclick=function(){ posteingangZuProjekt(g, function(rest){ if(rest && rest.length) z.replaceWith(posteingangMailBox(rest)); else z.remove(); }); };
+  z.querySelector('[data-a="projekt"]').onclick=function(){ posteingangZuProjekt(g, function(rest){ if(rest && rest.length) z.replaceWith(posteingangMailBox(rest)); else z.remove(); }, warn); };
   z.querySelector('[data-a="weg"]').onclick=function(){
     if(demo()){ z.remove(); toast("Präsentation: verworfen – gespeichert wurde nichts."); return; }
     textAbfrage("Warum wird die Mail „"+(mail.betreff||"")+"“ verworfen?", {titel:"Mail verwerfen", feld:"Grund", ok:"Verwerfen",
@@ -3197,67 +3206,96 @@ function posteingangProjektPunkte(p, g){
     (d.beteiligte||[]).forEach(function(b){ if(String(b.mail||"").toLowerCase().split("@")[1]===dom) n+=6; });
   return n;
 }
-/* fertig(rest): rest = Einträge, die im Posteingang bleiben (Angebot/Rechnung für den Inhaber) */
-function posteingangZuProjekt(g, fertig){
+/* fertig(rest): rest = Einträge, die im Posteingang bleiben (Angebot/Rechnung für den Inhaber);
+   hinweis(text): Hinweis an der Karte, wenn abgelegt, aber nicht als erledigt vermerkt */
+function posteingangZuProjekt(g, fertig, hinweis){
   var mail=g.filter(function(x){ return x.art==="mail"; })[0]||g[0];
+  /* je Mail nur ein Dialog – ein Doppelklick öffnete zwei, und beide legten alles ab (Tiefentest 05.10.2026) */
+  var gk=mail.nachricht_id||mail.id;
+  if(posteingangDialoge[gk] && document.body.contains(posteingangDialoge[gk])) return;
   /* Angebot/Rechnung (KPlus-PDF, 6-stellige Nummer) legt nur der Inhaber ab – wie beim Ordner-Upload –, ebenso die Mail,
      die sie als Anhang enthält (Tiefentest 05.10.2026); für alle anderen bleiben beide im Posteingang stehen */
   var mitKplus=g.some(function(e){ return kplusDateiname(e.dateiname); });
   var nurChef=function(e){ return !nurInhaber() && (kplusDateiname(e.dateiname) || (e.art==="mail" && mitKplus)); };
   if(!g.some(function(e){ return !nurChef(e); })){ toast("Diese Mail enthält nur ein Angebot bzw. eine Rechnung (KPlus) – ablegen darf das nur der Inhaber. Sie bleibt im Posteingang."); return; }
+  /* schon hochgeladen (der Erledigt-Vermerk scheiterte): nur noch vermerken – ins selbe Projekt, nichts doppelt */
+  var schonP=g.map(function(e){ return posteingangAbgelegt[e.id]; }).filter(Boolean)[0]||"";
   var liste=PROJEKTE.map(function(p){ return {p:p, n:posteingangProjektPunkte(p, g)}; })
     .sort(function(a,b){ return (b.n-a.n) || (projektOffen(b.p)-projektOffen(a.p)) || String(b.p.geaendert||"").localeCompare(String(a.p.geaendert||"")); });
   if(!liste.length){ toast("Es ist noch kein Projekt da – zuerst unter Projekte anlegen."); return; }
-  var v=ansichtOeffnen("Zu Projekt legen");
+  var v=ansichtOeffnen("Zu Projekt legen"); posteingangDialoge[gk]=v.inhalt;
   v.schritt.textContent=mail.betreff||"Mail";
   var arten=PROJEKT_DATEIARTEN.filter(function(x){ return !x[2] || nurInhaber(); });
-  var form=el('<div class="stack" style="max-width:640px"><label class="fl"><span class="req">Projekt</span><select data-p>'+
-    liste.map(function(x, i){ return '<option value="'+esc(x.p.id)+'">'+esc(projektTitel(x.p))+(i===0 && x.n>0?" – Vorschlag":"")+(projektOffen(x.p)?"":" (abgeschlossen)")+"</option>"; }).join("")+
+  var nrVon=function(pid){ var q=PROJEKTE.filter(function(x){ return x.id===pid; })[0]; return q ? (q.nummer||projektTitel(q)) : "dem Projekt"; };
+  var form=el('<div class="stack" style="max-width:640px"><label class="fl"><span class="req">Projekt</span><select data-p'+(schonP?" disabled":"")+'>'+
+    liste.map(function(x, i){ return '<option value="'+esc(x.p.id)+'"'+(x.p.id===schonP?" selected":"")+">"+esc(projektTitel(x.p))+(i===0 && x.n>0?" – Vorschlag":"")+(projektOffen(x.p)?"":" (abgeschlossen)")+"</option>"; }).join("")+
     "</select></label>"+
-    (liste[0].n>0?"":'<div class="note" style="font-size:13px">Kein Projekt passt eindeutig – bitte wählen.</div>')+
+    (liste[0].n>0 || schonP?"":'<div class="note" style="font-size:13px">Kein Projekt passt eindeutig – bitte wählen.</div>')+
     '<div class="fl"><span>Dateien und ihre Art</span></div><div class="stack" data-d style="gap:6px"></div>'+
     '<div class="muted" style="font-size:12.5px">'+(g.some(nurChef) ? "Die übrigen Dateien kommen in das Projekt; Angebot/Rechnung und die Mail dazu bleiben für den Inhaber im Posteingang."
       : "Danach liegt alles in den Dateien des Projekts, die Mail verschwindet aus dem Posteingang.")+"</div></div>");
   var dh=form.querySelector("[data-d]"), wahl={};
   g.forEach(function(e){
-    if(nurChef(e)){ dh.appendChild(el('<div class="rowflex" style="gap:8px;flex-wrap:nowrap;justify-content:space-between"><span style="font-size:13px;min-width:0;overflow-wrap:anywhere">'+esc(e.dateiname)+"</span>"+
-      '<span class="muted" style="font-size:12.5px;max-width:260px">'+(e.art==="mail"?"enthält Angebot/Rechnung":"Angebot/Rechnung (KPlus)")+" – legt nur der Inhaber ab, bleibt im Posteingang</span></div>")); return; }
+    if(nurChef(e) || posteingangAbgelegt[e.id]){ dh.appendChild(el('<div class="rowflex" style="gap:8px;flex-wrap:nowrap;justify-content:space-between"><span style="font-size:13px;min-width:0;overflow-wrap:anywhere">'+esc(e.dateiname)+"</span>"+
+      '<span class="muted" style="font-size:12.5px;max-width:260px">'+(posteingangAbgelegt[e.id] ? "schon in "+esc(nrVon(posteingangAbgelegt[e.id]))+" abgelegt"
+        : (e.art==="mail"?"enthält Angebot/Rechnung":"Angebot/Rechnung (KPlus)")+" – legt nur der Inhaber ab, bleibt im Posteingang")+"</span></div>")); return; }
     var vor=e.art==="mail" ? "mail" : dateiArtRaten("", e.dateiname, "");
     var z=el('<div class="rowflex" style="gap:8px;flex-wrap:nowrap;justify-content:space-between"><span style="font-size:13px;min-width:0;overflow-wrap:anywhere">'+esc(e.dateiname)+"</span>"+
       '<select style="max-width:210px">'+arten.map(function(a){ return '<option value="'+a[0]+'"'+(a[0]===vor?" selected":"")+">"+esc(a[1])+"</option>"; }).join("")+"</select></div>");
     wahl[e.id]=z.querySelector("select"); dh.appendChild(z);
   });
   /* Inhaber: KPlus-PDFs gleich am Text als Angebot bzw. Rechnung erkennen (dann Büro-Ordner) */
-  var kplusFertig=Promise.all(g.filter(function(e){ return nurInhaber() && kplusDateiname(e.dateiname); }).map(function(e){
+  var kplusFertig=Promise.all(g.filter(function(e){ return nurInhaber() && kplusDateiname(e.dateiname) && wahl[e.id]; }).map(function(e){
     return posteingangDatei(e).then(function(f){ return f.arrayBuffer(); }).then(function(b){ return kplusLesen(new Uint8Array(b)); })
       .then(function(erg){ if(wahl[e.id] && erg && erg.art) wahl[e.id].value=erg.art; }, function(){}); }));
   v.inhalt.appendChild(form);
-  var ab=el('<button class="btn ghost" type="button">Abbrechen</button>'), ok=el('<button class="btn" type="button">Ins Projekt legen</button>');
+  var teil=g.filter(function(e){ return !nurChef(e); }), rest=g.filter(nurChef);
+  var nurVermerken=function(){ return teil.every(function(e){ return posteingangAbgelegt[e.id]; }); };
+  var knopfText=function(){ return nurVermerken() ? "Im Posteingang als erledigt vermerken" : "Ins Projekt legen"; };
+  var ab=el('<button class="btn ghost" type="button">Abbrechen</button>'), ok=el('<button class="btn" type="button">'+knopfText()+"</button>");
   ab.onclick=function(){ v.zu(); };
   v.fuss.appendChild(ab); v.fuss.appendChild(ok);
   ok.onclick=function(){
     var p=PROJEKTE.filter(function(x){ return x.id===form.querySelector("[data-p]").value; })[0];
     if(!p) return;
     ok.disabled=true; ok.textContent="wird abgelegt …";
-    var artJe={}, istMail={}, teil=g.filter(function(e){ return !nurChef(e); }), rest=g.filter(nurChef);
-    kplusFertig.then(function(){
-      return Promise.all(teil.map(function(e){ return posteingangDatei(e).then(function(f){ artJe[f.name]=wahl[e.id].value; istMail[f.name]=e.art==="mail"; return f; }); }));
+    var artJe={}, istMail={}, eintragVon={}, hier={};
+    /* was schon im Projekt liegt (voriger Versuch), nicht nochmals hochladen – nur den Rest (Tiefentest 05.10.2026: alles doppelt) */
+    var offen=teil.filter(function(e){ return !posteingangAbgelegt[e.id]; });
+    /* inzwischen anderswo abgelegt oder verworfen (anderes Gerät)? Dann nichts mehr hochladen */
+    var stand=demo() ? Promise.resolve(null) : Store.sb.from("posteingang").select("id,status").in("id", teil.map(function(e){ return e.id; }))
+      .then(function(r){ return r.error ? null : r.data; }, function(){ return null; });
+    Promise.all([stand, kplusFertig]).then(function(x){
+      if((x[0]||[]).some(function(z){ return z.status!=="neu"; })) throw {schonErledigt:true};
+      return Promise.all(offen.map(function(e){ return posteingangDatei(e).then(function(f){ artJe[f.name]=wahl[e.id].value; istMail[f.name]=e.art==="mail"; eintragVon[f.name]=e; return f; }); }));
     }).then(function(files){
       var herkunft="E-Mail „"+(mail.betreff||"")+"“"+(mail.absender?" von "+mail.absender:"")+", "+dfmt(tagLokal(mail.eingang));
       /* enthält die Mail ein Angebot/eine Rechnung, liegt auch die Mail selbst (.eml mit allen Anhängen) nur beim Inhaber */
-      var mitBeleg=mailMitBeleg(g.map(function(e){ return e.dateiname; }), teil.map(function(e){ return wahl[e.id].value; }));
+      var mitBeleg=mailMitBeleg(g.map(function(e){ return e.dateiname; }), offen.map(function(e){ return wahl[e.id].value; }));
       return projektDateienHochladen(p, function(f){ return artJe[f.name]||"dokument"; }, files, function(){ return herkunft; }, function(f){ return mitBeleg && istMail[f.name]; }).then(function(neue){
-        if(neue.length!==files.length){ ok.disabled=false; ok.textContent="Ins Projekt legen"; toast("Nicht alles hochgeladen – die Mail bleibt im Posteingang. Bitte nochmals versuchen."); return; }
+        /* je Eintrag gemerkt, was schon im Projekt liegt */
+        neue.forEach(function(n){ var e=eintragVon[n.name]; if(!e) return; hier[e.id]=1; if(!demo()) posteingangAbgelegt[e.id]=p.id; });
+        if(teil.some(function(e){ return !hier[e.id] && !posteingangAbgelegt[e.id]; })){ ok.disabled=false; ok.textContent=knopfText();
+          toast("Nicht alles hochgeladen – die Mail bleibt im Posteingang. Nochmals „Ins Projekt legen“ lädt nur hoch, was noch fehlt."); return; }
         if(demo()){ v.zu(); if(fertig) fertig(rest); return; }
-        return posteingangGruppeSetzen(teil, {status:"erledigt", bezug:"projekt:"+p.id}).then(function(){
-          v.zu(); if(fertig) fertig(rest); toast("In "+(p.nummer||"das Projekt")+" abgelegt: "+files.length+" Datei"+(files.length===1?"":"en")+"."+
+        return posteingangGruppeSetzen(teil, {status:"erledigt", bezug:"projekt:"+p.id}).then(function(gesetzt){
+          /* abgelegt, aber nicht als erledigt vermerkt: keine Erfolgsmeldung, die Karte bleibt mit Hinweis – nochmals vermerkt nur */
+          if(!gesetzt){ ok.disabled=false; ok.textContent=knopfText();
+            var t="Abgelegt in "+(p.nummer||"dem Projekt")+", aber im Posteingang nicht als erledigt vermerkt – bitte nochmals vermerken oder die Mail verwerfen (nicht nochmals ablegen).";
+            if(hinweis) hinweis(t); toast(t); return; }
+          teil.forEach(function(e){ delete posteingangAbgelegt[e.id]; });
+          v.zu(); if(fertig) fertig(rest); toast("In "+(p.nummer||"das Projekt")+" abgelegt: "+teil.length+" Datei"+(teil.length===1?"":"en")+"."+
             (rest.length?" Angebot/Rechnung (KPlus) und die Mail dazu bleiben für den Inhaber im Posteingang.":""));
           /* der Absender kommt ins Adressbuch (Büro 02.10.2026: „sobald ein neuer auftaucht, wird er gespeichert“) */
           var ab=kontaktAusAbsender(mail.absender);
           if(ab) kontaktErfassen(ab, {art:"projekt", id:p.id, titel:projektTitel(p)}, false);
         });
       });
-    }, function(x){ ok.disabled=false; ok.textContent="Ins Projekt legen"; toast("Datei nicht abrufbar: "+(x.message||x)); });
+    }).catch(function(x){
+      ok.disabled=false; ok.textContent=knopfText();
+      if(x && x.schonErledigt){ v.zu(); if(fertig) fertig(rest); toast("Diese Mail ist inzwischen schon abgelegt bzw. verworfen – nichts doppelt abgelegt."); return; }
+      toast("Nicht abgelegt: "+((x&&x.message)||x));
+    });
   };
 }
 /* ---- Mail-Programm am PC (Büro 04.10.2026: „über die Mail auch Projekte einpflegen“) ----
@@ -24315,7 +24353,7 @@ Object.assign(RUNDGAENGE, {
         "<strong>Weitergeleitete Mail</strong> → „Zu Projekt legen“ (Projekt wird vorgeschlagen). Angebot/Rechnung (KPlus-PDF) und die Mail dazu legt nur der Inhaber ab – für alle anderen bleiben sie im Posteingang.",
         "„verwerfen“ nur mit Grund.",
         "Ohne Weiterleiten (nur Inhaber, am eigenen PC): im Mail-Programm „Mail mit Claude“ bei der Mail „↗ Leitstand“ – als neues Projekt, zu einem Projekt oder als Störung. Bei Projekt, Kunde und Markt steht dann „Mails dazu“."])+
-      RG_HG("Ein Eintrag ist erledigt, sobald der Auftrag angelegt bzw. alle Dateien hochgeladen sind; hängt dieselbe Rapportnummer schon an, bietet die App „verwerfen“ an.")},
+      RG_HG("Ein Eintrag ist erledigt, sobald der Auftrag angelegt bzw. alle Dateien hochgeladen und im Posteingang vermerkt sind – nochmals versuchen lädt nur hoch, was noch fehlt (nie doppelt); hängt dieselbe Rapportnummer schon an, bietet die App „verwerfen“ an.")},
     {reiter:"faellig", ziel:function(){ return rgKarte(/^Rückfragen von Lidl/) || rgReiter("faellig"); }, titel:"Rückfragen von Lidl",
       text:"Listen offener Aufträge und Wartungen von Lidl mit Frist. Die Zahlen „zu klären / offen / geplant / erledigt / ohne Antwort“ sind antippbar; „Liste öffnen“ filtert nach Art und Stand."+
       RG_HG(["Den Stand ermittelt die App selbst: Störung erledigt bzw. mit Einsatztag; Wartung erledigt, wenn dem Termin eine Wartung zugeordnet ist, geplant, wenn sie im Kalender steht.",
