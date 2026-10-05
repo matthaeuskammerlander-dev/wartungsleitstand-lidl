@@ -2000,6 +2000,40 @@ test("Tiefentest kern: „Zählt als“ folgt dem geänderten Protokolldatum, vo
   await a.zu();
 });
 
+test("Tiefentest kern: geführtes Protokoll am Handy – Mangel nur mit Maßnahme", async () => {
+  const a = await oeffnen(KONTEN.techniker, { handy: true });
+  const r = await a.seite.evaluate(async () => {
+    const x = window.__t.x, w = (ms) => new Promise((f) => setTimeout(f, ms)), db = window.__db.tabellen;
+    const ov = () => document.querySelector(".assistent[data-gefuehrt]"), schritt = () => (ov() ? ov().querySelector(".as-schritt").textContent : "");
+    const knopf = (re) => ov() && [...ov().querySelectorAll(".as-fuss button")].find((b) => re.test(b.textContent.trim()));
+    const bis = async (re) => { for (let i = 0; i < 30 && !re.test(schritt()); i++) { const k = knopf(/^Weiter$/) || knopf(/Überspringen/); if (!k) break; k.click(); await w(250); } return schritt(); };
+    const oeffne = async (art, sid, pid) => { if (ov()) ov().querySelector('[data-as="zu"]').click();
+      x("formDirty=false; S.protoArt='" + art + "'; S.stoerungAus=null; S.bearbeiten=null; S.protoStandort='" + sid + "'; S.protoPos='" + pid + "'; S.view='protokoll'; render(); 1"); await w(450);
+      document.getElementById("p_gefuehrt").click(); await w(300); };
+    const erg = {};
+    /* Mangel nur mit Maßnahme: bleibt sichtbar, die Übersicht nennt ihn, gespeichert wird erst vollständig */
+    await oeffne("wartung", "TS1", "TP1");
+    await bis(/· Arbeiten$/);
+    [...ov().querySelectorAll(".as-inhalt button")].find((b) => /alle auswählen/.test(b.textContent)).click(); await w(150);
+    await bis(/· Mängel$/);
+    const m = [...ov().querySelectorAll(".as-feld")].find((f) => /Empfohlene Maßnahme/.test(f.querySelector(".as-label").textContent)).querySelector("input");
+    m.value = "Filter tauschen bis Ende Monat"; m.dispatchEvent(new Event("input", { bubbles: true }));
+    [...ov().querySelectorAll(".as-inhalt button")].find((b) => /weiterer Mangel/.test(b.textContent)).click(); await w(150);
+    erg.nochSichtbar = [...ov().querySelectorAll(".as-inhalt input")].some((i) => /Filter tauschen/.test(i.value));
+    await bis(/· Übersicht$/);
+    erg.warn = (ov().querySelector(".warnbox") || {}).textContent || "";
+    erg.zeileMaengel = ([...ov().querySelectorAll(".as-zeile")].find((z) => /^Mängel/.test(z.textContent)) || {}).textContent || "";
+    knopf(/Protokoll speichern/).click(); await w(800);
+    erg.dialogOffen = !!ov(); erg.gespeichert = db.protokolle.length;
+    return erg;
+  });
+  pruefe(r.nochSichtbar, "Maßnahme nach „+ weiterer Mangel“ nicht mehr im Dialog sichtbar");
+  pruefe(/Mangel beschreiben.*Filter tauschen/.test(r.warn) && /ohne Beschreibung/.test(r.zeileMaengel), "Übersicht nennt den unvollständigen Mangel nicht: " + JSON.stringify(r));
+  pruefe(r.dialogOffen && r.gespeichert === 0, "Dialog geschlossen bzw. unvollständig gespeichert: " + JSON.stringify(r));
+  pruefe(!a.fehler.length, "Laufzeitfehler: " + a.fehler.join("; "));
+  await a.zu();
+});
+
 /* ================================================================ Ablauf ================================================================ */
 const filterText = process.argv.slice(2).find((x) => !x.startsWith("--"));
 const filter = filterText ? new RegExp(filterText, "i") : null;
