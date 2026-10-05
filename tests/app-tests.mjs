@@ -2419,6 +2419,17 @@ test("Tiefentest kalender: Woche zeigt den Startpunkt wie der Rundgang; Rundgän
       return o;
     }, handy);
     Object.entries(r).forEach(([k, v]) => { if (!v) fehl.push("TT-KAL-10 Startpunkt-Zeile fehlt: " + (handy ? "Handy " : "PC ") + k); });
+    /* TT-KAL-12: Rundgang „Termin anlegen“ nennt alle Terminarten; Handbuch nennt Zeitausgleich und „Abwesenheit und Arbeit am selben Tag“ */
+    if (!handy) {
+      const d = await a.seite.evaluate(() => {
+        const x = window.__t.x;
+        const rg = x("RUNDGAENGE.kalender.schritte.filter(function(s){ return s.titel==='Termin anlegen'; })[0].text");
+        const text = x("handbuchKarte(handbuchZahlen())").textContent, ab11 = (text.split("11 · Kalender")[1] || "").split("12 · ")[0];
+        return { fehltImRundgang: x("PLAN_KAT.map(function(k){ return k[1]; })").filter((k) => !rg.includes(k.split(" ")[0])), zeitausgleich: ab11.includes("Zeitausgleich"),
+          abwesenheitUndArbeit: /eingesprungen/.test(ab11) && /Urlaubstag zurückgeben/.test(ab11) && /herausnehmen/.test(ab11), laenge: text.length };
+      });
+      if (d.laenge < 1000 || d.fehltImRundgang.length || !d.zeitausgleich || !d.abwesenheitUndArbeit) fehl.push("TT-KAL-12 Handbuch/Rundgang unvollständig: " + JSON.stringify(d));
+    }
     if (a.fehler.length) fehl.push("Laufzeitfehler: " + a.fehler.join("; "));
     await a.zu();
   }
