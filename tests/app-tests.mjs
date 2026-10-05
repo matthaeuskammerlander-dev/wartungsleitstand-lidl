@@ -2329,6 +2329,39 @@ test("Tiefentest kalender: Tour – Teilerfolg ehrlich gemeldet, Störung nie do
   });
   if (r09.fehler || r09.manuell === "null" || r09.gleich.gefragt || r09.gleich.manuell !== r09.manuell || r09.nein.gefragt !== 1 || r09.nein.manuell !== r09.manuell || r09.nein.folge || r09.ja.manuell !== "null" || !r09.ja.folge)
     fehl.push("TT-KAL-09 Handanpassung ohne Rückfrage verworfen: " + JSON.stringify(r09));
+  /* TT-KAL-01: „Route vorschlagen“, der Straßendienst antwortet nicht – der Knopf wartet höchstens die Frist (im Test 3 s statt 15 s),
+     nicht je Dienst nacheinander; die Linie kommt im Hintergrund; der Knopf sagt, was gerade passiert */
+  const r01 = {};
+  for (const fall of ["beide Dienste hängen", "Matrix vom Ersatzdienst, Linie hängt"]) {
+    const haengen = (rt) => {
+      const u = new URL(rt.request().url());
+      if (fall !== "beide Dienste hängen" && u.hostname === "router.project-osrm.org" && u.pathname.startsWith("/table/")) {
+        const n = decodeURIComponent(u.pathname).split("/").pop().split(";").length;
+        const m = (w) => Array.from({ length: n }, (_, i) => Array.from({ length: n }, (_, j) => (i === j ? 0 : w)));
+        return rt.fulfill({ status: 200, headers: { "Access-Control-Allow-Origin": "*", "Content-Type": "application/json" }, body: JSON.stringify({ code: "Ok", durations: m(3600), distances: m(80000) }) });
+      }
+      /* sonst: Verbindung angenommen, nie eine Antwort */
+    };
+    const passt = (u) => ["routing.openstreetmap.de", "router.project-osrm.org"].includes(u.hostname);
+    await a.seite.route(passt, haengen);
+    r01[fall] = await a.seite.evaluate(async () => {
+      const tt = window.__tt, x = window.__t.x; tt.leeren();
+      x("if(typeof ROUTER_FRIST!=='undefined'){ ROUTER_FRIST=3000; routerLangsam={}; } routerBasis=null; S.view='karte'; S.tour.startId='__betrieb'; S.tour.ergebnis=null; S.tour.manuell=null; S.tour.dazu=null; render()"); await tt.warte(200);
+      document.querySelector("#t_go").click();
+      const t0 = Date.now(), texte = new Set(); let frei = null;
+      while (Date.now() - t0 < 8000) {
+        await tt.warte(100);
+        const b = document.querySelector("#t_go");
+        if (b) texte.add(b.textContent.trim());
+        if (b && !b.disabled) { frei = Date.now() - t0; break; }
+      }
+      return { frei, texte: [...texte], echteStrasse: !!(x("S.tour.ergebnis") || {}).echteStrasse };
+    });
+    await a.seite.unroute(passt, haengen);
+  }
+  const b01 = r01["beide Dienste hängen"], m01 = r01["Matrix vom Ersatzdienst, Linie hängt"];
+  if (b01.frei == null || b01.frei > 4000 || !b01.texte.some((t) => /antwortet nicht/.test(t)) || m01.frei == null || m01.frei > 2500 || !m01.echteStrasse)
+    fehl.push("TT-KAL-01 Route vorschlagen hängt: " + JSON.stringify(r01));
   if (a.fehler.length) fehl.push("Laufzeitfehler: " + a.fehler.join("; "));
   await a.zu();
   pruefe(!fehl.length, fehl.join(" | "));

@@ -1914,38 +1914,56 @@ var ROUTER = [
 ];
 var routerBasis = null;
 var ROUTER_MAX = 90;   // Grenze der öffentlichen Matrix-Schnittstelle
+var ROUTER_FRIST = 15000;   // so lange wartet eine Anfrage höchstens – über alle Dienste zusammen
+var routerLangsam = {};     // Dienste, die in dieser Sitzung nicht rechtzeitig geantwortet haben: zuletzt fragen
 
-function osrm(pfad){
+/* melde (freiwillig): Text für den Knopf, solange gewartet wird */
+function osrm(pfad, melde){
   var kandidaten = routerBasis
     ? [routerBasis].concat(ROUTER.filter(function(b){ return b!==routerBasis; }))
     : ROUTER.slice();
-  var i=0;
-  function versuch(){
-    if(i>=kandidaten.length) return Promise.resolve(null);
-    var basis=kandidaten[i++];
-    /* Frist: ein Dienst, der die Verbindung annimmt und nie antwortet, hielte
-       sonst den Knopf für immer auf „wird berechnet“ – nach 15 s der nächste
-       Dienst, zuletzt die Luftlinie */
-    var ab=window.AbortController ? new AbortController() : null;
-    var frist=null;
-    var zeit=new Promise(function(_, nein){
-      frist=setTimeout(function(){ if(ab) ab.abort(); nein(new Error("Frist")); }, 15000);
-    });
-    return Promise.race([
-        fetch(basis+pfad, ab ? {signal:ab.signal} : undefined)
-          .then(function(r){ return r.ok ? r.json() : null; }),
-        zeit])
-      .then(function(j){ clearTimeout(frist); if(j && j.code==="Ok"){ routerBasis=basis; return j; } return versuch(); })
-      .catch(function(){ clearTimeout(frist); return versuch(); });
-  }
-  return versuch();
+  kandidaten = kandidaten.filter(function(b){ return !routerLangsam[b]; }).concat(kandidaten.filter(function(b){ return routerLangsam[b]; }));
+  /* Frist: ein Dienst, der die Verbindung annimmt und nie antwortet, hielte sonst den Knopf für immer auf
+     „wird berechnet“. Antwortet der erste nicht bald (ein Drittel der Frist), wird der nächste dazu gefragt –
+     die erste gültige Antwort gilt; nach ROUTER_FRIST insgesamt die Luftlinie. Früher 15 s je Dienst
+     nacheinander: bis zu 30 s gesperrt (Prüflauf 05.10.2026) */
+  return new Promise(function(fertig){
+    var i=0, laeuft={}, aus=false, abbrechen=[], weiterT=null, gesamtT=null;
+    var ende=function(j){
+      if(aus) return; aus=true; clearTimeout(gesamtT); clearTimeout(weiterT);
+      abbrechen.forEach(function(a){ a.abort(); });
+      fertig(j);
+    };
+    var naechster=function(){
+      clearTimeout(weiterT);
+      if(aus) return;
+      if(i>=kandidaten.length){ if(!Object.keys(laeuft).length) ende(null); return; }
+      var basis=kandidaten[i++], ab=window.AbortController ? new AbortController() : null;
+      if(ab) abbrechen.push(ab);
+      if(i>1 && melde) melde("Straßendienst antwortet nicht – frage den Ersatzdienst …");
+      laeuft[basis]=1;
+      fetch(basis+pfad, ab ? {signal:ab.signal} : undefined)
+        .then(function(r){ return r.ok ? r.json() : null; })
+        .then(function(j){ delete laeuft[basis]; if(aus) return;
+          if(j && j.code==="Ok"){ routerBasis=basis; delete routerLangsam[basis]; ende(j); } else naechster(); },
+          function(){ delete laeuft[basis]; if(!aus) naechster(); });
+      weiterT=setTimeout(naechster, ROUTER_FRIST/3);
+    };
+    gesamtT=setTimeout(function(){
+      /* wer bis jetzt nicht geantwortet hat, kommt in dieser Sitzung zuletzt dran (nicht nochmals 15 s warten) */
+      Object.keys(laeuft).forEach(function(b){ routerLangsam[b]=1; });
+      if(melde) melde("Straßendienst antwortet nicht – rechne mit Luftlinie …");
+      ende(null);
+    }, ROUTER_FRIST);
+    naechster();
+  });
 }
 function koordListe(punkte){
   return punkte.map(function(p){ return p.lon.toFixed(5)+","+p.lat.toFixed(5); }).join(";");
 }
-function strassenMatrix(punkte){
+function strassenMatrix(punkte, melde){
   if(punkte.length<2 || punkte.length>ROUTER_MAX) return Promise.resolve(null);
-  return osrm("/table/v1/driving/"+koordListe(punkte)+"?annotations=duration,distance")
+  return osrm("/table/v1/driving/"+koordListe(punkte)+"?annotations=duration,distance", melde)
     .then(function(j){
       if(!j || !j.durations || !j.distances) return null;
       return {dauer:j.durations, distanz:j.distances};
@@ -1994,7 +2012,7 @@ function planeTour(opt){
   if(!stopps.length) return Promise.resolve(null);
   var punkte=[start].concat(stopps.map(function(s){ return s.standort; }));
 
-  return strassenMatrix(punkte).then(function(M){
+  return strassenMatrix(punkte, opt.melde).then(function(M){
     var echteStrasse = !!M;
     /* findet der Dienst für ein Paar keine Straße, steht dort null –
        das wäre sonst 0 km / 0 h; dann für dieses Paar die Luftlinie */
@@ -4532,7 +4550,10 @@ function tourKandidaten(){
    eine neuere Rechnung nicht überschreiben und eine gelöschte Route nicht
    zurückbringen (Löschen und Auswahl-Chips zählen hoch) */
 var tourLauf=0;
-function tourRechnen(){
+/* gestrichelte Linie der offenen Karte gegen den Straßenverlauf tauschen (setzt karteOsm) – false: Karte nicht mehr offen */
+var tourLinieNachladen=null;
+/* melde (freiwillig): Text für den Knopf, solange der Straßendienst nicht antwortet */
+function tourRechnen(melde){
   var lauf=++tourLauf;
   /* eine vom Büro geschickte Tour: genau ihre Stopps, nicht die Auswahl oben */
   var kandidaten=S.tour.fest ? tourFestKandidaten() : tourKandidaten();
@@ -4572,14 +4593,18 @@ function tourRechnen(){
     start=byId[S.tour.startId];
   }
   S.tour.geometrie=null;
-  return planeTour({start:start, stopps:kandidaten, stundenProTag:S.tour.stundenProTag})
+  return planeTour({start:start, stopps:kandidaten, stundenProTag:S.tour.stundenProTag, melde:melde})
     .then(function(erg){
       if(lauf!==tourLauf) return false;   // überholt – nichts übernehmen
       S.tour.ergebnis=erg;
       if(!erg || !erg.echteStrasse) return true;
-      /* die tatsächlich gefahrene Linie für die Karte nachladen */
-      return strassenGeometrie([erg.start].concat(erg.reihenfolge).concat([erg.start]))
-        .then(function(g){ if(lauf!==tourLauf) return false; S.tour.geometrie=g; return true; });
+      /* die tatsächlich gefahrene Linie für die Karte im Hintergrund nachladen – das Ergebnis steht schon
+         (sonst wartete der Knopf auch noch auf die Linie, bis zu weiteren 15 s); bis dahin gestrichelt */
+      strassenGeometrie([erg.start].concat(erg.reihenfolge).concat([erg.start])).then(function(g){
+        if(lauf!==tourLauf || !g) return; S.tour.geometrie=g;
+        if(tourLinieNachladen) tourLinieNachladen(g);
+      }, function(){});
+      return true;
     });
 }
 
@@ -4885,9 +4910,17 @@ function karteOsm(withGeo){
           color:tokenFarbe("--accent"), weight:4, opacity:.8
         }).addTo(karte);
       } else {
-        L.polyline(punkte.map(function(p){ return [p.lat,p.lon]; }),{
+        var linie=L.polyline(punkte.map(function(p){ return [p.lat,p.lon]; }),{
           color:tokenFarbe("--accent"), weight:3, opacity:.85, dashArray:"8 6"
         }).addTo(karte);
+        /* kommt der Straßenverlauf nach (tourRechnen lädt ihn im Hintergrund), nur die Linie tauschen –
+           die Karte bleibt, wo sie gerade ist */
+        tourLinieNachladen=function(g){
+          if(!document.body.contains(host)){ tourLinieNachladen=null; return false; }
+          karte.removeLayer(linie);
+          L.polyline(g.map(function(c){ return [c[1],c[0]]; }),{ color:tokenFarbe("--accent"), weight:4, opacity:.8 }).addTo(karte);
+          tourLinieNachladen=null; return true;
+        };
       }
       /* Tag je Stopp – für die Überschrift im Fenster des Nummern-Markers */
       var tagVon={};
@@ -5180,7 +5213,8 @@ function tourPanel(){
 
     var rechnen=function(){
       goBtn.disabled=true; goBtn.textContent="Route wird berechnet …";
-      tourRechnen().then(function(aktuell){
+      /* der Knopf sagt, was gerade passiert (Straßendienst antwortet nicht …) */
+      tourRechnen(function(text){ goBtn.textContent=text; }).then(function(aktuell){
         if(aktuell===false) return;   // überholt: neuere Rechnung oder Route gelöscht
         /* wie beim Standort: nur in der Karte und ohne Angefangenes neu zeichnen;
            das Ergebnis steht in S.tour und erscheint beim nächsten Öffnen */
@@ -5234,7 +5268,7 @@ function tourAnpassen(wegId, dazuId){
   if(!ids.length){ S.tour.ergebnis=null; S.tour.geometrie=null; S.tour.manuell=null; S.tour.dazu=null; S.tour.fest=null; S.tour.vonBuero=null; tourLauf++; toast("Kein Markt mehr in der Tour."); if(darfRendern()) render(); return; }
   toast("Route wird neu berechnet …");
   tourPasstAn++;
-  tourRechnen().then(function(ok){
+  tourRechnen(toast).then(function(ok){
     tourPasstAn--;
     if(ok===false) return;
     /* in den übrigen Märkten ist nichts (mehr) zu warten – etwa inzwischen nicht betreut */
