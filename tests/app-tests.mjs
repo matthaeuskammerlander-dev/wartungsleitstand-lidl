@@ -1858,6 +1858,24 @@ reSchritt("editor", "R28", async (a) => {
   });
   return r.length === 1 ? "" : "offene Fenster nach Doppeltipp: " + JSON.stringify(r);
 });
+/* Beleg inzwischen gelöscht: Editor bleibt mit den Eingaben offen, klare Meldung */
+reSchritt("editor", "R29", async (a) => {
+  const r = await a.seite.evaluate(async () => {
+    const x = window.__t.x, db = window.__db.tabellen, R = window.__re;
+    db.belege.push({ id: "b29", art: "rechnung", nummer: "T-R-2026-329", test: true, extern: false, datum: "2026-06-01", status: "entwurf", kunde_id: "lidl",
+      kopf: { betreff: ["Test"] }, positionen: [{ typ: "pos", nr: "1", menge: 1, eh: "Stk", text: "Test", preis: 10 }], summen: { netto: 10 } });
+    window.__b29 = JSON.parse(JSON.stringify(db.belege.filter((q) => q.id === "b29")[0]));
+    x("belegEditor({projekt:null, protokoll:null, kunde_id:'lidl', standort_id:null}, window.__b29, function(){})");
+    const d = await R.bis(() => { const d = R.dlg(); return d && d.querySelector('.bpos [data-f="text"]') && d; });
+    R.setze(d.querySelector('.bpos [data-f="text"]'), "Geänderter Text R29");
+    db.belege.splice(db.belege.findIndex((q) => q.id === "b29"), 1);   /* inzwischen auf einem anderen Gerät gelöscht */
+    R.toasts.length = 0; R.knopf(d, /^Speichern$/).click();
+    await R.bis(() => R.toasts.length); await R.warte(200);
+    return { toasts: R.toasts.slice(), offen: document.body.contains(d), text: d.querySelector('.bpos [data-f="text"]').value, frei: !R.knopf(d, /^Speichern$/).disabled };
+  });
+  return r.offen && r.frei && r.text === "Geänderter Text R29" && r.toasts.some((t) => /gelöscht/.test(t)) && !r.toasts.some((t) => /329 gespeichert|Cannot read|undefined/.test(t))
+    ? "" : `Editor offen: ${r.offen}, Speichern frei: ${r.frei}, Meldungen ${JSON.stringify(r.toasts)}`;
+});
 /* Briefkopf: IBAN mit falscher Prüfziffer wird nicht gespeichert – Feld markiert, Meldung (wie bei den Reisekosten) */
 reSchritt("editor", "R19", async (a) => {
   const r = await a.seite.evaluate(async () => {
