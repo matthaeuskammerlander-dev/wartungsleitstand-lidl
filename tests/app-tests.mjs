@@ -5705,6 +5705,43 @@ test("Karte: Auswahl „fällig in 31–60 Tagen“ – Märkte mit einem Termin
   await a.zu();
 });
 
+async function afHilfen(a) {
+  await a.seite.evaluate(() => {
+    const x = window.__t.x;
+    const af = window.__af = {
+      warte: (ms) => new Promise((f) => setTimeout(f, ms)),
+      /* das oberste Fenster und ein Knopf darin (Text als Regex) */
+      oben: () => [...document.querySelectorAll(".assistent")].sort((p, q) => (+p.style.zIndex || 0) - (+q.style.zIndex || 0)).pop(),
+      knopf: async (re, ms) => { for (let i = 0; i < (ms || 3000) / 50; i++) { const o = af.oben();
+          const b = o && [...o.querySelectorAll("button")].find((k) => re.test(k.textContent) && !k.disabled);
+          if (b) { b.click(); await af.warte(30); return true; } await af.warte(50); } return false; },
+      titel: () => [...document.querySelectorAll(".assistent .as-titel")].map((t) => t.textContent),
+      /* n kleine Fotos (unterschiedlicher Inhalt) */
+      fotos: (n, farbe) => Promise.all(Array.from({ length: n }, (_, i) => new Promise((f) => {
+        const c = document.createElement("canvas"); c.width = 30; c.height = 40; const g = c.getContext("2d");
+        g.fillStyle = "rgb(" + (farbe || 10) + "," + (i * 40 % 255) + ",90)"; g.fillRect(0, 0, 30, 40);
+        c.toBlob((b) => f(new File([b], "s" + i + ".jpg", { type: "image/jpeg" })), "image/jpeg"); }))),
+      /* Prüfbuch-Antwort: je Buch {sn, daten:[…]} */
+      antwort: (buecher, bilder) => { window.__kiAntwort = (name, body) => ({ data: { art: "pruefbuch", modell: "test", daten: {
+        pruefbuecher: buecher.map((b) => ({ anlage: { bezeichnung: "Testanlage " + b.sn, seriennummer: b.sn, hersteller: "Testwerk", kaeltemittelKg: "12" },
+          pruefungen: (b.daten || []).map((d) => ({ datum: d, techniker: "T", firma: "Testfirma" })), unsicher: [], hinweise: "" })),
+        bilder: bilder || [], hinweise: "" } }, error: null }); },
+      /* Prüfbuch über den KI-Knopf im Anlagen-Dialog lesen und Angehaktes übernehmen */
+      lesen: async (n, farbe) => {
+        x("(function(){ kiFotosWaehlen=function(){ return window.__af.fotos(" + n + "," + (farbe || 10) + "); }; return 1; })()");
+        if (!await af.knopf(/Aus Fotos lesen \(KI\)/)) return "kein KI-Knopf";
+        if (!await af.knopf(/^Prüfbuch/)) return "keine Wahl Prüfbuch";
+        if (!await af.knopf(/Direkt in der App/)) return "kein Weg direkt";
+        return "";
+      },
+      fotosDb: () => window.__db.tabellen.anlagenfotos.slice(),
+    };
+  });
+}
+
+/* Inhaber 06.10.2026: „Die Fotos von Prüfbüchern … sollten auch in den Anlagedaten und im Anlagenbuch zu finden sein.“ –
+   in der Datenbank lag kein einziges Foto. Alle Wege der KI-Prüfbuch-Erkennung: bekannte Anlage, mehrere Bücher, neue Anlage
+   (Verwaltung und Protokoll), dazu Anlagenbuch und Historie */
 test("Anlagenfotos: KI-Prüfbuch – Fotos landen an der Anlage (bekannt, mehrere Bücher, neu in Verwaltung und Protokoll), Anlagenbuch und Historie zeigen sie", async () => {
   const a = await oeffnen(KONTEN.techniker);
   await afHilfen(a);
