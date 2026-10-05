@@ -40,12 +40,31 @@ def main():
     m, roh = mail("Rapport 4711", [("4711_rapport.pdf", "application/pdf", b"%PDF-1.4")])
     e = P.eintraege(m, roh, "Rapport 4711")
     assert [(x[0], x[3]) for x in e] == [("4711_rapport.pdf", "rapport")], e
-    # zu groß: weggelassen
+    # zu groß (Inhaber 05.10.2026): nicht still weggelassen, sondern ein Eintrag ohne Datei mit Hinweis (art „unbekannt“) –
+    # für den Anhang und für die Mail selbst; was passt, kommt wie bisher
     alt = P.GROESSTE
-    P.GROESSTE = 3
-    m, roh = mail("Gross", [("a.pdf", "application/pdf", b"%PDF-1.4")])
-    assert P.eintraege(m, roh, "Gross") == []
+    P.GROESSTE = 3000
+    m, roh = mail("Fwd: Pläne Hotel", [("Plan riesig.pdf", "application/pdf", b"%PDF" + b"x" * 5000), ("Notiz.txt", "text/plain", b"klein")])
+    e = P.eintraege(m, roh, "Fwd: Pläne Hotel")
+    assert [(x[0], x[3]) for x in e] == [("Plan riesig.pdf", "unbekannt"), ("Notiz.txt", "unbekannt"), ("Fwd Pläne Hotel.eml", "unbekannt")], e
+    assert e[0][1] is None and "zu groß" in e[0][4] and "von Hand" in e[0][4] and "MB" in e[0][4], e[0]
+    assert e[1][1] == b"klein" and not e[1][4], e[1]
+    assert e[2][1] is None and "Mail" in e[2][4] and "zu groß" in e[2][4], e[2]
     P.GROESSTE = alt
+    # Lidl am Absender (allgemeine Lidl-Domain bzw. eingestellte weitere) und am Dateinamen der PDF – nicht nur am Betreff
+    m, roh = mail("Kühlung defekt Filiale 4711", [("SR-2026-0815.pdf", "application/pdf", b"%PDF-1.4")])
+    e = P.eintraege(m, roh, "Kühlung defekt Filiale 4711", "auftraege@lidl.example")
+    assert [(x[0], x[3]) for x in e] == [("SR-2026-0815.pdf", "auftrag")], e
+    m, roh = mail("Filiale 4711", [("SR-2026-0815_Rapport.pdf", "application/pdf", b"%PDF-1.4")])
+    assert [x[3] for x in P.eintraege(m, roh, "Filiale 4711", "fm@service.lidl.example")] == ["rapport"]
+    m, roh = mail("Filiale 4711", [("12345.pdf", "application/pdf", b"%PDF-1.4")])
+    assert [x[3] for x in P.eintraege(m, roh, "Filiale 4711", "x@partner-fm.example", ["partner-fm.example"])] == ["auftrag"]
+    assert [x[3] for x in P.eintraege(m, roh, "Filiale 4711", "x@notlidl.example")] == ["unbekannt", "mail"]
+    m, roh = mail("Fwd: Unterlagen", [("Störung Kühlregal.pdf", "application/pdf", b"%PDF-1.4")])
+    assert [x[3] for x in P.eintraege(m, roh, "Fwd: Unterlagen")] == ["auftrag"]
+    # ein Bild von Lidl bleibt unklar (Logo, Foto) – Auftrag nur als PDF; die Mail kommt dann als .eml dazu (nur Inhaber)
+    m, roh = mail("Filiale 4711", [("Foto.jpg", "image/jpeg", b"JPEG")])
+    assert [x[3] for x in P.eintraege(m, roh, "Filiale 4711", "auftraege@lidl.example")] == ["unbekannt", "mail"]
     ohne_leserecht()
     print("posteingang_test: alles in Ordnung")
 
@@ -83,7 +102,7 @@ def ohne_leserecht():
     P.PRUEFEN = True          # nur anzeigen – keine Protokolldatei neben dem Skript
     try:
         db = P.Supabase({"supabase_url": "https://x.test", "supabase_key": "k", "email": "e", "passwort": "p"})
-        gefunden = [("Anfrage.eml", b"From: a@b.at", "message/rfc822", "mail"), ("Plan EG.pdf", b"%PDF-1.4", "application/pdf", "unbekannt")]
+        gefunden = [("Anfrage.eml", b"From: a@b.at", "message/rfc822", "mail", None), ("Plan EG.pdf", b"%PDF-1.4", "application/pdf", "unbekannt", None)]
         # erster Lauf: die zweite Datei scheitert – die Mail bleibt liegen
         n1, ok1 = P.ablegen_mail(db, "<1@b>", "a@b.at", "Anfrage", gefunden, "2026/10")
         assert (n1, ok1) == (1, False) and len(netz.dateien) == 1 and len(netz.zeilen) == 1, (n1, ok1, netz.dateien, netz.zeilen)
@@ -92,6 +111,11 @@ def ohne_leserecht():
         assert ok2 and len(netz.dateien) == 2 and len(netz.zeilen) == 2, (n2, ok2, netz.dateien, netz.zeilen)
         # dritter Lauf (Mail ließ sich nicht verschieben): immer noch nichts doppelt, kein Fehler
         assert P.ablegen_mail(db, "<1@b>", "a@b.at", "Anfrage", gefunden, "2026/10")[1] and len(netz.dateien) == 2 and len(netz.zeilen) == 2
+        # Hinweis ohne Datei (zu groß): kein Hochladen, Zeile mit leerem Pfad und dem Hinweis
+        hin = [("Plan riesig.pdf", None, None, "unbekannt", "Anhang zu groß (25,3 MB) – bitte von Hand aus dem Postfach holen")]
+        assert P.ablegen_mail(db, "<3@b>", "a@b.at", "Pläne", hin, "2026/10") == (1, True) and len(netz.dateien) == 2
+        z = netz.zeilen[("<3@b>", "Plan riesig.pdf")]
+        assert z["pfad"] == "" and z["art"] == "unbekannt" and "zu groß" in z["notiz"] and z.get("bytes") is None, z
         # fester Pfad: gleiche Mail und Datei → gleicher Pfad, andere Mail → anderer
         assert P.ablage_pfad("<1@b>", "a.pdf", "2026/10") == P.ablage_pfad("<1@b>", "a.pdf", "2026/10") != P.ablage_pfad("<2@b>", "a.pdf", "2026/10")
         assert all(p.startswith("2026/10/") for p in netz.dateien)

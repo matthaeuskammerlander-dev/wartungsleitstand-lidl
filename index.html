@@ -3139,11 +3139,13 @@ function posteingangKarte(){
     if(!liste.length){ host.appendChild(el('<div class="muted" style="font-size:12.5px">Nichts Neues im Postfach.</div>')); return; }
     /* weitergeleitete Mail (mit .eml): eine Karte je Mail, „Zu Projekt legen“ (Büro 02.10.2026) */
     var mailGr={}, gezeigt={};
-    liste.forEach(function(e){ if(e.art==="mail") mailGr[e.nachricht_id||e.id]=1; });
+    liste.forEach(function(e){ if(e.art==="mail" && !posteingangOhneDatei(e)) mailGr[e.nachricht_id||e.id]=1; });
     liste.forEach(function(e){
+      /* Anhang bzw. Mail zu groß (Synology, Inhaber 05.10.2026): nur ein Hinweis ohne Datei – eigene Karte, nie in „Zu Projekt legen“ */
+      if(posteingangOhneDatei(e)){ host.appendChild(posteingangHinweisBox(e)); return; }
       var gk=e.nachricht_id||e.id;
       if(mailGr[gk]){
-        if(!gezeigt[gk]){ gezeigt[gk]=1; host.appendChild(posteingangMailBox(liste.filter(function(x){ return (x.nachricht_id||x.id)===gk; }))); }
+        if(!gezeigt[gk]){ gezeigt[gk]=1; host.appendChild(posteingangMailBox(liste.filter(function(x){ return (x.nachricht_id||x.id)===gk && !posteingangOhneDatei(x); }))); }
         return;
       }
       var info=werteRapport("", e.dateiname) || {};
@@ -3189,7 +3191,7 @@ function posteingangKarte(){
       /* weitergeleitete Mail ohne .eml (Rohmail zu groß): die Anhänge lassen sich trotzdem einem Projekt zuordnen –
          zusammen mit den anderen Anhängen derselben Mail (Tiefentest 05.10.2026: sonst gab es keinen Weg ins Projekt) */
       if(e.art!=="rapport" && e.art!=="auftrag"){
-        var gruppe=liste.filter(function(y){ return (y.nachricht_id||y.id)===(e.nachricht_id||e.id) && y.art!=="rapport" && y.art!=="auftrag"; });
+        var gruppe=liste.filter(function(y){ return (y.nachricht_id||y.id)===(e.nachricht_id||e.id) && y.art!=="rapport" && y.art!=="auftrag" && !posteingangOhneDatei(y); });
         var pb=el('<button class="btn sm" type="button">Zu Projekt legen</button>');
         pb.onclick=function(){ posteingangZuProjekt(gruppe, function(rest){ var bleibt=(rest||[]).map(function(y){ return y.id; });
           gruppe.forEach(function(y){ var c=bleibt.indexOf(y.id)<0 && host.querySelector('[data-pe="'+y.id+'"]'); if(c) c.remove(); }); }); };
@@ -3202,6 +3204,24 @@ function posteingangKarte(){
     });
   });
   return c;
+}
+/* Eintrag ohne Datei: das Synology-Skript meldet so einen Anhang (oder eine Mail), der größer als der Speicher erlaubt
+   (20 MB) ist – statt ihn still wegzulassen (Inhaber 05.10.2026). Der Inhaber holt ihn von Hand aus dem Postfach. */
+function posteingangOhneDatei(e){ return !!e && !e.pfad; }
+function posteingangHinweisBox(e){
+  var z=el('<div class="posbox" data-pe="'+esc(e.id)+'"><div class="rowflex" style="justify-content:space-between;gap:8px">'+
+    '<div style="min-width:0"><strong style="word-break:break-all">⚠ '+esc(e.dateiname)+"</strong><br>"+
+      '<span class="muted" style="font-size:12.5px">'+esc(zeitFmt(e.eingang))+(e.betreff?" · "+esc(e.betreff):"")+(e.absender?" · "+esc(e.absender):"")+"</span></div>"+
+    '<span class="tag f30">nicht abgeholt</span></div>'+
+    '<div class="note warnbox" style="font-size:13px;margin:4px 0">'+esc(e.notiz||"Zu groß – bitte von Hand aus dem Postfach holen.")+"</div>"+
+    '<div class="rowflex" style="gap:6px"><button class="btn sm" type="button" data-a="erl">Von Hand geholt – erledigt</button>'+
+    '<button class="btn ghost sm" type="button" data-a="weg">verwerfen</button></div></div>');
+  z.querySelector('[data-a="erl"]').onclick=function(){
+    if(demo()){ z.remove(); toast("Präsentation: abgehakt – gespeichert wurde nichts."); return; }
+    posteingangGruppeSetzen([e], {status:"erledigt"}).then(function(ok){ if(ok){ z.remove(); toast("Als erledigt vermerkt."); } });
+  };
+  z.querySelector('[data-a="weg"]').onclick=function(){ posteingangVerwerfen(e, function(){ z.remove(); }); };
+  return z;
 }
 /* ---- Weitergeleitete Mail → Projekt (Büro 02.10.2026: „warum kannst du die Mail nicht selber
    hochladen – das wäre sehr praktisch“): Mail an das Datenbank-Postfach weiterleiten, hier
@@ -24710,6 +24730,7 @@ Object.assign(RUNDGAENGE, {
         "<strong>Auftrag</strong> → „Als Störungsauftrag erfassen“ (liest die PDF gleich ein).",
         "<strong>Rapport</strong> → „Rapport zuordnen“: die App sucht das Protokoll am selben Markt und Besuchstag (gleiche Auftragsnummer zuerst) und öffnet „Korrigieren“ mit angehängtem Rapport.",
         "<strong>Weitergeleitete Mail</strong> (nur Inhaber) → „Zu Projekt legen“ (Projekt wird vorgeschlagen; auch für Anhänge, deren Mail zu groß war – alle Anhänge der Mail zusammen). Angebot/Rechnung (KPlus-PDF) und die Mail dazu legt nur der Inhaber ab – für alle anderen bleiben sie im Posteingang.",
+        "<strong>⚠ … nicht abgeholt</strong> (nur Inhaber): ein Anhang oder eine Mail über 20 MB passt nicht in den Speicher – die Synology meldet ihn statt ihn wegzulassen. Von Hand aus dem Postfach holen, dann „Von Hand geholt – erledigt“.",
         "„verwerfen“ nur mit Grund.",
         "Ohne Weiterleiten (nur Inhaber, am eigenen PC): im Mail-Programm „Mail mit Claude“ bei der Mail „↗ Leitstand“ – als neues Projekt, zu einem Projekt oder als Störung. Bei Projekt, Kunde und Markt steht dann „Mails dazu“."])+
       RG_HG("Ein Eintrag ist erledigt, sobald der Auftrag angelegt bzw. alle Dateien hochgeladen und im Posteingang vermerkt sind – nochmals versuchen lädt nur hoch, was noch fehlt (nie doppelt); hängt dieselbe Rapportnummer schon an, bietet die App „verwerfen“ an.")},

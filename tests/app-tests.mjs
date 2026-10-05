@@ -4690,6 +4690,40 @@ test("Antworten post: KPlus-Beleg neu eingelesen – Rechnung und Angebot „ver
   await a.zu();
 });
 
+test("Antworten post: Synology-Posteingang – ein zu großer Anhang steht als Hinweis da (ohne Datei), die Mail lässt sich trotzdem ablegen", async () => {
+  /* das Skript selbst (zu große Anhänge, Lidl am Dateinamen und Absender, Konto ohne Leserecht) prüft tools/posteingang_test.py */
+  const a = await tmSeite(KONTEN.inhaber);
+  const r = await a.seite.evaluate(async () => {
+    const x = window.__t.x, db = window.__db.tabellen, tm = window.__tm, jetzt = new Date().toISOString(), fehlt = [], p = (bed, text) => { if (!bed) fehlt.push(text); };
+    window.UKT_CONFIG.posteingangAktiv = true; tm.toastSpion();
+    const sb = x("Store.sb");
+    db.projekte.push({ id: "tmp_p6", nummer: "P-2026-906", titel: "Große Pläne", kunde_id: "lidl", status: "anfrage", daten: {}, verlauf: [], erstellt: jetzt, geaendert: jetzt });
+    await x("projekteLaden()");
+    await sb.storage.from("posteingang").upload("2026/10/gr1_mail.eml", new Blob(["From: a@planer-test.at\r\nSubject: P-2026-906 Pläne\r\n\r\nAnbei die Pläne."]));
+    const zeile = (id, art, name, pfad, notiz) => ({ id, nachricht_id: "<gr1@test>", art, dateiname: name, pfad, status: "neu", betreff: "Fwd: P-2026-906 Pläne", absender: "a@planer-test.at", eingang: jetzt, bytes: null, notiz: notiz || null });
+    db.posteingang.push(zeile("gr1a", "mail", "Fwd P-2026-906 Pläne.eml", "2026/10/gr1_mail.eml"),
+      zeile("gr1b", "unbekannt", "Plan riesig.pdf", "", "Anhang zu groß (25,3 MB) – bitte von Hand aus dem Postfach holen"));
+    const k = x("posteingangKarte()"); document.body.appendChild(k); await tm.bis(() => k.querySelectorAll(".posbox").length >= 2);
+    const boxen = [...k.querySelectorAll(".posbox")], hinweis = boxen.find((b) => /Plan riesig/.test(b.textContent) && /zu groß/.test(b.textContent)), mailBox = boxen.find((b) => /✉/.test(b.textContent));
+    p(!!hinweis && /25,3 MB/.test(hinweis.textContent) && !/ansehen|Rapport zuordnen|Störungsauftrag/.test(hinweis.textContent), "zu großer Anhang: kein eigener Hinweis bzw. Knöpfe für eine Datei, die es nicht gibt: " + (hinweis ? hinweis.textContent : "(keiner)"));
+    p(mailBox && !/Plan riesig/.test(mailBox.textContent), "die Mail-Karte führt den nicht abgeholten Anhang als Datei: " + (mailBox ? mailBox.textContent : "(keine)"));
+    /* die Mail ins Projekt – der Hinweis bleibt stehen, bis er erledigt ist */
+    tm.knopf(mailBox, /Zu Projekt legen/).click(); await tm.bis(() => tm.fuss(/Ins Projekt legen/));
+    tm.dlg().querySelector("[data-p]").value = "tmp_p6"; window.__toasts = [];
+    tm.fuss(/Ins Projekt legen/).click(); await tm.toastBis(/abgelegt|^Nicht/);
+    const st = (id) => db.posteingang.find((e) => e.id === id).status;
+    p(st("gr1a") === "erledigt" && st("gr1b") === "neu" && window.__toasts.some((t) => /abgelegt: 1 Datei/.test(t)), "Ablegen mit Hinweis-Zeile: " + JSON.stringify({ a: st("gr1a"), b: st("gr1b"), t: window.__toasts }));
+    const erl = hinweis && tm.knopf(hinweis, /erledigt/);
+    if (erl) { erl.click(); await tm.bis(() => st("gr1b") !== "neu", 2000); }
+    p(erl && st("gr1b") === "erledigt" && !k.contains(hinweis), "Hinweis lässt sich nicht als erledigt abhaken: " + st("gr1b"));
+    k.remove(); x("ansichtenSchliessen()");
+    return { fehlt };
+  });
+  pruefe(!r.fehlt.length, r.fehlt.join(" | "));
+  pruefe(!a.fehler.length, "Laufzeitfehler: " + a.fehler.join("; "));
+  await a.zu();
+});
+
 /* ================================================================ Ablauf ================================================================ */
 const filterText = process.argv.slice(2).find((x) => !x.startsWith("--"));
 const filter = filterText ? new RegExp(filterText, "i") : null;

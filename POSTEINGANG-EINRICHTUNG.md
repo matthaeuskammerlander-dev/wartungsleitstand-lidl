@@ -27,6 +27,14 @@ legt die PDFs in den **Posteingang** der App. Alles ist vorbereitet und
    das Projekt vor (Projektnummer im Betreff, Kunde, Absender-Domain eines
    Beteiligten), die Art jeder Datei ist vorgewählt (Mail, Plan, Unterlage …).
    Erst wenn alle Dateien im Projekt liegen, ist die Mail im Posteingang erledigt.
+   Ist ein Anhang (oder die Mail selbst) größer als 20 MB, legt das Skript ihn nicht still weg,
+   sondern meldet ihn als Eintrag ohne Datei: der Inhaber sieht im Posteingang „⚠ … nicht
+   abgeholt“ mit der Größe, holt die Datei von Hand aus dem Postfach (Ordner „Verarbeitet“) und
+   hakt „Von Hand geholt – erledigt“ ab.
+   Lidl-Aufträge und Rapporte erkennt das Skript am Betreff, am Dateinamen der PDF („rapport“,
+   „auftrag“, „störung“) und am Absender (jede Adresse `…@lidl.<Endung>`); schickt ein
+   Dienstleister im Auftrag von Lidl, seine Domain in `ukt_posteingang.json` unter
+   `"lidl_domains": ["…"]` eintragen – seine PDFs gelten dann als Aufträge.
    Dafür einmal `tools/posteingang-projekte.sql` ausführen (erledigt am 02.10.2026).
    Wer was sieht (Inhaber 05.10.2026, `tools/rechte-2026-10-05.sql`): weitergeleitete Mails
    (Projekte) samt Anhängen NUR der Inhaber; Lidl-Aufträge und Rapporte Inhaber und Admins;
