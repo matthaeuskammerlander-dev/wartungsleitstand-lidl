@@ -360,9 +360,11 @@ Kammerlander Umwelt- und Klimatechnik (UKT) – oft kurz, vom Handy, im Feld.
   mit Standort (Lager, Fahrzeug, bei Person, Baustelle/Markt, Reparatur, sonst – `wzOrtText`), Zustand, Prüfung fällig, zurück am;
   Standort-Verlauf schreibt nur der Trigger (`werkzeug_verlauf`). `bedarf` = was ein Einsatz braucht (mitnehmen / abholen bei … /
   bestellen bei …; offen → bestellt → abholbereit → erledigt), Bezug Projekt, Störung, Kalendertermin oder Markt (`bedarfZu`,
-  `bedarfFuerEinsatz`; Datum/Person vom Termin bzw. Einsatz: `bedarfWann`, `bedarfWer`); `packlisten` (übernehmen ohne Doppel).
+  `bedarfFuerEinsatz`; Datum/Person vom Termin bzw. Einsatz – mehrtägig bis zum letzten Tag –, sonst vom nächsten Projekt-/Markttermin:
+  `bedarfWann`, `bedarfWer`, `bedarfEinsaetze`); `packlisten` (übernehmen ohne Doppel, je Bezug nacheinander).
   Erinnert in „Heute für dich“ (heute/morgen), „🔍 Planung prüfen“ (je Tag „Vorher besorgen“), Kalenderzeile 🧰, Büro-To-do
   (`wzToDo`). Kästen in Termin (gespeichert, nicht Abwesenheit/Privat), Störung, Projekt, Markt; Fahrzeug zeigt, was drin liegt.
+  Bedarf an einem privaten Termin sehen andere nie (`bedarfVerborgen`); nachträglich privat → Frage „mitlöschen?“.
   Alle, die mitarbeiten, lesen und schreiben; Werkzeug/Packliste löschen nur Büro, Bedarf wer ihn angelegt hat oder Büro.
   Keine Preise, kein Lagerbestand. Kunde sieht nichts davon.
   Lernt mit (Büro 04.10.2026, Grundsatz: vorschlagen, mit einem Tippen bestätigen – nie still anlegen): je Projekttyp ab 2
