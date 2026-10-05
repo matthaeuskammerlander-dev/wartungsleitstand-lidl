@@ -1961,6 +1961,45 @@ test("Tiefentest werkzeug: Präsentation meldet nie echtes Speichern; Kunde lies
   pruefe(kunde === 0, "Attrappe: Kunde liest Werkzeug bzw. Bedarf (" + kunde + ")");
 });
 
+test("Tiefentest kern: „Zählt als“ folgt dem geänderten Protokolldatum, von Hand Gewähltes bleibt", async () => {
+  const a = await oeffnen(KONTEN.techniker);
+  const r = await a.seite.evaluate(async () => {
+    const x = window.__t.x, w = (ms) => new Promise((f) => setTimeout(f, ms)), db = window.__db.tabellen;
+    /* JW (TP1) steht in wenigen Tagen an, die HJI (TP2) im Frühjahr ist versäumt */
+    x("posById.TP2.historie=[plusMonate(isoLokal(new Date()),-18)]; berechneFaelligkeiten(); 1");
+    const tp = (id) => x("(function(){ var p=POS.filter(function(p){ return p.id==='" + id + "'; })[0]||{}; return p.status+' '+(p.naechste||''); })()");
+    const vor = { TP1: tp("TP1"), TP2: tp("TP2") };
+    const datum = x("plusTage('" + vor.TP2.split(" ")[1] + "', 20)");   /* Nachtrag: Besuch 20 Tage nach dem versäumten HJI-Termin */
+    x("formDirty=false; S.protoArt='wartung'; S.bearbeiten=null; S.protoStandort='TS1'; S.protoPos=null; S.view='protokoll'; render(); 1"); await w(500);
+    const form = document.getElementById("proto"), slot = () => form.querySelector(".posslot"), df = form.querySelector("#f_datum");
+    const datumSetzen = async (d) => { df.value = d; df.dispatchEvent(new Event("input", { bubbles: true })); df.dispatchEvent(new Event("change", { bubbles: true })); await w(200); };
+    const slotHeute = slot().value;
+    await datumSetzen(datum);
+    const slotNachDatum = slot().value, angehakt = slot().closest("label").querySelector('input[name="posw"]').checked;
+    /* zum Vergleich: was die App für dieses Datum selbst vorwählt (Markt neu wählen baut die Auswahl neu) */
+    form.querySelector("#f_standort").onchange(); await w(200);
+    const kontrolle = slot().value;
+    /* von Hand gewählt bleibt beim nächsten Datumswechsel */
+    slot().value = "TP1"; slot().onchange();
+    await datumSetzen(x("plusTage('" + datum + "', 1)"));
+    const vonHand = slot().value + "/" + slot().closest("label").querySelector('input[name="posw"]').value;
+    slot().value = "TP2"; slot().onchange();
+    form.querySelectorAll("fieldset.fs-zu").forEach((f) => f.classList.remove("fs-zu"));
+    document.getElementById("f_allesok").click();
+    const fehlt = form._fehltNoch();
+    if (!fehlt.length) document.getElementById("save").click();
+    for (let i = 0; i < 40 && !db.protokolle.length; i++) await w(250);
+    await w(500);
+    return { vor, datum, slotHeute, slotNachDatum, angehakt, kontrolle, vonHand, fehlt, gespeichertAls: (db.protokolle[0] || {}).position_ids, nach: { TP1: tp("TP1"), TP2: tp("TP2") } };
+  });
+  pruefe(r.slotHeute === "TP1" && r.kontrolle === "TP2", "Ausgangslage anders: " + JSON.stringify(r));
+  pruefe(r.slotNachDatum === r.kontrolle && r.angehakt, "Vorwahl nach Datumsänderung " + r.slotNachDatum + " (für " + r.datum + " wählt die App selbst " + r.kontrolle + "): " + JSON.stringify(r));
+  pruefe(r.vonHand === "TP1/TP1", "von Hand gewählter Termin beim Datumswechsel überschrieben: " + r.vonHand);
+  pruefe(JSON.stringify(r.gespeichertAls) === '["TP2"]' && /^faellig/.test(r.nach.TP1), "gespeichert " + JSON.stringify(r.gespeichertAls) + " – die fällige JW verschwindet: " + JSON.stringify(r.nach) + " " + r.fehlt);
+  pruefe(!a.fehler.length, "Laufzeitfehler: " + a.fehler.join("; "));
+  await a.zu();
+});
+
 /* ================================================================ Ablauf ================================================================ */
 const filterText = process.argv.slice(2).find((x) => !x.startsWith("--"));
 const filter = filterText ? new RegExp(filterText, "i") : null;

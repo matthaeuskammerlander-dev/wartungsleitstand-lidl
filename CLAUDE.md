@@ -218,7 +218,8 @@ Kammerlander Umwelt- und Klimatechnik (UKT) – oft kurz, vom Handy, im Feld.
   (`WIEDERKEHR_ANZAHL`, `WIEDERKEHR_TAGE`) – Markierung, kein Eingriff.
 - „Zählt als“ im Protokoll (`fillPos`): ist ein Termin versäumt und liegt der
   nächste Termin der Anlage höchstens 3 Monate nach dem Protokolldatum, ist
-  der nächste vorgewählt.
+  der nächste vorgewählt. Wird das Datum geändert (Nachtrag), wählt die App für
+  das neue Datum neu vor – von Hand Gewähltes und eine Korrektur bleiben.
 - Markt-Status (Verwaltung): **betreut** · **zur Zeit nicht betreut**
   (`pausiert`, `pausiertGrund` am Markt, `marktPausiert`: bleibt in Anlagen,
   Karte und Suche sichtbar mit Vermerk und Grund, alle Anlagen wie „zur Zeit
