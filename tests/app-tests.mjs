@@ -1753,7 +1753,7 @@ test("Tiefentest stunden: Abgleich mit dem Kalender – Lücken behalten Markt u
   pruefe(!fehl.length, fehl.join(" | "));
 });
 
-test("Tiefentest stunden: Zeit erfassen – Kalender-Vorschlag ohne Abwesenheit, Verknüpfung nur am Tag des Termins, nur Notiz bleibt gestempelt, Dauer geprüft", async () => {
+test("Tiefentest stunden: Zeit erfassen – Kalender-Vorschlag ohne Abwesenheit, Verknüpfung nur am Tag des Termins, nur Notiz bleibt gestempelt, Dauer geprüft, gestempelter Tag nie doppelt", async () => {
   const a = await oeffnen(KONTEN.techniker);
   await ttHilfen(a);
   const fehl = [];
@@ -1822,6 +1822,40 @@ test("Tiefentest stunden: Zeit erfassen – Kalender-Vorschlag ohne Abwesenheit,
     return { erg, gespeichert: window.__db.tabellen.arbeitszeiten.map((z) => z.minuten) };
   });
   if (r19.gespeichert.length || !/gültige Dauer/.test(r19.erg["-3"]) || !/gültige Dauer/.test(r19.erg["7:75"])) fehl.push("TT-19 unsinnige Dauer: " + JSON.stringify(r19));
+  /* TT-29: gestempelter Tag – „erfassen“ beim Termin ohne Uhrzeit nur mit Rückfrage; über Mitternacht gestempelt: kein „erfassen“, Überschneidung erkannt */
+  const r29 = await a.seite.evaluate(async () => {
+    const tt = window.__tt, x = window.__t.x, db = window.__db.tabellen; tt.leeren();
+    const T = tt.werktag(1), heute = x("isoLokal(new Date())"), gestern = x("plusTage(isoLokal(new Date()),-1)");
+    const zeile = async (tag, titel) => {
+      x("S.view='stunden'; S.stWoche=montagVon('" + tag + "'); render()"); await tt.warte(250);
+      return [...document.querySelectorAll("[data-tage] .rowflex")].find((e) => e.querySelector("a.sprunglink") && e.textContent.includes(titel));
+    };
+    /* (a) gestempelt 07:00–15:30, Baustelle ganztägig – „erfassen“ mit 8 h */
+    tt.gestempelt({ datum: T, beginn: "07:00", ende: "15:30", minuten: 480, pause_min: 30, bereich: "baustelle" });
+    await tt.termin({ kategorie: "projekt", titel: "Baustelle ganztägig", datum: T, standort_id: "TS3" });
+    await tt.laden();
+    const za = await zeile(T, "Baustelle ganztägig"), erf = za && za.querySelector("[data-erf]");
+    let summeA = 480;
+    if (erf) {
+      window.__antwort.confirm = false; erf.click(); await tt.warte(150);
+      const d = tt.dialog(), du = d.querySelector('[data-f="dauer"]'); du.value = "8"; du.dispatchEvent(new Event("input", { bubbles: true }));
+      tt.ok(d).click(); await tt.warte(400); window.__antwort.confirm = true; x("ansichtenSchliessen()");
+      summeA = db.arbeitszeiten.filter((z) => z.datum === T).reduce((s, z) => s + z.minuten, 0);
+    }
+    const rueckfrageA = window.__dialoge.filter((d) => d[0] === "confirm").length;
+    /* (b) gestern 22:00 bis 00:30 gestempelt, Termin 22:30–23:30; heute von Hand 00:00–00:30 */
+    tt.gestempelt({ datum: gestern, beginn: "22:00", ende: "00:30", minuten: 150, bereich: "stoerung" });
+    await tt.termin({ kategorie: "wartung", titel: "Nachtwartung", datum: gestern, beginn: "22:30", ende: "23:30", standort_id: "TS1" });
+    await tt.laden();
+    const zb = await zeile(gestern, "Nachtwartung"), kb = zb ? [...zb.querySelectorAll("button")].map((b) => b.textContent.trim()) : null;
+    window.__dialoge.length = 0;
+    x("zeitEditor(null, {datum:'" + heute + "', beginn:'00:00', ende:'00:30', art:'arbeit', bereich:'stoerung'})"); await tt.warte(150);
+    tt.ok(tt.dialog()).click(); await tt.warte(400);
+    const neuB = db.arbeitszeiten.find((z) => z.datum === heute && z.beginn === "00:00");
+    return { summeA, rueckfrageA, kb, rueckfrageB: window.__dialoge.filter((d) => d[0] === "confirm").length, markiertB: !!(neuB && x("zeitenUeberschneidungen(ZEITEN)")[neuB.id]) };
+  });
+  if (!(r29.summeA === 480 && r29.rueckfrageA)) fehl.push("TT-29 (a) gestempelter Tag, „erfassen“ ohne Rückfrage: " + JSON.stringify(r29));
+  if (!r29.kb || r29.kb.includes("erfassen") || !r29.rueckfrageB || !r29.markiertB) fehl.push("TT-29 (b) über Mitternacht gestempelt: " + JSON.stringify(r29));
   if (a.fehler.length) fehl.push("Laufzeitfehler: " + a.fehler.join("; "));
   await a.zu();
   pruefe(!fehl.length, fehl.join(" | "));

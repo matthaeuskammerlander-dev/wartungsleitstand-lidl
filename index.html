@@ -24210,7 +24210,7 @@ Object.assign(RUNDGAENGE, {
         "Gestempelt und geplant, aber nicht zugeordnet: beim Tag <strong>„⇆ Mit Kalender abgleichen“</strong>; beim Termin steht dann „⏱ abgleichen“ statt „erfassen“ – so wird nichts doppelt erfasst.",
         "<strong>Abstand zum Soll</strong>: je Tag „+0:30“, „−1:00“ oder heute „noch 2:00“; unten die Woche („bis gestern …, noch … bis zum Wochensoll“). Nur zur Info – Überstunden zählen als Monatsbilanz."])+
       RG_HG(["Zeichen: ⏱ gestempelt, ⏱✎ geändert/nachgetragen, 🔒 bestätigt, ⚠ Überschneidung.",
-        "Ab 6 h ohne 30 min Pause ergänzt die App die Pause; höchstens 16 h je Eintrag; Überschneidungen nur nach Rückfrage.",
+        "Ab 6 h ohne 30 min Pause ergänzt die App die Pause; höchstens 16 h je Eintrag; Überschneidungen (auch über Mitternacht) und eine Dauer ohne Uhrzeit an einem gestempelten Tag nur nach Rückfrage; Unsinniges wie „7:75“ oder eine negative Dauer nimmt sie nicht an.",
         "Gestempelte Einträge ändern geht – die Datenbank kennzeichnet sie dann als geändert; löschen kann sie nur der Inhaber.",
         "Einträge „aus dem Kalender“ passt die Datenbank an, wenn sich der Kalendereintrag ändert, und entfernt sie, wenn er gelöscht wird (nie in einem bestätigten Monat). Änderst du so einen Eintrag selbst, gilt er als von Hand."])},
     {reiter:"stunden", ziel:function(){ return rgKarte(/^Reisekosten und Kilometergeld/); }, wenn:function(){ return akAn(); }, titel:"Reisekosten und Kilometergeld",
@@ -30791,6 +30791,8 @@ function viewStunden(){
         host.appendChild(ab);
       }
       var gestempeltAm=stempelBloecke(tag);
+      /* über Mitternacht gestempelt (22:00–00:30): lässt sich nicht abgleichen – aber auch nicht nochmals „erfassen“ */
+      var nachtGestempelt=ZEITEN.filter(function(z){ return z.datum===tag && z.art==="arbeit" && /^stempel/.test(z.quelle||"") && zeitMin(z.beginn)!=null && zeitMin(z.ende)!=null && zeitMin(z.ende)<zeitMin(z.beginn); });
       pl.forEach(function(e){
         var erfasst=ZEITEN.some(function(z){ return z.planung_id===e.id && z.datum===tag; });
         var k=planKat(e.kategorie), abw=PLAN_ABWESEND.indexOf(e.kategorie)>=0;
@@ -30801,6 +30803,8 @@ function viewStunden(){
             /* schon gestempelt in dieser Zeit: nicht nochmals erfassen, sondern abgleichen (nie doppelt) */
             !abw && e.beginn && gestempeltAm.some(function(b){ var pb=zeitMin(e.beginn), pe=zeitMin(e.ende)||pb+60; return pb<b.ende && b.beginn<pe; }) ?
               '<button class="btn ghost sm" type="button" data-abg title="Die Zeit ist schon gestempelt – hier nur zuordnen">⏱ abgleichen</button>' :
+            !abw && e.beginn && nachtGestempelt.some(function(z){ var pb=zeitMin(e.beginn), pe=zeitMin(e.ende)||pb+60; return pb<zeitMin(z.ende)+1440 && zeitMin(z.beginn)<pe; }) ?
+              '<span class="muted" style="white-space:nowrap" title="Die Zeit ist schon gestempelt (über Mitternacht) – wofür, lässt sich am gestempelten Eintrag ändern">⏱ gestempelt</span>' :
             /* Abwesenheit: kommt von selbst (Urlaub erst genehmigt) – nie von Hand „erfassen“ (beantragter Urlaub wäre sonst schon Urlaub) */
             abw ? (e.kategorie==="urlaub" && e.status!=="genehmigt" ? '<span class="muted" style="white-space:nowrap" title="Steht in den Stunden, sobald der Inhaber genehmigt hat">nach Genehmigung</span>'
                   : sollMinutenTag(tag) ? '<span class="muted" style="white-space:nowrap" title="Die Stunden trägt die App von selbst ein">automatisch</span>' : "")
@@ -30993,13 +30997,17 @@ function zeitEditor(z, vorgabe){
       if((beginn && !ende) || (!beginn && ende)){ fehler("Bitte von und bis eintragen – oder beide leer lassen und die Dauer angeben."); return; }
       if(!min){ fehler(!beginn && F("dauer").value.trim() ? "Bitte eine gültige Dauer eintragen (z. B. 8 oder 7:30)." : "Bitte von–bis oder die Dauer eintragen."); return; }
       if(min>16*60){ fehler("Mehr als 16 Stunden an einem Eintrag – bitte prüfen."); return; }
-      /* überschneidet sich mit einem anderen Eintrag desselben Tages? */
+      /* überschneidet sich mit einem anderen Eintrag desselben Tages – oder über Mitternacht mit dem Vor- bzw. Folgetag? */
       var b0=zeitMin(beginn), e0=zeitMin(ende); if(e0!=null && b0!=null && e0<b0) e0+=1440;
       var ueber=b0!=null && ZEITEN.some(function(x){
-        if(x.datum!==datum || (z && x.id===z.id) || !x.beginn || !x.ende) return false;
+        if((z && x.id===z.id) || !x.beginn || !x.ende) return false;
         var b1=zeitMin(x.beginn), e1=zeitMin(x.ende); if(e1<b1) e1+=1440;
-        return b0<e1 && b1<e0; });
+        var vers=x.datum===datum ? 0 : x.datum===plusTage(datum,-1) ? -1440 : x.datum===plusTage(datum,1) ? 1440 : null;
+        return vers!=null && b0<e1+vers && b1+vers<e0; });
       if(ueber && !window.confirm("Die Zeit überschneidet sich mit einem anderen Eintrag an diesem Tag. Trotzdem speichern?")) return;
+      /* nur eine Dauer an einem Tag mit gestempelter Zeit (etwa „erfassen“ bei einem ganztägigen Termin): zählt zusätzlich – erst fragen */
+      var gestempeltTag=!beginn && F("art").value==="arbeit" && (neu || datum!==z.datum) && ZEITEN.some(function(x){ return x.datum===datum && x.art==="arbeit" && /^stempel/.test(x.quelle||""); });
+      if(gestempeltTag && !window.confirm("An diesem Tag ist schon Zeit gestempelt – diese Dauer zählt zusätzlich dazu (doppelt?). Wofür die gestempelte Zeit war, lässt sich am gestempelten Eintrag ändern (Bereich, Markt, Projekt).\n\nTrotzdem zusätzlich speichern?")) return;
       var zeile={datum:datum, art:F("art").value, beginn:beginn||null, ende:ende||null, pause_min:beginn?(+F("pause_min").value||0):0, minuten:min,
         taetigkeit:F("taetigkeit").value.trim()||null, standort_id:F("standort_id").value||null, projekt_id:F("projekt_id").value||null,
         notiz:F("notiz").value.trim()||null, geaendert:new Date().toISOString(),
@@ -31937,6 +31945,10 @@ function zeitenUeberschneidungen(liste){
       if(ueber){ hit[a.id]=true; hit[b.id]=true; }
     }); });
   });
+  /* über Mitternacht: ein Eintrag bis 00:30 überschneidet sich mit Einträgen des Folgetags, die vor 00:30 beginnen */
+  liste.forEach(function(a){ var sa=zeitSpanne(a); if(!sa || sa[1]<=1440 || (a.art && a.art!=="arbeit")) return;
+    (je[(a.user_id||a.name||"")+"|"+plusTage(a.datum,1)]||[]).forEach(function(b){ var sb=zeitSpanne(b);
+      if(sb && sb[0]<sa[1]-1440){ hit[a.id]=true; hit[b.id]=true; } }); });
   return hit;
 }
 /* eigene Einträge von Hand, die sich mit einem Zeitraum überschneiden (für Ein- und Ausstempeln) */
