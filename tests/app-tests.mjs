@@ -1718,6 +1718,30 @@ reSchritt("kplus", "R03", async (a) => {
   return /^gutschrift, Fenster 0, Belege [+]0, Meldung: .*Gutschrift/.test(r.gutschrift) && r.minus === -50 && r.netto == null && !/stimmt/.test(r.note) && /nicht erkannt/.test(r.note)
     ? "" : `Gutschrift ${r.gutschrift}; Netto-Summe „-50,00“ gelesen als ${r.minus}; ohne Summe: ${r.netto}, Hinweis „${r.note}“`;
 });
+/* Lernen aus KPlus: dieselbe Wartung mit anderem Wortlaut kommt nicht doppelt in den nächsten Vorschlag */
+reSchritt("kplus", "R05", async (a) => {
+  const r = await a.seite.evaluate(async () => {
+    const x = window.__t.x, db = window.__db.tabellen, R = window.__re;
+    const prot = (id, d) => ({ id, client_id: id, standort_id: "TS1", datum: d, wartungsart: "Wartung", techniker: "Testtechniker", anlagen: [{ name: "VRV Anlage", termin: "JW" }],
+      version: 1, erstellt: new Date().toISOString(), erstellt_von: "u_tech_test_at" });
+    db.katalog.push({ id: "kw5", text: "Wartung Klimaanlage lt. Rahmenvertrag (Test)", eh: "Stk", preis: 210, kunde_id: "lidl", aktiv: true, quelle: "Test" });
+    db.protokolle.push(prot("w51", "2026-03-01"), prot("w52", "2026-04-01"), prot("w53", "2026-05-01"));
+    await x("Promise.all([ladeProtokolle(), katalogLaden()])");
+    let vgl = "";
+    for (const [id, nr] of [["w51", "900051"], ["w52", "900052"]]) {
+      const d = R.vorschau(id, R.erg(nr, [{ typ: "pos", nr: "2", menge: 1, eh: "Stk", preis: 210, betragPdf: 210, text: "Jahreswartung VRV lt. FB035/Pos.1" }]));
+      vgl = vgl || [...d.querySelectorAll(".as-inhalt .card div[style*=border-left]")].map((z) => z.textContent).join(" | ");
+      await R.ablegen(d);
+    }
+    await x("belegeAlleLaden()");
+    x("belegNeu(kontextProtokoll(window.__re.pk('w53')), 'rechnung', null, function(){})");
+    const d = await R.bis(() => { const d = R.dlg(); return d && d.querySelector(".bpos") && d; });
+    return { vgl, pos: [...d.querySelectorAll(".bpos")].map((z) => z.querySelector('[data-f="text"]').value.split("\n")[0] + " | " + z.querySelector('[data-f="preis"]').value),
+      summe: d.querySelector(".bsumme").textContent };
+  });
+  const w = r.pos.filter((p) => /wartung/i.test(p));
+  return w.length === 1 && !/fehlte in der App · Jahreswartung/.test(r.vgl) ? "" : `1 Anlage, aber ${w.length} Wartungspositionen im Vorschlag: ${JSON.stringify(r.pos)} – ${r.summe}. Vergleich beim Ablegen: ${r.vgl}`;
+});
 
 /* ================================================================ Ablauf ================================================================ */
 const filterText = process.argv.slice(2).find((x) => !x.startsWith("--"));
