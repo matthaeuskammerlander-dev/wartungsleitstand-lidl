@@ -4415,6 +4415,38 @@ test("Tiefentest stunden: CSV Lohnverrechnung und Alle Einträge – selbst geti
   await a.zu();
 });
 
+/* Tiefentest 05.10.: Werkzeug und Material speichern – „noch nicht eingerichtet“ nur bei fehlender Tabelle („does not exist“,
+   „schema cache“); eine verletzte Prüfregel nennt auch „relation“ und muss als echte Meldung kommen (wie Reisekosten, TTQ-22) */
+test("Tiefentest werkzeug: verletzte Prüfregel beim Speichern meldet nicht „noch nicht eingerichtet“, sondern die echte Meldung", async () => {
+  const a = await oeffnen(KONTEN.inhaber);
+  const r = await a.seite.evaluate(async () => {
+    const x = window.__t.x, sb = x("Store.sb"), altFrom = sb.from;
+    let meldung = "";
+    /* werkzeug und bedarf antworten mit dem Fehler der Datenbank, alles andere wie immer */
+    sb.from = function (t) {
+      if (t !== "werkzeug" && t !== "bedarf") return altFrom.apply(this, arguments);
+      const p = Promise.resolve({ data: null, error: { message: meldung.replace("TAB", t) } }), q = { insert: () => q, update: () => q, eq: () => q, select: () => p };
+      return q;
+    };
+    const fang = (pr) => pr.then(() => "gespeichert", (e) => String(e && e.message || e));
+    const beide = async (m) => { meldung = m;
+      return [await fang(x("wzSpeichern(null, {name:'TT-Prüfregel'})")), await fang(x("bedarfSpeichern(null, {art:'material', text:'TT-Prüfregel'})"))]; };
+    const erg = {
+      pruefregel: await beide('new row for relation "TAB" violates check constraint "TAB_name_check"'),
+      fehlt: await beide('relation "public.TAB" does not exist'),
+      cache: await beide("Could not find the table 'public.TAB' in the schema cache"),
+      netz: await beide("TypeError: Failed to fetch"),
+    };
+    sb.from = altFrom;
+    return erg;
+  });
+  pruefe(r.pruefregel.every((m) => /violates check constraint/.test(m) && !/nicht eingerichtet/.test(m)), "Prüfregel als „nicht eingerichtet“ gemeldet: " + JSON.stringify(r.pruefregel));
+  pruefe(r.fehlt.concat(r.cache).every((m) => /noch nicht eingerichtet/.test(m)), "fehlende Tabelle nicht als „nicht eingerichtet“ gemeldet: " + JSON.stringify([r.fehlt, r.cache]));
+  pruefe(r.netz.every((m) => /keine Verbindung/.test(m)), "Netzfehler nicht auf Deutsch: " + JSON.stringify(r.netz));
+  pruefe(!a.fehler.length, "Laufzeitfehler: " + a.fehler.join("; "));
+  await a.zu();
+});
+
 /* ================================================================ Ablauf ================================================================ */
 const filterText = process.argv.slice(2).find((x) => !x.startsWith("--"));
 const filter = filterText ? new RegExp(filterText, "i") : null;
