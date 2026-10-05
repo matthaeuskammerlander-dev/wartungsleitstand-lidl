@@ -1803,7 +1803,7 @@ function autoNamenVergeben(){
 }
 function toast(msg){ var t=document.getElementById("toast");
   /* Präsentation: keine Erfolgsmeldung soll nach echtem Speichern klingen */
-  if(typeof demo==="function" && demo() && /gespeichert|angelegt|übernommen|gelöscht|abgehakt|zurückgenommen|wiederhergestellt/i.test(msg) && !/Präsentation/.test(msg))
+  if(typeof demo==="function" && demo() && /gespeichert|angelegt|übernommen|gelöscht|abgehakt|zurückgenommen|wiederhergestellt|verschoben/i.test(msg) && !/Präsentation/.test(msg))
     msg=msg.replace(/[.!]?$/,"")+(window.UKT_VORSCHAU==="Spielwiese" ? " (Spielwiese, nicht gespeichert)." : " (Präsentation, nicht gespeichert).");
   msg=technikDeutsch(msg);
   /* Fehler länger stehen lassen – die liest man, eine Bestätigung nicht (Büro 02.10.2026) */
@@ -32288,6 +32288,8 @@ function abgleichDialog(tag, nachAusstempeln){
       /* jeden Termin einzeln – scheitert einer (keine Verbindung, keine Berechtigung), sagt es die Meldung; nie „verschoben“ ohne Antwort */
       var k=Promise.resolve(), gut=0, nicht=[];
       verschieben.forEach(function(it){ k=k.then(function(){ var e=PLANUNG.filter(function(y){ return y.id===it.planung_id; })[0]; if(!e) return;
+        /* Präsentation: nur im Speicher – keine Anfrage an die Datenbank */
+        if(demo()){ PLANUNG=PLANUNG.map(function(y){ return y.id===e.id ? Object.assign({}, y, {datum:naechster, datum_bis:null}) : y; }); gut++; return; }
         return mitFrist(Store.sb.from("planung").update({datum:naechster, datum_bis:null, geaendert_von:meinName()}).eq("id", e.id).select("*"), 15000).then(function(r){
           if(r.error || !(r.data||[]).length) throw new Error(r.error ? r.error.message : "keine Berechtigung");
           r.data.forEach(function(g){ PLANUNG=PLANUNG.filter(function(y){ return y.id!==g.id; }).concat([g]); }); gut++;
@@ -32300,10 +32302,13 @@ function abgleichDialog(tag, nachAusstempeln){
         planGeaendert(); if(darfRendern()) render(); });
     };
     if(!teile.length){ fertig(0); return; }
-    if(demo()){ /* Präsentation: im Speicher wie die Datenbankfunktion */
+    if(demo()){ /* Präsentation: im Speicher wie die Datenbankfunktion – Summe und Pause bleiben (Pause beim längsten Teil) */
       var weg={}; bloecke.forEach(function(b, bi){ if(alle.some(function(x){ return x.block===bi; })) b.eintraege.forEach(function(z){ weg[z.id]=1; }); });
-      ZEITEN=ZEITEN.filter(function(z){ return !weg[z.id]; }).concat(teile.map(function(t){ return Object.assign({id:neueKennung("z"), datum:tag, art:"arbeit", quelle:"stempel_abgeglichen", pause_min:0,
-        minuten:zeitMin(t.ende)-zeitMin(t.beginn), name:meinName()}, t, {planung_id:t.planung_id||null, standort_id:t.standort_id||null, projekt_id:t.projekt_id||null}); }));
+      abgleichMinuten(alle, bloecke);
+      ZEITEN=ZEITEN.filter(function(z){ return !weg[z.id]; }).concat(teile.map(function(t, i){ var x=alle[i];
+        var geaendert=bloecke[x.block].eintraege.some(function(z){ return z.quelle==="stempel_geaendert" || z.quelle==="stempel_nachgetragen"; });
+        return Object.assign({id:neueKennung("z"), datum:tag, art:"arbeit", quelle:geaendert?"stempel_geaendert":"stempel_abgeglichen", pause_min:x.pause||0, pause_auto:x.pauseAuto||0,
+          minuten:x.min, name:meinName()}, t, {planung_id:t.planung_id||null, standort_id:t.standort_id||null, projekt_id:t.projekt_id||null}); }));
       fertig(teile.length); return;
     }
     mitFrist(Store.sb.rpc("stempel_abgleich", {p_datum:tag, p_teile:teile}), 20000).then(function(r){

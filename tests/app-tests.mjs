@@ -1994,6 +1994,51 @@ test("Tiefentest stunden: Abwesenheit – Tag herausnehmen nur für die eine Per
   pruefe(!fehl.length, fehl.join(" | "));
 });
 
+test("Tiefentest stunden: Präsentation – Abgleich lässt Summe und Pause gleich, Tag herausnehmen und Verschieben schicken nichts an die Datenbank", async () => {
+  const a = await oeffnen(KONTEN.praesentation);
+  await ttHilfen(a);
+  const r = await a.seite.evaluate(async () => {
+    const tt = window.__tt, x = window.__t.x, ich = tt.ich(), sb = x("Store.sb"), altFrom = sb.from;
+    /* jede Schreibanfrage mitschreiben */
+    window.__schreib = [];
+    sb.from = function (t) { const q = altFrom.call(this, t); ["insert", "update", "upsert", "delete"].forEach((m) => { const o = q[m]; q[m] = function () { window.__schreib.push(t + "." + m); return o.apply(q, arguments); }; }); return q; };
+    const T = tt.werktag(1), dlg = () => tt.dialog();
+    /* TT-01: Abgleich in der Präsentation rechnet wie die Datenbank – Summe 510, Pause 30 */
+    x("ZEITEN").push({ id: "tp01", user_id: ich, name: "P", datum: T, beginn: "07:00", ende: "16:00", pause_min: 30, minuten: 510, art: "arbeit", quelle: "stempel", bereich: "wartung" });
+    x("PLANUNG").push({ id: "tp01p", art: "termin", kategorie: "wartung", titel: "Wartung", datum: T, beginn: "08:00", ende: "10:00", wer: [ich], wer_namen: ["P"], standort_id: "TS1", status: "offen", erstellt_von: ich });
+    x("abgleichDialog('" + T + "', false)"); await tt.warte(200);
+    tt.ok(dlg()).click(); await tt.warte(400);
+    const l = x("ZEITEN").filter((z) => z.datum === T);
+    const t01 = { summe: l.reduce((s, z) => s + z.minuten, 0), pause: l.reduce((s, z) => s + (z.pause_min || 0), 0), teile: l.length };
+    /* TT-02 (a): Krankenstand Mo–Fr, Arbeit am Mittwoch → „für diesen Tag beenden“ */
+    const mo = x("plusTage(montagVon(isoLokal(new Date())),7)"), mi = x("plusTage('" + mo + "',2)");
+    x("PLANUNG").push({ id: "tp02k", art: "termin", kategorie: "krank", titel: "Krankenstand", datum: mo, datum_bis: x("plusTage('" + mo + "',4)"), wer: [ich], wer_namen: ["P"], status: "offen", erstellt_von: ich, ausnahmen: {} });
+    x("zeitEditor(null, {datum:'" + mi + "', beginn:'08:00', ende:'10:00', art:'arbeit', bereich:'werkstatt'})"); await tt.warte(150);
+    tt.ok(dlg()).click(); await tt.warte(300);
+    const beenden = [...dlg().querySelectorAll("button")].find((k) => /für diesen Tag beenden/.test(k.textContent));
+    if (beenden) { beenden.click(); await tt.warte(400); }
+    const schreibA = window.__schreib.slice(); x("ansichtenSchliessen()"); document.querySelectorAll(".assistent").forEach((d) => d.remove());
+    /* TT-02 (b): Abgleich mit einem nicht gemachten Termin → verschieben (nur im Speicher) */
+    window.__schreib.length = 0;
+    const T2 = tt.werktag(2);
+    x("ZEITEN").push({ id: "tp02z", user_id: ich, name: "P", datum: T2, beginn: "07:00", ende: "12:00", pause_min: 0, minuten: 300, art: "arbeit", quelle: "stempel", bereich: "wartung" });
+    x("PLANUNG").push({ id: "tp02a", art: "termin", kategorie: "wartung", titel: "Wartung", datum: T2, beginn: "08:00", ende: "10:00", wer: [ich], wer_namen: ["P"], standort_id: "TS1", status: "offen", erstellt_von: ich },
+      { id: "tp02b", art: "termin", kategorie: "werkstatt", titel: "Werkstatt", datum: T2, beginn: "14:00", ende: "15:00", wer: [ich], wer_namen: ["P"], status: "offen", erstellt_von: ich });
+    x("abgleichDialog('" + T2 + "', false)"); await tt.warte(200);
+    const vs = dlg().querySelector("[data-vs]"); vs.checked = true; vs.dispatchEvent(new Event("change"));
+    tt.ok(dlg()).click(); await tt.warte(500);
+    sb.from = altFrom;
+    return { t01, beenden: !!beenden, schreibA, schreibB: window.__schreib.slice(), T2, verschoben: x("PLANUNG").find((p) => p.id === "tp02b").datum, toast: tt.toasts.slice(-1)[0] || "" };
+  });
+  const fehl = [];
+  if (r.t01.summe !== 510 || r.t01.pause !== 30 || r.t01.teile !== 3) fehl.push("TT-01 Präsentation: Summe/Pause nach dem Abgleich " + JSON.stringify(r.t01));
+  if (!r.beenden || r.schreibA.length) fehl.push("TT-02 (a) „Tag beenden“ schickt " + JSON.stringify(r.schreibA) + " an die Datenbank");
+  if (r.schreibB.length || r.verschoben === r.T2) fehl.push("TT-02 (b) Verschieben: " + JSON.stringify(r.schreibB) + " an die Datenbank / im Speicher nicht verschoben: " + JSON.stringify(r));
+  if (a.fehler.length) fehl.push("Laufzeitfehler: " + a.fehler.join("; "));
+  await a.zu();
+  pruefe(!fehl.length, fehl.join(" | "));
+});
+
 /* ================================================================ Ablauf ================================================================ */
 const filterText = process.argv.slice(2).find((x) => !x.startsWith("--"));
 const filter = filterText ? new RegExp(filterText, "i") : null;
