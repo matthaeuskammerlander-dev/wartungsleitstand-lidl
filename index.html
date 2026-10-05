@@ -18924,15 +18924,21 @@ function wzLaden(neu){
   if(wzLaedt) return wzLaedt;
   if(!neu && wzGeladen && Date.now()-wzStand<60000) return Promise.resolve(false);
   var alt=new Date(Date.now()-60*864e5).toISOString();
+  /* Seite für Seite (alleSeiten): Supabase liefert höchstens 1000 Zeilen je Abfrage – der Rest fehlte sonst still (Prüflauf 05.10.2026) */
   wzLaedt=Promise.all([
-    Store.sb.from("werkzeug").select("*").order("name").limit(3000),
-    Store.sb.from("bedarf").select("*").in("status", ["offen","bestellt","abholbereit"]).limit(3000),
-    Store.sb.from("bedarf").select("*").eq("status", "erledigt").gte("erledigt", alt).limit(2000),
+    alleSeiten(function(){ return Store.sb.from("werkzeug").select("*").order("name").order("id"); }, "id"),
+    alleSeiten(function(){ return Store.sb.from("bedarf").select("*").in("status", ["offen","bestellt","abholbereit"]).order("id"); }, "id"),
+    alleSeiten(function(){ return Store.sb.from("bedarf").select("*").eq("status", "erledigt").gte("erledigt", alt).order("id"); }, "id"),
     Store.sb.from("packlisten").select("*").order("name"),
     /* zum Lernen (je Projekttyp, je Markt): alles, was je eingetragen wurde – nur die nötigen Spalten */
-    Store.sb.from("bedarf").select("id,art,text,werkzeug_id,projekt_id,standort_id").limit(8000)
+    alleSeiten(function(){ return Store.sb.from("bedarf").select("id,art,text,werkzeug_id,projekt_id,standort_id,planung_id").order("id"); }, "id"),
+    /* die Fahrzeuge gleich mit: ob ein Werkzeug „in meinem Auto“ liegt, weiß die App sonst erst nach dem Reiter Fahrzeuge */
+    fzGeladen ? null : fzLaden()
   ]).then(function(r){
-    if(r[0].error){ wzFehlt=/does not exist|schema cache|relation/i.test(r[0].error.message||""); wzFehler=wzFehlt?"":r[0].error.message; }
+    var fe=r.filter(function(x){ return x && x.error; })[0];
+    if(fe){ var m=String(fe.error.message||""); wzFehlt=/does not exist|schema cache|relation/i.test(m);
+      /* in Klartext – Techniker sollen nie „Failed to fetch“ lesen */
+      wzFehler=wzFehlt ? "" : technikDeutsch(m)!==m ? "Keine Verbindung – Werkzeug und Material nicht geladen." : "Werkzeug und Material nicht geladen: "+m; }
     else { WZ=r[0].data||[]; BEDARF=(r[1].data||[]).concat(r[2].data||[]); PACKLISTEN=r[3].data||[]; BEDARF_ALLE=(r[4]&&r[4].data)||BEDARF.slice(); wzFehlt=false; wzFehler=""; }
     wzGeladen=true; wzStand=Date.now(); wzLaedt=null; return true;
   }, function(){ wzFehler="Keine Verbindung – Werkzeug und Material nicht geladen."; wzGeladen=true; wzStand=Date.now(); wzLaedt=null; return true; });
@@ -19605,7 +19611,8 @@ function wzListeKarte(){
   si.oninput=function(){ S.wzSuche=si.value; clearTimeout(si._t); si._t=setTimeout(function(){ render(); setTimeout(function(){ var x=document.querySelector("[data-such]"); if(x){ x.focus(); x.setSelectionRange(x.value.length, x.value.length); } }, 0); }, 350); };
   c.querySelectorAll(".chips .chip").forEach(function(b){ b.onclick=function(){ S.wzFilter=b.dataset.w; render(); }; });
   var h=c.querySelector("[data-l]");
-  if(!aktiv.length) h.appendChild(el('<div class="muted" style="font-size:12.5px">Noch kein Werkzeug eingetragen. „+ Werkzeug“ – Bezeichnung und wo es gerade ist; der Rest kann später kommen.</div>'));
+  if(!aktiv.length) h.appendChild(el('<div class="muted" style="font-size:12.5px">'+(wzFehler ? "Nicht geladen – siehe oben. Später nochmals öffnen." :
+    "Noch kein Werkzeug eingetragen. „+ Werkzeug“ – Bezeichnung und wo es gerade ist; der Rest kann später kommen.")+"</div>"));
   else if(!l.length) h.appendChild(el('<div class="muted" style="font-size:12.5px">Nichts gefunden.</div>'));
   var mf=meinFahrzeug(), ich=meineKennung();
   l.slice(0,300).forEach(function(w){
@@ -19650,7 +19657,7 @@ function viewWerkzeug(){
   if(!planTeam) planTeamLaden();
   if(wzFehlt) f.appendChild(el('<div class="card"><div class="pad"><h2>Werkzeug und Material</h2><div class="note warnbox">Die Tabellen fehlen noch in der Datenbank'+
     (istInhaber()?" – tools/werkzeug.sql einmal im Supabase SQL Editor ausführen.":" – das richtet der Inhaber ein.")+"</div></div></div>"));
-  if(wzFehler) f.appendChild(el('<div class="card"><div class="pad"><div class="note warnbox">'+esc(wzFehler)+"</div></div></div>"));
+  if(wzFehler) f.appendChild(el('<div class="card"><div class="pad"><div class="note warnbox">'+esc(technikDeutsch(wzFehler))+"</div></div></div>"));
   if(!wzGeladen){ f.appendChild(el('<div class="card"><div class="pad muted">Werkzeug und Material werden geladen …</div></div>')); return f; }
   f.appendChild(bedarfUebersichtKarte());
   f.appendChild(wzListeKarte());
@@ -29299,7 +29306,9 @@ function viewKalender(){
     Object.keys(e.ausnahmen||{}).filter(function(t){ return e.ausnahmen[t].art==="zurueck"; }).forEach(function(t){
       var ub=el('<button type="button" class="note warnbox" style="text-align:left;cursor:pointer;font:inherit">🗓 '+esc(planWerText(e)||"")+": Urlaubstag "+esc(dfmt(t))+" zurückgegeben – im Urlaub herausnehmen</button>");
       ub.onclick=function(){ planEditor(e); }; td.querySelector(".stack").appendChild(ub); }); });
-  if(fzBuero() && wzAn()){ if(!wzGeladen) wzNachladen();
+  /* Werkzeug und Material für alle laden: 🧰 in der Kalenderzeile und „Vorher besorgen“ (Prüflauf 05.10.2026: nach dem Neuladen im Kalender fehlte es) */
+  if(wzAn() && !wzGeladen) wzNachladen();
+  if(fzBuero() && wzAn()){
     wzToDo().forEach(function(t){ var wb=el('<button type="button" class="note warnbox" style="text-align:left;cursor:pointer;font:inherit">'+esc(t)+"</button>");
       wb.onclick=function(){ springe({reiter:"werkzeug"}); }; td.querySelector(".stack").appendChild(wb); }); }
   var fo=folgeOffen().length;
@@ -29775,6 +29784,8 @@ function planungPruefenAnsicht(wahl, von, bis){
     fahrtenGenau(alleOrte, function(){ if(document.body.contains(host)) zeichne(); });
   };
   zeichne();
+  /* Material und Werkzeug noch nicht geladen: nachladen, dann „Vorher besorgen“ neu zeichnen */
+  if(wzAn() && !wzGeladen) wzLaden().then(function(){ if(document.body.contains(host)) zeichne(); });
   var zu=el('<button class="btn" type="button">Fertig</button>'); zu.onclick=function(){ v.zu(); render(); }; v.fuss.appendChild(zu);
 }
 /* neue Reihenfolge übernehmen: Beginn des ersten Einsatzes bleibt, Dauer je Einsatz bleibt, dazwischen die Fahrt */
