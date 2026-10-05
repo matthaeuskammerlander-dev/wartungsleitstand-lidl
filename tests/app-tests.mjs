@@ -4576,6 +4576,84 @@ test("Antworten post: Posteingang – Projektmails nur der Inhaber, Lidl-Aufträ
   await a.zu();
 });
 
+test("Antworten post: Mail mit Preisen im Text – die .eml liegt nur beim Inhaber (Büro-Ordner) mit Hinweis, andere legen sie nicht ab", async () => {
+  const a = await tmSeite(KONTEN.inhaber);
+  const r = await a.seite.evaluate(async () => {
+    const x = window.__t.x, db = window.__db.tabellen, tm = window.__tm, jetzt = new Date().toISOString(), fehlt = [], p = (bed, text) => { if (!bed) fehlt.push(text); };
+    /* Erkennung: ein Betrag mit € bzw. EUR (auch „Euro“ hinter der Zahl) */
+    const faelle = { "Pauschal 4.800 € netto": true, "EUR 1.234,50 zzgl. USt": true, "Summe 1234,50 EUR": true, "€ 980,-": true, "Kosten: 350 Euro": true, "4800€": true,
+      "Abgasnorm Euro 6": false, "netto 1.000,00": false, "Filiale 4711, Auftrag 123456": false, "": false };
+    const falsch = Object.keys(faelle).filter((t) => x("mailTextMitPreis(" + JSON.stringify(t) + ")") !== faelle[t]);
+    p(!falsch.length, "Preis-Erkennung falsch bei: " + JSON.stringify(falsch));
+    /* Text der .eml: base64, quoted-printable, HTML – Anhänge zählen nicht */
+    const b64 = btoa(unescape(encodeURIComponent("Guten Tag,\r\nunser Angebot: 4.800 € netto.\r\n")));
+    const emlB64 = "From: a@planer-test.at\r\nSubject: Angebot Hotel\r\nMIME-Version: 1.0\r\nContent-Type: multipart/mixed; boundary=\"xx\"\r\n\r\n--xx\r\nContent-Type: text/plain; charset=utf-8\r\n" +
+      "Content-Transfer-Encoding: base64\r\n\r\n" + b64 + "\r\n--xx\r\nContent-Type: application/pdf; name=\"Plan.pdf\"\r\nContent-Disposition: attachment; filename=\"Plan.pdf\"\r\nContent-Transfer-Encoding: base64\r\n\r\nJVBERi0xLjQ=\r\n--xx--\r\n";
+    const emlQp = "From: a@planer-test.at\r\nSubject: Wartung\r\nContent-Type: text/html; charset=iso-8859-1\r\nContent-Transfer-Encoding: quoted-printable\r\n\r\n<p>Preis: EUR&nbsp;1.234,=\r\n50 f=FCr die Wartung</p>\r\n";
+    const emlAnhang = "From: a@planer-test.at\r\nSubject: Plan\r\nContent-Type: multipart/mixed; boundary=\"yy\"\r\n\r\n--yy\r\nContent-Type: text/plain\r\n\r\nAnbei der Plan.\r\n--yy\r\nContent-Type: text/plain; name=\"Liste.txt\"\r\nContent-Disposition: attachment; filename=\"Liste.txt\"\r\n\r\nSumme 500 EUR\r\n--yy--\r\n";
+    const emlOhne = "From: a@planer-test.at\r\nSubject: Termin\r\n\r\nBitte um Termin am 12.10. in Filiale 4711.\r\n";
+    const liest = [emlB64, emlQp, emlAnhang, emlOhne].map((t) => x("mailTextMitPreis(emlText(" + JSON.stringify(t) + "))"));
+    p(JSON.stringify(liest) === "[true,true,false,false]", "Text der .eml falsch gelesen (base64, quoted-printable/HTML, nur im Anhang, ohne): " + JSON.stringify(liest));
+    const eml = (t) => new Blob([t], { type: "message/rfc822" });
+    db.projekte.push({ id: "tmp_p4", nummer: "P-2026-904", titel: "Preise Hotel", kunde_id: "lidl", status: "anfrage", daten: {}, verlauf: [], erstellt: jetzt, geaendert: jetzt });
+    await x("projekteLaden()");
+    const dateien = () => (db.projekte.find((q) => q.id === "tmp_p4").daten.dateien || []).map((f) => f.art + "|" + f.pfad + "|" + f.name);
+    tm.verbinden(); tm.toastSpion();
+    /* 1. Mail-Programm „Mail zu Projekt legen“: Preis im Text → .eml unter buero/, Hinweis im Dialog und in der Meldung */
+    const MZ = (uid, text) => ({ konto: "gmx", ordner: "INBOX", uid, messageId: "<pp" + uid + "@test>", datum: "2026-10-01T08:00:00.000Z", betreff: "Mail " + uid, von: [{ name: "Planer", address: "a@planer-test.at" }], an: [], text, anhaenge: [] });
+    for (const [uid, text, roh] of [[71, "Unser Angebot: 4.800 € netto", emlB64], [72, "Bitte um Termin", emlOhne]]) {
+      tm.programm({ mail: MZ(uid, text), roh: () => eml(roh) }); window.__toasts = [];
+      x("ansichtenSchliessen()"); x("mailUebernehmen({k:'gmx', o:'INBOX', u:" + uid + ", a:'zuprojekt', p:'tmp_p4'})");
+      await tm.bis(() => tm.fuss(/Ins Projekt legen/));
+      const hinweis = /enthält Preise/.test(tm.dlg().textContent);
+      p(uid === 71 ? hinweis : !hinweis, "Mail zu Projekt " + uid + ": Hinweis „enthält Preise“ " + (hinweis ? "ohne Preis" : "fehlt"));
+      tm.fuss(/Ins Projekt legen/).click(); await tm.toastBis(/abgelegt|^Nicht/);
+      if (uid === 71) p(window.__toasts.some((t) => /enthält Preise – nur für den Inhaber abgelegt/.test(t)), "Mail zu Projekt: Meldung ohne Hinweis auf die Preise: " + JSON.stringify(window.__toasts));
+    }
+    let d1 = dateien();
+    p(d1.some((f) => /^mail\|buero\/.*Mail 71\.eml$/.test(f)) && d1.some((f) => /^mail\|tmp_p4\/.*Mail 72\.eml$/.test(f)), "Mail zu Projekt: .eml mit Preisen nicht (nur) im Büro-Ordner: " + JSON.stringify(d1));
+    const eintrag = (db.projekte.find((q) => q.id === "tmp_p4").daten.dateien || []).find((f) => /Mail 71/.test(f.name)) || {};
+    x("ansichtenSchliessen(); projektAnsicht('tmp_p4')"); await tm.bis(() => tm.dlg() && /Mail 71/.test(tm.dlg().textContent));
+    const zeile = [...tm.dlg().querySelectorAll("[data-liste] div")].find((z) => /Mail 71/.test(z.textContent));
+    p(eintrag.preise && zeile && /enthält Preise/.test(zeile.textContent), "Projektdateien: kein sichtbarer Hinweis bei der Mail mit Preisen: " + (zeile ? zeile.textContent : "(keine Zeile)"));
+    x("ansichtenSchliessen()");
+    /* 2. Posteingang (Inhaber): Preis im HTML-Teil – Hinweis schon im Dialog, .eml unter buero/, der Plan ins Projekt */
+    window.UKT_CONFIG.posteingangAktiv = true;
+    const sb = x("Store.sb"), pe = (id, art, name, pfad) => ({ id, nachricht_id: "<pp9@test>", art, dateiname: name, pfad, status: "neu", betreff: "Fwd: P-2026-904 Wartung", absender: "a@planer-test.at", eingang: jetzt, bytes: 300 });
+    await sb.storage.from("posteingang").upload("2026/10/pp9_mail.eml", new Blob([emlQp]));
+    await sb.storage.from("posteingang").upload("2026/10/pp9_plan.pdf", new Blob(["%PDF-1.4 Plan"], { type: "application/pdf" }));
+    db.posteingang.push(pe("pp9a", "mail", "Fwd P-2026-904 Wartung.eml", "2026/10/pp9_mail.eml"), pe("pp9b", "unbekannt", "Plan Keller.pdf", "2026/10/pp9_plan.pdf"));
+    const k = x("posteingangKarte()"); document.body.appendChild(k); await tm.bis(() => k.querySelector(".posbox"));
+    tm.knopf(k, /Zu Projekt legen/).click(); await tm.bis(() => tm.fuss(/Ins Projekt legen/));
+    await tm.bis(() => /enthält Preise/.test(tm.dlg().textContent), 2000);
+    p(/enthält Preise – nur für den Inhaber abgelegt/.test(tm.dlg().textContent), "Posteingang: Dialog ohne Hinweis auf die Preise");
+    tm.dlg().querySelector("[data-p]").value = "tmp_p4"; window.__toasts = [];
+    tm.fuss(/Ins Projekt legen/).click(); await tm.toastBis(/abgelegt|^Nicht/);
+    d1 = dateien();
+    p(d1.some((f) => /^mail\|buero\/.*Fwd P-2026-904 Wartung\.eml$/.test(f)) && d1.some((f) => /^plan\|tmp_p4\/.*Plan Keller\.pdf$/.test(f)), "Posteingang: .eml mit Preisen nicht im Büro-Ordner bzw. Plan fehlt: " + JSON.stringify(d1));
+    k.remove(); x("ansichtenSchliessen()");
+    /* 3. Mailverlauf: die Mail mit Preisen liegt nur beim Inhaber */
+    const MV = { konto: "gmx", ordner: "INBOX", uid: 73, messageId: "<pp73@test>", datum: "2026-09-20T08:00:00.000Z", betreff: "Angebot Kälte", von: [{ name: "Planer", address: "a@planer-test.at" }], an: [], anhaenge: [] };
+    tm.programm({ mails: [MV], vorschlag: { titel: "Preise Verlauf", kunde: "Lidl", kundeTreffer: "Lidl", status: "angebot", angaben: [], beteiligte: [], termine: [], tagebuch: [], dateien: [] }, roh: () => eml(emlB64) });
+    await tm.verlauf({ suche: "Kälte" }); window.__toasts = [];
+    tm.fuss(/Projekt anlegen/).click(); await tm.toastBis(/angelegt:|^Nicht fertig/);
+    const pv = db.projekte.find((q) => q.titel === "Preise Verlauf"), dv = ((pv && pv.daten.dateien) || []).map((f) => f.art + "|" + f.pfad);
+    p(dv.length === 1 && /^mail\|buero\//.test(dv[0]) && window.__toasts.some((t) => /enthält Preise/.test(t)), "Mailverlauf: .eml mit Preisen nicht im Büro-Ordner bzw. ohne Hinweis: " + JSON.stringify({ dv, t: window.__toasts }));
+    tm.ende();
+    /* 4. Techniker: eine .eml mit Preisen wird nicht abgelegt (Hinweis), eine ohne Preise schon */
+    await tm.anmelden("tech@test.at", "techniker"); tm.toastSpion(); await x("projekteLaden()");
+    window.__datei = [new File([emlB64], "Angebot Hotel.eml", { type: "message/rfc822" }), new File([emlOhne], "Termin.eml", { type: "message/rfc822" })];
+    const neu = await x("projektDateienHochladen(PROJEKTE.filter(function(q){ return q.id==='tmp_p4'; })[0], 'mail', window.__datei)");
+    d1 = dateien();
+    p(!d1.some((f) => /Angebot Hotel/.test(f)) && d1.some((f) => /^mail\|tmp_p4\/.*Termin\.eml$/.test(f)) && (neu || []).length === 1, "Techniker: .eml mit Preisen abgelegt bzw. die ohne nicht: " + JSON.stringify(d1));
+    p(window.__toasts.some((t) => /Angebot Hotel\.eml.*enthält Preise.*nur der Inhaber/.test(t)), "Techniker: kein Hinweis, warum die Mail nicht abgelegt wurde: " + JSON.stringify(window.__toasts));
+    return { fehlt };
+  });
+  pruefe(!r.fehlt.length, r.fehlt.join(" | "));
+  pruefe(!a.fehler.length, "Laufzeitfehler: " + a.fehler.join("; "));
+  await a.zu();
+});
+
 /* ================================================================ Ablauf ================================================================ */
 const filterText = process.argv.slice(2).find((x) => !x.startsWith("--"));
 const filter = filterText ? new RegExp(filterText, "i") : null;

@@ -311,6 +311,9 @@ Kammerlander Umwelt- und Klimatechnik (UKT) – oft kurz, vom Handy, im Feld.
   Dateien hochgeladen sind. Angebot/Rechnung als Art nur für den Inhaber. KPlus-PDFs (6-stellig, `kplusDateiname`; Tiefentest
   05.10.2026): beim Inhaber als Angebot/Rechnung erkannt (buero/), andere legen sie und die Mail dazu nicht ab (bleiben im
   Posteingang). Eine Mail mit Angebot/Rechnung (`mailMitBeleg`) liegt auch als .eml nur unter buero/ – ebenso aus dem Mail-Programm.
+  Ebenso eine Mail mit Preisen im TEXT (Inhaber 05.10.2026: Betrag mit €/EUR, `mailTextMitPreis`, `emlText` liest die .eml): beim
+  Inhaber nur unter buero/ mit Hinweis „enthält Preise – nur für den Inhaber abgelegt“ (`preise` an der Datei, `preisHinweis`), alle
+  anderen legen sie nicht ab – geprüft in `projektDateienHochladen`, gilt so für Posteingang, Mail-Programm, Mailverlauf und Dateien-Karte.
   Anhänge ohne .eml (Rohmail zu groß, art „unbekannt“): „Zu Projekt legen“ an der Einzelkarte, für alle Anhänge derselben Mail.
   Je Mail ein Dialog (`posteingangDialoge`); schon Hochgeladenes merkt `posteingangAbgelegt` – nochmals lädt nur den Rest bzw. vermerkt nur.
   Wer was sieht (Inhaber 05.10.2026, `posteingangRolle`, `posteingangSieht`): Projektmails (alles außer art „auftrag“/„rapport“)

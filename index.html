@@ -3307,6 +3307,9 @@ function posteingangZuProjekt(g, fertig, hinweis){
     var z=el('<div class="rowflex" style="gap:8px;flex-wrap:nowrap;justify-content:space-between"><span style="font-size:13px;min-width:0;overflow-wrap:anywhere">'+esc(e.dateiname)+"</span>"+
       '<select style="max-width:210px">'+arten.map(function(a){ return '<option value="'+a[0]+'"'+(a[0]===vor?" selected":"")+">"+esc(a[1])+"</option>"; }).join("")+"</select></div>");
     wahl[e.id]=z.querySelector("select"); dh.appendChild(z);
+    /* Preise im Text der Mail (Inhaber 05.10.2026): schon hier sagen, dass sie nur beim Inhaber liegt */
+    if(e.art==="mail" && !demo()) posteingangDatei(e).then(mailPreisDatei).then(function(ja){ if(ja && z.isConnected)
+      z.insertAdjacentElement("afterend", el('<div class="muted" style="font-size:12px">⚠ '+esc(e.dateiname)+" enthält Preise – "+(nurInhaber()?"nur für den Inhaber abgelegt":"legt nur der Inhaber ab")+"</div>")); }, function(){});
   });
   /* Inhaber: KPlus-PDFs gleich am Text als Angebot bzw. Rechnung erkennen (dann Büro-Ordner) */
   var kplusFertig=Promise.all(g.filter(function(e){ return nurInhaber() && kplusDateiname(e.dateiname) && wahl[e.id]; }).map(function(e){
@@ -3350,7 +3353,7 @@ function posteingangZuProjekt(g, fertig, hinweis){
             if(hinweis) hinweis(t); toast(t); return; }
           teil.forEach(function(e){ delete posteingangAbgelegt[e.id]; });
           v.zu(); if(fertig) fertig(rest); toast("In "+(p.nummer||"das Projekt")+" abgelegt: "+teil.length+" Datei"+(teil.length===1?"":"en")+"."+
-            (rest.length?" Angebot/Rechnung (KPlus) und die Mail dazu bleiben für den Inhaber im Posteingang.":""));
+            (rest.length?" Angebot/Rechnung (KPlus) und die Mail dazu bleiben für den Inhaber im Posteingang.":"")+preisHinweis(neue));
           /* der Absender kommt ins Adressbuch (Büro 02.10.2026: „sobald ein neuer auftaucht, wird er gespeichert“) */
           var ab=kontaktAusAbsender(mail.absender);
           if(ab) kontaktErfassen(ab, {art:"projekt", id:p.id, titel:projektTitel(p)}, false);
@@ -3504,6 +3507,54 @@ function kplusDateiname(n){ return /^\d{6}\.pdf$/i.test(String(n||"").trim()); }
 function mailMitBeleg(namen, arten){
   return arten.some(function(a){ return a==="angebot" || a==="rechnung"; }) || namen.some(kplusDateiname);
 }
+/* Preise im TEXT einer Mail (Inhaber 05.10.2026): ein Betrag mit € bzw. EUR („4.800 € netto“, „EUR 1.234,50“, auch „350 Euro“) –
+   dann liegt die Mail (.eml) wie eine KPlus-Rechnung nur beim Inhaber unter buero/ (mit Hinweis); andere legen sie nicht ab.
+   Geprüft beim Hochladen (projektDateienHochladen) – gilt so für Mail-Programm, Mailverlauf, Posteingang und Dateien-Karte. */
+var MAIL_PREIS=/(\d{1,3}(?:[.' ]\d{3})+|\d+)(?:,\d{1,2}|,-{1,2}|\.\d{2})?\s*(?:€|EUR\b|Euro\b)|(?:€|\bEUR)\s*\d/i;
+function mailTextMitPreis(t){ return MAIL_PREIS.test(String(t||"").replace(/ /g, " ")); }
+/* Text einer Mail (.eml): alle Teile text/plain und text/html (ohne Tags), auch eine weitergeleitete Mail darin, dekodiert
+   (base64, quoted-printable, Zeichensatz) – Anhänge nicht. roh: Text oder Bytes (Uint8Array/ArrayBuffer) */
+function emlText(roh){
+  var bin=function(u8){ var s=""; for(var i=0;i<u8.length;i+=8192) s+=String.fromCharCode.apply(null, u8.subarray(i, i+8192)); return s; };
+  var s=typeof roh==="string" ? bin(new TextEncoder().encode(roh)) : bin(roh instanceof Uint8Array ? roh : new Uint8Array(roh||0));
+  var teile=[];
+  var lies=function(t, tiefe){
+    var m=/\r?\n\r?\n/.exec(t), kopf=m ? t.slice(0, m.index) : t, rumpf=m ? t.slice(m.index+m[0].length) : "";
+    kopf=kopf.replace(/\r?\n[ \t]+/g, " ");
+    var feld=function(n){ var x=new RegExp("^"+n+":[ \\t]*(.*)$", "im").exec(kopf); return x ? x[1] : ""; };
+    var typ=feld("Content-Type"), art=(typ.split(";")[0].trim()||"text/plain").toLowerCase(), enc=feld("Content-Transfer-Encoding").trim().toLowerCase();
+    if(tiefe>8) return;
+    if(/^multipart\//.test(art)){
+      var gr=/boundary="?([^";]+)"?/i.exec(typ); if(!gr) return;
+      rumpf.split("--"+gr[1]).slice(1).forEach(function(teil){ if(!/^--/.test(teil)) lies(teil.replace(/^\r?\n/, ""), tiefe+1); });
+      return;
+    }
+    if(/^\s*attachment/i.test(feld("Content-Disposition"))) return;
+    if(art==="message/rfc822"){ lies(rumpf, tiefe+1); return; }
+    if(!/^text\/(plain|html)$/.test(art)) return;
+    var b=rumpf;
+    if(enc==="base64"){ try{ b=atob(rumpf.replace(/[^A-Za-z0-9+\/=]/g, "")); }catch(e){ return; } }
+    else if(enc==="quoted-printable") b=rumpf.replace(/=\r?\n/g, "").replace(/=([0-9A-F]{2})/gi, function(_, h){ return String.fromCharCode(parseInt(h, 16)); });
+    var cs=((/charset="?([^";\s]+)"?/i.exec(typ)||[])[1]||"utf-8").toLowerCase(), u8=new Uint8Array(b.length);
+    for(var i=0;i<b.length;i++) u8[i]=b.charCodeAt(i)&255;
+    var text; try{ text=new TextDecoder(cs).decode(u8); }catch(e){ text=new TextDecoder("utf-8").decode(u8); }
+    if(art==="text/html") text=text.replace(/<[^>]*>/g, " ").replace(/&euro;|&#8364;|&#x20ac;/gi, "€").replace(/&nbsp;|&#160;/gi, " ").replace(/&amp;/gi, "&");
+    teile.push(text);
+  };
+  lies(s, 0);
+  return teile.join("\n");
+}
+function istEmlDatei(f){ return !!f && (/\.eml$/i.test(f.name||"") || /message\/rfc822/i.test(f.type||"")); }
+/* Promise<boolean>: eine Mail-Datei (.eml) mit Preisen im Text */
+function mailPreisDatei(f){
+  if(!istEmlDatei(f) || typeof f.arrayBuffer!=="function") return Promise.resolve(false);
+  return f.arrayBuffer().then(function(b){ return mailTextMitPreis(emlText(b)); }, function(){ return false; });
+}
+/* Zusatz für die Erfolgsmeldung: welche abgelegten Mails Preise enthalten (stehen nur beim Inhaber) */
+function preisHinweis(neue){
+  var n=(neue||[]).filter(function(x){ return x && x.preise; }).length;
+  return n ? " "+(n===1 ? "Die Mail enthält" : n+" Mails enthalten")+" Preise – nur für den Inhaber abgelegt." : "";
+}
 /* KPlus-PDFs (6-stellige Nummer) am Text als Angebot bzw. Rechnung erkennen – nur Inhaber; artJe: Map Datei → Art */
 function kplusArtenPruefen(files, artJe){
   if(!nurInhaber()) return Promise.resolve();
@@ -3549,7 +3600,8 @@ function mailKopfKarte(m, arten){
       '<select style="max-width:210px">'+arten.map(function(x){ return '<option value="'+x[0]+'"'+(x[0]===vor?" selected":"")+">"+esc(x[1])+"</option>"; }).join("")+"</select></div>");
     liste.appendChild(z); return z;
   };
-  var mailZeile=zeile("Mail selbst (.eml)", "mail", false);
+  /* Preise im Text (Inhaber 05.10.2026): die Mail liegt dann nur beim Inhaber – schon hier sagen */
+  var mailZeile=zeile("Mail selbst (.eml)"+(mailTextMitPreis((m.betreff||"")+" | "+(m.text||"")) ? (nurInhaber() ? " – enthält Preise – nur für den Inhaber abgelegt" : " – enthält Preise – legt nur der Inhaber ab") : ""), "mail", false);
   var anh=(m.anhaenge||[]).map(function(x){ var z=zeile(x.name+" ("+Math.max(1,Math.round((x.groesse||0)/1024))+" KB)"+(kplusDateiname(x.name)?" – KPlus: wird als Angebot/Rechnung erkannt (nur Inhaber)":""),
     dateiArtRaten("", x.name, x.typ||""), true); return {a:x, z:z}; });
   return {kopf:c, liste:liste,
@@ -3576,7 +3628,7 @@ function mailInsProjekt(p, m, k, quelleSchritt, mehr){
       }, "E-Mail übernommen: „"+(m.betreff||"")+"“").then(function(){
         var ab=kontaktAusAbsender(mailAbsender(m));
         if(ab) kontaktErfassen(ab, {art:"projekt", id:p.id, titel:projektTitel(p)}, false);
-        return {neue:neue.length, alle:files.length};
+        return {neue:neue.length, alle:files.length, hinweis:preisHinweis(neue)};
       });
     });
   });
@@ -3711,7 +3763,7 @@ function mailProjektNeu(m){
         if(mitPerson && person.name) kontaktErfassen({name:person.name, firma:person.firma, telefon:person.telefon, mail:person.mail, kategorie:"Kunde / Bauherr",
           kunde_id:p.kunde_id!=="lidl"?p.kunde_id:""}, {art:"projekt", id:p.id, titel:projektTitel(p)}, false);
         v.zu(); if(S.view==="projekte" && darfRendern()) render(); projektAnsicht(p.id);
-        toast("Projekt "+p.nummer+" angelegt"+(r.neue===r.alle?" – Mail und "+(r.alle-1)+" Anhang/Anhänge abgelegt.":" – ACHTUNG: nur "+r.neue+" von "+r.alle+" Dateien abgelegt, bitte prüfen."));
+        toast("Projekt "+p.nummer+" angelegt"+(r.neue===r.alle?" – Mail und "+(r.alle-1)+" Anhang/Anhänge abgelegt.":" – ACHTUNG: nur "+r.neue+" von "+r.alle+" Dateien abgelegt, bitte prüfen.")+r.hinweis);
       }, function(e){ v.zu(); projektAnsicht(p.id); toast("Projekt "+p.nummer+" angelegt, aber die Mail ist nicht abgelegt: "+e.message+" – im Mail-Programm nochmals „Zu bestehendem Projekt“."); });
     }).catch(function(e){ ok.disabled=false; ok.textContent="Projekt anlegen"; err.textContent="Nicht angelegt: "+technikDeutsch(e.message); err.hidden=false; });
   };
@@ -3741,7 +3793,7 @@ function mailZuProjekt(m, vorId){
     ok.disabled=true; ok.textContent="wird abgelegt …";
     mailInsProjekt(p, m, k, null).then(function(r){
       v.zu(); projektAnsicht(p.id);
-      toast(r.neue===r.alle ? "In "+(p.nummer||"das Projekt")+" abgelegt: "+r.alle+" Datei"+(r.alle===1?"":"en")+"." : "Nur "+r.neue+" von "+r.alle+" Dateien abgelegt – bitte prüfen.");
+      toast((r.neue===r.alle ? "In "+(p.nummer||"das Projekt")+" abgelegt: "+r.alle+" Datei"+(r.alle===1?"":"en")+"." : "Nur "+r.neue+" von "+r.alle+" Dateien abgelegt – bitte prüfen.")+r.hinweis);
     }, function(e){ ok.disabled=false; ok.textContent="Ins Projekt legen"; toast("Nicht abgelegt: "+e.message); });
   };
 }
@@ -4032,6 +4084,7 @@ function mailVerlaufVorschlag(v, r, zielId){
             }).then(function(neue){
               /* abgelegt ist, was hochgeladen UND am Projekt vermerkt ist */
               files.forEach(function(f, j){ if(neue.some(function(n){ return n.name===f.name; })) stand.abgelegt[dateiSchluessel(liste2[j]||emlZeile)]=true; });
+              stand.preise=(stand.preise||[]).concat(neue.filter(function(n){ return n.preise; }));
               var e=neue.filter(function(x){ return /\.eml$/i.test(x.name); })[0]; if(e) emlPfad[i]=e.pfad; });
           });
         });
@@ -4100,7 +4153,7 @@ function mailVerlaufVorschlag(v, r, zielId){
       v.zu(); projektAnsicht(x.p.id);
       toast((ziel?"Übernommen":"Projekt "+x.p.nummer+" angelegt")+": "+Object.keys(emlPfad).length+" Mails, "+angaben.length+" Angaben"+(x.kplus?", "+x.kplus+" KPlus-Beleg"+(x.kplus===1?"":"e"):"")+
         (x.schon?", "+x.schon+" KPlus-Beleg"+(x.schon===1?"":"e")+" schon vorhanden – unverändert":"")+"."+
-        (hinweise?" ⚠ "+hinweise+" Auffälligkeit"+(hinweise===1?"":"en")+" in den KPlus-Positionen – unter „Angebote und Rechnungen“ ansehen.":""));
+        (hinweise?" ⚠ "+hinweise+" Auffälligkeit"+(hinweise===1?"":"en")+" in den KPlus-Positionen – unter „Angebote und Rechnungen“ ansehen.":"")+preisHinweis(stand.preise));
     }).catch(function(e){
       ok.disabled=false; ab.disabled=false;
       /* in Klartext – und ehrlich: ist das Projekt schon angelegt, stimmt „nichts gespeichert“ nicht */
@@ -24817,7 +24870,7 @@ Object.assign(RUNDGAENGE, {
       "<strong>Dateien</strong>: Art wird erkannt; „Ganzen Ordner hochladen“ überspringt Gleichnamiges; höchstens 20 MB je Datei.",
       "<strong>Stunden</strong> auf das Projekt, <strong>Tagebuch</strong>, <strong>Nachrichten</strong>.",
       "<strong>Zusammenfassung (PDF)</strong>: Eckdaten, Angaben mit Quellen, Listen, Baustellenbuch, Dateiliste, Tagebuch – „Ablegen“ für die Synology."])+
-      RG_HG(["Angebot und Rechnung als Dateiart (unter „buero/“) nur für den Inhaber – ebenso eine Mail (.eml), die ein Angebot/eine Rechnung als Anhang enthält; auf der Synology nur im Büro-Ordner, nie im Projektordner, den Techniker sehen.",
+      RG_HG(["Angebot und Rechnung als Dateiart (unter „buero/“) nur für den Inhaber – ebenso eine Mail (.eml), die ein Angebot/eine Rechnung als Anhang oder einen Preis im Text enthält (z. B. „4.800 € netto“; bei der Datei steht dann „enthält Preise“, andere legen sie nicht ab); auf der Synology nur im Büro-Ordner, nie im Projektordner, den Techniker sehen.",
         "Bei der Rechnung aus dem Angebot schlägt die App Mengen aus dem Baustellenbuch vor."])+
       RG_ACHTUNG(["Hat ein anderes Gerät das Projekt inzwischen geändert, wird nicht gespeichert – die App lädt neu, dann noch einmal eintragen.",
         "Beim Löschen eines Projekts (nur Inhaber) bleiben die Dateien."])},
@@ -29062,6 +29115,7 @@ function projektDateienKarte(p, buero, schreiben, neuZeichnen){
     var zu=dateiGehoertZu(p, x);
     var z=el('<div style="font-size:13px"><a href="#" class="sprunglink">'+esc(x.name||"Datei")+"</a>"+
       '<span class="muted"> · '+esc(artName(x.art))+" · "+esc(dfmt(tagLokal(x.zeit)))+(x.von?" · "+esc(x.von):"")+(x.herkunft?" · aus „"+esc(x.herkunft)+"“":"")+"</span>"+
+      (x.preise?' <span class="tag" style="font-size:11.5px">enthält Preise – nur für den Inhaber abgelegt</span>':"")+
       (zu.length?'<br><span style="font-size:12px">gehört zu: '+zu.map(function(st){ return '<a href="#" class="sprunglink" data-zu="'+esc(st.bereich+":"+st.id)+'">'+esc(st.titel)+"</a>"; }).join(" · ")+"</span>"
         :'<br><span class="muted" style="font-size:12.5px">noch keiner Angabe zugeordnet</span>')+"</div>");
     z.querySelectorAll("[data-zu]").forEach(function(a){ tippe(a, function(){ zurStelle(a.dataset.zu); }); });
@@ -29137,6 +29191,20 @@ function projektDateienHochladen(p, art, liste, herkunft, nurBuero){
   if(!liste.length) return Promise.resolve([]);
   var zuGross=liste.filter(function(f){ return f.size>PROJEKT_DATEI_MAX; });
   if(zuGross.length){ toast("Zu groß (höchstens 20 MB): "+zuGross.map(function(f){ return f.name; }).join(", ")); return Promise.resolve([]); }
+  /* Mail mit Preisen im Text (Inhaber 05.10.2026): beim Inhaber nur unter buero/ (Hinweis bei der Datei und in der Meldung),
+     alle anderen legen sie nicht ab – wie eine KPlus-Rechnung */
+  var preise=[];
+  return Promise.all(liste.map(function(f){ return mailPreisDatei(f).then(function(ja){ if(ja) preise.push(f); }); })).then(function(){
+    var hinweis="";
+    if(preise.length && !nurInhaber()){
+      hinweis=preise.map(function(f){ return "„"+f.name+"“"; }).join(", ")+(preise.length===1?" enthält":" enthalten")+" Preise – ablegen darf das nur der Inhaber, nicht abgelegt.";
+      liste=liste.filter(function(f){ return preise.indexOf(f)<0; });
+      if(!liste.length){ toast(hinweis); return []; }
+    }
+    return projektDateienAblegen(p, art, liste, herkunft, function(f){ return preise.indexOf(f)>=0 || !!(nurBuero && nurBuero(f)); }, preise, hinweis);
+  });
+}
+function projektDateienAblegen(p, art, liste, herkunft, nurBuero, preise, hinweis){
   var artVon=typeof art==="function" ? art : function(){ return art; };
   var artName=typeof art==="function" ? "nach Art sortiert" : (PROJEKT_DATEIARTEN.filter(function(x){ return x[0]===art; })[0]||[art,art])[1];
   toast(liste.length+" Datei"+(liste.length===1?"":"en")+" wird hochgeladen …");
@@ -29146,6 +29214,7 @@ function projektDateienHochladen(p, art, liste, herkunft, nurBuero){
   return Promise.all(liste.map(function(f){
     var fa=artVon(f), pfad=projektDateiPfad(p, fa, f.name, nurBuero && nurBuero(f)), eintrag={pfad:pfad, name:f.name, art:fa, groesse:f.size, typ:f.type||"", von:meinName(), zeit:new Date().toISOString()};
     var hk=herkunft ? herkunft(f) : ""; if(hk) eintrag.herkunft=hk;
+    if(preise && preise.indexOf(f)>=0) eintrag.preise=true;   /* Mail mit Preisen im Text – Hinweis bei der Datei */
     if(demo()){ eintrag._url=URL.createObjectURL(f); neue.push(eintrag); return null; }
     return mitFrist(Store.sb.storage.from("projektdateien").upload(pfad, f, {contentType:f.type||"application/octet-stream", upsert:false}), 120000)
       .then(function(r){ if(r.error) throw new Error(r.error.message); neue.push(eintrag); })
@@ -29154,8 +29223,9 @@ function projektDateienHochladen(p, art, liste, herkunft, nurBuero){
     if(!neue.length) return;
     return projektAendern(p, function(d){ d.dateien=(d.dateien||[]).concat(neue); }, neue.length+" Datei"+(neue.length===1?"":"en")+" hinzugefügt ("+artName+")");
   }).then(function(){
-    if(fehler.length) toast((neue.length?neue.length+" hochgeladen, ":"")+"nicht hochgeladen – "+fehler.join("; "));
-    else if(neue.length) toast("Hochgeladen.");
+    if(fehler.length) toast((neue.length?neue.length+" hochgeladen, ":"")+"nicht hochgeladen – "+fehler.join("; ")+(hinweis?" – "+hinweis:""));
+    else if(neue.length) toast("Hochgeladen."+(hinweis?" "+hinweis:"")+preisHinweis(neue));
+    else if(hinweis) toast(hinweis);
     return neue;
   }, function(e){ toast("Hochgeladen, aber nicht am Projekt vermerkt: "+e.message); return []; });
 }
