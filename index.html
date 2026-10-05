@@ -4012,7 +4012,10 @@ function mailVerlaufVorschlag(v, r, zielId){
             files.forEach(function(f, j){ var x=liste2[j]; artJe.set(f, (x||emlZeile).z.querySelector("select").value); });
             /* PDFs: KPlus-Angebot/Rechnung? dann Art danach und Positionen einlesen (nur Inhaber) */
             var pruefen=nurInhaber() ? files.filter(function(f){ return /pdf/i.test(f.type) || /\.pdf$/i.test(f.name); }).map(function(f){
-              return f.arrayBuffer().then(function(b){ return kplusLesen(new Uint8Array(b)); }).then(function(erg){ artJe.set(f, erg.art);
+              return f.arrayBuffer().then(function(b){ return kplusLesen(new Uint8Array(b)); }).then(function(erg){
+                /* Gutschrift: nur als Büro-Datei (Preise – nie in den Projektordner), kein Beleg */
+                if(erg.art==="gutschrift"){ artJe.set(f, "rechnung"); toast(f.name+": "+KPLUS_GUTSCHRIFT+" Das PDF liegt bei den Büro-Dateien."); return; }
+                artJe.set(f, erg.art);
                 if(!kplus.some(function(k){ return k.erg.art===erg.art && k.erg.nummer===erg.nummer; })) kplus.push({erg:erg, datei:f}); }, function(){}); }) : [];
             return Promise.all(pruefen).then(function(){
               /* enthält die Mail ein Angebot/eine Rechnung, liegt auch die Mail selbst (.eml mit allen Anhängen) nur beim Inhaber */
@@ -4066,8 +4069,11 @@ function mailVerlaufVorschlag(v, r, zielId){
       kplus.forEach(function(x){ if(x.fertig) return; k2=k2.then(function(){
         melde("KPlus "+(x.erg.art==="rechnung"?"Rechnung ":"Angebot ")+x.erg.nummer+" wird eingelesen …");
         var pa=PROJEKTE.filter(function(y){ return y.id===p.id; })[0]||p;
+        /* ohne erkannte Nummer nicht als Beleg ablegen (die nächste solche überschriebe sie) – das PDF liegt bei den Büro-Dateien */
+        if(!String(x.erg.nummer||"").trim()){ x.fertig=true; toast("KPlus-PDF ohne erkannte Nummer nicht als Beleg abgelegt – es liegt bei den Büro-Dateien."); return; }
         /* gibt es den Beleg schon (gleiche Art und Nummer), bleiben Stand, Bezahlt-Datum und Projekt – nur eine fehlende PDF
-           kommt dazu (nichts still überschreiben); ein neuer wird eingefügt, nie per upsert über einen anderen gelegt */
+           kommt dazu (nichts still überschreiben, auch nie an ein anderes Projekt umhängen); ein neuer wird eingefügt,
+           nie per upsert über einen anderen gelegt */
         return Store.sb.from("belege").select("*").eq("art", x.erg.art).eq("nummer", x.erg.nummer).then(function(rv){
           if(rv.error) throw new Error(rv.error.message);
           var da=(rv.data||[])[0];
@@ -21081,6 +21087,7 @@ function katalogVorschlag(text, kid){
   var best=null, bestW=0;
   KATALOG.forEach(function(k){
     if(k.kunde_id && k.kunde_id!==kid) return;
+    if(k.aktiv===false) return;   /* ausgeblendet (etwa ein alter Preis) – wie in katalogFinde und katalogWahl */
     var t=String(k.text||"").toLowerCase();
     if(/fahrtpauschale|regiestunden/.test(t) || !(+k.preis>0)) return;
     var gem=woerter.filter(function(w){ return t.indexOf(w.slice(0, Math.max(5, w.length-2)))>=0; });
@@ -21107,7 +21114,7 @@ function angebotAusFolge(p){
     var zone=fahrtZone(st), fk=zone ? katalogFinde(new RegExp("fahrtpauschale\\s*zone\\s*"+zone, "i"), kid) : null;
     nr++;
     pos.push(fk ? {typ:"pos", nr:String(nr), menge:1, eh:fk.eh, text:fk.text, preis:+fk.preis, katalog_id:fk.id, alternativ:false}
-                : {typ:"pos", nr:String(nr), menge:1, eh:"psh", text:zone ? "Fahrtpauschale Zone "+zone+" – Preis fehlt im Katalog" : "Fahrtpauschale – Zone unbekannt (Markt ohne Postleitzahl)", preis:0, katalog_id:null, alternativ:false});
+                : {typ:"pos", nr:String(nr), menge:1, eh:"psh", text:zone ? "Fahrtpauschale Zone "+zone+" – Preis fehlt im Katalog" : "Fahrtpauschale – Zone unbekannt ("+fahrtZoneFehltText(st)+")", preis:0, katalog_id:null, alternativ:false});
     var kopf={empfaenger:kundeAnschrift(kid), betreff:[(st&&st.filiale?"Filiale "+st.filiale+" ":"")+(st?stName(st):p.standortName||"")+", Angebot zu "+
       (mangel.length===1?"einem Mangel":mangel.length+" Mängeln")+" aus "+(istStoerung(p)?"dem Störungseinsatz":"der Wartung")+" vom "+dfmt(p.datum)]};
     belegNeu({projekt:null, protokoll:null, kunde_id:kid, standort_id:p.standortId||null, ausProtokoll:p._id}, "angebot", {kopf:kopf, positionen:pos}, function(){
@@ -24104,6 +24111,7 @@ function handbuchKarte(z){
       liste(["Solange KPlus Angebote und Rechnungen schreibt, sind Belege aus der App <strong>Test-Belege</strong> (Nummer T-…). KPlus-PDFs lassen sich einlesen – "+
           "zum Vergleich und für den Positionskatalog.",
         "Rechnung aus dem Angebot: die Mengen schlägt das Baustellenbuch vor. Rechnungen gibt es auch für Wartungs- und Störungseinsätze – mit dem Lidl-Rapport angehängt.",
+        "<strong>KPlus-Rechnung hochladen</strong> beim Einsatz (im Protokoll unter „Rechnung zu diesem Einsatz“): statt selbst zu schreiben, das PDF aus KPlus – die App vergleicht es mit ihrem Vorschlag („So hätte die App gerechnet“), legt das Original beim Beleg ab, vermerkt den Einsatz als abgerechnet und lernt daraus für künftige Vorschläge.",
         "Status mit Datum (versendet, fällig, bezahlt); überfällige Rechnungen sind markiert.",
         "Preise, Katalog und Belege liegen nur in der Datenbank, sichtbar nur für den Inhaber – nicht für Admins, nicht auf der Synology im Projektordner."]))+
 
@@ -24426,7 +24434,8 @@ var RUNDGAENGE={
       "<strong>Arbeitszeit je Markt</strong> aus Rapport-Zeiten, Ankunft–Ende bei Störungen und Stunden am Markt – damit rechnen Tour, Kalender und Auslastung.",
       "<strong>Vorschläge in Feldern</strong>: was jemand einmal eingetippt hat (Problem, Ursache, Bereich …), steht bei allen als Vorschlag – Zugangsdaten nie.",
       "<strong>Adressbuch</strong> aus Protokollen, Störungen, Projekten und Mails.",
-      "<strong>Positionskatalog</strong> (nur Inhaber) aus KPlus-PDFs und gespeicherten Belegen."])+
+      "<strong>Positionskatalog</strong> (nur Inhaber) aus KPlus-PDFs und gespeicherten Belegen.",
+      "<strong>Rechnungsvorschläge zu Einsätzen</strong> (nur Inhaber) aus hochgeladenen KPlus-Rechnungen: was der Chef bei solchen Einsätzen regelmäßig dazuschreibt."])+
       RG_HG("Gelernt wird nur je Markt bzw. je Wert – nie, wie schnell eine bestimmte Person arbeitet.")},
     {titel:"Wer wann eine Nachricht bekommt", text:RG_LISTE([
       "<strong>Kalender:</strong> wer in einen Termin oder eine Aufgabe eingetragen wird (nicht bei Privatem); Urlaub genehmigt/abgelehnt.",
@@ -24874,8 +24883,10 @@ Object.assign(RUNDGAENGE, {
     {reiter:"belege", ziel:function(){ return rgReiter("belege"); }, titel:"Status, Folgeaufträge, KPlus",
       text:RG_LISTE(["Status: versendet (setzt das Zahlungsziel, Vorgabe 21 Tage), bezahlt, storniert; Angebote: versendet, angenommen, abgelehnt; „Rechnung daraus“.",
         "<strong>Folgeaufträge</strong> (Projekte): „Angebot entwerfen“ mit Befund, Katalogvorschlag je Mangel und Fahrtpauschale.",
-        "<strong>KPlus-PDF einlesen</strong> am Projekt: die App rechnet gegen die Summe im PDF nach, neue Positionen auf Wunsch in den Katalog."])+
-      RG_HG("Eine echte Rechnung zu einem Einsatz vermerkt das Protokoll als abgerechnet.")}
+        "<strong>KPlus-PDF einlesen</strong> am Projekt: die App rechnet gegen die Summe im PDF nach, neue Positionen auf Wunsch in den Katalog.",
+        "<strong>KPlus-Rechnung hochladen</strong> beim Einsatz (Protokoll › „Rechnung zu diesem Einsatz“): „So hätte die App gerechnet“ zeigt, was gleich war, was fehlte und was zu viel war."])+
+      RG_HG(["Eine echte Rechnung zu einem Einsatz – auch eine hochgeladene KPlus-Rechnung – vermerkt das Protokoll als abgerechnet; das Original-PDF liegt beim Beleg.",
+        "Aus hochgeladenen KPlus-Rechnungen lernt die App: was der Chef bei solchen Einsätzen mindestens zweimal (am selben Markt einmal) dazuschreibt, steht künftig im Vorschlag unter „Ergänzt aus früheren KPlus-Rechnungen – bitte prüfen“."])}
   ]}
 });
 var RUNDGANG=null;
@@ -27596,12 +27607,18 @@ function projektPdfDialog(p){
    ================================================================ */
 var BELEG_MWST=20;
 function geld(n){ return (Math.round((+n||0)*100)/100).toLocaleString("de-AT",{minimumFractionDigits:2, maximumFractionDigits:2}); }
-function geldLesen(t){ var s=String(t||"").trim().replace(/\s/g,""); if(!s) return null; s=s.replace(/\./g,"").replace(",","."); var n=+s; return isFinite(n)?n:NaN; }
+/* Betrag/Menge von Hand wie zahlLesen: „78.81“ = 78,81 und „1.5“ = 1,5 – Tausenderpunkt nur mit echter Dreiergruppe
+   („1.975“, „92.333,78“). Früher fiel jeder Punkt weg: aus 1.5 × 78.81 wurde still 15 × 7881. */
+function geldLesen(t){ var s=String(t||"").trim().replace(/\s/g,""); if(!s) return null; return zahlLesen(s); }
+/* Cent kaufmännisch runden: erst das Gleitkomma-Rauschen weg (1,5 × 39,41 ergibt im Rechner 59,114999…), dann auf
+   Cent – 59,12, nicht 59,11. Für Summe, Tabelle, Editor und PDF gleich (posBetrag). */
+function centRund(n){ var c=+((+n||0)*100).toFixed(6); return (c<0 ? -Math.round(-c) : Math.round(c))/100; }
+function posBetrag(x){ return centRund((+x.menge||0)*(+x.preis||0)); }
 /* Summen eines Belegs: Alternativ- und Textpositionen zählen nicht */
 function belegSummen(pos){
   var netto=0;
-  (pos||[]).forEach(function(x){ if(x.typ==="pos" && !x.alternativ) netto+=Math.round((+x.menge||0)*(+x.preis||0)*100)/100; });
-  netto=Math.round(netto*100)/100;
+  (pos||[]).forEach(function(x){ if(x.typ==="pos" && !x.alternativ) netto+=posBetrag(x); });
+  netto=centRund(netto);
   var mwst=Math.round(netto*BELEG_MWST)/100;
   return {netto:netto, mwst:mwst, brutto:Math.round((netto+mwst)*100)/100, satz:BELEG_MWST};
 }
@@ -27768,7 +27785,7 @@ function belegPdfErzeugen(b, kx){
       doc.text(T(geldPdf(p.menge)), 47, y, {align:"right"}); doc.text(T(p.eh||""), 48.5, y);
       if(p.preis!=null) doc.text(T(geldPdf(p.preis)), 160, y, {align:"right"});
       if(p.alternativ){ doc.setTextColor(140); schrift(9, false, true); doc.setTextColor(140); doc.text("Alternativ", R-1.5, y, {align:"right"}); schrift(9); }
-      else doc.text(T(geldPdf(Math.round((+p.menge||0)*(+p.preis||0)*100)/100)), R-1.5, y, {align:"right"});
+      else doc.text(T(geldPdf(posBetrag(p))), R-1.5, y, {align:"right"});
       zeilen.forEach(function(t){ if(y>UNTEN){ neueSeite(); schrift(9); } doc.text(t, 55, y); y+=4.1; });
       y+=2;
     });
@@ -27839,9 +27856,11 @@ function belegPdfAblegen(b, kx, blob){
 /* Wozu gehört ein Beleg? Projekt (Baustelle) oder Protokoll (Wartung/Störung) */
 function kontextProjekt(p){ return {projekt:p, protokoll:null, kunde_id:p.kunde_id||"lidl", standort_id:p.standort_id||null}; }
 function kontextProtokoll(pk){ var st=byId[pk.standortId]; return {projekt:null, protokoll:pk, kunde_id:st?kundeVon(st):"lidl", standort_id:pk.standortId||null}; }
-function belegKontext(b){
+/* pkNach (frei): Protokolle nach _id, einmal je Liste gebildet – sonst kopiert jede Zeile alle Protokolle (Suche im Reiter
+   Rechnungen brauchte bei vielen Belegen Sekunden je Tastendruck) */
+function belegKontext(b, pkNach){
   var pr=b.projekt_id ? PROJEKTE.filter(function(x){ return x.id===b.projekt_id; })[0] : null;
-  var pk=b.protokoll_id ? alleProtokolle(true).filter(function(x){ return x._id===b.protokoll_id; })[0] : null;
+  var pk=b.protokoll_id ? (pkNach ? pkNach[b.protokoll_id] : alleProtokolle(true).filter(function(x){ return x._id===b.protokoll_id; })[0]) : null;
   return {projekt:pr||null, protokoll:pk||null, kunde_id:b.kunde_id||(pr&&pr.kunde_id)||"lidl",
           standort_id:b.standort_id||(pr&&pr.standort_id)||(pk&&pk.standortId)||null};
 }
@@ -27880,7 +27899,8 @@ function kplusAuswerten(seiten){
   var alle=[].concat.apply([], seiten);
   var titel=alle.filter(function(i){ return /^(Angebot|Rechnung|Gutschrift)$/.test(i.t) && i.x>250 && i.y<260; })[0];
   if(!titel) throw new Error("Kein KPlus-Angebot bzw. keine KPlus-Rechnung erkannt.");
-  var fett=titel.f, art=titel.t==="Rechnung"?"rechnung":"angebot";
+  /* Gutschrift: eigene Art – sie ist weder Angebot noch Rechnung und wird (noch) nicht als Beleg abgelegt (KPLUS_GUTSCHRIFT) */
+  var fett=titel.f, art=titel.t==="Rechnung"?"rechnung":titel.t==="Gutschrift"?"gutschrift":"angebot";
   var zeileVon=function(i){ return alle.filter(function(x){ return x.s===i.s && Math.abs(x.y-i.y)<3 && x!==i; }); };
   var wertNeben=function(lbl){ var l=alle.filter(function(i){ return i.s===1 && i.t===lbl && i.x>250; })[0]; if(!l) return ""; var r=zeileVon(l).filter(function(x){ return x.x>l.x+20; }); return r.length?r[r.length-1].t:""; };
   var kopf={nummer:(zeileVon(titel).filter(function(x){ return x.x>titel.x+60; })[0]||{}).t||"", datum:wertNeben("Datum"), kundennummer:wertNeben("Kundennummer"), sachbearbeiter:wertNeben("Sachbearbeiter")};
@@ -27937,8 +27957,9 @@ function kplusAuswerten(seiten){
         else { akt={typ:"gruppe", text:text}; pos.push(akt); gruppe=text; }
         letzteY=y; return;
       }
-      /* Fortsetzung der Position – mit größerem Abstand ein eigener Textabsatz */
-      if(akt && (akt.typ!=="pos" || y-letzteY<16)){
+      /* Fortsetzung der Position bzw. des Textabsatzes – mit größerem Abstand ein eigener Textabsatz; eine normale Zeile
+         unter einer Überschrift ist nie Teil der Überschrift (früher verschmolzen beide, ebenso weit entfernte Absätze) */
+      if(akt && akt.typ!=="gruppe" && y-letzteY<16){
         akt.text+=(akt.typ==="pos"?"\n":" ")+text;
         if(akt.typ==="pos"){ if(preis&&akt.preis==null) akt.preis=geldLesen(preis.t); if(betrag && /Alternativ/i.test(betrag.t)) akt.alternativ=true; }
       }
@@ -27947,7 +27968,7 @@ function kplusAuswerten(seiten){
     });
   });
   /* Summen und Schlusstext */
-  var zahlRechts=function(lbl){ var l=alle.filter(function(i){ return lbl.test(i.t); })[0]; if(!l) return null; var r=zeileVon(l).filter(function(x){ return x.x>l.x && /^[\d.]+,\d\d$/.test(x.t); }); return r.length?geldLesen(r[r.length-1].t):null; };
+  var zahlRechts=function(lbl){ var l=alle.filter(function(i){ return lbl.test(i.t); })[0]; if(!l) return null; var r=zeileVon(l).filter(function(x){ return x.x>l.x && /^-?[\d.]+,\d\d$/.test(x.t); }); return r.length?geldLesen(r[r.length-1].t):null; };
   summen.netto=zahlRechts(/^Netto-Summe/); summen.brutto=zahlRechts(/^Gesamt$/); summen.mwst=summen.netto!=null&&summen.brutto!=null?Math.round((summen.brutto-summen.netto)*100)/100:null;
   var zb=alle.filter(function(i){ return /^Zahlungsbedingungen:/.test(i.t); })[0];
   if(zb) kopf.zahlung=zeileVon(zb).map(function(x){ return x.t; }).join(" ");
@@ -27968,12 +27989,17 @@ function textMenge(text){
   var t=String(text||"").replace(/\s+/g, " ");
   var m=/(\d+(?:[,.]\d+)?)\s*(?:mann|monteure?|techniker|personen|pers\.)\s*(?:a|à|á|je|x|zu|mal)\s*(\d+(?:[,.]\d+)?)\s*(?:std\.?|stunden|h)(?![a-zäöü])/i.exec(t);
   if(m) return {menge:textZahl(m[1])*textZahl(m[2]), eh:"Std", fund:m[0].trim()};
-  /* „(3 h)“, „(ca. 2,5 Std.)“, „3 Stunden“ – nicht „8 l/h“ oder „kWh“ */
-  var re=/(\d+(?:[,.]\d+)?)\s*(std\.?|stunden|h)(?![a-zäöü\/])/gi, x;
+  /* „(2 x 3 h)“ = 6 Std */
+  var mx=/(\d+(?:[,.]\d+)?)\s*(?:x|×|mal)\s*(\d+(?:[,.]\d+)?)\s*(?:std\.?|stunden|h)(?![a-zäöü])/i.exec(t);
+  if(mx) return {menge:textZahl(mx[1])*textZahl(mx[2]), eh:"Std", fund:mx[0].trim()};
+  /* „(3 h)“, „(ca. 2,5 Std.)“, „3 Stunden“ – nicht „8 l/h“, „kWh“, „24h-Notdienst“ */
+  var re=/(\d+(?:[,.]\d+)?)\s*(std\.?|stunden|h)(?![a-zäöü\/\-])/gi, x;
   while((x=re.exec(t))){
     var vor=t.charAt(x.index-1);
     if(vor==="/" || /[a-z]/i.test(vor)) continue;
     if(/^h$/i.test(x[2]) && /\/\s*$/.test(t.slice(0, x.index))) continue;
+    /* Uhrzeit-Bereich („Mo-Fr 7-16 h“) ist keine Menge */
+    if(/\d\s*[-–]\s*$/.test(t.slice(0, x.index))) continue;
     return {menge:textZahl(x[1]), eh:"Std", fund:x[0].trim()};
   }
   return null;
@@ -27985,8 +28011,8 @@ function positionPruefen(p){
   if(tm && p.menge!=null && Math.abs(tm.menge-(+p.menge))>0.01 && (stunden || /regie|stundensatz|zuschlag|arbeitszeit|arbeitsstunde|montagestunde|facharbeiter|techniker|monteur/i.test(p.text)))
     w.push("Text nennt "+mengeText(tm.menge)+" Std („"+tm.fund+"“), Menge ist "+mengeText(p.menge)+" "+(p.eh||""));
   if(/regiestunde|stundensatz|zuschlag stunde|arbeitsstunde/i.test(p.text) && eh && !stunden) w.push("Stunden-Position mit Einheit „"+p.eh+"“ statt Std");
-  if(p.betragPdf!=null && p.menge!=null && p.preis!=null && Math.abs(p.betragPdf-Math.round((+p.menge)*(+p.preis)*100)/100)>0.05)
-    w.push("Betrag im PDF ("+geld(p.betragPdf)+" €) ist nicht Menge × Preis ("+geld(Math.round((+p.menge)*(+p.preis)*100)/100)+" €)");
+  if(p.betragPdf!=null && p.menge!=null && p.preis!=null && Math.abs(p.betragPdf-posBetrag(p))>0.05)
+    w.push("Betrag im PDF ("+geld(p.betragPdf)+" €) ist nicht Menge × Preis ("+geld(posBetrag(p))+" €)");
   return w;
 }
 function positionenPruefen(positionen){
@@ -28003,6 +28029,9 @@ function pruefHinweisBox(positionen, wofuer){
 function katalogTextOhneMenge(text){
   return String(text||"")
     .replace(/\(\s*\d+(?:[,.]\d+)?\s*(?:mann|monteure?|techniker|personen|pers\.)\s*(?:a|à|á|je|x|zu|mal)\s*\d+(?:[,.]\d+)?\s*(?:std\.?|stunden|h)\s*\)/gi, "")
+    /* dasselbe ohne Klammer („Zuschlag Samstag 3 Mann a 10 Std“) und „(2 x 3 h)“ */
+    .replace(/\s*\d+(?:[,.]\d+)?\s*(?:mann|monteure?|techniker|personen|pers\.)\s*(?:a|à|á|je|x|zu|mal)\s*\d+(?:[,.]\d+)?\s*(?:std\.?|stunden|h)(?![a-zäöü])/gi, "")
+    .replace(/\(\s*\d+(?:[,.]\d+)?\s*(?:x|×|mal)\s*\d+(?:[,.]\d+)?\s*(?:std\.?|stunden|h)\s*\)/gi, "")
     .replace(/\(\s*(?:ca\.?\s*)?\d+(?:[,.]\d+)?\s*(?:std\.?|stunden|h)\s*\)/gi, "")
     .replace(/[ \t]+\n/g, "\n").replace(/[ \t]{2,}/g, " ").trim();
 }
@@ -28054,15 +28083,27 @@ function belegeKarte(p){
 /* ziel: ein Projekt ODER ein Kontext {projekt, protokoll, kunde_id, standort_id} (KPlus-Rechnung zu einem Einsatz,
    Büro 05.10.2026: „statt die Rechnung zu schreiben das KPlus-PDF hochladen, das der Chef geschrieben hat – damit die
    App das Rechnungschreiben lernt“). datei: das Original-PDF (wird beim Beleg abgelegt). */
+var KPLUS_GUTSCHRIFT="Das ist eine KPlus-Gutschrift – Gutschriften legt die App (noch) nicht als Beleg ab, sie bleiben in KPlus.";
 function kplusVorschau(ziel, erg, fertig, datei){
+  /* eine Gutschrift nie als Angebot oder Rechnung ablegen (früher wurde sie still zum „angenommenen Angebot“) */
+  if(erg.art==="gutschrift"){ toast(KPLUS_GUTSCHRIFT); return; }
   var kx=("protokoll" in ziel) ? ziel : kontextProjekt(ziel), p=kx.projekt, pk=kx.protokoll;
   var v=ansichtOeffnen("KPlus "+(erg.art==="rechnung"?"Rechnung":"Angebot")+" "+erg.nummer, null, pk?{breit:true}:null);
   var pos=erg.positionen.filter(function(x){ return x.typ==="pos"; });
-  var su=belegSummen(erg.positionen), passt=erg.summenPdf.netto==null || Math.abs(su.netto-erg.summenPdf.netto)<0.05;
+  /* ohne gelesene Netto-Summe gibt es nichts zu vergleichen – dann nie „stimmt“ */
+  var su=belegSummen(erg.positionen), ohneSumme=erg.summenPdf.netto==null, passt=!ohneSumme && Math.abs(su.netto-erg.summenPdf.netto)<0.05;
   v.schritt.textContent=dfmt(erg.datum)+" · "+pos.length+" Positionen · "+kontextTitel(kx);
+  /* Nummer im PDF nicht erkannt (anderes Layout): erst eintragen – ohne Nummer überschrieb die nächste solche Rechnung still die erste */
+  var nrFeld=null;
+  if(!String(erg.nummer||"").trim()){
+    var nk=el('<div class="note warnbox" style="font-size:13px"><strong>Nummer im PDF nicht erkannt</strong> – bitte aus dem PDF eintragen:'+
+      '<input type="text" inputmode="numeric" data-nummer placeholder="z. B. 419886" aria-label="Nummer" style="display:block;margin-top:6px;max-width:200px"></div>');
+    nrFeld=nk.querySelector("[data-nummer]"); v.inhalt.appendChild(nk);
+  }
   v.inhalt.appendChild(el('<div class="note'+(passt?"":" warnbox")+'" style="font-size:13px">'+
-    "Netto laut PDF <strong>"+geld(erg.summenPdf.netto)+" €</strong>, nachgerechnet <strong>"+geld(su.netto)+" €</strong> – "+
-    (passt?"stimmt.":"weicht ab, bitte die Positionen prüfen.")+
+    (ohneSumme ? "Netto-Summe im PDF <strong>nicht erkannt</strong>, nachgerechnet <strong>"+geld(su.netto)+" €</strong> – bitte die Positionen mit dem PDF vergleichen."
+      : "Netto laut PDF <strong>"+geld(erg.summenPdf.netto)+" €</strong>, nachgerechnet <strong>"+geld(su.netto)+" €</strong> – "+
+        (passt?"stimmt.":"weicht ab, bitte die Positionen prüfen."))+
     ((erg.kopf.betreff||[]).length?"<br>"+esc(erg.kopf.betreff.join(" · ")):"")+
     (erg.kopf.leistungszeitraum?"<br>Leistungszeitraum: "+esc(erg.kopf.leistungszeitraum):"")+"</div>"));
   var hinweis=pruefHinweisBox(erg.positionen, "im KPlus-PDF"); if(hinweis) v.inhalt.appendChild(hinweis);
@@ -28075,6 +28116,9 @@ function kplusVorschau(ziel, erg, fertig, datei){
   ab.onclick=function(){ v.zu(); };
   v.fuss.appendChild(kat); v.fuss.appendChild(ab); v.fuss.appendChild(ok);
   ok.onclick=function(){
+    if(nrFeld){ var nn=nrFeld.value.trim();
+      if(!nn){ toast("Bitte die "+(erg.art==="rechnung"?"Rechnungsnummer":"Angebotsnummer")+" aus dem PDF eintragen – sie wurde nicht erkannt."); nrFeld.focus(); return; }
+      erg.nummer=nn; }
     ok.disabled=true; ok.textContent="wird abgelegt …";
     var bestehend=p ? (BELEGE_JE_PROJEKT[p.id]||[]) : [];
     var angebot=erg.art==="rechnung" ? bestehend.filter(function(b){ return b.art==="angebot"; })[0] : null;
@@ -28082,28 +28126,53 @@ function kplusVorschau(ziel, erg, fertig, datei){
     var zeile={projekt_id:p?p.id:null, protokoll_id:pk?pk._id:null, kunde_id:kx.kunde_id||"lidl", standort_id:kx.standort_id||null, art:erg.art, nummer:erg.nummer, test:false, extern:true,
       datum:erg.datum||isoLokal(new Date()), status:erg.art==="rechnung"?"versendet":"angenommen",
       bezug_id:angebot?angebot.id:null, kopf:kopf, positionen:erg.positionen, summen:belegSummen(erg.positionen), geaendert_von:meinName()};
-    var beleg=null;
-    Store.sb.from("belege").upsert(zeile, {onConflict:"art,nummer"}).select("*").then(function(r){
+    var beleg=null, abgFehler=null, katFehler=null;
+    var kurz=function(e){ var m=String((e&&e.message)||e||""); return /fetch|network|load failed/i.test(m) ? "keine Verbindung" : m; };
+    /* dieselbe Nummer liegt schon an einem Projekt bzw. Einsatz: nur leere Bezüge füllen (früher verlor das Projekt sie still);
+       an einem ANDEREN Projekt bzw. Einsatz nur nach Rückfrage umhängen */
+    Store.sb.from("belege").select("*").eq("art", erg.art).eq("nummer", erg.nummer).then(function(r0){
+      if(r0.error) throw new Error(r0.error.message);
+      var alt=(r0.data||[])[0];
+      if(alt){
+        var ak=belegKontext(alt), wo=ak.projekt||ak.protokoll ? kontextTitel(ak) : alt.protokoll_id ? "einem anderen Einsatz" : "einem anderen Projekt";
+        if(((pk && alt.protokoll_id && alt.protokoll_id!==pk._id) || (p && alt.projekt_id && alt.projekt_id!==p.id)) &&
+          !window.confirm("KPlus-"+(erg.art==="rechnung"?"Rechnung ":"Angebot ")+erg.nummer+" liegt schon bei: "+wo+".\n\nHierher umhängen? Dort fehlt sie danach.")) throw {abbruch:true};
+        if(!p) zeile.projekt_id=alt.projekt_id||null;
+        if(!pk) zeile.protokoll_id=alt.protokoll_id||null;
+        if(!zeile.bezug_id) zeile.bezug_id=alt.bezug_id||null;
+      }
+      return Store.sb.from("belege").upsert(zeile, {onConflict:"art,nummer"}).select("*");
+    }).then(function(r){
       if(r.error) throw new Error(r.error.message);
       beleg=(r.data||[])[0]||null;
       /* das Original-PDF zum Beleg (nur Inhaber, Büro-Ordner) – ein Fehler hier hält das Ablegen nicht auf */
       var pdf=datei && beleg ? belegPdfAblegen(beleg, kx, datei).catch(function(e){ toast("PDF nicht abgelegt: "+e.message); }) : null;
-      /* Einsatz mit KPlus-Rechnung gilt als abgerechnet */
+      /* Einsatz mit KPlus-Rechnung gilt als abgerechnet – scheitert der Vermerk, sagt es die Meldung (früher hieß es trotzdem „vermerkt“) */
       var abg=pk && erg.art==="rechnung" ? Store.sb.from("abrechnung").upsert({protokoll_id:pk._id, abgerechnet:new Date().toISOString(), von:meinName(), notiz:"KPlus-Rechnung "+erg.nummer},{onConflict:"protokoll_id"})
-        .then(function(){ return abrechnungLaden(); }, function(){}) : null;
-      return Promise.all([pdf, abg]).then(function(){ return kat.querySelector("input").checked ? katalogUebernehmen(erg) : 0; });
+        .then(function(r){ if(r && r.error){ abgFehler=kurz(r.error); return; } return Promise.resolve(abrechnungLaden()).catch(function(){}); }, function(e){ abgFehler=kurz(e); }) : null;
+      /* der Katalog zuletzt: scheitert nur er, ist der Beleg trotzdem abgelegt (früher „Nicht abgelegt – nichts gespeichert“) */
+      return Promise.all([pdf, abg]).then(function(){ return kat.querySelector("input").checked ? katalogUebernehmen(erg).catch(function(e){ katFehler=kurz(e); return 0; }) : 0; });
     }).then(function(n){
-      v.zu(); toast((erg.art==="rechnung"?"Rechnung ":"Angebot ")+erg.nummer+" abgelegt"+(pk&&erg.art==="rechnung"?", Einsatz als abgerechnet vermerkt":"")+(n?" – "+n+" neue Position"+(n===1?"":"en")+" im Katalog":"")+".");
+      v.zu(); toast((erg.art==="rechnung"?"Rechnung ":"Angebot ")+erg.nummer+" abgelegt"+
+        (pk&&erg.art==="rechnung" ? (abgFehler ? " – der Einsatz ist aber NICHT als abgerechnet vermerkt (nicht gespeichert: "+abgFehler+"). Bitte die KPlus-Rechnung nochmals hochladen" : ", Einsatz als abgerechnet vermerkt") : "")+
+        (katFehler ? " – Katalog nicht ergänzt ("+katFehler+")" : n ? " – "+n+" neue Position"+(n===1?"":"en")+" im Katalog" : "")+".");
       fertig();
-    }).catch(function(e){ ok.disabled=false; ok.textContent=pk?"Beim Einsatz ablegen":"Am Projekt ablegen"; toast("Nicht abgelegt: "+e.message); });
+    }).catch(function(e){ ok.disabled=false; ok.textContent=pk?"Beim Einsatz ablegen":"Am Projekt ablegen";
+      toast(e && e.abbruch ? "Nicht abgelegt – "+erg.nummer+" bleibt, wo sie war." : "Nicht abgelegt: "+e.message); });
   };
 }
 /* KPlus-Rechnung gegen den Vorschlag der App (einsatzPositionen): was fehlte, was zu viel war, wo Menge/Preis abweichen */
 function einsatzVergleich(pk, kid, erg){
   var app=einsatzPositionen(pk, kid).filter(function(x){ return x.typ==="pos"; }), kp=erg.positionen.filter(function(x){ return x.typ==="pos" && !x.alternativ; });
   var norm=function(x){ return suchNorm(katalogTextOhneMenge(String(x.text||"").split("\n")[0])).slice(0,40); };
+  /* Wörter einzeln (suchNorm schreibt sie zusammen – „Wartung (JW): VRV Anlage“ → ein Wort –, dann griff die Regel nie) */
+  var woerter=function(x){ return katalogTextOhneMenge(String(x.text||"").split("\n")[0]).toLowerCase().replace(/ß/g,"ss").replace(/ä/g,"ae").replace(/ö/g,"oe").replace(/ü/g,"ue")
+    .split(/[^a-z0-9]+/).filter(Boolean); };
   var aehnlich=function(a, b){ var na=norm(a), nb=norm(b); if(!na || !nb) return false; if(na===nb) return true;
-    var wa=na.split(" ").filter(function(w){ return w.length>=5; }); return wa.length && wa.filter(function(w){ return nb.indexOf(w)>=0; }).length>=Math.min(2, wa.length); };
+    var wa=woerter(a).filter(function(w){ return w.length>=5; }), tb=woerter(b).join(" ");
+    if(wa.length && wa.filter(function(w){ return tb.indexOf(w)>=0; }).length>=Math.min(2, wa.length)) return true;
+    /* Wartung je Anlage: die App schreibt „Wartung (JW): Anlage“, KPlus etwa „Jahreswartung … lt. FB035“ – bei gleicher Einheit dieselbe Position */
+    return /wartung/.test(tb) && /wartung/.test(woerter(a).join(" ")) && String(a.eh||"").toLowerCase()===String(b.eh||"").toLowerCase(); };
   var frei=app.slice(), zeilen=[];
   kp.forEach(function(k){
     var i=-1; frei.some(function(a, j){ if(aehnlich(a, k)){ i=j; return true; } return false; });
@@ -28174,9 +28243,14 @@ function katalogLernen(positionen, quelle, opt){
       /* Mengen eines einzelnen Auftrags („(3 Mann a 10 Std)“, „(3 h)“) nicht in den allgemeinen Katalogtext */
       var text=katalogTextOhneMenge(String(x.text||"").replace(/\s*–\s*Preis fehlt im Katalog\s*$/,"").trim());
       if(x.typ!=="pos" || !text || !(+x.preis>0)) return;
-      /* auffällige Position (Einheit passt nicht, Betrag ≠ Menge × Preis): nicht lernen, bis sie geklärt ist */
-      if(positionPruefen(x).some(function(t){ return /Einheit|Betrag/.test(t); })){ unklar++; return; }
-      var k=katalogSchluessel(text,x.eh), alt=da[k];
+      /* Wartung/Regiestunden aus einem Einsatz (einsatzPositionen, Merker einsatz): der Text trägt Uhrzeit bzw. Anlage und
+         Protokolldatum – nie als neue Katalogposition (sonst trug jeder spätere Wartungsvorschlag das Datum eines alten Protokolls) */
+      if(x.einsatz) return;
+      /* auffällige Position (Text nennt eine andere Menge, Einheit passt nicht, Betrag ≠ Menge × Preis): weder neu
+         aufnehmen noch den Preis ändern, bis sie geklärt ist – „(3 h)“ bei Menge 1 setzte sonst 236,43 €/Std in den Katalog */
+      if(positionPruefen(x).length){ unklar++; return; }
+      /* ohne Einheit wird mit „Stk“ gespeichert – derselbe Schlüssel, sonst kam die Position bei jedem Speichern neu dazu */
+      var k=katalogSchluessel(text,x.eh||"Stk"), alt=da[k];
       if(alt){ if(opt.preiseAktualisieren && alt.id && Math.abs((+alt.preis||0)-(+x.preis))>=0.005) preisNeu.push({k:alt, preis:+x.preis}); return; }
       /* „FB035/Pos.38“, „FB035/Pos 21“, „FB 035, Pos. 9.1“ – Lidl-Rahmenvertrag */
       var fb=/FB\s*0?35\s*[\/,]?\s*Pos\.?\s*(\d+(?:\.\d+)?)/i.exec(text);
@@ -28196,7 +28270,7 @@ function katalogLernen(positionen, quelle, opt){
 function katalogUebernehmen(erg){
   return katalogLernen(erg.positionen, "KPlus "+(erg.art==="rechnung"?"Rechnung ":"Angebot ")+erg.nummer, {preiseAktualisieren:true}).then(function(x){
     if(x.preise) setTimeout(function(){ toast(x.preise+" Katalog-Preis"+(x.preise===1?"":"e")+" nach KPlus aktualisiert (der alte Preis steht bei der Herkunft)."); }, 2500);
-    if(x.unklar) setTimeout(function(){ toast(x.unklar+" auffällige Position"+(x.unklar===1?"":"en")+" nicht in den Katalog übernommen – erst klären (Einheit bzw. Betrag)."); }, 5000);
+    if(x.unklar) setTimeout(function(){ toast(x.unklar+" auffällige Position"+(x.unklar===1?"":"en")+" nicht in den Katalog übernommen – erst klären (Menge, Einheit bzw. Betrag)."); }, 5000);
     return x.neu;
   });
 }
@@ -28217,7 +28291,7 @@ function belegTabelle(pos, vergleich, druck){
   (pos||[]).forEach(function(x){
     if(x.typ==="gruppe"){ t+='<tr><td colspan="'+(vergleich?7:6)+'" style="font-weight:700;padding-top:8px">'+esc(x.text)+"</td></tr>"; return; }
     if(x.typ==="text"){ t+='<tr><td></td><td colspan="'+(vergleich?6:5)+'" style="font-style:italic">'+esc(x.text).replace(/\n/g,"<br>")+"</td></tr>"; return; }
-    var b=Math.round((+x.menge||0)*(+x.preis||0)*100)/100, a=vgl[x.nr];
+    var b=posBetrag(x), a=vgl[x.nr];
     var anders=a && Math.abs((+a.menge||0)-(+x.menge||0))>0.0001;
     t+="<tr"+(x.alternativ?' style="color:var(--muted,#777)"':"")+"><td>"+esc(x.nr||"")+'</td><td style="text-align:right">'+esc(geld(x.menge))+"</td><td>"+esc(x.eh||"")+"</td><td>"+
       esc(x.text||"").replace(/\n/g,"<br>")+'</td><td style="text-align:right">'+(x.preis!=null?geld(x.preis):"")+'</td><td style="text-align:right">'+(x.alternativ?"<em>Alternativ</em>":geld(b))+"</td>"+
@@ -28257,17 +28331,20 @@ function belegAnsicht(kx, b, fertig){
     if(!b.extern){
       var stx=el('<div class="rowflex" style="gap:8px;flex-wrap:wrap;margin-top:10px"><span class="muted" style="font-size:12.5px">Stand:</span></div>');
       var setz=function(neu){
+        /* alle Chips bis zur Antwort sperren – ein Doppeltipp öffnete den Beleg sonst zweimal */
+        var chips=function(an){ stx.querySelectorAll("button").forEach(function(c){ c.disabled=!an; }); };
+        chips(false);
         var a={status:neu, geaendert:new Date().toISOString(), geaendert_von:meinName()}, heute=isoLokal(new Date());
         if(neu==="versendet"){ a.versendet=heute; if(b.art==="rechnung") a.faellig=isoLokal(new Date(Date.now()+(+belegText("zahlungTage")||21)*864e5)); }
         if(neu==="bezahlt") a.bezahlt=heute;
         Store.sb.from("belege").update(a).eq("id", b.id).select("*").then(function(r){
-          if(r.error){ toast(r.error.message); return; }
+          if(r.error){ chips(true); toast(r.error.message); return; }
           Object.assign(b, r.data[0]); toast("Stand: "+belegStatusText(b)+".");
           /* echte Rechnung zum Einsatz versendet: Protokoll als abgerechnet vermerken */
           if(neu==="versendet" && !b.test && b.art==="rechnung" && kx.protokoll && abrechnungAn())
             Store.sb.from("abrechnung").upsert({protokoll_id:kx.protokoll._id, abgerechnet:new Date().toISOString(), von:meinName(), notiz:"Rechnung "+b.nummer},{onConflict:"protokoll_id"}).then(function(){ abrechnungLaden(); });
           v.zu(); fertig(); belegAnsicht(kx, b, fertig);
-        });
+        }, function(e){ chips(true); toast("Nicht gespeichert: "+((e&&e.message)||e)); });
       };
       (b.art==="rechnung" ? [["versendet","versendet"],["bezahlt","bezahlt"],["storniert","storniert"],["entwurf","zurück auf Entwurf"]]
                           : [["versendet","versendet"],["angenommen","angenommen"],["abgelehnt","abgelehnt"],["entwurf","zurück auf Entwurf"]]).forEach(function(s){
@@ -28292,11 +28369,14 @@ function belegAnsicht(kx, b, fertig){
     knoepfe.forEach(function(x){ var bt=el('<button class="btn'+(x[2]?' ghost" style="color:var(--crit);border-color:var(--crit)':' ghost')+'" type="button">'+esc(x[0])+"</button>"); bt.onclick=x[1]; v.fuss.appendChild(bt); });
   });
 }
-/* PDF zeigen (KPlus-Beleg: das abgelegte Original, sonst frisch erzeugt) */
+/* PDF zeigen – KPlus-Beleg: das abgelegte Original (pdf_pfad, sonst die KPlus-Datei am Projekt); ohne Original nie ein
+   App-PDF mit Briefkopf (sah aus wie eine echte eigene Rechnung, ohne TEST). Eigene Belege: frisch erzeugt. */
 function belegPdfZeigen(kx, b){
   if(b.extern){
+    if(b.pdf_pfad){ projektDateiOeffnen(b.pdf_pfad, (b.art==="rechnung"?"Rechnung_":"Angebot_")+b.nummer+".pdf"); return; }
     var d=kx.projekt && ((kx.projekt.daten||{}).dateien||[]).filter(function(f){ return /^\d{6}\.pdf$/i.test(f.name||"") && f.name.indexOf(b.nummer)===0; })[0];
     if(d){ projektDateiOeffnen(d.pfad, d.name); return; }
+    toast("Das Original-PDF dieses KPlus-Belegs liegt nicht in der App – bitte in KPlus öffnen."); return;
   }
   toast("PDF wird erstellt …");
   belegPdfErzeugen(b, kx).then(function(blob){
@@ -28365,6 +28445,12 @@ function fahrtZone(s){
   if(plz>=6000 && plz<6700) return s.lon!=null ? (+s.lon<FAHRT_TIROL_LON ? 2 : 1) : null;   /* Nordtirol */
   return 1;
 }
+/* Warum die Zone unbekannt ist – für den Hinweis in der Fahrtpauschale-Zeile (die Regel selbst steht nur in fahrtZone) */
+function fahrtZoneFehltText(s){
+  if(!s) return "kein Markt";
+  var m=String(s.plz||"").match(/\d{4}/) || String(s.adresse||"").match(/\b\d{4}\b/), plz=m ? +m[0] : 0;
+  return plz>=6000 && plz<6700 ? "Lage des Markts in Tirol fehlt" : "Markt ohne Postleitzahl";
+}
 /* Rechnung zu einem Einsatz: Positionen aus dem Protokoll vorschlagen – Wartung
    je Anlage, Störung mit Regiestunden (Ankunft bis Fertig × Monteure), Material,
    Kältemittel; Preise aus dem Katalog, wo eine passende Position steht. */
@@ -28378,7 +28464,7 @@ function einsatzPositionen(pk, kid){
     (pk.anlagen||[]).forEach(function(a){
       var kat=katalogFinde(/wartung/i, kid);
       nr++; pos.push({typ:"pos", nr:String(nr), menge:1, eh:"Stk", text:"Wartung"+(a.termin?" ("+a.termin+")":"")+": "+(a.name||"Anlage")+"\nlt. Wartungsprotokoll vom "+dfmt(pk.datum)+(kat?"\n"+katalogTextOhneMenge(kat.text):""),
-        preis:kat?+kat.preis:0, katalog_id:kat?kat.id:null, alternativ:false});
+        preis:kat?+kat.preis:0, katalog_id:kat?kat.id:null, alternativ:false, einsatz:true});
     });
   } else {
     pos.push({typ:"text", text:"Störungsbehebung"+(pk.auftragsnummer?" lt. Auftrag "+pk.auftragsnummer:"")+(so.problemtyp?": "+so.problemtyp:"")+
@@ -28389,15 +28475,22 @@ function einsatzPositionen(pk, kid){
       var std=Math.round(((e0<b0?e0+1440:e0)-b0)/60*mann*4)/4;
       var rk=katalogFinde(/regiestunden/i, kid), zeit=so.ankunft+"–"+so.ende+(mann>1?", "+mann+" Mann":"");
       add(std, "Std", "Regiestunden Techniker ("+zeit+")", rk, rk ? "Einsatz "+zeit : "");
+      pos[pos.length-1].einsatz=true;
     }
-    (so.material||[]).forEach(function(m){ add(zahlLesen(m.menge)===zahlLesen(m.menge) && zahlLesen(m.menge)!=null ? zahlLesen(m.menge) : 1, "Stk", m.text, null); });
+    /* Menge aus dem Protokoll samt Einheit („2 Stk“, „3 m“, „0,5 Rolle“ – früher wurde daraus still 1 Stk);
+       nicht lesbar: 1 Stk mit sichtbarem Hinweis im Text */
+    (so.material||[]).forEach(function(m){
+      var t=String(m.menge==null?"":m.menge).trim(), mm=/^(\d+(?:[.,]\d+)?)\s*([^\d\s]\S*)?$/.exec(t), n=mm ? zahlLesen(mm[1]) : null;
+      if(n!=null && n===n) add(n, mm[2]||"Stk", m.text, null);
+      else add(1, "Stk", m.text+(t ? "\nMenge laut Protokoll: „"+t+"“ – bitte prüfen" : ""), null);
+    });
   }
   var km=stoer ? {art:so.kmArt, nach:zahlLesen(so.kmNach)} : (pk.kaeltemittel||{});
   if(km && +km.nach>0) add(+km.nach, "kg", "Kältemittel "+(km.art||""), katalogFinde(new RegExp("k(ä|ae)ltemittel\\s*"+String(km.art||"").replace(/[^A-Za-z0-9]/g,"").replace(/^R/i,"R\\s*")+"\\b","i"), kid));
   /* Fahrtpauschale der Zone des Markts – fehlt sie im Katalog, steht die Zeile ohne Preis da */
   var zone=fahrtZone(byId[pk.standortId]), fk=zone ? katalogFinde(new RegExp("fahrtpauschale\\s*zone\\s*"+zone, "i"), kid) : null;
   if(fk) add(1, "psh", "", fk);
-  else add(1, "psh", zone ? "Fahrtpauschale Zone "+zone+" – Preis fehlt im Katalog" : "Fahrtpauschale – Zone unbekannt (Markt ohne Postleitzahl), bitte Zone 1 oder 2 wählen", null);
+  else add(1, "psh", zone ? "Fahrtpauschale Zone "+zone+" – Preis fehlt im Katalog" : "Fahrtpauschale – Zone unbekannt ("+fahrtZoneFehltText(byId[pk.standortId])+"), bitte Zone 1 oder 2 wählen", null);
   return pos;
 }
 /* neuer Beleg – leer, aus einem Angebot (Mengen aus dem Baustellenbuch) oder zu einem Einsatz (Protokoll) */
@@ -28471,6 +28564,9 @@ function belegEditor(kx, b, fertig, vorschlaege){
   var v=ansichtOeffnen(titel, null, {breit:true});
   v.schritt.textContent=(b.test?"TEST – keine gültige "+(b.art==="rechnung"?"Rechnung":"Angebot")+" (KPlus führt) · ":"")+kontextTitel(kx);
   var kopf=JSON.parse(JSON.stringify(b.kopf||{})), pos=JSON.parse(JSON.stringify(b.positionen||[]));
+  /* Baustellenbuch-Vorschläge hängen an der Position selbst, nicht an der Zeilennummer – sonst rutschen sie nach
+     Löschen, Verschieben oder Kopieren auf eine andere Zeile (ein Tipp setzte dann z. B. die Fahrtpauschale auf 5) */
+  var vsVon=new Map(); Object.keys(vorschlaege||{}).forEach(function(i){ if(pos[i]) vsVon.set(pos[i], vorschlaege[i]); });
   var feld=function(label, k, wert, typ, breit){ return '<label class="fl"'+(breit?' style="grid-column:1/-1"':"")+"><span>"+esc(label)+"</span>"+
     (typ==="lang" ? '<textarea data-k="'+k+'" data-wachsen rows="3">'+esc(wert||"")+"</textarea>" : '<input type="'+(typ||"text")+'" data-k="'+k+'" value="'+esc(wert||"")+'">')+"</label>"; };
   var raster='style="display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:10px"';
@@ -28517,7 +28613,7 @@ function belegEditor(kx, b, fertig, vorschlaege){
           '<span class="rowflex" style="gap:4px;flex-wrap:nowrap">'+akt+'<button class="btn ghost sm" type="button" data-weg title="entfernen">✕</button></span></div>');
         var tg=z.querySelector("textarea"); tg.oninput=function(){ x.text=this.value; feldHoehe(this); };
       } else {
-        var vs=vorschlaege&&vorschlaege[i];
+        var vs=vsVon.get(x);
         z=el('<div class="bpos'+(x.alternativ?" alt":"")+'">'+
           '<input type="text" data-f="nr" value="'+esc(x.nr||"")+'" aria-label="Position">'+
           '<input type="text" inputmode="decimal" data-f="menge" value="'+esc(x.menge!=null?geld(x.menge):"")+'" aria-label="Menge">'+
@@ -28529,7 +28625,7 @@ function belegEditor(kx, b, fertig, vorschlaege){
             akt+'<button class="btn ghost sm" type="button" data-kopie title="Zeile kopieren">⧉</button><button class="btn ghost sm" type="button" data-weg title="entfernen">✕</button></div>'+
           (vs?'<div class="vs"><a href="#" class="sprunglink" data-vs>Baustellenbuch: '+esc(geld(vs.menge))+" übernehmen</a> <span class=\"muted\">("+esc(vs.text.slice(0,120))+")</span></div>":"")+
         "</div>");
-        var betrag=function(){ z.querySelector("[data-betrag]").textContent=x.alternativ?"Alternativ":geld((+x.menge||0)*(+x.preis||0)); rechnen(); };
+        var betrag=function(){ z.querySelector("[data-betrag]").textContent=x.alternativ?"Alternativ":geld(posBetrag(x)); rechnen(); };
         z.querySelectorAll("[data-f]").forEach(function(inp){
           inp.oninput=inp.onchange=function(){
             var f=inp.dataset.f;
@@ -28539,7 +28635,7 @@ function belegEditor(kx, b, fertig, vorschlaege){
             betrag();
           };
         });
-        var vsl=z.querySelector("[data-vs]"); if(vsl) tippe(vsl, function(){ x.menge=vs.menge; delete vorschlaege[i]; zeichnen(); });
+        var vsl=z.querySelector("[data-vs]"); if(vsl) tippe(vsl, function(){ x.menge=vs.menge; vsVon.delete(x); zeichnen(); });
         z.querySelector("[data-kopie]").onclick=function(){ var k=JSON.parse(JSON.stringify(x)); pos.splice(i+1,0,k); zeichnen(); };
         betrag();
       }
@@ -28595,6 +28691,9 @@ function belegEditor(kx, b, fertig, vorschlaege){
     ok.disabled=true;
     (b.id ? Store.sb.from("belege").update(zeile).eq("id", b.id).select("*") : Store.sb.from("belege").insert(zeile).select("*")).then(function(r){
       if(r.error) throw new Error(r.error.message);
+      /* inzwischen gelöscht (anderes Gerät): die Datenbank liefert keine Zeile – Editor mit den Eingaben offen lassen,
+         erst nach geprüfter Antwort „gespeichert“ melden */
+      if(!(r.data||[]).length) throw new Error("der Beleg wurde inzwischen gelöscht (anderes Gerät?) – die Eingaben bleiben im Fenster");
       v.zu(); toast(titel+" gespeichert."); fertig();
       belegAnsicht(kx, r.data[0], fertig);
       katalogLernen(zeile.positionen, (zeile.test?"Test-":"")+(zeile.art==="rechnung"?"Rechnung ":"Angebot ")+(zeile.nummer||""), {kundeId:zeile.kunde_id||null})
@@ -28638,16 +28737,18 @@ function katalogAnsicht(){
     '<select data-n="kunde"><option value="">für alle Kunden</option><option value="lidl">nur Lidl</option></select>'+
     '<button class="btn sm" type="button" data-n="ok">Anlegen</button></div></div></details>');
   neuK.querySelector('[data-n="ok"]').onclick=function(){
-    var g=function(n){ return neuK.querySelector('[data-n="'+n+'"]').value.trim(); };
+    var knopf=this, g=function(n){ return neuK.querySelector('[data-n="'+n+'"]').value.trim(); };
     var text=g("text"), pr=geldLesen(g("preis"));
     if(!text){ toast("Bitte den Text der Position eintragen."); return; }
-    if(pr!==pr || !(pr>=0)){ toast("Preis bitte als Zahl (z. B. 447,30)."); return; }
+    if(pr==null || pr!==pr || pr<0){ toast("Preis bitte als Zahl (z. B. 447,30)."); return; }
     if(KATALOG.some(function(k){ return katalogSchluessel(k.text,k.eh)===katalogSchluessel(text, g("eh")||"Stk"); })){ toast("Diese Position steht schon im Katalog – dort den Preis ändern."); return; }
     var z={text:text, eh:g("eh")||"Stk", preis:pr, quelle:"von Hand ("+meinName()+")", kunde_id:g("kunde")||null, geaendert_von:meinName()};
+    knopf.disabled=true;   /* bis zur Antwort gesperrt – ein Doppelklick legte die Position sonst zweimal an */
     Store.sb.from("katalog").insert(z).select("*").then(function(r){
+      knopf.disabled=false;
       if(r.error || !(r.data||[]).length){ toast("Nicht angelegt: "+((r.error&&r.error.message)||"keine Berechtigung")); return; }
       KATALOG=KATALOG.concat(r.data); neuK.open=false; neuK.querySelectorAll("textarea,input[data-n=preis]").forEach(function(i){ i.value=""; });
-      toast("Position angelegt."); q.value=text.slice(0,20); zeichnen(); }, function(){ toast("Keine Verbindung."); });
+      toast("Position angelegt."); q.value=text.slice(0,20); zeichnen(); }, function(){ knopf.disabled=false; toast("Keine Verbindung."); });
   };
   v.inhalt.appendChild(neuK); v.inhalt.appendChild(q); v.inhalt.appendChild(l);
   /* Katalog prüfen (Büro 05.10.2026): Mengen eines alten Auftrags im Text („(3 h)“, „3 Mann a 10 Std“) landen sonst in
@@ -28679,8 +28780,11 @@ function katalogAnsicht(){
       var schreib=function(felder){ felder.geaendert=new Date().toISOString(); felder.geaendert_von=meinName();
         Store.sb.from("katalog").update(felder).eq("id",k.id).then(function(r){ if(r.error){ toast(r.error.message); return; } Object.assign(k, felder); toast("Gespeichert."); zeichnen(); }); };
       z.querySelector("[data-sp]").onclick=function(){
-        var pr=geldLesen(z.querySelector("[data-preis]").value); if(pr!==pr){ toast("Preis bitte als Zahl."); return; }
-        schreib({text:z.querySelector("textarea").value.trim(), eh:z.querySelector("[data-eh]").value.trim()||"Stk", preis:pr});
+        /* wie „+ Neue Position“: Text und Preis müssen da sein (leer wurde still „ohne Preis“ gespeichert; leeren Text lehnt die Datenbank ab) */
+        var text=z.querySelector("textarea").value.trim(), pr=geldLesen(z.querySelector("[data-preis]").value);
+        if(!text){ toast("Bitte den Text der Position eintragen."); return; }
+        if(pr==null || pr!==pr || pr<0){ toast("Preis bitte als Zahl (z. B. 447,30)."); return; }
+        schreib({text:text, eh:z.querySelector("[data-eh]").value.trim()||"Stk", preis:pr});
       };
       z.querySelector("[data-aus]").onclick=function(){ schreib({aktiv:k.aktiv===false}); };
       var oh=z.querySelector("[data-ohne]");
@@ -28688,6 +28792,7 @@ function katalogAnsicht(){
         schreib({text:ohne, quelle:((k.quelle||"")+" · Menge aus dem Text entfernt").slice(0,300)}); };
       l.appendChild(z);
     });
+    if(t.length>150) l.appendChild(el('<div class="muted" style="font-size:12.5px">… und '+(t.length-150)+" weitere – bitte die Suche eingrenzen.</div>"));
   };
   q.oninput=zeichnen;
   katalogLaden().then(zeichnen, function(e){ l.appendChild(el('<div class="note warnbox">'+esc(e.message)+"</div>")); });
@@ -28744,13 +28849,17 @@ function viewBelege(){
       return '<button class="chip" type="button" data-f="'+x[0]+'" aria-pressed="'+(S.blFilter===x[0])+'">'+esc(x[1])+(n?" · "+n:"")+"</button>"; }).join("");
     chips.querySelectorAll("[data-f]").forEach(function(b){ b.onclick=function(){ S.blFilter=b.dataset.f; zeichnen(); }; });
     var q=suchNorm(S.blQ);
+    /* Kontext je Beleg nur einmal je Zeichnen, die Protokolle einmal nach _id */
+    var pkNach={}, kxVon={};
+    alleProtokolle(true).forEach(function(p){ if(!(p._id in pkNach)) pkNach[p._id]=p; });
+    var kontext=function(b){ return kxVon[b.id] || (kxVon[b.id]=belegKontext(b, pkNach)); };
     var l=BELEGE_ALLE.filter(function(b){ return passt(b, S.blFilter); }).filter(function(b){
-      var kx=belegKontext(b), st=kx.standort_id&&byId[kx.standort_id];
+      var kx=kontext(b), st=kx.standort_id&&byId[kx.standort_id];
       return !q || suchNorm([b.nummer, ((b.kopf||{}).betreff||[]).join(" "), (b.kopf||{}).bestellung, st?stName(st):"", kontextTitel(kx)].join(" ")).indexOf(q)>=0; });
     liste.innerHTML="";
     if(!l.length){ liste.appendChild(el('<div class="muted" style="font-size:12.5px">Nichts in dieser Auswahl.</div>')); return; }
     l.forEach(function(b){
-      var kx=belegKontext(b), s=b.summen||{};
+      var kx=kontext(b), s=b.summen||{};
       var z=el('<div class="card" style="box-shadow:none;margin:0;cursor:pointer" role="button" tabindex="0"><div class="pad" style="padding:10px 12px">'+
         '<div class="rowflex" style="justify-content:space-between;gap:8px"><strong>'+(b.art==="rechnung"?"Rechnung ":"Angebot ")+esc(b.nummer)+"</strong>"+
           '<span class="rowflex" style="gap:6px">'+(b.extern?'<span class="tag">KPlus</span>':b.test?'<span class="tag f30">TEST</span>':"")+
@@ -28802,6 +28911,7 @@ function einsatzBelegeZeile(pk){
     toast("KPlus-PDF wird gelesen …");
     Promise.all([f.arrayBuffer().then(function(buf){ return kplusLesen(new Uint8Array(buf)); }), katalogLaden().catch(function(){ return []; })]).then(function(x){
       var erg=x[0];
+      if(erg.art==="gutschrift"){ toast(KPLUS_GUTSCHRIFT); return; }
       if(erg.art!=="rechnung" && !window.confirm("Das ist ein KPlus-"+(erg.art==="angebot"?"Angebot":"Beleg")+", keine Rechnung. Trotzdem beim Einsatz ablegen?")) return;
       kplusVorschau(kontextProtokoll(pk), erg, laden, f);
     }, function(e){ toast("Nicht lesbar: "+(e&&e.message||e)); });
@@ -28817,7 +28927,12 @@ function einsatzWaehlen(nimm){
   var q=el('<input type="search" placeholder="Markt, Auftragsnummer, Datum …" style="width:100%">'), l=el('<div class="stack" style="gap:6px;margin-top:8px"></div>');
   var nurOffen=el('<label class="chk" style="margin-top:6px"><input type="checkbox" checked><span>nur ohne Rechnung</span></label>');
   v.inhalt.appendChild(q); v.inhalt.appendChild(nurOffen); v.inhalt.appendChild(l);
-  var mitBeleg={}; BELEGE_ALLE.forEach(function(b){ if(b.protokoll_id) mitBeleg[b.protokoll_id]=b.nummer; });
+  /* verrechnet ist ein Einsatz nur mit einer Rechnung (nicht storniert) – ein Angebot aus dem Folgeauftrag zählt nicht,
+     sonst verschwand die Wartung aus „nur ohne Rechnung“ und die Rechnung konnte vergessen werden */
+  var mitBeleg={}, nebenBeleg={};
+  BELEGE_ALLE.forEach(function(b){ if(!b.protokoll_id) return;
+    if(b.art==="rechnung" && b.status!=="storniert") mitBeleg[b.protokoll_id]=b.nummer;
+    else nebenBeleg[b.protokoll_id]=(b.art==="angebot"?"Angebot ":"Rechnung ")+b.nummer+(b.status==="storniert"?" storniert":""); });
   var zeichnen=function(){
     var s=suchNorm(q.value); l.innerHTML="";
     var t=alleProtokolle(false).filter(function(p){ return !p.geloescht && p._quelle!=="geraet"; })
@@ -28828,7 +28943,7 @@ function einsatzWaehlen(nimm){
     t.forEach(function(p){
       var z=el('<button class="btn ghost" type="button" style="text-align:left;display:block;width:100%;font-size:13px"><strong>'+esc(dfmt(p.datum))+" · "+esc(protoName(p))+"</strong>"+
         '<br><span class="muted">'+(istStoerung(p)?"Störung"+((p.stoerung||{}).problemtyp?" – "+esc(p.stoerung.problemtyp):""):"Wartung")+(p.auftragsnummer?" · Auftrag "+esc(p.auftragsnummer):"")+
-        (rapportVon(p)?" · 📎 Rapport":" · ohne Rapport")+(mitBeleg[p._id]?" · schon Rechnung "+esc(mitBeleg[p._id]):"")+"</span></button>");
+        (rapportVon(p)?" · 📎 Rapport":" · ohne Rapport")+(mitBeleg[p._id]?" · schon Rechnung "+esc(mitBeleg[p._id]):"")+(nebenBeleg[p._id]?" · "+esc(nebenBeleg[p._id]):"")+"</span></button>");
       z.onclick=function(){ v.zu(); nimm(p); };
       l.appendChild(z);
     });
@@ -28863,6 +28978,12 @@ function belegEinstellungen(fertig){
     v.inhalt.appendChild(form);
     var fk=fussKnoepfe(v, "Speichern"), ab=fk.ab, ok=fk.ok;
     ok.onclick=function(){
+      /* IBAN mit falscher Prüfziffer nicht speichern (wie bei den Reisekosten) – sonst fehlte der Bezahl-Code still und die
+         falsche IBAN stünde in jeder Rechnung */
+      var ibanFeld=form.querySelector('[data-e="firma.iban"]'), iban=ibanFeld.value.trim();
+      ibanFeld.removeAttribute("aria-invalid");
+      if(iban && !ibanGueltig(iban)){ ibanFeld.setAttribute("aria-invalid","true"); ibanFeld.focus();
+        toast("Die IBAN stimmt nicht (Prüfziffer) – bitte prüfen. Ohne gültige IBAN gibt es keinen Bezahl-Code auf den Rechnungen."); return; }
       var neu={modus:form.querySelector('input[name="bm"]:checked').value, firma:{}, kunden:{lidl:{}}, texte:{}};
       form.querySelectorAll("[data-e]").forEach(function(i){
         var t=i.dataset.e.split("."), w=i.value.trim();
@@ -28977,7 +29098,7 @@ function projektDateienKarte(p, buero, schreiben, neuZeichnen){
     var kplusArten=Promise.resolve({});
     if(kplus.length){
       if(!buero){ toast(kplus.length+" Angebot/Rechnung (KPlus) übersprungen – die laden nur Inhaber hoch."); kplus=[]; }
-      else kplusArten=Promise.all(kplus.map(function(f){ return f.arrayBuffer().then(function(b){ return kplusLesen(new Uint8Array(b)); }).then(function(e){ return [f.name, e.art]; }, function(){ return [f.name, "dokument"]; }); }))
+      else kplusArten=Promise.all(kplus.map(function(f){ return f.arrayBuffer().then(function(b){ return kplusLesen(new Uint8Array(b)); }).then(function(e){ return [f.name, e.art==="gutschrift"?"rechnung":e.art]; }, function(){ return [f.name, "dokument"]; }); }))
         .then(function(l){ var m={}; l.forEach(function(x){ m[x[0]]=x[1]; }); return m; });
     }
     kplusArten.then(function(m){

@@ -3876,6 +3876,473 @@ test("Tiefentest mail: Posteingang – „Zu Projekt legen“ legt nichts doppel
   await a.zu();
 });
 
+/* ---------------- Tiefentest rechnungen: Angebote, Rechnungen, Katalog, KPlus ----------------
+   Je Fund ein Schritt (reSchritt); die Schritte einer Gruppe laufen nacheinander auf derselben Seite (spart
+   Zeit), jeder mit eigenen erfundenen Daten. Gemeldet werden alle fehlgeschlagenen Schritte zusammen. */
+const RE_GRUPPEN = { eingaben: [], editor: [], kplus: [], tempo: [] };
+const reSchritt = (gruppe, id, fn) => RE_GRUPPEN[gruppe].push({ id, fn });
+async function reGruppe(gruppe) {
+  if (!RE_GRUPPEN[gruppe].length) return;
+  const a = await oeffnen(KONTEN.inhaber);
+  await a.seite.evaluate(async () => {
+    const x = window.__t.x, db = window.__db.tabellen, warte = (ms) => new Promise((f) => setTimeout(f, ms));
+    const R = (window.__re = {
+      warte, toasts: [], confirms: [], ja: true,
+      /* warten, bis f() etwas liefert (höchstens max ms) */
+      bis: async (f, max = 3000) => { const t0 = Date.now(); for (;;) { let v = null; try { v = f(); } catch (e) {} if (v || Date.now() - t0 > max) return v; await warte(20); } },
+      dlg: () => [...document.querySelectorAll(".assistent")].pop() || null,
+      knopf: (d, re) => [...(d || document).querySelectorAll("button")].filter((b) => re.test(b.textContent.trim()))[0] || null,
+      setze: (i, w) => { i.value = w; i.dispatchEvent(new Event("input", { bubbles: true })); },
+      pk: (id) => x("alleProtokolle(true)").filter((p) => p._id === id)[0],
+      stoerung: async (id, datum) => {
+        db.protokolle.push({ id, client_id: id, standort_id: "TS1", datum, wartungsart: "Störung", techniker: "Testtechniker", anlagen: [],
+          stoerung: { ankunft: "08:00", ende: "09:00" }, version: 1, erstellt: new Date().toISOString(), erstellt_von: "u_tech_test_at" });
+        await x("ladeProtokolle()");
+      },
+      /* KPlus-Rechnung wie aus kplusAuswerten: Fahrtpauschale und ggf. weitere Positionen */
+      erg: (nr, mehr) => { const pos = [{ typ: "pos", nr: "1", menge: 1, eh: "psh", preis: 50, betragPdf: 50, text: "Fahrtpauschale Zone 1 (Testtext)" }].concat(mehr || []);
+        return { art: "rechnung", nummer: nr, datum: "2026-06-02", kopf: { betreff: ["Test"] }, summenPdf: { netto: x("belegSummen")(pos).netto }, positionen: pos }; },
+      vorschau: (pkId, erg, datei) => { x("kplusVorschau")(x("kontextProtokoll")(R.pk(pkId)), erg, function () {}, datei); return R.dlg(); },
+      /* „Beim Einsatz ablegen“ tippen und warten, bis es fertig ist (jede Antwort endet mit einer Meldung) */
+      ablegen: async (d) => { const n = R.toasts.length, k = R.knopf(d, /ablegen$/); k.click();
+        await R.bis(() => R.toasts.length > n && (!document.body.contains(d) || !/wird abgelegt/.test(k.textContent)), 5000); await warte(80); },
+    });
+    x("(function(){ var alt=toast; toast=function(m){ window.__re.toasts.push(technikDeutsch(m)); return alt.apply(this, arguments); }; return 1; })()");
+    window.confirm = (m) => { R.confirms.push(String(m)); return R.ja; };
+    await x("Promise.all([ladeProtokolle(), katalogLaden(), abrechnungLaden(), belegeAlleLaden()])");
+  });
+  const fehler = [];
+  for (const s of RE_GRUPPEN[gruppe]) {
+    try { const f = await s.fn(a); if (f) fehler.push(s.id + ": " + f); }
+    catch (e) { fehler.push(s.id + ": " + String(e.message || e).split("\n")[0]); }
+    await a.x("(function(){ ansichtenSchliessen(); window.__re.ja=true; return 1; })()").catch(() => {});
+  }
+  if (a.fehler.length) fehler.push("Laufzeitfehler: " + a.fehler.join("; "));
+  await a.zu();
+  pruefe(!fehler.length, fehler.join(" | "));
+}
+test("Tiefentest rechnungen: Eingaben, Rundung, Positionsvorschläge, Katalog pflegen", () => reGruppe("eingaben"));
+test("Tiefentest rechnungen: Beleg-Editor, Rechnung zum Einsatz, Status, Briefkopf", () => reGruppe("editor"));
+test("Tiefentest rechnungen: KPlus-PDF lesen, beim Einsatz ablegen, daraus lernen", () => reGruppe("kplus"));
+test("Tiefentest rechnungen: Reiter Rechnungen bleibt mit vielen Belegen schnell", () => reGruppe("tempo"));
+
+/* Dezimalpunkt: „1.5“ und „78.81“ sind 1,5 und 78,81 – nie 15 und 7881 (Beleg-Editor und Katalog) */
+reSchritt("eingaben", "R01", async (a) => {
+  const r = await a.seite.evaluate(async () => {
+    const x = window.__t.x, db = window.__db.tabellen, R = window.__re;
+    x("belegNeu({projekt:null, protokoll:null, kunde_id:'lidl', standort_id:null}, 'rechnung', null, function(){})");
+    const d = await R.bis(() => { const d = R.dlg(); return d && d.querySelector("[data-plus]") && d; });
+    d.querySelector("[data-plus]").click();
+    const z = [...d.querySelectorAll(".bpos")].pop();
+    R.setze(z.querySelector('[data-f="text"]'), "Montage Dezimalpunkt"); R.setze(z.querySelector('[data-f="menge"]'), "1.5"); R.setze(z.querySelector('[data-f="preis"]'), "78.81");
+    const n0 = db.belege.length; R.knopf(d, /^Speichern$/).click();
+    await R.bis(() => db.belege.length > n0);
+    const b = db.belege[db.belege.length - 1] || {}, p = (b.positionen || []).filter((q) => /Dezimalpunkt/.test(q.text || ""))[0] || {};
+    x("ansichtenSchliessen()");
+    x("katalogAnsicht()");
+    const det = await R.bis(() => R.dlg() && R.dlg().querySelector("details")); det.open = true;
+    det.querySelector('[data-n="text"]').value = "Dezimalpunkt Testposition"; det.querySelector('[data-n="preis"]').value = "447.30";
+    det.querySelector('[data-n="ok"]').click();
+    const k = await R.bis(() => db.katalog.filter((q) => q.text === "Dezimalpunkt Testposition")[0]);
+    return { menge: p.menge, preis: p.preis, netto: (b.summen || {}).netto, kPreis: k ? k.preis : null };
+  });
+  return r.menge === 1.5 && r.preis === 78.81 && r.kPreis === 447.3 ? "" : `„1.5“ × „78.81“ gespeichert als ${r.menge} × ${r.preis} (netto ${r.netto}); Katalog „447.30“ als ${r.kPreis}`;
+});
+/* Cent kaufmännisch: 1,5 × 39,41 = 59,115 → 59,12 (nicht 59,11 wegen Gleitkomma) – Summe und Tabelle */
+reSchritt("eingaben", "R02", async (a) => {
+  const r = JSON.parse(await a.x("JSON.stringify([belegSummen([{typ:'pos',menge:1.5,preis:39.41}]).netto, belegSummen([{typ:'pos',menge:0.5,preis:40.41}]).netto, belegSummen([{typ:'pos',menge:0.25,preis:16.06}]).netto])"));
+  const t = await a.x("belegTabelle([{typ:'pos',nr:'1',menge:1.5,eh:'Std',text:'Test',preis:39.41}], null).querySelector('tbody').textContent");
+  return r.join("/") === "59.12/20.21/4.02" && /59,12/.test(t) ? "" : "nicht kaufmännisch gerundet (erwartet 59.12/20.21/4.02): " + JSON.stringify(r) + " · Tabelle: " + t;
+});
+/* Material aus dem Protokoll: „2 Stk“ und „3 m“ bleiben 2 Stk und 3 m; Unlesbares wird sichtbar markiert */
+reSchritt("eingaben", "R08", async (a) => {
+  const r = JSON.parse(await a.x(`JSON.stringify(einsatzPositionen({_id:'tm8',standortId:'TS1',datum:'2026-06-01',wartungsart:'Störung',stoerung:{ankunft:'08:00',ende:'09:00',
+    material:[{text:'Kondensatpumpe',menge:'2 Stk'},{text:'Kupferrohr 12 mm',menge:'3 m'},{text:'Isolierband',menge:'0,5 Rolle'},{text:'Dichtung',menge:'etwas'}]}},'lidl')
+    .filter(function(p){ return /Kondensatpumpe|Kupferrohr|Isolierband|Dichtung/.test(p.text); }).map(function(p){ return p.text.replace(/\\n/g,' / ')+': '+p.menge+' '+p.eh; }))`));
+  return r[0] === "Kondensatpumpe: 2 Stk" && r[1] === "Kupferrohr 12 mm: 3 m" && r[2] === "Isolierband: 0.5 Rolle" && /^Dichtung .*„etwas“.*: 1 Stk$/.test(r[3] || "")
+    ? "" : "Material „2 Stk“ / „3 m“ / „0,5 Rolle“ / „etwas“ im Vorschlag: " + JSON.stringify(r);
+});
+/* Tiroler Markt mit Postleitzahl, aber ohne Kartenlage: der Hinweis nennt die echte Ursache */
+reSchritt("eingaben", "R20", async (a) => {
+  const r = await a.x("(function(){ var alt=byId.TS4.lon; byId.TS4.lon=null; try{ return einsatzPositionen({standortId:'TS4',datum:'2026-01-01',anlagen:[{name:'VRV'}]},'lidl').pop().text; } finally { byId.TS4.lon=alt; } })()");
+  return !/ohne Postleitzahl/.test(r) && /Lage/.test(r) ? "" : "Fahrtpauschale für PLZ 6460 ohne Kartenlage: " + r;
+});
+/* Positionsprüfung: Uhrzeit-Bereiche und „24h-Notdienst“ sind keine Menge, „2 x 3 h“ = 6 Std; Mengen ohne Klammer nicht in den Katalogtext */
+reSchritt("eingaben", "R23", async (a) => {
+  const r = await a.seite.evaluate(() => {
+    const x = window.__t.x, f = x("positionPruefen"), o = x("katalogTextOhneMenge");
+    return { uhr: f({ typ: "pos", text: "Regiestunden Techniker Mo-Fr 7-16 h", menge: 3, eh: "Std" }), notdienst: f({ typ: "pos", text: "Zuschlag 24h-Notdienst", menge: 1, eh: "psh" }),
+      mal: f({ typ: "pos", text: "Zuschlag Nacht (2 x 3 h)", menge: 6, eh: "Std" }), malFalsch: f({ typ: "pos", text: "Zuschlag Nacht (2 x 3 h)", menge: 3, eh: "Std" }),
+      o1: o("Zuschlag Samstag 3 Mann a 10 Std"), o2: o("Zuschlag Nacht (2 x 3 h)") };
+  });
+  return !r.uhr.length && !r.notdienst.length && !r.mal.length && r.malFalsch.length === 1 && r.o1 === "Zuschlag Samstag" && r.o2 === "Zuschlag Nacht"
+    ? "" : "Fehlalarme bzw. Auftragsmenge im Katalogtext: " + JSON.stringify(r);
+});
+/* Katalog lernt eine Position ohne Einheit nur einmal (gespeichert wird sie mit „Stk“) */
+reSchritt("eingaben", "R18", async (a) => {
+  const r = await a.seite.evaluate(async () => {
+    for (const q of ["A", "B", "C"]) await window.__t.x("katalogLernen([{typ:'pos',text:'Dichtband ohne Einheit',eh:'',preis:5}],'Test-Rechnung " + q + "',{})");
+    return window.__db.tabellen.katalog.filter((k) => k.text === "Dichtband ohne Einheit").map((k) => k.eh + " · " + k.quelle);
+  });
+  return r.length === 1 ? "" : `${r.length} Katalogeinträge für dieselbe Position: ${JSON.stringify(r)}`;
+});
+/* auffällige KPlus-Position („(3 h)“ bei Menge 1) ändert den Katalog-Preis nicht */
+reSchritt("eingaben", "R07", async (a) => {
+  const r = await a.seite.evaluate(async () => {
+    const x = window.__t.x, db = window.__db.tabellen;
+    db.katalog.push({ id: "kr7", text: "Regiestunden Techniker R07", eh: "Std", preis: 78.81, kunde_id: "lidl", aktiv: true, quelle: "Test" });
+    await x("katalogLaden()");
+    const erg = await x("katalogLernen")([{ typ: "pos", nr: "1", menge: 1, eh: "Std", preis: 236.43, betragPdf: 236.43, text: "Regiestunden Techniker R07 (3 h)" }], "KPlus Rechnung 900990", { preiseAktualisieren: true });
+    const k = db.katalog.filter((q) => q.id === "kr7")[0];
+    return { erg, preis: k.preis, quelle: k.quelle };
+  });
+  return r.preis === 78.81 && r.erg.unklar === 1 ? "" : `„(3 h)“ bei Menge 1: Katalog-Preis ${r.preis} (${r.quelle}), Ergebnis ${JSON.stringify(r.erg)}`;
+});
+/* ausgeblendete Katalog-Positionen werden im Angebot aus dem Folgeauftrag nicht vorgeschlagen */
+reSchritt("eingaben", "R12", async (a) => {
+  const r = await a.seite.evaluate(async () => {
+    const x = window.__t.x, db = window.__db.tabellen;
+    db.katalog.push({ id: "k12", text: "Verdampferlüfter liefern und tauschen (alter Preis)", eh: "Stk", preis: 99, kunde_id: "lidl", aktiv: false, quelle: "Test" });
+    await x("katalogLaden()");
+    const k = x("katalogVorschlag")("Verdampferlüfter defekt – liefern und tauschen", "lidl");
+    return k ? k.text : null;
+  });
+  return !r ? "" : "ausgeblendete Katalog-Position vorgeschlagen: " + r;
+});
+/* Katalog-Zeile speichern: leerer Preis bzw. leerer Text wird mit Meldung abgelehnt */
+reSchritt("eingaben", "R26", async (a) => {
+  const r = await a.seite.evaluate(async () => {
+    const x = window.__t.x, db = window.__db.tabellen, R = window.__re;
+    db.katalog.push({ id: "k26", text: "Leerprobe Position R26", eh: "Stk", preis: 26, kunde_id: null, aktiv: true, quelle: "Test" });
+    x("katalogAnsicht()");
+    const zeile = () => [...R.dlg().querySelectorAll("[data-sp]")].map((b) => b.parentElement.parentElement).filter((z) => /Leerprobe Position R26/.test(z.querySelector("textarea").value))[0];
+    let z = await R.bis(zeile);
+    R.toasts.length = 0;
+    z.querySelector("[data-preis]").value = ""; z.querySelector("[data-sp]").click(); await R.warte(150);
+    const preis = db.katalog.filter((q) => q.id === "k26")[0].preis;
+    z = zeile() || z; z.querySelector("[data-preis]").value = "26,00"; z.querySelector("textarea").value = "  "; z.querySelector("[data-sp]").click(); await R.warte(150);
+    return { preis, text: db.katalog.filter((q) => q.id === "k26")[0].text, toasts: R.toasts.slice() };
+  });
+  return r.preis === 26 && r.text === "Leerprobe Position R26" && r.toasts.some((t) => /Preis/.test(t)) && r.toasts.some((t) => /Text/.test(t))
+    ? "" : `leerer Preis bzw. Text: Preis jetzt ${r.preis}, Text „${r.text}“, Meldungen ${JSON.stringify(r.toasts)}`;
+});
+/* Katalog: Doppelklick auf „Anlegen“ legt einmal an; mehr als 150 Treffer → Hinweis auf weitere */
+reSchritt("eingaben", "R25", async (a) => {
+  const r = await a.seite.evaluate(async () => {
+    const x = window.__t.x, db = window.__db.tabellen, R = window.__re;
+    x("katalogAnsicht()");
+    const det = await R.bis(() => R.dlg() && R.dlg().querySelector("details")); det.open = true;
+    det.querySelector('[data-n="text"]').value = "Doppelklick Testposition"; det.querySelector('[data-n="preis"]').value = "12,50";
+    const k = det.querySelector('[data-n="ok"]'); k.click(); k.click();
+    await R.bis(() => db.katalog.some((q) => q.text === "Doppelklick Testposition")); await R.warte(150);
+    const doppelt = db.katalog.filter((q) => q.text === "Doppelklick Testposition").length;
+    x("ansichtenSchliessen()");
+    for (let i = 0; i < 170; i++) db.katalog.push({ id: "kv" + i, text: "Viele Testposition " + String(i).padStart(3, "0"), eh: "Stk", preis: 1 + i, kunde_id: null, aktiv: true, quelle: "Test" });
+    x("katalogAnsicht()");
+    const d = await R.bis(() => R.dlg() && R.dlg().querySelectorAll("[data-sp]").length && R.dlg());
+    return { doppelt, gesamt: db.katalog.length, sichtbar: d.querySelectorAll("[data-sp]").length, hinweis: /weitere/i.test(d.querySelector(".as-inhalt").textContent) };
+  });
+  return r.doppelt === 1 && (r.sichtbar === r.gesamt || r.hinweis) ? "" : `Doppelklick legt ${r.doppelt}× an; sichtbar ${r.sichtbar} von ${r.gesamt}, Hinweis auf weitere: ${r.hinweis}`;
+});
+
+/* Rechnung aus Angebot: der Baustellenbuch-Vorschlag bleibt beim Kältemittel, auch nach Löschen und Verschieben */
+reSchritt("editor", "R04", async (a) => {
+  const r = await a.seite.evaluate(async () => {
+    const x = window.__t.x, R = window.__re;
+    window.__p4 = { id: "prt4", titel: "Testprojekt R04", kunde_id: "lidl", standort_id: "TS1", status: "baustelle",
+      daten: { baubuch: [{ art: "kaeltemittel", menge: 5, eh: "kg", text: "R410A nachgefüllt", datum: "2026-06-01" }] } };
+    window.__a4 = { id: "ang4", art: "angebot", nummer: "T-A-2026-904", kopf: { betreff: ["Test"] }, positionen: [
+      { typ: "pos", nr: "1", menge: 1, eh: "psh", text: "Montage", preis: 100 },
+      { typ: "pos", nr: "2", menge: 2, eh: "kg", text: "Kältemittel R410A", preis: 60 },
+      { typ: "pos", nr: "3", menge: 1, eh: "psh", text: "Fahrtpauschale", preis: 50 }] };
+    x("belegNeu(kontextProjekt(window.__p4), 'rechnung', window.__a4, function(){})");
+    const d = await R.bis(() => { const d = R.dlg(); return d && d.querySelectorAll(".bpos").length === 3 && d; });
+    const zeilen = () => [...d.querySelectorAll(".bpos")].map((z) => [z.querySelector('[data-f="text"]').value, z.querySelector('[data-f="menge"]').value, !!z.querySelector("[data-vs]")]);
+    const vorher = zeilen();
+    d.querySelector(".bpos [data-weg]").click();          /* „Montage“ entfernen (Rückfrage: ja) */
+    const nachLoeschen = zeilen();
+    d.querySelector(".bpos [data-runter]").click();       /* Kältemittel nach unten */
+    const nachVerschieben = zeilen();
+    const link = d.querySelector("[data-vs]"); if (link) link.click();
+    return { vorher, nachLoeschen, nachVerschieben, nachTipp: zeilen() };
+  });
+  const bei = (l) => JSON.stringify(l.filter((z) => z[2]).map((z) => z[0])), km = r.nachTipp.filter((z) => /Kältemittel/.test(z[0]))[0] || [], fp = r.nachTipp.filter((z) => /Fahrtpauschale/.test(z[0]))[0] || [];
+  return bei(r.nachLoeschen) === '["Kältemittel R410A"]' && bei(r.nachVerschieben) === '["Kältemittel R410A"]' && km[1] === "5,00" && fp[1] === "1,00"
+    ? "" : `Vorschlag vorher bei ${bei(r.vorher)}, nach dem Löschen bei ${bei(r.nachLoeschen)}, nach dem Verschieben bei ${bei(r.nachVerschieben)}; nach dem Tipp: Kältemittel ${km[1]}, Fahrtpauschale ${fp[1]}`;
+});
+/* Katalog lernt aus Einsatz-Rechnungen keine Texte mit Uhrzeit oder Protokolldatum */
+reSchritt("editor", "R06", async (a) => {
+  const r = await a.seite.evaluate(async () => {
+    const x = window.__t.x, db = window.__db.tabellen, R = window.__re;
+    const prot = (id, d, o) => Object.assign({ id, client_id: id, standort_id: "TS1", datum: d, wartungsart: "Wartung", techniker: "Testtechniker", anlagen: [{ name: "VRV Anlage R06", termin: "JW" }],
+      version: 1, erstellt: new Date().toISOString(), erstellt_von: "u_tech_test_at" }, o || {});
+    db.katalog.push({ id: "kw6", text: "Wartung Klimaanlage lt. Rahmenvertrag (Test)", eh: "Stk", preis: 210, kunde_id: "lidl", aktiv: true, quelle: "Test" });
+    db.protokolle.push(prot("s61", "2026-06-01", { wartungsart: "Störung", anlagen: [], stoerung: { ankunft: "08:00", ende: "10:00", problemtyp: "Kühlung" } }),
+      prot("s62", "2026-06-08", { wartungsart: "Störung", anlagen: [], stoerung: { ankunft: "13:00", ende: "14:30", problemtyp: "Kühlung" } }),
+      prot("w61", "2026-06-05"), prot("w62", "2026-07-05"));
+    await x("Promise.all([ladeProtokolle(), katalogLaden()])");
+    const vorher = db.katalog.length;
+    for (const id of ["s61", "s62", "w61"]) {
+      x("belegNeu(kontextProtokoll(window.__re.pk('" + id + "')), 'rechnung', null, function(){})");
+      const d = await R.bis(() => { const d = R.dlg(); return d && d.querySelector(".bpos") && R.knopf(d, /^Speichern$/) && d; });
+      const n0 = db.belege.length; R.knopf(d, /^Speichern$/).click();
+      await R.bis(() => db.belege.length > n0); await R.warte(200);   /* der Katalog lernt nach dem Speichern */
+      x("ansichtenSchliessen()");
+    }
+    const neu = db.katalog.slice(vorher).map((k) => k.text.replace(/\n/g, " / "));
+    await x("katalogLaden()");
+    const w2 = x("einsatzPositionen(window.__re.pk('w62'), 'lidl')").filter((p) => /wartung/i.test(p.text))[0];
+    return { neu, w2: w2 ? w2.text.replace(/\n/g, " / ") : null };
+  });
+  return !r.neu.length && !/05\.06\.2026/.test(r.w2 || "") ? "" : `${r.neu.length} neue Katalogpositionen aus Einsatz-Rechnungen: ${JSON.stringify(r.neu)}; Vorschlag zur Wartung vom 05.07.2026: „${r.w2}“`;
+});
+/* ein Angebot zum Einsatz macht ihn nicht „schon verrechnet“ – er bleibt in „nur ohne Rechnung“ */
+reSchritt("editor", "R09", async (a) => {
+  const r = await a.seite.evaluate(async () => {
+    const x = window.__t.x, db = window.__db.tabellen, R = window.__re;
+    db.protokolle.push({ id: "pf9", client_id: "pf9", standort_id: "TS1", datum: "2026-05-11", wartungsart: "Wartung", techniker: "Testtechniker", anlagen: [{ name: "VRV Anlage" }],
+      maengel: [{ text: "Kondensatpumpe defekt", prio: "hoch" }], version: 1, erstellt: new Date().toISOString(), erstellt_von: "u_tech_test_at" });
+    await x("Promise.all([ladeProtokolle(), belegeAlleLaden()])");
+    const liste = async (ohneFilter) => {
+      x("einsatzWaehlen(function(){})");
+      const d = await R.bis(() => { const d = R.dlg(); return d && /Rechnung zu einem Einsatz/.test(d.querySelector(".as-titel").textContent) && d; });
+      if (ohneFilter) { const cb = d.querySelector("input[type=checkbox]"); cb.checked = false; cb.onchange(); }
+      const t = [...d.querySelectorAll(".as-inhalt button")].map((b) => b.textContent).filter((t) => /11\.05\.2026/.test(t)); x("ansichtenSchliessen()"); return t; };
+    const vorher = await liste(false);
+    x("angebotAusFolge(window.__re.pk('pf9'))");
+    const d = await R.bis(() => { const d = R.dlg(); return d && /Angebot/.test(d.querySelector(".as-titel").textContent) && R.knopf(d, /^Speichern$/) && d; });
+    const n0 = db.belege.length; R.knopf(d, /^Speichern$/).click(); await R.bis(() => db.belege.length > n0); await R.warte(100);
+    x("ansichtenSchliessen()");
+    await x("belegeAlleLaden()");
+    return { vorher, nachher: await liste(false), ohneFilter: await liste(true) };
+  });
+  return r.vorher.length === 1 && r.nachher.length === 1 && r.ohneFilter.some((t) => /Angebot T-A-/.test(t)) && !r.ohneFilter.some((t) => /schon Rechnung/.test(t))
+    ? "" : `vor dem Angebot ${r.vorher.length}×, danach ${r.nachher.length}× in „nur ohne Rechnung“; ohne Filter: ${JSON.stringify(r.ohneFilter)}`;
+});
+/* Status-Chip doppelt getippt: nur ein Fenster */
+reSchritt("editor", "R28", async (a) => {
+  const r = await a.seite.evaluate(async () => {
+    const x = window.__t.x, db = window.__db.tabellen, R = window.__re;
+    db.belege.push({ id: "b28", art: "rechnung", nummer: "T-R-2026-328", test: true, extern: false, datum: "2026-06-01", status: "entwurf", kunde_id: "lidl",
+      kopf: { betreff: ["Test"] }, positionen: [{ typ: "pos", nr: "1", menge: 1, eh: "Stk", text: "Test", preis: 10 }], summen: { netto: 10 } });
+    window.__b28 = JSON.parse(JSON.stringify(db.belege.filter((q) => q.id === "b28")[0]));
+    x("belegAnsicht({projekt:null, protokoll:null, kunde_id:'lidl', standort_id:null}, window.__b28, function(){})");
+    const c = await R.bis(() => [...R.dlg().querySelectorAll("button.chip")].filter((q) => q.textContent === "versendet")[0]);
+    c.click(); c.click();
+    await R.bis(() => db.belege.filter((q) => q.id === "b28")[0].status === "versendet"); await R.warte(300);
+    return [...document.querySelectorAll(".assistent .as-titel")].map((t) => t.textContent);
+  });
+  return r.length === 1 ? "" : "offene Fenster nach Doppeltipp: " + JSON.stringify(r);
+});
+/* Beleg inzwischen gelöscht: Editor bleibt mit den Eingaben offen, klare Meldung */
+reSchritt("editor", "R29", async (a) => {
+  const r = await a.seite.evaluate(async () => {
+    const x = window.__t.x, db = window.__db.tabellen, R = window.__re;
+    db.belege.push({ id: "b29", art: "rechnung", nummer: "T-R-2026-329", test: true, extern: false, datum: "2026-06-01", status: "entwurf", kunde_id: "lidl",
+      kopf: { betreff: ["Test"] }, positionen: [{ typ: "pos", nr: "1", menge: 1, eh: "Stk", text: "Test", preis: 10 }], summen: { netto: 10 } });
+    window.__b29 = JSON.parse(JSON.stringify(db.belege.filter((q) => q.id === "b29")[0]));
+    x("belegEditor({projekt:null, protokoll:null, kunde_id:'lidl', standort_id:null}, window.__b29, function(){})");
+    const d = await R.bis(() => { const d = R.dlg(); return d && d.querySelector('.bpos [data-f="text"]') && d; });
+    R.setze(d.querySelector('.bpos [data-f="text"]'), "Geänderter Text R29");
+    db.belege.splice(db.belege.findIndex((q) => q.id === "b29"), 1);   /* inzwischen auf einem anderen Gerät gelöscht */
+    R.toasts.length = 0; R.knopf(d, /^Speichern$/).click();
+    await R.bis(() => R.toasts.length); await R.warte(200);
+    return { toasts: R.toasts.slice(), offen: document.body.contains(d), text: d.querySelector('.bpos [data-f="text"]').value, frei: !R.knopf(d, /^Speichern$/).disabled };
+  });
+  return r.offen && r.frei && r.text === "Geänderter Text R29" && r.toasts.some((t) => /gelöscht/.test(t)) && !r.toasts.some((t) => /329 gespeichert|Cannot read|undefined/.test(t))
+    ? "" : `Editor offen: ${r.offen}, Speichern frei: ${r.frei}, Meldungen ${JSON.stringify(r.toasts)}`;
+});
+/* Briefkopf: IBAN mit falscher Prüfziffer wird nicht gespeichert – Feld markiert, Meldung (wie bei den Reisekosten) */
+reSchritt("editor", "R19", async (a) => {
+  const r = await a.seite.evaluate(async () => {
+    const x = window.__t.x, db = window.__db.tabellen, R = window.__re;
+    x("belegEinstellungen()");
+    const d = await R.bis(() => { const d = R.dlg(); return d && d.querySelector('[data-e="firma.iban"]') && d; });
+    d.querySelector('[data-e="firma.name"]').value = "Musterfirma Test"; d.querySelector('[data-e="firma.bank"]').value = "Testbank";
+    d.querySelector('[data-e="firma.iban"]').value = "AT61 1904 3002 3457 3202";   /* öffentliche Beispiel-IBAN mit falscher Prüfziffer */
+    R.toasts.length = 0;
+    R.knopf(d, /^Speichern$/).click(); await R.warte(300);
+    const w = (db.einstellungen.filter((e) => e.schluessel === "belege")[0] || {}).wert;
+    return { gespeichert: !!(w && w.firma && w.firma.iban === "AT61 1904 3002 3457 3202"), markiert: d.querySelector('[data-e="firma.iban"]').getAttribute("aria-invalid"),
+      offen: document.body.contains(d), toasts: R.toasts.slice() };
+  });
+  return !r.gespeichert && r.markiert === "true" && r.offen && r.toasts.some((m) => /IBAN/.test(m)) ? "" : `IBAN mit falscher Prüfziffer gespeichert: ${r.gespeichert}, Feld markiert: ${r.markiert}, Meldungen ${JSON.stringify(r.toasts)}`;
+});
+/* Rundgang und Handbuch erklären „KPlus-Rechnung hochladen“ beim Einsatz und das Lernen daraus */
+reSchritt("editor", "R24", async (a) => {
+  const t = await a.x("JSON.stringify(RUNDGAENGE)+' '+String(handbuchKarte)");
+  return /KPlus-Rechnung hochladen/.test(t) && /So hätte die App gerechnet/.test(t) && /aus hochgeladenen KPlus-Rechnungen/.test(t) ? "" : "Rundgänge/Handbuch erwähnen „KPlus-Rechnung hochladen“, den Vergleich oder das Lernen daraus nicht";
+});
+
+/* KPlus lesen: Text unter einer Überschrift ist ein eigener Absatz, weit auseinander stehende Absätze bleiben getrennt */
+reSchritt("kplus", "R27", async (a) => {
+  const r = await a.seite.evaluate(() => {
+    const x = window.__t.x, it = (xx, y, t, f) => ({ s: 1, x: xx, y, w: 20, t, f: f || "F2" });
+    const erg = x("kplusAuswerten")([[it(330, 150, "Angebot", "F1"), it(480, 150, "413999", "F1"), it(150, 300, "Bezeichnung"),
+      it(160, 320, "1. Kühlzelle", "F1"), it(160, 335, "Lieferung und Montage laut Plan"),
+      it(60, 360, "1.1"), it(100, 360, "1,00 Stk"), it(160, 360, "Verdampfer Test"), it(420, 360, "100,00"), it(500, 360, "100,00"),
+      it(160, 420, "Erster Hinweis"), it(160, 432, "zweite Zeile davon"), it(160, 520, "Zweiter, eigener Hinweis weiter unten"),
+      it(300, 600, "Netto-Summe"), it(500, 600, "100,00")]]);
+    return erg.positionen.map((p) => p.typ + ": " + p.text);
+  });
+  return JSON.stringify(r) === JSON.stringify(["gruppe: 1. Kühlzelle", "text: Lieferung und Montage laut Plan", "pos: Verdampfer Test", "text: Erster Hinweis zweite Zeile davon", "text: Zweiter, eigener Hinweis weiter unten"])
+    ? "" : "gelesen: " + JSON.stringify(r);
+});
+/* KPlus: Gutschrift wird nicht als Angebot abgelegt; ohne erkannte PDF-Summe steht kein „stimmt“ */
+reSchritt("kplus", "R03", async (a) => {
+  const r = await a.seite.evaluate(async () => {
+    const x = window.__t.x, R = window.__re, it = (xx, y, t, f) => ({ s: 1, x: xx, y, w: 20, t, f: f || "F2" });
+    await R.stoerung("pg3", "2026-06-01");
+    const gs = x("kplusAuswerten")([[it(330, 150, "Gutschrift", "F1"), it(480, 150, "900777", "F1"), it(150, 300, "Bezeichnung"),
+      it(60, 320, "1"), it(100, 320, "1,00 psh"), it(160, 320, "Gutschrift Störung Test"), it(420, 320, "-50,00"), it(500, 320, "-50,00"),
+      it(300, 400, "Netto-Summe"), it(500, 400, "-50,00")]]);
+    const n0 = document.querySelectorAll(".assistent").length, nb = window.__db.tabellen.belege.length;
+    R.vorschau("pg3", gs);                                      /* wie „KPlus-Rechnung hochladen“ beim Einsatz */
+    const gutschrift = gs.art + ", Fenster " + (document.querySelectorAll(".assistent").length - n0) + ", Belege +" + (window.__db.tabellen.belege.length - nb) + ", Meldung: " + R.toasts.slice(-1)[0];
+    const kopf = [it(330, 150, "Rechnung", "F1"), it(480, 150, "900778", "F1"), it(150, 300, "Bezeichnung"),
+      it(60, 320, "1"), it(100, 320, "1,00 psh"), it(160, 320, "Fahrtpauschale Zone 1 (Testtext)"), it(420, 320, "50,00"), it(500, 320, "50,00")];
+    const minus = x("kplusAuswerten")([kopf.concat([it(300, 400, "Netto-Summe"), it(500, 400, "-50,00")])]).summenPdf.netto;
+    const erg = x("kplusAuswerten")([kopf]);                   /* Netto-Summe fehlt im PDF-Text */
+    const note = R.vorschau("pg3", erg).querySelector(".as-inhalt .note").textContent;
+    return { gutschrift, minus, netto: erg.summenPdf.netto, note };
+  });
+  return /^gutschrift, Fenster 0, Belege [+]0, Meldung: .*Gutschrift/.test(r.gutschrift) && r.minus === -50 && r.netto == null && !/stimmt/.test(r.note) && /nicht erkannt/.test(r.note)
+    ? "" : `Gutschrift ${r.gutschrift}; Netto-Summe „-50,00“ gelesen als ${r.minus}; ohne Summe: ${r.netto}, Hinweis „${r.note}“`;
+});
+/* KPlus beim Einsatz: scheitert der Abrechnungs-Vermerk, sagt die Meldung das */
+reSchritt("kplus", "R13", async (a) => {
+  const r = await a.seite.evaluate(async () => {
+    const x = window.__t.x, db = window.__db.tabellen, R = window.__re;
+    await R.stoerung("pk13", "2026-06-01");
+    const sb = x("Store.sb"), altFrom = sb.from;   /* nur das Schreiben in abrechnung scheitert – wie supabase-js es meldet ({error}, kein Wurf) */
+    sb.from = function (t) { const q = altFrom.apply(sb, arguments); if (t === "abrechnung") q.upsert = function () { return Promise.resolve({ data: null, error: { message: "TypeError: Failed to fetch" } }); }; return q; };
+    try { R.toasts.length = 0; await R.ablegen(R.vorschau("pk13", R.erg("900555"))); } finally { sb.from = altFrom; }
+    return { toasts: R.toasts.slice(), abger: db.abrechnung.some((z) => z.protokoll_id === "pk13"), beleg: db.belege.some((b) => b.nummer === "900555") };
+  });
+  return r.beleg && !r.abger && r.toasts.some((t) => /NICHT als abgerechnet/.test(t)) && !r.toasts.some((t) => /Einsatz als abgerechnet vermerkt/.test(t))
+    ? "" : `Beleg gespeichert: ${r.beleg}, abgerechnet: ${r.abger}, Meldungen ${JSON.stringify(r.toasts)}`;
+});
+/* KPlus beim Einsatz: scheitert nur der Katalog, heißt es „abgelegt – Katalog nicht ergänzt“ und das Fenster schließt */
+reSchritt("kplus", "R21", async (a) => {
+  const r = await a.seite.evaluate(async () => {
+    const x = window.__t.x, db = window.__db.tabellen, R = window.__re;
+    await R.stoerung("pk21", "2026-06-01");
+    const sb = x("Store.sb"), altFrom = sb.from;
+    sb.from = function (t) { const q = altFrom.apply(sb, arguments);
+      if (t === "katalog") q.insert = function () { return { select: function () { return Promise.resolve({ data: null, error: { message: "TypeError: Failed to fetch" } }); } }; };
+      return q; };
+    const d = R.vorschau("pk21", R.erg("900621", [{ typ: "pos", nr: "2", menge: 1, eh: "psh", preis: 30, betragPdf: 30, text: "Kleinmaterial pauschal R21" }]));
+    try { R.toasts.length = 0; await R.ablegen(d); } finally { sb.from = altFrom; }
+    return { toasts: R.toasts.slice(), beleg: db.belege.some((b) => b.nummer === "900621"), abger: db.abrechnung.some((z) => z.protokoll_id === "pk21"), offen: document.body.contains(d) };
+  });
+  return r.beleg && r.abger && !r.offen && r.toasts.some((t) => /Katalog/.test(t) && /abgelegt/.test(t)) && !r.toasts.some((t) => /Nicht abgelegt/.test(t))
+    ? "" : `Beleg gespeichert: ${r.beleg}, abgerechnet: ${r.abger}, Fenster offen: ${r.offen}, Meldungen ${JSON.stringify(r.toasts)}`;
+});
+/* KPlus-PDF ohne erkannte Nummer: nicht ohne Nummer ablegen (sonst überschreibt die nächste solche Rechnung die erste) */
+reSchritt("kplus", "R14", async (a) => {
+  const r = await a.seite.evaluate(async () => {
+    const x = window.__t.x, db = window.__db.tabellen, R = window.__re, it = (xx, y, t, f) => ({ s: 1, x: xx, y, w: 20, t, f: f || "F2" });
+    /* Rechnungsnummer eine Zeile unter dem Titel – kplusAuswerten findet sie nicht */
+    const erg = x("kplusAuswerten")([[it(330, 150, "Rechnung", "F1"), it(480, 165, "900801", "F1"), it(150, 300, "Bezeichnung"),
+      it(60, 320, "1"), it(100, 320, "1,00 psh"), it(160, 320, "Fahrtpauschale Zone 1 (Testtext)"), it(420, 320, "50,00"), it(500, 320, "50,00"), it(300, 400, "Netto-Summe"), it(500, 400, "50,00")]]);
+    await R.stoerung("p141", "2026-06-01"); await R.stoerung("p142", "2026-06-09");
+    const n0 = db.belege.length;
+    let d = R.vorschau("p141", JSON.parse(JSON.stringify(erg)));
+    R.toasts.length = 0; await R.ablegen(d);
+    const ohne = db.belege.length - n0, meldung = R.toasts.slice(-1)[0], feld = d.querySelector("[data-nummer]");
+    if (feld) { R.setze(feld, "900801"); await R.ablegen(d); }
+    x("ansichtenSchliessen()");
+    d = R.vorschau("p142", JSON.parse(JSON.stringify(erg)));
+    const feld2 = d.querySelector("[data-nummer]"); if (feld2) R.setze(feld2, "900802");
+    await R.ablegen(d);
+    return { nummer: erg.nummer, ohne, meldung, belege: db.belege.slice(n0).map((b) => [b.nummer, b.protokoll_id]) };
+  });
+  return r.ohne === 0 && /nummer/i.test(r.meldung || "") && JSON.stringify(r.belege) === '[["900801","p141"],["900802","p142"]]'
+    ? "" : `Nummer „${r.nummer}“; ohne Nummer abgelegt: ${r.ohne} (${r.meldung}); danach Belege ${JSON.stringify(r.belege)}`;
+});
+/* KPlus beim Einsatz: liegt dieselbe Rechnung schon am Projekt, bleibt der Projektbezug; an einem anderen Einsatz erst nach Rückfrage */
+reSchritt("kplus", "R22", async (a) => {
+  const r = await a.seite.evaluate(async () => {
+    const db = window.__db.tabellen, R = window.__re;
+    db.belege.push({ id: "b22", art: "rechnung", nummer: "900700", extern: true, test: false, datum: "2026-06-01", status: "versendet", projekt_id: "prt1", kunde_id: "lidl", kopf: {}, positionen: [], summen: { netto: 0 } },
+      { id: "b22b", art: "rechnung", nummer: "900701", extern: true, test: false, datum: "2026-06-01", status: "versendet", protokoll_id: "pkAnders", kunde_id: "lidl", kopf: {}, positionen: [], summen: { netto: 0 } });
+    await R.stoerung("pk22", "2026-06-01");
+    R.confirms.length = 0;
+    await R.ablegen(R.vorschau("pk22", R.erg("900700")));
+    const b1 = db.belege.filter((q) => q.nummer === "900700").map((q) => [q.projekt_id, q.protokoll_id]);
+    R.ja = false;                                         /* „schon bei einem anderen Einsatz – hierher?“ → nein */
+    const d = R.vorschau("pk22", R.erg("900701")); await R.ablegen(d);
+    const b2 = db.belege.filter((q) => q.nummer === "900701").map((q) => q.protokoll_id);
+    return { b1, b2, confirms: R.confirms.slice(), offen: document.body.contains(d) };
+  });
+  return JSON.stringify(r.b1) === '[["prt1","pk22"]]' && JSON.stringify(r.b2) === '["pkAnders"]' && r.confirms.some((m) => /900701/.test(m)) && r.offen
+    ? "" : `am Projekt: ${JSON.stringify(r.b1)}; am anderen Einsatz: ${JSON.stringify(r.b2)}; Rückfragen ${JSON.stringify(r.confirms)}, Fenster offen ${r.offen}`;
+});
+/* KPlus-Beleg: „PDF ansehen“ zeigt das abgelegte Original – ohne Original nie ein App-PDF mit Briefkopf */
+reSchritt("kplus", "R10", async (a) => {
+  const r = await a.seite.evaluate(async () => {
+    const x = window.__t.x, db = window.__db.tabellen, R = window.__re;
+    await R.stoerung("pk10", "2026-06-01");
+    await R.ablegen(R.vorschau("pk10", R.erg("900560"), new File([new TextEncoder().encode("%PDF-1.4\n%%EOF\n")], "900560.pdf", { type: "application/pdf" })));
+    const mit = await R.bis(() => db.belege.filter((q) => q.nummer === "900560" && q.pdf_pfad)[0]);
+    db.belege.push({ id: "b10b", art: "rechnung", nummer: "900561", extern: true, test: false, datum: "2026-06-01", status: "versendet", protokoll_id: "pk10", kunde_id: "lidl", kopf: {}, positionen: [], summen: { netto: 0 } });
+    x("(function(){ window.__gezeigt=[]; window.__alt10=[pdfAnsicht, belegPdfErzeugen];"
+      + " pdfAnsicht=function(u,n){ window.__gezeigt.push('angezeigt: '+n); };"
+      + " belegPdfErzeugen=function(){ window.__gezeigt.push('App-PDF neu erzeugt'); return new Promise(function(){}); }; return 1; })()");
+    const zeige = async (b) => { x("ansichtenSchliessen()"); window.__b10 = b;
+      x("belegAnsicht(kontextProtokoll(window.__re.pk('pk10')), window.__b10, function(){})");
+      const k = await R.bis(() => R.knopf(R.dlg(), /^PDF ansehen$/)); k.click(); await R.warte(250); };
+    try { await zeige(mit); const g1 = window.__gezeigt.slice(); window.__gezeigt.length = 0; R.toasts.length = 0;
+      await zeige(db.belege.filter((q) => q.id === "b10b")[0]);
+      return { pfad: mit && mit.pdf_pfad, g1, g2: window.__gezeigt.slice(), toasts: R.toasts.slice() };
+    } finally { x("(function(){ pdfAnsicht=window.__alt10[0]; belegPdfErzeugen=window.__alt10[1]; return 1; })()"); }
+  });
+  return r.pfad && r.g1.length === 1 && /^angezeigt/.test(r.g1[0]) && !r.g2.length && r.toasts.some((t) => /Original/.test(t))
+    ? "" : `Original unter ${r.pfad}; „PDF ansehen“ zeigt ${JSON.stringify(r.g1)}; ohne Original: ${JSON.stringify(r.g2)}, Meldungen ${JSON.stringify(r.toasts)}`;
+});
+/* Lernen aus KPlus: dieselbe Wartung mit anderem Wortlaut kommt nicht doppelt in den nächsten Vorschlag */
+reSchritt("kplus", "R05", async (a) => {
+  const r = await a.seite.evaluate(async () => {
+    const x = window.__t.x, db = window.__db.tabellen, R = window.__re;
+    const prot = (id, d) => ({ id, client_id: id, standort_id: "TS1", datum: d, wartungsart: "Wartung", techniker: "Testtechniker", anlagen: [{ name: "VRV Anlage", termin: "JW" }],
+      version: 1, erstellt: new Date().toISOString(), erstellt_von: "u_tech_test_at" });
+    db.katalog.push({ id: "kw5", text: "Wartung Klimaanlage lt. Rahmenvertrag (Test)", eh: "Stk", preis: 210, kunde_id: "lidl", aktiv: true, quelle: "Test" });
+    db.protokolle.push(prot("w51", "2026-03-01"), prot("w52", "2026-04-01"), prot("w53", "2026-05-01"));
+    await x("Promise.all([ladeProtokolle(), katalogLaden()])");
+    let vgl = "";
+    for (const [id, nr] of [["w51", "900051"], ["w52", "900052"]]) {
+      const d = R.vorschau(id, R.erg(nr, [{ typ: "pos", nr: "2", menge: 1, eh: "Stk", preis: 210, betragPdf: 210, text: "Jahreswartung VRV lt. FB035/Pos.1" }]));
+      vgl = vgl || [...d.querySelectorAll(".as-inhalt .card div[style*=border-left]")].map((z) => z.textContent).join(" | ");
+      await R.ablegen(d);
+    }
+    await x("belegeAlleLaden()");
+    x("belegNeu(kontextProtokoll(window.__re.pk('w53')), 'rechnung', null, function(){})");
+    const d = await R.bis(() => { const d = R.dlg(); return d && d.querySelector(".bpos") && d; });
+    return { vgl, pos: [...d.querySelectorAll(".bpos")].map((z) => z.querySelector('[data-f="text"]').value.split("\n")[0] + " | " + z.querySelector('[data-f="preis"]').value),
+      summe: d.querySelector(".bsumme").textContent };
+  });
+  const w = r.pos.filter((p) => /wartung/i.test(p));
+  return w.length === 1 && !/fehlte in der App · Jahreswartung/.test(r.vgl) ? "" : `1 Anlage, aber ${w.length} Wartungspositionen im Vorschlag: ${JSON.stringify(r.pos)} – ${r.summe}. Vergleich beim Ablegen: ${r.vgl}`;
+});
+
+/* Reiter Rechnungen: die Suche bleibt bei vielen Protokollen und Belegen schnell */
+reSchritt("tempo", "R15", async (a) => {
+  const r = await a.seite.evaluate(async () => {
+    const x = window.__t.x, db = window.__db.tabellen, R = window.__re, st = ["TS1", "TS2", "TS3", "TS4", "TS5"];
+    for (let i = 0; i < 1500; i++) db.protokolle.push({ id: "pp" + i, client_id: "pp" + i, standort_id: st[i % 5], datum: "2025-" + String(1 + (i % 12)).padStart(2, "0") + "-" + String(1 + (i % 28)).padStart(2, "0"),
+      wartungsart: "Wartung", techniker: "Testtechniker", anlagen: [{ name: "VRV Anlage" }], version: 1, erstellt: new Date().toISOString(), erstellt_von: "u_tech_test_at" });
+    for (let i = 0; i < 600; i++) db.belege.push({ id: "bb" + i, art: "rechnung", nummer: String(900000 + i), extern: true, test: false, datum: "2025-06-01", status: "versendet",
+      protokoll_id: "pp" + i, kunde_id: "lidl", standort_id: st[i % 5], kopf: { betreff: ["Filiale Störung"] }, positionen: [], summen: { netto: 100, brutto: 120 } });
+    await x("ladeProtokolle()");
+    x("S.blFilter='alle'; S.view='belege'; render(); 1");
+    const qi = await R.bis(() => document.querySelectorAll("[data-liste] .card").length > 100 && [...document.querySelectorAll("input.search")].filter((i) => /Nummer, Betreff/.test(i.placeholder))[0], 20000);
+    const zeiten = [];
+    for (const w of ["9", "90", "900"]) { const t0 = performance.now(); qi.value = w; qi.dispatchEvent(new Event("input", { bubbles: true })); zeiten.push(Math.round(performance.now() - t0)); }
+    return { zeiten, prot: x("alleProtokolle(true).length"), belege: x("BELEGE_ALLE.length") };
+  });
+  return Math.max(...r.zeiten) < 1000 ? "" : `${r.prot} Protokolle, ${r.belege} Belege: ${JSON.stringify(r.zeiten)} ms je Tastendruck`;
+});
+
 /* ================================================================ Ablauf ================================================================ */
 const filterText = process.argv.slice(2).find((x) => !x.startsWith("--"));
 const filter = filterText ? new RegExp(filterText, "i") : null;

@@ -101,7 +101,8 @@ Kammerlander Umwelt- und Klimatechnik (UKT) – oft kurz, vom Handy, im Feld.
 - Angebote/Rechnungen NUR Inhaber (Tabellen `belege`, `katalog`): KPlus-PDFs
   liest `kplusLesen` ohne KI aus dem PDF-Text nach Spaltenlage (Position x<90,
   Menge+EH 90–150, Text 150–395, Preis 395–480, Betrag/„Alternativ“ ab 480;
-  Zeilen nach Abstand, nicht gerundet) und rechnet gegen die PDF-Summe nach.
+  Zeilen nach Abstand, nicht gerundet) und rechnet gegen die PDF-Summe nach (Summe nicht erkannt → Hinweis, nie
+  „stimmt“). Gutschriften (art „gutschrift“) nie als Beleg – nur als Büro-Datei (`KPLUS_GUTSCHRIFT`).
   Positionsprüfung (Büro 05.10.2026: „in der Klammer steht 3 h, als Anzahl nur 1 h – da stimmt was nicht“,
   `positionPruefen`, `textMenge`): nennt der Text einer Arbeits-/Stundenposition eine Menge („(3 h)“, „4 Mann a 10 Std“),
   muss sie zur Menge passen; Stunden mit Einheit ≠ Std und PDF-Betrag ≠ Menge × Preis werden gemeldet (KPlus-Vorschau,
@@ -336,7 +337,8 @@ Kammerlander Umwelt- und Klimatechnik (UKT) – oft kurz, vom Handy, im Feld.
   Verbindung gar keine Karte. Der Leitstand darf dort nur lesen/suchen (das Mail-Programm sperrt Senden,
   Verschieben, Löschen). Mailinhalte nie ins Repository. Test: „Mail-Programm am PC …“.
 - **Katalog lernt mit** (`katalogLernen`, Büro 02.10.2026, nur Inhaber): neue Positionen aus KPlus-PDFs und
-  aus gespeicherten App-Belegen kommen dazu (Herkunft in `quelle`, ohne Preis nichts); Preise bestehender
+  aus gespeicherten App-Belegen kommen dazu (Herkunft in `quelle`, ohne Preis nichts; Wartung/Regiestunden eines Einsatzes
+  mit Uhrzeit bzw. Protokolldatum nie – Merker `einsatz` aus `einsatzPositionen`); Preise bestehender
   Positionen ändert nur KPlus (alter Preis in der Herkunft). „+ Neue Position“ im Katalog; Auswahl nach Häufigkeit.
 - **Tour → Kalender** (`tourSchicken`, `tourBuero`, Büro 03.10.2026): Inhaber und Admins planen für sich und alle
   (Admins auch für den Inhaber), Techniker nur für sich selbst; für sich selbst nur Kalendereinträge, für andere
