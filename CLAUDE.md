@@ -288,7 +288,7 @@ Kammerlander Umwelt- und Klimatechnik (UKT) – oft kurz, vom Handy, im Feld.
   Zeitausgleich) legt die Datenbank selbst in die Stunden (tools/stunden-kalender.sql, Trigger `planung_stunden`,
   Quelle „kalender“): je Arbeitstag das Tagessoll (`soll_minuten`, `feiertag_at` wie `sollMinutenTag`/`feiertageAT`),
   angepasst/entfernt mit dem Kalendereintrag, nie im bestätigten Monat; anlegen für eine Person nur sie selbst oder
-  das Büro; selbst geändert → „hand“. Zeitausgleich zählt nicht als Ist (baut Überstunden ab). Stempeluhr: „📅 Heute
+  der Inhaber; selbst geändert → „hand“. Zeitausgleich zählt nicht als Ist (baut Überstunden ab). Stempeluhr: „📅 Heute
   geplant“ (`stempelPlanChips`), nach dem Ausstempeln Verknüpfung mit dem Termin (`zeitenMitPlanungVerknuepfen`).
   Soll je Tag/Woche in „Meine Arbeitszeit“ (`sollIstTag`) nur zur Info – Überstunden bleiben MONATSBILANZ.
   Vor dem Bestätigen: `monatLuecken` (Tage ohne Eintrag, Abwesenheit ohne Stunden, Geplantes nicht erfasst) mit
@@ -303,7 +303,11 @@ Kammerlander Umwelt- und Klimatechnik (UKT) – oft kurz, vom Handy, im Feld.
   Krankenstand/Schule/ZA „für diesen Tag beenden“; ungeklärt ⚠ beim Tag und in `monatLuecken`. Die Antwort gilt je Tag UND Person
   (`ausnahmen[Tag][user_id]`, ältere ohne Person gelten für alle); stehen mehrere im Eintrag, verliert nur diese Person den Tag
   (`planPersonHerausloesen`: aus dem Eintrag genommen, eigene Einträge für ihre übrigen Tage); nur Tage im Zeitraum. Urlaub ändert nur der Inhaber. Neu Eingetragene bekommen eine Chat-Nachricht
-  (nicht bei Privatem). Diese Grenzen nie lockern.
+  (nicht bei Privatem). Abwesenheiten ANDERER – auch gemeinsame (Betriebsurlaub, Kurs) – legt an, ändert, kürzt, nimmt
+  Tage heraus und löscht nur der Inhaber; die eigene (nur sie eingetragen bzw. niemand und von ihr angelegt) die Person selbst,
+  aus gemeinsamen nimmt sie nur sich selbst heraus; Admins wie Techniker (Inhaber 05.10.2026: `planAbwesenheitDarf`, Personenwahl
+  nur „ich“, sonst schreibgeschützt „ändert nur der Inhaber“; Datenbank: Sperrregeln „abwesenheit … nur selbst oder inhaber“ und
+  Trigger `planung_rechte_abwesenheit`, tools/rechte-2026-10-05.sql). Diese Grenzen nie lockern.
 - **Posteingang → Projekt** (Büro 02.10.2026): weitergeleitete Mails (nicht Lidl-Auftrag/Rapport)
   kommen mit `.eml` (art „mail“, `eintraege` in synology/ukt_posteingang.py, Test
   tools/posteingang_test.py); in der App eine Karte je Mail (`posteingangMailBox`), „Zu Projekt

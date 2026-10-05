@@ -4447,6 +4447,84 @@ test("Tiefentest werkzeug: verletzte Prüfregel beim Speichern meldet nicht „n
   await a.zu();
 });
 
+/* ---- Antworten des Inhabers vom 05.10.2026: Stunden und Abwesenheiten ---- */
+test("Antworten stunden: Abwesenheiten anderer nur der Inhaber – Admin wie Techniker nur für sich, aus gemeinsamen nur sich selbst herausnehmen", async () => {
+  const fehl = [];
+  const a = await oeffnen(KONTEN.admin);
+  await ttHilfen(a);
+  const r = await a.seite.evaluate(async () => {
+    const tt = window.__tt, x = window.__t.x, db = window.__db.tabellen, sb = x("Store.sb"), e = {}; tt.leeren();
+    const ich = tt.ich(), tech = "u_tech_test_at", inh = "u_inhaber_test_at";
+    const t1 = x("werktagAb(plusTage(isoLokal(new Date()),7))"), t3 = x("plusTage('" + t1 + "',2)");
+    const nein = (q) => (q.error || !(q.data || []).length ? "abgelehnt" : "angenommen");
+    const knoepfe = (d) => [...d.querySelectorAll(".as-fuss button")].map((b) => b.textContent.trim());
+    /* (a) neue Schule für mich und einen Kollegen: wählbar ist nur „ich“, gespeichert nur für mich */
+    x("planEditor(null, {art:'termin', kategorie:'schule', titel:'Kurs AW', datum:'" + t1 + "', wer:['" + ich + "','" + tech + "'], wer_namen:['Testadmin','Testtechniker']})"); await tt.warte(300);
+    let d = tt.dialog();
+    e.chips = [...d.querySelectorAll("[data-wer] .chip")].map((c) => c.textContent);
+    tt.ok(d).click(); await tt.warte(400);
+    e.gespeichert = db.planung.filter((p) => p.titel === "Kurs AW").map((p) => (p.wer || []).join());
+    x("ansichtenSchliessen()");
+    /* (b) Datenbank: für einen anderen anlegen, seine Abwesenheit ändern oder löschen – abgelehnt; Wartung für andere wie bisher */
+    e.anlegenFremd = nein(await sb.from("planung").insert({ art: "termin", kategorie: "zeitausgleich", titel: "ZA", datum: t1, wer: [tech], wer_namen: ["Testtechniker"] }).select("*"));
+    db.planung.push({ id: "aw1u", art: "termin", kategorie: "urlaub", titel: "Urlaub", datum: t1, datum_bis: t3, wer: [tech], wer_namen: ["Testtechniker"], status: "genehmigt", erstellt_von: inh, erstellt: new Date().toISOString(), privat: false, ausnahmen: {} });
+    e.aendernFremd = nein(await sb.from("planung").update({ datum_bis: t1 }).eq("id", "aw1u").select("*"));
+    e.loeschenFremd = nein(await sb.from("planung").delete().eq("id", "aw1u").select("id"));
+    e.wartungFremd = nein(await sb.from("planung").insert({ art: "termin", kategorie: "wartung", titel: "Wartung", datum: t1, wer: [tech], wer_namen: ["Testtechniker"] }).select("*"));
+    /* (c) fremder Urlaub geöffnet: schreibgeschützt mit Hinweis – kein Speichern, Löschen, Tag herausnehmen, nicht ziehbar */
+    await tt.laden();
+    x("planEditor(PLANUNG.filter(function(p){ return p.id==='aw1u'; })[0])"); await tt.warte(300);
+    d = tt.dialog();
+    e.fremd = { hinweis: /ändert nur der Inhaber/.test(d.textContent), knoepfe: knoepfe(d).filter((t) => /Speichern|Löschen/.test(t)), felderAn: [...d.querySelectorAll("form input, form select, form textarea, form button")].filter((f) => !f.disabled).length,
+      heraus: /Tage herausnehmen/.test(d.textContent), ziehen: x("kalDarfZiehen({art:'termin', e:PLANUNG.filter(function(p){ return p.id==='aw1u'; })[0]})") };
+    x("ansichtenSchliessen()");
+    /* (d) gemeinsamer Kurs (ich und der Techniker): nur mich herausnehmen – sonst nichts */
+    db.planung.push({ id: "aw1k", art: "termin", kategorie: "schule", titel: "Kältekurs", datum: t1, datum_bis: t3, wer: [ich, tech], wer_namen: ["Testadmin", "Testtechniker"], status: "offen", erstellt_von: inh, erstellt: new Date().toISOString(), privat: false, ausnahmen: {} });
+    await tt.laden();
+    x("planEditor(PLANUNG.filter(function(p){ return p.id==='aw1k'; })[0])"); await tt.warte(300);
+    d = tt.dialog();
+    e.kurs = { optionen: [...d.querySelectorAll("[data-fuer] option")].map((o) => o.textContent), knoepfe: knoepfe(d).filter((t) => /Speichern|Löschen/.test(t)) };
+    x("ansichtenSchliessen()");
+    e.kurs.titel = nein(await sb.from("planung").update({ titel: "Anders" }).eq("id", "aw1k").select("*"));
+    e.kurs.kollegeRaus = nein(await sb.from("planung").update({ wer: [ich], wer_namen: ["Testadmin"] }).eq("id", "aw1k").select("*"));
+    e.kurs.antwort = nein(await sb.from("planung").update({ ausnahmen: { [t1]: { [ich]: { art: "eingesprungen", von: "Testadmin" } } } }).eq("id", "aw1k").select("*"));
+    e.kurs.selbstRaus = nein(await sb.from("planung").update({ wer: [tech], wer_namen: ["Testtechniker"] }).eq("id", "aw1k").select("*"));
+    /* (e) eigene Abwesenheit: anlegen, ändern, löschen – erlaubt */
+    const eig = await sb.from("planung").insert({ art: "termin", kategorie: "krank", titel: "Krank", datum: t1, wer: [ich], wer_namen: ["Testadmin"] }).select("*");
+    const id = eig.data && eig.data[0].id;
+    e.eigen = [nein(eig), id ? nein(await sb.from("planung").update({ datum_bis: t3 }).eq("id", id).select("*")) : "-", id ? nein(await sb.from("planung").delete().eq("id", id).select("id")) : "-"].join();
+    return e;
+  });
+  if (r.chips.length !== 1 || !/\(ich\)/.test(r.chips[0]) || JSON.stringify(r.gespeichert) !== JSON.stringify(["u_admin_test_at"])) fehl.push("(a) Abwesenheit für andere wählbar: " + JSON.stringify([r.chips, r.gespeichert]));
+  if (r.anlegenFremd !== "abgelehnt" || r.aendernFremd !== "abgelehnt" || r.loeschenFremd !== "abgelehnt" || r.wartungFremd !== "angenommen") fehl.push("(b) Datenbank: " + JSON.stringify(r));
+  if (!r.fremd.hinweis || r.fremd.knoepfe.length || r.fremd.felderAn || r.fremd.heraus || r.fremd.ziehen) fehl.push("(c) fremder Urlaub nicht schreibgeschützt: " + JSON.stringify(r.fremd));
+  if (JSON.stringify(r.kurs.optionen) !== JSON.stringify(["nur Testadmin"]) || r.kurs.knoepfe.length || r.kurs.titel !== "abgelehnt" || r.kurs.kollegeRaus !== "abgelehnt" || r.kurs.antwort !== "angenommen" || r.kurs.selbstRaus !== "angenommen")
+    fehl.push("(d) gemeinsamer Kurs: " + JSON.stringify(r.kurs));
+  if (r.eigen !== "angenommen,angenommen,angenommen") fehl.push("(e) eigene Abwesenheit: " + r.eigen);
+  if (a.fehler.length) fehl.push("Laufzeitfehler (Admin): " + a.fehler.join("; "));
+  await a.zu();
+  /* der Inhaber: für andere anlegen, ändern, löschen – im Termin mit Personenwahl */
+  const b = await oeffnen(KONTEN.inhaber);
+  await ttHilfen(b);
+  const r2 = await b.seite.evaluate(async () => {
+    const tt = window.__tt, x = window.__t.x, sb = x("Store.sb"); tt.leeren();
+    const tech = "u_tech_test_at", t1 = x("werktagAb(plusTage(isoLokal(new Date()),7))");
+    const ins = await sb.from("planung").insert({ art: "termin", kategorie: "schule", titel: "Kurs", datum: t1, wer: [tech], wer_namen: ["Testtechniker"] }).select("*");
+    const id = ins.data && ins.data[0].id;
+    const upd = id ? await sb.from("planung").update({ titel: "Kurs neu" }).eq("id", id).select("*") : {};
+    await tt.laden();
+    x("planEditor(PLANUNG.filter(function(p){ return p.id==='" + id + "'; })[0])"); await tt.warte(400);
+    const d = tt.dialog(), kn = [...d.querySelectorAll(".as-fuss button")].map((k) => k.textContent.trim()), chips = d.querySelectorAll("[data-wer] .chip").length;
+    x("ansichtenSchliessen()");
+    const del = id ? await sb.from("planung").delete().eq("id", id).select("id") : {};
+    return { anlegen: !ins.error, aendern: !upd.error && (upd.data || []).length === 1, speichern: kn.includes("Speichern"), loeschen: kn.includes("Löschen"), chips, loeschenDb: !del.error && (del.data || []).length === 1 };
+  });
+  if (!r2.anlegen || !r2.aendern || !r2.speichern || !r2.loeschen || r2.chips < 2 || !r2.loeschenDb) fehl.push("Inhaber darf Abwesenheit anderer nicht verwalten: " + JSON.stringify(r2));
+  if (b.fehler.length) fehl.push("Laufzeitfehler (Inhaber): " + b.fehler.join("; "));
+  await b.zu();
+  pruefe(!fehl.length, fehl.join(" | "));
+});
+
 /* ================================================================ Ablauf ================================================================ */
 const filterText = process.argv.slice(2).find((x) => !x.startsWith("--"));
 const filter = filterText ? new RegExp(filterText, "i") : null;
