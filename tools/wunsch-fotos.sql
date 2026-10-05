@@ -17,13 +17,18 @@ create policy "wunschfotos hochladen" on storage.objects for insert to authentic
               and name like 'wunsch/' || auth.uid()::text || '/%'
               and (public.darf_schreiben() or public.meine_rolle() = 'praesentation'));
 
--- ansehen: Protokollfotos wie bisher alle Angemeldeten, Chat-Fotos nur wer
+-- ansehen: Protokollfotos alle Angemeldeten, ein Kunden-Konto aber nur zu
+-- Protokollen, die es selbst lesen darf; Chat- und Anlagenfotos nur wer
 -- mitarbeitet, Bilder zu Wünschen nur Absender und Inhaber (dieselbe Fassung
--- steht in tools/chat.sql, damit ein erneutes Ausführen nichts zurücksetzt)
+-- steht in tools/chat.sql und tools/anlagenfotos.sql, damit ein erneutes
+-- Ausführen nichts zurücksetzt)
 drop policy if exists "fotos ansehen" on storage.objects;
 create policy "fotos ansehen" on storage.objects for select to authenticated
   using (bucket_id = 'protokollfotos'
-         and case when name like 'wunsch/%' then (owner = auth.uid() or public.ist_inhaber())
-                  when name like 'chat/%'   then public.darf_schreiben()
+         and case when name like 'wunsch/%'  then (owner = auth.uid() or public.ist_inhaber())
+                  when name like 'chat/%'    then public.darf_schreiben()
                   when name like 'anlagen/%' then public.darf_schreiben()
-                  else true end);
+                  else (public.meine_rolle() <> 'kunde'
+                        or exists (select 1 from public.protokolle p
+                                    where p.client_id = split_part(storage.objects.name, '/', 1)))
+             end);

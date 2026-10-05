@@ -3574,6 +3574,59 @@ test("Tiefentest mail: Rechte – Posteingang nur für Mitarbeiter, KPlus-PDFs u
   await a.zu();
 });
 
+test("Rechte: Protokollfotos, Auftrags- und Rapport-PDFs – das Kunden-Konto nur zu Protokollen seiner Standorte, gleiche Regel in allen Skripten", async () => {
+  /* „fotos ansehen“ steht in drei Skripten: jede Fassung gleich (sonst setzt ein erneutes Ausführen zurück), und der Kunde
+     kommt an <client_id>/… nur noch über ein Protokoll, das er lesen darf (früher „else true“: alle Protokolldateien) */
+  const fassung = (f) => { const m = /create policy "fotos ansehen"[\s\S]*?(using \(bucket_id = 'protokollfotos'[\s\S]*?\);)/.exec(readFileSync(join(WURZEL, "tools", f), "utf8")); return m ? m[1] : "fehlt in " + f; };
+  const f = ["anlagenfotos.sql", "chat.sql", "wunsch-fotos.sql"].map(fassung);
+  pruefe(f.every((t) => t === f[0]), "„fotos ansehen“ ist nicht in allen Skripten gleich: " + f.join(" | "));
+  pruefe(!/else true/.test(f[0]) && /else \(public\.meine_rolle\(\) <> 'kunde'\s+or exists \(select 1 from public\.protokolle p\s+where p\.client_id = split_part\(storage\.objects\.name, '\/', 1\)\)\)/.test(f[0]),
+    "„fotos ansehen“ lässt das Kunden-Konto an alle Protokolldateien: " + f[0]);
+  const kopf = readFileSync(join(WURZEL, "supabase-setup.sql"), "utf8").split("create table")[0], ks = kopf.indexOf("tools/kunden-projekte-stunden.sql"), af = kopf.indexOf("tools/anlagenfotos.sql");
+  pruefe(ks >= 0 && af > ks, "Kopf von supabase-setup.sql: tools/anlagenfotos.sql fehlt oder steht vor tools/kunden-projekte-stunden.sql");
+  /* die Attrappe wie die Regel – und die App legt und sucht die Dateien wirklich unter der Kennung des Protokolls (client_id) */
+  const a = await tmSeite(KONTEN.techniker);
+  const r = await a.seite.evaluate(async () => {
+    const x = window.__t.x, db = window.__db.tabellen, tm = window.__tm, jetzt = new Date().toISOString(), e = {};
+    db.stammdaten.push({ id: "kunde:KT1", typ: "kunde", ziel: "KT1", felder: { name: "Testkunde Eins", aktiv: true }, neu: true, geaendert: jetzt, von: "Test", grund: "Test" });
+    db.stammdaten.push({ id: "standort:TS5", typ: "standort", ziel: "TS5", felder: { kundeId: "KT1" }, neu: false, geaendert: jetzt, von: "Test", grund: "Test" });
+    const zeile = (cid, sid) => ({ id: "srv_" + cid, client_id: cid, standort_id: sid, erstellt: jetzt, erstellt_von: "u_tech_test_at", datum: jetzt.slice(0, 10), wartungsart: "Stoerung", version: 1,
+      fotos: [{ id: "f1", name: "Foto 1" }], stoerung: { auftragDatei: { name: "auftrag.pdf" } } });
+    db.protokolle.push(zeile("p_tf_lidl", "TS1"), zeile("p_tf_kt1", "TS5"));
+    const pfade = ["p_tf_lidl/f1.jpg", "p_tf_lidl/auftrag.pdf", "p_tf_kt1/f1.jpg", "p_tf_kt1/auftrag.pdf", "p_tf_kt1/rapport-x.pdf", "p_tf_waise/f1.jpg", "chat/tf/1.jpg", "anlagen/TP1/tf-1.jpg", "wunsch/u_tech_test_at/tf/1.jpg"];
+    for (const pf of pfade) await x("Store.sb").storage.from("protokollfotos").upload(pf, new Blob(["x"], { type: /\.pdf$/.test(pf) ? "application/pdf" : "image/jpeg" }));
+    const sicht = async () => { const o = []; for (const pf of pfade) if ((await x("Store.sb").storage.from("protokollfotos").createSignedUrl(pf, 600)).data) o.push(pf); return o; };
+    e.techniker = await sicht();
+    for (const [konto, rolle] of [["kunde@test.at", "kunde"], ["praes@test.at", "praesentation"], ["admin@test.at", "admin"], ["inhaber@test.at", "inhaber"]]) {
+      await tm.anmelden(konto, rolle);
+      e[rolle] = await sicht();
+      if (rolle !== "kunde") continue;
+      const zeilen = ((await x("Store.sb").from("protokolle").select("*")).data || []).filter((z) => /^p_tf_/.test(z.client_id));
+      e.kundeProtokolle = zeilen.map((z) => z.client_id);
+      const pr = x("ausZeile")(zeilen[0] || zeile("p_tf_lidl", "TS1"));
+      e.kundeFotos = (await x("ladeFotos")(pr)).map((b) => !!b.url);
+      e.kundeAuftrag = !!(await x("ladeAuftragPdf")(pr));
+      /* dieselben Abrufe für das Protokoll des anderen Kunden (etwa über eine erratene Kennung) */
+      const fremd = x("ausZeile")(zeile("p_tf_kt1", "TS5"));
+      e.fremdFotos = (await x("ladeFotos")(fremd)).map((b) => !!b.url);
+      e.fremdAuftrag = !!(await x("ladeAuftragPdf")(fremd));
+    }
+    return e;
+  });
+  const alle = ["p_tf_lidl/f1.jpg", "p_tf_lidl/auftrag.pdf", "p_tf_kt1/f1.jpg", "p_tf_kt1/auftrag.pdf", "p_tf_kt1/rapport-x.pdf", "p_tf_waise/f1.jpg"];
+  const gleich = (ist, soll) => JSON.stringify(ist) === JSON.stringify(soll);
+  pruefe(gleich(r.kunde, ["p_tf_lidl/f1.jpg", "p_tf_lidl/auftrag.pdf"]), "Kunden-Konto (Lidl) sieht im Speicher: " + JSON.stringify(r.kunde));
+  pruefe(gleich(r.kundeProtokolle, ["p_tf_lidl"]), "Kunden-Konto (Lidl) liest Protokolle: " + JSON.stringify(r.kundeProtokolle));
+  pruefe(gleich(r.kundeFotos, [true]) && r.kundeAuftrag, "Kunden-Konto: Foto bzw. Auftrag des eigenen Protokolls fehlt in der App: " + JSON.stringify(r));
+  pruefe(gleich(r.fremdFotos, [false]) && !r.fremdAuftrag, "Kunden-Konto: Foto bzw. Auftrag eines anderen Kunden abrufbar: " + JSON.stringify(r));
+  pruefe(gleich(r.praesentation, alle), "Präsentation sieht im Speicher: " + JSON.stringify(r.praesentation));
+  pruefe(gleich(r.techniker, alle.concat(["chat/tf/1.jpg", "anlagen/TP1/tf-1.jpg", "wunsch/u_tech_test_at/tf/1.jpg"])), "Techniker sieht im Speicher: " + JSON.stringify(r.techniker));
+  pruefe(gleich(r.admin, alle.concat(["chat/tf/1.jpg", "anlagen/TP1/tf-1.jpg"])), "Admin sieht im Speicher: " + JSON.stringify(r.admin));
+  pruefe(gleich(r.inhaber, alle.concat(["chat/tf/1.jpg", "anlagen/TP1/tf-1.jpg", "wunsch/u_tech_test_at/tf/1.jpg"])), "Inhaber sieht im Speicher: " + JSON.stringify(r.inhaber));
+  pruefe(!a.fehler.length, "Laufzeitfehler: " + a.fehler.join("; "));
+  await a.zu();
+});
+
 test("Tiefentest mail: Projekt aus Mailverlauf – vorhandene KPlus-Belege bleiben, nach einem Abbruch „Weiter ablegen“ ohne zweites Projekt", async () => {
   const a = await tmSeite(KONTEN.inhaber);
   const r = await a.seite.evaluate(async () => {

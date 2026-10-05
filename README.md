@@ -417,7 +417,9 @@ etwa 140 KB — für Typenschilder und Mängel gut lesbar, im Mobilfunk sparsam.
 Gespeichert wird getrennt vom Protokoll: auf Supabase im nicht öffentlichen
 Bucket `protokollfotos`, ausgeliefert über zeitlich begrenzte Links. Im
 Protokoll steht nur der Verweis. Innerhalb von Claude liegt je Foto ein
-eigenes Dokument in der dortigen Datenbank.
+eigenes Dokument in der dortigen Datenbank. Ein Kunden-Konto (z. B. Lidl)
+bekommt Fotos, Auftrags- und Rapport-PDFs nur zu Protokollen seiner eigenen
+Standorte (Regel „fotos ansehen“ in `tools/anlagenfotos.sql`, seit 05.10.2026).
 
 Ohne Verbindung wandern Protokoll **und** Bilder zusammen in den
 Zwischenspeicher des Geräts und gehen später gemeinsam raus. Ein Protokoll

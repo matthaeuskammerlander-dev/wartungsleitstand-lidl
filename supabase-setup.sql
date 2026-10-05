@@ -10,8 +10,10 @@
 --      alle protokolle“, „fassungen lesen“, „berichte lesen“, „berichte
 --      ansehen“ (sonst sieht das Lidl-Konto Protokolle aller Kunden)
 --   3. tools/anlagenfotos.sql – „fotos ansehen“ (Chat-, Anlagen- und
---      Wunsch-Fotos nur für Mitarbeitende; dieselbe Fassung steht in
---      tools/chat.sql und tools/wunsch-fotos.sql)
+--      Wunsch-Fotos nur für Mitarbeitende; Protokollfotos und Auftrags-/
+--      Rapport-PDFs sieht ein Kunden-Konto nur zu seinen Protokollen, setzt
+--      also Schritt 2 voraus; dieselbe Fassung steht in tools/chat.sql und
+--      tools/wunsch-fotos.sql)
 -- tools/rollen.sql allein reicht NICHT.
 -- Ganz unten stehen die Tabellenrechte für die Data API – seit 30.10.2026
 -- vergibt Supabase sie nicht mehr von selbst (siehe Erklärung dort).

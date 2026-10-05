@@ -44,18 +44,23 @@ grant select, insert, delete on public.chat to authenticated;
 
 -- Fotos des Team-Chats (chat/…) sieht nur, wer mitarbeitet – Kunde und
 -- Präsentation nicht. Die Regel „fotos ansehen“ aus supabase-setup.sql galt für
--- den ganzen Bucket; Protokollfotos und Auftrags-PDFs bleiben für alle
--- Angemeldeten lesbar wie bisher. (Wird supabase-setup.sql später nochmals
--- ausgeführt, danach diese Datei erneut ausführen.)
+-- den ganzen Bucket; Protokollfotos und Auftrags-PDFs (<client_id>/…) sehen
+-- alle Angemeldeten außer dem Kunden-Konto – das nur zu Protokollen, die es
+-- selbst lesen darf (seine Standorte, tools/kunden-projekte-stunden.sql).
+-- (Wird supabase-setup.sql später nochmals ausgeführt, danach diese Datei
+-- erneut ausführen.)
 drop policy if exists "fotos ansehen" on storage.objects;
 create policy "fotos ansehen" on storage.objects for select to authenticated
   -- Bilder zu Änderungswünschen (wunsch/…): nur Absender und Inhaber – dieselbe
-  -- Fassung wie in tools/wunsch-fotos.sql
+  -- Fassung wie in tools/wunsch-fotos.sql und tools/anlagenfotos.sql
   using (bucket_id = 'protokollfotos'
-         and case when name like 'wunsch/%' then (owner = auth.uid() or public.ist_inhaber())
-                  when name like 'chat/%'   then public.darf_schreiben()
+         and case when name like 'wunsch/%'  then (owner = auth.uid() or public.ist_inhaber())
+                  when name like 'chat/%'    then public.darf_schreiben()
                   when name like 'anlagen/%' then public.darf_schreiben()
-                  else true end);
+                  else (public.meine_rolle() <> 'kunde'
+                        or exists (select 1 from public.protokolle p
+                                    where p.client_id = split_part(storage.objects.name, '/', 1)))
+             end);
 
 -- Fotos einer gelöschten Nachricht aus dem Speicher nehmen: nur unter chat/…,
 -- nur die selbst hochgeladenen (Admins: alle). Protokollfotos bleiben unberührt.

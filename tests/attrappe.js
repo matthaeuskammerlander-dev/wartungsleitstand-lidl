@@ -8,7 +8,7 @@
     if(x.status===200) DB=JSON.parse(x.responseText); }catch(e){} }
   T.forEach(function(t){ if(!Array.isArray(DB[t])) DB[t]=[]; });
   function sichern(){ try{ localStorage.setItem("attrappe_db",JSON.stringify(DB)); }catch(e){} }
-  var DATEIEN={}, sitzung=null, horcher=[], z=0;
+  var DATEIEN={}, BESITZER={}, sitzung=null, horcher=[], z=0;
   window.__abgelehnt=[];
   /* Benutzerprofil (user_metadata) je Adresse – wie in Supabase über Sitzungen hinweg */
   function meta(m){ DB._meta=DB._meta||{}; return DB._meta[m]=DB._meta[m]||{}; }
@@ -16,6 +16,12 @@
   function melde(){ horcher.forEach(function(cb){ try{ cb(sitzung?"SIGNED_IN":"SIGNED_OUT",sitzung); }catch(e){} }); }
   function uid(){ return sitzung?sitzung.user.id:null; }
   function admin(){ return !!(sitzung && DB.admins.some(function(a){ return a.user_id===uid(); })); }
+  /* wie kunde_sieht() (kunden-projekte-stunden.sql): Mitarbeiter immer, ein Kunden-Konto (rollen.kunde_id, leer = Lidl)
+     nur Standorte seines Kunden (stammdaten standort:… felder.kundeId, leer = Lidl) */
+  function kundeSieht(sid){ var ich=DB.rollen.filter(function(r){ return r.user_id===uid(); })[0]||{};
+    if(ich.rolle!=="kunde") return true;
+    var s=DB.stammdaten.filter(function(r){ return r.id==="standort:"+sid; })[0];
+    return ((s && s.felder && s.felder.kundeId) || "lidl")===(ich.kunde_id || "lidl"); }
   function passt(r,f){ return f.every(function(x){
     if(x.a==="eq") return r[x.s]===x.w;
     if(x.a==="is") return x.w===null?(r[x.s]==null):(r[x.s]===x.w);
@@ -194,6 +200,7 @@
       if(this.t==="rollen") { /* wie die Regel: eigene Zeile, Admins alle */ }
       erg=tab.filter(function(r){ return passt(r,self.f); });
       if(this.t==="admins") erg=erg.filter(function(r){ return r.user_id===uid(); });
+      if(this.t==="protokolle") erg=erg.filter(function(r){ return kundeSieht(r.standort_id); });   /* wie „angemeldete lesen alle protokolle“ */
       if(this.t==="planung_privat") erg=erg.filter(function(r){ return r.user_id===uid(); });   /* wie die Regel: nur die eigenen */
       if(this.t==="arbeitszeiten"||this.t==="auslagen"||this.t==="auslagen_konto"){ var rl=(DB.rollen.filter(function(r){ return r.user_id===uid(); })[0]||{}).rolle; if(rl!=="inhaber") erg=erg.filter(function(r){ return r.user_id===uid(); }); }
       /* wie „fahrzeuge lesen“ (fahrzeuge.sql): Büro alle, sonst nur das Fahrzeug, in dem man Fahrer ist */
@@ -309,12 +316,21 @@
     var erlaubt=this.n==="sicherungen" ? null : this.n==="auslagen" ? ["image/jpeg","image/png","application/pdf"] : this.n==="projektdateien" ? ["application/pdf","image/jpeg","image/png","image/heic","image/heif","image/webp","text/plain","text/csv","application/msword","application/vnd.openxmlformats-officedocument.wordprocessingml.document","application/vnd.ms-excel","application/vnd.openxmlformats-officedocument.spreadsheetml.sheet","application/zip","message/rfc822","application/vnd.ms-outlook","image/vnd.dwg","application/acad","application/x-acad","application/autocad_dwg","application/dwg","application/x-dwg","application/x-autocad","application/octet-stream"] : ["image/jpeg","image/png","application/pdf"];
     if(erlaubt && b && b.type && erlaubt.indexOf(b.type)<0)
       return Promise.resolve({data:null,error:{message:"mime type "+b.type+" is not supported"}});
-    DATEIEN[k]=b; return Promise.resolve({data:{path:p},error:null}); };
-  /* wie posteingang-lesen.sql: Dateien im Bucket „posteingang“ nur mit darf_schreiben() (nicht Kunde, nicht Präsentation) */
-  function eimerGesperrt(n){ var rl=(DB.rollen.filter(function(r){ return r.user_id===uid(); })[0]||{}).rolle; return n==="posteingang" && (!sitzung || rl==="kunde" || rl==="praesentation"); }
-  E.prototype.createSignedUrl=function(p){ var b=eimerGesperrt(this.n) ? null : DATEIEN[this.n+"/"+p];
+    DATEIEN[k]=b; BESITZER[k]=uid(); return Promise.resolve({data:{path:p},error:null}); };
+  /* wie posteingang-lesen.sql: Dateien im Bucket „posteingang“ nur mit darf_schreiben() (nicht Kunde, nicht Präsentation);
+     wie „fotos ansehen“ (anlagenfotos.sql = chat.sql = wunsch-fotos.sql) im Bucket „protokollfotos“: wunsch/… nur Absender
+     und Inhaber, chat/… und anlagen/… nur wer mitarbeitet, alles übrige (<client_id>/…) ein Kunde nur zu Protokollen,
+     die er lesen darf */
+  function eimerGesperrt(n, p){ var rl=(DB.rollen.filter(function(r){ return r.user_id===uid(); })[0]||{}).rolle;
+    if(n==="posteingang") return !sitzung || rl==="kunde" || rl==="praesentation";
+    if(n!=="protokollfotos") return false;
+    if(!sitzung) return true;
+    if(/^wunsch\//.test(p)) return !(BESITZER[n+"/"+p]===uid() || rl==="inhaber");
+    if(/^(chat|anlagen)\//.test(p)) return rl==="kunde" || rl==="praesentation";
+    return rl==="kunde" && !DB.protokolle.some(function(r){ return r.client_id===String(p).split("/")[0] && kundeSieht(r.standort_id); }); }
+  E.prototype.createSignedUrl=function(p){ var b=eimerGesperrt(this.n, p) ? null : DATEIEN[this.n+"/"+p];
     return Promise.resolve(b?{data:{signedUrl:URL.createObjectURL(b)},error:null}:{data:null,error:{message:"weg"}}); };
-  E.prototype.download=function(p){ var b=eimerGesperrt(this.n) ? null : DATEIEN[this.n+"/"+p]; return Promise.resolve(b?{data:b,error:null}:{data:null,error:{message:"weg"}}); };
+  E.prototype.download=function(p){ var b=eimerGesperrt(this.n, p) ? null : DATEIEN[this.n+"/"+p]; return Promise.resolve(b?{data:b,error:null}:{data:null,error:{message:"weg"}}); };
   E.prototype.remove=function(){ return Promise.resolve({data:[],error:null}); };
   E.prototype.list=function(){ return Promise.resolve({data:[],error:null}); };
   window.supabase={createClient:function(){ return {
