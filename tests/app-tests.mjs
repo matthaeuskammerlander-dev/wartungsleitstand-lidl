@@ -4500,6 +4500,21 @@ test("Tiefentest werkzeug: verletzte Prüfregel beim Speichern meldet nicht „n
   await a.zu();
 });
 
+test("Karte: Auswahl „fällig in 31–60 Tagen“ – Märkte mit einem Termin im übernächsten Monat lassen sich dazunehmen", async () => {
+  const a = await oeffnen(KONTEN.admin);
+  const r = await a.seite.evaluate(() => {
+    const x = window.__t.x;
+    const heute = new Date(), g30 = x("isoLokal(new Date(Date.now()+VORLAUF_TAGE*86400000))"), g60 = x("isoLokal(new Date(Date.now()+KARTE_BALD_TAGE*86400000))");
+    const maerkte = x("ST.filter(function(s){ return !marktPausiert(s) && (s.status==='erledigt'||s.status==='geplant'); }).map(function(s){ return {id:s.id, kat:karteKat(s), n:s.pos.map(function(p){ return p.naechste; }).filter(Boolean).sort()[0]||''}; })");
+    const falsch = maerkte.filter((m) => (m.kat === "bald") !== (m.n && m.n >= g30 && m.n < g60) && !(m.kat === "plan" && (!m.n || m.n >= g60)));
+    return { kat: x("KARTE_KAT.map(function(k){ return k[0]+'|'+k[1]; })"), falsch, bald: maerkte.filter((m) => m.kat === "bald").length, faelligUnveraendert: x("VORLAUF_TAGE") };
+  });
+  pruefe(r.kat.some((k) => /^bald\|fällig in 31–60 Tagen$/.test(k)), "keine Auswahl „fällig in 31–60 Tagen“: " + JSON.stringify(r.kat));
+  pruefe(!r.falsch.length, "Märkte falsch eingeteilt: " + JSON.stringify(r.falsch));
+  pruefe(r.faelligUnveraendert === 30, "Fälligkeit selbst verändert: " + r.faelligUnveraendert);
+  await a.zu();
+});
+
 /* ================================================================ Ablauf ================================================================ */
 const filterText = process.argv.slice(2).find((x) => !x.startsWith("--"));
 const filter = filterText ? new RegExp(filterText, "i") : null;
