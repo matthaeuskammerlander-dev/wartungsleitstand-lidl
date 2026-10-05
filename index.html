@@ -9021,6 +9021,11 @@ function kontowechselAufraeumen(){
   /* Druckansicht (Wartungsübersicht, Bericht) zeigt die Daten des alten Kontos */
   var da=document.getElementById("druckansicht"); if(da) da.remove();
   document.body.classList.remove("druckmodus");
+  /* Reisekosten (Beträge, IBAN) und Fahrzeuge (Fahrer, Privatautos) gehören zum alten Konto – sonst sähe
+     und speicherte das neue Konto sie als eigene (die Fahrzeuge bis zu einer Minute lang) */
+  AUSLAGEN=[]; AK_KONTO=null; akGeladen=false; akLaedt=null; akKonto=""; akFehler=""; akStand=0;
+  AK_ALLE={monat:"", liste:[], konten:{}, laedt:false, fehler:""}; AK_ABGEGEBEN=null;
+  FZ=[]; FZ_E=[]; FZ_K={}; fzGeladen=false; fzLaedt=null; fzStand=0; fzFehler="";
   /* Änderungsverlauf und Posteingang gehören zum alten Konto – die
      Präsentation mischte den Speicherinhalt sonst in ihren Verlauf */
   aenderungen=[]; POSTEINGANG=[]; protokolleFehler="";
@@ -19686,16 +19691,17 @@ function fzLaden(neu){
   if(demo() || Store.modus!=="supabase" || !Store.sb){ fzGeladen=true; return Promise.resolve(false); }
   if(fzLaedt) return fzLaedt;
   if(!neu && fzGeladen && Date.now()-fzStand<60000) return Promise.resolve(false);
-  var ab=isoLokal(new Date(Date.now()-430*864e5));
+  var ab=isoLokal(new Date(Date.now()-430*864e5)), konto=meineKennung();
   fzLaedt=Promise.all([
     Store.sb.from("fahrzeuge").select("*").order("kennzeichen"),
     Store.sb.from("fahrzeug_eintraege").select("*").gte("datum", ab).order("datum", {ascending:false}).limit(8000),
     nurInhaber() ? Store.sb.from("fahrzeug_kosten").select("*") : Promise.resolve({data:[]})
   ]).then(function(r){
+    if(meineKennung()!==konto) return false;   /* inzwischen ein anderes Konto (kontowechselAufraeumen) – nichts übernehmen */
     if(r[0].error){ fzFehlt=/does not exist|schema cache|relation/i.test(r[0].error.message||""); fzFehler=fzFehlt?"":r[0].error.message; }
     else { FZ=r[0].data||[]; FZ_E=r[1].data||[]; FZ_K={}; (r[2].data||[]).forEach(function(k){ FZ_K[k.eintrag_id]=k; }); fzFehlt=false; fzFehler=""; }
     fzGeladen=true; fzStand=Date.now(); fzLaedt=null; return true;
-  }, function(){ fzFehler="Keine Verbindung – Fahrzeuge nicht geladen."; fzGeladen=true; fzStand=Date.now(); fzLaedt=null; return true; });
+  }, function(){ if(meineKennung()!==konto) return false; fzFehler="Keine Verbindung – Fahrzeuge nicht geladen."; fzGeladen=true; fzStand=Date.now(); fzLaedt=null; return true; });
   return fzLaedt;
 }
 function fzEintraege(f){ return FZ_E.filter(function(e){ return e.fahrzeug_id===f.id; })
@@ -31343,22 +31349,29 @@ function akLaden(neu){
   if(demo()){ akGeladen=true; return Promise.resolve(false); }
   if(!betriebAn()) return Promise.resolve(false);
   var konto=Store.benutzer.email, uid=Store.benutzer.id;
-  if(konto!==akKonto){ akKonto=konto; AUSLAGEN=[]; AK_KONTO=null; akGeladen=false; }
+  if(konto!==akKonto){ akKonto=konto; AUSLAGEN=[]; AK_KONTO=null; akGeladen=false; akLaedt=null; akFehler=""; }
   if(akLaedt) return akLaedt;
-  if(!neu && akGeladen && Date.now()-akStand<60000) return Promise.resolve(false);
+  /* höchstens einmal je Minute neu (zurückgegeben, ausbezahlt, anderer Satz); nach einem Fehler schon nach 15 s */
+  if(!neu && akGeladen && Date.now()-akStand<(akFehler?15000:60000)) return Promise.resolve(false);
+  /* Antwort für ein Konto, das inzwischen nicht mehr angemeldet ist: nichts übernehmen */
+  var anderes=function(){ return !Store.benutzer || Store.benutzer.email!==konto; };
   akLaedt=Promise.all([
     Store.sb.from("auslagen").select("*").eq("user_id", uid).gte("datum", plusMonate(isoLokal(new Date()),-14)).order("datum").limit(3000),
     Store.sb.from("auslagen_konto").select("*").eq("user_id", uid),
     Store.sb.from("einstellungen").select("*").eq("schluessel", "kilometergeld")
   ]).then(function(r){
+    if(anderes()) return false;
     akLaedt=null; akStand=Date.now(); akGeladen=true;
-    if(Store.benutzer.email!==konto) return false;
-    if(r[0].error){ akFehlt=/does not exist|schema cache|relation/i.test(r[0].error.message||""); akFehler=akFehlt?"":r[0].error.message; return true; }
+    if(r[0].error){ akFehlt=/does not exist|schema cache|relation/i.test(r[0].error.message||""); akFehler=akFehlt?"":akLadeFehler(r[0].error.message); return true; }
     akFehlt=false; akFehler=""; AUSLAGEN=r[0].data||[]; AK_KONTO=(r[1].data||[])[0]||null;
     var e=(r[2].data||[])[0]; if(e && e.wert && +e.wert.satz>0) KM_SATZ=+e.wert.satz;
     return true;
-  }, function(){ akLaedt=null; akStand=Date.now(); akGeladen=true; akFehler="Keine Verbindung – Reisekosten nicht geladen."; return true; });
+  }, function(){ if(anderes()) return false; akLaedt=null; akStand=Date.now(); akGeladen=true; akFehler="Keine Verbindung – Reisekosten nicht geladen."; return true; });
   return akLaedt;
+}
+/* Ladefehler in Klartext – supabase-js meldet ein fehlendes Netz als „TypeError: Failed to fetch“ */
+function akLadeFehler(m){
+  return /failed to fetch|networkerror|load failed|network request failed/i.test(String(m||"")) ? "Keine Verbindung – Reisekosten nicht geladen." : "Reisekosten nicht geladen: "+technikDeutsch(m);
 }
 function akNeuZeichnen(){ if(S.view==="stunden" && darfRendern() && !document.querySelector(".assistent")) render(); }
 function akImMonat(liste, monat){ return liste.filter(function(z){ return String(z.datum).slice(0,7)===monat; })
@@ -31592,7 +31605,10 @@ function akPdf(l, name, monat, konto){
 }
 /* ---------- Karte im Reiter Stunden: meine Reisekosten ---------- */
 function akMeineKarte(){
-  if(!akGeladen && !akLaedt) akLaden().then(function(neu){ if(neu) akNeuZeichnen(); });
+  /* bei jedem Zeichnen: akLaden prüft das Konto und lädt gedrosselt nach (sonst bliebe bis zum Neuladen der
+     Seite der erste Stand – Zurückgegebenes gesperrt, „ausbezahlt“ unsichtbar, nach einem Fehler leer) */
+  var warLaedt=akLaedt, lauf=akLaden();
+  if(lauf!==warLaedt) lauf.then(function(neu){ if(neu) akNeuZeichnen(); });
   if(!fzGeladen) fzLaden().then(function(neu){ if(neu) akNeuZeichnen(); });
   var heute=isoLokal(new Date());
   S.akMonat=S.akMonat||heute.slice(0,7);
@@ -31659,18 +31675,21 @@ function akMeineKarte(){
 /* ---------- Inhaber: Reisekosten aller, je Person, ausbezahlt ---------- */
 var AK_ALLE={monat:"", liste:[], konten:{}, laedt:false, fehler:""}, AK_ABGEGEBEN=null;
 function akAlleLaden(monat){
-  AK_ALLE.laedt=true;
+  /* ins Objekt, für das geladen wird – nach einem Kontowechsel (kontowechselAufraeumen) ist AK_ALLE ein neues */
+  var ziel=AK_ALLE;
+  ziel.laedt=true;
   var von=monat+"-01", bis=plusMonate(von,1);
   return Promise.all([Store.sb.from("auslagen").select("*").gte("datum", von).lt("datum", bis).order("datum").limit(5000), Store.sb.from("auslagen_konto").select("*")]).then(function(r){
-    AK_ALLE.laedt=false; AK_ALLE.monat=monat;
-    if(r[0].error){ AK_ALLE.fehler=r[0].error.message; return; }
-    AK_ALLE.fehler=""; AK_ALLE.liste=r[0].data||[]; AK_ALLE.konten={}; (r[1].data||[]).forEach(function(k){ AK_ALLE.konten[k.user_id]=k; });
-  }, function(){ AK_ALLE.laedt=false; AK_ALLE.fehler="Keine Verbindung."; });
+    ziel.laedt=false; ziel.monat=monat;
+    if(r[0].error){ ziel.fehler=r[0].error.message; return; }
+    ziel.fehler=""; ziel.liste=r[0].data||[]; ziel.konten={}; (r[1].data||[]).forEach(function(k){ ziel.konten[k.user_id]=k; });
+  }, function(){ ziel.laedt=false; ziel.fehler="Keine Verbindung."; });
 }
 /* abgegeben, noch nicht ausbezahlt (alle Monate) – fürs To-do des Inhabers */
 function akAbgegebenLaden(){
   if(!istInhaber() || !betriebAn()) return Promise.resolve([]);
-  return Store.sb.from("auslagen").select("user_id,name,datum,betrag,status").eq("status","eingereicht").limit(3000).then(function(r){ AK_ABGEGEBEN=r.error ? [] : (r.data||[]); return AK_ABGEGEBEN; }, function(){ return []; });
+  var konto=meineKennung();   /* inzwischen ein anderes Konto: nichts übernehmen */
+  return Store.sb.from("auslagen").select("user_id,name,datum,betrag,status").eq("status","eingereicht").limit(3000).then(function(r){ if(meineKennung()!==konto) return []; AK_ABGEGEBEN=r.error ? [] : (r.data||[]); return AK_ABGEGEBEN; }, function(){ return []; });
 }
 function akAbgegebenText(){
   var je={}; (AK_ABGEGEBEN||[]).forEach(function(z){ var k=z.user_id+"|"+String(z.datum).slice(0,7); (je[k]=je[k]||{name:z.name||"?", monat:String(z.datum).slice(0,7), summe:0}).summe+=+z.betrag||0; });

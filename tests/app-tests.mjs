@@ -1600,6 +1600,85 @@ test("Abwesenheit und Arbeit am selben Tag: die App fragt sofort – eingesprung
   await b.zu();
 });
 
+/* Tiefentest Reisekosten und Kilometergeld, Fahrzeuge (Funde RK-…, TTQ-…): je Test eine zusammengehörige Gruppe,
+   alle Abweichungen eines Tests werden gesammelt gemeldet */
+const RK_HILFEN = `
+  window.__rk = {
+    warte: (ms) => new Promise((f) => setTimeout(f, ms)),
+    karte: (re) => [...document.querySelectorAll(".card")].find((c) => { const h = c.querySelector("h2"); return h && re.test(h.textContent); }),
+    dlg: () => [...document.querySelectorAll(".assistent")].pop(),
+    speichern: (d) => [...d.querySelectorAll(".as-fuss button")].find((b) => /^Speichern$/.test(b.textContent.trim())).click(),
+    knopf: (wo, re) => [...(wo || document).querySelectorAll("button")].find((b) => re.test(b.textContent)),
+    toastSpion: () => { window.__toasts = []; window.__t.x("(function(){ if(window.__toastSpion) return 1; window.__toastSpion=1; var alt=toast; toast=function(m){ window.__toasts.push(String(m)); return alt.apply(this, arguments); }; return 1; })()"); },
+    anmelden: async (mail, rolle) => {
+      const x = window.__t.x;
+      await x("Store.sb.auth.signOut()"); await window.__rk.warte(300);
+      await x("Store.sb.auth.signInWithPassword({email:'" + mail + "',password:'test123'})");
+      for (let i = 0; i < 80 && !x("Rolle.da && Rolle.name==='" + rolle + "'"); i++) await window.__rk.warte(100);
+      await window.__rk.warte(300);
+    },
+  }; 1`;
+async function rkSeite(konto) { const a = await oeffnen(konto); await a.seite.evaluate((h) => eval(h), RK_HILFEN); return a; }
+
+test("Tiefentest reisekosten: Kontowechsel und Nachladen – keine fremden Reisekosten, IBAN oder Fahrzeuge, Zurückgegebenes wieder änderbar, nach Ladefehler neuer Versuch im Klartext", async () => {
+  const a = await rkSeite(KONTEN.inhaber);
+  const r = await a.seite.evaluate(async () => {
+    const x = window.__t.x, db = window.__db.tabellen, { warte, karte, knopf } = window.__rk;
+    const rk = () => (karte(/^Reisekosten und Kilometergeld/) || {}).textContent || "";
+    const neu = () => { x("S.view='faellig'; render()"); x("S.view='stunden'; render()"); };
+    const heute = x("isoLokal(new Date())"), fehlt = [], p = (bed, text) => { if (!bed) fehlt.push(text); };
+    /* RK-01, RK-09: der Inhaber hat eigene Reisekosten, IBAN und Fahrzeuge im Speicher der Seite */
+    db.auslagen.push({ id: "tkG1", user_id: "u_inhaber_test_at", name: "Testinhaber", art: "beleg", datum: heute, text: "TT-Geheim Hotel", kategorie: "naechtigung", betrag: 177.7, foto: "u_inhaber_test_at/g.jpg", status: "offen", erstellt: new Date().toISOString() });
+    db.auslagen_konto.push({ user_id: "u_inhaber_test_at", kontoinhaber: "Testinhaber", iban: "AT88 0000 0000 0000 0001" });
+    db.fahrzeuge.push({ id: "fzF", kennzeichen: "S-FREMD 1", fahrer: ["u_admin_test_at"], fahrer_namen: ["Testadmin"], privat_von: "u_admin_test_at", privat_name: "Testadmin", aktiv: true },
+      { id: "fzS", kennzeichen: "S-TECH 1", fahrer: ["u_tech_test_at"], fahrer_namen: ["Testtechniker"], aktiv: true });
+    x("S.view='fahrzeuge'; render()"); await warte(600);
+    x("S.view='stunden'; render()"); await warte(700);
+    const inhaberSieht = /TT-Geheim/.test(rk()) && x("FZ.length") >= 2;
+    /* Abmelden, als Techniker anmelden – ohne Neuladen der Seite */
+    await window.__rk.anmelden("tech@test.at", "techniker");
+    /* so liefert die Regel „fahrzeuge lesen“ dem Techniker: nur Fahrzeuge, bei denen er Fahrer ist */
+    db.fahrzeuge.splice(db.fahrzeuge.findIndex((f) => f.id === "fzF"), 1);
+    /* RK-02: ein eigener, schon abgegebener Eintrag */
+    db.auslagen.push({ id: "tkR1", user_id: "u_tech_test_at", name: "Testtechniker", art: "beleg", datum: heute, text: "Parkgarage Test", kategorie: "parken", betrag: 8, foto: "u_tech_test_at/p.jpg", status: "eingereicht", erstellt: new Date().toISOString() });
+    window.__rk.toastSpion();
+    x("ansichtenSchliessen(); S.view='fahrzeuge'; render()"); await warte(600);
+    const fahrzeuge = [...document.querySelectorAll("[data-fzid] h2")].map((h) => h.textContent);
+    p(!fahrzeuge.includes("S-FREMD 1"), "RK-09 Techniker sieht nach dem Kontowechsel ein fremdes Fahrzeug: " + JSON.stringify(fahrzeuge));
+    x("S.view='stunden'; render()"); await warte(700);
+    const k = karte(/^Reisekosten und Kilometergeld/), iban = k ? k.querySelector('[data-k="iban"]').value : null;
+    p(!/TT-Geheim/.test(rk()) && !x("AUSLAGEN.some(function(z){ return z.user_id!==meineKennung(); })") && !iban,
+      "RK-01 Techniker sieht Reisekosten/IBAN des Inhabers: " + JSON.stringify({ iban, auslagen: x("AUSLAGEN.map(function(z){ return z.text; })") }));
+    if (k) knopf(k, /Konto speichern/).click();
+    await warte(400);
+    p(((db.auslagen_konto.find((z) => z.user_id === "u_tech_test_at") || {}).iban || null) !== "AT88 0000 0000 0000 0001", "RK-01 fremde IBAN als eigenes Auszahlungskonto gespeichert");
+    const chatVorher = db.chat.length, ab = knopf(karte(/^Reisekosten und Kilometergeld/), /Monat abgeben/);
+    if (ab) ab.click();
+    await warte(600);
+    p(db.chat.length === chatVorher && !window.__toasts.some((t) => /^Abgegeben/.test(t)), "RK-01 falsche Abgabe-Meldung/Nachricht an den Inhaber: " + JSON.stringify(window.__toasts));
+    /* RK-02: der Inhaber gibt zurück – eine Minute später lädt die Liste beim Zeichnen neu */
+    db.auslagen.find((z) => z.id === "tkR1").status = "offen";
+    x("akStand=0"); neu(); await warte(600);
+    const stand = x("AUSLAGEN.filter(function(z){ return z.id==='tkR1'; }).map(function(z){ return z.status; }).join()");
+    x("akEditor(AUSLAGEN.filter(function(z){ return z.id==='tkR1'; })[0])"); await warte(300);
+    const d = window.__rk.dlg();
+    p(stand === "offen" && d && !/Schon abgegeben/.test(d.textContent), "RK-02 Zurückgegebenes bleibt gesperrt (Liste nie nachgeladen): " + stand);
+    x("ansichtenSchliessen()");
+    /* RK-02: Ladefehler so, wie supabase-js ihn liefert ({error:{message:"TypeError: Failed to fetch"}}) – Klartext, danach neuer Versuch */
+    x("(function(){ var sb=Store.sb, alt=sb.from.bind(sb), n=0; sb.from=function(t){ var q=alt(t); if(t==='auslagen' && n++===0) q.then=function(ok,nok){ return Promise.resolve({data:null,error:{message:'TypeError: Failed to fetch'}}).then(ok,nok); }; return q; }; return 1; })()");
+    x("akStand=0"); neu(); await warte(600);
+    const fehlerText = rk();
+    p(!/Failed to fetch/.test(fehlerText) && /Verbindung/.test(fehlerText), "RK-02 Ladefehler als Rohtext: " + fehlerText.slice(0, 250));
+    x("akStand=0"); neu(); await warte(600);
+    p(/Parkgarage/.test(rk()) && !/Verbindung/.test(rk()), "RK-02 nach dem Ladefehler kein neuer Versuch: " + rk().slice(0, 250));
+    return { inhaberSieht, rolle: x("Rolle.name"), fehlt };
+  });
+  pruefe(r.inhaberSieht && r.rolle === "techniker", "Aufbau falsch: " + JSON.stringify(r));
+  pruefe(!r.fehlt.length, r.fehlt.join(" | "));
+  pruefe(!a.fehler.length, "Laufzeitfehler: " + a.fehler.join("; "));
+  await a.zu();
+});
+
 /* ================================================================ Ablauf ================================================================ */
 const filterText = process.argv.slice(2).find((x) => !x.startsWith("--"));
 const filter = filterText ? new RegExp(filterText, "i") : null;
