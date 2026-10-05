@@ -3087,6 +3087,793 @@ test("Tiefentest kern: Werkzeug ausscheiden – Rückfrage, auffindbar, zurückh
   await a.zu();
 });
 
+/* Tiefentest Reisekosten und Kilometergeld, Fahrzeuge (Funde RK-…, TTQ-…): je Test eine zusammengehörige Gruppe,
+   alle Abweichungen eines Tests werden gesammelt gemeldet */
+const RK_HILFEN = `
+  window.__rk = {
+    warte: (ms) => new Promise((f) => setTimeout(f, ms)),
+    karte: (re) => [...document.querySelectorAll(".card")].find((c) => { const h = c.querySelector("h2"); return h && re.test(h.textContent); }),
+    dlg: () => [...document.querySelectorAll(".assistent")].pop(),
+    speichern: (d) => [...d.querySelectorAll(".as-fuss button")].find((b) => /^Speichern$/.test(b.textContent.trim())).click(),
+    knopf: (wo, re) => [...(wo || document).querySelectorAll("button")].find((b) => re.test(b.textContent)),
+    toastSpion: () => { window.__toasts = []; window.__t.x("(function(){ if(window.__toastSpion) return 1; window.__toastSpion=1; var alt=toast; toast=function(m){ window.__toasts.push(String(m)); return alt.apply(this, arguments); }; return 1; })()"); },
+    anmelden: async (mail, rolle) => {
+      const x = window.__t.x;
+      await x("Store.sb.auth.signOut()"); await window.__rk.warte(300);
+      await x("Store.sb.auth.signInWithPassword({email:'" + mail + "',password:'test123'})");
+      for (let i = 0; i < 80 && !x("Rolle.da && Rolle.name==='" + rolle + "'"); i++) await window.__rk.warte(100);
+      await window.__rk.warte(300);
+    },
+  }; 1`;
+async function rkSeite(konto) { const a = await oeffnen(konto); await a.seite.evaluate((h) => eval(h), RK_HILFEN); return a; }
+
+test("Tiefentest reisekosten: Kontowechsel und Nachladen – keine fremden Reisekosten, IBAN oder Fahrzeuge, Zurückgegebenes wieder änderbar, nach Ladefehler neuer Versuch im Klartext", async () => {
+  const a = await rkSeite(KONTEN.inhaber);
+  const r = await a.seite.evaluate(async () => {
+    const x = window.__t.x, db = window.__db.tabellen, { warte, karte, knopf } = window.__rk;
+    const rk = () => (karte(/^Reisekosten und Kilometergeld/) || {}).textContent || "";
+    const neu = () => { x("S.view='faellig'; render()"); x("S.view='stunden'; render()"); };
+    const heute = x("isoLokal(new Date())"), fehlt = [], p = (bed, text) => { if (!bed) fehlt.push(text); };
+    /* RK-01, RK-09: der Inhaber hat eigene Reisekosten, IBAN und Fahrzeuge im Speicher der Seite */
+    db.auslagen.push({ id: "tkG1", user_id: "u_inhaber_test_at", name: "Testinhaber", art: "beleg", datum: heute, text: "TT-Geheim Hotel", kategorie: "naechtigung", betrag: 177.7, foto: "u_inhaber_test_at/g.jpg", status: "offen", erstellt: new Date().toISOString() });
+    db.auslagen_konto.push({ user_id: "u_inhaber_test_at", kontoinhaber: "Testinhaber", iban: "AT88 0000 0000 0000 0001" });
+    db.fahrzeuge.push({ id: "fzF", kennzeichen: "S-FREMD 1", fahrer: ["u_admin_test_at"], fahrer_namen: ["Testadmin"], privat_von: "u_admin_test_at", privat_name: "Testadmin", aktiv: true },
+      { id: "fzS", kennzeichen: "S-TECH 1", fahrer: ["u_tech_test_at"], fahrer_namen: ["Testtechniker"], aktiv: true });
+    x("S.view='fahrzeuge'; render()"); await warte(600);
+    x("S.view='stunden'; render()"); await warte(700);
+    const inhaberSieht = /TT-Geheim/.test(rk()) && x("FZ.length") >= 2;
+    /* Abmelden, als Techniker anmelden – ohne Neuladen der Seite */
+    await window.__rk.anmelden("tech@test.at", "techniker");
+    /* so liefert die Regel „fahrzeuge lesen“ dem Techniker: nur Fahrzeuge, bei denen er Fahrer ist */
+    db.fahrzeuge.splice(db.fahrzeuge.findIndex((f) => f.id === "fzF"), 1);
+    /* RK-02: ein eigener, schon abgegebener Eintrag */
+    db.auslagen.push({ id: "tkR1", user_id: "u_tech_test_at", name: "Testtechniker", art: "beleg", datum: heute, text: "Parkgarage Test", kategorie: "parken", betrag: 8, foto: "u_tech_test_at/p.jpg", status: "eingereicht", erstellt: new Date().toISOString() });
+    window.__rk.toastSpion();
+    x("ansichtenSchliessen(); S.view='fahrzeuge'; render()"); await warte(600);
+    const fahrzeuge = [...document.querySelectorAll("[data-fzid] h2")].map((h) => h.textContent);
+    p(!fahrzeuge.includes("S-FREMD 1"), "RK-09 Techniker sieht nach dem Kontowechsel ein fremdes Fahrzeug: " + JSON.stringify(fahrzeuge));
+    x("S.view='stunden'; render()"); await warte(700);
+    const k = karte(/^Reisekosten und Kilometergeld/), iban = k ? k.querySelector('[data-k="iban"]').value : null;
+    p(!/TT-Geheim/.test(rk()) && !x("AUSLAGEN.some(function(z){ return z.user_id!==meineKennung(); })") && !iban,
+      "RK-01 Techniker sieht Reisekosten/IBAN des Inhabers: " + JSON.stringify({ iban, auslagen: x("AUSLAGEN.map(function(z){ return z.text; })") }));
+    if (k) knopf(k, /Konto speichern/).click();
+    await warte(400);
+    p(((db.auslagen_konto.find((z) => z.user_id === "u_tech_test_at") || {}).iban || null) !== "AT88 0000 0000 0000 0001", "RK-01 fremde IBAN als eigenes Auszahlungskonto gespeichert");
+    const chatVorher = db.chat.length, ab = knopf(karte(/^Reisekosten und Kilometergeld/), /Monat abgeben/);
+    if (ab) ab.click();
+    await warte(600);
+    p(db.chat.length === chatVorher && !window.__toasts.some((t) => /^Abgegeben/.test(t)), "RK-01 falsche Abgabe-Meldung/Nachricht an den Inhaber: " + JSON.stringify(window.__toasts));
+    /* RK-02: der Inhaber gibt zurück – eine Minute später lädt die Liste beim Zeichnen neu */
+    db.auslagen.find((z) => z.id === "tkR1").status = "offen";
+    x("akStand=0"); neu(); await warte(600);
+    const stand = x("AUSLAGEN.filter(function(z){ return z.id==='tkR1'; }).map(function(z){ return z.status; }).join()");
+    x("akEditor(AUSLAGEN.filter(function(z){ return z.id==='tkR1'; })[0])"); await warte(300);
+    const d = window.__rk.dlg();
+    p(stand === "offen" && d && !/Schon abgegeben/.test(d.textContent), "RK-02 Zurückgegebenes bleibt gesperrt (Liste nie nachgeladen): " + stand);
+    x("ansichtenSchliessen()");
+    /* RK-02: Ladefehler so, wie supabase-js ihn liefert ({error:{message:"TypeError: Failed to fetch"}}) – Klartext, danach neuer Versuch */
+    x("(function(){ var sb=Store.sb, alt=sb.from.bind(sb), n=0; sb.from=function(t){ var q=alt(t); if(t==='auslagen' && n++===0) q.then=function(ok,nok){ return Promise.resolve({data:null,error:{message:'TypeError: Failed to fetch'}}).then(ok,nok); }; return q; }; return 1; })()");
+    x("akStand=0"); neu(); await warte(600);
+    const fehlerText = rk();
+    p(!/Failed to fetch/.test(fehlerText) && /Verbindung/.test(fehlerText), "RK-02 Ladefehler als Rohtext: " + fehlerText.slice(0, 250));
+    x("akStand=0"); neu(); await warte(600);
+    p(/Parkgarage/.test(rk()) && !/Verbindung/.test(rk()), "RK-02 nach dem Ladefehler kein neuer Versuch: " + rk().slice(0, 250));
+    return { inhaberSieht, rolle: x("Rolle.name"), fehlt };
+  });
+  pruefe(r.inhaberSieht && r.rolle === "techniker", "Aufbau falsch: " + JSON.stringify(r));
+  pruefe(!r.fehlt.length, r.fehlt.join(" | "));
+  pruefe(!a.fehler.length, "Laufzeitfehler: " + a.fehler.join("; "));
+  await a.zu();
+});
+
+test("Tiefentest reisekosten: Monat abgeben, Konto, ausbezahlt, Kilometergeld-Satz – ehrliche Rückmeldung, auch ohne Verbindung", async () => {
+  const a = await rkSeite(KONTEN.techniker);
+  const r = await a.seite.evaluate(async () => {
+    const x = window.__t.x, db = window.__db.tabellen, { warte, karte, knopf } = window.__rk;
+    const heute = x("isoLokal(new Date())"), fehlt = [], p = (bed, text) => { if (!bed) fehlt.push(text); };
+    const meine = () => karte(/^Reisekosten und Kilometergeld/);
+    db.auslagen.push({ id: "tkA1", user_id: "u_tech_test_at", name: "Testtechniker", art: "beleg", datum: heute, text: "Parken Test", kategorie: "parken", betrag: 11.5, foto: "u_tech_test_at/a.jpg", status: "offen", erstellt: new Date().toISOString() });
+    window.__rk.toastSpion();
+    x("S.view='stunden'; render()"); await warte(700);
+    /* RK-07: am zweiten Gerät schon abgegeben – das Abgeben trifft keine Zeile */
+    db.auslagen.find((z) => z.id === "tkA1").status = "eingereicht";
+    let chatVorher = db.chat.length;
+    knopf(meine(), /Monat abgeben/).click(); await warte(700);
+    p(!window.__toasts.some((t) => /^Abgegeben/.test(t)) && db.chat.length === chatVorher && window.__toasts.some((t) => /schon abgegeben/i.test(t)),
+      "RK-07 Abgeben traf keine Zeile, trotzdem „Abgegeben“/Nachricht an den Inhaber: " + JSON.stringify({ toasts: window.__toasts, chat: db.chat.length - chatVorher }));
+    /* RK-10: ohne Verbindung – Monat abgeben und Konto speichern melden sich */
+    db.auslagen.push({ id: "tkA2", user_id: "u_tech_test_at", name: "Testtechniker", art: "beleg", datum: heute, text: "Maut Test", kategorie: "maut", betrag: 4, foto: "u_tech_test_at/m.jpg", status: "offen", erstellt: new Date().toISOString() });
+    await x("akLaden(true)"); x("render()"); await warte(300);
+    window.__toasts.length = 0; window.__netzWeg = true;
+    const ab = knopf(meine(), /Monat abgeben/); ab.click(); await warte(400);
+    const abgeben = window.__toasts.splice(0);
+    knopf(meine(), /Konto speichern/).click(); await warte(400);
+    const konto = window.__toasts.splice(0);
+    window.__netzWeg = false;
+    p(abgeben.some((t) => /Verbindung/.test(t)), "RK-10 „Monat abgeben“ ohne Verbindung ohne Rückmeldung: " + JSON.stringify(abgeben));
+    p(konto.some((t) => /Verbindung/.test(t)), "RK-10 „Konto speichern“ ohne Verbindung ohne Rückmeldung: " + JSON.stringify(konto));
+    /* Inhaber: ausbezahlt und Kilometergeld-Satz ohne Verbindung */
+    await window.__rk.anmelden("inhaber@test.at", "inhaber");
+    x("S.view='stunden'; AK_ALLE.monat=''; render()"); await warte(700);
+    const alle = karte(/^Reisekosten aller/);
+    window.__toasts.length = 0; window.__netzWeg = true;
+    const az = [...alle.querySelectorAll("button")].find((b) => b.textContent === "ausbezahlt");
+    az.click(); await warte(400);
+    const ausbezahlt = window.__toasts.splice(0), grau = az.disabled;
+    alle.querySelector("[data-satz]").value = "0,42"; alle.querySelector("[data-satzok]").click(); await warte(400);
+    const satz = window.__toasts.splice(0);
+    window.__netzWeg = false;
+    p(ausbezahlt.some((t) => /Verbindung/.test(t)) && !grau, "RK-10 „ausbezahlt“ ohne Verbindung: keine Meldung oder Knopf bleibt grau: " + JSON.stringify({ ausbezahlt, grau }));
+    p(satz.some((t) => /Verbindung/.test(t)), "RK-10 Kilometergeld-Satz ohne Verbindung ohne Rückmeldung: " + JSON.stringify(satz));
+    p(db.auslagen.every((z) => z.status !== "ausbezahlt"), "ohne Verbindung trotzdem ausbezahlt");
+    return { rolle: x("Rolle.name"), fehlt };
+  });
+  pruefe(r.rolle === "inhaber", "Aufbau falsch: " + JSON.stringify(r));
+  pruefe(!r.fehlt.length, r.fehlt.join(" | "));
+  pruefe(!a.fehler.length, "Laufzeitfehler: " + a.fehler.join("; "));
+  await a.zu();
+});
+
+test("Tiefentest reisekosten: Inhaber ändert fremde Einträge – Privatauto bleibt, kein Vorschlag aus dem eigenen Kalender, Belegfoto bleibt bei der Person, eigene Karte und „Reisekosten aller“ stimmen", async () => {
+  const a = await rkSeite(KONTEN.inhaber);
+  const r = await a.seite.evaluate(async () => {
+    const x = window.__t.x, db = window.__db.tabellen, { warte, karte, dlg, speichern } = window.__rk;
+    const heute = x("isoLokal(new Date())"), ich = x("meineKennung()"), fehlt = [], p = (bed, text) => { if (!bed) fehlt.push(text); };
+    db.fahrzeuge.push({ id: "fzT", kennzeichen: "S-TT 100", fahrer: ["u_tech_test_at"], fahrer_namen: ["Testtechniker"], privat_von: "u_tech_test_at", privat_name: "Testtechniker", aktiv: true });
+    db.auslagen.push({ id: "akK", user_id: "u_tech_test_at", name: "Testtechniker", art: "km", datum: heute, text: "Salzburg – Wels – Salzburg", km: 200, km_satz: 0.5, betrag: 100, fahrzeug_id: "fzT", fahrzeug_name: "S-TT 100", status: "eingereicht", erstellt: new Date().toISOString() },
+      { id: "akB", user_id: "u_tech_test_at", name: "Testtechniker", art: "beleg", datum: heute, text: "Baumarkt Fremd", kategorie: "material", betrag: 23.85, foto: "u_tech_test_at/b.jpg", status: "eingereicht", erstellt: new Date().toISOString() });
+    await x("fzLaden(true)");
+    /* eigener Termin des Inhabers heute an einem Markt – daraus darf kein Strecken-Vorschlag für den Techniker werden */
+    await x("Store.sb.from('planung').insert(" + JSON.stringify({ art: "termin", kategorie: "wartung", titel: "Wartung Test", datum: heute, wer: [ich], wer_namen: ["I"], standort_id: "TS1" }) + ").select('*')");
+    x("planungStand=0; planungNachladen()"); await warte(400);
+    window.__entfernt = [];
+    x("(function(){ var st=Store.sb.storage, alt=st.from.bind(st); st.from=function(n){ var e=alt(n), rm=e.remove; e.remove=function(p){ window.__entfernt.push(n+':'+JSON.stringify(p)); return rm.apply(e, arguments); }; return e; }; return 1; })()");
+    x("S.view='stunden'; AK_ALLE.monat=''; render()"); await warte(800);
+    /* RK-04: km-Eintrag des Technikers mit seinem Privatauto */
+    x("akEditor(AK_ALLE.liste.filter(function(z){ return z.id==='akK'; })[0])"); await warte(400);
+    let d = dlg();
+    const auswahl = d.querySelector('[data-f="fahrzeug_id"]').value, chips = [...d.querySelectorAll("[data-vorschlag] .chip")].map((c) => c.textContent);
+    d.querySelector('[data-f="text"]').value = "Salzburg – Wels – Linz – Salzburg";
+    speichern(d); await warte(700);
+    const k = db.auslagen.find((q) => q.id === "akK");
+    p(/Linz/.test(k.text) && k.fahrzeug_id === "fzT" && k.fahrzeug_name === "S-TT 100", "RK-04 Privatauto des Technikers beim Speichern still entfernt: " + JSON.stringify({ auswahl, text: k.text, fahrzeug_id: k.fahrzeug_id, fahrzeug_name: k.fahrzeug_name }));
+    p(!chips.some((c) => /laut Kalender/.test(c)), "RK-04 Strecken-Vorschlag aus dem Kalender des Inhabers beim Eintrag des Technikers: " + JSON.stringify(chips));
+    /* RK-05, RK-06: Beleg des Technikers ändern (Betrag; ein neues Foto darf nicht im Ordner des Inhabers landen) */
+    x("akEditor(AK_ALLE.liste.filter(function(z){ return z.id==='akB'; })[0])"); await warte(400);
+    d = dlg();
+    d.querySelector('[data-f="betrag"]').value = "30,00";
+    const inp = d.querySelector("[data-foto]");
+    if (inp) {
+      const cv = document.createElement("canvas"); cv.width = 40; cv.height = 60; cv.getContext("2d").fillRect(0, 0, 20, 20);
+      const blob = await new Promise((f) => cv.toBlob(f, "image/png"));
+      const dt = new DataTransfer(); dt.items.add(new File([blob], "neu.png", { type: "image/png" }));
+      inp.files = dt.files; inp.dispatchEvent(new Event("change"));
+    }
+    speichern(d); await warte(900);
+    const b = db.auslagen.find((q) => q.id === "akB");
+    p(b.betrag === 30, "RK-05/06 Betrag nicht gespeichert: " + b.betrag);
+    /* Speicher-Regel „auslagen fotos lesen“ (tools/reisekosten.sql): die Person liest nur ihren eigenen Ordner */
+    p(String(b.foto || "").indexOf("u_tech_test_at/") === 0 && !window.__entfernt.length, "RK-05 Belegfoto liegt im Ordner des Inhabers / Original entfernt: " + JSON.stringify({ foto: b.foto, entfernt: window.__entfernt }));
+    const eigene = (karte(/^Reisekosten und Kilometergeld/) || {}).textContent || "";
+    p(!/Baumarkt Fremd|Linz/.test(eigene) && x("AUSLAGEN.filter(function(z){ return z.user_id!==meineKennung(); }).length") === 0, "RK-06 fremde Einträge in der eigenen Reisekosten-Karte des Inhabers");
+    const alleText = (karte(/^Reisekosten aller/) || {}).textContent || "";
+    p(x("(AK_ALLE.liste.filter(function(z){ return z.id==='akB'; })[0]||{}).betrag") === 30 && !/23,85/.test(alleText), "RK-06 „Reisekosten aller“ zeigt nach dem Speichern den alten Betrag");
+    /* RK-06: löschen – die Zeile verschwindet auch aus „Reisekosten aller“ */
+    x("akEditor(AK_ALLE.liste.filter(function(z){ return z.id==='akB'; })[0])"); await warte(400);
+    [...dlg().querySelectorAll(".as-fuss button")].find((q) => /Löschen/.test(q.textContent)).click(); await warte(900);
+    p(!db.auslagen.some((z) => z.id === "akB") && !/Baumarkt Fremd/.test((karte(/^Reisekosten aller/) || {}).textContent || ""), "RK-06 gelöschter Eintrag steht weiter in „Reisekosten aller“");
+    return { fehlt };
+  });
+  pruefe(!r.fehlt.length, r.fehlt.join(" | "));
+  pruefe(!a.fehler.length, "Laufzeitfehler: " + a.fehler.join("; "));
+  await a.zu();
+});
+
+test("Tiefentest reisekosten: To-do „Reisekosten … – auszahlen“ aktualisiert sich und führt in den Monat der Abgabe; Ladefehler bei „Reisekosten aller“ ohne Endlosschleife", async () => {
+  const a = await rkSeite(KONTEN.inhaber);
+  const r = await a.seite.evaluate(async () => {
+    const x = window.__t.x, db = window.__db.tabellen, { warte, karte } = window.__rk;
+    const fehlt = [], p = (bed, text) => { if (!bed) fehlt.push(text); };
+    const todos = () => [...document.querySelectorAll("#kal_todo button")].filter((b) => /Reisekosten/.test(b.textContent));
+    x("S.view='kalender'; render()"); await warte(800);
+    const vorher = todos().length;
+    /* RK-08: der Techniker gibt den Vormonat ab, während der Kalender des Inhabers offen ist */
+    const vm = x("plusMonate(isoLokal(new Date()),-1).slice(0,7)");
+    db.auslagen.push({ id: "tkV1", user_id: "u_tech_test_at", name: "Testtechniker", art: "beleg", datum: vm + "-28", text: "Baumarkt Test", kategorie: "material", betrag: 55, foto: "u_tech_test_at/v.jpg", status: "eingereicht", erstellt: new Date().toISOString() });
+    x("typeof akAbgegebenStand==='undefined' || (akAbgegebenStand=0)");   /* gedrosselt: eine Minute später */
+    for (let i = 0; i < 2; i++) { x("S.view='faellig'; render()"); await warte(150); x("S.view='kalender'; render()"); await warte(500); }
+    const nachher = todos().map((b) => b.textContent);
+    p(vorher === 0 && nachher.length === 1, "RK-08 To-do zeigt die neue Abgabe erst nach Neuladen der Seite: " + JSON.stringify({ vorher, nachher }));
+    /* RK-03: der Klick führt in den Monat der Abgabe */
+    x("S.akMonatAlle=isoLokal(new Date()).slice(0,7)");
+    if (todos()[0]) todos()[0].click();
+    await warte(900);
+    const ka = karte(/^Reisekosten aller/), inhalt = ka ? ka.querySelector("[data-inhalt]") : null;
+    p(x("S.akMonatAlle") === vm && inhalt && /Testtechniker/.test(inhalt.textContent), "RK-03 To-do führt nicht in den abgegebenen Monat: " + JSON.stringify({ monat: x("S.akMonatAlle"), vm, inhalt: inhalt ? inhalt.textContent.slice(0, 80) : null }));
+    /* TTQ-19: wirft die Abfrage (Netz weg beim Lesen), zeichnet sich der Reiter nicht endlos neu */
+    x("(function(){ var sb=Store.sb, alt=sb.from.bind(sb); sb.from=function(t){ var q=alt(t); if(t==='auslagen') q.then=function(ok,nok){ return Promise.reject(new TypeError('Failed to fetch')).then(ok,nok); }; return q; }; return 1; })()");
+    x("(function(){ window.__rz={n:0}; var alt=render; render=function(){ window.__rz.n++; if(window.__rz.n>200) return; return alt.apply(this, arguments); }; return 1; })()");
+    x("S.view='stunden'; AK_ALLE.monat=''; render()"); await warte(1000);
+    const n = x("window.__rz.n"), alleText = (karte(/^Reisekosten aller/) || {}).textContent || "";
+    p(n < 10 && /Verbindung/.test(alleText), "TTQ-19 Ladefehler bei „Reisekosten aller“: " + n + " Neuzeichnungen in 1 s; Karte: " + alleText.slice(-80));
+    return { fehlt };
+  });
+  pruefe(!r.fehlt.length, r.fehlt.join(" | "));
+  pruefe(!a.fehler.length, "Laufzeitfehler: " + a.fehler.join("; "));
+  await a.zu();
+});
+
+test("Tiefentest reisekosten: Erfassen – Vorschau wie gespeichert, Grenzen der Datenbank auf Deutsch, Vorbelegung aus dem Bedarf passt, Präsentation rechnet richtig", async () => {
+  const a = await rkSeite(KONTEN.techniker);
+  const r = await a.seite.evaluate(async () => {
+    const x = window.__t.x, db = window.__db.tabellen, { warte, dlg, speichern } = window.__rk;
+    const heute = x("isoLokal(new Date())"), fehlt = [], p = (bed, text) => { if (!bed) fehlt.push(text); };
+    const foto = async (d, name) => {
+      const cv = document.createElement("canvas"); cv.width = 40; cv.height = 60; cv.getContext("2d").fillRect(0, 0, 20, 20);
+      const blob = await new Promise((f) => cv.toBlob(f, "image/png"));
+      const dt = new DataTransfer(); dt.items.add(new File([blob], name, { type: "image/png" }));
+      const inp = d.querySelector("[data-foto]"); inp.files = dt.files; inp.dispatchEvent(new Event("change"));
+    };
+    /* RK-11: alter Eintrag mit 0,42 €/km – die Vorschau nennt den Satz, mit dem gespeichert wird */
+    db.auslagen.push({ id: "tkK1", user_id: "u_tech_test_at", name: "Testtechniker", art: "km", datum: heute, text: "Salzburg – Hallein – Salzburg", km: 100, km_satz: 0.42, betrag: 42, status: "offen", erstellt: new Date().toISOString() });
+    x("S.view='stunden'; render()"); await warte(700);
+    x("akEditor(AUSLAGEN.filter(function(z){ return z.id==='tkK1'; })[0])"); await warte(300);
+    let d = dlg();
+    const vorschau = d.querySelector("[data-kmbetrag]").textContent;
+    speichern(d); await warte(500);
+    p(db.auslagen.find((z) => z.id === "tkK1").betrag === 42 && /42,00/.test(vorschau), "RK-11 Vorschau zeigt einen anderen Betrag als gespeichert wird: " + vorschau);
+    /* RK-11: km mit zwei Nachkommastellen – die Datenbank speichert eine (numeric(8,1)) */
+    x("ansichtenSchliessen(); akEditor(null, {art:'km'})"); await warte(300);
+    d = dlg(); d.querySelector('[data-f="text"]').value = "Salzburg – Anif";
+    const kmFeld = d.querySelector('[data-f="km"]'); kmFeld.value = "12,35"; kmFeld.dispatchEvent(new Event("input"));
+    const vorschau2 = d.querySelector("[data-kmbetrag]").textContent;
+    speichern(d); await warte(500);
+    const k2 = db.auslagen.find((z) => z.text === "Salzburg – Anif") || {};
+    p(/12,4 km/.test(vorschau2) && /6,20/.test(vorschau2) && k2.betrag === 6.2, "RK-11 Vorschau „12,35 km“ weicht vom Gespeicherten ab: " + JSON.stringify({ vorschau2, km: k2.km, betrag: k2.betrag }));
+    /* TTQ-22: über den Grenzen der Datenbank – deutsche Meldung, nichts gespeichert */
+    x("ansichtenSchliessen(); akEditor(null, {art:'km'})"); await warte(300);
+    d = dlg(); d.querySelector('[data-f="text"]').value = "Salzburg – Lissabon"; d.querySelector('[data-f="km"]').value = "6000";
+    speichern(d); await warte(500);
+    const errKm = d.querySelector("[data-err]").textContent;
+    p(/5[.\s]?000/.test(errKm) && !/check|violates/i.test(errKm) && !db.auslagen.some((z) => z.km === 6000), "TTQ-22 über 5000 km: " + errKm);
+    x("ansichtenSchliessen(); akEditor(null, {art:'beleg'})"); await warte(300);
+    d = dlg(); d.querySelector('[data-f="text"]').value = "Testkauf groß"; d.querySelector('[data-f="betrag"]').value = "150000"; await foto(d, "g.png");
+    speichern(d); await warte(600);
+    const errB = d.querySelector("[data-err]").textContent;
+    p(/100[.\s]?000/.test(errB) && !/check|violates/i.test(errB) && !db.auslagen.some((z) => z.betrag === 150000), "TTQ-22 über 100 000 €: " + errB);
+    /* RK-14: Bedarf „abholen“ mit langem Text und langer Bezugsquelle → „Selbst bezahlt – Beleg erfassen“ */
+    x("ansichtenSchliessen()");
+    await x("wzLaden(true)");
+    const bd = (await x("Store.sb.from('bedarf').insert({art:'material', text:'" + "Testmaterial ".repeat(16).slice(0, 200) + "', beschaffung:'abholen', bezugsquelle:'" + "Testquelle ".repeat(16).slice(0, 175) + "', status:'offen'}).select('*')")).data[0];
+    await x("wzLaden(true)");
+    x("bedarfEditor(BEDARF.filter(function(b){ return b.id==='" + bd.id + "'; })[0])"); await warte(300);
+    [...dlg().querySelectorAll(".as-fuss button")].find((b) => /Selbst bezahlt/.test(b.textContent)).click(); await warte(300);
+    const laenge = dlg().querySelector('[data-f="text"]').value.length;
+    p(laenge <= 300, "RK-14 vorbelegter Text länger als die Datenbank erlaubt (300): " + laenge);
+    x("ansichtenSchliessen()");
+    /* RK-12: Präsentation – km ändern rechnet neu, Beleg mit Foto ohne „Foto fehlt“ */
+    await window.__rk.anmelden("praes@test.at", "praesentation");
+    x("ansichtenSchliessen(); S.akMonat=''; S.view='stunden'; render()"); await warte(500);
+    x("akEditor(null, {art:'km'})"); await warte(300);
+    d = dlg(); d.querySelector('[data-f="text"]').value = "Salzburg – Hallein"; d.querySelector('[data-f="km"]').value = "12,5"; speichern(d); await warte(300);
+    x("akEditor(AUSLAGEN.filter(function(z){ return z.art==='km'; })[0])"); await warte(300);
+    d = dlg(); d.querySelector('[data-f="km"]').value = "100"; speichern(d); await warte(300);
+    const km = x("AUSLAGEN.filter(function(z){ return z.art==='km'; }).map(function(z){ return z.km+' km = '+z.betrag; }).join()");
+    x("akEditor(null, {art:'beleg'})"); await warte(300);
+    d = dlg(); d.querySelector('[data-f="text"]').value = "Baumarkt Test"; d.querySelector('[data-f="betrag"]').value = "9,90"; await foto(d, "b.png");
+    speichern(d); await warte(400);
+    x("ansichtenSchliessen(); S.view='stunden'; render()"); await warte(400);
+    const kp = window.__rk.karte(/^Reisekosten und Kilometergeld/);
+    p(km === "100 km = 50", "RK-12 Präsentation: km geändert, Betrag nicht neu gerechnet: " + km);
+    p(kp && /Baumarkt Test/.test(kp.textContent) && !/Foto fehlt/.test(kp.textContent), "RK-12 Präsentation: Beleg mit Foto steht als „⚠ Foto fehlt“");
+    return { rolle: x("Rolle.name"), fehlt };
+  });
+  pruefe(r.rolle === "praesentation", "Aufbau falsch: " + JSON.stringify(r));
+  pruefe(!r.fehlt.length, r.fehlt.join(" | "));
+  pruefe(!a.fehler.length, "Laufzeitfehler: " + a.fehler.join("; "));
+  await a.zu();
+});
+
+test("Tiefentest reisekosten: Blätter, PDF, CSV und Rundgang – gleiche Beleg-Nummern, jeder Kilometergeld-Satz genannt, Zahlen ohne Tausendertrenner, kein fester Satz im Rundgang", async () => {
+  const a = await rkSeite(KONTEN.inhaber);
+  const r = await a.seite.evaluate(async () => {
+    const x = window.__t.x, db = window.__db.tabellen, { warte, karte } = window.__rk;
+    const heute = x("isoLokal(new Date())"), m = heute.slice(0, 7), fehlt = [], p = (bed, text) => { if (!bed) fehlt.push(text); };
+    /* RK-13: zwei Belege vom selben Tag – in Postgres ist die Reihenfolge bei order('datum') nicht festgelegt, hier der später erfasste zuerst */
+    db.auslagen.push({ id: "tkS2", user_id: "u_tech_test_at", name: "Testtechniker", art: "beleg", datum: heute, text: "Zweiter Kauf", kategorie: "material", betrag: 1234.5, foto: "u_tech_test_at/2.jpg", status: "eingereicht", erstellt: "2026-01-02T10:00:00Z" },
+      { id: "tkS1", user_id: "u_tech_test_at", name: "Testtechniker", art: "beleg", datum: heute, text: "Erster Kauf", kategorie: "material", betrag: 1, foto: "u_tech_test_at/1.jpg", status: "eingereicht", erstellt: "2026-01-01T10:00:00Z" },
+      { id: "tkC2", user_id: "u_tech_test_at", name: "Testtechniker", art: "km", datum: heute, text: "Salzburg – Wien", km: 222.4, km_satz: 0.5, betrag: 111.2, status: "eingereicht", erstellt: new Date().toISOString() });
+    /* Kontoinhaber tippt jede Person selbst – in der CSV darf daraus keine Excel-Formel werden */
+    db.auslagen_konto.push({ user_id: "u_tech_test_at", kontoinhaber: "=1+1", iban: "AT00 TEST" });
+    await x("akAlleLaden('" + m + "')");
+    /* Blatt der Person: akImMonat; PDF des Inhabers: je Person aus AK_ALLE.liste in dieser Reihenfolge */
+    const person = x("akSummen(akImMonat(AK_ALLE.liste,'" + m + "')).belege.map(function(z){ return z.text; })");
+    const inhaber = x("akSummen(AK_ALLE.liste.filter(function(z){ return z.user_id==='u_tech_test_at'; })).belege.map(function(z){ return z.text; })");
+    p(JSON.stringify(person) === JSON.stringify(inhaber), "RK-13 Beleg-Nr. im Blatt der Person und im PDF des Inhabers vertauscht: " + JSON.stringify({ person, inhaber }));
+    /* RK-15: CSV „Reisekosten aller“ */
+    x("(function(){ pdfHerunterladen=function(b){ window.__csv=b; }; return 1; })()");
+    x("S.view='stunden'; AK_ALLE.monat=''; render()"); await warte(800);
+    [...karte(/^Reisekosten aller/).querySelectorAll("button")].find((b) => b.textContent.indexOf("Liste (CSV)") >= 0).click(); await warte(200);
+    const zeile = window.__csv ? (await window.__csv.text()).split(String.fromCharCode(10))[1] || "" : "";
+    p(zeile && zeile.indexOf(String.fromCharCode(160)) < 0 && /;1235,50;/.test(zeile), "RK-15 CSV: Beträge mit Tausendertrenner (U+00A0): " + zeile.split(String.fromCharCode(160)).join("<NBSP>"));
+    p(zeile.indexOf(";=1+1") < 0, "RK-15 CSV: selbst getippter Kontoinhaber als Excel-Formel: " + zeile);
+    /* TTQ-20: zwei Kilometergeld-Sätze im Monat – beide stehen im PDF */
+    const html = x("akPdfHtml([{art:'km',datum:'2026-09-03',text:'A',km:100,km_satz:0.5,betrag:50},{art:'km',datum:'2026-09-20',text:'B',km:100,km_satz:0.42,betrag:42}],'Test','2026-09',null,[])");
+    p(html.indexOf("0,42") >= 0 && html.indexOf("0,50") >= 0, "TTQ-20 PDF nennt nur einen Kilometergeld-Satz");
+    /* RK-17: der Rundgang nennt keinen festen Satz */
+    x("KM_SATZ=0.42");
+    const s = x("RUNDGAENGE.stunden.schritte.filter(function(s){ return s.titel==='Reisekosten und Kilometergeld'; })[0]");
+    const t = typeof s.text === "function" ? s.text() : s.text;
+    p(!/0,50 € je km/.test(t), "RK-17 Rundgang nennt fest „0,50 € je km“, eingestellt ist 0,42");
+    return { fehlt };
+  });
+  pruefe(!r.fehlt.length, r.fehlt.join(" | "));
+  pruefe(!a.fehler.length, "Laufzeitfehler: " + a.fehler.join("; "));
+  await a.zu();
+});
+
+/* ---- Tiefentest Mail: Hilfen im Browser – das Mail-Programm am PC nachgebaut (nichts geht ins Netz) ---- */
+const TM_HILFEN = `
+  window.__tm = {
+    warte: (ms) => new Promise((f) => setTimeout(f, ms)),
+    /* warten, bis bed() stimmt (höchstens ms) – kürzer als feste Wartezeiten */
+    bis: async (bed, ms) => { const ende = Date.now() + (ms || 5000); for (;;) { let ok = false; try { ok = bed(); } catch (e) {} if (ok || Date.now() > ende) return ok; await new Promise((f) => setTimeout(f, 40)); } },
+    dlg: () => [...document.querySelectorAll(".assistent")].pop(),
+    knopf: (wo, re) => [...(wo || document).querySelectorAll("button")].find((b) => re.test(b.textContent)),
+    fuss: (re) => [...((window.__tm.dlg() || document).querySelectorAll(".as-fuss button"))].find((b) => re.test(b.textContent)),
+    toastSpion: () => { window.__toasts = []; window.__t.x("(function(){ if(window.__toastSpion) return 1; window.__toastSpion=1; var alt=toast; toast=function(m){ window.__toasts.push(String(m)); return alt.apply(this, arguments); }; return 1; })()"); },
+    toastBis: (re, ms) => window.__tm.bis(() => window.__toasts.some((t) => re.test(t)), ms),
+    verbinden: () => localStorage.setItem("ukt_mailbruecke", JSON.stringify({ schluessel: "ef".repeat(16), konto: window.__t.x("wer()"), seit: new Date().toISOString() })),
+    /* c: Antwort je Pfad (/api/<pfad>) – Wert, Funktion (u, o) oder Promise; ohne Angabe die Vorgaben */
+    programm: (c) => {
+      const tm = window.__tm, alt = tm.altFetch || (tm.altFetch = window.fetch);
+      tm.aufrufe = [];
+      const res = (d) => d instanceof Response ? d : new Response(d instanceof Blob ? d : typeof d === "string" ? d : JSON.stringify(d), { status: 200 });
+      const vorgabe = { status: { ok: true, konten: [], claude: true }, "leitstand/abholen": { auftrag: null },
+        roh: () => new Blob(["From: p@planer-test.at\\r\\n\\r\\nText"], { type: "message/rfc822" }),
+        anhang: (u) => new Blob(["%PDF-1.4 " + u], { type: "application/pdf" }),
+        suche: () => ({ mails: c.mails || [] }), mail: () => c.mail,
+        /* wie das Mail-Programm: nur die gewählten Mails kommen zurück */
+        verlauf: (u, o) => { const w = JSON.parse(o.body).mails.map((m) => m.uid); return { mails: (c.mails || []).filter((m) => w.indexOf(m.uid) >= 0), vorschlag: c.vorschlag || {} }; } };
+      window.fetch = (u, o) => {
+        u = String(u); if (!u.startsWith("http://localhost:4317")) return alt(u, o);
+        const pfad = (/\\/api\\/([a-z\\/]+)/.exec(u) || [])[1] || ""; tm.aufrufe.push(pfad);
+        let w = pfad in c ? c[pfad] : vorgabe[pfad];
+        if (typeof w === "function") w = w(u, o);
+        if (w === undefined) return Promise.resolve(new Response('{"fehler":"unbekannt"}', { status: 404 }));
+        return Promise.resolve(w).then(res);
+      };
+    },
+    ende: () => { if (window.__tm.altFetch) window.fetch = window.__tm.altFetch; },
+    /* Mailverlauf: suchen, auswerten lassen, Vorschlag abwarten */
+    verlauf: async (vorgabe, vorher) => {
+      const tm = window.__tm;
+      window.__t.x("ansichtenSchliessen()"); window.__t.x("mailVerlaufDialog(" + JSON.stringify(vorgabe) + ")");
+      await tm.bis(() => tm.fuss(/Mit Claude auswerten \\(/));
+      if (vorher) await vorher(tm.dlg());
+      await tm.bis(() => !tm.fuss(/Mit Claude auswerten/).disabled, 1000);
+      tm.fuss(/Mit Claude auswerten/).click();
+      await tm.bis(() => tm.fuss(/Projekt anlegen|Ins Projekt übernehmen/));
+      return tm.dlg();
+    },
+    anmelden: async (mail, rolle) => {
+      const x = window.__t.x;
+      await x("Store.sb.auth.signOut()"); await window.__tm.warte(300);
+      await x("Store.sb.auth.signInWithPassword({email:'" + mail + "',password:'test123'})");
+      for (let i = 0; i < 80 && !x("Rolle.da && Rolle.name==='" + rolle + "'"); i++) await window.__tm.warte(100);
+      await window.__tm.warte(300);
+    },
+  }; 1`;
+async function tmSeite(konto) { const a = await oeffnen(konto); await a.seite.evaluate((h) => eval(h), TM_HILFEN); return a; }
+
+test("Tiefentest mail: Rechte – Posteingang nur für Mitarbeiter, KPlus-PDFs und Mails mit Angebot/Rechnung nur für den Inhaber", async () => {
+  /* M5: alle Datenbank-Regeln zum Posteingang (Tabelle und Dateien) lesen nur mit darf_schreiben() – nie für jedes Konto */
+  const { readdirSync } = await import("node:fs");
+  const sql = readdirSync(join(WURZEL, "tools")).filter((f) => f.endsWith(".sql")).map((f) => readFileSync(join(WURZEL, "tools", f), "utf8")).join("\n") + "\n" + readFileSync(join(WURZEL, "supabase-setup.sql"), "utf8");
+  const regeln = [...sql.matchAll(/create policy "posteingang (lesen|ansehen)"[^;]*;/gi)].map((m) => m[0].replace(/\s+/g, " "));
+  pruefe(regeln.length >= 4 && regeln.every((t) => /darf_schreiben\(\)/.test(t) && !/using \(true\)/.test(t)), "M5 Posteingang für jedes angemeldete Konto lesbar: " + regeln.join(" | "));
+  const a = await tmSeite(KONTEN.inhaber);
+  const r = await a.seite.evaluate(async () => {
+    const x = window.__t.x, db = window.__db.tabellen, tm = window.__tm, jetzt = new Date().toISOString(), fehlt = [], p = (bed, text) => { if (!bed) fehlt.push(text); };
+    const sb = x("Store.sb");
+    /* M5: weitergeleitete Mail eines anderen Kunden im Posteingang – das Kunden-Konto und die Präsentation bekommen nichts davon */
+    await sb.storage.from("posteingang").upload("2026/10/tm5_mail.eml", new Blob(["From: a@anderer-kunde-test.at\r\n\r\nText"]));
+    db.posteingang.push({ id: "tm5a", nachricht_id: "<tm5@test>", art: "mail", dateiname: "Anfrage anderer Kunde.eml", pfad: "2026/10/tm5_mail.eml", status: "neu", betreff: "Anfrage anderer Kunde", absender: "a@anderer-kunde-test.at", eingang: jetzt, bytes: 300 });
+    for (const [konto, rolle] of [["kunde@test.at", "kunde"], ["praes@test.at", "praesentation"]]) {
+      await tm.anmelden(konto, rolle);
+      const zeilen = await x("Store.sb").from("posteingang").select("*"), datei = await x("Store.sb").storage.from("posteingang").createSignedUrl("2026/10/tm5_mail.eml", 600);
+      p(!(zeilen.data || []).length && !datei.data, "M5 " + rolle + " liest den Posteingang: " + (zeilen.data || []).length + " Zeilen, Datei " + (datei.data ? "abrufbar" : "gesperrt"));
+    }
+    await tm.anmelden("inhaber@test.at", "inhaber");
+    p(((await x("Store.sb").from("posteingang").select("*")).data || []).length >= 1, "M5 Inhaber liest den Posteingang nicht mehr");
+    db.posteingang.find((e) => e.id === "tm5a").status = "verworfen";
+
+    /* M3/M4: KPlus-PDFs (6-stellige Nummer) sind Angebote/Rechnungen – nur der Inhaber legt sie ab (Büro-Ordner);
+       die Mail selbst (.eml) enthält sie als Anhang und liegt dann ebenso nur beim Inhaber */
+    tm.verbinden(); tm.toastSpion(); window.UKT_CONFIG.posteingangAktiv = true;
+    x("kplusLesen=function(d){ var t=new TextDecoder().decode(d), nr=(/4139\\d\\d/.exec(t)||[''])[0]; if(!nr) return Promise.reject(new Error('kein KPlus')); return Promise.resolve({art:nr==='413953'?'angebot':'rechnung', nummer:nr, datum:'2026-03-20', kopf:{}, positionen:[{typ:'pos', nr:'1', menge:1, eh:'Stk', text:'Testposition', preis:1000}], summenPdf:{netto:1000}}); }");
+    const roh = (nr) => new Blob(["From: buero@test-firma.at\r\nSubject: Rechnung " + nr + "\r\n\r\nAnbei die Rechnung, netto 1.000,00 (Anhang " + nr + ".pdf als base64)"], { type: "message/rfc822" });
+    const anh = (u) => { const nr = (/uid=(\d+)/.exec(u) || [])[1]; return new Blob(["%PDF-1.4 " + (nr === "33" ? "Plan" : "KPlus 4139" + nr)], { type: "application/pdf" }); };
+    db.projekte.push({ id: "tmp_r3", nummer: "P-2026-903", titel: "Rechte Kälte", kunde_id: "lidl", status: "baustelle", daten: {}, verlauf: [], erstellt: jetzt, geaendert: jetzt });
+    await x("projekteLaden()");
+    const MV = { konto: "gmx", ordner: "INBOX", uid: 52, messageId: "<tm52@test>", datum: "2026-03-20T08:00:00.000Z", betreff: "Rechnung 413952", von: [{ name: "Büro", address: "buero@test-firma.at" }], an: [],
+      anhaenge: [{ i: 0, name: "413952.pdf", typ: "application/pdf", groesse: 4096 }] };
+    tm.programm({ mails: [MV], vorschlag: { titel: "Rechte Rechnungstest", kunde: "Lidl", kundeTreffer: "Lidl", status: "abgerechnet", angaben: [], beteiligte: [], termine: [], tagebuch: [], dateien: [] },
+      roh: (u) => roh("4139" + (/uid=(\d+)/.exec(u) || [])[1]), anhang: anh });
+    await tm.verlauf({ suche: "413952" });
+    tm.fuss(/Projekt anlegen/).click();
+    await tm.toastBis(/angelegt:|^Nicht fertig/);
+    const pv = db.projekte.find((q) => q.titel === "Rechte Rechnungstest"), dv = ((pv && pv.daten.dateien) || []).map((f) => f.art + "|" + f.pfad);
+    p(dv.some((f) => /^rechnung\|buero\/.*413952\.pdf$/.test(f)) && dv.some((f) => /^mail\|buero\/.*\.eml$/.test(f)), "M3 Mailverlauf: Mail mit KPlus-Rechnung nicht nur beim Inhaber: " + JSON.stringify(dv));
+    /* „Mail zu Projekt legen“ (Mail-Programm): KPlus-Anhang als Angebot unter buero/, die Mail ebenso; eine Mail nur mit Plan bleibt für alle */
+    const MZ = (uid, name) => ({ konto: "gmx", ordner: "INBOX", uid, messageId: "<tm" + uid + "@test>", datum: "2026-03-21T08:00:00.000Z", betreff: "Unterlagen " + uid, von: [{ name: "Büro", address: "buero@test-firma.at" }], an: [], text: "Anbei",
+      anhaenge: [{ i: 0, name, typ: "application/pdf", groesse: 4096 }] });
+    for (const [uid, name] of [[53, "413953.pdf"], [33, "Plan EG.pdf"]]) {
+      tm.programm({ mail: MZ(uid, name), roh: (u) => roh("4139" + uid), anhang: anh }); window.__toasts = [];
+      x("ansichtenSchliessen()"); x("mailUebernehmen({k:'gmx', o:'INBOX', u:" + uid + ", a:'zuprojekt', p:'tmp_r3'})");
+      await tm.bis(() => tm.fuss(/Ins Projekt legen/));
+      tm.fuss(/Ins Projekt legen/).click();
+      await tm.toastBis(/abgelegt|^Nicht/);
+    }
+    const dz = (db.projekte.find((q) => q.id === "tmp_r3").daten.dateien || []).map((f) => f.art + "|" + f.pfad + "|" + f.name);
+    p(dz.some((f) => /^angebot\|buero\/.*413953\.pdf$/.test(f)) && dz.some((f) => /^mail\|buero\/.*Unterlagen 53\.eml$/.test(f)), "M3/M4 Mail zu Projekt: KPlus-Angebot bzw. die Mail dazu nicht nur beim Inhaber: " + JSON.stringify(dz));
+    p(dz.some((f) => /^mail\|tmp_r3\/.*Unterlagen 33\.eml$/.test(f)), "M3 Mail ohne Angebot/Rechnung landet unnötig im Büro-Ordner: " + JSON.stringify(dz));
+    /* Posteingang beim Inhaber: KPlus-PDF als Rechnung erkannt (Büro-Ordner), die Mail ebenso */
+    const sbI = x("Store.sb"), pe = (id, gr, art, name, pfad) => ({ id, nachricht_id: "<" + gr + "@test>", art, dateiname: name, pfad, status: "neu", betreff: "Fwd: Rechnung P-2026-903", absender: "office@ukt.at", eingang: jetzt, bytes: 400 });
+    /* (ohne Dateityp hochgeladen – die Attrappe kennt für den Posteingang nur PDF und Bilder) */
+    await sbI.storage.from("posteingang").upload("2026/10/tm4_mail.eml", new Blob(["From: buero@test-firma.at\r\n\r\nAnbei die Rechnung 413954"]));
+    await sbI.storage.from("posteingang").upload("2026/10/tm4_413954.pdf", new Blob(["%PDF-1.4 KPlus 413954"], { type: "application/pdf" }));
+    db.posteingang.push(pe("tm4a", "tm4", "mail", "Fwd Rechnung P-2026-903.eml", "2026/10/tm4_mail.eml"), pe("tm4b", "tm4", "unbekannt", "413954.pdf", "2026/10/tm4_413954.pdf"));
+    let k = x("posteingangKarte()"); document.body.appendChild(k); await tm.bis(() => k.querySelector(".posbox"));
+    tm.knopf(k, /Zu Projekt legen/).click(); await tm.bis(() => tm.fuss(/Ins Projekt legen/));
+    let d = tm.dlg(), zeile = () => [...d.querySelectorAll("[data-d] .rowflex")].find((z) => /413954\.pdf/.test(z.textContent));
+    await tm.bis(() => zeile().querySelector("select").value === "rechnung", 1500);
+    p(zeile().querySelector("select").value === "rechnung", "M4 Posteingang (Inhaber): KPlus-PDF nicht als Rechnung erkannt, vorgewählt „" + zeile().querySelector("select").value + "“");
+    window.__toasts = []; tm.fuss(/Ins Projekt legen/).click(); await tm.toastBis(/abgelegt|^Nicht/);
+    const dp = (db.projekte.find((q) => q.id === "tmp_r3").daten.dateien || []).filter((f) => /Fwd Rechnung|413954/.test(f.name)).map((f) => f.art + "|" + f.pfad);
+    p(dp.length === 2 && dp.every((f) => /\|buero\//.test(f)), "M3/M4 Posteingang (Inhaber): Rechnung bzw. Mail dazu nicht im Büro-Ordner: " + JSON.stringify(dp));
+    k.remove(); x("ansichtenSchliessen()"); tm.ende();
+
+    /* als Admin: Mail und Rechnung aus dem Mailverlauf sind nicht zu sehen; aus dem Posteingang legt er nur den Plan ab */
+    await tm.anmelden("admin@test.at", "admin"); tm.toastSpion(); await x("projekteLaden()");
+    x("projektAnsicht('" + pv.id + "')"); await tm.bis(() => tm.dlg() && /Dateien/.test(tm.dlg().textContent));
+    const karte = [...tm.dlg().querySelectorAll(".card")].find((c) => /^Dateien/.test((c.querySelector("h2") || {}).textContent || ""));
+    const sicht = karte ? [...karte.querySelectorAll("[data-liste] a")].map((l) => l.textContent) : ["(keine Karte)"];
+    p(!sicht.some((n) => /\.eml$|413952/.test(n)), "M3 Admin sieht die Mail mit Rechnung bzw. die Rechnung: " + JSON.stringify(sicht));
+    x("ansichtenSchliessen()");
+    const sbA = x("Store.sb");
+    await sbA.storage.from("posteingang").upload("2026/10/tm4c_mail.eml", new Blob(["From: buero@test-firma.at\r\n\r\nAnbei die Rechnung 413955"]));
+    await sbA.storage.from("posteingang").upload("2026/10/tm4c_413955.pdf", new Blob(["%PDF-1.4 KPlus 413955"], { type: "application/pdf" }));
+    await sbA.storage.from("posteingang").upload("2026/10/tm4c_plan.pdf", new Blob(["%PDF-1.4 Plan"], { type: "application/pdf" }));
+    await sbA.storage.from("posteingang").upload("2026/10/tm4d_413956.pdf", new Blob(["%PDF-1.4 KPlus 413956"], { type: "application/pdf" }));
+    db.posteingang.push(pe("tm4c1", "tm4c", "mail", "Fwd Unterlagen P-2026-903.eml", "2026/10/tm4c_mail.eml"), pe("tm4c2", "tm4c", "unbekannt", "413955.pdf", "2026/10/tm4c_413955.pdf"),
+      pe("tm4c3", "tm4c", "unbekannt", "Plan OG.pdf", "2026/10/tm4c_plan.pdf"), pe("tm4d1", "tm4d", "mail", "Fwd Rechnung 413956.eml", "2026/10/tm4c_mail.eml"), pe("tm4d2", "tm4d", "unbekannt", "413956.pdf", "2026/10/tm4d_413956.pdf"));
+    k = x("posteingangKarte()"); document.body.appendChild(k); await tm.bis(() => k.querySelectorAll(".posbox").length >= 2);
+    const box = (re) => [...k.querySelectorAll(".posbox")].find((b) => re.test(b.textContent));
+    /* nur Mail + KPlus-Rechnung: gar kein Dialog, sichtbarer Hinweis */
+    window.__toasts = []; tm.knopf(box(/413956/), /Zu Projekt legen/).click(); await tm.warte(300);
+    p(!document.querySelector(".assistent") && window.__toasts.some((t) => /nur der Inhaber/.test(t)), "M4 Admin: Mail nur mit KPlus-Rechnung – kein Hinweis bzw. Dialog offen: " + JSON.stringify(window.__toasts));
+    /* Mail + KPlus + Plan: der Plan kommt ins Projekt, Mail und KPlus bleiben für den Inhaber im Posteingang */
+    tm.knopf(box(/413955/), /Zu Projekt legen/).click(); await tm.bis(() => tm.fuss(/Ins Projekt legen/));
+    d = tm.dlg();
+    p(/nur der Inhaber/.test(d.textContent), "M4 Admin: Dialog sagt nicht, dass Angebot/Rechnung nur der Inhaber ablegt");
+    d.querySelector("[data-p]").value = "tmp_r3"; window.__toasts = [];
+    tm.fuss(/Ins Projekt legen/).click(); await tm.toastBis(/abgelegt|^Nicht/);
+    const da = (db.projekte.find((q) => q.id === "tmp_r3").daten.dateien || []).filter((f) => /Fwd Unterlagen|413955|Plan OG/.test(f.name)).map((f) => f.art + "|" + f.name);
+    p(da.length === 1 && da[0] === "plan|Plan OG.pdf", "M4 Admin hat Angebot/Rechnung bzw. die Mail dazu abgelegt: " + JSON.stringify(da));
+    p(["tm4c1", "tm4c2"].every((id) => db.posteingang.find((e) => e.id === id).status === "neu") && db.posteingang.find((e) => e.id === "tm4c3").status === "erledigt",
+      "M4 Posteingang nach dem Ablegen durch den Admin: " + JSON.stringify(db.posteingang.filter((e) => /^tm4c/.test(e.id)).map((e) => e.id + ":" + e.status)));
+    p(window.__toasts.some((t) => /bleiben für den Inhaber/.test(t)) && /413955/.test(k.textContent), "M4 Admin: kein Hinweis bzw. die Karte für den Inhaber fehlt: " + JSON.stringify(window.__toasts));
+    k.remove();
+    return { fehlt };
+  });
+  pruefe(!r.fehlt.length, r.fehlt.join(" | "));
+  pruefe(!a.fehler.length, "Laufzeitfehler: " + a.fehler.join("; "));
+  await a.zu();
+});
+
+test("Tiefentest mail: Projekt aus Mailverlauf – vorhandene KPlus-Belege bleiben, nach einem Abbruch „Weiter ablegen“ ohne zweites Projekt", async () => {
+  const a = await tmSeite(KONTEN.inhaber);
+  const r = await a.seite.evaluate(async () => {
+    const x = window.__t.x, db = window.__db.tabellen, tm = window.__tm, jetzt = new Date().toISOString(), fehlt = [], p = (bed, text) => { if (!bed) fehlt.push(text); };
+    tm.verbinden(); tm.toastSpion();
+    const leer = { angaben: [], beteiligte: [], termine: [], tagebuch: [], dateien: [] };
+    const M = (uid, datum, betreff, anh, von) => ({ konto: "gmx", ordner: "INBOX", uid, messageId: "<tm" + uid + "@test>", datum, betreff, von: [von || { name: "Paula Planer", address: "p@planer-test.at" }], an: [], anhaenge: anh || [] });
+    /* M6: Rechnung 413960 ist bezahlt (Projekt tmp_alt), Angebot 413961 abgelehnt (anderes Projekt) – „Verlauf übernehmen“ darf daran nichts ändern */
+    db.projekte.push({ id: "tmp_alt", nummer: "P-2026-960", titel: "Altprojekt Belege", kunde_id: "lidl", status: "abgerechnet", daten: {}, verlauf: [], erstellt: jetzt, geaendert: jetzt },
+      { id: "tmp_anderes", nummer: "P-2026-961", titel: "Anderes Projekt", kunde_id: "lidl", status: "verloren", daten: {}, verlauf: [], erstellt: jetzt, geaendert: jetzt });
+    db.belege.push({ id: "tmb960", art: "rechnung", nummer: "413960", status: "bezahlt", bezahlt: "2026-05-01", faellig: "2026-04-20", projekt_id: "tmp_alt", kunde_id: "lidl", extern: true, test: false, datum: "2026-03-20", positionen: [], kopf: {} },
+      { id: "tmb961", art: "angebot", nummer: "413961", status: "abgelehnt", projekt_id: "tmp_anderes", kunde_id: "lidl", extern: true, test: false, datum: "2026-02-10", positionen: [], kopf: {} });
+    await x("projekteLaden()");
+    x("kplusLesen=function(d){ var t=new TextDecoder().decode(d), nr=(/41396\\d/.exec(t)||[''])[0]; if(!nr) return Promise.reject(new Error('kein KPlus')); return Promise.resolve({art:nr==='413960'?'rechnung':'angebot', nummer:nr, datum:'2026-03-20', kopf:{}, positionen:[{typ:'pos', nr:'1', menge:1, eh:'Stk', text:'Testposition', preis:100}], summenPdf:{netto:100}}); }");
+    const pdf = (nr) => [{ i: 0, name: nr + ".pdf", typ: "application/pdf", groesse: 4096 }];
+    tm.programm({ mails: [M(60, "2026-03-20T08:00:00.000Z", "Rechnung 413960", pdf("413960")), M(61, "2026-02-10T08:00:00.000Z", "Angebot 413961", pdf("413961"))],
+      vorschlag: Object.assign({ status: "abgerechnet" }, leer), anhang: (u) => new Blob(["%PDF-1.4 KPlus " + (u.includes("uid=60") ? "413960" : "413961")], { type: "application/pdf" }) });
+    let d = await tm.verlauf({ projektId: "tmp_alt", suche: "413960, 413961" });
+    await tm.bis(() => /413961 schon vorhanden/.test(d.innerText), 1500);
+    p(/Rechnung 413960 schon vorhanden \(bezahlt/.test(d.innerText) && /Angebot 413961 schon vorhanden \(abgelehnt, P-2026-961/.test(d.innerText), "M6 Vorschlag zeigt nicht, dass die KPlus-Belege schon vorhanden sind");
+    tm.fuss(/Ins Projekt übernehmen/).click();
+    await tm.toastBis(/^Übernommen|^Nicht fertig/);
+    const b = (nr) => { const z = db.belege.find((y) => y.nummer === nr); return z.status + "|" + z.projekt_id + "|" + (z.bezahlt || ""); };
+    p(b("413960") === "bezahlt|tmp_alt|2026-05-01", "M6 bezahlte Rechnung überschrieben: " + b("413960"));
+    p(b("413961") === "abgelehnt|tmp_anderes|", "M6 abgelehntes Angebot (anderes Projekt) überschrieben: " + b("413961"));
+    p(db.belege.filter((y) => /^41396/.test(y.nummer)).length === 2, "M6 Belege doppelt");
+    p(window.__toasts.some((t) => /schon vorhanden/.test(t)), "M6 Meldung nennt die schon vorhandenen Belege nicht: " + JSON.stringify(window.__toasts));
+
+    /* M1/M2: das Ablegen bricht ab (erst ist das Mail-Programm kurz weg, dann die Verbindung zur Datenbank) – die Meldung nennt das
+       schon angelegte Projekt in Klartext, „Weiter ablegen“ setzt es fort: kein zweites Projekt, nichts doppelt */
+    let rohSchritt = 0;
+    tm.programm({ mails: [M(21, "2026-03-02T08:00:00.000Z", "Anfrage Doppeltest")], vorschlag: Object.assign({ titel: "Doppeltest Kälte", kunde: "Lidl", kundeTreffer: "Lidl", status: "anfrage" }, leer),
+      roh: () => { rohSchritt++; if (rohSchritt === 1) return Promise.reject(new TypeError("Failed to fetch")); if (rohSchritt === 2) window.__netzWeg = true;
+        return new Blob(["From: p@planer-test.at\r\n\r\nText"], { type: "message/rfc822" }); } });
+    d = await tm.verlauf({ suche: "Doppeltest" });
+    const fort = () => [...d.querySelectorAll(".note")].map((n) => n.textContent).filter((t) => /abgebrochen|Abgebrochen/.test(t)).join(" ");
+    const weiter = () => tm.fuss(/Weiter ablegen|Projekt anlegen/);
+    tm.fuss(/Projekt anlegen/).click();
+    await tm.bis(() => fort() && !weiter().disabled);
+    const m1 = { fort: fort(), knopf: weiter().textContent };
+    window.__toasts = []; weiter().click();
+    await tm.bis(() => window.__netzWeg && !weiter().disabled && window.__toasts.some((t) => /abgebrochen|^Nicht fertig/.test(t)));
+    window.__netzWeg = false;
+    const m2 = { fort: fort(), toast: window.__toasts.filter((t) => /abgebrochen|^Nicht fertig/.test(t)).pop() || "" };
+    window.__toasts = []; weiter().click();
+    await tm.toastBis(/angelegt:|^Übernommen|abgebrochen|^Nicht fertig/);
+    const doppel = db.projekte.filter((q) => q.titel === "Doppeltest Kälte"), dd = ((doppel[0] || {}).daten || {});
+    p(/P-20\d\d-\d+/.test(m1.fort) && /angelegt/.test(m1.fort) && /Weiter ablegen/.test(m1.knopf), "M1 nach dem Abbruch: Projekt nicht genannt bzw. kein „Weiter ablegen“: " + JSON.stringify(m1));
+    p(!/nichts gespeichert|Failed to fetch/.test(m2.toast + " " + m2.fort) && /P-20\d\d-\d+/.test(m2.toast), "M2 Meldung passt nicht zum Stand (Projekt ist angelegt): " + JSON.stringify(m2));
+    p(doppel.length === 1, "M1 „Weiter ablegen“ legt ein weiteres Projekt an: " + doppel.map((q) => q.nummer).join(", "));
+    p((dd.mails || []).length === 1 && (dd.dateien || []).filter((f) => /\.eml$/.test(f.name)).length === 1, "M1 nach „Weiter ablegen“: Mail fehlt oder doppelt: " + JSON.stringify({ mails: (dd.mails || []).length, dateien: (dd.dateien || []).map((f) => f.name) }));
+
+    /* M7/M14: „Verlauf übernehmen“ ins bestehende Projekt – der Stand bleibt (Claude schlägt einen älteren vor), schon übernommene
+       Mails sind markiert und nicht vorgehakt, Mail, Beteiligte und Termine kommen nicht doppelt */
+    db.projekte.push({ id: "tmp_914", nummer: "P-2026-914", titel: "Doppeltverlauf Kälte", kunde_id: "lidl", status: "baustelle", erstellt: jetzt, geaendert: jetzt, verlauf: [{ zeit: jetzt, wer: "T", text: "Stand: Baustelle" }],
+      daten: { mails: [{ id: "<tm161@test>", konto: "gmx", betreff: "Anfrage Doppeltverlauf", von: "p@planer-test.at", datum: "2026-03-02T08:00:00.000Z" }],
+        dateien: [{ pfad: "tmp_914/mail-abc-Anfrage_Doppeltverlauf.eml", name: "Anfrage Doppeltverlauf.eml", art: "mail", groesse: 100, typ: "message/rfc822", von: "T", zeit: jetzt }],
+        beteiligte: [{ id: "bt1", rolle: "Planer HKLS", firma: "Planer GmbH", name: "Paula Planer", mail: "p@planer-test.at", quellen: [] }],
+        termine: [{ id: "tm1", datum: "2026-03-05", was: "Begehung vor Ort", quellen: [] }] } });
+    await x("projekteLaden()");
+    tm.programm({ mails: [M(161, "2026-03-02T08:00:00.000Z", "Anfrage Doppeltverlauf"), M(162, "2026-03-10T08:00:00.000Z", "Nachtrag Doppeltverlauf")],
+      vorschlag: Object.assign({}, leer, { status: "angebot", beteiligte: [{ rolle: "Planer HKLS", firma: "Planer GmbH", name: "Paula Planer", mail_adresse: "p@planer-test.at", mail: 0 }],
+        termine: [{ datum: "2026-03-05", text: "Begehung vor Ort", mail: 0 }, { datum: "2026-03-12", text: "Baubesprechung", mail: 1 }] }) });
+    let liste14 = {};
+    d = await tm.verlauf({ projektId: "tmp_914", suche: "Doppeltverlauf" }, (dl) => {
+      const z = [...dl.querySelectorAll("[data-l] label")], z161 = z.find((l) => /Anfrage Doppeltverlauf/.test(l.textContent));
+      liste14 = { haken161: z161.querySelector("input").checked, markiert: /im Projekt/.test(z161.textContent), haken162: z.find((l) => /Nachtrag/.test(l.textContent)).querySelector("input").checked };
+      /* bewusst nochmals mitlesen lassen – abgelegt wird sie trotzdem nicht doppelt */
+      z161.querySelector("input").checked = true; z161.querySelector("input").dispatchEvent(new Event("change"));
+    });
+    p(!liste14.haken161 && liste14.markiert && liste14.haken162, "M14 Suchliste: schon übernommene Mail vorgehakt bzw. nicht als „im Projekt“ markiert: " + JSON.stringify(liste14));
+    const stand14 = d.querySelector('[data-k="status"]').value;
+    p(stand14 === "baustelle", "M7 Stand im bestehenden Projekt mit Claudes Vorschlag vorbelegt: " + stand14);
+    window.__toasts = []; tm.fuss(/Ins Projekt übernehmen/).click(); await tm.toastBis(/^Übernommen|^Nicht fertig/);
+    let p914 = db.projekte.find((q) => q.id === "tmp_914");
+    p(p914.status === "baustelle", "M7 Stand still von „baustelle“ auf „" + p914.status + "“ gesetzt");
+    p(p914.daten.beteiligte.filter((b) => b.name === "Paula Planer").length === 1, "M14 Beteiligte doppelt: " + JSON.stringify(p914.daten.beteiligte.map((b) => b.name)));
+    p(p914.daten.dateien.filter((f) => f.name === "Anfrage Doppeltverlauf.eml").length === 1 && p914.daten.dateien.filter((f) => f.name === "Nachtrag Doppeltverlauf.eml").length === 1,
+      "M14 Mails doppelt bzw. die neue fehlt: " + JSON.stringify(p914.daten.dateien.map((f) => f.name)));
+    p(p914.daten.termine.filter((t) => t.was === "Begehung vor Ort").length === 1 && p914.daten.termine.some((t) => t.was === "Baubesprechung"), "M14 Termine doppelt bzw. der neue fehlt: " + JSON.stringify(p914.daten.termine.map((t) => t.datum + " " + t.was)));
+    p(p914.daten.mails.length === 2, "M14 Mail-Verweise: " + p914.daten.mails.length);
+    /* bewusst einen anderen Stand gewählt: der gilt, mit „Stand: …“ im Tagebuch */
+    d = await tm.verlauf({ projektId: "tmp_914", suche: "Doppeltverlauf" }, (dl) => tm.knopf(dl, /^alle$/).click());
+    d.querySelector('[data-k="status"]').value = "inbetriebnahme";
+    window.__toasts = []; tm.fuss(/Ins Projekt übernehmen/).click(); await tm.toastBis(/^Übernommen|^Nicht fertig/);
+    p914 = db.projekte.find((q) => q.id === "tmp_914");
+    p(p914.status === "inbetriebnahme" && p914.verlauf.some((v) => /^Stand: Inbetriebnahme/.test(v.text)), "M7 bewusst gewählter Stand nicht gespeichert bzw. ohne Tagebuch: " + p914.status + " " + JSON.stringify(p914.verlauf.map((v) => v.text)));
+
+    /* M8/M22: neues (vergangenes) Projekt – Claude liefert Daten als TT.MM.JJJJ: umgewandelt, nichts unsichtbar oder später still gelöscht;
+       ein Termin mit unklarem Datum ist nicht vorgehakt; „Anfrage vom“ ohne Angabe = Datum der ältesten Mail (mit ihr als Quelle), nicht heute */
+    tm.programm({ mails: [M(221, "2024-05-06T08:00:00.000Z", "Anfrage Altbau Datumtest"), M(222, "2024-05-20T08:00:00.000Z", "Angebot Altbau Datumtest")],
+      vorschlag: Object.assign({}, leer, { titel: "Altbau Datumtest", kunde: "Lidl", kundeTreffer: "Lidl", status: "abgerechnet", angaben: [{ key: "angebotDatum", wert: "20.05.2024", mail: 1 }],
+        termine: [{ datum: "10.06.2024", text: "Begehung Altbau", mail: 1 }, { datum: "demnächst", text: "Montage irgendwann", mail: 1 }],
+        tagebuch: [{ datum: "20.05.2024", text: "Angebot geschickt", mail: 1 }, { datum: "Mitte Mai", text: "Rückruf Planer", mail: 0 }] }) });
+    d = await tm.verlauf({ suche: "Altbau Datumtest" });
+    const unklar8 = [...d.querySelectorAll("label")].find((l) => /Montage irgendwann/.test(l.textContent));
+    p(unklar8 && !unklar8.querySelector("input").checked && /unklar/.test(unklar8.textContent), "M8 Termin mit unklarem Datum vorgehakt bzw. nicht markiert: " + (unklar8 ? unklar8.textContent : "fehlt"));
+    window.__toasts = []; tm.fuss(/Projekt anlegen/).click(); await tm.toastBis(/angelegt:|abgebrochen|^Nicht fertig/);
+    const p22 = db.projekte.find((q) => q.titel === "Altbau Datumtest"), d22 = (p22 && p22.daten) || {};
+    p(d22.angebotDatum === "2024-05-20", "M8 „Angebot vom“ nicht als JJJJ-MM-TT gespeichert: " + d22.angebotDatum);
+    p((d22.termine || []).map((t) => t.datum + "|" + t.was).join() === "2024-06-10|Begehung Altbau", "M8 Termine: " + JSON.stringify(d22.termine));
+    p(p22.verlauf.some((v) => /^2024-05-20T/.test(v.zeit) && v.text === "Angebot geschickt") && p22.verlauf.some((v) => /^2024-05-06T/.test(v.zeit) && v.text === "Rückruf Planer"),
+      "M8 Tagebuch-Datum: " + JSON.stringify(p22.verlauf.map((v) => v.zeit + "|" + v.text)));
+    p(d22.anfrageDatum === "2024-05-06" && ((d22.quellen || {}).anfrage || []).length === 1, "M22 „Anfrage vom“ " + d22.anfrageDatum + " (heute statt älteste Mail?), Quelle " + JSON.stringify((d22.quellen || {}).anfrage));
+    /* im Projekt sichtbar – und nach „Angaben speichern“ (nur der Titel geändert) noch da */
+    x("ansichtenSchliessen()"); x("projektAnsicht('" + p22.id + "')"); await tm.bis(() => tm.dlg() && tm.dlg().querySelector('[data-d="angebotDatum"]'));
+    const v22 = tm.dlg();
+    p(v22.querySelector('[data-d="angebotDatum"]').value === "2024-05-20", "M8 „Angebot vom“ im Projekt nicht sichtbar: " + v22.querySelector('[data-d="angebotDatum"]').value);
+    v22.querySelector('[data-p="titel"]').value = "Altbau Datumtest neu"; v22.querySelector("[data-speichern]").click();
+    await tm.bis(() => db.projekte.find((q) => q.id === p22.id).titel === "Altbau Datumtest neu", 2000);
+    p(db.projekte.find((q) => q.id === p22.id).daten.angebotDatum === "2024-05-20", "M8 „Angaben speichern“ hat „Angebot vom“ gelöscht");
+
+    /* M19/M16: während Claude liest, gibt ein Häkchen den Knopf nicht frei (keine zweite, kostenpflichtige Auswertung);
+       eine leere Antwort („null“) lässt den Knopf nicht hängen, die App sagt es in Klartext */
+    let verlaufAufrufe = 0;
+    tm.programm({ mails: [M(191, "2026-03-01T08:00:00.000Z", "Häkchentest 191"), M(192, "2026-03-02T08:00:00.000Z", "Häkchentest 192")],
+      verlauf: () => { verlaufAufrufe++; return new Promise((f) => setTimeout(() => f("null"), 600)); } });
+    x("ansichtenSchliessen()"); x("mailVerlaufDialog({suche:'Häkchentest'})");
+    await tm.bis(() => tm.fuss(/Mit Claude auswerten \(2/));
+    d = tm.dlg(); const los = tm.fuss(/Mit Claude auswerten/);
+    los.click(); await tm.warte(100);
+    const haken = d.querySelector("[data-l] input:checked"); haken.checked = false; haken.dispatchEvent(new Event("change"));
+    const frei19 = !los.disabled; if (frei19) los.click();
+    await tm.bis(() => !los.disabled && verlaufAufrufe && !/liest/.test(los.textContent), 2500); await tm.warte(700);
+    p(!frei19 && verlaufAufrufe === 1, "M19 während Claude liest, gibt ein Häkchen den Knopf frei – " + verlaufAufrufe + " Auswertungen");
+    p(!los.disabled && /nichts gefunden/.test(d.querySelector(".as-schritt").textContent), "M16 Antwort „null“: Knopf " + (los.disabled ? "hängt („" + los.textContent + "“)" : "frei") + ", Hinweis: " + d.querySelector(".as-schritt").textContent);
+    tm.ende(); x("ansichtenSchliessen()");
+    return { fehlt };
+  });
+  pruefe(!r.fehlt.length, r.fehlt.join(" | "));
+  pruefe(!a.fehler.length, "Laufzeitfehler: " + a.fehler.join("; "));
+  await a.zu();
+});
+
+test("Tiefentest mail: Projekt aus Mail und Mails dazu – leere Antwort von Claude in Klartext, eigene Eingaben bleiben, dieselbe Mail nicht still doppelt", async () => {
+  const a = await tmSeite(KONTEN.inhaber);
+  const r = await a.seite.evaluate(async () => {
+    const x = window.__t.x, db = window.__db.tabellen, tm = window.__tm, fehlt = [], p = (bed, text) => { if (!bed) fehlt.push(text); };
+    tm.verbinden(); tm.toastSpion();
+    const MAIL = (uid, betreff) => ({ konto: "gmx", ordner: "INBOX", uid, messageId: "<tp" + uid + "@test>", betreff, datum: "2026-10-02T09:12:00.000Z",
+      von: [{ name: "Max Planer", address: "max@planer-test.at" }], an: [], cc: [], text: "Bitte um Angebot.", html: null, anhaenge: [], notiz: null, auftraege: [] });
+    const oeffne = async (uid) => { x("ansichtenSchliessen()"); x("mailBrueckeStatus=null"); x("mailUebernehmen({k:'gmx', o:'INBOX', u:" + uid + ", a:'projekt'})");
+      await tm.bis(() => tm.dlg() && tm.dlg().querySelector('[data-f="titel"]')); return tm.dlg(); };
+    /* M16: Claude antwortet leer ({}) – keine Erfolgsmeldung ohne Inhalt */
+    tm.programm({ mail: MAIL(96, "Anfrage Leertest"), extrahieren: {} });
+    let d = await oeffne(96);
+    await tm.bis(() => !/liest/.test(d.querySelector("[data-claude] button").textContent), 2000);
+    const ct = d.querySelector("[data-claudetext]").textContent, orange = [...d.querySelectorAll("[data-f]")].filter((f) => f.style.background).length;
+    p(!/✓ von Claude ausgefüllt/.test(ct) && /nichts gefunden/.test(ct), "M16 leere Antwort {}: „" + ct + "“ bei " + orange + " ausgefüllten Feldern");
+
+    /* M9: was man tippt, während Claude noch liest, bleibt stehen – nur die übrigen Felder füllt Claude */
+    tm.programm({ mail: MAIL(91, "Anfrage Eingabetest"), extrahieren: () => new Promise((f) => setTimeout(() => f({ titel: "Claude Titel", ansprechpartner: "Claude Kontakt", telefon: "+43 1 999", kunde: "" }), 700)) });
+    d = await oeffne(91);
+    const fd = (n) => d.querySelector('[data-f="' + n + '"]');
+    const tippe = (n, w) => { fd(n).value = w; fd(n).dispatchEvent(new Event("input", { bubbles: true })); };
+    const liest9 = /Claude liest/.test(d.textContent);
+    tippe("telefon", "0664 1234567"); tippe("ansprechpartner", "Selbst getippt");
+    await tm.bis(() => !/liest/.test(d.querySelector("[data-claude] button").textContent), 2500);
+    const m9 = { liest9, tel: fd("telefon").value, ap: fd("ansprechpartner").value, titel: fd("titel").value };
+    p(m9.liest9 && m9.tel === "0664 1234567" && m9.ap === "Selbst getippt" && m9.titel === "Claude Titel", "M9 eigene Eingaben während des Lesens ersetzt (bzw. Claude füllt nichts): " + JSON.stringify(m9));
+
+    /* M10: dieselbe Mail ein zweites Mal „als neues Projekt“ – Hinweis auf das vorhandene Projekt, ein zweites nur nach Rückfrage */
+    tm.programm({ mail: MAIL(61, "Anfrage Zweimaltest"), extrahieren: {} });
+    d = await oeffne(61); d.querySelector('[data-f="kunde"]').value = "lidl";
+    window.__toasts = []; tm.fuss(/Projekt anlegen/).click(); await tm.toastBis(/angelegt/);
+    d = await oeffne(61);
+    const hinweis10 = d.querySelector(".as-inhalt").innerText.replace(/Anfrage Zweimaltest/g, "");
+    d.querySelector('[data-f="kunde"]').value = "lidl";
+    window.__antwort.confirm = false; window.__dialoge.length = 0;
+    tm.fuss(/Projekt anlegen/).click(); await tm.warte(500);
+    window.__antwort.confirm = true;
+    const proj10 = db.projekte.filter((q) => ((q.daten || {}).mails || []).some((m) => m.id === "<tp61@test>")).map((q) => q.nummer);
+    p(/liegt schon in P-20\d\d-\d+/.test(hinweis10) && window.__dialoge.some((z) => /schon/.test(z[1])) && proj10.length === 1,
+      "M10 dieselbe Mail ergibt " + proj10.length + " Projekte (Hinweis: " + /liegt schon/.test(hinweis10) + ", Rückfragen: " + JSON.stringify(window.__dialoge) + ")");
+
+    /* M17: „Mails dazu“ – gesendete Mail ohne Empfänger zeigt kein „undefined“ */
+    x("ansichtenSchliessen()");
+    tm.programm({ suche: { mails: [{ konto: "gmx", ordner: "Gesendet", uid: 5, messageId: "<g5@test>", datum: "2026-09-01T08:00:00.000Z", betreff: "Angebot Leerempfänger", gesendet: true, von: [], an: [] }] } });
+    const k17 = x("mailsDazuKarte([{text:'P-2026-917', inhalt:true}], {})"); document.body.appendChild(k17);
+    await tm.bis(() => /Leerempfänger/.test(k17.innerText));
+    p(/Leerempfänger/.test(k17.innerText) && !/undefined/.test(k17.innerText), "M17 Zeile zeigt „undefined“: " + k17.innerText.replace(/\s+/g, " "));
+    k17.remove();
+
+    /* M21: „Mail zu Projekt legen“ ohne passendes Projekt – nichts vorgewählt, ein schneller Klick legt nichts ab */
+    tm.programm({ mail: Object.assign(MAIL(71, "Fotos vom Wochenende"), { von: [{ name: "Familie", address: "familie@gmx.at" }] }) });
+    x("mailUebernehmen({k:'gmx', o:'INBOX', u:71, a:'zuprojekt'})"); await tm.bis(() => tm.fuss(/Ins Projekt legen/));
+    const wahl21 = tm.dlg().querySelector("[data-p]").value;
+    window.__toasts = []; tm.fuss(/Ins Projekt legen/).click(); await tm.warte(300);
+    p(!wahl21 && !db.projekte.some((q) => ((q.daten || {}).mails || []).some((m) => m.id === "<tp71@test>")) && window.__toasts.some((t) => /Projekt wählen/.test(t)),
+      "M21 Mail zu Projekt: ohne Vorschlag „" + wahl21 + "“ vorgewählt bzw. abgelegt, Meldungen " + JSON.stringify(window.__toasts));
+    tm.ende(); x("ansichtenSchliessen()");
+    return { fehlt };
+  });
+  pruefe(!r.fehlt.length, r.fehlt.join(" | "));
+  pruefe(!a.fehler.length, "Laufzeitfehler: " + a.fehler.join("; "));
+  await a.zu();
+});
+
+test("Tiefentest mail: Posteingang – „Zu Projekt legen“ legt nichts doppelt ab und meldet ehrlich, was gespeichert ist", async () => {
+  const a = await tmSeite(KONTEN.inhaber);
+  const r = await a.seite.evaluate(async () => {
+    const x = window.__t.x, db = window.__db.tabellen, tm = window.__tm, jetzt = new Date().toISOString(), fehlt = [], p = (bed, text) => { if (!bed) fehlt.push(text); };
+    tm.toastSpion(); window.UKT_CONFIG.posteingangAktiv = true;
+    const sb = x("Store.sb");
+    const pe = (id, gr, art, name, betreff, absender) => ({ id, nachricht_id: "<" + gr + "@test>", art, dateiname: name, pfad: "2026/10/" + id + "_" + name.replace(/\W+/g, "_"), status: "neu", betreff,
+      absender: absender || "a@planer-test.at", eingang: jetzt, bytes: 400 });
+    const ablegen = async (...eintraege) => { for (const e of eintraege) { await sb.storage.from("posteingang").upload(e.pfad, new Blob(["Inhalt " + e.dateiname])); db.posteingang.push(e); } };
+    const projekt = (id, nr, titel) => db.projekte.push({ id, nummer: nr, titel, kunde_id: "lidl", status: "baustelle", daten: {}, verlauf: [], erstellt: jetzt, geaendert: jetzt });
+    const karte = async () => { document.querySelectorAll("#tmPe").forEach((k) => k.remove()); const k = x("posteingangKarte()"); k.id = "tmPe"; document.body.appendChild(k);
+      await tm.bis(() => !/wird geladen/.test(k.textContent)); return k; };
+    const box = (k, re) => [...k.querySelectorAll(".posbox")].find((b) => re.test(b.textContent));
+    const namen = (pid) => ((db.projekte.find((q) => q.id === pid).daten || {}).dateien || []).map((f) => f.name);
+    projekt("tmp_911", "P-2026-911", "Doppelklick Kälte"); projekt("tmp_912", "P-2026-912", "Teilfehler Kälte"); projekt("tmp_913", "P-2026-913", "Vermerk Kälte");
+    await x("projekteLaden()");
+
+    /* M11: Doppelklick auf „Zu Projekt legen“ – nur ein Dialog, nichts doppelt */
+    await ablegen(pe("pe11a", "pe11", "mail", "Plan P-2026-911.eml", "Plan P-2026-911"), pe("pe11b", "pe11", "unbekannt", "Plan EG.pdf", "Plan P-2026-911"));
+    let k = await karte();
+    const kn = tm.knopf(box(k, /P-2026-911/), /Zu Projekt legen/); kn.click(); kn.click(); await tm.warte(300);
+    const dlg11 = [...document.querySelectorAll(".assistent")].filter((d) => /Zu Projekt legen/.test(d.querySelector(".as-titel").textContent));
+    for (const d of dlg11) { window.__toasts = []; tm.knopf(d.querySelector(".as-fuss"), /Ins Projekt legen/).click(); await tm.toastBis(/abgelegt|^Nicht|schon/); }
+    p(dlg11.length === 1 && namen("tmp_911").length === 2, "M11 Doppelklick: " + dlg11.length + " Dialoge, Dateien " + JSON.stringify(namen("tmp_911")));
+    x("ansichtenSchliessen()");
+
+    /* M12: eine Datei scheitert einmal – „nochmals“ lädt nur hoch, was noch fehlt */
+    await ablegen(pe("pe12a", "pe12", "mail", "Unterlagen P-2026-912.eml", "Unterlagen P-2026-912"), pe("pe12b", "pe12", "unbekannt", "Plan Teilfehler.pdf", "Unterlagen P-2026-912"),
+      pe("pe12c", "pe12", "unbekannt", "Datenblatt.pdf", "Unterlagen P-2026-912"));
+    const altFrom = sb.storage.from; let einmal = 1;
+    sb.storage.from = function (n) { const e = altFrom.call(this, n); if (n === "projektdateien") { const up = e.upload.bind(e);
+      e.upload = (pf, b, o) => (/Teilfehler/.test(pf) && einmal-- > 0) ? Promise.resolve({ data: null, error: { message: "Zeitüberschreitung" } }) : up(pf, b, o); } return e; };
+    k = await karte();
+    tm.knopf(box(k, /P-2026-912/), /Zu Projekt legen/).click(); await tm.bis(() => tm.fuss(/Ins Projekt legen/));
+    window.__toasts = []; tm.fuss(/Ins Projekt legen/).click(); await tm.toastBis(/Nicht alles|abgelegt/);
+    const m12 = window.__toasts.slice();
+    await tm.bis(() => !tm.fuss(/Ins Projekt legen/).disabled, 1000);
+    window.__toasts = []; tm.fuss(/Ins Projekt legen/).click(); await tm.toastBis(/Nicht alles|abgelegt/);
+    sb.storage.from = altFrom;
+    p(m12.some((t) => /Nicht alles hochgeladen/.test(t)) && namen("tmp_912").length === 3, "M12 nach „nochmals“: " + JSON.stringify(namen("tmp_912")) + " (erste Meldungen " + JSON.stringify(m12) + ")");
+    x("ansichtenSchliessen()");
+
+    /* M13: der Erledigt-Vermerk scheitert – keine reine Erfolgsmeldung, die Karte bleibt mit Hinweis; nochmals legt nichts doppelt ab */
+    await ablegen(pe("pe13a", "pe13", "mail", "Plan P-2026-913.eml", "Plan P-2026-913"), pe("pe13b", "pe13", "unbekannt", "Plan OG.pdf", "Plan P-2026-913"));
+    k = await karte();
+    const altF = sb.from;
+    sb.from = function (t) { const q = altF.call(this, t); if (t === "posteingang") { const u = q.update.bind(q);
+      q.update = function (dd) { u(dd); q.then = (ok2, nok) => Promise.resolve({ data: null, error: { message: "Zeitüberschreitung" } }).then(ok2, nok); return q; }; } return q; };
+    tm.knopf(box(k, /P-2026-913/), /Zu Projekt legen/).click(); await tm.bis(() => tm.fuss(/Ins Projekt legen/));
+    window.__toasts = []; tm.fuss(/Ins Projekt legen/).click(); await tm.toastBis(/abgelegt|^Nicht/i); await tm.warte(200);
+    sb.from = altF;
+    const m13 = { toasts: window.__toasts.slice(), karte: !!box(k, /P-2026-913/), hinweis: /nicht als erledigt/.test((box(k, /P-2026-913/) || {}).textContent || "") };
+    x("ansichtenSchliessen()");
+    if (box(k, /P-2026-913/)) { tm.knopf(box(k, /P-2026-913/), /Zu Projekt legen/).click(); await tm.bis(() => tm.fuss(/Ins Projekt legen|vermerken/));
+      window.__toasts = []; tm.fuss(/Ins Projekt legen|vermerken/).click(); await tm.toastBis(/abgelegt|^Nicht/); }
+    p(!m13.toasts.some((t) => /^In P-2026-913 abgelegt: /.test(t)) && m13.karte && m13.hinweis, "M13 Vermerk gescheitert: " + JSON.stringify(m13));
+    p(namen("tmp_913").length === 2 && db.posteingang.filter((e) => /^pe13/.test(e.id)).every((e) => e.status === "erledigt"),
+      "M13 nach dem zweiten Versuch: Dateien " + JSON.stringify(namen("tmp_913")) + ", Posteingang " + JSON.stringify(db.posteingang.filter((e) => /^pe13/.test(e.id)).map((e) => e.status)));
+    x("ansichtenSchliessen()");
+
+    /* M21: kein Projekt passt – nichts vorgewählt, ein schneller Klick legt nichts irgendwo ab */
+    projekt("tmp_921", "P-2026-921", "Ganz anderes Projekt"); await x("projekteLaden()");
+    await ablegen(pe("pe21a", "pe21", "mail", "Fotos vom Wochenende.eml", "Fotos vom Wochenende", "familie@gmx.at"), pe("pe21b", "pe21", "unbekannt", "IMG_0001.jpg", "Fotos vom Wochenende", "familie@gmx.at"));
+    k = await karte();
+    tm.knopf(box(k, /Wochenende/), /Zu Projekt legen/).click(); await tm.bis(() => tm.fuss(/Ins Projekt legen/));
+    const wahl21 = tm.dlg().querySelector("[data-p]").value;
+    window.__toasts = []; tm.fuss(/Ins Projekt legen/).click(); await tm.warte(300);
+    const abgelegt21 = db.projekte.filter((q) => ((q.daten || {}).dateien || []).some((f) => /Wochenende|IMG_0001/.test(f.name))).map((q) => q.nummer);
+    p(!wahl21 && !abgelegt21.length && window.__toasts.some((t) => /Projekt wählen/.test(t)), "M21 ohne Vorschlag vorgewählt „" + wahl21 + "“, abgelegt in " + JSON.stringify(abgelegt21) + ", Meldungen " + JSON.stringify(window.__toasts));
+    x("ansichtenSchliessen()");
+
+    /* M15: weitergeleitete Projektmail ohne .eml (Rohmail über 20 MB) – die Pläne lassen sich trotzdem gemeinsam einem Projekt zuordnen */
+    projekt("tmp_915", "P-2026-915", "Große Pläne Hotel"); await x("projekteLaden()");
+    await ablegen(...["EG", "OG", "DG"].map((n, i) => pe("pe15" + i, "pe15", "unbekannt", "Plan " + n + " gross.pdf", "Fwd: Pläne P-2026-915", "planer@planer-test.at")));
+    k = await karte();
+    const b15 = box(k, /Plan EG gross/), kn15 = b15 && tm.knopf(b15, /Zu Projekt legen/);
+    if (kn15) { kn15.click(); await tm.bis(() => tm.fuss(/Ins Projekt legen/)); window.__toasts = []; tm.fuss(/Ins Projekt legen/).click(); await tm.toastBis(/abgelegt|^Nicht/i); }
+    p(kn15 && namen("tmp_915").length === 3 && !box(k, /Plan (EG|OG|DG) gross/), "M15 Pläne einer Mail ohne .eml: Knopf „Zu Projekt legen“ " + (kn15 ? "da" : "fehlt") + ", im Projekt " + JSON.stringify(namen("tmp_915")) +
+      ", Karten noch da: " + [...k.querySelectorAll(".posbox")].map((b) => b.querySelector("strong").textContent).join(", "));
+    x("ansichtenSchliessen()");
+
+    /* M20: Präsentation bzw. Vorschau eines Änderungswunsches (speichert nie) – die Meldung sagt, dass nichts gespeichert wurde */
+    projekt("tmp_920", "P-2026-920", "Präsentation Kälte"); await x("projekteLaden()");
+    await ablegen(pe("pe20a", "pe20", "mail", "Plan P-2026-920.eml", "Plan P-2026-920"));
+    k = await karte();
+    window.UKT_VORSCHAU = "W-Test";
+    tm.knopf(box(k, /P-2026-920/), /Zu Projekt legen/).click(); await tm.bis(() => tm.fuss(/Ins Projekt legen/));
+    window.__toasts = []; tm.fuss(/Ins Projekt legen/).click(); await tm.bis(() => !document.querySelector(".assistent"), 2000); await tm.warte(100);
+    const t20 = document.getElementById("toast").textContent;
+    delete window.UKT_VORSCHAU;
+    p(/Präsentation|nichts gespeichert|gespeichert wurde nichts/.test(t20) && !namen("tmp_920").length && db.posteingang.find((e) => e.id === "pe20a").status === "neu",
+      "M20 Präsentation meldet „" + t20 + "“ (Dateien in der Datenbank: " + namen("tmp_920").length + ")");
+    x("ansichtenSchliessen()"); document.querySelectorAll("#tmPe").forEach((kk) => kk.remove());
+
+    /* M18: der Rundgang „Projekt anlegen“ verspricht keinen Weg, den es nicht gibt – der Posteingang legt nur zu bestehenden Projekten ab */
+    const rg = x("JSON.stringify(RUNDGAENGE.projekte.schritte[0].text)");
+    p(!/aus einer Mail im Posteingang/.test(rg) && /Posteingang[^.]*bestehend/.test(rg), "M18 Rundgang „Projekt anlegen“: " + rg);
+    return { fehlt };
+  });
+  pruefe(!r.fehlt.length, r.fehlt.join(" | "));
+  pruefe(!a.fehler.length, "Laufzeitfehler: " + a.fehler.join("; "));
+  await a.zu();
+});
+
 /* ================================================================ Ablauf ================================================================ */
 const filterText = process.argv.slice(2).find((x) => !x.startsWith("--"));
 const filter = filterText ? new RegExp(filterText, "i") : null;

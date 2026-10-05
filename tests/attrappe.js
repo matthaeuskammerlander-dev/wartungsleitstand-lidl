@@ -33,6 +33,8 @@
     if(art==="select" && (rolle==="kunde"||rolle==="praesentation") && (tab==="stammdaten"||tab==="aenderungen")) return "nur lesen: "+tab;
     /* wie werkzeug.sql: lesen nur, wer mitarbeitet (darf_schreiben) – Kunde und Präsentation sehen nichts davon */
     if(art==="select" && (rolle==="kunde"||rolle==="praesentation") && ["werkzeug","werkzeug_verlauf","bedarf","packlisten"].indexOf(tab)>=0) return "nur lesen: "+tab;
+    /* wie posteingang-lesen.sql: den Posteingang (weitergeleitete Mails auch anderer Kunden) liest nur, wer mitarbeitet */
+    if(art==="select" && (rolle==="kunde"||rolle==="praesentation") && tab==="posteingang") return "nur lesen: posteingang gesperrt";
     if(tab==="stammdaten"){
       var typ=(zeile&&zeile.typ)||(alt&&alt.typ);
       if(art==="delete" && !admin()) return "stammdaten: Loeschen nur fuer Admins";
@@ -152,6 +154,18 @@
     return DB.stammdaten.some(function(r){ return r.id!==d.id && r.typ==="stoerung" && nr(r)===n; })
       ? {code:"23505", message:'duplicate key value violates unique constraint "stoerung_auftrag_einmal"'} : null;
   }
+  /* wie reisekosten.sql: km ist numeric(8,1) – Postgres rundet „12,35“ auf 12,4 (die kleine Zugabe gleicht
+     die Gleitkomma-Darstellung von 12,35 aus); dazu die Prüfregeln (check) mit der englischen Meldung von Postgres */
+  function kmSpalte(km){ return Math.round(+km*10+1e-6)/10; }
+  function auslagenCheck(r){
+    var weg=function(n){ return 'new row for relation "auslagen" violates check constraint "auslagen_'+n+'_check"'; };
+    if(r.text!=null && String(r.text).length>300) return weg("text");
+    if(r.km!=null && !(r.km>0 && r.km<=5000)) return weg("km");
+    if(r.betrag!=null && !(r.betrag>=0 && r.betrag<=100000)) return weg("betrag");
+    if(r.ohne_beleg!=null && String(r.ohne_beleg).length>300) return weg("ohne_beleg");
+    if(r.notiz!=null && String(r.notiz).length>500) return weg("notiz");
+    return null;
+  }
   function Q(t){ this.t=t; this.a="select"; this.f=[]; this.d=null; this.o={}; this.ord=null; this.lim=null; this.sp=null; }
   Q.prototype.select=function(s){ if(typeof s==="string"&&s&&s!=="*") this.sp=s.split(",").map(function(x){return x.trim();}); return this; };
   Q.prototype.insert=function(d){ this.a="insert"; this.d=d; return this; };
@@ -208,11 +222,12 @@
         if(self.t==="arbeitszeiten"){ if(!r.user_id) r.user_id=uid(); if(r.pause_min==null) r.pause_min=0; r.erstellt=r.erstellt||new Date().toISOString(); }
         if(self.t==="planung") planPruefen(r, null);
         if(self.t==="vor_ort_fragen") r.angelegt=r.angelegt||new Date().toISOString();
-        if(self.t==="auslagen"){ r.user_id=r.user_id||uid(); r.status=r.status||"offen"; r.erstellt=new Date().toISOString(); if(r.art==="km"){ r.km_satz=r.km_satz||0.5; r.betrag=Math.round(r.km*r.km_satz*100)/100; } }
+        if(self.t==="auslagen"){ r.user_id=r.user_id||uid(); r.status=r.status||"offen"; r.erstellt=new Date().toISOString(); if(r.km!=null) r.km=kmSpalte(r.km); if(r.art==="km"){ r.km_satz=r.km_satz||0.5; r.betrag=Math.round(r.km*r.km_satz*100)/100; } }
         if(self.t==="auslagen_konto") r.user_id=r.user_id||uid();
         if(self.t==="werkzeug"||self.t==="bedarf"){ r.erstellt_von=uid(); r.erstellt=new Date().toISOString(); r.aktiv=r.aktiv==null?true:r.aktiv; if(self.t==="bedarf"){ r.status=r.status||"offen"; r.beschaffung=r.beschaffung||"mitnehmen"; if(r.status==="erledigt") r.erledigt=new Date().toISOString(); } else { r.zustand=r.zustand||"ok"; r.standort_art=r.standort_art||"lager"; } }
         if(self.t==="projekte"){ r.erstellt=r.erstellt||new Date().toISOString(); r.geaendert=r.geaendert||r.erstellt; r.daten=r.daten||{}; r.verlauf=r.verlauf||[]; }
         return r; });
+      if(self.t==="auslagen"){ neu.forEach(function(r){ v=v||auslagenCheck(r); }); if(v){ window.__abgelehnt.push(v); return {data:null,error:{message:v}}; } }
       if(self.t==="werkzeug") neu.forEach(function(r){ wzMerken(r); });
       neu.forEach(function(r){ tab.push(r); }); if(self.t==="planung") neu.forEach(function(r){ stundenSync(r.id); });
       if(self.t==="werkzeug") neu.forEach(function(r){ wzVerlauf(r, null); });
@@ -240,6 +255,9 @@
     if(this.a==="update"){
       var b=tab.filter(function(r){ return passt(r,self.f); });
       b.forEach(function(r){ v=v||darf(self.t,"update",self.d,r)||bisVorDatum(Object.assign({}, r, self.d)); });
+      /* Prüfregeln vor dem Ändern – scheitert eine Zeile, bleibt alles, wie es war */
+      if(!v && self.t==="auslagen") b.forEach(function(r){ var n=Object.assign({},r,self.d); if(n.km!=null) n.km=kmSpalte(n.km);
+        if(n.art==="km") n.betrag=Math.round(n.km*(n.km_satz||0.5)*100)/100; v=v||auslagenCheck(n); });
       if(v){ window.__abgelehnt.push(v); return {data:null,error:{message:v}}; }
       b.forEach(function(r){ if(self.t==="protokolle"){ var u=r.erstellt_von,g2=r.erstellt;
           DB.protokoll_fassungen.push({client_id:r.client_id,version:r.version,gesichert:new Date().toISOString(),daten:JSON.parse(JSON.stringify(r))});
@@ -252,6 +270,7 @@
           if(self.t==="planung") planPruefen(r, altR);
           if(self.t==="arbeitszeiten") r.quelle=(zg && /^stempel(_nachgetragen|_abgeglichen)?$/.test(qv||"")) ? "stempel_geaendert" : (zg||("art" in self.d && self.d.art!==altR.art)) && qv==="kalender" ? "hand" : (qv||"hand");
           if(self.t==="planung") stundenSync(r.id);
+          if(self.t==="auslagen" && r.km!=null) r.km=kmSpalte(r.km);
           if(self.t==="auslagen" && r.art==="km") r.betrag=Math.round(r.km*(r.km_satz||0.5)*100)/100;
           if(self.t==="bedarf") r.erledigt = r.status==="erledigt" ? (altR.status==="erledigt" ? altR.erledigt : new Date().toISOString()) : null;
           if(self.t==="werkzeug"){ wzMerken(r); wzVerlauf(r, altR); }
@@ -289,9 +308,11 @@
     if(erlaubt && b && b.type && erlaubt.indexOf(b.type)<0)
       return Promise.resolve({data:null,error:{message:"mime type "+b.type+" is not supported"}});
     DATEIEN[k]=b; return Promise.resolve({data:{path:p},error:null}); };
-  E.prototype.createSignedUrl=function(p){ var b=DATEIEN[this.n+"/"+p];
+  /* wie posteingang-lesen.sql: Dateien im Bucket „posteingang“ nur mit darf_schreiben() (nicht Kunde, nicht Präsentation) */
+  function eimerGesperrt(n){ var rl=(DB.rollen.filter(function(r){ return r.user_id===uid(); })[0]||{}).rolle; return n==="posteingang" && (!sitzung || rl==="kunde" || rl==="praesentation"); }
+  E.prototype.createSignedUrl=function(p){ var b=eimerGesperrt(this.n) ? null : DATEIEN[this.n+"/"+p];
     return Promise.resolve(b?{data:{signedUrl:URL.createObjectURL(b)},error:null}:{data:null,error:{message:"weg"}}); };
-  E.prototype.download=function(p){ var b=DATEIEN[this.n+"/"+p]; return Promise.resolve(b?{data:b,error:null}:{data:null,error:{message:"weg"}}); };
+  E.prototype.download=function(p){ var b=eimerGesperrt(this.n) ? null : DATEIEN[this.n+"/"+p]; return Promise.resolve(b?{data:b,error:null}:{data:null,error:{message:"weg"}}); };
   E.prototype.remove=function(){ return Promise.resolve({data:[],error:null}); };
   E.prototype.list=function(){ return Promise.resolve({data:[],error:null}); };
   window.supabase={createClient:function(){ return {
