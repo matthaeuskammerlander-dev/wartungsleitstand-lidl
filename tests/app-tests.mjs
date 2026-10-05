@@ -1753,7 +1753,7 @@ test("Tiefentest stunden: Abgleich mit dem Kalender – Lücken behalten Markt u
   pruefe(!fehl.length, fehl.join(" | "));
 });
 
-test("Tiefentest stunden: Zeit erfassen – Kalender-Vorschlag ohne Abwesenheit, Verknüpfung nur am Tag des Termins, nur Notiz bleibt gestempelt", async () => {
+test("Tiefentest stunden: Zeit erfassen – Kalender-Vorschlag ohne Abwesenheit, Verknüpfung nur am Tag des Termins, nur Notiz bleibt gestempelt, Dauer geprüft", async () => {
   const a = await oeffnen(KONTEN.techniker);
   await ttHilfen(a);
   const fehl = [];
@@ -1810,6 +1810,18 @@ test("Tiefentest stunden: Zeit erfassen – Kalender-Vorschlag ohne Abwesenheit,
     return { vorher, nachher: { min: z1.minuten, quelle: z1.quelle, notiz: z1.notiz } };
   });
   if (r7.fehlt || r7.nachher.notiz !== "Material vergessen" || r7.nachher.min !== r7.vorher.min || r7.nachher.quelle !== r7.vorher.quelle) fehl.push("TT-07 nur Notiz geändert: " + JSON.stringify(r7));
+  /* TT-19: negative oder unsinnige Dauer („-3“, „7:75“) wird mit Meldung abgewiesen, nichts gespeichert */
+  const r19 = await a.seite.evaluate(async () => {
+    const tt = window.__tt, x = window.__t.x; tt.leeren(); const T = tt.werktag(1), erg = {};
+    for (const dauer of ["-3", "7:75"]) {
+      x("zeitEditor(null, {datum:'" + T + "', art:'arbeit', bereich:'werkstatt'})"); await tt.warte(150);
+      const d = tt.dialog(), du = d.querySelector('[data-f="dauer"]'); du.value = dauer; du.dispatchEvent(new Event("input", { bubbles: true }));
+      tt.ok(d).click(); await tt.warte(300);
+      const e = d.querySelector("[data-err]"); erg[dauer] = e && !e.hidden ? e.textContent : ""; x("ansichtenSchliessen()");
+    }
+    return { erg, gespeichert: window.__db.tabellen.arbeitszeiten.map((z) => z.minuten) };
+  });
+  if (r19.gespeichert.length || !/gültige Dauer/.test(r19.erg["-3"]) || !/gültige Dauer/.test(r19.erg["7:75"])) fehl.push("TT-19 unsinnige Dauer: " + JSON.stringify(r19));
   if (a.fehler.length) fehl.push("Laufzeitfehler: " + a.fehler.join("; "));
   await a.zu();
   pruefe(!fehl.length, fehl.join(" | "));
