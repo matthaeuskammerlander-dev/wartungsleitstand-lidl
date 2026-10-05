@@ -1627,7 +1627,7 @@ async function ttHilfen(a) {
   });
 }
 
-test("Tiefentest stunden: Abgleich mit dem Kalender – Lücken behalten Markt und Projekt, Termin im Termin, Vorschau wie gestempelt", async () => {
+test("Tiefentest stunden: Abgleich mit dem Kalender – Lücken behalten Markt und Projekt, Termin im Termin, Vorschau wie gestempelt, Verschieben sicher", async () => {
   const a = await oeffnen(KONTEN.techniker);
   await ttHilfen(a);
   const fehl = [];
@@ -1673,6 +1673,67 @@ test("Tiefentest stunden: Abgleich mit dem Kalender – Lücken behalten Markt u
     return { zeilen, vorschau: zeilen.reduce((s, t) => s + hm(t), 0), gespeichert: window.__db.tabellen.arbeitszeiten.filter((z) => z.datum === T).reduce((s, z) => s + z.minuten, 0) };
   });
   if (r15.vorschau !== 525 || r15.gespeichert !== 525) fehl.push("TT-15 Vorschau " + r15.vorschau + " / gespeichert " + r15.gespeichert + " statt 525: " + JSON.stringify(r15.zeilen));
+  /* TT-21: nur „auf … verschieben“ angehakt – der Knopf „Abgleichen“ wird frei und verschiebt */
+  const r21 = await a.seite.evaluate(async () => {
+    const tt = window.__tt, x = window.__t.x; tt.leeren(); const T = tt.werktag(1);
+    tt.gestempelt({ datum: T, beginn: "07:00", ende: "12:00", minuten: 300, bereich: "werkstatt" });
+    const w = await tt.termin({ kategorie: "werkstatt", titel: "Werkstatt", datum: T, beginn: "14:00", ende: "15:00" });
+    await tt.laden();
+    x("S.view='stunden'; S.stWoche=montagVon('" + T + "'); render()"); await tt.warte(300);
+    const knopf = [...document.querySelectorAll("button")].find((b) => /Mit Kalender abgleichen \(1\)/.test(b.textContent));
+    if (!knopf) return { knopf: false };
+    knopf.click(); await tt.warte(200);
+    const d = tt.dialog(), ok = tt.ok(d), vorher = ok.disabled;
+    const vs = d.querySelector("[data-vs]"); vs.checked = true; vs.dispatchEvent(new Event("change")); await tt.warte(50);
+    const nachher = tt.ok(tt.dialog()).disabled;
+    tt.ok(tt.dialog()).click(); await tt.warte(600);
+    return { knopf: true, vorher, nachher, T, datum: window.__db.tabellen.planung.find((p) => p.id === w.id).datum };
+  });
+  if (!r21.knopf || r21.nachher || r21.datum === r21.T) fehl.push("TT-21 nur „verschieben“: Knopf bleibt gesperrt: " + JSON.stringify(r21));
+  /* TT-28 / TT-27: ein mehrtägiger Termin wird nie zum Ein-Tages-Termin; verschoben wird nie in die Vergangenheit */
+  const r28 = await a.seite.evaluate(async () => {
+    const tt = window.__tt, x = window.__t.x; tt.leeren(); const T = tt.werktag(3), heute = x("isoLokal(new Date())");
+    tt.gestempelt({ datum: T, beginn: "07:00", ende: "12:00", minuten: 300, bereich: "werkstatt" });
+    await tt.termin({ kategorie: "wartung", titel: "Wartung früh", datum: T, beginn: "08:00", ende: "10:00", standort_id: "TS1" });
+    const w = await tt.termin({ kategorie: "werkstatt", titel: "Werkstatt spät", datum: T, beginn: "14:00", ende: "15:00" });
+    const bis = x("plusTage('" + T + "',4)");
+    const bau = await tt.termin({ kategorie: "projekt", titel: "Baustelle", datum: T, datum_bis: bis, beginn: "13:00", ende: "16:00", standort_id: "TS3" });
+    await tt.laden();
+    x("abgleichDialog('" + T + "', false)"); await tt.warte(200);
+    const d = tt.dialog();
+    const box = (titel) => [...d.querySelectorAll("[data-an]")].map((c) => c.closest(".stack")).find((s) => s.querySelector("strong").textContent === titel);
+    const vsBau = box("Baustelle").querySelector("[data-vs]"), vsW = box("Werkstatt spät").querySelector("[data-vs]");
+    if (vsBau) { vsBau.checked = true; vsBau.dispatchEvent(new Event("change")); }
+    const dd = tt.dialog(), vsW2 = [...dd.querySelectorAll("[data-vs]")].find((c) => c.closest(".stack").querySelector("strong").textContent === "Werkstatt spät");
+    vsW2.checked = true; vsW2.dispatchEvent(new Event("change"));
+    tt.ok(tt.dialog()).click(); await tt.warte(800);
+    const db = window.__db.tabellen, g = db.planung.find((p) => p.id === bau.id);
+    return { heute, bau: g.datum + ".." + (g.datum_bis || g.datum), bauVorher: T + ".." + bis, angeboten: !!vsBau, werkstatt: db.planung.find((p) => p.id === w.id).datum, text: vsW.closest("label").textContent };
+  });
+  if (r28.bau !== r28.bauVorher) fehl.push("TT-28 mehrtägiger Termin verändert: " + JSON.stringify(r28));
+  if (r28.werkstatt < r28.heute) fehl.push("TT-27 in die Vergangenheit verschoben: " + JSON.stringify(r28));
+  /* TT-06: Verschieben scheitert (Antwort mit Fehler / keine Verbindung) – sichtbare Meldung, kein „verschoben“, nichts hängt */
+  for (const variante of ["fehler", "netz"]) {
+    const r6 = await a.seite.evaluate(async (variante) => {
+      const tt = window.__tt, x = window.__t.x; tt.leeren(); const T = tt.werktag(1);
+      await tt.termin({ kategorie: "wartung", titel: "Wartung gemacht", datum: T, beginn: "08:00", ende: "10:00", standort_id: "TS1" });
+      const w = await tt.termin({ kategorie: "werkstatt", titel: "Werkstatt offen", datum: T, beginn: "14:00", ende: "15:00" });
+      tt.gestempelt({ datum: T, beginn: "07:00", ende: "12:00", minuten: 300, bereich: "werkstatt" });
+      await tt.laden();
+      const sb = x("Store.sb"), altFrom = sb.from;
+      if (variante === "fehler") /* wie supabase-js ohne Netz: update liefert {error}, statt zu werfen */
+        sb.from = function (t) { const q = altFrom.call(this, t); if (t === "planung") { const u = q.update; q.update = function () { u.apply(q, arguments); q.then = (ok, nok) => Promise.resolve({ data: null, error: { message: "TypeError: Failed to fetch" } }).then(ok, nok); return q; }; } return q; };
+      x("abgleichDialog('" + T + "', false)"); await tt.warte(200);
+      const d = tt.dialog(), vs = d.querySelector("[data-vs]"); vs.checked = true; vs.dispatchEvent(new Event("change"));
+      const ok = tt.ok(tt.dialog());
+      if (variante === "netz") window.__netzWeg = true;
+      ok.click(); await tt.warte(800);
+      window.__netzWeg = false; sb.from = altFrom;
+      return { T, toast: tt.toasts.slice(-1)[0] || "", datum: window.__db.tabellen.planung.find((p) => p.id === w.id).datum,
+        haengt: document.body.contains(d) && ok.disabled, knopf: ok.textContent, fehler: window.__fehler.filter((f) => /promise/.test(f)) };
+    }, variante);
+    if (/1 Termin verschoben/.test(r6.toast) || !/nicht verschoben/.test(r6.toast) || r6.haengt || r6.fehler.length) fehl.push("TT-06 (" + variante + ") Verschieben gescheitert: " + JSON.stringify(r6));
+  }
   if (a.fehler.length) fehl.push("Laufzeitfehler: " + a.fehler.join("; "));
   await a.zu();
   pruefe(!fehl.length, fehl.join(" | "));

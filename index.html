@@ -1807,7 +1807,7 @@ function toast(msg){ var t=document.getElementById("toast");
     msg=msg.replace(/[.!]?$/,"")+(window.UKT_VORSCHAU==="Spielwiese" ? " (Spielwiese, nicht gespeichert)." : " (Präsentation, nicht gespeichert).");
   msg=technikDeutsch(msg);
   /* Fehler länger stehen lassen – die liest man, eine Bestätigung nicht (Büro 02.10.2026) */
-  var fehler=/^(Nicht |Keine |Fehler|Bitte )|nicht (gespeichert|angelegt|geändert|gelöscht)|keine Verbindung/i.test(msg);
+  var fehler=/^(Nicht |Keine |Fehler|Bitte )|nicht (gespeichert|angelegt|geändert|gelöscht|verschoben)|keine Verbindung/i.test(msg);
   t.textContent=msg; t.style.display="block"; clearTimeout(t._h); t._h=setTimeout(function(){t.style.display="none";}, fehler?6500:3200); }
 /* technische Meldungen des Browsers (fetch ohne Netz) in Klartext – Techniker sollen nie „Failed to fetch“ lesen */
 function technikDeutsch(m){
@@ -24201,7 +24201,7 @@ Object.assign(RUNDGAENGE, {
         "Über 6 h Arbeit und weniger als 30 min Pause: die fehlende Pause zieht er im längsten Abschnitt ab.",
         "Hinweise bei über 10 h und über 12 h am Tag.",
         "Passt ein Abschnitt zu einem heute geplanten Termin (gleicher Markt oder gleiches Projekt), verknüpft die App ihn – im Termin steht dann „✓ erfasst“.",
-        "<strong>Abgleich mit dem Kalender</strong>: Ist Geplantes noch nicht erfasst (etwa nur ein- und ausgestempelt), bietet die App nach dem Ausstempeln an, die gestempelte Zeit nach den Terminen aufzuteilen – dazwischen Fahrt bzw. was dort gestempelt war (Bereich, Markt, Projekt); ein Termin mitten in einem anderen unterbricht ihn. Die Stempeluhr hat Vorrang: Summe und Pause bleiben genau gleich (prüft die Datenbank, die Vorschau zeigt die Stunden ohne Pause). Nicht Gemachtes bleibt offen oder wird auf den nächsten Arbeitstag verschoben."])},
+        "<strong>Abgleich mit dem Kalender</strong>: Ist Geplantes noch nicht erfasst (etwa nur ein- und ausgestempelt), bietet die App nach dem Ausstempeln an, die gestempelte Zeit nach den Terminen aufzuteilen – dazwischen Fahrt bzw. was dort gestempelt war (Bereich, Markt, Projekt); ein Termin mitten in einem anderen unterbricht ihn. Die Stempeluhr hat Vorrang: Summe und Pause bleiben genau gleich (prüft die Datenbank, die Vorschau zeigt die Stunden ohne Pause). Nicht Gemachtes bleibt offen oder wird auf den nächsten Arbeitstag ab heute verschoben (mehrtägige Termine bleiben, wie sie sind); scheitert das Verschieben, sagt es die Meldung."])},
     {reiter:"stunden", ziel:function(){ return rgKarte(/^Meine Arbeitszeit/); }, titel:"Meine Arbeitszeit",
       text:RG_LISTE(["Woche mit Einträgen, Feiertagen und „⚠ über 12 h“; ‹ › blättern, „Monatsliste (PDF)“.",
         "<strong>+ Zeit erfassen</strong>: Art (Arbeit, Urlaub, Krankenstand, Feiertag, Zeitausgleich, Schule …), Bereich, von/bis/Pause oder Dauer, Was, Markt, Projekt – Vorschläge „laut Kalender“ und „laut deinen Protokollen“.",
@@ -32092,7 +32092,10 @@ function abgleichDialog(tag, nachAusstempeln){
   var lueckenBereich={};   /* geänderte Bereiche der Lücken: Schlüssel Block:Beginn */
   var host=el('<div class="stack" style="gap:10px"></div>'); v.inhalt.appendChild(host);
   var err=el('<div class="note warnbox" hidden></div>');
-  var naechster=werktagAb(plusTage(tag,1));
+  /* verschoben wird auf den nächsten Arbeitstag – nie in die Vergangenheit (Abgleich eines älteren Tages: ab heute) */
+  var heuteAb=isoLokal(new Date()), naechster=werktagAb(plusTage(tag,1)>heuteAb ? plusTage(tag,1) : heuteAb);
+  /* mehrtägige Termine (Baustelle, Kurs) nie verschieben – sonst würden sie zum Ein-Tages-Termin, auch für alle anderen */
+  var mehrtaegig=function(it){ var e=it.planung_id && PLANUNG.filter(function(y){ return y.id===it.planung_id; })[0]; return !!(e && e.datum_bis && e.datum_bis>e.datum); };
   var teileAlle=function(){
     var alle=[];
     bloecke.forEach(function(b, bi){
@@ -32119,6 +32122,7 @@ function abgleichDialog(tag, nachAusstempeln){
             ' <span class="muted">geplant '+esc(kalHm(it.beginn)+"–"+kalHm(it.ende))+(erf?" · schon erfasst":"")+"</span></span></label>"+
           (w.an ? '<div class="rowflex" style="gap:6px;flex-wrap:wrap;font-size:13px">tatsächlich <input type="time" data-s value="'+kalHm(w.s)+'" style="width:auto"> – <input type="time" data-e value="'+kalHm(w.e)+'" style="width:auto">'+
               '<select data-b style="width:auto">'+bereichListe(w.bereich).map(function(x){ return '<option value="'+esc(x[0])+'"'+(x[0]===w.bereich?" selected":"")+">"+esc(x[1])+"</option>"; }).join("")+"</select></div>"
+            : mehrtaegig(it) ? '<div class="muted" style="font-size:12.5px">mehrtägig – bleibt im Kalender, wie er ist</div>'
             : (it.planung_id ? '<label class="chk" style="font-size:12.5px"><input type="checkbox" data-vs'+(w.verschieben?" checked":"")+'><span>auf '+esc(WOCHENTAGE[wochentagIdx(naechster)]+" "+dfmt(naechster))+' verschieben</span></label>'
                              : '<div class="muted" style="font-size:12.5px">bleibt offen</div>'))+"</div>");
         z.querySelector("[data-an]").onchange=function(){ w.an=this.checked; zeichne(); };
@@ -32126,7 +32130,7 @@ function abgleichDialog(tag, nachAusstempeln){
         if(si) si.onchange=function(){ var m=zeitMin(si.value); if(m!=null){ w.s=m; zeichne(); } };
         if(ei) ei.onchange=function(){ var m=zeitMin(ei.value); if(m!=null){ w.e=m; zeichne(); } };
         if(bs) bs.onchange=function(){ w.bereich=bs.value; zeichne(); };
-        if(vs) vs.onchange=function(){ w.verschieben=vs.checked; };
+        if(vs) vs.onchange=function(){ w.verschieben=vs.checked; zeichne(); };   /* nur verschieben angehakt: der Knopf wird frei */
         pl.appendChild(z);
       });
       host.appendChild(pl);
@@ -32163,14 +32167,22 @@ function abgleichDialog(tag, nachAusstempeln){
     if(abgleichMinuten(alle, bloecke).some(function(x){ return x.min<0; })){ err.textContent="Die Pause passt in keinen Abschnitt – bitte einen Abschnitt länger machen."; err.hidden=false; return; }
     var teile=alle.map(function(x){ return {beginn:kalHm(x.beginn), ende:kalHm(x.ende), bereich:x.bereich||null, taetigkeit:(x.taetigkeit||"").slice(0,300),
       standort_id:x.standort_id||"", projekt_id:x.projekt_id||"", planung_id:x.planung_id||""}; });
-    var verschieben=plan.filter(function(it){ var w=wahl[it.schluessel]; return !w.an && w.verschieben && it.planung_id; });
+    var verschieben=plan.filter(function(it){ var w=wahl[it.schluessel]; return !w.an && w.verschieben && it.planung_id && !mehrtaegig(it); });
     ok.disabled=true; ok.textContent="wird gespeichert …";
     var fertig=function(n){
-      var k=Promise.resolve();
+      /* jeden Termin einzeln – scheitert einer (keine Verbindung, keine Berechtigung), sagt es die Meldung; nie „verschoben“ ohne Antwort */
+      var k=Promise.resolve(), gut=0, nicht=[];
       verschieben.forEach(function(it){ k=k.then(function(){ var e=PLANUNG.filter(function(y){ return y.id===it.planung_id; })[0]; if(!e) return;
         return mitFrist(Store.sb.from("planung").update({datum:naechster, datum_bis:null, geaendert_von:meinName()}).eq("id", e.id).select("*"), 15000).then(function(r){
-          (r.data||[]).forEach(function(g){ PLANUNG=PLANUNG.filter(function(y){ return y.id!==g.id; }).concat([g]); }); }); }); });
-      k.then(function(){ v.zu(); toast("Abgeglichen"+(n?": "+n+" Abschnitte":"")+(verschieben.length?", "+verschieben.length+" Termin"+(verschieben.length===1?"":"e")+" verschoben":"")+" – die gestempelte Zeit ist gleich geblieben."); planGeaendert(); if(darfRendern()) render(); });
+          if(r.error || !(r.data||[]).length) throw new Error(r.error ? r.error.message : "keine Berechtigung");
+          r.data.forEach(function(g){ PLANUNG=PLANUNG.filter(function(y){ return y.id!==g.id; }).concat([g]); }); gut++;
+        }).catch(function(x){ nicht.push("„"+it.titel+"“ ("+technikDeutsch(x.message||String(x))+")"); }); }); });
+      k.then(function(){
+        var nichtText=nicht.length ? nicht.length+" Termin"+(nicht.length===1?"":"e")+" nicht verschoben: "+nicht.join(", ")+" – bitte im Kalender von Hand." : "";
+        /* nichts gespeichert: der Dialog bleibt, der Knopf ist wieder frei */
+        if(!n && !gut && nicht.length){ ok.disabled=false; ok.textContent="Abgleichen"; err.textContent="⚠ "+nichtText; err.hidden=false; return; }
+        v.zu(); toast("Abgeglichen"+(n?": "+n+" Abschnitte":"")+(gut?", "+gut+" Termin"+(gut===1?"":"e")+" verschoben":"")+" – die gestempelte Zeit ist gleich geblieben."+(nichtText?" ⚠ "+nichtText:""));
+        planGeaendert(); if(darfRendern()) render(); });
     };
     if(!teile.length){ fertig(0); return; }
     if(demo()){ /* Präsentation: im Speicher wie die Datenbankfunktion */
