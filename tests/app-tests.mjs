@@ -2267,6 +2267,14 @@ test("Tiefentest mail: Projekt aus Mail und Mails dazu – leere Antwort von Cla
     await tm.bis(() => /Leerempfänger/.test(k17.innerText));
     p(/Leerempfänger/.test(k17.innerText) && !/undefined/.test(k17.innerText), "M17 Zeile zeigt „undefined“: " + k17.innerText.replace(/\s+/g, " "));
     k17.remove();
+
+    /* M21: „Mail zu Projekt legen“ ohne passendes Projekt – nichts vorgewählt, ein schneller Klick legt nichts ab */
+    tm.programm({ mail: Object.assign(MAIL(71, "Fotos vom Wochenende"), { von: [{ name: "Familie", address: "familie@gmx.at" }] }) });
+    x("mailUebernehmen({k:'gmx', o:'INBOX', u:71, a:'zuprojekt'})"); await tm.bis(() => tm.fuss(/Ins Projekt legen/));
+    const wahl21 = tm.dlg().querySelector("[data-p]").value;
+    window.__toasts = []; tm.fuss(/Ins Projekt legen/).click(); await tm.warte(300);
+    p(!wahl21 && !db.projekte.some((q) => ((q.daten || {}).mails || []).some((m) => m.id === "<tp71@test>")) && window.__toasts.some((t) => /Projekt wählen/.test(t)),
+      "M21 Mail zu Projekt: ohne Vorschlag „" + wahl21 + "“ vorgewählt bzw. abgelegt, Meldungen " + JSON.stringify(window.__toasts));
     tm.ende(); x("ansichtenSchliessen()");
     return { fehlt };
   });
@@ -2333,6 +2341,17 @@ test("Tiefentest mail: Posteingang – „Zu Projekt legen“ legt nichts doppel
     p(!m13.toasts.some((t) => /^In P-2026-913 abgelegt: /.test(t)) && m13.karte && m13.hinweis, "M13 Vermerk gescheitert: " + JSON.stringify(m13));
     p(namen("tmp_913").length === 2 && db.posteingang.filter((e) => /^pe13/.test(e.id)).every((e) => e.status === "erledigt"),
       "M13 nach dem zweiten Versuch: Dateien " + JSON.stringify(namen("tmp_913")) + ", Posteingang " + JSON.stringify(db.posteingang.filter((e) => /^pe13/.test(e.id)).map((e) => e.status)));
+    x("ansichtenSchliessen()");
+
+    /* M21: kein Projekt passt – nichts vorgewählt, ein schneller Klick legt nichts irgendwo ab */
+    projekt("tmp_921", "P-2026-921", "Ganz anderes Projekt"); await x("projekteLaden()");
+    await ablegen(pe("pe21a", "pe21", "mail", "Fotos vom Wochenende.eml", "Fotos vom Wochenende", "familie@gmx.at"), pe("pe21b", "pe21", "unbekannt", "IMG_0001.jpg", "Fotos vom Wochenende", "familie@gmx.at"));
+    k = await karte();
+    tm.knopf(box(k, /Wochenende/), /Zu Projekt legen/).click(); await tm.bis(() => tm.fuss(/Ins Projekt legen/));
+    const wahl21 = tm.dlg().querySelector("[data-p]").value;
+    window.__toasts = []; tm.fuss(/Ins Projekt legen/).click(); await tm.warte(300);
+    const abgelegt21 = db.projekte.filter((q) => ((q.daten || {}).dateien || []).some((f) => /Wochenende|IMG_0001/.test(f.name))).map((q) => q.nummer);
+    p(!wahl21 && !abgelegt21.length && window.__toasts.some((t) => /Projekt wählen/.test(t)), "M21 ohne Vorschlag vorgewählt „" + wahl21 + "“, abgelegt in " + JSON.stringify(abgelegt21) + ", Meldungen " + JSON.stringify(window.__toasts));
     x("ansichtenSchliessen()"); document.querySelectorAll("#tmPe").forEach((kk) => kk.remove());
     return { fehlt };
   });
