@@ -93,6 +93,14 @@
     }
     return null;
   }
+  /* wie die Sperrregel „bedarf privat nur eigene“ (Inhaber 05.10.2026): Material/Werkzeug an einem privaten Termin sieht
+     (und ändert) nur, wer den Termin angelegt hat oder dort eingetragen ist – auch nicht das Büro */
+  function bedarfPrivatFremd(r){
+    if(!r || !r.planung_id) return false;
+    var p=DB.planung.filter(function(x){ return x.id===r.planung_id; })[0];
+    return !!(p && (p.privat || p.kategorie==="privat") && p.erstellt_von!==uid() && (p.wer||[]).indexOf(uid())<0);
+  }
+  function sichtbar(t){ return function(r){ return t!=="bedarf" || !bedarfPrivatFremd(r); }; }
   /* wie der Trigger planung_pruefen (planung.sql): privat nur „Abwesend“, Urlaub genehmigt nur der Inhaber */
   function planPruefen(r, alt){
     var rl=(DB.rollen.filter(function(x){ return x.user_id===uid(); })[0]||{}).rolle||"techniker";
@@ -195,7 +203,7 @@
     if(this.a==="select"){
       var sv=darf(this.t,"select",null,null); if(sv && /nur lesen/.test(sv)) return {data:[],error:null};
       if(this.t==="rollen") { /* wie die Regel: eigene Zeile, Admins alle */ }
-      erg=tab.filter(function(r){ return passt(r,self.f); });
+      erg=tab.filter(function(r){ return passt(r,self.f); }).filter(sichtbar(this.t));
       if(this.t==="admins") erg=erg.filter(function(r){ return r.user_id===uid(); });
       if(this.t==="planung_privat") erg=erg.filter(function(r){ return r.user_id===uid(); });   /* wie die Regel: nur die eigenen */
       if(this.t==="arbeitszeiten"||this.t==="auslagen"||this.t==="auslagen_konto"){ var rl=(DB.rollen.filter(function(r){ return r.user_id===uid(); })[0]||{}).rolle; if(rl!=="inhaber") erg=erg.filter(function(r){ return r.user_id===uid(); }); }
@@ -259,7 +267,7 @@
       sichern(); return {data:aus(raus),error:null};
     }
     if(this.a==="update"){
-      var b=tab.filter(function(r){ return passt(r,self.f); });
+      var b=tab.filter(function(r){ return passt(r,self.f); }).filter(sichtbar(self.t));   /* wie Postgres: was man nicht lesen darf, trifft kein update mit Bedingung */
       b.forEach(function(r){ v=v||darf(self.t,"update",self.d,r)||bisVorDatum(Object.assign({}, r, self.d)); });
       /* Prüfregeln vor dem Ändern – scheitert eine Zeile, bleibt alles, wie es war */
       if(!v && self.t==="auslagen") b.forEach(function(r){ var n=Object.assign({},r,self.d); if(n.km!=null) n.km=kmSpalte(n.km);
@@ -285,10 +293,10 @@
       sichern(); return {data:aus(erg),error:null};
     }
     if(this.a==="delete"){
-      var w=tab.filter(function(r){ return passt(r,self.f); });
+      var sicht=sichtbar(self.t), w=tab.filter(function(r){ return passt(r,self.f) && sicht(r); });
       w.forEach(function(r){ v=v||darf(self.t,"delete",null,r); });
       if(v){ window.__abgelehnt.push(v); return {data:null,error:{message:v}}; }
-      for(var i=tab.length-1;i>=0;i--) if(passt(tab[i],self.f)){ erg.push(tab[i]); tab.splice(i,1); }
+      for(var i=tab.length-1;i>=0;i--) if(passt(tab[i],self.f) && sicht(tab[i])){ erg.push(tab[i]); tab.splice(i,1); }
       if(self.t==="planung") erg.forEach(function(r){ stundenSync(r.id); });
       /* Fremdschlüssel wie in werkzeug.sql: Termin bzw. Werkzeug weg → Bedarf bleibt ohne Verknüpfung (on delete set null), Verlauf geht mit */
       var wegIds=erg.map(function(r){ return r.id; });
