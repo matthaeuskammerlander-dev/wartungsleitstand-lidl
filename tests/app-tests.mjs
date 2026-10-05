@@ -1672,6 +1672,14 @@ reSchritt("eingaben", "R01", async (a) => {
   });
   return r.menge === 1.5 && r.preis === 78.81 && r.kPreis === 447.3 ? "" : `„1.5“ × „78.81“ gespeichert als ${r.menge} × ${r.preis} (netto ${r.netto}); Katalog „447.30“ als ${r.kPreis}`;
 });
+/* Material aus dem Protokoll: „2 Stk“ und „3 m“ bleiben 2 Stk und 3 m; Unlesbares wird sichtbar markiert */
+reSchritt("eingaben", "R08", async (a) => {
+  const r = JSON.parse(await a.x(`JSON.stringify(einsatzPositionen({_id:'tm8',standortId:'TS1',datum:'2026-06-01',wartungsart:'Störung',stoerung:{ankunft:'08:00',ende:'09:00',
+    material:[{text:'Kondensatpumpe',menge:'2 Stk'},{text:'Kupferrohr 12 mm',menge:'3 m'},{text:'Isolierband',menge:'0,5 Rolle'},{text:'Dichtung',menge:'etwas'}]}},'lidl')
+    .filter(function(p){ return /Kondensatpumpe|Kupferrohr|Isolierband|Dichtung/.test(p.text); }).map(function(p){ return p.text.replace(/\\n/g,' / ')+': '+p.menge+' '+p.eh; }))`));
+  return r[0] === "Kondensatpumpe: 2 Stk" && r[1] === "Kupferrohr 12 mm: 3 m" && r[2] === "Isolierband: 0.5 Rolle" && /^Dichtung .*„etwas“.*: 1 Stk$/.test(r[3] || "")
+    ? "" : "Material „2 Stk“ / „3 m“ / „0,5 Rolle“ / „etwas“ im Vorschlag: " + JSON.stringify(r);
+});
 /* auffällige KPlus-Position („(3 h)“ bei Menge 1) ändert den Katalog-Preis nicht */
 reSchritt("eingaben", "R07", async (a) => {
   const r = await a.seite.evaluate(async () => {
