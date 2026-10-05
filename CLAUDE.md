@@ -254,7 +254,11 @@ Kammerlander Umwelt- und Klimatechnik (UKT) – oft kurz, vom Handy, im Feld.
   Rechnungen und Positionskatalog kommen nie in `projekte.daten` (das sehen
   alle), sondern in eigene, nur für Inhaber lesbare Tabellen bzw. Dateien.
 - **Arbeitszeiten** (Tabelle `arbeitszeiten`): jede Person sieht nur ihre
-  eigenen, der Inhaber alle; ein bestätigter Monat ist gesperrt.
+  eigenen, der Inhaber alle; ein bestätigter Monat ist gesperrt – auch für NEUE Einträge (von Hand, Stempeln,
+  Abgleich): bestätigt = die Person hat dort einen Eintrag mit `bestaetigt`; nur der Inhaber trägt danach ein oder
+  öffnet ihn wieder („Wieder öffnen“ in `zeitenInhaberKarte`; ist die Person noch eingestempelt, warnt „Bestätigen“ vorher). App: `monatGesperrt`, Meldung `MONAT_GESPERRT`;
+  Datenbank: Trigger `arbeitszeiten_monat_gesperrt` (gilt auch für stempeln()/stempel_abgleich(), nicht für die
+  Kalender-Übernahme – die hat ihre eigene Regel), tools/rechte-2026-10-05.sql (Inhaber 05.10.2026).
 - **Stempeluhr** (Tabelle `stempel`, Funktion `stempeln()`, tools/stempeluhr.sql):
   Zeit vom Server, Eintrag beim Ausstempeln vom Server berechnet (Quelle
   „stempel“); nachträglich geändert = „stempel_geaendert“. Standort nur, wenn
@@ -277,8 +281,12 @@ Kammerlander Umwelt- und Klimatechnik (UKT) – oft kurz, vom Handy, im Feld.
   Sonstiges; Personen `wer`, mehrtägig `datum_bis`) und Aufgaben (Zuständige,
   fällig, Bezug Projekt+Schritt/Markt/Störung, erledigt). PRIVAT: andere sehen
   nur „Abwesend“, Titel/Details in `planung_privat` (nur die Person selbst –
-  Trigger `planung_pruefen` erzwingt es). Urlaub genehmigt nur der Inhaber
-  (Trigger). Der Kalender zeigt dazu Störungen (Einsatztag bleibt in der
+  Trigger `planung_pruefen` erzwingt es). KRANKENSTAND anderer: Kollegen sehen nur „Abwesend“ (grau, ohne Titel/Details;
+  `planKrankVerborgen`, `planKatSicht`, `planTitel`) – die Art nur der Inhaber und die Person selbst (Gesundheitsdaten,
+  Inhaber 05.10.2026; nur in der App, die Datenbank-Zeile bleibt lesbar). Urlaub genehmigt nur der Inhaber
+  (Trigger); schon genehmigten löscht nur er – die Person „Urlaub zurückziehen“ (Rückfrage, Nachricht an den Inhaber,
+  `chatAnInhaber`; Sperrregel „genehmigter urlaub loeschen nur inhaber“; Inhaber 05.10.2026); ändert sie ihn (→ wieder
+  beantragt), bekommt der Inhaber von selbst „Urlaub geändert – bitte neu genehmigen“ (`urlaubGeaendertMelden`). Der Kalender zeigt dazu Störungen (Einsatztag bleibt in der
   Störung), Projekttermine, erledigte Protokolle und fällige Wartungen zum
   Einplanen (`wartungenImMonat`; eingeplant werden die Wartungstermine der
   Anlagen: `planung.position_ids`, `wartungEinplanen`, `planFuerPosition`, in
@@ -288,7 +296,7 @@ Kammerlander Umwelt- und Klimatechnik (UKT) – oft kurz, vom Handy, im Feld.
   Zeitausgleich) legt die Datenbank selbst in die Stunden (tools/stunden-kalender.sql, Trigger `planung_stunden`,
   Quelle „kalender“): je Arbeitstag das Tagessoll (`soll_minuten`, `feiertag_at` wie `sollMinutenTag`/`feiertageAT`),
   angepasst/entfernt mit dem Kalendereintrag, nie im bestätigten Monat; anlegen für eine Person nur sie selbst oder
-  das Büro; selbst geändert → „hand“. Zeitausgleich zählt nicht als Ist (baut Überstunden ab). Stempeluhr: „📅 Heute
+  der Inhaber; selbst geändert → „hand“. Zeitausgleich zählt nicht als Ist (baut Überstunden ab). Stempeluhr: „📅 Heute
   geplant“ (`stempelPlanChips`), nach dem Ausstempeln Verknüpfung mit dem Termin (`zeitenMitPlanungVerknuepfen`).
   Soll je Tag/Woche in „Meine Arbeitszeit“ (`sollIstTag`) nur zur Info – Überstunden bleiben MONATSBILANZ.
   Vor dem Bestätigen: `monatLuecken` (Tage ohne Eintrag, Abwesenheit ohne Stunden, Geplantes nicht erfasst) mit
@@ -299,11 +307,17 @@ Kammerlander Umwelt- und Klimatechnik (UKT) – oft kurz, vom Handy, im Feld.
   ein Termin mitten in einem anderen unterbricht ihn, Minuten wie die Datenbank (`abgleichMinuten`: Pause zum längsten Teil); nach dem Ausstempeln angeboten, beim Tag „⇆ Mit Kalender abgleichen“, beim Termin „⏱ abgleichen“ statt
   „erfassen“ (nie doppelt). Umstempeln mit Vorgabe aus dem Termin (`geplantFuerMich`, „⇄ Dorthin umstempeln“).
   Abwesenheit und Arbeit am selben Tag (`abwesenheitPruefen`, tools/abwesenheit-arbeit.sql, `planung.ausnahmen`): beim Einstempeln und
-  Erfassen fragen – „eingesprungen“ (beides zählt), Urlaub „zurückgeben“ (Inhaber nimmt den Tag heraus: `planTagHerausnehmen`, To-do),
+  Erfassen fragen (ein halber Tag mit Uhrzeit – EIN Tag mit von–bis – nur, wenn die Arbeit bzw. das Einstempeln hineinfällt:
+  `abwesenheitZeitTrifft`; ganztägig, mehrtägig oder Arbeit ohne Uhrzeit immer; Inhaber 05.10.2026) – „eingesprungen“ (beides zählt), Urlaub „zurückgeben“ (Inhaber nimmt den Tag heraus: `planTagHerausnehmen`, To-do),
   Krankenstand/Schule/ZA „für diesen Tag beenden“; ungeklärt ⚠ beim Tag und in `monatLuecken`. Die Antwort gilt je Tag UND Person
   (`ausnahmen[Tag][user_id]`, ältere ohne Person gelten für alle); stehen mehrere im Eintrag, verliert nur diese Person den Tag
   (`planPersonHerausloesen`: aus dem Eintrag genommen, eigene Einträge für ihre übrigen Tage); nur Tage im Zeitraum. Urlaub ändert nur der Inhaber. Neu Eingetragene bekommen eine Chat-Nachricht
-  (nicht bei Privatem). Diese Grenzen nie lockern.
+  (nicht bei Privatem). Abwesenheiten ANDERER – auch gemeinsame (Betriebsurlaub, Kurs) – legt an, ändert, kürzt, nimmt
+  Tage heraus und löscht nur der Inhaber; die eigene (SELBST angelegt UND nur sie bzw. niemand eingetragen – was der Inhaber für
+  jemanden einträgt, ändert nur er; die Person bittet per Chat um Herausnehmen) die Person selbst,
+  aus gemeinsamen nimmt sie nur sich selbst heraus; Admins wie Techniker (Inhaber 05.10.2026: `planAbwesenheitDarf`, Personenwahl
+  nur „ich“, sonst schreibgeschützt „ändert nur der Inhaber“; Datenbank: Sperrregeln „abwesenheit … nur selbst oder inhaber“ und
+  Trigger `planung_rechte_abwesenheit`, tools/rechte-2026-10-05.sql). Diese Grenzen nie lockern.
 - **Posteingang → Projekt** (Büro 02.10.2026): weitergeleitete Mails (nicht Lidl-Auftrag/Rapport)
   kommen mit `.eml` (art „mail“, `eintraege` in synology/ukt_posteingang.py, Test
   tools/posteingang_test.py); in der App eine Karte je Mail (`posteingangMailBox`), „Zu Projekt

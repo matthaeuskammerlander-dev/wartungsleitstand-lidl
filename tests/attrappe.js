@@ -15,6 +15,7 @@
   function nutzer(m){ return {id:"u_"+String(m).replace(/[^a-z0-9]/gi,"_"), email:m, user_metadata:JSON.parse(JSON.stringify(meta(m)))}; }
   function melde(){ horcher.forEach(function(cb){ try{ cb(sitzung?"SIGNED_IN":"SIGNED_OUT",sitzung); }catch(e){} }); }
   function uid(){ return sitzung?sitzung.user.id:null; }
+  function rolleVon(){ return (DB.rollen.filter(function(r){ return r.user_id===uid(); })[0]||{}).rolle||"techniker"; }
   function admin(){ return !!(sitzung && DB.admins.some(function(a){ return a.user_id===uid(); })); }
   /* wie kunde_sieht() (kunden-projekte-stunden.sql): Mitarbeiter immer, ein Kunden-Konto (rollen.kunde_id, leer = Lidl)
      nur Standorte seines Kunden (stammdaten standort:… felder.kundeId, leer = Lidl) */
@@ -61,6 +62,12 @@
       if(zz.user_id && zz.user_id!==uid()) return "arbeitszeiten: fremd";
       if(zeile && zeile.bestaetigt) return "arbeitszeiten: nur Inhaber bestaetigt";
     }
+    /* wie der Trigger arbeitszeiten_monat_gesperrt (rechte-2026-10-05.sql, Inhaber 05.10.2026): im bestätigten Monat der Person auch
+       nichts Neues (anlegen, ändern, löschen) – außer der Inhaber; die Kalender-Übernahme (stundenSync) schreibt direkt und hat ihre eigene Regel */
+    if(tab==="arbeitszeiten" && art!=="select" && rolle!=="inhaber"){
+      var az2=Object.assign({}, alt||{}, zeile||{});
+      if((alt && monatBestaetigt(alt.user_id, alt.datum)) || (art!=="delete" && monatBestaetigt(az2.user_id||uid(), az2.datum))) return MONAT_GESPERRT;
+    }
     if(tab==="projekte" && art==="delete" && rolle!=="inhaber") return "projekte: loeschen nur Inhaber";
     if(tab==="arbeitszeiten" && art==="delete" && rolle!=="inhaber" && alt && /^stempel|^kalender/.test(alt.quelle||"")) return "arbeitszeiten: gestempelt oder aus dem Kalender";
     if(tab==="arbeitszeiten" && art==="insert" && rolle!=="inhaber" && zeile && zeile.quelle && zeile.quelle!=="hand") return "arbeitszeiten: nur von Hand";
@@ -83,6 +90,34 @@
     }
     if(tab==="planung" && (art==="update"||art==="delete") && alt && alt.privat && alt.erstellt_von!==uid() && (alt.wer||[]).indexOf(uid())<0) return "planung: privat";
     if(tab==="planung" && art==="update" && alt && alt.kategorie==="urlaub" && rolle!=="inhaber" && zeile && (zeile.status==="genehmigt"||zeile.status==="abgelehnt") && zeile.status!==alt.status) return "Urlaub genehmigt nur der Inhaber";
+    /* wie tools/rechte-2026-10-05.sql (Inhaber 05.10.2026): Abwesenheit (Urlaub, Krankenstand, Schule, Zeitausgleich) anderer – auch
+       gemeinsame – legt an, ändert und löscht nur der Inhaber; die eigene (nur ich eingetragen bzw. niemand und von mir angelegt) die
+       Person selbst. Aus einer gemeinsamen nimmt sie nur sich selbst heraus und gibt ihre Antwort (ausnahmen) – Trigger planung_rechte_abwesenheit
+       nach planung_pruefen (Urlaub, der dabei wieder „beantragt“ würde, also nicht) */
+    if(tab==="planung" && art!=="select" && rolle!=="inhaber"){
+      var abw=function(r){ return !!r && r.art!=="aufgabe" && ["urlaub","krank","schule","zeitausgleich"].indexOf(r.kategorie)>=0; };
+      /* eigen = selbst angelegt UND nur selbst eingetragen (bzw. niemand) – was der Inhaber für jemanden einträgt, ändert nur er */
+      var eigen=function(r, von){ return von===uid() && (r.wer||[]).every(function(u){ return u===uid(); }); };
+      var nurInhaber="planung: Abwesenheit anderer nur der Inhaber";
+      if(art==="insert" && abw(zeile) && !eigen(zeile, uid())) return nurInhaber;
+      if(art==="delete" && abw(alt) && !eigen(alt, alt.erstellt_von)) return nurInhaber;
+      /* schon genehmigten Urlaub löscht nur der Inhaber – auch nicht die Person selbst */
+      if(art==="delete" && abw(alt) && alt.kategorie==="urlaub" && alt.status==="genehmigt") return "planung: genehmigten Urlaub löscht nur der Inhaber";
+      if(art==="update" && alt){
+        var nz=JSON.parse(JSON.stringify(Object.assign({}, alt, zeile||{})));
+        if(!abw(alt) || eigen(alt, alt.erstellt_von)){ if(abw(nz) && !eigen(nz, alt.erstellt_von)) return nurInhaber; }
+        else {
+          if((alt.wer||[]).indexOf(uid())<0) return nurInhaber;
+          planPruefen(nz, alt);
+          var frei=["wer","wer_namen","ausnahmen","geaendert","geaendert_von"], gl=function(p, q){ return JSON.stringify(p==null?null:p)===JSON.stringify(q==null?null:q); };
+          if(Object.keys(nz).concat(Object.keys(alt)).some(function(k){ return frei.indexOf(k)<0 && !gl(nz[k], alt[k]); })) return nurInhaber+" (nur sich selbst herausnehmen)";
+          var iw=(alt.wer||[]).indexOf(uid());
+          if(!gl(nz.wer, alt.wer) && (alt.wer||[]).length<2) return nurInhaber+" (nur aus einem gemeinsamen Eintrag)";
+          if(!gl(nz.wer, alt.wer) && !(gl(nz.wer, alt.wer.filter(function(u){ return u!==uid(); })) && gl(nz.wer_namen, (alt.wer_namen||[]).filter(function(n, k){ return k!==iw; })))) return nurInhaber+" (nur sich selbst herausnehmen)";
+          if(gl(nz.wer, alt.wer) && !gl(nz.wer_namen, alt.wer_namen)) return nurInhaber;
+        }
+      }
+    }
     if(tab==="aenderungen" && art!=="insert" && art!=="select") return "aenderungen: unveraenderlich";
     /* wie vor-ort-fragen.sql: Büro stellt und erledigt, alle (die schreiben dürfen) antworten */
     if(tab==="vor_ort_fragen"){
@@ -112,6 +147,7 @@
   /* wie der Trigger planung_stunden (stunden-kalender.sql): Urlaub (genehmigt), Krankenstand, Schule,
      Zeitausgleich je Arbeitstag mit dem Tagessoll in die Stunden – anlegen nur für sich selbst oder als Büro;
      ein bestätigter Monat (eine Person hat dort einen bestätigten Eintrag) bleibt unberührt */
+  var MONAT_GESPERRT="Monat ist bestätigt – nur der Inhaber kann noch etwas eintragen";
   function monatBestaetigt(u, d){ return DB.arbeitszeiten.some(function(x){ return x.user_id===u && x.bestaetigt && String(x.datum).slice(0,7)===String(d).slice(0,7); }); }
   function stundenSync(id){
     var p=DB.planung.filter(function(x){ return x.id===id; })[0], zart=null, personen=[], bis=null;
@@ -366,6 +402,7 @@
         var fe=function(m){ return Promise.resolve({data:null,error:{message:m}}); };
         var mm=function(t){ var x=/^(\d\d):(\d\d)$/.exec(t||""); return x ? (+x[1])*60+(+x[2]) : null; };
         var hh=function(m){ return ("0"+Math.floor(m/60)).slice(-2)+":"+("0"+(m%60)).slice(-2); };
+        if(rolleVon()!=="inhaber" && monatBestaetigt(uid(), w.p_datum)) return fe(MONAT_GESPERRT);   /* wie der Trigger arbeitszeiten_monat_gesperrt */
         var eig=DB.arbeitszeiten.filter(function(z){ return z.user_id===uid() && z.datum===w.p_datum && z.art==="arbeit" && /^stempel/.test(z.quelle||"") && !z.bestaetigt && mm(z.ende)>mm(z.beginn); })
           .sort(function(x,y){ return mm(x.beginn)-mm(y.beginn); });
         var bl=[]; eig.forEach(function(z){ var l2=bl[bl.length-1]; if(l2 && mm(z.beginn)===l2.e){ l2.z.push(z); l2.e=mm(z.ende); } else bl.push({b:mm(z.beginn), e:mm(z.ende), z:[z]}); });
@@ -418,6 +455,9 @@
       if(w.p_ende_hand){ var d=new Date(ein.zeit); var t=w.p_ende_hand.split(":"); d.setHours(+t[0],+t[1],0,0); if(d<=new Date(ein.zeit)) d.setDate(d.getDate()+1); ende=d; q="stempel_nachgetragen";
         if(ende>new Date(jetzt)) return fehler("Das Ende liegt in der Zukunft"); }
       if(ende-new Date(ein.zeit)>86400000) return fehler("Länger als 24 Stunden eingestempelt – bitte das tatsächliche Ende angeben");
+      /* wie der Trigger arbeitszeiten_monat_gesperrt: ein Abschnitt in einem bestätigten Monat – alles zurück, nichts ausgestempelt */
+      var tagV=function(x){ x=new Date(x); return x.getFullYear()+"-"+("0"+(x.getMonth()+1)).slice(-2)+"-"+("0"+x.getDate()).slice(-2); };
+      if(rolleVon()!=="inhaber" && meine.some(function(x){ return x.zeit>=ein.zeit && new Date(x.zeit)<ende && (x.art==="ein"||x.art==="wechsel") && monatBestaetigt(uid(), tagV(x.zeit)); })) return fehler(MONAT_GESPERRT);
       var weg=[];
       if(w.p_ersetzen) for(var i=DB.arbeitszeiten.length-1;i>=0;i--){ var a=DB.arbeitszeiten[i];
         if(w.p_ersetzen.indexOf(a.id)>=0 && a.user_id===uid() && (a.quelle||"hand")==="hand" && !a.bestaetigt){ weg.push(a.id); DB.arbeitszeiten.splice(i,1); } }

@@ -4500,6 +4500,380 @@ test("Tiefentest werkzeug: verletzte Prüfregel beim Speichern meldet nicht „n
   await a.zu();
 });
 
+/* ---- Antworten des Inhabers vom 05.10.2026: Stunden und Abwesenheiten ---- */
+test("Antworten stunden: Abwesenheiten anderer nur der Inhaber – Admin wie Techniker nur für sich, aus gemeinsamen nur sich selbst herausnehmen", async () => {
+  const fehl = [];
+  const a = await oeffnen(KONTEN.admin);
+  await ttHilfen(a);
+  const r = await a.seite.evaluate(async () => {
+    const tt = window.__tt, x = window.__t.x, db = window.__db.tabellen, sb = x("Store.sb"), e = {}; tt.leeren();
+    const ich = tt.ich(), tech = "u_tech_test_at", inh = "u_inhaber_test_at";
+    const t1 = x("werktagAb(plusTage(isoLokal(new Date()),7))"), t3 = x("plusTage('" + t1 + "',2)");
+    const nein = (q) => (q.error || !(q.data || []).length ? "abgelehnt" : "angenommen");
+    const knoepfe = (d) => [...d.querySelectorAll(".as-fuss button")].map((b) => b.textContent.trim());
+    /* (a) neue Schule für mich und einen Kollegen: wählbar ist nur „ich“, gespeichert nur für mich */
+    x("planEditor(null, {art:'termin', kategorie:'schule', titel:'Kurs AW', datum:'" + t1 + "', wer:['" + ich + "','" + tech + "'], wer_namen:['Testadmin','Testtechniker']})"); await tt.warte(300);
+    let d = tt.dialog();
+    e.chips = [...d.querySelectorAll("[data-wer] .chip")].map((c) => c.textContent);
+    tt.ok(d).click(); await tt.warte(400);
+    e.gespeichert = db.planung.filter((p) => p.titel === "Kurs AW").map((p) => (p.wer || []).join());
+    x("ansichtenSchliessen()");
+    /* (b) Datenbank: für einen anderen anlegen, seine Abwesenheit ändern oder löschen – abgelehnt; Wartung für andere wie bisher */
+    e.anlegenFremd = nein(await sb.from("planung").insert({ art: "termin", kategorie: "zeitausgleich", titel: "ZA", datum: t1, wer: [tech], wer_namen: ["Testtechniker"] }).select("*"));
+    db.planung.push({ id: "aw1u", art: "termin", kategorie: "urlaub", titel: "Urlaub", datum: t1, datum_bis: t3, wer: [tech], wer_namen: ["Testtechniker"], status: "genehmigt", erstellt_von: inh, erstellt: new Date().toISOString(), privat: false, ausnahmen: {} });
+    e.aendernFremd = nein(await sb.from("planung").update({ datum_bis: t1 }).eq("id", "aw1u").select("*"));
+    e.loeschenFremd = nein(await sb.from("planung").delete().eq("id", "aw1u").select("id"));
+    e.wartungFremd = nein(await sb.from("planung").insert({ art: "termin", kategorie: "wartung", titel: "Wartung", datum: t1, wer: [tech], wer_namen: ["Testtechniker"] }).select("*"));
+    /* (c) fremder Urlaub geöffnet: schreibgeschützt mit Hinweis – kein Speichern, Löschen, Tag herausnehmen, nicht ziehbar */
+    await tt.laden();
+    x("planEditor(PLANUNG.filter(function(p){ return p.id==='aw1u'; })[0])"); await tt.warte(300);
+    d = tt.dialog();
+    e.fremd = { hinweis: /ändert nur der Inhaber/.test(d.textContent), knoepfe: knoepfe(d).filter((t) => /Speichern|Löschen/.test(t)), felderAn: [...d.querySelectorAll("form input, form select, form textarea, form button")].filter((f) => !f.disabled).length,
+      heraus: /Tage herausnehmen/.test(d.textContent), ziehen: x("kalDarfZiehen({art:'termin', e:PLANUNG.filter(function(p){ return p.id==='aw1u'; })[0]})") };
+    x("ansichtenSchliessen()");
+    /* (d) gemeinsamer Kurs (ich und der Techniker): nur mich herausnehmen – sonst nichts */
+    db.planung.push({ id: "aw1k", art: "termin", kategorie: "schule", titel: "Kältekurs", datum: t1, datum_bis: t3, wer: [ich, tech], wer_namen: ["Testadmin", "Testtechniker"], status: "offen", erstellt_von: inh, erstellt: new Date().toISOString(), privat: false, ausnahmen: {} });
+    await tt.laden();
+    x("planEditor(PLANUNG.filter(function(p){ return p.id==='aw1k'; })[0])"); await tt.warte(300);
+    d = tt.dialog();
+    e.kurs = { optionen: [...d.querySelectorAll("[data-fuer] option")].map((o) => o.textContent), knoepfe: knoepfe(d).filter((t) => /Speichern|Löschen/.test(t)) };
+    x("ansichtenSchliessen()");
+    e.kurs.titel = nein(await sb.from("planung").update({ titel: "Anders" }).eq("id", "aw1k").select("*"));
+    e.kurs.kollegeRaus = nein(await sb.from("planung").update({ wer: [ich], wer_namen: ["Testadmin"] }).eq("id", "aw1k").select("*"));
+    e.kurs.antwort = nein(await sb.from("planung").update({ ausnahmen: { [t1]: { [ich]: { art: "eingesprungen", von: "Testadmin" } } } }).eq("id", "aw1k").select("*"));
+    e.kurs.selbstRaus = nein(await sb.from("planung").update({ wer: [tech], wer_namen: ["Testtechniker"] }).eq("id", "aw1k").select("*"));
+    /* (e) eigene Abwesenheit: anlegen, ändern, löschen – erlaubt */
+    const eig = await sb.from("planung").insert({ art: "termin", kategorie: "krank", titel: "Krank", datum: t1, wer: [ich], wer_namen: ["Testadmin"] }).select("*");
+    const id = eig.data && eig.data[0].id;
+    e.eigen = [nein(eig), id ? nein(await sb.from("planung").update({ datum_bis: t3 }).eq("id", id).select("*")) : "-", id ? nein(await sb.from("planung").delete().eq("id", id).select("id")) : "-"].join();
+    return e;
+  });
+  if (r.chips.length !== 1 || !/\(ich\)/.test(r.chips[0]) || JSON.stringify(r.gespeichert) !== JSON.stringify(["u_admin_test_at"])) fehl.push("(a) Abwesenheit für andere wählbar: " + JSON.stringify([r.chips, r.gespeichert]));
+  if (r.anlegenFremd !== "abgelehnt" || r.aendernFremd !== "abgelehnt" || r.loeschenFremd !== "abgelehnt" || r.wartungFremd !== "angenommen") fehl.push("(b) Datenbank: " + JSON.stringify(r));
+  if (!r.fremd.hinweis || r.fremd.knoepfe.length || r.fremd.felderAn || r.fremd.heraus || r.fremd.ziehen) fehl.push("(c) fremder Urlaub nicht schreibgeschützt: " + JSON.stringify(r.fremd));
+  if (JSON.stringify(r.kurs.optionen) !== JSON.stringify(["nur Testadmin"]) || r.kurs.knoepfe.length || r.kurs.titel !== "abgelehnt" || r.kurs.kollegeRaus !== "abgelehnt" || r.kurs.antwort !== "angenommen" || r.kurs.selbstRaus !== "angenommen")
+    fehl.push("(d) gemeinsamer Kurs: " + JSON.stringify(r.kurs));
+  if (r.eigen !== "angenommen,angenommen,angenommen") fehl.push("(e) eigene Abwesenheit: " + r.eigen);
+  if (a.fehler.length) fehl.push("Laufzeitfehler (Admin): " + a.fehler.join("; "));
+  await a.zu();
+  /* der Inhaber: für andere anlegen, ändern, löschen – im Termin mit Personenwahl */
+  const b = await oeffnen(KONTEN.inhaber);
+  await ttHilfen(b);
+  const r2 = await b.seite.evaluate(async () => {
+    const tt = window.__tt, x = window.__t.x, sb = x("Store.sb"); tt.leeren();
+    const tech = "u_tech_test_at", t1 = x("werktagAb(plusTage(isoLokal(new Date()),7))");
+    const ins = await sb.from("planung").insert({ art: "termin", kategorie: "schule", titel: "Kurs", datum: t1, wer: [tech], wer_namen: ["Testtechniker"] }).select("*");
+    const id = ins.data && ins.data[0].id;
+    const upd = id ? await sb.from("planung").update({ titel: "Kurs neu" }).eq("id", id).select("*") : {};
+    await tt.laden();
+    x("planEditor(PLANUNG.filter(function(p){ return p.id==='" + id + "'; })[0])"); await tt.warte(400);
+    const d = tt.dialog(), kn = [...d.querySelectorAll(".as-fuss button")].map((k) => k.textContent.trim()), chips = d.querySelectorAll("[data-wer] .chip").length;
+    x("ansichtenSchliessen()");
+    const del = id ? await sb.from("planung").delete().eq("id", id).select("id") : {};
+    return { anlegen: !ins.error, aendern: !upd.error && (upd.data || []).length === 1, speichern: kn.includes("Speichern"), loeschen: kn.includes("Löschen"), chips, loeschenDb: !del.error && (del.data || []).length === 1 };
+  });
+  if (!r2.anlegen || !r2.aendern || !r2.speichern || !r2.loeschen || r2.chips < 2 || !r2.loeschenDb) fehl.push("Inhaber darf Abwesenheit anderer nicht verwalten: " + JSON.stringify(r2));
+  if (b.fehler.length) fehl.push("Laufzeitfehler (Inhaber): " + b.fehler.join("; "));
+  await b.zu();
+  pruefe(!fehl.length, fehl.join(" | "));
+});
+
+test("Antworten stunden: genehmigten Urlaub löscht nur der Inhaber – die Person zieht ihn zurück, der Chef bekommt eine Nachricht", async () => {
+  const fehl = [];
+  const a = await oeffnen(KONTEN.techniker);
+  await ttHilfen(a);
+  const r = await a.seite.evaluate(async () => {
+    const tt = window.__tt, x = window.__t.x, db = window.__db.tabellen, sb = x("Store.sb"), e = {}; tt.leeren();
+    const ich = tt.ich(), t1 = x("werktagAb(plusTage(isoLokal(new Date()),14))"), t3 = x("plusTage('" + t1 + "',2)");
+    const nein = (q) => (q.error || !(q.data || []).length ? "abgelehnt" : "angenommen");
+    ["genehmigt", "beantragt"].forEach((st) => db.planung.push({ id: "aw2" + st, art: "termin", kategorie: "urlaub", titel: "Urlaub", datum: t1, datum_bis: t3, wer: [ich], wer_namen: ["Testtechniker"], status: st,
+      erstellt_von: ich, erstellt: new Date().toISOString(), privat: false, ausnahmen: {} }));
+    await tt.laden();
+    const oeffne = async (id) => { x("planEditor(PLANUNG.filter(function(p){ return p.id==='" + id + "'; })[0])"); await tt.warte(200); return [...tt.dialog().querySelectorAll(".as-fuss button")]; };
+    let kn = await oeffne("aw2genehmigt");
+    e.genehmigt = kn.map((b) => b.textContent.trim());
+    const zk = kn.find((b) => /zurückziehen/.test(b.textContent)), chatVorher = db.chat.length;
+    window.__dialoge.length = 0;
+    if (zk) { zk.click(); await tt.warte(600); }
+    e.rueckfrage = window.__dialoge.filter((d) => d[0] === "confirm").map((d) => d[1]).join(" | ");
+    e.nachricht = db.chat.slice(chatVorher).map((c) => c.an + ": " + c.text);
+    e.toast = tt.toasts.join(" | ");
+    e.nochDa = db.planung.some((p) => p.id === "aw2genehmigt" && p.status === "genehmigt");
+    x("ansichtenSchliessen()");
+    e.beantragt = (await oeffne("aw2beantragt")).map((b) => b.textContent.trim()); x("ansichtenSchliessen()");
+    e.loeschenGenehmigt = nein(await sb.from("planung").delete().eq("id", "aw2genehmigt").select("id"));
+    e.loeschenBeantragt = nein(await sb.from("planung").delete().eq("id", "aw2beantragt").select("id"));
+    return e;
+  });
+  if (r.genehmigt.includes("Löschen") || !r.genehmigt.includes("Urlaub zurückziehen")) fehl.push("Knöpfe bei genehmigtem Urlaub: " + JSON.stringify(r.genehmigt));
+  if (!/zurückziehen/.test(r.rueckfrage) || r.nachricht.length !== 1 || !/^u_inhaber_test_at: .*zurück/.test(r.nachricht[0]) || !/Der Chef bekommt eine Nachricht/.test(r.toast) || !r.nochDa)
+    fehl.push("Zurückziehen: " + JSON.stringify({ rueckfrage: r.rueckfrage, nachricht: r.nachricht, toast: r.toast, nochDa: r.nochDa }));
+  if (!r.beantragt.includes("Löschen") || r.beantragt.includes("Urlaub zurückziehen")) fehl.push("Knöpfe bei beantragtem Urlaub: " + JSON.stringify(r.beantragt));
+  if (r.loeschenGenehmigt !== "abgelehnt" || r.loeschenBeantragt !== "angenommen") fehl.push("Datenbank: " + JSON.stringify([r.loeschenGenehmigt, r.loeschenBeantragt]));
+  if (a.fehler.length) fehl.push("Laufzeitfehler (Techniker): " + a.fehler.join("; "));
+  await a.zu();
+  const b = await oeffnen(KONTEN.inhaber);
+  await ttHilfen(b);
+  const r2 = await b.seite.evaluate(async () => {
+    const tt = window.__tt, x = window.__t.x, db = window.__db.tabellen, sb = x("Store.sb"); tt.leeren();
+    const t1 = x("werktagAb(plusTage(isoLokal(new Date()),14))");
+    db.planung.push({ id: "aw2i", art: "termin", kategorie: "urlaub", titel: "Urlaub", datum: t1, wer: ["u_tech_test_at"], wer_namen: ["Testtechniker"], status: "genehmigt", erstellt_von: "u_tech_test_at", erstellt: new Date().toISOString(), privat: false, ausnahmen: {} });
+    await tt.laden();
+    x("planEditor(PLANUNG.filter(function(p){ return p.id==='aw2i'; })[0])"); await tt.warte(200);
+    const kn = [...tt.dialog().querySelectorAll(".as-fuss button")].map((k) => k.textContent.trim()); x("ansichtenSchliessen()");
+    const del = await sb.from("planung").delete().eq("id", "aw2i").select("id");
+    return { kn, geloescht: !del.error && (del.data || []).length === 1 };
+  });
+  if (!r2.kn.includes("Löschen") || r2.kn.includes("Urlaub zurückziehen") || !r2.geloescht) fehl.push("Inhaber löscht genehmigten Urlaub nicht: " + JSON.stringify(r2));
+  if (b.fehler.length) fehl.push("Laufzeitfehler (Inhaber): " + b.fehler.join("; "));
+  await b.zu();
+  pruefe(!fehl.length, fehl.join(" | "));
+});
+
+test("Antworten stunden: Krankenstand anderer sehen Kollegen nur als „Abwesend“ – die Art nur der Inhaber und die Person selbst", async () => {
+  const fehl = [];
+  const sicht = async (konto) => {
+    const a = await oeffnen(konto);
+    await ttHilfen(a);
+    const r = await a.seite.evaluate(async () => {
+      const tt = window.__tt, x = window.__t.x, db = window.__db.tabellen, e = {}; tt.leeren();
+      const adm = "u_admin_test_at", t1 = x("werktagAb(plusTage(isoLokal(new Date()),7))"), t2 = x("plusTage('" + t1 + "',1)");
+      const z = { art: "termin", wer: [adm], wer_namen: ["Testadmin"], erstellt_von: "u_inhaber_test_at", erstellt: new Date().toISOString(), privat: false, ausnahmen: {}, status: "offen" };
+      db.planung.push(Object.assign({ id: "aw3k", kategorie: "krank", titel: "Grippe Testadmin", details: "Arztbrief folgt", datum: t1 }, z));
+      db.planung.push(Object.assign({ id: "aw3s", kategorie: "schule", titel: "Kältekurs", datum: t2 }, z));
+      await tt.laden();
+      e.kal = Object.values(x("kalenderEintraege('" + t1 + "', '" + t2 + "', 'alle')")).flat().filter((y) => y.e).map((y) => y.titel + "|" + y.farbe).sort();
+      e.grau = x("planKat('privat')[2]"); e.krank = x("planKat('krank')[2]"); e.schule = x("planKat('schule')[2]");
+      x("planEditor(PLANUNG.filter(function(p){ return p.id==='aw3k'; })[0])"); await tt.warte(200);
+      const d = tt.dialog();
+      e.editor = (d.innerText + " " + [...d.querySelectorAll("input, textarea")].map((f) => f.value).join(" ") + " " +
+        [...d.querySelectorAll("select")].map((f) => (f.options[f.selectedIndex] || {}).text || "").join(" ")).replace(/\s+/g, " "); x("ansichtenSchliessen()");
+      e.verplant = x("verplantPruefen(['" + adm + "'], ['Testadmin'], '" + t1 + "', '" + t1 + "', 0, 1440)").join(" ");
+      x("S.view='kalender'; S.kalModus='monat'; S.kMonat='" + t1.slice(0, 7) + "'; S.kalWer='alle'; S.kalNur=''; render()"); await tt.warte(500);
+      e.reiter = /Grippe/.test(document.body.innerText);
+      return e;
+    });
+    if (a.fehler.length) fehl.push("Laufzeitfehler (" + konto + "): " + a.fehler.join("; "));
+    await a.zu();
+    return r;
+  };
+  const t = await sicht(KONTEN.techniker);
+  if (JSON.stringify(t.kal) !== JSON.stringify(["Abwesend|" + t.grau, "Kältekurs|" + t.schule]) || /Grippe|Krankenstand|Arztbrief/.test(t.editor) || !/abwesend/.test(t.editor) ||
+      /Grippe/.test(t.verplant) || !/Abwesend/.test(t.verplant) || t.reiter) fehl.push("Techniker sieht den Krankenstand: " + JSON.stringify(t));
+  const i = await sicht(KONTEN.inhaber), s = await sicht(KONTEN.admin);
+  [["Inhaber", i], ["Person selbst", s]].forEach(([wer, r]) => {
+    if (JSON.stringify(r.kal) !== JSON.stringify(["Grippe Testadmin|" + r.krank, "Kältekurs|" + r.schule]) || !/Grippe/.test(r.editor) || !r.reiter) fehl.push(wer + " sieht den Krankenstand nicht: " + JSON.stringify(r));
+  });
+  pruefe(!fehl.length, fehl.join(" | "));
+});
+
+test("Antworten stunden: bestätigter Monat sperrt auch neue Einträge – von Hand, Stempeln, Abgleich; nur der Inhaber trägt nach oder öffnet wieder", async () => {
+  const fehl = [], GESPERRT = /Monat ist bestätigt – nur der Inhaber kann noch etwas eintragen/;
+  const a = await oeffnen(KONTEN.techniker);
+  await ttHilfen(a);
+  const r = await a.seite.evaluate(async () => {
+    const tt = window.__tt, x = window.__t.x, db = window.__db.tabellen, sb = x("Store.sb"), e = {}; tt.leeren();
+    const ich = tt.ich(), heute = x("isoLokal(new Date())"), vm = x("plusMonate(isoLokal(new Date()),-1).slice(0,7)"), jetzt = new Date().toISOString();
+    const zeile = (z) => Object.assign({ user_id: ich, name: "T", minuten: 60, art: "arbeit", quelle: "hand", pause_min: 0 }, z);
+    db.arbeitszeiten.push(zeile({ id: "aw4v", datum: vm + "-02", bestaetigt: jetzt }));
+    await tt.laden();
+    /* (a) von Hand im bestätigten Vormonat: klare Meldung, nichts gespeichert */
+    x("zeitEditor(null, {datum:'" + vm + "-10', beginn:'08:00', ende:'10:00', art:'arbeit', bereich:'werkstatt'})"); await tt.warte(200);
+    let d = tt.dialog(); e.hinweis = /Monat ist bestätigt/.test(d.textContent);
+    tt.ok(d).click(); await tt.warte(300);
+    e.meldung = (d.querySelector("[data-err]") || {}).textContent || "";
+    e.handGespeichert = db.arbeitszeiten.some((z) => z.datum === vm + "-10");
+    x("ansichtenSchliessen()");
+    /* (b) Datenbank: neuer Eintrag im bestätigten Monat abgelehnt; im offenen Monat geht es */
+    const ins = await sb.from("arbeitszeiten").insert(zeile({ datum: vm + "-11" })).select("*");
+    e.db = ins.error ? ins.error.message : "angenommen";
+    const ok = await sb.from("arbeitszeiten").insert(zeile({ datum: heute })).select("*");
+    e.dbOffen = ok.error ? ok.error.message : "angenommen";
+    /* (c) Abgleich im bestätigten Monat (ein später dazugekommener, offener Stempel-Eintrag): App meldet es, Datenbank lehnt ab */
+    tt.gestempelt({ datum: vm + "-12", beginn: "07:00", ende: "15:00", minuten: 450, pause_min: 30, bereich: "wartung" });
+    await tt.laden(); tt.toasts.length = 0;
+    x("abgleichDialog('" + vm + "-12', false)"); await tt.warte(200);
+    e.abgleichApp = { toast: tt.toasts.join(" | "), dialog: !!tt.dialog() }; x("ansichtenSchliessen()");
+    const ab = await sb.rpc("stempel_abgleich", { p_datum: vm + "-12", p_teile: [{ beginn: "07:00", ende: "15:00", bereich: "wartung" }] });
+    e.abgleichDb = ab.error ? ab.error.message : "angenommen";
+    /* (d) Stempeln, wenn der laufende Monat schon bestätigt ist: einstempeln meldet es; ausstempeln lehnt die Datenbank ab */
+    tt.leeren(); db.arbeitszeiten.push(zeile({ id: "aw4h", datum: heute, bestaetigt: jetzt })); await tt.laden();
+    x("stempelGeladen=true; STEMPEL=[]; S.view='stunden'; render()"); await tt.warte(500);
+    const karte = document.getElementById("stempelkarte");
+    const chip = karte.querySelector(".chips .chip[data-b]"); if (chip) chip.click();
+    tt.toasts.length = 0; karte.querySelector("[data-ein]").click(); await tt.warte(500);
+    e.einApp = { toast: tt.toasts.join(" | "), stempel: db.stempel.length, frage: !!tt.dialog() };
+    x("ansichtenSchliessen()");
+    db.stempel.push({ id: "aw4s", user_id: ich, name: "T", art: "ein", zeit: new Date(Date.now() - 60000).toISOString(), bereich: "werkstatt" });
+    const vorher = db.arbeitszeiten.length, aus = await sb.rpc("stempeln", { p_art: "aus", p_name: "T" });
+    e.ausDb = { meldung: aus.error ? aus.error.message : "angenommen", eintraege: db.arbeitszeiten.length - vorher, nochEin: db.stempel.length === 1 };
+    return e;
+  });
+  if (!r.hinweis || !/Monat ist bestätigt/.test(r.meldung) || r.handGespeichert) fehl.push("(a) von Hand: " + JSON.stringify(r));
+  if (!GESPERRT.test(r.db) || r.dbOffen !== "angenommen") fehl.push("(b) Datenbank: " + JSON.stringify([r.db, r.dbOffen]));
+  if (!GESPERRT.test(r.abgleichApp.toast) || r.abgleichApp.dialog || !GESPERRT.test(r.abgleichDb)) fehl.push("(c) Abgleich: " + JSON.stringify([r.abgleichApp, r.abgleichDb]));
+  if (!GESPERRT.test(r.einApp.toast) || r.einApp.stempel || r.einApp.frage || !GESPERRT.test(r.ausDb.meldung) || r.ausDb.eintraege || !r.ausDb.nochEin) fehl.push("(d) Stempeln: " + JSON.stringify([r.einApp, r.ausDb]));
+  if (a.fehler.length) fehl.push("Laufzeitfehler (Techniker): " + a.fehler.join("; "));
+  await a.zu();
+  /* der Inhaber: trägt im bestätigten Monat nach und öffnet ihn wieder */
+  const b = await oeffnen(KONTEN.inhaber);
+  await ttHilfen(b);
+  const r2 = await b.seite.evaluate(async () => {
+    const tt = window.__tt, x = window.__t.x, db = window.__db.tabellen, sb = x("Store.sb"); tt.leeren();
+    const tech = "u_tech_test_at", vm = x("plusMonate(isoLokal(new Date()),-1).slice(0,7)");
+    db.arbeitszeiten.push({ id: "aw4i", user_id: tech, name: "Testtechniker", datum: vm + "-02", minuten: 480, art: "arbeit", quelle: "hand", pause_min: 0, bestaetigt: new Date().toISOString(), bestaetigt_von: "Testinhaber" });
+    const ins = await sb.from("arbeitszeiten").insert({ user_id: tech, name: "Testtechniker", datum: vm + "-03", minuten: 60, art: "arbeit", quelle: "hand" }).select("*");
+    x("S.view='stunden'; S.stMonat='" + vm + "'; render()"); await tt.warte(800);
+    const knopf = [...document.querySelectorAll("button")].find((k) => /Wieder öffnen/.test(k.textContent));
+    if (knopf) { knopf.click(); await tt.warte(500); }
+    return { nachtragen: ins.error ? ins.error.message : "angenommen", knopf: !!knopf, nochBestaetigt: db.arbeitszeiten.filter((z) => z.user_id === tech && z.bestaetigt).length };
+  });
+  if (r2.nachtragen !== "angenommen" || !r2.knopf || r2.nochBestaetigt) fehl.push("Inhaber: " + JSON.stringify(r2));
+  if (b.fehler.length) fehl.push("Laufzeitfehler (Inhaber): " + b.fehler.join("; "));
+  await b.zu();
+  pruefe(!fehl.length, fehl.join(" | "));
+});
+
+test("Antworten stunden: Arbeit planen (📅) schlägt freitags 07:00–14:00 vor – mit 30 min Pause das Tagessoll von 6:30 h", async () => {
+  const a = await oeffnen(KONTEN.techniker);
+  const r = await a.seite.evaluate(async () => {
+    const x = window.__t.x, warte = (ms) => new Promise((f) => setTimeout(f, ms));
+    x("S.view='stunden'; S.stWoche=montagVon(isoLokal(new Date())); render()"); await warte(600);
+    const tage = [...document.querySelectorAll("[data-tage] > div")];
+    const vorschlag = (i) => { tage[i].querySelector("[data-planen]").click(); const d = [...document.querySelectorAll(".assistent")].pop();
+      const v = d.querySelector('[data-f="beginn"]').value + "–" + d.querySelector('[data-f="ende"]').value; x("ansichtenSchliessen()"); return v; };
+    return { montag: vorschlag(0), freitag: vorschlag(4), rundgang: JSON.stringify(x("RUNDGAENGE")).match(/Vorschlag 07:00[^)]*\)/g) };
+  });
+  pruefe(r.montag === "07:00–15:30" && r.freitag === "07:00–14:00", "Vorschlag beim Planen: " + JSON.stringify(r));
+  pruefe(JSON.stringify(r.rundgang) === JSON.stringify(["Vorschlag 07:00–15:30, freitags bis 14:00)"]), "Rundgang nennt die Freitag-Vorgabe falsch: " + JSON.stringify(r.rundgang));
+  pruefe(!a.fehler.length, "Laufzeitfehler: " + a.fehler.join("; "));
+  await a.zu();
+});
+
+test("Antworten stunden: halber Tag mit Uhrzeit – gefragt wird nur, wenn die Arbeit bzw. das Einstempeln in die Abwesenheit fällt", async () => {
+  const a = await oeffnen(KONTEN.techniker);
+  await ttHilfen(a);
+  const r = await a.seite.evaluate(async () => {
+    const tt = window.__tt, x = window.__t.x, db = window.__db.tabellen, e = {};
+    const frage = () => [...document.querySelectorAll(".assistent")].some((d) => /eingetragen$/.test(d.querySelector(".as-titel").textContent));
+    /* Arbeit erfassen: fragt die App? (sonst gespeichert) */
+    const erfassen = async (tag, z) => {
+      x("zeitEditor(null, " + JSON.stringify(Object.assign({ datum: tag, art: "arbeit", bereich: "werkstatt" }, z)) + ")"); await tt.warte(150);
+      tt.ok(tt.dialog()).click(); await tt.warte(300);
+      const f = frage(); x("ansichtenSchliessen()"); return f ? "fragt" : db.arbeitszeiten.some((y) => y.datum === tag && y.art === "arbeit") ? "gespeichert" : "?";
+    };
+    const T = tt.werktag(1), T2 = tt.werktag(2);
+    const fall = async (abw, z, tag) => { tt.leeren(); await tt.termin(Object.assign({ kategorie: "zeitausgleich", titel: "Zeitausgleich", datum: tag || T }, abw)); await tt.laden(); return erfassen(tag || T, z); };
+    const halb = { beginn: "12:00", ende: "15:30" };
+    e.vormittag = await fall(halb, { beginn: "07:00", ende: "11:00" });
+    e.konfliktVormittag = x("abwesenheitKonflikt('" + T + "', ZEITEN).length");
+    e.mittag = await fall(halb, { beginn: "13:00", ende: "14:00" });
+    e.nurDauer = await fall(halb, { minuten: 120 });
+    e.ganztaegig = await fall({}, { beginn: "07:00", ende: "11:00" });
+    e.mehrtaegig = await fall({ datum_bis: x("plusTage('" + T2 + "',1)"), beginn: "12:00", ende: "15:30" }, { beginn: "07:00", ende: "11:00" }, T2);
+    /* Einstempeln jetzt: Abwesenheit heute mit Uhrzeit um „jetzt“ herum – bzw. später */
+    const jm = x("new Date().getHours()*60+new Date().getMinutes()"), hm = (m) => x("kalHm(" + m + ")");
+    const stempeln = async (b, en) => {
+      tt.leeren(); await tt.termin({ kategorie: "zeitausgleich", titel: "Zeitausgleich", datum: x("isoLokal(new Date())"), beginn: hm(b), ende: hm(en) }); await tt.laden();
+      x("stempelGeladen=true; STEMPEL=[]; S.view='stunden'; render()"); await tt.warte(400);
+      const karte = document.getElementById("stempelkarte"), chip = karte.querySelector(".chips .chip[data-b]"); if (chip) chip.click();
+      karte.querySelector("[data-ein]").click(); await tt.warte(500);
+      const f = frage(); x("ansichtenSchliessen()"); return f ? "fragt" : db.stempel.length ? "eingestempelt" : "?";
+    };
+    e.stempelnDrin = await stempeln(Math.max(0, jm - 30), Math.min(1439, jm + 30));
+    e.stempelnDraussen = jm + 90 <= 1439 ? await stempeln(jm + 60, jm + 90) : await stempeln(jm - 90, jm - 60);
+    return e;
+  });
+  pruefe(r.vormittag === "gespeichert" && r.konfliktVormittag === 0, "Arbeit vor dem halben Tag: gefragt bzw. ⚠ – " + JSON.stringify(r));
+  pruefe(r.mittag === "fragt" && r.nurDauer === "fragt" && r.ganztaegig === "fragt" && r.mehrtaegig === "fragt", "Arbeit im halben Tag, ohne Uhrzeit, ganztägig oder mehrtägig: nicht gefragt – " + JSON.stringify(r));
+  pruefe(r.stempelnDrin === "fragt" && r.stempelnDraussen === "eingestempelt", "Einstempeln: " + JSON.stringify(r));
+  pruefe(!a.fehler.length, "Laufzeitfehler: " + a.fehler.join("; "));
+  await a.zu();
+});
+
+test("Antworten stunden: was der Inhaber für jemanden einträgt, ändert nur der Inhaber – die Person antwortet nur und bittet um Herausnehmen", async () => {
+  const fehl = [];
+  const a = await oeffnen(KONTEN.techniker);
+  await ttHilfen(a);
+  const r = await a.seite.evaluate(async () => {
+    const tt = window.__tt, x = window.__t.x, db = window.__db.tabellen, sb = x("Store.sb"), e = {}; tt.leeren();
+    const ich = tt.ich(), T = tt.werktag(1), T2 = tt.werktag(2), nein = (q) => (q.error || !(q.data || []).length ? "abgelehnt" : "angenommen");
+    const z = { art: "termin", kategorie: "krank", titel: "Krank", wer: [ich], wer_namen: ["Testtechniker"], status: "offen", erstellt: new Date().toISOString(), privat: false, ausnahmen: {} };
+    db.planung.push(Object.assign({ id: "aw5k", datum: T, erstellt_von: "u_inhaber_test_at" }, z), Object.assign({ id: "aw5e", datum: T2, erstellt_von: ich }, z));
+    await tt.laden();
+    x("planEditor(PLANUNG.filter(function(p){ return p.id==='aw5k'; })[0])"); await tt.warte(200);
+    let d = tt.dialog();
+    e.editor = { hinweis: /ändert nur der Inhaber/.test(d.textContent), knoepfe: [...d.querySelectorAll(".as-fuss button")].map((b) => b.textContent.trim()).filter((t) => /Speichern|Löschen/.test(t)), heraus: /Tage herausnehmen/.test(d.textContent) };
+    x("ansichtenSchliessen()");
+    /* Arbeit an diesem Tag: nicht selbst beenden, sondern den Chef bitten */
+    const chatVorher = db.chat.length;
+    x("abwesenheitPruefen('" + T + "', function(){})"); await tt.warte(150);
+    d = tt.dialog(); e.antworten = [...d.querySelectorAll("button")].map((b) => b.textContent.trim().split("\n")[0]);
+    const bitte = [...d.querySelectorAll("button")].find((b) => /Chef/.test(b.textContent)); if (bitte) { bitte.click(); await tt.warte(600); }
+    e.nachricht = db.chat.slice(chatVorher).map((c) => c.an).join();
+    e.antwort = (((db.planung.find((p) => p.id === "aw5k") || {}).ausnahmen || {})[T] || {})[ich];
+    x("ansichtenSchliessen()");
+    e.db = { aendern: nein(await sb.from("planung").update({ datum_bis: T2 }).eq("id", "aw5k").select("*")), leeren: nein(await sb.from("planung").update({ wer: [], wer_namen: [] }).eq("id", "aw5k").select("*")),
+      loeschen: nein(await sb.from("planung").delete().eq("id", "aw5k").select("id")),
+      eigenAendern: nein(await sb.from("planung").update({ titel: "Grippe" }).eq("id", "aw5e").select("*")), eigenLoeschen: nein(await sb.from("planung").delete().eq("id", "aw5e").select("id")) };
+    return e;
+  });
+  if (!r.editor.hinweis || r.editor.knoepfe.length || r.editor.heraus) fehl.push("Termin nicht schreibgeschützt: " + JSON.stringify(r.editor));
+  if (r.antworten.some((t) => /für diesen Tag beenden/.test(t)) || r.nachricht !== "u_inhaber_test_at" || !r.antwort || r.antwort.art !== "zurueck") fehl.push("Arbeit am Tag: " + JSON.stringify(r));
+  if (JSON.stringify(r.db) !== JSON.stringify({ aendern: "abgelehnt", leeren: "abgelehnt", loeschen: "abgelehnt", eigenAendern: "angenommen", eigenLoeschen: "angenommen" })) fehl.push("Datenbank: " + JSON.stringify(r.db));
+  if (a.fehler.length) fehl.push("Laufzeitfehler: " + a.fehler.join("; "));
+  await a.zu();
+  pruefe(!fehl.length, fehl.join(" | "));
+});
+
+test("Antworten stunden: genehmigten Urlaub geändert – wieder beantragt, der Chef bekommt „bitte neu genehmigen“", async () => {
+  const a = await oeffnen(KONTEN.techniker);
+  await ttHilfen(a);
+  const r = await a.seite.evaluate(async () => {
+    const tt = window.__tt, x = window.__t.x, db = window.__db.tabellen, e = {}; tt.leeren();
+    const ich = tt.ich(), t1 = x("werktagAb(plusTage(isoLokal(new Date()),14))"), t3 = x("plusTage('" + t1 + "',2)");
+    db.planung.push({ id: "aw6u", art: "termin", kategorie: "urlaub", titel: "Urlaub", datum: t1, datum_bis: t3, wer: [ich], wer_namen: ["Testtechniker"], status: "genehmigt", erstellt_von: ich, erstellt: new Date().toISOString(), privat: false, ausnahmen: {} });
+    await tt.laden();
+    const aendern = async (feld, wert) => { const vorher = db.chat.length; x("planEditor(PLANUNG.filter(function(p){ return p.id==='aw6u'; })[0])"); await tt.warte(200);
+      const d = tt.dialog(), f = d.querySelector('[data-f="' + feld + '"]'); f.value = wert; f.dispatchEvent(new Event("change", { bubbles: true }));
+      tt.ok(d).click(); await tt.warte(600); x("ansichtenSchliessen()");
+      return { status: db.planung.find((p) => p.id === "aw6u").status, chat: db.chat.slice(vorher).map((c) => c.an + ": " + c.text) }; };
+    e.details = await aendern("details", "Sommer");
+    tt.toasts.length = 0;
+    e.tage = await aendern("datum_bis", x("plusTage('" + t3 + "',1)"));
+    e.toast = tt.toasts.join(" | ");
+    return e;
+  });
+  pruefe(r.details.status === "genehmigt" && !r.details.chat.length, "nur Details geändert: " + JSON.stringify(r.details));
+  pruefe(r.tage.status === "beantragt" && r.tage.chat.length === 1 && /^u_inhaber_test_at: .*Urlaub geändert – bitte neu genehmigen/.test(r.tage.chat[0]) && /Chef/.test(r.toast), "Tage geändert: " + JSON.stringify(r));
+  pruefe(!a.fehler.length, "Laufzeitfehler: " + a.fehler.join("; "));
+  await a.zu();
+});
+
+test("Antworten stunden: Monat bestätigen warnt, wenn die Person noch eingestempelt ist", async () => {
+  const a = await oeffnen(KONTEN.inhaber);
+  await ttHilfen(a);
+  const r = await a.seite.evaluate(async () => {
+    const tt = window.__tt, x = window.__t.x, db = window.__db.tabellen; tt.leeren();
+    const vm = x("plusMonate(isoLokal(new Date()),-1).slice(0,7)"), zeile = (u, n) => ({ id: "aw7" + u, user_id: u, name: n, datum: vm + "-02", minuten: 480, art: "arbeit", quelle: "hand", pause_min: 0 });
+    db.arbeitszeiten.push(zeile("u_tech_test_at", "Testtechniker"), zeile("u_admin_test_at", "Testadmin"));
+    db.stempel.push({ id: "aw7s", user_id: "u_tech_test_at", name: "Testtechniker", art: "ein", zeit: new Date(vm + "-28T08:00:00").toISOString() });
+    x("S.view='stunden'; S.stMonat='" + vm + "'; render()"); await tt.warte(800);
+    const fragen = {};
+    for (const n of ["Testtechniker", "Testadmin"]) {
+      const zeileTr = [...document.querySelectorAll("tr")].find((tr) => tr.firstChild && tr.firstChild.textContent.startsWith(n));
+      window.__antwort.confirm = false; window.__dialoge.length = 0;
+      [...zeileTr.querySelectorAll("button")].find((b) => b.textContent === "Bestätigen").click(); await tt.warte(400);
+      fragen[n] = window.__dialoge.map((d) => d[1]).join(" | ");
+    }
+    window.__antwort.confirm = true;
+    return fragen;
+  });
+  pruefe(/Testtechniker ist noch eingestempelt/.test(r.Testtechniker) && !/eingestempelt/.test(r.Testadmin) && /bestätigen\?/.test(r.Testadmin), "Warnung: " + JSON.stringify(r));
+  pruefe(!a.fehler.length, "Laufzeitfehler: " + a.fehler.join("; "));
+  await a.zu();
+});
+
 /* ================================================================ Ablauf ================================================================ */
 const filterText = process.argv.slice(2).find((x) => !x.startsWith("--"));
 const filter = filterText ? new RegExp(filterText, "i") : null;
