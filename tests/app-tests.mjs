@@ -1941,10 +1941,11 @@ test("Tiefentest stunden: Abwesenheit – Tag herausnehmen nur für die eine Per
     x("planEditor(PLANUNG.filter(function(p){ return p.id==='tt04'; })[0])"); await tt.warte(150);
     const knopf = [...tt.dialog().querySelectorAll("button")].find((b) => /^Tag herausnehmen$/.test(b.textContent.trim()));
     knopf.parentNode.querySelector('input[type="date"]').value = mi; knopf.click(); await tt.warte(500);
-    return { tech, plan: db.planung.filter((p) => p.kategorie === "urlaub").map((p) => p.datum + ".." + (p.datum_bis || p.datum) + " " + ((p.wer || []).join() || p.erstellt_von)),
+    const soll = [0, 1, 3, 4].filter((i) => x("sollMinutenTag(plusTage('" + mo + "'," + i + "))")).length;   /* ohne Mittwoch, ohne Feiertage */
+    return { tech, soll, plan: db.planung.filter((p) => p.kategorie === "urlaub").map((p) => p.datum + ".." + (p.datum_bis || p.datum) + " " + ((p.wer || []).join() || p.erstellt_von)),
       stunden: db.arbeitszeiten.filter((z) => z.art === "urlaub").map((z) => z.datum.slice(5) + " " + z.user_id).sort() };
   });
-  if (r4.stunden.length !== 4 || !r4.stunden.every((s) => s.endsWith(r4.tech)) || !r4.plan.every((s) => s.endsWith(r4.tech))) fehl.push("TT-04 zweiter Teil gehört dem Inhaber: " + JSON.stringify(r4));
+  if (r4.stunden.length !== r4.soll || !r4.stunden.every((s) => s.endsWith(r4.tech)) || !r4.plan.every((s) => s.endsWith(r4.tech))) fehl.push("TT-04 zweiter Teil gehört dem Inhaber: " + JSON.stringify(r4));
   /* TT-05: zurückgegebener Tag liegt nach dem Kürzen außerhalb – kein Knopf, der Urlaub wird nicht verlängert */
   const r5 = await a.seite.evaluate(async () => {
     const tt = window.__tt, x = window.__t.x, db = window.__db.tabellen; tt.leeren();
@@ -1975,9 +1976,10 @@ test("Tiefentest stunden: Abwesenheit – Tag herausnehmen nur für die eine Per
     if (knopf) { knopf.click(); await tt.warte(600); }
     const amMi = (uid) => db.planung.some((p) => (p.wer || []).includes(uid) && x("planTage(" + JSON.stringify(p) + ")").includes(mi));
     const std = (uid) => db.arbeitszeiten.filter((z) => z.art === "urlaub" && z.user_id === uid).map((z) => z.datum).sort();
-    return { knopf: !!knopf, vorher, tech: { mi: amMi(ids[0]), std: std(ids[0]).length }, admin: { mi: amMi(ids[1]), std: std(ids[1]).length }, inhaber: { mi: amMi(ids[2]), std: std(ids[2]).length } };
+    const soll = (l) => l.filter((i) => x("sollMinutenTag(plusTage('" + mo + "'," + i + "))")).length;   /* Feiertage zählen nicht */
+    return { knopf: !!knopf, vorher, ohneMi: soll([0, 1, 3, 4]), alle: soll([0, 1, 2, 3, 4]), tech: { mi: amMi(ids[0]), std: std(ids[0]).length }, admin: { mi: amMi(ids[1]), std: std(ids[1]).length }, inhaber: { mi: amMi(ids[2]), std: std(ids[2]).length } };
   });
-  if (!rq1.knopf || rq1.tech.mi || rq1.tech.std !== 4 || !rq1.admin.mi || rq1.admin.std !== 5 || !rq1.inhaber.mi || rq1.inhaber.std !== 5) fehl.push("TTQ-01 Betriebsurlaub: Tag für alle herausgenommen: " + JSON.stringify(rq1));
+  if (!rq1.knopf || rq1.tech.mi || rq1.tech.std !== rq1.ohneMi || !rq1.admin.mi || rq1.admin.std !== rq1.alle || !rq1.inhaber.mi || rq1.inhaber.std !== rq1.alle) fehl.push("TTQ-01 Betriebsurlaub: Tag für alle herausgenommen: " + JSON.stringify(rq1));
   if (a.fehler.length) fehl.push("Laufzeitfehler (Inhaber): " + a.fehler.join("; "));
   await a.zu();
   /* Techniker: gemeinsamer Kurs mit einer Kollegin */
@@ -2051,6 +2053,69 @@ test("Tiefentest stunden: Präsentation – Abgleich lässt Summe und Pause glei
   if (r.t01.summe !== 510 || r.t01.pause !== 30 || r.t01.teile !== 3) fehl.push("TT-01 Präsentation: Summe/Pause nach dem Abgleich " + JSON.stringify(r.t01));
   if (!r.beenden || r.schreibA.length) fehl.push("TT-02 (a) „Tag beenden“ schickt " + JSON.stringify(r.schreibA) + " an die Datenbank");
   if (r.schreibB.length || r.verschoben === r.T2) fehl.push("TT-02 (b) Verschieben: " + JSON.stringify(r.schreibB) + " an die Datenbank / im Speicher nicht verschoben: " + JSON.stringify(r));
+  if (a.fehler.length) fehl.push("Laufzeitfehler: " + a.fehler.join("; "));
+  await a.zu();
+  pruefe(!fehl.length, fehl.join(" | "));
+});
+
+test("Tiefentest stunden: Datenbank-Skripte mehrfach ausführbar, Nachbildung wie die SQL", async () => {
+  const fehl = [];
+  /* SQL-1: stunden-kalender.sql („Mehrfach ausführbar“) nach stempel-abgleich.sql nochmals ausgeführt – der Abgleich bleibt erlaubt und „geändert“ sichtbar */
+  const sk = readFileSync(join(WURZEL, "tools", "stunden-kalender.sql"), "utf8"), sa = readFileSync(join(WURZEL, "tools", "stempel-abgleich.sql"), "utf8");
+  const quellen = (s) => ((/arbeitszeiten_quelle_check\s+check \(quelle in \(([^)]*)\)/.exec(s) || [])[1] || "").split(",").map((q) => q.trim());
+  const merken = (s) => ((/old\.quelle in \(([^)]*)\) and zeit_geaendert/.exec(s) || [])[1] || "").split(",").map((q) => q.trim());
+  const fehlt = quellen(sa).filter((q) => !quellen(sk).includes(q)), fehltT = merken(sa).filter((q) => !merken(sk).includes(q));
+  if (!/Mehrfach ausführbar/.test(sk) || fehlt.length || fehltT.length) fehl.push("SQL-1 stunden-kalender.sql setzt den Abgleich zurück – fehlt: " + JSON.stringify({ quellen: fehlt, trigger: fehltT }));
+  /* ATT-1: die Nachbildung (tests/attrappe.js) verhält sich wie die SQL-Funktionen bzw. supabase-js */
+  const a = await oeffnen(KONTEN.techniker);
+  await ttHilfen(a);
+  const r = await a.seite.evaluate(async () => {
+    const tt = window.__tt, x = window.__t.x, db = window.__db.tabellen, sb = x("Store.sb"), ich = tt.ich(), e = {};
+    /* (1) bestätigter Monat: der Kalender legt dort keine Stunden an (planung_stunden_sync) */
+    tt.leeren(); const vm = x("plusMonate(isoLokal(new Date()),-1).slice(0,7)");
+    db.arbeitszeiten.push({ id: "att1b", user_id: ich, name: "T", datum: vm + "-01", minuten: 60, art: "arbeit", quelle: "hand", bestaetigt: new Date().toISOString() });
+    let tag = vm + "-15"; while (!x("sollMinutenTag('" + tag + "')")) tag = x("plusTage('" + tag + "',1)");
+    await tt.termin({ kategorie: "krank", titel: "Krank", datum: tag });
+    e.bestaetigt = db.arbeitszeiten.filter((z) => z.datum === tag && z.quelle === "kalender").length;
+    /* (2) stempel_abgleich: Pause automatisch bleibt, „geändert“ bleibt sichtbar, Pause muss in einen Abschnitt passen */
+    tt.leeren(); const T = tt.werktag(1);
+    tt.gestempelt({ datum: T, beginn: "07:00", ende: "15:30", minuten: 480, pause_min: 30, pause_auto: 30, quelle: "stempel_geaendert", bereich: "wartung" });
+    const rr = await sb.rpc("stempel_abgleich", { p_datum: T, p_teile: [{ beginn: "07:00", ende: "08:00", bereich: "fahrt" }, { beginn: "08:00", ende: "15:30", bereich: "wartung" }] });
+    const ab = (rr.data || {}).eintraege || [];
+    e.pauseAuto = ab.reduce((s, z) => s + (z.pause_auto || 0), 0); e.quellen = ab.map((z) => z.quelle).join();
+    tt.leeren(); tt.gestempelt({ datum: T, beginn: "07:00", ende: "08:00", minuten: 20, pause_min: 40, bereich: "wartung" });
+    const rp = await sb.rpc("stempel_abgleich", { p_datum: T, p_teile: [{ beginn: "07:00", ende: "07:30", bereich: "fahrt" }, { beginn: "07:30", ende: "08:00", bereich: "wartung" }] });
+    e.pausePasst = rp.error ? rp.error.message : "angenommen";
+    /* (3) planung: Ende vor dem Beginn lehnt die Datenbank ab */
+    const pf = await sb.from("planung").insert({ art: "termin", kategorie: "krank", titel: "x", datum: T, datum_bis: x("plusTage('" + T + "',-2)"), wer: [ich] }).select("*");
+    e.bisVorBeginn = pf.error ? "abgelehnt" : "angenommen";
+    /* (4) delete().select('id') liefert nur die Kennung */
+    tt.leeren(); tt.gestempelt({ id: "att1d", datum: T, beginn: "07:00", ende: "08:00", minuten: 60, quelle: "hand" });
+    const del = await sb.from("arbeitszeiten").delete().eq("id", "att1d").select("id");
+    e.spalten = Object.keys((del.data || [])[0] || {}).join();
+    /* (5) ohne Netz wie supabase-js: {error} statt zu werfen – auch bei Funktionen */
+    window.__netzWeg = "antwort";
+    try { const nu = await sb.from("planung").update({ titel: "y" }).eq("id", "gibtsnicht").select("*"); e.netzTabelle = nu.error ? "Fehler" : "ok"; } catch (y) { e.netzTabelle = "geworfen"; }
+    try { const nr = await sb.rpc("stempeln", { p_art: "ein" }); e.netzRpc = nr.error ? "Fehler" : "ok"; } catch (y) { e.netzRpc = "geworfen"; }
+    window.__netzWeg = false;
+    /* (6) stempeln: Pause je TAG (frühere gestempelte Zeit des Tages zählt mit); Ende in der Zukunft geht nicht */
+    tt.leeren(); const ein = new Date(Date.now() - 3 * 3600000), tagE = x("isoLokal(new Date(" + ein.getTime() + "))");
+    tt.gestempelt({ datum: tagE, beginn: "00:00", ende: "00:01", minuten: 240, bereich: "werkstatt" });   /* 4 h früher am Tag */
+    db.stempel.push({ id: "att1s", user_id: ich, name: "T", art: "ein", zeit: ein.toISOString(), bereich: "werkstatt" });
+    const aus = await sb.rpc("stempeln", { p_art: "aus", p_name: "T" });
+    e.pauseTag = ((aus.data || {}).eintraege || []).reduce((s, z) => s + (z.pause_auto || 0), 0);
+    db.stempel.length = 0; db.stempel.push({ id: "att1z", user_id: ich, name: "T", art: "ein", zeit: new Date(Date.now() - 3600000).toISOString(), bereich: "werkstatt" });
+    const spaeter = new Date(Date.now() + 30 * 60000), hm = ("0" + spaeter.getHours()).slice(-2) + ":" + ("0" + spaeter.getMinutes()).slice(-2);
+    const zk = await sb.rpc("stempeln", { p_art: "aus", p_name: "T", p_ende_hand: hm });
+    e.zukunft = zk.error ? zk.error.message : "angenommen";
+    return e;
+  });
+  if (r.bestaetigt !== 0) fehl.push("ATT-1 Kalender-Stunden im bestätigten Monat angelegt: " + JSON.stringify(r));
+  if (r.pauseAuto !== 30 || r.quellen !== "stempel_geaendert,stempel_geaendert" || !/Pause passt/.test(r.pausePasst)) fehl.push("ATT-1 stempel_abgleich anders als die SQL: " + JSON.stringify(r));
+  if (r.bisVorBeginn !== "abgelehnt") fehl.push("ATT-1 planung: Ende vor Beginn angenommen: " + JSON.stringify(r));
+  if (r.spalten !== "id") fehl.push("ATT-1 delete().select('id') liefert " + r.spalten);
+  if (r.netzTabelle !== "Fehler" || r.netzRpc !== "Fehler") fehl.push("ATT-1 ohne Netz nicht wie supabase-js: " + JSON.stringify(r));
+  if (r.pauseTag !== 30 || !/Zukunft/.test(r.zukunft)) fehl.push("ATT-1 stempeln anders als stempeluhr-4.sql: " + JSON.stringify(r));
   if (a.fehler.length) fehl.push("Laufzeitfehler: " + a.fehler.join("; "));
   await a.zu();
   pruefe(!fehl.length, fehl.join(" | "));

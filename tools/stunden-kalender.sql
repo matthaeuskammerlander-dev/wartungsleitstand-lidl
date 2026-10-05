@@ -10,7 +10,8 @@
 --   * Wer einen Kalender-Eintrag in den Stunden selbst ändert, übernimmt ihn (Quelle wird „hand“);
 --     der Kalender fasst ihn dann nicht mehr an.
 --   * Neue Kalender-Art „zeitausgleich“.
--- Einmal im Supabase SQL Editor ausführen. Mehrfach ausführbar.
+-- Einmal im Supabase SQL Editor ausführen. Mehrfach ausführbar – auch nach tools/stempel-abgleich.sql: Quellen und
+-- Trigger unten stehen auf demselben Stand (mit „stempel_abgeglichen“), ein erneutes Ausführen setzt den Abgleich nicht zurück.
 
 alter table public.planung drop constraint if exists planung_kategorie_check;
 alter table public.planung add constraint planung_kategorie_check
@@ -19,7 +20,7 @@ alter table public.planung add constraint planung_kategorie_check
 
 alter table public.arbeitszeiten drop constraint if exists arbeitszeiten_quelle_check;
 alter table public.arbeitszeiten add constraint arbeitszeiten_quelle_check
-  check (quelle in ('hand','stempel','stempel_geaendert','stempel_nachgetragen','kalender'));
+  check (quelle in ('hand','stempel','stempel_geaendert','stempel_nachgetragen','stempel_abgeglichen','kalender'));
 
 -- gesetzliche Feiertage in Österreich (wie feiertageAT in der App)
 create or replace function public.feiertag_at(d date) returns boolean
@@ -136,7 +137,7 @@ begin
   if coalesce(current_setting('ukt.kalender_sync', true), '') = '1' then return new; end if;
   if old.quelle = 'kalender' and (zeit_geaendert or new.art is distinct from old.art) then
     new.quelle := 'hand';
-  elsif old.quelle in ('stempel','stempel_nachgetragen') and zeit_geaendert then
+  elsif old.quelle in ('stempel','stempel_nachgetragen','stempel_abgeglichen') and zeit_geaendert then
     new.quelle := 'stempel_geaendert';
   elsif new.quelle is distinct from old.quelle and not public.ist_inhaber() then
     new.quelle := old.quelle;     -- die Quelle selbst setzt niemand von Hand um

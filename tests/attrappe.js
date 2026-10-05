@@ -95,7 +95,9 @@
     r.geaendert=new Date().toISOString();
   }
   /* wie der Trigger planung_stunden (stunden-kalender.sql): Urlaub (genehmigt), Krankenstand, Schule,
-     Zeitausgleich je Arbeitstag mit dem Tagessoll in die Stunden – anlegen nur für sich selbst oder als Büro */
+     Zeitausgleich je Arbeitstag mit dem Tagessoll in die Stunden – anlegen nur für sich selbst oder als Büro;
+     ein bestätigter Monat (eine Person hat dort einen bestätigten Eintrag) bleibt unberührt */
+  function monatBestaetigt(u, d){ return DB.arbeitszeiten.some(function(x){ return x.user_id===u && x.bestaetigt && String(x.datum).slice(0,7)===String(d).slice(0,7); }); }
   function stundenSync(id){
     var p=DB.planung.filter(function(x){ return x.id===id; })[0], zart=null, personen=[], bis=null;
     var rl=(DB.rollen.filter(function(x){ return x.user_id===uid(); })[0]||{}).rolle;
@@ -104,12 +106,14 @@
     if(p && p.art==='termin' && p.datum && p.status!=='abgelehnt' && ['urlaub','krank','schule','zeitausgleich'].indexOf(p.kategorie)>=0 && (p.kategorie!=='urlaub' || p.status==='genehmigt')){
       zart=p.kategorie; personen=(p.wer&&p.wer.length)?p.wer:[p.erstellt_von]; bis=p.datum_bis&&p.datum_bis>p.datum?p.datum_bis:p.datum; }
     for(var i=DB.arbeitszeiten.length-1;i>=0;i--){ var az=DB.arbeitszeiten[i];
-      if(az.planung_id===id && az.quelle==='kalender' && !az.bestaetigt && (!zart || personen.indexOf(az.user_id)<0 || az.datum<p.datum || az.datum>bis || !soll(az.datum))) DB.arbeitszeiten.splice(i,1); }
+      if(az.planung_id!==id || az.quelle!=='kalender' || az.bestaetigt) continue;
+      /* gelöscht (Trigger beim DELETE): entfernen außer im bestätigten Monat; sonst wie planung_stunden_sync Schritt 1 */
+      if(!p ? !monatBestaetigt(az.user_id, az.datum) : (!zart || personen.indexOf(az.user_id)<0 || az.datum<p.datum || az.datum>bis || !soll(az.datum) || monatBestaetigt(az.user_id, az.datum))) DB.arbeitszeiten.splice(i,1); }
     if(!zart) return;
     personen.forEach(function(u, k){
       if(!(u===uid() || rl==='inhaber' || admin())) return;
       for(var d=p.datum, n=0; d<=bis && n<93; d=plus(d), n++){
-        var sm=soll(d); if(!sm) continue;
+        var sm=soll(d); if(!sm || monatBestaetigt(u, d)) continue;
         var min=sm;
         if(bis===p.datum && p.beginn && p.ende){ var sp=(+p.ende.slice(0,2)*60 + +p.ende.slice(3))-(+p.beginn.slice(0,2)*60 + +p.beginn.slice(3)); if(sp>0) min=Math.min(sp, sm); }
         var da=DB.arbeitszeiten.filter(function(x){ return x.planung_id===id && x.quelle==='kalender' && x.user_id===u && x.datum===d; })[0];
@@ -157,8 +161,13 @@
         if(self.sp){ var o={}; self.sp.forEach(function(s){ o[s]=k[s]; }); return o; } return k; }), error:null};
     }
     var v=null;
+    /* wie supabase-js: zurück kommen Kopien, mit .select("id") nur die genannten Spalten */
+    var aus=function(l){ return l.map(function(r){ var k=JSON.parse(JSON.stringify(r));
+      if(self.sp){ var o={}; self.sp.forEach(function(s){ o[s]=k[s]; }); return o; } return k; }); };
+    /* wie die Prüfung in planung.sql: datum_bis nie vor datum */
+    var bisVorDatum=function(r){ return self.t==="planung" && r.datum && r.datum_bis && r.datum_bis<r.datum ? 'new row for relation "planung" violates check constraint "planung_check"' : null; };
     if(this.a==="insert"){
-      [].concat(this.d).forEach(function(d){ v=v||darf(self.t,"insert",d,null); });
+      [].concat(this.d).forEach(function(d){ v=v||darf(self.t,"insert",d,null)||bisVorDatum(d); });
       if(v){ window.__abgelehnt.push(v); return {data:null,error:{message:v}}; }
       var neu=[].concat(this.d).map(function(d){ var r=Object.assign({},d);
         if(r.id==null) r.id="x"+Date.now().toString(36)+(++z);
@@ -172,7 +181,7 @@
         if(self.t==="werkzeug"||self.t==="bedarf"){ r.erstellt_von=uid(); r.erstellt=new Date().toISOString(); r.aktiv=r.aktiv==null?true:r.aktiv; if(self.t==="bedarf"){ r.status=r.status||"offen"; r.beschaffung=r.beschaffung||"mitnehmen"; if(r.status==="erledigt") r.erledigt=new Date().toISOString(); } else { r.zustand=r.zustand||"ok"; r.standort_art=r.standort_art||"lager"; } }
         if(self.t==="projekte"){ r.erstellt=r.erstellt||new Date().toISOString(); r.geaendert=r.geaendert||r.erstellt; r.daten=r.daten||{}; r.verlauf=r.verlauf||[]; }
         return r; });
-      neu.forEach(function(r){ tab.push(r); }); if(self.t==="planung") neu.forEach(function(r){ stundenSync(r.id); }); sichern(); return {data:neu,error:null};
+      neu.forEach(function(r){ tab.push(r); }); if(self.t==="planung") neu.forEach(function(r){ stundenSync(r.id); }); sichern(); return {data:aus(neu),error:null};
     }
     if(this.a==="upsert"){
       var sp=this.o.onConflict||"id", raus=[];
@@ -189,11 +198,11 @@
           tab.push(r); raus.push(r); }
       });
       if(v){ window.__abgelehnt.push(v); return {data:null,error:{message:v}}; }
-      sichern(); return {data:raus,error:null};
+      sichern(); return {data:aus(raus),error:null};
     }
     if(this.a==="update"){
       var b=tab.filter(function(r){ return passt(r,self.f); });
-      b.forEach(function(r){ v=v||darf(self.t,"update",self.d,r); });
+      b.forEach(function(r){ v=v||darf(self.t,"update",self.d,r)||bisVorDatum(Object.assign({}, r, self.d)); });
       if(v){ window.__abgelehnt.push(v); return {data:null,error:{message:v}}; }
       b.forEach(function(r){ if(self.t==="protokolle"){ var u=r.erstellt_von,g2=r.erstellt;
           DB.protokoll_fassungen.push({client_id:r.client_id,version:r.version,gesichert:new Date().toISOString(),daten:JSON.parse(JSON.stringify(r))});
@@ -204,14 +213,14 @@
           var altR=JSON.parse(JSON.stringify(r));
           Object.assign(r,self.d);
           if(self.t==="planung") planPruefen(r, altR);
-          if(self.t==="arbeitszeiten") r.quelle=(zg && /^stempel(_nachgetragen)?$/.test(qv||"")) ? "stempel_geaendert" : (zg||("art" in self.d && self.d.art!==altR.art)) && qv==="kalender" ? "hand" : (qv||"hand");
+          if(self.t==="arbeitszeiten") r.quelle=(zg && /^stempel(_nachgetragen|_abgeglichen)?$/.test(qv||"")) ? "stempel_geaendert" : (zg||("art" in self.d && self.d.art!==altR.art)) && qv==="kalender" ? "hand" : (qv||"hand");
           if(self.t==="planung") stundenSync(r.id);
           if(self.t==="auslagen" && r.art==="km") r.betrag=Math.round(r.km*(r.km_satz||0.5)*100)/100;
           if(self.t==="bedarf") r.erledigt = r.status==="erledigt" ? (altR.status==="erledigt" ? altR.erledigt : new Date().toISOString()) : null;
           if(self.t==="werkzeug" && r.standort_art!==altR.standort_art || self.t==="werkzeug" && r.person_id!==altR.person_id) DB.werkzeug_verlauf.push({id:"x"+(++z), werkzeug_id:r.id, zeit:new Date().toISOString(), standort:r.standort_art+(r.person_name?" "+r.person_name:""), von_name:r.geaendert_von});
         }
         erg.push(r); });
-      sichern(); return {data:erg,error:null};
+      sichern(); return {data:aus(erg),error:null};
     }
     if(this.a==="delete"){
       var w=tab.filter(function(r){ return passt(r,self.f); });
@@ -219,12 +228,15 @@
       if(v){ window.__abgelehnt.push(v); return {data:null,error:{message:v}}; }
       for(var i=tab.length-1;i>=0;i--) if(passt(tab[i],self.f)){ erg.push(tab[i]); tab.splice(i,1); }
       if(self.t==="planung") erg.forEach(function(r){ stundenSync(r.id); });
-      sichern(); return {data:erg,error:null};
+      sichern(); return {data:aus(erg),error:null};
     }
     return {data:[],error:null};
   };
-  /* window.__netzWeg=true: Schreiben scheitert wie ohne Netz (fetch wirft) – für Tests „keine Verbindung“ */
+  /* window.__netzWeg=true: Schreiben in Tabellen scheitert wie ohne Netz (fetch wirft) – für Tests „keine Verbindung“;
+     window.__netzWeg="antwort": wie supabase-js ohne Netz – Schreiben und Funktionen (rpc) liefern {error}, statt zu werfen */
+  var NETZ_FEHLER={data:null, error:{message:"TypeError: Failed to fetch"}};
   Q.prototype.then=function(ok,nok){ var s=this;
+    if(window.__netzWeg==="antwort" && s.a!=="select") return Promise.resolve(JSON.parse(JSON.stringify(NETZ_FEHLER))).then(ok,nok);
     if(window.__netzWeg && s.a!=="select") return Promise.reject(new TypeError("Failed to fetch")).then(ok,nok);
     return new Promise(function(f){ setTimeout(function(){ f(s.lauf()); },0); }).then(ok,nok); };
   function E(n){ this.n=n; }
@@ -258,6 +270,7 @@
     functions:{invoke:function(name,o){ return Promise.resolve(window.__kiAntwort ? window.__kiAntwort(name,o.body) : {data:null,error:{message:"keine KI im Test"}}); }},
     storage:{from:function(n){ return new E(n); }},
     rpc:function(name, w){
+      if(window.__netzWeg==="antwort") return Promise.resolve(JSON.parse(JSON.stringify(NETZ_FEHLER)));
       /* wie public.bereiche_eigene() (bereiche-eigen.sql): eigene Bereiche, häufigste zuerst */
       /* wie public.team_liste() (chat-direkt.sql): Büro und Techniker */
       if(name==="team_liste"){ var rl={}; DB.rollen.forEach(function(r){ rl[r.user_id]=r; });
@@ -277,18 +290,23 @@
         var bl=[]; eig.forEach(function(z){ var l2=bl[bl.length-1]; if(l2 && mm(z.beginn)===l2.e){ l2.z.push(z); l2.e=mm(z.ende); } else bl.push({b:mm(z.beginn), e:mm(z.ende), z:[z]}); });
         if(!bl.length) return fe("An diesem Tag gibt es keine gestempelte Zeit, die sich aufteilen lässt");
         var erg=[], weg=[];
+        /* wie eine Ausnahme in der Datenbank: alles zurück, auch schon angelegte Teile früherer Blöcke */
+        var nein=function(m){ erg.forEach(function(n){ var k=DB.arbeitszeiten.indexOf(n); if(k>=0) DB.arbeitszeiten.splice(k,1); }); return fe(m); };
         for(var bi=0; bi<bl.length; bi++){ var B=bl[bi];
           var tt=(w.p_teile||[]).filter(function(t){ return mm(t.beginn)>=B.b && mm(t.ende)<=B.e; }).sort(function(x,y){ return mm(x.beginn)-mm(y.beginn); });
           if(!tt.length) continue;
           var cur=B.b, lang=-1, li=0;
-          for(var i=0;i<tt.length;i++){ if(mm(tt[i].beginn)!==cur) return fe("Die Abschnitte müssen lückenlos sein"); if(mm(tt[i].ende)<=cur) return fe("Abschnitt ohne Dauer");
+          for(var i=0;i<tt.length;i++){ if(mm(tt[i].beginn)!==cur) return nein("Die Abschnitte müssen lückenlos sein"); if(mm(tt[i].ende)<=cur) return nein("Abschnitt ohne Dauer");
             if(mm(tt[i].ende)-cur>lang){ lang=mm(tt[i].ende)-cur; li=i; } cur=mm(tt[i].ende); }
-          if(cur!==B.e) return fe("Die Abschnitte müssen genau die gestempelte Zeit ergeben");
-          var smin=B.z.reduce(function(x,z){ return x+(z.minuten||0); },0), sp=B.z.reduce(function(x,z){ return x+(z.pause_min||0); },0);
+          if(cur!==B.e) return nein("Die Abschnitte müssen genau die gestempelte Zeit ergeben");
+          var smin=B.z.reduce(function(x,z){ return x+(z.minuten||0); },0), sp=B.z.reduce(function(x,z){ return x+(z.pause_min||0); },0), sa=B.z.reduce(function(x,z){ return x+(z.pause_auto||0); },0);
           var andere=0; tt.forEach(function(t,i){ if(i!==li) andere+=mm(t.ende)-mm(t.beginn); });
-          tt.forEach(function(t,i){ var n={id:"x"+(++z), user_id:uid(), name:B.z[0].name, datum:w.p_datum, beginn:t.beginn, ende:t.ende, pause_min:i===li?sp:0, pause_auto:0,
+          if(smin-andere<0) return nein("Die Pause passt in keinen Abschnitt – bitte einen Abschnitt länger machen");
+          /* Quelle: nachgetragen/geändert bleibt sichtbar, sonst „abgeglichen“ */
+          var qa=B.z.some(function(z0){ return z0.quelle==="stempel_geaendert" || z0.quelle==="stempel_nachgetragen"; }) ? "stempel_geaendert" : "stempel_abgeglichen";
+          tt.forEach(function(t,i){ var n={id:"x"+(++z), user_id:uid(), name:B.z[0].name, datum:w.p_datum, beginn:t.beginn, ende:t.ende, pause_min:i===li?Math.min(600,sp):0, pause_auto:i===li?Math.min(600,sa):0,
             minuten:i===li?smin-andere:mm(t.ende)-mm(t.beginn), art:"arbeit", taetigkeit:t.taetigkeit||null, standort_id:t.standort_id||null, projekt_id:t.projekt_id||null,
-            planung_id:t.planung_id||null, quelle:"stempel_abgeglichen", bereich:t.bereich||null, erstellt:new Date().toISOString()}; DB.arbeitszeiten.push(n); erg.push(n); });
+            planung_id:t.planung_id||null, quelle:qa, bereich:t.bereich||null, erstellt:new Date().toISOString()}; DB.arbeitszeiten.push(n); erg.push(n); });
           B.z.forEach(function(z0){ weg.push(z0.id); });
         }
         for(var wi=DB.arbeitszeiten.length-1; wi>=0; wi--) if(weg.indexOf(DB.arbeitszeiten[wi].id)>=0) DB.arbeitszeiten.splice(wi,1); sichern();
@@ -316,7 +334,8 @@
         return Promise.resolve({data:{stempel:JSON.parse(JSON.stringify(s))}, error:null});
       }
       var ein=meine.filter(function(x){ return x.art==="ein"; })[0], ende=new Date(jetzt), q="stempel";
-      if(w.p_ende_hand){ var d=new Date(ein.zeit); var t=w.p_ende_hand.split(":"); d.setHours(+t[0],+t[1],0,0); if(d<=new Date(ein.zeit)) d.setDate(d.getDate()+1); ende=d; q="stempel_nachgetragen"; }
+      if(w.p_ende_hand){ var d=new Date(ein.zeit); var t=w.p_ende_hand.split(":"); d.setHours(+t[0],+t[1],0,0); if(d<=new Date(ein.zeit)) d.setDate(d.getDate()+1); ende=d; q="stempel_nachgetragen";
+        if(ende>new Date(jetzt)) return fehler("Das Ende liegt in der Zukunft"); }
       if(ende-new Date(ein.zeit)>86400000) return fehler("Länger als 24 Stunden eingestempelt – bitte das tatsächliche Ende angeben");
       var weg=[];
       if(w.p_ersetzen) for(var i=DB.arbeitszeiten.length-1;i>=0;i--){ var a=DB.arbeitszeiten[i];
@@ -339,9 +358,14 @@
           quelle:q, ort:(g.ort||ortE)?{ein:g.ort||null, aus:ortE}:null, bereich:g.bereich||null, erstellt:jetzt};
         DB.arbeitszeiten.push(e); ee.push(e);
       });
-      /* gesetzliche Pause (vereinfacht je Einstempeln): über 6 h mindestens 30 min */
+      /* gesetzliche Pause wie stempeluhr-4.sql – je TAG: frühere gestempelte Einträge desselben Tages und die Lücke seit
+         dem letzten Ausstempeln zählen mit; über 6 h mindestens 30 min */
       var einst=(DB.einstellungen.filter(function(e){ return e.schluessel==="arbeitszeit"; })[0]||{}).wert||{};
-      var summe=ee.reduce(function(a,e){ return a+e.minuten; },0), pz=ee.reduce(function(a,e){ return a+e.pause_min; },0);
+      var tagE=tagVon(ein.zeit), frueher=DB.arbeitszeiten.filter(function(a){ return a.user_id===uid() && a.datum===tagE && a.art==="arbeit" && /^stempel/.test(a.quelle||"") && ee.indexOf(a)<0; });
+      var vorAus=meine.filter(function(x){ return x.art==="aus" && x.zeit<ein.zeit; })[0];
+      var summe=ee.reduce(function(a,e){ return a+e.minuten; },0)+frueher.reduce(function(a,e){ return a+(e.minuten||0); },0),
+        pz=ee.reduce(function(a,e){ return a+e.pause_min; },0)+frueher.reduce(function(a,e){ return a+(e.pause_min||0); },0)+
+          (vorAus && tagVon(vorAus.zeit)===tagE ? Math.floor((new Date(ein.zeit)-new Date(vorAus.zeit))/60000) : 0);
       if(einst.autoPause!==false && summe>360 && pz<30 && ee.length){
         var lang=ee.slice().sort(function(a,b){ return b.minuten-a.minuten; })[0], f=Math.min(30-pz, lang.minuten);
         lang.minuten-=f; lang.pause_min+=f; lang.pause_auto=f;
