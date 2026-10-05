@@ -2121,6 +2121,46 @@ test("Tiefentest stunden: Datenbank-Skripte mehrfach ausführbar, Nachbildung wi
   pruefe(!fehl.length, fehl.join(" | "));
 });
 
+/* ---- Tiefentest Kalender: eine Seite je Rolle für mehrere Fälle (kurze Laufzeit), Routendienst abgelehnt ---- */
+const ROUTENDIENSTE = ["routing.openstreetmap.de", "router.project-osrm.org", "nominatim.openstreetmap.org"];
+async function tkOeffnen(konto, opt) {
+  const a = await oeffnen(konto, opt);
+  await a.seite.route((u) => ROUTENDIENSTE.includes(u.hostname), (rt) => rt.abort());
+  await ttHilfen(a);
+  await a.seite.evaluate(() => {
+    const x = window.__t.x, tt = window.__tt;
+    /* Termine am Tag in zwei Tagen (Planung prüfen) */
+    tt.tag2 = () => x("plusTage(isoLokal(new Date()),2)");
+    tt.termine = async (l) => { for (const z of l) await tt.termin(z); x("planungStand=0"); await tt.laden(); };
+    tt.pruefen = async (tag) => { x("planungPruefenAnsicht('ich', '" + tag + "', '" + tag + "')"); await tt.warte(150); return tt.dialog(); };
+    tt.knopf = (d, re, zeile) => [...d.querySelectorAll("button")].find((b) => re.test(b.textContent) && (!zeile || zeile.test(b.parentNode.textContent)));
+    tt.zeit = (titel) => { const p = window.__db.tabellen.planung.find((y) => y.titel === titel); return p ? p.beginn + "–" + p.ende : "fehlt"; };
+  });
+  return a;
+}
+
+test("Tiefentest kalender: Planung prüfen – Reihenfolge übernehmen", async () => {
+  const fehl = [];
+  const a = await tkOeffnen(KONTEN.techniker);
+  /* TT-KAL-02: derselbe Markt zweimal am Tag – jeder Termin einmal neu gesetzt, der früheste Beginn bleibt */
+  const r02 = await a.seite.evaluate(async () => {
+    const tt = window.__tt, x = window.__t.x; tt.leeren(); const tag = tt.tag2();
+    x("STARTPUNKTE[meineKennung()]={betrieb:true}");
+    const z = (titel, sid, b, e) => ({ kategorie: "wartung", titel, datum: tag, beginn: b, ende: e, standort_id: sid });
+    await tt.termine([z("A früh", "TS3", "08:00", "09:00"), z("B", "TS4", "10:00", "11:00"), z("A spät", "TS3", "12:00", "13:00")]);
+    const k = tt.knopf(await tt.pruefen(tag), /Reihenfolge übernehmen/);
+    if (!k) return { fehler: "kein Vorschlag" };
+    const upd = [], sb = x("Store.sb"), alt = sb.from;
+    sb.from = function (t) { const q = alt.call(this, t); const o = q.update; q.update = function (dd) { upd.push(t); return o.apply(q, arguments); }; return q; };
+    k.click(); await tt.warte(500); sb.from = alt;
+    return { frueh: tt.zeit("A früh"), spaet: tt.zeit("A spät"), b: tt.zeit("B"), updates: upd.length };
+  });
+  if (r02.fehler || !r02.frueh.startsWith("08:00") || !r02.spaet.startsWith("09:00") || r02.updates !== 3) fehl.push("TT-KAL-02 Tag beginnt später / Termine doppelt geschrieben: " + JSON.stringify(r02));
+  if (a.fehler.length) fehl.push("Laufzeitfehler: " + a.fehler.join("; "));
+  await a.zu();
+  pruefe(!fehl.length, fehl.join(" | "));
+});
+
 /* ================================================================ Ablauf ================================================================ */
 const filterText = process.argv.slice(2).find((x) => !x.startsWith("--"));
 const filter = filterText ? new RegExp(filterText, "i") : null;
