@@ -1945,7 +1945,9 @@ const TM_HILFEN = `
       const vorgabe = { status: { ok: true, konten: [], claude: true }, "leitstand/abholen": { auftrag: null },
         roh: () => new Blob(["From: p@planer-test.at\\r\\n\\r\\nText"], { type: "message/rfc822" }),
         anhang: (u) => new Blob(["%PDF-1.4 " + u], { type: "application/pdf" }),
-        suche: () => ({ mails: c.mails || [] }), verlauf: () => ({ mails: c.mails || [], vorschlag: c.vorschlag || {} }), mail: () => c.mail };
+        suche: () => ({ mails: c.mails || [] }), mail: () => c.mail,
+        /* wie das Mail-Programm: nur die gewählten Mails kommen zurück */
+        verlauf: (u, o) => { const w = JSON.parse(o.body).mails.map((m) => m.uid); return { mails: (c.mails || []).filter((m) => w.indexOf(m.uid) >= 0), vorschlag: c.vorschlag || {} }; } };
       window.fetch = (u, o) => {
         u = String(u); if (!u.startsWith("http://localhost:4317")) return alt(u, o);
         const pfad = (/\\/api\\/([a-z\\/]+)/.exec(u) || [])[1] || ""; tm.aufrufe.push(pfad);
@@ -1957,10 +1959,12 @@ const TM_HILFEN = `
     },
     ende: () => { if (window.__tm.altFetch) window.fetch = window.__tm.altFetch; },
     /* Mailverlauf: suchen, auswerten lassen, Vorschlag abwarten */
-    verlauf: async (vorgabe) => {
+    verlauf: async (vorgabe, vorher) => {
       const tm = window.__tm;
       window.__t.x("ansichtenSchliessen()"); window.__t.x("mailVerlaufDialog(" + JSON.stringify(vorgabe) + ")");
-      await tm.bis(() => tm.fuss(/Mit Claude auswerten \\(/) && !tm.fuss(/Mit Claude auswerten/).disabled);
+      await tm.bis(() => tm.fuss(/Mit Claude auswerten \\(/));
+      if (vorher) await vorher(tm.dlg());
+      await tm.bis(() => !tm.fuss(/Mit Claude auswerten/).disabled, 1000);
       tm.fuss(/Mit Claude auswerten/).click();
       await tm.bis(() => tm.fuss(/Projekt anlegen|Ins Projekt übernehmen/));
       return tm.dlg();
@@ -2132,6 +2136,42 @@ test("Tiefentest mail: Projekt aus Mailverlauf – vorhandene KPlus-Belege bleib
     p(!/nichts gespeichert|Failed to fetch/.test(m2.toast + " " + m2.fort) && /P-20\d\d-\d+/.test(m2.toast), "M2 Meldung passt nicht zum Stand (Projekt ist angelegt): " + JSON.stringify(m2));
     p(doppel.length === 1, "M1 „Weiter ablegen“ legt ein weiteres Projekt an: " + doppel.map((q) => q.nummer).join(", "));
     p((dd.mails || []).length === 1 && (dd.dateien || []).filter((f) => /\.eml$/.test(f.name)).length === 1, "M1 nach „Weiter ablegen“: Mail fehlt oder doppelt: " + JSON.stringify({ mails: (dd.mails || []).length, dateien: (dd.dateien || []).map((f) => f.name) }));
+
+    /* M7/M14: „Verlauf übernehmen“ ins bestehende Projekt – der Stand bleibt (Claude schlägt einen älteren vor), schon übernommene
+       Mails sind markiert und nicht vorgehakt, Mail, Beteiligte und Termine kommen nicht doppelt */
+    db.projekte.push({ id: "tmp_914", nummer: "P-2026-914", titel: "Doppeltverlauf Kälte", kunde_id: "lidl", status: "baustelle", erstellt: jetzt, geaendert: jetzt, verlauf: [{ zeit: jetzt, wer: "T", text: "Stand: Baustelle" }],
+      daten: { mails: [{ id: "<tm161@test>", konto: "gmx", betreff: "Anfrage Doppeltverlauf", von: "p@planer-test.at", datum: "2026-03-02T08:00:00.000Z" }],
+        dateien: [{ pfad: "tmp_914/mail-abc-Anfrage_Doppeltverlauf.eml", name: "Anfrage Doppeltverlauf.eml", art: "mail", groesse: 100, typ: "message/rfc822", von: "T", zeit: jetzt }],
+        beteiligte: [{ id: "bt1", rolle: "Planer HKLS", firma: "Planer GmbH", name: "Paula Planer", mail: "p@planer-test.at", quellen: [] }],
+        termine: [{ id: "tm1", datum: "2026-03-05", was: "Begehung vor Ort", quellen: [] }] } });
+    await x("projekteLaden()");
+    tm.programm({ mails: [M(161, "2026-03-02T08:00:00.000Z", "Anfrage Doppeltverlauf"), M(162, "2026-03-10T08:00:00.000Z", "Nachtrag Doppeltverlauf")],
+      vorschlag: Object.assign({}, leer, { status: "angebot", beteiligte: [{ rolle: "Planer HKLS", firma: "Planer GmbH", name: "Paula Planer", mail_adresse: "p@planer-test.at", mail: 0 }],
+        termine: [{ datum: "2026-03-05", text: "Begehung vor Ort", mail: 0 }, { datum: "2026-03-12", text: "Baubesprechung", mail: 1 }] }) });
+    let liste14 = {};
+    d = await tm.verlauf({ projektId: "tmp_914", suche: "Doppeltverlauf" }, (dl) => {
+      const z = [...dl.querySelectorAll("[data-l] label")], z161 = z.find((l) => /Anfrage Doppeltverlauf/.test(l.textContent));
+      liste14 = { haken161: z161.querySelector("input").checked, markiert: /im Projekt/.test(z161.textContent), haken162: z.find((l) => /Nachtrag/.test(l.textContent)).querySelector("input").checked };
+      /* bewusst nochmals mitlesen lassen – abgelegt wird sie trotzdem nicht doppelt */
+      z161.querySelector("input").checked = true; z161.querySelector("input").dispatchEvent(new Event("change"));
+    });
+    p(!liste14.haken161 && liste14.markiert && liste14.haken162, "M14 Suchliste: schon übernommene Mail vorgehakt bzw. nicht als „im Projekt“ markiert: " + JSON.stringify(liste14));
+    const stand14 = d.querySelector('[data-k="status"]').value;
+    p(stand14 === "baustelle", "M7 Stand im bestehenden Projekt mit Claudes Vorschlag vorbelegt: " + stand14);
+    window.__toasts = []; tm.fuss(/Ins Projekt übernehmen/).click(); await tm.toastBis(/^Übernommen|^Nicht fertig/);
+    let p914 = db.projekte.find((q) => q.id === "tmp_914");
+    p(p914.status === "baustelle", "M7 Stand still von „baustelle“ auf „" + p914.status + "“ gesetzt");
+    p(p914.daten.beteiligte.filter((b) => b.name === "Paula Planer").length === 1, "M14 Beteiligte doppelt: " + JSON.stringify(p914.daten.beteiligte.map((b) => b.name)));
+    p(p914.daten.dateien.filter((f) => f.name === "Anfrage Doppeltverlauf.eml").length === 1 && p914.daten.dateien.filter((f) => f.name === "Nachtrag Doppeltverlauf.eml").length === 1,
+      "M14 Mails doppelt bzw. die neue fehlt: " + JSON.stringify(p914.daten.dateien.map((f) => f.name)));
+    p(p914.daten.termine.filter((t) => t.was === "Begehung vor Ort").length === 1 && p914.daten.termine.some((t) => t.was === "Baubesprechung"), "M14 Termine doppelt bzw. der neue fehlt: " + JSON.stringify(p914.daten.termine.map((t) => t.datum + " " + t.was)));
+    p(p914.daten.mails.length === 2, "M14 Mail-Verweise: " + p914.daten.mails.length);
+    /* bewusst einen anderen Stand gewählt: der gilt, mit „Stand: …“ im Tagebuch */
+    d = await tm.verlauf({ projektId: "tmp_914", suche: "Doppeltverlauf" }, (dl) => tm.knopf(dl, /^alle$/).click());
+    d.querySelector('[data-k="status"]').value = "inbetriebnahme";
+    window.__toasts = []; tm.fuss(/Ins Projekt übernehmen/).click(); await tm.toastBis(/^Übernommen|^Nicht fertig/);
+    p914 = db.projekte.find((q) => q.id === "tmp_914");
+    p(p914.status === "inbetriebnahme" && p914.verlauf.some((v) => /^Stand: Inbetriebnahme/.test(v.text)), "M7 bewusst gewählter Stand nicht gespeichert bzw. ohne Tagebuch: " + p914.status + " " + JSON.stringify(p914.verlauf.map((v) => v.text)));
     tm.ende(); x("ansichtenSchliessen()");
     return { fehlt };
   });

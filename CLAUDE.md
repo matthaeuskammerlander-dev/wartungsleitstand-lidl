@@ -321,7 +321,9 @@ Kammerlander Umwelt- und Klimatechnik (UKT) – oft kurz, vom Handy, im Feld.
   `mailVerlaufVorschlag`; Projekte „✦ Aus Mails nachtragen“, „Mails dazu“ → „Verlauf übernehmen“, Mail-Programm
   „↗ Leitstand → Projekt aus Mailverlauf“): Mails suchen/wählen → Claude (`/api/verlauf`) schlägt Stand, Angaben je
   Schritt, Beteiligte, Termine, Tagebuch (mit Mail-Datum) und Dateiarten vor, je mit Mail als Quelle → prüfen → alle
-  Mails + Anhänge in die Dateien, KPlus-PDFs (kplusLesen) als Belege am Projekt (schon vorhandene Belege – Art+Nummer – bleiben unverändert, höchstens die PDF kommt dazu); bestehendes Projekt nur ergänzen; `#mail=…` geht ebenso. Geöffnet wird „Projekt aus Mail“ (Titel/Datum/Absender vorbelegt, „✦ Mit Claude
+  Mails + Anhänge in die Dateien, KPlus-PDFs (kplusLesen) als Belege am Projekt (schon vorhandene Belege – Art+Nummer – bleiben unverändert, höchstens die PDF kommt dazu); bestehendes Projekt nur ergänzen (Stand bleibt, außer bewusst umgestellt → „Stand: …“ im
+  Tagebuch; schon übernommene Mails sind markiert und nicht vorgehakt, Beteiligte/Termine/Tagebuch nicht doppelt); nach einem Abbruch
+  „Weiter ablegen“ (kein zweites Projekt); `#mail=…` geht ebenso. Geöffnet wird „Projekt aus Mail“ (Titel/Datum/Absender vorbelegt, „✦ Mit Claude
   ausfüllen“ über das Mail-Programm), „Mail zu Projekt legen“ oder die Störungserfassung. Mail (.eml) + gewählte
   Anhänge → Projektdateien (Herkunft), Verweis in `daten.mails`, bei neuer Anfrage `.eml` als Quelle
   (`daten.quellen.anfrage`), Absender ins Adressbuch. „Mails dazu“ bei Projekt, Kunde (nicht Lidl) und Markt – ohne
