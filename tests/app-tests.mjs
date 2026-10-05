@@ -1692,6 +1692,17 @@ reSchritt("eingaben", "R07", async (a) => {
   });
   return r.preis === 78.81 && r.erg.unklar === 1 ? "" : `„(3 h)“ bei Menge 1: Katalog-Preis ${r.preis} (${r.quelle}), Ergebnis ${JSON.stringify(r.erg)}`;
 });
+/* ausgeblendete Katalog-Positionen werden im Angebot aus dem Folgeauftrag nicht vorgeschlagen */
+reSchritt("eingaben", "R12", async (a) => {
+  const r = await a.seite.evaluate(async () => {
+    const x = window.__t.x, db = window.__db.tabellen;
+    db.katalog.push({ id: "k12", text: "Verdampferlüfter liefern und tauschen (alter Preis)", eh: "Stk", preis: 99, kunde_id: "lidl", aktiv: false, quelle: "Test" });
+    await x("katalogLaden()");
+    const k = x("katalogVorschlag")("Verdampferlüfter defekt – liefern und tauschen", "lidl");
+    return k ? k.text : null;
+  });
+  return !r ? "" : "ausgeblendete Katalog-Position vorgeschlagen: " + r;
+});
 /* Rechnung aus Angebot: der Baustellenbuch-Vorschlag bleibt beim Kältemittel, auch nach Löschen und Verschieben */
 reSchritt("editor", "R04", async (a) => {
   const r = await a.seite.evaluate(async () => {
