@@ -19013,30 +19013,50 @@ function bedarfFuerEinsatz(x, tag){
   if(!bz) return [];
   return bedarfZu(bz).filter(function(b){ return bedarfOffen(b) && (!b.benoetigt_am || !tag || b.benoetigt_am<=tag); });
 }
+/* die nächsten Einsätze eines Projekt- bzw. Markt-Bedarfs ab heute (Kalendertermine, Projekttermine, Störungseinsätze),
+   früheste zuerst – je {datum, ids, namen}: daher kommen Datum und Person (Prüflauf 05.10.2026: die Person fehlte) */
+function bedarfEinsaetze(b){
+  var heute=isoLokal(new Date()), l=[];
+  var termin=function(x){ l.push({datum:x.datum, ids:(x.wer||[]).length?x.wer:[x.erstellt_von], namen:x.wer_namen||[]}); };
+  if(b.projekt_id){
+    PLANUNG.forEach(function(x){ if(x.projekt_id===b.projekt_id && x.art==="termin" && x.datum && x.datum>=heute) termin(x); });
+    PROJEKTE.filter(function(p){ return p.id===b.projekt_id; }).slice(0,1).forEach(function(p){ ((p.daten||{}).termine||[]).forEach(function(t){
+      if(t.datum && t.datum>=heute && !t.erledigt) l.push({datum:t.datum, ids:bedarfNamenIds([t.wer]), namen:t.wer?[t.wer]:[]}); }); });
+  }
+  else if(b.standort_id && !b.stoerung_id && !b.planung_id){
+    PLANUNG.forEach(function(x){ if(x.standort_id===b.standort_id && x.art==="termin" && x.datum && x.datum>=heute) termin(x); });
+    OFFENE.forEach(function(o){ if(o.standortId===b.standort_id && o.termin && o.termin>=heute && !o.erledigt) l.push({datum:o.termin, ids:bedarfNamenIds([o.terminTechniker]), namen:o.terminTechniker?[o.terminTechniker]:[]}); });
+  }
+  return l.sort(function(x,y){ return x.datum.localeCompare(y.datum); });
+}
+/* freie Namen (Störungseinsatz, Projekttermin) → Kennungen aus dem Team, soweit bekannt */
+function bedarfNamenIds(namen){
+  var ids=[], team=planTeamMitMir();
+  (namen||[]).forEach(function(n){ String(n||"").split(",").forEach(function(t){ var k=kanonName(t.trim()); if(!k) return;
+    team.forEach(function(p){ if(kanonName(p.name||"")===k && ids.indexOf(p.user_id)<0) ids.push(p.user_id); }); }); });
+  return ids;
+}
 /* wann und für wen: eigenes Datum, sonst der Termin bzw. Störungseinsatz, sonst der nächste Termin des Projekts */
 function bedarfWann(b){
   if(b.benoetigt_am) return b.benoetigt_am;
-  var e=b.planung_id && PLANUNG.filter(function(x){ return x.id===b.planung_id; })[0]; if(e && e.datum) return e.datum;
+  var e=b.planung_id && PLANUNG.filter(function(x){ return x.id===b.planung_id; })[0];
+  /* mehrtägig: solange er läuft, gilt heute; vorbei erst nach dem letzten Tag */
+  if(e && e.datum){ var heute0=isoLokal(new Date()), bis=e.datum_bis && e.datum_bis>e.datum ? e.datum_bis : e.datum;
+    return e.datum>=heute0 ? e.datum : bis<heute0 ? bis : heute0; }
   var o=b.stoerung_id && OFFENE.filter(function(x){ return x._id===b.stoerung_id; })[0]; if(o && o.termin) return o.termin;
-  var heute=isoLokal(new Date());
-  if(b.projekt_id){
-    var d=PLANUNG.filter(function(x){ return x.projekt_id===b.projekt_id && x.art==="termin" && x.datum && x.datum>=heute; }).map(function(x){ return x.datum; })
-      .concat(PROJEKTE.filter(function(p){ return p.id===b.projekt_id; }).map(function(p){ return ((p.daten||{}).termine||[]).filter(function(t){ return t.datum && t.datum>=heute && !t.erledigt; }).map(function(t){ return t.datum; }); })[0]||[]).sort();
-    if(d.length) return d[0];
-  }
-  if(b.standort_id && !b.projekt_id && !b.stoerung_id && !b.planung_id){
-    var d2=PLANUNG.filter(function(x){ return x.standort_id===b.standort_id && x.art==="termin" && x.datum && x.datum>=heute; }).map(function(x){ return x.datum; })
-      .concat(OFFENE.filter(function(o){ return o.standortId===b.standort_id && o.termin && o.termin>=heute && !o.erledigt; }).map(function(o){ return o.termin; })).sort();
-    if(d2.length) return d2[0];
-  }
-  return null;
+  var n=bedarfEinsaetze(b);
+  return n.length ? n[0].datum : null;
 }
-/* wer sich kümmert: eingetragen, sonst wer beim Termin bzw. Störungseinsatz ist */
+/* wer sich kümmert: eingetragen, sonst wer beim Termin bzw. Störungseinsatz ist, sonst wer beim nächsten Projekt- bzw. Markttermin ist */
 function bedarfWer(b){
   if(b.wer) return {ids:[b.wer], namen:[b.wer_name||planPersonName(b.wer)||""]};
   var e=b.planung_id && PLANUNG.filter(function(x){ return x.id===b.planung_id; })[0]; if(e) return {ids:(e.wer||[]).length?e.wer:[e.erstellt_von], namen:e.wer_namen||[]};
-  var o=b.stoerung_id && OFFENE.filter(function(x){ return x._id===b.stoerung_id; })[0]; if(o && o.terminTechniker) return {ids:[], namen:[o.terminTechniker]};
-  return {ids:[], namen:[]};
+  var o=b.stoerung_id && OFFENE.filter(function(x){ return x._id===b.stoerung_id; })[0]; if(o && o.terminTechniker) return {ids:bedarfNamenIds([o.terminTechniker]), namen:[o.terminTechniker]};
+  var n=bedarfEinsaetze(b), r={ids:[], namen:[]};
+  n.filter(function(x){ return x.datum===n[0].datum; }).forEach(function(x){
+    x.ids.forEach(function(id){ if(id && r.ids.indexOf(id)<0) r.ids.push(id); });
+    x.namen.forEach(function(nm){ if(nm && r.namen.indexOf(nm)<0) r.namen.push(nm); }); });
+  return r;
 }
 function bedarfIstMeins(b){
   var w=bedarfWer(b), ich=meineKennung(), n=kanonName(meinName()||"");
@@ -19056,10 +19076,11 @@ function bedarfBezugText(b){
 function bedarfWerkzeugInfo(b){
   var w=b.werkzeug_id && WZ.filter(function(x){ return x.id===b.werkzeug_id; })[0]; if(!w) return null;
   var h=wzHinweise(w).filter(function(a){ return a.art==="crit" || /Reparatur/.test(a.text); }).map(function(a){ return a.text; });
-  var wer=bedarfWer(b), ids=wer.ids.length ? wer.ids : [meineKennung()];
+  /* niemand eingetragen: die Person, die gerade schaut; steht nur ein Name da (Störung), nie der Betrachter */
+  var wer=bedarfWer(b), mitName=wer.namen.some(function(n){ return !!n; }), ids=wer.ids.length ? wer.ids : mitName ? [] : [meineKennung()];
   if(!h.length && ids.some(function(id){ return wzBei(w, id); })) return null;
   var text=[wzOrtText(w)].concat(h).filter(function(x, i, l){ return l.indexOf(x)===i; }).join(" · ");
-  return {text:text, warnen:h.length>0 || wer.ids.length>0};
+  return {text:text, warnen:h.length>0 || wer.ids.length>0 || mitName};
 }
 function bedarfWerkzeugHinweis(b){ var i=bedarfWerkzeugInfo(b); return i ? i.text : ""; }
 /* eine Zeile: ☐ abhaken, Text, Weg, Status, wofür, Werkzeug-Hinweis; antippen öffnet */
@@ -19526,6 +19547,7 @@ function wzNachfragen(){
     if(!b.werkzeug_id || b.nachgefragt || !bedarfIstMeins(b)) return false;
     var w=WZ.filter(function(x){ return x.id===b.werkzeug_id; })[0]; if(!w || w.standort_art==="lager" || w.aktiv===false || gesehen[w.id]) return false;
     var d=bedarfWann(b); if(!d || d<grenze || d>heute) return false;
+    var e=b.planung_id && PLANUNG.filter(function(x){ return x.id===b.planung_id; })[0]; if(e && e.datum_bis && e.datum_bis>heute) return false;   /* mehrtägig: erst nach dem letzten Tag */
     if(d===heute){ var sid=bedarfMarkt(b); if(!sid || !alleProtokolle().some(function(p){ return p.datum===heute && p.standortId===sid && !p.geloescht; })) return false; }
     gesehen[w.id]=1; return true;
   });
