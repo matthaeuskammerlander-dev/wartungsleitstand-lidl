@@ -4470,6 +4470,40 @@ test("Antworten kern: „Nur Jahreswartung“ sperrt den Halbjahrestermin wie am
   await a.zu();
 });
 
+test("Antworten kern: Protokoll am Handy – offene Vor-Ort-Fragen ganz oben als Hinweis, antippen springt zur Frage", async () => {
+  const a = await oeffnen(KONTEN.techniker, { handy: true });
+  const r = await a.seite.evaluate(async () => {
+    const x = window.__t.x, w = (ms) => new Promise((f) => setTimeout(f, ms)), db = window.__db.tabellen;
+    const hinweis = () => { const h = document.querySelector("#app [data-vororthinweis]"); return h && !h.hidden && h.offsetParent !== null ? h.textContent.replace(/\s+/g, " ").trim() : ""; };
+    const oeffne = async (sid) => { x("formDirty=false; S.protoArt='wartung'; S.stoerungAus=null; S.bearbeiten=null; S.protoStandort='" + sid + "'; S.protoPos=null; S.view='protokoll'; render(); 1"); await w(500); };
+    db.vor_ort_fragen.push({ id: "vfa1", standort_id: "TS1", frage: "Wo ist der Schlüssel zum Technikraum?", angelegt: new Date().toISOString(), angelegt_von: "Büro" });
+    await x("vorOrtLaden(true)");
+    const erg = {};
+    await oeffne("TS2"); erg.ohneFrage = hinweis();
+    await oeffne("TS1"); erg.mitFrage = hinweis();
+    const kopf = document.querySelector("#app [data-vororthinweis]");
+    erg.imKopf = !!kopf && !kopf.closest("form") && kopf.getBoundingClientRect().top < document.getElementById("proto").getBoundingClientRect().top;
+    erg.untenNoch = !!document.querySelector("#f_vorort [data-vorort]");
+    window.scrollTo(0, 0);
+    if (kopf) { (kopf.querySelector("a,button") || kopf).click(); await w(900); }
+    const ziel = document.querySelector("#f_vorort [data-vorort] .note");
+    const rz = ziel ? ziel.getBoundingClientRect() : null;
+    erg.gesprungen = !!rz && rz.top >= 0 && rz.top < window.innerHeight && ziel.classList.contains("sprungziel");
+    /* beantwortet: der Hinweis oben verschwindet, die Frage steht unten weiter (mit Antwort) */
+    const inp = document.querySelector('#f_vorort [data-v="antwort"]');
+    if (inp) { inp.value = "hängt im Büro"; document.querySelector('#f_vorort [data-v="speichern"]').click(); await w(600); }
+    erg.nachAntwort = hinweis();
+    erg.antwort = (db.vor_ort_fragen.find((f) => f.id === "vfa1") || {}).antwort || "";
+    return erg;
+  });
+  pruefe(!r.ohneFrage, "Hinweis ohne offene Frage am Markt: " + r.ohneFrage);
+  pruefe(/❓\s*1 Frage vor Ort/.test(r.mitFrage) && r.imKopf && r.untenNoch, "Hinweis „❓ 1 Frage vor Ort“ fehlt oben im Kopf (bzw. die Stelle unter der Marktwahl): " + JSON.stringify(r));
+  pruefe(r.gesprungen, "Antippen springt nicht zur Frage: " + JSON.stringify(r));
+  pruefe(r.antwort === "hängt im Büro" && !r.nachAntwort, "nach dem Beantworten steht der Hinweis noch da: " + JSON.stringify(r));
+  pruefe(!a.fehler.length, "Laufzeitfehler: " + a.fehler.join("; "));
+  await a.zu();
+});
+
 /* ================================================================ Ablauf ================================================================ */
 const filterText = process.argv.slice(2).find((x) => !x.startsWith("--"));
 const filter = filterText ? new RegExp(filterText, "i") : null;
