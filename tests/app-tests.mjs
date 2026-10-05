@@ -2219,7 +2219,7 @@ test("Tiefentest mail: Projekt aus Mailverlauf – vorhandene KPlus-Belege bleib
   await a.zu();
 });
 
-test("Tiefentest mail: Projekt aus Mail und Mails dazu – leere Antwort von Claude in Klartext", async () => {
+test("Tiefentest mail: Projekt aus Mail und Mails dazu – leere Antwort von Claude in Klartext, eigene Eingaben bleiben", async () => {
   const a = await tmSeite(KONTEN.inhaber);
   const r = await a.seite.evaluate(async () => {
     const x = window.__t.x, db = window.__db.tabellen, tm = window.__tm, fehlt = [], p = (bed, text) => { if (!bed) fehlt.push(text); };
@@ -2234,6 +2234,17 @@ test("Tiefentest mail: Projekt aus Mail und Mails dazu – leere Antwort von Cla
     await tm.bis(() => !/liest/.test(d.querySelector("[data-claude] button").textContent), 2000);
     const ct = d.querySelector("[data-claudetext]").textContent, orange = [...d.querySelectorAll("[data-f]")].filter((f) => f.style.background).length;
     p(!/✓ von Claude ausgefüllt/.test(ct) && /nichts gefunden/.test(ct), "M16 leere Antwort {}: „" + ct + "“ bei " + orange + " ausgefüllten Feldern");
+
+    /* M9: was man tippt, während Claude noch liest, bleibt stehen – nur die übrigen Felder füllt Claude */
+    tm.programm({ mail: MAIL(91, "Anfrage Eingabetest"), extrahieren: () => new Promise((f) => setTimeout(() => f({ titel: "Claude Titel", ansprechpartner: "Claude Kontakt", telefon: "+43 1 999", kunde: "" }), 700)) });
+    d = await oeffne(91);
+    const fd = (n) => d.querySelector('[data-f="' + n + '"]');
+    const tippe = (n, w) => { fd(n).value = w; fd(n).dispatchEvent(new Event("input", { bubbles: true })); };
+    const liest9 = /Claude liest/.test(d.textContent);
+    tippe("telefon", "0664 1234567"); tippe("ansprechpartner", "Selbst getippt");
+    await tm.bis(() => !/liest/.test(d.querySelector("[data-claude] button").textContent), 2500);
+    const m9 = { liest9, tel: fd("telefon").value, ap: fd("ansprechpartner").value, titel: fd("titel").value };
+    p(m9.liest9 && m9.tel === "0664 1234567" && m9.ap === "Selbst getippt" && m9.titel === "Claude Titel", "M9 eigene Eingaben während des Lesens ersetzt (bzw. Claude füllt nichts): " + JSON.stringify(m9));
     tm.ende(); x("ansichtenSchliessen()");
     return { fehlt };
   });
