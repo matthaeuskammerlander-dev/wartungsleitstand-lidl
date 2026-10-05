@@ -24222,7 +24222,7 @@ Object.assign(RUNDGAENGE, {
         "Einträge „aus dem Kalender“ passt die Datenbank an, wenn sich der Kalendereintrag ändert, und entfernt sie, wenn er gelöscht wird (nie in einem bestätigten Monat). Änderst du so einen Eintrag selbst, gilt er als von Hand."])},
     {reiter:"stunden", ziel:function(){ return rgKarte(/^Reisekosten und Kilometergeld/); }, wenn:function(){ return akAn(); }, titel:"Reisekosten und Kilometergeld",
       text:RG_LISTE(["<strong>📷 + Beleg</strong>: mit eigenem Geld bezahlt (Bauhaus, Parken, Maut, Tanken, Nächtigung …) – Foto vom Beleg (Pflicht; sonst „Kein Beleg vorhanden“ mit Grund), Datum, wo/was, Betrag, wofür, Projekt/Markt.",
-        "<strong>🚗 + Kilometer</strong>: Fahrt mit dem Privatauto – Datum, Strecke (Vorschlag aus dem Kalender), km; die App rechnet das Kilometergeld (0,50 € je km).",
+        "<strong>🚗 + Kilometer</strong>: Fahrt mit dem Privatauto – Datum, Strecke (Vorschlag aus dem Kalender), km; die App rechnet das Kilometergeld (km × Satz, den der Chef einstellt).",
         "Am Monatsende <strong>„Monat abgeben“</strong> – danach ändert nur noch der Chef. „PDF“ wie das bisherige Blatt (Barbelege, Kilometer mit Privatauto, zu zahlen) mit allen Belegfotos.",
         "Unten „Konto für die Auszahlung“ (IBAN) einmal eintragen."])+
       RG_HG(["Nur du und der Inhaber sehen deine Reisekosten – keine Admins, keine Kollegen.",
@@ -31596,6 +31596,8 @@ function akAbgeben(monat){
 /* ---------- PDF wie das bisherige Blatt (Barbelege, Kilometer mit Privatauto, Konto) und dahinter die Belegfotos ---------- */
 function akPdfHtml(l, name, monat, konto, fotos){
   var s=akSummen(l), zelle='style="border-bottom:1px solid #ddd;padding:3px 5px"', th='style="text-align:left;border-bottom:1px solid #999;padding:3px 5px;background:#eee"';
+  /* Kilometergeld-Sätze im Monat – schon erfasste behalten ihren Satz; bei mehreren steht er je Zeile, sonst wirkte eine Zeile falsch gerechnet */
+  var saetze=[]; s.kms.forEach(function(z){ var v=+(z.km_satz||KM_SATZ); if(saetze.indexOf(v)<0) saetze.push(v); });
   var h=blattKopf("Reisekosten "+MONATE_L[+monat.slice(5,7)]+" "+monat.slice(0,4), name)+
     '<table style="border-collapse:collapse;font-size:12px;margin-bottom:10px"><tr><td style="padding:2px 14px 2px 0">Mitarbeiter</td><td><strong>'+esc(name)+"</strong></td></tr>"+
     '<tr><td style="padding:2px 14px 2px 0">Monat / Jahr</td><td>'+esc(MONATE_L[+monat.slice(5,7)]+" "+monat.slice(0,4))+"</td></tr>"+
@@ -31609,8 +31611,8 @@ function akPdfHtml(l, name, monat, konto, fotos){
     '<div style="font-weight:700;margin:14px 0 4px">Kilometer mit Privatauto</div>'+
     '<table style="width:100%;border-collapse:collapse;font-size:11.5px"><thead><tr><th '+th+'>Datum</th><th '+th+'>Strecke</th><th '+th+'>Fahrzeug</th><th '+th+' align="right">km</th><th '+th+' align="right">Betrag</th></tr></thead><tbody>'+
     (s.kms.length ? s.kms.map(function(z){ return "<tr><td "+zelle+">"+esc(dfmt(z.datum))+"</td><td "+zelle+">"+esc(z.text||"")+"</td><td "+zelle+">"+esc(z.fahrzeug_name||"")+"</td><td "+zelle+' align="right">'+
-      esc(String(z.km).replace(".",","))+"</td><td "+zelle+' align="right">'+geld(z.betrag)+" €</td></tr>"; }).join("") : "<tr><td "+zelle+' colspan="5">keine</td></tr>')+
-    "<tr><td colspan=\"3\" "+zelle+"><strong>Gesamt</strong> (€ pro km: "+geld(s.kms.length?s.kms[0].km_satz||KM_SATZ:KM_SATZ)+")</td><td "+zelle+' align="right"><strong>'+esc(String(s.km).replace(".",","))+"</strong></td><td "+zelle+' align="right"><strong>'+geld(s.summeKm)+" €</strong></td></tr></tbody></table>"+
+      esc(String(z.km).replace(".",","))+(saetze.length>1?' <span style="color:#555">× '+geld(z.km_satz||KM_SATZ)+" €</span>":"")+"</td><td "+zelle+' align="right">'+geld(z.betrag)+" €</td></tr>"; }).join("") : "<tr><td "+zelle+' colspan="5">keine</td></tr>')+
+    "<tr><td colspan=\"3\" "+zelle+"><strong>Gesamt</strong> (€ pro km: "+(saetze.length?saetze.map(geld).join(" / "):geld(KM_SATZ))+")</td><td "+zelle+' align="right"><strong>'+esc(String(s.km).replace(".",","))+"</strong></td><td "+zelle+' align="right"><strong>'+geld(s.summeKm)+" €</strong></td></tr></tbody></table>"+
     '<table class="zusammen" style="margin-top:14px;border-collapse:collapse;font-size:12.5px">'+
       '<tr><td style="padding:3px 18px 3px 0">Ausgaben Barbelege</td><td align="right">'+geld(s.summeBelege)+" €</td></tr>"+
       '<tr><td style="padding:3px 18px 3px 0">Kilometergeld</td><td align="right">'+geld(s.summeKm)+" €</td></tr>"+
@@ -31726,7 +31728,8 @@ function akAlleLaden(monat){
   return Promise.all([Store.sb.from("auslagen").select("*").gte("datum", von).lt("datum", bis).order("datum").limit(5000), Store.sb.from("auslagen_konto").select("*")]).then(function(r){
     ziel.laedt=false; ziel.monat=monat;
     if(r[0].error){ ziel.fehler=akLadeFehler(r[0].error.message); return; }
-    ziel.fehler=""; ziel.liste=r[0].data||[]; ziel.konten={}; (r[1].data||[]).forEach(function(k){ ziel.konten[k.user_id]=k; });
+    /* sortiert wie akImMonat im Blatt der Person (Datum, dann erfasst) – sonst wichen die Beleg-Nummern ab */
+    ziel.fehler=""; ziel.liste=akImMonat(r[0].data||[], monat); ziel.konten={}; (r[1].data||[]).forEach(function(k){ ziel.konten[k.user_id]=k; });
   }, function(){ ziel.laedt=false; ziel.monat=monat; ziel.fehler="Keine Verbindung – Reisekosten nicht geladen."; });   /* Monat auch hier merken – sonst lädt akInhaberKarte bei jedem Zeichnen neu (endlos) */
 }
 /* abgegeben, noch nicht ausbezahlt (alle Monate) – fürs To-do des Inhabers */
@@ -31776,6 +31779,8 @@ function akInhaberKarte(){
   if(!keys.length){ host.appendChild(el('<div class="muted">In diesem Monat hat niemand Reisekosten eingetragen.</div>')); return c; }
   var tab=el('<div class="scrollx"><table class="t" style="width:100%;font-size:12.5px"><thead><tr><th>Mitarbeiter</th><th>Belege</th><th>km</th><th>Kilometergeld</th><th>zu zahlen</th><th>Stand</th><th></th></tr></thead><tbody></tbody></table></div>');
   var csv=[["Mitarbeiter","Monat","Belege (Anzahl)","Belege (€)","km","Kilometergeld (€)","zu zahlen (€)","Stand","Kontoinhaber","IBAN"]];
+  /* Zahlen ohne Tausendertrenner wie in der Lohn-CSV – geld() setzt ein geschütztes Leerzeichen, Excel läse „1 234,50“ als Text */
+  var zahl=function(x){ return (Math.round((+x||0)*100)/100).toFixed(2).replace(".",","); };
   keys.forEach(function(uid){
     var l=je[uid], s=akSummen(l), n=namen[uid]||"?", konto=AK_ALLE.konten[uid];
     var st={offen:0, eingereicht:0, ausbezahlt:0}; l.forEach(function(z){ st[z.status]++; });
@@ -31817,11 +31822,14 @@ function akInhaberKarte(){
       det.querySelector(".stack").appendChild(r);
     });
     tab.querySelector("tbody").appendChild(tr); tab.querySelector("tbody").appendChild(det);
-    csv.push([n, monat, s.belege.length, geld(s.summeBelege), String(s.km).replace(".",","), geld(s.summeKm), geld(s.gesamt), stand, konto?konto.kontoinhaber||"":"", konto?konto.iban||"":""]);
+    csv.push([n, monat, s.belege.length, zahl(s.summeBelege), String(s.km).replace(".",","), zahl(s.summeKm), zahl(s.gesamt), stand, konto?konto.kontoinhaber||"":"", konto?konto.iban||"":""]);
   });
   host.appendChild(tab);
   var cb=el('<button class="btn ghost sm" type="button" style="margin-top:6px">Liste (CSV)</button>');
-  cb.onclick=function(){ pdfHerunterladen(new Blob(["﻿"+csv.map(function(r){ return r.map(function(x){ x=String(x); return /[;"\n]/.test(x) ? '"'+x.replace(/"/g,'""')+'"' : x; }).join(";"); }).join("\r\n")], {type:"text/csv;charset=utf-8"}), "Reisekosten_"+monat+".csv"); };
+  cb.onclick=function(){ pdfHerunterladen(new Blob(["﻿"+csv.map(function(r){ return r.map(function(x){ x=String(x);
+    /* =, +, -, @ am Anfang (den Kontoinhaber tippt jede Person selbst) würde Excel als Formel ausführen – wie csv() als Text kennzeichnen */
+    if(/^[=+\-@\t\r]/.test(x) && !/^-?\d+([.,]\d+)?$/.test(x)) x="'"+x;
+    return /[;"\n]/.test(x) ? '"'+x.replace(/"/g,'""')+'"' : x; }).join(";"); }).join("\r\n")], {type:"text/csv;charset=utf-8"}), "Reisekosten_"+monat+".csv"); };
   host.appendChild(cb);
   return c;
 }

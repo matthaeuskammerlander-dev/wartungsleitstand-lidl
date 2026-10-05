@@ -1887,6 +1887,44 @@ test("Tiefentest reisekosten: Erfassen – Vorschau wie gespeichert, Grenzen der
   await a.zu();
 });
 
+test("Tiefentest reisekosten: Blätter, PDF, CSV und Rundgang – gleiche Beleg-Nummern, jeder Kilometergeld-Satz genannt, Zahlen ohne Tausendertrenner, kein fester Satz im Rundgang", async () => {
+  const a = await rkSeite(KONTEN.inhaber);
+  const r = await a.seite.evaluate(async () => {
+    const x = window.__t.x, db = window.__db.tabellen, { warte, karte } = window.__rk;
+    const heute = x("isoLokal(new Date())"), m = heute.slice(0, 7), fehlt = [], p = (bed, text) => { if (!bed) fehlt.push(text); };
+    /* RK-13: zwei Belege vom selben Tag – in Postgres ist die Reihenfolge bei order('datum') nicht festgelegt, hier der später erfasste zuerst */
+    db.auslagen.push({ id: "tkS2", user_id: "u_tech_test_at", name: "Testtechniker", art: "beleg", datum: heute, text: "Zweiter Kauf", kategorie: "material", betrag: 1234.5, foto: "u_tech_test_at/2.jpg", status: "eingereicht", erstellt: "2026-01-02T10:00:00Z" },
+      { id: "tkS1", user_id: "u_tech_test_at", name: "Testtechniker", art: "beleg", datum: heute, text: "Erster Kauf", kategorie: "material", betrag: 1, foto: "u_tech_test_at/1.jpg", status: "eingereicht", erstellt: "2026-01-01T10:00:00Z" },
+      { id: "tkC2", user_id: "u_tech_test_at", name: "Testtechniker", art: "km", datum: heute, text: "Salzburg – Wien", km: 222.4, km_satz: 0.5, betrag: 111.2, status: "eingereicht", erstellt: new Date().toISOString() });
+    /* Kontoinhaber tippt jede Person selbst – in der CSV darf daraus keine Excel-Formel werden */
+    db.auslagen_konto.push({ user_id: "u_tech_test_at", kontoinhaber: "=1+1", iban: "AT00 TEST" });
+    await x("akAlleLaden('" + m + "')");
+    /* Blatt der Person: akImMonat; PDF des Inhabers: je Person aus AK_ALLE.liste in dieser Reihenfolge */
+    const person = x("akSummen(akImMonat(AK_ALLE.liste,'" + m + "')).belege.map(function(z){ return z.text; })");
+    const inhaber = x("akSummen(AK_ALLE.liste.filter(function(z){ return z.user_id==='u_tech_test_at'; })).belege.map(function(z){ return z.text; })");
+    p(JSON.stringify(person) === JSON.stringify(inhaber), "RK-13 Beleg-Nr. im Blatt der Person und im PDF des Inhabers vertauscht: " + JSON.stringify({ person, inhaber }));
+    /* RK-15: CSV „Reisekosten aller“ */
+    x("(function(){ pdfHerunterladen=function(b){ window.__csv=b; }; return 1; })()");
+    x("S.view='stunden'; AK_ALLE.monat=''; render()"); await warte(800);
+    [...karte(/^Reisekosten aller/).querySelectorAll("button")].find((b) => b.textContent.indexOf("Liste (CSV)") >= 0).click(); await warte(200);
+    const zeile = window.__csv ? (await window.__csv.text()).split(String.fromCharCode(10))[1] || "" : "";
+    p(zeile && zeile.indexOf(String.fromCharCode(160)) < 0 && /;1235,50;/.test(zeile), "RK-15 CSV: Beträge mit Tausendertrenner (U+00A0): " + zeile.split(String.fromCharCode(160)).join("<NBSP>"));
+    p(zeile.indexOf(";=1+1") < 0, "RK-15 CSV: selbst getippter Kontoinhaber als Excel-Formel: " + zeile);
+    /* TTQ-20: zwei Kilometergeld-Sätze im Monat – beide stehen im PDF */
+    const html = x("akPdfHtml([{art:'km',datum:'2026-09-03',text:'A',km:100,km_satz:0.5,betrag:50},{art:'km',datum:'2026-09-20',text:'B',km:100,km_satz:0.42,betrag:42}],'Test','2026-09',null,[])");
+    p(html.indexOf("0,42") >= 0 && html.indexOf("0,50") >= 0, "TTQ-20 PDF nennt nur einen Kilometergeld-Satz");
+    /* RK-17: der Rundgang nennt keinen festen Satz */
+    x("KM_SATZ=0.42");
+    const s = x("RUNDGAENGE.stunden.schritte.filter(function(s){ return s.titel==='Reisekosten und Kilometergeld'; })[0]");
+    const t = typeof s.text === "function" ? s.text() : s.text;
+    p(!/0,50 € je km/.test(t), "RK-17 Rundgang nennt fest „0,50 € je km“, eingestellt ist 0,42");
+    return { fehlt };
+  });
+  pruefe(!r.fehlt.length, r.fehlt.join(" | "));
+  pruefe(!a.fehler.length, "Laufzeitfehler: " + a.fehler.join("; "));
+  await a.zu();
+});
+
 /* ================================================================ Ablauf ================================================================ */
 const filterText = process.argv.slice(2).find((x) => !x.startsWith("--"));
 const filter = filterText ? new RegExp(filterText, "i") : null;
