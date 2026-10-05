@@ -1627,7 +1627,7 @@ async function ttHilfen(a) {
   });
 }
 
-test("Tiefentest stunden: Abgleich mit dem Kalender – Lücken behalten Markt und Projekt, Termin im Termin, Vorschau wie gestempelt, Verschieben sicher", async () => {
+test("Tiefentest stunden: Abgleich mit dem Kalender – Lücken behalten Markt und Projekt, Termin im Termin, Vorschau wie gestempelt, Verschieben sicher, Störung einmal", async () => {
   const a = await oeffnen(KONTEN.techniker);
   await ttHilfen(a);
   const fehl = [];
@@ -1734,6 +1734,20 @@ test("Tiefentest stunden: Abgleich mit dem Kalender – Lücken behalten Markt u
     }, variante);
     if (/1 Termin verschoben/.test(r6.toast) || !/nicht verschoben/.test(r6.toast) || r6.haengt || r6.fehler.length) fehl.push("TT-06 (" + variante + ") Verschieben gescheitert: " + JSON.stringify(r6));
   }
+  /* TT-16 (zuletzt – die Störung bleibt in den Stammdaten): über die Tour eingeplant = Störung mit Einsatztag UND Kalendertermin – einmal im Abgleich */
+  const r16 = await a.seite.evaluate(async () => {
+    const tt = window.__tt, x = window.__t.x; tt.leeren(); const T = tt.werktag(1);
+    await x("stoerungSpeichern({_id:'stv16', standortId:'TS2', auftragsnummer:'T-16', problemtyp:'Kühlung', erfasstAm:new Date().toISOString(), status:'offen', termin:'" + T + "', terminZeit:'09:00', terminTechniker:meinName(), _ohneMeldung:true}, 'Test')");
+    await tt.termin({ kategorie: "stoerung", titel: "Störung TS2", datum: T, beginn: "09:00", ende: "10:00", standort_id: "TS2", stoerung_id: "stv16" });
+    tt.gestempelt({ datum: T, beginn: "08:00", ende: "12:00", minuten: 240, bereich: "wartung" });
+    await tt.laden();
+    const geplant = x("geplantFuerMich('" + T + "')").map((i) => i.schluessel.split(":")[0] + " " + i.titel);
+    x("abgleichDialog('" + T + "', false)"); await tt.warte(200);
+    tt.ok(tt.dialog()).click(); await tt.warte(600);
+    return { offen: x("OFFENE.filter(function(o){ return o._id==='stv16'; }).length"), geplant,
+      stoerMin: window.__db.tabellen.arbeitszeiten.filter((z) => z.datum === T && z.bereich === "stoerung").reduce((s, z) => s + z.minuten, 0) };
+  });
+  if (r16.offen !== 1 || r16.geplant.length !== 1 || r16.stoerMin !== 60) fehl.push("TT-16 Störung doppelt: " + JSON.stringify(r16));
   if (a.fehler.length) fehl.push("Laufzeitfehler: " + a.fehler.join("; "));
   await a.zu();
   pruefe(!fehl.length, fehl.join(" | "));
