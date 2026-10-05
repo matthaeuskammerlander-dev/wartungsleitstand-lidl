@@ -18991,13 +18991,19 @@ function wzHinweisTags(w){ return wzHinweise(w).map(function(a){ return ' <span 
 /* ---------- Bedarf: was für einen Einsatz gebraucht wird ---------- */
 function bedarfWeg(b){ return BEDARF_WEGE.filter(function(x){ return x[0]===b.beschaffung; })[0]||BEDARF_WEGE[0]; }
 function bedarfOffen(b){ return b.status!=="erledigt"; }
+/* hängt an einem privaten Termin einer anderen Person: nie zeigen – dort sehen die anderen nur „Abwesend“
+   (Prüflauf 05.10.2026: ein nachträglich privat gestellter Termin zeigte seinen Eintrag weiter allen) */
+function bedarfVerborgen(b){
+  var e=b.planung_id && PLANUNG.filter(function(x){ return x.id===b.planung_id; })[0];
+  return !!(e && (e.privat || e.kategorie==="privat") && !planIstMeins(e) && e.erstellt_von!==meineKennung());
+}
 /* Bedarf zu einem Bezug: Projekt, Störung, Termin; am Markt nur, was an keinem anderen Bezug hängt */
 function bedarfZu(bz){
   return BEDARF.filter(function(b){
     return (bz.planung_id && b.planung_id===bz.planung_id) || (bz.stoerung_id && b.stoerung_id===bz.stoerung_id) ||
       (bz.projekt_id && b.projekt_id===bz.projekt_id && (!b.planung_id || b.planung_id===bz.planung_id || !bz.planung_id)) ||
       (bz.standort_id && b.standort_id===bz.standort_id && !b.projekt_id && !b.stoerung_id && !b.planung_id);
-  });
+  }).filter(function(b){ return !bedarfVerborgen(b); });
 }
 /* Bedarf zu einem Kalendereintrag (Termin, Störungseinsatz, Projekttermin) – nur offener, der bis zu diesem Tag gebraucht wird */
 function bedarfFuerEinsatz(x, tag){
@@ -19393,7 +19399,7 @@ function bedarfGelerntProjekt(p){
     e.p[pid]=1; if(wid && !e.werkzeug_id) e.werkzeug_id=wid; if(art==="werkzeug") e.art="werkzeug";
   };
   andere.forEach(function(x){
-    BEDARF_ALLE.forEach(function(b){ if(b.projekt_id===x.id) dazu(x.id, b.text, b.art, b.werkzeug_id); });
+    BEDARF_ALLE.forEach(function(b){ if(b.projekt_id===x.id && !bedarfVerborgen(b)) dazu(x.id, b.text, b.art, b.werkzeug_id); });
     ((x.daten||{}).baubuch||[]).forEach(function(e){
       if(["werkzeug","kran","material","geholt"].indexOf(e.art)>=0 && e.text) dazu(x.id, e.text, e.art==="werkzeug"||e.art==="kran" ? "werkzeug" : "material", null); });
   });
@@ -19408,7 +19414,7 @@ function bedarfGelerntMarkt(sid, schonListe){
   if(!sid) return [];
   var je={}, schon=(schonListe||[]).map(function(b){ return bedarfSchluessel(b.text); });
   BEDARF_ALLE.forEach(function(b){
-    if(b.standort_id!==sid) return;
+    if(b.standort_id!==sid || bedarfVerborgen(b)) return;
     var k=bedarfSchluessel(b.text); if(!k || schon.indexOf(k)>=0) return;
     var e=je[k]||(je[k]={text:String(b.text).trim(), art:b.art, werkzeug_id:b.werkzeug_id||null, n:0});
     e.n++; if(b.art==="werkzeug") e.art="werkzeug"; if(b.werkzeug_id) e.werkzeug_id=b.werkzeug_id;
@@ -19557,7 +19563,7 @@ function bedarfGruppen(liste){
 function bedarfUebersichtKarte(){
   var buero=wzBuero();
   if(S.bdAlle==null) S.bdAlle=buero;
-  var offen=BEDARF.filter(bedarfOffen), meine=offen.filter(bedarfIstMeins), l=S.bdAlle ? offen : meine;
+  var offen=BEDARF.filter(function(b){ return bedarfOffen(b) && !bedarfVerborgen(b); }), meine=offen.filter(bedarfIstMeins), l=S.bdAlle ? offen : meine;
   var c=el('<div class="card"><div class="pad stack" style="gap:8px">'+
     '<div class="rowflex" style="justify-content:space-between;gap:8px"><h2>Mitnehmen, abholen, bestellen'+(l.length?" ("+l.length+")":"")+"</h2>"+
       '<button class="btn sm" type="button" data-neu>+ Was wird gebraucht?</button></div>'+
@@ -19580,7 +19586,7 @@ function bedarfUebersichtKarte(){
       h.appendChild(ae);
     }
   });
-  var fertig=BEDARF.filter(function(b){ return !bedarfOffen(b); }).sort(function(a,b){ return String(b.erledigt||"").localeCompare(String(a.erledigt||"")); });
+  var fertig=BEDARF.filter(function(b){ return !bedarfOffen(b) && !bedarfVerborgen(b); }).sort(function(a,b){ return String(b.erledigt||"").localeCompare(String(a.erledigt||"")); });
   if(fertig.length){
     var d=el('<details><summary class="muted" style="cursor:pointer;font-size:12.5px">Zuletzt erledigt ('+fertig.length+")</summary><div class=\"stack\" style=\"gap:4px;margin-top:6px\"></div></details>");
     fertig.slice(0,30).forEach(function(b){ d.querySelector(".stack").appendChild(bedarfZeile(b, {mitBezug:true})); });
@@ -30412,6 +30418,12 @@ function planEditor(e, vorgabe){
     else if(neu || a.kategorie==="urlaub") zeile.status = a.status==="erledigt" ? "erledigt" : "offen";
     if(neu) zeile.erstellt_name=meinName();
     var privDaten = priv ? {titel:titel||null, details:F("details").value.trim()||null} : null;
+    /* nachträglich privat (Prüflauf 05.10.2026): Material / Werkzeug am Termin – fragen, ob es mit weg soll
+       (was bleibt, sehen die anderen nicht mehr: bedarfVerborgen); löschen darf nur, wer es angelegt hat, oder das Büro */
+    var bdWeg = priv && !neu && !(a.privat||a.kategorie==="privat") && wzAn() && !demo() ?
+      BEDARF.filter(function(b){ return b.planung_id===e.id && (b.erstellt_von===ich || wzBuero()); }) : [];
+    if(bdWeg.length && !window.confirm("Am Termin steht noch Material / Werkzeug: "+bdWeg.slice(0,5).map(function(b){ return b.text; }).join(", ")+(bdWeg.length>5?" …":"")+
+      ".\n\nPrivat sehen die anderen es nicht mehr. Gleich mitlöschen?\n\nOK = löschen · Abbrechen = behalten (nur du siehst es, Reiter Werkzeug)")) bdWeg=[];
     ok.disabled=true; ok.textContent="wird gespeichert …";
     var fertig=function(gesp){
       PLANUNG=PLANUNG.filter(function(x){ return x.id!==gesp.id; }).concat([gesp]);
@@ -30433,6 +30445,11 @@ function planEditor(e, vorgabe){
       return (nachher ? mitFrist(nachher, 15000) : Promise.resolve({})).then(function(r2){
         if(r2 && r2.error) toast("Der private Teil ist nicht gespeichert: "+r2.error.message);
         fertig(gesp);
+        if(bdWeg.length) mitFrist(Store.sb.from("bedarf").delete().in("id", bdWeg.map(function(b){ return b.id; })).select("id"), 15000).then(function(r3){
+          if(r3.error) throw new Error(r3.error.message);
+          var weg=(r3.data||[]).map(function(z){ return z.id; });
+          BEDARF=BEDARF.filter(function(b){ return weg.indexOf(b.id)<0; }); BEDARF_ALLE=BEDARF_ALLE.filter(function(b){ return weg.indexOf(b.id)<0; }); wzGeaendert();
+        }).catch(function(x){ toast("Material / Werkzeug am Termin nicht gelöscht: "+technikDeutsch(x.message||String(x))); });
       });
     }).catch(function(x){ ok.disabled=false; ok.textContent="Speichern"; fehler(x.message||String(x)); });
   };
