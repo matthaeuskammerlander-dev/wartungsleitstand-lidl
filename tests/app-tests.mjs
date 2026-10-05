@@ -1859,6 +1859,20 @@ reSchritt("editor", "R19", async (a) => {
   });
   return !r.gespeichert && r.markiert === "true" && r.offen && r.toasts.some((m) => /IBAN/.test(m)) ? "" : `IBAN mit falscher Prüfziffer gespeichert: ${r.gespeichert}, Feld markiert: ${r.markiert}, Meldungen ${JSON.stringify(r.toasts)}`;
 });
+/* KPlus lesen: Text unter einer Überschrift ist ein eigener Absatz, weit auseinander stehende Absätze bleiben getrennt */
+reSchritt("kplus", "R27", async (a) => {
+  const r = await a.seite.evaluate(() => {
+    const x = window.__t.x, it = (xx, y, t, f) => ({ s: 1, x: xx, y, w: 20, t, f: f || "F2" });
+    const erg = x("kplusAuswerten")([[it(330, 150, "Angebot", "F1"), it(480, 150, "413999", "F1"), it(150, 300, "Bezeichnung"),
+      it(160, 320, "1. Kühlzelle", "F1"), it(160, 335, "Lieferung und Montage laut Plan"),
+      it(60, 360, "1.1"), it(100, 360, "1,00 Stk"), it(160, 360, "Verdampfer Test"), it(420, 360, "100,00"), it(500, 360, "100,00"),
+      it(160, 420, "Erster Hinweis"), it(160, 432, "zweite Zeile davon"), it(160, 520, "Zweiter, eigener Hinweis weiter unten"),
+      it(300, 600, "Netto-Summe"), it(500, 600, "100,00")]]);
+    return erg.positionen.map((p) => p.typ + ": " + p.text);
+  });
+  return JSON.stringify(r) === JSON.stringify(["gruppe: 1. Kühlzelle", "text: Lieferung und Montage laut Plan", "pos: Verdampfer Test", "text: Erster Hinweis zweite Zeile davon", "text: Zweiter, eigener Hinweis weiter unten"])
+    ? "" : "gelesen: " + JSON.stringify(r);
+});
 /* KPlus: Gutschrift wird nicht als Angebot abgelegt; ohne erkannte PDF-Summe steht kein „stimmt“ */
 reSchritt("kplus", "R03", async (a) => {
   const r = await a.seite.evaluate(async () => {
