@@ -15,6 +15,7 @@
   function nutzer(m){ return {id:"u_"+String(m).replace(/[^a-z0-9]/gi,"_"), email:m, user_metadata:JSON.parse(JSON.stringify(meta(m)))}; }
   function melde(){ horcher.forEach(function(cb){ try{ cb(sitzung?"SIGNED_IN":"SIGNED_OUT",sitzung); }catch(e){} }); }
   function uid(){ return sitzung?sitzung.user.id:null; }
+  function rolleVon(){ return (DB.rollen.filter(function(r){ return r.user_id===uid(); })[0]||{}).rolle||"techniker"; }
   function admin(){ return !!(sitzung && DB.admins.some(function(a){ return a.user_id===uid(); })); }
   /* wie kunde_sieht() (kunden-projekte-stunden.sql): Mitarbeiter immer, ein Kunden-Konto (rollen.kunde_id, leer = Lidl)
      nur Standorte seines Kunden (stammdaten standort:… felder.kundeId, leer = Lidl) */
@@ -75,6 +76,12 @@
       if(zz.user_id && zz.user_id!==uid()) return "arbeitszeiten: fremd";
       if(zeile && zeile.bestaetigt) return "arbeitszeiten: nur Inhaber bestaetigt";
     }
+    /* wie der Trigger arbeitszeiten_monat_gesperrt (rechte-2026-10-05.sql, Inhaber 05.10.2026): im bestätigten Monat der Person auch
+       nichts Neues (anlegen, ändern, löschen) – außer der Inhaber; die Kalender-Übernahme (stundenSync) schreibt direkt und hat ihre eigene Regel */
+    if(tab==="arbeitszeiten" && art!=="select" && rolle!=="inhaber"){
+      var az2=Object.assign({}, alt||{}, zeile||{});
+      if((alt && monatBestaetigt(alt.user_id, alt.datum)) || (art!=="delete" && monatBestaetigt(az2.user_id||uid(), az2.datum))) return MONAT_GESPERRT;
+    }
     if(tab==="projekte" && art==="delete" && rolle!=="inhaber") return "projekte: loeschen nur Inhaber";
     if(tab==="arbeitszeiten" && art==="delete" && rolle!=="inhaber" && alt && /^stempel|^kalender/.test(alt.quelle||"")) return "arbeitszeiten: gestempelt oder aus dem Kalender";
     if(tab==="arbeitszeiten" && art==="insert" && rolle!=="inhaber" && zeile && zeile.quelle && zeile.quelle!=="hand") return "arbeitszeiten: nur von Hand";
@@ -82,12 +89,21 @@
     var startpunkt=function(z){ return !!z && /^startpunkt:/.test(z.schluessel||""); };
     var startpunktOk=(art==="insert" && startpunkt(zeile)) || (art==="update" && startpunkt(alt) && (!zeile || !("schluessel" in zeile) || startpunkt(zeile)));
     if(tab==="einstellungen" && art!=="select" && rolle!=="inhaber" && !startpunktOk) return "einstellungen: nur Inhaber";
+    /* wie die Sperrregel „startpunkt nur eigener“ (Inhaber 05.10.2026): den eigenen setzt jeder, fremde nur Inhaber und Admins */
+    var spFremd=function(z){ return startpunkt(z) && z.schluessel!=="startpunkt:"+uid(); };
+    if(tab==="einstellungen" && (art==="insert"||art==="update") && !(rolle==="inhaber" || admin()) && (spFremd(zeile) || spFremd(alt))) return "einstellungen: Startpunkt nur der eigene";
     /* wie projekte-ablauf.sql: katalog.text not null check (length(trim(text)) between 1 and 4000) */
     if(tab==="katalog" && (art==="insert"||art==="update") && zeile && (art==="insert" || ("text" in zeile)) && !String(zeile.text==null?"":zeile.text).trim()) return "katalog: text verletzt check";
     /* wie werkzeug.sql: Werkzeug und Packlisten löscht nur das Büro, Bedarf wer ihn angelegt hat oder das Büro; den Verlauf schreibt nur der Server */
     if((tab==="werkzeug"||tab==="packlisten") && art==="delete" && !(admin() || rolle==="inhaber")) return tab+": loeschen nur Buero";
     if(tab==="bedarf" && art==="delete" && !(admin() || rolle==="inhaber" || (alt && alt.erstellt_von===uid()))) return "bedarf: loeschen nur eigene";
     if(tab==="werkzeug_verlauf" && art!=="select") return "werkzeug_verlauf: nur der Server";
+    /* wie fahrzeuge.sql und die Antworten vom 05.10.2026: Fahrzeuge schreibt das Büro, sonst jede Person nur ihre EIGENEN Privatautos */
+    if(tab==="fahrzeuge" && (art==="insert"||art==="update") && !(admin() || rolle==="inhaber")){
+      if(alt && alt.privat_von!==uid()) return "fahrzeuge: nur das eigene Privatauto";
+      if(zeile && (!alt || ("privat_von" in zeile)) && zeile.privat_von!==uid()) return "fahrzeuge: nur das eigene Privatauto";
+    }
+    if(tab==="fahrzeuge" && art==="delete" && rolle!=="inhaber") return "fahrzeuge: loeschen nur Inhaber";
     /* wie reisekosten.sql: eigene (der Inhaber alle); abgegeben ändert nur der Inhaber; ausbezahlt setzt nur er */
     if((tab==="auslagen"||tab==="auslagen_konto") && art!=="select" && rolle!=="inhaber"){
       var az=alt||zeile||{};
@@ -97,6 +113,34 @@
     }
     if(tab==="planung" && (art==="update"||art==="delete") && alt && alt.privat && alt.erstellt_von!==uid() && (alt.wer||[]).indexOf(uid())<0) return "planung: privat";
     if(tab==="planung" && art==="update" && alt && alt.kategorie==="urlaub" && rolle!=="inhaber" && zeile && (zeile.status==="genehmigt"||zeile.status==="abgelehnt") && zeile.status!==alt.status) return "Urlaub genehmigt nur der Inhaber";
+    /* wie tools/rechte-2026-10-05.sql (Inhaber 05.10.2026): Abwesenheit (Urlaub, Krankenstand, Schule, Zeitausgleich) anderer – auch
+       gemeinsame – legt an, ändert und löscht nur der Inhaber; die eigene (nur ich eingetragen bzw. niemand und von mir angelegt) die
+       Person selbst. Aus einer gemeinsamen nimmt sie nur sich selbst heraus und gibt ihre Antwort (ausnahmen) – Trigger planung_rechte_abwesenheit
+       nach planung_pruefen (Urlaub, der dabei wieder „beantragt“ würde, also nicht) */
+    if(tab==="planung" && art!=="select" && rolle!=="inhaber"){
+      var abw=function(r){ return !!r && r.art!=="aufgabe" && ["urlaub","krank","schule","zeitausgleich"].indexOf(r.kategorie)>=0; };
+      /* eigen = selbst angelegt UND nur selbst eingetragen (bzw. niemand) – was der Inhaber für jemanden einträgt, ändert nur er */
+      var eigen=function(r, von){ return von===uid() && (r.wer||[]).every(function(u){ return u===uid(); }); };
+      var nurInhaber="planung: Abwesenheit anderer nur der Inhaber";
+      if(art==="insert" && abw(zeile) && !eigen(zeile, uid())) return nurInhaber;
+      if(art==="delete" && abw(alt) && !eigen(alt, alt.erstellt_von)) return nurInhaber;
+      /* schon genehmigten Urlaub löscht nur der Inhaber – auch nicht die Person selbst */
+      if(art==="delete" && abw(alt) && alt.kategorie==="urlaub" && alt.status==="genehmigt") return "planung: genehmigten Urlaub löscht nur der Inhaber";
+      if(art==="update" && alt){
+        var nz=JSON.parse(JSON.stringify(Object.assign({}, alt, zeile||{})));
+        if(!abw(alt) || eigen(alt, alt.erstellt_von)){ if(abw(nz) && !eigen(nz, alt.erstellt_von)) return nurInhaber; }
+        else {
+          if((alt.wer||[]).indexOf(uid())<0) return nurInhaber;
+          planPruefen(nz, alt);
+          var frei=["wer","wer_namen","ausnahmen","geaendert","geaendert_von"], gl=function(p, q){ return JSON.stringify(p==null?null:p)===JSON.stringify(q==null?null:q); };
+          if(Object.keys(nz).concat(Object.keys(alt)).some(function(k){ return frei.indexOf(k)<0 && !gl(nz[k], alt[k]); })) return nurInhaber+" (nur sich selbst herausnehmen)";
+          var iw=(alt.wer||[]).indexOf(uid());
+          if(!gl(nz.wer, alt.wer) && (alt.wer||[]).length<2) return nurInhaber+" (nur aus einem gemeinsamen Eintrag)";
+          if(!gl(nz.wer, alt.wer) && !(gl(nz.wer, alt.wer.filter(function(u){ return u!==uid(); })) && gl(nz.wer_namen, (alt.wer_namen||[]).filter(function(n, k){ return k!==iw; })))) return nurInhaber+" (nur sich selbst herausnehmen)";
+          if(gl(nz.wer, alt.wer) && !gl(nz.wer_namen, alt.wer_namen)) return nurInhaber;
+        }
+      }
+    }
     if(tab==="aenderungen" && art!=="insert" && art!=="select") return "aenderungen: unveraenderlich";
     /* wie vor-ort-fragen.sql: Büro stellt und erledigt, alle (die schreiben dürfen) antworten */
     if(tab==="vor_ort_fragen"){
@@ -110,6 +154,16 @@
     }
     return null;
   }
+  /* wie die Sperrregel „bedarf privat nur eigene“ (Inhaber 05.10.2026): Material/Werkzeug an einem privaten Termin sieht
+     (und ändert) nur, wer den Termin angelegt hat oder dort eingetragen ist – auch nicht das Büro */
+  function bedarfPrivatFremd(r){
+    if(!r || !r.planung_id) return false;
+    /* der Inhaber sieht es (volle Kontrolle, bleibt in der Sicherung – Inhaber 05.10.2026); Admins nicht */
+    if(((DB.rollen.filter(function(x){ return x.user_id===uid(); })[0]||{}).rolle)==="inhaber") return false;
+    var p=DB.planung.filter(function(x){ return x.id===r.planung_id; })[0];
+    return !!(p && (p.privat || p.kategorie==="privat") && p.erstellt_von!==uid() && (p.wer||[]).indexOf(uid())<0);
+  }
+  function sichtbar(t){ return function(r){ return t!=="bedarf" || !bedarfPrivatFremd(r); }; }
   /* wie der Trigger planung_pruefen (planung.sql): privat nur „Abwesend“, Urlaub genehmigt nur der Inhaber */
   function planPruefen(r, alt){
     var rl=(DB.rollen.filter(function(x){ return x.user_id===uid(); })[0]||{}).rolle||"techniker";
@@ -126,6 +180,7 @@
   /* wie der Trigger planung_stunden (stunden-kalender.sql): Urlaub (genehmigt), Krankenstand, Schule,
      Zeitausgleich je Arbeitstag mit dem Tagessoll in die Stunden – anlegen nur für sich selbst oder als Büro;
      ein bestätigter Monat (eine Person hat dort einen bestätigten Eintrag) bleibt unberührt */
+  var MONAT_GESPERRT="Monat ist bestätigt – nur der Inhaber kann noch etwas eintragen";
   function monatBestaetigt(u, d){ return DB.arbeitszeiten.some(function(x){ return x.user_id===u && x.bestaetigt && String(x.datum).slice(0,7)===String(d).slice(0,7); }); }
   function stundenSync(id){
     var p=DB.planung.filter(function(x){ return x.id===id; })[0], zart=null, personen=[], bis=null;
@@ -176,6 +231,12 @@
     return DB.stammdaten.some(function(r){ return r.id!==d.id && r.typ==="stoerung" && nr(r)===n; })
       ? {code:"23505", message:'duplicate key value violates unique constraint "stoerung_auftrag_einmal"'} : null;
   }
+  /* wie unique (art, nummer) in projekte-ablauf.sql: eine Belegnummer je Art nur einmal */
+  function belegDoppelt(tname, d){
+    if(tname!=="belege" || !d || d.nummer==null) return null;
+    return DB.belege.some(function(r){ return r.id!==d.id && r.art===d.art && r.nummer===d.nummer; })
+      ? {code:"23505", message:'duplicate key value violates unique constraint "belege_art_nummer_key"'} : null;
+  }
   /* wie reisekosten.sql: km ist numeric(8,1) – Postgres rundet „12,35“ auf 12,4 (die kleine Zugabe gleicht
      die Gleitkomma-Darstellung von 12,35 aus); dazu die Prüfregeln (check) mit der englischen Meldung von Postgres */
   function kmSpalte(km){ return Math.round(+km*10+1e-6)/10; }
@@ -187,6 +248,24 @@
     if(r.ohne_beleg!=null && String(r.ohne_beleg).length>300) return weg("ohne_beleg");
     if(r.notiz!=null && String(r.notiz).length>500) return weg("notiz");
     return null;
+  }
+  /* wie der Trigger auslagen_pruefen_privatauto (Antworten 05.10.2026): Kilometergeld nur mit einem Privatauto der Person
+     des Eintrags; eine reine Statusänderung (abgeben, zurückgeben, ausbezahlt) eines gespeicherten km-Eintrags prüft er nicht */
+  function kmOhneAuto(n, alt){
+    if(n.art!=="km") return null;
+    if(alt && alt.art==="km" && ["fahrzeug_id","user_id","km","datum","text"].every(function(k){ return (n[k]==null?null:n[k])===(alt[k]==null?null:alt[k]); })) return null;
+    var inh=rolleVon()==="inhaber", wer=!alt ? (inh ? (n.user_id||uid()) : uid()) : (inh ? n.user_id : alt.user_id);
+    return n.fahrzeug_id && DB.fahrzeuge.some(function(f){ return f.id===n.fahrzeug_id && f.privat_von===wer; }) ? null
+      : "Kilometergeld nur mit eingetragenem Privatauto – zuerst im Reiter Fahrzeuge das Privatauto eintragen";
+  }
+  /* wie der Trigger fahrzeuge_privat_pruefen (Antworten 05.10.2026): Nicht-Büro setzt am eigenen Privatauto nur Kennzeichen,
+     Bezeichnung, Namen und „in Verwendung“ – Fahrer ist die Person selbst, Fristen/GPS/Notiz bleiben bzw. sind leer */
+  function fzPrivatMerken(r, alt){
+    var rl=rolleVon(); if(admin() || rl==="inhaber") return;
+    var frei=["kennzeichen","bezeichnung","privat_name","aktiv","geaendert","geaendert_von"];
+    if(alt){ Object.keys(r).forEach(function(k){ if(frei.indexOf(k)<0) r[k]=alt[k]; }); Object.keys(alt).forEach(function(k){ if(!(k in r)) r[k]=alt[k]; }); return; }
+    ["erstzulassung","pickerl_bis","service_bis","service_km","tracker_id","notiz"].forEach(function(k){ r[k]=null; });
+    r.fahrer=[uid()]; r.fahrer_namen=[r.privat_name||""]; if(r.aktiv==null) r.aktiv=true; r.erstellt_von=uid();
   }
   function Q(t){ this.t=t; this.a="select"; this.f=[]; this.d=null; this.o={}; this.ord=null; this.lim=null; this.sp=null; }
   Q.prototype.select=function(s){ if(typeof s==="string"&&s&&s!=="*") this.sp=s.split(",").map(function(x){return x.trim();}); return this; };
@@ -212,10 +291,12 @@
     if(this.a==="select"){
       var sv=darf(this.t,"select",null,null); if(sv && /nur lesen/.test(sv)) return {data:[],error:null};
       if(this.t==="rollen") { /* wie die Regel: eigene Zeile, Admins alle */ }
-      erg=tab.filter(function(r){ return passt(r,self.f); });
+      erg=tab.filter(function(r){ return passt(r,self.f); }).filter(sichtbar(this.t));
       if(this.t==="admins") erg=erg.filter(function(r){ return r.user_id===uid(); });
       if(this.t==="protokolle") erg=erg.filter(function(r){ return kundeSieht(r.standort_id); });   /* wie „angemeldete lesen alle protokolle“ */
       if(this.t==="planung_privat") erg=erg.filter(function(r){ return r.user_id===uid(); });   /* wie die Regel: nur die eigenen */
+      /* wie die Sperrregel vom 05.10.2026 (rechte-2026-10-05.sql): Inhaber alles, Admins nur Lidl-Aufträge und Rapporte, sonst nichts */
+      if(this.t==="posteingang") erg=erg.filter(postSieht);
       if(this.t==="arbeitszeiten"||this.t==="auslagen"||this.t==="auslagen_konto"){ var rl=(DB.rollen.filter(function(r){ return r.user_id===uid(); })[0]||{}).rolle; if(rl!=="inhaber") erg=erg.filter(function(r){ return r.user_id===uid(); }); }
       /* wie „fahrzeuge lesen“ (fahrzeuge.sql): Büro alle, sonst nur das Fahrzeug, in dem man Fahrer ist */
       if(this.t==="fahrzeuge"){ var rf=(DB.rollen.filter(function(r){ return r.user_id===uid(); })[0]||{}).rolle; if(!(admin() || rf==="inhaber")) erg=erg.filter(function(r){ return (r.fahrer||[]).indexOf(uid())>=0; }); }
@@ -236,7 +317,7 @@
     if(this.a==="insert"){
       [].concat(this.d).forEach(function(d){ v=v||darf(self.t,"insert",d,null)||bisVorDatum(d); });
       if(v){ window.__abgelehnt.push(v); return {data:null,error:{message:v}}; }
-      var dpI=null; [].concat(this.d).forEach(function(d){ dpI=dpI||stoerNrDoppelt(self.t, d); });
+      var dpI=null; [].concat(this.d).forEach(function(d){ dpI=dpI||stoerNrDoppelt(self.t, d)||belegDoppelt(self.t, d); });
       if(dpI) return {data:null,error:dpI};
       var neu=[].concat(this.d).map(function(d){ var r=Object.assign({},d);
         if(r.id==null) r.id="x"+Date.now().toString(36)+(++z);
@@ -251,14 +332,16 @@
         if(self.t==="werkzeug"||self.t==="bedarf"){ r.erstellt_von=uid(); r.erstellt=new Date().toISOString(); r.aktiv=r.aktiv==null?true:r.aktiv; if(self.t==="bedarf"){ r.status=r.status||"offen"; r.beschaffung=r.beschaffung||"mitnehmen"; if(r.status==="erledigt") r.erledigt=new Date().toISOString(); } else { r.zustand=r.zustand||"ok"; r.standort_art=r.standort_art||"lager"; } }
         if(self.t==="projekte"){ r.erstellt=r.erstellt||new Date().toISOString(); r.geaendert=r.geaendert||r.erstellt; r.daten=r.daten||{}; r.verlauf=r.verlauf||[]; }
         return r; });
-      if(self.t==="auslagen"){ neu.forEach(function(r){ v=v||auslagenCheck(r); }); if(v){ window.__abgelehnt.push(v); return {data:null,error:{message:v}}; } }
+      if(self.t==="auslagen"){ neu.forEach(function(r){ v=v||kmOhneAuto(r, null)||auslagenCheck(r); }); if(v){ window.__abgelehnt.push(v); return {data:null,error:{message:v}}; } }
       if(self.t==="werkzeug") neu.forEach(function(r){ wzMerken(r); });
+      if(self.t==="fahrzeuge") neu.forEach(function(r){ fzPrivatMerken(r, null); });
       neu.forEach(function(r){ tab.push(r); }); if(self.t==="planung") neu.forEach(function(r){ stundenSync(r.id); });
       if(self.t==="werkzeug") neu.forEach(function(r){ wzVerlauf(r, null); });
       sichern(); return {data:aus(neu),error:null};
     }
     if(this.a==="upsert"){
-      var sp=this.o.onConflict||"id", raus=[];
+      /* ohne onConflict gilt wie in Postgres der Primärschlüssel – bei einstellungen „schluessel“ */
+      var sp=this.o.onConflict||(self.t==="einstellungen"?"schluessel":"id"), raus=[];
       var dpU=null; [].concat(this.d).forEach(function(d){ dpU=dpU||stoerNrDoppelt(self.t, d); });
       if(dpU) return {data:null,error:dpU};
       [].concat(this.d).forEach(function(d){
@@ -277,11 +360,13 @@
       sichern(); return {data:aus(raus),error:null};
     }
     if(this.a==="update"){
-      var b=tab.filter(function(r){ return passt(r,self.f); });
+      var b=tab.filter(function(r){ return passt(r,self.f); }).filter(sichtbar(self.t));   /* wie Postgres: was man nicht lesen darf, trifft kein update mit Bedingung */
+      /* wie die Sperrregel vom 05.10.2026: im Posteingang ändert man nur, was man sehen darf (sonst: nichts geändert) */
+      if(self.t==="posteingang") b=b.filter(postSieht);
       b.forEach(function(r){ v=v||darf(self.t,"update",self.d,r)||bisVorDatum(Object.assign({}, r, self.d)); });
       /* Prüfregeln vor dem Ändern – scheitert eine Zeile, bleibt alles, wie es war */
       if(!v && self.t==="auslagen") b.forEach(function(r){ var n=Object.assign({},r,self.d); if(n.km!=null) n.km=kmSpalte(n.km);
-        if(n.art==="km") n.betrag=Math.round(n.km*(n.km_satz||0.5)*100)/100; v=v||auslagenCheck(n); });
+        if(n.art==="km") n.betrag=Math.round(n.km*(n.km_satz||0.5)*100)/100; v=v||kmOhneAuto(n, r)||auslagenCheck(n); });
       if(v){ window.__abgelehnt.push(v); return {data:null,error:{message:v}}; }
       b.forEach(function(r){ if(self.t==="protokolle"){ var u=r.erstellt_von,g2=r.erstellt;
           DB.protokoll_fassungen.push({client_id:r.client_id,version:r.version,gesichert:new Date().toISOString(),daten:JSON.parse(JSON.stringify(r))});
@@ -298,15 +383,16 @@
           if(self.t==="auslagen" && r.art==="km") r.betrag=Math.round(r.km*(r.km_satz||0.5)*100)/100;
           if(self.t==="bedarf") r.erledigt = r.status==="erledigt" ? (altR.status==="erledigt" ? altR.erledigt : new Date().toISOString()) : null;
           if(self.t==="werkzeug"){ wzMerken(r); wzVerlauf(r, altR); }
+          if(self.t==="fahrzeuge") fzPrivatMerken(r, altR);
         }
         erg.push(r); });
       sichern(); return {data:aus(erg),error:null};
     }
     if(this.a==="delete"){
-      var w=tab.filter(function(r){ return passt(r,self.f); });
+      var sicht=sichtbar(self.t), w=tab.filter(function(r){ return passt(r,self.f) && sicht(r); });
       w.forEach(function(r){ v=v||darf(self.t,"delete",null,r); });
       if(v){ window.__abgelehnt.push(v); return {data:null,error:{message:v}}; }
-      for(var i=tab.length-1;i>=0;i--) if(passt(tab[i],self.f)){ erg.push(tab[i]); tab.splice(i,1); }
+      for(var i=tab.length-1;i>=0;i--) if(passt(tab[i],self.f) && sicht(tab[i])){ erg.push(tab[i]); tab.splice(i,1); }
       if(self.t==="planung") erg.forEach(function(r){ stundenSync(r.id); });
       /* Fremdschlüssel wie in werkzeug.sql: Termin bzw. Werkzeug weg → Bedarf bleibt ohne Verknüpfung (on delete set null), Verlauf geht mit */
       var wegIds=erg.map(function(r){ return r.id; });
@@ -331,13 +417,21 @@
     var erlaubt=this.n==="sicherungen" ? null : this.n==="auslagen" ? ["image/jpeg","image/png","application/pdf"] : this.n==="projektdateien" ? ["application/pdf","image/jpeg","image/png","image/heic","image/heif","image/webp","text/plain","text/csv","application/msword","application/vnd.openxmlformats-officedocument.wordprocessingml.document","application/vnd.ms-excel","application/vnd.openxmlformats-officedocument.spreadsheetml.sheet","application/zip","message/rfc822","application/vnd.ms-outlook","image/vnd.dwg","application/acad","application/x-acad","application/autocad_dwg","application/dwg","application/x-dwg","application/x-autocad","application/octet-stream"] : ["image/jpeg","image/png","application/pdf"];
     if(erlaubt && b && b.type && erlaubt.indexOf(b.type)<0)
       return Promise.resolve({data:null,error:{message:"mime type "+b.type+" is not supported"}});
+    /* wie reisekosten.sql und die Antworten vom 05.10.2026: Belegfotos legt jede Person in ihren Ordner <user_id>/, der Inhaber auch in fremde */
+    if(this.n==="auslagen" && String(p).split("/")[0]!==uid() && rolleVon()!=="inhaber")
+      return Promise.resolve({data:null,error:{message:"new row violates row-level security policy"}});
     DATEIEN[k]=b; BESITZER[k]=uid(); return Promise.resolve({data:{path:p},error:null}); };
-  /* wie posteingang-lesen.sql: Dateien im Bucket „posteingang“ nur mit darf_schreiben() (nicht Kunde, nicht Präsentation);
+  /* wie posteingang-lesen.sql: Dateien im Bucket „posteingang“ nur mit darf_schreiben() (nicht Kunde, nicht Präsentation)
+     … und seit dem 05.10.2026 (rechte-2026-10-05.sql): Inhaber alles, Admins nur die Dateien der Lidl-Aufträge und Rapporte
+     (Pfad über posteingang.pfad), Techniker nichts;
      wie „fotos ansehen“ (anlagenfotos.sql = chat.sql = wunsch-fotos.sql) im Bucket „protokollfotos“: wunsch/… nur Absender
      und Inhaber, chat/… und anlagen/… nur wer mitarbeitet, alles übrige (<client_id>/…) ein Kunde nur zu Protokollen,
      die er lesen darf */
+  function postSieht(r){ var rl=rolleVon(); return rl==="inhaber" || (admin() && (rl==="admin"||rl==="inhaber") && (r.art==="auftrag" || r.art==="rapport")); }
   function eimerGesperrt(n, p){ var rl=(DB.rollen.filter(function(r){ return r.user_id===uid(); })[0]||{}).rolle;
-    if(n==="posteingang") return !sitzung || rl==="kunde" || rl==="praesentation";
+    if(n==="posteingang"){
+      if(!sitzung || rl==="kunde" || rl==="praesentation") return true;
+      return !(rl==="inhaber" || DB.posteingang.some(function(r){ return r.pfad===p && postSieht(r); })); }
     if(n!=="protokollfotos") return false;
     if(!sitzung) return true;
     if(/^wunsch\//.test(p)) return !(BESITZER[n+"/"+p]===uid() || rl==="inhaber");
@@ -346,7 +440,18 @@
   E.prototype.createSignedUrl=function(p){ var b=eimerGesperrt(this.n, p) ? null : DATEIEN[this.n+"/"+p];
     return Promise.resolve(b?{data:{signedUrl:URL.createObjectURL(b)},error:null}:{data:null,error:{message:"weg"}}); };
   E.prototype.download=function(p){ var b=eimerGesperrt(this.n, p) ? null : DATEIEN[this.n+"/"+p]; return Promise.resolve(b?{data:b,error:null}:{data:null,error:{message:"weg"}}); };
-  E.prototype.remove=function(){ return Promise.resolve({data:[],error:null}); };
+  /* Speicher „auslagen“ wie die Regeln (reisekosten.sql, Antworten 05.10.2026): entfernen im eigenen Ordner – aber nicht
+     das Foto eines abgegebenen oder ausbezahlten Eintrags –, der Inhaber überall; was die Regel nicht erlaubt, bleibt still
+     liegen (wie Supabase: keine Fehlermeldung, nur nichts entfernt). Andere Bereiche: wie bisher (nichts entfernt). */
+  E.prototype.remove=function(pfade){
+    if(this.n!=="auslagen" || !sitzung) return Promise.resolve({data:[],error:null});
+    var n=this.n, inh=rolleVon()==="inhaber", weg=[];
+    (pfade||[]).forEach(function(p){
+      var gesperrt=DB.auslagen.some(function(a){ return a.foto===p && a.status!=="offen"; });
+      if(!DATEIEN[n+"/"+p] || !(inh || (String(p).split("/")[0]===uid() && !gesperrt))) return;
+      delete DATEIEN[n+"/"+p]; weg.push({name:p});
+    });
+    return Promise.resolve({data:weg,error:null}); };
   E.prototype.list=function(){ return Promise.resolve({data:[],error:null}); };
   window.supabase={createClient:function(){ return {
     auth:{ getSession:function(){ return Promise.resolve({data:{session:sitzung},error:null}); },
@@ -381,6 +486,7 @@
         var fe=function(m){ return Promise.resolve({data:null,error:{message:m}}); };
         var mm=function(t){ var x=/^(\d\d):(\d\d)$/.exec(t||""); return x ? (+x[1])*60+(+x[2]) : null; };
         var hh=function(m){ return ("0"+Math.floor(m/60)).slice(-2)+":"+("0"+(m%60)).slice(-2); };
+        if(rolleVon()!=="inhaber" && monatBestaetigt(uid(), w.p_datum)) return fe(MONAT_GESPERRT);   /* wie der Trigger arbeitszeiten_monat_gesperrt */
         var eig=DB.arbeitszeiten.filter(function(z){ return z.user_id===uid() && z.datum===w.p_datum && z.art==="arbeit" && /^stempel/.test(z.quelle||"") && !z.bestaetigt && mm(z.ende)>mm(z.beginn); })
           .sort(function(x,y){ return mm(x.beginn)-mm(y.beginn); });
         var bl=[]; eig.forEach(function(z){ var l2=bl[bl.length-1]; if(l2 && mm(z.beginn)===l2.e){ l2.z.push(z); l2.e=mm(z.ende); } else bl.push({b:mm(z.beginn), e:mm(z.ende), z:[z]}); });
@@ -408,6 +514,24 @@
         for(var wi=DB.arbeitszeiten.length-1; wi>=0; wi--) if(weg.indexOf(DB.arbeitszeiten[wi].id)>=0) DB.arbeitszeiten.splice(wi,1); sichern();
         return Promise.resolve({data:{eintraege:JSON.parse(JSON.stringify(erg)), ersetzt:weg}, error:null});
       }
+      /* wie public.fahrzeuge_auswahl() (Inhaber 05.10.2026): alle aktiven Fahrzeuge, NUR Kennung, Kennzeichen, Bezeichnung,
+         Fahrernamen – für alle, die mitarbeiten (Kunde und Präsentation bekommen nichts); die Leseregel der Fahrzeuge bleibt */
+      if(name==="fahrzeuge_auswahl"){ var rlFa=(DB.rollen.filter(function(r){ return r.user_id===uid(); })[0]||{}).rolle;
+        if(!sitzung || rlFa==="kunde" || rlFa==="praesentation") return Promise.resolve({data:[], error:null});
+        return Promise.resolve({data:DB.fahrzeuge.filter(function(f){ return f.aktiv!==false; }).sort(function(a,b){ return String(a.kennzeichen).localeCompare(String(b.kennzeichen)); })
+          .map(function(f){ return {id:f.id, kennzeichen:f.kennzeichen, bezeichnung:f.bezeichnung||null, fahrer_namen:(f.fahrer_namen||[]).slice()}; }), error:null}); }
+      /* wie public.beleg_nummer() (belege-ausbau.sql): nächste Nummer je Kreis und Jahr, nur für den Inhaber – Zähler
+         in belegnummern (test: T-R-2026-001, echt: fortlaufend ohne Jahr) */
+      if(name==="beleg_nummer"){
+        if((DB.rollen.filter(function(r){ return r.user_id===uid(); })[0]||{}).rolle!=="inhaber") return Promise.resolve({data:null,error:{message:"Belegnummern vergibt nur der Inhaber"}});
+        if(["angebot","rechnung"].indexOf(w.p_art)<0) return Promise.resolve({data:null,error:{message:"unbekannte Belegart"}});
+        if(!Array.isArray(DB.belegnummern)) DB.belegnummern=[];
+        var kreis=(w.p_test?"test_":"")+w.p_art, jb=w.p_test?new Date().getFullYear():0;
+        var zl=DB.belegnummern.filter(function(r){ return r.kreis===kreis && r.jahr===jb; })[0];
+        if(!zl){ zl={kreis:kreis, jahr:jb, letzte:0}; DB.belegnummern.push(zl); }
+        zl.letzte++; sichern();
+        return Promise.resolve({data:w.p_test ? "T-"+(w.p_art==="rechnung"?"R":"A")+"-"+jb+"-"+("00"+zl.letzte).slice(-3) : String(zl.letzte), error:null});
+      }
       if(name!=="stempeln") return Promise.resolve({data:null,error:null});
       /* wie public.stempeln() (stempeluhr-2.sql): Zeit vom „Server“, Reihenfolge prüfen,
          Umstempeln, beim Ausstempeln je Abschnitt ein Eintrag, Einträge von Hand ersetzen */
@@ -433,6 +557,9 @@
       if(w.p_ende_hand){ var d=new Date(ein.zeit); var t=w.p_ende_hand.split(":"); d.setHours(+t[0],+t[1],0,0); if(d<=new Date(ein.zeit)) d.setDate(d.getDate()+1); ende=d; q="stempel_nachgetragen";
         if(ende>new Date(jetzt)) return fehler("Das Ende liegt in der Zukunft"); }
       if(ende-new Date(ein.zeit)>86400000) return fehler("Länger als 24 Stunden eingestempelt – bitte das tatsächliche Ende angeben");
+      /* wie der Trigger arbeitszeiten_monat_gesperrt: ein Abschnitt in einem bestätigten Monat – alles zurück, nichts ausgestempelt */
+      var tagV=function(x){ x=new Date(x); return x.getFullYear()+"-"+("0"+(x.getMonth()+1)).slice(-2)+"-"+("0"+x.getDate()).slice(-2); };
+      if(rolleVon()!=="inhaber" && meine.some(function(x){ return x.zeit>=ein.zeit && new Date(x.zeit)<ende && (x.art==="ein"||x.art==="wechsel") && monatBestaetigt(uid(), tagV(x.zeit)); })) return fehler(MONAT_GESPERRT);
       var weg=[];
       if(w.p_ersetzen) for(var i=DB.arbeitszeiten.length-1;i>=0;i--){ var a=DB.arbeitszeiten[i];
         if(w.p_ersetzen.indexOf(a.id)>=0 && a.user_id===uid() && (a.quelle||"hand")==="hand" && !a.bestaetigt){ weg.push(a.id); DB.arbeitszeiten.splice(i,1); } }

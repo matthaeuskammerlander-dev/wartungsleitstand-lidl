@@ -1,3 +1,5 @@
+-- Nach einem erneuten Lauf gelten zusätzlich die Sperren aus tools/rechte-2026-10-05.sql (eigene Namen, werden hier nicht entfernt).
+-- Dort schränkt „posteingang nach rolle“ das Lesen weiter ein: Projektmails nur der Inhaber, Lidl-Aufträge/Rapporte auch Admins, Techniker nichts.
 -- Posteingang nur für Mitarbeiter lesbar (Tiefentest 05.10.2026):
 -- Bisher durfte jedes angemeldete Konto Tabelle und Dateien des Posteingangs lesen –
 -- auch das Kunden-Konto (Lidl) und die Präsentation. Dort liegen aber weitergeleitete

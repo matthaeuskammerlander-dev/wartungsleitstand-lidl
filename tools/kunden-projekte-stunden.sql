@@ -1,3 +1,4 @@
+-- Nach einem erneuten Lauf gelten zusätzlich die Sperren aus tools/rechte-2026-10-05.sql (eigene Namen, werden hier nicht entfernt).
 -- Weitere Kunden, Projekte und Arbeitszeiten (Büro 01.10.2026)
 -- Einmal im Supabase SQL Editor ausführen (nach rollen.sql). Mehrfach
 -- ausführbar – auch nach den späteren Skripten (Stand 05.10.2026): die Regeln

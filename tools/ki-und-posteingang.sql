@@ -1,3 +1,4 @@
+-- Nach einem erneuten Lauf gelten zusätzlich die Sperren aus tools/rechte-2026-10-05.sql (eigene Namen, werden hier nicht entfernt).
 -- KI-Erkennung und Mail-Posteingang – vorbereitet, erst ausführen, wenn es
 -- losgehen soll (siehe KI-EINRICHTUNG.md und POSTEINGANG-EINRICHTUNG.md).
 -- Mehrfach ausführen schadet nicht.

@@ -51,7 +51,9 @@ Kammerlander Umwelt- und Klimatechnik (UKT) – oft kurz, vom Handy, im Feld.
   Büro 01.10.2026): Hat eine Anlage am Markt einen Halbjahrestermin (HJI oder
   HJW), bekommen die weiteren Anlagen dort mit nur JW automatisch einen (ab
   30 kg HJW, sonst HJI; Gaswarnanlagen nicht), zählt ab heute, Monat wie die
-  andere Anlage (Feld `hjiMarkt`). Vor Ort bestätigt der Termine-Schritt den
+  andere Anlage (Feld `hjiMarkt`). Bewusst „nur Jahreswartung“ (`nurJW`) geht vor
+  (Inhaber 05.10.2026): kein automatischer Halbjahrestermin, `nurJW` bleibt, bis es
+  jemand in der Verwaltung zurücknimmt. Vor Ort bestätigt der Termine-Schritt den
   Monat: gleicher Besuch oder 6 Monate nach der JW. Ein Merker (typ „merker“)
   verhindert, dass ein zurückgenommener Termin wiederkommt.
 - Geführtes Protokoll im Einsatz (Büro 01.10.2026, nach dem ersten Härtetest):
@@ -119,9 +121,27 @@ Kammerlander Umwelt- und Klimatechnik (UKT) – oft kurz, vom Handy, im Feld.
   Beleg, Katalog „⚠ zu prüfen“) – nur Hinweise. Katalogtexte ohne Auftrags-Mengen (`katalogTextOhneMenge`; auffällige
   Positionen lernt der Katalog nicht). KPlus-Rechnung zum Einsatz (`einsatzBelegeZeile` → `kplusVorschau(kontext)`):
   Vergleich mit dem App-Vorschlag (`einsatzVergleich`, gespeichert in `kopf.lernen`), Original-PDF beim Beleg, Einsatz
-  abgerechnet; `einsatzGelernt` ergänzt künftige Vorschläge um das, was der Chef ≥2× (am Markt ≥1×) dazuschrieb.
+  abgerechnet – zu einem anderen Einsatz umgehängt (Inhaber 05.10.2026): der vorige verliert den Vermerk „abgerechnet (KPlus …)“
+  (nur ohne andere Rechnung und wenn der Vermerk diese Nummer nennt) und steht wieder unter „noch nicht abgerechnet“; `einsatzGelernt` ergänzt künftige Vorschläge um das, was der Chef ≥2× (am Markt ≥1×) dazuschrieb.
+  Lernen je Einsatzart (`einsatzArt`, `einsatzLernBelege`; Inhaber 05.10.2026 „ersetzen nach 3×“): eine App-Position, die der Chef in
+  ≥3 verschiedenen KPlus-Rechnungen gestrichen (und seltener selbst geschrieben) hat, schlägt die App dort nicht mehr vor
+  (`einsatzGestrichen`, `LERN_STREICHEN`, Schlüssel `vorschlagSchluessel`; `lernen.passend`/`zuviel[].schluessel`); Vorschlag und
+  Vergleich rechnen gleich (`einsatzVorschlag`); Grund im Editor („gelernt aus N KPlus-Rechnungen“, Hinweis über den Positionen).
+  Wartungspreis je Art (Inhaber 05.10.2026, `katalogWartung`, `wartungArten`): je Anlage die Katalogposition, deren Text
+  genau ihre Termin-Art nennt (Jahreswartung/JW, Halbjahreswartung/HJW, Halbjahresinspektion/HJI; je Stück/pauschal) – sonst
+  ohne Preis mit `hinweis` „Preis für JW fehlt – alte KPlus-Rechnung mit dieser Position hochladen“ (im Editor und in der
+  Positionsprüfung, solange die Zeile keinen Betrag hat); nie der Preis einer anderen Art. Dazu je Anlagentyp (Inhaber
+  05.10.2026, `anlageTyp`, `wartungTypen`: Split, Multi-Split, VRV/VRF, Kaltwassersatz, Kühlung, Lüftung, Wärmepumpe – aus
+  Bauart, sonst Bezeichnung): erst Art+Typ, eine Position nur mit der Art nur, wenn es für diese Art keine typ-eigenen gibt,
+  sonst ohne Preis („Preis für JW Split fehlt …“); nie der Preis eines anderen Typs. Je Anlage verrechnet wird nur
+  die planmäßige Wartung (`einsatzArt`, Inhaber 05.10.2026): Reparatur, Prüfung, Sonstiges wie eine Störung nach Aufwand –
+  Textzeile, Regiestunden (Ankunft–Fertig, sonst verrechenbare Stunden des Lidl-Rapports, sonst Zeile „Stunden eintragen“),
+  Material, Kältemittel, Fahrtpauschale. Kältemittel nachgefüllt ohne Sorte im Protokoll: „Kältemittel – Sorte fehlt“ ohne
+  Preis mit Hinweis (nie irgendeine Sorte samt Preis; Inhaber 05.10.2026), mit Sorte die Katalogposition dieser Sorte.
   App-Belege sind TEST (T-A-/T-R-Nummern), solange KPlus führt. Rechnung aus
   Angebot: Mengenvorschläge aus dem Baustellenbuch (`baubuchVorschlaege`).
+  Neu eingelesene KPlus-Belege (`kplusVorschau`, Mailverlauf) stehen auf „versendet“ – Rechnung UND Angebot (Inhaber 05.10.2026);
+  ein schon vorhandener Beleg (Art + Nummer) behält seinen Stand.
   Echte Preise und Belege nie ins Repository – nur in Supabase.
 - Quellen (Büro 01.10.2026: „man soll immer alles von beiden Seiten finden“):
   Schritte (`daten.quellen[schritt]`), Listeneinträge und Baustellenbuch führen
@@ -162,7 +182,10 @@ Kammerlander Umwelt- und Klimatechnik (UKT) – oft kurz, vom Handy, im Feld.
 - Angebot/Rechnung bearbeiten (`belegEditor`, Büro 01.10.2026 „gründlich überarbeiten“): großes
   Fenster, Positionen als Tabelle (`.bpos`, am Handy Block), Bezeichnung wächst mit
   (`feldHoehe`), Summe immer sichtbar im Fuß, Kopf/Texte einklappbar, Vorschau (PDF)
-  vor dem Speichern, Zeile kopieren/verschieben, Textzeilen.
+  vor dem Speichern, Zeile kopieren/verschieben, Textzeilen. Nummer erst beim Speichern (Inhaber 05.10.2026: keine Lücken
+  im Nummernkreis): `belegNeu` zieht keine, der Editor zeigt „Nummer wird beim Speichern vergeben“, `belegNummer` (Funktion
+  `beleg_nummer`, atomar) erst im Speichern – gescheitert bleibt sie für den nächsten Versuch, schon vergeben (unique art+nummer)
+  → nächste; ein Doppeltipp öffnet nur einen Editor (`belegNeuLaeuft`).
 - Synology-Ablage der Baustellen (`synology/ukt_archiv.py`, `projekte_abgleich`):
   je Projekt `{jahr}/Lidl/Baustellen/…` bzw. `{jahr}/Kunden/{kunde}/Baustellen/{Filiale Ort}_{Nummer}/`
   (Protokolle `…/Wartungen` und `…/Störungen` getrennt, Büro 02.10.2026) mit
@@ -263,7 +286,11 @@ Kammerlander Umwelt- und Klimatechnik (UKT) – oft kurz, vom Handy, im Feld.
   Rechnungen und Positionskatalog kommen nie in `projekte.daten` (das sehen
   alle), sondern in eigene, nur für Inhaber lesbare Tabellen bzw. Dateien.
 - **Arbeitszeiten** (Tabelle `arbeitszeiten`): jede Person sieht nur ihre
-  eigenen, der Inhaber alle; ein bestätigter Monat ist gesperrt.
+  eigenen, der Inhaber alle; ein bestätigter Monat ist gesperrt – auch für NEUE Einträge (von Hand, Stempeln,
+  Abgleich): bestätigt = die Person hat dort einen Eintrag mit `bestaetigt`; nur der Inhaber trägt danach ein oder
+  öffnet ihn wieder („Wieder öffnen“ in `zeitenInhaberKarte`; ist die Person noch eingestempelt, warnt „Bestätigen“ vorher). App: `monatGesperrt`, Meldung `MONAT_GESPERRT`;
+  Datenbank: Trigger `arbeitszeiten_monat_gesperrt` (gilt auch für stempeln()/stempel_abgleich(), nicht für die
+  Kalender-Übernahme – die hat ihre eigene Regel), tools/rechte-2026-10-05.sql (Inhaber 05.10.2026).
 - **Stempeluhr** (Tabelle `stempel`, Funktion `stempeln()`, tools/stempeluhr.sql):
   Zeit vom Server, Eintrag beim Ausstempeln vom Server berechnet (Quelle
   „stempel“); nachträglich geändert = „stempel_geaendert“. Standort nur, wenn
@@ -286,8 +313,12 @@ Kammerlander Umwelt- und Klimatechnik (UKT) – oft kurz, vom Handy, im Feld.
   Sonstiges; Personen `wer`, mehrtägig `datum_bis`) und Aufgaben (Zuständige,
   fällig, Bezug Projekt+Schritt/Markt/Störung, erledigt). PRIVAT: andere sehen
   nur „Abwesend“, Titel/Details in `planung_privat` (nur die Person selbst –
-  Trigger `planung_pruefen` erzwingt es). Urlaub genehmigt nur der Inhaber
-  (Trigger). Der Kalender zeigt dazu Störungen (Einsatztag bleibt in der
+  Trigger `planung_pruefen` erzwingt es). KRANKENSTAND anderer: Kollegen sehen nur „Abwesend“ (grau, ohne Titel/Details;
+  `planKrankVerborgen`, `planKatSicht`, `planTitel`) – die Art nur der Inhaber und die Person selbst (Gesundheitsdaten,
+  Inhaber 05.10.2026; nur in der App, die Datenbank-Zeile bleibt lesbar). Urlaub genehmigt nur der Inhaber
+  (Trigger); schon genehmigten löscht nur er – die Person „Urlaub zurückziehen“ (Rückfrage, Nachricht an den Inhaber,
+  `chatAnInhaber`; Sperrregel „genehmigter urlaub loeschen nur inhaber“; Inhaber 05.10.2026); ändert sie ihn (→ wieder
+  beantragt), bekommt der Inhaber von selbst „Urlaub geändert – bitte neu genehmigen“ (`urlaubGeaendertMelden`). Der Kalender zeigt dazu Störungen (Einsatztag bleibt in der
   Störung), Projekttermine, erledigte Protokolle und fällige Wartungen zum
   Einplanen (`wartungenImMonat`; eingeplant werden die Wartungstermine der
   Anlagen: `planung.position_ids`, `wartungEinplanen`, `planFuerPosition`, in
@@ -297,7 +328,7 @@ Kammerlander Umwelt- und Klimatechnik (UKT) – oft kurz, vom Handy, im Feld.
   Zeitausgleich) legt die Datenbank selbst in die Stunden (tools/stunden-kalender.sql, Trigger `planung_stunden`,
   Quelle „kalender“): je Arbeitstag das Tagessoll (`soll_minuten`, `feiertag_at` wie `sollMinutenTag`/`feiertageAT`),
   angepasst/entfernt mit dem Kalendereintrag, nie im bestätigten Monat; anlegen für eine Person nur sie selbst oder
-  das Büro; selbst geändert → „hand“. Zeitausgleich zählt nicht als Ist (baut Überstunden ab). Stempeluhr: „📅 Heute
+  der Inhaber; selbst geändert → „hand“. Zeitausgleich zählt nicht als Ist (baut Überstunden ab). Stempeluhr: „📅 Heute
   geplant“ (`stempelPlanChips`), nach dem Ausstempeln Verknüpfung mit dem Termin (`zeitenMitPlanungVerknuepfen`).
   Soll je Tag/Woche in „Meine Arbeitszeit“ (`sollIstTag`) nur zur Info – Überstunden bleiben MONATSBILANZ.
   Vor dem Bestätigen: `monatLuecken` (Tage ohne Eintrag, Abwesenheit ohne Stunden, Geplantes nicht erfasst) mit
@@ -308,11 +339,17 @@ Kammerlander Umwelt- und Klimatechnik (UKT) – oft kurz, vom Handy, im Feld.
   ein Termin mitten in einem anderen unterbricht ihn, Minuten wie die Datenbank (`abgleichMinuten`: Pause zum längsten Teil); nach dem Ausstempeln angeboten, beim Tag „⇆ Mit Kalender abgleichen“, beim Termin „⏱ abgleichen“ statt
   „erfassen“ (nie doppelt). Umstempeln mit Vorgabe aus dem Termin (`geplantFuerMich`, „⇄ Dorthin umstempeln“).
   Abwesenheit und Arbeit am selben Tag (`abwesenheitPruefen`, tools/abwesenheit-arbeit.sql, `planung.ausnahmen`): beim Einstempeln und
-  Erfassen fragen – „eingesprungen“ (beides zählt), Urlaub „zurückgeben“ (Inhaber nimmt den Tag heraus: `planTagHerausnehmen`, To-do),
+  Erfassen fragen (ein halber Tag mit Uhrzeit – EIN Tag mit von–bis – nur, wenn die Arbeit bzw. das Einstempeln hineinfällt:
+  `abwesenheitZeitTrifft`; ganztägig, mehrtägig oder Arbeit ohne Uhrzeit immer; Inhaber 05.10.2026) – „eingesprungen“ (beides zählt), Urlaub „zurückgeben“ (Inhaber nimmt den Tag heraus: `planTagHerausnehmen`, To-do),
   Krankenstand/Schule/ZA „für diesen Tag beenden“; ungeklärt ⚠ beim Tag und in `monatLuecken`. Die Antwort gilt je Tag UND Person
   (`ausnahmen[Tag][user_id]`, ältere ohne Person gelten für alle); stehen mehrere im Eintrag, verliert nur diese Person den Tag
   (`planPersonHerausloesen`: aus dem Eintrag genommen, eigene Einträge für ihre übrigen Tage); nur Tage im Zeitraum. Urlaub ändert nur der Inhaber. Neu Eingetragene bekommen eine Chat-Nachricht
-  (nicht bei Privatem). Diese Grenzen nie lockern.
+  (nicht bei Privatem). Abwesenheiten ANDERER – auch gemeinsame (Betriebsurlaub, Kurs) – legt an, ändert, kürzt, nimmt
+  Tage heraus und löscht nur der Inhaber; die eigene (SELBST angelegt UND nur sie bzw. niemand eingetragen – was der Inhaber für
+  jemanden einträgt, ändert nur er; die Person bittet per Chat um Herausnehmen) die Person selbst,
+  aus gemeinsamen nimmt sie nur sich selbst heraus; Admins wie Techniker (Inhaber 05.10.2026: `planAbwesenheitDarf`, Personenwahl
+  nur „ich“, sonst schreibgeschützt „ändert nur der Inhaber“; Datenbank: Sperrregeln „abwesenheit … nur selbst oder inhaber“ und
+  Trigger `planung_rechte_abwesenheit`, tools/rechte-2026-10-05.sql). Diese Grenzen nie lockern.
 - **Posteingang → Projekt** (Büro 02.10.2026): weitergeleitete Mails (nicht Lidl-Auftrag/Rapport)
   kommen mit `.eml` (art „mail“, `eintraege` in synology/ukt_posteingang.py, Test
   tools/posteingang_test.py); in der App eine Karte je Mail (`posteingangMailBox`), „Zu Projekt
@@ -320,8 +357,20 @@ Kammerlander Umwelt- und Klimatechnik (UKT) – oft kurz, vom Handy, im Feld.
   Dateien hochgeladen sind. Angebot/Rechnung als Art nur für den Inhaber. KPlus-PDFs (6-stellig, `kplusDateiname`; Tiefentest
   05.10.2026): beim Inhaber als Angebot/Rechnung erkannt (buero/), andere legen sie und die Mail dazu nicht ab (bleiben im
   Posteingang). Eine Mail mit Angebot/Rechnung (`mailMitBeleg`) liegt auch als .eml nur unter buero/ – ebenso aus dem Mail-Programm.
+  Ebenso eine Mail mit Preisen im TEXT (Inhaber 05.10.2026: Betrag mit €/EUR, `mailTextMitPreis`, `emlText` liest die .eml): beim
+  Inhaber nur unter buero/ mit Hinweis „enthält Preise – nur für den Inhaber abgelegt“ (`preise` an der Datei, `preisHinweis`), alle
+  anderen legen sie nicht ab – geprüft in `projektDateienHochladen`, gilt so für Posteingang, Mail-Programm, Mailverlauf und Dateien-Karte.
+  Signatur/Impressum zählen nicht (`MAIL_IMPRESSUM`: Stammkapital, Firmenbuch, FN, UID …; nach dem Trenner „-- “ bis zu einer zitierten Mail).
   Anhänge ohne .eml (Rohmail zu groß, art „unbekannt“): „Zu Projekt legen“ an der Einzelkarte, für alle Anhänge derselben Mail.
+  Zu Großes (über 20 MB, Anhang oder Mail) meldet das Skript als Eintrag OHNE Datei (art „unbekannt“, `pfad` leer, Hinweis in `notiz`;
+  Inhaber 05.10.2026) – Karte „⚠ … nicht abgeholt“ (`posteingangOhneDatei`, `posteingangHinweisBox`), nie in „Zu Projekt legen“.
+  Lidl-Auftrag/Rapport erkennt das Skript an Betreff, Dateiname („rapport“, „auftrag“, „störung“) und Absender (allgemein `lidl.<Endung>`
+  und `lidl_domains` in ukt_posteingang.json): eine PDF von Lidl, die kein Rapport ist, ist ein Auftrag.
   Je Mail ein Dialog (`posteingangDialoge`); schon Hochgeladenes merkt `posteingangAbgelegt` – nochmals lädt nur den Rest bzw. vermerkt nur.
+  Wer was sieht (Inhaber 05.10.2026, `posteingangRolle`, `posteingangSieht`): Projektmails (alles außer art „auftrag“/„rapport“)
+  NUR der Inhaber, Lidl-Aufträge und Rapporte Inhaber und Admins, Techniker gar nicht (Karte, Benachrichtigung, Datenbank:
+  Sperrregeln für Tabelle und Speicher, Push `nur_rolle` – tools/rechte-2026-10-05.sql). Das Synology-Konto legt ab, ohne lesen
+  zu können (`ablage_pfad` fest je Mail und Datei, `on_conflict` + `ignore-duplicates`, return=minimal). Nie lockern.
 - **Mail-Programm am PC** (Büro 04.10.2026, `mailBruecke`, `mailUebernehmen`, `mailProjektNeu`, `mailZuProjekt`,
   `mailStoerung`, `mailsDazuKarte`): das Programm „Mail mit Claude“ läuft NUR auf dem PC des Inhabers
   (http://localhost:4317, nicht in diesem Repository). Verbunden per 6-stelligem Code aus dem Mail-Programm unter
@@ -354,6 +403,8 @@ Kammerlander Umwelt- und Klimatechnik (UKT) – oft kurz, vom Handy, im Feld.
   (Admins auch für den Inhaber), Techniker nur für sich selbst; für sich selbst nur Kalendereinträge, für andere
   zusätzlich Tour + Nachricht, die Person nimmt sie unter „Touren für dich“ an (`tourAnnehmen`). Störungen der Tour
   bekommen „Einsatz geplant am“ (ohne zweite Nachricht, `_ohneMeldung`), Wartungen stehen in Fällig als „📅 eingeplant“.
+  Startpunkt (`einstellungen` „startpunkt:<Konto>“): jeder setzt nur seinen eigenen, Inhaber und Admins für alle
+  (`startpunktDarf`; die Datenbank sperrt es mit einer Sperrregel – Inhaber 05.10.2026).
 - **Arbeitszeit lernt** (`arbeitStunden`, `stoerDauerMin`, Büro 02.10.2026): Tour und Kalender rechnen mit der
   tatsächlichen Zeit vor Ort – Lidl-Rapport (von–bis), Störung Ankunft–Fertig, Stunden mit Markt (`einsatz_dauern`,
   tools/einsatz-dauern.sql: nur Median je Markt, keine Personen); ohne Erfahrung `ARBEIT_H`.
@@ -366,7 +417,8 @@ Kammerlander Umwelt- und Klimatechnik (UKT) – oft kurz, vom Handy, im Feld.
 - **Vor Ort klären** (tools/vor-ort-fragen.sql, Büro 03.10.2026): Fragen je Markt (`vor_ort_fragen`); Büro (Inhaber, Admins) stellt
   und hakt ab, alle die schreiben dürfen antworten (Trigger: Nicht-Büro ändert nur die Antwort, Zeit setzt der Server).
   Im Protokoll nur sichtbar, wenn am Markt eine Frage offen ist (Fokus: Techniker nicht mit Neuem belasten) – im Formular
-  unter dem Markt, im geführten Dialog im Schritt „Gewartete/Betroffene Anlagen“.
+  unter dem Markt, im geführten Dialog im Schritt „Gewartete/Betroffene Anlagen“. Zusätzlich ganz oben im Kopf
+  „❓ n Frage(n) vor Ort“ (`P.vorOrtHinweis`, nur solange eine ohne Antwort offen ist; antippen springt hin – Inhaber 05.10.2026).
 - **Alte Liste prüfen** (`altlisteFunde`, Verwaltung › Datenpflege): Nebenfeld-Hinweise auf weitere Anlagen, Zellen ohne Datum,
   Inbetriebnahme nach erster Wartung, zwei Märkte an einer Adresse (nur ohne bzw. gleiche Filialnummer), Lidl ohne Filialnummer;
   „passt so“ bzw. „als Frage weitergegeben“ als Merker `altliste:<Schlüssel>`.
@@ -381,13 +433,16 @@ Kammerlander Umwelt- und Klimatechnik (UKT) – oft kurz, vom Handy, im Feld.
   Rechnung – Empfänger, IBAN, BIC, Betrag, „Rechnung <Nummer>“; nur mit gültiger IBAN (Prüfziffer, `ibanGueltig`) und Betrag ≥ 0,01 €; Umlaute umschrieben.
 - **Werkzeug und Material** (tools/werkzeug.sql, Reiter „Werkzeug“, Büro 04.10.2026: „dass man nichts vergisst“): `werkzeug`
   mit Standort (Lager, Fahrzeug, bei Person, Baustelle/Markt, Reparatur, sonst – `wzOrtText`), Zustand, Prüfung fällig, zurück am;
-  Standort-Verlauf schreibt nur der Trigger (`werkzeug_verlauf`). `bedarf` = was ein Einsatz braucht (mitnehmen / abholen bei … /
+  Standort-Verlauf schreibt nur der Trigger (`werkzeug_verlauf`). Als Ort ist jedes aktive Fahrzeug wählbar (Inhaber 05.10.2026
+  „Ja, nur Kennzeichen“): Datenbank-Funktion `fahrzeuge_auswahl()` liefert NUR Kennung, Kennzeichen, Bezeichnung, Fahrernamen
+  (`fzAuswahlLaden`, `wzFahrzeuge` – nur für die Werkzeug-Ortswahl); die Leseregel der Fahrzeuge bleibt (Techniker: nur das eigene). `bedarf` = was ein Einsatz braucht (mitnehmen / abholen bei … /
   bestellen bei …; offen → bestellt → abholbereit → erledigt), Bezug Projekt, Störung, Kalendertermin oder Markt (`bedarfZu`,
   `bedarfFuerEinsatz`; Datum/Person vom Termin bzw. Einsatz – mehrtägig bis zum letzten Tag –, sonst vom nächsten Projekt-/Markttermin:
   `bedarfWann`, `bedarfWer`, `bedarfEinsaetze`); `packlisten` (übernehmen ohne Doppel, je Bezug nacheinander).
   Erinnert in „Heute für dich“ (heute/morgen), „🔍 Planung prüfen“ (je Tag „Vorher besorgen“), Kalenderzeile 🧰, Büro-To-do
   (`wzToDo`). Kästen in Termin (gespeichert, nicht Abwesenheit/Privat), Störung, Projekt, Markt; Fahrzeug zeigt, was drin liegt.
-  Bedarf an einem privaten Termin sehen andere nie (`bedarfVerborgen`); nachträglich privat → Frage „mitlöschen?“.
+  Bedarf an einem privaten Termin sehen andere nie, nur der Inhaber (`bedarfVerborgen` mit `nurInhaber()`, als gelernter Vorschlag nie; die Datenbank sperrt es selbst – Sperrregel
+  „bedarf privat nur eigene“: nur wer den Termin angelegt hat oder dort eingetragen ist und der Inhaber, nicht Admins – Inhaber 05.10.2026); nachträglich privat → Frage „mitlöschen?“.
   Alle, die mitarbeiten, lesen und schreiben; Werkzeug/Packliste löschen nur Büro, Bedarf wer ihn angelegt hat oder Büro.
   Ausscheiden („im Bestand“ abwählen) fragt nach; Filter „Ausgeschieden“ (nur wenn es welches gibt) zum Wiederfinden/Zurückholen.
   Keine Preise, kein Lagerbestand. Kunde sieht nichts davon.
@@ -401,18 +456,27 @@ Kammerlander Umwelt- und Klimatechnik (UKT) – oft kurz, vom Handy, im Feld.
   „auslagen“ unter `<user_id>/`) oder „km“ (Strecke, km; Betrag = km × Satz rechnet der Trigger `auslagen_pruefen`, Satz aus
   `einstellungen.kilometergeld`, Standard 0,50 €). offen → eingereicht („Monat abgeben“, Nachricht nur an Inhaber) → ausbezahlt (nur Inhaber);
   Abgegebenes ändert nur der Inhaber. Jede Person sieht nur ihre eigenen, der Inhaber alle – KEINE Admins. Konto in `auslagen_konto`.
-  Kilometergeld nur fürs Privatauto (`fahrzeuge.privat_von`). PDF `akPdf` mit Belegfotos; Inhaber: „Reisekosten aller“, To-do
+  Kilometergeld nur MIT eingetragenem Privatauto (Pflicht, Inhaber 05.10.2026: `fahrzeuge.privat_von` = Person des Eintrags; `akOhneAutoText`,
+  Trigger `auslagen_pruefen_privatauto` in tools/rechte-2026-10-05.sql; reine Statusänderung alter Einträge ohne Fahrzeug geht weiter). PDF `akPdf` mit Belegfotos; Inhaber: „Reisekosten aller“, To-do
   (`akAbgegebenText`), Projekt zeigt die Summe (nur Inhaber); Bedarf „abholen/bestellen“ → „Selbst bezahlt – Beleg erfassen“.
-  Fremde Einträge ändert der Inhaber ohne Belegfoto (das liegt im Ordner der Person, ersetzen nur sie – „zurückgeben“). Nie lockern.
+  Belegfoto (Inhaber 05.10.2026, tools/rechte-2026-10-05.sql): nach der Abgabe ersetzt/entfernt es nur noch der Inhaber (Speicher-Regel; nach
+  „zurückgeben“ wieder die Person); ersetzt er das Foto eines fremden Eintrags, liegt das neue im Ordner der Person (`akFotoHochladen(datei, fuer)`),
+  das alte wird erst nach dem Speichern entfernt. Nie lockern.
 - **Diktieren** (`diktatKnopf`): Spracherkennung des Browsers, keine KI, Text wird angehängt.
 - **Rapport-Text** (`rapTextRein`): ausgeführte Arbeiten aus dem Lidl-Rapport zusätzlich in
   „Durchgeführte Maßnahmen“ bzw. „Bemerkungen“ – nie ersetzen, kein Feld fällt weg.
 - **Fahrtpauschale** (`fahrtZone`, Büro 02.10.2026): Zone 2 = Kärnten, Steiermark, Vorarlberg, Tirol westlich von
   Innsbruck (Innsbruck selbst Zone 1), Osttirol; sonst Zone 1. `einsatzPositionen` nimmt die Katalog-Position der Zone. Nur auf Anweisung ändern.
 - **Fahrzeuge** (tools/fahrzeuge.sql, Büro 02.10.2026): km, Pickerl, Service, Reparatur, Schaden; Techniker nur
-  ihr Fahrzeug (km-Stand, Schaden), Beträge nur Inhaber (`fahrzeug_kosten`). GPS-Import (X-GPS, CSV/Excel):
-  NUR Kilometer je Tag – nie Orte, Uhrzeiten oder Fahrten speichern (Fahrtenbuch mit Orten erst nach
-  Zustimmung/Betriebsvereinbarung). Diese Grenze nie lockern.
+  ihr Fahrzeug (km-Stand, Schaden), Beträge nur Inhaber (`fahrzeug_kosten`). Eigene Privatautos (auch mehrere) trägt jede Person
+  selbst ein (`privatautoEditor`, „+ Mein Privatauto“, Inhaber 05.10.2026): nur Kennzeichen, Bezeichnung, „in Verwendung“; Datenbank:
+  Regeln + Trigger `fahrzeuge_privat_pruefen` (tools/rechte-2026-10-05.sql) – Nicht-Büro nie fremde/Firmenfahrzeuge, nie Fristen/GPS.
+  GPS-Import (X-GPS, CSV/Excel): NUR Kilometer je Tag – nie Orte, Uhrzeiten oder Fahrten speichern (Fahrtenbuch mit Orten erst nach
+  Zustimmung/Betriebsvereinbarung). Diese Grenze nie lockern. Keine direkte
+  X-GPS-Anbindung (Inhaber 05.10.2026: „zu kompliziert und unnötig“) – stattdessen je Fahrzeug und Monat
+  „gefahren laut km-Stand“ (`fzKmLautStand`) neben „geplante Einsatzfahrten ≈ X km“ (`fzEinsatzKm`: je Fahrer und Tag
+  Startpunkt → Einsätze laut Kalender → zurück, Übernachtung wie beim Startpunkt; Straßen-km aus `FAHR_KM` von Kalender/Tour,
+  sonst Luftlinie × `UMWEG`; keine eigene Netzabfrage, nichts gespeichert). Sichtbar wie die km im Reiter Fahrzeuge.
 - **Spielwiese** (`spielwieseOeffnen`, `spielwieseDarf`: Inhaber, Admins und Techniker – je mit dem eigenen Konto und
   dessen Rechten, Büro 03.10.2026; nie Kunde/Präsentation): eigene App im geschützten Vollbild; darin
   `spielwiese()` statt `demo()` – alles läuft echt gegen die Schattendatenbank (`schattenClient`: Tabellen
@@ -428,7 +492,10 @@ Kammerlander Umwelt- und Klimatechnik (UKT) – oft kurz, vom Handy, im Feld.
 
 ## Rollen
 
-inhaber, admin, techniker, kunde, praesentation. Der Kunde darf nur ansehen
+inhaber, admin, techniker, kunde, praesentation. Testkonten ausblenden (Inhaber 05.10.2026): Haken „in
+Personenlisten ausblenden“ in der Kontenübersicht (Verwaltung › Inhaber) → `einstellungen.personen_ausblenden`
+{ids}; `chatTeamLaden` lässt sie in jeder Personenauswahl weg (`PERSONEN_AUS`), das Konto bleibt bestehen,
+schon Eingetragenes bleibt sichtbar. Keine Namen oder Kennungen in den Code. Der Kunde darf nur ansehen
 (`nurLesen()`). Die Präsentation darf alles bedienen wie ein Admin, gespeichert
 wird aber nichts (`demo()` – jedes Speichern muss `demo()` abfangen; die
 Vorschau eines Änderungswunsches läuft genauso). Verwaltung nur Admins

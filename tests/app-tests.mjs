@@ -1326,7 +1326,9 @@ test("Reisekosten: Beleg mit Foto, Kilometer Privatauto, Monat abgeben, Chef zah
     const wzFrage = !!d && /In die Werkzeugliste/.test(d.textContent);
     if (d) { const nein = [...d.querySelectorAll("button")].find((b) => /Nein/.test(b.textContent)); if (nein) nein.click(); }
     await warte(300);
-    /* Kilometer */
+    /* Kilometer – nur mit eingetragenem Privatauto (Inhaber 05.10.2026) */
+    db.fahrzeuge.push({ id: "fzRk", kennzeichen: "S-RK 1", fahrer: [ich], fahrer_namen: ["Testtechniker"], privat_von: ich, privat_name: "Testtechniker", aktiv: true });
+    await x("fzLaden(true)");
     x("akEditor(null, {art:'km'})"); await warte(400);
     d = dlg();
     d.querySelector('[data-f="text"]').value = "Salzburg – Saalfelden – Salzburg";
@@ -2598,12 +2600,12 @@ test("Tiefentest werkzeug: privater Termin, Störung fürs Büro, verliehen übe
       { id: "WTV21R", name: "Rohrzange TV21", standort_art: "reparatur", standort_text: "Fa. Rep", zurueck_am: vorgestern, zustand: "ok", aktiv: true });
     db.bedarf.push({ id: "BTV24B", art: "werkzeug", text: "Pumpe TV24B", werkzeug_id: "WTV24B", stoerung_id: "STV24B", standort_id: "TS1", status: "offen", beschaffung: "mitnehmen" });
     x("planungStand=0; planungNachladen()"); await warte(500); await x("fzLaden(true)"); await x("wzLaden(true)");
-    /* privater Termin des Technikers: der Inhaber sieht nur „Abwesend“ */
+    /* privater Termin des Technikers: der Inhaber sieht „Abwesend“ – das Material dazu sieht er auch (volle Kontrolle, Inhaber 05.10.2026), als Vorschlag lernt es aber niemand */
     const zeile = x("(kalenderEintraege('" + d.morgen + "','" + d.morgen + "','alle')['" + d.morgen + "']||[]).map(function(y){ return kalEintragZeile(y,true).textContent; }).join(' | ')");
-    soll(/Abwesend/.test(zeile) && !/Kardiologie/.test(zeile), "Inhaber sieht im Kalender beim privaten Termin: " + zeile);
+    soll(/Abwesend/.test(zeile) && /Kardiologie/.test(zeile), "Inhaber sieht im Kalender beim privaten Termin nicht „Abwesend“ mit Material: " + zeile);
     soll(!x("bedarfGelerntMarkt('TS1',[]).some(function(e){ return /Kardiologie/.test(e.text); })"), "Eintrag des privaten Termins als „An diesem Markt schon gebraucht“");
     x("S.bdAlle=true; S.view='werkzeug'; render()"); await warte(600);
-    soll(!/Kardiologie/.test(app()), "Inhaber sieht den Eintrag des privaten Termins im Reiter Werkzeug unter „Alle“");
+    soll(/Kardiologie/.test(app()), "Inhaber sieht den Eintrag des privaten Termins im Reiter Werkzeug unter „Alle“ nicht");
     /* Störung für den Techniker, Werkzeug im Büro-Auto: ⚠ (nicht „hat der Betrachter“) */
     x("OFFENE.push({_id:'STV24B', standortId:'TS1', termin:'" + heute + "', terminTechniker:'Testtechniker', erledigt:false}); 1");
     const info = JSON.parse(x("JSON.stringify(bedarfWerkzeugInfo(" + bd("BTV24B") + "))"));
@@ -3254,8 +3256,10 @@ test("Tiefentest reisekosten: Inhaber ändert fremde Einträge – Privatauto bl
     speichern(d); await warte(900);
     const b = db.auslagen.find((q) => q.id === "akB");
     p(b.betrag === 30, "RK-05/06 Betrag nicht gespeichert: " + b.betrag);
-    /* Speicher-Regel „auslagen fotos lesen“ (tools/reisekosten.sql): die Person liest nur ihren eigenen Ordner */
-    p(String(b.foto || "").indexOf("u_tech_test_at/") === 0 && !window.__entfernt.length, "RK-05 Belegfoto liegt im Ordner des Inhabers / Original entfernt: " + JSON.stringify({ foto: b.foto, entfernt: window.__entfernt }));
+    /* Speicher-Regel „auslagen fotos lesen“ (tools/reisekosten.sql): die Person liest nur ihren eigenen Ordner – der Inhaber ersetzt
+       das Foto dort (Antwort des Inhabers 05.10.2026, statt RK-05 „nur die Person“); das alte wird erst nach dem Speichern entfernt */
+    p(String(b.foto || "").indexOf("u_tech_test_at/") === 0 && b.foto !== "u_tech_test_at/b.jpg" && window.__entfernt.length === 1 && /u_tech_test_at\/b\.jpg/.test(window.__entfernt[0]),
+      "RK-05 Belegfoto liegt nicht im Ordner der Person bzw. das alte nicht (genau einmal) entfernt: " + JSON.stringify({ foto: b.foto, entfernt: window.__entfernt }));
     const eigene = (karte(/^Reisekosten und Kilometergeld/) || {}).textContent || "";
     p(!/Baumarkt Fremd|Linz/.test(eigene) && x("AUSLAGEN.filter(function(z){ return z.user_id!==meineKennung(); }).length") === 0, "RK-06 fremde Einträge in der eigenen Reisekosten-Karte des Inhabers");
     const alleText = (karte(/^Reisekosten aller/) || {}).textContent || "";
@@ -3318,6 +3322,9 @@ test("Tiefentest reisekosten: Erfassen – Vorschau wie gespeichert, Grenzen der
     };
     /* RK-11: alter Eintrag mit 0,42 €/km – die Vorschau nennt den Satz, mit dem gespeichert wird */
     db.auslagen.push({ id: "tkK1", user_id: "u_tech_test_at", name: "Testtechniker", art: "km", datum: heute, text: "Salzburg – Hallein – Salzburg", km: 100, km_satz: 0.42, betrag: 42, status: "offen", erstellt: new Date().toISOString() });
+    /* Kilometergeld nur mit eingetragenem Privatauto (Inhaber 05.10.2026) */
+    db.fahrzeuge.push({ id: "fzTk", kennzeichen: "S-TK 1", fahrer: ["u_tech_test_at"], fahrer_namen: ["Testtechniker"], privat_von: "u_tech_test_at", privat_name: "Testtechniker", aktiv: true });
+    await x("fzLaden(true)");
     x("S.view='stunden'; render()"); await warte(700);
     x("akEditor(AUSLAGEN.filter(function(z){ return z.id==='tkK1'; })[0])"); await warte(300);
     let d = dlg();
@@ -3536,7 +3543,7 @@ test("Tiefentest mail: Rechte – Posteingang nur für Mitarbeiter, KPlus-PDFs u
     p(dp.length === 2 && dp.every((f) => /\|buero\//.test(f)), "M3/M4 Posteingang (Inhaber): Rechnung bzw. Mail dazu nicht im Büro-Ordner: " + JSON.stringify(dp));
     k.remove(); x("ansichtenSchliessen()"); tm.ende();
 
-    /* als Admin: Mail und Rechnung aus dem Mailverlauf sind nicht zu sehen; aus dem Posteingang legt er nur den Plan ab */
+    /* als Admin: Mail und Rechnung aus dem Mailverlauf sind nicht zu sehen; Projektmails im Posteingang auch nicht */
     await tm.anmelden("admin@test.at", "admin"); tm.toastSpion(); await x("projekteLaden()");
     x("projektAnsicht('" + pv.id + "')"); await tm.bis(() => tm.dlg() && /Dateien/.test(tm.dlg().textContent));
     const karte = [...tm.dlg().querySelectorAll(".card")].find((c) => /^Dateien/.test((c.querySelector("h2") || {}).textContent || ""));
@@ -3550,22 +3557,11 @@ test("Tiefentest mail: Rechte – Posteingang nur für Mitarbeiter, KPlus-PDFs u
     await sbA.storage.from("posteingang").upload("2026/10/tm4d_413956.pdf", new Blob(["%PDF-1.4 KPlus 413956"], { type: "application/pdf" }));
     db.posteingang.push(pe("tm4c1", "tm4c", "mail", "Fwd Unterlagen P-2026-903.eml", "2026/10/tm4c_mail.eml"), pe("tm4c2", "tm4c", "unbekannt", "413955.pdf", "2026/10/tm4c_413955.pdf"),
       pe("tm4c3", "tm4c", "unbekannt", "Plan OG.pdf", "2026/10/tm4c_plan.pdf"), pe("tm4d1", "tm4d", "mail", "Fwd Rechnung 413956.eml", "2026/10/tm4c_mail.eml"), pe("tm4d2", "tm4d", "unbekannt", "413956.pdf", "2026/10/tm4d_413956.pdf"));
-    k = x("posteingangKarte()"); document.body.appendChild(k); await tm.bis(() => k.querySelectorAll(".posbox").length >= 2);
-    const box = (re) => [...k.querySelectorAll(".posbox")].find((b) => re.test(b.textContent));
-    /* nur Mail + KPlus-Rechnung: gar kein Dialog, sichtbarer Hinweis */
-    window.__toasts = []; tm.knopf(box(/413956/), /Zu Projekt legen/).click(); await tm.warte(300);
-    p(!document.querySelector(".assistent") && window.__toasts.some((t) => /nur der Inhaber/.test(t)), "M4 Admin: Mail nur mit KPlus-Rechnung – kein Hinweis bzw. Dialog offen: " + JSON.stringify(window.__toasts));
-    /* Mail + KPlus + Plan: der Plan kommt ins Projekt, Mail und KPlus bleiben für den Inhaber im Posteingang */
-    tm.knopf(box(/413955/), /Zu Projekt legen/).click(); await tm.bis(() => tm.fuss(/Ins Projekt legen/));
-    d = tm.dlg();
-    p(/nur der Inhaber/.test(d.textContent), "M4 Admin: Dialog sagt nicht, dass Angebot/Rechnung nur der Inhaber ablegt");
-    d.querySelector("[data-p]").value = "tmp_r3"; window.__toasts = [];
-    tm.fuss(/Ins Projekt legen/).click(); await tm.toastBis(/abgelegt|^Nicht/);
-    const da = (db.projekte.find((q) => q.id === "tmp_r3").daten.dateien || []).filter((f) => /Fwd Unterlagen|413955|Plan OG/.test(f.name)).map((f) => f.art + "|" + f.name);
-    p(da.length === 1 && da[0] === "plan|Plan OG.pdf", "M4 Admin hat Angebot/Rechnung bzw. die Mail dazu abgelegt: " + JSON.stringify(da));
-    p(["tm4c1", "tm4c2"].every((id) => db.posteingang.find((e) => e.id === id).status === "neu") && db.posteingang.find((e) => e.id === "tm4c3").status === "erledigt",
-      "M4 Posteingang nach dem Ablegen durch den Admin: " + JSON.stringify(db.posteingang.filter((e) => /^tm4c/.test(e.id)).map((e) => e.id + ":" + e.status)));
-    p(window.__toasts.some((t) => /bleiben für den Inhaber/.test(t)) && /413955/.test(k.textContent), "M4 Admin: kein Hinweis bzw. die Karte für den Inhaber fehlt: " + JSON.stringify(window.__toasts));
+    /* Antwort des Inhabers 05.10.2026: weitergeleitete Mails (Projekte) samt Anhängen sieht NUR der Inhaber – der Admin
+       bekommt sie weder aus der Datenbank noch als Karte (früher legte er hier den Plan ab, Angebot/Rechnung blieben liegen) */
+    const zeilenA = ((await sbA.from("posteingang").select("*")).data || []).filter((e) => /^tm4[cd]/.test(e.id));
+    k = x("posteingangKarte()"); document.body.appendChild(k); await tm.bis(() => !/wird geladen/.test(k.textContent));
+    p(!zeilenA.length && !/413955|413956|Plan OG|Fwd Unterlagen/.test(k.textContent), "M4 Admin sieht Projektmails im Posteingang: " + JSON.stringify(zeilenA.map((e) => e.id)) + " " + k.textContent.slice(0, 200));
     k.remove();
     return { fehlt };
   });
@@ -4500,44 +4496,1215 @@ test("Tiefentest werkzeug: verletzte Prüfregel beim Speichern meldet nicht „n
   await a.zu();
 });
 
-/* ---- Anlagenfotos: Hilfen für die KI-Prüfbuch-Erkennung im Test (Fotos, Antwort der KI, Knöpfe) ---- */
-async function afHilfen(a) {
-  await a.seite.evaluate(() => {
-    const x = window.__t.x;
-    const af = window.__af = {
-      warte: (ms) => new Promise((f) => setTimeout(f, ms)),
-      /* das oberste Fenster und ein Knopf darin (Text als Regex) */
-      oben: () => [...document.querySelectorAll(".assistent")].sort((p, q) => (+p.style.zIndex || 0) - (+q.style.zIndex || 0)).pop(),
-      knopf: async (re, ms) => { for (let i = 0; i < (ms || 3000) / 50; i++) { const o = af.oben();
-          const b = o && [...o.querySelectorAll("button")].find((k) => re.test(k.textContent) && !k.disabled);
-          if (b) { b.click(); await af.warte(30); return true; } await af.warte(50); } return false; },
-      titel: () => [...document.querySelectorAll(".assistent .as-titel")].map((t) => t.textContent),
-      /* n kleine Fotos (unterschiedlicher Inhalt) */
-      fotos: (n, farbe) => Promise.all(Array.from({ length: n }, (_, i) => new Promise((f) => {
-        const c = document.createElement("canvas"); c.width = 30; c.height = 40; const g = c.getContext("2d");
-        g.fillStyle = "rgb(" + (farbe || 10) + "," + (i * 40 % 255) + ",90)"; g.fillRect(0, 0, 30, 40);
-        c.toBlob((b) => f(new File([b], "s" + i + ".jpg", { type: "image/jpeg" })), "image/jpeg"); }))),
-      /* Prüfbuch-Antwort: je Buch {sn, daten:[…]} */
-      antwort: (buecher, bilder) => { window.__kiAntwort = (name, body) => ({ data: { art: "pruefbuch", modell: "test", daten: {
-        pruefbuecher: buecher.map((b) => ({ anlage: { bezeichnung: "Testanlage " + b.sn, seriennummer: b.sn, hersteller: "Testwerk", kaeltemittelKg: "12" },
-          pruefungen: (b.daten || []).map((d) => ({ datum: d, techniker: "T", firma: "Testfirma" })), unsicher: [], hinweise: "" })),
-        bilder: bilder || [], hinweise: "" } }, error: null }); },
-      /* Prüfbuch über den KI-Knopf im Anlagen-Dialog lesen und Angehaktes übernehmen */
-      lesen: async (n, farbe) => {
-        x("(function(){ kiFotosWaehlen=function(){ return window.__af.fotos(" + n + "," + (farbe || 10) + "); }; return 1; })()");
-        if (!await af.knopf(/Aus Fotos lesen \(KI\)/)) return "kein KI-Knopf";
-        if (!await af.knopf(/^Prüfbuch/)) return "keine Wahl Prüfbuch";
-        if (!await af.knopf(/Direkt in der App/)) return "kein Weg direkt";
-        return "";
-      },
-      fotosDb: () => window.__db.tabellen.anlagenfotos.slice(),
-    };
+/* ---- Antworten des Inhabers vom 05.10.2026: Stunden und Abwesenheiten ---- */
+test("Antworten stunden: Abwesenheiten anderer nur der Inhaber – Admin wie Techniker nur für sich, aus gemeinsamen nur sich selbst herausnehmen", async () => {
+  const fehl = [];
+  const a = await oeffnen(KONTEN.admin);
+  await ttHilfen(a);
+  const r = await a.seite.evaluate(async () => {
+    const tt = window.__tt, x = window.__t.x, db = window.__db.tabellen, sb = x("Store.sb"), e = {}; tt.leeren();
+    const ich = tt.ich(), tech = "u_tech_test_at", inh = "u_inhaber_test_at";
+    const t1 = x("werktagAb(plusTage(isoLokal(new Date()),7))"), t3 = x("plusTage('" + t1 + "',2)");
+    const nein = (q) => (q.error || !(q.data || []).length ? "abgelehnt" : "angenommen");
+    const knoepfe = (d) => [...d.querySelectorAll(".as-fuss button")].map((b) => b.textContent.trim());
+    /* (a) neue Schule für mich und einen Kollegen: wählbar ist nur „ich“, gespeichert nur für mich */
+    x("planEditor(null, {art:'termin', kategorie:'schule', titel:'Kurs AW', datum:'" + t1 + "', wer:['" + ich + "','" + tech + "'], wer_namen:['Testadmin','Testtechniker']})"); await tt.warte(300);
+    let d = tt.dialog();
+    e.chips = [...d.querySelectorAll("[data-wer] .chip")].map((c) => c.textContent);
+    tt.ok(d).click(); await tt.warte(400);
+    e.gespeichert = db.planung.filter((p) => p.titel === "Kurs AW").map((p) => (p.wer || []).join());
+    x("ansichtenSchliessen()");
+    /* (b) Datenbank: für einen anderen anlegen, seine Abwesenheit ändern oder löschen – abgelehnt; Wartung für andere wie bisher */
+    e.anlegenFremd = nein(await sb.from("planung").insert({ art: "termin", kategorie: "zeitausgleich", titel: "ZA", datum: t1, wer: [tech], wer_namen: ["Testtechniker"] }).select("*"));
+    db.planung.push({ id: "aw1u", art: "termin", kategorie: "urlaub", titel: "Urlaub", datum: t1, datum_bis: t3, wer: [tech], wer_namen: ["Testtechniker"], status: "genehmigt", erstellt_von: inh, erstellt: new Date().toISOString(), privat: false, ausnahmen: {} });
+    e.aendernFremd = nein(await sb.from("planung").update({ datum_bis: t1 }).eq("id", "aw1u").select("*"));
+    e.loeschenFremd = nein(await sb.from("planung").delete().eq("id", "aw1u").select("id"));
+    e.wartungFremd = nein(await sb.from("planung").insert({ art: "termin", kategorie: "wartung", titel: "Wartung", datum: t1, wer: [tech], wer_namen: ["Testtechniker"] }).select("*"));
+    /* (c) fremder Urlaub geöffnet: schreibgeschützt mit Hinweis – kein Speichern, Löschen, Tag herausnehmen, nicht ziehbar */
+    await tt.laden();
+    x("planEditor(PLANUNG.filter(function(p){ return p.id==='aw1u'; })[0])"); await tt.warte(300);
+    d = tt.dialog();
+    e.fremd = { hinweis: /ändert nur der Inhaber/.test(d.textContent), knoepfe: knoepfe(d).filter((t) => /Speichern|Löschen/.test(t)), felderAn: [...d.querySelectorAll("form input, form select, form textarea, form button")].filter((f) => !f.disabled).length,
+      heraus: /Tage herausnehmen/.test(d.textContent), ziehen: x("kalDarfZiehen({art:'termin', e:PLANUNG.filter(function(p){ return p.id==='aw1u'; })[0]})") };
+    x("ansichtenSchliessen()");
+    /* (d) gemeinsamer Kurs (ich und der Techniker): nur mich herausnehmen – sonst nichts */
+    db.planung.push({ id: "aw1k", art: "termin", kategorie: "schule", titel: "Kältekurs", datum: t1, datum_bis: t3, wer: [ich, tech], wer_namen: ["Testadmin", "Testtechniker"], status: "offen", erstellt_von: inh, erstellt: new Date().toISOString(), privat: false, ausnahmen: {} });
+    await tt.laden();
+    x("planEditor(PLANUNG.filter(function(p){ return p.id==='aw1k'; })[0])"); await tt.warte(300);
+    d = tt.dialog();
+    e.kurs = { optionen: [...d.querySelectorAll("[data-fuer] option")].map((o) => o.textContent), knoepfe: knoepfe(d).filter((t) => /Speichern|Löschen/.test(t)) };
+    x("ansichtenSchliessen()");
+    e.kurs.titel = nein(await sb.from("planung").update({ titel: "Anders" }).eq("id", "aw1k").select("*"));
+    e.kurs.kollegeRaus = nein(await sb.from("planung").update({ wer: [ich], wer_namen: ["Testadmin"] }).eq("id", "aw1k").select("*"));
+    e.kurs.antwort = nein(await sb.from("planung").update({ ausnahmen: { [t1]: { [ich]: { art: "eingesprungen", von: "Testadmin" } } } }).eq("id", "aw1k").select("*"));
+    e.kurs.selbstRaus = nein(await sb.from("planung").update({ wer: [tech], wer_namen: ["Testtechniker"] }).eq("id", "aw1k").select("*"));
+    /* (e) eigene Abwesenheit: anlegen, ändern, löschen – erlaubt */
+    const eig = await sb.from("planung").insert({ art: "termin", kategorie: "krank", titel: "Krank", datum: t1, wer: [ich], wer_namen: ["Testadmin"] }).select("*");
+    const id = eig.data && eig.data[0].id;
+    e.eigen = [nein(eig), id ? nein(await sb.from("planung").update({ datum_bis: t3 }).eq("id", id).select("*")) : "-", id ? nein(await sb.from("planung").delete().eq("id", id).select("id")) : "-"].join();
+    return e;
   });
-}
+  if (r.chips.length !== 1 || !/\(ich\)/.test(r.chips[0]) || JSON.stringify(r.gespeichert) !== JSON.stringify(["u_admin_test_at"])) fehl.push("(a) Abwesenheit für andere wählbar: " + JSON.stringify([r.chips, r.gespeichert]));
+  if (r.anlegenFremd !== "abgelehnt" || r.aendernFremd !== "abgelehnt" || r.loeschenFremd !== "abgelehnt" || r.wartungFremd !== "angenommen") fehl.push("(b) Datenbank: " + JSON.stringify(r));
+  if (!r.fremd.hinweis || r.fremd.knoepfe.length || r.fremd.felderAn || r.fremd.heraus || r.fremd.ziehen) fehl.push("(c) fremder Urlaub nicht schreibgeschützt: " + JSON.stringify(r.fremd));
+  if (JSON.stringify(r.kurs.optionen) !== JSON.stringify(["nur Testadmin"]) || r.kurs.knoepfe.length || r.kurs.titel !== "abgelehnt" || r.kurs.kollegeRaus !== "abgelehnt" || r.kurs.antwort !== "angenommen" || r.kurs.selbstRaus !== "angenommen")
+    fehl.push("(d) gemeinsamer Kurs: " + JSON.stringify(r.kurs));
+  if (r.eigen !== "angenommen,angenommen,angenommen") fehl.push("(e) eigene Abwesenheit: " + r.eigen);
+  if (a.fehler.length) fehl.push("Laufzeitfehler (Admin): " + a.fehler.join("; "));
+  await a.zu();
+  /* der Inhaber: für andere anlegen, ändern, löschen – im Termin mit Personenwahl */
+  const b = await oeffnen(KONTEN.inhaber);
+  await ttHilfen(b);
+  const r2 = await b.seite.evaluate(async () => {
+    const tt = window.__tt, x = window.__t.x, sb = x("Store.sb"); tt.leeren();
+    const tech = "u_tech_test_at", t1 = x("werktagAb(plusTage(isoLokal(new Date()),7))");
+    const ins = await sb.from("planung").insert({ art: "termin", kategorie: "schule", titel: "Kurs", datum: t1, wer: [tech], wer_namen: ["Testtechniker"] }).select("*");
+    const id = ins.data && ins.data[0].id;
+    const upd = id ? await sb.from("planung").update({ titel: "Kurs neu" }).eq("id", id).select("*") : {};
+    await tt.laden();
+    x("planEditor(PLANUNG.filter(function(p){ return p.id==='" + id + "'; })[0])"); await tt.warte(400);
+    const d = tt.dialog(), kn = [...d.querySelectorAll(".as-fuss button")].map((k) => k.textContent.trim()), chips = d.querySelectorAll("[data-wer] .chip").length;
+    x("ansichtenSchliessen()");
+    const del = id ? await sb.from("planung").delete().eq("id", id).select("id") : {};
+    return { anlegen: !ins.error, aendern: !upd.error && (upd.data || []).length === 1, speichern: kn.includes("Speichern"), loeschen: kn.includes("Löschen"), chips, loeschenDb: !del.error && (del.data || []).length === 1 };
+  });
+  if (!r2.anlegen || !r2.aendern || !r2.speichern || !r2.loeschen || r2.chips < 2 || !r2.loeschenDb) fehl.push("Inhaber darf Abwesenheit anderer nicht verwalten: " + JSON.stringify(r2));
+  if (b.fehler.length) fehl.push("Laufzeitfehler (Inhaber): " + b.fehler.join("; "));
+  await b.zu();
+  pruefe(!fehl.length, fehl.join(" | "));
+});
 
-/* Inhaber 06.10.2026: „Die Fotos von Prüfbüchern … sollten auch in den Anlagedaten und im Anlagenbuch zu finden sein.“ –
-   in der Datenbank lag kein einziges Foto. Alle Wege der KI-Prüfbuch-Erkennung: bekannte Anlage, mehrere Bücher, neue Anlage
-   (Verwaltung und Protokoll), dazu Anlagenbuch und Historie */
+test("Antworten stunden: genehmigten Urlaub löscht nur der Inhaber – die Person zieht ihn zurück, der Chef bekommt eine Nachricht", async () => {
+  const fehl = [];
+  const a = await oeffnen(KONTEN.techniker);
+  await ttHilfen(a);
+  const r = await a.seite.evaluate(async () => {
+    const tt = window.__tt, x = window.__t.x, db = window.__db.tabellen, sb = x("Store.sb"), e = {}; tt.leeren();
+    const ich = tt.ich(), t1 = x("werktagAb(plusTage(isoLokal(new Date()),14))"), t3 = x("plusTage('" + t1 + "',2)");
+    const nein = (q) => (q.error || !(q.data || []).length ? "abgelehnt" : "angenommen");
+    ["genehmigt", "beantragt"].forEach((st) => db.planung.push({ id: "aw2" + st, art: "termin", kategorie: "urlaub", titel: "Urlaub", datum: t1, datum_bis: t3, wer: [ich], wer_namen: ["Testtechniker"], status: st,
+      erstellt_von: ich, erstellt: new Date().toISOString(), privat: false, ausnahmen: {} }));
+    await tt.laden();
+    const oeffne = async (id) => { x("planEditor(PLANUNG.filter(function(p){ return p.id==='" + id + "'; })[0])"); await tt.warte(200); return [...tt.dialog().querySelectorAll(".as-fuss button")]; };
+    let kn = await oeffne("aw2genehmigt");
+    e.genehmigt = kn.map((b) => b.textContent.trim());
+    const zk = kn.find((b) => /zurückziehen/.test(b.textContent)), chatVorher = db.chat.length;
+    window.__dialoge.length = 0;
+    if (zk) { zk.click(); await tt.warte(600); }
+    e.rueckfrage = window.__dialoge.filter((d) => d[0] === "confirm").map((d) => d[1]).join(" | ");
+    e.nachricht = db.chat.slice(chatVorher).map((c) => c.an + ": " + c.text);
+    e.toast = tt.toasts.join(" | ");
+    e.nochDa = db.planung.some((p) => p.id === "aw2genehmigt" && p.status === "genehmigt");
+    x("ansichtenSchliessen()");
+    e.beantragt = (await oeffne("aw2beantragt")).map((b) => b.textContent.trim()); x("ansichtenSchliessen()");
+    e.loeschenGenehmigt = nein(await sb.from("planung").delete().eq("id", "aw2genehmigt").select("id"));
+    e.loeschenBeantragt = nein(await sb.from("planung").delete().eq("id", "aw2beantragt").select("id"));
+    return e;
+  });
+  if (r.genehmigt.includes("Löschen") || !r.genehmigt.includes("Urlaub zurückziehen")) fehl.push("Knöpfe bei genehmigtem Urlaub: " + JSON.stringify(r.genehmigt));
+  if (!/zurückziehen/.test(r.rueckfrage) || r.nachricht.length !== 1 || !/^u_inhaber_test_at: .*zurück/.test(r.nachricht[0]) || !/Der Chef bekommt eine Nachricht/.test(r.toast) || !r.nochDa)
+    fehl.push("Zurückziehen: " + JSON.stringify({ rueckfrage: r.rueckfrage, nachricht: r.nachricht, toast: r.toast, nochDa: r.nochDa }));
+  if (!r.beantragt.includes("Löschen") || r.beantragt.includes("Urlaub zurückziehen")) fehl.push("Knöpfe bei beantragtem Urlaub: " + JSON.stringify(r.beantragt));
+  if (r.loeschenGenehmigt !== "abgelehnt" || r.loeschenBeantragt !== "angenommen") fehl.push("Datenbank: " + JSON.stringify([r.loeschenGenehmigt, r.loeschenBeantragt]));
+  if (a.fehler.length) fehl.push("Laufzeitfehler (Techniker): " + a.fehler.join("; "));
+  await a.zu();
+  const b = await oeffnen(KONTEN.inhaber);
+  await ttHilfen(b);
+  const r2 = await b.seite.evaluate(async () => {
+    const tt = window.__tt, x = window.__t.x, db = window.__db.tabellen, sb = x("Store.sb"); tt.leeren();
+    const t1 = x("werktagAb(plusTage(isoLokal(new Date()),14))");
+    db.planung.push({ id: "aw2i", art: "termin", kategorie: "urlaub", titel: "Urlaub", datum: t1, wer: ["u_tech_test_at"], wer_namen: ["Testtechniker"], status: "genehmigt", erstellt_von: "u_tech_test_at", erstellt: new Date().toISOString(), privat: false, ausnahmen: {} });
+    await tt.laden();
+    x("planEditor(PLANUNG.filter(function(p){ return p.id==='aw2i'; })[0])"); await tt.warte(200);
+    const kn = [...tt.dialog().querySelectorAll(".as-fuss button")].map((k) => k.textContent.trim()); x("ansichtenSchliessen()");
+    const del = await sb.from("planung").delete().eq("id", "aw2i").select("id");
+    return { kn, geloescht: !del.error && (del.data || []).length === 1 };
+  });
+  if (!r2.kn.includes("Löschen") || r2.kn.includes("Urlaub zurückziehen") || !r2.geloescht) fehl.push("Inhaber löscht genehmigten Urlaub nicht: " + JSON.stringify(r2));
+  if (b.fehler.length) fehl.push("Laufzeitfehler (Inhaber): " + b.fehler.join("; "));
+  await b.zu();
+  pruefe(!fehl.length, fehl.join(" | "));
+});
+
+test("Antworten stunden: Krankenstand anderer sehen Kollegen nur als „Abwesend“ – die Art nur der Inhaber und die Person selbst", async () => {
+  const fehl = [];
+  const sicht = async (konto) => {
+    const a = await oeffnen(konto);
+    await ttHilfen(a);
+    const r = await a.seite.evaluate(async () => {
+      const tt = window.__tt, x = window.__t.x, db = window.__db.tabellen, e = {}; tt.leeren();
+      const adm = "u_admin_test_at", t1 = x("werktagAb(plusTage(isoLokal(new Date()),7))"), t2 = x("plusTage('" + t1 + "',1)");
+      const z = { art: "termin", wer: [adm], wer_namen: ["Testadmin"], erstellt_von: "u_inhaber_test_at", erstellt: new Date().toISOString(), privat: false, ausnahmen: {}, status: "offen" };
+      db.planung.push(Object.assign({ id: "aw3k", kategorie: "krank", titel: "Grippe Testadmin", details: "Arztbrief folgt", datum: t1 }, z));
+      db.planung.push(Object.assign({ id: "aw3s", kategorie: "schule", titel: "Kältekurs", datum: t2 }, z));
+      await tt.laden();
+      e.kal = Object.values(x("kalenderEintraege('" + t1 + "', '" + t2 + "', 'alle')")).flat().filter((y) => y.e).map((y) => y.titel + "|" + y.farbe).sort();
+      e.grau = x("planKat('privat')[2]"); e.krank = x("planKat('krank')[2]"); e.schule = x("planKat('schule')[2]");
+      x("planEditor(PLANUNG.filter(function(p){ return p.id==='aw3k'; })[0])"); await tt.warte(200);
+      const d = tt.dialog();
+      e.editor = (d.innerText + " " + [...d.querySelectorAll("input, textarea")].map((f) => f.value).join(" ") + " " +
+        [...d.querySelectorAll("select")].map((f) => (f.options[f.selectedIndex] || {}).text || "").join(" ")).replace(/\s+/g, " "); x("ansichtenSchliessen()");
+      e.verplant = x("verplantPruefen(['" + adm + "'], ['Testadmin'], '" + t1 + "', '" + t1 + "', 0, 1440)").join(" ");
+      x("S.view='kalender'; S.kalModus='monat'; S.kMonat='" + t1.slice(0, 7) + "'; S.kalWer='alle'; S.kalNur=''; render()"); await tt.warte(500);
+      e.reiter = /Grippe/.test(document.body.innerText);
+      return e;
+    });
+    if (a.fehler.length) fehl.push("Laufzeitfehler (" + konto + "): " + a.fehler.join("; "));
+    await a.zu();
+    return r;
+  };
+  const t = await sicht(KONTEN.techniker);
+  if (JSON.stringify(t.kal) !== JSON.stringify(["Abwesend|" + t.grau, "Kältekurs|" + t.schule]) || /Grippe|Krankenstand|Arztbrief/.test(t.editor) || !/abwesend/.test(t.editor) ||
+      /Grippe/.test(t.verplant) || !/Abwesend/.test(t.verplant) || t.reiter) fehl.push("Techniker sieht den Krankenstand: " + JSON.stringify(t));
+  const i = await sicht(KONTEN.inhaber), s = await sicht(KONTEN.admin);
+  [["Inhaber", i], ["Person selbst", s]].forEach(([wer, r]) => {
+    if (JSON.stringify(r.kal) !== JSON.stringify(["Grippe Testadmin|" + r.krank, "Kältekurs|" + r.schule]) || !/Grippe/.test(r.editor) || !r.reiter) fehl.push(wer + " sieht den Krankenstand nicht: " + JSON.stringify(r));
+  });
+  pruefe(!fehl.length, fehl.join(" | "));
+});
+
+test("Antworten stunden: bestätigter Monat sperrt auch neue Einträge – von Hand, Stempeln, Abgleich; nur der Inhaber trägt nach oder öffnet wieder", async () => {
+  const fehl = [], GESPERRT = /Monat ist bestätigt – nur der Inhaber kann noch etwas eintragen/;
+  const a = await oeffnen(KONTEN.techniker);
+  await ttHilfen(a);
+  const r = await a.seite.evaluate(async () => {
+    const tt = window.__tt, x = window.__t.x, db = window.__db.tabellen, sb = x("Store.sb"), e = {}; tt.leeren();
+    const ich = tt.ich(), heute = x("isoLokal(new Date())"), vm = x("plusMonate(isoLokal(new Date()),-1).slice(0,7)"), jetzt = new Date().toISOString();
+    const zeile = (z) => Object.assign({ user_id: ich, name: "T", minuten: 60, art: "arbeit", quelle: "hand", pause_min: 0 }, z);
+    db.arbeitszeiten.push(zeile({ id: "aw4v", datum: vm + "-02", bestaetigt: jetzt }));
+    await tt.laden();
+    /* (a) von Hand im bestätigten Vormonat: klare Meldung, nichts gespeichert */
+    x("zeitEditor(null, {datum:'" + vm + "-10', beginn:'08:00', ende:'10:00', art:'arbeit', bereich:'werkstatt'})"); await tt.warte(200);
+    let d = tt.dialog(); e.hinweis = /Monat ist bestätigt/.test(d.textContent);
+    tt.ok(d).click(); await tt.warte(300);
+    e.meldung = (d.querySelector("[data-err]") || {}).textContent || "";
+    e.handGespeichert = db.arbeitszeiten.some((z) => z.datum === vm + "-10");
+    x("ansichtenSchliessen()");
+    /* (b) Datenbank: neuer Eintrag im bestätigten Monat abgelehnt; im offenen Monat geht es */
+    const ins = await sb.from("arbeitszeiten").insert(zeile({ datum: vm + "-11" })).select("*");
+    e.db = ins.error ? ins.error.message : "angenommen";
+    const ok = await sb.from("arbeitszeiten").insert(zeile({ datum: heute })).select("*");
+    e.dbOffen = ok.error ? ok.error.message : "angenommen";
+    /* (c) Abgleich im bestätigten Monat (ein später dazugekommener, offener Stempel-Eintrag): App meldet es, Datenbank lehnt ab */
+    tt.gestempelt({ datum: vm + "-12", beginn: "07:00", ende: "15:00", minuten: 450, pause_min: 30, bereich: "wartung" });
+    await tt.laden(); tt.toasts.length = 0;
+    x("abgleichDialog('" + vm + "-12', false)"); await tt.warte(200);
+    e.abgleichApp = { toast: tt.toasts.join(" | "), dialog: !!tt.dialog() }; x("ansichtenSchliessen()");
+    const ab = await sb.rpc("stempel_abgleich", { p_datum: vm + "-12", p_teile: [{ beginn: "07:00", ende: "15:00", bereich: "wartung" }] });
+    e.abgleichDb = ab.error ? ab.error.message : "angenommen";
+    /* (d) Stempeln, wenn der laufende Monat schon bestätigt ist: einstempeln meldet es; ausstempeln lehnt die Datenbank ab */
+    tt.leeren(); db.arbeitszeiten.push(zeile({ id: "aw4h", datum: heute, bestaetigt: jetzt })); await tt.laden();
+    x("stempelGeladen=true; STEMPEL=[]; S.view='stunden'; render()"); await tt.warte(500);
+    const karte = document.getElementById("stempelkarte");
+    const chip = karte.querySelector(".chips .chip[data-b]"); if (chip) chip.click();
+    tt.toasts.length = 0; karte.querySelector("[data-ein]").click(); await tt.warte(500);
+    e.einApp = { toast: tt.toasts.join(" | "), stempel: db.stempel.length, frage: !!tt.dialog() };
+    x("ansichtenSchliessen()");
+    db.stempel.push({ id: "aw4s", user_id: ich, name: "T", art: "ein", zeit: new Date(Date.now() - 60000).toISOString(), bereich: "werkstatt" });
+    const vorher = db.arbeitszeiten.length, aus = await sb.rpc("stempeln", { p_art: "aus", p_name: "T" });
+    e.ausDb = { meldung: aus.error ? aus.error.message : "angenommen", eintraege: db.arbeitszeiten.length - vorher, nochEin: db.stempel.length === 1 };
+    return e;
+  });
+  if (!r.hinweis || !/Monat ist bestätigt/.test(r.meldung) || r.handGespeichert) fehl.push("(a) von Hand: " + JSON.stringify(r));
+  if (!GESPERRT.test(r.db) || r.dbOffen !== "angenommen") fehl.push("(b) Datenbank: " + JSON.stringify([r.db, r.dbOffen]));
+  if (!GESPERRT.test(r.abgleichApp.toast) || r.abgleichApp.dialog || !GESPERRT.test(r.abgleichDb)) fehl.push("(c) Abgleich: " + JSON.stringify([r.abgleichApp, r.abgleichDb]));
+  if (!GESPERRT.test(r.einApp.toast) || r.einApp.stempel || r.einApp.frage || !GESPERRT.test(r.ausDb.meldung) || r.ausDb.eintraege || !r.ausDb.nochEin) fehl.push("(d) Stempeln: " + JSON.stringify([r.einApp, r.ausDb]));
+  if (a.fehler.length) fehl.push("Laufzeitfehler (Techniker): " + a.fehler.join("; "));
+  await a.zu();
+  /* der Inhaber: trägt im bestätigten Monat nach und öffnet ihn wieder */
+  const b = await oeffnen(KONTEN.inhaber);
+  await ttHilfen(b);
+  const r2 = await b.seite.evaluate(async () => {
+    const tt = window.__tt, x = window.__t.x, db = window.__db.tabellen, sb = x("Store.sb"); tt.leeren();
+    const tech = "u_tech_test_at", vm = x("plusMonate(isoLokal(new Date()),-1).slice(0,7)");
+    db.arbeitszeiten.push({ id: "aw4i", user_id: tech, name: "Testtechniker", datum: vm + "-02", minuten: 480, art: "arbeit", quelle: "hand", pause_min: 0, bestaetigt: new Date().toISOString(), bestaetigt_von: "Testinhaber" });
+    const ins = await sb.from("arbeitszeiten").insert({ user_id: tech, name: "Testtechniker", datum: vm + "-03", minuten: 60, art: "arbeit", quelle: "hand" }).select("*");
+    x("S.view='stunden'; S.stMonat='" + vm + "'; render()"); await tt.warte(800);
+    const knopf = [...document.querySelectorAll("button")].find((k) => /Wieder öffnen/.test(k.textContent));
+    if (knopf) { knopf.click(); await tt.warte(500); }
+    return { nachtragen: ins.error ? ins.error.message : "angenommen", knopf: !!knopf, nochBestaetigt: db.arbeitszeiten.filter((z) => z.user_id === tech && z.bestaetigt).length };
+  });
+  if (r2.nachtragen !== "angenommen" || !r2.knopf || r2.nochBestaetigt) fehl.push("Inhaber: " + JSON.stringify(r2));
+  if (b.fehler.length) fehl.push("Laufzeitfehler (Inhaber): " + b.fehler.join("; "));
+  await b.zu();
+  pruefe(!fehl.length, fehl.join(" | "));
+});
+
+test("Antworten stunden: Arbeit planen (📅) schlägt freitags 07:00–14:00 vor – mit 30 min Pause das Tagessoll von 6:30 h", async () => {
+  const a = await oeffnen(KONTEN.techniker);
+  const r = await a.seite.evaluate(async () => {
+    const x = window.__t.x, warte = (ms) => new Promise((f) => setTimeout(f, ms));
+    x("S.view='stunden'; S.stWoche=montagVon(isoLokal(new Date())); render()"); await warte(600);
+    const tage = [...document.querySelectorAll("[data-tage] > div")];
+    const vorschlag = (i) => { tage[i].querySelector("[data-planen]").click(); const d = [...document.querySelectorAll(".assistent")].pop();
+      const v = d.querySelector('[data-f="beginn"]').value + "–" + d.querySelector('[data-f="ende"]').value; x("ansichtenSchliessen()"); return v; };
+    return { montag: vorschlag(0), freitag: vorschlag(4), rundgang: JSON.stringify(x("RUNDGAENGE")).match(/Vorschlag 07:00[^)]*\)/g) };
+  });
+  pruefe(r.montag === "07:00–15:30" && r.freitag === "07:00–14:00", "Vorschlag beim Planen: " + JSON.stringify(r));
+  pruefe(JSON.stringify(r.rundgang) === JSON.stringify(["Vorschlag 07:00–15:30, freitags bis 14:00)"]), "Rundgang nennt die Freitag-Vorgabe falsch: " + JSON.stringify(r.rundgang));
+  pruefe(!a.fehler.length, "Laufzeitfehler: " + a.fehler.join("; "));
+  await a.zu();
+});
+
+test("Antworten stunden: halber Tag mit Uhrzeit – gefragt wird nur, wenn die Arbeit bzw. das Einstempeln in die Abwesenheit fällt", async () => {
+  const a = await oeffnen(KONTEN.techniker);
+  await ttHilfen(a);
+  const r = await a.seite.evaluate(async () => {
+    const tt = window.__tt, x = window.__t.x, db = window.__db.tabellen, e = {};
+    const frage = () => [...document.querySelectorAll(".assistent")].some((d) => /eingetragen$/.test(d.querySelector(".as-titel").textContent));
+    /* Arbeit erfassen: fragt die App? (sonst gespeichert) */
+    const erfassen = async (tag, z) => {
+      x("zeitEditor(null, " + JSON.stringify(Object.assign({ datum: tag, art: "arbeit", bereich: "werkstatt" }, z)) + ")"); await tt.warte(150);
+      tt.ok(tt.dialog()).click(); await tt.warte(300);
+      const f = frage(); x("ansichtenSchliessen()"); return f ? "fragt" : db.arbeitszeiten.some((y) => y.datum === tag && y.art === "arbeit") ? "gespeichert" : "?";
+    };
+    const T = tt.werktag(1), T2 = tt.werktag(2);
+    const fall = async (abw, z, tag) => { tt.leeren(); await tt.termin(Object.assign({ kategorie: "zeitausgleich", titel: "Zeitausgleich", datum: tag || T }, abw)); await tt.laden(); return erfassen(tag || T, z); };
+    const halb = { beginn: "12:00", ende: "15:30" };
+    e.vormittag = await fall(halb, { beginn: "07:00", ende: "11:00" });
+    e.konfliktVormittag = x("abwesenheitKonflikt('" + T + "', ZEITEN).length");
+    e.mittag = await fall(halb, { beginn: "13:00", ende: "14:00" });
+    e.nurDauer = await fall(halb, { minuten: 120 });
+    e.ganztaegig = await fall({}, { beginn: "07:00", ende: "11:00" });
+    e.mehrtaegig = await fall({ datum_bis: x("plusTage('" + T2 + "',1)"), beginn: "12:00", ende: "15:30" }, { beginn: "07:00", ende: "11:00" }, T2);
+    /* Einstempeln jetzt: Abwesenheit heute mit Uhrzeit um „jetzt“ herum – bzw. später */
+    const jm = x("new Date().getHours()*60+new Date().getMinutes()"), hm = (m) => x("kalHm(" + m + ")");
+    const stempeln = async (b, en) => {
+      tt.leeren(); await tt.termin({ kategorie: "zeitausgleich", titel: "Zeitausgleich", datum: x("isoLokal(new Date())"), beginn: hm(b), ende: hm(en) }); await tt.laden();
+      x("stempelGeladen=true; STEMPEL=[]; S.view='stunden'; render()"); await tt.warte(400);
+      const karte = document.getElementById("stempelkarte"), chip = karte.querySelector(".chips .chip[data-b]"); if (chip) chip.click();
+      karte.querySelector("[data-ein]").click(); await tt.warte(500);
+      const f = frage(); x("ansichtenSchliessen()"); return f ? "fragt" : db.stempel.length ? "eingestempelt" : "?";
+    };
+    e.stempelnDrin = await stempeln(Math.max(0, jm - 30), Math.min(1439, jm + 30));
+    e.stempelnDraussen = jm + 90 <= 1439 ? await stempeln(jm + 60, jm + 90) : await stempeln(jm - 90, jm - 60);
+    return e;
+  });
+  pruefe(r.vormittag === "gespeichert" && r.konfliktVormittag === 0, "Arbeit vor dem halben Tag: gefragt bzw. ⚠ – " + JSON.stringify(r));
+  pruefe(r.mittag === "fragt" && r.nurDauer === "fragt" && r.ganztaegig === "fragt" && r.mehrtaegig === "fragt", "Arbeit im halben Tag, ohne Uhrzeit, ganztägig oder mehrtägig: nicht gefragt – " + JSON.stringify(r));
+  pruefe(r.stempelnDrin === "fragt" && r.stempelnDraussen === "eingestempelt", "Einstempeln: " + JSON.stringify(r));
+  pruefe(!a.fehler.length, "Laufzeitfehler: " + a.fehler.join("; "));
+  await a.zu();
+});
+
+test("Antworten stunden: was der Inhaber für jemanden einträgt, ändert nur der Inhaber – die Person antwortet nur und bittet um Herausnehmen", async () => {
+  const fehl = [];
+  const a = await oeffnen(KONTEN.techniker);
+  await ttHilfen(a);
+  const r = await a.seite.evaluate(async () => {
+    const tt = window.__tt, x = window.__t.x, db = window.__db.tabellen, sb = x("Store.sb"), e = {}; tt.leeren();
+    const ich = tt.ich(), T = tt.werktag(1), T2 = tt.werktag(2), nein = (q) => (q.error || !(q.data || []).length ? "abgelehnt" : "angenommen");
+    const z = { art: "termin", kategorie: "krank", titel: "Krank", wer: [ich], wer_namen: ["Testtechniker"], status: "offen", erstellt: new Date().toISOString(), privat: false, ausnahmen: {} };
+    db.planung.push(Object.assign({ id: "aw5k", datum: T, erstellt_von: "u_inhaber_test_at" }, z), Object.assign({ id: "aw5e", datum: T2, erstellt_von: ich }, z));
+    await tt.laden();
+    x("planEditor(PLANUNG.filter(function(p){ return p.id==='aw5k'; })[0])"); await tt.warte(200);
+    let d = tt.dialog();
+    e.editor = { hinweis: /ändert nur der Inhaber/.test(d.textContent), knoepfe: [...d.querySelectorAll(".as-fuss button")].map((b) => b.textContent.trim()).filter((t) => /Speichern|Löschen/.test(t)), heraus: /Tage herausnehmen/.test(d.textContent) };
+    x("ansichtenSchliessen()");
+    /* Arbeit an diesem Tag: nicht selbst beenden, sondern den Chef bitten */
+    const chatVorher = db.chat.length;
+    x("abwesenheitPruefen('" + T + "', function(){})"); await tt.warte(150);
+    d = tt.dialog(); e.antworten = [...d.querySelectorAll("button")].map((b) => b.textContent.trim().split("\n")[0]);
+    const bitte = [...d.querySelectorAll("button")].find((b) => /Chef/.test(b.textContent)); if (bitte) { bitte.click(); await tt.warte(600); }
+    e.nachricht = db.chat.slice(chatVorher).map((c) => c.an).join();
+    e.antwort = (((db.planung.find((p) => p.id === "aw5k") || {}).ausnahmen || {})[T] || {})[ich];
+    x("ansichtenSchliessen()");
+    e.db = { aendern: nein(await sb.from("planung").update({ datum_bis: T2 }).eq("id", "aw5k").select("*")), leeren: nein(await sb.from("planung").update({ wer: [], wer_namen: [] }).eq("id", "aw5k").select("*")),
+      loeschen: nein(await sb.from("planung").delete().eq("id", "aw5k").select("id")),
+      eigenAendern: nein(await sb.from("planung").update({ titel: "Grippe" }).eq("id", "aw5e").select("*")), eigenLoeschen: nein(await sb.from("planung").delete().eq("id", "aw5e").select("id")) };
+    return e;
+  });
+  if (!r.editor.hinweis || r.editor.knoepfe.length || r.editor.heraus) fehl.push("Termin nicht schreibgeschützt: " + JSON.stringify(r.editor));
+  if (r.antworten.some((t) => /für diesen Tag beenden/.test(t)) || r.nachricht !== "u_inhaber_test_at" || !r.antwort || r.antwort.art !== "zurueck") fehl.push("Arbeit am Tag: " + JSON.stringify(r));
+  if (JSON.stringify(r.db) !== JSON.stringify({ aendern: "abgelehnt", leeren: "abgelehnt", loeschen: "abgelehnt", eigenAendern: "angenommen", eigenLoeschen: "angenommen" })) fehl.push("Datenbank: " + JSON.stringify(r.db));
+  if (a.fehler.length) fehl.push("Laufzeitfehler: " + a.fehler.join("; "));
+  await a.zu();
+  pruefe(!fehl.length, fehl.join(" | "));
+});
+
+test("Antworten stunden: genehmigten Urlaub geändert – wieder beantragt, der Chef bekommt „bitte neu genehmigen“", async () => {
+  const a = await oeffnen(KONTEN.techniker);
+  await ttHilfen(a);
+  const r = await a.seite.evaluate(async () => {
+    const tt = window.__tt, x = window.__t.x, db = window.__db.tabellen, e = {}; tt.leeren();
+    const ich = tt.ich(), t1 = x("werktagAb(plusTage(isoLokal(new Date()),14))"), t3 = x("plusTage('" + t1 + "',2)");
+    db.planung.push({ id: "aw6u", art: "termin", kategorie: "urlaub", titel: "Urlaub", datum: t1, datum_bis: t3, wer: [ich], wer_namen: ["Testtechniker"], status: "genehmigt", erstellt_von: ich, erstellt: new Date().toISOString(), privat: false, ausnahmen: {} });
+    await tt.laden();
+    const aendern = async (feld, wert) => { const vorher = db.chat.length; x("planEditor(PLANUNG.filter(function(p){ return p.id==='aw6u'; })[0])"); await tt.warte(200);
+      const d = tt.dialog(), f = d.querySelector('[data-f="' + feld + '"]'); f.value = wert; f.dispatchEvent(new Event("change", { bubbles: true }));
+      tt.ok(d).click(); await tt.warte(600); x("ansichtenSchliessen()");
+      return { status: db.planung.find((p) => p.id === "aw6u").status, chat: db.chat.slice(vorher).map((c) => c.an + ": " + c.text) }; };
+    e.details = await aendern("details", "Sommer");
+    tt.toasts.length = 0;
+    e.tage = await aendern("datum_bis", x("plusTage('" + t3 + "',1)"));
+    e.toast = tt.toasts.join(" | ");
+    return e;
+  });
+  pruefe(r.details.status === "genehmigt" && !r.details.chat.length, "nur Details geändert: " + JSON.stringify(r.details));
+  pruefe(r.tage.status === "beantragt" && r.tage.chat.length === 1 && /^u_inhaber_test_at: .*Urlaub geändert – bitte neu genehmigen/.test(r.tage.chat[0]) && /Chef/.test(r.toast), "Tage geändert: " + JSON.stringify(r));
+  pruefe(!a.fehler.length, "Laufzeitfehler: " + a.fehler.join("; "));
+  await a.zu();
+});
+
+test("Antworten stunden: Monat bestätigen warnt, wenn die Person noch eingestempelt ist", async () => {
+  const a = await oeffnen(KONTEN.inhaber);
+  await ttHilfen(a);
+  const r = await a.seite.evaluate(async () => {
+    const tt = window.__tt, x = window.__t.x, db = window.__db.tabellen; tt.leeren();
+    const vm = x("plusMonate(isoLokal(new Date()),-1).slice(0,7)"), zeile = (u, n) => ({ id: "aw7" + u, user_id: u, name: n, datum: vm + "-02", minuten: 480, art: "arbeit", quelle: "hand", pause_min: 0 });
+    db.arbeitszeiten.push(zeile("u_tech_test_at", "Testtechniker"), zeile("u_admin_test_at", "Testadmin"));
+    db.stempel.push({ id: "aw7s", user_id: "u_tech_test_at", name: "Testtechniker", art: "ein", zeit: new Date(vm + "-28T08:00:00").toISOString() });
+    x("S.view='stunden'; S.stMonat='" + vm + "'; render()"); await tt.warte(800);
+    const fragen = {};
+    for (const n of ["Testtechniker", "Testadmin"]) {
+      const zeileTr = [...document.querySelectorAll("tr")].find((tr) => tr.firstChild && tr.firstChild.textContent.startsWith(n));
+      window.__antwort.confirm = false; window.__dialoge.length = 0;
+      [...zeileTr.querySelectorAll("button")].find((b) => b.textContent === "Bestätigen").click(); await tt.warte(400);
+      fragen[n] = window.__dialoge.map((d) => d[1]).join(" | ");
+    }
+    window.__antwort.confirm = true;
+    return fragen;
+  });
+  pruefe(/Testtechniker ist noch eingestempelt/.test(r.Testtechniker) && !/eingestempelt/.test(r.Testadmin) && /bestätigen\?/.test(r.Testadmin), "Warnung: " + JSON.stringify(r));
+  pruefe(!a.fehler.length, "Laufzeitfehler: " + a.fehler.join("; "));
+  await a.zu();
+});
+
+/* Antworten des Inhabers vom 05.10.2026 (Teil kern) */
+test("Antworten kern: „Nur Jahreswartung“ sperrt den Halbjahrestermin wie am Markt üblich – bleibt, bis die Verwaltung es zurücknimmt", async () => {
+  const a = await oeffnen(KONTEN.admin);
+  const r = await a.seite.evaluate(async () => {
+    const x = window.__t.x, w = (ms) => new Promise((f) => setTimeout(f, ms)), db = window.__db.tabellen, t0 = new Date().toISOString();
+    /* am Markt TS1 hat die Anlage TP1/TP2 eine HJI; dazu zwei kleine Anlagen nur mit JW – eine bewusst „nur Jahreswartung“ */
+    const anlage = (id, nurJW) => ({ id: "position:" + id, typ: "position", ziel: id, neu: true, geaendert: t0, von: "Test", grund: "Test",
+      felder: Object.assign({ standortId: "TS1", intervallCode: "JW", monat: 3, aktiv: true, anlageZu: id, anlagentyp: "Split " + id, kaeltemittelKg: 2, inbetriebnahme: "2020-03-01" }, nurJW ? { nurJW: true } : {}) });
+    db.stammdaten.push(anlage("NJW1", true), anlage("NJW2", false));
+    await x("ladeStammdaten(true)"); await w(300);
+    const faelle = x("hjMarktFaelle().map(function(f){ return f.a.leader.id; })");
+    for (let i = 0; i < 40; i++) { if (!x("hjMarktLaeuft")) x("hjMarktAutomatisch()"); await w(200);
+      if (!x("hjMarktLaeuft") && x("ALLE_POS.some(function(p){ return p.anlageZu==='NJW2' && p.hjiMarkt; })")) break; }
+    await w(300);
+    const hj = (id) => x("ALLE_POS.filter(function(p){ return p.anlageZu==='" + id + "' && p.id!=='" + id + "' && p.aktiv!==false; }).map(function(p){ return p.intervallCode; })");
+    return { faelle, njw1: hj("NJW1"), njw2: hj("NJW2"), nurJW1: !!x("anlageDaten(posById.NJW1).nurJW") };
+  });
+  pruefe(r.faelle.indexOf("NJW2") >= 0 && r.njw2.length === 1, "Kontrolle: Anlage ohne Entscheidung bekommt keinen Halbjahrestermin: " + JSON.stringify(r));
+  pruefe(r.faelle.indexOf("NJW1") < 0 && !r.njw1.length && r.nurJW1, "„Nur Jahreswartung“ trotzdem mit Halbjahrestermin bzw. aufgehoben: " + JSON.stringify(r));
+  pruefe(!a.fehler.length, "Laufzeitfehler: " + a.fehler.join("; "));
+  await a.zu();
+});
+
+test("Antworten kern: Protokoll am Handy – offene Vor-Ort-Fragen ganz oben als Hinweis, antippen springt zur Frage", async () => {
+  const a = await oeffnen(KONTEN.techniker, { handy: true });
+  const r = await a.seite.evaluate(async () => {
+    const x = window.__t.x, w = (ms) => new Promise((f) => setTimeout(f, ms)), db = window.__db.tabellen;
+    const hinweis = () => { const h = document.querySelector("#app [data-vororthinweis]"); return h && !h.hidden && h.offsetParent !== null ? h.textContent.replace(/\s+/g, " ").trim() : ""; };
+    const oeffne = async (sid) => { x("formDirty=false; S.protoArt='wartung'; S.stoerungAus=null; S.bearbeiten=null; S.protoStandort='" + sid + "'; S.protoPos=null; S.view='protokoll'; render(); 1"); await w(500); };
+    db.vor_ort_fragen.push({ id: "vfa1", standort_id: "TS1", frage: "Wo ist der Schlüssel zum Technikraum?", angelegt: new Date().toISOString(), angelegt_von: "Büro" });
+    await x("vorOrtLaden(true)");
+    const erg = {};
+    await oeffne("TS2"); erg.ohneFrage = hinweis();
+    await oeffne("TS1"); erg.mitFrage = hinweis();
+    const kopf = document.querySelector("#app [data-vororthinweis]");
+    erg.imKopf = !!kopf && !kopf.closest("form") && kopf.getBoundingClientRect().top < document.getElementById("proto").getBoundingClientRect().top;
+    erg.untenNoch = !!document.querySelector("#f_vorort [data-vorort]");
+    window.scrollTo(0, 0);
+    if (kopf) { (kopf.querySelector("a,button") || kopf).click(); await w(900); }
+    const ziel = document.querySelector("#f_vorort [data-vorort] .note");
+    const rz = ziel ? ziel.getBoundingClientRect() : null;
+    erg.gesprungen = !!rz && rz.top >= 0 && rz.top < window.innerHeight && ziel.classList.contains("sprungziel");
+    /* beantwortet: der Hinweis oben verschwindet, die Frage steht unten weiter (mit Antwort) */
+    const inp = document.querySelector('#f_vorort [data-v="antwort"]');
+    if (inp) { inp.value = "hängt im Büro"; document.querySelector('#f_vorort [data-v="speichern"]').click(); await w(600); }
+    erg.nachAntwort = hinweis();
+    erg.antwort = (db.vor_ort_fragen.find((f) => f.id === "vfa1") || {}).antwort || "";
+    return erg;
+  });
+  pruefe(!r.ohneFrage, "Hinweis ohne offene Frage am Markt: " + r.ohneFrage);
+  pruefe(/❓\s*1 Frage vor Ort/.test(r.mitFrage) && r.imKopf && r.untenNoch, "Hinweis „❓ 1 Frage vor Ort“ fehlt oben im Kopf (bzw. die Stelle unter der Marktwahl): " + JSON.stringify(r));
+  pruefe(r.gesprungen, "Antippen springt nicht zur Frage: " + JSON.stringify(r));
+  pruefe(r.antwort === "hängt im Büro" && !r.nachAntwort, "nach dem Beantworten steht der Hinweis noch da: " + JSON.stringify(r));
+  pruefe(!a.fehler.length, "Laufzeitfehler: " + a.fehler.join("; "));
+  await a.zu();
+});
+
+test("Antworten kern: Testkonten aus den Personenlisten ausblenden – Haken in der Kontenübersicht, Konto bleibt, nur der Inhaber stellt es ein", async () => {
+  const a = await rkSeite(KONTEN.inhaber);
+  const r = await a.seite.evaluate(async () => {
+    const x = window.__t.x, rk = window.__rk, w = rk.warte, db = window.__db.tabellen, ADM = "u_admin_test_at";
+    const erg = {};
+    const zuInhaber = async () => { x("ansichtenSchliessen(); S.view='verwaltung'; S.adm=S.adm||{suche:'',filter:'alle',sort:'filiale',auf:true,sel:null,entwurf:null}; S.adm.tab='inhaber'; render(); 1"); await w(700); };
+    const haken = () => document.querySelector('#app [data-ausblenden="' + ADM + '"]');
+    const team = async () => { await x("planTeamLaden()"); return x("(planTeam||[]).map(function(p){ return p.user_id; })"); };
+    const wzPersonen = async () => { x("wzEditor(null)"); await w(300); const d = rk.dlg(); const l = [...d.querySelectorAll('[data-f="person_id"] option')].map((o) => o.value); x("ansichtenSchliessen()"); return l; };
+    await zuInhaber();
+    erg.vorher = { haken: !!haken() && !haken().checked, team: await team() };
+    if (haken()) { haken().click(); await w(700); }
+    erg.einstellung = (db.einstellungen.find((e) => e.schluessel === "personen_ausblenden") || {}).wert || null;
+    await zuInhaber();
+    erg.kontoNochDa = /Testadmin/.test((haken() || { closest: () => null }).closest("tr") ? haken().closest("tr").textContent : "") && haken().checked;
+    erg.team = await team();
+    erg.wz = await wzPersonen();
+    x("formDirty=false; S.protoArt='wartung'; S.bearbeiten=null; S.protoStandort='TS1'; S.protoPos=null; S.view='protokoll'; render(); 1"); await w(700);
+    erg.fuer = [...document.querySelectorAll("#f_fuer option")].map((o) => o.textContent);
+    erg.auslastung = await x("chatTeamLaden().then(function(t){ return t.map(function(p){ return p.user_id; }); })");
+    /* wieder einblenden und wieder ausblenden */
+    await zuInhaber(); haken().click(); await w(700);
+    erg.wieder = await team();
+    await zuInhaber(); haken().click(); await w(700);
+    /* Techniker: sieht die Liste ebenso ohne das Konto, darf die Einstellung aber nicht ändern */
+    await rk.anmelden("tech@test.at", "techniker");
+    x("chatTeam=null; planTeam=null; planTeamZeit=0; 1");
+    erg.tech = await team();
+    const v = await x("Store.sb.from('einstellungen').upsert({schluessel:'personen_ausblenden', wert:{ids:[]}})");
+    erg.techSchreibt = !(v && v.error);
+    erg.nachTech = ((db.einstellungen.find((e) => e.schluessel === "personen_ausblenden") || {}).wert || {}).ids || [];
+    return erg;
+  });
+  pruefe(r.vorher.haken && r.vorher.team.indexOf("u_admin_test_at") >= 0, "Ausgangslage: kein Haken „in Personenlisten ausblenden“ in der Kontenübersicht: " + JSON.stringify(r.vorher));
+  pruefe(r.einstellung && (r.einstellung.ids || []).indexOf("u_admin_test_at") >= 0 && r.kontoNochDa, "Einstellung nicht gespeichert bzw. Konto nicht mehr in der Übersicht: " + JSON.stringify(r));
+  pruefe(r.team.indexOf("u_admin_test_at") < 0 && r.wz.indexOf("u_admin_test_at") < 0 && !r.fuer.some((n) => /Testadmin/.test(n)) && r.auslastung.indexOf("u_admin_test_at") < 0,
+    "ausgeblendetes Konto steht noch in einer Personenliste: " + JSON.stringify([r.team, r.wz, r.fuer, r.auslastung]));
+  pruefe(r.wieder.indexOf("u_admin_test_at") >= 0, "nach dem Einblenden fehlt das Konto: " + JSON.stringify(r.wieder));
+  pruefe(r.tech.indexOf("u_admin_test_at") < 0 && !r.techSchreibt && r.nachTech.indexOf("u_admin_test_at") >= 0, "Techniker: Liste bzw. Recht falsch: " + JSON.stringify([r.tech, r.techSchreibt, r.nachTech]));
+  pruefe(!a.fehler.length, "Laufzeitfehler: " + a.fehler.join("; "));
+  await a.zu();
+});
+
+test("Antworten kern: Tour-Startpunkt – jeder nur den eigenen, Inhaber und Admin für alle (App und Datenbank)", async () => {
+  const a = await rkSeite(KONTEN.techniker);
+  const r = await a.seite.evaluate(async () => {
+    const x = window.__t.x, rk = window.__rk, w = rk.warte, db = window.__db.tabellen, ADM = "u_admin_test_at", TECH = "u_tech_test_at";
+    rk.toastSpion();
+    const tag = x("werktagAb(plusTage(isoLokal(new Date()),2))"), erg = {};
+    const gespeichert = (id) => db.einstellungen.some((e) => e.schluessel === "startpunkt:" + id);
+    const waehlen = async (id) => { x("ansichtenSchliessen(); startpunktWaehlen('" + id + "', '" + tag + "')"); await w(200); const d = rk.dlg(); const k = d && rk.knopf(d, /Betrieb/); if (k) { k.click(); await w(400); } return !!k; };
+    /* Techniker: fremder Startpunkt – kein Dialog, nichts gespeichert, auch kein „festlegen“ beim Kalendertag des anderen */
+    x("STARTPUNKTE={}; 1");
+    erg.techFremdDialog = await waehlen(ADM);
+    erg.techFremdToast = window.__toasts.slice(-1)[0] || "";
+    erg.techFremdGespeichert = gespeichert(ADM);
+    await x("Store.sb.from('planung').insert({art:'termin', kategorie:'wartung', titel:'Startpunkt-Test', datum:'" + tag + "', beginn:'09:00', ende:'10:00', standort_id:'TS1', wer:['" + ADM + "'], wer_namen:['Testadmin']})");
+    await x("planungLaden()");
+    const zeile = x("(function(){ var z=startFahrtZeile('" + ADM + "', '" + tag + "', (kalenderEintraege('" + tag + "','" + tag + "','" + ADM + "','')['" + tag + "']||[])); return z ? z.outerHTML : ''; })()");
+    erg.zeileMitLink = /<a /.test(zeile); erg.zeile = zeile.replace(/<[^>]+>/g, "");
+    /* Datenbank (Attrappe wie die Sperrregel): fremder Startpunkt abgelehnt, eigener geht */
+    const fremd = await x("Store.sb.from('einstellungen').upsert({schluessel:'startpunkt:" + ADM + "', wert:{betrieb:true}})");
+    erg.dbFremd = !!(fremd && fremd.error);
+    erg.eigen = await waehlen("ich"); erg.eigenGespeichert = gespeichert(TECH);
+    /* Admin: plant für alle – setzt den Startpunkt des Technikers */
+    await rk.anmelden("admin@test.at", "admin");
+    db.einstellungen.forEach((e) => { if (e.schluessel === "startpunkt:" + TECH) e.wert = {}; });
+    await x("startpunkteLaden()");
+    erg.adminDialog = await waehlen(TECH);
+    erg.adminGespeichert = JSON.stringify((db.einstellungen.find((e) => e.schluessel === "startpunkt:" + TECH) || {}).wert || null);
+    return erg;
+  });
+  pruefe(!r.techFremdDialog && !r.techFremdGespeichert && /selbst|Büro/.test(r.techFremdToast), "Techniker kann den Startpunkt eines anderen setzen: " + JSON.stringify(r));
+  pruefe(!r.zeileMitLink && /Startpunkt/.test(r.zeile), "Kalender zeigt dem Techniker „festlegen/ändern“ beim Startpunkt eines anderen: " + JSON.stringify(r));
+  pruefe(r.dbFremd, "Datenbank (Attrappe) nimmt den fremden Startpunkt eines Technikers an");
+  pruefe(r.eigen && r.eigenGespeichert, "eigener Startpunkt lässt sich nicht mehr setzen: " + JSON.stringify(r));
+  pruefe(r.adminDialog && /betrieb/.test(r.adminGespeichert), "Admin kann den Startpunkt des Technikers nicht setzen: " + JSON.stringify(r));
+  pruefe(!a.fehler.length, "Laufzeitfehler: " + a.fehler.join("; "));
+  await a.zu();
+});
+
+test("Antworten kern: Werkzeug „im Fahrzeug eines Kollegen“ – jedes Fahrzeug wählbar, von fremden nur Kennzeichen, Bezeichnung, Fahrer", async () => {
+  const a = await oeffnen(KONTEN.techniker);
+  const r = await a.seite.evaluate(async () => {
+    const x = window.__t.x, w = (ms) => new Promise((f) => setTimeout(f, ms)), db = window.__db.tabellen;
+    const dlg = () => [...document.querySelectorAll(".assistent")].pop();
+    db.fahrzeuge.push({ id: "FKOL1", kennzeichen: "T-KOL1", bezeichnung: "Testbus", fahrer: ["u_admin_test_at"], fahrer_namen: ["Testadmin"], aktiv: true,
+      notiz: "nur fürs Büro", pickerl_bis: "2027-01-31", service_km: 90000, tracker_id: "trk-1" });
+    db.fahrzeuge.push({ id: "FALT1", kennzeichen: "T-ALT1", fahrer: [], fahrer_namen: [], aktiv: false });
+    db.werkzeug.push({ id: "WKOL1", name: "Lecksucher KOL", standort_art: "lager", zustand: "ok", aktiv: true });
+    await x("wzLaden(true)"); await x("fzLaden(true)");
+    const erg = { fz: x("FZ.length") };
+    const rpc = await x("Store.sb.rpc('fahrzeuge_auswahl')");
+    erg.spalten = rpc && rpc.data && rpc.data[0] ? Object.keys(rpc.data[0]).sort().join(",") : "";
+    erg.anzahl = rpc && rpc.data ? rpc.data.length : -1;
+    x("wzEditor(WZ.filter(function(w){ return w.id==='WKOL1'; })[0])"); await w(500);
+    let d = dlg();
+    const chip = d.querySelector('[data-ort] .chip[data-w="fahrzeug"]');
+    erg.chip = !!chip && !chip.hidden;
+    erg.hinweis = [...d.querySelectorAll(".muted")].some((m) => !m.hidden && /Kein Fahrzeug zur Wahl/.test(m.textContent));
+    erg.optionen = [...d.querySelectorAll('[data-f="fahrzeug_id"] option')].map((o) => o.textContent);
+    if (chip) { chip.click(); await w(100); d.querySelector('[data-f="fahrzeug_id"]').value = "FKOL1";
+      [...d.querySelectorAll(".as-fuss button")].pop().click(); await w(700); }
+    const wz = db.werkzeug.find((z) => z.id === "WKOL1");
+    erg.gespeichert = wz.standort_art + "/" + wz.fahrzeug_id + "/" + wz.fahrzeug_name;
+    erg.ortText = x("wzOrtText(WZ.filter(function(w){ return w.id==='WKOL1'; })[0])");
+    return erg;
+  });
+  pruefe(r.fz === 0, "Leseregel der Fahrzeuge verändert – Techniker sieht ein fremdes Fahrzeug: " + JSON.stringify(r));
+  pruefe(r.spalten === "bezeichnung,fahrer_namen,id,kennzeichen" && r.anzahl === 1, "fahrzeuge_auswahl liefert mehr als Kennzeichen, Bezeichnung, Fahrer (bzw. ausgeschiedene): " + JSON.stringify(r));
+  pruefe(r.chip && !r.hinweis && r.optionen.some((o) => /T-KOL1/.test(o)) && !r.optionen.some((o) => /T-ALT1/.test(o)), "Fahrzeug eines Kollegen nicht wählbar: " + JSON.stringify(r));
+  pruefe(r.gespeichert === "fahrzeug/FKOL1/T-KOL1" && /T-KOL1/.test(r.ortText), "Werkzeug nicht im Fahrzeug des Kollegen gespeichert: " + JSON.stringify(r));
+  pruefe(!a.fehler.length, "Laufzeitfehler: " + a.fehler.join("; "));
+  await a.zu();
+});
+
+test("Antworten kern: Material am privaten Termin sperrt die Datenbank selbst – nur wer den Termin angelegt hat oder eingetragen ist, und der Inhaber", async () => {
+  const a = await rkSeite(KONTEN.techniker);
+  const r = await a.seite.evaluate(async () => {
+    const x = window.__t.x, db = window.__db.tabellen, ADM = "u_admin_test_at", TECH = "u_tech_test_at", tag = x("isoLokal(new Date())");
+    const t = (id, wer, von) => ({ id, art: "termin", kategorie: "privat", privat: true, titel: "Abwesend", datum: tag, wer: wer, wer_namen: [], erstellt_von: von, status: "offen" });
+    db.planung.push(t("PPRIV1", [ADM], ADM), t("PPRIV2", [TECH], TECH), t("PPRIV3", [], TECH), Object.assign(t("POFF1", [ADM], ADM), { kategorie: "buero", privat: false, titel: "Büro" }));
+    const b = (id, pid) => ({ id, art: "material", text: "Teil " + id, planung_id: pid, status: "offen", beschaffung: "mitnehmen", erstellt_von: ADM });
+    db.bedarf.push(b("BPRIV1", "PPRIV1"), b("BPRIV2", "PPRIV2"), b("BPRIV3", "PPRIV3"), b("BOFF1", "POFF1"), b("BOHNE", null));
+    const lesen = async () => ((await x("Store.sb.from('bedarf').select('*')")).data || []).map((z) => z.id).sort();
+    const ids = await lesen();
+    const upd = await x("Store.sb.from('bedarf').update({text:'geändert'}).eq('id','BPRIV1').select('*')");
+    /* Admin (Kollege): sieht den privaten des Technikers nicht; Inhaber: sieht alles (volle Kontrolle, Sicherung) */
+    /* in der App ebenso: bedarfVerborgen blendet beim Admin aus, beim Inhaber nicht */
+    const appVerborgen = async () => { await x("planungLaden()"); return x("bedarfVerborgen({planung_id:'PPRIV2'})"); };
+    await window.__rk.anmelden("admin@test.at", "admin"); const admin = await lesen(), appAdmin = await appVerborgen();
+    await window.__rk.anmelden("inhaber@test.at", "inhaber"); const inhaber = await lesen(), appInhaber = await appVerborgen();
+    return { ids, admin, inhaber, appAdmin, appInhaber, updZeilen: (upd.data || []).length, text: db.bedarf.find((z) => z.id === "BPRIV1").text };
+  });
+  pruefe(r.admin.indexOf("BPRIV2") < 0 && r.admin.indexOf("BPRIV3") < 0 && r.admin.indexOf("BPRIV1") >= 0, "Admin sieht privates Material eines Kollegen: " + JSON.stringify(r.admin));
+  pruefe(["BPRIV1", "BPRIV2", "BPRIV3", "BOFF1", "BOHNE"].every((i) => r.inhaber.indexOf(i) >= 0), "Inhaber sieht nicht alles: " + JSON.stringify(r.inhaber));
+  pruefe(r.appAdmin === true && r.appInhaber === false, "App blendet privates Material falsch aus (Admin soll nicht, Inhaber soll sehen): " + JSON.stringify([r.appAdmin, r.appInhaber]));
+  pruefe(["BOFF1", "BOHNE", "BPRIV2", "BPRIV3"].every((i) => r.ids.indexOf(i) >= 0), "eigene bzw. nicht private Einträge fehlen: " + JSON.stringify(r));
+  pruefe(r.ids.indexOf("BPRIV1") < 0, "Material am privaten Termin einer anderen Person kommt aus der Datenbank: " + JSON.stringify(r));
+  pruefe(r.updZeilen === 0 && r.text === "Teil BPRIV1", "fremder Eintrag am privaten Termin ließ sich ändern: " + JSON.stringify(r));
+  pruefe(!a.fehler.length, "Laufzeitfehler: " + a.fehler.join("; "));
+  await a.zu();
+});
+
+test("Antworten kern: Fahrzeuge – geplante Einsatzfahrten als km-Schätzung neben den km laut km-Stand, ohne GPS-Anbindung", async () => {
+  const a = await oeffnen(KONTEN.techniker);
+  const r = await a.seite.evaluate(async () => {
+    const x = window.__t.x, w = (ms) => new Promise((f) => setTimeout(f, ms)), db = window.__db.tabellen, TECH = "u_tech_test_at";
+    const heute = x("isoLokal(new Date())"), morgen = x("plusTage(isoLokal(new Date()),1)"), vormonat = x("isoLokal(new Date(new Date().getFullYear(), new Date().getMonth()-1, 28))");
+    db.fahrzeuge.push({ id: "FKM1", kennzeichen: "T-KM1", fahrer: [TECH], fahrer_namen: ["Testtechniker"], aktiv: true });
+    db.fahrzeug_eintraege.push({ id: "FKE1", fahrzeug_id: "FKM1", art: "km", datum: vormonat, km: 10000, quelle: "hand" },
+      { id: "FKE2", fahrzeug_id: "FKM1", art: "km", datum: heute, km: 10500, quelle: "hand" });
+    db.einstellungen.push({ schluessel: "startpunkt:" + TECH, wert: { betrieb: true } });
+    const termin = (id, tag, sid, b, e) => ({ id, art: "termin", kategorie: "wartung", titel: "Einsatz " + sid, datum: tag, beginn: b, ende: e, standort_id: sid, wer: [TECH], wer_namen: ["Testtechniker"], erstellt_von: TECH, status: "offen" });
+    db.planung.push(termin("PKM1", heute, "TS1", "08:00", "09:00"), termin("PKM2", heute, "TS2", "11:00", "12:00"));
+    x("try{ FAHR_KM={}; }catch(e){} STARTPUNKTE={}; startpunkteGeladen=false; PLANUNG=[]; planungGeladen=false; planungStand=0; 1");
+    const karte = async () => { x("ansichtenSchliessen(); fzGeladen=false; S.view='fahrzeuge'; render(); 1"); await w(1200); x("render()"); await w(300);
+      const c = document.querySelector('#app [data-fzid="FKM1"]'); return c ? c.innerText.replace(/\s+/g, " ") : ""; };
+    const zahl = (t, re) => { const m = re.exec(t); return m ? +m[1].replace(/\D/g, "") : null; };
+    const erg = {};
+    erg.mitHeim = x("Math.round(fahrKm(BETRIEB,byId.TS1)+fahrKm(byId.TS1,byId.TS2)+fahrKm(byId.TS2,BETRIEB))");
+    erg.ohneHeim = x("Math.round(fahrKm(BETRIEB,byId.TS1)+fahrKm(byId.TS1,byId.TS2))");
+    let t = await karte();
+    erg.text = t;
+    erg.schaetzung = zahl(t, /geplante Einsatzfahrten ≈ ([\d.   ]*\d) km/);
+    erg.kmStand = zahl(t, /laut km-Stand ([\d.   ]*\d) km/);
+    erg.hinweis = /Schätzung – Umwege und Fahrten am Einsatzort nicht enthalten/.test(t);
+    /* morgen geht es vom letzten Markt weiter (weit weg – Übernachtung): heute keine Heimfahrt */
+    db.planung.push(termin("PKM3", morgen, "TS2", "08:00", "09:00"));
+    x("planungStand=0; 1");
+    t = await karte();
+    erg.mitUebernachtung = zahl(t, /geplante Einsatzfahrten ≈ ([\d.   ]*\d) km/);
+    /* die Texte kündigen keine direkte X-GPS-Anbindung bzw. kein Fahrtenbuch mit Orten mehr an */
+    erg.gpsText = /Fahrtenbuch mit Orten erst/.test(String(x("fzGpsImport")));
+    return erg;
+  });
+  pruefe(r.kmStand === 500, "gefahrene km laut km-Stand fehlen: " + JSON.stringify(r));
+  pruefe(r.schaetzung === r.mitHeim && r.hinweis, "Schätzung „geplante Einsatzfahrten ≈ … km“ fehlt bzw. falsch (Start → Einsätze → zurück): " + JSON.stringify(r));
+  pruefe(r.mitUebernachtung === r.ohneHeim, "Übernachtung am letzten Markt: Heimfahrt trotzdem gezählt: " + JSON.stringify(r));
+  pruefe(!r.gpsText, "GPS-Import kündigt noch ein Fahrtenbuch mit Orten an");
+  pruefe(!a.fehler.length, "Laufzeitfehler: " + a.fehler.join("; "));
+  await a.zu();
+});
+
+/* Antworten des Inhabers vom 05.10.2026 (Reisekosten, Kilometergeld, Posteingang, Preise in Mails, KPlus-Stand) */
+test("Antworten post: Reisekosten – Belegfoto nach der Abgabe nur noch der Inhaber; er ersetzt ein fremdes Foto im Ordner der Person", async () => {
+  const a = await rkSeite(KONTEN.inhaber);
+  const r = await a.seite.evaluate(async () => {
+    const x = window.__t.x, db = window.__db.tabellen, dat = window.__db.dateien, { warte, dlg, speichern } = window.__rk;
+    const heute = x("isoLokal(new Date())"), fehlt = [], p = (bed, text) => { if (!bed) fehlt.push(text); };
+    const bild = async () => { const cv = document.createElement("canvas"); cv.width = 40; cv.height = 60; cv.getContext("2d").fillRect(0, 0, 20, 20);
+      const b = await new Promise((f) => cv.toBlob(f, "image/png")); const dt = new DataTransfer(); dt.items.add(new File([b], "neu.png", { type: "image/png" })); return dt.files; };
+    const oeffne = async (id) => { x("ansichtenSchliessen(); akEditor(" + JSON.stringify(db.auslagen.find((z) => z.id === id)) + ")"); await warte(400); return dlg(); };
+    dat["auslagen/u_tech_test_at/alt.jpg"] = new Blob(["alt"], { type: "image/jpeg" });
+    dat["auslagen/u_tech_test_at/offen.jpg"] = new Blob(["offen"], { type: "image/jpeg" });
+    db.auslagen.push({ id: "apB", user_id: "u_tech_test_at", name: "Testtechniker", art: "beleg", datum: heute, text: "Baumarkt abgegeben", kategorie: "material", betrag: 12.5, foto: "u_tech_test_at/alt.jpg", status: "eingereicht", erstellt: new Date().toISOString() },
+      { id: "apO", user_id: "u_tech_test_at", name: "Testtechniker", art: "beleg", datum: heute, text: "Baumarkt offen", kategorie: "material", betrag: 3, foto: "u_tech_test_at/offen.jpg", status: "offen", erstellt: new Date().toISOString() });
+    x("S.view='stunden'; AK_ALLE.monat=''; render()"); await warte(600);
+    /* Speichern scheitert: das alte Foto bleibt (entfernt wird erst nach Erfolg) */
+    let d = await oeffne("apB"), inp = d.querySelector("[data-foto]");
+    p(!!inp, "Inhaber: beim fremden Beleg kein Knopf, um das Foto zu ersetzen");
+    if (inp) {
+      inp.files = await bild(); inp.dispatchEvent(new Event("change"));
+      window.__netzWeg = "antwort"; speichern(d); await warte(700); window.__netzWeg = false;
+      p(db.auslagen.find((z) => z.id === "apB").foto === "u_tech_test_at/alt.jpg" && !!dat["auslagen/u_tech_test_at/alt.jpg"], "Speichern gescheitert, altes Foto trotzdem entfernt");
+      d = await oeffne("apB"); inp = d.querySelector("[data-foto]");
+      inp.files = await bild(); inp.dispatchEvent(new Event("change"));
+      speichern(d); await warte(900);
+    }
+    const b = db.auslagen.find((z) => z.id === "apB");
+    p(/^u_tech_test_at\//.test(b.foto) && b.foto !== "u_tech_test_at/alt.jpg" && !!dat["auslagen/" + b.foto], "neues Foto nicht im Ordner der Person: " + b.foto);
+    p(!dat["auslagen/u_tech_test_at/alt.jpg"], "altes Foto nach dem Ersetzen nicht entfernt");
+    /* die Person selbst: nach der Abgabe weder ersetzen noch entfernen – vorher schon */
+    await window.__rk.anmelden("tech@test.at", "techniker");
+    d = await oeffne("apB"); inp = d.querySelector("[data-foto]");
+    p((!inp || inp.disabled) && /nur (noch )?der Chef/.test(d.textContent), "Techniker: abgegebenes Belegfoto lässt sich ersetzen bzw. kein Hinweis");
+    x("ansichtenSchliessen()");
+    const sb = x("Store.sb");
+    await sb.storage.from("auslagen").remove([b.foto]);
+    p(!!dat["auslagen/" + b.foto], "Techniker hat das Foto eines abgegebenen Belegs entfernt");
+    await sb.storage.from("auslagen").remove(["u_tech_test_at/offen.jpg"]);
+    p(!dat["auslagen/u_tech_test_at/offen.jpg"], "Techniker kann das Foto eines offenen Belegs nicht entfernen");
+    const fremd = await sb.storage.from("auslagen").upload("u_inhaber_test_at/x.jpg", new Blob(["x"], { type: "image/jpeg" }));
+    p(!!fremd.error && !dat["auslagen/u_inhaber_test_at/x.jpg"], "Techniker legt ein Foto in einen fremden Ordner");
+    return { fehlt };
+  });
+  pruefe(!r.fehlt.length, r.fehlt.join(" | "));
+  pruefe(!a.fehler.length, "Laufzeitfehler: " + a.fehler.join("; "));
+  await a.zu();
+});
+
+test("Antworten post: Kilometergeld nur mit eingetragenem Privatauto – App und Datenbank, Abgeben alter Einträge geht weiter, Inhaber ändert fremde", async () => {
+  const a = await rkSeite(KONTEN.techniker);
+  const r = await a.seite.evaluate(async () => {
+    const x = window.__t.x, db = window.__db.tabellen, { warte, dlg, speichern } = window.__rk;
+    const heute = x("isoLokal(new Date())"), fehlt = [], p = (bed, text) => { if (!bed) fehlt.push(text); };
+    const sb = () => x("Store.sb");
+    /* ein alter km-Eintrag ohne Fahrzeug (vor der Regel erfasst) */
+    db.auslagen.push({ id: "kmAlt", user_id: "u_tech_test_at", name: "Testtechniker", art: "km", datum: heute, text: "Salzburg – Golling – Salzburg", km: 60, km_satz: 0.5, betrag: 30, status: "offen", erstellt: new Date().toISOString() });
+    db.fahrzeuge.push({ id: "fzFirma", kennzeichen: "S-FI 1", fahrer: ["u_tech_test_at"], fahrer_namen: ["Testtechniker"], aktiv: true },
+      { id: "fzAndere", kennzeichen: "S-AN 2", fahrer: ["u_admin_test_at"], fahrer_namen: ["Testadmin"], privat_von: "u_admin_test_at", privat_name: "Testadmin", aktiv: true });
+    await x("fzLaden(true)");
+    x("S.view='stunden'; render()"); await warte(500);
+    /* App: ohne eigenes Privatauto kein neuer km-Eintrag, sondern der Hinweis */
+    x("akEditor(null, {art:'km'})"); await warte(300);
+    let d = dlg();
+    p(/Zuerst im Reiter Fahrzeuge dein Privatauto eintragen/.test(d.textContent) && !d.querySelector('[data-f="km"]') && ![...d.querySelectorAll(".as-fuss button")].some((b) => /^Speichern$/.test(b.textContent.trim())),
+      "ohne Privatauto: km-Eintrag möglich bzw. kein Hinweis: " + d.textContent.slice(0, 160));
+    x("ansichtenSchliessen()");
+    /* Datenbank: ohne Fahrzeug, mit Firmenfahrzeug oder fremdem Privatauto abgelehnt */
+    for (const [fz, was] of [[null, "ohne Fahrzeug"], ["fzFirma", "Firmenfahrzeug"], ["fzAndere", "Privatauto einer anderen Person"]]) {
+      const e = await sb().from("auslagen").insert({ art: "km", datum: heute, text: "Test " + was, km: 10, fahrzeug_id: fz }).select("*");
+      p(!!e.error && /Privatauto/.test(e.error.message) && !db.auslagen.some((z) => z.text === "Test " + was), "Datenbank nimmt km-Eintrag " + was + " an: " + JSON.stringify(e.error));
+    }
+    /* reine Statusänderung (Monat abgeben) an einem alten Eintrag ohne Fahrzeug geht weiter */
+    const ab = await sb().from("auslagen").update({ status: "eingereicht" }).eq("id", "kmAlt").select("id");
+    p(!ab.error && db.auslagen.find((z) => z.id === "kmAlt").status === "eingereicht", "alter km-Eintrag ohne Fahrzeug lässt sich nicht abgeben: " + JSON.stringify(ab.error));
+    /* mit eigenem Privatauto: vorgewählt, gespeichert mit Fahrzeug */
+    db.fahrzeuge.push({ id: "fzMeins", kennzeichen: "S-PV 3", fahrer: ["u_tech_test_at"], fahrer_namen: ["Testtechniker"], privat_von: "u_tech_test_at", privat_name: "Testtechniker", aktiv: true });
+    await x("fzLaden(true)");
+    x("akEditor(null, {art:'km'})"); await warte(300);
+    d = dlg();
+    p(d.querySelector('[data-f="fahrzeug_id"]').value === "fzMeins", "eigenes Privatauto nicht vorgewählt");
+    d.querySelector('[data-f="text"]').value = "Salzburg – Werfen – Salzburg"; d.querySelector('[data-f="km"]').value = "80";
+    speichern(d); await warte(600);
+    const neu = db.auslagen.find((z) => z.text === "Salzburg – Werfen – Salzburg");
+    p(neu && neu.fahrzeug_id === "fzMeins" && neu.betrag === 40, "km-Eintrag mit Privatauto nicht gespeichert: " + JSON.stringify(neu));
+    /* Inhaber ändert den fremden Eintrag: mit dem Privatauto der Person ja, mit einem anderen nein */
+    await window.__rk.anmelden("inhaber@test.at", "inhaber");
+    await x("fzLaden(true)");
+    x("akEditor(" + JSON.stringify(neu) + ")"); await warte(300);
+    d = dlg(); d.querySelector('[data-f="km"]').value = "90"; speichern(d); await warte(600);
+    p(db.auslagen.find((z) => z.id === neu.id).km === 90, "Inhaber kann den fremden km-Eintrag nicht ändern: " + ((dlg() || {}).textContent || "").slice(0, 120));
+    const falsch = await sb().from("auslagen").update({ fahrzeug_id: "fzAndere", km: 95 }).eq("id", neu.id).select("id");
+    p(!!falsch.error && db.auslagen.find((z) => z.id === neu.id).km === 90, "Inhaber: fremder km-Eintrag mit dem Privatauto einer anderen Person gespeichert");
+    x("ansichtenSchliessen(); akEditor(null, {art:'km'})"); await warte(300);
+    p(/Zuerst im Reiter Fahrzeuge dein Privatauto eintragen/.test(dlg().textContent) && !!dlg().querySelector(".as-fuss button") && /Mein Privatauto/.test(dlg().querySelector(".as-fuss").textContent),
+      "Inhaber ohne eigenes Privatauto: kein Hinweis bzw. kein Knopf „+ Mein Privatauto“");
+    return { fehlt };
+  });
+  pruefe(!r.fehlt.length, r.fehlt.join(" | "));
+  pruefe(!a.fehler.length, "Laufzeitfehler: " + a.fehler.join("; "));
+  await a.zu();
+});
+
+test("Antworten post: Privatauto – Techniker legen ihre eigenen (auch mehrere) selbst an, aus dem Kilometergeld-Hinweis; fremde und Firmenfahrzeuge nur das Büro", async () => {
+  const a = await rkSeite(KONTEN.techniker);
+  const r = await a.seite.evaluate(async () => {
+    const x = window.__t.x, db = window.__db.tabellen, { warte, dlg, speichern } = window.__rk;
+    const fehlt = [], p = (bed, text) => { if (!bed) fehlt.push(text); }, ich = x("meineKennung()"), sb = () => x("Store.sb");
+    db.fahrzeuge.push({ id: "fzAdm", kennzeichen: "S-AD 9", fahrer: ["u_admin_test_at", ich], fahrer_namen: ["Testadmin", "Testtechniker"], privat_von: "u_admin_test_at", privat_name: "Testadmin", aktiv: true });
+    await x("fzLaden(true)");
+    /* aus dem Kilometergeld-Hinweis: „+ Mein Privatauto“, danach geht es mit dem Kilometer-Dialog weiter */
+    x("S.view='stunden'; render(); akEditor(null, {art:'km'})"); await warte(300);
+    const kn = [...dlg().querySelectorAll(".as-fuss button")].find((b) => /Mein Privatauto/.test(b.textContent));
+    p(!!kn, "Kilometergeld-Hinweis ohne „+ Mein Privatauto“");
+    if (kn) {
+      kn.click(); await warte(300);
+      let d = dlg(); d.querySelector('[data-f="kennzeichen"]').value = "s-pv 11"; d.querySelector('[data-f="bezeichnung"]').value = "Kombi";
+      speichern(d); await warte(700);
+      const neu = db.fahrzeuge.find((f) => f.kennzeichen === "S-PV 11") || {};
+      p(neu.privat_von === ich && (neu.fahrer || []).indexOf(ich) >= 0, "Privatauto nicht als eigenes gespeichert: " + JSON.stringify(neu));
+      d = dlg();
+      p(d && d.querySelector('[data-f="km"]') && d.querySelector('[data-f="fahrzeug_id"]').value === neu.id, "nach dem Anlegen kein Kilometer-Dialog mit dem neuen Auto");
+      x("ansichtenSchliessen()");
+    }
+    /* ein zweites im Reiter Fahrzeuge – dann muss beim Kilometergeld gewählt werden */
+    x("S.view='fahrzeuge'; render()"); await warte(500);
+    const kf = [...document.querySelectorAll("button")].find((b) => /Mein Privatauto/.test(b.textContent));
+    p(!!kf, "Reiter Fahrzeuge ohne „+ Mein Privatauto“");
+    if (kf) { kf.click(); await warte(300); const d = dlg(); d.querySelector('[data-f="kennzeichen"]').value = "S-PV 12"; speichern(d); await warte(700); }
+    x("ansichtenSchliessen(); akEditor(null, {art:'km'})"); await warte(300);
+    let d = dlg(), sel = d.querySelector('[data-f="fahrzeug_id"]');
+    p(sel && sel.options.length === 3 && sel.value === "", "zwei Privatautos: keine Auswahl bzw. eines still vorgewählt: " + (sel ? sel.options.length + "/" + sel.value : "-"));
+    d.querySelector('[data-f="text"]').value = "Salzburg – Lofer – Salzburg"; d.querySelector('[data-f="km"]').value = "90";
+    speichern(d); await warte(400);
+    p(/Privatauto wählen/.test(d.querySelector("[data-err]").textContent) && !db.auslagen.some((z) => /Lofer/.test(z.text)), "ohne Auswahl gespeichert");
+    const zweit = db.fahrzeuge.find((f) => f.kennzeichen === "S-PV 12") || {};
+    sel.value = zweit.id; speichern(d); await warte(600);
+    p((db.auslagen.find((z) => /Lofer/.test(z.text)) || {}).fahrzeug_id === zweit.id, "Kilometergeld mit dem gewählten Privatauto nicht gespeichert");
+    /* eigenes Privatauto bearbeiten: Kennzeichen ja, Fristen nein */
+    await sb().from("fahrzeuge").update({ bezeichnung: "Kombi neu", pickerl_bis: "2027-01-01", tracker_id: "x" }).eq("id", zweit.id).select("id");
+    const z2 = db.fahrzeuge.find((f) => f.id === zweit.id);
+    p(z2.bezeichnung === "Kombi neu" && !z2.pickerl_bis && !z2.tracker_id, "Techniker ändert Fristen/GPS am Privatauto: " + JSON.stringify(z2));
+    /* Datenbank: Firmenfahrzeug, fremdes Privatauto, fremdes Fahrzeug ändern, privat_von umhängen – alles nein */
+    const e1 = await sb().from("fahrzeuge").insert({ kennzeichen: "S-FI 77", fahrer: [ich] }).select("id");
+    const e2 = await sb().from("fahrzeuge").insert({ kennzeichen: "S-FR 78", privat_von: "u_admin_test_at", fahrer: [ich] }).select("id");
+    await sb().from("fahrzeuge").update({ kennzeichen: "S-XX 1" }).eq("id", "fzAdm").select("id");
+    await sb().from("fahrzeuge").update({ privat_von: "u_admin_test_at" }).eq("id", zweit.id).select("id");
+    p(!!e1.error && !!e2.error && !db.fahrzeuge.some((f) => /S-FI 77|S-FR 78/.test(f.kennzeichen)), "Techniker legt Firmen- bzw. fremdes Privatauto an");
+    p(db.fahrzeuge.find((f) => f.id === "fzAdm").kennzeichen === "S-AD 9" && db.fahrzeuge.find((f) => f.id === zweit.id).privat_von === ich, "Techniker ändert fremdes Fahrzeug bzw. hängt sein Privatauto um");
+    return { fehlt };
+  });
+  pruefe(!r.fehlt.length, r.fehlt.join(" | "));
+  pruefe(!a.fehler.length, "Laufzeitfehler: " + a.fehler.join("; "));
+  await a.zu();
+});
+
+test("Antworten post: Posteingang – Projektmails nur der Inhaber, Lidl-Aufträge und Rapporte auch Admins, Techniker gar nicht", async () => {
+  const a = await tmSeite(KONTEN.inhaber);
+  const r = await a.seite.evaluate(async () => {
+    const x = window.__t.x, db = window.__db.tabellen, tm = window.__tm, jetzt = new Date().toISOString(), fehlt = [], p = (bed, text) => { if (!bed) fehlt.push(text); };
+    window.UKT_CONFIG.posteingangAktiv = true;
+    const pe = (id, art, name) => ({ id, nachricht_id: "<" + id + "@test>", art, dateiname: name, pfad: "2026/10/" + id + "_" + name.replace(/\W+/g, "_"), status: "neu", betreff: "Betreff " + id, absender: "a@test-firma.at", eingang: jetzt, bytes: 300 });
+    const zeilen = [pe("ppA", "auftrag", "Auftrag 4711.pdf"), pe("ppR", "rapport", "4711_rapport.pdf"), pe("ppM", "mail", "Anfrage Hotel.eml"), pe("ppU", "unbekannt", "Plan Hotel.pdf")];
+    for (const z of zeilen) { await x("Store.sb").storage.from("posteingang").upload(z.pfad, new Blob(["%PDF-1.4 " + z.id], { type: "application/pdf" })); db.posteingang.push(z); }
+    const sicht = async () => {
+      const sb = x("Store.sb"), l = ((await sb.from("posteingang").select("*")).data || []).map((e) => e.id).sort().join();
+      const dat = []; for (const z of zeilen) { const u = await sb.storage.from("posteingang").createSignedUrl(z.pfad, 600); if (u.data) dat.push(z.id); }
+      x("S.view='faellig'; render()"); await tm.warte(700);
+      const k = [...document.querySelectorAll(".card")].find((c) => /^Posteingang/.test((c.querySelector("h2") || {}).textContent || ""));
+      return { l, dat: dat.sort().join(), karte: k ? k.textContent : null, push: x("pushArtenGewaehlt().indexOf('posteingang')>=0") };
+    };
+    const inh = await sicht();
+    p(inh.l === "ppA,ppM,ppR,ppU" && inh.dat === "ppA,ppM,ppR,ppU" && /Anfrage Hotel/.test(inh.karte || "") && /Auftrag 4711/.test(inh.karte || "") && inh.push, "Inhaber sieht nicht alles: " + JSON.stringify(inh));
+    await tm.anmelden("admin@test.at", "admin");
+    const adm = await sicht();
+    p(adm.l === "ppA,ppR" && adm.dat === "ppA,ppR", "Admin liest Projektmails (Tabelle bzw. Dateien): " + JSON.stringify({ l: adm.l, dat: adm.dat }));
+    p(adm.karte && /Auftrag 4711/.test(adm.karte) && /4711_rapport/.test(adm.karte) && !/Anfrage Hotel|Plan Hotel|weitergeleitete Mails/.test(adm.karte) && adm.push,
+      "Admin: Karte zeigt nicht genau Aufträge und Rapporte: " + (adm.karte || "(keine Karte)").slice(0, 300));
+    await tm.anmelden("tech@test.at", "techniker");
+    const tec = await sicht();
+    p(!tec.l && !tec.dat && tec.karte === null && !tec.push && !x("posteingangAn()"), "Techniker sieht den Posteingang: " + JSON.stringify(tec));
+    return { fehlt };
+  });
+  pruefe(!r.fehlt.length, r.fehlt.join(" | "));
+  pruefe(!a.fehler.length, "Laufzeitfehler: " + a.fehler.join("; "));
+  await a.zu();
+});
+
+test("Antworten post: Mail mit Preisen im Text – die .eml liegt nur beim Inhaber (Büro-Ordner) mit Hinweis, andere legen sie nicht ab", async () => {
+  const a = await tmSeite(KONTEN.inhaber);
+  const r = await a.seite.evaluate(async () => {
+    const x = window.__t.x, db = window.__db.tabellen, tm = window.__tm, jetzt = new Date().toISOString(), fehlt = [], p = (bed, text) => { if (!bed) fehlt.push(text); };
+    /* Erkennung: ein Betrag mit € bzw. EUR (auch „Euro“ hinter der Zahl) */
+    const faelle = { "Pauschal 4.800 € netto": true, "EUR 1.234,50 zzgl. USt": true, "Summe 1234,50 EUR": true, "€ 980,-": true, "Kosten: 350 Euro": true, "4800€": true,
+      "Abgasnorm Euro 6": false, "netto 1.000,00": false, "Filiale 4711, Auftrag 123456": false, "": false };
+    const falsch = Object.keys(faelle).filter((t) => x("mailTextMitPreis(" + JSON.stringify(t) + ")") !== faelle[t]);
+    p(!falsch.length, "Preis-Erkennung falsch bei: " + JSON.stringify(falsch));
+    /* Text der .eml: base64, quoted-printable, HTML – Anhänge zählen nicht */
+    const b64 = btoa(unescape(encodeURIComponent("Guten Tag,\r\nunser Angebot: 4.800 € netto.\r\n")));
+    const emlB64 = "From: a@planer-test.at\r\nSubject: Angebot Hotel\r\nMIME-Version: 1.0\r\nContent-Type: multipart/mixed; boundary=\"xx\"\r\n\r\n--xx\r\nContent-Type: text/plain; charset=utf-8\r\n" +
+      "Content-Transfer-Encoding: base64\r\n\r\n" + b64 + "\r\n--xx\r\nContent-Type: application/pdf; name=\"Plan.pdf\"\r\nContent-Disposition: attachment; filename=\"Plan.pdf\"\r\nContent-Transfer-Encoding: base64\r\n\r\nJVBERi0xLjQ=\r\n--xx--\r\n";
+    const emlQp = "From: a@planer-test.at\r\nSubject: Wartung\r\nContent-Type: text/html; charset=iso-8859-1\r\nContent-Transfer-Encoding: quoted-printable\r\n\r\n<p>Preis: EUR&nbsp;1.234,=\r\n50 f=FCr die Wartung</p>\r\n";
+    const emlAnhang = "From: a@planer-test.at\r\nSubject: Plan\r\nContent-Type: multipart/mixed; boundary=\"yy\"\r\n\r\n--yy\r\nContent-Type: text/plain\r\n\r\nAnbei der Plan.\r\n--yy\r\nContent-Type: text/plain; name=\"Liste.txt\"\r\nContent-Disposition: attachment; filename=\"Liste.txt\"\r\n\r\nSumme 500 EUR\r\n--yy--\r\n";
+    const emlOhne = "From: a@planer-test.at\r\nSubject: Termin\r\n\r\nBitte um Termin am 12.10. in Filiale 4711.\r\n";
+    const liest = [emlB64, emlQp, emlAnhang, emlOhne].map((t) => x("mailTextMitPreis(emlText(" + JSON.stringify(t) + "))"));
+    p(JSON.stringify(liest) === "[true,true,false,false]", "Text der .eml falsch gelesen (base64, quoted-printable/HTML, nur im Anhang, ohne): " + JSON.stringify(liest));
+    const eml = (t) => new Blob([t], { type: "message/rfc822" });
+    db.projekte.push({ id: "tmp_p4", nummer: "P-2026-904", titel: "Preise Hotel", kunde_id: "lidl", status: "anfrage", daten: {}, verlauf: [], erstellt: jetzt, geaendert: jetzt });
+    await x("projekteLaden()");
+    const dateien = () => (db.projekte.find((q) => q.id === "tmp_p4").daten.dateien || []).map((f) => f.art + "|" + f.pfad + "|" + f.name);
+    tm.verbinden(); tm.toastSpion();
+    /* 1. Mail-Programm „Mail zu Projekt legen“: Preis im Text → .eml unter buero/, Hinweis im Dialog und in der Meldung */
+    const MZ = (uid, text) => ({ konto: "gmx", ordner: "INBOX", uid, messageId: "<pp" + uid + "@test>", datum: "2026-10-01T08:00:00.000Z", betreff: "Mail " + uid, von: [{ name: "Planer", address: "a@planer-test.at" }], an: [], text, anhaenge: [] });
+    for (const [uid, text, roh] of [[71, "Unser Angebot: 4.800 € netto", emlB64], [72, "Bitte um Termin", emlOhne]]) {
+      tm.programm({ mail: MZ(uid, text), roh: () => eml(roh) }); window.__toasts = [];
+      x("ansichtenSchliessen()"); x("mailUebernehmen({k:'gmx', o:'INBOX', u:" + uid + ", a:'zuprojekt', p:'tmp_p4'})");
+      await tm.bis(() => tm.fuss(/Ins Projekt legen/));
+      const hinweis = /enthält Preise/.test(tm.dlg().textContent);
+      p(uid === 71 ? hinweis : !hinweis, "Mail zu Projekt " + uid + ": Hinweis „enthält Preise“ " + (hinweis ? "ohne Preis" : "fehlt"));
+      tm.fuss(/Ins Projekt legen/).click(); await tm.toastBis(/abgelegt|^Nicht/);
+      if (uid === 71) p(window.__toasts.some((t) => /enthält Preise – nur für den Inhaber abgelegt/.test(t)), "Mail zu Projekt: Meldung ohne Hinweis auf die Preise: " + JSON.stringify(window.__toasts));
+    }
+    let d1 = dateien();
+    p(d1.some((f) => /^mail\|buero\/.*Mail 71\.eml$/.test(f)) && d1.some((f) => /^mail\|tmp_p4\/.*Mail 72\.eml$/.test(f)), "Mail zu Projekt: .eml mit Preisen nicht (nur) im Büro-Ordner: " + JSON.stringify(d1));
+    const eintrag = (db.projekte.find((q) => q.id === "tmp_p4").daten.dateien || []).find((f) => /Mail 71/.test(f.name)) || {};
+    x("ansichtenSchliessen(); projektAnsicht('tmp_p4')"); await tm.bis(() => tm.dlg() && /Mail 71/.test(tm.dlg().textContent));
+    const zeile = [...tm.dlg().querySelectorAll("[data-liste] div")].find((z) => /Mail 71/.test(z.textContent));
+    p(eintrag.preise && zeile && /enthält Preise/.test(zeile.textContent), "Projektdateien: kein sichtbarer Hinweis bei der Mail mit Preisen: " + (zeile ? zeile.textContent : "(keine Zeile)"));
+    x("ansichtenSchliessen()");
+    /* 2. Posteingang (Inhaber): Preis im HTML-Teil – Hinweis schon im Dialog, .eml unter buero/, der Plan ins Projekt */
+    window.UKT_CONFIG.posteingangAktiv = true;
+    const sb = x("Store.sb"), pe = (id, art, name, pfad) => ({ id, nachricht_id: "<pp9@test>", art, dateiname: name, pfad, status: "neu", betreff: "Fwd: P-2026-904 Wartung", absender: "a@planer-test.at", eingang: jetzt, bytes: 300 });
+    await sb.storage.from("posteingang").upload("2026/10/pp9_mail.eml", new Blob([emlQp]));
+    await sb.storage.from("posteingang").upload("2026/10/pp9_plan.pdf", new Blob(["%PDF-1.4 Plan"], { type: "application/pdf" }));
+    db.posteingang.push(pe("pp9a", "mail", "Fwd P-2026-904 Wartung.eml", "2026/10/pp9_mail.eml"), pe("pp9b", "unbekannt", "Plan Keller.pdf", "2026/10/pp9_plan.pdf"));
+    const k = x("posteingangKarte()"); document.body.appendChild(k); await tm.bis(() => k.querySelector(".posbox"));
+    tm.knopf(k, /Zu Projekt legen/).click(); await tm.bis(() => tm.fuss(/Ins Projekt legen/));
+    await tm.bis(() => /enthält Preise/.test(tm.dlg().textContent), 2000);
+    p(/enthält Preise – nur für den Inhaber abgelegt/.test(tm.dlg().textContent), "Posteingang: Dialog ohne Hinweis auf die Preise");
+    tm.dlg().querySelector("[data-p]").value = "tmp_p4"; window.__toasts = [];
+    tm.fuss(/Ins Projekt legen/).click(); await tm.toastBis(/abgelegt|^Nicht/);
+    d1 = dateien();
+    p(d1.some((f) => /^mail\|buero\/.*Fwd P-2026-904 Wartung\.eml$/.test(f)) && d1.some((f) => /^plan\|tmp_p4\/.*Plan Keller\.pdf$/.test(f)), "Posteingang: .eml mit Preisen nicht im Büro-Ordner bzw. Plan fehlt: " + JSON.stringify(d1));
+    k.remove(); x("ansichtenSchliessen()");
+    /* 3. Mailverlauf: die Mail mit Preisen liegt nur beim Inhaber */
+    const MV = { konto: "gmx", ordner: "INBOX", uid: 73, messageId: "<pp73@test>", datum: "2026-09-20T08:00:00.000Z", betreff: "Angebot Kälte", von: [{ name: "Planer", address: "a@planer-test.at" }], an: [], anhaenge: [] };
+    tm.programm({ mails: [MV], vorschlag: { titel: "Preise Verlauf", kunde: "Lidl", kundeTreffer: "Lidl", status: "angebot", angaben: [], beteiligte: [], termine: [], tagebuch: [], dateien: [] }, roh: () => eml(emlB64) });
+    await tm.verlauf({ suche: "Kälte" }); window.__toasts = [];
+    tm.fuss(/Projekt anlegen/).click(); await tm.toastBis(/angelegt:|^Nicht fertig/);
+    const pv = db.projekte.find((q) => q.titel === "Preise Verlauf"), dv = ((pv && pv.daten.dateien) || []).map((f) => f.art + "|" + f.pfad);
+    p(dv.length === 1 && /^mail\|buero\//.test(dv[0]) && window.__toasts.some((t) => /enthält Preise/.test(t)), "Mailverlauf: .eml mit Preisen nicht im Büro-Ordner bzw. ohne Hinweis: " + JSON.stringify({ dv, t: window.__toasts }));
+    tm.ende();
+    /* 4. Techniker: eine .eml mit Preisen wird nicht abgelegt (Hinweis), eine ohne Preise schon */
+    await tm.anmelden("tech@test.at", "techniker"); tm.toastSpion(); await x("projekteLaden()");
+    window.__datei = [new File([emlB64], "Angebot Hotel.eml", { type: "message/rfc822" }), new File([emlOhne], "Termin.eml", { type: "message/rfc822" })];
+    const neu = await x("projektDateienHochladen(PROJEKTE.filter(function(q){ return q.id==='tmp_p4'; })[0], 'mail', window.__datei)");
+    d1 = dateien();
+    p(!d1.some((f) => /Angebot Hotel/.test(f)) && d1.some((f) => /^mail\|tmp_p4\/.*Termin\.eml$/.test(f)) && (neu || []).length === 1, "Techniker: .eml mit Preisen abgelegt bzw. die ohne nicht: " + JSON.stringify(d1));
+    p(window.__toasts.some((t) => /Angebot Hotel\.eml.*enthält Preise.*nur der Inhaber/.test(t)), "Techniker: kein Hinweis, warum die Mail nicht abgelegt wurde: " + JSON.stringify(window.__toasts));
+    return { fehlt };
+  });
+  pruefe(!r.fehlt.length, r.fehlt.join(" | "));
+  pruefe(!a.fehler.length, "Laufzeitfehler: " + a.fehler.join("; "));
+  await a.zu();
+});
+
+test("Antworten post: Preis-Erkennung – Beträge in Signatur und Impressum zählen nicht, eine zitierte Mail darunter schon", async () => {
+  const a = await oeffnen(KONTEN.inhaber);
+  const r = await a.seite.evaluate(() => {
+    const x = window.__t.x;
+    const faelle = [
+      ["Mit freundlichen Grüßen\nMuster GmbH\nStammkapital EUR 35.000\nFN 123456a, Firmenbuchgericht Salzburg", false],
+      ["Danke!\nTest GmbH · Gesellschaftskapital: 70.000 € · UID ATU12345678", false],
+      ["Bitte um Termin.\n-- \nTest GmbH\nAktion: Klimacheck ab 99 € im Shop", false],
+      ["Unser Angebot: 4.800 € netto\n-- \nTest GmbH\nStammkapital EUR 35.000", true],
+      ["Passt so.\n-- \nTest GmbH\n\n> Von: planer@test.example\n> Preis: 1.200 € netto", true],
+    ];
+    const falsch = faelle.filter((f) => x("mailTextMitPreis(" + JSON.stringify(f[0]) + ")") !== f[1]).map((f) => f[0].slice(0, 40));
+    /* auch im HTML-Teil einer .eml: Zeilenumbrüche (<br>) bleiben Zeilen */
+    const eml = "From: a@test.example\r\nContent-Type: text/html; charset=utf-8\r\n\r\n<p>Termin passt.</p><p>Test GmbH<br>Stammkapital EUR 35.000<br>FN 123456a</p>\r\n";
+    return { falsch, html: x("mailTextMitPreis(emlText(" + JSON.stringify(eml) + "))") };
+  });
+  pruefe(!r.falsch.length && r.html === false, "Signatur zählt als Preis: " + JSON.stringify(r));
+  pruefe(!a.fehler.length, "Laufzeitfehler: " + a.fehler.join("; "));
+  await a.zu();
+});
+
+test("Antworten post: KPlus-Beleg neu eingelesen – Rechnung und Angebot „versendet“, vorhandene Belege bleiben, wie sie sind", async () => {
+  const a = await tmSeite(KONTEN.inhaber);
+  const r = await a.seite.evaluate(async () => {
+    const x = window.__t.x, db = window.__db.tabellen, tm = window.__tm, jetzt = new Date().toISOString(), fehlt = [], p = (bed, text) => { if (!bed) fehlt.push(text); };
+    const erg = (art, nr) => ({ art, nummer: nr, datum: "2026-09-30", kopf: {}, positionen: [{ typ: "pos", nr: "1", menge: 1, eh: "Stk", text: "Testposition", preis: 100 }], summenPdf: { netto: 100 } });
+    db.projekte.push({ id: "tmp_p5", nummer: "P-2026-905", titel: "KPlus Stand", kunde_id: "lidl", status: "angebot", daten: {}, verlauf: [], erstellt: jetzt, geaendert: jetzt });
+    db.belege.push({ id: "bAlt", art: "rechnung", nummer: "413981", status: "bezahlt", bezahlt: "2026-09-15", projekt_id: "tmp_p5", kunde_id: "lidl", test: false, extern: true, datum: "2026-09-01", kopf: {}, positionen: [], summen: {} });
+    await x("projekteLaden()"); tm.toastSpion();
+    const ablegen = async (e) => {
+      x("ansichtenSchliessen(); kplusVorschau(PROJEKTE.filter(function(q){ return q.id==='tmp_p5'; })[0], " + JSON.stringify(e) + ", function(){})");
+      await tm.bis(() => tm.fuss(/Am Projekt ablegen/)); window.__toasts = [];
+      tm.fuss(/Am Projekt ablegen/).click(); await tm.toastBis(/abgelegt/);
+    };
+    await ablegen(erg("angebot", "413980")); await ablegen(erg("rechnung", "413982")); await ablegen(erg("rechnung", "413981"));
+    const st = (nr) => (db.belege.find((b) => b.nummer === nr) || {}).status;
+    p(st("413980") === "versendet", "KPlus-Vorschau: neues Angebot steht auf „" + st("413980") + "“ statt „versendet“");
+    p(st("413982") === "versendet", "KPlus-Vorschau: neue Rechnung steht auf „" + st("413982") + "“");
+    p(st("413981") === "bezahlt", "KPlus-Vorschau: vorhandene bezahlte Rechnung wurde „" + st("413981") + "“");
+    /* Mailverlauf: neues KPlus-Angebot ebenso „versendet“ */
+    tm.verbinden();
+    x("kplusLesen=function(d){ var t=new TextDecoder().decode(d), nr=(/4139\\d\\d/.exec(t)||[''])[0]; if(!nr) return Promise.reject(new Error('kein KPlus')); return Promise.resolve({art:'angebot', nummer:nr, datum:'2026-09-20', kopf:{}, positionen:[{typ:'pos', nr:'1', menge:1, eh:'Stk', text:'Testposition', preis:1000}], summenPdf:{netto:1000}}); }");
+    const MV = { konto: "gmx", ordner: "INBOX", uid: 83, messageId: "<kp83@test>", datum: "2026-09-20T08:00:00.000Z", betreff: "Angebot 413983", von: [{ name: "Büro", address: "buero@test-firma.at" }], an: [],
+      anhaenge: [{ i: 0, name: "413983.pdf", typ: "application/pdf", groesse: 4096 }] };
+    tm.programm({ mails: [MV], vorschlag: { titel: "KPlus Verlauf", kunde: "Lidl", kundeTreffer: "Lidl", status: "angebot", angaben: [], beteiligte: [], termine: [], tagebuch: [], dateien: [] },
+      anhang: () => new Blob(["%PDF-1.4 KPlus 413983"], { type: "application/pdf" }) });
+    await tm.verlauf({ suche: "413983" }); window.__toasts = [];
+    tm.fuss(/Projekt anlegen/).click(); await tm.toastBis(/angelegt:|^Nicht fertig/);
+    p(st("413983") === "versendet", "Mailverlauf: neues KPlus-Angebot steht auf „" + st("413983") + "“ statt „versendet“");
+    tm.ende();
+    return { fehlt };
+  });
+  pruefe(!r.fehlt.length, r.fehlt.join(" | "));
+  pruefe(!a.fehler.length, "Laufzeitfehler: " + a.fehler.join("; "));
+  await a.zu();
+});
+
+test("Antworten post: Synology-Posteingang – ein zu großer Anhang steht als Hinweis da (ohne Datei), die Mail lässt sich trotzdem ablegen", async () => {
+  /* das Skript selbst (zu große Anhänge, Lidl am Dateinamen und Absender, Konto ohne Leserecht) prüft tools/posteingang_test.py */
+  const a = await tmSeite(KONTEN.inhaber);
+  const r = await a.seite.evaluate(async () => {
+    const x = window.__t.x, db = window.__db.tabellen, tm = window.__tm, jetzt = new Date().toISOString(), fehlt = [], p = (bed, text) => { if (!bed) fehlt.push(text); };
+    window.UKT_CONFIG.posteingangAktiv = true; tm.toastSpion();
+    const sb = x("Store.sb");
+    db.projekte.push({ id: "tmp_p6", nummer: "P-2026-906", titel: "Große Pläne", kunde_id: "lidl", status: "anfrage", daten: {}, verlauf: [], erstellt: jetzt, geaendert: jetzt });
+    await x("projekteLaden()");
+    await sb.storage.from("posteingang").upload("2026/10/gr1_mail.eml", new Blob(["From: a@planer-test.at\r\nSubject: P-2026-906 Pläne\r\n\r\nAnbei die Pläne."]));
+    const zeile = (id, art, name, pfad, notiz) => ({ id, nachricht_id: "<gr1@test>", art, dateiname: name, pfad, status: "neu", betreff: "Fwd: P-2026-906 Pläne", absender: "a@planer-test.at", eingang: jetzt, bytes: null, notiz: notiz || null });
+    db.posteingang.push(zeile("gr1a", "mail", "Fwd P-2026-906 Pläne.eml", "2026/10/gr1_mail.eml"),
+      zeile("gr1b", "unbekannt", "Plan riesig.pdf", "", "Anhang zu groß (25,3 MB) – bitte von Hand aus dem Postfach holen"));
+    const k = x("posteingangKarte()"); document.body.appendChild(k); await tm.bis(() => k.querySelectorAll(".posbox").length >= 2);
+    const boxen = [...k.querySelectorAll(".posbox")], hinweis = boxen.find((b) => /Plan riesig/.test(b.textContent) && /zu groß/.test(b.textContent)), mailBox = boxen.find((b) => /✉/.test(b.textContent));
+    p(!!hinweis && /25,3 MB/.test(hinweis.textContent) && !/ansehen|Rapport zuordnen|Störungsauftrag/.test(hinweis.textContent), "zu großer Anhang: kein eigener Hinweis bzw. Knöpfe für eine Datei, die es nicht gibt: " + (hinweis ? hinweis.textContent : "(keiner)"));
+    p(mailBox && !/Plan riesig/.test(mailBox.textContent), "die Mail-Karte führt den nicht abgeholten Anhang als Datei: " + (mailBox ? mailBox.textContent : "(keine)"));
+    /* die Mail ins Projekt – der Hinweis bleibt stehen, bis er erledigt ist */
+    tm.knopf(mailBox, /Zu Projekt legen/).click(); await tm.bis(() => tm.fuss(/Ins Projekt legen/));
+    tm.dlg().querySelector("[data-p]").value = "tmp_p6"; window.__toasts = [];
+    tm.fuss(/Ins Projekt legen/).click(); await tm.toastBis(/abgelegt|^Nicht/);
+    const st = (id) => db.posteingang.find((e) => e.id === id).status;
+    p(st("gr1a") === "erledigt" && st("gr1b") === "neu" && window.__toasts.some((t) => /abgelegt: 1 Datei/.test(t)), "Ablegen mit Hinweis-Zeile: " + JSON.stringify({ a: st("gr1a"), b: st("gr1b"), t: window.__toasts }));
+    const erl = hinweis && tm.knopf(hinweis, /erledigt/);
+    if (erl) { erl.click(); await tm.bis(() => st("gr1b") !== "neu", 2000); }
+    p(erl && st("gr1b") === "erledigt" && !k.contains(hinweis), "Hinweis lässt sich nicht als erledigt abhaken: " + st("gr1b"));
+    k.remove(); x("ansichtenSchliessen()");
+    return { fehlt };
+  });
+  pruefe(!r.fehlt.length, r.fehlt.join(" | "));
+  pruefe(!a.fehler.length, "Laufzeitfehler: " + a.fehler.join("; "));
+  await a.zu();
+});
+
+/* ---------------- Antworten des Inhabers 05.10.2026 zu Angeboten und Rechnungen ---------------- */
+const AR_HILFEN = `window.__ar = {
+  warte: (ms) => new Promise((f) => setTimeout(f, ms)),
+  bis: async (f, max = 3000) => { const t0 = Date.now(); for (;;) { let v = null; try { v = f(); } catch (e) {} if (v || Date.now() - t0 > max) return v; await window.__ar.warte(20); } },
+  dlgs: () => [...document.querySelectorAll(".assistent")],
+  knopf: (d, re) => [...(d || document).querySelectorAll("button")].filter((b) => re.test(b.textContent.trim()))[0] || null,
+}; 1`;
+test("Antworten rechnung: Nummer erst beim Speichern – Abbrechen verbraucht keine, Doppeltipp öffnet einen Editor, nie dieselbe Nummer", async () => {
+  const a = await oeffnen(KONTEN.inhaber);
+  await a.seite.evaluate((h) => eval(h), AR_HILFEN);
+  const r = await a.seite.evaluate(async () => {
+    const x = window.__t.x, db = window.__db.tabellen, A = window.__ar, jahr = new Date().getFullYear();
+    x("S.view='belege'; render(); 1"); await A.warte(300);
+    const plus = document.querySelector('[data-a="frei"]');
+    plus.click(); plus.click();                                   /* Doppeltipp auf „+ Rechnung“ */
+    await A.bis(() => A.dlgs().length && A.dlgs()[0].querySelector("[data-plus]")); await A.warte(400);
+    const editoren = A.dlgs().length, d0 = A.dlgs()[0];
+    const kopf = d0.querySelector(".as-titel").textContent + " | " + d0.querySelector(".as-schritt").textContent;
+    A.knopf(d0, /^Abbrechen$/).click(); x("ansichtenSchliessen()");
+    const speichern = async () => {
+      x("belegNeu({projekt:null, protokoll:null, kunde_id:'lidl', standort_id:null}, 'rechnung', null, function(){})");
+      const d = await A.bis(() => { const d = A.dlgs().pop(); return d && d.querySelector("[data-plus]") && d; });
+      const n0 = db.belege.length; A.knopf(d, /^Speichern$/).click();
+      await A.bis(() => db.belege.length > n0); await A.warte(100); x("ansichtenSchliessen()");
+      return db.belege.length > n0 ? db.belege[db.belege.length - 1].nummer : null;
+    };
+    const n1 = await speichern();
+    /* die nächste Nummer ist schon vergeben (anderes Gerät, Nummernkreis ohne Zähler der Datenbank): nie doppelt speichern */
+    db.belege.push({ id: "ar_fremd", art: "rechnung", nummer: "T-R-" + jahr + "-002", test: true, extern: false, datum: "2026-06-01", status: "entwurf", kopf: {}, positionen: [], summen: {} });
+    const n2 = await speichern();
+    const nummern = db.belege.filter((b) => b.art === "rechnung").map((b) => b.nummer);
+    return { editoren, kopf, n1, n2, jahr, doppelt: nummern.length !== new Set(nummern).size };
+  });
+  pruefe(r.editoren === 1, "Doppeltipp auf „+ Rechnung“ öffnet " + r.editoren + " Editoren");
+  pruefe(/Nummer wird beim Speichern vergeben/.test(r.kopf) && !/T-R-/.test(r.kopf), "Editor zeigt vor dem Speichern schon eine Nummer: " + r.kopf);
+  pruefe(r.n1 === "T-R-" + r.jahr + "-001", "Abbrechen hat eine Nummer verbraucht – erste gespeicherte: " + r.n1);
+  pruefe(r.n2 === "T-R-" + r.jahr + "-003" && !r.doppelt, "Vergebene Nummer nicht übersprungen: " + r.n2 + (r.doppelt ? " (doppelt)" : ""));
+  pruefe(!a.fehler.length, "Laufzeitfehler: " + a.fehler.join("; "));
+  await a.zu();
+});
+test("Antworten rechnung: Vorschlag zum Einsatz – Wartungspreis je JW/HJW/HJI, Reparatur und Prüfung nach Aufwand, Kältemittel ohne Sorte ohne Preis", async () => {
+  const a = await oeffnen(KONTEN.inhaber);
+  await a.seite.evaluate((h) => eval(h), AR_HILFEN);
+  const r = await a.seite.evaluate(async () => {
+    const x = window.__t.x, db = window.__db.tabellen, A = window.__ar;
+    const kat = (id, text, eh, preis) => ({ id, text, eh, preis, kunde_id: "lidl", aktiv: true, quelle: "Test" });
+    db.katalog.push(kat("arw0", "Wartung allgemein (Test)", "Stk", 99), kat("arw1", "Jahreswartung Klimaanlage (Test)", "Stk", 210),
+      kat("arw2", "Halbjahreswartung Klimaanlage (Test)", "Stk", 150), kat("arw3", "Jahreswartung Techniker (Test)", "Std", 70));
+    await x("katalogLaden()");
+    const pk = (o) => Object.assign({ _id: "ar_" + Math.random(), standortId: "TS1", datum: "2026-06-01", wartungsart: "planmäßig", techniker: "Testtechniker", anlagen: [] }, o);
+    const zeilen = (p) => x("einsatzPositionen")(p, "lidl").map((q) => ({ typ: q.typ, text: q.text, preis: q.preis, menge: q.menge, eh: q.eh, hinweis: q.hinweis || "" }));
+    const wartung = pk({ anlagen: [{ name: "Anlage A", termin: "Jahreswartung" }, { name: "Anlage B", termin: "Halbjahreswartung" },
+      { name: "Anlage C", termin: "Halbjahresinspektion" }, { name: "Anlage D", termin: "" }] });
+    const w = zeilen(wartung);
+    /* der Hinweis steht im Editor bei der Position */
+    x("belegNeu")(x("kontextProtokoll")(wartung), "rechnung", null, function () {});
+    const d = await A.bis(() => { const d = A.dlgs().pop(); return d && d.querySelector(".bpos") && d; });
+    const editor = d ? d.textContent : ""; x("ansichtenSchliessen()");
+    /* Reparatur (Stunden laut Lidl-Rapport) und Prüfung (ohne Zeiten): nach Aufwand wie eine Störung, keine Wartung je Anlage */
+    const anlA = [{ name: "Anlage A", termin: "Jahreswartung" }];
+    const reparatur = pk({ wartungsart: "Reparatur", anlagen: anlA, bemerkungen: "Verdichter getauscht", rapport: { daten: { stunden: "3:30" } } });
+    const rep = zeilen(reparatur), pruef = zeilen(pk({ wartungsart: "Prüfung", anlagen: anlA }));
+    x("belegNeu")(x("kontextProtokoll")(reparatur), "rechnung", null, function () {});
+    const d2 = await A.bis(() => { const d = A.dlgs().pop(); return d && d.querySelector(".bpos") && d; });
+    const betreff = d2 ? d2.querySelector('[data-k="betreff"]').value : ""; x("ansichtenSchliessen()");
+    /* Kältemittel nachgefüllt: ohne Sorte nie irgendeine Sorte samt Preis, mit Sorte wie bisher */
+    db.katalog.push(kat("arkm", "Kältemittel R410A (Test)", "kg", 60)); await x("katalogLaden()");
+    const km = (o) => zeilen(o).filter((p) => /lte?mittel/i.test(p.text))[0] || {};
+    const kmOhne = km(pk({ kaeltemittel: { art: null, nach: 2.5 } })), kmMit = km(pk({ kaeltemittel: { art: "R410A", nach: 2.5 } }));
+    const kmStoer = km(pk({ wartungsart: "Störung", stoerung: { kmArt: "", kmNach: "1,5" } }));
+    return { w, editor, rep, pruef, betreff, kmOhne, kmMit, kmStoer };
+  });
+  const anl = (n) => r.w.filter((p) => new RegExp("Anlage " + n).test(p.text))[0] || {};
+  pruefe(anl("A").preis === 210 && /Jahreswartung Klimaanlage/.test(anl("A").text), "JW nicht zum JW-Preis: " + JSON.stringify(anl("A")));
+  pruefe(anl("B").preis === 150 && /Halbjahreswartung Klimaanlage/.test(anl("B").text), "HJW nicht zum HJW-Preis: " + JSON.stringify(anl("B")));
+  pruefe(!anl("C").preis && /Preis für HJI fehlt – alte KPlus-Rechnung mit dieser Position hochladen/.test(anl("C").hinweis), "HJI ohne Katalogposition: " + JSON.stringify(anl("C")));
+  pruefe(!anl("D").preis && anl("D").hinweis, "Anlage ohne bekannte Termin-Art bekam einen Preis: " + JSON.stringify(anl("D")));
+  pruefe(/Preis für HJI fehlt/.test(r.editor), "Hinweis „Preis für HJI fehlt“ im Editor nicht sichtbar");
+  const kurz = (l) => JSON.stringify(l.map((p) => p.typ + ":" + String(p.text).split("\n")[0] + "|" + p.menge + "|" + p.preis + (p.hinweis ? "|⚠" : "")));
+  for (const [art, l] of [["Reparatur", r.rep], ["Prüfung", r.pruef]]) {
+    pruefe(!l.some((p) => p.typ === "pos" && /^Wartung/.test(p.text)), art + ": Wartung je Anlage vorgeschlagen: " + kurz(l));
+    pruefe(l.some((p) => p.typ === "pos" && /Fahrtpauschale/.test(p.text)) && l.some((p) => p.typ === "text" && new RegExp("^" + art).test(p.text)), art + ": Textzeile oder Fahrtpauschale fehlt: " + kurz(l));
+  }
+  const regie = r.rep.filter((p) => /Regiestunde/.test(p.text))[0] || {};
+  pruefe(regie.menge === 3.5 && regie.preis === 70 && regie.eh === "Std", "Reparatur: Regiestunden laut Rapport × Stundensatz fehlen: " + kurz(r.rep));
+  const regieP = r.pruef.filter((p) => /Regiestunde/.test(p.text))[0] || {};
+  pruefe(regieP.hinweis && !regieP.menge, "Prüfung ohne Zeiten: Regiestunden ohne Hinweis bzw. mit Menge: " + kurz(r.pruef));
+  pruefe(/Reparatur/.test(r.betreff) && !/Wartung/.test(r.betreff), "Betreff der Reparatur-Rechnung: " + r.betreff);
+  for (const [was, k, menge] of [["Wartung", r.kmOhne, 2.5], ["Störung", r.kmStoer, 1.5]])
+    pruefe(/^Kältemittel – Sorte fehlt/.test(k.text || "") && !k.preis && k.hinweis && k.menge === menge, was + ": Kältemittel ohne Sorte: " + JSON.stringify(k));
+  pruefe(r.kmMit.preis === 60 && /R410A/.test(r.kmMit.text) && !r.kmMit.hinweis, "Kältemittel mit Sorte nicht wie bisher: " + JSON.stringify(r.kmMit));
+  pruefe(!a.fehler.length, "Laufzeitfehler: " + a.fehler.join("; "));
+  await a.zu();
+});
+test("Antworten rechnung: Wartungspreis je Art und Anlagentyp – nie der Preis eines anderen Typs", async () => {
+  const a = await oeffnen(KONTEN.inhaber);
+  const r = await a.seite.evaluate(async () => {
+    const x = window.__t.x, db = window.__db.tabellen;
+    const kat = (id, text, preis) => ({ id, text, eh: "Stk", preis, kunde_id: "lidl", aktiv: true, quelle: "Test" });
+    db.katalog.push(kat("at1", "Jahreswartung Split (Test)", 180), kat("at2", "Jahreswartung VRV (Test)", 300), kat("at3", "Jahreswartung allgemein (Test)", 99),
+      kat("at4", "Halbjahreswartung (Test)", 150), kat("at5", "HJI Split (Test)", 80));
+    await x("katalogLaden()");
+    const anl = [["A", "Jahreswartung", { bauart: "Split" }], ["B", "Jahreswartung", { name: "Anlage B VRV Verkaufsraum" }], ["C", "Jahreswartung", { bauart: "Multi-Split" }],
+      ["D", "Jahreswartung", {}], ["E", "Halbjahreswartung", { bauart: "Split" }], ["F", "Halbjahresinspektion", { bauart: "VRV luftgekühlt" }]]
+      .map(([n, t, o]) => Object.assign({ name: "Anlage " + n, termin: t }, o));
+    return x("einsatzPositionen")({ _id: "at", standortId: "TS1", datum: "2026-06-01", wartungsart: "planmäßig", anlagen: anl }, "lidl")
+      .filter((p) => /^Wartung/.test(p.text)).map((p) => ({ n: (/Anlage (\w)/.exec(p.text) || [])[1], preis: p.preis, hinweis: p.hinweis || "" }));
+  });
+  const z = (n) => r.filter((p) => p.n === n)[0] || {};
+  pruefe(z("A").preis === 180 && z("B").preis === 300, "Art+Typ nicht gefunden: " + JSON.stringify([z("A"), z("B")]));
+  pruefe(!z("C").preis && /Preis für JW Multi-Split fehlt/.test(z("C").hinweis), "Multi-Split bekam einen fremden Preis: " + JSON.stringify(z("C")));
+  pruefe(!z("D").preis && z("D").hinweis, "Anlage ohne Typ bekam trotz typ-eigener Positionen einen Preis: " + JSON.stringify(z("D")));
+  pruefe(z("E").preis === 150, "HJW ohne typ-eigene Position nicht zum allgemeinen Preis: " + JSON.stringify(z("E")));
+  pruefe(!z("F").preis && /Preis für HJI VRV fehlt/.test(z("F").hinweis), "VRV bekam den HJI-Preis von Split: " + JSON.stringify(z("F")));
+  pruefe(!a.fehler.length, "Laufzeitfehler: " + a.fehler.join("; "));
+  await a.zu();
+});
+test("Antworten rechnung: KPlus-Rechnung umgehängt – der vorige Einsatz ist wieder „noch nicht abgerechnet“; die App lernt Streichen nach 3 Rechnungen", async () => {
+  const a = await oeffnen(KONTEN.inhaber);
+  await a.seite.evaluate((h) => eval(h), AR_HILFEN);
+  const r = await a.seite.evaluate(async () => {
+    const x = window.__t.x, db = window.__db.tabellen, A = window.__ar;
+    const st = (id, d, o) => Object.assign({ id, client_id: id, standort_id: "TS1", datum: d, wartungsart: "Störung", techniker: "Testtechniker", anlagen: [],
+      stoerung: { ankunft: "08:00", ende: "09:00", problemtyp: "Kühlung" }, version: 1, erstellt: new Date().toISOString(), erstellt_von: "u_tech_test_at" }, o || {});
+    db.protokolle.push(st("ar_a", "2026-05-01"), st("ar_b", "2026-05-02"), st("ar_c", "2026-05-03"), st("ar_d", "2026-05-04"));
+    await x("Promise.all([ladeProtokolle(), katalogLaden(), abrechnungLaden(), belegeAlleLaden()])");
+    const pk = (id) => x("alleProtokolle(true)").filter((p) => p._id === id)[0];
+    const erg = (nr, pos) => ({ art: "rechnung", nummer: nr, datum: "2026-05-05", kopf: { betreff: ["Test"] }, summenPdf: { netto: null },
+      positionen: pos || [{ typ: "pos", nr: "1", menge: 1, eh: "Std", preis: 70, betragPdf: 70, text: "Regiestundensatz Test" }] });
+    const ablegen = async (id, e) => {
+      x("kplusVorschau")(x("kontextProtokoll")(pk(id)), e, function () {});
+      const d = await A.bis(() => { const d = A.dlgs().pop(); return d && A.knopf(d, /Beim Einsatz ablegen/) && d; });
+      const vgl = d.textContent;
+      A.knopf(d, /Beim Einsatz ablegen/).click(); await A.bis(() => !document.body.contains(d), 4000); await A.warte(300);
+      await x("Promise.all([abrechnungLaden(), belegeAlleLaden()])"); return vgl;
+    };
+    await ablegen("ar_a", erg("900901"));
+    const vorher = !!x("abrechnung")["ar_a"];
+    await ablegen("ar_b", erg("900901"));                        /* dieselbe Rechnung gehört zu Einsatz B – umhängen (Rückfrage: ja) */
+    const nachher = { a: !!x("abrechnung")["ar_a"], b: !!x("abrechnung")["ar_b"], beleg: (db.belege.filter((b) => b.nummer === "900901")[0] || {}).protokoll_id,
+      meldung: document.getElementById("toast").textContent };
+    /* C hat noch eine zweite Rechnung: bleibt abgerechnet */
+    await ablegen("ar_c", erg("900902")); await ablegen("ar_c", erg("900903")); await ablegen("ar_d", erg("900903"));
+    const c = !!x("abrechnung")["ar_c"];
+    /* Lernen (Markt in Zone 2): der Chef streicht die Fahrtpauschale und schreibt Kleinmaterial dazu – nach 2 Rechnungen
+       schlägt die App die Pauschale noch vor, nach 3 nicht mehr (mit Grund); eine andere Einsatzart lernt davon nichts */
+    db.protokolle.push(st("ar_l1", "2026-06-01", { standort_id: "TS2" }), st("ar_l2", "2026-06-02", { standort_id: "TS2" }), st("ar_l3", "2026-06-03", { standort_id: "TS2" }),
+      st("ar_l4", "2026-06-04", { standort_id: "TS2" }), st("ar_r", "2026-06-05", { standort_id: "TS2", wartungsart: "Reparatur", stoerung: null }));
+    await x("ladeProtokolle()");
+    const mitKlein = (nr) => erg(nr, [{ typ: "pos", nr: "1", menge: 1, eh: "Std", preis: 70, betragPdf: 70, text: "Regiestundensatz Test" },
+      { typ: "pos", nr: "2", menge: 1, eh: "psh", preis: 30, betragPdf: 30, text: "Kleinmaterial pauschal" }]);
+    const fahrt = (id) => x("einsatzVorschlag")(pk(id), "lidl").pos.some((q) => q.typ === "pos" && /Fahrtpauschale/.test(q.text));
+    await ablegen("ar_l1", mitKlein("900911")); await ablegen("ar_l2", mitKlein("900912"));
+    const nachZwei = fahrt("ar_l4");
+    const vgl3 = await ablegen("ar_l3", mitKlein("900913"));
+    x("belegNeu")(x("kontextProtokoll")(pk("ar_l4")), "rechnung", null, function () {});
+    const d = await A.bis(() => { const d = A.dlgs().pop(); return d && d.querySelector(".bpos") && d; });
+    const ed = { text: d.textContent, pos: [...d.querySelectorAll(".bpos")].map((z) => z.querySelector('[data-f="text"]').value.split("\n")[0]) };
+    x("ansichtenSchliessen()");
+    return { vorher, nachher, c, nachZwei, nachDrei: fahrt("ar_l4"), reparatur: fahrt("ar_r"), ed, vgl3: /Kleinmaterial/.test(vgl3) };
+  });
+  pruefe(r.vorher, "Einsatz A nach der KPlus-Rechnung nicht als abgerechnet vermerkt");
+  pruefe(r.nachher.beleg === "ar_b" && r.nachher.b && !r.nachher.a && /wieder „noch nicht abgerechnet“/.test(r.nachher.meldung), "Umgehängt: A bleibt abgerechnet bzw. B nicht – " + JSON.stringify(r.nachher));
+  pruefe(r.c, "Einsatz mit einer weiteren Rechnung verlor den Vermerk „abgerechnet“");
+  pruefe(r.nachZwei, "Fahrtpauschale schon nach 2 gestrichenen KPlus-Rechnungen nicht mehr vorgeschlagen");
+  pruefe(!r.nachDrei && !r.ed.pos.some((t) => /Fahrtpauschale/.test(t)), "Fahrtpauschale nach 3 gestrichenen KPlus-Rechnungen noch im Vorschlag: " + JSON.stringify(r.ed.pos));
+  pruefe(/Fahrtpauschale Zone 2[^]*nicht mehr vor[^]*gelernt aus 3 KPlus-Rechnungen/.test(r.ed.text), "Grund für die fehlende Fahrtpauschale im Editor nicht sichtbar");
+  pruefe(r.ed.pos.some((t) => /Kleinmaterial/.test(t)) && /gelernt aus 3 KPlus-Rechnungen/.test(r.ed.text.replace(/Fahrtpauschale[^]*?gestrichen war\./, "")), "Dazugeschriebenes ohne Grund „gelernt aus 3 KPlus-Rechnungen“: " + JSON.stringify(r.ed.pos));
+  pruefe(r.reparatur, "Reparatur lernt von Störungen (andere Einsatzart): Fahrtpauschale fehlt");
+  pruefe(!a.fehler.length, "Laufzeitfehler: " + a.fehler.join("; "));
+  await a.zu();
+});
+
+test("Störung aus dem Kalender: schon eingelesener Auftrag zeigt „QR-Code zeigen“, Einlesen erst auf Wunsch", async () => {
+  const a = await oeffnen(KONTEN.admin);
+  const r = await a.seite.evaluate(async () => {
+    const x = window.__t.x, w = (ms) => new Promise((f) => setTimeout(f, ms));
+    const dlg = () => [...document.querySelectorAll(".assistent")].pop();
+    const sicht = (d, s) => { const e = d.querySelector(s); return !!e && !!(e.offsetWidth || e.offsetHeight || e.getClientRects().length); };
+    await x("stoerungSpeichern({_id:'sqr1', standortId:'TS1', auftragsnummer:'612345', status:'offen'}, 'Test')");
+    x("ansichtenSchliessen(); document.querySelectorAll('.assistent').forEach(function(d){ d.remove(); }); stoerungDialog(OFFENE.filter(function(o){ return o._id==='sqr1'; })[0])"); await w(300);
+    let d = dlg(); const erg = {};
+    erg.qrSichtbar = sicht(d, "#st_qrzeigen"); erg.pdfVorher = sicht(d, 'label[for="st_pdf"]'); erg.scanVorher = sicht(d, "#st_qr"); erg.infoVorher = sicht(d, "#st_info");
+    d.querySelector("#st_qrzeigen").click(); await w(400);
+    erg.qrAnsicht = /QR-Code aus der Auftragsnummer/.test(document.body.innerText) && /612345/.test(document.body.innerText);
+    x("ansichtenSchliessen(); document.querySelectorAll('.assistent').forEach(function(d){ d.remove(); }); stoerungDialog(OFFENE.filter(function(o){ return o._id==='sqr1'; })[0])"); await w(300);
+    d = dlg(); d.querySelector("#st_einlesenAuf").click(); await w(100);
+    erg.pdfNachher = sicht(d, 'label[for="st_pdf"]'); erg.scanNachher = sicht(d, "#st_qr");
+    /* neuer Auftrag ohne Nummer: Einlesen wie bisher gleich sichtbar, kein „QR-Code zeigen“ */
+    x("document.querySelectorAll('.assistent').forEach(function(d){ d.remove(); }); stoerungDialog(null, null, {standortId:'TS1'})"); await w(300);
+    d = dlg(); erg.neuPdf = sicht(d, 'label[for="st_pdf"]'); erg.neuQr = !!d.querySelector("#st_qrzeigen");
+    return erg;
+  });
+  pruefe(r.qrSichtbar && !r.pdfVorher && !r.scanVorher && !r.infoVorher, "eingelesener Auftrag: QR-Knopf fehlt oder Einlese-Knöpfe stehen da: " + JSON.stringify(r));
+  pruefe(r.qrAnsicht, "„QR-Code zeigen“ öffnet keinen QR-Code: " + JSON.stringify(r));
+  pruefe(r.pdfNachher && r.scanNachher, "„Anderen Auftrag einlesen …“ zeigt die Einlese-Knöpfe nicht: " + JSON.stringify(r));
+  pruefe(r.neuPdf && !r.neuQr, "neuer Auftrag: Einlesen nicht gleich sichtbar oder QR-Knopf ohne Nummer: " + JSON.stringify(r));
+  await a.zu();
+});
+
+test("Karte: Auswahl „fällig in 31–60 Tagen“ – Märkte mit einem Termin im übernächsten Monat lassen sich dazunehmen", async () => {
+  const a = await oeffnen(KONTEN.admin);
+  const r = await a.seite.evaluate(() => {
+    const x = window.__t.x;
+    const heute = new Date(), g30 = x("isoLokal(new Date(Date.now()+VORLAUF_TAGE*86400000))"), g60 = x("isoLokal(new Date(Date.now()+KARTE_BALD_TAGE*86400000))");
+    const maerkte = x("ST.filter(function(s){ return !marktPausiert(s) && (s.status==='erledigt'||s.status==='geplant'); }).map(function(s){ return {id:s.id, kat:karteKat(s), n:s.pos.map(function(p){ return p.naechste; }).filter(Boolean).sort()[0]||''}; })");
+    const falsch = maerkte.filter((m) => (m.kat === "bald") !== (m.n && m.n >= g30 && m.n < g60) && !(m.kat === "plan" && (!m.n || m.n >= g60)));
+    return { kat: x("KARTE_KAT.map(function(k){ return k[0]+'|'+k[1]; })"), falsch, bald: maerkte.filter((m) => m.kat === "bald").length, faelligUnveraendert: x("VORLAUF_TAGE") };
+  });
+  pruefe(r.kat.some((k) => /^bald\|fällig in 31–60 Tagen$/.test(k)), "keine Auswahl „fällig in 31–60 Tagen“: " + JSON.stringify(r.kat));
+  pruefe(!r.falsch.length, "Märkte falsch eingeteilt: " + JSON.stringify(r.falsch));
+  pruefe(r.faelligUnveraendert === 30, "Fälligkeit selbst verändert: " + r.faelligUnveraendert);
+  /* dieselbe Auswahl in der Fällig-Liste */
+  const l = await a.seite.evaluate(async () => {
+    const x = window.__t.x, w = (ms) => new Promise((f) => setTimeout(f, ms));
+    x("ansichtenSchliessen(); S.view='faellig'; S.faelligListe=''; S.faelligBald=false; render()"); await w(300);
+    const zeilen = () => document.querySelectorAll("#dulist > *").length;
+    const knopf = document.querySelector('#du_karte [data-a="bald"]'), vorher = zeilen();
+    const n = x("ALLE_POS.filter(function(p){ return POS.indexOf(p)>=0 && (p.status==='erledigt'||p.status==='geplant') && p.naechste && p.naechste<isoLokal(new Date(Date.now()+KARTE_BALD_TAGE*86400000)); }).length");
+    if (knopf) knopf.click(); await w(300);
+    const nachher = zeilen(), titel = document.querySelector("#du_karte h2").textContent;
+    x("S.faelligBald=false; render()");
+    return { knopf: !!knopf, n, vorher, nachher, titel };
+  });
+  /* und in der Tourenplanung: „bis Ende übernächsten Monats“ nimmt mehr Termine mit als „nächsten Monats“ */
+  const t = await a.seite.evaluate(() => {
+    const x = window.__t.x;
+    x("S.tour.status=['ueberfaellig','faellig']; S.tour.naechsterMonat=true; S.tour.uebernaechster=false");
+    const n1 = x("tourKandidaten().reduce(function(a,k){ return a+k.positionen.length; },0)");
+    x("S.tour.uebernaechster=true");
+    const n2 = x("tourKandidaten().reduce(function(a,k){ return a+k.positionen.length; },0)");
+    const bis = x("endeFolgemonat(1)"); x("S.tour.uebernaechster=false; S.tour.naechsterMonat=false");
+    return { n1, n2, bis };
+  });
+  pruefe(t.n2 >= t.n1 && /^\d{4}-\d\d-\d\d$/.test(t.bis), "Tour: „übernächsten Monats“ nimmt weniger mit: " + JSON.stringify(t));
+  pruefe(!l.n || (l.knopf && l.nachher > l.vorher && /bis 60 Tage/.test(l.titel)), "Fällig-Liste: „+ fällig in 31–60 Tagen“ fehlt oder wirkt nicht: " + JSON.stringify(l));
+  await a.zu();
+});
+
 test("Anlagenfotos: KI-Prüfbuch – Fotos landen an der Anlage (bekannt, mehrere Bücher, neu in Verwaltung und Protokoll), Anlagenbuch und Historie zeigen sie", async () => {
   const a = await oeffnen(KONTEN.techniker);
   await afHilfen(a);
@@ -4657,6 +5824,7 @@ test("Anlagenfotos: KI-Prüfbuch – Fotos landen an der Anlage (bekannt, mehrer
 
 /* Inhaber 06.10.2026: Anlagen-Karten im Markt einklappbar, am Handy zu („sonst muss man so weit scrollen“); „Beim Zurückspringen
    sollte es aber offen bleiben. Erst nachdem man lange nicht reingeschaut hat, wieder schließen.“ */
+
 test("Anlagen-Karten: im Markt – am Handy eingeklappt mit Kurzinfo, bleiben offen beim Zurückkommen, nach langer Zeit wieder zu, Sprünge klappen auf", async () => {
   const a = await oeffnen(KONTEN.techniker, { handy: true });
   const r = await a.seite.evaluate(async () => {

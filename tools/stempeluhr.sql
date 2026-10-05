@@ -1,3 +1,4 @@
+-- Nach einem erneuten Lauf gelten zusätzlich die Sperren aus tools/rechte-2026-10-05.sql (eigene Namen, werden hier nicht entfernt).
 -- Stempeluhr (Büro 01.10.2026): Ein- und Ausstempeln wie früher in Crewmeister.
 -- Einmal im Supabase SQL Editor ausführen (nach kunden-projekte-stunden.sql).
 -- Mehrfach ausführbar – auch nach den späteren Skripten (stempeluhr-2/-3/-4,
