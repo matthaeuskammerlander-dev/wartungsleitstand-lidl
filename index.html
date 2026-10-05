@@ -24119,7 +24119,8 @@ function handbuchKarte(z){
           "zum Vergleich und für den Positionskatalog.",
         "Die Nummer bekommt ein neuer Beleg erst beim <strong>Speichern</strong> (bis dahin „Nummer wird beim Speichern vergeben“) – Abbrechen lässt keine Lücke im Nummernkreis.",
         "Rechnung aus dem Angebot: die Mengen schlägt das Baustellenbuch vor. Rechnungen gibt es auch für Wartungs- und Störungseinsätze – mit dem Lidl-Rapport angehängt.",
-        "Wartung: je Anlage der Katalogpreis ihrer Termin-Art (JW, HJW, HJI). Fehlt er, steht die Zeile ohne Preis mit Hinweis – eine alte KPlus-Rechnung mit dieser Position hochladen, dann kennt der Katalog den Preis.",
+        "Wartung: je Anlage der Katalogpreis ihrer Termin-Art (JW, HJW, HJI). Fehlt er, steht die Zeile ohne Preis mit Hinweis – eine alte KPlus-Rechnung mit dieser Position hochladen, dann kennt der Katalog den Preis. "+
+          "Reparatur, Prüfung und sonstige Einsätze werden wie eine Störung nach Aufwand vorgeschlagen (Regiestunden, Material, Fahrtpauschale).",
         "<strong>KPlus-Rechnung hochladen</strong> beim Einsatz (im Protokoll unter „Rechnung zu diesem Einsatz“): statt selbst zu schreiben, das PDF aus KPlus – die App vergleicht es mit ihrem Vorschlag („So hätte die App gerechnet“), legt das Original beim Beleg ab, vermerkt den Einsatz als abgerechnet und lernt daraus für künftige Vorschläge.",
         "Status mit Datum (versendet, fällig, bezahlt); überfällige Rechnungen sind markiert.",
         "Preise, Katalog und Belege liegen nur in der Datenbank, sichtbar nur für den Inhaber – nicht für Admins, nicht auf der Synology im Projektordner."]))+
@@ -24882,6 +24883,7 @@ Object.assign(RUNDGAENGE, {
     {reiter:"belege", ziel:function(){ return rgEl('[data-a="einsatz"]'); }, titel:"Rechnung zu einem Einsatz",
       text:"Protokoll wählen (vorgegeben: nur ohne Rechnung, mit Rapport-Anzeige) – die App schlägt die Positionen vor."+
       RG_HG(["<strong>Wartung</strong>: je Anlage die Katalogposition ihrer Termin-Art (Jahreswartung/JW, Halbjahreswartung/HJW, Halbjahresinspektion/HJI) – fehlt sie, steht die Zeile ohne Preis mit „Preis für … fehlt – alte KPlus-Rechnung mit dieser Position hochladen“ (nie der Preis einer anderen Art). <strong>Störung</strong>: Textzeile, Regiestunden (Ankunft–Fertig × Personen, auf ¼ h), Material.",
+        "<strong>Reparatur, Prüfung, Sonstiges</strong>: wie eine Störung nach Aufwand – Textzeile, Regiestunden (verrechenbare Stunden laut Lidl-Rapport; ohne Zeit eine Zeile „Stunden eintragen“), Material – keine Wartung je Anlage.",
         "Kältemittel (kg) und die <strong>Fahrtpauschale der Zone</strong> (Zone 2: Kärnten, Steiermark, Vorarlberg, Tirol westlich von Innsbruck, Osttirol) – fehlt sie im Katalog, ohne Preis.",
         "Betreff, Bestellnummer (= Auftragsnummer) und Leistungszeitraum kommen aus dem Protokoll; der Lidl-Rapport hängt hinten am PDF."])},
     {reiter:"belege", ziel:function(){ return rgReiter("belege"); }, titel:"Der Beleg-Editor",
@@ -28024,8 +28026,8 @@ function positionPruefen(p){
   if(/regiestunde|stundensatz|zuschlag stunde|arbeitsstunde/i.test(p.text) && eh && !stunden) w.push("Stunden-Position mit Einheit „"+p.eh+"“ statt Std");
   if(p.betragPdf!=null && p.menge!=null && p.preis!=null && Math.abs(p.betragPdf-posBetrag(p))>0.05)
     w.push("Betrag im PDF ("+geld(p.betragPdf)+" €) ist nicht Menge × Preis ("+geld(posBetrag(p))+" €)");
-  /* Hinweis aus dem Rechnungsvorschlag (Preis bzw. Sorte fehlt), solange kein Preis eingetragen ist */
-  if(p.hinweis && !(+p.preis>0)) w.push(p.hinweis);
+  /* Hinweis aus dem Rechnungsvorschlag (Preis, Stunden bzw. Sorte fehlen), solange die Position noch keinen Betrag hat */
+  if(p.hinweis && !(posBetrag(p)>0)) w.push(p.hinweis);
   return w;
 }
 function positionenPruefen(positionen){
@@ -28479,13 +28481,20 @@ function fahrtZoneFehltText(s){
 /* Rechnung zu einem Einsatz: Positionen aus dem Protokoll vorschlagen – Wartung
    je Anlage, Störung mit Regiestunden (Ankunft bis Fertig × Monteure), Material,
    Kältemittel; Preise aus dem Katalog, wo eine passende Position steht. */
+/* Art des Einsatzes für Rechnung und Lernen (Inhaber 05.10.2026): je Anlage verrechnet wird nur die planmäßige Wartung –
+   Störung, Reparatur, Prüfung und Sonstiges nach Aufwand (Regiestunden, Material, Kältemittel, Fahrtpauschale) */
+function einsatzArt(pk){
+  if(istStoerung(pk)) return "stoerung";
+  var w=String((pk&&pk.wartungsart)||"").toLowerCase();
+  return /^reparatur/.test(w) ? "reparatur" : /^pr(ü|ue)fung/.test(w) ? "pruefung" : /^sonstig/.test(w) ? "sonstige" : "wartung";
+}
 function einsatzPositionen(pk, kid){
   var pos=[], nr=0, stoer=istStoerung(pk), so=pk.stoerung||{};
   /* zusatz: was zu genau diesem Einsatz gehört (Uhrzeit, Mannschaft) – bleibt auch beim Katalogtext stehen. Mengen aus
      einem alten Auftrag im Katalogtext („(3 Mann a 10 Std)“) fallen weg (Büro 05.10.2026: „da stimmt was nicht“) */
-  var add=function(menge, eh, text, kat, zusatz){ nr++; pos.push({typ:"pos", nr:String(nr), menge:menge, eh:(kat&&kat.eh)||eh,
-    text:(kat?katalogTextOhneMenge(kat.text):text)+(zusatz?"\n"+zusatz:""), preis:kat?+kat.preis:0, katalog_id:kat?kat.id:null, alternativ:false}); };
-  if(!stoer){
+  var add=function(menge, eh, text, kat, zusatz){ nr++; var p={typ:"pos", nr:String(nr), menge:menge, eh:(kat&&kat.eh)||eh,
+    text:(kat?katalogTextOhneMenge(kat.text):text)+(zusatz?"\n"+zusatz:""), preis:kat?+kat.preis:0, katalog_id:kat?kat.id:null, alternativ:false}; pos.push(p); return p; };
+  if(einsatzArt(pk)==="wartung"){
     /* je Anlage der Preis ihrer Termin-Art (katalogWartung) – fehlt er, ohne Preis mit Hinweis (Inhaber 05.10.2026) */
     (pk.anlagen||[]).forEach(function(a){
       var wa=wartungArten(a.termin), art=wa.length===1 ? wa[0] : null, kat=art ? katalogWartung(art, kid) : null;
@@ -28495,15 +28504,25 @@ function einsatzPositionen(pk, kid){
       pos.push(w);
     });
   } else {
-    pos.push({typ:"text", text:"Störungsbehebung"+(pk.auftragsnummer?" lt. Auftrag "+pk.auftragsnummer:"")+(so.problemtyp?": "+so.problemtyp:"")+
-      (so.massnahmen?"\n"+String(so.massnahmen).slice(0,400):"")});
+    /* Störung – und wie sie (Inhaber 05.10.2026) Reparatur, Prüfung, Sonstiges: nach Aufwand, keine Wartung je Anlage */
+    var wart=String(pk.wartungsart||"").trim();
+    pos.push(stoer ? {typ:"text", text:"Störungsbehebung"+(pk.auftragsnummer?" lt. Auftrag "+pk.auftragsnummer:"")+(so.problemtyp?": "+so.problemtyp:"")+
+      (so.massnahmen?"\n"+String(so.massnahmen).slice(0,400):"")}
+      : {typ:"text", text:wart.charAt(0).toUpperCase()+wart.slice(1)+" lt. Protokoll vom "+dfmt(pk.datum)+(pk.auftragsnummer?", Auftrag "+pk.auftragsnummer:"")+
+        ((pk.anlagen||[]).length?": "+pk.anlagen.map(function(a){ return a.name||"Anlage"; }).join(", "):"")+(pk.bemerkungen?"\n"+String(pk.bemerkungen).slice(0,400):"")});
     var mann=1+((pk.mitarbeiter||[]).length);
-    var b0=zeitMin(so.ankunft), e0=zeitMin(so.ende);
+    var b0=zeitMin(so.ankunft), e0=zeitMin(so.ende), rk=katalogFinde(/regiestunden/i, kid);
+    /* ohne Ankunft/Fertig (Wartungsformular): die verrechenbaren Stunden des Lidl-Rapports; gar keine Zeit → Zeile mit Hinweis */
+    var rap=!stoer && rapportVon(pk), rapStd=rap && rap.daten ? stundenZahl(rap.daten.stunden) : null;
     if(b0!=null && e0!=null){
       var std=Math.round(((e0<b0?e0+1440:e0)-b0)/60*mann*4)/4;
-      var rk=katalogFinde(/regiestunden/i, kid), zeit=so.ankunft+"–"+so.ende+(mann>1?", "+mann+" Mann":"");
+      var zeit=so.ankunft+"–"+so.ende+(mann>1?", "+mann+" Mann":"");
       add(std, "Std", "Regiestunden Techniker ("+zeit+")", rk, rk ? "Einsatz "+zeit : "");
       pos[pos.length-1].einsatz=true;
+    } else if(rapStd){
+      add(Math.round(rapStd*4)/4, "Std", "Regiestunden Techniker (lt. Rapport "+rap.daten.stunden+" h)", rk, rk ? "lt. Rapport "+rap.daten.stunden+" h" : "").einsatz=true;
+    } else if(!stoer){
+      var ohne=add(0, "Std", "Regiestunden Techniker", rk); ohne.einsatz=true; ohne.hinweis="Arbeitszeit steht nicht im Protokoll – Stunden eintragen";
     }
     /* Menge aus dem Protokoll samt Einheit („2 Stk“, „3 m“, „0,5 Rolle“ – früher wurde daraus still 1 Stk);
        nicht lesbar: 1 Stk mit sichtbarem Hinweis im Text */
@@ -28554,7 +28573,8 @@ function belegNeu(kx, art, vorlage, fertig){
         pos=fahrtIdx>=0 ? pos.slice(0, fahrtIdx).concat(neuePos, pos.slice(fahrtIdx)) : pos.concat(neuePos);
         var n2=0; pos.forEach(function(x){ if(x.typ==="pos") x.nr=String(++n2); });
       }
-      kopf.betreff=[(st&&st.filiale?"Filiale "+st.filiale+" ":"")+(st?stName(st):pk.standortName||"")+", "+(istStoerung(pk)?"Störung"+(so.problemtyp?" "+so.problemtyp:""):"Wartung "+(pk.wartungsart||""))];
+      kopf.betreff=[(st&&st.filiale?"Filiale "+st.filiale+" ":"")+(st?stName(st):pk.standortName||"")+", "+(istStoerung(pk)?"Störung"+(so.problemtyp?" "+so.problemtyp:""):
+        einsatzArt(pk)==="wartung" ? "Wartung "+(pk.wartungsart||"") : String(pk.wartungsart).charAt(0).toUpperCase()+String(pk.wartungsart).slice(1))];
       kopf.bestellung=pk.auftragsnummer||pk.bestellnummer||"";
       kopf.leistungszeitraum=dfmt(pk.datum);
     }
@@ -28660,11 +28680,11 @@ function belegEditor(kx, b, fertig, vorschlaege){
           '<div class="akt"><label class="alt-chk" title="Alternativposition – zählt nicht zur Summe"><input type="checkbox" data-f="alternativ"'+(x.alternativ?" checked":"")+"> Alt.</label>"+
             akt+'<button class="btn ghost sm" type="button" data-kopie title="Zeile kopieren">⧉</button><button class="btn ghost sm" type="button" data-weg title="entfernen">✕</button></div>'+
           (vs?'<div class="vs"><a href="#" class="sprunglink" data-vs>Baustellenbuch: '+esc(geld(vs.menge))+" übernehmen</a> <span class=\"muted\">("+esc(vs.text.slice(0,120))+")</span></div>":"")+
-          /* Hinweis des Vorschlags (Preis fehlt, Sorte fehlt – Inhaber 05.10.2026): sichtbar, solange kein Preis eingetragen ist */
+          /* Hinweis des Vorschlags (Preis, Stunden, Sorte fehlen – Inhaber 05.10.2026): sichtbar, solange die Position keinen Betrag hat */
           (x.hinweis?'<div class="vs" data-hinweis style="color:var(--warn)">⚠ '+esc(x.hinweis)+"</div>":"")+
         "</div>");
         var betrag=function(){ z.querySelector("[data-betrag]").textContent=x.alternativ?"Alternativ":geld(posBetrag(x));
-          var h=z.querySelector("[data-hinweis]"); if(h) h.hidden=+x.preis>0; rechnen(); };
+          var h=z.querySelector("[data-hinweis]"); if(h) h.hidden=posBetrag(x)>0; rechnen(); };
         z.querySelectorAll("[data-f]").forEach(function(inp){
           inp.oninput=inp.onchange=function(){
             var f=inp.dataset.f;

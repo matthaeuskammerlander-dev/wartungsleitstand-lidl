@@ -4505,7 +4505,14 @@ test("Antworten rechnung: Vorschlag zum Einsatz – Wartungspreis je JW/HJW/HJI,
     x("belegNeu")(x("kontextProtokoll")(wartung), "rechnung", null, function () {});
     const d = await A.bis(() => { const d = A.dlgs().pop(); return d && d.querySelector(".bpos") && d; });
     const editor = d ? d.textContent : ""; x("ansichtenSchliessen()");
-    return { w, editor };
+    /* Reparatur (Stunden laut Lidl-Rapport) und Prüfung (ohne Zeiten): nach Aufwand wie eine Störung, keine Wartung je Anlage */
+    const anlA = [{ name: "Anlage A", termin: "Jahreswartung" }];
+    const reparatur = pk({ wartungsart: "Reparatur", anlagen: anlA, bemerkungen: "Verdichter getauscht", rapport: { daten: { stunden: "3:30" } } });
+    const rep = zeilen(reparatur), pruef = zeilen(pk({ wartungsart: "Prüfung", anlagen: anlA }));
+    x("belegNeu")(x("kontextProtokoll")(reparatur), "rechnung", null, function () {});
+    const d2 = await A.bis(() => { const d = A.dlgs().pop(); return d && d.querySelector(".bpos") && d; });
+    const betreff = d2 ? d2.querySelector('[data-k="betreff"]').value : ""; x("ansichtenSchliessen()");
+    return { w, editor, rep, pruef, betreff };
   });
   const anl = (n) => r.w.filter((p) => new RegExp("Anlage " + n).test(p.text))[0] || {};
   pruefe(anl("A").preis === 210 && /Jahreswartung Klimaanlage/.test(anl("A").text), "JW nicht zum JW-Preis: " + JSON.stringify(anl("A")));
@@ -4513,6 +4520,16 @@ test("Antworten rechnung: Vorschlag zum Einsatz – Wartungspreis je JW/HJW/HJI,
   pruefe(!anl("C").preis && /Preis für HJI fehlt – alte KPlus-Rechnung mit dieser Position hochladen/.test(anl("C").hinweis), "HJI ohne Katalogposition: " + JSON.stringify(anl("C")));
   pruefe(!anl("D").preis && anl("D").hinweis, "Anlage ohne bekannte Termin-Art bekam einen Preis: " + JSON.stringify(anl("D")));
   pruefe(/Preis für HJI fehlt/.test(r.editor), "Hinweis „Preis für HJI fehlt“ im Editor nicht sichtbar");
+  const kurz = (l) => JSON.stringify(l.map((p) => p.typ + ":" + String(p.text).split("\n")[0] + "|" + p.menge + "|" + p.preis + (p.hinweis ? "|⚠" : "")));
+  for (const [art, l] of [["Reparatur", r.rep], ["Prüfung", r.pruef]]) {
+    pruefe(!l.some((p) => p.typ === "pos" && /^Wartung/.test(p.text)), art + ": Wartung je Anlage vorgeschlagen: " + kurz(l));
+    pruefe(l.some((p) => p.typ === "pos" && /Fahrtpauschale/.test(p.text)) && l.some((p) => p.typ === "text" && new RegExp("^" + art).test(p.text)), art + ": Textzeile oder Fahrtpauschale fehlt: " + kurz(l));
+  }
+  const regie = r.rep.filter((p) => /Regiestunde/.test(p.text))[0] || {};
+  pruefe(regie.menge === 3.5 && regie.preis === 70 && regie.eh === "Std", "Reparatur: Regiestunden laut Rapport × Stundensatz fehlen: " + kurz(r.rep));
+  const regieP = r.pruef.filter((p) => /Regiestunde/.test(p.text))[0] || {};
+  pruefe(regieP.hinweis && !regieP.menge, "Prüfung ohne Zeiten: Regiestunden ohne Hinweis bzw. mit Menge: " + kurz(r.pruef));
+  pruefe(/Reparatur/.test(r.betreff) && !/Wartung/.test(r.betreff), "Betreff der Reparatur-Rechnung: " + r.betreff);
   pruefe(!a.fehler.length, "Laufzeitfehler: " + a.fehler.join("; "));
   await a.zu();
 });
