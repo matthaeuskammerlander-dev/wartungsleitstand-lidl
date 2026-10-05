@@ -62,6 +62,9 @@
     var startpunkt=function(z){ return !!z && /^startpunkt:/.test(z.schluessel||""); };
     var startpunktOk=(art==="insert" && startpunkt(zeile)) || (art==="update" && startpunkt(alt) && (!zeile || !("schluessel" in zeile) || startpunkt(zeile)));
     if(tab==="einstellungen" && art!=="select" && rolle!=="inhaber" && !startpunktOk) return "einstellungen: nur Inhaber";
+    /* wie die Sperrregel „startpunkt nur eigener“ (Inhaber 05.10.2026): den eigenen setzt jeder, fremde nur Inhaber und Admins */
+    var spFremd=function(z){ return startpunkt(z) && z.schluessel!=="startpunkt:"+uid(); };
+    if(tab==="einstellungen" && (art==="insert"||art==="update") && !(rolle==="inhaber" || admin()) && (spFremd(zeile) || spFremd(alt))) return "einstellungen: Startpunkt nur der eigene";
     /* wie projekte-ablauf.sql: katalog.text not null check (length(trim(text)) between 1 and 4000) */
     if(tab==="katalog" && (art==="insert"||art==="update") && zeile && (art==="insert" || ("text" in zeile)) && !String(zeile.text==null?"":zeile.text).trim()) return "katalog: text verletzt check";
     /* wie werkzeug.sql: Werkzeug und Packlisten löscht nur das Büro, Bedarf wer ihn angelegt hat oder das Büro; den Verlauf schreibt nur der Server */

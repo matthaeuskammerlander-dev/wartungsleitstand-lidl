@@ -4547,6 +4547,44 @@ test("Antworten kern: Testkonten aus den Personenlisten ausblenden – Haken in 
   await a.zu();
 });
 
+test("Antworten kern: Tour-Startpunkt – jeder nur den eigenen, Inhaber und Admin für alle (App und Datenbank)", async () => {
+  const a = await rkSeite(KONTEN.techniker);
+  const r = await a.seite.evaluate(async () => {
+    const x = window.__t.x, rk = window.__rk, w = rk.warte, db = window.__db.tabellen, ADM = "u_admin_test_at", TECH = "u_tech_test_at";
+    rk.toastSpion();
+    const tag = x("werktagAb(plusTage(isoLokal(new Date()),2))"), erg = {};
+    const gespeichert = (id) => db.einstellungen.some((e) => e.schluessel === "startpunkt:" + id);
+    const waehlen = async (id) => { x("ansichtenSchliessen(); startpunktWaehlen('" + id + "', '" + tag + "')"); await w(200); const d = rk.dlg(); const k = d && rk.knopf(d, /Betrieb/); if (k) { k.click(); await w(400); } return !!k; };
+    /* Techniker: fremder Startpunkt – kein Dialog, nichts gespeichert, auch kein „festlegen“ beim Kalendertag des anderen */
+    x("STARTPUNKTE={}; 1");
+    erg.techFremdDialog = await waehlen(ADM);
+    erg.techFremdToast = window.__toasts.slice(-1)[0] || "";
+    erg.techFremdGespeichert = gespeichert(ADM);
+    await x("Store.sb.from('planung').insert({art:'termin', kategorie:'wartung', titel:'Startpunkt-Test', datum:'" + tag + "', beginn:'09:00', ende:'10:00', standort_id:'TS1', wer:['" + ADM + "'], wer_namen:['Testadmin']})");
+    await x("planungLaden()");
+    const zeile = x("(function(){ var z=startFahrtZeile('" + ADM + "', '" + tag + "', (kalenderEintraege('" + tag + "','" + tag + "','" + ADM + "','')['" + tag + "']||[])); return z ? z.outerHTML : ''; })()");
+    erg.zeileMitLink = /<a /.test(zeile); erg.zeile = zeile.replace(/<[^>]+>/g, "");
+    /* Datenbank (Attrappe wie die Sperrregel): fremder Startpunkt abgelehnt, eigener geht */
+    const fremd = await x("Store.sb.from('einstellungen').upsert({schluessel:'startpunkt:" + ADM + "', wert:{betrieb:true}})");
+    erg.dbFremd = !!(fremd && fremd.error);
+    erg.eigen = await waehlen("ich"); erg.eigenGespeichert = gespeichert(TECH);
+    /* Admin: plant für alle – setzt den Startpunkt des Technikers */
+    await rk.anmelden("admin@test.at", "admin");
+    db.einstellungen.forEach((e) => { if (e.schluessel === "startpunkt:" + TECH) e.wert = {}; });
+    await x("startpunkteLaden()");
+    erg.adminDialog = await waehlen(TECH);
+    erg.adminGespeichert = JSON.stringify((db.einstellungen.find((e) => e.schluessel === "startpunkt:" + TECH) || {}).wert || null);
+    return erg;
+  });
+  pruefe(!r.techFremdDialog && !r.techFremdGespeichert && /selbst|Büro/.test(r.techFremdToast), "Techniker kann den Startpunkt eines anderen setzen: " + JSON.stringify(r));
+  pruefe(!r.zeileMitLink && /Startpunkt/.test(r.zeile), "Kalender zeigt dem Techniker „festlegen/ändern“ beim Startpunkt eines anderen: " + JSON.stringify(r));
+  pruefe(r.dbFremd, "Datenbank (Attrappe) nimmt den fremden Startpunkt eines Technikers an");
+  pruefe(r.eigen && r.eigenGespeichert, "eigener Startpunkt lässt sich nicht mehr setzen: " + JSON.stringify(r));
+  pruefe(r.adminDialog && /betrieb/.test(r.adminGespeichert), "Admin kann den Startpunkt des Technikers nicht setzen: " + JSON.stringify(r));
+  pruefe(!a.fehler.length, "Laufzeitfehler: " + a.fehler.join("; "));
+  await a.zu();
+});
+
 /* ================================================================ Ablauf ================================================================ */
 const filterText = process.argv.slice(2).find((x) => !x.startsWith("--"));
 const filter = filterText ? new RegExp(filterText, "i") : null;

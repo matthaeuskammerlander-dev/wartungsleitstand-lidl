@@ -24605,7 +24605,8 @@ Object.assign(RUNDGAENGE, {
         "<strong>„In der Nähe, kleiner Umweg“</strong> – offene Störungen oder überfällige Wartungen höchstens 20 Minuten Umweg entfernt."])+
       RG_HG("„Reihenfolge übernehmen“ setzt die Uhrzeiten des Tages neu: der früheste Beginn bleibt, jede Dauer bleibt, dazwischen die Fahrzeit – die Personen bekommen eine Nachricht.")},
     {reiter:"kalender", ziel:function(){ return rgEl("#kal_karte [data-inhalt]"); }, titel:"Startpunkt und Fahrzeiten",
-      text:"Bei gewählter Person steht je Tag „🚗 Start … losfahren hh:mm“. Fehlt der Startpunkt: „⚠ Startpunkt unbekannt – festlegen“."+
+      text:"Bei gewählter Person steht je Tag „🚗 Start … losfahren hh:mm“. Fehlt der Startpunkt: „⚠ Startpunkt unbekannt – festlegen“. "+
+        "Den Startpunkt setzt jeder nur für sich selbst; Inhaber und Admins auch für andere (fürs Planen)."+
       RG_HG(["Der Startpunkt wird so bestimmt: für den Tag festgelegt → Übernachtung (letzter Einsatz am Vortag mehr als 90 min von daheim) → fester Startpunkt → sonst Nachfrage.",
         "Gespeichert wird nur ein Ort bzw. die PLZ oder der nächste Markt – nie eine genaue Wohnadresse."])},
     {reiter:"kalender", ziel:function(){ return rgReiter("kalender"); }, titel:"Urlaub und Privates",
@@ -24752,7 +24753,7 @@ Object.assign(RUNDGAENGE, {
       RG_HG("Kandidaten sind alle Märkte der Auswahl oben (Kunde, Region, Suche) mit Lage, nicht pausiert und mit passender Arbeit – die Zahl steht neben dem Knopf.")},
     {reiter:"karte", ziel:function(){ return rgEl("#t_start"); }, titel:"Startpunkt und Tageslänge",
       text:"Startpunkt: der der Person, aktueller Standort (Vorgabe), Betrieb St. Johann oder ein Markt. „Arbeitszeit je Tag“ 4–14 h (Vorgabe 8)."+
-      RG_HG(["Der feste Startpunkt einer Person wird im Kalender festgelegt (bei gewählter Person: „Startpunkt … festlegen“).",
+      RG_HG(["Der feste Startpunkt einer Person wird im Kalender festgelegt (bei gewählter Person: „Startpunkt … festlegen“) – jeder seinen eigenen, Inhaber und Admins auch den anderer.",
         "Ohne Freigabe der Position startet die Tour beim Betrieb; eine Position älter als 5 Minuten wird neu abgefragt."])},
     {reiter:"karte", ziel:function(){ return rgEl("#t_go"); }, titel:"Route vorschlagen",
       text:"„Route vorschlagen“ rechnet die Tour. Ergebnis: Kacheln (Stopps, Wartungen, km, Arbeitstage) und je Tag eine Tabelle mit Uhrzeiten ab 07:00, Navi, Protokoll, ✕ (herausnehmen); „+ Markt dazunehmen“; „Tag n in Google Maps“; „Tour drucken“."+
@@ -30288,8 +30289,13 @@ function startpunktFuer(wahl, tag){
   if(sp.betrieb) return {ort:BETRIEB, quelle:"fester Startpunkt (Betrieb)"};
   return {ort:null, quelle:"unbekannt"};
 }
+/* Startpunkt setzt jeder nur für sich selbst; Inhaber und Admins für alle, fürs Planen (Inhaber 05.10.2026 –
+   die Datenbank sperrt es zusätzlich, Sperrregel „startpunkt nur eigener“); die Präsentation speichert ohnehin nichts */
+function startpunktDarf(uid){ return uid===meineKennung() || tourBuero() || demo(); }
 function startpunktWaehlen(wahl, tag, fertig){
-  var uid=kontoVon(wahl), sp=JSON.parse(JSON.stringify(STARTPUNKTE[uid]||{})), vort=startpunktVortag(uid, tag);
+  var uid=kontoVon(wahl);
+  if(!startpunktDarf(uid)){ toast("Den Startpunkt legt jede Person selbst fest – für andere nur das Büro."); return; }
+  var sp=JSON.parse(JSON.stringify(STARTPUNKTE[uid]||{})), vort=startpunktVortag(uid, tag);
   var v=ansichtOeffnen("Startpunkt festlegen");
   v.schritt.textContent=(planPersonName(uid)||meinName())+" · "+dfmt(tag);
   var box=el('<div class="stack" style="gap:8px;max-width:560px">'+
@@ -30338,12 +30344,11 @@ function startpunktWaehlen(wahl, tag, fertig){
 function startFahrtZeile(wahl, tag, l){
   var sp=startpunktFuer(wahl, tag), erste=l.map(einsatzOrtZeit).filter(Boolean).sort(function(a,b){ return a.b-b.b; })[0];
   if(!erste) return null;
-  if(!sp.ort){ var z=el('<div style="font-size:12px;color:var(--warn)">⚠ Startpunkt unbekannt – <a href="#">festlegen</a></div>');
-    z.querySelector("a").onclick=function(ev){ ev.preventDefault(); startpunktWaehlen(wahl, tag, function(){ render(); }); }; return z; }
+  /* „festlegen“/„ändern“ nur, wer den Startpunkt dieser Person setzen darf (startpunktDarf) */
+  var darf=startpunktDarf(kontoVon(wahl)), los=function(z){ var a=z.querySelector("a"); if(a) a.onclick=function(ev){ ev.preventDefault(); startpunktWaehlen(wahl, tag, function(){ render(); }); }; return z; };
+  if(!sp.ort) return los(el('<div style="font-size:12px;color:var(--warn)">⚠ Startpunkt unbekannt – '+(darf?'<a href="#">festlegen</a>':"legt die Person selbst fest (oder das Büro)")+"</div>"));
   var min=fahrtMinZw(sp.ort, erste.s), ab=erste.b-min;
-  var z2=el('<div style="font-size:12px;color:'+(ab<5*60+30?"var(--crit)":"var(--ink-3)")+'">🚗 Start '+esc(sp.ort.name)+' <span class="muted">('+esc(sp.quelle)+')</span> → '+esc(stName(erste.s))+": ca. "+min+" min – losfahren "+kalHm(Math.max(0,ab))+' · <a href="#">ändern</a></div>');
-  z2.querySelector("a").onclick=function(ev){ ev.preventDefault(); startpunktWaehlen(wahl, tag, function(){ render(); }); };
-  return z2;
+  return los(el('<div style="font-size:12px;color:'+(ab<5*60+30?"var(--crit)":"var(--ink-3)")+'">🚗 Start '+esc(sp.ort.name)+' <span class="muted">('+esc(sp.quelle)+')</span> → '+esc(stName(erste.s))+": ca. "+min+" min – losfahren "+kalHm(Math.max(0,ab))+(darf?' · <a href="#">ändern</a>':"")+"</div>"));
 }
 /* ---- Planung prüfen (Büro 02.10.2026: „wenn sich jemand einen Tag oder eine Woche selber geplant hat,
    prüft die App die Effizienz der Tour und dass keine offene Störung oder Wartung übersehen wurde“) ----
@@ -30459,7 +30464,9 @@ function planungPruefenAnsicht(wahl, von, bis){
       if(!tg.start.ort){ gut=false; probleme++; sz=el('<div class="note warnbox" style="font-size:13px">⚠ <strong>Startpunkt unbekannt</strong> – erste Fahrt und Reihenfolge ohne Start gerechnet. <button class="btn sm" type="button">festlegen</button></div>'); }
       else { var ef=tg.ersteFahrt; sz=el('<div style="font-size:13px'+(ef && ef.ab<5*60+30?";color:var(--crit);font-weight:600":"")+'">🚗 Start: <strong>'+esc(tg.start.ort.name)+'</strong> <span class="muted">('+esc(tg.start.quelle)+")</span>"+
         (ef?" → "+esc(stName(ef.nach))+": "+(FAHR_CACHE[(tg.start.ort.id||"")+">"+ef.nach.id]!=null?"":"ca. ")+ef.min+" min, losfahren "+kalHm(Math.max(0,ef.ab)):"")+' <button class="btn ghost sm" type="button">ändern</button></div>'); }
-      sz.querySelector("button").onclick=function(){ startpunktWaehlen(wahl, tg.tag, zeichne); };
+      /* den Startpunkt einer anderen Person setzt nur das Büro (startpunktDarf, Inhaber 05.10.2026) */
+      if(startpunktDarf(kontoVon(wahl))) sz.querySelector("button").onclick=function(){ startpunktWaehlen(wahl, tg.tag, zeichne); };
+      else sz.querySelector("button").remove();
       h.appendChild(sz);
       if(tg.reihenfolge){
         gut=false; probleme++;
