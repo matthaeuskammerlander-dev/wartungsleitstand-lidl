@@ -31,6 +31,8 @@
     var rolle=(DB.rollen.filter(function(r){ return r.user_id===uid(); })[0]||{}).rolle||"techniker";
     if(art!=="select" && (rolle==="kunde"||rolle==="praesentation") && !(tab==="aenderungswuensche" && art==="insert" && rolle==="praesentation")) return "nur lesen ("+rolle+")";
     if(art==="select" && (rolle==="kunde"||rolle==="praesentation") && (tab==="stammdaten"||tab==="aenderungen")) return "nur lesen: "+tab;
+    /* wie werkzeug.sql: lesen nur, wer mitarbeitet (darf_schreiben) – Kunde und Präsentation sehen nichts davon */
+    if(art==="select" && (rolle==="kunde"||rolle==="praesentation") && ["werkzeug","werkzeug_verlauf","bedarf","packlisten"].indexOf(tab)>=0) return "nur lesen: "+tab;
     if(tab==="stammdaten"){
       var typ=(zeile&&zeile.typ)||(alt&&alt.typ);
       if(art==="delete" && !admin()) return "stammdaten: Loeschen nur fuer Admins";
@@ -127,6 +129,29 @@
       }
     });
   }
+  /* wie werkzeug_merken und werkzeug_verlauf_schreiben (werkzeug.sql): Ort ohne passende Angabe aufräumen,
+     Verlauf beim Anlegen und bei jedem Wechsel von Ort, Person, Fahrzeug, Projekt, Markt oder Zustand */
+  function wzMerken(r){
+    if(r.standort_art!=="fahrzeug"){ r.fahrzeug_id=null; r.fahrzeug_name=null; }
+    if(r.standort_art!=="person"){ r.person_id=null; r.person_name=null; }
+    if(r.standort_art!=="baustelle"){ r.projekt_id=null; r.standort_id=null; }
+    r.geaendert=new Date().toISOString();
+  }
+  function wzVerlauf(r, alt){
+    if(alt && ["standort_art","standort_text","fahrzeug_id","person_id","projekt_id","standort_id","zustand"].every(function(k){ return (r[k]==null?null:r[k])===(alt[k]==null?null:alt[k]); })) return;
+    var ort={lager:"Lager", fahrzeug:"Fahrzeug "+(r.fahrzeug_name||"?"), person:"bei "+(r.person_name||"?"), baustelle:"Baustelle/Markt", reparatur:"in Reparatur"}[r.standort_art]||"sonst";
+    DB.werkzeug_verlauf.push({id:"x"+(++z), werkzeug_id:r.id, zeit:new Date().toISOString(), von:uid(), von_name:r.geaendert_von||null,
+      standort:ort+(r.standort_text&&String(r.standort_text).trim()?" – "+r.standort_text:""), zustand:r.zustand});
+  }
+  /* wie der Index stoerung_auftrag_einmal (stoerung-eindeutig.sql): eine Auftragsnummer nur einmal als
+     (nicht gelöschte) Störung – sonst lehnt die Datenbank mit 23505 ab */
+  function stoerNrDoppelt(tname, d){
+    if(tname!=="stammdaten" || !d || d.typ!=="stoerung") return null;
+    var nr=function(r){ var f=r.felder||{}; return (f.geloescht && f.geloescht!=="false") ? "" : String(f.auftragsnummer||"").trim(); };
+    var n=nr(d); if(!n) return null;
+    return DB.stammdaten.some(function(r){ return r.id!==d.id && r.typ==="stoerung" && nr(r)===n; })
+      ? {code:"23505", message:'duplicate key value violates unique constraint "stoerung_auftrag_einmal"'} : null;
+  }
   function Q(t){ this.t=t; this.a="select"; this.f=[]; this.d=null; this.o={}; this.ord=null; this.lim=null; this.sp=null; }
   Q.prototype.select=function(s){ if(typeof s==="string"&&s&&s!=="*") this.sp=s.split(",").map(function(x){return x.trim();}); return this; };
   Q.prototype.insert=function(d){ this.a="insert"; this.d=d; return this; };
@@ -155,6 +180,8 @@
       if(this.t==="admins") erg=erg.filter(function(r){ return r.user_id===uid(); });
       if(this.t==="planung_privat") erg=erg.filter(function(r){ return r.user_id===uid(); });   /* wie die Regel: nur die eigenen */
       if(this.t==="arbeitszeiten"||this.t==="auslagen"||this.t==="auslagen_konto"){ var rl=(DB.rollen.filter(function(r){ return r.user_id===uid(); })[0]||{}).rolle; if(rl!=="inhaber") erg=erg.filter(function(r){ return r.user_id===uid(); }); }
+      /* wie „fahrzeuge lesen“ (fahrzeuge.sql): Büro alle, sonst nur das Fahrzeug, in dem man Fahrer ist */
+      if(this.t==="fahrzeuge"){ var rf=(DB.rollen.filter(function(r){ return r.user_id===uid(); })[0]||{}).rolle; if(!(admin() || rf==="inhaber")) erg=erg.filter(function(r){ return (r.fahrer||[]).indexOf(uid())>=0; }); }
       if(this.ords) erg.sort(function(a,b){ for(var i=0;i<self.ords.length;i++){ var o=self.ords[i],x=a[o.s],y=b[o.s]; var c=(x<y?-1:x>y?1:0)*(o.auf?1:-1); if(c) return c; } return 0; });
       if(this.lim!=null) erg=erg.slice(0,this.lim);
       if(this.rng) erg=erg.slice(this.rng[0], this.rng[1]+1);
@@ -172,6 +199,8 @@
     if(this.a==="insert"){
       [].concat(this.d).forEach(function(d){ v=v||darf(self.t,"insert",d,null)||bisVorDatum(d); });
       if(v){ window.__abgelehnt.push(v); return {data:null,error:{message:v}}; }
+      var dpI=null; [].concat(this.d).forEach(function(d){ dpI=dpI||stoerNrDoppelt(self.t, d); });
+      if(dpI) return {data:null,error:dpI};
       var neu=[].concat(this.d).map(function(d){ var r=Object.assign({},d);
         if(r.id==null) r.id="x"+Date.now().toString(36)+(++z);
         if(self.t==="aenderungswuensche"){ r.id=++z; r.von=uid(); r.erstellt=new Date().toISOString(); r.status=r.status||"neu"; r.verlauf=r.verlauf||[]; }
@@ -184,10 +213,15 @@
         if(self.t==="werkzeug"||self.t==="bedarf"){ r.erstellt_von=uid(); r.erstellt=new Date().toISOString(); r.aktiv=r.aktiv==null?true:r.aktiv; if(self.t==="bedarf"){ r.status=r.status||"offen"; r.beschaffung=r.beschaffung||"mitnehmen"; if(r.status==="erledigt") r.erledigt=new Date().toISOString(); } else { r.zustand=r.zustand||"ok"; r.standort_art=r.standort_art||"lager"; } }
         if(self.t==="projekte"){ r.erstellt=r.erstellt||new Date().toISOString(); r.geaendert=r.geaendert||r.erstellt; r.daten=r.daten||{}; r.verlauf=r.verlauf||[]; }
         return r; });
-      neu.forEach(function(r){ tab.push(r); }); if(self.t==="planung") neu.forEach(function(r){ stundenSync(r.id); }); sichern(); return {data:aus(neu),error:null};
+      if(self.t==="werkzeug") neu.forEach(function(r){ wzMerken(r); });
+      neu.forEach(function(r){ tab.push(r); }); if(self.t==="planung") neu.forEach(function(r){ stundenSync(r.id); });
+      if(self.t==="werkzeug") neu.forEach(function(r){ wzVerlauf(r, null); });
+      sichern(); return {data:aus(neu),error:null};
     }
     if(this.a==="upsert"){
       var sp=this.o.onConflict||"id", raus=[];
+      var dpU=null; [].concat(this.d).forEach(function(d){ dpU=dpU||stoerNrDoppelt(self.t, d); });
+      if(dpU) return {data:null,error:dpU};
       [].concat(this.d).forEach(function(d){
         var sps=sp.split(","); var i=null; for(var k=0;k<tab.length;k++){ if(sps.every(function(s2){ return tab[k][s2]!=null && tab[k][s2]===d[s2]; })){ i=k; break; } }
         /* wie Postgres ON CONFLICT DO NOTHING: vorhandene Zeile bleibt, keine Regelprüfung, nichts zurück */
@@ -220,7 +254,7 @@
           if(self.t==="planung") stundenSync(r.id);
           if(self.t==="auslagen" && r.art==="km") r.betrag=Math.round(r.km*(r.km_satz||0.5)*100)/100;
           if(self.t==="bedarf") r.erledigt = r.status==="erledigt" ? (altR.status==="erledigt" ? altR.erledigt : new Date().toISOString()) : null;
-          if(self.t==="werkzeug" && r.standort_art!==altR.standort_art || self.t==="werkzeug" && r.person_id!==altR.person_id) DB.werkzeug_verlauf.push({id:"x"+(++z), werkzeug_id:r.id, zeit:new Date().toISOString(), standort:r.standort_art+(r.person_name?" "+r.person_name:""), von_name:r.geaendert_von});
+          if(self.t==="werkzeug"){ wzMerken(r); wzVerlauf(r, altR); }
         }
         erg.push(r); });
       sichern(); return {data:aus(erg),error:null};
@@ -231,6 +265,11 @@
       if(v){ window.__abgelehnt.push(v); return {data:null,error:{message:v}}; }
       for(var i=tab.length-1;i>=0;i--) if(passt(tab[i],self.f)){ erg.push(tab[i]); tab.splice(i,1); }
       if(self.t==="planung") erg.forEach(function(r){ stundenSync(r.id); });
+      /* Fremdschlüssel wie in werkzeug.sql: Termin bzw. Werkzeug weg → Bedarf bleibt ohne Verknüpfung (on delete set null), Verlauf geht mit */
+      var wegIds=erg.map(function(r){ return r.id; });
+      if(self.t==="planung") DB.bedarf.forEach(function(b){ if(wegIds.indexOf(b.planung_id)>=0) b.planung_id=null; });
+      if(self.t==="werkzeug"){ DB.bedarf.forEach(function(b){ if(wegIds.indexOf(b.werkzeug_id)>=0) b.werkzeug_id=null; });
+        for(var vi=DB.werkzeug_verlauf.length-1; vi>=0; vi--) if(wegIds.indexOf(DB.werkzeug_verlauf[vi].werkzeug_id)>=0) DB.werkzeug_verlauf.splice(vi,1); }
       sichern(); return {data:aus(erg),error:null};
     }
     return {data:[],error:null};

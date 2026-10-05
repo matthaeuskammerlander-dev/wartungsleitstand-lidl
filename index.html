@@ -1803,7 +1803,7 @@ function autoNamenVergeben(){
 }
 function toast(msg){ var t=document.getElementById("toast");
   /* Präsentation: keine Erfolgsmeldung soll nach echtem Speichern klingen */
-  if(typeof demo==="function" && demo() && /gespeichert|angelegt|übernommen|gelöscht|abgehakt|zurückgenommen|wiederhergestellt|verschoben/i.test(msg) && !/Präsentation/.test(msg))
+  if(typeof demo==="function" && demo() && (/gespeichert|angelegt|übernommen|gelöscht|abgehakt|zurückgenommen|wiederhergestellt|verschoben/i.test(msg) || /^(Erledigt|Eingetragen|Wieder offen)\b|: jetzt /.test(msg)) && !/Präsentation/.test(msg))
     msg=msg.replace(/[.!]?$/,"")+(window.UKT_VORSCHAU==="Spielwiese" ? " (Spielwiese, nicht gespeichert)." : " (Präsentation, nicht gespeichert).");
   msg=technikDeutsch(msg);
   /* Fehler länger stehen lassen – die liest man, eine Bestätigung nicht (Büro 02.10.2026) */
@@ -2500,6 +2500,30 @@ function stoerungTeilFormular(P){
       knoepfe.forEach(function(c){ c.addEventListener("click", function(){ frei(false); }); });
     });
   }
+  /* weiterer Kunde (alles wie bei Lidl, nur ohne Lidl-Texte): Untertitel und
+     Beschriftungen folgen dem gewählten Markt */
+  function lidlTexte(){
+    var s=o.standortId?byId[o.standortId]:null, lidl=!s || istLidl(s);
+    var u=P.ov.querySelector(".as-schritt"); if(u) u.textContent="Auftrag von "+(lidl?"Lidl":kundeTitel(kundeVon(s)));
+    var t={lidlKontakt:lidl?"Kontakt bei Lidl":"Kontakt beim Kunden", lidlTelefon:lidl?"Telefon Lidl":"Telefon Kontakt"};
+    Object.keys(t).forEach(function(k){ var i=inhalt.querySelector('[data-s="'+k+'"]'), sp=i && i.closest("label") && i.closest("label").querySelector("span"); if(sp) sp.textContent=t[k]; });
+    var oh=inhalt.querySelector("#st_ohne + span"); if(oh) oh.textContent=lidl?"ohne Lidl-Auftrag (telefonisch)":"ohne Auftrag (telefonisch)";
+    inhalt.querySelectorAll(".st-gruppe h3").forEach(function(h){ if(/^Gerät laut/.test(h.textContent)) h.textContent=lidl?"Gerät laut Lidl":"Gerät laut Auftrag"; });
+  }
+  /* „Fehlendes mit KI auslesen“ folgt dem Abtippen: fehlt nichts mehr, verschwindet
+     der Knopf (ein unnötiger KI-Lauf), sonst nennt sein Hinweis, was noch fehlt */
+  function kiKnopfNeu(){
+    var k=inhalt.querySelector("#st_ki"), fehlt=o.seiten.length ? stoerungAngabenFehlen(o) : [];
+    if(k && k.disabled) return;   /* die KI liest gerade */
+    if(!fehlt.length){ if(k) k.remove(); return; }
+    if(!k){
+      var qr=inhalt.querySelector("#st_qr"); if(!qr) return;
+      k=el('<button class="btn sm" type="button" id="st_ki">Fehlendes mit KI auslesen</button>');
+      k.onclick=function(){ P.kiAuslesen(null); };
+      qr.parentNode.insertBefore(k, qr.nextSibling);
+    }
+    k.title="Fehlt: "+fehlt.join(", ");
+  }
   /* für die anderen Teile */
   P.zeichne=zeichne;
 
@@ -2558,11 +2582,11 @@ function stoerungTeilFormular(P){
       sehen.onclick=function(e){ e.preventDefault(); if(posById[o.positionId]) anlageHistorieAnsicht(posById[o.positionId], o._id); };
       sehenNeu();
     };
-    anlWahl();
-    inhalt.querySelector("#st_markt").onchange=function(){ o.standortId=this.value||null; o.positionId=null; o._marktAuto=false; anlWahl();
+    anlWahl(); lidlTexte();
+    inhalt.querySelector("#st_markt").onchange=function(){ o.standortId=this.value||null; o.positionId=null; o._marktAuto=false; anlWahl(); lidlTexte(); kiKnopfNeu();
       /* von Hand gewählt: eine Meldung zur Markterkennung stimmt nicht mehr */
       if(/Markt erkannt|kein Markt bekannt|Markt laut Auftrag/.test(P.meldung)) P.melde(""); };
-    inhalt.querySelector("#st_ohne").onchange=function(){ o.ohneAuftrag=this.checked; };
+    inhalt.querySelector("#st_ohne").onchange=function(){ o.ohneAuftrag=this.checked; kiKnopfNeu(); };
     inhalt.querySelectorAll("[data-s]").forEach(function(i){
       i.oninput=function(){
         o[i.dataset.s]=i.value.trim();
@@ -2574,19 +2598,20 @@ function stoerungTeilFormular(P){
           if(st){
             if(st.id!==o.standortId) o.positionId=null;
             o.standortId=st.id; o._marktAuto=true;
-            if(w) w.value=st.id; anlWahl();
+            if(w) w.value=st.id; anlWahl(); lidlTexte();
             P.melde("Markt erkannt: <strong>"+esc(stName(st))+"</strong>.");
           } else {
             /* die Nummer passt zu keinem Markt (mehr): der nur aus ihr erkannte
                Markt gilt nicht mehr – sonst hinge die Störung am falschen */
             if(o._marktAuto){
               o.standortId=null; o.positionId=null; o._marktAuto=false;
-              if(w) w.value=""; anlWahl();
+              if(w) w.value=""; anlWahl(); lidlTexte();
             }
             /* auch ohne vorher erkannten Markt sagen, dass die Nummer nicht passt (leer: Meldung weg) */
             P.melde(i.value.trim() ? "Zur Filial-Nr. „"+esc(i.value.trim())+"“ ist kein Markt bekannt – bitte den <a href=\"#\" class=\"sprunglink\" data-stsprung=\"markt\">Markt wählen</a>." : "");
           }
         }
+        kiKnopfNeu();
       };
     });
     inhalt.querySelector("#st_pdf").onchange=function(){ P.pdfLesen(this); };
@@ -2779,7 +2804,9 @@ function stoerungTeilSpeichern(P){
       /* Eine Auftragsnummer gibt es nur EINMAL als Störung – offen oder erledigt (Büro 01.10.2026:
          die Daten kommen aus verschiedenen Quellen – Mail, PDF, Liste, von Hand; die Datenbank
          sperrt es zusätzlich). Statt neu anzulegen: die vorhandene öffnen. */
-      var gleicheNr=!vorhanden && stoerungNr(o) ? OFFENE.filter(function(x){ return x._id!==o._id && !x.geloescht && stoerungNr(x)===stoerungNr(o); })[0] : null;
+      /* auch beim Ändern, wenn die Nummer eine andere wird – sonst lehnte erst die Datenbank ab */
+      var nrNeu=!vorhanden || stoerungNr(o)!==stoerungNr(vorhanden);
+      var gleicheNr=nrNeu && stoerungNr(o) ? OFFENE.filter(function(x){ return x._id!==o._id && !x.geloescht && stoerungNr(x)===stoerungNr(o); })[0] : null;
       if(gleicheNr){
         box.innerHTML="Auftrag <strong>"+esc(o.auftragsnummer)+"</strong> ist schon als Störung erfasst"+(gleicheNr.erledigt?" und <strong>erledigt</strong>":"")+
           " ("+esc(stName(byId[gleicheNr.standortId]||{})||"ohne Markt")+(gleicheNr.problemtyp?" · "+esc(gleicheNr.problemtyp):"")+"). Doppelt anlegen geht nicht. "+
@@ -2801,8 +2828,11 @@ function stoerungTeilSpeichern(P){
         if(wo===false){
           /* weder zentral noch auf dem Gerät gespeichert – Dialog bleibt offen, nichts geht verloren */
           b.disabled=false; b.textContent=vorhanden?"Änderung speichern":"Störungsauftrag anlegen";
-          box.textContent="Die Störung konnte nicht gespeichert werden – weder in der Ablage noch auf dem Gerät"+
-            (Store.fehler?" ("+Store.fehler+")":"")+". Die Eingaben sind noch da; bitte später nochmals speichern.";
+          /* Nummer schon vergeben (Datenbank-Sperre): „später nochmals“ hilft nie – die Nummer prüfen */
+          box.textContent=/schon als Störung erfasst/.test(Store.fehler||"")
+            ? "Nicht gespeichert: Auftrag "+(o.auftragsnummer||"")+" ist schon als Störung erfasst – doppelt geht nicht. Bitte die Auftragsnummer prüfen; die Eingaben sind noch da."
+            : "Die Störung konnte nicht gespeichert werden – weder in der Ablage noch auf dem Gerät"+
+              (Store.fehler?" ("+Store.fehler+")":"")+". Die Eingaben sind noch da; bitte später nochmals speichern.";
           box.hidden=false; return;
         }
         if(!vorhanden && meinEingang){ posteingangOffen=meinEingang; posteingangErledigt("auftrag", o._id); }
@@ -6899,13 +6929,18 @@ function termineSchritt(inhalt, a){
      einen Halbjahrestermin gibt (Büro 29.09.2026). Anlegen dürfen ihn nur
      Admins – sonst geht die Meldung ans Büro (halbWunsch, steht in Nachbessern). */
   var nurEine=!!a._leaderId && a._termine.length===1 && normCode(a._termine[0].intervallCode)==="JW" && !a.nurJW;
+  /* ab 30 kg (bekannte Füllmenge) bleibt die HJW Pflicht – dann kein „nur Jahreswartung“ (wie regelKgFragen) */
+  var hjwPflicht=zahlLesen(a.kaeltemittelKg)>=30;
   if(nurEine) h+='<div class="as-feld" data-halb><div class="as-label">Halbjahrestermin</div>'+
     (a.halbWunsch
       ? '<div class="note" style="font-size:12.5px">Halbjahrestermin fehlt – vor Ort gemeldet ('+esc(a.halbWunsch)+'). Das Büro legt ihn in der Verwaltung an. '+
         '<a href="#" class="sprunglink" data-halbweg>Meldung zurücknehmen</a></div>'
-      : '<div class="as-hinweis">Eingetragen ist nur die Jahreswartung. Gibt es für diese Anlage auch einen Halbjahrestermin?</div>'+
-        '<div class="chips"><button class="chip" type="button" data-halbja>Ja – Halbjahrestermin</button>'+
-        '<button class="chip" type="button" data-halbnein>Nein – nur Jahreswartung</button></div>')+"</div>";
+      : (hjwPflicht
+        ? '<div class="as-hinweis">Eingetragen ist nur die Jahreswartung. Ab 30 kg Kältemittel gehört eine Halbjahreswartung (HJW) dazu.</div>'+
+          '<div class="chips"><button class="chip" type="button" data-halbja>HJW '+(Admin.frei?"anlegen":"ans Büro melden")+"</button></div>"
+        : '<div class="as-hinweis">Eingetragen ist nur die Jahreswartung. Gibt es für diese Anlage auch einen Halbjahrestermin?</div>'+
+          '<div class="chips"><button class="chip" type="button" data-halbja>Ja – Halbjahrestermin</button>'+
+          '<button class="chip" type="button" data-halbnein>Nein – nur Jahreswartung</button></div>'))+"</div>";
   /* sehr kleine Anlage: bewusst nur die Jahreswartung (in der Verwaltung rücknehmbar) */
   if(a.nurJW && a._termine.length<2)
     h+='<div class="note" style="font-size:12.5px"><strong>Nur Jahreswartung</strong> – für diese Anlage ist bewusst kein Halbjahrestermin vorgesehen '+
@@ -8229,11 +8264,18 @@ function stoerungSpeichern(o, grund, rueck){
       if(vorher.termin!==o.termin || (vorher.terminZeit||"")!==(o.terminZeit||"") || kanonName(vorher.terminTechniker||"")!==kanonName(o.terminTechniker))
         stoerungEinsatzMelden(o, !vorher.termin);
     }
-    /* Kontakt bei Lidl aus dem Störungsauftrag: ins Adressbuch (still – passiert bei jedem Speichern) */
-    if(wo!==false && o.lidlKontakt && typeof kontaktErfassen==="function") kontaktErfassen({name:o.lidlKontakt, firma:"Lidl Österreich", funktion:"Kontakt Lidl", kategorie:"Lidl", telefon:o.lidlTelefon, mail:o.lidlMail},
+    /* Kontakt aus dem Störungsauftrag: ins Adressbuch (still – passiert bei jedem Speichern) */
+    if(wo!==false && o.lidlKontakt && typeof kontaktErfassen==="function") kontaktErfassen(stoerungKontakt(o),
       {art:"stoerung", id:o._id, titel:"Störung "+(byId[o.standortId]?stName(byId[o.standortId]):"")+(o.auftragsnummer?" "+o.auftragsnummer:"")}, true);
     return wo;
   });
+}
+/* Kontakt aus dem Störungsauftrag fürs Adressbuch: bei Lidl „Lidl Österreich“, bei
+   weiteren Kunden die Firma des Kunden (wie kontaktAusProtokoll) */
+function stoerungKontakt(o){
+  var s=byId[o.standortId], lidl=!s || istLidl(s);
+  return {name:o.lidlKontakt, firma:lidl ? "Lidl Österreich" : kundeTitel(kundeVon(s)), funktion:lidl ? "Kontakt Lidl" : "Kontakt Kunde",
+    kategorie:lidl ? "Lidl" : "Kunde / Bauherr", telefon:o.lidlTelefon, mail:o.lidlMail, kunde_id:lidl ? null : kundeVon(s)};
 }
 function stoerungEinsatzMelden(o, neu){
   if(typeof chatAn!=="function" || !chatAn()) return;
@@ -13307,6 +13349,10 @@ function protoAssistentTeilMarkt(P){
     }, pruefen:function(){ return f("#f_standort").value ? "" : "Bitte einen Markt wählen."; }});
     P.schritte.push({titel:stoer?"Betroffene Anlagen":"Gewartete Anlagen", zeigen:function(){
       inhalt.innerHTML=frage(stoer?"Welche Anlage war betroffen?":"Welche Anlagen haben Sie gewartet?");
+      /* offene Fragen „Vor Ort klären“ zum Markt – auch hier, sonst sähe sie, wer Schritt
+         für Schritt arbeitet, nie (der Dialog deckt das Formular ab); nicht bei einer Korrektur */
+      var vk=!S.bearbeiten && vorOrtKasten(f("#f_standort").value, {nachher:function(){ if(form._vorOrt) form._vorOrt(); }});
+      if(vk) inhalt.appendChild(vk);
       var box=el('<div class="stack"></div>');
       var zeilen=form.querySelectorAll('#f_posbox label.chk');
       if(!zeilen.length && !(form._neueAnlagen && form._neueAnlagen().length)) box.appendChild(el('<div class="muted">Für diesen Markt ist keine wählbare Anlage eingetragen (zur Zeit nicht gewartete zählen für eine Wartung nicht).</div>'));
@@ -13528,6 +13574,15 @@ function protoAssistentTeilArbeiten(P){
       inhalt.appendChild(reihe);
       if(da!=="datei") inhalt.appendChild(el('<div class="muted" style="font-size:12.5px">'+esc(((form.querySelector("#s_info")||{}).textContent||"").replace(/\s*Auftrag ansehen\s*$/,""))+"</div>"));
       inhalt.appendChild(textFeld("Lidl-Auftragsnummer", "#f_auftrag", false));
+      /* Ausnahme wie im Formular (#f_ohneauftrag): ohne Lidl-Auftrag ist die Nummer
+         keine Pflicht – sonst ließe sich im Dialog nicht speichern */
+      var ohneF=form.querySelector("#f_ohneauftrag");
+      if(ohneF){
+        var oh=el('<label class="chk" style="margin-top:6px"><input type="checkbox"><span>Ausnahme: kein Lidl-Auftrag</span></label>'), ohC=oh.querySelector("input");
+        ohC.checked=ohneF.checked;
+        ohC.onchange=function(){ ohneF.checked=ohC.checked; ohneF.dispatchEvent(new Event("change",{bubbles:true})); formDirty=true; };
+        inhalt.appendChild(oh);
+      }
       ["s_auftragsdatum|Auftragsdatum","s_stoerungsnr|Störungsnummer","s_problemtyp|Problemtyp"].forEach(function(x){
         var t=x.split("|"); inhalt.appendChild(textFeld(t[1], "#"+t[0], false));
       });
@@ -13636,7 +13691,8 @@ function protoAssistentTeilArbeiten(P){
         if(!mit.length) liste.appendChild(el('<div class="muted" style="font-size:12.5px">Noch kein Mangel eingetragen.</div>'));
         zeilen.forEach(function(z){
           var t=z.querySelector(".m-t"), p=z.querySelector(".m-p"), m=z.querySelector(".m-m");
-          if(!t.value.trim() && zeilen.length>1 && z!==zeilen[zeilen.length-1]) return;
+          /* leere Zeilen ausblenden – eine Zeile mit Maßnahme bleibt sichtbar, sonst wäre sie nicht mehr zu ergänzen */
+          if(!t.value.trim() && !m.value.trim() && zeilen.length>1 && z!==zeilen[zeilen.length-1]) return;
           var g=el('<div class="as-gruppe"></div>');
           g.appendChild(textFeldRoh("Mangel / Feststellung", t));
           var prio=chips([["","–"],["niedrig","niedrig"],["mittel","mittel"],["hoch","hoch"],["sofort","sofort"]], p.value, function(v){ p.value=v; formDirty=true; });
@@ -13835,7 +13891,10 @@ function protoAssistentTeilAbschluss(P){
         var t=!stoer && posById[cb.value];
         return nm+(t ? " ("+(t.intervall||intervallArt(t.intervallCode)).kurz+")" : ""); });
       var arbeiten=[].slice.call(form.querySelectorAll('input[name="arbeit"]:checked')).length;
-      var maengel=[].slice.call(form.querySelectorAll(".mangelrow")).filter(function(z){ return z.querySelector(".m-t").value.trim(); }).length;
+      var mZeilen=[].slice.call(form.querySelectorAll(".mangelrow"));
+      var maengel=mZeilen.filter(function(z){ return z.querySelector(".m-t").value.trim(); }).length;
+      /* Maßnahme ohne Beschreibung: mitnennen – „keine“ wäre falsch, gespeichert wird so nicht */
+      var mOhne=mZeilen.filter(function(z){ return !z.querySelector(".m-t").value.trim() && z.querySelector(".m-m").value.trim(); }).length;
       /* jede Zeile führt zu ihrem Schritt (Index über den Titel – die Störung hat
          einen Schritt mehr); „Datum“ hat keinen: zurück ins Formular zum Feld */
       var zeile=function(k,v,schritt){ return '<div class="as-zeile" role="button" tabindex="0" style="cursor:pointer" data-schritt="'+esc(schritt)+'" title="Ändern">'+
@@ -13866,7 +13925,7 @@ function protoAssistentTeilAbschluss(P){
           zeile("Anlagendaten", anlText, ersterAnlageSchritt)+
           (termOffen.length?zeile("Inbetriebnahme / Termine", "noch offen bei "+termOffen.length+" Anlage"+(termOffen.length===1?"":"n"), termOffen[0].titel):"")+
           (stoer?zeile("Maßnahmen", wert("#s_massnahmen").slice(0,60), "Störungsbehebung"):zeile("Arbeiten", arbeiten+" angehakt", "Arbeiten"))+
-          zeile("Mängel", maengel?maengel+" eingetragen":"keine", "Mängel")+
+          zeile("Mängel", [maengel?maengel+" eingetragen":"", mOhne?mOhne+" ohne Beschreibung":""].filter(Boolean).join(" · ")||"keine", "Mängel")+
           zeile("Betriebsbereit", (form.querySelector('input[name="bereit"]:checked')||{}).value||"–", "Ergebnis")+
           (wert("#f_sofort").trim()?zeile("Sofortmaßnahme", wert("#f_sofort").slice(0,60), "Ergebnis"):"")+
           (!stoer?zeile("Ergebnis", ergebnisse.join(" · ").slice(0,90)||"–", "Ergebnis"):"")+
@@ -14298,7 +14357,8 @@ function protoTeilMarkt(P){
         "</span>"+pill(schlecht)+"</label>");
       var sl=z.querySelector(".posslot");
       if(sl){ sl.onclick=function(e){ e.stopPropagation(); };
-        sl.onchange=function(){ z.querySelector('input[name="posw"]').value=sl.value; }; }
+        /* von Hand gewählt (auch „Heute gewartet als“ im geführten Dialog): bleibt beim Datumswechsel */
+        sl.onchange=function(){ z.querySelector('input[name="posw"]').value=sl.value; sl.dataset.vonHand="1"; }; }
       liste.appendChild(z);
     });
     P.posBox.appendChild(liste);
@@ -14377,6 +14437,28 @@ function protoTeilMarkt(P){
     };
     if(s){ P.selSt.value=s.id; form.querySelector("#f_adresse").value=s.adresse; }
     fillPos(p?p.id:null);
+    /* „zählt als“ richtet sich nach dem Protokolldatum: wird es geändert (etwa für
+       einen Nachtrag), die Vorwahl für das neue Datum bestimmen – sonst zählte der
+       Besuch still für einen anderen Termin. Angehakte Anlagen und von Hand
+       gewählte Termine bleiben; eine Korrektur behält die gespeicherte Wahl. */
+    var datumFeld=form.querySelector("#f_datum");
+    if(datumFeld && !stoer) datumFeld.addEventListener("change", function(){
+      if(P.bearb || !P.selSt.value) return;
+      var an=[], hand={}, km=(form.querySelector("#f_kmAnlage")||{}).value;
+      P.posBox.querySelectorAll('input[name="posw"]').forEach(function(x){
+        if(x.checked) an.push(x.dataset.anlage);
+        var sl=x.closest("label").querySelector(".posslot");
+        if(sl && sl.dataset.vonHand) hand[x.dataset.anlage]=sl.value;
+      });
+      fillPos(null);
+      P.posBox.querySelectorAll('input[name="posw"]').forEach(function(x){
+        x.checked=an.indexOf(x.dataset.anlage)>=0;
+        var sl=x.closest("label").querySelector(".posslot"), h=hand[x.dataset.anlage];
+        if(sl && h && Array.prototype.some.call(sl.options, function(o){ return o.value===h; })){ sl.value=h; x.value=h; sl.dataset.vonHand="1"; }
+      });
+      P.anlagenZeichnen();
+      kaeltemittelAnlagen(form, km);
+    });
     /* erst wenn alles gesetzt ist (auch bei einer Korrektur) */
     setTimeout(function(){ if(form._lidlAnpassen) form._lidlAnpassen(); }, 0);
     /* offene Fragen „Vor Ort klären“ zum gewählten Markt (Büro 03.10.2026) – nicht bei einer Korrektur */
@@ -15643,6 +15725,11 @@ function protoTeilPflicht(P){
       if(form.querySelector('input[name="posw"]') && !form.querySelector('input[name="posw"]:checked') && !P.neueAnlagen.length)
         l.push(stoer ? "Anlage, an der die Störung vorliegt" : "gewartete Anlage");
       if(KM_MENGEN.some(function(id){ var n=form.querySelector("#"+id); return n && !kgGueltig(n.value); })) l.push("Kältemittel-Menge als Zahl");
+      /* Mangel mit Maßnahme, aber ohne Beschreibung – wie pflichtPruefung; sonst schlösse der Dialog und nichts wäre gespeichert */
+      form.querySelectorAll(".mangelrow").forEach(function(z){
+        var m=z.querySelector(".m-m").value.trim();
+        if(m && !z.querySelector(".m-t").value.trim()) l.push("Mangel beschreiben (bei „"+m+"“)");
+      });
       var df=form.querySelector("#f_datum");
       if(df && df.value && df.value>isoLokal(new Date())) l.push("Datum (liegt in der Zukunft)");
       if(P.fotosInArbeit>0) l.push("Fotos werden noch verkleinert – kurz warten");
@@ -19000,15 +19087,21 @@ function wzLaden(neu){
   if(wzLaedt) return wzLaedt;
   if(!neu && wzGeladen && Date.now()-wzStand<60000) return Promise.resolve(false);
   var alt=new Date(Date.now()-60*864e5).toISOString();
+  /* Seite für Seite (alleSeiten): Supabase liefert höchstens 1000 Zeilen je Abfrage – der Rest fehlte sonst still (Prüflauf 05.10.2026) */
   wzLaedt=Promise.all([
-    Store.sb.from("werkzeug").select("*").order("name").limit(3000),
-    Store.sb.from("bedarf").select("*").in("status", ["offen","bestellt","abholbereit"]).limit(3000),
-    Store.sb.from("bedarf").select("*").eq("status", "erledigt").gte("erledigt", alt).limit(2000),
+    alleSeiten(function(){ return Store.sb.from("werkzeug").select("*").order("name").order("id"); }, "id"),
+    alleSeiten(function(){ return Store.sb.from("bedarf").select("*").in("status", ["offen","bestellt","abholbereit"]).order("id"); }, "id"),
+    alleSeiten(function(){ return Store.sb.from("bedarf").select("*").eq("status", "erledigt").gte("erledigt", alt).order("id"); }, "id"),
     Store.sb.from("packlisten").select("*").order("name"),
     /* zum Lernen (je Projekttyp, je Markt): alles, was je eingetragen wurde – nur die nötigen Spalten */
-    Store.sb.from("bedarf").select("id,art,text,werkzeug_id,projekt_id,standort_id").limit(8000)
+    alleSeiten(function(){ return Store.sb.from("bedarf").select("id,art,text,werkzeug_id,projekt_id,standort_id,planung_id").order("id"); }, "id"),
+    /* die Fahrzeuge gleich mit: ob ein Werkzeug „in meinem Auto“ liegt, weiß die App sonst erst nach dem Reiter Fahrzeuge */
+    fzGeladen ? null : fzLaden()
   ]).then(function(r){
-    if(r[0].error){ wzFehlt=/does not exist|schema cache|relation/i.test(r[0].error.message||""); wzFehler=wzFehlt?"":r[0].error.message; }
+    var fe=r.filter(function(x){ return x && x.error; })[0];
+    if(fe){ var m=String(fe.error.message||""); wzFehlt=/does not exist|schema cache|relation/i.test(m);
+      /* in Klartext – Techniker sollen nie „Failed to fetch“ lesen */
+      wzFehler=wzFehlt ? "" : technikDeutsch(m)!==m ? "Keine Verbindung – Werkzeug und Material nicht geladen." : "Werkzeug und Material nicht geladen: "+m; }
     else { WZ=r[0].data||[]; BEDARF=(r[1].data||[]).concat(r[2].data||[]); PACKLISTEN=r[3].data||[]; BEDARF_ALLE=(r[4]&&r[4].data)||BEDARF.slice(); wzFehlt=false; wzFehler=""; }
     wzGeladen=true; wzStand=Date.now(); wzLaedt=null; return true;
   }, function(){ wzFehler="Keine Verbindung – Werkzeug und Material nicht geladen."; wzGeladen=true; wzStand=Date.now(); wzLaedt=null; return true; });
@@ -19052,6 +19145,8 @@ function wzHinweise(w){
   if(w.zustand==="defekt") r.push({art:"crit", text:"defekt"});
   if(w.zustand==="verloren") r.push({art:"crit", text:"verloren"});
   if(w.standort_art==="reparatur") r.push({art:w.zurueck_am && w.zurueck_am<heute ? "crit" : "warn", text:"in Reparatur"+(w.zurueck_am?(w.zurueck_am<heute?" – sollte seit "+dfmt(w.zurueck_am)+" zurück sein":" bis ca. "+dfmt(w.zurueck_am)):"")});
+  /* verliehen bzw. sonst wo: überschrittenes „zurück am“ wie bei Reparatur (Prüflauf 05.10.2026: kein Hinweis, kein To-do) */
+  if(w.standort_art==="sonst" && w.zurueck_am && w.zurueck_am<heute) r.push({art:"crit", text:"sollte seit "+dfmt(w.zurueck_am)+" zurück sein"});
   if(w.pruefen_bis){ var t=Math.round((new Date(w.pruefen_bis+"T12:00:00")-new Date(heute+"T12:00:00"))/864e5);
     if(t<=30) r.push({art:t<0?"crit":"warn", text:"Prüfung "+(t<0?"abgelaufen seit ":"fällig ")+dfmt(w.pruefen_bis)}); }
   return r;
@@ -19061,46 +19156,72 @@ function wzHinweisTags(w){ return wzHinweise(w).map(function(a){ return ' <span 
 /* ---------- Bedarf: was für einen Einsatz gebraucht wird ---------- */
 function bedarfWeg(b){ return BEDARF_WEGE.filter(function(x){ return x[0]===b.beschaffung; })[0]||BEDARF_WEGE[0]; }
 function bedarfOffen(b){ return b.status!=="erledigt"; }
+/* hängt an einem privaten Termin einer anderen Person: nie zeigen – dort sehen die anderen nur „Abwesend“
+   (Prüflauf 05.10.2026: ein nachträglich privat gestellter Termin zeigte seinen Eintrag weiter allen) */
+function bedarfVerborgen(b){
+  var e=b.planung_id && PLANUNG.filter(function(x){ return x.id===b.planung_id; })[0];
+  return !!(e && (e.privat || e.kategorie==="privat") && !planIstMeins(e) && e.erstellt_von!==meineKennung());
+}
 /* Bedarf zu einem Bezug: Projekt, Störung, Termin; am Markt nur, was an keinem anderen Bezug hängt */
 function bedarfZu(bz){
   return BEDARF.filter(function(b){
     return (bz.planung_id && b.planung_id===bz.planung_id) || (bz.stoerung_id && b.stoerung_id===bz.stoerung_id) ||
       (bz.projekt_id && b.projekt_id===bz.projekt_id && (!b.planung_id || b.planung_id===bz.planung_id || !bz.planung_id)) ||
       (bz.standort_id && b.standort_id===bz.standort_id && !b.projekt_id && !b.stoerung_id && !b.planung_id);
-  });
+  }).filter(function(b){ return !bedarfVerborgen(b); });
 }
-/* Bedarf zu einem Kalendereintrag (Termin, Störungseinsatz, Projekttermin) – nur offener, der bis zu diesem Tag gebraucht wird */
-function bedarfFuerEinsatz(x, tag){
+/* Bedarf zu einem Kalendereintrag (Termin, Störungseinsatz, Projekttermin) – nur offener (mitErledigt: auch abgehakter), der bis zu diesem Tag gebraucht wird */
+function bedarfFuerEinsatz(x, tag, mitErledigt){
   var bz = x.e ? {planung_id:x.e.id, projekt_id:x.e.projekt_id, stoerung_id:x.e.stoerung_id, standort_id:x.e.standort_id}
          : x.o ? {stoerung_id:x.o._id, standort_id:x.o.standortId}
          : x.p ? {projekt_id:x.p.id} : null;
   if(!bz) return [];
-  return bedarfZu(bz).filter(function(b){ return bedarfOffen(b) && (!b.benoetigt_am || !tag || b.benoetigt_am<=tag); });
+  return bedarfZu(bz).filter(function(b){ return (mitErledigt || bedarfOffen(b)) && (!b.benoetigt_am || !tag || b.benoetigt_am<=tag); });
+}
+/* die nächsten Einsätze eines Projekt- bzw. Markt-Bedarfs ab heute (Kalendertermine, Projekttermine, Störungseinsätze),
+   früheste zuerst – je {datum, ids, namen}: daher kommen Datum und Person (Prüflauf 05.10.2026: die Person fehlte) */
+function bedarfEinsaetze(b){
+  var heute=isoLokal(new Date()), l=[];
+  var termin=function(x){ l.push({datum:x.datum, ids:(x.wer||[]).length?x.wer:[x.erstellt_von], namen:x.wer_namen||[]}); };
+  if(b.projekt_id){
+    PLANUNG.forEach(function(x){ if(x.projekt_id===b.projekt_id && x.art==="termin" && x.datum && x.datum>=heute) termin(x); });
+    PROJEKTE.filter(function(p){ return p.id===b.projekt_id; }).slice(0,1).forEach(function(p){ ((p.daten||{}).termine||[]).forEach(function(t){
+      if(t.datum && t.datum>=heute && !t.erledigt) l.push({datum:t.datum, ids:bedarfNamenIds([t.wer]), namen:t.wer?[t.wer]:[]}); }); });
+  }
+  else if(b.standort_id && !b.stoerung_id && !b.planung_id){
+    PLANUNG.forEach(function(x){ if(x.standort_id===b.standort_id && x.art==="termin" && x.datum && x.datum>=heute) termin(x); });
+    OFFENE.forEach(function(o){ if(o.standortId===b.standort_id && o.termin && o.termin>=heute && !o.erledigt) l.push({datum:o.termin, ids:bedarfNamenIds([o.terminTechniker]), namen:o.terminTechniker?[o.terminTechniker]:[]}); });
+  }
+  return l.sort(function(x,y){ return x.datum.localeCompare(y.datum); });
+}
+/* freie Namen (Störungseinsatz, Projekttermin) → Kennungen aus dem Team, soweit bekannt */
+function bedarfNamenIds(namen){
+  var ids=[], team=planTeamMitMir();
+  (namen||[]).forEach(function(n){ String(n||"").split(",").forEach(function(t){ var k=kanonName(t.trim()); if(!k) return;
+    team.forEach(function(p){ if(kanonName(p.name||"")===k && ids.indexOf(p.user_id)<0) ids.push(p.user_id); }); }); });
+  return ids;
 }
 /* wann und für wen: eigenes Datum, sonst der Termin bzw. Störungseinsatz, sonst der nächste Termin des Projekts */
 function bedarfWann(b){
   if(b.benoetigt_am) return b.benoetigt_am;
-  var e=b.planung_id && PLANUNG.filter(function(x){ return x.id===b.planung_id; })[0]; if(e && e.datum) return e.datum;
+  var e=b.planung_id && PLANUNG.filter(function(x){ return x.id===b.planung_id; })[0];
+  /* mehrtägig: solange er läuft, gilt heute; vorbei erst nach dem letzten Tag */
+  if(e && e.datum){ var heute0=isoLokal(new Date()), bis=e.datum_bis && e.datum_bis>e.datum ? e.datum_bis : e.datum;
+    return e.datum>=heute0 ? e.datum : bis<heute0 ? bis : heute0; }
   var o=b.stoerung_id && OFFENE.filter(function(x){ return x._id===b.stoerung_id; })[0]; if(o && o.termin) return o.termin;
-  var heute=isoLokal(new Date());
-  if(b.projekt_id){
-    var d=PLANUNG.filter(function(x){ return x.projekt_id===b.projekt_id && x.art==="termin" && x.datum && x.datum>=heute; }).map(function(x){ return x.datum; })
-      .concat(PROJEKTE.filter(function(p){ return p.id===b.projekt_id; }).map(function(p){ return ((p.daten||{}).termine||[]).filter(function(t){ return t.datum && t.datum>=heute && !t.erledigt; }).map(function(t){ return t.datum; }); })[0]||[]).sort();
-    if(d.length) return d[0];
-  }
-  if(b.standort_id && !b.projekt_id && !b.stoerung_id && !b.planung_id){
-    var d2=PLANUNG.filter(function(x){ return x.standort_id===b.standort_id && x.art==="termin" && x.datum && x.datum>=heute; }).map(function(x){ return x.datum; })
-      .concat(OFFENE.filter(function(o){ return o.standortId===b.standort_id && o.termin && o.termin>=heute && !o.erledigt; }).map(function(o){ return o.termin; })).sort();
-    if(d2.length) return d2[0];
-  }
-  return null;
+  var n=bedarfEinsaetze(b);
+  return n.length ? n[0].datum : null;
 }
-/* wer sich kümmert: eingetragen, sonst wer beim Termin bzw. Störungseinsatz ist */
+/* wer sich kümmert: eingetragen, sonst wer beim Termin bzw. Störungseinsatz ist, sonst wer beim nächsten Projekt- bzw. Markttermin ist */
 function bedarfWer(b){
   if(b.wer) return {ids:[b.wer], namen:[b.wer_name||planPersonName(b.wer)||""]};
   var e=b.planung_id && PLANUNG.filter(function(x){ return x.id===b.planung_id; })[0]; if(e) return {ids:(e.wer||[]).length?e.wer:[e.erstellt_von], namen:e.wer_namen||[]};
-  var o=b.stoerung_id && OFFENE.filter(function(x){ return x._id===b.stoerung_id; })[0]; if(o && o.terminTechniker) return {ids:[], namen:[o.terminTechniker]};
-  return {ids:[], namen:[]};
+  var o=b.stoerung_id && OFFENE.filter(function(x){ return x._id===b.stoerung_id; })[0]; if(o && o.terminTechniker) return {ids:bedarfNamenIds([o.terminTechniker]), namen:[o.terminTechniker]};
+  var n=bedarfEinsaetze(b), r={ids:[], namen:[]};
+  n.filter(function(x){ return x.datum===n[0].datum; }).forEach(function(x){
+    x.ids.forEach(function(id){ if(id && r.ids.indexOf(id)<0) r.ids.push(id); });
+    x.namen.forEach(function(nm){ if(nm && r.namen.indexOf(nm)<0) r.namen.push(nm); }); });
+  return r;
 }
 function bedarfIstMeins(b){
   var w=bedarfWer(b), ich=meineKennung(), n=kanonName(meinName()||"");
@@ -19120,10 +19241,11 @@ function bedarfBezugText(b){
 function bedarfWerkzeugInfo(b){
   var w=b.werkzeug_id && WZ.filter(function(x){ return x.id===b.werkzeug_id; })[0]; if(!w) return null;
   var h=wzHinweise(w).filter(function(a){ return a.art==="crit" || /Reparatur/.test(a.text); }).map(function(a){ return a.text; });
-  var wer=bedarfWer(b), ids=wer.ids.length ? wer.ids : [meineKennung()];
+  /* niemand eingetragen: die Person, die gerade schaut; steht nur ein Name da (Störung), nie der Betrachter */
+  var wer=bedarfWer(b), mitName=wer.namen.some(function(n){ return !!n; }), ids=wer.ids.length ? wer.ids : mitName ? [] : [meineKennung()];
   if(!h.length && ids.some(function(id){ return wzBei(w, id); })) return null;
   var text=[wzOrtText(w)].concat(h).filter(function(x, i, l){ return l.indexOf(x)===i; }).join(" · ");
-  return {text:text, warnen:h.length>0 || wer.ids.length>0};
+  return {text:text, warnen:h.length>0 || wer.ids.length>0 || mitName};
 }
 function bedarfWerkzeugHinweis(b){ var i=bedarfWerkzeugInfo(b); return i ? i.text : ""; }
 /* eine Zeile: ☐ abhaken, Text, Weg, Status, wofür, Werkzeug-Hinweis; antippen öffnet */
@@ -19164,12 +19286,14 @@ function bedarfEditor(b, vorgabe){
   var v=ansichtOeffnen(b ? "Material / Werkzeug" : "Was wird gebraucht?");
   var bezugT=bedarfBezugText(a); v.schritt.textContent=bezugT ? "für "+bezugT : "ohne Bezug – wird in der Übersicht unter „ohne Termin“ geführt";
   var quellen=[]; BEDARF.forEach(function(x){ if(x.bezugsquelle && quellen.indexOf(x.bezugsquelle)<0) quellen.push(x.bezugsquelle); });
-  var wzListe=WZ.filter(function(w){ return w.aktiv!==false; });
+  /* die gespeicherte Verknüpfung bleibt wählbar, auch wenn das Werkzeug nicht mehr im Bestand ist – sonst ginge sie beim Speichern still verloren */
+  var wzListe=WZ.filter(function(w){ return w.aktiv!==false || w.id===a.werkzeug_id; });
   var team=planTeamMitMir();
   var form=el('<form class="stack" autocomplete="off" style="max-width:600px">'+
     '<div class="chips" data-art>'+[["material","Material"],["werkzeug","Werkzeug / Gerät"]].map(function(x){ return '<button class="chip" type="button" data-w="'+x[0]+'" aria-pressed="'+(a.art===x[0])+'">'+x[1]+"</button>"; }).join("")+"</div>"+
     '<label class="fl" data-wzwahl><span>Welches Werkzeug?</span><select data-f="werkzeug_id"><option value="">– aus der Liste wählen oder unten eintippen –</option>'+
-      wzListe.map(function(w){ return '<option value="'+esc(w.id)+'"'+(a.werkzeug_id===w.id?" selected":"")+">"+esc(w.name+(w.nummer?" ("+w.nummer+")":"")+" · "+wzOrtText(w))+"</option>"; }).join("")+"</select></label>"+
+      wzListe.map(function(w){ return '<option value="'+esc(w.id)+'"'+(a.werkzeug_id===w.id?" selected":"")+">"+esc(w.name+(w.nummer?" ("+w.nummer+")":"")+" · "+(w.aktiv===false?"nicht mehr im Bestand":wzOrtText(w)))+"</option>"; }).join("")+
+      (a.werkzeug_id && !wzListe.some(function(w){ return w.id===a.werkzeug_id; })?'<option value="'+esc(a.werkzeug_id)+'" selected>'+esc(a.text||"?")+"</option>":"")+"</select></label>"+
     '<div class="grid" style="display:grid;grid-template-columns:2fr 1fr;gap:10px">'+
       '<label class="fl"><span class="req">Was?</span><input type="text" data-f="text" maxlength="200" value="'+esc(a.text||"")+'" placeholder="z. B. Kupferrohr 3/8, Vakuumpumpe, Kondensatpumpe"></label>'+
       '<label class="fl"><span>Menge</span><input type="text" data-f="menge" maxlength="40" value="'+esc(a.menge||"")+'" placeholder="z. B. 2 Stk, 10 m"></label></div>'+
@@ -19204,9 +19328,13 @@ function bedarfEditor(b, vorgabe){
     var lo=el('<button class="btn ghost" type="button" style="color:var(--crit);border-color:var(--crit)">Löschen</button>');
     lo.onclick=function(){
       if(!window.confirm("„"+b.text+"“ löschen?\n\nWenn es nur erledigt ist: lieber abhaken – dann bleibt es nachvollziehbar.")) return;
-      Store.sb.from("bedarf").delete().eq("id", b.id).select("id").then(function(r){
-        if(r.error || !r.data || !r.data.length){ fehler("Nicht gelöscht"+(r.error?" ("+r.error.message+")":" – keine Berechtigung")+"."); return; }
-        BEDARF=BEDARF.filter(function(x){ return x.id!==b.id; }); v.zu(); toast("Gelöscht."); wzGeaendert(); });
+      /* mit Frist und Fehlerzweig wie beim Speichern – ohne Verbindung stand sonst nichts da (Prüflauf 05.10.2026) */
+      lo.disabled=true;
+      mitFrist(Store.sb.from("bedarf").delete().eq("id", b.id).select("id"), 15000).then(function(r){
+        if(r.error || !r.data || !r.data.length){ lo.disabled=false; fehler("Nicht gelöscht"+(r.error?" ("+r.error.message+")":" – keine Berechtigung")+"."); return; }
+        /* auch aus dem Gelernten – sonst stünde es gleich wieder als „schon gebraucht“ da */
+        BEDARF=BEDARF.filter(function(x){ return x.id!==b.id; }); BEDARF_ALLE=BEDARF_ALLE.filter(function(x){ return x.id!==b.id; }); v.zu(); toast("Gelöscht."); wzGeaendert();
+      }, function(e){ lo.disabled=false; fehler("Nicht gelöscht: "+(e.message||String(e))); });
     };
     v.fuss.appendChild(lo);
   }
@@ -19231,7 +19359,8 @@ function bedarfEditor(b, vorgabe){
     /* steht genau so in der Werkzeugliste: verknüpfen (dann sieht man, wo es ist) */
     var gleich=!felder.werkzeug_id && WZ.filter(function(w){ return w.aktiv!==false && suchNorm(w.name)===suchNorm(text); })[0];
     if(gleich){ felder.werkzeug_id=gleich.id; felder.art="werkzeug"; }
-    var fragen=felder.art==="werkzeug" && !felder.werkzeug_id;
+    /* einmal fragen: beim Anlegen oder wenn es neu Werkzeug bzw. ein anderes ist – nach „Nein“ nicht bei jedem Speichern wieder */
+    var fragen=felder.art==="werkzeug" && !felder.werkzeug_id && (!b || b.art!=="werkzeug" || bedarfSchluessel(b.text)!==bedarfSchluessel(text));
     ok.disabled=true; ok.textContent="wird gespeichert …";
     bedarfSpeichern(b, felder).then(function(n){ v.zu(); wzGeaendert(); toast("Gespeichert: "+n.text+" – "+bedarfWeg(n)[1]+"."); if(fragen) wzAufnehmenFragen(n); },
       function(e){ ok.disabled=false; ok.textContent="Speichern"; fehler(e.message||String(e)); });
@@ -19251,7 +19380,8 @@ function bedarfKasten(bz, opt){
     if(nurLesen()) return;
     /* gelernt: je Projekttyp (vom Projekt mitgegeben), je Markt */
     var vp=opt.vorschlag ? opt.vorschlag() : null; if(vp) h.appendChild(vp);
-    if(bz.standort_id && !opt.ohneMarkt){ var vm=bedarfVorschlagLeiste("An diesem Markt schon gebraucht – antippen trägt ein:", bedarfGelerntMarkt(bz.standort_id, l.filter(bedarfOffen)), bz,
+    /* ohne das, was hier schon steht – auch Abgehaktes (sonst käme es sofort als Vorschlag wieder) */
+    if(bz.standort_id && !opt.ohneMarkt){ var vm=bedarfVorschlagLeiste("An diesem Markt schon gebraucht – antippen trägt ein:", bedarfGelerntMarkt(bz.standort_id, l), bz,
       "markt:"+bz.standort_id+":"+(bz.planung_id||bz.stoerung_id||"markt"), false); if(vm) h.appendChild(vm); }
     var r=el('<div class="rowflex" style="gap:6px;flex-wrap:wrap"><button class="btn ghost sm" type="button" data-n>+ Material / Werkzeug</button>'+
       (PACKLISTEN.length?'<button class="btn ghost sm" type="button" data-p>Packliste übernehmen</button>':"")+"</div>");
@@ -19281,16 +19411,28 @@ function packlisteWaehlen(bz){
   });
   var ab=el('<button class="btn ghost" type="button">Abbrechen</button>'); ab.onclick=function(){ v.zu(); }; v.fuss.appendChild(ab);
 }
+/* je Bezug nacheinander (Prüflauf 05.10.2026): zweimal schnell getippt, während die erste Übernahme noch speichert, legte alles doppelt an */
+var PACKLISTE_LAEUFT={};
 function packlisteUebernehmen(bz, pl){
-  var da=bedarfZu(bz).filter(bedarfOffen).map(function(b){ return suchNorm(b.text); });
-  var neu=(pl.eintraege||[]).filter(function(x){ return x.text && da.indexOf(suchNorm(x.text))<0; });
-  if(!neu.length){ toast("Alles aus „"+pl.name+"“ steht schon drin."); return Promise.resolve(); }
-  var kette=Promise.resolve(), n=0;
-  neu.forEach(function(x){ kette=kette.then(function(){
-    var f={art:x.werkzeug_id?"werkzeug":(x.art||"material"), text:x.text, menge:x.menge||null, werkzeug_id:x.werkzeug_id||null, beschaffung:"mitnehmen", status:"offen"};
-    ["projekt_id","stoerung_id","planung_id","standort_id"].forEach(function(k){ if(bz[k]) f[k]=bz[k]; });
-    return bedarfSpeichern(null, f).then(function(){ n++; }); }); });
-  return kette.then(function(){ toast(n+" aus „"+pl.name+"“ übernommen."); }, function(e){ toast("Nur "+n+" übernommen: "+technikDeutsch(e.message||String(e))); });
+  var schl=["projekt_id","stoerung_id","planung_id","standort_id"].map(function(k){ return bz[k]||""; }).join("|");
+  /* ging die vorige Übernahme unerwartet schief, darf das die nächste nicht blockieren */
+  var lauf=(PACKLISTE_LAEUFT[schl]||Promise.resolve()).then(null, function(){}).then(function(){
+    var da=bedarfZu(bz).filter(bedarfOffen).map(function(b){ return suchNorm(b.text); });
+    /* auch eine Zeile, die in der Packliste mehrfach steht, nur einmal */
+    var neu=(pl.eintraege||[]).filter(function(x){ var k=x.text && suchNorm(x.text); if(!k || da.indexOf(k)>=0) return false; da.push(k); return true; });
+    if(!neu.length){ toast("Alles aus „"+pl.name+"“ steht schon drin."); return; }
+    toast("„"+pl.name+"“ wird übernommen …");
+    var kette=Promise.resolve(), n=0;
+    neu.forEach(function(x){ kette=kette.then(function(){
+      var f={art:x.werkzeug_id?"werkzeug":(x.art||"material"), text:x.text, menge:x.menge||null, werkzeug_id:x.werkzeug_id||null, beschaffung:"mitnehmen", status:"offen"};
+      ["projekt_id","stoerung_id","planung_id","standort_id"].forEach(function(k){ if(bz[k]) f[k]=bz[k]; });
+      return bedarfSpeichern(null, f).then(function(){ n++; }); }); });
+    return kette.then(function(){ toast(n+" aus „"+pl.name+"“ übernommen."); }, function(e){ toast("Nur "+n+" übernommen: "+technikDeutsch(e.message||String(e))); });
+  });
+  PACKLISTE_LAEUFT[schl]=lauf;
+  var fertig=function(){ if(PACKLISTE_LAEUFT[schl]===lauf) delete PACKLISTE_LAEUFT[schl]; };
+  lauf.then(fertig, fertig);
+  return lauf;
 }
 /* Packliste anlegen/ändern: je Zeile ein Eintrag; ein Name aus der Werkzeugliste wird mit ihr verknüpft */
 function packlisteEditor(pl){
@@ -19312,9 +19454,11 @@ function packlisteEditor(pl){
   if(pl && wzBuero() && !demo()){
     var lo=el('<button class="btn ghost" type="button" style="color:var(--crit);border-color:var(--crit)">Löschen</button>');
     lo.onclick=function(){ if(!window.confirm("Packliste „"+pl.name+"“ löschen?")) return;
-      Store.sb.from("packlisten").delete().eq("id", pl.id).select("id").then(function(r){
-        if(r.error || !r.data || !r.data.length){ err.textContent="Nicht gelöscht."; err.hidden=false; return; }
-        PACKLISTEN=PACKLISTEN.filter(function(x){ return x.id!==pl.id; }); v.zu(); toast("Gelöscht."); wzGeaendert(); }); };
+      lo.disabled=true;
+      mitFrist(Store.sb.from("packlisten").delete().eq("id", pl.id).select("id"), 15000).then(function(r){
+        if(r.error || !r.data || !r.data.length){ lo.disabled=false; err.textContent="Nicht gelöscht"+(r.error?" ("+technikDeutsch(r.error.message)+")":" – keine Berechtigung")+"."; err.hidden=false; return; }
+        PACKLISTEN=PACKLISTEN.filter(function(x){ return x.id!==pl.id; }); v.zu(); toast("Gelöscht."); wzGeaendert();
+      }, function(e){ lo.disabled=false; err.textContent="Nicht gelöscht: "+technikDeutsch(e.message||String(e)); err.hidden=false; }); };
     v.fuss.appendChild(lo);
   }
   var ok=fussKnoepfe(v, "Speichern").ok;
@@ -19326,7 +19470,7 @@ function packlisteEditor(pl){
       return w ? {art:"werkzeug", text:w.name, werkzeug_id:w.id} : {art:"material", text:t.slice(0,200)}; });
     if(!ein.length){ err.textContent="Bitte mindestens einen Eintrag."; err.hidden=false; return; }
     var z={name:name, eintraege:ein, geaendert:new Date().toISOString(), geaendert_von:meinName()};
-    if(demo()){ PACKLISTEN=wzZeileSetzen(PACKLISTEN, Object.assign({id:pl?pl.id:neueKennung("pl")}, pl||{}, z)); v.zu(); wzGeaendert(); return; }
+    if(demo()){ PACKLISTEN=wzZeileSetzen(PACKLISTEN, Object.assign({id:pl?pl.id:neueKennung("pl")}, pl||{}, z)); v.zu(); toast("Packliste gespeichert ("+ein.length+" Einträge)."); wzGeaendert(); return; }
     ok.disabled=true;
     var q=pl ? Store.sb.from("packlisten").update(z).eq("id", pl.id).select("*") : Store.sb.from("packlisten").insert(z).select("*");
     mitFrist(q, 15000).then(function(r){
@@ -19356,6 +19500,8 @@ function wzOrtSchnell(w, ziel){
   else if(ziel && ziel.fahrzeug) f={standort_art:"fahrzeug", fahrzeug_id:ziel.fahrzeug.id, fahrzeug_name:ziel.fahrzeug.kennzeichen, standort_text:null};
   if(!f) return;
   if(w.standort_art==="reparatur" && !window.confirm("„"+w.name+"“ steht als „in Reparatur“.\n\nIst es zurück?")) return;
+  /* verloren und jetzt in der Hand: wieder gefunden – sonst bliebe es „verloren“ und im To-do (Prüflauf 05.10.2026) */
+  if(w.zustand==="verloren"){ if(!window.confirm("„"+w.name+"“ steht als „verloren“.\n\nWieder gefunden?")) return; f.zustand="ok"; }
   f.zurueck_am=null;
   wzSpeichern(w, f).then(function(n){ toast(n.name+": jetzt "+wzOrtText(n)+"."); }, function(e){ toast("Nicht gespeichert: "+technikDeutsch(e.message||String(e))); });
 }
@@ -19363,8 +19509,11 @@ function meinFahrzeug(){ var ich=meineKennung(); return FZ.filter(function(f){ r
 function wzEditor(w){
   if(!wzAn()){ toast("Werkzeug geht nur mit Anmeldung."); return; }
   if(!planTeam) planTeamLaden();
-  if(!fzGeladen) fzLaden();
+  var fzWarten=fzGeladen ? null : fzLaden();
   var a=Object.assign({standort_art:"lager", zustand:"ok"}, w||{});
+  var fzOptHtml=function(wahl){ return '<option value="">–</option>'+FZ.filter(function(f){ return f.aktiv!==false || f.id===a.fahrzeug_id; }).map(function(f){
+        return '<option value="'+esc(f.id)+'"'+(wahl===f.id?" selected":"")+">"+esc(f.kennzeichen+((f.fahrer_namen||[]).length?" · "+f.fahrer_namen.join(", "):""))+"</option>"; }).join("")+
+        (a.fahrzeug_id && !FZ.some(function(f){ return f.id===a.fahrzeug_id; })?'<option value="'+esc(a.fahrzeug_id)+'"'+(wahl===a.fahrzeug_id?" selected":"")+">"+esc(a.fahrzeug_name||"?")+"</option>":""); };
   var v=ansichtOeffnen(w ? w.name : "Neues Werkzeug / Gerät");
   if(w) v.schritt.textContent="jetzt: "+wzOrtText(w);
   var gruppen=[]; WZ.forEach(function(x){ if(x.gruppe && gruppen.indexOf(x.gruppe)<0) gruppen.push(x.gruppe); });
@@ -19378,9 +19527,7 @@ function wzEditor(w){
       '<label class="fl"><span>Seriennummer</span><input type="text" data-f="seriennummer" maxlength="80" value="'+esc(a.seriennummer||"")+'"></label></div>'+
     '<div class="fl"><span>Wo ist es gerade?</span></div><div class="chips" data-ort>'+WZ_ORTE.map(function(x){ return '<button class="chip" type="button" data-w="'+x[0]+'" aria-pressed="'+(a.standort_art===x[0])+'">'+esc(x[1])+"</button>"; }).join("")+"</div>"+
     '<div class="grid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:10px">'+
-      '<label class="fl" data-nur="fahrzeug"><span>Fahrzeug</span><select data-f="fahrzeug_id"><option value="">–</option>'+FZ.filter(function(f){ return f.aktiv!==false || f.id===a.fahrzeug_id; }).map(function(f){
-        return '<option value="'+esc(f.id)+'"'+(a.fahrzeug_id===f.id?" selected":"")+">"+esc(f.kennzeichen+((f.fahrer_namen||[]).length?" · "+f.fahrer_namen.join(", "):""))+"</option>"; }).join("")+
-        (a.fahrzeug_id && !FZ.some(function(f){ return f.id===a.fahrzeug_id; })?'<option value="'+esc(a.fahrzeug_id)+'" selected>'+esc(a.fahrzeug_name||"?")+"</option>":"")+"</select></label>"+
+      '<label class="fl" data-nur="fahrzeug"><span>Fahrzeug</span><select data-f="fahrzeug_id">'+fzOptHtml(a.fahrzeug_id)+"</select></label>"+
       '<label class="fl" data-nur="person"><span>Bei wem?</span><select data-f="person_id"><option value="">–</option>'+team.map(function(p){
         return '<option value="'+esc(p.user_id)+'"'+(a.person_id===p.user_id?" selected":"")+">"+esc(p.name||"–")+"</option>"; }).join("")+
         (a.person_id && !team.some(function(p){ return p.user_id===a.person_id; })?'<option value="'+esc(a.person_id)+'" selected>'+esc(a.person_name||"?")+"</option>":"")+"</select></label>"+
@@ -19404,18 +19551,38 @@ function wzEditor(w){
     form.querySelector("[data-standorttextlabel]").textContent={lager:"Wo im Lager? (Regal, Fach)", fahrzeug:"Wo im Fahrzeug? (kann leer bleiben)", person:"Notiz (kann leer bleiben)",
       baustelle:"Wo genau? (kann leer bleiben)", reparatur:"Reparatur bei wem?", sonst:"Wo?"}[ort]||"Wo genau?";
   };
-  form.querySelectorAll("[data-ort] .chip").forEach(function(c){ c.onclick=function(){ ort=c.dataset.w; form.querySelectorAll("[data-ort] .chip").forEach(function(x){ x.setAttribute("aria-pressed", String(x===c)); }); zeigen(); }; });
+  form.querySelectorAll("[data-ort] .chip").forEach(function(c){ c.onclick=function(){
+    /* anderer Ort: „Wo genau?“ gehört zum alten Ort (sonst stünde die Reparaturfirma als Lagerplatz da) – zurück zum ursprünglichen Ort: dessen Text */
+    if(c.dataset.w!==ort) F("standort_text").value = c.dataset.w===a.standort_art ? (a.standort_text||"") : "";
+    ort=c.dataset.w; form.querySelectorAll("[data-ort] .chip").forEach(function(x){ x.setAttribute("aria-pressed", String(x===c)); }); zeigen(); }; });
   zeigen();
+  /* „Fahrzeug“ nur anbieten, wenn eines zur Wahl steht (Techniker sehen nur das eigene – fahrzeuge.sql);
+     sonst führte es zu „Bitte das Fahrzeug wählen“, das sich nicht erfüllen lässt */
+  var fzChip=form.querySelector('[data-ort] .chip[data-w="fahrzeug"]');
+  var fzHinweis=el('<div class="muted" style="font-size:12.5px" hidden>Kein Fahrzeug zur Wahl (dir ist keines zugeteilt) – liegt es in einem Auto, „bei Person“ wählen.</div>');
+  form.querySelector("[data-ort]").insertAdjacentElement("afterend", fzHinweis);
+  var fzPruefen=function(){
+    var leer=fzGeladen && !fzFehler && F("fahrzeug_id").options.length<=1;
+    fzChip.hidden=leer && ort!=="fahrzeug"; fzHinweis.hidden=!fzChip.hidden;
+  };
+  fzPruefen();
+  /* Fahrzeuge erst jetzt geladen: die Auswahl nachziehen */
+  if(fzWarten) fzWarten.then(function(){ if(!form.isConnected) return; var sel=F("fahrzeug_id"); sel.innerHTML=fzOptHtml(sel.value||a.fahrzeug_id); fzPruefen(); });
   var vl=form.querySelector("[data-verlauf]");
   if(vl) vl.addEventListener("toggle", function(){
-    var h=vl.querySelector(".stack"); if(h.childNodes.length || demo()) return;
+    /* nach einem Ladefehler beim nächsten Aufklappen neu versuchen (Prüflauf 05.10.2026: stand sonst für immer „Noch kein Verlauf.“) */
+    var h=vl.querySelector(".stack"); if(!vl.open || (h.childNodes.length && !h._fehler) || demo()) return;
+    h._fehler=false; h.innerHTML="";
     h.appendChild(el('<div class="muted" style="font-size:12.5px">wird geladen …</div>'));
+    var nichtGeladen=function(m){ m=String(m||""); h.innerHTML=""; h._fehler=true;
+      h.appendChild(el('<div class="note warnbox" style="font-size:12.5px">Verlauf nicht geladen ('+esc(technikDeutsch(m)!==m ? "keine Verbindung" : m)+") – zum neuen Versuch zu- und wieder aufklappen.</div>")); };
     Store.sb.from("werkzeug_verlauf").select("*").eq("werkzeug_id", w.id).order("zeit", {ascending:false}).limit(50).then(function(r){
+      if(r.error){ nichtGeladen(r.error.message); return; }
       h.innerHTML="";
       (r.data||[]).forEach(function(x){ h.appendChild(el('<div style="font-size:12.5px"><span class="mono muted">'+esc(dfmt(tagLokal(x.zeit)))+" "+esc(zeitAus(x.zeit))+"</span> "+esc(x.standort||"")+
         (x.zustand && x.zustand!=="ok"?" · "+esc(x.zustand):"")+(x.von_name?' <span class="muted">· '+esc(x.von_name)+"</span>":"")+"</div>")); });
       if(!(r.data||[]).length) h.appendChild(el('<div class="muted" style="font-size:12.5px">Noch kein Verlauf.</div>'));
-    });
+    }, function(e){ nichtGeladen(e && e.message || e); });
   });
   v.inhalt.appendChild(form);
   var err=form.querySelector("[data-err]"), fehler=function(t){ err.textContent=technikDeutsch(t); err.hidden=false; };
@@ -19428,7 +19595,7 @@ function wzEditor(w){
       standort_art:ort, standort_text:F("standort_text").value.trim()||null, zustand:F("zustand").value, pruefen_bis:F("pruefen_bis").value||null,
       notiz:F("notiz").value.trim()||null, zurueck_am:(ort==="reparatur"||ort==="sonst") ? (F("zurueck_am").value||null) : null,
       fahrzeug_id:null, fahrzeug_name:null, person_id:null, person_name:null, projekt_id:null, standort_id:null};
-    if(ort==="fahrzeug"){ var fz=F("fahrzeug_id").value; if(!fz){ fehler("Bitte das Fahrzeug wählen."); return; }
+    if(ort==="fahrzeug"){ var fz=F("fahrzeug_id").value; if(!fz){ fehler(F("fahrzeug_id").options.length<=1 ? "Kein Fahrzeug zur Wahl – liegt es in einem Auto, bitte „bei Person“ wählen." : "Bitte das Fahrzeug wählen."); return; }
       f.fahrzeug_id=fz; var fo=FZ.filter(function(x){ return x.id===fz; })[0]; f.fahrzeug_name=fo ? fo.kennzeichen : (a.fahrzeug_name||null); }
     if(ort==="person"){ var pid=F("person_id").value; if(!pid){ fehler("Bitte wählen, bei wem es ist."); return; }
       f.person_id=pid; f.person_name=planPersonName(pid)||a.person_name||null; }
@@ -19436,6 +19603,9 @@ function wzEditor(w){
       if(!f.projekt_id && !f.standort_id && !f.standort_text){ fehler("Bitte Projekt, Markt oder „Wo genau?“ angeben."); return; } }
     if(ort==="reparatur" && !f.standort_text && !window.confirm("Ohne Angabe, wo es repariert wird.\n\nTrotzdem speichern?")) return;
     if(w) f.aktiv=F("aktiv").checked;
+    /* „im Bestand“ abgewählt: einmal nachfragen (Fehlbedienung einplanen) und sagen, wie es zurückkommt */
+    if(w && w.aktiv!==false && f.aktiv===false &&
+       !window.confirm("„"+name+"“ als ausgeschieden markieren?\n\nEs verschwindet aus den Listen. Unter Werkzeug › „Ausgeschieden“ lässt es sich wieder öffnen und zurückholen – der Verlauf bleibt.")) return;
     ok.disabled=true; ok.textContent="wird gespeichert …";
     wzSpeichern(w, f).then(function(n){ v.zu(); wzGeaendert(); toast(n.name+" gespeichert – "+wzOrtText(n)+"."); },
       function(e){ ok.disabled=false; ok.textContent="Speichern"; fehler(e.message||String(e)); });
@@ -19463,7 +19633,7 @@ function bedarfGelerntProjekt(p){
     e.p[pid]=1; if(wid && !e.werkzeug_id) e.werkzeug_id=wid; if(art==="werkzeug") e.art="werkzeug";
   };
   andere.forEach(function(x){
-    BEDARF_ALLE.forEach(function(b){ if(b.projekt_id===x.id) dazu(x.id, b.text, b.art, b.werkzeug_id); });
+    BEDARF_ALLE.forEach(function(b){ if(b.projekt_id===x.id && !bedarfVerborgen(b)) dazu(x.id, b.text, b.art, b.werkzeug_id); });
     ((x.daten||{}).baubuch||[]).forEach(function(e){
       if(["werkzeug","kran","material","geholt"].indexOf(e.art)>=0 && e.text) dazu(x.id, e.text, e.art==="werkzeug"||e.art==="kran" ? "werkzeug" : "material", null); });
   });
@@ -19478,7 +19648,7 @@ function bedarfGelerntMarkt(sid, schonListe){
   if(!sid) return [];
   var je={}, schon=(schonListe||[]).map(function(b){ return bedarfSchluessel(b.text); });
   BEDARF_ALLE.forEach(function(b){
-    if(b.standort_id!==sid) return;
+    if(b.standort_id!==sid || bedarfVerborgen(b)) return;
     var k=bedarfSchluessel(b.text); if(!k || schon.indexOf(k)>=0) return;
     var e=je[k]||(je[k]={text:String(b.text).trim(), art:b.art, werkzeug_id:b.werkzeug_id||null, n:0});
     e.n++; if(b.art==="werkzeug") e.art="werkzeug"; if(b.werkzeug_id) e.werkzeug_id=b.werkzeug_id;
@@ -19563,14 +19733,16 @@ function wzAufnehmenFragen(b){
   v.inhalt.appendChild(el('<div class="note" style="font-size:13px">Steht es in der Liste, sieht jeder, wo es gerade ist – und die App warnt, wenn es in Reparatur oder bei jemand anderem ist. Wo ist es jetzt?</div>'));
   var r=el('<div class="stack" style="gap:8px;max-width:360px"></div>');
   var mf=meinFahrzeug();
+  /* während gespeichert wird, alle Antworten sperren – zwei schnelle Tipper legten das Werkzeug doppelt an (Prüflauf 05.10.2026) */
+  var sperren=function(an){ r.querySelectorAll("button").forEach(function(x){ x.disabled=an; }); };
   [["Ja – im Lager", {standort_art:"lager"}], ["Ja – bei mir", {standort_art:"person", person_id:meineKennung(), person_name:meinName()}]]
     .concat(mf ? [["Ja – in meinem Auto ("+mf.kennzeichen+")", {standort_art:"fahrzeug", fahrzeug_id:mf.id, fahrzeug_name:mf.kennzeichen}]] : [])
     .forEach(function(x){
       var k=el('<button class="btn" type="button">'+esc(x[0])+"</button>");
-      k.onclick=function(){ k.disabled=true;
+      k.onclick=function(){ sperren(true);
         wzSpeichern(null, Object.assign({name:b.text.slice(0,120)}, x[1])).then(function(w){
           return (b.id ? bedarfSpeichern(b, {werkzeug_id:w.id, art:"werkzeug"}) : Promise.resolve()).then(function(){ v.zu(); wzGeaendert(); toast("„"+w.name+"“ steht jetzt in der Werkzeugliste – "+wzOrtText(w)+"."); });
-        }).catch(function(e){ k.disabled=false; toast("Nicht gespeichert: "+technikDeutsch(e.message||String(e))); }); };
+        }).catch(function(e){ sperren(false); toast("Nicht gespeichert: "+technikDeutsch(e.message||String(e))); }); };
       r.appendChild(k);
     });
   var nein=el('<button class="btn ghost" type="button">Nein, nicht aufnehmen</button>'); nein.onclick=function(){ v.zu(); };
@@ -19590,6 +19762,7 @@ function wzNachfragen(){
     if(!b.werkzeug_id || b.nachgefragt || !bedarfIstMeins(b)) return false;
     var w=WZ.filter(function(x){ return x.id===b.werkzeug_id; })[0]; if(!w || w.standort_art==="lager" || w.aktiv===false || gesehen[w.id]) return false;
     var d=bedarfWann(b); if(!d || d<grenze || d>heute) return false;
+    var e=b.planung_id && PLANUNG.filter(function(x){ return x.id===b.planung_id; })[0]; if(e && e.datum_bis && e.datum_bis>heute) return false;   /* mehrtägig: erst nach dem letzten Tag */
     if(d===heute){ var sid=bedarfMarkt(b); if(!sid || !alleProtokolle().some(function(p){ return p.datum===heute && p.standortId===sid && !p.geloescht; })) return false; }
     gesehen[w.id]=1; return true;
   });
@@ -19603,14 +19776,19 @@ function wzNachfrageZeile(b){
   var setze=function(felder){
     var p=felder ? wzSpeichern(w, Object.assign({zurueck_am:null}, felder)) : Promise.resolve(w);
     return p.then(function(){ return bedarfSpeichern(b, Object.assign({nachgefragt:new Date().toISOString()}, bedarfOffen(b) ? {status:"erledigt"} : {})); })
-      .then(function(){ toast(w.name+": "+(felder ? "Standort gespeichert." : "bleibt so.")); }, function(e){ toast("Nicht gespeichert: "+technikDeutsch(e.message||String(e))); });
+      .then(function(){ toast(w.name+": "+(felder ? "Standort gespeichert." : "bleibt so.")); return true; }, function(e){ toast("Nicht gespeichert: "+technikDeutsch(e.message||String(e))); return false; });
   };
-  var knopf=function(t, felder){ var x=el('<button class="btn ghost sm" type="button">'+esc(t)+"</button>"); x.onclick=function(){ x.disabled=true; setze(felder); }; k.appendChild(x); };
+  /* während gespeichert wird, sind alle Knöpfe der Zeile gesperrt; ging es nicht, wieder frei (Prüflauf 05.10.2026: blieb gesperrt) */
+  var knopf=function(t, felder){ var x=el('<button class="btn ghost sm" type="button">'+esc(t)+"</button>");
+    x.onclick=function(){ var alle=k.querySelectorAll("button"); alle.forEach(function(y){ y.disabled=true; });
+      setze(felder).then(function(ok){ if(!ok) alle.forEach(function(y){ y.disabled=false; }); }); };
+    k.appendChild(x); };
   knopf("passt so", null);
-  if(!wzBei(w, meineKennung())) knopf("bei mir", {standort_art:"person", person_id:meineKennung(), person_name:meinName()});
+  /* der neue Ort ersetzt den alten ganz – „Wo genau?“ des alten Orts gehört nicht dazu */
+  if(!wzBei(w, meineKennung())) knopf("bei mir", {standort_art:"person", person_id:meineKennung(), person_name:meinName(), standort_text:null});
   var sid=bedarfMarkt(b);
-  if(b.projekt_id) knopf("auf der Baustelle", {standort_art:"baustelle", projekt_id:b.projekt_id, standort_id:null});
-  else if(sid) knopf("am Markt gelassen", {standort_art:"baustelle", standort_id:sid, projekt_id:null});
+  if(b.projekt_id) knopf("auf der Baustelle", {standort_art:"baustelle", projekt_id:b.projekt_id, standort_id:null, standort_text:null});
+  else if(sid) knopf("am Markt gelassen", {standort_art:"baustelle", standort_id:sid, projekt_id:null, standort_text:null});
   knopf("zurück ins Lager", {standort_art:"lager", standort_text:null});
   return z;
 }
@@ -19627,7 +19805,7 @@ function bedarfGruppen(liste){
 function bedarfUebersichtKarte(){
   var buero=wzBuero();
   if(S.bdAlle==null) S.bdAlle=buero;
-  var offen=BEDARF.filter(bedarfOffen), meine=offen.filter(bedarfIstMeins), l=S.bdAlle ? offen : meine;
+  var offen=BEDARF.filter(function(b){ return bedarfOffen(b) && !bedarfVerborgen(b); }), meine=offen.filter(bedarfIstMeins), l=S.bdAlle ? offen : meine;
   var c=el('<div class="card"><div class="pad stack" style="gap:8px">'+
     '<div class="rowflex" style="justify-content:space-between;gap:8px"><h2>Mitnehmen, abholen, bestellen'+(l.length?" ("+l.length+")":"")+"</h2>"+
       '<button class="btn sm" type="button" data-neu>+ Was wird gebraucht?</button></div>'+
@@ -19650,7 +19828,7 @@ function bedarfUebersichtKarte(){
       h.appendChild(ae);
     }
   });
-  var fertig=BEDARF.filter(function(b){ return !bedarfOffen(b); }).sort(function(a,b){ return String(b.erledigt||"").localeCompare(String(a.erledigt||"")); });
+  var fertig=BEDARF.filter(function(b){ return !bedarfOffen(b) && !bedarfVerborgen(b); }).sort(function(a,b){ return String(b.erledigt||"").localeCompare(String(a.erledigt||"")); });
   if(fertig.length){
     var d=el('<details><summary class="muted" style="cursor:pointer;font-size:12.5px">Zuletzt erledigt ('+fertig.length+")</summary><div class=\"stack\" style=\"gap:4px;margin-top:6px\"></div></details>");
     fertig.slice(0,30).forEach(function(b){ d.querySelector(".stack").appendChild(bedarfZeile(b, {mitBezug:true})); });
@@ -19662,13 +19840,17 @@ function wzListeKarte(){
   var such=S.wzSuche||"", filt=S.wzFilter||"alle", heute=isoLokal(new Date());
   var aktiv=WZ.filter(function(w){ return w.aktiv!==false; });
   var filter=[["alle","Alle"],["meins","Bei mir"],["lager","Lager"],["fahrzeug","Fahrzeuge"],["person","bei Personen"],["baustelle","Baustelle / Markt"],["reparatur","Reparatur"],["achtung","Prüfung / defekt"]];
+  /* ausgeschiedenes Werkzeug bleibt auffindbar (Verlauf ansehen, zurückholen) – der Filter erscheint nur, wenn es welches gibt */
+  var weg=WZ.filter(function(w){ return w.aktiv===false; });
+  if(weg.length || filt==="weg") filter.push(["weg","Ausgeschieden ("+weg.length+")"]);
   var passt=function(w){
+    if(filt==="weg") return true;
     if(filt==="meins") return wzBei(w, meineKennung());
     if(filt==="achtung") return wzHinweise(w).length>0;
     return filt==="alle" || w.standort_art===filt;
   };
   var n=suchNorm(such);
-  var l=aktiv.filter(passt).filter(function(w){ return !n || suchNorm([w.name, w.nummer, w.gruppe, w.seriennummer, wzOrtText(w)].join(" ")).indexOf(n)>=0; })
+  var l=(filt==="weg"?weg:aktiv).filter(passt).filter(function(w){ return !n || suchNorm([w.name, w.nummer, w.gruppe, w.seriennummer, wzOrtText(w)].join(" ")).indexOf(n)>=0; })
     .sort(function(a,b){ return String(a.gruppe||"").localeCompare(String(b.gruppe||""),"de") || String(a.name).localeCompare(String(b.name),"de"); });
   var c=el('<div class="card"><div class="pad stack" style="gap:8px">'+
     '<div class="rowflex" style="justify-content:space-between;gap:8px"><h2>Werkzeug und Geräte ('+aktiv.length+")</h2>"+
@@ -19681,19 +19863,20 @@ function wzListeKarte(){
   si.oninput=function(){ S.wzSuche=si.value; clearTimeout(si._t); si._t=setTimeout(function(){ render(); setTimeout(function(){ var x=document.querySelector("[data-such]"); if(x){ x.focus(); x.setSelectionRange(x.value.length, x.value.length); } }, 0); }, 350); };
   c.querySelectorAll(".chips .chip").forEach(function(b){ b.onclick=function(){ S.wzFilter=b.dataset.w; render(); }; });
   var h=c.querySelector("[data-l]");
-  if(!aktiv.length) h.appendChild(el('<div class="muted" style="font-size:12.5px">Noch kein Werkzeug eingetragen. „+ Werkzeug“ – Bezeichnung und wo es gerade ist; der Rest kann später kommen.</div>'));
+  if(!aktiv.length && filt!=="weg") h.appendChild(el('<div class="muted" style="font-size:12.5px">'+(wzFehler ? "Nicht geladen – siehe oben. Später nochmals öffnen." :
+    "Noch kein Werkzeug eingetragen. „+ Werkzeug“ – Bezeichnung und wo es gerade ist; der Rest kann später kommen.")+"</div>"));
   else if(!l.length) h.appendChild(el('<div class="muted" style="font-size:12.5px">Nichts gefunden.</div>'));
   var mf=meinFahrzeug(), ich=meineKennung();
   l.slice(0,300).forEach(function(w){
     var beiMir=wzBei(w, ich);
     var z=el('<div class="rowflex" style="justify-content:space-between;gap:8px;padding:7px 0;border-bottom:1px solid var(--line);flex-wrap:wrap" data-wz="'+esc(w.id)+'">'+
       '<a href="#" class="sprunglink" style="flex:1;min-width:200px;color:inherit"><strong>'+esc(w.name)+"</strong>"+(w.nummer?' <span class="mono muted">'+esc(w.nummer)+"</span>":"")+
-        (w.gruppe?' <span class="muted" style="font-size:12px">· '+esc(w.gruppe)+"</span>":"")+'<br><span style="font-size:12.5px">📍 '+esc(wzOrtText(w))+"</span>"+wzHinweisTags(w)+"</a>"+
+        (w.gruppe?' <span class="muted" style="font-size:12px">· '+esc(w.gruppe)+"</span>":"")+(w.aktiv===false?' <span class="tag">ausgeschieden</span>':"")+'<br><span style="font-size:12.5px">📍 '+esc(wzOrtText(w))+"</span>"+wzHinweisTags(w)+"</a>"+
       '<span class="rowflex" style="gap:4px;flex-wrap:wrap"></span></div>');
     z.querySelector("a").onclick=function(ev){ ev.preventDefault(); wzEditor(w); };
     var k=z.querySelector("span.rowflex");
     var knopf=function(t, ziel){ var b=el('<button class="btn ghost sm" type="button">'+esc(t)+"</button>"); b.onclick=function(){ wzOrtSchnell(w, ziel); }; k.appendChild(b); };
-    if(!nurLesen()){
+    if(!nurLesen() && w.aktiv!==false){   /* ausgeschieden: erst im Fenster zurückholen */
       if(!beiMir) knopf("Ich hab’s", "ich");
       if(mf && !(w.standort_art==="fahrzeug" && w.fahrzeug_id===mf.id)) knopf("In mein Auto", {fahrzeug:mf});
       if(w.standort_art!=="lager") knopf("Ins Lager", "lager");
@@ -19726,7 +19909,7 @@ function viewWerkzeug(){
   if(!planTeam) planTeamLaden();
   if(wzFehlt) f.appendChild(el('<div class="card"><div class="pad"><h2>Werkzeug und Material</h2><div class="note warnbox">Die Tabellen fehlen noch in der Datenbank'+
     (istInhaber()?" – tools/werkzeug.sql einmal im Supabase SQL Editor ausführen.":" – das richtet der Inhaber ein.")+"</div></div></div>"));
-  if(wzFehler) f.appendChild(el('<div class="card"><div class="pad"><div class="note warnbox">'+esc(wzFehler)+"</div></div></div>"));
+  if(wzFehler) f.appendChild(el('<div class="card"><div class="pad"><div class="note warnbox">'+esc(technikDeutsch(wzFehler))+"</div></div></div>"));
   if(!wzGeladen){ f.appendChild(el('<div class="card"><div class="pad muted">Werkzeug und Material werden geladen …</div></div>')); return f; }
   f.appendChild(bedarfUebersichtKarte());
   f.appendChild(wzListeKarte());
@@ -20166,12 +20349,15 @@ function vorOrtNeu(sid, opt){
     if(t===null) return;
     t=String(t).trim(); if(t.length<3){ toast("Ohne Frage nicht gespeichert."); return; }
     var z={standort_id:sid, position_id:opt.position_id||null, frage:t.slice(0,1000), herkunft:opt.herkunft||null, angelegt_von:meinName()};
+    /* nicht gespeichert (etwa keine Verbindung): den Dialog mit der getippten Frage
+       gleich wieder öffnen – sonst wäre sie weg und müsste neu getippt werden */
+    var nochmal=function(text){ toast(text); vorOrtNeu(sid, Object.assign({}, opt, {vorgabe:t})); };
     mitFrist(Store.sb.from("vor_ort_fragen").insert(z).select("*"), 15000).then(function(r){
-      if(r.error || !(r.data||[]).length){ toast("Nicht gespeichert: "+vorOrtFehlerText(r)); return; }
+      if(r.error || !(r.data||[]).length){ nochmal("Nicht gespeichert: "+vorOrtFehlerText(r)); return; }
       VOR_ORT.push(r.data[0]);
       toast("Frage gespeichert – sie erscheint beim nächsten Protokoll an diesem Markt.");
       if(opt.fertig) opt.fertig(r.data[0]); else if(darfRendern()) render();
-    }, function(e){ toast("Nicht gespeichert: "+vorOrtFehlerText(null, e)); });
+    }, function(e){ nochmal("Nicht gespeichert: "+vorOrtFehlerText(null, e)); });
   });
 }
 function vorOrtAendern(f, felder, knopf, text, ok){
@@ -20303,7 +20489,8 @@ function altlisteFunde(){
   var genau=ST.filter(function(s){ return s.aktiv!==false && s.lat!=null && s.lon!=null && s.genauigkeit==="adresse"; });
   for(var i=0;i<genau.length;i++) for(var k=i+1;k<genau.length;k++){
     var x=genau[i], y=genau[k];
-    var fx=String(x.filiale||"").trim(), fy=String(y.filiale||"").trim();
+    /* ohne führende Nullen vergleichen – „0901“ ist dieselbe Filiale wie „901“ (wie pruefListe) */
+    var fx=String(x.filiale||"").trim().replace(/^0+/,""), fy=String(y.filiale||"").trim().replace(/^0+/,"");
     if(fx && fy && fx!==fy) continue;   /* verschiedene Filialnummern: gewollt (Markt und Lager, Doppelfiliale) */
     if(luftlinie(x, y)*1000<60)
       dazu("doppelt:"+[x.id, y.id].sort().join("+"), x, "Doppelt?", "„"+stName(x)+"“ und „"+stName(y)+"“ liegen an derselben Adresse – derselbe Markt doppelt? "+
@@ -23419,7 +23606,7 @@ function handbuchKarte(z){
       "<p><strong>Techniker – ein Einsatz</strong></p>"+liste([
         "<strong>Was steht an?</strong> Reiter <em>Fällig</em>: „Heute für dich“ (Kalender), offene Störungen, anstehende Wartungen. Reiter <em>Kalender</em>: Monat, Woche, Tag oder Liste (die Woche am Handy wie am iPhone: 3 Tage nebeneinander, wählbar 7 Tage oder Liste) – in Tag und Woche in eine freie Zeit tippen legt dort einen Termin an, einen Termin ziehen verschiebt ihn (am Handy kurz halten, dann ziehen), wischen wechselt den Tag; „nur Störungen“ zeigt Einsätze und Lidl-Zieltermine; eine geschickte Tour steht mit Uhrzeiten im Kalender des Technikers, und die Tour kann Termine, Aufgaben und Projekte mit einplanen; „🔍 Planung prüfen“ (Person wählen) zeigt eine kürzere Reihenfolge, zu knappe Fahrten und übersehene Wartungen/Störungen am Markt und in der Nähe; Fahrzeiten zwischen den Einsätzen stehen dabei.",
         "<strong>Protokoll beginnen:</strong> Wartungszeile oder Störung antippen – oder Reiter <em>Protokoll</em> → „Schritt für Schritt ausfüllen“.",
-        "<strong>Vor Ort klären:</strong> steht oben im Protokoll eine Frage des Büros (etwa „Welche Hausnummer?“, „Dieselbe Anlage?“), bitte kurz antworten – sie erscheint nur, wenn es an diesem Markt eine gibt.",
+        "<strong>Vor Ort klären:</strong> steht oben im Protokoll (Schritt für Schritt: bei den Anlagen) eine Frage des Büros (etwa „Welche Hausnummer?“, „Dieselbe Anlage?“), bitte kurz antworten – sie erscheint nur, wenn es an diesem Markt eine gibt.",
         "<strong>Markt und Anlagen:</strong> gewartete (bzw. betroffene) Anlagen anhaken. Fehlt eine, „+ Anlage fehlt“ – erst prüfen, ob sie nicht doch in der Liste steht.",
         "<strong>Je Anlage:</strong> Anlagendaten ergänzen (Typenschild und Prüfbuch des Außengeräts, Kältemittel und Füllmenge aus dem Prüfbuch; Fotos kann die KI lesen), "+
           "Inbetriebnahme und Termine bestätigen, „Heute gewartet als“ wählen – bei einer neuen Anlage mit zwei Terminen bestimmt das, welcher Termin heute erledigt ist.",
@@ -24176,6 +24363,7 @@ Object.assign(RUNDGAENGE, {
       text:"Die Schritte: Markt → Anlagen → je Anlage (Daten, Termine, „Heute gewartet als“) → bei Störung Auftrag → Arbeiten bzw. Behebung → bei Störung Material → Mängel → Ergebnis → Kältemittel → Fotos und Rapport → Abschluss → Übersicht."+
       RG_HG(["Im Anlagen-Schritt speichert „Stimmt – weiter“ die Termine sofort, „Überspringen“ nichts.",
         "Andere Anlagen am Markt erscheinen nur, wenn bei ihnen Termindaten fehlen.",
+        "Offene Fragen „Vor Ort klären“ stehen im Schritt „Gewartete Anlagen“ – die Antwort wird sofort gespeichert.",
         "In der Übersicht führt jede Zeile zu ihrem Schritt; gespeichert wird erst, wenn nichts mehr fehlt."])},
     {titel:"Entwurf und Stolperfallen", text:RG_HG(["Alles wird 1–2 Sekunden nach jeder Eingabe auf dem Gerät gesichert – ein Entwurf entsteht erst bei echter Eingabe (nur Markt wählen reicht nicht).",
         "Entwürfe gehören zum Konto; Korrekturen haben einen eigenen."])+
@@ -24322,17 +24510,19 @@ Object.assign(RUNDGAENGE, {
     {reiter:"werkzeug", ziel:function(){ return rgKarte(/^Mitnehmen, abholen/); }, titel:"Mitnehmen, abholen, bestellen",
       text:RG_LISTE(["Alles Offene nach Tag: heute, morgen, diese Woche, später, ohne Termin – „Meine“ oder „Alle“.",
         "☐ antippen hakt ab; Zeile antippen öffnet: Was, Menge, Werkzeug aus der Liste, <strong>wie es mitkommt</strong> (mitnehmen, abholen bei …, bestellen bei …), gebraucht am, wer sich kümmert, Stand (offen, bestellt, abholbereit, erledigt)."])+
-      RG_HG(["Datum und Person kommen vom Termin, vom Störungseinsatz oder vom nächsten Projekttermin – eintragen muss man sie nur, wenn es anders ist.",
-        "Liegt das gebrauchte Werkzeug nicht bei der Person (anderes Auto, Lager, Reparatur, defekt), steht ein ⚠ dabei."])},
+      RG_HG(["Datum und Person kommen vom Termin (mehrtägig: bis zum letzten Tag), vom Störungseinsatz oder vom nächsten Projekt- bzw. Markttermin – eintragen muss man sie nur, wenn es anders ist.",
+        "Liegt das gebrauchte Werkzeug nicht bei der Person (anderes Auto, Lager, Reparatur, defekt), steht ein ⚠ dabei.",
+        "Was an einem privaten Termin hängt, sehen die anderen nicht; wird ein Termin nachträglich privat, fragt die App, ob es mitgelöscht wird."])},
     {reiter:"werkzeug", ziel:function(){ return rgKarte(/^Werkzeug und Geräte/); }, titel:"Wo ist das Werkzeug?",
       text:RG_LISTE(["Suchen und filtern: bei mir, Lager, Fahrzeuge, bei Personen, Baustelle/Markt, Reparatur, Prüfung/defekt.",
         "<strong>„Ich hab’s“</strong>, <strong>„In mein Auto“</strong>, <strong>„Ins Lager“</strong> – ein Griff, wenn man es nimmt oder zurücklegt.",
-        "Antippen öffnet: Standort genau (Fahrzeug, Person, Projekt/Markt, Reparatur bei wem und zurück am), Zustand, Prüfung/Kalibrierung fällig, Verlauf."])+
+        "Antippen öffnet: Standort genau (Fahrzeug, Person, Projekt/Markt, Reparatur bei wem und zurück am), Zustand, Prüfung/Kalibrierung fällig, Verlauf.",
+        "„im Bestand“ abwählen fragt nach; Ausgeschiedenes steht unter „Ausgeschieden“ – von dort öffnen und den Haken wieder setzen holt es zurück."])+
       RG_HG(["Jeder Standortwechsel steht mit Zeit und Name im Verlauf – den schreibt die Datenbank, nicht die App.",
-        "Reparatur überfällig, Prüfung fällig, defekt und „noch zu bestellen“ stehen fürs Büro im Kalender-To-do (🧰, 🛒).",
+        "Reparatur bzw. Verliehenes überfällig („zurück am“ vorbei), Prüfung fällig, defekt, verloren und „noch zu bestellen“ stehen fürs Büro im Kalender-To-do (🧰, 🛒). „Ich hab’s“ bei verlorenem Werkzeug fragt „Wieder gefunden?“.",
         "Das Fahrzeug zeigt, was drin liegt; das Projekt und der Markt, was dort liegt. Keine Preise, kein Lagerbestand."])},
     {reiter:"werkzeug", ziel:function(){ return rgKarte(/^Packlisten/); }, titel:"Packlisten",
-      text:"Was man für eine Art Einsatz immer wieder braucht (z. B. VRV-Montage). Im Projekt, in der Störung oder im Termin trägt <strong>„Packliste übernehmen“</strong> alles auf einmal ein – was schon drinsteht, nicht doppelt."},
+      text:"Was man für eine Art Einsatz immer wieder braucht (z. B. VRV-Montage). Im Projekt, in der Störung oder im Termin trägt <strong>„Packliste übernehmen“</strong> alles auf einmal ein – was schon drinsteht, nicht doppelt (auch nicht, wenn zweimal getippt wird)."},
     {titel:"Lernt mit", text:"Die App <strong>schlägt vor</strong>, man bestätigt mit einem Tippen – angelegt wird nichts von selbst."+RG_LISTE([
         "<strong>Je Projekttyp</strong>: im Projekt „Bei früheren Projekten … gebraucht“ – was in mindestens 2 Projekten desselben Typs eingetragen war (auch Spezialwerkzeug, Kran und Material aus dem Baustellenbuch). „Ausgewählte übernehmen“.",
         "<strong>Je Markt</strong>: im Termin, in der Störung und am Markt „An diesem Markt schon gebraucht“; „Planung prüfen“ erinnert daran (💡).",
@@ -26064,7 +26254,7 @@ function kontakteNachtragen(){
     if(d.ansprechpartner) l.push([{name:d.ansprechpartner, telefon:d.telefon, funktion:"Ansprechpartner vor Ort"}, h]);
   });
   weitereKunden(true).forEach(function(k){ if(k.ansprechpartner) l.push([{name:k.ansprechpartner, firma:k.name, telefon:k.telefon, mail:k.email, kategorie:"Kunde / Bauherr", kunde_id:k.id}, {art:"kunde", id:k.id, titel:k.name}]); });
-  OFFENE.forEach(function(o){ if(o.lidlKontakt) l.push([{name:o.lidlKontakt, firma:"Lidl Österreich", funktion:"Kontakt Lidl", kategorie:"Lidl", telefon:o.lidlTelefon, mail:o.lidlMail},
+  OFFENE.forEach(function(o){ if(o.lidlKontakt) l.push([stoerungKontakt(o),
     {art:"stoerung", id:o._id, titel:"Störung "+(byId[o.standortId]?stName(byId[o.standortId]):"")+(o.auftragsnummer?" "+o.auftragsnummer:"")}]); });
   var i=0, weiter=function(){ if(i>=l.length) return; var x=l[i++]; kontaktErfassen(x[0], x[1], true).then(weiter, weiter); };
   weiter();
@@ -26081,7 +26271,7 @@ function kontaktVorkommen(k){
     if(d.ansprechpartner && gleich({name:d.ansprechpartner, telefon:d.telefon})) l.push({art:"projekt", p:p, text:"Ansprechpartner vor Ort – "+projektTitel(p)});
   });
   weitereKunden(true).forEach(function(x){ if(x.ansprechpartner && gleich({name:x.ansprechpartner, firma:x.name, telefon:x.telefon, mail:x.email})) l.push({art:"kunde", kid:x.id, text:"Ansprechpartner Kunde "+x.name}); });
-  OFFENE.forEach(function(o){ if(o.lidlKontakt && gleich({name:o.lidlKontakt, firma:"Lidl Österreich", telefon:o.lidlTelefon, mail:o.lidlMail})) l.push({art:"stoerung", o:o, text:"Störung "+(byId[o.standortId]?stName(byId[o.standortId]):"")+(o.auftragsnummer?" · "+o.auftragsnummer:"")+(o.erledigt?" (erledigt)":"")}); });
+  OFFENE.forEach(function(o){ var sk=o.lidlKontakt && stoerungKontakt(o); if(sk && gleich({name:sk.name, firma:sk.firma, telefon:sk.telefon, mail:sk.mail})) l.push({art:"stoerung", o:o, text:"Störung "+(byId[o.standortId]?stName(byId[o.standortId]):"")+(o.auftragsnummer?" · "+o.auftragsnummer:"")+(o.erledigt?" (erledigt)":"")}); });
   return l;
 }
 function kontaktZeileHtml(k){
@@ -29385,7 +29575,9 @@ function viewKalender(){
     abwesenheitAusnahmen(e).filter(function(x){ return x.art==="zurueck" && planTage(e).indexOf(x.tag)>=0; }).forEach(function(x){
       var ub=el('<button type="button" class="note warnbox" style="text-align:left;cursor:pointer;font:inherit">🗓 '+esc(x.von||planWerText(e)||"")+": Urlaubstag "+esc(dfmt(x.tag))+" zurückgegeben – im Urlaub herausnehmen</button>");
       ub.onclick=function(){ planEditor(e); }; td.querySelector(".stack").appendChild(ub); }); });
-  if(fzBuero() && wzAn()){ if(!wzGeladen) wzNachladen();
+  /* Werkzeug und Material für alle laden: 🧰 in der Kalenderzeile und „Vorher besorgen“ (Prüflauf 05.10.2026: nach dem Neuladen im Kalender fehlte es) */
+  if(wzAn() && !wzGeladen) wzNachladen();
+  if(fzBuero() && wzAn()){
     wzToDo().forEach(function(t){ var wb=el('<button type="button" class="note warnbox" style="text-align:left;cursor:pointer;font:inherit">'+esc(t)+"</button>");
       wb.onclick=function(){ springe({reiter:"werkzeug"}); }; td.querySelector(".stack").appendChild(wb); }); }
   var fo=folgeOffen().length;
@@ -29797,7 +29989,9 @@ function planungPruefen(wahl, von, bis){
     var bdGes={}; tag.material=[];
     l.forEach(function(x){ bedarfFuerEinsatz(x, t).forEach(function(b){ if(bdGes[b.id] || schonGezeigt[b.id]) return; bdGes[b.id]=schonGezeigt[b.id]=1; tag.material.push(b); }); });
     tag.marktTipp=[];
-    markte.forEach(function(s){ var lt=bedarfGelerntMarkt(s.id, tag.material.concat(BEDARF.filter(function(b){ return bedarfOffen(b) && bedarfMarkt(b)===s.id; })));
+    /* was bei den Einsätzen des Tages schon steht – auch abgehakt – ist kein 💡-Tipp mehr */
+    var imTag=[]; l.forEach(function(x){ imTag=imTag.concat(bedarfFuerEinsatz(x, t, true)); });
+    markte.forEach(function(s){ var lt=bedarfGelerntMarkt(s.id, imTag.concat(BEDARF.filter(function(b){ return bedarfOffen(b) && bedarfMarkt(b)===s.id; })));
       if(lt.length) tag.marktTipp.push({s:s, l:lt}); });
     tag.orte=markte;
     tage.push(tag);
@@ -29869,6 +30063,8 @@ function planungPruefenAnsicht(wahl, von, bis){
     fahrtenGenau(alleOrte, function(){ if(document.body.contains(host)) zeichne(); });
   };
   zeichne();
+  /* Material und Werkzeug noch nicht geladen: nachladen, dann „Vorher besorgen“ neu zeichnen */
+  if(wzAn() && !wzGeladen) wzLaden().then(function(){ if(document.body.contains(host)) zeichne(); });
   var zu=el('<button class="btn" type="button">Fertig</button>'); zu.onclick=function(){ v.zu(); render(); }; v.fuss.appendChild(zu);
 }
 /* neue Reihenfolge übernehmen: Beginn des ersten Einsatzes bleibt, Dauer je Einsatz bleibt, dazwischen die Fahrt.
@@ -30526,6 +30722,12 @@ function planEditor(e, vorgabe){
     else if(neu || a.kategorie==="urlaub") zeile.status = a.status==="erledigt" ? "erledigt" : "offen";
     if(neu) zeile.erstellt_name=meinName();
     var privDaten = priv ? {titel:titel||null, details:F("details").value.trim()||null} : null;
+    /* nachträglich privat (Prüflauf 05.10.2026): Material / Werkzeug am Termin – fragen, ob es mit weg soll
+       (was bleibt, sehen die anderen nicht mehr: bedarfVerborgen); löschen darf nur, wer es angelegt hat, oder das Büro */
+    var bdWeg = priv && !neu && !(a.privat||a.kategorie==="privat") && wzAn() && !demo() ?
+      BEDARF.filter(function(b){ return b.planung_id===e.id && (b.erstellt_von===ich || wzBuero()); }) : [];
+    if(bdWeg.length && !window.confirm("Am Termin steht noch Material / Werkzeug: "+bdWeg.slice(0,5).map(function(b){ return b.text; }).join(", ")+(bdWeg.length>5?" …":"")+
+      ".\n\nPrivat sehen die anderen es nicht mehr. Gleich mitlöschen?\n\nOK = löschen · Abbrechen = behalten (nur du siehst es, Reiter Werkzeug)")) bdWeg=[];
     ok.disabled=true; ok.textContent="wird gespeichert …";
     var fertig=function(gesp){
       PLANUNG=PLANUNG.filter(function(x){ return x.id!==gesp.id; }).concat([gesp]);
@@ -30547,6 +30749,11 @@ function planEditor(e, vorgabe){
       return (nachher ? mitFrist(nachher, 15000) : Promise.resolve({})).then(function(r2){
         if(r2 && r2.error) toast("Der private Teil ist nicht gespeichert: "+r2.error.message);
         fertig(gesp);
+        if(bdWeg.length) mitFrist(Store.sb.from("bedarf").delete().in("id", bdWeg.map(function(b){ return b.id; })).select("id"), 15000).then(function(r3){
+          if(r3.error) throw new Error(r3.error.message);
+          var weg=(r3.data||[]).map(function(z){ return z.id; });
+          BEDARF=BEDARF.filter(function(b){ return weg.indexOf(b.id)<0; }); BEDARF_ALLE=BEDARF_ALLE.filter(function(b){ return weg.indexOf(b.id)<0; }); wzGeaendert();
+        }).catch(function(x){ toast("Material / Werkzeug am Termin nicht gelöscht: "+technikDeutsch(x.message||String(x))); });
       });
     }).catch(function(x){ ok.disabled=false; ok.textContent="Speichern"; fehler(x.message||String(x)); });
   };

@@ -218,7 +218,8 @@ Kammerlander Umwelt- und Klimatechnik (UKT) – oft kurz, vom Handy, im Feld.
   (`WIEDERKEHR_ANZAHL`, `WIEDERKEHR_TAGE`) – Markierung, kein Eingriff.
 - „Zählt als“ im Protokoll (`fillPos`): ist ein Termin versäumt und liegt der
   nächste Termin der Anlage höchstens 3 Monate nach dem Protokolldatum, ist
-  der nächste vorgewählt.
+  der nächste vorgewählt. Wird das Datum geändert (Nachtrag), wählt die App für
+  das neue Datum neu vor – von Hand Gewähltes und eine Korrektur bleiben.
 - Markt-Status (Verwaltung): **betreut** · **zur Zeit nicht betreut**
   (`pausiert`, `pausiertGrund` am Markt, `marktPausiert`: bleibt in Anlagen,
   Karte und Suche sichtbar mit Vermerk und Grund, alle Anlagen wie „zur Zeit
@@ -346,7 +347,8 @@ Kammerlander Umwelt- und Klimatechnik (UKT) – oft kurz, vom Handy, im Feld.
   samt Fortschritt (`datenpflegePunkte`); „Wieder betreuen“ öffnet nur den Markt-Editor.
 - **Vor Ort klären** (tools/vor-ort-fragen.sql, Büro 03.10.2026): Fragen je Markt (`vor_ort_fragen`); Büro (Inhaber, Admins) stellt
   und hakt ab, alle die schreiben dürfen antworten (Trigger: Nicht-Büro ändert nur die Antwort, Zeit setzt der Server).
-  Im Protokoll nur sichtbar, wenn am Markt eine Frage offen ist (Fokus: Techniker nicht mit Neuem belasten).
+  Im Protokoll nur sichtbar, wenn am Markt eine Frage offen ist (Fokus: Techniker nicht mit Neuem belasten) – im Formular
+  unter dem Markt, im geführten Dialog im Schritt „Gewartete/Betroffene Anlagen“.
 - **Alte Liste prüfen** (`altlisteFunde`, Verwaltung › Datenpflege): Nebenfeld-Hinweise auf weitere Anlagen, Zellen ohne Datum,
   Inbetriebnahme nach erster Wartung, zwei Märkte an einer Adresse (nur ohne bzw. gleiche Filialnummer), Lidl ohne Filialnummer;
   „passt so“ bzw. „als Frage weitergegeben“ als Merker `altliste:<Schlüssel>`.
@@ -363,10 +365,13 @@ Kammerlander Umwelt- und Klimatechnik (UKT) – oft kurz, vom Handy, im Feld.
   mit Standort (Lager, Fahrzeug, bei Person, Baustelle/Markt, Reparatur, sonst – `wzOrtText`), Zustand, Prüfung fällig, zurück am;
   Standort-Verlauf schreibt nur der Trigger (`werkzeug_verlauf`). `bedarf` = was ein Einsatz braucht (mitnehmen / abholen bei … /
   bestellen bei …; offen → bestellt → abholbereit → erledigt), Bezug Projekt, Störung, Kalendertermin oder Markt (`bedarfZu`,
-  `bedarfFuerEinsatz`; Datum/Person vom Termin bzw. Einsatz: `bedarfWann`, `bedarfWer`); `packlisten` (übernehmen ohne Doppel).
+  `bedarfFuerEinsatz`; Datum/Person vom Termin bzw. Einsatz – mehrtägig bis zum letzten Tag –, sonst vom nächsten Projekt-/Markttermin:
+  `bedarfWann`, `bedarfWer`, `bedarfEinsaetze`); `packlisten` (übernehmen ohne Doppel, je Bezug nacheinander).
   Erinnert in „Heute für dich“ (heute/morgen), „🔍 Planung prüfen“ (je Tag „Vorher besorgen“), Kalenderzeile 🧰, Büro-To-do
   (`wzToDo`). Kästen in Termin (gespeichert, nicht Abwesenheit/Privat), Störung, Projekt, Markt; Fahrzeug zeigt, was drin liegt.
+  Bedarf an einem privaten Termin sehen andere nie (`bedarfVerborgen`); nachträglich privat → Frage „mitlöschen?“.
   Alle, die mitarbeiten, lesen und schreiben; Werkzeug/Packliste löschen nur Büro, Bedarf wer ihn angelegt hat oder Büro.
+  Ausscheiden („im Bestand“ abwählen) fragt nach; Filter „Ausgeschieden“ (nur wenn es welches gibt) zum Wiederfinden/Zurückholen.
   Keine Preise, kein Lagerbestand. Kunde sieht nichts davon.
   Lernt mit (Büro 04.10.2026, Grundsatz: vorschlagen, mit einem Tippen bestätigen – nie still anlegen): je Projekttyp ab 2
   Projekten (`bedarfGelerntProjekt`, auch Baustellenbuch), je Markt (`bedarfGelerntMarkt`, auch „Planung prüfen“ 💡), aus dem
@@ -396,7 +401,7 @@ Kammerlander Umwelt- und Klimatechnik (UKT) – oft kurz, vom Handy, im Feld.
   sperrt zusätzlich jedes Schreiben im Netz. Schließen verwirft alles.
 - **Störungen nie doppelt** (Büro 01.10.2026): eine Lidl-Auftragsnummer gibt es
   nur einmal als Störung (Datenbank-Index `stoerung_auftrag_einmal`,
-  tools/stoerung-eindeutig.sql; im Dialog „Vorhandene öffnen“ statt neu).
+  tools/stoerung-eindeutig.sql; im Dialog „Vorhandene öffnen“ statt neu – auch beim Ändern der Nummer).
   Nennt ein Störungsprotokoll die Auftragsnummer einer ANDEREN offenen Störung
   am Markt, fragt die App, welche erledigt ist; offene Störungen mit passendem
   Protokoll (gleicher Markt, gleiche Nummer) werden beim Laden verknüpft
