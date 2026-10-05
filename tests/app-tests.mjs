@@ -1843,6 +1843,21 @@ reSchritt("editor", "R09", async (a) => {
   return r.vorher.length === 1 && r.nachher.length === 1 && r.ohneFilter.some((t) => /Angebot T-A-/.test(t)) && !r.ohneFilter.some((t) => /schon Rechnung/.test(t))
     ? "" : `vor dem Angebot ${r.vorher.length}×, danach ${r.nachher.length}× in „nur ohne Rechnung“; ohne Filter: ${JSON.stringify(r.ohneFilter)}`;
 });
+/* Status-Chip doppelt getippt: nur ein Fenster */
+reSchritt("editor", "R28", async (a) => {
+  const r = await a.seite.evaluate(async () => {
+    const x = window.__t.x, db = window.__db.tabellen, R = window.__re;
+    db.belege.push({ id: "b28", art: "rechnung", nummer: "T-R-2026-328", test: true, extern: false, datum: "2026-06-01", status: "entwurf", kunde_id: "lidl",
+      kopf: { betreff: ["Test"] }, positionen: [{ typ: "pos", nr: "1", menge: 1, eh: "Stk", text: "Test", preis: 10 }], summen: { netto: 10 } });
+    window.__b28 = JSON.parse(JSON.stringify(db.belege.filter((q) => q.id === "b28")[0]));
+    x("belegAnsicht({projekt:null, protokoll:null, kunde_id:'lidl', standort_id:null}, window.__b28, function(){})");
+    const c = await R.bis(() => [...R.dlg().querySelectorAll("button.chip")].filter((q) => q.textContent === "versendet")[0]);
+    c.click(); c.click();
+    await R.bis(() => db.belege.filter((q) => q.id === "b28")[0].status === "versendet"); await R.warte(300);
+    return [...document.querySelectorAll(".assistent .as-titel")].map((t) => t.textContent);
+  });
+  return r.length === 1 ? "" : "offene Fenster nach Doppeltipp: " + JSON.stringify(r);
+});
 /* Briefkopf: IBAN mit falscher Prüfziffer wird nicht gespeichert – Feld markiert, Meldung (wie bei den Reisekosten) */
 reSchritt("editor", "R19", async (a) => {
   const r = await a.seite.evaluate(async () => {
