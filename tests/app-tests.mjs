@@ -2156,6 +2156,34 @@ test("Tiefentest kalender: Planung prüfen – Reihenfolge übernehmen", async (
     return { frueh: tt.zeit("A früh"), spaet: tt.zeit("A spät"), b: tt.zeit("B"), updates: upd.length };
   });
   if (r02.fehler || !r02.frueh.startsWith("08:00") || !r02.spaet.startsWith("09:00") || r02.updates !== 3) fehl.push("TT-KAL-02 Tag beginnt später / Termine doppelt geschrieben: " + JSON.stringify(r02));
+  /* TT-KAL-03: nie eine Uhrzeit nach 24:00 oder ein Ende vor dem Beginn – (a) Reihenfolge übernehmen, (b) Tour → Kalender ab 19:00, (c) „📅 Handy“ bei altem Eintrag „26:00“ */
+  const r03 = await a.seite.evaluate(async () => {
+    const tt = window.__tt, x = window.__t.x, db = window.__db.tabellen; tt.leeren(); const tag = tt.tag2();
+    x("STARTPUNKTE={}");
+    const z = (titel, sid, b, e) => ({ kategorie: "besprechung", titel, datum: tag, beginn: b, ende: e, standort_id: sid });
+    await tt.termine([z("Wien", "TS1", "14:00", "15:00"), z("West", "TS4", "15:00", "16:00"), z("Linz", "TS5", "16:00", "17:00"), z("Innsbruck", "TS3", "17:00", "18:00")]);
+    const k = tt.knopf(await tt.pruefen(tag), /Reihenfolge übernehmen/);
+    if (k) { k.click(); await tt.warte(500); }
+    const zeiten = ["Wien", "West", "Linz", "Innsbruck"].map((t) => [t].concat(tt.zeit(t).split("–")));
+    const meldungA = tt.toasts.slice(-1)[0] || "";
+    tt.leeren();
+    window.__T = { tage: [{ nr: 1, stopps: [
+      { standort: x("byId.TS1"), positionen: [x("posById.TP1")], fahrtH: 0.5, arbeitH: 3 },
+      { standort: x("byId.TS3"), positionen: [x("posById.TP4")], fahrtH: 0.5, arbeitH: 3 }] }], anzahlStopps: 2, kmGesamt: 40, stundenProTag: 8 };
+    x("tourSchicken(window.__T)"); await tt.warte(300);
+    const d = tt.dialog(), st = d.querySelector("[data-a=start]"); st.value = "19:00"; st.dispatchEvent(new Event("input", { bubbles: true }));
+    tt.ok(d).click(); await tt.warte(500);
+    db.planung.forEach((p) => zeiten.push([p.titel, p.beginn, p.ende]));
+    const meldungB = document.body.contains(d) ? d.querySelector("[data-a=fehler]").textContent : "Dialog zu";
+    tt.leeren();
+    x("PLANUNG").push({ id: "alt26", art: "termin", kategorie: "wartung", titel: "Alt", datum: tag, beginn: "23:00", ende: "26:00", wer: [tt.ich()], wer_namen: ["T"], standort_id: "TS1", status: "offen" });
+    let ics = "ok";
+    try { x("planIcs(PLANUNG[0])"); } catch (e) { ics = String(e.message || e); }
+    return { reihenfolge: !!k, zeiten, meldungA, meldungB, ics };
+  });
+  const spaet = r03.zeiten.filter(([, b, e]) => b > "23:59" || e > "23:59" || b > e).map((z) => z.join(" "));
+  if (!r03.reihenfolge || spaet.length || !/Mitternacht/.test(r03.meldungA) || !/Mitternacht/.test(r03.meldungB) || r03.ics !== "ok")
+    fehl.push("TT-KAL-03 Uhrzeit nach 24:00 bzw. Ende vor Beginn: " + JSON.stringify({ spaet, meldungA: r03.meldungA, meldungB: r03.meldungB, ics: r03.ics, reihenfolge: r03.reihenfolge }));
   if (a.fehler.length) fehl.push("Laufzeitfehler: " + a.fehler.join("; "));
   await a.zu();
   pruefe(!fehl.length, fehl.join(" | "));

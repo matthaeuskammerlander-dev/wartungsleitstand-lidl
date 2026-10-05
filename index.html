@@ -11714,7 +11714,19 @@ function tourAbwesend(an, tag){
     (PLAN_ABWESEND.indexOf(e.kategorie)>=0 || ((e.privat||e.kategorie==="privat") && !e.beginn)) && planTage(e).indexOf(tag)>=0; });
 }
 function tourTagFrei(an, t){ var x=werktagAb(t); for(var i=0;i<60 && tourAbwesend(an, x);i++) x=werktagAb(plusTage(x,1)); return x; }
+/* ginge ein Tour-Tag ab diesem Arbeitsbeginn über Mitternacht? Dann Text für die Meldung, sonst "" – im Kalender
+   stünde sonst „23:00–26:00“ (gleiche Rechnung wie tourInKalender) */
+function tourZuSpaet(T, start){
+  var raus="";
+  T.tage.forEach(function(tg, i){
+    var m=zeitMin(start)||7*60;
+    tg.stopps.forEach(function(st){ if(!st.standort) return; m+=Math.round((st.fahrtH||0)*60/5)*5; m+=Math.max(30, Math.round((st.arbeitH||1)*60/15)*15); });
+    if(m>24*60-1 && !raus) raus="Mit Arbeitsbeginn "+kalHm(zeitMin(start)||7*60)+" ginge "+(T.tage.length>1?"Tag "+(i+1):"der Tag")+" bis nach Mitternacht. Bitte früher beginnen.";
+  });
+  return raus;
+}
 function tourInKalender(T, an, anName, titel, ab, start){
+  var zuSpaet=tourZuSpaet(T, start); if(zuSpaet) return Promise.reject(new Error(zuSpaet));
   var tage=[], tag=tourTagFrei(an, ab||plusTage(isoLokal(new Date()),1)), zeilen=[], updates=[];
   T.tage.forEach(function(tg, i){
     if(i>0) tag=tourTagFrei(an, plusTage(tag,1));
@@ -11791,6 +11803,10 @@ function tourSchicken(T){
     if(!an){ fe.textContent="Bitte auswählen, an wen die Tour geht."; fe.hidden=false; return; }
     var titel=box.querySelector('[data-a="titel"]').value.trim()||"Tour", notiz=box.querySelector('[data-a="notiz"]').value.trim();
     var d=tourDaten(T), ich=meineAngaben().name||wer();
+    /* über Mitternacht gleich hier melden – bei „Tour schicken“ wäre die Tour sonst schon gespeichert */
+    var stEl=box.querySelector('[data-a="start"]'), kalEl=box.querySelector('[data-a="kal"]');
+    var spaet=stEl && (an===ichId || (kalEl && kalEl.checked)) ? tourZuSpaet(T, stEl.value||"07:00") : "";
+    if(spaet){ fe.textContent=spaet; fe.hidden=false; return; }
     if(an===ichId){
       if(!planungAn()){ fe.textContent="Der Kalender ist nicht verfügbar."; fe.hidden=false; return; }
       los.disabled=true; los.textContent="wird eingetragen …"; fe.hidden=true;
@@ -29782,18 +29798,24 @@ function planungPruefenAnsicht(wahl, von, bis){
    Steht ein Markt zweimal in der Reihenfolge (am Tag zweimal besucht), kommen seine Einsätze beim ersten Mal
    dran – jeder Termin wird genau einmal neu gesetzt (sonst begann der Tag später und jeder bekam zwei Nachrichten) */
 function reihenfolgeUebernehmen(tg, rf){
-  if(!window.confirm("Uhrzeiten an diesem Tag nach der kürzeren Reihenfolge neu setzen?\n\n"+rf.best.map(stName).join(" → ")+"\n\nDie Personen bekommen eine Nachricht.")) return Promise.resolve();
-  var start=Math.min.apply(null, rf.ez.map(function(o){ return o.b; })), cur=start, prev=null, aufg=[], dran=[];
+  var start=Math.min.apply(null, rf.ez.map(function(o){ return o.b; })), cur=start, prev=null, aufg=[], dran=[], neu=[];
   rf.best.forEach(function(s){
     rf.ez.filter(function(o){ return o.s.id===s.id && dran.indexOf(o)<0; }).forEach(function(o){
       dran.push(o);
       if(prev) cur+=fahrtMinZw(prev, s); prev=s;
-      var dauer=o.e-o.b, b=cur, e=cur+dauer; cur=e;
-      var x=o.x;
-      if(x.e) aufg.push(Store.sb.from("planung").update({beginn:kalHm(b), ende:kalHm(Math.min(24*60-1,e)), geaendert_von:meinName()}).eq("id", x.e.id).select("*").then(function(r){
-        (r.data||[]).forEach(function(g){ PLANUNG=PLANUNG.filter(function(y){ return y.id!==g.id; }).concat([g]); planBenachrichtigen(g, (g.wer||[]).filter(function(id){ return id!==meineKennung(); }), false, "Uhrzeit geändert (kürzere Reihenfolge)"); }); }));
-      else if(x.o) aufg.push(stoerungSpeichern(Object.assign({}, x.o, {terminZeit:kalHm(b)}), "Reihenfolge des Tages geändert"));
+      var dauer=Math.max(0, o.e-o.b), b=cur, e=cur+dauer; cur=e;
+      neu.push({x:o.x, b:b, e:e});
     });
+  });
+  /* reicht der Tag in der neuen Reihenfolge nicht (Ende nach Mitternacht), ändert sich nichts – sonst stünden
+     Uhrzeiten wie „25:25“ oder ein Ende vor dem Beginn im Kalender */
+  if(cur>24*60-1){ toast("Nicht übernommen: in der kürzeren Reihenfolge ginge der Tag bis nach Mitternacht. Bitte früher beginnen oder Termine auf einen anderen Tag legen."); return Promise.resolve(); }
+  if(!window.confirm("Uhrzeiten an diesem Tag nach der kürzeren Reihenfolge neu setzen?\n\n"+rf.best.map(stName).join(" → ")+"\n\nDie Personen bekommen eine Nachricht.")) return Promise.resolve();
+  neu.forEach(function(n){
+    var x=n.x;
+    if(x.e) aufg.push(Store.sb.from("planung").update({beginn:kalHm(n.b), ende:kalHm(n.e), geaendert_von:meinName()}).eq("id", x.e.id).select("*").then(function(r){
+      (r.data||[]).forEach(function(g){ PLANUNG=PLANUNG.filter(function(y){ return y.id!==g.id; }).concat([g]); planBenachrichtigen(g, (g.wer||[]).filter(function(id){ return id!==meineKennung(); }), false, "Uhrzeit geändert (kürzere Reihenfolge)"); }); }));
+    else if(x.o) aufg.push(stoerungSpeichern(Object.assign({}, x.o, {terminZeit:kalHm(n.b)}), "Reihenfolge des Tages geändert"));
   });
   return Promise.all(aufg).then(function(){ toast("Reihenfolge übernommen."); planGeaendert(); });
 }
@@ -30481,10 +30503,12 @@ function planBenachrichtigen(e, an, neu, betreff){
 function planIcs(e){
   var tx=function(t){ return String(t||"").replace(/\\/g,"\\\\").replace(/\n/g,"\\n").replace(/([,;])/g,"\\$1"); };
   var utc=function(x){ return x.toISOString().replace(/[-:]/g,"").replace(/\.\d+/,""); };
-  var zeilen;
-  if(e.beginn){
-    var von=new Date(e.datum+"T"+e.beginn+":00"), bis=new Date((e.datum_bis||e.datum)+"T"+(e.ende||e.beginn)+":00");
-    if(bis<=von) bis=new Date(von.getTime()+3600000);
+  var zeilen, von=e.beginn ? new Date(e.datum+"T"+e.beginn+":00") : null;
+  /* ältere Einträge mit Uhrzeit nach 24:00 („26:00“) ergeben kein gültiges Datum – Beginn dann ganztägig,
+     Ende ungültig oder vor dem Beginn: eine Stunde (sonst bricht „📅 Handy“ ab) */
+  if(von && !isNaN(von)){
+    var bis=new Date((e.datum_bis||e.datum)+"T"+(e.ende||e.beginn)+":00");
+    if(isNaN(bis) || bis<=von) bis=new Date(von.getTime()+3600000);
     zeilen=["DTSTART:"+utc(von), "DTEND:"+utc(bis)];
   } else {
     zeilen=["DTSTART;VALUE=DATE:"+e.datum.replace(/-/g,""), "DTEND;VALUE=DATE:"+plusTage(e.datum_bis||e.datum,1).replace(/-/g,"")];
