@@ -3293,7 +3293,8 @@ function mailHolen(pfad, opt){
   return mitFrist(fetch(url+pfad, {method:opt.body?"POST":"GET", headers:h, body:opt.body?JSON.stringify(opt.body):undefined}), opt.frist||30000)
     .then(function(r){
       if(!r.ok) return r.json().then(function(j){ throw new Error(j.fehler||("Fehler "+r.status)); }, function(){ throw new Error("Fehler "+r.status); });
-      return opt.blob ? r.blob() : r.json();
+      /* unlesbare Antwort: in Klartext statt „Unexpected token …“ (Tiefentest 05.10.2026) */
+      return opt.blob ? r.blob() : r.json().catch(function(){ throw new Error("Das Mail-Programm hat unerwartet geantwortet – bitte nochmals versuchen."); });
     }, function(e){ throw new Error(/fetch|network|load/i.test(e&&e.message||"") ? mailNichtErreichbar(url) : (e&&e.message||String(e))); });
 }
 /* #mail=… (Mail übernehmen) oder #mailkopplung=… (verbinden) aus dem Mail-Programm */
@@ -3537,13 +3538,16 @@ function mailProjektNeu(m){
       cb.disabled=true; cb.textContent="✦ Claude liest die Mail …"; ct.textContent="dauert etwa 10–20 Sekunden – die Felder füllen sich dann von selbst";
       mailHolen("/api/extrahieren", {frist:150000, body:{konto:m.konto, ordner:m.ordner, uid:m.uid, typen:projektTypen(), kunden:kunden().map(function(x){ return x.name; })}}).then(function(r){
         if(!form.isConnected) return;
-        ki=r; cb.disabled=false; cb.textContent="✦ Nochmals auslesen"; ct.textContent="✓ von Claude ausgefüllt – orange Felder bitte prüfen";
-        var setzen=function(n, w){ w=String(w||"").trim(); if(!w) return; f(n).value=w; f(n).style.background="var(--accent-soft, #fbeee8)"; };
+        /* leere oder unerwartete Antwort: kein „✓ ausgefüllt“ ohne Inhalt (Tiefentest 05.10.2026) */
+        r=r && typeof r==="object" ? r : {};
+        ki=r; cb.disabled=false; cb.textContent="✦ Nochmals auslesen";
+        var gefunden=0, setzen=function(n, w){ w=String(w||"").trim(); if(!w) return; f(n).value=w; f(n).style.background="var(--accent-soft, #fbeee8)"; gefunden++; };
         setzen("titel", r.titel); setzen("typ", r.typ); setzen("ansprechpartner", r.ansprechpartner); setzen("telefon", r.telefon);
         setzen("anfrageVon", r.kunde||r.ansprechpartner);
         var ort=[r.adresse, [r.plz, r.ort].filter(Boolean).join(" ")].filter(Boolean).join(", ");
         setzen("beschreibung", [r.beschreibung, ort?"Ort: "+ort:"", r.wunschtermin?"Wunschtermin: "+r.wunschtermin:"", r.email?"Mail: "+r.email:""].filter(Boolean).join("\n"));
         var treffer=kunden().filter(function(x){ return r.kundeTreffer && x.name===r.kundeTreffer; })[0];
+        ct.textContent=gefunden || treffer || r.kunde ? "✓ von Claude ausgefüllt – orange Felder bitte prüfen" : "Claude hat in der Mail nichts gefunden – bitte selbst ausfüllen.";
         var hin=form.querySelector("[data-neuk]");
         if(treffer){ f("kunde").value=treffer.id; standorte(); hin.hidden=true; }
         else if(r.kunde && !f("kunde").value){
@@ -3655,13 +3659,17 @@ function mailVerlaufDialog(vorgabe){
     '<div class="stack" data-l style="gap:2px"></div></div>');
   v.inhalt.appendChild(form);
   var liste=form.querySelector("[data-l]"), treffer=[];
-  var zaehlen=function(){ var n=liste.querySelectorAll("input:checked").length; form.querySelector("[data-n]").textContent=n+" von "+treffer.length+" gewählt"; los.disabled=!n; los.textContent="✦ Mit Claude auswerten ("+n+" Mail"+(n===1?"":"s")+")"; };
+  /* während Claude liest, bleiben Knopf und Auswahl gesperrt – ein Häkchen gab sonst eine zweite (kostenpflichtige)
+     Auswertung frei, deren Ergebnis den schon gezeigten Vorschlag ersetzte (Tiefentest 05.10.2026) */
+  var laeuft=false;
+  var sperren=function(an){ laeuft=an; form.querySelectorAll("[data-l] input, [data-a], [data-s], [data-q], [data-ziel]").forEach(function(x){ x.disabled=an; }); };
+  var zaehlen=function(){ var n=liste.querySelectorAll("input:checked").length; form.querySelector("[data-n]").textContent=n+" von "+treffer.length+" gewählt"; if(laeuft) return; los.disabled=!n; los.textContent="✦ Mit Claude auswerten ("+n+" Mail"+(n===1?"":"s")+")"; };
   var suchen=function(){
     var begriffe=form.querySelector("[data-q]").value.split(/[,;]/).map(function(t){ return {text:t.trim(), inhalt:/\d{4,}|^p-/i.test(t.trim())}; }).filter(function(b){ return b.text.length>=3; });
     if(!begriffe.length){ toast("Bitte ein Stichwort mit mindestens 3 Zeichen."); return; }
     liste.innerHTML='<div class="muted" style="font-size:12.5px">wird gesucht …</div>';
     mailHolen("/api/suche", {frist:90000, body:{begriffe:begriffe, tage:1830, anzahl:60}}).then(function(r){
-      treffer=r.mails.slice().sort(function(a,b){ return String(a.datum||"").localeCompare(String(b.datum||"")); });
+      treffer=((r && r.mails)||[]).slice().sort(function(a,b){ return String(a.datum||"").localeCompare(String(b.datum||"")); });
       if(vorgabe.mail && !treffer.some(function(m){ return m.konto===vorgabe.mail.k && m.uid===vorgabe.mail.u && m.ordner===vorgabe.mail.o; }))
         treffer.unshift({konto:vorgabe.mail.k, ordner:vorgabe.mail.o, uid:vorgabe.mail.u, betreff:vorgabe.mail.betreff||"(die gewählte Mail)", datum:null, von:[], an:[]});
       liste.innerHTML="";
@@ -3695,14 +3703,18 @@ function mailVerlaufDialog(vorgabe){
     var gew=[].map.call(liste.querySelectorAll("input:checked"), function(c){ var m=treffer[+c.dataset.i]; return {konto:m.konto, ordner:m.ordner, uid:m.uid}; });
     if(!gew.length) return;
     var angaben=[]; Object.keys(PROJEKT_ANGABEN).forEach(function(s){ PROJEKT_ANGABEN[s].forEach(function(a){ angaben.push(a[0]+" = "+a[1]+(a[2]==="datum"?" (Datum)":"")); }); });
-    los.disabled=true; los.textContent="✦ Claude liest "+gew.length+" Mails …";
+    sperren(true); los.disabled=true; los.textContent="✦ Claude liest "+gew.length+" Mails …";
     v.schritt.textContent="Claude liest den Verlauf – je nach Menge 1 bis 3 Minuten. Das Fenster kann offen bleiben.";
     mailHolen("/api/verlauf", {frist:330000, body:{mails:gew, angaben:angaben, schritte:PROJEKT_SCHRITTE.map(function(s){ return s[0]; }),
       rollen:PROJEKT_LISTEN.beteiligte.felder[0][3], dateiarten:PROJEKT_DATEIARTEN.map(function(a){ return a[0]; }), typen:projektTypen(),
       kunden:[{id:"lidl", name:"Lidl"}].concat(weitereKunden()).map(function(k){ return k.name; })}}).then(function(r){
       if(!document.body.contains(v.inhalt)) return;
-      mailVerlaufVorschlag(v, r, form.querySelector("[data-ziel]").value);
-    }, function(e){ los.disabled=false; zaehlen(); v.schritt.textContent="Nicht ausgewertet: "+e.message; toast("Claude: "+e.message); });
+      sperren(false);
+      /* leere oder unerwartete Antwort: nicht hängen bleiben, sondern in Klartext sagen */
+      if(!r || typeof r!=="object" || !Array.isArray(r.mails) || !r.mails.length){ zaehlen(); v.schritt.textContent="Claude hat nichts gefunden (leere Antwort) – nochmals versuchen oder andere Mails wählen."; toast(v.schritt.textContent); return; }
+      try{ mailVerlaufVorschlag(v, r, form.querySelector("[data-ziel]").value); }
+      catch(e){ v.schritt.textContent="Nicht ausgewertet: "+e.message+" – bitte schließen und nochmals versuchen."; toast(v.schritt.textContent); }
+    }, function(e){ sperren(false); zaehlen(); v.schritt.textContent="Nicht ausgewertet: "+e.message; toast("Claude: "+e.message); });
   };
   if(vorgabe.suche) suchen();
 }
@@ -3989,6 +4001,7 @@ function mailsDazuKarte(begriffe, opt){
   begriffe=begriffe.filter(function(b){ return b && String(b.text||"").trim().length>=3; });
   if(!begriffe.length){ host.textContent="Nichts zum Suchen (keine Mail-Adresse oder Projektnummer)."; return c; }
   mailHolen("/api/suche", {frist:60000, body:{begriffe:begriffe, anzahl:25}}).then(function(r){
+    if(!r || !Array.isArray(r.mails)){ host.textContent="Das Mail-Programm hat unerwartet geantwortet – später nochmals öffnen."; return; }
     host.innerHTML=""; host.className="stack"; host.style.gap="4px";
     /* alle auf einmal: Projekt aus dem Mailverlauf ergänzen (Angaben, Beteiligte, Termine, Dateien, KPlus) */
     if(opt.projekt && r.mails.length){

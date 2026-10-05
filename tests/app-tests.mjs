@@ -2196,6 +2196,44 @@ test("Tiefentest mail: Projekt aus Mailverlauf – vorhandene KPlus-Belege bleib
     v22.querySelector('[data-p="titel"]').value = "Altbau Datumtest neu"; v22.querySelector("[data-speichern]").click();
     await tm.bis(() => db.projekte.find((q) => q.id === p22.id).titel === "Altbau Datumtest neu", 2000);
     p(db.projekte.find((q) => q.id === p22.id).daten.angebotDatum === "2024-05-20", "M8 „Angaben speichern“ hat „Angebot vom“ gelöscht");
+
+    /* M19/M16: während Claude liest, gibt ein Häkchen den Knopf nicht frei (keine zweite, kostenpflichtige Auswertung);
+       eine leere Antwort („null“) lässt den Knopf nicht hängen, die App sagt es in Klartext */
+    let verlaufAufrufe = 0;
+    tm.programm({ mails: [M(191, "2026-03-01T08:00:00.000Z", "Häkchentest 191"), M(192, "2026-03-02T08:00:00.000Z", "Häkchentest 192")],
+      verlauf: () => { verlaufAufrufe++; return new Promise((f) => setTimeout(() => f("null"), 600)); } });
+    x("ansichtenSchliessen()"); x("mailVerlaufDialog({suche:'Häkchentest'})");
+    await tm.bis(() => tm.fuss(/Mit Claude auswerten \(2/));
+    d = tm.dlg(); const los = tm.fuss(/Mit Claude auswerten/);
+    los.click(); await tm.warte(100);
+    const haken = d.querySelector("[data-l] input:checked"); haken.checked = false; haken.dispatchEvent(new Event("change"));
+    const frei19 = !los.disabled; if (frei19) los.click();
+    await tm.bis(() => !los.disabled && verlaufAufrufe && !/liest/.test(los.textContent), 2500); await tm.warte(700);
+    p(!frei19 && verlaufAufrufe === 1, "M19 während Claude liest, gibt ein Häkchen den Knopf frei – " + verlaufAufrufe + " Auswertungen");
+    p(!los.disabled && /nichts gefunden/.test(d.querySelector(".as-schritt").textContent), "M16 Antwort „null“: Knopf " + (los.disabled ? "hängt („" + los.textContent + "“)" : "frei") + ", Hinweis: " + d.querySelector(".as-schritt").textContent);
+    tm.ende(); x("ansichtenSchliessen()");
+    return { fehlt };
+  });
+  pruefe(!r.fehlt.length, r.fehlt.join(" | "));
+  pruefe(!a.fehler.length, "Laufzeitfehler: " + a.fehler.join("; "));
+  await a.zu();
+});
+
+test("Tiefentest mail: Projekt aus Mail und Mails dazu – leere Antwort von Claude in Klartext", async () => {
+  const a = await tmSeite(KONTEN.inhaber);
+  const r = await a.seite.evaluate(async () => {
+    const x = window.__t.x, db = window.__db.tabellen, tm = window.__tm, fehlt = [], p = (bed, text) => { if (!bed) fehlt.push(text); };
+    tm.verbinden(); tm.toastSpion();
+    const MAIL = (uid, betreff) => ({ konto: "gmx", ordner: "INBOX", uid, messageId: "<tp" + uid + "@test>", betreff, datum: "2026-10-02T09:12:00.000Z",
+      von: [{ name: "Max Planer", address: "max@planer-test.at" }], an: [], cc: [], text: "Bitte um Angebot.", html: null, anhaenge: [], notiz: null, auftraege: [] });
+    const oeffne = async (uid) => { x("ansichtenSchliessen()"); x("mailBrueckeStatus=null"); x("mailUebernehmen({k:'gmx', o:'INBOX', u:" + uid + ", a:'projekt'})");
+      await tm.bis(() => tm.dlg() && tm.dlg().querySelector('[data-f="titel"]')); return tm.dlg(); };
+    /* M16: Claude antwortet leer ({}) – keine Erfolgsmeldung ohne Inhalt */
+    tm.programm({ mail: MAIL(96, "Anfrage Leertest"), extrahieren: {} });
+    let d = await oeffne(96);
+    await tm.bis(() => !/liest/.test(d.querySelector("[data-claude] button").textContent), 2000);
+    const ct = d.querySelector("[data-claudetext]").textContent, orange = [...d.querySelectorAll("[data-f]")].filter((f) => f.style.background).length;
+    p(!/✓ von Claude ausgefüllt/.test(ct) && /nichts gefunden/.test(ct), "M16 leere Antwort {}: „" + ct + "“ bei " + orange + " ausgefüllten Feldern");
     tm.ende(); x("ansichtenSchliessen()");
     return { fehlt };
   });
