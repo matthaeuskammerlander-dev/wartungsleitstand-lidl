@@ -2598,12 +2598,12 @@ test("Tiefentest werkzeug: privater Termin, Störung fürs Büro, verliehen übe
       { id: "WTV21R", name: "Rohrzange TV21", standort_art: "reparatur", standort_text: "Fa. Rep", zurueck_am: vorgestern, zustand: "ok", aktiv: true });
     db.bedarf.push({ id: "BTV24B", art: "werkzeug", text: "Pumpe TV24B", werkzeug_id: "WTV24B", stoerung_id: "STV24B", standort_id: "TS1", status: "offen", beschaffung: "mitnehmen" });
     x("planungStand=0; planungNachladen()"); await warte(500); await x("fzLaden(true)"); await x("wzLaden(true)");
-    /* privater Termin des Technikers: der Inhaber sieht nur „Abwesend“ */
+    /* privater Termin des Technikers: der Inhaber sieht „Abwesend“ – das Material dazu sieht er auch (volle Kontrolle, Inhaber 05.10.2026), als Vorschlag lernt es aber niemand */
     const zeile = x("(kalenderEintraege('" + d.morgen + "','" + d.morgen + "','alle')['" + d.morgen + "']||[]).map(function(y){ return kalEintragZeile(y,true).textContent; }).join(' | ')");
-    soll(/Abwesend/.test(zeile) && !/Kardiologie/.test(zeile), "Inhaber sieht im Kalender beim privaten Termin: " + zeile);
+    soll(/Abwesend/.test(zeile) && /Kardiologie/.test(zeile), "Inhaber sieht im Kalender beim privaten Termin nicht „Abwesend“ mit Material: " + zeile);
     soll(!x("bedarfGelerntMarkt('TS1',[]).some(function(e){ return /Kardiologie/.test(e.text); })"), "Eintrag des privaten Termins als „An diesem Markt schon gebraucht“");
     x("S.bdAlle=true; S.view='werkzeug'; render()"); await warte(600);
-    soll(!/Kardiologie/.test(app()), "Inhaber sieht den Eintrag des privaten Termins im Reiter Werkzeug unter „Alle“");
+    soll(/Kardiologie/.test(app()), "Inhaber sieht den Eintrag des privaten Termins im Reiter Werkzeug unter „Alle“ nicht");
     /* Störung für den Techniker, Werkzeug im Büro-Auto: ⚠ (nicht „hat der Betrachter“) */
     x("OFFENE.push({_id:'STV24B', standortId:'TS1', termin:'" + heute + "', terminTechniker:'Testtechniker', erledigt:false}); 1");
     const info = JSON.parse(x("JSON.stringify(bedarfWerkzeugInfo(" + bd("BTV24B") + "))"));
@@ -4870,6 +4870,247 @@ test("Antworten stunden: Monat bestätigen warnt, wenn die Person noch eingestem
     return fragen;
   });
   pruefe(/Testtechniker ist noch eingestempelt/.test(r.Testtechniker) && !/eingestempelt/.test(r.Testadmin) && /bestätigen\?/.test(r.Testadmin), "Warnung: " + JSON.stringify(r));
+  pruefe(!a.fehler.length, "Laufzeitfehler: " + a.fehler.join("; "));
+  await a.zu();
+});
+
+/* Antworten des Inhabers vom 05.10.2026 (Teil kern) */
+test("Antworten kern: „Nur Jahreswartung“ sperrt den Halbjahrestermin wie am Markt üblich – bleibt, bis die Verwaltung es zurücknimmt", async () => {
+  const a = await oeffnen(KONTEN.admin);
+  const r = await a.seite.evaluate(async () => {
+    const x = window.__t.x, w = (ms) => new Promise((f) => setTimeout(f, ms)), db = window.__db.tabellen, t0 = new Date().toISOString();
+    /* am Markt TS1 hat die Anlage TP1/TP2 eine HJI; dazu zwei kleine Anlagen nur mit JW – eine bewusst „nur Jahreswartung“ */
+    const anlage = (id, nurJW) => ({ id: "position:" + id, typ: "position", ziel: id, neu: true, geaendert: t0, von: "Test", grund: "Test",
+      felder: Object.assign({ standortId: "TS1", intervallCode: "JW", monat: 3, aktiv: true, anlageZu: id, anlagentyp: "Split " + id, kaeltemittelKg: 2, inbetriebnahme: "2020-03-01" }, nurJW ? { nurJW: true } : {}) });
+    db.stammdaten.push(anlage("NJW1", true), anlage("NJW2", false));
+    await x("ladeStammdaten(true)"); await w(300);
+    const faelle = x("hjMarktFaelle().map(function(f){ return f.a.leader.id; })");
+    for (let i = 0; i < 40; i++) { if (!x("hjMarktLaeuft")) x("hjMarktAutomatisch()"); await w(200);
+      if (!x("hjMarktLaeuft") && x("ALLE_POS.some(function(p){ return p.anlageZu==='NJW2' && p.hjiMarkt; })")) break; }
+    await w(300);
+    const hj = (id) => x("ALLE_POS.filter(function(p){ return p.anlageZu==='" + id + "' && p.id!=='" + id + "' && p.aktiv!==false; }).map(function(p){ return p.intervallCode; })");
+    return { faelle, njw1: hj("NJW1"), njw2: hj("NJW2"), nurJW1: !!x("anlageDaten(posById.NJW1).nurJW") };
+  });
+  pruefe(r.faelle.indexOf("NJW2") >= 0 && r.njw2.length === 1, "Kontrolle: Anlage ohne Entscheidung bekommt keinen Halbjahrestermin: " + JSON.stringify(r));
+  pruefe(r.faelle.indexOf("NJW1") < 0 && !r.njw1.length && r.nurJW1, "„Nur Jahreswartung“ trotzdem mit Halbjahrestermin bzw. aufgehoben: " + JSON.stringify(r));
+  pruefe(!a.fehler.length, "Laufzeitfehler: " + a.fehler.join("; "));
+  await a.zu();
+});
+
+test("Antworten kern: Protokoll am Handy – offene Vor-Ort-Fragen ganz oben als Hinweis, antippen springt zur Frage", async () => {
+  const a = await oeffnen(KONTEN.techniker, { handy: true });
+  const r = await a.seite.evaluate(async () => {
+    const x = window.__t.x, w = (ms) => new Promise((f) => setTimeout(f, ms)), db = window.__db.tabellen;
+    const hinweis = () => { const h = document.querySelector("#app [data-vororthinweis]"); return h && !h.hidden && h.offsetParent !== null ? h.textContent.replace(/\s+/g, " ").trim() : ""; };
+    const oeffne = async (sid) => { x("formDirty=false; S.protoArt='wartung'; S.stoerungAus=null; S.bearbeiten=null; S.protoStandort='" + sid + "'; S.protoPos=null; S.view='protokoll'; render(); 1"); await w(500); };
+    db.vor_ort_fragen.push({ id: "vfa1", standort_id: "TS1", frage: "Wo ist der Schlüssel zum Technikraum?", angelegt: new Date().toISOString(), angelegt_von: "Büro" });
+    await x("vorOrtLaden(true)");
+    const erg = {};
+    await oeffne("TS2"); erg.ohneFrage = hinweis();
+    await oeffne("TS1"); erg.mitFrage = hinweis();
+    const kopf = document.querySelector("#app [data-vororthinweis]");
+    erg.imKopf = !!kopf && !kopf.closest("form") && kopf.getBoundingClientRect().top < document.getElementById("proto").getBoundingClientRect().top;
+    erg.untenNoch = !!document.querySelector("#f_vorort [data-vorort]");
+    window.scrollTo(0, 0);
+    if (kopf) { (kopf.querySelector("a,button") || kopf).click(); await w(900); }
+    const ziel = document.querySelector("#f_vorort [data-vorort] .note");
+    const rz = ziel ? ziel.getBoundingClientRect() : null;
+    erg.gesprungen = !!rz && rz.top >= 0 && rz.top < window.innerHeight && ziel.classList.contains("sprungziel");
+    /* beantwortet: der Hinweis oben verschwindet, die Frage steht unten weiter (mit Antwort) */
+    const inp = document.querySelector('#f_vorort [data-v="antwort"]');
+    if (inp) { inp.value = "hängt im Büro"; document.querySelector('#f_vorort [data-v="speichern"]').click(); await w(600); }
+    erg.nachAntwort = hinweis();
+    erg.antwort = (db.vor_ort_fragen.find((f) => f.id === "vfa1") || {}).antwort || "";
+    return erg;
+  });
+  pruefe(!r.ohneFrage, "Hinweis ohne offene Frage am Markt: " + r.ohneFrage);
+  pruefe(/❓\s*1 Frage vor Ort/.test(r.mitFrage) && r.imKopf && r.untenNoch, "Hinweis „❓ 1 Frage vor Ort“ fehlt oben im Kopf (bzw. die Stelle unter der Marktwahl): " + JSON.stringify(r));
+  pruefe(r.gesprungen, "Antippen springt nicht zur Frage: " + JSON.stringify(r));
+  pruefe(r.antwort === "hängt im Büro" && !r.nachAntwort, "nach dem Beantworten steht der Hinweis noch da: " + JSON.stringify(r));
+  pruefe(!a.fehler.length, "Laufzeitfehler: " + a.fehler.join("; "));
+  await a.zu();
+});
+
+test("Antworten kern: Testkonten aus den Personenlisten ausblenden – Haken in der Kontenübersicht, Konto bleibt, nur der Inhaber stellt es ein", async () => {
+  const a = await rkSeite(KONTEN.inhaber);
+  const r = await a.seite.evaluate(async () => {
+    const x = window.__t.x, rk = window.__rk, w = rk.warte, db = window.__db.tabellen, ADM = "u_admin_test_at";
+    const erg = {};
+    const zuInhaber = async () => { x("ansichtenSchliessen(); S.view='verwaltung'; S.adm=S.adm||{suche:'',filter:'alle',sort:'filiale',auf:true,sel:null,entwurf:null}; S.adm.tab='inhaber'; render(); 1"); await w(700); };
+    const haken = () => document.querySelector('#app [data-ausblenden="' + ADM + '"]');
+    const team = async () => { await x("planTeamLaden()"); return x("(planTeam||[]).map(function(p){ return p.user_id; })"); };
+    const wzPersonen = async () => { x("wzEditor(null)"); await w(300); const d = rk.dlg(); const l = [...d.querySelectorAll('[data-f="person_id"] option')].map((o) => o.value); x("ansichtenSchliessen()"); return l; };
+    await zuInhaber();
+    erg.vorher = { haken: !!haken() && !haken().checked, team: await team() };
+    if (haken()) { haken().click(); await w(700); }
+    erg.einstellung = (db.einstellungen.find((e) => e.schluessel === "personen_ausblenden") || {}).wert || null;
+    await zuInhaber();
+    erg.kontoNochDa = /Testadmin/.test((haken() || { closest: () => null }).closest("tr") ? haken().closest("tr").textContent : "") && haken().checked;
+    erg.team = await team();
+    erg.wz = await wzPersonen();
+    x("formDirty=false; S.protoArt='wartung'; S.bearbeiten=null; S.protoStandort='TS1'; S.protoPos=null; S.view='protokoll'; render(); 1"); await w(700);
+    erg.fuer = [...document.querySelectorAll("#f_fuer option")].map((o) => o.textContent);
+    erg.auslastung = await x("chatTeamLaden().then(function(t){ return t.map(function(p){ return p.user_id; }); })");
+    /* wieder einblenden und wieder ausblenden */
+    await zuInhaber(); haken().click(); await w(700);
+    erg.wieder = await team();
+    await zuInhaber(); haken().click(); await w(700);
+    /* Techniker: sieht die Liste ebenso ohne das Konto, darf die Einstellung aber nicht ändern */
+    await rk.anmelden("tech@test.at", "techniker");
+    x("chatTeam=null; planTeam=null; planTeamZeit=0; 1");
+    erg.tech = await team();
+    const v = await x("Store.sb.from('einstellungen').upsert({schluessel:'personen_ausblenden', wert:{ids:[]}})");
+    erg.techSchreibt = !(v && v.error);
+    erg.nachTech = ((db.einstellungen.find((e) => e.schluessel === "personen_ausblenden") || {}).wert || {}).ids || [];
+    return erg;
+  });
+  pruefe(r.vorher.haken && r.vorher.team.indexOf("u_admin_test_at") >= 0, "Ausgangslage: kein Haken „in Personenlisten ausblenden“ in der Kontenübersicht: " + JSON.stringify(r.vorher));
+  pruefe(r.einstellung && (r.einstellung.ids || []).indexOf("u_admin_test_at") >= 0 && r.kontoNochDa, "Einstellung nicht gespeichert bzw. Konto nicht mehr in der Übersicht: " + JSON.stringify(r));
+  pruefe(r.team.indexOf("u_admin_test_at") < 0 && r.wz.indexOf("u_admin_test_at") < 0 && !r.fuer.some((n) => /Testadmin/.test(n)) && r.auslastung.indexOf("u_admin_test_at") < 0,
+    "ausgeblendetes Konto steht noch in einer Personenliste: " + JSON.stringify([r.team, r.wz, r.fuer, r.auslastung]));
+  pruefe(r.wieder.indexOf("u_admin_test_at") >= 0, "nach dem Einblenden fehlt das Konto: " + JSON.stringify(r.wieder));
+  pruefe(r.tech.indexOf("u_admin_test_at") < 0 && !r.techSchreibt && r.nachTech.indexOf("u_admin_test_at") >= 0, "Techniker: Liste bzw. Recht falsch: " + JSON.stringify([r.tech, r.techSchreibt, r.nachTech]));
+  pruefe(!a.fehler.length, "Laufzeitfehler: " + a.fehler.join("; "));
+  await a.zu();
+});
+
+test("Antworten kern: Tour-Startpunkt – jeder nur den eigenen, Inhaber und Admin für alle (App und Datenbank)", async () => {
+  const a = await rkSeite(KONTEN.techniker);
+  const r = await a.seite.evaluate(async () => {
+    const x = window.__t.x, rk = window.__rk, w = rk.warte, db = window.__db.tabellen, ADM = "u_admin_test_at", TECH = "u_tech_test_at";
+    rk.toastSpion();
+    const tag = x("werktagAb(plusTage(isoLokal(new Date()),2))"), erg = {};
+    const gespeichert = (id) => db.einstellungen.some((e) => e.schluessel === "startpunkt:" + id);
+    const waehlen = async (id) => { x("ansichtenSchliessen(); startpunktWaehlen('" + id + "', '" + tag + "')"); await w(200); const d = rk.dlg(); const k = d && rk.knopf(d, /Betrieb/); if (k) { k.click(); await w(400); } return !!k; };
+    /* Techniker: fremder Startpunkt – kein Dialog, nichts gespeichert, auch kein „festlegen“ beim Kalendertag des anderen */
+    x("STARTPUNKTE={}; 1");
+    erg.techFremdDialog = await waehlen(ADM);
+    erg.techFremdToast = window.__toasts.slice(-1)[0] || "";
+    erg.techFremdGespeichert = gespeichert(ADM);
+    await x("Store.sb.from('planung').insert({art:'termin', kategorie:'wartung', titel:'Startpunkt-Test', datum:'" + tag + "', beginn:'09:00', ende:'10:00', standort_id:'TS1', wer:['" + ADM + "'], wer_namen:['Testadmin']})");
+    await x("planungLaden()");
+    const zeile = x("(function(){ var z=startFahrtZeile('" + ADM + "', '" + tag + "', (kalenderEintraege('" + tag + "','" + tag + "','" + ADM + "','')['" + tag + "']||[])); return z ? z.outerHTML : ''; })()");
+    erg.zeileMitLink = /<a /.test(zeile); erg.zeile = zeile.replace(/<[^>]+>/g, "");
+    /* Datenbank (Attrappe wie die Sperrregel): fremder Startpunkt abgelehnt, eigener geht */
+    const fremd = await x("Store.sb.from('einstellungen').upsert({schluessel:'startpunkt:" + ADM + "', wert:{betrieb:true}})");
+    erg.dbFremd = !!(fremd && fremd.error);
+    erg.eigen = await waehlen("ich"); erg.eigenGespeichert = gespeichert(TECH);
+    /* Admin: plant für alle – setzt den Startpunkt des Technikers */
+    await rk.anmelden("admin@test.at", "admin");
+    db.einstellungen.forEach((e) => { if (e.schluessel === "startpunkt:" + TECH) e.wert = {}; });
+    await x("startpunkteLaden()");
+    erg.adminDialog = await waehlen(TECH);
+    erg.adminGespeichert = JSON.stringify((db.einstellungen.find((e) => e.schluessel === "startpunkt:" + TECH) || {}).wert || null);
+    return erg;
+  });
+  pruefe(!r.techFremdDialog && !r.techFremdGespeichert && /selbst|Büro/.test(r.techFremdToast), "Techniker kann den Startpunkt eines anderen setzen: " + JSON.stringify(r));
+  pruefe(!r.zeileMitLink && /Startpunkt/.test(r.zeile), "Kalender zeigt dem Techniker „festlegen/ändern“ beim Startpunkt eines anderen: " + JSON.stringify(r));
+  pruefe(r.dbFremd, "Datenbank (Attrappe) nimmt den fremden Startpunkt eines Technikers an");
+  pruefe(r.eigen && r.eigenGespeichert, "eigener Startpunkt lässt sich nicht mehr setzen: " + JSON.stringify(r));
+  pruefe(r.adminDialog && /betrieb/.test(r.adminGespeichert), "Admin kann den Startpunkt des Technikers nicht setzen: " + JSON.stringify(r));
+  pruefe(!a.fehler.length, "Laufzeitfehler: " + a.fehler.join("; "));
+  await a.zu();
+});
+
+test("Antworten kern: Werkzeug „im Fahrzeug eines Kollegen“ – jedes Fahrzeug wählbar, von fremden nur Kennzeichen, Bezeichnung, Fahrer", async () => {
+  const a = await oeffnen(KONTEN.techniker);
+  const r = await a.seite.evaluate(async () => {
+    const x = window.__t.x, w = (ms) => new Promise((f) => setTimeout(f, ms)), db = window.__db.tabellen;
+    const dlg = () => [...document.querySelectorAll(".assistent")].pop();
+    db.fahrzeuge.push({ id: "FKOL1", kennzeichen: "T-KOL1", bezeichnung: "Testbus", fahrer: ["u_admin_test_at"], fahrer_namen: ["Testadmin"], aktiv: true,
+      notiz: "nur fürs Büro", pickerl_bis: "2027-01-31", service_km: 90000, tracker_id: "trk-1" });
+    db.fahrzeuge.push({ id: "FALT1", kennzeichen: "T-ALT1", fahrer: [], fahrer_namen: [], aktiv: false });
+    db.werkzeug.push({ id: "WKOL1", name: "Lecksucher KOL", standort_art: "lager", zustand: "ok", aktiv: true });
+    await x("wzLaden(true)"); await x("fzLaden(true)");
+    const erg = { fz: x("FZ.length") };
+    const rpc = await x("Store.sb.rpc('fahrzeuge_auswahl')");
+    erg.spalten = rpc && rpc.data && rpc.data[0] ? Object.keys(rpc.data[0]).sort().join(",") : "";
+    erg.anzahl = rpc && rpc.data ? rpc.data.length : -1;
+    x("wzEditor(WZ.filter(function(w){ return w.id==='WKOL1'; })[0])"); await w(500);
+    let d = dlg();
+    const chip = d.querySelector('[data-ort] .chip[data-w="fahrzeug"]');
+    erg.chip = !!chip && !chip.hidden;
+    erg.hinweis = [...d.querySelectorAll(".muted")].some((m) => !m.hidden && /Kein Fahrzeug zur Wahl/.test(m.textContent));
+    erg.optionen = [...d.querySelectorAll('[data-f="fahrzeug_id"] option')].map((o) => o.textContent);
+    if (chip) { chip.click(); await w(100); d.querySelector('[data-f="fahrzeug_id"]').value = "FKOL1";
+      [...d.querySelectorAll(".as-fuss button")].pop().click(); await w(700); }
+    const wz = db.werkzeug.find((z) => z.id === "WKOL1");
+    erg.gespeichert = wz.standort_art + "/" + wz.fahrzeug_id + "/" + wz.fahrzeug_name;
+    erg.ortText = x("wzOrtText(WZ.filter(function(w){ return w.id==='WKOL1'; })[0])");
+    return erg;
+  });
+  pruefe(r.fz === 0, "Leseregel der Fahrzeuge verändert – Techniker sieht ein fremdes Fahrzeug: " + JSON.stringify(r));
+  pruefe(r.spalten === "bezeichnung,fahrer_namen,id,kennzeichen" && r.anzahl === 1, "fahrzeuge_auswahl liefert mehr als Kennzeichen, Bezeichnung, Fahrer (bzw. ausgeschiedene): " + JSON.stringify(r));
+  pruefe(r.chip && !r.hinweis && r.optionen.some((o) => /T-KOL1/.test(o)) && !r.optionen.some((o) => /T-ALT1/.test(o)), "Fahrzeug eines Kollegen nicht wählbar: " + JSON.stringify(r));
+  pruefe(r.gespeichert === "fahrzeug/FKOL1/T-KOL1" && /T-KOL1/.test(r.ortText), "Werkzeug nicht im Fahrzeug des Kollegen gespeichert: " + JSON.stringify(r));
+  pruefe(!a.fehler.length, "Laufzeitfehler: " + a.fehler.join("; "));
+  await a.zu();
+});
+
+test("Antworten kern: Material am privaten Termin sperrt die Datenbank selbst – nur wer den Termin angelegt hat oder eingetragen ist, und der Inhaber", async () => {
+  const a = await rkSeite(KONTEN.techniker);
+  const r = await a.seite.evaluate(async () => {
+    const x = window.__t.x, db = window.__db.tabellen, ADM = "u_admin_test_at", TECH = "u_tech_test_at", tag = x("isoLokal(new Date())");
+    const t = (id, wer, von) => ({ id, art: "termin", kategorie: "privat", privat: true, titel: "Abwesend", datum: tag, wer: wer, wer_namen: [], erstellt_von: von, status: "offen" });
+    db.planung.push(t("PPRIV1", [ADM], ADM), t("PPRIV2", [TECH], TECH), t("PPRIV3", [], TECH), Object.assign(t("POFF1", [ADM], ADM), { kategorie: "buero", privat: false, titel: "Büro" }));
+    const b = (id, pid) => ({ id, art: "material", text: "Teil " + id, planung_id: pid, status: "offen", beschaffung: "mitnehmen", erstellt_von: ADM });
+    db.bedarf.push(b("BPRIV1", "PPRIV1"), b("BPRIV2", "PPRIV2"), b("BPRIV3", "PPRIV3"), b("BOFF1", "POFF1"), b("BOHNE", null));
+    const lesen = async () => ((await x("Store.sb.from('bedarf').select('*')")).data || []).map((z) => z.id).sort();
+    const ids = await lesen();
+    const upd = await x("Store.sb.from('bedarf').update({text:'geändert'}).eq('id','BPRIV1').select('*')");
+    /* Admin (Kollege): sieht den privaten des Technikers nicht; Inhaber: sieht alles (volle Kontrolle, Sicherung) */
+    /* in der App ebenso: bedarfVerborgen blendet beim Admin aus, beim Inhaber nicht */
+    const appVerborgen = async () => { await x("planungLaden()"); return x("bedarfVerborgen({planung_id:'PPRIV2'})"); };
+    await window.__rk.anmelden("admin@test.at", "admin"); const admin = await lesen(), appAdmin = await appVerborgen();
+    await window.__rk.anmelden("inhaber@test.at", "inhaber"); const inhaber = await lesen(), appInhaber = await appVerborgen();
+    return { ids, admin, inhaber, appAdmin, appInhaber, updZeilen: (upd.data || []).length, text: db.bedarf.find((z) => z.id === "BPRIV1").text };
+  });
+  pruefe(r.admin.indexOf("BPRIV2") < 0 && r.admin.indexOf("BPRIV3") < 0 && r.admin.indexOf("BPRIV1") >= 0, "Admin sieht privates Material eines Kollegen: " + JSON.stringify(r.admin));
+  pruefe(["BPRIV1", "BPRIV2", "BPRIV3", "BOFF1", "BOHNE"].every((i) => r.inhaber.indexOf(i) >= 0), "Inhaber sieht nicht alles: " + JSON.stringify(r.inhaber));
+  pruefe(r.appAdmin === true && r.appInhaber === false, "App blendet privates Material falsch aus (Admin soll nicht, Inhaber soll sehen): " + JSON.stringify([r.appAdmin, r.appInhaber]));
+  pruefe(["BOFF1", "BOHNE", "BPRIV2", "BPRIV3"].every((i) => r.ids.indexOf(i) >= 0), "eigene bzw. nicht private Einträge fehlen: " + JSON.stringify(r));
+  pruefe(r.ids.indexOf("BPRIV1") < 0, "Material am privaten Termin einer anderen Person kommt aus der Datenbank: " + JSON.stringify(r));
+  pruefe(r.updZeilen === 0 && r.text === "Teil BPRIV1", "fremder Eintrag am privaten Termin ließ sich ändern: " + JSON.stringify(r));
+  pruefe(!a.fehler.length, "Laufzeitfehler: " + a.fehler.join("; "));
+  await a.zu();
+});
+
+test("Antworten kern: Fahrzeuge – geplante Einsatzfahrten als km-Schätzung neben den km laut km-Stand, ohne GPS-Anbindung", async () => {
+  const a = await oeffnen(KONTEN.techniker);
+  const r = await a.seite.evaluate(async () => {
+    const x = window.__t.x, w = (ms) => new Promise((f) => setTimeout(f, ms)), db = window.__db.tabellen, TECH = "u_tech_test_at";
+    const heute = x("isoLokal(new Date())"), morgen = x("plusTage(isoLokal(new Date()),1)"), vormonat = x("isoLokal(new Date(new Date().getFullYear(), new Date().getMonth()-1, 28))");
+    db.fahrzeuge.push({ id: "FKM1", kennzeichen: "T-KM1", fahrer: [TECH], fahrer_namen: ["Testtechniker"], aktiv: true });
+    db.fahrzeug_eintraege.push({ id: "FKE1", fahrzeug_id: "FKM1", art: "km", datum: vormonat, km: 10000, quelle: "hand" },
+      { id: "FKE2", fahrzeug_id: "FKM1", art: "km", datum: heute, km: 10500, quelle: "hand" });
+    db.einstellungen.push({ schluessel: "startpunkt:" + TECH, wert: { betrieb: true } });
+    const termin = (id, tag, sid, b, e) => ({ id, art: "termin", kategorie: "wartung", titel: "Einsatz " + sid, datum: tag, beginn: b, ende: e, standort_id: sid, wer: [TECH], wer_namen: ["Testtechniker"], erstellt_von: TECH, status: "offen" });
+    db.planung.push(termin("PKM1", heute, "TS1", "08:00", "09:00"), termin("PKM2", heute, "TS2", "11:00", "12:00"));
+    x("try{ FAHR_KM={}; }catch(e){} STARTPUNKTE={}; startpunkteGeladen=false; PLANUNG=[]; planungGeladen=false; planungStand=0; 1");
+    const karte = async () => { x("ansichtenSchliessen(); fzGeladen=false; S.view='fahrzeuge'; render(); 1"); await w(1200); x("render()"); await w(300);
+      const c = document.querySelector('#app [data-fzid="FKM1"]'); return c ? c.innerText.replace(/\s+/g, " ") : ""; };
+    const zahl = (t, re) => { const m = re.exec(t); return m ? +m[1].replace(/\D/g, "") : null; };
+    const erg = {};
+    erg.mitHeim = x("Math.round(fahrKm(BETRIEB,byId.TS1)+fahrKm(byId.TS1,byId.TS2)+fahrKm(byId.TS2,BETRIEB))");
+    erg.ohneHeim = x("Math.round(fahrKm(BETRIEB,byId.TS1)+fahrKm(byId.TS1,byId.TS2))");
+    let t = await karte();
+    erg.text = t;
+    erg.schaetzung = zahl(t, /geplante Einsatzfahrten ≈ ([\d.   ]*\d) km/);
+    erg.kmStand = zahl(t, /laut km-Stand ([\d.   ]*\d) km/);
+    erg.hinweis = /Schätzung – Umwege und Fahrten am Einsatzort nicht enthalten/.test(t);
+    /* morgen geht es vom letzten Markt weiter (weit weg – Übernachtung): heute keine Heimfahrt */
+    db.planung.push(termin("PKM3", morgen, "TS2", "08:00", "09:00"));
+    x("planungStand=0; 1");
+    t = await karte();
+    erg.mitUebernachtung = zahl(t, /geplante Einsatzfahrten ≈ ([\d.   ]*\d) km/);
+    /* die Texte kündigen keine direkte X-GPS-Anbindung bzw. kein Fahrtenbuch mit Orten mehr an */
+    erg.gpsText = /Fahrtenbuch mit Orten erst/.test(String(x("fzGpsImport")));
+    return erg;
+  });
+  pruefe(r.kmStand === 500, "gefahrene km laut km-Stand fehlen: " + JSON.stringify(r));
+  pruefe(r.schaetzung === r.mitHeim && r.hinweis, "Schätzung „geplante Einsatzfahrten ≈ … km“ fehlt bzw. falsch (Start → Einsätze → zurück): " + JSON.stringify(r));
+  pruefe(r.mitUebernachtung === r.ohneHeim, "Übernachtung am letzten Markt: Heimfahrt trotzdem gezählt: " + JSON.stringify(r));
+  pruefe(!r.gpsText, "GPS-Import kündigt noch ein Fahrtenbuch mit Orten an");
   pruefe(!a.fehler.length, "Laufzeitfehler: " + a.fehler.join("; "));
   await a.zu();
 });

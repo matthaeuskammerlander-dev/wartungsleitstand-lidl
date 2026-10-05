@@ -2014,6 +2014,7 @@ function planeTour(opt){
 
   return strassenMatrix(punkte, opt.melde).then(function(M){
     var echteStrasse = !!M;
+    if(M) fahrKmMerken(punkte, M);   /* Straßen-km auch für die Schätzung bei den Fahrzeugen (fzEinsatzKm) */
     /* findet der Dienst für ein Paar keine Straße, steht dort null –
        das wäre sonst 0 km / 0 h; dann für dieses Paar die Luftlinie */
     var dauerH = M ? function(i,j){ var d=M.dauer[i][j]; return d==null ? fahrH(punkte[i],punkte[j]) : d/3600; }
@@ -9350,7 +9351,9 @@ function kontowechselAufraeumen(){
      und speicherte das neue Konto sie als eigene (die Fahrzeuge bis zu einer Minute lang) */
   AUSLAGEN=[]; AK_KONTO=null; akGeladen=false; akLaedt=null; akKonto=""; akFehler=""; akStand=0;
   AK_ALLE={monat:"", liste:[], konten:{}, laedt:false, fehler:""}; AK_ABGEGEBEN=null;
-  FZ=[]; FZ_E=[]; FZ_K={}; fzGeladen=false; fzLaedt=null; fzStand=0; fzFehler="";
+  FZ=[]; FZ_E=[]; FZ_K={}; fzGeladen=false; fzLaedt=null; fzStand=0; fzFehler=""; FZ_AUSWAHL=null; fzAuswahlKonto="";
+  /* Personenauswahl: die Teamliste des vorigen Kontos ließe das neue Konto doppelt bzw. das alte weg */
+  planTeam=null; planTeamZeit=0; PERSONEN_AUS=[];
   /* ebenso Werkzeug und Material: die Präsentation lädt sie nie (darf sie nicht lesen) und sähe sonst die des vorigen Kontos */
   WZ=[]; BEDARF=[]; BEDARF_ALLE=[]; PACKLISTEN=[]; wzGeladen=false; wzLaedt=null; wzStand=0; wzFehler="";
   /* Änderungsverlauf und Posteingang gehören zum alten Konto – die
@@ -10624,12 +10627,26 @@ function chatEntwurfLeer(){ return {text:"", fotos:[], an:null, anName:null, bez
 var chatEntwurf=chatEntwurfLeer();
 var chatSendet={};                     /* Nachrichten, die gerade übertragen werden (Kennung → Nachricht) */
 var pushKonto=null;                    /* für welchen Stand (Konto, Recht) das Abo des Geräts zuletzt abgeglichen wurde */
-/* wer im Team ist (Büro und Techniker) – für „An: Person“ (Funktion team_liste, tools/chat.sql) */
+/* Konten, die in keiner Personenauswahl erscheinen – etwa Testkonten (Inhaber 05.10.2026: „Ja, ausblenden“):
+   einstellungen „personen_ausblenden“ {ids:[…]}, lesen alle Mitarbeiter, ändern nur der Inhaber (Haken in der
+   Kontenübersicht, inhaberKarte). Die Konten bleiben bestehen; wer schon eingetragen ist, bleibt es. */
+var PERSONEN_AUS=[];
+function personenAusLaden(){
+  if(!Store.sb) return Promise.resolve(PERSONEN_AUS);
+  return Store.sb.from("einstellungen").select("wert").eq("schluessel","personen_ausblenden").then(function(r){
+    var w=!r.error && r.data && r.data[0] && r.data[0].wert;
+    PERSONEN_AUS=(w && Array.isArray(w.ids)) ? w.ids.slice() : [];
+    return PERSONEN_AUS;
+  }, function(){ return PERSONEN_AUS; });   /* keine Verbindung: der letzte bekannte Stand gilt */
+}
+/* wer im Team ist (Büro und Techniker) – für „An: Person“ und jede Personenauswahl (Funktion team_liste, tools/chat.sql);
+   ohne die ausgeblendeten Konten (PERSONEN_AUS) */
 function chatTeamLaden(){
   if(chatTeam) return Promise.resolve(chatTeam);
-  return Store.sb.rpc("team_liste").then(function(r){
+  return Promise.all([Store.sb.rpc("team_liste"), personenAusLaden()]).then(function(rr){
+    var r=rr[0];
     if(r.error || !Array.isArray(r.data)) return [];
-    chatTeam=r.data.filter(function(t){ return t.user_id!==(Store.benutzer&&Store.benutzer.id); })
+    chatTeam=r.data.filter(function(t){ return t.user_id!==(Store.benutzer&&Store.benutzer.id) && PERSONEN_AUS.indexOf(t.user_id)<0; })
       .sort(function(a,b){ return String(a.name||"").localeCompare(String(b.name||""), "de"); });
     return chatTeam;
   }, function(){ return []; });
@@ -14707,8 +14724,10 @@ function protoTeilMarkt(P){
     form._vorOrt=function(){
       var h=form.querySelector("#f_vorort"); if(!h) return;
       h.innerHTML="";
-      if(P.bearb || !P.selSt.value) return;
-      var k=vorOrtKasten(P.selSt.value); if(k) h.appendChild(k);
+      /* der Hinweis oben im Kopf zählt mit (P.vorOrtHinweis, viewProtokoll) – auch nach dem Beantworten */
+      var oben=function(){ if(P.vorOrtHinweis) P.vorOrtHinweis(); };
+      if(!P.bearb && P.selSt.value){ var k=vorOrtKasten(P.selSt.value, {nachher:oben}); if(k) h.appendChild(k); }
+      oben();
     };
     form._vorOrt();
     vorOrtLaden();
@@ -16628,6 +16647,7 @@ function viewProtokoll(){
         '<div class="rowflex"><button class="btn" type="button" id="p_gefuehrt">Schritt für Schritt ergänzen</button></div>'+
       "</div></div>")
     : el('<div class="card"><div class="pad stack">'+
+        '<div class="note warnbox" data-vororthinweis hidden style="font-size:13.5px"><a href="#" style="color:inherit;font-weight:600"></a> – antippen zum Beantworten</div>'+
         '<div class="modus" role="group" aria-label="Art des Protokolls">'+
           '<button type="button" data-art="wartung" aria-pressed="'+(!stoer)+'">Wartung</button>'+
           '<button type="button" data-art="stoerung" aria-pressed="'+stoer+'">Störung</button></div>'+
@@ -16641,6 +16661,21 @@ function viewProtokoll(){
           '<button class="btn ghost" type="button" id="p_leeren">Formular leeren</button>'+
           '<span class="muted" style="font-size:12.5px">ein Thema nach dem anderen – am Handy meist schneller</span></div>'+
       "</div></div>");
+  /* offene Fragen „Vor Ort klären“ zusätzlich ganz oben (Inhaber 05.10.2026): am Handy steht die Stelle unter der
+     Marktwahl weit unten im langen Formular – antippen springt hin; nur solange eine Frage ohne Antwort offen ist */
+  var vorOrtOben=P.head.querySelector("[data-vororthinweis]");
+  P.vorOrtHinweis=function(){
+    if(!vorOrtOben) return;
+    var sid=P.selSt.value, n=sid ? vorOrtFragen(sid).filter(function(q){ return !String(q.antwort||"").trim(); }).length : 0;
+    vorOrtOben.hidden=!n;
+    if(n) vorOrtOben.querySelector("a").textContent="❓ "+n+" Frage"+(n===1?"":"n")+" vor Ort";
+  };
+  if(vorOrtOben) vorOrtOben.querySelector("a").onclick=function(ev){
+    ev.preventDefault();
+    var z=form.querySelector("#f_vorort .note.warnbox") || form.querySelector("#f_vorort .note");
+    if(z) sprungHervorheben(z, {block:"start"});
+  };
+  P.vorOrtHinweis();
   P.gefuehrt=P.head.querySelector("#p_gefuehrt");
   if(P.gefuehrt) P.gefuehrt.onclick=function(){ protokollAssistent(form, stoer); };
   /* derselbe Knopf wie unten im Formular, mit derselben Rückfrage */
@@ -18700,13 +18735,39 @@ function inhaberKarte(){
     '<div data-ki class="stack"></div></div></div>');
   var kh=c.querySelector("[data-konten]"), kih=c.querySelector("[data-ki]");
   var TEXT={inhaber:"Inhaber", admin:"Admin", techniker:"Techniker", kunde:"Kunde (nur lesen)", praesentation:"Präsentation (Spielwiese, nichts wird gespeichert)"};
-  Store.sb.from("rollen").select("rolle,name").then(function(r){
+  /* dazu die Teamliste (auch Techniker ohne Eintrag in rollen) – je Konto der Haken „in Personenlisten ausblenden“
+     (Testkonten, Inhaber 05.10.2026); Kunde und Präsentation stehen ohnehin in keiner Personenauswahl */
+  Promise.all([Store.sb.from("rollen").select("user_id,rolle,name"),
+    Store.sb.rpc("team_liste").then(function(t){ return t; }, function(){ return {data:[]}; }), personenAusLaden()]).then(function(rr){
+    var r=rr[0], team=(rr[1] && !rr[1].error && Array.isArray(rr[1].data)) ? rr[1].data : [];
     kh.innerHTML="";
     if(r.error){ kh.appendChild(el('<div class="muted">Rollen noch nicht eingerichtet – tools/rollen.sql ausführen.</div>')); return; }
-    var l=(r.data||[]).slice().sort(function(a,b){ return String(a.rolle).localeCompare(b.rolle) || String(a.name).localeCompare(b.name); });
-    kh.appendChild(el('<div class="scrollx"><table class="dt"><thead><tr><th>Name</th><th>Rolle</th></tr></thead><tbody>'+
-      l.map(function(x){ return "<tr><td>"+esc(x.name||"–")+"</td><td>"+esc(TEXT[x.rolle]||x.rolle)+"</td></tr>"; }).join("")+
-      '<tr><td colspan="2" class="muted">alle anderen Konten: Techniker</td></tr></tbody></table></div>'));
+    var l=(r.data||[]).map(function(x){ return {user_id:x.user_id, rolle:x.rolle, name:x.name}; });
+    team.forEach(function(t){ var da=l.filter(function(x){ return x.user_id===t.user_id; })[0];
+      if(!da) l.push({user_id:t.user_id, rolle:t.rolle||"techniker", name:t.name}); else if(!da.name) da.name=t.name; });
+    l.sort(function(a,b){ return String(a.rolle).localeCompare(b.rolle) || String(a.name).localeCompare(b.name); });
+    var tab=el('<div class="scrollx"><table class="dt"><thead><tr><th>Name</th><th>Rolle</th><th>In Personenlisten</th></tr></thead><tbody>'+
+      l.map(function(x){ var wahl=x.user_id && ["inhaber","admin","techniker"].indexOf(x.rolle)>=0;
+        return "<tr><td>"+esc(x.name||"–")+"</td><td>"+esc(TEXT[x.rolle]||x.rolle)+"</td><td>"+(wahl
+          ? '<label class="chk" style="font-size:12.5px"><input type="checkbox" data-ausblenden="'+esc(x.user_id)+'"'+(PERSONEN_AUS.indexOf(x.user_id)>=0?" checked":"")+"><span>ausblenden</span></label>"
+          : '<span class="muted">–</span>')+"</td></tr>"; }).join("")+
+      '<tr><td colspan="3" class="muted">alle anderen Konten: Techniker</td></tr></tbody></table></div>');
+    kh.appendChild(tab);
+    kh.appendChild(el('<div class="muted" style="font-size:12.5px">„ausblenden“ (etwa für Testkonten): das Konto erscheint in keiner Personenauswahl mehr – Kalender „Wer?“, Tour, '+
+      "„Ausgefüllt für“, Werkzeug „bei wem“, Fahrer, Auslastung, Nachricht an … Es bleibt bestehen, Anmelden geht weiter, wo es schon eingetragen ist, bleibt es.</div>"));
+    tab.querySelectorAll("[data-ausblenden]").forEach(function(cb){
+      var id=cb.dataset.ausblenden, name=(l.filter(function(x){ return x.user_id===id; })[0]||{}).name||"Das Konto";
+      cb.onchange=function(){
+        var an=cb.checked, ids=PERSONEN_AUS.filter(function(i){ return i!==id; }).concat(an?[id]:[]);
+        var zurueck=function(t){ cb.disabled=false; cb.checked=!an; toast(t); };
+        cb.disabled=true;
+        mitFrist(Store.sb.from("einstellungen").upsert({schluessel:"personen_ausblenden", wert:{ids:ids}, geaendert:new Date().toISOString(), von:meinName()}), 15000).then(function(r2){
+          if(r2 && r2.error){ zurueck("Nicht gespeichert: "+technikDeutsch(r2.error.message)); return; }
+          cb.disabled=false; PERSONEN_AUS=ids; chatTeam=null; planTeam=null; planTeamZeit=0;
+          toast(an ? name+" erscheint in keiner Personenauswahl mehr – das Konto bleibt." : name+" steht wieder in den Personenlisten.");
+        }, function(e){ zurueck("Nicht gespeichert: "+technikDeutsch((e&&e.message)||"keine Verbindung")); });
+      };
+    });
   });
   kiKostenAnsicht(kih);
   var mk=mailKoppelnKasten(); if(mk) c.querySelector(".pad").appendChild(mk);
@@ -19400,10 +19461,14 @@ function wzHinweisTags(w){ return wzHinweise(w).map(function(a){ return ' <span 
 function bedarfWeg(b){ return BEDARF_WEGE.filter(function(x){ return x[0]===b.beschaffung; })[0]||BEDARF_WEGE[0]; }
 function bedarfOffen(b){ return b.status!=="erledigt"; }
 /* hängt an einem privaten Termin einer anderen Person: nie zeigen – dort sehen die anderen nur „Abwesend“
-   (Prüflauf 05.10.2026: ein nachträglich privat gestellter Termin zeigte seinen Eintrag weiter allen) */
-function bedarfVerborgen(b){
+   (Prüflauf 05.10.2026: ein nachträglich privat gestellter Termin zeigte seinen Eintrag weiter allen). Seit dem
+   05.10.2026 sperrt es auch die Datenbank (Sperrregel „bedarf privat nur eigene“; der Inhaber liest es dort, nicht Admins) – hier bleibt es für
+   Einträge, die vor dem Umstellen auf privat schon geladen waren. Der Inhaber sieht sie (volle Kontrolle, Inhaber
+   05.10.2026) – streng nurInhaber(), kein Rückfall auf Admins wie in der Datenbank; auchInhaber: für Gelerntes (Vorschläge) bleibt es verborgen */
+function bedarfVerborgen(b, auchInhaber){
+  if(nurInhaber() && !auchInhaber) return false;
   var e=b.planung_id && PLANUNG.filter(function(x){ return x.id===b.planung_id; })[0];
-  return !!(e && (e.privat || e.kategorie==="privat") && !planIstMeins(e) && e.erstellt_von!==meineKennung());
+  return !!(e &&(e.privat || e.kategorie==="privat") && !planIstMeins(e) && e.erstellt_von!==meineKennung());
 }
 /* Bedarf zu einem Bezug: Projekt, Störung, Termin; am Markt nur, was an keinem anderen Bezug hängt */
 function bedarfZu(bz){
@@ -19752,14 +19817,33 @@ function wzOrtSchnell(w, ziel){
   wzSpeichern(w, f).then(function(n){ toast(n.name+": jetzt "+wzOrtText(n)+"."); }, function(e){ toast("Nicht gespeichert: "+technikDeutsch(e.message||String(e))); });
 }
 function meinFahrzeug(){ var ich=meineKennung(); return FZ.filter(function(f){ return f.aktiv!==false && (f.fahrer||[]).indexOf(ich)>=0; })[0]||null; }
+/* Werkzeug-Ort „im Fahrzeug eines Kollegen“ (Inhaber 05.10.2026: „Ja, nur Kennzeichen“): zur Wahl stehen alle aktiven
+   Fahrzeuge – von fremden nur Kennzeichen, Bezeichnung und Fahrer (Datenbank-Funktion fahrzeuge_auswahl; keine Kosten, km,
+   Fristen, Schäden). Nur für die Ortswahl beim Werkzeug; der Reiter Fahrzeuge (FZ) zeigt weiter nur die eigenen. */
+var FZ_AUSWAHL=null, fzAuswahlStand=0, fzAuswahlKonto="";
+function fzAuswahlLaden(){
+  if(demo() || Store.modus!=="supabase" || !Store.sb) return Promise.resolve(false);
+  var konto=meineKennung();
+  if(FZ_AUSWAHL && fzAuswahlKonto===konto && Date.now()-fzAuswahlStand<60000) return Promise.resolve(false);
+  return Promise.resolve(Store.sb.rpc("fahrzeuge_auswahl")).then(function(r){
+    /* noch nicht eingerichtet bzw. ohne Verbindung: es bleiben die eigenen (FZ) */
+    if(meineKennung()!==konto || !r || r.error || !Array.isArray(r.data)) return false;
+    FZ_AUSWAHL=r.data; fzAuswahlStand=Date.now(); fzAuswahlKonto=konto; return true;
+  }, function(){ return false; });
+}
+function wzFahrzeuge(){
+  var l=FZ.slice();
+  if(fzAuswahlKonto===meineKennung()) (FZ_AUSWAHL||[]).forEach(function(f){ if(!l.some(function(x){ return x.id===f.id; })) l.push(f); });
+  return l;
+}
 function wzEditor(w){
   if(!wzAn()){ toast("Werkzeug geht nur mit Anmeldung."); return; }
   if(!planTeam) planTeamLaden();
-  var fzWarten=fzGeladen ? null : fzLaden();
+  var fzWarten=(fzGeladen && FZ_AUSWAHL && fzAuswahlKonto===meineKennung()) ? null : Promise.all([fzGeladen ? false : fzLaden(), fzAuswahlLaden()]);
   var a=Object.assign({standort_art:"lager", zustand:"ok"}, w||{});
-  var fzOptHtml=function(wahl){ return '<option value="">–</option>'+FZ.filter(function(f){ return f.aktiv!==false || f.id===a.fahrzeug_id; }).map(function(f){
+  var fzOptHtml=function(wahl){ var l=wzFahrzeuge(); return '<option value="">–</option>'+l.filter(function(f){ return f.aktiv!==false || f.id===a.fahrzeug_id; }).map(function(f){
         return '<option value="'+esc(f.id)+'"'+(wahl===f.id?" selected":"")+">"+esc(f.kennzeichen+((f.fahrer_namen||[]).length?" · "+f.fahrer_namen.join(", "):""))+"</option>"; }).join("")+
-        (a.fahrzeug_id && !FZ.some(function(f){ return f.id===a.fahrzeug_id; })?'<option value="'+esc(a.fahrzeug_id)+'"'+(wahl===a.fahrzeug_id?" selected":"")+">"+esc(a.fahrzeug_name||"?")+"</option>":""); };
+        (a.fahrzeug_id && !l.some(function(f){ return f.id===a.fahrzeug_id; })?'<option value="'+esc(a.fahrzeug_id)+'"'+(wahl===a.fahrzeug_id?" selected":"")+">"+esc(a.fahrzeug_name||"?")+"</option>":""); };
   var v=ansichtOeffnen(w ? w.name : "Neues Werkzeug / Gerät");
   if(w) v.schritt.textContent="jetzt: "+wzOrtText(w);
   var gruppen=[]; WZ.forEach(function(x){ if(x.gruppe && gruppen.indexOf(x.gruppe)<0) gruppen.push(x.gruppe); });
@@ -19802,10 +19886,10 @@ function wzEditor(w){
     if(c.dataset.w!==ort) F("standort_text").value = c.dataset.w===a.standort_art ? (a.standort_text||"") : "";
     ort=c.dataset.w; form.querySelectorAll("[data-ort] .chip").forEach(function(x){ x.setAttribute("aria-pressed", String(x===c)); }); zeigen(); }; });
   zeigen();
-  /* „Fahrzeug“ nur anbieten, wenn eines zur Wahl steht (Techniker sehen nur das eigene – fahrzeuge.sql);
-     sonst führte es zu „Bitte das Fahrzeug wählen“, das sich nicht erfüllen lässt */
+  /* „Fahrzeug“ nur anbieten, wenn eines zur Wahl steht (alle aktiven über fahrzeuge_auswahl – ohne die Funktion nur das
+     eigene, fahrzeuge.sql); sonst führte es zu „Bitte das Fahrzeug wählen“, das sich nicht erfüllen lässt */
   var fzChip=form.querySelector('[data-ort] .chip[data-w="fahrzeug"]');
-  var fzHinweis=el('<div class="muted" style="font-size:12.5px" hidden>Kein Fahrzeug zur Wahl (dir ist keines zugeteilt) – liegt es in einem Auto, „bei Person“ wählen.</div>');
+  var fzHinweis=el('<div class="muted" style="font-size:12.5px" hidden>Kein Fahrzeug zur Wahl – liegt es in einem Auto, „bei Person“ wählen.</div>');
   form.querySelector("[data-ort]").insertAdjacentElement("afterend", fzHinweis);
   var fzPruefen=function(){
     var leer=fzGeladen && !fzFehler && F("fahrzeug_id").options.length<=1;
@@ -19842,7 +19926,7 @@ function wzEditor(w){
       notiz:F("notiz").value.trim()||null, zurueck_am:(ort==="reparatur"||ort==="sonst") ? (F("zurueck_am").value||null) : null,
       fahrzeug_id:null, fahrzeug_name:null, person_id:null, person_name:null, projekt_id:null, standort_id:null};
     if(ort==="fahrzeug"){ var fz=F("fahrzeug_id").value; if(!fz){ fehler(F("fahrzeug_id").options.length<=1 ? "Kein Fahrzeug zur Wahl – liegt es in einem Auto, bitte „bei Person“ wählen." : "Bitte das Fahrzeug wählen."); return; }
-      f.fahrzeug_id=fz; var fo=FZ.filter(function(x){ return x.id===fz; })[0]; f.fahrzeug_name=fo ? fo.kennzeichen : (a.fahrzeug_name||null); }
+      f.fahrzeug_id=fz; var fo=wzFahrzeuge().filter(function(x){ return x.id===fz; })[0]; f.fahrzeug_name=fo ? fo.kennzeichen : (a.fahrzeug_name||null); }
     if(ort==="person"){ var pid=F("person_id").value; if(!pid){ fehler("Bitte wählen, bei wem es ist."); return; }
       f.person_id=pid; f.person_name=planPersonName(pid)||a.person_name||null; }
     if(ort==="baustelle"){ f.projekt_id=F("projekt_id").value||null; f.standort_id=F("standort_id").value||null;
@@ -19879,7 +19963,7 @@ function bedarfGelerntProjekt(p){
     e.p[pid]=1; if(wid && !e.werkzeug_id) e.werkzeug_id=wid; if(art==="werkzeug") e.art="werkzeug";
   };
   andere.forEach(function(x){
-    BEDARF_ALLE.forEach(function(b){ if(b.projekt_id===x.id && !bedarfVerborgen(b)) dazu(x.id, b.text, b.art, b.werkzeug_id); });
+    BEDARF_ALLE.forEach(function(b){ if(b.projekt_id===x.id && !bedarfVerborgen(b, true)) dazu(x.id, b.text, b.art, b.werkzeug_id); });
     ((x.daten||{}).baubuch||[]).forEach(function(e){
       if(["werkzeug","kran","material","geholt"].indexOf(e.art)>=0 && e.text) dazu(x.id, e.text, e.art==="werkzeug"||e.art==="kran" ? "werkzeug" : "material", null); });
   });
@@ -19894,7 +19978,7 @@ function bedarfGelerntMarkt(sid, schonListe){
   if(!sid) return [];
   var je={}, schon=(schonListe||[]).map(function(b){ return bedarfSchluessel(b.text); });
   BEDARF_ALLE.forEach(function(b){
-    if(b.standort_id!==sid || bedarfVerborgen(b)) return;
+    if(b.standort_id!==sid || bedarfVerborgen(b, true)) return;   /* Gelerntes: Privates nie als Vorschlag – auch nicht beim Inhaber */
     var k=bedarfSchluessel(b.text); if(!k || schon.indexOf(k)>=0) return;
     var e=je[k]||(je[k]={text:String(b.text).trim(), art:b.art, werkzeug_id:b.werkzeug_id||null, n:0});
     e.n++; if(b.art==="werkzeug") e.art="werkzeug"; if(b.werkzeug_id) e.werkzeug_id=b.werkzeug_id;
@@ -20180,8 +20264,10 @@ function wzToDo(){
    Techniker sehen nur ihr zugeteiltes Fahrzeug und tragen km-Stand und Schäden ein; Inhaber und Admins
    sehen alle und tragen Service, Pickerl, Reparaturen ein; Beträge nur der Inhaber (fahrzeug_kosten).
    GPS (X-GPS): Import einer Bericht-Datei (CSV/Excel) – übernommen werden NUR Kilometer je Tag
-   (Inhaber 02.10.2026). Orte, Uhrzeiten und Fahrten bleiben in der Datei: ein Fahrtenbuch mit Orten
-   wäre Standortüberwachung der Mitarbeiter (erst nach Zustimmung/Betriebsvereinbarung, ArbVG § 96). */
+   (Inhaber 02.10.2026). Orte, Uhrzeiten und Fahrten bleiben in der Datei – ein Fahrtenbuch mit Orten
+   wäre Standortüberwachung der Mitarbeiter (ArbVG § 96). Eine direkte X-GPS-Anbindung gibt es nicht (Inhaber
+   05.10.2026: „zu kompliziert und unnötig“); stattdessen schätzt die App die km der geplanten Einsatzfahrten
+   (fzEinsatzKm) und stellt sie den km laut km-Stand gegenüber (fzKmLautStand). */
 var FZ=[], FZ_E=[], FZ_K={}, fzGeladen=false, fzFehlt=false, fzFehler="", fzLaedt=null, fzStand=0;
 var FZ_ARTEN={km:"km-Stand", service:"Service", pickerl:"Pickerl (§ 57a)", reparatur:"Reparatur", schaden:"Schaden", reifen:"Reifen", sonstiges:"Sonstiges"};
 function fzBuero(){ return istInhaber() || Rolle.name==="admin"; }
@@ -20211,6 +20297,54 @@ function fzStrecke(f, ym){
   var l=fzEintraege(f).filter(function(e){ return String(e.datum).slice(0,7)===ym && e.strecke!=null; });
   return l.length ? Math.round(l.reduce(function(s,e){ return s+(+e.strecke||0); },0)) : null;
 }
+/* gefahrene km eines Monats laut km-Stand: letzter Stand im Monat minus letzter Stand davor (sonst der erste im Monat) */
+function fzKmLautStand(f, ym){
+  var von=ym+"-01", vor=null, erst=null, letzt=null;
+  fzEintraege(f).filter(function(e){ return e.km!=null; }).reverse().forEach(function(e){
+    var d=String(e.datum);
+    if(d<von) vor=e; else if(d.slice(0,7)===ym){ if(!erst) erst=e; letzt=e; }
+  });
+  var ab=vor||erst;
+  return (ab && letzt && ab!==letzt && letzt.km>=ab.km) ? {km:letzt.km-ab.km, von:ab.datum, bis:letzt.datum} : null;
+}
+/* ---- km der geplanten Einsatzfahrten (Inhaber 05.10.2026, statt einer X-GPS-Anbindung: „Verbinde lieber die km mit
+   den geplanten Einsatzfahrten, damit man eine ungefähre Schätzung bekommt. Es wird Diskrepanzen geben aufgrund von
+   Umwegen oder Fahrten während eines Einsatzes (z. B. Material holen), damit muss man halt leben.“) ----
+   Je Fahrer des Fahrzeugs und Tag (bis heute): Startpunkt → Einsätze des Tages laut Kalender (Termine, Störungseinsätze,
+   Projekttermine, erledigte Einsätze; je Markt einmal, nach Uhrzeit) → zurück nach Hause bzw. zum Betrieb – außer die
+   Person übernachtet dort (wie beim Startpunkt: am nächsten Tag geht es vom letzten Einsatz weiter). Straßen-km aus dem,
+   was Kalender und Tour schon abgefragt haben (FAHR_KM), sonst Luftlinie × UMWEG wie in der Tour. Keine eigene
+   Netzabfrage, keine Orte gespeichert. Fahren zwei denselben Weg am selben Tag (gemeinsam), zählt er einmal. */
+function fzEinsatzKm(f, ym){
+  var heute=isoLokal(new Date()), von=ym+"-01", ende=isoLokal(new Date(+ym.slice(0,4), +ym.slice(5,7), 0)), bis=ende<heute ? ende : heute;
+  if(von>heute || !(f.fahrer||[]).length) return null;
+  var km=0, tage={}, wege={};
+  var projOrt=function(pid){ var p=pid && PROJEKTE.filter(function(x){ return x.id===pid; })[0]; return p ? p.standort_id : null; };
+  f.fahrer.forEach(function(uid){
+    /* einmal je Person: der Monat samt 4 Tagen davor (Übernachtung) und dem Tag danach (Heimfahrt?) */
+    var m=kalenderEintraege(plusTage(von,-4), plusTage(bis,1), uid, ""), sp=STARTPUNKTE[uid]||{}, heim=sp.heimat||BETRIEB;
+    var orte=function(t){
+      var l=[];
+      (m[t]||[]).forEach(function(x){
+        if(x.art==="aufgabe" || x.art==="ziel" || (x.e && (x.e.status==="abgelehnt" || x.e.privat))) return;
+        var sid=x.e ? (x.e.standort_id||projOrt(x.e.projekt_id)) : x.o ? x.o.standortId : x.pr ? x.pr.standortId : x.p ? x.p.standort_id : null, s=sid && byId[sid];
+        if(s && s.lat!=null && s.lon!=null && l.indexOf(s)<0) l.push(s);
+      });
+      return l;
+    };
+    for(var t=von; t<=bis; t=plusTage(t,1)){
+      var o=orte(t); if(!o.length) continue;
+      var weg=[startpunktFuer(uid, t, m).ort||heim].concat(o), morgen=plusTage(t,1);
+      var naechster=orte(morgen).length ? startpunktFuer(uid, morgen, m) : null;
+      if(!(naechster && naechster.ort && naechster.ort.id===o[o.length-1].id)) weg.push(heim);
+      var schl=t+":"+weg.map(function(p){ return p.id||(p.lat+","+p.lon); }).join(">");
+      if(wege[schl]) continue;
+      wege[schl]=1; tage[t]=1;
+      for(var i=1;i<weg.length;i++) km+=fahrKmZw(weg[i-1], weg[i]);
+    }
+  });
+  return {km:Math.round(km), tage:Object.keys(tage).length};
+}
 /* was am Fahrzeug ansteht: Pickerl und Service (Datum: 30 Tage vorher, km: 1000 km vorher), offene Schäden */
 function fzFaellig(f){
   var heute=isoLokal(new Date()), r=[], st=fzKmStand(f);
@@ -20227,6 +20361,8 @@ function viewFahrzeuge(){
   fzLaden().then(function(neu){ if(neu && S.view==="fahrzeuge" && darfRendern() && !document.querySelector(".assistent")) render(); });
   if(wzAn()) wzNachladen();   /* was in den Fahrzeugen liegt */
   if(!planTeam) planTeamLaden();
+  /* Kalender und Startpunkte für die km-Schätzung (fzEinsatzKm) – höchstens einmal je Minute */
+  planungNachladen(function(){ if(S.view==="fahrzeuge" && darfRendern() && !document.querySelector(".assistent")) render(); });
   var buero=fzBuero() && !nurLesen();
   var kopf=el('<div class="card"><div class="pad stack" style="gap:8px">'+
     '<div class="rowflex" style="justify-content:space-between;align-items:flex-start;gap:10px"><div><h2>Fahrzeuge</h2>'+
@@ -20259,6 +20395,14 @@ function fzKarte(x){
     '<div class="kpis">'+kpi(st?st.km.toLocaleString("de-AT"):"–", "km-Stand"+(st?" ("+dfmt(st.datum)+")":""))+
       kpi(sm!=null?sm.toLocaleString("de-AT"):"–", "km diesen Monat")+kpi(sv!=null?sv.toLocaleString("de-AT"):"–", "km Vormonat")+
       kpi(x.pickerl_bis?dfmt(x.pickerl_bis).slice(3):"–", "Pickerl bis")+"</div>"+
+    /* gefahren laut km-Stand neben der Schätzung aus den geplanten Einsatzfahrten (Inhaber 05.10.2026, statt GPS) */
+    ((x.fahrer||[]).length ? '<div data-kmschaetzung style="font-size:12.5px">'+[[ym, "Diesen Monat"], [vm, MONATE_L[+vm.slice(5,7)]]].map(function(z){
+      var g=fzKmLautStand(x, z[0]), e=fzEinsatzKm(x, z[0]);
+      return "<div>"+esc(z[1])+": gefahren laut km-Stand <strong>"+(g?g.km.toLocaleString("de-AT")+" km":"–")+"</strong>"+
+        (g?' <span class="muted">('+esc(dfmt(g.von).slice(0,6))+"–"+esc(dfmt(g.bis).slice(0,6))+")</span>":"")+
+        " · geplante Einsatzfahrten ≈ <strong>"+(e?e.km.toLocaleString("de-AT")+" km":"–")+"</strong>"+
+        (e&&e.tage?' <span class="muted">('+e.tage+" Tag"+(e.tage===1?"":"e")+")</span>":"")+"</div>"; }).join("")+
+      '<div class="muted">Schätzung – Umwege und Fahrten am Einsatzort nicht enthalten.</div></div>' : "")+
     (fae.length?'<div class="rowflex" style="gap:6px;flex-wrap:wrap">'+fae.map(function(a){ return '<span class="tag" style="'+(a.art==="crit"?"background:var(--crit);color:#fff":"background:var(--warn-soft,#fdf1d8)")+'">'+esc(a.text)+"</span>"; }).join("")+"</div>":"")+
     '<div class="rowflex" style="gap:6px;flex-wrap:wrap"><button class="btn sm" type="button" data-e="km">km-Stand eintragen</button>'+
       '<button class="btn ghost sm" type="button" data-e="schaden">Schaden melden</button>'+
@@ -20319,9 +20463,13 @@ function fzEditor(x){
   var pvFuellen=function(){ var sel=form.querySelector("#fz_pvw"), alt=sel.value||(x&&x.privat_von)||"";
     sel.innerHTML='<option value="">– Person –</option>'+team.map(function(p){ return '<option value="'+esc(p.user_id)+'"'+(alt===p.user_id?" selected":"")+">"+esc(p.name||"–")+"</option>"; }).join("")+
       (alt && !team.some(function(p){ return p.user_id===alt; }) ? '<option value="'+esc(alt)+'" selected>'+esc((x&&x.privat_name)||"?")+"</option>" : ""); };
+  /* schon eingetragene Fahrer bleiben sichtbar, auch wenn sie nicht (mehr) in der Personenauswahl stehen (ausgeblendete
+     Testkonten, Inhaber 05.10.2026) – sonst blieben sie ungesehen gewählt */
+  var altName=function(id){ var i=((x&&x.fahrer)||[]).indexOf(id); return i>=0 ? ((x.fahrer_namen||[])[i]||"") : ""; };
   var chipsZeichnen=function(){ pvFuellen(); fh.innerHTML="";
     if(!team.length) fh.appendChild(el('<span class="muted" style="font-size:12.5px">Team wird geladen …</span>'));
-    team.forEach(function(p){ var b=el('<button class="chip" type="button" aria-pressed="'+(wahl.indexOf(p.user_id)>=0)+'">'+esc(p.name||"–")+"</button>");
+    team.concat(wahl.filter(function(id){ return !team.some(function(p){ return p.user_id===id; }); }).map(function(id){ return {user_id:id, name:altName(id)||"?"}; }))
+      .forEach(function(p){ var b=el('<button class="chip" type="button" aria-pressed="'+(wahl.indexOf(p.user_id)>=0)+'">'+esc(p.name||"–")+"</button>");
       b.onclick=function(){ var i=wahl.indexOf(p.user_id); if(i>=0) wahl.splice(i,1); else wahl.push(p.user_id); chipsZeichnen(); }; fh.appendChild(b); }); };
   chipsZeichnen();
   if(team.length<2) planTeamLaden().then(function(t){ team=planTeamMitMir(t); chipsZeichnen(); });
@@ -20335,7 +20483,7 @@ function fzEditor(x){
     var skT=form.querySelector("#fz_sk").value.trim(), sk=skT ? zahlLesen(skT) : null;
     if(skT && !(sk>=0)){ fehl("„Service bei km“: bitte eine Zahl."); return; }
     var z={kennzeichen:k, bezeichnung:form.querySelector("#fz_b").value.trim()||null, fahrer:wahl,
-      fahrer_namen:wahl.map(function(id){ return planPersonName(id)||""; }).filter(Boolean),
+      fahrer_namen:wahl.map(function(id){ return planPersonName(id)||altName(id)||""; }).filter(Boolean),
       pickerl_bis:form.querySelector("#fz_p").value||null, erstzulassung:form.querySelector("#fz_z").value||null,
       service_bis:form.querySelector("#fz_sd").value||null, service_km:sk==null?null:Math.round(sk),
       tracker_id:form.querySelector("#fz_t").value.trim()||null, notiz:form.querySelector("#fz_n").value.trim()||null,
@@ -20344,7 +20492,7 @@ function fzEditor(x){
     var pv=form.querySelector("#fz_pv").checked ? form.querySelector("#fz_pvw").value : "";
     if(form.querySelector("#fz_pv").checked && !pv){ fehl("Privatauto: bitte wählen, wem es gehört."); return; }
     z.privat_von=pv||null; z.privat_name=pv ? (planPersonName(pv)||(x&&x.privat_name)||null) : null;
-    if(pv && z.fahrer.indexOf(pv)<0){ z.fahrer=z.fahrer.concat([pv]); z.fahrer_namen=z.fahrer.map(function(id){ return planPersonName(id)||""; }).filter(Boolean); }
+    if(pv && z.fahrer.indexOf(pv)<0){ z.fahrer=z.fahrer.concat([pv]); z.fahrer_namen=z.fahrer.map(function(id){ return planPersonName(id)||altName(id)||""; }).filter(Boolean); }
     if(demo()){ var neuX=Object.assign({id:x?x.id:neueKennung("fz")}, x||{}, z); FZ=FZ.filter(function(y){ return y.id!==neuX.id; }).concat([neuX]); v.zu(); toast("Fahrzeug gespeichert (Präsentation, nicht gespeichert)."); render(); return; }
     ok.disabled=true; ok.textContent="wird gespeichert …";
     var q=x ? Store.sb.from("fahrzeuge").update(z).eq("id", x.id).select("*") : Store.sb.from("fahrzeuge").insert(z).select("*");
@@ -20477,8 +20625,9 @@ function fzGpsImport(){
   v.schritt.textContent="Bericht-Datei aus dem X-GPS-Portal (CSV oder Excel)";
   var box=el('<div class="stack" style="max-width:640px">'+
     '<div class="note">Im Portal des GPS-Anbieters einen Bericht mit <strong>Datum</strong> und <strong>Kilometern</strong> (gefahrene Strecke oder km-Stand) je Fahrzeug herunterladen '+
-      "(CSV oder Excel) und hier wählen. Übernommen werden <strong>nur die Kilometer je Tag</strong> – Orte, Uhrzeiten und einzelne Fahrten werden nicht gespeichert "+
-      "(ein Fahrtenbuch mit Orten erst nach Zustimmung bzw. Betriebsvereinbarung). Schon eingelesene Tage werden ersetzt, nicht doppelt gezählt.</div>"+
+      "(CSV oder Excel) und hier wählen. Übernommen werden <strong>nur die Kilometer je Tag</strong> – Orte, Uhrzeiten und einzelne Fahrten werden nicht gespeichert. "+
+      "Schon eingelesene Tage werden ersetzt, nicht doppelt gezählt. Eine direkte Verbindung zum GPS-Portal gibt es nicht – zum Vergleich steht bei jedem "+
+      "Fahrzeug die Schätzung aus den geplanten Einsatzfahrten.</div>"+
     '<label class="btn sm" style="cursor:pointer;align-self:flex-start">Datei wählen<input type="file" accept=".csv,.txt,.xlsx,.xls,text/csv" hidden></label>'+
     '<div data-erg class="stack" style="gap:8px"></div></div>');
   v.inhalt.appendChild(box);
@@ -22784,6 +22933,8 @@ function altlastenAutomatisch(){
    Besuch oder 6 Monate nach der JW). Jeder Schritt steht im Änderungsverlauf
    und ist rücknehmbar; ein Merker verhindert, dass ein zurückgenommener Termin
    wiederkommt. Gaswarnanlagen sind keine Klimaanlagen – ausgenommen.
+   Bewusst „nur Jahreswartung“ (nurJW) geht vor (Inhaber 05.10.2026): diese Anlage bekommt keinen
+   Halbjahrestermin, und nurJW bleibt, bis es jemand in der Verwaltung zurücknimmt.
    ================================================================ */
 function hjMarktMerkerId(leaderId){ return "merker:hjimarkt:"+leaderId; }
 function hjMarktFaelle(){
@@ -22803,6 +22954,7 @@ function hjMarktFaelle(){
       var tl=a.termine.filter(function(t){ return t.aktiv!==false; });
       if(!tl.length || !tl.every(function(t){ return intervallArt(t.intervallCode).kurz==="JW"; })) return;
       if(/gas\s*-?\s*warn/i.test(String(a.leader.anlagentyp||"")+" "+anlagenName(a.leader))) return;
+      if(anlageDaten(a.leader).nurJW) return;   /* bewusst nur Jahreswartung – nie überstimmen (Inhaber 05.10.2026) */
       if(stammUeber[hjMarktMerkerId(a.leader.id)]) return;
       if(ALLE_POS.some(function(p){ return p.hjiMarkt && p.anlageZu===a.leader.id; })) return;
       var kg=+a.leader.kaeltemittelKg;
@@ -22817,8 +22969,9 @@ function hjMarktAnlegen(f){
   return termineNeuSchreiben(f.s.id, leader.id, [{intervallCode:f.code, monat:f.monat, monatGrund:grundT, hjiMarkt:f.vorbild.a.leader.id}],
     "Halbjahrestermin wie am Markt üblich", rueck, true).then(function(ok){
     if(ok===false) return false;
-    /* „nur Jahreswartung“ bzw. die Meldung „Halbjahrestermin fehlt“ sind damit erledigt */
-    var weiter = (leader.nurJW || leader.halbWunsch) ? (function(){ var pro={}; pro[leader.id]={nurJW:null, halbWunsch:""};
+    /* die Meldung „Halbjahrestermin fehlt“ ist damit erledigt; „nur Jahreswartung“ hebt die Automatik nie auf –
+       solche Anlagen kommen gar nicht hierher (hjMarktFaelle, Inhaber 05.10.2026) */
+    var weiter = leader.halbWunsch ? (function(){ var pro={}; pro[leader.id]={halbWunsch:""};
       return positionenSchreiben(pro, "Halbjahrestermin wie am Markt üblich", rueck); })() : Promise.resolve();
     return weiter.then(function(){
       protokolliere({art:"stammdaten", standortId:f.s.id, standortName:stName(f.s),
@@ -23854,7 +24007,7 @@ function handbuchKarte(z){
       "<p><strong>Techniker – ein Einsatz</strong></p>"+liste([
         "<strong>Was steht an?</strong> Reiter <em>Fällig</em>: „Heute für dich“ (Kalender), offene Störungen, anstehende Wartungen. Reiter <em>Kalender</em>: Monat, Woche, Tag oder Liste (die Woche am Handy wie am iPhone: 3 Tage nebeneinander, wählbar 7 Tage oder Liste) – in Tag und Woche in eine freie Zeit tippen legt dort einen Termin an, einen Termin ziehen verschiebt ihn (am Handy kurz halten, dann ziehen), wischen wechselt den Tag; „nur Störungen“ zeigt Einsätze und Lidl-Zieltermine; eine geschickte Tour steht mit Uhrzeiten im Kalender des Technikers, und die Tour kann Termine, Aufgaben und Projekte mit einplanen; „🔍 Planung prüfen“ (Person wählen) zeigt eine kürzere Reihenfolge, zu knappe Fahrten und übersehene Wartungen/Störungen am Markt und in der Nähe; Fahrzeiten zwischen den Einsätzen stehen dabei.",
         "<strong>Protokoll beginnen:</strong> Wartungszeile oder Störung antippen – oder Reiter <em>Protokoll</em> → „Schritt für Schritt ausfüllen“.",
-        "<strong>Vor Ort klären:</strong> steht oben im Protokoll (Schritt für Schritt: bei den Anlagen) eine Frage des Büros (etwa „Welche Hausnummer?“, „Dieselbe Anlage?“), bitte kurz antworten – sie erscheint nur, wenn es an diesem Markt eine gibt.",
+        "<strong>Vor Ort klären:</strong> steht oben im Protokoll (Schritt für Schritt: bei den Anlagen) eine Frage des Büros (etwa „Welche Hausnummer?“, „Dieselbe Anlage?“), bitte kurz antworten – sie erscheint nur, wenn es an diesem Markt eine gibt. Ganz oben steht dann „❓ 1 Frage vor Ort“: antippen springt zur Frage.",
         "<strong>Markt und Anlagen:</strong> gewartete (bzw. betroffene) Anlagen anhaken. Fehlt eine, „+ Anlage fehlt“ – erst prüfen, ob sie nicht doch in der Liste steht.",
         "<strong>Je Anlage:</strong> Anlagendaten ergänzen (Typenschild und Prüfbuch des Außengeräts, Kältemittel und Füllmenge aus dem Prüfbuch; Fotos kann die KI lesen), "+
           "Inbetriebnahme und Termine bestätigen, „Heute gewartet als“ wählen – bei einer neuen Anlage mit zwei Terminen bestimmt das, welcher Termin heute erledigt ist.",
@@ -23864,7 +24017,7 @@ function handbuchKarte(z){
         "<strong>Abschluss:</strong> Datum, Uhrzeit, wer noch dabei war, Unterschrift. Das Protokoll läuft immer unter deinem Namen – du bist verantwortlich.",
         "<strong>Übersicht prüfen und speichern.</strong> Oben steht „✓ gespeichert“. Nach einer Störung bietet die App fällige Wartungen am selben Markt gleich mit an.",
         "<strong>Reisekosten und Kilometergeld:</strong> Reiter <em>Stunden</em> – selbst bezahlte Belege mit Foto und Kilometer mit dem Privatauto; am Monatsende „Monat abgeben“, der Chef zahlt aus und hakt „ausbezahlt“ ab.",
-        "<strong>Werkzeug und Material:</strong> Reiter <em>Werkzeug</em> – was mitzunehmen, abzuholen oder zu bestellen ist (im Termin, in der Störung, im Projekt, am Markt eintragen; „Heute für dich“ und „Planung prüfen“ erinnern) und wo jedes Werkzeug gerade ist („Ich hab’s“, „In mein Auto“, „Ins Lager“, Reparatur, Prüfung). Lernt mit: Vorschläge je Projekttyp und je Markt, Material aus dem Angebot, neues Werkzeug kommt auf Nachfrage in die Liste, nach dem Einsatz „Wo ist das Werkzeug jetzt?“.",
+        "<strong>Werkzeug und Material:</strong> Reiter <em>Werkzeug</em> – was mitzunehmen, abzuholen oder zu bestellen ist (im Termin, in der Störung, im Projekt, am Markt eintragen; „Heute für dich“ und „Planung prüfen“ erinnern) und wo jedes Werkzeug gerade ist („Ich hab’s“, „In mein Auto“, „Ins Lager“, Reparatur, Prüfung; als Ort ist jedes Fahrzeug wählbar, von fremden nur mit Kennzeichen, Bezeichnung und Fahrer). Lernt mit: Vorschläge je Projekttyp und je Markt, Material aus dem Angebot, neues Werkzeug kommt auf Nachfrage in die Liste, nach dem Einsatz „Wo ist das Werkzeug jetzt?“.",
         "<strong>Stunden:</strong> ein-, um- und ausstempeln (Reiter <em>Stunden</em>; „📅 Heute geplant“ füllt Bereich und Markt, „⇄ Dorthin umstempeln“ mit einem Tippen) – die Stempeluhr hat Vorrang; nach dem Ausstempeln gleicht die App die Zeit mit dem Kalender ab. Ohne Stempeluhr: geplante Termine mit „erfassen“ übernehmen. "+
         "Urlaub (genehmigt), Krankenstand, Schule und Zeitausgleich im Kalender stehen von selbst in den Stunden; je Tag und Woche steht der Abstand zum Soll (nur zur Info – Überstunden zählen je Monat)."])+
       "<p><strong>Büro / Admin – Aufträge, Planung, Datenpflege</strong></p>"+liste([
@@ -23915,7 +24068,7 @@ function handbuchKarte(z){
           "<strong>HJW ab 30 kg</strong> Kältemittel, sonst <strong>HJI</strong>. Ein eingetragener Soll-Monat bleibt, wenn er höchstens 3 Monate abweicht – der Halbjahrestermin zusätzlich nur, wenn er 5–7 Monate von der JW entfernt liegt (sonst JW + 6).",
         "<strong>Nur Jahreswartung:</strong> Sehr kleine Anlagen brauchen nur einen Besuch im Jahr. Ist die Füllmenge nicht bekannt, bietet die Frage "+
           "„Hat die Anlage 30 kg Kältemittel oder mehr?“ dafür die Wahl <strong>„Kein Halbjahrestermin – nur Jahreswartung“</strong> (solange die Anlage "+
-          "keinen zweiten Termin hat). Dann wird kein Halbjahrestermin angelegt, und die Anlage gilt nicht als lückenhaft. Die Entscheidung steht mit Name im "+
+          "keinen zweiten Termin hat). Dann wird kein Halbjahrestermin angelegt – auch nicht automatisch, wenn eine andere Anlage am Markt einen hat –, und die Anlage gilt nicht als lückenhaft. Die Entscheidung steht mit Name im "+
           "Änderungsverlauf und lässt sich in der Verwaltung bei der Anlage wieder zurücknehmen (Haken „Kein Halbjahrestermin“). Ab 30 kg bleibt die Halbjahreswartung Pflicht.",
         "<strong>Termine vor Ort prüfen:</strong> Beim Protokoll („Schritt für Schritt ausfüllen“, Wartung und Störung) fragt die App je Anlage "+
           "„Stimmen Inbetriebnahme und Termine?“ – bei den angehakten Anlagen bei jedem Besuch, solange Inbetriebnahme, Soll-Monat oder Kürzel fehlen "+
@@ -24012,7 +24165,7 @@ function handbuchKarte(z){
           "filtert mit „noch nicht abgerechnet“. Techniker und Kunde sehen davon nichts."]))+
 
     abschnitt("6 · Rollen",
-      liste(["<strong>Inhaber</strong> – alles, dazu Rollenübersicht, KI-Kosten, Änderungswünsche freigeben und <strong>nur der Inhaber</strong>: Angebote, Rechnungen, Preise, Positionskatalog, Stunden aller, Urlaub genehmigen, Vermerke.",
+      liste(["<strong>Inhaber</strong> – alles, dazu Rollenübersicht (mit „in Personenlisten ausblenden“ für Testkonten), KI-Kosten, Änderungswünsche freigeben und <strong>nur der Inhaber</strong>: Angebote, Rechnungen, Preise, Positionskatalog, Stunden aller, Urlaub genehmigen, Vermerke.",
         "<strong>Admin</strong> – Verwaltung und Datenbasis, Märkte und Anlagen ändern, Nachbessern, Planung – keine Preise, Angebote oder Rechnungen.",
         "<strong>Techniker</strong> – Protokolle, Störungen, Anlagendaten ergänzen und Termine prüfen (Soll-Monat, Kürzel – neue "+
           "Termine legt das Büro an), Wünsche schicken, Claude fragen.",
@@ -24139,7 +24292,9 @@ function handbuchKarte(z){
     abschnitt("14 · Bedienung am Handy und am PC",
       liste(["<strong>Reiter</strong> nach dem Arbeitsablauf: Fällig, Kalender, Karte, Protokoll, Anlagen, Stunden, Fahrzeuge – dann die Büro-Reiter.",
         "<strong>Fahrzeuge:</strong> je Fahrzeug km-Stand, Kilometer je Monat, Pickerl, Service, Reparaturen und Schäden. Techniker sehen ihr Fahrzeug und tragen km-Stand und Schäden ein; "+
-          "das Büro legt Fahrzeuge an und liest die GPS-Berichte (X-GPS, CSV/Excel) ein – nur Kilometer je Tag, keine Orte. Pickerl und Service stehen 30 Tage vorher im To-do; Beträge sieht nur der Inhaber.",
+          "das Büro legt Fahrzeuge an und kann GPS-Berichte (X-GPS, CSV/Excel) einlesen – nur Kilometer je Tag, keine Orte. Je Monat steht „gefahren laut km-Stand“ neben "+
+          "„geplante Einsatzfahrten ≈ … km“: eine Schätzung aus dem Kalender der Fahrer (Startpunkt → Einsätze → zurück) – Umwege und Fahrten am Einsatzort sind nicht enthalten. "+
+          "Pickerl und Service stehen 30 Tage vorher im To-do; Beträge sieht nur der Inhaber.",
         "<strong>Einklappen:</strong> jede Karte lässt sich über ihre Überschrift zu- und aufklappen; zugeklappt zeigt sie, wie viel drin ist. Am Handy beginnen lange Abschnitte zugeklappt. Die Wahl merkt sich jedes Gerät.",
         "<strong>Großer Bildschirm:</strong> zwei Spalten – links die Hauptsache, rechts das Begleitende; Projekt und Markt öffnen sich groß.",
         "<strong>Navigationsleiste:</strong> auf langen Seiten und in großen Fenstern (Protokoll, Fällig, Projekt …) steht rechts eine schmale Leiste – ein Punkt je Abschnitt, der aktuelle ist hervorgehoben. Antippen springt hin, „☰“ zeigt alle Abschnitte mit Namen, ⊟/⊞ klappt alles zu bzw. auf.",
@@ -24391,6 +24546,11 @@ var RUNDGAENGE={
       text:"Protokolle laufen immer unter dem Namen dessen, der angemeldet ist. Stimmen Techniker und Name im Abschluss nicht überein, gibt es kein PDF. "+
       "In einem Protokoll kannst du einen <strong>Vermerk</strong> eintragen – für alle sichtbar, das Protokoll bleibt unverändert. „€ abgerechnet“ setzt du beim Protokoll."+
       RG_HG("Jede Korrektur legt die alte Fassung ab (mit Grund und Name) und ersetzt das Archiv-PDF – das alte bleibt nachvollziehbar.")},
+    {reiter:"verwaltung", ziel:function(){ return rgKarte(/^Inhaber$/); }, wenn:function(){ return istInhaber() && reiterErlaubt("verwaltung") && Store.modus==="supabase"; },
+      vorher:function(){ rgVerwaltung("inhaber"); }, titel:"Konten und Rollen",
+      text:"Wer welche Rolle hat. Je Konto der Haken <strong>„in Personenlisten ausblenden“</strong> – etwa für Testkonten: sie stehen dann in keiner Auswahl mehr "+
+        "(Kalender „Wer?“, Tour, „Ausgefüllt für“, Werkzeug „bei wem“, Fahrer, Auslastung, Nachricht an …)."+
+      RG_HG("Das Konto bleibt bestehen und kann sich weiter anmelden; wo es schon eingetragen ist, bleibt es stehen. Die Einstellung gilt für alle Geräte, ändern kann sie nur der Inhaber.")},
     {reiter:"verwaltung", ziel:function(){ return rgKarte(/^Sicherung/); }, wenn:function(){ return istInhaber() && reiterErlaubt("verwaltung") && Store.modus==="supabase"; },
       vorher:function(){ rgVerwaltung("inhaber"); }, titel:"Sicherung",
       text:"Stand der Sicherung und Knöpfe: jetzt sichern, herunterladen, Dateien sichern."+
@@ -24541,7 +24701,8 @@ Object.assign(RUNDGAENGE, {
         "<strong>„In der Nähe, kleiner Umweg“</strong> – offene Störungen oder überfällige Wartungen höchstens 20 Minuten Umweg entfernt."])+
       RG_HG("„Reihenfolge übernehmen“ setzt die Uhrzeiten des Tages neu: der früheste Beginn bleibt, jede Dauer bleibt, dazwischen die Fahrzeit – die Personen bekommen eine Nachricht.")},
     {reiter:"kalender", ziel:function(){ return rgEl("#kal_karte [data-inhalt]"); }, titel:"Startpunkt und Fahrzeiten",
-      text:"Bei gewählter Person steht je Tag „🚗 Start … losfahren hh:mm“. Fehlt der Startpunkt: „⚠ Startpunkt unbekannt – festlegen“."+
+      text:"Bei gewählter Person steht je Tag „🚗 Start … losfahren hh:mm“. Fehlt der Startpunkt: „⚠ Startpunkt unbekannt – festlegen“. "+
+        "Den Startpunkt setzt jeder nur für sich selbst; Inhaber und Admins auch für andere (fürs Planen)."+
       RG_HG(["Der Startpunkt wird so bestimmt: für den Tag festgelegt → Übernachtung (letzter Einsatz am Vortag mehr als 90 min von daheim) → fester Startpunkt → sonst Nachfrage.",
         "Gespeichert wird nur ein Ort bzw. die PLZ oder der nächste Markt – nie eine genaue Wohnadresse."])},
     {reiter:"kalender", ziel:function(){ return rgReiter("kalender"); }, titel:"Urlaub und Privates",
@@ -24577,7 +24738,7 @@ Object.assign(RUNDGAENGE, {
       RG_ACHTUNG(["Wechsel Wartung/Störung oder „Formular leeren“ verwirft die Eingaben (nach Rückfrage)."])},
     {reiter:"protokoll", ziel:function(){ return rgEl("#f_standort"); }, titel:"Einsatz: Markt und Anlagen",
       text:RG_LISTE(["<strong>Datum</strong> (heute) und <strong>Markt</strong> sind Pflicht; „Märkte in der Nähe“ hilft.",
-        "Unter dem Markt: „Markt ansehen“, offene Störungen am Markt („Diese Störung übernehmen“ bzw. „Stattdessen Störungsprotokoll“) und – nur wenn eine offen ist – „Vor Ort klären“.",
+        "Unter dem Markt: „Markt ansehen“, offene Störungen am Markt („Diese Störung übernehmen“ bzw. „Stattdessen Störungsprotokoll“) und – nur wenn eine offen ist – „Vor Ort klären“; dann steht ganz oben zusätzlich „❓ 1 Frage vor Ort“ – antippen springt hin.",
         "<strong>Anlagen anhaken</strong>: vorangehakt sind fällige/überfällige (Wartung), die einzige Anlage oder die, aus der du kommst.",
         "<strong>„zählt als“</strong>: bei mehreren Terminen wählt die App den fälligen; ist er versäumt und der nächste höchstens 3 Monate entfernt, den nächsten.",
         "<strong>Wartungsart</strong>: nur „planmäßig“ oder „Prüfung“ erledigt einen Termin."])+
@@ -24693,7 +24854,7 @@ Object.assign(RUNDGAENGE, {
       RG_HG("Kandidaten sind alle Märkte der Auswahl oben (Kunde, Region, Suche) mit Lage, nicht pausiert und mit passender Arbeit – die Zahl steht neben dem Knopf.")},
     {reiter:"karte", ziel:function(){ return rgEl("#t_start"); }, titel:"Startpunkt und Tageslänge",
       text:"Startpunkt: der der Person, aktueller Standort (Vorgabe), Betrieb St. Johann oder ein Markt. „Arbeitszeit je Tag“ 4–14 h (Vorgabe 8)."+
-      RG_HG(["Der feste Startpunkt einer Person wird im Kalender festgelegt (bei gewählter Person: „Startpunkt … festlegen“).",
+      RG_HG(["Der feste Startpunkt einer Person wird im Kalender festgelegt (bei gewählter Person: „Startpunkt … festlegen“) – jeder seinen eigenen, Inhaber und Admins auch den anderer.",
         "Ohne Freigabe der Position startet die Tour beim Betrieb; eine Position älter als 5 Minuten wird neu abgefragt."])},
     {reiter:"karte", ziel:function(){ return rgEl("#t_go"); }, titel:"Route vorschlagen",
       text:"„Route vorschlagen“ rechnet die Tour. Ergebnis: Kacheln (Stopps, Wartungen, km, Arbeitstage) und je Tag eine Tabelle mit Uhrzeiten ab 07:00, Navi, Protokoll, ✕ (herausnehmen); „+ Markt dazunehmen“; „Tag n in Google Maps“; „Tour drucken“."+
@@ -24763,9 +24924,11 @@ Object.assign(RUNDGAENGE, {
     {reiter:"fahrzeuge", ziel:function(){ return rgReiter("fahrzeuge"); }, wenn:function(){ return reiterErlaubt("fahrzeuge"); }, titel:"Fahrzeuge",
       text:RG_LISTE(["<strong>Techniker</strong> sehen ihr Fahrzeug: „km-Stand eintragen“, „Schaden melden“ (eigene Einträge 24 h löschbar).",
         "<strong>Büro</strong>: „+ Fahrzeug“, Bearbeiten (Fahrer, Pickerl, Service am/bei km, GPS-Kennung), „Service / Reparatur …“, Schaden „behoben“.",
-        "<strong>GPS-Daten einlesen</strong> (X-GPS, CSV/Excel): Vorschau je Fahrzeug, „Kilometer übernehmen“."])+
+        "<strong>GPS-Daten einlesen</strong> (X-GPS, CSV/Excel): Vorschau je Fahrzeug, „Kilometer übernehmen“.",
+        "Je Monat: <strong>gefahren laut km-Stand</strong> neben <strong>„geplante Einsatzfahrten ≈ … km“</strong> – eine Schätzung, Umwege und Fahrten am Einsatzort sind nicht enthalten."])+
       RG_HG(["Pickerl und Service werden 30 Tage vorher gelb, überfällig rot (Service nach km ab 1.000 km Rest) und stehen fürs Büro im To-do (🚐).",
-        "GPS: <strong>nur Kilometer je Tag</strong> – keine Orte, Uhrzeiten oder Fahrten; dieselbe Datei zweimal zählt nicht doppelt.",
+        "GPS: <strong>nur Kilometer je Tag</strong> – keine Orte, Uhrzeiten oder Fahrten; dieselbe Datei zweimal zählt nicht doppelt. Eine direkte GPS-Anbindung gibt es nicht.",
+        "Die Schätzung rechnet je Fahrer und Tag aus dem Kalender: Startpunkt → Einsätze → zurück (bei Übernachtung am letzten Markt keine Heimfahrt); Straßen-km, soweit Kalender oder Tour sie schon kennen, sonst Luftlinie mit Umweg-Zuschlag. Nichts wird dafür gespeichert.",
         "Beträge (Kosten) sieht und speichert nur der Inhaber."])}
   ]},
   werkzeug:{thema:true, titel:"Werkzeug und Material", fuer:function(){ return reiterErlaubt("werkzeug"); }, schritte:[
@@ -24776,11 +24939,12 @@ Object.assign(RUNDGAENGE, {
         "☐ antippen hakt ab; Zeile antippen öffnet: Was, Menge, Werkzeug aus der Liste, <strong>wie es mitkommt</strong> (mitnehmen, abholen bei …, bestellen bei …), gebraucht am, wer sich kümmert, Stand (offen, bestellt, abholbereit, erledigt)."])+
       RG_HG(["Datum und Person kommen vom Termin (mehrtägig: bis zum letzten Tag), vom Störungseinsatz oder vom nächsten Projekt- bzw. Markttermin – eintragen muss man sie nur, wenn es anders ist.",
         "Liegt das gebrauchte Werkzeug nicht bei der Person (anderes Auto, Lager, Reparatur, defekt), steht ein ⚠ dabei.",
-        "Was an einem privaten Termin hängt, sehen die anderen nicht; wird ein Termin nachträglich privat, fragt die App, ob es mitgelöscht wird."])},
+        "Was an einem privaten Termin hängt, sehen die anderen nicht (nur der Inhaber); wird ein Termin nachträglich privat, fragt die App, ob es mitgelöscht wird."])},
     {reiter:"werkzeug", ziel:function(){ return rgKarte(/^Werkzeug und Geräte/); }, titel:"Wo ist das Werkzeug?",
       text:RG_LISTE(["Suchen und filtern: bei mir, Lager, Fahrzeuge, bei Personen, Baustelle/Markt, Reparatur, Prüfung/defekt.",
         "<strong>„Ich hab’s“</strong>, <strong>„In mein Auto“</strong>, <strong>„Ins Lager“</strong> – ein Griff, wenn man es nimmt oder zurücklegt.",
         "Antippen öffnet: Standort genau (Fahrzeug, Person, Projekt/Markt, Reparatur bei wem und zurück am), Zustand, Prüfung/Kalibrierung fällig, Verlauf.",
+        "Als Fahrzeug ist <strong>jedes</strong> Fahrzeug wählbar – auch das eines Kollegen; von fremden Fahrzeugen siehst du dabei nur Kennzeichen, Bezeichnung und Fahrer.",
         "„im Bestand“ abwählen fragt nach; Ausgeschiedenes steht unter „Ausgeschieden“ – von dort öffnen und den Haken wieder setzen holt es zurück."])+
       RG_HG(["Jeder Standortwechsel steht mit Zeit und Name im Verlauf – den schreibt die Datenbank, nicht die App.",
         "Reparatur bzw. Verliehenes überfällig („zurück am“ vorbei), Prüfung fällig, defekt, verloren und „noch zu bestellen“ stehen fürs Büro im Kalender-To-do (🧰, 🛒). „Ich hab’s“ bei verlorenem Werkzeug fragt „Wieder gefunden?“.",
@@ -25993,7 +26157,7 @@ function schattenClient(echt){
     from:function(t){ return new Q(t); },
     /* nur lesende Funktionen gehen durch (vorschauSchutz lässt genau diese zu) */
     rpc:function(name, args){
-      if(/^(team_liste|bereiche_eigene|einsatz_dauern)$/.test(name)) return echt.rpc(name, args);
+      if(/^(team_liste|bereiche_eigene|einsatz_dauern|fahrzeuge_auswahl)$/.test(name)) return echt.rpc(name, args);
       return Promise.resolve({data:null, error:{message:"function "+name+": in der Spielwiese nicht verfügbar"}});
     },
     functions:{invoke:function(){ return Promise.resolve({data:null, error:{message:"In der Spielwiese keine KI und keine Server-Funktionen."}}); }},
@@ -26019,8 +26183,8 @@ function vorschauSchutz(supa){
     /* nur POST und nur im Pfad – nicht irgendwo in der Abfrage (?x=/storage/…) */
     var pfad=""; try{ pfad=new URL(String(u||""), W.location.href).pathname; }catch(e){}
     if(m==="POST" && /\/storage\/v1\/object\/sign\//.test(pfad)) return false;
-    /* reine Lese-Funktionen (Teamliste, eigene Tätigkeitsbereiche) */
-    if(m==="POST" && /\/rest\/v1\/rpc\/(team_liste|bereiche_eigene|einsatz_dauern)$/.test(pfad)) return false;
+    /* reine Lese-Funktionen (Teamliste, eigene Tätigkeitsbereiche, Fahrzeug-Auswahl fürs Werkzeug) */
+    if(m==="POST" && /\/rest\/v1\/rpc\/(team_liste|bereiche_eigene|einsatz_dauern|fahrzeuge_auswahl)$/.test(pfad)) return false;
     return m!=="GET" && m!=="HEAD" && zuSupabase(u); };
   var f=W.fetch;
   W.fetch=function(u, o){
@@ -29629,6 +29793,13 @@ function planZeit(e){ return e.beginn ? e.beginn+(e.ende?"–"+e.ende:"") : "gan
    Zwischen zwei Einsätzen einer Person an verschiedenen Orten: wie lange dauert die Fahrt, reicht die
    Zeit dazwischen? Sofort geschätzt (Luftlinie × Umweg), dann über das Straßenrouting genau (FAHR_CACHE). */
 var FAHR_CACHE={}, fahrLaedt={};
+/* Straßen-km derselben Abfragen (Kalender und Tour) – für die km-Schätzung der Fahrzeuge (fzEinsatzKm); nur im Speicher */
+var FAHR_KM={};
+function fahrKmMerken(punkte, m){
+  if(!m || !m.distanz) return;
+  punkte.forEach(function(a,i){ punkte.forEach(function(b,j){ if(i!==j && a && b && a.id && b.id && m.distanz[i] && m.distanz[i][j]!=null) FAHR_KM[a.id+">"+b.id]=m.distanz[i][j]/1000; }); });
+}
+function fahrKmZw(a,b){ if(!a || !b || a.id===b.id) return 0; var k=FAHR_KM[a.id+">"+b.id]; return k!=null ? k : fahrKm(a,b); }
 function fahrtSchaetzMin(a,b){ return Math.max(5, Math.round(fahrH(a,b)*60/5)*5); }
 function einsatzOrtZeit(x){
   var sid=x.e ? x.e.standort_id : x.o ? x.o.standortId : null, s=sid && byId[sid];
@@ -29664,6 +29835,7 @@ function fahrtenGenau(orte, fertig){
   strassenMatrix(punkte).then(function(m){
     if(!m || !m.dauer) return;
     punkte.forEach(function(a,i){ punkte.forEach(function(b,j){ if(i!==j && m.dauer[i] && m.dauer[i][j]!=null) FAHR_CACHE[a.id+">"+b.id]=Math.max(1, Math.round(m.dauer[i][j]/60)); }); });
+    fahrKmMerken(punkte, m);
     if(fertig) fertig();
   }, function(){});
 }
@@ -30223,11 +30395,13 @@ function startpunktSpeichern(uid, wert){
     if(r.error){ toast("Startpunkt nicht gespeichert: "+r.error.message); return zurueck(); } return true; }, function(){ toast("Startpunkt nicht gespeichert – keine Verbindung."); return zurueck(); });
 }
 function kontoVon(wahl){ return wahl==="ich" ? meineKennung() : wahl; }
-function startpunktVortag(uid, tag){
+/* m (freiwillig): schon geholte Kalendereinträge dieser Person je Tag (kalenderEintraege über den Zeitraum) – spart die
+   Abfrage je Tag, etwa bei der km-Schätzung eines ganzen Monats (fzEinsatzKm) */
+function startpunktVortag(uid, tag, m){
   var sp=STARTPUNKTE[uid]||{};
   for(var i=1;i<=4;i++){
     var t=plusTage(tag,-i);
-    var l=(kalenderEintraege(t,t,uid,"")[t]||[]).map(function(x){
+    var l=((m||kalenderEintraege(t,t,uid,""))[t]||[]).map(function(x){
       var sid=x.e ? x.e.standort_id : x.o ? x.o.standortId : x.pr ? x.pr.standortId : null;
       return {s:sid && byId[sid], z:zeitMin(x.zeit)||0}; }).filter(function(o){ return o.s && o.s.lat!=null; });
     if(!l.length) continue;
@@ -30239,16 +30413,21 @@ function startpunktVortag(uid, tag){
   }
   return null;
 }
-function startpunktFuer(wahl, tag){
+function startpunktFuer(wahl, tag, m){
   var uid=kontoVon(wahl), sp=STARTPUNKTE[uid]||{}, fest=(sp.tage||{})[tag];
   if(fest) return {ort:fest, quelle:"für diesen Tag festgelegt"};
-  var v=startpunktVortag(uid, tag); if(v) return v;
+  var v=startpunktVortag(uid, tag, m); if(v) return v;
   if(sp.heimat) return {ort:sp.heimat, quelle:"fester Startpunkt"};
   if(sp.betrieb) return {ort:BETRIEB, quelle:"fester Startpunkt (Betrieb)"};
   return {ort:null, quelle:"unbekannt"};
 }
+/* Startpunkt setzt jeder nur für sich selbst; Inhaber und Admins für alle, fürs Planen (Inhaber 05.10.2026 –
+   die Datenbank sperrt es zusätzlich, Sperrregel „startpunkt nur eigener“); die Präsentation speichert ohnehin nichts */
+function startpunktDarf(uid){ return uid===meineKennung() || tourBuero() || demo(); }
 function startpunktWaehlen(wahl, tag, fertig){
-  var uid=kontoVon(wahl), sp=JSON.parse(JSON.stringify(STARTPUNKTE[uid]||{})), vort=startpunktVortag(uid, tag);
+  var uid=kontoVon(wahl);
+  if(!startpunktDarf(uid)){ toast("Den Startpunkt legt jede Person selbst fest – für andere nur das Büro."); return; }
+  var sp=JSON.parse(JSON.stringify(STARTPUNKTE[uid]||{})), vort=startpunktVortag(uid, tag);
   var v=ansichtOeffnen("Startpunkt festlegen");
   v.schritt.textContent=(planPersonName(uid)||meinName())+" · "+dfmt(tag);
   var box=el('<div class="stack" style="gap:8px;max-width:560px">'+
@@ -30297,12 +30476,11 @@ function startpunktWaehlen(wahl, tag, fertig){
 function startFahrtZeile(wahl, tag, l){
   var sp=startpunktFuer(wahl, tag), erste=l.map(einsatzOrtZeit).filter(Boolean).sort(function(a,b){ return a.b-b.b; })[0];
   if(!erste) return null;
-  if(!sp.ort){ var z=el('<div style="font-size:12px;color:var(--warn)">⚠ Startpunkt unbekannt – <a href="#">festlegen</a></div>');
-    z.querySelector("a").onclick=function(ev){ ev.preventDefault(); startpunktWaehlen(wahl, tag, function(){ render(); }); }; return z; }
+  /* „festlegen“/„ändern“ nur, wer den Startpunkt dieser Person setzen darf (startpunktDarf) */
+  var darf=startpunktDarf(kontoVon(wahl)), los=function(z){ var a=z.querySelector("a"); if(a) a.onclick=function(ev){ ev.preventDefault(); startpunktWaehlen(wahl, tag, function(){ render(); }); }; return z; };
+  if(!sp.ort) return los(el('<div style="font-size:12px;color:var(--warn)">⚠ Startpunkt unbekannt – '+(darf?'<a href="#">festlegen</a>':"legt die Person selbst fest (oder das Büro)")+"</div>"));
   var min=fahrtMinZw(sp.ort, erste.s), ab=erste.b-min;
-  var z2=el('<div style="font-size:12px;color:'+(ab<5*60+30?"var(--crit)":"var(--ink-3)")+'">🚗 Start '+esc(sp.ort.name)+' <span class="muted">('+esc(sp.quelle)+')</span> → '+esc(stName(erste.s))+": ca. "+min+" min – losfahren "+kalHm(Math.max(0,ab))+' · <a href="#">ändern</a></div>');
-  z2.querySelector("a").onclick=function(ev){ ev.preventDefault(); startpunktWaehlen(wahl, tag, function(){ render(); }); };
-  return z2;
+  return los(el('<div style="font-size:12px;color:'+(ab<5*60+30?"var(--crit)":"var(--ink-3)")+'">🚗 Start '+esc(sp.ort.name)+' <span class="muted">('+esc(sp.quelle)+')</span> → '+esc(stName(erste.s))+": ca. "+min+" min – losfahren "+kalHm(Math.max(0,ab))+(darf?' · <a href="#">ändern</a>':"")+"</div>"));
 }
 /* ---- Planung prüfen (Büro 02.10.2026: „wenn sich jemand einen Tag oder eine Woche selber geplant hat,
    prüft die App die Effizienz der Tour und dass keine offene Störung oder Wartung übersehen wurde“) ----
@@ -30418,7 +30596,9 @@ function planungPruefenAnsicht(wahl, von, bis){
       if(!tg.start.ort){ gut=false; probleme++; sz=el('<div class="note warnbox" style="font-size:13px">⚠ <strong>Startpunkt unbekannt</strong> – erste Fahrt und Reihenfolge ohne Start gerechnet. <button class="btn sm" type="button">festlegen</button></div>'); }
       else { var ef=tg.ersteFahrt; sz=el('<div style="font-size:13px'+(ef && ef.ab<5*60+30?";color:var(--crit);font-weight:600":"")+'">🚗 Start: <strong>'+esc(tg.start.ort.name)+'</strong> <span class="muted">('+esc(tg.start.quelle)+")</span>"+
         (ef?" → "+esc(stName(ef.nach))+": "+(FAHR_CACHE[(tg.start.ort.id||"")+">"+ef.nach.id]!=null?"":"ca. ")+ef.min+" min, losfahren "+kalHm(Math.max(0,ef.ab)):"")+' <button class="btn ghost sm" type="button">ändern</button></div>'); }
-      sz.querySelector("button").onclick=function(){ startpunktWaehlen(wahl, tg.tag, zeichne); };
+      /* den Startpunkt einer anderen Person setzt nur das Büro (startpunktDarf, Inhaber 05.10.2026) */
+      if(startpunktDarf(kontoVon(wahl))) sz.querySelector("button").onclick=function(){ startpunktWaehlen(wahl, tg.tag, zeichne); };
+      else sz.querySelector("button").remove();
       h.appendChild(sz);
       if(tg.reihenfolge){
         gut=false; probleme++;

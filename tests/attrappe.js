@@ -75,6 +75,9 @@
     var startpunkt=function(z){ return !!z && /^startpunkt:/.test(z.schluessel||""); };
     var startpunktOk=(art==="insert" && startpunkt(zeile)) || (art==="update" && startpunkt(alt) && (!zeile || !("schluessel" in zeile) || startpunkt(zeile)));
     if(tab==="einstellungen" && art!=="select" && rolle!=="inhaber" && !startpunktOk) return "einstellungen: nur Inhaber";
+    /* wie die Sperrregel „startpunkt nur eigener“ (Inhaber 05.10.2026): den eigenen setzt jeder, fremde nur Inhaber und Admins */
+    var spFremd=function(z){ return startpunkt(z) && z.schluessel!=="startpunkt:"+uid(); };
+    if(tab==="einstellungen" && (art==="insert"||art==="update") && !(rolle==="inhaber" || admin()) && (spFremd(zeile) || spFremd(alt))) return "einstellungen: Startpunkt nur der eigene";
     /* wie projekte-ablauf.sql: katalog.text not null check (length(trim(text)) between 1 and 4000) */
     if(tab==="katalog" && (art==="insert"||art==="update") && zeile && (art==="insert" || ("text" in zeile)) && !String(zeile.text==null?"":zeile.text).trim()) return "katalog: text verletzt check";
     /* wie werkzeug.sql: Werkzeug und Packlisten löscht nur das Büro, Bedarf wer ihn angelegt hat oder das Büro; den Verlauf schreibt nur der Server */
@@ -131,6 +134,16 @@
     }
     return null;
   }
+  /* wie die Sperrregel „bedarf privat nur eigene“ (Inhaber 05.10.2026): Material/Werkzeug an einem privaten Termin sieht
+     (und ändert) nur, wer den Termin angelegt hat oder dort eingetragen ist – auch nicht das Büro */
+  function bedarfPrivatFremd(r){
+    if(!r || !r.planung_id) return false;
+    /* der Inhaber sieht es (volle Kontrolle, bleibt in der Sicherung – Inhaber 05.10.2026); Admins nicht */
+    if(((DB.rollen.filter(function(x){ return x.user_id===uid(); })[0]||{}).rolle)==="inhaber") return false;
+    var p=DB.planung.filter(function(x){ return x.id===r.planung_id; })[0];
+    return !!(p && (p.privat || p.kategorie==="privat") && p.erstellt_von!==uid() && (p.wer||[]).indexOf(uid())<0);
+  }
+  function sichtbar(t){ return function(r){ return t!=="bedarf" || !bedarfPrivatFremd(r); }; }
   /* wie der Trigger planung_pruefen (planung.sql): privat nur „Abwesend“, Urlaub genehmigt nur der Inhaber */
   function planPruefen(r, alt){
     var rl=(DB.rollen.filter(function(x){ return x.user_id===uid(); })[0]||{}).rolle||"techniker";
@@ -234,7 +247,7 @@
     if(this.a==="select"){
       var sv=darf(this.t,"select",null,null); if(sv && /nur lesen/.test(sv)) return {data:[],error:null};
       if(this.t==="rollen") { /* wie die Regel: eigene Zeile, Admins alle */ }
-      erg=tab.filter(function(r){ return passt(r,self.f); });
+      erg=tab.filter(function(r){ return passt(r,self.f); }).filter(sichtbar(this.t));
       if(this.t==="admins") erg=erg.filter(function(r){ return r.user_id===uid(); });
       if(this.t==="protokolle") erg=erg.filter(function(r){ return kundeSieht(r.standort_id); });   /* wie „angemeldete lesen alle protokolle“ */
       if(this.t==="planung_privat") erg=erg.filter(function(r){ return r.user_id===uid(); });   /* wie die Regel: nur die eigenen */
@@ -279,7 +292,8 @@
       sichern(); return {data:aus(neu),error:null};
     }
     if(this.a==="upsert"){
-      var sp=this.o.onConflict||"id", raus=[];
+      /* ohne onConflict gilt wie in Postgres der Primärschlüssel – bei einstellungen „schluessel“ */
+      var sp=this.o.onConflict||(self.t==="einstellungen"?"schluessel":"id"), raus=[];
       var dpU=null; [].concat(this.d).forEach(function(d){ dpU=dpU||stoerNrDoppelt(self.t, d); });
       if(dpU) return {data:null,error:dpU};
       [].concat(this.d).forEach(function(d){
@@ -298,7 +312,7 @@
       sichern(); return {data:aus(raus),error:null};
     }
     if(this.a==="update"){
-      var b=tab.filter(function(r){ return passt(r,self.f); });
+      var b=tab.filter(function(r){ return passt(r,self.f); }).filter(sichtbar(self.t));   /* wie Postgres: was man nicht lesen darf, trifft kein update mit Bedingung */
       b.forEach(function(r){ v=v||darf(self.t,"update",self.d,r)||bisVorDatum(Object.assign({}, r, self.d)); });
       /* Prüfregeln vor dem Ändern – scheitert eine Zeile, bleibt alles, wie es war */
       if(!v && self.t==="auslagen") b.forEach(function(r){ var n=Object.assign({},r,self.d); if(n.km!=null) n.km=kmSpalte(n.km);
@@ -324,10 +338,10 @@
       sichern(); return {data:aus(erg),error:null};
     }
     if(this.a==="delete"){
-      var w=tab.filter(function(r){ return passt(r,self.f); });
+      var sicht=sichtbar(self.t), w=tab.filter(function(r){ return passt(r,self.f) && sicht(r); });
       w.forEach(function(r){ v=v||darf(self.t,"delete",null,r); });
       if(v){ window.__abgelehnt.push(v); return {data:null,error:{message:v}}; }
-      for(var i=tab.length-1;i>=0;i--) if(passt(tab[i],self.f)){ erg.push(tab[i]); tab.splice(i,1); }
+      for(var i=tab.length-1;i>=0;i--) if(passt(tab[i],self.f) && sicht(tab[i])){ erg.push(tab[i]); tab.splice(i,1); }
       if(self.t==="planung") erg.forEach(function(r){ stundenSync(r.id); });
       /* Fremdschlüssel wie in werkzeug.sql: Termin bzw. Werkzeug weg → Bedarf bleibt ohne Verknüpfung (on delete set null), Verlauf geht mit */
       var wegIds=erg.map(function(r){ return r.id; });
@@ -430,6 +444,12 @@
         for(var wi=DB.arbeitszeiten.length-1; wi>=0; wi--) if(weg.indexOf(DB.arbeitszeiten[wi].id)>=0) DB.arbeitszeiten.splice(wi,1); sichern();
         return Promise.resolve({data:{eintraege:JSON.parse(JSON.stringify(erg)), ersetzt:weg}, error:null});
       }
+      /* wie public.fahrzeuge_auswahl() (Inhaber 05.10.2026): alle aktiven Fahrzeuge, NUR Kennung, Kennzeichen, Bezeichnung,
+         Fahrernamen – für alle, die mitarbeiten (Kunde und Präsentation bekommen nichts); die Leseregel der Fahrzeuge bleibt */
+      if(name==="fahrzeuge_auswahl"){ var rlFa=(DB.rollen.filter(function(r){ return r.user_id===uid(); })[0]||{}).rolle;
+        if(!sitzung || rlFa==="kunde" || rlFa==="praesentation") return Promise.resolve({data:[], error:null});
+        return Promise.resolve({data:DB.fahrzeuge.filter(function(f){ return f.aktiv!==false; }).sort(function(a,b){ return String(a.kennzeichen).localeCompare(String(b.kennzeichen)); })
+          .map(function(f){ return {id:f.id, kennzeichen:f.kennzeichen, bezeichnung:f.bezeichnung||null, fahrer_namen:(f.fahrer_namen||[]).slice()}; }), error:null}); }
       if(name!=="stempeln") return Promise.resolve({data:null,error:null});
       /* wie public.stempeln() (stempeluhr-2.sql): Zeit vom „Server“, Reihenfolge prüfen,
          Umstempeln, beim Ausstempeln je Abschnitt ein Eintrag, Einträge von Hand ersetzen */

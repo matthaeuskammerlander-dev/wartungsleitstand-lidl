@@ -51,7 +51,9 @@ Kammerlander Umwelt- und Klimatechnik (UKT) – oft kurz, vom Handy, im Feld.
   Büro 01.10.2026): Hat eine Anlage am Markt einen Halbjahrestermin (HJI oder
   HJW), bekommen die weiteren Anlagen dort mit nur JW automatisch einen (ab
   30 kg HJW, sonst HJI; Gaswarnanlagen nicht), zählt ab heute, Monat wie die
-  andere Anlage (Feld `hjiMarkt`). Vor Ort bestätigt der Termine-Schritt den
+  andere Anlage (Feld `hjiMarkt`). Bewusst „nur Jahreswartung“ (`nurJW`) geht vor
+  (Inhaber 05.10.2026): kein automatischer Halbjahrestermin, `nurJW` bleibt, bis es
+  jemand in der Verwaltung zurücknimmt. Vor Ort bestätigt der Termine-Schritt den
   Monat: gleicher Besuch oder 6 Monate nach der JW. Ein Merker (typ „merker“)
   verhindert, dass ein zurückgenommener Termin wiederkommt.
 - Geführtes Protokoll im Einsatz (Büro 01.10.2026, nach dem ersten Härtetest):
@@ -359,6 +361,8 @@ Kammerlander Umwelt- und Klimatechnik (UKT) – oft kurz, vom Handy, im Feld.
   (Admins auch für den Inhaber), Techniker nur für sich selbst; für sich selbst nur Kalendereinträge, für andere
   zusätzlich Tour + Nachricht, die Person nimmt sie unter „Touren für dich“ an (`tourAnnehmen`). Störungen der Tour
   bekommen „Einsatz geplant am“ (ohne zweite Nachricht, `_ohneMeldung`), Wartungen stehen in Fällig als „📅 eingeplant“.
+  Startpunkt (`einstellungen` „startpunkt:<Konto>“): jeder setzt nur seinen eigenen, Inhaber und Admins für alle
+  (`startpunktDarf`; die Datenbank sperrt es mit einer Sperrregel – Inhaber 05.10.2026).
 - **Arbeitszeit lernt** (`arbeitStunden`, `stoerDauerMin`, Büro 02.10.2026): Tour und Kalender rechnen mit der
   tatsächlichen Zeit vor Ort – Lidl-Rapport (von–bis), Störung Ankunft–Fertig, Stunden mit Markt (`einsatz_dauern`,
   tools/einsatz-dauern.sql: nur Median je Markt, keine Personen); ohne Erfahrung `ARBEIT_H`.
@@ -371,7 +375,8 @@ Kammerlander Umwelt- und Klimatechnik (UKT) – oft kurz, vom Handy, im Feld.
 - **Vor Ort klären** (tools/vor-ort-fragen.sql, Büro 03.10.2026): Fragen je Markt (`vor_ort_fragen`); Büro (Inhaber, Admins) stellt
   und hakt ab, alle die schreiben dürfen antworten (Trigger: Nicht-Büro ändert nur die Antwort, Zeit setzt der Server).
   Im Protokoll nur sichtbar, wenn am Markt eine Frage offen ist (Fokus: Techniker nicht mit Neuem belasten) – im Formular
-  unter dem Markt, im geführten Dialog im Schritt „Gewartete/Betroffene Anlagen“.
+  unter dem Markt, im geführten Dialog im Schritt „Gewartete/Betroffene Anlagen“. Zusätzlich ganz oben im Kopf
+  „❓ n Frage(n) vor Ort“ (`P.vorOrtHinweis`, nur solange eine ohne Antwort offen ist; antippen springt hin – Inhaber 05.10.2026).
 - **Alte Liste prüfen** (`altlisteFunde`, Verwaltung › Datenpflege): Nebenfeld-Hinweise auf weitere Anlagen, Zellen ohne Datum,
   Inbetriebnahme nach erster Wartung, zwei Märkte an einer Adresse (nur ohne bzw. gleiche Filialnummer), Lidl ohne Filialnummer;
   „passt so“ bzw. „als Frage weitergegeben“ als Merker `altliste:<Schlüssel>`.
@@ -386,13 +391,16 @@ Kammerlander Umwelt- und Klimatechnik (UKT) – oft kurz, vom Handy, im Feld.
   Rechnung – Empfänger, IBAN, BIC, Betrag, „Rechnung <Nummer>“; nur mit gültiger IBAN (Prüfziffer, `ibanGueltig`) und Betrag ≥ 0,01 €; Umlaute umschrieben.
 - **Werkzeug und Material** (tools/werkzeug.sql, Reiter „Werkzeug“, Büro 04.10.2026: „dass man nichts vergisst“): `werkzeug`
   mit Standort (Lager, Fahrzeug, bei Person, Baustelle/Markt, Reparatur, sonst – `wzOrtText`), Zustand, Prüfung fällig, zurück am;
-  Standort-Verlauf schreibt nur der Trigger (`werkzeug_verlauf`). `bedarf` = was ein Einsatz braucht (mitnehmen / abholen bei … /
+  Standort-Verlauf schreibt nur der Trigger (`werkzeug_verlauf`). Als Ort ist jedes aktive Fahrzeug wählbar (Inhaber 05.10.2026
+  „Ja, nur Kennzeichen“): Datenbank-Funktion `fahrzeuge_auswahl()` liefert NUR Kennung, Kennzeichen, Bezeichnung, Fahrernamen
+  (`fzAuswahlLaden`, `wzFahrzeuge` – nur für die Werkzeug-Ortswahl); die Leseregel der Fahrzeuge bleibt (Techniker: nur das eigene). `bedarf` = was ein Einsatz braucht (mitnehmen / abholen bei … /
   bestellen bei …; offen → bestellt → abholbereit → erledigt), Bezug Projekt, Störung, Kalendertermin oder Markt (`bedarfZu`,
   `bedarfFuerEinsatz`; Datum/Person vom Termin bzw. Einsatz – mehrtägig bis zum letzten Tag –, sonst vom nächsten Projekt-/Markttermin:
   `bedarfWann`, `bedarfWer`, `bedarfEinsaetze`); `packlisten` (übernehmen ohne Doppel, je Bezug nacheinander).
   Erinnert in „Heute für dich“ (heute/morgen), „🔍 Planung prüfen“ (je Tag „Vorher besorgen“), Kalenderzeile 🧰, Büro-To-do
   (`wzToDo`). Kästen in Termin (gespeichert, nicht Abwesenheit/Privat), Störung, Projekt, Markt; Fahrzeug zeigt, was drin liegt.
-  Bedarf an einem privaten Termin sehen andere nie (`bedarfVerborgen`); nachträglich privat → Frage „mitlöschen?“.
+  Bedarf an einem privaten Termin sehen andere nie, nur der Inhaber (`bedarfVerborgen` mit `nurInhaber()`, als gelernter Vorschlag nie; die Datenbank sperrt es selbst – Sperrregel
+  „bedarf privat nur eigene“: nur wer den Termin angelegt hat oder dort eingetragen ist und der Inhaber, nicht Admins – Inhaber 05.10.2026); nachträglich privat → Frage „mitlöschen?“.
   Alle, die mitarbeiten, lesen und schreiben; Werkzeug/Packliste löschen nur Büro, Bedarf wer ihn angelegt hat oder Büro.
   Ausscheiden („im Bestand“ abwählen) fragt nach; Filter „Ausgeschieden“ (nur wenn es welches gibt) zum Wiederfinden/Zurückholen.
   Keine Preise, kein Lagerbestand. Kunde sieht nichts davon.
@@ -416,8 +424,11 @@ Kammerlander Umwelt- und Klimatechnik (UKT) – oft kurz, vom Handy, im Feld.
   Innsbruck (Innsbruck selbst Zone 1), Osttirol; sonst Zone 1. `einsatzPositionen` nimmt die Katalog-Position der Zone. Nur auf Anweisung ändern.
 - **Fahrzeuge** (tools/fahrzeuge.sql, Büro 02.10.2026): km, Pickerl, Service, Reparatur, Schaden; Techniker nur
   ihr Fahrzeug (km-Stand, Schaden), Beträge nur Inhaber (`fahrzeug_kosten`). GPS-Import (X-GPS, CSV/Excel):
-  NUR Kilometer je Tag – nie Orte, Uhrzeiten oder Fahrten speichern (Fahrtenbuch mit Orten erst nach
-  Zustimmung/Betriebsvereinbarung). Diese Grenze nie lockern.
+  NUR Kilometer je Tag – nie Orte, Uhrzeiten oder Fahrten speichern. Diese Grenze nie lockern. Keine direkte
+  X-GPS-Anbindung (Inhaber 05.10.2026: „zu kompliziert und unnötig“) – stattdessen je Fahrzeug und Monat
+  „gefahren laut km-Stand“ (`fzKmLautStand`) neben „geplante Einsatzfahrten ≈ X km“ (`fzEinsatzKm`: je Fahrer und Tag
+  Startpunkt → Einsätze laut Kalender → zurück, Übernachtung wie beim Startpunkt; Straßen-km aus `FAHR_KM` von Kalender/Tour,
+  sonst Luftlinie × `UMWEG`; keine eigene Netzabfrage, nichts gespeichert). Sichtbar wie die km im Reiter Fahrzeuge.
 - **Spielwiese** (`spielwieseOeffnen`, `spielwieseDarf`: Inhaber, Admins und Techniker – je mit dem eigenen Konto und
   dessen Rechten, Büro 03.10.2026; nie Kunde/Präsentation): eigene App im geschützten Vollbild; darin
   `spielwiese()` statt `demo()` – alles läuft echt gegen die Schattendatenbank (`schattenClient`: Tabellen
@@ -433,7 +444,10 @@ Kammerlander Umwelt- und Klimatechnik (UKT) – oft kurz, vom Handy, im Feld.
 
 ## Rollen
 
-inhaber, admin, techniker, kunde, praesentation. Der Kunde darf nur ansehen
+inhaber, admin, techniker, kunde, praesentation. Testkonten ausblenden (Inhaber 05.10.2026): Haken „in
+Personenlisten ausblenden“ in der Kontenübersicht (Verwaltung › Inhaber) → `einstellungen.personen_ausblenden`
+{ids}; `chatTeamLaden` lässt sie in jeder Personenauswahl weg (`PERSONEN_AUS`), das Konto bleibt bestehen,
+schon Eingetragenes bleibt sichtbar. Keine Namen oder Kennungen in den Code. Der Kunde darf nur ansehen
 (`nurLesen()`). Die Präsentation darf alles bedienen wie ein Admin, gespeichert
 wird aber nichts (`demo()` – jedes Speichern muss `demo()` abfangen; die
 Vorschau eines Änderungswunsches läuft genauso). Verwaltung nur Admins
