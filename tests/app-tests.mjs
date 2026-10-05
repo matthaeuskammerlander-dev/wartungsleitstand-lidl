@@ -2139,7 +2139,7 @@ async function tkOeffnen(konto, opt) {
   return a;
 }
 
-test("Tiefentest kalender: Planung prüfen – Reihenfolge übernehmen", async () => {
+test("Tiefentest kalender: Planung prüfen und Abwesenheit – Reihenfolge einmal und nie nach Mitternacht, ohne Netz gemeldet, Tag herausnehmen ganz oder ehrlich, alte Einplanung, „gilt als deins“, Startpunkt, halber Tag", async () => {
   const fehl = [];
   const a = await tkOeffnen(KONTEN.techniker);
   /* TT-KAL-02: derselbe Markt zweimal am Tag – jeder Termin einmal neu gesetzt, der früheste Beginn bleibt */
@@ -2275,7 +2275,7 @@ test("Tiefentest kalender: Planung prüfen – Reihenfolge übernehmen", async (
   pruefe(!fehl.length, fehl.join(" | "));
 });
 
-test("Tiefentest kalender: Tour – Teilerfolg ehrlich gemeldet, Störung nie doppelt im Kalender", async () => {
+test("Tiefentest kalender: Tour – Teilerfolg ehrlich gemeldet, Störung nie doppelt, Handanpassung nur mit Rückfrage, Route wartet höchstens die Frist", async () => {
   const fehl = [];
   const a = await tkOeffnen(KONTEN.inhaber);
   /* TT-KAL-06: Tour → „In meinen Kalender“: Anlegen klappt, danach (Termin der Aufgabe verschieben) reißt die Verbindung ab */
