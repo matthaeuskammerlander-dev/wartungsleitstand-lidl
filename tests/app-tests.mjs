@@ -2352,6 +2352,16 @@ test("Tiefentest mail: Posteingang – „Zu Projekt legen“ legt nichts doppel
     window.__toasts = []; tm.fuss(/Ins Projekt legen/).click(); await tm.warte(300);
     const abgelegt21 = db.projekte.filter((q) => ((q.daten || {}).dateien || []).some((f) => /Wochenende|IMG_0001/.test(f.name))).map((q) => q.nummer);
     p(!wahl21 && !abgelegt21.length && window.__toasts.some((t) => /Projekt wählen/.test(t)), "M21 ohne Vorschlag vorgewählt „" + wahl21 + "“, abgelegt in " + JSON.stringify(abgelegt21) + ", Meldungen " + JSON.stringify(window.__toasts));
+    x("ansichtenSchliessen()");
+
+    /* M15: weitergeleitete Projektmail ohne .eml (Rohmail über 20 MB) – die Pläne lassen sich trotzdem gemeinsam einem Projekt zuordnen */
+    projekt("tmp_915", "P-2026-915", "Große Pläne Hotel"); await x("projekteLaden()");
+    await ablegen(...["EG", "OG", "DG"].map((n, i) => pe("pe15" + i, "pe15", "unbekannt", "Plan " + n + " gross.pdf", "Fwd: Pläne P-2026-915", "planer@planer-test.at")));
+    k = await karte();
+    const b15 = box(k, /Plan EG gross/), kn15 = b15 && tm.knopf(b15, /Zu Projekt legen/);
+    if (kn15) { kn15.click(); await tm.bis(() => tm.fuss(/Ins Projekt legen/)); window.__toasts = []; tm.fuss(/Ins Projekt legen/).click(); await tm.toastBis(/abgelegt|^Nicht/i); }
+    p(kn15 && namen("tmp_915").length === 3 && !box(k, /Plan (EG|OG|DG) gross/), "M15 Pläne einer Mail ohne .eml: Knopf „Zu Projekt legen“ " + (kn15 ? "da" : "fehlt") + ", im Projekt " + JSON.stringify(namen("tmp_915")) +
+      ", Karten noch da: " + [...k.querySelectorAll(".posbox")].map((b) => b.querySelector("strong").textContent).join(", "));
     x("ansichtenSchliessen()"); document.querySelectorAll("#tmPe").forEach((kk) => kk.remove());
     return { fehlt };
   });

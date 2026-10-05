@@ -305,6 +305,8 @@ Kammerlander Umwelt- und Klimatechnik (UKT) – oft kurz, vom Handy, im Feld.
   Dateien hochgeladen sind. Angebot/Rechnung als Art nur für den Inhaber. KPlus-PDFs (6-stellig, `kplusDateiname`; Tiefentest
   05.10.2026): beim Inhaber als Angebot/Rechnung erkannt (buero/), andere legen sie und die Mail dazu nicht ab (bleiben im
   Posteingang). Eine Mail mit Angebot/Rechnung (`mailMitBeleg`) liegt auch als .eml nur unter buero/ – ebenso aus dem Mail-Programm.
+  Anhänge ohne .eml (Rohmail zu groß, art „unbekannt“): „Zu Projekt legen“ an der Einzelkarte, für alle Anhänge derselben Mail.
+  Je Mail ein Dialog (`posteingangDialoge`); schon Hochgeladenes merkt `posteingangAbgelegt` – nochmals lädt nur den Rest bzw. vermerkt nur.
 - **Mail-Programm am PC** (Büro 04.10.2026, `mailBruecke`, `mailUebernehmen`, `mailProjektNeu`, `mailZuProjekt`,
   `mailStoerung`, `mailsDazuKarte`): das Programm „Mail mit Claude“ läuft NUR auf dem PC des Inhabers
   (http://localhost:4317, nicht in diesem Repository). Verbunden per 6-stelligem Code aus dem Mail-Programm unter
