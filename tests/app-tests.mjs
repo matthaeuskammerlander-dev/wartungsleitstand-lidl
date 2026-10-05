@@ -2362,6 +2362,19 @@ test("Tiefentest mail: Posteingang – „Zu Projekt legen“ legt nichts doppel
     if (kn15) { kn15.click(); await tm.bis(() => tm.fuss(/Ins Projekt legen/)); window.__toasts = []; tm.fuss(/Ins Projekt legen/).click(); await tm.toastBis(/abgelegt|^Nicht/i); }
     p(kn15 && namen("tmp_915").length === 3 && !box(k, /Plan (EG|OG|DG) gross/), "M15 Pläne einer Mail ohne .eml: Knopf „Zu Projekt legen“ " + (kn15 ? "da" : "fehlt") + ", im Projekt " + JSON.stringify(namen("tmp_915")) +
       ", Karten noch da: " + [...k.querySelectorAll(".posbox")].map((b) => b.querySelector("strong").textContent).join(", "));
+    x("ansichtenSchliessen()");
+
+    /* M20: Präsentation bzw. Vorschau eines Änderungswunsches (speichert nie) – die Meldung sagt, dass nichts gespeichert wurde */
+    projekt("tmp_920", "P-2026-920", "Präsentation Kälte"); await x("projekteLaden()");
+    await ablegen(pe("pe20a", "pe20", "mail", "Plan P-2026-920.eml", "Plan P-2026-920"));
+    k = await karte();
+    window.UKT_VORSCHAU = "W-Test";
+    tm.knopf(box(k, /P-2026-920/), /Zu Projekt legen/).click(); await tm.bis(() => tm.fuss(/Ins Projekt legen/));
+    window.__toasts = []; tm.fuss(/Ins Projekt legen/).click(); await tm.bis(() => !document.querySelector(".assistent"), 2000); await tm.warte(100);
+    const t20 = document.getElementById("toast").textContent;
+    delete window.UKT_VORSCHAU;
+    p(/Präsentation|nichts gespeichert|gespeichert wurde nichts/.test(t20) && !namen("tmp_920").length && db.posteingang.find((e) => e.id === "pe20a").status === "neu",
+      "M20 Präsentation meldet „" + t20 + "“ (Dateien in der Datenbank: " + namen("tmp_920").length + ")");
     x("ansichtenSchliessen()"); document.querySelectorAll("#tmPe").forEach((kk) => kk.remove());
     return { fehlt };
   });
