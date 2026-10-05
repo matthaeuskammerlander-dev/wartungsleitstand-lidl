@@ -385,7 +385,7 @@ Kammerlander Umwelt- und Klimatechnik (UKT) – oft kurz, vom Handy, im Feld.
   `bedarfWann`, `bedarfWer`, `bedarfEinsaetze`); `packlisten` (übernehmen ohne Doppel, je Bezug nacheinander).
   Erinnert in „Heute für dich“ (heute/morgen), „🔍 Planung prüfen“ (je Tag „Vorher besorgen“), Kalenderzeile 🧰, Büro-To-do
   (`wzToDo`). Kästen in Termin (gespeichert, nicht Abwesenheit/Privat), Störung, Projekt, Markt; Fahrzeug zeigt, was drin liegt.
-  Bedarf an einem privaten Termin sehen andere nie (`bedarfVerborgen`; die Datenbank sperrt es selbst – Sperrregel
+  Bedarf an einem privaten Termin sehen andere nie, nur der Inhaber (`bedarfVerborgen` mit `nurInhaber()`, als gelernter Vorschlag nie; die Datenbank sperrt es selbst – Sperrregel
   „bedarf privat nur eigene“: nur wer den Termin angelegt hat oder dort eingetragen ist und der Inhaber, nicht Admins – Inhaber 05.10.2026); nachträglich privat → Frage „mitlöschen?“.
   Alle, die mitarbeiten, lesen und schreiben; Werkzeug/Packliste löschen nur Büro, Bedarf wer ihn angelegt hat oder Büro.
   Ausscheiden („im Bestand“ abwählen) fragt nach; Filter „Ausgeschieden“ (nur wenn es welches gibt) zum Wiederfinden/Zurückholen.

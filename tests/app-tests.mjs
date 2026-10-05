@@ -2598,12 +2598,12 @@ test("Tiefentest werkzeug: privater Termin, Störung fürs Büro, verliehen übe
       { id: "WTV21R", name: "Rohrzange TV21", standort_art: "reparatur", standort_text: "Fa. Rep", zurueck_am: vorgestern, zustand: "ok", aktiv: true });
     db.bedarf.push({ id: "BTV24B", art: "werkzeug", text: "Pumpe TV24B", werkzeug_id: "WTV24B", stoerung_id: "STV24B", standort_id: "TS1", status: "offen", beschaffung: "mitnehmen" });
     x("planungStand=0; planungNachladen()"); await warte(500); await x("fzLaden(true)"); await x("wzLaden(true)");
-    /* privater Termin des Technikers: der Inhaber sieht nur „Abwesend“ */
+    /* privater Termin des Technikers: der Inhaber sieht „Abwesend“ – das Material dazu sieht er auch (volle Kontrolle, Inhaber 05.10.2026), als Vorschlag lernt es aber niemand */
     const zeile = x("(kalenderEintraege('" + d.morgen + "','" + d.morgen + "','alle')['" + d.morgen + "']||[]).map(function(y){ return kalEintragZeile(y,true).textContent; }).join(' | ')");
-    soll(/Abwesend/.test(zeile) && !/Kardiologie/.test(zeile), "Inhaber sieht im Kalender beim privaten Termin: " + zeile);
+    soll(/Abwesend/.test(zeile) && /Kardiologie/.test(zeile), "Inhaber sieht im Kalender beim privaten Termin nicht „Abwesend“ mit Material: " + zeile);
     soll(!x("bedarfGelerntMarkt('TS1',[]).some(function(e){ return /Kardiologie/.test(e.text); })"), "Eintrag des privaten Termins als „An diesem Markt schon gebraucht“");
     x("S.bdAlle=true; S.view='werkzeug'; render()"); await warte(600);
-    soll(!/Kardiologie/.test(app()), "Inhaber sieht den Eintrag des privaten Termins im Reiter Werkzeug unter „Alle“");
+    soll(/Kardiologie/.test(app()), "Inhaber sieht den Eintrag des privaten Termins im Reiter Werkzeug unter „Alle“ nicht");
     /* Störung für den Techniker, Werkzeug im Büro-Auto: ⚠ (nicht „hat der Betrachter“) */
     x("OFFENE.push({_id:'STV24B', standortId:'TS1', termin:'" + heute + "', terminTechniker:'Testtechniker', erledigt:false}); 1");
     const info = JSON.parse(x("JSON.stringify(bedarfWerkzeugInfo(" + bd("BTV24B") + "))"));
@@ -4632,12 +4632,15 @@ test("Antworten kern: Material am privaten Termin sperrt die Datenbank selbst �
     const ids = await lesen();
     const upd = await x("Store.sb.from('bedarf').update({text:'geändert'}).eq('id','BPRIV1').select('*')");
     /* Admin (Kollege): sieht den privaten des Technikers nicht; Inhaber: sieht alles (volle Kontrolle, Sicherung) */
-    await window.__rk.anmelden("admin@test.at", "admin"); const admin = await lesen();
-    await window.__rk.anmelden("inhaber@test.at", "inhaber"); const inhaber = await lesen();
-    return { ids, admin, inhaber, updZeilen: (upd.data || []).length, text: db.bedarf.find((z) => z.id === "BPRIV1").text };
+    /* in der App ebenso: bedarfVerborgen blendet beim Admin aus, beim Inhaber nicht */
+    const appVerborgen = async () => { await x("planungLaden()"); return x("bedarfVerborgen({planung_id:'PPRIV2'})"); };
+    await window.__rk.anmelden("admin@test.at", "admin"); const admin = await lesen(), appAdmin = await appVerborgen();
+    await window.__rk.anmelden("inhaber@test.at", "inhaber"); const inhaber = await lesen(), appInhaber = await appVerborgen();
+    return { ids, admin, inhaber, appAdmin, appInhaber, updZeilen: (upd.data || []).length, text: db.bedarf.find((z) => z.id === "BPRIV1").text };
   });
   pruefe(r.admin.indexOf("BPRIV2") < 0 && r.admin.indexOf("BPRIV3") < 0 && r.admin.indexOf("BPRIV1") >= 0, "Admin sieht privates Material eines Kollegen: " + JSON.stringify(r.admin));
   pruefe(["BPRIV1", "BPRIV2", "BPRIV3", "BOFF1", "BOHNE"].every((i) => r.inhaber.indexOf(i) >= 0), "Inhaber sieht nicht alles: " + JSON.stringify(r.inhaber));
+  pruefe(r.appAdmin === true && r.appInhaber === false, "App blendet privates Material falsch aus (Admin soll nicht, Inhaber soll sehen): " + JSON.stringify([r.appAdmin, r.appInhaber]));
   pruefe(["BOFF1", "BOHNE", "BPRIV2", "BPRIV3"].every((i) => r.ids.indexOf(i) >= 0), "eigene bzw. nicht private Einträge fehlen: " + JSON.stringify(r));
   pruefe(r.ids.indexOf("BPRIV1") < 0, "Material am privaten Termin einer anderen Person kommt aus der Datenbank: " + JSON.stringify(r));
   pruefe(r.updZeilen === 0 && r.text === "Teil BPRIV1", "fremder Eintrag am privaten Termin ließ sich ändern: " + JSON.stringify(r));
