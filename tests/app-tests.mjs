@@ -1628,7 +1628,7 @@ async function ttHilfen(a) {
   });
 }
 
-test("Tiefentest stunden: Abgleich mit dem Kalender – Lücken behalten Markt und Projekt, Termin im Termin, Vorschau wie gestempelt, Verschieben sicher, Störung einmal", async () => {
+test("Tiefentest stunden: Abgleich mit dem Kalender – Lücken behalten Markt und Projekt, Termin im Termin, Vorschau wie gestempelt, Verschieben sicher, Störung einmal, Spielwiese mit klarer Meldung", async () => {
   const a = await oeffnen(KONTEN.techniker);
   await ttHilfen(a);
   const fehl = [];
@@ -1749,6 +1749,23 @@ test("Tiefentest stunden: Abgleich mit dem Kalender – Lücken behalten Markt u
       stoerMin: window.__db.tabellen.arbeitszeiten.filter((z) => z.datum === T && z.bereich === "stoerung").reduce((s, z) => s + z.minuten, 0) };
   });
   if (r16.offen !== 1 || r16.geplant.length !== 1 || r16.stoerMin !== 60) fehl.push("TT-16 Störung doppelt: " + JSON.stringify(r16));
+  /* TTQ-15: in der Spielwiese (Schattendatenbank) sagen Stempeluhr und Abgleich „in der Spielwiese nicht verfügbar“ – nicht „Datenbank nicht eingerichtet“ */
+  const rq15 = await a.seite.evaluate(async () => {
+    const tt = window.__tt, x = window.__t.x; tt.leeren(); const T = tt.werktag(1);
+    tt.gestempelt({ datum: T, beginn: "07:00", ende: "12:00", minuten: 300, bereich: "werkstatt" });
+    await tt.termin({ kategorie: "wartung", titel: "Wartung", datum: T, beginn: "08:00", ende: "10:00", standort_id: "TS1" });
+    await tt.laden();
+    window.__ttEcht = x("Store.sb"); x("Store.sb=schattenClient(Store.sb); window.UKT_VORSCHAU='Spielwiese'; 1");
+    try {
+      await x("stempelDruecken('ein', {bereich:'werkstatt'})"); await tt.warte(100);
+      const stempel = tt.toasts.filter((t) => /gestempelt/i.test(t)).pop() || "";
+      x("abgleichDialog('" + T + "', false)"); await tt.warte(200);
+      const d = tt.dialog(); tt.ok(d).click(); await tt.warte(400);
+      const e = d.querySelector(".warnbox:not([hidden])");
+      return { stempel, abgleich: e ? e.textContent : "" };
+    } finally { x("Store.sb=window.__ttEcht; window.UKT_VORSCHAU=undefined; ansichtenSchliessen(); 1"); }
+  });
+  if (!/Spielwiese/.test(rq15.stempel) || /nicht eingerichtet/.test(rq15.stempel) || !/Spielwiese/.test(rq15.abgleich) || /nicht eingerichtet/.test(rq15.abgleich)) fehl.push("TTQ-15 Spielwiese: irreführende Meldung: " + JSON.stringify(rq15));
   if (a.fehler.length) fehl.push("Laufzeitfehler: " + a.fehler.join("; "));
   await a.zu();
   pruefe(!fehl.length, fehl.join(" | "));
