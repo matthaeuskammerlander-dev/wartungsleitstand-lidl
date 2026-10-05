@@ -1791,6 +1791,22 @@ reSchritt("editor", "R09", async (a) => {
   return r.vorher.length === 1 && r.nachher.length === 1 && r.ohneFilter.some((t) => /Angebot T-A-/.test(t)) && !r.ohneFilter.some((t) => /schon Rechnung/.test(t))
     ? "" : `vor dem Angebot ${r.vorher.length}×, danach ${r.nachher.length}× in „nur ohne Rechnung“; ohne Filter: ${JSON.stringify(r.ohneFilter)}`;
 });
+/* Briefkopf: IBAN mit falscher Prüfziffer wird nicht gespeichert – Feld markiert, Meldung (wie bei den Reisekosten) */
+reSchritt("editor", "R19", async (a) => {
+  const r = await a.seite.evaluate(async () => {
+    const x = window.__t.x, db = window.__db.tabellen, R = window.__re;
+    x("belegEinstellungen()");
+    const d = await R.bis(() => { const d = R.dlg(); return d && d.querySelector('[data-e="firma.iban"]') && d; });
+    d.querySelector('[data-e="firma.name"]').value = "Musterfirma Test"; d.querySelector('[data-e="firma.bank"]').value = "Testbank";
+    d.querySelector('[data-e="firma.iban"]').value = "AT61 1904 3002 3457 3202";   /* öffentliche Beispiel-IBAN mit falscher Prüfziffer */
+    R.toasts.length = 0;
+    R.knopf(d, /^Speichern$/).click(); await R.warte(300);
+    const w = (db.einstellungen.filter((e) => e.schluessel === "belege")[0] || {}).wert;
+    return { gespeichert: !!(w && w.firma && w.firma.iban === "AT61 1904 3002 3457 3202"), markiert: d.querySelector('[data-e="firma.iban"]').getAttribute("aria-invalid"),
+      offen: document.body.contains(d), toasts: R.toasts.slice() };
+  });
+  return !r.gespeichert && r.markiert === "true" && r.offen && r.toasts.some((m) => /IBAN/.test(m)) ? "" : `IBAN mit falscher Prüfziffer gespeichert: ${r.gespeichert}, Feld markiert: ${r.markiert}, Meldungen ${JSON.stringify(r.toasts)}`;
+});
 /* KPlus: Gutschrift wird nicht als Angebot abgelegt; ohne erkannte PDF-Summe steht kein „stimmt“ */
 reSchritt("kplus", "R03", async (a) => {
   const r = await a.seite.evaluate(async () => {
