@@ -2240,6 +2240,14 @@ test("Tiefentest kalender: Planung prüfen – Reihenfolge übernehmen", async (
     return { vorher, nachher: offen(), eingeplant: !!x("planFuerPosition('TP1')"), status: x("posById.TP1.status") };
   });
   if (!r07.vorher.includes("TP1") || r07.eingeplant || !r07.nachher.includes("TP1")) fehl.push("TT-KAL-07 fällige Wartung trotz alter Einplanung übersehen: " + JSON.stringify(r07));
+  /* TT-KAL-08: Krankenstand ohne eingetragene Person („gilt als deins“) zählt auch für Tour, Auslastung und Doppelbuchung */
+  const r08 = await a.seite.evaluate(async () => {
+    const tt = window.__tt, x = window.__t.x; tt.leeren(); const t7 = x("werktagAb(plusTage(isoLokal(new Date()),7))");
+    await tt.termine([{ kategorie: "krank", titel: "Krank ohne wer", datum: t7, datum_bis: x("plusTage('" + t7 + "',1)"), wer: [], wer_namen: [] }]);
+    return { t7, abwesenheitAm: x("abwesenheitAm('" + t7 + "').length"), tourAbwesend: x("tourAbwesend(meineKennung(), '" + t7 + "')"),
+      tourTag: x("tourTagFrei(meineKennung(), '" + t7 + "')"), doppelt: x("verplantPruefen([meineKennung()], [meinName()], '" + t7 + "', '" + t7 + "', 600, 660).length") };
+  });
+  if (r08.abwesenheitAm !== 1 || !r08.tourAbwesend || r08.tourTag === r08.t7 || !r08.doppelt) fehl.push("TT-KAL-08 Krankenstand ohne „Wer“ zählt nicht für Tour/Doppelbuchung: " + JSON.stringify(r08));
   if (a.fehler.length) fehl.push("Laufzeitfehler: " + a.fehler.join("; "));
   await a.zu();
   pruefe(!fehl.length, fehl.join(" | "));
