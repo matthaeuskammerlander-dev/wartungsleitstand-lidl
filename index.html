@@ -3722,7 +3722,7 @@ function mailVerlaufVorschlag(v, r, zielId){
   var tagK=liste("Tagebuch (Verlauf)", tag, function(t){ return '<span class="mono">'+esc(t.datum?dfmt(t.datum):"")+"</span> · "+esc(t.text); });
   /* Dateien: je Mail die Mail selbst und die Anhänge mit Art; PDFs werden beim Anlegen auf KPlus geprüft */
   var dateiK=el('<div class="card" style="box-shadow:none;margin:0"><div class="pad stack" style="gap:6px"><h2>Mails und Anhänge</h2>'+
-    '<div class="muted" style="font-size:12.5px">Alles kommt in die Projektdateien (mit Herkunft). KPlus-PDFs (Angebot/Rechnung) erkennt die App beim Anlegen und liest die Positionen ein'+(nurInhaber()?"":" – nur für Inhaber")+".</div></div></div>");
+    '<div class="muted" style="font-size:12.5px">Alles kommt in die Projektdateien (mit Herkunft). KPlus-PDFs (Angebot/Rechnung) erkennt die App beim Anlegen und liest die Positionen ein'+(nurInhaber()?" – schon vorhandene Belege bleiben unverändert":" – nur für Inhaber")+".</div></div></div>");
   var artVorschlag=function(i, name, typ){ var d=(vs.dateien||[]).filter(function(x){ return +x.mail===i && x.name===name; })[0]; var a=d && arten.some(function(x){ return x[0]===d.art; }) ? d.art : dateiArtRaten("", name, typ||""); return a; };
   var wahlen=[];
   mails.forEach(function(m, i){
@@ -3738,6 +3738,16 @@ function mailVerlaufVorschlag(v, r, zielId){
     dateiK.querySelector(".stack").appendChild(block);
   });
   w.appendChild(dateiK);
+  /* KPlus-Belege (6-stellige Nummer), die es schon gibt: gleich hier zeigen – sie bleiben beim Übernehmen, wie sie sind
+     (Stand, bezahlt, Projekt; Tiefentest 05.10.2026: eine bezahlte Rechnung wurde still wieder „versendet“) */
+  var kplusNamen=wahlen.filter(function(x){ return x.a && /^\d{6}\.pdf$/i.test(x.a.name||""); });
+  if(nurInhaber() && kplusNamen.length) Store.sb.from("belege").select("id,art,nummer,status,projekt_id,bezahlt,faellig").in("nummer", kplusNamen.map(function(x){ return x.a.name.slice(0,6); })).then(function(rv){
+    (rv.data||[]).forEach(function(b){ kplusNamen.filter(function(x){ return x.a.name.slice(0,6)===b.nummer; }).forEach(function(x){
+      var pb=PROJEKTE.filter(function(q){ return q.id===b.projekt_id; })[0];
+      x.z.parentNode.insertBefore(el('<div class="muted" style="font-size:11.5px;padding-left:22px">KPlus '+(b.art==="rechnung"?"Rechnung":"Angebot")+" "+esc(b.nummer)+" schon vorhanden ("+esc(belegStatusText(b))+(pb?", "+esc(pb.nummer||projektTitel(pb)):"")+
+        ") – bleibt unverändert, höchstens die PDF kommt dazu.</div>"), x.z.nextSibling);
+    }); });
+  }, function(){});
   var fortschritt=el('<div class="note" hidden style="font-size:13px"></div>'); w.appendChild(fortschritt);
   var ab=el('<button class="btn ghost" type="button">Abbrechen</button>'), ok=el('<button class="btn" type="button">'+(ziel?"Ins Projekt übernehmen":"Projekt anlegen")+"</button>");
   ab.onclick=function(){ v.zu(); };
@@ -3809,22 +3819,30 @@ function mailVerlaufVorschlag(v, r, zielId){
       }).then(function(){ return p; });
     }).then(function(p){
       /* KPlus-Belege am Projekt (Positionen, Original-PDF, Katalog) */
-      var k2=Promise.resolve(), ok2=0;
+      var k2=Promise.resolve(), ok2=0, schon=0;
       kplus.forEach(function(x){ k2=k2.then(function(){
         melde("KPlus "+(x.erg.art==="rechnung"?"Rechnung ":"Angebot ")+x.erg.nummer+" wird eingelesen …");
         var pa=PROJEKTE.filter(function(y){ return y.id===p.id; })[0]||p;
-        var zeile={projekt_id:pa.id, kunde_id:pa.kunde_id||"lidl", standort_id:pa.standort_id||null, art:x.erg.art, nummer:x.erg.nummer, test:false, extern:true, datum:x.erg.datum||isoLokal(new Date()),
-          status:x.erg.art==="rechnung"?"versendet":"angenommen", kopf:x.erg.kopf, positionen:x.erg.positionen, summen:belegSummen(x.erg.positionen), geaendert_von:meinName()};
-        return Store.sb.from("belege").upsert(zeile, {onConflict:"art,nummer"}).select("*").then(function(rr){
-          if(rr.error) throw new Error(rr.error.message); ok2++;
-          return Promise.all([belegPdfAblegen(rr.data[0], kontextProjekt(pa), x.datei).catch(function(){}), katalogUebernehmen(x.erg).catch(function(){})]);
+        /* gibt es den Beleg schon (gleiche Art und Nummer), bleiben Stand, Bezahlt-Datum und Projekt – nur eine fehlende PDF
+           kommt dazu (nichts still überschreiben); ein neuer wird eingefügt, nie per upsert über einen anderen gelegt */
+        return Store.sb.from("belege").select("*").eq("art", x.erg.art).eq("nummer", x.erg.nummer).then(function(rv){
+          if(rv.error) throw new Error(rv.error.message);
+          var da=(rv.data||[])[0];
+          if(da){ schon++; return da.pdf_pfad ? null : belegPdfAblegen(da, kontextProjekt(pa), x.datei).catch(function(){}); }
+          var zeile={projekt_id:pa.id, kunde_id:pa.kunde_id||"lidl", standort_id:pa.standort_id||null, art:x.erg.art, nummer:x.erg.nummer, test:false, extern:true, datum:x.erg.datum||isoLokal(new Date()),
+            status:x.erg.art==="rechnung"?"versendet":"angenommen", kopf:x.erg.kopf, positionen:x.erg.positionen, summen:belegSummen(x.erg.positionen), geaendert_von:meinName()};
+          return Store.sb.from("belege").insert(zeile).select("*").then(function(rr){
+            if(rr.error) throw new Error(rr.error.message); ok2++;
+            return Promise.all([belegPdfAblegen(rr.data[0], kontextProjekt(pa), x.datei).catch(function(){}), katalogUebernehmen(x.erg).catch(function(){})]);
+          });
         }).catch(function(e){ toast("KPlus "+x.erg.nummer+" nicht abgelegt: "+e.message); });
       }); });
-      return k2.then(function(){ return {p:p, kplus:ok2}; });
+      return k2.then(function(){ return {p:p, kplus:ok2, schon:schon}; });
     }).then(function(x){
       var hinweise=kplus.reduce(function(n, k){ return n+positionenPruefen(k.erg.positionen).length; }, 0);
       v.zu(); projektAnsicht(x.p.id);
-      toast((ziel?"Übernommen":"Projekt "+x.p.nummer+" angelegt")+": "+Object.keys(emlPfad).length+" Mails, "+angaben.length+" Angaben"+(x.kplus?", "+x.kplus+" KPlus-Beleg"+(x.kplus===1?"":"e"):"")+"."+
+      toast((ziel?"Übernommen":"Projekt "+x.p.nummer+" angelegt")+": "+Object.keys(emlPfad).length+" Mails, "+angaben.length+" Angaben"+(x.kplus?", "+x.kplus+" KPlus-Beleg"+(x.kplus===1?"":"e"):"")+
+        (x.schon?", "+x.schon+" KPlus-Beleg"+(x.schon===1?"":"e")+" schon vorhanden – unverändert":"")+"."+
         (hinweise?" ⚠ "+hinweise+" Auffälligkeit"+(hinweise===1?"":"en")+" in den KPlus-Positionen – unter „Angebote und Rechnungen“ ansehen.":""));
     }).catch(function(e){ ok.disabled=false; ab.disabled=false; melde("Abgebrochen: "+e.message+" – was schon abgelegt ist, bleibt im Projekt."); toast("Nicht fertig: "+e.message); });
   };

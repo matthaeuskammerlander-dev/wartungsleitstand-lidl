@@ -1925,6 +1925,91 @@ test("Tiefentest reisekosten: Blätter, PDF, CSV und Rundgang – gleiche Beleg-
   await a.zu();
 });
 
+/* ---- Tiefentest Mail: Hilfen im Browser – das Mail-Programm am PC nachgebaut (nichts geht ins Netz) ---- */
+const TM_HILFEN = `
+  window.__tm = {
+    warte: (ms) => new Promise((f) => setTimeout(f, ms)),
+    /* warten, bis bed() stimmt (höchstens ms) – kürzer als feste Wartezeiten */
+    bis: async (bed, ms) => { const ende = Date.now() + (ms || 5000); for (;;) { let ok = false; try { ok = bed(); } catch (e) {} if (ok || Date.now() > ende) return ok; await new Promise((f) => setTimeout(f, 40)); } },
+    dlg: () => [...document.querySelectorAll(".assistent")].pop(),
+    knopf: (wo, re) => [...(wo || document).querySelectorAll("button")].find((b) => re.test(b.textContent)),
+    fuss: (re) => [...((window.__tm.dlg() || document).querySelectorAll(".as-fuss button"))].find((b) => re.test(b.textContent)),
+    toastSpion: () => { window.__toasts = []; window.__t.x("(function(){ if(window.__toastSpion) return 1; window.__toastSpion=1; var alt=toast; toast=function(m){ window.__toasts.push(String(m)); return alt.apply(this, arguments); }; return 1; })()"); },
+    toastBis: (re, ms) => window.__tm.bis(() => window.__toasts.some((t) => re.test(t)), ms),
+    verbinden: () => localStorage.setItem("ukt_mailbruecke", JSON.stringify({ schluessel: "ef".repeat(16), konto: window.__t.x("wer()"), seit: new Date().toISOString() })),
+    /* c: Antwort je Pfad (/api/<pfad>) – Wert, Funktion (u, o) oder Promise; ohne Angabe die Vorgaben */
+    programm: (c) => {
+      const tm = window.__tm, alt = tm.altFetch || (tm.altFetch = window.fetch);
+      tm.aufrufe = [];
+      const res = (d) => d instanceof Response ? d : new Response(d instanceof Blob ? d : typeof d === "string" ? d : JSON.stringify(d), { status: 200 });
+      const vorgabe = { status: { ok: true, konten: [], claude: true }, "leitstand/abholen": { auftrag: null },
+        roh: () => new Blob(["From: p@planer-test.at\\r\\n\\r\\nText"], { type: "message/rfc822" }),
+        anhang: (u) => new Blob(["%PDF-1.4 " + u], { type: "application/pdf" }),
+        suche: () => ({ mails: c.mails || [] }), verlauf: () => ({ mails: c.mails || [], vorschlag: c.vorschlag || {} }), mail: () => c.mail };
+      window.fetch = (u, o) => {
+        u = String(u); if (!u.startsWith("http://localhost:4317")) return alt(u, o);
+        const pfad = (/\\/api\\/([a-z\\/]+)/.exec(u) || [])[1] || ""; tm.aufrufe.push(pfad);
+        let w = pfad in c ? c[pfad] : vorgabe[pfad];
+        if (typeof w === "function") w = w(u, o);
+        if (w === undefined) return Promise.resolve(new Response('{"fehler":"unbekannt"}', { status: 404 }));
+        return Promise.resolve(w).then(res);
+      };
+    },
+    ende: () => { if (window.__tm.altFetch) window.fetch = window.__tm.altFetch; },
+    /* Mailverlauf: suchen, auswerten lassen, Vorschlag abwarten */
+    verlauf: async (vorgabe) => {
+      const tm = window.__tm;
+      window.__t.x("ansichtenSchliessen()"); window.__t.x("mailVerlaufDialog(" + JSON.stringify(vorgabe) + ")");
+      await tm.bis(() => tm.fuss(/Mit Claude auswerten \\(/) && !tm.fuss(/Mit Claude auswerten/).disabled);
+      tm.fuss(/Mit Claude auswerten/).click();
+      await tm.bis(() => tm.fuss(/Projekt anlegen|Ins Projekt übernehmen/));
+      return tm.dlg();
+    },
+    anmelden: async (mail, rolle) => {
+      const x = window.__t.x;
+      await x("Store.sb.auth.signOut()"); await window.__tm.warte(300);
+      await x("Store.sb.auth.signInWithPassword({email:'" + mail + "',password:'test123'})");
+      for (let i = 0; i < 80 && !x("Rolle.da && Rolle.name==='" + rolle + "'"); i++) await window.__tm.warte(100);
+      await window.__tm.warte(300);
+    },
+  }; 1`;
+async function tmSeite(konto) { const a = await oeffnen(konto); await a.seite.evaluate((h) => eval(h), TM_HILFEN); return a; }
+
+test("Tiefentest mail: Projekt aus Mailverlauf – vorhandene KPlus-Belege bleiben, wie sie sind", async () => {
+  const a = await tmSeite(KONTEN.inhaber);
+  const r = await a.seite.evaluate(async () => {
+    const x = window.__t.x, db = window.__db.tabellen, tm = window.__tm, jetzt = new Date().toISOString(), fehlt = [], p = (bed, text) => { if (!bed) fehlt.push(text); };
+    tm.verbinden(); tm.toastSpion();
+    const leer = { angaben: [], beteiligte: [], termine: [], tagebuch: [], dateien: [] };
+    const M = (uid, datum, betreff, anh, von) => ({ konto: "gmx", ordner: "INBOX", uid, messageId: "<tm" + uid + "@test>", datum, betreff, von: [von || { name: "Paula Planer", address: "p@planer-test.at" }], an: [], anhaenge: anh || [] });
+    /* M6: Rechnung 413960 ist bezahlt (Projekt tmp_alt), Angebot 413961 abgelehnt (anderes Projekt) – „Verlauf übernehmen“ darf daran nichts ändern */
+    db.projekte.push({ id: "tmp_alt", nummer: "P-2026-960", titel: "Altprojekt Belege", kunde_id: "lidl", status: "abgerechnet", daten: {}, verlauf: [], erstellt: jetzt, geaendert: jetzt },
+      { id: "tmp_anderes", nummer: "P-2026-961", titel: "Anderes Projekt", kunde_id: "lidl", status: "verloren", daten: {}, verlauf: [], erstellt: jetzt, geaendert: jetzt });
+    db.belege.push({ id: "tmb960", art: "rechnung", nummer: "413960", status: "bezahlt", bezahlt: "2026-05-01", faellig: "2026-04-20", projekt_id: "tmp_alt", kunde_id: "lidl", extern: true, test: false, datum: "2026-03-20", positionen: [], kopf: {} },
+      { id: "tmb961", art: "angebot", nummer: "413961", status: "abgelehnt", projekt_id: "tmp_anderes", kunde_id: "lidl", extern: true, test: false, datum: "2026-02-10", positionen: [], kopf: {} });
+    await x("projekteLaden()");
+    x("kplusLesen=function(d){ var t=new TextDecoder().decode(d), nr=(/41396\\d/.exec(t)||[''])[0]; if(!nr) return Promise.reject(new Error('kein KPlus')); return Promise.resolve({art:nr==='413960'?'rechnung':'angebot', nummer:nr, datum:'2026-03-20', kopf:{}, positionen:[{typ:'pos', nr:'1', menge:1, eh:'Stk', text:'Testposition', preis:100}], summenPdf:{netto:100}}); }");
+    const pdf = (nr) => [{ i: 0, name: nr + ".pdf", typ: "application/pdf", groesse: 4096 }];
+    tm.programm({ mails: [M(60, "2026-03-20T08:00:00.000Z", "Rechnung 413960", pdf("413960")), M(61, "2026-02-10T08:00:00.000Z", "Angebot 413961", pdf("413961"))],
+      vorschlag: Object.assign({ status: "abgerechnet" }, leer), anhang: (u) => new Blob(["%PDF-1.4 KPlus " + (u.includes("uid=60") ? "413960" : "413961")], { type: "application/pdf" }) });
+    let d = await tm.verlauf({ projektId: "tmp_alt", suche: "413960, 413961" });
+    await tm.bis(() => /413961 schon vorhanden/.test(d.innerText), 1500);
+    p(/Rechnung 413960 schon vorhanden \(bezahlt/.test(d.innerText) && /Angebot 413961 schon vorhanden \(abgelehnt, P-2026-961/.test(d.innerText), "M6 Vorschlag zeigt nicht, dass die KPlus-Belege schon vorhanden sind");
+    tm.fuss(/Ins Projekt übernehmen/).click();
+    await tm.toastBis(/^Übernommen|^Nicht fertig/);
+    const b = (nr) => { const z = db.belege.find((y) => y.nummer === nr); return z.status + "|" + z.projekt_id + "|" + (z.bezahlt || ""); };
+    p(b("413960") === "bezahlt|tmp_alt|2026-05-01", "M6 bezahlte Rechnung überschrieben: " + b("413960"));
+    p(b("413961") === "abgelehnt|tmp_anderes|", "M6 abgelehntes Angebot (anderes Projekt) überschrieben: " + b("413961"));
+    p(db.belege.filter((y) => /^41396/.test(y.nummer)).length === 2, "M6 Belege doppelt");
+    p(window.__toasts.some((t) => /schon vorhanden/.test(t)), "M6 Meldung nennt die schon vorhandenen Belege nicht: " + JSON.stringify(window.__toasts));
+    tm.ende(); x("ansichtenSchliessen()");
+    return { fehlt };
+  });
+  pruefe(!r.fehlt.length, r.fehlt.join(" | "));
+  pruefe(!a.fehler.length, "Laufzeitfehler: " + a.fehler.join("; "));
+  await a.zu();
+});
+
 /* ================================================================ Ablauf ================================================================ */
 const filterText = process.argv.slice(2).find((x) => !x.startsWith("--"));
 const filter = filterText ? new RegExp(filterText, "i") : null;
