@@ -1727,6 +1727,61 @@ test("Tiefentest reisekosten: Monat abgeben, Konto, ausbezahlt, Kilometergeld-Sa
   await a.zu();
 });
 
+test("Tiefentest reisekosten: Inhaber ändert fremde Einträge – Privatauto bleibt, kein Vorschlag aus dem eigenen Kalender, Belegfoto bleibt bei der Person, eigene Karte und „Reisekosten aller“ stimmen", async () => {
+  const a = await rkSeite(KONTEN.inhaber);
+  const r = await a.seite.evaluate(async () => {
+    const x = window.__t.x, db = window.__db.tabellen, { warte, karte, dlg, speichern } = window.__rk;
+    const heute = x("isoLokal(new Date())"), ich = x("meineKennung()"), fehlt = [], p = (bed, text) => { if (!bed) fehlt.push(text); };
+    db.fahrzeuge.push({ id: "fzT", kennzeichen: "S-TT 100", fahrer: ["u_tech_test_at"], fahrer_namen: ["Testtechniker"], privat_von: "u_tech_test_at", privat_name: "Testtechniker", aktiv: true });
+    db.auslagen.push({ id: "akK", user_id: "u_tech_test_at", name: "Testtechniker", art: "km", datum: heute, text: "Salzburg – Wels – Salzburg", km: 200, km_satz: 0.5, betrag: 100, fahrzeug_id: "fzT", fahrzeug_name: "S-TT 100", status: "eingereicht", erstellt: new Date().toISOString() },
+      { id: "akB", user_id: "u_tech_test_at", name: "Testtechniker", art: "beleg", datum: heute, text: "Baumarkt Fremd", kategorie: "material", betrag: 23.85, foto: "u_tech_test_at/b.jpg", status: "eingereicht", erstellt: new Date().toISOString() });
+    await x("fzLaden(true)");
+    /* eigener Termin des Inhabers heute an einem Markt – daraus darf kein Strecken-Vorschlag für den Techniker werden */
+    await x("Store.sb.from('planung').insert(" + JSON.stringify({ art: "termin", kategorie: "wartung", titel: "Wartung Test", datum: heute, wer: [ich], wer_namen: ["I"], standort_id: "TS1" }) + ").select('*')");
+    x("planungStand=0; planungNachladen()"); await warte(400);
+    window.__entfernt = [];
+    x("(function(){ var st=Store.sb.storage, alt=st.from.bind(st); st.from=function(n){ var e=alt(n), rm=e.remove; e.remove=function(p){ window.__entfernt.push(n+':'+JSON.stringify(p)); return rm.apply(e, arguments); }; return e; }; return 1; })()");
+    x("S.view='stunden'; AK_ALLE.monat=''; render()"); await warte(800);
+    /* RK-04: km-Eintrag des Technikers mit seinem Privatauto */
+    x("akEditor(AK_ALLE.liste.filter(function(z){ return z.id==='akK'; })[0])"); await warte(400);
+    let d = dlg();
+    const auswahl = d.querySelector('[data-f="fahrzeug_id"]').value, chips = [...d.querySelectorAll("[data-vorschlag] .chip")].map((c) => c.textContent);
+    d.querySelector('[data-f="text"]').value = "Salzburg – Wels – Linz – Salzburg";
+    speichern(d); await warte(700);
+    const k = db.auslagen.find((q) => q.id === "akK");
+    p(/Linz/.test(k.text) && k.fahrzeug_id === "fzT" && k.fahrzeug_name === "S-TT 100", "RK-04 Privatauto des Technikers beim Speichern still entfernt: " + JSON.stringify({ auswahl, text: k.text, fahrzeug_id: k.fahrzeug_id, fahrzeug_name: k.fahrzeug_name }));
+    p(!chips.some((c) => /laut Kalender/.test(c)), "RK-04 Strecken-Vorschlag aus dem Kalender des Inhabers beim Eintrag des Technikers: " + JSON.stringify(chips));
+    /* RK-05, RK-06: Beleg des Technikers ändern (Betrag; ein neues Foto darf nicht im Ordner des Inhabers landen) */
+    x("akEditor(AK_ALLE.liste.filter(function(z){ return z.id==='akB'; })[0])"); await warte(400);
+    d = dlg();
+    d.querySelector('[data-f="betrag"]').value = "30,00";
+    const inp = d.querySelector("[data-foto]");
+    if (inp) {
+      const cv = document.createElement("canvas"); cv.width = 40; cv.height = 60; cv.getContext("2d").fillRect(0, 0, 20, 20);
+      const blob = await new Promise((f) => cv.toBlob(f, "image/png"));
+      const dt = new DataTransfer(); dt.items.add(new File([blob], "neu.png", { type: "image/png" }));
+      inp.files = dt.files; inp.dispatchEvent(new Event("change"));
+    }
+    speichern(d); await warte(900);
+    const b = db.auslagen.find((q) => q.id === "akB");
+    p(b.betrag === 30, "RK-05/06 Betrag nicht gespeichert: " + b.betrag);
+    /* Speicher-Regel „auslagen fotos lesen“ (tools/reisekosten.sql): die Person liest nur ihren eigenen Ordner */
+    p(String(b.foto || "").indexOf("u_tech_test_at/") === 0 && !window.__entfernt.length, "RK-05 Belegfoto liegt im Ordner des Inhabers / Original entfernt: " + JSON.stringify({ foto: b.foto, entfernt: window.__entfernt }));
+    const eigene = (karte(/^Reisekosten und Kilometergeld/) || {}).textContent || "";
+    p(!/Baumarkt Fremd|Linz/.test(eigene) && x("AUSLAGEN.filter(function(z){ return z.user_id!==meineKennung(); }).length") === 0, "RK-06 fremde Einträge in der eigenen Reisekosten-Karte des Inhabers");
+    const alleText = (karte(/^Reisekosten aller/) || {}).textContent || "";
+    p(x("(AK_ALLE.liste.filter(function(z){ return z.id==='akB'; })[0]||{}).betrag") === 30 && !/23,85/.test(alleText), "RK-06 „Reisekosten aller“ zeigt nach dem Speichern den alten Betrag");
+    /* RK-06: löschen – die Zeile verschwindet auch aus „Reisekosten aller“ */
+    x("akEditor(AK_ALLE.liste.filter(function(z){ return z.id==='akB'; })[0])"); await warte(400);
+    [...dlg().querySelectorAll(".as-fuss button")].find((q) => /Löschen/.test(q.textContent)).click(); await warte(900);
+    p(!db.auslagen.some((z) => z.id === "akB") && !/Baumarkt Fremd/.test((karte(/^Reisekosten aller/) || {}).textContent || ""), "RK-06 gelöschter Eintrag steht weiter in „Reisekosten aller“");
+    return { fehlt };
+  });
+  pruefe(!r.fehlt.length, r.fehlt.join(" | "));
+  pruefe(!a.fehler.length, "Laufzeitfehler: " + a.fehler.join("; "));
+  await a.zu();
+});
+
 /* ================================================================ Ablauf ================================================================ */
 const filterText = process.argv.slice(2).find((x) => !x.startsWith("--"));
 const filter = filterText ? new RegExp(filterText, "i") : null;

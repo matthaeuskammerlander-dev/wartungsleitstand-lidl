@@ -376,7 +376,8 @@ Kammerlander Umwelt- und Klimatechnik (UKT) – oft kurz, vom Handy, im Feld.
   `einstellungen.kilometergeld`, Standard 0,50 €). offen → eingereicht („Monat abgeben“, Nachricht nur an Inhaber) → ausbezahlt (nur Inhaber);
   Abgegebenes ändert nur der Inhaber. Jede Person sieht nur ihre eigenen, der Inhaber alle – KEINE Admins. Konto in `auslagen_konto`.
   Kilometergeld nur fürs Privatauto (`fahrzeuge.privat_von`). PDF `akPdf` mit Belegfotos; Inhaber: „Reisekosten aller“, To-do
-  (`akAbgegebenText`), Projekt zeigt die Summe (nur Inhaber); Bedarf „abholen/bestellen“ → „Selbst bezahlt – Beleg erfassen“. Nie lockern.
+  (`akAbgegebenText`), Projekt zeigt die Summe (nur Inhaber); Bedarf „abholen/bestellen“ → „Selbst bezahlt – Beleg erfassen“.
+  Fremde Einträge ändert der Inhaber ohne Belegfoto (das liegt im Ordner der Person, ersetzen nur sie – „zurückgeben“). Nie lockern.
 - **Diktieren** (`diktatKnopf`): Spracherkennung des Browsers, keine KI, Text wird angehängt.
 - **Rapport-Text** (`rapTextRein`): ausgeführte Arbeiten aus dem Lidl-Rapport zusätzlich in
   „Durchgeführte Maßnahmen“ bzw. „Bemerkungen“ – nie ersetzen, kein Feld fällt weg.

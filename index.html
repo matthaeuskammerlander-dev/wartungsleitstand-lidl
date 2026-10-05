@@ -24232,7 +24232,7 @@ Object.assign(RUNDGAENGE, {
       text:"Monatstabelle je Person (Soll, Ist, Differenz, Überstunden, Sa, So, Feiertag, Montage, Fahrt, Urlaub, Krank, Entfernung), „Lohnverrechnung (CSV)“, „Bestätigen“, „Arbeitszeitregeln“, Schalter „Standort beim Stempeln“."+
       RG_HG(["Soll Mo–Do 8 h, Fr 6,5 h (38,5 h), Feiertage 0. Überstunden als <strong>Monatsbilanz</strong>, nicht je Tag; Samstag, Sonntag, Feiertag getrennt; Montage = Baustelle, Wartung, Störung; Fahrt = Wegzeit.",
         "„Bestätigen“ sperrt den Monat – danach ändert nur noch der Inhaber (prüft die Datenbank).",
-        "Darunter <strong>„Reisekosten aller“</strong>: je Person Belege, km, Kilometergeld, zu zahlen, Konto – PDF mit allen Belegen, „ausbezahlt“, „zurückgeben“, CSV; der Kilometergeld-Satz ist dort einstellbar.",
+        "Darunter <strong>„Reisekosten aller“</strong>: je Person Belege, km, Kilometergeld, zu zahlen, Konto – PDF mit allen Belegen, „ausbezahlt“, „zurückgeben“, CSV; der Kilometergeld-Satz ist dort einstellbar. Einträge anderer lassen sich dort ändern – das Belegfoto ersetzt nur die Person selbst (dazu „zurückgeben“).",
         "Vorher zeigt die Zeile in Rot, was fehlt: Arbeitstage ohne Eintrag, Abwesenheit im Kalender ohne Stunden, Geplantes ohne passenden Eintrag – mit „Nachricht an …“ (fertiger Text im Chat)."])},
     {reiter:"fahrzeuge", ziel:function(){ return rgReiter("fahrzeuge"); }, wenn:function(){ return reiterErlaubt("fahrzeuge"); }, titel:"Fahrzeuge",
       text:RG_LISTE(["<strong>Techniker</strong> sehen ihr Fahrzeug: „km-Stand eintragen“, „Schaden melden“ (eigene Einträge 24 h löschbar).",
@@ -31416,16 +31416,25 @@ function akEditor(z, vorgabe){
   if(!fzGeladen) fzLaden();
   var a=Object.assign({art:"beleg", datum:isoLokal(new Date()), kategorie:"material"}, vorgabe||{}, z||{});
   var gesperrt=!!z && z.status!=="offen" && !istInhaber();
+  /* der Inhaber ändert den Eintrag einer anderen Person (aus „Reisekosten aller“) */
+  var fremd=!!z && !!z.user_id && z.user_id!==meineKennung();
   var km=a.art==="km";
   var v=ansichtOeffnen(z ? (km?"Kilometer Privatauto":"Beleg") : (km?"Kilometer mit Privatauto":"Selbst bezahlt – Beleg"));
   v.schritt.textContent=gesperrt ? "Schon abgegeben ("+AK_STATUS[z.status]+") – ändern kann das nur der Inhaber" : (km ? "Kilometergeld "+geld(KM_SATZ)+" € je km" : "mit Foto vom Beleg – der Chef zahlt am Monatsende aus");
-  var autos=meinePrivatautos();
+  /* Privatautos der Person, der der Eintrag gehört; das gespeicherte Fahrzeug bleibt wählbar (auch wenn es
+     inzwischen nicht mehr aktiv ist) – sonst ginge es beim Speichern still verloren */
+  var autos=fremd ? FZ.filter(function(f){ return f.privat_von===z.user_id && f.aktiv!==false; }) : meinePrivatautos();
+  if(a.fahrzeug_id && !autos.some(function(f){ return f.id===a.fahrzeug_id; }))
+    autos=autos.concat([FZ.filter(function(f){ return f.id===a.fahrzeug_id; })[0] || {id:a.fahrzeug_id, kennzeichen:a.fahrzeug_name||""}]);
   var projekte=PROJEKTE.filter(function(p){ return projektOffen(p) || p.id===a.projekt_id; });
   var form=el('<form class="stack" autocomplete="off" style="max-width:560px">'+
     (km ? "" :
       '<div class="stack" style="gap:6px"><div class="fl"><span class="req">Foto vom Beleg</span></div>'+
+        /* Fotos liegen im Ordner der Person (Speicher „auslagen“ unter <user_id>/) – der Inhaber darf dort nicht
+           ablegen; ein neues Foto landete in seinem Ordner und die Person sähe ihren Beleg nicht mehr */
+        (fremd ? '<div class="muted" style="font-size:12.5px">Das Foto ersetzen kann nur '+esc(a.name||"die Person")+" selbst – dazu „zurückgeben“.</div>" :
         '<div class="rowflex" style="gap:8px;flex-wrap:wrap"><label class="btn sm" style="cursor:pointer">📷 Beleg fotografieren<input type="file" accept="image/*" capture="environment" data-foto hidden></label>'+
-        '<label class="btn ghost sm" style="cursor:pointer">Bild / PDF wählen<input type="file" accept="image/*,application/pdf" data-foto hidden></label></div>'+
+        '<label class="btn ghost sm" style="cursor:pointer">Bild / PDF wählen<input type="file" accept="image/*,application/pdf" data-foto hidden></label></div>')+
         '<div data-vorschau class="muted" style="font-size:12.5px">'+(a.foto?"Foto ist gespeichert – wird geladen …":"Noch kein Foto.")+"</div>"+
         '<label class="chk" style="font-size:12.5px"><input type="checkbox" data-ohne'+(a.ohne_beleg?" checked":"")+"><span>Kein Beleg vorhanden</span></label>"+
         '<label class="fl" data-ohnegrund'+(a.ohne_beleg?"":" hidden")+'><span>Warum kein Beleg?</span><input type="text" data-f="ohne_beleg" maxlength="300" value="'+esc(a.ohne_beleg||"")+'" placeholder="z. B. Parkautomat ohne Beleg"></label></div>')+
@@ -31437,7 +31446,7 @@ function akEditor(z, vorgabe){
     (km ? '<label class="fl"><span class="req">Strecke</span><input type="text" data-f="text" maxlength="300" value="'+esc(a.text||"")+'" placeholder="z. B. Salzburg – Saalfelden – St. Johann i. T. – Salzburg"></label>'+
           '<div data-vorschlag class="chips"></div>'+
           '<label class="fl"><span>Fahrzeug</span><select data-f="fahrzeug_id"><option value="">– Privatauto –</option>'+autos.map(function(f){
-            return '<option value="'+esc(f.id)+'"'+(a.fahrzeug_id===f.id || (!a.fahrzeug_id && autos.length===1)?" selected":"")+">"+esc(f.kennzeichen+(f.bezeichnung?" · "+f.bezeichnung:""))+"</option>"; }).join("")+"</select></label>"+
+            return '<option value="'+esc(f.id)+'"'+(a.fahrzeug_id===f.id || (!a.fahrzeug_id && autos.length===1 && !fremd)?" selected":"")+">"+esc((f.kennzeichen||"gespeichertes Fahrzeug")+(f.bezeichnung?" · "+f.bezeichnung:""))+"</option>"; }).join("")+"</select></label>"+
           '<div class="note" data-kmbetrag style="font-size:13px"></div>'
         : '<label class="fl"><span class="req">Wo / was?</span><input type="text" data-f="text" maxlength="300" value="'+esc(a.text||"")+'" placeholder="z. B. Bauhaus – Silikon und Schrauben"></label>'+
           '<div class="fl"><span>Wofür?</span></div><div class="chips" data-kat>'+AUSLAGE_KAT.map(function(x){ return '<button class="chip" type="button" data-w="'+x[0]+'" aria-pressed="'+(a.kategorie===x[0])+'">'+esc(x[1])+"</button>"; }).join("")+"</div>")+
@@ -31465,7 +31474,8 @@ function akEditor(z, vorgabe){
     F("km").addEventListener("input", rechne); rechne();
     var vorschlag=function(){
       var h=form.querySelector("[data-vorschlag]"); h.innerHTML="";
-      var s=akStreckeVorschlag(F("datum").value), kv=F("fahrzeug_id").value ? akKmVorschlag(F("datum").value, F("fahrzeug_id").value) : null;
+      /* der Kalender-Vorschlag ist die Strecke des Angemeldeten – beim Eintrag einer anderen Person keiner */
+      var s=fremd ? "" : akStreckeVorschlag(F("datum").value), kv=F("fahrzeug_id").value ? akKmVorschlag(F("datum").value, F("fahrzeug_id").value) : null;
       if(s){ var c=el('<button class="chip" type="button">laut Kalender: '+esc(s)+"</button>"); c.onclick=function(){ F("text").value=s; }; h.appendChild(c); }
       if(kv){ var c2=el('<button class="chip" type="button">'+kv+" km laut Fahrzeug</button>"); c2.onclick=function(){ F("km").value=String(kv); rechne(); }; h.appendChild(c2); }
     };
@@ -31481,7 +31491,7 @@ function akEditor(z, vorgabe){
       Store.sb.from("auslagen").delete().eq("id", z.id).select("id").then(function(r){
         if(r.error || !r.data || !r.data.length){ fehler("Nicht gelöscht"+(r.error?" ("+r.error.message+")":" – vielleicht schon abgegeben")+"."); return; }
         if(z.foto) Store.sb.storage.from("auslagen").remove([z.foto]).then(function(){}, function(){});
-        AUSLAGEN=AUSLAGEN.filter(function(x){ return x.id!==z.id; }); v.zu(); toast("Gelöscht."); akNeuZeichnen(); }); };
+        AUSLAGEN=AUSLAGEN.filter(function(x){ return x.id!==z.id; }); akAlleVeraltet(); v.zu(); toast("Gelöscht."); akNeuZeichnen(); }); };
     v.fuss.appendChild(lo);
   }
   var ok=fussKnoepfe(v, "Speichern").ok;
@@ -31497,8 +31507,8 @@ function akEditor(z, vorgabe){
       var k=akBetragLesen(F("km").value);
       if(!(k>0)){ fehler("Bitte die gefahrenen Kilometer als Zahl eintragen."); F("km").focus(); return; }
       if(k>1500 && !window.confirm(k+" km an einem Tag – stimmt das?")) return;
-      var fid=F("fahrzeug_id").value||null, fo=fid && FZ.filter(function(f){ return f.id===fid; })[0];
-      Object.assign(zeile, {km:k, fahrzeug_id:fid, fahrzeug_name:fo?fo.kennzeichen:null});
+      var fid=F("fahrzeug_id").value||null, fo=fid && autos.filter(function(f){ return f.id===fid; })[0];
+      Object.assign(zeile, {km:k, fahrzeug_id:fid, fahrzeug_name:fo?fo.kennzeichen||null:null});
     } else {
       var b=akBetragLesen(F("betrag").value);
       if(!(b>0)){ fehler("Bitte den Betrag eintragen, z. B. 23,85."); F("betrag").focus(); return; }
@@ -31511,9 +31521,13 @@ function akEditor(z, vorgabe){
     if(a.bedarf_id) zeile.bedarf_id=a.bedarf_id;
     ok.disabled=true; ok.textContent=datei ? "Foto wird hochgeladen …" : "wird gespeichert …";
     var fertig=function(n){
-      AUSLAGEN=AUSLAGEN.filter(function(x){ return x.id!==n.id; }).concat([n]);
+      /* in die eigene Karte nur eigene Einträge – den einer anderen Person zeigt „Reisekosten aller“ (neu geladen) */
+      var eigen=!n.user_id || n.user_id===meineKennung();
+      AUSLAGEN=AUSLAGEN.filter(function(x){ return x.id!==n.id; }).concat(eigen ? [n] : []);
+      akAlleVeraltet();
       v.zu(); toast("Gespeichert: "+(n.art==="km" ? String(n.km).replace(".",",")+" km = " : "")+geld(n.betrag)+" €.");
-      S.akMonat=String(n.datum).slice(0,7); akNeuZeichnen();
+      if(eigen) S.akMonat=String(n.datum).slice(0,7);
+      akNeuZeichnen();
       /* dafür besorgt (Werkzeug und Material): der Bedarf ist erledigt */
       var bd=a.bedarf_id && BEDARF.filter(function(x){ return x.id===a.bedarf_id; })[0];
       if(bd && bedarfOffen(bd)) bedarfSpeichern(bd, {status:"erledigt"}).then(function(){ toast("„"+bd.text+"“ ist als erledigt abgehakt."); }, function(){});
@@ -31686,6 +31700,8 @@ function akMeineKarte(){
 }
 /* ---------- Inhaber: Reisekosten aller, je Person, ausbezahlt ---------- */
 var AK_ALLE={monat:"", liste:[], konten:{}, laedt:false, fehler:""}, AK_ABGEGEBEN=null;
+/* ein Eintrag wurde geändert oder gelöscht: „Reisekosten aller“ und das To-do beim nächsten Zeichnen neu laden */
+function akAlleVeraltet(){ if(istInhaber()){ AK_ALLE.monat=""; AK_ABGEGEBEN=null; } }
 function akAlleLaden(monat){
   /* ins Objekt, für das geladen wird – nach einem Kontowechsel (kontowechselAufraeumen) ist AK_ALLE ein neues */
   var ziel=AK_ALLE;
