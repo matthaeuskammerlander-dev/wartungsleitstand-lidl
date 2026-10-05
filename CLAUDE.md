@@ -302,7 +302,9 @@ Kammerlander Umwelt- und Klimatechnik (UKT) – oft kurz, vom Handy, im Feld.
   kommen mit `.eml` (art „mail“, `eintraege` in synology/ukt_posteingang.py, Test
   tools/posteingang_test.py); in der App eine Karte je Mail (`posteingangMailBox`), „Zu Projekt
   legen“ (`posteingangZuProjekt`, Vorschlag `posteingangProjektPunkte`) – erledigt erst, wenn alle
-  Dateien hochgeladen sind. Angebot/Rechnung als Art nur für den Inhaber.
+  Dateien hochgeladen sind. Angebot/Rechnung als Art nur für den Inhaber. KPlus-PDFs (6-stellig, `kplusDateiname`; Tiefentest
+  05.10.2026): beim Inhaber als Angebot/Rechnung erkannt (buero/), andere legen sie und die Mail dazu nicht ab (bleiben im
+  Posteingang). Eine Mail mit Angebot/Rechnung (`mailMitBeleg`) liegt auch als .eml nur unter buero/ – ebenso aus dem Mail-Programm.
 - **Mail-Programm am PC** (Büro 04.10.2026, `mailBruecke`, `mailUebernehmen`, `mailProjektNeu`, `mailZuProjekt`,
   `mailStoerung`, `mailsDazuKarte`): das Programm „Mail mit Claude“ läuft NUR auf dem PC des Inhabers
   (http://localhost:4317, nicht in diesem Repository). Verbunden per 6-stelligem Code aus dem Mail-Programm unter

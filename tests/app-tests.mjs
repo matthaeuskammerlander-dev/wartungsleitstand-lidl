@@ -1995,6 +1995,85 @@ test("Tiefentest mail: Rechte – Posteingang nur für Mitarbeiter, KPlus-PDFs u
     }
     await tm.anmelden("inhaber@test.at", "inhaber");
     p(((await x("Store.sb").from("posteingang").select("*")).data || []).length >= 1, "M5 Inhaber liest den Posteingang nicht mehr");
+    db.posteingang.find((e) => e.id === "tm5a").status = "verworfen";
+
+    /* M3/M4: KPlus-PDFs (6-stellige Nummer) sind Angebote/Rechnungen – nur der Inhaber legt sie ab (Büro-Ordner);
+       die Mail selbst (.eml) enthält sie als Anhang und liegt dann ebenso nur beim Inhaber */
+    tm.verbinden(); tm.toastSpion(); window.UKT_CONFIG.posteingangAktiv = true;
+    x("kplusLesen=function(d){ var t=new TextDecoder().decode(d), nr=(/4139\\d\\d/.exec(t)||[''])[0]; if(!nr) return Promise.reject(new Error('kein KPlus')); return Promise.resolve({art:nr==='413953'?'angebot':'rechnung', nummer:nr, datum:'2026-03-20', kopf:{}, positionen:[{typ:'pos', nr:'1', menge:1, eh:'Stk', text:'Testposition', preis:1000}], summenPdf:{netto:1000}}); }");
+    const roh = (nr) => new Blob(["From: buero@test-firma.at\r\nSubject: Rechnung " + nr + "\r\n\r\nAnbei die Rechnung, netto 1.000,00 (Anhang " + nr + ".pdf als base64)"], { type: "message/rfc822" });
+    const anh = (u) => { const nr = (/uid=(\d+)/.exec(u) || [])[1]; return new Blob(["%PDF-1.4 " + (nr === "33" ? "Plan" : "KPlus 4139" + nr)], { type: "application/pdf" }); };
+    db.projekte.push({ id: "tmp_r3", nummer: "P-2026-903", titel: "Rechte Kälte", kunde_id: "lidl", status: "baustelle", daten: {}, verlauf: [], erstellt: jetzt, geaendert: jetzt });
+    await x("projekteLaden()");
+    const MV = { konto: "gmx", ordner: "INBOX", uid: 52, messageId: "<tm52@test>", datum: "2026-03-20T08:00:00.000Z", betreff: "Rechnung 413952", von: [{ name: "Büro", address: "buero@test-firma.at" }], an: [],
+      anhaenge: [{ i: 0, name: "413952.pdf", typ: "application/pdf", groesse: 4096 }] };
+    tm.programm({ mails: [MV], vorschlag: { titel: "Rechte Rechnungstest", kunde: "Lidl", kundeTreffer: "Lidl", status: "abgerechnet", angaben: [], beteiligte: [], termine: [], tagebuch: [], dateien: [] },
+      roh: (u) => roh("4139" + (/uid=(\d+)/.exec(u) || [])[1]), anhang: anh });
+    await tm.verlauf({ suche: "413952" });
+    tm.fuss(/Projekt anlegen/).click();
+    await tm.toastBis(/angelegt:|^Nicht fertig/);
+    const pv = db.projekte.find((q) => q.titel === "Rechte Rechnungstest"), dv = ((pv && pv.daten.dateien) || []).map((f) => f.art + "|" + f.pfad);
+    p(dv.some((f) => /^rechnung\|buero\/.*413952\.pdf$/.test(f)) && dv.some((f) => /^mail\|buero\/.*\.eml$/.test(f)), "M3 Mailverlauf: Mail mit KPlus-Rechnung nicht nur beim Inhaber: " + JSON.stringify(dv));
+    /* „Mail zu Projekt legen“ (Mail-Programm): KPlus-Anhang als Angebot unter buero/, die Mail ebenso; eine Mail nur mit Plan bleibt für alle */
+    const MZ = (uid, name) => ({ konto: "gmx", ordner: "INBOX", uid, messageId: "<tm" + uid + "@test>", datum: "2026-03-21T08:00:00.000Z", betreff: "Unterlagen " + uid, von: [{ name: "Büro", address: "buero@test-firma.at" }], an: [], text: "Anbei",
+      anhaenge: [{ i: 0, name, typ: "application/pdf", groesse: 4096 }] });
+    for (const [uid, name] of [[53, "413953.pdf"], [33, "Plan EG.pdf"]]) {
+      tm.programm({ mail: MZ(uid, name), roh: (u) => roh("4139" + uid), anhang: anh }); window.__toasts = [];
+      x("ansichtenSchliessen()"); x("mailUebernehmen({k:'gmx', o:'INBOX', u:" + uid + ", a:'zuprojekt', p:'tmp_r3'})");
+      await tm.bis(() => tm.fuss(/Ins Projekt legen/));
+      tm.fuss(/Ins Projekt legen/).click();
+      await tm.toastBis(/abgelegt|^Nicht/);
+    }
+    const dz = (db.projekte.find((q) => q.id === "tmp_r3").daten.dateien || []).map((f) => f.art + "|" + f.pfad + "|" + f.name);
+    p(dz.some((f) => /^angebot\|buero\/.*413953\.pdf$/.test(f)) && dz.some((f) => /^mail\|buero\/.*Unterlagen 53\.eml$/.test(f)), "M3/M4 Mail zu Projekt: KPlus-Angebot bzw. die Mail dazu nicht nur beim Inhaber: " + JSON.stringify(dz));
+    p(dz.some((f) => /^mail\|tmp_r3\/.*Unterlagen 33\.eml$/.test(f)), "M3 Mail ohne Angebot/Rechnung landet unnötig im Büro-Ordner: " + JSON.stringify(dz));
+    /* Posteingang beim Inhaber: KPlus-PDF als Rechnung erkannt (Büro-Ordner), die Mail ebenso */
+    const sbI = x("Store.sb"), pe = (id, gr, art, name, pfad) => ({ id, nachricht_id: "<" + gr + "@test>", art, dateiname: name, pfad, status: "neu", betreff: "Fwd: Rechnung P-2026-903", absender: "office@ukt.at", eingang: jetzt, bytes: 400 });
+    /* (ohne Dateityp hochgeladen – die Attrappe kennt für den Posteingang nur PDF und Bilder) */
+    await sbI.storage.from("posteingang").upload("2026/10/tm4_mail.eml", new Blob(["From: buero@test-firma.at\r\n\r\nAnbei die Rechnung 413954"]));
+    await sbI.storage.from("posteingang").upload("2026/10/tm4_413954.pdf", new Blob(["%PDF-1.4 KPlus 413954"], { type: "application/pdf" }));
+    db.posteingang.push(pe("tm4a", "tm4", "mail", "Fwd Rechnung P-2026-903.eml", "2026/10/tm4_mail.eml"), pe("tm4b", "tm4", "unbekannt", "413954.pdf", "2026/10/tm4_413954.pdf"));
+    let k = x("posteingangKarte()"); document.body.appendChild(k); await tm.bis(() => k.querySelector(".posbox"));
+    tm.knopf(k, /Zu Projekt legen/).click(); await tm.bis(() => tm.fuss(/Ins Projekt legen/));
+    let d = tm.dlg(), zeile = () => [...d.querySelectorAll("[data-d] .rowflex")].find((z) => /413954\.pdf/.test(z.textContent));
+    await tm.bis(() => zeile().querySelector("select").value === "rechnung", 1500);
+    p(zeile().querySelector("select").value === "rechnung", "M4 Posteingang (Inhaber): KPlus-PDF nicht als Rechnung erkannt, vorgewählt „" + zeile().querySelector("select").value + "“");
+    window.__toasts = []; tm.fuss(/Ins Projekt legen/).click(); await tm.toastBis(/abgelegt|^Nicht/);
+    const dp = (db.projekte.find((q) => q.id === "tmp_r3").daten.dateien || []).filter((f) => /Fwd Rechnung|413954/.test(f.name)).map((f) => f.art + "|" + f.pfad);
+    p(dp.length === 2 && dp.every((f) => /\|buero\//.test(f)), "M3/M4 Posteingang (Inhaber): Rechnung bzw. Mail dazu nicht im Büro-Ordner: " + JSON.stringify(dp));
+    k.remove(); x("ansichtenSchliessen()"); tm.ende();
+
+    /* als Admin: Mail und Rechnung aus dem Mailverlauf sind nicht zu sehen; aus dem Posteingang legt er nur den Plan ab */
+    await tm.anmelden("admin@test.at", "admin"); tm.toastSpion(); await x("projekteLaden()");
+    x("projektAnsicht('" + pv.id + "')"); await tm.bis(() => tm.dlg() && /Dateien/.test(tm.dlg().textContent));
+    const karte = [...tm.dlg().querySelectorAll(".card")].find((c) => /^Dateien/.test((c.querySelector("h2") || {}).textContent || ""));
+    const sicht = karte ? [...karte.querySelectorAll("[data-liste] a")].map((l) => l.textContent) : ["(keine Karte)"];
+    p(!sicht.some((n) => /\.eml$|413952/.test(n)), "M3 Admin sieht die Mail mit Rechnung bzw. die Rechnung: " + JSON.stringify(sicht));
+    x("ansichtenSchliessen()");
+    const sbA = x("Store.sb");
+    await sbA.storage.from("posteingang").upload("2026/10/tm4c_mail.eml", new Blob(["From: buero@test-firma.at\r\n\r\nAnbei die Rechnung 413955"]));
+    await sbA.storage.from("posteingang").upload("2026/10/tm4c_413955.pdf", new Blob(["%PDF-1.4 KPlus 413955"], { type: "application/pdf" }));
+    await sbA.storage.from("posteingang").upload("2026/10/tm4c_plan.pdf", new Blob(["%PDF-1.4 Plan"], { type: "application/pdf" }));
+    await sbA.storage.from("posteingang").upload("2026/10/tm4d_413956.pdf", new Blob(["%PDF-1.4 KPlus 413956"], { type: "application/pdf" }));
+    db.posteingang.push(pe("tm4c1", "tm4c", "mail", "Fwd Unterlagen P-2026-903.eml", "2026/10/tm4c_mail.eml"), pe("tm4c2", "tm4c", "unbekannt", "413955.pdf", "2026/10/tm4c_413955.pdf"),
+      pe("tm4c3", "tm4c", "unbekannt", "Plan OG.pdf", "2026/10/tm4c_plan.pdf"), pe("tm4d1", "tm4d", "mail", "Fwd Rechnung 413956.eml", "2026/10/tm4c_mail.eml"), pe("tm4d2", "tm4d", "unbekannt", "413956.pdf", "2026/10/tm4d_413956.pdf"));
+    k = x("posteingangKarte()"); document.body.appendChild(k); await tm.bis(() => k.querySelectorAll(".posbox").length >= 2);
+    const box = (re) => [...k.querySelectorAll(".posbox")].find((b) => re.test(b.textContent));
+    /* nur Mail + KPlus-Rechnung: gar kein Dialog, sichtbarer Hinweis */
+    window.__toasts = []; tm.knopf(box(/413956/), /Zu Projekt legen/).click(); await tm.warte(300);
+    p(!document.querySelector(".assistent") && window.__toasts.some((t) => /nur der Inhaber/.test(t)), "M4 Admin: Mail nur mit KPlus-Rechnung – kein Hinweis bzw. Dialog offen: " + JSON.stringify(window.__toasts));
+    /* Mail + KPlus + Plan: der Plan kommt ins Projekt, Mail und KPlus bleiben für den Inhaber im Posteingang */
+    tm.knopf(box(/413955/), /Zu Projekt legen/).click(); await tm.bis(() => tm.fuss(/Ins Projekt legen/));
+    d = tm.dlg();
+    p(/nur der Inhaber/.test(d.textContent), "M4 Admin: Dialog sagt nicht, dass Angebot/Rechnung nur der Inhaber ablegt");
+    d.querySelector("[data-p]").value = "tmp_r3"; window.__toasts = [];
+    tm.fuss(/Ins Projekt legen/).click(); await tm.toastBis(/abgelegt|^Nicht/);
+    const da = (db.projekte.find((q) => q.id === "tmp_r3").daten.dateien || []).filter((f) => /Fwd Unterlagen|413955|Plan OG/.test(f.name)).map((f) => f.art + "|" + f.name);
+    p(da.length === 1 && da[0] === "plan|Plan OG.pdf", "M4 Admin hat Angebot/Rechnung bzw. die Mail dazu abgelegt: " + JSON.stringify(da));
+    p(["tm4c1", "tm4c2"].every((id) => db.posteingang.find((e) => e.id === id).status === "neu") && db.posteingang.find((e) => e.id === "tm4c3").status === "erledigt",
+      "M4 Posteingang nach dem Ablegen durch den Admin: " + JSON.stringify(db.posteingang.filter((e) => /^tm4c/.test(e.id)).map((e) => e.id + ":" + e.status)));
+    p(window.__toasts.some((t) => /bleiben für den Inhaber/.test(t)) && /413955/.test(k.textContent), "M4 Admin: kein Hinweis bzw. die Karte für den Inhaber fehlt: " + JSON.stringify(window.__toasts));
+    k.remove();
     return { fehlt };
   });
   pruefe(!r.fehlt.length, r.fehlt.join(" | "));
