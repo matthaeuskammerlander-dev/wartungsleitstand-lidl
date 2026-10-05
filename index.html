@@ -19005,13 +19005,13 @@ function bedarfZu(bz){
       (bz.standort_id && b.standort_id===bz.standort_id && !b.projekt_id && !b.stoerung_id && !b.planung_id);
   }).filter(function(b){ return !bedarfVerborgen(b); });
 }
-/* Bedarf zu einem Kalendereintrag (Termin, Störungseinsatz, Projekttermin) – nur offener, der bis zu diesem Tag gebraucht wird */
-function bedarfFuerEinsatz(x, tag){
+/* Bedarf zu einem Kalendereintrag (Termin, Störungseinsatz, Projekttermin) – nur offener (mitErledigt: auch abgehakter), der bis zu diesem Tag gebraucht wird */
+function bedarfFuerEinsatz(x, tag, mitErledigt){
   var bz = x.e ? {planung_id:x.e.id, projekt_id:x.e.projekt_id, stoerung_id:x.e.stoerung_id, standort_id:x.e.standort_id}
          : x.o ? {stoerung_id:x.o._id, standort_id:x.o.standortId}
          : x.p ? {projekt_id:x.p.id} : null;
   if(!bz) return [];
-  return bedarfZu(bz).filter(function(b){ return bedarfOffen(b) && (!b.benoetigt_am || !tag || b.benoetigt_am<=tag); });
+  return bedarfZu(bz).filter(function(b){ return (mitErledigt || bedarfOffen(b)) && (!b.benoetigt_am || !tag || b.benoetigt_am<=tag); });
 }
 /* die nächsten Einsätze eines Projekt- bzw. Markt-Bedarfs ab heute (Kalendertermine, Projekttermine, Störungseinsätze),
    früheste zuerst – je {datum, ids, namen}: daher kommen Datum und Person (Prüflauf 05.10.2026: die Person fehlte) */
@@ -19121,12 +19121,14 @@ function bedarfEditor(b, vorgabe){
   var v=ansichtOeffnen(b ? "Material / Werkzeug" : "Was wird gebraucht?");
   var bezugT=bedarfBezugText(a); v.schritt.textContent=bezugT ? "für "+bezugT : "ohne Bezug – wird in der Übersicht unter „ohne Termin“ geführt";
   var quellen=[]; BEDARF.forEach(function(x){ if(x.bezugsquelle && quellen.indexOf(x.bezugsquelle)<0) quellen.push(x.bezugsquelle); });
-  var wzListe=WZ.filter(function(w){ return w.aktiv!==false; });
+  /* die gespeicherte Verknüpfung bleibt wählbar, auch wenn das Werkzeug nicht mehr im Bestand ist – sonst ginge sie beim Speichern still verloren */
+  var wzListe=WZ.filter(function(w){ return w.aktiv!==false || w.id===a.werkzeug_id; });
   var team=planTeamMitMir();
   var form=el('<form class="stack" autocomplete="off" style="max-width:600px">'+
     '<div class="chips" data-art>'+[["material","Material"],["werkzeug","Werkzeug / Gerät"]].map(function(x){ return '<button class="chip" type="button" data-w="'+x[0]+'" aria-pressed="'+(a.art===x[0])+'">'+x[1]+"</button>"; }).join("")+"</div>"+
     '<label class="fl" data-wzwahl><span>Welches Werkzeug?</span><select data-f="werkzeug_id"><option value="">– aus der Liste wählen oder unten eintippen –</option>'+
-      wzListe.map(function(w){ return '<option value="'+esc(w.id)+'"'+(a.werkzeug_id===w.id?" selected":"")+">"+esc(w.name+(w.nummer?" ("+w.nummer+")":"")+" · "+wzOrtText(w))+"</option>"; }).join("")+"</select></label>"+
+      wzListe.map(function(w){ return '<option value="'+esc(w.id)+'"'+(a.werkzeug_id===w.id?" selected":"")+">"+esc(w.name+(w.nummer?" ("+w.nummer+")":"")+" · "+(w.aktiv===false?"nicht mehr im Bestand":wzOrtText(w)))+"</option>"; }).join("")+
+      (a.werkzeug_id && !wzListe.some(function(w){ return w.id===a.werkzeug_id; })?'<option value="'+esc(a.werkzeug_id)+'" selected>'+esc(a.text||"?")+"</option>":"")+"</select></label>"+
     '<div class="grid" style="display:grid;grid-template-columns:2fr 1fr;gap:10px">'+
       '<label class="fl"><span class="req">Was?</span><input type="text" data-f="text" maxlength="200" value="'+esc(a.text||"")+'" placeholder="z. B. Kupferrohr 3/8, Vakuumpumpe, Kondensatpumpe"></label>'+
       '<label class="fl"><span>Menge</span><input type="text" data-f="menge" maxlength="40" value="'+esc(a.menge||"")+'" placeholder="z. B. 2 Stk, 10 m"></label></div>'+
@@ -19192,7 +19194,8 @@ function bedarfEditor(b, vorgabe){
     /* steht genau so in der Werkzeugliste: verknüpfen (dann sieht man, wo es ist) */
     var gleich=!felder.werkzeug_id && WZ.filter(function(w){ return w.aktiv!==false && suchNorm(w.name)===suchNorm(text); })[0];
     if(gleich){ felder.werkzeug_id=gleich.id; felder.art="werkzeug"; }
-    var fragen=felder.art==="werkzeug" && !felder.werkzeug_id;
+    /* einmal fragen: beim Anlegen oder wenn es neu Werkzeug bzw. ein anderes ist – nach „Nein“ nicht bei jedem Speichern wieder */
+    var fragen=felder.art==="werkzeug" && !felder.werkzeug_id && (!b || b.art!=="werkzeug" || bedarfSchluessel(b.text)!==bedarfSchluessel(text));
     ok.disabled=true; ok.textContent="wird gespeichert …";
     bedarfSpeichern(b, felder).then(function(n){ v.zu(); wzGeaendert(); toast("Gespeichert: "+n.text+" – "+bedarfWeg(n)[1]+"."); if(fragen) wzAufnehmenFragen(n); },
       function(e){ ok.disabled=false; ok.textContent="Speichern"; fehler(e.message||String(e)); });
@@ -19212,7 +19215,8 @@ function bedarfKasten(bz, opt){
     if(nurLesen()) return;
     /* gelernt: je Projekttyp (vom Projekt mitgegeben), je Markt */
     var vp=opt.vorschlag ? opt.vorschlag() : null; if(vp) h.appendChild(vp);
-    if(bz.standort_id && !opt.ohneMarkt){ var vm=bedarfVorschlagLeiste("An diesem Markt schon gebraucht – antippen trägt ein:", bedarfGelerntMarkt(bz.standort_id, l.filter(bedarfOffen)), bz,
+    /* ohne das, was hier schon steht – auch Abgehaktes (sonst käme es sofort als Vorschlag wieder) */
+    if(bz.standort_id && !opt.ohneMarkt){ var vm=bedarfVorschlagLeiste("An diesem Markt schon gebraucht – antippen trägt ein:", bedarfGelerntMarkt(bz.standort_id, l), bz,
       "markt:"+bz.standort_id+":"+(bz.planung_id||bz.stoerung_id||"markt"), false); if(vm) h.appendChild(vm); }
     var r=el('<div class="rowflex" style="gap:6px;flex-wrap:wrap"><button class="btn ghost sm" type="button" data-n>+ Material / Werkzeug</button>'+
       (PACKLISTEN.length?'<button class="btn ghost sm" type="button" data-p>Packliste übernehmen</button>':"")+"</div>");
@@ -29762,7 +29766,9 @@ function planungPruefen(wahl, von, bis){
     var bdGes={}; tag.material=[];
     l.forEach(function(x){ bedarfFuerEinsatz(x, t).forEach(function(b){ if(bdGes[b.id] || schonGezeigt[b.id]) return; bdGes[b.id]=schonGezeigt[b.id]=1; tag.material.push(b); }); });
     tag.marktTipp=[];
-    markte.forEach(function(s){ var lt=bedarfGelerntMarkt(s.id, tag.material.concat(BEDARF.filter(function(b){ return bedarfOffen(b) && bedarfMarkt(b)===s.id; })));
+    /* was bei den Einsätzen des Tages schon steht – auch abgehakt – ist kein 💡-Tipp mehr */
+    var imTag=[]; l.forEach(function(x){ imTag=imTag.concat(bedarfFuerEinsatz(x, t, true)); });
+    markte.forEach(function(s){ var lt=bedarfGelerntMarkt(s.id, imTag.concat(BEDARF.filter(function(b){ return bedarfOffen(b) && bedarfMarkt(b)===s.id; })));
       if(lt.length) tag.marktTipp.push({s:s, l:lt}); });
     tag.orte=markte;
     tage.push(tag);
