@@ -1787,6 +1787,28 @@ reSchritt("kplus", "R03", async (a) => {
   return /^gutschrift, Fenster 0, Belege [+]0, Meldung: .*Gutschrift/.test(r.gutschrift) && r.minus === -50 && r.netto == null && !/stimmt/.test(r.note) && /nicht erkannt/.test(r.note)
     ? "" : `Gutschrift ${r.gutschrift}; Netto-Summe „-50,00“ gelesen als ${r.minus}; ohne Summe: ${r.netto}, Hinweis „${r.note}“`;
 });
+/* KPlus-Beleg: „PDF ansehen“ zeigt das abgelegte Original – ohne Original nie ein App-PDF mit Briefkopf */
+reSchritt("kplus", "R10", async (a) => {
+  const r = await a.seite.evaluate(async () => {
+    const x = window.__t.x, db = window.__db.tabellen, R = window.__re;
+    await R.stoerung("pk10", "2026-06-01");
+    await R.ablegen(R.vorschau("pk10", R.erg("900560"), new File([new TextEncoder().encode("%PDF-1.4\n%%EOF\n")], "900560.pdf", { type: "application/pdf" })));
+    const mit = await R.bis(() => db.belege.filter((q) => q.nummer === "900560" && q.pdf_pfad)[0]);
+    db.belege.push({ id: "b10b", art: "rechnung", nummer: "900561", extern: true, test: false, datum: "2026-06-01", status: "versendet", protokoll_id: "pk10", kunde_id: "lidl", kopf: {}, positionen: [], summen: { netto: 0 } });
+    x("(function(){ window.__gezeigt=[]; window.__alt10=[pdfAnsicht, belegPdfErzeugen];"
+      + " pdfAnsicht=function(u,n){ window.__gezeigt.push('angezeigt: '+n); };"
+      + " belegPdfErzeugen=function(){ window.__gezeigt.push('App-PDF neu erzeugt'); return new Promise(function(){}); }; return 1; })()");
+    const zeige = async (b) => { x("ansichtenSchliessen()"); window.__b10 = b;
+      x("belegAnsicht(kontextProtokoll(window.__re.pk('pk10')), window.__b10, function(){})");
+      const k = await R.bis(() => R.knopf(R.dlg(), /^PDF ansehen$/)); k.click(); await R.warte(250); };
+    try { await zeige(mit); const g1 = window.__gezeigt.slice(); window.__gezeigt.length = 0; R.toasts.length = 0;
+      await zeige(db.belege.filter((q) => q.id === "b10b")[0]);
+      return { pfad: mit && mit.pdf_pfad, g1, g2: window.__gezeigt.slice(), toasts: R.toasts.slice() };
+    } finally { x("(function(){ pdfAnsicht=window.__alt10[0]; belegPdfErzeugen=window.__alt10[1]; return 1; })()"); }
+  });
+  return r.pfad && r.g1.length === 1 && /^angezeigt/.test(r.g1[0]) && !r.g2.length && r.toasts.some((t) => /Original/.test(t))
+    ? "" : `Original unter ${r.pfad}; „PDF ansehen“ zeigt ${JSON.stringify(r.g1)}; ohne Original: ${JSON.stringify(r.g2)}, Meldungen ${JSON.stringify(r.toasts)}`;
+});
 /* Lernen aus KPlus: dieselbe Wartung mit anderem Wortlaut kommt nicht doppelt in den nächsten Vorschlag */
 reSchritt("kplus", "R05", async (a) => {
   const r = await a.seite.evaluate(async () => {
