@@ -65,6 +65,12 @@ Kammerlander Umwelt- und Klimatechnik (UKT) – oft kurz, vom Handy, im Feld.
   Doppel zurück. Bezeichnung jeder Anlage in der Übersicht des Anlagendialogs
   änderbar. KI-Fotos: Prüfbuch und Typenschilder bis 30 Bilder, gelesen in
   Teilen zu 8 (`kiTeilLesen`, `kiTeileZusammen`; der Server nimmt 12 je Aufruf).
+  Die gelesenen Fotos (Inhaber 06.10.2026) wählt man gleich in der KI-Prüfansicht („📷 Fotos an der Anlage
+  speichern“, `kiFotoAuswahl`, `fotoVorschlag`; bei mehreren Büchern hängen sie an jedem Buch, `_fotoQuelle`) –
+  `kiFotosAblegen`: bekannte Anlage sofort (Tabelle `anlagenfotos`, Speicher `anlagen/…`), neue Anlage hochladen
+  und an `_fotosOffen` vormerken, eingetragen nach dem Speichern von Anlage bzw. Protokoll (`anlagenFotosEintragen`,
+  Warteschlange auf dem Gerät, `anlagenFotosNachtragen`). Scheitert das Hochladen: nachfragen, nie still verwerfen.
+  Zu sehen unter „📷 Fotos der Anlage“ (Markt, Historie, Verwaltung) und im Anlagenbuch (`anlagenbuchFotosEinsetzen`).
   Wartungspunkt „Kondensatwanne“ (früher „Kondensatwanne/-ablauf“, alte
   Protokolle über `arbeitenAktuell`).
 - Techniker/in = angemeldetes Konto (Büro 01.10.2026: „er ist verantwortlich für

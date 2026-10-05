@@ -6225,6 +6225,8 @@ function anlageNeuAnlegen(s, vorlage, weiter){
           (felder.intervallCode?" · "+felder.intervallCode+(felder.monat?" "+MONATE_L[felder.monat]:""):"")+
           (felder.nurJW && !w.weitere.length ? " · nur Jahreswartung, kein Halbjahrestermin" : "")}], rueck:rueck});
       toast(wo==="geraet" ? "Anlage auf dem Gerät gespeichert – wird übertragen, sobald Verbindung besteht." : "Anlage angelegt.");
+      /* Fotos aus der KI-Erkennung, vorgemerkt solange die Anlage neu war: jetzt an ihr eintragen (Inhaber 06.10.2026) */
+      if(erg._fotosOffen && erg._fotosOffen.length) setTimeout(function(){ anlagenFotosEintragen(erg._fotosOffen, id, s.id); }, 600);
       render();
     });
   });
@@ -6582,7 +6584,13 @@ function anlageHistorieAnsicht(leader, ohneStoerung){
   v.schritt.innerHTML=s?marktLink(s):"";
   var box=el('<div class="stack"></div>');
   /* Anlagenbuch: alles zu dieser Anlage als PDF (Kunde: nur ansehen, kein Export) */
-  if(!nurLesen()){ var abRow=el('<div class="rowflex"></div>'); abRow.appendChild(pdfKnopf("📄 Anlagenbuch als PDF", function(){ return "Anlagenbuch_"+(s?stName(s)+"_":"")+anlagenName(d)+".pdf"; }, function(){ return anlagenbuchPdf(leader); })); box.appendChild(abRow); }
+  if(!nurLesen()){ var abRow=el('<div class="rowflex"></div>'); abRow.appendChild(pdfKnopf("📄 Anlagenbuch als PDF", function(){ return "Anlagenbuch_"+(s?stName(s)+"_":"")+anlagenName(d)+".pdf"; }, function(){ return anlagenbuchPdf(leader); }));
+    /* Fotos von Prüfbuch, Typenschild und Anlage auch hier (Inhaber 06.10.2026) */
+    if(anlagenFotosAn()){
+      var foH=el('<button class="btn ghost sm" type="button" data-fotozahl="'+esc(leader.id)+'">📷 Fotos der Anlage ('+anlagenFotosVon(leader.id).length+')</button>');
+      foH.onclick=function(){ anlagenFotosVerwalten(leader); }; abRow.appendChild(foH); anlagenFotosLaden();
+    }
+    box.appendChild(abRow); }
   var wk=wiederkehrVon(leader);
   if(wk) box.appendChild(el('<div class="note warnbox"><strong>⚠ Wiederkehrende Störung:</strong> '+esc(wiederkehrText(wk))+'.</div>'));
   /* Kältemittel-Bilanz dieser Anlage (je Jahr) samt Leck-Verdacht –
@@ -7402,11 +7410,18 @@ function anlageDialogTeilKi(P){
     function verarbeiten(erg){
         if(P.geschlossen){ toast("Der Dialog war schon geschlossen – das Ergebnis der KI wurde verworfen."); return; }
         var d=erg.daten||{};
+        /* die gelesenen Fotos (nur direkt in der App gelesen): sie gehen mit in die Prüfansicht und
+           können an der Anlage gespeichert werden. Bei mehreren Büchern hängen sie an jedem Buch –
+           auch an den weiteren, die danach angeboten werden (Inhaber 06.10.2026: vorher gingen sie
+           beim Wählen des Buchs verloren) */
+        var fq=erg._bilder ? {bilder:erg._bilder, info:d.bilder, mehrere:false} : (d._fotoQuelle||null);
         /* Prüfbuch: eine Fotoserie kann mehrere Bücher (Anlagen) enthalten –
            eins gehört zu dieser Anlage, die anderen werden danach angeboten */
         if(art==="pruefbuch"){
           var buecher=kiPruefbuecher(d);
           if(!buecher.length){ toast("Auf den Fotos wurde kein Prüfbuch erkannt."); zurueck(); return; }
+          if(buecher.length>1 && fq) buecher.forEach(function(b){
+            try{ Object.defineProperty(b, "_fotoQuelle", {value:{bilder:fq.bilder, info:fq.info, mehrere:true}, enumerable:false}); }catch(e){} });
           if(buecher.length>1 && !erg._gewaehlt){
             return kiBuchWaehlen(buecher, d.hinweise, a).then(function(i){
               if(i===null){ zurueck(); return; }
@@ -7417,7 +7432,7 @@ function anlageDialogTeilKi(P){
           }
           d=buecher[0];
         }
-        if(art==="typenschild" && geraet==="innen") return kiInnen(d);
+        if(art==="typenschild" && geraet==="innen") return kiInnen(d, fq);
         /* Außengerät: das Schild, das die KI als außen erkennt, sonst das erste */
         if(art==="typenschild"){
           var gl=Array.isArray(d.geraete)?d.geraete:[];
@@ -7496,12 +7511,15 @@ function anlageDialogTeilKi(P){
            „pruefungen[1].datum“) und einzelne Prüfungsfelder zählen für die Zeile */
         var unsP=(d.unsicher||[]).map(function(u){ u=String(u).trim();
           return /^(pruefungen|datum|techniker|firma|maengel)\b/i.test(u) ? "pruefungen" : u.replace(/^anlage\s*[.:]\s*/i,"").replace(/\[\d+\]/g,""); });
-        return kiPruefen(art==="pruefbuch"?"Prüfbuch":"Typenschild Außengerät", gelesen, a, felder, unsP, hinweis).then(function(wahl){
+        /* was vorher schon bekannt war (Liste, Prüfbuch, App) – Seiten nur mit diesen Einträgen sind „nichts Neues“ */
+        var lpB=a._leaderId ? posById[a._leaderId] : null, bekannteBesuche=(lpB ? besucheDerAnlage(lpB) : []).concat((a._nachweiseNeu||[]).map(function(n){ return n.datum; }));
+        /* Fotos zum Speichern gleich in der Prüfansicht wählen – nicht mehr als eigener Dialog
+           danach, der leicht unterging (Inhaber 06.10.2026: kein einziges Foto kam an) */
+        return kiFotoAuswahl(a, art, fq, bekannteBesuche, d).then(function(fotos){
+        return kiPruefen(art==="pruefbuch"?"Prüfbuch":"Typenschild Außengerät", gelesen, a, felder, unsP, hinweis, fotos).then(function(wahl){
           if(!wahl){ zurueck(); return; }
-          /* die Fotos dazu an der Anlage speichern (nur aus der direkten Erkennung – beim Weg über die Claude-App liegen sie nicht in der App) */
-          /* was vorher schon bekannt war (Liste, Prüfbuch, App) – Seiten nur mit diesen Einträgen sind „nichts Neues“ */
-          var lpB=a._leaderId ? posById[a._leaderId] : null, bekannteBesuche=(lpB ? besucheDerAnlage(lpB) : []).concat((a._nachweiseNeu||[]).map(function(n){ return n.datum; }));
-          if(erg && erg._bilder) setTimeout(function(){ anlagenFotosSpeichern(a, art, erg._bilder, (erg.daten||{}).bilder, bekannteBesuche); }, 300);
+          /* erst die Fotos ablegen (an der Anlage bzw. bei einer neuen Anlage vorgemerkt), dann weiter im Dialog */
+          return kiFotosAblegen(a, art, wahl._fotos, P).then(function(){
           Object.keys(wahl).forEach(function(k){
             if(k==="_nachweise") a._nachweiseNeu=(a._nachweiseNeu||[]).concat(wahl[k]);
             else if(k==="_notizOhneTag") a._notizDazu=wahl[k];
@@ -7513,13 +7531,15 @@ function anlageDialogTeilKi(P){
           /* gehen Inbetriebnahme oder Termine aus dem Prüfbuch nicht hervor:
              gleich danach fragen – für die Planung das Wichtigste */
           if(art==="pruefbuch" && a._termine && termineOffen(a).some(function(x){ return !x.weich; })) P.termineEinzeln("Noch offen","Zur Übersicht");
+          });
+        });
         });
     }
   }
   /* Innengeräte vom Typenschild: je Gerät ein Haken. Schon erfasste
      Seriennummern werden nicht doppelt angeboten; übernommen wird ans Ende
      der Liste, den Raum trägt man danach ein. */
-  function kiInnen(d){
+  function kiInnen(d, fq){
     /* Nummern wie in der Antwort der KI („geraet 3“), auch wenn Außengeräte wegfallen */
     var gl=(Array.isArray(d.geraete)?d.geraete:[]).map(function(x){ return x.art==="aussen" ? null : x; });
     /* schon erfasst (zählt als „schon erfasst“) und schon in dieser Antwort
@@ -7554,13 +7574,17 @@ function anlageDialogTeilKi(P){
       /* ohne Gerätenummer: bei einem Gerät dieses, sonst sicherheitshalber alle */
       if(m) uns.push("geraet "+m[1]); else uns=uns.concat(alleNr);
     });
-    return kiPruefen("Typenschilder Innengeräte", gelesen, {}, felder, uns, hinweis).then(function(wahl){
+    return kiFotoAuswahl(a, "typenschild", fq, null, d).then(function(fotos){
+    return kiPruefen("Typenschilder Innengeräte", gelesen, {}, felder, uns, hinweis, fotos).then(function(wahl){
+      return kiFotosAblegen(a, "typenschild", wahl && wahl._fotos, P).then(function(){
       if(wahl && Object.keys(wahl).length){
         a.innengeraete=(Array.isArray(a.innengeraete)?a.innengeraete:[]).map(function(g){ return Object.assign({},g); })
           .concat(Object.keys(wahl).sort(function(x,y){ return +x.slice(6)-+y.slice(6); }).map(function(k){ return wahl[k]; }));
         toast(Object.keys(wahl).length+" Innengerät"+(Object.keys(wahl).length===1?"":"e")+" übernommen – Raum bitte ergänzen, dann „Übernehmen“.");
         P.uebersicht();
       } else zurueck();   /* nichts übernommen */
+      });
+    });
     });
   }
   /* Aufbau – läuft, wenn alle Teile angemeldet sind, in der ursprünglichen Reihenfolge */
@@ -12191,15 +12215,134 @@ function tourSchicken(T){
    ================================================================ */
 var anlagenFotos=[], anlagenFotosGeladen=false, anlagenFotosLaedt=false;
 function anlagenFotosAn(){ return Store.modus==="supabase" && !!Store.sb && !!Store.benutzer && !nurLesen() && !demo(); }
+/* läuft gerade ein Laden, wartet ein zweiter Aufruf darauf (statt sofort mit halbem Stand weiterzumachen);
+   vorher werden vorgemerkte Fotos eingetragen (anlagenFotosNachtragen) */
 function anlagenFotosLaden(neu){
-  if(!anlagenFotosAn() || anlagenFotosLaedt || (anlagenFotosGeladen && !neu)) return Promise.resolve();
-  anlagenFotosLaedt=true;
-  return alleSeiten(function(){ return Store.sb.from("anlagenfotos").select("*").order("erstellt"); }, "id").then(function(r){
+  if(!anlagenFotosAn()) return Promise.resolve();
+  if(anlagenFotosLaedt) return anlagenFotosLaedt;
+  if(anlagenFotosGeladen && !neu && !anlagenFotosSchlange().length) return Promise.resolve();
+  anlagenFotosLaedt=anlagenFotosNachtragen().then(function(){
+    return alleSeiten(function(){ return Store.sb.from("anlagenfotos").select("*").order("erstellt"); }, "id");
+  }).then(function(r){
     anlagenFotosLaedt=false;
     if(!r || r.error || !Array.isArray(r.data)) return;
     anlagenFotos=r.data; anlagenFotosGeladen=true;
     document.querySelectorAll("[data-fotozahl]").forEach(function(b){ var n=anlagenFotosVon(b.dataset.fotozahl).length; b.textContent="📷 Fotos der Anlage ("+n+")"; });
   }, function(){ anlagenFotosLaedt=false; });
+  return anlagenFotosLaedt;
+}
+/* Zeilen, die noch in die Tabelle müssen (Datei liegt schon im Speicher) – auf dem Gerät gemerkt,
+   damit nichts verloren geht, wenn die Verbindung gerade fehlt (Inhaber 06.10.2026: nichts still
+   verwerfen). In der Spielwiese nur im Speicher der Seite – nie in die echte Datenbank nachtragen. */
+var anlagenFotosOffenMem=[], anlagenFotosNachtragLaeuft=null;
+function anlagenFotosSchlange(neu){
+  if(spielwiese()){ if(neu) anlagenFotosOffenMem=neu; return anlagenFotosOffenMem.slice(); }
+  try{
+    if(neu) localStorage.setItem("ukt_anlagenfotos_offen", JSON.stringify(neu));
+    var l=JSON.parse(localStorage.getItem("ukt_anlagenfotos_offen")||"[]");
+    return Array.isArray(l) ? l : [];
+  }catch(e){ if(neu) anlagenFotosOffenMem=neu; return anlagenFotosOffenMem.slice(); }
+}
+/* vorgemerkte Zeilen eintragen; liefert {ok, offen, meldung} */
+function anlagenFotosNachtragen(){
+  if(!anlagenFotosAn()) return Promise.resolve({ok:0, offen:anlagenFotosSchlange().length, meldung:""});
+  if(anlagenFotosNachtragLaeuft) return anlagenFotosNachtragLaeuft;
+  var l=anlagenFotosSchlange();
+  if(!l.length) return Promise.resolve({ok:0, offen:0, meldung:""});
+  var fertig=[], meldung="";
+  anlagenFotosNachtragLaeuft=Promise.all(l.map(function(z){
+    var zeile={anlage_id:z.anlage_id||null, standort_id:z.standort_id||null, art:z.art, pfad:z.pfad, pruefsumme:z.pruefsumme||null,
+      von_name:z.von_name||null, beschriftung:z.beschriftung||null};
+    return mitFrist(Store.sb.from("anlagenfotos").insert(zeile), 15000).then(function(r){
+      /* schon eingetragen (gleicher Pfad) zählt als erledigt */
+      if(!r || !r.error || /duplicate|unique/i.test(r.error.message||"")) fertig.push(z.pfad); else meldung=r.error.message;
+    }, function(e){ meldung=(e&&e.message)||String(e); });
+  })).then(function(){
+    anlagenFotosNachtragLaeuft=null;
+    var rest=anlagenFotosSchlange().filter(function(z){ return fertig.indexOf(z.pfad)<0; });
+    anlagenFotosSchlange(rest);
+    return {ok:fertig.length, offen:rest.length, meldung:meldung};
+  });
+  return anlagenFotosNachtragLaeuft;
+}
+/* hochgeladene Fotos an einer (jetzt bekannten) Anlage eintragen – mit sichtbarer Rückmeldung */
+function anlagenFotosEintragen(metas, anlageId, standortId){
+  if(!metas || !metas.length) return Promise.resolve();
+  var l=anlagenFotosSchlange();
+  metas.forEach(function(m){ if(!l.some(function(z){ return z.pfad===m.pfad; })) l.push(Object.assign({}, m, {anlage_id:anlageId, standort_id:standortId||null})); });
+  anlagenFotosSchlange(l);
+  var n=metas.length;
+  return anlagenFotosNachtragen().then(function(e){
+    if(e.offen) toast(n+" Foto"+(n===1?"":"s")+" noch nicht an der Anlage eingetragen"+(/relation|does not exist|schema cache/i.test(e.meldung)?" – Fotos an der Anlage sind in der Datenbank noch nicht eingerichtet":e.meldung?" ("+e.meldung+")":"")+
+      ". Die App versucht es beim nächsten Öffnen der Anlage wieder.");
+    else toast(n+" Foto"+(n===1?"":"s")+" an der Anlage gespeichert – „📷 Fotos der Anlage“.");
+    return Promise.resolve(anlagenFotosLaedt).then(function(){ return anlagenFotosLaden(true); });
+  });
+}
+/* Bilder in den Speicher laden (anlagen/…); liefert {ok:[Zeilen ohne Anlage], fehler:[Bilder], meldung} */
+function anlagenFotosHochladen(liste, art, ordner, beschriftung){
+  var ich=meineAngaben().name||wer(), stamp=Date.now().toString(36)+Math.random().toString(36).slice(2,5), ok=[], fehler=[], meldung="";
+  return Promise.all(liste.map(function(x,i){
+    var pfad=ordner+art+"-"+stamp+"-"+(i+1)+".jpg";
+    return mitFrist(Store.sb.storage.from("protokollfotos").upload(pfad, datenUrlZuBlob(x.u), {contentType:"image/jpeg", upsert:false}), 30000)
+      .then(function(r){ if(r && r.error) throw new Error(r.error.message);
+        ok.push({art:art, pfad:pfad, pruefsumme:x.h||null, von_name:ich, beschriftung:beschriftung||null}); },
+        function(e){ fehler.push(x); meldung=(e&&e.message)||String(e); })
+      .catch(function(e){ fehler.push(x); meldung=(e&&e.message)||String(e); });
+  })).then(function(){ return {ok:ok, fehler:fehler, meldung:meldung}; });
+}
+/* Fotos aus der KI-Prüfansicht ablegen: bekannte Anlage – gleich eintragen; neue (noch nicht
+   gespeicherte) Anlage – hochladen und an der Anlage vormerken (a._fotosOffen), eingetragen wird
+   nach dem Speichern der Anlage bzw. des Protokolls (anlagenFotosEintragen). Klappt das Hochladen
+   nicht: fragen – nochmals oder bewusst ohne Fotos (Inhaber 06.10.2026: nichts still verwerfen). */
+function kiFotosAblegen(a, art, liste, P){
+  if(!liste || !liste.length || !anlagenFotosAn()) return Promise.resolve();
+  var anlageId=a._leaderId||null, standortId=a.standortId||(anlageId&&posById[anlageId]&&posById[anlageId].standortId)||null;
+  var ordner="anlagen/"+(anlageId||(standortId?"markt-"+standortId:"neu"))+"/";
+  if(P && P.kopf) P.kopf("Fotos werden gespeichert …", liste.length+" Foto"+(liste.length===1?"":"s"));
+  var versuch=function(rest){
+    return anlagenFotosHochladen(rest, art, ordner).then(function(e){
+      var weiter=Promise.resolve();
+      if(e.ok.length){
+        if(anlageId) weiter=anlagenFotosEintragen(e.ok, anlageId, standortId);
+        else { a._fotosOffen=(a._fotosOffen||[]).concat(e.ok);
+          toast(e.ok.length+" Foto"+(e.ok.length===1?"":"s")+" vorgemerkt – sie kommen an die Anlage, sobald sie gespeichert ist."); }
+      }
+      if(!e.fehler.length) return weiter;
+      return weiter.then(function(){ return new Promise(function(fertig){
+        var erledigt=false, ende=function(w){ if(erledigt) return; erledigt=true; v.zu(); fertig(w); };
+        var v=ansichtOeffnen("Fotos nicht gespeichert", function(){ if(!erledigt){ erledigt=true; toast(e.fehler.length+" Foto(s) nicht gespeichert."); fertig(false); } });
+        v.schritt.textContent=e.fehler.length+" von "+liste.length+" Foto"+(liste.length===1?"":"s");
+        v.inhalt.appendChild(el('<div class="note warnbox">Die Fotos konnten nicht in den Speicher geladen werden'+(e.meldung?" ("+esc(e.meldung)+")":"")+
+          '. Meist fehlt gerade die Verbindung. Die gelesenen Angaben gehen trotzdem in den Dialog.</div>'));
+        var nein=el('<button class="btn ghost" type="button">Ohne diese Fotos weiter</button>'), ja=el('<button class="btn" type="button">Nochmals versuchen</button>');
+        nein.onclick=function(){ if(window.confirm("Die "+e.fehler.length+" Foto(s) wirklich nicht speichern?\n\nSie müssten später nochmals fotografiert und über „📷 Fotos der Anlage“ dazugelegt werden.")) ende(false); };
+        ja.onclick=function(){ ende(true); };
+        v.fuss.appendChild(nein); v.fuss.appendChild(ja);
+      }).then(function(nochmal){ if(nochmal) return versuch(e.fehler); }); });
+    });
+  };
+  return versuch(liste);
+}
+/* für die KI-Prüfansicht: welche der gelesenen Fotos zum Speichern angeboten werden (ohne die
+   schon an der Anlage gespeicherten) und welche vorgewählt sind (fotoVorschlag) */
+function kiFotoAuswahl(a, art, fq, bekannt, buch){
+  if(!fq || !Array.isArray(fq.bilder) || !fq.bilder.length || !anlagenFotosAn()) return Promise.resolve(null);
+  var anlageId=a._leaderId||null;
+  return anlagenFotosLaden().then(function(){ return Promise.all(fq.bilder.map(fotoPruefsumme)); }).then(function(summen){
+    var da=(anlageId?anlagenFotosVon(anlageId):[]).concat(a._fotosOffen||[]), schon={};
+    da.forEach(function(f){ if(f.pruefsumme) schon[f.pruefsumme]=1; });
+    var ersteMal=!da.some(function(f){ return f.art===art; });
+    /* mehrere Bücher auf den Fotos: vorgewählt nur Seiten mit Prüfungen genau dieses Buchs */
+    var buchTage=fq.mehrere ? ((buch&&buch.pruefungen)||[]).map(function(p){ return fotoIso(p&&p.datum); }).filter(Boolean) : null;
+    var alle=fq.bilder.map(function(u,i){ return {u:u, h:summen[i], v:fotoVorschlag(art, fq.info, bekannt, i, ersteMal, buchTage)}; });
+    var neu=alle.filter(function(x){ return !x.h || !schon[x.h]; });
+    return {liste:neu, schon:alle.length-neu.length};
+  }, function(){ return null; });
+}
+function fotoIso(d){
+  var m=/^(\d{1,2})\.(\d{1,2})\.(\d{4})$/.exec(String(d||"").trim());
+  return m ? m[3]+"-"+("0"+m[2]).slice(-2)+"-"+("0"+m[1]).slice(-2) : null;
 }
 /* Fotos einer Anlage – über jede Zeile der Anlage (Leitzeile kann wechseln) */
 function anlagenFotosVon(leaderId){
@@ -12215,16 +12358,21 @@ function fotoPruefsumme(datenUrl){
       return Array.prototype.map.call(new Uint8Array(h), function(x){ return ("0"+x.toString(16)).slice(-2); }).join(""); });
   }catch(e){ return Promise.resolve(""); }
 }
-/* nach „Übernehmen“ der KI: fragen, welche Fotos an die Anlage kommen, dann speichern */
+/* Vorschlag je Foto, welche an die Anlage kommen (KI-Prüfansicht, Verwaltung „+ Prüfbuch-Seiten“) */
 /* info (nur Prüfbuch, von der KI): je Bild die Daten der Überprüfungen darauf;
    bekannt: Wartungsdaten, die schon vorher bekannt waren. Daraus der Vorschlag je
    Foto – beim ersten Mal alles, danach nur Seiten mit neuem Eintrag. */
-function fotoVorschlag(art, info, bekannt, i, ersteMal){
-  if(art!=="pruefbuch" || !Array.isArray(info)) return {an:true, text:""};
+/* buchTage (mehrere Prüfbücher auf den Fotos): Prüfungsdaten des gewählten Buchs – eine Seite
+   ohne diese Daten gehört vermutlich zu einem anderen Buch und ist nicht vorgewählt */
+function fotoVorschlag(art, info, bekannt, i, ersteMal, buchTage){
+  if(art!=="pruefbuch" || !Array.isArray(info)) return buchTage ? {an:false, text:"Buch unklar"} : {an:true, text:""};
   var e=info.filter(function(x){ return +x.nr===i+1; })[0];
-  if(!e) return {an:true, text:""};
-  var iso=(e.pruefungsdaten||[]).map(function(d){ var m=/^(\d{1,2})\.(\d{1,2})\.(\d{4})$/.exec(String(d).trim());
-    return m ? m[3]+"-"+("0"+m[2]).slice(-2)+"-"+("0"+m[1]).slice(-2) : null; }).filter(Boolean);
+  if(!e) return buchTage ? {an:false, text:"Buch unklar"} : {an:true, text:""};
+  var iso=(e.pruefungsdaten||[]).map(fotoIso).filter(Boolean);
+  if(buchTage){
+    if(!iso.length) return {an:false, text:"Buch unklar"};
+    if(!iso.some(function(d){ return buchTage.indexOf(d)>=0; })) return {an:false, text:"anderes Prüfbuch"};
+  }
   var neu=iso.filter(function(d){ return !(bekannt||[]).some(function(b){ return b && gleicherBesuch(b, d); }); });
   if(neu.length) return {an:true, text:"neuer Eintrag "+neu.map(dfmt).join(", ")};
   if(ersteMal) return {an:true, text:iso.length?"bekannte Einträge":"Stammdaten"};
@@ -12234,7 +12382,7 @@ function fotoVorschlag(art, info, bekannt, i, ersteMal){
 function anlagenFotosSpeichern(a, art, bilder, info, bekannt, beschriftung){
   if(!anlagenFotosAn() || !bilder || !bilder.length) return;
   var anlageId=a._leaderId||null, standortId=a.standortId||(anlageId&&posById[anlageId]&&posById[anlageId].standortId)||null;
-  if(!anlageId && !standortId) return;
+  if(!anlageId && !standortId){ toast("Fotos nicht gespeichert: die Anlage ist noch nicht gespeichert."); return; }
   var artName=art==="pruefbuch"?"Prüfbuch":art==="typenschild"?"Typenschild":"Anlagen";
   anlagenFotosLaden().then(function(){
     return Promise.all(bilder.map(fotoPruefsumme));
@@ -12250,17 +12398,8 @@ function anlagenFotosSpeichern(a, art, bilder, info, bekannt, beschriftung){
     var box=el('<div class="stack"><div class="muted" style="font-size:12.5px">Vorgewählt sind die Seiten mit neuem Eintrag – antippen wählt an oder ab'+
       (bilder.length>neu.length?" – "+(bilder.length-neu.length)+" Foto(s) sind schon gespeichert und fehlen hier":"")+".</div>"+
       '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(96px,1fr));gap:8px" data-bilder></div></div>');
-    var raster=box.querySelector("[data-bilder]"), wahl=neu.map(function(x){ return x.v.an; });
-    neu.forEach(function(x,i){
-      var f=el('<button type="button" style="position:relative;padding:0;border:2px solid var(--accent);border-radius:8px;overflow:hidden;background:none;cursor:pointer">'+
-        '<img alt="Foto '+(i+1)+'" style="display:block;width:100%;aspect-ratio:3/4;object-fit:cover">'+
-        '<span style="position:absolute;top:4px;right:4px;background:var(--accent);color:#fff;border-radius:50%;width:22px;height:22px;font-size:13px;line-height:22px">✓</span>'+
-        (x.v.text?'<span style="position:absolute;left:0;right:0;bottom:0;background:rgba(0,0,0,.6);color:#fff;font-size:11px;padding:2px 4px;text-align:left">'+esc(x.v.text)+"</span>":"")+"</button>");
-      f.querySelector("img").src=x.u;
-      var zeigen=function(){ f.style.borderColor=wahl[i]?"var(--accent)":"var(--line)"; f.style.opacity=wahl[i]?"1":".55"; f.querySelector("span").hidden=!wahl[i]; };
-      f.onclick=function(){ wahl[i]=!wahl[i]; zeigen(); }; zeigen();
-      raster.appendChild(f);
-    });
+    var wahl=neu.map(function(x){ return x.v.an; });
+    fotoWahlRaster(box.querySelector("[data-bilder]"), neu, wahl);
     v.inhalt.appendChild(box);
     var nein=el('<button class="btn ghost" type="button">Nicht speichern</button>'), ja=el('<button class="btn" type="button">Speichern</button>');
     nein.onclick=function(){ v.zu(); };
@@ -12279,6 +12418,19 @@ function anlagenFotosSpeichern(a, art, bilder, info, bekannt, beschriftung){
           toast(/relation|does not exist/i.test(String(e&&e.message))?"Fotos an der Anlage sind in der Datenbank noch nicht eingerichtet.":"Nicht (ganz) gespeichert: "+(e&&e.message||e)); });
     };
     v.fuss.appendChild(nein); v.fuss.appendChild(ja);
+  });
+}
+/* Fotos zum Antippen (an/ab) – wahl[i] je Foto; geaendert() nach jedem Tippen */
+function fotoWahlRaster(raster, neu, wahl, geaendert){
+  neu.forEach(function(x,i){
+    var f=el('<button type="button" data-fotowahl="'+i+'" style="position:relative;padding:0;border:2px solid var(--accent);border-radius:8px;overflow:hidden;background:none;cursor:pointer">'+
+      '<img alt="Foto '+(i+1)+'" style="display:block;width:100%;aspect-ratio:3/4;object-fit:cover">'+
+      '<span style="position:absolute;top:4px;right:4px;background:var(--accent);color:#fff;border-radius:50%;width:22px;height:22px;font-size:13px;line-height:22px">✓</span>'+
+      (x.v.text?'<span style="position:absolute;left:0;right:0;bottom:0;background:rgba(0,0,0,.6);color:#fff;font-size:11px;padding:2px 4px;text-align:left">'+esc(x.v.text)+"</span>":"")+"</button>");
+    f.querySelector("img").src=x.u;
+    var zeigen=function(){ f.style.borderColor=wahl[i]?"var(--accent)":"var(--line)"; f.style.opacity=wahl[i]?"1":".55"; f.querySelector("span").hidden=!wahl[i]; f.setAttribute("aria-pressed", String(!!wahl[i])); };
+    f.onclick=function(){ wahl[i]=!wahl[i]; zeigen(); if(geaendert) geaendert(); }; zeigen();
+    raster.appendChild(f);
   });
 }
 /* Verwaltung: ansehen und ohne KI Fotos dazulegen (Prüfbuch oder Typenschild) */
@@ -13364,7 +13516,10 @@ function kiNachweise(liste){
 /* Kontrollansicht: was die KI gelesen hat, gegen den jetzigen Stand. Je
    Feld ein Haken – vorbelegt, wo bisher nichts steht; unsichere Felder
    sind markiert und nie vorbelegt. Liefert die gewählten Werte. */
-function kiPruefen(titel, gelesen, jetzt, felder, unsicher, hinweis){
+/* fotos (kiFotoAuswahl): {liste, schon} – die gelesenen Fotos zum Speichern an der Anlage, gleich
+   hier mit Haken (Inhaber 06.10.2026: der eigene Dialog danach ging unter); die gewählten kommen
+   als nicht aufzählbares _fotos mit dem Ergebnis zurück */
+function kiPruefen(titel, gelesen, jetzt, felder, unsicher, hinweis, fotos){
   return new Promise(function(fertig){
     var v=ansichtOeffnen(titel, function(){ fertig(null); });   /* „Schließen“ = nichts übernehmen */
     v.schritt.textContent="Von der KI gelesen – bitte prüfen";
@@ -13385,11 +13540,31 @@ function kiPruefen(titel, gelesen, jetzt, felder, unsicher, hinweis){
     v.inhalt.appendChild(box);
     var nimm=el('<button class="btn" type="button">Angehakte übernehmen</button>');
     var zu=el('<button class="btn ghost" type="button">Nichts übernehmen</button>');
+    var fl=(fotos && fotos.liste) || [], fwahl=fl.map(function(x){ return x.v.an; });
+    var fotoZahl=function(){ return fwahl.filter(Boolean).length; };
+    var knopfText=function(){ var n=fotoZahl(); nimm.textContent="Angehakte übernehmen"+(n?" + "+n+" Foto"+(n===1?"":"s")+" speichern":""); };
+    if(fl.length){
+      var fbox=el('<div class="posbox stack" data-kifotos style="border-color:var(--accent);gap:6px;margin-top:10px">'+
+        '<strong>📷 Fotos an der Anlage speichern</strong>'+
+        '<div class="muted" style="font-size:12.5px">Vorgewählt sind die Seiten mit neuem Eintrag – antippen wählt an oder ab'+
+        (fotos.schon?" – "+fotos.schon+" Foto(s) sind schon gespeichert und fehlen hier":"")+
+        '. Danach unter „📷 Fotos der Anlage“ und im Anlagenbuch.</div>'+
+        '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(80px,1fr));gap:8px" data-bilder></div></div>');
+      fotoWahlRaster(fbox.querySelector("[data-bilder]"), fl, fwahl, knopfText);
+      v.inhalt.appendChild(fbox);
+    } else if(fotos && fotos.schon) v.inhalt.appendChild(el('<div class="muted" style="font-size:12.5px;margin-top:8px">📷 Die Fotos sind an der Anlage schon gespeichert.</div>'));
+    knopfText();
     nimm.onclick=function(){
       var r={}; box.querySelectorAll("input:checked").forEach(function(c){ r[c.dataset.k]=gelesen[c.dataset.k]; });
+      try{ Object.defineProperty(r, "_fotos", {value:fl.filter(function(_,i){ return fwahl[i]; }), enumerable:false}); }catch(e){}
       v.zu(); fertig(r);
     };
-    zu.onclick=function(){ v.zu(); fertig(null); };
+    zu.onclick=function(){
+      /* angehakte Fotos nicht still wegwerfen */
+      var n=fotoZahl();
+      if(n && !window.confirm("Nichts übernehmen – auch die "+n+" Foto"+(n===1?"":"s")+" nicht an der Anlage speichern?")) return;
+      v.zu(); fertig(null);
+    };
     v.fuss.appendChild(zu); v.fuss.appendChild(nimm);
   });
 }
@@ -15020,6 +15195,11 @@ function protoTeilAnlagen(P){
     wendeStammdatenAn();
     protokolliere({art:"stammdaten", standortId:sid, standortName:byId[sid]?stName(byId[sid]):doc.standortName, grund:grund, felder:felder, rueck:rueck,
       protokollId:protokollId||undefined});   /* im Verlauf: „Protokoll öffnen“ und der Filter „nur ein Protokoll“ */
+    /* vor Ort neu erfasste Anlagen: die dabei per KI gelesenen und vorgemerkten Fotos jetzt an der
+       nun bekannten Anlage eintragen (Inhaber 06.10.2026 – vorher blieben sie ohne Anlage) */
+    var fotosNeu=[];
+    P.neueAnlagen.forEach(function(n){ if(n.werte && (n.werte._fotosOffen||[]).length) fotosNeu.push({id:n.id, l:n.werte._fotosOffen}); });
+    if(fotosNeu.length) setTimeout(function(){ fotosNeu.forEach(function(x){ anlagenFotosEintragen(x.l, x.id, sid); }); }, 600);
   }
   /* Aufbau – läuft, wenn alle Teile angemeldet sind, in der ursprünglichen Reihenfolge */
   return function(){
@@ -18129,11 +18309,52 @@ function anlagenbuchHtml(leader){
     "<h2>Termine</h2><table><tr><th>Art</th><th>Soll (Tag.Monat)</th><th>letzte Wartung</th><th>nächster Termin</th><th>Stand</th></tr>"+(termine||"<tr><td colspan='5'>–</td></tr>")+"</table>"+
     "<h2>Wartungen und Störungseinsätze</h2><table><tr><th style='width:13%'>Datum</th><th>Art</th><th>Techniker/in</th><th style='width:12%'>Quelle</th><th>Mängel</th></tr>"+(hist||"<tr><td colspan='5'>Noch nichts erfasst.</td></tr>")+"</table>"+
     "<h2>Offene Störungen</h2>"+(offen ? "<table><tr><th>erfasst</th><th>Problem</th><th>Auftrag</th><th>Zieltermin</th><th>Stand</th></tr>"+offen+"</table>" : "<div>Keine offene Störung.</div>")+
-    "<h2>Kältemittel</h2>"+kmHtml;
+    "<h2>Kältemittel</h2>"+kmHtml+
+    /* Fotos von Prüfbuch, Typenschild und Anlage (Inhaber 06.10.2026) – eingesetzt von anlagenbuchFotosEinsetzen */
+    (anlagenFotosAn() ? "<div data-rolle='anlagenfotos'></div>" : "");
 }
 function anlagenbuchPdf(leader){
   var d=anlageDaten(leader), s=byId[leader.standortId], name=anlagenName(d);
-  return blattZuPdf({html:anlagenbuchHtml(leader), fuss:"Anlagenbuch "+name+(s?" – "+stName(s):""), titel:"Anlagenbuch "+name, betreff:"Lidl Klimaanlagen - Anlagenbuch"});
+  return blattZuPdf({html:anlagenbuchHtml(leader), fuss:"Anlagenbuch "+name+(s?" – "+stName(s):""), titel:"Anlagenbuch "+name, betreff:"Lidl Klimaanlagen - Anlagenbuch",
+    vorbereiten:function(blatt){ var h=blatt.querySelector('[data-rolle="anlagenfotos"]'); return h ? anlagenbuchFotosEinsetzen(h, leader) : Promise.resolve(); }});
+}
+/* Fotos der Anlage ins Anlagenbuch: verkleinert, mit Art, Datum, wer und Beschriftung. Bilder aus dem
+   Speicher mit Frist; fehlt eines, steht ein Hinweis da – das Anlagenbuch entsteht trotzdem */
+function anlagenbuchFotosEinsetzen(host, leader){
+  var kopf="<h2>Fotos: Prüfbuch, Typenschild, Anlage</h2>";
+  host.innerHTML=kopf+"<div>werden geladen …</div>";
+  return anlagenFotosLaden().then(function(){
+    var l=anlagenFotosVon(leader.id).slice().sort(function(x,y){ return String(x.erstellt||"").localeCompare(String(y.erstellt||"")); });
+    if(!l.length){ host.innerHTML=kopf+"<div>Noch keine Fotos gespeichert.</div>"; return; }
+    return Promise.all(l.map(function(f){ return anlagenFotoAlsDaten(f.pfad).then(function(u){ return {f:f, u:u}; }, function(){ return {f:f, u:null}; }); }))
+      .then(function(b){
+        var fehlt=b.filter(function(x){ return !x.u; }).length;
+        host.innerHTML=kopf+(fehlt ? "<div style='color:#b3261e'>"+fehlt+" Foto"+(fehlt===1?"":"s")+" gerade nicht abrufbar – bitte bei Verbindung das Anlagenbuch nochmals erstellen.</div>" : "")+
+          "<div class='fotos'>"+b.map(function(x){
+            var f=x.f;
+            return "<figure>"+(x.u ? '<img alt="" src="'+bildUrl(x.u)+'">' : "<div>Bild nicht abrufbar</div>")+
+              "<figcaption>"+esc(fotoArtName(f.art, f.beschriftung)+" · "+dfmt(tagLokal(f.erstellt))+(f.von_name?" · "+f.von_name:""))+"</figcaption></figure>";
+          }).join("")+"</div>";
+      });
+  });
+}
+/* ein Foto aus dem Speicher als verkleinerte Bilddaten (längste Kante 900 px) – für PDFs */
+function anlagenFotoAlsDaten(pfad){
+  return mitFrist(Store.sb.storage.from("protokollfotos").download(pfad), 20000).then(function(r){
+    if(!r || r.error || !r.data) throw new Error((r&&r.error&&r.error.message)||"nicht abrufbar");
+    var url=URL.createObjectURL(r.data);
+    return new Promise(function(ok, nein){
+      var img=new Image();
+      img.onload=function(){
+        var f=Math.min(1, 900/Math.max(img.naturalWidth, img.naturalHeight)), cv=document.createElement("canvas");
+        cv.width=Math.max(1, Math.round(img.naturalWidth*f)); cv.height=Math.max(1, Math.round(img.naturalHeight*f));
+        cv.getContext("2d").drawImage(img, 0, 0, cv.width, cv.height);
+        URL.revokeObjectURL(url); ok(cv.toDataURL("image/jpeg", 0.8));
+      };
+      img.onerror=function(){ URL.revokeObjectURL(url); nein(new Error("Bild nicht lesbar")); };
+      img.src=url;
+    });
+  });
 }
 
 /* ---------- Monatsbericht: für Lidl (ohne Internes) oder intern für UKT ---------- */
@@ -23856,7 +24077,7 @@ function handbuchKarte(z){
         "<strong>Protokoll beginnen:</strong> Wartungszeile oder Störung antippen – oder Reiter <em>Protokoll</em> → „Schritt für Schritt ausfüllen“.",
         "<strong>Vor Ort klären:</strong> steht oben im Protokoll (Schritt für Schritt: bei den Anlagen) eine Frage des Büros (etwa „Welche Hausnummer?“, „Dieselbe Anlage?“), bitte kurz antworten – sie erscheint nur, wenn es an diesem Markt eine gibt.",
         "<strong>Markt und Anlagen:</strong> gewartete (bzw. betroffene) Anlagen anhaken. Fehlt eine, „+ Anlage fehlt“ – erst prüfen, ob sie nicht doch in der Liste steht.",
-        "<strong>Je Anlage:</strong> Anlagendaten ergänzen (Typenschild und Prüfbuch des Außengeräts, Kältemittel und Füllmenge aus dem Prüfbuch; Fotos kann die KI lesen), "+
+        "<strong>Je Anlage:</strong> Anlagendaten ergänzen (Typenschild und Prüfbuch des Außengeräts, Kältemittel und Füllmenge aus dem Prüfbuch; Fotos kann die KI lesen – die angetippten Prüfbuch-Seiten bleiben als „📷 Fotos der Anlage“ und im Anlagenbuch), "+
           "Inbetriebnahme und Termine bestätigen, „Heute gewartet als“ wählen – bei einer neuen Anlage mit zwei Terminen bestimmt das, welcher Termin heute erledigt ist.",
         "<strong>Arbeiten, Mängel, Ergebnis, Kältemittel</strong> – bei der Störung Störungsbehebung und Material.",
         "<strong>🎤 Diktieren:</strong> neben Bemerkungen, Fehlerbild, Ursache und Maßnahmen – sprechen statt tippen, der Text wird angehängt (Spracherkennung des Handys, keine KI). Geht es nicht, das Mikrofon der Tastatur nehmen.",
@@ -24258,7 +24479,7 @@ var RUNDGAENGE={
         "<strong>Fotos</strong> werden vor dem Hochladen verkleinert (spart Datenvolumen, Typenschilder bleiben lesbar).",
         "<strong>Vorschläge</strong> in Feldern (Problem, Ursache …) stammen aus dem, was das Team schon einmal eingetippt hat – Zugangsdaten nie."])},
     {titel:"Anlagendaten und Termine – worauf achten", text:RG_LISTE([
-      "<strong>Typenschild und Prüfbuch</strong> gelten dem Außengerät. Fotos davon kann die KI lesen – das Ergebnis kommt immer zur Kontrolle.",
+      "<strong>Typenschild und Prüfbuch</strong> gelten dem Außengerät. Fotos davon kann die KI lesen – das Ergebnis kommt immer zur Kontrolle; die Fotos selbst bleiben an der Anlage (📷 Fotos der Anlage, Anlagenbuch).",
       "<strong>Füllmenge</strong> aus dem Prüfbuch (auf dem Typenschild steht nur die Werksfüllung). Ab 30 kg gibt es die Halbjahreswartung (HJW), darunter die Halbjahresinspektion (HJI).",
       "<strong>Termine:</strong> Jahreswartung (JW) im Monat der Inbetriebnahme, der Halbjahrestermin sechs Monate versetzt. Stimmt etwas nicht, hier korrigieren – mit kurzem Grund.",
       "<strong>Neue Anlage mit zwei Terminen:</strong> „Heute gewartet als“ bestimmt, welcher Termin heute erledigt ist – darauf achten, sonst stimmt die Fälligkeit nicht.",
@@ -24573,7 +24794,7 @@ Object.assign(RUNDGAENGE, {
       RG_HG("Kontakt und Personenzertifikat kommen aus „Meine Angaben“ bzw. dem letzten Protokoll, das Firmenzertifikat vom letzten Mal. Bei „Ausgefüllt für“ steht im Protokoll und PDF „erfasst von … im Auftrag“.")},
     {reiter:"protokoll", ziel:function(){ return rgEl("#anlagen"); }, titel:"Anlagendaten",
       text:"Je angehakter Anlage eine Karte mit „Fehlt: …“ oder „vollständig“; „Ergänzen“/„Prüfen“ öffnet den Anlagendialog: die fehlenden Gruppen nacheinander, am Ende die Übersicht mit „Übernehmen“."+RG_LISTE([
-        "<strong>Aus Fotos lesen (KI):</strong> Prüfbuch (mehrere Seiten, mehrere Anlagen), Typenschild Außengerät, Typenschilder Innengeräte – übernommen wird nur, was angehakt bleibt.",
+        "<strong>Aus Fotos lesen (KI):</strong> Prüfbuch (mehrere Seiten, mehrere Anlagen), Typenschild Außengerät, Typenschilder Innengeräte – übernommen wird nur, was angehakt bleibt. Unten in der Prüfansicht „📷 Fotos an der Anlage speichern“: die angetippten Seiten kommen an die Anlage (bei einer neuen Anlage, sobald das Protokoll gespeichert ist).",
         "<strong>Füllmenge</strong> nur aus dem Prüfbuch, nie die Werksfüllung vom Typenschild.",
         "<strong>„+ Anlage fehlt in der Liste“</strong> fragt zuerst, ob sie nicht doch dasteht – sonst entsteht ein Doppel."])+
       RG_HG(["<strong>Termine</strong> (Inbetriebnahme, Kürzel, Soll-Monat) werden <strong>sofort</strong> gespeichert – mit Eintrag „Termine beim Protokoll geprüft“ im Verlauf, auch wenn das Protokoll danach verworfen wird.",
@@ -24826,7 +25047,7 @@ Object.assign(RUNDGAENGE, {
       text:"Die Kacheln führen zur passenden Liste; „Fälligkeiten nach FM-Region“ filtert nach Region bzw. Monat (gilt dann für alle Reiter). Die Liste „Anstehende Wartungen“ zeigt bis 120 Zeilen, nach Fälligkeit."+
       RG_HG("„📅 eingeplant“ zeigt, wer den Termin im Kalender hat. Eine Zeile antippen öffnet das Wartungsprotokoll.")},
     {reiter:"anlagen", ziel:function(){ return rgEl("#stlist"); }, titel:"Anlagenstamm",
-      text:"Märkte als aufklappbare Zeilen; aufgeklappt: Navigieren, „+ Störungsauftrag“, Störungen und je Anlage ein Block – „Fehlt: …“ führt zur offenen Frage. Knöpfe: Anlagendaten ergänzen/prüfen, Historie, 📷 Fotos, 📄 Anlagenbuch (PDF)."+
+      text:"Märkte als aufklappbare Zeilen; aufgeklappt: Navigieren, „+ Störungsauftrag“, Störungen und je Anlage ein Block – „Fehlt: …“ führt zur offenen Frage. Knöpfe: Anlagendaten ergänzen/prüfen, Historie, 📷 Fotos (Prüfbuch, Typenschild, Anlage – auch im Anlagenbuch), 📄 Anlagenbuch (PDF)."+
       RG_HG(["Die Historie zeigt Liste, Prüfbuch und Protokolle – derselbe Besuch (≤ 14 Tage) nur einmal; dazu die Kältemittel-Bilanz je Jahr mit Leck-Verdacht.",
         "Das Anlagenbuch-PDF enthält Stammdaten, Termine, Historie, offene Störungen und Kältemittel."])},
     {ziel:function(){ return rgEl(".detail"); }, fenster:true, vorher:function(){ var s=rgMarkt(); if(s) marktAnsicht(s.id); }, titel:"Das Markt-Fenster",

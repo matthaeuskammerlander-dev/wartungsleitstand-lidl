@@ -4500,6 +4500,161 @@ test("Tiefentest werkzeug: verletzte Prüfregel beim Speichern meldet nicht „n
   await a.zu();
 });
 
+/* ---- Anlagenfotos: Hilfen für die KI-Prüfbuch-Erkennung im Test (Fotos, Antwort der KI, Knöpfe) ---- */
+async function afHilfen(a) {
+  await a.seite.evaluate(() => {
+    const x = window.__t.x;
+    const af = window.__af = {
+      warte: (ms) => new Promise((f) => setTimeout(f, ms)),
+      /* das oberste Fenster und ein Knopf darin (Text als Regex) */
+      oben: () => [...document.querySelectorAll(".assistent")].sort((p, q) => (+p.style.zIndex || 0) - (+q.style.zIndex || 0)).pop(),
+      knopf: async (re, ms) => { for (let i = 0; i < (ms || 3000) / 50; i++) { const o = af.oben();
+          const b = o && [...o.querySelectorAll("button")].find((k) => re.test(k.textContent) && !k.disabled);
+          if (b) { b.click(); await af.warte(30); return true; } await af.warte(50); } return false; },
+      titel: () => [...document.querySelectorAll(".assistent .as-titel")].map((t) => t.textContent),
+      /* n kleine Fotos (unterschiedlicher Inhalt) */
+      fotos: (n, farbe) => Promise.all(Array.from({ length: n }, (_, i) => new Promise((f) => {
+        const c = document.createElement("canvas"); c.width = 30; c.height = 40; const g = c.getContext("2d");
+        g.fillStyle = "rgb(" + (farbe || 10) + "," + (i * 40 % 255) + ",90)"; g.fillRect(0, 0, 30, 40);
+        c.toBlob((b) => f(new File([b], "s" + i + ".jpg", { type: "image/jpeg" })), "image/jpeg"); }))),
+      /* Prüfbuch-Antwort: je Buch {sn, daten:[…]} */
+      antwort: (buecher, bilder) => { window.__kiAntwort = (name, body) => ({ data: { art: "pruefbuch", modell: "test", daten: {
+        pruefbuecher: buecher.map((b) => ({ anlage: { bezeichnung: "Testanlage " + b.sn, seriennummer: b.sn, hersteller: "Testwerk", kaeltemittelKg: "12" },
+          pruefungen: (b.daten || []).map((d) => ({ datum: d, techniker: "T", firma: "Testfirma" })), unsicher: [], hinweise: "" })),
+        bilder: bilder || [], hinweise: "" } }, error: null }); },
+      /* Prüfbuch über den KI-Knopf im Anlagen-Dialog lesen und Angehaktes übernehmen */
+      lesen: async (n, farbe) => {
+        x("(function(){ kiFotosWaehlen=function(){ return window.__af.fotos(" + n + "," + (farbe || 10) + "); }; return 1; })()");
+        if (!await af.knopf(/Aus Fotos lesen \(KI\)/)) return "kein KI-Knopf";
+        if (!await af.knopf(/^Prüfbuch/)) return "keine Wahl Prüfbuch";
+        if (!await af.knopf(/Direkt in der App/)) return "kein Weg direkt";
+        return "";
+      },
+      fotosDb: () => window.__db.tabellen.anlagenfotos.slice(),
+    };
+  });
+}
+
+/* Inhaber 06.10.2026: „Die Fotos von Prüfbüchern … sollten auch in den Anlagedaten und im Anlagenbuch zu finden sein.“ –
+   in der Datenbank lag kein einziges Foto. Alle Wege der KI-Prüfbuch-Erkennung: bekannte Anlage, mehrere Bücher, neue Anlage
+   (Verwaltung und Protokoll), dazu Anlagenbuch und Historie */
+test("Anlagenfotos: KI-Prüfbuch – Fotos landen an der Anlage (bekannt, mehrere Bücher, neu in Verwaltung und Protokoll), Anlagenbuch und Historie zeigen sie", async () => {
+  const a = await oeffnen(KONTEN.techniker);
+  await afHilfen(a);
+  const r = await a.seite.evaluate(async () => {
+    const af = window.__af, x = window.__t.x, db = window.__db.tabellen, erg = {};
+    const anAnlage = (id) => db.anlagenfotos.filter((f) => f.anlage_id === id).length;
+    const warteAuf = async (f) => { for (let i = 0; i < 60 && !f(); i++) await af.warte(100); return f(); };
+    /* Anlagen-Dialog zu Ende führen (fehlenden Soll-Monat setzen, Übernehmen) */
+    const fertigKlicken = async () => {
+      for (let i = 0; i < 12; i++) {
+        const o = af.oben(); if (!o || !o.querySelector("[data-as]")) break;
+        o.querySelectorAll("[data-monat]").forEach((s) => { if (s.value === "0") { s.value = "3"; s.dispatchEvent(new Event("change")); } });
+        if (!(await af.knopf(/^(Übernehmen|Weiter|Zur Übersicht)$/, 500))) break;
+        await af.warte(250);
+      }
+    };
+    const pruefansicht = () => { const o = af.oben(), k = o && [...o.querySelectorAll(".as-fuss button")].pop(), f = o ? [...o.querySelectorAll("[data-kifotos] [data-fotowahl]")] : [];
+      return { fotos: f.length, an: f.map((b) => b.getAttribute("aria-pressed") === "true"), knopf: k ? k.textContent : "" }; };
+    /* 1) Verwaltung › bekannte Anlage, ein Buch, zwei Seiten: Auswahl gleich in der Prüfansicht, kein eigener Dialog danach */
+    af.antwort([{ sn: "SN-A1", daten: ["10.03.2024"] }], [{ nr: "1", pruefungsdaten: ["10.03.2024"] }, { nr: "2", pruefungsdaten: [] }]);
+    x("anlageDatenErgaenzen(posById.TP1); 1");
+    erg.a_lesen = await af.lesen(2, 20);
+    await warteAuf(() => /Angehakte/.test(pruefansicht().knopf));
+    erg.a_ansicht = pruefansicht();
+    /* das erste Hochladen scheitert (keine Verbindung): Rückfrage statt still verwerfen, „Nochmals versuchen“ klappt */
+    const E = Object.getPrototypeOf(x("Store.sb.storage.from('protokollfotos')")), hoch = E.upload; let fehlschlag = 1;
+    E.upload = function () { if (fehlschlag-- > 0) return Promise.resolve({ data: null, error: { message: "Failed to fetch" } }); return hoch.apply(this, arguments); };
+    await af.knopf(/Angehakte übernehmen/, 3000);
+    erg.a_frage = await warteAuf(() => af.titel().indexOf("Fotos nicht gespeichert") >= 0);
+    await af.knopf(/Nochmals versuchen/, 2000); E.upload = hoch;
+    await warteAuf(() => anAnlage("TP1") >= 2); await af.warte(400);
+    erg.a_rows = anAnlage("TP1"); erg.a_titel = af.titel();
+    x("ansichtenSchliessen(); kiRest=null; 1");
+    /* 2) mehrere Bücher: Buch 1 gehört zu TP3 – vorgewählt nur seine Seite */
+    af.antwort([{ sn: "SN-B1", daten: ["01.02.2025"] }, { sn: "SN-B2", daten: ["05.06.2025"] }],
+      [{ nr: "1", pruefungsdaten: ["01.02.2025"] }, { nr: "2", pruefungsdaten: ["05.06.2025"] }]);
+    x("anlageDatenErgaenzen(posById.TP3); 1");
+    erg.b_lesen = await af.lesen(2, 60);
+    erg.b_buch = await af.knopf(/^Buch 1/, 8000);
+    await warteAuf(() => /Angehakte/.test(pruefansicht().knopf));
+    erg.b_ansicht = pruefansicht();
+    await af.knopf(/Angehakte übernehmen/, 3000);
+    await warteAuf(() => anAnlage("TP3") >= 1); await af.warte(200);
+    erg.b_rows = anAnlage("TP3");
+    x("ansichtenSchliessen(); kiRest=null; 1");
+    /* 3) Verwaltung › neue Anlage: vorgemerkt, nach dem Speichern an der neuen Anlage */
+    af.antwort([{ sn: "SN-N1", daten: ["10.03.2024"] }], [{ nr: "1", pruefungsdaten: ["10.03.2024"] }]);
+    const ts5 = () => JSON.parse(x("JSON.stringify(ALLE_POS.filter(function(p){ return p.standortId==='TS5'; }).map(function(p){ return p.id; }))"));
+    const vorTS5 = ts5();
+    x("anlageNeuAnlegen(byId.TS5); 1"); await af.warte(300);
+    erg.c_lesen = await af.lesen(1, 100);
+    await af.knopf(/Angehakte übernehmen/, 8000);
+    await af.warte(400);
+    await fertigKlicken();
+    erg.c_neu = ts5().filter((id) => vorTS5.indexOf(id) < 0);
+    erg.c_rows = erg.c_neu.length ? (await warteAuf(() => anAnlage(erg.c_neu[0]) >= 1), anAnlage(erg.c_neu[0])) : -1;
+    x("ansichtenSchliessen(); 1");
+    /* 4) Protokoll › „+ Anlage fehlt“ › neue Anlage per KI: nach dem Speichern des Protokolls an der Anlage */
+    af.antwort([{ sn: "SN-P1", daten: ["10.03.2024"] }], [{ nr: "1", pruefungsdaten: ["10.03.2024"] }]);
+    x("formDirty=false; S.protoArt='wartung'; S.bearbeiten=null; S.protoStandort='TS1'; S.protoPos=null; S.view='protokoll'; render(); 1"); await af.warte(500);
+    const form = document.getElementById("proto");
+    form.querySelector("#addAnlage").click();
+    await af.knopf(/zusätzliche Anlage erfassen/); await af.warte(300);
+    erg.d_lesen = await af.lesen(1, 140);
+    await af.knopf(/Angehakte übernehmen/, 8000);
+    await af.warte(400);
+    await fertigKlicken();
+    form.querySelectorAll("fieldset.fs-zu").forEach((f) => f.classList.remove("fs-zu"));
+    document.getElementById("f_allesok").click();
+    erg.d_fehlt = form._fehltNoch();
+    if (!erg.d_fehlt.length) document.getElementById("save").click();
+    for (let i = 0; i < 40 && !db.protokolle.length; i++) await af.warte(250);
+    const npId = ((db.protokolle[0] || {}).position_ids || []).filter((id) => /^NP/.test(id))[0];
+    erg.d_np = npId || "";
+    erg.d_rows = npId ? (await warteAuf(() => anAnlage(npId) >= 1), anAnlage(npId)) : -1;
+    erg.ohneAnlage = db.anlagenfotos.filter((f) => !f.anlage_id).length;
+    erg.von = db.anlagenfotos.every((f) => f.von === "u_tech_test_at" && f.erstellt);
+    erg.dateien = db.anlagenfotos.every((f) => !!window.__db.dateien["protokollfotos/" + f.pfad]);
+    /* 5) Anlagenbuch: Abschnitt mit den Bildern; ein fehlendes Bild gibt einen Hinweis statt Absturz */
+    erg.buchHtml = /data-rolle='anlagenfotos'/.test(x("anlagenbuchHtml(posById.TP1)"));
+    const einsetzen = x("typeof anlagenbuchFotosEinsetzen=='function' ? anlagenbuchFotosEinsetzen : function(){ return Promise.resolve(); }");
+    const h = document.createElement("div");
+    await einsetzen(h, x("posById.TP1"));
+    erg.buchBilder = h.querySelectorAll("img").length; erg.buchText = h.textContent;
+    const weg = db.anlagenfotos.find((f) => f.anlage_id === "TP1"); if (weg) delete window.__db.dateien["protokollfotos/" + weg.pfad];
+    const h2 = document.createElement("div");
+    await einsetzen(h2, x("posById.TP1"));
+    erg.buchFehlt = h2.textContent;
+    /* 6) Historie der Anlage (auch für Techniker): Knopf mit Zahl */
+    x("ansichtenSchliessen(); anlageHistorieAnsicht(posById.TP1); 1"); await af.warte(400);
+    erg.historie = [...af.oben().querySelectorAll("button")].map((b) => b.textContent).filter((t) => /Fotos der Anlage/.test(t));
+    erg.fehler = window.__fehler.slice();
+    return erg;
+  });
+  pruefe(!r.a_lesen && !r.b_lesen && !r.c_lesen && !r.d_lesen, "Ablauf hakt: " + JSON.stringify(r));
+  pruefe(r.a_ansicht.fotos === 2 && /2 Fotos speichern/.test(r.a_ansicht.knopf), "Prüfansicht ohne Fotoauswahl: " + JSON.stringify(r.a_ansicht));
+  pruefe(r.a_frage, "Hochladen gescheitert: keine Rückfrage „Fotos nicht gespeichert“");
+  pruefe(r.a_rows === 2 && !r.a_titel.some((t) => /Fotos speichern/.test(t)), "bekannte Anlage: " + r.a_rows + " Fotos gespeichert, Fenster " + JSON.stringify(r.a_titel));
+  pruefe(r.b_buch && r.b_ansicht.fotos === 2 && JSON.stringify(r.b_ansicht.an) === "[true,false]" && /1 Foto speichern/.test(r.b_ansicht.knopf) && r.b_rows === 1,
+    "mehrere Bücher: Fotos gehen beim Wählen des Buchs verloren oder falsch vorgewählt: " + JSON.stringify({ b: r.b_ansicht, rows: r.b_rows }));
+  pruefe(r.c_neu.length === 1 && r.c_rows === 1, "neue Anlage (Verwaltung): Fotos nicht an der neuen Anlage: " + JSON.stringify({ neu: r.c_neu, rows: r.c_rows }));
+  pruefe(!r.d_fehlt.length && r.d_np && r.d_rows === 1, "neue Anlage im Protokoll: Fotos nicht an der Anlage: " + JSON.stringify({ np: r.d_np, rows: r.d_rows, fehlt: r.d_fehlt }));
+  pruefe(r.ohneAnlage === 0 && r.von && r.dateien, "Fotos ohne Anlage, ohne Datei oder fremdes Konto: " + JSON.stringify({ ohne: r.ohneAnlage, von: r.von, dateien: r.dateien }));
+  pruefe(r.buchHtml && r.buchBilder === 2 && /Fotos: Prüfbuch, Typenschild, Anlage/.test(r.buchText) && /Prüfbuch · \d\d\.\d\d\.\d{4}/.test(r.buchText), "Anlagenbuch ohne Fotos: " + r.buchText);
+  pruefe(/1 Foto gerade nicht abrufbar/.test(r.buchFehlt) && /Bild nicht abrufbar/.test(r.buchFehlt), "Anlagenbuch: fehlendes Bild ohne Hinweis: " + r.buchFehlt);
+  pruefe(r.historie.length === 1 && /\(2\)/.test(r.historie[0]), "Historie der Anlage ohne „📷 Fotos der Anlage (2)“: " + JSON.stringify(r.historie));
+  pruefe(!r.fehler.length && !a.fehler.length, "Laufzeitfehler: " + r.fehler.concat(a.fehler).join("; "));
+  await a.zu();
+  /* Präsentation und Kunde: kein Foto-Speichern, kein Abschnitt im Anlagenbuch */
+  for (const k of [KONTEN.praesentation, KONTEN.kunde]) {
+    const b = await oeffnen(k);
+    const z = await b.x("JSON.stringify([anlagenFotosAn(), /anlagenfotos/.test(anlagenbuchHtml(posById.TP1))])");
+    pruefe(z === "[false,false]", k + ": Fotos an der Anlage nicht gesperrt: " + z);
+    await b.zu();
+  }
+});
+
 /* ================================================================ Ablauf ================================================================ */
 const filterText = process.argv.slice(2).find((x) => !x.startsWith("--"));
 const filter = filterText ? new RegExp(filterText, "i") : null;

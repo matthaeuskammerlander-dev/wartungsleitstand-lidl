@@ -41,6 +41,20 @@
     if(art==="select" && (rolle==="kunde"||rolle==="praesentation") && ["werkzeug","werkzeug_verlauf","bedarf","packlisten"].indexOf(tab)>=0) return "nur lesen: "+tab;
     /* wie posteingang-lesen.sql: den Posteingang (weitergeleitete Mails auch anderer Kunden) liest nur, wer mitarbeitet */
     if(art==="select" && (rolle==="kunde"||rolle==="praesentation") && tab==="posteingang") return "nur lesen: posteingang gesperrt";
+    /* wie anlagenfotos.sql: lesen und speichern nur, wer mitarbeitet (darf_schreiben), von = auth.uid(), Art und Beschriftung geprüft,
+       Pfad eindeutig; löschen nur Admins (ist_admin) */
+    if(tab==="anlagenfotos"){
+      if(art==="select" && (rolle==="kunde"||rolle==="praesentation")) return "nur lesen: anlagenfotos gesperrt";
+      if(art==="insert"){
+        if(zeile.von!=null && zeile.von!==uid()) return "anlagenfotos: von ist nicht das eigene Konto";
+        if(["pruefbuch","typenschild","anlage"].indexOf(zeile.art)<0) return 'new row for relation "anlagenfotos" violates check constraint "anlagenfotos_art_check"';
+        if(zeile.beschriftung!=null && String(zeile.beschriftung).length>80) return 'new row for relation "anlagenfotos" violates check constraint "anlagenfotos_beschriftung_check"';
+        if(!zeile.pfad) return 'null value in column "pfad" of relation "anlagenfotos" violates not-null constraint';
+        if(DB.anlagenfotos.some(function(f){ return f.pfad===zeile.pfad; })) return 'duplicate key value violates unique constraint "anlagenfotos_pfad_key"';
+      }
+      if(art==="update") return "anlagenfotos: keine Regel zum Aendern";
+      if(art==="delete" && !admin()) return "anlagenfotos: loeschen nur Admins";
+    }
     if(tab==="stammdaten"){
       var typ=(zeile&&zeile.typ)||(alt&&alt.typ);
       if(art==="delete" && !admin()) return "stammdaten: Loeschen nur fuer Admins";
@@ -231,6 +245,7 @@
         if(self.t==="arbeitszeiten"){ if(!r.user_id) r.user_id=uid(); if(r.pause_min==null) r.pause_min=0; r.erstellt=r.erstellt||new Date().toISOString(); }
         if(self.t==="planung") planPruefen(r, null);
         if(self.t==="vor_ort_fragen") r.angelegt=r.angelegt||new Date().toISOString();
+        if(self.t==="anlagenfotos"){ r.erstellt=r.erstellt||new Date().toISOString(); r.von=r.von||uid(); }
         if(self.t==="auslagen"){ r.user_id=r.user_id||uid(); r.status=r.status||"offen"; r.erstellt=new Date().toISOString(); if(r.km!=null) r.km=kmSpalte(r.km); if(r.art==="km"){ r.km_satz=r.km_satz||0.5; r.betrag=Math.round(r.km*r.km_satz*100)/100; } }
         if(self.t==="auslagen_konto") r.user_id=r.user_id||uid();
         if(self.t==="werkzeug"||self.t==="bedarf"){ r.erstellt_von=uid(); r.erstellt=new Date().toISOString(); r.aktiv=r.aktiv==null?true:r.aktiv; if(self.t==="bedarf"){ r.status=r.status||"offen"; r.beschaffung=r.beschaffung||"mitnehmen"; if(r.status==="erledigt") r.erledigt=new Date().toISOString(); } else { r.zustand=r.zustand||"ok"; r.standort_art=r.standort_art||"lager"; } }
