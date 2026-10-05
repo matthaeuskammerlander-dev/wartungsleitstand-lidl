@@ -4655,6 +4655,53 @@ test("Anlagenfotos: KI-Prüfbuch – Fotos landen an der Anlage (bekannt, mehrer
   }
 });
 
+/* Inhaber 06.10.2026: Anlagen-Karten im Markt einklappbar, am Handy zu („sonst muss man so weit scrollen“); „Beim Zurückspringen
+   sollte es aber offen bleiben. Erst nachdem man lange nicht reingeschaut hat, wieder schließen.“ */
+test("Anlagen-Karten: im Markt – am Handy eingeklappt mit Kurzinfo, bleiben offen beim Zurückkommen, nach langer Zeit wieder zu, Sprünge klappen auf", async () => {
+  const a = await oeffnen(KONTEN.techniker, { handy: true });
+  const r = await a.seite.evaluate(async () => {
+    const x = window.__t.x, w = (ms) => new Promise((f) => setTimeout(f, ms)), erg = {};
+    const oben = () => [...document.querySelectorAll(".assistent")].pop();
+    const karten = () => [...oben().querySelectorAll(".akarte")];
+    const zu = (k) => k.classList.contains("ak-zu");
+    x("ansichtenSchliessen(); marktAnsicht('TS1'); 1"); await w(500);
+    const k0 = karten();
+    erg.anzahl = k0.length; erg.zuAmHandy = k0.map(zu);
+    erg.kopf = k0[0] ? k0[0].querySelector(".ak-kopf").textContent : "";
+    erg.koerperVersteckt = k0[0] ? getComputedStyle(k0[0].querySelector(".ak-koerper")).display === "none" : false;
+    /* antippen klappt auf; zurück aus einem Unterfenster (Markt neu geöffnet): bleibt offen */
+    k0[0].querySelector(".ak-kopf").click(); await w(100);
+    erg.aufNachTippen = !zu(k0[0]);
+    x("ansichtenSchliessen(); marktAnsicht('TS1'); 1"); await w(400);
+    erg.offenNachZurueck = karten().map(zu);
+    /* lange nicht hineingeschaut (über ANLAGEN_KARTE_FRIST_MS): wieder zu */
+    const m = JSON.parse(localStorage.getItem("ukt_anlagen_karten") || "{}");
+    Object.keys(m).forEach((k) => { m[k].t = Date.now() - x("ANLAGEN_KARTE_FRIST_MS") - 1000; });
+    localStorage.setItem("ukt_anlagen_karten", JSON.stringify(m));
+    x("ansichtenSchliessen(); marktAnsicht('TS1'); 1"); await w(400);
+    erg.zuNachFrist = karten().map(zu);
+    /* Sprung zu einem Termin in einer zugeklappten Karte klappt sie auf */
+    const ziel = karten()[0].querySelector(".posbox[data-pid]");
+    x("sprungHervorheben")(ziel); await w(100);
+    erg.aufNachSprung = !zu(karten()[0]);
+    return erg;
+  });
+  pruefe(r.anzahl >= 1 && r.zuAmHandy.every(Boolean), "Handy: Anlagen-Karten nicht eingeklappt: " + JSON.stringify(r));
+  pruefe(r.koerperVersteckt && /VRV Anlage/.test(r.kopf) && /fällig|überfällig|Zeitplan|in \d+ Tagen/.test(r.kopf) && /▸/.test(r.kopf), "eingeklappt fehlt Name/Status/▸: " + r.kopf);
+  pruefe(r.aufNachTippen, "Antippen klappt nicht auf");
+  pruefe(r.offenNachZurueck[0] === false, "beim Zurückkommen nicht mehr offen: " + JSON.stringify(r.offenNachZurueck));
+  pruefe(r.zuNachFrist.every(Boolean), "nach langer Zeit nicht wieder zu: " + JSON.stringify(r.zuNachFrist));
+  pruefe(r.aufNachSprung, "Sprung in eine zugeklappte Karte klappt sie nicht auf");
+  pruefe(!a.fehler.length, "Laufzeitfehler: " + a.fehler.join("; "));
+  await a.zu();
+  /* am PC wie bisher aufgeklappt */
+  const b = await oeffnen(KONTEN.techniker);
+  const pc = await b.seite.evaluate(async () => { window.__t.x("marktAnsicht('TS1'); 1"); await new Promise((f) => setTimeout(f, 500));
+    return [...[...document.querySelectorAll(".assistent")].pop().querySelectorAll(".akarte")].map((k) => k.classList.contains("ak-zu")); });
+  pruefe(pc.length >= 1 && pc.every((z) => !z), "PC: Anlagen-Karten nicht aufgeklappt: " + JSON.stringify(pc));
+  await b.zu();
+});
+
 /* ================================================================ Ablauf ================================================================ */
 const filterText = process.argv.slice(2).find((x) => !x.startsWith("--"));
 const filter = filterText ? new RegExp(filterText, "i") : null;

@@ -516,6 +516,9 @@ input[aria-invalid="true"]{border-color:var(--crit);box-shadow:0 0 0 1px var(--c
 .as-zeile strong{text-align:right;overflow-wrap:anywhere}
 .as-offen{color:var(--warn)}
 .akarte{border:1px solid var(--line);border-radius:10px;padding:10px 12px;display:grid;gap:6px;background:var(--ground)}
+.akarte .ak-kopf{cursor:pointer}
+.akarte.ak-zu .ak-koerper,.akarte.ak-zu .ak-lang,.akarte:not(.ak-zu) .ak-kurz{display:none}
+.akarte .ak-pfeil{display:inline-block;width:1em;color:var(--muted,#667)}
 @media (max-width:600px){ .assistent{padding:0} .as-karte{border-radius:0;height:100%} }
 /* breite Fenster (Projekt, Markt …): am PC nicht mehr ein schmaler Streifen,
    sondern fast der ganze Bildschirm – am Handy wie bisher ganzseitig (Büro 01.10.2026) */
@@ -6429,6 +6432,23 @@ var ANLAGEN_AUF=(function(){
   return {maerkte:{}, termine:{}, diagramm:null};
 }());
 function anlagenAufMerken(){ try{ sessionStorage.setItem("ukt_anlagen_auf", JSON.stringify(ANLAGEN_AUF)); }catch(e){} }
+/* Anlagen-Karten im Markt einklappbar (Inhaber 06.10.2026: am Handy „muss man sonst so weit scrollen“):
+   am Handy zu, am PC offen. Wer eine Karte auf- (oder am PC zu-)klappt, findet sie beim Zurückkommen
+   (Unterfenster, Markt wieder geöffnet, App kurz verlassen) so wieder – „erst nachdem man lange nicht
+   reingeschaut hat, wieder schließen“: gemerkt je Anlage mit Zeitpunkt auf dem Gerät; nach
+   ANLAGEN_KARTE_FRIST_MS ohne Hineinschauen (Karte antippen oder Markt öffnen) gilt wieder der Standard. */
+var ANLAGEN_KARTE_FRIST_MS=2*3600*1000;   /* 2 Stunden */
+function anlagenKarteStand(id){
+  var m=lsGet("ukt_anlagen_karten",{})||{}, e=m[id];
+  return (e && Date.now()-(+e.t||0)<ANLAGEN_KARTE_FRIST_MS) ? e : null;
+}
+/* auf: true/false merken (mit jetzt), null: vergessen; abgelaufene Einträge räumt es mit weg */
+function anlagenKarteMerken(id, auf){
+  var m=lsGet("ukt_anlagen_karten",{})||{}, jetzt=Date.now();
+  Object.keys(m).forEach(function(k){ if(!m[k] || jetzt-(+m[k].t||0)>=ANLAGEN_KARTE_FRIST_MS) delete m[k]; });
+  if(auf===null) delete m[id]; else m[id]={auf:!!auf, t:jetzt};
+  lsSet("ukt_anlagen_karten", m);
+}
 function anlagenBloecke(s, host){
   anlagenDesMarkts(s,true).forEach(function(a){
     if(anlagePausiert(a.leader) || marktPausiert(s)){ host.appendChild(pausiertBox(a.leader)); return; }
@@ -6437,10 +6457,19 @@ function anlagenBloecke(s, host){
        Wichtigste; sie führen zum Termine-Schritt */
     var l=termineOffenVon(a.leader).filter(function(x){ return !x.weich; })
       .map(function(x){ return {k:"termine", l:x.l}; }).concat(anlageLuecken(d));
-    var blk=el('<div class="akarte" style="background:var(--surface)"><div class="rowflex" style="justify-content:space-between;gap:8px">'+
-      '<strong style="font-size:15px">'+esc(anlagenName(d))+"</strong>"+
+    /* eingeklappt sichtbar: Name, dringlichster Termin-Status, Störung, „Fehlt“ – kurz */
+    var schlimmst=a.termine.map(function(t){ return t.status; }).filter(function(x){ return x && STATUS_LABEL[x]; })
+      .sort(function(x,y){ return (STATUS_RANK[x]||0)-(STATUS_RANK[y]||0); })[0];
+    var offeneSt=stoerungenDerAnlage(a);
+    var blk=el('<div class="akarte" style="background:var(--surface)" data-anlage="'+esc(a.leader.id)+'">'+
+      '<div class="rowflex ak-kopf" role="button" tabindex="0" style="justify-content:space-between;gap:8px">'+
+      '<strong style="font-size:15px"><span class="ak-pfeil" aria-hidden="true">▾</span> '+esc(anlagenName(d))+"</strong>"+
       (wiederkehrVon(a.leader) ? '<span class="pill p-ueberfaellig" title="'+esc(wiederkehrText(wiederkehrVon(a.leader)))+'">⚠ wiederkehrende Störung</span>' : "")+
-      '<span class="muted" style="font-size:12.5px">'+a.termine.length+" Termin"+(a.termine.length===1?"":"e")+" im Jahr</span></div>"+
+      '<span class="ak-kurz rowflex" style="gap:6px">'+(schlimmst?pill(schlimmst):"")+
+        (offeneSt.length?'<span class="pill p-ueberfaellig">'+(offeneSt.length===1?"Störung offen":offeneSt.length+" Störungen offen")+"</span>":"")+
+        (l.length&&!nurLesen()?'<span style="font-size:12.5px;color:var(--warn)">Fehlt: '+esc(l.slice(0,2).map(function(f){ return f.l; }).join(", ")+(l.length>2?" +"+(l.length-2):""))+"</span>":"")+"</span>"+
+      '<span class="muted ak-lang" style="font-size:12.5px">'+a.termine.length+" Termin"+(a.termine.length===1?"":"e")+" im Jahr</span></div>"+
+      '<div class="ak-koerper stack" style="gap:6px">'+
       '<div style="font-size:13px">'+(anlageKurz(d)?esc(anlageKurz(d)):'<span class="muted">Anlagendaten noch nicht erfasst</span>')+"</div>"+
       /* die Inbetriebnahme gehört der Anlage – oben bei den Anlagendaten, nicht nur unten je Termin */
       '<div style="font-size:13px">'+(ib ? 'Inbetriebnahme <strong class="mono">'+dfmt(ib)+"</strong>"
@@ -6460,7 +6489,23 @@ function anlagenBloecke(s, host){
         '<button class="btn ghost sm" type="button" data-a="hist">Historie der Anlage</button>'+
         (nurLesen()?"":'<button class="btn ghost sm" type="button" data-a="fotos" data-fotozahl="'+esc(a.leader.id)+'"'+'>📷 Fotos der Anlage ('+anlagenFotosVon(a.leader.id).length+')</button>')+
         (nurLesen()?"":'<button class="btn ghost sm" type="button" data-a="buch" title="Alles zu dieser Anlage als PDF">📄 Anlagenbuch</button>')+"</div>"+
-      '<div class="stack" data-termine></div></div>');
+      '<div class="stack" data-termine></div></div></div>');
+    /* einklappen: Standard am Handy zu, am PC offen; Gemerktes gilt ANLAGEN_KARTE_FRIST_MS lang
+       und wird beim Hineinschauen (Markt geöffnet, Karte angetippt) erneuert */
+    (function(){
+      var id=a.leader.id, kopf=blk.querySelector(".ak-kopf"), stdZu=schmalerBildschirm(), stand=anlagenKarteStand(id);
+      var setzen=function(auf){ blk.classList.toggle("ak-zu", !auf); kopf.setAttribute("aria-expanded", String(!!auf));
+        kopf.querySelector(".ak-pfeil").textContent=auf?"▾":"▸"; kopf.title=auf?"Zuklappen":"Aufklappen"; };
+      setzen(stand ? stand.auf : !stdZu);
+      if(stand) anlagenKarteMerken(id, stand.auf);
+      /* merken: nichts merken = Standard (ohne Merken bleibt es nur bis zum Neuzeichnen so) */
+      blk._auf=function(auf, nichtMerken){ setzen(auf); if(nichtMerken) return; anlagenKarteMerken(id, auf===!stdZu ? null : auf); };
+      var wechsel=function(){ blk._auf(blk.classList.contains("ak-zu")); };
+      kopf.onclick=function(e){ if(e.target.closest("a,button,input,select")) return; wechsel(); };
+      kopf.onkeydown=function(e){ if(e.key==="Enter"||e.key===" "){ e.preventDefault(); wechsel(); } };
+      /* hineinschauen (irgendwo in der offenen Karte tippen) hält sie offen */
+      blk.addEventListener("click", function(e){ if(!blk.classList.contains("ak-zu") && !kopf.contains(e.target) && anlagenKarteStand(id)) anlagenKarteMerken(id, true); });
+    }());
     /* Dieselbe geführte Erfassung wie beim Protokoll, nur ohne Protokoll –
        zum Nachtragen, wenn jemand die Angaben gerade zur Hand hat. */
     blk.querySelector('[data-a="daten"]').onclick=function(){
@@ -6488,7 +6533,7 @@ function anlagenBloecke(s, host){
       x.onclick=function(e){ e.preventDefault(); anlageDatenErgaenzen(a.leader, null, x.dataset.spring); };
     });
     var zg=zugangBox(d);
-    if(zg) blk.insertBefore(zg, blk.querySelector("[data-termine]"));
+    if(zg){ var tz0=blk.querySelector("[data-termine]"); tz0.parentNode.insertBefore(zg, tz0); }
     a.termine.forEach(function(t){ blk.querySelector("[data-termine]").appendChild(posBox(t,s,true)); });
     host.appendChild(blk);
   });
@@ -23553,6 +23598,8 @@ function spaltenAnordnen(teile){
 }
 /* ein Sprungziel in einer zugeklappten Karte: die Karte geht auf (und bleibt auf) */
 function aufklappen(z){
+  /* zugeklappte Anlagen-Karte im Markt (anlagenBloecke) – auch wenn die Karte selbst das Ziel ist */
+  var ak=z && z.closest ? z.closest(".akarte.ak-zu") : null; if(ak && ak._auf) ak._auf(true);
   var c=z && z.closest ? z.closest(".card.klappbar.zu") : null; if(!c) return;
   var h=c.querySelector("h2"); if(h && h.onclick) h.onclick({target:h, closest:function(){ return null; }});
 }
@@ -25047,7 +25094,7 @@ Object.assign(RUNDGAENGE, {
       text:"Die Kacheln führen zur passenden Liste; „Fälligkeiten nach FM-Region“ filtert nach Region bzw. Monat (gilt dann für alle Reiter). Die Liste „Anstehende Wartungen“ zeigt bis 120 Zeilen, nach Fälligkeit."+
       RG_HG("„📅 eingeplant“ zeigt, wer den Termin im Kalender hat. Eine Zeile antippen öffnet das Wartungsprotokoll.")},
     {reiter:"anlagen", ziel:function(){ return rgEl("#stlist"); }, titel:"Anlagenstamm",
-      text:"Märkte als aufklappbare Zeilen; aufgeklappt: Navigieren, „+ Störungsauftrag“, Störungen und je Anlage ein Block – „Fehlt: …“ führt zur offenen Frage. Knöpfe: Anlagendaten ergänzen/prüfen, Historie, 📷 Fotos (Prüfbuch, Typenschild, Anlage – auch im Anlagenbuch), 📄 Anlagenbuch (PDF)."+
+      text:"Märkte als aufklappbare Zeilen; aufgeklappt: Navigieren, „+ Störungsauftrag“, Störungen und je Anlage ein Block (am Handy eingeklappt: Name, Status, Störung, „Fehlt“ – antippen klappt auf; bleibt offen, bis man 2 Stunden nicht hineingeschaut hat) – „Fehlt: …“ führt zur offenen Frage. Knöpfe: Anlagendaten ergänzen/prüfen, Historie, 📷 Fotos (Prüfbuch, Typenschild, Anlage – auch im Anlagenbuch), 📄 Anlagenbuch (PDF)."+
       RG_HG(["Die Historie zeigt Liste, Prüfbuch und Protokolle – derselbe Besuch (≤ 14 Tage) nur einmal; dazu die Kältemittel-Bilanz je Jahr mit Leck-Verdacht.",
         "Das Anlagenbuch-PDF enthält Stammdaten, Termine, Historie, offene Störungen und Kältemittel."])},
     {ziel:function(){ return rgEl(".detail"); }, fenster:true, vorher:function(){ var s=rgMarkt(); if(s) marktAnsicht(s.id); }, titel:"Das Markt-Fenster",
@@ -25171,7 +25218,8 @@ function rundgangZeigen(){
   setTimeout(function(){
     if(RUNDGANG!==R) return;
     var z=null; try{ z=s.ziel ? s.ziel() : null; }catch(e){ z=null; }
-    if(z && z.closest){ var k=z.closest(".card.klappbar.zu"); if(k && k._klapp && k!==z) k._klapp(false); }
+    if(z && z.closest){ var k=z.closest(".card.klappbar.zu"); if(k && k._klapp && k!==z) k._klapp(false);
+      var ak=z.closest(".akarte.ak-zu"); if(ak && ak._auf && ak!==z) ak._auf(true, true); }
     R.el=z;
     if(z){
       /* am Handy steht die Erklärung unten – das Ziel daher nach oben holen; dafür unten Platz schaffen,
