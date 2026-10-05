@@ -1672,6 +1672,27 @@ reSchritt("eingaben", "R01", async (a) => {
   });
   return r.menge === 1.5 && r.preis === 78.81 && r.kPreis === 447.3 ? "" : `„1.5“ × „78.81“ gespeichert als ${r.menge} × ${r.preis} (netto ${r.netto}); Katalog „447.30“ als ${r.kPreis}`;
 });
+/* KPlus: Gutschrift wird nicht als Angebot abgelegt; ohne erkannte PDF-Summe steht kein „stimmt“ */
+reSchritt("kplus", "R03", async (a) => {
+  const r = await a.seite.evaluate(async () => {
+    const x = window.__t.x, R = window.__re, it = (xx, y, t, f) => ({ s: 1, x: xx, y, w: 20, t, f: f || "F2" });
+    await R.stoerung("pg3", "2026-06-01");
+    const gs = x("kplusAuswerten")([[it(330, 150, "Gutschrift", "F1"), it(480, 150, "900777", "F1"), it(150, 300, "Bezeichnung"),
+      it(60, 320, "1"), it(100, 320, "1,00 psh"), it(160, 320, "Gutschrift Störung Test"), it(420, 320, "-50,00"), it(500, 320, "-50,00"),
+      it(300, 400, "Netto-Summe"), it(500, 400, "-50,00")]]);
+    const n0 = document.querySelectorAll(".assistent").length, nb = window.__db.tabellen.belege.length;
+    R.vorschau("pg3", gs);                                      /* wie „KPlus-Rechnung hochladen“ beim Einsatz */
+    const gutschrift = gs.art + ", Fenster " + (document.querySelectorAll(".assistent").length - n0) + ", Belege +" + (window.__db.tabellen.belege.length - nb) + ", Meldung: " + R.toasts.slice(-1)[0];
+    const kopf = [it(330, 150, "Rechnung", "F1"), it(480, 150, "900778", "F1"), it(150, 300, "Bezeichnung"),
+      it(60, 320, "1"), it(100, 320, "1,00 psh"), it(160, 320, "Fahrtpauschale Zone 1 (Testtext)"), it(420, 320, "50,00"), it(500, 320, "50,00")];
+    const minus = x("kplusAuswerten")([kopf.concat([it(300, 400, "Netto-Summe"), it(500, 400, "-50,00")])]).summenPdf.netto;
+    const erg = x("kplusAuswerten")([kopf]);                   /* Netto-Summe fehlt im PDF-Text */
+    const note = R.vorschau("pg3", erg).querySelector(".as-inhalt .note").textContent;
+    return { gutschrift, minus, netto: erg.summenPdf.netto, note };
+  });
+  return /^gutschrift, Fenster 0, Belege [+]0, Meldung: .*Gutschrift/.test(r.gutschrift) && r.minus === -50 && r.netto == null && !/stimmt/.test(r.note) && /nicht erkannt/.test(r.note)
+    ? "" : `Gutschrift ${r.gutschrift}; Netto-Summe „-50,00“ gelesen als ${r.minus}; ohne Summe: ${r.netto}, Hinweis „${r.note}“`;
+});
 
 /* ================================================================ Ablauf ================================================================ */
 const filterText = process.argv.slice(2).find((x) => !x.startsWith("--"));

@@ -3781,7 +3781,10 @@ function mailVerlaufVorschlag(v, r, zielId){
             files.forEach(function(f, j){ var x=liste2[j]; artJe.set(f, x ? x.z.querySelector("select").value : hier.filter(function(y){ return !y.a; })[0].z.querySelector("select").value); });
             /* PDFs: KPlus-Angebot/Rechnung? dann Art danach und Positionen einlesen (nur Inhaber) */
             var pruefen=nurInhaber() ? files.filter(function(f){ return /pdf/i.test(f.type) || /\.pdf$/i.test(f.name); }).map(function(f){
-              return f.arrayBuffer().then(function(b){ return kplusLesen(new Uint8Array(b)); }).then(function(erg){ artJe.set(f, erg.art); kplus.push({erg:erg, datei:f}); }, function(){}); }) : [];
+              return f.arrayBuffer().then(function(b){ return kplusLesen(new Uint8Array(b)); }).then(function(erg){
+                /* Gutschrift: nur als Büro-Datei (Preise – nie in den Projektordner), kein Beleg */
+                if(erg.art==="gutschrift"){ artJe.set(f, "rechnung"); toast(f.name+": "+KPLUS_GUTSCHRIFT+" Das PDF liegt bei den Büro-Dateien."); return; }
+                artJe.set(f, erg.art); kplus.push({erg:erg, datei:f}); }, function(){}); }) : [];
             return Promise.all(pruefen).then(function(){
               return projektDateienHochladen(p, function(f){ return artJe.get(f)||"dokument"; }, files, function(){ return mailHerkunft(m); });
             }).then(function(neue){ var e=neue.filter(function(x){ return /\.eml$/i.test(x.name); })[0]; if(e) emlPfad[i]=e.pfad; });
@@ -27373,7 +27376,8 @@ function kplusAuswerten(seiten){
   var alle=[].concat.apply([], seiten);
   var titel=alle.filter(function(i){ return /^(Angebot|Rechnung|Gutschrift)$/.test(i.t) && i.x>250 && i.y<260; })[0];
   if(!titel) throw new Error("Kein KPlus-Angebot bzw. keine KPlus-Rechnung erkannt.");
-  var fett=titel.f, art=titel.t==="Rechnung"?"rechnung":"angebot";
+  /* Gutschrift: eigene Art – sie ist weder Angebot noch Rechnung und wird (noch) nicht als Beleg abgelegt (KPLUS_GUTSCHRIFT) */
+  var fett=titel.f, art=titel.t==="Rechnung"?"rechnung":titel.t==="Gutschrift"?"gutschrift":"angebot";
   var zeileVon=function(i){ return alle.filter(function(x){ return x.s===i.s && Math.abs(x.y-i.y)<3 && x!==i; }); };
   var wertNeben=function(lbl){ var l=alle.filter(function(i){ return i.s===1 && i.t===lbl && i.x>250; })[0]; if(!l) return ""; var r=zeileVon(l).filter(function(x){ return x.x>l.x+20; }); return r.length?r[r.length-1].t:""; };
   var kopf={nummer:(zeileVon(titel).filter(function(x){ return x.x>titel.x+60; })[0]||{}).t||"", datum:wertNeben("Datum"), kundennummer:wertNeben("Kundennummer"), sachbearbeiter:wertNeben("Sachbearbeiter")};
@@ -27440,7 +27444,7 @@ function kplusAuswerten(seiten){
     });
   });
   /* Summen und Schlusstext */
-  var zahlRechts=function(lbl){ var l=alle.filter(function(i){ return lbl.test(i.t); })[0]; if(!l) return null; var r=zeileVon(l).filter(function(x){ return x.x>l.x && /^[\d.]+,\d\d$/.test(x.t); }); return r.length?geldLesen(r[r.length-1].t):null; };
+  var zahlRechts=function(lbl){ var l=alle.filter(function(i){ return lbl.test(i.t); })[0]; if(!l) return null; var r=zeileVon(l).filter(function(x){ return x.x>l.x && /^-?[\d.]+,\d\d$/.test(x.t); }); return r.length?geldLesen(r[r.length-1].t):null; };
   summen.netto=zahlRechts(/^Netto-Summe/); summen.brutto=zahlRechts(/^Gesamt$/); summen.mwst=summen.netto!=null&&summen.brutto!=null?Math.round((summen.brutto-summen.netto)*100)/100:null;
   var zb=alle.filter(function(i){ return /^Zahlungsbedingungen:/.test(i.t); })[0];
   if(zb) kopf.zahlung=zeileVon(zb).map(function(x){ return x.t; }).join(" ");
@@ -27547,15 +27551,20 @@ function belegeKarte(p){
 /* ziel: ein Projekt ODER ein Kontext {projekt, protokoll, kunde_id, standort_id} (KPlus-Rechnung zu einem Einsatz,
    Büro 05.10.2026: „statt die Rechnung zu schreiben das KPlus-PDF hochladen, das der Chef geschrieben hat – damit die
    App das Rechnungschreiben lernt“). datei: das Original-PDF (wird beim Beleg abgelegt). */
+var KPLUS_GUTSCHRIFT="Das ist eine KPlus-Gutschrift – Gutschriften legt die App (noch) nicht als Beleg ab, sie bleiben in KPlus.";
 function kplusVorschau(ziel, erg, fertig, datei){
+  /* eine Gutschrift nie als Angebot oder Rechnung ablegen (früher wurde sie still zum „angenommenen Angebot“) */
+  if(erg.art==="gutschrift"){ toast(KPLUS_GUTSCHRIFT); return; }
   var kx=("protokoll" in ziel) ? ziel : kontextProjekt(ziel), p=kx.projekt, pk=kx.protokoll;
   var v=ansichtOeffnen("KPlus "+(erg.art==="rechnung"?"Rechnung":"Angebot")+" "+erg.nummer, null, pk?{breit:true}:null);
   var pos=erg.positionen.filter(function(x){ return x.typ==="pos"; });
-  var su=belegSummen(erg.positionen), passt=erg.summenPdf.netto==null || Math.abs(su.netto-erg.summenPdf.netto)<0.05;
+  /* ohne gelesene Netto-Summe gibt es nichts zu vergleichen – dann nie „stimmt“ */
+  var su=belegSummen(erg.positionen), ohneSumme=erg.summenPdf.netto==null, passt=!ohneSumme && Math.abs(su.netto-erg.summenPdf.netto)<0.05;
   v.schritt.textContent=dfmt(erg.datum)+" · "+pos.length+" Positionen · "+kontextTitel(kx);
   v.inhalt.appendChild(el('<div class="note'+(passt?"":" warnbox")+'" style="font-size:13px">'+
-    "Netto laut PDF <strong>"+geld(erg.summenPdf.netto)+" €</strong>, nachgerechnet <strong>"+geld(su.netto)+" €</strong> – "+
-    (passt?"stimmt.":"weicht ab, bitte die Positionen prüfen.")+
+    (ohneSumme ? "Netto-Summe im PDF <strong>nicht erkannt</strong>, nachgerechnet <strong>"+geld(su.netto)+" €</strong> – bitte die Positionen mit dem PDF vergleichen."
+      : "Netto laut PDF <strong>"+geld(erg.summenPdf.netto)+" €</strong>, nachgerechnet <strong>"+geld(su.netto)+" €</strong> – "+
+        (passt?"stimmt.":"weicht ab, bitte die Positionen prüfen."))+
     ((erg.kopf.betreff||[]).length?"<br>"+esc(erg.kopf.betreff.join(" · ")):"")+
     (erg.kopf.leistungszeitraum?"<br>Leistungszeitraum: "+esc(erg.kopf.leistungszeitraum):"")+"</div>"));
   var hinweis=pruefHinweisBox(erg.positionen, "im KPlus-PDF"); if(hinweis) v.inhalt.appendChild(hinweis);
@@ -28295,6 +28304,7 @@ function einsatzBelegeZeile(pk){
     toast("KPlus-PDF wird gelesen …");
     Promise.all([f.arrayBuffer().then(function(buf){ return kplusLesen(new Uint8Array(buf)); }), katalogLaden().catch(function(){ return []; })]).then(function(x){
       var erg=x[0];
+      if(erg.art==="gutschrift"){ toast(KPLUS_GUTSCHRIFT); return; }
       if(erg.art!=="rechnung" && !window.confirm("Das ist ein KPlus-"+(erg.art==="angebot"?"Angebot":"Beleg")+", keine Rechnung. Trotzdem beim Einsatz ablegen?")) return;
       kplusVorschau(kontextProtokoll(pk), erg, laden, f);
     }, function(e){ toast("Nicht lesbar: "+(e&&e.message||e)); });
@@ -28469,7 +28479,7 @@ function projektDateienKarte(p, buero, schreiben, neuZeichnen){
     var kplusArten=Promise.resolve({});
     if(kplus.length){
       if(!buero){ toast(kplus.length+" Angebot/Rechnung (KPlus) übersprungen – die laden nur Inhaber hoch."); kplus=[]; }
-      else kplusArten=Promise.all(kplus.map(function(f){ return f.arrayBuffer().then(function(b){ return kplusLesen(new Uint8Array(b)); }).then(function(e){ return [f.name, e.art]; }, function(){ return [f.name, "dokument"]; }); }))
+      else kplusArten=Promise.all(kplus.map(function(f){ return f.arrayBuffer().then(function(b){ return kplusLesen(new Uint8Array(b)); }).then(function(e){ return [f.name, e.art==="gutschrift"?"rechnung":e.art]; }, function(){ return [f.name, "dokument"]; }); }))
         .then(function(l){ var m={}; l.forEach(function(x){ m[x[0]]=x[1]; }); return m; });
     }
     kplusArten.then(function(m){
