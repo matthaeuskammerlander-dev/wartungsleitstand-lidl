@@ -254,7 +254,11 @@ Kammerlander Umwelt- und Klimatechnik (UKT) – oft kurz, vom Handy, im Feld.
   Rechnungen und Positionskatalog kommen nie in `projekte.daten` (das sehen
   alle), sondern in eigene, nur für Inhaber lesbare Tabellen bzw. Dateien.
 - **Arbeitszeiten** (Tabelle `arbeitszeiten`): jede Person sieht nur ihre
-  eigenen, der Inhaber alle; ein bestätigter Monat ist gesperrt.
+  eigenen, der Inhaber alle; ein bestätigter Monat ist gesperrt – auch für NEUE Einträge (von Hand, Stempeln,
+  Abgleich): bestätigt = die Person hat dort einen Eintrag mit `bestaetigt`; nur der Inhaber trägt danach ein oder
+  öffnet ihn wieder („Wieder öffnen“ in `zeitenInhaberKarte`). App: `monatGesperrt`, Meldung `MONAT_GESPERRT`;
+  Datenbank: Trigger `arbeitszeiten_monat_gesperrt` (gilt auch für stempeln()/stempel_abgleich(), nicht für die
+  Kalender-Übernahme – die hat ihre eigene Regel), tools/rechte-2026-10-05.sql (Inhaber 05.10.2026).
 - **Stempeluhr** (Tabelle `stempel`, Funktion `stempeln()`, tools/stempeluhr.sql):
   Zeit vom Server, Eintrag beim Ausstempeln vom Server berechnet (Quelle
   „stempel“); nachträglich geändert = „stempel_geaendert“. Standort nur, wenn

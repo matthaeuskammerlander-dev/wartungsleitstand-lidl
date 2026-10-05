@@ -4614,6 +4614,73 @@ test("Antworten stunden: Krankenstand anderer sehen Kollegen nur als „Abwesend
   pruefe(!fehl.length, fehl.join(" | "));
 });
 
+test("Antworten stunden: bestätigter Monat sperrt auch neue Einträge – von Hand, Stempeln, Abgleich; nur der Inhaber trägt nach oder öffnet wieder", async () => {
+  const fehl = [], GESPERRT = /Monat ist bestätigt – nur der Inhaber kann noch etwas eintragen/;
+  const a = await oeffnen(KONTEN.techniker);
+  await ttHilfen(a);
+  const r = await a.seite.evaluate(async () => {
+    const tt = window.__tt, x = window.__t.x, db = window.__db.tabellen, sb = x("Store.sb"), e = {}; tt.leeren();
+    const ich = tt.ich(), heute = x("isoLokal(new Date())"), vm = x("plusMonate(isoLokal(new Date()),-1).slice(0,7)"), jetzt = new Date().toISOString();
+    const zeile = (z) => Object.assign({ user_id: ich, name: "T", minuten: 60, art: "arbeit", quelle: "hand", pause_min: 0 }, z);
+    db.arbeitszeiten.push(zeile({ id: "aw4v", datum: vm + "-02", bestaetigt: jetzt }));
+    await tt.laden();
+    /* (a) von Hand im bestätigten Vormonat: klare Meldung, nichts gespeichert */
+    x("zeitEditor(null, {datum:'" + vm + "-10', beginn:'08:00', ende:'10:00', art:'arbeit', bereich:'werkstatt'})"); await tt.warte(200);
+    let d = tt.dialog(); e.hinweis = /Monat ist bestätigt/.test(d.textContent);
+    tt.ok(d).click(); await tt.warte(300);
+    e.meldung = (d.querySelector("[data-err]") || {}).textContent || "";
+    e.handGespeichert = db.arbeitszeiten.some((z) => z.datum === vm + "-10");
+    x("ansichtenSchliessen()");
+    /* (b) Datenbank: neuer Eintrag im bestätigten Monat abgelehnt; im offenen Monat geht es */
+    const ins = await sb.from("arbeitszeiten").insert(zeile({ datum: vm + "-11" })).select("*");
+    e.db = ins.error ? ins.error.message : "angenommen";
+    const ok = await sb.from("arbeitszeiten").insert(zeile({ datum: heute })).select("*");
+    e.dbOffen = ok.error ? ok.error.message : "angenommen";
+    /* (c) Abgleich im bestätigten Monat (ein später dazugekommener, offener Stempel-Eintrag): App meldet es, Datenbank lehnt ab */
+    tt.gestempelt({ datum: vm + "-12", beginn: "07:00", ende: "15:00", minuten: 450, pause_min: 30, bereich: "wartung" });
+    await tt.laden(); tt.toasts.length = 0;
+    x("abgleichDialog('" + vm + "-12', false)"); await tt.warte(200);
+    e.abgleichApp = { toast: tt.toasts.join(" | "), dialog: !!tt.dialog() }; x("ansichtenSchliessen()");
+    const ab = await sb.rpc("stempel_abgleich", { p_datum: vm + "-12", p_teile: [{ beginn: "07:00", ende: "15:00", bereich: "wartung" }] });
+    e.abgleichDb = ab.error ? ab.error.message : "angenommen";
+    /* (d) Stempeln, wenn der laufende Monat schon bestätigt ist: einstempeln meldet es; ausstempeln lehnt die Datenbank ab */
+    tt.leeren(); db.arbeitszeiten.push(zeile({ id: "aw4h", datum: heute, bestaetigt: jetzt })); await tt.laden();
+    x("stempelGeladen=true; STEMPEL=[]; S.view='stunden'; render()"); await tt.warte(500);
+    const karte = document.getElementById("stempelkarte");
+    const chip = karte.querySelector(".chips .chip[data-b]"); if (chip) chip.click();
+    tt.toasts.length = 0; karte.querySelector("[data-ein]").click(); await tt.warte(500);
+    e.einApp = { toast: tt.toasts.join(" | "), stempel: db.stempel.length, frage: !!tt.dialog() };
+    x("ansichtenSchliessen()");
+    db.stempel.push({ id: "aw4s", user_id: ich, name: "T", art: "ein", zeit: new Date(Date.now() - 60000).toISOString(), bereich: "werkstatt" });
+    const vorher = db.arbeitszeiten.length, aus = await sb.rpc("stempeln", { p_art: "aus", p_name: "T" });
+    e.ausDb = { meldung: aus.error ? aus.error.message : "angenommen", eintraege: db.arbeitszeiten.length - vorher, nochEin: db.stempel.length === 1 };
+    return e;
+  });
+  if (!r.hinweis || !/Monat ist bestätigt/.test(r.meldung) || r.handGespeichert) fehl.push("(a) von Hand: " + JSON.stringify(r));
+  if (!GESPERRT.test(r.db) || r.dbOffen !== "angenommen") fehl.push("(b) Datenbank: " + JSON.stringify([r.db, r.dbOffen]));
+  if (!GESPERRT.test(r.abgleichApp.toast) || r.abgleichApp.dialog || !GESPERRT.test(r.abgleichDb)) fehl.push("(c) Abgleich: " + JSON.stringify([r.abgleichApp, r.abgleichDb]));
+  if (!GESPERRT.test(r.einApp.toast) || r.einApp.stempel || r.einApp.frage || !GESPERRT.test(r.ausDb.meldung) || r.ausDb.eintraege || !r.ausDb.nochEin) fehl.push("(d) Stempeln: " + JSON.stringify([r.einApp, r.ausDb]));
+  if (a.fehler.length) fehl.push("Laufzeitfehler (Techniker): " + a.fehler.join("; "));
+  await a.zu();
+  /* der Inhaber: trägt im bestätigten Monat nach und öffnet ihn wieder */
+  const b = await oeffnen(KONTEN.inhaber);
+  await ttHilfen(b);
+  const r2 = await b.seite.evaluate(async () => {
+    const tt = window.__tt, x = window.__t.x, db = window.__db.tabellen, sb = x("Store.sb"); tt.leeren();
+    const tech = "u_tech_test_at", vm = x("plusMonate(isoLokal(new Date()),-1).slice(0,7)");
+    db.arbeitszeiten.push({ id: "aw4i", user_id: tech, name: "Testtechniker", datum: vm + "-02", minuten: 480, art: "arbeit", quelle: "hand", pause_min: 0, bestaetigt: new Date().toISOString(), bestaetigt_von: "Testinhaber" });
+    const ins = await sb.from("arbeitszeiten").insert({ user_id: tech, name: "Testtechniker", datum: vm + "-03", minuten: 60, art: "arbeit", quelle: "hand" }).select("*");
+    x("S.view='stunden'; S.stMonat='" + vm + "'; render()"); await tt.warte(800);
+    const knopf = [...document.querySelectorAll("button")].find((k) => /Wieder öffnen/.test(k.textContent));
+    if (knopf) { knopf.click(); await tt.warte(500); }
+    return { nachtragen: ins.error ? ins.error.message : "angenommen", knopf: !!knopf, nochBestaetigt: db.arbeitszeiten.filter((z) => z.user_id === tech && z.bestaetigt).length };
+  });
+  if (r2.nachtragen !== "angenommen" || !r2.knopf || r2.nochBestaetigt) fehl.push("Inhaber: " + JSON.stringify(r2));
+  if (b.fehler.length) fehl.push("Laufzeitfehler (Inhaber): " + b.fehler.join("; "));
+  await b.zu();
+  pruefe(!fehl.length, fehl.join(" | "));
+});
+
 /* ================================================================ Ablauf ================================================================ */
 const filterText = process.argv.slice(2).find((x) => !x.startsWith("--"));
 const filter = filterText ? new RegExp(filterText, "i") : null;
