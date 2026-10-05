@@ -24757,7 +24757,7 @@ Object.assign(RUNDGAENGE, {
     {reiter:"stunden", ziel:function(){ return rgKarte(/^Alle Mitarbeiter/); }, wenn:function(){ return istInhaber(); }, titel:"Alle Mitarbeiter und Lohn (Inhaber)",
       text:"Monatstabelle je Person (Soll, Ist, Differenz, Überstunden, Sa, So, Feiertag, Montage, Fahrt, Urlaub, Krank, Entfernung), „Lohnverrechnung (CSV)“, „Bestätigen“, „Arbeitszeitregeln“, Schalter „Standort beim Stempeln“."+
       RG_HG(["Soll Mo–Do 8 h, Fr 6,5 h (38,5 h), Feiertage 0. Überstunden als <strong>Monatsbilanz</strong>, nicht je Tag; Samstag, Sonntag, Feiertag getrennt; Montage = Baustelle, Wartung, Störung; Fahrt = Wegzeit.",
-        "„Bestätigen“ sperrt den Monat – auch für Neues (von Hand, Stempeln, Abgleich); danach trägt nur noch der Inhaber ein oder ändert (prüft die Datenbank). „Wieder öffnen“ hebt die Sperre auf.",
+        "„Bestätigen“ sperrt den Monat – auch für Neues (von Hand, Stempeln, Abgleich); danach trägt nur noch der Inhaber ein oder ändert (prüft die Datenbank). „Wieder öffnen“ hebt die Sperre auf. Ist die Person noch eingestempelt, warnt die Rückfrage vorher.",
         "Darunter <strong>„Reisekosten aller“</strong>: je Person Belege, km, Kilometergeld, zu zahlen, Konto – PDF mit allen Belegen, „ausbezahlt“, „zurückgeben“, CSV; der Kilometergeld-Satz ist dort einstellbar. Einträge anderer lassen sich dort ändern – das Belegfoto ersetzt nur die Person selbst (dazu „zurückgeben“).",
         "Vorher zeigt die Zeile in Rot, was fehlt: Arbeitstage ohne Eintrag, Abwesenheit im Kalender ohne Stunden, Geplantes ohne passenden Eintrag – mit „Nachricht an …“ (fertiger Text im Chat)."])},
     {reiter:"fahrzeuge", ziel:function(){ return rgReiter("fahrzeuge"); }, wenn:function(){ return reiterErlaubt("fahrzeuge"); }, titel:"Fahrzeuge",
@@ -32221,9 +32221,23 @@ function zeitenInhaberKarte(){
       }
       if(offen && !demo()){
         var bs=el('<button class="btn ghost sm" type="button">Bestätigen</button>');
+        /* noch eingestempelt (seit vor dem Monatsende)? Vorher warnen – nach dem Bestätigen ginge Ausstempeln erst wieder,
+           wenn der Monat wieder offen ist (Inhaber 05.10.2026) */
+        var eingestempelt=function(){
+          return mitFrist(Store.sb.from("stempel").select("art,zeit").eq("user_id", key).order("zeit", {ascending:false}).limit(30), 15000).then(function(r){
+            var l=(r && r.data)||[]; if(!l.length || l[0].art==="aus") return null;
+            var ein=l.filter(function(s){ return s.art==="ein"; })[0];
+            return ein && tagLokal(ein.zeit)<bis ? ein : null;
+          }, function(){ return null; });
+        };
         bs.onclick=function(){
           var uz=Object.keys(zeitenUeberschneidungen(z)).length;
-          if(!window.confirm("Arbeitszeit von "+n+" für "+MONATE_L[+monat.slice(5,7)]+" bestätigen?\n\nDanach kann "+n+" in diesem Monat nichts mehr ändern."+
+          bs.disabled=true;
+          eingestempelt().then(function(ein){
+          bs.disabled=false;
+          if(!window.confirm((ein?"⚠ "+n+" ist noch eingestempelt (seit "+dfmt(tagLokal(ein.zeit))+" "+zeitAus(ein.zeit)+") – nach dem Bestätigen geht Ausstempeln erst wieder, "+
+              "wenn du den Monat wieder öffnest. Trotzdem bestätigen?\n\n":"")+
+            "Arbeitszeit von "+n+" für "+MONATE_L[+monat.slice(5,7)]+" bestätigen?\n\nDanach kann "+n+" in diesem Monat nichts mehr ändern."+
             (lueckenT.length?"\n\n⚠ Es fehlt vielleicht noch etwas:\n– "+lueckenT.join("\n– "):"")+
             (uz?"\n\n⚠ Achtung: "+uz+" Einträge überschneiden sich (doppelt erfasst?) – vorher prüfen.":"")+
             (a.ueber12.length?"\n\n⚠ An "+a.ueber12.length+" Tag(en) über 12 Stunden.":""))) return;
@@ -32233,6 +32247,7 @@ function zeitenInhaberKarte(){
               if(r2.error){ bs.disabled=false; toast("Nicht bestätigt: "+r2.error.message); return; }
               toast("Bestätigt."); render();
             });
+          });
         };
         zelleK.appendChild(bs);
       }

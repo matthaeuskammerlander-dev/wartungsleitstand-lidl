@@ -256,7 +256,7 @@ Kammerlander Umwelt- und Klimatechnik (UKT) – oft kurz, vom Handy, im Feld.
 - **Arbeitszeiten** (Tabelle `arbeitszeiten`): jede Person sieht nur ihre
   eigenen, der Inhaber alle; ein bestätigter Monat ist gesperrt – auch für NEUE Einträge (von Hand, Stempeln,
   Abgleich): bestätigt = die Person hat dort einen Eintrag mit `bestaetigt`; nur der Inhaber trägt danach ein oder
-  öffnet ihn wieder („Wieder öffnen“ in `zeitenInhaberKarte`). App: `monatGesperrt`, Meldung `MONAT_GESPERRT`;
+  öffnet ihn wieder („Wieder öffnen“ in `zeitenInhaberKarte`; ist die Person noch eingestempelt, warnt „Bestätigen“ vorher). App: `monatGesperrt`, Meldung `MONAT_GESPERRT`;
   Datenbank: Trigger `arbeitszeiten_monat_gesperrt` (gilt auch für stempeln()/stempel_abgleich(), nicht für die
   Kalender-Übernahme – die hat ihre eigene Regel), tools/rechte-2026-10-05.sql (Inhaber 05.10.2026).
 - **Stempeluhr** (Tabelle `stempel`, Funktion `stempeln()`, tools/stempeluhr.sql):
