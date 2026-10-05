@@ -24119,6 +24119,7 @@ function handbuchKarte(z){
           "zum Vergleich und für den Positionskatalog.",
         "Die Nummer bekommt ein neuer Beleg erst beim <strong>Speichern</strong> (bis dahin „Nummer wird beim Speichern vergeben“) – Abbrechen lässt keine Lücke im Nummernkreis.",
         "Rechnung aus dem Angebot: die Mengen schlägt das Baustellenbuch vor. Rechnungen gibt es auch für Wartungs- und Störungseinsätze – mit dem Lidl-Rapport angehängt.",
+        "Wartung: je Anlage der Katalogpreis ihrer Termin-Art (JW, HJW, HJI). Fehlt er, steht die Zeile ohne Preis mit Hinweis – eine alte KPlus-Rechnung mit dieser Position hochladen, dann kennt der Katalog den Preis.",
         "<strong>KPlus-Rechnung hochladen</strong> beim Einsatz (im Protokoll unter „Rechnung zu diesem Einsatz“): statt selbst zu schreiben, das PDF aus KPlus – die App vergleicht es mit ihrem Vorschlag („So hätte die App gerechnet“), legt das Original beim Beleg ab, vermerkt den Einsatz als abgerechnet und lernt daraus für künftige Vorschläge.",
         "Status mit Datum (versendet, fällig, bezahlt); überfällige Rechnungen sind markiert.",
         "Preise, Katalog und Belege liegen nur in der Datenbank, sichtbar nur für den Inhaber – nicht für Admins, nicht auf der Synology im Projektordner."]))+
@@ -24880,7 +24881,7 @@ Object.assign(RUNDGAENGE, {
         "Die Fahrtpauschale je Zone kommt aus dem Katalog – fehlt eine Zone, steht die Zeile ohne Preis da."])},
     {reiter:"belege", ziel:function(){ return rgEl('[data-a="einsatz"]'); }, titel:"Rechnung zu einem Einsatz",
       text:"Protokoll wählen (vorgegeben: nur ohne Rechnung, mit Rapport-Anzeige) – die App schlägt die Positionen vor."+
-      RG_HG(["<strong>Wartung</strong>: je Anlage die Katalogposition „Wartung“. <strong>Störung</strong>: Textzeile, Regiestunden (Ankunft–Fertig × Personen, auf ¼ h), Material.",
+      RG_HG(["<strong>Wartung</strong>: je Anlage die Katalogposition ihrer Termin-Art (Jahreswartung/JW, Halbjahreswartung/HJW, Halbjahresinspektion/HJI) – fehlt sie, steht die Zeile ohne Preis mit „Preis für … fehlt – alte KPlus-Rechnung mit dieser Position hochladen“ (nie der Preis einer anderen Art). <strong>Störung</strong>: Textzeile, Regiestunden (Ankunft–Fertig × Personen, auf ¼ h), Material.",
         "Kältemittel (kg) und die <strong>Fahrtpauschale der Zone</strong> (Zone 2: Kärnten, Steiermark, Vorarlberg, Tirol westlich von Innsbruck, Osttirol) – fehlt sie im Katalog, ohne Preis.",
         "Betreff, Bestellnummer (= Auftragsnummer) und Leistungszeitraum kommen aus dem Protokoll; der Lidl-Rapport hängt hinten am PDF."])},
     {reiter:"belege", ziel:function(){ return rgReiter("belege"); }, titel:"Der Beleg-Editor",
@@ -28023,6 +28024,8 @@ function positionPruefen(p){
   if(/regiestunde|stundensatz|zuschlag stunde|arbeitsstunde/i.test(p.text) && eh && !stunden) w.push("Stunden-Position mit Einheit „"+p.eh+"“ statt Std");
   if(p.betragPdf!=null && p.menge!=null && p.preis!=null && Math.abs(p.betragPdf-posBetrag(p))>0.05)
     w.push("Betrag im PDF ("+geld(p.betragPdf)+" €) ist nicht Menge × Preis ("+geld(posBetrag(p))+" €)");
+  /* Hinweis aus dem Rechnungsvorschlag (Preis bzw. Sorte fehlt), solange kein Preis eingetragen ist */
+  if(p.hinweis && !(+p.preis>0)) w.push(p.hinweis);
   return w;
 }
 function positionenPruefen(positionen){
@@ -28399,6 +28402,18 @@ function katalogFinde(re, kid){
   var l=KATALOG.filter(function(k){ return k.aktiv!==false && re.test(k.text||""); });
   return l.filter(function(k){ return k.kunde_id===(kid||"lidl"); })[0] || l[0] || null;
 }
+/* Wartungspreis je Art (Inhaber 05.10.2026; früher galt die erste Katalogzeile mit „Wartung“ – eine JW bekam so den
+   HJW-Preis): die Position, deren Text genau diese Termin-Art nennt – Jahreswartung/JW, Halbjahreswartung/HJW,
+   Halbjahresinspektion/HJI –, je Stück bzw. pauschal wie die Wartungszeile (keine Stunden- oder kg-Preise).
+   Nie der Preis einer anderen Art: ohne passende Position bleibt die Zeile ohne Preis (einsatzPositionen). */
+var WARTUNG_ARTEN={JW:/(^|[^a-zäöü])(jahres[\s-]*wartung|jw)(?![a-zäöü])/i, HJW:/(^|[^a-zäöü])(halbjahres[\s-]*wartung|hjw)(?![a-zäöü])/i,
+  HJI:/(^|[^a-zäöü])(halbjahres[\s-]*inspektion|hji)(?![a-zäöü])/i};
+function wartungArten(text){ return Object.keys(WARTUNG_ARTEN).filter(function(k){ return WARTUNG_ARTEN[k].test(String(text||"")); }); }
+function katalogWartung(art, kid){
+  var l=KATALOG.filter(function(k){ var a=wartungArten(k.text);
+    return k.aktiv!==false && a.length===1 && a[0]===art && /^(stk|st|stück|psh|psch|pauschal|anl|anlage)?\.?$/i.test(String(k.eh||"").trim()); });
+  return l.filter(function(k){ return k.kunde_id===(kid||"lidl"); })[0] || l[0] || null;
+}
 /* Fahrtpauschale nach Zone (Büro 02.10.2026, „zum Rechnungschreiben wichtig, automatisch“):
    Zone 2 = Kärnten, Steiermark, Vorarlberg, Tirol ab Innsbruck und Osttirol; der Rest Zone 1.
    Bundesland aus der Postleitzahl; in Nordtirol erst westlich von Innsbruck Zone 2 (Völs, Telfs,
@@ -28471,10 +28486,13 @@ function einsatzPositionen(pk, kid){
   var add=function(menge, eh, text, kat, zusatz){ nr++; pos.push({typ:"pos", nr:String(nr), menge:menge, eh:(kat&&kat.eh)||eh,
     text:(kat?katalogTextOhneMenge(kat.text):text)+(zusatz?"\n"+zusatz:""), preis:kat?+kat.preis:0, katalog_id:kat?kat.id:null, alternativ:false}); };
   if(!stoer){
+    /* je Anlage der Preis ihrer Termin-Art (katalogWartung) – fehlt er, ohne Preis mit Hinweis (Inhaber 05.10.2026) */
     (pk.anlagen||[]).forEach(function(a){
-      var kat=katalogFinde(/wartung/i, kid);
-      nr++; pos.push({typ:"pos", nr:String(nr), menge:1, eh:"Stk", text:"Wartung"+(a.termin?" ("+a.termin+")":"")+": "+(a.name||"Anlage")+"\nlt. Wartungsprotokoll vom "+dfmt(pk.datum)+(kat?"\n"+katalogTextOhneMenge(kat.text):""),
-        preis:kat?+kat.preis:0, katalog_id:kat?kat.id:null, alternativ:false, einsatz:true});
+      var wa=wartungArten(a.termin), art=wa.length===1 ? wa[0] : null, kat=art ? katalogWartung(art, kid) : null;
+      nr++; var w={typ:"pos", nr:String(nr), menge:1, eh:(kat&&kat.eh)||"Stk", text:"Wartung"+(a.termin?" ("+a.termin+")":"")+": "+(a.name||"Anlage")+"\nlt. Wartungsprotokoll vom "+dfmt(pk.datum)+(kat?"\n"+katalogTextOhneMenge(kat.text):""),
+        preis:kat?+kat.preis:0, katalog_id:kat?kat.id:null, alternativ:false, einsatz:true};
+      if(!kat) w.hinweis=art ? "Preis für "+art+" fehlt – alte KPlus-Rechnung mit dieser Position hochladen" : "Termin-Art (JW, HJW oder HJI) unbekannt – Preis bitte von Hand eintragen";
+      pos.push(w);
     });
   } else {
     pos.push({typ:"text", text:"Störungsbehebung"+(pk.auftragsnummer?" lt. Auftrag "+pk.auftragsnummer:"")+(so.problemtyp?": "+so.problemtyp:"")+
@@ -28642,8 +28660,11 @@ function belegEditor(kx, b, fertig, vorschlaege){
           '<div class="akt"><label class="alt-chk" title="Alternativposition – zählt nicht zur Summe"><input type="checkbox" data-f="alternativ"'+(x.alternativ?" checked":"")+"> Alt.</label>"+
             akt+'<button class="btn ghost sm" type="button" data-kopie title="Zeile kopieren">⧉</button><button class="btn ghost sm" type="button" data-weg title="entfernen">✕</button></div>'+
           (vs?'<div class="vs"><a href="#" class="sprunglink" data-vs>Baustellenbuch: '+esc(geld(vs.menge))+" übernehmen</a> <span class=\"muted\">("+esc(vs.text.slice(0,120))+")</span></div>":"")+
+          /* Hinweis des Vorschlags (Preis fehlt, Sorte fehlt – Inhaber 05.10.2026): sichtbar, solange kein Preis eingetragen ist */
+          (x.hinweis?'<div class="vs" data-hinweis style="color:var(--warn)">⚠ '+esc(x.hinweis)+"</div>":"")+
         "</div>");
-        var betrag=function(){ z.querySelector("[data-betrag]").textContent=x.alternativ?"Alternativ":geld(posBetrag(x)); rechnen(); };
+        var betrag=function(){ z.querySelector("[data-betrag]").textContent=x.alternativ?"Alternativ":geld(posBetrag(x));
+          var h=z.querySelector("[data-hinweis]"); if(h) h.hidden=+x.preis>0; rechnen(); };
         z.querySelectorAll("[data-f]").forEach(function(inp){
           inp.oninput=inp.onchange=function(){
             var f=inp.dataset.f;

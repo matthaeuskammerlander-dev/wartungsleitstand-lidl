@@ -4487,6 +4487,35 @@ test("Antworten rechnung: Nummer erst beim Speichern – Abbrechen verbraucht ke
   pruefe(!a.fehler.length, "Laufzeitfehler: " + a.fehler.join("; "));
   await a.zu();
 });
+test("Antworten rechnung: Vorschlag zum Einsatz – Wartungspreis je JW/HJW/HJI, Reparatur und Prüfung nach Aufwand, Kältemittel ohne Sorte ohne Preis", async () => {
+  const a = await oeffnen(KONTEN.inhaber);
+  await a.seite.evaluate((h) => eval(h), AR_HILFEN);
+  const r = await a.seite.evaluate(async () => {
+    const x = window.__t.x, db = window.__db.tabellen, A = window.__ar;
+    const kat = (id, text, eh, preis) => ({ id, text, eh, preis, kunde_id: "lidl", aktiv: true, quelle: "Test" });
+    db.katalog.push(kat("arw0", "Wartung allgemein (Test)", "Stk", 99), kat("arw1", "Jahreswartung Klimaanlage (Test)", "Stk", 210),
+      kat("arw2", "Halbjahreswartung Klimaanlage (Test)", "Stk", 150), kat("arw3", "Jahreswartung Techniker (Test)", "Std", 70));
+    await x("katalogLaden()");
+    const pk = (o) => Object.assign({ _id: "ar_" + Math.random(), standortId: "TS1", datum: "2026-06-01", wartungsart: "planmäßig", techniker: "Testtechniker", anlagen: [] }, o);
+    const zeilen = (p) => x("einsatzPositionen")(p, "lidl").map((q) => ({ typ: q.typ, text: q.text, preis: q.preis, menge: q.menge, eh: q.eh, hinweis: q.hinweis || "" }));
+    const wartung = pk({ anlagen: [{ name: "Anlage A", termin: "Jahreswartung" }, { name: "Anlage B", termin: "Halbjahreswartung" },
+      { name: "Anlage C", termin: "Halbjahresinspektion" }, { name: "Anlage D", termin: "" }] });
+    const w = zeilen(wartung);
+    /* der Hinweis steht im Editor bei der Position */
+    x("belegNeu")(x("kontextProtokoll")(wartung), "rechnung", null, function () {});
+    const d = await A.bis(() => { const d = A.dlgs().pop(); return d && d.querySelector(".bpos") && d; });
+    const editor = d ? d.textContent : ""; x("ansichtenSchliessen()");
+    return { w, editor };
+  });
+  const anl = (n) => r.w.filter((p) => new RegExp("Anlage " + n).test(p.text))[0] || {};
+  pruefe(anl("A").preis === 210 && /Jahreswartung Klimaanlage/.test(anl("A").text), "JW nicht zum JW-Preis: " + JSON.stringify(anl("A")));
+  pruefe(anl("B").preis === 150 && /Halbjahreswartung Klimaanlage/.test(anl("B").text), "HJW nicht zum HJW-Preis: " + JSON.stringify(anl("B")));
+  pruefe(!anl("C").preis && /Preis für HJI fehlt – alte KPlus-Rechnung mit dieser Position hochladen/.test(anl("C").hinweis), "HJI ohne Katalogposition: " + JSON.stringify(anl("C")));
+  pruefe(!anl("D").preis && anl("D").hinweis, "Anlage ohne bekannte Termin-Art bekam einen Preis: " + JSON.stringify(anl("D")));
+  pruefe(/Preis für HJI fehlt/.test(r.editor), "Hinweis „Preis für HJI fehlt“ im Editor nicht sichtbar");
+  pruefe(!a.fehler.length, "Laufzeitfehler: " + a.fehler.join("; "));
+  await a.zu();
+});
 
 /* ================================================================ Ablauf ================================================================ */
 const filterText = process.argv.slice(2).find((x) => !x.startsWith("--"));
