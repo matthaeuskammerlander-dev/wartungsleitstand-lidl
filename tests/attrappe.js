@@ -90,7 +90,8 @@
        nach planung_pruefen (Urlaub, der dabei wieder „beantragt“ würde, also nicht) */
     if(tab==="planung" && art!=="select" && rolle!=="inhaber"){
       var abw=function(r){ return !!r && r.art!=="aufgabe" && ["urlaub","krank","schule","zeitausgleich"].indexOf(r.kategorie)>=0; };
-      var eigen=function(r, von){ var w=r.wer||[]; return w.length ? w.every(function(u){ return u===uid(); }) : von===uid(); };
+      /* eigen = selbst angelegt UND nur selbst eingetragen (bzw. niemand) – was der Inhaber für jemanden einträgt, ändert nur er */
+      var eigen=function(r, von){ return von===uid() && (r.wer||[]).every(function(u){ return u===uid(); }); };
       var nurInhaber="planung: Abwesenheit anderer nur der Inhaber";
       if(art==="insert" && abw(zeile) && !eigen(zeile, uid())) return nurInhaber;
       if(art==="delete" && abw(alt) && !eigen(alt, alt.erstellt_von)) return nurInhaber;
@@ -105,6 +106,7 @@
           var frei=["wer","wer_namen","ausnahmen","geaendert","geaendert_von"], gl=function(p, q){ return JSON.stringify(p==null?null:p)===JSON.stringify(q==null?null:q); };
           if(Object.keys(nz).concat(Object.keys(alt)).some(function(k){ return frei.indexOf(k)<0 && !gl(nz[k], alt[k]); })) return nurInhaber+" (nur sich selbst herausnehmen)";
           var iw=(alt.wer||[]).indexOf(uid());
+          if(!gl(nz.wer, alt.wer) && (alt.wer||[]).length<2) return nurInhaber+" (nur aus einem gemeinsamen Eintrag)";
           if(!gl(nz.wer, alt.wer) && !(gl(nz.wer, alt.wer.filter(function(u){ return u!==uid(); })) && gl(nz.wer_namen, (alt.wer_namen||[]).filter(function(n, k){ return k!==iw; })))) return nurInhaber+" (nur sich selbst herausnehmen)";
           if(gl(nz.wer, alt.wer) && !gl(nz.wer_namen, alt.wer_namen)) return nurInhaber;
         }

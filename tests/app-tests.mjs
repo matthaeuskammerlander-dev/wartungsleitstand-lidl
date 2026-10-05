@@ -4738,6 +4738,89 @@ test("Antworten stunden: halber Tag mit Uhrzeit – gefragt wird nur, wenn die A
   await a.zu();
 });
 
+test("Antworten stunden: was der Inhaber für jemanden einträgt, ändert nur der Inhaber – die Person antwortet nur und bittet um Herausnehmen", async () => {
+  const fehl = [];
+  const a = await oeffnen(KONTEN.techniker);
+  await ttHilfen(a);
+  const r = await a.seite.evaluate(async () => {
+    const tt = window.__tt, x = window.__t.x, db = window.__db.tabellen, sb = x("Store.sb"), e = {}; tt.leeren();
+    const ich = tt.ich(), T = tt.werktag(1), T2 = tt.werktag(2), nein = (q) => (q.error || !(q.data || []).length ? "abgelehnt" : "angenommen");
+    const z = { art: "termin", kategorie: "krank", titel: "Krank", wer: [ich], wer_namen: ["Testtechniker"], status: "offen", erstellt: new Date().toISOString(), privat: false, ausnahmen: {} };
+    db.planung.push(Object.assign({ id: "aw5k", datum: T, erstellt_von: "u_inhaber_test_at" }, z), Object.assign({ id: "aw5e", datum: T2, erstellt_von: ich }, z));
+    await tt.laden();
+    x("planEditor(PLANUNG.filter(function(p){ return p.id==='aw5k'; })[0])"); await tt.warte(200);
+    let d = tt.dialog();
+    e.editor = { hinweis: /ändert nur der Inhaber/.test(d.textContent), knoepfe: [...d.querySelectorAll(".as-fuss button")].map((b) => b.textContent.trim()).filter((t) => /Speichern|Löschen/.test(t)), heraus: /Tage herausnehmen/.test(d.textContent) };
+    x("ansichtenSchliessen()");
+    /* Arbeit an diesem Tag: nicht selbst beenden, sondern den Chef bitten */
+    const chatVorher = db.chat.length;
+    x("abwesenheitPruefen('" + T + "', function(){})"); await tt.warte(150);
+    d = tt.dialog(); e.antworten = [...d.querySelectorAll("button")].map((b) => b.textContent.trim().split("\n")[0]);
+    const bitte = [...d.querySelectorAll("button")].find((b) => /Chef/.test(b.textContent)); if (bitte) { bitte.click(); await tt.warte(600); }
+    e.nachricht = db.chat.slice(chatVorher).map((c) => c.an).join();
+    e.antwort = (((db.planung.find((p) => p.id === "aw5k") || {}).ausnahmen || {})[T] || {})[ich];
+    x("ansichtenSchliessen()");
+    e.db = { aendern: nein(await sb.from("planung").update({ datum_bis: T2 }).eq("id", "aw5k").select("*")), leeren: nein(await sb.from("planung").update({ wer: [], wer_namen: [] }).eq("id", "aw5k").select("*")),
+      loeschen: nein(await sb.from("planung").delete().eq("id", "aw5k").select("id")),
+      eigenAendern: nein(await sb.from("planung").update({ titel: "Grippe" }).eq("id", "aw5e").select("*")), eigenLoeschen: nein(await sb.from("planung").delete().eq("id", "aw5e").select("id")) };
+    return e;
+  });
+  if (!r.editor.hinweis || r.editor.knoepfe.length || r.editor.heraus) fehl.push("Termin nicht schreibgeschützt: " + JSON.stringify(r.editor));
+  if (r.antworten.some((t) => /für diesen Tag beenden/.test(t)) || r.nachricht !== "u_inhaber_test_at" || !r.antwort || r.antwort.art !== "zurueck") fehl.push("Arbeit am Tag: " + JSON.stringify(r));
+  if (JSON.stringify(r.db) !== JSON.stringify({ aendern: "abgelehnt", leeren: "abgelehnt", loeschen: "abgelehnt", eigenAendern: "angenommen", eigenLoeschen: "angenommen" })) fehl.push("Datenbank: " + JSON.stringify(r.db));
+  if (a.fehler.length) fehl.push("Laufzeitfehler: " + a.fehler.join("; "));
+  await a.zu();
+  pruefe(!fehl.length, fehl.join(" | "));
+});
+
+test("Antworten stunden: genehmigten Urlaub geändert – wieder beantragt, der Chef bekommt „bitte neu genehmigen“", async () => {
+  const a = await oeffnen(KONTEN.techniker);
+  await ttHilfen(a);
+  const r = await a.seite.evaluate(async () => {
+    const tt = window.__tt, x = window.__t.x, db = window.__db.tabellen, e = {}; tt.leeren();
+    const ich = tt.ich(), t1 = x("werktagAb(plusTage(isoLokal(new Date()),14))"), t3 = x("plusTage('" + t1 + "',2)");
+    db.planung.push({ id: "aw6u", art: "termin", kategorie: "urlaub", titel: "Urlaub", datum: t1, datum_bis: t3, wer: [ich], wer_namen: ["Testtechniker"], status: "genehmigt", erstellt_von: ich, erstellt: new Date().toISOString(), privat: false, ausnahmen: {} });
+    await tt.laden();
+    const aendern = async (feld, wert) => { const vorher = db.chat.length; x("planEditor(PLANUNG.filter(function(p){ return p.id==='aw6u'; })[0])"); await tt.warte(200);
+      const d = tt.dialog(), f = d.querySelector('[data-f="' + feld + '"]'); f.value = wert; f.dispatchEvent(new Event("change", { bubbles: true }));
+      tt.ok(d).click(); await tt.warte(600); x("ansichtenSchliessen()");
+      return { status: db.planung.find((p) => p.id === "aw6u").status, chat: db.chat.slice(vorher).map((c) => c.an + ": " + c.text) }; };
+    e.details = await aendern("details", "Sommer");
+    tt.toasts.length = 0;
+    e.tage = await aendern("datum_bis", x("plusTage('" + t3 + "',1)"));
+    e.toast = tt.toasts.join(" | ");
+    return e;
+  });
+  pruefe(r.details.status === "genehmigt" && !r.details.chat.length, "nur Details geändert: " + JSON.stringify(r.details));
+  pruefe(r.tage.status === "beantragt" && r.tage.chat.length === 1 && /^u_inhaber_test_at: .*Urlaub geändert – bitte neu genehmigen/.test(r.tage.chat[0]) && /Chef/.test(r.toast), "Tage geändert: " + JSON.stringify(r));
+  pruefe(!a.fehler.length, "Laufzeitfehler: " + a.fehler.join("; "));
+  await a.zu();
+});
+
+test("Antworten stunden: Monat bestätigen warnt, wenn die Person noch eingestempelt ist", async () => {
+  const a = await oeffnen(KONTEN.inhaber);
+  await ttHilfen(a);
+  const r = await a.seite.evaluate(async () => {
+    const tt = window.__tt, x = window.__t.x, db = window.__db.tabellen; tt.leeren();
+    const vm = x("plusMonate(isoLokal(new Date()),-1).slice(0,7)"), zeile = (u, n) => ({ id: "aw7" + u, user_id: u, name: n, datum: vm + "-02", minuten: 480, art: "arbeit", quelle: "hand", pause_min: 0 });
+    db.arbeitszeiten.push(zeile("u_tech_test_at", "Testtechniker"), zeile("u_admin_test_at", "Testadmin"));
+    db.stempel.push({ id: "aw7s", user_id: "u_tech_test_at", name: "Testtechniker", art: "ein", zeit: new Date(vm + "-28T08:00:00").toISOString() });
+    x("S.view='stunden'; S.stMonat='" + vm + "'; render()"); await tt.warte(800);
+    const fragen = {};
+    for (const n of ["Testtechniker", "Testadmin"]) {
+      const zeileTr = [...document.querySelectorAll("tr")].find((tr) => tr.firstChild && tr.firstChild.textContent.startsWith(n));
+      window.__antwort.confirm = false; window.__dialoge.length = 0;
+      [...zeileTr.querySelectorAll("button")].find((b) => b.textContent === "Bestätigen").click(); await tt.warte(400);
+      fragen[n] = window.__dialoge.map((d) => d[1]).join(" | ");
+    }
+    window.__antwort.confirm = true;
+    return fragen;
+  });
+  pruefe(/Testtechniker ist noch eingestempelt/.test(r.Testtechniker) && !/eingestempelt/.test(r.Testadmin) && /bestätigen\?/.test(r.Testadmin), "Warnung: " + JSON.stringify(r));
+  pruefe(!a.fehler.length, "Laufzeitfehler: " + a.fehler.join("; "));
+  await a.zu();
+});
+
 /* ================================================================ Ablauf ================================================================ */
 const filterText = process.argv.slice(2).find((x) => !x.startsWith("--"));
 const filter = filterText ? new RegExp(filterText, "i") : null;

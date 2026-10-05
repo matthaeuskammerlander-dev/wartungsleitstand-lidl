@@ -24111,6 +24111,7 @@ function handbuchKarte(z){
           "die Person tippt „Urlaub zurückziehen“, der Chef bekommt eine Nachricht und nimmt ihn heraus.",
         "<strong>Abwesenheit anderer</strong> (Urlaub, Krankenstand, Schule, Zeitausgleich) legt nur der Inhaber an, ändert, kürzt oder löscht sie – auch gemeinsame wie "+
           "Betriebsurlaub oder Kurs. Jede Person trägt ihre eigene selbst ein (Admins wie Techniker); aus einem gemeinsamen Eintrag nimmt man nur sich selbst heraus. "+
+          "Was der Inhaber für jemanden eingetragen hat (etwa den Krankenstand nach einem Anruf), ändert nur er – die Person bittet ihn bei Arbeit an so einem Tag per Knopf, den Tag herauszunehmen. "+
           "Sonst ist der Eintrag schreibgeschützt („ändert nur der Inhaber“) – das prüft auch die Datenbank.",
         "<strong>Abwesenheit und Arbeit am selben Tag:</strong> Urlaub (genehmigt), Krankenstand, Schule und Zeitausgleich stehen von selbst in den Stunden. "+
           "Wer an so einem Tag einstempelt oder Arbeit erfasst, wird gefragt: „Nur kurz eingesprungen“ (beides bleibt), „… für diesen Tag beenden“ "+
@@ -29593,10 +29594,11 @@ function planIstMeins(e){
   var ich=meineKennung();
   return (e.wer||[]).indexOf(ich)>=0 || (!(e.wer||[]).length && e.erstellt_von===ich);
 }
-/* nur meins: eingetragen bin nur ich – oder niemand und ich habe es angelegt */
+/* nur meins: selbst angelegt UND nur ich eingetragen (bzw. niemand) – was der Inhaber für jemanden einträgt, ist nicht dessen
+   „eigene“ Abwesenheit, die ändert nur er (Inhaber 05.10.2026) */
 function planNurMeins(e){
-  var ich=meineKennung(), w=e.wer||[];
-  return w.length ? w.every(function(u){ return u===ich; }) : e.erstellt_von===ich;
+  var ich=meineKennung();
+  return e.erstellt_von===ich && (e.wer||[]).every(function(u){ return u===ich; });
 }
 /* Abwesenheit (Urlaub, Krankenstand, Schule, Zeitausgleich) ANDERER – auch gemeinsame wie Betriebsurlaub oder Kurs –
    legt an, ändert, kürzt und löscht nur der Inhaber; die eigene die Person selbst, aus einer gemeinsamen nimmt sie nur sich
@@ -30883,7 +30885,7 @@ function planEditor(e, vorgabe){
   v.inhalt.appendChild(form);
   /* Abwesenheit: einzelne Tage herausnehmen (gearbeitet, Urlaubstag zurückgegeben) – Urlaub nur der Inhaber; sonst die eigene,
      aus einer gemeinsamen nur sich selbst (Inhaber 05.10.2026: Admins wie Techniker) */
-  if(!neu && planAbwesenheit(a) && !demo() && (nurInhaber() || (a.kategorie!=="urlaub" && planIstMeins(a)))){
+  if(!neu && planAbwesenheit(a) && !demo() && (nurInhaber() || (a.kategorie!=="urlaub" && (planNurMeins(a) || ((a.wer||[]).length>1 && planIstMeins(a)))))){
     var tk=el('<div class="card" style="box-shadow:none;margin-top:12px"><div class="pad stack" style="gap:8px"><h2>Einzelne Tage herausnehmen</h2>'+
       '<div class="muted" style="font-size:12.5px">Wurde an einem Tag doch gearbeitet: den Tag herausnehmen – die Stunden passen sich an.</div></div></div>');
     /* zurückgegebene Tage: je Person, nur solange der Tag noch im Zeitraum liegt – herausgenommen nur für diese Person */
@@ -31069,7 +31071,7 @@ function planEditor(e, vorgabe){
   if(abwFremd){
     form.querySelectorAll("input,select,textarea,button").forEach(function(x){ x.disabled=true; });
     form.insertBefore(el('<div class="note" style="font-size:12.5px">🔒 '+esc(planKat(a.kategorie)[1])+(planWerText(a)?" von "+esc(planWerText(a)):"")+
-      " – ändert nur der Inhaber"+(planIstMeins(a)?" (aus einem gemeinsamen Eintrag kannst du unten nur dich selbst herausnehmen)":"")+".</div>"), form.firstChild);
+      " – ändert nur der Inhaber"+(planIstMeins(a) && (a.wer||[]).length>1?" (aus einem gemeinsamen Eintrag kannst du unten nur dich selbst herausnehmen)":"")+".</div>"), form.firstChild);
   }
   var err=form.querySelector("[data-err]"), fehler=function(t){ err.textContent=technikDeutsch(t); err.hidden=false; };
   /* schon genehmigten Urlaub löscht nur der Inhaber – auch nicht die Person selbst (Inhaber 05.10.2026); sie zieht ihn zurück:
@@ -31520,8 +31522,15 @@ function abwesenheitPruefen(tag, weiter, trifft){
           toast("Der Chef bekommt eine Nachricht – bis er den Tag herausnimmt, zählt beides.");
         });
       });
-  } else knopf("<strong>"+esc(k[1])+" für diesen Tag beenden</strong><br><span style=\"font-weight:400;font-size:12.5px\">der Tag wird aus dem Eintrag genommen"+mitAnderen+", die Stunden passen sich an</span>", "ghost",
+  } else if(nurInhaber() || planNurMeins(e) || (e.wer||[]).length>1) knopf("<strong>"+esc(k[1])+" für diesen Tag beenden</strong><br><span style=\"font-weight:400;font-size:12.5px\">der Tag wird aus dem Eintrag genommen"+mitAnderen+", die Stunden passen sich an</span>", "ghost",
     function(){ return planTagHerausnehmen(e, tag, meineKennung()); });
+  /* vom Inhaber für mich eingetragen: ändert nur er (Inhaber 05.10.2026) – ich bitte ihn, den Tag herauszunehmen */
+  else knopf("<strong>Ich arbeite – Chef bitten, den Tag herauszunehmen</strong><br><span style=\"font-weight:400;font-size:12.5px\">eingetragen hat ihn der Chef – er bekommt eine Nachricht und nimmt den Tag heraus</span>", "ghost",
+    function(){
+      return abwesenheitAusnahmeSetzen(e, tag, "zurueck").then(function(){
+        return chatAnInhaber("🗓 Ich arbeite am "+dfmt(tag)+" – bitte "+k[1]+" für diesen Tag herausnehmen (Eintrag öffnen → „Tag herausnehmen“).");
+      }).then(function(n){ toast(n ? "Der Chef bekommt eine Nachricht – bis er den Tag herausnimmt, zählt beides." : "Vermerkt – die Nachricht ging nicht raus, bitte dem Chef direkt Bescheid geben."); });
+    });
   var ab=el('<button class="btn ghost" type="button">Abbrechen</button>'); ab.onclick=function(){ v.zu(); }; v.fuss.appendChild(ab);
   v.inhalt.appendChild(r);
 }
@@ -32022,7 +32031,7 @@ function monatLueckenText(r){
     r.abwesend.length ? r.abwesend.length+"× Abwesenheit im Kalender ohne Stunden: "+tage(r.abwesend) : "",
     r.geplant.length ? r.geplant.length+"× geplant, aber nichts dazu erfasst: "+tage(r.geplant) : "",
     r.doppelt.length ? r.doppelt.length+"× Abwesenheit und Arbeit am selben Tag, nicht geklärt: "+tage(r.doppelt) : "",
-    r.zurueck.length ? r.zurueck.length+"× Urlaubstag zurückgegeben – im Kalender herausnehmen: "+tage(r.zurueck) : ""].filter(Boolean);
+    r.zurueck.length ? r.zurueck.length+"× Tag zurückgegeben (Urlaub bzw. vom Chef eingetragene Abwesenheit) – im Kalender herausnehmen: "+tage(r.zurueck) : ""].filter(Boolean);
 }
 function sollMinutenMonat(monat){
   var t=monat+"-01", ende=plusMonate(t,1), s=0;
