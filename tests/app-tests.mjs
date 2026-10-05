@@ -1733,6 +1733,42 @@ reSchritt("eingaben", "R12", async (a) => {
   });
   return !r ? "" : "ausgeblendete Katalog-Position vorgeschlagen: " + r;
 });
+/* Katalog-Zeile speichern: leerer Preis bzw. leerer Text wird mit Meldung abgelehnt */
+reSchritt("eingaben", "R26", async (a) => {
+  const r = await a.seite.evaluate(async () => {
+    const x = window.__t.x, db = window.__db.tabellen, R = window.__re;
+    db.katalog.push({ id: "k26", text: "Leerprobe Position R26", eh: "Stk", preis: 26, kunde_id: null, aktiv: true, quelle: "Test" });
+    x("katalogAnsicht()");
+    const zeile = () => [...R.dlg().querySelectorAll("[data-sp]")].map((b) => b.parentElement.parentElement).filter((z) => /Leerprobe Position R26/.test(z.querySelector("textarea").value))[0];
+    let z = await R.bis(zeile);
+    R.toasts.length = 0;
+    z.querySelector("[data-preis]").value = ""; z.querySelector("[data-sp]").click(); await R.warte(150);
+    const preis = db.katalog.filter((q) => q.id === "k26")[0].preis;
+    z = zeile() || z; z.querySelector("[data-preis]").value = "26,00"; z.querySelector("textarea").value = "  "; z.querySelector("[data-sp]").click(); await R.warte(150);
+    return { preis, text: db.katalog.filter((q) => q.id === "k26")[0].text, toasts: R.toasts.slice() };
+  });
+  return r.preis === 26 && r.text === "Leerprobe Position R26" && r.toasts.some((t) => /Preis/.test(t)) && r.toasts.some((t) => /Text/.test(t))
+    ? "" : `leerer Preis bzw. Text: Preis jetzt ${r.preis}, Text „${r.text}“, Meldungen ${JSON.stringify(r.toasts)}`;
+});
+/* Katalog: Doppelklick auf „Anlegen“ legt einmal an; mehr als 150 Treffer → Hinweis auf weitere */
+reSchritt("eingaben", "R25", async (a) => {
+  const r = await a.seite.evaluate(async () => {
+    const x = window.__t.x, db = window.__db.tabellen, R = window.__re;
+    x("katalogAnsicht()");
+    const det = await R.bis(() => R.dlg() && R.dlg().querySelector("details")); det.open = true;
+    det.querySelector('[data-n="text"]').value = "Doppelklick Testposition"; det.querySelector('[data-n="preis"]').value = "12,50";
+    const k = det.querySelector('[data-n="ok"]'); k.click(); k.click();
+    await R.bis(() => db.katalog.some((q) => q.text === "Doppelklick Testposition")); await R.warte(150);
+    const doppelt = db.katalog.filter((q) => q.text === "Doppelklick Testposition").length;
+    x("ansichtenSchliessen()");
+    for (let i = 0; i < 170; i++) db.katalog.push({ id: "kv" + i, text: "Viele Testposition " + String(i).padStart(3, "0"), eh: "Stk", preis: 1 + i, kunde_id: null, aktiv: true, quelle: "Test" });
+    x("katalogAnsicht()");
+    const d = await R.bis(() => R.dlg() && R.dlg().querySelectorAll("[data-sp]").length && R.dlg());
+    return { doppelt, gesamt: db.katalog.length, sichtbar: d.querySelectorAll("[data-sp]").length, hinweis: /weitere/i.test(d.querySelector(".as-inhalt").textContent) };
+  });
+  return r.doppelt === 1 && (r.sichtbar === r.gesamt || r.hinweis) ? "" : `Doppelklick legt ${r.doppelt}× an; sichtbar ${r.sichtbar} von ${r.gesamt}, Hinweis auf weitere: ${r.hinweis}`;
+});
+
 /* Rechnung aus Angebot: der Baustellenbuch-Vorschlag bleibt beim Kältemittel, auch nach Löschen und Verschieben */
 reSchritt("editor", "R04", async (a) => {
   const r = await a.seite.evaluate(async () => {

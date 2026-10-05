@@ -55,6 +55,8 @@
     if(tab==="arbeitszeiten" && art==="delete" && rolle!=="inhaber" && alt && /^stempel|^kalender/.test(alt.quelle||"")) return "arbeitszeiten: gestempelt oder aus dem Kalender";
     if(tab==="arbeitszeiten" && art==="insert" && rolle!=="inhaber" && zeile && zeile.quelle && zeile.quelle!=="hand") return "arbeitszeiten: nur von Hand";
     if(tab==="einstellungen" && art!=="select" && rolle!=="inhaber") return "einstellungen: nur Inhaber";
+    /* wie projekte-ablauf.sql: katalog.text not null check (length(trim(text)) between 1 and 4000) */
+    if(tab==="katalog" && (art==="insert"||art==="update") && zeile && (art==="insert" || ("text" in zeile)) && !String(zeile.text==null?"":zeile.text).trim()) return "katalog: text verletzt check";
     /* wie werkzeug.sql: Werkzeug und Packlisten löscht nur das Büro, Bedarf wer ihn angelegt hat oder das Büro; den Verlauf schreibt nur der Server */
     if((tab==="werkzeug"||tab==="packlisten") && art==="delete" && !(admin() || rolle==="inhaber")) return tab+": loeschen nur Buero";
     if(tab==="bedarf" && art==="delete" && !(admin() || rolle==="inhaber" || (alt && alt.erstellt_von===uid()))) return "bedarf: loeschen nur eigene";
