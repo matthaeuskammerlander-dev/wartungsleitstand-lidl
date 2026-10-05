@@ -2403,6 +2403,28 @@ test("Tiefentest kalender: Präsentation – Reihenfolge übernehmen, mit einpla
   pruefe(!fehl.length, fehl.join(" | "));
 });
 
+test("Tiefentest kalender: Woche zeigt den Startpunkt wie der Rundgang; Rundgänge am Handy quer; Handbuch vollständig", async () => {
+  const fehl = [];
+  /* TT-KAL-10: Woche (Zeitraster) bei gewählter Person: „🚗 Start …“ bzw. „Startpunkt unbekannt“ – am PC 7 Tage, am Handy 3 und 7 Tage */
+  for (const handy of [false, true]) {
+    const a = await tkOeffnen(KONTEN.techniker, { handy });
+    const r = await a.seite.evaluate(async (handy) => {
+      const tt = window.__tt, x = window.__t.x; tt.leeren(); const heute = x("isoLokal(new Date())"), o = {};
+      await tt.termine([{ kategorie: "wartung", titel: "Einsatz TS3", datum: heute, beginn: "09:00", ende: "10:00", standort_id: "TS3" }]);
+      for (const [modus, wa] of handy ? [["woche", "3"], ["woche", "7"], ["tag", ""]] : [["woche", "7"], ["tag", ""]]) {
+        x("S.view='kalender'; S.kalWer='ich'; S.kalModus='" + modus + "'; S.kTag=isoLokal(new Date()); S.kalWoche=montagVon(isoLokal(new Date())); S.kalAb=isoLokal(new Date()); S.kalWocheArt='" + (wa || "3") + "'; render()");
+        await tt.warte(150);
+        o[modus + (wa ? " " + wa + " Tage" : "")] = /🚗 Start|Startpunkt unbekannt/.test(document.getElementById("kal_karte").innerText);
+      }
+      return o;
+    }, handy);
+    Object.entries(r).forEach(([k, v]) => { if (!v) fehl.push("TT-KAL-10 Startpunkt-Zeile fehlt: " + (handy ? "Handy " : "PC ") + k); });
+    if (a.fehler.length) fehl.push("Laufzeitfehler: " + a.fehler.join("; "));
+    await a.zu();
+  }
+  pruefe(!fehl.length, fehl.join(" | "));
+});
+
 /* ================================================================ Ablauf ================================================================ */
 const filterText = process.argv.slice(2).find((x) => !x.startsWith("--"));
 const filter = filterText ? new RegExp(filterText, "i") : null;
