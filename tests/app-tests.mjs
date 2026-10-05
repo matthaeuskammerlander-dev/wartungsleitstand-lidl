@@ -2066,7 +2066,7 @@ test("Tiefentest kern: geführtes Protokoll am Handy – Vor-Ort-Frage, Mangel n
   await a.zu();
 });
 
-test("Tiefentest kern: Störungsauftrag – weiterer Kunde ohne Lidl", async () => {
+test("Tiefentest kern: Störungsauftrag – weiterer Kunde ohne Lidl, KI-Knopf folgt dem Abtippen", async () => {
   const a = await oeffnen(KONTEN.admin);
   const r = await a.seite.evaluate(async () => {
     const x = window.__t.x, w = (ms) => new Promise((f) => setTimeout(f, ms)), db = window.__db.tabellen, t0 = new Date().toISOString();
@@ -2087,12 +2087,25 @@ test("Tiefentest kern: Störungsauftrag – weiterer Kunde ohne Lidl", async () 
     erg.lidl = x("istLidl(byId.TS5)");
     erg.stoerung = db.stammdaten.filter((s) => s.typ === "stoerung").map((s) => s.ziel);
     erg.kontakte = db.kontakte.filter((c) => /Beispielkontakt/.test(c.name || "")).map((c) => ({ firma: c.firma, kategorie: c.kategorie, kunde_id: c.kunde_id || null }));
+    /* Auftrag als Bild: „Fehlendes mit KI auslesen“ verschwindet, sobald alles abgetippt ist, und nennt sonst, was noch fehlt */
+    window.__v = { seiten: ["data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="], standortId: "TS1" };
+    x("ansichtenSchliessen(); document.querySelectorAll('.assistent').forEach(function(d){ d.remove(); }); stoerungDialog(null, null, window.__v)"); await w(300);
+    d = dlg();
+    const setz = (k, v) => { const i = d.querySelector('[data-s="' + k + '"]'); i.value = v; i.dispatchEvent(new Event("input", { bubbles: true })); i.dispatchEvent(new Event("change", { bubbles: true })); };
+    erg.kiVorher = !!d.querySelector("#st_ki");
+    setz("auftragsnummer", "700123"); setz("problemtyp", "Klima defekt"); setz("zieltermin", "2026-12-01");
+    erg.kiTitel = (d.querySelector("#st_ki") || {}).title || "";
+    setz("beschreibung", "zu warm im Verkaufsraum");
+    erg.kiNachher = !!d.querySelector("#st_ki");
+    setz("beschreibung", "");
+    erg.kiWieder = !!d.querySelector("#st_ki");
     return erg;
   });
   pruefe(r.lidl === false && r.stoerung.indexOf("TS5") >= 0, "Ausgangslage anders: " + JSON.stringify(r));
   pruefe(r.kontakte.length === 1 && r.kontakte[0].firma === "Testkunde Eins" && r.kontakte[0].kategorie === "Kunde / Bauherr" && r.kontakte[0].kunde_id === "KT1",
     "Kontakt des weiteren Kunden landet als Lidl im Adressbuch: " + JSON.stringify(r.kontakte));
   pruefe(!/Lidl/.test(r.texte), "Dialog nennt beim weiteren Kunden Lidl: " + r.texte);
+  pruefe(r.kiVorher && r.kiTitel === "Fehlt: Beschreibung" && !r.kiNachher && r.kiWieder, "KI-Knopf folgt dem Abtippen nicht: " + JSON.stringify([r.kiVorher, r.kiTitel, r.kiNachher, r.kiWieder]));
   pruefe(!a.fehler.length, "Laufzeitfehler: " + a.fehler.join("; "));
   await a.zu();
 });
