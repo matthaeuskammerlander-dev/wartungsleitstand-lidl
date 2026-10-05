@@ -381,6 +381,12 @@
         for(var wi=DB.arbeitszeiten.length-1; wi>=0; wi--) if(weg.indexOf(DB.arbeitszeiten[wi].id)>=0) DB.arbeitszeiten.splice(wi,1); sichern();
         return Promise.resolve({data:{eintraege:JSON.parse(JSON.stringify(erg)), ersetzt:weg}, error:null});
       }
+      /* wie public.fahrzeuge_auswahl() (Inhaber 05.10.2026): alle aktiven Fahrzeuge, NUR Kennung, Kennzeichen, Bezeichnung,
+         Fahrernamen – für alle, die mitarbeiten (Kunde und Präsentation bekommen nichts); die Leseregel der Fahrzeuge bleibt */
+      if(name==="fahrzeuge_auswahl"){ var rlFa=(DB.rollen.filter(function(r){ return r.user_id===uid(); })[0]||{}).rolle;
+        if(!sitzung || rlFa==="kunde" || rlFa==="praesentation") return Promise.resolve({data:[], error:null});
+        return Promise.resolve({data:DB.fahrzeuge.filter(function(f){ return f.aktiv!==false; }).sort(function(a,b){ return String(a.kennzeichen).localeCompare(String(b.kennzeichen)); })
+          .map(function(f){ return {id:f.id, kennzeichen:f.kennzeichen, bezeichnung:f.bezeichnung||null, fahrer_namen:(f.fahrer_namen||[]).slice()}; }), error:null}); }
       if(name!=="stempeln") return Promise.resolve({data:null,error:null});
       /* wie public.stempeln() (stempeluhr-2.sql): Zeit vom „Server“, Reihenfolge prüfen,
          Umstempeln, beim Ausstempeln je Abschnitt ein Eintrag, Einträge von Hand ersetzen */

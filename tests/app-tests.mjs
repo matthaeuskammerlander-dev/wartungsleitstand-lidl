@@ -4585,6 +4585,41 @@ test("Antworten kern: Tour-Startpunkt – jeder nur den eigenen, Inhaber und Adm
   await a.zu();
 });
 
+test("Antworten kern: Werkzeug „im Fahrzeug eines Kollegen“ – jedes Fahrzeug wählbar, von fremden nur Kennzeichen, Bezeichnung, Fahrer", async () => {
+  const a = await oeffnen(KONTEN.techniker);
+  const r = await a.seite.evaluate(async () => {
+    const x = window.__t.x, w = (ms) => new Promise((f) => setTimeout(f, ms)), db = window.__db.tabellen;
+    const dlg = () => [...document.querySelectorAll(".assistent")].pop();
+    db.fahrzeuge.push({ id: "FKOL1", kennzeichen: "T-KOL1", bezeichnung: "Testbus", fahrer: ["u_admin_test_at"], fahrer_namen: ["Testadmin"], aktiv: true,
+      notiz: "nur fürs Büro", pickerl_bis: "2027-01-31", service_km: 90000, tracker_id: "trk-1" });
+    db.fahrzeuge.push({ id: "FALT1", kennzeichen: "T-ALT1", fahrer: [], fahrer_namen: [], aktiv: false });
+    db.werkzeug.push({ id: "WKOL1", name: "Lecksucher KOL", standort_art: "lager", zustand: "ok", aktiv: true });
+    await x("wzLaden(true)"); await x("fzLaden(true)");
+    const erg = { fz: x("FZ.length") };
+    const rpc = await x("Store.sb.rpc('fahrzeuge_auswahl')");
+    erg.spalten = rpc && rpc.data && rpc.data[0] ? Object.keys(rpc.data[0]).sort().join(",") : "";
+    erg.anzahl = rpc && rpc.data ? rpc.data.length : -1;
+    x("wzEditor(WZ.filter(function(w){ return w.id==='WKOL1'; })[0])"); await w(500);
+    let d = dlg();
+    const chip = d.querySelector('[data-ort] .chip[data-w="fahrzeug"]');
+    erg.chip = !!chip && !chip.hidden;
+    erg.hinweis = [...d.querySelectorAll(".muted")].some((m) => !m.hidden && /Kein Fahrzeug zur Wahl/.test(m.textContent));
+    erg.optionen = [...d.querySelectorAll('[data-f="fahrzeug_id"] option')].map((o) => o.textContent);
+    if (chip) { chip.click(); await w(100); d.querySelector('[data-f="fahrzeug_id"]').value = "FKOL1";
+      [...d.querySelectorAll(".as-fuss button")].pop().click(); await w(700); }
+    const wz = db.werkzeug.find((z) => z.id === "WKOL1");
+    erg.gespeichert = wz.standort_art + "/" + wz.fahrzeug_id + "/" + wz.fahrzeug_name;
+    erg.ortText = x("wzOrtText(WZ.filter(function(w){ return w.id==='WKOL1'; })[0])");
+    return erg;
+  });
+  pruefe(r.fz === 0, "Leseregel der Fahrzeuge verändert – Techniker sieht ein fremdes Fahrzeug: " + JSON.stringify(r));
+  pruefe(r.spalten === "bezeichnung,fahrer_namen,id,kennzeichen" && r.anzahl === 1, "fahrzeuge_auswahl liefert mehr als Kennzeichen, Bezeichnung, Fahrer (bzw. ausgeschiedene): " + JSON.stringify(r));
+  pruefe(r.chip && !r.hinweis && r.optionen.some((o) => /T-KOL1/.test(o)) && !r.optionen.some((o) => /T-ALT1/.test(o)), "Fahrzeug eines Kollegen nicht wählbar: " + JSON.stringify(r));
+  pruefe(r.gespeichert === "fahrzeug/FKOL1/T-KOL1" && /T-KOL1/.test(r.ortText), "Werkzeug nicht im Fahrzeug des Kollegen gespeichert: " + JSON.stringify(r));
+  pruefe(!a.fehler.length, "Laufzeitfehler: " + a.fehler.join("; "));
+  await a.zu();
+});
+
 /* ================================================================ Ablauf ================================================================ */
 const filterText = process.argv.slice(2).find((x) => !x.startsWith("--"));
 const filter = filterText ? new RegExp(filterText, "i") : null;

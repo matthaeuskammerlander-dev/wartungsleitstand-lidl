@@ -9350,7 +9350,7 @@ function kontowechselAufraeumen(){
      und speicherte das neue Konto sie als eigene (die Fahrzeuge bis zu einer Minute lang) */
   AUSLAGEN=[]; AK_KONTO=null; akGeladen=false; akLaedt=null; akKonto=""; akFehler=""; akStand=0;
   AK_ALLE={monat:"", liste:[], konten:{}, laedt:false, fehler:""}; AK_ABGEGEBEN=null;
-  FZ=[]; FZ_E=[]; FZ_K={}; fzGeladen=false; fzLaedt=null; fzStand=0; fzFehler="";
+  FZ=[]; FZ_E=[]; FZ_K={}; fzGeladen=false; fzLaedt=null; fzStand=0; fzFehler=""; FZ_AUSWAHL=null; fzAuswahlKonto="";
   /* Personenauswahl: die Teamliste des vorigen Kontos ließe das neue Konto doppelt bzw. das alte weg */
   planTeam=null; planTeamZeit=0; PERSONEN_AUS=[];
   /* ebenso Werkzeug und Material: die Präsentation lädt sie nie (darf sie nicht lesen) und sähe sonst die des vorigen Kontos */
@@ -19812,14 +19812,33 @@ function wzOrtSchnell(w, ziel){
   wzSpeichern(w, f).then(function(n){ toast(n.name+": jetzt "+wzOrtText(n)+"."); }, function(e){ toast("Nicht gespeichert: "+technikDeutsch(e.message||String(e))); });
 }
 function meinFahrzeug(){ var ich=meineKennung(); return FZ.filter(function(f){ return f.aktiv!==false && (f.fahrer||[]).indexOf(ich)>=0; })[0]||null; }
+/* Werkzeug-Ort „im Fahrzeug eines Kollegen“ (Inhaber 05.10.2026: „Ja, nur Kennzeichen“): zur Wahl stehen alle aktiven
+   Fahrzeuge – von fremden nur Kennzeichen, Bezeichnung und Fahrer (Datenbank-Funktion fahrzeuge_auswahl; keine Kosten, km,
+   Fristen, Schäden). Nur für die Ortswahl beim Werkzeug; der Reiter Fahrzeuge (FZ) zeigt weiter nur die eigenen. */
+var FZ_AUSWAHL=null, fzAuswahlStand=0, fzAuswahlKonto="";
+function fzAuswahlLaden(){
+  if(demo() || Store.modus!=="supabase" || !Store.sb) return Promise.resolve(false);
+  var konto=meineKennung();
+  if(FZ_AUSWAHL && fzAuswahlKonto===konto && Date.now()-fzAuswahlStand<60000) return Promise.resolve(false);
+  return Promise.resolve(Store.sb.rpc("fahrzeuge_auswahl")).then(function(r){
+    /* noch nicht eingerichtet bzw. ohne Verbindung: es bleiben die eigenen (FZ) */
+    if(meineKennung()!==konto || !r || r.error || !Array.isArray(r.data)) return false;
+    FZ_AUSWAHL=r.data; fzAuswahlStand=Date.now(); fzAuswahlKonto=konto; return true;
+  }, function(){ return false; });
+}
+function wzFahrzeuge(){
+  var l=FZ.slice();
+  if(fzAuswahlKonto===meineKennung()) (FZ_AUSWAHL||[]).forEach(function(f){ if(!l.some(function(x){ return x.id===f.id; })) l.push(f); });
+  return l;
+}
 function wzEditor(w){
   if(!wzAn()){ toast("Werkzeug geht nur mit Anmeldung."); return; }
   if(!planTeam) planTeamLaden();
-  var fzWarten=fzGeladen ? null : fzLaden();
+  var fzWarten=(fzGeladen && FZ_AUSWAHL && fzAuswahlKonto===meineKennung()) ? null : Promise.all([fzGeladen ? false : fzLaden(), fzAuswahlLaden()]);
   var a=Object.assign({standort_art:"lager", zustand:"ok"}, w||{});
-  var fzOptHtml=function(wahl){ return '<option value="">–</option>'+FZ.filter(function(f){ return f.aktiv!==false || f.id===a.fahrzeug_id; }).map(function(f){
+  var fzOptHtml=function(wahl){ var l=wzFahrzeuge(); return '<option value="">–</option>'+l.filter(function(f){ return f.aktiv!==false || f.id===a.fahrzeug_id; }).map(function(f){
         return '<option value="'+esc(f.id)+'"'+(wahl===f.id?" selected":"")+">"+esc(f.kennzeichen+((f.fahrer_namen||[]).length?" · "+f.fahrer_namen.join(", "):""))+"</option>"; }).join("")+
-        (a.fahrzeug_id && !FZ.some(function(f){ return f.id===a.fahrzeug_id; })?'<option value="'+esc(a.fahrzeug_id)+'"'+(wahl===a.fahrzeug_id?" selected":"")+">"+esc(a.fahrzeug_name||"?")+"</option>":""); };
+        (a.fahrzeug_id && !l.some(function(f){ return f.id===a.fahrzeug_id; })?'<option value="'+esc(a.fahrzeug_id)+'"'+(wahl===a.fahrzeug_id?" selected":"")+">"+esc(a.fahrzeug_name||"?")+"</option>":""); };
   var v=ansichtOeffnen(w ? w.name : "Neues Werkzeug / Gerät");
   if(w) v.schritt.textContent="jetzt: "+wzOrtText(w);
   var gruppen=[]; WZ.forEach(function(x){ if(x.gruppe && gruppen.indexOf(x.gruppe)<0) gruppen.push(x.gruppe); });
@@ -19862,10 +19881,10 @@ function wzEditor(w){
     if(c.dataset.w!==ort) F("standort_text").value = c.dataset.w===a.standort_art ? (a.standort_text||"") : "";
     ort=c.dataset.w; form.querySelectorAll("[data-ort] .chip").forEach(function(x){ x.setAttribute("aria-pressed", String(x===c)); }); zeigen(); }; });
   zeigen();
-  /* „Fahrzeug“ nur anbieten, wenn eines zur Wahl steht (Techniker sehen nur das eigene – fahrzeuge.sql);
-     sonst führte es zu „Bitte das Fahrzeug wählen“, das sich nicht erfüllen lässt */
+  /* „Fahrzeug“ nur anbieten, wenn eines zur Wahl steht (alle aktiven über fahrzeuge_auswahl – ohne die Funktion nur das
+     eigene, fahrzeuge.sql); sonst führte es zu „Bitte das Fahrzeug wählen“, das sich nicht erfüllen lässt */
   var fzChip=form.querySelector('[data-ort] .chip[data-w="fahrzeug"]');
-  var fzHinweis=el('<div class="muted" style="font-size:12.5px" hidden>Kein Fahrzeug zur Wahl (dir ist keines zugeteilt) – liegt es in einem Auto, „bei Person“ wählen.</div>');
+  var fzHinweis=el('<div class="muted" style="font-size:12.5px" hidden>Kein Fahrzeug zur Wahl – liegt es in einem Auto, „bei Person“ wählen.</div>');
   form.querySelector("[data-ort]").insertAdjacentElement("afterend", fzHinweis);
   var fzPruefen=function(){
     var leer=fzGeladen && !fzFehler && F("fahrzeug_id").options.length<=1;
@@ -19902,7 +19921,7 @@ function wzEditor(w){
       notiz:F("notiz").value.trim()||null, zurueck_am:(ort==="reparatur"||ort==="sonst") ? (F("zurueck_am").value||null) : null,
       fahrzeug_id:null, fahrzeug_name:null, person_id:null, person_name:null, projekt_id:null, standort_id:null};
     if(ort==="fahrzeug"){ var fz=F("fahrzeug_id").value; if(!fz){ fehler(F("fahrzeug_id").options.length<=1 ? "Kein Fahrzeug zur Wahl – liegt es in einem Auto, bitte „bei Person“ wählen." : "Bitte das Fahrzeug wählen."); return; }
-      f.fahrzeug_id=fz; var fo=FZ.filter(function(x){ return x.id===fz; })[0]; f.fahrzeug_name=fo ? fo.kennzeichen : (a.fahrzeug_name||null); }
+      f.fahrzeug_id=fz; var fo=wzFahrzeuge().filter(function(x){ return x.id===fz; })[0]; f.fahrzeug_name=fo ? fo.kennzeichen : (a.fahrzeug_name||null); }
     if(ort==="person"){ var pid=F("person_id").value; if(!pid){ fehler("Bitte wählen, bei wem es ist."); return; }
       f.person_id=pid; f.person_name=planPersonName(pid)||a.person_name||null; }
     if(ort==="baustelle"){ f.projekt_id=F("projekt_id").value||null; f.standort_id=F("standort_id").value||null;
@@ -23932,7 +23951,7 @@ function handbuchKarte(z){
         "<strong>Abschluss:</strong> Datum, Uhrzeit, wer noch dabei war, Unterschrift. Das Protokoll läuft immer unter deinem Namen – du bist verantwortlich.",
         "<strong>Übersicht prüfen und speichern.</strong> Oben steht „✓ gespeichert“. Nach einer Störung bietet die App fällige Wartungen am selben Markt gleich mit an.",
         "<strong>Reisekosten und Kilometergeld:</strong> Reiter <em>Stunden</em> – selbst bezahlte Belege mit Foto und Kilometer mit dem Privatauto; am Monatsende „Monat abgeben“, der Chef zahlt aus und hakt „ausbezahlt“ ab.",
-        "<strong>Werkzeug und Material:</strong> Reiter <em>Werkzeug</em> – was mitzunehmen, abzuholen oder zu bestellen ist (im Termin, in der Störung, im Projekt, am Markt eintragen; „Heute für dich“ und „Planung prüfen“ erinnern) und wo jedes Werkzeug gerade ist („Ich hab’s“, „In mein Auto“, „Ins Lager“, Reparatur, Prüfung). Lernt mit: Vorschläge je Projekttyp und je Markt, Material aus dem Angebot, neues Werkzeug kommt auf Nachfrage in die Liste, nach dem Einsatz „Wo ist das Werkzeug jetzt?“.",
+        "<strong>Werkzeug und Material:</strong> Reiter <em>Werkzeug</em> – was mitzunehmen, abzuholen oder zu bestellen ist (im Termin, in der Störung, im Projekt, am Markt eintragen; „Heute für dich“ und „Planung prüfen“ erinnern) und wo jedes Werkzeug gerade ist („Ich hab’s“, „In mein Auto“, „Ins Lager“, Reparatur, Prüfung; als Ort ist jedes Fahrzeug wählbar, von fremden nur mit Kennzeichen, Bezeichnung und Fahrer). Lernt mit: Vorschläge je Projekttyp und je Markt, Material aus dem Angebot, neues Werkzeug kommt auf Nachfrage in die Liste, nach dem Einsatz „Wo ist das Werkzeug jetzt?“.",
         "<strong>Stunden:</strong> ein-, um- und ausstempeln (Reiter <em>Stunden</em>; „📅 Heute geplant“ füllt Bereich und Markt, „⇄ Dorthin umstempeln“ mit einem Tippen) – die Stempeluhr hat Vorrang; nach dem Ausstempeln gleicht die App die Zeit mit dem Kalender ab. Ohne Stempeluhr: geplante Termine mit „erfassen“ übernehmen. "+
         "Urlaub (genehmigt), Krankenstand, Schule und Zeitausgleich im Kalender stehen von selbst in den Stunden; je Tag und Woche steht der Abstand zum Soll (nur zur Info – Überstunden zählen je Monat)."])+
       "<p><strong>Büro / Admin – Aufträge, Planung, Datenpflege</strong></p>"+liste([
@@ -24841,6 +24860,7 @@ Object.assign(RUNDGAENGE, {
       text:RG_LISTE(["Suchen und filtern: bei mir, Lager, Fahrzeuge, bei Personen, Baustelle/Markt, Reparatur, Prüfung/defekt.",
         "<strong>„Ich hab’s“</strong>, <strong>„In mein Auto“</strong>, <strong>„Ins Lager“</strong> – ein Griff, wenn man es nimmt oder zurücklegt.",
         "Antippen öffnet: Standort genau (Fahrzeug, Person, Projekt/Markt, Reparatur bei wem und zurück am), Zustand, Prüfung/Kalibrierung fällig, Verlauf.",
+        "Als Fahrzeug ist <strong>jedes</strong> Fahrzeug wählbar – auch das eines Kollegen; von fremden Fahrzeugen siehst du dabei nur Kennzeichen, Bezeichnung und Fahrer.",
         "„im Bestand“ abwählen fragt nach; Ausgeschiedenes steht unter „Ausgeschieden“ – von dort öffnen und den Haken wieder setzen holt es zurück."])+
       RG_HG(["Jeder Standortwechsel steht mit Zeit und Name im Verlauf – den schreibt die Datenbank, nicht die App.",
         "Reparatur bzw. Verliehenes überfällig („zurück am“ vorbei), Prüfung fällig, defekt, verloren und „noch zu bestellen“ stehen fürs Büro im Kalender-To-do (🧰, 🛒). „Ich hab’s“ bei verlorenem Werkzeug fragt „Wieder gefunden?“.",
@@ -26053,7 +26073,7 @@ function schattenClient(echt){
     from:function(t){ return new Q(t); },
     /* nur lesende Funktionen gehen durch (vorschauSchutz lässt genau diese zu) */
     rpc:function(name, args){
-      if(/^(team_liste|bereiche_eigene|einsatz_dauern)$/.test(name)) return echt.rpc(name, args);
+      if(/^(team_liste|bereiche_eigene|einsatz_dauern|fahrzeuge_auswahl)$/.test(name)) return echt.rpc(name, args);
       return Promise.resolve({data:null, error:{message:"function "+name+": in der Spielwiese nicht verfügbar"}});
     },
     functions:{invoke:function(){ return Promise.resolve({data:null, error:{message:"In der Spielwiese keine KI und keine Server-Funktionen."}}); }},
@@ -26079,8 +26099,8 @@ function vorschauSchutz(supa){
     /* nur POST und nur im Pfad – nicht irgendwo in der Abfrage (?x=/storage/…) */
     var pfad=""; try{ pfad=new URL(String(u||""), W.location.href).pathname; }catch(e){}
     if(m==="POST" && /\/storage\/v1\/object\/sign\//.test(pfad)) return false;
-    /* reine Lese-Funktionen (Teamliste, eigene Tätigkeitsbereiche) */
-    if(m==="POST" && /\/rest\/v1\/rpc\/(team_liste|bereiche_eigene|einsatz_dauern)$/.test(pfad)) return false;
+    /* reine Lese-Funktionen (Teamliste, eigene Tätigkeitsbereiche, Fahrzeug-Auswahl fürs Werkzeug) */
+    if(m==="POST" && /\/rest\/v1\/rpc\/(team_liste|bereiche_eigene|einsatz_dauern|fahrzeuge_auswahl)$/.test(pfad)) return false;
     return m!=="GET" && m!=="HEAD" && zuSupabase(u); };
   var f=W.fetch;
   W.fetch=function(u, o){

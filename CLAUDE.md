@@ -377,7 +377,9 @@ Kammerlander Umwelt- und Klimatechnik (UKT) – oft kurz, vom Handy, im Feld.
   Rechnung – Empfänger, IBAN, BIC, Betrag, „Rechnung <Nummer>“; nur mit gültiger IBAN (Prüfziffer, `ibanGueltig`) und Betrag ≥ 0,01 €; Umlaute umschrieben.
 - **Werkzeug und Material** (tools/werkzeug.sql, Reiter „Werkzeug“, Büro 04.10.2026: „dass man nichts vergisst“): `werkzeug`
   mit Standort (Lager, Fahrzeug, bei Person, Baustelle/Markt, Reparatur, sonst – `wzOrtText`), Zustand, Prüfung fällig, zurück am;
-  Standort-Verlauf schreibt nur der Trigger (`werkzeug_verlauf`). `bedarf` = was ein Einsatz braucht (mitnehmen / abholen bei … /
+  Standort-Verlauf schreibt nur der Trigger (`werkzeug_verlauf`). Als Ort ist jedes aktive Fahrzeug wählbar (Inhaber 05.10.2026
+  „Ja, nur Kennzeichen“): Datenbank-Funktion `fahrzeuge_auswahl()` liefert NUR Kennung, Kennzeichen, Bezeichnung, Fahrernamen
+  (`fzAuswahlLaden`, `wzFahrzeuge` – nur für die Werkzeug-Ortswahl); die Leseregel der Fahrzeuge bleibt (Techniker: nur das eigene). `bedarf` = was ein Einsatz braucht (mitnehmen / abholen bei … /
   bestellen bei …; offen → bestellt → abholbereit → erledigt), Bezug Projekt, Störung, Kalendertermin oder Markt (`bedarfZu`,
   `bedarfFuerEinsatz`; Datum/Person vom Termin bzw. Einsatz – mehrtägig bis zum letzten Tag –, sonst vom nächsten Projekt-/Markttermin:
   `bedarfWann`, `bedarfWer`, `bedarfEinsaetze`); `packlisten` (übernehmen ohne Doppel, je Bezug nacheinander).
