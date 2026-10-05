@@ -1803,7 +1803,7 @@ function autoNamenVergeben(){
 }
 function toast(msg){ var t=document.getElementById("toast");
   /* Präsentation: keine Erfolgsmeldung soll nach echtem Speichern klingen */
-  if(typeof demo==="function" && demo() && /gespeichert|angelegt|übernommen|gelöscht|abgehakt|zurückgenommen|wiederhergestellt/i.test(msg) && !/Präsentation/.test(msg))
+  if(typeof demo==="function" && demo() && (/gespeichert|angelegt|übernommen|gelöscht|abgehakt|zurückgenommen|wiederhergestellt/i.test(msg) || /^(Erledigt|Eingetragen|Wieder offen)\b|: jetzt /.test(msg)) && !/Präsentation/.test(msg))
     msg=msg.replace(/[.!]?$/,"")+(window.UKT_VORSCHAU==="Spielwiese" ? " (Spielwiese, nicht gespeichert)." : " (Präsentation, nicht gespeichert).");
   msg=technikDeutsch(msg);
   /* Fehler länger stehen lassen – die liest man, eine Bestätigung nicht (Büro 02.10.2026) */
@@ -19305,7 +19305,7 @@ function packlisteEditor(pl){
       return w ? {art:"werkzeug", text:w.name, werkzeug_id:w.id} : {art:"material", text:t.slice(0,200)}; });
     if(!ein.length){ err.textContent="Bitte mindestens einen Eintrag."; err.hidden=false; return; }
     var z={name:name, eintraege:ein, geaendert:new Date().toISOString(), geaendert_von:meinName()};
-    if(demo()){ PACKLISTEN=wzZeileSetzen(PACKLISTEN, Object.assign({id:pl?pl.id:neueKennung("pl")}, pl||{}, z)); v.zu(); wzGeaendert(); return; }
+    if(demo()){ PACKLISTEN=wzZeileSetzen(PACKLISTEN, Object.assign({id:pl?pl.id:neueKennung("pl")}, pl||{}, z)); v.zu(); toast("Packliste gespeichert ("+ein.length+" Einträge)."); wzGeaendert(); return; }
     ok.disabled=true;
     var q=pl ? Store.sb.from("packlisten").update(z).eq("id", pl.id).select("*") : Store.sb.from("packlisten").insert(z).select("*");
     mitFrist(q, 15000).then(function(r){
@@ -19392,14 +19392,19 @@ function wzEditor(w){
   zeigen();
   var vl=form.querySelector("[data-verlauf]");
   if(vl) vl.addEventListener("toggle", function(){
-    var h=vl.querySelector(".stack"); if(h.childNodes.length || demo()) return;
+    /* nach einem Ladefehler beim nächsten Aufklappen neu versuchen (Prüflauf 05.10.2026: stand sonst für immer „Noch kein Verlauf.“) */
+    var h=vl.querySelector(".stack"); if(!vl.open || (h.childNodes.length && !h._fehler) || demo()) return;
+    h._fehler=false; h.innerHTML="";
     h.appendChild(el('<div class="muted" style="font-size:12.5px">wird geladen …</div>'));
+    var nichtGeladen=function(m){ m=String(m||""); h.innerHTML=""; h._fehler=true;
+      h.appendChild(el('<div class="note warnbox" style="font-size:12.5px">Verlauf nicht geladen ('+esc(technikDeutsch(m)!==m ? "keine Verbindung" : m)+") – zum neuen Versuch zu- und wieder aufklappen.</div>")); };
     Store.sb.from("werkzeug_verlauf").select("*").eq("werkzeug_id", w.id).order("zeit", {ascending:false}).limit(50).then(function(r){
+      if(r.error){ nichtGeladen(r.error.message); return; }
       h.innerHTML="";
       (r.data||[]).forEach(function(x){ h.appendChild(el('<div style="font-size:12.5px"><span class="mono muted">'+esc(dfmt(tagLokal(x.zeit)))+" "+esc(zeitAus(x.zeit))+"</span> "+esc(x.standort||"")+
         (x.zustand && x.zustand!=="ok"?" · "+esc(x.zustand):"")+(x.von_name?' <span class="muted">· '+esc(x.von_name)+"</span>":"")+"</div>")); });
       if(!(r.data||[]).length) h.appendChild(el('<div class="muted" style="font-size:12.5px">Noch kein Verlauf.</div>'));
-    });
+    }, function(e){ nichtGeladen(e && e.message || e); });
   });
   v.inhalt.appendChild(form);
   var err=form.querySelector("[data-err]"), fehler=function(t){ err.textContent=technikDeutsch(t); err.hidden=false; };
