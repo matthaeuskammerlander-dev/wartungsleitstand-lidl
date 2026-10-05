@@ -47,7 +47,8 @@ node tests/app-tests.mjs --gruendlich     # zusätzlich jeden Knopf in jedem Rei
 - Die Tests laufen mit **erfundenen Daten** (`tests/testdaten.js`) und einer **nachgebauten Datenbank**
   (`tests/attrappe.js`, Startbestand `tests/seed.json`). Nichts geht ins Netz, nichts Echtes ins Repository.
 - Testkonten: `inhaber@`, `admin@`, `tech@`, `kunde@`, `praes@test.at`, Passwort `test123`.
-- `window.__netzWeg=true` in der Attrappe lässt Schreiben scheitern wie ohne Netz.
+- `window.__netzWeg=true` in der Attrappe lässt Schreiben in Tabellen scheitern wie ohne Netz (fetch wirft);
+  `window.__netzWeg="antwort"` wie supabase-js ohne Netz: Schreiben und Funktionen (rpc) liefern `{error}`.
 - Die GitHub-Prüfung („App prüfen“) führt `pruefen.mjs` und `tests/app-tests.mjs` bei jedem Stand aus.
 
 ## Große Formulare: Teile mit gemeinsamem Kontext

@@ -1575,7 +1575,8 @@ test("Abwesenheit und Arbeit am selben Tag: die App fragt sofort – eingesprung
     [...d.querySelectorAll("button")].find((b) => /für diesen Tag beenden/.test(b.textContent)).click(); await warte(1500);
     const krankTeile = db.planung.filter((p) => p.titel === "Krank lang").map((p) => p.datum + ".." + (p.datum_bis || p.datum)).sort();
     const eingestempelt = x("stempelZustand().art");
-    return { frage1, ausnahme: ausnahme && ausnahme.art, arbeitGespeichert, offen1, frage2, krankTeile, eingestempelt, gestern, heute, morgen };
+    /* die Antwort steht je Tag und Person: ausnahmen[Tag][user_id] */
+    return { frage1, ausnahme: ausnahme && (ausnahme[ich] || {}).art, arbeitGespeichert, offen1, frage2, krankTeile, eingestempelt, gestern, heute, morgen };
   });
   pruefe(r.frage1 && r.ausnahme === "eingesprungen" && r.arbeitGespeichert && r.offen1 === 0, "eingesprungen falsch: " + JSON.stringify(r));
   pruefe(r.frage2 && JSON.stringify(r.krankTeile) === JSON.stringify([r.gestern + ".." + r.gestern, r.morgen + ".." + r.morgen]) && r.eingestempelt !== "aus", "Tag beenden falsch: " + JSON.stringify(r));
@@ -1598,6 +1599,870 @@ test("Abwesenheit und Arbeit am selben Tag: die App fragt sofort – eingesprung
   pruefe(JSON.stringify(r2.u) === JSON.stringify([r2.morgen + ".." + r2.morgen + " genehmigt"]), "Urlaubstag nicht herausgenommen: " + JSON.stringify(r2));
   pruefe(!b.fehler.length, "Laufzeitfehler (Inhaber): " + b.fehler.join("; "));
   await b.zu();
+});
+
+/* ---- Tiefentest Stunden: Hilfen im Browser (eine Seite für mehrere Fälle – kurze Laufzeit) ---- */
+async function ttHilfen(a) {
+  await a.seite.evaluate(() => {
+    const x = window.__t.x, db = window.__db.tabellen;
+    const tt = window.__tt = {
+      warte: (ms) => new Promise((f) => setTimeout(f, ms)),
+      ich: () => x("meineKennung()"),
+      /* n-ter Werktag vor heute (1 = der letzte) */
+      werktag: (n) => { let t = x("plusTage(isoLokal(new Date()),-1)"), k = 0; for (;;) { if (x("sollMinutenTag('" + t + "')") > 0 && ++k === (n || 1)) return t; t = x("plusTage('" + t + "',-1)"); } },
+      /* jeder Fall beginnt leer: kein Dialog, keine Termine, keine Stunden */
+      leeren: () => { x("ansichtenSchliessen()"); document.querySelectorAll(".assistent").forEach((d) => d.remove()); document.body.style.overflow = "";
+        db.arbeitszeiten.length = 0; db.planung.length = 0; db.stempel.length = 0; x("ZEITEN=[]; PLANUNG=[]; 1"); window.__dialoge.length = 0; tt.toasts.length = 0; },
+      termin: async (z) => (await x("Store.sb.from('planung').insert(" + JSON.stringify(Object.assign({ art: "termin", wer: [tt.ich()], wer_namen: ["T"] }, z)) + ").select('*')")).data[0],
+      gestempelt: (z) => db.arbeitszeiten.push(Object.assign({ id: "tt" + Math.random().toString(36).slice(2, 8), user_id: tt.ich(), name: "T", pause_min: 0, art: "arbeit", quelle: "stempel" }, z)),
+      laden: async () => { await x("planungLaden()"); await x("zeitenLaden()"); },
+      dialog: () => [...document.querySelectorAll(".assistent")].pop(),
+      ok: (d) => [...d.querySelectorAll(".as-fuss button")].pop(),
+      /* die Stunden eines Tages kurz: „von-bis Bereich Markt Projekt Minuten“ */
+      teile: (tag) => db.arbeitszeiten.filter((z) => z.user_id === tt.ich() && z.datum === tag).sort((p, q) => String(p.beginn).localeCompare(String(q.beginn)))
+        .map((z) => z.beginn + "-" + z.ende + " " + z.bereich + " " + (z.standort_id || "-") + " " + (z.projekt_id || "-") + " " + z.minuten),
+      toasts: [],
+    };
+    const altToast = x("toast"); x("toast=function(m){ window.__tt.toasts.push(String(m)); return window.__ttAltToast.apply(this, arguments); }; 1");
+    window.__ttAltToast = altToast;
+  });
+}
+
+test("Tiefentest stunden: Abgleich mit dem Kalender – Lücken behalten Markt und Projekt, Termin im Termin, Vorschau wie gestempelt, Verschieben sicher, Störung einmal, Spielwiese mit klarer Meldung", async () => {
+  const a = await oeffnen(KONTEN.techniker);
+  await ttHilfen(a);
+  const fehl = [];
+  /* TT-12: Lücken behalten, was dort gestempelt war (Bereich, Markt, Projekt) – nur die Besprechung wird Büro */
+  const r12 = await a.seite.evaluate(async () => {
+    const tt = window.__tt, x = window.__t.x; tt.leeren(); const T = tt.werktag(1);
+    tt.gestempelt({ datum: T, beginn: "07:00", ende: "08:00", minuten: 60, bereich: "fahrt" });
+    tt.gestempelt({ datum: T, beginn: "08:00", ende: "16:00", minuten: 450, pause_min: 30, bereich: "baustelle", standort_id: "TS1", projekt_id: "pr12" });
+    await tt.termin({ kategorie: "besprechung", titel: "Baubesprechung", datum: T, beginn: "12:00", ende: "13:00" });
+    await tt.laden();
+    const fahrtVorher = x("lohnAuswertung(ZEITEN, '" + T.slice(0, 7) + "')").fahrt;
+    x("abgleichDialog('" + T + "', false)"); await tt.warte(200);
+    tt.ok(tt.dialog()).click(); await tt.warte(600);
+    return { teile: tt.teile(T), fahrtVorher, fahrtNachher: x("lohnAuswertung(ZEITEN, '" + T.slice(0, 7) + "')").fahrt };
+  });
+  if (JSON.stringify(r12.teile) !== JSON.stringify(["07:00-08:00 fahrt - - 60", "08:00-12:00 baustelle TS1 pr12 210", "12:00-13:00 buero - - 60", "13:00-16:00 baustelle TS1 pr12 180"]) || r12.fahrtNachher !== r12.fahrtVorher)
+    fehl.push("TT-12 Lücken verlieren Bereich/Markt/Projekt: " + JSON.stringify(r12));
+  /* TT-30: Termin ganz innerhalb eines anderen – bekommt seinen Abschnitt, bleibt nicht still offen */
+  const r30 = await a.seite.evaluate(async () => {
+    const tt = window.__tt, x = window.__t.x; tt.leeren(); const T = tt.werktag(1);
+    tt.gestempelt({ datum: T, beginn: "07:00", ende: "15:30", minuten: 480, pause_min: 30, bereich: "wartung" });
+    await tt.termin({ kategorie: "wartung", titel: "Wartung lang", datum: T, beginn: "08:00", ende: "12:00", standort_id: "TS1" });
+    await tt.termin({ kategorie: "besprechung", titel: "Telefonkonferenz", datum: T, beginn: "09:00", ende: "10:00" });
+    await tt.laden();
+    x("abgleichDialog('" + T + "', false)"); await tt.warte(200);
+    tt.ok(tt.dialog()).click(); await tt.warte(600);
+    return { teile: tt.teile(T), offen: x("abgleichOffen('" + T + "')").map((i) => i.titel) };
+  });
+  if (r30.offen.length || JSON.stringify(r30.teile) !== JSON.stringify(["07:00-08:00 fahrt - - 60", "08:00-09:00 wartung TS1 - 60", "09:00-10:00 buero - - 60", "10:00-12:00 wartung TS1 - 120", "12:00-15:30 wartung - - 180"]))
+    fehl.push("TT-30 Termin im Termin: " + JSON.stringify(r30));
+  /* TT-15: die Vorschau „So wird die gestempelte Zeit aufgeteilt“ ergibt die gestempelte Summe (Pause abgezogen) */
+  const r15 = await a.seite.evaluate(async () => {
+    const tt = window.__tt, x = window.__t.x; tt.leeren(); const T = tt.werktag(1);
+    tt.gestempelt({ datum: T, beginn: "07:00", ende: "12:00", minuten: 285, pause_min: 15, bereich: "wartung" });
+    tt.gestempelt({ datum: T, beginn: "13:00", ende: "17:00", minuten: 240, bereich: "wartung" });
+    await tt.termin({ kategorie: "stoerung", titel: "Störung", datum: T, beginn: "09:00", ende: "10:00", standort_id: "TS2" });
+    await tt.termin({ kategorie: "projekt", titel: "Projekttermin", datum: T, beginn: "14:00", ende: "15:00", standort_id: "TS3" });
+    await tt.laden();
+    x("abgleichDialog('" + T + "', false)"); await tt.warte(200);
+    const d = tt.dialog(), hm = (t) => { const m = /(\d+):(\d\d)/.exec(t); return m ? +m[1] * 60 + +m[2] : 0; };
+    const zeilen = [...d.querySelectorAll(".rowflex .mono.muted")].map((s) => s.textContent.trim());
+    tt.ok(d).click(); await tt.warte(600);
+    return { zeilen, vorschau: zeilen.reduce((s, t) => s + hm(t), 0), gespeichert: window.__db.tabellen.arbeitszeiten.filter((z) => z.datum === T).reduce((s, z) => s + z.minuten, 0) };
+  });
+  if (r15.vorschau !== 525 || r15.gespeichert !== 525) fehl.push("TT-15 Vorschau " + r15.vorschau + " / gespeichert " + r15.gespeichert + " statt 525: " + JSON.stringify(r15.zeilen));
+  /* TT-21: nur „auf … verschieben“ angehakt – der Knopf „Abgleichen“ wird frei und verschiebt */
+  const r21 = await a.seite.evaluate(async () => {
+    const tt = window.__tt, x = window.__t.x; tt.leeren(); const T = tt.werktag(1);
+    tt.gestempelt({ datum: T, beginn: "07:00", ende: "12:00", minuten: 300, bereich: "werkstatt" });
+    const w = await tt.termin({ kategorie: "werkstatt", titel: "Werkstatt", datum: T, beginn: "14:00", ende: "15:00" });
+    await tt.laden();
+    x("S.view='stunden'; S.stWoche=montagVon('" + T + "'); render()"); await tt.warte(300);
+    const knopf = [...document.querySelectorAll("button")].find((b) => /Mit Kalender abgleichen \(1\)/.test(b.textContent));
+    if (!knopf) return { knopf: false };
+    knopf.click(); await tt.warte(200);
+    const d = tt.dialog(), ok = tt.ok(d), vorher = ok.disabled;
+    const vs = d.querySelector("[data-vs]"); vs.checked = true; vs.dispatchEvent(new Event("change")); await tt.warte(50);
+    const nachher = tt.ok(tt.dialog()).disabled;
+    tt.ok(tt.dialog()).click(); await tt.warte(600);
+    return { knopf: true, vorher, nachher, T, datum: window.__db.tabellen.planung.find((p) => p.id === w.id).datum };
+  });
+  if (!r21.knopf || r21.nachher || r21.datum === r21.T) fehl.push("TT-21 nur „verschieben“: Knopf bleibt gesperrt: " + JSON.stringify(r21));
+  /* TT-28 / TT-27: ein mehrtägiger Termin wird nie zum Ein-Tages-Termin; verschoben wird nie in die Vergangenheit */
+  const r28 = await a.seite.evaluate(async () => {
+    const tt = window.__tt, x = window.__t.x; tt.leeren(); const T = tt.werktag(3), heute = x("isoLokal(new Date())");
+    tt.gestempelt({ datum: T, beginn: "07:00", ende: "12:00", minuten: 300, bereich: "werkstatt" });
+    await tt.termin({ kategorie: "wartung", titel: "Wartung früh", datum: T, beginn: "08:00", ende: "10:00", standort_id: "TS1" });
+    const w = await tt.termin({ kategorie: "werkstatt", titel: "Werkstatt spät", datum: T, beginn: "14:00", ende: "15:00" });
+    const bis = x("plusTage('" + T + "',4)");
+    const bau = await tt.termin({ kategorie: "projekt", titel: "Baustelle", datum: T, datum_bis: bis, beginn: "13:00", ende: "16:00", standort_id: "TS3" });
+    await tt.laden();
+    x("abgleichDialog('" + T + "', false)"); await tt.warte(200);
+    const d = tt.dialog();
+    const box = (titel) => [...d.querySelectorAll("[data-an]")].map((c) => c.closest(".stack")).find((s) => s.querySelector("strong").textContent === titel);
+    const vsBau = box("Baustelle").querySelector("[data-vs]"), vsW = box("Werkstatt spät").querySelector("[data-vs]");
+    if (vsBau) { vsBau.checked = true; vsBau.dispatchEvent(new Event("change")); }
+    const dd = tt.dialog(), vsW2 = [...dd.querySelectorAll("[data-vs]")].find((c) => c.closest(".stack").querySelector("strong").textContent === "Werkstatt spät");
+    vsW2.checked = true; vsW2.dispatchEvent(new Event("change"));
+    tt.ok(tt.dialog()).click(); await tt.warte(800);
+    const db = window.__db.tabellen, g = db.planung.find((p) => p.id === bau.id);
+    return { heute, bau: g.datum + ".." + (g.datum_bis || g.datum), bauVorher: T + ".." + bis, angeboten: !!vsBau, werkstatt: db.planung.find((p) => p.id === w.id).datum, text: vsW.closest("label").textContent };
+  });
+  if (r28.bau !== r28.bauVorher) fehl.push("TT-28 mehrtägiger Termin verändert: " + JSON.stringify(r28));
+  if (r28.werkstatt < r28.heute) fehl.push("TT-27 in die Vergangenheit verschoben: " + JSON.stringify(r28));
+  /* TT-06: Verschieben scheitert (Antwort mit Fehler / keine Verbindung) – sichtbare Meldung, kein „verschoben“, nichts hängt */
+  for (const variante of ["fehler", "netz"]) {
+    const r6 = await a.seite.evaluate(async (variante) => {
+      const tt = window.__tt, x = window.__t.x; tt.leeren(); const T = tt.werktag(1);
+      await tt.termin({ kategorie: "wartung", titel: "Wartung gemacht", datum: T, beginn: "08:00", ende: "10:00", standort_id: "TS1" });
+      const w = await tt.termin({ kategorie: "werkstatt", titel: "Werkstatt offen", datum: T, beginn: "14:00", ende: "15:00" });
+      tt.gestempelt({ datum: T, beginn: "07:00", ende: "12:00", minuten: 300, bereich: "werkstatt" });
+      await tt.laden();
+      const sb = x("Store.sb"), altFrom = sb.from;
+      if (variante === "fehler") /* wie supabase-js ohne Netz: update liefert {error}, statt zu werfen */
+        sb.from = function (t) { const q = altFrom.call(this, t); if (t === "planung") { const u = q.update; q.update = function () { u.apply(q, arguments); q.then = (ok, nok) => Promise.resolve({ data: null, error: { message: "TypeError: Failed to fetch" } }).then(ok, nok); return q; }; } return q; };
+      x("abgleichDialog('" + T + "', false)"); await tt.warte(200);
+      const d = tt.dialog(), vs = d.querySelector("[data-vs]"); vs.checked = true; vs.dispatchEvent(new Event("change"));
+      const ok = tt.ok(tt.dialog());
+      if (variante === "netz") window.__netzWeg = true;
+      ok.click(); await tt.warte(800);
+      window.__netzWeg = false; sb.from = altFrom;
+      return { T, toast: tt.toasts.slice(-1)[0] || "", datum: window.__db.tabellen.planung.find((p) => p.id === w.id).datum,
+        haengt: document.body.contains(d) && ok.disabled, knopf: ok.textContent, fehler: window.__fehler.filter((f) => /promise/.test(f)) };
+    }, variante);
+    if (/1 Termin verschoben/.test(r6.toast) || !/nicht verschoben/.test(r6.toast) || r6.haengt || r6.fehler.length) fehl.push("TT-06 (" + variante + ") Verschieben gescheitert: " + JSON.stringify(r6));
+  }
+  /* TT-16 (zuletzt – die Störung bleibt in den Stammdaten): über die Tour eingeplant = Störung mit Einsatztag UND Kalendertermin – einmal im Abgleich */
+  const r16 = await a.seite.evaluate(async () => {
+    const tt = window.__tt, x = window.__t.x; tt.leeren(); const T = tt.werktag(1);
+    await x("stoerungSpeichern({_id:'stv16', standortId:'TS2', auftragsnummer:'T-16', problemtyp:'Kühlung', erfasstAm:new Date().toISOString(), status:'offen', termin:'" + T + "', terminZeit:'09:00', terminTechniker:meinName(), _ohneMeldung:true}, 'Test')");
+    await tt.termin({ kategorie: "stoerung", titel: "Störung TS2", datum: T, beginn: "09:00", ende: "10:00", standort_id: "TS2", stoerung_id: "stv16" });
+    tt.gestempelt({ datum: T, beginn: "08:00", ende: "12:00", minuten: 240, bereich: "wartung" });
+    await tt.laden();
+    const geplant = x("geplantFuerMich('" + T + "')").map((i) => i.schluessel.split(":")[0] + " " + i.titel);
+    x("abgleichDialog('" + T + "', false)"); await tt.warte(200);
+    tt.ok(tt.dialog()).click(); await tt.warte(600);
+    return { offen: x("OFFENE.filter(function(o){ return o._id==='stv16'; }).length"), geplant,
+      stoerMin: window.__db.tabellen.arbeitszeiten.filter((z) => z.datum === T && z.bereich === "stoerung").reduce((s, z) => s + z.minuten, 0) };
+  });
+  if (r16.offen !== 1 || r16.geplant.length !== 1 || r16.stoerMin !== 60) fehl.push("TT-16 Störung doppelt: " + JSON.stringify(r16));
+  /* TTQ-15: in der Spielwiese (Schattendatenbank) sagen Stempeluhr und Abgleich „in der Spielwiese nicht verfügbar“ – nicht „Datenbank nicht eingerichtet“ */
+  const rq15 = await a.seite.evaluate(async () => {
+    const tt = window.__tt, x = window.__t.x; tt.leeren(); const T = tt.werktag(1);
+    tt.gestempelt({ datum: T, beginn: "07:00", ende: "12:00", minuten: 300, bereich: "werkstatt" });
+    await tt.termin({ kategorie: "wartung", titel: "Wartung", datum: T, beginn: "08:00", ende: "10:00", standort_id: "TS1" });
+    await tt.laden();
+    window.__ttEcht = x("Store.sb"); x("Store.sb=schattenClient(Store.sb); window.UKT_VORSCHAU='Spielwiese'; 1");
+    try {
+      await x("stempelDruecken('ein', {bereich:'werkstatt'})"); await tt.warte(100);
+      const stempel = tt.toasts.filter((t) => /gestempelt/i.test(t)).pop() || "";
+      x("abgleichDialog('" + T + "', false)"); await tt.warte(200);
+      const d = tt.dialog(); tt.ok(d).click(); await tt.warte(400);
+      const e = d.querySelector(".warnbox:not([hidden])");
+      return { stempel, abgleich: e ? e.textContent : "" };
+    } finally { x("Store.sb=window.__ttEcht; window.UKT_VORSCHAU=undefined; ansichtenSchliessen(); 1"); }
+  });
+  if (!/Spielwiese/.test(rq15.stempel) || /nicht eingerichtet/.test(rq15.stempel) || !/Spielwiese/.test(rq15.abgleich) || /nicht eingerichtet/.test(rq15.abgleich)) fehl.push("TTQ-15 Spielwiese: irreführende Meldung: " + JSON.stringify(rq15));
+  if (a.fehler.length) fehl.push("Laufzeitfehler: " + a.fehler.join("; "));
+  await a.zu();
+  pruefe(!fehl.length, fehl.join(" | "));
+});
+
+test("Tiefentest stunden: Zeit erfassen – Kalender-Vorschlag ohne Abwesenheit, Verknüpfung nur am Tag des Termins, nur Notiz bleibt gestempelt, Dauer geprüft, gestempelter Tag nie doppelt", async () => {
+  const a = await oeffnen(KONTEN.techniker);
+  await ttHilfen(a);
+  const fehl = [];
+  /* TT-08: Krankenstand/Urlaub kommen von selbst – als Vorschlag zum Antippen gäbe es sie doppelt bzw. beantragten Urlaub schon als Urlaub */
+  const r8 = await a.seite.evaluate(async () => {
+    const tt = window.__tt, x = window.__t.x, db = window.__db.tabellen; tt.leeren(); const T1 = tt.werktag(1), T2 = tt.werktag(2);
+    await tt.termin({ kategorie: "krank", titel: "Krankenstand", datum: T1 });
+    await tt.termin({ kategorie: "urlaub", titel: "Urlaub", datum: T2 });
+    await tt.laden();
+    const erfassen = async (tag, muster) => {
+      x("zeitEditor(null, {datum:'" + tag + "'})"); await tt.warte(150);
+      const d = tt.dialog(), chip = [...d.querySelectorAll("[data-vorschlag] .chip")].find((c) => muster.test(c.textContent));
+      if (!chip) { x("ansichtenSchliessen()"); return "kein Vorschlag"; }
+      chip.click(); tt.ok(d).click(); await tt.warte(500); x("ansichtenSchliessen()");
+      return chip.textContent;
+    };
+    const chipK = await erfassen(T1, /Krankenstand/), chipU = await erfassen(T2, /Urlaub/);
+    const am = (t) => db.arbeitszeiten.filter((z) => z.datum === t).map((z) => z.art + " " + z.minuten + " " + (z.quelle || "hand"));
+    return { chipK, chipU, krank: am(T1), urlaub: am(T2) };
+  });
+  if (r8.krank.filter((s) => /^krank/.test(s)).length > 1 || r8.urlaub.some((s) => /^urlaub/.test(s)) || r8.chipK !== "kein Vorschlag" || r8.chipU !== "kein Vorschlag")
+    fehl.push("TT-08 Abwesenheit als Vorschlag: " + JSON.stringify(r8));
+  /* TT-24: Vorschlag gewählt, dann das Datum geändert – keine Verknüpfung mit dem Termin des anderen Tages */
+  const r24 = await a.seite.evaluate(async () => {
+    const tt = window.__tt, x = window.__t.x; tt.leeren(); const T1 = tt.werktag(1), T2 = tt.werktag(2);
+    const w = await tt.termin({ kategorie: "wartung", titel: "Wartung Eins", datum: T1, beginn: "08:00", ende: "10:00", standort_id: "TS1" });
+    await tt.laden();
+    x("zeitEditor(null, {datum:'" + T1 + "'})"); await tt.warte(150);
+    const d = tt.dialog();
+    [...d.querySelectorAll("[data-vorschlag] .chip")].find((c) => /Wartung Eins/.test(c.textContent)).click();
+    const dat = d.querySelector('[data-f="datum"]'); dat.value = T2; dat.dispatchEvent(new Event("change", { bubbles: true }));
+    tt.ok(d).click(); await tt.warte(500);
+    const z = window.__db.tabellen.arbeitszeiten.find((y) => y.datum === T2);
+    return { gespeichert: !!z, planung_id: z && z.planung_id, termin: w.id };
+  });
+  if (!r24.gespeichert || r24.planung_id === r24.termin) fehl.push("TT-24 mit dem Termin des anderen Tages verknüpft: " + JSON.stringify(r24));
+  /* TT-07: gestempelt (Sekunden zählen), dann nur die Notiz geändert – Minuten und „gestempelt“ bleiben */
+  const r7 = await a.seite.evaluate(async () => {
+    const tt = window.__tt, x = window.__t.x, db = window.__db.tabellen; tt.leeren();
+    const ein = new Date(Date.now() - 20 * 60000); ein.setSeconds(50, 0);
+    const aus = new Date(ein.getTime() + 19 * 60000 + 15000);   /* 19 min 15 s später: Ende-Sekunden kleiner als Beginn-Sekunden */
+    db.stempel.push({ id: "stt07", user_id: tt.ich(), name: "T", art: "ein", zeit: ein.toISOString(), bereich: "werkstatt" });
+    window.__stempelVersatz = aus.getTime() - Date.now();
+    x("stempelStand=0"); await x("stempelNachladen(true)"); await x("zeitenLaden()");
+    await x("stempelDruecken('aus', {taetigkeit:'Werkstatt'})"); window.__stempelVersatz = 0; await tt.warte(100);
+    x("ansichtenSchliessen()");
+    const z0 = db.arbeitszeiten.find((z) => /^stempel/.test(z.quelle || ""));
+    if (!z0) return { fehlt: true };
+    const vorher = { min: z0.minuten, quelle: z0.quelle };
+    x("zeitEditor(ZEITEN.filter(function(z){ return z.id==='" + z0.id + "'; })[0])"); await tt.warte(150);
+    const d = tt.dialog(), n = d.querySelector('[data-f="notiz"]'); n.value = "Material vergessen"; n.dispatchEvent(new Event("input", { bubbles: true }));
+    tt.ok(d).click(); await tt.warte(500);
+    const z1 = db.arbeitszeiten.find((z) => z.id === z0.id);
+    return { vorher, nachher: { min: z1.minuten, quelle: z1.quelle, notiz: z1.notiz } };
+  });
+  if (r7.fehlt || r7.nachher.notiz !== "Material vergessen" || r7.nachher.min !== r7.vorher.min || r7.nachher.quelle !== r7.vorher.quelle) fehl.push("TT-07 nur Notiz geändert: " + JSON.stringify(r7));
+  /* TT-19: negative oder unsinnige Dauer („-3“, „7:75“) wird mit Meldung abgewiesen, nichts gespeichert */
+  const r19 = await a.seite.evaluate(async () => {
+    const tt = window.__tt, x = window.__t.x; tt.leeren(); const T = tt.werktag(1), erg = {};
+    for (const dauer of ["-3", "7:75"]) {
+      x("zeitEditor(null, {datum:'" + T + "', art:'arbeit', bereich:'werkstatt'})"); await tt.warte(150);
+      const d = tt.dialog(), du = d.querySelector('[data-f="dauer"]'); du.value = dauer; du.dispatchEvent(new Event("input", { bubbles: true }));
+      tt.ok(d).click(); await tt.warte(300);
+      const e = d.querySelector("[data-err]"); erg[dauer] = e && !e.hidden ? e.textContent : ""; x("ansichtenSchliessen()");
+    }
+    return { erg, gespeichert: window.__db.tabellen.arbeitszeiten.map((z) => z.minuten) };
+  });
+  if (r19.gespeichert.length || !/gültige Dauer/.test(r19.erg["-3"]) || !/gültige Dauer/.test(r19.erg["7:75"])) fehl.push("TT-19 unsinnige Dauer: " + JSON.stringify(r19));
+  /* TT-29: gestempelter Tag – „erfassen“ beim Termin ohne Uhrzeit nur mit Rückfrage; über Mitternacht gestempelt: kein „erfassen“, Überschneidung erkannt */
+  const r29 = await a.seite.evaluate(async () => {
+    const tt = window.__tt, x = window.__t.x, db = window.__db.tabellen; tt.leeren();
+    const T = tt.werktag(1), heute = x("isoLokal(new Date())"), gestern = x("plusTage(isoLokal(new Date()),-1)");
+    const zeile = async (tag, titel) => {
+      x("S.view='stunden'; S.stWoche=montagVon('" + tag + "'); render()"); await tt.warte(250);
+      return [...document.querySelectorAll("[data-tage] .rowflex")].find((e) => e.querySelector("a.sprunglink") && e.textContent.includes(titel));
+    };
+    /* (a) gestempelt 07:00–15:30, Baustelle ganztägig – „erfassen“ mit 8 h */
+    tt.gestempelt({ datum: T, beginn: "07:00", ende: "15:30", minuten: 480, pause_min: 30, bereich: "baustelle" });
+    await tt.termin({ kategorie: "projekt", titel: "Baustelle ganztägig", datum: T, standort_id: "TS3" });
+    await tt.laden();
+    const za = await zeile(T, "Baustelle ganztägig"), erf = za && za.querySelector("[data-erf]");
+    let summeA = 480;
+    if (erf) {
+      window.__antwort.confirm = false; erf.click(); await tt.warte(150);
+      const d = tt.dialog(), du = d.querySelector('[data-f="dauer"]'); du.value = "8"; du.dispatchEvent(new Event("input", { bubbles: true }));
+      tt.ok(d).click(); await tt.warte(400); window.__antwort.confirm = true; x("ansichtenSchliessen()");
+      summeA = db.arbeitszeiten.filter((z) => z.datum === T).reduce((s, z) => s + z.minuten, 0);
+    }
+    const rueckfrageA = window.__dialoge.filter((d) => d[0] === "confirm").length;
+    /* (b) gestern 22:00 bis 00:30 gestempelt, Termin 22:30–23:30; heute von Hand 00:00–00:30 */
+    tt.gestempelt({ datum: gestern, beginn: "22:00", ende: "00:30", minuten: 150, bereich: "stoerung" });
+    await tt.termin({ kategorie: "wartung", titel: "Nachtwartung", datum: gestern, beginn: "22:30", ende: "23:30", standort_id: "TS1" });
+    await tt.laden();
+    const zb = await zeile(gestern, "Nachtwartung"), kb = zb ? [...zb.querySelectorAll("button")].map((b) => b.textContent.trim()) : null;
+    window.__dialoge.length = 0;
+    x("zeitEditor(null, {datum:'" + heute + "', beginn:'00:00', ende:'00:30', art:'arbeit', bereich:'stoerung'})"); await tt.warte(150);
+    tt.ok(tt.dialog()).click(); await tt.warte(400);
+    const neuB = db.arbeitszeiten.find((z) => z.datum === heute && z.beginn === "00:00");
+    return { summeA, rueckfrageA, kb, rueckfrageB: window.__dialoge.filter((d) => d[0] === "confirm").length, markiertB: !!(neuB && x("zeitenUeberschneidungen(ZEITEN)")[neuB.id]) };
+  });
+  if (!(r29.summeA === 480 && r29.rueckfrageA)) fehl.push("TT-29 (a) gestempelter Tag, „erfassen“ ohne Rückfrage: " + JSON.stringify(r29));
+  if (!r29.kb || r29.kb.includes("erfassen") || !r29.rueckfrageB || !r29.markiertB) fehl.push("TT-29 (b) über Mitternacht gestempelt: " + JSON.stringify(r29));
+  if (a.fehler.length) fehl.push("Laufzeitfehler: " + a.fehler.join("; "));
+  await a.zu();
+  pruefe(!fehl.length, fehl.join(" | "));
+});
+
+test("Tiefentest stunden: Hinweise über 12 h / 60 h zählen nur Arbeit, auch über den Monatswechsel; laufender Monat bis gestern", async () => {
+  const a = await oeffnen(KONTEN.inhaber);
+  await ttHilfen(a);
+  const fehl = [];
+  /* TT-09: Urlaub Mo–Fr aus dem Kalender, Fr zusätzlich 6 h Arbeit, Sa und So je 11 h – weder „über 12 h“ noch „über 60 h“ */
+  const r9 = await a.seite.evaluate(async () => {
+    const tt = window.__tt, x = window.__t.x, db = window.__db.tabellen; tt.leeren();
+    const mo = x("plusTage(montagVon(isoLokal(new Date())),-7)"), tag = (i) => x("plusTage('" + mo + "'," + i + ")");
+    for (let i = 0; i < 5; i++) db.arbeitszeiten.push({ id: "t9u" + i, user_id: tt.ich(), name: "I", datum: tag(i), minuten: i === 4 ? 390 : 480, art: "urlaub", quelle: "kalender", pause_min: 0 });
+    tt.gestempelt({ datum: tag(4), beginn: "07:00", ende: "13:30", minuten: 360, pause_min: 30, quelle: "hand", bereich: "werkstatt" });
+    tt.gestempelt({ datum: tag(5), beginn: "06:00", ende: "17:30", minuten: 660, pause_min: 30, quelle: "hand", bereich: "werkstatt" });
+    tt.gestempelt({ datum: tag(6), beginn: "06:00", ende: "17:30", minuten: 660, pause_min: 30, quelle: "hand", bereich: "werkstatt" });
+    await tt.laden();
+    x("S.view='stunden'; S.stWoche='" + mo + "'; render()"); await tt.warte(300);
+    return { ueber12: [...document.querySelectorAll("[data-tage] strong")].filter((s) => /über 12 h/.test(s.textContent)).map((s) => s.textContent.slice(0, 9)),
+      woche: ((document.querySelector("[data-summen]") || {}).textContent || "").slice(0, 80) };
+  });
+  if (r9.ueber12.length || /über 60 h/.test(r9.woche)) fehl.push("TT-09 Urlaub zählt bei 12 h / 60 h mit: " + JSON.stringify(r9));
+  /* TT-35: 5 × 12,5 h von Mo 28.09. bis Fr 02.10. – über 60 h in der Woche, auch wenn sie über den Monatswechsel geht (Auswertung und Tabelle des Inhabers) */
+  const r35 = await a.seite.evaluate(async () => {
+    const tt = window.__tt, x = window.__t.x, db = window.__db.tabellen; tt.leeren();
+    const l = ["2026-09-28", "2026-09-29", "2026-09-30", "2026-10-01", "2026-10-02"].map((d, i) => ({ id: "t35" + i, user_id: "u_tech_test_at", name: "Testtechniker", datum: d, beginn: "06:00", ende: "19:00", pause_min: 30, minuten: 750, art: "arbeit", quelle: "hand", bereich: "werkstatt" }));
+    window.__l35 = l; l.forEach((z) => db.arbeitszeiten.push(Object.assign({}, z)));
+    const sep = x("lohnAuswertung(window.__l35, '2026-09')").ueber60, okt = x("lohnAuswertung(window.__l35, '2026-10')").ueber60;
+    x("S.view='stunden'; S.stMonat='2026-10'; render()"); await tt.warte(500);
+    const karte = [...document.querySelectorAll(".card h2")].find((h) => /^Alle Mitarbeiter/.test(h.textContent));
+    const zeile = karte && [...karte.closest(".card").querySelectorAll("tbody tr")].find((r) => /Testtechniker/.test(r.textContent));
+    return { sep, okt, tabelle: zeile ? /über 60 h/.test(zeile.textContent) : null };
+  });
+  if (!r35.sep.length || !r35.okt.length || !r35.tabelle) fehl.push("TT-35 Woche über 60 h über den Monatswechsel nicht gemeldet: " + JSON.stringify(r35));
+  /* TT-33: laufender Monat, jeder Arbeitstag bis gestern genau mit dem Tagessoll erfasst – kein rotes Minus (wie die Woche: „bis gestern“) */
+  const r33 = await a.seite.evaluate(async () => {
+    const tt = window.__tt, x = window.__t.x, db = window.__db.tabellen; tt.leeren(); const heute = x("isoLokal(new Date())");
+    for (let t = heute.slice(0, 7) + "-01"; t < heute; t = x("plusTage('" + t + "',1)")) {
+      const s = x("sollMinutenTag('" + t + "')"); if (s) db.arbeitszeiten.push({ id: "t33" + t, user_id: tt.ich(), name: "I", datum: t, minuten: s, art: "arbeit", quelle: "hand", bereich: "werkstatt" });
+    }
+    await tt.laden();
+    x("S.view='stunden'; S.stWoche=montagVon('" + heute + "'); render()"); await tt.warte(300);
+    const su = document.querySelector("[data-summen] span");
+    return { text: su.textContent, rot: [...su.querySelectorAll("span")].filter((s) => /crit/.test(s.getAttribute("style") || "") && !s.hasAttribute("data-wochesoll")).map((s) => s.textContent) };
+  });
+  if (r33.rot.some((t) => /^[−-]/.test(t))) fehl.push("TT-33 Monatszeile rot im Minus, obwohl bis gestern alles erfasst: " + r33.text);
+  if (a.fehler.length) fehl.push("Laufzeitfehler: " + a.fehler.join("; "));
+  await a.zu();
+  pruefe(!fehl.length, fehl.join(" | "));
+});
+
+test("Tiefentest stunden: Abwesenheit – Tag herausnehmen nur für die eine Person, Antwort je Person, nur Tage im Zeitraum", async () => {
+  const fehl = [];
+  /* Inhaber nimmt Tage heraus */
+  const a = await oeffnen(KONTEN.inhaber);
+  await ttHilfen(a);
+  /* TT-04: Urlaub vom Techniker angelegt, niemand eingetragen („gilt als seins“) – Mittwoch herausnehmen: Rest bleibt bei ihm */
+  const r4 = await a.seite.evaluate(async () => {
+    const tt = window.__tt, x = window.__t.x, db = window.__db.tabellen; tt.leeren();
+    const tech = "u_tech_test_at", mo = x("plusTage(montagVon(isoLokal(new Date())),7)"), mi = x("plusTage('" + mo + "',2)"), fr = x("plusTage('" + mo + "',4)");
+    db.planung.push({ id: "tt04", art: "termin", kategorie: "urlaub", titel: "Urlaub", datum: mo, datum_bis: fr, wer: [], wer_namen: [], status: "genehmigt", erstellt_von: tech, erstellt_name: "Testtechniker", erstellt: new Date().toISOString(), privat: false, ausnahmen: {} });
+    await x("Store.sb.from('planung').update({details:'Sommer'}).eq('id','tt04').select('*')");   /* Kalender legt die Urlaubsstunden an */
+    await tt.laden();
+    x("planEditor(PLANUNG.filter(function(p){ return p.id==='tt04'; })[0])"); await tt.warte(150);
+    const knopf = [...tt.dialog().querySelectorAll("button")].find((b) => /^Tag herausnehmen$/.test(b.textContent.trim()));
+    knopf.parentNode.querySelector('input[type="date"]').value = mi; knopf.click(); await tt.warte(500);
+    const soll = [0, 1, 3, 4].filter((i) => x("sollMinutenTag(plusTage('" + mo + "'," + i + "))")).length;   /* ohne Mittwoch, ohne Feiertage */
+    return { tech, soll, plan: db.planung.filter((p) => p.kategorie === "urlaub").map((p) => p.datum + ".." + (p.datum_bis || p.datum) + " " + ((p.wer || []).join() || p.erstellt_von)),
+      stunden: db.arbeitszeiten.filter((z) => z.art === "urlaub").map((z) => z.datum.slice(5) + " " + z.user_id).sort() };
+  });
+  if (r4.stunden.length !== r4.soll || !r4.stunden.every((s) => s.endsWith(r4.tech)) || !r4.plan.every((s) => s.endsWith(r4.tech))) fehl.push("TT-04 zweiter Teil gehört dem Inhaber: " + JSON.stringify(r4));
+  /* TT-05: zurückgegebener Tag liegt nach dem Kürzen außerhalb – kein Knopf, der Urlaub wird nicht verlängert */
+  const r5 = await a.seite.evaluate(async () => {
+    const tt = window.__tt, x = window.__t.x, db = window.__db.tabellen; tt.leeren();
+    const tech = "u_tech_test_at", mo = x("plusTage(montagVon(isoLokal(new Date())),7)"), di = x("plusTage('" + mo + "',1)"), don = x("plusTage('" + mo + "',3)"), fr = x("plusTage('" + mo + "',4)");
+    const u = (await x("Store.sb.from('planung').insert(" + JSON.stringify({ art: "termin", kategorie: "urlaub", titel: "Urlaub", datum: mo, datum_bis: fr, wer: [tech], wer_namen: ["Testtechniker"], status: "genehmigt" }) + ").select('*')")).data[0];
+    const aus = {}; aus[don] = { art: "zurueck", von: "Testtechniker", zeit: new Date().toISOString() };
+    await x("Store.sb.from('planung').update(" + JSON.stringify({ ausnahmen: aus }) + ").eq('id','" + u.id + "').select('*')");
+    await x("Store.sb.from('planung').update(" + JSON.stringify({ datum_bis: di }) + ").eq('id','" + u.id + "').select('*')");
+    await tt.laden();
+    x("planEditor(PLANUNG.filter(function(p){ return p.id==='" + u.id + "'; })[0])"); await tt.warte(150);
+    const knopf = [...tt.dialog().querySelectorAll("button")].find((b) => /zurückgegeben/.test(b.textContent));
+    if (knopf) { knopf.click(); await tt.warte(500); }
+    return { knopf: knopf ? knopf.textContent : null, plan: db.planung.map((p) => p.datum + ".." + (p.datum_bis || p.datum)), soll: [mo + ".." + di],
+      stunden: db.arbeitszeiten.filter((z) => z.art === "urlaub").map((z) => z.datum).sort(), sollStunden: [mo, di].filter((t) => x("sollMinutenTag('" + t + "')")) };
+  });
+  if (r5.knopf || JSON.stringify(r5.plan) !== JSON.stringify(r5.soll) || JSON.stringify(r5.stunden) !== JSON.stringify(r5.sollStunden)) fehl.push("TT-05 Tag außerhalb herausgenommen: " + JSON.stringify(r5));
+  /* TTQ-01 (Inhaber): Betriebsurlaub für drei, einer gibt einen Tag zurück – nur er verliert ihn */
+  const rq1 = await a.seite.evaluate(async () => {
+    const tt = window.__tt, x = window.__t.x, db = window.__db.tabellen; tt.leeren();
+    const ids = ["u_tech_test_at", "u_admin_test_at", "u_inhaber_test_at"], mo = x("plusTage(montagVon(isoLokal(new Date())),7)"), mi = x("plusTage('" + mo + "',2)"), fr = x("plusTage('" + mo + "',4)");
+    const u = (await x("Store.sb.from('planung').insert(" + JSON.stringify({ art: "termin", kategorie: "urlaub", titel: "Betriebsurlaub", datum: mo, datum_bis: fr, wer: ids, wer_namen: ["Testtechniker", "Testadmin", "Testinhaber"], status: "genehmigt" }) + ").select('*')")).data[0];
+    const aus = {}; aus[mi] = { art: "zurueck", von: "Testtechniker", zeit: new Date().toISOString() };   /* Antwort im älteren Format (nur Name) */
+    await x("Store.sb.from('planung').update(" + JSON.stringify({ ausnahmen: aus }) + ").eq('id','" + u.id + "').select('*')");
+    await tt.laden();
+    const vorher = db.arbeitszeiten.filter((z) => z.art === "urlaub").length;
+    x("planEditor(PLANUNG.filter(function(p){ return p.id==='" + u.id + "'; })[0])"); await tt.warte(150);
+    const knopf = [...tt.dialog().querySelectorAll("button")].find((b) => /zurückgegeben von Testtechniker/.test(b.textContent));
+    if (knopf) { knopf.click(); await tt.warte(600); }
+    const amMi = (uid) => db.planung.some((p) => (p.wer || []).includes(uid) && x("planTage(" + JSON.stringify(p) + ")").includes(mi));
+    const std = (uid) => db.arbeitszeiten.filter((z) => z.art === "urlaub" && z.user_id === uid).map((z) => z.datum).sort();
+    const soll = (l) => l.filter((i) => x("sollMinutenTag(plusTage('" + mo + "'," + i + "))")).length;   /* Feiertage zählen nicht */
+    return { knopf: !!knopf, vorher, ohneMi: soll([0, 1, 3, 4]), alle: soll([0, 1, 2, 3, 4]), tech: { mi: amMi(ids[0]), std: std(ids[0]).length }, admin: { mi: amMi(ids[1]), std: std(ids[1]).length }, inhaber: { mi: amMi(ids[2]), std: std(ids[2]).length } };
+  });
+  if (!rq1.knopf || rq1.tech.mi || rq1.tech.std !== rq1.ohneMi || !rq1.admin.mi || rq1.admin.std !== rq1.alle || !rq1.inhaber.mi || rq1.inhaber.std !== rq1.alle) fehl.push("TTQ-01 Betriebsurlaub: Tag für alle herausgenommen: " + JSON.stringify(rq1));
+  if (a.fehler.length) fehl.push("Laufzeitfehler (Inhaber): " + a.fehler.join("; "));
+  await a.zu();
+  /* Techniker: gemeinsamer Kurs mit einer Kollegin */
+  const b = await oeffnen(KONTEN.techniker);
+  await ttHilfen(b);
+  const kurs = async (antwort) => b.seite.evaluate(async (antwort) => {
+    const tt = window.__tt, x = window.__t.x, db = window.__db.tabellen; tt.leeren();
+    const ich = tt.ich(), kollegin = "u_admin_test_at", heute = x("isoLokal(new Date())"), gestern = x("plusTage('" + heute + "',-1)"), morgen = x("plusTage('" + heute + "',1)");
+    db.planung.push({ id: "ttk", art: "termin", kategorie: "schule", titel: "Kältekurs", datum: gestern, datum_bis: morgen, wer: [ich, kollegin], wer_namen: ["Testtechniker", "Testadmin"], status: "offen", erstellt_von: "u_inhaber_test_at", erstellt: new Date().toISOString(), privat: false, ausnahmen: {} });
+    [heute, morgen].forEach((t) => db.arbeitszeiten.push({ id: "ttk" + t, user_id: kollegin, name: "Testadmin", datum: t, minuten: 480, art: "schule", quelle: "kalender", planung_id: "ttk", pause_min: 0 }));
+    await tt.laden();
+    const offenVorher = x("abwesenheitOffen('" + heute + "','" + kollegin + "').length");
+    x("zeitEditor(null, {datum:'" + heute + "', beginn:'08:00', ende:'10:00', art:'arbeit', bereich:'werkstatt'})"); await tt.warte(150);
+    tt.ok(tt.dialog()).click(); await tt.warte(300);
+    const knopf = [...tt.dialog().querySelectorAll("button")].find((k) => new RegExp(antwort).test(k.textContent));
+    if (knopf) { knopf.click(); await tt.warte(700); }
+    const amHeute = (uid) => db.planung.some((p) => (p.wer || []).includes(uid) && x("planTage(" + JSON.stringify(p) + ")").includes(heute));
+    return { knopf: !!knopf, offenVorher, offenKollegin: x("abwesenheitOffen('" + heute + "','" + kollegin + "').length"), offenIch: x("abwesenheitOffen('" + heute + "').length"),
+      kolleginHeute: amHeute(kollegin), ichHeute: amHeute(ich), ichMorgen: db.planung.some((p) => (p.wer || []).includes(ich) && x("planTage(" + JSON.stringify(p) + ")").includes(morgen)),
+      kolleginStunden: db.arbeitszeiten.filter((z) => z.user_id === kollegin).map((z) => z.datum).sort(), heute, morgen };
+  }, antwort);
+  /* TTQ-02: „Nur kurz eingesprungen“ gilt nur für mich – bei der Kollegin bleibt der Tag ungeklärt */
+  const rq2 = await kurs("Nur kurz eingesprungen");
+  if (!rq2.knopf || rq2.offenVorher !== 1 || rq2.offenKollegin !== 1 || rq2.offenIch !== 0) fehl.push("TTQ-02 Antwort gilt für alle: " + JSON.stringify(rq2));
+  /* TTQ-01 (Techniker): „für diesen Tag beenden“ – nur ich verliere den Tag, die Kollegin behält Kurs und Stunden */
+  const rq1b = await kurs("für diesen Tag beenden");
+  if (!rq1b.knopf || rq1b.ichHeute || !rq1b.ichMorgen || !rq1b.kolleginHeute || JSON.stringify(rq1b.kolleginStunden) !== JSON.stringify([rq1b.heute, rq1b.morgen].sort()))
+    fehl.push("TTQ-01 Kurs für zwei: Tag für beide beendet: " + JSON.stringify(rq1b));
+  if (b.fehler.length) fehl.push("Laufzeitfehler (Techniker): " + b.fehler.join("; "));
+  await b.zu();
+  pruefe(!fehl.length, fehl.join(" | "));
+});
+
+test("Tiefentest stunden: Präsentation – Abgleich lässt Summe und Pause gleich, Tag herausnehmen und Verschieben schicken nichts an die Datenbank", async () => {
+  const a = await oeffnen(KONTEN.praesentation);
+  await ttHilfen(a);
+  const r = await a.seite.evaluate(async () => {
+    const tt = window.__tt, x = window.__t.x, ich = tt.ich(), sb = x("Store.sb"), altFrom = sb.from;
+    /* jede Schreibanfrage mitschreiben */
+    window.__schreib = [];
+    sb.from = function (t) { const q = altFrom.call(this, t); ["insert", "update", "upsert", "delete"].forEach((m) => { const o = q[m]; q[m] = function () { window.__schreib.push(t + "." + m); return o.apply(q, arguments); }; }); return q; };
+    const T = tt.werktag(1), dlg = () => tt.dialog();
+    /* TT-01: Abgleich in der Präsentation rechnet wie die Datenbank – Summe 510, Pause 30 */
+    x("ZEITEN").push({ id: "tp01", user_id: ich, name: "P", datum: T, beginn: "07:00", ende: "16:00", pause_min: 30, minuten: 510, art: "arbeit", quelle: "stempel", bereich: "wartung" });
+    x("PLANUNG").push({ id: "tp01p", art: "termin", kategorie: "wartung", titel: "Wartung", datum: T, beginn: "08:00", ende: "10:00", wer: [ich], wer_namen: ["P"], standort_id: "TS1", status: "offen", erstellt_von: ich });
+    x("abgleichDialog('" + T + "', false)"); await tt.warte(200);
+    tt.ok(dlg()).click(); await tt.warte(400);
+    const l = x("ZEITEN").filter((z) => z.datum === T);
+    const t01 = { summe: l.reduce((s, z) => s + z.minuten, 0), pause: l.reduce((s, z) => s + (z.pause_min || 0), 0), teile: l.length };
+    /* TT-02 (a): Krankenstand Mo–Fr, Arbeit am Mittwoch → „für diesen Tag beenden“ */
+    const mo = x("plusTage(montagVon(isoLokal(new Date())),7)"), mi = x("plusTage('" + mo + "',2)");
+    x("PLANUNG").push({ id: "tp02k", art: "termin", kategorie: "krank", titel: "Krankenstand", datum: mo, datum_bis: x("plusTage('" + mo + "',4)"), wer: [ich], wer_namen: ["P"], status: "offen", erstellt_von: ich, ausnahmen: {} });
+    x("zeitEditor(null, {datum:'" + mi + "', beginn:'08:00', ende:'10:00', art:'arbeit', bereich:'werkstatt'})"); await tt.warte(150);
+    tt.ok(dlg()).click(); await tt.warte(300);
+    const beenden = [...dlg().querySelectorAll("button")].find((k) => /für diesen Tag beenden/.test(k.textContent));
+    if (beenden) { beenden.click(); await tt.warte(400); }
+    const schreibA = window.__schreib.slice(); x("ansichtenSchliessen()"); document.querySelectorAll(".assistent").forEach((d) => d.remove());
+    /* TT-02 (b): Abgleich mit einem nicht gemachten Termin → verschieben (nur im Speicher) */
+    window.__schreib.length = 0;
+    const T2 = tt.werktag(2);
+    x("ZEITEN").push({ id: "tp02z", user_id: ich, name: "P", datum: T2, beginn: "07:00", ende: "12:00", pause_min: 0, minuten: 300, art: "arbeit", quelle: "stempel", bereich: "wartung" });
+    x("PLANUNG").push({ id: "tp02a", art: "termin", kategorie: "wartung", titel: "Wartung", datum: T2, beginn: "08:00", ende: "10:00", wer: [ich], wer_namen: ["P"], standort_id: "TS1", status: "offen", erstellt_von: ich },
+      { id: "tp02b", art: "termin", kategorie: "werkstatt", titel: "Werkstatt", datum: T2, beginn: "14:00", ende: "15:00", wer: [ich], wer_namen: ["P"], status: "offen", erstellt_von: ich });
+    x("abgleichDialog('" + T2 + "', false)"); await tt.warte(200);
+    const vs = dlg().querySelector("[data-vs]"); vs.checked = true; vs.dispatchEvent(new Event("change"));
+    tt.ok(dlg()).click(); await tt.warte(500);
+    sb.from = altFrom;
+    return { t01, beenden: !!beenden, schreibA, schreibB: window.__schreib.slice(), T2, verschoben: x("PLANUNG").find((p) => p.id === "tp02b").datum, toast: tt.toasts.slice(-1)[0] || "" };
+  });
+  const fehl = [];
+  if (r.t01.summe !== 510 || r.t01.pause !== 30 || r.t01.teile !== 3) fehl.push("TT-01 Präsentation: Summe/Pause nach dem Abgleich " + JSON.stringify(r.t01));
+  if (!r.beenden || r.schreibA.length) fehl.push("TT-02 (a) „Tag beenden“ schickt " + JSON.stringify(r.schreibA) + " an die Datenbank");
+  if (r.schreibB.length || r.verschoben === r.T2) fehl.push("TT-02 (b) Verschieben: " + JSON.stringify(r.schreibB) + " an die Datenbank / im Speicher nicht verschoben: " + JSON.stringify(r));
+  if (a.fehler.length) fehl.push("Laufzeitfehler: " + a.fehler.join("; "));
+  await a.zu();
+  pruefe(!fehl.length, fehl.join(" | "));
+});
+
+test("Tiefentest stunden: Datenbank-Skripte mehrfach ausführbar, Nachbildung wie die SQL", async () => {
+  const fehl = [];
+  /* SQL-1: stunden-kalender.sql („Mehrfach ausführbar“) nach stempel-abgleich.sql nochmals ausgeführt – der Abgleich bleibt erlaubt und „geändert“ sichtbar */
+  const sk = readFileSync(join(WURZEL, "tools", "stunden-kalender.sql"), "utf8"), sa = readFileSync(join(WURZEL, "tools", "stempel-abgleich.sql"), "utf8");
+  const quellen = (s) => ((/arbeitszeiten_quelle_check\s+check \(quelle in \(([^)]*)\)/.exec(s) || [])[1] || "").split(",").map((q) => q.trim());
+  const merken = (s) => ((/old\.quelle in \(([^)]*)\) and zeit_geaendert/.exec(s) || [])[1] || "").split(",").map((q) => q.trim());
+  const fehlt = quellen(sa).filter((q) => !quellen(sk).includes(q)), fehltT = merken(sa).filter((q) => !merken(sk).includes(q));
+  if (!/Mehrfach ausführbar/.test(sk) || fehlt.length || fehltT.length) fehl.push("SQL-1 stunden-kalender.sql setzt den Abgleich zurück – fehlt: " + JSON.stringify({ quellen: fehlt, trigger: fehltT }));
+  /* ATT-1: die Nachbildung (tests/attrappe.js) verhält sich wie die SQL-Funktionen bzw. supabase-js */
+  const a = await oeffnen(KONTEN.techniker);
+  await ttHilfen(a);
+  const r = await a.seite.evaluate(async () => {
+    const tt = window.__tt, x = window.__t.x, db = window.__db.tabellen, sb = x("Store.sb"), ich = tt.ich(), e = {};
+    /* (1) bestätigter Monat: der Kalender legt dort keine Stunden an (planung_stunden_sync) */
+    tt.leeren(); const vm = x("plusMonate(isoLokal(new Date()),-1).slice(0,7)");
+    db.arbeitszeiten.push({ id: "att1b", user_id: ich, name: "T", datum: vm + "-01", minuten: 60, art: "arbeit", quelle: "hand", bestaetigt: new Date().toISOString() });
+    let tag = vm + "-15"; while (!x("sollMinutenTag('" + tag + "')")) tag = x("plusTage('" + tag + "',1)");
+    await tt.termin({ kategorie: "krank", titel: "Krank", datum: tag });
+    e.bestaetigt = db.arbeitszeiten.filter((z) => z.datum === tag && z.quelle === "kalender").length;
+    /* (2) stempel_abgleich: Pause automatisch bleibt, „geändert“ bleibt sichtbar, Pause muss in einen Abschnitt passen */
+    tt.leeren(); const T = tt.werktag(1);
+    tt.gestempelt({ datum: T, beginn: "07:00", ende: "15:30", minuten: 480, pause_min: 30, pause_auto: 30, quelle: "stempel_geaendert", bereich: "wartung" });
+    const rr = await sb.rpc("stempel_abgleich", { p_datum: T, p_teile: [{ beginn: "07:00", ende: "08:00", bereich: "fahrt" }, { beginn: "08:00", ende: "15:30", bereich: "wartung" }] });
+    const ab = (rr.data || {}).eintraege || [];
+    e.pauseAuto = ab.reduce((s, z) => s + (z.pause_auto || 0), 0); e.quellen = ab.map((z) => z.quelle).join();
+    tt.leeren(); tt.gestempelt({ datum: T, beginn: "07:00", ende: "08:00", minuten: 20, pause_min: 40, bereich: "wartung" });
+    const rp = await sb.rpc("stempel_abgleich", { p_datum: T, p_teile: [{ beginn: "07:00", ende: "07:30", bereich: "fahrt" }, { beginn: "07:30", ende: "08:00", bereich: "wartung" }] });
+    e.pausePasst = rp.error ? rp.error.message : "angenommen";
+    /* (3) planung: Ende vor dem Beginn lehnt die Datenbank ab */
+    const pf = await sb.from("planung").insert({ art: "termin", kategorie: "krank", titel: "x", datum: T, datum_bis: x("plusTage('" + T + "',-2)"), wer: [ich] }).select("*");
+    e.bisVorBeginn = pf.error ? "abgelehnt" : "angenommen";
+    /* (4) delete().select('id') liefert nur die Kennung */
+    tt.leeren(); tt.gestempelt({ id: "att1d", datum: T, beginn: "07:00", ende: "08:00", minuten: 60, quelle: "hand" });
+    const del = await sb.from("arbeitszeiten").delete().eq("id", "att1d").select("id");
+    e.spalten = Object.keys((del.data || [])[0] || {}).join();
+    /* (5) ohne Netz wie supabase-js: {error} statt zu werfen – auch bei Funktionen */
+    window.__netzWeg = "antwort";
+    try { const nu = await sb.from("planung").update({ titel: "y" }).eq("id", "gibtsnicht").select("*"); e.netzTabelle = nu.error ? "Fehler" : "ok"; } catch (y) { e.netzTabelle = "geworfen"; }
+    try { const nr = await sb.rpc("stempeln", { p_art: "ein" }); e.netzRpc = nr.error ? "Fehler" : "ok"; } catch (y) { e.netzRpc = "geworfen"; }
+    window.__netzWeg = false;
+    /* (6) stempeln: Pause je TAG (frühere gestempelte Zeit des Tages zählt mit); Ende in der Zukunft geht nicht */
+    tt.leeren(); const ein = new Date(Date.now() - 3 * 3600000), tagE = x("isoLokal(new Date(" + ein.getTime() + "))");
+    tt.gestempelt({ datum: tagE, beginn: "00:00", ende: "00:01", minuten: 240, bereich: "werkstatt" });   /* 4 h früher am Tag */
+    db.stempel.push({ id: "att1s", user_id: ich, name: "T", art: "ein", zeit: ein.toISOString(), bereich: "werkstatt" });
+    const aus = await sb.rpc("stempeln", { p_art: "aus", p_name: "T" });
+    e.pauseTag = ((aus.data || {}).eintraege || []).reduce((s, z) => s + (z.pause_auto || 0), 0);
+    db.stempel.length = 0; db.stempel.push({ id: "att1z", user_id: ich, name: "T", art: "ein", zeit: new Date(Date.now() - 3600000).toISOString(), bereich: "werkstatt" });
+    const spaeter = new Date(Date.now() + 30 * 60000), hm = ("0" + spaeter.getHours()).slice(-2) + ":" + ("0" + spaeter.getMinutes()).slice(-2);
+    const zk = await sb.rpc("stempeln", { p_art: "aus", p_name: "T", p_ende_hand: hm });
+    e.zukunft = zk.error ? zk.error.message : "angenommen";
+    return e;
+  });
+  if (r.bestaetigt !== 0) fehl.push("ATT-1 Kalender-Stunden im bestätigten Monat angelegt: " + JSON.stringify(r));
+  if (r.pauseAuto !== 30 || r.quellen !== "stempel_geaendert,stempel_geaendert" || !/Pause passt/.test(r.pausePasst)) fehl.push("ATT-1 stempel_abgleich anders als die SQL: " + JSON.stringify(r));
+  if (r.bisVorBeginn !== "abgelehnt") fehl.push("ATT-1 planung: Ende vor Beginn angenommen: " + JSON.stringify(r));
+  if (r.spalten !== "id") fehl.push("ATT-1 delete().select('id') liefert " + r.spalten);
+  if (r.netzTabelle !== "Fehler" || r.netzRpc !== "Fehler") fehl.push("ATT-1 ohne Netz nicht wie supabase-js: " + JSON.stringify(r));
+  if (r.pauseTag !== 30 || !/Zukunft/.test(r.zukunft)) fehl.push("ATT-1 stempeln anders als stempeluhr-4.sql: " + JSON.stringify(r));
+  if (a.fehler.length) fehl.push("Laufzeitfehler: " + a.fehler.join("; "));
+  await a.zu();
+  pruefe(!fehl.length, fehl.join(" | "));
+});
+
+/* ---- Tiefentest Kalender: eine Seite je Rolle für mehrere Fälle (kurze Laufzeit), Routendienst abgelehnt ---- */
+const ROUTENDIENSTE = ["routing.openstreetmap.de", "router.project-osrm.org", "nominatim.openstreetmap.org"];
+async function tkOeffnen(konto, opt) {
+  const a = await oeffnen(konto, opt);
+  await a.seite.route((u) => ROUTENDIENSTE.includes(u.hostname), (rt) => rt.abort());
+  await ttHilfen(a);
+  await a.seite.evaluate(() => {
+    const x = window.__t.x, tt = window.__tt;
+    /* Termine am Tag in zwei Tagen (Planung prüfen) */
+    tt.tag2 = () => x("plusTage(isoLokal(new Date()),2)");
+    tt.termine = async (l) => { for (const z of l) await tt.termin(z); x("planungStand=0"); await tt.laden(); };
+    tt.pruefen = async (tag) => { x("planungPruefenAnsicht('ich', '" + tag + "', '" + tag + "')"); await tt.warte(150); return tt.dialog(); };
+    tt.knopf = (d, re, zeile) => [...d.querySelectorAll("button")].find((b) => re.test(b.textContent) && (!zeile || zeile.test(b.parentNode.textContent)));
+    tt.zeit = (titel) => { const p = window.__db.tabellen.planung.find((y) => y.titel === titel); return p ? p.beginn + "–" + p.ende : "fehlt"; };
+  });
+  return a;
+}
+
+test("Tiefentest kalender: Planung prüfen und Abwesenheit – Reihenfolge einmal und nie nach Mitternacht, ohne Netz gemeldet, Tag herausnehmen ganz oder ehrlich, alte Einplanung, „gilt als deins“, Startpunkt, halber Tag", async () => {
+  const fehl = [];
+  const a = await tkOeffnen(KONTEN.techniker);
+  /* TT-KAL-02: derselbe Markt zweimal am Tag – jeder Termin einmal neu gesetzt, der früheste Beginn bleibt */
+  const r02 = await a.seite.evaluate(async () => {
+    const tt = window.__tt, x = window.__t.x; tt.leeren(); const tag = tt.tag2();
+    x("STARTPUNKTE[meineKennung()]={betrieb:true}");
+    const z = (titel, sid, b, e) => ({ kategorie: "wartung", titel, datum: tag, beginn: b, ende: e, standort_id: sid });
+    await tt.termine([z("A früh", "TS3", "08:00", "09:00"), z("B", "TS4", "10:00", "11:00"), z("A spät", "TS3", "12:00", "13:00")]);
+    const k = tt.knopf(await tt.pruefen(tag), /Reihenfolge übernehmen/);
+    if (!k) return { fehler: "kein Vorschlag" };
+    const upd = [], sb = x("Store.sb"), alt = sb.from;
+    sb.from = function (t) { const q = alt.call(this, t); const o = q.update; q.update = function (dd) { upd.push(t); return o.apply(q, arguments); }; return q; };
+    k.click(); await tt.warte(500); sb.from = alt;
+    return { frueh: tt.zeit("A früh"), spaet: tt.zeit("A spät"), b: tt.zeit("B"), updates: upd.length };
+  });
+  if (r02.fehler || !r02.frueh.startsWith("08:00") || !r02.spaet.startsWith("09:00") || r02.updates !== 3) fehl.push("TT-KAL-02 Tag beginnt später / Termine doppelt geschrieben: " + JSON.stringify(r02));
+  /* TT-KAL-03: nie eine Uhrzeit nach 24:00 oder ein Ende vor dem Beginn – (a) Reihenfolge übernehmen, (b) Tour → Kalender ab 19:00, (c) „📅 Handy“ bei altem Eintrag „26:00“ */
+  const r03 = await a.seite.evaluate(async () => {
+    const tt = window.__tt, x = window.__t.x, db = window.__db.tabellen; tt.leeren(); const tag = tt.tag2();
+    x("STARTPUNKTE={}");
+    const z = (titel, sid, b, e) => ({ kategorie: "besprechung", titel, datum: tag, beginn: b, ende: e, standort_id: sid });
+    await tt.termine([z("Wien", "TS1", "14:00", "15:00"), z("West", "TS4", "15:00", "16:00"), z("Linz", "TS5", "16:00", "17:00"), z("Innsbruck", "TS3", "17:00", "18:00")]);
+    const k = tt.knopf(await tt.pruefen(tag), /Reihenfolge übernehmen/);
+    if (k) { k.click(); await tt.warte(500); }
+    const zeiten = ["Wien", "West", "Linz", "Innsbruck"].map((t) => [t].concat(tt.zeit(t).split("–")));
+    const meldungA = tt.toasts.slice(-1)[0] || "";
+    tt.leeren();
+    window.__T = { tage: [{ nr: 1, stopps: [
+      { standort: x("byId.TS1"), positionen: [x("posById.TP1")], fahrtH: 0.5, arbeitH: 3 },
+      { standort: x("byId.TS3"), positionen: [x("posById.TP4")], fahrtH: 0.5, arbeitH: 3 }] }], anzahlStopps: 2, kmGesamt: 40, stundenProTag: 8 };
+    x("tourSchicken(window.__T)"); await tt.warte(300);
+    const d = tt.dialog(), st = d.querySelector("[data-a=start]"); st.value = "19:00"; st.dispatchEvent(new Event("input", { bubbles: true }));
+    tt.ok(d).click(); await tt.warte(500);
+    db.planung.forEach((p) => zeiten.push([p.titel, p.beginn, p.ende]));
+    const meldungB = document.body.contains(d) ? d.querySelector("[data-a=fehler]").textContent : "Dialog zu";
+    tt.leeren();
+    x("PLANUNG").push({ id: "alt26", art: "termin", kategorie: "wartung", titel: "Alt", datum: tag, beginn: "23:00", ende: "26:00", wer: [tt.ich()], wer_namen: ["T"], standort_id: "TS1", status: "offen" });
+    let ics = "ok";
+    try { x("planIcs(PLANUNG[0])"); } catch (e) { ics = String(e.message || e); }
+    return { reihenfolge: !!k, zeiten, meldungA, meldungB, ics };
+  });
+  const spaet = r03.zeiten.filter(([, b, e]) => b > "23:59" || e > "23:59" || b > e).map((z) => z.join(" "));
+  if (!r03.reihenfolge || spaet.length || !/Mitternacht/.test(r03.meldungA) || !/Mitternacht/.test(r03.meldungB) || r03.ics !== "ok")
+    fehl.push("TT-KAL-03 Uhrzeit nach 24:00 bzw. Ende vor Beginn: " + JSON.stringify({ spaet, meldungA: r03.meldungA, meldungB: r03.meldungB, ics: r03.ics, reihenfolge: r03.reihenfolge }));
+  /* TT-KAL-04: ohne Netz – „Reihenfolge übernehmen“ und „mit einplanen“ melden es sichtbar, kein unbehandelter Fehler */
+  const r04 = await a.seite.evaluate(async () => {
+    const tt = window.__tt, x = window.__t.x; tt.leeren(); const tag = tt.tag2(), erg = {};
+    x("STARTPUNKTE={}");
+    const z = (titel, sid, b, e, kat) => ({ kategorie: kat || "besprechung", titel, datum: tag, beginn: b, ende: e, standort_id: sid });
+    await tt.termine([z("Innsbruck", "TS3", "08:00", "09:00"), z("Wien", "TS1", "10:00", "11:00", "wartung"), z("West", "TS4", "12:00", "13:00")]);
+    /* netz „antwort“: die Datenbank lehnt ab ({error}) – dann keine Erfolgsmeldung */
+    for (const [name, re, zeile, netz] of [["Reihenfolge übernehmen", /Reihenfolge übernehmen/], ["mit einplanen", /mit einplanen/, /Testfiliale 901/], ["abgelehnt", /Reihenfolge übernehmen/, null, "antwort"]]) {
+      x("ansichtenSchliessen()"); tt.toasts.length = 0;
+      const k = tt.knopf(await tt.pruefen(tag), re, zeile);
+      if (!k) { erg[name] = "Knopf fehlt"; continue; }
+      const f0 = window.__fehler.length;
+      window.__netzWeg = netz || true; k.click(); await tt.warte(400); window.__netzWeg = false;
+      const unbeh = window.__fehler.slice(f0).filter((y) => y.startsWith("promise"));
+      if (!(netz ? /^Nicht/ : /Verbindung/).test(tt.toasts.join(" ")) || unbeh.length) erg[name] = { toasts: tt.toasts.slice(), unbehandelt: unbeh };
+    }
+    return erg;
+  });
+  if (Object.keys(r04).length) fehl.push("TT-KAL-04 ohne Netz keine Meldung bzw. unbehandelter Fehler: " + JSON.stringify(r04));
+  /* TT-KAL-05: Einzelne Tage herausnehmen (Mitte) – reißt die Verbindung beim zweiten Schritt ab: ganz oder gar nicht, sonst ehrlich „nur zum Teil“ */
+  const r05 = await a.seite.evaluate(async () => {
+    const tt = window.__tt, x = window.__t.x, db = window.__db.tabellen, h = (n) => x("plusTage(isoLokal(new Date())," + n + ")"), erg = {};
+    const teile = (l) => l.filter((p) => p.titel === "Krank TV").map((p) => p.datum + ".." + (p.datum_bis || p.datum)).sort().join(" ");
+    for (const modus of ["einmal", "weg"]) {
+      tt.leeren();
+      await tt.termine([{ kategorie: "krank", titel: "Krank TV", datum: h(14), datum_bis: h(18) }]);
+      x("planEditor(PLANUNG.filter(function(e){ return e.titel==='Krank TV'; })[0])"); await tt.warte(200);
+      const karte = [...tt.dialog().querySelectorAll(".card")].find((c) => /Einzelne Tage herausnehmen/.test(c.textContent));
+      if (!karte) return { fehler: "Karte „Einzelne Tage herausnehmen“ fehlt" };
+      karte.querySelector("input[type=date]").value = h(16);
+      /* das Kürzen klappt, beim Anlegen des zweiten Teils reißt die Verbindung ab – „einmal“: gleich danach ist sie wieder da */
+      const sb = x("Store.sb"), alt = sb.from;
+      sb.from = function (t) { if (modus === "einmal" && window.__netzWeg) window.__netzWeg = false;
+        const q = alt.call(this, t); if (t === "planung") { const ins = q.insert; q.insert = function () { window.__netzWeg = true; return ins.apply(q, arguments); }; } return q; };
+      const knopf = [...karte.querySelectorAll("button")].find((b) => /Tag herausnehmen/.test(b.textContent));
+      tt.toasts.length = 0; knopf.click(); await tt.warte(400);
+      sb.from = alt; window.__netzWeg = false;
+      erg[modus] = { db: teile(db.planung), lokal: teile(x("PLANUNG")), toast: tt.toasts.join(" ") };
+      /* nochmals tippen, die Verbindung ist wieder da: fertig */
+      if (modus === "weg" && !knopf.disabled) { knopf.click(); await tt.warte(400); erg.nochmals = teile(db.planung); }
+    }
+    erg.vorher = h(14) + ".." + h(18); erg.halb = h(14) + ".." + h(15); erg.fertig = h(14) + ".." + h(15) + " " + h(17) + ".." + h(18);
+    return erg;
+  });
+  if (r05.fehler || r05.einmal.db !== r05.vorher || !/^Nicht geändert/.test(r05.einmal.toast) || r05.weg.db !== r05.halb || r05.weg.lokal !== r05.halb || !/nur zum Teil/.test(r05.weg.toast) || r05.nochmals !== r05.fertig)
+    fehl.push("TT-KAL-05 Tag herausnehmen halb gespeichert bzw. Meldung falsch: " + JSON.stringify(r05));
+  /* TT-KAL-07: eine längst vergangene Einplanung (vor einem Jahr) verdeckt die fällige Wartung am selben Markt nicht */
+  const r07 = await a.seite.evaluate(async () => {
+    const tt = window.__tt, x = window.__t.x; tt.leeren(); const tag = tt.tag2(), alt = x("plusTage(isoLokal(new Date()),-375)");
+    const offen = () => x("planungPruefen('ich','" + tag + "','" + tag + "')[0].amMarkt.map(function(a){ return a.p ? a.p.id : a.art; })");
+    await tt.termine([{ kategorie: "wartung", titel: "Wartung TS1", datum: tag, beginn: "08:00", ende: "10:00", standort_id: "TS1" }]);
+    const vorher = offen();
+    await tt.termine([{ kategorie: "wartung", titel: "Alte Einplanung", datum: alt, standort_id: "TS1", position_ids: ["TP1"] }]);
+    return { vorher, nachher: offen(), eingeplant: !!x("planFuerPosition('TP1')"), status: x("posById.TP1.status") };
+  });
+  if (!r07.vorher.includes("TP1") || r07.eingeplant || !r07.nachher.includes("TP1")) fehl.push("TT-KAL-07 fällige Wartung trotz alter Einplanung übersehen: " + JSON.stringify(r07));
+  /* TT-KAL-08: Krankenstand ohne eingetragene Person („gilt als deins“) zählt auch für Tour, Auslastung und Doppelbuchung */
+  const r08 = await a.seite.evaluate(async () => {
+    const tt = window.__tt, x = window.__t.x; tt.leeren(); const t7 = x("werktagAb(plusTage(isoLokal(new Date()),7))");
+    await tt.termine([{ kategorie: "krank", titel: "Krank ohne wer", datum: t7, datum_bis: x("plusTage('" + t7 + "',1)"), wer: [], wer_namen: [] }]);
+    return { t7, abwesenheitAm: x("abwesenheitAm('" + t7 + "').length"), tourAbwesend: x("tourAbwesend(meineKennung(), '" + t7 + "')"),
+      tourTag: x("tourTagFrei(meineKennung(), '" + t7 + "')"), doppelt: x("verplantPruefen([meineKennung()], [meinName()], '" + t7 + "', '" + t7 + "', 600, 660).length") };
+  });
+  if (r08.abwesenheitAm !== 1 || !r08.tourAbwesend || r08.tourTag === r08.t7 || !r08.doppelt) fehl.push("TT-KAL-08 Krankenstand ohne „Wer“ zählt nicht für Tour/Doppelbuchung: " + JSON.stringify(r08));
+  /* TT-KAL-15: Techniker speichert seinen Startpunkt (Nachbildung wie tools/startpunkte.sql); nicht gespeichert = gilt auch nicht */
+  const r15 = await a.seite.evaluate(async () => {
+    const tt = window.__tt, x = window.__t.x, db = window.__db.tabellen; tt.leeren(); const ich = tt.ich(), tag = tt.tag2();
+    x("STARTPUNKTE={}");
+    const waehlen = async () => { x("startpunktWaehlen('ich', '" + tag + "')"); await tt.warte(150); const d = tt.dialog(); tt.knopf(d, /Betrieb/).click(); await tt.warte(300); return d; };
+    window.__netzWeg = true; const d1 = await waehlen(); window.__netzWeg = false;
+    const ohneNetz = { gilt: JSON.stringify(x("STARTPUNKTE[meineKennung()]") || null), toast: tt.toasts.slice(-1)[0] || "" };
+    d1.remove(); x("ansichtenSchliessen()");
+    const d2 = await waehlen();
+    return { ohneNetz, toast: tt.toasts.slice(-1)[0] || "", gespeichert: db.einstellungen.some((e) => e.schluessel === "startpunkt:" + ich), offen: document.body.contains(d2) };
+  });
+  if (!r15.gespeichert || r15.offen || r15.ohneNetz.gilt !== "null") fehl.push("TT-KAL-15 Startpunkt nicht gespeichert bzw. gilt trotz Fehler: " + JSON.stringify(r15));
+  /* TT-10: halber Tag Zeitausgleich mit Uhrzeit – die Frage nennt die eingetragenen Stunden, nicht „das Tagessoll“ (ob überhaupt gefragt wird, entscheidet das Büro) */
+  const rT10 = await a.seite.evaluate(async () => {
+    const tt = window.__tt, x = window.__t.x, db = window.__db.tabellen; tt.leeren(); const T = tt.werktag(1);
+    await tt.termine([{ kategorie: "zeitausgleich", titel: "Zeitausgleich", datum: T, beginn: "12:00", ende: "15:30" }]);
+    const za = db.arbeitszeiten.filter((z) => z.datum === T && z.art === "zeitausgleich").map((z) => z.minuten).join();
+    x("abwesenheitPruefen('" + T + "', function(){})"); await tt.warte(150);
+    const d = tt.dialog(), frage = d ? d.innerText.replace(/\s+/g, " ") : "";
+    return { za, frage: frage.slice(0, 260) };
+  });
+  if (rT10.za !== "210" || /Tagessoll/.test(rT10.frage) || !/3:30 h/.test(rT10.frage)) fehl.push("TT-10 Frage nennt nicht die eingetragenen Stunden: " + JSON.stringify(rT10));
+  if (a.fehler.length) fehl.push("Laufzeitfehler: " + a.fehler.join("; "));
+  await a.zu();
+  pruefe(!fehl.length, fehl.join(" | "));
+});
+
+test("Tiefentest kalender: Tour – Teilerfolg ehrlich gemeldet, Störung nie doppelt, Handanpassung nur mit Rückfrage, Route wartet höchstens die Frist", async () => {
+  const fehl = [];
+  const a = await tkOeffnen(KONTEN.inhaber);
+  /* TT-KAL-06: Tour → „In meinen Kalender“: Anlegen klappt, danach (Termin der Aufgabe verschieben) reißt die Verbindung ab */
+  const r06 = await a.seite.evaluate(async () => {
+    const tt = window.__tt, x = window.__t.x, db = window.__db.tabellen; tt.leeren();
+    await x("stoerungSpeichern({_id:'stk1', standortId:'TS2', auftragsnummer:'T-K1', erfasstAm:new Date().toISOString(), status:'offen'}, 'Test')");
+    const auf = await tt.termin({ art: "aufgabe", kategorie: "sonstiges", titel: "Aufgabe TS1", standort_id: "TS1" }); await tt.laden();
+    window.__T = { tage: [{ nr: 1, stopps: [
+      { standort: x("byId.TS1"), positionen: [{ id: "plan:" + auf.id, anlagentyp: "Aufgabe" }], fahrtH: 0.5, arbeitH: 1 },
+      { standort: x("byId.TS2"), positionen: [{ id: "stoer:stk1", anlagentyp: "Störung" }], fahrtH: 0.5, arbeitH: 1 }] }], anzahlStopps: 2, kmGesamt: 40, stundenProTag: 8 };
+    const schicken = async (netzWegBeimVerschieben) => {
+      x("tourSchicken(window.__T)"); await tt.warte(300);
+      const d = tt.dialog(); tt.knopf(d, /^Ich/).click(); await tt.warte(50);
+      const sb = x("Store.sb"), alt = sb.from;
+      if (netzWegBeimVerschieben) sb.from = function (t) { const q = alt.call(this, t); if (t === "planung") { const up = q.update; q.update = function () { window.__netzWeg = true; return up.apply(q, arguments); }; } return q; };
+      const knopf = tt.ok(d); tt.toasts.length = 0; knopf.click(); await tt.warte(500);
+      sb.from = alt; window.__netzWeg = false;
+      const meldung = (document.body.contains(d) ? d.querySelector("[data-a=fehler]").textContent + " " : "") + tt.toasts.join(" ");
+      /* nochmals tippen, falls der Knopf wieder frei ist */
+      if (document.body.contains(d) && !knopf.disabled) { knopf.click(); await tt.warte(500); }
+      x("ansichtenSchliessen()");
+      return { meldung, stoerung: db.planung.filter((p) => p.stoerung_id === "stk1").length };
+    };
+    const erst = await schicken(true), nochmal = await schicken(false);
+    return { erst, nochmal, aufgabe: tt.zeit("Aufgabe TS1"), stoerZeit: db.planung.filter((p) => p.stoerung_id === "stk1").map((p) => p.datum + " " + p.beginn) };
+  });
+  if (r06.erst.stoerung !== 1 || !/1 Termin.*nicht/.test(r06.erst.meldung) || /nichts gespeichert/.test(r06.erst.meldung) || r06.nochmal.stoerung !== 1)
+    fehl.push("TT-KAL-06 Teilerfolg nicht ehrlich gemeldet bzw. Störung doppelt im Kalender: " + JSON.stringify(r06));
+  /* TT-KAL-09: Tour von Hand angepasst (✕) – ein Auswahl-Chip verwirft das nur nach Rückfrage; ein Chip, der nichts ändert, verwirft nichts */
+  const r09 = await a.seite.evaluate(async () => {
+    const tt = window.__tt, x = window.__t.x; tt.leeren();
+    x("S.view='karte'; S.tour.startId='__betrieb'; S.tour.ergebnis=null; S.tour.manuell=null; render()"); await tt.warte(200);
+    document.querySelector("#t_go").click();
+    for (let i = 0; i < 40 && !x("S.tour.ergebnis"); i++) await tt.warte(100);
+    const weg = document.querySelector("[data-tourweg]"); if (!weg) return { fehler: "kein ✕ in der Route" };
+    weg.click();
+    for (let i = 0; i < 40 && !(x("S.tour.manuell") && !document.querySelector("[data-tourweg='" + weg.dataset.tourweg + "']")); i++) await tt.warte(100);
+    const manuell = JSON.stringify(x("S.tour.manuell")), fragen = () => window.__dialoge.filter((y) => y[0] === "confirm").length, erg = { manuell };
+    /* (a) „ganz Österreich“ ist schon gewählt – nichts ändert sich */
+    let f0 = fragen(); document.querySelector("#t_land .chip[data-l=__alle]").click(); await tt.warte(100);
+    erg.gleich = { gefragt: fragen() - f0, manuell: JSON.stringify(x("S.tour.manuell")) };
+    /* (b) anderer Chip, Rückfrage abgelehnt – die Anpassung bleibt; (c) bestätigt – sie entfällt */
+    for (const [fall, antwort] of [["nein", false], ["ja", true]]) {
+      window.__antwort.confirm = antwort; f0 = fragen();
+      document.querySelector("#t_folge").click(); await tt.warte(100);
+      window.__antwort.confirm = true;
+      erg[fall] = { gefragt: fragen() - f0, manuell: JSON.stringify(x("S.tour.manuell")), folge: x("S.tour.naechsterMonat") };
+    }
+    x("S.tour.naechsterMonat=false; S.tour.ergebnis=null; S.tour.manuell=null; S.tour.dazu=null");
+    return erg;
+  });
+  if (r09.fehler || r09.manuell === "null" || r09.gleich.gefragt || r09.gleich.manuell !== r09.manuell || r09.nein.gefragt !== 1 || r09.nein.manuell !== r09.manuell || r09.nein.folge || r09.ja.manuell !== "null" || !r09.ja.folge)
+    fehl.push("TT-KAL-09 Handanpassung ohne Rückfrage verworfen: " + JSON.stringify(r09));
+  /* TT-KAL-01: „Route vorschlagen“, der Straßendienst antwortet nicht – der Knopf wartet höchstens die Frist (im Test 3 s statt 15 s),
+     nicht je Dienst nacheinander; die Linie kommt im Hintergrund; der Knopf sagt, was gerade passiert */
+  const r01 = {};
+  for (const fall of ["beide Dienste hängen", "Matrix vom Ersatzdienst, Linie hängt"]) {
+    const haengen = (rt) => {
+      const u = new URL(rt.request().url());
+      if (fall !== "beide Dienste hängen" && u.hostname === "router.project-osrm.org" && u.pathname.startsWith("/table/")) {
+        const n = decodeURIComponent(u.pathname).split("/").pop().split(";").length;
+        const m = (w) => Array.from({ length: n }, (_, i) => Array.from({ length: n }, (_, j) => (i === j ? 0 : w)));
+        return rt.fulfill({ status: 200, headers: { "Access-Control-Allow-Origin": "*", "Content-Type": "application/json" }, body: JSON.stringify({ code: "Ok", durations: m(3600), distances: m(80000) }) });
+      }
+      /* sonst: Verbindung angenommen, nie eine Antwort */
+    };
+    const passt = (u) => ["routing.openstreetmap.de", "router.project-osrm.org"].includes(u.hostname);
+    await a.seite.route(passt, haengen);
+    r01[fall] = await a.seite.evaluate(async () => {
+      const tt = window.__tt, x = window.__t.x; tt.leeren();
+      x("if(typeof ROUTER_FRIST!=='undefined'){ ROUTER_FRIST=3000; routerLangsam={}; } routerBasis=null; S.view='karte'; S.tour.startId='__betrieb'; S.tour.ergebnis=null; S.tour.manuell=null; S.tour.dazu=null; render()"); await tt.warte(200);
+      document.querySelector("#t_go").click();
+      const t0 = Date.now(), texte = new Set(); let frei = null;
+      while (Date.now() - t0 < 8000) {
+        await tt.warte(100);
+        const b = document.querySelector("#t_go");
+        if (b) texte.add(b.textContent.trim());
+        if (b && !b.disabled) { frei = Date.now() - t0; break; }
+      }
+      return { frei, texte: [...texte], echteStrasse: !!(x("S.tour.ergebnis") || {}).echteStrasse };
+    });
+    await a.seite.unroute(passt, haengen);
+  }
+  const b01 = r01["beide Dienste hängen"], m01 = r01["Matrix vom Ersatzdienst, Linie hängt"];
+  if (b01.frei == null || b01.frei > 4000 || !b01.texte.some((t) => /antwortet nicht/.test(t)) || m01.frei == null || m01.frei > 2500 || !m01.echteStrasse)
+    fehl.push("TT-KAL-01 Route vorschlagen hängt: " + JSON.stringify(r01));
+  if (a.fehler.length) fehl.push("Laufzeitfehler: " + a.fehler.join("; "));
+  await a.zu();
+  pruefe(!fehl.length, fehl.join(" | "));
+});
+
+test("Tiefentest kalender: Präsentation – Reihenfolge übernehmen, mit einplanen und Tag beenden schicken nichts an die Datenbank", async () => {
+  const a = await tkOeffnen(KONTEN.praesentation);
+  const r = await a.seite.evaluate(async () => {
+    const tt = window.__tt, x = window.__t.x; tt.leeren();
+    const ich = tt.ich(), tag = tt.tag2(), h = (n) => x("plusTage(isoLokal(new Date())," + n + ")");
+    const sb = x("Store.sb"), alt = sb.from, schreib = [];
+    sb.from = function (t) { const q = alt.call(this, t); ["insert", "update", "delete", "upsert"].forEach((m) => { const o = q[m]; q[m] = function () { schreib.push(t + "." + m); return o.apply(q, arguments); }; }); return q; };
+    /* nur im Speicher, wie sie der Termin-Editor in der Präsentation anlegt */
+    const e = (id, kategorie, titel, sid, b, en) => ({ id, art: "termin", kategorie, titel, datum: tag, beginn: b, ende: en, standort_id: sid, wer: [ich], wer_namen: ["P"], status: "offen", erstellt_von: ich, position_ids: [] });
+    x("PLANUNG").push(e("pl_d1", "besprechung", "Innsbruck", "TS3", "08:00", "09:00"), e("pl_d2", "wartung", "Wien", "TS1", "10:00", "11:00"), e("pl_d3", "besprechung", "West", "TS4", "12:00", "13:00"),
+      { id: "pl_d4", art: "termin", kategorie: "krank", titel: "Krank", datum: h(14), datum_bis: h(18), wer: [ich], wer_namen: ["P"], status: "offen", erstellt_von: ich, ausnahmen: {} });
+    const erg = {};
+    for (const [name, re, zeile] of [["Reihenfolge übernehmen", /Reihenfolge übernehmen/], ["mit einplanen", /mit einplanen/, /Testfiliale 901/]]) {
+      x("ansichtenSchliessen()");
+      const k = tt.knopf(await tt.pruefen(tag), re, zeile), s0 = schreib.length;
+      if (k) { k.click(); await tt.warte(300); }
+      erg[name] = k ? schreib.slice(s0) : "Knopf fehlt";
+    }
+    erg.imSpeicher = x("PLANUNG").filter((p) => p.id === "pl_d2").map((p) => p.beginn + " " + (p.position_ids || []).join())[0];
+    x("ansichtenSchliessen()");
+    x("abwesenheitPruefen('" + h(16) + "', function(){})"); await tt.warte(200);
+    const k2 = tt.knopf(tt.dialog(), /für diesen Tag beenden/), s1 = schreib.length;
+    if (k2) { k2.click(); await tt.warte(300); }
+    erg["Tag beenden"] = k2 ? schreib.slice(s1) : "Knopf fehlt";
+    sb.from = alt;
+    return erg;
+  });
+  const fehl = [];
+  const raus = Object.entries(r).filter(([k, v]) => k !== "imSpeicher" && (typeof v === "string" || v.length)).map(([k, v]) => k + ": " + v);
+  if (raus.length) fehl.push("TT-KAL-13 Präsentation schickt Schreibanfragen: " + raus.join(" | "));
+  if (!/TP1/.test(r.imSpeicher || "")) fehl.push("TT-KAL-13 Präsentation: im Speicher nicht mit eingeplant: " + JSON.stringify(r));
+  if (a.fehler.length) fehl.push("Laufzeitfehler: " + a.fehler.join("; "));
+  await a.zu();
+  pruefe(!fehl.length, fehl.join(" | "));
+});
+
+test("Tiefentest kalender: Woche zeigt den Startpunkt wie der Rundgang; Rundgänge am Handy quer; Handbuch vollständig", async () => {
+  const fehl = [];
+  /* TT-KAL-10: Woche (Zeitraster) bei gewählter Person: „🚗 Start …“ bzw. „Startpunkt unbekannt“ – am PC 7 Tage, am Handy 3 und 7 Tage */
+  for (const handy of [false, true]) {
+    const a = await tkOeffnen(KONTEN.techniker, { handy });
+    const r = await a.seite.evaluate(async (handy) => {
+      const tt = window.__tt, x = window.__t.x; tt.leeren(); const heute = x("isoLokal(new Date())"), o = {};
+      await tt.termine([{ kategorie: "wartung", titel: "Einsatz TS3", datum: heute, beginn: "09:00", ende: "10:00", standort_id: "TS3" }]);
+      for (const [modus, wa] of handy ? [["woche", "3"], ["woche", "7"], ["tag", ""]] : [["woche", "7"], ["tag", ""]]) {
+        x("S.view='kalender'; S.kalWer='ich'; S.kalModus='" + modus + "'; S.kTag=isoLokal(new Date()); S.kalWoche=montagVon(isoLokal(new Date())); S.kalAb=isoLokal(new Date()); S.kalWocheArt='" + (wa || "3") + "'; render()");
+        await tt.warte(150);
+        o[modus + (wa ? " " + wa + " Tage" : "")] = /🚗 Start|Startpunkt unbekannt/.test(document.getElementById("kal_karte").innerText);
+      }
+      return o;
+    }, handy);
+    Object.entries(r).forEach(([k, v]) => { if (!v) fehl.push("TT-KAL-10 Startpunkt-Zeile fehlt: " + (handy ? "Handy " : "PC ") + k); });
+    /* TT-KAL-12: Rundgang „Termin anlegen“ nennt alle Terminarten; Handbuch nennt Zeitausgleich und „Abwesenheit und Arbeit am selben Tag“ */
+    if (!handy) {
+      const d = await a.seite.evaluate(() => {
+        const x = window.__t.x;
+        const rg = x("RUNDGAENGE.kalender.schritte.filter(function(s){ return s.titel==='Termin anlegen'; })[0].text");
+        const text = x("handbuchKarte(handbuchZahlen())").textContent, ab11 = (text.split("11 · Kalender")[1] || "").split("12 · ")[0];
+        return { fehltImRundgang: x("PLAN_KAT.map(function(k){ return k[1]; })").filter((k) => !rg.includes(k.split(" ")[0])), zeitausgleich: ab11.includes("Zeitausgleich"),
+          abwesenheitUndArbeit: /eingesprungen/.test(ab11) && /Urlaubstag zurückgeben/.test(ab11) && /herausnehmen/.test(ab11), laenge: text.length };
+      });
+      if (d.laenge < 1000 || d.fehltImRundgang.length || !d.zeitausgleich || !d.abwesenheitUndArbeit) fehl.push("TT-KAL-12 Handbuch/Rundgang unvollständig: " + JSON.stringify(d));
+    }
+    if (a.fehler.length) fehl.push("Laufzeitfehler: " + a.fehler.join("; "));
+    await a.zu();
+  }
+  /* TT-KAL-11: Rundgang am Handy im Querformat (844×390) – die gezeigte Stelle (obere 40 px) ist nie von der Erklärung verdeckt */
+  {
+    const a = await oeffnen(KONTEN.techniker, { handy: true });
+    await a.seite.setViewportSize({ width: 844, height: 390 });
+    await a.seite.waitForTimeout(300);
+    const r = await a.seite.evaluate(async () => {
+      const x = window.__t.x, warte = (ms) => new Promise((f) => setTimeout(f, ms)), fehler = [];
+      x("rundgangStarten('techniker')"); await warte(300);
+      let n = 0;
+      for (let i = 0; i < 40; i++) {
+        await warte(900);
+        const R = x("RUNDGANG"); if (!R) break; n++;
+        const titel = R.schritte[R.i].titel, z = R.el, k = document.querySelector("#rundgang .rg-karte").getBoundingClientRect();
+        const w = document.querySelector("#rundgang [data-rg=weiter]").getBoundingClientRect();
+        if (w.bottom > innerHeight + 1 || w.top < 0) fehler.push(titel + ": Knöpfe außerhalb");
+        if (z && document.body.contains(z)) {
+          const t = z.getBoundingClientRect(), seg = Math.min(t.height, 40);
+          if (t.width > 2 && t.top >= -1 && t.top + seg <= innerHeight + 1 && !(t.top + seg <= k.top + 1 || t.top >= k.bottom - 1))
+            fehler.push(titel + " (Ziel " + Math.round(t.top) + "–" + Math.round(t.top + seg) + ", Karte " + Math.round(k.top) + "–" + Math.round(k.bottom) + ")");
+        }
+        document.querySelector("#rundgang [data-rg=weiter]").click();
+      }
+      x("rundgangEnde()");
+      return { n, fehler };
+    });
+    if (r.n < 5 || r.fehler.length) fehl.push("TT-KAL-11 Rundgang quer: " + r.fehler.length + " von " + r.n + " Schritten verdeckt: " + r.fehler.join("; "));
+    if (a.fehler.length) fehl.push("Laufzeitfehler: " + a.fehler.join("; "));
+    await a.zu();
+  }
+  pruefe(!fehl.length, fehl.join(" | "));
 });
 
 /* ================================================================ Ablauf ================================================================ */

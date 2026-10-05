@@ -73,7 +73,10 @@ Nachbarn mit anschließender 2-opt-Verbesserung.
 Was der Dienst nicht kennt: Verkehrslage und Baustellen. Ist er nicht
 erreichbar — etwa innerhalb von Claude, wo externe Abfragen gesperrt sind —
 fällt die Planung auf eine Schätzung zurück (Luftlinie mal 1,3 bei 70 km/h) und
-sagt das im Ergebnis deutlich dazu.
+sagt das im Ergebnis deutlich dazu. Gewartet wird höchstens 15 s insgesamt
+(`ROUTER_FRIST`; antwortet der erste Dienst nach 5 s nicht, wird der zweite
+dazu gefragt), der Knopf sagt dabei, was passiert. Der Straßenverlauf für die
+Karte kommt im Hintergrund nach – bis dahin ist die Linie gestrichelt.
 
 Mehrtägige Touren fahren am Folgetag vom letzten Stopp weiter, rechnen also mit
 Übernachtung unterwegs.
