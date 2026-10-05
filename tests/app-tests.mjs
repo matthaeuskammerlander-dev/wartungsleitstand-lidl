@@ -4697,6 +4697,47 @@ test("Antworten stunden: Arbeit planen (📅) schlägt freitags 07:00–14:00 vo
   await a.zu();
 });
 
+test("Antworten stunden: halber Tag mit Uhrzeit – gefragt wird nur, wenn die Arbeit bzw. das Einstempeln in die Abwesenheit fällt", async () => {
+  const a = await oeffnen(KONTEN.techniker);
+  await ttHilfen(a);
+  const r = await a.seite.evaluate(async () => {
+    const tt = window.__tt, x = window.__t.x, db = window.__db.tabellen, e = {};
+    const frage = () => [...document.querySelectorAll(".assistent")].some((d) => /eingetragen$/.test(d.querySelector(".as-titel").textContent));
+    /* Arbeit erfassen: fragt die App? (sonst gespeichert) */
+    const erfassen = async (tag, z) => {
+      x("zeitEditor(null, " + JSON.stringify(Object.assign({ datum: tag, art: "arbeit", bereich: "werkstatt" }, z)) + ")"); await tt.warte(150);
+      tt.ok(tt.dialog()).click(); await tt.warte(300);
+      const f = frage(); x("ansichtenSchliessen()"); return f ? "fragt" : db.arbeitszeiten.some((y) => y.datum === tag && y.art === "arbeit") ? "gespeichert" : "?";
+    };
+    const T = tt.werktag(1), T2 = tt.werktag(2);
+    const fall = async (abw, z, tag) => { tt.leeren(); await tt.termin(Object.assign({ kategorie: "zeitausgleich", titel: "Zeitausgleich", datum: tag || T }, abw)); await tt.laden(); return erfassen(tag || T, z); };
+    const halb = { beginn: "12:00", ende: "15:30" };
+    e.vormittag = await fall(halb, { beginn: "07:00", ende: "11:00" });
+    e.konfliktVormittag = x("abwesenheitKonflikt('" + T + "', ZEITEN).length");
+    e.mittag = await fall(halb, { beginn: "13:00", ende: "14:00" });
+    e.nurDauer = await fall(halb, { minuten: 120 });
+    e.ganztaegig = await fall({}, { beginn: "07:00", ende: "11:00" });
+    e.mehrtaegig = await fall({ datum_bis: x("plusTage('" + T2 + "',1)"), beginn: "12:00", ende: "15:30" }, { beginn: "07:00", ende: "11:00" }, T2);
+    /* Einstempeln jetzt: Abwesenheit heute mit Uhrzeit um „jetzt“ herum – bzw. später */
+    const jm = x("new Date().getHours()*60+new Date().getMinutes()"), hm = (m) => x("kalHm(" + m + ")");
+    const stempeln = async (b, en) => {
+      tt.leeren(); await tt.termin({ kategorie: "zeitausgleich", titel: "Zeitausgleich", datum: x("isoLokal(new Date())"), beginn: hm(b), ende: hm(en) }); await tt.laden();
+      x("stempelGeladen=true; STEMPEL=[]; S.view='stunden'; render()"); await tt.warte(400);
+      const karte = document.getElementById("stempelkarte"), chip = karte.querySelector(".chips .chip[data-b]"); if (chip) chip.click();
+      karte.querySelector("[data-ein]").click(); await tt.warte(500);
+      const f = frage(); x("ansichtenSchliessen()"); return f ? "fragt" : db.stempel.length ? "eingestempelt" : "?";
+    };
+    e.stempelnDrin = await stempeln(Math.max(0, jm - 30), Math.min(1439, jm + 30));
+    e.stempelnDraussen = jm + 90 <= 1439 ? await stempeln(jm + 60, jm + 90) : await stempeln(jm - 90, jm - 60);
+    return e;
+  });
+  pruefe(r.vormittag === "gespeichert" && r.konfliktVormittag === 0, "Arbeit vor dem halben Tag: gefragt bzw. ⚠ – " + JSON.stringify(r));
+  pruefe(r.mittag === "fragt" && r.nurDauer === "fragt" && r.ganztaegig === "fragt" && r.mehrtaegig === "fragt", "Arbeit im halben Tag, ohne Uhrzeit, ganztägig oder mehrtägig: nicht gefragt – " + JSON.stringify(r));
+  pruefe(r.stempelnDrin === "fragt" && r.stempelnDraussen === "eingestempelt", "Einstempeln: " + JSON.stringify(r));
+  pruefe(!a.fehler.length, "Laufzeitfehler: " + a.fehler.join("; "));
+  await a.zu();
+});
+
 /* ================================================================ Ablauf ================================================================ */
 const filterText = process.argv.slice(2).find((x) => !x.startsWith("--"));
 const filter = filterText ? new RegExp(filterText, "i") : null;

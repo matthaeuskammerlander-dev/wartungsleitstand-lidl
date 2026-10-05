@@ -24115,7 +24115,8 @@ function handbuchKarte(z){
         "<strong>Abwesenheit und Arbeit am selben Tag:</strong> Urlaub (genehmigt), Krankenstand, Schule und Zeitausgleich stehen von selbst in den Stunden. "+
           "Wer an so einem Tag einstempelt oder Arbeit erfasst, wird gefragt: „Nur kurz eingesprungen“ (beides bleibt), „… für diesen Tag beenden“ "+
           "bzw. beim Urlaub „Urlaubstag zurückgeben“ (der Inhaber nimmt den Tag heraus). Im Eintrag selbst nimmt „Einzelne Tage herausnehmen“ einen Tag heraus – "+
-          "bei mehreren Personen nur für die gewählte (der Inhaber wählt, sonst nur für dich).",
+          "bei mehreren Personen nur für die gewählte (der Inhaber wählt, sonst nur für dich). Ein halber Tag mit Uhrzeit (z. B. Zeitausgleich 12:00–15:30) "+
+          "fragt nur, wenn die Arbeit bzw. das Einstempeln in diese Zeit fällt; ganztägig, mehrtägig oder Arbeit ohne Uhrzeit fragt immer.",
         "<strong>Wartungen einplanen:</strong> nicht als loser Termin, sondern die Wartungstermine der Anlagen ankreuzen. In „Fällig“ steht dann „📅 eingeplant“; "+
           "ist seither gewartet worden, gilt die Planung als erledigt.",
         "<strong>Aufgaben (ToDo)</strong> mit Zuständigen, Fälligkeit und Bezug (Projekt mit Schritt, Markt, Störung am selben Markt). Fällige Aufgaben zählen am Reiter.",
@@ -24735,7 +24736,7 @@ Object.assign(RUNDGAENGE, {
       text:RG_LISTE(["Woche mit Einträgen, Feiertagen und „⚠ über 12 h“; ‹ › blättern, „Monatsliste (PDF)“.",
         "<strong>+ Zeit erfassen</strong>: Art (Arbeit, Urlaub, Krankenstand, Feiertag, Zeitausgleich, Schule …), Bereich, von/bis/Pause oder Dauer, Was, Markt, Projekt – Vorschläge „laut Kalender“ und „laut deinen Protokollen“ (Urlaub, Krankenstand … nur als Hinweis – sie stehen von selbst in den Stunden).",
         "Geplante Termine: <strong>„erfassen“</strong>; 📅 plant die Arbeit im Voraus. Urlaub, Krankenstand, Schule, Zeitausgleich: „automatisch“ bzw. „nach Genehmigung“.",
-        "<strong>Urlaub, Krankenstand, Schule oder Zeitausgleich und trotzdem Arbeit?</strong> Beim Einstempeln bzw. Erfassen fragt die App gleich: „Nur kurz eingesprungen“ (beides zählt), „Urlaubstag zurückgeben“ (der Chef nimmt ihn heraus) oder „für diesen Tag beenden“ – die Antwort gilt nur für dich; stehen mehrere im Eintrag (Betriebsurlaub, Kurs), bleiben die anderen eingetragen. Ungeklärt: ⚠ beim Tag.",
+        "<strong>Urlaub, Krankenstand, Schule oder Zeitausgleich und trotzdem Arbeit?</strong> Beim Einstempeln bzw. Erfassen fragt die App gleich: „Nur kurz eingesprungen“ (beides zählt), „Urlaubstag zurückgeben“ (der Chef nimmt ihn heraus) oder „für diesen Tag beenden“ – die Antwort gilt nur für dich; stehen mehrere im Eintrag (Betriebsurlaub, Kurs), bleiben die anderen eingetragen. Ungeklärt: ⚠ beim Tag. Ein halber Tag mit Uhrzeit (z. B. Zeitausgleich 12:00–15:30) fragt nur, wenn die Arbeit bzw. das Einstempeln in diese Zeit fällt.",
         "Gestempelt und geplant, aber nicht zugeordnet: beim Tag <strong>„⇆ Mit Kalender abgleichen“</strong>; beim Termin steht dann „⏱ abgleichen“ statt „erfassen“ – so wird nichts doppelt erfasst.",
         "<strong>Abstand zum Soll</strong>: je Tag „+0:30“, „−1:00“ oder heute „noch 2:00“; unten die Woche („bis gestern …, noch … bis zum Wochensoll“) und ebenso der laufende Monat („noch … bis zum Monatssoll“). Nur zur Info – Überstunden zählen als Monatsbilanz."])+
       RG_HG(["Zeichen: ⏱ gestempelt, ⏱✎ geändert/nachgetragen, 🔒 bestätigt, ⚠ Überschneidung.",
@@ -31475,9 +31476,20 @@ function planPersonHerausloesen(e, tag, uid){
   });
   return planHerausnehmenFertig(e, tag, q, name||"diese Person");
 }
-/* vor dem Einstempeln / Erfassen von Arbeit: ist an diesem Tag Abwesenheit eingetragen? Dann fragen, sonst gleich weiter */
-function abwesenheitPruefen(tag, weiter){
-  var offen=abwesenheitOffen(tag);
+/* halber Tag mit Uhrzeit (Inhaber 05.10.2026): eine Abwesenheit an EINEM Tag mit von–bis (z. B. Zeitausgleich 12:00–15:30) trifft nur
+   Arbeit, die zeitlich hineinfällt – bzw. das Einstempeln in dieser Zeit (beginn = ende = jetzt). Ganztägig, mehrtägig (zählt je Tag
+   das volle Soll) oder Arbeit ohne Uhrzeit (nur Dauer): wie bisher immer. */
+function abwesenheitZeitTrifft(e, beginn, ende){
+  if((e.datum_bis && e.datum_bis>e.datum) || !e.beginn || !e.ende) return true;
+  var ab=zeitMin(e.beginn), ae=zeitMin(e.ende), b=zeitMin(beginn), en=zeitMin(ende);
+  if(ab==null || ae==null || ae<=ab || b==null) return true;
+  if(en==null || en===b) en=b+1; else if(en<b) en+=1440;   /* ein Zeitpunkt bzw. über Mitternacht */
+  return b<ae && ab<en;
+}
+/* vor dem Einstempeln / Erfassen von Arbeit: ist an diesem Tag Abwesenheit eingetragen? Dann fragen, sonst gleich weiter.
+   trifft(e): nur diese Abwesenheiten (etwa nur, wenn die Arbeit in den halben Tag fällt) */
+function abwesenheitPruefen(tag, weiter, trifft){
+  var offen=abwesenheitOffen(tag).filter(function(e){ return !trifft || trifft(e); });
   if(!offen.length || nurLesen()){ weiter(); return; }
   var e=offen[0], k=planKat(e.kategorie), urlaub=e.kategorie==="urlaub";
   var mitAnderen=(e.wer||[]).length>1 ? " – nur für dich, die anderen bleiben eingetragen" : "";
@@ -31515,8 +31527,9 @@ function abwesenheitPruefen(tag, weiter){
 }
 /* ⚠ beim Tag (Meine Arbeitszeit): Abwesenheit und Arbeit, nicht geklärt */
 function abwesenheitKonflikt(tag, liste, uid){
-  if(!(liste||[]).some(function(z){ return z.datum===tag && z.art==="arbeit"; })) return [];
-  return abwesenheitOffen(tag, uid);
+  var arbeit=(liste||[]).filter(function(z){ return z.datum===tag && z.art==="arbeit"; });
+  if(!arbeit.length) return [];
+  return abwesenheitOffen(tag, uid).filter(function(e){ return arbeit.some(function(z){ return abwesenheitZeitTrifft(e, z.beginn, z.ende); }); });
 }
 
 /* Stunden: was ich an einem Tag geplant habe (Termine mit mir) */
@@ -31653,7 +31666,7 @@ function viewStunden(){
       var konflikt=abwesenheitKonflikt(tag, ZEITEN);
       if(konflikt.length && !nurLesen()){
         var kw=el('<div class="note warnbox" style="font-size:12.5px">⚠ '+esc(planKat(konflikt[0].kategorie)[1])+' und Arbeit am selben Tag – noch nicht geklärt. <button class="btn ghost sm" type="button" data-schreiben>klären</button></div>');
-        kw.querySelector("button").onclick=function(){ abwesenheitPruefen(tag, function(){ render(); }); };
+        kw.querySelector("button").onclick=function(){ abwesenheitPruefen(tag, function(){ render(); }, function(e){ return konflikt.indexOf(e)>=0; }); };
         host.appendChild(kw);
       }
       var offenAb=abgleichOffen(tag);
@@ -31914,7 +31927,8 @@ function zeitEditor(z, vorgabe){
         zeile.pause_min=30; zeile.minuten-=pauseErgaenzt; zeile.pause_auto=pauseErgaenzt;
       }
       /* an diesem Tag Urlaub, Krankenstand …? erst klären – dann geht es mit demselben Knopf weiter */
-      if(zeile.art==="arbeit" && !form._abwOk && abwesenheitOffen(datum).length){ abwesenheitPruefen(datum, function(){ form._abwOk=true; ok.click(); }); return; }
+      var abwTrifft=function(e){ return abwesenheitZeitTrifft(e, beginn, ende); };   /* halber Tag: nur, wenn die Arbeit hineinfällt */
+      if(zeile.art==="arbeit" && !form._abwOk && abwesenheitOffen(datum).some(abwTrifft)){ abwesenheitPruefen(datum, function(){ form._abwOk=true; ok.click(); }, abwTrifft); return; }
       ok.disabled=true; ok.textContent="wird gespeichert …";
       var fertig=function(gesp){
         ZEITEN=ZEITEN.filter(function(x){ return x.id!==gesp.id; }).concat([gesp]);
@@ -31990,7 +32004,7 @@ function monatLuecken(liste, uid, monat){
       if(!z.length && !abw.length && !pl.some(function(e){ return (e.privat||e.kategorie==="privat") && !e.beginn && planTage(e).indexOf(tag)>=0; })) r.ohne.push(tag);
       abw.forEach(function(e){ if(!z.some(function(x){ return x.art===e.kategorie || x.planung_id===e.id; })) r.abwesend.push(tag+" "+planKat(e.kategorie)[1]); });
       /* Abwesenheit und Arbeit am selben Tag: geklärt (eingesprungen) – sonst Hinweis; Urlaubstag zurückgegeben: der Kalender muss noch angepasst werden */
-      if(z.some(function(x){ return x.art==="arbeit"; })) abw.forEach(function(e){ var au=abwesenheitAusnahme(e, tag, uid);
+      abw.filter(function(e){ return z.some(function(x){ return x.art==="arbeit" && abwesenheitZeitTrifft(e, x.beginn, x.ende); }); }).forEach(function(e){ var au=abwesenheitAusnahme(e, tag, uid);
         if(!au) r.doppelt.push(tag+" "+planKat(e.kategorie)[1]); else if(au.art==="zurueck") r.zurueck.push(tag); });
     }
     pl.forEach(function(e){
@@ -33479,8 +33493,9 @@ function stempelKarte(){
       if(jetztSchon.length && !window.confirm("Für jetzt ist schon Arbeitszeit von Hand eingetragen ("+jetztSchon.map(zeitKurz).join(", ")+").\n\nTrotzdem einstempeln? Beim Ausstempeln kannst du wählen, was gilt.")) return;
       var einKnopf=this, einWerte={bereich:bw.wert(), standort_id:w.querySelector("[data-st]").value||null, projekt_id:w.querySelector("[data-pr]").value||null,
         taetigkeit:w.querySelector("[data-was]").value.trim()||null};
-      /* heute Urlaub, Krankenstand …? erst klären (Büro 04.10.2026) */
-      abwesenheitPruefen(heute, function(){ stempelDruecken("ein", einWerte, einKnopf); });
+      /* heute Urlaub, Krankenstand …? erst klären (Büro 04.10.2026) – ein halber Tag mit Uhrzeit nur, wenn „jetzt“ hineinfällt */
+      var jetztHm=zeitAus(new Date().toISOString());
+      abwesenheitPruefen(heute, function(){ stempelDruecken("ein", einWerte, einKnopf); }, function(e){ return abwesenheitZeitTrifft(e, jetztHm, jetztHm); });
     };
     /* die nächsten Märkte zur Auswahl (Position nur zum Sortieren, nicht gespeichert) */
     w.insertBefore(naeheAuswahl(function(s){ w.querySelector("[data-st]").value=s.id; }), w.querySelector(".grid"));
