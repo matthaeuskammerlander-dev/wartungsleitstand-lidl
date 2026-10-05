@@ -417,7 +417,9 @@ Kammerlander Umwelt- und Klimatechnik (UKT) – oft kurz, vom Handy, im Feld.
 - **Fahrtpauschale** (`fahrtZone`, Büro 02.10.2026): Zone 2 = Kärnten, Steiermark, Vorarlberg, Tirol westlich von
   Innsbruck (Innsbruck selbst Zone 1), Osttirol; sonst Zone 1. `einsatzPositionen` nimmt die Katalog-Position der Zone. Nur auf Anweisung ändern.
 - **Fahrzeuge** (tools/fahrzeuge.sql, Büro 02.10.2026): km, Pickerl, Service, Reparatur, Schaden; Techniker nur
-  ihr Fahrzeug (km-Stand, Schaden), Beträge nur Inhaber (`fahrzeug_kosten`). GPS-Import (X-GPS, CSV/Excel):
+  ihr Fahrzeug (km-Stand, Schaden), Beträge nur Inhaber (`fahrzeug_kosten`). Eigene Privatautos (auch mehrere) trägt jede Person
+  selbst ein (`privatautoEditor`, „+ Mein Privatauto“, Inhaber 05.10.2026): nur Kennzeichen, Bezeichnung, „in Verwendung“; Datenbank:
+  Regeln + Trigger `fahrzeuge_privat_pruefen` (tools/rechte-2026-10-05.sql) – Nicht-Büro nie fremde/Firmenfahrzeuge, nie Fristen/GPS. GPS-Import (X-GPS, CSV/Excel):
   NUR Kilometer je Tag – nie Orte, Uhrzeiten oder Fahrten speichern (Fahrtenbuch mit Orten erst nach
   Zustimmung/Betriebsvereinbarung). Diese Grenze nie lockern.
 - **Spielwiese** (`spielwieseOeffnen`, `spielwieseDarf`: Inhaber, Admins und Techniker – je mit dem eigenen Konto und

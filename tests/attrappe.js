@@ -69,6 +69,12 @@
     if((tab==="werkzeug"||tab==="packlisten") && art==="delete" && !(admin() || rolle==="inhaber")) return tab+": loeschen nur Buero";
     if(tab==="bedarf" && art==="delete" && !(admin() || rolle==="inhaber" || (alt && alt.erstellt_von===uid()))) return "bedarf: loeschen nur eigene";
     if(tab==="werkzeug_verlauf" && art!=="select") return "werkzeug_verlauf: nur der Server";
+    /* wie fahrzeuge.sql und die Antworten vom 05.10.2026: Fahrzeuge schreibt das Büro, sonst jede Person nur ihre EIGENEN Privatautos */
+    if(tab==="fahrzeuge" && (art==="insert"||art==="update") && !(admin() || rolle==="inhaber")){
+      if(alt && alt.privat_von!==uid()) return "fahrzeuge: nur das eigene Privatauto";
+      if(zeile && (!alt || ("privat_von" in zeile)) && zeile.privat_von!==uid()) return "fahrzeuge: nur das eigene Privatauto";
+    }
+    if(tab==="fahrzeuge" && art==="delete" && rolle!=="inhaber") return "fahrzeuge: loeschen nur Inhaber";
     /* wie reisekosten.sql: eigene (der Inhaber alle); abgegeben ändert nur der Inhaber; ausbezahlt setzt nur er */
     if((tab==="auslagen"||tab==="auslagen_konto") && art!=="select" && rolle!=="inhaber"){
       var az=alt||zeile||{};
@@ -178,6 +184,15 @@
     return n.fahrzeug_id && DB.fahrzeuge.some(function(f){ return f.id===n.fahrzeug_id && f.privat_von===wer; }) ? null
       : "Kilometergeld nur mit eingetragenem Privatauto – zuerst im Reiter Fahrzeuge das Privatauto eintragen";
   }
+  /* wie der Trigger fahrzeuge_privat_pruefen (Antworten 05.10.2026): Nicht-Büro setzt am eigenen Privatauto nur Kennzeichen,
+     Bezeichnung, Namen und „in Verwendung“ – Fahrer ist die Person selbst, Fristen/GPS/Notiz bleiben bzw. sind leer */
+  function fzPrivatMerken(r, alt){
+    var rl=rolleJetzt(); if(admin() || rl==="inhaber") return;
+    var frei=["kennzeichen","bezeichnung","privat_name","aktiv","geaendert","geaendert_von"];
+    if(alt){ Object.keys(r).forEach(function(k){ if(frei.indexOf(k)<0) r[k]=alt[k]; }); Object.keys(alt).forEach(function(k){ if(!(k in r)) r[k]=alt[k]; }); return; }
+    ["erstzulassung","pickerl_bis","service_bis","service_km","tracker_id","notiz"].forEach(function(k){ r[k]=null; });
+    r.fahrer=[uid()]; r.fahrer_namen=[r.privat_name||""]; if(r.aktiv==null) r.aktiv=true; r.erstellt_von=uid();
+  }
   function Q(t){ this.t=t; this.a="select"; this.f=[]; this.d=null; this.o={}; this.ord=null; this.lim=null; this.sp=null; }
   Q.prototype.select=function(s){ if(typeof s==="string"&&s&&s!=="*") this.sp=s.split(",").map(function(x){return x.trim();}); return this; };
   Q.prototype.insert=function(d){ this.a="insert"; this.d=d; return this; };
@@ -243,6 +258,7 @@
         return r; });
       if(self.t==="auslagen"){ neu.forEach(function(r){ v=v||kmOhneAuto(r, null)||auslagenCheck(r); }); if(v){ window.__abgelehnt.push(v); return {data:null,error:{message:v}}; } }
       if(self.t==="werkzeug") neu.forEach(function(r){ wzMerken(r); });
+      if(self.t==="fahrzeuge") neu.forEach(function(r){ fzPrivatMerken(r, null); });
       neu.forEach(function(r){ tab.push(r); }); if(self.t==="planung") neu.forEach(function(r){ stundenSync(r.id); });
       if(self.t==="werkzeug") neu.forEach(function(r){ wzVerlauf(r, null); });
       sichern(); return {data:aus(neu),error:null};
@@ -290,6 +306,7 @@
           if(self.t==="auslagen" && r.art==="km") r.betrag=Math.round(r.km*(r.km_satz||0.5)*100)/100;
           if(self.t==="bedarf") r.erledigt = r.status==="erledigt" ? (altR.status==="erledigt" ? altR.erledigt : new Date().toISOString()) : null;
           if(self.t==="werkzeug"){ wzMerken(r); wzVerlauf(r, altR); }
+          if(self.t==="fahrzeuge") fzPrivatMerken(r, altR);
         }
         erg.push(r); });
       sichern(); return {data:aus(erg),error:null};

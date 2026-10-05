@@ -20314,20 +20314,26 @@ function viewFahrzeuge(){
   var kopf=el('<div class="card"><div class="pad stack" style="gap:8px">'+
     '<div class="rowflex" style="justify-content:space-between;align-items:flex-start;gap:10px"><div><h2>Fahrzeuge</h2>'+
       '<div class="sub">Kilometer, Pickerl, Service, Reparaturen und Schäden je Fahrzeug. '+(buero?"Techniker sehen ihr eigenes Fahrzeug und tragen km-Stand und Schäden ein.":"Hier steht dein Fahrzeug – km-Stand eintragen, Schäden melden.")+"</div></div>"+
-      (buero?'<div class="rowflex" style="gap:6px"><button class="btn sm" type="button" data-fz="neu">+ Fahrzeug</button><button class="btn ghost sm" type="button" data-fz="gps">GPS-Daten einlesen</button></div>':"")+
+      (nurLesen()?"":'<div class="rowflex" style="gap:6px">'+(buero?'<button class="btn sm" type="button" data-fz="neu">+ Fahrzeug</button>':"")+
+        '<button class="btn '+(buero?"ghost ":"")+'sm" type="button" data-fz="privat">+ Mein Privatauto</button>'+(buero?'<button class="btn ghost sm" type="button" data-fz="gps">GPS-Daten einlesen</button>':"")+"</div>")+
     "</div>"+
     (fzFehlt?'<div class="note warnbox">Die Fahrzeug-Tabellen fehlen noch in der Datenbank'+(istInhaber()?" – tools/fahrzeuge.sql einmal im Supabase SQL Editor ausführen.":" – das richtet der Inhaber ein.")+"</div>":"")+
     (fzFehler?'<div class="note warnbox">'+esc(fzFehler)+"</div>":"")+
   "</div></div>");
   var nb=kopf.querySelector('[data-fz="neu"]'); if(nb) nb.onclick=function(){ fzEditor(null); };
   var gb=kopf.querySelector('[data-fz="gps"]'); if(gb) gb.onclick=fzGpsImport;
+  var pb=kopf.querySelector('[data-fz="privat"]'); if(pb) pb.onclick=function(){ privatautoEditor(null); };
   f.appendChild(kopf);
   if(!fzGeladen){ f.appendChild(el('<div class="card"><div class="pad muted">Fahrzeuge werden geladen …</div></div>')); return f; }
   var liste=FZ.filter(function(x){ return x.aktiv!==false; });
   if(!liste.length && !fzFehlt) f.appendChild(el('<div class="card"><div class="pad muted" style="font-size:13px">'+
-    (buero?"Noch kein Fahrzeug. „+ Fahrzeug“ legt eines an – mit Kennzeichen und Fahrer.":"Dir ist noch kein Fahrzeug zugeteilt – das macht das Büro.")+"</div></div>"));
+    (buero?"Noch kein Fahrzeug. „+ Fahrzeug“ legt eines an – mit Kennzeichen und Fahrer.":"Dir ist noch kein Fahrzeug zugeteilt – das macht das Büro. Dein Privatauto (Kilometergeld) trägst du mit „+ Mein Privatauto“ selbst ein.")+"</div></div>"));
   liste.forEach(function(x){ f.appendChild(fzKarte(x)); });
   var alt=FZ.filter(function(x){ return x.aktiv===false; });
+  /* eigene, nicht mehr verwendete Privatautos: wieder aktiv stellen über Bearbeiten */
+  var altMein=alt.filter(function(x){ return !buero && x.privat_von===meineKennung(); });
+  if(altMein.length){ var am=el('<div class="muted rowflex" style="font-size:12.5px;padding:0 4px;gap:6px">Nicht mehr verwendet:</div>');
+    altMein.forEach(function(x){ var b=el('<button class="btn ghost sm" type="button">'+esc(x.kennzeichen)+"</button>"); b.onclick=function(){ privatautoEditor(x); }; am.appendChild(b); }); f.appendChild(am); }
   if(alt.length && buero) f.appendChild(el('<div class="muted" style="font-size:12.5px;padding:0 4px">Nicht mehr im Einsatz: '+alt.map(function(x){ return esc(x.kennzeichen); }).join(", ")+" (unter „Bearbeiten“ wieder aktiv stellen)</div>"));
   return f;
 }
@@ -20345,7 +20351,8 @@ function fzKarte(x){
     (fae.length?'<div class="rowflex" style="gap:6px;flex-wrap:wrap">'+fae.map(function(a){ return '<span class="tag" style="'+(a.art==="crit"?"background:var(--crit);color:#fff":"background:var(--warn-soft,#fdf1d8)")+'">'+esc(a.text)+"</span>"; }).join("")+"</div>":"")+
     '<div class="rowflex" style="gap:6px;flex-wrap:wrap"><button class="btn sm" type="button" data-e="km">km-Stand eintragen</button>'+
       '<button class="btn ghost sm" type="button" data-e="schaden">Schaden melden</button>'+
-      (buero?'<button class="btn ghost sm" type="button" data-e="service">Service / Reparatur …</button><button class="btn ghost sm" type="button" data-e="bearb">Bearbeiten</button>':"")+"</div>"+
+      (buero?'<button class="btn ghost sm" type="button" data-e="service">Service / Reparatur …</button><button class="btn ghost sm" type="button" data-e="bearb">Bearbeiten</button>':
+        (x.privat_von===meineKennung() && !nurLesen() ? '<button class="btn ghost sm" type="button" data-e="privat">Bearbeiten</button>' : ""))+"</div>"+
     (function(){ var drin=WZ.filter(function(w){ return w.aktiv!==false && w.standort_art==="fahrzeug" && w.fahrzeug_id===x.id; });
       return drin.length ? '<div style="font-size:12.5px">🧰 Im Fahrzeug: '+drin.map(function(w){ return esc(w.name); }).join(", ")+"</div>" : ""; })()+
     '<details><summary class="muted" style="cursor:pointer;font-size:12.5px">Verlauf ('+ein.length+")</summary><div data-verlauf></div></details>"+
@@ -20354,6 +20361,7 @@ function fzKarte(x){
   c.querySelector('[data-e="schaden"]').onclick=function(){ fzEintragEditor(x, "schaden"); };
   var sb=c.querySelector('[data-e="service"]'); if(sb) sb.onclick=function(){ fzEintragEditor(x, "service"); };
   var bb=c.querySelector('[data-e="bearb"]'); if(bb) bb.onclick=function(){ fzEditor(x); };
+  var pe=c.querySelector('[data-e="privat"]'); if(pe) pe.onclick=function(){ privatautoEditor(x); };
   var vl=c.querySelector("[data-verlauf]");
   c.querySelector("details").addEventListener("toggle", function(){ if(vl.childNodes.length) return;
     if(!ein.length){ vl.appendChild(el('<div class="muted" style="font-size:12.5px;margin-top:6px">Noch keine Einträge.</div>')); return; }
@@ -20437,6 +20445,43 @@ function fzEditor(x){
       var g=r.data[0]; FZ=FZ.filter(function(y){ return y.id!==g.id; }).concat([g]).sort(function(a,b){ return a.kennzeichen.localeCompare(b.kennzeichen); });
       v.zu(); toast("Fahrzeug "+g.kennzeichen+" gespeichert."); render();
     }, function(){ ok.disabled=false; ok.textContent="Speichern"; fehl("Keine Verbindung – bitte nochmals."); });
+  };
+}
+/* Mein Privatauto (Inhaber 05.10.2026): jede Person legt ihre EIGENEN Privatautos selbst an und bearbeitet sie – auch mehrere
+   (Kennzeichen, Bezeichnung, noch in Verwendung; Kilometergeld an sie selbst, sie ist Fahrer). Fremde und Firmenfahrzeuge,
+   Fristen, GPS und Kosten nur das Büro – die Datenbank lässt Nicht-Büro nur privat_von = sie selbst zu und behält alle anderen
+   Spalten (Regeln und Trigger fahrzeuge_privat_pruefen, tools/rechte-2026-10-05.sql). fertig(fahrzeug): danach weiter */
+function privatautoEditor(x, fertig){
+  if(nurAnsehenAbweisen()) return;
+  var ich=meineKennung();
+  if(x && x.privat_von!==ich){ toast("Das ist nicht dein Privatauto – ändern kann es das Büro."); return; }
+  var v=ansichtOeffnen(x ? "Privatauto "+x.kennzeichen : "Mein Privatauto");
+  v.schritt.textContent="Für Fahrten mit diesem Auto gibt es Kilometergeld (Reiter Stunden › Reisekosten) – Firmenfahrzeuge trägt das Büro ein";
+  var form=el('<form class="stack" autocomplete="off" style="max-width:480px">'+
+    '<label class="fl"><span class="req">Kennzeichen</span><input type="text" data-f="kennzeichen" autocapitalize="characters" maxlength="20" value="'+esc(x?x.kennzeichen:"")+'"></label>'+
+    '<label class="fl"><span>Bezeichnung (Marke, Modell)</span><input type="text" data-f="bezeichnung" maxlength="100" value="'+esc(x&&x.bezeichnung||"")+'"></label>'+
+    (x?'<label class="chk"><input type="checkbox" data-f="aktiv"'+(x.aktiv===false?"":" checked")+"><span>noch in Verwendung</span></label>":"")+
+    '<div class="note warnbox" data-err hidden></div></form>');
+  var F=function(k){ return form.querySelector('[data-f="'+k+'"]'); }, err=form.querySelector("[data-err]");
+  v.inhalt.appendChild(form);
+  var ok=fussKnoepfe(v, "Speichern").ok;
+  ok.onclick=function(){
+    err.hidden=true;
+    var k=F("kennzeichen").value.trim().toUpperCase();
+    if(!k){ err.textContent="Bitte das Kennzeichen eintragen."; err.hidden=false; F("kennzeichen").focus(); return; }
+    if(FZ.some(function(y){ return (!x || y.id!==x.id) && fzNorm(y.kennzeichen)===fzNorm(k); })){ err.textContent="Dieses Kennzeichen gibt es schon."; err.hidden=false; return; }
+    var z={kennzeichen:k, bezeichnung:F("bezeichnung").value.trim()||null, privat_von:ich, privat_name:meinName(), geaendert:new Date().toISOString(), geaendert_von:meinName()};
+    if(x) z.aktiv=F("aktiv").checked; else { z.fahrer=[ich]; z.fahrer_namen=[meinName()]; z.aktiv=true; }
+    var fertigMit=function(g){ FZ=FZ.filter(function(y){ return y.id!==g.id; }).concat([g]).sort(function(a,b){ return a.kennzeichen.localeCompare(b.kennzeichen); });
+      v.zu(); toast("Privatauto "+g.kennzeichen+" gespeichert."); if(fertig) fertig(g); else if(darfRendern()) render(); };
+    if(demo()){ fertigMit(Object.assign({id:x?x.id:neueKennung("fz")}, x||{}, z)); return; }
+    ok.disabled=true; ok.textContent="wird gespeichert …";
+    var q=x ? Store.sb.from("fahrzeuge").update(z).eq("id", x.id).select("*") : Store.sb.from("fahrzeuge").insert(z).select("*");
+    mitFrist(q, 15000).then(function(r){
+      ok.disabled=false; ok.textContent="Speichern";
+      if(r.error || !(r.data||[]).length){ err.textContent="Nicht gespeichert: "+technikDeutsch((r.error&&r.error.message)||"keine Berechtigung"); err.hidden=false; return; }
+      fertigMit(r.data[0]);
+    }, function(){ ok.disabled=false; ok.textContent="Speichern"; err.textContent="Keine Verbindung – bitte nochmals."; err.hidden=false; });
   };
 }
 /* Eintrag: km-Stand, Schaden (auch Techniker), Service/Pickerl/Reparatur/Reifen/Sonstiges (Büro) */
@@ -24818,7 +24863,7 @@ Object.assign(RUNDGAENGE, {
         "Einträge „aus dem Kalender“ passt die Datenbank an, wenn sich der Kalendereintrag ändert, und entfernt sie, wenn er gelöscht wird (nie in einem bestätigten Monat). Änderst du so einen Eintrag selbst, gilt er als von Hand."])},
     {reiter:"stunden", ziel:function(){ return rgKarte(/^Reisekosten und Kilometergeld/); }, wenn:function(){ return akAn(); }, titel:"Reisekosten und Kilometergeld",
       text:RG_LISTE(["<strong>📷 + Beleg</strong>: mit eigenem Geld bezahlt (Bauhaus, Parken, Maut, Tanken, Nächtigung …) – Foto vom Beleg (Pflicht; sonst „Kein Beleg vorhanden“ mit Grund), Datum, wo/was, Betrag, wofür, Projekt/Markt.",
-        "<strong>🚗 + Kilometer</strong>: Fahrt mit dem Privatauto – Datum, Strecke (Vorschlag aus dem Kalender), km, Privatauto; die App rechnet das Kilometergeld (km × Satz, den der Chef einstellt). Ohne eingetragenes Privatauto geht es nicht – zuerst im Reiter Fahrzeuge das Privatauto eintragen (lassen).",
+        "<strong>🚗 + Kilometer</strong>: Fahrt mit dem Privatauto – Datum, Strecke (Vorschlag aus dem Kalender), km, Privatauto; die App rechnet das Kilometergeld (km × Satz, den der Chef einstellt). Ohne eingetragenes Privatauto geht es nicht – „+ Mein Privatauto“ (gleich im Hinweis oder im Reiter Fahrzeuge) trägt es ein, auch mehrere; dann wählst du beim Kilometergeld das Auto.",
         "Am Monatsende <strong>„Monat abgeben“</strong> – danach ändert nur noch der Chef, auch das Belegfoto. „PDF“ wie das bisherige Blatt (Barbelege, Kilometer mit Privatauto, zu zahlen) mit allen Belegfotos.",
         "Unten „Konto für die Auszahlung“ (IBAN) einmal eintragen."])+
       RG_HG(["Nur du und der Inhaber sehen deine Reisekosten – keine Admins, keine Kollegen.",
@@ -24833,6 +24878,7 @@ Object.assign(RUNDGAENGE, {
         "Vorher zeigt die Zeile in Rot, was fehlt: Arbeitstage ohne Eintrag, Abwesenheit im Kalender ohne Stunden, Geplantes ohne passenden Eintrag – mit „Nachricht an …“ (fertiger Text im Chat)."])},
     {reiter:"fahrzeuge", ziel:function(){ return rgReiter("fahrzeuge"); }, wenn:function(){ return reiterErlaubt("fahrzeuge"); }, titel:"Fahrzeuge",
       text:RG_LISTE(["<strong>Techniker</strong> sehen ihr Fahrzeug: „km-Stand eintragen“, „Schaden melden“ (eigene Einträge 24 h löschbar).",
+        "<strong>+ Mein Privatauto</strong> (alle): eigene Privatautos selbst eintragen und bearbeiten – Kennzeichen, Bezeichnung; dafür gibt es Kilometergeld. Firmenfahrzeuge, Fristen und fremde Autos trägt das Büro ein.",
         "<strong>Büro</strong>: „+ Fahrzeug“, Bearbeiten (Fahrer, Pickerl, Service am/bei km, GPS-Kennung), „Service / Reparatur …“, Schaden „behoben“.",
         "<strong>GPS-Daten einlesen</strong> (X-GPS, CSV/Excel): Vorschau je Fahrzeug, „Kilometer übernehmen“."])+
       RG_HG(["Pickerl und Service werden 30 Tage vorher gelb, überfällig rot (Service nach km ab 1.000 km Rest) und stehen fürs Büro im To-do (🚐).",
@@ -32308,8 +32354,7 @@ function meinePrivatautos(){ var ich=meineKennung(); return FZ.filter(function(f
    auslagen_pruefen_privatauto: fahrzeug_id eines Fahrzeugs mit privat_von = Person des Eintrags) */
 function akOhneAutoText(fremdName){
   if(fremdName) return "Zuerst im Reiter Fahrzeuge das Privatauto von "+fremdName+" eintragen (beim Fahrzeug „Privatauto – Kilometergeld an …“).";
-  return "Zuerst im Reiter Fahrzeuge dein Privatauto eintragen"+(fzBuero() && !nurLesen() ? " („+ Fahrzeug“ bzw. Bearbeiten: „Privatauto – Kilometergeld an …“)." :
-    " lassen – das macht das Büro (beim Fahrzeug „Privatauto – Kilometergeld an …“).");
+  return "Zuerst im Reiter Fahrzeuge dein Privatauto eintragen („+ Mein Privatauto“ – das geht gleich hier).";
 }
 /* Vorschlag für die Strecke eines Tages: Startpunkt – Orte der eigenen Einsätze – zurück */
 function akStreckeVorschlag(tag){
@@ -32365,7 +32410,8 @@ function akEditor(z, vorgabe){
     v.schritt.textContent="Kilometergeld nur mit Privatauto";
     v.inhalt.appendChild(el('<div class="note warnbox" style="max-width:560px;font-size:13.5px">'+(fzFehler ? esc(fzFehler)+" Bitte später nochmals." :
       "<strong>"+esc(akOhneAutoText())+"</strong><br>Kilometergeld gibt es nur für ein eingetragenes Privatauto, nicht für ein Firmenfahrzeug.")+"</div>"));
-    if(fzBuero() && !nurLesen() && !fzFehler){ var zf=el('<button class="btn" type="button">Zum Reiter Fahrzeuge</button>'); zf.onclick=function(){ v.zu(); springe({reiter:"fahrzeuge"}); }; v.fuss.appendChild(zf); }
+    /* gleich hier das eigene Privatauto anlegen (Inhaber 05.10.2026) – danach geht es mit dem Kilometergeld weiter */
+    if(!nurLesen() && !fzFehler){ var zf=el('<button class="btn" type="button">+ Mein Privatauto</button>'); zf.onclick=function(){ v.zu(); privatautoEditor(null, function(){ akEditor(z, vorgabe); }); }; v.fuss.appendChild(zf); }
     return;
   }
   var projekte=PROJEKTE.filter(function(p){ return projektOffen(p) || p.id===a.projekt_id; });

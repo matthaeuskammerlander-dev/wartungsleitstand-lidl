@@ -4535,8 +4535,61 @@ test("Antworten post: Kilometergeld nur mit eingetragenem Privatauto – App und
     const falsch = await sb().from("auslagen").update({ fahrzeug_id: "fzAndere", km: 95 }).eq("id", neu.id).select("id");
     p(!!falsch.error && db.auslagen.find((z) => z.id === neu.id).km === 90, "Inhaber: fremder km-Eintrag mit dem Privatauto einer anderen Person gespeichert");
     x("ansichtenSchliessen(); akEditor(null, {art:'km'})"); await warte(300);
-    p(/Zuerst im Reiter Fahrzeuge dein Privatauto eintragen/.test(dlg().textContent) && !!dlg().querySelector(".as-fuss button") && /Fahrzeuge/.test(dlg().querySelector(".as-fuss").textContent),
-      "Inhaber ohne eigenes Privatauto: kein Hinweis bzw. kein Weg zum Reiter Fahrzeuge");
+    p(/Zuerst im Reiter Fahrzeuge dein Privatauto eintragen/.test(dlg().textContent) && !!dlg().querySelector(".as-fuss button") && /Mein Privatauto/.test(dlg().querySelector(".as-fuss").textContent),
+      "Inhaber ohne eigenes Privatauto: kein Hinweis bzw. kein Knopf „+ Mein Privatauto“");
+    return { fehlt };
+  });
+  pruefe(!r.fehlt.length, r.fehlt.join(" | "));
+  pruefe(!a.fehler.length, "Laufzeitfehler: " + a.fehler.join("; "));
+  await a.zu();
+});
+
+test("Antworten post: Privatauto – Techniker legen ihre eigenen (auch mehrere) selbst an, aus dem Kilometergeld-Hinweis; fremde und Firmenfahrzeuge nur das Büro", async () => {
+  const a = await rkSeite(KONTEN.techniker);
+  const r = await a.seite.evaluate(async () => {
+    const x = window.__t.x, db = window.__db.tabellen, { warte, dlg, speichern } = window.__rk;
+    const fehlt = [], p = (bed, text) => { if (!bed) fehlt.push(text); }, ich = x("meineKennung()"), sb = () => x("Store.sb");
+    db.fahrzeuge.push({ id: "fzAdm", kennzeichen: "S-AD 9", fahrer: ["u_admin_test_at", ich], fahrer_namen: ["Testadmin", "Testtechniker"], privat_von: "u_admin_test_at", privat_name: "Testadmin", aktiv: true });
+    await x("fzLaden(true)");
+    /* aus dem Kilometergeld-Hinweis: „+ Mein Privatauto“, danach geht es mit dem Kilometer-Dialog weiter */
+    x("S.view='stunden'; render(); akEditor(null, {art:'km'})"); await warte(300);
+    const kn = [...dlg().querySelectorAll(".as-fuss button")].find((b) => /Mein Privatauto/.test(b.textContent));
+    p(!!kn, "Kilometergeld-Hinweis ohne „+ Mein Privatauto“");
+    if (kn) {
+      kn.click(); await warte(300);
+      let d = dlg(); d.querySelector('[data-f="kennzeichen"]').value = "s-pv 11"; d.querySelector('[data-f="bezeichnung"]').value = "Kombi";
+      speichern(d); await warte(700);
+      const neu = db.fahrzeuge.find((f) => f.kennzeichen === "S-PV 11") || {};
+      p(neu.privat_von === ich && (neu.fahrer || []).indexOf(ich) >= 0, "Privatauto nicht als eigenes gespeichert: " + JSON.stringify(neu));
+      d = dlg();
+      p(d && d.querySelector('[data-f="km"]') && d.querySelector('[data-f="fahrzeug_id"]').value === neu.id, "nach dem Anlegen kein Kilometer-Dialog mit dem neuen Auto");
+      x("ansichtenSchliessen()");
+    }
+    /* ein zweites im Reiter Fahrzeuge – dann muss beim Kilometergeld gewählt werden */
+    x("S.view='fahrzeuge'; render()"); await warte(500);
+    const kf = [...document.querySelectorAll("button")].find((b) => /Mein Privatauto/.test(b.textContent));
+    p(!!kf, "Reiter Fahrzeuge ohne „+ Mein Privatauto“");
+    if (kf) { kf.click(); await warte(300); const d = dlg(); d.querySelector('[data-f="kennzeichen"]').value = "S-PV 12"; speichern(d); await warte(700); }
+    x("ansichtenSchliessen(); akEditor(null, {art:'km'})"); await warte(300);
+    let d = dlg(), sel = d.querySelector('[data-f="fahrzeug_id"]');
+    p(sel && sel.options.length === 3 && sel.value === "", "zwei Privatautos: keine Auswahl bzw. eines still vorgewählt: " + (sel ? sel.options.length + "/" + sel.value : "-"));
+    d.querySelector('[data-f="text"]').value = "Salzburg – Lofer – Salzburg"; d.querySelector('[data-f="km"]').value = "90";
+    speichern(d); await warte(400);
+    p(/Privatauto wählen/.test(d.querySelector("[data-err]").textContent) && !db.auslagen.some((z) => /Lofer/.test(z.text)), "ohne Auswahl gespeichert");
+    const zweit = db.fahrzeuge.find((f) => f.kennzeichen === "S-PV 12") || {};
+    sel.value = zweit.id; speichern(d); await warte(600);
+    p((db.auslagen.find((z) => /Lofer/.test(z.text)) || {}).fahrzeug_id === zweit.id, "Kilometergeld mit dem gewählten Privatauto nicht gespeichert");
+    /* eigenes Privatauto bearbeiten: Kennzeichen ja, Fristen nein */
+    await sb().from("fahrzeuge").update({ bezeichnung: "Kombi neu", pickerl_bis: "2027-01-01", tracker_id: "x" }).eq("id", zweit.id).select("id");
+    const z2 = db.fahrzeuge.find((f) => f.id === zweit.id);
+    p(z2.bezeichnung === "Kombi neu" && !z2.pickerl_bis && !z2.tracker_id, "Techniker ändert Fristen/GPS am Privatauto: " + JSON.stringify(z2));
+    /* Datenbank: Firmenfahrzeug, fremdes Privatauto, fremdes Fahrzeug ändern, privat_von umhängen – alles nein */
+    const e1 = await sb().from("fahrzeuge").insert({ kennzeichen: "S-FI 77", fahrer: [ich] }).select("id");
+    const e2 = await sb().from("fahrzeuge").insert({ kennzeichen: "S-FR 78", privat_von: "u_admin_test_at", fahrer: [ich] }).select("id");
+    await sb().from("fahrzeuge").update({ kennzeichen: "S-XX 1" }).eq("id", "fzAdm").select("id");
+    await sb().from("fahrzeuge").update({ privat_von: "u_admin_test_at" }).eq("id", zweit.id).select("id");
+    p(!!e1.error && !!e2.error && !db.fahrzeuge.some((f) => /S-FI 77|S-FR 78/.test(f.kennzeichen)), "Techniker legt Firmen- bzw. fremdes Privatauto an");
+    p(db.fahrzeuge.find((f) => f.id === "fzAdm").kennzeichen === "S-AD 9" && db.fahrzeuge.find((f) => f.id === zweit.id).privat_von === ich, "Techniker ändert fremdes Fahrzeug bzw. hängt sein Privatauto um");
     return { fehlt };
   });
   pruefe(!r.fehlt.length, r.fehlt.join(" | "));
