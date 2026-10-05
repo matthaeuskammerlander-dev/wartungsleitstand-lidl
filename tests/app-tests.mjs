@@ -1861,7 +1861,7 @@ test("Tiefentest stunden: Zeit erfassen – Kalender-Vorschlag ohne Abwesenheit,
   pruefe(!fehl.length, fehl.join(" | "));
 });
 
-test("Tiefentest stunden: Hinweise über 12 h / 60 h zählen nur Arbeit, auch über den Monatswechsel", async () => {
+test("Tiefentest stunden: Hinweise über 12 h / 60 h zählen nur Arbeit, auch über den Monatswechsel; laufender Monat bis gestern", async () => {
   const a = await oeffnen(KONTEN.inhaber);
   await ttHilfen(a);
   const fehl = [];
@@ -1891,6 +1891,18 @@ test("Tiefentest stunden: Hinweise über 12 h / 60 h zählen nur Arbeit, auch ü
     return { sep, okt, tabelle: zeile ? /über 60 h/.test(zeile.textContent) : null };
   });
   if (!r35.sep.length || !r35.okt.length || !r35.tabelle) fehl.push("TT-35 Woche über 60 h über den Monatswechsel nicht gemeldet: " + JSON.stringify(r35));
+  /* TT-33: laufender Monat, jeder Arbeitstag bis gestern genau mit dem Tagessoll erfasst – kein rotes Minus (wie die Woche: „bis gestern“) */
+  const r33 = await a.seite.evaluate(async () => {
+    const tt = window.__tt, x = window.__t.x, db = window.__db.tabellen; tt.leeren(); const heute = x("isoLokal(new Date())");
+    for (let t = heute.slice(0, 7) + "-01"; t < heute; t = x("plusTage('" + t + "',1)")) {
+      const s = x("sollMinutenTag('" + t + "')"); if (s) db.arbeitszeiten.push({ id: "t33" + t, user_id: tt.ich(), name: "I", datum: t, minuten: s, art: "arbeit", quelle: "hand", bereich: "werkstatt" });
+    }
+    await tt.laden();
+    x("S.view='stunden'; S.stWoche=montagVon('" + heute + "'); render()"); await tt.warte(300);
+    const su = document.querySelector("[data-summen] span");
+    return { text: su.textContent, rot: [...su.querySelectorAll("span")].filter((s) => /crit/.test(s.getAttribute("style") || "") && !s.hasAttribute("data-wochesoll")).map((s) => s.textContent) };
+  });
+  if (r33.rot.some((t) => /^[−-]/.test(t))) fehl.push("TT-33 Monatszeile rot im Minus, obwohl bis gestern alles erfasst: " + r33.text);
   if (a.fehler.length) fehl.push("Laufzeitfehler: " + a.fehler.join("; "));
   await a.zu();
   pruefe(!fehl.length, fehl.join(" | "));
