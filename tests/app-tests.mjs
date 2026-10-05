@@ -1691,6 +1691,17 @@ reSchritt("eingaben", "R20", async (a) => {
   const r = await a.x("(function(){ var alt=byId.TS4.lon; byId.TS4.lon=null; try{ return einsatzPositionen({standortId:'TS4',datum:'2026-01-01',anlagen:[{name:'VRV'}]},'lidl').pop().text; } finally { byId.TS4.lon=alt; } })()");
   return !/ohne Postleitzahl/.test(r) && /Lage/.test(r) ? "" : "Fahrtpauschale für PLZ 6460 ohne Kartenlage: " + r;
 });
+/* Positionsprüfung: Uhrzeit-Bereiche und „24h-Notdienst“ sind keine Menge, „2 x 3 h“ = 6 Std; Mengen ohne Klammer nicht in den Katalogtext */
+reSchritt("eingaben", "R23", async (a) => {
+  const r = await a.seite.evaluate(() => {
+    const x = window.__t.x, f = x("positionPruefen"), o = x("katalogTextOhneMenge");
+    return { uhr: f({ typ: "pos", text: "Regiestunden Techniker Mo-Fr 7-16 h", menge: 3, eh: "Std" }), notdienst: f({ typ: "pos", text: "Zuschlag 24h-Notdienst", menge: 1, eh: "psh" }),
+      mal: f({ typ: "pos", text: "Zuschlag Nacht (2 x 3 h)", menge: 6, eh: "Std" }), malFalsch: f({ typ: "pos", text: "Zuschlag Nacht (2 x 3 h)", menge: 3, eh: "Std" }),
+      o1: o("Zuschlag Samstag 3 Mann a 10 Std"), o2: o("Zuschlag Nacht (2 x 3 h)") };
+  });
+  return !r.uhr.length && !r.notdienst.length && !r.mal.length && r.malFalsch.length === 1 && r.o1 === "Zuschlag Samstag" && r.o2 === "Zuschlag Nacht"
+    ? "" : "Fehlalarme bzw. Auftragsmenge im Katalogtext: " + JSON.stringify(r);
+});
 /* Katalog lernt eine Position ohne Einheit nur einmal (gespeichert wird sie mit „Stk“) */
 reSchritt("eingaben", "R18", async (a) => {
   const r = await a.seite.evaluate(async () => {
