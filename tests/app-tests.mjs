@@ -1575,7 +1575,8 @@ test("Abwesenheit und Arbeit am selben Tag: die App fragt sofort – eingesprung
     [...d.querySelectorAll("button")].find((b) => /für diesen Tag beenden/.test(b.textContent)).click(); await warte(1500);
     const krankTeile = db.planung.filter((p) => p.titel === "Krank lang").map((p) => p.datum + ".." + (p.datum_bis || p.datum)).sort();
     const eingestempelt = x("stempelZustand().art");
-    return { frage1, ausnahme: ausnahme && ausnahme.art, arbeitGespeichert, offen1, frage2, krankTeile, eingestempelt, gestern, heute, morgen };
+    /* die Antwort steht je Tag und Person: ausnahmen[Tag][user_id] */
+    return { frage1, ausnahme: ausnahme && (ausnahme[ich] || {}).art, arbeitGespeichert, offen1, frage2, krankTeile, eingestempelt, gestern, heute, morgen };
   });
   pruefe(r.frage1 && r.ausnahme === "eingesprungen" && r.arbeitGespeichert && r.offen1 === 0, "eingesprungen falsch: " + JSON.stringify(r));
   pruefe(r.frage2 && JSON.stringify(r.krankTeile) === JSON.stringify([r.gestern + ".." + r.gestern, r.morgen + ".." + r.morgen]) && r.eingestempelt !== "aus", "Tag beenden falsch: " + JSON.stringify(r));
@@ -1905,6 +1906,91 @@ test("Tiefentest stunden: Hinweise über 12 h / 60 h zählen nur Arbeit, auch ü
   if (r33.rot.some((t) => /^[−-]/.test(t))) fehl.push("TT-33 Monatszeile rot im Minus, obwohl bis gestern alles erfasst: " + r33.text);
   if (a.fehler.length) fehl.push("Laufzeitfehler: " + a.fehler.join("; "));
   await a.zu();
+  pruefe(!fehl.length, fehl.join(" | "));
+});
+
+test("Tiefentest stunden: Abwesenheit – Tag herausnehmen nur für die eine Person, Antwort je Person, nur Tage im Zeitraum", async () => {
+  const fehl = [];
+  /* Inhaber nimmt Tage heraus */
+  const a = await oeffnen(KONTEN.inhaber);
+  await ttHilfen(a);
+  /* TT-04: Urlaub vom Techniker angelegt, niemand eingetragen („gilt als seins“) – Mittwoch herausnehmen: Rest bleibt bei ihm */
+  const r4 = await a.seite.evaluate(async () => {
+    const tt = window.__tt, x = window.__t.x, db = window.__db.tabellen; tt.leeren();
+    const tech = "u_tech_test_at", mo = x("plusTage(montagVon(isoLokal(new Date())),7)"), mi = x("plusTage('" + mo + "',2)"), fr = x("plusTage('" + mo + "',4)");
+    db.planung.push({ id: "tt04", art: "termin", kategorie: "urlaub", titel: "Urlaub", datum: mo, datum_bis: fr, wer: [], wer_namen: [], status: "genehmigt", erstellt_von: tech, erstellt_name: "Testtechniker", erstellt: new Date().toISOString(), privat: false, ausnahmen: {} });
+    await x("Store.sb.from('planung').update({details:'Sommer'}).eq('id','tt04').select('*')");   /* Kalender legt die Urlaubsstunden an */
+    await tt.laden();
+    x("planEditor(PLANUNG.filter(function(p){ return p.id==='tt04'; })[0])"); await tt.warte(150);
+    const knopf = [...tt.dialog().querySelectorAll("button")].find((b) => /^Tag herausnehmen$/.test(b.textContent.trim()));
+    knopf.parentNode.querySelector('input[type="date"]').value = mi; knopf.click(); await tt.warte(500);
+    return { tech, plan: db.planung.filter((p) => p.kategorie === "urlaub").map((p) => p.datum + ".." + (p.datum_bis || p.datum) + " " + ((p.wer || []).join() || p.erstellt_von)),
+      stunden: db.arbeitszeiten.filter((z) => z.art === "urlaub").map((z) => z.datum.slice(5) + " " + z.user_id).sort() };
+  });
+  if (r4.stunden.length !== 4 || !r4.stunden.every((s) => s.endsWith(r4.tech)) || !r4.plan.every((s) => s.endsWith(r4.tech))) fehl.push("TT-04 zweiter Teil gehört dem Inhaber: " + JSON.stringify(r4));
+  /* TT-05: zurückgegebener Tag liegt nach dem Kürzen außerhalb – kein Knopf, der Urlaub wird nicht verlängert */
+  const r5 = await a.seite.evaluate(async () => {
+    const tt = window.__tt, x = window.__t.x, db = window.__db.tabellen; tt.leeren();
+    const tech = "u_tech_test_at", mo = x("plusTage(montagVon(isoLokal(new Date())),7)"), di = x("plusTage('" + mo + "',1)"), don = x("plusTage('" + mo + "',3)"), fr = x("plusTage('" + mo + "',4)");
+    const u = (await x("Store.sb.from('planung').insert(" + JSON.stringify({ art: "termin", kategorie: "urlaub", titel: "Urlaub", datum: mo, datum_bis: fr, wer: [tech], wer_namen: ["Testtechniker"], status: "genehmigt" }) + ").select('*')")).data[0];
+    const aus = {}; aus[don] = { art: "zurueck", von: "Testtechniker", zeit: new Date().toISOString() };
+    await x("Store.sb.from('planung').update(" + JSON.stringify({ ausnahmen: aus }) + ").eq('id','" + u.id + "').select('*')");
+    await x("Store.sb.from('planung').update(" + JSON.stringify({ datum_bis: di }) + ").eq('id','" + u.id + "').select('*')");
+    await tt.laden();
+    x("planEditor(PLANUNG.filter(function(p){ return p.id==='" + u.id + "'; })[0])"); await tt.warte(150);
+    const knopf = [...tt.dialog().querySelectorAll("button")].find((b) => /zurückgegeben/.test(b.textContent));
+    if (knopf) { knopf.click(); await tt.warte(500); }
+    return { knopf: knopf ? knopf.textContent : null, plan: db.planung.map((p) => p.datum + ".." + (p.datum_bis || p.datum)), soll: [mo + ".." + di],
+      stunden: db.arbeitszeiten.filter((z) => z.art === "urlaub").map((z) => z.datum).sort(), sollStunden: [mo, di].filter((t) => x("sollMinutenTag('" + t + "')")) };
+  });
+  if (r5.knopf || JSON.stringify(r5.plan) !== JSON.stringify(r5.soll) || JSON.stringify(r5.stunden) !== JSON.stringify(r5.sollStunden)) fehl.push("TT-05 Tag außerhalb herausgenommen: " + JSON.stringify(r5));
+  /* TTQ-01 (Inhaber): Betriebsurlaub für drei, einer gibt einen Tag zurück – nur er verliert ihn */
+  const rq1 = await a.seite.evaluate(async () => {
+    const tt = window.__tt, x = window.__t.x, db = window.__db.tabellen; tt.leeren();
+    const ids = ["u_tech_test_at", "u_admin_test_at", "u_inhaber_test_at"], mo = x("plusTage(montagVon(isoLokal(new Date())),7)"), mi = x("plusTage('" + mo + "',2)"), fr = x("plusTage('" + mo + "',4)");
+    const u = (await x("Store.sb.from('planung').insert(" + JSON.stringify({ art: "termin", kategorie: "urlaub", titel: "Betriebsurlaub", datum: mo, datum_bis: fr, wer: ids, wer_namen: ["Testtechniker", "Testadmin", "Testinhaber"], status: "genehmigt" }) + ").select('*')")).data[0];
+    const aus = {}; aus[mi] = { art: "zurueck", von: "Testtechniker", zeit: new Date().toISOString() };   /* Antwort im älteren Format (nur Name) */
+    await x("Store.sb.from('planung').update(" + JSON.stringify({ ausnahmen: aus }) + ").eq('id','" + u.id + "').select('*')");
+    await tt.laden();
+    const vorher = db.arbeitszeiten.filter((z) => z.art === "urlaub").length;
+    x("planEditor(PLANUNG.filter(function(p){ return p.id==='" + u.id + "'; })[0])"); await tt.warte(150);
+    const knopf = [...tt.dialog().querySelectorAll("button")].find((b) => /zurückgegeben von Testtechniker/.test(b.textContent));
+    if (knopf) { knopf.click(); await tt.warte(600); }
+    const amMi = (uid) => db.planung.some((p) => (p.wer || []).includes(uid) && x("planTage(" + JSON.stringify(p) + ")").includes(mi));
+    const std = (uid) => db.arbeitszeiten.filter((z) => z.art === "urlaub" && z.user_id === uid).map((z) => z.datum).sort();
+    return { knopf: !!knopf, vorher, tech: { mi: amMi(ids[0]), std: std(ids[0]).length }, admin: { mi: amMi(ids[1]), std: std(ids[1]).length }, inhaber: { mi: amMi(ids[2]), std: std(ids[2]).length } };
+  });
+  if (!rq1.knopf || rq1.tech.mi || rq1.tech.std !== 4 || !rq1.admin.mi || rq1.admin.std !== 5 || !rq1.inhaber.mi || rq1.inhaber.std !== 5) fehl.push("TTQ-01 Betriebsurlaub: Tag für alle herausgenommen: " + JSON.stringify(rq1));
+  if (a.fehler.length) fehl.push("Laufzeitfehler (Inhaber): " + a.fehler.join("; "));
+  await a.zu();
+  /* Techniker: gemeinsamer Kurs mit einer Kollegin */
+  const b = await oeffnen(KONTEN.techniker);
+  await ttHilfen(b);
+  const kurs = async (antwort) => b.seite.evaluate(async (antwort) => {
+    const tt = window.__tt, x = window.__t.x, db = window.__db.tabellen; tt.leeren();
+    const ich = tt.ich(), kollegin = "u_admin_test_at", heute = x("isoLokal(new Date())"), gestern = x("plusTage('" + heute + "',-1)"), morgen = x("plusTage('" + heute + "',1)");
+    db.planung.push({ id: "ttk", art: "termin", kategorie: "schule", titel: "Kältekurs", datum: gestern, datum_bis: morgen, wer: [ich, kollegin], wer_namen: ["Testtechniker", "Testadmin"], status: "offen", erstellt_von: "u_inhaber_test_at", erstellt: new Date().toISOString(), privat: false, ausnahmen: {} });
+    [heute, morgen].forEach((t) => db.arbeitszeiten.push({ id: "ttk" + t, user_id: kollegin, name: "Testadmin", datum: t, minuten: 480, art: "schule", quelle: "kalender", planung_id: "ttk", pause_min: 0 }));
+    await tt.laden();
+    const offenVorher = x("abwesenheitOffen('" + heute + "','" + kollegin + "').length");
+    x("zeitEditor(null, {datum:'" + heute + "', beginn:'08:00', ende:'10:00', art:'arbeit', bereich:'werkstatt'})"); await tt.warte(150);
+    tt.ok(tt.dialog()).click(); await tt.warte(300);
+    const knopf = [...tt.dialog().querySelectorAll("button")].find((k) => new RegExp(antwort).test(k.textContent));
+    if (knopf) { knopf.click(); await tt.warte(700); }
+    const amHeute = (uid) => db.planung.some((p) => (p.wer || []).includes(uid) && x("planTage(" + JSON.stringify(p) + ")").includes(heute));
+    return { knopf: !!knopf, offenVorher, offenKollegin: x("abwesenheitOffen('" + heute + "','" + kollegin + "').length"), offenIch: x("abwesenheitOffen('" + heute + "').length"),
+      kolleginHeute: amHeute(kollegin), ichHeute: amHeute(ich), ichMorgen: db.planung.some((p) => (p.wer || []).includes(ich) && x("planTage(" + JSON.stringify(p) + ")").includes(morgen)),
+      kolleginStunden: db.arbeitszeiten.filter((z) => z.user_id === kollegin).map((z) => z.datum).sort(), heute, morgen };
+  }, antwort);
+  /* TTQ-02: „Nur kurz eingesprungen“ gilt nur für mich – bei der Kollegin bleibt der Tag ungeklärt */
+  const rq2 = await kurs("Nur kurz eingesprungen");
+  if (!rq2.knopf || rq2.offenVorher !== 1 || rq2.offenKollegin !== 1 || rq2.offenIch !== 0) fehl.push("TTQ-02 Antwort gilt für alle: " + JSON.stringify(rq2));
+  /* TTQ-01 (Techniker): „für diesen Tag beenden“ – nur ich verliere den Tag, die Kollegin behält Kurs und Stunden */
+  const rq1b = await kurs("für diesen Tag beenden");
+  if (!rq1b.knopf || rq1b.ichHeute || !rq1b.ichMorgen || !rq1b.kolleginHeute || JSON.stringify(rq1b.kolleginStunden) !== JSON.stringify([rq1b.heute, rq1b.morgen].sort()))
+    fehl.push("TTQ-01 Kurs für zwei: Tag für beide beendet: " + JSON.stringify(rq1b));
+  if (b.fehler.length) fehl.push("Laufzeitfehler (Techniker): " + b.fehler.join("; "));
+  await b.zu();
   pruefe(!fehl.length, fehl.join(" | "));
 });
 

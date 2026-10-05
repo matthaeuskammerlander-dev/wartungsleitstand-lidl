@@ -24206,7 +24206,7 @@ Object.assign(RUNDGAENGE, {
       text:RG_LISTE(["Woche mit Einträgen, Feiertagen und „⚠ über 12 h“; ‹ › blättern, „Monatsliste (PDF)“.",
         "<strong>+ Zeit erfassen</strong>: Art (Arbeit, Urlaub, Krankenstand, Feiertag, Zeitausgleich, Schule …), Bereich, von/bis/Pause oder Dauer, Was, Markt, Projekt – Vorschläge „laut Kalender“ und „laut deinen Protokollen“ (Urlaub, Krankenstand … nur als Hinweis – sie stehen von selbst in den Stunden).",
         "Geplante Termine: <strong>„erfassen“</strong>; 📅 plant die Arbeit im Voraus. Urlaub, Krankenstand, Schule, Zeitausgleich: „automatisch“ bzw. „nach Genehmigung“.",
-        "<strong>Urlaub, Krankenstand, Schule oder Zeitausgleich und trotzdem Arbeit?</strong> Beim Einstempeln bzw. Erfassen fragt die App gleich: „Nur kurz eingesprungen“ (beides zählt), „Urlaubstag zurückgeben“ (der Chef nimmt ihn heraus) oder „für diesen Tag beenden“. Ungeklärt: ⚠ beim Tag.",
+        "<strong>Urlaub, Krankenstand, Schule oder Zeitausgleich und trotzdem Arbeit?</strong> Beim Einstempeln bzw. Erfassen fragt die App gleich: „Nur kurz eingesprungen“ (beides zählt), „Urlaubstag zurückgeben“ (der Chef nimmt ihn heraus) oder „für diesen Tag beenden“ – die Antwort gilt nur für dich; stehen mehrere im Eintrag (Betriebsurlaub, Kurs), bleiben die anderen eingetragen. Ungeklärt: ⚠ beim Tag.",
         "Gestempelt und geplant, aber nicht zugeordnet: beim Tag <strong>„⇆ Mit Kalender abgleichen“</strong>; beim Termin steht dann „⏱ abgleichen“ statt „erfassen“ – so wird nichts doppelt erfasst.",
         "<strong>Abstand zum Soll</strong>: je Tag „+0:30“, „−1:00“ oder heute „noch 2:00“; unten die Woche („bis gestern …, noch … bis zum Wochensoll“) und ebenso der laufende Monat („noch … bis zum Monatssoll“). Nur zur Info – Überstunden zählen als Monatsbilanz."])+
       RG_HG(["Zeichen: ⏱ gestempelt, ⏱✎ geändert/nachgetragen, 🔒 bestätigt, ⚠ Überschneidung.",
@@ -29296,8 +29296,9 @@ function viewKalender(){
       rb.onclick=function(){ springe({reiter:"stunden", finde:function(){ return [].slice.call(document.querySelectorAll(".card h2")).filter(function(h){ return /^Reisekosten aller/.test(h.textContent); }).map(function(h){ return h.closest(".card"); })[0]; }, block:"start"}); };
       td.querySelector(".stack").appendChild(rb); }); }
   if(istInhaber()) PLANUNG.forEach(function(e){ if(e.kategorie!=="urlaub") return;
-    Object.keys(e.ausnahmen||{}).filter(function(t){ return e.ausnahmen[t].art==="zurueck"; }).forEach(function(t){
-      var ub=el('<button type="button" class="note warnbox" style="text-align:left;cursor:pointer;font:inherit">🗓 '+esc(planWerText(e)||"")+": Urlaubstag "+esc(dfmt(t))+" zurückgegeben – im Urlaub herausnehmen</button>");
+    /* je Person und nur Tage, die noch im Urlaub liegen (nach dem Kürzen bleibt eine alte Antwort sonst ewig stehen) */
+    abwesenheitAusnahmen(e).filter(function(x){ return x.art==="zurueck" && planTage(e).indexOf(x.tag)>=0; }).forEach(function(x){
+      var ub=el('<button type="button" class="note warnbox" style="text-align:left;cursor:pointer;font:inherit">🗓 '+esc(x.von||planWerText(e)||"")+": Urlaubstag "+esc(dfmt(x.tag))+" zurückgegeben – im Urlaub herausnehmen</button>");
       ub.onclick=function(){ planEditor(e); }; td.querySelector(".stack").appendChild(ub); }); });
   if(fzBuero() && wzAn()){ if(!wzGeladen) wzNachladen();
     wzToDo().forEach(function(t){ var wb=el('<button type="button" class="note warnbox" style="text-align:left;cursor:pointer;font:inherit">'+esc(t)+"</button>");
@@ -30170,13 +30171,20 @@ function planEditor(e, vorgabe){
   if(!neu && a.art==="termin" && PLAN_ABWESEND.indexOf(a.kategorie)>=0 && !demo() && (istInhaber() || (a.kategorie!=="urlaub" && (planIstMeins(a) || Rolle.name==="admin")))){
     var tk=el('<div class="card" style="box-shadow:none;margin-top:12px"><div class="pad stack" style="gap:8px"><h2>Einzelne Tage herausnehmen</h2>'+
       '<div class="muted" style="font-size:12.5px">Wurde an einem Tag doch gearbeitet: den Tag herausnehmen – die Stunden passen sich an.</div></div></div>');
-    var zu=Object.keys(a.ausnahmen||{}).filter(function(t){ return a.ausnahmen[t].art==="zurueck"; }).sort();
-    zu.forEach(function(t){ var b=el('<button class="btn sm" type="button" style="align-self:flex-start">'+esc(dfmt(t))+" herausnehmen (zurückgegeben von "+esc(a.ausnahmen[t].von||"")+")</button>");
-      b.onclick=function(){ b.disabled=true; planTagHerausnehmen(a, t).then(function(ok){ if(ok) v.zu(); else b.disabled=false; }, function(x){ b.disabled=false; toast("Nicht geändert: "+technikDeutsch(x.message||String(x))); }); };
+    /* zurückgegebene Tage: je Person, nur solange der Tag noch im Zeitraum liegt – herausgenommen nur für diese Person */
+    var zu=abwesenheitAusnahmen(a).filter(function(x){ return x.art==="zurueck" && planTage(a).indexOf(x.tag)>=0; });
+    zu.forEach(function(x){ var b=el('<button class="btn sm" type="button" style="align-self:flex-start">'+esc(dfmt(x.tag))+" herausnehmen (zurückgegeben von "+esc(x.von||"")+")</button>");
+      b.onclick=function(){ b.disabled=true; planTagHerausnehmen(a, x.tag, x.uid).then(function(ok){ if(ok) v.zu(); else b.disabled=false; }, function(y){ b.disabled=false; toast("Nicht geändert: "+technikDeutsch(y.message||String(y))); }); };
       tk.querySelector(".stack").appendChild(b); });
-    var hr=el('<div class="rowflex" style="gap:6px"><input type="date" style="width:auto" min="'+esc(a.datum)+'" max="'+esc(a.datum_bis||a.datum)+'"><button class="btn ghost sm" type="button">Tag herausnehmen</button></div>');
+    /* mehrere Personen: für wen? Büro wie bisher „für alle“, sonst nur für sich selbst */
+    var tkPers=(a.wer||[]).length>1 ? a.wer : [], tkBuero=istInhaber() || Rolle.name==="admin", tkIch=meineKennung();
+    var hr=el('<div class="rowflex" style="gap:6px;flex-wrap:wrap"><input type="date" style="width:auto" min="'+esc(a.datum)+'" max="'+esc(a.datum_bis||a.datum)+'">'+
+      (tkPers.length ? '<select data-fuer style="width:auto">'+(tkBuero || tkPers.indexOf(tkIch)<0 ? '<option value="">für alle</option>' : "")+tkPers.map(function(u, k){
+        return '<option value="'+esc(u)+'"'+(!tkBuero && u===tkIch?" selected":"")+">nur "+esc((a.wer_namen||[])[k]||"?")+"</option>"; }).join("")+"</select>" : "")+
+      '<button class="btn ghost sm" type="button">Tag herausnehmen</button></div>');
     hr.querySelector("button").onclick=function(){ var t=hr.querySelector("input").value; if(!t || t<a.datum || t>(a.datum_bis||a.datum)){ toast("Bitte einen Tag aus dem Zeitraum wählen."); return; }
-      var b2=this; b2.disabled=true; planTagHerausnehmen(a, t).then(function(ok){ if(ok) v.zu(); else b2.disabled=false; }, function(x){ b2.disabled=false; toast("Nicht geändert: "+technikDeutsch(x.message||String(x))); }); };
+      var fuer=hr.querySelector("[data-fuer]");
+      var b2=this; b2.disabled=true; planTagHerausnehmen(a, t, fuer ? fuer.value||null : null).then(function(ok){ if(ok) v.zu(); else b2.disabled=false; }, function(x){ b2.disabled=false; toast("Nicht geändert: "+technikDeutsch(x.message||String(x))); }); };
     tk.querySelector(".stack").appendChild(hr);
     v.inhalt.appendChild(tk);
   }
@@ -30572,24 +30580,51 @@ function heuteFuerMichKarte(){
 /* ---------- Abwesenheit und Arbeit am selben Tag (Büro 04.10.2026: „für sowas sollte man vorbereitet sein“) ----------
    Beim Einstempeln und beim Erfassen von Arbeit an einem Tag mit Urlaub, Krankenstand, Schule oder Zeitausgleich
    fragt die App gleich: kurz eingesprungen (beides zählt) – Urlaubstag zurückgeben (der Inhaber nimmt ihn heraus) –
-   Krankenstand/Schule/Zeitausgleich für diesen Tag beenden. Die Antwort steht je Tag in planung.ausnahmen
+   Krankenstand/Schule/Zeitausgleich für diesen Tag beenden. Die Antwort steht je Tag und Person in planung.ausnahmen
    (tools/abwesenheit-arbeit.sql). Was ungeklärt bleibt: ⚠ beim Tag und in der Prüfung vor dem Bestätigen. */
 function abwesenheitAm(tag, uid){
   uid=uid||meineKennung();
   return PLANUNG.filter(function(e){ return planStundenAuto(e) && planTage(e).indexOf(tag)>=0 &&
     ((e.wer||[]).indexOf(uid)>=0 || (!(e.wer||[]).length && e.erstellt_von===uid)); });
 }
-function abwesenheitAusnahme(e, tag){ return ((e.ausnahmen||{})[tag])||null; }
-function abwesenheitOffen(tag, uid){ return abwesenheitAm(tag, uid).filter(function(e){ return !abwesenheitAusnahme(e, tag); }); }
+/* Die Antwort gilt je Tag UND Person – ein Eintrag kann mehrere Personen haben (Betriebsurlaub, Kurs für zwei):
+   ausnahmen[Tag] = {<user_id>: {art, von, zeit}, …}. Ältere Antworten {art, von, zeit} (ohne Person) gelten wie bisher für alle. */
+function abwesenheitAusnahme(e, tag, uid){
+  var a=(e.ausnahmen||{})[tag]; if(!a) return null;
+  if(typeof a.art==="string") return a;
+  return a[uid||meineKennung()]||null;
+}
+/* alle Antworten eines Eintrags als Liste {tag, uid, art, von, zeit} – bei älteren die Person über den Namen */
+function abwesenheitAusnahmen(e){
+  var l=[], wer=e.wer||[];
+  Object.keys(e.ausnahmen||{}).sort().forEach(function(t){ var a=e.ausnahmen[t]; if(!a) return;
+    if(typeof a.art==="string"){ var i=(e.wer_namen||[]).indexOf(a.von);
+      l.push(Object.assign({tag:t, uid:i>=0 ? wer[i] : wer.length===1 ? wer[0] : !wer.length ? e.erstellt_von : null}, a)); }
+    else Object.keys(a).forEach(function(u){ l.push(Object.assign({tag:t, uid:u}, a[u])); });
+  });
+  return l;
+}
+function abwesenheitOffen(tag, uid){ return abwesenheitAm(tag, uid).filter(function(e){ return !abwesenheitAusnahme(e, tag, uid); }); }
 function abwesenheitAusnahmeSetzen(e, tag, art){
-  var a=Object.assign({}, e.ausnahmen||{}); a[tag]={art:art, von:meinName(), zeit:new Date().toISOString()};
+  var a=Object.assign({}, e.ausnahmen||{}), alt=a[tag], ich=meineKennung(), m={};
+  /* ältere Antwort am selben Tag: der Person zuordnen, die sie gegeben hat (über den Namen) */
+  if(alt && typeof alt.art==="string"){ var ai=(e.wer_namen||[]).indexOf(alt.von); if(ai>=0 && (e.wer||[])[ai]!==ich) m[e.wer[ai]]=alt; }
+  else if(alt) m=Object.assign({}, alt);
+  m[ich]={art:art, von:meinName(), zeit:new Date().toISOString()}; a[tag]=m;
   if(demo()){ e.ausnahmen=a; return Promise.resolve(e); }
   return mitFrist(Store.sb.from("planung").update({ausnahmen:a}).eq("id", e.id).select("*"), 15000).then(function(r){
     if(r.error || !(r.data||[]).length) throw new Error(r.error ? r.error.message : "keine Berechtigung");
     var g=r.data[0]; PLANUNG=PLANUNG.filter(function(y){ return y.id!==g.id; }).concat([g]); return g; });
 }
-/* einen Tag aus einer (mehrtägigen) Abwesenheit herausnehmen – die Stunden passt der Trigger an */
-function planTagHerausnehmen(e, tag){
+/* einen Tag aus einer (mehrtägigen) Abwesenheit herausnehmen – die Stunden passt der Trigger an.
+   uid: nur für diese Person (sie hat gearbeitet bzw. den Tag zurückgegeben) – stehen weitere Personen im Eintrag, behalten sie ihn. */
+function planTagHerausnehmen(e, tag, uid){
+  /* Präsentation: keine Anfrage an die Datenbank – auch keine vorbereiten (die Kette unten schickt sonst schon ab) */
+  if(demo()){ toast("In der Präsentation wird nichts gespeichert."); return Promise.resolve(false); }
+  /* nur ein Tag im Zeitraum – eine Antwort von vor dem Kürzen hätte den Eintrag sonst verlängert */
+  if(planTage(e).indexOf(tag)<0) return Promise.reject(new Error(dfmt(tag)+" liegt nicht (mehr) im Zeitraum dieses Eintrags."));
+  var personen=(e.wer||[]).length ? e.wer : [e.erstellt_von];
+  if(uid && personen.length>1 && personen.indexOf(uid)>=0) return planPersonHerausloesen(e, tag, uid);
   var bis=e.datum_bis && e.datum_bis>e.datum ? e.datum_bis : e.datum, q;
   var a=Object.assign({}, e.ausnahmen||{}); delete a[tag];
   if(e.datum===bis){
@@ -30602,24 +30637,58 @@ function planTagHerausnehmen(e, tag){
     /* in der Mitte: der erste Teil bis zum Vortag, ein zweiter ab dem Folgetag */
     var vt=plusTage(tag,-1), ft=plusTage(tag,1), a2={};
     Object.keys(a).forEach(function(k){ if(k>tag){ a2[k]=a[k]; delete a[k]; } });
+    /* niemand eingetragen („gilt als deins“): die Kopie bekommt die Person ausdrücklich – angelegt wird sie sonst von dem,
+       der herausnimmt, und der Urlaub (samt Stunden) gehörte danach ihm */
     var kopie={art:e.art, kategorie:e.kategorie, titel:e.titel, details:e.details||null, datum:ft, datum_bis:ft===bis?null:bis, beginn:e.beginn||null, ende:e.ende||null,
-      wer:e.wer||[], wer_namen:e.wer_namen||[], status:e.status, privat:false, ausnahmen:a2, erstellt_name:meinName(), geaendert_von:meinName()};
+      wer:(e.wer||[]).length ? e.wer : [e.erstellt_von], wer_namen:(e.wer||[]).length ? (e.wer_namen||[]) : [e.erstellt_name||""],
+      status:e.status, privat:false, ausnahmen:a2, erstellt_name:meinName(), geaendert_von:meinName()};
     q=Store.sb.from("planung").update({datum_bis:vt===e.datum?null:vt, ausnahmen:a, geaendert_von:meinName()}).eq("id", e.id).select("*")
       .then(function(r){ if(r.error || !(r.data||[]).length) return r; return Store.sb.from("planung").insert(kopie).select("*").then(function(r2){ return r2.error ? r2 : {data:(r.data||[]).concat(r2.data||[]), error:null}; }); });
   }
-  if(demo()){ toast("In der Präsentation wird nichts gespeichert."); return Promise.resolve(false); }
+  return planHerausnehmenFertig(e, tag, q);
+}
+function planHerausnehmenFertig(e, tag, q, nurFuer){
   return mitFrist(Promise.resolve(q), 20000).then(function(r){
     if(r.error) throw new Error(r.error.message);
     if(!(r.data||[]).length) throw new Error("Nicht geändert – keine Berechtigung.");
     PLANUNG=PLANUNG.filter(function(y){ return y.id!==e.id; }).concat((r.data||[]).filter(function(g){ return g.kategorie; }));
-    toast(planKat(e.kategorie)[1]+": "+dfmt(tag)+" herausgenommen – die Stunden werden angepasst."); planGeaendert(); return true;
+    toast(planKat(e.kategorie)[1]+": "+dfmt(tag)+" herausgenommen"+(nurFuer?" – nur für "+nurFuer+", die anderen bleiben eingetragen":"")+" – die Stunden werden angepasst."); planGeaendert(); return true;
   });
+}
+/* mehrere Personen im Eintrag: nur diese eine Person verliert den Tag. Sie wird aus dem Eintrag genommen (der Rest bleibt,
+   wie er ist – auch die Stunden der anderen) und bekommt für ihre übrigen Tage eigene Einträge. Reihenfolge wichtig: erst
+   herausnehmen (der Trigger entfernt ihre Stunden), dann ihre Einträge anlegen (der Trigger legt die Stunden neu an). */
+function planPersonHerausloesen(e, tag, uid){
+  var bis=e.datum_bis && e.datum_bis>e.datum ? e.datum_bis : e.datum, i=(e.wer||[]).indexOf(uid), name=(e.wer_namen||[])[i]||"";
+  /* Antworten: die der Person ziehen mit um, die der anderen bleiben am Eintrag */
+  var bleibt={}, mit={};
+  Object.keys(e.ausnahmen||{}).forEach(function(t){ var x=e.ausnahmen[t]; if(!x) return;
+    if(typeof x.art==="string"){ if(x.von===name){ if(t!==tag) (mit[t]={})[uid]=x; } else bleibt[t]=x; return; }
+    var r=Object.assign({}, x); if(r[uid] && t!==tag) (mit[t]={})[uid]=r[uid]; delete r[uid]; if(Object.keys(r).length) bleibt[t]=r; });
+  var teile=[];
+  if(tag>e.datum) teile.push([e.datum, plusTage(tag,-1)]);
+  if(tag<bis) teile.push([plusTage(tag,1), bis]);
+  var neu=teile.map(function(t){ var au={}; Object.keys(mit).forEach(function(k){ if(k>=t[0] && k<=t[1]) au[k]=mit[k]; });
+    return {art:e.art, kategorie:e.kategorie, titel:e.titel, details:e.details||null, datum:t[0], datum_bis:t[1]>t[0]?t[1]:null, beginn:e.beginn||null, ende:e.ende||null,
+      wer:[uid], wer_namen:[name], status:e.status, privat:false, ausnahmen:au, erstellt_name:meinName(), geaendert_von:meinName()}; });
+  var ohne={wer:e.wer.filter(function(u){ return u!==uid; }), wer_namen:(e.wer_namen||[]).filter(function(n, k){ return k!==i; }), ausnahmen:bleibt, geaendert_von:meinName()};
+  var q=Store.sb.from("planung").update(ohne).eq("id", e.id).select("*").then(function(r){
+    if(r.error || !(r.data||[]).length || !neu.length) return r;
+    return Store.sb.from("planung").insert(neu).select("*").then(function(r2){
+      if(!r2.error) return {data:(r.data||[]).concat(r2.data||[]), error:null};
+      /* die eigenen Einträge ließen sich nicht anlegen: zurück wie vorher, damit die Person ihre Abwesenheit nicht ganz verliert */
+      return Store.sb.from("planung").update({wer:e.wer, wer_namen:e.wer_namen||[], ausnahmen:e.ausnahmen||{}, geaendert_von:meinName()}).eq("id", e.id).select("*")
+        .then(function(){ return r2; }, function(){ return r2; });
+    });
+  });
+  return planHerausnehmenFertig(e, tag, q, name||"diese Person");
 }
 /* vor dem Einstempeln / Erfassen von Arbeit: ist an diesem Tag Abwesenheit eingetragen? Dann fragen, sonst gleich weiter */
 function abwesenheitPruefen(tag, weiter){
   var offen=abwesenheitOffen(tag);
   if(!offen.length || nurLesen()){ weiter(); return; }
   var e=offen[0], k=planKat(e.kategorie), urlaub=e.kategorie==="urlaub";
+  var mitAnderen=(e.wer||[]).length>1 ? " – nur für dich, die anderen bleiben eingetragen" : "";
   var v=ansichtOeffnen(k[1]+" eingetragen");
   v.schritt.textContent=WOCHENTAGE[wochentagIdx(tag)]+" "+dfmt(tag)+" · "+planTitel(e)+(e.datum_bis&&e.datum_bis!==e.datum?" ("+dfmt(e.datum)+"–"+dfmt(e.datum_bis)+")":"");
   v.inhalt.appendChild(el('<div class="note" style="font-size:13.5px">An diesem Tag ist <strong>'+esc(k[1])+"</strong> eingetragen – und er steht schon mit dem Tagessoll in den Stunden. "+
@@ -30633,9 +30702,9 @@ function abwesenheitPruefen(tag, weiter){
   knopf("<strong>Nur kurz eingesprungen</strong><br><span style=\"font-weight:400;font-size:12.5px\">"+esc(k[1])+" bleibt, die Arbeit kommt dazu</span>", "ghost",
     function(){ return abwesenheitAusnahmeSetzen(e, tag, "eingesprungen"); });
   if(urlaub){
-    knopf("<strong>Ich arbeite – Urlaubstag zurückgeben</strong><br><span style=\"font-weight:400;font-size:12.5px\">"+(istInhaber()?"der Tag wird aus dem Urlaub genommen":"der Chef bekommt eine Nachricht und nimmt den Tag aus dem Urlaub")+"</span>", "ghost",
+    knopf("<strong>Ich arbeite – Urlaubstag zurückgeben</strong><br><span style=\"font-weight:400;font-size:12.5px\">"+(istInhaber()?"der Tag wird aus dem Urlaub genommen"+mitAnderen:"der Chef bekommt eine Nachricht und nimmt den Tag aus dem Urlaub")+"</span>", "ghost",
       function(){
-        if(istInhaber()) return planTagHerausnehmen(e, tag);
+        if(istInhaber()) return planTagHerausnehmen(e, tag, meineKennung());
         return abwesenheitAusnahmeSetzen(e, tag, "zurueck").then(function(){
           if(chatAn()) chatTeamLaden().then(function(t){ (t||[]).filter(function(p){ return p.rolle==="inhaber"; }).forEach(function(p, i){
             mitFrist(Store.sb.from("chat").insert({id:"c_"+Date.now().toString(36)+i+Math.random().toString(36).slice(2,8), von:Store.benutzer.id, von_name:meinName(),
@@ -30644,8 +30713,8 @@ function abwesenheitPruefen(tag, weiter){
           toast("Der Chef bekommt eine Nachricht – bis er den Tag herausnimmt, zählt beides.");
         });
       });
-  } else knopf("<strong>"+esc(k[1])+" für diesen Tag beenden</strong><br><span style=\"font-weight:400;font-size:12.5px\">der Tag wird aus dem Eintrag genommen, die Stunden passen sich an</span>", "ghost",
-    function(){ return planTagHerausnehmen(e, tag); });
+  } else knopf("<strong>"+esc(k[1])+" für diesen Tag beenden</strong><br><span style=\"font-weight:400;font-size:12.5px\">der Tag wird aus dem Eintrag genommen"+mitAnderen+", die Stunden passen sich an</span>", "ghost",
+    function(){ return planTagHerausnehmen(e, tag, meineKennung()); });
   var ab=el('<button class="btn ghost" type="button">Abbrechen</button>'); ab.onclick=function(){ v.zu(); }; v.fuss.appendChild(ab);
   v.inhalt.appendChild(r);
 }
@@ -31112,7 +31181,7 @@ function monatLuecken(liste, uid, monat){
       if(!z.length && !abw.length && !pl.some(function(e){ return (e.privat||e.kategorie==="privat") && !e.beginn && planTage(e).indexOf(tag)>=0; })) r.ohne.push(tag);
       abw.forEach(function(e){ if(!z.some(function(x){ return x.art===e.kategorie || x.planung_id===e.id; })) r.abwesend.push(tag+" "+planKat(e.kategorie)[1]); });
       /* Abwesenheit und Arbeit am selben Tag: geklärt (eingesprungen) – sonst Hinweis; Urlaubstag zurückgegeben: der Kalender muss noch angepasst werden */
-      if(z.some(function(x){ return x.art==="arbeit"; })) abw.forEach(function(e){ var au=abwesenheitAusnahme(e, tag);
+      if(z.some(function(x){ return x.art==="arbeit"; })) abw.forEach(function(e){ var au=abwesenheitAusnahme(e, tag, uid);
         if(!au) r.doppelt.push(tag+" "+planKat(e.kategorie)[1]); else if(au.art==="zurueck") r.zurueck.push(tag); });
     }
     pl.forEach(function(e){
