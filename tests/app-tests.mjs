@@ -1679,6 +1679,54 @@ test("Tiefentest reisekosten: Kontowechsel und Nachladen – keine fremden Reise
   await a.zu();
 });
 
+test("Tiefentest reisekosten: Monat abgeben, Konto, ausbezahlt, Kilometergeld-Satz – ehrliche Rückmeldung, auch ohne Verbindung", async () => {
+  const a = await rkSeite(KONTEN.techniker);
+  const r = await a.seite.evaluate(async () => {
+    const x = window.__t.x, db = window.__db.tabellen, { warte, karte, knopf } = window.__rk;
+    const heute = x("isoLokal(new Date())"), fehlt = [], p = (bed, text) => { if (!bed) fehlt.push(text); };
+    const meine = () => karte(/^Reisekosten und Kilometergeld/);
+    db.auslagen.push({ id: "tkA1", user_id: "u_tech_test_at", name: "Testtechniker", art: "beleg", datum: heute, text: "Parken Test", kategorie: "parken", betrag: 11.5, foto: "u_tech_test_at/a.jpg", status: "offen", erstellt: new Date().toISOString() });
+    window.__rk.toastSpion();
+    x("S.view='stunden'; render()"); await warte(700);
+    /* RK-07: am zweiten Gerät schon abgegeben – das Abgeben trifft keine Zeile */
+    db.auslagen.find((z) => z.id === "tkA1").status = "eingereicht";
+    let chatVorher = db.chat.length;
+    knopf(meine(), /Monat abgeben/).click(); await warte(700);
+    p(!window.__toasts.some((t) => /^Abgegeben/.test(t)) && db.chat.length === chatVorher && window.__toasts.some((t) => /schon abgegeben/i.test(t)),
+      "RK-07 Abgeben traf keine Zeile, trotzdem „Abgegeben“/Nachricht an den Inhaber: " + JSON.stringify({ toasts: window.__toasts, chat: db.chat.length - chatVorher }));
+    /* RK-10: ohne Verbindung – Monat abgeben und Konto speichern melden sich */
+    db.auslagen.push({ id: "tkA2", user_id: "u_tech_test_at", name: "Testtechniker", art: "beleg", datum: heute, text: "Maut Test", kategorie: "maut", betrag: 4, foto: "u_tech_test_at/m.jpg", status: "offen", erstellt: new Date().toISOString() });
+    await x("akLaden(true)"); x("render()"); await warte(300);
+    window.__toasts.length = 0; window.__netzWeg = true;
+    const ab = knopf(meine(), /Monat abgeben/); ab.click(); await warte(400);
+    const abgeben = window.__toasts.splice(0);
+    knopf(meine(), /Konto speichern/).click(); await warte(400);
+    const konto = window.__toasts.splice(0);
+    window.__netzWeg = false;
+    p(abgeben.some((t) => /Verbindung/.test(t)), "RK-10 „Monat abgeben“ ohne Verbindung ohne Rückmeldung: " + JSON.stringify(abgeben));
+    p(konto.some((t) => /Verbindung/.test(t)), "RK-10 „Konto speichern“ ohne Verbindung ohne Rückmeldung: " + JSON.stringify(konto));
+    /* Inhaber: ausbezahlt und Kilometergeld-Satz ohne Verbindung */
+    await window.__rk.anmelden("inhaber@test.at", "inhaber");
+    x("S.view='stunden'; AK_ALLE.monat=''; render()"); await warte(700);
+    const alle = karte(/^Reisekosten aller/);
+    window.__toasts.length = 0; window.__netzWeg = true;
+    const az = [...alle.querySelectorAll("button")].find((b) => b.textContent === "ausbezahlt");
+    az.click(); await warte(400);
+    const ausbezahlt = window.__toasts.splice(0), grau = az.disabled;
+    alle.querySelector("[data-satz]").value = "0,42"; alle.querySelector("[data-satzok]").click(); await warte(400);
+    const satz = window.__toasts.splice(0);
+    window.__netzWeg = false;
+    p(ausbezahlt.some((t) => /Verbindung/.test(t)) && !grau, "RK-10 „ausbezahlt“ ohne Verbindung: keine Meldung oder Knopf bleibt grau: " + JSON.stringify({ ausbezahlt, grau }));
+    p(satz.some((t) => /Verbindung/.test(t)), "RK-10 Kilometergeld-Satz ohne Verbindung ohne Rückmeldung: " + JSON.stringify(satz));
+    p(db.auslagen.every((z) => z.status !== "ausbezahlt"), "ohne Verbindung trotzdem ausbezahlt");
+    return { rolle: x("Rolle.name"), fehlt };
+  });
+  pruefe(r.rolle === "inhaber", "Aufbau falsch: " + JSON.stringify(r));
+  pruefe(!r.fehlt.length, r.fehlt.join(" | "));
+  pruefe(!a.fehler.length, "Laufzeitfehler: " + a.fehler.join("; "));
+  await a.zu();
+});
+
 /* ================================================================ Ablauf ================================================================ */
 const filterText = process.argv.slice(2).find((x) => !x.startsWith("--"));
 const filter = filterText ? new RegExp(filterText, "i") : null;

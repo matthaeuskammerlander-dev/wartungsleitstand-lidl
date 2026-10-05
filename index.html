@@ -31534,16 +31534,23 @@ function akEditor(z, vorgabe){
   };
 }
 /* ---------- Monat abgeben: alles Offene → abgegeben, Nachricht an den Inhaber ---------- */
+var akAbgabeLaeuft=false;   /* zweites Tippen während des Speicherns gibt nicht doppelt ab */
 function akAbgeben(monat){
+  if(akAbgabeLaeuft){ toast("Wird gerade abgegeben – einen Moment."); return; }
   var l=akImMonat(AUSLAGEN, monat).filter(function(z){ return z.status==="offen"; }), s=akSummen(l);
   if(!l.length){ toast("In diesem Monat ist nichts offen."); return; }
   if(!AK_KONTO || !AK_KONTO.iban){ if(!window.confirm("Es ist noch kein Konto für die Auszahlung eingetragen (unten „Konto für die Auszahlung“).\n\nTrotzdem abgeben?")) return; }
   if(!window.confirm("Reisekosten "+MONATE_L[+monat.slice(5,7)]+" abgeben?\n\n"+s.belege.length+" Belege: "+geld(s.summeBelege)+" €\n"+
     (s.kms.length?String(s.km).replace(".",",")+" km Privatauto: "+geld(s.summeKm)+" €\n":"")+"zusammen: "+geld(s.gesamt)+" €\n\nDanach ändern kann es nur noch der Chef.")) return;
   var von=monat+"-01", bis=plusMonate(von,1);
-  Store.sb.from("auslagen").update({status:"eingereicht"}).eq("user_id", Store.benutzer.id).eq("status","offen").gte("datum", von).lt("datum", bis).select("*").then(function(r){
+  akAbgabeLaeuft=true;
+  mitFrist(Store.sb.from("auslagen").update({status:"eingereicht"}).eq("user_id", Store.benutzer.id).eq("status","offen").gte("datum", von).lt("datum", bis).select("*"), 20000).then(function(r){
+    akAbgabeLaeuft=false;
     if(r.error){ toast("Nicht abgegeben: "+technikDeutsch(r.error.message)); return; }
+    /* keine Zeile getroffen: schon abgegeben (anderes Gerät) – keine Erfolgsmeldung, keine Nachricht an den Chef */
+    if(!(r.data||[]).length){ toast("Schon abgegeben (vielleicht an einem anderen Gerät) – nichts mehr offen."); akLaden(true).then(function(neu){ if(neu) akNeuZeichnen(); }); return; }
     (r.data||[]).forEach(function(n){ AUSLAGEN=AUSLAGEN.filter(function(x){ return x.id!==n.id; }).concat([n]); });
+    s=akSummen(r.data);   /* gemeldet wird, was wirklich abgegeben wurde – nicht der Stand auf dem Gerät */
     toast("Abgegeben – "+geld(s.gesamt)+" €. Der Chef bekommt eine Nachricht.");
     akNeuZeichnen();
     /* Nachricht an den Inhaber (nur an ihn – Beträge sieht sonst niemand) */
@@ -31554,7 +31561,7 @@ function akAbgeben(monat){
         mitFrist(Store.sb.from("chat").insert({id:"c_"+Date.now().toString(36)+i+Math.random().toString(36).slice(2,8), von:Store.benutzer.id, von_name:meinName(), text:text, an:p.user_id, an_name:p.name||"", fotos:[]}), 15000).then(function(){}, function(){});
       });
     });
-  });
+  }, function(e){ akAbgabeLaeuft=false; toast("Nicht abgegeben: "+technikDeutsch((e&&e.message)||String(e))); });
 }
 /* ---------- PDF wie das bisherige Blatt (Barbelege, Kilometer mit Privatauto, Konto) und dahinter die Belegfotos ---------- */
 function akPdfHtml(l, name, monat, konto, fotos){
@@ -31660,14 +31667,19 @@ function akMeineKarte(){
       '<label class="fl"><span>Kontoinhaber</span><input type="text" data-k="kontoinhaber" maxlength="120" value="'+esc((AK_KONTO&&AK_KONTO.kontoinhaber)||meinName())+'"></label>'+
       '<label class="fl"><span>IBAN</span><input type="text" data-k="iban" maxlength="40" autocapitalize="characters" value="'+esc((AK_KONTO&&AK_KONTO.iban)||"")+'"></label></div>'+
     '<button class="btn ghost sm" type="button" style="margin-top:6px" data-schreiben>Konto speichern</button></details>');
-  kd.querySelector("button").onclick=function(){
+  var kb=kd.querySelector("button");
+  kb.onclick=function(){
     var iban=kd.querySelector('[data-k="iban"]').value.replace(/\s/g,"").toUpperCase();
     if(iban && !ibanGueltig(iban)){ toast("Die IBAN stimmt nicht (Prüfziffer) – bitte prüfen."); return; }
     var zz={user_id:Store.benutzer.id, kontoinhaber:kd.querySelector('[data-k="kontoinhaber"]').value.trim()||null, iban:iban ? iban.replace(/(.{4})/g,"$1 ").trim() : null, geaendert:new Date().toISOString()};
     if(demo()){ AK_KONTO=zz; toast("Gespeichert (Präsentation)."); return; }
-    Store.sb.from("auslagen_konto").upsert(zz, {onConflict:"user_id"}).select("*").then(function(r){
+    /* mit Frist und Fehlerzweig: ohne Verbindung eine Meldung statt Stille */
+    kb.disabled=true;
+    mitFrist(Store.sb.from("auslagen_konto").upsert(zz, {onConflict:"user_id"}).select("*"), 20000).then(function(r){
+      kb.disabled=false;
       if(r.error){ toast("Nicht gespeichert: "+technikDeutsch(r.error.message)); return; }
-      AK_KONTO=(r.data||[])[0]||zz; toast("Konto gespeichert."); akNeuZeichnen(); });
+      AK_KONTO=(r.data||[])[0]||zz; toast("Konto gespeichert."); akNeuZeichnen(); },
+      function(e){ kb.disabled=false; toast("Nicht gespeichert: "+technikDeutsch((e&&e.message)||String(e))); });
   };
   c.querySelector(".pad").appendChild(kd);
   return c;
@@ -31709,11 +31721,15 @@ function akInhaberKarte(){
       '<div class="muted" style="margin-top:4px">Amtliches Kilometergeld (seit 2025: 0,50 €). Gilt für neue Einträge – schon erfasste behalten ihren Satz.</div></details>'+
   "</div></div>");
   c.querySelectorAll("[data-m]").forEach(function(b){ b.onclick=function(){ S.akMonatAlle=plusMonate(monat+"-01", +b.dataset.m).slice(0,7); AK_ALLE.monat=""; render(); }; });
-  c.querySelector("[data-satzok]").onclick=function(){
+  var sk=c.querySelector("[data-satzok]");
+  sk.onclick=function(){
     var n=akBetragLesen(c.querySelector("[data-satz]").value);
     if(!(n>0 && n<5)){ toast("Bitte einen Satz wie 0,50 eintragen."); return; }
-    Store.sb.from("einstellungen").upsert({schluessel:"kilometergeld", wert:{satz:n}, geaendert:new Date().toISOString(), von:meinName()}).then(function(r){
-      if(r.error){ toast("Nicht gespeichert: "+r.error.message); return; } KM_SATZ=n; toast("Kilometergeld "+geld(n)+" € je km gespeichert."); render(); });
+    sk.disabled=true;
+    mitFrist(Store.sb.from("einstellungen").upsert({schluessel:"kilometergeld", wert:{satz:n}, geaendert:new Date().toISOString(), von:meinName()}), 20000).then(function(r){
+      sk.disabled=false;
+      if(r.error){ toast("Nicht gespeichert: "+r.error.message); return; } KM_SATZ=n; toast("Kilometergeld "+geld(n)+" € je km gespeichert."); render(); },
+      function(e){ sk.disabled=false; toast("Nicht gespeichert: "+technikDeutsch((e&&e.message)||String(e))); });
   };
   var host=c.querySelector("[data-inhalt]");
   if(AK_ALLE.laedt || AK_ALLE.monat!==monat){ host.appendChild(el('<div class="muted">wird geladen …</div>')); return c; }
@@ -31742,17 +31758,19 @@ function akInhaberKarte(){
         var su=akSummen(auszahlbar).gesamt;
         if(!window.confirm(n+": "+geld(su)+" € als ausbezahlt abhaken?"+(st.offen?"\n\nAchtung: "+st.offen+" Einträge sind noch nicht abgegeben.":""))) return;
         az.disabled=true;
-        Store.sb.from("auslagen").update({status:"ausbezahlt", ausbezahlt_von:meinName()}).in("id", auszahlbar.map(function(z){ return z.id; })).select("id").then(function(r){
+        mitFrist(Store.sb.from("auslagen").update({status:"ausbezahlt", ausbezahlt_von:meinName()}).in("id", auszahlbar.map(function(z){ return z.id; })).select("id"), 20000).then(function(r){
           if(r.error){ az.disabled=false; toast("Nicht gespeichert: "+r.error.message); return; }
-          toast("Ausbezahlt abgehakt."); AK_ALLE.monat=""; AK_ABGEGEBEN=null; render(); });
+          toast("Ausbezahlt abgehakt."); AK_ALLE.monat=""; AK_ABGEGEBEN=null; render(); },
+          function(e){ az.disabled=false; toast("Nicht gespeichert: "+technikDeutsch((e&&e.message)||String(e))); });   /* Knopf wieder frei, Meldung statt Stille */
       };
       zk.appendChild(az);
     }
     if(st.eingereicht){
       var zr=el('<button class="btn ghost sm" type="button" title="zum Ändern an die Person zurück">zurückgeben</button>');
       zr.onclick=function(){ if(!window.confirm("Die abgegebenen Einträge von "+n+" zum Ändern zurückgeben?")) return;
-        Store.sb.from("auslagen").update({status:"offen"}).in("id", l.filter(function(z){ return z.status==="eingereicht"; }).map(function(z){ return z.id; })).select("id").then(function(r){
-          if(r.error){ toast("Nicht gespeichert: "+r.error.message); return; } toast("Zurückgegeben."); AK_ALLE.monat=""; AK_ABGEGEBEN=null; render(); }); };
+        mitFrist(Store.sb.from("auslagen").update({status:"offen"}).in("id", l.filter(function(z){ return z.status==="eingereicht"; }).map(function(z){ return z.id; })).select("id"), 20000).then(function(r){
+          if(r.error){ toast("Nicht gespeichert: "+r.error.message); return; } toast("Zurückgegeben."); AK_ALLE.monat=""; AK_ABGEGEBEN=null; render(); },
+          function(e){ toast("Nicht gespeichert: "+technikDeutsch((e&&e.message)||String(e))); }); };
       zk.appendChild(zr);
     }
     /* die Einträge einzeln (Fotos ansehen) */
