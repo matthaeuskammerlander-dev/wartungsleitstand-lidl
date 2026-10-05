@@ -2259,6 +2259,14 @@ test("Tiefentest mail: Projekt aus Mail und Mails dazu – leere Antwort von Cla
     const proj10 = db.projekte.filter((q) => ((q.daten || {}).mails || []).some((m) => m.id === "<tp61@test>")).map((q) => q.nummer);
     p(/liegt schon in P-20\d\d-\d+/.test(hinweis10) && window.__dialoge.some((z) => /schon/.test(z[1])) && proj10.length === 1,
       "M10 dieselbe Mail ergibt " + proj10.length + " Projekte (Hinweis: " + /liegt schon/.test(hinweis10) + ", Rückfragen: " + JSON.stringify(window.__dialoge) + ")");
+
+    /* M17: „Mails dazu“ – gesendete Mail ohne Empfänger zeigt kein „undefined“ */
+    x("ansichtenSchliessen()");
+    tm.programm({ suche: { mails: [{ konto: "gmx", ordner: "Gesendet", uid: 5, messageId: "<g5@test>", datum: "2026-09-01T08:00:00.000Z", betreff: "Angebot Leerempfänger", gesendet: true, von: [], an: [] }] } });
+    const k17 = x("mailsDazuKarte([{text:'P-2026-917', inhalt:true}], {})"); document.body.appendChild(k17);
+    await tm.bis(() => /Leerempfänger/.test(k17.innerText));
+    p(/Leerempfänger/.test(k17.innerText) && !/undefined/.test(k17.innerText), "M17 Zeile zeigt „undefined“: " + k17.innerText.replace(/\s+/g, " "));
+    k17.remove();
     tm.ende(); x("ansichtenSchliessen()");
     return { fehlt };
   });
