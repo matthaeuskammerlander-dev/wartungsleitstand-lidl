@@ -4620,19 +4620,24 @@ test("Antworten kern: Werkzeug „im Fahrzeug eines Kollegen“ – jedes Fahrze
   await a.zu();
 });
 
-test("Antworten kern: Material am privaten Termin sperrt die Datenbank selbst – nur wer den Termin angelegt hat oder eingetragen ist", async () => {
-  const a = await oeffnen(KONTEN.techniker);
+test("Antworten kern: Material am privaten Termin sperrt die Datenbank selbst – nur wer den Termin angelegt hat oder eingetragen ist, und der Inhaber", async () => {
+  const a = await rkSeite(KONTEN.techniker);
   const r = await a.seite.evaluate(async () => {
     const x = window.__t.x, db = window.__db.tabellen, ADM = "u_admin_test_at", TECH = "u_tech_test_at", tag = x("isoLokal(new Date())");
     const t = (id, wer, von) => ({ id, art: "termin", kategorie: "privat", privat: true, titel: "Abwesend", datum: tag, wer: wer, wer_namen: [], erstellt_von: von, status: "offen" });
     db.planung.push(t("PPRIV1", [ADM], ADM), t("PPRIV2", [TECH], TECH), t("PPRIV3", [], TECH), Object.assign(t("POFF1", [ADM], ADM), { kategorie: "buero", privat: false, titel: "Büro" }));
     const b = (id, pid) => ({ id, art: "material", text: "Teil " + id, planung_id: pid, status: "offen", beschaffung: "mitnehmen", erstellt_von: ADM });
     db.bedarf.push(b("BPRIV1", "PPRIV1"), b("BPRIV2", "PPRIV2"), b("BPRIV3", "PPRIV3"), b("BOFF1", "POFF1"), b("BOHNE", null));
-    const sel = await x("Store.sb.from('bedarf').select('*')");
-    const ids = (sel.data || []).map((z) => z.id).sort();
+    const lesen = async () => ((await x("Store.sb.from('bedarf').select('*')")).data || []).map((z) => z.id).sort();
+    const ids = await lesen();
     const upd = await x("Store.sb.from('bedarf').update({text:'geändert'}).eq('id','BPRIV1').select('*')");
-    return { ids, updZeilen: (upd.data || []).length, text: db.bedarf.find((z) => z.id === "BPRIV1").text };
+    /* Admin (Kollege): sieht den privaten des Technikers nicht; Inhaber: sieht alles (volle Kontrolle, Sicherung) */
+    await window.__rk.anmelden("admin@test.at", "admin"); const admin = await lesen();
+    await window.__rk.anmelden("inhaber@test.at", "inhaber"); const inhaber = await lesen();
+    return { ids, admin, inhaber, updZeilen: (upd.data || []).length, text: db.bedarf.find((z) => z.id === "BPRIV1").text };
   });
+  pruefe(r.admin.indexOf("BPRIV2") < 0 && r.admin.indexOf("BPRIV3") < 0 && r.admin.indexOf("BPRIV1") >= 0, "Admin sieht privates Material eines Kollegen: " + JSON.stringify(r.admin));
+  pruefe(["BPRIV1", "BPRIV2", "BPRIV3", "BOFF1", "BOHNE"].every((i) => r.inhaber.indexOf(i) >= 0), "Inhaber sieht nicht alles: " + JSON.stringify(r.inhaber));
   pruefe(["BOFF1", "BOHNE", "BPRIV2", "BPRIV3"].every((i) => r.ids.indexOf(i) >= 0), "eigene bzw. nicht private Einträge fehlen: " + JSON.stringify(r));
   pruefe(r.ids.indexOf("BPRIV1") < 0, "Material am privaten Termin einer anderen Person kommt aus der Datenbank: " + JSON.stringify(r));
   pruefe(r.updZeilen === 0 && r.text === "Teil BPRIV1", "fremder Eintrag am privaten Termin ließ sich ändern: " + JSON.stringify(r));

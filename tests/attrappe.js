@@ -97,6 +97,8 @@
      (und ändert) nur, wer den Termin angelegt hat oder dort eingetragen ist – auch nicht das Büro */
   function bedarfPrivatFremd(r){
     if(!r || !r.planung_id) return false;
+    /* der Inhaber sieht es (volle Kontrolle, bleibt in der Sicherung – Inhaber 05.10.2026); Admins nicht */
+    if(((DB.rollen.filter(function(x){ return x.user_id===uid(); })[0]||{}).rolle)==="inhaber") return false;
     var p=DB.planung.filter(function(x){ return x.id===r.planung_id; })[0];
     return !!(p && (p.privat || p.kategorie==="privat") && p.erstellt_von!==uid() && (p.wer||[]).indexOf(uid())<0);
   }
