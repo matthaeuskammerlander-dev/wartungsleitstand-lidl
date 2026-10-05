@@ -1816,6 +1816,77 @@ test("Tiefentest reisekosten: To-do „Reisekosten … – auszahlen“ aktualis
   await a.zu();
 });
 
+test("Tiefentest reisekosten: Erfassen – Vorschau wie gespeichert, Grenzen der Datenbank auf Deutsch, Vorbelegung aus dem Bedarf passt, Präsentation rechnet richtig", async () => {
+  const a = await rkSeite(KONTEN.techniker);
+  const r = await a.seite.evaluate(async () => {
+    const x = window.__t.x, db = window.__db.tabellen, { warte, dlg, speichern } = window.__rk;
+    const heute = x("isoLokal(new Date())"), fehlt = [], p = (bed, text) => { if (!bed) fehlt.push(text); };
+    const foto = async (d, name) => {
+      const cv = document.createElement("canvas"); cv.width = 40; cv.height = 60; cv.getContext("2d").fillRect(0, 0, 20, 20);
+      const blob = await new Promise((f) => cv.toBlob(f, "image/png"));
+      const dt = new DataTransfer(); dt.items.add(new File([blob], name, { type: "image/png" }));
+      const inp = d.querySelector("[data-foto]"); inp.files = dt.files; inp.dispatchEvent(new Event("change"));
+    };
+    /* RK-11: alter Eintrag mit 0,42 €/km – die Vorschau nennt den Satz, mit dem gespeichert wird */
+    db.auslagen.push({ id: "tkK1", user_id: "u_tech_test_at", name: "Testtechniker", art: "km", datum: heute, text: "Salzburg – Hallein – Salzburg", km: 100, km_satz: 0.42, betrag: 42, status: "offen", erstellt: new Date().toISOString() });
+    x("S.view='stunden'; render()"); await warte(700);
+    x("akEditor(AUSLAGEN.filter(function(z){ return z.id==='tkK1'; })[0])"); await warte(300);
+    let d = dlg();
+    const vorschau = d.querySelector("[data-kmbetrag]").textContent;
+    speichern(d); await warte(500);
+    p(db.auslagen.find((z) => z.id === "tkK1").betrag === 42 && /42,00/.test(vorschau), "RK-11 Vorschau zeigt einen anderen Betrag als gespeichert wird: " + vorschau);
+    /* RK-11: km mit zwei Nachkommastellen – die Datenbank speichert eine (numeric(8,1)) */
+    x("ansichtenSchliessen(); akEditor(null, {art:'km'})"); await warte(300);
+    d = dlg(); d.querySelector('[data-f="text"]').value = "Salzburg – Anif";
+    const kmFeld = d.querySelector('[data-f="km"]'); kmFeld.value = "12,35"; kmFeld.dispatchEvent(new Event("input"));
+    const vorschau2 = d.querySelector("[data-kmbetrag]").textContent;
+    speichern(d); await warte(500);
+    const k2 = db.auslagen.find((z) => z.text === "Salzburg – Anif") || {};
+    p(/12,4 km/.test(vorschau2) && /6,20/.test(vorschau2) && k2.betrag === 6.2, "RK-11 Vorschau „12,35 km“ weicht vom Gespeicherten ab: " + JSON.stringify({ vorschau2, km: k2.km, betrag: k2.betrag }));
+    /* TTQ-22: über den Grenzen der Datenbank – deutsche Meldung, nichts gespeichert */
+    x("ansichtenSchliessen(); akEditor(null, {art:'km'})"); await warte(300);
+    d = dlg(); d.querySelector('[data-f="text"]').value = "Salzburg – Lissabon"; d.querySelector('[data-f="km"]').value = "6000";
+    speichern(d); await warte(500);
+    const errKm = d.querySelector("[data-err]").textContent;
+    p(/5[.\s]?000/.test(errKm) && !/check|violates/i.test(errKm) && !db.auslagen.some((z) => z.km === 6000), "TTQ-22 über 5000 km: " + errKm);
+    x("ansichtenSchliessen(); akEditor(null, {art:'beleg'})"); await warte(300);
+    d = dlg(); d.querySelector('[data-f="text"]').value = "Testkauf groß"; d.querySelector('[data-f="betrag"]').value = "150000"; await foto(d, "g.png");
+    speichern(d); await warte(600);
+    const errB = d.querySelector("[data-err]").textContent;
+    p(/100[.\s]?000/.test(errB) && !/check|violates/i.test(errB) && !db.auslagen.some((z) => z.betrag === 150000), "TTQ-22 über 100 000 €: " + errB);
+    /* RK-14: Bedarf „abholen“ mit langem Text und langer Bezugsquelle → „Selbst bezahlt – Beleg erfassen“ */
+    x("ansichtenSchliessen()");
+    await x("wzLaden(true)");
+    const bd = (await x("Store.sb.from('bedarf').insert({art:'material', text:'" + "Testmaterial ".repeat(16).slice(0, 200) + "', beschaffung:'abholen', bezugsquelle:'" + "Testquelle ".repeat(16).slice(0, 175) + "', status:'offen'}).select('*')")).data[0];
+    await x("wzLaden(true)");
+    x("bedarfEditor(BEDARF.filter(function(b){ return b.id==='" + bd.id + "'; })[0])"); await warte(300);
+    [...dlg().querySelectorAll(".as-fuss button")].find((b) => /Selbst bezahlt/.test(b.textContent)).click(); await warte(300);
+    const laenge = dlg().querySelector('[data-f="text"]').value.length;
+    p(laenge <= 300, "RK-14 vorbelegter Text länger als die Datenbank erlaubt (300): " + laenge);
+    x("ansichtenSchliessen()");
+    /* RK-12: Präsentation – km ändern rechnet neu, Beleg mit Foto ohne „Foto fehlt“ */
+    await window.__rk.anmelden("praes@test.at", "praesentation");
+    x("ansichtenSchliessen(); S.akMonat=''; S.view='stunden'; render()"); await warte(500);
+    x("akEditor(null, {art:'km'})"); await warte(300);
+    d = dlg(); d.querySelector('[data-f="text"]').value = "Salzburg – Hallein"; d.querySelector('[data-f="km"]').value = "12,5"; speichern(d); await warte(300);
+    x("akEditor(AUSLAGEN.filter(function(z){ return z.art==='km'; })[0])"); await warte(300);
+    d = dlg(); d.querySelector('[data-f="km"]').value = "100"; speichern(d); await warte(300);
+    const km = x("AUSLAGEN.filter(function(z){ return z.art==='km'; }).map(function(z){ return z.km+' km = '+z.betrag; }).join()");
+    x("akEditor(null, {art:'beleg'})"); await warte(300);
+    d = dlg(); d.querySelector('[data-f="text"]').value = "Baumarkt Test"; d.querySelector('[data-f="betrag"]').value = "9,90"; await foto(d, "b.png");
+    speichern(d); await warte(400);
+    x("ansichtenSchliessen(); S.view='stunden'; render()"); await warte(400);
+    const kp = window.__rk.karte(/^Reisekosten und Kilometergeld/);
+    p(km === "100 km = 50", "RK-12 Präsentation: km geändert, Betrag nicht neu gerechnet: " + km);
+    p(kp && /Baumarkt Test/.test(kp.textContent) && !/Foto fehlt/.test(kp.textContent), "RK-12 Präsentation: Beleg mit Foto steht als „⚠ Foto fehlt“");
+    return { rolle: x("Rolle.name"), fehlt };
+  });
+  pruefe(r.rolle === "praesentation", "Aufbau falsch: " + JSON.stringify(r));
+  pruefe(!r.fehlt.length, r.fehlt.join(" | "));
+  pruefe(!a.fehler.length, "Laufzeitfehler: " + a.fehler.join("; "));
+  await a.zu();
+});
+
 /* ================================================================ Ablauf ================================================================ */
 const filterText = process.argv.slice(2).find((x) => !x.startsWith("--"));
 const filter = filterText ? new RegExp(filterText, "i") : null;

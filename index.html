@@ -19142,7 +19142,8 @@ function bedarfEditor(b, vorgabe){
   /* im Geschäft mit eigenem Geld bezahlt: gleich den Beleg erfassen (Reisekosten) – danach ist der Eintrag erledigt */
   if(b && bedarfOffen(b) && b.beschaffung!=="mitnehmen" && akAn() && !nurLesen()){
     var sb=el('<button class="btn ghost" type="button">🧾 Selbst bezahlt – Beleg erfassen</button>');
-    sb.onclick=function(){ v.zu(); akEditor(null, {art:"beleg", text:(b.bezugsquelle?b.bezugsquelle+" – ":"")+b.text, kategorie:b.art==="werkzeug"?"werkzeug":"material",
+    /* auslagen.text hat höchstens 300 Zeichen (Bezugsquelle und Text dürfen je 200 haben) – maxlength greift beim Vorbelegen nicht */
+    sb.onclick=function(){ v.zu(); akEditor(null, {art:"beleg", text:((b.bezugsquelle?b.bezugsquelle+" – ":"")+b.text).slice(0,300), kategorie:b.art==="werkzeug"?"werkzeug":"material",
       projekt_id:b.projekt_id||null, standort_id:bedarfMarkt(b)||null, bedarf_id:b.id}); };
     v.fuss.appendChild(sb);
   }
@@ -31347,6 +31348,8 @@ function akBetragLesen(t){
   else if((s.match(/\./g)||[]).length>1 || /\.\d{3}$/.test(s)) s=s.replace(/\./g,"");
   var n=+s; return isFinite(n) ? Math.round(n*100)/100 : NaN;
 }
+/* km wie die Datenbank (numeric(8,1)): eine Nachkommastelle, 12,35 → 12,4 (die Zugabe gleicht die Gleitkomma-Darstellung aus) */
+function akKmRunden(k){ return k>0 ? Math.round(k*10+1e-6)/10 : k; }
 function akLaden(neu){
   if(demo()){ akGeladen=true; return Promise.resolve(false); }
   if(!betriebAn()) return Promise.resolve(false);
@@ -31422,7 +31425,9 @@ function akEditor(z, vorgabe){
   var fremd=!!z && !!z.user_id && z.user_id!==meineKennung();
   var km=a.art==="km";
   var v=ansichtOeffnen(z ? (km?"Kilometer Privatauto":"Beleg") : (km?"Kilometer mit Privatauto":"Selbst bezahlt – Beleg"));
-  v.schritt.textContent=gesperrt ? "Schon abgegeben ("+AK_STATUS[z.status]+") – ändern kann das nur der Inhaber" : (km ? "Kilometergeld "+geld(KM_SATZ)+" € je km" : "mit Foto vom Beleg – der Chef zahlt am Monatsende aus");
+  /* Satz dieses Eintrags: ein gespeicherter behält seinen (Trigger auslagen_pruefen), ein neuer bekommt den eingestellten */
+  var satz=(z && z.art==="km" && +z.km_satz>0) ? +z.km_satz : KM_SATZ;
+  v.schritt.textContent=gesperrt ? "Schon abgegeben ("+AK_STATUS[z.status]+") – ändern kann das nur der Inhaber" : (km ? "Kilometergeld "+geld(satz)+" € je km" : "mit Foto vom Beleg – der Chef zahlt am Monatsende aus");
   /* Privatautos der Person, der der Eintrag gehört; das gespeicherte Fahrzeug bleibt wählbar (auch wenn es
      inzwischen nicht mehr aktiv ist) – sonst ginge es beim Speichern still verloren */
   var autos=fremd ? FZ.filter(function(f){ return f.privat_von===z.user_id && f.aktiv!==false; }) : meinePrivatautos();
@@ -31470,9 +31475,11 @@ function akEditor(z, vorgabe){
       var pdf=/pdf/i.test(datei.type||""); zeigeBild(URL.createObjectURL(datei), pdf); form.querySelector("[data-ohne]").checked=false; form.querySelector("[data-ohnegrund]").hidden=true; }; });
     form.querySelector("[data-ohne]").onchange=function(){ form.querySelector("[data-ohnegrund]").hidden=!this.checked; };
     if(a.foto && !demo()) akFotoUrl(a.foto).then(function(u){ zeigeBild(u, /\.pdf$/i.test(a.foto)); }, function(){ vs.textContent="Foto nicht geladen."; });
+    else if(a.foto) vs.textContent="Foto gewählt (Präsentation – nicht gespeichert).";
   } else {
     var kb=form.querySelector("[data-kmbetrag]");
-    var rechne=function(){ var k=akBetragLesen(F("km").value); kb.textContent = k>0 ? String(k).replace(".",",")+" km × "+geld(KM_SATZ)+" € = "+geld(Math.round(k*KM_SATZ*100)/100)+" €" : "Kilometergeld "+geld(KM_SATZ)+" € je km."; };
+    /* Vorschau = was die Datenbank speichert: km mit einer Nachkommastelle (12,35 → 12,4) × Satz dieses Eintrags */
+    var rechne=function(){ var k=akKmRunden(akBetragLesen(F("km").value)); kb.textContent = k>0 ? String(k).replace(".",",")+" km × "+geld(satz)+" € = "+geld(Math.round(k*satz*100)/100)+" €" : "Kilometergeld "+geld(satz)+" € je km."; };
     F("km").addEventListener("input", rechne); rechne();
     var vorschlag=function(){
       var h=form.querySelector("[data-vorschlag]"); h.innerHTML="";
@@ -31506,14 +31513,17 @@ function akEditor(z, vorgabe){
     var zeile={art:a.art, datum:datum, text:text, projekt_id:F("projekt_id").value||null, standort_id:F("standort_id").value||null, notiz:F("notiz").value.trim()||null};
     if(!z) zeile.name=meinName();   /* der Inhaber ändert fremde Einträge – der Name bleibt der der Person */
     if(km){
-      var k=akBetragLesen(F("km").value);
+      var k=akKmRunden(akBetragLesen(F("km").value));
       if(!(k>0)){ fehler("Bitte die gefahrenen Kilometer als Zahl eintragen."); F("km").focus(); return; }
+      /* Grenze der Datenbank (tools/reisekosten.sql) – sonst käme ihre englische Prüfmeldung */
+      if(k>5000){ fehler("Mehr als 5.000 km an einem Tag gehen nicht – bitte die Kilometer prüfen."); F("km").focus(); return; }
       if(k>1500 && !window.confirm(k+" km an einem Tag – stimmt das?")) return;
       var fid=F("fahrzeug_id").value||null, fo=fid && autos.filter(function(f){ return f.id===fid; })[0];
       Object.assign(zeile, {km:k, fahrzeug_id:fid, fahrzeug_name:fo?fo.kennzeichen||null:null});
     } else {
       var b=akBetragLesen(F("betrag").value);
       if(!(b>0)){ fehler("Bitte den Betrag eintragen, z. B. 23,85."); F("betrag").focus(); return; }
+      if(b>100000){ fehler("Mehr als 100.000 € gehen nicht – bitte den Betrag prüfen."); F("betrag").focus(); return; }
       if(b>2000 && !window.confirm(geld(b)+" € – stimmt der Betrag?")) return;
       var ohne=form.querySelector("[data-ohne]").checked;
       if(!datei && !a.foto && !ohne){ fehler("Bitte den Beleg fotografieren – oder „Kein Beleg vorhanden“ mit Grund."); return; }
@@ -31536,12 +31546,16 @@ function akEditor(z, vorgabe){
       /* Werkzeug gekauft, das noch nicht in der Liste steht: einmal fragen */
       if(!z && n.kategorie==="werkzeug" && !(bd && bd.werkzeug_id) && wzAn()) wzAufnehmenFragen({text:String(n.text).replace(/^.*?–\s*/,"")});
     };
-    if(demo()){ fertig(Object.assign({id:neueKennung("ak"), status:"offen", betrag:km?Math.round(zeile.km*KM_SATZ*100)/100:zeile.betrag}, z||{}, zeile)); return; }
+    /* Präsentation: Betrag nach dem Zusammenführen rechnen (sonst bliebe der alte stehen), gewähltes Foto nur vermerken */
+    if(demo()){ if(datei) zeile.foto="praesentation/"+(datei.name||"beleg");
+      fertig(Object.assign({id:neueKennung("ak"), status:"offen"}, z||{}, zeile, km ? {km_satz:satz, betrag:Math.round(zeile.km*satz*100)/100} : {})); return; }
     (datei ? akFotoHochladen(datei) : Promise.resolve(null)).then(function(pfad){
       if(pfad){ zeile.foto=pfad; zeile.ohne_beleg=null; }
       var q=z ? Store.sb.from("auslagen").update(zeile).eq("id", z.id).select("*") : Store.sb.from("auslagen").insert(zeile).select("*");
       return mitFrist(q, 20000).then(function(r){
-        if(r.error) throw new Error(/does not exist|schema cache|relation/i.test(r.error.message)?"Reisekosten sind in der Datenbank noch nicht eingerichtet (tools/reisekosten.sql).":r.error.message);
+        /* nur „does not exist“/„schema cache“ heißt nicht eingerichtet – eine verletzte Prüfregel nennt auch „relation“ */
+        if(r.error) throw new Error(/does not exist|schema cache/i.test(r.error.message)?"Reisekosten sind in der Datenbank noch nicht eingerichtet (tools/reisekosten.sql).":
+          /violates check constraint/i.test(r.error.message)?"Nicht gespeichert – eine Angabe ist zu lang oder zu groß (Text bis 300 Zeichen, Notiz bis 500, km bis 5.000, Betrag bis 100.000 €).":r.error.message);
         if(!r.data || !r.data.length) throw new Error("Nicht gespeichert – vielleicht schon abgegeben.");
         if(pfad && z && z.foto) Store.sb.storage.from("auslagen").remove([z.foto]).then(function(){}, function(){});
         fertig(r.data[0]);
