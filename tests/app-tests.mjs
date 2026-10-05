@@ -2184,6 +2184,25 @@ test("Tiefentest kalender: Planung prüfen – Reihenfolge übernehmen", async (
   const spaet = r03.zeiten.filter(([, b, e]) => b > "23:59" || e > "23:59" || b > e).map((z) => z.join(" "));
   if (!r03.reihenfolge || spaet.length || !/Mitternacht/.test(r03.meldungA) || !/Mitternacht/.test(r03.meldungB) || r03.ics !== "ok")
     fehl.push("TT-KAL-03 Uhrzeit nach 24:00 bzw. Ende vor Beginn: " + JSON.stringify({ spaet, meldungA: r03.meldungA, meldungB: r03.meldungB, ics: r03.ics, reihenfolge: r03.reihenfolge }));
+  /* TT-KAL-04: ohne Netz – „Reihenfolge übernehmen“ und „mit einplanen“ melden es sichtbar, kein unbehandelter Fehler */
+  const r04 = await a.seite.evaluate(async () => {
+    const tt = window.__tt, x = window.__t.x; tt.leeren(); const tag = tt.tag2(), erg = {};
+    x("STARTPUNKTE={}");
+    const z = (titel, sid, b, e, kat) => ({ kategorie: kat || "besprechung", titel, datum: tag, beginn: b, ende: e, standort_id: sid });
+    await tt.termine([z("Innsbruck", "TS3", "08:00", "09:00"), z("Wien", "TS1", "10:00", "11:00", "wartung"), z("West", "TS4", "12:00", "13:00")]);
+    /* netz „antwort“: die Datenbank lehnt ab ({error}) – dann keine Erfolgsmeldung */
+    for (const [name, re, zeile, netz] of [["Reihenfolge übernehmen", /Reihenfolge übernehmen/], ["mit einplanen", /mit einplanen/, /Testfiliale 901/], ["abgelehnt", /Reihenfolge übernehmen/, null, "antwort"]]) {
+      x("ansichtenSchliessen()"); tt.toasts.length = 0;
+      const k = tt.knopf(await tt.pruefen(tag), re, zeile);
+      if (!k) { erg[name] = "Knopf fehlt"; continue; }
+      const f0 = window.__fehler.length;
+      window.__netzWeg = netz || true; k.click(); await tt.warte(400); window.__netzWeg = false;
+      const unbeh = window.__fehler.slice(f0).filter((y) => y.startsWith("promise"));
+      if (!(netz ? /^Nicht/ : /Verbindung/).test(tt.toasts.join(" ")) || unbeh.length) erg[name] = { toasts: tt.toasts.slice(), unbehandelt: unbeh };
+    }
+    return erg;
+  });
+  if (Object.keys(r04).length) fehl.push("TT-KAL-04 ohne Netz keine Meldung bzw. unbehandelter Fehler: " + JSON.stringify(r04));
   if (a.fehler.length) fehl.push("Laufzeitfehler: " + a.fehler.join("; "));
   await a.zu();
   pruefe(!fehl.length, fehl.join(" | "));
