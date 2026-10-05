@@ -2376,6 +2376,10 @@ test("Tiefentest mail: Posteingang – „Zu Projekt legen“ legt nichts doppel
     p(/Präsentation|nichts gespeichert|gespeichert wurde nichts/.test(t20) && !namen("tmp_920").length && db.posteingang.find((e) => e.id === "pe20a").status === "neu",
       "M20 Präsentation meldet „" + t20 + "“ (Dateien in der Datenbank: " + namen("tmp_920").length + ")");
     x("ansichtenSchliessen()"); document.querySelectorAll("#tmPe").forEach((kk) => kk.remove());
+
+    /* M18: der Rundgang „Projekt anlegen“ verspricht keinen Weg, den es nicht gibt – der Posteingang legt nur zu bestehenden Projekten ab */
+    const rg = x("JSON.stringify(RUNDGAENGE.projekte.schritte[0].text)");
+    p(!/aus einer Mail im Posteingang/.test(rg) && /Posteingang[^.]*bestehend/.test(rg), "M18 Rundgang „Projekt anlegen“: " + rg);
     return { fehlt };
   });
   pruefe(!r.fehlt.length, r.fehlt.join(" | "));
