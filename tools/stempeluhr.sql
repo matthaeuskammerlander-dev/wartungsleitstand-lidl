@@ -1,6 +1,11 @@
 -- Stempeluhr (Büro 01.10.2026): Ein- und Ausstempeln wie früher in Crewmeister.
 -- Einmal im Supabase SQL Editor ausführen (nach kunden-projekte-stunden.sql).
--- Mehrfach ausführen schadet nicht.
+-- Mehrfach ausführbar – auch nach den späteren Skripten (stempeluhr-2/-3/-4,
+-- bereiche-eigen, stunden-kalender, stempel-abgleich; Stand 05.10.2026):
+-- erlaubte Quellen und Trigger unten stehen auf deren Stand. Die Funktion
+-- stempeln() legt dieses Skript NICHT mehr an – sie steht heute in
+-- stempeluhr-4.sql (Bereichsprüfung aus bereiche-eigen.sql). Ersteinrichtung:
+-- danach stempeluhr-2.sql, -3, -4 und bereiche-eigen.sql ausführen.
 --
 -- * Die Zeit eines Stempels setzt die Datenbank (now()) – nicht das Handy. Wer
 --   die Uhr am Handy verstellt, ändert nichts.
@@ -68,9 +73,10 @@ grant select, delete on public.stempel to authenticated;
 -- ---------------------------------------------------------------------------
 alter table public.arbeitszeiten add column if not exists quelle text not null default 'hand';
 alter table public.arbeitszeiten add column if not exists ort jsonb;
+-- erlaubte Quellen: Stand von stempel-abgleich.sql und stunden-kalender.sql
 alter table public.arbeitszeiten drop constraint if exists arbeitszeiten_quelle_check;
 alter table public.arbeitszeiten add constraint arbeitszeiten_quelle_check
-  check (quelle in ('hand','stempel','stempel_geaendert','stempel_nachgetragen'));
+  check (quelle in ('hand','stempel','stempel_geaendert','stempel_nachgetragen','stempel_abgeglichen','kalender'));
 
 -- von Hand: nur Einträge „hand“; gestempelte darf man nicht löschen (nur der Inhaber)
 drop policy if exists "zeiten erfassen" on public.arbeitszeiten;
@@ -80,17 +86,21 @@ drop policy if exists "zeiten loeschen" on public.arbeitszeiten;
 create policy "zeiten loeschen" on public.arbeitszeiten for delete to authenticated
   using ((user_id = auth.uid() and bestaetigt is null and quelle = 'hand') or public.ist_inhaber());
 
--- nachträglich geänderte Zeiten eines gestempelten Eintrags: kennzeichnen
+-- nachträglich geänderte Zeiten eines gestempelten (auch abgeglichenen) Eintrags: kennzeichnen;
+-- Kalender-Einträge, die jemand selbst ändert, werden „hand“; die Quelle setzt niemand von Hand um.
+-- Gleiche Fassung wie in stempel-abgleich.sql und stunden-kalender.sql.
 create or replace function public.arbeitszeit_stempel_merken() returns trigger
 language plpgsql as $$
+declare zeit_geaendert boolean := new.datum is distinct from old.datum or new.beginn is distinct from old.beginn
+          or new.ende is distinct from old.ende or new.pause_min is distinct from old.pause_min or new.minuten is distinct from old.minuten;
 begin
-  if old.quelle in ('stempel','stempel_nachgetragen')
-     and (new.datum is distinct from old.datum or new.beginn is distinct from old.beginn
-          or new.ende is distinct from old.ende or new.pause_min is distinct from old.pause_min
-          or new.minuten is distinct from old.minuten) then
+  if coalesce(current_setting('ukt.kalender_sync', true), '') = '1' then return new; end if;
+  if old.quelle = 'kalender' and (zeit_geaendert or new.art is distinct from old.art) then
+    new.quelle := 'hand';
+  elsif old.quelle in ('stempel','stempel_nachgetragen','stempel_abgeglichen') and zeit_geaendert then
     new.quelle := 'stempel_geaendert';
   elsif new.quelle is distinct from old.quelle and not public.ist_inhaber() then
-    new.quelle := old.quelle;     -- die Quelle selbst setzt niemand von Hand um
+    new.quelle := old.quelle;
   end if;
   return new;
 end $$;
@@ -101,75 +111,18 @@ create trigger arbeitszeit_stempel_merken before update on public.arbeitszeiten
 -- ---------------------------------------------------------------------------
 -- stempeln(): der einzige Weg zu einem Stempel. Prüft die Reihenfolge, nimmt
 -- die Zeit vom Server und legt beim Ausstempeln den Eintrag an.
--- p_ende_hand ('HH:MM'): vergessen auszustempeln – das tatsächliche Ende (muss
--- vor jetzt liegen); der Eintrag heißt dann „stempel_nachgetragen“.
+-- Die Funktion steht heute in stempeluhr-4.sql (Bereichsprüfung aus
+-- bereiche-eigen.sql). Dieses Skript legte bis 05.10.2026 eine erste Fassung
+-- mit 7 Angaben an, die stempeluhr-2.sql entfernt und ersetzt hat. Erneut
+-- angelegt läge sie als zweite, veraltete Fassung neben der heutigen
+-- (ohne Umstempeln, Bereich und automatische Pause; bereiche-eigen.sql
+-- bricht dann ab). Deshalb hier nur: eine solche alte Fassung entfernen –
+-- dasselbe tut stempeluhr-2.sql. Die heutige Fassung bleibt unberührt.
 -- ---------------------------------------------------------------------------
-create or replace function public.stempeln(p_art text, p_standort text default null, p_projekt uuid default null,
-  p_taetigkeit text default null, p_ort jsonb default null, p_name text default null, p_ende_hand text default null)
-returns jsonb language plpgsql security definer set search_path = public as $$
-declare
-  tz constant text := 'Europe/Vienna';
-  letzt public.stempel; ein public.stempel; s public.stempel;
-  pause_ab timestamptz := null; pause_sek numeric := 0; ende timestamptz := now();
-  quelle text := 'stempel'; min integer; neu_id uuid; tag date;
-begin
-  if auth.uid() is null or not public.darf_schreiben() then raise exception 'Stempeln ist mit diesem Konto nicht möglich'; end if;
-  if p_art not in ('ein','pause','weiter','aus') then raise exception 'unbekannte Stempelart'; end if;
-  if p_ort is not null and (p_ort ? 'lat' or p_ort ? 'lon' or p_ort ? 'latitude' or p_ort ? 'longitude') then
-    raise exception 'Koordinaten werden nicht gespeichert';
-  end if;
-  select * into letzt from public.stempel where user_id = auth.uid() order by zeit desc limit 1;
-  if p_art = 'ein' and letzt.id is not null and letzt.art <> 'aus' then raise exception 'Du bist schon eingestempelt'; end if;
-  if p_art = 'pause' and (letzt.id is null or letzt.art not in ('ein','weiter')) then raise exception 'Pause geht nur nach dem Einstempeln'; end if;
-  if p_art = 'weiter' and (letzt.id is null or letzt.art <> 'pause') then raise exception 'Weiter geht nur nach einer Pause'; end if;
-  if p_art = 'aus' and (letzt.id is null or letzt.art = 'aus') then raise exception 'Du bist nicht eingestempelt'; end if;
+drop function if exists public.stempeln(text, text, uuid, text, jsonb, text, text);
 
-  if p_art <> 'aus' then
-    insert into public.stempel (user_id, name, art, standort_id, projekt_id, taetigkeit, ort)
-    values (auth.uid(), p_name, p_art,
-            coalesce(p_standort, case when p_art <> 'ein' then letzt.standort_id end),
-            coalesce(p_projekt,  case when p_art <> 'ein' then letzt.projekt_id end),
-            coalesce(p_taetigkeit, case when p_art <> 'ein' then letzt.taetigkeit end), p_ort)
-    returning * into s;
-    return jsonb_build_object('stempel', to_jsonb(s));
-  end if;
-
-  -- Ausstempeln: ab dem letzten „ein“ rechnen
-  select * into ein from public.stempel where user_id = auth.uid() and art = 'ein' order by zeit desc limit 1;
-  if p_ende_hand is not null then
-    if p_ende_hand !~ '^\d\d:\d\d$' then raise exception 'Ende bitte als HH:MM'; end if;
-    ende := ((ein.zeit at time zone tz)::date + p_ende_hand::time) at time zone tz;
-    if ende <= ein.zeit then ende := ende + interval '1 day'; end if;
-    if ende > now() then raise exception 'Das Ende liegt in der Zukunft'; end if;
-    quelle := 'stempel_nachgetragen';
-  end if;
-  for s in select * from public.stempel where user_id = auth.uid() and zeit >= ein.zeit order by zeit loop
-    if s.art = 'pause' then pause_ab := s.zeit;
-    elsif s.art = 'weiter' and pause_ab is not null then pause_sek := pause_sek + extract(epoch from s.zeit - pause_ab); pause_ab := null;
-    end if;
-  end loop;
-  if pause_ab is not null then pause_sek := pause_sek + greatest(0, extract(epoch from ende - pause_ab)); end if;
-  min := floor((extract(epoch from ende - ein.zeit) - pause_sek) / 60);
-  if min > 1440 then raise exception 'Länger als 24 Stunden eingestempelt – bitte das tatsächliche Ende angeben'; end if;
-  min := greatest(0, min);
-  tag := (ein.zeit at time zone tz)::date;
-  insert into public.arbeitszeiten (user_id, name, datum, beginn, ende, pause_min, minuten, art, taetigkeit,
-                                    standort_id, projekt_id, quelle, ort)
-  values (auth.uid(), coalesce(p_name, ein.name), tag,
-          to_char(ein.zeit at time zone tz, 'HH24:MI'), to_char(ende at time zone tz, 'HH24:MI'),
-          least(600, round(pause_sek / 60)), min, 'arbeit', coalesce(p_taetigkeit, ein.taetigkeit),
-          coalesce(p_standort, ein.standort_id), coalesce(p_projekt, ein.projekt_id), quelle,
-          case when ein.ort is null and p_ort is null then null else jsonb_build_object('ein', ein.ort, 'aus', p_ort) end)
-  returning id into neu_id;
-  insert into public.stempel (user_id, name, art, standort_id, projekt_id, taetigkeit, ort, eintrag_id)
-  values (auth.uid(), p_name, 'aus', coalesce(p_standort, ein.standort_id), coalesce(p_projekt, ein.projekt_id),
-          coalesce(p_taetigkeit, ein.taetigkeit), p_ort, neu_id)
-  returning * into s;
-  return jsonb_build_object('stempel', to_jsonb(s), 'eintrag', (select to_jsonb(a) from public.arbeitszeiten a where a.id = neu_id));
-end $$;
-revoke all on function public.stempeln(text, text, uuid, text, jsonb, text, text) from public, anon;
-grant execute on function public.stempeln(text, text, uuid, text, jsonb, text, text) to authenticated;
-
--- Kontrolle
+-- Kontrolle (stempeln_fassungen: 1 – bei der Ersteinrichtung 0, bis stempeluhr-2.sql gelaufen ist)
 select (select count(*) from public.stempel) as stempel,
-       (select wert from public.einstellungen where schluessel = 'stempel_standort') as standort;
+       (select wert from public.einstellungen where schluessel = 'stempel_standort') as standort,
+       (select count(*) from pg_proc p join pg_namespace s on s.oid = p.pronamespace
+         where s.nspname = 'public' and p.proname = 'stempeln') as stempeln_fassungen;

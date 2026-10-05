@@ -1,6 +1,11 @@
 -- Weitere Kunden, Projekte und Arbeitszeiten (Büro 01.10.2026)
 -- Einmal im Supabase SQL Editor ausführen (nach rollen.sql). Mehrfach
--- ausführen schadet nicht.
+-- ausführbar – auch nach den späteren Skripten (Stand 05.10.2026): die Regeln
+-- „zeiten erfassen“ und „zeiten loeschen“ stehen hier auf dem Stand von
+-- stempeluhr.sql (von Hand nur Einträge „hand“, gestempelte löscht nur der
+-- Inhaber), die Regeln für Projektdateien wie in nur-inhaber-buero.sql.
+-- Tabellen und die Ablage legt es nur an, wenn sie fehlen – spätere
+-- Änderungen (Projekt-Schritte, Dateitypen, weitere Spalten) bleiben.
 --
 -- 1. Weitere Kunden außer Lidl: ein Kunde ist ein Eintrag in stammdaten
 --    (typ 'kunde', ziel = Kennung). Ein Markt/Standort gehört zu einem Kunden
@@ -155,6 +160,9 @@ create table if not exists public.arbeitszeiten (
   bestaetigt   timestamptz,                 -- vom Inhaber bestätigt: danach gesperrt
   bestaetigt_von text
 );
+-- woher der Eintrag kommt (Stempeluhr, Kalender …) – hier nur, damit die Regeln unten sie
+-- kennen; die erlaubten Werte setzen stempeluhr.sql, stunden-kalender.sql und stempel-abgleich.sql
+alter table public.arbeitszeiten add column if not exists quelle text not null default 'hand';
 create index if not exists arbeitszeiten_user_datum_idx on public.arbeitszeiten (user_id, datum);
 create index if not exists arbeitszeiten_datum_idx on public.arbeitszeiten (datum);
 alter table public.arbeitszeiten enable row level security;
@@ -164,13 +172,14 @@ drop policy if exists "zeiten aendern"   on public.arbeitszeiten;
 drop policy if exists "zeiten loeschen"  on public.arbeitszeiten;
 create policy "zeiten lesen" on public.arbeitszeiten for select to authenticated
   using (user_id = auth.uid() or public.ist_inhaber());
+-- von Hand: nur Einträge „hand“; gestempelte darf man nicht löschen (nur der Inhaber) – wie stempeluhr.sql
 create policy "zeiten erfassen" on public.arbeitszeiten for insert to authenticated
-  with check ((user_id = auth.uid() and bestaetigt is null and public.darf_schreiben()) or public.ist_inhaber());
+  with check ((user_id = auth.uid() and bestaetigt is null and quelle = 'hand' and public.darf_schreiben()) or public.ist_inhaber());
 create policy "zeiten aendern" on public.arbeitszeiten for update to authenticated
   using ((user_id = auth.uid() and bestaetigt is null) or public.ist_inhaber())
   with check ((user_id = auth.uid() and bestaetigt is null) or public.ist_inhaber());
 create policy "zeiten loeschen" on public.arbeitszeiten for delete to authenticated
-  using ((user_id = auth.uid() and bestaetigt is null) or public.ist_inhaber());
+  using ((user_id = auth.uid() and bestaetigt is null and quelle = 'hand') or public.ist_inhaber());
 revoke all on public.arbeitszeiten from anon;
 grant select, insert, update, delete on public.arbeitszeiten to authenticated;
 
