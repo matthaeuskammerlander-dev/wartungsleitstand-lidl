@@ -2304,6 +2304,31 @@ test("Tiefentest kalender: Tour – Teilerfolg ehrlich gemeldet, Störung nie do
   });
   if (r06.erst.stoerung !== 1 || !/1 Termin.*nicht/.test(r06.erst.meldung) || /nichts gespeichert/.test(r06.erst.meldung) || r06.nochmal.stoerung !== 1)
     fehl.push("TT-KAL-06 Teilerfolg nicht ehrlich gemeldet bzw. Störung doppelt im Kalender: " + JSON.stringify(r06));
+  /* TT-KAL-09: Tour von Hand angepasst (✕) – ein Auswahl-Chip verwirft das nur nach Rückfrage; ein Chip, der nichts ändert, verwirft nichts */
+  const r09 = await a.seite.evaluate(async () => {
+    const tt = window.__tt, x = window.__t.x; tt.leeren();
+    x("S.view='karte'; S.tour.startId='__betrieb'; S.tour.ergebnis=null; S.tour.manuell=null; render()"); await tt.warte(200);
+    document.querySelector("#t_go").click();
+    for (let i = 0; i < 40 && !x("S.tour.ergebnis"); i++) await tt.warte(100);
+    const weg = document.querySelector("[data-tourweg]"); if (!weg) return { fehler: "kein ✕ in der Route" };
+    weg.click();
+    for (let i = 0; i < 40 && !(x("S.tour.manuell") && !document.querySelector("[data-tourweg='" + weg.dataset.tourweg + "']")); i++) await tt.warte(100);
+    const manuell = JSON.stringify(x("S.tour.manuell")), fragen = () => window.__dialoge.filter((y) => y[0] === "confirm").length, erg = { manuell };
+    /* (a) „ganz Österreich“ ist schon gewählt – nichts ändert sich */
+    let f0 = fragen(); document.querySelector("#t_land .chip[data-l=__alle]").click(); await tt.warte(100);
+    erg.gleich = { gefragt: fragen() - f0, manuell: JSON.stringify(x("S.tour.manuell")) };
+    /* (b) anderer Chip, Rückfrage abgelehnt – die Anpassung bleibt; (c) bestätigt – sie entfällt */
+    for (const [fall, antwort] of [["nein", false], ["ja", true]]) {
+      window.__antwort.confirm = antwort; f0 = fragen();
+      document.querySelector("#t_folge").click(); await tt.warte(100);
+      window.__antwort.confirm = true;
+      erg[fall] = { gefragt: fragen() - f0, manuell: JSON.stringify(x("S.tour.manuell")), folge: x("S.tour.naechsterMonat") };
+    }
+    x("S.tour.naechsterMonat=false; S.tour.ergebnis=null; S.tour.manuell=null; S.tour.dazu=null");
+    return erg;
+  });
+  if (r09.fehler || r09.manuell === "null" || r09.gleich.gefragt || r09.gleich.manuell !== r09.manuell || r09.nein.gefragt !== 1 || r09.nein.manuell !== r09.manuell || r09.nein.folge || r09.ja.manuell !== "null" || !r09.ja.folge)
+    fehl.push("TT-KAL-09 Handanpassung ohne Rückfrage verworfen: " + JSON.stringify(r09));
   if (a.fehler.length) fehl.push("Laufzeitfehler: " + a.fehler.join("; "));
   await a.zu();
   pruefe(!fehl.length, fehl.join(" | "));
