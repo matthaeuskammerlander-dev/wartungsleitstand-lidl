@@ -169,6 +169,15 @@
     if(r.notiz!=null && String(r.notiz).length>500) return weg("notiz");
     return null;
   }
+  /* wie der Trigger auslagen_pruefen_privatauto (Antworten 05.10.2026): Kilometergeld nur mit einem Privatauto der Person
+     des Eintrags; eine reine Statusänderung (abgeben, zurückgeben, ausbezahlt) eines gespeicherten km-Eintrags prüft er nicht */
+  function kmOhneAuto(n, alt){
+    if(n.art!=="km") return null;
+    if(alt && alt.art==="km" && ["fahrzeug_id","user_id","km","datum","text"].every(function(k){ return (n[k]==null?null:n[k])===(alt[k]==null?null:alt[k]); })) return null;
+    var inh=rolleJetzt()==="inhaber", wer=!alt ? (inh ? (n.user_id||uid()) : uid()) : (inh ? n.user_id : alt.user_id);
+    return n.fahrzeug_id && DB.fahrzeuge.some(function(f){ return f.id===n.fahrzeug_id && f.privat_von===wer; }) ? null
+      : "Kilometergeld nur mit eingetragenem Privatauto – zuerst im Reiter Fahrzeuge das Privatauto eintragen";
+  }
   function Q(t){ this.t=t; this.a="select"; this.f=[]; this.d=null; this.o={}; this.ord=null; this.lim=null; this.sp=null; }
   Q.prototype.select=function(s){ if(typeof s==="string"&&s&&s!=="*") this.sp=s.split(",").map(function(x){return x.trim();}); return this; };
   Q.prototype.insert=function(d){ this.a="insert"; this.d=d; return this; };
@@ -230,7 +239,7 @@
         if(self.t==="werkzeug"||self.t==="bedarf"){ r.erstellt_von=uid(); r.erstellt=new Date().toISOString(); r.aktiv=r.aktiv==null?true:r.aktiv; if(self.t==="bedarf"){ r.status=r.status||"offen"; r.beschaffung=r.beschaffung||"mitnehmen"; if(r.status==="erledigt") r.erledigt=new Date().toISOString(); } else { r.zustand=r.zustand||"ok"; r.standort_art=r.standort_art||"lager"; } }
         if(self.t==="projekte"){ r.erstellt=r.erstellt||new Date().toISOString(); r.geaendert=r.geaendert||r.erstellt; r.daten=r.daten||{}; r.verlauf=r.verlauf||[]; }
         return r; });
-      if(self.t==="auslagen"){ neu.forEach(function(r){ v=v||auslagenCheck(r); }); if(v){ window.__abgelehnt.push(v); return {data:null,error:{message:v}}; } }
+      if(self.t==="auslagen"){ neu.forEach(function(r){ v=v||kmOhneAuto(r, null)||auslagenCheck(r); }); if(v){ window.__abgelehnt.push(v); return {data:null,error:{message:v}}; } }
       if(self.t==="werkzeug") neu.forEach(function(r){ wzMerken(r); });
       neu.forEach(function(r){ tab.push(r); }); if(self.t==="planung") neu.forEach(function(r){ stundenSync(r.id); });
       if(self.t==="werkzeug") neu.forEach(function(r){ wzVerlauf(r, null); });
@@ -260,7 +269,7 @@
       b.forEach(function(r){ v=v||darf(self.t,"update",self.d,r)||bisVorDatum(Object.assign({}, r, self.d)); });
       /* Prüfregeln vor dem Ändern – scheitert eine Zeile, bleibt alles, wie es war */
       if(!v && self.t==="auslagen") b.forEach(function(r){ var n=Object.assign({},r,self.d); if(n.km!=null) n.km=kmSpalte(n.km);
-        if(n.art==="km") n.betrag=Math.round(n.km*(n.km_satz||0.5)*100)/100; v=v||auslagenCheck(n); });
+        if(n.art==="km") n.betrag=Math.round(n.km*(n.km_satz||0.5)*100)/100; v=v||kmOhneAuto(n, r)||auslagenCheck(n); });
       if(v){ window.__abgelehnt.push(v); return {data:null,error:{message:v}}; }
       b.forEach(function(r){ if(self.t==="protokolle"){ var u=r.erstellt_von,g2=r.erstellt;
           DB.protokoll_fassungen.push({client_id:r.client_id,version:r.version,gesichert:new Date().toISOString(),daten:JSON.parse(JSON.stringify(r))});

@@ -1326,7 +1326,9 @@ test("Reisekosten: Beleg mit Foto, Kilometer Privatauto, Monat abgeben, Chef zah
     const wzFrage = !!d && /In die Werkzeugliste/.test(d.textContent);
     if (d) { const nein = [...d.querySelectorAll("button")].find((b) => /Nein/.test(b.textContent)); if (nein) nein.click(); }
     await warte(300);
-    /* Kilometer */
+    /* Kilometer – nur mit eingetragenem Privatauto (Inhaber 05.10.2026) */
+    db.fahrzeuge.push({ id: "fzRk", kennzeichen: "S-RK 1", fahrer: [ich], fahrer_namen: ["Testtechniker"], privat_von: ich, privat_name: "Testtechniker", aktiv: true });
+    await x("fzLaden(true)");
     x("akEditor(null, {art:'km'})"); await warte(400);
     d = dlg();
     d.querySelector('[data-f="text"]').value = "Salzburg – Saalfelden – Salzburg";
@@ -3320,6 +3322,9 @@ test("Tiefentest reisekosten: Erfassen – Vorschau wie gespeichert, Grenzen der
     };
     /* RK-11: alter Eintrag mit 0,42 €/km – die Vorschau nennt den Satz, mit dem gespeichert wird */
     db.auslagen.push({ id: "tkK1", user_id: "u_tech_test_at", name: "Testtechniker", art: "km", datum: heute, text: "Salzburg – Hallein – Salzburg", km: 100, km_satz: 0.42, betrag: 42, status: "offen", erstellt: new Date().toISOString() });
+    /* Kilometergeld nur mit eingetragenem Privatauto (Inhaber 05.10.2026) */
+    db.fahrzeuge.push({ id: "fzTk", kennzeichen: "S-TK 1", fahrer: ["u_tech_test_at"], fahrer_namen: ["Testtechniker"], privat_von: "u_tech_test_at", privat_name: "Testtechniker", aktiv: true });
+    await x("fzLaden(true)");
     x("S.view='stunden'; render()"); await warte(700);
     x("akEditor(AUSLAGEN.filter(function(z){ return z.id==='tkK1'; })[0])"); await warte(300);
     let d = dlg();
@@ -4489,6 +4494,60 @@ test("Antworten post: Reisekosten – Belegfoto nach der Abgabe nur noch der Inh
     p(!dat["auslagen/u_tech_test_at/offen.jpg"], "Techniker kann das Foto eines offenen Belegs nicht entfernen");
     const fremd = await sb.storage.from("auslagen").upload("u_inhaber_test_at/x.jpg", new Blob(["x"], { type: "image/jpeg" }));
     p(!!fremd.error && !dat["auslagen/u_inhaber_test_at/x.jpg"], "Techniker legt ein Foto in einen fremden Ordner");
+    return { fehlt };
+  });
+  pruefe(!r.fehlt.length, r.fehlt.join(" | "));
+  pruefe(!a.fehler.length, "Laufzeitfehler: " + a.fehler.join("; "));
+  await a.zu();
+});
+
+test("Antworten post: Kilometergeld nur mit eingetragenem Privatauto – App und Datenbank, Abgeben alter Einträge geht weiter, Inhaber ändert fremde", async () => {
+  const a = await rkSeite(KONTEN.techniker);
+  const r = await a.seite.evaluate(async () => {
+    const x = window.__t.x, db = window.__db.tabellen, { warte, dlg, speichern } = window.__rk;
+    const heute = x("isoLokal(new Date())"), fehlt = [], p = (bed, text) => { if (!bed) fehlt.push(text); };
+    const sb = () => x("Store.sb");
+    /* ein alter km-Eintrag ohne Fahrzeug (vor der Regel erfasst) */
+    db.auslagen.push({ id: "kmAlt", user_id: "u_tech_test_at", name: "Testtechniker", art: "km", datum: heute, text: "Salzburg – Golling – Salzburg", km: 60, km_satz: 0.5, betrag: 30, status: "offen", erstellt: new Date().toISOString() });
+    db.fahrzeuge.push({ id: "fzFirma", kennzeichen: "S-FI 1", fahrer: ["u_tech_test_at"], fahrer_namen: ["Testtechniker"], aktiv: true },
+      { id: "fzAndere", kennzeichen: "S-AN 2", fahrer: ["u_admin_test_at"], fahrer_namen: ["Testadmin"], privat_von: "u_admin_test_at", privat_name: "Testadmin", aktiv: true });
+    await x("fzLaden(true)");
+    x("S.view='stunden'; render()"); await warte(500);
+    /* App: ohne eigenes Privatauto kein neuer km-Eintrag, sondern der Hinweis */
+    x("akEditor(null, {art:'km'})"); await warte(300);
+    let d = dlg();
+    p(/Zuerst im Reiter Fahrzeuge dein Privatauto eintragen/.test(d.textContent) && !d.querySelector('[data-f="km"]') && ![...d.querySelectorAll(".as-fuss button")].some((b) => /^Speichern$/.test(b.textContent.trim())),
+      "ohne Privatauto: km-Eintrag möglich bzw. kein Hinweis: " + d.textContent.slice(0, 160));
+    x("ansichtenSchliessen()");
+    /* Datenbank: ohne Fahrzeug, mit Firmenfahrzeug oder fremdem Privatauto abgelehnt */
+    for (const [fz, was] of [[null, "ohne Fahrzeug"], ["fzFirma", "Firmenfahrzeug"], ["fzAndere", "Privatauto einer anderen Person"]]) {
+      const e = await sb().from("auslagen").insert({ art: "km", datum: heute, text: "Test " + was, km: 10, fahrzeug_id: fz }).select("*");
+      p(!!e.error && /Privatauto/.test(e.error.message) && !db.auslagen.some((z) => z.text === "Test " + was), "Datenbank nimmt km-Eintrag " + was + " an: " + JSON.stringify(e.error));
+    }
+    /* reine Statusänderung (Monat abgeben) an einem alten Eintrag ohne Fahrzeug geht weiter */
+    const ab = await sb().from("auslagen").update({ status: "eingereicht" }).eq("id", "kmAlt").select("id");
+    p(!ab.error && db.auslagen.find((z) => z.id === "kmAlt").status === "eingereicht", "alter km-Eintrag ohne Fahrzeug lässt sich nicht abgeben: " + JSON.stringify(ab.error));
+    /* mit eigenem Privatauto: vorgewählt, gespeichert mit Fahrzeug */
+    db.fahrzeuge.push({ id: "fzMeins", kennzeichen: "S-PV 3", fahrer: ["u_tech_test_at"], fahrer_namen: ["Testtechniker"], privat_von: "u_tech_test_at", privat_name: "Testtechniker", aktiv: true });
+    await x("fzLaden(true)");
+    x("akEditor(null, {art:'km'})"); await warte(300);
+    d = dlg();
+    p(d.querySelector('[data-f="fahrzeug_id"]').value === "fzMeins", "eigenes Privatauto nicht vorgewählt");
+    d.querySelector('[data-f="text"]').value = "Salzburg – Werfen – Salzburg"; d.querySelector('[data-f="km"]').value = "80";
+    speichern(d); await warte(600);
+    const neu = db.auslagen.find((z) => z.text === "Salzburg – Werfen – Salzburg");
+    p(neu && neu.fahrzeug_id === "fzMeins" && neu.betrag === 40, "km-Eintrag mit Privatauto nicht gespeichert: " + JSON.stringify(neu));
+    /* Inhaber ändert den fremden Eintrag: mit dem Privatauto der Person ja, mit einem anderen nein */
+    await window.__rk.anmelden("inhaber@test.at", "inhaber");
+    await x("fzLaden(true)");
+    x("akEditor(" + JSON.stringify(neu) + ")"); await warte(300);
+    d = dlg(); d.querySelector('[data-f="km"]').value = "90"; speichern(d); await warte(600);
+    p(db.auslagen.find((z) => z.id === neu.id).km === 90, "Inhaber kann den fremden km-Eintrag nicht ändern: " + ((dlg() || {}).textContent || "").slice(0, 120));
+    const falsch = await sb().from("auslagen").update({ fahrzeug_id: "fzAndere", km: 95 }).eq("id", neu.id).select("id");
+    p(!!falsch.error && db.auslagen.find((z) => z.id === neu.id).km === 90, "Inhaber: fremder km-Eintrag mit dem Privatauto einer anderen Person gespeichert");
+    x("ansichtenSchliessen(); akEditor(null, {art:'km'})"); await warte(300);
+    p(/Zuerst im Reiter Fahrzeuge dein Privatauto eintragen/.test(dlg().textContent) && !!dlg().querySelector(".as-fuss button") && /Fahrzeuge/.test(dlg().querySelector(".as-fuss").textContent),
+      "Inhaber ohne eigenes Privatauto: kein Hinweis bzw. kein Weg zum Reiter Fahrzeuge");
     return { fehlt };
   });
   pruefe(!r.fehlt.length, r.fehlt.join(" | "));

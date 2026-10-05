@@ -24733,13 +24733,13 @@ Object.assign(RUNDGAENGE, {
         "Einträge „aus dem Kalender“ passt die Datenbank an, wenn sich der Kalendereintrag ändert, und entfernt sie, wenn er gelöscht wird (nie in einem bestätigten Monat). Änderst du so einen Eintrag selbst, gilt er als von Hand."])},
     {reiter:"stunden", ziel:function(){ return rgKarte(/^Reisekosten und Kilometergeld/); }, wenn:function(){ return akAn(); }, titel:"Reisekosten und Kilometergeld",
       text:RG_LISTE(["<strong>📷 + Beleg</strong>: mit eigenem Geld bezahlt (Bauhaus, Parken, Maut, Tanken, Nächtigung …) – Foto vom Beleg (Pflicht; sonst „Kein Beleg vorhanden“ mit Grund), Datum, wo/was, Betrag, wofür, Projekt/Markt.",
-        "<strong>🚗 + Kilometer</strong>: Fahrt mit dem Privatauto – Datum, Strecke (Vorschlag aus dem Kalender), km; die App rechnet das Kilometergeld (km × Satz, den der Chef einstellt).",
+        "<strong>🚗 + Kilometer</strong>: Fahrt mit dem Privatauto – Datum, Strecke (Vorschlag aus dem Kalender), km, Privatauto; die App rechnet das Kilometergeld (km × Satz, den der Chef einstellt). Ohne eingetragenes Privatauto geht es nicht – zuerst im Reiter Fahrzeuge das Privatauto eintragen (lassen).",
         "Am Monatsende <strong>„Monat abgeben“</strong> – danach ändert nur noch der Chef, auch das Belegfoto. „PDF“ wie das bisherige Blatt (Barbelege, Kilometer mit Privatauto, zu zahlen) mit allen Belegfotos.",
         "Unten „Konto für die Auszahlung“ (IBAN) einmal eintragen."])+
       RG_HG(["Nur du und der Inhaber sehen deine Reisekosten – keine Admins, keine Kollegen.",
         "Beim Abgeben bekommt der Inhaber eine Nachricht; im Kalender-To-do steht „Reisekosten … – auszahlen“.",
         "Werkzeug und Material: bei „abholen“/„bestellen“ führt „🧾 Selbst bezahlt – Beleg erfassen“ hierher und hakt den Eintrag danach ab; gekauftes Werkzeug kann gleich in die Werkzeugliste.",
-        "Kilometergeld nur fürs Privatauto (beim Fahrzeug: „Privatauto – Kilometergeld an …“), nicht fürs Firmenfahrzeug."])},
+        "Kilometergeld nur mit eingetragenem Privatauto (beim Fahrzeug: „Privatauto – Kilometergeld an …“), nie fürs Firmenfahrzeug – das prüft auch die Datenbank."])},
     {reiter:"stunden", ziel:function(){ return rgKarte(/^Alle Mitarbeiter/); }, wenn:function(){ return istInhaber(); }, titel:"Alle Mitarbeiter und Lohn (Inhaber)",
       text:"Monatstabelle je Person (Soll, Ist, Differenz, Überstunden, Sa, So, Feiertag, Montage, Fahrt, Urlaub, Krank, Entfernung), „Lohnverrechnung (CSV)“, „Bestätigen“, „Arbeitszeitregeln“, Schalter „Standort beim Stempeln“."+
       RG_HG(["Soll Mo–Do 8 h, Fr 6,5 h (38,5 h), Feiertage 0. Überstunden als <strong>Monatsbilanz</strong>, nicht je Tag; Samstag, Sonntag, Feiertag getrennt; Montage = Baustelle, Wartung, Störung; Fahrt = Wegzeit.",
@@ -32200,6 +32200,13 @@ function akSummen(l){
 }
 /* meine Privatautos (das Büro stellt beim Fahrzeug „Privatauto – Kilometergeld an …“ ein) */
 function meinePrivatautos(){ var ich=meineKennung(); return FZ.filter(function(f){ return f.privat_von===ich && f.aktiv!==false; }); }
+/* Kilometergeld nur MIT eingetragenem Privatauto (Inhaber 05.10.2026; die Datenbank prüft es ebenso – Trigger
+   auslagen_pruefen_privatauto: fahrzeug_id eines Fahrzeugs mit privat_von = Person des Eintrags) */
+function akOhneAutoText(fremdName){
+  if(fremdName) return "Zuerst im Reiter Fahrzeuge das Privatauto von "+fremdName+" eintragen (beim Fahrzeug „Privatauto – Kilometergeld an …“).";
+  return "Zuerst im Reiter Fahrzeuge dein Privatauto eintragen"+(fzBuero() && !nurLesen() ? " („+ Fahrzeug“ bzw. Bearbeiten: „Privatauto – Kilometergeld an …“)." :
+    " lassen – das macht das Büro (beim Fahrzeug „Privatauto – Kilometergeld an …“).");
+}
 /* Vorschlag für die Strecke eines Tages: Startpunkt – Orte der eigenen Einsätze – zurück */
 function akStreckeVorschlag(tag){
   var orte=[], dazu=function(s){ if(!s) return; var n=s.ort||stName(s); if(n && orte[orte.length-1]!==n) orte.push(n); };
@@ -32231,6 +32238,8 @@ function akFotoUrl(pfad){
 /* ---------- erfassen / ändern ---------- */
 function akEditor(z, vorgabe){
   if(!akAn()){ toast("Reisekosten gehen nur mit Anmeldung."); return; }
+  /* neuer km-Eintrag: erst die Fahrzeuge kennen (ohne Privatauto kein Kilometergeld) – danach öffnet sich der Dialog */
+  if(!fzGeladen && !z && (vorgabe||{}).art==="km" && !demo()){ toast("Fahrzeuge werden geladen …"); fzLaden().then(function(){ if(fzGeladen) akEditor(z, vorgabe); }); return; }
   if(!fzGeladen) fzLaden();
   var a=Object.assign({art:"beleg", datum:isoLokal(new Date()), kategorie:"material"}, vorgabe||{}, z||{});
   var gesperrt=!!z && z.status!=="offen" && !istInhaber();
@@ -32246,6 +32255,15 @@ function akEditor(z, vorgabe){
   var autos=fremd ? FZ.filter(function(f){ return f.privat_von===z.user_id && f.aktiv!==false; }) : meinePrivatautos();
   if(a.fahrzeug_id && !autos.some(function(f){ return f.id===a.fahrzeug_id; }))
     autos=autos.concat([FZ.filter(function(f){ return f.id===a.fahrzeug_id; })[0] || {id:a.fahrzeug_id, kennzeichen:a.fahrzeug_name||""}]);
+  /* Kilometergeld nur MIT eingetragenem Privatauto (Inhaber 05.10.2026): ohne eigenes Privatauto gar kein neuer km-Eintrag,
+     nur der Hinweis (die Präsentation zeigt den Ablauf trotzdem – sie speichert nichts und legt keine Fahrzeuge an) */
+  if(km && !z && !autos.length && !demo()){
+    v.schritt.textContent="Kilometergeld nur mit Privatauto";
+    v.inhalt.appendChild(el('<div class="note warnbox" style="max-width:560px;font-size:13.5px">'+(fzFehler ? esc(fzFehler)+" Bitte später nochmals." :
+      "<strong>"+esc(akOhneAutoText())+"</strong><br>Kilometergeld gibt es nur für ein eingetragenes Privatauto, nicht für ein Firmenfahrzeug.")+"</div>"));
+    if(fzBuero() && !nurLesen() && !fzFehler){ var zf=el('<button class="btn" type="button">Zum Reiter Fahrzeuge</button>'); zf.onclick=function(){ v.zu(); springe({reiter:"fahrzeuge"}); }; v.fuss.appendChild(zf); }
+    return;
+  }
   var projekte=PROJEKTE.filter(function(p){ return projektOffen(p) || p.id===a.projekt_id; });
   var form=el('<form class="stack" autocomplete="off" style="max-width:560px">'+
     (km ? "" :
@@ -32266,7 +32284,7 @@ function akEditor(z, vorgabe){
     "</div>"+
     (km ? '<label class="fl"><span class="req">Strecke</span><input type="text" data-f="text" maxlength="300" value="'+esc(a.text||"")+'" placeholder="z. B. Salzburg – Saalfelden – St. Johann i. T. – Salzburg"></label>'+
           '<div data-vorschlag class="chips"></div>'+
-          '<label class="fl"><span>Fahrzeug</span><select data-f="fahrzeug_id"><option value="">– Privatauto –</option>'+autos.map(function(f){
+          '<label class="fl"><span'+(demo()?"":' class="req"')+'>Privatauto</span><select data-f="fahrzeug_id"><option value="">– bitte wählen –</option>'+autos.map(function(f){
             return '<option value="'+esc(f.id)+'"'+(a.fahrzeug_id===f.id || (!a.fahrzeug_id && autos.length===1 && !fremd)?" selected":"")+">"+esc((f.kennzeichen||"gespeichertes Fahrzeug")+(f.bezeichnung?" · "+f.bezeichnung:""))+"</option>"; }).join("")+"</select></label>"+
           '<div class="note" data-kmbetrag style="font-size:13px"></div>'
         : '<label class="fl"><span class="req">Wo / was?</span><input type="text" data-f="text" maxlength="300" value="'+esc(a.text||"")+'" placeholder="z. B. Bauhaus – Silikon und Schrauben"></label>'+
@@ -32303,8 +32321,9 @@ function akEditor(z, vorgabe){
       if(kv){ var c2=el('<button class="chip" type="button">'+kv+" km laut Fahrzeug</button>"); c2.onclick=function(){ F("km").value=String(kv); rechne(); }; h.appendChild(c2); }
     };
     F("datum").addEventListener("change", vorschlag); F("fahrzeug_id").addEventListener("change", vorschlag); vorschlag();
-    if(!autos.length) form.insertBefore(el('<div class="note" style="font-size:12.5px">Kilometergeld gibt es nur für das <strong>Privatauto</strong>, nicht für ein Firmenfahrzeug. '+
-      "Ist dein Auto noch nicht als Privatauto eingetragen, macht das das Büro unter Fahrzeuge → Bearbeiten.</div>"), form.firstChild);
+    /* gespeicherter Eintrag ohne Privatauto (vor der Regel erfasst) bzw. Präsentation: ändern geht erst mit Privatauto */
+    if(!autos.length) form.insertBefore(el('<div class="note warnbox" style="font-size:12.5px">Kilometergeld gibt es nur mit eingetragenem <strong>Privatauto</strong>, nicht für ein Firmenfahrzeug. '+
+      esc(demo() ? "Präsentation: im echten Betrieb zuerst im Reiter Fahrzeuge das Privatauto eintragen." : akOhneAutoText(fremd ? (a.name||"der Person") : ""))+"</div>"), form.firstChild);
   }
   v.inhalt.appendChild(form);
   if(gesperrt){ form.querySelectorAll("input,select,button").forEach(function(x){ if(!x.closest("[data-vorschau]")) x.disabled=true; }); return; }
@@ -32333,6 +32352,8 @@ function akEditor(z, vorgabe){
       if(k>5000){ fehler("Mehr als 5.000 km an einem Tag gehen nicht – bitte die Kilometer prüfen."); F("km").focus(); return; }
       if(k>1500 && !window.confirm(k+" km an einem Tag – stimmt das?")) return;
       var fid=F("fahrzeug_id").value||null, fo=fid && autos.filter(function(f){ return f.id===fid; })[0];
+      /* ohne Privatauto kein Kilometergeld (Inhaber 05.10.2026) – die Datenbank lehnt es sonst ab */
+      if(!fid && !demo()){ fehler(autos.length ? "Bitte das Privatauto wählen." : akOhneAutoText(fremd ? (a.name||"der Person") : "")); F("fahrzeug_id").focus(); return; }
       Object.assign(zeile, {km:k, fahrzeug_id:fid, fahrzeug_name:fo?fo.kennzeichen||null:null});
     } else {
       var b=akBetragLesen(F("betrag").value);
