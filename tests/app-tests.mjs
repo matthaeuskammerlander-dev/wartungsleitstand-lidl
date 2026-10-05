@@ -1672,6 +1672,18 @@ reSchritt("eingaben", "R01", async (a) => {
   });
   return r.menge === 1.5 && r.preis === 78.81 && r.kPreis === 447.3 ? "" : `„1.5“ × „78.81“ gespeichert als ${r.menge} × ${r.preis} (netto ${r.netto}); Katalog „447.30“ als ${r.kPreis}`;
 });
+/* auffällige KPlus-Position („(3 h)“ bei Menge 1) ändert den Katalog-Preis nicht */
+reSchritt("eingaben", "R07", async (a) => {
+  const r = await a.seite.evaluate(async () => {
+    const x = window.__t.x, db = window.__db.tabellen;
+    db.katalog.push({ id: "kr7", text: "Regiestunden Techniker R07", eh: "Std", preis: 78.81, kunde_id: "lidl", aktiv: true, quelle: "Test" });
+    await x("katalogLaden()");
+    const erg = await x("katalogLernen")([{ typ: "pos", nr: "1", menge: 1, eh: "Std", preis: 236.43, betragPdf: 236.43, text: "Regiestunden Techniker R07 (3 h)" }], "KPlus Rechnung 900990", { preiseAktualisieren: true });
+    const k = db.katalog.filter((q) => q.id === "kr7")[0];
+    return { erg, preis: k.preis, quelle: k.quelle };
+  });
+  return r.preis === 78.81 && r.erg.unklar === 1 ? "" : `„(3 h)“ bei Menge 1: Katalog-Preis ${r.preis} (${r.quelle}), Ergebnis ${JSON.stringify(r.erg)}`;
+});
 /* Rechnung aus Angebot: der Baustellenbuch-Vorschlag bleibt beim Kältemittel, auch nach Löschen und Verschieben */
 reSchritt("editor", "R04", async (a) => {
   const r = await a.seite.evaluate(async () => {
