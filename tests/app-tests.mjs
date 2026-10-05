@@ -2230,6 +2230,16 @@ test("Tiefentest kalender: Planung prüfen – Reihenfolge übernehmen", async (
   });
   if (r05.fehler || r05.einmal.db !== r05.vorher || !/^Nicht geändert/.test(r05.einmal.toast) || r05.weg.db !== r05.halb || r05.weg.lokal !== r05.halb || !/nur zum Teil/.test(r05.weg.toast) || r05.nochmals !== r05.fertig)
     fehl.push("TT-KAL-05 Tag herausnehmen halb gespeichert bzw. Meldung falsch: " + JSON.stringify(r05));
+  /* TT-KAL-07: eine längst vergangene Einplanung (vor einem Jahr) verdeckt die fällige Wartung am selben Markt nicht */
+  const r07 = await a.seite.evaluate(async () => {
+    const tt = window.__tt, x = window.__t.x; tt.leeren(); const tag = tt.tag2(), alt = x("plusTage(isoLokal(new Date()),-375)");
+    const offen = () => x("planungPruefen('ich','" + tag + "','" + tag + "')[0].amMarkt.map(function(a){ return a.p ? a.p.id : a.art; })");
+    await tt.termine([{ kategorie: "wartung", titel: "Wartung TS1", datum: tag, beginn: "08:00", ende: "10:00", standort_id: "TS1" }]);
+    const vorher = offen();
+    await tt.termine([{ kategorie: "wartung", titel: "Alte Einplanung", datum: alt, standort_id: "TS1", position_ids: ["TP1"] }]);
+    return { vorher, nachher: offen(), eingeplant: !!x("planFuerPosition('TP1')"), status: x("posById.TP1.status") };
+  });
+  if (!r07.vorher.includes("TP1") || r07.eingeplant || !r07.nachher.includes("TP1")) fehl.push("TT-KAL-07 fällige Wartung trotz alter Einplanung übersehen: " + JSON.stringify(r07));
   if (a.fehler.length) fehl.push("Laufzeitfehler: " + a.fehler.join("; "));
   await a.zu();
   pruefe(!fehl.length, fehl.join(" | "));
