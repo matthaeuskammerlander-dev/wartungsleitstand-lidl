@@ -4541,6 +4541,41 @@ test("Antworten rechnung: Vorschlag zum Einsatz – Wartungspreis je JW/HJW/HJI,
   pruefe(!a.fehler.length, "Laufzeitfehler: " + a.fehler.join("; "));
   await a.zu();
 });
+test("Antworten rechnung: KPlus-Rechnung umgehängt – der vorige Einsatz ist wieder „noch nicht abgerechnet“; die App lernt Streichen nach 3 Rechnungen", async () => {
+  const a = await oeffnen(KONTEN.inhaber);
+  await a.seite.evaluate((h) => eval(h), AR_HILFEN);
+  const r = await a.seite.evaluate(async () => {
+    const x = window.__t.x, db = window.__db.tabellen, A = window.__ar;
+    const st = (id, d, o) => Object.assign({ id, client_id: id, standort_id: "TS1", datum: d, wartungsart: "Störung", techniker: "Testtechniker", anlagen: [],
+      stoerung: { ankunft: "08:00", ende: "09:00", problemtyp: "Kühlung" }, version: 1, erstellt: new Date().toISOString(), erstellt_von: "u_tech_test_at" }, o || {});
+    db.protokolle.push(st("ar_a", "2026-05-01"), st("ar_b", "2026-05-02"), st("ar_c", "2026-05-03"), st("ar_d", "2026-05-04"));
+    await x("Promise.all([ladeProtokolle(), katalogLaden(), abrechnungLaden(), belegeAlleLaden()])");
+    const pk = (id) => x("alleProtokolle(true)").filter((p) => p._id === id)[0];
+    const erg = (nr, pos) => ({ art: "rechnung", nummer: nr, datum: "2026-05-05", kopf: { betreff: ["Test"] }, summenPdf: { netto: null },
+      positionen: pos || [{ typ: "pos", nr: "1", menge: 1, eh: "Std", preis: 70, betragPdf: 70, text: "Regiestundensatz Test" }] });
+    const ablegen = async (id, e) => {
+      x("kplusVorschau")(x("kontextProtokoll")(pk(id)), e, function () {});
+      const d = await A.bis(() => { const d = A.dlgs().pop(); return d && A.knopf(d, /Beim Einsatz ablegen/) && d; });
+      const vgl = d.textContent;
+      A.knopf(d, /Beim Einsatz ablegen/).click(); await A.bis(() => !document.body.contains(d), 4000); await A.warte(300);
+      await x("Promise.all([abrechnungLaden(), belegeAlleLaden()])"); return vgl;
+    };
+    await ablegen("ar_a", erg("900901"));
+    const vorher = !!x("abrechnung")["ar_a"];
+    await ablegen("ar_b", erg("900901"));                        /* dieselbe Rechnung gehört zu Einsatz B – umhängen (Rückfrage: ja) */
+    const nachher = { a: !!x("abrechnung")["ar_a"], b: !!x("abrechnung")["ar_b"], beleg: (db.belege.filter((b) => b.nummer === "900901")[0] || {}).protokoll_id,
+      meldung: document.getElementById("toast").textContent };
+    /* C hat noch eine zweite Rechnung: bleibt abgerechnet */
+    await ablegen("ar_c", erg("900902")); await ablegen("ar_c", erg("900903")); await ablegen("ar_d", erg("900903"));
+    const c = !!x("abrechnung")["ar_c"];
+    return { vorher, nachher, c };
+  });
+  pruefe(r.vorher, "Einsatz A nach der KPlus-Rechnung nicht als abgerechnet vermerkt");
+  pruefe(r.nachher.beleg === "ar_b" && r.nachher.b && !r.nachher.a && /wieder „noch nicht abgerechnet“/.test(r.nachher.meldung), "Umgehängt: A bleibt abgerechnet bzw. B nicht – " + JSON.stringify(r.nachher));
+  pruefe(r.c, "Einsatz mit einer weiteren Rechnung verlor den Vermerk „abgerechnet“");
+  pruefe(!a.fehler.length, "Laufzeitfehler: " + a.fehler.join("; "));
+  await a.zu();
+});
 
 /* ================================================================ Ablauf ================================================================ */
 const filterText = process.argv.slice(2).find((x) => !x.startsWith("--"));

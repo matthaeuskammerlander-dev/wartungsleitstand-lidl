@@ -24122,7 +24122,7 @@ function handbuchKarte(z){
         "Wartung: je Anlage der Katalogpreis ihrer Termin-Art (JW, HJW, HJI). Fehlt er, steht die Zeile ohne Preis mit Hinweis – eine alte KPlus-Rechnung mit dieser Position hochladen, dann kennt der Katalog den Preis. "+
           "Reparatur, Prüfung und sonstige Einsätze werden wie eine Störung nach Aufwand vorgeschlagen (Regiestunden, Material, Fahrtpauschale). "+
           "Nachgefülltes Kältemittel ohne Sorte im Protokoll steht als „Kältemittel – Sorte fehlt“ ohne Preis da.",
-        "<strong>KPlus-Rechnung hochladen</strong> beim Einsatz (im Protokoll unter „Rechnung zu diesem Einsatz“): statt selbst zu schreiben, das PDF aus KPlus – die App vergleicht es mit ihrem Vorschlag („So hätte die App gerechnet“), legt das Original beim Beleg ab, vermerkt den Einsatz als abgerechnet und lernt daraus für künftige Vorschläge.",
+        "<strong>KPlus-Rechnung hochladen</strong> beim Einsatz (im Protokoll unter „Rechnung zu diesem Einsatz“): statt selbst zu schreiben, das PDF aus KPlus – die App vergleicht es mit ihrem Vorschlag („So hätte die App gerechnet“), legt das Original beim Beleg ab, vermerkt den Einsatz als abgerechnet und lernt daraus für künftige Vorschläge. Gehört sie eigentlich zu einem anderen Einsatz, dort hochladen und umhängen – der vorige steht dann wieder unter „noch nicht abgerechnet“ (außer er hat noch eine andere Rechnung).",
         "Status mit Datum (versendet, fällig, bezahlt); überfällige Rechnungen sind markiert.",
         "Preise, Katalog und Belege liegen nur in der Datenbank, sichtbar nur für den Inhaber – nicht für Admins, nicht auf der Synology im Projektordner."]))+
 
@@ -24899,6 +24899,7 @@ Object.assign(RUNDGAENGE, {
         "<strong>KPlus-PDF einlesen</strong> am Projekt: die App rechnet gegen die Summe im PDF nach, neue Positionen auf Wunsch in den Katalog.",
         "<strong>KPlus-Rechnung hochladen</strong> beim Einsatz (Protokoll › „Rechnung zu diesem Einsatz“): „So hätte die App gerechnet“ zeigt, was gleich war, was fehlte und was zu viel war."])+
       RG_HG(["Eine echte Rechnung zu einem Einsatz – auch eine hochgeladene KPlus-Rechnung – vermerkt das Protokoll als abgerechnet; das Original-PDF liegt beim Beleg.",
+        "Wird eine KPlus-Rechnung zu einem anderen Einsatz umgehängt, verliert der vorige den Vermerk „abgerechnet“ und steht wieder unter „noch nicht abgerechnet“ – außer er hat noch eine andere Rechnung.",
         "Aus hochgeladenen KPlus-Rechnungen lernt die App: was der Chef bei solchen Einsätzen mindestens zweimal (am selben Markt einmal) dazuschreibt, steht künftig im Vorschlag unter „Ergänzt aus früheren KPlus-Rechnungen – bitte prüfen“."])}
   ]}
 });
@@ -28142,7 +28143,7 @@ function kplusVorschau(ziel, erg, fertig, datei){
     var zeile={projekt_id:p?p.id:null, protokoll_id:pk?pk._id:null, kunde_id:kx.kunde_id||"lidl", standort_id:kx.standort_id||null, art:erg.art, nummer:erg.nummer, test:false, extern:true,
       datum:erg.datum||isoLokal(new Date()), status:erg.art==="rechnung"?"versendet":"angenommen",
       bezug_id:angebot?angebot.id:null, kopf:kopf, positionen:erg.positionen, summen:belegSummen(erg.positionen), geaendert_von:meinName()};
-    var beleg=null, abgFehler=null, katFehler=null;
+    var beleg=null, abgFehler=null, katFehler=null, vorher=null, umhText="";
     var kurz=function(e){ var m=String((e&&e.message)||e||""); return /fetch|network|load failed/i.test(m) ? "keine Verbindung" : m; };
     /* dieselbe Nummer liegt schon an einem Projekt bzw. Einsatz: nur leere Bezüge füllen (früher verlor das Projekt sie still);
        an einem ANDEREN Projekt bzw. Einsatz nur nach Rückfrage umhängen */
@@ -28156,6 +28157,7 @@ function kplusVorschau(ziel, erg, fertig, datei){
         if(!p) zeile.projekt_id=alt.projekt_id||null;
         if(!pk) zeile.protokoll_id=alt.protokoll_id||null;
         if(!zeile.bezug_id) zeile.bezug_id=alt.bezug_id||null;
+        if(pk && alt.protokoll_id && alt.protokoll_id!==pk._id) vorher={id:alt.protokoll_id, wo:wo};
       }
       return Store.sb.from("belege").upsert(zeile, {onConflict:"art,nummer"}).select("*");
     }).then(function(r){
@@ -28166,11 +28168,24 @@ function kplusVorschau(ziel, erg, fertig, datei){
       /* Einsatz mit KPlus-Rechnung gilt als abgerechnet – scheitert der Vermerk, sagt es die Meldung (früher hieß es trotzdem „vermerkt“) */
       var abg=pk && erg.art==="rechnung" ? Store.sb.from("abrechnung").upsert({protokoll_id:pk._id, abgerechnet:new Date().toISOString(), von:meinName(), notiz:"KPlus-Rechnung "+erg.nummer},{onConflict:"protokoll_id"})
         .then(function(r){ if(r && r.error){ abgFehler=kurz(r.error); return; } return Promise.resolve(abrechnungLaden()).catch(function(){}); }, function(e){ abgFehler=kurz(e); }) : null;
+      /* von Einsatz A hierher umgehängt (Inhaber 05.10.2026): A verliert den Vermerk „abgerechnet (KPlus …)“ und steht wieder
+         unter „noch nicht abgerechnet“ – nur, wenn A keine andere Rechnung hat und der Vermerk von dieser Rechnung stammt */
+      var umh=vorher && erg.art==="rechnung" ? Promise.all([Store.sb.from("belege").select("id,art,status,test,extern,nummer").eq("protokoll_id", vorher.id),
+        Store.sb.from("abrechnung").select("*").eq("protokoll_id", vorher.id)]).then(function(x){
+        if(x[0].error || x[1].error) throw new Error((x[0].error||x[1].error).message);
+        var andere=(x[0].data||[]).filter(function(b){ return b.art==="rechnung" && b.status!=="storniert" && (b.extern || !b.test); }), a=(x[1].data||[])[0];
+        if(andere.length){ if(a) umhText=" – "+vorher.wo+" bleibt abgerechnet (Rechnung "+andere[0].nummer+")"; return; }
+        if(!a || String(a.notiz||"").indexOf(erg.nummer)<0) return;
+        return Store.sb.from("abrechnung").delete().eq("protokoll_id", vorher.id).then(function(r){
+          if(r && r.error) throw new Error(r.error.message);
+          umhText=" – "+vorher.wo+" wieder „noch nicht abgerechnet“"; });
+      }).catch(function(e){ umhText=" – bei "+vorher.wo+" steht NOCH „abgerechnet“ (nicht geändert: "+kurz(e)+")"; }) : null;
       /* der Katalog zuletzt: scheitert nur er, ist der Beleg trotzdem abgelegt (früher „Nicht abgelegt – nichts gespeichert“) */
-      return Promise.all([pdf, abg]).then(function(){ return kat.querySelector("input").checked ? katalogUebernehmen(erg).catch(function(e){ katFehler=kurz(e); return 0; }) : 0; });
+      return Promise.all([pdf, abg, umh]).then(function(){ return umh ? Promise.resolve(abrechnungLaden()).catch(function(){}) : null; })
+        .then(function(){ return kat.querySelector("input").checked ? katalogUebernehmen(erg).catch(function(e){ katFehler=kurz(e); return 0; }) : 0; });
     }).then(function(n){
       v.zu(); toast((erg.art==="rechnung"?"Rechnung ":"Angebot ")+erg.nummer+" abgelegt"+
-        (pk&&erg.art==="rechnung" ? (abgFehler ? " – der Einsatz ist aber NICHT als abgerechnet vermerkt (nicht gespeichert: "+abgFehler+"). Bitte die KPlus-Rechnung nochmals hochladen" : ", Einsatz als abgerechnet vermerkt") : "")+
+        (pk&&erg.art==="rechnung" ? (abgFehler ? " – der Einsatz ist aber NICHT als abgerechnet vermerkt (nicht gespeichert: "+abgFehler+"). Bitte die KPlus-Rechnung nochmals hochladen" : ", Einsatz als abgerechnet vermerkt") : "")+umhText+
         (katFehler ? " – Katalog nicht ergänzt ("+katFehler+")" : n ? " – "+n+" neue Position"+(n===1?"":"en")+" im Katalog" : "")+".");
       fertig();
     }).catch(function(e){ ok.disabled=false; ok.textContent=pk?"Beim Einsatz ablegen":"Am Projekt ablegen";
