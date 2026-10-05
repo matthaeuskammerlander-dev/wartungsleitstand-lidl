@@ -2208,6 +2208,42 @@ test("Tiefentest kalender: Planung prüfen – Reihenfolge übernehmen", async (
   pruefe(!fehl.length, fehl.join(" | "));
 });
 
+test("Tiefentest kalender: Präsentation – Reihenfolge übernehmen, mit einplanen und Tag beenden schicken nichts an die Datenbank", async () => {
+  const a = await tkOeffnen(KONTEN.praesentation);
+  const r = await a.seite.evaluate(async () => {
+    const tt = window.__tt, x = window.__t.x; tt.leeren();
+    const ich = tt.ich(), tag = tt.tag2(), h = (n) => x("plusTage(isoLokal(new Date())," + n + ")");
+    const sb = x("Store.sb"), alt = sb.from, schreib = [];
+    sb.from = function (t) { const q = alt.call(this, t); ["insert", "update", "delete", "upsert"].forEach((m) => { const o = q[m]; q[m] = function () { schreib.push(t + "." + m); return o.apply(q, arguments); }; }); return q; };
+    /* nur im Speicher, wie sie der Termin-Editor in der Präsentation anlegt */
+    const e = (id, kategorie, titel, sid, b, en) => ({ id, art: "termin", kategorie, titel, datum: tag, beginn: b, ende: en, standort_id: sid, wer: [ich], wer_namen: ["P"], status: "offen", erstellt_von: ich, position_ids: [] });
+    x("PLANUNG").push(e("pl_d1", "besprechung", "Innsbruck", "TS3", "08:00", "09:00"), e("pl_d2", "wartung", "Wien", "TS1", "10:00", "11:00"), e("pl_d3", "besprechung", "West", "TS4", "12:00", "13:00"),
+      { id: "pl_d4", art: "termin", kategorie: "krank", titel: "Krank", datum: h(14), datum_bis: h(18), wer: [ich], wer_namen: ["P"], status: "offen", erstellt_von: ich, ausnahmen: {} });
+    const erg = {};
+    for (const [name, re, zeile] of [["Reihenfolge übernehmen", /Reihenfolge übernehmen/], ["mit einplanen", /mit einplanen/, /Testfiliale 901/]]) {
+      x("ansichtenSchliessen()");
+      const k = tt.knopf(await tt.pruefen(tag), re, zeile), s0 = schreib.length;
+      if (k) { k.click(); await tt.warte(300); }
+      erg[name] = k ? schreib.slice(s0) : "Knopf fehlt";
+    }
+    erg.imSpeicher = x("PLANUNG").filter((p) => p.id === "pl_d2").map((p) => p.beginn + " " + (p.position_ids || []).join())[0];
+    x("ansichtenSchliessen()");
+    x("abwesenheitPruefen('" + h(16) + "', function(){})"); await tt.warte(200);
+    const k2 = tt.knopf(tt.dialog(), /für diesen Tag beenden/), s1 = schreib.length;
+    if (k2) { k2.click(); await tt.warte(300); }
+    erg["Tag beenden"] = k2 ? schreib.slice(s1) : "Knopf fehlt";
+    sb.from = alt;
+    return erg;
+  });
+  const fehl = [];
+  const raus = Object.entries(r).filter(([k, v]) => k !== "imSpeicher" && (typeof v === "string" || v.length)).map(([k, v]) => k + ": " + v);
+  if (raus.length) fehl.push("TT-KAL-13 Präsentation schickt Schreibanfragen: " + raus.join(" | "));
+  if (!/TP1/.test(r.imSpeicher || "")) fehl.push("TT-KAL-13 Präsentation: im Speicher nicht mit eingeplant: " + JSON.stringify(r));
+  if (a.fehler.length) fehl.push("Laufzeitfehler: " + a.fehler.join("; "));
+  await a.zu();
+  pruefe(!fehl.length, fehl.join(" | "));
+});
+
 /* ================================================================ Ablauf ================================================================ */
 const filterText = process.argv.slice(2).find((x) => !x.startsWith("--"));
 const filter = filterText ? new RegExp(filterText, "i") : null;
