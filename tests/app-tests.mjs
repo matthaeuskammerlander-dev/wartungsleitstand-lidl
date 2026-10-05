@@ -4343,6 +4343,24 @@ reSchritt("tempo", "R15", async (a) => {
   return Math.max(...r.zeiten) < 1000 ? "" : `${r.prot} Protokolle, ${r.belege} Belege: ${JSON.stringify(r.zeiten)} ms je Tastendruck`;
 });
 
+/* Zusammenführung der Tiefentests: KPlus erkennt jetzt Gutschriften (eigene Art) – „Mail zu Projekt“ und der Posteingang legen
+   KPlus-PDFs nach der erkannten Art ab; eine Gutschrift (Preise) muss dabei wie eine Rechnung im Büro-Ordner landen */
+test("Tiefentest zusammenführung: KPlus-Gutschrift aus Mail und Posteingang liegt nur im Büro-Ordner", async () => {
+  const a = await oeffnen(KONTEN.inhaber);
+  const r = await a.seite.evaluate(async () => {
+    const x = window.__t.x;
+    x("kplusLesen=function(){ return Promise.resolve({art:'gutschrift', nummer:'900777', datum:'2026-06-01', kopf:{}, positionen:[], summenPdf:{}}); }");
+    window.__gsDatei = new File([new Uint8Array([37, 80, 68, 70])], "900777.pdf", { type: "application/pdf" });
+    window.__gsArt = new Map();
+    await x("kplusArtenPruefen([window.__gsDatei], window.__gsArt)");
+    const art = window.__gsArt.get(window.__gsDatei);
+    return { art, pfad: x("projektDateiPfad({id:'pGS'}, " + JSON.stringify(art || "") + ", '900777.pdf')"), mitBeleg: x("mailMitBeleg([], [" + JSON.stringify(art || "") + "])") };
+  });
+  pruefe(r.art === "rechnung" && /^buero\//.test(r.pfad) && r.mitBeleg === true, "Gutschrift nicht nur im Büro-Ordner: " + JSON.stringify(r));
+  pruefe(!a.fehler.length, "Laufzeitfehler: " + a.fehler.join("; "));
+  await a.zu();
+});
+
 /* ================================================================ Ablauf ================================================================ */
 const filterText = process.argv.slice(2).find((x) => !x.startsWith("--"));
 const filter = filterText ? new RegExp(filterText, "i") : null;
