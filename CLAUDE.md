@@ -112,7 +112,23 @@ Kammerlander Umwelt- und Klimatechnik (UKT) – oft kurz, vom Handy, im Feld.
   Beleg, Katalog „⚠ zu prüfen“) – nur Hinweise. Katalogtexte ohne Auftrags-Mengen (`katalogTextOhneMenge`; auffällige
   Positionen lernt der Katalog nicht). KPlus-Rechnung zum Einsatz (`einsatzBelegeZeile` → `kplusVorschau(kontext)`):
   Vergleich mit dem App-Vorschlag (`einsatzVergleich`, gespeichert in `kopf.lernen`), Original-PDF beim Beleg, Einsatz
-  abgerechnet; `einsatzGelernt` ergänzt künftige Vorschläge um das, was der Chef ≥2× (am Markt ≥1×) dazuschrieb.
+  abgerechnet – zu einem anderen Einsatz umgehängt (Inhaber 05.10.2026): der vorige verliert den Vermerk „abgerechnet (KPlus …)“
+  (nur ohne andere Rechnung und wenn der Vermerk diese Nummer nennt) und steht wieder unter „noch nicht abgerechnet“; `einsatzGelernt` ergänzt künftige Vorschläge um das, was der Chef ≥2× (am Markt ≥1×) dazuschrieb.
+  Lernen je Einsatzart (`einsatzArt`, `einsatzLernBelege`; Inhaber 05.10.2026 „ersetzen nach 3×“): eine App-Position, die der Chef in
+  ≥3 verschiedenen KPlus-Rechnungen gestrichen (und seltener selbst geschrieben) hat, schlägt die App dort nicht mehr vor
+  (`einsatzGestrichen`, `LERN_STREICHEN`, Schlüssel `vorschlagSchluessel`; `lernen.passend`/`zuviel[].schluessel`); Vorschlag und
+  Vergleich rechnen gleich (`einsatzVorschlag`); Grund im Editor („gelernt aus N KPlus-Rechnungen“, Hinweis über den Positionen).
+  Wartungspreis je Art (Inhaber 05.10.2026, `katalogWartung`, `wartungArten`): je Anlage die Katalogposition, deren Text
+  genau ihre Termin-Art nennt (Jahreswartung/JW, Halbjahreswartung/HJW, Halbjahresinspektion/HJI; je Stück/pauschal) – sonst
+  ohne Preis mit `hinweis` „Preis für JW fehlt – alte KPlus-Rechnung mit dieser Position hochladen“ (im Editor und in der
+  Positionsprüfung, solange die Zeile keinen Betrag hat); nie der Preis einer anderen Art. Dazu je Anlagentyp (Inhaber
+  05.10.2026, `anlageTyp`, `wartungTypen`: Split, Multi-Split, VRV/VRF, Kaltwassersatz, Kühlung, Lüftung, Wärmepumpe – aus
+  Bauart, sonst Bezeichnung): erst Art+Typ, eine Position nur mit der Art nur, wenn es für diese Art keine typ-eigenen gibt,
+  sonst ohne Preis („Preis für JW Split fehlt …“); nie der Preis eines anderen Typs. Je Anlage verrechnet wird nur
+  die planmäßige Wartung (`einsatzArt`, Inhaber 05.10.2026): Reparatur, Prüfung, Sonstiges wie eine Störung nach Aufwand –
+  Textzeile, Regiestunden (Ankunft–Fertig, sonst verrechenbare Stunden des Lidl-Rapports, sonst Zeile „Stunden eintragen“),
+  Material, Kältemittel, Fahrtpauschale. Kältemittel nachgefüllt ohne Sorte im Protokoll: „Kältemittel – Sorte fehlt“ ohne
+  Preis mit Hinweis (nie irgendeine Sorte samt Preis; Inhaber 05.10.2026), mit Sorte die Katalogposition dieser Sorte.
   App-Belege sind TEST (T-A-/T-R-Nummern), solange KPlus führt. Rechnung aus
   Angebot: Mengenvorschläge aus dem Baustellenbuch (`baubuchVorschlaege`).
   Neu eingelesene KPlus-Belege (`kplusVorschau`, Mailverlauf) stehen auf „versendet“ – Rechnung UND Angebot (Inhaber 05.10.2026);
@@ -157,7 +173,10 @@ Kammerlander Umwelt- und Klimatechnik (UKT) – oft kurz, vom Handy, im Feld.
 - Angebot/Rechnung bearbeiten (`belegEditor`, Büro 01.10.2026 „gründlich überarbeiten“): großes
   Fenster, Positionen als Tabelle (`.bpos`, am Handy Block), Bezeichnung wächst mit
   (`feldHoehe`), Summe immer sichtbar im Fuß, Kopf/Texte einklappbar, Vorschau (PDF)
-  vor dem Speichern, Zeile kopieren/verschieben, Textzeilen.
+  vor dem Speichern, Zeile kopieren/verschieben, Textzeilen. Nummer erst beim Speichern (Inhaber 05.10.2026: keine Lücken
+  im Nummernkreis): `belegNeu` zieht keine, der Editor zeigt „Nummer wird beim Speichern vergeben“, `belegNummer` (Funktion
+  `beleg_nummer`, atomar) erst im Speichern – gescheitert bleibt sie für den nächsten Versuch, schon vergeben (unique art+nummer)
+  → nächste; ein Doppeltipp öffnet nur einen Editor (`belegNeuLaeuft`).
 - Synology-Ablage der Baustellen (`synology/ukt_archiv.py`, `projekte_abgleich`):
   je Projekt `{jahr}/Lidl/Baustellen/…` bzw. `{jahr}/Kunden/{kunde}/Baustellen/{Filiale Ort}_{Nummer}/`
   (Protokolle `…/Wartungen` und `…/Störungen` getrennt, Büro 02.10.2026) mit

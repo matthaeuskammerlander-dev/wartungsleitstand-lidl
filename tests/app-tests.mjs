@@ -5466,6 +5466,179 @@ test("Antworten post: Synology-Posteingang – ein zu großer Anhang steht als H
   await a.zu();
 });
 
+/* ---------------- Antworten des Inhabers 05.10.2026 zu Angeboten und Rechnungen ---------------- */
+const AR_HILFEN = `window.__ar = {
+  warte: (ms) => new Promise((f) => setTimeout(f, ms)),
+  bis: async (f, max = 3000) => { const t0 = Date.now(); for (;;) { let v = null; try { v = f(); } catch (e) {} if (v || Date.now() - t0 > max) return v; await window.__ar.warte(20); } },
+  dlgs: () => [...document.querySelectorAll(".assistent")],
+  knopf: (d, re) => [...(d || document).querySelectorAll("button")].filter((b) => re.test(b.textContent.trim()))[0] || null,
+}; 1`;
+test("Antworten rechnung: Nummer erst beim Speichern – Abbrechen verbraucht keine, Doppeltipp öffnet einen Editor, nie dieselbe Nummer", async () => {
+  const a = await oeffnen(KONTEN.inhaber);
+  await a.seite.evaluate((h) => eval(h), AR_HILFEN);
+  const r = await a.seite.evaluate(async () => {
+    const x = window.__t.x, db = window.__db.tabellen, A = window.__ar, jahr = new Date().getFullYear();
+    x("S.view='belege'; render(); 1"); await A.warte(300);
+    const plus = document.querySelector('[data-a="frei"]');
+    plus.click(); plus.click();                                   /* Doppeltipp auf „+ Rechnung“ */
+    await A.bis(() => A.dlgs().length && A.dlgs()[0].querySelector("[data-plus]")); await A.warte(400);
+    const editoren = A.dlgs().length, d0 = A.dlgs()[0];
+    const kopf = d0.querySelector(".as-titel").textContent + " | " + d0.querySelector(".as-schritt").textContent;
+    A.knopf(d0, /^Abbrechen$/).click(); x("ansichtenSchliessen()");
+    const speichern = async () => {
+      x("belegNeu({projekt:null, protokoll:null, kunde_id:'lidl', standort_id:null}, 'rechnung', null, function(){})");
+      const d = await A.bis(() => { const d = A.dlgs().pop(); return d && d.querySelector("[data-plus]") && d; });
+      const n0 = db.belege.length; A.knopf(d, /^Speichern$/).click();
+      await A.bis(() => db.belege.length > n0); await A.warte(100); x("ansichtenSchliessen()");
+      return db.belege.length > n0 ? db.belege[db.belege.length - 1].nummer : null;
+    };
+    const n1 = await speichern();
+    /* die nächste Nummer ist schon vergeben (anderes Gerät, Nummernkreis ohne Zähler der Datenbank): nie doppelt speichern */
+    db.belege.push({ id: "ar_fremd", art: "rechnung", nummer: "T-R-" + jahr + "-002", test: true, extern: false, datum: "2026-06-01", status: "entwurf", kopf: {}, positionen: [], summen: {} });
+    const n2 = await speichern();
+    const nummern = db.belege.filter((b) => b.art === "rechnung").map((b) => b.nummer);
+    return { editoren, kopf, n1, n2, jahr, doppelt: nummern.length !== new Set(nummern).size };
+  });
+  pruefe(r.editoren === 1, "Doppeltipp auf „+ Rechnung“ öffnet " + r.editoren + " Editoren");
+  pruefe(/Nummer wird beim Speichern vergeben/.test(r.kopf) && !/T-R-/.test(r.kopf), "Editor zeigt vor dem Speichern schon eine Nummer: " + r.kopf);
+  pruefe(r.n1 === "T-R-" + r.jahr + "-001", "Abbrechen hat eine Nummer verbraucht – erste gespeicherte: " + r.n1);
+  pruefe(r.n2 === "T-R-" + r.jahr + "-003" && !r.doppelt, "Vergebene Nummer nicht übersprungen: " + r.n2 + (r.doppelt ? " (doppelt)" : ""));
+  pruefe(!a.fehler.length, "Laufzeitfehler: " + a.fehler.join("; "));
+  await a.zu();
+});
+test("Antworten rechnung: Vorschlag zum Einsatz – Wartungspreis je JW/HJW/HJI, Reparatur und Prüfung nach Aufwand, Kältemittel ohne Sorte ohne Preis", async () => {
+  const a = await oeffnen(KONTEN.inhaber);
+  await a.seite.evaluate((h) => eval(h), AR_HILFEN);
+  const r = await a.seite.evaluate(async () => {
+    const x = window.__t.x, db = window.__db.tabellen, A = window.__ar;
+    const kat = (id, text, eh, preis) => ({ id, text, eh, preis, kunde_id: "lidl", aktiv: true, quelle: "Test" });
+    db.katalog.push(kat("arw0", "Wartung allgemein (Test)", "Stk", 99), kat("arw1", "Jahreswartung Klimaanlage (Test)", "Stk", 210),
+      kat("arw2", "Halbjahreswartung Klimaanlage (Test)", "Stk", 150), kat("arw3", "Jahreswartung Techniker (Test)", "Std", 70));
+    await x("katalogLaden()");
+    const pk = (o) => Object.assign({ _id: "ar_" + Math.random(), standortId: "TS1", datum: "2026-06-01", wartungsart: "planmäßig", techniker: "Testtechniker", anlagen: [] }, o);
+    const zeilen = (p) => x("einsatzPositionen")(p, "lidl").map((q) => ({ typ: q.typ, text: q.text, preis: q.preis, menge: q.menge, eh: q.eh, hinweis: q.hinweis || "" }));
+    const wartung = pk({ anlagen: [{ name: "Anlage A", termin: "Jahreswartung" }, { name: "Anlage B", termin: "Halbjahreswartung" },
+      { name: "Anlage C", termin: "Halbjahresinspektion" }, { name: "Anlage D", termin: "" }] });
+    const w = zeilen(wartung);
+    /* der Hinweis steht im Editor bei der Position */
+    x("belegNeu")(x("kontextProtokoll")(wartung), "rechnung", null, function () {});
+    const d = await A.bis(() => { const d = A.dlgs().pop(); return d && d.querySelector(".bpos") && d; });
+    const editor = d ? d.textContent : ""; x("ansichtenSchliessen()");
+    /* Reparatur (Stunden laut Lidl-Rapport) und Prüfung (ohne Zeiten): nach Aufwand wie eine Störung, keine Wartung je Anlage */
+    const anlA = [{ name: "Anlage A", termin: "Jahreswartung" }];
+    const reparatur = pk({ wartungsart: "Reparatur", anlagen: anlA, bemerkungen: "Verdichter getauscht", rapport: { daten: { stunden: "3:30" } } });
+    const rep = zeilen(reparatur), pruef = zeilen(pk({ wartungsart: "Prüfung", anlagen: anlA }));
+    x("belegNeu")(x("kontextProtokoll")(reparatur), "rechnung", null, function () {});
+    const d2 = await A.bis(() => { const d = A.dlgs().pop(); return d && d.querySelector(".bpos") && d; });
+    const betreff = d2 ? d2.querySelector('[data-k="betreff"]').value : ""; x("ansichtenSchliessen()");
+    /* Kältemittel nachgefüllt: ohne Sorte nie irgendeine Sorte samt Preis, mit Sorte wie bisher */
+    db.katalog.push(kat("arkm", "Kältemittel R410A (Test)", "kg", 60)); await x("katalogLaden()");
+    const km = (o) => zeilen(o).filter((p) => /lte?mittel/i.test(p.text))[0] || {};
+    const kmOhne = km(pk({ kaeltemittel: { art: null, nach: 2.5 } })), kmMit = km(pk({ kaeltemittel: { art: "R410A", nach: 2.5 } }));
+    const kmStoer = km(pk({ wartungsart: "Störung", stoerung: { kmArt: "", kmNach: "1,5" } }));
+    return { w, editor, rep, pruef, betreff, kmOhne, kmMit, kmStoer };
+  });
+  const anl = (n) => r.w.filter((p) => new RegExp("Anlage " + n).test(p.text))[0] || {};
+  pruefe(anl("A").preis === 210 && /Jahreswartung Klimaanlage/.test(anl("A").text), "JW nicht zum JW-Preis: " + JSON.stringify(anl("A")));
+  pruefe(anl("B").preis === 150 && /Halbjahreswartung Klimaanlage/.test(anl("B").text), "HJW nicht zum HJW-Preis: " + JSON.stringify(anl("B")));
+  pruefe(!anl("C").preis && /Preis für HJI fehlt – alte KPlus-Rechnung mit dieser Position hochladen/.test(anl("C").hinweis), "HJI ohne Katalogposition: " + JSON.stringify(anl("C")));
+  pruefe(!anl("D").preis && anl("D").hinweis, "Anlage ohne bekannte Termin-Art bekam einen Preis: " + JSON.stringify(anl("D")));
+  pruefe(/Preis für HJI fehlt/.test(r.editor), "Hinweis „Preis für HJI fehlt“ im Editor nicht sichtbar");
+  const kurz = (l) => JSON.stringify(l.map((p) => p.typ + ":" + String(p.text).split("\n")[0] + "|" + p.menge + "|" + p.preis + (p.hinweis ? "|⚠" : "")));
+  for (const [art, l] of [["Reparatur", r.rep], ["Prüfung", r.pruef]]) {
+    pruefe(!l.some((p) => p.typ === "pos" && /^Wartung/.test(p.text)), art + ": Wartung je Anlage vorgeschlagen: " + kurz(l));
+    pruefe(l.some((p) => p.typ === "pos" && /Fahrtpauschale/.test(p.text)) && l.some((p) => p.typ === "text" && new RegExp("^" + art).test(p.text)), art + ": Textzeile oder Fahrtpauschale fehlt: " + kurz(l));
+  }
+  const regie = r.rep.filter((p) => /Regiestunde/.test(p.text))[0] || {};
+  pruefe(regie.menge === 3.5 && regie.preis === 70 && regie.eh === "Std", "Reparatur: Regiestunden laut Rapport × Stundensatz fehlen: " + kurz(r.rep));
+  const regieP = r.pruef.filter((p) => /Regiestunde/.test(p.text))[0] || {};
+  pruefe(regieP.hinweis && !regieP.menge, "Prüfung ohne Zeiten: Regiestunden ohne Hinweis bzw. mit Menge: " + kurz(r.pruef));
+  pruefe(/Reparatur/.test(r.betreff) && !/Wartung/.test(r.betreff), "Betreff der Reparatur-Rechnung: " + r.betreff);
+  for (const [was, k, menge] of [["Wartung", r.kmOhne, 2.5], ["Störung", r.kmStoer, 1.5]])
+    pruefe(/^Kältemittel – Sorte fehlt/.test(k.text || "") && !k.preis && k.hinweis && k.menge === menge, was + ": Kältemittel ohne Sorte: " + JSON.stringify(k));
+  pruefe(r.kmMit.preis === 60 && /R410A/.test(r.kmMit.text) && !r.kmMit.hinweis, "Kältemittel mit Sorte nicht wie bisher: " + JSON.stringify(r.kmMit));
+  pruefe(!a.fehler.length, "Laufzeitfehler: " + a.fehler.join("; "));
+  await a.zu();
+});
+test("Antworten rechnung: Wartungspreis je Art und Anlagentyp – nie der Preis eines anderen Typs", async () => {
+  const a = await oeffnen(KONTEN.inhaber);
+  const r = await a.seite.evaluate(async () => {
+    const x = window.__t.x, db = window.__db.tabellen;
+    const kat = (id, text, preis) => ({ id, text, eh: "Stk", preis, kunde_id: "lidl", aktiv: true, quelle: "Test" });
+    db.katalog.push(kat("at1", "Jahreswartung Split (Test)", 180), kat("at2", "Jahreswartung VRV (Test)", 300), kat("at3", "Jahreswartung allgemein (Test)", 99),
+      kat("at4", "Halbjahreswartung (Test)", 150), kat("at5", "HJI Split (Test)", 80));
+    await x("katalogLaden()");
+    const anl = [["A", "Jahreswartung", { bauart: "Split" }], ["B", "Jahreswartung", { name: "Anlage B VRV Verkaufsraum" }], ["C", "Jahreswartung", { bauart: "Multi-Split" }],
+      ["D", "Jahreswartung", {}], ["E", "Halbjahreswartung", { bauart: "Split" }], ["F", "Halbjahresinspektion", { bauart: "VRV luftgekühlt" }]]
+      .map(([n, t, o]) => Object.assign({ name: "Anlage " + n, termin: t }, o));
+    return x("einsatzPositionen")({ _id: "at", standortId: "TS1", datum: "2026-06-01", wartungsart: "planmäßig", anlagen: anl }, "lidl")
+      .filter((p) => /^Wartung/.test(p.text)).map((p) => ({ n: (/Anlage (\w)/.exec(p.text) || [])[1], preis: p.preis, hinweis: p.hinweis || "" }));
+  });
+  const z = (n) => r.filter((p) => p.n === n)[0] || {};
+  pruefe(z("A").preis === 180 && z("B").preis === 300, "Art+Typ nicht gefunden: " + JSON.stringify([z("A"), z("B")]));
+  pruefe(!z("C").preis && /Preis für JW Multi-Split fehlt/.test(z("C").hinweis), "Multi-Split bekam einen fremden Preis: " + JSON.stringify(z("C")));
+  pruefe(!z("D").preis && z("D").hinweis, "Anlage ohne Typ bekam trotz typ-eigener Positionen einen Preis: " + JSON.stringify(z("D")));
+  pruefe(z("E").preis === 150, "HJW ohne typ-eigene Position nicht zum allgemeinen Preis: " + JSON.stringify(z("E")));
+  pruefe(!z("F").preis && /Preis für HJI VRV fehlt/.test(z("F").hinweis), "VRV bekam den HJI-Preis von Split: " + JSON.stringify(z("F")));
+  pruefe(!a.fehler.length, "Laufzeitfehler: " + a.fehler.join("; "));
+  await a.zu();
+});
+test("Antworten rechnung: KPlus-Rechnung umgehängt – der vorige Einsatz ist wieder „noch nicht abgerechnet“; die App lernt Streichen nach 3 Rechnungen", async () => {
+  const a = await oeffnen(KONTEN.inhaber);
+  await a.seite.evaluate((h) => eval(h), AR_HILFEN);
+  const r = await a.seite.evaluate(async () => {
+    const x = window.__t.x, db = window.__db.tabellen, A = window.__ar;
+    const st = (id, d, o) => Object.assign({ id, client_id: id, standort_id: "TS1", datum: d, wartungsart: "Störung", techniker: "Testtechniker", anlagen: [],
+      stoerung: { ankunft: "08:00", ende: "09:00", problemtyp: "Kühlung" }, version: 1, erstellt: new Date().toISOString(), erstellt_von: "u_tech_test_at" }, o || {});
+    db.protokolle.push(st("ar_a", "2026-05-01"), st("ar_b", "2026-05-02"), st("ar_c", "2026-05-03"), st("ar_d", "2026-05-04"));
+    await x("Promise.all([ladeProtokolle(), katalogLaden(), abrechnungLaden(), belegeAlleLaden()])");
+    const pk = (id) => x("alleProtokolle(true)").filter((p) => p._id === id)[0];
+    const erg = (nr, pos) => ({ art: "rechnung", nummer: nr, datum: "2026-05-05", kopf: { betreff: ["Test"] }, summenPdf: { netto: null },
+      positionen: pos || [{ typ: "pos", nr: "1", menge: 1, eh: "Std", preis: 70, betragPdf: 70, text: "Regiestundensatz Test" }] });
+    const ablegen = async (id, e) => {
+      x("kplusVorschau")(x("kontextProtokoll")(pk(id)), e, function () {});
+      const d = await A.bis(() => { const d = A.dlgs().pop(); return d && A.knopf(d, /Beim Einsatz ablegen/) && d; });
+      const vgl = d.textContent;
+      A.knopf(d, /Beim Einsatz ablegen/).click(); await A.bis(() => !document.body.contains(d), 4000); await A.warte(300);
+      await x("Promise.all([abrechnungLaden(), belegeAlleLaden()])"); return vgl;
+    };
+    await ablegen("ar_a", erg("900901"));
+    const vorher = !!x("abrechnung")["ar_a"];
+    await ablegen("ar_b", erg("900901"));                        /* dieselbe Rechnung gehört zu Einsatz B – umhängen (Rückfrage: ja) */
+    const nachher = { a: !!x("abrechnung")["ar_a"], b: !!x("abrechnung")["ar_b"], beleg: (db.belege.filter((b) => b.nummer === "900901")[0] || {}).protokoll_id,
+      meldung: document.getElementById("toast").textContent };
+    /* C hat noch eine zweite Rechnung: bleibt abgerechnet */
+    await ablegen("ar_c", erg("900902")); await ablegen("ar_c", erg("900903")); await ablegen("ar_d", erg("900903"));
+    const c = !!x("abrechnung")["ar_c"];
+    /* Lernen (Markt in Zone 2): der Chef streicht die Fahrtpauschale und schreibt Kleinmaterial dazu – nach 2 Rechnungen
+       schlägt die App die Pauschale noch vor, nach 3 nicht mehr (mit Grund); eine andere Einsatzart lernt davon nichts */
+    db.protokolle.push(st("ar_l1", "2026-06-01", { standort_id: "TS2" }), st("ar_l2", "2026-06-02", { standort_id: "TS2" }), st("ar_l3", "2026-06-03", { standort_id: "TS2" }),
+      st("ar_l4", "2026-06-04", { standort_id: "TS2" }), st("ar_r", "2026-06-05", { standort_id: "TS2", wartungsart: "Reparatur", stoerung: null }));
+    await x("ladeProtokolle()");
+    const mitKlein = (nr) => erg(nr, [{ typ: "pos", nr: "1", menge: 1, eh: "Std", preis: 70, betragPdf: 70, text: "Regiestundensatz Test" },
+      { typ: "pos", nr: "2", menge: 1, eh: "psh", preis: 30, betragPdf: 30, text: "Kleinmaterial pauschal" }]);
+    const fahrt = (id) => x("einsatzVorschlag")(pk(id), "lidl").pos.some((q) => q.typ === "pos" && /Fahrtpauschale/.test(q.text));
+    await ablegen("ar_l1", mitKlein("900911")); await ablegen("ar_l2", mitKlein("900912"));
+    const nachZwei = fahrt("ar_l4");
+    const vgl3 = await ablegen("ar_l3", mitKlein("900913"));
+    x("belegNeu")(x("kontextProtokoll")(pk("ar_l4")), "rechnung", null, function () {});
+    const d = await A.bis(() => { const d = A.dlgs().pop(); return d && d.querySelector(".bpos") && d; });
+    const ed = { text: d.textContent, pos: [...d.querySelectorAll(".bpos")].map((z) => z.querySelector('[data-f="text"]').value.split("\n")[0]) };
+    x("ansichtenSchliessen()");
+    return { vorher, nachher, c, nachZwei, nachDrei: fahrt("ar_l4"), reparatur: fahrt("ar_r"), ed, vgl3: /Kleinmaterial/.test(vgl3) };
+  });
+  pruefe(r.vorher, "Einsatz A nach der KPlus-Rechnung nicht als abgerechnet vermerkt");
+  pruefe(r.nachher.beleg === "ar_b" && r.nachher.b && !r.nachher.a && /wieder „noch nicht abgerechnet“/.test(r.nachher.meldung), "Umgehängt: A bleibt abgerechnet bzw. B nicht – " + JSON.stringify(r.nachher));
+  pruefe(r.c, "Einsatz mit einer weiteren Rechnung verlor den Vermerk „abgerechnet“");
+  pruefe(r.nachZwei, "Fahrtpauschale schon nach 2 gestrichenen KPlus-Rechnungen nicht mehr vorgeschlagen");
+  pruefe(!r.nachDrei && !r.ed.pos.some((t) => /Fahrtpauschale/.test(t)), "Fahrtpauschale nach 3 gestrichenen KPlus-Rechnungen noch im Vorschlag: " + JSON.stringify(r.ed.pos));
+  pruefe(/Fahrtpauschale Zone 2[^]*nicht mehr vor[^]*gelernt aus 3 KPlus-Rechnungen/.test(r.ed.text), "Grund für die fehlende Fahrtpauschale im Editor nicht sichtbar");
+  pruefe(r.ed.pos.some((t) => /Kleinmaterial/.test(t)) && /gelernt aus 3 KPlus-Rechnungen/.test(r.ed.text.replace(/Fahrtpauschale[^]*?gestrichen war\./, "")), "Dazugeschriebenes ohne Grund „gelernt aus 3 KPlus-Rechnungen“: " + JSON.stringify(r.ed.pos));
+  pruefe(r.reparatur, "Reparatur lernt von Störungen (andere Einsatzart): Fahrtpauschale fehlt");
+  pruefe(!a.fehler.length, "Laufzeitfehler: " + a.fehler.join("; "));
+  await a.zu();
+});
+
 /* ================================================================ Ablauf ================================================================ */
 const filterText = process.argv.slice(2).find((x) => !x.startsWith("--"));
 const filter = filterText ? new RegExp(filterText, "i") : null;

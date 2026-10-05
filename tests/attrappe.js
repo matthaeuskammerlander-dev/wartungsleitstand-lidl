@@ -217,6 +217,12 @@
     return DB.stammdaten.some(function(r){ return r.id!==d.id && r.typ==="stoerung" && nr(r)===n; })
       ? {code:"23505", message:'duplicate key value violates unique constraint "stoerung_auftrag_einmal"'} : null;
   }
+  /* wie unique (art, nummer) in projekte-ablauf.sql: eine Belegnummer je Art nur einmal */
+  function belegDoppelt(tname, d){
+    if(tname!=="belege" || !d || d.nummer==null) return null;
+    return DB.belege.some(function(r){ return r.id!==d.id && r.art===d.art && r.nummer===d.nummer; })
+      ? {code:"23505", message:'duplicate key value violates unique constraint "belege_art_nummer_key"'} : null;
+  }
   /* wie reisekosten.sql: km ist numeric(8,1) – Postgres rundet „12,35“ auf 12,4 (die kleine Zugabe gleicht
      die Gleitkomma-Darstellung von 12,35 aus); dazu die Prüfregeln (check) mit der englischen Meldung von Postgres */
   function kmSpalte(km){ return Math.round(+km*10+1e-6)/10; }
@@ -297,7 +303,7 @@
     if(this.a==="insert"){
       [].concat(this.d).forEach(function(d){ v=v||darf(self.t,"insert",d,null)||bisVorDatum(d); });
       if(v){ window.__abgelehnt.push(v); return {data:null,error:{message:v}}; }
-      var dpI=null; [].concat(this.d).forEach(function(d){ dpI=dpI||stoerNrDoppelt(self.t, d); });
+      var dpI=null; [].concat(this.d).forEach(function(d){ dpI=dpI||stoerNrDoppelt(self.t, d)||belegDoppelt(self.t, d); });
       if(dpI) return {data:null,error:dpI};
       var neu=[].concat(this.d).map(function(d){ var r=Object.assign({},d);
         if(r.id==null) r.id="x"+Date.now().toString(36)+(++z);
@@ -499,6 +505,18 @@
         if(!sitzung || rlFa==="kunde" || rlFa==="praesentation") return Promise.resolve({data:[], error:null});
         return Promise.resolve({data:DB.fahrzeuge.filter(function(f){ return f.aktiv!==false; }).sort(function(a,b){ return String(a.kennzeichen).localeCompare(String(b.kennzeichen)); })
           .map(function(f){ return {id:f.id, kennzeichen:f.kennzeichen, bezeichnung:f.bezeichnung||null, fahrer_namen:(f.fahrer_namen||[]).slice()}; }), error:null}); }
+      /* wie public.beleg_nummer() (belege-ausbau.sql): nächste Nummer je Kreis und Jahr, nur für den Inhaber – Zähler
+         in belegnummern (test: T-R-2026-001, echt: fortlaufend ohne Jahr) */
+      if(name==="beleg_nummer"){
+        if((DB.rollen.filter(function(r){ return r.user_id===uid(); })[0]||{}).rolle!=="inhaber") return Promise.resolve({data:null,error:{message:"Belegnummern vergibt nur der Inhaber"}});
+        if(["angebot","rechnung"].indexOf(w.p_art)<0) return Promise.resolve({data:null,error:{message:"unbekannte Belegart"}});
+        if(!Array.isArray(DB.belegnummern)) DB.belegnummern=[];
+        var kreis=(w.p_test?"test_":"")+w.p_art, jb=w.p_test?new Date().getFullYear():0;
+        var zl=DB.belegnummern.filter(function(r){ return r.kreis===kreis && r.jahr===jb; })[0];
+        if(!zl){ zl={kreis:kreis, jahr:jb, letzte:0}; DB.belegnummern.push(zl); }
+        zl.letzte++; sichern();
+        return Promise.resolve({data:w.p_test ? "T-"+(w.p_art==="rechnung"?"R":"A")+"-"+jb+"-"+("00"+zl.letzte).slice(-3) : String(zl.letzte), error:null});
+      }
       if(name!=="stempeln") return Promise.resolve({data:null,error:null});
       /* wie public.stempeln() (stempeluhr-2.sql): Zeit vom „Server“, Reihenfolge prüfen,
          Umstempeln, beim Ausstempeln je Abschnitt ein Eintrag, Einträge von Hand ersetzen */
