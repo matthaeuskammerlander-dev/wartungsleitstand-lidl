@@ -4568,11 +4568,31 @@ test("Antworten rechnung: KPlus-Rechnung umgehängt – der vorige Einsatz ist w
     /* C hat noch eine zweite Rechnung: bleibt abgerechnet */
     await ablegen("ar_c", erg("900902")); await ablegen("ar_c", erg("900903")); await ablegen("ar_d", erg("900903"));
     const c = !!x("abrechnung")["ar_c"];
-    return { vorher, nachher, c };
+    /* Lernen (Markt in Zone 2): der Chef streicht die Fahrtpauschale und schreibt Kleinmaterial dazu – nach 2 Rechnungen
+       schlägt die App die Pauschale noch vor, nach 3 nicht mehr (mit Grund); eine andere Einsatzart lernt davon nichts */
+    db.protokolle.push(st("ar_l1", "2026-06-01", { standort_id: "TS2" }), st("ar_l2", "2026-06-02", { standort_id: "TS2" }), st("ar_l3", "2026-06-03", { standort_id: "TS2" }),
+      st("ar_l4", "2026-06-04", { standort_id: "TS2" }), st("ar_r", "2026-06-05", { standort_id: "TS2", wartungsart: "Reparatur", stoerung: null }));
+    await x("ladeProtokolle()");
+    const mitKlein = (nr) => erg(nr, [{ typ: "pos", nr: "1", menge: 1, eh: "Std", preis: 70, betragPdf: 70, text: "Regiestundensatz Test" },
+      { typ: "pos", nr: "2", menge: 1, eh: "psh", preis: 30, betragPdf: 30, text: "Kleinmaterial pauschal" }]);
+    const fahrt = (id) => x("einsatzVorschlag")(pk(id), "lidl").pos.some((q) => q.typ === "pos" && /Fahrtpauschale/.test(q.text));
+    await ablegen("ar_l1", mitKlein("900911")); await ablegen("ar_l2", mitKlein("900912"));
+    const nachZwei = fahrt("ar_l4");
+    const vgl3 = await ablegen("ar_l3", mitKlein("900913"));
+    x("belegNeu")(x("kontextProtokoll")(pk("ar_l4")), "rechnung", null, function () {});
+    const d = await A.bis(() => { const d = A.dlgs().pop(); return d && d.querySelector(".bpos") && d; });
+    const ed = { text: d.textContent, pos: [...d.querySelectorAll(".bpos")].map((z) => z.querySelector('[data-f="text"]').value.split("\n")[0]) };
+    x("ansichtenSchliessen()");
+    return { vorher, nachher, c, nachZwei, nachDrei: fahrt("ar_l4"), reparatur: fahrt("ar_r"), ed, vgl3: /Kleinmaterial/.test(vgl3) };
   });
   pruefe(r.vorher, "Einsatz A nach der KPlus-Rechnung nicht als abgerechnet vermerkt");
   pruefe(r.nachher.beleg === "ar_b" && r.nachher.b && !r.nachher.a && /wieder „noch nicht abgerechnet“/.test(r.nachher.meldung), "Umgehängt: A bleibt abgerechnet bzw. B nicht – " + JSON.stringify(r.nachher));
   pruefe(r.c, "Einsatz mit einer weiteren Rechnung verlor den Vermerk „abgerechnet“");
+  pruefe(r.nachZwei, "Fahrtpauschale schon nach 2 gestrichenen KPlus-Rechnungen nicht mehr vorgeschlagen");
+  pruefe(!r.nachDrei && !r.ed.pos.some((t) => /Fahrtpauschale/.test(t)), "Fahrtpauschale nach 3 gestrichenen KPlus-Rechnungen noch im Vorschlag: " + JSON.stringify(r.ed.pos));
+  pruefe(/Fahrtpauschale Zone 2[^]*nicht mehr vor[^]*gelernt aus 3 KPlus-Rechnungen/.test(r.ed.text), "Grund für die fehlende Fahrtpauschale im Editor nicht sichtbar");
+  pruefe(r.ed.pos.some((t) => /Kleinmaterial/.test(t)) && /gelernt aus 3 KPlus-Rechnungen/.test(r.ed.text.replace(/Fahrtpauschale[^]*?gestrichen war\./, "")), "Dazugeschriebenes ohne Grund „gelernt aus 3 KPlus-Rechnungen“: " + JSON.stringify(r.ed.pos));
+  pruefe(r.reparatur, "Reparatur lernt von Störungen (andere Einsatzart): Fahrtpauschale fehlt");
   pruefe(!a.fehler.length, "Laufzeitfehler: " + a.fehler.join("; "));
   await a.zu();
 });
