@@ -1892,6 +1892,12 @@ reSchritt("editor", "R19", async (a) => {
   });
   return !r.gespeichert && r.markiert === "true" && r.offen && r.toasts.some((m) => /IBAN/.test(m)) ? "" : `IBAN mit falscher Prüfziffer gespeichert: ${r.gespeichert}, Feld markiert: ${r.markiert}, Meldungen ${JSON.stringify(r.toasts)}`;
 });
+/* Rundgang und Handbuch erklären „KPlus-Rechnung hochladen“ beim Einsatz und das Lernen daraus */
+reSchritt("editor", "R24", async (a) => {
+  const t = await a.x("JSON.stringify(RUNDGAENGE)+' '+String(handbuchKarte)");
+  return /KPlus-Rechnung hochladen/.test(t) && /So hätte die App gerechnet/.test(t) && /aus hochgeladenen KPlus-Rechnungen/.test(t) ? "" : "Rundgänge/Handbuch erwähnen „KPlus-Rechnung hochladen“, den Vergleich oder das Lernen daraus nicht";
+});
+
 /* KPlus lesen: Text unter einer Überschrift ist ein eigener Absatz, weit auseinander stehende Absätze bleiben getrennt */
 reSchritt("kplus", "R27", async (a) => {
   const r = await a.seite.evaluate(() => {
