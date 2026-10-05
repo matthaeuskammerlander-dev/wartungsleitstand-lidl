@@ -2000,19 +2000,27 @@ test("Tiefentest kern: „Zählt als“ folgt dem geänderten Protokolldatum, vo
   await a.zu();
 });
 
-test("Tiefentest kern: geführtes Protokoll am Handy – Mangel nur mit Maßnahme, Ausnahme ohne Lidl-Auftrag", async () => {
+test("Tiefentest kern: geführtes Protokoll am Handy – Vor-Ort-Frage, Mangel nur mit Maßnahme, Ausnahme ohne Lidl-Auftrag", async () => {
   const a = await oeffnen(KONTEN.techniker, { handy: true });
   const r = await a.seite.evaluate(async () => {
     const x = window.__t.x, w = (ms) => new Promise((f) => setTimeout(f, ms)), db = window.__db.tabellen;
     const ov = () => document.querySelector(".assistent[data-gefuehrt]"), schritt = () => (ov() ? ov().querySelector(".as-schritt").textContent : "");
     const knopf = (re) => ov() && [...ov().querySelectorAll(".as-fuss button")].find((b) => re.test(b.textContent.trim()));
-    const bis = async (re) => { for (let i = 0; i < 30 && !re.test(schritt()); i++) { const k = knopf(/^Weiter$/) || knopf(/Überspringen/); if (!k) break; k.click(); await w(250); } return schritt(); };
+    const gesehen = [];   /* Schritte, die die offene Vor-Ort-Frage zeigen */
+    const bis = async (re) => { for (let i = 0; i < 30 && !re.test(schritt()); i++) { if (/zweite Außeneinheit/.test(ov().textContent)) gesehen.push(schritt()); const k = knopf(/^Weiter$/) || knopf(/Überspringen/); if (!k) break; k.click(); await w(250); } return schritt(); };
     const oeffne = async (art, sid, pid) => { if (ov()) ov().querySelector('[data-as="zu"]').click();
       x("formDirty=false; S.protoArt='" + art + "'; S.stoerungAus=null; S.bearbeiten=null; S.protoStandort='" + sid + "'; S.protoPos='" + pid + "'; S.view='protokoll'; render(); 1"); await w(450);
       document.getElementById("p_gefuehrt").click(); await w(300); };
     const erg = {};
-    /* Mangel nur mit Maßnahme: bleibt sichtbar, die Übersicht nennt ihn, gespeichert wird erst vollständig */
+    /* offene Vor-Ort-Frage am Markt: steht auch im geführten Dialog und lässt sich dort beantworten */
+    db.vor_ort_fragen.push({ id: "vfk3", standort_id: "TS1", frage: "Gibt es im Lager eine zweite Außeneinheit?", angelegt: new Date().toISOString(), angelegt_von: "Büro" });
+    await x("vorOrtLaden(true)");
     await oeffne("wartung", "TS1", "TP1");
+    await bis(/· Gewartete Anlagen$/);
+    const vk = ov().querySelector(".as-inhalt [data-vorort]");
+    if (vk) { vk.querySelector('[data-v="antwort"]').value = "ja, im Lager"; vk.querySelector('[data-v="speichern"]').click(); await w(500); }
+    erg.antwort = (db.vor_ort_fragen.find((f) => f.id === "vfk3") || {}).antwort || "";
+    /* Mangel nur mit Maßnahme: bleibt sichtbar, die Übersicht nennt ihn, gespeichert wird erst vollständig */
     await bis(/· Arbeiten$/);
     [...ov().querySelectorAll(".as-inhalt button")].find((b) => /alle auswählen/.test(b.textContent)).click(); await w(150);
     await bis(/· Mängel$/);
@@ -2038,8 +2046,10 @@ test("Tiefentest kern: geführtes Protokoll am Handy – Mangel nur mit Maßnahm
     knopf(/Protokoll speichern/).click();
     for (let i = 0; i < 30 && !db.protokolle.length; i++) await w(200);
     erg.stoer = db.protokolle.map((p) => ({ nr: p.auftragsnummer || "", ohne: !!(p.stoerung || {}).ohneAuftrag }));
+    erg.gesehen = gesehen;
     return erg;
   });
+  pruefe(r.gesehen.length > 0 && r.antwort === "ja, im Lager", "offene Vor-Ort-Frage im geführten Dialog nicht gezeigt bzw. nicht beantwortbar: " + JSON.stringify([r.gesehen, r.antwort]));
   pruefe(r.nochSichtbar, "Maßnahme nach „+ weiterer Mangel“ nicht mehr im Dialog sichtbar");
   pruefe(/Mangel beschreiben.*Filter tauschen/.test(r.warn) && /ohne Beschreibung/.test(r.zeileMaengel), "Übersicht nennt den unvollständigen Mangel nicht: " + JSON.stringify(r));
   pruefe(r.dialogOffen && r.gespeichert === 0, "Dialog geschlossen bzw. unvollständig gespeichert: " + JSON.stringify(r));
