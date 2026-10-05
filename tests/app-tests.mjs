@@ -5639,6 +5639,33 @@ test("Antworten rechnung: KPlus-Rechnung umgehängt – der vorige Einsatz ist w
   await a.zu();
 });
 
+test("Störung aus dem Kalender: schon eingelesener Auftrag zeigt „QR-Code zeigen“, Einlesen erst auf Wunsch", async () => {
+  const a = await oeffnen(KONTEN.admin);
+  const r = await a.seite.evaluate(async () => {
+    const x = window.__t.x, w = (ms) => new Promise((f) => setTimeout(f, ms));
+    const dlg = () => [...document.querySelectorAll(".assistent")].pop();
+    const sicht = (d, s) => { const e = d.querySelector(s); return !!e && !!(e.offsetWidth || e.offsetHeight || e.getClientRects().length); };
+    await x("stoerungSpeichern({_id:'sqr1', standortId:'TS1', auftragsnummer:'612345', status:'offen'}, 'Test')");
+    x("ansichtenSchliessen(); document.querySelectorAll('.assistent').forEach(function(d){ d.remove(); }); stoerungDialog(OFFENE.filter(function(o){ return o._id==='sqr1'; })[0])"); await w(300);
+    let d = dlg(); const erg = {};
+    erg.qrSichtbar = sicht(d, "#st_qrzeigen"); erg.pdfVorher = sicht(d, 'label[for="st_pdf"]'); erg.scanVorher = sicht(d, "#st_qr"); erg.infoVorher = sicht(d, "#st_info");
+    d.querySelector("#st_qrzeigen").click(); await w(400);
+    erg.qrAnsicht = /QR-Code aus der Auftragsnummer/.test(document.body.innerText) && /612345/.test(document.body.innerText);
+    x("ansichtenSchliessen(); document.querySelectorAll('.assistent').forEach(function(d){ d.remove(); }); stoerungDialog(OFFENE.filter(function(o){ return o._id==='sqr1'; })[0])"); await w(300);
+    d = dlg(); d.querySelector("#st_einlesenAuf").click(); await w(100);
+    erg.pdfNachher = sicht(d, 'label[for="st_pdf"]'); erg.scanNachher = sicht(d, "#st_qr");
+    /* neuer Auftrag ohne Nummer: Einlesen wie bisher gleich sichtbar, kein „QR-Code zeigen“ */
+    x("document.querySelectorAll('.assistent').forEach(function(d){ d.remove(); }); stoerungDialog(null, null, {standortId:'TS1'})"); await w(300);
+    d = dlg(); erg.neuPdf = sicht(d, 'label[for="st_pdf"]'); erg.neuQr = !!d.querySelector("#st_qrzeigen");
+    return erg;
+  });
+  pruefe(r.qrSichtbar && !r.pdfVorher && !r.scanVorher && !r.infoVorher, "eingelesener Auftrag: QR-Knopf fehlt oder Einlese-Knöpfe stehen da: " + JSON.stringify(r));
+  pruefe(r.qrAnsicht, "„QR-Code zeigen“ öffnet keinen QR-Code: " + JSON.stringify(r));
+  pruefe(r.pdfNachher && r.scanNachher, "„Anderen Auftrag einlesen …“ zeigt die Einlese-Knöpfe nicht: " + JSON.stringify(r));
+  pruefe(r.neuPdf && !r.neuQr, "neuer Auftrag: Einlesen nicht gleich sichtbar oder QR-Knopf ohne Nummer: " + JSON.stringify(r));
+  await a.zu();
+});
+
 /* ================================================================ Ablauf ================================================================ */
 const filterText = process.argv.slice(2).find((x) => !x.startsWith("--"));
 const filter = filterText ? new RegExp(filterText, "i") : null;
