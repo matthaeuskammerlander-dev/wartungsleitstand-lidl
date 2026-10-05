@@ -394,7 +394,9 @@ Kammerlander Umwelt- und Klimatechnik (UKT) – oft kurz, vom Handy, im Feld.
   Abgegebenes ändert nur der Inhaber. Jede Person sieht nur ihre eigenen, der Inhaber alle – KEINE Admins. Konto in `auslagen_konto`.
   Kilometergeld nur fürs Privatauto (`fahrzeuge.privat_von`). PDF `akPdf` mit Belegfotos; Inhaber: „Reisekosten aller“, To-do
   (`akAbgegebenText`), Projekt zeigt die Summe (nur Inhaber); Bedarf „abholen/bestellen“ → „Selbst bezahlt – Beleg erfassen“.
-  Fremde Einträge ändert der Inhaber ohne Belegfoto (das liegt im Ordner der Person, ersetzen nur sie – „zurückgeben“). Nie lockern.
+  Belegfoto (Inhaber 05.10.2026, tools/rechte-2026-10-05.sql): nach der Abgabe ersetzt/entfernt es nur noch der Inhaber (Speicher-Regel; nach
+  „zurückgeben“ wieder die Person); ersetzt er das Foto eines fremden Eintrags, liegt das neue im Ordner der Person (`akFotoHochladen(datei, fuer)`),
+  das alte wird erst nach dem Speichern entfernt. Nie lockern.
 - **Diktieren** (`diktatKnopf`): Spracherkennung des Browsers, keine KI, Text wird angehängt.
 - **Rapport-Text** (`rapTextRein`): ausgeführte Arbeiten aus dem Lidl-Rapport zusätzlich in
   „Durchgeführte Maßnahmen“ bzw. „Bemerkungen“ – nie ersetzen, kein Feld fällt weg.

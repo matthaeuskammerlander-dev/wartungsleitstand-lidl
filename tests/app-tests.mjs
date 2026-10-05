@@ -3254,8 +3254,10 @@ test("Tiefentest reisekosten: Inhaber ändert fremde Einträge – Privatauto bl
     speichern(d); await warte(900);
     const b = db.auslagen.find((q) => q.id === "akB");
     p(b.betrag === 30, "RK-05/06 Betrag nicht gespeichert: " + b.betrag);
-    /* Speicher-Regel „auslagen fotos lesen“ (tools/reisekosten.sql): die Person liest nur ihren eigenen Ordner */
-    p(String(b.foto || "").indexOf("u_tech_test_at/") === 0 && !window.__entfernt.length, "RK-05 Belegfoto liegt im Ordner des Inhabers / Original entfernt: " + JSON.stringify({ foto: b.foto, entfernt: window.__entfernt }));
+    /* Speicher-Regel „auslagen fotos lesen“ (tools/reisekosten.sql): die Person liest nur ihren eigenen Ordner – der Inhaber ersetzt
+       das Foto dort (Antwort des Inhabers 05.10.2026, statt RK-05 „nur die Person“); das alte wird erst nach dem Speichern entfernt */
+    p(String(b.foto || "").indexOf("u_tech_test_at/") === 0 && b.foto !== "u_tech_test_at/b.jpg" && window.__entfernt.length === 1 && /u_tech_test_at\/b\.jpg/.test(window.__entfernt[0]),
+      "RK-05 Belegfoto liegt nicht im Ordner der Person bzw. das alte nicht (genau einmal) entfernt: " + JSON.stringify({ foto: b.foto, entfernt: window.__entfernt }));
     const eigene = (karte(/^Reisekosten und Kilometergeld/) || {}).textContent || "";
     p(!/Baumarkt Fremd|Linz/.test(eigene) && x("AUSLAGEN.filter(function(z){ return z.user_id!==meineKennung(); }).length") === 0, "RK-06 fremde Einträge in der eigenen Reisekosten-Karte des Inhabers");
     const alleText = (karte(/^Reisekosten aller/) || {}).textContent || "";
@@ -4443,6 +4445,53 @@ test("Tiefentest werkzeug: verletzte Prüfregel beim Speichern meldet nicht „n
   pruefe(r.pruefregel.every((m) => /violates check constraint/.test(m) && !/nicht eingerichtet/.test(m)), "Prüfregel als „nicht eingerichtet“ gemeldet: " + JSON.stringify(r.pruefregel));
   pruefe(r.fehlt.concat(r.cache).every((m) => /noch nicht eingerichtet/.test(m)), "fehlende Tabelle nicht als „nicht eingerichtet“ gemeldet: " + JSON.stringify([r.fehlt, r.cache]));
   pruefe(r.netz.every((m) => /keine Verbindung/.test(m)), "Netzfehler nicht auf Deutsch: " + JSON.stringify(r.netz));
+  pruefe(!a.fehler.length, "Laufzeitfehler: " + a.fehler.join("; "));
+  await a.zu();
+});
+
+/* Antworten des Inhabers vom 05.10.2026 (Reisekosten, Kilometergeld, Posteingang, Preise in Mails, KPlus-Stand) */
+test("Antworten post: Reisekosten – Belegfoto nach der Abgabe nur noch der Inhaber; er ersetzt ein fremdes Foto im Ordner der Person", async () => {
+  const a = await rkSeite(KONTEN.inhaber);
+  const r = await a.seite.evaluate(async () => {
+    const x = window.__t.x, db = window.__db.tabellen, dat = window.__db.dateien, { warte, dlg, speichern } = window.__rk;
+    const heute = x("isoLokal(new Date())"), fehlt = [], p = (bed, text) => { if (!bed) fehlt.push(text); };
+    const bild = async () => { const cv = document.createElement("canvas"); cv.width = 40; cv.height = 60; cv.getContext("2d").fillRect(0, 0, 20, 20);
+      const b = await new Promise((f) => cv.toBlob(f, "image/png")); const dt = new DataTransfer(); dt.items.add(new File([b], "neu.png", { type: "image/png" })); return dt.files; };
+    const oeffne = async (id) => { x("ansichtenSchliessen(); akEditor(" + JSON.stringify(db.auslagen.find((z) => z.id === id)) + ")"); await warte(400); return dlg(); };
+    dat["auslagen/u_tech_test_at/alt.jpg"] = new Blob(["alt"], { type: "image/jpeg" });
+    dat["auslagen/u_tech_test_at/offen.jpg"] = new Blob(["offen"], { type: "image/jpeg" });
+    db.auslagen.push({ id: "apB", user_id: "u_tech_test_at", name: "Testtechniker", art: "beleg", datum: heute, text: "Baumarkt abgegeben", kategorie: "material", betrag: 12.5, foto: "u_tech_test_at/alt.jpg", status: "eingereicht", erstellt: new Date().toISOString() },
+      { id: "apO", user_id: "u_tech_test_at", name: "Testtechniker", art: "beleg", datum: heute, text: "Baumarkt offen", kategorie: "material", betrag: 3, foto: "u_tech_test_at/offen.jpg", status: "offen", erstellt: new Date().toISOString() });
+    x("S.view='stunden'; AK_ALLE.monat=''; render()"); await warte(600);
+    /* Speichern scheitert: das alte Foto bleibt (entfernt wird erst nach Erfolg) */
+    let d = await oeffne("apB"), inp = d.querySelector("[data-foto]");
+    p(!!inp, "Inhaber: beim fremden Beleg kein Knopf, um das Foto zu ersetzen");
+    if (inp) {
+      inp.files = await bild(); inp.dispatchEvent(new Event("change"));
+      window.__netzWeg = "antwort"; speichern(d); await warte(700); window.__netzWeg = false;
+      p(db.auslagen.find((z) => z.id === "apB").foto === "u_tech_test_at/alt.jpg" && !!dat["auslagen/u_tech_test_at/alt.jpg"], "Speichern gescheitert, altes Foto trotzdem entfernt");
+      d = await oeffne("apB"); inp = d.querySelector("[data-foto]");
+      inp.files = await bild(); inp.dispatchEvent(new Event("change"));
+      speichern(d); await warte(900);
+    }
+    const b = db.auslagen.find((z) => z.id === "apB");
+    p(/^u_tech_test_at\//.test(b.foto) && b.foto !== "u_tech_test_at/alt.jpg" && !!dat["auslagen/" + b.foto], "neues Foto nicht im Ordner der Person: " + b.foto);
+    p(!dat["auslagen/u_tech_test_at/alt.jpg"], "altes Foto nach dem Ersetzen nicht entfernt");
+    /* die Person selbst: nach der Abgabe weder ersetzen noch entfernen – vorher schon */
+    await window.__rk.anmelden("tech@test.at", "techniker");
+    d = await oeffne("apB"); inp = d.querySelector("[data-foto]");
+    p((!inp || inp.disabled) && /nur (noch )?der Chef/.test(d.textContent), "Techniker: abgegebenes Belegfoto lässt sich ersetzen bzw. kein Hinweis");
+    x("ansichtenSchliessen()");
+    const sb = x("Store.sb");
+    await sb.storage.from("auslagen").remove([b.foto]);
+    p(!!dat["auslagen/" + b.foto], "Techniker hat das Foto eines abgegebenen Belegs entfernt");
+    await sb.storage.from("auslagen").remove(["u_tech_test_at/offen.jpg"]);
+    p(!dat["auslagen/u_tech_test_at/offen.jpg"], "Techniker kann das Foto eines offenen Belegs nicht entfernen");
+    const fremd = await sb.storage.from("auslagen").upload("u_inhaber_test_at/x.jpg", new Blob(["x"], { type: "image/jpeg" }));
+    p(!!fremd.error && !dat["auslagen/u_inhaber_test_at/x.jpg"], "Techniker legt ein Foto in einen fremden Ordner");
+    return { fehlt };
+  });
+  pruefe(!r.fehlt.length, r.fehlt.join(" | "));
   pruefe(!a.fehler.length, "Laufzeitfehler: " + a.fehler.join("; "));
   await a.zu();
 });

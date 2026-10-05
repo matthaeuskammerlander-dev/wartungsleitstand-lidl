@@ -24734,7 +24734,7 @@ Object.assign(RUNDGAENGE, {
     {reiter:"stunden", ziel:function(){ return rgKarte(/^Reisekosten und Kilometergeld/); }, wenn:function(){ return akAn(); }, titel:"Reisekosten und Kilometergeld",
       text:RG_LISTE(["<strong>📷 + Beleg</strong>: mit eigenem Geld bezahlt (Bauhaus, Parken, Maut, Tanken, Nächtigung …) – Foto vom Beleg (Pflicht; sonst „Kein Beleg vorhanden“ mit Grund), Datum, wo/was, Betrag, wofür, Projekt/Markt.",
         "<strong>🚗 + Kilometer</strong>: Fahrt mit dem Privatauto – Datum, Strecke (Vorschlag aus dem Kalender), km; die App rechnet das Kilometergeld (km × Satz, den der Chef einstellt).",
-        "Am Monatsende <strong>„Monat abgeben“</strong> – danach ändert nur noch der Chef. „PDF“ wie das bisherige Blatt (Barbelege, Kilometer mit Privatauto, zu zahlen) mit allen Belegfotos.",
+        "Am Monatsende <strong>„Monat abgeben“</strong> – danach ändert nur noch der Chef, auch das Belegfoto. „PDF“ wie das bisherige Blatt (Barbelege, Kilometer mit Privatauto, zu zahlen) mit allen Belegfotos.",
         "Unten „Konto für die Auszahlung“ (IBAN) einmal eintragen."])+
       RG_HG(["Nur du und der Inhaber sehen deine Reisekosten – keine Admins, keine Kollegen.",
         "Beim Abgeben bekommt der Inhaber eine Nachricht; im Kalender-To-do steht „Reisekosten … – auszahlen“.",
@@ -24744,7 +24744,7 @@ Object.assign(RUNDGAENGE, {
       text:"Monatstabelle je Person (Soll, Ist, Differenz, Überstunden, Sa, So, Feiertag, Montage, Fahrt, Urlaub, Krank, Entfernung), „Lohnverrechnung (CSV)“, „Bestätigen“, „Arbeitszeitregeln“, Schalter „Standort beim Stempeln“."+
       RG_HG(["Soll Mo–Do 8 h, Fr 6,5 h (38,5 h), Feiertage 0. Überstunden als <strong>Monatsbilanz</strong>, nicht je Tag; Samstag, Sonntag, Feiertag getrennt; Montage = Baustelle, Wartung, Störung; Fahrt = Wegzeit.",
         "„Bestätigen“ sperrt den Monat – danach ändert nur noch der Inhaber (prüft die Datenbank).",
-        "Darunter <strong>„Reisekosten aller“</strong>: je Person Belege, km, Kilometergeld, zu zahlen, Konto – PDF mit allen Belegen, „ausbezahlt“, „zurückgeben“, CSV; der Kilometergeld-Satz ist dort einstellbar. Einträge anderer lassen sich dort ändern – das Belegfoto ersetzt nur die Person selbst (dazu „zurückgeben“).",
+        "Darunter <strong>„Reisekosten aller“</strong>: je Person Belege, km, Kilometergeld, zu zahlen, Konto – PDF mit allen Belegen, „ausbezahlt“, „zurückgeben“, CSV; der Kilometergeld-Satz ist dort einstellbar. Einträge anderer lassen sich dort ändern, auch das Belegfoto (das neue liegt im Ordner der Person, das alte wird erst nach dem Speichern entfernt).",
         "Vorher zeigt die Zeile in Rot, was fehlt: Arbeitstage ohne Eintrag, Abwesenheit im Kalender ohne Stunden, Geplantes ohne passenden Eintrag – mit „Nachricht an …“ (fertiger Text im Chat)."])},
     {reiter:"fahrzeuge", ziel:function(){ return rgReiter("fahrzeuge"); }, wenn:function(){ return reiterErlaubt("fahrzeuge"); }, titel:"Fahrzeuge",
       text:RG_LISTE(["<strong>Techniker</strong> sehen ihr Fahrzeug: „km-Stand eintragen“, „Schaden melden“ (eigene Einträge 24 h löschbar).",
@@ -32214,9 +32214,10 @@ function akKmVorschlag(tag, fid){
   var e=FZ_E.filter(function(x){ return x.fahrzeug_id===fid && x.datum===tag && x.strecke!=null; });
   return e.length ? Math.round(e.reduce(function(s,x){ return s+(+x.strecke||0); },0)) : null;
 }
-/* Belegfoto: verkleinert hochladen (PDF so, wie es ist) */
-function akFotoHochladen(datei){
-  var uid=Store.benutzer.id, pdf=/pdf/i.test(datei.type||"") || /\.pdf$/i.test(datei.name||"");
+/* Belegfoto: verkleinert hochladen (PDF so, wie es ist) – immer in den Ordner der Person, der der Eintrag gehört
+   (fuer: ihre Kennung, wenn der Inhaber den Eintrag einer anderen Person ändert; Inhaber 05.10.2026) */
+function akFotoHochladen(datei, fuer){
+  var uid=fuer||Store.benutzer.id, pdf=/pdf/i.test(datei.type||"") || /\.pdf$/i.test(datei.name||"");
   var pfad=uid+"/"+isoLokal(new Date())+"_"+Math.random().toString(36).slice(2,10)+(pdf?".pdf":".jpg");
   var blob=pdf ? Promise.resolve(datei) : verkleinere(datei).then(function(v){ return datenUrlZuBlob(v.datenUrl, "image/jpeg"); });
   return blob.then(function(b){
@@ -32249,9 +32250,10 @@ function akEditor(z, vorgabe){
   var form=el('<form class="stack" autocomplete="off" style="max-width:560px">'+
     (km ? "" :
       '<div class="stack" style="gap:6px"><div class="fl"><span class="req">Foto vom Beleg</span></div>'+
-        /* Fotos liegen im Ordner der Person (Speicher „auslagen“ unter <user_id>/) – der Inhaber darf dort nicht
-           ablegen; ein neues Foto landete in seinem Ordner und die Person sähe ihren Beleg nicht mehr */
-        (fremd ? '<div class="muted" style="font-size:12.5px">Das Foto ersetzen kann nur '+esc(a.name||"die Person")+" selbst – dazu „zurückgeben“.</div>" :
+        /* Inhaber 05.10.2026: nach der Abgabe ersetzt bzw. entfernt das Foto nur noch der Inhaber (Speicher-Regel in der
+           Datenbank); ersetzt er das Foto eines fremden Eintrags, liegt das neue im Ordner der Person (Speicher „auslagen“
+           unter <user_id>/) – sonst sähe sie ihren Beleg nicht mehr –, das alte wird erst nach dem Speichern entfernt */
+        (gesperrt ? '<div class="muted" style="font-size:12.5px">Schon abgegeben – das Foto ersetzen oder entfernen kann nur noch der Chef (oder er gibt den Monat zurück).</div>' :
         '<div class="rowflex" style="gap:8px;flex-wrap:wrap"><label class="btn sm" style="cursor:pointer">📷 Beleg fotografieren<input type="file" accept="image/*" capture="environment" data-foto hidden></label>'+
         '<label class="btn ghost sm" style="cursor:pointer">Bild / PDF wählen<input type="file" accept="image/*,application/pdf" data-foto hidden></label></div>')+
         '<div data-vorschau class="muted" style="font-size:12.5px">'+(a.foto?"Foto ist gespeichert – wird geladen …":"Noch kein Foto.")+"</div>"+
@@ -32361,7 +32363,7 @@ function akEditor(z, vorgabe){
     /* Präsentation: Betrag nach dem Zusammenführen rechnen (sonst bliebe der alte stehen), gewähltes Foto nur vermerken */
     if(demo()){ if(datei) zeile.foto="praesentation/"+(datei.name||"beleg");
       fertig(Object.assign({id:neueKennung("ak"), status:"offen"}, z||{}, zeile, km ? {km_satz:satz, betrag:Math.round(zeile.km*satz*100)/100} : {})); return; }
-    (datei ? akFotoHochladen(datei) : Promise.resolve(null)).then(function(pfad){
+    (datei ? akFotoHochladen(datei, fremd ? z.user_id : null) : Promise.resolve(null)).then(function(pfad){
       if(pfad){ zeile.foto=pfad; zeile.ohne_beleg=null; }
       var q=z ? Store.sb.from("auslagen").update(zeile).eq("id", z.id).select("*") : Store.sb.from("auslagen").insert(zeile).select("*");
       return mitFrist(q, 20000).then(function(r){
