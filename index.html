@@ -25764,10 +25764,10 @@ Object.assign(RUNDGAENGE, {
       "<strong>Kopf</strong>: Auftraggeber, Objekt, Montage / Wartung / Reparatur / Garantie.",
       "<strong>Stunden</strong>: Vorschläge aus den aufs Projekt gebuchten Stunden (aller Personen), dem Kalender und dem Bauzeitplan anhaken – Datum, Monteure (Namen oder „4 Mann“), von, bis, Pause; Stunden = Personen × (bis − von − Pause). Alles änderbar, „+ Zeile“ von Hand.",
       "<strong>Arbeiten</strong> (Aufgaben und Termine mit einem Tipp übernehmen), Arbeiten beendet ja/nein; <strong>Material</strong> als Liste – „+ Material“ je Position mit Menge, Einheit, Bezeichnung –, Prüfungen, Vorkommnisse.",
-      "<strong>Rapporte und Fotos</strong>: Rapport- oder Regieberichte und Fotos als PDF oder Foto anhängen – wählen bzw. gleich fotografieren, „aus den Projektdateien …“ oder einfügen (am Handy lange tippen → „Einsetzen“, am Laptop Strg+V).",
+      "<strong>Rapporte und Fotos</strong>: Rapport- oder Regieberichte und Fotos als PDF oder Foto anhängen – wählen bzw. gleich fotografieren, „aus den Projektdateien …“ oder einfügen (am Handy lange tippen → „Einsetzen“, am Laptop Strg+V). Fotos: Vorschau antippen zum Ansehen, Beschriftung darunter.",
       "<strong>Abschluss</strong>: du unterschreibst als verantwortlicher Monteur – immer unter deinem eigenen Namen. Das Feld für den Auftraggebervertreter bleibt im PDF zum Unterschreiben auf dem Ausdruck."])+
       RG_HG(["Jede Eingabe bleibt auf dem Gerät gemerkt, bis gespeichert ist; „Als Entwurf speichern“ geht ohne Unterschrift.",
-        "Nach dem Unterschreiben kommt das PDF in die Projektdateien (Art Protokoll) und auf der Synology in den Projektordner – ohne Preise. Angehängte Rapporte und Fotos stehen hinten im PDF (und so auch an der Rechnung); die Dateien selbst liegen gleich nach dem Anhängen bei den Projektdateien.",
+        "Nach dem Unterschreiben kommt das PDF in die Projektdateien (Art Protokoll) und auf der Synology in den Projektordner – ohne Preise. Fotos werden wie im Protokoll verkleinert und stehen im PDF unter „Fotos“ – drei je Zeile mit Beschriftung; Rapporte (PDF) hängen hinten an (und so auch an der Rechnung); die Dateien selbst liegen gleich nach dem Anhängen bei den Projektdateien.",
         "Schon verwendete Stunden und Termine schlägt die App nicht nochmals vor („noch in keinem Nachweis“ steht bei den übrigen).",
         "Die Rechnung (nur Inhaber) übernimmt die Stunden mit „⏱ Stunden aus Arbeitsnachweisen“."])+
       RG_ACHTUNG(["Unterschrieben ist er fest – ändern nur über „Korrigieren“ mit Grund (du oder der Inhaber); die Unterschrift bleibt, die Korrektur steht im PDF. Löschen nur der Inhaber."])},
@@ -28605,6 +28605,17 @@ function anLaden(pid){
     return (AN_JE_PROJEKT[pid]=r.data||[]);
   });
 }
+/* Foto oder PDF? (am Namen bzw. Typ) */
+function anIstBild(name, typ){ return !(/pdf/i.test(typ||"") || /\.pdf$/i.test(name||"")) && (/^image\//i.test(typ||"") || /\.(jpe?g|png|webp|gif|heic|heif)$/i.test(name||"")); }
+/* Adresse eines angehängten Fotos zum Ansehen – einmal je Pfad geholt (10 min gültig) */
+var AN_BILD_URL={};
+function anBildUrl(x){
+  if(x._url) return Promise.resolve(x._url);
+  var c=AN_BILD_URL[x.pfad]; if(c && c.bis>Date.now()) return Promise.resolve(c.u);
+  if(!Store.sb) return Promise.resolve("");
+  return Store.sb.storage.from("projektdateien").createSignedUrl(x.pfad, 900).then(function(r){
+    var u=(r && r.data && r.data.signedUrl)||""; if(u) AN_BILD_URL[x.pfad]={u:u, bis:Date.now()+600000}; return u; }, function(){ return ""; });
+}
 /* Materialzeilen mit Inhalt (leere „+ Material“-Zeilen zählen nicht) */
 function anMaterial(d){ return ((d||{}).materialListe||[]).filter(function(m){ return String(m.text||"").trim() || m.menge!=null; }); }
 function anTitel(a){ return "Arbeitsnachweis "+(a && a.nummer ? "Nr. "+a.nummer : "(neu)"); }
@@ -28951,7 +28962,13 @@ function anEditor(p, a, fertig, opt){
       return x;
     });
     hochladenLaeuft=true; zeichnen();
-    projektDateienHochladen(PROJEKTE.filter(function(x){ return x.id===p.id; })[0]||p, "protokoll", gut).then(function(neue){
+    /* Fotos wie im Protokoll verkleinern (Inhaber 06.10.2026) – längste Kante FOTO_KANTE, als JPEG; geht das nicht
+       (Bildformat unbekannt), bleibt das Original */
+    Promise.all(gut.map(function(f){
+      if(!anIstBild(f.name, f.type)) return f;
+      return verkleinere(f).then(function(k){ return fetch(k.datenUrl).then(function(r){ return r.blob(); }).then(function(b){
+        return new File([b], String(f.name||"Foto").replace(/\.[A-Za-z0-9]+$/, "")+".jpg", {type:"image/jpeg"}); }); }, function(){ return f; });
+    })).then(function(klein){ return projektDateienHochladen(PROJEKTE.filter(function(x){ return x.id===p.id; })[0]||p, "protokoll", klein); }).then(function(neue){
       hochladenLaeuft=false;
       d.anhaenge=(d.anhaenge||[]).concat((neue||[]).map(function(x){ var o={pfad:x.pfad, name:x.name, typ:x.typ||""}; if(x._url) o._url=x._url; return o; }));
       if((neue||[]).length){ merken(); toast("✓ "+neue.length+" Datei"+(neue.length===1?"":"en")+" angehängt: "+neue.map(function(x){ return x.name; }).join(", ")+
@@ -28971,21 +28988,36 @@ function anEditor(p, a, fertig, opt){
   document.addEventListener("paste", einfuegen);
   function rapportSchritt(box){
     d.anhaenge=d.anhaenge||[];
-    box.appendChild(el('<div class="muted" style="font-size:12.5px">Rapportberichte, Regieberichte und Fotos von der Baustelle – als PDF oder Foto (am Handy auch gleich fotografieren). Sie liegen bei den Projektdateien und hängen hinten am PDF des Arbeitsnachweises (und so auch an der Rechnung).</div>'));
+    box.appendChild(el('<div class="muted" style="font-size:12.5px">Rapportberichte, Regieberichte und Fotos von der Baustelle – als PDF oder Foto (am Handy auch gleich fotografieren). Fotos werden verkleinert und stehen im PDF unter „Fotos“ mit Beschriftung; Rapporte hängen hinten an (und so auch an der Rechnung). Alles liegt auch bei den Projektdateien.</div>'));
     var liste=el('<div class="stack" style="gap:6px" data-anhaenge></div>');
     if(!d.anhaenge.length) liste.appendChild(el('<div class="muted" style="font-size:12.5px">Noch kein Rapport und kein Foto angehängt.</div>'));
     d.anhaenge.forEach(function(x, i){
-      var z=el('<div class="rowflex" data-anhang style="gap:8px;flex-wrap:nowrap;border:1px solid var(--line);border-radius:8px;padding:6px 10px;font-size:13px">'+
-        '<span>'+(/pdf/i.test(x.typ||x.name) ? "📄" : "🖼")+'</span><span style="flex:1;min-width:0;overflow-wrap:anywhere">'+esc(x.name)+"</span>"+
-        '<button class="btn ghost sm" type="button" data-ansehen>ansehen</button><button class="btn ghost sm" type="button" data-weg aria-label="Entfernen">✕</button></div>');
-      z.querySelector("[data-ansehen]").onclick=function(){ if(x._url) window.open(x._url, "_blank", "noopener"); else projektDateiOeffnen(x.pfad, x.name); };
+      var bild=anIstBild(x.name, x.typ);
+      var z=el('<div class="stack" data-anhang style="gap:6px;border:1px solid var(--line);border-radius:8px;padding:6px 10px;font-size:13px">'+
+        '<div class="rowflex" style="gap:8px;flex-wrap:nowrap">'+
+          (bild ? '<button type="button" data-vorschau title="Foto ansehen" style="flex:none;width:64px;height:48px;padding:0;border:1px solid var(--line);border-radius:6px;background:var(--surface-2,#eee);overflow:hidden;cursor:pointer">'+
+              '<img alt="" style="width:100%;height:100%;object-fit:cover;display:block"></button>' : "<span>📄</span>")+
+          '<span data-name style="flex:1;min-width:0;overflow-wrap:anywhere">'+esc(x.name)+"</span>"+
+          '<button class="btn ghost sm" type="button" data-ansehen>ansehen</button><button class="btn ghost sm" type="button" data-weg aria-label="Entfernen">✕</button></div>'+
+        (bild ? '<label class="fl" style="min-width:0"><span>Beschriftung (steht im PDF unter dem Foto)</span><input type="text" data-notiz maxlength="200" value="'+esc(x.notiz||"")+'" placeholder="z. B. Außeneinheit nach der Montage"></label>' : "")+
+        "</div>");
+      var ansehen=function(){
+        if(!bild){ if(x._url) pdfAnsicht(x._url, x.name); else projektDateiOeffnen(x.pfad, x.name); return; }
+        anBildUrl(x).then(function(u){ if(u) bildAnsicht(u, x.name); else toast("Foto gerade nicht abrufbar – bitte bei Verbindung nochmals."); });
+      };
+      z.querySelector("[data-ansehen]").onclick=ansehen;
+      if(bild){
+        z.querySelector("[data-vorschau]").onclick=ansehen;
+        anBildUrl(x).then(function(u){ var im=z.querySelector("[data-vorschau] img"); if(u && im) im.src=bildUrl(u); });
+        z.querySelector("[data-notiz]").oninput=function(){ x.notiz=this.value.slice(0,200); merken(); };
+      }
       z.querySelector("[data-weg]").onclick=function(){
         if(!window.confirm("„"+x.name+"“ vom Arbeitsnachweis entfernen?\n\nDie Datei bleibt bei den Projektdateien.")) return;
         d.anhaenge.splice(i, 1); merken(); zeichnen(); toast("Entfernt – die Datei bleibt bei den Projektdateien."); };
       liste.appendChild(z);
     });
     box.appendChild(liste);
-    if(hochladenLaeuft) box.appendChild(el('<div class="note" style="font-size:13px">⏳ wird hochgeladen …</div>'));
+    if(hochladenLaeuft) box.appendChild(el('<div class="note" style="font-size:13px">⏳ wird verkleinert und hochgeladen …</div>'));
     var wahl=el('<div class="rowflex" style="gap:8px;flex-wrap:wrap">'+
       '<label class="btn sm" style="cursor:pointer">📷 Foto / 📎 PDF wählen<input type="file" data-datei accept="application/pdf,.pdf,image/*" multiple hidden></label>'+
       '<button class="btn ghost sm" type="button" data-aus>aus den Projektdateien …</button></div>');
@@ -29116,7 +29148,7 @@ function anSpeichern(p, a, n, sig, grund){
 }
 
 /* ---------- PDF wie das Papierformular (A4, Tabelle mit Linien, Logo und Firmenangaben wie im Protokoll) ---------- */
-function anBlattHtml(p, a){
+function anBlattHtml(p, a, fotos){
   var d=a.daten||{}, zl=d.zeilen||[], L="border:1px solid #555;padding:3px 5px";
   var th=function(t, w){ return "<th style='"+L+(w?";width:"+w:"")+"'>"+esc(t)+"</th>"; };
   var td=function(t, r){ return "<td style='"+L+(r?";text-align:right":"")+"'>"+esc(t==null?"":t)+"</td>"; };
@@ -29147,7 +29179,9 @@ function anBlattHtml(p, a){
         tz("Datum", a.unterschrieben ? tagFmt(a.unterschrieben) : "")+"</table></div>"+
       "<div><table>"+tz("Auftraggebervertreter", d.vertreter||"")+"<tr><td class='k'>Unterschrift</td><td style='height:48px'>&nbsp;</td></tr>"+tz("Datum", "")+"</table></div>"+
     "</div></div>"+
-    ((d.anhaenge||[]).length ? "<div style='margin-top:8px;font-size:12px'><strong>Anlagen (hinten angehängt):</strong> "+d.anhaenge.map(function(x){ return esc(x.name); }).join(", ")+"</div>" : "")+
+    anFotosHtml(d, fotos)+
+    ((d.anhaenge||[]).some(function(x){ return !anIstBild(x.name, x.typ); }) ? "<div style='margin-top:8px;font-size:12px'><strong>Anlagen (hinten angehängt):</strong> "+
+      d.anhaenge.filter(function(x){ return !anIstBild(x.name, x.typ); }).map(function(x){ return esc(x.name); }).join(", ")+"</div>" : "")+
     "<div class='fuss'>Arbeitsnachweis "+esc(a.nummer||"")+" · Projekt "+esc(p.nummer||"")+(a.unterschrieben ? "" : " · ENTWURF – nicht unterschrieben")+
       korr.map(function(k){ return "<br>Korrigiert am "+esc(tagFmt(k.zeit))+" von "+esc(k.von||"")+": „"+esc(k.grund||"")+"“"; }).join("")+"</div>";
 }
@@ -29155,11 +29189,31 @@ function anDateiname(p, a){
   return ("Arbeitsnachweis_"+(p.nummer||"")+"_Nr"+(a.nummer||"")+"_"+String(anZeitraum(a)||dfmt(a.datum)).split(" – ")[0].replace(/\./g,"-")+((a.korrekturen||[]).length ? "_Korrektur-"+a.korrekturen.length : "")+".pdf")
     .replace(/[\\\/:*?"<>|]+/g,"").replace(/\s+/g,"-");
 }
-function anPdfErzeugen(p, a){
-  return blattZuPdf({html:anBlattHtml(p, a), titel:anTitel(a)+" "+(p.nummer||""), fuss:anTitel(a)+" – "+projektTitel(p), betreff:"Arbeitsnachweis Projekt "+(p.nummer||"")})
-    .then(function(blob){ return anhaengeAnPdf(blob, ((a.daten||{}).anhaenge)||[]); });
+/* Fotos im Blatt wie im Protokoll: drei je Zeile, Beschriftung darunter (Inhaber 06.10.2026: „im PDF verbrauchen sie
+   sehr viele Seiten und man kann sie nicht beschriften“). fotos = [{url, name, notiz}] mit eingebetteten Bildern. */
+function anFotosHtml(d, fotos){
+  var l=fotos || ((d||{}).anhaenge||[]).filter(function(x){ return anIstBild(x.name, x.typ); }).map(function(x){ return {url:"", name:x.name, notiz:x.notiz}; });
+  if(!l.length) return "";
+  return "<h2>Fotos</h2><div class='fotos'>"+l.map(function(b){
+    return "<figure>"+(b.url ? '<img alt="" src="'+bildUrl(b.url)+'">' : "<div style='font-size:11px;color:#666'>Foto: "+esc(b.name||"")+"</div>")+
+      "<figcaption>"+esc(b.notiz||"")+"</figcaption></figure>"; }).join("")+"</div>";
 }
-/* Rapportberichte und Fotos hinten ans PDF: PDF-Seiten übernehmen, Fotos je auf eine A4-Seite. Nicht lesbar: Meldung, ohne. */
+function anPdfErzeugen(p, a){
+  var alle=((a.daten||{}).anhaenge)||[], fehlt=[];
+  var fotos=alle.filter(function(x){ return anIstBild(x.name, x.typ); });
+  /* Fotos fürs PDF einbetten (als Daten), sonst fehlen sie im Bild der Seite */
+  return Promise.all(fotos.map(function(x){
+    return anBildUrl(x).then(function(u){ if(!u) throw new Error("nicht abrufbar"); return fetch(u); })
+      .then(function(r){ if(!r.ok) throw new Error("HTTP "+r.status); return r.blob(); })
+      .then(function(b){ return new Promise(function(ok){ var fr=new FileReader(); fr.onload=function(){ ok(fr.result); }; fr.onerror=function(){ ok(""); }; fr.readAsDataURL(b); }); })
+      .catch(function(){ return ""; })
+      .then(function(u){ if(!u) fehlt.push(x.name); return {url:u, name:x.name, notiz:x.notiz}; });
+  })).then(function(eingebettet){
+    if(fehlt.length) toast("Foto(s) nicht abrufbar, im PDF nur mit Namen: "+fehlt.join(", "));
+    return blattZuPdf({html:anBlattHtml(p, a, eingebettet), titel:anTitel(a)+" "+(p.nummer||""), fuss:anTitel(a)+" – "+projektTitel(p), betreff:"Arbeitsnachweis Projekt "+(p.nummer||"")});
+  }).then(function(blob){ return anhaengeAnPdf(blob, alle.filter(function(x){ return !anIstBild(x.name, x.typ); })); });
+}
+/* Rapportberichte hinten ans PDF: PDF-Seiten übernehmen (ältere Stände: ein Foto je A4-Seite – Fotos stehen jetzt im Blatt). Nicht lesbar: Meldung, ohne. */
 function anhaengeAnPdf(blob, liste){
   if(!liste.length) return Promise.resolve(blob);
   var fehlt=[];

@@ -6057,7 +6057,15 @@ test("Arbeitsnachweis: Monteur erstellt aus Stunden und Kalender, unterschreibt 
     const dtB = new DataTransfer(); dtB.items.add(png);
     d.querySelector("[data-einfuegen]").dispatchEvent(new ClipboardEvent("paste", { clipboardData: dtB, bubbles: true, cancelable: true }));
     await A.bis(() => d.querySelectorAll("[data-anhang]").length === 2);
-    e.rapporte = [...d.querySelectorAll("[data-anhang]")].map((z) => z.querySelectorAll("span")[1].textContent);
+    e.rapporte = [...d.querySelectorAll("[data-anhang]")].map((z) => z.querySelector("[data-name]").textContent);
+    /* Foto: verkleinert (JPEG), Vorschau, beschriften, in der App ansehen */
+    const fz = d.querySelectorAll("[data-anhang]")[1];
+    await A.bis(() => /^blob:|^https:/.test(fz.querySelector("[data-vorschau] img").getAttribute("src") || ""));
+    e.vorschau = !!fz.querySelector("[data-vorschau] img").getAttribute("src");
+    const no = fz.querySelector("[data-notiz]"); no.value = "Außeneinheit nach der Montage"; no.dispatchEvent(new Event("input"));
+    fz.querySelector("[data-ansehen]").click();
+    const bildDlg = await A.bis(() => { const q = A.dlg(); return q && q !== d && q.querySelector("img") && q; });
+    e.ansehen = !!bildDlg; if (bildDlg) bildDlg.querySelector('[data-a="zu"]').click(); await A.warte(100);
     A.knopf(d, /^Weiter: Abschluss/).click(); await A.warte(50);
     e.rapportZusammen = /2 Rapporte\/Fotos angehängt/.test(d.textContent);
     /* ohne Unterschrift geht „Unterschreiben“ nicht */
@@ -6076,7 +6084,8 @@ test("Arbeitsnachweis: Monteur erstellt aus Stunden und Kalender, unterschreibt 
     const blatt = x("anBlattHtml")(pr, an);
     { const L = window.PDFLib, mitA = await L.PDFDocument.load(await (await x("anPdfErzeugen")(pr, an)).arrayBuffer()),
         ohneA = await L.PDFDocument.load(await (await x("anPdfErzeugen")(pr, Object.assign({}, an, { daten: Object.assign({}, an.daten, { anhaenge: [] }) }))).arrayBuffer());
-      e.rapportSeiten = mitA.getPageCount() - ohneA.getPageCount(); e.rapportDb = ((an.daten || {}).anhaenge || []).map((q) => q.name + (q._url ? "+url" : "")).join("|");
+      e.rapportSeiten = mitA.getPageCount() - ohneA.getPageCount();
+      e.fotoFehlt = window.__toasts.filter((t) => /nicht abrufbar|nicht lesbar/.test(t)); e.fotoBlatt = x("anFotosHtml")(an.daten, null); e.notiz = ((an.daten.anhaenge || [])[1] || {}).notiz || ""; e.rapportDb = ((an.daten || {}).anhaenge || []).map((q) => q.name + (q._url ? "+url" : "")).join("|");
       e.rapportDateien = ((pr.daten || {}).dateien || []).filter((f) => /^Regiebericht_Firma_X|^Bild_P-TEST-AN_/.test(f.name)).length; e.rapportBlatt = /Anlagen \(hinten angehängt\)/.test(blatt); }
     e.mat = JSON.stringify((an.daten || {}).materialListe); e.matBlatt = /<th[^>]*>Einheit<\/th>/.test(blatt) && /12,5/.test(blatt) && /Kupferrohr 12 mm/.test(blatt) && /Wandkonsole/.test(blatt);
     e.mann = [x("anMonteureText")({ monteure: "Darko", personen: 2 }), x("anMonteureText")({ monteure: "4 Mann", personen: 4 }), x("anMonteureText")({ monteure: "Huber, Maier", personen: 2 })].join("|") + "|" + />2 Mann</.test(blatt);
@@ -6141,9 +6150,12 @@ test("Arbeitsnachweis: Monteur erstellt aus Stunden und Kalender, unterschreibt 
   pruefe(r.mann === "Darko + 1 weitere Person|4 Mann|Huber, Maier|true", "Monteure/Personen im PDF: " + r.mann);
   pruefe(r.matZeilen === 3 && r.mat === JSON.stringify([{ menge: 12.5, eh: "m", text: "Kupferrohr 12 mm" }, { menge: 3, eh: "Stk", text: "Wandkonsole" }]) && r.matBlatt,
     "Materialliste: " + JSON.stringify([r.matZeilen, r.mat, r.matBlatt]));
-  pruefe(r.rapporte.length === 2 && r.rapporte[0] === "Regiebericht_Firma_X.pdf" && /^Bild_P-TEST-AN_\d{4}-\d\d-\d\d_2\.png$/.test(r.rapporte[1]) && r.rapportZusammen,
+  pruefe(r.rapporte.length === 2 && r.rapporte[0] === "Regiebericht_Firma_X.pdf" && /^Bild_P-TEST-AN_\d{4}-\d\d-\d\d_2\.jpg$/.test(r.rapporte[1]) && r.rapportZusammen,
     "Rapportberichte wählen/einfügen: " + JSON.stringify([r.rapporte, r.rapportZusammen]));
-  pruefe(r.rapportSeiten === 3 && /^Regiebericht_Firma_X\.pdf\|Bild_P-TEST-AN_.*\.png$/.test(r.rapportDb) && r.rapportDateien === 2 && r.rapportBlatt,
+  pruefe(!r.fotoFehlt.length, "Foto nicht ins PDF eingebettet: " + JSON.stringify(r.fotoFehlt));
+  pruefe(r.vorschau && r.ansehen && r.notiz === "Außeneinheit nach der Montage" && /<h2>Fotos<\/h2><div class='fotos'><figure>/.test(r.fotoBlatt) && /Außeneinheit nach der Montage/.test(r.fotoBlatt),
+    "Foto: Vorschau/ansehen/Beschriftung/Blatt: " + JSON.stringify([r.vorschau, r.ansehen, r.notiz, r.fotoBlatt]));
+  pruefe(r.rapportSeiten >= 2 && r.rapportSeiten <= 3 && /^Regiebericht_Firma_X\.pdf\|Bild_P-TEST-AN_.*_2\.jpg$/.test(r.rapportDb) && r.rapportDateien === 2 && r.rapportBlatt,
     "Rapportberichte im PDF/in der Datenbank: " + JSON.stringify([r.rapportSeiten, r.rapportDb, r.rapportDateien, r.rapportBlatt]));
   pruefe(r.zweiter === "0|true|true", "Zweiter Nachweis schlägt Verwendetes wieder vor: " + r.zweiter);
   pruefe(r.fremdName === "Testtechniker|u_tech_test_at", "Fremder Name gespeichert: " + r.fremdName);
