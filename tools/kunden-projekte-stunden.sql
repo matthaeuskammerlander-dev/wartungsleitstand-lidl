@@ -43,7 +43,7 @@ $$;
 -- Stammdaten für Kunde und Präsentation: ohne Zugangsdaten, ein Kunde nur seine eigenen
 create or replace view public.stammdaten_lesen as
   select id, typ, ziel,
-         felder - 'zugangLink' - 'zugangBenutzer' - 'zugangPasswort' as felder,
+         felder - 'zugangLink' - 'zugangBenutzer' - 'zugangPasswort' - 'zugangWeitere' as felder,
          neu, geaendert, von, grund
     from public.stammdaten
    where auth.uid() is not null

@@ -85,7 +85,7 @@ begin
   if to_regclass('public.stammdaten_lesen') is null then
     create view public.stammdaten_lesen as
       select id, typ, ziel,
-             felder - 'zugangLink' - 'zugangBenutzer' - 'zugangPasswort' as felder,
+             felder - 'zugangLink' - 'zugangBenutzer' - 'zugangPasswort' - 'zugangWeitere' as felder,
              neu, geaendert, von, grund
         from public.stammdaten
        where auth.uid() is not null;
