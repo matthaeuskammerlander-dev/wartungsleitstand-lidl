@@ -425,6 +425,10 @@ Kammerlander Umwelt- und Klimatechnik (UKT) – oft kurz, vom Handy, im Feld.
   tatsächlichen Zeit vor Ort – Lidl-Rapport (von–bis), Störung Ankunft–Fertig, Stunden mit Markt (`einsatz_dauern`,
   tools/einsatz-dauern.sql: nur Median je Markt, keine Personen); ohne Erfahrung `ARBEIT_H`.
 - **Gelerntes geteilt** (`gelerntTeilen`, tools/gelernte-werte.sql): selbst Eingetipptes steht bei allen als Vorschlag; Zugangsdaten nie.
+- **Mehrere Zugänge je Regelung** (Inhaber 06.10.2026): erster Benutzer weiter in `zugangBenutzer`/`zugangPasswort`
+  (ältere App-Stände verlieren nichts), weitere in `zugangWeitere` = [{bez, benutzer, passwort, link}] (`zugaengeLesen`,
+  „+ weiterer Benutzer“, entfernen mit Rückfrage). Geheim wie die anderen (`GEHEIME_FELDER`): nie in Protokoll/PDF/Archiv/KI,
+  im Verlauf nur „vertraulich“, Kunde/Präsentation nie (Sicht `stammdaten_lesen` nimmt das Feld heraus).
 - **Folgeaufträge** (Büro 02.10.2026, nur Inhaber): Mängel und „Folgeauftrag erforderlich“ aus
   Protokollen stehen in Projekte als „Folgeaufträge – Angebot?“ (`folgeOffen`); erledigt durch ein Projekt
   mit `daten.ausProtokoll` oder „Kein Angebot“ mit Grund (Merker `folge:<Protokoll>`).

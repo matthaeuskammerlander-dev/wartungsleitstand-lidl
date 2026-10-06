@@ -754,7 +754,7 @@ var STAMM_FELDER_POS = ["anlagentyp","intervallCode","inbetriebnahme","monat","m
                         "pausiert","pausiertGrund","bauart","kreislaeufe","pruefbuch","rkUkt","pumpeUkt",
                         /* Füllmenge je Kältekreis [kg, …] – „HJW ab 30 kg“ gilt je Kreis (Inhaber 06.10.2026) */
                         "kgKreise",
-                        "regelung","regelungFirma","regelungFirmaName","fernzugriff","zugangLink","zugangBenutzer","zugangPasswort",
+                        "regelung","regelungFirma","regelungFirmaName","fernzugriff","zugangLink","zugangBenutzer","zugangPasswort","zugangWeitere",
                         "ortAussen","ortStrom","ortRegelung","ortPruefbuch","hersteller","modell","seriennummer","leistungKw","vorOrtNeu",
                         /* Zuordnung einer Termin-Zeile zu ihrer Anlage (von Hand) */
                         "anlageZu",
@@ -6033,29 +6033,44 @@ function zugangsAdresse(roh){
 function zugangBox(d){
   if(nurLesen()||demo()||!angemeldetOderLokal()) return null;   /* Kunde, Präsentation und Abgemeldete sehen keine Zugangsdaten */
   if(d.fernzugriff!=="ja") return null;
-  if(!d.zugangLink && !d.zugangBenutzer && !d.zugangPasswort) return null;
+  /* je Zugang eine Zeile: der erste aus den bisherigen Feldern, dazu die weiteren
+     Benutzer (Inhaber 06.10.2026) – jeder mit Bezeichnung, Passwort verdeckt */
+  var zl=[];
+  if(d.zugangBenutzer || d.zugangPasswort) zl.push({benutzer:d.zugangBenutzer||"", passwort:d.zugangPasswort||""});
+  zl=zl.concat(zugaengeLesen(d.zugangWeitere)||[]);
+  if(!d.zugangLink && !zl.length) return null;
+  var mehrere=zl.length>1;
   var b=el('<div class="note" style="display:grid;gap:6px">'+
     '<div class="l muted" style="font-size:11px;text-transform:uppercase;letter-spacing:.06em">Zugang zur Regelung</div>'+
     (d.zugangLink?'<div class="rowflex" style="gap:8px"><a href="'+esc(zugangsAdresse(d.zugangLink))+
       '" target="_blank" rel="noopener" class="mono" style="word-break:break-all">'+esc(d.zugangLink)+"</a>"+
       '<button class="btn ghost sm" type="button" data-kopiere="link">kopieren</button></div>':"")+
-    (d.zugangBenutzer?'<div class="rowflex" style="gap:8px"><span>Benutzer: <span class="mono">'+esc(d.zugangBenutzer)+
-      "</span></span>"+'<button class="btn ghost sm" type="button" data-kopiere="benutzer">kopieren</button></div>':"")+
-    (d.zugangPasswort?'<div class="rowflex" style="gap:8px"><span>Passwort: <span class="mono" data-pw>••••••••</span></span>'+
-      '<button class="btn ghost sm" type="button" data-zeigen>anzeigen</button>'+
-      '<button class="btn ghost sm" type="button" data-kopiere="passwort">kopieren</button></div>':"")+
+    zl.map(function(z,i){
+      return '<div data-zugang="'+i+'" style="display:grid;gap:4px'+(mehrere?";border-top:1px solid var(--line, #ddd);padding-top:6px":"")+'">'+
+        (mehrere?"<strong>"+esc(z.bez||"Benutzer "+(i+1))+"</strong>":"")+
+        (z.link?'<div class="rowflex" style="gap:8px"><a href="'+esc(zugangsAdresse(z.link))+
+          '" target="_blank" rel="noopener" class="mono" style="word-break:break-all">'+esc(z.link)+"</a>"+
+          '<button class="btn ghost sm" type="button" data-kopiere="link|'+i+'">kopieren</button></div>':"")+
+        (z.benutzer?'<div class="rowflex" style="gap:8px"><span>Benutzer: <span class="mono">'+esc(z.benutzer)+
+          "</span></span>"+'<button class="btn ghost sm" type="button" data-kopiere="benutzer|'+i+'">kopieren</button></div>':"")+
+        (z.passwort?'<div class="rowflex" style="gap:8px"><span>Passwort: <span class="mono" data-pw>••••••••</span></span>'+
+          '<button class="btn ghost sm" type="button" data-zeigen>anzeigen</button>'+
+          '<button class="btn ghost sm" type="button" data-kopiere="passwort|'+i+'">kopieren</button></div>':"")+
+      "</div>";
+    }).join("")+
   "</div>");
-  var pw=b.querySelector("[data-pw]"), zeig=b.querySelector("[data-zeigen]");
-  if(zeig) zeig.onclick=function(){
-    var zu=pw.textContent.indexOf("•")>=0;
-    pw.textContent=zu?d.zugangPasswort:"••••••••";
-    zeig.textContent=zu?"verbergen":"anzeigen";
-  };
+  b.querySelectorAll("[data-zeigen]").forEach(function(zeig){
+    var zb=zeig.closest("[data-zugang]"), pw=zb.querySelector("[data-pw]"), z=zl[+zb.dataset.zugang];
+    zeig.onclick=function(){
+      var zu=pw.textContent.indexOf("•")>=0;
+      pw.textContent=zu?z.passwort:"••••••••";
+      zeig.textContent=zu?"verbergen":"anzeigen";
+    };
+  });
   b.querySelectorAll("[data-kopiere]").forEach(function(k){
-    var was=k.dataset.kopiere;
+    var t=k.dataset.kopiere.split("|"), was=t[0], z=t.length>1 ? zl[+t[1]] : {link:d.zugangLink};
     k.onclick=function(){
-      inZwischenablage(was==="link"?d.zugangLink:was==="benutzer"?d.zugangBenutzer:d.zugangPasswort,
-        was==="link"?"Adresse":was==="benutzer"?"Benutzername":"Passwort");
+      inZwischenablage(z[was], was==="link"?"Adresse":was==="benutzer"?"Benutzername":"Passwort");
     };
   });
   return b;
@@ -6203,6 +6218,7 @@ function anlagenZusammenfuehren(a1, a2){
        Das Passwort erscheint nur verdeckt. */
     var hatZugang=function(d){ return GEHEIME_FELDER.some(function(k){ return !leerWert(d[k]); }); };
     var zugangText=function(d){ return GEHEIME_FELDER.map(function(k){ var f=ANLAGE_FELDER.filter(function(x){ return x.k===k; })[0]||{l:k, t:""};
+      if(f.t==="zugaenge") return zugaengeLesen(d[k]) ? f.l+": "+zugaengeText(d[k]) : "";   /* weitere Benutzer, Passwort verdeckt */
       return leerWert(d[k]) ? "" : f.l+": "+(f.t==="geheim" ? "••••••••" : String(d[k])); }).filter(Boolean).join(" · "); };
     var zugangFrage=hatZugang(dh) && hatZugang(dd) && GEHEIME_FELDER.some(function(k){ return !gleich(dh[k], dd[k]); });
     if(zugangFrage) box.appendChild(el('<div class="posbox"><strong>Zugang zur Regelung – welcher Satz gilt?</strong>'+
@@ -7111,7 +7127,11 @@ var ANLAGE_GRUPPEN=[
     wenn:function(a){ return a.regelung!==OHNE_REGELUNG && a.fernzugriff==="ja"; }, felder:[
     {k:"zugangLink", l:"Adresse / Link", t:"text"},
     {k:"zugangBenutzer", l:"Benutzername", t:"text"},
-    {k:"zugangPasswort", l:"Passwort", t:"geheim"}]},
+    {k:"zugangPasswort", l:"Passwort", t:"geheim"},
+    /* weitere Benutzer (Inhaber 06.10.2026: „mehrere Benutzernamen hinterlegen“) –
+       das erste Paar bleibt oben in zugangBenutzer/zugangPasswort, damit ältere
+       App-Stände nichts verlieren; hier [{bez, benutzer, passwort, link}] */
+    {k:"zugangWeitere", l:"Weitere Benutzer", t:"zugaenge", optional:true}]},
   {titel:"Wo steht was", frage:"Wo stehen Außengeräte, Absicherung, Regelung und Prüfbuch?", felder:[
     {k:"ortAussen", l:"Außengeräte", t:"wahl", o:ORTE, frei:true},
     {k:"ortStrom", l:"Elektrische Absicherung", t:"wahl", o:ORTE, frei:true},
@@ -7347,15 +7367,78 @@ document.addEventListener("click", function(e){
   } else d.closest("[data-igzeile]").remove();
   verwaltungBearbeitet=true;   /* per Knopf geändert – kein input/change */
 });
+/* Weitere Zugänge zur Regelung (Inhaber 06.10.2026: „mehrere Benutzernamen“):
+   je Zugang Bezeichnung, Benutzer, Passwort und – nur falls anders als oben –
+   eine eigene Adresse. Geheim wie zugangPasswort (GEHEIME_FELDER): nie im
+   Protokoll, PDF, Archiv, nie mit Wert im Verlauf, nie bei Kunde/Präsentation/KI. */
+var ZUGANG_FELDER=[["bez","Bezeichnung","z. B. Service, Kunde, Installateur"],["benutzer","Benutzername",""],
+  ["passwort","Passwort",""],["link","Eigene Adresse / Link","nur falls anders als oben"]];
+function zugangBelegt(z){ return !!z && ZUGANG_FELDER.some(function(f){ return String(z[f[0]]==null?"":z[f[0]]).trim()!==""; }); }
+/* gespeicherte Form: nur ausgefüllte Zugänge, ohne Leerzeichen am Rand; keiner → null */
+function zugaengeLesen(w){
+  var l=(Array.isArray(w)?w:[]).filter(zugangBelegt).map(function(z){
+    var r={}; ZUGANG_FELDER.forEach(function(f){ var v=String(z[f[0]]==null?"":z[f[0]]).trim(); if(v) r[f[0]]=v; }); return r; });
+  return l.length ? l : null;
+}
+/* Übersicht und Zusammenführen: Bezeichnung und Benutzer, das Passwort nur verdeckt */
+function zugaengeText(w){
+  var l=zugaengeLesen(w)||[];
+  if(!l.length) return "–";
+  return l.map(function(z,i){ return (z.bez||"Benutzer "+(i+2))+(z.benutzer?": "+z.benutzer:"")+(z.passwort?" · Passwort ••••••••":""); }).join("; ");
+}
+/* ein weiterer Zugang als Eingabezeile – Anlagendialog (Passwort beim Eintippen
+   sichtbar wie oben) und Verwaltung (verdeckt, mit „anzeigen“) */
+/* idx: im Anlagendialog die Stelle in der Liste (data-zw="0|benutzer") */
+function zugangZeileHtml(z, nr, verdeckt, idx){
+  z=z||{};
+  var vor=idx==null ? "" : idx+"|";
+  return '<div class="posbox" data-zwzeile style="margin-bottom:8px"><div class="rowflex" style="justify-content:space-between">'+
+    "<strong>Benutzer "+nr+'</strong><button class="btn ghost sm" type="button" data-zwweg="'+(idx==null?"":idx)+'">entfernen</button></div>'+
+    '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px;margin-top:6px">'+
+    ZUGANG_FELDER.map(function(f){
+      var pw=verdeckt && f[0]==="passwort";
+      return '<label class="fl"><span>'+esc(f[1])+"</span>"+(pw?'<span class="rowflex" style="gap:6px">':"")+
+        '<input type="'+(pw?"password":"text")+'" data-zw="'+vor+f[0]+'" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false"'+
+        (f[0]==="link"?' inputmode="url"':"")+(pw?' style="flex:1;min-width:0"':"")+' placeholder="'+esc(f[2])+'" value="'+esc(z[f[0]]==null?"":z[f[0]])+'">'+
+        (pw?'<button class="btn ghost sm" type="button" data-zwzeigen>anzeigen</button></span>':"")+"</label>";
+    }).join("")+"</div></div>";
+}
+/* die weiteren Zugänge aus den Eingabezeilen (leere fallen weg) */
+function zugaengeAusZeilen(box){
+  return zugaengeLesen([].map.call(box.querySelectorAll("[data-zwzeile]"), function(z){
+    var r={}; z.querySelectorAll("[data-zw]").forEach(function(x){ r[x.dataset.zw]=x.value; }); return r; }));
+}
+/* Verwaltung: „+ weiterer Benutzer“, entfernen (mit Rückfrage, wenn etwas drinsteht), Passwort aufdecken */
+document.addEventListener("click", function(e){
+  var d=e.target && e.target.closest ? e.target.closest("[data-zwliste] [data-zwdazu],[data-zwliste] [data-zwweg],[data-zwliste] [data-zwzeigen]") : null; if(!d) return;
+  e.preventDefault();
+  if(d.hasAttribute("data-zwzeigen")){
+    var pi=d.previousElementSibling, zu=pi.type==="password";
+    pi.type=zu?"text":"password"; d.textContent=zu?"verbergen":"anzeigen"; return;
+  }
+  var liste=d.closest("[data-zwliste]"), host=liste.querySelector("[data-zwzeilen]");
+  if(d.hasAttribute("data-zwdazu")){
+    var z=el(zugangZeileHtml({}, host.querySelectorAll("[data-zwzeile]").length+2, true));
+    host.appendChild(z); var i=z.querySelector("input"); if(i) i.focus();
+  } else {
+    var zl=d.closest("[data-zwzeile]"), werte={};
+    zl.querySelectorAll("[data-zw]").forEach(function(x){ werte[x.dataset.zw]=x.value; });
+    if(zugangBelegt(werte) && !window.confirm("Diesen Zugang („"+(String(werte.bez||"").trim()||String(werte.benutzer||"").trim()||"ohne Bezeichnung")+"“) entfernen?\n\n"+
+      "Zugangsdaten stehen nicht im Änderungsverlauf – nach dem Speichern kommt er auch über „Rückgängig“ nicht zurück.")) return;
+    zl.remove();
+  }
+  verwaltungBearbeitet=true;   /* per Knopf geändert – kein input/change */
+});
 /* Für den Änderungsverlauf: Zugangsdaten der Regelung (Adresse, Benutzer,
    Passwort) nie mit Wert – der Verlauf ist für alle Angemeldeten lesbar und
    lässt sich nicht löschen. Festgehalten wird nur, DASS sie geändert wurden. */
 function verlaufWert(f, w){
-  if(istGeheim(f.k)) return leerWert(w) ? "–" : "•••••••• (vertraulich)";
+  if(istGeheim(f.k)) return (leerWert(w) || (Array.isArray(w) && !w.length)) ? "–" : "•••••••• (vertraulich)";
   return anlageWertText(f, w);
 }
 function anlageWertText(f, w){
   if(f.t==="innen") return innenText(w);
+  if(f.t==="zugaenge") return zugaengeText(w);   /* Passwörter nur verdeckt */
   if(f.t==="kreise") return kgKreiseText(w)||"–";
   if(leerWert(w)) return "–";
   if(f.t==="kg") return String(w).replace(".",",")+" kg";
@@ -7909,6 +7992,12 @@ function anlageDialogTeilFelder(P){
           }).join("")+"</div></div>";
       }).join("")+
         '<button class="btn ghost sm" type="button" data-innendazu>+ Innengerät</button>';
+    } else if(f.t==="zugaenge"){
+      /* weitere Benutzer (Inhaber 06.10.2026) – der erste steht in den Feldern darüber */
+      var zwl=Array.isArray(w)?w:[];
+      h+=(zwl.length?"":'<div class="as-hinweis" style="margin:0 0 6px">Gibt es mehr als einen Benutzer (z. B. Service, Kunde, Installateur)? Der erste steht oben.</div>')+
+        zwl.map(function(z,i){ return zugangZeileHtml(z, i+2, false, i); }).join("")+
+        '<button class="btn ghost sm" type="button" data-zwdazu>+ weiterer Benutzer</button>';
     } else if(f.t==="geheim"){
       /* Beim Eintippen sichtbar – man überträgt es meist von einem Zettel
          und will sehen, was dasteht. Angezeigt wird es später verdeckt. */
@@ -8059,6 +8148,23 @@ function anlageDialogTeilSchritte(P){
         liste[+t[0]][t[1]]=v;
       };
     });
+    /* weitere Benutzer (Inhaber 06.10.2026): ebenso eigene Kopie; leere fallen beim Übernehmen weg */
+    var zugaenge=function(){ a.zugangWeitere=(Array.isArray(a.zugangWeitere)?a.zugangWeitere:[]).map(function(z){ return Object.assign({},z); }); return a.zugangWeitere; };
+    var zwDazu=inhalt.querySelector("[data-zwdazu]");
+    if(zwDazu) zwDazu.onclick=function(){ zugaenge().push({}); gruppeZeigen(g);
+      var l=inhalt.querySelectorAll("[data-zwzeile]"); if(l.length){ var i0=l[l.length-1].querySelector("input"); if(i0) i0.focus(); } };
+    inhalt.querySelectorAll("[data-zwweg]").forEach(function(b){
+      b.onclick=function(){
+        var liste=zugaenge(), z=liste[+b.dataset.zwweg]||{};
+        /* Fehlbedienung einplanen: Ausgefülltes nur nach Rückfrage weg */
+        if(zugangBelegt(z) && !window.confirm("Diesen Zugang („"+(String(z.bez||"").trim()||String(z.benutzer||"").trim()||"ohne Bezeichnung")+"“) entfernen?\n\n"+
+          "Zugangsdaten stehen nicht im Änderungsverlauf – nach dem Speichern kommt er auch über „Rückgängig“ nicht zurück.")) return;
+        liste.splice(+b.dataset.zwweg,1); gruppeZeigen(g);
+      };
+    });
+    inhalt.querySelectorAll("[data-zw]").forEach(function(i){
+      i.oninput=function(){ var t=i.dataset.zw.split("|"), liste=zugaenge(); liste[+t[0]][t[1]]=i.value; };
+    });
     P.kgHinweis();
   }
   function nameZeigen(){
@@ -8186,6 +8292,8 @@ function anlageAssistentDialog(fertig, start, titel, neu, alles, vorgang){
   var schliessen=function(wert){
     geschlossen=true;
     if(wert){ delete wert._springe; delete wert._ohneRegel; delete wert._kiVorlage; }   /* nur Steuerung des Dialogs, kein Anlagenwert */
+    /* weitere Benutzer: nur ausgefüllte, keiner → null (sonst „geändert“ ohne Änderung) */
+    if(wert && "zugangWeitere" in wert) wert.zugangWeitere=zugaengeLesen(wert.zugangWeitere);
     ov.remove(); document.body.style.overflow=vorherOv; fertig(wert);
     /* weitere Prüfbücher aus derselben Fotoserie: nach dem Speichern anbieten */
     if(wert && kiRest && kiRest.liste.length) setTimeout(weitereAusPruefbuch, 400);
@@ -22284,12 +22392,22 @@ function verwaltungTeilAnlagen(P){
       /* vorher keine und jetzt keine: nichts ändern (sonst „geändert“ ohne Änderung) */
       if(ig.length || il.dataset.hatte) w.innengeraete=ig;
     }
+    /* weitere Benutzer zur Regelung (Inhaber 06.10.2026) – vorher keine und jetzt keine: nichts ändern */
+    var zwL=k.querySelector("[data-zwliste]");
+    if(zwL){ var zw=zugaengeAusZeilen(zwL); if(zw || zwL.dataset.hatte) w.zugangWeitere=zw; }
     return w;
   }
   function datenFeld(f, w){
     var v=(w[f.k]==null?"":w[f.k]);
     /* Innengeräte sind eine Liste – hier direkt bearbeitbar (Büro 01.10.2026):
        je Gerät eine Zeile, dazu „+ Innengerät“; Lesen aus Fotos bleibt über den Anlagendialog */
+    /* weitere Benutzer zur Regelung (Inhaber 06.10.2026): je Zugang eine Zeile, Passwort verdeckt */
+    if(f.t==="zugaenge"){
+      var zwW=zugaengeLesen(w[f.k])||[];
+      return '<div class="fl" data-zwliste data-hatte="'+(zwW.length?"1":"")+'" style="grid-column:1/-1"><span>'+esc(f.l)+' <span class="muted">(der erste steht bei „Benutzername“)</span></span>'+
+        '<div data-zwzeilen>'+zwW.map(function(z,i){ return zugangZeileHtml(z, i+2, true); }).join("")+"</div>"+
+        '<div><button class="btn ghost sm" type="button" data-zwdazu>+ weiterer Benutzer</button></div></div>';
+    }
     if(f.t==="innen"){
       var igL=Array.isArray(w[f.k]) ? w[f.k] : [];
       return '<div class="fl" data-innenliste data-hatte="'+(igL.length?"1":"")+'" style="grid-column:1/-1"><span>'+esc(f.l)+'</span>'+
@@ -22748,6 +22866,7 @@ function verwaltungTeilSpeichern(P){
         var karteWieVorher=k.getAttribute("data-basis")===zeilen.map(function(z){ return z.dataset.pid; }).join(",");
         var la=function(key){
           /* Innengeräte: die Liste aus den Zeilen (vorher keine und jetzt keine: unverändert) */
+          if(key==="zugangWeitere"){ var zwl=k.querySelector("[data-zwliste]"); if(!zwl) return undefined; var zw=zugaengeAusZeilen(zwl); return (zw||zwl.dataset.hatte) ? zw : undefined; }
           if(key==="innengeraete"){ var il=k.querySelector("[data-innenliste]"); if(!il) return undefined; var ig=innenAusZeilen(il); return (ig.length||il.dataset.hatte) ? ig : undefined; }
           var x=k.querySelector('[data-a="'+key+'"]'); if(!x) return undefined;
           return x.type==="checkbox"?x.checked:x.value.trim(); };
@@ -24719,7 +24838,7 @@ function handbuchKarte(z){
         "<strong>Dichtheitskontrolle</strong> (F-Gase-Verordnung): ab 5 t CO₂e jährlich, ab 50 t halbjährlich, ab 500 t vierteljährlich – "+
           "mit Leckage-Erkennung jeweils doppelt so lang. Ab 30 kg in einem Kältekreis ist bei uns zusätzlich die Halbjahreswartung (HJW) vorgesehen.",
         "<strong>Prüfbuch-Ort:</strong> Standard „"+esc(PRUEFBUCH_ORT)+"“.",
-        "<strong>Zugang zur Regelung</strong> (Link, Benutzer, Passwort) steht nur bei der Anlage – nie im Protokoll, nie im PDF, nie im Archiv, "+
+        "<strong>Zugang zur Regelung</strong> (Link, Benutzer, Passwort – auch mehrere Benutzer mit Bezeichnung über „+ weiterer Benutzer“) steht nur bei der Anlage – nie im Protokoll, nie im PDF, nie im Archiv, "+
           "im Änderungsverlauf nur als „geändert“."]))+
 
     abschnitt("5 · Was automatisch passiert – und was nie ohne Mensch",
@@ -25040,6 +25159,7 @@ var RUNDGAENGE={
       "<strong>Füllmenge</strong> aus dem Prüfbuch (auf dem Typenschild steht nur die Werksfüllung). Ab 30 kg in einem Kältekreis gibt es die Halbjahreswartung (HJW) – bei mehreren Kreisen zählt der größte, nicht die Summe (<strong>Füllmenge je Kältekreis</strong>), darunter die Halbjahresinspektion (HJI).",
       "<strong>Termine:</strong> Jahreswartung (JW) im Monat der Inbetriebnahme, der Halbjahrestermin sechs Monate versetzt. Stimmt etwas nicht, hier korrigieren – mit kurzem Grund.",
       "<strong>Neue Anlage mit zwei Terminen:</strong> „Heute gewartet als“ bestimmt, welcher Termin heute erledigt ist – darauf achten, sonst stimmt die Fälligkeit nicht.",
+      "<strong>Zugang zur Regelung:</strong> Adresse, Benutzer und Passwort – gibt es mehrere Benutzer (z. B. Service, Kunde, Installateur), mit „+ weiterer Benutzer“ je einen mit Bezeichnung dazu.",
       "Nach einer Störung bietet die App an, fällige Wartungen am selben Markt gleich mitzumachen."])+
       RG_HG(["Die KI liest nur und schlägt vor – übernommen wird erst, was du bestätigst.",
         "Den Soll-Monat ändert die App nie von selbst; eine vorgezogene Wartung ist normal und zählt für den nächsten Termin.",

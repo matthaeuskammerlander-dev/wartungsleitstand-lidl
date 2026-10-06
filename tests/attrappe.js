@@ -504,7 +504,7 @@
         sitzung.user=nutzer(sitzung.user.email);
         return Promise.resolve({data:{user:sitzung.user},error:null}); } },
     from:function(t){
-      if(t==="stammdaten_lesen") DB.stammdaten_lesen=DB.stammdaten.map(function(r){ var f=Object.assign({},r.felder); delete f.zugangLink; delete f.zugangBenutzer; delete f.zugangPasswort; return Object.assign({},r,{felder:f}); });
+      if(t==="stammdaten_lesen") DB.stammdaten_lesen=DB.stammdaten.map(function(r){ var f=Object.assign({},r.felder); delete f.zugangLink; delete f.zugangBenutzer; delete f.zugangPasswort; delete f.zugangWeitere; return Object.assign({},r,{felder:f}); });
       return new Q(t); },
     functions:{invoke:function(name,o){ return Promise.resolve(window.__kiAntwort ? window.__kiAntwort(name,o.body) : {data:null,error:{message:"keine KI im Test"}}); }},
     storage:{from:function(n){ return new E(n); }},

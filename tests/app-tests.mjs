@@ -6189,6 +6189,89 @@ test("Karte: „📍 Mein Standort“ zeigt die eigene Position (nur auf dem Ger
   await a.zu();
 });
 
+test("Zugänge: mehrere Benutzer je Regelung – anlegen, entfernen mit Rückfrage, speichern, neu laden; Verlauf ohne Werte; Kunde/Präsentation sehen nichts; altes Paar bleibt", async () => {
+  const a = await oeffnen(KONTEN.admin, { handy: true });
+  const r = await a.seite.evaluate(async () => {
+    const x = window.__t.x, w = (ms) => new Promise((f) => setTimeout(f, ms)), e = {};
+    /* erfundene Anlage TP1 mit Fernzugriff und dem bisherigen einzelnen Paar */
+    x("posById.TP1.regelung='Testregler'; posById.TP1.fernzugriff='ja'; posById.TP1.zugangLink='10.0.0.9'; posById.TP1.zugangBenutzer='erster-test'; posById.TP1.zugangPasswort='Alt-Pw-111'; 1");
+    e.geheim = x("GEHEIME_FELDER").indexOf("zugangWeitere") >= 0;
+    x("anlageDatenErgaenzen")(x("posById.TP1"), null, "zugangWeitere"); await w(300);
+    const ov = () => [...document.querySelectorAll(".assistent")].pop();
+    const tippe = (i, v) => { i.value = v; i.dispatchEvent(new Event("input", { bubbles: true })); };
+    e.altDa = (ov().querySelector('[data-in="zugangBenutzer"]') || {}).value;
+    const dazu = () => ov().querySelector("[data-zwdazu]");
+    e.knopf = dazu() ? dazu().textContent : "";
+    const fuelle = (n, werte) => Object.keys(werte).forEach((k) => tippe(ov().querySelector('[data-zw="' + n + "|" + k + '"]'), werte[k]));
+    dazu().click(); await w(50); fuelle(0, { bez: "Service", benutzer: "svc-test", passwort: "Weit-Pw-222" });
+    dazu().click(); await w(50); fuelle(1, { bez: "Installateur", benutzer: "inst-test", passwort: "Weit-Pw-333", link: "10.0.0.10" });
+    dazu().click(); await w(50); fuelle(2, { bez: "Wegdamit", benutzer: "weg-test" });
+    const echt = window.confirm; e.fragen = 0; window.confirm = () => { e.fragen++; return true; };
+    ov().querySelector('[data-zwweg="2"]').click(); await w(50); window.confirm = echt;
+    e.zeilen = ov().querySelectorAll("[data-zwzeile]").length;
+    [...ov().querySelectorAll(".as-fuss button")].find((b) => /Übersicht/.test(b.textContent)).click(); await w(100);
+    const ueb = ov().querySelector(".as-inhalt").innerText;
+    e.uebersicht = /Service: svc-test/.test(ueb) && /Installateur: inst-test/.test(ueb);
+    e.uebersichtPw = /Weit-Pw-/.test(ueb);
+    [...ov().querySelectorAll(".as-fuss button")].find((b) => /Übernehmen/.test(b.textContent)).click(); await w(1200);
+    const zeile = (window.__db.tabellen.stammdaten || []).find((z) => z.id === "position:TP1") || {};
+    e.db = JSON.stringify((zeile.felder || {}).zugangWeitere || null);
+    e.dbAlt = [(zeile.felder || {}).zugangBenutzer, (zeile.felder || {}).zugangPasswort];
+    const verlauf = JSON.stringify(window.__db.tabellen.aenderungen || []);
+    e.verlaufDa = /Weitere Benutzer/.test(verlauf);
+    e.verlaufWerte = ["Weit-Pw-222", "Weit-Pw-333", "svc-test", "inst-test", "Alt-Pw-111", "weg-test"].filter((s) => verlauf.indexOf(s) >= 0);
+    /* neu laden: die Liste kommt wieder, das alte Paar bleibt */
+    await x("ladeStammdaten()"); await w(200);
+    const d = x("anlageDaten")(x("posById.TP1"));
+    e.geladen = [(d.zugangWeitere || []).map((z) => z.bez).join(","), d.zugangBenutzer, d.zugangPasswort];
+    /* Anzeige in den Anlagendaten: je Zugang mit Bezeichnung, Passwort verdeckt, aufdeckbar */
+    const box = x("zugangBox")(d); document.body.appendChild(box);
+    e.anzeige = [box.querySelectorAll("[data-zugang]").length, /Service/.test(box.innerText) && /Installateur/.test(box.innerText), /Weit-Pw-/.test(box.innerText)];
+    box.querySelector('[data-zugang="1"] [data-zeigen]').click();
+    e.aufgedeckt = /Weit-Pw-222/.test(box.innerText) && !/Weit-Pw-333/.test(box.innerText);
+    box.remove();
+    /* nie im Anlagenbuch, nie in der Sicht für Kunde/Präsentation */
+    e.buch = /Weit-Pw-|svc-test/.test(x("anlagenbuchHtml")(x("posById.TP1")));
+    const sicht = await window.__t.x("Store.sb.from('stammdaten_lesen').select('*')");
+    e.sicht = JSON.stringify(sicht.data || []).indexOf("Weit-Pw-") >= 0;
+    e.verlaufWert = x("verlaufWert")({ k: "zugangWeitere" }, [{ passwort: "Weit-Pw-222" }]);
+    /* Verwaltung: Zeilen da, Passwort verdeckt, bleiben beim Neuaufbau des Blocks */
+    const ed = x("verwaltungEditor")(x("byId.TS1")); document.body.appendChild(ed); await w(200);
+    const zl = ed.querySelector("[data-zwliste]");
+    e.verw = zl ? [zl.querySelectorAll("[data-zwzeile]").length, (zl.querySelector('[data-zw="passwort"]') || {}).type, /object Object/.test(ed.innerHTML)] : null;
+    if (zl) { zl.querySelector("[data-zwdazu]").click(); await w(50); }
+    e.verwDazu = zl ? zl.querySelectorAll("[data-zwzeile]").length : 0;
+    ed.remove();
+    e.breiter = document.documentElement.scrollWidth - window.innerWidth;
+    return e;
+  });
+  pruefe(r.geheim, "zugangWeitere gilt nicht als geheim");
+  pruefe(r.altDa === "erster-test" && /\+ weiterer Benutzer/.test(r.knopf), "Dialog: altes Paar bzw. Knopf fehlt: " + JSON.stringify([r.altDa, r.knopf]));
+  pruefe(r.zeilen === 2 && r.fragen === 1, "Entfernen: Zeilen " + r.zeilen + ", Rückfragen " + r.fragen);
+  pruefe(r.uebersicht && !r.uebersichtPw, "Übersicht: " + JSON.stringify([r.uebersicht, r.uebersichtPw]));
+  pruefe(/"bez":"Service".*"passwort":"Weit-Pw-222"/.test(r.db) && /"link":"10.0.0.10"/.test(r.db) && !/Wegdamit/.test(r.db), "nicht gespeichert: " + r.db);
+  pruefe(!r.dbAlt[0] || r.dbAlt[0] === "erster-test", "altes Paar überschrieben: " + JSON.stringify(r.dbAlt));
+  pruefe(r.verlaufDa && !r.verlaufWerte.length, "Verlauf: vermerkt " + r.verlaufDa + ", Werte darin: " + r.verlaufWerte.join(","));
+  pruefe(JSON.stringify(r.geladen) === '["Service,Installateur","erster-test","Alt-Pw-111"]', "nach dem Laden: " + JSON.stringify(r.geladen));
+  pruefe(JSON.stringify(r.anzeige) === "[3,true,false]" && r.aufgedeckt, "Anzeige: " + JSON.stringify([r.anzeige, r.aufgedeckt]));
+  pruefe(!r.buch && !r.sicht && !/Weit-Pw/.test(r.verlaufWert), "geheim durchgesickert: " + JSON.stringify([r.buch, r.sicht, r.verlaufWert]));
+  pruefe(r.verw && r.verw[0] === 2 && r.verw[1] === "password" && !r.verw[2] && r.verwDazu === 3, "Verwaltung: " + JSON.stringify([r.verw, r.verwDazu]));
+  pruefe(r.breiter <= 4, "Handy: Seite " + r.breiter + "px breiter als der Bildschirm");
+  pruefe(!a.fehler.length, "Laufzeitfehler: " + a.fehler.join("; "));
+  await a.zu();
+  /* Kunde und Präsentation: das Feld wird ausgeblendet, keine Anzeige */
+  for (const konto of [KONTEN.kunde, KONTEN.praesentation]) {
+    const b = await oeffnen(konto);
+    const k = await b.seite.evaluate(() => {
+      const x = window.__t.x;
+      return { box: x("zugangBox")({ fernzugriff: "ja", zugangWeitere: [{ bez: "S", benutzer: "u", passwort: "p" }] }) === null,
+        aus: x("geheimesAusgeblendet()"), geheim: x("istGeheim")("zugangWeitere") };
+    });
+    pruefe(k.box && k.aus && k.geheim, konto + ": " + JSON.stringify(k));
+    await b.zu();
+  }
+});
+
 /* ================================================================ Ablauf ================================================================ */
 const filterText = process.argv.slice(2).find((x) => !x.startsWith("--"));
 const filter = filterText ? new RegExp(filterText, "i") : null;
