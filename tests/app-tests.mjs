@@ -6379,6 +6379,27 @@ test("Tagesrückblick: nach jedem Ausstempeln – Grenze verschieben, teilen, �
     return { zeile, ohneNetz, nachgetragen, vorLaden, andersGeraet, fremd: !!(fremd && fremd.error), rueckfall, warnung, ohneDb: db.tag_geprueft.some((g) => g.datum === T2) };
   });
   if (r5.zeile !== "true true true" || r5.ohneNetz || !r5.nachgetragen || r5.vorLaden || !r5.andersGeraet || !r5.fremd || !r5.rueckfall || r5.warnung.length || r5.ohneDb) fehl.push("(5) geprüft in der Datenbank: " + JSON.stringify(r5));
+  /* (6) „+ Weiterer Bereich“: mehrere Bereiche zu verschiedenen Zeiten – ohne Bereich nichts, über das Ende hinaus gekürzt, Summe und Pause gleich */
+  const r6 = await a.seite.evaluate(async () => {
+    const tt = window.__tt, x = window.__t.x, db = window.__db.tabellen; tt.leeren(); const T = tt.werktag(1);
+    tt.gestempelt({ datum: T, beginn: "07:00", ende: "16:00", minuten: 510, pause_min: 30, bereich: "werkstatt" });
+    await tt.laden();
+    x("abgleichDialog('" + T + "', true)"); await tt.warte(200);
+    const neu = (bi, s, e, b) => { const n = tt.dialog().querySelectorAll("[data-neu]")[bi]; n.querySelector("[data-ns]").value = s; n.querySelector("[data-ne]").value = e;
+      n.querySelector("[data-nb]").value = b; n.querySelector("[data-nok]").click(); };
+    const abs = () => [...tt.dialog().querySelectorAll("[data-abschnitt]")].map((e) => e.dataset.abschnitt);
+    neu(0, "09:00", "10:00", ""); const ohneBereich = abs(), toastOhne = tt.toasts.slice(-1)[0] || "";
+    neu(0, "09:00", "10:00", "fahrt"); neu(0, "12:00", "17:00", "wartung"); neu(0, "11:00", "11:30", "fahrt");
+    const danach = abs(), toastGekuerzt = tt.toasts.some((t) => /gekürzt/.test(t)), okText = tt.ok(tt.dialog()).textContent;
+    tt.ok(tt.dialog()).click(); await tt.warte(600);
+    const l = db.arbeitszeiten.filter((z) => z.datum === T).sort((p, q) => p.beginn < q.beginn ? -1 : 1);
+    return { ohneBereich, toastOhne, danach, toastGekuerzt, okText, bereiche: l.map((z) => z.beginn.slice(0, 5) + "-" + z.ende.slice(0, 5) + " " + z.bereich),
+      min: l.reduce((s, z) => s + z.minuten, 0), pause: l.reduce((s, z) => s + (z.pause_min || 0), 0), zu: !tt.dialog() };
+  });
+  if (JSON.stringify(r6.ohneBereich) !== '["07:00-16:00 werkstatt"]' || !/Bereich wählen/.test(r6.toastOhne)
+    || JSON.stringify(r6.danach) !== '["07:00-09:00 werkstatt","09:00-10:00 fahrt","10:00-11:00 werkstatt","11:00-11:30 fahrt","11:30-12:00 werkstatt","12:00-16:00 wartung"]'
+    || !r6.toastGekuerzt || !/Speichern/.test(r6.okText) || r6.min !== 510 || r6.pause !== 30 || r6.bereiche.length !== 6 || !r6.zu)
+    fehl.push("(6) weiterer Bereich: " + JSON.stringify(r6));
   if (a.fehler.length) fehl.push("Laufzeitfehler: " + a.fehler.join("; "));
   await a.zu();
   pruefe(!fehl.length, fehl.join(" | "));
