@@ -1522,7 +1522,7 @@ test("Stempeluhr ↔ Kalender: Abgleich teilt die gestempelte Zeit nach den Term
     db.arbeitszeiten.push({ id: "zst1", user_id: ich, name: "T", datum: gestern, beginn: "07:00", ende: "16:00", pause_min: 30, pause_auto: 0, minuten: 510, art: "arbeit", quelle: "stempel", bereich: "wartung" });
     x("planungStand=0; planungNachladen()"); await warte(500); await x("zeitenLaden()");
     x("S.view='stunden'; S.stWoche=montagVon('" + gestern + "'); render()"); await warte(700);
-    const knopf = [...document.querySelectorAll("button")].find((b) => /Mit Kalender abgleichen \(3\)/.test(b.textContent));
+    const knopf = [...document.querySelectorAll("button")].find((b) => /Tag prüfen · 3 Termine/.test(b.textContent));
     if (knopf) knopf.click(); await warte(500);
     let d = [...document.querySelectorAll(".assistent")].pop();
     const dialog = !!d && /Tagesrückblick/.test(d.textContent);
