@@ -352,8 +352,14 @@ Kammerlander Umwelt- und Klimatechnik (UKT) – oft kurz, vom Handy, im Feld.
   Stempeluhr hat VORRANG (Büro 04.10.2026): Abgleich mit dem Kalender (`abgleichDialog`, `abgleichTeile`, Funktion `stempel_abgleich`,
   tools/stempel-abgleich.sql) teilt nur die gestempelte Zeit auf – Blöcke lückenlos und genau, Summe/Pause unverändert, Quelle
   „stempel_abgeglichen“; Lücken zwischen Terminen behalten, was dort gestempelt war (Bereich, Markt, Projekt – sonst Fahrt),
-  ein Termin mitten in einem anderen unterbricht ihn, Minuten wie die Datenbank (`abgleichMinuten`: Pause zum längsten Teil); nach dem Ausstempeln angeboten, beim Tag „⇆ Mit Kalender abgleichen“, beim Termin „⏱ abgleichen“ statt
-  „erfassen“ (nie doppelt). Umstempeln mit Vorgabe aus dem Termin (`geplantFuerMich`, „⇄ Dorthin umstempeln“).
+  ein Termin mitten in einem anderen unterbricht ihn, Minuten wie die Datenbank (`abgleichMinuten`: Pause zum längsten Teil); nach dem Ausstempeln angeboten, beim Tag „⇆ Tag prüfen“, beim Termin „⏱ abgleichen“ statt
+  „erfassen“ (nie doppelt). Tagesrückblick (Inhaber 06.10.2026, derselbe Dialog `abgleichDialog`): nach JEDEM Ausstempeln
+  (auch ohne Termin, auch Präsentation) „Was hast du heute wann und wo gemacht?“ – Abschnitte aus Gestempeltem (inkl. Umstempeln)
+  bzw. Kalender-Vorschlag, je Abschnitt Grenze ±15 min/Uhrzeit, Bereich, Markt, Projekt, Was, teilen, entfernen (Zeit an den
+  Nachbarn); Blockanfang/-ende fest; nur geänderte Blöcke gehen an `stempel_abgleich`. „✓ Passt so“ ohne Änderung schreibt nichts,
+  merkt den Tag als geprüft (`tagGeprueft`/`tagAlsGeprueft`: localStorage `ukt_tag_geprueft` je Konto|Tag = Stand der gestempelten
+  Einträge; ganz „stempel_abgeglichen“ gilt überall als geprüft; Präsentation/Spielwiese nur im Speicher). „Später“ speichert nichts –
+  beim Tag „⇆ Tag prüfen“ (`tagPruefenOffen`), bis geprüft oder Monat bestätigt. Umstempeln mit Vorgabe aus dem Termin (`geplantFuerMich`, „⇄ Dorthin umstempeln“).
   Abwesenheit und Arbeit am selben Tag (`abwesenheitPruefen`, tools/abwesenheit-arbeit.sql, `planung.ausnahmen`): beim Einstempeln und
   Erfassen fragen (ein halber Tag mit Uhrzeit – EIN Tag mit von–bis – nur, wenn die Arbeit bzw. das Einstempeln hineinfällt:
   `abwesenheitZeitTrifft`; ganztägig, mehrtägig oder Arbeit ohne Uhrzeit immer; Inhaber 05.10.2026) – „eingesprungen“ (beides zählt), Urlaub „zurückgeben“ (Inhaber nimmt den Tag heraus: `planTagHerausnehmen`, To-do),

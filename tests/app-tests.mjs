@@ -1525,7 +1525,7 @@ test("Stempeluhr ↔ Kalender: Abgleich teilt die gestempelte Zeit nach den Term
     const knopf = [...document.querySelectorAll("button")].find((b) => /Mit Kalender abgleichen \(3\)/.test(b.textContent));
     if (knopf) knopf.click(); await warte(500);
     let d = [...document.querySelectorAll(".assistent")].pop();
-    const dialog = !!d && /Mit dem Kalender abgleichen/.test(d.textContent);
+    const dialog = !!d && /Tagesrückblick/.test(d.textContent);
     /* „Werkstatt aufräumen“ nicht gemacht → verschieben */
     const box = [...d.querySelectorAll("[data-an]")].find((c) => /Werkstatt aufräumen/.test(c.closest("label").textContent));
     box.checked = false; box.dispatchEvent(new Event("change")); await warte(200);
@@ -1692,7 +1692,7 @@ test("Tiefentest stunden: Abgleich mit dem Kalender – Lücken behalten Markt u
     const w = await tt.termin({ kategorie: "werkstatt", titel: "Werkstatt", datum: T, beginn: "14:00", ende: "15:00" });
     await tt.laden();
     x("S.view='stunden'; S.stWoche=montagVon('" + T + "'); render()"); await tt.warte(300);
-    const knopf = [...document.querySelectorAll("button")].find((b) => /Mit Kalender abgleichen \(1\)/.test(b.textContent));
+    const knopf = [...document.querySelectorAll("button")].find((b) => /Tag prüfen · 1 Termin/.test(b.textContent));
     if (!knopf) return { knopf: false };
     knopf.click(); await tt.warte(200);
     const d = tt.dialog(), ok = tt.ok(d), vorher = ok.disabled;
@@ -6270,6 +6270,129 @@ test("Zugänge: mehrere Benutzer je Regelung – anlegen, entfernen mit Rückfra
     pruefe(k.box && k.aus && k.geheim, konto + ": " + JSON.stringify(k));
     await b.zu();
   }
+});
+
+test("Tagesrückblick: nach jedem Ausstempeln – Grenze verschieben, teilen, „Passt so“, „Später“, ohne Netz sichtbar", async () => {
+  const a = await oeffnen(KONTEN.techniker);
+  await ttHilfen(a);
+  const fehl = [];
+  /* (1) ausgestempelt OHNE Kalendertermin, untertags richtig umgestempelt: der Rückblick kommt, „Passt so“ schreibt nichts und merkt den Tag */
+  const r1 = await a.seite.evaluate(async () => {
+    const tt = window.__tt, x = window.__t.x, db = window.__db.tabellen; tt.leeren(); const T = tt.werktag(1);
+    const um = (hm) => new Date(T + "T" + hm + ":00");
+    db.stempel.push({ id: "trs1", user_id: tt.ich(), name: "T", art: "ein", zeit: um("07:00").toISOString(), bereich: "werkstatt" });
+    db.stempel.push({ id: "trs2", user_id: tt.ich(), name: "T", art: "wechsel", zeit: um("10:00").toISOString(), bereich: "fahrt" });
+    window.__stempelVersatz = um("13:00").getTime() - Date.now();
+    x("stempelStand=0"); await x("stempelNachladen(true)"); await x("zeitenLaden()");
+    await x("stempelDruecken('aus', {taetigkeit:'Material geholt'})"); window.__stempelVersatz = 0;
+    await tt.warte(1700);
+    const d = tt.dialog();
+    if (!d) return { kein: true, toasts: tt.toasts };
+    const titel = d.querySelector(".as-titel").textContent, abschnitte = [...d.querySelectorAll("[data-abschnitt]")].map((e) => e.dataset.abschnitt);
+    const okText = tt.ok(d).textContent, vorher = JSON.stringify(db.arbeitszeiten);
+    tt.ok(d).click(); await tt.warte(300);
+    return { T, titel, abschnitte, okText, gleich: vorher === JSON.stringify(db.arbeitszeiten), offen: document.body.contains(d), geprueft: x("tagGeprueft('" + T + "')"), toast: tt.toasts.slice(-1)[0] || "" };
+  });
+  if (r1.kein || r1.titel !== "Tagesrückblick" || JSON.stringify(r1.abschnitte) !== '["07:00-10:00 werkstatt","10:00-13:00 fahrt"]' || !/Passt so/.test(r1.okText) || !r1.gleich || r1.offen || !r1.geprueft || !/geprüft/.test(r1.toast))
+    fehl.push("(1) Rückblick nach dem Ausstempeln / Passt so: " + JSON.stringify(r1));
+  /* (2) beim Tag „⇆ Tag prüfen“: Grenze ±15 und per Uhrzeit, Abschnitt teilen, Bereich ändern → lückenlos, Summe und Pause gleich */
+  const r2 = await a.seite.evaluate(async () => {
+    const tt = window.__tt, x = window.__t.x, db = window.__db.tabellen; tt.leeren(); const T = tt.werktag(1);
+    tt.gestempelt({ datum: T, beginn: "07:00", ende: "16:00", minuten: 510, pause_min: 30, bereich: "wartung" });
+    await tt.termin({ kategorie: "wartung", titel: "Wartung Eins", datum: T, beginn: "08:00", ende: "10:00", standort_id: "TS1" });
+    await tt.laden();
+    x("S.view='stunden'; S.stWoche=montagVon('" + T + "'); render()"); await tt.warte(300);
+    const knopf = [...document.querySelectorAll("button")].find((b) => /Tag prüfen/.test(b.textContent));
+    if (!knopf) return { knopf: false };
+    const knopfText = knopf.textContent; knopf.click(); await tt.warte(200);
+    const abs = () => [...tt.dialog().querySelectorAll("[data-abschnitt]")], gr = () => [...tt.dialog().querySelectorAll("[data-grenze]")];
+    const vorschlag = abs().map((e) => e.dataset.abschnitt);
+    gr()[1].querySelector("[data-gp]").click(); gr()[1].querySelector("[data-gp]").click();
+    const g0 = gr()[0].querySelector("input[data-g]"); g0.value = "07:45"; g0.dispatchEvent(new Event("change"));
+    abs()[2].querySelector("[data-abteilen]").click();
+    const sel = abs()[3].querySelector("select[data-abb]"); sel.value = "werkstatt"; sel.dispatchEvent(new Event("change"));
+    const summe = tt.dialog().querySelector("[data-summe]").textContent, okText = tt.ok(tt.dialog()).textContent;
+    tt.ok(tt.dialog()).click(); await tt.warte(600);
+    const l = db.arbeitszeiten.filter((z) => z.datum === T);
+    x("render()"); await tt.warte(200);
+    return { knopf: true, knopfText, vorschlag, summe, okText, teile: tt.teile(T), min: l.reduce((s, z) => s + z.minuten, 0), pause: l.reduce((s, z) => s + (z.pause_min || 0), 0),
+      quellen: [...new Set(l.map((z) => z.quelle))].join(), hinweis: !![...document.querySelectorAll("button")].find((b) => /Tag prüfen/.test(b.textContent)) };
+  });
+  if (!r2.knopf || !/1 Termin/.test(r2.knopfText) || JSON.stringify(r2.vorschlag) !== '["07:00-08:00 fahrt","08:00-10:00 wartung","10:00-16:00 wartung"]')
+    fehl.push("(2) Vorschlag / Knopf beim Tag: " + JSON.stringify(r2));
+  else if (JSON.stringify(r2.teile) !== JSON.stringify(["07:00-07:45 fahrt - - 45", "07:45-10:30 wartung TS1 - 135", "10:30-13:15 wartung - - 165", "13:15-16:00 werkstatt - - 165"])
+    || r2.min !== 510 || r2.pause !== 30 || r2.quellen !== "stempel_abgeglichen" || !/8:30/.test(r2.summe) || !/Speichern/.test(r2.okText) || r2.hinweis)
+    fehl.push("(2) Grenze/teilen gespeichert: " + JSON.stringify(r2));
+  /* (3) „Später“: nichts gespeichert, beim Tag bleibt „⇆ Tag prüfen“; entfernen gibt die Zeit dem Nachbarn */
+  const r3 = await a.seite.evaluate(async () => {
+    const tt = window.__tt, x = window.__t.x, db = window.__db.tabellen; tt.leeren(); const T = tt.werktag(1);
+    tt.gestempelt({ datum: T, beginn: "07:00", ende: "09:00", minuten: 120, bereich: "fahrt" });
+    tt.gestempelt({ datum: T, beginn: "09:00", ende: "12:00", minuten: 180, bereich: "werkstatt" });
+    await tt.laden(); const vorher = JSON.stringify(db.arbeitszeiten);
+    x("abgleichDialog('" + T + "', true)"); await tt.warte(200);
+    const d = tt.dialog(), sp = [...d.querySelectorAll(".as-fuss button")].find((b) => /Später/.test(b.textContent));
+    d.querySelector("[data-abschnitt] [data-abweg]").click();
+    const nachWeg = [...tt.dialog().querySelectorAll("[data-abschnitt]")].map((e) => e.dataset.abschnitt);
+    [...tt.dialog().querySelectorAll(".as-fuss button")].find((b) => /Später/.test(b.textContent)).click(); await tt.warte(200);
+    x("S.view='stunden'; S.stWoche=montagVon('" + T + "'); render()"); await tt.warte(300);
+    return { spaeter: !!sp, nachWeg, gleich: vorher === JSON.stringify(db.arbeitszeiten), zu: !tt.dialog(), toast: tt.toasts.slice(-1)[0] || "",
+      hinweis: !![...document.querySelectorAll("button")].find((b) => /Tag prüfen/.test(b.textContent)) };
+  });
+  if (!r3.spaeter || JSON.stringify(r3.nachWeg) !== '["07:00-12:00 werkstatt"]' || !r3.gleich || !r3.zu || !r3.hinweis || !/Tag prüfen/.test(r3.toast)) fehl.push("(3) Später / entfernen: " + JSON.stringify(r3));
+  /* (4) keine Verbindung: sichtbare Meldung, Dialog bleibt, Knopf wieder frei, nichts geändert */
+  const r4 = await a.seite.evaluate(async () => {
+    const tt = window.__tt, x = window.__t.x, db = window.__db.tabellen; tt.leeren(); const T = tt.werktag(1);
+    tt.gestempelt({ datum: T, beginn: "07:00", ende: "12:00", minuten: 300, bereich: "werkstatt" });
+    await tt.laden(); const vorher = JSON.stringify(db.arbeitszeiten);
+    x("abgleichDialog('" + T + "', false)"); await tt.warte(200);
+    tt.dialog().querySelector("[data-abschnitt] [data-abteilen]").click();
+    window.__netzWeg = "antwort"; const ok = tt.ok(tt.dialog()); ok.click(); await tt.warte(500); window.__netzWeg = false;
+    const d = tt.dialog(), e = d && d.querySelector(".warnbox:not([hidden])");
+    return { offen: !!d, meldung: e ? e.textContent : "", frei: !ok.disabled, gleich: vorher === JSON.stringify(db.arbeitszeiten), geprueft: x("tagGeprueft('" + T + "')") };
+  });
+  if (!r4.offen || !r4.meldung || !r4.frei || !r4.gleich || r4.geprueft) fehl.push("(4) ohne Netz: " + JSON.stringify(r4));
+  if (a.fehler.length) fehl.push("Laufzeitfehler: " + a.fehler.join("; "));
+  await a.zu();
+  pruefe(!fehl.length, fehl.join(" | "));
+});
+
+test("Tagesrückblick: Präsentation speichert nie, am Handy (390 px) ragt nichts über den Rand", async () => {
+  const a = await oeffnen(KONTEN.praesentation, { handy: true });
+  await ttHilfen(a);
+  const r = await a.seite.evaluate(async () => {
+    const tt = window.__tt, x = window.__t.x, ich = tt.ich(), sb = x("Store.sb"), altFrom = sb.from, altRpc = sb.rpc;
+    window.__schreib = [];
+    sb.from = function (t) { const q = altFrom.call(this, t); ["insert", "update", "upsert", "delete"].forEach((m) => { const o = q[m]; q[m] = function () { window.__schreib.push(t + "." + m); return o.apply(q, arguments); }; }); return q; };
+    sb.rpc = function (n) { if (n !== "team_liste" && n !== "bereiche_eigene") window.__schreib.push("rpc." + n); return altRpc.apply(this, arguments); };
+    const T = tt.werktag(1);
+    x("ZEITEN").push({ id: "trp1", user_id: ich, name: "P", datum: T, beginn: "07:00", ende: "16:00", pause_min: 30, minuten: 510, art: "arbeit", quelle: "stempel", bereich: "wartung" });
+    x("PLANUNG").push({ id: "trp1p", art: "termin", kategorie: "wartung", titel: "Wartung mit einem sehr langen Titel für den schmalen Bildschirm", datum: T, beginn: "08:00", ende: "10:00", wer: [ich], wer_namen: ["P"], standort_id: "TS1", status: "offen", erstellt_von: ich });
+    x("abgleichDialog('" + T + "', false)"); await tt.warte(200);
+    let d = tt.dialog();
+    d.querySelector("[data-abschnitt] [data-abmehr]").click(); await tt.warte(50); d = tt.dialog();
+    const breit = window.innerWidth, raus = [...d.querySelectorAll("*")].filter((e) => { const b = e.getBoundingClientRect(); return b.width && b.right > breit + 1; })
+      .map((e) => e.tagName + "." + e.className + " " + Math.round(e.getBoundingClientRect().right)).slice(0, 5);
+    const inhalt = d.querySelector(".as-inhalt"), quer = inhalt.scrollWidth - inhalt.clientWidth;
+    d.querySelectorAll("[data-abschnitt]")[2].querySelector("[data-abteilen]").click();
+    tt.ok(tt.dialog()).click(); await tt.warte(400);
+    const l = x("ZEITEN").filter((z) => z.datum === T);
+    /* Ausstempeln in der Präsentation: der Rückblick kommt auch hier – „Passt so“ schickt nichts */
+    const ein = new Date(Math.max(Date.now() - 3600000, new Date(new Date().setHours(0, 2, 0, 0)).getTime()));
+    x("STEMPEL").unshift({ id: "trpst", user_id: ich, art: "ein", zeit: ein.toISOString(), bereich: "werkstatt" });
+    await x("stempelDruecken('aus', {taetigkeit:'Werkstatt'})"); await tt.warte(1700);
+    const d2 = tt.dialog(), titel2 = d2 ? d2.querySelector(".as-titel").textContent : "";
+    if (d2) { tt.ok(d2).click(); await tt.warte(300); }
+    sb.from = altFrom; sb.rpc = altRpc;
+    return { raus, quer, teile: l.length, min: l.reduce((s, z) => s + z.minuten, 0), pause: l.reduce((s, z) => s + (z.pause_min || 0), 0), schreib: window.__schreib.slice(), titel2 };
+  });
+  const fehl = [];
+  if (r.raus.length || r.quer > 1) fehl.push("Handy: ragt über den Rand " + JSON.stringify([r.raus, r.quer]));
+  if (r.teile !== 4 || r.min !== 510 || r.pause !== 30) fehl.push("Präsentation: Aufteilung im Speicher " + JSON.stringify(r));
+  if (r.schreib.length) fehl.push("Präsentation schickt " + JSON.stringify(r.schreib) + " an die Datenbank");
+  if (r.titel2 !== "Tagesrückblick") fehl.push("Präsentation: kein Rückblick nach dem Ausstempeln " + JSON.stringify(r));
+  if (a.fehler.length) fehl.push("Laufzeitfehler: " + a.fehler.join("; "));
+  await a.zu();
+  pruefe(!fehl.length, fehl.join(" | "));
 });
 
 /* ================================================================ Ablauf ================================================================ */
