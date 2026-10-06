@@ -5995,7 +5995,29 @@ test("Arbeitsnachweis: Monteur erstellt aus Stunden und Kalender, unterschreibt 
     const ta = d.querySelector('[data-t="arbeiten"]'); ta.value += "\n3 × VRV montieren, Verrohrung, Inbetriebnahme\n11 × Blenden tauschen"; ta.dispatchEvent(new Event("input"));
     A.knopf(d, /^ja$/).click();
     A.knopf(d, /^Weiter: Material/).click(); await A.warte(50);
+    /* Materialaufwand als Liste: Menge, Einheit, Bezeichnung – leere Zeile fällt beim Speichern weg */
+    for (const [m, eh, t] of [["12,5", "m", "Kupferrohr 12 mm"], ["3", "Stk", "Wandkonsole"]]) {
+      A.knopf(d, /^\+ Material$/).click(); await A.warte(30);
+      const zz = [...d.querySelectorAll(".an-mat")].pop(), s2 = (k, v) => { const i = zz.querySelector('[data-m="' + k + '"]'); i.value = v; i.dispatchEvent(new Event("input")); };
+      s2("menge", m); s2("eh", eh); s2("text", t);
+    }
+    A.knopf(d, /^\+ Material$/).click(); await A.warte(30);
+    e.matZeilen = d.querySelectorAll(".an-mat").length;
+    /* Rapportberichte: PDF wählen und ein Bild aus der Zwischenablage einfügen – beides zu den Projektdateien, hinten ans PDF */
+    A.knopf(d, /^Weiter: Rapporte und Fotos/).click(); await A.warte(50);
+    const rpdf = await (async () => { const L = await x("(window.PDFLib ? Promise.resolve() : ladeSkript(PDF_LIB)).then(function(){ return window.PDFLib; })");
+      const doc = await L.PDFDocument.create(); doc.addPage(); doc.addPage(); return new File([await doc.save()], "Regiebericht_Firma_X.pdf", { type: "application/pdf" }); })();
+    const dtA = new DataTransfer(); dtA.items.add(rpdf);
+    const inp = d.querySelector("[data-datei]"); inp.files = dtA.files; inp.dispatchEvent(new Event("change"));
+    await A.bis(() => d.querySelectorAll("[data-anhang]").length === 1);
+    const cv0 = document.createElement("canvas"); cv0.width = 60; cv0.height = 40; cv0.getContext("2d").fillRect(5, 5, 20, 20);
+    const png = await new Promise((ok) => cv0.toBlob((b) => ok(new File([b], "image.png", { type: "image/png" })), "image/png"));
+    const dtB = new DataTransfer(); dtB.items.add(png);
+    d.querySelector("[data-einfuegen]").dispatchEvent(new ClipboardEvent("paste", { clipboardData: dtB, bubbles: true, cancelable: true }));
+    await A.bis(() => d.querySelectorAll("[data-anhang]").length === 2);
+    e.rapporte = [...d.querySelectorAll("[data-anhang]")].map((z) => z.querySelectorAll("span")[1].textContent);
     A.knopf(d, /^Weiter: Abschluss/).click(); await A.warte(50);
+    e.rapportZusammen = /2 Rapporte\/Fotos angehängt/.test(d.textContent);
     /* ohne Unterschrift geht „Unterschreiben“ nicht */
     A.knopf(d, /^Unterschreiben und abschließen/).click(); await A.warte(200);
     e.ohneSig = db.arbeitsnachweise.length + "|" + /Unterschrift/.test(window.__toasts.join(" "));
@@ -6010,6 +6032,12 @@ test("Arbeitsnachweis: Monteur erstellt aus Stunden und Kalender, unterschreibt 
     e.datei = ((pr.daten || {}).dateien || []).filter((f) => f.art === "protokoll" && /^Arbeitsnachweis_P-TEST-AN_Nr1/.test(f.name)).length;
     /* das PDF-Blatt: Kopf mit Logo und Firmenangaben, Zeilen mit Stunden, Feld für den Auftraggebervertreter */
     const blatt = x("anBlattHtml")(pr, an);
+    { const L = window.PDFLib, mitA = await L.PDFDocument.load(await (await x("anPdfErzeugen")(pr, an)).arrayBuffer()),
+        ohneA = await L.PDFDocument.load(await (await x("anPdfErzeugen")(pr, Object.assign({}, an, { daten: Object.assign({}, an.daten, { anhaenge: [] }) }))).arrayBuffer());
+      e.rapportSeiten = mitA.getPageCount() - ohneA.getPageCount(); e.rapportDb = ((an.daten || {}).anhaenge || []).map((q) => q.name + (q._url ? "+url" : "")).join("|");
+      e.rapportDateien = ((pr.daten || {}).dateien || []).filter((f) => /^Regiebericht_Firma_X|^Bild_P-TEST-AN_/.test(f.name)).length; e.rapportBlatt = /Anlagen \(hinten angehängt\)/.test(blatt); }
+    e.mat = JSON.stringify((an.daten || {}).materialListe); e.matBlatt = /<th[^>]*>Einheit<\/th>/.test(blatt) && /12,5/.test(blatt) && /Kupferrohr 12 mm/.test(blatt) && /Wandkonsole/.test(blatt);
+    e.mann = [x("anMonteureText")({ monteure: "Darko", personen: 2 }), x("anMonteureText")({ monteure: "4 Mann", personen: 4 }), x("anMonteureText")({ monteure: "Huber, Maier", personen: 2 })].join("|") + "|" + />2 Mann</.test(blatt);
     e.blatt = /ARBEITSNACHWEIS/.test(blatt) && /logo\.png/.test(blatt) && /Speckbacherstraße 92/.test(blatt) && /16,00/.test(blatt) && /Auftraggebervertreter/.test(blatt);
     /* nochmals: schon Verwendetes wird nicht wieder vorgeschlagen */
     x("ansichtenSchliessen()"); x("anEditor")(pr, null, function () {});
@@ -6068,6 +6096,13 @@ test("Arbeitsnachweis: Monteur erstellt aus Stunden und Kalender, unterschreibt 
   pruefe(r.an.monteur === "Testtechniker" && r.an.von === "u_tech_test_at" && r.an.unterschrieben && r.an.sig && r.an.nummer === 1, "Gespeichert: " + JSON.stringify(r.an));
   pruefe(r.an.summe === 29 && /CVP/.test(r.an.arbeiten) && /Blenden/.test(r.an.arbeiten) && r.an.beendet === true, "Inhalt: " + JSON.stringify(r.an));
   pruefe(r.an.pdf && r.datei === 1 && r.blatt, "PDF nicht als Projektdatei abgelegt bzw. Blatt unvollständig: " + JSON.stringify([r.an.pdf, r.datei, r.blatt]));
+  pruefe(r.mann === "Darko + 1 weitere Person|4 Mann|Huber, Maier|true", "Monteure/Personen im PDF: " + r.mann);
+  pruefe(r.matZeilen === 3 && r.mat === JSON.stringify([{ menge: 12.5, eh: "m", text: "Kupferrohr 12 mm" }, { menge: 3, eh: "Stk", text: "Wandkonsole" }]) && r.matBlatt,
+    "Materialliste: " + JSON.stringify([r.matZeilen, r.mat, r.matBlatt]));
+  pruefe(r.rapporte.length === 2 && r.rapporte[0] === "Regiebericht_Firma_X.pdf" && /^Bild_P-TEST-AN_\d{4}-\d\d-\d\d_2\.png$/.test(r.rapporte[1]) && r.rapportZusammen,
+    "Rapportberichte wählen/einfügen: " + JSON.stringify([r.rapporte, r.rapportZusammen]));
+  pruefe(r.rapportSeiten === 3 && /^Regiebericht_Firma_X\.pdf\|Bild_P-TEST-AN_.*\.png$/.test(r.rapportDb) && r.rapportDateien === 2 && r.rapportBlatt,
+    "Rapportberichte im PDF/in der Datenbank: " + JSON.stringify([r.rapportSeiten, r.rapportDb, r.rapportDateien, r.rapportBlatt]));
   pruefe(r.zweiter === "0|true|true", "Zweiter Nachweis schlägt Verwendetes wieder vor: " + r.zweiter);
   pruefe(r.fremdName === "Testtechniker|u_tech_test_at", "Fremder Name gespeichert: " + r.fremdName);
   pruefe(r.ohneGrund && r.mitGrund && !r.techLoescht, "Unterschriebenes geändert ohne Grund / löschen: " + JSON.stringify([r.ohneGrund, r.mitGrund, r.techLoescht]));
@@ -6100,6 +6135,14 @@ test("Arbeitsnachweis: Präsentation füllt aus, speichert aber nichts; am Handy
     setz("monteure", "4 Mann"); setz("von", "15:00"); setz("bis", "23:30"); setz("pause", "0,5");
     e.std = z.querySelector("[data-std]").textContent;
     e.breiter = document.documentElement.scrollWidth - window.innerWidth;
+    /* Materialliste und Rapporte/Fotos am Handy: nichts ragt über den Rand */
+    const raus = () => [...d.querySelectorAll("*")].filter((q) => { const b = q.getBoundingClientRect(); return b.width && b.right > window.innerWidth + 1; }).map((q) => q.tagName + "." + q.className);
+    A.knopf(d, /^Weiter: Arbeiten/).click(); await A.warte(50);
+    A.knopf(d, /^Weiter: Material/).click(); await A.warte(50);
+    A.knopf(d, /^\+ Material$/).click(); await A.warte(50);
+    e.matRaus = raus();
+    A.knopf(d, /^Weiter: Rapporte und Fotos/).click(); await A.warte(50);
+    e.rapRaus = raus();
     A.knopf(d, /^Als Entwurf speichern/).click(); await A.warte(300);
     e.db = db.arbeitsnachweise.length; e.toast = window.__toasts.join(" | "); e.abgelehnt = window.__abgelehnt.length;
     return e;
@@ -6107,6 +6150,7 @@ test("Arbeitsnachweis: Präsentation füllt aus, speichert aber nichts; am Handy
   pruefe(r.std === "32,00", "4 Mann 15:00–23:30, Pause 0,5 ergibt nicht 32,00 h: " + r.std);
   pruefe(r.db === 0 && /Präsentation/.test(r.toast), "Präsentation hat gespeichert bzw. keine Meldung: " + JSON.stringify(r));
   pruefe(r.breiter <= 4, "Handy: Seite " + r.breiter + "px breiter als der Bildschirm");
+  pruefe(!r.matRaus.length && !r.rapRaus.length, "Handy: Material/Rapporte ragen über den Rand " + JSON.stringify([r.matRaus.slice(0, 4), r.rapRaus.slice(0, 4)]));
   pruefe(!a.fehler.length, "Laufzeitfehler: " + a.fehler.join("; "));
   await a.zu();
 });

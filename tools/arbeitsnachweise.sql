@@ -91,7 +91,11 @@ begin
       new.unterschrieben := old.unterschrieben;
       n_alt := jsonb_array_length(coalesce(old.korrekturen,'[]'::jsonb));
       n_neu := jsonb_array_length(coalesce(new.korrekturen,'[]'::jsonb));
-      if n_neu < n_alt or coalesce(new.korrekturen,'[]'::jsonb) -> 0 is distinct from coalesce(old.korrekturen,'[]'::jsonb) -> 0 then
+      -- die bisherigen Korrekturen bleiben genau stehen (vorher: Vergleich nur des ersten Eintrags – bei der ERSTEN Korrektur
+      -- fehlte der alte und jede erste Korrektur wurde abgelehnt; Inhaber 06.10.2026)
+      if n_neu < n_alt or (n_alt > 0 and (select coalesce(jsonb_agg(t.e order by t.i), '[]'::jsonb)
+            from jsonb_array_elements(coalesce(new.korrekturen,'[]'::jsonb)) with ordinality t(e, i) where t.i <= n_alt)
+          is distinct from coalesce(old.korrekturen,'[]'::jsonb)) then
         raise exception 'Arbeitsnachweis: Korrekturen bleiben stehen';
       end if;
       if (new.daten is distinct from old.daten or new.datum is distinct from old.datum)

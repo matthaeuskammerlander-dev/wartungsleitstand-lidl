@@ -290,7 +290,11 @@ Kammerlander Umwelt- und Klimatechnik (UKT) – oft kurz, vom Handy, im Feld.
   alle), sondern in eigene, nur für Inhaber lesbare Tabellen bzw. Dateien.
 - **Arbeitsnachweise** (Inhaber 06.10.2026, Tabelle `arbeitsnachweise`, SQL-Abschnitt „Arbeitsnachweise“ in tools/rechte-2026-10-05.sql):
   wie das Papierformular (Auftraggeber, Objekt, Zeilen Datum/Monteure/von/bis/Pause/Stunden = Personen × (bis − von − Pause),
-  Montage/Wartung/Reparatur/Garantie, Arbeiten beendet, Ausgeführte Arbeiten, Material, Prüfungen, Vorkommnisse). Im Projekt
+  Montage/Wartung/Reparatur/Garantie, Arbeiten beendet, Ausgeführte Arbeiten, Material, Prüfungen, Vorkommnisse). Material als Liste
+  (Inhaber 06.10.2026: `daten.materialListe` [{menge, eh, text}], `anMaterial`, dazu freier Text `daten.material`; keine Preise). Schritt
+  „Rapporte und Fotos“ (Inhaber 06.10.2026): PDF/Foto wählen, aus den Projektdateien oder einfügen (Strg+V / „Einsetzen“, `paste` nur
+  solange der Schritt offen ist) – sofort als Projektdatei Art „protokoll“ hochgeladen, am Nachweis nur der Verweis `daten.anhaenge`
+  [{pfad, name, typ}]; `anhaengeAnPdf` hängt sie hinten ans PDF (Fotos je A4-Seite). Entfernen nimmt nur den Verweis. Im Projekt
   `anKarte` → `anEditor` (geführt, Eingaben auf dem Gerät gemerkt). Der MONTEUR erstellt und unterschreibt – immer das angemeldete
   Konto (Trigger setzt `erstellt_von`/`monteur`, unterschreiben nur der Ersteller; gleiche Regel wie „Protokolle nur unter eigenem
   Namen“); Auftraggebervertreter bleibt im PDF zum händischen Unterschreiben. Unterschrieben = fest: nur Korrektur mit Grund
