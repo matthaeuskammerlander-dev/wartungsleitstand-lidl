@@ -6305,10 +6305,15 @@ test("Karte: „📍 Mein Standort“ zeigt die eigene Position (nur auf dem Ger
     if (!k) return { knopf: false, leaflet: typeof window.L };
     k.click(); await w(600);
     const ort = x("S.meinOrt");
-    return { knopf: true, ort, text: k.textContent, gespeichert: /48.21|16.37/.test(JSON.stringify(window.__db.tabellen)) && !/48.21|16.37/.test(vorher), ls: Object.keys(localStorage).filter((s) => /ort|standort|gps/i.test(s)) };
+    /* eigenes Zeichen in eigener Farbe – nicht wie ein Markt (Inhaber 06.10.2026) */
+    const ich = document.querySelector("[data-ich] i"), farbeIch = ich ? getComputedStyle(ich).backgroundColor : "";
+    const maerkte = [...document.querySelectorAll("path.leaflet-interactive")].filter((p) => p.getAttribute("fill-opacity") !== "0.1").map((p) => p.getAttribute("fill")).filter(Boolean);
+    const ichSchild = !!document.querySelector("[data-ich] em") && /Ich/.test(document.querySelector("[data-ich] em").textContent);
+    return { knopf: true, ort, text: k.textContent, farbeIch, maerkte: [...new Set(maerkte)], ichSchild, gespeichert: /48.21|16.37/.test(JSON.stringify(window.__db.tabellen)) && !/48.21|16.37/.test(vorher), ls: Object.keys(localStorage).filter((s) => /ort|standort|gps/i.test(s)) };
   });
   pruefe(r.knopf, "kein Knopf „Mein Standort“ auf der Karte: " + JSON.stringify(r));
   pruefe(r.ort && Math.abs(r.ort.lat - 48.21) < 1e-6 && /Mein Standort/.test(r.text), "Position nicht übernommen: " + JSON.stringify(r));
+  pruefe(r.farbeIch === "rgb(26, 109, 255)" && r.ichSchild && !r.maerkte.some((c) => /1a6dff|26, 109, 255/i.test(c)), "Eigener Standort nicht eigenständig sichtbar: " + JSON.stringify([r.farbeIch, r.ichSchild, r.maerkte]));
   pruefe(!r.gespeichert && !r.ls.length, "Position wurde gespeichert: " + JSON.stringify(r));
   pruefe(!a.fehler.length, "Laufzeitfehler: " + a.fehler.join("; "));
   await a.zu();
