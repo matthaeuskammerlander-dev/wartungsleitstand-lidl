@@ -285,6 +285,19 @@ Kammerlander Umwelt- und Klimatechnik (UKT) – oft kurz, vom Handy, im Feld.
   tools/nur-inhaber-buero.sql; Büro 01.10.2026). Preise, Angebote,
   Rechnungen und Positionskatalog kommen nie in `projekte.daten` (das sehen
   alle), sondern in eigene, nur für Inhaber lesbare Tabellen bzw. Dateien.
+- **Arbeitsnachweise** (Inhaber 06.10.2026, Tabelle `arbeitsnachweise`, SQL-Abschnitt „Arbeitsnachweise“ in tools/rechte-2026-10-05.sql):
+  wie das Papierformular (Auftraggeber, Objekt, Zeilen Datum/Monteure/von/bis/Pause/Stunden = Personen × (bis − von − Pause),
+  Montage/Wartung/Reparatur/Garantie, Arbeiten beendet, Ausgeführte Arbeiten, Material, Prüfungen, Vorkommnisse). Im Projekt
+  `anKarte` → `anEditor` (geführt, Eingaben auf dem Gerät gemerkt). Der MONTEUR erstellt und unterschreibt – immer das angemeldete
+  Konto (Trigger setzt `erstellt_von`/`monteur`, unterschreiben nur der Ersteller; gleiche Regel wie „Protokolle nur unter eigenem
+  Namen“); Auftraggebervertreter bleibt im PDF zum händischen Unterschreiben. Unterschrieben = fest: nur Korrektur mit Grund
+  (`korrekturen`), Ersteller oder Inhaber; löschen nur Inhaber; Präsentation speichert nie. Vorschläge (`anVorschlaege`) aus den
+  Projektstunden ALLER Personen über `projekt_stunden()` (security definer, nur dieses Projekt, nur Datum/Name/Zeiten/Bereich – die
+  Leseregel von `arbeitszeiten` bleibt; ohne Funktion nur die eigenen), Kalenderterminen und Bauzeitplan; schon verwendete nicht
+  nochmals. Keine Preise; PDF (`anPdfAblegen`) als Projektdatei Art „protokoll“. Rechnung (nur Inhaber, `belegEditor`):
+  „⏱ Stunden aus Arbeitsnachweisen“ (`anRechnungPositionen`) – Regiestunden für alle Stunden + Zuschlag Samstag 50 % /
+  Sonntag-Feiertag 100 % aus dem Katalog, Menge passend zum Text (`positionPruefen`); Nacht/Überstunden nur als Hinweis;
+  PDF der Nachweise hinten an (`kopf.anhaenge`, `pdfDateienAnhaengen`), verrechnete in `kopf.arbeitsnachweise`.
 - **Arbeitszeiten** (Tabelle `arbeitszeiten`): jede Person sieht nur ihre
   eigenen, der Inhaber alle; ein bestätigter Monat ist gesperrt – auch für NEUE Einträge (von Hand, Stempeln,
   Abgleich): bestätigt = die Person hat dort einen Eintrag mit `bestaetigt`; nur der Inhaber trägt danach ein oder

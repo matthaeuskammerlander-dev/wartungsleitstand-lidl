@@ -26,7 +26,7 @@ Die Fachregeln (Termine, Rechte, Datenschutz) stehen ausführlich in **CLAUDE.md
 | Anlagen / Markt | `viewAnlagen`, `marktAnsicht` | `anlagenDesMarkts`, `verbundenKarte`, `anlageAssistent` → `anlageAssistentDialog` (Teile `anlageDialogTeilKi`, `…Felder`, `…Schritte`) |
 | Stunden / Stempeluhr | `viewStunden` | `zeitEditor`, `stempeln` (Datenbank), `lohnAuswertung` |
 | Fahrzeuge | `viewFahrzeuge` | `fzEditor`, `fzEintragEditor`, `fzGpsImport` |
-| Projekte | `viewProjekte`, `projektAnsicht` | `projektNeu`, `folgeKarte`, Baustellenbuch |
+| Projekte | `viewProjekte`, `projektAnsicht` | `projektNeu`, `folgeKarte`, Baustellenbuch, Arbeitsnachweise (`anKarte`, `anEditor`, `anPdfAblegen`, `anRechnungPositionen`) |
 | Rechnungen (nur Inhaber) | `viewBelege` | `belegEditor`, `einsatzPositionen`, `fahrtZone`, `katalogLernen`, `angebotAusFolge` |
 | Kunden & Kontakte | `viewKunden` | `kontaktErfassen` (lernt neue Personen), `kontaktAusProtokoll` |
 | Verlauf | `viewVerlauf` | `stammRueckgaengig`, `korrekturRueckgaengig` |

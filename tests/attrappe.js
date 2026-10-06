@@ -1,7 +1,7 @@
 /* Nachgebaute Supabase-Schnittstelle für die automatischen Tests (tests/app-tests.mjs) – nur Code, Startbestand aus seed.json (erfunden). */
 (function(){
   "use strict";
-  var T=["gelernte_werte","fahrzeuge","fahrzeug_eintraege","fahrzeug_kosten","kontakte","protokoll_vermerke","planung","planung_privat","belege","katalog","stempel","einstellungen","projekte","arbeitszeiten","anlagenfotos","touren","kundenliste","gelesen","push_ereignisse","kennzahlen","chat","abrechnung","push_abos","protokolle","aenderungen","stammdaten","admins","berichte","protokoll_fassungen","rollen","ki_nutzung","posteingang","stammdaten_lesen","aenderungswuensche","vor_ort_fragen","werkzeug","werkzeug_verlauf","bedarf","packlisten","auslagen","auslagen_konto"];
+  var T=["gelernte_werte","fahrzeuge","fahrzeug_eintraege","fahrzeug_kosten","kontakte","protokoll_vermerke","planung","planung_privat","belege","katalog","stempel","einstellungen","projekte","arbeitszeiten","anlagenfotos","touren","kundenliste","gelesen","push_ereignisse","kennzahlen","chat","abrechnung","push_abos","protokolle","aenderungen","stammdaten","admins","berichte","protokoll_fassungen","rollen","ki_nutzung","posteingang","stammdaten_lesen","aenderungswuensche","vor_ort_fragen","werkzeug","werkzeug_verlauf","bedarf","packlisten","auslagen","auslagen_konto","arbeitsnachweise"];
   var DB; try{ DB=JSON.parse(localStorage.getItem("attrappe_db")||"null"); }catch(e){ DB=null; }
   /* leerer Speicher (neuer Port, nach __db.zuruecksetzen()): Startbestand aus seed.json */
   if(!DB){ DB={}; try{ var x=new XMLHttpRequest(); x.open("GET","seed.json?"+Date.now(),false); x.send();
@@ -141,6 +141,13 @@
         }
       }
     }
+    /* wie die Regeln der Arbeitsnachweise (Inhaber 06.10.2026): lesen und anlegen alle, die mitarbeiten; ändern wer ihn
+       angelegt hat und der Inhaber; löschen nur der Inhaber (Prüfregeln des Triggers: anPruefen) */
+    if(tab==="arbeitsnachweise"){
+      if(rolle==="kunde"||rolle==="praesentation") return art==="select" ? "nur lesen: arbeitsnachweise gesperrt" : "nur lesen ("+rolle+")";
+      if(art==="update" && alt && alt.erstellt_von!==uid() && rolle!=="inhaber") return "arbeitsnachweise: aendern nur wer ihn angelegt hat oder der Inhaber";
+      if(art==="delete" && rolle!=="inhaber") return "arbeitsnachweise: loeschen nur Inhaber";
+    }
     if(tab==="aenderungen" && art!=="insert" && art!=="select") return "aenderungen: unveraenderlich";
     /* wie vor-ort-fragen.sql: Büro stellt und erledigt, alle (die schreiben dürfen) antworten */
     if(tab==="vor_ort_fragen"){
@@ -162,6 +169,33 @@
     if(((DB.rollen.filter(function(x){ return x.user_id===uid(); })[0]||{}).rolle)==="inhaber") return false;
     var p=DB.planung.filter(function(x){ return x.id===r.planung_id; })[0];
     return !!(p && (p.privat || p.kategorie==="privat") && p.erstellt_von!==uid() && (p.wer||[]).indexOf(uid())<0);
+  }
+  /* wie der Trigger arbeitsnachweise_pruefen (Inhaber 06.10.2026): eigenes Konto und eigener Name, Unterschrift nur vom
+     Monteur selbst, unterschrieben = fest (ändern nur als Korrektur mit Grund) – liefert eine Meldung oder null */
+  function kontoName(){ var r=DB.rollen.filter(function(x){ return x.user_id===uid(); })[0]||{};
+    return r.name || (meta(sitzung.user.email).einstellungen||{}).name || sitzung.user.email.split("@")[0]; }
+  function anPruefen(n, alt){
+    var jetzt=new Date().toISOString();
+    if(!alt){ n.erstellt_von=uid(); n.monteur=kontoName(); n.erstellt=jetzt; n.korrekturen=[]; n.unterschrieben=n.unterschrift!=null?jetzt:null; }
+    else {
+      ["erstellt_von","monteur","projekt_id","nummer","erstellt"].forEach(function(k){ n[k]=alt[k]; });
+      if(alt.unterschrieben){
+        n.unterschrift=alt.unterschrift; n.unterschrieben=alt.unterschrieben;
+        var ka=alt.korrekturen||[], kn=n.korrekturen||[];
+        if(kn.length<ka.length || JSON.stringify(kn.slice(0, ka.length))!==JSON.stringify(ka)) return "Arbeitsnachweis: Korrekturen bleiben stehen";
+        if((JSON.stringify(n.daten)!==JSON.stringify(alt.daten) || n.datum!==alt.datum) && !(kn.length>ka.length && String((kn[kn.length-1]||{}).grund||"").trim()))
+          return "Arbeitsnachweis ist unterschrieben – ändern nur als Korrektur mit Grund";
+      } else {
+        n.korrekturen=alt.korrekturen||[];
+        if(n.unterschrift!=null){ if(uid()!==alt.erstellt_von) return "Arbeitsnachweis: unterschreiben darf nur der Monteur selbst"; n.unterschrieben=jetzt; }
+        else n.unterschrieben=null;
+      }
+    }
+    if(!n.projekt_id || !(n.nummer>=1)) return 'null value in column "nummer" of relation "arbeitsnachweise" violates not-null constraint';
+    if(!alt && DB.arbeitsnachweise.some(function(x){ return x.projekt_id===n.projekt_id && x.nummer===n.nummer; }))
+      return 'duplicate key value violates unique constraint "arbeitsnachweise_projekt_id_nummer_key"';
+    n.geaendert=jetzt; n.daten=n.daten||{};
+    return null;
   }
   function sichtbar(t){ return function(r){ return t!=="bedarf" || !bedarfPrivatFremd(r); }; }
   /* wie der Trigger planung_pruefen (planung.sql): privat nur „Abwesend“, Urlaub genehmigt nur der Inhaber */
@@ -333,6 +367,7 @@
         if(self.t==="projekte"){ r.erstellt=r.erstellt||new Date().toISOString(); r.geaendert=r.geaendert||r.erstellt; r.daten=r.daten||{}; r.verlauf=r.verlauf||[]; }
         return r; });
       if(self.t==="auslagen"){ neu.forEach(function(r){ v=v||kmOhneAuto(r, null)||auslagenCheck(r); }); if(v){ window.__abgelehnt.push(v); return {data:null,error:{message:v}}; } }
+      if(self.t==="arbeitsnachweise"){ neu.forEach(function(r){ v=v||anPruefen(r, null); }); if(v){ window.__abgelehnt.push(v); return {data:null,error:{message:v, code:/duplicate/.test(v)?"23505":undefined}}; } }
       if(self.t==="werkzeug") neu.forEach(function(r){ wzMerken(r); });
       if(self.t==="fahrzeuge") neu.forEach(function(r){ fzPrivatMerken(r, null); });
       neu.forEach(function(r){ tab.push(r); }); if(self.t==="planung") neu.forEach(function(r){ stundenSync(r.id); });
@@ -367,7 +402,10 @@
       /* Prüfregeln vor dem Ändern – scheitert eine Zeile, bleibt alles, wie es war */
       if(!v && self.t==="auslagen") b.forEach(function(r){ var n=Object.assign({},r,self.d); if(n.km!=null) n.km=kmSpalte(n.km);
         if(n.art==="km") n.betrag=Math.round(n.km*(n.km_satz||0.5)*100)/100; v=v||kmOhneAuto(n, r)||auslagenCheck(n); });
+      /* Arbeitsnachweise: Prüfregeln des Triggers vor dem Ändern; feste Spalten bleiben */
+      var anNeu=[]; if(!v && self.t==="arbeitsnachweise") b.forEach(function(r){ var n=JSON.parse(JSON.stringify(Object.assign({}, r, self.d))); v=v||anPruefen(n, r); anNeu.push(n); });
       if(v){ window.__abgelehnt.push(v); return {data:null,error:{message:v}}; }
+      if(self.t==="arbeitsnachweise"){ b.forEach(function(r, i){ Object.keys(anNeu[i]).forEach(function(k){ r[k]=anNeu[i][k]; }); erg.push(r); }); sichern(); return {data:aus(erg),error:null}; }
       b.forEach(function(r){ if(self.t==="protokolle"){ var u=r.erstellt_von,g2=r.erstellt;
           DB.protokoll_fassungen.push({client_id:r.client_id,version:r.version,gesichert:new Date().toISOString(),daten:JSON.parse(JSON.stringify(r))});
           Object.assign(r,self.d); r.erstellt_von=u; r.erstellt=g2; }
@@ -531,6 +569,16 @@
         if(!zl){ zl={kreis:kreis, jahr:jb, letzte:0}; DB.belegnummern.push(zl); }
         zl.letzte++; sichern();
         return Promise.resolve({data:w.p_test ? "T-"+(w.p_art==="rechnung"?"R":"A")+"-"+jb+"-"+("00"+zl.letzte).slice(-3) : String(zl.letzte), error:null});
+      }
+      /* wie public.projekt_stunden() (Inhaber 06.10.2026): die Arbeitszeiten ALLER Personen auf genau diesem Projekt, nur Datum, Name,
+         von, bis, Pause, Minuten, Bereich, Tätigkeit – für alle, die mitarbeiten. window.__ohneProjektStunden: Funktion fehlt noch */
+      if(name==="projekt_stunden"){
+        if(window.__ohneProjektStunden) return Promise.resolve({data:null, error:{message:"Could not find the function public.projekt_stunden(p_projekt) in the schema cache", code:"PGRST202"}});
+        var rlPs=(DB.rollen.filter(function(r){ return r.user_id===uid(); })[0]||{}).rolle;
+        if(!sitzung || rlPs==="kunde" || rlPs==="praesentation" || !w || !w.p_projekt) return Promise.resolve({data:[], error:null});
+        return Promise.resolve({data:DB.arbeitszeiten.filter(function(a){ return a.projekt_id===w.p_projekt && (a.art||"arbeit")==="arbeit"; })
+          .sort(function(a,b){ return String(a.datum+(a.beginn||"")).localeCompare(String(b.datum+(b.beginn||""))); })
+          .map(function(a){ return {id:a.id, name:a.name||null, datum:a.datum, beginn:a.beginn||null, ende:a.ende||null, pause_min:a.pause_min||0, minuten:a.minuten||0, bereich:a.bereich||null, taetigkeit:a.taetigkeit||null}; }), error:null});
       }
       if(name!=="stempeln") return Promise.resolve({data:null,error:null});
       /* wie public.stempeln() (stempeluhr-2.sql): Zeit vom „Server“, Reihenfolge prüfen,

@@ -38,3 +38,13 @@ Jede Entscheidung steht in einem eigenen Commit (Commit-Nachricht nennt sie).
 | E24 | **Tag mitten aus einer Abwesenheit herausnehmen**: scheitert der zweite Schritt, nimmt die App den ersten zurück | Eintrag war sonst halb gekürzt | eigene SQL-Funktion (offen, technisch) |
 | E25 | **Präsentation**: Abgleich, „Reihenfolge übernehmen“, „mit einplanen“ und „Tag herausnehmen“ schreiben nicht in die Datenbank; Meldungen sagen „nicht gespeichert“ | Präsentation speichert nie | `demo()`-Abfragen |
 | E26 | **Testattrappe** näher an der echten Datenbank (Kopien bei Schreiben, Prüfregeln von auslagen, Werkzeug-Verlauf, Startpunkte, Lesesperren für Kunde/Präsentation) | Tests prüften teils anderes Verhalten | tests/attrappe.js |
+
+## Arbeitsnachweise (Inhaber 06.10.2026)
+
+| # | Entscheidung | Warum | Zurücknehmen |
+|---|---|---|---|
+| E27 | **Eigene Tabelle `arbeitsnachweise`** statt `projekte.daten` – Rechte in der Datenbank: lesen/anlegen alle Mitarbeiter, ändern Ersteller oder Inhaber, löschen nur Inhaber; Trigger setzt Konto und Namen des Monteurs selbst | In `projekte.daten` könnte jeder Mitarbeiter alles ändern – „nur unter eigenem Namen“ ließe sich nicht durchsetzen | SQL-Abschnitt „Arbeitsnachweise“ |
+| E28 | **Unterschrieben = fest**: Inhalt ändern nur als Korrektur mit Grund (Ersteller oder Inhaber), Eintrag in `korrekturen` mit Name/Datum, steht im PDF; Unterschrift, Monteur, Projekt, Nummer bleiben. Unterschreiben nur der Ersteller selbst (auch der Inhaber nie für einen anderen) | Wie beim Protokoll: Korrektur mit Grund statt stillem Ändern | Trigger `arbeitsnachweise_pruefen` |
+| E29 | **Rechnung**: Regiestunden Facharbeiter für ALLE Stunden, Zuschlag 50 % Samstag bzw. 100 % Sonntag/Feiertag ZUSÄTZLICH für die Stunden an diesen Tagen; Nacht/Überstunden nicht automatisch (keine festgelegte Grenze) – Hinweis bei Zeilen über Mitternacht oder über der Normalarbeitszeit des Tages | Zuschlag als Aufschlag je Stunde wie in den KPlus-Texten („Zuschlag Samstag (3 Mann a 10 Std)“); Nacht-Grenze nicht erfinden | `anRechnungPositionen` |
+| E30 | **PDF als Projektdatei Art „Protokoll“** (keine neue Dateiart) | Die Synology-Ablage kennt die Art schon (Ordner „Protokolle“) – kein Eingriff ins Python-Skript | `anPdfAblegen` |
+| E31 | **„+ Test-Rechnung“ im Projekt** (bisher nur „Rechnung daraus“ aus einem Angebot) | Regie-Baustellen ohne Angebot brauchen eine Rechnung mit den Stunden | Knopf in `belegeKarte` |

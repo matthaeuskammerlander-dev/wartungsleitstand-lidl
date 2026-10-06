@@ -5928,6 +5928,180 @@ test("Projektdateien: bis 50 MB je Datei – zu Große werden ausgelassen, der R
   await a.zu();
 });
 
+const AN_HILFEN = `window.__an = {
+  warte: (ms) => new Promise((f) => setTimeout(f, ms)),
+  bis: async (f, max = 4000) => { const t0 = Date.now(); for (;;) { let v = null; try { v = f(); } catch (e) {} if (v || Date.now() - t0 > max) return v; await window.__an.warte(30); } },
+  dlg: () => [...document.querySelectorAll(".assistent")].pop(),
+  knopf: (wo, re) => [...(wo || document).querySelectorAll("button")].find((b) => re.test(b.textContent.trim())),
+  karte: (re) => [...document.querySelectorAll(".card")].find((c) => { const h = c.querySelector("h2"); return h && re.test(h.textContent); }),
+  toastSpion: () => { window.__toasts = []; window.__t.x("(function(){ if(window.__toastSpion) return 1; window.__toastSpion=1; var alt=toast; toast=function(m){ window.__toasts.push(String(m)); return alt.apply(this, arguments); }; return 1; })()"); },
+  unterschreiben: (cv) => { const r = cv.getBoundingClientRect(), ev = (t, x, y) => cv.dispatchEvent(new PointerEvent(t, { clientX: r.left + x, clientY: r.top + y, bubbles: true, pointerId: 1 }));
+    ev("pointerdown", 20, 40); for (let i = 1; i < 12; i++) ev("pointermove", 20 + i * 15, 40 + (i % 2) * 20); ev("pointerup", 200, 40); },
+  anmelden: async (mail, rolle) => {
+    const x = window.__t.x;
+    await x("Store.sb.auth.signOut()"); await window.__an.warte(300);
+    await x("Store.sb.auth.signInWithPassword({email:'" + mail + "',password:'test123'})");
+    for (let i = 0; i < 80 && !x("Rolle.da && Rolle.name==='" + rolle + "'"); i++) await window.__an.warte(100);
+    await window.__an.warte(300);
+  },
+  daten: () => {
+    const db = window.__db.tabellen, jetzt = new Date().toISOString();
+    db.projekte.push({ id: "pan1", nummer: "P-TEST-AN", titel: "Arbeitsnachweis: Umbau Klima Testfiliale", kunde_id: "lidl", standort_id: "TS1", status: "baustelle",
+      daten: { termine: [{ id: "tan1", datum: "2026-09-16", zeit: "08:00", was: "Abnahme mit Bauleitung", wer: "Testtechniker" }] }, verlauf: [], erstellt: jetzt, geaendert: jetzt });
+    const az = (id, u, name, datum, b, e, min) => ({ id, user_id: u, name, datum, beginn: b, ende: e, pause_min: 30, minuten: min, art: "arbeit", bereich: "baustelle", projekt_id: "pan1", quelle: "hand", notiz: "geheime Notiz " + id, erstellt: jetzt });
+    db.arbeitszeiten.push(az("azn1", "u_tech_test_at", "Testtechniker", "2026-09-12", "15:00", "23:30", 480), az("azn2", "u_admin_test_at", "Testadmin", "2026-09-12", "15:00", "23:30", 480),
+      az("azn3", "u_tech_test_at", "Testtechniker", "2026-09-14", "07:00", "15:30", 480));
+    db.planung.push({ id: "plan_an1", art: "termin", kategorie: "baustelle", titel: "Inbetriebnahme VRV", datum: "2026-09-15", beginn: "07:00", ende: "12:00", wer: ["u_tech_test_at"], wer_namen: ["Testtechniker"],
+      projekt_id: "pan1", erstellt_von: "u_inhaber_test_at", erstellt: jetzt });
+    db.planung.push({ id: "plan_an2", art: "aufgabe", titel: "3 × CVP außer Betrieb nehmen, demontieren, entsorgen", projekt_id: "pan1", status: "erledigt", wer: ["u_tech_test_at"], wer_namen: ["Testtechniker"], erstellt_von: "u_inhaber_test_at", erstellt: jetzt });
+  },
+}; 1`;
+test("Arbeitsnachweis: Monteur erstellt aus Stunden und Kalender, unterschreibt unter eigenem Namen, PDF im Projekt; Rechnung übernimmt die Stunden mit passender Menge", async () => {
+  const a = await oeffnen(KONTEN.techniker);
+  await a.seite.evaluate((h) => eval(h), AN_HILFEN);
+  const r = await a.seite.evaluate(async () => {
+    const x = window.__t.x, db = window.__db.tabellen, A = window.__an, e = {};
+    A.toastSpion(); A.daten();
+    await x("Promise.all([projekteLaden(), planungLaden()])");
+    /* Rechte: Techniker liest in den Stunden nur die eigenen – für den Arbeitsnachweis (projekt_stunden) alle des Projekts, ohne Notiz */
+    e.eigeneStunden = ((await x("Store.sb.from('arbeitszeiten').select('*').eq('projekt_id','pan1')")).data || []).length;
+    const st = await x("anStundenLaden(PROJEKTE.filter(function(p){ return p.id==='pan1'; })[0])");
+    e.projektStunden = st.l.length; e.mitNotiz = st.l.some((z) => "notiz" in z); e.stEigene = st.eigene;
+    window.__ohneProjektStunden = true;
+    const st2 = await x("anStundenLaden(PROJEKTE.filter(function(p){ return p.id==='pan1'; })[0])");
+    e.ohneFunktion = st2.l.length + "/" + st2.eigene; window.__ohneProjektStunden = false;
+    /* im Projekt: „+ Arbeitsnachweis“ – geführt Schritt für Schritt */
+    x("projektAnsicht('pan1')");
+    const karte = await A.bis(() => A.karte(/^Arbeitsnachweise/));
+    e.karte = !!karte;
+    karte.querySelector("[data-an-neu]").click();
+    let d = await A.bis(() => { const d = A.dlg(); return d && /Neuer Arbeitsnachweis/.test(d.querySelector(".as-titel").textContent) && d; });
+    e.auftraggeber = d.querySelector('[data-k="auftraggeber"]').value;
+    A.knopf(d, /^Weiter: Stunden/).click();
+    await A.bis(() => d.querySelectorAll(".an-zeile").length >= 3 && /Testadmin/.test(d.textContent));
+    e.zeilen = [...d.querySelectorAll(".an-zeile")].map((z) => z.querySelector('[data-z="datum"]').value + "|" + z.querySelector('[data-z="personen"]').value + "|" + z.querySelector("[data-std]").textContent);
+    e.vorschlagFremd = /Testadmin/.test(d.textContent) && /noch in keinem Nachweis/.test(d.textContent);
+    A.knopf(d, /^Weiter: Arbeiten/).click(); await A.warte(100);
+    const ub = A.knopf(d, /^\+ 3 × CVP/); e.aufgabeVorschlag = !!ub; if (ub) ub.click();
+    const ta = d.querySelector('[data-t="arbeiten"]'); ta.value += "\n3 × VRV montieren, Verrohrung, Inbetriebnahme\n11 × Blenden tauschen"; ta.dispatchEvent(new Event("input"));
+    A.knopf(d, /^ja$/).click();
+    A.knopf(d, /^Weiter: Material/).click(); await A.warte(50);
+    A.knopf(d, /^Weiter: Abschluss/).click(); await A.warte(50);
+    /* ohne Unterschrift geht „Unterschreiben“ nicht */
+    A.knopf(d, /^Unterschreiben und abschließen/).click(); await A.warte(200);
+    e.ohneSig = db.arbeitsnachweise.length + "|" + /Unterschrift/.test(window.__toasts.join(" "));
+    e.monteurAnzeige = (d.textContent.match(/Verantwortlicher Monteur: ([^–]+)–/) || [])[1];
+    A.unterschreiben(d.querySelector("[data-sig]")); await A.warte(50);
+    A.knopf(d, /^Unterschreiben und abschließen/).click();
+    await A.bis(() => db.arbeitsnachweise.length && db.arbeitsnachweise[0].pdf_pfad, 30000);
+    const an = db.arbeitsnachweise[0] || {};
+    e.an = { monteur: an.monteur, von: an.erstellt_von, unterschrieben: !!an.unterschrieben, sig: /^data:image\/png/.test(an.unterschrift || ""), nummer: an.nummer, pdf: an.pdf_pfad || "",
+      summe: x("anSumme")(an), arbeiten: (an.daten || {}).arbeiten, beendet: (an.daten || {}).beendet };
+    const pr = db.projekte.filter((p) => p.id === "pan1")[0];
+    e.datei = ((pr.daten || {}).dateien || []).filter((f) => f.art === "protokoll" && /^Arbeitsnachweis_P-TEST-AN_Nr1/.test(f.name)).length;
+    /* das PDF-Blatt: Kopf mit Logo und Firmenangaben, Zeilen mit Stunden, Feld für den Auftraggebervertreter */
+    const blatt = x("anBlattHtml")(pr, an);
+    e.blatt = /ARBEITSNACHWEIS/.test(blatt) && /logo\.png/.test(blatt) && /Speckbacherstraße 92/.test(blatt) && /16,00/.test(blatt) && /Auftraggebervertreter/.test(blatt);
+    /* nochmals: schon Verwendetes wird nicht wieder vorgeschlagen */
+    x("ansichtenSchliessen()"); x("anEditor")(pr, null, function () {});
+    d = await A.bis(() => { const d = A.dlg(); return d && /Neuer Arbeitsnachweis/.test(d.querySelector(".as-titel").textContent) && d; });
+    A.knopf(d, /^Weiter: Stunden/).click();
+    await A.bis(() => /schon in einem Arbeitsnachweis/.test(d.textContent));
+    e.zweiter = d.querySelectorAll(".an-zeile").length + "|" + /schon in einem Arbeitsnachweis/.test(d.textContent) + "|" + /Abnahme mit Bauleitung/.test(d.textContent);
+    x("ansichtenSchliessen()");
+    /* Datenbank: fremder Name wird zum eigenen, Unterschriebenes nur mit Grund, löschen nur der Inhaber */
+    const sb = x("Store.sb");
+    const ins = await sb.from("arbeitsnachweise").insert({ projekt_id: "pan1", nummer: 7, datum: "2026-09-20", monteur: "Testinhaber", erstellt_von: "u_inhaber_test_at", daten: { zeilen: [] } }).select("*");
+    e.fremdName = ins.data && ins.data[0].monteur + "|" + ins.data[0].erstellt_von;
+    const upd = await sb.from("arbeitsnachweise").update({ daten: { zeilen: [] } }).eq("id", an.id).select("*");
+    e.ohneGrund = !!upd.error;
+    const upd2 = await sb.from("arbeitsnachweise").update({ daten: Object.assign({}, an.daten, { material: "Kupferrohr" }), korrekturen: [{ zeit: new Date().toISOString(), von: "Testtechniker", grund: "Material nachgetragen" }] }).eq("id", an.id).select("*");
+    e.mitGrund = !upd2.error && upd2.data[0].daten.material === "Kupferrohr" && upd2.data[0].unterschrift === an.unterschrift;
+    const del = await sb.from("arbeitsnachweise").delete().eq("id", an.id).select("id");
+    e.techLoescht = !del.error;
+    /* Inhaber: unterschreibt keinen fremden Entwurf, schreibt die Rechnung mit den Stunden */
+    await A.anmelden("inhaber@test.at", "inhaber");
+    const sig2 = await sb.from("arbeitsnachweise").update({ unterschrift: "data:image/png;base64,AAAA" }).eq("id", ins.data[0].id).select("*");
+    e.inhaberSigniertFremd = !sig2.error;
+    db.katalog.push({ id: "kan1", text: "Regiestunden Facharbeiter (3 Mann a 10 Std)", eh: "Std", preis: 65, kunde_id: null, aktiv: true, quelle: "Test" },
+      { id: "kan2", text: "Zuschlag 50 % Samstag", eh: "Std", preis: 32.5, kunde_id: null, aktiv: true, quelle: "Test" });
+    await x("Promise.all([projekteLaden(), katalogLaden()])");
+    const p2 = x("PROJEKTE").filter((p) => p.id === "pan1")[0];
+    x("belegNeu")(x("kontextProjekt")(p2), "rechnung", null, function () {});
+    d = await A.bis(() => { const d = A.dlg(); return d && d.querySelector("[data-an-std]") && d; });
+    d.querySelector("[data-an-std]").click();
+    const w = await A.bis(() => { const w = A.dlg(); return w !== d && /Stunden aus Arbeitsnachweisen/.test(w.querySelector(".as-titel").textContent) && w; });
+    e.auswahl = w ? w.querySelectorAll("[data-id]:checked").length : -1;
+    A.knopf(w, /^Positionen übernehmen/).click();
+    await A.bis(() => d.querySelectorAll(".bpos").length >= 2);
+    const n0 = db.belege.length; A.knopf(d, /^Speichern$/).click();
+    await A.bis(() => db.belege.length > n0);
+    const b = db.belege[db.belege.length - 1] || { positionen: [], kopf: {} };
+    e.pos = b.positionen.filter((q) => q.typ === "pos").map((q) => ({ menge: q.menge, eh: q.eh, preis: q.preis, text: q.text, pruef: x("positionPruefen")(q) }));
+    e.kopf = { anh: (b.kopf.anhaenge || []).length, ids: (b.kopf.arbeitsnachweise || []).length };
+    x("ansichtenSchliessen()");
+    /* Rechnungs-PDF mit dem Arbeitsnachweis hinten dran */
+    const kx = x("kontextProjekt")(p2);
+    const mit = await x("belegPdfErzeugen")(b, kx), ohne = await x("belegPdfErzeugen")(Object.assign({}, b, { kopf: Object.assign({}, b.kopf, { anhaenge: [] }) }), kx);
+    e.pdfMit = mit.size > ohne.size + 2000;
+    /* Kunde liest keine Arbeitsnachweise */
+    await A.anmelden("kunde@test.at", "kunde");
+    e.kundeLiest = ((await sb.from("arbeitsnachweise").select("*")).data || []).length;
+    return e;
+  });
+  pruefe(r.eigeneStunden === 2, "Techniker liest fremde Stunden direkt: " + r.eigeneStunden);
+  pruefe(r.projektStunden === 3 && !r.mitNotiz && !r.stEigene, "projekt_stunden: alle Projektstunden ohne Notiz erwartet: " + JSON.stringify(r));
+  pruefe(r.ohneFunktion === "2/true", "Ohne Datenbank-Funktion nicht auf die eigenen zurück: " + r.ohneFunktion);
+  pruefe(r.karte && r.auftraggeber === "Lidl", "Karte/Kopf: " + r.karte + " " + r.auftraggeber);
+  pruefe(r.zeilen.length === 3 && r.zeilen[0] === "2026-09-12|2|16,00" && /^2026-09-15\|1\|5,00/.test(r.zeilen[2]), "Vorgeschlagene Zeilen: " + JSON.stringify(r.zeilen));
+  pruefe(r.vorschlagFremd && r.aufgabeVorschlag, "Vorschläge ohne fremde Stunden bzw. ohne Aufgabe");
+  pruefe(r.ohneSig === "0|true", "Ohne Unterschrift gespeichert: " + r.ohneSig);
+  pruefe(r.an.monteur === "Testtechniker" && r.an.von === "u_tech_test_at" && r.an.unterschrieben && r.an.sig && r.an.nummer === 1, "Gespeichert: " + JSON.stringify(r.an));
+  pruefe(r.an.summe === 29 && /CVP/.test(r.an.arbeiten) && /Blenden/.test(r.an.arbeiten) && r.an.beendet === true, "Inhalt: " + JSON.stringify(r.an));
+  pruefe(r.an.pdf && r.datei === 1 && r.blatt, "PDF nicht als Projektdatei abgelegt bzw. Blatt unvollständig: " + JSON.stringify([r.an.pdf, r.datei, r.blatt]));
+  pruefe(r.zweiter === "0|true|true", "Zweiter Nachweis schlägt Verwendetes wieder vor: " + r.zweiter);
+  pruefe(r.fremdName === "Testtechniker|u_tech_test_at", "Fremder Name gespeichert: " + r.fremdName);
+  pruefe(r.ohneGrund && r.mitGrund && !r.techLoescht, "Unterschriebenes geändert ohne Grund / löschen: " + JSON.stringify([r.ohneGrund, r.mitGrund, r.techLoescht]));
+  pruefe(!r.inhaberSigniertFremd, "Inhaber hat einen fremden Entwurf unterschrieben");
+  pruefe(r.auswahl === 1, "Auswahl der unterschriebenen Arbeitsnachweise: " + r.auswahl);
+  const regie = r.pos.filter((q) => /^Regiestunden Facharbeiter/.test(q.text))[0] || {}, sa = r.pos.filter((q) => /^Zuschlag 50 % Samstag/.test(q.text))[0] || {};
+  pruefe(regie.menge === 29 && regie.preis === 65 && regie.eh === "Std" && /\(29 Std\)/.test(regie.text) && !/3 Mann a 10/.test(regie.text), "Regiestunden: " + JSON.stringify(regie));
+  pruefe(sa.menge === 16 && sa.preis === 32.5 && /\(2 Mann à 8 Std\)/.test(sa.text), "Zuschlag Samstag: " + JSON.stringify(sa));
+  pruefe(r.pos.length === 2 && r.pos.every((q) => !q.pruef.length), "Positionsprüfung meldet: " + JSON.stringify(r.pos.map((q) => q.pruef)));
+  pruefe(r.kopf.anh === 1 && r.kopf.ids === 1 && r.pdfMit, "PDF des Arbeitsnachweises nicht an der Rechnung: " + JSON.stringify([r.kopf, r.pdfMit]));
+  pruefe(r.kundeLiest === 0, "Kunde liest Arbeitsnachweise");
+  pruefe(!a.fehler.length, "Laufzeitfehler: " + a.fehler.join("; "));
+  await a.zu();
+});
+
+test("Arbeitsnachweis: Präsentation füllt aus, speichert aber nichts; am Handy bedienbar", async () => {
+  const a = await oeffnen(KONTEN.praesentation, { handy: true });
+  await a.seite.evaluate((h) => eval(h), AN_HILFEN);
+  const r = await a.seite.evaluate(async () => {
+    const x = window.__t.x, db = window.__db.tabellen, A = window.__an, e = {};
+    A.toastSpion();
+    const p = { id: "pan9", nummer: "P-TEST-AN9", titel: "Arbeitsnachweis: Vorführung", kunde_id: "lidl", standort_id: "TS1", status: "baustelle", daten: {}, verlauf: [], geaendert: new Date().toISOString() };
+    x("PROJEKTE").push(p);
+    x("anEditor")(p, null, function () {});
+    const d = await A.bis(() => A.dlg());
+    A.knopf(d, /^Weiter: Stunden/).click(); await A.warte(200);
+    A.knopf(d, /^\+ Zeile$/).click(); await A.warte(50);
+    const z = d.querySelector(".an-zeile");
+    const setz = (k, v) => { const i = z.querySelector('[data-z="' + k + '"]'); i.value = v; i.dispatchEvent(new Event("input")); };
+    setz("monteure", "4 Mann"); setz("von", "15:00"); setz("bis", "23:30"); setz("pause", "0,5");
+    e.std = z.querySelector("[data-std]").textContent;
+    e.breiter = document.documentElement.scrollWidth - window.innerWidth;
+    A.knopf(d, /^Als Entwurf speichern/).click(); await A.warte(300);
+    e.db = db.arbeitsnachweise.length; e.toast = window.__toasts.join(" | "); e.abgelehnt = window.__abgelehnt.length;
+    return e;
+  });
+  pruefe(r.std === "32,00", "4 Mann 15:00–23:30, Pause 0,5 ergibt nicht 32,00 h: " + r.std);
+  pruefe(r.db === 0 && /Präsentation/.test(r.toast), "Präsentation hat gespeichert bzw. keine Meldung: " + JSON.stringify(r));
+  pruefe(r.breiter <= 4, "Handy: Seite " + r.breiter + "px breiter als der Bildschirm");
+  pruefe(!a.fehler.length, "Laufzeitfehler: " + a.fehler.join("; "));
+  await a.zu();
+});
+
 /* ================================================================ Ablauf ================================================================ */
 const filterText = process.argv.slice(2).find((x) => !x.startsWith("--"));
 const filter = filterText ? new RegExp(filterText, "i") : null;
