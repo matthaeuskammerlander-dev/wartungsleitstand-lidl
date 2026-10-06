@@ -6169,6 +6169,26 @@ test("Kältekreise: HJW ab 30 kg je Kältekreis – 3 Kreise je unter 30 kg → 
   await a.zu();
 });
 
+test("Karte: „📍 Mein Standort“ zeigt die eigene Position (nur auf dem Gerät, nichts gespeichert)", async () => {
+  const a = await oeffnen(KONTEN.techniker);
+  const r = await a.seite.evaluate(async () => {
+    const x = window.__t.x, w = (ms) => new Promise((f) => setTimeout(f, ms));
+    navigator.geolocation.getCurrentPosition = (ok) => setTimeout(() => ok({ coords: { latitude: 48.21, longitude: 16.37, accuracy: 25 } }), 50);
+    const vorher = JSON.stringify(window.__db.tabellen);
+    x("S.view='karte'; render()"); await w(800);
+    const k = document.getElementById("karteich");
+    if (!k) return { knopf: false, leaflet: typeof window.L };
+    k.click(); await w(600);
+    const ort = x("S.meinOrt");
+    return { knopf: true, ort, text: k.textContent, gespeichert: /48.21|16.37/.test(JSON.stringify(window.__db.tabellen)) && !/48.21|16.37/.test(vorher), ls: Object.keys(localStorage).filter((s) => /ort|standort|gps/i.test(s)) };
+  });
+  pruefe(r.knopf, "kein Knopf „Mein Standort“ auf der Karte: " + JSON.stringify(r));
+  pruefe(r.ort && Math.abs(r.ort.lat - 48.21) < 1e-6 && /Mein Standort/.test(r.text), "Position nicht übernommen: " + JSON.stringify(r));
+  pruefe(!r.gespeichert && !r.ls.length, "Position wurde gespeichert: " + JSON.stringify(r));
+  pruefe(!a.fehler.length, "Laufzeitfehler: " + a.fehler.join("; "));
+  await a.zu();
+});
+
 /* ================================================================ Ablauf ================================================================ */
 const filterText = process.argv.slice(2).find((x) => !x.startsWith("--"));
 const filter = filterText ? new RegExp(filterText, "i") : null;
