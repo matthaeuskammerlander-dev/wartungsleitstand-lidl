@@ -6102,6 +6102,64 @@ test("Arbeitsnachweis: Präsentation füllt aus, speichert aber nichts; am Handy
   await a.zu();
 });
 
+test("Kältekreise: HJW ab 30 kg je Kältekreis – 3 Kreise je unter 30 kg → HJI, 1 Kreis ab 30 kg → HJW, ohne Kreise wie bisher", async () => {
+  const a = await oeffnen(KONTEN.admin, { handy: true });
+  const r = await a.seite.evaluate(async () => {
+    const x = window.__t.x, w = (ms) => new Promise((f) => setTimeout(f, ms)), e = {};
+    /* zentrale Hilfe: maßgeblich ist der größte Kreis (erfundenes Beispiel 20,5 / 19 / 18 = 57,5 kg) */
+    const hk = x("hjwKg");
+    e.hk = [hk({ kreislaeufe: 3, kgKreise: [20.5, 19, 18], kaeltemittelKg: 57.5 }), hk({ kreislaeufe: 1, kgKreise: [35], kaeltemittelKg: 35 }),
+      hk({ kaeltemittelKg: 57.5 }), hk({ kreislaeufe: 3, kgKreise: [20.5, 19], kaeltemittelKg: 75 })];
+    e.lesen = JSON.stringify(x("kgKreiseLesen")("20,5 / 19 / 18"));
+    /* Nachbessern: Anlage TS1 (TP1 JW + TP2 HJI), zusammen 57,5 kg */
+    const befund = () => { x("indexNeuAufbauen(); 1"); return x("auffaelligkeiten(byId.TS1).fehler").filter((t) => /ab 30 kg/.test(t)).length + "/" + x("anlagenOhneHJW(byId.TS1).length"); };
+    x("posById.TP1.kaeltemittelKg=57.5; posById.TP2.kaeltemittelKg=57.5; posById.TP1.ueber30kg=true; posById.TP2.ueber30kg=true; 1");
+    e.ohneKreise = befund();
+    x("posById.TP1.kreislaeufe=3; posById.TP1.kgKreise=[20.5,19,18]; 1");
+    e.dreiKreise = befund();
+    x("posById.TP1.kreislaeufe=1; posById.TP1.kgKreise=[57.5]; 1");
+    e.einKreis = befund();
+    x("posById.TP1.kreislaeufe=3; posById.TP1.kgKreise=[20.5,19,18]; 1"); befund();
+    /* Anlagenbuch und Anlagendaten zeigen die Kreise */
+    e.buch = /20,5 \/ 19 \/ 18 kg/.test(x("anlagenbuchHtml")(x("posById.TP1")));
+    e.kurz = x("anlageKurz")(x("anlageDaten")(x("posById.TP1")));
+    /* Standardregel im Termine-Schritt: 3 Kreise → HJI; ohne Kreise (57,5 kg gesamt) → HJW; 1 Kreis 35 kg → HJW */
+    const regel = async (an) => {
+      const box = document.createElement("div"); document.body.appendChild(box);
+      an = Object.assign({ inbetriebnahme: "2020-03-15", _termine: [{ id: "X1", intervallCode: "JW", monat: 3 }, { id: "X2", intervallCode: "", monat: 9 }] }, an);
+      x("termineSchritt")(box, an); box.querySelector("[data-regelall]").click(); await w(150);
+      const ergebnis = an._termine.map((t) => t.intervallCode).join(","); box.remove(); return ergebnis;
+    };
+    e.regel = [await regel({ kaeltemittelKg: 57.5, kgKreise: [20.5, 19, 18], kreislaeufe: 3 }), await regel({ kaeltemittelKg: 57.5 }),
+      await regel({ kaeltemittelKg: 35, kgKreise: [35], kreislaeufe: 1 })];
+    /* KI-Prüfbuch: Füllgewicht je Kältekreislauf → kgKreise, Summe als Gesamtfüllmenge, wenn sie fehlt */
+    const ki = x("kiAnlage")({ kgKreise: ["20,5", "19", "18"] });
+    e.ki = JSON.stringify([ki.kgKreise, ki.kaeltemittelKg, ki.kreislaeufe]);
+    /* Anlagendialog am Handy: je Kreis ein Feld (Anzahl aus „Kältekreisläufe“), Hinweis zum größten Kreis */
+    x("posById.TP1.kgKreise=null; 1"); befund();
+    x("anlageDatenErgaenzen")(x("posById.TP1"), null, "kgKreise"); await w(300);
+    const ov = document.querySelector(".assistent");
+    const felder = ov ? [...ov.querySelectorAll("[data-kreis]")] : [];
+    e.felder = felder.length;
+    ["20,5", "19", "18"].forEach((v, i) => { if (felder[i]) { felder[i].value = v; felder[i].dispatchEvent(new Event("input", { bubbles: true })); } });
+    e.hinweis = ov ? (ov.querySelector('[data-hinweis="kgKreise"]') || {}).textContent || "" : "";
+    e.breiter = document.documentElement.scrollWidth - window.innerWidth;
+    return e;
+  });
+  pruefe(JSON.stringify(r.hk) === "[20.5,35,57.5,35.5]", "hjwKg falsch (größter Kreis / 1 Kreis / ohne Kreise / Rest der Gesamtfüllmenge): " + JSON.stringify(r.hk));
+  pruefe(r.lesen === "[20.5,19,18]", "„20,5 / 19 / 18“ nicht gelesen: " + r.lesen);
+  pruefe(r.ohneKreise === "1/1", "ohne Kreise (57,5 kg gesamt, nur HJI) kein Nachbessern-Befund wie bisher: " + r.ohneKreise);
+  pruefe(r.dreiKreise === "0/0", "3 Kreise je unter 30 kg: trotzdem „ab 30 kg aber keine HJW“: " + r.dreiKreise);
+  pruefe(r.einKreis === "1/1", "1 Kreis ab 30 kg ohne HJW: kein Befund: " + r.einKreis);
+  pruefe(r.buch && /je Kreis 20,5 \/ 19 \/ 18 kg/.test(r.kurz), "Kreise nicht im Anlagenbuch bzw. in den Anlagendaten: " + JSON.stringify([r.buch, r.kurz]));
+  pruefe(JSON.stringify(r.regel) === '["JW,HJI","JW,HJW","JW,HJW"]', "Standardregel: " + JSON.stringify(r.regel));
+  pruefe(r.ki === "[[20.5,19,18],57.5,3]", "KI-Prüfbuch Kreise: " + r.ki);
+  pruefe(r.felder === 3 && /Größter Kreis 20,5 kg → Halbjahresinspektion \(HJI\)/.test(r.hinweis), "Anlagendialog: Felder je Kreis / Hinweis: " + JSON.stringify([r.felder, r.hinweis]));
+  pruefe(r.breiter <= 4, "Handy: Seite " + r.breiter + "px breiter als der Bildschirm");
+  pruefe(!a.fehler.length, "Laufzeitfehler: " + a.fehler.join("; "));
+  await a.zu();
+});
+
 /* ================================================================ Ablauf ================================================================ */
 const filterText = process.argv.slice(2).find((x) => !x.startsWith("--"));
 const filter = filterText ? new RegExp(filterText, "i") : null;

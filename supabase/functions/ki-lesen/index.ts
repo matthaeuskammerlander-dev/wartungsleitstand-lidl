@@ -58,7 +58,8 @@ const ANLAGE = {
   bauart: text,             // Split, Multi-Split, VRV luftgekühlt, VRV wassergekühlt, Kaltwassersatz
   kreislaeufe: text,
   kaeltemittelArt: text,    // R410A, R32 …
-  kaeltemittelKg: text,     // „1,85“
+  kaeltemittelKg: text,     // „1,85“ – Gesamtfüllmenge der Anlage
+  kgKreise: { type: "array", items: text }, // Füllgewicht je Kältekreislauf (Seite 2, Kreis 1–4) – HJW ab 30 kg gilt je Kreis
   gwp: text, co2t: text,
   leistungKw: text,
   psBar: text, toC: text, tkC: text,
@@ -124,6 +125,8 @@ const ANWEISUNG: Record<string, string> = {
     "(\"keine\" wenn in der rechten Spalte „erfolgreich überprüft“ gestempelt ist). " +
     "Lies auch das vorgeschriebene Wartungs- bzw. Überprüfungsintervall in Monaten " +
     "(wartungsintervallMonate, meist 12 oder 6). Als kaeltemittelKg gilt die Gesamtfüllmenge der Anlage. " +
+    "Stehen in den technischen Daten (Seite 2) Füllgewichte je Kältekreislauf (Kältekreislauf 1 bis 4), trage sie der Reihe " +
+    "nach als kgKreise ein (je Kreis ein Eintrag, nur ausgefüllte Kreise); sonst bleibt kgKreise leer. " +
     "Daten immer als TT.MM.JJJJ; steht nur Monat und Jahr, schreibe MM.JJJJ. " +
     "Lass Felder leer, die nicht auf den Bildern stehen – nichts ergänzen, nichts schätzen, " +
     "keine Standardwerte einsetzen. Nimm jedes Feld, bei dem die Handschrift mehrdeutig ist, " +

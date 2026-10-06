@@ -36,7 +36,10 @@ Kammerlander Umwelt- und Klimatechnik (UKT) – oft kurz, vom Handy, im Feld.
 
 - Jede Anlage hat eine Jahreswartung (**JW**) im Monat der Inbetriebnahme und
   sechs Monate versetzt einen Halbjahrestermin: **HJW** ab 30 kg Kältemittel,
-  sonst **HJI**. Ein eingetragener Soll-Monat bleibt, wenn er höchstens
+  sonst **HJI** – ab 30 kg (je Kältekreis – maßgeblich der größte Kreis; Inhaber 06.10.2026):
+  Feld „Füllmenge je Kältekreis“ (`kgKreise`), zentrale Hilfe `hjwKg` (größter Kreis, ohne Kreise
+  die Gesamtfüllmenge `kaeltemittelKg`, die für Kältemittel-Bilanz/CO₂e bleibt), `hjwNoetig` je Termin.
+  Beispiel: 3 Kreise 20,5 / 19 / 18 kg (zusammen 57,5 kg) → HJI. Ein eingetragener Soll-Monat bleibt, wenn er höchstens
   3 Monate von der Regel abweicht (`standardRegel`) – der Halbjahrestermin
   zusätzlich nur, wenn er 5–7 Monate von der JW entfernt liegt, sonst JW + 6
   (`sollGeduldet`, `sollAbweichend` – auch genau im Regelmonat).

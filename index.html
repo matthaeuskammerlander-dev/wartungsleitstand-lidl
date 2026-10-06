@@ -752,6 +752,8 @@ var STAMM_FELDER_POS = ["anlagentyp","intervallCode","inbetriebnahme","monat","m
                         "kaeltemittelArt","rueckkuehler","aktiv","notiz",
                         /* Anlagendaten, die vor Ort nach und nach ergänzt werden */
                         "pausiert","pausiertGrund","bauart","kreislaeufe","pruefbuch","rkUkt","pumpeUkt",
+                        /* Füllmenge je Kältekreis [kg, …] – „HJW ab 30 kg“ gilt je Kreis (Inhaber 06.10.2026) */
+                        "kgKreise",
                         "regelung","regelungFirma","regelungFirmaName","fernzugriff","zugangLink","zugangBenutzer","zugangPasswort",
                         "ortAussen","ortStrom","ortRegelung","ortPruefbuch","hersteller","modell","seriennummer","leistungKw","vorOrtNeu",
                         /* Zuordnung einer Termin-Zeile zu ihrer Anlage (von Hand) */
@@ -823,6 +825,44 @@ function zahlLesen(t){
   else if(/^-?[1-9]\d{0,2}(\.\d{3})+$/.test(v)) v=v.replace(/\./g,"");
   return /^-?(\d+\.?\d*|\.\d+)$/.test(v) ? +v : NaN;
 }
+/* Füllmenge je Kältekreis (kgKreise): Liste von Zahlen, z. B. [20.5,19,18].
+   Inhaber 06.10.2026: „HJW ab 30 kg“ gilt JE KÄLTEKREIS, nicht für die Summe
+   der Anlage – maßgeblich ist der größte Kreis. Aus einer Liste oder einem
+   Text „20,5 / 19 / 18“ (auch ; oder +); leere Kreise → null, nicht lesbar → NaN. */
+function kgKreiseLesen(w){
+  var l=Array.isArray(w) ? w : (leerWert(w) ? [] : String(w).split(/[\/;+|]/));
+  l=l.map(function(x){ return (x==null || String(x).trim()==="") ? null : zahlLesen(typeof x==="number" ? x : String(x).replace(/kg/i,"")); });
+  while(l.length && l[l.length-1]==null) l.pop();
+  return l;
+}
+function kgKreiseText(w, ohneEinheit){
+  var l=kgKreiseLesen(w); if(!l.length) return "";
+  return l.map(function(x){ return x==null ? "?" : (x!==x ? "nicht lesbar" : String(x).replace(".",",")); }).join(" / ")+(ohneEinheit?"":" kg");
+}
+/* gilt die Angabe je Kreis? Nicht bei genau einem Kreis (dann ist die Gesamtfüllmenge der Kreis) */
+function kgJeKreis(a){
+  a=a||{};
+  return +a.kreislaeufe!==1 && kgKreiseLesen(a.kgKreise).some(function(x){ return x!=null && x===x; });
+}
+/* maßgebliche Füllmenge für „HJW ab 30 kg“: der größte Kältekreis, wenn die
+   Kreise bekannt sind – sonst wie bisher die Gesamtfüllmenge. Fehlt bei
+   einem Kreis die Angabe, könnte der Rest der Gesamtfüllmenge in ihm stecken
+   (lieber HJW als eine fehlende Pflicht). null = unbekannt. */
+function hjwKg(a){
+  a=a||{};
+  var ges=zahlLesen(a.kaeltemittelKg); if(ges!==ges) ges=null;
+  if(!kgJeKreis(a)) return ges;
+  var n=+a.kreislaeufe||0, l=kgKreiseLesen(a.kgKreise);
+  if(n) l=l.slice(0,n);
+  var bek=l.filter(function(x){ return x!=null && x===x; });
+  var max=Math.max.apply(null, bek), fehlen=Math.max(n, l.length)-bek.length;
+  if(fehlen>0){
+    if(ges==null) return max>=30 ? max : null;
+    var rest=ges-bek.reduce(function(s,x){ return s+x; },0);
+    return Math.max(max, Math.round(rest*100)/100);
+  }
+  return max;
+}
 
 function indexNeuAufbauen(){
   byId={}; posById={};
@@ -837,6 +877,13 @@ function indexNeuAufbauen(){
     var a=ANLAGEN[k], l=a.leader;
     var q=(("kaeltemittelKg" in geaenderteFelder(l)) || l.kaeltemittelText) ? l : (a.termine.filter(function(t){ return t.kaeltemittelText; })[0]||l);
     a.termine.forEach(function(t){ t.kaeltemittelText=q.kaeltemittelText||""; t.ueber30kg=!!q.ueber30kg; });
+    /* HJW nötig: „ab 30 kg“ je Kältekreis (Inhaber 06.10.2026) – sind die Kreise
+       bekannt, entscheidet der größte; sonst wie bisher die Gesamtfüllmenge */
+    var wert=function(k){ if(!leerWert(l[k]) || (k in geaenderteFelder(l))) return l[k];
+      var t=a.termine.filter(function(x){ return !leerWert(x[k]); })[0]; return t ? t[k] : null; };
+    var dk={kgKreise:wert("kgKreise"), kreislaeufe:wert("kreislaeufe"), kaeltemittelKg:q.kaeltemittelKg};
+    var noetig=kgJeKreis(dk) ? (hjwKg(dk)>=30) : !!q.ueber30kg;
+    a.termine.forEach(function(t){ t.hjwNoetig=noetig; });
   });
   /* „zur Zeit nicht gewartet“ gilt für die ganze Anlage (steht an ihrer ersten Zeile),
      „zur Zeit nicht betreut“ für alle Anlagen des Markts: bleibt sichtbar,
@@ -853,7 +900,7 @@ function indexNeuAufbauen(){
     var bj=s.pos.map(function(p){ return p.baujahr; }).filter(Boolean);
     s.baujahrVon=bj.length?Math.min.apply(null,bj):null;
     s.baujahrBis=bj.length?Math.max.apply(null,bj):null;
-    s.ueber30kg=s.pos.some(function(p){ return p.ueber30kg; });
+    s.ueber30kg=s.pos.some(function(p){ return p.hjwNoetig; });   /* ab 30 kg in einem Kältekreis */
     var t={}; s.pos.forEach(function(p){ if(p.anlagentyp) t[p.anlagentyp]=1; });
     s.typen=Object.keys(t);
     s.anzahlPositionen=s.pos.length;
@@ -1043,7 +1090,7 @@ var STAEDTE=[["Wien",16.372,48.208,"start"],["Graz",15.439,47.071,"start"],["Lin
 /* ---------- Fälligkeit ----------
    Regeln von Kammerlander:
      JW  = Jahreswartung
-     HJW = Halbjahreswartung   (vorgeschrieben ab 30 kg Kältemittel)
+     HJW = Halbjahreswartung   (vorgeschrieben ab 30 kg Kältemittel in einem Kältekreis – Inhaber 06.10.2026)
      HJI = Halbjahresinspektion
    Maßgeblich ist allein die Inbetriebnahme: JW +12 Monate, HJW und HJI
    +6 Monate, danach jedes Jahr am selben Tag.
@@ -1092,7 +1139,7 @@ function inbetriebnahmeVon(p){
    Inbetriebnahme, die Halbjahrestermine sechs Monate versetzt. */
 /* Standardregel für die Termine einer Anlage (vom Büro so festgelegt):
    JW im Monat der Inbetriebnahme, sechs Monate versetzt HJW (ab 30 kg
-   Kältemittel) bzw. HJI. Ein eingetragener Soll-Monat bleibt, wenn er
+   Kältemittel im größten Kältekreis – kg = hjwKg(a), Inhaber 06.10.2026) bzw. HJI. Ein eingetragener Soll-Monat bleibt, wenn er
    höchstens 3 Monate abweicht (der Halbjahrestermin zusätzlich nur, wenn er
    5 bis 7 Monate neben der JW liegt). termine: [{intervallCode, monat}] – höchstens
    zwei, Reihenfolge bleibt; fehlende kommen hinten dazu (neu:true).
@@ -1134,20 +1181,22 @@ function standardRegel(ib, kg, termine){
    die Anlage 30 kg oder mehr hat (HJW) oder weniger (HJI). „weiß nicht“ → null
    (Kürzel bleibt offen), Abbrechen → undefined.
    mitNurJW: zusätzlich „Kein Halbjahrestermin – nur Jahreswartung“ anbieten
-   (sehr kleine Anlagen brauchen nur einen Besuch im Jahr) → "nurJW" */
-function regelKgFragen(kg, mitNurJW){
+   (sehr kleine Anlagen brauchen nur einen Besuch im Jahr) → "nurJW".
+   kg ist die maßgebliche Füllmenge (hjwKg: größter Kältekreis, sonst gesamt –
+   Inhaber 06.10.2026); jeKreis: sie stammt aus den Kältekreisen (nur für den Text) */
+function regelKgFragen(kg, mitNurJW, jeKreis){
   kg=zahlLesen(kg);
-  /* bekannte Füllmenge: ab 30 kg bleibt die HJW Pflicht. Darunter wird – wo
+  /* bekannte Füllmenge: ab 30 kg (in einem Kältekreis) bleibt die HJW Pflicht. Darunter wird – wo
      „nur Jahreswartung“ möglich ist – gefragt, ob es überhaupt einen
      Halbjahrestermin gibt (Büro 29.09.2026: auch bei bekannter kleiner Menge,
      auch durch Techniker vor Ort) */
   if(kg>=30 || (kg>0 && !mitNurJW)) return Promise.resolve(kg);
   if(kg>0) return new Promise(function(fertig){
     var v=ansichtOeffnen("Halbjahrestermin");
-    v.schritt.textContent="Füllmenge "+String(kg).replace(".",",")+" kg";
+    v.schritt.textContent=(jeKreis?"größter Kältekreis ":"Füllmenge ")+String(kg).replace(".",",")+" kg";
     var erledigt=false, ende=function(w){ if(erledigt) return; erledigt=true; v.zu(); fertig(w); };
     var box=el('<div class="stack"><div style="font-size:16px;font-weight:600">Gibt es für diese Anlage einen Halbjahrestermin?</div>'+
-      '<div class="muted" style="font-size:12.5px">Unter 30 kg Kältemittel ist der Halbjahrestermin eine Halbjahresinspektion (HJI). Sehr kleine Anlagen brauchen nur die Jahreswartung.</div>'+
+      '<div class="muted" style="font-size:12.5px">Unter 30 kg Kältemittel in jedem Kältekreis ist der Halbjahrestermin eine Halbjahresinspektion (HJI). Sehr kleine Anlagen brauchen nur die Jahreswartung.</div>'+
       '<button class="btn" type="button" data-w="hji" style="text-align:left">Ja – Halbjahresinspektion (HJI)</button>'+
       '<button class="btn ghost" type="button" data-w="nurjw" style="text-align:left">Nein – nur Jahreswartung<br>'+
         '<span style="font-size:12.5px;font-weight:400">sehr kleine Anlage, ein Besuch im Jahr genügt</span></button></div>');
@@ -1160,10 +1209,11 @@ function regelKgFragen(kg, mitNurJW){
     var v=ansichtOeffnen("Füllmenge unbekannt");
     v.schritt.textContent="für den Halbjahrestermin";
     var erledigt=false, ende=function(w){ if(erledigt) return; erledigt=true; v.zu(); fertig(w); };
-    var box=el('<div class="stack"><div style="font-size:16px;font-weight:600">Hat die Anlage 30 kg Kältemittel oder mehr?</div>'+
-      '<div class="muted" style="font-size:12.5px">Ab 30 kg ist der Halbjahrestermin eine Halbjahreswartung (HJW), darunter eine Halbjahresinspektion (HJI).</div>'+
-      '<button class="btn" type="button" data-w="ja" style="text-align:left">Ja, 30 kg oder mehr → HJW</button>'+
-      '<button class="btn" type="button" data-w="nein" style="text-align:left">Nein, weniger als 30 kg → HJI</button>'+
+    var box=el('<div class="stack"><div style="font-size:16px;font-weight:600">Hat ein Kältekreis der Anlage 30 kg Kältemittel oder mehr?</div>'+
+      '<div class="muted" style="font-size:12.5px">Ab 30 kg in einem Kältekreis ist der Halbjahrestermin eine Halbjahreswartung (HJW), darunter eine Halbjahresinspektion (HJI). '+
+        'Maßgeblich ist der größte Kreis, nicht die Summe der Anlage (z. B. 3 Kreise mit je unter 30 kg → HJI).</div>'+
+      '<button class="btn" type="button" data-w="ja" style="text-align:left">Ja, ein Kreis hat 30 kg oder mehr → HJW</button>'+
+      '<button class="btn" type="button" data-w="nein" style="text-align:left">Nein, jeder Kreis unter 30 kg → HJI</button>'+
       (mitNurJW?'<button class="btn ghost" type="button" data-w="nurjw" style="text-align:left">Kein Halbjahrestermin – nur Jahreswartung<br>'+
         '<span style="font-size:12.5px;font-weight:400">sehr kleine Anlage, ein Besuch im Jahr genügt</span></button>':"")+
       '<button class="btn ghost" type="button" data-w="weiss" style="text-align:left">Weiß nicht – Kürzel offen lassen</button></div>');
@@ -7016,6 +7066,10 @@ var ANLAGE_GRUPPEN=[
   {titel:"Kältemittel und Leistung", frage:"Welches Kältemittel, wie viel – und wie stark ist die Anlage?", felder:[
     {k:"kaeltemittelArt", l:"Kältemittel", t:"wahl", o:KAELTEMITTEL, frei:true},
     {k:"kaeltemittelKg", l:"Füllmenge (kg)", t:"kg"},
+    /* je Kältekreis (Inhaber 06.10.2026): „HJW ab 30 kg“ gilt je Kreis, nicht für die
+       Summe – nur bei mehreren Kreisen gefragt, freiwillig (fehlt sie, zählt die Gesamtfüllmenge) */
+    {k:"kgKreise", l:"Füllmenge je Kältekreis", t:"kreise", optional:true,
+      wenn:function(a){ return +a.kreislaeufe>=2 || (!+a.kreislaeufe && kgKreiseLesen(a.kgKreise).length>=2); }},
     {k:"leistungKw", l:"Kälteleistung (kW)", t:"kw"}]},
   {titel:"Rückkühler und Pumpen", frage:"Wassergekühlt: Gehören Rückkühler und Pumpenstation zu unserem Auftrag?",
     wenn:istWassergekuehlt, felder:[
@@ -7228,7 +7282,7 @@ function anlageLuecken(a){
   var ohneGeheim=nurLesen()||demo()||!angemeldetOderLokal();
   return ANLAGE_FELDER.filter(function(f){
     if(ohneGeheim && f.gruppe.geheim) return false;
-    return !f.gruppe.optional && feldGilt(f,a) && leerWert(a[f.k]); });
+    return !f.gruppe.optional && !f.optional && feldGilt(f,a) && leerWert(a[f.k]); });
 }
 var INNEN_FELDER=[["raum","Raum / Bezeichnung","z. B. Verkaufsraum 1"],["hersteller","Hersteller",""],
   ["modell","Modell",""],["seriennummer","Seriennummer",""],["leistungKw","Leistung (kW)","z. B. 5,6"]];
@@ -7281,6 +7335,7 @@ function verlaufWert(f, w){
 }
 function anlageWertText(f, w){
   if(f.t==="innen") return innenText(w);
+  if(f.t==="kreise") return kgKreiseText(w)||"–";
   if(leerWert(w)) return "–";
   if(f.t==="kg") return String(w).replace(".",",")+" kg";
   if(f.t==="kw") return String(w).replace(".",",")+" kW";
@@ -7298,6 +7353,7 @@ function anlageKurz(a){
   if(a.bauart) t.push(a.bauart);
   if(a.kreislaeufe) t.push(a.kreislaeufe+" Kältekreis"+(+a.kreislaeufe===1?"":"e"));
   if(a.kaeltemittelArt||!leerWert(a.kaeltemittelKg)) t.push([a.kaeltemittelArt, leerWert(a.kaeltemittelKg)?"":String(a.kaeltemittelKg).replace(".",",")+" kg"].filter(Boolean).join(" "));
+  if(kgJeKreis(a)) t.push("je Kreis "+kgKreiseText(a.kgKreise));   /* HJW ab 30 kg je Kreis (Inhaber 06.10.2026) */
   if(!leerWert(a.leistungKw)) t.push(String(a.leistungKw).replace(".",",")+" kW");
   var co2=co2Tonnen(a); if(co2) t.push(String(co2).replace(".",",")+" t CO₂e");
   if(a.pruefbuch==="ja") t.push("Prüfbuch"+(a.ortPruefbuch?" ("+a.ortPruefbuch+")":""));
@@ -7344,14 +7400,14 @@ function termineSchritt(inhalt, a){
      einen Halbjahrestermin gibt (Büro 29.09.2026). Anlegen dürfen ihn nur
      Admins – sonst geht die Meldung ans Büro (halbWunsch, steht in Nachbessern). */
   var nurEine=!!a._leaderId && a._termine.length===1 && normCode(a._termine[0].intervallCode)==="JW" && !a.nurJW;
-  /* ab 30 kg (bekannte Füllmenge) bleibt die HJW Pflicht – dann kein „nur Jahreswartung“ (wie regelKgFragen) */
-  var hjwPflicht=zahlLesen(a.kaeltemittelKg)>=30;
+  /* ab 30 kg in einem Kältekreis (bekannte Füllmenge, hjwKg – Inhaber 06.10.2026) bleibt die HJW Pflicht – dann kein „nur Jahreswartung“ (wie regelKgFragen) */
+  var hjwPflicht=hjwKg(a)>=30;
   if(nurEine) h+='<div class="as-feld" data-halb><div class="as-label">Halbjahrestermin</div>'+
     (a.halbWunsch
       ? '<div class="note" style="font-size:12.5px">Halbjahrestermin fehlt – vor Ort gemeldet ('+esc(a.halbWunsch)+'). Das Büro legt ihn in der Verwaltung an. '+
         '<a href="#" class="sprunglink" data-halbweg>Meldung zurücknehmen</a></div>'
       : (hjwPflicht
-        ? '<div class="as-hinweis">Eingetragen ist nur die Jahreswartung. Ab 30 kg Kältemittel gehört eine Halbjahreswartung (HJW) dazu.</div>'+
+        ? '<div class="as-hinweis">Eingetragen ist nur die Jahreswartung. Ab 30 kg Kältemittel in einem Kältekreis gehört eine Halbjahreswartung (HJW) dazu.</div>'+
           '<div class="chips"><button class="chip" type="button" data-halbja>HJW '+(Admin.frei?"anlegen":"ans Büro melden")+"</button></div>"
         : '<div class="as-hinweis">Eingetragen ist nur die Jahreswartung. Gibt es für diese Anlage auch einen Halbjahrestermin?</div>'+
           '<div class="chips"><button class="chip" type="button" data-halbja>Ja – Halbjahrestermin</button>'+
@@ -7365,7 +7421,7 @@ function termineSchritt(inhalt, a){
        Dialog nicht – die Standardregel legte sonst einen dritten Termin an */
     ? '<div class="note" style="font-size:12.5px">Nur die Inbetriebnahme eintragen – die App korrigiert danach beide Zeilen der alten Liste selbst.</div>'
     : '<div class="as-feld"><button class="btn ghost sm" type="button" data-regelall>Standardregel anwenden</button>'+
-    '<div class="as-hinweis">JW im Monat der Inbetriebnahme, sechs Monate später HJW (ab 30 kg) bzw. HJI. '+
+    '<div class="as-hinweis">JW im Monat der Inbetriebnahme, sechs Monate später HJW (ab 30 kg in einem Kältekreis) bzw. HJI. '+
     "Ein eingetragener Soll-Monat bleibt, wenn er höchstens 3 Monate abweicht – der Halbjahrestermin zusätzlich nur, wenn er 5–7 Monate von der JW entfernt liegt (sonst JW + 6). "+
     (Admin.frei?"Fehlt der zweite Termin, kommt er dazu.":"Fehlt ein Termin, legt ihn das Büro in der Verwaltung an.")+"</div></div>")+
     '<div class="muted" style="font-size:12.5px">Einen Termin streichen geht in der Verwaltung.</div>';
@@ -7376,7 +7432,7 @@ function termineSchritt(inhalt, a){
   if(halbJa) halbJa.onclick=function(){
     var jwM=+a._termine[0].monat||0;
     if(!jwM){ toast("Zuerst den Soll-Monat der Jahreswartung wählen – der Halbjahrestermin liegt sechs Monate versetzt."); return; }
-    regelKgFragen(a.kaeltemittelKg, false).then(function(kg){
+    regelKgFragen(hjwKg(a), false, kgJeKreis(a)).then(function(kg){
       if(kg===undefined) return;
       var code = kg===null ? "" : (kg>=30 ? "HJW" : "HJI"), m=((jwM+5)%12)+1;
       if(Admin.frei){
@@ -7394,7 +7450,7 @@ function termineSchritt(inhalt, a){
     if(!a.inbetriebnahme){ toast("Zuerst die Inbetriebnahme eintragen – daraus kommen die Termine."); return; }
     if(a._termine.length>2){ toast("Mehr als zwei Termine – bitte in der Verwaltung ordnen."); return; }
     /* „nur Jahreswartung“ nur, solange die Anlage keinen zweiten Termin hat */
-    regelKgFragen(a.kaeltemittelKg, a._termine.length<2).then(function(kg){
+    regelKgFragen(hjwKg(a), a._termine.length<2, kgJeKreis(a)).then(function(kg){
       if(kg===undefined) return;
       var r=standardRegel(a.inbetriebnahme, kg, a._termine);
       /* Neue Termine legen nur Admins an (README: Verwaltung) – Kürzel und
@@ -7811,6 +7867,14 @@ function anlageDialogTeilFelder(P){
     } else if(f.t==="kg"||f.t==="kw"){
       h+='<input type="text" inputmode="decimal" data-in="'+f.k+'" placeholder="'+(f.t==="kw"?"z. B. 35":"z. B. 12,5")+'" value="'+esc(leerWert(w)?"":String(w).replace(".",","))+'">'+
         '<div class="as-hinweis" data-hinweis="'+f.k+'"></div>';
+    } else if(f.t==="kreise"){
+      /* je Kältekreis ein Feld – so viele wie Kältekreisläufe (Inhaber 06.10.2026) */
+      var kl=kgKreiseLesen(w), kn=Math.min(Math.max(+a.kreislaeufe||0, kl.length, 2), 12);
+      h+='<div class="as-hinweis" style="margin:0 0 6px">Maßgeblich für „HJW ab 30 kg“ ist der größte Kreis, nicht die Summe der Anlage.</div>'+
+        '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(110px,1fr));gap:8px">';
+      for(var ki=0;ki<kn;ki++) h+='<label class="fl"><span>Kreis '+(ki+1)+' (kg)</span><input type="text" inputmode="decimal" data-kreis="'+ki+'" placeholder="z. B. 18,5" value="'+
+        esc(kl[ki]==null || kl[ki]!==kl[ki] ? "" : String(kl[ki]).replace(".",","))+'"></label>';
+      h+='</div><div class="as-hinweis" data-hinweis="kgKreise"></div>';
     } else if(f.t==="innen"){
       var liste=Array.isArray(w)?w:[];
       h+=liste.map(function(g,i){
@@ -7839,10 +7903,24 @@ function anlageDialogTeilFelder(P){
     return h+"</div>";
   }
   function kgHinweis(){
+    /* „HJW ab 30 kg“ je Kältekreis (Inhaber 06.10.2026): maßgeblich ist der größte Kreis */
+    var hk=hjwKg(a), jeKreis=kgJeKreis(a), zahl=function(x){ return String(Math.round(x*100)/100).replace(".",","); };
+    var nk=inhalt.querySelector('[data-hinweis="kgKreise"]');
+    if(nk){
+      var kl=kgKreiseLesen(a.kgKreise), bek=kl.filter(function(x){ return x!=null && x===x; }), ges=zahlLesen(a.kaeltemittelKg);
+      var sum=bek.reduce(function(s2,x){ return s2+x; },0), tk=[];
+      if(jeKreis){
+        tk.push("Größter Kreis "+zahl(Math.max.apply(null,bek))+" kg → "+(hk>=30 ? "Halbjahreswartung (HJW)" : "Halbjahresinspektion (HJI)"+(ges>=30?", obwohl die Anlage zusammen "+zahl(ges)+" kg hat":"")));
+        if(ges>0 && bek.length>=(+a.kreislaeufe||kl.length) && Math.abs(sum-ges)>0.05) tk.push("Summe der Kreise "+zahl(sum)+" kg, Füllmenge der Anlage "+zahl(ges)+" kg – bitte prüfen");
+      }
+      nk.textContent=tk.join(" · ");
+    }
     var n=inhalt.querySelector('[data-hinweis="kaeltemittelKg"]'); if(!n) return;
     var i=inhalt.querySelector('[data-in="kaeltemittelKg"]'), t=i ? zahlHinweisText(i) : "";
     n.textContent = (i && i.getAttribute("aria-invalid")==="true") ? t
-      : [t, +a.kaeltemittelKg>=30 ? "Ab 30 kg ist eine Halbjahreswartung (HJW) vorgeschrieben." : ""].filter(Boolean).join(" · ");
+      : [t, hk>=30 ? (jeKreis ? "Ein Kältekreis hat 30 kg oder mehr – Halbjahreswartung (HJW) vorgeschrieben."
+          : "Ab 30 kg ist eine Halbjahreswartung (HJW) vorgeschrieben"+(+a.kreislaeufe>=2 ? " – bei mehreren Kältekreisen zählt der größte Kreis, nicht die Summe (unten je Kreis eintragen)." : "."))
+        : ""].filter(Boolean).join(" · ");
   }
   /* Zahlenfeld: nicht lesbar → rot und Hinweis (Weiter geht erst nach der
      Korrektur); mit Punkt eingegeben → sagen, wie die Zahl gelesen wurde */
@@ -7921,10 +7999,28 @@ function anlageDialogTeilSchritte(P){
       }
       i.oninput=function(){
         var k=i.dataset.in, v=i.value.trim();
-        if(k==="kaeltemittelKg"){ a[k]=P.zahlFeld(i, a[k]); P.kgHinweis(); }
+        if(k==="kaeltemittelKg"){ a[k]=P.zahlFeld(i, a[k]); P.kgAusKreisen=false; P.kgHinweis(); }
         else if(k==="leistungKw" || i.inputMode==="decimal") a[k]=P.zahlFeld(i, a[k]);
         else if(k==="kreislaeufe"){ a[k]= v===""?a[k]:+v; inhalt.querySelectorAll('.chip[data-f="kreislaeufe"]').forEach(function(c){ c.setAttribute("aria-pressed","false"); }); }
         else a[k]=v;
+      };
+    });
+    /* Füllmenge je Kältekreis: eigene Liste; nicht lesbar → rot, Weiter erst nach der Korrektur.
+       Ist die Gesamtfüllmenge leer, kommt die Summe der Kreise hinein (solange sie niemand tippt) */
+    inhalt.querySelectorAll("[data-kreis]").forEach(function(i){
+      i.oninput=function(){
+        var nz=zahlLesen(i.value); i.setAttribute("aria-invalid", String(nz!==nz));
+        if(nz!==nz){ P.kgHinweis(); return; }
+        var l=kgKreiseLesen(a.kgKreise).slice(), kx=+i.dataset.kreis;
+        while(l.length<kx) l.push(null);
+        l[kx]=nz; while(l.length && l[l.length-1]==null) l.pop();
+        a.kgKreise=l.length ? l : null;
+        var kgIn=inhalt.querySelector('[data-in="kaeltemittelKg"]'), anz=+a.kreislaeufe||0;
+        if(kgIn && (leerWert(a.kaeltemittelKg) || P.kgAusKreisen)){
+          var voll=anz && l.length===anz && l.every(function(x){ return x!=null; });
+          if(voll){ a.kaeltemittelKg=Math.round(l.reduce(function(s2,x){ return s2+x; },0)*100)/100; kgIn.value=String(a.kaeltemittelKg).replace(".",","); P.kgAusKreisen=true; }
+        }
+        P.kgHinweis();
       };
     });
     /* Innengeräte: eigene Kopie der Liste bearbeiten, nie den gespeicherten Stand */
@@ -7994,8 +8090,9 @@ function anlageDialogTeilSchritte(P){
       ANLAGE_GRUPPEN.filter(function(g){ return !g.wenn || g.wenn(a); }).map(function(g,i){
         var zeilen=g.felder.filter(function(f){ return feldGilt(Object.assign({gruppe:g},f),a); }).map(function(f){
           var w=a[f.k];
-          return '<div class="as-zeile"><span>'+esc(f.l)+"</span><strong"+(leerWert(w)&&!g.optional?' class="as-offen"':"")+">"+
-            esc(leerWert(w)?(g.optional?"–":"offen"):anlageWertText(f,w))+"</strong></div>";
+          var frei=g.optional||f.optional;
+          return '<div class="as-zeile"><span>'+esc(f.l)+"</span><strong"+(leerWert(w)&&!frei?' class="as-offen"':"")+">"+
+            esc(leerWert(w)?(frei?"–":"offen"):anlageWertText(f,w))+"</strong></div>";
         }).join("");
         return '<div class="as-gruppe"><div class="as-gkopf"><span>'+esc(g.titel)+"</span>"+
           '<button class="btn ghost sm" type="button" data-g="'+ANLAGE_GRUPPEN.indexOf(g)+'">ändern</button></div>'+zeilen+"</div>";
@@ -8099,6 +8196,11 @@ function anlageAssistentDialog(fertig, start, titel, neu, alles, vorgang){
       return g.optional && (!g.wenn || g.wenn(a)) && g.felder.some(function(f){
         return feldGilt(Object.assign({gruppe:g}, f), a) && leerWert(a[f.k]); });
     });
+    /* Füllmenge je Kältekreis fehlt bei mehreren Kreisen und zusammen ab 30 kg: dann
+       entscheidet sie HJW oder HJI (Inhaber 06.10.2026) – die Gruppe nochmals zeigen */
+    var kreisG=ANLAGE_FELDER.filter(function(f){ return f.k==="kgKreise"; })[0];
+    if(kreisG && pflicht.indexOf(kreisG.gruppe)<0 && feldGilt(kreisG, a) && !kgJeKreis(a) && zahlLesen(a.kaeltemittelKg)>=30)
+      pflicht=ANLAGE_GRUPPEN.filter(function(g){ return g===kreisG.gruppe || pflicht.indexOf(g)>=0; });
     return pflicht.concat(frei);
   };
   /* „alles“: der Aufruf kommt nicht aus einem Protokoll, sondern vom Knopf an
@@ -13058,6 +13160,8 @@ var KI_AUFTRAG={
     "nach § 22 KAV mit Datum, prüfender Firma (Stempel), Techniker falls lesbar und ob Mängel eingetragen sind "+
     "(\"keine\", wenn „erfolgreich überprüft“ gestempelt ist). Lies auch das vorgeschriebene Wartungsintervall "+
     "in Monaten (wartungsintervallMonate, meist 12 oder 6). Als kaeltemittelKg gilt die Gesamtfüllmenge der Anlage. "+
+    "Stehen in den technischen Daten (Seite 2) Füllgewichte je Kältekreislauf (Kältekreislauf 1 bis 4), trage sie der Reihe "+
+    "nach als kgKreise ein (je Kreis ein Eintrag, nur ausgefüllte Kreise); sonst bleibt kgKreise leer. "+
     "WICHTIG: Die Fotos können Seiten MEHRERER Prüfbücher enthalten (je Anlage ein Buch, z. B. zwei VRV und ein Split). "+
     "Lege je Prüfbuch einen eigenen Eintrag in \"pruefbuecher\" an und ordne jede Seite dem richtigen Buch zu "+
     "(Anlagenbezeichnung, Seriennummer, Aufstellungsort, Handschrift, Stempel). Mische nie Angaben verschiedener Bücher.",
@@ -13073,7 +13177,7 @@ var KI_AUFTRAG={
 };
 var KI_VORLAGE={
   pruefbuch:{pruefbuecher:[{anlage:{bezeichnung:"",hersteller:"",modell:"",seriennummer:"",bauart:"",kreislaeufe:"",
-    kaeltemittelArt:"",kaeltemittelKg:"",gwp:"",co2t:"",leistungKw:"",psBar:"",toC:"",tkC:"",hermetisch:"",
+    kaeltemittelArt:"",kaeltemittelKg:"",kgKreise:[""],gwp:"",co2t:"",leistungKw:"",psBar:"",toC:"",tkC:"",hermetisch:"",
     baujahr:"",fluidgruppe:"",psv:"",gefahr:"",erstePruefung:"",leckageerkennung:"",dichtheitMonate:"",astv:"",
     inbetriebnahme:"",konformitaet:"",aufsteller:"",filiale:"",adresse:"",wartungsintervallMonate:""},
     pruefungen:[{datum:"",firma:"",techniker:"",maengel:""}], unsicher:[], hinweise:""}], hinweise:""},
@@ -13667,6 +13771,15 @@ function kiAnlage(k){
   var km=String(k.kaeltemittelArt||"").replace(/[\s\-]+/g,"").toUpperCase().replace(/^(R\d+)([A-Z]?)$/,"$1$2");
   setz("kaeltemittelArt", KAELTEMITTEL.filter(function(x){ return x.toUpperCase()===km; })[0] || km);
   ["kaeltemittelKg","gwp","leistungKw","psBar","toC","tkC","psv"].forEach(function(x){ setz(x, kiZahl(k[x])); });
+  /* Füllgewicht je Kältekreislauf (Prüfbuch Seite 2) – „HJW ab 30 kg“ gilt je Kreis (Inhaber 06.10.2026).
+     Steht keine Gesamtfüllmenge da, ist sie die Summe der Kreise. */
+  var kk=(Array.isArray(k.kgKreise) ? k.kgKreise : (leerWert(k.kgKreise) ? [] : String(k.kgKreise).split(/[\/;|]/))).map(kiZahl);
+  while(kk.length && kk[kk.length-1]==null) kk.pop();
+  if(kk.some(function(x){ return x!=null; })){
+    setz("kgKreise", kk);
+    if(r.kaeltemittelKg==null && kk.every(function(x){ return x!=null; })) setz("kaeltemittelKg", Math.round(kk.reduce(function(a2,x){ return a2+x; },0)*100)/100);
+    if(r.kreislaeufe==null && kk.length>=2) setz("kreislaeufe", kk.length);
+  }
   ["hermetisch","leckageerkennung","astv"].forEach(function(x){ setz(x, kiJn(k[x])); });
   var fg=String(k.fluidgruppe||"").replace(/\D/g,""); if(fg==="1"||fg==="2") setz("fluidgruppe", fg);
   var gp=String(k.gefahr||"").toUpperCase(); setz("gefahr", /HP|HOH/.test(gp)?"HP":/NP|NIED/.test(gp)?"NP":null);
@@ -14076,7 +14189,7 @@ function protoAssistentTeilAnlagen(P){
         inhalt.innerHTML=frage((stoer?"Betroffen":"Gewartet")+" (vor Ort neu erfasst): "+(w.anlagentyp||"Neue Anlage"));
         var dk=datenKasten(n.id, titel, z); if(dk) inhalt.appendChild(dk);
         if(!z.a) z.a=JSON.parse(JSON.stringify({inbetriebnahme:w.inbetriebnahme||null, _termine:w._termine||[{id:"NEU", intervallCode:"JW", monat:0}],
-          kaeltemittelKg:w.kaeltemittelKg, nurJW:!!w.nurJW}));
+          kaeltemittelKg:w.kaeltemittelKg, kgKreise:w.kgKreise, kreislaeufe:w.kreislaeufe, nurJW:!!w.nurJW}));
         var tg=el('<div class="as-gruppe"><div class="as-gkopf"><span>Termine</span></div>'+
           '<div class="muted" style="font-size:12.5px">Inbetriebnahme und Termine bitte gleich eintragen (Typenschild, Prüfbuch).</div></div>');
         var host=el("<div></div>"); tg.appendChild(host); inhalt.appendChild(tg);
@@ -15419,7 +15532,7 @@ function protoTeilAnlagen(P){
     ANLAGE_KEYS=ANLAGE_FELDER.map(function(f){ return f.k; });
     form._nameJetzt=function(anlId){ var an=ANLAGEN[anlId]; return an ? anlageNameJetzt(an.leader) : null; };
     /* für den Schritt-für-Schritt-Dialog: Ausgangswerte des Termine-Schritts und das Speichern */
-    form._termineStart=function(leader){ return Object.assign({kaeltemittelKg:anlageWerte(leader).kaeltemittelKg}, termineWerte(leader)); };
+    form._termineStart=function(leader){ var aw=anlageWerte(leader); return Object.assign({kaeltemittelKg:aw.kaeltemittelKg, kgKreise:aw.kgKreise, kreislaeufe:aw.kreislaeufe}, termineWerte(leader)); };
     form._termineSpeichern=termineSpeichern;
     P.posBox.addEventListener("change",function(e){ if(e.target && e.target.name==="posw") anlagenZeichnen(); });
     form.querySelector("#addAnlage").onclick=function(ev, weiter){
@@ -17221,7 +17334,8 @@ function blattInhalt(p){
         z("Bauart",a.bauart)+
         z("Kältekreisläufe / Prüfbuch",[a.kreislaeufe?a.kreislaeufe+" Kältekreis"+(+a.kreislaeufe===1?"":"e"):"",
           a.pruefbuch?"Prüfbuch: "+jn(a.pruefbuch):"", a.ortPruefbuch?"liegt "+(a.ortPruefbuch===PRUEFBUCH_ORT_ALT?PRUEFBUCH_ORT:a.ortPruefbuch):""].filter(Boolean).join(" · "))+
-        z("Kältemittel / Füllmenge",[a.kaeltemittelArt, leerWert(a.kaeltemittelKg)?"":String(a.kaeltemittelKg).replace(".",",")+" kg"].filter(Boolean).join(" · "))+
+        z("Kältemittel / Füllmenge",[a.kaeltemittelArt, leerWert(a.kaeltemittelKg)?"":String(a.kaeltemittelKg).replace(".",",")+" kg",
+          kgJeKreis(a)?"je Kreis "+kgKreiseText(a.kgKreise):""].filter(Boolean).join(" · "))+
         (istWassergekuehlt(a)?z("Rückkühler / Pumpenstation von UKT",[a.rkUkt?"Rückkühler: "+jn(a.rkUkt):"", a.pumpeUkt?"Pumpen: "+jn(a.pumpeUkt):""].filter(Boolean).join(" · ")):"")+
         z("Regelung", a.regelung===OHNE_REGELUNG ? "keine eigene Regelung" : [a.regelung,
           a.regelungFirma?"betreut von "+(regelungFirmaText(a)==="andere Firma"?"anderer Firma":regelungFirmaText(a)):"",
@@ -19496,6 +19610,7 @@ function stammWert(feld, w){
      in einer Liste, die sich absichtlich nicht mehr ändern lässt. */
   if(feld==="zugangPasswort" || istGeheim(feld)) return "••••••••";
   if(feld==="innengeraete") return innenText(w);
+  if(feld==="kgKreise") return kgKreiseText(w)||"–";
   if(feld==="kundeId") return kundeTitel(w);
   if(feld==="nachweise") return Array.isArray(w)&&w.length ? w.map(function(n){ return dfmt(n.datum)+(n.techniker?" ("+n.techniker+")":""); }).join(", ") : "–";
   if(feld==="aktiv"||feld==="pausiert"||feld==="vorOrtNeu") return w?"ja":"nein";
@@ -19545,9 +19660,9 @@ function auffaelligkeiten(s){
     Object.keys(k).forEach(function(kz){ if(k[kz]>1)
       f.push(mit(anlagenName(a.leader)+": "+k[kz]+" Termine mit demselben Kürzel "+kz+" – einer davon doppelt oder mit falschem Kürzel?", a.leader)); });
   });
-  /* „ab 30 kg HJW“ gilt je Anlage – eine HJW einer anderen Anlage im Markt hilft nicht */
+  /* „ab 30 kg HJW“ gilt je Anlage und dort je Kältekreis (Inhaber 06.10.2026) – eine HJW einer anderen Anlage im Markt hilft nicht */
   anlagenOhneHJW(s).forEach(function(a){
-    f.push(mit(anlagenName(a.leader)+": ab 30 kg Kältemittel, aber keine Halbjahreswartung (HJW)", a.leader));
+    f.push(mit(anlagenName(a.leader)+": ab 30 kg Kältemittel in einem Kältekreis, aber keine Halbjahreswartung (HJW)", a.leader));
   });
   /* Nur die Jahreswartung eingetragen: vor Ort als fehlend gemeldet → anlegen;
      sonst offen, bis vor Ort entschieden ist (Büro 29.09.2026). Ein Markt mit
@@ -19649,11 +19764,12 @@ function auffaelligkeiten(s){
   var einmal=function(liste){ return liste.filter(function(x,i){ return liste.indexOf(x)===i; }); };
   return {fehler:einmal(f), luecken:einmal(l), pid:ziel};
 }
-/* Anlagen eines Markts ab 30 kg Kältemittel ohne Halbjahreswartung (HJW) –
-   je Anlage geprüft (Nachbessern und Handbuch „Zu klären“) */
+/* Anlagen eines Markts ab 30 kg Kältemittel in einem Kältekreis ohne Halbjahreswartung (HJW) –
+   je Anlage geprüft (Nachbessern und Handbuch „Zu klären“); hjwNoetig setzt indexNeuAufbauen
+   (größter Kältekreis, sonst Gesamtfüllmenge – Inhaber 06.10.2026) */
 function anlagenOhneHJW(s){
   return anlagenDesMarkts(s,false).filter(function(a){
-    return a.termine.some(function(t){ return t.ueber30kg; }) &&
+    return a.termine.some(function(t){ return t.hjwNoetig; }) &&
            !a.termine.some(function(t){ return intervallArt(t.intervallCode).kurz==="HJW"; });
   });
 }
@@ -22129,6 +22245,8 @@ function verwaltungTeilAnlagen(P){
       var key=x.dataset.a, v=x.type==="checkbox"?x.checked:x.value.trim();
       /* Füllmenge/Leistung als Zahl; nicht lesbar bleibt der getippte Text stehen */
       if(key==="kaeltemittelKg"||key==="leistungKw"){ var n=zahlLesen(v); w[key]= n!==n ? v : n; }
+      /* je Kältekreis „20,5 / 19 / 18“; nicht lesbar bleibt der getippte Text stehen */
+      else if(key==="kgKreise"){ var kl=kgKreiseLesen(v); w[key]= kl.some(function(x){ return x!==x; }) ? v : (kl.length ? kl : null); }
       else w[key]= (key==="kreislaeufe") ? (v===""?null:+v) : v;
     });
     /* Innengeräte: je Zeile ein Gerät, leere Zeilen fallen weg */
@@ -22171,6 +22289,10 @@ function verwaltungTeilAnlagen(P){
       /* mit Punkt getippt: sagen, wie die Zahl gelesen wird („1.150“ = 1150) */
       '<span class="muted" data-zahlhinweis style="font-size:12.5px"></span></label>';
     if(f.t==="datum") return '<label class="fl"><span>'+esc(f.l)+'</span><input type="date" data-a="'+f.k+'" value="'+esc(v)+'"></label>';
+    /* Füllmenge je Kältekreis (Inhaber 06.10.2026): eine Zeile, Kreise mit „/“ getrennt */
+    if(f.t==="kreise") return '<label class="fl"><span>'+esc(f.l)+' (kg)</span><input type="text" inputmode="decimal" data-a="'+f.k+'" placeholder="z. B. 20,5 / 19 / 18" value="'+
+      esc(Array.isArray(w[f.k]) ? kgKreiseText(w[f.k], true) : v)+'">'+
+      '<span class="muted" style="font-size:12.5px">je Kreis mit „/“ getrennt – „HJW ab 30 kg“ gilt für den größten Kreis</span></label>';
     if(f.t==="jn") return '<label class="fl"><span>'+esc(f.l)+'</span><select data-a="'+f.k+'">'+
       [["","–"],["ja","ja"],["nein","nein"]].concat((f.extra||[]).map(function(x){ return [x,x]; })).map(function(o){ return '<option value="'+o[0]+'"'+(v===o[0]?" selected":"")+">"+o[1]+"</option>"; }).join("")+"</select></label>";
     if(f.t==="zahl") return '<label class="fl"><span>'+esc(f.l)+'</span><input type="number" min="1" data-a="'+f.k+'" value="'+esc(v)+'"></label>';
@@ -22197,7 +22319,8 @@ function verwaltungTeilAnlagen(P){
     var box=k.querySelector(".anlagendaten");
     box.innerHTML=datenBlockHtml(w);
     /* Bauart, Regelung und Fernzugriff entscheiden, welche Fragen folgen */
-    box.querySelectorAll('[data-a="bauart"],[data-a="regelung"],[data-a="fernzugriff"]').forEach(function(x){
+    /* Kältekreisläufe: ab zwei Kreisen kommt „Füllmenge je Kältekreis“ dazu */
+    box.querySelectorAll('[data-a="bauart"],[data-a="regelung"],[data-a="fernzugriff"],[data-a="kreislaeufe"]').forEach(function(x){
       x.onchange=function(){ datenBlockSetzen(k, anlagenWerte(k)); };
     });
     box.querySelectorAll("[data-zeigen]").forEach(function(b){
@@ -22251,7 +22374,7 @@ function verwaltungTeilAnlagen(P){
       '<div class="note" data-ibhinweis hidden style="font-size:12.5px">Inbetriebnahme eingetragen bzw. geändert – passen die Termine dazu? '+
         '<button class="btn sm" type="button" data-a2="regel2" style="margin-left:6px">Standardregel anwenden</button></div>'+
       '<div class="rowflex" style="gap:6px"><button class="btn ghost sm" type="button" data-a2="plus">+ Termin hinzufügen</button>'+
-        '<button class="btn ghost sm" type="button" data-a2="regel" title="JW im Monat der Inbetriebnahme, sechs Monate später HJW (ab 30 kg) bzw. HJI">Standardregel anwenden</button></div>'+
+        '<button class="btn ghost sm" type="button" data-a2="regel" title="JW im Monat der Inbetriebnahme, sechs Monate später HJW (ab 30 kg in einem Kältekreis) bzw. HJI">Standardregel anwenden</button></div>'+
       /* sehr kleine Anlage: bewusst nur die Jahreswartung – hier auch wieder zurückzunehmen */
       '<label class="chk" style="font-size:12.5px;align-items:center"><input type="checkbox" data-a="nurJW"'+(d.nurJW?" checked":"")+
         "><span>Kein Halbjahrestermin – nur Jahreswartung (sehr kleine Anlage)</span></label>"+
@@ -22305,8 +22428,13 @@ function verwaltungTeilAnlagen(P){
          !window.confirm("Füllmenge „"+kgF.value.trim()+"“ gelesen als "+kg+" kg (Punkt als Tausenderpunkt). Stimmt das?\n\nSonst abbrechen und mit Komma eingeben (z. B. 1,15).")){ kgF.focus(); return; }
       var zeilen=Array.prototype.filter.call(k.querySelectorAll(".terminzeile"), function(z){ var e=z.querySelector('[data-t="entfaellt"]'); return !(e && e.checked); });
       if(zeilen.length>2){ toast("Diese Anlage hat mehr als zwei Termine – bitte zuerst die überzähligen auf „Termin entfällt“ setzen."); return; }
+      /* „HJW ab 30 kg“ je Kältekreis (Inhaber 06.10.2026): mit den Kreisen aus dem Formular der größte Kreis */
+      var krF=k.querySelector('[data-a="kgKreise"]'), krN=k.querySelector('[data-a="kreislaeufe"]');
+      var dKr={kaeltemittelKg:kg||null, kgKreise:krF ? krF.value : d.kgKreise, kreislaeufe:krN ? krN.value : d.kreislaeufe};
+      if(krF && kgKreiseLesen(krF.value).some(function(x){ return x!==x; })){ toast("Die Füllmenge je Kältekreis „"+krF.value.trim()+"“ ist nicht lesbar – bitte z. B. 20,5 / 19 / 18 eingeben."); krF.focus(); return; }
+      if(kgJeKreis(dKr)) kg=hjwKg(dKr)||0;
       /* „nur Jahreswartung“ nur, solange die Anlage keinen zweiten Termin hat */
-      regelKgFragen(kg, zeilen.length<2).then(function(kg2){
+      regelKgFragen(kg, zeilen.length<2, kgJeKreis(dKr)).then(function(kg2){
         if(kg2===undefined) return;
         k.querySelector('[data-a="nurJW"]').checked = kg2==="nurJW";
         var ibH=k.querySelector("[data-ibhinweis]"); if(ibH) ibH.hidden=true;
@@ -22643,6 +22771,9 @@ function verwaltungTeilSpeichern(P){
                    und Leistung vor dem Speichern nachfragen (von Typenschildern oft so abgeschrieben) */
                 if((f.t==="kg"||f.t==="kw") && dz>=1000 && v.indexOf(".")>=0 && v.indexOf(",")<0) tausender.push((kartenName||"Anlage")+": "+f.l+" „"+v+"“ = "+dz); }
               else if(f.t==="zahl" && v!=="" && !(+v>=0 && isFinite(+v))){ unlesbar.push((kartenName||"Anlage")+": "+f.l+" „"+v+"“"); neuP[f.k]=NaN; }
+              /* Füllmenge je Kältekreis: Liste von Zahlen; nicht lesbar → nicht speichern und sagen */
+              else if(f.t==="kreise"){ var kl2=kgKreiseLesen(v); if(kl2.some(function(x){ return x!==x; })) unlesbar.push((kartenName||"Anlage")+": "+f.l+" „"+v+"“ (z. B. 20,5 / 19 / 18)");
+                neuP[f.k]= kl2.length ? kl2 : null; }
               /* Dichtheitskontrolle: eine Anzahl Monate (1–60) oder „nz“ – kein negativer oder Text-Wert */
               else if(f.k==="dichtheitMonate" && v && v!=="nz" && !(/^\d{1,2}$/.test(v) && +v>=1 && +v<=60)){ unlesbar.push((kartenName||"Anlage")+": "+f.l+" „"+v+"“ (Monate 1–60 oder nz)"); neuP[f.k]=v; }
               else neuP[f.k]= (f.t==="zahl") ? (v===""?null:+v) : (f.t==="datum" ? (v||null) : v);
@@ -22914,7 +23045,7 @@ function verwaltungEditor(s){
       '<div class="rowflex" style="margin-top:10px"><button class="btn ghost sm" type="button" id="a_plus">+ weitere Anlage</button>'+
         (s._entwurf?"":'<button class="btn ghost sm" type="button" id="a_plusKi">+ Anlage geführt anlegen (auch aus Prüfbuch per KI)</button>')+"</div>"+
       '<div class="muted" style="font-size:12.5px;margin-top:8px">Ein Markt hat eine oder mehrere <strong>Anlagen</strong>. Jede Anlage hat ihre '+
-        '<strong>Termine</strong>: die Jahreswartung am Jahrestag der Inbetriebnahme, dazu sechs Monate versetzt HJW (ab 30 kg Kältemittel) '+
+        '<strong>Termine</strong>: die Jahreswartung am Jahrestag der Inbetriebnahme, dazu sechs Monate versetzt HJW (ab 30 kg Kältemittel in einem Kältekreis) '+
         'oder HJI. Steht ein Termin in der falschen Anlage, schiebt ihn die Auswahl rechts neben dem Termin hinüber.</div>'+
     "</fieldset>"+
 
@@ -23243,7 +23374,7 @@ function marktDrang(s){
    – weicht der Soll-Monat der alten Liste höchstens 3 Monate davon ab, bleibt er;
      der Halbjahrestermin zusätzlich nur, wenn er 5 bis 7 Monate neben der
      (endgültigen) JW liegt – sonst JW + 6 Monate;
-   – Halbjahrestermin ab 30 kg Kältemittel HJW, sonst HJI;
+   – Halbjahrestermin ab 30 kg Kältemittel in einem Kältekreis HJW, sonst HJI;
    – ohne Inbetriebnahme wird nichts gerechnet, der Fall steht in Nachbessern.
    Nur Zeilen der alten Liste – eine in der App angelegte Anlage ist keine
    Altlast (ob sie eine Listenzeile doppelt, klärt „Mögliche Doppelanlagen“).
@@ -23302,7 +23433,8 @@ function altlastenFaelle(){
       var mIb=+ib.slice(5,7), zielHalb=((mIb+6-1)%12)+1;
       /* näher am IB-Monat = Jahreswartung */
       var jw = (monatsAbstand(m0,mIb) <= monatsAbstand(m1,mIb)) ? t0 : t1, hj = jw===t0 ? t1 : t0;
-      var kg=+(d0.kaeltemittelKg||d1.kaeltemittelKg||0);
+      /* ab 30 kg im größten Kältekreis (sonst gesamt) – Inhaber 06.10.2026 */
+      var kg=hjwKg(d0); if(kg==null) kg=hjwKg(d1); kg=+kg||0;
       var neuMonat=function(alt, ziel){ return (alt && monatsAbstand(alt,ziel)<=3) ? +alt : ziel; };
       var jwM=neuMonat(slotMonat(jw), mIb), hjAlt=slotMonat(hj);
       var hjM=(hjAlt && monatsAbstand(hjAlt,zielHalb)<=3 && monatsAbstand(hjAlt,jwM)>=5) ? hjAlt : ((jwM+5)%12)+1;
@@ -23378,7 +23510,7 @@ function altlastenAutomatisch(){
    Markt einen Halbjahrestermin (HJI oder HJW), bekommen die weiteren Anlagen
    dort, die nur die Jahreswartung haben, ebenfalls einen – beim selben Besuch
    werden Filter und Kühllamellen gereinigt, abgerechnet ganz normal als HJI.
-   Automatisch angelegt (ab 30 kg HJW, sonst HJI), zählt ab heute; Monat wie der
+   Automatisch angelegt (ab 30 kg in einem Kältekreis HJW, sonst HJI), zählt ab heute; Monat wie der
    Halbjahrestermin der anderen Anlage – vor Ort wird er bestätigt (gleicher
    Besuch oder 6 Monate nach der JW). Jeder Schritt steht im Änderungsverlauf
    und ist rücknehmbar; ein Merker verhindert, dass ein zurückgenommener Termin
@@ -23407,8 +23539,8 @@ function hjMarktFaelle(){
       if(anlageDaten(a.leader).nurJW) return;   /* bewusst nur Jahreswartung – nie überstimmen (Inhaber 05.10.2026) */
       if(stammUeber[hjMarktMerkerId(a.leader.id)]) return;
       if(ALLE_POS.some(function(p){ return p.hjiMarkt && p.anlageZu===a.leader.id; })) return;
-      var kg=+a.leader.kaeltemittelKg;
-      faelle.push({s:s, a:a, vorbild:vorbild, code:(isFinite(kg) && kg>=30) ? "HJW" : "HJI", monat:+vorbild.h.monat});
+      var kg=hjwKg(anlageDaten(a.leader));   /* größter Kältekreis, sonst gesamt (Inhaber 06.10.2026) */
+      faelle.push({s:s, a:a, vorbild:vorbild, code:(kg!=null && kg>=30) ? "HJW" : "HJI", monat:+vorbild.h.monat});
     });
   });
   return faelle;
@@ -24517,11 +24649,11 @@ function handbuchKarte(z){
           "auch wenn er von der Regel abweicht (dann soll ein Grund dabeistehen). Einzige Ausnahme ist die automatische Bereinigung der "+
           "Altlasten (unten). Nur wenn er fehlt, rechnet die App aus der Inbetriebnahme.",
         "<strong>Standardregel</strong> (Knopf „Standardregel anwenden“): JW im Monat der Inbetriebnahme, sechs Monate versetzt "+
-          "<strong>HJW ab 30 kg</strong> Kältemittel, sonst <strong>HJI</strong>. Ein eingetragener Soll-Monat bleibt, wenn er höchstens 3 Monate abweicht – der Halbjahrestermin zusätzlich nur, wenn er 5–7 Monate von der JW entfernt liegt (sonst JW + 6).",
+          "<strong>HJW ab 30 kg</strong> Kältemittel in einem Kältekreis (maßgeblich ist der größte Kreis, nicht die Summe der Anlage – „Füllmenge je Kältekreis“ bei den Anlagendaten), sonst <strong>HJI</strong>. Ein eingetragener Soll-Monat bleibt, wenn er höchstens 3 Monate abweicht – der Halbjahrestermin zusätzlich nur, wenn er 5–7 Monate von der JW entfernt liegt (sonst JW + 6).",
         "<strong>Nur Jahreswartung:</strong> Sehr kleine Anlagen brauchen nur einen Besuch im Jahr. Ist die Füllmenge nicht bekannt, bietet die Frage "+
           "„Hat die Anlage 30 kg Kältemittel oder mehr?“ dafür die Wahl <strong>„Kein Halbjahrestermin – nur Jahreswartung“</strong> (solange die Anlage "+
           "keinen zweiten Termin hat). Dann wird kein Halbjahrestermin angelegt – auch nicht automatisch, wenn eine andere Anlage am Markt einen hat –, und die Anlage gilt nicht als lückenhaft. Die Entscheidung steht mit Name im "+
-          "Änderungsverlauf und lässt sich in der Verwaltung bei der Anlage wieder zurücknehmen (Haken „Kein Halbjahrestermin“). Ab 30 kg bleibt die Halbjahreswartung Pflicht.",
+          "Änderungsverlauf und lässt sich in der Verwaltung bei der Anlage wieder zurücknehmen (Haken „Kein Halbjahrestermin“). Ab 30 kg in einem Kältekreis bleibt die Halbjahreswartung Pflicht.",
         "<strong>Termine vor Ort prüfen:</strong> Beim Protokoll („Schritt für Schritt ausfüllen“, Wartung und Störung) fragt die App je Anlage "+
           "„Stimmen Inbetriebnahme und Termine?“ – bei den angehakten Anlagen bei jedem Besuch, solange Inbetriebnahme, Soll-Monat oder Kürzel fehlen "+
           "oder ein Soll-Monat ohne Begründung von der Regel abweicht; bei den anderen Anlagen des Markts, wenn etwas fehlt. „Überspringen“ geht immer. "+
@@ -24553,7 +24685,7 @@ function handbuchKarte(z){
           "oder „betreut“ zurückstellen.",
         "<strong>Altlasten der alten Liste:</strong> Dieselbe Anlage in zwei Zeilen der Liste, jede mit „JW“, ist ein Fehler der Liste. "+
           "Öffnet ein Admin die App, korrigiert sie das einmal selbst: JW im Monat der Inbetriebnahme (ein alter Soll-Monat bleibt, wenn er "+
-          "höchstens 3 Monate abweicht), der Halbjahrestermin sechs Monate von der JW entfernt – ab 30 kg HJW, sonst HJI (sein alter Soll-Monat "+
+          "höchstens 3 Monate abweicht), der Halbjahrestermin sechs Monate von der JW entfernt – ab 30 kg in einem Kältekreis HJW, sonst HJI (sein alter Soll-Monat "+
           "bleibt nur, wenn er höchstens 3 Monate von seiner Regel abweicht und 5–7 Monate von der JW entfernt liegt). Jede Korrektur steht im "+
           "Änderungsverlauf; wird sie dort zurückgenommen, baut die App nichts erneut um. Ohne Inbetriebnahme, bei mehr als zwei Zeilen, "+
           "verschiedenem Typenschild, begründetem Soll-Monat oder Terminen, die nicht rund ein halbes Jahr auseinanderliegen, gibt es nur einen "+
@@ -24564,7 +24696,7 @@ function handbuchKarte(z){
         "<strong>Füllmenge</strong> kommt aus dem Prüfbuch (auf dem Typenschild steht nur die Werksfüllung). Aus Kältemittel und Füllmenge "+
           "rechnet die App GWP und CO₂-Äquivalent.",
         "<strong>Dichtheitskontrolle</strong> (F-Gase-Verordnung): ab 5 t CO₂e jährlich, ab 50 t halbjährlich, ab 500 t vierteljährlich – "+
-          "mit Leckage-Erkennung jeweils doppelt so lang. Ab 30 kg ist bei uns zusätzlich die Halbjahreswartung (HJW) vorgesehen.",
+          "mit Leckage-Erkennung jeweils doppelt so lang. Ab 30 kg in einem Kältekreis ist bei uns zusätzlich die Halbjahreswartung (HJW) vorgesehen.",
         "<strong>Prüfbuch-Ort:</strong> Standard „"+esc(PRUEFBUCH_ORT)+"“.",
         "<strong>Zugang zur Regelung</strong> (Link, Benutzer, Passwort) steht nur bei der Anlage – nie im Protokoll, nie im PDF, nie im Archiv, "+
           "im Änderungsverlauf nur als „geändert“."]))+
@@ -24884,7 +25016,7 @@ var RUNDGAENGE={
         "<strong>Vorschläge</strong> in Feldern (Problem, Ursache …) stammen aus dem, was das Team schon einmal eingetippt hat – Zugangsdaten nie."])},
     {titel:"Anlagendaten und Termine – worauf achten", text:RG_LISTE([
       "<strong>Typenschild und Prüfbuch</strong> gelten dem Außengerät. Fotos davon kann die KI lesen – das Ergebnis kommt immer zur Kontrolle; die Fotos selbst bleiben an der Anlage (📷 Fotos der Anlage, Anlagenbuch).",
-      "<strong>Füllmenge</strong> aus dem Prüfbuch (auf dem Typenschild steht nur die Werksfüllung). Ab 30 kg gibt es die Halbjahreswartung (HJW), darunter die Halbjahresinspektion (HJI).",
+      "<strong>Füllmenge</strong> aus dem Prüfbuch (auf dem Typenschild steht nur die Werksfüllung). Ab 30 kg in einem Kältekreis gibt es die Halbjahreswartung (HJW) – bei mehreren Kreisen zählt der größte, nicht die Summe (<strong>Füllmenge je Kältekreis</strong>), darunter die Halbjahresinspektion (HJI).",
       "<strong>Termine:</strong> Jahreswartung (JW) im Monat der Inbetriebnahme, der Halbjahrestermin sechs Monate versetzt. Stimmt etwas nicht, hier korrigieren – mit kurzem Grund.",
       "<strong>Neue Anlage mit zwei Terminen:</strong> „Heute gewartet als“ bestimmt, welcher Termin heute erledigt ist – darauf achten, sonst stimmt die Fälligkeit nicht.",
       "Nach einer Störung bietet die App an, fällige Wartungen am selben Markt gleich mitzumachen."])+
@@ -25043,7 +25175,7 @@ var RUNDGAENGE={
       "<strong>Kontakte</strong> ← Protokolle (wer unterschrieben hat), Störungen (Lidl-Kontakt), Projekte (Beteiligte); der Markt zeigt sie unter „Projekte und Kontakte“.",
       "Alles ist <strong>von beiden Seiten</strong> erreichbar: vom Markt zum Protokoll, vom Protokoll zum Projekt, von der Datei zur Angabe."])},
     {titel:"Wie die Fälligkeit entsteht", text:RG_LISTE([
-      "Jede Anlage: <strong>Jahreswartung</strong> im Monat der Inbetriebnahme, <strong>Halbjahrestermin</strong> sechs Monate versetzt (ab 30 kg HJW, sonst HJI).",
+      "Jede Anlage: <strong>Jahreswartung</strong> im Monat der Inbetriebnahme, <strong>Halbjahrestermin</strong> sechs Monate versetzt (ab 30 kg in einem Kältekreis HJW, sonst HJI).",
       "Die App sucht für jeden Termin den passenden Besuch: eine Wartung bis 3 Monate vor dem nächsten Termin gilt als <strong>verspätet erledigt</strong>, später als <strong>vorgezogen</strong> für den nächsten – der versäumte gilt dann als mit erledigt.",
       "Eine Wartung an einem Termin der Anlage erledigt einen versäumten anderen Termin derselben Anlage mit.",
       "Ein neu angelegter Termin zählt ab dem Tag des Anlegens – nicht rückwirkend.",
@@ -25741,17 +25873,17 @@ function viewDaten(){
     '<div><h2>Zu klären</h2><div class="sub">Punkte, die sich aus der Liste allein nicht auflösen lassen.</div></div>'+
     '<div class="stack">'+
       (function(){
-        /* Regel: ab 30 kg Kältemittel ist der zweite Besuch im Jahr eine
+        /* Regel: ab 30 kg Kältemittel in einem Kältekreis ist der zweite Besuch im Jahr eine
            Halbjahreswartung (HJW), keine bloße Inspektion */
         /* je Anlage geprüft wie in Nachbessern – eine HJW einer anderen Anlage im Markt hilft nicht */
         var anlagen=[];
         ST.forEach(function(s){ anlagenOhneHJW(s).forEach(function(a){ anlagen.push({s:s, a:a}); }); });
         if(!anlagen.length) return "";
         var maerkte=anlagen.filter(function(x,i){ return !i || anlagen[i-1].s!==x.s; }).length;
-        return '<div class="note warnbox"><strong>'+dzNb(anlagen.length+' Anlage'+(anlagen.length===1?"":"n")+' ab 30 kg Kältemittel ohne Halbjahreswartung')+'</strong> '+
+        return '<div class="note warnbox"><strong>'+dzNb(anlagen.length+' Anlage'+(anlagen.length===1?"":"n")+' ab 30 kg Kältemittel (in einem Kältekreis) ohne Halbjahreswartung')+'</strong> '+
           '(in '+maerkte+' Markt'+(maerkte===1?"":"en")+') – '+
           'dort steht nur eine Jahreswartung, oder der zweite Termin ist als Inspektion (HJI) eingetragen. '+
-          'Nach Ihrer Regel braucht es ab 30 kg eine Halbjahreswartung (HJW): '+
+          'Nach Ihrer Regel braucht es ab 30 kg in einem Kältekreis eine Halbjahreswartung (HJW): '+
           anlagen.slice(0,14).map(function(x){ return dzMarkt(x.s, stName(x.s)+" – "+anlagenName(x.a.leader), "kg", x.a.leader.id); }).join(", ")+(anlagen.length>14?" "+dzNb("…"):"")+".</div>";
       })()+
       (function(){
