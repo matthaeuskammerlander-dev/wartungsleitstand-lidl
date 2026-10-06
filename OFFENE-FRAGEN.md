@@ -49,5 +49,6 @@ Nur Fachregeln, Löschen und Rechte – alles andere wird ohne Rückfrage erledi
 - **Urlaub**: Urlaubsanspruch je Person, Urlaubsjahr (Kalenderjahr oder Eintrittsjahr), halbe Urlaubstage, Resturlaub ins nächste Jahr.
 - **F23** KPlus-Gutschriften als eigene Belegart?
 - **Michael Kors**: Rechnungsempfänger.
+- **Arbeitsnachweis → Rechnung (Chef)**: Samstag 4 Mann à 10 Std – alle 40 Std als Regie UND 40 Std Zuschlag 50 % (so gebaut, wie in KPlus 419885) oder Wochenende nur als Zuschlag? Ab wann gilt „Nacht“ (100 %), und bekommen Überstunden automatisch einen Zuschlag? Bis zur Antwort: Regie + Zuschlag Sa/So/Feiertag, Nacht/Überstunden nur als Hinweis.
 - **Darko**: „Verkauf 2“ (Sammelzeile aufteilen).
 - **F21**: Preise je Art und Anlagentyp – alte KPlus-Rechnung hochladen.
