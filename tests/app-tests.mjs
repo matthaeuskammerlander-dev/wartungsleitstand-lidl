@@ -58,7 +58,7 @@ const pruefe = (bed, text) => { if (!bed) throw new Error(text); };
 let BROWSER, PORT;
 /* frische Seite (eigener Speicher), angemeldet als konto (oder abgemeldet) */
 async function oeffnen(konto, opt = {}) {
-  const kontext = await BROWSER.newContext({ viewport: opt.handy ? { width: 390, height: 844 } : { width: 1280, height: 900 }, isMobile: !!opt.handy, hasTouch: !!opt.handy });
+  const kontext = await BROWSER.newContext({ viewport: opt.handy ? { width: 390, height: 844 } : { width: 1280, height: 900 }, isMobile: !!opt.handy, hasTouch: !!opt.handy, ...(opt.ua ? { userAgent: opt.ua } : {}) });
   /* simulierte Uhrzeit (opt.uhr oder TEST_UHR="HH:MM"): heute zu dieser Zeit, die Uhr läuft von dort weiter (Timer bleiben echt) */
   const uhr = opt.uhr || process.env.TEST_UHR;
   if (uhr) await kontext.addInitScript((hm) => {
@@ -242,7 +242,13 @@ test("Handy: Eingabefelder mit 16 px – das iPhone vergrößert beim Anmelden u
   });
   pruefe(r.grob, "Test-Handy gilt nicht als Touch-Gerät");
   pruefe(r.mail >= 16 && r.pw >= 16, "Anmeldefelder kleiner als 16 px: " + JSON.stringify(r));
-  pruefe(!/maximum-scale|user-scalable=no/.test(r.vp), "Zoomen gesperrt: " + r.vp);
+  pruefe(!/maximum-scale|user-scalable=no/.test(r.vp), "Zoomen gesperrt (kein iPhone): " + r.vp);
+  /* iPhone: maximum-scale=1 gegen das automatische Hineinzoomen (Safari lässt Zoomen mit zwei Fingern trotzdem zu) */
+  const ip = await oeffnen(null, { handy: true, ua: "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1" });
+  const vpIp = await ip.seite.evaluate(() => document.querySelector('meta[name="viewport"]').content);
+  pruefe(/maximum-scale=1/.test(vpIp) && !/user-scalable=no/.test(vpIp), "iPhone: Viewport ohne Zoom-Grenze: " + vpIp);
+  pruefe(!ip.fehler.length, "iPhone: Laufzeitfehler: " + ip.fehler.join("; "));
+  await ip.zu();
   const b = await oeffnen(KONTEN.techniker, { handy: true });
   const r2 = await b.seite.evaluate(async () => {
     const x = window.__t.x, w = (ms) => new Promise((f) => setTimeout(f, ms)), klein = [];
