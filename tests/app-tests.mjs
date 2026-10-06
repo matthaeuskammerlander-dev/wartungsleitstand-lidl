@@ -6351,6 +6351,34 @@ test("Tagesrückblick: nach jedem Ausstempeln – Grenze verschieben, teilen, �
     return { offen: !!d, meldung: e ? e.textContent : "", frei: !ok.disabled, gleich: vorher === JSON.stringify(db.arbeitszeiten), geprueft: x("tagGeprueft('" + T + "')") };
   });
   if (!r4.offen || !r4.meldung || !r4.frei || !r4.gleich || r4.geprueft) fehl.push("(4) ohne Netz: " + JSON.stringify(r4));
+  /* (5) „geprüft“ steht in der Datenbank (Tabelle tag_geprueft) – gilt auch auf einem anderen Gerät; fehlt die Tabelle: Rückfall aufs Gerät */
+  const r5 = await a.seite.evaluate(async () => {
+    const tt = window.__tt, x = window.__t.x, db = window.__db.tabellen; tt.leeren(); const T = tt.werktag(1), T2 = tt.werktag(2), T3 = tt.werktag(3);
+    db.tag_geprueft.length = 0;
+    tt.gestempelt({ datum: T3, beginn: "07:00", ende: "12:00", minuten: 300, bereich: "werkstatt" });
+    tt.gestempelt({ datum: T, beginn: "07:00", ende: "12:00", minuten: 300, bereich: "werkstatt" });
+    tt.gestempelt({ datum: T2, beginn: "07:00", ende: "12:00", minuten: 300, bereich: "werkstatt" });
+    await tt.laden();
+    x("abgleichDialog('" + T + "', false)"); await tt.warte(200); tt.ok(tt.dialog()).click(); await tt.warte(400);
+    const zeile = db.tag_geprueft.filter((g) => g.datum === T).map((g) => (g.user_id === tt.ich()) + " " + !!g.stand + " " + !!g.geprueft_am).join();
+    /* anderes Gerät: nichts auf dem Gerät gemerkt, frisch aus der Datenbank geladen */
+    localStorage.removeItem("ukt_tag_geprueft"); x("TAG_GEPRUEFT_DB={}; tagGeprueftKonto=''; 1");
+    const vorLaden = x("tagGeprueft('" + T + "')"); await x("zeitenLaden()");
+    const andersGeraet = x("tagGeprueft('" + T + "')");
+    /* fremde Zeile schreiben geht nicht (auch nicht über die Datenbank) */
+    const fremd = await x("Store.sb.from('tag_geprueft').upsert({user_id:'u_fremd', datum:'" + T + "', stand:'x'}, {onConflict:'user_id,datum'})");
+    /* ohne Netz geprüft: auf dem Gerät gemerkt, beim nächsten Laden in die Datenbank nachgetragen */
+    window.__netzWeg = true; x("abgleichDialog('" + T3 + "', false)"); await tt.warte(200); tt.ok(tt.dialog()).click(); await tt.warte(400); window.__netzWeg = false;
+    const ohneNetz = db.tag_geprueft.some((g) => g.datum === T3); await x("zeitenLaden()"); await tt.warte(300);
+    const nachgetragen = db.tag_geprueft.some((g) => g.datum === T3);
+    /* Tabelle fehlt: „Passt so“ merkt es auf dem Gerät, ohne Warnung */
+    window.__ohneTagGeprueft = true; x("TAG_GEPRUEFT_DB={}; tagGeprueftKonto=''; 1"); await x("zeitenLaden()"); tt.toasts.length = 0;
+    x("abgleichDialog('" + T2 + "', false)"); await tt.warte(200); tt.ok(tt.dialog()).click(); await tt.warte(400);
+    const rueckfall = x("tagGeprueft('" + T2 + "')"), warnung = tt.toasts.filter((t) => /⚠/.test(t));
+    window.__ohneTagGeprueft = false;
+    return { zeile, ohneNetz, nachgetragen, vorLaden, andersGeraet, fremd: !!(fremd && fremd.error), rueckfall, warnung, ohneDb: db.tag_geprueft.some((g) => g.datum === T2) };
+  });
+  if (r5.zeile !== "true true true" || r5.ohneNetz || !r5.nachgetragen || r5.vorLaden || !r5.andersGeraet || !r5.fremd || !r5.rueckfall || r5.warnung.length || r5.ohneDb) fehl.push("(5) geprüft in der Datenbank: " + JSON.stringify(r5));
   if (a.fehler.length) fehl.push("Laufzeitfehler: " + a.fehler.join("; "));
   await a.zu();
   pruefe(!fehl.length, fehl.join(" | "));

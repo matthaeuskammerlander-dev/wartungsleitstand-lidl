@@ -1,7 +1,7 @@
 /* Nachgebaute Supabase-Schnittstelle für die automatischen Tests (tests/app-tests.mjs) – nur Code, Startbestand aus seed.json (erfunden). */
 (function(){
   "use strict";
-  var T=["gelernte_werte","fahrzeuge","fahrzeug_eintraege","fahrzeug_kosten","kontakte","protokoll_vermerke","planung","planung_privat","belege","katalog","stempel","einstellungen","projekte","arbeitszeiten","anlagenfotos","touren","kundenliste","gelesen","push_ereignisse","kennzahlen","chat","abrechnung","push_abos","protokolle","aenderungen","stammdaten","admins","berichte","protokoll_fassungen","rollen","ki_nutzung","posteingang","stammdaten_lesen","aenderungswuensche","vor_ort_fragen","werkzeug","werkzeug_verlauf","bedarf","packlisten","auslagen","auslagen_konto","arbeitsnachweise"];
+  var T=["gelernte_werte","fahrzeuge","fahrzeug_eintraege","fahrzeug_kosten","kontakte","protokoll_vermerke","planung","planung_privat","belege","katalog","stempel","einstellungen","projekte","arbeitszeiten","anlagenfotos","touren","kundenliste","gelesen","push_ereignisse","kennzahlen","chat","abrechnung","push_abos","protokolle","aenderungen","stammdaten","admins","berichte","protokoll_fassungen","rollen","ki_nutzung","posteingang","stammdaten_lesen","aenderungswuensche","vor_ort_fragen","werkzeug","werkzeug_verlauf","bedarf","packlisten","auslagen","auslagen_konto","arbeitsnachweise","tag_geprueft"];
   var DB; try{ DB=JSON.parse(localStorage.getItem("attrappe_db")||"null"); }catch(e){ DB=null; }
   /* leerer Speicher (neuer Port, nach __db.zuruecksetzen()): Startbestand aus seed.json */
   if(!DB){ DB={}; try{ var x=new XMLHttpRequest(); x.open("GET","seed.json?"+Date.now(),false); x.send();
@@ -104,6 +104,11 @@
       if(zeile && (!alt || ("privat_von" in zeile)) && zeile.privat_von!==uid()) return "fahrzeuge: nur das eigene Privatauto";
     }
     if(tab==="fahrzeuge" && art==="delete" && rolle!=="inhaber") return "fahrzeuge: loeschen nur Inhaber";
+    /* wie tag_geprueft (Tagesrückblick, Inhaber 06.10.2026): schreiben nur die eigene Zeile (auch der Inhaber), löschen gar nicht */
+    if(tab==="tag_geprueft" && art!=="select"){
+      if(art==="delete") return "tag_geprueft: keine Regel zum Loeschen";
+      var tg=Object.assign({}, alt||{}, zeile||{}); if(tg.user_id!==uid() || (alt && alt.user_id!==uid())) return "tag_geprueft: nur die eigene Zeile";
+    }
     /* wie reisekosten.sql: eigene (der Inhaber alle); abgegeben ändert nur der Inhaber; ausbezahlt setzt nur er */
     if((tab==="auslagen"||tab==="auslagen_konto") && art!=="select" && rolle!=="inhaber"){
       var az=alt||zeile||{};
@@ -322,6 +327,8 @@
     var tab=DB[this.t], self=this, erg=[];
     if(!tab) return {data:null,error:{message:"keine Tabelle"}};
     if(!sitzung) return {data:[],error:null};
+    /* window.__ohneTagGeprueft: die Tabelle ist noch nicht eingerichtet (SQL noch nicht ausgeführt) */
+    if(this.t==="tag_geprueft" && window.__ohneTagGeprueft) return {data:null,error:{message:'relation "public.tag_geprueft" does not exist', code:"42P01"}};
     if(this.a==="select"){
       var sv=darf(this.t,"select",null,null); if(sv && /nur lesen/.test(sv)) return {data:[],error:null};
       if(this.t==="rollen") { /* wie die Regel: eigene Zeile, Admins alle */ }
@@ -331,7 +338,7 @@
       if(this.t==="planung_privat") erg=erg.filter(function(r){ return r.user_id===uid(); });   /* wie die Regel: nur die eigenen */
       /* wie die Sperrregel vom 05.10.2026 (rechte-2026-10-05.sql): Inhaber alles, Admins nur Lidl-Aufträge und Rapporte, sonst nichts */
       if(this.t==="posteingang") erg=erg.filter(postSieht);
-      if(this.t==="arbeitszeiten"||this.t==="auslagen"||this.t==="auslagen_konto"){ var rl=(DB.rollen.filter(function(r){ return r.user_id===uid(); })[0]||{}).rolle; if(rl!=="inhaber") erg=erg.filter(function(r){ return r.user_id===uid(); }); }
+      if(this.t==="arbeitszeiten"||this.t==="auslagen"||this.t==="auslagen_konto"||this.t==="tag_geprueft"){ var rl=(DB.rollen.filter(function(r){ return r.user_id===uid(); })[0]||{}).rolle; if(rl!=="inhaber") erg=erg.filter(function(r){ return r.user_id===uid(); }); }
       /* wie „fahrzeuge lesen“ (fahrzeuge.sql): Büro alle, sonst nur das Fahrzeug, in dem man Fahrer ist */
       if(this.t==="fahrzeuge"){ var rf=(DB.rollen.filter(function(r){ return r.user_id===uid(); })[0]||{}).rolle; if(!(admin() || rf==="inhaber")) erg=erg.filter(function(r){ return (r.fahrer||[]).indexOf(uid())>=0; }); }
       if(this.ords) erg.sort(function(a,b){ for(var i=0;i<self.ords.length;i++){ var o=self.ords[i],x=a[o.s],y=b[o.s]; var c=(x<y?-1:x>y?1:0)*(o.auf?1:-1); if(c) return c; } return 0; });
@@ -385,6 +392,7 @@
         if(i!=null && self.o.ignoreDuplicates) return;
         v=v||darf(self.t, i==null?"insert":"update", d, i==null?null:tab[i]);
         if(v) return;
+        if(self.t==="tag_geprueft") d=Object.assign({}, d, {geprueft_am:new Date().toISOString()});   /* Zeit setzt der Server (Trigger) */
         if(i!=null){
           tab[i]=Object.assign({},tab[i],d); raus.push(tab[i]); }
         else { var r=Object.assign({},d); if(r.id==null) r.id="x"+Date.now().toString(36)+(++z);

@@ -357,8 +357,11 @@ Kammerlander Umwelt- und Klimatechnik (UKT) – oft kurz, vom Handy, im Feld.
   (auch ohne Termin, auch Präsentation) „Was hast du heute wann und wo gemacht?“ – Abschnitte aus Gestempeltem (inkl. Umstempeln)
   bzw. Kalender-Vorschlag, je Abschnitt Grenze ±15 min/Uhrzeit, Bereich, Markt, Projekt, Was, teilen, entfernen (Zeit an den
   Nachbarn); Blockanfang/-ende fest; nur geänderte Blöcke gehen an `stempel_abgleich`. „✓ Passt so“ ohne Änderung schreibt nichts,
-  merkt den Tag als geprüft (`tagGeprueft`/`tagAlsGeprueft`: localStorage `ukt_tag_geprueft` je Konto|Tag = Stand der gestempelten
-  Einträge; ganz „stempel_abgeglichen“ gilt überall als geprüft; Präsentation/Spielwiese nur im Speicher). „Später“ speichert nichts –
+  merkt den Tag als geprüft (`tagGeprueft`/`tagAlsGeprueft`, Wert = Stand der gestempelten Einträge): Tabelle `tag_geprueft`
+  (user_id, datum, stand, geprueft_am; lesen eigene + Inhaber, schreiben nur eigene, nicht Kunde/Präsentation, löschen niemand;
+  `tagGeprueftLaden` in `zeitenLaden`) – gilt auf allen Geräten; dazu localStorage `ukt_tag_geprueft` je Konto|Tag als Rückfall
+  (Tabelle fehlt → nur Gerät; Netz weg → beim nächsten `zeitenLaden` nachgetragen, `tagGeprueftSenden`). Ganz „stempel_abgeglichen“ gilt
+  ohnehin als geprüft; Präsentation/Spielwiese nur im Speicher. „Später“ speichert nichts –
   beim Tag „⇆ Tag prüfen“ (`tagPruefenOffen`), bis geprüft oder Monat bestätigt. Umstempeln mit Vorgabe aus dem Termin (`geplantFuerMich`, „⇄ Dorthin umstempeln“).
   Abwesenheit und Arbeit am selben Tag (`abwesenheitPruefen`, tools/abwesenheit-arbeit.sql, `planung.ausnahmen`): beim Einstempeln und
   Erfassen fragen (ein halber Tag mit Uhrzeit – EIN Tag mit von–bis – nur, wenn die Arbeit bzw. das Einstempeln hineinfällt:
