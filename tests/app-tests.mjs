@@ -58,7 +58,7 @@ const pruefe = (bed, text) => { if (!bed) throw new Error(text); };
 let BROWSER, PORT;
 /* frische Seite (eigener Speicher), angemeldet als konto (oder abgemeldet) */
 async function oeffnen(konto, opt = {}) {
-  const kontext = await BROWSER.newContext({ viewport: opt.handy ? { width: 390, height: 844 } : { width: 1280, height: 900 }, isMobile: !!opt.handy });
+  const kontext = await BROWSER.newContext({ viewport: opt.handy ? { width: 390, height: 844 } : { width: 1280, height: 900 }, isMobile: !!opt.handy, hasTouch: !!opt.handy });
   /* simulierte Uhrzeit (opt.uhr oder TEST_UHR="HH:MM"): heute zu dieser Zeit, die Uhr läuft von dort weiter (Timer bleiben echt) */
   const uhr = opt.uhr || process.env.TEST_UHR;
   if (uhr) await kontext.addInitScript((hm) => {
@@ -230,6 +230,33 @@ test("Kalender: Termin anlegen erscheint im Kalender; Präsentation speichert ni
     pruefe(!a.fehler.length, `${rolle}: Laufzeitfehler: ` + a.fehler.join("; "));
     await a.zu();
   }
+});
+
+test("Handy: Eingabefelder mit 16 px – das iPhone vergrößert beim Anmelden und Tippen nicht mehr (Zoomen bleibt erlaubt)", async () => {
+  const a = await oeffnen(null, { handy: true });
+  const r = await a.seite.evaluate(async () => {
+    const w = (ms) => new Promise((f) => setTimeout(f, ms));
+    const host = document.createElement("div"); host.appendChild(window.__t.x("viewAnmeldung()")); document.body.appendChild(host);
+    const gr = (q) => { const n = document.querySelector(q); return n ? parseFloat(getComputedStyle(n).fontSize) : -1; };
+    return { grob: matchMedia("(pointer:coarse)").matches, mail: gr("#l_mail"), pw: gr("#l_pw"), vp: (document.querySelector('meta[name="viewport"]') || {}).content || "" };
+  });
+  pruefe(r.grob, "Test-Handy gilt nicht als Touch-Gerät");
+  pruefe(r.mail >= 16 && r.pw >= 16, "Anmeldefelder kleiner als 16 px: " + JSON.stringify(r));
+  pruefe(!/maximum-scale|user-scalable=no/.test(r.vp), "Zoomen gesperrt: " + r.vp);
+  const b = await oeffnen(KONTEN.techniker, { handy: true });
+  const r2 = await b.seite.evaluate(async () => {
+    const x = window.__t.x, w = (ms) => new Promise((f) => setTimeout(f, ms)), klein = [];
+    for (const v of ["protokoll", "stunden", "kalender", "projekte"]) {
+      x("S.view='" + v + "'; render(); 1"); await w(400);
+      document.querySelectorAll("input:not([type=checkbox]):not([type=radio]):not([type=file]):not([type=range]),select,textarea").forEach((n) => {
+        const b = n.getBoundingClientRect(); if (b.width && parseFloat(getComputedStyle(n).fontSize) < 16) klein.push(v + ":" + (n.id || n.className || n.type)); });
+      if (document.documentElement.scrollWidth > window.innerWidth + 4) klein.push(v + ": breiter als der Bildschirm " + document.documentElement.scrollWidth);
+    }
+    return klein.slice(0, 8);
+  });
+  pruefe(!r2.length, "Felder unter 16 px bzw. zu breit: " + JSON.stringify(r2));
+  pruefe(!a.fehler.length && !b.fehler.length, "Laufzeitfehler: " + a.fehler.concat(b.fehler).join("; "));
+  await a.zu(); await b.zu();
 });
 
 test("Protokoll: Mangel je Anlage – auswählen, gespeichert mit Name, im PDF und im Anlagenbuch nur bei der Anlage", async () => {
