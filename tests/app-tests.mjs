@@ -59,6 +59,14 @@ let BROWSER, PORT;
 /* frische Seite (eigener Speicher), angemeldet als konto (oder abgemeldet) */
 async function oeffnen(konto, opt = {}) {
   const kontext = await BROWSER.newContext({ viewport: opt.handy ? { width: 390, height: 844 } : { width: 1280, height: 900 }, isMobile: !!opt.handy });
+  /* simulierte Uhrzeit (opt.uhr oder TEST_UHR="HH:MM"): heute zu dieser Zeit, die Uhr läuft von dort weiter (Timer bleiben echt) */
+  const uhr = opt.uhr || process.env.TEST_UHR;
+  if (uhr) await kontext.addInitScript((hm) => {
+    const Echt = Date, z = new Echt(); z.setHours(+hm.split(":")[0], +hm.split(":")[1], 0, 0);
+    const versatz = z.getTime() - Echt.now();
+    class Uhr extends Echt { constructor(...a) { if (a.length) super(...a); else super(Echt.now() + versatz); } static now() { return Echt.now() + versatz; } }
+    window.Date = Uhr;
+  }, uhr);
   const seite = await kontext.newPage();
   const fehler = [];
   seite.on("pageerror", (e) => fehler.push(e.message));
@@ -1534,7 +1542,8 @@ test("Stempeluhr ↔ Kalender: Abgleich teilt die gestempelte Zeit nach den Term
     x("planungStand=0; planungNachladen()"); await warte(500);
     await x("stempelDruecken('ein', {bereich:'werkstatt'})"); await warte(600);
     x("ansichtenSchliessen(); S.view='stunden'; S.stWoche=montagVon(isoLokal(new Date())); render()"); await warte(700);
-    const um = [...document.querySelectorAll("#stempelkarte button")].find((b) => /Dorthin umstempeln/.test(b.textContent));
+    /* gezielt bei „Wartung Jetzt“ – der verschobene Werkstatt-Termin (an Werktagen heute 14–15 Uhr) steht je nach Uhrzeit davor */
+    const um = [...document.querySelectorAll("#stempelkarte button")].find((b) => /Dorthin umstempeln/.test(b.textContent) && /Wartung Jetzt/.test(b.closest(".note").textContent));
     if (um) um.click(); await warte(500);
     d = [...document.querySelectorAll(".assistent")].pop();
     const vorbelegt = d ? { st: d.querySelector("[data-st]").value, was: d.querySelector("[data-neuwas]").value, bereich: [...d.querySelectorAll('.chip[aria-pressed="true"]')].map((c) => c.dataset.b).join() } : null;
