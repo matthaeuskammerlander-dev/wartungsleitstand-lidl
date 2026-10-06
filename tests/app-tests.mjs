@@ -232,6 +232,46 @@ test("Kalender: Termin anlegen erscheint im Kalender; Präsentation speichert ni
   }
 });
 
+test("Protokoll: Mangel je Anlage – auswählen, gespeichert mit Name, im PDF und im Anlagenbuch nur bei der Anlage", async () => {
+  const a = await oeffnen(KONTEN.techniker);
+  const r = await a.seite.evaluate(async () => {
+    const x = window.__t.x, w = (ms) => new Promise((f) => setTimeout(f, ms)), db = window.__db.tabellen, e = {};
+    x("formDirty=false; S.protoArt='wartung'; S.bearbeiten=null; S.protoStandort='TS1'; S.protoPos='TP1'; S.view='protokoll'; render(); 1");
+    await w(400);
+    const form = document.getElementById("proto");
+    form.querySelectorAll("fieldset.fs-zu").forEach((f) => f.classList.remove("fs-zu"));
+    const alles = document.getElementById("f_allesok"); if (alles) alles.click();
+    const leader = x("anlageLeader(posById.TP1).id");
+    document.getElementById("addMangel").click(); await w(50);
+    const zeilen = [...form.querySelectorAll(".mangelrow")], z1 = zeilen[zeilen.length - 1];
+    z1.querySelector(".m-t").value = "Kondensatablauf verstopft";
+    const sel = z1.querySelector(".m-a"); sel.dispatchEvent(new Event("focus"));
+    e.optionen = [...sel.options].map((o) => o.value ? "A" : "leer").join(",");
+    sel.value = leader; sel.dispatchEvent(new Event("change"));
+    document.getElementById("addMangel").click(); await w(50);
+    [...form.querySelectorAll(".mangelrow")].pop().querySelector(".m-t").value = "Zugang zum Dach rutschig";
+    const vorher = db.protokolle.length;
+    document.getElementById("save").click();
+    for (let i = 0; i < 40 && db.protokolle.length === vorher; i++) await w(250);
+    await w(600);
+    const p = db.protokolle[db.protokolle.length - 1] || {};
+    e.maengel = (p.maengel || []).map((m) => m.text + "|" + (m.anlage === leader) + "|" + (m.anlageName ? "Name" : "-"));
+    const pp = x("ausZeile")(p);
+    const prot = pp || {};
+    const blatt = x("blattInhalt")(prot) || "";
+    e.pdf = /<th[^>]*>Anlage<\/th>/.test(blatt) && /alle \/ allgemein/.test(blatt);
+    e.betrifft = [x("mangelBetrifft")({ text: "a", anlage: leader }, x("posById.TP1")), x("mangelBetrifft")({ text: "b" }, x("posById.TP1")),
+      x("mangelBetrifft")({ text: "c", anlage: "TP3" }, x("posById.TP1"))].join(",");
+    return e;
+  });
+  pruefe(r.optionen === "leer,A", "Auswahl der Anlagen: " + r.optionen);
+  pruefe(JSON.stringify(r.maengel) === JSON.stringify(["Kondensatablauf verstopft|true|Name", "Zugang zum Dach rutschig|false|-"]), "Gespeicherte Mängel: " + JSON.stringify(r.maengel));
+  pruefe(r.pdf, "PDF ohne Spalte Anlage bzw. ohne „alle / allgemein“");
+  pruefe(r.betrifft === "true,true,false", "Anlagenbuch-Zuordnung: " + r.betrifft);
+  pruefe(!a.fehler.length, "Laufzeitfehler: " + a.fehler.join("; "));
+  await a.zu();
+});
+
 test("Protokoll: Wartungsprotokoll speichern – landet in der Datenbank, Fälligkeit rückt weiter, Bestätigung sichtbar", async () => {
   const a = await oeffnen(KONTEN.techniker);
   const r = await a.seite.evaluate(async () => {
@@ -2900,6 +2940,7 @@ test("Tiefentest kern: geführtes Protokoll am Handy – Vor-Ort-Frage, Mangel n
     await bis(/· Arbeiten$/);
     [...ov().querySelectorAll(".as-inhalt button")].find((b) => /alle auswählen/.test(b.textContent)).click(); await w(150);
     await bis(/· Mängel$/);
+    erg.anlageWahl = /Für welche Anlage?/.test(ov().textContent);
     const m = [...ov().querySelectorAll(".as-feld")].find((f) => /Empfohlene Maßnahme/.test(f.querySelector(".as-label").textContent)).querySelector("input");
     m.value = "Filter tauschen bis Ende Monat"; m.dispatchEvent(new Event("input", { bubbles: true }));
     [...ov().querySelectorAll(".as-inhalt button")].find((b) => /weiterer Mangel/.test(b.textContent)).click(); await w(150);
@@ -2932,6 +2973,7 @@ test("Tiefentest kern: geführtes Protokoll am Handy – Vor-Ort-Frage, Mangel n
     return erg;
   });
   pruefe(r.gesehen.length > 0 && r.antwort === "ja, im Lager", "offene Vor-Ort-Frage im geführten Dialog nicht gezeigt bzw. nicht beantwortbar: " + JSON.stringify([r.gesehen, r.antwort]));
+  pruefe(r.anlageWahl, "Geführtes Protokoll: beim Mangel keine Anlagen-Auswahl");
   pruefe(r.nochSichtbar, "Maßnahme nach „+ weiterer Mangel“ nicht mehr im Dialog sichtbar");
   pruefe(!r.nurJwAngeboten && /HJW/.test(r.hjwKnopf), "bei 35 kg wird „Nein – nur Jahreswartung“ angeboten bzw. kein HJW-Knopf: " + JSON.stringify([r.nurJwAngeboten, r.hjwKnopf]));
   pruefe(/Mangel beschreiben.*Filter tauschen/.test(r.warn) && /ohne Beschreibung/.test(r.zeileMaengel), "Übersicht nennt den unvollständigen Mangel nicht: " + JSON.stringify(r));

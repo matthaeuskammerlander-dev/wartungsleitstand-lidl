@@ -101,6 +101,9 @@ Kammerlander Umwelt- und Klimatechnik (UKT) – oft kurz, vom Handy, im Feld.
   (`neueAnlageReihenfolge`) – nur sie steht im Protokoll und gilt als gewartet.
   Kommt bei einer bestehenden Anlage ein Termin dazu, wird vor dem Weitergehen
   nochmals nach „Heute gewartet als“ gefragt.
+- Mangel je Anlage (Inhaber 06.10.2026): Auswahl `.m-a` je Mängelzeile (angehakte + neu erfasste Anlagen, leer = alle /
+  allgemein; `mangelAnlagen`, `mangelAnlageFuellen`, im geführten Dialog „Für welche Anlage?“ über `form._mangelAnlageFuellen`);
+  gespeichert `maengel[].anlage` (erste Zeile) + `anlageName`; PDF-Spalte „Anlage“, Anlagenbuch nur passende (`mangelBetrifft`).
 - Nach dem Speichern oben „✓ … gespeichert“ (`S.gespeichert`,
   `gespeichertKarte`); nach einer Störung mit fälligen Wartungen am Markt
   „Wartung gleich mitmachen“ (`faelligeWartungen`).

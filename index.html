@@ -389,7 +389,7 @@ legend{font-family:var(--f-disp);font-size:12.5px;font-weight:600;text-transform
 }
 .btn:disabled{opacity:.5;cursor:not-allowed}
 .btn:focus-visible{outline:2px solid var(--ink);outline-offset:2px}
-.mangelrow{display:grid;grid-template-columns:2fr 1fr 2fr auto;gap:8px;align-items:end}
+.mangelrow{display:grid;grid-template-columns:2fr 1.3fr 1fr 2fr auto;gap:8px;align-items:end}
 @media (max-width:640px){.mangelrow{grid-template-columns:1fr}}
 canvas.sig{width:100%;height:150px;border:1px dashed var(--line-2);border-radius:8px;background:#fff;touch-action:none;display:block}
 .note{font-size:12.5px;color:var(--ink-2);background:var(--surface-2);border-radius:8px;padding:10px 12px}
@@ -8717,7 +8717,7 @@ function feldText(feld, wert, mitArt){
     var p=posById[zeileWeiter(id)]||posById[id];
     if(!p) return id;
     return anlagenName(p)+(mitArt ? " ("+intervallArt((posById[id]||p).intervallCode).art+")" : ""); }).join(", ");
-  if(feld==="maengel") return wert.map(function(m){ return m.text+(m.prio?" ("+m.prio+")":""); }).join("; ");
+  if(feld==="maengel") return wert.map(function(m){ return (m.anlageName?m.anlageName+": ":"")+m.text+(m.prio?" ("+m.prio+")":""); }).join("; ");
   if(feld==="unterschrift") return "vorhanden";
   if(feld==="fotos") return wert.length+" Foto(s)";
   if(feld==="anlagen") return wert.length+" Anlage(n) erfasst";
@@ -14555,6 +14555,10 @@ function protoAssistentTeilArbeiten(P){
           if(!t.value.trim() && !m.value.trim() && zeilen.length>1 && z!==zeilen[zeilen.length-1]) return;
           var g=el('<div class="as-gruppe"></div>');
           g.appendChild(textFeldRoh("Mangel / Feststellung", t));
+          var sa=z.querySelector(".m-a");
+          if(sa && form._mangelAnlageFuellen){ form._mangelAnlageFuellen(sa);
+            var al=[].map.call(sa.options, function(o){ return [o.value, o.textContent]; });
+            if(al.length>1) g.appendChild(P.feldRahmen("Für welche Anlage?", chips(al, sa.value, function(v){ sa.value=v; sa.onchange(); }))); }
           var prio=chips([["","–"],["niedrig","niedrig"],["mittel","mittel"],["hoch","hoch"],["sofort","sofort"]], p.value, function(v){ p.value=v; formDirty=true; });
           g.appendChild(P.feldRahmen("Priorität", prio));
           g.appendChild(textFeldRoh("Empfohlene Maßnahme / Frist", m));
@@ -15339,7 +15343,7 @@ function protoTeilAnlagen(P){
   var stoer=P.stoer, form=P.form, bearb=P.bearb;
   var ANLAGE_KEYS, buchZiel;
   /* für die anderen Teile */
-  P.angehakt=angehakt; P.anlagenZeichnen=anlagenZeichnen; P.anlagenSchnappschuss=anlagenSchnappschuss; P.anlagenUebernehmen=anlagenUebernehmen;
+  P.angehakt=angehakt; P.angehakteAnlagen=angehakteAnlagen; P.anlageNameJetzt=function(l){ return anlageNameJetzt(l); }; P.anlagenZeichnen=anlagenZeichnen; P.anlagenSchnappschuss=anlagenSchnappschuss; P.anlagenUebernehmen=anlagenUebernehmen;
   /* in diesem Protokoll umbenannt: schon den neuen Namen zeigen und ins Protokoll schreiben */
   function anlageNameJetzt(l){ return String((P.anlagenAend[l.id]||{}).anlagentyp||"").trim() || anlagenName(anlageDaten(l)); }
   function anlageBasis(p){
@@ -15710,15 +15714,36 @@ function protoTeilMaengel(P){
   var stoer=P.stoer, form=P.form, bearb=P.bearb;
   var allesOk;
   /* für die anderen Teile */
-  P.addMangel=addMangel; P.ergebnisSperre=ergebnisSperre;
+  P.addMangel=addMangel; P.ergebnisSperre=ergebnisSperre; P.mangelAnlagen=mangelAnlagen; P.mangelAnlageFuellen=mangelAnlageFuellen;
+  /* Mangel je Anlage (Inhaber 06.10.2026: „bei Mängeln auswählen können, für welche Anlage“): zur Wahl stehen die
+     angehakten Anlagen und die hier neu erfassten; leer = alle bzw. Markt allgemein. Gespeichert als anlage
+     (Kennung der ersten Zeile) und anlageName (Name am Wartungstag – bleibt lesbar, auch wenn sich die Anlage ändert). */
+  function mangelAnlagen(){
+    var l=(P.angehakteAnlagen ? P.angehakteAnlagen() : []).map(function(p){ return [p.id, P.anlageNameJetzt(p)]; });
+    (P.neueAnlagen||[]).forEach(function(n){ l.push([n.id, String((n.werte||{}).anlagentyp||"").trim()||"Neue Anlage"]); });
+    return l;
+  }
+  /* Auswahl neu füllen – die bisherige Wahl bleibt, auch wenn die Anlage gerade nicht angehakt ist (mit ihrem Namen) */
+  function mangelAnlageFuellen(sel){
+    var w=sel.value, name=sel.dataset.name||"", l=mangelAnlagen();
+    if(w && !l.some(function(x){ return x[0]===w; })) l.push([w, (name||"Anlage")+" (nicht mehr angehakt)"]);
+    sel.innerHTML='<option value="">– alle / allgemein –</option>'+l.map(function(x){ return '<option value="'+esc(x[0])+'">'+esc(x[1])+"</option>"; }).join("");
+    sel.value=w;
+    var lab=sel.closest("label"); if(lab) lab.hidden=!l.length;
+  }
   function addMangel(){
     var b=el('<div class="mangelrow">'+
       '<label class="fl"><span>Mangel / Feststellung</span><input type="text" class="m-t"></label>'+
+      '<label class="fl"><span>Anlage</span><select class="m-a"></select></label>'+
       '<label class="fl"><span>Priorität</span><select class="m-p"><option value="">–</option><option>niedrig</option><option>mittel</option><option>hoch</option><option>sofort</option></select></label>'+
       '<label class="fl"><span>Empfohlene Maßnahme / Frist</span><input type="text" class="m-m"></label>'+
       '<button type="button" class="btn ghost sm" style="margin-bottom:1px">×</button>'+
     "</div>");
     b.querySelector("button").onclick=function(){ b.remove(); };
+    var sa=b.querySelector(".m-a");
+    mangelAnlageFuellen(sa);
+    sa.onfocus=sa.onmousedown=function(){ mangelAnlageFuellen(sa); };
+    sa.onchange=function(){ var o=sa.options[sa.selectedIndex]; sa.dataset.name=sa.value && o ? o.textContent.replace(/ (nicht mehr angehakt)$/,"") : ""; formDirty=true; };
     P.mHost.appendChild(b);
     return b;
   }
@@ -16266,7 +16291,7 @@ function protoTeilUnterschrift(P){
       },
       leeren:function(){ ctx.clearRect(0,0,P.cv.width,P.cv.height); P.hasSig=false; }
     };
-    form._mangelHinzu=P.addMangel;
+    form._mangelHinzu=P.addMangel; form._mangelAnlageFuellen=P.mangelAnlageFuellen;
   };
 }
 /* Protokoll-Formular, Teil Vorbelegung: Datum, Uhrzeit, Techniker/in aus dem Konto, „Ausgefüllt für“, Zertifikate */
@@ -16415,6 +16440,7 @@ function protoTeilKorrektur(P){
       (bearb.maengel&&bearb.maengel.length?bearb.maengel:[{}]).forEach(function(m){
         var mb=P.addMangel();
         mb.querySelector(".m-t").value=m.text||""; mb.querySelector(".m-p").value=m.prio||""; mb.querySelector(".m-m").value=m.massnahme||"";
+        var ma=mb.querySelector(".m-a"); if(ma && m.anlage){ ma.dataset.name=m.anlageName||""; ma.innerHTML='<option value="'+esc(m.anlage)+'"></option>'; ma.value=m.anlage; P.mangelAnlageFuellen(ma); }
       });
       if(bearb.betriebsbereit){ r3=form.querySelector('input[name="bereit"][value="'+bearb.betriebsbereit+'"]'); if(r3) r3.checked=true; }
       setz("f_sofort",bearb.sofortmassnahme);
@@ -16641,7 +16667,8 @@ function protoTeilEntwurf(P){
       return {anlage:cb.dataset.anlage||"", pos:cb.value||""};
     });
     form.querySelectorAll(".mangelrow").forEach(function(z){
-      d.maengel.push({t:z.querySelector(".m-t").value, p:z.querySelector(".m-p").value, m:z.querySelector(".m-m").value});
+      var za=z.querySelector(".m-a");
+      d.maengel.push({t:z.querySelector(".m-t").value, p:z.querySelector(".m-p").value, m:z.querySelector(".m-m").value, a:za?za.value:"", an:za?za.dataset.name||"":""});
     });
     if(P.matHost) Array.prototype.forEach.call(P.matHost.children,function(z){
       var t=z.querySelector(".mt-t"), m=z.querySelector(".mt-m");
@@ -16685,7 +16712,8 @@ function protoTeilEntwurf(P){
     P.mHost.innerHTML="";
     (d.maengel&&d.maengel.length?d.maengel:[null]).forEach(function(m){
       var z=P.addMangel();
-      if(m){ z.querySelector(".m-t").value=m.t||""; z.querySelector(".m-p").value=m.p||""; z.querySelector(".m-m").value=m.m||""; }
+      if(m){ z.querySelector(".m-t").value=m.t||""; z.querySelector(".m-p").value=m.p||""; z.querySelector(".m-m").value=m.m||"";
+        var za=z.querySelector(".m-a"); if(za && m.a){ za.dataset.name=m.an||""; za.innerHTML='<option value="'+esc(m.a)+'"></option>'; za.value=m.a; P.mangelAnlageFuellen(za); } }
     });
     if(stoer && P.matHost){
       P.matHost.innerHTML="";
@@ -16918,7 +16946,9 @@ function protoTeilSpeichern(P){
       Array.prototype.forEach.call(P.mHost.children,function(b){
         var t=b.querySelector(".m-t").value.trim();
         if(!t) return;
-        maengel.push({text:t,prio:b.querySelector(".m-p").value,massnahme:b.querySelector(".m-m").value.trim()});
+        var mg={text:t,prio:b.querySelector(".m-p").value,massnahme:b.querySelector(".m-m").value.trim()}, ma=b.querySelector(".m-a");
+        if(ma && ma.value){ mg.anlage=ma.value; mg.anlageName=ma.dataset.name||""; }
+        maengel.push(mg);
       });
       var stSel=byId[v("f_standort")];
       /* verantwortlich ist das angemeldete Konto (Büro 01.10.2026) – bei einer Korrektur bleibt, wer es gemacht hat */
@@ -17499,9 +17529,10 @@ function blattInhalt(p){
     "</table>";
   }).join("");
 
+  var mitAnl=(p.maengel||[]).some(function(m){ return m && m.anlageName; });
   var maengelHtml=(p.maengel&&p.maengel.length)
-    ? "<table><tr><th>Mangel / Feststellung</th><th style='width:14%'>Priorität</th><th>Empfohlene Maßnahme / Frist</th></tr>"+
-      p.maengel.map(function(m){ return "<tr><td>"+esc(m.text)+"</td><td>"+esc(m.prio||"")+"</td><td>"+esc(m.massnahme||"")+"</td></tr>"; }).join("")+
+    ? "<table><tr><th>Mangel / Feststellung</th>"+(mitAnl?"<th style='width:22%'>Anlage</th>":"")+"<th style='width:14%'>Priorität</th><th>Empfohlene Maßnahme / Frist</th></tr>"+
+      p.maengel.map(function(m){ return "<tr><td>"+esc(m.text)+"</td>"+(mitAnl?"<td>"+esc(m.anlageName||"alle / allgemein")+"</td>":"")+"<td>"+esc(m.prio||"")+"</td><td>"+esc(m.massnahme||"")+"</td></tr>"; }).join("")+
       "</table>"
     : "<div>Keine Mängel festgestellt.</div>";
 
@@ -18133,7 +18164,7 @@ function protokollDetail(p){
     ((p.arbeiten&&p.arbeiten.length)?'<div><div class="l muted" style="font-size:11px;text-transform:uppercase;letter-spacing:.06em;margin-bottom:4px">Durchgeführte Arbeiten</div>'+
       '<div class="rowflex">'+p.arbeiten.map(function(a){ return '<span class="tag">'+esc(a)+"</span>"; }).join("")+"</div></div>":"")+
     ((p.maengel&&p.maengel.length)?'<div><div class="l muted" style="font-size:11px;text-transform:uppercase;letter-spacing:.06em;margin-bottom:4px">Mängel</div>'+
-      p.maengel.map(function(m){ return '<div style="font-size:13px">• '+esc(m.text)+
+      p.maengel.map(function(m){ return '<div style="font-size:13px">• '+(m.anlageName?"<strong>"+esc(m.anlageName)+":</strong> ":"")+esc(m.text)+
         (m.prio?' <span class="tag">'+esc(m.prio)+"</span>":"")+(m.massnahme?" – "+esc(m.massnahme):"")+"</div>"; }).join("")+"</div>":"")+
     (p.bemerkungen?'<div><div class="l muted" style="font-size:11px;text-transform:uppercase;letter-spacing:.06em;margin-bottom:4px">Bemerkungen</div>'+
       '<div style="font-size:13px">'+esc(p.bemerkungen)+"</div></div>":"")+
@@ -18750,7 +18781,8 @@ function anlagenbuchHtml(leader){
       "</td><td>"+(t.letzte?esc(dfmt(t.letzte)):"–")+"</td><td>"+(t.naechste?esc(dfmt(t.naechste)):"–")+"</td><td>"+esc(st)+(t.aktiv===false?" (stillgelegt)":"")+"</td></tr>";
   }).join("");
   var hist=anlageHistorie(leader).map(function(x){
-    var mg=x.protokoll&&x.protokoll.maengel&&x.protokoll.maengel.length ? x.protokoll.maengel.map(function(m){ return m.text+(m.prio?" ("+m.prio+")":""); }).join("; ") : "";
+    var mg=x.protokoll&&x.protokoll.maengel&&x.protokoll.maengel.length ? x.protokoll.maengel.filter(function(m){ return mangelBetrifft(m, leader); })
+      .map(function(m){ return m.text+(m.prio?" ("+m.prio+")":""); }).join("; ") : "";
     return "<tr><td>"+esc(dfmt(x.datum))+"</td><td>"+esc(x.art)+"</td><td>"+esc(x.techniker||"")+"</td><td>"+esc(x.quelle)+"</td><td>"+esc(mg)+"</td></tr>";
   }).join("");
   var offen=stoerungenDerAnlage(a).map(function(o){
@@ -21954,7 +21986,7 @@ function angebotAusFolge(p){
     var mangel=(so.folgeauftrag ? [{text:so.folgeText||"Folgeauftrag", prio:""}] : []).concat(folgeMaengel(p));
     var anl=(p.anlagen||[]).map(function(a){ return a.name; }).filter(Boolean).join(", ");
     var pos=[{typ:"text", text:"Lt. "+(istStoerung(p)?"Störungseinsatz":"Wartungsprotokoll")+" vom "+dfmt(p.datum)+(p.techniker?" ("+p.techniker+")":"")+
-      (anl?" – Anlage: "+anl:"")+" festgestellt:\n"+mangel.map(function(m){ return "• "+m.text+(m.prio?" ("+m.prio+")":"")+(m.massnahme?" → "+m.massnahme:""); }).join("\n")+
+      (anl?" – Anlage: "+anl:"")+" festgestellt:\n"+mangel.map(function(m){ return "• "+(m.anlageName?m.anlageName+": ":"")+m.text+(m.prio?" ("+m.prio+")":"")+(m.massnahme?" → "+m.massnahme:""); }).join("\n")+
       ((p.fotos||[]).length ? "\nFotos: im Protokoll." : "")}];
     var nr=0;
     mangel.forEach(function(m){
@@ -25146,7 +25178,7 @@ var RUNDGAENGE={
       "<strong>Markt</strong> – Filiale suchen oder die nächsten Märkte antippen.",
       "<strong>Anlagen</strong> – die gewarteten (bzw. bei Störung die betroffenen) Anlagen anhaken. Fehlt eine: „+ Anlage fehlt“ – die App fragt zuerst, ob sie nicht doch in der Liste steht.",
       "<strong>Je Anlage ein Schritt</strong> – Anlagendaten prüfen und ergänzen, Inbetriebnahme und Termine bestätigen und „Heute gewartet als“ wählen (welcher Termin heute erledigt ist).",
-      "<strong>Arbeiten</strong> (bzw. Störungsbehebung und Material), <strong>Mängel</strong>, <strong>Ergebnis</strong>, <strong>Kältemittel</strong> (nachgefüllt, zurückgewonnen).",
+      "<strong>Arbeiten</strong> (bzw. Störungsbehebung und Material), <strong>Mängel</strong> (je Mangel „Für welche Anlage?“ – oder alle / allgemein), <strong>Ergebnis</strong>, <strong>Kältemittel</strong> (nachgefüllt, zurückgewonnen).",
       "<strong>Fotos und Rapport</strong> – bis 25 Fotos, je Foto eine Notiz; bei Lidl-Einsätzen den Rapportbericht anhängen.",
       "<strong>Abschluss</strong> – Datum, Uhrzeit, wer noch dabei war, Unterschrift. Du bist angemeldet, du bist verantwortlich: das Protokoll läuft immer unter deinem Namen.",
       "<strong>Übersicht</strong> – alles noch einmal; jede Zeile führt zu ihrem Schritt. Gespeichert wird erst, wenn nichts mehr fehlt."])+
@@ -27980,6 +28012,12 @@ function viewProjekte(){
    angelegt ist (daten.ausProtokoll) oder der Inhaber „kein Angebot“ mit Grund wählt (Merker
    „folge:<Protokoll>“, rücknehmbar im Änderungsverlauf). Nur Inhaber – Angebote sind Inhaber-Sache. */
 function folgeMerkerId(pid){ return "merker:folge:"+pid; }
+/* gehört ein Mangel zu dieser Anlage? ohne Angabe: ja (alle / allgemein); unbekannte Kennung (etwa vor Ort neu erfasst): ja */
+function mangelBetrifft(m, p){
+  if(!m || !m.anlage) return true;
+  var q=posById[m.anlage]; if(!q || !p) return true;
+  var a=anlageVon(q), b=anlageVon(p); return !a || !b || a.id===b.id;
+}
 function folgeMaengel(p){ return (p.maengel||[]).filter(function(m){ return m && String(m.text||"").trim(); }); }
 function folgeOffen(){
   if(!nurInhaber()) return [];
