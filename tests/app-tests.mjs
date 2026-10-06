@@ -5907,6 +5907,27 @@ test("Anlagen-Karten: im Markt – am Handy eingeklappt mit Kurzinfo, bleiben of
   await b.zu();
 });
 
+test("Projektdateien: bis 50 MB je Datei – zu Große werden ausgelassen, der Rest des Ordners kommt hoch", async () => {
+  const a = await oeffnen(KONTEN.inhaber);
+  const r = await a.seite.evaluate(async () => {
+    const x = window.__t.x, w = (ms) => new Promise((f) => setTimeout(f, ms)), db = window.__db.tabellen, jetzt = new Date().toISOString();
+    db.projekte.push({ id: "pgross", nummer: "P-T-50", titel: "Große Pläne", kunde_id: "lidl", standort_id: "TS1", status: "baustelle", daten: {}, verlauf: [], erstellt: jetzt, geaendert: jetzt });
+    await x("projekteLaden()"); await w(300);
+    window.__toasts = []; x("(function(){ var alt=toast; toast=function(m){ window.__toasts.push(String(m)); return alt.apply(this, arguments); }; return 1; })()");
+    const gross = new File(["x"], "Riesenplan.pdf", { type: "application/pdf" }); Object.defineProperty(gross, "size", { value: 60 * 1048576 });
+    const mittel = new File(["y"], "Plan 30MB.pdf", { type: "application/pdf" }); Object.defineProperty(mittel, "size", { value: 30 * 1048576 });
+    const klein = new File(["%PDF-1.4"], "Plan klein.pdf", { type: "application/pdf" });
+    window.__d = [gross, mittel, klein];
+    const neu = await x("projektDateienHochladen(PROJEKTE.filter(function(q){ return q.id==='pgross'; })[0], 'plan', window.__d)");
+    const namen = ((db.projekte.find((q) => q.id === "pgross") || {}).daten.dateien || []).map((f) => f.name);
+    return { max: x("PROJEKT_DATEI_MAX"), neu: (neu || []).length, namen, toasts: window.__toasts };
+  });
+  pruefe(r.max === 50 * 1048576, "Grenze nicht 50 MB: " + r.max);
+  pruefe(r.namen.indexOf("Plan klein.pdf") >= 0 && r.namen.indexOf("Plan 30MB.pdf") >= 0 && r.namen.indexOf("Riesenplan.pdf") < 0, "falsch hochgeladen: " + JSON.stringify(r));
+  pruefe(r.toasts.some((t) => /zu groß.*Riesenplan\.pdf \(60 MB\)/.test(t)), "kein Hinweis auf die zu große Datei: " + JSON.stringify(r.toasts));
+  await a.zu();
+});
+
 /* ================================================================ Ablauf ================================================================ */
 const filterText = process.argv.slice(2).find((x) => !x.startsWith("--"));
 const filter = filterText ? new RegExp(filterText, "i") : null;

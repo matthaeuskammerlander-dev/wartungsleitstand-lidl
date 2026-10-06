@@ -25441,7 +25441,7 @@ Object.assign(RUNDGAENGE, {
         "Projekttermine erscheinen im Kalender – ohne eigenen Kalendereintrag und ohne Nachricht; Aufgaben und „Einplanen“ dagegen mit Nachricht an die Eingetragenen."])},
     {titel:"Baustellenbuch, Dateien, PDF", text:RG_LISTE([
       "<strong>Baustellenbuch</strong>: Datum, Art, Beschreibung, Menge – orange, was für die Rechnung zählt (Zusatzleistung, Kran, Material, Wochenende, Erschwernis …). Mengen, keine Preise.",
-      "<strong>Dateien</strong>: Art wird erkannt; „Ganzen Ordner hochladen“ überspringt Gleichnamiges; höchstens 20 MB je Datei.",
+      "<strong>Dateien</strong>: Art wird erkannt; „Ganzen Ordner hochladen“ überspringt Gleichnamiges; höchstens 50 MB je Datei (Größeres wird ausgelassen, der Rest hochgeladen).",
       "<strong>Stunden</strong> auf das Projekt, <strong>Tagebuch</strong>, <strong>Nachrichten</strong>.",
       "<strong>Zusammenfassung (PDF)</strong>: Eckdaten, Angaben mit Quellen, Listen, Baustellenbuch, Dateiliste, Tagebuch – „Ablegen“ für die Synology."])+
       RG_HG(["Angebot und Rechnung als Dateiart (unter „buero/“) nur für den Inhaber – ebenso eine Mail (.eml), die ein Angebot/eine Rechnung als Anhang oder einen Preis im Text enthält (z. B. „4.800 € netto“; bei der Datei steht dann „enthält Preise“, andere legen sie nicht ab); auf der Synology nur im Büro-Ordner, nie im Projektordner, den Techniker sehen.",
@@ -29812,7 +29812,9 @@ function belegEinstellungen(fertig){
 
 /* Dateien eines Projekts: hochladen (mit Art), ansehen. Angebote und
    Rechnungen liegen unter buero/… – die sehen nur die Inhaber. */
-var PROJEKT_DATEI_MAX=20*1048576;
+/* 50 MB je Datei: höchste Grenze im Supabase-Tarif „Free“ (Inhaber 06.10.2026: Ordner mit großen Plänen) –
+   dazu tools/projektdateien-50mb.sql (Speicher „projektdateien“) */
+var PROJEKT_DATEI_MAX=50*1048576;
 /* nurBuero: auch eine andere Art nur für Inhaber ablegen (z. B. eine Mail, die eine Rechnung als Anhang enthält) */
 function projektDateiPfad(p, art, name, nurBuero){
   var buero=!!nurBuero || PROJEKT_DATEIARTEN.some(function(x){ return x[0]===art && x[2]; });
@@ -29828,7 +29830,7 @@ function projektDateienKarte(p, buero, schreiben, neuZeichnen){
     (schreiben?'<div class="rowflex" style="gap:8px;flex-wrap:wrap"><select data-art><option value="">automatisch erkennen</option>'+arten.map(function(x){ return '<option value="'+x[0]+'">'+esc(x[1])+(x[2]?" (nur Inhaber)":"")+"</option>"; }).join("")+"</select>"+
       '<label class="btn ghost sm" style="cursor:pointer">Datei hinzufügen<input type="file" data-datei hidden multiple></label>'+
       '<label class="btn ghost sm" style="cursor:pointer" title="ganzen Projektordner vom PC – die App sortiert nach Art">Ganzen Ordner hochladen<input type="file" data-ordner hidden webkitdirectory multiple></label></div>'+
-      '<div class="muted" style="font-size:12.5px">PDF, Fotos, Pläne (auch DWG), E-Mails (.eml/.msg), Word, Excel – bis 20 MB je Datei. Angebote und Rechnungen sehen nur die Inhaber.</div>':"")+
+      '<div class="muted" style="font-size:12.5px">PDF, Fotos, Pläne (auch DWG), E-Mails (.eml/.msg), Word, Excel – bis 50 MB je Datei. Angebote und Rechnungen sehen nur die Inhaber.</div>':"")+
   "</div></div>");
   var l=k.querySelector("[data-liste]");
   if(!dateien.length) l.appendChild(el('<div class="muted" style="font-size:12.5px">Noch keine Dateien.</div>'));
@@ -29927,7 +29929,12 @@ function projektDateienKarte(p, buero, schreiben, neuZeichnen){
 function projektDateienHochladen(p, art, liste, herkunft, nurBuero){
   if(!liste.length) return Promise.resolve([]);
   var zuGross=liste.filter(function(f){ return f.size>PROJEKT_DATEI_MAX; });
-  if(zuGross.length){ toast("Zu groß (höchstens 20 MB): "+zuGross.map(function(f){ return f.name; }).join(", ")); return Promise.resolve([]); }
+  /* zu große Dateien auslassen, den Rest trotzdem hochladen (vorher brach der ganze Ordner ab) */
+  if(zuGross.length){
+    toast("Nicht hochgeladen – zu groß (höchstens "+Math.round(PROJEKT_DATEI_MAX/1048576)+" MB je Datei): "+zuGross.map(function(f){ return f.name+" ("+Math.round(f.size/1048576)+" MB)"; }).join(", "));
+    liste=liste.filter(function(f){ return zuGross.indexOf(f)<0; });
+    if(!liste.length) return Promise.resolve([]);
+  }
   /* Mail mit Preisen im Text (Inhaber 05.10.2026): beim Inhaber nur unter buero/ (Hinweis bei der Datei und in der Meldung),
      alle anderen legen sie nicht ab – wie eine KPlus-Rechnung */
   var preise=[];
