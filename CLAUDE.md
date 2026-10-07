@@ -527,7 +527,7 @@ Kammerlander Umwelt- und Klimatechnik (UKT) – oft kurz, vom Handy, im Feld.
   (`feldHoehe`, `textfelderAnpassen` bei Eingabe/Fokus/Klick/Größe/neuen Elementen), Zeilenzahl = Mindestmaß, keine Obergrenze;
   Ausnahme `data-fest`. Test „Textfelder wachsen mit dem Text …“.
 - **Schriftgröße je Gerät** (Inhaber 07.10.2026: „der Chef will alles sehr groß, ich eher klein“): ☰ → „Aa Schriftgröße“ (`schriftDialog`,
-  `SCHRIFT_STUFEN` Sehr klein 0,75 / Klein 0,85 / Normal / Groß 1,15 / Sehr groß 1,3), localStorage `ukt_schrift`; `schriftAnwenden` (Kopf-Skript) setzt am Handy/Tablet
+  `SCHRIFT_STUFEN` Sehr klein 0,75 / Klein 0,85 / Normal / Groß 1,15 / Sehr groß 1,3; Feineinstellung − / + in 5-%-Schritten 60–150 %, gespeichert als Zahl), localStorage `ukt_schrift`; `schriftAnwenden` (Kopf-Skript) setzt am Handy/Tablet
   die Viewport-Breite = Gerätebreite ÷ Stufe und initial-scale = Stufe (Text bricht neu um, iPhone maximum-scale = Stufe); Normal bleibt wie bisher.
   Am PC nur Hinweis Strg +/− (Browser merkt es selbst). Test „Schriftgröße je Gerät …“.
 - **Diktieren** (`diktatKnopf`): Spracherkennung des Browsers, keine KI, Text wird angehängt.

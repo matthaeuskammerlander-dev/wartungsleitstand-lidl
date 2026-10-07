@@ -6359,6 +6359,20 @@ test("Schriftgröße je Gerät: ☰ → Aa Schriftgröße – am Handy Sehr klei
   const klein = await waehle("^Klein");
   await a.seite.reload({ waitUntil: "load" }); await a.seite.waitForTimeout(1500);
   const nachLaden = await a.seite.evaluate(() => document.querySelector('meta[name="viewport"]').content);
+  const fein = await a.seite.evaluate(async () => {
+    const w = (ms) => new Promise((f) => setTimeout(f, ms));
+    document.querySelector(".tab-menue").click(); await w(150);
+    [...document.querySelectorAll("#reiter_menue button")].find((b) => /Schriftgröße/.test(b.textContent)).click(); await w(200);
+    const d = [...document.querySelectorAll(".assistent")].pop();
+    d.querySelector('[data-schriftfein="-5"]').click(); await w(300);
+    const r = { prozent: d.querySelector("[data-schriftprozent]").textContent, vp: document.querySelector('meta[name="viewport"]').content,
+      offen: document.body.contains(d), gewaehlt: d.querySelectorAll('[data-schrift][aria-pressed="true"]').length };
+    d.querySelector('[data-schriftfein="5"]').click(); await w(300);
+    r.zurueck = d.querySelector('[data-schrift="klein"]').getAttribute("aria-pressed");
+    d.querySelector(".x, [data-zu], button[aria-label='Schließen']")?.click(); await w(200);
+    return r;
+  });
+  pruefe(fein.prozent === "80 %" && /width=488, initial-scale=0\.8/.test(fein.vp) && fein.offen && fein.gewaehlt === 0 && fein.zurueck === "true", "Feineinstellung: " + JSON.stringify(fein));
   const normal = await waehle("^Normal");
   pruefe(/width=520, initial-scale=0\.75/.test(sehrKlein.vp) && Math.abs(sehrKlein.breite - 520) <= 2 && sehrKlein.raus <= 2, "Sehr klein: " + JSON.stringify(sehrKlein));
   pruefe(/width=339, initial-scale=1\.15/.test(gross.vp) && Math.abs(gross.breite - 339) <= 2 && gross.raus <= 2, "Groß: " + JSON.stringify(gross));
