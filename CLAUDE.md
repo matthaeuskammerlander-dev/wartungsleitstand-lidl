@@ -442,6 +442,11 @@ Kammerlander Umwelt- und Klimatechnik (UKT) – oft kurz, vom Handy, im Feld.
   bekommen „Einsatz geplant am“ (ohne zweite Nachricht, `_ohneMeldung`), Wartungen stehen in Fällig als „📅 eingeplant“.
   Startpunkt (`einstellungen` „startpunkt:<Konto>“): jeder setzt nur seinen eigenen, Inhaber und Admins für alle
   (`startpunktDarf`; die Datenbank sperrt es mit einer Sperrregel – Inhaber 05.10.2026).
+- **Mehrere Techniker je Einsatz** (Inhaber 07.10.2026: „nur einen Techniker wählen – für Stempeluhr/Zeiterfassung unpraktisch“):
+  Störung „Wer fährt hin“ (`terminTechniker`, Komma-Liste, `stoerWer` überall statt des einen Namens – Kalender, Doppelbuchung,
+  Nachricht an jeden mit „Mit dir: …“, Bedarf, Tourfilter; Knöpfe `data-mehr` schalten um); „Tour verteilen“ an mehrere (`tourSchicken`:
+  je andere Person eine Tour + Nachricht, `tourInKalender(…, mit)` je Stopp EIN Termin mit allen). Ordner hochladen meldet sofort
+  „wird geprüft …“ und den Fortschritt „n von m hochgeladen“.
 - **Arbeitszeit lernt** (`arbeitStunden`, `stoerDauerMin`, Büro 02.10.2026): Tour und Kalender rechnen mit der
   tatsächlichen Zeit vor Ort – Lidl-Rapport (von–bis), Störung Ankunft–Fertig, Stunden mit Markt (`einsatz_dauern`,
   tools/einsatz-dauern.sql: nur Median je Markt, keine Personen); ohne Erfahrung `ARBEIT_H`.

@@ -552,6 +552,62 @@ test("Bedienung: Eingabe-Dialog statt Browser-Abfrage – leer geht nicht, Abbre
   await a.zu();
 });
 
+test("Mehrere Techniker: Tour an zwei Personen (gemeinsame Termine, je Tour + Nachricht) und Störung „Wer fährt hin“ mit mehreren", async () => {
+  const a = await oeffnen(KONTEN.inhaber);
+  const r = await a.seite.evaluate(async () => {
+    const x = window.__t.x, warte = (ms) => new Promise((f) => setTimeout(f, ms)), db = window.__db.tabellen, e = {};
+    await x("stoerungSpeichern({_id:'stm1', standortId:'TS2', auftragsnummer:'T-M1', erfasstAm:new Date().toISOString(), status:'offen'}, 'Test')"); await warte(300);
+    window.__T = { tage: [{ nr: 1, stopps: [
+      { standort: x("byId.TS1"), positionen: [x("posById.TP1")], fahrtH: 0.5, arbeitH: 1 },
+      { standort: x("byId.TS2"), positionen: [{ id: "stoer:stm1", anlagentyp: "Störung" }], fahrtH: 0.5, arbeitH: 1 } ] }], anzahlStopps: 2, kmGesamt: 40, stundenProTag: 8 };
+    x("ansichtenSchliessen()"); x("tourSchicken(window.__T)"); await warte(500);
+    const d = [...document.querySelectorAll(".assistent")].pop(), chips = [...d.querySelectorAll("[data-an] .chip")];
+    const tech = chips.find((b) => /Testtechniker/.test(b.textContent)), adm = chips.find((b) => /Testadmin/.test(b.textContent));
+    if (!tech || !adm) return { fehler: "Auswahl: " + chips.map((b) => b.textContent).join(",") };
+    tech.click(); adm.click(); await warte(100);
+    e.gedrueckt = chips.filter((b) => b.getAttribute("aria-pressed") === "true").length;
+    const knopf = [...d.querySelectorAll(".as-fuss button")].pop(); e.knopf = knopf.textContent;
+    const vorPlan = db.planung.length, vorChat = (db.chat || []).length, vorTouren = db.touren.length;
+    knopf.click(); await warte(1800);
+    const neu = db.planung.slice(vorPlan);
+    e.termine = neu.length; e.werAlle = neu.every((p) => (p.wer || []).length === 2 && p.wer.indexOf("u_tech_test_at") >= 0);
+    e.touren = db.touren.slice(vorTouren).map((t) => t.an).sort().join();
+    e.chats = (db.chat || []).slice(vorChat).filter((c) => /Neue Tour/.test(c.text) && /Mit dir:/.test(c.text)).length;
+    e.stoer = (x("OFFENE").filter((o) => o._id === "stm1")[0] || {}).terminTechniker || "";
+    /* Störung: „Wer fährt hin“ – Knöpfe wählen mehrere, nochmals antippen nimmt heraus */
+    x("ansichtenSchliessen(); document.querySelectorAll('.assistent').forEach(function(d){ d.remove(); }); stoerungDialog(null, null, {standortId:'TS1'})"); await warte(400);
+    const sd = [...document.querySelectorAll(".assistent")].pop(), feld = sd.querySelector('[data-s="terminTechniker"]'), kn = [...feld.closest("label").querySelectorAll(".chip[data-mehr]")];
+    kn[0].click(); kn[1].click(); await warte(50);
+    e.zwei = feld.value + " | " + kn.slice(0, 2).map((c) => c.getAttribute("aria-pressed")).join();
+    kn[0].click(); await warte(50);
+    e.einer = feld.value + " | " + kn[0].getAttribute("aria-pressed");
+    e.textfeldZu = feld.style.display === "none";
+    x("ansichtenSchliessen(); document.querySelectorAll('.assistent').forEach(function(d){ d.remove(); })");
+    /* jede eingetragene Person bekommt die Nachricht, steht im Kalender und in der Doppelbuchungs-Prüfung */
+    e.teilen = x("stoerWer({terminTechniker:'Testtechniker und Testadmin; Testtechniker'})").join("|");
+    const T = x("plusTage(isoLokal(new Date()), 3)");
+    const o = { _id: "stm2", standortId: "TS1", termin: T, terminZeit: "08:00", terminTechniker: "Testtechniker, Testadmin", erledigt: false };
+    x("OFFENE").push(o);
+    const vc = (db.chat || []).length; x("stoerungEinsatzMelden")(o, true); await warte(600);
+    e.meldungen = (db.chat || []).slice(vc).map((c) => c.an).sort().join();
+    e.verplant = x("verplantPruefen")([], ["Testadmin"], T, T, 7 * 60, 9 * 60, null, null).join(" | ");
+    e.kalender = JSON.stringify(((x("kalenderEintraege")(T, T, "alle") || {})[T] || []).filter((z) => z.o && z.o._id === "stm2").map((z) => z.unter));
+    return e;
+  });
+  pruefe(!r.fehler, r.fehler);
+  pruefe(r.gedrueckt === 2 && /2 Personen/.test(r.knopf), "Tour: Mehrfachauswahl " + JSON.stringify(r));
+  pruefe(r.termine === 2 && r.werAlle, "Tour: Termine nicht gemeinsam für beide: " + JSON.stringify(r));
+  pruefe(r.touren === "u_admin_test_at,u_tech_test_at" && r.chats === 2, "Tour: je Person Tour + Nachricht: " + JSON.stringify(r));
+  pruefe(/Testtechniker/.test(r.stoer) && /Testadmin/.test(r.stoer), "Störung der Tour ohne beide Namen: " + r.stoer);
+  pruefe(/, .* \| true,true$/.test(r.zwei) && /^[^,]+ \| false$/.test(r.einer) && r.textfeldZu, "Wer fährt hin: " + JSON.stringify([r.zwei, r.einer, r.textfeldZu]));
+  pruefe(r.teilen === "Testtechniker|Testadmin", "Namen teilen: " + r.teilen);
+  pruefe(r.meldungen === "u_admin_test_at,u_tech_test_at", "Nachricht nicht an beide: " + r.meldungen);
+  pruefe(/Testadmin: Störung/.test(r.verplant), "Doppelbuchung erkennt die zweite Person nicht: " + r.verplant);
+  pruefe(/Testtechniker, Testadmin/.test(r.kalender), "Kalender ohne beide Namen: " + r.kalender);
+  pruefe(!a.fehler.length, "Laufzeitfehler: " + a.fehler.join("; "));
+  await a.zu();
+});
+
 test("Tour → Kalender: für sich selbst und andere; Störung bekommt „Einsatz geplant“; Techniker nur für sich und nimmt an", async () => {
   const a = await oeffnen(KONTEN.inhaber);
   const r = await a.seite.evaluate(async () => {

@@ -2555,8 +2555,10 @@ function stoerungTeilFormular(P){
     var f=FELDER.filter(function(x){ return x[0]===k; })[0]; if(!f) return "";
     var knoepfe=(LERN_STOER.indexOf(k)>=0 ? lernChips(gelernteStoerWerte(k), o[k], '[data-s="'+k+'"]', "st_"+k) : "")+
       /* „Wer fährt hin“: die eigenen Leute zuerst, dann wer zuletzt gefahren ist */
-      (k==="terminTechniker" ? lernChips(technikerVorschlaege(), o[k], '[data-s="terminTechniker"]', "st_terminTechniker") : "");
-    var feld='<label class="fl'+(knoepfe?' st-voll" data-wahl="'+(k==="terminTechniker"?"jemand anderes":"anderer")+'"':'"')+'><span'+(f[3]?' class="req"':"")+">"+esc(f[1])+"</span>"+knoepfe+
+      (k==="terminTechniker" ? lernChips(technikerVorschlaege(), o[k], '[data-s="terminTechniker"]', "st_terminTechniker")
+        .replace(/<button class="chip"/g, '<button class="chip" data-mehr')
+        .replace(/data-w="([^"]*)"([^>]*)aria-pressed="(true|false)"/g, function(_, w, z){ var dabei=stoerWer(o).indexOf(w.replace(/&quot;/g,'"').replace(/&amp;/g,"&"))>=0; return 'data-w="'+w+'"'+z+'aria-pressed="'+dabei+'"'; }) : "");
+    var feld='<label class="fl'+(knoepfe?' st-voll" data-wahl="'+(k==="terminTechniker"?"jemand anderes":"anderer")+'"'+(k==="terminTechniker"?" data-mehr":""):'"')+'><span'+(f[3]?' class="req"':"")+">"+esc(f[1])+(k==="terminTechniker"?' <span class="muted" style="font-weight:400">– auch mehrere</span>':"")+"</span>"+knoepfe+
       '<input type="'+f[2]+'" data-s="'+k+'" value="'+esc(o[k]||"")+'"'+(LERN_STOER.indexOf(k)>=0?' data-merk="st_'+k+'"':"")+"></label>";
     /* die Ausnahme gehört zur Auftragsnummer (Büro 03.10.2026) */
     if(k==="auftragsnummer") return '<div class="stack" style="gap:4px">'+feld+
@@ -2571,13 +2573,16 @@ function stoerungTeilFormular(P){
       var andere=el('<button class="chip" type="button">'+esc(l.dataset.wahl)+" …</button>");
       box.appendChild(andere);
       var frei=function(an){ inp.style.display=an?"":"none"; andere.setAttribute("aria-pressed", String(an)); };
-      var v=inp.value.trim();
-      frei(!!v && !knoepfe.some(function(c){ return c.dataset.w===v; }));
+      var v=inp.value.trim(), mehr=l.hasAttribute("data-mehr");
+      var passt=function(n){ return knoepfe.some(function(c){ return c.dataset.w===n; }); };
+      frei(!!v && !(mehr ? stoerWer({terminTechniker:v}).every(passt) : passt(v)));
       andere.onclick=function(){
         if(inp.style.display!=="none"){ inp.focus(); return; }
+        /* mehrere: die gewählten bleiben, dazu wird getippt */
+        if(mehr){ frei(true); if(inp.value.trim()) inp.value=inp.value.trim().replace(/,?\s*$/, ", "); inp.focus(); return; }
         frei(true); inp.value=""; inp.dispatchEvent(new Event("input",{bubbles:true}));
         knoepfe.forEach(function(c){ c.setAttribute("aria-pressed","false"); }); inp.focus(); };
-      knoepfe.forEach(function(c){ c.addEventListener("click", function(){ frei(false); }); });
+      knoepfe.forEach(function(c){ c.addEventListener("click", function(){ frei(mehr ? !stoerWer({terminTechniker:inp.value}).every(passt) : false); }); });
     });
   }
   /* weiterer Kunde (alles wie bei Lidl, nur ohne Lidl-Texte): Untertitel und
@@ -2885,13 +2890,13 @@ function stoerungTeilSpeichern(P){
            "Trotzdem beim gewählten Markt speichern?")) return;
       /* gescannter QR-Inhalt eines anderen Auftrags (Nummer seither geändert) fällt weg */
       if(o.qrInhalt && !qrPasst(o.qrInhalt, o.auftragsnummer)) delete o.qrInhalt;
-      if(o.terminTechniker) o.terminTechniker=kanonName(o.terminTechniker);   /* „Tobi“ → voller Name */
+      if(o.terminTechniker) o.terminTechniker=stoerWer(o).join(", ");   /* „Tobi“ → voller Name, auch mehrere */
       /* Doppelbuchung: Techniker zu dieser Zeit schon verplant (Kalender oder andere Störung)? */
       var altE=vorhanden||{};
-      if(o.terminTechniker && o.termin && !o.erledigt && (altE.termin!==o.termin || (altE.terminZeit||"")!==(o.terminZeit||"") || kanonName(altE.terminTechniker||"")!==o.terminTechniker)){
+      if(o.terminTechniker && o.termin && !o.erledigt && (altE.termin!==o.termin || (altE.terminZeit||"")!==(o.terminZeit||"") || stoerWer(altE).join(", ")!==o.terminTechniker)){
         var tb0=o.terminZeit ? zeitMin(o.terminZeit) : 0, te0=o.terminZeit ? Math.min(1440, tb0+120) : 1440;
-        var doppelt=verplantPruefen([], [o.terminTechniker], o.termin, o.termin, tb0, te0, null, o._id);
-        if(doppelt.length && !window.confirm(o.terminTechniker+" ist da schon verplant:\n\n"+doppelt.slice(0,8).join("\n")+"\n\nTrotzdem so einplanen?")) return;
+        var doppelt=verplantPruefen([], stoerWer(o), o.termin, o.termin, tb0, te0, null, o._id);
+        if(doppelt.length && !window.confirm("Da schon verplant:\n\n"+doppelt.slice(0,8).join("\n")+"\n\nTrotzdem so einplanen?")) return;
       }
       /* derselbe Lidl-Auftrag schon offen (etwa doppelt gemailt)? */
       /* Eine Auftragsnummer gibt es nur EINMAL als Störung – offen oder erledigt (Büro 01.10.2026:
@@ -4629,7 +4634,7 @@ function stoerungIcs(o){
   }
   var titel="Störung "+(s?stName(s):(o.filialCode||""))+(o.problemtyp?" – "+o.problemtyp:"");
   var text=[o.auftragsnummer?"Lidl-Auftrag "+o.auftragsnummer:"", o.zieltermin?"Zieltermin "+dfmt(o.zieltermin):"",
-            o.terminTechniker?"Techniker/in: "+kanonName(o.terminTechniker):"", o.beschreibung||"", o.notiz?"Notiz: "+o.notiz:""].filter(Boolean).join("\n");
+            o.terminTechniker?"Techniker/in: "+stoerWer(o).join(", "):"", o.beschreibung||"", o.notiz?"Notiz: "+o.notiz:""].filter(Boolean).join("\n");
   var ics=["BEGIN:VCALENDAR","VERSION:2.0","PRODID:-//UKT//Wartungsleitstand//DE","CALSCALE:GREGORIAN","BEGIN:VEVENT",
     "UID:"+o._id+"@wartungsleitstand", "DTSTAMP:"+jetzt]
     .concat(zeilen)
@@ -4654,7 +4659,7 @@ function stoerungEintrag(o, ohneMarkt){
           (o.problemtyp?'<br><span style="font-size:13px" data-a="text">'+esc(o.problemtyp)+"</span>":"")+"</div>"+
         '<span class="pill '+alter.klasse+'">'+esc(alter.text)+"</span></div>"+
       (o.termin?'<div style="font-size:13px"><strong>Einsatz geplant:</strong> <a href="#" class="sprunglink" data-a="kal" title="Im Kalender zeigen">'+esc(dfmt(o.termin))+"</a>"+
-        (o.terminZeit?", "+esc(o.terminZeit)+" Uhr":"")+(o.terminTechniker?" · "+esc(kanonName(o.terminTechniker)):"")+"</div>":"")+
+        (o.terminZeit?", "+esc(o.terminZeit)+" Uhr":"")+(o.terminTechniker?" · "+esc(stoerWer(o).join(", ")):"")+"</div>":"")+
       (o.beschreibung?'<div class="muted" style="font-size:12.5px" data-a="text">'+esc(String(o.beschreibung).slice(0,220))+
         (String(o.beschreibung).length>220?" …":"")+"</div>":"")+
       '<div class="muted mono" style="font-size:12.5px">'+
@@ -4951,7 +4956,7 @@ function tourArten(){ if(!S.tour.arten) S.tour.arten={wartung:true, stoerung:fal
 function tourFuer(){ return S.tour.fuer||""; }
 function tourFuerName(){ var p=(planTeam||[]).filter(function(x){ return x.user_id===tourFuer(); })[0]; return p ? (p.name||"") : (tourFuer()===meineKennung() ? meinName() : ""); }
 function tourPasstPlan(e){ var f=tourFuer(); if(!f) return true; return kalWerPasst(f, (e.wer||[]).length ? e.wer : [e.erstellt_von], e.wer_namen); }
-function tourPasstStoerung(o){ var f=tourFuer(); if(!f || !o.terminTechniker) return true; return kanonName(o.terminTechniker)===kanonName(tourFuerName()); }
+function tourPasstStoerung(o){ var f=tourFuer(); if(!f || !o.terminTechniker) return true; return stoerWer(o).indexOf(kanonName(tourFuerName()))>=0; }
 function tourPasstWartung(p){ var f=tourFuer(); if(!f) return true; var pl=planFuerPosition(p.id); return !pl || (pl.wer||[]).indexOf(f)>=0; }
 function tourPlanStopps(art){
   var heute=isoLokal(new Date()), bis=endeFolgemonat(), je={};
@@ -7249,9 +7254,15 @@ var LERN_ANLAGE=["hersteller","modell","aufsteller"], LERN_STOER=["problemtyp","
 /* Wer fährt hin: die eigenen Techniker zuerst (feste Reihenfolge), danach, wer
    bei Störungen zuletzt eingetragen war – Namen in der bekannten Schreibweise */
 var EIGENE_TECHNIKER=["Darko Jekic","Manfred Kammerlander","Tobias Kammerlander","Matthäus Kammerlander"];
+/* „Wer fährt hin“ – auch mehrere (Inhaber 07.10.2026: „beim Einsätze planen kann man nur einen Techniker wählen – für
+   Stempeluhr und Zeiterfassung unpraktisch“): im Feld durch Komma getrennt; je Name die bekannte Schreibweise, ohne Doppel */
+function stoerWer(o){
+  return String((o && o.terminTechniker)||"").split(/\s*[,;+&\/]\s*|\s+und\s+/).map(function(n){ n=n.trim(); return n ? (kanonName(n)||n) : ""; })
+    .filter(function(n, i, l){ return n && l.indexOf(n)===i; });
+}
 function technikerVorschlaege(){
   var l=EIGENE_TECHNIKER.slice();
-  gelernteStoerWerte("terminTechniker").forEach(function(v){ v=kanonName(v)||v; if(l.indexOf(v)<0) l.push(v); });
+  gelernteStoerWerte("terminTechniker").forEach(function(v){ stoerWer({terminTechniker:v}).forEach(function(n){ if(l.indexOf(n)<0) l.push(n); }); });
   return l;
 }
 function gelernteStoerWerte(key){
@@ -7273,6 +7284,15 @@ document.addEventListener("click", function(e){
   var c=e.target && e.target.closest ? e.target.closest(".chip[data-lern]") : null; if(!c) return;
   e.preventDefault();
   var wurzel=c.closest(".assistent, form, .card")||document, ziel=wurzel.querySelector(c.dataset.lern); if(!ziel) return;
+  if(c.hasAttribute("data-mehr")){
+    /* mehrere wählbar (Wer fährt hin): antippen nimmt dazu bzw. wieder heraus */
+    var l=stoerWer({terminTechniker:ziel.value}), i=l.indexOf(c.dataset.w);
+    if(i>=0) l.splice(i, 1); else l.push(c.dataset.w);
+    ziel.value=l.join(", ");
+    ziel.dispatchEvent(new Event("input",{bubbles:true})); ziel.dispatchEvent(new Event("change",{bubbles:true}));
+    c.parentNode.querySelectorAll(".chip[data-lern]").forEach(function(x){ x.setAttribute("aria-pressed", String(l.indexOf(x.dataset.w)>=0)); });
+    return;
+  }
   ziel.value=c.dataset.w;
   ziel.dispatchEvent(new Event("input",{bubbles:true})); ziel.dispatchEvent(new Event("change",{bubbles:true}));
   c.parentNode.querySelectorAll(".chip").forEach(function(x){ x.setAttribute("aria-pressed", String(x===c)); });
@@ -7283,7 +7303,7 @@ document.addEventListener("input", function(e){
   var wurzel=i.closest(".assistent, form, .card")||document, v=String(i.value||"").trim();
   wurzel.querySelectorAll(".chip[data-lern]").forEach(function(c){
     var z=null; try{ z=wurzel.querySelector(c.dataset.lern); }catch(x){}
-    if(z===i) c.setAttribute("aria-pressed", String(c.dataset.w===v));
+    if(z===i) c.setAttribute("aria-pressed", String(c.hasAttribute("data-mehr") ? stoerWer({terminTechniker:v}).indexOf(c.dataset.w)>=0 : c.dataset.w===v));
   });
 }, true);
 document.addEventListener("change", function(e){
@@ -8949,7 +8969,7 @@ function stoerungSpeichern(o, grund, rueck){
        Nachricht bekommen?“) */
     if(wo!==false && o.terminTechniker && o.termin && !o.erledigt && !o._ohneMeldung){
       var vorher=(altU && altU.felder) || {};
-      if(vorher.termin!==o.termin || (vorher.terminZeit||"")!==(o.terminZeit||"") || kanonName(vorher.terminTechniker||"")!==kanonName(o.terminTechniker))
+      if(vorher.termin!==o.termin || (vorher.terminZeit||"")!==(o.terminZeit||"") || stoerWer(vorher).join(", ")!==stoerWer(o).join(", "))
         stoerungEinsatzMelden(o, !vorher.termin);
     }
     /* Kontakt aus dem Störungsauftrag: ins Adressbuch (still – passiert bei jedem Speichern) */
@@ -8967,18 +8987,20 @@ function stoerungKontakt(o){
 }
 function stoerungEinsatzMelden(o, neu){
   if(typeof chatAn!=="function" || !chatAn()) return;
-  var name=kanonName(o.terminTechniker||""); if(!name || name===kanonName(meinName())) return;
-  chatTeamLaden().then(function(t){
+  /* jede eingetragene Person (außer mir selbst) bekommt die Nachricht */
+  var namen=stoerWer(o).filter(function(n){ return n!==kanonName(meinName()); }); if(!namen.length) return;
+  chatTeamLaden().then(function(t){ namen.forEach(function(name){
     var p=(t||[]).filter(function(x){ return kanonName(x.name||"")===name; })[0]; if(!p) return;
-    var s=byId[o.standortId];
+    var s=byId[o.standortId], mit=stoerWer(o).filter(function(n){ return n!==name; });
     var text=("🔧 "+(neu?"Störungseinsatz für dich":"Störungseinsatz geändert")+": "+(s?stName(s):(o.filialCode||"Störung"))+
       " – "+dfmt(o.termin)+(o.terminZeit?", "+o.terminZeit+" Uhr":"")+
       (s&&s.adresse?"\n"+s.adresse:"")+(o.problemtyp?"\n"+o.problemtyp:"")+(o.prioritaet?" · "+o.prioritaet:"")+
       (o.auftragsnummer?"\nLidl-Auftrag "+o.auftragsnummer:"")+(o.beschreibung?"\n\n"+o.beschreibung:"")+
+      (mit.length?"\nMit dir: "+mit.join(", "):"")+
       "\n\nÖffnen: Reiter Fällig → Offene Störungen (auch im Kalender und in deiner To-do-Liste)").slice(0,3900);
     mitFrist(Store.sb.from("chat").insert({id:"c_"+Date.now().toString(36)+Math.random().toString(36).slice(2,8),
       von:Store.benutzer.id, von_name:meinName(), text:text, an:p.user_id, an_name:p.name||name, fotos:[]}), 15000).then(function(){}, function(){});
-  }, function(){});
+  }); }, function(){});
 }
 /* Jede Statusänderung einer Störung (abgehakt, gelöscht, per Protokoll
    erledigt) bekommt ihren eigenen Eintrag im Änderungsverlauf. So nimmt
@@ -12531,7 +12553,10 @@ function tourZuSpaet(T, start){
   });
   return raus;
 }
-function tourInKalender(T, an, anName, titel, ab, start){
+/* mit (frei): weitere Personen [{id, name}] – dann je Stopp ein gemeinsamer Termin mit allen (Inhaber 07.10.2026) */
+function tourInKalender(T, an, anName, titel, ab, start, mit){
+  mit=(mit||[]).filter(function(g){ return g && g.id && g.id!==an; });
+  var werIds=[an].concat(mit.map(function(g){ return g.id; })), werNamen=[anName].concat(mit.map(function(g){ return g.name; }));
   var zuSpaet=tourZuSpaet(T, start); if(zuSpaet) return Promise.reject(new Error(zuSpaet));
   var tage=[], tag=tourTagFrei(an, ab||plusTage(isoLokal(new Date()),1)), zeilen=[], updates=[], vermerke=[];
   T.tage.forEach(function(tg, i){
@@ -12556,7 +12581,7 @@ function tourInKalender(T, an, anName, titel, ab, start){
       var namen=(st.positionen||[]).filter(function(p){ return String(p.id||"").indexOf("plan:")!==0; }).map(function(p){ return p.anlagentyp||""; }).filter(Boolean);
       zeilen.push({art:"termin", kategorie:stoer && !pos.length ? "stoerung" : "wartung", titel:(stoer && !pos.length ? "Störung " : "Wartung ")+stName(st.standort),
         details:titel+(namen.length?"\n"+namen.join(", "):""), datum:tag, beginn:kalHm(b), ende:kalHm(e),
-        wer:[an], wer_namen:[anName], standort_id:st.standort.id, position_ids:pos, stoerung_id:stoer, status:"offen", privat:false,
+        wer:werIds, wer_namen:werNamen, standort_id:st.standort.id, position_ids:pos, stoerung_id:stoer, status:"offen", privat:false,
         erstellt_name:meinName(), geaendert_von:meinName()});
     });
   });
@@ -12568,7 +12593,7 @@ function tourInKalender(T, an, anName, titel, ab, start){
        Nachricht, die Tour bringt schon eine (Büro 03.10.2026) */
     zeilen.concat(vermerke).forEach(function(z){ if(!z.stoerung_id) return;
       var o=OFFENE.filter(function(x){ return x._id===z.stoerung_id && !x.erledigt && !x.geloescht; })[0]; if(!o) return;
-      stoerungSpeichern(Object.assign({}, o, {termin:z.datum, terminZeit:z.beginn, terminTechniker:anName, _ohneMeldung:true}), "Einsatz geplant (Tour)"); });
+      stoerungSpeichern(Object.assign({}, o, {termin:z.datum, terminZeit:z.beginn, terminTechniker:werNamen.join(", "), _ohneMeldung:true}), "Einsatz geplant (Tour)"); });
     /* vorhandene Einträge verschieben: jeder zählt einzeln – die neuen Termine stehen schon, ein Fehler hier ist ein
        Teilerfolg (nicht „nichts gespeichert“; nochmals tippen legte sonst alles doppelt an) */
     var fehlt=0;
@@ -12596,61 +12621,76 @@ function tourSchicken(T){
       "Dort öffnet sie sie mit einem Tipp – mit genau diesen Märkten und Arbeiten, gerechnet ab "+esc(S.tour.startId==="__gps"?"dem Betrieb":"dem gewählten Startpunkt")+".</div>"+
     '<div class="note warnbox" data-a="fehler" hidden></div></div>');
   v.inhalt.appendChild(box);
-  var an=null, anName="", fe=box.querySelector('[data-a="fehler"]');
+  /* an wen – auch mehrere (Inhaber 07.10.2026: „beim Einsätze planen kann man nur einen Techniker wählen“): eine
+     Zwei-Mann-Tour steht bei allen im Kalender (ein Termin je Stopp mit allen), jede andere Person bekommt die Tour und
+     eine Nachricht. gew = [{id, name}] in der Reihenfolge des Antippens; die erste Person bestimmt freie Tage. */
+  var gew=[], fe=box.querySelector('[data-a="fehler"]');
   var kalCb0=box.querySelector('[data-a="kal"]');
+  var nurIch=function(){ return gew.length===1 && gew[0].id===ichId; };
   /* für sich selbst geht es nur um den Kalender – das Häkchen bleibt an */
-  var waehle=function(){ if(kalCb0){ var selbst=an===ichId; if(selbst) kalCb0.checked=true; kalCb0.disabled=selbst; }
-    los.textContent = an===ichId ? "In meinen Kalender" : "Tour schicken"; };
+  var waehle=function(){ if(kalCb0){ var selbst=gew.some(function(g){ return g.id===ichId; }); if(selbst) kalCb0.checked=true; kalCb0.disabled=selbst; }
+    los.textContent = nurIch() ? "In meinen Kalender" : gew.length>1 ? "Tour an "+gew.length+" Personen" : "Tour schicken"; };
   (buero ? chatTeamLaden() : Promise.resolve([])).then(function(team){
     var h=box.querySelector("[data-an]"); h.innerHTML="";
     /* Ich zuerst – Techniker sehen nur sich selbst */
     team=[{user_id:ichId, name:"Ich ("+ichName+")"}].concat(buero ? team : []);
     team.forEach(function(p){
       var b=el('<button class="chip" type="button" aria-pressed="false">'+esc(p.name||"Unbekannt")+"</button>");
-      b.onclick=function(){ an=p.user_id; anName=p.user_id===ichId ? ichName : (p.name||""); h.querySelectorAll(".chip").forEach(function(x){ x.setAttribute("aria-pressed", String(x===b)); }); waehle(); };
+      b.onclick=function(){
+        var i=gew.map(function(g){ return g.id; }).indexOf(p.user_id);
+        if(i>=0) gew.splice(i, 1); else gew.push({id:p.user_id, name:p.user_id===ichId ? ichName : (p.name||"")});
+        b.setAttribute("aria-pressed", String(i<0)); fe.hidden=true; waehle(); };
       h.appendChild(b);
       if((tourFuer() && p.user_id===tourFuer()) || (!buero && p.user_id===ichId)) b.onclick();
     });
+    if(buero) h.appendChild(el('<div class="muted" style="font-size:12px;flex-basis:100%">Mehrere antippen = gemeinsame Tour (z. B. zu zweit).</div>'));
   });
   var los=el('<button class="btn" type="button">Tour schicken</button>'), ab=el('<button class="btn ghost" type="button">Abbrechen</button>');
   ab.onclick=function(){ v.zu(); };
   los.onclick=function(){
-    if(!an){ fe.textContent="Bitte auswählen, an wen die Tour geht."; fe.hidden=false; return; }
+    if(!gew.length){ fe.textContent="Bitte auswählen, an wen die Tour geht."; fe.hidden=false; return; }
     var titel=box.querySelector('[data-a="titel"]').value.trim()||"Tour", notiz=box.querySelector('[data-a="notiz"]').value.trim();
     var d=tourDaten(T), ich=meineAngaben().name||wer();
+    var erst=gew[0], mit=gew.slice(1), andere=gew.filter(function(g){ return g.id!==ichId; }), alleNamen=gew.map(function(g){ return g.name; });
     /* über Mitternacht gleich hier melden – bei „Tour schicken“ wäre die Tour sonst schon gespeichert */
     var stEl=box.querySelector('[data-a="start"]'), kalEl=box.querySelector('[data-a="kal"]');
-    var spaet=stEl && (an===ichId || (kalEl && kalEl.checked)) ? tourZuSpaet(T, stEl.value||"07:00") : "";
+    var spaet=stEl && (gew.some(function(g){ return g.id===ichId; }) || (kalEl && kalEl.checked)) ? tourZuSpaet(T, stEl.value||"07:00") : "";
     if(spaet){ fe.textContent=spaet; fe.hidden=false; return; }
-    if(an===ichId){
+    if(nurIch()){
       if(!planungAn()){ fe.textContent="Der Kalender ist nicht verfügbar."; fe.hidden=false; return; }
       los.disabled=true; los.textContent="wird eingetragen …"; fe.hidden=true;
-      tourInKalender(T, an, anName, titel, box.querySelector('[data-a="ab"]').value, box.querySelector('[data-a="start"]').value||"07:00").then(function(kal){
+      tourInKalender(T, erst.id, erst.name, titel, box.querySelector('[data-a="ab"]').value, box.querySelector('[data-a="start"]').value||"07:00").then(function(kal){
         v.zu(); toast(kal.anzahl+" Termin"+(kal.anzahl===1?"":"e")+" in deinem Kalender – ab "+dfmt(kal.tage[0]||"")+"."+
           (kal.fehlt?" "+kal.fehlt+" Termin"+(kal.fehlt===1?"":"e")+" nicht verschoben – bitte im Kalender prüfen.":""));
       }).catch(function(x){ los.disabled=false; los.textContent="In meinen Kalender"; fe.textContent="Nicht eingetragen: "+technikDeutsch(x.message||x); fe.hidden=false; });
       return;
     }
     if(!buero){ fe.textContent="Touren für andere plant das Büro."; fe.hidden=false; return; }
-    los.disabled=true; los.textContent="wird geschickt …"; fe.hidden=true;
-    mitFrist(Store.sb.from("touren").insert({an:an, an_name:anName, von:Store.benutzer.id, von_name:ich, titel:titel, notiz:notiz||null, daten:d}), 15000).then(function(r){
+    var losText=los.textContent; los.disabled=true; los.textContent="wird geschickt …"; fe.hidden=true;
+    /* je andere Person eine Tour zum Annehmen (ich selbst brauche keine – mein Kalender genügt) */
+    mitFrist(Store.sb.from("touren").insert(andere.map(function(g){ return {an:g.id, an_name:g.name, von:Store.benutzer.id, von_name:ich, titel:titel, notiz:notiz||null, daten:d}; })), 15000).then(function(r){
       if(r.error) throw new Error(/relation|does not exist/i.test(r.error.message)?"Touren sind in der Datenbank noch nicht eingerichtet.":r.error.message);
-      /* Nachricht mit Push – die Tagesübersicht gleich zum Lesen */
-      /* in den Kalender: je Stopp ein Termin, Tage auf Werktage gelegt */
-      var kalCb=box.querySelector('[data-a="kal"]'), kalPlan=kalCb && kalCb.checked ? tourInKalender(T, an, anName, titel, box.querySelector('[data-a="ab"]').value, box.querySelector('[data-a="start"]').value||"07:00") : Promise.resolve(null);
+      /* in den Kalender: je Stopp EIN Termin mit allen gewählten Personen, Tage auf Werktage gelegt */
+      var kalCb=box.querySelector('[data-a="kal"]'), kalPlan=kalCb && kalCb.checked ? tourInKalender(T, erst.id, erst.name, titel, box.querySelector('[data-a="ab"]').value, box.querySelector('[data-a="start"]').value||"07:00", mit) : Promise.resolve(null);
       return kalPlan.then(function(kal){
       var tageText=T.tage.map(function(tag, i){ return (kal&&kal.tage[i]?WOCHENTAGE[(new Date(kal.tage[i]+"T12:00:00").getDay()+6)%7]+" "+dfmt(kal.tage[i]):"Tag "+tag.nr)+": "+tag.stopps.filter(function(st){ return st.standort; }).map(function(st){ return stName(st.standort); }).join(" → "); }).join("\n");
-      var text=("🗺 Neue Tour für dich: "+titel+" – "+d.anzahl+" Stopps, "+d.km+" km\n"+tageText+(notiz?"\n\n"+notiz:"")+
-        (kal?"\n\nDie Stopps stehen mit Uhrzeit in deinem Kalender und in der To-do-Liste.":"")+
-        "\n\nÖffnen: Reiter Karte → „Touren für dich“").slice(0,3900);
-      return mitFrist(Store.sb.from("chat").insert({id:"c_"+Date.now().toString(36)+Math.random().toString(36).slice(2,8),
-        von:Store.benutzer.id, von_name:ich, text:text, an:an, an_name:anName, fotos:[]}), 15000).then(function(r2){
+      /* Nachricht mit Push an jede andere Person – die Tagesübersicht gleich zum Lesen */
+      var fehler=[];
+      return Promise.all(andere.map(function(g){
+        var mitDir=alleNamen.filter(function(n){ return n!==g.name; });
+        var text=("🗺 Neue Tour für dich: "+titel+" – "+d.anzahl+" Stopps, "+d.km+" km"+(mitDir.length?"\nMit dir: "+mitDir.join(", "):"")+"\n"+tageText+(notiz?"\n\n"+notiz:"")+
+          (kal?"\n\nDie Stopps stehen mit Uhrzeit in deinem Kalender und in der To-do-Liste.":"")+
+          "\n\nÖffnen: Reiter Karte → „Touren für dich“").slice(0,3900);
+        return mitFrist(Store.sb.from("chat").insert({id:"c_"+Date.now().toString(36)+Math.random().toString(36).slice(2,8),
+          von:Store.benutzer.id, von_name:ich, text:text, an:g.id, an_name:g.name, fotos:[]}), 15000).then(function(r2){ if(r2 && r2.error) fehler.push(g.name); }, function(){ fehler.push(g.name); });
+      })).then(function(){
         v.zu();
-        toast(r2 && r2.error ? "Tour gespeichert – die Nachricht ging nicht hinaus ("+r2.error.message+")." : "Tour an "+anName+" geschickt"+(kal?" – "+kal.anzahl+" Termine in seinem Kalender"+(kal.fehlt?", "+kal.fehlt+" nicht verschoben (bitte im Kalender prüfen)":""):"")+".");
+        toast("Tour an "+alleNamen.join(", ")+" geschickt"+(kal?" – "+kal.anzahl+" Termine im Kalender"+(gew.length>1?" (je Stopp ein gemeinsamer Termin)":"")+(kal.fehlt?", "+kal.fehlt+" nicht verschoben (bitte im Kalender prüfen)":""):"")+"."+
+          (fehler.length?" ⚠ Nachricht ging nicht hinaus an: "+fehler.join(", ")+".":""));
         if(typeof chatLaden==="function") chatLaden();
       });
       });
-    }).catch(function(x){ los.disabled=false; los.textContent="Tour schicken"; fe.textContent="Nicht geschickt: "+technikDeutsch(x.message||x); fe.hidden=false; });
+    }).catch(function(x){ los.disabled=false; los.textContent=losText; fe.textContent="Nicht geschickt: "+technikDeutsch(x.message||x); fe.hidden=false; });
   };
   v.fuss.appendChild(ab); v.fuss.appendChild(los);
 }
@@ -20206,7 +20246,7 @@ function bedarfEinsaetze(b){
   }
   else if(b.standort_id && !b.stoerung_id && !b.planung_id){
     PLANUNG.forEach(function(x){ if(x.standort_id===b.standort_id && x.art==="termin" && x.datum && x.datum>=heute) termin(x); });
-    OFFENE.forEach(function(o){ if(o.standortId===b.standort_id && o.termin && o.termin>=heute && !o.erledigt) l.push({datum:o.termin, ids:bedarfNamenIds([o.terminTechniker]), namen:o.terminTechniker?[o.terminTechniker]:[]}); });
+    OFFENE.forEach(function(o){ if(o.standortId===b.standort_id && o.termin && o.termin>=heute && !o.erledigt) l.push({datum:o.termin, ids:bedarfNamenIds(stoerWer(o)), namen:o.terminTechniker?[o.terminTechniker]:[]}); });
   }
   return l.sort(function(x,y){ return x.datum.localeCompare(y.datum); });
 }
@@ -20232,7 +20272,7 @@ function bedarfWann(b){
 function bedarfWer(b){
   if(b.wer) return {ids:[b.wer], namen:[b.wer_name||planPersonName(b.wer)||""]};
   var e=b.planung_id && PLANUNG.filter(function(x){ return x.id===b.planung_id; })[0]; if(e) return {ids:(e.wer||[]).length?e.wer:[e.erstellt_von], namen:e.wer_namen||[]};
-  var o=b.stoerung_id && OFFENE.filter(function(x){ return x._id===b.stoerung_id; })[0]; if(o && o.terminTechniker) return {ids:bedarfNamenIds([o.terminTechniker]), namen:[o.terminTechniker]};
+  var o=b.stoerung_id && OFFENE.filter(function(x){ return x._id===b.stoerung_id; })[0]; if(o && o.terminTechniker) return {ids:bedarfNamenIds(stoerWer(o)), namen:stoerWer(o)};
   var n=bedarfEinsaetze(b), r={ids:[], namen:[]};
   n.filter(function(x){ return x.datum===n[0].datum; }).forEach(function(x){
     x.ids.forEach(function(id){ if(id && r.ids.indexOf(id)<0) r.ids.push(id); });
@@ -31119,6 +31159,8 @@ function projektDateienKarte(p, buero, schreiben, neuZeichnen){
   var ord=k.querySelector("[data-ordner]");
   if(ord) ord.onchange=function(){
     var alle=[].slice.call(ord.files||[]); ord.value="";
+    /* gleich sichtbar machen, dass etwas passiert – das Prüfen (Doppel, KPlus) dauert bei vielen Dateien (Inhaber 07.10.2026) */
+    if(alle.length) toast("Ordner wird geprüft ("+alle.length+" Datei"+(alle.length===1?"":"en")+") …");
     var pa=PROJEKTE.filter(function(x){ return x.id===p.id; })[0]||p, da={};
     ((pa.daten||{}).dateien||[]).forEach(function(x){ da[dateiNameNorm(x.name)]=1; });
     var weg=[], kplus=[], liste=alle.filter(function(f){
@@ -31227,6 +31269,9 @@ function projektDateienAblegen(p, art, liste, herkunft, nurBuero, preise, hinwei
   var artVon=typeof art==="function" ? art : function(){ return art; };
   var artName=typeof art==="function" ? "nach Art sortiert" : (PROJEKT_DATEIARTEN.filter(function(x){ return x[0]===art; })[0]||[art,art])[1];
   toast(liste.length+" Datei"+(liste.length===1?"":"en")+" wird hochgeladen …");
+  /* Fortschritt bei mehreren Dateien – höchstens alle 1,5 s eine Meldung */
+  var fertigZahl=0, letzteMeldung=Date.now(), fortschritt=function(){ fertigZahl++;
+    if(liste.length>3 && fertigZahl<liste.length && Date.now()-letzteMeldung>1500){ letzteMeldung=Date.now(); toast(fertigZahl+" von "+liste.length+" hochgeladen …"); } };
   var neue=[], fehler=[];
   var meldung=function(m){ return /mime|type/i.test(m)?"Dateityp geht nicht – bitte als PDF oder Foto":/bucket|not found/i.test(m)?"Ablage für Projektdateien noch nicht eingerichtet (tools/kunden-projekte-stunden.sql)":/row-level|policy|unauthor/i.test(m)?"keine Berechtigung":m; };
   /* jede Datei für sich: klappt eine nicht, bleiben die anderen trotzdem am Projekt */
@@ -31237,7 +31282,7 @@ function projektDateienAblegen(p, art, liste, herkunft, nurBuero, preise, hinwei
     if(f._hash) eintrag.hash=f._hash;   /* Prüfsumme – erkennt später dieselbe Datei unter anderem Namen */
     if(demo()){ eintrag._url=URL.createObjectURL(f); neue.push(eintrag); return null; }
     return mitFrist(Store.sb.storage.from("projektdateien").upload(pfad, f, {contentType:f.type||"application/octet-stream", upsert:false}), 120000)
-      .then(function(r){ if(r.error) throw new Error(r.error.message); neue.push(eintrag); })
+      .then(function(r){ fortschritt(); if(r.error) throw new Error(r.error.message); neue.push(eintrag); })
       .catch(function(e){ fehler.push(f.name+": "+meldung(e&&e.message||String(e))); });
   })).then(function(){
     if(!neue.length) return;
@@ -31780,11 +31825,11 @@ function verplantPruefen(ids, namen, d, bis, b0, e0, ohnePlanId, ohneStoerId){
   });
   (typeof OFFENE!=="undefined" ? OFFENE : []).forEach(function(o){
     if(!o.termin || o.erledigt || o.geloescht || o._id===ohneStoerId || o.termin<d || o.termin>bis) return;
-    if(!istDabei(null, o.terminTechniker)) return;
+    var dabei=stoerWer(o).filter(function(n){ return istDabei(null, n); }); if(!dabei.length) return;
     var b1=o.terminZeit ? zeitMin(o.terminZeit) : 0, e1=o.terminZeit ? Math.min(1440, b1+120) : 1440;
     if(!(b0<e1 && b1<e0)) return;
     var st=byId[o.standortId];
-    treffer.push(kanonName(o.terminTechniker)+": Störung "+(st?stName(st):(o.filialCode||""))+" ("+dfmt(o.termin)+", "+(o.terminZeit||"ganztägig")+")");
+    treffer.push(dabei.join(", ")+": Störung "+(st?stName(st):(o.filialCode||""))+" ("+dfmt(o.termin)+", "+(o.terminZeit||"ganztägig")+")");
   });
   return treffer;
 }
@@ -31868,8 +31913,8 @@ function kalenderEintraege(von, bis, wahl, nur){
   /* Störungen: geplanter Einsatz steht in der Störung selbst */
   offeneStoerungen(true).forEach(function(o){
     var s=o.standortId && byId[o.standortId];
-    if(o.termin && kalWerPasst(wahl, [], [o.terminTechniker])) dazu(o.termin, {art:"stoerung", o:o, zeit:o.terminZeit||"", farbe:planKat("stoerung")[2],
-      titel:"Störung "+(s?stName(s):(o.filialCode||"")), unter:[o.terminZeit||"ganztägig", o.terminTechniker?kanonName(o.terminTechniker):"", o.problemtyp||""].filter(Boolean).join(" · ")});
+    if(o.termin && kalWerPasst(wahl, [], stoerWer(o))) dazu(o.termin, {art:"stoerung", o:o, zeit:o.terminZeit||"", farbe:planKat("stoerung")[2],
+      titel:"Störung "+(s?stName(s):(o.filialCode||"")), unter:[o.terminZeit||"ganztägig", stoerWer(o).join(", "), o.problemtyp||""].filter(Boolean).join(" · ")});
     else if(!o.termin && o.zieltermin && (wahl==="alle" || nurStoer)) dazu(o.zieltermin, {art:"ziel", o:o, zeit:"", farbe:planKat("stoerung")[2], rand:true,
       titel:"Zieltermin Störung "+(s?stName(s):(o.filialCode||"")), unter:"noch kein Einsatz geplant"});
   });
@@ -32290,8 +32335,8 @@ function kalVerschieben(x, tag, b, dauer){
     }, function(){ toast("Nicht verschoben – keine Verbindung."); render(); });
   } else if(x.art==="stoerung" && x.o){
     var o=Object.assign({}, x.o, {termin:tag, terminZeit:kalHm(b)});
-    var d2=verplantPruefen([], [o.terminTechniker], tag, tag, b, b+120, null, o._id);
-    if(d2.length && !window.confirm((o.terminTechniker||"")+" ist da schon verplant:\n\n"+d2.slice(0,8).join("\n")+"\n\nTrotzdem dorthin verschieben?")){ render(); return; }
+    var d2=verplantPruefen([], stoerWer(o), tag, tag, b, b+120, null, o._id);
+    if(d2.length && !window.confirm("Da schon verplant:\n\n"+d2.slice(0,8).join("\n")+"\n\nTrotzdem dorthin verschieben?")){ render(); return; }
     stoerungSpeichern(o, "Einsatz verschoben").then(function(wo){ toast(wo===false?"Nicht verschoben.":"Einsatz verschoben auf "+dfmt(tag)+", "+kalHm(b)+"."); render(); });
   }
 }
@@ -32764,7 +32809,7 @@ function einsatzZeile(e){
 /* geplante Störungseinsätze (Einsatztag steht in der Störung) der gewählten Person */
 function stoerEinsaetze(wahl){
   return (typeof OFFENE!=="undefined" ? OFFENE : []).filter(function(o){
-    return o.termin && !o.erledigt && !o.geloescht && kalWerPasst(wahl, [], [o.terminTechniker]); });
+    return o.termin && !o.erledigt && !o.geloescht && kalWerPasst(wahl, [], stoerWer(o)); });
 }
 function stoerEinsatzZeile(o){
   var heute=isoLokal(new Date()), s=byId[o.standortId];
@@ -32772,7 +32817,7 @@ function stoerEinsatzZeile(o){
     '<button class="btn ghost sm" type="button" data-ab style="min-width:36px;font-size:16px;padding:2px 6px" title="wird mit dem Störungsprotokoll abgehakt">☐</button>'+
     '<a href="#" class="sprunglink" style="flex:1;min-width:0;font-size:13.5px;text-decoration:none;color:inherit"><strong>Störung '+esc(s?stName(s):(o.filialCode||""))+"</strong>"+
       '<br><span class="muted" style="font-size:12.5px"><span'+(o.termin<heute?' style="color:var(--crit)"':"")+">Störung "+esc(dfmt(o.termin))+(o.terminZeit?" "+esc(o.terminZeit):"")+"</span>"+
-      (o.terminTechniker?" · "+esc(kanonName(o.terminTechniker)):"")+(o.problemtyp?" · "+esc(o.problemtyp):"")+(o.auftragsnummer?" · Auftrag "+esc(o.auftragsnummer):"")+"</span></a>"+
+      (o.terminTechniker?" · "+esc(stoerWer(o).join(", ")):"")+(o.problemtyp?" · "+esc(o.problemtyp):"")+(o.auftragsnummer?" · Auftrag "+esc(o.auftragsnummer):"")+"</span></a>"+
     (nurLesen()?"":'<button class="btn sm" type="button" data-proto style="flex:none">Störungsprotokoll</button>')+"</div>");
   z.querySelector("a").onclick=function(ev){ ev.preventDefault(); stoerungDialog(o); };
   z.querySelector("[data-ab]").onclick=function(){ toast("Eine Störung ist erledigt, sobald das Störungsprotokoll gespeichert ist – „Störungsprotokoll“ antippen."); };
