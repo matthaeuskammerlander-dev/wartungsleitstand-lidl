@@ -25779,7 +25779,7 @@ Object.assign(RUNDGAENGE, {
         "Projekttermine erscheinen im Kalender – ohne eigenen Kalendereintrag und ohne Nachricht; Aufgaben und „Einplanen“ dagegen mit Nachricht an die Eingetragenen."])},
     {titel:"Baustellenbuch, Dateien, PDF", text:RG_LISTE([
       "<strong>Baustellenbuch</strong>: Datum, Art, Beschreibung, Menge – orange, was für die Rechnung zählt (Zusatzleistung, Kran, Material, Wochenende, Erschwernis …). Mengen, keine Preise.",
-      "<strong>Dateien</strong>: Art wird erkannt; „Ganzen Ordner hochladen“ überspringt Gleichnamiges; höchstens 50 MB je Datei (Größeres wird ausgelassen, der Rest hochgeladen).",
+      "<strong>Dateien</strong>: Art wird erkannt; „Ganzen Ordner hochladen“ überspringt Gleichnamiges; doppelte Dateien erkennt die App am Inhalt (auch „Plan (1).pdf“ oder eine Kopie unter anderem Namen) und lädt sie nicht nochmals hoch; höchstens 50 MB je Datei (Größeres wird ausgelassen, der Rest hochgeladen).",
       "<strong>Stunden</strong> auf das Projekt, <strong>Tagebuch</strong>, <strong>Nachrichten</strong>.",
       "<strong>Zusammenfassung (PDF)</strong>: Eckdaten, Angaben mit Quellen, Listen, Baustellenbuch, Dateiliste, Tagebuch – „Ablegen“ für die Synology."])+
       RG_HG(["Angebot und Rechnung als Dateiart (unter „buero/“) nur für den Inhaber – ebenso eine Mail (.eml), die ein Angebot/eine Rechnung als Anhang oder einen Preis im Text enthält (z. B. „4.800 € netto“; bei der Datei steht dann „enthält Preise“, andere legen sie nicht ab); auf der Synology nur im Büro-Ordner, nie im Projektordner, den Techniker sehen.",
@@ -31100,18 +31100,59 @@ function projektDateienKarte(p, buero, schreiben, neuZeichnen){
         .then(function(l){ var m={}; l.forEach(function(x){ m[x[0]]=x[1]; }); return m; });
     }
     kplusArten.then(function(m){
-      var alleListe=liste.concat(kplus);
-      if(!alleListe.length){ toast(weg.length?"Alle Dateien sind schon am Projekt.":"Keine Dateien im Ordner."); return; }
-      if(!window.confirm(alleListe.length+" Datei"+(alleListe.length===1?"":"en")+" hochladen"+(weg.length?" ("+weg.length+" schon vorhanden, übersprungen)":"")+"?\n\n"+
-        alleListe.slice(0,25).map(function(f){ return "• "+f.name+" → "+artName(m[f.name]||artVon(f)); }).join("\n")+(alleListe.length>25?"\n…":""))) return;
+      /* doppelte am Inhalt (gleiche Datei unter anderem Namen, Inhaber 07.10.2026) gleich hier aussortieren und nennen */
+      return dateienDoppeltPruefen(p, liste.concat(kplus)).then(function(dp){ return {m:m, dp:dp}; });
+    }).then(function(x){
+      var m=x.m, dp=x.dp, alleListe=dp.neu, dop=dp.doppelt.length;
+      if(!alleListe.length){ toast(weg.length||dop?"Alle Dateien sind schon am Projekt"+(dop?" bzw. doppelt im Ordner":"")+".":"Keine Dateien im Ordner."); return; }
+      var ueber=[weg.length?weg.length+" schon vorhanden":"", dop?dop+" doppelt (gleicher Inhalt)":""].filter(Boolean).join(", ");
+      if(!window.confirm(alleListe.length+" Datei"+(alleListe.length===1?"":"en")+" hochladen"+(ueber?" ("+ueber+", übersprungen)":"")+"?\n\n"+
+        alleListe.slice(0,25).map(function(f){ return "• "+f.name+" → "+artName(m[f.name]||artVon(f)); }).join("\n")+(alleListe.length>25?"\n…":"")+
+        (dop?"\n\nDoppelt, nicht hochgeladen:\n"+dp.doppelt.slice(0,10).map(function(d){ return "• "+d.f.name+" = "+(d.wie?d.wie.name+" (schon am Projekt)":d.wieDatei.name); }).join("\n")+(dop>10?"\n…":""):""))) return;
       projektDateienHochladen(p, function(f){ return m[f.name]||artVon(f); }, alleListe, function(f){ return ordnerVon(f); })
         .then(function(neue){ if(neue.length) neuZeichnen(); });
     });
   };
   return k;
 }
+/* Doppelte Dateien am INHALT erkennen (Inhaber 07.10.2026: „Erkennst du beim Upload doppelte Dateien?“ – im Ordner
+   lagen „Plan.pdf“ und „Plan (1).pdf“ mit gleichem Inhalt). Prüfsumme SHA-256 je Datei, am Projekt als hash vermerkt;
+   ältere Einträge ohne Prüfsumme: gleicher Name ohne „ (1)“/„ - Kopie“ und gleiche Größe. Liefert {neu, doppelt:[{f, wie}]}
+   – wie = der vorhandene Eintrag am Projekt bzw. die gleiche Datei in dieser Auswahl (wieDatei). */
+function dateiPruefsumme(f){
+  if(f && f._hash) return Promise.resolve(f._hash);
+  if(!(window.crypto && crypto.subtle && f && f.arrayBuffer)) return Promise.resolve("");
+  return f.arrayBuffer().then(function(b){ return crypto.subtle.digest("SHA-256", b); }).then(function(h){
+    var x=Array.prototype.map.call(new Uint8Array(h), function(z){ return ("0"+z.toString(16)).slice(-2); }).join("");
+    try{ f._hash=x; }catch(e){}
+    return x;
+  }).catch(function(){ return ""; });
+}
+function dateiNameOhneKopie(n){ return dateiNameNorm(String(n||"").replace(/(\s*\(\d+\))+(?=\.[^.]+$|$)/, "").replace(/\s*-\s*Kopie(?=\.[^.]+$|$)/i, "")); }
+function dateienDoppeltPruefen(p, liste){
+  var pa=PROJEKTE.filter(function(x){ return x.id===p.id; })[0]||p, vorh=((pa.daten||{}).dateien||[]);
+  return Promise.all(liste.map(dateiPruefsumme)).then(function(hs){
+    var neu=[], doppelt=[], gesehen={};
+    liste.forEach(function(f, i){
+      var h=hs[i];
+      var gleich=vorh.filter(function(x){ return x.hash ? (!!h && x.hash===h) : (x.groesse===f.size && dateiNameOhneKopie(x.name)===dateiNameOhneKopie(f.name)); })[0];
+      if(gleich){ doppelt.push({f:f, wie:gleich}); return; }
+      var k=h || ("n:"+dateiNameOhneKopie(f.name)+":"+f.size);
+      if(gesehen[k]){ doppelt.push({f:f, wie:null, wieDatei:gesehen[k]}); return; }
+      gesehen[k]=f; neu.push(f);
+    });
+    return {neu:neu, doppelt:doppelt};
+  });
+}
+function doppeltText(doppelt){
+  if(!doppelt.length) return "";
+  return doppelt.length+" doppelte Datei"+(doppelt.length===1?"":"en")+" nicht nochmals hochgeladen (gleicher Inhalt): "+
+    doppelt.slice(0, 6).map(function(d){ var w=d.wie ? d.wie.name : d.wieDatei.name; return "„"+d.f.name+"“"+(w!==d.f.name ? " = „"+w+"“" : "")+(d.wie ? " (schon am Projekt)" : ""); }).join(", ")+
+    (doppelt.length>6 ? " …" : "")+".";
+}
 /* Dateien hochladen und am Projekt vermerken – für die Dateien-Karte und das
-   Baustellenbuch. Liefert die vermerkten Einträge (leer, wenn nichts ging). */
+   Baustellenbuch. Liefert die vermerkten Einträge (leer, wenn nichts ging) – bei einer Datei, die mit gleichem Inhalt
+   schon am Projekt liegt, deren vorhandenen Eintrag (so verweist z. B. ein Arbeitsnachweis auf die schon vorhandene). */
 /* art: Dateiart oder Funktion(Datei) → Art; herkunft (frei): Funktion(Datei) → Ordner, aus dem sie kam;
    nurBuero (frei): Funktion(Datei) → true, wenn sie trotz ihrer Art nur der Inhaber sehen darf (buero/) */
 function projektDateienHochladen(p, art, liste, herkunft, nurBuero){
@@ -31125,7 +31166,7 @@ function projektDateienHochladen(p, art, liste, herkunft, nurBuero){
   }
   /* Mail mit Preisen im Text (Inhaber 05.10.2026): beim Inhaber nur unter buero/ (Hinweis bei der Datei und in der Meldung),
      alle anderen legen sie nicht ab – wie eine KPlus-Rechnung */
-  var preise=[];
+  var preise=[], vorhanden=[];
   return Promise.all(liste.map(function(f){ return mailPreisDatei(f).then(function(ja){ if(ja) preise.push(f); }); })).then(function(){
     var hinweis="";
     if(preise.length && !nurInhaber()){
@@ -31133,7 +31174,16 @@ function projektDateienHochladen(p, art, liste, herkunft, nurBuero){
       liste=liste.filter(function(f){ return preise.indexOf(f)<0; });
       if(!liste.length){ toast(hinweis); return []; }
     }
-    return projektDateienAblegen(p, art, liste, herkunft, function(f){ return preise.indexOf(f)>=0 || !!(nurBuero && nurBuero(f)); }, preise, hinweis);
+    /* erst danach: schon am Projekt bzw. doppelt in der Auswahl – dann nicht nochmals hochladen; Büro-Dateien (buero/)
+       gibt es als vorhandenen Eintrag nur für den Inhaber zurück */
+    return dateienDoppeltPruefen(p, liste).then(function(dp){
+      liste=dp.neu;
+      dp.doppelt.forEach(function(d){ if(d.wie && vorhanden.indexOf(d.wie)<0 && (nurInhaber() || !/^buero\//.test(d.wie.pfad||""))) vorhanden.push(d.wie); });
+      hinweis=[hinweis, doppeltText(dp.doppelt)].filter(Boolean).join(" ");
+      if(!liste.length){ if(hinweis) toast(hinweis); return vorhanden; }
+      return projektDateienAblegen(p, art, liste, herkunft, function(f){ return preise.indexOf(f)>=0 || !!(nurBuero && nurBuero(f)); }, preise, hinweis)
+        .then(function(neue){ return (neue||[]).concat(vorhanden); });
+    });
   });
 }
 function projektDateienAblegen(p, art, liste, herkunft, nurBuero, preise, hinweis){
@@ -31147,6 +31197,7 @@ function projektDateienAblegen(p, art, liste, herkunft, nurBuero, preise, hinwei
     var fa=artVon(f), pfad=projektDateiPfad(p, fa, f.name, nurBuero && nurBuero(f)), eintrag={pfad:pfad, name:f.name, art:fa, groesse:f.size, typ:f.type||"", von:meinName(), zeit:new Date().toISOString()};
     var hk=herkunft ? herkunft(f) : ""; if(hk) eintrag.herkunft=hk;
     if(preise && preise.indexOf(f)>=0) eintrag.preise=true;   /* Mail mit Preisen im Text – Hinweis bei der Datei */
+    if(f._hash) eintrag.hash=f._hash;   /* Prüfsumme – erkennt später dieselbe Datei unter anderem Namen */
     if(demo()){ eintrag._url=URL.createObjectURL(f); neue.push(eintrag); return null; }
     return mitFrist(Store.sb.storage.from("projektdateien").upload(pfad, f, {contentType:f.type||"application/octet-stream", upsert:false}), 120000)
       .then(function(r){ if(r.error) throw new Error(r.error.message); neue.push(eintrag); })

@@ -810,7 +810,8 @@ test("Projekt aus Mailverlauf: Mails wählen, Claude-Vorschlag prüfen, anlegen 
       const antw = (d) => Promise.resolve(new Response(d instanceof Blob ? d : JSON.stringify(d), { status: 200 }));
       if (u.includes("/api/suche")) return antw({ mails: MAILS.map((m) => Object.assign({}, m, { von: m.vonListe })) });
       if (u.includes("/api/verlauf")) return antw({ mails: MAILS, vorschlag: VORSCHLAG });
-      if (u.includes("/api/roh?")) return antw(new Blob(["From: p@planer-test.at\r\n\r\nText"], { type: "message/rfc822" }));
+      /* je Mail ein eigener Inhalt – gleiche Inhalte erkennt die App als doppelt (Inhaber 07.10.2026) */
+      if (u.includes("/api/roh?")) return antw(new Blob(["From: p@planer-test.at\r\n\r\nText " + ((/uid=(\d+)/.exec(u) || [])[1] || "")], { type: "message/rfc822" }));
       if (u.includes("/api/anhang?")) return antw(new Blob(["kein KPlus"], { type: "application/pdf" }));
       if (u.includes("/api/status")) return antw({ ok: true, konten: [], claude: true });
       if (u.includes("/api/leitstand/abholen")) return antw({ auftrag: null });
@@ -5447,7 +5448,7 @@ test("Antworten post: Mail mit Preisen im Text – die .eml liegt nur beim Inhab
     tm.ende();
     /* 4. Techniker: eine .eml mit Preisen wird nicht abgelegt (Hinweis), eine ohne Preise schon */
     await tm.anmelden("tech@test.at", "techniker"); tm.toastSpion(); await x("projekteLaden()");
-    window.__datei = [new File([emlB64], "Angebot Hotel.eml", { type: "message/rfc822" }), new File([emlOhne], "Termin.eml", { type: "message/rfc822" })];
+    window.__datei = [new File([emlB64], "Angebot Hotel.eml", { type: "message/rfc822" }), new File([emlOhne + "Zweite Mail.\r\n"], "Termin.eml", { type: "message/rfc822" })];
     const neu = await x("projektDateienHochladen(PROJEKTE.filter(function(q){ return q.id==='tmp_p4'; })[0], 'mail', window.__datei)");
     d1 = dateien();
     p(!d1.some((f) => /Angebot Hotel/.test(f)) && d1.some((f) => /^mail\|tmp_p4\/.*Termin\.eml$/.test(f)) && (neu || []).length === 1, "Techniker: .eml mit Preisen abgelegt bzw. die ohne nicht: " + JSON.stringify(d1));
@@ -6009,6 +6010,35 @@ test("Projektdateien: bis 50 MB je Datei – zu Große werden ausgelassen, der R
   pruefe(r.max === 50 * 1048576, "Grenze nicht 50 MB: " + r.max);
   pruefe(r.namen.indexOf("Plan klein.pdf") >= 0 && r.namen.indexOf("Plan 30MB.pdf") >= 0 && r.namen.indexOf("Riesenplan.pdf") < 0, "falsch hochgeladen: " + JSON.stringify(r));
   pruefe(r.toasts.some((t) => /zu groß.*Riesenplan\.pdf \(60 MB\)/.test(t)), "kein Hinweis auf die zu große Datei: " + JSON.stringify(r.toasts));
+  await a.zu();
+});
+
+test("Projektdateien: doppelte am Inhalt erkannt – „Plan (1).pdf“ und Kopien unter anderem Namen werden nicht nochmals hochgeladen", async () => {
+  const a = await oeffnen(KONTEN.inhaber);
+  const r = await a.seite.evaluate(async () => {
+    const x = window.__t.x, w = (ms) => new Promise((f) => setTimeout(f, ms)), db = window.__db.tabellen, jetzt = new Date().toISOString();
+    /* ein älterer Eintrag ohne Prüfsumme */
+    db.projekte.push({ id: "pdop", nummer: "P-T-DOP", titel: "Doppelte", kunde_id: "lidl", standort_id: "TS1", status: "baustelle",
+      daten: { dateien: [{ pfad: "pdop/plan-alt-Plan_alt.pdf", name: "Plan alt.pdf", art: "plan", groesse: 11, typ: "application/pdf", zeit: jetzt }] }, verlauf: [], erstellt: jetzt, geaendert: jetzt });
+    await x("projekteLaden()"); await w(300);
+    window.__toasts = []; x("(function(){ var alt=toast; toast=function(m){ window.__toasts.push(String(m)); return alt.apply(this, arguments); }; return 1; })()");
+    const pdf = (name, inhalt) => new File([inhalt], name, { type: "application/pdf" });
+    const p = () => x("PROJEKTE").filter((q) => q.id === "pdop")[0];
+    window.__d = [pdf("Plan A.pdf", "%PDF Inhalt A"), pdf("Plan A (1).pdf", "%PDF Inhalt A"), pdf("Plan B.pdf", "%PDF Inhalt B"), pdf("Plan alt (1).pdf", "%PDF alt 11")];
+    const erst = await x("projektDateienHochladen")(p(), "plan", window.__d);
+    const nach1 = (p().daten.dateien || []).map((f) => f.name + (f.hash ? "#" : ""));
+    const toast1 = window.__toasts.join(" | ");
+    window.__toasts.length = 0;
+    const zweit = await x("projektDateienHochladen")(p(), "plan", [pdf("Kopie von B.pdf", "%PDF Inhalt B"), pdf("Plan C.pdf", "%PDF Inhalt C")]);
+    const nach2 = (p().daten.dateien || []).map((f) => f.name);
+    return { erst: erst.map((f) => f.name), nach1, toast1, zweit: zweit.map((f) => f.name), nach2, toast2: window.__toasts.join(" | ") };
+  });
+  pruefe(JSON.stringify(r.nach1) === JSON.stringify(["Plan alt.pdf", "Plan A.pdf#", "Plan B.pdf#"]), "erste Auswahl: " + JSON.stringify(r));
+  pruefe(/2 doppelte Dateien/.test(r.toast1) && /Plan A \(1\)\.pdf“ = „Plan A\.pdf/.test(r.toast1) && /Plan alt \(1\)\.pdf“ = „Plan alt\.pdf“ \(schon am Projekt\)/.test(r.toast1), "Meldung 1: " + r.toast1);
+  pruefe(JSON.stringify(r.nach2) === JSON.stringify(["Plan alt.pdf", "Plan A.pdf", "Plan B.pdf", "Plan C.pdf"]) && r.zweit.indexOf("Plan B.pdf") >= 0 && r.zweit.indexOf("Plan C.pdf") >= 0,
+    "Kopie unter anderem Namen: " + JSON.stringify(r));
+  pruefe(/Kopie von B\.pdf“ = „Plan B\.pdf“ \(schon am Projekt\)/.test(r.toast2), "Meldung 2: " + r.toast2);
+  pruefe(!a.fehler.length, "Laufzeitfehler: " + a.fehler.join("; "));
   await a.zu();
 });
 

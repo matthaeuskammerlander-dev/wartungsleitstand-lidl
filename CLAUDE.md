@@ -155,6 +155,9 @@ Kammerlander Umwelt- und Klimatechnik (UKT) – oft kurz, vom Handy, im Feld.
   hochgeladen (`quelleDatei` verknüpft am Namen). Dateien zeigen „gehört zu“
   (`dateiGehoertZu`), die Synology-Mappe verlinkt relativ in den Projektordner.
   Projekttyp in `daten.typ` (`PROJEKT_TYPEN` + eigene).
+  Doppelte Dateien (Inhaber 07.10.2026): `projektDateienHochladen` prüft nach der Preis-Prüfung am INHALT (`dateiPruefsumme` SHA-256 → `hash` am Eintrag;
+  ältere ohne hash: Name ohne „ (1)“/„ - Kopie“ + gleiche Größe, `dateienDoppeltPruefen`) – nicht nochmals hochgeladen, Meldung `doppeltText`;
+  zurück kommt der vorhandene Eintrag (buero/ nur für den Inhaber). „Ganzen Ordner hochladen“ nennt die Doppel schon in der Rückfrage.
 - Projektzusammenfassung als PDF (`projektPdfDialog`, `projektPdfErzeugen`, Büro
   01.10.2026): Eckdaten und alle Angaben, KEINE Anhänge (Dokumente liegen auf der
   Synology); abgelegt `daten.mappePdf`, Synology → `Projekt_<Nr>.pdf`. Zum Testen
