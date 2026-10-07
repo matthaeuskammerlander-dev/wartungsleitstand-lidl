@@ -6199,6 +6199,46 @@ test("Pläne finden: Geschoss/Gewerk erkannt, Suche, Stände beisammen, 📌 anh
   await a.zu();
 });
 
+test("Tagesrückblick: teilen mit Uhrzeit und Bereich, „Wo?“ mit Baustellen/Projekten (auch ohne Markt), Stempeluhr ebenso", async () => {
+  const a = await oeffnen(KONTEN.inhaber);
+  const r = await a.seite.evaluate(async () => {
+    const x = window.__t.x, w = (ms) => new Promise((f) => setTimeout(f, ms)), db = window.__db.tabellen, j = new Date().toISOString(), e = {};
+    db.projekte.push({ id: "pwo", nummer: "P-T-WO", titel: "Baustelle ohne Markt", kunde_id: "lidl", standort_id: null, status: "baustelle", daten: {}, verlauf: [], erstellt: j, geaendert: j });
+    await x("projekteLaden()");
+    const T = x("plusTage(isoLokal(new Date()), -1)"), ich = x("meineKennung()");
+    db.arbeitszeiten.push({ id: "zwo1", user_id: ich, name: "T", datum: T, beginn: "07:00", ende: "15:00", pause_min: 30, minuten: 450, art: "arbeit", quelle: "stempel", bereich: "werkstatt" });
+    await x("zeitenLaden()");
+    x("abgleichDialog('" + T + "', false)"); await w(300);
+    const d = () => [...document.querySelectorAll(".assistent")].pop();
+    d().querySelector("[data-abschnitt] [data-abteilen]").click(); await w(50);
+    const tp = d().querySelector("[data-teilen]"); e.panel = !!tp;
+    tp.querySelector("[data-tz]").value = "10:30"; tp.querySelector("[data-tz]").dispatchEvent(new Event("change"));
+    tp.querySelector("[data-tb]").value = "baustelle"; tp.querySelector("[data-tb]").dispatchEvent(new Event("change"));
+    tp.querySelector("[data-tok]").click(); await w(50);
+    e.abschnitte = [...d().querySelectorAll("[data-abschnitt]")].map((z) => z.dataset.abschnitt);
+    /* der neue Teil ist aufgeklappt: Wo? – die Baustelle ohne Markt ist wählbar */
+    const zwei = d().querySelectorAll("[data-abschnitt]")[1], wo = zwei.querySelector("[data-abst]");
+    e.woOptionen = [...wo.querySelectorAll("optgroup")].map((g) => g.label).join("|");
+    wo.value = "p:pwo"; wo.dispatchEvent(new Event("change")); await w(50);
+    e.woGewaehlt = d().querySelectorAll("[data-abschnitt]")[1].querySelector("[data-abst]").value;
+    [...d().querySelectorAll(".as-fuss button")].pop().click(); await w(700);
+    const l = db.arbeitszeiten.filter((z) => z.datum === T).sort((p, q) => p.beginn < q.beginn ? -1 : 1);
+    e.gespeichert = l.map((z) => z.beginn.slice(0, 5) + "-" + z.ende.slice(0, 5) + " " + z.bereich + " " + (z.projekt_id || "-")).join(" | ");
+    /* Stempeluhr: Wo? enthält die Baustelle, gewählt setzt sie Projekt (Standort leer) */
+    x("ansichtenSchliessen(); S.view='stunden'; render(); 1"); await w(400);
+    const st = document.querySelector("[data-st]");
+    e.stempelWo = st ? [...st.options].some((o) => o.value === "p:pwo") : "kein Feld";
+    if (st) { st.value = "p:pwo"; st.dispatchEvent(new Event("change")); e.stempelOrt = JSON.stringify(x("ortLesen")(st.closest(".stack") || document)); }
+    return e;
+  });
+  pruefe(r.panel && JSON.stringify(r.abschnitte) === JSON.stringify(["07:00-10:30 werkstatt", "10:30-15:00 baustelle"]), "Teilen: " + JSON.stringify(r));
+  pruefe(r.woOptionen === "Baustellen / Projekte|Märkte / Standorte" && r.woGewaehlt === "p:pwo", "Wo?: " + JSON.stringify(r));
+  pruefe(/10:30-15:00 baustelle pwo/.test(r.gespeichert) && /07:00-10:30 werkstatt -/.test(r.gespeichert), "gespeichert: " + r.gespeichert);
+  pruefe(r.stempelWo === true && r.stempelOrt === '{"standort_id":null,"projekt_id":"pwo"}', "Stempeluhr Wo?: " + JSON.stringify([r.stempelWo, r.stempelOrt]));
+  pruefe(!a.fehler.length, "Laufzeitfehler: " + a.fehler.join("; "));
+  await a.zu();
+});
+
 const AN_HILFEN = `window.__an = {
   warte: (ms) => new Promise((f) => setTimeout(f, ms)),
   bis: async (f, max = 4000) => { const t0 = Date.now(); for (;;) { let v = null; try { v = f(); } catch (e) {} if (v || Date.now() - t0 > max) return v; await window.__an.warte(30); } },
@@ -6632,7 +6672,7 @@ test("Tagesrückblick: nach jedem Ausstempeln – Grenze verschieben, teilen, �
     const vorschlag = abs().map((e) => e.dataset.abschnitt);
     gr()[1].querySelector("[data-gp]").click(); gr()[1].querySelector("[data-gp]").click();
     const g0 = gr()[0].querySelector("input[data-g]"); g0.value = "07:45"; g0.dispatchEvent(new Event("change"));
-    abs()[2].querySelector("[data-abteilen]").click();
+    abs()[2].querySelector("[data-abteilen]").click(); [...document.querySelectorAll(".assistent [data-tok]")].pop().click();
     const sel = abs()[3].querySelector("select[data-abb]"); sel.value = "werkstatt"; sel.dispatchEvent(new Event("change"));
     const summe = tt.dialog().querySelector("[data-summe]").textContent, okText = tt.ok(tt.dialog()).textContent;
     tt.ok(tt.dialog()).click(); await tt.warte(600);
@@ -6668,7 +6708,7 @@ test("Tagesrückblick: nach jedem Ausstempeln – Grenze verschieben, teilen, �
     tt.gestempelt({ datum: T, beginn: "07:00", ende: "12:00", minuten: 300, bereich: "werkstatt" });
     await tt.laden(); const vorher = JSON.stringify(db.arbeitszeiten);
     x("abgleichDialog('" + T + "', false)"); await tt.warte(200);
-    tt.dialog().querySelector("[data-abschnitt] [data-abteilen]").click();
+    tt.dialog().querySelector("[data-abschnitt] [data-abteilen]").click(); [...document.querySelectorAll(".assistent [data-tok]")].pop().click();
     window.__netzWeg = "antwort"; const ok = tt.ok(tt.dialog()); ok.click(); await tt.warte(500); window.__netzWeg = false;
     const d = tt.dialog(), e = d && d.querySelector(".warnbox:not([hidden])");
     return { offen: !!d, meldung: e ? e.textContent : "", frei: !ok.disabled, gleich: vorher === JSON.stringify(db.arbeitszeiten), geprueft: x("tagGeprueft('" + T + "')") };
@@ -6745,7 +6785,7 @@ test("Tagesrückblick: Präsentation speichert nie, am Handy (390 px) ragt nicht
     const breit = window.innerWidth, raus = [...d.querySelectorAll("*")].filter((e) => { const b = e.getBoundingClientRect(); return b.width && b.right > breit + 1; })
       .map((e) => e.tagName + "." + e.className + " " + Math.round(e.getBoundingClientRect().right)).slice(0, 5);
     const inhalt = d.querySelector(".as-inhalt"), quer = inhalt.scrollWidth - inhalt.clientWidth;
-    d.querySelectorAll("[data-abschnitt]")[2].querySelector("[data-abteilen]").click();
+    d.querySelectorAll("[data-abschnitt]")[2].querySelector("[data-abteilen]").click(); [...document.querySelectorAll(".assistent [data-tok]")].pop().click();
     tt.ok(tt.dialog()).click(); await tt.warte(400);
     const l = x("ZEITEN").filter((z) => z.datum === T);
     /* Ausstempeln in der Präsentation: der Rückblick kommt auch hier – „Passt so“ schickt nichts */

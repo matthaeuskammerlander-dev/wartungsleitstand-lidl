@@ -492,7 +492,7 @@ details.handbuch .hb-inhalt li{margin:5px 0}
 .as-kopf{display:flex;justify-content:space-between;align-items:flex-start;gap:10px;padding:14px 16px;border-bottom:1px solid var(--line)}
 .as-titel{font-weight:700;font-size:16px;overflow-wrap:anywhere}
 .as-schritt{font-size:12.5px;color:var(--ink-3);margin-top:2px}
-.as-inhalt{padding:16px;overflow:auto;display:grid;gap:16px;flex:1;align-content:start}
+.as-inhalt{padding:16px;overflow:auto;display:grid;gap:16px;flex:1;align-content:start;overscroll-behavior:contain;-webkit-overflow-scrolling:touch}
 /* Sprungleiste oben im Projekt (Inhaber 07.10.2026) – bleibt beim Scrollen stehen, am Handy waagrecht wischbar */
 .projekt-sprung{position:sticky;top:-16px;z-index:5;background:var(--surface);margin:-16px -16px 0;padding:8px 16px;flex-wrap:nowrap;overflow-x:auto;-webkit-overflow-scrolling:touch;border-bottom:1px solid var(--line);scrollbar-width:none}
 .projekt-sprung::-webkit-scrollbar{display:none}
@@ -35609,6 +35609,38 @@ function tagPruefenOffen(tag){
   var z=stempelZustand(); if(z.ein && tagLokal(z.ein.zeit)===tag) return false;
   return !tagGeprueft(tag);
 }
+/* „Wo?“ – Märkte UND Baustellen/Projekte (Inhaber 07.10.2026: „man kann den Ort eines Projekts nicht als Standort
+   einstellen“ – etwa eine Baustelle ohne angelegten Markt). Wert „p:<Projekt>“ = dort; Standort ist dann der des Projekts. */
+function ortWahlWert(standortId, projektId){
+  var p=projektId && PROJEKTE.filter(function(x){ return x.id===projektId; })[0];
+  return p && (!standortId || p.standort_id===standortId) ? "p:"+p.id : (standortId||"");
+}
+function ortOptionenHtml(standortId, projektId, leer){
+  var w=ortWahlWert(standortId, projektId);
+  var pr=PROJEKTE.filter(function(p){ return projektOffen(p) || "p:"+p.id===w; });
+  return '<option value="">'+esc(leer||"– Betrieb, Werkstatt, unterwegs –")+"</option>"+
+    (pr.length ? '<optgroup label="Baustellen / Projekte">'+pr.map(function(p){ return '<option value="p:'+esc(p.id)+'"'+("p:"+p.id===w?" selected":"")+">🏗 "+esc(projektTitel(p))+"</option>"; }).join("")+"</optgroup>" : "")+
+    '<optgroup label="Märkte / Standorte">'+ST.slice().sort(nachMarktname).map(function(s){
+      return '<option value="'+esc(s.id)+'"'+(s.id===w?" selected":"")+">"+esc(stName(s)+(istLidl(s)?"":" · "+kundeTitel(kundeVon(s))))+"</option>"; }).join("")+"</optgroup>";
+}
+function ortWert(v){
+  v=String(v||"");
+  if(v.indexOf("p:")===0){ var p=PROJEKTE.filter(function(x){ return x.id===v.slice(2); })[0]; return {standort_id:(p && p.standort_id)||null, projekt_id:v.slice(2)}; }
+  return {standort_id:v||null, projekt_id:null};
+}
+/* in einem Formular mit [data-st] (Wo?) und [data-pr] (Projekt): lesen, setzen, verknüpfen */
+function ortLesen(host){
+  var st=host.querySelector("[data-st]"), pr=host.querySelector("[data-pr]"), o=ortWert(st ? st.value : "");
+  return {standort_id:o.standort_id, projekt_id:o.projekt_id || (pr && pr.value) || null};
+}
+function ortSetzen(host, standortId, projektId){
+  var st=host.querySelector("[data-st]"), pr=host.querySelector("[data-pr]");
+  if(st) st.value=ortWahlWert(standortId, projektId); if(pr) pr.value=projektId||"";
+}
+function ortVerknuepfen(host){
+  var st=host.querySelector("[data-st]"), pr=host.querySelector("[data-pr]");
+  if(st && pr) st.addEventListener("change", function(){ var o=ortWert(st.value); if(o.projekt_id) pr.value=o.projekt_id; });
+}
 function abgleichDialog(tag, nachAusstempeln){
   if(monatGesperrt(tag)){ toast(MONAT_GESPERRT+"."); return; }
   var bloecke=stempelBloecke(tag);
@@ -35663,6 +35695,8 @@ function abgleichDialog(tag, nachAusstempeln){
   };
   var auswahl=function(liste, wert, leer){ return '<option value="">'+esc(leer)+"</option>"+liste.map(function(o){ return '<option value="'+esc(o[0])+'"'+(o[0]===wert?" selected":"")+">"+esc(o[1])+"</option>"; }).join(""); };
   var zeichne=function(){
+    /* Scrollstand halten (Inhaber 07.10.2026: „am iPhone schwierig zu scrollen“ – nach jeder Änderung sprang die Liste) */
+    var y=v.inhalt.scrollTop; setTimeout(function(){ if(Math.abs(v.inhalt.scrollTop-y)>2) v.inhalt.scrollTop=y; }, 0);
     host.innerHTML="";
     var gest=bloecke.map(function(b){ var min=b.eintraege.reduce(function(s,z){ return s+(z.minuten||0); },0), p=b.eintraege.reduce(function(s,z){ return s+(z.pause_min||0); },0);
       return kalHm(b.beginn)+"–"+kalHm(b.ende)+(p?" (Pause "+p+" min)":"")+" = "+stundenText(min); }).join(" · ");
@@ -35715,10 +35749,15 @@ function abgleichDialog(tag, nachAusstempeln){
             '<span class="mono muted" style="white-space:nowrap"'+(a.pause?' title="ohne die Pause von '+a.pause+' min"':"")+">"+stundenText(a.min)+(a.pause?" ⏸":"")+"</span></div>"+
           '<div class="rowflex" style="gap:6px;flex-wrap:wrap"><select data-abb style="width:auto;max-width:100%" aria-label="Bereich">'+bereichListe(a.bereich).map(function(x){ return '<option value="'+esc(x[0])+'"'+(x[0]===a.bereich?" selected":"")+">"+esc(x[1])+"</option>"; }).join("")+"</select>"+
             '<button class="btn ghost sm" type="button" data-abmehr>'+(a.offen?"▴ zu":"✎ Markt, Projekt, Was")+"</button>"+
-            '<button class="btn ghost sm" type="button" data-abteilen title="In zwei Abschnitte teilen">+ hier teilen</button>'+
+            '<button class="btn ghost sm" type="button" data-abteilen aria-expanded="'+!!a.teilen+'" title="In zwei Abschnitte teilen – mit Uhrzeit">✂ teilen</button>'+
             (l.length>1?'<button class="btn ghost sm" type="button" data-abweg title="Entfernen – die Zeit geht an den Nachbarn">✕ entfernen</button>':"")+"</div>"+
+          /* teilen (Inhaber 07.10.2026: „Zeitraum aufteilen hat nicht gut funktioniert“): gleich mit Uhrzeit und dem Bereich danach */
+          (a.teilen ? '<div class="rowflex" data-teilen style="gap:6px;flex-wrap:wrap;font-size:13px;border:1px dashed var(--line);border-radius:8px;padding:6px 8px">'+
+              "teilen um "+'<input type="time" data-tz value="'+esc(a.teilen.zeit)+'" style="width:auto">'+" – danach "+
+              '<select data-tb style="width:auto;max-width:100%" aria-label="Bereich danach">'+bereichListe(a.teilen.bereich).map(function(x){ return '<option value="'+esc(x[0])+'"'+(x[0]===a.teilen.bereich?" selected":"")+">"+esc(x[1])+"</option>"; }).join("")+"</select>"+
+              '<button class="btn sm" type="button" data-tok>✂ Teilen</button></div>' : "")+
           (a.offen ? '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(min(200px,100%),1fr));gap:8px">'+
-              '<label class="fl" style="min-width:0"><span>Markt / Standort</span><select data-abst style="width:100%">'+auswahl(stOpt, a.standort_id||"", "– Betrieb, Werkstatt, unterwegs –")+"</select></label>"+
+              '<label class="fl" style="min-width:0"><span>Wo? (Markt oder Baustelle)</span><select data-abst style="width:100%">'+ortOptionenHtml(a.standort_id, a.projekt_id)+"</select></label>"+
               '<label class="fl" style="min-width:0"><span>Projekt</span><select data-abpr style="width:100%">'+auswahl(prOpt, a.projekt_id||"", "–")+"</select></label>"+
               '<label class="fl" style="min-width:0;grid-column:1/-1"><span>Was</span><input type="text" data-abwas maxlength="300" value="'+esc(a.taetigkeit||"")+'" placeholder="z. B. Montage Innengeräte, Material geholt"></label></div>' : "")+
           "</div>");
@@ -35726,13 +35765,27 @@ function abgleichDialog(tag, nachAusstempeln){
         k.querySelector("[data-abmehr]").onclick=function(){ a.offen=!a.offen; zeichne(); };
         k.querySelector("[data-abteilen]").onclick=function(){
           var L=a.ende-a.beginn; if(L<2){ toast("Der Abschnitt ist zu kurz zum Teilen."); return; }
+          if(a.teilen){ a.teilen=null; zeichne(); return; }
           var m=a.beginn+Math.round(L/2/15)*15; if(m<=a.beginn || m>=a.ende) m=a.beginn+Math.floor(L/2);
-          l.splice(i+1, 0, Object.assign({}, a, {beginn:m, planung_id:null, titel:"", offen:true})); a.ende=m; hand=true; zeichne();
+          a.teilen={zeit:kalHm(m), bereich:a.bereich}; zeichne();
         };
+        var tp=k.querySelector("[data-teilen]");
+        if(tp){
+          tp.querySelector("[data-tz]").onchange=function(){ a.teilen.zeit=this.value; };
+          tp.querySelector("[data-tb]").onchange=function(){ a.teilen.bereich=this.value; };
+          tp.querySelector("[data-tok]").onclick=function(){
+            var m=zeitMin(tp.querySelector("[data-tz]").value), ber=tp.querySelector("[data-tb]").value;
+            if(m==null || m<=a.beginn || m>=a.ende){ toast("Bitte eine Uhrzeit zwischen "+kalHm(a.beginn)+" und "+kalHm(a.ende)+" wählen."); return; }
+            var neu=Object.assign({}, a, {beginn:m, bereich:ber||a.bereich, planung_id:null, titel:"", offen:true, teilen:null});
+            if(ber && ber!==a.bereich){ neu.standort_id=null; neu.projekt_id=null; neu.taetigkeit=""; }
+            a.teilen=null; a.ende=m; l.splice(i+1, 0, neu); hand=true; zeichne();
+            toast("✓ Geteilt um "+kalHm(m)+" – danach "+bereichName(neu.bereich)+". Wo und was kannst du darunter ergänzen.");
+          };
+        }
         var weg=k.querySelector("[data-abweg]");
         if(weg) weg.onclick=function(){ if(i>0) l[i-1].ende=a.ende; else l[1].beginn=a.beginn; l.splice(i, 1); hand=true; zeichne(); };
         var sst=k.querySelector("[data-abst]"), spr=k.querySelector("[data-abpr]"), was=k.querySelector("[data-abwas]");
-        if(sst) sst.onchange=function(){ a.standort_id=sst.value||null; hand=true; zeichne(); };
+        if(sst) sst.onchange=function(){ var o=ortWert(sst.value); a.standort_id=o.standort_id; if(o.projekt_id) a.projekt_id=o.projekt_id; hand=true; zeichne(); };
         if(spr) spr.onchange=function(){ a.projekt_id=spr.value||null; hand=true; zeichne(); };
         if(was) was.onchange=function(){ a.taetigkeit=was.value.trim().slice(0,300); hand=true; zeichne(); };
         tl.appendChild(k);
@@ -35962,8 +36015,7 @@ function ausstempelnFragen(opt, knopf){
   if(!belegt.length){
     var stOpt=ST.slice().sort(nachMarktname);
     form.appendChild(el('<div class="grid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:10px">'+
-      '<label class="fl"><span>Markt / Standort</span><select data-st><option value="">–</option>'+stOpt.map(function(s){
-        return '<option value="'+esc(s.id)+'"'+(seg.standort_id===s.id?" selected":"")+">"+esc(stName(s))+"</option>"; }).join("")+"</select></label>"+
+      '<label class="fl"><span>Wo? (Markt oder Baustelle)</span><select data-st>'+ortOptionenHtml(seg.standort_id, seg.projekt_id, "–")+"</select></label>"+
       '<label class="fl"><span>Projekt</span><select data-pr><option value="">–</option>'+PROJEKTE.filter(projektOffen).map(function(p){
         return '<option value="'+esc(p.id)+'"'+(seg.projekt_id===p.id?" selected":"")+">"+esc(projektTitel(p))+"</option>"; }).join("")+"</select></label></div>"));
   }
@@ -35987,7 +36039,7 @@ function ausstempelnFragen(opt, knopf){
   ok.onclick=function(){
     if(ab.fehlt()) return;
     var o=Object.assign({}, opt, {taetigkeit:ab.text()||null});
-    if(!belegt.length){ o.standort_id=(form.querySelector("[data-st]")||{}).value||null; o.projekt_id=(form.querySelector("[data-pr]")||{}).value||null; }
+    if(!belegt.length){ var ow=ortLesen(form); o.standort_id=ow.standort_id; o.projekt_id=ow.projekt_id; }
     var wahl=form.querySelector('input[name="doppelt"]:checked');
     if(doppelt.length && wahl && wahl.value==="ersetzen") o.ersetzen=doppelt.map(function(x){ return x.id; });
     v.zu();
@@ -36008,8 +36060,7 @@ function umstempelnDialog(knopf, vorgabe){
     '<h2 style="margin-top:6px">Weiter mit …</h2>'+
     '<div class="fl"><span class="req">Weiter im Bereich</span></div><div data-bw></div>'+
     '<div class="grid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:10px">'+
-      '<label class="fl"><span>Wo? (Markt / Standort)</span><select data-st><option value="">– Betrieb, Werkstatt, unterwegs –</option>'+stOpt.map(function(s){
-        return '<option value="'+esc(s.id)+'"'+(seg.standort_id===s.id?" selected":"")+">"+esc(stName(s)+(istLidl(s)?"":" · "+kundeTitel(kundeVon(s))))+"</option>"; }).join("")+"</select></label>"+
+      '<label class="fl"><span>Wo? (Markt oder Baustelle)</span><select data-st>'+ortOptionenHtml(seg.standort_id, seg.projekt_id)+"</select></label>"+
       '<label class="fl"><span>Projekt</span><select data-pr><option value="">–</option>'+PROJEKTE.filter(projektOffen).map(function(p){
         return '<option value="'+esc(p.id)+'"'+(seg.projekt_id===p.id?" selected":"")+">"+esc(projektTitel(p))+"</option>"; }).join("")+"</select></label>"+
     "</div>"+
@@ -36018,10 +36069,11 @@ function umstempelnDialog(knopf, vorgabe){
   form.querySelector("[data-erledigt]").appendChild(abfrage.el);
   form.querySelector("[data-bw]").appendChild(bw.el);
   /* vom Termin (Kalender): Bereich, Markt, Projekt, Was schon eingetragen */
-  if(vorgabe){ if(vorgabe.bereich) bw.setzen(vorgabe.bereich); form.querySelector("[data-st]").value=vorgabe.standort_id||""; form.querySelector("[data-pr]").value=vorgabe.projekt_id||"";
+  ortVerknuepfen(form);
+  if(vorgabe){ if(vorgabe.bereich) bw.setzen(vorgabe.bereich); ortSetzen(form, vorgabe.standort_id, vorgabe.projekt_id);
     form.querySelector("[data-neuwas]").value=vorgabe.taetigkeit||""; }
   form.insertBefore(naeheAuswahl(function(s){ form.querySelector("[data-st]").value=s.id; }), form.querySelector(".grid"));
-  var pc=stempelPlanChips(function(x){ if(x.bereich) bw.setzen(x.bereich); form.querySelector("[data-st]").value=x.standort_id||""; form.querySelector("[data-pr]").value=x.projekt_id||"";
+  var pc=stempelPlanChips(function(x){ if(x.bereich) bw.setzen(x.bereich); ortSetzen(form, x.standort_id, x.projekt_id);
     form.querySelector("[data-neuwas]").value=x.taetigkeit||""; toast("Übernommen: "+(x.taetigkeit||"")); });
   if(pc) form.insertBefore(pc, form.querySelector("[data-bw]").previousElementSibling);
   v.inhalt.appendChild(form);
@@ -36032,7 +36084,7 @@ function umstempelnDialog(knopf, vorgabe){
   ok.onclick=function(){
     if(abfrage.fehlt()) return;
     if(!bw.wert()){ toast("Bitte den Bereich wählen, mit dem es weitergeht."); return; }
-    var o={bereich:bw.wert(), standort_id:form.querySelector("[data-st]").value||null, projekt_id:form.querySelector("[data-pr]").value||null,
+    var ow=ortLesen(form), o={bereich:bw.wert(), standort_id:ow.standort_id, projekt_id:ow.projekt_id,
       taetigkeit:form.querySelector("[data-neuwas]").value.trim()||null, erledigt:abfrage.text()||null};
     if(o.bereich===(seg.bereich||null) && o.standort_id===(seg.standort_id||null) && o.projekt_id===(seg.projekt_id||null) && o.taetigkeit===(seg.taetigkeit||null)){
       var e=form.querySelector("[data-err2]"); e.textContent="Es ist nichts anders als jetzt – bitte Bereich, Markt, Projekt oder Tätigkeit ändern."; e.hidden=false; return;
@@ -36062,8 +36114,7 @@ function stempelKarte(){
     var w=el('<div class="stack" style="gap:8px">'+
       '<div class="fl"><span class="req">Bereich</span></div><div data-bw></div>'+
       '<div class="grid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:10px">'+
-        '<label class="fl"><span>Wo? (Markt / Standort)</span><select data-st><option value="">– Betrieb, Werkstatt, unterwegs –</option>'+
-          stOpt.map(function(s){ return '<option value="'+esc(s.id)+'">'+esc(stName(s)+(istLidl(s)?"":" · "+kundeTitel(kundeVon(s))))+"</option>"; }).join("")+"</select></label>"+
+        '<label class="fl"><span>Wo? (Markt oder Baustelle)</span><select data-st>'+ortOptionenHtml(null, null)+"</select></label>"+
         '<label class="fl"><span>Projekt</span><select data-pr><option value="">–</option>'+PROJEKTE.filter(projektOffen).map(function(p){
           return '<option value="'+esc(p.id)+'">'+esc(projektTitel(p))+"</option>"; }).join("")+"</select></label>"+
       "</div>"+
@@ -36071,7 +36122,8 @@ function stempelKarte(){
       '<div data-doppelt></div>'+
       '<div><button class="btn" type="button" data-ein '+gross+' data-schreiben>▶ Einstempeln</button></div></div>');
     w.querySelector("[data-bw]").appendChild(bw.el);
-    var pc=stempelPlanChips(function(x){ if(x.bereich) bw.setzen(x.bereich); w.querySelector("[data-st]").value=x.standort_id||""; w.querySelector("[data-pr]").value=x.projekt_id||"";
+    ortVerknuepfen(w);
+    var pc=stempelPlanChips(function(x){ if(x.bereich) bw.setzen(x.bereich); ortSetzen(w, x.standort_id, x.projekt_id);
       w.querySelector("[data-was]").value=x.taetigkeit||""; toast("Übernommen: "+(x.taetigkeit||"")); });
     if(pc) w.insertBefore(pc, w.firstChild);
     /* Vorschlag: der Markt, an dem heute zuletzt eingestempelt wurde */
@@ -36086,7 +36138,7 @@ function stempelKarte(){
       if(monatGesperrt(heute)){ toast(MONAT_GESPERRT+" – einstempeln geht in diesem Monat nicht mehr."); return; }
       if(!bw.wert()){ toast("Bitte den Bereich wählen – die Lohnverrechnung braucht ihn (Montage, Fahrt, Werkstatt …)."); return; }
       if(jetztSchon.length && !window.confirm("Für jetzt ist schon Arbeitszeit von Hand eingetragen ("+jetztSchon.map(zeitKurz).join(", ")+").\n\nTrotzdem einstempeln? Beim Ausstempeln kannst du wählen, was gilt.")) return;
-      var einKnopf=this, einWerte={bereich:bw.wert(), standort_id:w.querySelector("[data-st]").value||null, projekt_id:w.querySelector("[data-pr]").value||null,
+      var einOrt=ortLesen(w), einKnopf=this, einWerte={bereich:bw.wert(), standort_id:einOrt.standort_id, projekt_id:einOrt.projekt_id,
         taetigkeit:w.querySelector("[data-was]").value.trim()||null};
       /* heute Urlaub, Krankenstand …? erst klären (Büro 04.10.2026) – ein halber Tag mit Uhrzeit nur, wenn „jetzt“ hineinfällt */
       var jetztHm=zeitAus(new Date().toISOString());
