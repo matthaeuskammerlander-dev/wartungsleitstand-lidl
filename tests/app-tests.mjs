@@ -6042,6 +6042,36 @@ test("Projektdateien: doppelte am Inhalt erkannt – „Plan (1).pdf“ und Kopi
   await a.zu();
 });
 
+test("Textfelder wachsen mit dem Text – im Projekt kein Scrollen im Feld (PC und Handy), beim Tippen und Aufklappen", async () => {
+  for (const handy of [false, true]) {
+    const a = await oeffnen(KONTEN.inhaber, { handy });
+    const r = await a.seite.evaluate(async () => {
+      const x = window.__t.x, w = (ms) => new Promise((f) => setTimeout(f, ms)), db = window.__db.tabellen, jetzt = new Date().toISOString();
+      const lang = Array.from({ length: 14 }, (_, i) => "Zeile " + (i + 1) + ": Rückkühler am Dach, Schallschutzwand 2,20 m, Fundierung mit Betriebsgewicht.").join("\n");
+      db.projekte.push({ id: "ptf", nummer: "P-T-TF", titel: "Lange Texte", kunde_id: "lidl", standort_id: "TS1", status: "baustelle",
+        daten: { beschreibung: lang, bestand: lang, vorgaben: lang }, verlauf: [], erstellt: jetzt, geaendert: jetzt });
+      await x("projekteLaden()"); x("projektAnsicht('ptf')"); await w(700);
+      /* alles aufklappen, was zugeklappt ist */
+      for (let i = 0; i < 3; i++) { document.querySelectorAll(".assistent details:not([open])").forEach((d) => d.setAttribute("open", ""));
+        [...document.querySelectorAll(".assistent [aria-expanded='false']")].forEach((b) => b.click()); await w(250); }
+      const sichtbar = () => [...document.querySelectorAll(".assistent textarea")].filter((t) => t.offsetParent && t.value.length > 200);
+      const zuKnapp = () => sichtbar().filter((t) => t.scrollHeight > t.clientHeight + 2).map((t) => (t.dataset.k || t.dataset.s || t.name || "?") + " " + t.clientHeight + "/" + t.scrollHeight);
+      const n = sichtbar().length, vorher = zuKnapp();
+      /* beim Tippen: ein kurzes Feld wird lang */
+      const kurz = [...document.querySelectorAll(".assistent textarea")].filter((t) => t.offsetParent && !t.value)[0];
+      let tippen = "kein leeres Feld";
+      if (kurz) { const h0 = kurz.clientHeight; kurz.value = lang; kurz.dispatchEvent(new Event("input", { bubbles: true })); await w(50);
+        tippen = kurz.scrollHeight <= kurz.clientHeight + 2 && kurz.clientHeight > h0 ? "ok" : h0 + "→" + kurz.clientHeight + "/" + kurz.scrollHeight; }
+      return { n, vorher, tippen };
+    });
+    pruefe(r.n >= 1, (handy ? "Handy" : "PC") + ": keine langen Textfelder im Projekt gefunden: " + JSON.stringify(r));
+    pruefe(!r.vorher.length, (handy ? "Handy" : "PC") + ": Textfelder zu knapp (Scrollen im Feld): " + JSON.stringify(r.vorher));
+    pruefe(r.tippen === "ok", (handy ? "Handy" : "PC") + ": Feld wächst beim Tippen nicht: " + r.tippen);
+    pruefe(!a.fehler.length, "Laufzeitfehler: " + a.fehler.join("; "));
+    await a.zu();
+  }
+});
+
 const AN_HILFEN = `window.__an = {
   warte: (ms) => new Promise((f) => setTimeout(f, ms)),
   bis: async (f, max = 4000) => { const t0 = Date.now(); for (;;) { let v = null; try { v = f(); } catch (e) {} if (v || Date.now() - t0 > max) return v; await window.__an.warte(30); } },

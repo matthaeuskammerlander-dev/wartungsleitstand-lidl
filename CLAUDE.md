@@ -503,6 +503,9 @@ Kammerlander Umwelt- und Klimatechnik (UKT) – oft kurz, vom Handy, im Feld.
   Belegfoto (Inhaber 05.10.2026, tools/rechte-2026-10-05.sql): nach der Abgabe ersetzt/entfernt es nur noch der Inhaber (Speicher-Regel; nach
   „zurückgeben“ wieder die Person); ersetzt er das Foto eines fremden Eintrags, liegt das neue im Ordner der Person (`akFotoHochladen(datei, fuer)`),
   das alte wird erst nach dem Speichern entfernt. Nie lockern.
+- **Textfelder wachsen mit** (Inhaber 07.10.2026: „man muss innen drinnen scrollen“): jedes `<textarea>` passt seine Höhe dem Text an
+  (`feldHoehe`, `textfelderAnpassen` bei Eingabe/Fokus/Klick/Größe/neuen Elementen), Zeilenzahl = Mindestmaß, keine Obergrenze;
+  Ausnahme `data-fest`. Test „Textfelder wachsen mit dem Text …“.
 - **Diktieren** (`diktatKnopf`): Spracherkennung des Browsers, keine KI, Text wird angehängt.
 - **Rapport-Text** (`rapTextRein`): ausgeführte Arbeiten aus dem Lidl-Rapport zusätzlich in
   „Durchgeführte Maßnahmen“ bzw. „Bemerkungen“ – nie ersetzen, kein Feld fällt weg.
