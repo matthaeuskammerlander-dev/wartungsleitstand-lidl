@@ -6346,9 +6346,13 @@ test("Schriftgröße je Gerät: ☰ → Aa Schriftgröße – am Handy Sehr klei
     await a.seite.evaluate(async (q) => {
       const w = (ms) => new Promise((f) => setTimeout(f, ms));
       document.querySelector(".tab-menue").click(); await w(150);
-      [...document.querySelectorAll("#reiter_menue button")].find((b) => /Schriftgröße/.test(b.textContent)).click(); await w(200);
+      const mk = [...document.querySelectorAll("#reiter_menue button")].find((b) => /Schriftgröße/.test(b.textContent));
+      if (!mk) throw new Error("kein Menüeintrag bei " + q + ", Breite " + document.documentElement.clientWidth + ", ☰ " + getComputedStyle(document.querySelector(".tab-menue")).display);
+      mk.click(); await w(200);
       const d = [...document.querySelectorAll(".assistent")].pop();
-      [...d.querySelectorAll("[data-schrift]")].find((b) => new RegExp(q).test(b.textContent)).click(); await w(400);
+      const kb = [...d.querySelectorAll("[data-schrift]")].find((b) => new RegExp(q).test(b.textContent));
+      if (!kb) throw new Error("kein Knopf " + q + ": " + [...d.querySelectorAll("[data-schrift]")].map((b) => b.textContent).join("|"));
+      kb.click(); await w(400);
     }, re);
     await a.seite.waitForTimeout(400);
     return a.seite.evaluate(() => ({ vp: document.querySelector('meta[name="viewport"]').content, breite: document.documentElement.clientWidth,
@@ -6373,7 +6377,25 @@ test("Schriftgröße je Gerät: ☰ → Aa Schriftgröße – am Handy Sehr klei
     return r;
   });
   pruefe(fein.prozent === "80 %" && /width=488, initial-scale=0\.8/.test(fein.vp) && fein.offen && fein.gewaehlt === 0 && fein.zurueck === "true", "Feineinstellung: " + JSON.stringify(fein));
-  const normal = await waehle("^Normal");
+  /* ganz klein: Seite breiter als 700 px – „Aa“ oben bleibt sichtbar und führt zurück */
+  await a.seite.evaluate(() => localStorage.setItem("ukt_schrift", "0.5"));
+  await a.seite.setViewportSize({ width: 430, height: 900 });
+  await a.seite.reload({ waitUntil: "load" }); await a.seite.waitForTimeout(1500);
+  const aa = await a.seite.evaluate(async () => {
+    const w = (ms) => new Promise((f) => setTimeout(f, ms));
+    const b = document.getElementById("schriftbtn"), r = b.getBoundingClientRect();
+    const sichtbar = !b.hidden && r.width > 0 && r.right <= document.documentElement.clientWidth + 1;
+    const breite = document.documentElement.clientWidth;
+    b.click(); await w(250);
+    const d = [...document.querySelectorAll(".assistent")].pop();
+    if (!d) return { sichtbar, breite, fehlt: "kein Fenster", vp: "" };
+    const n = [...d.querySelectorAll("[data-schrift]")].find((x) => /^Normal/.test(x.textContent));
+    if (!n) return { sichtbar, breite, fehlt: d.textContent.slice(0, 200), vp: "" };
+    n.click(); await w(400);
+    return { sichtbar, breite, vp: document.querySelector('meta[name="viewport"]').content };
+  });
+  pruefe(aa.sichtbar && aa.breite > 700 && /width=device-width/.test(aa.vp), "Aa-Knopf bei ganz klein: " + JSON.stringify(aa));
+  const normal = await waehle("^(✓ )?Normal");
   pruefe(/width=520, initial-scale=0\.75/.test(sehrKlein.vp) && Math.abs(sehrKlein.breite - 520) <= 2 && sehrKlein.raus <= 2, "Sehr klein: " + JSON.stringify(sehrKlein));
   pruefe(/width=339, initial-scale=1\.15/.test(gross.vp) && Math.abs(gross.breite - 339) <= 2 && gross.raus <= 2, "Groß: " + JSON.stringify(gross));
   pruefe(/width=459, initial-scale=0\.85/.test(klein.vp) && Math.abs(klein.breite - 459) <= 2 && klein.raus <= 2, "Klein: " + JSON.stringify(klein));
