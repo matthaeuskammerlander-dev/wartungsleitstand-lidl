@@ -452,6 +452,10 @@ Kammerlander Umwelt- und Klimatechnik (UKT) – oft kurz, vom Handy, im Feld.
   Nachricht an jeden mit „Mit dir: …“, Bedarf, Tourfilter; Knöpfe `data-mehr` schalten um); „Tour verteilen“ an mehrere (`tourSchicken`:
   je andere Person eine Tour + Nachricht, `tourInKalender(…, mit)` je Stopp EIN Termin mit allen). Ordner hochladen meldet sofort
   „wird geprüft …“ und den Fortschritt „n von m hochgeladen“.
+- **Vergessen / abholen am Markt** (Inhaber 07.10.2026: „Tobias hat seine Leiter in der Tivoligasse vergessen“): offene `bedarf`-Einträge mit
+  standort_id (`marktAbholen`, `abholText`) – Knopf „🧰 Vergessen / abholen“ im Markt-Fenster und Karten-Popup (`marktAbholenNeu`, vorbelegt abholen/Werkzeug),
+  🧰-Zeichen auf der Karte (`.abholpin`), je Tour-Stopp, im Tourausdruck, in den Kalenderterminen der Tour und „Unterwegs abholen“ mit „+ dazunehmen“.
+  Tagesrückblick: teilen mit Uhrzeit + Bereich (`a.teilen`), Scrollstand bleibt; „Wo?“ mit Baustellen/Projekten (`ortOptionenHtml`, `ortWert`, `ortLesen`).
 - **Arbeitszeit lernt** (`arbeitStunden`, `stoerDauerMin`, Büro 02.10.2026): Tour und Kalender rechnen mit der
   tatsächlichen Zeit vor Ort – Lidl-Rapport (von–bis), Störung Ankunft–Fertig, Stunden mit Markt (`einsatz_dauern`,
   tools/einsatz-dauern.sql: nur Median je Markt, keine Personen); ohne Erfahrung `ARBEIT_H`.

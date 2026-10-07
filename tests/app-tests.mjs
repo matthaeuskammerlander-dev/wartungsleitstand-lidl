@@ -6239,6 +6239,44 @@ test("Tagesrückblick: teilen mit Uhrzeit und Bereich, „Wo?“ mit Baustellen/
   await a.zu();
 });
 
+test("Vergessen / abholen: vom Markt aus eintragen, 🧰 auf der Karte, im Popup, beim Tour-Stopp und „Unterwegs abholen“", async () => {
+  const a = await oeffnen(KONTEN.inhaber);
+  const r = await a.seite.evaluate(async () => {
+    const x = window.__t.x, w = (ms) => new Promise((f) => setTimeout(f, ms)), db = window.__db.tabellen, e = {};
+    db.bedarf.push({ id: "bab1", art: "werkzeug", text: "Leiter", notiz: "von Tobias vergessen", standort_id: "TS1", beschaffung: "abholen", bezugsquelle: "im Markt", status: "offen", erstellt_von: "u_inhaber_test_at", erstellt: new Date().toISOString() },
+      { id: "bab2", art: "werkzeug", text: "Bohrmaschine", standort_id: "TS3", beschaffung: "abholen", status: "offen", erstellt_von: "u_inhaber_test_at", erstellt: new Date().toISOString() },
+      { id: "bab3", art: "werkzeug", text: "Alte Sache", standort_id: "TS1", beschaffung: "abholen", status: "erledigt", erstellt_von: "u_inhaber_test_at", erstellt: new Date().toISOString() });
+    await x("wzLaden(true)");
+    /* Markt-Fenster: Knopf oben, Zahl der offenen */
+    x("marktAnsicht('TS1')"); await w(500);
+    const mf = [...document.querySelectorAll(".assistent")].pop();
+    e.knopf = !!mf.querySelector("[data-abholen]"); e.zahl = (mf.querySelector("[data-abholzahl]") || {}).textContent || "";
+    e.karteTitel = /Mitnehmen \/ abholen an diesem Markt/.test(mf.textContent);
+    mf.querySelector("[data-abholen]").click(); await w(300);
+    const ed = [...document.querySelectorAll(".assistent")].pop();
+    e.editor = (ed.querySelector('[data-f="bezugsquelle"]') || {}).value + " | " + [...ed.querySelectorAll("[data-weg] .chip")].filter((c) => c.getAttribute("aria-pressed") === "true").map((c) => c.textContent.trim()).join();
+    x("ansichtenSchliessen()");
+    /* Karte: Zeichen und Popup */
+    x("S.view='karte'; render(); 1"); await w(1200);
+    e.pins = [...document.querySelectorAll("[data-abholpin]")].map((p) => p.dataset.abholpin).sort().join();
+    const pop = x("popupInhalt")(x("byId.TS1"));
+    e.popup = [...pop.querySelectorAll("[data-abholeintrag]")].map((z) => z.textContent).join(" | ") + " | knopf:" + !!pop.querySelector('[data-akt="abholen"]');
+    /* Tour: am Stopp und unterwegs */
+    const T = { tage: [{ nr: 1, stunden: 2, startPunkt: x("BETRIEB"), stopps: [{ standort: x("byId.TS1"), positionen: [x("posById.TP1")], fahrtH: 0.5, arbeitH: 1, km: 10 }] }], anzahlStopps: 1, anzahlPositionen: 1, kmGesamt: 10, stundenProTag: 8 };
+    const te = x("tourErgebnis")(T);
+    e.stopp = [...te.querySelectorAll("[data-tourabholen]")].map((s) => s.textContent).join(" | ");
+    const uw = te.querySelector("[data-unterwegs]"); e.unterwegs = uw ? uw.textContent : "";
+    return e;
+  });
+  pruefe(r.knopf && /1 offen/.test(r.zahl) && r.karteTitel, "Markt-Fenster: " + JSON.stringify(r));
+  pruefe(/^im Markt .* \| .*abholen/.test(r.editor), "Editor vom Markt aus nicht vorbelegt: " + r.editor);
+  pruefe(r.pins === "TS1,TS3", "Karte: 🧰-Zeichen " + r.pins);
+  pruefe(/Leiter – von Tobias vergessen/.test(r.popup) && !/Alte Sache/.test(r.popup) && /knopf:true/.test(r.popup), "Popup: " + r.popup);
+  pruefe(/abholen: Leiter/.test(r.stopp) && /Bohrmaschine/.test(r.unterwegs) && !/Leiter/.test(r.unterwegs), "Tour: " + JSON.stringify([r.stopp, r.unterwegs]));
+  pruefe(!a.fehler.length, "Laufzeitfehler: " + a.fehler.join("; "));
+  await a.zu();
+});
+
 const AN_HILFEN = `window.__an = {
   warte: (ms) => new Promise((f) => setTimeout(f, ms)),
   bis: async (f, max = 4000) => { const t0 = Date.now(); for (;;) { let v = null; try { v = f(); } catch (e) {} if (v || Date.now() - t0 > max) return v; await window.__an.warte(30); } },

@@ -302,6 +302,8 @@ body.nurlesen [data-schreiben], body.nurlesen .zugang{display:none!important}
 .stoerpin>span{transform:rotate(45deg)}
 .stoerpin.klein{display:inline-flex;width:14px;height:14px;font-size:9px;border-width:1.5px;margin-right:5px;vertical-align:-2px;transform:none;border-radius:50%}
 .stoerpin.lidl{background:#5B3E9B}
+.abholpin{display:inline-flex;align-items:center;gap:2px;padding:1px 6px;border-radius:10px;background:var(--warn);color:#fff;border:2px solid #fff;
+  font:700 12px/16px system-ui,sans-serif;box-shadow:0 1px 4px rgba(0,0,0,.35);white-space:nowrap}
 /* „📍 Mein Standort“ (Inhaber 06.10.2026: „fast nicht von Filialen ohne offene Wartung zu unterscheiden“): kräftig blauer
    Punkt mit weißem Rand, pulsierendem Ring und Schild „Ich“ – keine Statusfarbe, immer obenauf */
 .ichpunkt{position:relative;width:22px;height:22px;pointer-events:none}
@@ -4529,6 +4531,14 @@ function marktAnsicht(sid){
   a.inhalt.closest(".assistent").setAttribute("data-marktfenster", sid);   /* für „Claude fragen“: welcher Markt gerade offen ist (nicht data-markt – das öffnet beim Antippen einen Markt) */
   a.schritt.textContent=[s.filiale?"Filiale "+s.filiale:"", s.adresse].filter(Boolean).join(" · ");
   a.inhalt.appendChild(standortDetail(s));
+  /* gleich oben: etwas vergessen oder abzuholen (Inhaber 07.10.2026: „damit man es leicht findet“) */
+  if(wzAn() && !nurLesen()){
+    var abK=el('<div class="rowflex" style="gap:8px;flex-wrap:wrap;align-items:center"><button class="btn ghost sm" type="button" data-abholen>🧰 Vergessen / abholen</button><span class="muted" style="font-size:12.5px" data-abholzahl></span></div>');
+    abK.querySelector("[data-abholen]").onclick=function(){ marktAbholenNeu(sid); };
+    var abZ=function(){ var n=marktAbholen(sid).length; abK.querySelector("[data-abholzahl]").textContent=n ? n+" offen – siehe „Mitnehmen / abholen an diesem Markt“" : ""; };
+    if(wzGeladen) abZ(); else wzLaden().then(abZ, function(){});
+    a.inhalt.appendChild(abK);
+  }
   var h=el('<div class="card" style="box-shadow:none;margin-top:12px" data-historie><div class="pad stack">'+
     '<h2>Wartungs- und Störungshistorie</h2></div></div>');
   h.querySelector(".stack").appendChild(historieAnsicht(s));
@@ -4542,7 +4552,7 @@ function marktAnsicht(sid){
   if(chatAn()) a.inhalt.appendChild(chatBezugKarte("markt", s.id, chatBezugText("markt", s)));
   var vb=verbundenKarte(sid); if(vb) a.inhalt.appendChild(vb);
   /* Material für den nächsten Besuch; Werkzeug, das gerade dort ist (Büro 04.10.2026) */
-  if(wzAn()){ var mk=bedarfKarte("Material und Werkzeug für den nächsten Besuch", {standort_id:sid}, {leer:"Nichts vorgemerkt – z. B. besondere Filter oder Ersatzteile für diesen Markt."});
+  if(wzAn()){ var mk=bedarfKarte("Mitnehmen / abholen an diesem Markt", {standort_id:sid}, {leer:"Nichts vorgemerkt – z. B. vergessenes Werkzeug zum Abholen, besondere Filter oder Ersatzteile für den nächsten Besuch."});
     var amM=WZ.filter(function(w){ return w.aktiv!==false && w.standort_art==="baustelle" && w.standort_id===sid; });
     if(amM.length) mk.querySelector(".stack").appendChild(el('<div class="muted" style="font-size:12.5px">📍 Liegt am Markt: '+amM.map(function(w){ return esc(w.name); }).join(", ")+"</div>"));
     a.inhalt.appendChild(mk); }
@@ -5350,6 +5360,16 @@ function karteOsm(withGeo){
       stoerMarker.push(mk);
       bounds.push([s.lat,s.lon]);   /* der Ausschnitt schließt die Störungen ein */
     });
+    /* 🧰 etwas abzuholen / mitzunehmen (Inhaber 07.10.2026) – rechts oben am Punkt, immer sichtbar; lädt Werkzeug und Material nach */
+    var abholEbene=L.layerGroup().addTo(karte);
+    var abholZeichnen=function(){
+      if(leafletKarte!==karte) return; abholEbene.clearLayers();
+      withGeo.forEach(function(s){ var l=marktAbholen(s.id); if(!l.length) return;
+        var mk=L.marker([s.lat,s.lon],{zIndexOffset:950, title:"Abholen / mitnehmen: "+l.map(function(b){ return b.text; }).join(", "),
+          icon:L.divIcon({className:"", iconSize:[34,20], iconAnchor:[-4,28], html:'<div class="abholpin" data-abholpin="'+esc(s.id)+'">🧰'+(l.length>1?" "+l.length:"")+"</div>"})}).addTo(abholEbene);
+        mk.bindPopup(function(){ return popupInhalt(s); },{minWidth:230,maxWidth:280}); });
+    };
+    if(wzAn()){ if(wzGeladen) abholZeichnen(); else wzLaden().then(abholZeichnen, function(){}); }
     /* Rückfragen des Kunden (offene Wartung oder noch nicht erfasster
        Störungsauftrag): dasselbe Zeichen mit „L“, wo noch kein Störungszeichen steht */
     /* steht am Markt schon das Störungszeichen, kommt das „L“ nur dazu, wenn die Störungen ausgeblendet sind */
@@ -5513,13 +5533,17 @@ function popupInhalt(s){
         '<br><span style="color:#555">'+esc(stoerungAlter(o).text)+(o.termin?" · Einsatz "+esc(dfmt(o.termin)):"")+"</span></div>"+
         '<button class="btn sm" type="button" data-stoerproto="'+esc(o._id)+'" data-schreiben style="width:100%;margin-bottom:8px">Störungsprotokoll erstellen</button>';
     }).join("")+
+    marktAbholen(s.id).map(function(b){ return '<div data-abholeintrag="'+esc(b.id)+'" role="button" tabindex="0" title="ansehen / erledigt" style="font-size:12.5px;margin-bottom:6px;padding:6px 8px;border-left:3px solid var(--warn);background:var(--warn-soft);border-radius:4px;cursor:pointer">'+esc(abholText(b))+" ›</div>"; }).join("")+
     '<div style="display:flex;flex-direction:column;gap:6px">'+
       '<a class="btn sm" style="text-align:center;text-decoration:none" href="'+gmapsZiel(s)+
         '" target="_blank" rel="noopener" data-navi="'+esc(s.id)+'">Mit <span data-naviname>'+esc(naviName())+'</span> navigieren</a>'+
       '<button class="btn ghost sm" type="button" data-akt="detail">Anlagen und Historie</button>'+
       '<button class="btn ghost sm" type="button" data-akt="proto" data-schreiben>Protokoll ausfüllen</button>'+
       (!nurLesen() && angemeldetOderLokal() && !marktPausiert(s) ? '<button class="btn ghost sm" type="button" data-stoerneu="'+esc(s.id)+'" data-schreiben>+ Störungsauftrag</button>' : "")+
+      (wzAn() && !nurLesen() ? '<button class="btn ghost sm" type="button" data-akt="abholen" data-schreiben>🧰 Vergessen / abholen</button>' : "")+
     "</div>";
+  var abB=d.querySelector('[data-akt="abholen"]'); if(abB) abB.onclick=function(){ if(leafletKarte) leafletKarte.closePopup(); marktAbholenNeu(s.id); };
+  d.querySelectorAll("[data-abholeintrag]").forEach(function(k){ k.onclick=function(){ var b=BEDARF.filter(function(x){ return x.id===k.dataset.abholeintrag; })[0]; if(b){ if(leafletKarte) leafletKarte.closePopup(); bedarfEditor(b); } }; });
   var jetztOffen=function(id){ return OFFENE.filter(function(x){ return x._id===id && !x.erledigt && !x.geloescht; })[0]; };
   d.querySelectorAll("[data-stoer][role]").forEach(function(k){
     k.onclick=function(){ var o=jetztOffen(k.dataset.stoer); if(o) stoerungDialog(o); else toast("Diese Störung ist inzwischen erledigt oder gelöscht."); };
@@ -5823,6 +5847,7 @@ function tourDrucken(T){
         return anlagenName(p)+(p.intervall?" · "+p.intervall.kurz:"")+(p.status==="ueberfaellig"?" (überfällig)":"");
       });
       stoerungVonMarkt(s.id).forEach(function(o){ var t="Störung: "+(o.problemtyp||"offen"); if(tun.indexOf(t)<0) tun.push(t+" (offen)"); });
+      marktAbholen(s.id).forEach(function(b){ tun.push(abholText(b)); });   /* 🧰 vergessen / abholen */
       var lidl=kundenVonMarkt(s.id);
       return "<tr><td>"+(i+1)+"</td><td><strong>"+esc(stName(s))+"</strong>"+(s.filiale && stName(s).indexOf(s.filiale)<0?" · Fil. "+esc(s.filiale):"")+"<br>"+esc(s.adresse||"")+
         (s.notiz?"<br><em>"+esc(s.notiz)+"</em>":"")+"</td><td>"+uhr(anf)+"–"+uhr(ende)+"<br>"+Math.round(st.km)+" km</td><td>"+
@@ -5888,7 +5913,7 @@ function tourErgebnis(T){
           (st.arbeitQuelle && st.arbeitQuelle!=="Richtwert" ? '<br><span class="muted" style="font-size:11.5px;font-family:inherit" title="gelernt aus den erfassten Stunden">⏱ '+esc(st.arbeitQuelle)+"</span>" : "")+"</td>"+
         '<td>'+st.positionen.map(function(p){
             return '<span class="tag">'+esc(p.anlagentyp||"Anlage")+"</span>";
-          }).join(" ")+"</td>"+
+          }).join(" ")+marktAbholen(st.standort.id).map(function(b){ return '<br><span class="tag" style="background:var(--warn-soft);border-color:var(--warn)" data-tourabholen>'+esc(abholText(b))+"</span>"; }).join("")+"</td>"+
         /* am Stopp gleich das Protokoll (bzw. bei offener Störung das Störungsprotokoll) */
         '<td><div class="rowflex" style="gap:4px;flex-wrap:nowrap"><a class="btn ghost sm" href="'+gmapsZiel(st.standort)+'" target="_blank" rel="noopener" data-navi="'+esc(st.standort.id)+'">Navi</a>'+
           '<button class="btn ghost sm" type="button" data-tourproto="'+esc(st.standort.id)+'" data-schreiben>Protokoll</button>'+
@@ -5939,6 +5964,23 @@ function tourErgebnis(T){
     box.appendChild(tagKarte);
   });
 
+  /* unterwegs abholen: offene Einträge an Märkten außerhalb der Tour, die nächsten zuerst – mit „dazunehmen“ */
+  (function(){
+    var drin={}, punkte=[]; T.tage.forEach(function(t){ t.stopps.forEach(function(st){ if(st.standort){ drin[st.standort.id]=1; if(st.standort.lat) punkte.push(st.standort); } }); });
+    var l=[]; (typeof BEDARF!=="undefined"?BEDARF:[]).forEach(function(b){ var s=b.standort_id && byId[b.standort_id];
+      if(!s || drin[s.id] || !s.lat || !bedarfOffen(b) || bedarfVerborgen(b)) return;
+      var km=punkte.length ? Math.min.apply(null, punkte.map(function(p){ return luftlinie(p, s); })) : null;
+      l.push({b:b, s:s, km:km}); });
+    if(!l.length) return;
+    l.sort(function(a, c){ return (a.km==null?1e9:a.km)-(c.km==null?1e9:c.km); });
+    var k=el('<div class="note" data-unterwegs style="font-size:13px"><strong>🧰 Unterwegs abholen / mitnehmen</strong> – nicht in dieser Tour:</div>');
+    l.slice(0,8).forEach(function(x){
+      var z=el('<div class="rowflex" style="gap:6px;margin-top:4px;flex-wrap:wrap"><span style="flex:1;min-width:0">'+esc(stName(x.s))+": "+esc(abholText(x.b))+(x.km!=null?' <span class="muted">· ca. '+Math.round(x.km)+" km von der Route</span>":"")+"</span></div>");
+      if((x.s.pos||[]).length && !marktPausiert(x.s)){ var b=el('<button class="btn ghost sm" type="button">+ dazunehmen</button>'); b.onclick=function(){ tourAnpassen(null, x.s.id); }; z.appendChild(b); }
+      k.appendChild(z);
+    });
+    box.appendChild(k);
+  })();
   box.appendChild(el('<div class="note">'+
     (T.echteStrasse
       ? 'Fahrzeiten und Kilometer stammen aus echtem Straßenrouting über OpenStreetMap (OSRM, PKW): '+
@@ -12585,7 +12627,7 @@ function tourInKalender(T, an, anName, titel, ab, start, mit){
       if(!pos.length && !stoer) return;
       var namen=(st.positionen||[]).filter(function(p){ return String(p.id||"").indexOf("plan:")!==0; }).map(function(p){ return p.anlagentyp||""; }).filter(Boolean);
       zeilen.push({art:"termin", kategorie:stoer && !pos.length ? "stoerung" : "wartung", titel:(stoer && !pos.length ? "Störung " : "Wartung ")+stName(st.standort),
-        details:titel+(namen.length?"\n"+namen.join(", "):""), datum:tag, beginn:kalHm(b), ende:kalHm(e),
+        details:titel+(namen.length?"\n"+namen.join(", "):"")+marktAbholen(st.standort.id).map(function(x){ return "\n"+abholText(x); }).join(""), datum:tag, beginn:kalHm(b), ende:kalHm(e),
         wer:werIds, wer_namen:werNamen, standort_id:st.standort.id, position_ids:pos, stoerung_id:stoer, status:"offen", privat:false,
         erstellt_name:meinName(), geaendert_von:meinName()});
     });
@@ -20461,6 +20503,21 @@ function bedarfKasten(bz, opt){
   if(!wzGeladen) wzLaden().then(function(){ if(h.isConnected) h._neu(); });
   h._neu();
   return h;
+}
+/* ---------- „Vergessen / abholen“ am Markt (Inhaber 07.10.2026: „Tobias hat seine Leiter in der Tivoligasse vergessen –
+   eine Notiz, die man auf der Karte und in der Tourenplanung sieht, damit man sie unterwegs holt“). Es sind die offenen
+   Einträge von „Werkzeug und Material“ mit diesem Markt (abholen, mitnehmen, bestellen) – nichts Neues in der Datenbank. */
+function marktAbholen(sid){
+  return (typeof BEDARF!=="undefined" ? BEDARF : []).filter(function(b){ return b.standort_id===sid && bedarfOffen(b) && !bedarfVerborgen(b); });
+}
+function abholText(b){
+  var weg=(BEDARF_WEGE.filter(function(x){ return x[0]===b.beschaffung; })[0]||["","",""]);
+  return weg[2]+" "+weg[1]+": "+b.text+(b.menge?" ("+b.menge+")":"")+(b.notiz?" – "+b.notiz:"")+(b.wer_name?" · "+b.wer_name:"");
+}
+/* neuer Eintrag direkt vom Markt aus – vorbelegt mit „abholen“, Werkzeug, „im Markt …“ */
+function marktAbholenNeu(sid){
+  var s=byId[sid];
+  bedarfEditor(null, {standort_id:sid, art:"werkzeug", beschaffung:"abholen", bezugsquelle:s ? "im Markt "+stName(s) : ""});
 }
 function bedarfKarte(titel, bz, opt){
   var c=el('<div class="card" style="box-shadow:none;margin-top:12px"><div class="pad stack" style="gap:8px"><h2>'+esc(titel)+"</h2></div></div>");
