@@ -529,7 +529,7 @@ Kammerlander Umwelt- und Klimatechnik (UKT) – oft kurz, vom Handy, im Feld.
 - **Schriftgröße je Gerät** (Inhaber 07.10.2026: „der Chef will alles sehr groß, ich eher klein“): ☰ → „Aa Schriftgröße“ (`schriftDialog`,
   `SCHRIFT_STUFEN` Sehr klein 0,75 / Klein 0,85 / Normal / Groß 1,15 / Sehr groß 1,3; Feineinstellung − / + in 5-%-Schritten 60–150 %, gespeichert als Zahl), localStorage `ukt_schrift`; `schriftAnwenden` (Kopf-Skript) setzt am Handy/Tablet
   die Viewport-Breite = Gerätebreite ÷ Stufe und initial-scale = Stufe (Text bricht neu um, iPhone maximum-scale = Stufe); Normal bleibt wie bisher.
-  Am PC nur Hinweis Strg +/− (Browser merkt es selbst). Am Handy/Tablet zusätzlich immer der Kopfknopf „Aa“ (`#schriftbtn`) – klein gestellt
+  Am PC nur Hinweis Strg +/− (Browser merkt es selbst). Am Handy/Tablet zusätzlich immer „Aa Schriftgröße“ ganz unten neben Handbuch/Rundgänge (`#schriftbtn`; nicht in der Kopfleiste – zu viel Platz) – klein gestellt
   wird die Seite breiter als 700 px und das ☰ verschwindet. Test „Schriftgröße je Gerät …“.
 - **Karte bleibt erhalten** (Inhaber 07.10.2026: „die Karte dauert manchmal sehr lange zum Laden – nervig im Einsatz“): `render()` baut die
   Leaflet-Karte nicht ab, sondern hält sie an und merkt den Ausschnitt (`_uktAnsicht`); `karteOsm` setzt den Container mit den geladenen Kacheln

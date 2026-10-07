@@ -6384,7 +6384,7 @@ test("Schriftgröße je Gerät: ☰ → Aa Schriftgröße – am Handy Sehr klei
   const aa = await a.seite.evaluate(async () => {
     const w = (ms) => new Promise((f) => setTimeout(f, ms));
     const b = document.getElementById("schriftbtn"), r = b.getBoundingClientRect();
-    const sichtbar = !b.hidden && r.width > 0 && r.right <= document.documentElement.clientWidth + 1;
+    const sichtbar = !b.hidden && r.width > 0 && r.right <= document.documentElement.clientWidth + 1 && !b.closest("header");
     const breite = document.documentElement.clientWidth;
     b.click(); await w(250);
     const d = [...document.querySelectorAll(".assistent")].pop();
@@ -6394,7 +6394,7 @@ test("Schriftgröße je Gerät: ☰ → Aa Schriftgröße – am Handy Sehr klei
     n.click(); await w(400);
     return { sichtbar, breite, vp: document.querySelector('meta[name="viewport"]').content };
   });
-  pruefe(aa.sichtbar && aa.breite > 700 && /width=device-width/.test(aa.vp), "Aa-Knopf bei ganz klein: " + JSON.stringify(aa));
+  pruefe(aa.sichtbar && aa.breite > 700 && /width=device-width/.test(aa.vp), "Aa Schriftgröße (unten, nicht im Kopf) bei ganz klein: " + JSON.stringify(aa));
   const normal = await waehle("^(✓ )?Normal");
   pruefe(/width=520, initial-scale=0\.75/.test(sehrKlein.vp) && Math.abs(sehrKlein.breite - 520) <= 2 && sehrKlein.raus <= 2, "Sehr klein: " + JSON.stringify(sehrKlein));
   pruefe(/width=339, initial-scale=1\.15/.test(gross.vp) && Math.abs(gross.breite - 339) <= 2 && gross.raus <= 2, "Groß: " + JSON.stringify(gross));
@@ -6736,6 +6736,39 @@ test("Karte bleibt erhalten: Reiter weg und zurück, Neuzeichnen – geladene Ka
   pruefe(r.ausschnitt && r.ausschnitt[0] === 48.2 && r.ausschnitt[1] === 16.37 && r.ausschnitt[2] === 12, "Ausschnitt nicht behalten: " + JSON.stringify(r));
   pruefe(r.punkte1 > 0 && r.punkte2 === r.punkte1 && r.punkte3 === r.punkte1 && r.ebenenNachRender === r.ebenen, "Zeichen doppelt oder fehlen: " + JSON.stringify(r));
   pruefe(r.zoomNeu, "neue Auswahl nicht neu ausgerichtet: " + JSON.stringify(r));
+  pruefe(!a.fehler.length, "Laufzeitfehler: " + a.fehler.join("; "));
+  await a.zu();
+});
+
+test("Kartenbilder auf dem Gerät: angesehene Kacheln gespeichert, ohne Netz von dort gezeigt, Anzahl und Leeren mit Rückfrage", async () => {
+  const a = await oeffnen(KONTEN.techniker, { handy: true });
+  const r = await a.seite.evaluate(async () => {
+    const x = window.__t.x, w = (ms) => new Promise((f) => setTimeout(f, ms)), e = {};
+    const png = Uint8Array.from(atob("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="), (c) => c.charCodeAt(0));
+    const echt = window.fetch; let netz = true; e.geholt = 0;
+    window.fetch = (u, o) => /tile\.openstreetmap\.org/.test(String(u)) ? (e.geholt++, netz ? Promise.resolve(new Response(png, { status: 200, headers: { "Content-Type": "image/png" } })) : Promise.reject(new TypeError("offline"))) : echt(u, o);
+    x("S.view='karte'; render()"); await w(2500);
+    if (!document.querySelector("#osmkarte.leaflet-container")) return { keineKarte: true };
+    e.zahl1 = await x("kachelZahl")();
+    e.blob1 = [...document.querySelectorAll("#osmkarte .leaflet-tile")].filter((i) => /^blob:/.test(i.src) || i.complete).length;
+    /* ohne Netz, ganz neue Karte */
+    netz = false; e.geholt = 0;
+    x("leafletKarte.remove(); leafletKarte=null; render()"); await w(2500);
+    const kacheln = [...document.querySelectorAll("#osmkarte .leaflet-tile")];
+    e.kacheln = kacheln.length;
+    e.ausSpeicher = kacheln.filter((i) => i.classList.contains("leaflet-tile-loaded")).length;
+    e.info = (document.querySelector("[data-kachelinfo]") || {}).textContent || "";
+    const echtC = window.confirm; e.fragen = 0; window.confirm = () => { e.fragen++; return true; };
+    document.querySelector("[data-kachelleeren]").click(); await w(600); window.confirm = echtC;
+    e.zahlNachLeeren = await x("kachelZahl")();
+    e.infoNach = (document.querySelector("[data-kachelinfo]") || {}).textContent || "";
+    window.fetch = echt;
+    return e;
+  });
+  pruefe(!r.keineKarte, "keine Straßenkarte im Test: " + JSON.stringify(r));
+  pruefe(r.zahl1 > 0, "keine Kartenbilder gespeichert: " + JSON.stringify(r));
+  pruefe(r.kacheln > 0 && r.ausSpeicher >= Math.min(r.kacheln, r.zahl1) * 0.8, "ohne Netz nicht aus dem Speicher gezeigt: " + JSON.stringify(r));
+  pruefe(/Kartenbilder auf diesem Gerät gespeichert/.test(r.info) && r.fragen === 1 && r.zahlNachLeeren === 0 && /werden auf diesem Gerät gespeichert/.test(r.infoNach), "Anzahl/Leeren: " + JSON.stringify(r));
   pruefe(!a.fehler.length, "Laufzeitfehler: " + a.fehler.join("; "));
   await a.zu();
 });

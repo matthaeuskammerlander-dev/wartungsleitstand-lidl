@@ -747,7 +747,6 @@ table.dt td{padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:
     <span class="kopfknoepfe"><button class="btn ghost icon" type="button" id="neuladen" hidden title="Daten und App neu laden" aria-label="Aktualisieren">↻</button>
     <button class="btn ghost icon" type="button" id="fragebtn" hidden title="Claude fragen – Kältetechnik, Vorschriften, die App" aria-label="Claude fragen">✦</button>
     <button class="btn ghost icon" type="button" id="chatbtn" hidden title="Team-Chat" aria-label="Team-Chat"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 5.5A2.5 2.5 0 0 1 6.5 3h11A2.5 2.5 0 0 1 20 5.5v8a2.5 2.5 0 0 1-2.5 2.5H10l-5 4v-4H6.5A2.5 2.5 0 0 1 4 13.5v-8z"/><path d="M8 8.5h8M8 11.5h5"/></svg><span class="chatzahl" id="chatzahl"></span></button>
-    <button class="btn ghost icon" type="button" id="schriftbtn" hidden title="Schriftgröße auf diesem Gerät" aria-label="Schriftgröße" style="font-weight:700">Aa</button>
     <button class="btn ghost icon" type="button" id="qrbtn" hidden title="QR-Code zur App" aria-label="QR-Code zur App"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M3 3h8v8H3V3zm2 2v4h4V5H5zm8-2h8v8h-8V3zm2 2v4h4V5h-4zM3 13h8v8H3v-8zm2 2v4h4v-4H5zm1-9h2v2H6V6zm10 0h2v2h-2V6zM6 16h2v2H6v-2zm7-3h2v2h-2v-2zm2 2h2v2h-2v-2zm-2 2h2v2h-2v-2zm4 0h2v2h-2v-2zm2-2h2v2h-2v-2zm0 4h2v2h-2v-2zm-4 2h2v2h-2v-2zm2-2h2v2h-2v-2z"/></svg></button></span>
     </div>
     <div class="stand" id="stand" hidden></div>
@@ -758,7 +757,8 @@ table.dt td{padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:
 <main class="wrap"><div id="app"></div></main>
 <div class="wrap" style="text-align:center;padding-top:18px"><button class="btn ghost sm" type="button" id="wunschlink" hidden>💡 Änderung vorschlagen</button>
   <button class="btn ghost sm" type="button" id="handbuchlink" hidden>📖 Handbuch</button>
-  <button class="btn ghost sm" type="button" id="rundganglink" hidden>🧭 Rundgänge</button></div>
+  <button class="btn ghost sm" type="button" id="rundganglink" hidden>🧭 Rundgänge</button>
+  <button class="btn ghost sm" type="button" id="schriftbtn" hidden title="Schriftgröße auf diesem Gerät">Aa Schriftgröße</button></div>
 <div class="wrap" id="appversion" style="font-size:10.5px;color:var(--ink-2);opacity:.6;text-align:center;padding:14px 0 calc(10px + env(safe-area-inset-bottom,0px))"></div>
 <script>
 /* App-Version, ganz klein unten: Stand der Datei, wie sie der Server ausliefert
@@ -1120,12 +1120,93 @@ function kachelnPruefen(gezielt){
     if(erledigt) return; erledigt=true; kachelLaeuft=false;
     KARTE_MODUS = ok ? "osm" : "svg";
     if(ok && S.view==="karte" && darfRendern()) render();
-    else if(!ok && gezielt) toast("Die Straßenkarte (OpenStreetMap) ist gerade nicht erreichbar – es bleibt die Übersichtskarte.");
+    if(ok) return;
+    /* kein Netz: gibt es gespeicherte Kartenbilder, trotzdem die Straßenkarte – angesehene Gegenden sind da */
+    kachelZahl().then(function(n){
+      if(n>0 && KARTE_MODUS!=="osm"){ KARTE_MODUS="osm"; if(S.view==="karte" && darfRendern()) render();
+        if(gezielt) toast("Kein Netz zur Straßenkarte – gezeigt werden die auf diesem Gerät gespeicherten Kartenbilder."); return; }
+      if(gezielt) toast("Die Straßenkarte (OpenStreetMap) ist gerade nicht erreichbar – es bleibt die Übersichtskarte.");
+    });
   };
   var t=setTimeout(function(){ fertig(false); }, 8000);
   bild.onload=function(){ clearTimeout(t); fertig(true); };
   bild.onerror=function(){ clearTimeout(t); fertig(false); };
   bild.src="https://tile.openstreetmap.org/0/0/0.png?p="+Date.now();
+}
+/* Kartenbilder auf dem Gerät speichern (Inhaber 07.10.2026: „Kartenbilder auf dem Handy speichern“): jede angesehene Kachel kommt in
+   den Browser-Speicher (IndexedDB „ukt_kacheln“) und beim nächsten Mal von dort – schnell und auch ohne Empfang. Nur Angesehenes, nie
+   ganze Gegenden vorab (Nutzungsregeln von OpenStreetMap). Älter als KACHEL_ALT_TAGE: angezeigt und im Hintergrund erneuert. Höchstens
+   KACHEL_MAX Bilder (ca. 15 KB je Bild), die ältesten fallen heraus. Nur Kartenbilder, keine Daten der App. */
+var KACHEL_MAX=4000, KACHEL_ALT_TAGE=30, kachelDbP=null, kachelNeu=0;
+function kachelDb(){
+  if(kachelDbP) return kachelDbP;
+  kachelDbP=new Promise(function(ok, fehl){
+    try{
+      var r=indexedDB.open("ukt_kacheln", 1);
+      r.onupgradeneeded=function(){ var st=r.result.createObjectStore("k"); st.createIndex("t", "t"); };
+      r.onsuccess=function(){ ok(r.result); }; r.onerror=function(){ fehl(r.error); }; r.onblocked=function(){ fehl(new Error("blockiert")); };
+    }catch(e){ fehl(e); }
+  });
+  kachelDbP.catch(function(){ kachelDbP=null; });
+  return kachelDbP;
+}
+function kachelSpeicher(modus){ return kachelDb().then(function(db){ return db.transaction("k", modus).objectStore("k"); }); }
+function kachelLesen(key){
+  return kachelSpeicher("readonly").then(function(st){ return new Promise(function(ok){ var r=st.get(key); r.onsuccess=function(){ ok(r.result||null); }; r.onerror=function(){ ok(null); }; }); });
+}
+function kachelZahl(){
+  if(!window.indexedDB) return Promise.resolve(0);
+  return kachelSpeicher("readonly").then(function(st){ return new Promise(function(ok){ var r=st.count(); r.onsuccess=function(){ ok(r.result||0); }; r.onerror=function(){ ok(0); }; }); }, function(){ return 0; });
+}
+function kachelSchreiben(key, daten){
+  return kachelSpeicher("readwrite").then(function(st){
+    st.put({d:daten, t:Date.now()}, key);
+    if(++kachelNeu%100===0) setTimeout(kachelAufraeumen, 2000);
+  }, function(){});
+}
+/* über KACHEL_MAX: die ältesten bis auf 90 % entfernen */
+function kachelAufraeumen(){
+  return kachelSpeicher("readwrite").then(function(st){ return new Promise(function(ok){
+    var c=st.count(); c.onsuccess=function(){
+      var weg=c.result-Math.floor(KACHEL_MAX*0.9); if(c.result<=KACHEL_MAX || weg<=0){ ok(0); return; }
+      var n=0, cur=st.index("t").openCursor();
+      cur.onsuccess=function(){ var z=cur.result; if(!z || n>=weg){ ok(n); return; } z.delete(); n++; z.continue(); };
+      cur.onerror=function(){ ok(n); };
+    }; c.onerror=function(){ ok(0); };
+  }); }, function(){ return 0; });
+}
+function kachelLeeren(){
+  return kachelSpeicher("readwrite").then(function(st){ return new Promise(function(ok){ var r=st.clear(); r.onsuccess=function(){ ok(true); }; r.onerror=function(){ ok(false); }; }); });
+}
+/* Kachelebene mit Gerätespeicher; ohne IndexedDB/fetch die gewöhnliche */
+var KachelMitSpeicher=null;
+function kachelEbene(url, opt){
+  if(!window.indexedDB || !window.fetch || !window.Promise || !window.URL || !URL.createObjectURL) return L.tileLayer(url, opt);
+  if(!KachelMitSpeicher) KachelMitSpeicher=L.TileLayer.extend({
+    createTile:function(coords, done){
+      var img=document.createElement("img"), quelle=this.getTileUrl(coords), key=coords.z+"/"+coords.x+"/"+coords.y, blobUrl=null;
+      L.DomEvent.on(img, "load", L.Util.bind(this._tileOnLoad, this, done, img));
+      L.DomEvent.on(img, "error", L.Util.bind(this._tileOnError, this, done, img));
+      img.alt=""; img.setAttribute("role", "presentation");
+      var zeigen=function(daten){
+        if(blobUrl) URL.revokeObjectURL(blobUrl);
+        blobUrl=URL.createObjectURL(new Blob([daten], {type:"image/png"}));
+        img.addEventListener("load", function(){ setTimeout(function(){ if(blobUrl){ URL.revokeObjectURL(blobUrl); blobUrl=null; } }, 1000); }, {once:true});
+        img.src=blobUrl;
+      };
+      var holen=function(anzeigen){
+        fetch(quelle, {mode:"cors", credentials:"omit"}).then(function(r){ return r.ok ? r.arrayBuffer() : Promise.reject(new Error("HTTP "+r.status)); })
+          .then(function(daten){ kachelSchreiben(key, daten); if(anzeigen) zeigen(daten); },
+                function(){ if(anzeigen) img.src=quelle; });   /* letzter Versuch wie bisher */
+      };
+      kachelLesen(key).then(function(z){
+        if(z && z.d){ zeigen(z.d); if(Date.now()-(z.t||0)>KACHEL_ALT_TAGE*86400000) holen(false); }
+        else holen(true);
+      }, function(){ img.src=quelle; });
+      return img;
+    }
+  });
+  return new KachelMitSpeicher(url, opt);
 }
 var HEUTE = new Date();
 var JAHR = HEUTE.getFullYear();
@@ -5372,6 +5453,7 @@ function karteOsm(withGeo){
       (navigator.geolocation?'<button class="btn ghost sm" type="button" id="karteich">📍 Mein Standort</button>':"")+
       (stoerungsMaerkte().length?'<button class="btn ghost sm" type="button" id="kartestoer">Offene Störungen zeigen</button>':"")+
       '<span class="muted" style="font-size:12.5px">Ist Ihr Standort bekannt, öffnet die Karte in Ihrer Umgebung.</span></div>'+
+    '<div class="muted" data-kachelinfo style="font-size:12.5px"></div>'+
     '<div id="mapdetail"></div>'+
   "</div></div>");
 
@@ -5394,7 +5476,7 @@ function karteOsm(withGeo){
       if(alt){ try{ alt.stop(); alt._animatingZoom=false; alt.remove(); }catch(e){} }
       karte=L.map(host,{scrollWheelZoom:true}).setView([47.6,13.4],7);
       /* keepBuffer: rundum mehr Kacheln vorhalten; updateWhenIdle aus: am Handy schon beim Wischen nachladen */
-      kachel=L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png",{
+      kachel=kachelEbene("https://tile.openstreetmap.org/{z}/{x}/{y}.png",{
         maxZoom:19, keepBuffer:4, updateWhenIdle:false, attribution:'&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
       }).addTo(karte);
       karte._uktKachel=kachel;
@@ -5593,6 +5675,19 @@ function karteOsm(withGeo){
   },0);
 
   karteHinweiseAnbinden(card);
+  /* gespeicherte Kartenbilder: Anzahl und Leeren */
+  var ki=card.querySelector("[data-kachelinfo]");
+  var kiZeigen=function(){ kachelZahl().then(function(n){
+    if(!document.body.contains(ki) && !card.contains(ki)) return;
+    ki.innerHTML=n ? "📦 "+n.toLocaleString("de-AT")+" Kartenbilder auf diesem Gerät gespeichert (ca. "+Math.max(1, Math.round(n*15/1024))+" MB) – angesehene Gegenden gehen auch ohne Empfang. "+
+      '<button class="btn ghost sm" type="button" data-kachelleeren>Leeren</button>' : "📦 Angesehene Kartenbilder werden auf diesem Gerät gespeichert – beim nächsten Mal schneller und auch ohne Empfang.";
+    var b=ki.querySelector("[data-kachelleeren]");
+    if(b) b.onclick=function(){
+      if(!window.confirm("Alle "+n.toLocaleString("de-AT")+" gespeicherten Kartenbilder auf diesem Gerät löschen? Sie werden beim Ansehen wieder geladen (braucht Empfang).")) return;
+      kachelLeeren().then(function(){ toast("Gespeicherte Kartenbilder gelöscht."); kiZeigen(); }, function(){ toast("Konnte die Kartenbilder nicht löschen."); });
+    };
+  }); };
+  if(window.indexedDB) kiZeigen();
   return card;
 }
 
@@ -24983,7 +25078,7 @@ function handbuchKarte(z){
           "Inbetriebnahme und Termine bestätigen, „Heute gewartet als“ wählen – bei einer neuen Anlage mit zwei Terminen bestimmt das, welcher Termin heute erledigt ist.",
         "<strong>Arbeiten, Mängel, Ergebnis, Kältemittel</strong> – bei der Störung Störungsbehebung und Material.",
         "<strong>🎤 Diktieren:</strong> neben Bemerkungen, Fehlerbild, Ursache und Maßnahmen – sprechen statt tippen, der Text wird angehängt (Spracherkennung des Handys, keine KI). Geht es nicht, das Mikrofon der Tastatur nehmen.",
-        "<strong>Schriftgröße:</strong> ☰ (oben bei den Reitern) → „Aa Schriftgröße“, am Handy auch der Knopf „Aa“ ganz oben – am Handy/Tablet Sehr klein, Klein, Normal, Groß oder Sehr groß, darunter feiner in 5-%-Schritten (− / +); gilt nur auf diesem Gerät, jede Person stellt es sich selbst ein. Am PC Strg und + / − (Strg und 0 = normal).",
+        "<strong>Schriftgröße:</strong> ☰ (oben bei den Reitern) → „Aa Schriftgröße“, am Handy auch „Aa Schriftgröße“ ganz unten auf jeder Seite – am Handy/Tablet Sehr klein, Klein, Normal, Groß oder Sehr groß, darunter feiner in 5-%-Schritten (− / +); gilt nur auf diesem Gerät, jede Person stellt es sich selbst ein. Am PC Strg und + / − (Strg und 0 = normal).",
         "<strong>Fotos und Rapport:</strong> bis 25 Fotos mit Notiz, bei Lidl den Rapportbericht anhängen (oder später nachreichen) – die ausgeführten Arbeiten daraus kommen zusätzlich in „Durchgeführte Maßnahmen“ (Störung) bzw. „Bemerkungen“ (Wartung).",
         "<strong>Abschluss:</strong> Datum, Uhrzeit, wer noch dabei war, Unterschrift. Das Protokoll läuft immer unter deinem Namen – du bist verantwortlich.",
         "<strong>Übersicht prüfen und speichern.</strong> Oben steht „✓ gespeichert“. Nach einer Störung bietet die App fällige Wartungen am selben Markt gleich mit an.",
@@ -36691,7 +36786,8 @@ function zeigeQr(){
   ov.querySelector("#qrclose").focus();
 }
 document.getElementById("qrbtn").onclick=zeigeQr;
-/* Schriftgröße am Handy/Tablet immer erreichbar (Inhaber 07.10.2026: so klein gestellt, dass das ☰ fehlte – die Seite galt als breit) */
+/* Schriftgröße am Handy/Tablet immer erreichbar (Inhaber 07.10.2026: so klein gestellt, dass das ☰ fehlte – die Seite galt als breit);
+   unten neben Handbuch und Rundgänge, nicht in der Kopfleiste (Inhaber 07.10.2026: „nimmt dort zu viel Platz weg“) */
 (function(){ var b=document.getElementById("schriftbtn"); if(!b) return; b.onclick=schriftDialog;
   if(window.matchMedia && window.matchMedia("(pointer:coarse)").matches) b.hidden=false; })();
 /* Aktualisieren: holt die neueste App-Fassung und alle Daten neu. Ein
