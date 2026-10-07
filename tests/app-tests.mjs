@@ -275,6 +275,11 @@ test("Protokoll: Mangel je Anlage – auswählen, gespeichert mit Name, im PDF u
     form.querySelectorAll("fieldset.fs-zu").forEach((f) => f.classList.remove("fs-zu"));
     const alles = document.getElementById("f_allesok"); if (alles) alles.click();
     const leader = x("anlageLeader(posById.TP1).id");
+    /* die erste Mängelzeile entsteht vor dem Anhaken – nach einer Änderung an den Anlagen hat auch sie die Auswahl */
+    const cb = form.querySelector('input[name="posw"]:checked') || form.querySelector('input[name="posw"]');
+    cb.checked = false; cb.dispatchEvent(new Event("change", { bubbles: true })); cb.checked = true; cb.dispatchEvent(new Event("change", { bubbles: true })); await w(50);
+    const erste = form.querySelector(".mangelrow .m-a");
+    e.ersteZeile = !erste.closest("label").hidden && erste.options.length + "";
     document.getElementById("addMangel").click(); await w(50);
     const zeilen = [...form.querySelectorAll(".mangelrow")], z1 = zeilen[zeilen.length - 1];
     z1.querySelector(".m-t").value = "Kondensatablauf verstopft";
@@ -298,6 +303,7 @@ test("Protokoll: Mangel je Anlage – auswählen, gespeichert mit Name, im PDF u
     return e;
   });
   pruefe(r.optionen === "leer,A", "Auswahl der Anlagen: " + r.optionen);
+  pruefe(r.ersteZeile === "2", "erste Mängelzeile ohne Anlagen-Auswahl: " + r.ersteZeile);
   pruefe(JSON.stringify(r.maengel) === JSON.stringify(["Kondensatablauf verstopft|true|Name", "Zugang zum Dach rutschig|false|-"]), "Gespeicherte Mängel: " + JSON.stringify(r.maengel));
   pruefe(r.pdf, "PDF ohne Spalte Anlage bzw. ohne „alle / allgemein“");
   pruefe(r.betrifft === "true,true,false", "Anlagenbuch-Zuordnung: " + r.betrifft);
@@ -584,7 +590,7 @@ test("Mehrere Techniker: Tour an zwei Personen (gemeinsame Termine, je Tour + Na
     e.textfeldZu = feld.style.display === "none";
     x("ansichtenSchliessen(); document.querySelectorAll('.assistent').forEach(function(d){ d.remove(); })");
     /* jede eingetragene Person bekommt die Nachricht, steht im Kalender und in der Doppelbuchungs-Prüfung */
-    e.teilen = x("stoerWer({terminTechniker:'Testtechniker und Testadmin; Testtechniker'})").join("|");
+    e.teilen = x("stoerWer({terminTechniker:'Testtechniker, Testadmin; Testtechniker'})").join("|") + " # " + x("stoerWer({terminTechniker:'Kälte Huber & Co, Testadmin'})").join("|");
     const T = x("plusTage(isoLokal(new Date()), 3)");
     const o = { _id: "stm2", standortId: "TS1", termin: T, terminZeit: "08:00", terminTechniker: "Testtechniker, Testadmin", erledigt: false };
     x("OFFENE").push(o);
@@ -600,7 +606,7 @@ test("Mehrere Techniker: Tour an zwei Personen (gemeinsame Termine, je Tour + Na
   pruefe(r.touren === "u_admin_test_at,u_tech_test_at" && r.chats === 2, "Tour: je Person Tour + Nachricht: " + JSON.stringify(r));
   pruefe(/Testtechniker/.test(r.stoer) && /Testadmin/.test(r.stoer), "Störung der Tour ohne beide Namen: " + r.stoer);
   pruefe(/, .* \| true,true$/.test(r.zwei) && /^[^,]+ \| false$/.test(r.einer) && r.textfeldZu, "Wer fährt hin: " + JSON.stringify([r.zwei, r.einer, r.textfeldZu]));
-  pruefe(r.teilen === "Testtechniker|Testadmin", "Namen teilen: " + r.teilen);
+  pruefe(r.teilen === "Testtechniker|Testadmin # Kälte Huber & Co|Testadmin", "Namen teilen (Firmennamen bleiben ganz): " + r.teilen);
   pruefe(r.meldungen === "u_admin_test_at,u_tech_test_at", "Nachricht nicht an beide: " + r.meldungen);
   pruefe(/Testadmin: Störung/.test(r.verplant), "Doppelbuchung erkennt die zweite Person nicht: " + r.verplant);
   pruefe(/Testtechniker, Testadmin/.test(r.kalender), "Kalender ohne beide Namen: " + r.kalender);
