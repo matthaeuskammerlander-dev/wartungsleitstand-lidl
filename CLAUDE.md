@@ -536,6 +536,9 @@ Kammerlander Umwelt- und Klimatechnik (UKT) – oft kurz, vom Handy, im Feld.
 - **Kartenbilder auf dem Gerät** (Inhaber 07.10.2026): angesehene Kacheln in IndexedDB „ukt_kacheln“ (`kachelEbene`, `KachelMitSpeicher`, höchstens
   `KACHEL_MAX`, älter als `KACHEL_ALT_TAGE` im Hintergrund erneuert); nie ganze Gegenden vorab (OSM-Nutzungsregeln). Ohne Netz, aber mit gespeicherten
   Bildern: trotzdem Straßenkarte (`kachelnPruefen`). Anzahl + „Leeren“ (Rückfrage) unter der Karte. Überfällig auf der Karte in `--karte-rot` (`KARTE_VAR`, kräftiger als `--crit`).
+- **Daten kommen von selbst** (Inhaber 07.10.2026: „dauert lange, bis es die aktuellen Wartungen und Störungen aktualisiert“): `hintergrundNachladen`
+  beim Zurückkommen (visibilitychange) und alle 2 min, solange sichtbar; `storeNachRender(true)` zeichnet nur neu, wenn sich `datenStand()` geändert hat;
+  auch die Karte wird aufgefrischt (nicht bei offenem Popup). Markt-Fenster auf der Karte: `popupOpt()` (höchstens Kartenhöhe, innen scrollen), Knöpfe zweispaltig.
 - **Karte bleibt erhalten** (Inhaber 07.10.2026: „die Karte dauert manchmal sehr lange zum Laden – nervig im Einsatz“): `render()` baut die
   Leaflet-Karte nicht ab, sondern hält sie an und merkt den Ausschnitt (`_uktAnsicht`); `karteOsm` setzt den Container mit den geladenen Kacheln
   wieder ein (`_uktKachel`), zeichnet nur die Zeichen neu und behält den Ausschnitt, solange Auswahl/Tour/Standort gleich sind (`_uktSchluessel`);

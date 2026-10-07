@@ -6809,6 +6809,63 @@ test("Kartenbilder auf dem Gerät: angesehene Kacheln gespeichert, ohne Netz von
   await a.zu();
 });
 
+test("Neue Störungen kommen von selbst: Nachladen im Hintergrund frischt auch die Karte auf (Ausschnitt bleibt); ohne Änderung kein Neuzeichnen", async () => {
+  const a = await oeffnen(KONTEN.techniker);
+  const r = await a.seite.evaluate(async () => {
+    const x = window.__t.x, w = (ms) => new Promise((f) => setTimeout(f, ms)), db = window.__db.tabellen, e = {};
+    x("S.view='karte'; render()"); await w(1500);
+    if (!document.querySelector("#osmkarte.leaflet-container")) return { keineKarte: true };
+    x("leafletKarte").setView([48.2, 16.37], 11, { animate: false }); await w(200);
+    e.vorher = document.querySelectorAll(".stoerpin:not(.klein)").length;
+    /* ohne Änderung: nichts neu zeichnen */
+    const app = document.getElementById("app"), alt = app.firstElementChild;
+    x("nachgeladenUm=0; hintergrundNachladen()"); await w(1200);
+    e.unveraendertGleich = app.firstElementChild === alt;
+    /* ein Kollege legt eine Störung an */
+    db.stammdaten.push({ id: "stoer:neu1", typ: "stoerung", ziel: "TS3", felder: { auftragsnummer: "700001", status: "offen", problemtyp: "Kühlt nicht" }, neu: true, geaendert: new Date().toISOString(), von: "Test", grund: "Test" });
+    x("nachgeladenUm=0; hintergrundNachladen()"); await w(1500);
+    e.nachher = document.querySelectorAll(".stoerpin:not(.klein)").length;
+    const c = x("leafletKarte").getCenter();
+    e.ausschnitt = [Math.round(c.lat * 10) / 10, Math.round(c.lng * 100) / 100, x("leafletKarte").getZoom()];
+    e.offen = x("offeneStoerungen(true).length");
+    return e;
+  });
+  pruefe(!r.keineKarte, "keine Straßenkarte im Test: " + JSON.stringify(r));
+  pruefe(r.unveraendertGleich, "ohne Änderung neu gezeichnet: " + JSON.stringify(r));
+  pruefe(r.nachher > r.vorher, "neue Störung nicht auf der Karte: " + JSON.stringify(r));
+  pruefe(r.ausschnitt[0] === 48.2 && r.ausschnitt[1] === 16.37 && r.ausschnitt[2] === 11, "Ausschnitt verloren: " + JSON.stringify(r));
+  pruefe(!a.fehler.length, "Laufzeitfehler: " + a.fehler.join("; "));
+  await a.zu();
+});
+
+test("Karte am Handy: Markt-Fenster bleibt kompakt – Kopf mit Marktinfo sichtbar in der Karte, nicht höher als die Karte, Knöpfe zweispaltig", async () => {
+  const a = await oeffnen(KONTEN.inhaber, { handy: true });
+  const r = await a.seite.evaluate(async () => {
+    const x = window.__t.x, w = (ms) => new Promise((f) => setTimeout(f, ms)), db = window.__db.tabellen, e = {};
+    db.bedarf.push({ id: "bpop1", art: "werkzeug", text: "Leiter", notiz: "von Tobias vergessen", standort_id: "TS1", beschaffung: "abholen", status: "offen", erstellt_von: "u_inhaber_test_at", erstellt: new Date().toISOString() },
+      { id: "bpop2", art: "material", text: "Kupferrohr 3/8", standort_id: "TS1", beschaffung: "mitnehmen", status: "offen", erstellt_von: "u_inhaber_test_at", erstellt: new Date().toISOString() });
+    await x("wzLaden(true)");
+    x("S.view='karte'; render()"); await w(1500);
+    if (!document.querySelector("#osmkarte.leaflet-container")) return { keineKarte: true };
+    const k = x("leafletKarte"); let m = null;
+    k.eachLayer((l) => { if (!m && l.getLatLng && l.getPopup && l.getPopup() && Math.abs(l.getLatLng().lat - x("byId.TS1").lat) < 1e-9) m = l; });
+    m.openPopup(); await w(800);
+    const pop = document.querySelector("#osmkarte .leaflet-popup"), karte = document.getElementById("osmkarte").getBoundingClientRect();
+    const titel = pop.querySelector(".leaflet-popup-content > div > div"), tr = titel.getBoundingClientRect(), pr = pop.getBoundingClientRect();
+    e.titelInKarte = tr.top >= karte.top - 1 && tr.bottom <= karte.bottom + 1;
+    e.hoehe = Math.round(pr.height); e.karteHoehe = Math.round(karte.height);
+    const kn = [...pop.querySelectorAll("[data-popupknoepfe] .btn")].map((b) => Math.round(b.getBoundingClientRect().top));
+    e.zeilen = new Set(kn).size; e.knoepfe = kn.length;
+    e.ragtRaus = [...pop.querySelectorAll("[data-popupknoepfe] .btn")].some((b) => b.scrollWidth > b.clientWidth + 2);
+    return e;
+  });
+  pruefe(!r.keineKarte, "keine Straßenkarte im Test: " + JSON.stringify(r));
+  pruefe(r.titelInKarte && r.hoehe <= r.karteHoehe, "Fenster zu groß / Kopf außerhalb der Karte: " + JSON.stringify(r));
+  pruefe(r.zeilen < r.knoepfe && !r.ragtRaus, "Knöpfe nicht kompakt: " + JSON.stringify(r));
+  pruefe(!a.fehler.length, "Laufzeitfehler: " + a.fehler.join("; "));
+  await a.zu();
+});
+
 test("Karte: „📍 Mein Standort“ zeigt die eigene Position (nur auf dem Gerät, nichts gespeichert)", async () => {
   const a = await oeffnen(KONTEN.techniker);
   const r = await a.seite.evaluate(async () => {
