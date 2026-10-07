@@ -6277,6 +6277,69 @@ test("Vergessen / abholen: vom Markt aus eintragen, 🧰 auf der Karte, im Popup
   await a.zu();
 });
 
+test("Projekt-Termin: „Was wurde gemacht?“ ins Baustellenbuch (Termin + Schritt), ✓ dokumentiert/erledigt, beim Schritt sichtbar, im Arbeitsnachweis vorgeschlagen", async () => {
+  const a = await oeffnen(KONTEN.inhaber);
+  const r = await a.seite.evaluate(async () => {
+    const x = window.__t.x, w = (ms) => new Promise((f) => setTimeout(f, ms)), db = window.__db.tabellen, j = new Date().toISOString(), e = {};
+    const heute = x("isoLokal(new Date())"), ich = x("meineKennung()");
+    db.projekte.push({ id: "pkal", nummer: "P-T-KAL", titel: "Montage Test", kunde_id: "lidl", standort_id: "TS1", status: "baustelle", daten: {}, verlauf: [], erstellt: j, geaendert: j });
+    db.planung.push({ id: "tkal1", art: "termin", kategorie: "baustelle", titel: "Innengeräte montieren", datum: heute, beginn: "07:00", ende: "15:00", wer: [ich], wer_namen: ["T"],
+      projekt_id: "pkal", projekt_schritt: "baustelle", status: "offen", erstellt_von: ich, erstellt: j },
+      { id: "tkal2", art: "termin", kategorie: "buero", titel: "Besprechung", datum: heute, beginn: "16:00", ende: "17:00", wer: [ich], wer_namen: ["T"], status: "offen", erstellt_von: ich, erstellt: j });
+    await x("Promise.all([projekteLaden(), planungLaden()])"); await w(200);
+    /* Termin öffnen: „📝 Was wurde gemacht?“ */
+    x("planEditor(PLANUNG.filter(function(p){ return p.id==='tkal1'; })[0])"); await w(300);
+    let d = [...document.querySelectorAll(".assistent")].pop();
+    const knoepfe = [...d.querySelectorAll(".as-fuss button")].map((b) => b.textContent);
+    e.knoepfe = knoepfe.join("|");
+    [...d.querySelectorAll(".as-fuss button")].find((b) => /Was wurde gemacht/.test(b.textContent)).click(); await w(300);
+    d = [...document.querySelectorAll(".assistent")].pop();
+    e.titel = d.querySelector(".as-titel").textContent; e.schritt = d.querySelector('[data-f="schritt"]').value;
+    d.querySelector('[data-f="text"]').value = "6 Innengeräte montiert, Kondensat angeschlossen";
+    [...d.querySelectorAll(".as-fuss button")].find((b) => /Speichern/.test(b.textContent)).click(); await w(800);
+    const bb = (db.projekte.find((p) => p.id === "pkal").daten.baubuch || [])[0] || {};
+    e.eintrag = bb.planung_id + "|" + bb.schritt + "|" + bb.datum + "|" + (bb.datum === heute);
+    e.dokumentiert = x("planTerminErledigt(PLANUNG.filter(function(p){ return p.id==='tkal1'; })[0])");
+    e.kalTitel = ((x("kalenderEintraege")(heute, heute, "ich")[heute] || []).find((z) => z.e && z.e.id === "tkal1") || {}).titel || "";
+    /* ohne Bericht abhaken */
+    x("ansichtenSchliessen(); planEditor(PLANUNG.filter(function(p){ return p.id==='tkal2'; })[0])"); await w(300);
+    d = [...document.querySelectorAll(".assistent")].pop();
+    e.ohneProjekt = ![...d.querySelectorAll(".as-fuss button")].some((b) => /Was wurde gemacht/.test(b.textContent));
+    [...d.querySelectorAll(".as-fuss button")].find((b) => /✓ Erledigt/.test(b.textContent)).click(); await w(500);
+    const t2 = db.planung.find((p) => p.id === "tkal2"); e.abgehakt = !!t2.erledigt + "|" + t2.status;
+    /* Projekt-Schritt zeigt Termin und Bericht */
+    x("ansichtenSchliessen(); projektAnsicht('pkal')"); await w(700);
+    const pd = [...document.querySelectorAll(".assistent")].pop();
+    e.schrittTermin = [...pd.querySelectorAll("[data-schritttermin]")].map((z) => z.textContent).join(" | ");
+    e.schrittBericht = [...pd.querySelectorAll("[data-schrittbaubuch]")].map((z) => z.textContent).join(" | ");
+    /* Arbeitsnachweis: Baustellenbuch-Text als Vorschlag */
+    x("ansichtenSchliessen()");
+    const p = x("PROJEKTE").filter((q) => q.id === "pkal")[0];
+    x("anEditor")(p, null, function () {}); await w(400);
+    const ad = [...document.querySelectorAll(".assistent")].pop();
+    const z = [...ad.querySelectorAll(".as-fuss button")].find((b) => /^Weiter: Stunden/.test(b.textContent)); z.click(); await w(400);
+    if (!ad.querySelectorAll(".an-zeile").length) { [...ad.querySelectorAll("button")].find((b) => /^\+ Zeile$/.test(b.textContent)).click(); await w(100); }
+    [...ad.querySelectorAll(".as-fuss button")].find((b) => /^Weiter: Arbeiten/.test(b.textContent)).click(); await w(200);
+    e.anVorschlag = [...ad.querySelectorAll("button")].some((b) => /6 Innengeräte montiert/.test(b.textContent) && /Baustellenbuch/.test(b.textContent));
+    /* Tagesrückblick: beim gemachten Projekt-Termin der Knopf zum Bericht */
+    x("ansichtenSchliessen()");
+    db.arbeitszeiten.push({ id: "zkal1", user_id: ich, name: "T", datum: heute, beginn: "06:30", ende: "15:30", pause_min: 30, minuten: 510, art: "arbeit", quelle: "stempel", bereich: "baustelle" });
+    await x("zeitenLaden()"); x("abgleichDialog('" + heute + "', false)"); await w(400);
+    const rd = [...document.querySelectorAll(".assistent")].pop(), bk = rd.querySelector("[data-bericht]");
+    e.rueckblick = bk ? bk.textContent : "kein Knopf";
+    return e;
+  });
+  pruefe(/Was wurde gemacht/.test(r.knoepfe) && /✓ Erledigt/.test(r.knoepfe), "Termin-Knöpfe: " + r.knoepfe);
+  pruefe(r.titel === "Was wurde gemacht?" && r.schritt === "baustelle", "Baustellenbuch vorbelegt: " + JSON.stringify([r.titel, r.schritt]));
+  pruefe(/^tkal1\|baustelle\|.*\|true$/.test(r.eintrag) && r.dokumentiert === true && /^✓ dokumentiert/.test(r.kalTitel), "Bericht/Termin: " + JSON.stringify([r.eintrag, r.dokumentiert, r.kalTitel]));
+  pruefe(r.ohneProjekt && r.abgehakt === "true|offen", "Ohne Bericht abhaken: " + JSON.stringify([r.ohneProjekt, r.abgehakt]));
+  pruefe(/Innengeräte montieren/.test(r.schrittTermin) && /dokumentiert/.test(r.schrittTermin) && /6 Innengeräte montiert/.test(r.schrittBericht), "Projekt-Schritt: " + JSON.stringify([r.schrittTermin, r.schrittBericht]));
+  pruefe(r.anVorschlag, "Arbeitsnachweis schlägt den Baustellenbuch-Text nicht vor");
+  pruefe(/Bericht ✓/.test(r.rueckblick), "Tagesrückblick ohne Bericht-Knopf: " + r.rueckblick);
+  pruefe(!a.fehler.length, "Laufzeitfehler: " + a.fehler.join("; "));
+  await a.zu();
+});
+
 const AN_HILFEN = `window.__an = {
   warte: (ms) => new Promise((f) => setTimeout(f, ms)),
   bis: async (f, max = 4000) => { const t0 = Date.now(); for (;;) { let v = null; try { v = f(); } catch (e) {} if (v || Date.now() - t0 > max) return v; await window.__an.warte(30); } },

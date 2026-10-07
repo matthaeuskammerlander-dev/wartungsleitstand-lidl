@@ -456,6 +456,12 @@ Kammerlander Umwelt- und Klimatechnik (UKT) – oft kurz, vom Handy, im Feld.
   standort_id (`marktAbholen`, `abholText`) – Knopf „🧰 Vergessen / abholen“ im Markt-Fenster und Karten-Popup (`marktAbholenNeu`, vorbelegt abholen/Werkzeug),
   🧰-Zeichen auf der Karte (`.abholpin`), je Tour-Stopp, im Tourausdruck, in den Kalenderterminen der Tour und „Unterwegs abholen“ mit „+ dazunehmen“.
   Tagesrückblick: teilen mit Uhrzeit + Bereich (`a.teilen`), Scrollstand bleibt; „Wo?“ mit Baustellen/Projekten (`ortOptionenHtml`, `ortWert`, `ortLesen`).
+- **Termin ↔ Baustellenbuch ↔ Projekt-Schritt** (Inhaber 07.10.2026: „nach dem Termin eintragen, was gemacht wurde, mit Fotos – daraus später ein
+  Arbeitsbericht; Verbindungen überall, nicht überladen“): Baustellenbuch-Eintrag mit `planung_id` und `schritt` (`baubuchEditor(p, alt, fertig, vorgabe)`,
+  Schritt-Auswahl); „📝 Was wurde gemacht?“ am Projekt-Termin ab seinem Tag (`planEditor`, `planBerichtOeffnen`) und im Tagesrückblick beim
+  gemachten Termin; Termin „✓ dokumentiert“ (`planBaubuch`) oder „✓ Erledigt“ ohne Bericht (`planTerminAbhaken`: `planung.erledigt`, Stand bleibt
+  „offen“ – Stempeluhr/Rückblick kennen ihn weiter; `planTerminErledigt`); Projekt-Schritt zeigt seine Termine (auch vergangene) und Berichte
+  (`projektSchrittAufgaben`); Arbeitsnachweis schlägt Baustellenbuch-Texte der Tage vor und deren Fotos (`data-bbvorschlag`).
 - **Arbeitszeit lernt** (`arbeitStunden`, `stoerDauerMin`, Büro 02.10.2026): Tour und Kalender rechnen mit der
   tatsächlichen Zeit vor Ort – Lidl-Rapport (von–bis), Störung Ankunft–Fertig, Stunden mit Markt (`einsatz_dauern`,
   tools/einsatz-dauern.sql: nur Median je Markt, keine Personen); ohne Erfahrung `ARBEIT_H`.
