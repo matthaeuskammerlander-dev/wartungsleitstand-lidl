@@ -526,6 +526,10 @@ Kammerlander Umwelt- und Klimatechnik (UKT) – oft kurz, vom Handy, im Feld.
 - **Textfelder wachsen mit** (Inhaber 07.10.2026: „man muss innen drinnen scrollen“): jedes `<textarea>` passt seine Höhe dem Text an
   (`feldHoehe`, `textfelderAnpassen` bei Eingabe/Fokus/Klick/Größe/neuen Elementen), Zeilenzahl = Mindestmaß, keine Obergrenze;
   Ausnahme `data-fest`. Test „Textfelder wachsen mit dem Text …“.
+- **Schriftgröße je Gerät** (Inhaber 07.10.2026: „der Chef will alles sehr groß, ich eher klein“): ☰ → „Aa Schriftgröße“ (`schriftDialog`,
+  `SCHRIFT_STUFEN` Klein 0,85 / Normal / Groß 1,15 / Sehr groß 1,3), localStorage `ukt_schrift`; `schriftAnwenden` (Kopf-Skript) setzt am Handy/Tablet
+  die Viewport-Breite = Gerätebreite ÷ Stufe und initial-scale = Stufe (Text bricht neu um, iPhone maximum-scale = Stufe); Normal bleibt wie bisher.
+  Am PC nur Hinweis Strg +/− (Browser merkt es selbst). Test „Schriftgröße je Gerät …“.
 - **Diktieren** (`diktatKnopf`): Spracherkennung des Browsers, keine KI, Text wird angehängt.
 - **Rapport-Text** (`rapTextRein`): ausgeführte Arbeiten aus dem Lidl-Rapport zusätzlich in
   „Durchgeführte Maßnahmen“ bzw. „Bemerkungen“ – nie ersetzen, kein Feld fällt weg.

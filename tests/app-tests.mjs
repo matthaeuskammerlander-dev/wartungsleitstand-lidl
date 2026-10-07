@@ -6340,6 +6340,42 @@ test("Projekt-Termin: „Was wurde gemacht?“ ins Baustellenbuch (Termin + Schr
   await a.zu();
 });
 
+test("Schriftgröße je Gerät: ☰ → Aa Schriftgröße – am Handy Klein/Groß (Text bricht neu um, nichts ragt hinaus), bleibt nach Neuladen; am PC Hinweis Strg +/−", async () => {
+  const a = await oeffnen(KONTEN.techniker, { handy: true });
+  const waehle = async (re) => {
+    await a.seite.evaluate(async (q) => {
+      const w = (ms) => new Promise((f) => setTimeout(f, ms));
+      document.querySelector(".tab-menue").click(); await w(150);
+      [...document.querySelectorAll("#reiter_menue button")].find((b) => /Schriftgröße/.test(b.textContent)).click(); await w(200);
+      const d = [...document.querySelectorAll(".assistent")].pop();
+      [...d.querySelectorAll("[data-schrift]")].find((b) => new RegExp(q).test(b.textContent)).click(); await w(400);
+    }, re);
+    await a.seite.waitForTimeout(400);
+    return a.seite.evaluate(() => ({ vp: document.querySelector('meta[name="viewport"]').content, breite: document.documentElement.clientWidth,
+      raus: document.documentElement.scrollWidth - document.documentElement.clientWidth, gespeichert: localStorage.getItem("ukt_schrift") }));
+  };
+  const gross = await waehle("^Groß");
+  const klein = await waehle("^Klein");
+  await a.seite.reload({ waitUntil: "load" }); await a.seite.waitForTimeout(1500);
+  const nachLaden = await a.seite.evaluate(() => document.querySelector('meta[name="viewport"]').content);
+  const normal = await waehle("^Normal");
+  pruefe(/width=339, initial-scale=1\.15/.test(gross.vp) && Math.abs(gross.breite - 339) <= 2 && gross.raus <= 2, "Groß: " + JSON.stringify(gross));
+  pruefe(/width=459, initial-scale=0\.85/.test(klein.vp) && Math.abs(klein.breite - 459) <= 2 && klein.raus <= 2, "Klein: " + JSON.stringify(klein));
+  pruefe(/width=459/.test(nachLaden), "nach dem Neuladen nicht gemerkt: " + nachLaden);
+  pruefe(/width=device-width, initial-scale=1/.test(normal.vp) && normal.gespeichert === '"normal"', "Normal: " + JSON.stringify(normal));
+  pruefe(!a.fehler.length, "Laufzeitfehler: " + a.fehler.join("; "));
+  await a.zu();
+  const b = await oeffnen(KONTEN.techniker);
+  const pc = await b.seite.evaluate(async () => {
+    const w = (ms) => new Promise((f) => setTimeout(f, ms));
+    document.querySelector(".tab-menue").click(); await w(150);
+    [...document.querySelectorAll("#reiter_menue button")].find((x) => /Schriftgröße/.test(x.textContent)).click(); await w(200);
+    const d = [...document.querySelectorAll(".assistent")].pop(); return { text: d.textContent, knoepfe: d.querySelectorAll("[data-schrift]").length };
+  });
+  pruefe(/Strg und \+/.test(pc.text) && pc.knoepfe === 0, "PC: " + JSON.stringify(pc));
+  await b.zu();
+});
+
 const AN_HILFEN = `window.__an = {
   warte: (ms) => new Promise((f) => setTimeout(f, ms)),
   bis: async (f, max = 4000) => { const t0 = Date.now(); for (;;) { let v = null; try { v = f(); } catch (e) {} if (v || Date.now() - t0 > max) return v; await window.__an.warte(30); } },
