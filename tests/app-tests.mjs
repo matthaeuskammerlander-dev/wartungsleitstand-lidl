@@ -6340,7 +6340,7 @@ test("Projekt-Termin: „Was wurde gemacht?“ ins Baustellenbuch (Termin + Schr
   await a.zu();
 });
 
-test("Schriftgröße je Gerät: ☰ → Aa Schriftgröße – am Handy Klein/Groß (Text bricht neu um, nichts ragt hinaus), bleibt nach Neuladen; am PC Hinweis Strg +/−", async () => {
+test("Schriftgröße je Gerät: ☰ → Aa Schriftgröße – am Handy Sehr klein/Klein/Groß (Text bricht neu um, nichts ragt hinaus), bleibt nach Neuladen; am PC Hinweis Strg +/−", async () => {
   const a = await oeffnen(KONTEN.techniker, { handy: true });
   const waehle = async (re) => {
     await a.seite.evaluate(async (q) => {
@@ -6355,10 +6355,12 @@ test("Schriftgröße je Gerät: ☰ → Aa Schriftgröße – am Handy Klein/Gro
       raus: document.documentElement.scrollWidth - document.documentElement.clientWidth, gespeichert: localStorage.getItem("ukt_schrift") }));
   };
   const gross = await waehle("^Groß");
+  const sehrKlein = await waehle("^Sehr klein");
   const klein = await waehle("^Klein");
   await a.seite.reload({ waitUntil: "load" }); await a.seite.waitForTimeout(1500);
   const nachLaden = await a.seite.evaluate(() => document.querySelector('meta[name="viewport"]').content);
   const normal = await waehle("^Normal");
+  pruefe(/width=520, initial-scale=0\.75/.test(sehrKlein.vp) && Math.abs(sehrKlein.breite - 520) <= 2 && sehrKlein.raus <= 2, "Sehr klein: " + JSON.stringify(sehrKlein));
   pruefe(/width=339, initial-scale=1\.15/.test(gross.vp) && Math.abs(gross.breite - 339) <= 2 && gross.raus <= 2, "Groß: " + JSON.stringify(gross));
   pruefe(/width=459, initial-scale=0\.85/.test(klein.vp) && Math.abs(klein.breite - 459) <= 2 && klein.raus <= 2, "Klein: " + JSON.stringify(klein));
   pruefe(/width=459/.test(nachLaden), "nach dem Neuladen nicht gemerkt: " + nachLaden);
