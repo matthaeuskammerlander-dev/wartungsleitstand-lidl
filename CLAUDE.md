@@ -158,6 +158,11 @@ Kammerlander Umwelt- und Klimatechnik (UKT) – oft kurz, vom Handy, im Feld.
   Doppelte Dateien (Inhaber 07.10.2026): `projektDateienHochladen` prüft nach der Preis-Prüfung am INHALT (`dateiPruefsumme` SHA-256 → `hash` am Eintrag;
   ältere ohne hash: Name ohne „ (1)“/„ - Kopie“ + gleiche Größe, `dateienDoppeltPruefen`) – nicht nochmals hochgeladen, Meldung `doppeltText`;
   zurück kommt der vorhandene Eintrag (buero/ nur für den Inhaber). „Ganzen Ordner hochladen“ nennt die Doppel schon in der Rückfrage.
+- **Pläne finden** (Inhaber 07.10.2026: „einen Plan fürs Dachgeschoss, Erdgeschoss oder Elektroplan schnell finden“): `projektDateienKarte`
+  mit Suchfeld (`dateiSuchText`), Filtern Art/Geschoss/Gewerk (`dateiMerkmale` aus Name, herkunft, titel, pdfTitel – Kürzel wie GRDD/EG/UG1/OG1,
+  HT/HKLS, EP/AP; Handwerte `geschoss`/`gewerk` an der Datei gehen vor), Ständen je Grundname (`basis`, neuester oben, ältere aufklappbar),
+  📌 `wichtig` oben, lesbarem Namen `titel` (`dateiBeschreiben`, `dateiAendern` über `projektAendern` mit Tagebuch); PDF-Titel beim Hochladen
+  (`pdfTitelLesen`, ≤ 8 s) bzw. nachträglich „🔎 Pläne genauer erkennen“ (`pdfTitelNachlesen`). Sprungleiste oben im Projekt (`projektSprungleiste`, sticky).
 - Projektzusammenfassung als PDF (`projektPdfDialog`, `projektPdfErzeugen`, Büro
   01.10.2026): Eckdaten und alle Angaben, KEINE Anhänge (Dokumente liegen auf der
   Synology); abgelegt `daten.mappePdf`, Synology → `Projekt_<Nr>.pdf`. Zum Testen

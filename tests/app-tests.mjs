@@ -6128,6 +6128,71 @@ test("Textfelder wachsen mit dem Text – im Projekt kein Scrollen im Feld (PC u
   }
 });
 
+test("Pläne finden: Geschoss/Gewerk erkannt, Suche, Stände beisammen, 📌 anheften, beschreiben, PDF-Titel beim Hochladen, Sprungleiste oben", async () => {
+  const a = await oeffnen(KONTEN.inhaber);
+  const r = await a.seite.evaluate(async () => {
+    const x = window.__t.x, w = (ms) => new Promise((f) => setTimeout(f, ms)), db = window.__db.tabellen, j = new Date().toISOString(), e = {};
+    const f = (pfad, name, art, extra) => Object.assign({ pfad: "ppl/" + pfad, name, art, groesse: 100, typ: "application/pdf", zeit: j, von: "Test" }, extra || {});
+    db.projekte.push({ id: "ppl", nummer: "P-T-PL", titel: "Pläne", kunde_id: "lidl", standort_id: "TS1", status: "baustelle", verlauf: [], erstellt: j, geaendert: j,
+      daten: { dateien: [f("a", "620_NB_AP_CrashGRDD_20250903_VA.pdf", "plan"), f("b", "620_NB_AP_CrashGRDD_20250912.pdf", "plan"), f("c", "Siebenbrunnengasse-Klima-EG-UKT.pdf", "plan"),
+        f("d", "Elektroplan_1OG.pdf", "plan"), f("e", "Rückkühler_Klima_78kW.pdf", "dokument"), f("g", "Einreichung.pdf", "plan", { pdfTitel: "Lidl HKLS_Einreichung_HT-UG" })] } });
+    await x("projekteLaden()"); x("projektAnsicht('ppl')"); await w(700);
+    const dlg = () => [...document.querySelectorAll(".assistent")].pop();
+    const karte = () => [...dlg().querySelectorAll(".card")].find((c) => /^Dateien/.test((c.querySelector("h2") || {}).textContent || ""));
+    const k = karte(); if (k.classList.contains("zu") && k._klapp) k._klapp(false);
+    const reihe = (n) => [...karte().querySelectorAll('[data-filter="' + n + '"] .chip')].map((c) => c.textContent);
+    e.geschoss = reihe("geschoss"); e.gewerk = reihe("gewerk");
+    const zeilen = () => [...karte().querySelectorAll("[data-datei-zeile]")].map((z) => z.querySelector("[data-oeffnen]").textContent);
+    e.alle = zeilen();
+    [...karte().querySelectorAll('[data-filter="geschoss"] .chip')].find((c) => /^Dach/.test(c.textContent)).click(); await w(50);
+    e.dach = zeilen(); e.aelterKnopf = (karte().querySelector("[data-aeltere]") || {}).textContent || "";
+    karte().querySelector("[data-aeltere]").click(); await w(50); e.dachAuf = zeilen();
+    [...karte().querySelectorAll('[data-filter="geschoss"] .chip')].find((c) => /^Dach/.test(c.textContent)).click(); await w(50);
+    const sf = karte().querySelector("[data-dateisuche]"); sf.value = "elektro og"; sf.dispatchEvent(new Event("input")); await w(50); e.suche = zeilen();
+    sf.value = "UG"; sf.dispatchEvent(new Event("input")); await w(50); e.sucheUG = zeilen();
+    sf.value = ""; sf.dispatchEvent(new Event("input")); await w(50);
+    /* anheften */
+    const zeileVon = (n) => [...karte().querySelectorAll("[data-datei-zeile]")].find((z) => z.querySelector("[data-oeffnen]").textContent === n);
+    zeileVon("Elektroplan_1OG.pdf").querySelector("[data-pin]").click(); await w(600);
+    const pd = () => db.projekte.find((q) => q.id === "ppl").daten.dateien;
+    e.pin = (pd().find((q) => q.name === "Elektroplan_1OG.pdf") || {}).wichtig === true;
+    e.wichtigOben = /Wichtige Pläne/.test(karte().textContent) && zeilen()[0] === "Elektroplan_1OG.pdf";
+    /* beschreiben: lesbarer Name, Geschoss geändert */
+    zeileVon("620_NB_AP_CrashGRDD_20250912.pdf").querySelector("[data-bearb]").click(); await w(200);
+    const bd = dlg(); bd.querySelector("[data-titel]").value = "Dachdraufsicht mit Rückkühlern";
+    [...bd.querySelectorAll("[data-gw] .chip")].find((c) => c.textContent === "Klima").click();
+    [...bd.querySelectorAll(".as-fuss button")].find((b) => /Speichern/.test(b.textContent)).click(); await w(700);
+    const geb = pd().find((q) => q.name === "620_NB_AP_CrashGRDD_20250912.pdf") || {};
+    e.titel = geb.titel; e.gewerkGesetzt = JSON.stringify(geb.gewerk); e.geschossAuto = geb.geschoss === undefined;
+    e.lesbar = zeilen().indexOf("Dachdraufsicht mit Rückkühlern") >= 0;
+    /* Sprungleiste */
+    const bar = dlg().querySelector(".projekt-sprung");
+    e.sprung = bar ? [...bar.querySelectorAll(".chip")].map((c) => c.textContent) : [];
+    const pl = bar && [...bar.querySelectorAll(".chip")].find((c) => /Pläne/.test(c.textContent));
+    if (pl) { const dk = karte(); if (dk._klapp) dk._klapp(true); pl.click(); await w(400); e.sprungAuf = !karte().classList.contains("zu"); }
+    e.sticky = bar ? getComputedStyle(bar).position : "";
+    /* beim Hochladen: Titel aus der PDF */
+    const L = await x("(window.PDFLib ? Promise.resolve() : ladeSkript(PDF_LIB)).then(function(){ return window.PDFLib; })");
+    const doc = await L.PDFDocument.create(); doc.addPage(); doc.setTitle("Montageplan GR_EG Lüftung");
+    window.__pf = [new File([await doc.save()], "x123.pdf", { type: "application/pdf" })];
+    await x("projektDateienHochladen(PROJEKTE.filter(function(q){ return q.id==='ppl'; })[0], 'plan', window.__pf)");
+    const neu = pd().find((q) => q.name === "x123.pdf") || {};
+    e.pdfTitel = neu.pdfTitel || ""; const m = x("dateiMerkmale")(neu); e.neuMerk = m.geschoss.join() + "|" + m.gewerk.join();
+    return e;
+  });
+  pruefe(JSON.stringify(r.geschoss) === JSON.stringify(["Alle", "UG / Keller / Garage (1)", "EG (1)", "OG (1)", "Dach (2)"]), "Geschoss-Knöpfe: " + JSON.stringify(r.geschoss));
+  pruefe(r.gewerk.some((t) => /^Klima \(2\)/.test(t)) && r.gewerk.some((t) => /^Elektro/.test(t)) && r.gewerk.some((t) => /^Kälte/.test(t)) && r.gewerk.some((t) => /^Haustechnik/.test(t)), "Gewerk-Knöpfe: " + JSON.stringify(r.gewerk));
+  pruefe(r.alle.length === 5 && r.alle.indexOf("620_NB_AP_CrashGRDD_20250903_VA.pdf") < 0, "Stände nicht beisammen: " + JSON.stringify(r.alle));
+  pruefe(JSON.stringify(r.dach) === JSON.stringify(["620_NB_AP_CrashGRDD_20250912.pdf"]) && /1 älterer Stand/.test(r.aelterKnopf) && r.dachAuf.length === 2, "Dach-Filter/ältere Stände: " + JSON.stringify([r.dach, r.aelterKnopf, r.dachAuf]));
+  pruefe(JSON.stringify(r.suche) === JSON.stringify(["Elektroplan_1OG.pdf"]) && JSON.stringify(r.sucheUG) === JSON.stringify(["Einreichung.pdf"]), "Suche: " + JSON.stringify([r.suche, r.sucheUG]));
+  pruefe(r.pin && r.wichtigOben, "Anheften: " + JSON.stringify([r.pin, r.wichtigOben]));
+  pruefe(r.titel === "Dachdraufsicht mit Rückkühlern" && r.gewerkGesetzt === '["klima"]' && r.geschossAuto && r.lesbar, "Beschreiben: " + JSON.stringify(r));
+  pruefe(r.sprung.length >= 3 && r.sprung.some((t) => /Pläne/.test(t)) && r.sprungAuf && r.sticky === "sticky", "Sprungleiste: " + JSON.stringify([r.sprung, r.sprungAuf, r.sticky]));
+  pruefe(r.pdfTitel === "Montageplan GR_EG Lüftung" && r.neuMerk === "EG|lueftung", "PDF-Titel beim Hochladen: " + JSON.stringify([r.pdfTitel, r.neuMerk]));
+  pruefe(!a.fehler.length, "Laufzeitfehler: " + a.fehler.join("; "));
+  await a.zu();
+});
+
 const AN_HILFEN = `window.__an = {
   warte: (ms) => new Promise((f) => setTimeout(f, ms)),
   bis: async (f, max = 4000) => { const t0 = Date.now(); for (;;) { let v = null; try { v = f(); } catch (e) {} if (v || Date.now() - t0 > max) return v; await window.__an.warte(30); } },
