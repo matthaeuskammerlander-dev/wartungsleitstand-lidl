@@ -6702,6 +6702,44 @@ test("Kältekreise: HJW ab 30 kg je Kältekreis – 3 Kreise je unter 30 kg → 
   await a.zu();
 });
 
+test("Karte bleibt erhalten: Reiter weg und zurück, Neuzeichnen – geladene Kacheln und Ausschnitt bleiben, Zeichen neu, neue Auswahl richtet neu aus", async () => {
+  const a = await oeffnen(KONTEN.techniker, { handy: true });
+  const r = await a.seite.evaluate(async () => {
+    const x = window.__t.x, w = (ms) => new Promise((f) => setTimeout(f, ms)), e = {};
+    x("S.view='karte'; render()"); await w(1500);
+    const host = document.getElementById("osmkarte");
+    if (!host || !host.classList.contains("leaflet-container")) return { keineKarte: true, modus: x("KARTE_MODUS") };
+    const k = x("leafletKarte");
+    k.setView([48.2, 16.37], 12, { animate: false }); await w(300);
+    e.punkte1 = document.querySelectorAll("#osmkarte path.leaflet-interactive").length;
+    x("S.view='faellig'; render()"); await w(400);
+    x("S.view='karte'; render()"); await w(50);
+    const host2 = document.getElementById("osmkarte");
+    e.gleich = host2 === host && x("leafletKarte") === k;
+    e.kachelnSofort = host2.querySelectorAll(".leaflet-tile").length;
+    await w(500);
+    const c = x("leafletKarte").getCenter();
+    e.ausschnitt = [Math.round(c.lat * 10) / 10, Math.round(c.lng * 100) / 100, x("leafletKarte").getZoom()];
+    e.punkte2 = document.querySelectorAll("#osmkarte path.leaflet-interactive").length;
+    e.ebenen = 0; x("leafletKarte").eachLayer(() => e.ebenen++);
+    x("render()"); await w(700);
+    let n = 0; x("leafletKarte").eachLayer(() => n++); e.ebenenNachRender = n;
+    e.punkte3 = document.querySelectorAll("#osmkarte path.leaflet-interactive").length;
+    /* neue Auswahl (Region): neu ausgerichtet */
+    x("S.region='Laakirchen'; render()"); await w(700);
+    e.zoomNeu = x("leafletKarte").getZoom() !== 12 || Math.abs(x("leafletKarte").getCenter().lng - 16.37) > 0.2;
+    x("S.region='alle'; render()"); await w(300);
+    return e;
+  });
+  pruefe(!r.keineKarte, "keine Straßenkarte im Test: " + JSON.stringify(r));
+  pruefe(r.gleich && r.kachelnSofort > 0, "Karte neu aufgebaut statt behalten: " + JSON.stringify(r));
+  pruefe(r.ausschnitt && r.ausschnitt[0] === 48.2 && r.ausschnitt[1] === 16.37 && r.ausschnitt[2] === 12, "Ausschnitt nicht behalten: " + JSON.stringify(r));
+  pruefe(r.punkte1 > 0 && r.punkte2 === r.punkte1 && r.punkte3 === r.punkte1 && r.ebenenNachRender === r.ebenen, "Zeichen doppelt oder fehlen: " + JSON.stringify(r));
+  pruefe(r.zoomNeu, "neue Auswahl nicht neu ausgerichtet: " + JSON.stringify(r));
+  pruefe(!a.fehler.length, "Laufzeitfehler: " + a.fehler.join("; "));
+  await a.zu();
+});
+
 test("Karte: „📍 Mein Standort“ zeigt die eigene Position (nur auf dem Gerät, nichts gespeichert)", async () => {
   const a = await oeffnen(KONTEN.techniker);
   const r = await a.seite.evaluate(async () => {

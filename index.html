@@ -5379,12 +5379,30 @@ function karteOsm(withGeo){
   setTimeout(function(){
     var host=document.getElementById("osmkarte");
     if(!host) return;
-    if(leafletKarte){ try{ leafletKarte.stop(); leafletKarte._animatingZoom=false; leafletKarte.remove(); }catch(e){} leafletKarte=null; }
-    var karte=L.map(host,{scrollWheelZoom:true}).setView([47.6,13.4],7);
+    /* Die Karte bleibt erhalten (Inhaber 07.10.2026: „die Karte dauert manchmal sehr lange zum Laden – nervig im Einsatz“):
+       render() hängt sie nur aus (siehe dort); hier kommt ihr Container mit den schon geladenen Kacheln wieder hinein,
+       neu gezeichnet werden nur die Zeichen. Ausschnitt bleibt, solange Auswahl, Tour und Standort gleich sind. */
+    var karte, kachel, alt=leafletKarte, wieder=false;
+    if(alt && alt._uktKachel && !document.body.contains(alt.getContainer())){
+      host.parentNode.replaceChild(alt.getContainer(), host); host=alt.getContainer();
+      karte=alt; kachel=alt._uktKachel; wieder=true;
+      try{ karte.stop(); karte._animatingZoom=false; karte.closePopup(); }catch(e){}
+      var weg=[]; karte.eachLayer(function(l){ if(l!==kachel) weg.push(l); }); weg.forEach(function(l){ karte.removeLayer(l); });
+      karte.invalidateSize({pan:false});
+      if(karte._uktAnsicht) karte.setView(karte._uktAnsicht.c, karte._uktAnsicht.z, {animate:false});
+    } else {
+      if(alt){ try{ alt.stop(); alt._animatingZoom=false; alt.remove(); }catch(e){} }
+      karte=L.map(host,{scrollWheelZoom:true}).setView([47.6,13.4],7);
+      /* keepBuffer: rundum mehr Kacheln vorhalten; updateWhenIdle aus: am Handy schon beim Wischen nachladen */
+      kachel=L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png",{
+        maxZoom:19, keepBuffer:4, updateWhenIdle:false, attribution:'&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
+      }).addTo(karte);
+      karte._uktKachel=kachel;
+    }
     leafletKarte=karte;
-    L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png",{
-      maxZoom:19, attribution:'&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
-    }).addTo(karte);
+    /* gilt nur für diese Zeichnung – ältere Rückrufe (Nachladen, Standort) zeichnen nicht mehr hinein */
+    var gen=karte._uktGen=(karte._uktGen||0)+1;
+    var aktuell=function(){ return leafletKarte===karte && karte._uktGen===gen && document.body.contains(karte.getContainer()); };
 
     var maxPos=1; withGeo.forEach(function(s){ if(marktPosAnzahl(s)>maxPos) maxPos=marktPosAnzahl(s); });
     var bounds=[];
@@ -5422,7 +5440,7 @@ function karteOsm(withGeo){
     /* 🧰 etwas abzuholen / mitzunehmen (Inhaber 07.10.2026) – rechts oben am Punkt, immer sichtbar; lädt Werkzeug und Material nach */
     var abholEbene=L.layerGroup().addTo(karte);
     var abholZeichnen=function(){
-      if(leafletKarte!==karte) return; abholEbene.clearLayers();
+      if(!aktuell()) return; abholEbene.clearLayers();
       withGeo.forEach(function(s){ var l=marktAbholen(s.id); if(!l.length) return;
         var mk=L.marker([s.lat,s.lon],{zIndexOffset:950, title:"Abholen / mitnehmen: "+l.map(function(b){ return b.text; }).join(", "),
           icon:L.divIcon({className:"", iconSize:[34,20], iconAnchor:[-4,28], html:'<div class="abholpin" data-abholpin="'+esc(s.id)+'">🧰'+(l.length>1?" "+l.length:"")+"</div>"})}).addTo(abholEbene);
@@ -5539,11 +5557,14 @@ function karteOsm(withGeo){
       if(S.tour.gps) karte.setView([S.tour.gps.lat, S.tour.gps.lon], 10, {animate:false});
       else alleZeigen(false);
     }
-    ausrichten(false);
+    var schluessel=JSON.stringify([S.q, S.region, withGeo.map(function(s){ return s.id; }).join(","), T ? T.reihenfolge.map(function(p){ return p.id; }).join(",") : "", !!S.tour.gps]);
+    if(wieder && karte._uktSchluessel!==schluessel) wieder=false;
+    karte._uktSchluessel=schluessel;
+    if(!wieder) ausrichten(false);
     /* Leaflet misst den Container sofort, die endgültige Höhe steht
        aber erst nach dem Layout fest – das Fenster erst danach öffnen */
     /* nur, wenn diese Karte noch die aktuelle ist (schneller Reiterwechsel) */
-    setTimeout(function(){ if(leafletKarte===karte && document.body.contains(karte.getContainer())){ karte.invalidateSize(); ausrichten(true); sprungNachjustieren(); } },200);
+    setTimeout(function(){ if(aktuell()){ karte.invalidateSize({pan:!wieder}); if(!wieder) ausrichten(true); sprungNachjustieren(); } },200);
 
     var knopf=document.getElementById("kartealle");
     if(knopf) knopf.onclick=function(){ alleZeigen(true); };
@@ -5553,7 +5574,7 @@ function karteOsm(withGeo){
       holeStandort().then(function(g){
         ichK.disabled=false; ichK.textContent="📍 Mein Standort";
         if(g.fehler){ toast(g.fehler); return; }
-        if(leafletKarte!==karte) return;
+        if(!aktuell()) return;
         S.meinOrt=g; ichZeichnen(g);
         karte.setView([g.lat,g.lon], Math.max(karte.getZoom(), 13), {animate:true});
       });
@@ -36517,11 +36538,11 @@ function render(){
     if(l<tabsEl.scrollLeft+24 || r>tabsEl.scrollLeft+tabsEl.clientWidth-24) tabsEl.scrollLeft=Math.max(0, l-(tabsEl.clientWidth-gewaehlt.offsetWidth)/2);
   }
   var host=document.getElementById("app");
-  /* eine Leaflet-Karte abbauen, bevor ihr Container verschwindet (jede Ansicht
-     baut sie neu auf) – sonst laufen ihre Animationen ins Leere. Eine laufende
-     Zoom-Animation beendet Leaflet erst nach 250 ms per Zeitgeber; ohne
-     _animatingZoom kehrt der gleich zurück, statt die abgebaute Karte zu bewegen */
-  if(leafletKarte){ try{ leafletKarte.stop(); leafletKarte._animatingZoom=false; leafletKarte.remove(); }catch(e){} leafletKarte=null; }
+  /* Die Straßenkarte wird nicht abgebaut, nur angehalten und ausgehängt (karteOsm setzt sie wieder ein – die geladenen
+     Kacheln bleiben); Ausschnitt gemerkt, weil ein ausgehängter Container keine Größe hat. Eine laufende Zoom-Animation
+     beendet Leaflet erst nach 250 ms per Zeitgeber; ohne _animatingZoom kehrt der gleich zurück */
+  if(leafletKarte){ try{ leafletKarte.stop(); leafletKarte._animatingZoom=false; leafletKarte.closePopup();
+    if(document.body.contains(leafletKarte.getContainer())) leafletKarte._uktAnsicht={c:leafletKarte.getCenter(), z:leafletKarte.getZoom()}; }catch(e){} }
   /* Reiter Anlagen wird nur neu gezeichnet (etwa nach dem Nachladen im
      Hintergrund): die Scroll-Stelle bleibt – aufgeklappte Märkte und Termine
      kommen aus ANLAGEN_AUF wieder */
