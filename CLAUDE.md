@@ -531,6 +531,10 @@ Kammerlander Umwelt- und Klimatechnik (UKT) – oft kurz, vom Handy, im Feld.
   die Viewport-Breite = Gerätebreite ÷ Stufe und initial-scale = Stufe (Text bricht neu um, iPhone maximum-scale = Stufe); Normal bleibt wie bisher.
   Am PC nur Hinweis Strg +/− (Browser merkt es selbst). Am Handy/Tablet zusätzlich immer der Kopfknopf „Aa“ (`#schriftbtn`) – klein gestellt
   wird die Seite breiter als 700 px und das ☰ verschwindet. Test „Schriftgröße je Gerät …“.
+- **Karte bleibt erhalten** (Inhaber 07.10.2026: „die Karte dauert manchmal sehr lange zum Laden – nervig im Einsatz“): `render()` baut die
+  Leaflet-Karte nicht ab, sondern hält sie an und merkt den Ausschnitt (`_uktAnsicht`); `karteOsm` setzt den Container mit den geladenen Kacheln
+  wieder ein (`_uktKachel`), zeichnet nur die Zeichen neu und behält den Ausschnitt, solange Auswahl/Tour/Standort gleich sind (`_uktSchluessel`);
+  ältere Rückrufe prüfen `aktuell()` (`_uktGen`). Kacheln: keepBuffer 4, updateWhenIdle aus. Test „Karte bleibt erhalten …“.
 - **Diktieren** (`diktatKnopf`): Spracherkennung des Browsers, keine KI, Text wird angehängt.
 - **Rapport-Text** (`rapTextRein`): ausgeführte Arbeiten aus dem Lidl-Rapport zusätzlich in
   „Durchgeführte Maßnahmen“ bzw. „Bemerkungen“ – nie ersetzen, kein Feld fällt weg.
