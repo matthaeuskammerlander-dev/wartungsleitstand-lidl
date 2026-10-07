@@ -455,6 +455,8 @@ Kammerlander Umwelt- und Klimatechnik (UKT) – oft kurz, vom Handy, im Feld.
 - **Vergessen / abholen am Markt** (Inhaber 07.10.2026: „Tobias hat seine Leiter in der Tivoligasse vergessen“): offene `bedarf`-Einträge mit
   standort_id (`marktAbholen`, `abholText`) – Knopf „🧰 Vergessen / abholen“ im Markt-Fenster und Karten-Popup (`marktAbholenNeu`, vorbelegt abholen/Werkzeug),
   🧰-Zeichen auf der Karte (`.abholpin`), je Tour-Stopp, im Tourausdruck, in den Kalenderterminen der Tour und „Unterwegs abholen“ mit „+ dazunehmen“.
+  Geht nicht unter (Inhaber 07.10.2026: „nur auf der Karte sichtbar“): geladen bei jedem render() (`wzNachladen`), 🧰 neben jedem Marktnamen (`marktLink` → `abholZeichen`),
+  Fällig-Karte „An Märkten abholen / mitnehmen“ (`abholKarte`), Hinweis in der Marktinfo (`standortDetail`, `abholHinweisFuellen`) und oben im Protokoll beim gewählten Markt (`[data-abholoben]`).
   Tagesrückblick: teilen mit Uhrzeit + Bereich (`a.teilen`), Scrollstand bleibt; „Wo?“ mit Baustellen/Projekten (`ortOptionenHtml`, `ortWert`, `ortLesen`).
 - **Termin ↔ Baustellenbuch ↔ Projekt-Schritt** (Inhaber 07.10.2026: „nach dem Termin eintragen, was gemacht wurde, mit Fotos – daraus später ein
   Arbeitsbericht; Verbindungen überall, nicht überladen“): Baustellenbuch-Eintrag mit `planung_id` und `schritt` (`baubuchEditor(p, alt, fertig, vorgabe)`,
@@ -531,6 +533,9 @@ Kammerlander Umwelt- und Klimatechnik (UKT) – oft kurz, vom Handy, im Feld.
   die Viewport-Breite = Gerätebreite ÷ Stufe und initial-scale = Stufe (Text bricht neu um, iPhone maximum-scale = Stufe); Normal bleibt wie bisher.
   Am PC nur Hinweis Strg +/− (Browser merkt es selbst). Am Handy/Tablet zusätzlich immer „Aa Schriftgröße“ ganz unten neben Handbuch/Rundgänge (`#schriftbtn`; nicht in der Kopfleiste – zu viel Platz) – klein gestellt
   wird die Seite breiter als 700 px und das ☰ verschwindet. Test „Schriftgröße je Gerät …“.
+- **Kartenbilder auf dem Gerät** (Inhaber 07.10.2026): angesehene Kacheln in IndexedDB „ukt_kacheln“ (`kachelEbene`, `KachelMitSpeicher`, höchstens
+  `KACHEL_MAX`, älter als `KACHEL_ALT_TAGE` im Hintergrund erneuert); nie ganze Gegenden vorab (OSM-Nutzungsregeln). Ohne Netz, aber mit gespeicherten
+  Bildern: trotzdem Straßenkarte (`kachelnPruefen`). Anzahl + „Leeren“ (Rückfrage) unter der Karte. Überfällig auf der Karte in `--karte-rot` (`KARTE_VAR`, kräftiger als `--crit`).
 - **Karte bleibt erhalten** (Inhaber 07.10.2026: „die Karte dauert manchmal sehr lange zum Laden – nervig im Einsatz“): `render()` baut die
   Leaflet-Karte nicht ab, sondern hält sie an und merkt den Ausschnitt (`_uktAnsicht`); `karteOsm` setzt den Container mit den geladenen Kacheln
   wieder ein (`_uktKachel`), zeichnet nur die Zeichen neu und behält den Ausschnitt, solange Auswahl/Tour/Standort gleich sind (`_uktSchluessel`);

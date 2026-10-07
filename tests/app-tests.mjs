@@ -6277,6 +6277,42 @@ test("Vergessen / abholen: vom Markt aus eintragen, 🧰 auf der Karte, im Popup
   await a.zu();
 });
 
+test("Vergessen / abholen geht nicht unter: gleich geladen, Fällig-Karte, 🧰 neben dem Marktnamen, Marktinfo, oben im Protokoll; abgehakt verschwindet es", async () => {
+  const a = await oeffnen(KONTEN.techniker, { handy: true });
+  const r = await a.seite.evaluate(async () => {
+    const x = window.__t.x, w = (ms) => new Promise((f) => setTimeout(f, ms)), db = window.__db.tabellen, e = {};
+    await w(800);
+    e.geladenOhneKarte = x("wzGeladen");
+    db.bedarf.push({ id: "bvg1", art: "werkzeug", text: "Leiter", notiz: "von Tobias vergessen", standort_id: "TS1", beschaffung: "abholen", status: "offen", erstellt_von: "u_inhaber_test_at", erstellt: new Date().toISOString() });
+    await x("wzLaden(true)");
+    x("S.view='faellig'; render()"); await w(500);
+    const k = document.querySelector("[data-abholkarte]");
+    e.karte = k ? k.textContent : "";
+    e.zeichen = [...document.querySelectorAll('[data-abholmini="TS1"]')].length;
+    if (k) { k.querySelector("button.row").click(); await w(500); }
+    const mf = [...document.querySelectorAll(".assistent")].pop();
+    e.marktinfo = mf ? ((mf.querySelector("[data-abholhinweis]") || {}).textContent || "") : "";
+    x("ansichtenSchliessen()");
+    /* Protokoll: Markt wählen → Hinweis oben */
+    x("S.view='protokoll'; S.protoStandort='TS1'; render()"); await w(700);
+    e.protokoll = ((document.querySelector("[data-abholoben]") || {}).textContent || "");
+    x("S.protoStandort=''; formDirty=false; S.view='faellig'; render()"); await w(300);
+    /* abgehakt → weg */
+    db.bedarf.find((b) => b.id === "bvg1").status = "erledigt";
+    await x("wzLaden(true)"); x("render()"); await w(400);
+    e.nachher = !!document.querySelector("[data-abholkarte]") + "|" + document.querySelectorAll('[data-abholmini="TS1"]').length;
+    return e;
+  });
+  pruefe(r.geladenOhneKarte, "Werkzeug/Material nicht gleich geladen: " + JSON.stringify(r));
+  pruefe(/An Märkten abholen/.test(r.karte) && /Leiter – von Tobias vergessen/.test(r.karte), "Fällig-Karte fehlt: " + JSON.stringify(r));
+  pruefe(r.zeichen > 0, "🧰 neben dem Marktnamen fehlt: " + JSON.stringify(r));
+  pruefe(/Hier abholen/.test(r.marktinfo) && /Leiter/.test(r.marktinfo), "Marktinfo ohne Hinweis: " + JSON.stringify(r));
+  pruefe(/Hier abholen/.test(r.protokoll) && /Leiter/.test(r.protokoll), "Protokoll ohne Hinweis: " + JSON.stringify(r));
+  pruefe(r.nachher === "false|0", "nach dem Abhaken noch da: " + JSON.stringify(r));
+  pruefe(!a.fehler.length, "Laufzeitfehler: " + a.fehler.join("; "));
+  await a.zu();
+});
+
 test("Projekt-Termin: „Was wurde gemacht?“ ins Baustellenbuch (Termin + Schritt), ✓ dokumentiert/erledigt, beim Schritt sichtbar, im Arbeitsnachweis vorgeschlagen", async () => {
   const a = await oeffnen(KONTEN.inhaber);
   const r = await a.seite.evaluate(async () => {
