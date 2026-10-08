@@ -536,6 +536,18 @@ Kammerlander Umwelt- und Klimatechnik (UKT) – oft kurz, vom Handy, im Feld.
 - **Kartenbilder auf dem Gerät** (Inhaber 07.10.2026): angesehene Kacheln in IndexedDB „ukt_kacheln“ (`kachelEbene`, `KachelMitSpeicher`, höchstens
   `KACHEL_MAX`, älter als `KACHEL_ALT_TAGE` im Hintergrund erneuert); nie ganze Gegenden vorab (OSM-Nutzungsregeln). Ohne Netz, aber mit gespeicherten
   Bildern: trotzdem Straßenkarte (`kachelnPruefen`). Anzahl + „Leeren“ (Rückfrage) unter der Karte. Überfällig auf der Karte in `--karte-rot` (`KARTE_VAR`, kräftiger als `--crit`).
+- **Einmal sagen, überall verwenden** (Inhaber 08.10.2026: „redundant – bitte aufräumen, einheitlicher“): „Was gemacht?“ fragt NUR der
+  Tagesrückblick (`abgleichDialog`: Feld `[data-abwas]` je Abschnitt, Vorschlag `wasVorschlag` aus eigenem Protokoll/Termin, bei Baustellen `[data-abfoto]`);
+  beim Speichern: Text in die Stunden, bei Baustellen neu Eingetragenes + Fotos ins Baustellenbuch (planung_id, Schritt; nicht doppelt), gemachte Termine
+  `planTerminAbhaken(e, true, still)` (nicht Wartung/Störung – die erledigt das Protokoll; mehrtägige erst am letzten Tag). Ein-/Um-/Ausstempeln fragen kein
+  „Was“ mehr (Termin-Chip gibt es still mit: `dataset.was`); `erledigtAbfrage`/`stempelErledigt` entfernt. Termin: EIN „✓ Erledigt“ (Projekt: „✓ Erledigt …“ →
+  Baustellenbuch mit „✓ Ohne Text erledigt“, `vorgabe.ohneText`), „📅 In Handy-Kalender“. Arbeitsnachweis „Ausgeführte Arbeiten“ vorbefüllt
+  (`[data-anvorbefuellt]`). Stunden von Hand: „Was gemacht?“, Notiz nur noch bei alten Einträgen sichtbar.
+- **Datenverbrauch / Egress** (Inhaber 08.10.2026: Supabase „Egress Exceeded“, 7,6 GB bei 49 MB Datenbank): Störungen tragen Auftrags-PDF und
+  Seitenbilder in `felder.pdfDaten`/`felder.seiten` (~11 MB). Geladen wird `stammdaten_leicht` (tools/stammdaten-leicht.sql: ohne diese Felder,
+  `_schwer`; fehlt die Sicht → `stammdaten`), PDF/Seiten erst beim Öffnen (`stoerungSchwerLaden` in `stoerungDialog`/`protokollBeginnen`,
+  gemerkt in `STOER_SCHWER` je Stand); Trigger `stammdaten_schwer_behalten` behält sie beim Speichern (bewusst entfernen nur mit `_pdfWeg`/`_seitenWeg`).
+  Nachladen im Hintergrund nur, wenn `aenderungPruefen` (Anzahl + jüngste Änderung) etwas Neues meldet. Große Inhalte nie wieder in Stammdaten-Felder.
 - **Daten kommen von selbst** (Inhaber 07.10.2026: „dauert lange, bis es die aktuellen Wartungen und Störungen aktualisiert“): `hintergrundNachladen`
   beim Zurückkommen (visibilitychange) und alle 2 min, solange sichtbar; `storeNachRender(true)` zeichnet nur neu, wenn sich `datenStand()` geändert hat;
   auch die Karte wird aufgefrischt (nicht bei offenem Popup). Markt-Fenster auf der Karte: `popupOpt()` (höchstens Kartenhöhe, innen scrollen), Knöpfe zweispaltig.

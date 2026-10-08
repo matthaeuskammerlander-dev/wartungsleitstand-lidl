@@ -306,6 +306,12 @@
     ["erstzulassung","pickerl_bis","service_bis","service_km","tracker_id","notiz"].forEach(function(k){ r[k]=null; });
     r.fahrer=[uid()]; r.fahrer_namen=[r.privat_name||""]; if(r.aktiv==null) r.aktiv=true; r.erstellt_von=uid();
   }
+  /* wie tools/stammdaten-leicht.sql: Sicht ohne Auftrags-PDF/Seiten, Trigger behält sie beim Speichern */
+  function leicht(r){ var f=r.felder||{}; if(!("pdfDaten" in f) && !("seiten" in f)) return r; f=Object.assign({}, f); delete f.pdfDaten; delete f.seiten; f._schwer=true; return Object.assign({}, r, {felder:f}); }
+  function schwerBehalten(alt, d){ if(!d || !d.felder) return d; var f=Object.assign({}, d.felder), af=(alt&&alt.felder)||{};
+    if(af.pdfDaten && !f.pdfDaten && !f._pdfWeg){ f.pdfDaten=af.pdfDaten; if(!f.pdfName && af.pdfName) f.pdfName=af.pdfName; }
+    if(Array.isArray(af.seiten) && af.seiten.length && !(Array.isArray(f.seiten) && f.seiten.length) && !f._seitenWeg) f.seiten=af.seiten;
+    delete f._schwer; delete f._pdfWeg; delete f._seitenWeg; return Object.assign({}, d, {felder:f}); }
   function Q(t){ this.t=t; this.a="select"; this.f=[]; this.d=null; this.o={}; this.ord=null; this.lim=null; this.sp=null; }
   Q.prototype.select=function(s){ if(typeof s==="string"&&s&&s!=="*") this.sp=s.split(",").map(function(x){return x.trim();}); return this; };
   Q.prototype.insert=function(d){ this.a="insert"; this.d=d; return this; };
@@ -393,6 +399,7 @@
         v=v||darf(self.t, i==null?"insert":"update", d, i==null?null:tab[i]);
         if(v) return;
         if(self.t==="tag_geprueft") d=Object.assign({}, d, {geprueft_am:new Date().toISOString()});   /* Zeit setzt der Server (Trigger) */
+        if(self.t==="stammdaten") d=schwerBehalten(i!=null?tab[i]:null, d);
         if(i!=null){
           tab[i]=Object.assign({},tab[i],d); raus.push(tab[i]); }
         else { var r=Object.assign({},d); if(r.id==null) r.id="x"+Date.now().toString(36)+(++z);
@@ -421,7 +428,7 @@
           /* wie der Trigger: geänderte Zeiten eines gestempelten Eintrags kennzeichnen */
           var qv=r.quelle, zg=self.t==="arbeitszeiten" && ["datum","beginn","ende","pause_min","minuten"].some(function(k){ return (k in self.d) && self.d[k]!==r[k]; });
           var altR=JSON.parse(JSON.stringify(r));
-          Object.assign(r,self.d);
+          Object.assign(r, self.t==="stammdaten" ? schwerBehalten(altR, self.d) : self.d);
           if(self.t==="planung") planPruefen(r, altR);
           if(self.t==="arbeitszeiten") r.quelle=(zg && /^stempel(_nachgetragen|_abgeglichen)?$/.test(qv||"")) ? "stempel_geaendert" : (zg||("art" in self.d && self.d.art!==altR.art)) && qv==="kalender" ? "hand" : (qv||"hand");
           if(self.t==="planung") stundenSync(r.id);
@@ -512,6 +519,7 @@
         sitzung.user=nutzer(sitzung.user.email);
         return Promise.resolve({data:{user:sitzung.user},error:null}); } },
     from:function(t){
+      if(t==="stammdaten_leicht") DB.stammdaten_leicht=DB.stammdaten.map(leicht);
       if(t==="stammdaten_lesen") DB.stammdaten_lesen=DB.stammdaten.map(function(r){ var f=Object.assign({},r.felder); delete f.zugangLink; delete f.zugangBenutzer; delete f.zugangPasswort; delete f.zugangWeitere; return Object.assign({},r,{felder:f}); });
       return new Q(t); },
     functions:{invoke:function(name,o){ return Promise.resolve(window.__kiAntwort ? window.__kiAntwort(name,o.body) : {data:null,error:{message:"keine KI im Test"}}); }},

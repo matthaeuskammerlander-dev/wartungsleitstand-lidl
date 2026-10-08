@@ -1232,7 +1232,7 @@ test("Stunden ↔ Kalender: Abwesenheit von selbst in den Stunden, Soll je Tag/W
     const karte = document.getElementById("stempelkarte");
     const chip = [...karte.querySelectorAll(".chip")].find((c) => /Wartung Testmarkt/.test(c.textContent));
     if (chip) chip.click(); await warte(100);
-    const st = karte.querySelector("[data-st]"), was = karte.querySelector("[data-was]");
+    const st = karte.querySelector("[data-st]"), was = { value: (karte.querySelector("[data-bw]").parentElement.dataset.was || "") + (karte.querySelector("input[data-was]") ? " ALTES FELD" : "") };
     const bereich = [...karte.querySelectorAll('.chip[aria-pressed="true"]')].map((c) => c.dataset.b);
     /* Zeitausgleich als Art im Kalender, gilt als abwesend */
     const za = x("planKat('zeitausgleich')[1]"), zaAbw = x("PLAN_ABWESEND.indexOf('zeitausgleich')>=0");
@@ -1250,7 +1250,7 @@ test("Stunden ↔ Kalender: Abwesenheit von selbst in den Stunden, Soll je Tag/W
   pruefe(r.loeschenFehler && r.nachLoeschen === r.gekuerzt, "Techniker konnte Kalender-Stunden löschen");
   pruefe(r.krankZeile && r.erfassenBeiKrank === 0 && r.nachGenehmigung && r.erfasst, "Stunden zeigen Abwesenheit falsch: " + JSON.stringify(r));
   pruefe(r.sollDa > 0 && r.wocheSoll, "Soll je Tag/Woche fehlt");
-  pruefe(r.chip && r.st === "TS1" && /Wartung Testmarkt/.test(r.was) && r.bereich.join() === "wartung", "Stempeluhr-Vorschlag falsch: " + JSON.stringify(r));
+  pruefe(r.chip && r.st === "TS1" && /Wartung Testmarkt/.test(r.was) && !/ALTES FELD/.test(r.was) && r.bereich.join() === "wartung", "Stempeluhr-Vorschlag falsch: " + JSON.stringify(r));
   pruefe(r.za === "Zeitausgleich" && r.zaAbw, "Zeitausgleich fehlt im Kalender");
   pruefe(r.luecken.length && /ohne Eintrag/.test(r.luecken[0]), "Lücken vor dem Bestätigen nicht erkannt: " + JSON.stringify(r.luecken));
   pruefe(!a.fehler.length, "Laufzeitfehler: " + a.fehler.join("; "));
@@ -1682,14 +1682,14 @@ test("Stempeluhr ↔ Kalender: Abgleich teilt die gestempelte Zeit nach den Term
     const um = [...document.querySelectorAll("#stempelkarte button")].find((b) => /Dorthin umstempeln/.test(b.textContent) && /Wartung Jetzt/.test(b.closest(".note").textContent));
     if (um) um.click(); await warte(500);
     d = [...document.querySelectorAll(".assistent")].pop();
-    const vorbelegt = d ? { st: d.querySelector("[data-st]").value, was: d.querySelector("[data-neuwas]").value, bereich: [...d.querySelectorAll('.chip[aria-pressed="true"]')].map((c) => c.dataset.b).join() } : null;
+    const vorbelegt = d ? { st: d.querySelector("[data-st]").value, was: (d.querySelector("[data-bw]").parentElement.dataset.was || "") + (d.querySelector("input[data-neuwas], [data-erledigt]") ? " ALTES FELD" : ""), bereich: [...d.querySelectorAll('.chip[aria-pressed="true"]')].map((c) => c.dataset.b).join() } : null;
     return { knopf: !!knopf, dialog, teile, summe, verschoben, morgenErwartet: x("werktagAb(plusTage('" + gestern + "',1))"), um: !!um, vorbelegt };
   });
   pruefe(r.knopf && r.dialog, "Abgleich nicht angeboten: " + JSON.stringify(r));
   pruefe(r.summe === 510, "Summe hat sich geändert: " + r.summe);
   pruefe(JSON.stringify(r.teile) === JSON.stringify(["07:00-08:00 fahrt 60", "08:00-10:00 wartung P 120", "10:00-11:00 fahrt 60", "11:00-12:30 wartung P 90", "12:30-16:00 wartung 180"]), "Aufteilung falsch: " + JSON.stringify(r.teile));
   pruefe(r.verschoben === r.morgenErwartet, "nicht gemachter Termin nicht verschoben: " + r.verschoben);
-  pruefe(r.um && r.vorbelegt && r.vorbelegt.st === "TS2" && /Wartung Jetzt/.test(r.vorbelegt.was) && r.vorbelegt.bereich === "wartung", "Umstempeln nicht vorbelegt: " + JSON.stringify(r));
+  pruefe(r.um && r.vorbelegt && r.vorbelegt.st === "TS2" && /Wartung Jetzt/.test(r.vorbelegt.was) && !/ALTES FELD/.test(r.vorbelegt.was) && r.vorbelegt.bereich === "wartung", "Umstempeln nicht vorbelegt: " + JSON.stringify(r));
   pruefe(!a.fehler.length, "Laufzeitfehler: " + a.fehler.join("; "));
   await a.zu();
 });
@@ -6313,65 +6313,78 @@ test("Vergessen / abholen geht nicht unter: gleich geladen, Fällig-Karte, 🧰 
   await a.zu();
 });
 
-test("Projekt-Termin: „Was wurde gemacht?“ ins Baustellenbuch (Termin + Schritt), ✓ dokumentiert/erledigt, beim Schritt sichtbar, im Arbeitsnachweis vorgeschlagen", async () => {
+test("Projekt-Termin: EIN „✓ Erledigt …“ (Text/Fotos freiwillig, ins Baustellenbuch), beim Schritt sichtbar, Arbeitsnachweis vorbefüllt; Tagesrückblick = die eine Stelle für „Was gemacht?“", async () => {
   const a = await oeffnen(KONTEN.inhaber);
   const r = await a.seite.evaluate(async () => {
     const x = window.__t.x, w = (ms) => new Promise((f) => setTimeout(f, ms)), db = window.__db.tabellen, j = new Date().toISOString(), e = {};
     const heute = x("isoLokal(new Date())"), ich = x("meineKennung()");
+    const knoepfe = (d) => [...d.querySelectorAll(".as-fuss button")].map((b) => b.textContent).join("|");
     db.projekte.push({ id: "pkal", nummer: "P-T-KAL", titel: "Montage Test", kunde_id: "lidl", standort_id: "TS1", status: "baustelle", daten: {}, verlauf: [], erstellt: j, geaendert: j });
-    db.planung.push({ id: "tkal1", art: "termin", kategorie: "baustelle", titel: "Innengeräte montieren", datum: heute, beginn: "07:00", ende: "15:00", wer: [ich], wer_namen: ["T"],
+    db.planung.push({ id: "tkal1", art: "termin", kategorie: "projekt", titel: "Innengeräte montieren", datum: heute, beginn: "07:00", ende: "15:00", wer: [ich], wer_namen: ["T"],
       projekt_id: "pkal", projekt_schritt: "baustelle", status: "offen", erstellt_von: ich, erstellt: j },
-      { id: "tkal2", art: "termin", kategorie: "buero", titel: "Besprechung", datum: heute, beginn: "16:00", ende: "17:00", wer: [ich], wer_namen: ["T"], status: "offen", erstellt_von: ich, erstellt: j });
+      { id: "tkal2", art: "termin", kategorie: "buero", titel: "Besprechung", datum: heute, beginn: "16:00", ende: "17:00", wer: [ich], wer_namen: ["T"], status: "offen", erstellt_von: ich, erstellt: j },
+      { id: "tkal3", art: "termin", kategorie: "buero", titel: "Bürokram", datum: heute, beginn: "10:00", ende: "11:00", wer: [ich], wer_namen: ["T"], status: "offen", erstellt_von: ich, erstellt: j });
     await x("Promise.all([projekteLaden(), planungLaden()])"); await w(200);
-    /* Termin öffnen: „📝 Was wurde gemacht?“ */
+    /* Projekt-Termin: nur EIN Knopf „✓ Erledigt …“ */
     x("planEditor(PLANUNG.filter(function(p){ return p.id==='tkal1'; })[0])"); await w(300);
     let d = [...document.querySelectorAll(".assistent")].pop();
-    const knoepfe = [...d.querySelectorAll(".as-fuss button")].map((b) => b.textContent);
-    e.knoepfe = knoepfe.join("|");
-    [...d.querySelectorAll(".as-fuss button")].find((b) => /Was wurde gemacht/.test(b.textContent)).click(); await w(300);
+    e.knoepfe = knoepfe(d);
+    [...d.querySelectorAll(".as-fuss button")].find((b) => /✓ Erledigt …/.test(b.textContent)).click(); await w(300);
     d = [...document.querySelectorAll(".assistent")].pop();
-    e.titel = d.querySelector(".as-titel").textContent; e.schritt = d.querySelector('[data-f="schritt"]').value;
+    e.titel = d.querySelector(".as-titel").textContent; e.schritt = d.querySelector('[data-f="schritt"]').value; e.ohneText = !!d.querySelector("[data-ohnetext]");
     d.querySelector('[data-f="text"]').value = "6 Innengeräte montiert, Kondensat angeschlossen";
     [...d.querySelectorAll(".as-fuss button")].find((b) => /Speichern/.test(b.textContent)).click(); await w(800);
     const bb = (db.projekte.find((p) => p.id === "pkal").daten.baubuch || [])[0] || {};
-    e.eintrag = bb.planung_id + "|" + bb.schritt + "|" + bb.datum + "|" + (bb.datum === heute);
+    e.eintrag = bb.planung_id + "|" + bb.schritt + "|" + (bb.datum === heute);
     e.dokumentiert = x("planTerminErledigt(PLANUNG.filter(function(p){ return p.id==='tkal1'; })[0])");
     e.kalTitel = ((x("kalenderEintraege")(heute, heute, "ich")[heute] || []).find((z) => z.e && z.e.id === "tkal1") || {}).titel || "";
-    /* ohne Bericht abhaken */
+    x("ansichtenSchliessen(); planEditor(PLANUNG.filter(function(p){ return p.id==='tkal1'; })[0])"); await w(300);
+    e.knoepfeDanach = knoepfe([...document.querySelectorAll(".assistent")].pop());
+    /* ohne Projekt: gleich erledigt */
     x("ansichtenSchliessen(); planEditor(PLANUNG.filter(function(p){ return p.id==='tkal2'; })[0])"); await w(300);
     d = [...document.querySelectorAll(".assistent")].pop();
-    e.ohneProjekt = ![...d.querySelectorAll(".as-fuss button")].some((b) => /Was wurde gemacht/.test(b.textContent));
-    [...d.querySelectorAll(".as-fuss button")].find((b) => /✓ Erledigt/.test(b.textContent)).click(); await w(500);
+    e.knoepfe2 = knoepfe(d);
+    [...d.querySelectorAll(".as-fuss button")].find((b) => /^✓ Erledigt$/.test(b.textContent)).click(); await w(500);
     const t2 = db.planung.find((p) => p.id === "tkal2"); e.abgehakt = !!t2.erledigt + "|" + t2.status;
     /* Projekt-Schritt zeigt Termin und Bericht */
     x("ansichtenSchliessen(); projektAnsicht('pkal')"); await w(700);
     const pd = [...document.querySelectorAll(".assistent")].pop();
     e.schrittTermin = [...pd.querySelectorAll("[data-schritttermin]")].map((z) => z.textContent).join(" | ");
     e.schrittBericht = [...pd.querySelectorAll("[data-schrittbaubuch]")].map((z) => z.textContent).join(" | ");
-    /* Arbeitsnachweis: Baustellenbuch-Text als Vorschlag */
+    /* Arbeitsnachweis: „Ausgeführte Arbeiten“ gleich vorbefüllt */
     x("ansichtenSchliessen()");
     const p = x("PROJEKTE").filter((q) => q.id === "pkal")[0];
     x("anEditor")(p, null, function () {}); await w(400);
     const ad = [...document.querySelectorAll(".assistent")].pop();
-    const z = [...ad.querySelectorAll(".as-fuss button")].find((b) => /^Weiter: Stunden/.test(b.textContent)); z.click(); await w(400);
+    [...ad.querySelectorAll(".as-fuss button")].find((b) => /^Weiter: Stunden/.test(b.textContent)).click(); await w(400);
     if (!ad.querySelectorAll(".an-zeile").length) { [...ad.querySelectorAll("button")].find((b) => /^\+ Zeile$/.test(b.textContent)).click(); await w(100); }
     [...ad.querySelectorAll(".as-fuss button")].find((b) => /^Weiter: Arbeiten/.test(b.textContent)).click(); await w(200);
-    e.anVorschlag = [...ad.querySelectorAll("button")].some((b) => /6 Innengeräte montiert/.test(b.textContent) && /Baustellenbuch/.test(b.textContent));
-    /* Tagesrückblick: beim gemachten Projekt-Termin der Knopf zum Bericht */
+    e.anText = (ad.querySelector('[data-t="arbeiten"]') || {}).value || ""; e.anHinweis = !!ad.querySelector("[data-anvorbefuellt]");
+    /* Tagesrückblick: „Was gemacht?“ direkt je Abschnitt, Fotos bei Baustellen; Text → Stunden + Baustellenbuch, gemachter Termin → erledigt */
     x("ansichtenSchliessen()");
     db.arbeitszeiten.push({ id: "zkal1", user_id: ich, name: "T", datum: heute, beginn: "06:30", ende: "15:30", pause_min: 30, minuten: 510, art: "arbeit", quelle: "stempel", bereich: "baustelle" });
     await x("zeitenLaden()"); x("abgleichDialog('" + heute + "', false)"); await w(400);
-    const rd = [...document.querySelectorAll(".assistent")].pop(), bk = rd.querySelector("[data-bericht]");
-    e.rueckblick = bk ? bk.textContent : "kein Knopf";
+    const rd = [...document.querySelectorAll(".assistent")].pop();
+    e.alterKnopf = !!rd.querySelector("[data-bericht]");
+    const ab = [...rd.querySelectorAll("[data-abschnitt]")].find((k) => /Innengeräte montieren/.test(k.textContent));
+    e.feld = !!(ab && ab.querySelector("[data-abwas]")); e.foto = !!(ab && ab.querySelector("[data-abfoto]"));
+    const t = ab.querySelector("[data-abwas]"); t.value = "Leitungen verlegt"; t.dispatchEvent(new Event("change", { bubbles: true })); await w(200);
+    [...rd.querySelectorAll(".as-fuss button")].pop().click(); await w(1500);
+    const bb2 = db.projekte.find((q) => q.id === "pkal").daten.baubuch || [];
+    e.bbNeu = bb2.filter((b) => b.text === "Leitungen verlegt").map((b) => b.planung_id + "|" + b.schritt).join();
+    e.stunden = db.arbeitszeiten.filter((z) => z.datum === heute && z.taetigkeit === "Leitungen verlegt").length;
+    e.t3 = !!db.planung.find((q) => q.id === "tkal3").erledigt;
     return e;
   });
-  pruefe(/Was wurde gemacht/.test(r.knoepfe) && /✓ Erledigt/.test(r.knoepfe), "Termin-Knöpfe: " + r.knoepfe);
-  pruefe(r.titel === "Was wurde gemacht?" && r.schritt === "baustelle", "Baustellenbuch vorbelegt: " + JSON.stringify([r.titel, r.schritt]));
-  pruefe(/^tkal1\|baustelle\|.*\|true$/.test(r.eintrag) && r.dokumentiert === true && /^✓ dokumentiert/.test(r.kalTitel), "Bericht/Termin: " + JSON.stringify([r.eintrag, r.dokumentiert, r.kalTitel]));
-  pruefe(r.ohneProjekt && r.abgehakt === "true|offen", "Ohne Bericht abhaken: " + JSON.stringify([r.ohneProjekt, r.abgehakt]));
+  pruefe(/✓ Erledigt …/.test(r.knoepfe) && !/Was wurde gemacht/.test(r.knoepfe) && /In Handy-Kalender/.test(r.knoepfe), "Termin-Knöpfe: " + r.knoepfe);
+  pruefe(r.titel === "Was wurde gemacht?" && r.schritt === "baustelle" && r.ohneText, "Erledigt-Fenster: " + JSON.stringify([r.titel, r.schritt, r.ohneText]));
+  pruefe(/^tkal1\|baustelle\|true$/.test(r.eintrag) && r.dokumentiert === true && /^✓ dokumentiert/.test(r.kalTitel), "Bericht/Termin: " + JSON.stringify([r.eintrag, r.dokumentiert, r.kalTitel]));
+  pruefe(/Was gemacht wurde \(1\)/.test(r.knoepfeDanach) && !/✓ Erledigt/.test(r.knoepfeDanach), "Erledigter Termin: " + r.knoepfeDanach);
+  pruefe(/(^|\|)✓ Erledigt(\||$)/.test(r.knoepfe2) && r.abgehakt === "true|offen", "Ohne Projekt: " + JSON.stringify([r.knoepfe2, r.abgehakt]));
   pruefe(/Innengeräte montieren/.test(r.schrittTermin) && /dokumentiert/.test(r.schrittTermin) && /6 Innengeräte montiert/.test(r.schrittBericht), "Projekt-Schritt: " + JSON.stringify([r.schrittTermin, r.schrittBericht]));
-  pruefe(r.anVorschlag, "Arbeitsnachweis schlägt den Baustellenbuch-Text nicht vor");
-  pruefe(/Bericht ✓/.test(r.rueckblick), "Tagesrückblick ohne Bericht-Knopf: " + r.rueckblick);
+  pruefe(/6 Innengeräte montiert/.test(r.anText) && r.anHinweis, "Arbeitsnachweis nicht vorbefüllt: " + JSON.stringify([r.anText, r.anHinweis]));
+  pruefe(!r.alterKnopf && r.feld && r.foto, "Tagesrückblick: " + JSON.stringify(r));
+  pruefe(r.bbNeu === "tkal1|baustelle" && r.stunden > 0 && r.t3, "Rückblick speichert nicht überall: " + JSON.stringify([r.bbNeu, r.stunden, r.t3]));
   pruefe(!a.fehler.length, "Laufzeitfehler: " + a.fehler.join("; "));
   await a.zu();
 });
@@ -6862,6 +6875,48 @@ test("Karte am Handy: Markt-Fenster bleibt kompakt – Kopf mit Marktinfo sichtb
   pruefe(!r.keineKarte, "keine Straßenkarte im Test: " + JSON.stringify(r));
   pruefe(r.titelInKarte && r.hoehe <= r.karteHoehe, "Fenster zu groß / Kopf außerhalb der Karte: " + JSON.stringify(r));
   pruefe(r.zeilen < r.knoepfe && !r.ragtRaus, "Knöpfe nicht kompakt: " + JSON.stringify(r));
+  pruefe(!a.fehler.length, "Laufzeitfehler: " + a.fehler.join("; "));
+  await a.zu();
+});
+
+test("Datenverbrauch: Stammdaten ohne Auftrags-PDF laden, PDF erst beim Öffnen der Störung, beim Speichern bleibt es; ohne Änderung kein Nachladen", async () => {
+  const a = await oeffnen(KONTEN.admin);
+  const r = await a.seite.evaluate(async () => {
+    const x = window.__t.x, w = (ms) => new Promise((f) => setTimeout(f, ms)), db = window.__db.tabellen, e = {};
+    const pdf = "data:application/pdf;base64,JVBERi0xLjQKJcfsj6IKVEVTVA==";
+    db.stammdaten.push({ id: "stoerung:pdf1", typ: "stoerung", ziel: "TS1", felder: { auftragsnummer: "700100", problemtyp: "Kühlt nicht", pdfName: "auftrag.pdf", pdfDaten: pdf, seiten: ["data:image/png;base64,AAAA"] },
+      neu: true, geaendert: new Date().toISOString(), von: "Test", grund: "Test" });
+    await x("ladeStammdaten().then(storeNachRender)"); await w(300);
+    const o = x("OFFENE").filter((q) => q._id === "stoerung:pdf1")[0] || {};
+    e.leicht = !o.pdfDaten && !(o.seiten || []).length && o._schwer === true;
+    /* öffnen: PDF wird geholt */
+    x("stoerungDialog")(o); await w(800);
+    const d = [...document.querySelectorAll(".assistent")].pop();
+    e.pdfKnopf = !!(d && d.querySelector('[data-a="pdf"]'));
+    x("ansichtenSchliessen()");
+    /* Speichern einer leicht geladenen Störung: das PDF in der Datenbank bleibt */
+    x("STOER_SCHWER={}");   /* gemerktes PDF vergessen – wie ein anderes Gerät */
+    await x("ladeStammdaten().then(storeNachRender)"); await w(200);
+    const o2 = Object.assign({}, x("OFFENE").filter((q) => q._id === "stoerung:pdf1")[0], { notiz: "Kunde ruft zurück" });
+    e.leicht2 = !o2.pdfDaten;
+    await x("stoerungSpeichern")(o2, "Test"); await w(600);
+    const zeile = db.stammdaten.find((q) => q.id === "stoerung:pdf1") || { felder: {} };
+    e.dbPdf = zeile.felder.pdfDaten === pdf && (zeile.felder.seiten || []).length === 1 && zeile.felder.notiz === "Kunde ruft zurück" && !("_schwer" in zeile.felder);
+    /* Nachladen im Hintergrund: ohne Änderung nichts laden */
+    x("window.__hn=0; var __h=hintergrundNachladen; hintergrundNachladen=function(){ window.__hn++; return __h.apply(this, arguments); }; aenderungStand=''");
+    x("nachladenWennGeaendert()"); await w(400);
+    const nachErstem = x("window.__hn");
+    x("nachladenWennGeaendert()"); await w(400);
+    e.ohneAenderung = x("window.__hn") === nachErstem;
+    db.stammdaten.push({ id: "stoerung:pdf2", typ: "stoerung", ziel: "TS2", felder: { auftragsnummer: "700101" }, neu: true, geaendert: new Date(Date.now() + 1000).toISOString(), von: "Test", grund: "Test" });
+    x("nachladenWennGeaendert()"); await w(400);
+    e.mitAenderung = x("window.__hn") === nachErstem + 1;
+    return e;
+  });
+  pruefe(r.leicht && r.leicht2, "Stammdaten nicht leicht geladen: " + JSON.stringify(r));
+  pruefe(r.pdfKnopf, "Störung öffnen: PDF nicht nachgeladen: " + JSON.stringify(r));
+  pruefe(r.dbPdf, "Beim Speichern ging das PDF verloren: " + JSON.stringify(r));
+  pruefe(r.ohneAenderung && r.mitAenderung, "Nachladen nur bei Änderung: " + JSON.stringify(r));
   pruefe(!a.fehler.length, "Laufzeitfehler: " + a.fehler.join("; "));
   await a.zu();
 });

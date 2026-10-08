@@ -3152,6 +3152,7 @@ function stoerungTeilSpeichern(P){
 }
 function stoerungDialog(vorhanden, weiter, vorlage){
   if(nurLesen()){ posteingangOffen=null; toast("Mit diesem Konto lässt sich nur ansehen."); return; }
+  if(!weiter && stoerungSchwerFehlt(vorhanden)){ toast("Auftrag wird geladen …"); stoerungSchwerLaden(vorhanden).then(function(){ vorhanden._schwer=false; stoerungDialog(vorhanden, weiter, vorlage); }); return; }
   /* gemeinsame Datenbank, aber abgemeldet: nichts erfassen oder ändern – es
      ginge sonst später unter fremdem Namen in die Datenbank */
   if(!angemeldetOderLokal()){ posteingangOffen=null; toast("Dafür bitte zuerst anmelden."); return; }
@@ -9424,6 +9425,8 @@ function wendeStammdatenAn(){
       /* erfasst: steht in den Feldern (stoerungSpeichern); bei älteren
          Einträgen ohne diese Angabe gilt wie bisher die letzte Änderung */
       var so=Object.assign({_id:r.id, standortId:r.ziel}, r.felder);
+      var sw=so._schwer && STOER_SCHWER[r.id];
+      if(sw && sw.geaendert===r.geaendert){ if(sw.pdfDaten){ so.pdfDaten=sw.pdfDaten; so.pdfName=sw.pdfName; } so.seiten=sw.seiten; }
       if(!so.erfasstAm) so.erfasstAm=r.geaendert;
       if(!so.erfasstVon) so.erfasstVon=r.von;
       OFFENE.push(so);
@@ -9730,6 +9733,21 @@ function alleSeiten(bau, schluessel){
 /* nurVollstaendig (Nachladen im Hintergrund): ein unvollständiges Ergebnis
    (schlechter Empfang) ersetzt keinen vollständig geladenen Stand – sonst
    verschwänden offene Störungen und Anlagendaten bis zum nächsten Laden */
+var stammLeicht=true;
+/* Auftrags-PDF und Seitenbilder einer Störung erst beim Öffnen (felder._schwer aus stammdaten_leicht); gemerkt je Stand */
+var STOER_SCHWER={};
+function stoerungSchwerFehlt(o){ return !!(o && o._schwer && !o.pdfDaten && !(o.seiten||[]).length); }
+function stoerungSchwerLaden(o){
+  if(!stoerungSchwerFehlt(o) || !Store.sb || Store.modus!=="supabase") return Promise.resolve(o);
+  return mitFrist(Store.sb.from("stammdaten").select("id,felder,geaendert").eq("id", o._id), 20000).then(function(r){
+    var z=r && !r.error && r.data && r.data[0]; if(!z || !z.felder) return o;
+    var sw={pdfDaten:z.felder.pdfDaten||null, pdfName:z.felder.pdfName||o.pdfName||null, seiten:Array.isArray(z.felder.seiten)?z.felder.seiten:[], geaendert:z.geaendert};
+    STOER_SCHWER[o._id]=sw;
+    if(sw.pdfDaten){ o.pdfDaten=sw.pdfDaten; o.pdfName=sw.pdfName; } o.seiten=sw.seiten;
+    OFFENE.forEach(function(x){ if(x._id===o._id && x!==o){ if(sw.pdfDaten){ x.pdfDaten=sw.pdfDaten; x.pdfName=sw.pdfName; } x.seiten=sw.seiten; } });
+    return o;
+  }, function(){ return o; });
+}
 function ladeStammdaten(nurVollstaendig){
   /* Nachladen im Hintergrund, während schon geladen wird: nicht doppelt –
      sonst hielte der zweite Lauf „lädt gerade“ für „unvollständig“ und könnte
@@ -9745,9 +9763,12 @@ function ladeStammdaten(nurVollstaendig){
        fehlten sonst zufällig Anlagendaten und offene Störungen */
     /* nur gemerkte (ungeprüfte) Rolle: ohne Zugangsdaten lesen – so bleiben auch
        offene Störungen sichtbar, falls die Rolle inzwischen nur noch lesen darf */
-    var tab=nurLesen()||demo()||Rolle.gemerkt?"stammdaten_lesen":"stammdaten", SEITE=1000;
+    /* leicht (Inhaber 08.10.2026, Egress über dem Kontingent): ohne Auftrags-PDFs und Seitenbilder der Störungen –
+       die holt stoerungSchwerLaden erst beim Öffnen (tools/stammdaten-leicht.sql); fehlt die Sicht, wie bisher */
+    var tab=nurLesen()||demo()||Rolle.gemerkt?"stammdaten_lesen":(stammLeicht?"stammdaten_leicht":"stammdaten"), SEITE=1000;
     var seite=function(ab, bisher){
       return Store.sb.from(tab).select("*").order("id").range(ab, ab+SEITE-1).then(function(r){
+        if(r.error && tab==="stammdaten_leicht" && /stammdaten_leicht|does not exist|schema cache/i.test(r.error.message||"")){ stammLeicht=false; tab="stammdaten"; return seite(ab, bisher); }
         if(r.error) komplett=false;
         var l=bisher.concat(r.data||[]);
         return (!r.error && r.data && r.data.length===SEITE) ? seite(ab+SEITE, l) : l;
@@ -10984,8 +11005,21 @@ window.addEventListener("online",function(){ flushQueue(); if(Admin.geprueft && 
 /* Neue Störungen und Protokolle der Kollegen kommen von selbst (Inhaber 07.10.2026: „dauert lange, bis es die aktuellen Wartungen und
    Störungen aktualisiert“): beim Zurückkommen in die App und alle 2 Minuten, solange sie sichtbar ist (hintergrundNachladen: höchstens
    einmal je Minute; neu gezeichnet nur, wenn sich etwas geändert hat) */
-document.addEventListener("visibilitychange", function(){ if(!document.hidden) hintergrundNachladen(); });
-setInterval(function(){ if(!document.hidden) hintergrundNachladen(); }, 120000);
+/* Datenverbrauch (Inhaber 08.10.2026, Egress): vorher nur nachsehen, ob sich etwas geändert hat – jüngste Änderung und
+   Anzahl von Protokollen und Stammdaten (wenige Bytes); nur dann die Tabellen laden */
+var aenderungStand="";
+function aenderungPruefen(){
+  if(Store.modus!=="supabase" || !Store.sb || !Store.benutzer || demo() || !Admin.geprueft) return Promise.resolve(false);
+  var q=function(t){ return Store.sb.from(t).select("geaendert",{count:"exact"}).order("geaendert",{ascending:false}).limit(1); };
+  return mitFrist(Promise.all([q("protokolle"), q(stammLeicht?"stammdaten_leicht":"stammdaten")]), 10000).then(function(r){
+    if(r.some(function(x){ return !x || x.error; })) return true;   /* unklar: lieber laden */
+    var st=r.map(function(x){ return (x.count==null?"":x.count)+"@"+(((x.data||[])[0]||{}).geaendert||""); }).join("|");
+    var neu=st!==aenderungStand; aenderungStand=st; return neu;
+  }, function(){ return false; });
+}
+function nachladenWennGeaendert(){ aenderungPruefen().then(function(neu){ if(neu){ nachgeladenUm=0; hintergrundNachladen(); } }); }
+document.addEventListener("visibilitychange", function(){ if(!document.hidden) nachladenWennGeaendert(); });
+setInterval(function(){ if(!document.hidden) nachladenWennGeaendert(); }, 120000);
 
 function viewAnmeldung(){
   var f=document.createDocumentFragment();
@@ -24712,6 +24746,9 @@ function ansichtenSchliessen(){
 /* Ein neues Protokoll beginnen (Fällig-Zeile, posBox, Karte, Tour, Störung) –
    mit Rückfrage, wenn schon eines angefangen ist */
 function protokollBeginnen(sid, pid, art, stoerungId){
+  /* Störungsprotokoll: Auftrags-PDF und Seiten der Störung vorher holen (leicht geladen) */
+  var soS=stoerungId && OFFENE.filter(function(x){ return x._id===stoerungId; })[0];
+  if(stoerungSchwerFehlt(soS)){ stoerungSchwerLaden(soS).then(function(){ soS._schwer=false; protokollBeginnen(sid, pid, art, stoerungId); }); return; }
   /* das Störungsprotokoll zu dieser Störung wartet noch auf dem Gerät: ein
      zweites nur bewusst (etwa ein weiterer Einsatz) */
   var wartet=stoerungId && (lokaleProtokolle||[]).filter(function(e){ return e && !e._demo && e.ausStoerung===stoerungId && e.doc; })[0];
@@ -25342,7 +25379,7 @@ function handbuchKarte(z){
           "nur der Inhaber trägt dann noch ein oder öffnet ihn mit „Wieder öffnen“.",
         "<strong>Stempeluhr</strong> (oben im Reiter Stunden): Einstempeln, Pause, Weiter, Ausstempeln – die Uhrzeit setzt der Server, nicht das Handy. "+
           "Beim Ausstempeln entsteht der Eintrag von selbst – geht aus Protokollen, Projekt-Tagebuch oder der Angabe beim Einstempeln nicht hervor, was erledigt wurde, fragt die App danach. Wird ein gestempelter Eintrag nachträglich geändert, steht das für den Inhaber sichtbar dabei; "+
-          "löschen kann ihn nur der Inhaber. Vergessen auszustempeln: nach 12 Stunden lässt sich das tatsächliche Ende nachtragen. <strong>Tagesrückblick</strong> nach jedem Ausstempeln (Inhaber 06.10.2026, weil Umstempeln untertags oft vergessen wird): je Abschnitt von–bis, Bereich, Markt, Projekt, Was prüfen und anpassen, mit „+ Weiterer Bereich“ beliebig viele Bereiche zu verschiedenen Zeiten eintragen – Anfang, Ende, Summe und Pause bleiben wie gestempelt. „✓ Passt so“ übernimmt den Vorschlag; war schon alles richtig umgestempelt, werden keine Stunden geschrieben, nur „geprüft“ gemerkt (gilt auf allen Geräten). „Später“ speichert nichts – beim Tag steht dann „⇆ Tag prüfen“, bis der Tag geprüft oder der Monat bestätigt ist.",
+          "löschen kann ihn nur der Inhaber. Vergessen auszustempeln: nach 12 Stunden lässt sich das tatsächliche Ende nachtragen. <strong>Tagesrückblick</strong> nach jedem Ausstempeln (Inhaber 06.10.2026, weil Umstempeln untertags oft vergessen wird): je Abschnitt von–bis, Bereich, Markt, Projekt und <strong>„Was gemacht?“</strong> (die EINE Stelle dafür – Ein-, Um- und Ausstempeln fragen es nicht mehr; bei Baustellen mit 📷 Fotos, beides kommt ins Baustellenbuch, gemachte Termine gelten als erledigt), mit „+ Weiterer Bereich“ beliebig viele Bereiche zu verschiedenen Zeiten eintragen – Anfang, Ende, Summe und Pause bleiben wie gestempelt. „✓ Passt so“ übernimmt den Vorschlag; war schon alles richtig umgestempelt, werden keine Stunden geschrieben, nur „geprüft“ gemerkt (gilt auf allen Geräten). „Später“ speichert nichts – beim Tag steht dann „⇆ Tag prüfen“, bis der Tag geprüft oder der Monat bestätigt ist.",
         "<strong>Bereich und Umstempeln:</strong> beim Einstempeln den Bereich wählen (Fahrt, Baustelle, Wartung, Störung, Werkstatt, Büro). "+
           "„⇄ Umstempeln“ wechselt Bereich, Markt oder Projekt, ohne auszustempeln – beim Ausstempeln entsteht je Abschnitt ein Eintrag. "+
           "Beim Um- und Ausstempeln fragt die App nach der erledigten Arbeit im endenden Abschnitt, wenn sie nicht schon aus Angaben, Protokollen oder Projekt-Tagebuch hervorgeht. "+
@@ -25398,7 +25435,7 @@ function handbuchKarte(z){
 
     abschnitt("11 · Kalender und Aufgaben",
       liste(["<strong>Termine:</strong> Wartung, Störung, Baustelle, Büro, Werkstatt, Besprechung, Urlaub, Krankenstand, Schule, Zeitausgleich, privat, Sonstiges – mit einer oder mehreren Personen, "+
-          "auch mehrtägig. Wer eingetragen wird, bekommt eine Nachricht. „📅 Handy“ übernimmt einen Termin in den Handykalender.",
+          "auch mehrtägig. Wer eingetragen wird, bekommt eine Nachricht. „📅 In Handy-Kalender“ übernimmt einen Termin in den Kalender am Handy.",
         "<strong>Privat:</strong> die anderen sehen nur „Abwesend“ und die Zeit – Titel und Einzelheiten nur du (das prüft die Datenbank).",
         "<strong>Krankenstand</strong> anderer sehen die Kollegen nur als „Abwesend“ (grau, ohne Titel) – die Art sehen nur der Inhaber und die Person selbst. "+
           "Urlaub, Schule und Zeitausgleich sehen alle.",
@@ -25815,7 +25852,7 @@ Object.assign(RUNDGAENGE, {
         "Wer eingetragen wird, bekommt eine <strong>Nachricht</strong> (nicht bei Privatem)."])},
     {reiter:"kalender", ziel:function(){ return rgEl("#kal_karte [data-inhalt]"); }, titel:"Verschieben und ändern",
       text:"Einen Termin im Zeitraster <strong>ziehen</strong>: am PC mit der Maus, am Handy kurz halten (0,4 s) und ziehen – auf 15 Minuten genau, auch auf einen anderen Tag. "+
-      "Antippen öffnet den Termin zum Ändern, Löschen, „Protokoll beginnen“ (bei einer Wartung) oder „📅 Handy“ (in den Handykalender)."+
+      "Antippen öffnet den Termin zum Ändern, Löschen, „Protokoll beginnen“ (bei einer Wartung) oder „📅 In Handy-Kalender“."+
       RG_HG(["Vor dem Verschieben prüft die App, ob die Person schon verplant ist; die Eingetragenen bekommen „Termin verschoben“.",
         "Ziehen dürfen Inhaber, Admins, wer den Termin angelegt hat und wer eingetragen ist; Störungseinsätze nur das Büro; Abwesenheit anderer nur der Inhaber. Mehrtägige Termine ändert man im Termin."])},
     {reiter:"kalender", ziel:function(){ return rgKarte(/^To-do/); }, titel:"Aufgaben (To-do)",
@@ -26038,22 +26075,22 @@ Object.assign(RUNDGAENGE, {
         "Weniger als 11 h seit dem letzten Ausstempeln: Hinweis (§ 12 AZG). Schon von Hand eingetragene Zeit für „jetzt“: Rückfrage.",
         "„Märkte in der Nähe“ speichert nichts; der Standort wird nur gespeichert, wenn der Inhaber es eingeschaltet hat – und dann nur als Entfernung."])},
     {reiter:"stunden", ziel:function(){ return rgEl("#stempelkarte"); }, titel:"Umstempeln, Pause, Ausstempeln",
-      text:RG_LISTE(["<strong>⇄ Umstempeln</strong>: erst „Was hast du seit … gemacht?“ (ist es schon belegt – Protokoll, Projekt –, nur zur Ansicht), dann „Weiter mit …“ (Bereich, Markt, Projekt).",
+      text:RG_LISTE(["<strong>⇄ Umstempeln</strong>: nur „Weiter mit …“ (Bereich, Wo, Projekt) – was gemacht wurde, fragt erst der Tagesrückblick (einmal statt mehrfach).",
         "<strong>⏸ Pause</strong> / <strong>▶ Weiter</strong>.",
-        "<strong>■ Ausstempeln</strong>: Abschnitte ansehen, „Was hast du heute gemacht?“ – danach der <strong>Tagesrückblick</strong> (siehe unten); gibt es Einträge von Hand im Zeitraum: „gestempelte Zeit gilt – ersetzen“ oder „beide behalten“.",
+        "<strong>■ Ausstempeln</strong>: Abschnitte ansehen und bestätigen – danach der <strong>Tagesrückblick</strong> (siehe unten), dort „Was gemacht?“; gibt es Einträge von Hand im Zeitraum: „gestempelte Zeit gilt – ersetzen“ oder „beide behalten“.",
         "Vergessen auszustempeln (über 12 h): Ende von Hand eintragen."])+
       RG_HG(["Beim Ausstempeln legt der Server <strong>je Abschnitt einen Eintrag</strong> mit Bereich an.",
         "Über 6 h Arbeit und weniger als 30 min Pause: die fehlende Pause zieht er im längsten Abschnitt ab.",
         "Hinweise bei über 10 h und über 12 h am Tag.",
         "Passt ein Abschnitt zu einem heute geplanten Termin (gleicher Markt oder gleiches Projekt), verknüpft die App ihn – im Termin steht dann „✓ erfasst“.",
-        "<strong>Tagesrückblick</strong> (Inhaber 06.10.2026): nach jedem Ausstempeln „Was hast du heute wann und wo gemacht?“ – je Abschnitt von–bis (Grenze ±15 min oder Uhrzeit), Bereich, Markt, Projekt, Was; <strong>„+ Weiterer Bereich“</strong> von–bis (z. B. zwischendurch Fahrt oder Material holen – davor und danach bleibt, wie es war; beliebig oft), „+ hier teilen“, „✕ entfernen“ (die Zeit geht an den Nachbarn). „✓ Passt so“ übernimmt den Vorschlag (richtig umgestempelt: nichts wird geschrieben, der Tag gilt als geprüft – auf allen Geräten); „Später“ speichert nichts, beim Tag bleibt „⇆ Tag prüfen“. Der Vorschlag teilt die gestempelte Zeit nach den Terminen auf – dazwischen Fahrt bzw. was dort gestempelt war (Bereich, Markt, Projekt); ein Termin mitten in einem anderen unterbricht ihn. Die Stempeluhr hat Vorrang: Summe und Pause bleiben genau gleich (prüft die Datenbank, die Vorschau zeigt die Stunden ohne Pause). Nicht Gemachtes bleibt offen oder wird auf den nächsten Arbeitstag ab heute verschoben (mehrtägige Termine bleiben, wie sie sind); scheitert das Verschieben, sagt es die Meldung."])},
+        "<strong>Tagesrückblick</strong> (Inhaber 06.10.2026): nach jedem Ausstempeln „Was hast du heute wann und wo gemacht?“ – je Abschnitt von–bis (Grenze ±15 min oder Uhrzeit), Bereich, Wo/Projekt und <strong>„Was gemacht?“</strong> (Vorschlag aus dem eigenen Protokoll bzw. dem Termin; bei Baustellen 📷 Fotos – Text und Fotos gehen ins Baustellenbuch, gemachte Termine gelten als erledigt); <strong>„+ Weiterer Bereich“</strong> von–bis (z. B. zwischendurch Fahrt oder Material holen – davor und danach bleibt, wie es war; beliebig oft), „+ hier teilen“, „✕ entfernen“ (die Zeit geht an den Nachbarn). „✓ Passt so“ übernimmt den Vorschlag (richtig umgestempelt: nichts wird geschrieben, der Tag gilt als geprüft – auf allen Geräten); „Später“ speichert nichts, beim Tag bleibt „⇆ Tag prüfen“. Der Vorschlag teilt die gestempelte Zeit nach den Terminen auf – dazwischen Fahrt bzw. was dort gestempelt war (Bereich, Markt, Projekt); ein Termin mitten in einem anderen unterbricht ihn. Die Stempeluhr hat Vorrang: Summe und Pause bleiben genau gleich (prüft die Datenbank, die Vorschau zeigt die Stunden ohne Pause). Nicht Gemachtes bleibt offen oder wird auf den nächsten Arbeitstag ab heute verschoben (mehrtägige Termine bleiben, wie sie sind); scheitert das Verschieben, sagt es die Meldung."])},
     {reiter:"stunden", ziel:function(){ return rgKarte(/^Meine Arbeitszeit/); }, titel:"Meine Arbeitszeit",
       text:RG_LISTE(["Woche mit Einträgen, Feiertagen und „⚠ über 12 h“; ‹ › blättern, „Monatsliste (PDF)“.",
         "<strong>+ Zeit erfassen</strong>: Art (Arbeit, Urlaub, Krankenstand, Feiertag, Zeitausgleich, Schule …), Bereich, von/bis/Pause oder Dauer, Was, Markt, Projekt – Vorschläge „laut Kalender“ und „laut deinen Protokollen“ (Urlaub, Krankenstand … nur als Hinweis – sie stehen von selbst in den Stunden).",
         "Geplante Termine: <strong>„erfassen“</strong>; 📅 plant die Arbeit im Voraus. Urlaub, Krankenstand, Schule, Zeitausgleich: „automatisch“ bzw. „nach Genehmigung“.",
         "<strong>Urlaub, Krankenstand, Schule oder Zeitausgleich und trotzdem Arbeit?</strong> Beim Einstempeln bzw. Erfassen fragt die App gleich: „Nur kurz eingesprungen“ (beides zählt), „Urlaubstag zurückgeben“ (der Chef nimmt ihn heraus) oder „für diesen Tag beenden“ – die Antwort gilt nur für dich; stehen mehrere im Eintrag (Betriebsurlaub, Kurs), bleiben die anderen eingetragen. Ungeklärt: ⚠ beim Tag. Ein halber Tag mit Uhrzeit (z. B. Zeitausgleich 12:00–15:30) fragt nur, wenn die Arbeit bzw. das Einstempeln in diese Zeit fällt.",
         "Gestempelt und noch nicht geprüft: beim Tag <strong>„⇆ Tag prüfen“</strong> (öffnet den Tagesrückblick, mit der Zahl noch offener Termine); beim Termin steht dann „⏱ abgleichen“ statt „erfassen“ – so wird nichts doppelt erfasst.",
-        "<strong>Nach dem Termin</strong>: „✓ Erledigt“ hakt ihn ab; bei einem Projekt-Termin hält „📝 Was wurde gemacht?“ Text und Fotos im Baustellenbuch fest (mit Termin und Projekt-Schritt, auch aus dem Tagesrückblick) – der Termin steht dann „✓ dokumentiert“, der Projekt-Schritt zeigt Termin und Bericht, der Arbeitsnachweis schlägt Text und Fotos vor.",
+        "<strong>Nach dem Termin</strong>: EIN Knopf „✓ Erledigt“ – beim Projekt-Termin „✓ Erledigt …“ mit freiwilligem „Was wurde gemacht?“ und Fotos (ins Baustellenbuch, mit Termin und Schritt) oder „✓ Ohne Text erledigt“. Meist geht es schon über den Tagesrückblick. Der Termin steht dann „✓ dokumentiert“ bzw. „✓“, der Projekt-Schritt zeigt Termin und Bericht, der Arbeitsnachweis ist mit den Texten dieser Tage vorbefüllt.",
         "<strong>Abstand zum Soll</strong>: je Tag „+0:30“, „−1:00“ oder heute „noch 2:00“; unten die Woche („bis gestern …, noch … bis zum Wochensoll“) und ebenso der laufende Monat („noch … bis zum Monatssoll“). Nur zur Info – Überstunden zählen als Monatsbilanz."])+
       RG_HG(["Zeichen: ⏱ gestempelt, ⏱✎ geändert/nachgetragen, 🔒 bestätigt, ⚠ Überschneidung.",
         "Ab 6 h ohne 30 min Pause ergänzt die App die Pause; höchstens 16 h je Eintrag; Überschneidungen (auch über Mitternacht) und eine Dauer ohne Uhrzeit an einem gestempelten Tag nur nach Rückfrage; Unsinniges wie „7:75“ oder eine negative Dauer nimmt sie nicht an.",
@@ -29291,9 +29328,17 @@ function anEditor(p, a, fertig, opt){
     ((p.daten||{}).baubuch||[]).filter(function(b){ return tage[b.datum] && b.text; }).forEach(function(b){ texte.push({t:b.text, w:"Baustellenbuch "+dfmt(b.datum)}); });
     var gesehen={}; texte=texte.filter(function(x){ var k=String(x.t).trim().toLowerCase(); if(!k || gesehen[k]) return false; gesehen[k]=1; return true; });
     var ta=box.querySelector('[data-t="arbeiten"]');
+    /* leer: gleich mit dem Baustellenbuch dieser Tage vorbefüllt – nur noch prüfen (Inhaber 08.10.2026: einmal eintragen) */
+    var bbT=((p.daten||{}).baubuch||[]).filter(function(b){ return tage[b.datum] && b.text; }).map(function(b){ return String(b.text).trim(); })
+      .filter(function(t, i, l){ return t && l.indexOf(t)===i; });
+    if(ta && !ta.value.trim() && bbT.length){
+      ta.value=bbT.join("\n"); d.arbeiten=ta.value; feldHoehe(ta); merken();
+      box.insertBefore(el('<div class="note" style="font-size:12.5px" data-anvorbefuellt>Vorbefüllt aus dem Baustellenbuch dieser Tage – bitte prüfen und bei Bedarf ändern.</div>'), box.firstChild);
+    }
     if(texte.length){
       var tk=el('<div class="stack" style="gap:4px"><div class="muted" style="font-size:12.5px">Aus Aufgaben und Terminen übernehmen (antippen hängt die Zeile an):</div></div>');
       texte.forEach(function(x){ var b=el('<button class="btn ghost sm" type="button" style="text-align:left;align-self:flex-start">+ '+esc(x.t)+' <span class="muted">('+esc(x.w)+")</span></button>");
+        if(ta && ta.value.indexOf(String(x.t).trim())>=0) b.disabled=true;
         b.onclick=function(){ ta.value=(ta.value.trim() ? ta.value.replace(/\s+$/,"")+"\n" : "")+x.t; d.arbeiten=ta.value; feldHoehe(ta); merken(); b.disabled=true; };
         tk.appendChild(b); });
       box.appendChild(tk);
@@ -32152,6 +32197,13 @@ function baubuchEditor(p, alt, neuZeichnen, vorgabe){
   var ab=el('<button class="btn ghost" type="button">Abbrechen</button>'), ok=el('<button class="btn" type="button">Speichern</button>');
   ab.onclick=function(){ if(dateien.length && !window.confirm("Ausgewählte Dateien verwerfen?")) return; v.zu(); };
   if(weg) v.fuss.appendChild(weg);
+  /* vom Termin „✓ Erledigt …“: Text und Fotos freiwillig – auch ganz ohne */
+  if(!alt && vorgabe && vorgabe.ohneText){
+    form.insertBefore(el('<div class="muted" style="font-size:12.5px">Freiwillig: kurz, was gemacht wurde, und Fotos – oder gleich „✓ Ohne Text erledigt“.</div>'), form.firstChild);
+    var oh=el('<button class="btn ghost" type="button" data-ohnetext>✓ Ohne Text erledigt</button>');
+    oh.onclick=function(){ if(dateien.length && !window.confirm("Ausgewählte Dateien verwerfen?")) return; v.zu(); vorgabe.ohneText(); };
+    v.fuss.appendChild(oh);
+  }
   v.fuss.appendChild(ab); v.fuss.appendChild(ok);
   ok.onclick=function(){
     var F=function(k){ return form.querySelector('[data-f="'+k+'"]').value.trim(); };
@@ -33810,18 +33862,26 @@ function planEditor(e, vorgabe){
     pb.onclick=function(){ v.zu(); protokollBeginnen(a.standort_id, (a.position_ids||[]).filter(function(pid){ return posById[pid] && !planPosErledigt(a, pid); })[0]||"", "wartung"); };
     v.fuss.appendChild(pb);
   }
-  /* Termin ab seinem Tag: „Was wurde gemacht?“ (Projekt) und „✓ Erledigt“ auch ohne Bericht */
+  /* Termin ab seinem Tag: EIN „✓ Erledigt …“ (Inhaber 08.10.2026: „redundant – bitte aufräumen“) – beim Projekt-Termin mit
+     „Was wurde gemacht?“ und Fotos (freiwillig, ins Baustellenbuch), sonst gleich erledigt. Erledigt: Bericht ansehen bzw. „Wieder offen“ */
   if(!neu && a.art==="termin" && !planAbwesenheit(a) && !a.privat && a.kategorie!=="privat" && a.datum<=isoLokal(new Date()) && !nurLesen()){
-    if(a.projekt_id){ var bb=planBaubuch(a);
-      var be=el('<button class="btn ghost" type="button">'+(bb.length?"📝 Bericht ("+bb.length+")":"📝 Was wurde gemacht?")+"</button>");
-      be.onclick=function(){ v.zu(); planBerichtOeffnen(a); };
-      v.fuss.appendChild(be); }
-    var th=el('<button class="btn ghost" type="button">'+(a.erledigt?"Wieder offen":"✓ Erledigt")+"</button>");
-    th.onclick=function(){ planTerminAbhaken(a, !a.erledigt).then(function(ok){ if(ok) v.zu(); }); };
-    v.fuss.appendChild(th);
+    var bb=a.projekt_id ? planBaubuch(a) : [];
+    if(!planTerminErledigt(a)){
+      var th=el('<button class="btn ghost" type="button" data-terminerledigt>'+(a.projekt_id?"✓ Erledigt …":"✓ Erledigt")+"</button>");
+      th.onclick=function(){
+        if(a.projekt_id){ v.zu(); planBerichtOeffnen(a, null, null, true); return; }
+        planTerminAbhaken(a, true).then(function(ok){ if(ok) v.zu(); });
+      };
+      v.fuss.appendChild(th);
+    } else {
+      if(bb.length){ var be=el('<button class="btn ghost" type="button">📝 Was gemacht wurde ('+bb.length+")</button>");
+        be.onclick=function(){ v.zu(); planBerichtOeffnen(a); }; v.fuss.appendChild(be); }
+      if(a.erledigt){ var wo=el('<button class="btn ghost" type="button">Wieder offen</button>');
+        wo.onclick=function(){ planTerminAbhaken(a, false).then(function(ok){ if(ok) v.zu(); }); }; v.fuss.appendChild(wo); }
+    }
   }
   if(!neu && a.art==="termin"){
-    var ics=el('<button class="btn ghost" type="button" title="In den Kalender am Handy übernehmen">📅 Handy</button>');
+    var ics=el('<button class="btn ghost" type="button" title="Als Termin in den Kalender am Handy übernehmen (Datei .ics)">📅 In Handy-Kalender</button>');
     ics.onclick=function(){ planIcs(a); };
     v.fuss.appendChild(ics);
   }
@@ -33926,18 +33986,19 @@ function planBaubuch(e){
 }
 function planTerminErledigt(e){ return !!e && e.art==="termin" && (!!e.erledigt || planBaubuch(e).length>0); }
 /* „Was wurde gemacht?“ zu einem Projekt-Termin: das Baustellenbuch, vorbelegt mit Termin, Schritt und Tag */
-function planBerichtOeffnen(e, tag, fertig){
+function planBerichtOeffnen(e, tag, fertig, abhaken){
   var p=PROJEKTE.filter(function(x){ return x.id===e.projekt_id; })[0];
   if(!p){ toast("Das Projekt ist (noch) nicht geladen."); return; }
   var da=planBaubuch(e).filter(function(b){ return !tag || b.datum===tag; })[0];
   var heute=isoLokal(new Date()), d=tag || (e.datum>heute ? heute : (e.datum_bis && e.datum_bis<heute ? e.datum_bis : (e.datum_bis ? heute : e.datum)));
   baubuchEditor(p, da||null, function(){ planGeaendert(); if(fertig) fertig(); },
-    {datum:d, art:"arbeit", planung_id:e.id, schritt:e.projekt_schritt||p.status||null, text:""});
+    {datum:d, art:"arbeit", planung_id:e.id, schritt:e.projekt_schritt||p.status||null, text:"",
+     ohneText:abhaken && !da ? function(){ planTerminAbhaken(e, true).then(function(){ planGeaendert(); if(fertig) fertig(); }); } : null});
 }
 /* Termin von Hand erledigt / wieder offen – ohne Bericht */
-function planTerminAbhaken(e, an){
+function planTerminAbhaken(e, an, still){
   var felder={erledigt:an?new Date().toISOString():null, erledigt_von:an?meinName():null, geaendert_von:meinName()};
-  var fertig=function(g){ PLANUNG=PLANUNG.filter(function(x){ return x.id!==g.id; }).concat([g]); toast(an?"✓ Termin erledigt.":"Termin wieder offen."+(planBaubuch(g).length?" (Er hat einen Bericht im Baustellenbuch – der zählt weiter als erledigt.)":"")); planGeaendert(); return true; };
+  var fertig=function(g){ PLANUNG=PLANUNG.filter(function(x){ return x.id!==g.id; }).concat([g]); if(!still) toast(an?"✓ Termin erledigt.":"Termin wieder offen."+(planBaubuch(g).length?" (Er hat einen Bericht im Baustellenbuch – der zählt weiter als erledigt.)":"")); planGeaendert(); return true; };
   if(demo()) return Promise.resolve(fertig(Object.assign({}, e, felder)));
   return mitFrist(Store.sb.from("planung").update(felder).eq("id", e.id).select("*"), 15000).then(function(r){
     if(r.error || !r.data || !r.data.length){ toast("Nicht gespeichert"+(r.error?": "+r.error.message:" – keine Berechtigung")+"."); return false; }
@@ -34556,14 +34617,14 @@ function zeitEditor(z, vorgabe){
     '<label class="fl" data-dauerzeile><span>oder Dauer (Stunden, z. B. 8 oder 7:30)</span><input type="text" inputmode="decimal" data-f="dauer" value="'+esc(!a.beginn&&a.minuten?stundenText(a.minuten).replace(" h",""):"")+'"></label>'+
     '<div class="note" data-ergebnis style="font-size:13px"></div>'+
     '<div data-vorschlag class="stack" style="gap:6px"></div>'+
-    '<label class="fl"><span>Was?</span><input type="text" data-f="taetigkeit" maxlength="300" value="'+esc(a.taetigkeit||"")+'" placeholder="z. B. Wartung Filiale Seekirchen, Montage, Werkstatt, Büro"></label>'+
+    '<label class="fl"><span>Was gemacht?</span><input type="text" data-f="taetigkeit" maxlength="300" value="'+esc(a.taetigkeit||"")+'" placeholder="z. B. Wartung Filiale Seekirchen, Montage, Werkstatt, Büro"></label>'+
     '<div class="grid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:10px">'+
       '<label class="fl"><span>Markt / Standort</span><select data-f="standort_id"><option value="">–</option>'+stListe.map(function(s){
         return '<option value="'+esc(s.id)+'"'+(a.standort_id===s.id?" selected":"")+">"+esc(stName(s)+(istLidl(s)?"":" · "+kundeTitel(kundeVon(s))))+"</option>"; }).join("")+"</select></label>"+
       '<label class="fl"><span>Projekt</span><select data-f="projekt_id"><option value="">–</option>'+projekte.map(function(p){
         return '<option value="'+esc(p.id)+'"'+(a.projekt_id===p.id?" selected":"")+">"+esc(projektTitel(p))+"</option>"; }).join("")+"</select></label>"+
     "</div>"+
-    '<label class="fl"><span>Notiz</span><input type="text" data-f="notiz" maxlength="500" value="'+esc(a.notiz||"")+'"></label>'+
+    '<label class="fl"'+(a.notiz?"":" hidden")+'><span>Notiz</span><input type="text" data-f="notiz" maxlength="500" value="'+esc(a.notiz||"")+'"></label>'+
     '<div class="note warnbox" data-err hidden></div>'+
   "</form>");
   v.inhalt.appendChild(form);
@@ -36068,6 +36129,17 @@ function abgleichDialog(tag, nachAusstempeln){
     if(w===l[i].beginn) return;
     l[i-1].ende=w; l[i].beginn=w; hand=true;
   };
+  /* Vorschlag für „Was gemacht?“: eigene Protokolle am Markt an diesem Tag, sonst der Termin */
+  var uidR=Store.benutzer && Store.benutzer.id, ichR=suchNorm(meinName());
+  var wasVorschlag=function(a){
+    var t=[];
+    if(a.standort_id) alleProtokolle().forEach(function(p){
+      if(p.geloescht || p.datum!==tag || p.standortId!==a.standort_id) return;
+      if(!((uidR && p.erstelltVon===uidR) || (ichR && [p.techniker].concat(p.mitarbeiter||[]).map(suchNorm).indexOf(ichR)>=0))) return;
+      t.push((istStoerung(p)?"Störung ":"Wartung ")+protoName(p)+" (Protokoll)"); });
+    if(!t.length && a.titel) t.push(a.titel);
+    return t.join("; ").slice(0,300);
+  };
   var auswahl=function(liste, wert, leer){ return '<option value="">'+esc(leer)+"</option>"+liste.map(function(o){ return '<option value="'+esc(o[0])+'"'+(o[0]===wert?" selected":"")+">"+esc(o[1])+"</option>"; }).join(""); };
   var zeichne=function(){
     /* Scrollstand halten (Inhaber 07.10.2026: „am iPhone schwierig zu scrollen“ – nach jeder Änderung sprang die Liste) */
@@ -36090,12 +36162,6 @@ function abgleichDialog(tag, nachAusstempeln){
             : (it.planung_id ? '<label class="chk" style="font-size:12.5px"><input type="checkbox" data-vs'+(w.verschieben?" checked":"")+'><span>auf '+esc(WOCHENTAGE[wochentagIdx(naechster)]+" "+dfmt(naechster))+' verschieben</span></label>'
                              : '<div class="muted" style="font-size:12.5px">bleibt offen</div>'))+"</div>");
         z.querySelector("[data-an]").onchange=function(){ var alt=w.an; w.an=this.checked; termineNeu(function(){ w.an=alt; }); };
-        /* gemacht und Projekt-Termin: gleich festhalten, was gemacht wurde (Baustellenbuch, mit Fotos) */
-        var pe=w.an && it.planung_id && it.projekt_id && PLANUNG.filter(function(y){ return y.id===it.planung_id; })[0];
-        if(pe && !demo() && !nurLesen()){ var bbn=planBaubuch(pe).filter(function(b){ return b.datum===tag; }).length;
-          var bk=el('<button class="btn ghost sm" type="button" data-bericht style="align-self:flex-start">'+(bbn?"📝 Bericht ✓ – ansehen":"📝 Was wurde gemacht? (mit Fotos)")+"</button>");
-          bk.onclick=function(){ planBerichtOeffnen(pe, tag, function(){ zeichne(); }); };
-          z.appendChild(bk); }
         var si=z.querySelector("[data-s]"), ei=z.querySelector("[data-e]"), bs=z.querySelector("[data-b]"), vs=z.querySelector("[data-vs]");
         if(si) si.onchange=function(){ var m=zeitMin(si.value), alt=w.s; if(m!=null){ w.s=m; termineNeu(function(){ w.s=alt; }); } };
         if(ei) ei.onchange=function(){ var m=zeitMin(ei.value), alt=w.e; if(m!=null){ w.e=m; termineNeu(function(){ w.e=alt; }); } };
@@ -36129,7 +36195,7 @@ function abgleichDialog(tag, nachAusstempeln){
             '<span style="flex:1;min-width:0;overflow-wrap:anywhere">'+(info?esc(info):'<span class="muted">ohne Markt/Projekt</span>')+"</span>"+
             '<span class="mono muted" style="white-space:nowrap"'+(a.pause?' title="ohne die Pause von '+a.pause+' min"':"")+">"+stundenText(a.min)+(a.pause?" ⏸":"")+"</span></div>"+
           '<div class="rowflex" style="gap:6px;flex-wrap:wrap"><select data-abb style="width:auto;max-width:100%" aria-label="Bereich">'+bereichListe(a.bereich).map(function(x){ return '<option value="'+esc(x[0])+'"'+(x[0]===a.bereich?" selected":"")+">"+esc(x[1])+"</option>"; }).join("")+"</select>"+
-            '<button class="btn ghost sm" type="button" data-abmehr>'+(a.offen?"▴ zu":"✎ Markt, Projekt, Was")+"</button>"+
+            '<button class="btn ghost sm" type="button" data-abmehr>'+(a.offen?"▴ zu":"✎ Wo / Projekt")+"</button>"+
             '<button class="btn ghost sm" type="button" data-abteilen aria-expanded="'+!!a.teilen+'" title="In zwei Abschnitte teilen – mit Uhrzeit">✂ teilen</button>'+
             (l.length>1?'<button class="btn ghost sm" type="button" data-abweg title="Entfernen – die Zeit geht an den Nachbarn">✕ entfernen</button>':"")+"</div>"+
           /* teilen (Inhaber 07.10.2026: „Zeitraum aufteilen hat nicht gut funktioniert“): gleich mit Uhrzeit und dem Bereich danach */
@@ -36139,8 +36205,11 @@ function abgleichDialog(tag, nachAusstempeln){
               '<button class="btn sm" type="button" data-tok>✂ Teilen</button></div>' : "")+
           (a.offen ? '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(min(200px,100%),1fr));gap:8px">'+
               '<label class="fl" style="min-width:0"><span>Wo? (Markt oder Baustelle)</span><select data-abst style="width:100%">'+ortOptionenHtml(a.standort_id, a.projekt_id)+"</select></label>"+
-              '<label class="fl" style="min-width:0"><span>Projekt</span><select data-abpr style="width:100%">'+auswahl(prOpt, a.projekt_id||"", "–")+"</select></label>"+
-              '<label class="fl" style="min-width:0;grid-column:1/-1"><span>Was</span><input type="text" data-abwas maxlength="300" value="'+esc(a.taetigkeit||"")+'" placeholder="z. B. Montage Innengeräte, Material geholt"></label></div>' : "")+
+              '<label class="fl" style="min-width:0"><span>Projekt</span><select data-abpr style="width:100%">'+auswahl(prOpt, a.projekt_id||"", "–")+"</select></label></div>" : "")+
+          /* „Was gemacht?“ – die EINE Stelle dafür (Inhaber 08.10.2026): geht in die Stunden, bei Baustellen samt Fotos ins Baustellenbuch */
+          '<label class="fl" style="min-width:0"><span>Was gemacht?</span><textarea data-abwas rows="1" maxlength="300" placeholder="'+esc(wasVorschlag(a) ? "Vorschlag: "+wasVorschlag(a) : "z. B. Montage Innengeräte, Material geholt")+'">'+esc(a.taetigkeit||"")+"</textarea></label>"+
+          (a.projekt_id && !nurLesen() ? '<div class="rowflex" style="gap:6px;flex-wrap:wrap;align-items:center"><label class="btn ghost sm" style="cursor:pointer">📷 Fotos'+((a.fotos||[]).length?" ("+a.fotos.length+")":"")+
+              '<input type="file" data-abfoto hidden multiple accept="image/*,application/pdf"></label><span class="muted" style="font-size:12px">kommt mit dem Text ins Baustellenbuch</span></div>' : "")+
           "</div>");
         k.querySelector("[data-abb]").onchange=function(){ a.bereich=this.value; hand=true; zeichne(); };
         k.querySelector("[data-abmehr]").onclick=function(){ a.offen=!a.offen; zeichne(); };
@@ -36157,7 +36226,7 @@ function abgleichDialog(tag, nachAusstempeln){
           tp.querySelector("[data-tok]").onclick=function(){
             var m=zeitMin(tp.querySelector("[data-tz]").value), ber=tp.querySelector("[data-tb]").value;
             if(m==null || m<=a.beginn || m>=a.ende){ toast("Bitte eine Uhrzeit zwischen "+kalHm(a.beginn)+" und "+kalHm(a.ende)+" wählen."); return; }
-            var neu=Object.assign({}, a, {beginn:m, bereich:ber||a.bereich, planung_id:null, titel:"", offen:true, teilen:null});
+            var neu=Object.assign({}, a, {beginn:m, bereich:ber||a.bereich, planung_id:null, titel:"", offen:true, teilen:null, fotos:[], wasNeu:false});
             if(ber && ber!==a.bereich){ neu.standort_id=null; neu.projekt_id=null; neu.taetigkeit=""; }
             a.teilen=null; a.ende=m; l.splice(i+1, 0, neu); hand=true; zeichne();
             toast("✓ Geteilt um "+kalHm(m)+" – danach "+bereichName(neu.bereich)+". Wo und was kannst du darunter ergänzen.");
@@ -36168,7 +36237,9 @@ function abgleichDialog(tag, nachAusstempeln){
         var sst=k.querySelector("[data-abst]"), spr=k.querySelector("[data-abpr]"), was=k.querySelector("[data-abwas]");
         if(sst) sst.onchange=function(){ var o=ortWert(sst.value); a.standort_id=o.standort_id; if(o.projekt_id) a.projekt_id=o.projekt_id; hand=true; zeichne(); };
         if(spr) spr.onchange=function(){ a.projekt_id=spr.value||null; hand=true; zeichne(); };
-        if(was) was.onchange=function(){ a.taetigkeit=was.value.trim().slice(0,300); hand=true; zeichne(); };
+        if(was) was.onchange=function(){ a.taetigkeit=was.value.trim().slice(0,300); a.wasNeu=true; hand=true; zeichne(); };
+        var fi=k.querySelector("[data-abfoto]");
+        if(fi) fi.onchange=function(){ a.fotos=(a.fotos||[]).concat([].slice.call(fi.files||[])); fi.value=""; hand=true; zeichne(); };
         tl.appendChild(k);
       });
       /* „+ Weiterer Bereich“ (Inhaber 06.10.2026: „man sollte mehrere Bereiche zu verschiedenen Zeiten eintragen können“):
@@ -36225,11 +36296,34 @@ function abgleichDialog(tag, nachAusstempeln){
     if(luecke){ err.textContent="Die Abschnitte müssen lückenlos genau die gestempelte Zeit ergeben."; err.hidden=false; return; }
     var geaendert=bloecke.map(function(b, bi){ return blockGeaendert(bi); });
     var mitTeil=alle.filter(function(x){ return geaendert[x.block]; });
-    var teile=mitTeil.map(function(x){ return {beginn:kalHm(x.beginn), ende:kalHm(x.ende), bereich:x.bereich||null, taetigkeit:(x.taetigkeit||"").slice(0,300),
+    var teile=mitTeil.map(function(x){ return {beginn:kalHm(x.beginn), ende:kalHm(x.ende), bereich:x.bereich||null, taetigkeit:(x.taetigkeit||wasVorschlag(x)||"").slice(0,300),
       standort_id:x.standort_id||"", projekt_id:x.projekt_id||"", planung_id:x.planung_id||""}; });
     var verschieben=plan.filter(function(it){ var w=wahl[it.schluessel]; return !w.an && w.verschieben && it.planung_id && !mehrtaegig(it); });
+    /* gemachte Termine gelten als erledigt (EIN „erledigt“ – Inhaber 08.10.2026); Wartung/Störung erledigt das Protokoll, mehrtägige erst am letzten Tag */
+    var erl=plan.filter(function(it){ return wahl[it.schluessel].an && it.planung_id; }).map(function(it){ return PLANUNG.filter(function(y){ return y.id===it.planung_id; })[0]; })
+      .filter(function(e, i, l){ return e && l.indexOf(e)===i && e.art==="termin" && !planTerminErledigt(e) && ["wartung","stoerung"].indexOf(e.kategorie)<0 && (!e.datum_bis || e.datum_bis<=tag); });
+    /* bei Baustellen: neu eingetragener Text und Fotos ins Baustellenbuch (mit Termin und Schritt) */
+    var berichte=[]; abs.forEach(function(l){ l.forEach(function(a){ if(a.projekt_id && ((a.wasNeu && a.taetigkeit) || (a.fotos||[]).length)) berichte.push(a); }); });
+    if(demo()) berichte=[];   /* Präsentation: das Baustellenbuch bleibt unberührt */
+    var nachher=function(){
+      var k2=Promise.resolve(), nB=0, nE=0, fehlB=[];
+      berichte.forEach(function(a){ k2=k2.then(function(){
+        var p=PROJEKTE.filter(function(x){ return x.id===a.projekt_id; })[0]; if(!p) return;
+        var text=(a.taetigkeit||a.titel||"Fotos").trim(), fotos=a.fotos||[];
+        if(!fotos.length && ((p.daten||{}).baubuch||[]).some(function(b){ return b.datum===tag && String(b.text||"").trim()===text; })) return;
+        var pe=a.planung_id && PLANUNG.filter(function(y){ return y.id===a.planung_id; })[0];
+        return projektDateienHochladen(p, fotos.every(function(f){ return /^image\//.test(f.type); }) ? "foto" : "dokument", fotos).then(function(neue){
+          var n={id:neueKennung("bb"), datum:tag, zeit:kalHm(a.beginn), art:"arbeit", text:text, menge:null, eh:null, dateien:(neue||[]).map(function(x){ return x.pfad; }),
+            von:meinName(), erfasst:new Date().toISOString(), schritt:(pe && pe.projekt_schritt)||p.status||undefined, planung_id:a.planung_id||undefined};
+          return projektAendern(p, function(d){ d.baubuch=(d.baubuch||[]).concat([n]); }, "Baustellenbuch: Arbeit – "+text.slice(0,80)).then(function(){ nB++; });
+        }).catch(function(x){ fehlB.push(projektTitel(p)+" ("+technikDeutsch(x.message||String(x))+")"); });
+      }); });
+      erl.forEach(function(e){ k2=k2.then(function(){ return planTerminAbhaken(e, true, true).then(function(ok){ if(ok) nE++; }); }); });
+      return k2.then(function(){ return (nE?" · "+nE+" Termin"+(nE===1?"":"e")+" erledigt":"")+(nB?" · "+nB+" Eintr"+(nB===1?"ag":"äge")+" im Baustellenbuch":"")+
+        (fehlB.length?" ⚠ Nicht ins Baustellenbuch: "+fehlB.join(", "):""); });
+    };
     /* nichts zu ändern (etwa richtig umgestempelt): nur als geprüft merken – kein Schreiben */
-    if(!teile.length && !verschieben.length){ fertigZu("✓ Tag geprüft – passt so, nichts geändert."); return; }
+    if(!teile.length && !verschieben.length && !erl.length && !berichte.length){ fertigZu("✓ Tag geprüft – passt so, nichts geändert."); return; }
     ok.disabled=true; ok.textContent="wird gespeichert …";
     var fertig=function(n){
       /* jeden Termin einzeln – scheitert einer (keine Verbindung, keine Berechtigung), sagt es die Meldung; nie „verschoben“ ohne Antwort */
@@ -36244,8 +36338,10 @@ function abgleichDialog(tag, nachAusstempeln){
       k.then(function(){
         var nichtText=nicht.length ? nicht.length+" Termin"+(nicht.length===1?"":"e")+" nicht verschoben: "+nicht.join(", ")+" – bitte im Kalender von Hand." : "";
         /* nichts gespeichert: der Dialog bleibt, der Knopf ist wieder frei */
-        if(!n && !gut && nicht.length){ ok.disabled=false; ok.textContent=okText; err.textContent="⚠ "+nichtText; err.hidden=false; return; }
-        fertigZu("✓ Tag geprüft"+(n?": "+n+" Abschnitte gespeichert":"")+(gut?", "+gut+" Termin"+(gut===1?"":"e")+" verschoben":"")+" – die gestempelte Zeit ist gleich geblieben."+(nichtText?" ⚠ "+nichtText:""));
+        if(!n && !gut && nicht.length && !erl.length && !berichte.length){ ok.disabled=false; ok.textContent=okText; err.textContent="⚠ "+nichtText; err.hidden=false; return; }
+        return nachher().then(function(zusatz){
+          fertigZu("✓ Tag geprüft"+(n?": "+n+" Abschnitte gespeichert":"")+(gut?", "+gut+" Termin"+(gut===1?"":"e")+" verschoben":"")+zusatz+(n?" – die gestempelte Zeit ist gleich geblieben.":"")+(nichtText?" ⚠ "+nichtText:""));
+        });
       });
     };
     if(!teile.length){ fertig(0); return; }
@@ -36318,71 +36414,13 @@ function stempelDemo(w){
   return {stempel:s, eintraege:ee, ersetzt:w.p_ersetzen||[]};
 }
 
-/* Was im laufenden Abschnitt (seit dem Ein- bzw. letzten Umstempeln) schon belegt ist:
-   Angaben beim Stempeln (Tätigkeit oder Projekt), eigene Protokolle und eigene Einträge
-   im Projekt-Tagebuch seit Beginn des Abschnitts (Büro 01.10.2026) */
-function stempelErledigt(seg){
-  var ab=new Date(seg.zeit), tagAb=tagLokal(seg.zeit), bis=isoLokal(new Date()), uid=Store.benutzer && Store.benutzer.id, ich=suchNorm(meinName());
-  var l=[];
-  var pr=seg.projekt_id && PROJEKTE.filter(function(x){ return x.id===seg.projekt_id; })[0];
-  if(seg.taetigkeit || pr) l.push({text:[seg.bereich?bereichName(seg.bereich):"", pr?pr.titel:"", seg.taetigkeit||""].filter(Boolean).join(": "), quelle:"beim Stempeln", stempel:true});
-  alleProtokolle().forEach(function(p){
-    if(p.geloescht || !p.datum || p.datum<tagAb || p.datum>bis) return;
-    if(p.erstellt && new Date(p.erstellt)<ab) return;   /* vor diesem Abschnitt geschrieben */
-    var namen=[p.techniker].concat(p.mitarbeiter||[]).map(suchNorm);
-    if(!((uid && p.erstelltVon===uid) || (ich && namen.indexOf(ich)>=0))) return;
-    l.push({text:(istStoerung(p)?"Störung ":"Wartung ")+protoName(p), quelle:"Protokoll", standort_id:p.standortId});
-  });
-  PROJEKTE.forEach(function(pr2){
-    (pr2.verlauf||[]).forEach(function(e){
-      if(e.wer!==meinName() || !e.zeit || new Date(e.zeit)<ab || /^(Stand:|Angaben geändert|Projekt angelegt|\d+ Datei)/.test(e.text||"")) return;
-      l.push({text:pr2.titel+": "+e.text, quelle:"Projekt "+(pr2.nummer||""), projekt_id:pr2.id});
-    });
-  });
-  return l;
-}
-/* Abfrage „erledigte Arbeit“ für einen Abschnitt – beim Um- und beim Ausstempeln.
-   Belegt: nur zeigen, Ergänzung freiwillig. Nichts belegt: Pflicht.
-   text(): was zum Eintrag dazukommt (ohne die Angaben beim Stempeln – die stehen schon dort) */
-function erledigtAbfrage(belegt, frage){
-  var box=el('<div class="stack" style="gap:8px"></div>');
-  if(belegt.length){
-    box.appendChild(el('<div class="note" style="font-size:13px"><strong>Erledigt</strong> – geht aus deinen Angaben hervor:<ul style="margin:6px 0 0 18px;padding:0">'+
-      belegt.map(function(x){ return "<li>"+esc(x.text)+' <span class="muted">('+esc(x.quelle)+")</span></li>"; }).join("")+"</ul></div>"));
-    box.appendChild(el('<label class="fl"><span>Noch etwas dazu? (freiwillig)</span><input type="text" data-was maxlength="200" placeholder="z. B. Material geholt, Werkstatt"></label>'));
-  } else {
-    box.appendChild(el('<div class="fl"><span class="req">'+esc(frage)+"</span></div>"));
-    var chips=el('<div class="chips"></div>');
-    ["Wartung","Störung","Montage / Baustelle","Werkstatt","Büro","Material holen","Fahrt","Schulung"].forEach(function(t){
-      var c=el('<button class="chip" type="button">'+esc(t)+"</button>");
-      c.onclick=function(){ var f=box.querySelector("[data-was]"); f.value=f.value ? f.value+", "+t : t; f.focus(); };
-      chips.appendChild(c);
-    });
-    box.appendChild(chips);
-    box.appendChild(el('<textarea data-was rows="3" maxlength="300" placeholder="Kurz, was gemacht wurde – z. B. Montage Innengeräte Büro, Material für Baustelle geholt"></textarea>'));
-  }
-  box.appendChild(el('<div class="note warnbox" data-err hidden></div>'));
-  return {el:box,
-    fehlt:function(){
-      var dazu=box.querySelector("[data-was]").value.trim();
-      if(belegt.length || dazu) return false;
-      var e=box.querySelector("[data-err]"); e.textContent="Bitte kurz eintragen, was du gemacht hast."; e.hidden=false; box.querySelector("[data-was]").focus(); return true;
-    },
-    text:function(){
-      var dazu=box.querySelector("[data-was]").value.trim();
-      var t=belegt.filter(function(x){ return !x.stempel; }).map(function(x){ return x.text; }).concat(dazu?[dazu]:[]).join("; ");
-      return t.length>300 ? t.slice(0,297)+"…" : t;
-    },
-    fokus:function(){ if(!belegt.length) box.querySelector("[data-was]").focus(); }};
-}
 function abschnittText(g){ return (bereichName(g.bereich)||"ohne Bereich")+(g.standort_id&&byId[g.standort_id]?" · "+stName(byId[g.standort_id]):""); }
-/* Ausstempeln: erledigte Arbeit im letzten Abschnitt (siehe erledigtAbfrage). Überschneidet sich die
-   gestempelte Zeit mit Einträgen von Hand: ersetzen (empfohlen) oder beide behalten.
+/* Ausstempeln: nur bestätigen – was gemacht wurde, fragt danach der Tagesrückblick (Inhaber 08.10.2026: einmal statt
+   mehrfach). Überschneidet sich die gestempelte Zeit mit Einträgen von Hand: ersetzen (empfohlen) oder beide behalten.
    opt.ende: vergessen auszustempeln, tatsächliches Ende */
 function ausstempelnFragen(opt, knopf){
   opt=opt||{};
   var z=stempelZustand(), ein=z.ein; if(!ein || monatGesperrt(tagLokal(ein.zeit))){ stempelDruecken("aus", opt, knopf); return; }   /* bestätigter Monat: gleich die Meldung */
-  var seg=z.seg||ein, belegt=stempelErledigt(seg);
   var v=ansichtOeffnen("Ausstempeln");
   var jetzt=Date.now(), pause=z.pauseMs+(z.pauseSeit?jetzt-new Date(z.pauseSeit):0);
   v.schritt.textContent="seit "+zeitAus(ein.zeit)+(opt.ende?" bis "+opt.ende:" bis jetzt")+(opt.ende?"":" · "+stundenText(Math.max(0,Math.floor((jetzt-new Date(ein.zeit)-pause)/60000))))+
@@ -36391,15 +36429,7 @@ function ausstempelnFragen(opt, knopf){
   if(z.abschnitte.length>1) form.appendChild(el('<div class="note" style="font-size:13px"><strong>Abschnitte</strong> – je Abschnitt entsteht ein Eintrag:<br>'+
     z.abschnitte.map(function(g,i){ var bis=i<z.abschnitte.length-1 ? zeitAus(z.abschnitte[i+1].zeit) : (opt.ende||"jetzt");
       return esc(zeitAus(g.zeit)+"–"+bis+" · "+abschnittText(g)); }).join("<br>")+"</div>"));
-  var ab=erledigtAbfrage(belegt, z.abschnitte.length>1 ? "Was hast du seit "+zeitAus(seg.zeit)+" gemacht ("+(bereichName(seg.bereich)||"letzter Abschnitt")+")?" : "Was hast du heute gemacht?");
-  form.appendChild(ab.el);
-  if(!belegt.length){
-    var stOpt=ST.slice().sort(nachMarktname);
-    form.appendChild(el('<div class="grid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:10px">'+
-      '<label class="fl"><span>Wo? (Markt oder Baustelle)</span><select data-st>'+ortOptionenHtml(seg.standort_id, seg.projekt_id, "–")+"</select></label>"+
-      '<label class="fl"><span>Projekt</span><select data-pr><option value="">–</option>'+PROJEKTE.filter(projektOffen).map(function(p){
-        return '<option value="'+esc(p.id)+'"'+(seg.projekt_id===p.id?" selected":"")+">"+esc(projektTitel(p))+"</option>"; }).join("")+"</select></label></div>"));
-  }
+  form.appendChild(el('<div class="muted" style="font-size:13px">Gleich danach kommt der <strong>Tagesrückblick</strong> – dort trägst du je Abschnitt ein, was du gemacht hast (bei Baustellen mit Fotos).</div>'));
   /* von Hand eingetragene Zeit im selben Zeitraum: was soll gelten? */
   var bisZeit=new Date();
   if(opt.ende){ bisZeit=new Date(ein.zeit); var t=opt.ende.split(":"); bisZeit.setHours(+t[0],+t[1],0,0); if(bisZeit<=new Date(ein.zeit)) bisZeit.setDate(bisZeit.getDate()+1); }
@@ -36416,11 +36446,8 @@ function ausstempelnFragen(opt, knopf){
   var abbr=el('<button class="btn ghost" type="button">Abbrechen – weiter eingestempelt</button>'), ok=el('<button class="btn" type="button" style="background:var(--crit);border-color:var(--crit)">■ Ausstempeln</button>');
   abbr.onclick=function(){ v.zu(); };
   v.fuss.appendChild(abbr); v.fuss.appendChild(ok);
-  setTimeout(ab.fokus, 60);
   ok.onclick=function(){
-    if(ab.fehlt()) return;
-    var o=Object.assign({}, opt, {taetigkeit:ab.text()||null});
-    if(!belegt.length){ var ow=ortLesen(form); o.standort_id=ow.standort_id; o.projekt_id=ow.projekt_id; }
+    var o=Object.assign({}, opt);
     var wahl=form.querySelector('input[name="doppelt"]:checked');
     if(doppelt.length && wahl && wahl.value==="ersetzen") o.ersetzen=doppelt.map(function(x){ return x.id; });
     v.zu();
@@ -36428,16 +36455,14 @@ function ausstempelnFragen(opt, knopf){
   };
 }
 /* Umstempeln: Bereich, Markt oder Projekt wechseln – der laufende Abschnitt endet, ein neuer beginnt.
-   Vorher: was im endenden Abschnitt erledigt wurde (wie beim Ausstempeln, Büro 01.10.2026) */
+   Was gemacht wurde, fragt nur noch der Tagesrückblick (Inhaber 08.10.2026: „redundant – bitte aufräumen“) */
 function umstempelnDialog(knopf, vorgabe){
   var z=stempelZustand(), seg=z.seg||z.ein||{};
   var v=ansichtOeffnen("Umstempeln");
   v.schritt.textContent="jetzt: "+[bereichName(seg.bereich)||"ohne Bereich", seg.standort_id&&byId[seg.standort_id]?stName(byId[seg.standort_id]):"", seg.taetigkeit||""].filter(Boolean).join(" · ")+" seit "+zeitAus(seg.zeit);
-  var abfrage=erledigtAbfrage(stempelErledigt(seg), "Was hast du seit "+zeitAus(seg.zeit)+" gemacht ("+(bereichName(seg.bereich)||"bisheriger Abschnitt")+")?");
   var bw=bereichWahl(seg.bereich||null);
   var stOpt=ST.slice().sort(nachMarktname);
   var form=el('<div class="stack" style="max-width:560px">'+
-    '<div data-erledigt></div>'+
     '<h2 style="margin-top:6px">Weiter mit …</h2>'+
     '<div class="fl"><span class="req">Weiter im Bereich</span></div><div data-bw></div>'+
     '<div class="grid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:10px">'+
@@ -36445,30 +36470,26 @@ function umstempelnDialog(knopf, vorgabe){
       '<label class="fl"><span>Projekt</span><select data-pr><option value="">–</option>'+PROJEKTE.filter(projektOffen).map(function(p){
         return '<option value="'+esc(p.id)+'"'+(seg.projekt_id===p.id?" selected":"")+">"+esc(projektTitel(p))+"</option>"; }).join("")+"</select></label>"+
     "</div>"+
-    '<label class="fl"><span>Was als Nächstes? (kann leer bleiben)</span><input type="text" data-neuwas maxlength="300" placeholder="z. B. Montage Außengerät"></label>'+
+    '<div class="muted" style="font-size:12.5px">Was du gemacht hast, trägst du am Ende im Tagesrückblick ein.</div>'+
     '<div class="note warnbox" data-err2 hidden></div></div>');
-  form.querySelector("[data-erledigt]").appendChild(abfrage.el);
   form.querySelector("[data-bw]").appendChild(bw.el);
   /* vom Termin (Kalender): Bereich, Markt, Projekt, Was schon eingetragen */
   ortVerknuepfen(form);
   if(vorgabe){ if(vorgabe.bereich) bw.setzen(vorgabe.bereich); ortSetzen(form, vorgabe.standort_id, vorgabe.projekt_id);
-    form.querySelector("[data-neuwas]").value=vorgabe.taetigkeit||""; }
+    form.dataset.was=vorgabe.taetigkeit||""; }
   form.insertBefore(naeheAuswahl(function(s){ form.querySelector("[data-st]").value=s.id; }), form.querySelector(".grid"));
   var pc=stempelPlanChips(function(x){ if(x.bereich) bw.setzen(x.bereich); ortSetzen(form, x.standort_id, x.projekt_id);
-    form.querySelector("[data-neuwas]").value=x.taetigkeit||""; toast("Übernommen: "+(x.taetigkeit||"")); });
+    form.dataset.was=x.taetigkeit||""; toast("Übernommen: "+(x.taetigkeit||"")); });
   if(pc) form.insertBefore(pc, form.querySelector("[data-bw]").previousElementSibling);
   v.inhalt.appendChild(form);
   var abbr=el('<button class="btn ghost" type="button">Abbrechen</button>'), ok=el('<button class="btn" type="button">⇄ Umstempeln</button>');
   abbr.onclick=function(){ v.zu(); };
   v.fuss.appendChild(abbr); v.fuss.appendChild(ok);
-  setTimeout(abfrage.fokus, 60);
   ok.onclick=function(){
-    if(abfrage.fehlt()) return;
     if(!bw.wert()){ toast("Bitte den Bereich wählen, mit dem es weitergeht."); return; }
-    var ow=ortLesen(form), o={bereich:bw.wert(), standort_id:ow.standort_id, projekt_id:ow.projekt_id,
-      taetigkeit:form.querySelector("[data-neuwas]").value.trim()||null, erledigt:abfrage.text()||null};
-    if(o.bereich===(seg.bereich||null) && o.standort_id===(seg.standort_id||null) && o.projekt_id===(seg.projekt_id||null) && o.taetigkeit===(seg.taetigkeit||null)){
-      var e=form.querySelector("[data-err2]"); e.textContent="Es ist nichts anders als jetzt – bitte Bereich, Markt, Projekt oder Tätigkeit ändern."; e.hidden=false; return;
+    var ow=ortLesen(form), o={bereich:bw.wert(), standort_id:ow.standort_id, projekt_id:ow.projekt_id, taetigkeit:form.dataset.was||null, erledigt:null};
+    if(o.bereich===(seg.bereich||null) && o.standort_id===(seg.standort_id||null) && o.projekt_id===(seg.projekt_id||null) && (!form.dataset.was || o.taetigkeit===(seg.taetigkeit||null))){
+      var e=form.querySelector("[data-err2]"); e.textContent="Es ist nichts anders als jetzt – bitte Bereich, Markt oder Projekt ändern."; e.hidden=false; return;
     }
     v.zu();
     stempelDruecken("wechsel", o, knopf);
@@ -36499,13 +36520,13 @@ function stempelKarte(){
         '<label class="fl"><span>Projekt</span><select data-pr><option value="">–</option>'+PROJEKTE.filter(projektOffen).map(function(p){
           return '<option value="'+esc(p.id)+'">'+esc(projektTitel(p))+"</option>"; }).join("")+"</select></label>"+
       "</div>"+
-      '<label class="fl"><span>Was? (kann leer bleiben)</span><input type="text" data-was maxlength="300" placeholder="z. B. Wartung, Montage, Werkstatt"></label>'+
       '<div data-doppelt></div>'+
       '<div><button class="btn" type="button" data-ein '+gross+' data-schreiben>▶ Einstempeln</button></div></div>');
     w.querySelector("[data-bw]").appendChild(bw.el);
     ortVerknuepfen(w);
+    /* „Was“ fragt erst der Tagesrückblick (Inhaber 08.10.2026: „einmal sagen, überall verwenden“) – der Termin gibt es still mit */
     var pc=stempelPlanChips(function(x){ if(x.bereich) bw.setzen(x.bereich); ortSetzen(w, x.standort_id, x.projekt_id);
-      w.querySelector("[data-was]").value=x.taetigkeit||""; toast("Übernommen: "+(x.taetigkeit||"")); });
+      w.dataset.was=x.taetigkeit||""; toast("Übernommen: "+(x.taetigkeit||"")); });
     if(pc) w.insertBefore(pc, w.firstChild);
     /* Vorschlag: der Markt, an dem heute zuletzt eingestempelt wurde */
     var zuletzt=STEMPEL.filter(function(s){ return s.art==="ein"; })[0];
@@ -36520,7 +36541,7 @@ function stempelKarte(){
       if(!bw.wert()){ toast("Bitte den Bereich wählen – die Lohnverrechnung braucht ihn (Montage, Fahrt, Werkstatt …)."); return; }
       if(jetztSchon.length && !window.confirm("Für jetzt ist schon Arbeitszeit von Hand eingetragen ("+jetztSchon.map(zeitKurz).join(", ")+").\n\nTrotzdem einstempeln? Beim Ausstempeln kannst du wählen, was gilt.")) return;
       var einOrt=ortLesen(w), einKnopf=this, einWerte={bereich:bw.wert(), standort_id:einOrt.standort_id, projekt_id:einOrt.projekt_id,
-        taetigkeit:w.querySelector("[data-was]").value.trim()||null};
+        taetigkeit:w.dataset.was||null};
       /* heute Urlaub, Krankenstand …? erst klären (Büro 04.10.2026) – ein halber Tag mit Uhrzeit nur, wenn „jetzt“ hineinfällt */
       var jetztHm=zeitAus(new Date().toISOString());
       abwesenheitPruefen(heute, function(){ stempelDruecken("ein", einWerte, einKnopf); }, function(e){ return abwesenheitZeitTrifft(e, jetztHm, jetztHm); });
