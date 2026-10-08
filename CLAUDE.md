@@ -167,6 +167,9 @@ Kammerlander Umwelt- und Klimatechnik (UKT) – oft kurz, vom Handy, im Feld.
   HT/HKLS, EP/AP; Handwerte `geschoss`/`gewerk` an der Datei gehen vor), Ständen je Grundname (`basis`, neuester oben, ältere aufklappbar),
   📌 `wichtig` oben, lesbarem Namen `titel` (`dateiBeschreiben`, `dateiAendern` über `projektAendern` mit Tagebuch); PDF-Titel beim Hochladen
   (`pdfTitelLesen`, ≤ 8 s) bzw. nachträglich „🔎 Pläne genauer erkennen“ (`pdfTitelNachlesen`). Sprungleiste oben im Projekt (`projektSprungleiste`, sticky; Fenster mit Klasse `mit-sprung` → `grid-auto-rows:max-content`, sonst drückt das Raster die Leiste bei langem Inhalt auf ~1 px).
+  Übersichtlicher (Inhaber 08.10.2026: „sehr unübersichtlich“, gewählt a+b+c): „Auf einen Blick“ ganz oben (`projektBlickKarte`: Stand, nächster Termin,
+  offene Aufgaben, von uns dran, Ansprechpartner); leere Listen-Karten als „+ …“-Knopf darin (`projektLeereKarten`, Karte versteckt, Knopf löst ihr „+“ aus);
+  langer Text in den Angaben zugeklappt mit „▾ ganzen Text zeigen“ (`projektLangerText`, Klasse `lang-zu`).
   Kleiner Monatskalender im Projekt (Inhaber 08.10.2026, `projektMonatKarte`): Bauzeitplan-Termine, Kalendertermine und Aufgaben mit diesem Projekt, ◀ ▶ blättern, Tag antippen → Einträge, Eintrag → `kalEintragOeffnen`.
 - Projektzusammenfassung als PDF (`projektPdfDialog`, `projektPdfErzeugen`, Büro
   01.10.2026): Eckdaten und alle Angaben, KEINE Anhänge (Dokumente liegen auf der

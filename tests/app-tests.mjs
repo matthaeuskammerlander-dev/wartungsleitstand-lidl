@@ -5415,6 +5415,50 @@ test("Projekt: kleiner Monatskalender – Bauzeitplan-Termine und Kalendertermin
   await a.zu();
 });
 
+/* Inhaber 08.10.2026: „die Projekte sind immer noch sehr unübersichtlich“ – gewählt: Auf einen Blick, langer Text zugeklappt, leere Karten als „+“-Knopf */
+test("Projekt übersichtlicher: „Auf einen Blick“ oben, langer Text zugeklappt, leere Listen als „+“-Knopf statt eigener Karte", async () => {
+  const a = await oeffnen(KONTEN.inhaber);
+  await a.seite.setViewportSize({ width: 1580, height: 980 });
+  const r = await a.seite.evaluate(async () => {
+    const x = window.__t.x, w = (ms) => new Promise((f) => setTimeout(f, ms)), db = window.__db.tabellen, e = {};
+    const morgen = x("plusTage(isoLokal(new Date()),1)");
+    db.projekte.push({ id: "PUB1", nummer: "P-T-UB", titel: "Test Übersicht", status: "baustelle", daten: { typ: "Neubau",
+      beschreibung: Array.from({ length: 20 }, (_, i) => "Zeile " + (i + 1)).join("\n"),
+      termine: [{ id: "t1", datum: morgen, zeit: "07:30", was: "Kranstellung", wer: "Testtechniker" }],
+      beteiligte: [{ rolle: "Kunde / Bauherr", firma: "Testbau GmbH", name: "Frau Test", telefon: "0123 456" }] }, verlauf: [], erstellt: new Date().toISOString(), geaendert: new Date().toISOString() });
+    await x("projekteLaden()"); x("projektAnsicht('PUB1'); 1"); await w(900);
+    const o = [...document.querySelectorAll(".assistent")].pop(), inh = o.querySelector(".as-inhalt");
+    const blick = o.querySelector("[data-projektblick]");
+    e.blick = blick ? blick.textContent.replace(/\s+/g, " ") : "";
+    e.blickOben = blick && inh.querySelector(".card:not([hidden])") === blick;
+    const karte = (re) => [...o.querySelectorAll(".card")].find((c) => re.test(x("abschnittTitel")(c)));
+    e.bestellKarte = karte(/^Bestellungen/) ? karte(/^Bestellungen/).hidden : "fehlt";
+    e.termineKarte = karte(/^Termine/) ? karte(/^Termine/).hidden : "fehlt";
+    e.leer = [...o.querySelectorAll("[data-leerplus]")].map((b) => b.textContent).join(",");
+    e.sprungOhneBestellung = ![...o.querySelectorAll(".projekt-sprung .chip")].some((b) => /Bestellung/.test(b.textContent));
+    /* langer Text zugeklappt, antippen öffnet */
+    const t = karte(/^Angaben/).querySelector("textarea.lang-zu");
+    e.zu = !!t && t.getBoundingClientRect().height < 200;
+    const g = o.querySelector("[data-ganzertext]"); e.knopf = g ? g.textContent : "";
+    if (g) { g.click(); await w(200); }
+    e.auf = t && !t.classList.contains("lang-zu") && t.getBoundingClientRect().height > 250;
+    /* „+ Bestellung“ öffnet den Eintrag der versteckten Karte */
+    const pb = [...o.querySelectorAll("[data-leerplus]")].find((b) => /Bestellung/.test(b.textContent));
+    if (pb) { pb.click(); await w(400); }
+    const neu = [...document.querySelectorAll(".assistent")].pop();
+    e.bestellDialog = neu !== o && /Bestell/.test(neu.textContent);
+    x("ansichtenSchliessen(); 1");
+    return e;
+  });
+
+  pruefe(r.blickOben && /Nächster Termin/.test(r.blick) && /Kranstellung/.test(r.blick) && /Von uns drans*Testtechniker/.test(r.blick) && /Frau Test, Testbau GmbH/.test(r.blick) && /Stands*Baustelle/.test(r.blick), "Auf einen Blick: " + JSON.stringify(r));
+  pruefe(r.bestellKarte === true && r.termineKarte === false && /\+ Bestellung/.test(r.leer) && !/Termin/.test(r.leer) && !/Beteiligte/.test(r.leer) && r.sprungOhneBestellung, "Leere Karten: " + JSON.stringify(r));
+  pruefe(r.zu && /20 Zeilen/.test(r.knopf) && r.auf, "Langer Text: " + JSON.stringify(r));
+  pruefe(r.bestellDialog, "+ Bestellung öffnet nichts: " + JSON.stringify(r));
+  pruefe(!a.fehler.length, "Laufzeitfehler: " + a.fehler.join("; "));
+  await a.zu();
+});
+
 /* Antworten des Inhabers vom 05.10.2026 (Teil kern) */
 test("Antworten kern: „Nur Jahreswartung“ sperrt den Halbjahrestermin wie am Markt üblich – bleibt, bis die Verwaltung es zurücknimmt", async () => {
   const a = await oeffnen(KONTEN.admin);
@@ -6552,7 +6596,7 @@ test("Textfelder wachsen mit dem Text – im Projekt kein Scrollen im Feld (PC u
       await x("projekteLaden()"); x("projektAnsicht('ptf')"); await w(700);
       /* alles aufklappen, was zugeklappt ist */
       for (let i = 0; i < 3; i++) { document.querySelectorAll(".assistent details:not([open])").forEach((d) => d.setAttribute("open", ""));
-        [...document.querySelectorAll(".assistent [aria-expanded='false']")].forEach((b) => b.click()); await w(250); }
+        [...document.querySelectorAll(".assistent [aria-expanded='false'], .assistent [data-ganzertext]")].forEach((b) => b.click()); await w(250); }
       const sichtbar = () => [...document.querySelectorAll(".assistent textarea")].filter((t) => t.offsetParent && t.value.length > 200);
       const zuKnapp = () => sichtbar().filter((t) => t.scrollHeight > t.clientHeight + 2).map((t) => (t.dataset.k || t.dataset.s || t.name || "?") + " " + t.clientHeight + "/" + t.scrollHeight);
       const n = sichtbar().length, vorher = zuKnapp();

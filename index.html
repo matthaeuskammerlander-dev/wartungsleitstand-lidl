@@ -524,6 +524,13 @@ details.handbuch .hb-inhalt li{margin:5px 0}
 .projekt-sprung::-webkit-scrollbar{display:none}
 /* Zeilen so hoch wie ihr Inhalt: sonst drückt das Raster die (scrollbare) Leiste bei langem Inhalt auf ~1 px – nur leere Knopfränder (Inhaber 08.10.2026) */
 .as-inhalt.mit-sprung{grid-auto-rows:max-content}
+/* Projekt „Auf einen Blick“ und zugeklappter langer Text (Inhaber 08.10.2026: „Projekte sehr unübersichtlich“) */
+.pb-kacheln{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:8px}
+.pb-kachel{border:1px solid var(--line);border-radius:10px;padding:8px 10px;min-width:0}
+.pb-kachel .pb-l{font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--ink-3)}
+.pb-kachel .pb-w{font-weight:600;font-size:14px;overflow-wrap:anywhere}
+.pb-kachel .pb-u{font-size:12px;color:var(--ink-3);overflow-wrap:anywhere}
+textarea.lang-zu{max-height:9.5em!important;overflow:hidden!important;-webkit-mask-image:linear-gradient(#000 65%,transparent);mask-image:linear-gradient(#000 65%,transparent)}
 /* kleiner Monatskalender im Projekt */
 .mk-raster{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:3px}
 .mk-kopf{font-size:11px;color:var(--ink-3);text-align:center}
@@ -29177,6 +29184,65 @@ function projektNeu(vorgabe){
    Abschnitten – antippen klappt den Abschnitt auf und springt hin; der Inhalt bleibt, wie er ist */
 var PROJEKT_SPRUNG=[["Stand",/^Stand/],["Aufgaben",/^Aufgaben und Termine/],["📅 Kalender",/^Kalender/],["Angaben",/^Angaben/],["📁 Pläne & Dateien",/^Dateien/],["Beteiligte",/^Beteiligte/],
   ["Termine",/^Termine/],["Baustellenbuch",/^Baustellenbuch/],["Arbeitsnachweise",/^Arbeitsnachweise/],["Belege",/^Angebote und Rechnungen/],["Tagebuch",/^Tagebuch/]];
+/* „Auf einen Blick“ ganz oben im Projekt (Inhaber 08.10.2026: „Projekte sehr unübersichtlich“): Stand, nächster Termin,
+   offene Aufgaben, wer von uns dran ist, Ansprechpartner beim Kunden – darunter, was noch leer ist (projektLeereKarten) */
+function projektBlickKarte(p){
+  var d=p.daten||{}, heute=isoLokal(new Date());
+  var schritt=PROJEKT_SCHRITTE.filter(function(x){ return x[0]===p.status; })[0];
+  var termine=(d.termine||[]).filter(function(t){ return t.datum && t.datum>=heute && !t.erledigt; })
+    .map(function(t){ return {datum:t.datum, zeit:t.zeit||"", titel:t.was||"Termin", wer:t.wer||""}; })
+    .concat(PLANUNG.filter(function(e){ return e.projekt_id===p.id && e.art!=="aufgabe" && e.datum && (e.datum_bis||e.datum)>=heute && e.status!=="abgelehnt" && !planTerminErledigt(e); })
+      .map(function(e){ return {datum:e.datum<heute?heute:e.datum, zeit:e.beginn||"", titel:planTitel(e), wer:planWerText(e)}; }))
+    .sort(function(a,b){ return (a.datum+a.zeit).localeCompare(b.datum+b.zeit); });
+  var aufg=PLANUNG.filter(function(e){ return e.projekt_id===p.id && e.art==="aufgabe" && e.status!=="erledigt"; })
+    .sort(function(a,b){ return String(a.datum||"9999").localeCompare(String(b.datum||"9999")); });
+  var kunde=(d.beteiligte||[]).filter(function(b){ return /Kunde|Bauherr/.test(b.rolle||""); })[0] || (d.beteiligte||[]).filter(function(b){ return /Bauaufsicht|Planer/.test(b.rolle||""); })[0];
+  var naechster=termine[0], dran=termine.filter(function(t){ return t.wer; })[0];
+  var kachel=function(l, w, u){ return '<div class="pb-kachel"><div class="pb-l">'+esc(l)+'</div><div class="pb-w">'+w+"</div>"+(u?'<div class="pb-u">'+u+"</div>":"")+"</div>"; };
+  var k=el('<div class="card" style="box-shadow:none" data-projektblick><div class="pad stack" style="gap:8px"><h2>Auf einen Blick</h2><div class="pb-kacheln">'+
+    kachel("Stand", esc(schritt ? schritt[1] : (p.status||"–")))+
+    kachel("Nächster Termin", naechster ? esc(dfmt(naechster.datum)+(naechster.zeit?" "+naechster.zeit:"")) : "–",
+      naechster ? esc(naechster.titel)+(termine.length>1?" · noch "+(termine.length-1)+" weitere":"") : "nichts geplant")+
+    kachel("Offene Aufgaben", aufg.length ? String(aufg.length) : "keine",
+      aufg.length ? esc(planTitel(aufg[0]))+(aufg[0].datum?" · bis "+esc(dfmt(aufg[0].datum)):"") : "")+
+    kachel("Von uns dran", dran ? esc(dran.wer) : "–", dran ? "beim Termin am "+esc(dfmt(dran.datum)) : "noch niemand eingeplant")+
+    kachel("Ansprechpartner", kunde ? esc([kunde.name, kunde.firma].filter(Boolean).join(", ")||kunde.rolle) : (d.ansprechpartner ? esc(d.ansprechpartner) : "–"),
+      kunde ? esc(kunde.rolle||"")+(kunde.telefon?' · <a href="tel:'+esc(String(kunde.telefon).replace(/[^\d+]/g,""))+'">'+esc(kunde.telefon)+"</a>":"") : (d.telefon?esc(d.telefon):""))+
+    '</div><div data-leer class="rowflex" style="gap:6px;flex-wrap:wrap" hidden></div></div></div>');
+  return k;
+}
+/* leere Listen-Karten (Beteiligte, Termine, Bestellungen, Baustellenbuch …) nicht als eigene Karte, sondern als „+“-Knopf
+   in „Auf einen Blick“ – der Knopf löst den „+“-Knopf der versteckten Karte aus; sobald etwas drinsteht, ist die Karte wieder da */
+function projektLeereKarten(host, d){
+  var leer=host.querySelector("[data-projektblick] [data-leer]"); if(!leer) return;
+  var karten=[].slice.call(host.querySelectorAll(".card")).filter(function(c){ return c.querySelector("h2"); });
+  [["Beteiligte",/^Beteiligte/,"beteiligte"],["Termin (Bauzeitplan)",/^Termine/,"termine"],["Bestellung",/^Bestellungen/,"bestellungen"],
+   ["Baustellenbuch",/^Baustellenbuch/,"baubuch"],["Anlage",/^Anlagen/,"anlagen"]].forEach(function(x){
+    if((d[x[2]]||[]).length) return;
+    var k=karten.filter(function(c){ return x[1].test(abschnittTitel(c)); })[0]; if(!k) return;
+    var plus=[].slice.call(k.querySelectorAll("button")).filter(function(b){ return /^\+/.test(b.textContent.trim()); })[0];
+    if(!plus) return;   /* nur ansehen: Karte bleibt, wie sie ist */
+    k.hidden=true;
+    var b=el('<button class="btn ghost sm" type="button" data-leerplus>+ '+esc(x[0])+"</button>");
+    b.onclick=function(){ plus.click(); };
+    leer.appendChild(b);
+  });
+  if(leer.children.length){ leer.insertBefore(el('<span class="muted" style="font-size:12.5px">Noch leer:</span>'), leer.firstChild); leer.hidden=false; }
+}
+/* langer Text in den Angaben (z. B. „Was wird gebraucht?“): zugeklappt mit „ganzen Text zeigen“, antippen klappt auf */
+function projektLangerText(host){
+  var ang=[].slice.call(host.querySelectorAll(".card")).filter(function(c){ return /^Angaben/.test(abschnittTitel(c)); })[0]; if(!ang) return;
+  ang.querySelectorAll("textarea").forEach(function(t){
+    var zeilen=String(t.value||"").split("\n").length;
+    if(zeilen<=8 && t.value.length<=600) return;
+    t.classList.add("lang-zu");
+    var b=el('<button class="btn ghost sm" type="button" data-ganzertext style="align-self:flex-start">▾ ganzen Text zeigen ('+zeilen+" Zeilen)</button>");
+    var auf=function(){ t.classList.remove("lang-zu"); b.remove(); feldHoehe(t); };
+    b.onclick=function(){ auf(); t.focus(); };
+    t.addEventListener("focus", auf, {once:true});
+    t.parentNode.insertBefore(b, t.nextSibling);
+  });
+}
 /* kleiner Monatskalender im Projekt (Inhaber 08.10.2026): alles mit Bezug zum Projekt – Bauzeitplan-Termine, Kalendertermine
    und Aufgaben mit diesem Projekt; Tag antippen zeigt die Einträge, Eintrag antippen öffnet ihn (kalEintragOeffnen) */
 var PROJEKT_MONAT={};
@@ -29225,7 +29291,7 @@ function projektMonatKarte(p){
   return k;
 }
 function projektSprungleiste(host){
-  var karten=[].slice.call(host.querySelectorAll(".card")).filter(function(c){ return c.querySelector("h2"); });
+  var karten=[].slice.call(host.querySelectorAll(".card")).filter(function(c){ return c.querySelector("h2") && !c.hidden; });
   var bar=el('<div class="projekt-sprung chips" role="navigation" aria-label="Abschnitte des Projekts"></div>');
   PROJEKT_SPRUNG.forEach(function(s){
     var k=karten.filter(function(c){ return s[1].test(abschnittTitel(c)); })[0]; if(!k) return;
@@ -29271,6 +29337,7 @@ function projektAnsicht(id){
     stufen.querySelectorAll("[data-st]").forEach(function(b){ b.onclick=function(){ if(schreiben) umstellen(b.dataset.st); }; });
     var w=stufen.querySelector("[data-weiter]"); if(w) w.onclick=function(){ umstellen(PROJEKT_SCHRITTE[idx+1][0]); };
     v.inhalt.appendChild(stufen);
+    v.inhalt.appendChild(projektBlickKarte(p));
     /* Planung: Aufgaben und Termine des Projekts (Kalender) */
     if(planungAn()){
       planungNachladen(function(){});
@@ -29443,6 +29510,7 @@ function projektAnsicht(id){
     var anz=function(l, eins, mehr){ l=l||[]; return l.length ? l.length+" "+(l.length===1?eins:mehr) : "leer"; };
     var offeneAufg=PLANUNG.filter(function(e){ return e.projekt_id===p.id && e.art==="aufgabe" && e.status!=="erledigt"; }).length;
     kartenOrdnen(v.inhalt, [
+      {h:/^Auf einen Blick/, seite:"oben", key:"blick", fest:true},
       {h:/^Stand/, seite:"haupt", key:"stand", fix:true},
       {h:/^Aufgaben und Termine/, seite:"neben", key:"plan", fix:true, zusammen:offeneAufg?offeneAufg+(offeneAufg===1?" Aufgabe":" Aufgaben")+" offen":""},
       {h:/^Kalender/, seite:"neben", key:"monat"},
@@ -29461,6 +29529,8 @@ function projektAnsicht(id){
       {h:/^Tagebuch/, seite:"neben", key:"tagebuch", handyZu:true, zusammen:anz(p.verlauf,"Eintrag","Einträge")},
       {h:/Nachrichten/, seite:"neben", key:"chat", handyZu:true}
     ], "projekt", true, true);
+    projektLeereKarten(v.inhalt, d);
+    projektLangerText(v.inhalt);
     projektSprungleiste(v.inhalt);
 
     /* Projektzusammenfassung als PDF – ansehen, drucken, für die Synology ablegen */
