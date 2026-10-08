@@ -7130,6 +7130,28 @@ test("Arbeitszeit vor Ort kommt aus dem Lidl-Rapport: im Protokoll/PDF (Wartung 
   await a.zu();
 });
 
+test("Anlage einem anderen Markt zugeordnet (doppelter Markt): bleibt dort, auch nach dem nächsten Speichern der Anlage", async () => {
+  const a = await oeffnen(KONTEN.admin);
+  const r = await a.seite.evaluate(async () => {
+    const x = window.__t.x, w = (ms) => new Promise((f) => setTimeout(f, ms)), db = window.__db.tabellen, e = {};
+    const ziel = x("ST").filter((s) => s.id !== x("posById.TP1.standortId"))[0].id;
+    e.vorher = x("posById.TP1.standortId");
+    db.stammdaten.push({ id: "position:TP1", typ: "position", ziel: "TP1", neu: false, geaendert: new Date().toISOString(), von: "Test", grund: "Markt doppelt",
+      felder: Object.assign({}, (db.stammdaten.find((z) => z.id === "position:TP1") || {}).felder || {}, { standortId: ziel }) });
+    await x("ladeStammdaten().then(storeNachRender)"); await w(300);
+    e.nachLaden = x("posById.TP1.standortId") === ziel && x("byId['" + ziel + "'].pos").some((p) => p.id === "TP1");
+    await x("positionenSchreiben")({ TP1: { notiz: "Test nach Verschieben" } }, "Test");
+    await x("ladeStammdaten().then(storeNachRender)"); await w(300);
+    const zeilen = db.stammdaten.filter((z) => z.id === "position:TP1");
+    e.gespeichert = zeilen.length && zeilen[zeilen.length - 1].felder.standortId === ziel;
+    e.bleibt = x("posById.TP1.standortId") === ziel;
+    return e;
+  });
+  pruefe(r.nachLaden && r.gespeichert && r.bleibt, "Markt-Zuordnung geht verloren: " + JSON.stringify(r));
+  pruefe(!a.fehler.length, "Laufzeitfehler: " + a.fehler.join("; "));
+  await a.zu();
+});
+
 test("Karte: „📍 Mein Standort“ zeigt die eigene Position (nur auf dem Gerät, nichts gespeichert)", async () => {
   const a = await oeffnen(KONTEN.techniker);
   const r = await a.seite.evaluate(async () => {
