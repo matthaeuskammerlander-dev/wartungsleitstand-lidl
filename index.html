@@ -844,7 +844,9 @@ var STAMM_FELDER_POS = ["anlagentyp","intervallCode","inbetriebnahme","monat","m
                            Sammelzeile – eigene Anlage mit eigenen Terminen, die Sammelzeile bleibt für den Rest */
                         "teilVon",
                         /* Einträge der alten Liste, die vor Ort als falsch zurückgenommen wurden (Büro 02.10.2026) */
-                        "historieWeg"];
+                        "historieWeg",
+                        /* fehlerhaft angelegte Anlage gelöscht (Inhaber 08.10.2026) – ausgeblendet, die Weiterleitung bleibt (anlageLoeschen) */
+                        "geloescht","geloeschtVon","geloeschtAm"];
 var ABGELEITET_POS   = ["kaeltemittelText","ueber30kg","baujahr"];
 function auswahl(o, felder){
   var r={}; felder.forEach(function(k){ r[k]=(o[k]===undefined?null:o[k]); }); return r;
@@ -6888,6 +6890,42 @@ function terminAenderungen(start, erg, name){
 /* Geänderte Felder mehrerer Zeilen wegschreiben – je Zeile ein Eintrag in
    den Stammdaten, gerechnet gegen den Excel-Stand wie überall sonst.
    rueck: Rückgängig-Puffer des Vorgangs (stammSpeichern). */
+/* Fehlerhaft angelegte Anlage löschen (Inhaber 08.10.2026: „die KI hatte eine Anlage zu viel erkannt … Darko und ich wollen die
+   Anlage, die fehlerhaft angelegt wurde, komplett löschen können“) – nur Inhaber und Admins, mit Rückfrage, im Änderungsverlauf
+   rücknehmbar. Alle Zeilen der Anlage bekommen „geloescht“ (und werden stillgelegt): sie verschwinden aus Verwaltung, Anlagenbuch
+   und allen Listen, bleiben aber im Hintergrund – sonst käme eine Zeile der alten Liste als aktive Anlage zurück, und Wartungen
+   einer zusammengeführten Zeile zählten nicht mehr für die richtige Anlage (zeileWeiter). Hängen eigene Protokolle oder eine
+   offene Störung daran, ohne Weiterleitung: nicht löschen – zuerst zusammenführen bzw. die Störung umhängen. */
+function anlageLoeschenDarf(){ return !demo() && (istInhaber() || Rolle.name==="admin"); }
+function anlageLoeschen(anl, fertig){
+  if(!anlageLoeschenDarf()){ toast(demo() ? "In der Präsentation wird nichts gespeichert." : "Anlagen löschen nur Inhaber und Admins."); return; }
+  var zeilen=anl.termine.slice(), ids=zeilen.map(function(p){ return p.id; }), s=byId[anl.leader.standortId], name=anlagenName(anl.leader);
+  var prot=alleProtokolle().filter(function(pr){ return !pr.geloescht && (pr.positionIds||[]).concat(pr.positionId?[pr.positionId]:[]).some(function(id){ return ids.indexOf(id)>=0; }); });
+  var ohneWeiter=zeilen.filter(function(p){ return !p.zusammengefuehrtIn; });
+  if(prot.length && ohneWeiter.length){
+    window.alert("An der Anlage „"+name+"“ hängen "+prot.length+" Protokoll(e).\n\nDamit diese Wartungen nicht verloren gehen, bitte die Anlage zuerst mit der richtigen Anlage zusammenführen („Zusammenführen mit …“). Danach lässt sich der übrige Rest löschen.");
+    return;
+  }
+  var offen=offeneStoerungen(true).filter(function(o){ return o.positionId && ids.indexOf(o.positionId)>=0; });
+  if(offen.length){ window.alert("An der Anlage „"+name+"“ hängt eine offene Störung – bitte die Störung zuerst einer anderen Anlage zuordnen oder erledigen."); return; }
+  if(!window.confirm("Anlage „"+name+"“"+(s?" in „"+stName(s)+"“":"")+" löschen?\n\nSie verschwindet überall (Verwaltung, Anlagen, Anlagenbuch)."+
+    (prot.length ? " Ihre "+prot.length+" Wartung(en) zählen weiter für die Anlage, mit der sie zusammengeführt wurde." : "")+
+    "\n\nRücknehmbar im Änderungsverlauf.")) return;
+  var pro={}, jetzt=new Date().toISOString(), rueck={};
+  zeilen.forEach(function(p){ pro[p.id]={geloescht:true, geloeschtVon:meinName(), geloeschtAm:jetzt, aktiv:false}; });
+  positionenSchreiben(pro, "Anlage gelöscht", rueck).then(function(wo){
+    if(wo===false){
+      if(Object.keys(rueck).length) protokolliere({art:"stammdaten", standortId:s?s.id:null, standortName:s?stName(s):"", grund:"Anlage gelöscht – nur teilweise gespeichert: „"+name+"“",
+        felder:[{feld:"anlage", name:name, alt:"vorhanden", neu:"teilweise gelöscht"}], rueck:rueck});
+      toast("Nicht (ganz) gespeichert – bitte nochmals versuchen."); return;
+    }
+    protokolliere({art:"stammdaten", standortId:s?s.id:null, standortName:s?stName(s):"", grund:"Anlage gelöscht (fehlerhaft angelegt): „"+name+"“",
+      felder:[{feld:"anlage", name:name, alt:"vorhanden", neu:"gelöscht"}], rueck:rueck});
+    berechneFaelligkeiten();
+    toast("🗑 Anlage „"+name+"“ gelöscht"+(wo==="geraet"?" (vorerst nur auf diesem Gerät)":"")+".");
+    if(fertig) fertig(); else if(darfRendern()) render();
+  });
+}
 function positionenSchreiben(proPos, grund, rueck){
   var zeit=new Date().toISOString();
   return Promise.all(Object.keys(proPos).map(function(pid){
@@ -23098,6 +23136,8 @@ function verwaltungTeilAnlagen(P){
         (anl&&akt!=="still"?'<button class="btn ghost sm" type="button" data-a2="zusammen">Zusammenführen mit …</button>':"")+
         /* Prüfbuch- und Typenschild-Fotos ohne KI dazulegen und ansehen (Büro 01.10.2026) */
         (anl?'<button class="btn ghost sm" type="button" data-a2="fotos" data-fotozahl="'+esc(anl.leader.id)+'">📷 Fotos der Anlage ('+anlagenFotosVon(anl.leader.id).length+')</button>':"")+
+        /* fehlerhaft angelegt: ganz löschen – Inhaber und Admins (anlageLoeschen) */
+        (anl&&anlageLoeschenDarf()?'<button class="btn ghost sm" type="button" data-a2="loeschen" style="color:var(--crit);border-color:var(--crit)">🗑 Anlage löschen</button>':"")+
         '</span></div>'+
       '<div class="grid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:10px">'+
         '<label class="fl"><span>Bezeichnung der Anlage</span><input type="text" data-a="anlagentyp" placeholder="z. B. VRV Verkaufsraum" value="'+esc(d.anlagentyp||"")+'"></label>'+
@@ -23129,6 +23169,11 @@ function verwaltungTeilAnlagen(P){
         "><span>Kein Halbjahrestermin – nur Jahreswartung (sehr kleine Anlage)</span></label>"+
       '<label class="fl"><span>Notiz</span><input type="text" data-a="notiz" value="'+esc((anl?anl.leader.notiz:"")||"")+'"></label>'+
     "</div>");
+    var loK=k.querySelector('[data-a2="loeschen"]');
+    if(loK) loK.onclick=function(){
+      if(!verwaltungVerwerfenOk()) return;
+      anlageLoeschen(anlageVon(anl.leader), function(){ verwaltungBearbeitet=false; if(S.adm) S.adm.entwurf=null; render(); });
+    };
     var zfKnopf=k.querySelector('[data-a2="zusammen"]');
     if(zfKnopf) zfKnopf.onclick=function(){
       if(!verwaltungVerwerfenOk()) return;
@@ -23717,7 +23762,7 @@ function verwaltungTeilSpeichern(P){
 }
 function verwaltungEditor(s){
   var A=S.adm;
-  var ausgewaehlt=ALLE_POS.filter(function(p){ return p.standortId===s.id; });
+  var ausgewaehlt=ALLE_POS.filter(function(p){ return p.standortId===s.id && !p.geloescht; });
   /* Stand beim Aufbau des Editors: beim Speichern gilt nur als geändert, was
      hier im Formular geändert wurde. Was inzwischen im Hintergrund dazukam
      (Nachladen, Altlast-Bereinigung, anderes Gerät), überschreibt der alte
@@ -25363,6 +25408,7 @@ function handbuchKarte(z){
         "<strong>Aufträge:</strong> Posteingang und Rückfragen von Lidl in <em>Fällig</em>; neue Aufträge mit „+ Störungsauftrag“ (PDF oder Foto, die App liest Auftrag und Zieltermin).",
         "<strong>Planen:</strong> <em>Kalender</em> → Wartungen des Monats „einplanen“ (die Termine der Anlagen ankreuzen, Tag, Techniker), Einsätze und Aufgaben mit „+ Termin“ / „+ Aufgabe“, "+
           "größere Runden über die <em>Tourenplanung</em> (Reiter Karte) an einen Techniker schicken.",
+        "<strong>Anlage löschen</strong> (Inhaber, Admins): in der Verwaltung an der Anlage „🗑 Anlage löschen“ – für fehlerhaft angelegte (etwa eine von der KI doppelt erkannte, schon zusammengeführte). Sie verschwindet überall; hängen eigene Wartungen daran, zuerst „Zusammenführen mit …“. Rücknehmbar im Änderungsverlauf.",
         "<strong>Daten pflegen:</strong> <em>Verwaltung</em> → Nachbessern (Widersprüche und Lücken, das Dringendste zuerst), Doppelanlagen zusammenführen, Märkte und Anlagen ändern. "+
           "Was Techniker vor Ort ergänzt haben, steht im Änderungsverlauf und lässt sich dort zurücknehmen.",
         "<strong>Vor Ort klären und alte Liste:</strong> <em>Verwaltung</em> → Datenpflege: Fragen für den nächsten Besuch stellen (auch im Markt-Fenster), Antworten abhaken; „Alte Liste prüfen“ zeigt, was in der Excel-Liste wie ein Versehen aussieht – ansehen, als Frage weitergeben oder „passt so“.",

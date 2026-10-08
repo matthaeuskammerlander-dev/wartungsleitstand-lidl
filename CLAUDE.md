@@ -552,6 +552,11 @@ Kammerlander Umwelt- und Klimatechnik (UKT) – oft kurz, vom Handy, im Feld.
   oder das Büro; „behoben“ jeder; löschen nur Büro). App: `ihLaden`, `ihNeu` (Art Fehler/Alarm/Notiz, Anlage oder ganzer Markt), `ihBehoben`, `ihKasten`;
   🔒 im Kopf der Anlagen-Karte (`[data-ihpill]`, auch eingeklappt) + Text (`[data-ihanlage]`), Marktinfo (`[data-ihmarkt]`), Protokoll-Kopf (`[data-ihoben]`)
   und geführter Schritt „Abschluss“. NIE ins Protokoll, PDF, Monatsbericht oder Archiv übernehmen.
+- **Anlage löschen** (Inhaber 08.10.2026: „die KI hatte eine Anlage zu viel erkannt … die fehlerhaft angelegte komplett löschen“): 
+  (: Inhaber und Admins, nie Präsentation), Knopf „🗑 Anlage löschen“ in der Verwaltung (). Setzt //
+   +  an allen Zeilen (STAMM_FELDER_POS) über  mit Änderungsverlauf (rücknehmbar). NICHT aus der Datenbank
+  entfernen: Zeilen der alten Liste kämen sonst aktiv zurück, und Wartungen zusammengeführter Zeilen zählten nicht mehr (). Eigene Protokolle
+  ohne Weiterleitung oder offene Störung → nicht löschen (erst zusammenführen). Verwaltung blendet gelöschte aus.
 - **Datenverbrauch / Egress** (Inhaber 08.10.2026: Supabase „Egress Exceeded“, 7,6 GB bei 49 MB Datenbank): Störungen tragen Auftrags-PDF und
   Seitenbilder in `felder.pdfDaten`/`felder.seiten` (~11 MB). Geladen wird `stammdaten_leicht` (tools/stammdaten-leicht.sql: ohne diese Felder,
   `_schwer`; fehlt die Sicht → `stammdaten`), PDF/Seiten erst beim Öffnen (`stoerungSchwerLaden` in `stoerungDialog`/`protokollBeginnen`,

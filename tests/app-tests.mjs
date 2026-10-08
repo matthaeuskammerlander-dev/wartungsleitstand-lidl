@@ -7049,6 +7049,47 @@ test("Interne Notiz (nur UKT): an der Anlage anlegen, 🔒 im Kopf der Anlagen-K
   await k.zu();
 });
 
+test("Anlage löschen (Inhaber/Admin): fehlerhaft angelegte Anlage verschwindet aus der Verwaltung, Weiterleitung bleibt; mit eigenen Protokollen erst zusammenführen; Techniker darf nicht", async () => {
+  const a = await oeffnen(KONTEN.admin);
+  const r = await a.seite.evaluate(async () => {
+    const x = window.__t.x, w = (ms) => new Promise((f) => setTimeout(f, ms)), db = window.__db.tabellen, e = {}, j = new Date().toISOString();
+    /* eine von der KI zu viel angelegte Anlage am Markt TS1 */
+    db.stammdaten.push({ id: "position:NPdoppel", typ: "position", ziel: "NPdoppel", neu: true, geaendert: j, von: "Test", grund: "Anlage angelegt",
+      felder: { standortId: "TS1", aktiv: true, anlagentyp: "KI-Doppel Testanlage", intervallCode: "JW", sollMonat: 3, anlageZu: "NPdoppel", neuAngelegt: j } });
+    await x("ladeStammdaten().then(storeNachRender)"); await w(300);
+    x("Admin.frei=true; S.view='verwaltung'; S.adm={suche:'',filter:'alle',sort:'filiale',auf:true,sel:null,entwurf:null,tab:'maerkte'}; S.adm.sel='TS1'; render(); 1"); await w(700);
+    const karte = [...document.querySelectorAll(".anlagekarte")].find((k) => /KI-Doppel Testanlage/.test(k.querySelector('[data-a="anlagentyp"]').value));
+    e.knopf = !!(karte && karte.querySelector('[data-a2="loeschen"]'));
+    const echt = window.confirm; window.confirm = () => true;
+    karte.querySelector('[data-a2="loeschen"]').click(); await w(900);
+    window.confirm = echt;
+    const zeile = db.stammdaten.find((z) => z.id === "position:NPdoppel") || { felder: {} };
+    e.db = !!zeile.felder.geloescht + "|" + zeile.felder.aktiv + "|" + !!zeile.felder.geloeschtVon;
+    e.imHintergrund = !!x("posById.NPdoppel");
+    e.verwaltung = [...document.querySelectorAll(".anlagekarte [data-a='anlagentyp']")].some((i) => /KI-Doppel Testanlage/.test(i.value));
+    e.verlauf = (db.aenderungen || []).some((v) => /Anlage gelöscht/.test(v.grund || ""));
+    /* eine Anlage mit eigenem Protokoll ohne Weiterleitung: nicht löschen */
+    db.stammdaten.push({ id: "position:NPprot", typ: "position", ziel: "NPprot", neu: true, geaendert: j, von: "Test", grund: "Anlage angelegt",
+      felder: { standortId: "TS1", aktiv: true, anlagentyp: "Mit Protokoll", intervallCode: "JW", sollMonat: 4, anlageZu: "NPprot" } });
+    await x("ladeStammdaten().then(storeNachRender)"); await w(200);
+    x("protokolle").push({ _id: "prNP", datum: x("isoLokal(new Date())"), standortId: "TS1", positionId: "NPprot", positionIds: ["NPprot"], wartungsart: "Wartung" });
+    const meldungen = []; const alt = window.alert; window.alert = (t) => meldungen.push(t);
+    x("anlageLoeschen")(x("anlageVon(posById.NPprot)"));
+    window.alert = alt; await w(300);
+    e.blockiert = meldungen.length === 1 && /zusammenführen/.test(meldungen[0]) && !(db.stammdaten.find((z) => z.id === "position:NPprot").felder.geloescht);
+    return e;
+  });
+  pruefe(r.knopf, "Kein „🗑 Anlage löschen“ in der Verwaltung: " + JSON.stringify(r));
+  pruefe(r.db === "true|false|true" && r.imHintergrund && !r.verwaltung && r.verlauf, "Löschen: " + JSON.stringify(r));
+  pruefe(r.blockiert, "Anlage mit eigenen Protokollen wurde ohne Zusammenführen gelöscht: " + JSON.stringify(r));
+  pruefe(!a.fehler.length, "Laufzeitfehler: " + a.fehler.join("; "));
+  await a.zu();
+  const t = await oeffnen(KONTEN.techniker);
+  const darf = await t.seite.evaluate(() => window.__t.x("anlageLoeschenDarf()"));
+  pruefe(darf === false, "Techniker darf Anlagen löschen");
+  await t.zu();
+});
+
 test("Karte: „📍 Mein Standort“ zeigt die eigene Position (nur auf dem Gerät, nichts gespeichert)", async () => {
   const a = await oeffnen(KONTEN.techniker);
   const r = await a.seite.evaluate(async () => {
