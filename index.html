@@ -8166,8 +8166,11 @@ function anlageDialogTeilKi(P){
         if(art==="pruefbuch"){
           var buecher=kiPruefbuecher(d);
           if(!buecher.length){ toast("Auf den Fotos wurde kein Prüfbuch erkannt."); zurueck(); return; }
-          if(buecher.length>1 && fq) buecher.forEach(function(b){
-            try{ Object.defineProperty(b, "_fotoQuelle", {value:{bilder:fq.bilder, info:fq.info, mehrere:true}, enumerable:false}); }catch(e){} });
+          if(buecher.length>1 && fq) buecher.forEach(function(b, j){
+            /* nr: Nummer des Buchs, wie die KI die Bilder zuordnet (bilder[].buch); andereTage: Prüfungsdaten
+               der übrigen Bücher – am selben Markt wird oft am selben Tag gewartet, ein Datum allein sagt dann nichts */
+            var andere=[]; buecher.forEach(function(x, k){ if(k!==j) x.pruefungen.forEach(function(p){ var t=fotoIso(p&&p.datum); if(t) andere.push(t); }); });
+            try{ Object.defineProperty(b, "_fotoQuelle", {value:{bilder:fq.bilder, info:fq.info, mehrere:true, nr:j+1, andereTage:andere}, enumerable:false}); }catch(e){} });
           if(buecher.length>1 && !erg._gewaehlt){
             return kiBuchWaehlen(buecher, d.hinweise, a).then(function(i){
               if(i===null){ zurueck(); return; }
@@ -13259,10 +13262,10 @@ function kiFotoAuswahl(a, art, fq, bekannt, buch){
     da.forEach(function(f){ if(f.pruefsumme) schon[f.pruefsumme]=1; });
     var ersteMal=!da.some(function(f){ return f.art===art; });
     /* mehrere Bücher auf den Fotos: vorgewählt nur Seiten mit Prüfungen genau dieses Buchs */
-    var buchTage=fq.mehrere ? ((buch&&buch.pruefungen)||[]).map(function(p){ return fotoIso(p&&p.datum); }).filter(Boolean) : null;
-    var alle=fq.bilder.map(function(u,i){ return {u:u, h:summen[i], v:fotoVorschlag(art, fq.info, bekannt, i, ersteMal, buchTage)}; });
+    var buchWahl=fq.mehrere ? {nr:fq.nr||0, tage:((buch&&buch.pruefungen)||[]).map(function(p){ return fotoIso(p&&p.datum); }).filter(Boolean), andereTage:fq.andereTage||[]} : null;
+    var alle=fq.bilder.map(function(u,i){ return {u:u, h:summen[i], v:fotoVorschlag(art, fq.info, bekannt, i, ersteMal, buchWahl)}; });
     var neu=alle.filter(function(x){ return !x.h || !schon[x.h]; });
-    return {liste:neu, schon:alle.length-neu.length};
+    return {liste:neu, schon:alle.length-neu.length, mehrere:!!fq.mehrere};
   }, function(){ return null; });
 }
 function fotoIso(d){
@@ -13287,16 +13290,24 @@ function fotoPruefsumme(datenUrl){
 /* info (nur Prüfbuch, von der KI): je Bild die Daten der Überprüfungen darauf;
    bekannt: Wartungsdaten, die schon vorher bekannt waren. Daraus der Vorschlag je
    Foto – beim ersten Mal alles, danach nur Seiten mit neuem Eintrag. */
-/* buchTage (mehrere Prüfbücher auf den Fotos): Prüfungsdaten des gewählten Buchs – eine Seite
-   ohne diese Daten gehört vermutlich zu einem anderen Buch und ist nicht vorgewählt */
-function fotoVorschlag(art, info, bekannt, i, ersteMal, buchTage){
-  if(art!=="pruefbuch" || !Array.isArray(info)) return buchTage ? {an:false, text:"Buch unklar"} : {an:true, text:""};
+/* buchWahl (mehrere Prüfbücher auf den Fotos): {nr, tage, andereTage} des gewählten Buchs. Vorgewählt
+   wird nur, was sicher zu diesem Buch gehört (Inhaber 08.10.2026: „Zuordnung funktioniert noch nicht so gut“):
+   die Buchnummer, die die KI je Bild meldet (bilder[].buch), sonst ein Prüfungsdatum, das NUR in diesem Buch
+   steht – gleiche Tage in mehreren Büchern (alle Anlagen am selben Tag gewartet) bleiben „Buch unklar“ */
+function fotoVorschlag(art, info, bekannt, i, ersteMal, buchWahl){
+  if(art!=="pruefbuch" || !Array.isArray(info)) return buchWahl ? {an:false, text:"Buch unklar"} : {an:true, text:""};
   var e=info.filter(function(x){ return +x.nr===i+1; })[0];
-  if(!e) return buchTage ? {an:false, text:"Buch unklar"} : {an:true, text:""};
+  if(!e) return buchWahl ? {an:false, text:"Buch unklar"} : {an:true, text:""};
   var iso=(e.pruefungsdaten||[]).map(fotoIso).filter(Boolean);
-  if(buchTage){
-    if(!iso.length) return {an:false, text:"Buch unklar"};
-    if(!iso.some(function(d){ return buchTage.indexOf(d)>=0; })) return {an:false, text:"anderes Prüfbuch"};
+  if(buchWahl){
+    var nrKi=+e.buch||0;
+    if(nrKi && buchWahl.nr && nrKi!==buchWahl.nr) return {an:false, text:"Buch "+nrKi+" – andere Anlage"};
+    if(!(nrKi && nrKi===buchWahl.nr)){
+      var nurHier=iso.some(function(d){ return buchWahl.tage.indexOf(d)>=0 && buchWahl.andereTage.indexOf(d)<0; });
+      var nurDort=iso.some(function(d){ return buchWahl.andereTage.indexOf(d)>=0 && buchWahl.tage.indexOf(d)<0; });
+      if(!nurHier) return {an:false, text:nurDort?"anderes Prüfbuch":"Buch unklar"};
+      if(nurDort) return {an:false, text:"Buch unklar"};
+    }
   }
   var neu=iso.filter(function(d){ return !(bekannt||[]).some(function(b){ return b && gleicherBesuch(b, d); }); });
   if(neu.length) return {an:true, text:"neuer Eintrag "+neu.map(dfmt).join(", ")};
@@ -13355,8 +13366,39 @@ function fotoWahlRaster(raster, neu, wahl, geaendert){
     f.querySelector("img").src=x.u;
     var zeigen=function(){ f.style.borderColor=wahl[i]?"var(--accent)":"var(--line)"; f.style.opacity=wahl[i]?"1":".55"; f.querySelector("span").hidden=!wahl[i]; f.setAttribute("aria-pressed", String(!!wahl[i])); };
     f.onclick=function(){ wahl[i]=!wahl[i]; zeigen(); if(geaendert) geaendert(); }; zeigen();
+    f._zeigen=zeigen;
+    /* vor dem Speichern groß kontrollieren (Inhaber 08.10.2026) – eigener Knopf, wählt nichts um */
+    var lupe=el('<span role="button" tabindex="0" data-fotogross="'+i+'" aria-label="Foto '+(i+1)+' groß ansehen" style="position:absolute;top:4px;left:4px;background:rgba(0,0,0,.6);color:#fff;border-radius:6px;padding:3px 6px;font-size:14px;line-height:1">🔍</span>');
+    lupe.onclick=function(ev){ ev.stopPropagation(); fotoWahlGross(raster, neu, wahl, i, geaendert); };
+    lupe.onkeydown=function(ev){ if(ev.key==="Enter"||ev.key===" "){ ev.preventDefault(); lupe.onclick(ev); } };
+    f.appendChild(lupe);
     raster.appendChild(f);
   });
+}
+/* Ein Foto groß: blättern und wählen, ohne zurück ins Raster zu müssen */
+function fotoWahlGross(raster, neu, wahl, i, geaendert){
+  var v=ansichtOeffnen("Foto ansehen");
+  var bild=el('<img alt="" data-grossbild style="width:100%;border:1px solid var(--line);border-radius:8px;background:#fff">');
+  v.inhalt.appendChild(bild);
+  var zurueck=el('<button class="btn ghost" type="button" data-a="vor">◀</button>'), weiter=el('<button class="btn ghost" type="button" data-a="nach">▶</button>');
+  var wahlKnopf=el('<button class="btn" type="button" data-a="wahl"></button>');
+  var zeigen=function(){
+    var x=neu[i];
+    bild.src=x.u; bild.alt="Foto "+(i+1);
+    v.schritt.textContent="Foto "+(i+1)+" von "+neu.length+(x.v&&x.v.text?" · "+x.v.text:"");
+    wahlKnopf.textContent=wahl[i]?"✓ wird gespeichert":"nicht speichern";
+    wahlKnopf.className=wahl[i]?"btn":"btn ghost";
+    zurueck.disabled=i===0; weiter.disabled=i===neu.length-1;
+  };
+  zurueck.onclick=function(){ if(i>0){ i--; zeigen(); } };
+  weiter.onclick=function(){ if(i<neu.length-1){ i++; zeigen(); } };
+  wahlKnopf.onclick=function(){
+    wahl[i]=!wahl[i];
+    var f=raster.querySelector('[data-fotowahl="'+i+'"]'); if(f && f._zeigen) f._zeigen();
+    if(geaendert) geaendert(); zeigen();
+  };
+  v.fuss.appendChild(zurueck); v.fuss.appendChild(wahlKnopf); v.fuss.appendChild(weiter);
+  zeigen();
 }
 /* Verwaltung: ansehen und ohne KI Fotos dazulegen (Prüfbuch oder Typenschild) */
 function anlagenFotosVerwalten(leader){
@@ -14279,17 +14321,19 @@ function kiTeileZusammen(art, ergebnisse, groessen){
     ergebnisse.forEach(function(e,k){
       var d=(e&&e.daten)||{};
       if(d.hinweise) hinweise.push(d.hinweise);
+      var buchNr={};   /* Buch j dieses Teils → Nummer in der zusammengeführten Liste (für bilder[].buch) */
       kiPruefbuecher(d).forEach(function(b,j){
         var ziel = (j===0 && k>0 && buecher.length && !kennung(b)) ? buecher[buecher.length-1]
           : (sn(b) ? buecher.filter(function(x){ return sn(x)===sn(b); })[0] : null);
-        if(!ziel){ buecher.push({anlage:Object.assign({}, b.anlage), pruefungen:b.pruefungen.slice(), unsicher:b.unsicher.slice(), hinweise:b.hinweise||""}); return; }
+        if(!ziel){ buecher.push({anlage:Object.assign({}, b.anlage), pruefungen:b.pruefungen.slice(), unsicher:b.unsicher.slice(), hinweise:b.hinweise||""}); buchNr[j+1]=buecher.length; return; }
+        buchNr[j+1]=buecher.indexOf(ziel)+1;
         Object.keys(b.anlage).forEach(function(f){ if(!String(ziel.anlage[f]||"").trim() && String(b.anlage[f]||"").trim()) ziel.anlage[f]=b.anlage[f]; });
         ziel.pruefungen=ziel.pruefungen.concat(b.pruefungen);
         b.unsicher.forEach(function(u){ if(ziel.unsicher.indexOf(u)<0) ziel.unsicher.push(u); });
         ziel.hinweise=[ziel.hinweise, b.hinweise].filter(Boolean).join(" ");
       });
       (Array.isArray(d.bilder)?d.bilder:[]).forEach(function(x){
-        if(x && typeof x==="object") bilder.push(Object.assign({}, x, {nr:String((+x.nr||0)+versatz)}));
+        if(x && typeof x==="object") bilder.push(Object.assign({}, x, {nr:String((+x.nr||0)+versatz)}, x.buch!=null ? {buch:String(buchNr[+x.buch]||"")} : {}));
       });
       versatz+=groessen[k]||0;
     });
@@ -14482,7 +14526,8 @@ function kiPruefen(titel, gelesen, jetzt, felder, unsicher, hinweis, fotos){
     if(fl.length){
       var fbox=el('<div class="posbox stack" data-kifotos style="border-color:var(--accent);gap:6px;margin-top:10px">'+
         '<strong>📷 Fotos an der Anlage speichern</strong>'+
-        '<div class="muted" style="font-size:12.5px">Vorgewählt sind die Seiten mit neuem Eintrag – antippen wählt an oder ab'+
+        '<div class="muted" style="font-size:12.5px">Vorgewählt sind die Seiten mit neuem Eintrag'+(fotos.mehrere?" – nur aus diesem Prüfbuch":"")+
+        ' – antippen wählt an oder ab, 🔍 zeigt das Foto groß (dort auch blättern und wählen)'+
         (fotos.schon?" – "+fotos.schon+" Foto(s) sind schon gespeichert und fehlen hier":"")+
         '. Danach unter „📷 Fotos der Anlage“ und im Anlagenbuch.</div>'+
         '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(80px,1fr));gap:8px" data-bilder></div></div>');

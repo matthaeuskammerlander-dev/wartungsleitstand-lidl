@@ -6006,6 +6006,45 @@ test("Anlagenfotos: KI-Prüfbuch – Fotos landen an der Anlage (bekannt, mehrer
   }
 });
 
+test("Prüfbuch-Fotos mehrerer Bücher: vorgewählt nur sicher dieses Buch (KI-Buchnummer, sonst nur eigene Daten), 🔍 groß ansehen, blättern und wählen", async () => {
+  const a = await oeffnen(KONTEN.techniker);
+  const r = await a.seite.evaluate(async () => {
+    const x = window.__t.x, e = {}, fv = x("fotoVorschlag");
+    /* Buch 1: 01.02.2025 und 05.06.2025, Buch 2: 05.06.2025 (gleicher Tag) und 09.09.2025 */
+    const wahl = { nr: 1, tage: ["2025-02-01", "2025-06-05"], andereTage: ["2025-06-05", "2025-09-09"] };
+    const ohneBuch = [{ nr: "1", pruefungsdaten: ["01.02.2025"] }, { nr: "2", pruefungsdaten: ["05.06.2025"] }, { nr: "3", pruefungsdaten: ["09.09.2025"] }, { nr: "4", pruefungsdaten: [] }];
+    e.ohne = ohneBuch.map((_, i) => { const v = fv("pruefbuch", ohneBuch, [], i, true, wahl); return (v.an ? "+" : "-") + v.text; });
+    const mitBuch = [{ nr: "1", buch: "1", pruefungsdaten: ["05.06.2025"] }, { nr: "2", buch: "2", pruefungsdaten: ["05.06.2025"] }, { nr: "3", buch: "1", pruefungsdaten: [] }, { nr: "4", buch: "", pruefungsdaten: ["05.06.2025"] }];
+    e.mit = mitBuch.map((_, i) => { const v = fv("pruefbuch", mitBuch, [], i, true, wahl); return (v.an ? "+" : "-") + v.text; });
+    /* Teile zusammen: Buchnummer je Teil auf die gemeinsame Liste */
+    const z = x("kiTeileZusammen")("pruefbuch", [
+      { daten: { pruefbuecher: [{ anlage: { seriennummer: "A" }, pruefungen: [] }, { anlage: { seriennummer: "B" }, pruefungen: [] }], bilder: [{ nr: "1", buch: "2", pruefungsdaten: [] }] } },
+      { daten: { pruefbuecher: [{ anlage: { seriennummer: "B" }, pruefungen: [] }], bilder: [{ nr: "1", buch: "1", pruefungsdaten: [] }] } }], [1, 1]);
+    e.zusammen = z.daten.bilder.map((b) => b.nr + ":" + b.buch).join(",");
+    /* Raster: 🔍 öffnet groß, ohne umzuwählen; dort blättern und wählen, Raster folgt */
+    const box = document.createElement("div"); document.body.appendChild(box);
+    const bild = "data:image/gif;base64,R0lGODlhAQABAAAAACw=";
+    const liste = [{ u: bild, v: { an: true, text: "neuer Eintrag" } }, { u: bild, v: { an: false, text: "Buch unklar" } }];
+    const w = liste.map((y) => y.v.an); let mal = 0;
+    x("fotoWahlRaster")(box, liste, w, () => mal++);
+    box.querySelector('[data-fotogross="0"]').click();
+    const o = () => [...document.querySelectorAll(".assistent")].pop();
+    e.gross = !!o().querySelector("[data-grossbild]") && w[0] === true && /Foto 1 von 2/.test(o().textContent);
+    o().querySelector('[data-a="nach"]').click();
+    e.blaettern = /Foto 2 von 2 · Buch unklar/.test(o().querySelector(".as-schritt").textContent);
+    o().querySelector('[data-a="wahl"]').click();
+    e.gewaehlt = w[1] === true && box.querySelector('[data-fotowahl="1"]').getAttribute("aria-pressed") === "true" && mal === 1;
+    x("ansichtenSchliessen(); 1"); box.remove();
+    return e;
+  });
+  pruefe(r.ohne.join("|") === "+neuer Eintrag 01.02.2025|-Buch unklar|-anderes Prüfbuch|-Buch unklar", "ohne Buchnummer: " + r.ohne.join("|"));
+  pruefe(r.mit.join("|") === "+neuer Eintrag 05.06.2025|-Buch 2 – andere Anlage|+Stammdaten|-Buch unklar", "mit Buchnummer: " + r.mit.join("|"));
+  pruefe(r.zusammen === "1:2,2:2", "Buchnummer über Teile: " + r.zusammen);
+  pruefe(r.gross && r.blaettern && r.gewaehlt, "Große Ansicht: " + JSON.stringify(r));
+  pruefe(!a.fehler.length, "Laufzeitfehler: " + a.fehler.join("; "));
+  await a.zu();
+});
+
 /* Inhaber 06.10.2026: Anlagen-Karten im Markt einklappbar, am Handy zu („sonst muss man so weit scrollen“); „Beim Zurückspringen
    sollte es aber offen bleiben. Erst nachdem man lange nicht reingeschaut hat, wieder schließen.“ */
 

@@ -71,7 +71,10 @@ Kammerlander Umwelt- und Klimatechnik (UKT) – oft kurz, vom Handy, im Feld.
   änderbar. KI-Fotos: Prüfbuch und Typenschilder bis 30 Bilder, gelesen in
   Teilen zu 8 (`kiTeilLesen`, `kiTeileZusammen`; der Server nimmt 12 je Aufruf).
   Die gelesenen Fotos (Inhaber 06.10.2026) wählt man gleich in der KI-Prüfansicht („📷 Fotos an der Anlage
-  speichern“, `kiFotoAuswahl`, `fotoVorschlag`; bei mehreren Büchern hängen sie an jedem Buch, `_fotoQuelle`) –
+  speichern“, `kiFotoAuswahl`, `fotoVorschlag`; bei mehreren Büchern hängen sie an jedem Buch, `_fotoQuelle` mit `nr`/`andereTage`;
+  vorgewählt nur Seiten SICHER dieses Buchs – Buchnummer je Bild von der KI `bilder[].buch` (ki-lesen, über Teile umgerechnet in `kiTeileZusammen`),
+  sonst ein Prüfungsdatum, das nur in diesem Buch steht; gleiche Tage in mehreren Büchern = „Buch unklar“, nicht vorgewählt – Inhaber 08.10.2026;
+  🔍 je Foto groß ansehen, blättern, wählen: `fotoWahlGross`) –
   `kiFotosAblegen`: bekannte Anlage sofort (Tabelle `anlagenfotos`, Speicher `anlagen/…`), neue Anlage hochladen
   und an `_fotosOffen` vormerken, eingetragen nach dem Speichern von Anlage bzw. Protokoll (`anlagenFotosEintragen`,
   Warteschlange auf dem Gerät, `anlagenFotosNachtragen`). Scheitert das Hochladen: nachfragen, nie still verwerfen.
