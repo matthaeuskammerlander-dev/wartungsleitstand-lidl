@@ -7090,7 +7090,7 @@ test("Anlage löschen (Inhaber/Admin): fehlerhaft angelegte Anlage verschwindet 
   await t.zu();
 });
 
-test("Protokoll-Blatt: oben beim Datum der Wartung/des Einsatzes nur das Datum, die Uhrzeit steht unten beim Abschluss", async () => {
+test("Protokoll-Blatt/PDF: nur das Datum – die Uhrzeit erscheint nirgends (oben nicht, beim Abschluss nicht)", async () => {
   const a = await oeffnen(KONTEN.inhaber);
   const r = await a.seite.evaluate(() => {
     const x = window.__t.x, e = {};
@@ -7098,11 +7098,11 @@ test("Protokoll-Blatt: oben beim Datum der Wartung/des Einsatzes nur das Datum, 
       const p = { _id: "dt" + art, datum: "2026-10-08", uhrzeit: "14:35", standortId: "TS1", wartungsart: art, positionIds: ["TP1"], positionId: "TP1", techniker: "T", anlagen: [] };
       const h = String(x("blattInhalt")(p));
       const oben = h.slice(0, h.indexOf("Wartungsunternehmen") > 0 ? h.indexOf("Wartungsunternehmen") : 3000);
-      e[art] = { obenZeit: /14:35/.test(oben), untenZeit: /Datum \/ Uhrzeit[\s\S]{0,200}14:35/.test(h), datum: /08\.10\.2026/.test(oben) };
+      e[art] = { obenZeit: /14:35/.test(oben), untenZeit: /14:35/.test(h), datum: /08\.10\.2026/.test(oben) };
     }
     return e;
   });
-  for (const art of ["Wartung", "Störung"]) pruefe(r[art].datum && !r[art].obenZeit && r[art].untenZeit, art + ": " + JSON.stringify(r[art]));
+  for (const art of ["Wartung", "Störung"]) pruefe(r[art].datum && !r[art].obenZeit && !r[art].untenZeit, art + ": " + JSON.stringify(r[art]));
   pruefe(!a.fehler.length, "Laufzeitfehler: " + a.fehler.join("; "));
   await a.zu();
 });
