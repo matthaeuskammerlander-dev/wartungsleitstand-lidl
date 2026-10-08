@@ -39,8 +39,8 @@ begin
         new.felder := new.felder || jsonb_build_object('pdfName', old.felder->'pdfName');
       end if;
     end if;
-    if jsonb_typeof(old.felder->'seiten') = 'array' and jsonb_array_length(old.felder->'seiten') > 0
-       and (jsonb_typeof(new.felder->'seiten') is distinct from 'array' or jsonb_array_length(new.felder->'seiten') = 0)
+    if (case when jsonb_typeof(old.felder->'seiten') = 'array' then jsonb_array_length(old.felder->'seiten') else 0 end) > 0
+       and (case when jsonb_typeof(new.felder->'seiten') = 'array' then jsonb_array_length(new.felder->'seiten') else 0 end) = 0
        and not coalesce((new.felder->>'_seitenWeg')::boolean, false) then
       new.felder := new.felder || jsonb_build_object('seiten', old.felder->'seiten');
     end if;
