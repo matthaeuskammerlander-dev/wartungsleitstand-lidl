@@ -68,7 +68,7 @@ Kammerlander Umwelt- und Klimatechnik (UKT) – oft kurz, vom Handy, im Feld.
   für Schritt. „+ Anlage fehlt“ fragt zuerst, ob die Anlage schon in der
   Liste steht (`anlageSchonDa`) – sonst bleibt die Zeile der alten Liste als
   Doppel zurück. Bezeichnung jeder Anlage in der Übersicht des Anlagendialogs
-  änderbar. KI-Fotos: Prüfbuch und Typenschilder bis 30 Bilder, gelesen in
+  änderbar. KI-Fotos: Prüfbuch bis 50 (`KI_MAX_PRUEFBUCH`, Inhaber 08.10.2026; Höchstzahl steht vor dem Wählen, `kiMaxText`), Typenschilder bis 30 Bilder, gelesen in
   Teilen zu 8 (`kiTeilLesen`, `kiTeileZusammen`; der Server nimmt 12 je Aufruf).
   Die gelesenen Fotos (Inhaber 06.10.2026) wählt man gleich in der KI-Prüfansicht („📷 Fotos an der Anlage
   speichern“, `kiFotoAuswahl`, `fotoVorschlag`; bei mehreren Büchern hängen sie an jedem Buch, `_fotoQuelle` mit `nr`/`andereTage`;
@@ -88,7 +88,8 @@ Kammerlander Umwelt- und Klimatechnik (UKT) – oft kurz, vom Handy, im Feld.
   die Arbeit und das Protokoll“): `kontoTechName()` setzt Techniker/in fest
   (nicht änderbar), der Name im Abschluss ist immer derselbe (`verantwortlich`
   beim Speichern, Trigger tools/protokoll-techniker.sql). Korrektur: es bleibt,
-  wer es gemacht hat. Wer noch dabei war: Weitere/r Techniker/in. Ausnahme (Büro
+  wer es gemacht hat. Wer noch dabei war: Weitere Techniker/innen (Inhaber 08.10.2026: beliebig viele mit „+ Techniker/in“, je Zeile Auswahl aus
+  Team/bekannten Namen oder „anderer Name …“, leer lassen geht – `mitTechnikerListe`, verstecktes Feld `#f_mit` als JSON, `mitarbeiter`; alte Entwürfe mit f_tech2/f_tech3 werden übernommen). Ausnahme (Büro
   02.10.2026, ohne Bestätigung): Admins und Inhaber dürfen „Ausgefüllt für“ eine andere
   Person wählen (`#f_fuer`) – Techniker/in = wer gearbeitet hat, Spalte `erfasst_von`
   (tools/protokoll-im-auftrag.sql) = wer eingetragen hat, sichtbar in Protokoll und PDF
@@ -601,6 +602,10 @@ Kammerlander Umwelt- und Klimatechnik (UKT) – oft kurz, vom Handy, im Feld.
   `spielwiese()` statt `demo()` – alles läuft echt gegen die Schattendatenbank (`schattenClient`: Tabellen
   beim ersten Zugriff in den Speicher, Schreiben nur dort, keine KI/RPC außer Teamliste). `vorschauSchutz`
   sperrt zusätzlich jedes Schreiben im Netz. Schließen verwirft alles.
+- **Lidl-Auftrag mit großen Fotos** (Inhaber 08.10.2026: „6,5 MB – Fotos übernehmen, aber die Dateigröße reduzieren“): gelesen bis
+  `AUFTRAG_PDF_LESEN_MAX` (40 MB, `auftragPdfZuGross`); über `AUFTRAG_PDF_ORIGINAL` (1 MB) bleibt eine verkleinerte PDF aus den Seitenbildern
+  (`pdfVerkleinern`, „… (verkleinert).pdf“), eingebettete Fotos (ab 300 px, höchstens `AUFTRAG_FOTO_MAX`, je `AUFTRAG_FOTO_PX` als JPEG, `pdfFotosHolen`)
+  kommen zu den Auftragsbildern (`o.seiten`) bzw. in die Ansicht im Protokoll.
 - **Störungen nie doppelt** (Büro 01.10.2026): eine Lidl-Auftragsnummer gibt es
   nur einmal als Störung (Datenbank-Index `stoerung_auftrag_einmal`,
   tools/stoerung-eindeutig.sql; im Dialog „Vorhandene öffnen“ statt neu – auch beim Ändern der Nummer).

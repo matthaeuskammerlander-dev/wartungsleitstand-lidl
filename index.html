@@ -1589,6 +1589,53 @@ function kanonName(n){
     return NAMEN_ALIAS[l] || NAMEN_KANON[l] || t;
   }).filter(Boolean).join(", ");
 }
+/* Weitere Techniker/innen im Protokoll (Inhaber 08.10.2026: „mehr Techniker hinzufügen (+), aus einer Liste auswählen
+   oder auch keinen Namen“): beliebig viele, je Zeile Auswahl aus dem Team bzw. „anderer Name …“; leer gelassen zählt nicht.
+   Gespeichert im versteckten Feld (JSON-Liste) – Formular und geführter Dialog zeigen dieselbe Liste. */
+/* Auswahl: bekannte Namen und das Team ohne Kunden-/Präsentationskonten */
+function techAuswahlNamen(){
+  var s={}; bekannteNamen().forEach(function(n){ s[n]=1; });
+  (chatTeam||[]).forEach(function(t){ if(t && t.name && ["kunde","praesentation","archiv"].indexOf(t.rolle)<0) s[kanonName(t.name)]=1; });
+  if(typeof meinName==="function" && meinName()) s[kanonName(meinName())]=1;
+  return Object.keys(s).filter(Boolean).sort(function(a,b){ return a.localeCompare(b,"de"); });
+}
+function mitTechnikerLesen(ziel){
+  try{ var l=JSON.parse((ziel&&ziel.value)||"[]"); return Array.isArray(l) ? l.map(function(x){ return String(x||"").trim(); }).filter(Boolean) : []; }catch(e){ return []; }
+}
+function mitTechnikerListe(ziel, host, hauptName){
+  if(!ziel || !host) return;
+  var zeilen=mitTechnikerLesen(ziel);
+  var schreiben=function(){ ziel.value=JSON.stringify(zeilen.map(function(x){ return String(x||"").trim(); }).filter(Boolean)); formDirty=true;
+    ziel.dispatchEvent(new CustomEvent("neu", {detail:host})); };
+  var zeichnen=function(){
+    host.innerHTML="";
+    var box=el('<div class="stack" style="gap:6px"></div>'), haupt=String((hauptName&&hauptName())||"").trim().toLowerCase();
+    /* ohne Eintrag ein leeres Feld wie früher – leer lassen = allein */
+    (zeilen.length?zeilen:[""]).forEach(function(n, i){
+      var namen=techAuswahlNamen().filter(function(x){ return x.toLowerCase()!==haupt; }), frei=n && namen.indexOf(n)<0;
+      var z=el('<div class="rowflex" style="gap:6px;align-items:center;flex-wrap:nowrap" data-mitzeile>'+
+        '<select style="flex:1;min-width:0"><option value=""></option>'+namen.map(function(x){ return '<option value="'+esc(x)+'">'+esc(x)+"</option>"; }).join("")+
+          '<option value="__frei">anderer Name …</option></select>'+
+        '<input type="text" placeholder="Name" autocomplete="off" style="flex:1;min-width:0">'+
+        '<button class="btn ghost sm" type="button" aria-label="entfernen">✕</button></div>');
+      var sel=z.querySelector("select"), ein=z.querySelector("input");
+      sel.value=frei ? "__frei" : (n||""); ein.value=frei ? n : ""; ein.hidden=!frei;
+      sel.onchange=function(){ if(sel.value==="__frei"){ ein.hidden=false; zeilen[i]=ein.value; ein.focus(); } else { ein.hidden=true; zeilen[i]=sel.value; } schreiben(); };
+      ein.oninput=function(){ zeilen[i]=ein.value; schreiben(); };
+      z.querySelector("button").onclick=function(){ zeilen.splice(i,1); schreiben(); zeichnen(); };
+      box.appendChild(z);
+    });
+    var plus=el('<button class="btn ghost sm" type="button" data-mitplus style="align-self:flex-start">+ Techniker/in</button>');
+    plus.onclick=function(){ zeilen.push(""); zeichnen(); var s=host.querySelectorAll("[data-mitzeile] select"); if(s.length) s[s.length-1].focus(); };
+    box.appendChild(plus);
+    host.appendChild(box);
+  };
+  /* von außen geändert (Entwurf, Bearbeiten, die andere Ansicht derselben Liste): neu zeichnen */
+  /* das Team (Konten) kommt dazu, sobald geladen */
+  if(chatAn() && !chatTeam) chatTeamLaden().then(function(){ if(document.body.contains(host)) zeichnen(); });
+  ziel.addEventListener("neu", function(e){ if(e.detail===host || !document.body.contains(host)) return; zeilen=mitTechnikerLesen(ziel); zeichnen(); });
+  zeichnen();
+}
 function bekannteNamen(){
   var s={}; Object.keys(NAMEN_KANON).forEach(function(l){ s[NAMEN_KANON[l]]=1; });
   return Object.keys(s).sort(function(a,b){ return a.localeCompare(b,"de"); });
@@ -2978,7 +3025,7 @@ function stoerungTeilAuftragLesen(P){
   }
   function pdfLesen(ein){
     var datei=ein.files&&ein.files[0]; ein.value="";
-    if(!datei || pdfZuGross(datei)) return;
+    if(!datei || auftragPdfZuGross(datei)) return;
     melde("Auftrag wird gelesen …"); warnen("");
     leseLidlPdf(datei).then(function(a){
       /* lesbar, aber kein Lidl-Auftrag (etwa ein Rapport): nicht als Auftrag anhängen */
@@ -2986,8 +3033,11 @@ function stoerungTeilAuftragLesen(P){
         melde(""); warnen("In dieser PDF wurde kein Lidl-Störungsauftrag erkannt – nicht übernommen. Ist es die richtige Datei (nicht der Rapport)?");
         return;
       }
-      o.seiten=(a._seiten||[]).slice(0,2);
+      /* Seiten und die Fotos aus der PDF (verkleinert) */
+      o.seiten=(a._seiten||[]).slice(0,2).concat(a._fotos||[]);
       o.quelle="pdf";
+      if(a._fotos && a._fotos.length) toast(a._fotos.length+" Foto"+(a._fotos.length===1?"":"s")+" aus dem Auftrag übernommen"+(a._verkleinert?" – PDF von "+String(a._verkleinert).replace(".",",")+" MB verkleinert":"")+".");
+      else if(a._verkleinert) toast("PDF von "+String(a._verkleinert).replace(".",",")+" MB verkleinert.");
       /* die PDF selbst bleibt am Auftrag haengen und wandert spaeter ins
          Protokoll – die Seitenbilder sind nur fuers Anschauen da */
       o.pdfName=a._pdfName; o.pdfDaten=a._pdfDaten;
@@ -8115,7 +8165,7 @@ function anlageDialogTeilKi(P){
     var reihe=el('<div class="stack"><button class="btn" type="button" data-kiart="pruefbuch">Prüfbuch – eine oder mehrere Seiten</button>'+
       '<button class="btn" type="button" data-kiart="typenschild" data-geraet="aussen">Typenschild Außengerät</button>'+
       '<button class="btn ghost" type="button" data-kiart="typenschild" data-geraet="innen">Typenschilder Innengeräte – eins oder mehrere</button>'+
-      '<div class="muted" style="font-size:12.5px">Prüfbuch-Seiten dürfen in einem Rutsch fotografiert werden (bis '+KI_MAX_FOTOS+' Bilder, mehrere Anlagen gehen auch). '+
+      '<div class="muted" style="font-size:12.5px">Prüfbuch-Seiten dürfen in einem Rutsch fotografiert werden (<strong>bis '+kiMaxFotos("pruefbuch")+' Bilder</strong>, mehrere Anlagen gehen auch; Typenschilder bis '+kiMaxFotos("typenschild")+'). '+
       "Die Füllmenge der Anlage kommt aus dem Prüfbuch – auf dem Typenschild steht nur die Werksfüllung.</div></div>");
     reihe.querySelectorAll("[data-kiart]").forEach(function(b){ b.onclick=function(){ w.zu(); kiArt(b.dataset.kiart, b.dataset.geraet); }; });
     w.inhalt.appendChild(reihe);
@@ -8143,7 +8193,7 @@ function anlageDialogTeilKi(P){
     });
     function direkt(){ kiFotosWaehlen().then(function(dateien){
       if(!dateien.length) return;
-      if(dateien.length>kiMaxFotos(art)){ toast("Höchstens "+kiMaxFotos(art)+" Bilder auf einmal."); return; }
+      if(dateien.length>kiMaxFotos(art)){ window.alert(dateien.length+" Bilder gewählt – "+(art==="pruefbuch"?"beim Prüfbuch gehen ":"hier gehen ")+kiMaxText(art)+".\n\nBitte weniger wählen oder in zwei Durchgängen lesen (z. B. je Prüfbuch eine Serie)."); return; }
       P.kopf("KI liest "+dateien.length+" Bild"+(dateien.length===1?"":"er")+" …", "bitte warten");
       /* mit Zeitgrenze: eine hängende Anfrage darf den Dialog nicht ewig sperren */
       return kiLesen(art, dateien, kiKontext(kiMarkt(), a)).then(verarbeiten, function(e){
@@ -14098,7 +14148,7 @@ function kiWegWaehlen(art){
       '<button class="btn" type="button" data-weg="kopie" style="text-align:left;display:block;width:100%"><strong>Über die Claude-App (empfohlen)</strong><br>'+
         '<span style="font-size:13px;font-weight:400">Auftrag kopieren, Fotos in Claude geben, Antwort einfügen · kostenlos mit Claude-Abo</span></button>'+
       '<button class="btn ghost" type="button" data-weg="direkt" style="text-align:left;display:block;width:100%"><strong>Direkt in der App – kostenpflichtig</strong><br>'+
-        '<span style="font-size:13px">Fotos wählen, die App liest sie selbst · kostet je Fotoserie ca. 10–25 Cent (je nach Seitenzahl), '+
+        '<span style="font-size:13px">Fotos wählen, die App liest sie selbst · '+(kiMaxFotos(art)>12?"<strong>"+kiMaxText(art)+"</strong> · ":"")+'kostet je Fotoserie ca. 10–25 Cent (je nach Seitenzahl), '+
         'wird über den KI-Zugang der Firma abgerechnet</span></button></div>');
     box.querySelectorAll("[data-weg]").forEach(function(b){ b.onclick=function(){ ende(b.dataset.weg); }; });
     v.inhalt.appendChild(box);
@@ -14286,8 +14336,10 @@ function kiKopierweg(art, kontext, vorgang){
 }
 /* Prüfbuch und Typenschilder werden in Teilen gelesen; je Teil höchstens
    KI_PORTION Bilder (der Server nimmt bis 12), insgesamt bis KI_MAX_FOTOS */
-var KI_TEILBAR=["pruefbuch","typenschild"], KI_PORTION=8, KI_MAX_FOTOS=30;
-function kiMaxFotos(art){ return KI_TEILBAR.indexOf(art)>=0 ? KI_MAX_FOTOS : 12; }
+var KI_TEILBAR=["pruefbuch","typenschild"], KI_PORTION=8, KI_MAX_FOTOS=30, KI_MAX_PRUEFBUCH=50;   /* Prüfbuch bis 50 (Inhaber 08.10.2026) */
+function kiMaxFotos(art){ return art==="pruefbuch" ? KI_MAX_PRUEFBUCH : KI_TEILBAR.indexOf(art)>=0 ? KI_MAX_FOTOS : 12; }
+/* klarer Hinweis auf die Höchstzahl – vor dem Wählen und wenn zu viele gewählt wurden */
+function kiMaxText(art){ return "höchstens "+kiMaxFotos(art)+" Bilder auf einmal"; }
 /* ein Teil – eine Anfrage an die Funktion ki-lesen, mit eigener Zeitgrenze */
 function kiTeilLesen(art, bilder, kontext, k, n){
   var teilText = n>1 ? "Teil "+(k+1)+" von "+n+" einer Fotoserie (Bild 1 hier = Bild "+(k*KI_PORTION+1)+" der Serie). "+
@@ -14561,10 +14613,87 @@ document.addEventListener("click",function(e){
   else bildAnsicht(u, a.getAttribute("title")||"Ansicht");
 });
 
+/* Lidl-Auftrag mit großen Fotos (Inhaber 08.10.2026: „6,5 MB, Lidl hat zwei Fotos in großem Format dabei – Fotos übernehmen,
+   aber die Dateigröße reduzieren“): gelesen wird bis AUFTRAG_PDF_LESEN_MAX; über AUFTRAG_PDF_ORIGINAL bleibt nicht das
+   Original am Auftrag, sondern eine verkleinerte PDF aus den Seitenbildern (der Text ist dann schon gelesen); die Fotos
+   darin kommen verkleinert als eigene Bilder dazu (`pdfFotosHolen`). */
+var AUFTRAG_PDF_LESEN_MAX=40*1024*1024, AUFTRAG_PDF_ORIGINAL=1024*1024, AUFTRAG_FOTO_MAX=6, AUFTRAG_FOTO_PX=1600;
+function auftragPdfZuGross(datei){
+  if(datei && datei.size>AUFTRAG_PDF_LESEN_MAX){ toast("Die PDF ist zu groß ("+Math.round(datei.size/1048576*10)/10+" MB, höchstens "+Math.round(AUFTRAG_PDF_LESEN_MAX/1048576)+" MB)."); return true; }
+  return false;
+}
+/* Fotos in einer PDF (eingebettete Bilder ab 300 px, keine Logos/Striche), je höchstens AUFTRAG_FOTO_PX als JPEG */
+function pdfFotosHolen(pdf, maxSeiten){
+  var OPS=window.pdfjsLib.OPS, fotos=[], gesehen={};
+  var bildHolen=function(pg, id){
+    return new Promise(function(ok){
+      var quelle=/^g_/.test(id) ? pdf.commonObjs : pg.objs, fertig=false;
+      var nimm=function(b){ if(!fertig){ fertig=true; ok(b||null); } };
+      try{ if(quelle.has && quelle.has(id)) nimm(quelle.get(id)); else quelle.get(id, nimm); }catch(e){ nimm(null); }
+      setTimeout(function(){ nimm(null); }, 4000);
+    });
+  };
+  var alsJpeg=function(b){
+    var w=b.width, h=b.height; if(!w || !h || Math.min(w,h)<300) return null;
+    var sk=Math.min(1, AUFTRAG_FOTO_PX/Math.max(w,h)), cv=document.createElement("canvas");
+    cv.width=Math.round(w*sk); cv.height=Math.round(h*sk);
+    var g=cv.getContext("2d"); g.fillStyle="#fff"; g.fillRect(0,0,cv.width,cv.height);
+    if(b.bitmap) g.drawImage(b.bitmap, 0, 0, cv.width, cv.height);
+    else if(b.data){
+      var roh=document.createElement("canvas"); roh.width=w; roh.height=h;
+      var rg=roh.getContext("2d"), id=rg.createImageData(w,h), q=b.data, z=id.data, n=w*h;
+      if(b.kind===3 || q.length>=n*4) z.set(q.subarray ? q.subarray(0, n*4) : q.slice(0, n*4));
+      else if(b.kind===2 || q.length>=n*3){ for(var i=0,j=0;i<n;i++,j+=3){ z[i*4]=q[j]; z[i*4+1]=q[j+1]; z[i*4+2]=q[j+2]; z[i*4+3]=255; } }
+      else return null;   /* Schwarz-Weiß-Bitmaps sind keine Fotos */
+      rg.putImageData(id,0,0); g.drawImage(roh, 0, 0, cv.width, cv.height);
+    } else return null;
+    return cv.toDataURL("image/jpeg", 0.75);
+  };
+  var seiten=[]; for(var i=1;i<=Math.min(pdf.numPages, maxSeiten||10);i++) seiten.push(i);
+  return seiten.reduce(function(kette, n){
+    return kette.then(function(){
+      if(fotos.length>=AUFTRAG_FOTO_MAX) return;
+      return pdf.getPage(n).then(function(pg){
+        return pg.getOperatorList().then(function(ol){
+          var ids=[];
+          ol.fnArray.forEach(function(fn, k){
+            if(fn===OPS.paintImageXObject || fn===OPS.paintJpegXObject){ var id=ol.argsArray[k][0]; if(id && !gesehen[id]){ gesehen[id]=1; ids.push(id); } }
+          });
+          return ids.reduce(function(k2, id){
+            return k2.then(function(){ if(fotos.length>=AUFTRAG_FOTO_MAX) return;
+              return bildHolen(pg, id).then(function(b){ var u=b && alsJpeg(b); if(u) fotos.push(u); }); });
+          }, Promise.resolve());
+        });
+      });
+    }).catch(function(){});
+  }, Promise.resolve()).then(function(){ return fotos; });
+}
+/* verkleinerte PDF aus den Seiten (je rund 1100 px, JPEG) – für Aufträge, deren Original zu groß zum Ablegen ist */
+function pdfVerkleinern(pdf, name){
+  var seiten=[]; for(var i=1;i<=Math.min(pdf.numPages, 10);i++) seiten.push(i);
+  return ladePdfBibliotheken().then(function(){
+    var doc=null;
+    return seiten.reduce(function(kette, n){
+      return kette.then(function(){ return pdf.getPage(n); }).then(function(pg){
+        var roh=pg.getViewport({scale:1}), vp=pg.getViewport({scale:Math.min(2, 1100/roh.width)});
+        var cv=document.createElement("canvas"); cv.width=Math.round(vp.width); cv.height=Math.round(vp.height);
+        var g=cv.getContext("2d"); g.fillStyle="#fff"; g.fillRect(0,0,cv.width,cv.height);
+        return pg.render({canvasContext:g, viewport:vp}).promise.then(function(){
+          var w=roh.width, h=roh.height, quer=w>h;
+          if(!doc) doc=new window.jspdf.jsPDF({unit:"pt", format:[w,h], orientation:quer?"landscape":"portrait", compress:true});
+          else doc.addPage([w,h], quer?"landscape":"portrait");
+          doc.addImage(cv.toDataURL("image/jpeg", 0.7), "JPEG", 0, 0, w, h);
+        });
+      });
+    }, Promise.resolve()).then(function(){
+      return doc ? {name:String(name||"auftrag.pdf").replace(/\.pdf$/i,"")+" (verkleinert).pdf", datenUrl:doc.output("datauristring").replace(/^data:application\/pdf;[^,]*,/,"data:application/pdf;base64,")} : null;
+    });
+  });
+}
 function leseLidlPdf(datei){
-  /* das Original merken – es wird beim Protokoll abgelegt */
-  var roh=null;
-  return ladePdfJs().then(function(){ return dateiAlsDatenUrl(datei); })
+  /* das Original merken – es wird beim Protokoll abgelegt; zu groß: verkleinert */
+  var roh=null, gross=datei.size>AUFTRAG_PDF_ORIGINAL;
+  return ladePdfJs().then(function(){ return gross ? null : dateiAlsDatenUrl(datei); })
     .then(function(u){ roh=u; return datei.arrayBuffer(); }).then(function(buf){
     return window.pdfjsLib.getDocument({data:new Uint8Array(buf)}).promise;
   }).then(function(pdf){
@@ -14581,7 +14710,13 @@ function leseLidlPdf(datei){
         var a = lesbar ? werteLidlAuftrag(teile) : {};
         a._lesbar=lesbar; a._seiten=bilder;
         a._pdfName=datei.name||"auftrag.pdf"; a._pdfDaten=roh;
-        return a;
+        return pdfFotosHolen(pdf).then(function(f){ a._fotos=f; }, function(){ a._fotos=[]; }).then(function(){
+          if(!gross) return a;
+          return pdfVerkleinern(pdf, a._pdfName).then(function(k){
+            if(k){ a._pdfName=k.name; a._pdfDaten=k.datenUrl; a._verkleinert=Math.round(datei.size/1048576*10)/10; }
+            return a;
+          }, function(){ return a; });   /* ohne PDF-Werkzeug (kein Netz): Seitenbilder und Fotos genügen */
+        });
       });
     });
   });
@@ -15254,7 +15389,7 @@ function protoAssistentTeilAbschluss(P){
         inhalt.appendChild(el('<div class="as-feld"><div class="as-label">Techniker/in – verantwortlich, unterschreibt</div>'+
           '<div style="font-size:16px;font-weight:600">'+esc(tfE.value)+"</div>"+
           '<div class="muted" style="font-size:12.5px">'+(S.bearbeiten?"hat das Protokoll gemacht – bleibt bei der Korrektur":(f("#f_fuer")&&f("#f_fuer").value?"im Auftrag – erfasst von dir":"aus deinem Konto"))+
-          ". Wer noch dabei war, gehört unten zu „Weitere/r Techniker/in“.</div></div>"));
+          ". Wer noch dabei war, gehört unten zu „Weitere Techniker/innen“.</div></div>"));
         /* Admin/Inhaber: für jemand anderen ausfüllen – dieselbe Auswahl wie im Formular */
         var echt=f("#f_fuer");
         if(echt && !S.bearbeiten){
@@ -15269,8 +15404,9 @@ function protoAssistentTeilAbschluss(P){
         nameEin.onchange=function(){ var t=f("#f_tech"); if(t) t.dispatchEvent(new Event("change",{bubbles:true})); };
         inhalt.appendChild(nameFeld);
       }
-      inhalt.appendChild(textFeld("Weitere/r Techniker/in","#f_tech2",false,"leer = allein"));
-      inhalt.appendChild(textFeld("Dritte/r Techniker/in","#f_tech3",false));
+      var mitF=el('<div class="as-feld"><div class="as-label">Weitere Techniker/innen – wer noch dabei war</div><div></div></div>');
+      mitTechnikerListe(f("#f_mit"), mitF.lastChild, function(){ return wert("#f_tech"); });
+      inhalt.appendChild(mitF);
       /* Datum hier änderbar (Büro 01.10.2026: im Dialog ging es nicht) – als
          echtes Datumsfeld wie im Formular, nicht in der Zukunft */
       var df=el('<div class="as-feld"><div class="as-label">'+(stoer?"Datum des Einsatzes":"Datum der Wartung")+'</div><input type="date"></div>'), di=df.querySelector("input");
@@ -15328,7 +15464,7 @@ function protoAssistentTeilAbschluss(P){
           nFehlt=karten.filter(function(k){ return k.querySelector("[data-spring]"); }).length;
       var anlText=[nAkt?nAkt+" werden aktualisiert":"", nNeu?nNeu+" neu erfasst":"", nFehlt?"bei "+nFehlt+" fehlt noch etwas":""].filter(Boolean).join(" · ")||"unverändert";
       var ergebnisse=[].slice.call(form.querySelectorAll('input[name="ergebnis"]:checked')).map(function(cb){ return cb.nextElementSibling.textContent; });
-      var mit=[wert("#f_tech2"), wert("#f_tech3")].filter(function(x){ return x.trim(); });
+      var mit=mitTechnikerLesen(f("#f_mit"));
       var rapInfo=form.querySelector("#s_rapportinfo"), rapDa=form.querySelector("#s_rapport") && (!form._istLidl || form._istLidl());
       var gb=f("#f_grundbox");
       var fehlt=form._fehltNoch ? form._fehltNoch() : [];
@@ -15596,8 +15732,7 @@ function protokollFormHtml(stoer, s){
   '<fieldset><legend>Wartungsunternehmen</legend><div class="grid">'+
     '<label class="fl"><span>Firma / Vertragspartner</span><input type="text" id="f_firma" value="Kammerlander Umwelt- und Klimatechnik GmbH"></label>'+
     '<label class="fl"><span class="req">Techniker/in</span><input type="text" id="f_tech" list="technamen" autocomplete="off" required></label>'+
-    '<label class="fl"><span>Weitere/r Techniker/in</span><input type="text" id="f_tech2" list="technamen" autocomplete="off" placeholder="leer = allein"></label>'+
-    '<label class="fl"><span>Dritte/r Techniker/in</span><input type="text" id="f_tech3" list="technamen" autocomplete="off"></label>'+
+    '<div class="fl" style="grid-column:1/-1"><span>Weitere Techniker/innen</span><div data-mitliste></div><input type="hidden" id="f_mit" value="[]"></div>'+
     '<label class="fl"><span>Telefon / E-Mail</span><input type="text" id="f_kontakt"></label>'+
     '<label class="fl"><span>F-Gase-Unternehmenszertifikat Nr.</span><input type="text" id="f_zertu" inputmode="text" autocapitalize="characters" autocorrect="off" spellcheck="false"></label>'+
     '<label class="fl"><span>F-Gase-Personenzertifikat Nr.</span><input type="text" id="f_zertp" inputmode="text" autocapitalize="characters" autocorrect="off" spellcheck="false"></label>'+
@@ -15845,6 +15980,7 @@ function protoTeilMarkt(P){
     /* weiterer Kunde statt Lidl (Büro 01.10.2026): die Lidl-Teile ausblenden – Lidl-Auftrag
        als Pflicht, Auftrag-PDF und QR-Code, Rapportbericht, FM-Region, Rechnungshinweis */
     form._istLidl=function(){ var s0=byId[P.selSt.value]; return !s0 || istLidl(s0); };
+    mitTechnikerListe(form.querySelector("#f_mit"), form.querySelector("[data-mitliste]"), function(){ return form.querySelector("#f_tech").value; });
     form._lidlAnpassen=function(){
       var lidl=form._istLidl();
       form.querySelectorAll("[data-nurlidl]").forEach(function(x){ x.hidden=!lidl; });
@@ -16686,7 +16822,7 @@ function protoTeilStoerung(P){
       pdfEin=form.querySelector("#s_pdf");
       pdfEin.onchange=function(){
         var datei=pdfEin.files&&pdfEin.files[0]; pdfEin.value="";
-        if(!datei || pdfZuGross(datei)) return;
+        if(!datei || auftragPdfZuGross(datei)) return;
         sInfo("Auftrag wird gelesen …"); sWarn("");
         leseLidlPdf(datei).then(function(a){
           if(P.formWeg()) return;
@@ -16707,7 +16843,7 @@ function protoTeilStoerung(P){
             if(a._seiten && a._seiten.length) auftragBildZeigen(a._seiten);
             return; }
           uebernimmAuftrag(a);
-          if(a._seiten && a._seiten.length) auftragBildZeigen(a._seiten);
+          if(a._seiten && a._seiten.length) auftragBildZeigen(a._seiten.concat(a._fotos||[]));
         }, function(e){ if(P.formWeg()) return; sInfo(""); sWarn("Die PDF konnte nicht gelesen werden: "+esc(e&&e.message||String(e))); });
       };
       form.querySelector("#s_qrzeigen").onclick=function(){ auftragQrAnsicht(form.querySelector("#f_auftrag").value.trim(), P.qrRoh); };
@@ -16990,7 +17126,7 @@ function protoTeilKorrektur(P){
         setz("f_wart_sonst",art.replace(/^sonstige:\s*/,""));
       } else { r2=form.querySelector('input[name="wart"][value="'+art+'"]'); if(r2) r2.checked=true; }
       setz("f_firma",bearb.firma); setz("f_tech",bearb.techniker); setz("f_kontakt",bearb.kontakt);
-      setz("f_tech2",(bearb.mitarbeiter||[])[0]); setz("f_tech3",(bearb.mitarbeiter||[])[1]);
+      setz("f_mit",JSON.stringify(bearb.mitarbeiter||[])); form.querySelector("#f_mit").dispatchEvent(new Event("neu"));
       setz("f_zertu",bearb.zertUnternehmen); setz("f_zertp",bearb.zertPerson); setz("f_sub",bearb.subunternehmen);
       P.anlagenZeichnen();
       form.querySelectorAll('input[name="arbeit"]').forEach(function(c){ c.checked=arbeitenAktuell(bearb.arbeiten).indexOf(c.value)>=0; });
@@ -17242,6 +17378,8 @@ function protoTeilEntwurf(P){
     Object.keys(d.werte||{}).forEach(function(id){
       var n=form.querySelector("#"+CSS.escape(id)); if(n && n.type!=="file") n.value=d.werte[id];
     });
+    var fmit=form.querySelector("#f_mit");
+    if(fmit){ if(!d.werte || !d.werte.f_mit) fmit.value=JSON.stringify([(d.werte||{}).f_tech2, (d.werte||{}).f_tech3].filter(Boolean)); fmit.dispatchEvent(new Event("neu")); }
     /* verantwortlich bleibt das Konto – auch wenn im Entwurf ein anderer Name stand */
     if(P.kontoName && !bearb) form.querySelector("#f_tech").value=P.kontoName;
     form.querySelector("#f_name").value=form.querySelector("#f_tech").value;
@@ -17529,7 +17667,7 @@ function protoTeilSpeichern(P){
         wartungsart:radio("wart")==="sonstige"?("sonstige: "+v("f_wart_sonst")):radio("wart"),
         firma:v("f_firma"), techniker:verantwortlich, kontakt:v("f_kontakt"),
         /* wer noch mitgearbeitet hat */
-        mitarbeiter:[v("f_tech2"),v("f_tech3")].map(kanonName).filter(Boolean),
+        mitarbeiter:mitTechnikerLesen(form.querySelector("#f_mit")).map(kanonName).filter(Boolean),
         subunternehmen:v("f_sub"), zertUnternehmen:v("f_zertu"), zertPerson:v("f_zertp"),
         anlagen:anlagen,
         arbeiten:Array.prototype.map.call(form.querySelectorAll('input[name="arbeit"]:checked'),function(x){return x.value;}),
@@ -26211,7 +26349,7 @@ Object.assign(RUNDGAENGE, {
         "<strong>Wartungsart</strong>: nur „planmäßig“ oder „Prüfung“ erledigt einen Termin."])+
       RG_HG("Adresse und FM-Region kommen vom Markt. Antworten bei „Vor Ort klären“ werden sofort gespeichert – sie sind nicht Teil des Protokolls.")},
     {reiter:"protokoll", ziel:function(){ return rgEl("#f_tech"); }, titel:"Wartungsunternehmen",
-      text:"Techniker/in ist das angemeldete Konto (fest). Weitere/r und Dritte/r Techniker/in für die, die dabei waren. Admins und Inhaber können <strong>„Ausgefüllt für“</strong> eine andere Person wählen."+
+      text:"Techniker/in ist das angemeldete Konto (fest). Weitere Techniker/innen (+, aus der Liste oder anderer Name; leer lassen geht) für die, die dabei waren. Admins und Inhaber können <strong>„Ausgefüllt für“</strong> eine andere Person wählen."+
       RG_HG("Kontakt und Personenzertifikat kommen aus „Meine Angaben“ bzw. dem letzten Protokoll, das Firmenzertifikat vom letzten Mal. Bei „Ausgefüllt für“ steht im Protokoll und PDF „erfasst von … im Auftrag“.")},
     {reiter:"protokoll", ziel:function(){ return rgEl("#anlagen"); }, titel:"Anlagendaten",
       text:"Je angehakter Anlage eine Karte mit „Fehlt: …“ oder „vollständig“; „Ergänzen“/„Prüfen“ öffnet den Anlagendialog: die fehlenden Gruppen nacheinander, am Ende die Übersicht mit „Übernehmen“."+RG_LISTE([

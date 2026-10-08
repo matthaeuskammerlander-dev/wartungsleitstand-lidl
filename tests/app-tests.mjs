@@ -5056,6 +5056,88 @@ test("Stempeln kommt an oder wird deutlich gemeldet: wartet nie lange auf den St
   await a.zu();
 });
 
+/* Inhaber 08.10.2026: „Die PDF ist zu groß (6,5 MB) – Lidl hat zwei Fotos in großem Format dabei. Fotos übernehmen, aber die Dateigröße reduzieren.“ */
+test("Lidl-Auftrag mit großen Fotos: über 5 MB wird gelesen, Fotos verkleinert übernommen, abgelegt wird eine verkleinerte PDF", async () => {
+  const a = await oeffnen(KONTEN.admin);
+  const r = await a.seite.evaluate(async () => {
+    const x = window.__t.x, e = {};
+    await x("ladePdfBibliotheken()"); await x("ladePdfJs()");
+    /* Test-Auftrag: eine Seite Text, eine Seite mit einem großen „Foto“ (Rauschen, damit es nicht klein wird) */
+    const cv = document.createElement("canvas"); cv.width = 2400; cv.height = 1800;
+    const g = cv.getContext("2d"), bild = g.createImageData(2400, 1800);
+    for (let i = 0; i < bild.data.length; i += 4) { bild.data[i] = (i * 7) % 255; bild.data[i + 1] = (i * 13) % 255; bild.data[i + 2] = Math.random() * 255; bild.data[i + 3] = 255; }
+    g.putImageData(bild, 0, 0);
+    const doc = new window.jspdf.jsPDF({ unit: "mm", format: "a4" });
+    doc.text("Testauftrag ohne echte Daten", 20, 20);
+    doc.addPage(); doc.addImage(cv.toDataURL("image/jpeg", 0.95), "JPEG", 10, 10, 190, 142);
+    const blob = doc.output("blob"), datei = new File([blob], "Testauftrag.pdf", { type: "application/pdf" });
+    e.groesse = datei.size;
+    e.zuGrossAlt = datei.size > x("PDF_MAX");
+    e.zuGrossNeu = x("auftragPdfZuGross")(datei);
+    x("AUFTRAG_PDF_ORIGINAL=100*1024; 1");
+    const erg = await x("leseLidlPdf")(datei);
+    x("AUFTRAG_PDF_ORIGINAL=1024*1024; 1");
+    e.fotos = (erg._fotos || []).length;
+    const f = erg._fotos && erg._fotos[0];
+    if (f) { const im = new Image(); im.src = f; await im.decode(); e.fotoPx = Math.max(im.width, im.height); e.fotoKb = Math.round(f.length * 0.75 / 1024); }
+    e.name = erg._pdfName; e.verkleinert = erg._verkleinert;
+    e.pdfKb = Math.round(String(erg._pdfDaten || "").length * 0.75 / 1024);
+    const roh = atob(String(erg._pdfDaten).split(",")[1]), b = new Uint8Array(roh.length); for (let i = 0; i < roh.length; i++) b[i] = roh.charCodeAt(i);
+    e.seiten = (await window.pdfjsLib.getDocument({ data: b }).promise).numPages;
+    return e;
+  });
+  pruefe(!r.zuGrossNeu, "Große PDF abgelehnt: " + JSON.stringify(r));
+  pruefe(r.fotos === 1 && r.fotoPx === 1600 && r.fotoKb < 1200, "Fotos: " + JSON.stringify(r));
+  pruefe(/\(verkleinert\)\.pdf$/.test(r.name) && r.seiten === 2 && r.pdfKb * 1024 < r.groesse, "Verkleinerte PDF: " + JSON.stringify(r));
+  pruefe(!a.fehler.length, "Laufzeitfehler: " + a.fehler.join("; "));
+  await a.zu();
+});
+
+/* Inhaber 08.10.2026: „mehr Techniker hinzufügen (+), aus einer Liste auswählen oder auch keinen Namen – einfach frei lassen“ */
+test("Weitere Techniker/innen im Protokoll: beliebig viele mit +, aus der Liste oder anderer Name, leer lassen geht", async () => {
+  const a = await oeffnen(KONTEN.admin);
+  const r = await a.seite.evaluate(async () => {
+    const x = window.__t.x, w = (ms) => new Promise((f) => setTimeout(f, ms)), e = {};
+    x("formDirty=false; S.protoArt='wartung'; S.bearbeiten=null; S.protoStandort='TS1'; S.protoPos=null; S.view='protokoll'; render(); 1"); await w(500);
+    await x("chatTeamLaden()"); await w(300);
+    const form = document.getElementById("proto"), host = form.querySelector("[data-mitliste]"), ziel = form.querySelector("#f_mit");
+    e.start = host.querySelectorAll("[data-mitzeile]").length + "|" + ziel.value;
+    const namen = x("techAuswahlNamen()").filter((n) => n !== form.querySelector("#f_tech").value);
+    const waehle = (i, wert) => { const s = host.querySelectorAll("[data-mitzeile] select")[i]; s.value = wert; s.dispatchEvent(new Event("change")); };
+    waehle(0, namen[0]);
+    host.querySelector("[data-mitplus]").click(); waehle(1, "__frei");
+    const frei = host.querySelectorAll("[data-mitzeile] input")[1]; frei.value = "Gast Monteur"; frei.dispatchEvent(new Event("input"));
+    host.querySelector("[data-mitplus]").click(); host.querySelector("[data-mitplus]").click();   /* zwei leer gelassen */
+    e.zeilen = host.querySelectorAll("[data-mitzeile]").length;
+    e.wert = ziel.value;
+    e.erwartet = JSON.stringify([namen[0], "Gast Monteur"]);
+    /* entfernen: die erste Zeile weg */
+    host.querySelector("[data-mitzeile] button").click();
+    e.nachEntfernen = ziel.value;
+    /* alter Entwurf mit zwei Feldern */
+    ziel.value = JSON.stringify(["A Alt", "B Alt"]); ziel.dispatchEvent(new Event("neu"));
+    e.neuGezeichnet = [...host.querySelectorAll("[data-mitzeile] input")].map((i) => i.value).join(",");
+    return e;
+  });
+  pruefe(r.start === "1|[]", "Start: ein leeres Feld: " + r.start);
+  pruefe(r.zeilen === 4 && r.wert === r.erwartet, "Liste: " + JSON.stringify(r));
+  pruefe(r.nachEntfernen === '["Gast Monteur"]', "Entfernen: " + r.nachEntfernen);
+  pruefe(r.neuGezeichnet === "A Alt,B Alt", "Von außen gesetzt: " + r.neuGezeichnet);
+  pruefe(!a.fehler.length, "Laufzeitfehler: " + a.fehler.join("; "));
+  await a.zu();
+});
+
+test("KI-Prüfbuch bis 50 Bilder, Typenschilder bis 30 – Höchstzahl steht klar vor dem Wählen", async () => {
+  const a = await oeffnen(KONTEN.admin);
+  const r = await a.seite.evaluate(() => {
+    const x = window.__t.x;
+    return { pb: x("kiMaxFotos('pruefbuch')"), ts: x("kiMaxFotos('typenschild')"), au: x("kiMaxFotos('auftrag')"), text: x("kiMaxText('pruefbuch')") };
+  });
+  pruefe(r.pb === 50 && r.ts === 30 && r.au === 12 && r.text === "höchstens 50 Bilder auf einmal", "Höchstzahlen: " + JSON.stringify(r));
+  pruefe(!a.fehler.length, "Laufzeitfehler: " + a.fehler.join("; "));
+  await a.zu();
+});
+
 /* Antworten des Inhabers vom 05.10.2026 (Teil kern) */
 test("Antworten kern: „Nur Jahreswartung“ sperrt den Halbjahrestermin wie am Markt üblich – bleibt, bis die Verwaltung es zurücknimmt", async () => {
   const a = await oeffnen(KONTEN.admin);
