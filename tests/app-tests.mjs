@@ -5194,6 +5194,57 @@ test("Material abholen/bestellen: Händler suchen, Treffer wählen → Feld ausg
   await a.zu();
 });
 
+/* Inhaber 08.10.2026: „Kannst du nochmal überprüfen, dass sich auch die Fensterbreite und Größe immer gut anpasst?“ –
+   jeder Reiter in vielen Breiten und Schriftgrößen: nichts ragt über den Rand, kein seitliches Scrollen der Seite */
+test("Fensterbreite und Schriftgröße: jeder Reiter passt – Handy hoch/quer, Tablet, PC schmal bis breit, Schrift 60–150 %", async () => {
+  const REITER = ["faellig", "kalender", "karte", "protokoll", "anlagen", "stunden", "fahrzeuge", "werkzeug", "projekte", "kunden", "rechnungen", "verlauf", "verwaltung", "datenbasis"];
+  const messen = (seite) => seite.evaluate(async (reiter) => {
+    const w = (ms) => new Promise((f) => setTimeout(f, ms)), x = window.__t.x, funde = [];
+    for (const v of reiter) {
+      try { x("formDirty=false; S.view='" + v + "'; render(); 1"); } catch (e) { continue; }
+      await w(v === "karte" ? 700 : 350);
+      const B = document.documentElement.clientWidth, raus = document.documentElement.scrollWidth - B;
+      const schuld = [];
+      if (raus > 2) {
+        /* wer ragt hinaus – ohne Elemente in eigenem Scrollbereich */
+        document.querySelectorAll("body *").forEach((n) => {
+          if (schuld.length >= 3) return;
+          const r = n.getBoundingClientRect(); if (!r.width || r.right <= B + 2) return;
+          for (let p = n.parentElement; p && p !== document.body; p = p.parentElement) { const o = getComputedStyle(p).overflowX; if (o === "auto" || o === "scroll" || o === "hidden") return; }
+          if ([...n.children].some((k) => k.getBoundingClientRect().right > B + 2)) return;   /* nur das innerste */
+          schuld.push((n.tagName + "." + String(n.className || "").split(" ")[0] + " " + (n.textContent || "").trim().slice(0, 30)).trim() + " →" + Math.round(r.right));
+        });
+      }
+      if (raus > 2) funde.push(v + ": +" + raus + "px " + schuld.join(" | "));
+    }
+    x("S.view='faellig'; render(); 1");
+    return { breite: document.documentElement.clientWidth, vp: document.querySelector('meta[name="viewport"]').content, funde };
+  }, REITER);
+  const bericht = [];
+  /* Handy und Tablet (Touch): Schriftgröße über die Viewport-Breite */
+  const h = await oeffnen(KONTEN.inhaber, { handy: true });
+  for (const [bw, hh, stufen] of [[390, 844, [0.6, 0.75, 1, 1.3, 1.5]], [360, 740, [1.15, 1.3, 1.5]], [844, 390, [0.75, 1, 1.3]], [768, 1024, [0.75, 1, 1.3]]]) {
+    await h.seite.setViewportSize({ width: bw, height: hh });
+    for (const s of stufen) {
+      await h.seite.evaluate((z) => { localStorage.setItem("ukt_schrift", JSON.stringify(z)); schriftAnwenden(); }, s); await h.seite.waitForTimeout(500);
+      const m = await messen(h.seite);
+      if (m.funde.length) bericht.push("Touch " + bw + "×" + hh + " Schrift " + s + " (Breite " + m.breite + "): " + m.funde.join(" ;; "));
+    }
+  }
+  pruefe(!h.fehler.length, "Laufzeitfehler Handy: " + h.fehler.join("; "));
+  await h.zu();
+  /* PC: Strg +/− ändert die Breite in CSS-Pixeln – dieselben Breiten prüfen */
+  const p = await oeffnen(KONTEN.inhaber);
+  for (const bw of [640, 800, 1000, 1280, 1600, 1920, 2560]) {
+    await p.seite.setViewportSize({ width: bw, height: 900 }); await p.seite.waitForTimeout(300);
+    const m = await messen(p.seite);
+    if (m.funde.length) bericht.push("PC " + bw + ": " + m.funde.join(" ;; "));
+  }
+  pruefe(!p.fehler.length, "Laufzeitfehler PC: " + p.fehler.join("; "));
+  await p.zu();
+  pruefe(!bericht.length, "ragt hinaus:\n      " + bericht.join("\n      "));
+});
+
 /* Antworten des Inhabers vom 05.10.2026 (Teil kern) */
 test("Antworten kern: „Nur Jahreswartung“ sperrt den Halbjahrestermin wie am Markt üblich – bleibt, bis die Verwaltung es zurücknimmt", async () => {
   const a = await oeffnen(KONTEN.admin);
