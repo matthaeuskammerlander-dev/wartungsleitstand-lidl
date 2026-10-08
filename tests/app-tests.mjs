@@ -7107,6 +7107,29 @@ test("Protokoll-Blatt/PDF: nur das Datum – die Uhrzeit erscheint nirgends (obe
   await a.zu();
 });
 
+test("Arbeitszeit vor Ort kommt aus dem Lidl-Rapport: im Protokoll/PDF (Wartung und Störung), im Kalender beim erledigten Einsatz; ohne Rapport Ankunft–Fertig", async () => {
+  const a = await oeffnen(KONTEN.inhaber);
+  const r = await a.seite.evaluate(() => {
+    const x = window.__t.x, e = {}, heute = x("isoLokal(new Date())");
+    const rap = { daten: { zeilen: [{ von: "09:10", bis: "10:00", pause: "" }, { von: "07:30", bis: "08:45", pause: "" }, { von: "10:15", bis: "11:20" }] } };
+    e.zeit = JSON.stringify(x("rapportZeit")(rap.daten));
+    const w = { _id: "azW", datum: heute, uhrzeit: "15:55", standortId: "TS1", wartungsart: "Wartung", positionIds: ["TP1"], positionId: "TP1", techniker: "T", anlagen: [], rapport: rap };
+    const st = { _id: "azS", datum: heute, uhrzeit: "15:55", standortId: "TS1", wartungsart: "Störung", positionId: "TP1", techniker: "T", anlagen: [], stoerung: { ankunft: "13:00", ende: "14:30" } };
+    const hw = String(x("blattInhalt")(w)), hs = String(x("blattInhalt")(st));
+    e.wartung = /Arbeitszeit vor Ort[\s\S]{0,120}07:30 – 11:20/.test(hw) && !/15:55/.test(hw);
+    e.stoerung = /Arbeitszeit vor Ort[\s\S]{0,120}13:00 – 14:30/.test(hs) && !/15:55/.test(hs);
+    x("protokolle").push(w);
+    const k = (x("kalenderEintraege")(heute, heute, "alle")[heute] || []).find((z) => z.pr && z.pr._id === "azW") || {};
+    e.kalender = k.zeit + "|" + k.unter;
+    return e;
+  });
+  pruefe(r.zeit === '{"von":"07:30","bis":"11:20"}', "Rapport-Zeit: " + r.zeit);
+  pruefe(r.wartung && r.stoerung, "Protokoll/PDF: " + JSON.stringify(r));
+  pruefe(/^07:30\|erledigt · 07:30–11:20/.test(r.kalender), "Kalender: " + r.kalender);
+  pruefe(!a.fehler.length, "Laufzeitfehler: " + a.fehler.join("; "));
+  await a.zu();
+});
+
 test("Karte: „📍 Mein Standort“ zeigt die eigene Position (nur auf dem Gerät, nichts gespeichert)", async () => {
   const a = await oeffnen(KONTEN.techniker);
   const r = await a.seite.evaluate(async () => {

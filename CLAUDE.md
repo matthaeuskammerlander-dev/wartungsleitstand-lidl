@@ -570,6 +570,10 @@ Kammerlander Umwelt- und Klimatechnik (UKT) – oft kurz, vom Handy, im Feld.
   wieder ein (`_uktKachel`), zeichnet nur die Zeichen neu und behält den Ausschnitt, solange Auswahl/Tour/Standort gleich sind (`_uktSchluessel`);
   ältere Rückrufe prüfen `aktuell()` (`_uktGen`). Kacheln: keepBuffer 4, updateWhenIdle aus. Test „Karte bleibt erhalten …“.
 - **Diktieren** (`diktatKnopf`): Spracherkennung des Browsers, keine KI, Text wird angehängt.
+- **Uhrzeit / Arbeitszeit im Protokoll** (Inhaber 08.10.2026: „die Uhrzeit soll am PDF nicht erscheinen; die Arbeitszeit von–bis kommt vom Rapport
+  und steht dann am Protokoll; die gearbeitete Zeit brauchen wir im Kalender für Vor- und Nachplanung“): `blattInhalt` zeigt nur das Datum (nie `uhrzeit`);
+  „Arbeitszeit vor Ort“ = `protokollArbeitszeit` (Rapport-Zeilen `rapportZeit`: früheste von – späteste bis; sonst Ankunft–Fertig), bei Wartung und Störung;
+  `rapTextRein` füllt Ankunft/Fertig aus dem Rapport, wenn leer; Kalender zeigt beim erledigten Einsatz die gearbeitete Zeit.
 - **Rapport-Text** (`rapTextRein`): ausgeführte Arbeiten aus dem Lidl-Rapport zusätzlich in
   „Durchgeführte Maßnahmen“ bzw. „Bemerkungen“ – nie ersetzen, kein Feld fällt weg.
 - **Fahrtpauschale** (`fahrtZone`, Büro 02.10.2026): Zone 2 = Kärnten, Steiermark, Vorarlberg, Tirol westlich von

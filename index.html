@@ -10451,6 +10451,21 @@ function zuZeile(doc,uid){
 /* Der Rapportbericht eines Protokolls. Anfangs lag er nur bei Störungen in
    stoerung.rapportDatei – beide Stellen werden gelesen. */
 function rapportVon(p){ return (p && (p.rapport || (p.stoerung && p.stoerung.rapportDatei))) || null; }
+/* Arbeitszeit vor Ort (Inhaber 08.10.2026: „die Arbeitszeit von–bis soll man am Protokoll nicht eingeben müssen – die kommt vom
+   Rapport und steht dann am Protokoll; die gearbeitete Zeit brauchen wir im Kalender für Vor- und Nachplanung“): aus den Zeilen des
+   Lidl-Rapports (früheste von, späteste bis), sonst Ankunft–Fertig der Störung. {von, bis} oder null */
+function rapportZeit(daten){
+  var z=(daten && daten.zeilen)||[], von=null, bis=null;
+  z.forEach(function(x){ var a=hmMin(x.von), e=hmMin(x.bis); if(a==null || e==null) return;
+    if(von==null || a<von) von=a; if(bis==null || e>bis) bis=e; });
+  return von!=null ? {von:kalHm(von), bis:kalHm(bis)} : null;
+}
+function protokollArbeitszeit(p){
+  var r=rapportVon(p), az=r && rapportZeit(r.daten);
+  if(az) return az;
+  var so=p && p.stoerung;
+  return (so && so.ankunft && so.ende) ? {von:so.ankunft, bis:so.ende} : null;
+}
 function ausZeile(r){
   /* _id ist die Kennung aus der App – unter ihr liegen die Fotos */
   return { _id:r.client_id||r.id, erstellt:r.erstellt, erstelltVon:r.erstellt_von||null, standortName:r.standort_name, adresse:r.adresse, region:r.region,
@@ -13504,7 +13519,7 @@ var STOER_AUFTRAG=[
   ["lidlKontakt","Kontakt bei Lidl","text"], ["lidlTelefon","Telefon Lidl","text"], ["lidlMail","E-Mail Lidl","text"]
 ];
 var STOER_BEHEBUNG=[
-  ["ankunft","Ankunft","time"], ["ende","Fertig","time"],
+  ["ankunft","Ankunft (kommt aus dem Rapport)","time"], ["ende","Fertig (kommt aus dem Rapport)","time"],
   ["kmArt","Kältemittel","text"], ["kmNach","Kältemittel nachgefüllt (kg)","text"], ["kmEnt","Kältemittel zurückgewonnen (kg)","text"]
 ];
 var STOER_TEXTE=[["beschreibung","Beschreibung laut Auftrag"],["fehlerbild","Fehlerbild vor Ort"],
@@ -16390,6 +16405,10 @@ function protoTeilRapport(P){
       if(alt.indexOf(nurText)>=0) return;
       fe.value=alt.trim() ? alt.replace(/\s+$/,"")+"\n"+b : b;
       fe.dispatchEvent(new Event("input", {bubbles:true}));
+      /* Ankunft/Fertig gleich aus den Rapport-Zeiten – nichts eintippen (Inhaber 08.10.2026) */
+      var azR=rapportZeit(daten), fA=document.getElementById("s_ankunft"), fE=document.getElementById("s_ende");
+      if(azR && fA && !fA.value){ fA.value=azR.von; fA.dispatchEvent(new Event("input", {bubbles:true})); }
+      if(azR && fE && !fE.value){ fE.value=azR.bis; fE.dispatchEvent(new Event("input", {bubbles:true})); }
       toast("Ausgeführte Arbeiten aus dem Rapport bei „"+(fe.id==="s_massnahmen"?"Durchgeführte Maßnahmen":"Bemerkungen")+"“ ergänzt – bitte kurz prüfen.");
     };
     rapTextRaus=function(daten){
@@ -18058,7 +18077,7 @@ function blattInhalt(p){
     "</table>";
   var stoerBehebungHtml = !st ? "" :
     "<h2>Störungsbehebung</h2><table>"+
-      zeile("Arbeitszeit vor Ort",[so.ankunft,so.ende].filter(Boolean).join(" – ")+(so.ankunft||so.ende?" Uhr":""))+
+      (function(){ var az=protokollArbeitszeit(p); return az ? zeile("Arbeitszeit vor Ort", az.von+" – "+az.bis+" Uhr") : zeile("Arbeitszeit vor Ort", ""); })()+
       absatz("Fehlerbild vor Ort",so.fehlerbild)+
       absatz("Ursache",so.ursache)+
       absatz("Durchgeführte Maßnahmen",so.massnahmen)+
@@ -18085,6 +18104,7 @@ function blattInhalt(p){
       "<h2>Einsatz</h2><table>"+
         /* nur das Datum – die Uhrzeit erscheint im Protokoll/PDF nirgends (Inhaber 08.10.2026: „ich will, dass sie am PDF nicht erscheint“) */
         zeile(st?"Datum des Einsatzes":"Datum der Wartung",dfmt(p.datum))+
+        (!st && protokollArbeitszeit(p) ? zeile("Arbeitszeit vor Ort", protokollArbeitszeit(p).von+" – "+protokollArbeitszeit(p).bis+" Uhr") : "")+
         /* Bestellnummer gibt es im Formular nicht mehr – ältere Protokolle zeigen sie weiter */
         (p.bestellnummer?zeile("Bestellnummer",p.bestellnummer):"")+
         /* bei der Störung steht sie unter „Störungsmeldung Lidl“ */
@@ -32744,8 +32764,10 @@ function kalenderEintraege(von, bis, wahl, nur){
     if(p.geloescht || !p.datum || p.datum<von || p.datum>bis) return;
     if(!kalWerPasst(wahl, p.erstelltVon?[p.erstelltVon]:[], [p.techniker].concat(p.mitarbeiter||[]))) return;
     var s=byId[p.standortId];
-    dazu(p.datum, {art:"protokoll", pr:p, zeit:p.uhrzeit||"", farbe:"var(--ink-3)", grau:true,
-      titel:(istStoerung(p)?"Störung ":"Wartung ")+(s?stName(s):protoName(p)||""), unter:"erledigt"+(p.techniker?" · "+p.techniker:"")});
+    /* gearbeitete Zeit (Rapport bzw. Ankunft–Fertig) – für Vor- und Nachplanung (Inhaber 08.10.2026) */
+    var azK=protokollArbeitszeit(p);
+    dazu(p.datum, {art:"protokoll", pr:p, zeit:azK?azK.von:(p.uhrzeit||""), farbe:"var(--ink-3)", grau:true,
+      titel:(istStoerung(p)?"Störung ":"Wartung ")+(s?stName(s):protoName(p)||""), unter:"erledigt"+(azK?" · "+azK.von+"–"+azK.bis:"")+(p.techniker?" · "+p.techniker:"")});
   });
   Object.keys(m).forEach(function(t){ m[t].sort(function(a,b){ return String(a.zeit||"").localeCompare(String(b.zeit||"")) || (a.grau?1:0)-(b.grau?1:0); }); });
   return m;
