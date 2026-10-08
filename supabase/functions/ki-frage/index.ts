@@ -53,7 +53,7 @@ Deno.serve(async (req) => {
   if (req.method !== "POST") return antwort({ fehler: "Nur POST" }, 405);
 
   // Anfrage zuerst ganz lesen (sonst hängt der Upload am Handy)
-  let e: { nachrichten?: { role: string; text: string }[]; kontext?: string; weg?: string; nr?: number; suche?: string } = {};
+  let e: { nachrichten?: { role: string; text: string }[]; kontext?: string; weg?: string; nr?: number; suche?: string; link?: string } = {};
   try { e = await req.json(); } catch { return antwort({ fehler: "Anfrage nicht lesbar." }, 400); }
 
   const supabase = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_ANON_KEY")!,
@@ -68,7 +68,28 @@ Deno.serve(async (req) => {
     .map((n) => ({ role: n.role as "user" | "assistant", content: n.text.slice(0, MAX_ZEICHEN) }));
   // muss mit einer Frage beginnen und enden
   while (l.length && l[0].role !== "user") l.shift();
-  if (e.weg !== "github_stand" && e.weg !== "haendler" && (!l.length || l[l.length - 1].role !== "user")) return antwort({ fehler: "Keine Frage." }, 400);
+  if (e.weg !== "github_stand" && e.weg !== "haendler" && e.weg !== "link" && (!l.length || l[l.length - 1].role !== "user")) return antwort({ fehler: "Keine Frage." }, 400);
+
+  // ---- geteilter Google-Maps-Link (Inhaber 08.10.2026: „aus Google Maps teilen, nicht so praktisch“): die Kurz-Adresse
+  // (maps.app.goo.gl) leitet auf eine Adresse mit Name und Anschrift weiter – der Browser darf sie nicht selbst auflösen.
+  // Keine KI, kein Tageslimit; nur Google-Adressen werden aufgerufen.
+  if (e.weg === "link") {
+    const google = (x: string) => /^https:\/\/((maps\.app\.goo\.gl|goo\.gl)\/|((www|maps)\.)?google\.[a-z.]{2,6}\/maps|consent\.google\.[a-z.]{2,6}\/)/i.test(x);
+    let u = String(e.link ?? "").trim().slice(0, 500);
+    if (!google(u)) return antwort({ fehler: "Nur Links aus Google Maps." }, 400);
+    for (let i = 0; i < 5; i++) {
+      if (/[?&]q=|\/maps\/place\//.test(u)) break;
+      let r: Response;
+      try { r = await fetch(u, { redirect: "manual", headers: { "User-Agent": "Mozilla/5.0" } }); } catch { break; }
+      const ziel = r.headers.get("location");
+      if (!ziel) break;
+      let n = new URL(ziel, u).toString();
+      if (/consent\.google/.test(n)) n = new URL(n).searchParams.get("continue") || n;
+      if (!google(n)) break;
+      u = n;
+    }
+    return antwort({ url: u });
+  }
 
   // ---- Weg über GitHub: Claude Code beantwortet die Frage im Abo (kostet nichts
   // extra, dauert 1–2 Minuten). Das Repository ist öffentlich – die App schickt

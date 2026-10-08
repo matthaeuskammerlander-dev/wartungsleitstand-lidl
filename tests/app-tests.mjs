@@ -5286,6 +5286,43 @@ test("Händler selbst gefunden: Text einfügen verteilt Adresse, Telefon, Mail o
   await a.zu();
 });
 
+/* Inhaber 08.10.2026: aus Google Maps geteilter Link („nicht so praktisch das ganze“) – Link ins Feld, die App liest Name und Adresse ohne KI */
+test("Händler aus Google Maps geteilt: Link einfügen → Name und Adresse ohne KI, Kontakt gespeichert; Telefon/E-Mail-Felder wie alle anderen", async () => {
+  const a = await oeffnen(KONTEN.techniker);
+  const r = await a.seite.evaluate(async () => {
+    const x = window.__t.x, w = (ms) => new Promise((f) => setTimeout(f, ms)), db = window.__db.tabellen, e = {};
+    e.lesen = JSON.stringify(x("mapsLinkLesen")("https://maps.google.com/?q=Testk%C3%A4lte+GmbH,+Teststr.+5,+4050+Testort&ftid=0x1:0x2&entry=gps"));
+    e.ort = JSON.stringify(x("mapsLinkLesen")("https://www.google.com/maps/place/Testk%C3%A4lte+GmbH/@48.2,14.2,17z/data=x"));
+    const inv = x("Store.sb.functions").invoke; let gefragt = null;
+    x("Store.sb.functions").invoke = (n, o) => { gefragt = n + ":" + o.body.weg + ":" + o.body.link;
+      return Promise.resolve({ data: { url: "https://maps.google.com/?q=Testk%C3%A4lte+GmbH,+Teststr.+5,+4050+Testort&ftid=0x1:0x2" }, error: null }); };
+    x("bedarfEditor(null, {})"); await w(400);
+    const bed = [...document.querySelectorAll(".assistent")].pop();
+    bed.querySelector('[data-weg] [data-w="abholen"]').click();
+    const feld = bed.querySelector('[data-f="bezugsquelle"]'); feld.value = "https://maps.app.goo.gl/TEST123?g_st=ic";
+    bed.querySelector("[data-haendler]").click(); await w(400);
+    e.gefragt = gefragt;
+    const t = bed.querySelector("[data-haendlerwahl]"); e.treffer = t ? t.textContent : "";
+    if (t) { t.click(); await w(400); }
+    e.feld = feld.value;
+    const g = db.kontakte.find((z) => z.firma === "Testkälte GmbH");
+    e.kontakt = g ? g.kategorie + "|" + g.adresse : "";
+    /* Telefon-/E-Mail-Felder sehen aus wie Textfelder (im dunklen Modus waren sie weiß) */
+    x("kontaktEditor(null, {})"); await w(300);
+    const k = [...document.querySelectorAll(".assistent")].pop(), bg = (s) => getComputedStyle(k.querySelector(s)).backgroundColor;
+    e.felder = bg('[data-k="telefon"]') === bg('[data-k="name"]') && bg('[data-k="mail"]') === bg('[data-k="name"]');
+    x("Store.sb.functions").invoke = inv; x("ansichtenSchliessen(); 1");
+    return e;
+  });
+  pruefe(r.lesen === '{"firma":"Testkälte GmbH","adresse":"Teststr. 5, 4050 Testort","ort":"Testort"}', "Link lesen: " + r.lesen);
+  pruefe(r.ort === '{"firma":"Testkälte GmbH","adresse":"","ort":""}', "Ort-Link: " + r.ort);
+  pruefe(r.gefragt === "ki-frage:link:https://maps.app.goo.gl/TEST123?g_st=ic" && /Testkälte GmbH/.test(r.treffer) && /Teststr\. 5, 4050 Testort/.test(r.treffer), "Treffer: " + JSON.stringify(r));
+  pruefe(r.feld === "Testkälte GmbH, Testort" && r.kontakt === "Lieferant / Großhandel|Teststr. 5, 4050 Testort", "Gespeichert: " + JSON.stringify(r));
+  pruefe(r.felder, "Telefon/E-Mail-Felder anders gefärbt");
+  pruefe(!a.fehler.length, "Laufzeitfehler: " + a.fehler.join("; "));
+  await a.zu();
+});
+
 /* Antworten des Inhabers vom 05.10.2026 (Teil kern) */
 test("Antworten kern: „Nur Jahreswartung“ sperrt den Halbjahrestermin wie am Markt üblich – bleibt, bis die Verwaltung es zurücknimmt", async () => {
   const a = await oeffnen(KONTEN.admin);
