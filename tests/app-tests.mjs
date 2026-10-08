@@ -5245,6 +5245,47 @@ test("Fensterbreite und Schriftgröße: jeder Reiter passt – Handy hoch/quer, 
   pruefe(!bericht.length, "ragt hinaus:\n      " + bericht.join("\n      "));
 });
 
+/* Inhaber 08.10.2026: „Wenn ich es selbst im Internet gefunden habe – wie rückmelden zum Einpflegen? Am besten ohne KI“ */
+test("Händler selbst gefunden: Text einfügen verteilt Adresse, Telefon, Mail ohne KI auf die Felder – Kontakt gespeichert, Feld ausgefüllt", async () => {
+  const a = await oeffnen(KONTEN.techniker);
+  const r = await a.seite.evaluate(async () => {
+    const x = window.__t.x, w = (ms) => new Promise((f) => setTimeout(f, ms)), db = window.__db.tabellen, e = {}, kt = x("kontaktAusText");
+    /* erfundene Beispiele: Google Maps (mehrzeilig), Impressum, eine Zeile */
+    e.maps = kt("Testkälte Handel GmbH\n4,6 ★★★★★ (23)\nGroßhändler\nTeststraße 12, 4050 Testort, Österreich\nGeöffnet · Schließt um 17:00\n+43 7229 000000\ntestkaelte.at");
+    e.impressum = kt("Testkälte Handel GmbH\nTestgasse 3\nA-4050 Testort\nTel.: 07229 / 00 00 00\nFax: 07229 / 00 00 01\nE-Mail: office@testkaelte.at\nwww.testkaelte.at");
+    e.zeile = kt("Teststraße 12, 4050 Testort");
+    /* Ablauf: Händler suchen → nichts gefunden → selbst eintragen */
+    const alt = window.fetch;
+    window.fetch = function (u) { if (/nominatim/.test(String(u))) return Promise.resolve({ json: () => Promise.resolve([]) }); return alt.apply(this, arguments); };
+    x("bedarfEditor(null, {})"); await w(400);
+    const o = () => [...document.querySelectorAll(".assistent")].pop();
+    const bed = o();
+    bed.querySelector('[data-weg] [data-w="bestellen"]').click();
+    const feld = bed.querySelector('[data-f="bezugsquelle"]'); feld.value = "Testkälte Handel";
+    bed.querySelector("[data-haendler]").click(); await w(300);
+    bed.querySelector("[data-haendlerselbst]").click(); await w(300);
+    const k = o(), tf = k.querySelector("[data-kontakttext] textarea");
+    e.firmaVor = k.querySelector('[data-k="firma"]').value + "|" + k.querySelector('[data-k="kategorie"]').value;
+    tf.value = "Testkälte Handel GmbH\nTestgasse 3\nA-4050 Testort\nTel.: 07229 / 00 00 00\nE-Mail: office@testkaelte.at\nwww.testkaelte.at"; tf.dispatchEvent(new Event("input")); await w(600);
+    e.felder = ["firma", "adresse", "telefon", "mail", "notiz"].map((f) => k.querySelector('[data-k="' + f + '"]').value).join("|");
+    [...k.querySelectorAll(".as-fuss button")].find((b) => b.textContent === "Speichern").click(); await w(500);
+    e.feld = feld.value;
+    const g = db.kontakte.find((z) => z.firma === "Testkälte Handel");
+    e.kontakt = g ? [g.kategorie, g.adresse, g.telefon, g.mail].join("|") : "";
+    e.meldung = (bed.querySelector("[data-haendlergespeichert]") || {}).textContent || "";
+    window.fetch = alt; x("ansichtenSchliessen(); 1");
+    return e;
+  });
+  pruefe(r.maps.firma === "Testkälte Handel GmbH" && r.maps.adresse === "Teststraße 12, 4050 Testort" && r.maps.telefon === "+43 7229 000000", "Google Maps: " + JSON.stringify(r.maps));
+  pruefe(r.impressum.firma === "Testkälte Handel GmbH" && r.impressum.adresse === "Testgasse 3, 4050 Testort" && r.impressum.telefon === "07229 / 00 00 00" && r.impressum.mail === "office@testkaelte.at" && r.impressum.web === "www.testkaelte.at", "Impressum: " + JSON.stringify(r.impressum));
+  pruefe(r.zeile.adresse === "Teststraße 12, 4050 Testort", "eine Zeile: " + JSON.stringify(r.zeile));
+  pruefe(r.firmaVor === "Testkälte Handel|Lieferant / Großhandel", "Vorbelegt: " + r.firmaVor);
+  pruefe(r.felder === "Testkälte Handel|Testgasse 3, 4050 Testort|07229 / 00 00 00|office@testkaelte.at|www.testkaelte.at", "Felder: " + r.felder);
+  pruefe(r.feld === "Testkälte Handel, Testort" && r.kontakt === "Lieferant / Großhandel|Testgasse 3, 4050 Testort|07229 / 00 00 00|office@testkaelte.at" && /aufgenommen/.test(r.meldung), "Gespeichert: " + JSON.stringify(r));
+  pruefe(!a.fehler.length, "Laufzeitfehler: " + a.fehler.join("; "));
+  await a.zu();
+});
+
 /* Antworten des Inhabers vom 05.10.2026 (Teil kern) */
 test("Antworten kern: „Nur Jahreswartung“ sperrt den Halbjahrestermin wie am Markt üblich – bleibt, bis die Verwaltung es zurücknimmt", async () => {
   const a = await oeffnen(KONTEN.admin);

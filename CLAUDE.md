@@ -531,6 +531,8 @@ Kammerlander Umwelt- und Klimatechnik (UKT) – oft kurz, vom Handy, im Feld.
   „🔎 Händler suchen“ unter „Wo abholen / bei wem bestellen?“ (`haendlerSuchen`): erst Adressbuch, dann OpenStreetMap (Nominatim, nur auf Knopfdruck),
   sonst „✦ Mit KI im Internet suchen“ (ki-frage `weg:"haendler"`, Websuche, Antwort als JSON, zählt als Frage in ki_nutzung) – Auswahl → Feld „Name, Ort“ +
   Kontakt „Lieferant / Großhandel“ (`kontaktErfassen`, nur Leeres ergänzt); Händler aus den Kontakten stehen in der Vorschlagsliste (`haendlerAusKontakten`). Nie ohne Auswahl anlegen.
+  Selbst gefunden (Inhaber 08.10.2026: „am besten ohne KI“): „✍ selbst gefunden – Adresse eintragen“ → `kontaktEditor(…, {einfuegen:true})` mit „📋 Aus dem Internet einfügen“:
+  `kontaktAusText` verteilt eingefügten Text (Google Maps, Impressum) nach Mustern auf Firma/Adresse/Telefon/Mail, Webadresse in die Notiz – nur leere Felder.
 - **Reisekosten und Kilometergeld** (tools/reisekosten.sql, Reiter Stunden, Büro 04.10.2026; wie die Excel-Blätter „UKT Reisekosten:
   Barbelege“ und „Kilometer mit Privatauto“): Tabelle `auslagen` – art „beleg“ (Foto Pflicht, sonst „Kein Beleg“ mit Grund; Speicher
   „auslagen“ unter `<user_id>/`) oder „km“ (Strecke, km; Betrag = km × Satz rechnet der Trigger `auslagen_pruefen`, Satz aus

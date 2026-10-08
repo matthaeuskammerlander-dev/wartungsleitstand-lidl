@@ -21036,8 +21036,18 @@ function haendlerSuchen(feld, box){
     var weiter=el('<div class="note" style="font-size:12.5px" data-haendlerweiter>'+(treffer.length?"Nicht dabei? ":"Im Kartenverzeichnis nicht gefunden. ")+
       (kiAn()?'<button class="btn ghost sm" type="button" data-haendlerki>✦ Mit KI im Internet suchen</button> (ca. 2–4 Cent) · ':"")+
       '<a target="_blank" rel="noopener" href="https://www.google.com/maps/search/?api=1&query='+encodeURIComponent(q)+'">selbst im Internet nachsehen</a> · '+
+      '<button class="btn ghost sm" type="button" data-haendlerselbst>✍ selbst gefunden – Adresse eintragen</button> · '+
       '<button class="btn ghost sm" type="button" data-haendlerohne>ohne Adresse ins Adressbuch</button></div>');
     weiter.querySelector("[data-haendlerohne]").onclick=function(){ nimm({firma:q, adresse:"", anzeige:q}); };
+    /* im Internet selbst gefunden (Inhaber 08.10.2026: „wie dir rückmelden zum Einpflegen? am besten ohne KI“): Kontakt-Fenster
+       mit „Text einfügen“ – Adresse aus Google Maps oder dem Impressum kopieren, die App verteilt sie ohne KI auf die Felder */
+    weiter.querySelector("[data-haendlerselbst]").onclick=function(){
+      kontaktEditor(null, {firma:q, kategorie:"Lieferant / Großhandel"}, function(k){
+        var ort=(/\b\d{4,5}\s+([^,]+)/.exec(k.adresse||"")||[])[1], name=k.firma||k.name;
+        feld.value=name+(ort && suchNorm(name).indexOf(suchNorm(ort))<0 ? ", "+ort.trim() : "");
+        box.innerHTML=""; box.appendChild(el('<div class="note" style="font-size:12.5px" data-haendlergespeichert>✓ Ins Adressbuch aufgenommen: <strong>'+esc(name)+"</strong>"+(k.adresse?" · "+esc(k.adresse):"")+"</div>"));
+      }, {einfuegen:true});
+    };
     var kiK=weiter.querySelector("[data-haendlerki]");
     if(kiK) kiK.onclick=function(){
       kiK.disabled=true; kiK.textContent="✦ Claude sucht im Internet … (bis 1 min)";
@@ -28501,17 +28511,55 @@ function kontaktAnsicht(k){
     v.fuss.appendChild(be);
   }
 }
-function kontaktEditor(k, vorgabe, fertig){
+/* Kontaktangaben aus eingefügtem Text (Google Maps, Impressum, Mail-Signatur) – ohne KI, nur nach Mustern:
+   E-Mail, Webadresse, Telefon, „PLZ Ort“ samt Straße davor, sonst die erste Zeile als Firma */
+function kontaktAusText(t){
+  var r={}, zeilen=String(t||"").replace(/\r/g,"").split(/\n|\s+[·|•]\s+/).map(function(z){ return z.replace(/\s+/g," ").trim(); }).filter(Boolean), rest=[];
+  zeilen.forEach(function(z){
+    var m;
+    if(!r.mail && (m=/[\w.+-]+@[\w-]+(\.[\w-]+)+/.exec(z))){ r.mail=m[0]; z=z.replace(m[0],"").trim(); }
+    if(!r.web && (m=/\b(https?:\/\/|www\.)[^\s,]+/i.exec(z))){ r.web=m[0]; z=z.replace(m[0],"").trim(); }
+    var tel=/(?:^|[\s:])((?:\+|00)\d[\d\s\/()-]{6,}\d|0\d{2,4}[\s\/-]?\d[\d\s\/-]{4,}\d)/.exec(z);
+    if(tel && !(/^\d{4,5}\s+[A-Za-zÄÖÜ]/.test(z))){ var tn=tel[1].trim(); if(/fax/i.test(z)) tn=null; else if(!r.telefon) r.telefon=tn; else if(!r.mobil && /mobil|handy/i.test(z)) r.mobil=tn; if(tn) z=z.replace(tel[1],"").replace(/^(tel(efon)?|t|phone|mobil|handy)\.?:?\s*/i,"").trim(); }
+    if(!r._ort && (m=/^(.*?)(?:,\s*)?\b((?:A-|AT-|D-)?\d{4,5}\s+[A-Za-zÄÖÜäöüß][^,]*)(?:,\s*(Österreich|Austria|Deutschland|Germany))?\s*$/.exec(z))){
+      r._ort=m[2].replace(/^(A|AT|D)-/,"").trim(); if(m[1].trim()) r._str=m[1].replace(/,\s*$/,"").trim(); return; }
+    if(z && !/^(tel(efon)?|fax|e-?mail|web|öffnungszeiten|geöffnet|route|website)\b/i.test(z) && !/^(Österreich|Austria|Deutschland)$/i.test(z)) rest.push(z);
+  });
+  /* Straße: die Zeile vor „PLZ Ort“ mit Hausnummer */
+  if(r._ort && !r._str){ var s=rest.filter(function(z){ return /\d/.test(z) && /[a-zäöüß]{3}/i.test(z) && !/^\d+[,.]?\d*\s*(★|sterne|\()/i.test(z); }).pop(); if(s){ r._str=s; rest.splice(rest.indexOf(s),1); } }
+  if(r._ort) r.adresse=[r._str, r._ort].filter(Boolean).join(", ");
+  /* Firma: die erste Zeile, die nach Namen aussieht (keine Bewertung, keine Kategorie wie „Großhändler“ allein) */
+  var f=rest.filter(function(z){ return !/^\d[\d,.]*\s*(★|\()/.test(z) && z.length<=80; })[0];
+  if(f) r.firma=f;
+  delete r._ort; delete r._str;
+  return r;
+}
+function kontaktEditor(k, vorgabe, fertig, opt){
   if(!kontakteAn()){ toast("Kontakte gehen nur mit Anmeldung."); return; }
   var neu=!k, a=Object.assign({kategorie:"Sonstige"}, vorgabe||{}, k||{});
   var v=ansichtOeffnen(neu?"Neuer Kontakt":"Kontakt bearbeiten");
-  var form=el('<form class="stack" autocomplete="off" style="max-width:640px"><div class="grid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px">'+
+  var form=el('<form class="stack" autocomplete="off" style="max-width:640px">'+
+    (opt && opt.einfuegen ? '<label class="fl" data-kontakttext><span>📋 Aus dem Internet einfügen (Google Maps, Impressum …) – die App verteilt es auf die Felder</span>'+
+      '<textarea rows="3" placeholder="Adresse, Telefon, E-Mail kopieren und hier einfügen"></textarea></label>' : "")+
+    '<div class="grid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px">'+
     KONTAKT_FELDER.map(function(f){ return '<label class="fl"><span>'+esc(f[1])+'</span><input type="'+(f[2]||"text")+'" data-k="'+f[0]+'" value="'+esc(a[f[0]]||"")+'"></label>'; }).join("")+
     '<label class="fl"><span>Gruppe</span><select data-k="kategorie">'+KONTAKT_KATEGORIEN.map(function(x){ return '<option'+(a.kategorie===x?" selected":"")+">"+esc(x)+"</option>"; }).join("")+"</select></label>"+
     "</div>"+'<label class="fl"><span>Notiz</span><textarea data-k="notiz" rows="2">'+esc(a.notiz||"")+"</textarea></label>"+
     '<div class="note warnbox" data-hinweis hidden></div></form>');
   v.inhalt.appendChild(form);
   var K=function(x){ return form.querySelector('[data-k="'+x+'"]'); };
+  var tf=form.querySelector("[data-kontakttext] textarea");
+  if(tf){
+    /* nur leere Felder füllen – die Firma aus der Suche bleibt, wenn schon eingetragen; Webadresse in die Notiz */
+    var verteilen=function(){
+      var r=kontaktAusText(tf.value), n=0;
+      ["firma","adresse","telefon","mobil","mail"].forEach(function(x){ if(r[x] && K(x) && !K(x).value.trim()){ K(x).value=r[x]; n++; } });
+      if(r.web && K("notiz").value.indexOf(r.web)<0){ K("notiz").value=(K("notiz").value.trim()?K("notiz").value.trim()+"\n":"")+r.web; n++; }
+      if(n) toast(n+" Angabe"+(n===1?"":"n")+" übernommen – bitte kurz prüfen.");
+    };
+    tf.addEventListener("input", function(){ clearTimeout(tf._t); tf._t=setTimeout(verteilen, 400); });
+    setTimeout(function(){ try{ tf.focus(); }catch(e){} }, 60);
+  }
   /* schon im Adressbuch? (beim Tippen) */
   var hinweis=form.querySelector("[data-hinweis]");
   form.addEventListener("input", function(){
