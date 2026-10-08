@@ -5017,6 +5017,45 @@ test("Antworten stunden: Monat bestätigen warnt, wenn die Person noch eingestem
   await a.zu();
 });
 
+/* Inhaber 08.10.2026: „Ich habe heute eingestempelt. Es hat aber nicht funktioniert … vielleicht zu schnell die App geschlossen?“ */
+test("Stempeln kommt an oder wird deutlich gemeldet: wartet nie lange auf den Standort, „wird gestempelt …“ sichtbar, nicht Angekommenes nach dem Neustart als ⚠", async () => {
+  const a = await oeffnen(KONTEN.techniker);
+  const r = await a.seite.evaluate(async () => {
+    const x = window.__t.x, w = (ms) => new Promise((f) => setTimeout(f, ms)), db = window.__db.tabellen, e = {};
+    const meine = () => db.stempel.filter((s) => s.user_id === x("Store.benutzer.id"));
+    /* 1) gemerkter Druck von vorhin, der nie ankam (App zu früh geschlossen) */
+    localStorage.setItem("ukt_stempel_offen", JSON.stringify({ konto: x("Store.benutzer.email"), art: "ein", zeit: new Date(Date.now() - 3 * 3600000).toISOString() }));
+    await x("stempelNachladen(true)"); x("S.view='stunden'; render()"); await w(500);
+    const hw = document.querySelector("[data-stempelnichtan]");
+    e.hinweis = hw ? hw.textContent : "";
+    e.reiter = (document.querySelector('#tabs [data-v="stunden"]') || {}).textContent || "";
+    /* 2) Standort eingeschaltet, das Handy antwortet nie: gestempelt wird trotzdem, ohne Position */
+    const geo = navigator.geolocation.getCurrentPosition;
+    navigator.geolocation.getCurrentPosition = function () {};
+    x("STEMPEL_ORT_AN=true; STEMPEL_ORT_MS=400; 1");
+    const k = document.querySelector("#stempelkarte");
+    k.querySelector("[data-bw] [data-b]").click();
+    const knopf = k.querySelector("[data-ein]"); knopf.click(); await w(50);
+    e.waehrend = knopf.textContent + "|" + !!localStorage.getItem("ukt_stempel_offen");
+    for (let i = 0; i < 40 && !meine().some((s) => s.art === "ein"); i++) await w(100);
+    await w(300);
+    navigator.geolocation.getCurrentPosition = geo; x("STEMPEL_ORT_AN=false; STEMPEL_ORT_MS=8000; 1");
+    const s = meine().filter((y) => y.art === "ein").pop();
+    e.gestempelt = !!s && JSON.stringify(s.ort || null);
+    e.danach = !localStorage.getItem("ukt_stempel_offen") && !document.querySelector("[data-stempelnichtan]");
+    /* 3) ist der Druck doch angekommen (Antwort verpasst), verschwindet der Merker beim Laden still */
+    localStorage.setItem("ukt_stempel_offen", JSON.stringify({ konto: x("Store.benutzer.email"), art: "ein", zeit: new Date(Date.now() - 60000).toISOString() }));
+    e.angekommen = x("stempelNichtAngekommen()") === null && !localStorage.getItem("ukt_stempel_offen");
+    return e;
+  });
+  pruefe(/Einstempeln um \d\d:\d\d ist nicht angekommen/.test(r.hinweis) && /⚠/.test(r.reiter), "Hinweis nach dem Neustart: " + JSON.stringify(r));
+  pruefe(/wird gestempelt/.test(r.waehrend) && /\|true$/.test(r.waehrend), "Während des Stempelns: " + r.waehrend);
+  pruefe(r.gestempelt && /dauerte zu lange/.test(r.gestempelt), "Ohne Standort-Antwort nicht gestempelt: " + r.gestempelt);
+  pruefe(r.danach && r.angekommen, "Merker bleibt: " + JSON.stringify(r));
+  pruefe(!a.fehler.length, "Laufzeitfehler: " + a.fehler.join("; "));
+  await a.zu();
+});
+
 /* Antworten des Inhabers vom 05.10.2026 (Teil kern) */
 test("Antworten kern: „Nur Jahreswartung“ sperrt den Halbjahrestermin wie am Markt üblich – bleibt, bis die Verwaltung es zurücknimmt", async () => {
   const a = await oeffnen(KONTEN.admin);

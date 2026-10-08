@@ -335,6 +335,11 @@ Kammerlander Umwelt- und Klimatechnik (UKT) – oft kurz, vom Handy, im Feld.
   Umstempeln (art „wechsel“, tools/stempeluhr-2.sql): je Abschnitt ein Eintrag
   mit Bereich; überschneidende Einträge von Hand ersetzt nur die Funktion
   `stempeln()` (p_ersetzen), sonst bleiben beide und sind mit ⚠ markiert.
+  Stempeln geht nie verloren, ohne dass man es merkt (Inhaber 08.10.2026: „eingestempelt, kam nicht an – vielleicht zu schnell die App geschlossen“):
+  Standort wartet höchstens `STEMPEL_ORT_MS` (8 s), sonst ohne Position; Knopf „⏳ wird gestempelt …“ + Hinweis „App offen lassen“; der Druck wird
+  vor dem Senden auf dem Gerät gemerkt (`ukt_stempel_offen`, erst nach der Server-Antwort gelöscht) – fehlt er danach im Stempelverlauf
+  (`stempelNichtAngekommen`), zeigt die Stempeluhr „⚠ … ist nicht angekommen“ (`[data-stempelnichtan]`), der Reiter Stunden ⚠, einmal ein Hinweis.
+  Nie still nachstempeln – die Zeit kommt vom Server.
 - **Arbeitszeitgesetz und KV Metallgewerbe** (Büro 01.10.2026): Pause über 6 h
   mind. 30 min wird ergänzt (`pause_auto`, tools/stempeluhr-4.sql), 12 h/Tag,
   60 h/Woche, 11 h Ruhezeit als Hinweis; Soll aus `einstellungen.arbeitszeit`

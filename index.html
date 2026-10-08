@@ -35989,6 +35989,7 @@ function bereichWahl(vorgabe){
     setzen:function(b){ if(!b || !box.querySelector('[data-b="'+b+'"]')) return; w=b;
       box.querySelectorAll(".chip").forEach(function(o){ o.setAttribute("aria-pressed", String(o.dataset.b===w)); }); frei.hidden=w!=="sonstiges"; }};
 }
+var stempelGemeldet=null;
 function stempelNachladen(neu){
   if(demo()){ stempelGeladen=true; return Promise.resolve(); }
   if(!betriebAn() || stempelLaedt) return Promise.resolve();
@@ -36009,6 +36010,9 @@ function stempelNachladen(neu){
     STEMPEL_ORT_AN=!!(einst.stempel_standort && einst.stempel_standort.an);
     if(einst.arbeitszeit && Array.isArray(einst.arbeitszeit.verteilung)) ARBEITSZEIT=Object.assign({}, ARBEITSZEIT, einst.arbeitszeit);
     if(vorher!==JSON.stringify(STEMPEL)) stempelReiterZeichen();
+    var nichtAn=stempelNichtAngekommen();
+    if(nichtAn && nichtAn.zeit!==stempelGemeldet){ stempelGemeldet=nichtAn.zeit; stempelReiterZeichen();
+      toast("⚠ "+(STEMPEL_ART_TEXT[nichtAn.art]||"Stempeln")+" um "+zeitAus(nichtAn.zeit)+" ist nicht angekommen – bitte unter Stunden nochmals stempeln."); }
   }, function(e){ stempelLaedt=false; stempelFehler=(e&&e.message)||"keine Verbindung"; });
 }
 /* wo man gerade steht: nicht eingestempelt · eingestempelt · Pause – samt dem
@@ -36028,7 +36032,7 @@ function stempelZustand(){
 function stempelReiterZeichen(){
   var b=document.querySelector('#tabs [data-v="stunden"]'); if(!b) return;
   var z=stempelZustand().art;
-  b.textContent="Stunden"+(z==="ein"?" ⏱":z==="pause"?" ⏸":"");
+  b.textContent="Stunden"+(z==="ein"?" ⏱":z==="pause"?" ⏸":"")+(stempelNichtAngekommen()?" ⚠":"");
 }
 /* Entfernung beim Stempeln: zum gewählten Markt, sonst zum nächsten Markt bzw. Betrieb.
    Gespeichert wird nur das Ergebnis, nie die Position selbst. */
@@ -36048,9 +36052,35 @@ function stempelOrt(standortId){
       if(!r.status) r.status = best && nah(dmin) ? (best===BETRIEB?"im_betrieb":"am_markt") : "unterwegs";
       ok(r);
     }, function(e){ ok({status:"keine_position", grund:e && e.code===1 ? "nicht erlaubt" : "nicht ermittelt"}); },
-    {enableHighAccuracy:true, timeout:15000, maximumAge:60000});
+    {enableHighAccuracy:true, timeout:STEMPEL_ORT_MS, maximumAge:120000});
+    /* das Stempeln wartet nie lange auf den Standort (Inhaber 08.10.2026: eingestempelt, kam nicht an – bis zu 15 s
+       ohne Antwort, wer die App dann schließt, hat nicht gestempelt) */
+    setTimeout(function(){ ok({status:"keine_position", grund:"dauerte zu lange"}); }, STEMPEL_ORT_MS+500);
   });
 }
+var STEMPEL_ORT_MS=8000;
+/* ---------- Stempeln, das nicht angekommen ist (Inhaber 08.10.2026: „ganz sicher eingestempelt, vielleicht zu
+   schnell die App geschlossen?“) – vor dem Senden auf dem Gerät gemerkt, erst nach der Antwort des Servers gelöscht.
+   Fehlt der Eintrag danach in der Datenbank, sagt es die Stempeluhr deutlich (nie still nachgestempelt –
+   die Zeit kommt vom Server). */
+var STEMPEL_OFFEN_KEY="ukt_stempel_offen", stempelSendet=false;
+function stempelOffenLesen(){
+  try{ var o=JSON.parse(localStorage.getItem(STEMPEL_OFFEN_KEY)||"null");
+    return o && Store.benutzer && o.konto===Store.benutzer.email ? o : null; }catch(e){ return null; }
+}
+function stempelOffenMerken(art){
+  try{ localStorage.setItem(STEMPEL_OFFEN_KEY, JSON.stringify({konto:Store.benutzer.email, art:art, zeit:new Date().toISOString()})); }catch(e){}
+}
+function stempelOffenWeg(){ try{ localStorage.removeItem(STEMPEL_OFFEN_KEY); }catch(e){} }
+/* der gemerkte Druck, wenn er sicher NICHT angekommen ist (Stempelverlauf geladen, kein passender Eintrag danach) */
+function stempelNichtAngekommen(){
+  var o=stempelOffenLesen();
+  if(!o || stempelSendet || !stempelGeladen || demo()) return null;
+  var ab=new Date(o.zeit).getTime()-120000;
+  if(STEMPEL.some(function(s){ return s.art===o.art && new Date(s.zeit).getTime()>=ab; })){ stempelOffenWeg(); return null; }
+  return o;
+}
+var STEMPEL_ART_TEXT={ein:"Einstempeln", aus:"Ausstempeln", pause:"Pause", weiter:"Weiter nach der Pause", wechsel:"Umstempeln"};
 function ortName(id){ return id===BETRIEB.id ? "Betrieb" : (byId[id] ? stName(byId[id]) : "Markt"); }
 function ortKurz(o){
   if(!o) return "";
@@ -36118,7 +36148,9 @@ function stempelDruecken(art, opt, knopf){
   var z=stempelZustand();
   /* Ausstempeln in einen bestätigten Monat: die Datenbank nimmt den Eintrag nicht an – gleich sagen, was zu tun ist */
   if(art==="aus" && z.ein && monatGesperrt(tagLokal(z.ein.zeit))){ toast(MONAT_GESPERRT+" – bitte den Chef, den Monat wieder zu öffnen, dann nochmals ausstempeln."); return Promise.resolve(); }
-  if(knopf) knopf.disabled=true;
+  if(knopf){ knopf.disabled=true; knopf._text=knopf.textContent; knopf.textContent="⏳ wird gestempelt …"; }
+  if(!demo()){ stempelOffenMerken(art); stempelSendet=true; }
+  toast("Wird gestempelt – bitte die App offen lassen, bis „"+({ein:"Eingestempelt", aus:"Ausgestempelt"}[art]||"Gestempelt")+"“ kommt.");
   var standort=opt.standort_id || (art!=="ein" && z.seg ? z.seg.standort_id : null);
   return stempelOrt(standort).then(function(ort){
     var werte={p_art:art, p_standort:opt.standort_id||null, p_projekt:opt.projekt_id||null, p_taetigkeit:opt.taetigkeit||null,
@@ -36132,6 +36164,7 @@ function stempelDruecken(art, opt, knopf){
       return r.data;
     });
   }).then(function(erg){
+    stempelSendet=false; stempelOffenWeg();
     var s=erg && erg.stempel, ee=(erg && (erg.eintraege || (erg.eintrag?[erg.eintrag]:[]))) || [], weg=(erg && erg.ersetzt) || [];
     if(s) STEMPEL=[s].concat(STEMPEL.filter(function(x){ return x.id!==s.id; }));
     if(weg.length) ZEITEN=ZEITEN.filter(function(x){ return weg.indexOf(x.id)<0; });
@@ -36148,7 +36181,7 @@ function stempelDruecken(art, opt, knopf){
        und in der Präsentation (speichert dort nur im Speicher); nach dem Verknüpfen mit dem Kalender */
     if(art==="aus" && ee.length){ var atag=ee[ee.length-1].datum;
       setTimeout(function(){ if(tagPruefenOffen(atag) && !document.querySelector(".assistent")) abgleichDialog(atag, true); }, 1300); }
-  }).catch(function(e){ if(knopf) knopf.disabled=false; toast("Nicht gestempelt: "+(e.message||e)); stempelStand=0; stempelNachladen(true).then(function(){ if(S.view==="stunden") render(); }); });
+  }).catch(function(e){ stempelSendet=false; if(knopf){ knopf.disabled=false; if(knopf._text) knopf.textContent=knopf._text; } toast("Nicht gestempelt: "+(e.message||e)); stempelStand=0; stempelNachladen(true).then(function(){ if(S.view==="stunden") render(); }); });
 }
 /* Stempeluhr kennt den Kalender (Büro 03.10.2026): heute geplante Arbeit (nicht Abwesenheit, nicht
    Privates, nicht erledigt) als Vorschlag beim Ein- und Umstempeln */
@@ -36790,6 +36823,16 @@ function stempelKarte(){
   "</div></div>");
   var host=k.querySelector("[data-inhalt]"), zst=k.querySelector("[data-zustand]");
   if(!stempelGeladen && !demo()){ host.appendChild(el('<div class="muted" style="font-size:12.5px">wird geladen …</div>')); return k; }
+  var offen=stempelNichtAngekommen();
+  if(offen){
+    var hw=el('<div class="note warnbox" data-stempelnichtan style="font-size:13.5px"><strong>⚠ '+esc(STEMPEL_ART_TEXT[offen.art]||"Stempeln")+" um "+esc(zeitAus(offen.zeit))+
+      (tagLokal(offen.zeit)!==heute?" am "+esc(dfmt(tagLokal(offen.zeit))):"")+" ist nicht angekommen.</strong><br>"+
+      "Vermutlich wurde die App geschlossen, bevor der Server geantwortet hat, oder es gab kein Netz. Bitte jetzt nochmals stempeln – "+
+      (offen.art==="ein"?"die richtige Anfangszeit nach dem Ausstempeln im Stundeneintrag ändern.":"die richtige Zeit danach im Stundeneintrag ändern.")+
+      '<div style="margin-top:6px"><button class="btn ghost sm" type="button">Verstanden – Hinweis entfernen</button></div></div>');
+    hw.querySelector("button").onclick=function(){ stempelOffenWeg(); hw.remove(); stempelReiterZeichen(); };
+    host.appendChild(hw);
+  }
   var gross='style="font-size:17px;padding:14px 22px;min-width:150px"';
   if(z.art==="aus"){
     zst.innerHTML='<span class="pill">nicht eingestempelt</span>';
