@@ -527,6 +527,10 @@ Kammerlander Umwelt- und Klimatechnik (UKT) – oft kurz, vom Handy, im Feld.
   Angebot nur Inhaber ohne Preise (`bedarfAusAngebot`), unbekanntes Werkzeug → `wzAufnehmenFragen`, nach dem Einsatz
   `wzNachfragen` („Wo ist das Werkzeug jetzt?“, Spalte `bedarf.nachgefragt`), Werkzeug auf abgeschlossener Baustelle im To-do.
   Werkzeugstandort NIE automatisch aus Stempeluhr/GPS ändern.
+  Händler suchen (Inhaber 08.10.2026: „bei Wo den Händler eingeben, z. B. Reiss Kältetechnik Traun – Adresse im Internet suchen, gleich in die Kontakte“):
+  „🔎 Händler suchen“ unter „Wo abholen / bei wem bestellen?“ (`haendlerSuchen`): erst Adressbuch, dann OpenStreetMap (Nominatim, nur auf Knopfdruck),
+  sonst „✦ Mit KI im Internet suchen“ (ki-frage `weg:"haendler"`, Websuche, Antwort als JSON, zählt als Frage in ki_nutzung) – Auswahl → Feld „Name, Ort“ +
+  Kontakt „Lieferant / Großhandel“ (`kontaktErfassen`, nur Leeres ergänzt); Händler aus den Kontakten stehen in der Vorschlagsliste (`haendlerAusKontakten`). Nie ohne Auswahl anlegen.
 - **Reisekosten und Kilometergeld** (tools/reisekosten.sql, Reiter Stunden, Büro 04.10.2026; wie die Excel-Blätter „UKT Reisekosten:
   Barbelege“ und „Kilometer mit Privatauto“): Tabelle `auslagen` – art „beleg“ (Foto Pflicht, sonst „Kein Beleg“ mit Grund; Speicher
   „auslagen“ unter `<user_id>/`) oder „km“ (Strecke, km; Betrag = km × Satz rechnet der Trigger `auslagen_pruefen`, Satz aus

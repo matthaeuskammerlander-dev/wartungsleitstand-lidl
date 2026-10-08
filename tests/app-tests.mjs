@@ -5138,6 +5138,62 @@ test("KI-Prüfbuch bis 50 Bilder, Typenschilder bis 30 – Höchstzahl steht kla
   await a.zu();
 });
 
+/* Inhaber 08.10.2026: „bei Wo den Händler eingeben – die App sucht die Adresse im Internet und speichert ihn gleich in den Kontakten“ */
+test("Material abholen/bestellen: Händler suchen, Treffer wählen → Feld ausgefüllt und Kontakt im Adressbuch; nichts gefunden → ohne Adresse", async () => {
+  const a = await oeffnen(KONTEN.techniker);
+  const r = await a.seite.evaluate(async () => {
+    const x = window.__t.x, w = (ms) => new Promise((f) => setTimeout(f, ms)), db = window.__db.tabellen, e = {};
+    const alt = window.fetch;
+    window.fetch = function (u) {
+      if (/nominatim/.test(String(u))) {
+        const leer = /Unbekannt/.test(decodeURIComponent(String(u)));
+        return Promise.resolve({ json: () => Promise.resolve(leer ? [] : [{ name: "Testhandel Kälte", namedetails: { name: "Testhandel Kälte" },
+          address: { road: "Teststraße", house_number: "5", postcode: "4050", town: "Testort" }, extratags: { phone: "+43 1 000000" }, display_name: "x" }]) });
+      }
+      return alt.apply(this, arguments);
+    };
+    x("bedarfEditor(null, {})"); await w(400);
+    const o = () => [...document.querySelectorAll(".assistent")].pop();
+    o().querySelector('[data-weg] [data-w="abholen"]').click();
+    const feld = o().querySelector('[data-f="bezugsquelle"]');
+    e.knopfSichtbar = !o().querySelector("[data-quellesuche]").hidden;
+    feld.value = "Testhandel Kälte Testort";
+    o().querySelector("[data-haendler]").click(); await w(300);
+    const t = o().querySelector("[data-haendlerwahl]");
+    e.treffer = t ? t.textContent : "";
+    t.click(); await w(400);
+    e.feld = feld.value;
+    const k = db.kontakte.find((z) => z.firma === "Testhandel Kälte");
+    e.kontakt = k ? [k.kategorie, k.adresse, k.telefon].join("|") : "";
+    e.meldung = (o().querySelector("[data-haendlergespeichert]") || {}).textContent || "";
+    /* nichts gefunden: ohne Adresse */
+    feld.value = "Unbekannt Handel"; o().querySelector("[data-haendler]").click(); await w(300);
+    o().querySelector("[data-haendlerohne]").click(); await w(400);
+    e.ohne = !!db.kontakte.find((z) => z.firma === "Unbekannt Handel" && z.kategorie === "Lieferant / Großhandel");
+    /* nicht im Kartenverzeichnis: Claude sucht im Internet (KI-Dienst nachgestellt) */
+    const kiAlt = x("kiAn"), inv = x("Store.sb.functions").invoke; let gefragt = null;
+    window.kiAn = () => true; x("Store.sb.functions").invoke = (n, o) => { gefragt = n + ":" + o.body.weg + ":" + o.body.suche;
+      return Promise.resolve({ data: { treffer: [{ firma: "KI Kältehandel", strasse: "Weg 1", plz: "4050", ort: "Kiort", telefon: "", mail: "", web: "kihandel.at" }] }, error: null }); };
+    feld.value = "Unbekannt Kälte Kiort"; o().querySelector("[data-haendler]").click(); await w(300);
+    o().querySelector("[data-haendlerki]").click(); await w(300);
+    e.gefragt = gefragt;
+    const kt = [...o().querySelectorAll("[data-haendlerwahl]")].find((b) => /KI Kältehandel/.test(b.textContent));
+    if (kt) { kt.click(); await w(400); }
+    e.kiFeld = feld.value;
+    e.kiKontakt = !!db.kontakte.find((z) => z.firma === "KI Kältehandel" && z.adresse === "Weg 1, 4050 Kiort");
+    window.kiAn = kiAlt; x("Store.sb.functions").invoke = inv;
+    window.fetch = alt; x("ansichtenSchliessen(); 1");
+    return e;
+  });
+  pruefe(r.knopfSichtbar && /Testhandel Kälte/.test(r.treffer) && /Teststraße 5, 4050 Testort/.test(r.treffer), "Treffer: " + JSON.stringify(r));
+  pruefe(r.feld === "Testhandel Kälte, Testort", "Feld: " + r.feld);
+  pruefe(r.kontakt === "Lieferant / Großhandel|Teststraße 5, 4050 Testort|+43 1 000000" && /Adressbuch aufgenommen/.test(r.meldung), "Kontakt: " + JSON.stringify(r));
+  pruefe(r.ohne, "Ohne Adresse nicht gespeichert: " + JSON.stringify(r));
+  pruefe(r.gefragt === "ki-frage:haendler:Unbekannt Kälte Kiort" && r.kiFeld === "KI Kältehandel, Kiort" && r.kiKontakt, "KI-Suche: " + JSON.stringify(r));
+  pruefe(!a.fehler.length, "Laufzeitfehler: " + a.fehler.join("; "));
+  await a.zu();
+});
+
 /* Antworten des Inhabers vom 05.10.2026 (Teil kern) */
 test("Antworten kern: „Nur Jahreswartung“ sperrt den Halbjahrestermin wie am Markt üblich – bleibt, bis die Verwaltung es zurücknimmt", async () => {
   const a = await oeffnen(KONTEN.admin);

@@ -53,7 +53,7 @@ Deno.serve(async (req) => {
   if (req.method !== "POST") return antwort({ fehler: "Nur POST" }, 405);
 
   // Anfrage zuerst ganz lesen (sonst hängt der Upload am Handy)
-  let e: { nachrichten?: { role: string; text: string }[]; kontext?: string; weg?: string; nr?: number } = {};
+  let e: { nachrichten?: { role: string; text: string }[]; kontext?: string; weg?: string; nr?: number; suche?: string } = {};
   try { e = await req.json(); } catch { return antwort({ fehler: "Anfrage nicht lesbar." }, 400); }
 
   const supabase = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_ANON_KEY")!,
@@ -68,7 +68,7 @@ Deno.serve(async (req) => {
     .map((n) => ({ role: n.role as "user" | "assistant", content: n.text.slice(0, MAX_ZEICHEN) }));
   // muss mit einer Frage beginnen und enden
   while (l.length && l[0].role !== "user") l.shift();
-  if (e.weg !== "github_stand" && (!l.length || l[l.length - 1].role !== "user")) return antwort({ fehler: "Keine Frage." }, 400);
+  if (e.weg !== "github_stand" && e.weg !== "haendler" && (!l.length || l[l.length - 1].role !== "user")) return antwort({ fehler: "Keine Frage." }, 400);
 
   // ---- Weg über GitHub: Claude Code beantwortet die Frage im Abo (kostet nichts
   // extra, dauert 1–2 Minuten). Das Repository ist öffentlich – die App schickt
@@ -118,6 +118,44 @@ Deno.serve(async (req) => {
   const { count } = await supabase.from("ki_nutzung").select("id", { count: "exact", head: true })
     .eq("user_id", user.id).eq("art", "frage").gte("zeit", tagesbeginnWien(new Date()));
   if ((count ?? 0) >= LIMIT_JE_TAG) return antwort({ fehler: "Tageslimit für Fragen erreicht." }, 429);
+
+  // ---- Händler / Lieferant im Internet suchen (Inhaber 08.10.2026: „Reiss Kältetechnik Traun – die App soll die
+  // richtige Adresse im Internet suchen“). Websuche von Claude, Antwort nur als JSON; die App zeigt die Treffer zur Auswahl.
+  if (e.weg === "haendler") {
+    const suche = String(e.suche ?? "").replace(/\s+/g, " ").trim().slice(0, 200);
+    if (suche.length < 3) return antwort({ fehler: "Bitte Händler und Ort angeben." }, 400);
+    const client = new Anthropic();
+    let r;
+    try {
+      r = await client.messages.create({
+        model: MODELL,
+        max_tokens: 1500,
+        tools: [{ type: "web_search_20250305", name: "web_search", max_uses: 3, user_location: { type: "approximate", country: "AT" } }],
+        system: "Du suchst für eine Kältetechnik-Firma in Österreich die Geschäftsadresse eines Händlers oder Lieferanten (Großhandel, Kältetechnik, Elektro, Baumarkt …). " +
+          "Suche im Internet (Impressum, Firmenwebseite, Firmenverzeichnis). Antworte am Ende NUR mit JSON, ohne Text davor oder danach: " +
+          "{\"treffer\":[{\"firma\":\"\",\"strasse\":\"\",\"plz\":\"\",\"ort\":\"\",\"telefon\":\"\",\"mail\":\"\",\"web\":\"\"}]} – höchstens 3 Treffer, " +
+          "der passendste zuerst (Standort im genannten Ort bevorzugt). Nur Angaben, die du gefunden hast; Unbekanntes leer lassen, nichts erfinden. Nichts gefunden: {\"treffer\":[]}.",
+        messages: [{ role: "user", content: "Händler: " + suche }],
+      });
+    } catch (x) {
+      if (x instanceof Anthropic.RateLimitError) return antwort({ fehler: "Claude ist gerade ausgelastet – bitte gleich noch einmal." }, 429);
+      if (x instanceof Anthropic.APIError) return antwort({ fehler: `KI-Fehler ${x.status}` }, 502);
+      return antwort({ fehler: "Claude nicht erreichbar." }, 502);
+    }
+    const { error: nf2 } = await supabase.from("ki_nutzung").insert({
+      user_id: user.id, email: user.email, art: "frage", bilder: 0, modell: r.model,
+      tokens_ein: r.usage.input_tokens, tokens_aus: r.usage.output_tokens,
+    });
+    if (nf2) console.error("ki_nutzung nicht eingetragen:", nf2.message);
+    const roh = r.content.filter((b) => b.type === "text").map((b) => (b as { text: string }).text).join("\n");
+    const m = roh.match(/\{[\s\S]*\}/);
+    let treffer: Record<string, string>[] = [];
+    try { const j = m ? JSON.parse(m[0]) : null; if (j && Array.isArray(j.treffer)) treffer = j.treffer; } catch { /* unlesbar = nichts */ }
+    const t = (v: unknown) => String(v ?? "").replace(/\s+/g, " ").trim().slice(0, 200);
+    treffer = treffer.slice(0, 3).map((x) => ({ firma: t(x.firma), strasse: t(x.strasse), plz: t(x.plz), ort: t(x.ort), telefon: t(x.telefon), mail: t(x.mail), web: t(x.web) }))
+      .filter((x) => x.firma);
+    return antwort({ treffer });
+  }
 
   const kontext = String(e.kontext ?? "").slice(0, 40000);   // Übersicht aller Märkte samt Anlagenliste ≈ 20000 Zeichen
   const client = new Anthropic();

@@ -20983,6 +20983,83 @@ function bedarfStatus(b, status){
     function(e){ toast("Nicht gespeichert: "+technikDeutsch(e.message||String(e))); throw e; });
 }
 /* anlegen / ändern. vorgabe: Bezug (projekt_id, stoerung_id, planung_id, standort_id), art, text … */
+/* Händler / Lieferant (Inhaber 08.10.2026: „bei Wo den Händler eingeben, z. B. Reiss Kältetechnik Traun – die App sucht die richtige
+   Adresse im Internet und speichert ihn gleich in den Kontakten“): Suche über OpenStreetMap (Nominatim, nur auf Knopfdruck),
+   Auswahl aus den Treffern → Feld „Name, Ort“ + Kontakt (Kategorie „Lieferant / Großhandel“, nur Leeres ergänzt – kontaktErfassen).
+   Nichts gefunden: im Internet nachsehen (neuer Tab) oder ohne Adresse speichern. Nie still anlegen – immer erst nach Auswahl. */
+function haendlerAusKontakten(){
+  return KONTAKTE.filter(function(k){ return k.kategorie==="Lieferant / Großhandel" && (k.firma||k.name); }).map(function(k){
+    var ort=(/\b\d{4,5}\s+([^,]+)/.exec(k.adresse||"")||[])[1];
+    return (k.firma||k.name)+(ort && suchNorm(k.firma||k.name).indexOf(suchNorm(ort))<0 ? ", "+ort.trim() : "");
+  });
+}
+function haendlerAdresse(t){
+  var a=t.address||{}, ort=a.city||a.town||a.village||a.municipality||"";
+  var str=[a.road, a.house_number].filter(Boolean).join(" ");
+  return {strasse:str, ort:ort, text:[str, [a.postcode, ort].filter(Boolean).join(" ")].filter(Boolean).join(", ") || String(t.display_name||"")};
+}
+function haendlerSuchen(feld, box){
+  var q=String(feld.value||"").trim();
+  box.innerHTML="";
+  if(q.length<3){ box.appendChild(el('<div class="muted" style="font-size:12.5px">Bitte zuerst Händler und Ort eintippen, z. B. „Reiss Kältetechnik Traun“.</div>')); feld.focus(); return; }
+  var nimm=function(d){
+    feld.value=d.anzeige; box.innerHTML="";
+    var schon=kontaktFinden({firma:d.firma});
+    kontaktErfassen({firma:d.firma, adresse:d.adresse||"", telefon:d.telefon||"", kategorie:"Lieferant / Großhandel", notiz:d.web||""}, {art:"bezugsquelle", id:"", titel:"Material / Werkzeug"}, true)
+      .then(function(k){
+        box.appendChild(el('<div class="note" style="font-size:12.5px" data-haendlergespeichert>'+(k ? (schon?"✓ Schon im Adressbuch – fehlende Angaben ergänzt: ":"✓ Ins Adressbuch aufgenommen: ")+
+          "<strong>"+esc(d.firma)+"</strong>"+(d.adresse?" · "+esc(d.adresse):"") : "Kontakt nicht gespeichert (Adressbuch gerade nicht erreichbar) – die Angabe bleibt hier stehen.")+"</div>"));
+      });
+  };
+  /* schon in den Kontakten? dann zuerst die */
+  var nq=suchNorm(q), bekannt=KONTAKTE.filter(function(k){ var f=suchNorm(k.firma||k.name||""); return f && (nq.indexOf(f)===0 || f.indexOf(nq)===0); }).slice(0,3);
+  bekannt.forEach(function(k){
+    var b=el('<button class="btn ghost" type="button" style="text-align:left;white-space:normal" data-haendlertreffer-kontakt>📇 <strong>'+esc(k.firma||k.name)+"</strong>"+
+      (k.adresse?'<br><span class="muted" style="font-size:12.5px">'+esc(k.adresse)+"</span>":"")+' <span class="muted" style="font-size:12px">· aus dem Adressbuch</span></button>');
+    b.onclick=function(){ var ort=(/\b\d{4,5}\s+([^,]+)/.exec(k.adresse||"")||[])[1]; nimm({firma:k.firma||k.name, adresse:k.adresse, anzeige:(k.firma||k.name)+(ort?", "+ort.trim():"")}); };
+    box.appendChild(b);
+  });
+  var lade=el('<div class="muted" style="font-size:12.5px">sucht im Internet …</div>'); box.appendChild(lade);
+  var url="https://nominatim.openstreetmap.org/search?format=jsonv2&limit=5&countrycodes=at,de&addressdetails=1&extratags=1&namedetails=1&accept-language=de&q="+encodeURIComponent(q);
+  mitFrist(fetch(url).then(function(r){ return r.json(); }), 12000).then(function(j){
+    lade.remove();
+    var treffer=(Array.isArray(j)?j:[]).filter(function(t){ return t && (t.name || (t.namedetails&&t.namedetails.name)); });
+    treffer.forEach(function(t){
+      var name=(t.namedetails&&t.namedetails.name)||t.name, ad=haendlerAdresse(t), x=t.extratags||{};
+      var d={firma:name, adresse:ad.text, telefon:x.phone||x["contact:phone"]||"", web:x.website||x["contact:website"]||"", anzeige:name+(ad.ort && suchNorm(name).indexOf(suchNorm(ad.ort))<0?", "+ad.ort:"")};
+      var b=el('<button class="btn ghost" type="button" style="text-align:left;white-space:normal" data-haendlerwahl>🏬 <strong>'+esc(name)+"</strong><br>"+
+        '<span class="muted" style="font-size:12.5px">'+esc(ad.text)+(d.telefon?" · "+esc(d.telefon):"")+"</span></button>");
+      b.onclick=function(){ nimm(d); };
+      box.appendChild(b);
+    });
+    /* das Kartenverzeichnis kennt viele kleine Händler nicht: dann Claude im Internet suchen lassen (ein paar Cent) */
+    var weiter=el('<div class="note" style="font-size:12.5px" data-haendlerweiter>'+(treffer.length?"Nicht dabei? ":"Im Kartenverzeichnis nicht gefunden. ")+
+      (kiAn()?'<button class="btn ghost sm" type="button" data-haendlerki>✦ Mit KI im Internet suchen</button> (ca. 2–4 Cent) · ':"")+
+      '<a target="_blank" rel="noopener" href="https://www.google.com/maps/search/?api=1&query='+encodeURIComponent(q)+'">selbst im Internet nachsehen</a> · '+
+      '<button class="btn ghost sm" type="button" data-haendlerohne>ohne Adresse ins Adressbuch</button></div>');
+    weiter.querySelector("[data-haendlerohne]").onclick=function(){ nimm({firma:q, adresse:"", anzeige:q}); };
+    var kiK=weiter.querySelector("[data-haendlerki]");
+    if(kiK) kiK.onclick=function(){
+      kiK.disabled=true; kiK.textContent="✦ Claude sucht im Internet … (bis 1 min)";
+      mitFrist(Store.sb.functions.invoke("ki-frage", {body:{weg:"haendler", suche:q}}), 90000).then(function(r){
+        if(r.error) throw new Error((r.error.message||"KI nicht erreichbar"));
+        var l=(r.data && r.data.treffer)||[];
+        weiter.remove();
+        if(!l.length){ box.appendChild(el('<div class="note" style="font-size:12.5px">Claude hat dazu nichts gefunden – bitte Namen/Ort prüfen.</div>')); box.appendChild(weiter); kiK.remove(); return; }
+        l.forEach(function(t){
+          var adresse=[t.strasse, [t.plz, t.ort].filter(Boolean).join(" ")].filter(Boolean).join(", ");
+          var d={firma:t.firma, adresse:adresse, telefon:t.telefon||"", web:[t.web, t.mail].filter(Boolean).join(" · "), anzeige:t.firma+(t.ort && suchNorm(t.firma).indexOf(suchNorm(t.ort))<0?", "+t.ort:"")};
+          var b=el('<button class="btn ghost" type="button" style="text-align:left;white-space:normal" data-haendlerwahl>✦ <strong>'+esc(t.firma)+"</strong><br>"+
+            '<span class="muted" style="font-size:12.5px">'+esc(adresse||"Adresse nicht gefunden")+(t.telefon?" · "+esc(t.telefon):"")+(t.web?" · "+esc(t.web):"")+"</span></button>");
+          b.onclick=function(){ nimm(d); };
+          box.appendChild(b);
+        });
+        box.appendChild(el('<div class="muted" style="font-size:12px">Von Claude im Internet gefunden – bitte kurz prüfen, ob es der richtige Standort ist.</div>'));
+      }).catch(function(x){ kiK.disabled=false; kiK.textContent="✦ Mit KI im Internet suchen"; toast("KI-Suche nicht möglich: "+(x.message||x)); });
+    };
+    box.appendChild(weiter);
+  }, function(){ lade.textContent="Suche im Internet gerade nicht erreichbar – bitte später nochmals."; });
+}
 function bedarfEditor(b, vorgabe){
   if(!wzAn()){ toast("Werkzeug und Material gehen nur mit Anmeldung."); return; }
   if(!planTeam) planTeamLaden();
@@ -20990,6 +21067,8 @@ function bedarfEditor(b, vorgabe){
   var v=ansichtOeffnen(b ? "Material / Werkzeug" : "Was wird gebraucht?");
   var bezugT=bedarfBezugText(a); v.schritt.textContent=bezugT ? "für "+bezugT : "ohne Bezug – wird in der Übersicht unter „ohne Termin“ geführt";
   var quellen=[]; BEDARF.forEach(function(x){ if(x.bezugsquelle && quellen.indexOf(x.bezugsquelle)<0) quellen.push(x.bezugsquelle); });
+  /* Händler aus den Kontakten stehen auch zur Auswahl */
+  haendlerAusKontakten().forEach(function(q){ if(quellen.indexOf(q)<0) quellen.push(q); });
   /* die gespeicherte Verknüpfung bleibt wählbar, auch wenn das Werkzeug nicht mehr im Bestand ist – sonst ginge sie beim Speichern still verloren */
   var wzListe=WZ.filter(function(w){ return w.aktiv!==false || w.id===a.werkzeug_id; });
   var team=planTeamMitMir();
@@ -21004,6 +21083,8 @@ function bedarfEditor(b, vorgabe){
     '<div class="fl"><span>Wie kommt es mit?</span></div><div class="chips" data-weg>'+BEDARF_WEGE.map(function(x){ return '<button class="chip" type="button" data-w="'+x[0]+'" aria-pressed="'+(a.beschaffung===x[0])+'">'+x[2]+" "+x[1]+"</button>"; }).join("")+"</div>"+
     '<label class="fl" data-quelle><span>Wo abholen / bei wem bestellen?</span><input type="text" data-f="bezugsquelle" maxlength="200" list="bd_quellen" value="'+esc(a.bezugsquelle||"")+'" placeholder="z. B. Großhandel Salzburg, Werkstatt, Lieferant">'+
       '<datalist id="bd_quellen">'+quellen.map(function(q){ return '<option value="'+esc(q)+'">'; }).join("")+"</datalist></label>"+
+    '<div data-quellesuche class="stack" style="gap:6px;margin-top:-4px"><div><button class="btn ghost sm" type="button" data-haendler>🔎 Händler suchen – Adresse ins Adressbuch</button></div>'+
+      '<div data-haendlertreffer class="stack" style="gap:6px"></div></div>'+
     '<div class="grid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:10px">'+
       '<label class="fl"><span>Gebraucht am</span><input type="date" data-f="benoetigt_am" value="'+esc(a.benoetigt_am||"")+'"></label>'+
       '<label class="fl"><span>Wer kümmert sich?</span><select data-f="wer"><option value="">– wer beim Einsatz ist –</option>'+team.map(function(p){
@@ -21018,6 +21099,7 @@ function bedarfEditor(b, vorgabe){
   var zeigen=function(){
     form.querySelector("[data-wzwahl]").hidden = art!=="werkzeug" || !wzListe.length;
     form.querySelector("[data-quelle]").hidden = weg==="mitnehmen";
+    form.querySelector("[data-quellesuche]").hidden = weg==="mitnehmen";
     var w=F("werkzeug_id").value && WZ.filter(function(x){ return x.id===F("werkzeug_id").value; })[0], h=form.querySelector("[data-wzhinweis]");
     h.hidden=!(art==="werkzeug" && w);
     if(w) h.innerHTML="📍 Liegt gerade: <strong>"+esc(wzOrtText(w))+"</strong>"+wzHinweisTags(w);
@@ -21025,6 +21107,8 @@ function bedarfEditor(b, vorgabe){
   form.querySelectorAll("[data-art] .chip").forEach(function(c){ c.onclick=function(){ art=c.dataset.w; form.querySelectorAll("[data-art] .chip").forEach(function(x){ x.setAttribute("aria-pressed", String(x===c)); }); zeigen(); }; });
   form.querySelectorAll("[data-weg] .chip").forEach(function(c){ c.onclick=function(){ weg=c.dataset.w; form.querySelectorAll("[data-weg] .chip").forEach(function(x){ x.setAttribute("aria-pressed", String(x===c)); }); zeigen(); }; });
   F("werkzeug_id").onchange=function(){ var w=WZ.filter(function(x){ return x.id===F("werkzeug_id").value; })[0]; if(w) F("text").value=w.name; zeigen(); };
+  form.querySelector("[data-haendler]").onclick=function(){ haendlerSuchen(F("bezugsquelle"), form.querySelector("[data-haendlertreffer]")); };
+  if(!kontakteGeladen) kontakteLaden();
   zeigen();
   v.inhalt.appendChild(form);
   var err=form.querySelector("[data-err]"), fehler=function(t){ err.textContent=technikDeutsch(t); err.hidden=false; };
