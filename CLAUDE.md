@@ -457,6 +457,7 @@ Kammerlander Umwelt- und Klimatechnik (UKT) – oft kurz, vom Handy, im Feld.
   🧰-Zeichen auf der Karte (`.abholpin`), je Tour-Stopp, im Tourausdruck, in den Kalenderterminen der Tour und „Unterwegs abholen“ mit „+ dazunehmen“.
   Geht nicht unter (Inhaber 07.10.2026: „nur auf der Karte sichtbar“): geladen bei jedem render() (`wzNachladen`), 🧰 neben jedem Marktnamen (`marktLink` → `abholZeichen`),
   Fällig-Karte „An Märkten abholen / mitnehmen“ (`abholKarte`), Hinweis in der Marktinfo (`standortDetail`, `abholHinweisFuellen`) und oben im Protokoll beim gewählten Markt (`[data-abholoben]`).
+  Tour: ✕ an einem Stopp hält die Ansicht beim Nachbar-Stopp (`tourAnpassen`, Inhaber 08.10.2026: „springt sonst ganz nach oben“).
   Tagesrückblick: teilen mit Uhrzeit + Bereich (`a.teilen`), Scrollstand bleibt; „Wo?“ mit Baustellen/Projekten (`ortOptionenHtml`, `ortWert`, `ortLesen`).
 - **Termin ↔ Baustellenbuch ↔ Projekt-Schritt** (Inhaber 07.10.2026: „nach dem Termin eintragen, was gemacht wurde, mit Fotos – daraus später ein
   Arbeitsbericht; Verbindungen überall, nicht überladen“): Baustellenbuch-Eintrag mit `planung_id` und `schritt` (`baubuchEditor(p, alt, fertig, vorgabe)`,

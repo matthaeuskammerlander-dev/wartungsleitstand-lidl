@@ -6921,6 +6921,36 @@ test("Datenverbrauch: Stammdaten ohne Auftrags-PDF laden, PDF erst beim Öffnen 
   await a.zu();
 });
 
+test("Tour: ✕ an einem Stopp weit unten – die Ansicht bleibt beim Nachbar-Stopp, springt nicht nach oben", async () => {
+  const a = await oeffnen(KONTEN.inhaber, { handy: true });
+  const r = await a.seite.evaluate(async () => {
+    const x = window.__t.x, w = (ms) => new Promise((f) => setTimeout(f, ms)), e = {};
+    x("S.view='karte'; S.tour.startId='__betrieb'; S.tour.ergebnis=null; S.tour.manuell=null; render()"); await w(400);
+    document.querySelector("#t_go").click();
+    for (let i = 0; i < 60 && !x("S.tour.ergebnis"); i++) await w(100);
+    await w(400);
+    const alle = [...document.querySelectorAll("[data-tourweg]")];
+    e.stopps = alle.length;
+    if (alle.length < 2) return e;
+    const weg = alle[alle.length - 1], nachbar = alle[alle.length - 2];
+    weg.scrollIntoView({ block: "center" }); await w(300);
+    e.yVorher = Math.round(window.pageYOffset);
+    const nid = nachbar.dataset.tourweg, topVorher = nachbar.getBoundingClientRect().top;
+    weg.click();
+    for (let i = 0; i < 60 && document.querySelector("[data-tourweg='" + weg.dataset.tourweg + "']"); i++) await w(100);
+    await w(500);
+    const n2 = document.querySelector("[data-tourweg='" + nid + "']");
+    e.weg = !document.querySelector("[data-tourweg='" + weg.dataset.tourweg + "']");
+    e.abstand = n2 ? Math.round(Math.abs(n2.getBoundingClientRect().top - topVorher)) : null;
+    e.yNachher = Math.round(window.pageYOffset);
+    return e;
+  });
+  pruefe(r.stopps >= 2, "zu wenige Stopps im Test: " + JSON.stringify(r));
+  pruefe(r.weg && r.abstand != null && r.abstand <= 120 && r.yNachher >= r.yVorher - 300, "Ansicht nach dem ✕ verloren: " + JSON.stringify(r));
+  pruefe(!a.fehler.length, "Laufzeitfehler: " + a.fehler.join("; "));
+  await a.zu();
+});
+
 test("Karte: „📍 Mein Standort“ zeigt die eigene Position (nur auf dem Gerät, nichts gespeichert)", async () => {
   const a = await oeffnen(KONTEN.techniker);
   const r = await a.seite.evaluate(async () => {
