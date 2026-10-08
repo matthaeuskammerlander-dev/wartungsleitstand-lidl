@@ -522,6 +522,17 @@ details.handbuch .hb-inhalt li{margin:5px 0}
 /* Sprungleiste oben im Projekt (Inhaber 07.10.2026) – bleibt beim Scrollen stehen, am Handy waagrecht wischbar */
 .projekt-sprung{position:sticky;top:-16px;z-index:5;background:var(--surface);margin:-16px -16px 0;padding:8px 16px;flex-wrap:nowrap;overflow-x:auto;-webkit-overflow-scrolling:touch;border-bottom:1px solid var(--line);scrollbar-width:none}
 .projekt-sprung::-webkit-scrollbar{display:none}
+/* Zeilen so hoch wie ihr Inhalt: sonst drückt das Raster die (scrollbare) Leiste bei langem Inhalt auf ~1 px – nur leere Knopfränder (Inhaber 08.10.2026) */
+.as-inhalt.mit-sprung{grid-auto-rows:max-content}
+/* kleiner Monatskalender im Projekt */
+.mk-raster{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:3px}
+.mk-kopf{font-size:11px;color:var(--ink-3);text-align:center}
+.mk-tag{appearance:none;border:1px solid var(--line);background:var(--surface);color:var(--ink);border-radius:6px;padding:4px 0 2px;font-size:12.5px;
+  min-height:38px;display:flex;flex-direction:column;align-items:center;gap:2px;cursor:pointer;font-family:var(--f-body)}
+.mk-tag.mk-we{background:var(--surface-2,var(--surface));color:var(--ink-3)}
+.mk-tag.mk-heute{border-color:var(--accent);font-weight:700}
+.mk-tag.mk-wahl{background:var(--accent);color:var(--on-accent);border-color:var(--accent)}
+.mk-punkte{display:flex;gap:2px}.mk-punkte i{width:6px;height:6px;border-radius:50%;display:block}
 .projekt-sprung .chip{flex:0 0 auto}
 .as-inhalt .card{scroll-margin-top:52px}
 .as-inhalt>*{min-width:0;max-width:100%}
@@ -2271,29 +2282,37 @@ function planeTour(opt){
     var distKm = M ? function(i,j){ var d=M.distanz[i][j]; return d==null ? fahrKm(punkte[i],punkte[j]) : d/1000; }
                    : function(i,j){ return fahrKm(punkte[i],punkte[j]); };
 
-    var folge = reihenfolgeIdx(dauerH, ziel ? punkte.length-1 : punkte.length, ziel ? function(i){ return dauerH(i, zi); } : null);
-    var tage=[], tag=null, hierIdx=0, kmGesamt=0;
-
-    for(var n=0;n<folge.length;n++){
-      var zielIdx=folge[n];
-      var eintrag=stopps[zielIdx-1];
-      var fahrt=dauerH(hierIdx,zielIdx), km=distKm(hierIdx,zielIdx);
-      var aw=arbeitStunden(eintrag.standort, eintrag.positionen), arbeit=aw.h;
-      if(!tag || (tag.stunden + fahrt + arbeit) > opt.stundenProTag){
-        if(tag) tage.push(tag);
-        /* ein neuer Tag beginnt dort, wo der vorige endete (Übernachtung) */
-        tag={nr:tage.length+1, stunden:0, km:0, stopps:[], startPunkt:punkte[hierIdx]};
+    /* Tage im Einsatz begrenzt (Inhaber 08.10.2026): passt nicht alles hinein, fällt der am wenigsten dringende Markt
+       heraus (keine Störung, kein Überfälliges, spätester Termin) und die Route wird neu gerechnet – bis es passt */
+    var aktiv=[]; for(var ai=1;ai<=stopps.length;ai++) aktiv.push(ai);
+    var weggelassen=[];
+    var dringlich=function(e){ return e.positionen.reduce(function(m,p){
+      var k=/^(stoer|lidl):/.test(String(p.id)) || p.status==="ueberfaellig" ? "0" : (p.naechste||"9999"); return k<m ? k : m; }, "9999"); };
+    var rechne=function(){
+      /* Reihenfolge nur über die aktiven Märkte: Teil-Matrix 0 = Start, 1..n = aktiv, (n+1 = Ziel) */
+      var idx=[0].concat(aktiv); if(ziel) idx.push(zi);
+      var f=reihenfolgeIdx(function(i,j){ return dauerH(idx[i], idx[j]); }, ziel ? idx.length-1 : idx.length,
+        ziel ? function(i){ return dauerH(idx[i], zi); } : null).map(function(i){ return idx[i]; });
+      var tg=[], t=null, h=0, kmG=0;
+      for(var n=0;n<f.length;n++){
+        var zIdx=f[n], ein=stopps[zIdx-1], fa=dauerH(h,zIdx), k=distKm(h,zIdx), aw2=arbeitStunden(ein.standort, ein.positionen), ar=aw2.h;
+        if(!t || (t.stunden + fa + ar) > opt.stundenProTag){ if(t) tg.push(t); t={nr:tg.length+1, stunden:0, km:0, stopps:[], startPunkt:punkte[h]}; }
+        t.stunden += fa + ar; if(fa + ar > opt.stundenProTag) t.zuLang=true;
+        t.km += k; kmG += k;
+        t.stopps.push({standort:punkte[zIdx], positionen:ein.positionen, fahrtH:fa, km:k, arbeitH:ar, arbeitQuelle:aw2.quelle});
+        h=zIdx;
       }
-      tag.stunden += fahrt + arbeit;
-      /* ein Markt allein braucht mehr als einen Arbeitstag – geteilt wird er
-         nicht, aber der Tag wird markiert und doppelt gezählt */
-      if(fahrt + arbeit > opt.stundenProTag) tag.zuLang=true;
-      tag.km += km; kmGesamt += km;
-      tag.stopps.push({standort:punkte[zielIdx], positionen:eintrag.positionen,
-                       fahrtH:fahrt, km:km, arbeitH:arbeit, arbeitQuelle:aw.quelle});
-      hierIdx=zielIdx;
+      if(t) tg.push(t);
+      return {folge:f, tage:tg, hier:h, km:kmG};
+    };
+    var arbeitstage=function(tg){ return tg.reduce(function(a,t){ return a+(t.zuLang ? Math.max(1,Math.ceil(t.stunden/opt.stundenProTag)) : 1); },0); };
+    var r0=rechne();
+    while(opt.maxTage && aktiv.length>1 && arbeitstage(r0.tage)>opt.maxTage){
+      var raus=aktiv.slice().sort(function(a,b){ var da=dringlich(stopps[a-1]), db=dringlich(stopps[b-1]); return da<db ? 1 : da>db ? -1 : 0; })[0];
+      aktiv.splice(aktiv.indexOf(raus),1); weggelassen.push(stopps[raus-1]);
+      r0=rechne();
     }
-    if(tag) tage.push(tag);
+    var folge=r0.folge, tage=r0.tage, hierIdx=r0.hier, kmGesamt=r0.km;
 
     var rueck = tage.length ? dauerH(hierIdx,zi) : 0;
     var rueckKm = tage.length ? distKm(hierIdx,zi) : 0;
@@ -2301,13 +2320,14 @@ function planeTour(opt){
 
     return { start:start, ziel:ziel, tage:tage,
       stundenProTag:opt.stundenProTag,   // die Grenze dieser Rechnung (das Feld kann sich danach ändern)
+      maxTage:opt.maxTage||0, weggelassen:weggelassen,
       reihenfolge:folge.map(function(i){ return punkte[i]; }),
       echteStrasse:echteStrasse,
       zuViele: punkte.length>ROUTER_MAX,   // Routendienst gar nicht gefragt
       kmGesamt:kmGesamt+rueckKm,
       stundenGesamt:tage.reduce(function(a,t){return a+t.stunden;},0)+rueck,
       anzahlStopps:folge.length,
-      anzahlPositionen:stopps.reduce(function(a,s){return a+s.positionen.length;},0) };
+      anzahlPositionen:stopps.filter(function(s){ return weggelassen.indexOf(s)<0; }).reduce(function(a,s){return a+s.positionen.length;},0) };
   });
 }
 
@@ -2386,9 +2406,13 @@ function uhrFmt(startMin, h){
   return String(Math.floor(m/60)%24).padStart(2,"0")+":"+String(m%60).padStart(2,"0");
 }
 
+/* Einstellungen der Tourenplanung auf dem Gerät (ukt_tour_einst) */
+function tourEinst(k, std){ try{ var o=JSON.parse(localStorage.getItem("ukt_tour_einst")||"{}"); return o[k]!=null ? o[k] : std; }catch(e){ return std; } }
+function tourEinstMerken(){ try{ localStorage.setItem("ukt_tour_einst", JSON.stringify({std:S.tour.stundenProTag, tage:S.tour.maxTage||0})); }catch(e){} }
 /* ---------- State ---------- */
 var S={view:"faellig",region:"alle",q:"",sel:null,selPos:null,protoStandort:"",protoPos:"",stoerungAus:null,
-  tour:{status:["ueberfaellig","faellig"], stundenProTag:8, startId:"__gps",
+  /* Tourenplanung (Inhaber 08.10.2026): Standard 10 h je Tag; maxTage = wie viele Tage im Einsatz (0 = so viele wie nötig) */
+  tour:{status:["ueberfaellig","faellig"], stundenProTag:tourEinst("std", 10), maxTage:tourEinst("tage", 0), startId:"__gps",
         gps:null, gpsFehler:"", ergebnis:null, manuell:null, dazu:null, naechsterMonat:false, laender:[]}};
 /* Bundesland aus der Postleitzahl. Die Blöcke sind eindeutig bis auf ein paar
    Ränder: 5210–5299 (Innviertel: Braunau, Mattighofen), 5310/5311 (Mondsee)
@@ -5324,7 +5348,7 @@ function tourRechnen(melde){
   }
   var ziel=tourZielPunkt();
   S.tour.geometrie=null;
-  return planeTour({start:start, ziel:ziel, stopps:kandidaten, stundenProTag:S.tour.stundenProTag, melde:melde})
+  return planeTour({start:start, ziel:ziel, stopps:kandidaten, stundenProTag:S.tour.stundenProTag, maxTage:S.tour.fest ? 0 : (S.tour.maxTage||0), melde:melde})
     .then(function(erg){
       if(lauf!==tourLauf) return false;   // überholt – nichts übernehmen
       S.tour.ergebnis=erg;
@@ -5922,6 +5946,9 @@ function tourPanel(){
         (S.tour.gps?"Standort aktualisieren":"Standort bestimmen")+"</button></label>"+
       '<label class="fl"><span>Arbeitszeit je Tag (h)</span>'+
         '<input type="number" id="t_std" min="4" max="14" step="0.5" value="'+S.tour.stundenProTag+'"></label>'+
+      '<label class="fl"><span>Tage im Einsatz</span><select id="t_tage">'+
+        '<option value="0">so viele wie nötig</option>'+[1,2,3,4,5,6,7,8,9,10].map(function(n){ return '<option value="'+n+'"'+(S.tour.maxTage===n?" selected":"")+">"+n+(n===1?" Tag":" Tage")+"</option>"; }).join("")+
+      "</select></label>"+
     "</div>"+
     gpsHinweis+
 
@@ -6024,12 +6051,14 @@ function tourPanel(){
     });
   };
   c.querySelector("#t_std").onchange=function(e2){
-    var v=parseFloat(e2.target.value); if(v>=4&&v<=14) S.tour.stundenProTag=v;
+    var v=parseFloat(e2.target.value); if(v>=4&&v<=14){ S.tour.stundenProTag=v; tourEinstMerken(); }
   };
+  c.querySelector("#t_tage").onchange=function(e2){ S.tour.maxTage=parseInt(e2.target.value,10)||0; tourEinstMerken(); };
   var goBtn=c.querySelector("#t_go");
   goBtn.onclick=function(){
     S.tour.startId=startSel.value; S.tour.zielId=zielSel.value;
     var v=parseFloat(c.querySelector("#t_std").value); if(v>=4&&v<=14) S.tour.stundenProTag=v;
+    S.tour.maxTage=parseInt(c.querySelector("#t_tage").value,10)||0; tourEinstMerken();
     /* eine geschickte Tour offen: „Route vorschlagen“ rechnet wieder aus der Auswahl oben */
     if(S.tour.fest){ S.tour.fest=null; S.tour.vonBuero=null; }
     if(!tourKandidaten().length){ toast("Keine Standorte für diese Auswahl."); return; }
@@ -6193,6 +6222,10 @@ function tourErgebnis(T){
     /* ein Tag, der allein länger ist als die eingestellte Arbeitszeit, zählt so oft, wie er Tage braucht */
     '<div class="kpi"><div class="n">'+T.tage.reduce(function(a,t){ return a+(t.zuLang ? Math.max(1,Math.ceil(t.stunden/(T.stundenProTag||S.tour.stundenProTag))) : 1); },0)+'</div><div class="l">Arbeitstage</div></div>'+
   "</div>"));
+  if(T.weggelassen && T.weggelassen.length) box.appendChild(el('<div class="note warnbox" style="font-size:13px" data-weggelassen><strong>'+T.weggelassen.length+
+    (T.weggelassen.length===1?" Markt passt":" Märkte passen")+" nicht in "+T.maxTage+(T.maxTage===1?" Tag":" Tage")+"</strong> (je "+String(T.stundenProTag).replace(".",",")+
+    " h) – die am wenigsten dringenden sind weggelassen: "+T.weggelassen.map(function(e){ return esc(stName(e.standort)); }).join(", ")+
+    ". Mehr Tage wählen oder einen anderen Markt mit ✕ herausnehmen.</div>"));
   /* Tour von Hand anpassen: ✕ an jedem Stopp nimmt den Markt heraus, hier kommt einer dazu */
   var anp=el('<div class="rowflex" style="gap:8px"><button class="btn ghost sm" type="button">+ Markt dazunehmen</button>'+
     '<span class="muted" style="font-size:12.5px">✕ an einem Stopp nimmt den Markt aus der Tour – die Route wird jeweils neu gerechnet.</span></div>');
@@ -29142,8 +29175,55 @@ function projektNeu(vorgabe){
 /* ---------- ein Projekt im Fenster ---------- */
 /* Sprungleiste oben (Inhaber 07.10.2026: „Projekte vom Layout her übersichtlicher“): feste Knöpfe zu den wichtigsten
    Abschnitten – antippen klappt den Abschnitt auf und springt hin; der Inhalt bleibt, wie er ist */
-var PROJEKT_SPRUNG=[["Stand",/^Stand/],["Aufgaben",/^Aufgaben und Termine/],["Angaben",/^Angaben/],["📁 Pläne & Dateien",/^Dateien/],["Beteiligte",/^Beteiligte/],
+var PROJEKT_SPRUNG=[["Stand",/^Stand/],["Aufgaben",/^Aufgaben und Termine/],["📅 Kalender",/^Kalender/],["Angaben",/^Angaben/],["📁 Pläne & Dateien",/^Dateien/],["Beteiligte",/^Beteiligte/],
   ["Termine",/^Termine/],["Baustellenbuch",/^Baustellenbuch/],["Arbeitsnachweise",/^Arbeitsnachweise/],["Belege",/^Angebote und Rechnungen/],["Tagebuch",/^Tagebuch/]];
+/* kleiner Monatskalender im Projekt (Inhaber 08.10.2026): alles mit Bezug zum Projekt – Bauzeitplan-Termine, Kalendertermine
+   und Aufgaben mit diesem Projekt; Tag antippen zeigt die Einträge, Eintrag antippen öffnet ihn (kalEintragOeffnen) */
+var PROJEKT_MONAT={};
+function projektMonatKarte(p){
+  var k=el('<div class="card" style="box-shadow:none;margin-top:12px" data-projektmonat><div class="pad stack" style="gap:8px"><h2>Kalender</h2><div data-mk></div></div></div>');
+  var host=k.querySelector("[data-mk]"), heute=isoLokal(new Date()), gewaehlt=null;
+  var eintraege=function(von, bis){
+    var m=kalenderEintraege(von, bis, "alle"), r={};
+    Object.keys(m).forEach(function(t){ var l=m[t].filter(function(x){ return (x.p && x.p.id===p.id) || (x.e && x.e.projekt_id===p.id); }); if(l.length) r[t]=l; });
+    return r;
+  };
+  var zeichnen=function(){
+    var mon=PROJEKT_MONAT[p.id]||heute.slice(0,7), j=+mon.slice(0,4), mo=+mon.slice(5,7);
+    var erster=mon+"-01", tageIm=new Date(j, mo, 0).getDate(), letzter=mon+"-"+("0"+tageIm).slice(-2);
+    var e=eintraege(erster, letzter), vorne=(new Date(j, mo-1, 1).getDay()+6)%7;
+    var zellen=""; for(var i=0;i<vorne;i++) zellen+='<div></div>';
+    for(var d=1; d<=tageIm; d++){
+      var tag=mon+"-"+("0"+d).slice(-2), l=e[tag]||[], we=(vorne+d-1)%7>=5;
+      zellen+='<button type="button" class="mk-tag'+(tag===heute?" mk-heute":"")+(tag===gewaehlt?" mk-wahl":"")+(we?" mk-we":"")+'" data-tag="'+tag+'"'+(l.length?' aria-label="'+d+": "+l.length+' Einträge"':"")+'>'+d+
+        (l.length?'<span class="mk-punkte">'+l.slice(0,3).map(function(x){ return '<i style="background:'+(x.grau?"var(--ink-3)":(x.farbe||"var(--accent)"))+'"></i>'; }).join("")+"</span>":"")+"</button>";
+    }
+    var zahl=Object.keys(e).reduce(function(a,t){ return a+e[t].length; },0);
+    host.innerHTML='<div class="rowflex" style="justify-content:space-between;gap:6px"><button class="btn ghost sm" type="button" data-mk="-1" aria-label="Monat zurück">◀</button>'+
+      '<strong>'+esc(MONATE_L[mo]+" "+j)+'</strong><span class="muted" style="font-size:12px">'+(zahl?zahl+(zahl===1?" Eintrag":" Einträge"):"keine Einträge")+'</span>'+
+      '<button class="btn ghost sm" type="button" data-mk="1" aria-label="Monat vor">▶</button></div>'+
+      '<div class="mk-raster">'+["Mo","Di","Mi","Do","Fr","Sa","So"].map(function(w){ return '<div class="mk-kopf">'+w+"</div>"; }).join("")+zellen+"</div>"+
+      '<div data-mkliste class="stack" style="gap:4px"></div>';
+    host.querySelectorAll("[data-mk]").forEach(function(b){ b.onclick=function(){
+      var n=new Date(j, mo-1+(+b.dataset.mk), 1); PROJEKT_MONAT[p.id]=n.getFullYear()+"-"+("0"+(n.getMonth()+1)).slice(-2); gewaehlt=null; zeichnen(); }; });
+    var liste=host.querySelector("[data-mkliste]");
+    host.querySelectorAll("[data-tag]").forEach(function(b){ b.onclick=function(){ gewaehlt=gewaehlt===b.dataset.tag?null:b.dataset.tag; zeichnen(); }; });
+    if(gewaehlt){
+      var l=e[gewaehlt]||[];
+      liste.appendChild(el('<div class="muted" style="font-size:12.5px">'+esc(WOCHENTAGE[wochentagIdx(gewaehlt)]+" "+dfmt(gewaehlt))+(l.length?"":" – nichts eingetragen")+"</div>"));
+      l.forEach(function(x){
+        var z=el('<button type="button" class="btn ghost" style="text-align:left;white-space:normal;justify-content:flex-start;'+(x.grau?"opacity:.6":"")+'">'+
+          '<span style="display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:6px;background:'+(x.farbe||"var(--accent)")+'"></span>'+
+          (x.zeit?"<strong>"+esc(x.zeit)+"</strong> ":"")+esc(String(x.titel||"").replace(" – "+projektTitel(p),""))+
+          (x.unter?'<br><span class="muted" style="font-size:12px">'+esc(x.unter)+"</span>":"")+"</button>");
+        z.onclick=function(){ kalEintragOeffnen(x); };
+        liste.appendChild(z);
+      });
+    }
+  };
+  zeichnen();
+  return k;
+}
 function projektSprungleiste(host){
   var karten=[].slice.call(host.querySelectorAll(".card")).filter(function(c){ return c.querySelector("h2"); });
   var bar=el('<div class="projekt-sprung chips" role="navigation" aria-label="Abschnitte des Projekts"></div>');
@@ -29153,7 +29233,7 @@ function projektSprungleiste(host){
     b.onclick=function(){ if(k.classList.contains("zu") && k._klapp) k._klapp(false); k.scrollIntoView({block:"start", behavior:"smooth"}); };
     bar.appendChild(b);
   });
-  if(bar.children.length>=3) host.insertBefore(bar, host.firstChild);
+  if(bar.children.length>=3){ host.insertBefore(bar, host.firstChild); host.classList.add("mit-sprung"); }
 }
 function projektAnsicht(id){
   var p=PROJEKTE.filter(function(x){ return x.id===id; })[0];
@@ -29198,6 +29278,7 @@ function projektAnsicht(id){
         {projekt_id:p.id, standort_id:p.standort_id||null, kategorie:"projekt"},
         schreiben ? [["+ Aufgabe",{art:"aufgabe", projekt_schritt:p.status}],["Einplanen",{art:"termin", titel:projektTitel(p), beginn:"07:00", ende:"15:00"}]] : []));
     }
+    v.inhalt.appendChild(projektMonatKarte(p));
 
     /* Angaben je Schritt – bis zum aktuellen offen, die späteren eingeklappt */
     var ang=el('<div class="card" style="box-shadow:none;margin-top:12px"><div class="pad stack" style="gap:10px"><h2>Angaben</h2>'+
@@ -29364,6 +29445,7 @@ function projektAnsicht(id){
     kartenOrdnen(v.inhalt, [
       {h:/^Stand/, seite:"haupt", key:"stand", fix:true},
       {h:/^Aufgaben und Termine/, seite:"neben", key:"plan", fix:true, zusammen:offeneAufg?offeneAufg+(offeneAufg===1?" Aufgabe":" Aufgaben")+" offen":""},
+      {h:/^Kalender/, seite:"neben", key:"monat"},
       {h:/^Angaben/, seite:"haupt", key:"angaben", fix:true, handyZu:true, zusammen:d.typ||""},
       {h:/^Beteiligte/, seite:"neben", key:"beteiligte", handyZu:true, zusammen:anz(d.beteiligte,"Eintrag","Einträge")},
       {h:/^Termine/, seite:"neben", key:"termine", zusammen:anz(d.termine,"Termin","Termine")},

@@ -166,7 +166,8 @@ Kammerlander Umwelt- und Klimatechnik (UKT) – oft kurz, vom Handy, im Feld.
   mit Suchfeld (`dateiSuchText`), Filtern Art/Geschoss/Gewerk (`dateiMerkmale` aus Name, herkunft, titel, pdfTitel – Kürzel wie GRDD/EG/UG1/OG1,
   HT/HKLS, EP/AP; Handwerte `geschoss`/`gewerk` an der Datei gehen vor), Ständen je Grundname (`basis`, neuester oben, ältere aufklappbar),
   📌 `wichtig` oben, lesbarem Namen `titel` (`dateiBeschreiben`, `dateiAendern` über `projektAendern` mit Tagebuch); PDF-Titel beim Hochladen
-  (`pdfTitelLesen`, ≤ 8 s) bzw. nachträglich „🔎 Pläne genauer erkennen“ (`pdfTitelNachlesen`). Sprungleiste oben im Projekt (`projektSprungleiste`, sticky).
+  (`pdfTitelLesen`, ≤ 8 s) bzw. nachträglich „🔎 Pläne genauer erkennen“ (`pdfTitelNachlesen`). Sprungleiste oben im Projekt (`projektSprungleiste`, sticky; Fenster mit Klasse `mit-sprung` → `grid-auto-rows:max-content`, sonst drückt das Raster die Leiste bei langem Inhalt auf ~1 px).
+  Kleiner Monatskalender im Projekt (Inhaber 08.10.2026, `projektMonatKarte`): Bauzeitplan-Termine, Kalendertermine und Aufgaben mit diesem Projekt, ◀ ▶ blättern, Tag antippen → Einträge, Eintrag → `kalEintragOeffnen`.
 - Projektzusammenfassung als PDF (`projektPdfDialog`, `projektPdfErzeugen`, Büro
   01.10.2026): Eckdaten und alle Angaben, KEINE Anhänge (Dokumente liegen auf der
   Synology); abgelegt `daten.mappePdf`, Synology → `Projekt_<Nr>.pdf`. Zum Testen
@@ -470,6 +471,9 @@ Kammerlander Umwelt- und Klimatechnik (UKT) – oft kurz, vom Handy, im Feld.
   Tour-Endpunkt (Inhaber 08.10.2026: „Start in Wien, Ende zu Hause in Salzburg“): `S.tour.zielId` („“ = zurück zum Start, `__heim` = fester Startpunkt
   `tourHeim` der Person bzw. eigener, `__betrieb`, Markt) → `tourZielPunkt`, `planeTour({ziel})`, `reihenfolgeIdx(…, ende)` optimiert bis zum Ziel; T.ziel in Karte (🏁),
   Linie, Tag-Navigation, Ausdruck, geschickte Tour (`tourDaten.ziel`).
+  Arbeitszeit je Tag Standard 10 h, „Tage im Einsatz“ (Inhaber 08.10.2026; `S.tour.maxTage`, 0 = so viele wie nötig; beides auf dem Gerät gemerkt, `ukt_tour_einst`):
+  `planeTour({maxTage})` lässt so lange den am wenigsten dringenden Markt weg (keine Störung/Lidl-Rückfrage, nicht überfällig, spätester Termin), bis die
+  Arbeitstage passen, und rechnet die Route neu; genannt in `[data-weggelassen]`. Eine geschickte Tour (`S.tour.fest`) wird nie gekürzt.
   Tagesrückblick: teilen mit Uhrzeit + Bereich (`a.teilen`), Scrollstand bleibt; „Wo?“ mit Baustellen/Projekten (`ortOptionenHtml`, `ortWert`, `ortLesen`).
 - **Termin ↔ Baustellenbuch ↔ Projekt-Schritt** (Inhaber 07.10.2026: „nach dem Termin eintragen, was gemacht wurde, mit Fotos – daraus später ein
   Arbeitsbericht; Verbindungen überall, nicht überladen“): Baustellenbuch-Eintrag mit `planung_id` und `schritt` (`baubuchEditor(p, alt, fertig, vorgabe)`,

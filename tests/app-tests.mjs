@@ -5323,6 +5323,98 @@ test("Händler aus Google Maps geteilt: Link einfügen → Name und Adresse ohne
   await a.zu();
 });
 
+/* Inhaber 08.10.2026: „Für die Tourenplanung die Standardarbeitszeit auf 10 Stunden je Tag, und man soll einstellen können, wie viele Tage man im Einsatz ist“ */
+test("Tourenplanung: Standard 10 h je Tag, Tage im Einsatz begrenzen – die am wenigsten dringenden Märkte fallen heraus und werden genannt", async () => {
+  const a = await oeffnen(KONTEN.admin);
+  const r = await a.seite.evaluate(async () => {
+    const x = window.__t.x, e = {};
+    e.std = x("S.tour.stundenProTag"); e.tage = x("S.tour.maxTage");
+    /* fünf Märkte je 6 h Arbeit (ein Markt je Tag), Fahrten über Luftlinie */
+    const st = x("ST.filter(function(s){ return s.lat; }).slice(0,5)");
+    const stopps = st.map((s, i) => ({ standort: s, positionen: [{ id: "tt" + i, status: i < 2 ? "ueberfaellig" : "faellig", naechste: "2026-1" + (i + 1) + "-01" }] }));
+    /* kurze Tage, damit die Tour mehrere Tage braucht */
+    const ohne = await x("planeTour")({ start: x("BETRIEB"), stopps, stundenProTag: 4, maxTage: 0 });
+    const max = Math.max(1, ohne.tage.length - 1);
+    const zwei = await x("planeTour")({ start: x("BETRIEB"), stopps, stundenProTag: 4, maxTage: max });
+    e.ohne = ohne.tage.length + "|" + ohne.anzahlStopps + "|" + ohne.weggelassen.length;
+    e.max = max; e.zwei = zwei.tage.length + "|" + (zwei.anzahlStopps + zwei.weggelassen.length) + "|" + zwei.weggelassen.length;
+    e.ueberfaelligDrin = zwei.tage.flatMap((t) => t.stopps).filter((s) => s.positionen[0].status === "ueberfaellig").length;
+    /* Anzeige und Einstellung im Reiter Karte */
+    x("S.view='karte'; render(); 1"); await new Promise((f) => setTimeout(f, 700));
+    const sel = document.querySelector("#t_tage"); e.feld = !!sel && document.querySelector("#t_std").value;
+    sel.value = "3"; sel.dispatchEvent(new Event("change"));
+    e.gemerkt = localStorage.getItem("ukt_tour_einst");
+    x("S").tour.ergebnis = zwei; const box = x("tourErgebnis")(zwei); document.body.appendChild(box);
+    e.hinweis = (box.querySelector("[data-weggelassen]") || {}).textContent || ""; box.remove();
+    return e;
+  });
+  pruefe(r.std === 10 && r.tage === 0, "Standard: " + JSON.stringify(r));
+  pruefe(/^\d+\|5\|0$/.test(r.ohne) && +r.ohne.split("|")[0] >= 2, "ohne Grenze: " + r.ohne);
+  const [tg, alle, weg] = r.zwei.split("|").map(Number);
+  pruefe(tg <= r.max && alle === 5 && weg >= 1 && r.ueberfaelligDrin === Math.min(2, 5 - weg), "begrenzt: " + JSON.stringify(r));
+  pruefe(r.feld === "10" && r.gemerkt === '{"std":10,"tage":3}', "Feld/gemerkt: " + JSON.stringify(r));
+  pruefe(/passen? nicht in \d+ Tag/.test(r.hinweis) && /am wenigsten dringenden/.test(r.hinweis), "Hinweis: " + r.hinweis);
+  pruefe(!a.fehler.length, "Laufzeitfehler: " + a.fehler.join("; "));
+  await a.zu();
+});
+
+/* Inhaber 08.10.2026 (Screenshot Projekt): die Sprungleiste oben war nach dem Scrollen abgeschnitten – nur leere Knopf-Ränder sichtbar */
+test("Projekt: Sprungleiste oben bleibt beim Scrollen ganz sichtbar (Knöpfe nicht abgeschnitten) – PC und Handy", async () => {
+  const ergebnisse = [];
+  for (const handy of [false, true]) {
+    const a = await oeffnen(KONTEN.inhaber, { handy });
+    if (!handy) await a.seite.setViewportSize({ width: 1580, height: 980 });
+    const r = await a.seite.evaluate(async () => {
+      const x = window.__t.x, w = (ms) => new Promise((f) => setTimeout(f, ms)), db = window.__db.tabellen;
+      db.projekte.push({ id: "PSP1", nummer: "P-T-SP", titel: "Test Sprungleiste", status: "baustelle", daten: { typ: "Neubau", beschreibung: "x\n".repeat(80) }, verlauf: [], erstellt: new Date().toISOString(), geaendert: new Date().toISOString() });
+      await x("projekteLaden()"); x("projektAnsicht('PSP1'); 1"); await w(900);
+      const o = [...document.querySelectorAll(".assistent")].pop(), inh = o.querySelector(".as-inhalt"), bar = o.querySelector(".projekt-sprung");
+      if (!bar) return { fehlt: true };
+      const pruef = () => { const ri = inh.getBoundingClientRect(), c = bar.querySelector(".chip").getBoundingClientRect();
+        return { oben: Math.round(c.top - ri.top), hoehe: Math.round(c.height), text: bar.querySelector(".chip").textContent }; };
+      const vor = pruef();
+      inh.scrollTop = 900; await w(300);
+      const nach = pruef();
+      x("ansichtenSchliessen(); 1");
+      return { vor, nach };
+    });
+    ergebnisse.push((handy ? "Handy " : "PC ") + JSON.stringify(r));
+    pruefe(!r.fehlt && r.vor.oben >= 0 && r.nach.oben >= 0 && r.vor.hoehe >= 24 && r.nach.hoehe >= 24, (handy ? "Handy" : "PC") + ": Knöpfe abgeschnitten " + JSON.stringify(r));
+    pruefe(!a.fehler.length, "Laufzeitfehler: " + a.fehler.join("; "));
+    await a.zu();
+  }
+});
+
+/* Inhaber 08.10.2026: „im Projekt auch einen kleinen Monatskalender“ */
+test("Projekt: kleiner Monatskalender – Bauzeitplan-Termine und Kalendertermine des Projekts, blättern, Tag antippen zeigt die Einträge", async () => {
+  const a = await oeffnen(KONTEN.inhaber);
+  const r = await a.seite.evaluate(async () => {
+    const x = window.__t.x, w = (ms) => new Promise((f) => setTimeout(f, ms)), db = window.__db.tabellen, e = {};
+    const heute = x("isoLokal(new Date())"), mon = heute.slice(0, 7), tag = mon + "-15";
+    const naechster = x("plusMonate(isoLokal(new Date()),1)").slice(0, 7) + "-03";
+    db.projekte.push({ id: "PMK1", nummer: "P-T-MK", titel: "Test Monat", status: "baustelle", daten: { typ: "Neubau", termine: [{ id: "t1", datum: tag, was: "Kranstellung", zeit: "07:00" }, { id: "t2", datum: naechster, was: "Inbetriebnahme" }] }, verlauf: [], erstellt: new Date().toISOString(), geaendert: new Date().toISOString() });
+    db.projekte.push({ id: "PMK2", nummer: "P-T-MK2", titel: "Anderes", status: "baustelle", daten: { termine: [{ id: "t3", datum: tag, was: "Fremder Termin" }] }, verlauf: [], erstellt: new Date().toISOString(), geaendert: new Date().toISOString() });
+    await x("projekteLaden()"); x("projektAnsicht('PMK1'); 1"); await w(900);
+    const o = [...document.querySelectorAll(".assistent")].pop(), k = o.querySelector("[data-projektmonat]");
+    if (!k) return { fehlt: true };
+    e.kopf = k.querySelector("strong").textContent;
+    e.punkte = k.querySelectorAll(".mk-punkte").length;
+    k.querySelector('[data-tag="' + tag + '"]').click(); await w(100);
+    e.liste = k.querySelector("[data-mkliste]").textContent;
+    k.querySelector('[data-mk="1"]').click(); await w(100);
+    e.naechster = k.querySelector("strong").textContent + "|" + k.querySelectorAll(".mk-punkte").length;
+    e.sprung = [...o.querySelectorAll(".projekt-sprung .chip")].some((b) => /Kalender/.test(b.textContent));
+    x("ansichtenSchliessen(); 1");
+    return e;
+  });
+  pruefe(!r.fehlt && r.punkte === 1, "Monat: " + JSON.stringify(r));
+  pruefe(/07:00/.test(r.liste) && /Kranstellung/.test(r.liste) && !/Fremder/.test(r.liste), "Tag: " + r.liste);
+  pruefe(/\|1$/.test(r.naechster) && r.naechster !== r.kopf + "|1", "Blättern: " + JSON.stringify(r));
+  pruefe(r.sprung, "Sprungleiste ohne Kalender");
+  pruefe(!a.fehler.length, "Laufzeitfehler: " + a.fehler.join("; "));
+  await a.zu();
+});
+
 /* Antworten des Inhabers vom 05.10.2026 (Teil kern) */
 test("Antworten kern: „Nur Jahreswartung“ sperrt den Halbjahrestermin wie am Markt üblich – bleibt, bis die Verwaltung es zurücknimmt", async () => {
   const a = await oeffnen(KONTEN.admin);
