@@ -6993,6 +6993,62 @@ test("Tour mit Endpunkt: z. B. Start Wien, Ende zu Hause – Reihenfolge Richtun
   await a.zu();
 });
 
+test("Interne Notiz (nur UKT): an der Anlage anlegen, 🔒 im Kopf der Anlagen-Karte, oben im Protokoll, ✓ behoben; Kunde sieht nichts", async () => {
+  const a = await oeffnen(KONTEN.techniker, { handy: true });
+  const r = await a.seite.evaluate(async () => {
+    const x = window.__t.x, w = (ms) => new Promise((f) => setTimeout(f, ms)), db = window.__db.tabellen, e = {};
+    const dlg = () => [...document.querySelectorAll(".assistent")].pop();
+    await x("ihLaden(true)");
+    x("marktAnsicht('TS1')"); await w(500);
+    let m = dlg();
+    const karte = m.querySelector("[data-anlage]"), pid = karte.dataset.anlage;
+    karte.querySelector('[data-a="ih"]').click(); await w(300);
+    let d = dlg();
+    e.titel = d.querySelector(".as-titel").textContent;
+    d.querySelector('[data-art] [data-k="alarm"]').click(); await w(50);
+    d = dlg(); d.querySelector("[data-text]").value = "Störmeldung E3 kurz aufgetreten – Fühler prüfen";
+    [...d.querySelectorAll(".as-fuss button")].pop().click(); await w(600);
+    const row = (db.interne_hinweise || []).find((h) => /E3/.test(h.text)) || {};
+    e.db = row.standort_id + "|" + (row.position_id === pid) + "|" + row.art + "|" + !!row.angelegt_von;
+    m = dlg(); const k2 = m.querySelector('[data-anlage="' + pid + '"]');
+    e.pill = (k2.querySelector("[data-ihpill]") || {}).textContent || "";
+    e.text = /E3/.test((k2.querySelector("[data-ihanlage]") || {}).textContent || "");
+    x("ansichtenSchliessen()");
+    /* Protokoll an diesem Markt: oben die interne Notiz */
+    x("S.view='protokoll'; S.protoStandort='TS1'; render()"); await w(700);
+    e.protokoll = /E3/.test((document.querySelector("[data-ihoben]") || {}).textContent || "");
+    x("S.protoStandort=''; formDirty=false; S.view='faellig'; render()"); await w(200);
+    /* ✓ behoben */
+    x("marktAnsicht('TS1')"); await w(500);
+    m = dlg(); m.querySelector('[data-anlage="' + pid + '"] [data-ihweg]').click(); await w(300);
+    d = dlg(); d.querySelector("textarea").value = "Fühler getauscht"; [...d.querySelectorAll(".as-fuss button")].pop().click(); await w(600);
+    const row2 = db.interne_hinweise.find((h) => /E3/.test(h.text));
+    e.behoben = !!row2.erledigt + "|" + row2.erledigt_text;
+    m = dlg(); e.pillDanach = (m.querySelector('[data-anlage="' + pid + '"] [data-ihpill]') || {}).textContent || "";
+    /* für den Kunden-Test: noch eine offene Notiz */
+    db.interne_hinweise.push({ id: "ihk1", standort_id: "TS1", position_id: pid, art: "fehler", text: "Nur intern – Kunde darf das nie sehen", angelegt: new Date().toISOString(), angelegt_von: "T" });
+    return e;
+  });
+  pruefe(/Interne Notiz/.test(r.titel) && r.db === "TS1|true|alarm|true", "Anlegen: " + JSON.stringify(r));
+  pruefe(/🔒/.test(r.pill) && r.text, "Anlagen-Karte zeigt die Notiz nicht: " + JSON.stringify(r));
+  pruefe(r.protokoll, "Protokoll zeigt die Notiz nicht oben: " + JSON.stringify(r));
+  pruefe(r.behoben === "true|Fühler getauscht" && !/🔒/.test(r.pillDanach), "✓ behoben: " + JSON.stringify(r));
+  pruefe(!a.fehler.length, "Laufzeitfehler: " + a.fehler.join("; "));
+  await a.zu();
+  /* das Kunden-Konto (Lidl) sieht keine interne Notiz */
+  const k = await oeffnen(KONTEN.kunde);
+  const rk = await k.seite.evaluate(async () => {
+    const x = window.__t.x, w = (ms) => new Promise((f) => setTimeout(f, ms));
+    window.__db.tabellen.interne_hinweise = window.__db.tabellen.interne_hinweise || [];
+    window.__db.tabellen.interne_hinweise.push({ id: "ihk2", standort_id: "TS1", art: "fehler", text: "Nur intern – Kunde darf das nie sehen", angelegt: new Date().toISOString(), angelegt_von: "T" });
+    const direkt = await x("Store.sb.from('interne_hinweise').select('*')");
+    x("marktAnsicht('TS1')"); await w(600);
+    return { direkt: (direkt.data || []).length, sichtbar: /Nur intern|🔒/.test(document.body.innerText) };
+  });
+  pruefe(rk.direkt === 0 && !rk.sichtbar, "Kunde sieht interne Notizen: " + JSON.stringify(rk));
+  await k.zu();
+});
+
 test("Karte: „📍 Mein Standort“ zeigt die eigene Position (nur auf dem Gerät, nichts gespeichert)", async () => {
   const a = await oeffnen(KONTEN.techniker);
   const r = await a.seite.evaluate(async () => {

@@ -6282,6 +6282,7 @@ function standortDetail(s){
     marktVermerk(s)+
     kundenVermerk(s)+
     '<div data-abholhinweis></div>'+
+    '<div data-ihmarkt></div>'+
     '<div class="rowflex">'+
       /* Navigieren: die Adresse oben antippen (Büro 02.10.2026: die zwei Knöpfe waren doppelt); die Navi-App wählt man unter „Konto“ */
       '<button class="btn ghost sm" type="button" data-akt="historie">Wartungshistorie</button>'+
@@ -6295,6 +6296,7 @@ function standortDetail(s){
     '<div class="stack" id="poslist"></div>'+
   "</div></div>");
   abholHinweisFuellen(d.querySelector("[data-abholhinweis]"), s.id);
+  if(ihAn()) ihKasten(d.querySelector("[data-ihmarkt]"), s.id);
   /* Historie: in der Markt-Ansicht steht sie im selben Fenster darunter – dorthin
      scrollen, statt in den Reiter Verlauf zu wechseln (ein angefangenes Protokoll
      bliebe sonst ohne Rückfrage liegen). Im Karten-Detail: die Markt-Ansicht. */
@@ -7021,6 +7023,7 @@ function anlagenBloecke(s, host){
       (wiederkehrVon(a.leader) ? '<span class="pill p-ueberfaellig" title="'+esc(wiederkehrText(wiederkehrVon(a.leader)))+'">⚠ wiederkehrende Störung</span>' : "")+
       '<span class="ak-kurz rowflex" style="gap:6px">'+(schlimmst?pill(schlimmst):"")+
         (offeneSt.length?'<span class="pill p-ueberfaellig">'+(offeneSt.length===1?"Störung offen":offeneSt.length+" Störungen offen")+"</span>":"")+
+        '<span data-ihpill></span>'+
         (l.length&&!nurLesen()?'<span style="font-size:12.5px;color:var(--warn)">Fehlt: '+esc(l.slice(0,2).map(function(f){ return f.l; }).join(", ")+(l.length>2?" +"+(l.length-2):""))+"</span>":"")+"</span>"+
       '<span class="muted ak-lang" style="font-size:12.5px">'+a.termine.length+" Termin"+(a.termine.length===1?"":"e")+" im Jahr</span></div>"+
       '<div class="ak-koerper stack" style="gap:6px">'+
@@ -7038,11 +7041,13 @@ function anlagenBloecke(s, host){
         return '<div class="stoerhinweis" data-zustoer="'+esc(o._id)+'" role="button" tabindex="0" style="cursor:pointer" title="Zur Störung">'+
           "<strong>Störung offen</strong>"+(o.problemtyp?": "+esc(o.problemtyp):"")+
           ' <span class="muted">· '+esc(stoerungAlter(o).text)+"</span> ›</div>"; }).join("")+
+      '<div data-ihanlage></div>'+
       '<div class="rowflex" style="gap:6px"><button class="btn'+(l.length?" sm":" ghost sm")+'" type="button" data-a="daten" data-schreiben>'+
         (l.length?"Anlagendaten ergänzen":"Anlagendaten prüfen")+"</button>"+
         '<button class="btn ghost sm" type="button" data-a="hist">Historie der Anlage</button>'+
         (nurLesen()?"":'<button class="btn ghost sm" type="button" data-a="fotos" data-fotozahl="'+esc(a.leader.id)+'"'+'>📷 Fotos der Anlage ('+anlagenFotosVon(a.leader.id).length+')</button>')+
-        (nurLesen()?"":'<button class="btn ghost sm" type="button" data-a="buch" title="Alles zu dieser Anlage als PDF">📄 Anlagenbuch</button>')+"</div>"+
+        (nurLesen()?"":'<button class="btn ghost sm" type="button" data-a="buch" title="Alles zu dieser Anlage als PDF">📄 Anlagenbuch</button>')+
+        (ihAn()?'<button class="btn ghost sm" type="button" data-a="ih" data-schreiben title="Nur UKT intern – nicht im Protokoll">🔒 Interne Notiz</button>':"")+"</div>"+
       '<div class="stack" data-termine></div></div></div>');
     /* einklappen: Standard am Handy zu, am PC offen; Gemerktes gilt ANLAGEN_KARTE_FRIST_MS lang
        und wird beim Hineinschauen (Markt geöffnet, Karte angetippt) erneuert */
@@ -7059,6 +7064,19 @@ function anlagenBloecke(s, host){
       kopf.onkeydown=function(e){ if(e.key==="Enter"||e.key===" "){ e.preventDefault(); wechsel(); } };
       /* hineinschauen (irgendwo in der offenen Karte tippen) hält sie offen */
       blk.addEventListener("click", function(e){ if(!blk.classList.contains("ak-zu") && !kopf.contains(e.target) && anlagenKarteStand(id)) anlagenKarteMerken(id, true); });
+    }());
+    /* interne Notizen dieser Anlage (nur UKT): 🔒 im Kopf – auch eingeklappt sichtbar –, darunter der Text mit „✓ behoben“ */
+    (function(){
+      var ihHost=blk.querySelector("[data-ihanlage]"), ihPill=blk.querySelector("[data-ihpill]");
+      ihHost.setAttribute("data-ihbox", "");
+      ihHost._ih=function(){
+        var lI=ihAn() ? ihAnlage(a) : [];
+        ihHost.innerHTML=lI.map(ihZeileHtml).join(""); ihVerdrahten(ihHost);
+        ihPill.innerHTML=lI.length ? '<span class="pill p-faellig" title="Interne Notiz – nur UKT">🔒 '+(lI.length===1?"intern":lI.length+" intern")+"</span>" : "";
+      };
+      ihHost._ih();
+      if(ihAn() && !ihGeladen) ihLaden();
+      var ihB=blk.querySelector('[data-a="ih"]'); if(ihB) ihB.onclick=function(){ ihNeu(s.id, {position_id:a.leader.id}); };
     }());
     /* Dieselbe geführte Erfassung wie beim Protokoll, nur ohne Protokoll –
        zum Nachtragen, wenn jemand die Angaben gerade zur Hand hat. */
@@ -15123,6 +15141,11 @@ function protoAssistentTeilAbschluss(P){
   return function(){
     P.schritte.push({titel:"Abschluss", zeigen:function(){
       inhalt.innerHTML=frage("Wer war vor Ort?");
+      /* ans Ende des Schritts: interne Notiz (nur UKT, nicht im Protokoll) – Inhaber 08.10.2026 */
+      if(ihAn() && f("#f_standort") && f("#f_standort").value) setTimeout(function(){
+        var ib=el('<div class="as-feld" data-ihabschluss><div class="as-label">🔒 Intern – nicht im Protokoll</div><div data-ihk></div></div>');
+        inhalt.appendChild(ib); ihKasten(ib.querySelector("[data-ihk]"), f("#f_standort").value, {alle:true});
+      }, 0);
       /* verantwortlich ist das angemeldete Konto – es schließt ab und unterschreibt (Büro 01.10.2026);
          nur ohne Namen im Konto einmal eintippen. Der Name gilt für beide Felder. */
       var tfE=f("#f_tech");
@@ -17719,6 +17742,7 @@ function viewProtokoll(){
     : el('<div class="card"><div class="pad stack">'+
         '<div class="note warnbox" data-vororthinweis hidden style="font-size:13.5px"><a href="#" style="color:inherit;font-weight:600"></a> – antippen zum Beantworten</div>'+
         '<div data-abholoben></div>'+
+        '<div data-ihoben class="stack" style="gap:6px"></div>'+
         '<div class="modus" role="group" aria-label="Art des Protokolls">'+
           '<button type="button" data-art="wartung" aria-pressed="'+(!stoer)+'">Wartung</button>'+
           '<button type="button" data-art="stoerung" aria-pressed="'+stoer+'">Störung</button></div>'+
@@ -17735,8 +17759,10 @@ function viewProtokoll(){
   /* offene Fragen „Vor Ort klären“ zusätzlich ganz oben (Inhaber 05.10.2026): am Handy steht die Stelle unter der
      Marktwahl weit unten im langen Formular – antippen springt hin; nur solange eine Frage ohne Antwort offen ist */
   var vorOrtOben=P.head.querySelector("[data-vororthinweis]");
-  var abholOben=P.head.querySelector("[data-abholoben]");
+  var abholOben=P.head.querySelector("[data-abholoben]"), ihOben=P.head.querySelector("[data-ihoben]");
   P.vorOrtHinweis=function(){
+    /* 🔒 interne Notizen am gewählten Markt (nur UKT) – was beim letzten Mal aufgefallen ist; hier auch eine neue hinterlassen */
+    if(ihOben && ihAn()){ var sidI=P.bearb ? "" : P.selSt.value; if(ihOben.dataset.sid!==sidI){ ihOben.dataset.sid=sidI; ihKasten(ihOben, sidI, {alle:true}); } }
     /* 🧰 am gewählten Markt abzuholen / mitzunehmen – gleich oben, wenn man dort ist */
     if(abholOben) abholHinweisFuellen(abholOben, P.bearb ? "" : P.selSt.value);
     if(!vorOrtOben) return;
@@ -21899,6 +21925,102 @@ function fzGpsVorschau(zeilen, erg, v){
    einem Fund der alten Liste. Wer an dem Markt ein Protokoll beginnt, sieht sie oben im Formular
    und antwortet gleich; das Büro hakt die Antwort ab. Techniker sehen nur etwas, wenn wirklich
    eine Frage offen ist. Tabelle vor_ort_fragen (tools/vor-ort-fragen.sql). */
+/* ===== Interne Hinweise (Inhaber 08.10.2026: „beim Störungs- oder Wartungseinsatz eine interne Notiz hinterlassen, die nicht
+   am Protokoll erscheint – in der Anlagenansicht klar ersichtlich, dass hier ein kleiner Alarm oder Fehler beiliegt, der beim
+   nächsten Mal behoben werden muss; nur UKT intern“). Tabelle interne_hinweise (tools/interne-hinweise.sql) – NIE im Protokoll,
+   PDF, Monatsbericht oder Archiv; Kunde und Präsentation sehen nichts (Datenbank: darf_schreiben). Bis „✓ behoben“. ===== */
+var IH=[], ihGeladen=false, ihLaedt=null, ihStand=0, ihFehlt=false;
+var IH_ARTEN=[["fehler","⚠ Fehler / Mangel"],["alarm","🔔 Alarm / Störmeldung"],["notiz","📝 Notiz"]];
+function ihAn(){ return betriebAn() && !demo() && !nurLesen(); }
+function ihLaden(sofort){
+  if(!ihAn()) return Promise.resolve();
+  if(ihLaedt) return ihLaedt;
+  if(!sofort && Date.now()-ihStand<60000) return Promise.resolve();
+  ihStand=Date.now();
+  ihLaedt=Store.sb.from("interne_hinweise").select("*").is("erledigt", null).order("angelegt").limit(2000).then(function(r){
+    ihLaedt=null;
+    if(r.error){ ihFehlt=/relation|does not exist|schema cache/i.test(r.error.message||""); return; }
+    var anders=JSON.stringify(r.data||[])!==JSON.stringify(IH); IH=r.data||[]; ihGeladen=true; ihFehlt=false;
+    if(anders) ihAuffrischen();
+  }, function(){ ihLaedt=null; });
+  return ihLaedt;
+}
+function ihMarkt(sid){ return IH.filter(function(h){ return h.standort_id===sid && !h.erledigt; }); }
+function ihAnlage(a){ var ids=[a.leader.id].concat((a.termine||[]).map(function(t){ return t.id; }));
+  return IH.filter(function(h){ return !h.erledigt && h.position_id && ids.indexOf(h.position_id)>=0; }); }
+function ihArtText(k){ return (IH_ARTEN.filter(function(x){ return x[0]===k; })[0]||IH_ARTEN[0])[1]; }
+function ihZeileHtml(h){
+  var p=h.position_id && posById[h.position_id];
+  return '<div class="note warnbox" data-ih="'+esc(h.id)+'" style="font-size:13px"><strong>🔒 '+esc(ihArtText(h.art))+"</strong>"+(p?" · "+esc(anlagenName(anlageDaten(p))):"")+
+    ' <span class="muted">(intern · '+esc([h.angelegt_von, h.angelegt?dfmt(String(h.angelegt).slice(0,10)):""].filter(Boolean).join(", "))+")</span><br>"+esc(h.text)+
+    '<div style="margin-top:4px"><button class="btn ghost sm" type="button" data-ihweg="'+esc(h.id)+'" data-schreiben>✓ behoben</button></div></div>';
+}
+function ihVerdrahten(host){
+  host.querySelectorAll("[data-ihweg]").forEach(function(b){ b.onclick=function(e){ e.stopPropagation();
+    var h=IH.filter(function(x){ return x.id===b.dataset.ihweg; })[0]; if(h) ihBehoben(h); }; });
+}
+/* Kästen neu füllen (Anlagen-Karte, Marktinfo, Protokoll) */
+function ihAuffrischen(){ document.querySelectorAll("[data-ihbox]").forEach(function(h){ if(h._ih) h._ih(); }); }
+function ihNeu(sid, opt){
+  opt=opt||{};
+  var s=byId[sid]; if(!s){ toast("Bitte zuerst den Markt wählen."); return; }
+  if(!ihAn()){ toast(demo() ? "In der Präsentation wird nichts gespeichert." : "Nur mit Anmeldung."); return; }
+  if(ihFehlt){ toast("Interne Notizen sind in der Datenbank noch nicht eingerichtet (tools/interne-hinweise.sql)."); return; }
+  var v=ansichtOeffnen("🔒 Interne Notiz");
+  v.schritt.textContent=stName(s)+" · nur UKT intern – steht nicht im Protokoll, Lidl sieht sie nie";
+  var anl=anlagenDesMarkts(s,false), art="fehler";
+  var f=el('<div class="stack" style="max-width:560px"><div class="chips" data-art></div>'+
+    '<label class="fl"><span>Welche Anlage?</span><select data-anl><option value="">ganzer Markt</option>'+anl.map(function(a){
+      return '<option value="'+esc(a.leader.id)+'"'+(a.leader.id===opt.position_id?" selected":"")+">"+esc(anlagenName(anlageDaten(a.leader)))+"</option>"; }).join("")+"</select></label>"+
+    '<label class="fl"><span class="req">Was ist?</span><textarea data-text rows="3" maxlength="1000" placeholder="z. B. Kondensatpumpe laut – nächstes Mal tauschen; Störmeldung E3 kurz aufgetreten"></textarea></label>'+
+    '<div class="muted" style="font-size:12.5px">Steht bei der Anlage und oben im Protokoll, wenn jemand wieder an diesem Markt arbeitet – bis jemand „✓ behoben“ tippt.</div>'+
+    '<div class="note warnbox" data-err hidden></div></div>');
+  var arten=function(){ var b=f.querySelector("[data-art]"); b.innerHTML=IH_ARTEN.map(function(x){ return '<button class="chip" type="button" data-k="'+x[0]+'" aria-pressed="'+(x[0]===art)+'">'+esc(x[1])+"</button>"; }).join("");
+    b.querySelectorAll("[data-k]").forEach(function(c){ c.onclick=function(){ art=c.dataset.k; arten(); }; }); };
+  arten();
+  f.querySelector("label:last-of-type span").appendChild(diktatKnopf(f.querySelector("[data-text]")));
+  v.inhalt.appendChild(f);
+  var ab=el('<button class="btn ghost" type="button">Abbrechen</button>'), ok=el('<button class="btn" type="button">🔒 Speichern</button>');
+  ab.onclick=function(){ v.zu(); };
+  v.fuss.appendChild(ab); v.fuss.appendChild(ok);
+  setTimeout(function(){ try{ f.querySelector("[data-text]").focus(); }catch(e){} }, 60);
+  ok.onclick=function(){
+    var t=f.querySelector("[data-text]").value.trim(), err=f.querySelector("[data-err]");
+    if(t.length<3){ err.textContent="Bitte kurz eintragen, was ist."; err.hidden=false; return; }
+    ok.disabled=true; ok.textContent="wird gespeichert …";
+    var z={standort_id:sid, position_id:f.querySelector("[data-anl]").value||null, art:art, text:t.slice(0,1000), protokoll_id:opt.protokoll_id||null, angelegt_von:meinName()};
+    mitFrist(Store.sb.from("interne_hinweise").insert(z).select("*"), 15000).then(function(r){
+      if(r.error || !(r.data||[]).length) throw new Error(r.error ? r.error.message : "keine Berechtigung");
+      IH=IH.concat(r.data); v.zu(); toast("🔒 Interne Notiz gespeichert – nur UKT sieht sie."); ihAuffrischen(); if(opt.nachher) opt.nachher();
+    }).catch(function(e){ ok.disabled=false; ok.textContent="🔒 Speichern"; err.textContent="Nicht gespeichert: "+technikDeutsch(e.message||String(e)); err.hidden=false; });
+  };
+}
+function ihBehoben(h){
+  if(!ihAn()){ toast("Nur mit Anmeldung."); return; }
+  textAbfrage("„"+h.text+"“\n\nWas wurde gemacht? (freiwillig)", {titel:"✓ Behoben", feld:"Was wurde gemacht?", ok:"✓ Behoben"}).then(function(t){
+    if(t===null) return;
+    mitFrist(Store.sb.from("interne_hinweise").update({erledigt:new Date().toISOString(), erledigt_von:meinName(), erledigt_text:t||null}).eq("id", h.id).select("*"), 15000).then(function(r){
+      if(r.error || !(r.data||[]).length) throw new Error(r.error ? r.error.message : "keine Berechtigung");
+      IH=IH.filter(function(x){ return x.id!==h.id; }); toast("✓ Als behoben vermerkt."); ihAuffrischen();
+    }).catch(function(e){ toast("Nicht gespeichert: "+technikDeutsch(e.message||String(e))); });
+  });
+}
+/* Kasten für einen Markt (nur „ganzer Markt“ oder alles) samt „+ Interne Notiz“ */
+function ihKasten(host, sid, opt){
+  if(!host) return;
+  opt=opt||{};
+  host.setAttribute("data-ihbox", "");
+  host._ih=function(){
+    if(!ihAn() || !sid){ host.innerHTML=""; return; }
+    var l=ihMarkt(sid).filter(function(h){ return opt.alle || !h.position_id; });
+    host.innerHTML=l.map(ihZeileHtml).join("")+(opt.knopf===false ? "" :
+      '<div><button class="btn ghost sm" type="button" data-ihneu data-schreiben>🔒 Interne Notiz (nur UKT)</button></div>');
+    ihVerdrahten(host);
+    var nb=host.querySelector("[data-ihneu]"); if(nb) nb.onclick=function(){ ihNeu(sid, {protokoll_id:opt.protokoll_id||null}); };
+  };
+  host._ih();
+  if(!ihGeladen) ihLaden();
+}
 var VOR_ORT=[], vorOrtGeladen=false, vorOrtLaedt=null, vorOrtStand=0, vorOrtFehler="";
 function vorOrtAn(){ return betriebAn() && !demo(); }
 function vorOrtBuero(){ return istInhaber() || Rolle.name==="admin"; }
@@ -25229,6 +25351,7 @@ function handbuchKarte(z){
         "<strong>Arbeiten, Mängel, Ergebnis, Kältemittel</strong> – bei der Störung Störungsbehebung und Material.",
         "<strong>🎤 Diktieren:</strong> neben Bemerkungen, Fehlerbild, Ursache und Maßnahmen – sprechen statt tippen, der Text wird angehängt (Spracherkennung des Handys, keine KI). Geht es nicht, das Mikrofon der Tastatur nehmen.",
         "<strong>Schriftgröße:</strong> ☰ (oben bei den Reitern) → „Aa Schriftgröße“, am Handy auch „Aa Schriftgröße“ ganz unten auf jeder Seite – am Handy/Tablet Sehr klein, Klein, Normal, Groß oder Sehr groß, darunter feiner in 5-%-Schritten (− / +); gilt nur auf diesem Gerät, jede Person stellt es sich selbst ein. Am PC Strg und + / − (Strg und 0 = normal).",
+        "<strong>🔒 Interne Notiz:</strong> nur für UKT – etwa eine kurze Störmeldung oder ein kleiner Fehler, der beim nächsten Mal behoben werden soll. Im Protokoll (oben bzw. im Schritt „Abschluss“) oder an der Anlage („🔒 Interne Notiz“); steht NICHT im Protokoll und Lidl sieht sie nie. Die Anlage zeigt dann 🔒 im Kopf, wer wieder hinkommt, sieht sie oben im Protokoll – bis jemand „✓ behoben“ tippt.",
         "<strong>Fotos und Rapport:</strong> bis 25 Fotos mit Notiz, bei Lidl den Rapportbericht anhängen (oder später nachreichen) – die ausgeführten Arbeiten daraus kommen zusätzlich in „Durchgeführte Maßnahmen“ (Störung) bzw. „Bemerkungen“ (Wartung).",
         "<strong>Abschluss:</strong> Datum, Uhrzeit, wer noch dabei war, Unterschrift. Das Protokoll läuft immer unter deinem Namen – du bist verantwortlich.",
         "<strong>Übersicht prüfen und speichern.</strong> Oben steht „✓ gespeichert“. Nach einer Störung bietet die App fällige Wartungen am selben Markt gleich mit an.",
@@ -32335,7 +32458,7 @@ function planungLaden(){
   var konto=Store.benutzer.email;
   if(konto!==planungKonto){ planungKonto=konto; PLANUNG=[]; PLAN_PRIVAT={}; planungGeladen=false; }
   planungLaedt=true;
-  startpunkteLaden(); gelerntLaden(); dauernLaden(); vorOrtLaden();
+  startpunkteLaden(); gelerntLaden(); dauernLaden(); vorOrtLaden(); ihLaden();
   try{ sicherungAutomatisch(); }catch(e){ console.warn("Sicherung", e); }
   return Promise.all([
     Store.sb.from("planung").select("*").order("datum").limit(5000),

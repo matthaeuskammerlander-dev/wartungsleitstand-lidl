@@ -547,6 +547,11 @@ Kammerlander Umwelt- und Klimatechnik (UKT) – oft kurz, vom Handy, im Feld.
   „Was“ mehr (Termin-Chip gibt es still mit: `dataset.was`); `erledigtAbfrage`/`stempelErledigt` entfernt. Termin: EIN „✓ Erledigt“ (Projekt: „✓ Erledigt …“ →
   Baustellenbuch mit „✓ Ohne Text erledigt“, `vorgabe.ohneText`), „📅 In Handy-Kalender“. Arbeitsnachweis „Ausgeführte Arbeiten“ vorbefüllt
   (`[data-anvorbefuellt]`). Stunden von Hand: „Was gemacht?“, Notiz nur noch bei alten Einträgen sichtbar.
+- **Interne Notiz** (Inhaber 08.10.2026: „interne Notiz beim Einsatz, nicht am Protokoll, in der Anlagenansicht klar ersichtlich – nur UKT intern“):
+  Tabelle `interne_hinweise` (tools/interne-hinweise.sql; lesen/schreiben `darf_schreiben()` – nie Kunde/Präsentation; Text ändert nur, wer angelegt hat,
+  oder das Büro; „behoben“ jeder; löschen nur Büro). App: `ihLaden`, `ihNeu` (Art Fehler/Alarm/Notiz, Anlage oder ganzer Markt), `ihBehoben`, `ihKasten`;
+  🔒 im Kopf der Anlagen-Karte (`[data-ihpill]`, auch eingeklappt) + Text (`[data-ihanlage]`), Marktinfo (`[data-ihmarkt]`), Protokoll-Kopf (`[data-ihoben]`)
+  und geführter Schritt „Abschluss“. NIE ins Protokoll, PDF, Monatsbericht oder Archiv übernehmen.
 - **Datenverbrauch / Egress** (Inhaber 08.10.2026: Supabase „Egress Exceeded“, 7,6 GB bei 49 MB Datenbank): Störungen tragen Auftrags-PDF und
   Seitenbilder in `felder.pdfDaten`/`felder.seiten` (~11 MB). Geladen wird `stammdaten_leicht` (tools/stammdaten-leicht.sql: ohne diese Felder,
   `_schwer`; fehlt die Sicht → `stammdaten`), PDF/Seiten erst beim Öffnen (`stoerungSchwerLaden` in `stoerungDialog`/`protokollBeginnen`,

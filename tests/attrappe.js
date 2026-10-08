@@ -1,7 +1,7 @@
 /* Nachgebaute Supabase-Schnittstelle für die automatischen Tests (tests/app-tests.mjs) – nur Code, Startbestand aus seed.json (erfunden). */
 (function(){
   "use strict";
-  var T=["gelernte_werte","fahrzeuge","fahrzeug_eintraege","fahrzeug_kosten","kontakte","protokoll_vermerke","planung","planung_privat","belege","katalog","stempel","einstellungen","projekte","arbeitszeiten","anlagenfotos","touren","kundenliste","gelesen","push_ereignisse","kennzahlen","chat","abrechnung","push_abos","protokolle","aenderungen","stammdaten","admins","berichte","protokoll_fassungen","rollen","ki_nutzung","posteingang","stammdaten_lesen","aenderungswuensche","vor_ort_fragen","werkzeug","werkzeug_verlauf","bedarf","packlisten","auslagen","auslagen_konto","arbeitsnachweise","tag_geprueft"];
+  var T=["gelernte_werte","fahrzeuge","fahrzeug_eintraege","fahrzeug_kosten","kontakte","protokoll_vermerke","planung","planung_privat","belege","katalog","stempel","einstellungen","projekte","arbeitszeiten","anlagenfotos","touren","kundenliste","gelesen","push_ereignisse","kennzahlen","chat","abrechnung","push_abos","protokolle","aenderungen","stammdaten","admins","berichte","protokoll_fassungen","rollen","ki_nutzung","posteingang","stammdaten_lesen","aenderungswuensche","vor_ort_fragen","interne_hinweise","werkzeug","werkzeug_verlauf","bedarf","packlisten","auslagen","auslagen_konto","arbeitsnachweise","tag_geprueft"];
   var DB; try{ DB=JSON.parse(localStorage.getItem("attrappe_db")||"null"); }catch(e){ DB=null; }
   /* leerer Speicher (neuer Port, nach __db.zuruecksetzen()): Startbestand aus seed.json */
   if(!DB){ DB={}; try{ var x=new XMLHttpRequest(); x.open("GET","seed.json?"+Date.now(),false); x.send();
@@ -154,6 +154,13 @@
       if(art==="delete" && rolle!=="inhaber") return "arbeitsnachweise: loeschen nur Inhaber";
     }
     if(tab==="aenderungen" && art!=="insert" && art!=="select") return "aenderungen: unveraenderlich";
+    /* wie interne-hinweise.sql: nur wer mitarbeitet (nie Kunde/Präsentation); Text ändert nur, wer angelegt hat, oder das Büro; löschen nur Büro */
+    if(tab==="interne_hinweise"){
+      if(rolle==="kunde"||rolle==="praesentation") return art==="select" ? "nur lesen: interne_hinweise gesperrt" : "nur lesen ("+rolle+")";
+      var bueroI=admin() || rolle==="inhaber";
+      if(art==="delete" && !bueroI) return "interne_hinweise: loeschen nur Buero";
+      if(art==="update" && !bueroI && alt && alt.angelegt_uid!==uid() && Object.keys(zeile||{}).some(function(k){ return ["text","art","standort_id","position_id"].indexOf(k)>=0; })) return "interne_hinweise: Text aendert nur, wer angelegt hat";
+    }
     /* wie vor-ort-fragen.sql: Büro stellt und erledigt, alle (die schreiben dürfen) antworten */
     if(tab==="vor_ort_fragen"){
       var buero=admin() || rolle==="inhaber";
@@ -373,6 +380,7 @@
         if(self.t==="arbeitszeiten"){ if(!r.user_id) r.user_id=uid(); if(r.pause_min==null) r.pause_min=0; r.erstellt=r.erstellt||new Date().toISOString(); }
         if(self.t==="planung") planPruefen(r, null);
         if(self.t==="vor_ort_fragen") r.angelegt=r.angelegt||new Date().toISOString();
+        if(self.t==="interne_hinweise"){ r.angelegt=new Date().toISOString(); r.angelegt_uid=uid(); }
         if(self.t==="anlagenfotos"){ r.erstellt=r.erstellt||new Date().toISOString(); r.von=r.von||uid(); }
         if(self.t==="auslagen"){ r.user_id=r.user_id||uid(); r.status=r.status||"offen"; r.erstellt=new Date().toISOString(); if(r.km!=null) r.km=kmSpalte(r.km); if(r.art==="km"){ r.km_satz=r.km_satz||0.5; r.betrag=Math.round(r.km*r.km_satz*100)/100; } }
         if(self.t==="auslagen_konto") r.user_id=r.user_id||uid();
