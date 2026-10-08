@@ -458,6 +458,9 @@ Kammerlander Umwelt- und Klimatechnik (UKT) – oft kurz, vom Handy, im Feld.
   Geht nicht unter (Inhaber 07.10.2026: „nur auf der Karte sichtbar“): geladen bei jedem render() (`wzNachladen`), 🧰 neben jedem Marktnamen (`marktLink` → `abholZeichen`),
   Fällig-Karte „An Märkten abholen / mitnehmen“ (`abholKarte`), Hinweis in der Marktinfo (`standortDetail`, `abholHinweisFuellen`) und oben im Protokoll beim gewählten Markt (`[data-abholoben]`).
   Tour: ✕ an einem Stopp hält die Ansicht beim Nachbar-Stopp (`tourAnpassen`, Inhaber 08.10.2026: „springt sonst ganz nach oben“).
+  Tour-Endpunkt (Inhaber 08.10.2026: „Start in Wien, Ende zu Hause in Salzburg“): `S.tour.zielId` („“ = zurück zum Start, `__heim` = fester Startpunkt
+  `tourHeim` der Person bzw. eigener, `__betrieb`, Markt) → `tourZielPunkt`, `planeTour({ziel})`, `reihenfolgeIdx(…, ende)` optimiert bis zum Ziel; T.ziel in Karte (🏁),
+  Linie, Tag-Navigation, Ausdruck, geschickte Tour (`tourDaten.ziel`).
   Tagesrückblick: teilen mit Uhrzeit + Bereich (`a.teilen`), Scrollstand bleibt; „Wo?“ mit Baustellen/Projekten (`ortOptionenHtml`, `ortWert`, `ortLesen`).
 - **Termin ↔ Baustellenbuch ↔ Projekt-Schritt** (Inhaber 07.10.2026: „nach dem Termin eintragen, was gemacht wurde, mit Fotos – daraus später ein
   Arbeitsbericht; Verbindungen überall, nicht überladen“): Baustellenbuch-Eintrag mit `planung_id` und `schritt` (`baubuchEditor(p, alt, fertig, vorgabe)`,

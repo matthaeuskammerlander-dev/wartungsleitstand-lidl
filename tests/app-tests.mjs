@@ -6951,6 +6951,48 @@ test("Tour: ✕ an einem Stopp weit unten – die Ansicht bleibt beim Nachbar-St
   await a.zu();
 });
 
+test("Tour mit Endpunkt: z. B. Start Wien, Ende zu Hause – Reihenfolge Richtung Ziel, letzte Fahrt zum Ziel, 🏁 auf der Karte, Ausdruck nennt Start und Ziel", async () => {
+  const a = await oeffnen(KONTEN.inhaber);
+  const r = await a.seite.evaluate(async () => {
+    const x = window.__t.x, w = (ms) => new Promise((f) => setTimeout(f, ms)), e = {};
+    /* Rechnung: Start 0, Märkte bei +1 und −1, Ziel bei +10 → erst −1, dann +1 (ohne Ziel wäre es gleichgültig) */
+    const pos = [0, 1, -1, 10], k = (i, j) => Math.abs(pos[i] - pos[j]);
+    e.folge = JSON.stringify(x("reihenfolgeIdx")(k, 3, (i) => Math.abs(pos[i] - 10)));
+    /* Ablauf: Ziel „nach Hause“ (fester Startpunkt) */
+    const ich = x("meineKennung()"), heim = { name: "Zu Hause Test", adresse: "Testgasse 1, 5020 Salzburg", lat: 47.8, lon: 13.04 };
+    x("STARTPUNKTE")[ich] = { heimat: heim };
+    x("S.view='karte'; S.tour.startId='__betrieb'; S.tour.zielId=''; S.tour.ergebnis=null; S.tour.manuell=null; render()"); await w(400);
+    const zs = document.querySelector("#t_ziel");
+    e.optionen = zs ? [...zs.options].map((o) => o.value).slice(0, 3).join(",") : "keine Auswahl";
+    e.heimText = zs ? [...zs.options].find((o) => o.value === "__heim").textContent : "";
+    zs.value = "__heim"; zs.dispatchEvent(new Event("change"));
+    document.querySelector("#t_go").click();
+    for (let i = 0; i < 60 && !x("S.tour.ergebnis"); i++) await w(100);
+    await w(500);
+    const T = x("S.tour.ergebnis") || {};
+    e.ziel = T.ziel ? T.ziel.name : null;
+    const letzter = (T.tage || []).slice(-1)[0] || {};
+    e.rueck = letzter.rueckfahrtH > 0;
+    e.text = /Fahrt zum Ziel/.test(document.getElementById("t_out").textContent);
+    e.flagge = !!document.querySelector("[data-tourziel]");
+    e.punkte = JSON.stringify(x("tagPunkte")(letzter, true).slice(-1).map((p) => p.name));
+    /* zurück zum Start: wie bisher */
+    x("S.tour.zielId=''; S.tour.ergebnis=null; render()"); await w(300);
+    document.querySelector("#t_go").click();
+    for (let i = 0; i < 60 && !x("S.tour.ergebnis"); i++) await w(100);
+    await w(300);
+    e.ohneZiel = !x("S.tour.ergebnis").ziel && /Rückfahrt zum Startpunkt/.test(document.getElementById("t_out").textContent);
+    x("S.tour.ergebnis=null; S.tour.zielId=''");
+    return e;
+  });
+  pruefe(r.folge === "[2,1]", "Reihenfolge nicht Richtung Ziel: " + r.folge);
+  pruefe(r.optionen === ",__heim,__betrieb" && /Zu Hause Test/.test(r.heimText), "Auswahl Endpunkt: " + JSON.stringify([r.optionen, r.heimText]));
+  pruefe(r.ziel === "Zu Hause Test" && r.rueck && r.text && r.flagge && /Zu Hause Test/.test(r.punkte), "Tour mit Ziel: " + JSON.stringify(r));
+  pruefe(r.ohneZiel, "Ohne Endpunkt nicht wie bisher: " + JSON.stringify(r));
+  pruefe(!a.fehler.length, "Laufzeitfehler: " + a.fehler.join("; "));
+  await a.zu();
+});
+
 test("Karte: „📍 Mein Standort“ zeigt die eigene Position (nur auf dem Gerät, nichts gespeichert)", async () => {
   const a = await oeffnen(KONTEN.techniker);
   const r = await a.seite.evaluate(async () => {

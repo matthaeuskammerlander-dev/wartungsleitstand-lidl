@@ -2174,7 +2174,8 @@ function strassenGeometrie(punkte){
 /* Nächster Nachbar, danach 2-opt gegen die schlimmsten Überkreuzungen.
    Gerechnet wird auf Fahrzeiten, nicht auf Entfernungen – über die
    Autobahn ist der längere Weg oft der schnellere. */
-function reihenfolgeIdx(kosten, n){
+/* ende(i): Kosten vom letzten Stopp zum festen Endpunkt (Tour endet woanders als sie beginnt) – optimiert wird dann der ganze Weg bis dorthin */
+function reihenfolgeIdx(kosten, n, ende){
   var offen=[]; for(var i=1;i<n;i++) offen.push(i);
   var weg=[], hier=0;
   while(offen.length){
@@ -2183,7 +2184,7 @@ function reihenfolgeIdx(kosten, n){
     hier=offen[best]; weg.push(hier); offen.splice(best,1);
   }
   var knoten=[0].concat(weg);
-  var laenge=function(kn){ var s=0; for(var i=0;i<kn.length-1;i++) s+=kosten(kn[i],kn[i+1]); return s; };
+  var laenge=function(kn){ var s=0; for(var i=0;i<kn.length-1;i++) s+=kosten(kn[i],kn[i+1]); return s+(ende && kn.length>1 ? ende(kn[kn.length-1]) : 0); };
   var aktuell=laenge(knoten), verbessert=true, runden=0;
   while(verbessert && runden<80){
     verbessert=false; runden++;
@@ -2204,6 +2205,9 @@ function planeTour(opt){
   var stopps = opt.stopps;                 // [{standort, positionen:[...]}]
   if(!stopps.length) return Promise.resolve(null);
   var punkte=[start].concat(stopps.map(function(s){ return s.standort; }));
+  /* Endpunkt (Inhaber 08.10.2026: „heute starten wir in Wien und beenden die Tour zu Hause in Salzburg“): als letzter Punkt in der Matrix */
+  var ziel=opt.ziel||null, zi=ziel ? punkte.length : 0;
+  if(ziel) punkte.push(ziel);
 
   return strassenMatrix(punkte, opt.melde).then(function(M){
     var echteStrasse = !!M;
@@ -2215,7 +2219,7 @@ function planeTour(opt){
     var distKm = M ? function(i,j){ var d=M.distanz[i][j]; return d==null ? fahrKm(punkte[i],punkte[j]) : d/1000; }
                    : function(i,j){ return fahrKm(punkte[i],punkte[j]); };
 
-    var folge = reihenfolgeIdx(dauerH, punkte.length);
+    var folge = reihenfolgeIdx(dauerH, ziel ? punkte.length-1 : punkte.length, ziel ? function(i){ return dauerH(i, zi); } : null);
     var tage=[], tag=null, hierIdx=0, kmGesamt=0;
 
     for(var n=0;n<folge.length;n++){
@@ -2239,11 +2243,11 @@ function planeTour(opt){
     }
     if(tag) tage.push(tag);
 
-    var rueck = tage.length ? dauerH(hierIdx,0) : 0;
-    var rueckKm = tage.length ? distKm(hierIdx,0) : 0;
+    var rueck = tage.length ? dauerH(hierIdx,zi) : 0;
+    var rueckKm = tage.length ? distKm(hierIdx,zi) : 0;
     if(tage.length){ tage[tage.length-1].rueckfahrtH=rueck; tage[tage.length-1].rueckfahrtKm=rueckKm; }
 
-    return { start:start, tage:tage,
+    return { start:start, ziel:ziel, tage:tage,
       stundenProTag:opt.stundenProTag,   // die Grenze dieser Rechnung (das Feld kann sich danach ändern)
       reihenfolge:folge.map(function(i){ return punkte[i]; }),
       echteStrasse:echteStrasse,
@@ -2317,7 +2321,7 @@ function gmapsRoute(punkte){
 }
 function tagPunkte(tag, mitRueckfahrt){
   var p=[tag.startPunkt].concat(tag.stopps.map(function(s){ return s.standort; }));
-  if(mitRueckfahrt && tag.rueckfahrtH) p.push(S.tour.ergebnis.start);
+  if(mitRueckfahrt && tag.rueckfahrtH) p.push(S.tour.ergebnis.ziel||S.tour.ergebnis.start);
   return p;
 }
 
@@ -5214,6 +5218,16 @@ var tourLauf=0;
 /* gestrichelte Linie der offenen Karte gegen den Straßenverlauf tauschen (setzt karteOsm) – false: Karte nicht mehr offen */
 var tourLinieNachladen=null;
 /* melde (freiwillig): Text für den Knopf, solange der Straßendienst nicht antwortet */
+/* Endpunkt der Tour: "" = zurück zum Start (wie bisher), "__heim" = zu Hause (fester Startpunkt der Person, für die geplant wird,
+   sonst der eigene), "__betrieb", sonst ein Markt */
+function tourHeimUid(){ return tourFuer() || meineKennung(); }
+function tourHeim(uid){ var sp=STARTPUNKTE[uid]||{}; return sp.heimat || (sp.betrieb ? BETRIEB : null); }
+function tourZielPunkt(){
+  var z=S.tour.zielId||"";
+  if(z==="__heim"){ var h=tourHeim(tourHeimUid()); return h ? Object.assign({name:"Zu Hause"}, h) : null; }
+  if(z==="__betrieb") return BETRIEB;
+  return (z && byId[z] && byId[z].lat) ? byId[z] : null;
+}
 function tourRechnen(melde){
   var lauf=++tourLauf;
   /* eine vom Büro geschickte Tour: genau ihre Stopps, nicht die Auswahl oben */
@@ -5253,15 +5267,16 @@ function tourRechnen(melde){
   } else if(byId[S.tour.startId] && byId[S.tour.startId].lat){
     start=byId[S.tour.startId];
   }
+  var ziel=tourZielPunkt();
   S.tour.geometrie=null;
-  return planeTour({start:start, stopps:kandidaten, stundenProTag:S.tour.stundenProTag, melde:melde})
+  return planeTour({start:start, ziel:ziel, stopps:kandidaten, stundenProTag:S.tour.stundenProTag, melde:melde})
     .then(function(erg){
       if(lauf!==tourLauf) return false;   // überholt – nichts übernehmen
       S.tour.ergebnis=erg;
       if(!erg || !erg.echteStrasse) return true;
       /* die tatsächlich gefahrene Linie für die Karte im Hintergrund nachladen – das Ergebnis steht schon
          (sonst wartete der Knopf auch noch auf die Linie, bis zu weiteren 15 s); bis dahin gestrichelt */
-      strassenGeometrie([erg.start].concat(erg.reihenfolge).concat([erg.start])).then(function(g){
+      strassenGeometrie([erg.start].concat(erg.reihenfolge).concat([erg.ziel||erg.start])).then(function(g){
         if(lauf!==tourLauf || !g) return; S.tour.geometrie=g;
         if(tourLinieNachladen) tourLinieNachladen(g);
       }, function(){});
@@ -5321,7 +5336,7 @@ function viewKarte(){
   var T=S.tour.ergebnis;
   var inTour={};
   if(T){
-    var punkte=[T.start].concat(T.reihenfolge).concat([T.start]);
+    var punkte=[T.start].concat(T.reihenfolge).concat([T.ziel||T.start]);
     var d="M"+punkte.map(function(p){ return X(p.lon).toFixed(1)+","+Y(p.lat).toFixed(1); }).join("L");
     routeSvg+='<path d="'+d+'" style="fill:none;stroke:var(--accent);stroke-width:2.2;stroke-linejoin:round;'+
       'stroke-linecap:round;stroke-dasharray:7 5;opacity:.85"/>';
@@ -5601,7 +5616,7 @@ function karteOsm(withGeo){
     });
 
     if(T){
-      var punkte=[T.start].concat(T.reihenfolge).concat([T.start]);
+      var punkte=[T.start].concat(T.reihenfolge).concat([T.ziel||T.start]);
       if(S.tour.geometrie){
         /* tatsächlicher Straßenverlauf vom Routendienst */
         L.polyline(S.tour.geometrie.map(function(c){ return [c[1],c[0]]; }),{
@@ -5641,6 +5656,8 @@ function karteOsm(withGeo){
         html:'<div style="width:16px;height:16px;border-radius:4px;background:'+tokenFarbe("--ink")+
           ';border:2px solid '+tokenFarbe("--surface")+'"></div>'})})
         .addTo(karte).bindPopup("Start: "+esc(T.start.name||"Startpunkt"));
+      if(T.ziel) L.marker([T.ziel.lat,T.ziel.lon],{icon:L.divIcon({className:"",iconSize:[22,22],iconAnchor:[11,11],
+        html:'<div data-tourziel style="font-size:18px;line-height:22px;text-align:center">🏁</div>'})}).addTo(karte).bindPopup("Ziel: "+esc(T.ziel.name||"Endpunkt"));
       bounds=bounds.concat(punkte.map(function(p){ return [p.lat,p.lon]; }));
     }
     /* „📍 Mein Standort“ (Inhaber 06.10.2026): nur auf diesem Gerät angezeigt – nie gespeichert oder gesendet */
@@ -5845,6 +5862,7 @@ function tourPanel(){
 
     '<div class="grid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px">'+
       '<label class="fl"><span>Startpunkt</span><select id="t_start"></select></label>'+
+      '<label class="fl"><span>Endpunkt</span><select id="t_ziel"></select></label>'+
       '<label class="fl"><span>Position</span><button class="btn ghost" type="button" id="t_gps">'+
         (S.tour.gps?"Standort aktualisieren":"Standort bestimmen")+"</button></label>"+
       '<label class="fl"><span>Arbeitszeit je Tag (h)</span>'+
@@ -5874,6 +5892,15 @@ function tourPanel(){
     .forEach(function(x){ var o=document.createElement("option"); o.value=x.id;
       o.textContent=(stName(x)===x.adresse)?x.adresse:(stName(x)+" · "+x.adresse); startSel.appendChild(o); });
   startSel.value=S.tour.startId;
+  /* Endpunkt: zurück zum Start, nach Hause, Betrieb oder ein Markt */
+  var zielSel=c.querySelector("#t_ziel"), heim=tourHeim(tourHeimUid()), heimWer=tourFuer() ? (tourFuerName()||"der Person") : "mir";
+  var zo=function(v, t, aus){ var o=document.createElement("option"); o.value=v; o.textContent=t; if(aus) o.disabled=true; zielSel.appendChild(o); };
+  zo("", "zurück zum Startpunkt");
+  zo("__heim", "nach Hause ("+heimWer+"): "+(heim ? (heim.name||heim.adresse||"fester Startpunkt") : "kein fester Startpunkt hinterlegt"), !heim);
+  zo("__betrieb", BETRIEB.name+" · "+BETRIEB.adresse);
+  ST.slice().filter(function(x){return x.lat;}).sort(nachMarktname).forEach(function(x){ zo(x.id, (stName(x)===x.adresse)?x.adresse:(stName(x)+" · "+x.adresse)); });
+  zielSel.value=S.tour.zielId||"";
+  zielSel.onchange=function(){ S.tour.zielId=zielSel.value; };
 
   /* Auswahl oben geändert: eine Anpassung von Hand (✕ / + Markt) entfällt – vorher fragen, wie bei „Route
      vorschlagen“ (Rundgang Tourenplanung: „die App fragt“). false = abgebrochen, nichts ändern */
@@ -5946,7 +5973,7 @@ function tourPanel(){
   };
   var goBtn=c.querySelector("#t_go");
   goBtn.onclick=function(){
-    S.tour.startId=startSel.value;
+    S.tour.startId=startSel.value; S.tour.zielId=zielSel.value;
     var v=parseFloat(c.querySelector("#t_std").value); if(v>=4&&v<=14) S.tour.stundenProTag=v;
     /* eine geschickte Tour offen: „Route vorschlagen“ rechnet wieder aus der Auswahl oben */
     if(S.tour.fest){ S.tour.fest=null; S.tour.vonBuero=null; }
@@ -6087,7 +6114,7 @@ function tourDrucken(T){
         tun.map(esc).join("<br>")+(lidl.length?"<br><strong>Lidl fragt nach:</strong> "+esc(lidl.map(function(z){ return (z.art==="stoerung"?"Auftrag ":"IH ")+z.nummer; }).join(", ")):"")+
         "</td><td style='width:26%'>&nbsp;</td></tr>";
     }).join("");
-    var zurueck=tag.rueckfahrtH ? "<div style='font-size:10px;margin-top:3px'>Rückfahrt "+Math.round(tag.rueckfahrtKm||0)+" km, ca. "+uhr(minute+tag.rueckfahrtH*60)+" zurück</div>" : "";
+    var zurueck=tag.rueckfahrtH ? "<div style='font-size:10px;margin-top:3px'>"+(T.ziel?"Fahrt zum Ziel "+esc(T.ziel.name||"")+" ":"Rückfahrt ")+Math.round(tag.rueckfahrtKm||0)+" km, ca. "+uhr(minute+tag.rueckfahrtH*60)+(T.ziel?" an":" zurück")+"</div>" : "";
     return "<h2 style='margin-top:12px'>Tag "+tag.nr+" · "+tag.stopps.length+" Stopps · "+Math.round(tag.km+(tag.rueckfahrtKm||0))+" km</h2>"+
       "<table><tr><th style='width:22px'>#</th><th style='width:30%'>Markt</th><th style='width:13%'>Zeit</th><th>Zu tun</th><th>Notizen</th></tr>"+zeilen+"</table>"+zurueck;
   }).join("");
@@ -6096,7 +6123,7 @@ function tourDrucken(T){
     '<button class="btn" type="button" id="d_druck">Drucken / als PDF sichern</button>'+
     '<button class="btn ghost" type="button" id="d_zu" style="background:#fff">Schließen</button></div>'+
     '<div class="blatt" style="font-size:11px">'+blattKopf("Tourenplan", T.anzahlStopps+" Stopps · "+Math.round(T.kmGesamt)+" km · "+T.tage.length+(T.tage.length===1?" Tag":" Tage"))+
-    (start?"<div style='margin-bottom:6px'>Start und Ziel: "+esc(start)+" · Beginn 07:00</div>":"")+tage+"</div></div>");
+    (start?"<div style='margin-bottom:6px'>"+(T.ziel ? "Start: "+esc(start)+" · Ziel: "+esc((T.ziel.name||"")+(T.ziel.adresse?" · "+T.ziel.adresse:"")) : "Start und Ziel: "+esc(start))+" · Beginn 07:00</div>":"")+tage+"</div></div>");
   document.body.appendChild(dv); document.body.classList.add("druckmodus");
   dv.querySelector("#d_zu").onclick=function(){ dv.remove(); document.body.classList.remove("druckmodus"); };
   dv.querySelector("#d_druck").onclick=function(){ window.print(); };
@@ -6158,7 +6185,7 @@ function tourErgebnis(T){
       return r;
     }).join("");
     var rueck = tag.rueckfahrtH ?
-      '<tr><td></td><td class="muted">Rückfahrt zum Startpunkt</td><td class="mono">'+Math.round(tag.rueckfahrtKm)+
+      '<tr><td></td><td class="muted">'+(T.ziel?"Fahrt zum Ziel: "+esc(T.ziel.name||"Endpunkt"):"Rückfahrt zum Startpunkt")+'</td><td class="mono">'+Math.round(tag.rueckfahrtKm)+
       ' km<br><span class="muted">'+stdFmt(tag.rueckfahrtH)+'</span></td><td class="mono">bis '+
       uhrFmt(minute,tag.rueckfahrtH)+"</td><td></td><td></td></tr>" : "";
     var gm=gmapsRoute(tagPunkte(tag,true));
@@ -6169,7 +6196,7 @@ function tourErgebnis(T){
            Arbeitszeit, der Heimweg kommt obendrauf. Sonst steht über dem Tag
            eine Stundenzahl, die zur Vorgabe nicht passt. */
         '<span class="muted mono" style="font-size:12.5px">'+stdFmt(tag.stunden)+' Arbeit'+
-        (tag.rueckfahrtH ? ' + '+stdFmt(tag.rueckfahrtH)+' Rückfahrt' : "")+
+        (tag.rueckfahrtH ? ' + '+stdFmt(tag.rueckfahrtH)+(T.ziel?' Fahrt zum Ziel':' Rückfahrt') : "")+
         ' · '+Math.round(tag.km+(tag.rueckfahrtKm||0))+" km</span>"+
       "</div>"+
       (tag.zuLang?'<div class="note warnbox">Länger als die eingestellte Arbeitszeit von '+String(T.stundenProTag||S.tour.stundenProTag).replace(".",",")+
@@ -12794,7 +12821,7 @@ function tourenLaden(){
 /* die stehende Route als Daten – je Stopp der Markt und was dort zu tun ist */
 function tourDaten(T){
   return {
-    start: S.tour.startId==="__gps" ? "__betrieb" : S.tour.startId,
+    start: S.tour.startId==="__gps" ? "__betrieb" : S.tour.startId, ziel: S.tour.zielId||"",
     stundenProTag: T.stundenProTag||S.tour.stundenProTag,
     stopps: T.tage.reduce(function(l,tag){ return l.concat(tag.stopps.filter(function(st){ return st.standort; }).map(function(st){
       return {s:st.standort.id, p:(st.positionen||[]).map(function(p){
@@ -12816,7 +12843,7 @@ function tourOeffnen(t){
   var d=t.daten||{};
   tourLauf++;
   S.tour.fest=d.stopps||[]; S.tour.manuell=null; S.tour.dazu=null;
-  S.tour.startId=d.start||"__betrieb"; if(d.stundenProTag) S.tour.stundenProTag=d.stundenProTag;
+  S.tour.startId=d.start||"__betrieb"; S.tour.zielId=d.ziel||""; if(d.stundenProTag) S.tour.stundenProTag=d.stundenProTag;
   S.tour.ergebnis=null; S.tour.geometrie=null; S.tour.vonBuero=t.id;
   if(S.view!=="karte"){ S.view="karte"; }
   render();
