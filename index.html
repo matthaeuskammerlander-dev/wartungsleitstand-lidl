@@ -1611,8 +1611,10 @@ function kanonName(n){
    oder auch keinen Namen“): beliebig viele, je Zeile Auswahl aus dem Team bzw. „anderer Name …“; leer gelassen zählt nicht.
    Gespeichert im versteckten Feld (JSON-Liste) – Formular und geführter Dialog zeigen dieselbe Liste. */
 /* Auswahl: bekannte Namen und das Team ohne Kunden-/Präsentationskonten */
+/* nur Techniker (Inhaber 09.10.2026: „sehr viele Namen – die Liste sollte nur für die Techniker sein, kürzen, redundant“): die Konten
+   des Teams (ohne Kunde/Präsentation/Archiv) und die eigenen Techniker – keine Firmen und Schreibweisen aus der alten Liste */
 function techAuswahlNamen(){
-  var s={}; bekannteNamen().forEach(function(n){ s[n]=1; });
+  var s={}; EIGENE_TECHNIKER.forEach(function(n){ s[kanonName(n)]=1; });
   (chatTeam||[]).forEach(function(t){ if(t && t.name && ["kunde","praesentation","archiv"].indexOf(t.rolle)<0) s[kanonName(t.name)]=1; });
   if(typeof meinName==="function" && meinName()) s[kanonName(meinName())]=1;
   return Object.keys(s).filter(Boolean).sort(function(a,b){ return a.localeCompare(b,"de"); });
@@ -1620,7 +1622,9 @@ function techAuswahlNamen(){
 function mitTechnikerLesen(ziel){
   try{ var l=JSON.parse((ziel&&ziel.value)||"[]"); return Array.isArray(l) ? l.map(function(x){ return String(x||"").trim(); }).filter(Boolean) : []; }catch(e){ return []; }
 }
-function mitTechnikerListe(ziel, host, hauptName){
+/* zahlZiel: verstecktes Feld mit der Anzahl weiterer Arbeitskräfte ohne Namen (Inhaber 09.10.2026: „auch einfach nur die Anzahl
+   der weiteren Arbeitskräfte angeben“) – Spalte protokolle.mitarbeiter_anzahl */
+function mitTechnikerListe(ziel, host, hauptName, zahlZiel){
   if(!ziel || !host) return;
   var zeilen=mitTechnikerLesen(ziel);
   var schreiben=function(){ ziel.value=JSON.stringify(zeilen.map(function(x){ return String(x||"").trim(); }).filter(Boolean)); formDirty=true;
@@ -1630,9 +1634,10 @@ function mitTechnikerListe(ziel, host, hauptName){
     var box=el('<div class="stack" style="gap:6px"></div>'), haupt=String((hauptName&&hauptName())||"").trim().toLowerCase();
     /* ohne Eintrag ein leeres Feld wie früher – leer lassen = allein */
     (zeilen.length?zeilen:[""]).forEach(function(n, i){
-      var namen=techAuswahlNamen().filter(function(x){ return x.toLowerCase()!==haupt; }), frei=n && namen.indexOf(n)<0;
+      /* wer schon verantwortlich ist oder in einer anderen Zeile steht, kommt nicht nochmals zur Auswahl */
+      var namen=techAuswahlNamen().filter(function(x){ return x.toLowerCase()!==haupt && (x===n || zeilen.indexOf(x)<0); }), frei=n && namen.indexOf(n)<0;
       var z=el('<div class="rowflex" style="gap:6px;align-items:center;flex-wrap:nowrap" data-mitzeile>'+
-        '<select style="flex:1;min-width:0"><option value=""></option>'+namen.map(function(x){ return '<option value="'+esc(x)+'">'+esc(x)+"</option>"; }).join("")+
+        '<select style="flex:1;min-width:0"><option value=""></option>'+namen.map(function(x){ return '<option value="'+esc(x)+'">'+esc(x)+(kanonName(x)===kanonName(meinName())?" (ich)":"")+"</option>"; }).join("")+
           '<option value="__frei">anderer Name …</option></select>'+
         '<input type="text" placeholder="Name" autocomplete="off" style="flex:1;min-width:0">'+
         '<button class="btn ghost sm" type="button" aria-label="entfernen">✕</button></div>');
@@ -1646,14 +1651,26 @@ function mitTechnikerListe(ziel, host, hauptName){
     var plus=el('<button class="btn ghost sm" type="button" data-mitplus style="align-self:flex-start">+ Techniker/in</button>');
     plus.onclick=function(){ zeilen.push(""); zeichnen(); var s=host.querySelectorAll("[data-mitzeile] select"); if(s.length) s[s.length-1].focus(); };
     box.appendChild(plus);
+    if(zahlZiel){
+      var zahl=Math.max(0, parseInt(zahlZiel.value,10)||0);
+      var zr=el('<div class="rowflex" style="gap:6px;align-items:center;flex-wrap:wrap" data-mitzahl><span style="font-size:13px">Weitere Arbeitskräfte ohne Namen</span>'+
+        '<button class="btn ghost sm" type="button" data-zm aria-label="eine weniger">−</button><strong data-zw style="min-width:1.5em;text-align:center">'+zahl+'</strong>'+
+        '<button class="btn ghost sm" type="button" data-zp aria-label="eine mehr">+</button></div>');
+      var setzeZahl=function(n){ zahlZiel.value=String(Math.max(0, Math.min(20, n))); formDirty=true; zahlZiel.dispatchEvent(new CustomEvent("neu", {detail:host})); zeichnen(); };
+      zr.querySelector("[data-zm]").onclick=function(){ setzeZahl(zahl-1); };
+      zr.querySelector("[data-zp]").onclick=function(){ setzeZahl(zahl+1); };
+      box.appendChild(zr);
+    }
     host.appendChild(box);
   };
+  if(zahlZiel) zahlZiel.addEventListener("neu", function(e){ if(e.detail===host || !document.body.contains(host)) return; zeichnen(); });
   /* von außen geändert (Entwurf, Bearbeiten, die andere Ansicht derselben Liste): neu zeichnen */
   /* das Team (Konten) kommt dazu, sobald geladen */
   if(chatAn() && !chatTeam) chatTeamLaden().then(function(){ if(document.body.contains(host)) zeichnen(); });
   ziel.addEventListener("neu", function(e){ if(e.detail===host || !document.body.contains(host)) return; zeilen=mitTechnikerLesen(ziel); zeichnen(); });
   zeichnen();
 }
+function mitAnzahlText(p){ var n=(p && p.mitarbeiterAnzahl)||0; return n ? " + "+n+(n===1?" weitere Arbeitskraft":" weitere Arbeitskräfte") : ""; }
 function bekannteNamen(){
   var s={}; Object.keys(NAMEN_KANON).forEach(function(l){ s[NAMEN_KANON[l]]=1; });
   return Object.keys(s).sort(function(a,b){ return a.localeCompare(b,"de"); });
@@ -10534,6 +10551,7 @@ function zuZeile(doc,uid){
      Datenbank, in der die Spalte noch fehlt */
   if(doc.stoerung) zeile.stoerung=doc.stoerung;
   if(doc.mitarbeiter && doc.mitarbeiter.length) zeile.mitarbeiter=doc.mitarbeiter;
+  if(doc.mitarbeiterAnzahl) zeile.mitarbeiter_anzahl=doc.mitarbeiterAnzahl;
   /* ebenso: fehlt die Spalte noch, bleibt ein Protokoll mit Rapport auf dem
      Gerät, bis supabase-setup.sql gelaufen ist */
   if(doc.rapport) zeile.rapport=doc.rapport;
@@ -10577,7 +10595,7 @@ function ausZeile(r){
     bemerkungen:r.bemerkungen, filiale:r.filiale, fotos:r.fotos||[],
     anlagen:r.anlagen||[], ergebnis:r.ergebnis||[], unterschrift:r.unterschrift,
     sofortmassnahme:r.sofortmassnahme, auftraggebervertreter:r.auftraggebervertreter,
-    stoerung:r.stoerung||null, mitarbeiter:r.mitarbeiter||[], rapport:r.rapport||null, kaeltemittel:r.kaeltemittel||null,
+    stoerung:r.stoerung||null, mitarbeiter:r.mitarbeiter||[], mitarbeiterAnzahl:r.mitarbeiter_anzahl||0, rapport:r.rapport||null, kaeltemittel:r.kaeltemittel||null,
     erfasstVon:r.erfasst_von||null };
 }
 /* Alle Spalten außer der Unterschrift. Die ist ein PNG als Text, rund 25 KB
@@ -10590,7 +10608,7 @@ var PROTOKOLL_SPALTEN=["id","client_id","erstellt","erstellt_von","standort_id",
   "firma","techniker","kontakt","subunternehmen","zert_unternehmen","zert_person","anlagen","arbeiten",
   "arbeiten_sonstiges","maengel","betriebsbereit","sofortmassnahme","ergebnis","bemerkungen","name_techniker",
   "auftraggebervertreter","fotos","version","geaendert","korrektur_grund","geloescht","geloescht_von",
-  "loesch_grund","stoerung","mitarbeiter","erfasst_von"].join(",");
+  "loesch_grund","stoerung","mitarbeiter","erfasst_von","mitarbeiter_anzahl"].join(",");
 /* Die Spalte rapport kommt mit einer späteren Fassung von supabase-setup.sql.
    Fehlt sie noch, lädt die App ohne sie weiter, statt gar nichts zu zeigen. */
 var rapportSpalte=true;
@@ -11088,6 +11106,7 @@ function aktualisiereProtokoll(id, doc, quelle, geraetFotos, geraetAuftrag, gera
     zeile.version=doc.version; zeile.geaendert=doc.geaendert; zeile.korrektur_grund=doc.korrekturGrund||null;
     /* bei einer Korrektur heißt „leer“ auch leeren – weggelassen bliebe der alte Wert */
     zeile.mitarbeiter=doc.mitarbeiter||[];
+    zeile.mitarbeiter_anzahl=doc.mitarbeiterAnzahl||0;
     /* ebenso der Rapport: nimmt ein Zurücknehmen ihn weg, muss der Verweis
        wirklich weg (sonst stimmen Verlauf, Archiv-PDF und Datenbank nicht) */
     if(rapportSpalte) zeile.rapport=doc.rapport||null;
@@ -15550,7 +15569,7 @@ function protoAssistentTeilAbschluss(P){
         inhalt.appendChild(nameFeld);
       }
       var mitF=el('<div class="as-feld"><div class="as-label">Weitere Techniker/innen – wer noch dabei war</div><div></div></div>');
-      mitTechnikerListe(f("#f_mit"), mitF.lastChild, function(){ return wert("#f_tech"); });
+      mitTechnikerListe(f("#f_mit"), mitF.lastChild, function(){ return wert("#f_tech"); }, f("#f_mitzahl"));
       inhalt.appendChild(mitF);
       /* Datum hier änderbar (Büro 01.10.2026: im Dialog ging es nicht) – als
          echtes Datumsfeld wie im Formular, nicht in der Zukunft */
@@ -15877,7 +15896,7 @@ function protokollFormHtml(stoer, s){
   '<fieldset><legend>Wartungsunternehmen</legend><div class="grid">'+
     '<label class="fl"><span>Firma / Vertragspartner</span><input type="text" id="f_firma" value="Kammerlander Umwelt- und Klimatechnik GmbH"></label>'+
     '<label class="fl"><span class="req">Techniker/in</span><input type="text" id="f_tech" list="technamen" autocomplete="off" required></label>'+
-    '<div class="fl" style="grid-column:1/-1"><span>Weitere Techniker/innen</span><div data-mitliste></div><input type="hidden" id="f_mit" value="[]"></div>'+
+    '<div class="fl" style="grid-column:1/-1"><span>Weitere Techniker/innen</span><div data-mitliste></div><input type="hidden" id="f_mit" value="[]"><input type="hidden" id="f_mitzahl" value="0"></div>'+
     '<label class="fl"><span>Telefon / E-Mail</span><input type="text" id="f_kontakt"></label>'+
     '<label class="fl"><span>F-Gase-Unternehmenszertifikat Nr.</span><input type="text" id="f_zertu" inputmode="text" autocapitalize="characters" autocorrect="off" spellcheck="false"></label>'+
     '<label class="fl"><span>F-Gase-Personenzertifikat Nr.</span><input type="text" id="f_zertp" inputmode="text" autocapitalize="characters" autocorrect="off" spellcheck="false"></label>'+
@@ -16125,7 +16144,7 @@ function protoTeilMarkt(P){
     /* weiterer Kunde statt Lidl (Büro 01.10.2026): die Lidl-Teile ausblenden – Lidl-Auftrag
        als Pflicht, Auftrag-PDF und QR-Code, Rapportbericht, FM-Region, Rechnungshinweis */
     form._istLidl=function(){ var s0=byId[P.selSt.value]; return !s0 || istLidl(s0); };
-    mitTechnikerListe(form.querySelector("#f_mit"), form.querySelector("[data-mitliste]"), function(){ return form.querySelector("#f_tech").value; });
+    mitTechnikerListe(form.querySelector("#f_mit"), form.querySelector("[data-mitliste]"), function(){ return form.querySelector("#f_tech").value; }, form.querySelector("#f_mitzahl"));
     form._lidlAnpassen=function(){
       var lidl=form._istLidl();
       form.querySelectorAll("[data-nurlidl]").forEach(function(x){ x.hidden=!lidl; });
@@ -17271,6 +17290,7 @@ function protoTeilKorrektur(P){
         setz("f_wart_sonst",art.replace(/^sonstige:\s*/,""));
       } else { r2=form.querySelector('input[name="wart"][value="'+art+'"]'); if(r2) r2.checked=true; }
       setz("f_firma",bearb.firma); setz("f_tech",bearb.techniker); setz("f_kontakt",bearb.kontakt);
+      setz("f_mitzahl",String(bearb.mitarbeiterAnzahl||0));
       setz("f_mit",JSON.stringify(bearb.mitarbeiter||[])); form.querySelector("#f_mit").dispatchEvent(new Event("neu"));
       setz("f_zertu",bearb.zertUnternehmen); setz("f_zertp",bearb.zertPerson); setz("f_sub",bearb.subunternehmen);
       P.anlagenZeichnen();
@@ -17813,6 +17833,7 @@ function protoTeilSpeichern(P){
         firma:v("f_firma"), techniker:verantwortlich, kontakt:v("f_kontakt"),
         /* wer noch mitgearbeitet hat */
         mitarbeiter:mitTechnikerLesen(form.querySelector("#f_mit")).map(kanonName).filter(Boolean),
+        mitarbeiterAnzahl:Math.max(0, parseInt(v("f_mitzahl"),10)||0),
         subunternehmen:v("f_sub"), zertUnternehmen:v("f_zertu"), zertPerson:v("f_zertp"),
         anlagen:anlagen,
         arbeiten:Array.prototype.map.call(form.querySelectorAll('input[name="arbeit"]:checked'),function(x){return x.value;}),
@@ -18449,7 +18470,7 @@ function blattInhalt(p){
 
       "<h2>Wartungsunternehmen</h2><table>"+
         zeile("Firma / Vertragspartner",p.firma)+
-        zeile("Techniker/in",[p.techniker].concat(p.mitarbeiter||[]).filter(Boolean).map(kanonName).join(", ")+(p.erfasstVon?" (erfasst von "+kanonName(p.erfasstVon)+" im Auftrag)":""))+
+        zeile("Techniker/in",[p.techniker].concat(p.mitarbeiter||[]).filter(Boolean).map(kanonName).join(", ")+mitAnzahlText(p)+(p.erfasstVon?" (erfasst von "+kanonName(p.erfasstVon)+" im Auftrag)":""))+
         zeile("Telefon / E-Mail",p.kontakt)+
         zeile("Subunternehmen",p.subunternehmen||"nein")+
         zeile("F-Gase-Unternehmenszertifikat Nr.",p.zertUnternehmen)+
@@ -18978,7 +18999,7 @@ function protokollDetail(p){
       '<div class="rowflex" style="margin-top:6px"><button class="btn ghost sm" type="button" data-akt="konfliktdruck">Korrektur vom Gerät ansehen</button>'+
       (nurLesen()||demo()?"":'<button class="btn ghost sm" type="button" data-akt="konfliktweg">Vom Gerät verwerfen</button>')+"</div></div>":"")+
     '<dl class="dl">'+
-      "<dt>Techniker/in</dt><dd>"+esc([p.techniker||p.nameTechniker].concat(p.mitarbeiter||[]).filter(Boolean).map(kanonName).join(", ")||"–")+
+      "<dt>Techniker/in</dt><dd>"+esc(([p.techniker||p.nameTechniker].concat(p.mitarbeiter||[]).filter(Boolean).map(kanonName).join(", ")||"–")+mitAnzahlText(p))+
         (p.erfasstVon?' <span class="muted" style="font-size:12.5px">· erfasst von '+esc(kanonName(p.erfasstVon))+" im Auftrag</span>":"")+"</dd>"+
       "<dt>Wartungsart</dt><dd>"+esc(p.wartungsart||"–")+"</dd>"+
       /* welche Anlagen gewartet bzw. betroffen waren – antippen: ihre Historie */
@@ -31699,7 +31720,7 @@ function einsatzPositionen(pk, kid){
       (so.massnahmen?"\n"+String(so.massnahmen).slice(0,400):"")}
       : {typ:"text", text:wart.charAt(0).toUpperCase()+wart.slice(1)+" lt. Protokoll vom "+dfmt(pk.datum)+(pk.auftragsnummer?", Auftrag "+pk.auftragsnummer:"")+
         ((pk.anlagen||[]).length?": "+pk.anlagen.map(function(a){ return a.name||"Anlage"; }).join(", "):"")+(pk.bemerkungen?"\n"+String(pk.bemerkungen).slice(0,400):"")});
-    var mann=1+((pk.mitarbeiter||[]).length);
+    var mann=1+((pk.mitarbeiter||[]).length)+(pk.mitarbeiterAnzahl||0);
     var b0=zeitMin(so.ankunft), e0=zeitMin(so.ende), rk=katalogFinde(/regiestunden/i, kid);
     /* ohne Ankunft/Fertig (Wartungsformular): die verrechenbaren Stunden des Lidl-Rapports; gar keine Zeit → Zeile mit Hinweis */
     var rap=!stoer && rapportVon(pk), rapStd=rap && rap.daten ? stundenZahl(rap.daten.stunden) : null;

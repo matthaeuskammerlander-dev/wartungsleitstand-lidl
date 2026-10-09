@@ -5117,12 +5117,18 @@ test("Weitere Techniker/innen im Protokoll: beliebig viele mit +, aus der Liste 
     /* alter Entwurf mit zwei Feldern */
     ziel.value = JSON.stringify(["A Alt", "B Alt"]); ziel.dispatchEvent(new Event("neu"));
     e.neuGezeichnet = [...host.querySelectorAll("[data-mitzeile] input")].map((i) => i.value).join(",");
+    /* Anzahl weiterer Arbeitskräfte ohne Namen (Inhaber 09.10.2026) */
+    const zp = () => host.querySelector("[data-mitzahl] [data-zp]");
+    zp().click(); zp().click(); await w(50);
+    e.zahl = form.querySelector("#f_mitzahl").value + "|" + host.querySelector("[data-mitzahl] [data-zw]").textContent + "|" + x("mitAnzahlText")({ mitarbeiterAnzahl: 2 });
+    e.nurTechniker = x("techAuswahlNamen()").every((n) => !/GmbH|straße/i.test(n));
     return e;
   });
   pruefe(r.start === "1|[]", "Start: ein leeres Feld: " + r.start);
   pruefe(r.zeilen === 4 && r.wert === r.erwartet, "Liste: " + JSON.stringify(r));
   pruefe(r.nachEntfernen === '["Gast Monteur"]', "Entfernen: " + r.nachEntfernen);
   pruefe(r.neuGezeichnet === "A Alt,B Alt", "Von außen gesetzt: " + r.neuGezeichnet);
+  pruefe(r.zahl === "2|2| + 2 weitere Arbeitskräfte" && r.nurTechniker, "Anzahl / nur Techniker: " + JSON.stringify(r));
   pruefe(!a.fehler.length, "Laufzeitfehler: " + a.fehler.join("; "));
   await a.zu();
 });

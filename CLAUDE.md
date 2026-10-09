@@ -92,7 +92,8 @@ Kammerlander Umwelt- und Klimatechnik (UKT) – oft kurz, vom Handy, im Feld.
   (nicht änderbar), der Name im Abschluss ist immer derselbe (`verantwortlich`
   beim Speichern, Trigger tools/protokoll-techniker.sql). Korrektur: es bleibt,
   wer es gemacht hat. Wer noch dabei war: Weitere Techniker/innen (Inhaber 08.10.2026: beliebig viele mit „+ Techniker/in“, je Zeile Auswahl aus
-  Team/bekannten Namen oder „anderer Name …“, leer lassen geht – `mitTechnikerListe`, verstecktes Feld `#f_mit` als JSON, `mitarbeiter`; alte Entwürfe mit f_tech2/f_tech3 werden übernommen). Ausnahme (Büro
+  nur Techniker – Team-Konten + `EIGENE_TECHNIKER`, keine Firmen/Altnamen, schon gewählte nicht doppelt, eigenes Konto „(ich)“ – Inhaber 09.10.2026 (`techAuswahlNamen`) – oder „anderer Name …“, leer lassen geht;
+  dazu „Weitere Arbeitskräfte ohne Namen“ − n + (`#f_mitzahl`, Spalte `protokolle.mitarbeiter_anzahl`, tools/protokoll-mitarbeiter-anzahl.sql; im PDF „+ n weitere Arbeitskräfte“, `mitAnzahlText`) – `mitTechnikerListe`, verstecktes Feld `#f_mit` als JSON, `mitarbeiter`; alte Entwürfe mit f_tech2/f_tech3 werden übernommen). Ausnahme (Büro
   02.10.2026, ohne Bestätigung): Admins und Inhaber dürfen „Ausgefüllt für“ eine andere
   Person wählen (`#f_fuer`) – Techniker/in = wer gearbeitet hat, Spalte `erfasst_von`
   (tools/protokoll-im-auftrag.sql) = wer eingetragen hat, sichtbar in Protokoll und PDF
