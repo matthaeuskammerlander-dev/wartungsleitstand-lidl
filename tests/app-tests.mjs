@@ -2146,14 +2146,16 @@ test("Tiefentest stunden: Abwesenheit – Tag herausnehmen nur für die eine Per
     const amHeute = (uid) => db.planung.some((p) => (p.wer || []).includes(uid) && x("planTage(" + JSON.stringify(p) + ")").includes(heute));
     return { knopf: !!knopf, offenVorher, offenKollegin: x("abwesenheitOffen('" + heute + "','" + kollegin + "').length"), offenIch: x("abwesenheitOffen('" + heute + "').length"),
       kolleginHeute: amHeute(kollegin), ichHeute: amHeute(ich), ichMorgen: db.planung.some((p) => (p.wer || []).includes(ich) && x("planTage(" + JSON.stringify(p) + ")").includes(morgen)),
-      kolleginStunden: db.arbeitszeiten.filter((z) => z.user_id === kollegin).map((z) => z.datum).sort(), heute, morgen };
+      kolleginStunden: db.arbeitszeiten.filter((z) => z.user_id === kollegin).map((z) => z.datum).sort(), heute, morgen,
+      /* Stunden nur an Arbeitstagen (am Freitag ist „morgen“ Samstag – ohne Soll) */
+      erwartet: [heute, morgen].filter((t) => x("sollMinutenTag('" + t + "')") > 0).sort() };
   }, antwort);
   /* TTQ-02: „Nur kurz eingesprungen“ gilt nur für mich – bei der Kollegin bleibt der Tag ungeklärt */
   const rq2 = await kurs("Nur kurz eingesprungen");
   if (!rq2.knopf || rq2.offenVorher !== 1 || rq2.offenKollegin !== 1 || rq2.offenIch !== 0) fehl.push("TTQ-02 Antwort gilt für alle: " + JSON.stringify(rq2));
   /* TTQ-01 (Techniker): „für diesen Tag beenden“ – nur ich verliere den Tag, die Kollegin behält Kurs und Stunden */
   const rq1b = await kurs("für diesen Tag beenden");
-  if (!rq1b.knopf || rq1b.ichHeute || !rq1b.ichMorgen || !rq1b.kolleginHeute || JSON.stringify(rq1b.kolleginStunden) !== JSON.stringify([rq1b.heute, rq1b.morgen].sort()))
+  if (!rq1b.knopf || rq1b.ichHeute || !rq1b.ichMorgen || !rq1b.kolleginHeute || JSON.stringify(rq1b.kolleginStunden) !== JSON.stringify(rq1b.erwartet))
     fehl.push("TTQ-01 Kurs für zwei: Tag für beide beendet: " + JSON.stringify(rq1b));
   if (b.fehler.length) fehl.push("Laufzeitfehler (Techniker): " + b.fehler.join("; "));
   await b.zu();
