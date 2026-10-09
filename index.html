@@ -36791,6 +36791,52 @@ function geplantFuerMich(tag){
   });
   return l.sort(function(a,b){ return (a.beginn==null?9999:a.beginn)-(b.beginn==null?9999:b.beginn); });
 }
+/* Tagesrückblick aus dem, was wirklich erledigt wurde (Inhaber 09.10.2026: „anhand der geschriebenen Protokolle, erledigten Wartungen
+   und Störungen und Arbeitsnachweise – z. B. um 10.15 Uhr Wartung in Hollabrunn; die Zeit kommt aus dem Rapportzettel, die Zeit
+   dazwischen ist Fahrzeit“): eigene Protokolle des Tages (selbst geschrieben ODER als Techniker/Weitere Techniker/in eingetragen –
+   etwa gemeinsam mit einem Kollegen), je Markt EIN Einsatz; Zeit aus dem Lidl-Rapport, sonst Ankunft–Fertig, sonst geschätzt
+   (Uhrzeit im Protokoll = fertig, Dauer wie gelernt – arbeitStunden). */
+function einsaetzeFuerMich(tag){
+  var uid=Store.benutzer && Store.benutzer.id, ich=suchNorm(meinName()), je={};
+  alleProtokolle().forEach(function(p){
+    if(p.geloescht || p.datum!==tag || !p.standortId) return;
+    if(!((uid && p.erstelltVon===uid) || (ich && [p.techniker].concat(p.mitarbeiter||[]).map(suchNorm).indexOf(ich)>=0))) return;
+    var az=protokollArbeitszeit(p), s=az?zeitMin(az.von):null, e=az?zeitMin(az.bis):null, quelle=az?((rapportVon(p) && rapportZeit((rapportVon(p)||{}).daten))?"Rapport":"Ankunft–Fertig"):"";
+    if(s==null || e==null || e<=s){
+      var fertig=zeitMin(p.uhrzeit); if(fertig==null) return;
+      var pos=(p.positionIds||[p.positionId]).map(function(id){ return posById[id]; }).filter(Boolean);
+      var dauer=Math.round(arbeitStunden(byId[p.standortId], pos).h*60);
+      s=Math.max(0, fertig-dauer); e=fertig; quelle="geschätzt";
+    }
+    var st=byId[p.standortId], art=istStoerung(p)?"stoerung":"wartung", k=p.standortId;
+    var x=je[k];
+    if(!x){ je[k]={schluessel:"prot:"+p._id, titel:(art==="stoerung"?"Störung ":"Wartung ")+(st?stName(st):protoName(p)), bereich:art, standort_id:p.standortId,
+      projekt_id:null, planung_id:null, beginn:s, ende:e, taetigkeit:(art==="stoerung"?"Störung ":"Wartung ")+(st?stName(st):protoName(p)), einsatz:true, zeitQuelle:quelle}; return; }
+    /* zweites Protokoll am selben Markt (weitere Anlage): ein Einsatz, früheste bis späteste Zeit; Störung und Wartung → beide im Text */
+    x.beginn=Math.min(x.beginn, s); x.ende=Math.max(x.ende, e);
+    if(art!==x.bereich && !/ \+ /.test(x.titel)){ x.titel+=" + "+(art==="stoerung"?"Störung":"Wartung"); x.taetigkeit=x.titel; }
+    if(quelle==="geschätzt" && x.zeitQuelle!=="geschätzt") x.zeitQuelle+=" (teils geschätzt)";
+  });
+  return Object.keys(je).map(function(k){ return je[k]; });
+}
+/* eigene Arbeitsnachweise mit Zeilen an diesem Tag (Monteur = angemeldetes Konto) – Baustelle beim Projekt */
+function anEinsaetzeFuerMich(tag){
+  var uid=Store.benutzer && Store.benutzer.id;
+  if(demo() || !uid || !Store.sb) return Promise.resolve([]);
+  return mitFrist(Store.sb.from("arbeitsnachweise").select("id,projekt_id,daten,erstellt_von").eq("erstellt_von", uid).limit(200), 10000).then(function(r){
+    if(r.error || !Array.isArray(r.data)) return [];
+    var l=[];
+    r.data.forEach(function(n){
+      var p=PROJEKTE.filter(function(x){ return x.id===n.projekt_id; })[0];
+      ((n.daten||{}).zeilen||[]).forEach(function(z, i){
+        var s=zeitMin(z.von), e=zeitMin(z.bis); if(z.datum!==tag || s==null || e==null || e<=s) return;
+        l.push({schluessel:"an:"+n.id+":"+i, titel:"Baustelle "+(p?projektTitel(p):"Projekt"), bereich:"baustelle", standort_id:(p&&p.standort_id)||null, projekt_id:n.projekt_id,
+          planung_id:null, beginn:s, ende:e, taetigkeit:"Baustelle "+(p?projektTitel(p):""), einsatz:true, zeitQuelle:"Arbeitsnachweis"});
+      });
+    });
+    return l;
+  }, function(){ return []; });
+}
 /* gestempelte Blöcke eines Tages (zusammenhängende gestempelte Einträge, noch nicht bestätigt) */
 function stempelBloecke(tag){
   var l=ZEITEN.filter(function(z){ return z.datum===tag && z.art==="arbeit" && /^stempel/.test(z.quelle||"") && !z.bestaetigt && zeitMin(z.beginn)!=null && zeitMin(z.ende)>zeitMin(z.beginn); })
@@ -36821,10 +36867,11 @@ function abgleichOffen(tag){
 function abgleichTeile(block, termine){
   var l=termine.map(function(t){ return Object.assign({}, t, {s:Math.max(block.beginn, t.s), e:Math.min(block.ende, t.e)}); })
     .filter(function(t){ return t.e>t.s; }).sort(function(a,b){ return a.s-b.s; });
-  var teile=[], cur=block.beginn, ortVorher=null, erste=true;
+  var teile=[], cur=block.beginn, ortVorher=null, erste=true, vorEinsatz=false;
   var terminTeil=function(t, s, e){ return {beginn:s, ende:e, bereich:t.bereich, taetigkeit:t.taetigkeit, standort_id:t.standort_id, projekt_id:t.projekt_id, planung_id:t.planung_id, schluessel:t.schluessel, titel:t.titel}; };
-  var luecke=function(von, bis, ortDanach){
-    var fahrt=(bis-von)<=150 && ((ortDanach && ortDanach!==ortVorher) || (!ortDanach && ortVorher && !erste));
+  /* einsatzNah: neben einem erledigten Einsatz (Protokoll, Arbeitsnachweis) ist die Zeit dazwischen Fahrt – ohne Höchstdauer (Inhaber 09.10.2026) */
+  var luecke=function(von, bis, ortDanach, einsatzNah){
+    var fahrt=((bis-von)<=150 || einsatzNah) && ((ortDanach && ortDanach!==ortVorher) || (!ortDanach && ortVorher && !erste));
     if(fahrt){ teile.push({beginn:von, ende:bis, bereich:"fahrt", taetigkeit:"Fahrt", standort_id:null, projekt_id:null, planung_id:null, luecke:true}); return; }
     /* sonst je Abschnitt, was dort gestempelt war – Bereich, Was, Markt, Projekt (nicht der erste Abschnitt für alles:
        aus Montage an der Baustelle wurde sonst Fahrt, und die Projektstunden gingen verloren) */
@@ -36845,11 +36892,11 @@ function abgleichTeile(block, termine){
       return;
     }
     if(t.s<cur) t.s=cur; if(t.e<=t.s) return;
-    if(t.s>cur) luecke(cur, t.s, t.standort_id);
+    if(t.s>cur) luecke(cur, t.s, t.standort_id, !!t.einsatz || vorEinsatz);
     teile.push(terminTeil(t, t.s, t.e));
-    cur=t.e; if(t.standort_id) ortVorher=t.standort_id; erste=false;
+    cur=t.e; if(t.standort_id) ortVorher=t.standort_id; erste=false; vorEinsatz=!!t.einsatz;
   });
-  if(cur<block.ende) luecke(cur, block.ende, null);
+  if(cur<block.ende) luecke(cur, block.ende, null, vorEinsatz);
   return teile;
 }
 /* angerechnete Minuten je Teil wie stempel_abgleich: Summe und Pause des Blocks bleiben, die Pause kommt zum längsten Teil */
@@ -36969,7 +37016,10 @@ function abgleichDialog(tag, nachAusstempeln){
   if(monatGesperrt(tag)){ toast(MONAT_GESPERRT+"."); return; }
   var bloecke=stempelBloecke(tag);
   if(!bloecke.length){ toast("An diesem Tag gibt es keine gestempelte Zeit zum Prüfen."); return; }
-  var plan=geplantFuerMich(tag).filter(function(it){ return it.beginn!=null; });
+  /* erledigt laut Protokoll zuerst – ein geplanter Termin am selben Markt ist damit erledigt und kommt nicht doppelt */
+  var eins=einsaetzeFuerMich(tag), einsOrte={}; eins.forEach(function(x){ einsOrte[x.standort_id]=1; });
+  var plan=eins.concat(geplantFuerMich(tag).filter(function(it){ return it.beginn!=null && !(it.standort_id && einsOrte[it.standort_id] && /^(wartung|stoerung)$/.test(it.bereich)); }))
+    .sort(function(a,b){ return a.beginn-b.beginn; });
   var heuteAb=isoLokal(new Date()), gespeichert=false;
   var spaeterMeldung=function(){ if(!gespeichert) toast("Nicht gespeichert – beim Tag steht „⇆ Tag prüfen“, bis du ihn geprüft hast."); };
   var v=ansichtOeffnen("Tagesrückblick", spaeterMeldung);
@@ -37000,6 +37050,16 @@ function abgleichDialog(tag, nachAusstempeln){
     hand=false;
   };
   vorschlagen();
+  /* Arbeitsnachweise kommen aus der Datenbank nach – dann neu vorschlagen, solange nichts von Hand geändert ist */
+  anEinsaetzeFuerMich(tag).then(function(l){
+    l=l.filter(function(x){ return !plan.some(function(y){ return y.schluessel===x.schluessel; }); });
+    if(!l.length || !document.body.contains(host)) return;
+    l.forEach(function(it){ plan.push(it); var drin=bloecke.some(function(b){ return Math.min(b.ende, it.ende)>Math.max(b.beginn, it.beginn); });
+      wahl[it.schluessel]={an:drin, s:it.beginn, e:it.ende, bereich:it.bereich, verschieben:false}; });
+    plan.sort(function(a,b){ return a.beginn-b.beginn; });
+    if(!hand) vorschlagen();
+    zeichne();
+  });
   /* geändert gegenüber dem Gestempelten? nur solche Blöcke gehen an die Datenbank */
   var gleich=function(a, z){ return a.beginn===zeitMin(z.beginn) && a.ende===zeitMin(z.ende) && a.bereich===(z.bereich||"sonstiges") && (a.taetigkeit||"")===(z.taetigkeit||"") &&
     (a.standort_id||"")===(z.standort_id||"") && (a.projekt_id||"")===(z.projekt_id||"") && (a.planung_id||"")===(z.planung_id||""); };
@@ -37038,12 +37098,14 @@ function abgleichDialog(tag, nachAusstempeln){
     host.appendChild(el('<div class="note" style="font-size:13px">⏱ <strong>Gestempelt:</strong> '+esc(gest)+'<br><span class="muted">Anfang, Ende und Summe bleiben – hier steht nur, wann du was und wo gemacht hast.</span></div>'));
     /* die geplanten Termine: gemacht? */
     if(plan.length){
-      var pl=el('<div class="stack" style="gap:6px"><div style="font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--accent)">Laut Kalender geplant – was davon wurde gemacht?</div></div>');
+      var pl=el('<div class="stack" style="gap:6px"><div style="font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--accent)">'+
+        (plan.some(function(it){ return it.einsatz; }) ? "Erledigt laut Protokoll – und geplant laut Kalender" : "Laut Kalender geplant – was davon wurde gemacht?")+"</div>"+
+        (plan.some(function(it){ return it.einsatz; }) ? '<div class="muted" style="font-size:12.5px">Die Zeiten kommen aus dem Rapport (sonst Ankunft–Fertig). Dazwischen ist Fahrt. Stimmt eine Zeit nicht, hier ändern.</div>' : "")+"</div>");
       plan.forEach(function(it){
         var w=wahl[it.schluessel], erf=geplantErfasst(it, tag);
         var z=el('<div class="stack" style="gap:4px;border:1px solid var(--line);border-radius:8px;padding:8px 10px'+(w.an?"":";opacity:.75")+'">'+
           '<label class="chk" style="font-size:13.5px"><input type="checkbox" data-an'+(w.an?" checked":"")+'><span style="min-width:0;overflow-wrap:anywhere"><strong>'+esc(it.titel)+"</strong>"+
-            ' <span class="muted">geplant '+esc(kalHm(it.beginn)+"–"+kalHm(it.ende))+(erf?" · schon erfasst":"")+"</span></span></label>"+
+            ' <span class="muted">'+(it.einsatz ? "✓ erledigt "+esc(kalHm(it.beginn)+"–"+kalHm(it.ende))+" · "+esc(it.zeitQuelle||"Protokoll") : "geplant "+esc(kalHm(it.beginn)+"–"+kalHm(it.ende)))+(erf?" · schon erfasst":"")+"</span></span></label>"+
           (w.an ? '<div class="rowflex" style="gap:6px;flex-wrap:wrap;font-size:13px">tatsächlich <input type="time" data-s value="'+kalHm(w.s)+'" style="width:auto"> – <input type="time" data-e value="'+kalHm(w.e)+'" style="width:auto">'+
               '<select data-b style="width:auto;max-width:100%">'+bereichListe(w.bereich).map(function(x){ return '<option value="'+esc(x[0])+'"'+(x[0]===w.bereich?" selected":"")+">"+esc(x[1])+"</option>"; }).join("")+"</select></div>"
             : mehrtaegig(it) ? '<div class="muted" style="font-size:12.5px">mehrtägig – bleibt im Kalender, wie er ist</div>'

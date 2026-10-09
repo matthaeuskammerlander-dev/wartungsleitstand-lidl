@@ -395,7 +395,11 @@ Kammerlander Umwelt- und Klimatechnik (UKT) – oft kurz, vom Handy, im Feld.
   `tagGeprueftLaden` in `zeitenLaden`) – gilt auf allen Geräten; dazu localStorage `ukt_tag_geprueft` je Konto|Tag als Rückfall
   (Tabelle fehlt → nur Gerät; Netz weg → beim nächsten `zeitenLaden` nachgetragen, `tagGeprueftSenden`). Ganz „stempel_abgeglichen“ gilt
   ohnehin als geprüft; Präsentation/Spielwiese nur im Speicher. „Später“ speichert nichts –
-  beim Tag „⇆ Tag prüfen“ (`tagPruefenOffen`), bis geprüft oder Monat bestätigt. Umstempeln mit Vorgabe aus dem Termin (`geplantFuerMich`, „⇄ Dorthin umstempeln“).
+  beim Tag „⇆ Tag prüfen“ (`tagPruefenOffen`), bis geprüft oder Monat bestätigt.
+  Aus dem Erledigten (Inhaber 09.10.2026: „anhand der geschriebenen Protokolle … Zeit aus dem Rapportzettel, dazwischen Fahrzeit“): `einsaetzeFuerMich` – eigene
+  Protokolle des Tages (selbst geschrieben oder als Techniker/Weitere/r Techniker/in eingetragen), je Markt ein Einsatz, Zeit aus dem Rapport, sonst Ankunft–Fertig,
+  sonst geschätzt (Uhrzeit = fertig, Dauer `arbeitStunden`); `anEinsaetzeFuerMich` – eigene Arbeitsnachweis-Zeilen (nachgeladen). Sie stehen oben als „✓ erledigt“,
+  ersetzen einen Kalendertermin (Wartung/Störung) am selben Markt; neben einem Einsatz ist die Lücke Fahrt ohne 150-min-Grenze (`abgleichTeile`, `einsatzNah`). Umstempeln mit Vorgabe aus dem Termin (`geplantFuerMich`, „⇄ Dorthin umstempeln“).
   Abwesenheit und Arbeit am selben Tag (`abwesenheitPruefen`, tools/abwesenheit-arbeit.sql, `planung.ausnahmen`): beim Einstempeln und
   Erfassen fragen (ein halber Tag mit Uhrzeit – EIN Tag mit von–bis – nur, wenn die Arbeit bzw. das Einstempeln hineinfällt:
   `abwesenheitZeitTrifft`; ganztägig, mehrtägig oder Arbeit ohne Uhrzeit immer; Inhaber 05.10.2026) – „eingesprungen“ (beides zählt), Urlaub „zurückgeben“ (Inhaber nimmt den Tag heraus: `planTagHerausnehmen`, To-do),

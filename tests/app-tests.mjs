@@ -5512,6 +5512,37 @@ test("Fotos der Anlage korrigieren: auswählen, löschen (mit Rückfrage), ander
   pruefe(t.fremdGewaehlt === false && t.verschoben && t.geloescht && t.k3bleibt, "Techniker nur eigene: " + JSON.stringify(t));
 });
 
+/* Inhaber 09.10.2026: „Tagesrückblick anhand der geschriebenen Protokolle – z. B. 10.15 Wartung in Hollabrunn, Zeit aus dem Rapport, dazwischen Fahrzeit“ */
+test("Tagesrückblick aus Protokollen: Rapport-Zeit bzw. Ankunft–Fertig, auch als Weitere/r Techniker/in, dazwischen Fahrt; Kalendertermin am selben Markt nicht doppelt", async () => {
+  const a = await oeffnen(KONTEN.techniker);
+  await ttHilfen(a);
+  const r = await a.seite.evaluate(async () => {
+    const tt = window.__tt, x = window.__t.x, db = window.__db.tabellen; tt.leeren(); const T = tt.werktag(1);
+    tt.gestempelt({ datum: T, beginn: "07:00", ende: "15:00", minuten: 450, pause_min: 30, bereich: "wartung" });
+    /* Kalender: Wartung TS1 geplant 07:30–09:00 (wird durch das Protokoll ersetzt) */
+    await tt.termin({ kategorie: "wartung", titel: "Wartung geplant", datum: T, beginn: "07:30", ende: "09:00", standort_id: "TS1" });
+    const ich = x("meinName()");
+    /* Wartung TS1 – vom Kollegen geschrieben, ich als Weitere/r Techniker/in; Zeit aus dem Lidl-Rapport */
+    x("protokolle").push({ _id: "trp1", datum: T, uhrzeit: "12:00", standortId: "TS1", wartungsart: "Wartung", positionIds: ["TP1"], positionId: "TP1",
+      techniker: "Kollege Test", mitarbeiter: [ich], erstelltVon: "u_fremd", anlagen: [], rapport: { daten: { zeilen: [{ von: "08:00", bis: "10:15" }] } } });
+    /* Störung TS3 – selbst geschrieben, Ankunft–Fertig */
+    x("protokolle").push({ _id: "trp2", datum: T, uhrzeit: "14:00", standortId: "TS3", wartungsart: "Störung", positionId: "TP4", techniker: ich, erstelltVon: x("Store.benutzer.id"),
+      anlagen: [], stoerung: { ankunft: "11:30", ende: "13:00" } });
+    /* Protokoll eines anderen ohne mich: zählt nicht */
+    x("protokolle").push({ _id: "trp3", datum: T, uhrzeit: "09:00", standortId: "TS2", wartungsart: "Wartung", positionId: "TP3", techniker: "Fremd", mitarbeiter: [], erstelltVon: "u_fremd", anlagen: [], stoerung: { ankunft: "09:00", ende: "10:00" } });
+    await tt.laden();
+    x("abgleichDialog('" + T + "')"); await tt.warte(600);
+    const d = tt.dialog();
+    const abs = [...d.querySelectorAll("[data-abschnitt]")].map((e) => e.dataset.abschnitt);
+    const oben = d.textContent;
+    return { abs, protokollZeile: /✓ erledigt 08:00–10:15 · Rapport/.test(oben), stoerZeile: /✓ erledigt 11:30–13:00 · Ankunft–Fertig/.test(oben), geplantWeg: !/Wartung geplant/.test(oben), fremdWeg: !/Testfiliale 902/.test(oben) };
+  });
+  pruefe(JSON.stringify(r.abs) === '["07:00-08:00 fahrt","08:00-10:15 wartung","10:15-11:30 fahrt","11:30-13:00 stoerung","13:00-15:00 fahrt"]', "Abschnitte: " + JSON.stringify(r));
+  pruefe(r.protokollZeile && r.stoerZeile && r.geplantWeg && r.fremdWeg, "Anzeige: " + JSON.stringify(r));
+  pruefe(!a.fehler.length, "Laufzeitfehler: " + a.fehler.join("; "));
+  await a.zu();
+});
+
 /* Antworten des Inhabers vom 05.10.2026 (Teil kern) */
 test("Antworten kern: „Nur Jahreswartung“ sperrt den Halbjahrestermin wie am Markt üblich – bleibt, bis die Verwaltung es zurücknimmt", async () => {
   const a = await oeffnen(KONTEN.admin);
