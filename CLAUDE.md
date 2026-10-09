@@ -572,6 +572,7 @@ Kammerlander Umwelt- und Klimatechnik (UKT) – oft kurz, vom Handy, im Feld.
 - **Kartenbilder auf dem Gerät** (Inhaber 07.10.2026): angesehene Kacheln in IndexedDB „ukt_kacheln“ (`kachelEbene`, `KachelMitSpeicher`, höchstens
   `KACHEL_MAX`, älter als `KACHEL_ALT_TAGE` im Hintergrund erneuert); nie ganze Gegenden vorab (OSM-Nutzungsregeln). Ohne Netz, aber mit gespeicherten
   Bildern: trotzdem Straßenkarte (`kachelnPruefen`). Anzahl + „Leeren“ (Rückfrage) unter der Karte. Überfällig auf der Karte in `--karte-rot`, fällig in 30 Tagen in `--karte-gelb` (`KARTE_VAR`; Inhaber 07./08.10.2026).
+  Punkte nach Fälligkeit übereinander (Inhaber 09.10.2026): `_uktRang` je Punkt (überfällig 5, fällig 4, bald 3, ohne Termin 2, im Zeitplan 1, nicht betreut 0), `punkteOrdnen` nach jedem Ein-/Ausblenden.
 - **Einmal sagen, überall verwenden** (Inhaber 08.10.2026: „redundant – bitte aufräumen, einheitlicher“): „Was gemacht?“ fragt NUR der
   Tagesrückblick (`abgleichDialog`: Feld `[data-abwas]` je Abschnitt, Vorschlag `wasVorschlag` aus eigenem Protokoll/Termin, bei Baustellen `[data-abfoto]`);
   beim Speichern: Text in die Stunden, bei Baustellen neu Eingetragenes + Fotos ins Baustellenbuch (planung_id, Schritt; nicht doppelt), gemachte Termine

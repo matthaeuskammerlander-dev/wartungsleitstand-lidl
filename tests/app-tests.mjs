@@ -5549,6 +5549,31 @@ test("Tagesrückblick aus Protokollen: Rapport-Zeit bzw. Ankunft–Fertig, auch 
   await a.zu();
 });
 
+/* Inhaber 09.10.2026: „In der Karte verdecken die grünen Punkte die roten und gelben – Rot immer sehen, dann Gelb, Grau, Grün, dann die nicht betreuten“ */
+test("Karte: Punkte nach Fälligkeit übereinander – überfällig obenauf, dann fällig, bald, ohne Termin, im Zeitplan, nicht betreut ganz unten (auch nach Filter-Umschalten)", async () => {
+  const a = await oeffnen(KONTEN.inhaber);
+  const r = await a.seite.evaluate(async () => {
+    const x = window.__t.x, w = (ms) => new Promise((f) => setTimeout(f, ms));
+    x("S.view='karte'; render(); 1"); await w(1200);
+    const rang = () => [...document.querySelectorAll(".leaflet-overlay-pane path.leaflet-interactive")].map((p) => p._leaflet_id).length;
+    const reihe = () => {
+      const l = []; x("leafletKarte").eachLayer((ly) => { if (ly._uktRang != null && ly._path) l.push([ly._uktRang, ly._path]); });
+      const pfade = [...document.querySelectorAll(".leaflet-overlay-pane path")];
+      return l.sort((p, q) => pfade.indexOf(p[1]) - pfade.indexOf(q[1])).map((p) => p[0]);
+    };
+    const e = { n: rang(), vorher: reihe() };
+    /* Filter aus- und wieder einschalten: Reihenfolge bleibt */
+    const chip = document.querySelector('[data-kf="plan"]'); if (chip) { chip.click(); await w(200); chip.click(); await w(300); }
+    e.nachher = reihe();
+    return e;
+  });
+  const sortiert = (l) => l.every((v, i) => i === 0 || l[i - 1] <= v);
+  pruefe(r.vorher.length >= 3 && new Set(r.vorher).size >= 2 && sortiert(r.vorher), "Reihenfolge (unten→oben): " + JSON.stringify(r.vorher));
+  pruefe(sortiert(r.nachher), "nach Filter: " + JSON.stringify(r.nachher));
+  pruefe(!a.fehler.length, "Laufzeitfehler: " + a.fehler.join("; "));
+  await a.zu();
+});
+
 /* Antworten des Inhabers vom 05.10.2026 (Teil kern) */
 test("Antworten kern: „Nur Jahreswartung“ sperrt den Halbjahrestermin wie am Markt üblich – bleibt, bis die Verwaltung es zurücknimmt", async () => {
   const a = await oeffnen(KONTEN.admin);
