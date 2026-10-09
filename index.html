@@ -25317,6 +25317,7 @@ function kartenOrdnen(host, regeln, praefix, mitLeiste, ausgleichen){
   /* im Fenster (Projekt, Markt …): schmale Navigationsleiste am rechten Rand */
   if(host.classList && host.classList.contains("as-inhalt") && host.closest(".as-karte")){
     setTimeout(function(){
+      if(host.querySelector(".projekt-reiter")) return;   /* Projekt mit Reitern: die Reiter ersetzen die Punkte-Leiste */
       if(host.scrollHeight < host.clientHeight*1.8 && host.querySelectorAll(".card.klappbar").length<4) return;
       sprungleiste(host, host.closest(".as-karte"), function(){
         return Array.prototype.slice.call(host.querySelectorAll(".sp-haupt > .card, .sp-neben > .card"))
@@ -29357,9 +29358,9 @@ function projektLeereKarten(host, d){
     var k=karten.filter(function(c){ return x[1].test(abschnittTitel(c)); })[0]; if(!k) return;
     var plus=[].slice.call(k.querySelectorAll("button")).filter(function(b){ return /^\+/.test(b.textContent.trim()); })[0];
     if(!plus) return;   /* nur ansehen: Karte bleibt, wie sie ist */
-    k.hidden=true;
+    k.hidden=true; k.dataset.leer="1";   /* bleibt auch in seinem Reiter versteckt (projektReiter) */
     var b=el('<button class="btn ghost sm" type="button" data-leerplus>+ '+esc(x[0])+"</button>");
-    b.onclick=function(){ plus.click(); };
+    b.onclick=function(){ plus.click(); }; b._karte=k;
     leer.appendChild(b);
   });
   if(leer.children.length){ leer.insertBefore(el('<span class="muted" style="font-size:12.5px">Noch leer:</span>'), leer.firstChild); leer.hidden=false; }
@@ -29424,6 +29425,73 @@ function projektMonatKarte(p){
   };
   zeichnen();
   return k;
+}
+/* Reiter im Projekt (Inhaber 09.10.2026: „immer noch etwas unübersichtlich – probieren wir es mit Reitern“): statt alle Karten
+   untereinander je Thema ein Reiter; gezeigt werden nur dessen Karten. Der gewählte Reiter bleibt je Projekt (auch nach dem
+   Speichern, wenn das Fenster neu aufgebaut wird). Leere Listen stehen als „+ …“ im Reiter, wenn er sonst leer wäre. */
+var PROJEKT_REITER=[
+  ["uebersicht","Übersicht",[/^Auf einen Blick/,/^Stand/,/^Aufgaben und Termine/,/^Kalender/]],
+  ["angaben","Angaben",[/^Angaben/,/^Beteiligte/,/^Anlagen/]],
+  ["planung","Termine & Material",[/^Termine/,/^Bestellungen/,/^Werkzeug und Material/]],
+  ["baustelle","Baustelle",[/^Baustellenbuch/,/^Arbeitsnachweise/,/^Stunden/]],
+  ["dateien","📁 Dateien",[/^Dateien/,/^Mails dazu/]],
+  ["belege","Belege",[/^Angebote und Rechnungen/]],
+  ["verlauf","Verlauf",[/^Tagebuch/,/Nachrichten/]]
+];
+var PROJEKT_REITER_WAHL={};
+function projektReiterVon(c){
+  var t=abschnittTitel(c);
+  for(var i=0;i<PROJEKT_REITER.length;i++) if(PROJEKT_REITER[i][2].some(function(re){ return re.test(t); })) return PROJEKT_REITER[i][0];
+  return "uebersicht";
+}
+function projektReiter(host, p){
+  var karten=[].slice.call(host.querySelectorAll(".card")).filter(function(c){ return c.querySelector("h2") && !c.parentElement.closest(".card"); });
+  if(karten.length<4){ projektSprungleiste(host); return; }
+  var d=p.daten||{};
+  var zahl={dateien:(d.dateien||[]).filter(function(x){ return nurInhaber() || !/^buero\//.test(x.pfad); }).length, baustelle:(d.baubuch||[]).length, verlauf:(p.verlauf||[]).length,
+    planung:(d.termine||[]).length+(d.bestellungen||[]).length};
+  var reiter=PROJEKT_REITER.filter(function(r){ return karten.some(function(c){ return projektReiterVon(c)===r[0]; }); });
+  var bar=el('<div class="projekt-sprung chips projekt-reiter" role="tablist" aria-label="Bereiche des Projekts"></div>');
+  var leerHinweis=el('<div class="note" data-reiterleer hidden style="font-size:13px"></div>');
+  host.insertBefore(leerHinweis, host.firstChild);
+  host.insertBefore(bar, host.firstChild); host.classList.add("mit-sprung");
+  var zeigen=function(id, scrollen){
+    PROJEKT_REITER_WAHL[p.id]=id;
+    bar.querySelectorAll("[data-reiter]").forEach(function(b){ var an=b.dataset.reiter===id; b.setAttribute("aria-pressed", String(an)); b.setAttribute("aria-selected", String(an)); });
+    var sichtbar=0;
+    karten.forEach(function(c){ var an=projektReiterVon(c)===id && c.dataset.leer!=="1"; c.hidden=!an; if(an) sichtbar++;
+      /* Reiter angetippt: seine Karten aufgeklappt – die Reiter ordnen schon, Zuklappen braucht es dann nicht */
+      if(an && scrollen && c.classList.contains("zu") && c._klapp) c._klapp(false); });
+    /* Spalten: ist eine leer, die andere über die ganze Breite */
+    host.querySelectorAll(".spalten").forEach(function(s){
+      var leer=[].slice.call(s.children).filter(function(sp){ return ![].slice.call(sp.querySelectorAll(".card")).some(function(c){ return !c.hidden; }); });
+      s.classList.toggle("einspaltig", leer.length>0);
+      [].slice.call(s.children).forEach(function(sp){ sp.hidden=leer.indexOf(sp)>=0 && leer.length<s.children.length; });
+    });
+    /* Reiter ohne sichtbare Karte: die „+ …“-Knöpfe seiner leeren Listen */
+    leerHinweis.innerHTML=""; leerHinweis.hidden=sichtbar>0;
+    if(!sichtbar){
+      leerHinweis.appendChild(el("<div>Hier ist noch nichts eingetragen.</div>"));
+      var reihe=el('<div class="rowflex" style="gap:6px;flex-wrap:wrap;margin-top:6px"></div>');
+      karten.filter(function(c){ return projektReiterVon(c)===id && c.dataset.leer==="1"; }).forEach(function(c){
+        var plus=[].slice.call(c.querySelectorAll("button")).filter(function(b){ return /^\+/.test(b.textContent.trim()); })[0]; if(!plus) return;
+        var b=el('<button class="btn ghost sm" type="button">+ '+esc(abschnittTitel(c).replace(/\s*\(.*$/,""))+"</button>");
+        b.onclick=function(){ plus.click(); }; reihe.appendChild(b);
+      });
+      leerHinweis.appendChild(reihe);
+    }
+    if(scrollen) host.scrollTop=0;
+  };
+  reiter.forEach(function(r){
+    var n=zahl[r[0]];
+    var b=el('<button class="chip" type="button" role="tab" data-reiter="'+r[0]+'">'+esc(r[1])+(n?' <span class="muted" style="font-size:11px">'+n+"</span>":"")+"</button>");
+    b.onclick=function(){ zeigen(r[0], true); };
+    bar.appendChild(b);
+  });
+  var w=PROJEKT_REITER_WAHL[p.id];
+  zeigen(reiter.some(function(r){ return r[0]===w; }) ? w : reiter[0][0], false);
+  /* „+ …“ in „Auf einen Blick“: nach dem Speichern steht der neue Eintrag in seinem Reiter – dorthin, wenn das Fenster neu aufgebaut wird */
+  host.querySelectorAll("[data-leerplus]").forEach(function(b){ b.addEventListener("click", function(){ if(b._karte) PROJEKT_REITER_WAHL[p.id]=projektReiterVon(b._karte); }); });
 }
 function projektSprungleiste(host){
   var karten=[].slice.call(host.querySelectorAll(".card")).filter(function(c){ return c.querySelector("h2") && !c.hidden; });
@@ -29666,7 +29734,7 @@ function projektAnsicht(id){
     ], "projekt", true, true);
     projektLeereKarten(v.inhalt, d);
     projektLangerText(v.inhalt);
-    projektSprungleiste(v.inhalt);
+    projektReiter(v.inhalt, p);
 
     /* Projektzusammenfassung als PDF – ansehen, drucken, für die Synology ablegen */
     var pdfK=el('<button class="btn sm" type="button">Zusammenfassung (PDF)</button>');

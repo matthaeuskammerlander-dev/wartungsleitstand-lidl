@@ -175,6 +175,11 @@ Kammerlander Umwelt- und Klimatechnik (UKT) – oft kurz, vom Handy, im Feld.
   offene Aufgaben, von uns dran, Ansprechpartner); leere Listen-Karten als „+ …“-Knopf darin (`projektLeereKarten`, Karte versteckt, Knopf löst ihr „+“ aus);
   langer Text in den Angaben zugeklappt mit „▾ ganzen Text zeigen“ (`projektLangerText`, Klasse `lang-zu`).
   Kleiner Monatskalender im Projekt (Inhaber 08.10.2026, `projektMonatKarte`): Bauzeitplan-Termine, Kalendertermine und Aufgaben mit diesem Projekt, ◀ ▶ blättern, Tag antippen → Einträge, Eintrag → `kalEintragOeffnen`.
+  Reiter im Projekt (Inhaber 09.10.2026: „immer noch etwas unübersichtlich – probieren wir es mit Reitern“, `projektReiter`, `PROJEKT_REITER`): Übersicht (Auf einen Blick,
+  Stand, Aufgaben, Kalender) · Angaben (Angaben, Beteiligte, Anlagen) · Termine & Material · Baustelle (Baustellenbuch, Arbeitsnachweise, Stunden) · 📁 Dateien (Dateien,
+  Mails dazu) · Belege · Verlauf; gezeigt nur die Karten des Reiters (eine leere Spalte fällt weg), angetippt aufgeklappt; ein Reiter ohne Karte zeigt die „+ …“ seiner leeren
+  Listen (`[data-reiterleer]`); gewählter Reiter je Projekt gemerkt (`PROJEKT_REITER_WAHL`, auch nach „+ …“ in „Auf einen Blick“ → Reiter des neuen Eintrags). Ersetzt die
+  Sprungleiste (bleibt nur bei weniger als 4 Karten); die Seitenleiste rechts fällt im Projekt weg.
 - Projektzusammenfassung als PDF (`projektPdfDialog`, `projektPdfErzeugen`, Büro
   01.10.2026): Eckdaten und alle Angaben, KEINE Anhänge (Dokumente liegen auf der
   Synology); abgelegt `daten.mappePdf`, Synology → `Projekt_<Nr>.pdf`. Zum Testen

@@ -482,7 +482,8 @@ test("Mail-Programm am PC: nur das verbundene Inhaber-Konto, Projekt aus Mail mi
     const p = db.projekte.filter((q) => q.titel === "Anfrage Lüftung Waschküche Hotel Test")[0] || null, pd = (p && p.daten) || {};
     await warte(500);
     const pv = dlg();
-    const mailsKarte = [...pv.querySelectorAll(".card h2")].some((h) => /^Mails dazu/.test(h.textContent)), imProjekt = /✓ im Projekt/.test(pv.innerText);
+    const mk = [...pv.querySelectorAll(".card")].find((c) => /^Mails dazu/.test((c.querySelector("h2") || {}).textContent || ""));
+    const mailsKarte = !!mk, imProjekt = !!mk && /✓ im Projekt/.test(mk.textContent);
     /* „↗ Leitstand“ im Mail-Programm: der offene Leitstand holt den Auftrag selbst ab */
     x("ansichtenSchliessen()");
     window.__mailAuftrag = { k: "gmx", o: "INBOX", u: 7, a: "zuprojekt" }; await warte(4500);
@@ -5050,7 +5051,8 @@ test("Stempeln kommt an oder wird deutlich gemeldet: wartet nie lange auf den St
     e.angekommen = x("stempelNichtAngekommen()") === null && !localStorage.getItem("ukt_stempel_offen");
     return e;
   });
-  pruefe(/Einstempeln um \d\d:\d\d ist nicht angekommen/.test(r.hinweis) && /⚠/.test(r.reiter), "Hinweis nach dem Neustart: " + JSON.stringify(r));
+  /* kurz nach Mitternacht liegt der Druck am Vortag – dann steht das Datum dabei */
+  pruefe(/Einstempeln um \d\d:\d\d( am \d\d\.\d\d\.\d{4})? ist nicht angekommen/.test(r.hinweis) && /⚠/.test(r.reiter), "Hinweis nach dem Neustart: " + JSON.stringify(r));
   pruefe(/wird gestempelt/.test(r.waehrend) && /\|true$/.test(r.waehrend), "Während des Stempelns: " + r.waehrend);
   pruefe(r.gestempelt && /dauerte zu lange/.test(r.gestempelt), "Ohne Standort-Antwort nicht gestempelt: " + r.gestempelt);
   pruefe(r.danach && r.angekommen, "Merker bleibt: " + JSON.stringify(r));
@@ -5411,14 +5413,15 @@ test("Projekt: kleiner Monatskalender – Bauzeitplan-Termine und Kalendertermin
     e.liste = k.querySelector("[data-mkliste]").textContent;
     k.querySelector('[data-mk="1"]').click(); await w(100);
     e.naechster = k.querySelector("strong").textContent + "|" + k.querySelectorAll(".mk-punkte").length;
-    e.sprung = [...o.querySelectorAll(".projekt-sprung .chip")].some((b) => /Kalender/.test(b.textContent));
+    /* steht im Reiter „Übersicht“ (vorgewählt) */
+    e.sprung = /Übersicht/.test((o.querySelector('[data-reiter][aria-pressed="true"]') || {}).textContent || "") && !k.closest(".card").hidden;
     x("ansichtenSchliessen(); 1");
     return e;
   });
   pruefe(!r.fehlt && r.punkte === 1, "Monat: " + JSON.stringify(r));
   pruefe(/07:00/.test(r.liste) && /Kranstellung/.test(r.liste) && !/Fremder/.test(r.liste), "Tag: " + r.liste);
   pruefe(/\|1$/.test(r.naechster) && r.naechster !== r.kopf + "|1", "Blättern: " + JSON.stringify(r));
-  pruefe(r.sprung, "Sprungleiste ohne Kalender");
+  pruefe(r.sprung, "Monatskalender nicht im Reiter Übersicht");
   pruefe(!a.fehler.length, "Laufzeitfehler: " + a.fehler.join("; "));
   await a.zu();
 });
@@ -5440,11 +5443,14 @@ test("Projekt übersichtlicher: „Auf einen Blick“ oben, langer Text zugeklap
     e.blick = blick ? blick.textContent.replace(/\s+/g, " ") : "";
     e.blickOben = blick && inh.querySelector(".card:not([hidden])") === blick;
     const karte = (re) => [...o.querySelectorAll(".card")].find((c) => re.test(x("abschnittTitel")(c)));
+    e.leer = [...o.querySelectorAll("[data-leerplus]")].map((b) => b.textContent).join(",");
+    /* im Reiter „Termine & Material“: Termine da, die leere Bestellungen-Karte bleibt versteckt */
+    o.querySelector('[data-reiter="planung"]').click(); await w(150);
     e.bestellKarte = karte(/^Bestellungen/) ? karte(/^Bestellungen/).hidden : "fehlt";
     e.termineKarte = karte(/^Termine/) ? karte(/^Termine/).hidden : "fehlt";
-    e.leer = [...o.querySelectorAll("[data-leerplus]")].map((b) => b.textContent).join(",");
     e.sprungOhneBestellung = ![...o.querySelectorAll(".projekt-sprung .chip")].some((b) => /Bestellung/.test(b.textContent));
     /* langer Text zugeklappt, antippen öffnet */
+    o.querySelector('[data-reiter="angaben"]').click(); await w(150);
     const t = karte(/^Angaben/).querySelector("textarea.lang-zu");
     e.zu = !!t && t.getBoundingClientRect().height < 200;
     const g = o.querySelector("[data-ganzertext]"); e.knopf = g ? g.textContent : "";
@@ -5574,6 +5580,51 @@ test("Karte: Punkte nach Fälligkeit übereinander – überfällig obenauf, dan
   pruefe(sortiert(r.nachher), "nach Filter: " + JSON.stringify(r.nachher));
   pruefe(!a.fehler.length, "Laufzeitfehler: " + a.fehler.join("; "));
   await a.zu();
+});
+
+/* Inhaber 09.10.2026: „die Projekte sind immer noch etwas unübersichtlich – probieren wir es mit Reitern“ */
+test("Projekt mit Reitern: je Thema ein Reiter, nur dessen Karten sichtbar, leerer Reiter mit „+ …“, gewählter Reiter bleibt – PC und Handy", async () => {
+  for (const handy of [false, true]) {
+    const a = await oeffnen(KONTEN.inhaber, { handy });
+    const r = await a.seite.evaluate(async () => {
+      const x = window.__t.x, w = (ms) => new Promise((f) => setTimeout(f, ms)), db = window.__db.tabellen, e = {}, jetzt = new Date().toISOString();
+      db.projekte.push({ id: "PRT1", nummer: "P-T-RT", titel: "Test Reiter", status: "baustelle", daten: { typ: "Neubau",
+        termine: [{ id: "t1", datum: x("plusTage(isoLokal(new Date()),2)"), was: "Kranstellung" }],
+        beteiligte: [{ rolle: "Kunde / Bauherr", firma: "Testbau GmbH", name: "Frau Test" }] }, verlauf: [], erstellt: jetzt, geaendert: jetzt });
+      await x("projekteLaden()"); x("projektAnsicht('PRT1'); 1"); await w(900);
+      const o = () => [...document.querySelectorAll(".assistent")].pop();
+      const sichtbar = () => [...o().querySelectorAll(".card")].filter((c) => c.querySelector("h2") && !c.parentElement.closest(".card") && c.offsetParent).map((c) => x("abschnittTitel")(c));
+      e.reiter = [...o().querySelectorAll("[data-reiter]")].map((b) => b.dataset.reiter);
+      e.start = sichtbar();
+      o().querySelector('[data-reiter="angaben"]').click(); await w(200);
+      e.angaben = sichtbar();
+      o().querySelector('[data-reiter="baustelle"]').click(); await w(200);
+      e.baustelle = sichtbar();
+      const leer = o().querySelector("[data-reiterleer]");
+      e.leerHinweis = leer && !leer.hidden ? leer.textContent : "";
+      /* „+ Baustellenbuch“ im leeren Reiter öffnet den Eintrag */
+      const plus = leer && [...leer.querySelectorAll("button")].find((b) => /Baustellenbuch/.test(b.textContent));
+      if (plus) { plus.click(); await w(400); }
+      e.plusOffen = o() !== document.querySelector("[data-projektblick]").closest(".assistent");
+      x("ansichtenSchliessen(); 1"); await w(200);
+      /* wieder geöffnet: derselbe Reiter */
+      x("projektAnsicht('PRT1'); 1"); await w(900);
+      e.gemerkt = (o().querySelector('[data-reiter][aria-pressed="true"]') || {}).dataset.reiter;
+      e.breit = o().querySelector(".projekt-reiter").scrollWidth <= o().querySelector(".projekt-reiter").clientWidth + 1 ? "passt" : "scrollt";
+      e.seiteBreit = document.documentElement.scrollWidth <= window.innerWidth + 1;
+      x("ansichtenSchliessen(); 1");
+      return e;
+    });
+    const n = handy ? "Handy" : "PC";
+    pruefe(r.reiter[0] === "uebersicht" && ["angaben", "planung", "baustelle", "dateien", "verlauf"].every((k) => r.reiter.includes(k)), n + " Reiter: " + JSON.stringify(r.reiter));
+    pruefe(r.start[0] === "Auf einen Blick" && r.start.some((t) => /^Stand/.test(t)) && !r.start.some((t) => /^(Angaben|Dateien|Tagebuch)/.test(t)), n + " Übersicht: " + JSON.stringify(r.start));
+    pruefe(r.angaben.some((t) => /^Angaben/.test(t)) && r.angaben.some((t) => /^Beteiligte/.test(t)) && !r.angaben.some((t) => /^(Auf einen Blick|Stand)/.test(t)), n + " Angaben: " + JSON.stringify(r.angaben));
+    pruefe(!r.baustelle.some((t) => /^Baustellenbuch/.test(t)) && (r.baustelle.length || /noch nichts eingetragen/.test(r.leerHinweis)), n + " Baustelle: " + JSON.stringify([r.baustelle, r.leerHinweis]));
+    pruefe(r.gemerkt === "baustelle", n + " gewählter Reiter nicht gemerkt: " + r.gemerkt);
+    pruefe(r.seiteBreit, n + ": Seite breiter als der Bildschirm");
+    pruefe(!a.fehler.length, "Laufzeitfehler: " + a.fehler.join("; "));
+    await a.zu();
+  }
 });
 
 /* Antworten des Inhabers vom 05.10.2026 (Teil kern) */
@@ -6711,6 +6762,7 @@ test("Textfelder wachsen mit dem Text – im Projekt kein Scrollen im Feld (PC u
       db.projekte.push({ id: "ptf", nummer: "P-T-TF", titel: "Lange Texte", kunde_id: "lidl", standort_id: "TS1", status: "baustelle",
         daten: { beschreibung: lang, bestand: lang, vorgaben: lang }, verlauf: [], erstellt: jetzt, geaendert: jetzt });
       await x("projekteLaden()"); x("projektAnsicht('ptf')"); await w(700);
+      const ra = document.querySelector('.assistent [data-reiter="angaben"]'); if (ra) { ra.click(); await w(200); }
       /* alles aufklappen, was zugeklappt ist */
       for (let i = 0; i < 3; i++) { document.querySelectorAll(".assistent details:not([open])").forEach((d) => d.setAttribute("open", ""));
         [...document.querySelectorAll(".assistent [aria-expanded='false'], .assistent [data-ganzertext]")].forEach((b) => b.click()); await w(250); }
@@ -6772,8 +6824,8 @@ test("Pläne finden: Geschoss/Gewerk erkannt, Suche, Stände beisammen, 📌 anh
     /* Sprungleiste */
     const bar = dlg().querySelector(".projekt-sprung");
     e.sprung = bar ? [...bar.querySelectorAll(".chip")].map((c) => c.textContent) : [];
-    const pl = bar && [...bar.querySelectorAll(".chip")].find((c) => /Pläne/.test(c.textContent));
-    if (pl) { const dk = karte(); if (dk._klapp) dk._klapp(true); pl.click(); await w(400); e.sprungAuf = !karte().classList.contains("zu"); }
+    const pl = bar && [...bar.querySelectorAll(".chip")].find((c) => /Dateien/.test(c.textContent));
+    if (pl) { const dk = karte(); if (dk._klapp) dk._klapp(true); pl.click(); await w(400); e.sprungAuf = !karte().classList.contains("zu") && !karte().hidden; }
     e.sticky = bar ? getComputedStyle(bar).position : "";
     /* beim Hochladen: Titel aus der PDF */
     const L = await x("(window.PDFLib ? Promise.resolve() : ladeSkript(PDF_LIB)).then(function(){ return window.PDFLib; })");
@@ -6791,7 +6843,7 @@ test("Pläne finden: Geschoss/Gewerk erkannt, Suche, Stände beisammen, 📌 anh
   pruefe(JSON.stringify(r.suche) === JSON.stringify(["Elektroplan_1OG.pdf"]) && JSON.stringify(r.sucheUG) === JSON.stringify(["Einreichung.pdf"]), "Suche: " + JSON.stringify([r.suche, r.sucheUG]));
   pruefe(r.pin && r.wichtigOben, "Anheften: " + JSON.stringify([r.pin, r.wichtigOben]));
   pruefe(r.titel === "Dachdraufsicht mit Rückkühlern" && r.gewerkGesetzt === '["klima"]' && r.geschossAuto && r.lesbar, "Beschreiben: " + JSON.stringify(r));
-  pruefe(r.sprung.length >= 3 && r.sprung.some((t) => /Pläne/.test(t)) && r.sprungAuf && r.sticky === "sticky", "Sprungleiste: " + JSON.stringify([r.sprung, r.sprungAuf, r.sticky]));
+  pruefe(r.sprung.length >= 3 && r.sprung.some((t) => /Dateien/.test(t)) && r.sprungAuf && r.sticky === "sticky", "Sprungleiste: " + JSON.stringify([r.sprung, r.sprungAuf, r.sticky]));
   pruefe(r.pdfTitel === "Montageplan GR_EG Lüftung" && r.neuMerk === "EG|lueftung", "PDF-Titel beim Hochladen: " + JSON.stringify([r.pdfTitel, r.neuMerk]));
   pruefe(!a.fehler.length, "Laufzeitfehler: " + a.fehler.join("; "));
   await a.zu();
