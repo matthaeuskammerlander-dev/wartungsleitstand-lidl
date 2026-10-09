@@ -53,8 +53,11 @@
         if(!zeile.pfad) return 'null value in column "pfad" of relation "anlagenfotos" violates not-null constraint';
         if(DB.anlagenfotos.some(function(f){ return f.pfad===zeile.pfad; })) return 'duplicate key value violates unique constraint "anlagenfotos_pfad_key"';
       }
-      if(art==="update") return "anlagenfotos: keine Regel zum Aendern";
-      if(art==="delete" && !admin()) return "anlagenfotos: loeschen nur Admins";
+      /* wie anlagenfotos-korrigieren.sql: ändern (nur Anlage, Markt, Art, Beschriftung) und löschen – Büro alle, sonst nur die eigenen */
+      if((art==="update"||art==="delete") && (rolle==="kunde"||rolle==="praesentation")) return "anlagenfotos: nicht erlaubt";
+      if((art==="update"||art==="delete") && !admin() && rolle!=="inhaber" && !(alt && alt.von===uid())) return "anlagenfotos: nur eigene";
+      if(art==="update" && zeile && Object.keys(zeile).some(function(k){ return ["anlage_id","standort_id","art","beschriftung"].indexOf(k)<0; })) return "anlagenfotos: Spalte nicht änderbar";
+      if(art==="update" && zeile && "art" in zeile && ["pruefbuch","typenschild","anlage"].indexOf(zeile.art)<0) return 'new row for relation "anlagenfotos" violates check constraint "anlagenfotos_art_check"';
     }
     if(tab==="stammdaten"){
       var typ=(zeile&&zeile.typ)||(alt&&alt.typ);

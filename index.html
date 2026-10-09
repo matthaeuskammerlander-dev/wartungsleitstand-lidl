@@ -13540,26 +13540,131 @@ function anlagenFotosVerwalten(leader){
 }
 /* Name einer Fotogruppe: Prüfbuch, Typenschild oder die Beschriftung */
 function fotoArtName(art, beschriftung){ return art==="pruefbuch" ? "Prüfbuch" : art==="typenschild" ? "Typenschild" : (beschriftung||"Anlage"); }
-/* ansehen: nach Datum und Art, antippen vergrößert */
+/* Fotos korrigieren (Inhaber 09.10.2026: „ein paar falsche Prüfbuchfotos dabei – nirgends die Möglichkeit, sie zu löschen
+   oder zu korrigieren“): das Büro bei allen, sonst nur die selbst gespeicherten; nie Kunde/Präsentation.
+   Datenbank: tools/anlagenfotos-korrigieren.sql (löschen, Anlage/Art/Beschriftung ändern, Bilddatei unter anlagen/ entfernen). */
+function anlagenFotoDarf(f){ return anlagenFotosAn() && !demo() && !nurLesen() && !!f && (Admin.zentral || f.von===meineKennung()); }
+function anlagenFotoZahlenNeu(){
+  document.querySelectorAll("[data-fotozahl]").forEach(function(b){ b.textContent="📷 Fotos der Anlage ("+anlagenFotosVon(b.dataset.fotozahl).length+")"; });
+}
+/* ansehen: nach Datum und Art, antippen vergrößert; „✎ Fotos korrigieren“: antippen wählt, dann löschen, andere Anlage, andere Art */
 function anlagenFotosAnsicht(leaderId, titel){
-  var l=anlagenFotosVon(leaderId).slice().reverse();
   var v=ansichtOeffnen("Fotos der Anlage");
   v.schritt.textContent=titel||"";
-  if(!l.length){ v.inhalt.appendChild(el('<div class="muted">Noch keine Fotos gespeichert.</div>')); return v; }
-  var gruppen={};
-  l.forEach(function(f){ var k=tagLokal(f.erstellt)+"|"+f.art+"|"+(f.beschriftung||""); (gruppen[k]=gruppen[k]||[]).push(f); });
-  Object.keys(gruppen).forEach(function(k){
-    var g=gruppen[k], t=k.split("|");
-    var box=el('<div class="stack" style="gap:6px;margin-bottom:12px"><div class="as-label">'+esc(fotoArtName(t[1], t[2]))+" · "+esc(dfmt(t[0]))+
-      (g[0].von_name?" · "+esc(g[0].von_name):"")+'</div><div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(110px,1fr));gap:8px" data-r></div></div>');
-    g.forEach(function(f){
-      var img=el('<img alt="Foto" style="width:100%;aspect-ratio:3/4;object-fit:cover;border-radius:8px;border:1px solid var(--line);cursor:pointer;background:var(--surface-2)">');
-      box.querySelector("[data-r]").appendChild(img);
-      chatBildUrl(f.pfad).then(function(u){ if(u) img.src=u; else img.alt="nicht ladbar"; });
-      img.onclick=function(){ if(img.src) bildAnsicht(img.src, fotoArtName(f.art, f.beschriftung)+" · "+dfmt(tagLokal(f.erstellt))); };
+  var host=el('<div class="stack" style="gap:8px"></div>'); v.inhalt.appendChild(host);
+  var bearbeiten=false, wahl={};
+  var gewaehlt=function(){ return anlagenFotosVon(leaderId).filter(function(f){ return wahl[f.id]; }); };
+  var zeichnen=function(){
+    host.innerHTML="";
+    var l=anlagenFotosVon(leaderId).slice().reverse();
+    if(!l.length){ host.appendChild(el('<div class="muted">Noch keine Fotos gespeichert.</div>')); return; }
+    if(l.some(anlagenFotoDarf)){
+      var n=gewaehlt().length;
+      var leiste=el('<div class="stack" style="gap:6px" data-fotoleiste>'+(bearbeiten
+        ? '<div class="note" style="font-size:12.5px">Fotos antippen, die falsch sind – dann löschen, einer anderen Anlage am Markt zuordnen oder die Art ändern. 🔍 zeigt ein Foto groß.'+
+          (Admin.zentral?"":" Du kannst nur deine eigenen Fotos ändern.")+'</div>'+
+          '<div class="rowflex" style="gap:6px;flex-wrap:wrap"><strong style="font-size:13px">'+n+' ausgewählt</strong>'+
+          '<button class="btn ghost sm" type="button" data-fa="loeschen" style="color:var(--crit);border-color:var(--crit)"'+(n?"":" disabled")+'>🗑 Löschen</button>'+
+          '<button class="btn ghost sm" type="button" data-fa="anlage"'+(n?"":" disabled")+'>↪ Andere Anlage</button>'+
+          '<button class="btn ghost sm" type="button" data-fa="art"'+(n?"":" disabled")+'>Art ändern</button>'+
+          '<button class="btn sm" type="button" data-fa="fertig">Fertig</button></div>'
+        : '<div><button class="btn ghost sm" type="button" data-fa="start">✎ Fotos korrigieren</button></div>')+"</div>");
+      leiste.querySelectorAll("[data-fa]").forEach(function(b){ b.onclick=function(){ fotoAktion(b.dataset.fa); }; });
+      host.appendChild(leiste);
+    }
+    var gruppen={};
+    l.forEach(function(f){ var k=tagLokal(f.erstellt)+"|"+f.art+"|"+(f.beschriftung||""); (gruppen[k]=gruppen[k]||[]).push(f); });
+    Object.keys(gruppen).forEach(function(k){
+      var g=gruppen[k], t=k.split("|");
+      var box=el('<div class="stack" style="gap:6px;margin-bottom:12px"><div class="as-label">'+esc(fotoArtName(t[1], t[2]))+" · "+esc(dfmt(t[0]))+
+        (g[0].von_name?" · "+esc(g[0].von_name):"")+'</div><div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(110px,1fr));gap:8px" data-r></div></div>');
+      g.forEach(function(f){
+        var darf=bearbeiten && anlagenFotoDarf(f), an=!!wahl[f.id];
+        var z=el('<div style="position:relative" data-fotoid="'+esc(f.id)+'"><img alt="Foto" style="width:100%;aspect-ratio:3/4;object-fit:cover;border-radius:8px;cursor:pointer;background:var(--surface-2);'+
+          'border:'+(an?"3px solid var(--crit)":"1px solid var(--line)")+';'+(bearbeiten && !darf?"opacity:.45":"")+'">'+
+          (an?'<span style="position:absolute;top:6px;right:6px;background:var(--crit);color:#fff;border-radius:50%;width:22px;height:22px;text-align:center;line-height:22px;font-size:13px">✓</span>':"")+
+          (bearbeiten?'<span role="button" data-gross style="position:absolute;top:6px;left:6px;background:rgba(0,0,0,.6);color:#fff;border-radius:6px;padding:3px 6px;font-size:14px;line-height:1">🔍</span>':"")+"</div>");
+        var img=z.querySelector("img");
+        box.querySelector("[data-r]").appendChild(z);
+        chatBildUrl(f.pfad).then(function(u){ if(u) img.src=u; else img.alt="nicht ladbar"; });
+        var gross=function(){ if(img.src) bildAnsicht(img.src, fotoArtName(f.art, f.beschriftung)+" · "+dfmt(tagLokal(f.erstellt))); };
+        img.onclick=function(){
+          if(!bearbeiten){ gross(); return; }
+          if(!darf){ toast("Dieses Foto hat jemand anderer gespeichert – ändern kann es nur das Büro."); return; }
+          wahl[f.id]=!wahl[f.id]; zeichnen();
+        };
+        var gk=z.querySelector("[data-gross]"); if(gk) gk.onclick=function(e){ e.stopPropagation(); gross(); };
+      });
+      host.appendChild(box);
     });
-    v.inhalt.appendChild(box);
-  });
+  };
+  /* nach jeder Änderung: frisch laden, Zahlen an den Knöpfen und die Ansicht neu */
+  var fertigNeu=function(meldung){ wahl={}; return anlagenFotosLaden(true).then(function(){ anlagenFotoZahlenNeu(); zeichnen(); if(meldung) toast(meldung); }); };
+  var fotoAktion=function(a){
+    if(a==="start"){ bearbeiten=true; wahl={}; zeichnen(); return; }
+    if(a==="fertig"){ bearbeiten=false; wahl={}; zeichnen(); return; }
+    var l=gewaehlt().filter(anlagenFotoDarf); if(!l.length) return;
+    var ids=l.map(function(f){ return f.id; }), nT=l.length+(l.length===1?" Foto":" Fotos");
+    if(a==="loeschen"){
+      if(!window.confirm(nT+" endgültig löschen?\n\nDas lässt sich nicht rückgängig machen. Wenn es nur bei der falschen Anlage liegt: lieber „Andere Anlage“.")) return;
+      mitFrist(Store.sb.from("anlagenfotos").delete().in("id", ids).select("id"), 15000).then(function(r){
+        if(r.error) throw new Error(r.error.message);
+        var weg=(r.data||[]).map(function(x){ return x.id; });
+        /* die Bilddateien der gelöschten Zeilen aus dem Speicher (ohne Regel bleiben sie still liegen – stört nicht) */
+        var pfade=l.filter(function(f){ return weg.indexOf(f.id)>=0; }).map(function(f){ return f.pfad; });
+        if(pfade.length) Store.sb.storage.from("protokollfotos").remove(pfade).then(function(){}, function(){});
+        anlagenFotos=anlagenFotos.filter(function(f){ return weg.indexOf(f.id)<0; });
+        return fertigNeu(weg.length===ids.length ? (weg.length===1?"1 Foto gelöscht.":weg.length+" Fotos gelöscht.")
+          : weg.length+" von "+ids.length+" gelöscht – für die übrigen fehlt die Berechtigung (Datenbank-Regel tools/anlagenfotos-korrigieren.sql noch nicht ausgeführt?).");
+      }).catch(function(e){ toast("Nicht gelöscht: "+technikDeutsch(e.message||String(e))); });
+      return;
+    }
+    if(a==="anlage"){
+      var lp=posById[leaderId], s=lp && byId[lp.standortId];
+      var andere=s ? anlagenDesMarkts(s, true).filter(function(x){ return x.leader && x.leader.id!==leaderId; }) : [];
+      if(!andere.length){ toast("An diesem Markt gibt es keine andere Anlage."); return; }
+      var w=ansichtOeffnen("Zu welcher Anlage gehören die Fotos?");
+      w.schritt.textContent=nT+" · "+(s?stName(s):"");
+      andere.forEach(function(x){
+        var b=el('<button class="btn ghost" type="button" style="text-align:left;white-space:normal;display:block;width:100%;margin-bottom:6px" data-zielanlage="'+esc(x.leader.id)+'">'+
+          esc(anlagenName(anlageDaten(x.leader)))+' <span class="muted" style="font-size:12px">'+esc(x.termine.map(function(p){ return (p.intervall&&p.intervall.kurz)||p.intervallCode||""; }).filter(Boolean).join(" / "))+
+          " · "+anlagenFotosVon(x.leader.id).length+" Fotos</span></button>");
+        b.onclick=function(){
+          w.zu();
+          mitFrist(Store.sb.from("anlagenfotos").update({anlage_id:x.leader.id, standort_id:s.id}).in("id", ids).select("id"), 15000).then(function(r){
+            if(r.error) throw new Error(r.error.message);
+            var n2=(r.data||[]).length;
+            return fertigNeu(n2===ids.length ? nT+" zu „"+anlagenName(anlageDaten(x.leader))+"“ verschoben."
+              : n2+" von "+ids.length+" verschoben – für die übrigen fehlt die Berechtigung (tools/anlagenfotos-korrigieren.sql noch nicht ausgeführt?).");
+          }).catch(function(e){ toast("Nicht verschoben: "+technikDeutsch(e.message||String(e))); });
+        };
+        w.inhalt.appendChild(b);
+      });
+      return;
+    }
+    if(a==="art"){
+      var w2=ansichtOeffnen("Was ist auf den Fotos?");
+      w2.schritt.textContent=nT;
+      var besch=el('<label class="fl" hidden><span>Was ist zu sehen? (z. B. Außengerät, Verrohrung)</span><input type="text" maxlength="80"></label>');
+      [["pruefbuch","Prüfbuch-Seite"],["typenschild","Typenschild"],["anlage","Foto der Anlage"]].forEach(function(x){
+        var b=el('<button class="btn ghost" type="button" style="display:block;width:100%;text-align:left;margin-bottom:6px" data-zielart="'+x[0]+'">'+esc(x[1])+"</button>");
+        b.onclick=function(){
+          if(x[0]==="anlage" && besch.hidden){ besch.hidden=false; besch.querySelector("input").focus(); b.textContent="Foto der Anlage – speichern"; return; }
+          var bs=x[0]==="anlage" ? (besch.querySelector("input").value.trim()||null) : null;
+          w2.zu();
+          mitFrist(Store.sb.from("anlagenfotos").update({art:x[0], beschriftung:bs}).in("id", ids).select("id"), 15000).then(function(r){
+            if(r.error) throw new Error(r.error.message);
+            var n3=(r.data||[]).length;
+            return fertigNeu(n3===ids.length ? nT+" jetzt „"+fotoArtName(x[0], bs)+"“."
+              : n3+" von "+ids.length+" geändert – für die übrigen fehlt die Berechtigung (tools/anlagenfotos-korrigieren.sql noch nicht ausgeführt?).");
+          }).catch(function(e){ toast("Nicht geändert: "+technikDeutsch(e.message||String(e))); });
+        };
+        w2.inhalt.appendChild(b);
+      });
+      w2.inhalt.appendChild(besch);
+    }
+  };
+  zeichnen();
   return v;
 }
 function kontoKarte(){

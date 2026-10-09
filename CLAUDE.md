@@ -79,6 +79,9 @@ Kammerlander Umwelt- und Klimatechnik (UKT) – oft kurz, vom Handy, im Feld.
   und an `_fotosOffen` vormerken, eingetragen nach dem Speichern von Anlage bzw. Protokoll (`anlagenFotosEintragen`,
   Warteschlange auf dem Gerät, `anlagenFotosNachtragen`). Scheitert das Hochladen: nachfragen, nie still verwerfen.
   Zu sehen unter „📷 Fotos der Anlage“ (Markt, Historie, Verwaltung) und im Anlagenbuch (`anlagenbuchFotosEinsetzen`).
+  Korrigieren (Inhaber 09.10.2026: „falsche Prüfbuchfotos – nirgends löschen oder korrigieren“): in „📷 Fotos der Anlage“ „✎ Fotos korrigieren“ (`anlagenFotosAnsicht`):
+  antippen wählt (🔍 groß), dann „🗑 Löschen“ (Rückfrage, auch die Bilddatei unter anlagen/), „↪ Andere Anlage“ (am selben Markt), „Art ändern“ (Prüfbuch/Typenschild/Anlage
+  mit Beschriftung). Büro alle Fotos, sonst nur die selbst gespeicherten (`anlagenFotoDarf`), nie Kunde/Präsentation – Datenbank: tools/anlagenfotos-korrigieren.sql.
 - Anlagen-Karten im Markt (`anlagenBloecke`, Inhaber 06.10.2026): einklappbar, am Handy zu (Kopf: Name, dringlichster
   Status, Störung, „Fehlt“), am PC offen. Auf-/Zugeklapptes bleibt je Anlage gemerkt (`ukt_anlagen_karten`, mit Zeit) und
   gilt nach `ANLAGEN_KARTE_FRIST_MS` (2 h) ohne Hineinschauen nicht mehr. Sprünge (`aufklappen`) und Rundgänge klappen auf.

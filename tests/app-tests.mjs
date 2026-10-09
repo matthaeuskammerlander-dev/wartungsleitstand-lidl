@@ -5459,6 +5459,59 @@ test("Projekt übersichtlicher: „Auf einen Blick“ oben, langer Text zugeklap
   await a.zu();
 });
 
+/* Inhaber 09.10.2026: „ein paar falsche Prüfbuchfotos dabei – nirgends die Möglichkeit, sie zu löschen oder zu korrigieren“ */
+test("Fotos der Anlage korrigieren: auswählen, löschen (mit Rückfrage), andere Anlage am Markt, Art ändern; Techniker nur eigene", async () => {
+  const ergebnis = {};
+  for (const konto of ["inhaber", "techniker"]) {
+    const a = await oeffnen(KONTEN[konto]);
+    const r = await a.seite.evaluate(async () => {
+      const x = window.__t.x, w = (ms) => new Promise((f) => setTimeout(f, ms)), db = window.__db.tabellen, e = {};
+      const ich = x("meineKennung()"), jetzt = new Date().toISOString();
+      db.stammdaten.push({ id: "position:NPfoto2", typ: "position", ziel: "NPfoto2", neu: true, geaendert: jetzt, von: "Test", grund: "Anlage angelegt",
+        felder: { standortId: "TS1", aktiv: true, anlagentyp: "Zweite Testanlage", intervallCode: "JW", sollMonat: 3, anlageZu: "NPfoto2", neuAngelegt: jetzt } });
+      await x("ladeStammdaten().then(storeNachRender)"); await w(300);
+      const markt = "TS1", anlagen = x("anlagenDesMarkts(byId['" + markt + "'], true).map(function(a){ return a.leader.id; })");
+      const quelle = anlagen[0], ziel = anlagen[1];
+      db.anlagenfotos.splice(0);
+      ["k1", "k2", "k3"].forEach((id, i) => db.anlagenfotos.push({ id, erstellt: jetzt, von: i < 2 ? ich : "u_fremd", von_name: "Test", anlage_id: quelle, standort_id: markt, art: "pruefbuch", pfad: "anlagen/test/" + id + ".jpg" }));
+      await x("anlagenFotosLaden(true)");
+      x("anlagenFotosAnsicht('" + quelle + "', 'Test')"); await w(300);
+      const o = () => [...document.querySelectorAll(".assistent")].pop(), v = o();
+      v.querySelector('[data-fa="start"]').click(); await w(100);
+      const tippe = (id) => v.querySelector('[data-fotoid="' + id + '"] img').click();
+      tippe("k3"); await w(50);
+      e.fremdGewaehlt = !!v.querySelector('[data-fotoid="k3"] span:not([data-gross])');
+      if (e.fremdGewaehlt) { tippe("k3"); await w(50); }
+      /* k1 zu einer anderen Anlage */
+      tippe("k1"); await w(50);
+      v.querySelector('[data-fa="anlage"]').click(); await w(200);
+      const zk = o().querySelector('[data-zielanlage="' + ziel + '"]'); e.zielDa = !!zk; if (zk) zk.click(); await w(400);
+      e.verschoben = (db.anlagenfotos.find((f) => f.id === "k1") || {}).anlage_id === ziel;
+      /* k2: Art ändern, dann löschen */
+      tippe("k2"); await w(50);
+      v.querySelector('[data-fa="art"]').click(); await w(200);
+      o().querySelector('[data-zielart="typenschild"]').click(); await w(400);
+      e.art = (db.anlagenfotos.find((f) => f.id === "k2") || {}).art;
+      tippe("k2"); await w(50);
+      window.__antwort.confirm = false; v.querySelector('[data-fa="loeschen"]').click(); await w(300);
+      e.nachNein = db.anlagenfotos.some((f) => f.id === "k2");
+      window.__antwort.confirm = true; v.querySelector('[data-fa="loeschen"]').click(); await w(500);
+      e.geloescht = !db.anlagenfotos.some((f) => f.id === "k2");
+      e.k3bleibt = db.anlagenfotos.some((f) => f.id === "k3");
+      e.zahl = v.querySelectorAll("[data-fotoid]").length;
+      x("ansichtenSchliessen(); 1");
+      return e;
+    });
+    ergebnis[konto] = r;
+    pruefe(!a.fehler.length, konto + ": Laufzeitfehler: " + a.fehler.join("; "));
+    await a.zu();
+  }
+  const i = ergebnis.inhaber, t = ergebnis.techniker;
+  pruefe(i.zielDa && i.verschoben && i.art === "typenschild" && i.nachNein && i.geloescht && i.k3bleibt, "Inhaber: " + JSON.stringify(i));
+  pruefe(i.fremdGewaehlt === true, "Inhaber darf fremde Fotos wählen: " + JSON.stringify(i));
+  pruefe(t.fremdGewaehlt === false && t.verschoben && t.geloescht && t.k3bleibt, "Techniker nur eigene: " + JSON.stringify(t));
+});
+
 /* Antworten des Inhabers vom 05.10.2026 (Teil kern) */
 test("Antworten kern: „Nur Jahreswartung“ sperrt den Halbjahrestermin wie am Markt üblich – bleibt, bis die Verwaltung es zurücknimmt", async () => {
   const a = await oeffnen(KONTEN.admin);
