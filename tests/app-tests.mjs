@@ -5732,6 +5732,47 @@ test("Arbeitsnachweis abrechnen wie ein Protokoll: noch nicht abgerechnet (Proje
   await b.zu();
 });
 
+/* Inhaber 10.10.2026: „in der Verwaltung und bei den Anlagen sind die Anlagen bzw. Anlagedaten oft ausgeklappt – am Handy nervig, die Seite wird so lang“ */
+test("Handy: Anlagen nicht dauernd ausgeklappt – nur eine Anlage und ein Markt offen, Anlagendaten in der Verwaltung zugeklappt mit „fehlt“", async () => {
+  const a = await oeffnen(KONTEN.admin, { handy: true });
+  const r = await a.seite.evaluate(async () => {
+    const x = window.__t.x, w = (ms) => new Promise((f) => setTimeout(f, ms)), db = window.__db.tabellen, e = {}, j = new Date().toISOString();
+    db.stammdaten.push({ id: "position:NPzwei", typ: "position", ziel: "NPzwei", neu: true, geaendert: j, von: "Test", grund: "Anlage angelegt",
+      felder: { standortId: "TS1", aktiv: true, anlagentyp: "Zweite Testanlage", intervallCode: "JW", sollMonat: 3, anlageZu: "NPzwei", neuAngelegt: j } });
+    await x("ladeStammdaten().then(storeNachRender)"); await w(300);
+    /* im Markt: zweite Anlage öffnen schließt die erste */
+    x("ansichtenSchliessen(); marktAnsicht('TS1'); 1"); await w(500);
+    const karten = () => [...[...document.querySelectorAll(".assistent")].pop().querySelectorAll(".akarte")];
+    const zu = (k) => k.classList.contains("ak-zu");
+    e.anzahl = karten().length;
+    karten()[0].querySelector(".ak-kopf").click(); await w(100);
+    karten()[1].querySelector(".ak-kopf").click(); await w(100);
+    e.markt = karten().map(zu);
+    /* Markt wieder öffnen verlängert das Gemerkte am Handy nicht */
+    const m0 = JSON.parse(localStorage.getItem("ukt_anlagen_karten") || "{}"), t0 = Object.values(m0).map((v) => v.t).join();
+    await w(50); x("ansichtenSchliessen(); marktAnsicht('TS1'); 1"); await w(400);
+    e.nichtVerlaengert = Object.values(JSON.parse(localStorage.getItem("ukt_anlagen_karten") || "{}")).map((v) => v.t).join() === t0;
+    x("ansichtenSchliessen(); 1");
+    /* Reiter Anlagen: ein zweiter Markt schließt den ersten */
+    x("S.view='anlagen'; render(); 1"); await w(500);
+    const st = [...document.querySelectorAll("#stlist details.st")];
+    e.maerkte = st.length;
+    if (st.length >= 2) { st[0].open = true; await w(100); st[1].open = true; await w(150); e.offen = st.filter((d) => d.open).length; }
+    /* Verwaltung: Anlagendaten zugeklappt, Lücken im Kopf */
+    x("Admin.frei=true; S.view='verwaltung'; S.adm={suche:'',filter:'alle',sort:'filiale',auf:true,sel:'TS1',entwurf:null,tab:'maerkte'}; render(); 1"); await w(700);
+    const det = [...document.querySelectorAll(".anlagekarte details")].filter((d) => /Anlagendaten/.test(d.querySelector("summary").textContent));
+    e.verw = det.length + "|" + det.filter((d) => d.open).length + "|" + det.filter((d) => d.querySelector("[data-luecken]")).length;
+    return e;
+  });
+  pruefe(r.anzahl >= 2 && r.markt.filter((z) => !z).length === 1 && r.markt[1] === false, "Markt: mehr als eine Anlage offen: " + JSON.stringify(r));
+  pruefe(r.nichtVerlaengert, "Markt öffnen verlängert am Handy das Aufgeklappte");
+  pruefe(r.maerkte < 2 || r.offen === 1, "Reiter Anlagen: mehrere Märkte offen: " + JSON.stringify(r));
+  const [n, offen, luecken] = r.verw.split("|").map(Number);
+  pruefe(n >= 1 && offen === 0 && luecken >= 1, "Verwaltung: Anlagendaten am Handy offen oder ohne „fehlt“: " + r.verw);
+  pruefe(!a.fehler.length, "Laufzeitfehler: " + a.fehler.join("; "));
+  await a.zu();
+});
+
 /* Antworten des Inhabers vom 05.10.2026 (Teil kern) */
 test("Antworten kern: „Nur Jahreswartung“ sperrt den Halbjahrestermin wie am Markt üblich – bleibt, bis die Verwaltung es zurücknimmt", async () => {
   const a = await oeffnen(KONTEN.admin);

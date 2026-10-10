@@ -85,6 +85,8 @@ Kammerlander Umwelt- und Klimatechnik (UKT) – oft kurz, vom Handy, im Feld.
 - Anlagen-Karten im Markt (`anlagenBloecke`, Inhaber 06.10.2026): einklappbar, am Handy zu (Kopf: Name, dringlichster
   Status, Störung, „Fehlt“), am PC offen. Auf-/Zugeklapptes bleibt je Anlage gemerkt (`ukt_anlagen_karten`, mit Zeit) und
   gilt nach `ANLAGEN_KARTE_FRIST_MS` (2 h) ohne Hineinschauen nicht mehr. Sprünge (`aufklappen`) und Rundgänge klappen auf.
+  Am Handy (Inhaber 10.10.2026: „oft ausgeklappt – die Seite wird so lang“): immer nur EINE Anlage je Markt offen (die anderen klappen zu), Öffnen des Markts
+  verlängert das Gemerkte nicht (nach 2 h wieder zu); im Reiter Anlagen nur EIN Markt offen; in der Verwaltung „Anlagendaten“ zugeklappt, Lücken als „n fehlen“ im Kopf (`[data-luecken]`).
   Wartungspunkt „Kondensatwanne“ (früher „Kondensatwanne/-ablauf“, alte
   Protokolle über `arbeitenAktuell`).
 - Techniker/in = angemeldetes Konto (Büro 01.10.2026: „er ist verantwortlich für
