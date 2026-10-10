@@ -5693,8 +5693,8 @@ test("Arbeitsnachweis abrechnen wie ein Protokoll: noch nicht abgerechnet (Proje
     x("ansichtenSchliessen(); 1"); await A.warte(200);
     /* KPlus-Rechnung zu Nachweis 2 */
     const p = x("PROJEKTE.filter(function(q){ return q.id==='pan1'; })[0]");
-    const erg = { art: "rechnung", nummer: "419999", datum: "2026-09-20", kopf: {}, summenPdf: { netto: 960 },
-      positionen: [{ typ: "pos", nr: "1", menge: 16, eh: "Std", text: "Regiestunde Facharbeiter (2 Mann à 8 Std)", preis: 60 }] };
+    const erg = { art: "rechnung", nummer: "419999", datum: "2026-09-20", kopf: {}, summenPdf: { netto: 1110 },
+      positionen: [{ typ: "pos", nr: "1", menge: 16, eh: "Std", text: "Regiestunde Facharbeiter (2 Mann à 8 Std)", preis: 60 }, { typ: "pos", nr: "2", menge: 1, eh: "Tag", text: "Hebebühne Miete", preis: 150 }] };
     x("kplusVorschau")(x("kontextArbeitsnachweis")(p, db.arbeitsnachweise[1]), erg, () => {}, null);
     const kv = await A.bis(() => { const d = A.dlg(); return d && A.knopf(d, /Beim Arbeitsnachweis ablegen/) && d; });
     e.vergleich = kv ? /So hätte die App gerechnet/.test(kv.textContent) : false;
@@ -5702,6 +5702,13 @@ test("Arbeitsnachweis abrechnen wie ein Protokoll: noch nicht abgerechnet (Proje
     await A.bis(() => db.belege.some((b) => b.nummer === "419999"), 6000);
     const b = db.belege.filter((b) => b.nummer === "419999")[0] || {};
     e.beleg = JSON.stringify((b.kopf || {}).arbeitsnachweise || null) + "|" + b.projekt_id + "|" + b.extern;
+    e.gelerntGespeichert = JSON.stringify(((b.kopf || {}).lernen || {}).fehlte || []);
+    /* gelernt: die nächste Rechnung zu einem Arbeitsnachweis im selben Projekt schlägt die Hebebühne vor */
+    await x("belegeAlleLaden()"); x("ansichtenSchliessen(); projektAnsicht('pan1'); 1"); await A.bis(() => zeile("ant1"));
+    zeile("ant1").querySelector("[data-an-schreiben]").click();
+    const ed2 = await A.bis(() => { const d = A.dlg(); return d && /Rechnung/.test(d.querySelector(".as-titel").textContent) && d; });
+    e.gelernt = ed2 ? [...ed2.querySelectorAll("textarea, input")].map((i) => i.value).join(" ") + " " + ed2.textContent : "";
+    x("ansichtenSchliessen(); 1"); await A.warte(200);
     /* von Hand vermerken (Nachweis 3) */
     x("ansichtenSchliessen(); projektAnsicht('pan1'); 1");
     await A.bis(() => zeile("ant3"));
@@ -5721,6 +5728,7 @@ test("Arbeitsnachweis abrechnen wie ein Protokoll: noch nicht abgerechnet (Proje
   pruefe(r.vergleich && r.beleg === '["ant2"]|pan1|true', "KPlus-Rechnung: " + JSON.stringify([r.vergleich, r.beleg, r.toasts]));
   pruefe(/€ abgerechnet/.test(r.stand2) && /419999/.test(r.stand2) && /€ abgerechnet/.test(r.stand3) && /vermerkt/.test(r.stand3), "Stand: " + JSON.stringify([r.stand2, r.stand3]));
   pruefe(/1 unterschrieben, noch nicht abgerechnet/.test(r.offen2), "danach offen: " + r.offen2);
+  pruefe(/Hebebühne/.test(r.gelerntGespeichert) && /Hebebühne Miete/.test(r.gelernt) && /gelernt aus 1 KPlus-Rechnung/.test(r.gelernt), "nicht gelernt: " + JSON.stringify([r.gelerntGespeichert, r.gelernt.slice(0, 400)]));
   pruefe(!a.fehler.length, "Laufzeitfehler: " + a.fehler.join("; "));
   await a.zu();
   /* Techniker sieht davon nichts */

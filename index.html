@@ -30188,10 +30188,10 @@ function anAbrechnungZeile(p, a, neu){
   /* Rechnung schreiben: Regiestunden und Zuschläge aus genau diesem Nachweis, sein PDF hinten an */
   z.querySelector("[data-an-schreiben]").onclick=function(){
     katalogLaden().catch(function(){ return []; }).then(function(){
-      var rp=anRechnungPositionen([a], kx.kunde_id);
+      var rp=anVorschlag(a, p, kx.kunde_id);   /* samt Gelerntem aus früheren KPlus-Rechnungen zu Arbeitsnachweisen */
       var kopf={empfaenger:kundeAnschrift(kx.kunde_id), betreff:[kontextTitel(kx), anTitel(a)+(anZeitraum(a)?" ("+anZeitraum(a)+")":"")], arbeitsnachweise:[a.id],
         anhaenge:a.pdf_pfad ? [{pfad:a.pdf_pfad, name:anDateiname(p, a), arbeitsnachweis:a.id}] : []};
-      belegNeu(kx, "rechnung", {positionen:rp.pos, kopf:kopf}, neu);
+      belegNeu(kx, "rechnung", {positionen:rp.pos, kopf:kopf, lernWeg:rp.weg}, neu);
       if(rp.hinweise.length) toast("Bitte prüfen: "+rp.hinweise.join(" · "));
     });
   };
@@ -31457,7 +31457,7 @@ function kplusVorschau(ziel, erg, fertig, datei){
   var hinweis=pruefHinweisBox(erg.positionen, "im KPlus-PDF"); if(hinweis) v.inhalt.appendChild(hinweis);
   /* Einsatz: so hätte die App gerechnet – die Unterschiede sind das, was sie lernen soll */
   var an=kx.an||null;   /* Rechnung zu einem Arbeitsnachweis (Inhaber 10.10.2026: „wie beim Protokoll“) */
-  var lernen=pk ? einsatzVergleich(pk, kx.kunde_id, erg) : an && erg.art==="rechnung" ? einsatzVergleich(null, kx.kunde_id, erg, anRechnungPositionen([an], kx.kunde_id)) : null;
+  var lernen=pk ? einsatzVergleich(pk, kx.kunde_id, erg) : an && erg.art==="rechnung" ? einsatzVergleich(null, kx.kunde_id, erg, anVorschlag(an, p, kx.kunde_id)) : null;
   if(lernen) v.inhalt.appendChild(einsatzVergleichKarte(lernen));
   v.inhalt.appendChild(belegTabelle(erg.positionen, null));
   var ab=el('<button class="btn ghost" type="button">Abbrechen</button>'), ok=el('<button class="btn" type="button">'+(pk?"Beim Einsatz ablegen":an?"Beim Arbeitsnachweis ablegen":"Am Projekt ablegen")+"</button>");
@@ -31570,7 +31570,8 @@ function einsatzVergleichKarte(l){
   var text={gleich:"✓ wie die App", anders:"≠ anders", fehlte:"+ fehlte in der App", zuviel:"− hätte die App zusätzlich"};
   var c=el('<div class="card" style="box-shadow:none;margin:8px 0"><div class="pad stack" style="gap:6px"><h2>So hätte die App gerechnet</h2>'+
     '<div class="muted" style="font-size:12.5px">App-Vorschlag netto <strong>'+geld(l.appNetto)+" €</strong> · KPlus netto <strong>"+geld(l.kpNetto)+" €</strong>. "+
-    (l.speichern.art==="arbeitsnachweis" ? "App-Vorschlag = Regiestunden und Zuschläge aus dem Arbeitsnachweis. Die Unterschiede werden mit dem Beleg gespeichert.</div></div></div>" :
+    (l.speichern.art==="arbeitsnachweis" ? "App-Vorschlag = Regiestunden und Zuschläge aus dem Arbeitsnachweis samt Gelerntem. Die Unterschiede werden mit dem Beleg gespeichert – "+
+      "künftige Rechnungen zu Arbeitsnachweisen ergänzen, was der Chef regelmäßig dazuschreibt, und lassen weg, was er in 3 Rechnungen gestrichen hat.</div></div></div>" :
     "Die Unterschiede werden mit dem Beleg gespeichert – künftige Rechnungsvorschläge zu Einsätzen ergänzen, was der Chef regelmäßig dazuschreibt, und lassen weg, was er in 3 Rechnungen gestrichen hat.</div></div></div>"));
   var s=c.querySelector(".stack");
   (l.weg||[]).forEach(function(w){ s.appendChild(el('<div class="muted" style="font-size:12.5px;padding-left:11px">Nicht mehr vorgeschlagen: „'+esc(w.text.slice(0,90))+
@@ -31584,7 +31585,14 @@ function einsatzVergleichKarte(l){
 }
 /* KPlus-Rechnungen früherer Einsätze derselben Art (einsatzArt: Wartung, Störung, Reparatur, Prüfung, Sonstiges) am selben
    Markt oder beim selben Kunden, mit gespeichertem Vergleich (kopf.lernen) – daraus lernt der Rechnungsvorschlag */
+/* Arbeitsnachweise lernen genauso (Inhaber 10.10.2026: „hier soll auch mitgelernt werden wie bei Protokollen“): statt eines Protokolls
+   steht pk = {_an:{id, projekt_id}} – gelernt aus KPlus-Rechnungen zu ANDEREN Arbeitsnachweisen, im selben Projekt zuerst
+   (wie „am selben Markt“), sonst beim selben Kunden */
+function lernOrtGleich(b, pk){ return pk._an ? !!b.projekt_id && b.projekt_id===pk._an.projekt_id : b.standort_id===pk.standortId; }
 function einsatzLernBelege(pk, kid){
+  if(pk._an) return (BELEGE_ALLE||[]).filter(function(b){ var l=(b.kopf||{}).lernen;
+    return b.extern && b.art==="rechnung" && b.status!=="storniert" && l && l.art==="arbeitsnachweis" && ((b.kopf||{}).arbeitsnachweise||[]).indexOf(pk._an.id)<0 &&
+      (lernOrtGleich(b, pk) || (b.kunde_id||"lidl")===(kid||"lidl")); });
   var art=einsatzArt(pk);
   return (BELEGE_ALLE||[]).filter(function(b){ var l=(b.kopf||{}).lernen;
     return b.extern && b.art==="rechnung" && b.protokoll_id && b.protokoll_id!==pk._id && l && l.art===art && (b.standort_id===pk.standortId || (b.kunde_id||"lidl")===(kid||"lidl")); });
@@ -31622,13 +31630,13 @@ function einsatzGelernt(pk, kid, schon, wegSchl){
     var gesehen={};
     (b.kopf.lernen.fehlte||[]).forEach(function(x){
       var k=katalogSchluessel(katalogTextOhneMenge(x.text), x.eh); if(gesehen[k]) return; gesehen[k]=1;
-      var e=zaehl[k]||(zaehl[k]={x:x, n:0, mengen:[], amMarkt:0, in:[]}); e.n++; e.mengen.push(+x.menge||0); if(b.standort_id===pk.standortId) e.amMarkt++; e.x=x; e.in.push(b.id);
+      var e=zaehl[k]||(zaehl[k]={x:x, n:0, mengen:[], amMarkt:0, in:[]}); e.n++; e.mengen.push(+x.menge||0); if(lernOrtGleich(b, pk)) e.amMarkt++; e.x=x; e.in.push(b.id);
     });
   });
   /* stand die gelernte Position in einer späteren KPlus-Rechnung schon im Vorschlag und passte (lernen.passend), zählt
      diese Rechnung mit – „gelernt aus N KPlus-Rechnungen“ nennt alle, in denen der Chef sie verrechnet hat */
   Object.keys(zaehl).forEach(function(k){ var e=zaehl[k], vk=vorschlagSchluessel(e.x);
-    belege.forEach(function(b){ if(e.in.indexOf(b.id)<0 && (b.kopf.lernen.passend||[]).indexOf(vk)>=0){ e.n++; if(b.standort_id===pk.standortId) e.amMarkt++; } }); });
+    belege.forEach(function(b){ if(e.in.indexOf(b.id)<0 && (b.kopf.lernen.passend||[]).indexOf(vk)>=0){ e.n++; if(lernOrtGleich(b, pk)) e.amMarkt++; } }); });
   var hat=(schon||[]).map(function(x){ return katalogSchluessel(katalogTextOhneMenge(String(x.text||"").split("\n")[0]), x.eh); });
   return Object.keys(zaehl).map(function(k){ return zaehl[k]; }).filter(function(e){ return (e.n>=2 || e.amMarkt>=1) && hat.indexOf(katalogSchluessel(katalogTextOhneMenge(e.x.text), e.x.eh))<0 &&
       (wegSchl||[]).indexOf(vorschlagSchluessel(e.x))<0; })
@@ -31637,8 +31645,14 @@ function einsatzGelernt(pk, kid, schon, wegSchl){
 /* Rechnungsvorschlag zu einem Einsatz samt Gelerntem – für „Rechnung schreiben“ (belegNeu) und „So hätte die App
    gerechnet“ (einsatzVergleich) gleich: Gestrichenes fällt weg, regelmäßig Dazugeschriebenes steht vor der Fahrtpauschale
    unter „Ergänzt aus früheren KPlus-Rechnungen – bitte prüfen“, je mit dem Grund (gelernt aus N KPlus-Rechnungen) */
-function einsatzVorschlag(pk, kid){
-  var pos=einsatzPositionen(pk, kid), weg=einsatzGestrichen(pk, kid), wk=weg.map(function(w){ return w.schluessel; });
+function einsatzVorschlag(pk, kid){ return vorschlagMitGelerntem(pk, kid, einsatzPositionen(pk, kid)); }
+/* Arbeitsnachweis: Regiestunden und Zuschläge aus dem Nachweis, dazu das Gelernte – für „Rechnung schreiben“ und den Vergleich gleich */
+function anVorschlag(a, p, kid){
+  var rp=anRechnungPositionen([a], kid);
+  return Object.assign(vorschlagMitGelerntem({_an:{id:a.id, projekt_id:p.id}}, kid, rp.pos), {hinweise:rp.hinweise});
+}
+function vorschlagMitGelerntem(pk, kid, pos){
+  var weg=einsatzGestrichen(pk, kid), wk=weg.map(function(w){ return w.schluessel; });
   if(wk.length) pos=pos.filter(function(x){ return x.typ!=="pos" || wk.indexOf(vorschlagSchluessel(x))<0; });
   var gel=einsatzGelernt(pk, kid, pos, wk);
   if(gel.length){
@@ -32018,7 +32032,7 @@ function belegNeu(kx, art, vorlage, fertig){
     else if(!kopf.gueltigBis) kopf.gueltigBis=isoLokal(new Date(Date.now()+60*864e5));
     var b={art:art, nummer:null, test:BELEG_EINST.modus!=="echt", extern:false, datum:isoLokal(new Date()), status:"entwurf", bezug_id:vorlage&&vorlage.id||null,
       kopf:kopf, positionen:pos, projekt_id:kx.projekt?kx.projekt.id:null, protokoll_id:kx.protokoll?kx.protokoll._id:(kx.ausProtokoll||null), kunde_id:kx.kunde_id, standort_id:kx.standort_id,
-      lernWeg:vsch?vsch.weg:[]};
+      lernWeg:vsch?vsch.weg:(vorlage&&vorlage.lernWeg)||[]};
     belegEditor(kx, b, fertig, art==="rechnung" && vorlage && kx.projekt ? baubuchVorschlaege(kx.projekt, pos) : null);
   }, function(e){ belegNeuLaeuft=false; toast("Nicht möglich: "+e.message); });
 }

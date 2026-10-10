@@ -347,6 +347,9 @@ Kammerlander Umwelt- und Klimatechnik (UKT) – oft kurz, vom Handy, im Feld.
   KPlus-Rechnung hochladen (`kplusVorschau` mit `kontextArbeitsnachweis` – Vergleich mit `anRechnungPositionen`, Beleg am Projekt, `kopf.arbeitsnachweise`), Rechnung schreiben
   (Regiestunden + Zuschläge dieses Nachweises, PDF hinten an) oder von Hand vermerken (Tabelle `abrechnung`, Schlüssel „an:<id>“). Abgerechnet (`anAbgerechnet`) = KPlus- oder echte
   Rechnung (nicht TEST, nicht storniert) nennt ihn, oder Vermerk. Offene: Hinweis in der Karte (`[data-an-offen]`) und To-do des Inhabers je Projekt (`anOffenLaden`, `anOffenJe`).
+  Lernt wie beim Einsatz (Inhaber 10.10.2026): `anVorschlag` = `anRechnungPositionen` + `vorschlagMitGelerntem` mit pk = {_an:{id, projekt_id}} – Lernbelege
+  (`einsatzLernBelege`) sind KPlus-Rechnungen mit `kopf.lernen.art` „arbeitsnachweis“ zu ANDEREN Nachweisen, im selben Projekt (`lernOrtGleich`, zählt wie „am Markt“) oder beim
+  selben Kunden; gilt für „Rechnung schreiben“ und den Vergleich beim Hochladen (nicht für „⏱ Stunden aus Arbeitsnachweisen“ mit mehreren Nachweisen).
 - **Arbeitszeiten** (Tabelle `arbeitszeiten`): jede Person sieht nur ihre
   eigenen, der Inhaber alle; ein bestätigter Monat ist gesperrt – auch für NEUE Einträge (von Hand, Stempeln,
   Abgleich): bestätigt = die Person hat dort einen Eintrag mit `bestaetigt`; nur der Inhaber trägt danach ein oder
