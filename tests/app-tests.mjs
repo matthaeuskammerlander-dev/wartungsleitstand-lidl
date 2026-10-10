@@ -5596,6 +5596,8 @@ test("Projekt mit Reitern: je Thema ein Reiter, nur dessen Karten sichtbar, leer
       const sichtbar = () => [...o().querySelectorAll(".card")].filter((c) => c.querySelector("h2") && !c.parentElement.closest(".card") && c.offsetParent).map((c) => x("abschnittTitel")(c));
       e.reiter = [...o().querySelectorAll("[data-reiter]")].map((b) => b.dataset.reiter);
       e.start = sichtbar();
+      const sb = o().querySelector("[data-schnell-an]"); e.schnell = [...o().querySelectorAll("[data-schnell] button")].map((b) => b.textContent);
+      if (sb) { const vor = o(); sb.click(); await w(600); e.anOffen = o() !== vor && /Arbeitsnachweis|Arbeitsbericht/.test(o().textContent); x("ansichtenSchliessen(); 1"); await w(200); x("projektAnsicht('PRT1'); 1"); await w(900); }
       o().querySelector('[data-reiter="angaben"]').click(); await w(200);
       e.angaben = sichtbar();
       o().querySelector('[data-reiter="planung"]').click(); await w(200);
@@ -5623,6 +5625,7 @@ test("Projekt mit Reitern: je Thema ein Reiter, nur dessen Karten sichtbar, leer
     pruefe(r.angaben.some((t) => /^Angaben/.test(t)) && r.angaben.some((t) => /^Beteiligte/.test(t)) && !r.angaben.some((t) => /^(Auf einen Blick|Stand)/.test(t)), n + " Angaben: " + JSON.stringify(r.angaben));
     pruefe(!r.baustelle.some((t) => /^Baustellenbuch/.test(t)) && (r.baustelle.length || /noch nichts eingetragen/.test(r.leerHinweis)), n + " Baustelle: " + JSON.stringify([r.baustelle, r.leerHinweis]));
     pruefe(r.planung.some((t) => /^Termine/.test(t)) && r.planung.some((t) => /^Kalender/.test(t)) && r.start.some((t) => /^Kalender/.test(t)), n + " Kalender in Übersicht und Termine & Material: " + JSON.stringify([r.start, r.planung]));
+    pruefe(/Arbeitsbericht erstellen/.test(r.schnell.join()) && r.anOffen && r.start.some((t) => /^Arbeitsnachweise/.test(t)), n + " Arbeitsbericht aus der Übersicht: " + JSON.stringify([r.schnell, r.anOffen, r.start]));
     pruefe(r.gemerkt === "baustelle", n + " gewählter Reiter nicht gemerkt: " + r.gemerkt);
     pruefe(r.seiteBreit, n + ": Seite breiter als der Bildschirm");
     pruefe(!a.fehler.length, "Laufzeitfehler: " + a.fehler.join("; "));
@@ -5659,6 +5662,74 @@ test("Protokoll-PDF: Seitenumbruch nie mitten in einer Tabelle – kurze Tabelle
   pruefe(!r.nachKopf.length, "Umbruch gleich nach der Kopfzeile: " + JSON.stringify(r));
   pruefe(!a.fehler.length, "Laufzeitfehler: " + a.fehler.join("; "));
   await a.zu();
+});
+
+/* Inhaber 10.10.2026: „wird ein fertiger Arbeitsnachweis beim Rechnungschreiben gleich behandelt wie ein Protokoll? – ja, bau das so ein“ */
+test("Arbeitsnachweis abrechnen wie ein Protokoll: noch nicht abgerechnet (Projekt, To-do), Rechnung schreiben, KPlus-Rechnung hochladen, von Hand vermerken – nur Inhaber", async () => {
+  const a = await oeffnen(KONTEN.inhaber);
+  await a.seite.evaluate((h) => eval(h), AN_HILFEN);
+  const r = await a.seite.evaluate(async () => {
+    const x = window.__t.x, db = window.__db.tabellen, A = window.__an, e = {}, jetzt = new Date().toISOString();
+    A.toastSpion(); A.daten();
+    const an = (id, nr, datum) => ({ id, projekt_id: "pan1", nummer: nr, monteur: "Testtechniker", erstellt_von: "u_tech_test_at", unterschrieben: jetzt, unterschrift: "data:image/png;base64,x",
+      daten: { zeilen: [{ datum, personen: 2, von: "07:00", bis: "15:30", pause: 0.5 }], arbeiten: "Montage" }, erstellt: jetzt, geaendert: jetzt });
+    db.arbeitsnachweise.push(an("ant1", 1, "2026-09-14"), an("ant2", 2, "2026-09-15"), an("ant3", 3, "2026-09-16"));
+    db.katalog.push({ id: "katr1", text: "Regiestunde Facharbeiter", eh: "Std", preis: 60, aktiv: true });
+    await x("Promise.all([projekteLaden(), planungLaden(), abrechnungLaden()])");
+    /* To-do im Kalender */
+    x("AN_OFFEN=null; S.view='kalender'; render(); 1"); await A.warte(800); x("render(); 1"); await A.warte(300);
+    e.todo = [...document.querySelectorAll("[data-an-todo]")].map((b) => b.textContent).join("|");
+    /* im Projekt: je Nachweis „noch nicht abgerechnet“ */
+    x("projektAnsicht('pan1')");
+    await A.bis(() => document.querySelectorAll("[data-an-abr]").length >= 3);
+    const zeile = (id) => document.querySelector('[data-an="' + id + '"] [data-an-abr]');
+    e.offen = (document.querySelector("[data-an-offen]") || {}).textContent;
+    e.stand1 = zeile("ant1").textContent;
+    /* Rechnung schreiben: Regiestunden aus genau diesem Nachweis, Nachweis im Kopf */
+    zeile("ant1").querySelector("[data-an-schreiben]").click();
+    const ed = await A.bis(() => { const d = A.dlg(); return d && /Rechnung/.test(d.querySelector(".as-titel").textContent) && d; });
+    e.editor = ed ? ed.textContent.replace(/\s+/g, " ").slice(0, 2000) : "";
+    if (ed) { const zu = ed.querySelector('[data-a="zu"]'); if (zu) zu.click(); await A.warte(300); const q = A.dlg(); if (q && q !== ed && /verwerfen|schließen/i.test(q.textContent)) { const j = A.knopf(q, /verwerfen|schließen/i); if (j) j.click(); } }
+    x("ansichtenSchliessen(); 1"); await A.warte(200);
+    /* KPlus-Rechnung zu Nachweis 2 */
+    const p = x("PROJEKTE.filter(function(q){ return q.id==='pan1'; })[0]");
+    const erg = { art: "rechnung", nummer: "419999", datum: "2026-09-20", kopf: {}, summenPdf: { netto: 960 },
+      positionen: [{ typ: "pos", nr: "1", menge: 16, eh: "Std", text: "Regiestunde Facharbeiter (2 Mann à 8 Std)", preis: 60 }] };
+    x("kplusVorschau")(x("kontextArbeitsnachweis")(p, db.arbeitsnachweise[1]), erg, () => {}, null);
+    const kv = await A.bis(() => { const d = A.dlg(); return d && A.knopf(d, /Beim Arbeitsnachweis ablegen/) && d; });
+    e.vergleich = kv ? /So hätte die App gerechnet/.test(kv.textContent) : false;
+    if (kv) A.knopf(kv, /Beim Arbeitsnachweis ablegen/).click();
+    await A.bis(() => db.belege.some((b) => b.nummer === "419999"), 6000);
+    const b = db.belege.filter((b) => b.nummer === "419999")[0] || {};
+    e.beleg = JSON.stringify((b.kopf || {}).arbeitsnachweise || null) + "|" + b.projekt_id + "|" + b.extern;
+    /* von Hand vermerken (Nachweis 3) */
+    x("ansichtenSchliessen(); projektAnsicht('pan1'); 1");
+    await A.bis(() => zeile("ant3"));
+    zeile("ant3").querySelector("[data-an-hand]").click();
+    await A.bis(() => db.abrechnung.some((z) => z.protokoll_id === "an:ant3"));
+    await A.bis(() => /abgerechnet/.test((zeile("ant3") || {}).textContent || "") && !/noch nicht/.test(zeile("ant3").textContent));
+    e.stand2 = zeile("ant2") && zeile("ant2").textContent;
+    e.stand3 = zeile("ant3") && zeile("ant3").textContent;
+    e.offen2 = (document.querySelector("[data-an-offen]") || {}).textContent;
+    x("ansichtenSchliessen(); 1");
+    e.toasts = window.__toasts.join(" | ");
+    return e;
+  });
+  pruefe(/3 Arbeitsnachweise noch nicht abgerechnet/.test(r.todo), "To-do: " + r.todo);
+  pruefe(/3 unterschrieben, noch nicht abgerechnet/.test(r.offen) && /noch nicht abgerechnet/.test(r.stand1), "Projekt: " + JSON.stringify([r.offen, r.stand1]));
+  pruefe(/Regiestunde/.test(r.editor) && /Arbeitsnachweis Nr\. 1/.test(r.editor), "Rechnung schreiben: " + r.editor.slice(0, 600));
+  pruefe(r.vergleich && r.beleg === '["ant2"]|pan1|true', "KPlus-Rechnung: " + JSON.stringify([r.vergleich, r.beleg, r.toasts]));
+  pruefe(/€ abgerechnet/.test(r.stand2) && /419999/.test(r.stand2) && /€ abgerechnet/.test(r.stand3) && /vermerkt/.test(r.stand3), "Stand: " + JSON.stringify([r.stand2, r.stand3]));
+  pruefe(/1 unterschrieben, noch nicht abgerechnet/.test(r.offen2), "danach offen: " + r.offen2);
+  pruefe(!a.fehler.length, "Laufzeitfehler: " + a.fehler.join("; "));
+  await a.zu();
+  /* Techniker sieht davon nichts */
+  const b = await oeffnen(KONTEN.techniker);
+  await b.seite.evaluate((h) => eval(h), AN_HILFEN);
+  const t = await b.seite.evaluate(async () => { const x = window.__t.x, A = window.__an; A.daten(); await x("projekteLaden()"); x("projektAnsicht('pan1')"); await A.warte(1200);
+    return document.querySelectorAll("[data-an-abr], [data-an-offen]").length + "|" + x("anAbrechnungAn()"); });
+  pruefe(t === "0|false", "Techniker sieht Abrechnung: " + t);
+  await b.zu();
 });
 
 /* Antworten des Inhabers vom 05.10.2026 (Teil kern) */

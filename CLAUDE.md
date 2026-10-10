@@ -180,6 +180,9 @@ Kammerlander Umwelt- und Klimatechnik (UKT) – oft kurz, vom Handy, im Feld.
   Mails dazu) · Belege · Verlauf; gezeigt nur die Karten des Reiters (eine leere Spalte fällt weg), angetippt aufgeklappt; ein Reiter ohne Karte zeigt die „+ …“ seiner leeren
   Listen (`[data-reiterleer]`); gewählter Reiter je Projekt gemerkt (`PROJEKT_REITER_WAHL`, auch nach „+ …“ in „Auf einen Blick“ → Reiter des neuen Eintrags). Ersetzt die
   Sprungleiste (bleibt nur bei weniger als 4 Karten); die Seitenleiste rechts fällt im Projekt weg. Der Kalender steht in Übersicht UND Termine & Material (Inhaber 10.10.2026, `projektReiterHat`).
+  Auf der Baustelle schnell (Inhaber 10.10.2026: „von hier einen Arbeitsbericht erstellen – das muss man auf der Baustelle schnell finden“): oben in „Auf einen Blick“
+  „📝 Arbeitsbericht erstellen“ (= neuer Arbeitsnachweis, `anEditor`), „📷 Baustellenbuch-Eintrag“, „📁 Pläne und Dateien“ (`projektBaustelleKnoepfe`, lösen die Knöpfe der Karten aus);
+  die Karte Arbeitsnachweise steht in Übersicht UND Baustelle.
 - PDF-Seitenumbruch (`blattZuPdf`, Inhaber 10.10.2026: „Überschrift der Anlage ganz unten, Daten auf der nächsten Seite“): eine Tabelle, die auf eine
   Seite passt, wird nie geteilt (`ganzeTabellen`); eine längere bricht nur zwischen Datenzeilen, nie gleich nach der Kopfzeile. Gilt für alle Blätter (Protokoll,
   Anlagenbuch, Monatsbericht, Arbeitsnachweis …).
@@ -338,6 +341,10 @@ Kammerlander Umwelt- und Klimatechnik (UKT) – oft kurz, vom Handy, im Feld.
   „⏱ Stunden aus Arbeitsnachweisen“ (`anRechnungPositionen`) – Regiestunden für alle Stunden + Zuschlag Samstag 50 % /
   Sonntag-Feiertag 100 % aus dem Katalog, Menge passend zum Text (`positionPruefen`); Nacht/Überstunden nur als Hinweis;
   PDF der Nachweise hinten an (`kopf.anhaenge`, `pdfDateienAnhaengen`), verrechnete in `kopf.arbeitsnachweise`.
+  Abrechnen wie ein Einsatz (Inhaber 10.10.2026, nur Inhaber – `anAbrechnungAn`): beim unterschriebenen Nachweis „Rechnung zu diesem Arbeitsnachweis“ (`anAbrechnungZeile`):
+  KPlus-Rechnung hochladen (`kplusVorschau` mit `kontextArbeitsnachweis` – Vergleich mit `anRechnungPositionen`, Beleg am Projekt, `kopf.arbeitsnachweise`), Rechnung schreiben
+  (Regiestunden + Zuschläge dieses Nachweises, PDF hinten an) oder von Hand vermerken (Tabelle `abrechnung`, Schlüssel „an:<id>“). Abgerechnet (`anAbgerechnet`) = KPlus- oder echte
+  Rechnung (nicht TEST, nicht storniert) nennt ihn, oder Vermerk. Offene: Hinweis in der Karte (`[data-an-offen]`) und To-do des Inhabers je Projekt (`anOffenLaden`, `anOffenJe`).
 - **Arbeitszeiten** (Tabelle `arbeitszeiten`): jede Person sieht nur ihre
   eigenen, der Inhaber alle; ein bestätigter Monat ist gesperrt – auch für NEUE Einträge (von Hand, Stempeln,
   Abgleich): bestätigt = die Person hat dort einen Eintrag mit `bestaetigt`; nur der Inhaber trägt danach ein oder
