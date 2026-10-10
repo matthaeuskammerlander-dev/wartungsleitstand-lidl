@@ -5708,6 +5708,8 @@ test("Arbeitsnachweis abrechnen wie ein Protokoll: noch nicht abgerechnet (Proje
     zeile("ant1").querySelector("[data-an-schreiben]").click();
     const ed2 = await A.bis(() => { const d = A.dlg(); return d && /Rechnung/.test(d.querySelector(".as-titel").textContent) && d; });
     e.gelernt = ed2 ? [...ed2.querySelectorAll("textarea, input")].map((i) => i.value).join(" ") + " " + ed2.textContent : "";
+    /* „⏱ Stunden aus Arbeitsnachweisen“ (mehrere Nachweise) lernt genauso */
+    e.mehrere = x("anVorschlagListe")([db.arbeitsnachweise[0], db.arbeitsnachweise[2]], p, "lidl").pos.map((q) => q.text + (q.gelernt ? " [" + q.gelernt + "]" : "")).join(" | ");
     x("ansichtenSchliessen(); 1"); await A.warte(200);
     /* von Hand vermerken (Nachweis 3) */
     x("ansichtenSchliessen(); projektAnsicht('pan1'); 1");
@@ -5728,6 +5730,7 @@ test("Arbeitsnachweis abrechnen wie ein Protokoll: noch nicht abgerechnet (Proje
   pruefe(r.vergleich && r.beleg === '["ant2"]|pan1|true', "KPlus-Rechnung: " + JSON.stringify([r.vergleich, r.beleg, r.toasts]));
   pruefe(/€ abgerechnet/.test(r.stand2) && /419999/.test(r.stand2) && /€ abgerechnet/.test(r.stand3) && /vermerkt/.test(r.stand3), "Stand: " + JSON.stringify([r.stand2, r.stand3]));
   pruefe(/1 unterschrieben, noch nicht abgerechnet/.test(r.offen2), "danach offen: " + r.offen2);
+  pruefe(/Hebebühne Miete \[gelernt aus 1 KPlus-Rechnung/.test(r.mehrere) && /Regiestunde/.test(r.mehrere), "Stunden aus Arbeitsnachweisen lernt nicht: " + r.mehrere);
   pruefe(/Hebebühne/.test(r.gelerntGespeichert) && /Hebebühne Miete/.test(r.gelernt) && /gelernt aus 1 KPlus-Rechnung/.test(r.gelernt), "nicht gelernt: " + JSON.stringify([r.gelerntGespeichert, r.gelernt.slice(0, 400)]));
   pruefe(!a.fehler.length, "Laufzeitfehler: " + a.fehler.join("; "));
   await a.zu();

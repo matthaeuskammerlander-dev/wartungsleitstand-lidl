@@ -30904,12 +30904,13 @@ function anRechnungDialog(kx, nimm){
       var ids=[].slice.call(box.querySelectorAll("[data-id]:checked")).map(function(i){ return i.dataset.id; });
       var gew=l.filter(function(a){ return ids.indexOf(a.id)>=0; });
       if(!gew.length){ toast("Bitte mindestens einen Arbeitsnachweis anhaken."); return; }
-      var r=anRechnungPositionen(gew, kx.kunde_id);
+      var r=anVorschlagListe(gew, p, kx.kunde_id);   /* samt Gelerntem aus früheren KPlus-Rechnungen zu Arbeitsnachweisen */
       if(!r.pos.length){ toast("In den gewählten Arbeitsnachweisen stehen keine Stunden."); return; }
       var pdf=box.querySelector("[data-pdf]").checked, anh=[], ohnePdf=[];
       if(pdf) gew.forEach(function(a){ if(a.pdf_pfad) anh.push({pfad:a.pdf_pfad, name:anDateiname(p, a), arbeitsnachweis:a.id}); else ohnePdf.push(anTitel(a)); });
       v.zu();
-      nimm(r.pos, anh, ids, r.hinweise.concat(ohnePdf.length ? [ohnePdf.join(", ")+": noch kein PDF abgelegt – nicht angehängt"] : []));
+      nimm(r.pos, anh, ids, r.hinweise.concat(ohnePdf.length ? [ohnePdf.join(", ")+": noch kein PDF abgelegt – nicht angehängt"] : [],
+        (r.weg||[]).map(function(w){ return "Nicht mehr vorgeschlagen: „"+w.text.slice(0,90)+"“ – gelernt aus "+w.n+" KPlus-Rechnungen, in denen sie gestrichen war"; })));
     };
     v.fuss.appendChild(ab); v.fuss.appendChild(ok);
   }, function(e){ toast(e.message); });
@@ -31586,12 +31587,12 @@ function einsatzVergleichKarte(l){
 /* KPlus-Rechnungen früherer Einsätze derselben Art (einsatzArt: Wartung, Störung, Reparatur, Prüfung, Sonstiges) am selben
    Markt oder beim selben Kunden, mit gespeichertem Vergleich (kopf.lernen) – daraus lernt der Rechnungsvorschlag */
 /* Arbeitsnachweise lernen genauso (Inhaber 10.10.2026: „hier soll auch mitgelernt werden wie bei Protokollen“): statt eines Protokolls
-   steht pk = {_an:{id, projekt_id}} – gelernt aus KPlus-Rechnungen zu ANDEREN Arbeitsnachweisen, im selben Projekt zuerst
+   steht pk = {_an:{ids, projekt_id}} – gelernt aus KPlus-Rechnungen zu ANDEREN Arbeitsnachweisen, im selben Projekt zuerst
    (wie „am selben Markt“), sonst beim selben Kunden */
 function lernOrtGleich(b, pk){ return pk._an ? !!b.projekt_id && b.projekt_id===pk._an.projekt_id : b.standort_id===pk.standortId; }
 function einsatzLernBelege(pk, kid){
   if(pk._an) return (BELEGE_ALLE||[]).filter(function(b){ var l=(b.kopf||{}).lernen;
-    return b.extern && b.art==="rechnung" && b.status!=="storniert" && l && l.art==="arbeitsnachweis" && ((b.kopf||{}).arbeitsnachweise||[]).indexOf(pk._an.id)<0 &&
+    return b.extern && b.art==="rechnung" && b.status!=="storniert" && l && l.art==="arbeitsnachweis" && !((b.kopf||{}).arbeitsnachweise||[]).some(function(id){ return pk._an.ids.indexOf(id)>=0; }) &&
       (lernOrtGleich(b, pk) || (b.kunde_id||"lidl")===(kid||"lidl")); });
   var art=einsatzArt(pk);
   return (BELEGE_ALLE||[]).filter(function(b){ var l=(b.kopf||{}).lernen;
@@ -31647,9 +31648,11 @@ function einsatzGelernt(pk, kid, schon, wegSchl){
    unter „Ergänzt aus früheren KPlus-Rechnungen – bitte prüfen“, je mit dem Grund (gelernt aus N KPlus-Rechnungen) */
 function einsatzVorschlag(pk, kid){ return vorschlagMitGelerntem(pk, kid, einsatzPositionen(pk, kid)); }
 /* Arbeitsnachweis: Regiestunden und Zuschläge aus dem Nachweis, dazu das Gelernte – für „Rechnung schreiben“ und den Vergleich gleich */
-function anVorschlag(a, p, kid){
-  var rp=anRechnungPositionen([a], kid);
-  return Object.assign(vorschlagMitGelerntem({_an:{id:a.id, projekt_id:p.id}}, kid, rp.pos), {hinweise:rp.hinweise});
+function anVorschlag(a, p, kid){ return anVorschlagListe([a], p, kid); }
+/* auch für „⏱ Stunden aus Arbeitsnachweisen“ mit mehreren Nachweisen (Inhaber 10.10.2026: „auch dort mitlernen“) */
+function anVorschlagListe(liste, p, kid){
+  var rp=anRechnungPositionen(liste, kid);
+  return Object.assign(vorschlagMitGelerntem({_an:{ids:liste.map(function(a){ return a.id; }), projekt_id:p.id}}, kid, rp.pos), {hinweise:rp.hinweise});
 }
 function vorschlagMitGelerntem(pk, kid, pos){
   var weg=einsatzGestrichen(pk, kid), wk=weg.map(function(w){ return w.schluessel; });
@@ -32234,7 +32237,7 @@ function belegEditor(kx, b, fertig, vorschlaege){
   var anStd=posKarte.querySelector("[data-an-std]");
   if(anStd) anStd.onclick=function(){
     anRechnungDialog(kx, function(neue, anh, ids, hinweise){
-      neue.forEach(function(x){ x.nr=naechsteNr(); pos.push(x); });
+      neue.forEach(function(x){ if(x.typ==="pos") x.nr=naechsteNr(); pos.push(x); });   /* Textzeilen (gelernt) ohne Nummer */
       kopf.anhaenge=(kopf.anhaenge||[]).filter(function(x){ return !anh.some(function(y){ return y.pfad===x.pfad; }); }).concat(anh);
       kopf.arbeitsnachweise=(kopf.arbeitsnachweise||[]).filter(function(id){ return ids.indexOf(id)<0; }).concat(ids);
       zeichnen(); anAnhZeigen();
