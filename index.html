@@ -18795,10 +18795,22 @@ function blattZuPdf(opt){
       .then(function(){
         /* mögliche Umbruchstellen: Unterkanten von Zeilen, Überschriften, Fotos */
         var oben=blatt.getBoundingClientRect().top, stellen=[];
+        /* Tabellen nie teilen (Inhaber 10.10.2026: „Überschrift der Anlage ganz unten, die Daten oben auf der nächsten Seite“):
+           passt eine Tabelle auf eine Seite, bleibt sie ganz beisammen; eine längere bricht nur zwischen Datenzeilen –
+           nie gleich nach ihrer Kopfzeile */
+        var SEITE_PX=Math.floor((297-2*10-6)*BREITE/(210-2*10));   /* wie unten beim Zerlegen in Seiten */
+        var ganzeTabellen=[].filter.call(blatt.querySelectorAll("table"), function(t){ var q=t.getBoundingClientRect(); return q.height<=SEITE_PX*0.9; });
+        var zeileOhneUmbruch=function(e){
+          if(e.tagName!=="TR") return false;
+          var t=e.closest("table");
+          if(ganzeTabellen.indexOf(t)>=0) return true;
+          return t && (t.rows[0]===e || ![].some.call(e.cells, function(c){ return c.tagName==="TD"; }));
+        };
         blatt.querySelectorAll("tr, h1, .kopf, .kaestchen > div, figure, .fuss, table, .zusammen").forEach(function(e){
           /* in einem Block, der beisammen bleiben soll, nur dessen Ende */
           var z=e.closest(".zusammen");
           if(z && z!==e) return;
+          if(zeileOhneUmbruch(e)) return;
           stellen.push(Math.round(e.getBoundingClientRect().bottom-oben));
         });
         /* vor einer Überschrift umbrechen, nie danach – sonst steht sie allein
@@ -18814,6 +18826,7 @@ function blattZuPdf(opt){
         blatt.querySelectorAll("tr, h1, h2, .kopf, .kaestchen > div, figure, .fuss, .zusammen").forEach(function(e){
           var r=e.getBoundingClientRect(); kaesten.push([r.top-oben, r.bottom-oben]);
         });
+        ganzeTabellen.forEach(function(t){ var q=t.getBoundingClientRect(); kaesten.push([q.top-oben, q.bottom-oben]); });
         stellen=stellen.filter(function(y){ return !kaesten.some(function(k){ return k[0]<y-1 && k[1]>y+1; }); });
         stellen.sort(function(a,b){ return a-b; });
         /* Rückfall für sehr lange Texte (Bemerkungen, Maßnahmen), die keine
@@ -18828,6 +18841,7 @@ function blattZuPdf(opt){
         blatt.querySelectorAll("img, canvas").forEach(function(e){
           var q=e.getBoundingClientRect(); if(q.height>0) boxen.push([q.top-oben, q.bottom-oben]);
         });
+        ganzeTabellen.forEach(function(t){ var q=t.getBoundingClientRect(); boxen.push([q.top-oben, q.bottom-oben]); });
         var zeilenJa={};
         boxen.forEach(function(b){ zeilenJa[Math.ceil(b[1])]=1; });
         var zeilen=Object.keys(zeilenJa).map(Number).filter(function(y){
@@ -29432,7 +29446,7 @@ function projektMonatKarte(p){
 var PROJEKT_REITER=[
   ["uebersicht","Übersicht",[/^Auf einen Blick/,/^Stand/,/^Aufgaben und Termine/,/^Kalender/]],
   ["angaben","Angaben",[/^Angaben/,/^Beteiligte/,/^Anlagen/]],
-  ["planung","Termine & Material",[/^Termine/,/^Bestellungen/,/^Werkzeug und Material/]],
+  ["planung","Termine & Material",[/^Termine/,/^Bestellungen/,/^Werkzeug und Material/,/^Kalender/]],   /* Kalender auch hier (Inhaber 10.10.2026) */
   ["baustelle","Baustelle",[/^Baustellenbuch/,/^Arbeitsnachweise/,/^Stunden/]],
   ["dateien","📁 Dateien",[/^Dateien/,/^Mails dazu/]],
   ["belege","Belege",[/^Angebote und Rechnungen/]],
@@ -29444,13 +29458,18 @@ function projektReiterVon(c){
   for(var i=0;i<PROJEKT_REITER.length;i++) if(PROJEKT_REITER[i][2].some(function(re){ return re.test(t); })) return PROJEKT_REITER[i][0];
   return "uebersicht";
 }
+/* eine Karte kann in mehreren Reitern stehen (der Kalender in Übersicht und Termine & Material) */
+function projektReiterHat(c, id){
+  var t=abschnittTitel(c), r=PROJEKT_REITER.filter(function(x){ return x[0]===id; })[0];
+  return r ? r[2].some(function(re){ return re.test(t); }) : false;
+}
 function projektReiter(host, p){
   var karten=[].slice.call(host.querySelectorAll(".card")).filter(function(c){ return c.querySelector("h2") && !c.parentElement.closest(".card"); });
   if(karten.length<4){ projektSprungleiste(host); return; }
   var d=p.daten||{};
   var zahl={dateien:(d.dateien||[]).filter(function(x){ return nurInhaber() || !/^buero\//.test(x.pfad); }).length, baustelle:(d.baubuch||[]).length, verlauf:(p.verlauf||[]).length,
     planung:(d.termine||[]).length+(d.bestellungen||[]).length};
-  var reiter=PROJEKT_REITER.filter(function(r){ return karten.some(function(c){ return projektReiterVon(c)===r[0]; }); });
+  var reiter=PROJEKT_REITER.filter(function(r){ return karten.some(function(c){ return projektReiterHat(c, r[0]); }); });
   var bar=el('<div class="projekt-sprung chips projekt-reiter" role="tablist" aria-label="Bereiche des Projekts"></div>');
   var leerHinweis=el('<div class="note" data-reiterleer hidden style="font-size:13px"></div>');
   host.insertBefore(leerHinweis, host.firstChild);
@@ -29459,7 +29478,7 @@ function projektReiter(host, p){
     PROJEKT_REITER_WAHL[p.id]=id;
     bar.querySelectorAll("[data-reiter]").forEach(function(b){ var an=b.dataset.reiter===id; b.setAttribute("aria-pressed", String(an)); b.setAttribute("aria-selected", String(an)); });
     var sichtbar=0;
-    karten.forEach(function(c){ var an=projektReiterVon(c)===id && c.dataset.leer!=="1"; c.hidden=!an; if(an) sichtbar++;
+    karten.forEach(function(c){ var an=projektReiterHat(c, id) && c.dataset.leer!=="1"; c.hidden=!an; if(an) sichtbar++;
       /* Reiter angetippt: seine Karten aufgeklappt – die Reiter ordnen schon, Zuklappen braucht es dann nicht */
       if(an && scrollen && c.classList.contains("zu") && c._klapp) c._klapp(false); });
     /* Spalten: ist eine leer, die andere über die ganze Breite */
@@ -29473,7 +29492,7 @@ function projektReiter(host, p){
     if(!sichtbar){
       leerHinweis.appendChild(el("<div>Hier ist noch nichts eingetragen.</div>"));
       var reihe=el('<div class="rowflex" style="gap:6px;flex-wrap:wrap;margin-top:6px"></div>');
-      karten.filter(function(c){ return projektReiterVon(c)===id && c.dataset.leer==="1"; }).forEach(function(c){
+      karten.filter(function(c){ return projektReiterHat(c, id) && c.dataset.leer==="1"; }).forEach(function(c){
         var plus=[].slice.call(c.querySelectorAll("button")).filter(function(b){ return /^\+/.test(b.textContent.trim()); })[0]; if(!plus) return;
         var b=el('<button class="btn ghost sm" type="button">+ '+esc(abschnittTitel(c).replace(/\s*\(.*$/,""))+"</button>");
         b.onclick=function(){ plus.click(); }; reihe.appendChild(b);

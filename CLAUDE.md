@@ -179,7 +179,10 @@ Kammerlander Umwelt- und Klimatechnik (UKT) – oft kurz, vom Handy, im Feld.
   Stand, Aufgaben, Kalender) · Angaben (Angaben, Beteiligte, Anlagen) · Termine & Material · Baustelle (Baustellenbuch, Arbeitsnachweise, Stunden) · 📁 Dateien (Dateien,
   Mails dazu) · Belege · Verlauf; gezeigt nur die Karten des Reiters (eine leere Spalte fällt weg), angetippt aufgeklappt; ein Reiter ohne Karte zeigt die „+ …“ seiner leeren
   Listen (`[data-reiterleer]`); gewählter Reiter je Projekt gemerkt (`PROJEKT_REITER_WAHL`, auch nach „+ …“ in „Auf einen Blick“ → Reiter des neuen Eintrags). Ersetzt die
-  Sprungleiste (bleibt nur bei weniger als 4 Karten); die Seitenleiste rechts fällt im Projekt weg.
+  Sprungleiste (bleibt nur bei weniger als 4 Karten); die Seitenleiste rechts fällt im Projekt weg. Der Kalender steht in Übersicht UND Termine & Material (Inhaber 10.10.2026, `projektReiterHat`).
+- PDF-Seitenumbruch (`blattZuPdf`, Inhaber 10.10.2026: „Überschrift der Anlage ganz unten, Daten auf der nächsten Seite“): eine Tabelle, die auf eine
+  Seite passt, wird nie geteilt (`ganzeTabellen`); eine längere bricht nur zwischen Datenzeilen, nie gleich nach der Kopfzeile. Gilt für alle Blätter (Protokoll,
+  Anlagenbuch, Monatsbericht, Arbeitsnachweis …).
 - Projektzusammenfassung als PDF (`projektPdfDialog`, `projektPdfErzeugen`, Büro
   01.10.2026): Eckdaten und alle Angaben, KEINE Anhänge (Dokumente liegen auf der
   Synology); abgelegt `daten.mappePdf`, Synology → `Projekt_<Nr>.pdf`. Zum Testen

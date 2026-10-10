@@ -5598,6 +5598,8 @@ test("Projekt mit Reitern: je Thema ein Reiter, nur dessen Karten sichtbar, leer
       e.start = sichtbar();
       o().querySelector('[data-reiter="angaben"]').click(); await w(200);
       e.angaben = sichtbar();
+      o().querySelector('[data-reiter="planung"]').click(); await w(200);
+      e.planung = sichtbar();
       o().querySelector('[data-reiter="baustelle"]').click(); await w(200);
       e.baustelle = sichtbar();
       const leer = o().querySelector("[data-reiterleer]");
@@ -5620,11 +5622,43 @@ test("Projekt mit Reitern: je Thema ein Reiter, nur dessen Karten sichtbar, leer
     pruefe(r.start[0] === "Auf einen Blick" && r.start.some((t) => /^Stand/.test(t)) && !r.start.some((t) => /^(Angaben|Dateien|Tagebuch)/.test(t)), n + " Übersicht: " + JSON.stringify(r.start));
     pruefe(r.angaben.some((t) => /^Angaben/.test(t)) && r.angaben.some((t) => /^Beteiligte/.test(t)) && !r.angaben.some((t) => /^(Auf einen Blick|Stand)/.test(t)), n + " Angaben: " + JSON.stringify(r.angaben));
     pruefe(!r.baustelle.some((t) => /^Baustellenbuch/.test(t)) && (r.baustelle.length || /noch nichts eingetragen/.test(r.leerHinweis)), n + " Baustelle: " + JSON.stringify([r.baustelle, r.leerHinweis]));
+    pruefe(r.planung.some((t) => /^Termine/.test(t)) && r.planung.some((t) => /^Kalender/.test(t)) && r.start.some((t) => /^Kalender/.test(t)), n + " Kalender in Übersicht und Termine & Material: " + JSON.stringify([r.start, r.planung]));
     pruefe(r.gemerkt === "baustelle", n + " gewählter Reiter nicht gemerkt: " + r.gemerkt);
     pruefe(r.seiteBreit, n + ": Seite breiter als der Bildschirm");
     pruefe(!a.fehler.length, "Laufzeitfehler: " + a.fehler.join("; "));
     await a.zu();
   }
+});
+
+/* Inhaber 10.10.2026: „beim Ausdrucken die Tabelle einer Anlage über zwei Seiten – Überschrift ganz unten, Daten oben auf der nächsten Seite“ */
+test("Protokoll-PDF: Seitenumbruch nie mitten in einer Tabelle – kurze Tabellen ganz auf eine Seite, lange nie gleich nach der Kopfzeile", async () => {
+  const a = await oeffnen(KONTEN.inhaber);
+  const r = await a.seite.evaluate(async () => {
+    const x = window.__t.x;
+    await x("ladePdfBibliotheken()");
+    /* wo umgebrochen wird: Seitenanfänge aus dem Zerschneiden des Gesamtbilds, Tabellen aus dem Blatt beim Zeichnen */
+    const h2c = window.html2canvas, dI = CanvasRenderingContext2D.prototype.drawImage;
+    let tabellen = [], skala = 1, bild = null; const starts = [];
+    window.html2canvas = (blatt, o) => { const oben = blatt.getBoundingClientRect().top; skala = o.scale;
+      tabellen = [...blatt.querySelectorAll("table")].map((t) => { const q = t.getBoundingClientRect(), k = t.rows[0].getBoundingClientRect();
+        return { id: t.id, oben: q.top - oben, unten: q.bottom - oben, kopfUnten: k.bottom - oben }; });
+      return h2c(blatt, o).then((c) => (bild = c)); };
+    CanvasRenderingContext2D.prototype.drawImage = function (src, ...w) { if (src === bild && w.length === 8) starts.push(w[1] / skala); return dI.call(this, src, ...w); };
+    const zeilen = (n) => Array.from({ length: n }, (_, i) => "<tr><td class='k'>Wert " + i + "</td><td>Testinhalt " + i + "</td></tr>").join("");
+    const html = "<h2>Vorspann</h2><div style='height:1000px'>Füllung</div>" +
+      "<h2>Anlage</h2><table id='kurz'><tr><th colspan='2'>Testanlage 1</th></tr>" + zeilen(10) + "</table>" +
+      "<h2>Lange Liste</h2><table id='lang'><tr><th colspan='2'>Testanlage 2</th></tr>" + zeilen(90) + "</table>";
+    try { await x("blattZuPdf")({ html, fuss: "Test" }); }
+    finally { window.html2canvas = h2c; CanvasRenderingContext2D.prototype.drawImage = dI; }
+    const grenzen = starts.slice(1).map((y) => Math.round(y));
+    return { grenzen, tabellen, mitten: grenzen.filter((y) => tabellen.some((t) => t.id === "kurz" && y > t.oben + 1 && y < t.unten - 1)),
+      nachKopf: grenzen.filter((y) => tabellen.some((t) => y > t.oben + 1 && y <= t.kopfUnten + 1)) };
+  });
+  pruefe(r.grenzen.length >= 2, "zu wenige Seiten: " + JSON.stringify(r));
+  pruefe(!r.mitten.length, "kurze Tabelle geteilt: " + JSON.stringify(r));
+  pruefe(!r.nachKopf.length, "Umbruch gleich nach der Kopfzeile: " + JSON.stringify(r));
+  pruefe(!a.fehler.length, "Laufzeitfehler: " + a.fehler.join("; "));
+  await a.zu();
 });
 
 /* Antworten des Inhabers vom 05.10.2026 (Teil kern) */
