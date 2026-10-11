@@ -143,6 +143,10 @@ Kammerlander Umwelt- und Klimatechnik (UKT) – oft kurz, vom Handy, im Feld.
   ≥3 verschiedenen KPlus-Rechnungen gestrichen (und seltener selbst geschrieben) hat, schlägt die App dort nicht mehr vor
   (`einsatzGestrichen`, `LERN_STREICHEN`, Schlüssel `vorschlagSchluessel`; `lernen.passend`/`zuviel[].schluessel`); Vorschlag und
   Vergleich rechnen gleich (`einsatzVorschlag`); Grund im Editor („gelernt aus N KPlus-Rechnungen“, Hinweis über den Positionen).
+  Gelerntes nie doppelt (Probe 11.10.2026): `positionenAehnlich` (eine Funktion für Vergleich UND `einsatzGelernt`) – gleiche erste Zeile ohne Mengen, zwei gemeinsame
+  Wörter ≥ 5 Buchstaben, oder bei gleicher Einheit Wartung ↔ Jahreswartung, Regiestunde ↔ Regiestundensatz ↔ Regiestunden, Fahrtpauschale ↔ Fahrtpauschale; eine gelernte
+  Position kommt nur dazu, wenn der Vorschlag keine ähnliche hat; einsatzspezifische Zweitzeilen (Datum, „lt. Arbeitsnachweis Nr.“, „Einsatz …, 2 Mann“) fallen weg (`gelerntText`).
+  Test „KPlus-Rechnung als echte PDF …“: pdf-lib-PDF im KPlus-Spaltenbild durch `kplusLesen`, Wartung/Störung/Arbeitsnachweis über die echten Hochlade-Knöpfe.
   Wartungspreis je Art (Inhaber 05.10.2026, `katalogWartung`, `wartungArten`): je Anlage die Katalogposition, deren Text
   genau ihre Termin-Art nennt (Jahreswartung/JW, Halbjahreswartung/HJW, Halbjahresinspektion/HJI; je Stück/pauschal) – sonst
   ohne Preis mit `hinweis` „Preis für JW fehlt – alte KPlus-Rechnung mit dieser Position hochladen“ (im Editor und in der

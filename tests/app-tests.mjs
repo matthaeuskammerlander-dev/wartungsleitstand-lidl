@@ -5784,6 +5784,146 @@ test("Handy: Anlagen nicht dauernd ausgeklappt – nur eine Anlage und ein Markt
   await a.zu();
 });
 
+/* Probe 11.10.2026 vor dem Rechnungs-Durchgang mit dem Chef: KPlus-Rechnung als echte PDF durch alle drei Wege (Wartung, Störung, Arbeitsnachweis) */
+test("KPlus-Rechnung als echte PDF: Wartung, Störung und Arbeitsnachweis – gelesen, abgelegt, abgerechnet, gelernt ohne doppelte Positionen; Listen und To-do stimmen", async () => {
+  const a = await oeffnen(KONTEN.inhaber);
+  await a.seite.evaluate((h) => eval(h), AN_HILFEN);
+  const r = await a.seite.evaluate(async () => {
+    const x = window.__t.x, db = window.__db.tabellen, A = window.__an, w = A.warte, e = { fehler: [] }, jetzt = new Date().toISOString();
+    const p = (ok, text) => { if (!ok) e.fehler.push(text); };
+    A.toastSpion(); window.confirm = (m) => { (window.__confirms = window.__confirms || []).push(String(m)); return window.__ja !== false; };
+    /* ---- KPlus-ähnliche PDF mit pdf-lib: Spalten wie in KPlus (Pos. <90, Menge 90–150, Text 150–395, Preis 395–480, Betrag ≥480) ---- */
+    const L = await x("(window.PDFLib ? Promise.resolve() : ladeSkript(PDF_LIB)).then(function(){ return window.PDFLib; })");
+    const kplusPdf = async (nr, betreff, zeilen) => {
+      const doc = await L.PDFDocument.create(), pg = doc.addPage([595, 842]);
+      const fn = await doc.embedFont(L.StandardFonts.Helvetica), fb = await doc.embedFont(L.StandardFonts.HelveticaBold);
+      const T = (xx, yTop, txt, bold, size) => pg.drawText(txt, { x: xx, y: 842 - yTop, size: size || 9, font: bold ? fb : fn });
+      T(50, 160, "Lidl Österreich GmbH"); T(50, 172, "Zentrale Dienste / Facility Management"); T(50, 184, "Unter der Leiten 11"); T(50, 196, "5020 Salzburg");
+      T(330, 150, "Rechnung", true, 12); T(480, 150, nr, true, 12);
+      T(330, 168, "Datum"); T(480, 168, "02.10.2026"); T(330, 180, "Kundennummer"); T(480, 180, "10001"); T(330, 192, "Sachbearbeiter"); T(480, 192, "Testchef");
+      T(50, 250, betreff, true); T(50, 275, "Sehr geehrte Damen und Herren,"); T(50, 287, "wir erlauben uns, wie folgt zu verrechnen:");
+      T(60, 300, "Pos."); T(100, 300, "Menge"); T(160, 300, "Bezeichnung"); T(420, 300, "Preis"); T(500, 300, "Betrag");
+      let y = 320, netto = 0;
+      zeilen.forEach((z, i) => { T(60, y, String(i + 1)); T(100, y, z.menge + " " + z.eh); T(160, y, z.text); T(420, y, z.preis); T(500, y, z.betrag);
+        if (z.text2) { y += 12; T(160, y, z.text2); } y += 18; netto += +z.betrag.replace(".", "").replace(",", "."); });
+      y += 10; const g = (n) => n.toFixed(2).replace(".", ",");
+      T(300, y, "Netto-Summe"); T(500, y, g(netto)); y += 14; T(300, y, "20 % MwSt."); T(500, y, g(netto * 0.2)); y += 14; T(300, y, "Gesamt"); T(500, y, g(netto * 1.2));
+      T(50, y + 30, "Zahlungsbedingungen: 14 Tage netto");
+      T(40, 800, "A-6380 St. Johann in Tirol, Speckbacherstraße 92 · office@ukt.at");
+      return new File([await doc.save()], nr + ".pdf", { type: "application/pdf" });
+    };
+    const datei = (input, file) => { const dt = new DataTransfer(); dt.items.add(file); input.files = dt.files; input.dispatchEvent(new Event("change", { bubbles: true })); };
+    const dlg = A.dlg, ablegen = async (re) => { const d = await A.bis(() => { const d = dlg(); return d && A.knopf(d, re) && d; }, 8000); if (!d) return null;
+      const txt = d.textContent.replace(/\s+/g, " "); A.knopf(d, re).click(); await A.bis(() => !document.body.contains(d), 8000); await w(300); return txt; };
+    /* ---- Testdaten: 2 Wartungen, 2 Störungen am Markt TS1, Projekt mit 2 Arbeitsnachweisen ---- */
+    const prot = (id, d, art, extra) => Object.assign({ id, client_id: id, standort_id: "TS1", datum: d, wartungsart: art, techniker: "Testtechniker", anlagen: [], version: 1, erstellt: jetzt, erstellt_von: "u_tech_test_at" }, extra);
+    db.protokolle.push(prot("sw1", "2026-09-01", "Wartung", { anlagen: [{ name: "VRV Anlage", termin: "JW", bauart: "VRV luftgekühlt" }] }),
+      prot("sw2", "2026-09-15", "Wartung", { anlagen: [{ name: "VRV Anlage", termin: "JW", bauart: "VRV luftgekühlt" }] }),
+      prot("ss1", "2026-09-03", "Störung", { mitarbeiter: ["Zweiter"], stoerung: { ankunft: "08:00", ende: "11:00", problemtyp: "Kühlung" } }),
+      prot("ss2", "2026-09-20", "Störung", { mitarbeiter: ["Zweiter"], stoerung: { ankunft: "08:00", ende: "11:00", problemtyp: "Kühlung" } }));
+    A.daten();
+    const an = (id, nr, datum) => ({ id, projekt_id: "pan1", nummer: nr, monteur: "Testtechniker", erstellt_von: "u_tech_test_at", unterschrieben: jetzt, unterschrift: "data:image/png;base64,x",
+      daten: { zeilen: [{ datum, personen: 2, von: "07:00", bis: "15:30", pause: 0.5 }], arbeiten: "Montage" }, erstellt: jetzt, geaendert: jetzt });
+    db.arbeitsnachweise.push(an("sa1", 1, "2026-09-14"), an("sa2", 2, "2026-09-16"));
+    await x("Promise.all([ladeProtokolle(), projekteLaden(), katalogLaden(), abrechnungLaden(), belegeAlleLaden()])");
+    const pk = (id) => x("alleProtokolle(true)").filter((q) => q._id === id)[0]; x("window.__s9pk=function(id){ return alleProtokolle(true).filter(function(q){ return q._id===id; })[0]; }; 1");
+    /* Ausgangslage: noch nicht abgerechnet im Reiter Protokoll */
+    x("S.view='protokoll'; render(); 1"); await w(500);
+    const chip = () => (document.getElementById("p_unabger") || {}).textContent || "kein Chip";
+    e.chipVorher = chip();
+    /* ---- 1. Wartung: KPlus-PDF beim Einsatz hochladen ---- */
+    const pdfW = await kplusPdf("419901", "Filiale 901 Jahreswartung Klima", [
+      { menge: "1,00", eh: "Stk", text: "Jahreswartung VRV-Anlage lt. FB035", text2: "inkl. Funktionsprüfung und Reinigung", preis: "210,00", betrag: "210,00" },
+      { menge: "1,00", eh: "psh", text: "Fahrtpauschale Zone 1", preis: "50,00", betrag: "50,00" }]);
+    const gelesen = await x("kplusLesen")(new Uint8Array(await pdfW.arrayBuffer()));
+    e.gelesen = { art: gelesen.art, nummer: gelesen.nummer, datum: gelesen.datum, netto: gelesen.summenPdf.netto, betreff: gelesen.kopf.betreff, pos: gelesen.positionen.map((q) => q.typ + ":" + q.menge + " " + q.eh + " " + q.text.replace(/\n/g, " / ") + " = " + q.preis) };
+    const host = document.createElement("div"); host.id = "s9host"; document.body.appendChild(host);
+    const zeile = (id) => { host.innerHTML = ""; host.appendChild(x("einsatzBelegeZeile")(pk(id))); return host.firstChild; };
+    let z = zeile("sw1"); datei(z.querySelector("[data-kplus]"), pdfW);
+    e.vglW = await ablegen(/Beim Einsatz ablegen/);
+    const bW = await A.bis(() => db.belege.find((b) => b.nummer === "419901" && b.pdf_pfad), 8000) || db.belege.find((b) => b.nummer === "419901") || {};
+    e.belegW = { protokoll: bW.protokoll_id, extern: bW.extern, status: bW.status, pdf: bW.pdf_pfad, lernenArt: (bW.kopf.lernen || {}).art, fehlte: ((bW.kopf.lernen || {}).fehlte || []).map((q) => q.text) };
+    e.abgerW = (db.abrechnung.find((q) => q.protokoll_id === "sw1") || {}).notiz;
+    e.katalogW = db.katalog.filter((k) => /Jahreswartung VRV/.test(k.text)).map((k) => k.text + " " + k.eh + " " + k.preis + " (" + k.quelle + ")");
+    /* nächste Wartung: Rechnung schreiben – JW-Preis jetzt aus dem Katalog */
+    await x("Promise.all([katalogLaden(), belegeAlleLaden(), abrechnungLaden()])");
+    x("belegNeu(kontextProtokoll(window.__s9pk('sw2')), 'rechnung', null, function(){})");
+    let ed = await A.bis(() => { const d = dlg(); return d && d.querySelector(".bpos") && d; }, 6000);
+    e.vorschlagW = ed ? [...ed.querySelectorAll(".bpos")].map((q) => q.querySelector('[data-f="text"]').value.split("\n")[0] + " | " + q.querySelector('[data-f="preis"]').value) : "kein Editor";
+    e.hinweisW = ed ? [...ed.querySelectorAll(".note")].map((n) => n.textContent.replace(/\s+/g, " ")).join(" || ").slice(0, 400) : "";
+    x("ansichtenSchliessen(); 1"); await w(200);
+    /* ---- 2. Störung ---- */
+    const pdfS = await kplusPdf("419902", "Filiale 901 Störung Kühlung", [
+      { menge: "6,00", eh: "Std", text: "Regiestunden Techniker", text2: "Einsatz 03.09.2026, 2 Mann", preis: "78,81", betrag: "472,86" },
+      { menge: "1,00", eh: "psh", text: "Kleinmaterial pauschal", preis: "30,00", betrag: "30,00" },
+      { menge: "1,00", eh: "psh", text: "Fahrtpauschale Zone 1", preis: "50,00", betrag: "50,00" }]);
+    z = zeile("ss1"); datei(z.querySelector("[data-kplus]"), pdfS);
+    e.vglS = await ablegen(/Beim Einsatz ablegen/);
+    const bS = await A.bis(() => db.belege.find((b) => b.nummer === "419902"), 8000) || {};
+    e.belegS = { protokoll: bS.protokoll_id, lernenArt: ((bS.kopf || {}).lernen || {}).art, fehlte: (((bS.kopf || {}).lernen || {}).fehlte || []).map((q) => q.text) };
+    e.abgerS = (db.abrechnung.find((q) => q.protokoll_id === "ss1") || {}).notiz;
+    await x("Promise.all([katalogLaden(), belegeAlleLaden(), abrechnungLaden()])");
+    x("belegNeu(kontextProtokoll(window.__s9pk('ss2')), 'rechnung', null, function(){})");
+    ed = await A.bis(() => { const d = dlg(); return d && d.querySelector(".bpos") && d; }, 6000);
+    e.vorschlagS = ed ? [...ed.querySelectorAll(".bpos")].map((q) => q.querySelector('[data-f="text"]').value.split("\n")[0] + " | " + q.querySelector('[data-f="menge"]').value + " | " + q.querySelector('[data-f="preis"]').value) : "kein Editor";
+    e.gelerntS = ed ? [...ed.querySelectorAll("textarea, input, .muted")].map((i) => i.value || i.textContent).filter((v) => /gelernt/.test(v)).join(" || ") : "";
+    x("ansichtenSchliessen(); 1"); await w(200);
+    /* dieselbe Rechnung nochmals bei einem anderen Einsatz: Rückfrage, bei „nein“ bleibt alles */
+    window.__confirms = []; window.__ja = false;
+    z = zeile("ss2"); datei(z.querySelector("[data-kplus]"), pdfS);
+    const d2 = await A.bis(() => { const d = dlg(); return d && A.knopf(d, /Beim Einsatz ablegen/) && d; }, 8000);
+    if (d2) { A.knopf(d2, /Beim Einsatz ablegen/).click(); await w(800); }
+    e.doppelt = { frage: (window.__confirms || []).join(" | "), bleibt: db.belege.filter((b) => b.nummer === "419902").map((b) => b.protokoll_id).join(), fensterOffen: !!(d2 && document.body.contains(d2)), meldung: window.__toasts.slice(-1)[0] };
+    window.__ja = true; x("ansichtenSchliessen(); 1"); await w(200);
+    /* ---- 3. Baustelle: Arbeitsnachweis ---- */
+    const pdfB = await kplusPdf("419903", "P-TEST-AN Umbau Klima Testfiliale", [
+      { menge: "16,00", eh: "Std", text: "Regiestunde Facharbeiter", text2: "lt. Arbeitsnachweis Nr. 1", preis: "60,00", betrag: "960,00" },
+      { menge: "1,00", eh: "Tag", text: "Hebebühne Miete", preis: "150,00", betrag: "150,00" }]);
+    x("projektAnsicht('pan1'); 1");
+    const anz = (id) => document.querySelector('[data-an="' + id + '"] [data-an-abr]');
+    await A.bis(() => anz("sa1") && anz("sa2"), 8000);
+    e.anVorher = (document.querySelector("[data-an-offen]") || {}).textContent;
+    datei(anz("sa1").querySelector("[data-an-kplus]"), pdfB);
+    e.vglB = await ablegen(/Beim Arbeitsnachweis ablegen/);
+    const bB = await A.bis(() => db.belege.find((b) => b.nummer === "419903"), 8000) || {};
+    e.belegB = { projekt: bB.projekt_id, an: JSON.stringify((bB.kopf || {}).arbeitsnachweise), lernenArt: ((bB.kopf || {}).lernen || {}).art, fehlte: (((bB.kopf || {}).lernen || {}).fehlte || []).map((q) => q.text) };
+    await A.bis(() => anz("sa1") && /abgerechnet/.test(anz("sa1").textContent) && !/noch nicht/.test(anz("sa1").textContent), 8000);
+    e.anNachher = (document.querySelector("[data-an-offen]") || {}).textContent + " || sa1: " + (anz("sa1") || {}).textContent;
+    anz("sa2").querySelector("[data-an-schreiben]").click();
+    ed = await A.bis(() => { const d = dlg(); return d && d.querySelector(".bpos") && d; }, 6000);
+    e.vorschlagB = ed ? [...ed.querySelectorAll(".bpos")].map((q) => q.querySelector('[data-f="text"]').value.split("\n")[0] + " | " + q.querySelector('[data-f="menge"]').value + " | " + q.querySelector('[data-f="preis"]').value) : "kein Editor";
+    x("ansichtenSchliessen(); 1"); await w(200);
+    /* ---- Listen: Reiter Protokoll (Chip), Reiter Rechnungen, „Rechnung zu einem Einsatz“, To-do ---- */
+    await x("abrechnungLaden()"); x("S.view='protokoll'; render(); 1"); await w(500);
+    e.chipNachher = chip();
+    x("S.blFilter='alle'; S.blQ=''; S.view='belege'; render(); 1"); await w(800);
+    e.belegeReiter = [...document.querySelectorAll("[data-liste] .card")].map((c) => c.textContent.replace(/\s+/g, " ").slice(0, 120)).filter((t) => /4199/.test(t));
+    x("einsatzWaehlen(function(){})"); await w(400);
+    const ew = dlg(); e.einsatzWahl = ew ? [...ew.querySelectorAll("button.btn.ghost")].map((b) => b.textContent.replace(/\s+/g, " ")).filter((t) => /Testfiliale 901/.test(t)).slice(0, 6) : "kein Fenster";
+    if (ew) { ew.querySelector("label.chk input").click(); await w(200); e.einsatzWahlAlle = [...ew.querySelectorAll("button.btn.ghost")].map((b) => b.textContent.replace(/\s+/g, " ")).filter((t) => /schon Rechnung 4199/.test(t)).length; }
+    x("ansichtenSchliessen(); AN_OFFEN=null; S.view='kalender'; render(); 1"); await w(900); x("render(); 1"); await w(300);
+    e.todo = [...document.querySelectorAll("[data-an-todo]")].map((b) => b.textContent).join("|");
+    host.remove(); return e;
+  });
+  pruefe(r.gelesen.art === "rechnung" && r.gelesen.nummer === "419901" && r.gelesen.datum === "2026-10-02" && r.gelesen.netto === 260 && r.gelesen.pos.length === 2 && /Jahreswartung VRV-Anlage lt\. FB035 \/ inkl\./.test(r.gelesen.pos[0]), "PDF gelesen: " + JSON.stringify(r.gelesen));
+  pruefe(r.belegW.protokoll === "sw1" && r.belegW.extern && /^buero\/belege\//.test(r.belegW.pdf || "") && r.belegW.lernenArt === "wartung" && r.abgerW === "KPlus-Rechnung 419901", "Wartung abgelegt: " + JSON.stringify([r.belegW, r.abgerW]));
+  pruefe(r.katalogW.length === 1 && /210 \(KPlus Rechnung 419901\)/.test(r.katalogW[0]), "Katalog JW-Preis: " + JSON.stringify(r.katalogW));
+  pruefe(r.vorschlagW.length === 2 && /^Wartung \(JW\): VRV Anlage \| 210,00/.test(r.vorschlagW[0]) && /^Fahrtpauschale/.test(r.vorschlagW[1]), "Vorschlag nächste Wartung: " + JSON.stringify(r.vorschlagW));
+  pruefe(/Preis fehlte in der App \(KPlus 210,00\)/.test(r.vglW), "Vergleich Wartung nennt den fehlenden JW-Preis nicht: " + r.vglW.slice(0, 500));
+  pruefe(r.belegS.protokoll === "ss1" && r.belegS.lernenArt === "stoerung" && JSON.stringify(r.belegS.fehlte) === JSON.stringify(["Kleinmaterial pauschal"]) && r.abgerS === "KPlus-Rechnung 419902", "Störung abgelegt/gelernt: " + JSON.stringify([r.belegS, r.abgerS]));
+  pruefe(r.vorschlagS.length === 3 && r.vorschlagS.filter((q) => /Regiestund/.test(q)).length === 1 && r.vorschlagS.some((q) => /^Kleinmaterial pauschal \| 1,00 \| 30,00/.test(q)) && /gelernt aus 1 KPlus-Rechnung – auch an diesem Markt/.test(r.gelerntS), "Vorschlag nächste Störung (Regiestunden nicht doppelt, Kleinmaterial gelernt): " + JSON.stringify([r.vorschlagS, r.gelerntS]));
+  pruefe(/liegt schon bei: Störung Testfiliale 901 vom 03\.09\.2026/.test(r.doppelt.frage) && r.doppelt.bleibt === "ss1" && r.doppelt.fensterOffen && /bleibt, wo sie war/.test(r.doppelt.meldung), "dieselbe Rechnung beim zweiten Einsatz: " + JSON.stringify(r.doppelt));
+  pruefe(/2 unterschrieben, noch nicht abgerechnet/.test(r.anVorher) && r.belegB.projekt === "pan1" && r.belegB.an === '["sa1"]' && r.belegB.lernenArt === "arbeitsnachweis" && JSON.stringify(r.belegB.fehlte) === JSON.stringify(["Hebebühne Miete"]), "Arbeitsnachweis abgelegt/gelernt: " + JSON.stringify([r.anVorher, r.belegB]));
+  pruefe(/^1 unterschrieben, noch nicht abgerechnet/.test(r.anNachher) && /€ abgerechnet KPlus-Rechnung 419903/.test(r.anNachher), "Arbeitsnachweis danach: " + r.anNachher);
+  pruefe(r.vorschlagB.length === 2 && /^Regiestunde Facharbeiter \| 16,00 \| 60,00/.test(r.vorschlagB[0]) && /^Hebebühne Miete \| 1,00 \| 150,00/.test(r.vorschlagB[1]), "Vorschlag nächster Arbeitsnachweis (keine doppelte Regiestunde, Hebebühne gelernt): " + JSON.stringify(r.vorschlagB));
+  pruefe(r.chipVorher === "noch nicht abgerechnet (4)" && r.chipNachher === "noch nicht abgerechnet (2)", "Chip im Reiter Protokoll: " + r.chipVorher + " → " + r.chipNachher);
+  pruefe(r.belegeReiter.length === 3 && r.belegeReiter.every((t) => /KPlus/.test(t) && /PDF abgelegt/.test(t)), "Reiter Rechnungen: " + JSON.stringify(r.belegeReiter));
+  pruefe(r.einsatzWahl.length === 2 && !r.einsatzWahl.some((t) => /schon Rechnung/.test(t)) && r.einsatzWahlAlle === 2, "Rechnung zu einem Einsatz – nur ohne Rechnung: " + JSON.stringify([r.einsatzWahl, r.einsatzWahlAlle]));
+  pruefe(/^💶 1 Arbeitsnachweis noch nicht abgerechnet – P-TEST-AN/.test(r.todo), "To-do: " + r.todo);
+  pruefe(!r.fehler.length, r.fehler.join(" | "));
+  pruefe(!a.fehler.length, "Laufzeitfehler: " + a.fehler.join("; "));
+  await a.zu();
+});
 /* Antworten des Inhabers vom 05.10.2026 (Teil kern) */
 test("Antworten kern: „Nur Jahreswartung“ sperrt den Halbjahrestermin wie am Markt üblich – bleibt, bis die Verwaltung es zurücknimmt", async () => {
   const a = await oeffnen(KONTEN.admin);

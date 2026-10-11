@@ -31534,17 +31534,31 @@ function kplusVorschau(ziel, erg, fertig, datei){
   };
 }
 /* KPlus-Rechnung gegen den Vorschlag der App (einsatzVorschlag – samt Gelerntem, wie „Rechnung schreiben“): was fehlte, was zu viel war, wo Menge/Preis abweichen */
-function einsatzVergleich(pk, kid, erg, vorschlag){
-  var vs=vorschlag||einsatzVorschlag(pk, kid), app=vs.pos.filter(function(x){ return x.typ==="pos"; }), kp=erg.positionen.filter(function(x){ return x.typ==="pos" && !x.alternativ; });
+/* Dieselbe Position, anders formuliert? (App-Vorschlag ↔ KPlus bzw. Gelerntes ↔ Vorschlag) – verglichen wird die erste Zeile ohne Mengen */
+function positionenAehnlich(a, b){
   var norm=function(x){ return suchNorm(katalogTextOhneMenge(String(x.text||"").split("\n")[0])).slice(0,40); };
   /* Wörter einzeln (suchNorm schreibt sie zusammen – „Wartung (JW): VRV Anlage“ → ein Wort –, dann griff die Regel nie) */
   var woerter=function(x){ return katalogTextOhneMenge(String(x.text||"").split("\n")[0]).toLowerCase().replace(/ß/g,"ss").replace(/ä/g,"ae").replace(/ö/g,"oe").replace(/ü/g,"ue")
     .split(/[^a-z0-9]+/).filter(Boolean); };
-  var aehnlich=function(a, b){ var na=norm(a), nb=norm(b); if(!na || !nb) return false; if(na===nb) return true;
-    var wa=woerter(a).filter(function(w){ return w.length>=5; }), tb=woerter(b).join(" ");
-    if(wa.length && wa.filter(function(w){ return tb.indexOf(w)>=0; }).length>=Math.min(2, wa.length)) return true;
-    /* Wartung je Anlage: die App schreibt „Wartung (JW): Anlage“, KPlus etwa „Jahreswartung … lt. FB035“ – bei gleicher Einheit dieselbe Position */
-    return /wartung/.test(tb) && /wartung/.test(woerter(a).join(" ")) && String(a.eh||"").toLowerCase()===String(b.eh||"").toLowerCase(); };
+  var na=norm(a), nb=norm(b); if(!na || !nb) return false; if(na===nb) return true;
+  var wa=woerter(a).filter(function(w){ return w.length>=5; }), tb=woerter(b).join(" "), ta=woerter(a).join(" ");
+  if(wa.length && wa.filter(function(w){ return tb.indexOf(w)>=0; }).length>=Math.min(2, wa.length)) return true;
+  var ehGleich=String(a.eh||"").toLowerCase()===String(b.eh||"").toLowerCase();
+  /* Wartung je Anlage: die App schreibt „Wartung (JW): Anlage“, KPlus etwa „Jahreswartung … lt. FB035“ – bei gleicher Einheit dieselbe Position */
+  if(/wartung/.test(tb) && /wartung/.test(ta) && ehGleich) return true;
+  /* Regiestunden („Regiestundensatz“, „Regiestunde Facharbeiter“, „Regiestunden Techniker“) und Fahrtpauschale: bei gleicher Einheit dieselbe
+     Position – sonst stand nach dem Lernen die Stunde zweimal im Vorschlag (Probe 11.10.2026) */
+  if(/regiestund|stundensatz/.test(tb) && /regiestund|stundensatz/.test(ta) && ehGleich) return true;
+  return /fahrtpauschale/.test(tb) && /fahrtpauschale/.test(ta) && ehGleich;
+}
+/* Zeilen einer gelernten Position, die nur zu dem einen Einsatz gehörten (Datum, „lt. Arbeitsnachweis Nr. 1“, „Einsatz …, 2 Mann“), fallen weg */
+function gelerntText(text){
+  var z=String(text||"").split("\n");
+  return [z[0]].concat(z.slice(1).filter(function(l){ return !/\d\d\.\d\d\.\d{4}|\blt\.|\bEinsatz\b|\bNr\.|\bMann\b/i.test(l); })).join("\n").trim();
+}
+function einsatzVergleich(pk, kid, erg, vorschlag){
+  var vs=vorschlag||einsatzVorschlag(pk, kid), app=vs.pos.filter(function(x){ return x.typ==="pos"; }), kp=erg.positionen.filter(function(x){ return x.typ==="pos" && !x.alternativ; });
+  var aehnlich=positionenAehnlich;
   var frei=app.slice(), zeilen=[];
   kp.forEach(function(k){
     var i=-1; frei.some(function(a, j){ if(aehnlich(a, k)){ i=j; return true; } return false; });
@@ -31638,10 +31652,11 @@ function einsatzGelernt(pk, kid, schon, wegSchl){
      diese Rechnung mit – „gelernt aus N KPlus-Rechnungen“ nennt alle, in denen der Chef sie verrechnet hat */
   Object.keys(zaehl).forEach(function(k){ var e=zaehl[k], vk=vorschlagSchluessel(e.x);
     belege.forEach(function(b){ if(e.in.indexOf(b.id)<0 && (b.kopf.lernen.passend||[]).indexOf(vk)>=0){ e.n++; if(lernOrtGleich(b, pk)) e.amMarkt++; } }); });
-  var hat=(schon||[]).map(function(x){ return katalogSchluessel(katalogTextOhneMenge(String(x.text||"").split("\n")[0]), x.eh); });
-  return Object.keys(zaehl).map(function(k){ return zaehl[k]; }).filter(function(e){ return (e.n>=2 || e.amMarkt>=1) && hat.indexOf(katalogSchluessel(katalogTextOhneMenge(e.x.text), e.x.eh))<0 &&
+  /* schon im Vorschlag (auch anders formuliert – „Regiestundensatz“ ↔ „Regiestunden Techniker“): nicht nochmals dazu */
+  var schonDa=function(x){ return (schon||[]).some(function(y){ return y.typ==="pos" && positionenAehnlich(y, x); }); };
+  return Object.keys(zaehl).map(function(k){ return zaehl[k]; }).filter(function(e){ return (e.n>=2 || e.amMarkt>=1) && !schonDa(e.x) &&
       (wegSchl||[]).indexOf(vorschlagSchluessel(e.x))<0; })
-    .map(function(e){ var m=e.mengen.slice().sort(function(a,b){ return a-b; }); return {text:katalogTextOhneMenge(e.x.text), eh:e.x.eh, preis:+e.x.preis||0, menge:m[Math.floor(m.length/2)]||1, n:e.n, amMarkt:e.amMarkt}; });
+    .map(function(e){ var m=e.mengen.slice().sort(function(a,b){ return a-b; }); return {text:gelerntText(katalogTextOhneMenge(e.x.text)), eh:e.x.eh, preis:+e.x.preis||0, menge:m[Math.floor(m.length/2)]||1, n:e.n, amMarkt:e.amMarkt}; });
 }
 /* Rechnungsvorschlag zu einem Einsatz samt Gelerntem – für „Rechnung schreiben“ (belegNeu) und „So hätte die App
    gerechnet“ (einsatzVergleich) gleich: Gestrichenes fällt weg, regelmäßig Dazugeschriebenes steht vor der Fahrtpauschale
