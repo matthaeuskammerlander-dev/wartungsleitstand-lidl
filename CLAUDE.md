@@ -138,7 +138,7 @@ Kammerlander Umwelt- und Klimatechnik (UKT) – oft kurz, vom Handy, im Feld.
   Positionen lernt der Katalog nicht). KPlus-Rechnung zum Einsatz (`einsatzBelegeZeile` → `kplusVorschau(kontext)`):
   Vergleich mit dem App-Vorschlag (`einsatzVergleich`, gespeichert in `kopf.lernen`), Original-PDF beim Beleg, Einsatz
   abgerechnet – zu einem anderen Einsatz umgehängt (Inhaber 05.10.2026): der vorige verliert den Vermerk „abgerechnet (KPlus …)“
-  (nur ohne andere Rechnung und wenn der Vermerk diese Nummer nennt) und steht wieder unter „noch nicht abgerechnet“; `einsatzGelernt` ergänzt künftige Vorschläge um das, was der Chef ≥2× (am Markt ≥1×) dazuschrieb.
+  (nur ohne andere Rechnung und wenn der Vermerk diese Nummer nennt) und steht wieder unter „noch nicht abgerechnet“; `einsatzGelernt` ergänzt künftige Vorschläge um das, was der Chef schon in EINER KPlus-Rechnung dazuschrieb – am selben Markt oder beim selben Kunden (Inhaber 11.10.2026: „auch ab der ersten Rechnung“; vorher ≥2×, am Markt ≥1×).
   Lernen je Einsatzart (`einsatzArt`, `einsatzLernBelege`; Inhaber 05.10.2026 „ersetzen nach 3×“): eine App-Position, die der Chef in
   ≥3 verschiedenen KPlus-Rechnungen gestrichen (und seltener selbst geschrieben) hat, schlägt die App dort nicht mehr vor
   (`einsatzGestrichen`, `LERN_STREICHEN`, Schlüssel `vorschlagSchluessel`; `lernen.passend`/`zuviel[].schluessel`); Vorschlag und
