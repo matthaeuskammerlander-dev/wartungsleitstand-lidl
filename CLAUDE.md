@@ -188,6 +188,8 @@ Kammerlander Umwelt- und Klimatechnik (UKT) – oft kurz, vom Handy, im Feld.
 - PDF-Seitenumbruch (`blattZuPdf`, Inhaber 10.10.2026: „Überschrift der Anlage ganz unten, Daten auf der nächsten Seite“): eine Tabelle, die auf eine
   Seite passt, wird nie geteilt (`ganzeTabellen`); eine längere bricht nur zwischen Datenzeilen, nie gleich nach der Kopfzeile. Gilt für alle Blätter (Protokoll,
   Anlagenbuch, Monatsbericht, Arbeitsnachweis …).
+  Anlagen-Tabellen im Protokollblatt (`blattInhalt`) mit `<colgroup>` 34 % wie die übrigen Tabellen (erste Zeile ist ein colspan – bei table-layout:fixed sonst 50/50;
+  Inhaber 11.10.2026); Zeile „Rückkühler / Pumpenstation von UKT gewartet“ (Rückkühler: ja/nein · Pumpen: ja/nein).
 - Projektzusammenfassung als PDF (`projektPdfDialog`, `projektPdfErzeugen`, Büro
   01.10.2026): Eckdaten und alle Angaben, KEINE Anhänge (Dokumente liegen auf der
   Synology); abgelegt `daten.mappePdf`, Synology → `Projekt_<Nr>.pdf`. Zum Testen
