@@ -19,10 +19,13 @@
       kaeltemittelText:kg?String(kg)+" kg":"", kaeltemittelKg:kg, ueber30kg:kg>=30, inbetriebnahme:ib, baujahr:ib?+ib.slice(0,4):null,
       plan2026:null, historie:historie, wartungenRaw:{}, techniker:{}};
   };
+  /* Termin-Tag von TP1/TP2 = heutiger Tag: so ist die JW genau heute fällig – mit einem festen Tag (früher der 10.)
+     war sie ab dem 11. des Monats überfällig, und datumsabhängige Tests kippten (11.10.2026) */
+  var tagHeute=String(Math.min(heute.getDate(), new Date(2018, monatPlus(0), 0).getDate())).padStart(2,"0");
   var positionen=[
     /* fällig jetzt: Jahreswartung im laufenden Monat, zuletzt vor einem Jahr */
-    pos("TP1","TS1","JW", monatPlus(0), 12, "2018-"+String(monatPlus(0)).padStart(2,"0")+"-10", [vorTagen(370)]),
-    pos("TP2","TS1","HJI",monatPlus(6), 12, "2018-"+String(monatPlus(0)).padStart(2,"0")+"-10", [vorTagen(190)]),
+    pos("TP1","TS1","JW", monatPlus(0), 12, "2018-"+String(monatPlus(0)).padStart(2,"0")+"-"+tagHeute, [vorTagen(370)]),
+    pos("TP2","TS1","HJI",monatPlus(6), 12, "2018-"+String(monatPlus(0)).padStart(2,"0")+"-"+tagHeute, [vorTagen(190)]),
     /* gerade gewartet – nicht fällig */
     pos("TP3","TS2","JW", monatPlus(0), 8,  "2019-"+String(monatPlus(0)).padStart(2,"0")+"-05", [vorTagen(10)]),
     /* seit drei Jahren nichts – überfällig */
