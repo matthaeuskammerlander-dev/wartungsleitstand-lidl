@@ -597,7 +597,7 @@ Kammerlander Umwelt- und Klimatechnik (UKT) – oft kurz, vom Handy, im Feld.
   wird die Seite breiter als 700 px und das ☰ verschwindet. Test „Schriftgröße je Gerät …“.
 - **Kartenbilder auf dem Gerät** (Inhaber 07.10.2026): angesehene Kacheln in IndexedDB „ukt_kacheln“ (`kachelEbene`, `KachelMitSpeicher`, höchstens
   `KACHEL_MAX`, älter als `KACHEL_ALT_TAGE` im Hintergrund erneuert); nie ganze Gegenden vorab (OSM-Nutzungsregeln). Ohne Netz, aber mit gespeicherten
-  Bildern: trotzdem Straßenkarte (`kachelnPruefen`). Anzahl + „Leeren“ (Rückfrage) unter der Karte. Überfällig auf der Karte in `--karte-rot`, fällig in 30 Tagen in `--karte-gelb` (`KARTE_VAR`; Inhaber 07./08.10.2026).
+  Bildern: trotzdem Straßenkarte (`kachelnPruefen`). Anzahl + „Leeren“ (Rückfrage) unter der Karte. Überfällig auf der Karte in `--karte-rot`, fällig in 30 Tagen in `--karte-gelb` (`KARTE_VAR`; Inhaber 07./08.10.2026). Fällig in 31–60 Tagen gelbgrün `--karte-bald` (Inhaber 11.10.2026: von „im Zeitplan“ kaum zu unterscheiden; verwandt bleibt es, weil noch nicht dringend).
   Punkte nach Fälligkeit übereinander (Inhaber 09.10.2026): `_uktRang` je Punkt (überfällig 5, fällig 4, bald 3, ohne Termin 2, im Zeitplan 1, nicht betreut 0), `punkteOrdnen` nach jedem Ein-/Ausblenden.
 - **Einmal sagen, überall verwenden** (Inhaber 08.10.2026: „redundant – bitte aufräumen, einheitlicher“): „Was gemacht?“ fragt NUR der
   Tagesrückblick (`abgleichDialog`: Feld `[data-abwas]` je Abschnitt, Vorschlag `wasVorschlag` aus eigenem Protokoll/Termin, bei Baustellen `[data-abfoto]`);
