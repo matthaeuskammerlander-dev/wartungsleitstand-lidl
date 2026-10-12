@@ -580,6 +580,12 @@ Kammerlander Umwelt- und Klimatechnik (UKT) – oft kurz, vom Handy, im Feld.
   Prüfhinweis am Markt (`pruefHinweis` in `STAMM_FELDER_ST`, Markt-Editor `#a_pruefHinweis`; erscheint als Fund-Art „Kartenpunkt“, bis das Büro ihn leert);
   „passt so“ bzw. „als Frage weitergegeben“ als Merker `altliste:<Schlüssel>`. Kartenpunkte am 12.10.2026 gegen OpenStreetMap (Lidl-Markt-Punkte)
   abgeglichen und als Markt-Überschreibung (lat/lon → „manuell“) in Supabase gesetzt – nie ins Repository.
+  **Verlässliche Adressquelle für Lidl-Märkte** (Inhaber 12.10.2026, „für alle Märkte“): die lidl.at-Filialsuche. Sitemap
+  `https://www.lidl.at/s/de-AT/filialsuche/sitemap.xml` listet alle Filialseiten; jede Seite trägt schema.org-Daten
+  (`GroceryStore` mit `address` und `geo`). Damit wurden alle Lidl-Märkte abgeglichen: 113 stimmten, 21 Adressen (Hausnummer/
+  Schreibweise/PLZ) und 27 Kartenpunkte als Überschreibung korrigiert, offene Fälle als `pruefHinweis` (Fil. 272 Triester Str.,
+  Fil. 515 Stiftgasse nicht mehr gelistet, Fil. 238 laut Lidl „Pischeldorfer Straße 184“, Fil. 349 PLZ 5020/5026).
+  OpenStreetMap-PLZ waren zweimal falsch (9710 statt 9711, 4030 statt 4020) – bei Widerspruch gilt lidl.at.
 - **Auslastung** (`auslastungRechnen`, Kalender, nur Büro): Wartungen der nächsten 12 Monate (gelernte Arbeitszeit, Fahrt als
   Rundfahrt je FM-Region, Störungen im Schnitt) gegen Sollzeit ohne Urlaub/Krank/Feiertag der gewählten Personen; Schätzung.
 - **Sicherung** (tools/sicherung.sql, nur Inhaber): wöchentlich beim Öffnen der App Datenbestand gepackt in den privaten
