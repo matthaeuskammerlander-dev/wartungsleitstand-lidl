@@ -162,6 +162,14 @@ Kammerlander Umwelt- und Klimatechnik (UKT) – oft kurz, vom Handy, im Feld.
   Angebot: Mengenvorschläge aus dem Baustellenbuch (`baubuchVorschlaege`).
   Neu eingelesene KPlus-Belege (`kplusVorschau`, Mailverlauf) stehen auf „versendet“ – Rechnung UND Angebot (Inhaber 05.10.2026);
   ein schon vorhandener Beleg (Art + Nummer) behält seinen Stand.
+  KPlus-Schluss-/Teilrechnungen (Inhaber 12.10.2026, Saalfelden 419890): Titel „Schlussrechnung“/„Teilrechnung“ gelten als Rechnung (`kopf.rechnungsart`); eine abgezogene
+  Teilrechnung („Stk 1.Teilrechnung 419801-1 vom … 87.033,05“) wird keine Position, sondern `kopf.teilrechnungen` [{nr, nummer, datum, netto}]; `kopf.auftragssumme`,
+  `summenPdf.brutto` auch aus „Bruttosumme“, `summenPdf.zahlbetrag`. Steht Menge+Einheit im selben Textlauf wie der Bezeichnungsanfang („4,00 Psch Kältemittel-…“), bleibt
+  der Anfang erhalten; Einheiten vereinheitlicht `einheitNorm` (psh/Psch/ßsh → psh, STk → Stk, KG → kg).
+  Katalog-Hinweis je Position (Spalte `katalog.hinweis`, tools/katalog-hinweis.sql; Inhaber 12.10.2026 zum Rahmenvertrag FB035 = KPlus Angebot 413797, Nummern „FB035/Pos.N“ in
+  `nummer`): was eine Pauschale enthält (z. B. KM-Leitung bis 15 m, Mehrlänge nach Pos. 29–37 je lfm, stärkeres Gerät als Mehrpreis) – beim Wählen (`katalogWahl`), unter der
+  Editor-Zeile (`katalogHinweis`, `[data-kathinweis]`) und zum Pflegen (`katalogAnsicht` `[data-hinweis]`); nie auf der Rechnung. Kabeltasse/Installationskanal: Pauschale je
+  lfm für 100 mm mit 1 Leitung – 200 mm/2 Leitungen zählt doppelt, 300 mm dreifach (`kabeltasseFaktor` im Baustellenbuch-Vorschlag; „Kabeltasse“ ≈ „Installationskanal“).
   Echte Preise und Belege nie ins Repository – nur in Supabase.
 - Quellen (Büro 01.10.2026: „man soll immer alles von beiden Seiten finden“):
   Schritte (`daten.quellen[schritt]`), Listeneinträge und Baustellenbuch führen

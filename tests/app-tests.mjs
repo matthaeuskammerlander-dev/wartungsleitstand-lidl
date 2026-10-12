@@ -4387,6 +4387,29 @@ reSchritt("kplus", "R27", async (a) => {
   return JSON.stringify(r) === JSON.stringify(["gruppe: 1. Kühlzelle", "text: Lieferung und Montage laut Plan", "pos: Verdampfer Test", "text: Erster Hinweis zweite Zeile davon", "text: Zweiter, eigener Hinweis weiter unten"])
     ? "" : "gelesen: " + JSON.stringify(r);
 });
+/* Schlussrechnung (Saalfelden 419890, Inhaber 12.10.2026): Titel „Schlussrechnung“/„Teilrechnung“ erkannt, abgezogene Teilrechnung in den Kopf
+   statt in die Positionen, Bruttosumme/Zahlbetrag/Auftragssumme gelesen, Mengenlauf „4,00 Psch Text…“ verliert den Textanfang nicht, Einheiten vereinheitlicht */
+reSchritt("kplus", "R28", async (a) => {
+  const r = await a.seite.evaluate(() => {
+    const x = window.__t.x, it = (xx, y, t, f) => ({ s: 1, x: xx, y, w: 20, t, f: f || "F2" });
+    const erg = x("kplusAuswerten")([[it(330, 150, "Schlussrechnung", "F1"), it(480, 150, "419890", "F1"), it(330, 168, "Datum"), it(480, 168, "03.10.2026"), it(150, 300, "Bezeichnung"),
+      it(160, 320, "Auftragssumme netto € 145.055,09"),
+      it(60, 340, "3"), it(100, 340, "1,00 psh"), it(160, 340, "VRV Anlage bis 1.000 m2 Verkaufsfläche"), it(420, 340, "76.283,29"), it(500, 340, "76.283,29"),
+      it(60, 360, "6"), it(100, 360, "2,00 STk"), it(160, 360, "Stahlunterkonstruktion"), it(420, 360, "1.109,73"), it(500, 360, "2.219,46"),
+      it(60, 380, "1.5"), it(100, 380, "4,00 Psch Kältemittel-, Strom- und Steuerleitung , Anschlüsse"), it(160, 392, "herstellen"), it(420, 380, "128,40"), it(500, 380, "513,60"),
+      it(60, 410, "5.2"), it(100, 410, "1,00 Std"), it(160, 410, "Regiestundensatz Servicetechniker 50 % Überstunde"), it(420, 410, "146,97"), it(500, 410, "Alternativ"),
+      it(100, 424, "Stk"), it(160, 424, "1.Teilrechnung 419801-1 vom 05.08.2026"), it(420, 424, "87.033,05"),
+      it(300, 450, "Netto-Summe"), it(500, 450, "144.522,85"), it(300, 464, "Bruttosumme"), it(500, 464, "173.427,42"), it(300, 478, "Zahlbetrag"), it(500, 478, "68.987,76")]]);
+    return { art: erg.art, nummer: erg.nummer, rechnungsart: erg.kopf.rechnungsart, auftragssumme: erg.kopf.auftragssumme, teil: JSON.stringify(erg.kopf.teilrechnungen),
+      netto: erg.summenPdf.netto, brutto: erg.summenPdf.brutto, zahl: erg.summenPdf.zahlbetrag,
+      pos: erg.positionen.map((p) => p.typ + ":" + (p.nr || "") + "|" + p.eh + "|" + String(p.text || "").replace(/\n/g, " / ") + "|" + (p.alternativ ? "ALT" : "")) };
+  });
+  const ok = r.art === "rechnung" && r.nummer === "419890" && r.rechnungsart === "Schlussrechnung" && r.auftragssumme === 145055.09
+    && r.teil === '[{"nr":1,"nummer":"419801-1","datum":"2026-08-05","netto":87033.05}]' && r.netto === 144522.85 && r.brutto === 173427.42 && r.zahl === 68987.76
+    && r.pos.length === 5 && r.pos[2] === "pos:6|Stk|Stahlunterkonstruktion|" && r.pos[3] === "pos:1.5|psh|Kältemittel-, Strom- und Steuerleitung , Anschlüsse / herstellen|"
+    && r.pos[4] === "pos:5.2|Std|Regiestundensatz Servicetechniker 50 % Überstunde|ALT";
+  return ok ? "" : "Schlussrechnung gelesen: " + JSON.stringify(r);
+});
 /* KPlus: Gutschrift wird nicht als Angebot abgelegt; ohne erkannte PDF-Summe steht kein „stimmt“ */
 reSchritt("kplus", "R03", async (a) => {
   const r = await a.seite.evaluate(async () => {
@@ -5985,6 +6008,52 @@ test("Lidl-Leistungsstandort AT6631: Markt gefunden (alt AT0405 und neu AT6405),
   pruefe(r.editorFeld === "AT6901" && r.warnung === false && r.warnungOhne === true, "Rechnung: " + JSON.stringify([r.editorFeld, r.warnung, r.warnungOhne]));
   pruefe(/Leistungsstandort: AT6901 – Filiale 901/.test(r.ansicht), "Beleg-Ansicht ohne Leistungsstandort");
   pruefe(r.verwaltung === "AT6901|true" && /Leistungsstandort\s*AT6901/.test(r.detail), "Verwaltung/Marktinfo: " + r.verwaltung + " / " + r.detail.slice(0, 200));
+  pruefe(!a.fehler.length, "Laufzeitfehler: " + a.fehler.join("; "));
+  await a.zu();
+});
+
+/* Inhaber 12.10.2026 (Rahmenvertrag FB035): Pauschalen – Hinweis je Katalogposition; Kabeltasse 100 mm = 1×, 200 mm/2 Leitungen = 2×, 300 mm = 3× */
+test("Rechnungskatalog: Hinweis je Position (Pauschale, Mehrmengen) beim Wählen, im Editor und zum Pflegen; Kabeltasse 200 mm zählt doppelt", async () => {
+  const a = await oeffnen(KONTEN.inhaber);
+  const r = await a.seite.evaluate(async () => {
+    const x = window.__t.x, w = (ms) => new Promise((f) => setTimeout(f, ms)), db = window.__db.tabellen, e = {};
+    db.katalog.push({ id: "kh1", nummer: "FB035/Pos.37", text: "Aufpreis Kältemittelleitung im Installationskanal 100 mm breit, bzw. Montage in Zwischendecke.", eh: "lfm", preis: 44.22, kunde_id: "lidl", aktiv: true, quelle: "Test",
+      hinweis: "Je lfm und 100 mm Kanalbreite mit 1 Leitung: Kabeltasse 200 mm mit 2 Leitungen zählt doppelt, 300 mm dreifach." });
+    await x("katalogLaden()");
+    e.faktor = [x("kabeltasseFaktor")("Kabeltasse 200 mm verlegt", "Aufpreis Kältemittelleitung im Installationskanal 100 mm breit"), x("kabeltasseFaktor")("3 Leitungen im Kanal", "Installationskanal 100 mm"),
+      x("kabeltasseFaktor")("Kabeltasse 200 mm", "Kältemittel R410a"), x("kabeltasseFaktor")("ohne Angabe", "Installationskanal 100 mm")].join(",");
+    /* Baustellenbuch: 12 lfm Kabeltasse 200 mm → Vorschlag 24 lfm */
+    const p = { id: "pkt1", daten: { baubuch: [{ art: "material", datum: "2026-10-01", text: "Kabeltasse 200 mm mit 2 Leitungen verlegt", menge: 12, eh: "lfm" }] } };
+    const vs = x("baubuchVorschlaege")(p, [{ typ: "pos", nr: "1", menge: 1, eh: "lfm", text: "Aufpreis Kältemittelleitung im Installationskanal 100 mm breit", katalog_id: "kh1" }]);
+    e.vorschlag = vs[0] ? vs[0].menge + " | " + vs[0].text : "kein Vorschlag";
+    /* Katalog wählen: Hinweis sichtbar */
+    x("katalogWahl(function(){})"); await w(500);
+    const d = [...document.querySelectorAll(".assistent")].pop();
+    d.querySelector("input[type=search]").value = "Installationskanal"; d.querySelector("input[type=search]").dispatchEvent(new Event("input")); await w(100);
+    e.wahl = [...d.querySelectorAll("button.btn.ghost")].map((b) => b.textContent).filter((t) => /Installationskanal/.test(t)).join(" || ");
+    x("ansichtenSchliessen(); 1"); await w(200);
+    /* Editor: Hinweis unter der Zeile */
+    db.projekte.push({ id: "pkt2", nummer: "P-T-KT", titel: "Katalog-Hinweis", kunde_id: "lidl", status: "baustelle", daten: {}, verlauf: [], erstellt: new Date().toISOString(), geaendert: new Date().toISOString() });
+    await x("projekteLaden()");
+    x("belegNeu(kontextProjekt(PROJEKTE.filter(function(q){ return q.id==='pkt2'; })[0]), 'rechnung', {positionen:[{typ:'pos', nr:'1', menge:1, eh:'lfm', text:'Aufpreis Kältemittelleitung im Installationskanal 100 mm breit', preis:44.22, katalog_id:'kh1'}], kopf:{}}, function(){})");
+    let ed = null; for (let i = 0; i < 40 && !ed; i++) { await w(150); const q = [...document.querySelectorAll(".assistent")].pop(); if (q && q.querySelector(".bpos")) ed = q; }
+    e.editor = ed ? (ed.querySelector("[data-kathinweis]") || {}).textContent || "kein Hinweis" : "kein Editor";
+    x("ansichtenSchliessen(); 1"); await w(200);
+    /* Katalog pflegen: Hinweis-Feld, Speichern schreibt ihn */
+    x("katalogAnsicht()"); await w(500);
+    const k = [...document.querySelectorAll(".assistent")].pop();
+    k.querySelector("input[type=search]").value = "Installationskanal"; k.querySelector("input[type=search]").dispatchEvent(new Event("input")); await w(100);
+    const hz = k.querySelector("[data-hinweis]"); e.pflege = hz ? hz.value.slice(0, 30) : "kein Feld";
+    if (hz) { hz.value = "Neuer Hinweis"; k.querySelector("[data-sp]").click(); await w(400); }
+    e.gespeichert = (db.katalog.find((q) => q.id === "kh1") || {}).hinweis;
+    x("ansichtenSchliessen(); 1");
+    return e;
+  });
+  pruefe(r.faktor === "2,3,1,1", "Kabeltassen-Faktor: " + r.faktor);
+  pruefe(/^24 \| .*×2 \(200 mm = 2 Leitungen\)/.test(r.vorschlag), "Baustellenbuch-Vorschlag: " + r.vorschlag);
+  pruefe(/FB035\/Pos\.37/.test(r.wahl) && /ℹ Je lfm und 100 mm Kanalbreite/.test(r.wahl), "Katalog wählen ohne Hinweis: " + r.wahl.slice(0, 300));
+  pruefe(/^ℹ Je lfm und 100 mm Kanalbreite/.test(r.editor), "Editor ohne Hinweis: " + r.editor);
+  pruefe(r.pflege === "Je lfm und 100 mm Kanalbreite " && r.gespeichert === "Neuer Hinweis", "Katalog pflegen: " + JSON.stringify([r.pflege, r.gespeichert]));
   pruefe(!a.fehler.length, "Laufzeitfehler: " + a.fehler.join("; "));
   await a.zu();
 });

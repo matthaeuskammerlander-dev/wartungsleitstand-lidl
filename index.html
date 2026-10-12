@@ -31287,12 +31287,20 @@ function kplusLesen(daten){
     return kette.then(function(){ return kplusAuswerten(seiten); });
   });
 }
+/* Einheiten, wie KPlus sie schreibt (psh, Psch, ßsh, STk, KG …) – eine Schreibweise im Katalog (Inhaber 05.10.2026: „STk → Stk“ von Hand bereinigt) */
+function einheitNorm(eh){
+  var e=String(eh||"").trim(), k=e.toLowerCase();
+  if(/^(psh|psch|ßsh|pausch|pauschal)$/.test(k)) return "psh";
+  if(k==="stk") return "Stk"; if(k==="std") return "Std"; if(k==="kg") return "kg"; if(k==="lfm") return "lfm"; if(k==="lt") return "lt"; if(k==="set") return "Set";
+  return e;
+}
 function kplusAuswerten(seiten){
   var alle=[].concat.apply([], seiten);
-  var titel=alle.filter(function(i){ return /^(Angebot|Rechnung|Gutschrift)$/.test(i.t) && i.x>250 && i.y<260; })[0];
+  /* auch Schluss- und Teilrechnungen (Saalfelden 419890, Inhaber 12.10.2026 – vorher „keine KPlus-Rechnung erkannt“) */
+  var titel=alle.filter(function(i){ return /^(Angebot|Rechnung|Schlussrechnung|Teilrechnung|Gutschrift)$/.test(i.t) && i.x>250 && i.y<260; })[0];
   if(!titel) throw new Error("Kein KPlus-Angebot bzw. keine KPlus-Rechnung erkannt.");
   /* Gutschrift: eigene Art – sie ist weder Angebot noch Rechnung und wird (noch) nicht als Beleg abgelegt (KPLUS_GUTSCHRIFT) */
-  var fett=titel.f, art=titel.t==="Rechnung"?"rechnung":titel.t==="Gutschrift"?"gutschrift":"angebot";
+  var fett=titel.f, art=/rechnung$/i.test(titel.t)?"rechnung":titel.t==="Gutschrift"?"gutschrift":"angebot";
   var zeileVon=function(i){ return alle.filter(function(x){ return x.s===i.s && Math.abs(x.y-i.y)<3 && x!==i; }); };
   var wertNeben=function(lbl){ var l=alle.filter(function(i){ return i.s===1 && i.t===lbl && i.x>250; })[0]; if(!l) return ""; var r=zeileVon(l).filter(function(x){ return x.x>l.x+20; }); return r.length?r[r.length-1].t:""; };
   var kopf={nummer:(zeileVon(titel).filter(function(x){ return x.x>titel.x+60; })[0]||{}).t||"", datum:wertNeben("Datum"), kundennummer:wertNeben("Kundennummer"), sachbearbeiter:wertNeben("Sachbearbeiter")};
@@ -31303,6 +31311,10 @@ function kplusAuswerten(seiten){
   var lz=alle.filter(function(i){ return /^Leistungszeitraum:/.test(i.t) && i.x<100; })[0];
   if(lz) kopf.leistungszeitraum=(lz.t.replace(/^Leistungszeitraum:\s*/,"")+" "+zeileVon(lz).map(function(x){ return x.t; }).join(" ")).trim();
   var datumIso=function(t){ var m=/(\d\d)\.(\d\d)\.(\d{4})/.exec(t||""); return m?m[3]+"-"+m[2]+"-"+m[1]:null; };
+  kopf.rechnungsart=titel.t;   /* Rechnung, Schlussrechnung, Teilrechnung */
+  var auf=alle.filter(function(i){ return /^Auftragssumme/.test(i.t); })[0];
+  if(auf){ var am=/([\d.]+,\d\d)/.exec(auf.t+" "+zeileVon(auf).map(function(x){ return x.t; }).join(" ")); if(am) kopf.auftragssumme=geldLesen(am[1]); }
+  kopf.teilrechnungen=[];
   /* Positionen: Zeilen unter dem Tabellenkopf, bis „Netto-Summe“, ohne Fußzeile */
   var pos=[], akt=null, letzteY=null, gruppe=null, ende=false, summen={};
   seiten.forEach(function(items){
@@ -31328,9 +31340,15 @@ function kplusAuswerten(seiten){
       var preis=z.filter(function(i){ return i.x>=395 && i.x<480 && /^-?[\d.]+,\d\d$/.test(i.t); })[0];
       var betrag=z.filter(function(i){ return i.x>=480; })[0];
       var text=txt.map(function(i){ return i.t; }).join(" ");
+      /* abgezogene Teilrechnung („Stk 1.Teilrechnung 419801-1 vom 05.08.2026 … 87.033,05“) – keine Position, in den Kopf */
+      var tr=/(\d+)\.\s*Teilrechnung\s+(\S+)\s+vom\s+(\d\d\.\d\d\.\d{4})/.exec((me?me.t+" ":"")+text);
+      if(tr){ var tb=z.filter(function(i){ return i.x>=395 && /^-?[\d.]+,\d\d$/.test(i.t); }).pop();
+        kopf.teilrechnungen.push({nr:+tr[1], nummer:tr[2], datum:datumIso(tr[3]), netto:tb?Math.abs(geldLesen(tb.t)):null}); letzteY=y; return; }
       if(nr){
-        var m=/^(-?[\d.]+,\d+)\s*(\S*)/.exec(me?me.t:"");
-        akt={typ:"pos", nr:nr.t, menge:m?geldLesen(m[1]):null, eh:m?m[2]:"", text:text, preis:preis?geldLesen(preis.t):null,
+        /* Menge und Einheit stehen manchmal im selben Textlauf wie der Anfang der Bezeichnung („4,00 Psch Kältemittel-, Strom- …“) */
+        var m=/^(-?[\d.]+,\d+)\s*(\S*)\s*(.*)$/.exec(me?me.t:"");
+        if(m && m[3]) text=(m[3]+" "+text).trim();
+        akt={typ:"pos", nr:nr.t, menge:m?geldLesen(m[1]):null, eh:m?einheitNorm(m[2]):"", text:text, preis:preis?geldLesen(preis.t):null,
              betragPdf:betrag&&/[\d],\d\d$/.test(betrag.t)?geldLesen(betrag.t):null, alternativ:!!(betrag&&/Alternativ/i.test(betrag.t)), gruppe:gruppe};
         pos.push(akt); letzteY=y; return;
       }
@@ -31361,7 +31379,8 @@ function kplusAuswerten(seiten){
   });
   /* Summen und Schlusstext */
   var zahlRechts=function(lbl){ var l=alle.filter(function(i){ return lbl.test(i.t); })[0]; if(!l) return null; var r=zeileVon(l).filter(function(x){ return x.x>l.x && /^-?[\d.]+,\d\d$/.test(x.t); }); return r.length?geldLesen(r[r.length-1].t):null; };
-  summen.netto=zahlRechts(/^Netto-Summe/); summen.brutto=zahlRechts(/^Gesamt$/); summen.mwst=summen.netto!=null&&summen.brutto!=null?Math.round((summen.brutto-summen.netto)*100)/100:null;
+  summen.netto=zahlRechts(/^Netto-Summe/); summen.brutto=zahlRechts(/^Gesamt$/) ?? zahlRechts(/^Bruttosumme$/);
+  if(kopf.teilrechnungen.length) summen.zahlbetrag=zahlRechts(/^Zahlbetrag$/); summen.mwst=summen.netto!=null&&summen.brutto!=null?Math.round((summen.brutto-summen.netto)*100)/100:null;
   var zb=alle.filter(function(i){ return /^Zahlungsbedingungen:/.test(i.t); })[0];
   if(zb) kopf.zahlung=zeileVon(zb).map(function(x){ return x.t; }).join(" ");
   var gb=alle.filter(function(i){ return /^Gültig bis:/.test(i.t); })[0];
@@ -32106,14 +32125,30 @@ function belegNeu(kx, art, vorlage, fertig){
 }
 /* Mengen aus dem Baustellenbuch, die zu Positionen passen (Kältemittel kg, Std Samstag/Sonntag, Stück …) –
    nur als Vorschlag neben der Position, übernommen wird erst mit einem Tipp */
+/* Hinweis der Katalogposition zu einer Beleg-Zeile (Spalte katalog.hinweis, tools/katalog-hinweis.sql) */
+function katalogHinweis(x){
+  if(!x || !x.katalog_id) return "";
+  var k=(KATALOG||[]).filter(function(k){ return k.id===x.katalog_id; })[0];
+  return (k && k.hinweis) || "";
+}
+/* Kabeltasse/Installationskanal (Inhaber 12.10.2026): die Pauschale (Pos. 37/37A) gilt je lfm für 100 mm Breite mit 1 Leitung –
+   200 mm mit 2 Leitungen zählt doppelt, 300 mm mit 3 dreifach. Faktor aus dem Text des Baustellenbuchs („Kabeltasse 200 mm“, „2 Leitungen“). */
+function kabeltasseFaktor(eintragText, positionText){
+  if(!/kabeltasse|inst\.?\s*kanal|installationskanal/i.test(String(positionText||"")) || !/100\s*mm/i.test(String(positionText||""))) return 1;
+  var t=String(eintragText||""), m=/(\d{3})\s*mm/i.exec(t), l=/(\d)\s*leitungen/i.exec(t);
+  var f=m ? Math.round(+m[1]/100) : l ? +l[1] : 1;
+  return f>=1 && f<=6 ? f : 1;
+}
 function baubuchVorschlaege(p, pos){
   var bb=((p.daten||{}).baubuch||[]).filter(function(x){ return x.menge!=null; });
   var vor={};
   pos.forEach(function(x, i){
     if(x.typ!=="pos" || x.alternativ) return;   /* Alternativpositionen werden nicht verrechnet */
-    var t=String(x.text||"").toLowerCase(), eh=String(x.eh||"").toLowerCase();
+    /* gleiche Sache, anderes Wort: Baustellenbuch „Kabeltasse“, Katalog „Installationskanal“/„Inst.Kanal“ (Inhaber 12.10.2026) */
+    var syn=function(w){ return String(w||"").toLowerCase().replace(/installationskanal|inst\.?\s?kanal/g,"kabeltasse"); };
+    var t=syn(x.text), eh=String(x.eh||"").toLowerCase();
     var treffer=bb.filter(function(e){
-      var et=String(e.text||"").toLowerCase(), ee=String(e.eh||"").toLowerCase();
+      var et=syn(e.text), ee=String(e.eh||"").toLowerCase();
       if(ee && eh && ee.slice(0,2)!==eh.slice(0,2) && !(ee==="std"&&/std|stk/.test(eh))) return false;
       if(e.art==="kaeltemittel") return /kältemittel/.test(t);
       if(e.art==="wochenende") return (/samstag/.test(t) && /samstag/.test(et)) || (/sonntag/.test(t) && /sonntag/.test(et));
@@ -32122,7 +32157,10 @@ function baubuchVorschlaege(p, pos){
       var gem=w.filter(function(x2){ return t.indexOf(x2)>=0; });
       return gem.length>=2 || gem.some(function(x2){ return x2.length>=9; });
     });
-    if(treffer.length===1 && Math.abs((+treffer[0].menge||0)-(+x.menge||0))>0.0001) vor[i]={menge:treffer[0].menge, text:baubuchArtName(treffer[0].art)+" "+dfmt(treffer[0].datum)+": "+treffer[0].text};
+    if(treffer.length===1){
+      var f=kabeltasseFaktor(treffer[0].text, x.text), menge=Math.round((+treffer[0].menge||0)*f*100)/100;
+      if(Math.abs(menge-(+x.menge||0))>0.0001) vor[i]={menge:menge, text:baubuchArtName(treffer[0].art)+" "+dfmt(treffer[0].datum)+": "+treffer[0].text+(f>1?" – ×"+f+" ("+f+"00 mm = "+f+" Leitungen)":"")};
+    }
   });
   return vor;
 }
@@ -32254,6 +32292,7 @@ function belegEditor(kx, b, fertig, vorschlaege){
           /* Hinweis des Vorschlags (Preis, Stunden, Sorte fehlen – Inhaber 05.10.2026): sichtbar, solange die Position keinen Betrag hat */
           (x.hinweis?'<div class="vs" data-hinweis style="color:var(--warn)">⚠ '+esc(x.hinweis)+"</div>":"")+
           (x.gelernt?'<div class="vs muted">'+esc(x.gelernt)+"</div>":"")+
+          (katalogHinweis(x)?'<div class="vs muted" data-kathinweis>ℹ '+esc(katalogHinweis(x))+"</div>":"")+
         "</div>");
         var betrag=function(){ z.querySelector("[data-betrag]").textContent=x.alternativ?"Alternativ":geld(posBetrag(x));
           var h=z.querySelector("[data-hinweis]"); if(h) h.hidden=posBetrag(x)>0; rechnen(); };
@@ -32381,8 +32420,9 @@ function katalogWahl(nimm){
       .sort(function(a,b){ return (nutz[katalogSchluessel(b.text,b.eh)]||0)-(nutz[katalogSchluessel(a.text,a.eh)]||0); }).slice(0,80);
     if(!t.length) l.appendChild(el('<div class="muted" style="font-size:12.5px">'+(KATALOG.length?"Nichts gefunden.":"Der Katalog ist noch leer – KPlus-PDFs einlesen füllt ihn.")+"</div>"));
     t.forEach(function(k){
-      var z=el('<button class="btn ghost" type="button" style="text-align:left;display:block;width:100%;font-size:13px">'+esc(String(k.text).split("\n")[0])+
-        '<br><span class="muted">'+esc(k.eh)+" · "+geld(k.preis)+" €"+(k.quelle?" · "+esc(k.quelle):"")+"</span></button>");
+      var z=el('<button class="btn ghost" type="button" style="text-align:left;display:block;width:100%;font-size:13px;white-space:normal">'+(k.nummer?'<span class="mono muted">'+esc(k.nummer)+"</span> ":"")+esc(String(k.text).split("\n")[0])+
+        '<br><span class="muted">'+esc(k.eh)+" · "+geld(k.preis)+" €"+(k.quelle?" · "+esc(k.quelle):"")+"</span>"+
+        (k.hinweis?'<br><span class="muted" style="font-size:12px">ℹ '+esc(k.hinweis)+"</span>":"")+"</button>");
       z.onclick=function(){ v.zu(); nimm(k); };
       l.appendChild(z);
     });
@@ -32439,7 +32479,10 @@ function katalogAnsicht(){
       var z=el('<div style="border:1px solid '+(w.length?"var(--warn)":"var(--line)")+';border-radius:8px;padding:8px;font-size:13px'+(k.aktiv===false?";opacity:.5":"")+'">'+
         (w.length?'<div style="color:var(--warn);font-size:12.5px;margin-bottom:4px">⚠ '+esc(w.join(" · "))+
           (ohne!==String(k.text||"").trim()?' <button class="btn ghost sm" type="button" data-ohne>Menge aus dem Text entfernen</button>':"")+"</div>":"")+
+        (k.nummer?'<div class="mono muted" style="font-size:12px">'+esc(k.nummer)+(k.gruppe?" · "+esc(k.gruppe):"")+"</div>":"")+
         '<textarea rows="2" style="width:100%">'+esc(k.text)+"</textarea>"+
+        /* Hinweis (Inhaber 12.10.2026): was die Pauschale enthält, wie Mehrmengen zählen – steht beim Wählen und im Editor, nie auf der Rechnung */
+        '<textarea rows="1" data-hinweis data-wachsen style="width:100%;margin-top:4px;font-size:12.5px" placeholder="Hinweis – z. B. Pauschale enthält KM-Leitung bis 15 m, Mehrlänge je lfm">'+esc(k.hinweis||"")+"</textarea>"+
         '<div class="rowflex" style="gap:8px;margin-top:4px"><input type="text" style="width:70px" value="'+esc(k.eh)+'" data-eh>'+
         '<input type="text" inputmode="decimal" style="width:110px" value="'+esc(geld(k.preis))+'" data-preis> €'+
         '<span class="muted" style="flex:1">'+esc(k.quelle||"")+"</span>"+
@@ -32451,7 +32494,7 @@ function katalogAnsicht(){
         var text=z.querySelector("textarea").value.trim(), pr=geldLesen(z.querySelector("[data-preis]").value);
         if(!text){ toast("Bitte den Text der Position eintragen."); return; }
         if(pr==null || pr!==pr || pr<0){ toast("Preis bitte als Zahl (z. B. 447,30)."); return; }
-        schreib({text:text, eh:z.querySelector("[data-eh]").value.trim()||"Stk", preis:pr});
+        schreib({text:text, eh:z.querySelector("[data-eh]").value.trim()||"Stk", preis:pr, hinweis:z.querySelector("[data-hinweis]").value.trim()||null});
       };
       z.querySelector("[data-aus]").onclick=function(){ schreib({aktiv:k.aktiv===false}); };
       var oh=z.querySelector("[data-ohne]");
