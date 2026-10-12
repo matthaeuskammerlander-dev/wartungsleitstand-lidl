@@ -6162,7 +6162,7 @@ test("Inbetriebnahmeprotokoll: aus der Anlage vorbelegt, Füllmenge und CO₂e g
     const html = x("ibnBlattHtml")(pr, z);
     e.blatt = /INBETRIEBNAHMEPROTOKOLL KÄLTEANLAGE/.test(html) && /16,3 kg/.test(html) && /34,03 t CO₂e/.test(html) && /Gefälle fehlt/.test(html) && /Kühlen 22 °C · Nachtabsenkung 22:00–06:00/.test(html)
       && /siehe Abnahmeprotokoll des Auftraggebers – Endabnahme Lidl vom 24.09.2026/.test(html) && /FXFQ63/.test(html) && /Verordnung \(EU\) 2024\/573/.test(html) && !/mit Vorbehalt/.test(html)
-      && /Anlage 1 von 2: VRV Verkauf/.test(html) && /Anlage 2 von 2: Split Backshop/.test(html) && /Nachfüllung bei 18 m Rohrlänge/.test(html) && /4,05 t CO₂e/.test(html) && /KÄLTEANLAGEN/.test(html) && /Unternehmenszertifikat Nr\.<\/td><td>AT-UNT-TEST-250/.test(html) && /G14-TEST-1/.test(html);
+      && /Anlage 1 von 2: VRV Verkauf/.test(html) && /Anlage 2 von 2: Split Backshop/.test(html) && /Nachfüllung bei 18 m Rohrlänge/.test(html) && /4,05 t CO₂e/.test(html) && /KÄLTEANLAGEN/.test(html) && /Zertifikat Betrieb \(F-Gase\)<\/td><td>AT-UNT-TEST-250/.test(html) && /G14-TEST-1/.test(html);
     x("ansichtenSchliessen(); 1");
     e.toasts = window.__toasts.join(" | ");
     return e;
