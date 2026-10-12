@@ -157,7 +157,8 @@ const ANWEISUNG: Record<string, string> = {
     "oder PDF-Seite). Lies Auftragsnummer, Störungsnummer, Kostenstelle/Filial-Nr. (z. B. AT0405), " +
     "Problemtyp, Beschreibung, Auftragsdatum, „Ausführen bis“ (als zieltermin), Priorität, Gerätedaten " +
     "(Typ, Modell, Hersteller, LIN/IA-Nummer, Seriennummer) und den Lidl-Ansprechpartner mit Telefon und " +
-    "E-Mail. Daten als TT.MM.JJJJ. Lass leer, was nicht dasteht; nichts schätzen.",
+    "E-Mail. Daten als TT.MM.JJJJ. Lass leer, was nicht dasteht; nichts schätzen." +
+    " Neues Lidl-Formular „Beauftragung“ (seit Oktober 2026): „Bestellung <Nummer> vom <Datum>“ im Titel → auftragsnummer und auftragsdatum; in der Tabelle „Auftrag Nr“ → stoerungsnr, Kostenstelle „AT…“ → filialCode, „Leistungs Datum/Zeitraum“ → zieltermin, „Inventartyp“ → lidlTyp, „Modell“ → lidlModell, „LIN“ → lin, „SN“ → seriennummer, „Problemtyp“ → problemtyp, „Bemerkung“ → beschreibung; der Kopf „Abteilung/Email/Tel.“ ist der Lidl-Ansprechpartner. „Best. Typ“ (z. B. Lidl Filiale Reparatur) ist keine Priorität.",
 };
 
 // ------------------------------------------------------------ Aufruf
