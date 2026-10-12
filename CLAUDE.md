@@ -706,7 +706,11 @@ Kammerlander Umwelt- und Klimatechnik (UKT) – oft kurz, vom Handy, im Feld.
   „in Planung“ ohne „seit n Tagen“, Kachel „Termine überfällig“ und Karten-Chip „überfällig“ fehlen beim Kunden. Nach der Rollenprüfung
   (`adminPruefen`) wird neu gestuft. Offene Störungen sieht der Kunde gar nicht (`offeneStoerungen` liefert für kunde [] – Kachel, Karte, Markt;
   erledigte stehen als Protokolle im Verlauf). Kein Reiter Fällig für den Kunden (`reiterErlaubt`: Karte, Anlagen, Verlauf) – Start auf der Karte,
-  dort die Konto-Karte mit Abmelden (`viewKarte`). Intern bleibt alles wie bisher – die Fachregeln ändern sich nicht.
+  dort die Konto-Karte mit Abmelden (`viewKarte`). Karte im Kundenkonto: alle Märkte als **Lidl-Kachel** statt farbiger Punkte, keine Status-Auswahl
+  (`kundeKacheln`, `kundeLogo` – das Logo liegt NICHT im Repository, sondern als Merker `merker:kundenlogo` in den Stammdaten, `felder.datenUrl` 96-px-PNG;
+  Merker gibt `stammdaten_lesen` auch dem Kunden; fehlt er, bleiben die Punkte; CSS `.lidlkachel`). Intern bleibt alles wie bisher – die Fachregeln ändern sich nicht.
+  Zugangsdaten kompakt (Inhaber 12.10.2026: „benötigt unnötig viel Platz“): `zugangBox` ist nur noch eine Zeile `[data-zugang-kurz]` mit Knopf „🔐 Zugang zur Regelung“
+  und Adresse; die vollen Zugangsdaten (`zugangBoxVoll`, Passwort verdeckt, kopieren) öffnen sich als eigenes Fenster.
 - **Fernzugriff gehört zum Markt** (Inhaber 12.10.2026: „der Link ist für alle Anlagen am Markt“): Marktfelder `fernLink` (sichtbar für alle,
   auch Kunde – Markt-Info `[data-fernlink]`), `fernBenutzer`, `fernPasswort`, `fernWeitere` ([{bez, benutzer, passwort}]) in `STAMM_FELDER_ST`; die drei
   Zugangsdaten sind geheim (`GEHEIM_MARKT` in `GEHEIME_FELDER`: nie Verlauf/PDF/Kunde; Sicht `stammdaten_lesen` lässt sie weg – tools/fernzugriff-markt.sql,

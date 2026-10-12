@@ -6219,20 +6219,31 @@ test("Kundenkonto: keine überfälligen Termine („in Planung“), Fernzugriff-
       felder: { fernLink: "https://regelung.test/ts1", fernBenutzer: "service", fernPasswort: "Geheim123", fernWeitere: [{ bez: "Kunde", benutzer: "lidl", passwort: "Pw2" }] } });
     db.stammdaten.push({ id: "position:TP1", typ: "position", ziel: "TP1", neu: false, geaendert: jetzt, von: "Test", grund: "Regelung", felder: { regelung: "Daikin", fernzugriff: "ja" } });
     db.stammdaten.push({ id: "stoer:kd1", typ: "stoerung", ziel: "TS1", felder: { standortId: "TS1", auftragsnummer: "700099", status: "offen", problemtyp: "Kühlt nicht" }, neu: true, geaendert: jetzt, von: "Test", grund: "Test" });
+    /* Lidl-Kachel statt Punkte im Kundenkonto (Inhaber 12.10.2026) – das Logo liegt als Merker in den Stammdaten */
+    db.stammdaten.push({ id: "merker:kundenlogo", typ: "merker", ziel: "kundenlogo", felder: { datenUrl: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==" }, neu: false, geaendert: jetzt, von: "Test", grund: "Test" });
     await x("ladeStammdaten().then(storeNachRender)"); await w(300);
     x("posById.TP2.historie=[plusMonate(isoLokal(new Date()),-18)]; berechneFaelligkeiten(); 1");   /* HJI versäumt */
   });
   /* intern (Techniker): überfällig bleibt überfällig; Zugang des Markts auch bei der Anlage ohne eigenen Zugang */
   const a = await oeffnen(KONTEN.techniker);
   await vorbereiten(a.seite);
-  const rt = await a.seite.evaluate(() => {
+  const rt = await a.seite.evaluate(async () => {
     const x = window.__t.x, e = {};
     e.tp2 = x("posById.TP2.status") + "|" + x("STATUS_LABEL.faellig");
     const d = x("standortDetail(byId.TS1)");
     e.link = (d.querySelector("[data-fernlink]") || {}).textContent;
-    e.marktZugang = /gilt für den ganzen Markt/.test(d.textContent) && /service/.test(d.textContent) && !/Geheim123/.test(d.innerHTML);
+    /* kompakt: eine Zeile mit Knopf, die Zugangsdaten als eigenes Fenster (Inhaber 12.10.2026) */
+    const kurz = d.querySelector("[data-zugang-kurz]");
+    e.marktZugang = !!kurz && /gilt für den ganzen Markt/.test(kurz.textContent) && !/service|Geheim123/.test(d.innerHTML);
+    document.body.appendChild(d); kurz.querySelector("button").click(); await new Promise((f) => setTimeout(f, 200));
+    const zf = [...document.querySelectorAll(".assistent")].pop();
+    e.marktZugangFenster = !!zf && /Zugang zur Regelung – gilt für den ganzen Markt/.test(zf.querySelector(".as-titel").textContent) && /service/.test(zf.textContent) && !/Geheim123/.test(zf.innerHTML);
+    x("ansichtenSchliessen(); 1"); d.remove();
     const host = document.createElement("div"); x("anlagenBloecke")(x("byId.TS1"), host);
-    e.anlageZugang = [...host.querySelectorAll(".note")].some((n) => /regelung\.test\/ts1/.test(n.textContent) && /gilt für den ganzen Markt/.test(n.textContent));
+    e.anlageZugang = [...host.querySelectorAll("[data-zugang-kurz]")].some((n) => /regelung\.test\/ts1/.test(n.textContent) && /gilt für den ganzen Markt/.test(n.textContent));
+    /* intern: Punkte, keine Kacheln */
+    x("KARTE_MODUS='osm'; S.view='karte'; render(); 1"); await new Promise((f) => setTimeout(f, 900));
+    e.karteIntern = x("kundeKacheln()") + "|" + document.querySelectorAll(".leaflet-marker-icon.lidlkachel").length + "|" + (document.querySelectorAll(".leaflet-overlay-pane path.leaflet-interactive").length > 0) + "|" + !document.getElementById("kartefilter").closest("[hidden]");
     e.gruppe = x("ANLAGE_GRUPPEN.filter(function(g){ return g.titel==='Zugang zur Regelung'; })[0].wenn(anlageDaten(posById.TP1))") + "|" +
       x("ANLAGE_GRUPPEN.filter(function(g){ return g.titel==='Zugang zur Regelung'; })[0].wenn(Object.assign(anlageDaten(posById.TP1), {zugangLink:'https://eigene.test'}))");
     e.weitere = x("fernWeitereText([{bez:'Kunde', benutzer:'lidl', passwort:'Pw2'}])") + "|" + JSON.stringify(x("fernWeitereLesen('Kunde; lidl; Pw2\\nService; s; p')"));
@@ -6240,7 +6251,8 @@ test("Kundenkonto: keine überfälligen Termine („in Planung“), Fernzugriff-
     return e;
   });
   pruefe(/^ueberfaellig\|fällig in/.test(rt.tp2), "intern: " + rt.tp2);
-  pruefe(rt.link === "https://regelung.test/ts1" && rt.marktZugang && rt.anlageZugang, "Markt-Zugang intern: " + JSON.stringify([rt.link, rt.marktZugang, rt.anlageZugang]));
+  pruefe(rt.link === "https://regelung.test/ts1" && rt.marktZugang && rt.marktZugangFenster && rt.anlageZugang, "Markt-Zugang intern: " + JSON.stringify([rt.link, rt.marktZugang, rt.marktZugangFenster, rt.anlageZugang]));
+  pruefe(rt.karteIntern === "false|0|true|true", "intern Karte: " + rt.karteIntern);
   pruefe(rt.gruppe === "false|true" && rt.weitere === 'Kunde; lidl; Pw2|[{"bez":"Kunde","benutzer":"lidl","passwort":"Pw2"},{"bez":"Service","benutzer":"s","passwort":"p"}]' && rt.geheim, "Gruppe/weitere/geheim: " + JSON.stringify([rt.gruppe, rt.weitere, rt.geheim]));
   pruefe(!a.fehler.length, "Laufzeitfehler: " + a.fehler.join("; "));
   await a.zu();
@@ -6254,6 +6266,8 @@ test("Kundenkonto: keine überfälligen Termine („in Planung“), Fernzugriff-
     e.wann = x("wannText(posById.TP2).zeile");
     /* kein Reiter Fällig – nach der Anmeldung die Karte (Inhaber 12.10.2026); Abmelden bleibt erreichbar */
     x("S.view='faellig'; render(); 1"); await w(400);
+    x("KARTE_MODUS='osm'; 1"); x("render(); 1"); await w(900);
+    e.kacheln = x("kundeKacheln()") + "|" + document.querySelectorAll(".leaflet-marker-icon.lidlkachel").length + "|" + document.querySelectorAll(".leaflet-overlay-pane path.leaflet-interactive").length + "|" + !!document.getElementById("kartefilter").closest("[hidden]") + "|" + /Farbe = dringlichster Status/.test(document.getElementById("app").innerText);
     e.start = x("S.view") + "|" + x("reiterErlaubt('faellig')") + "|" + [...document.querySelectorAll("#tabs button")].filter((b) => !b.hidden).map((b) => b.dataset.v).join(",") + "|" + /Angemeldet als/.test(document.getElementById("app").innerText);
     x("S.view='anlagen'; render(); 1"); await w(400);
     const app = document.getElementById("app");
@@ -6273,6 +6287,7 @@ test("Kundenkonto: keine überfälligen Termine („in Planung“), Fernzugriff-
   pruefe(rk.faelligText === "ok" && rk.inPlanung && rk.markt === "in Planung", "Kunde Fällig-Ansicht: " + JSON.stringify([rk.faelligText, rk.inPlanung, rk.markt]));
   pruefe(/^[1-9]\d*\|0\|ok$/.test(rk.stoer), "Kunde sieht offene Störungen: " + rk.stoer);
   pruefe(rk.start === "karte|false|karte,anlagen,verlauf|true", "Kunde Start/Reiter: " + rk.start);
+  pruefe(/^true\|[1-9]\d*\|0\|true\|false$/.test(rk.kacheln), "Kunde Lidl-Kacheln: " + rk.kacheln);
   pruefe(rk.link === "https://regelung.test/ts1" && rk.ohneZugang && rk.sicht, "Kunde Fernzugriff: " + JSON.stringify([rk.link, rk.ohneZugang, rk.sicht]));
   pruefe(!k.fehler.length, "Laufzeitfehler (Kunde): " + k.fehler.join("; "));
   await k.zu();
@@ -8513,8 +8528,10 @@ test("Zugänge: mehrere Benutzer je Regelung – anlegen, entfernen mit Rückfra
     await x("ladeStammdaten()"); await w(200);
     const d = x("anlageDaten")(x("posById.TP1"));
     e.geladen = [(d.zugangWeitere || []).map((z) => z.bez).join(","), d.zugangBenutzer, d.zugangPasswort];
-    /* Anzeige in den Anlagendaten: je Zugang mit Bezeichnung, Passwort verdeckt, aufdeckbar */
-    const box = x("zugangBox")(d); document.body.appendChild(box);
+    /* Anzeige in den Anlagendaten: je Zugang mit Bezeichnung, Passwort verdeckt, aufdeckbar – seit 12.10.2026 kompakt: zugangBox ist die Zeile mit Knopf, zugangBoxVoll das Fenster */
+    const kurz = x("zugangBox")(d);
+    e.kurz = !!kurz && kurz.hasAttribute("data-zugang-kurz") && /Zugang zur Regelung/.test(kurz.textContent) && !/Weit-Pw-/.test(kurz.innerText);
+    const box = x("zugangBoxVoll")(d); document.body.appendChild(box);
     e.anzeige = [box.querySelectorAll("[data-zugang]").length, /Service/.test(box.innerText) && /Installateur/.test(box.innerText), /Weit-Pw-/.test(box.innerText)];
     box.querySelector('[data-zugang="1"] [data-zeigen]').click();
     e.aufgedeckt = /Weit-Pw-222/.test(box.innerText) && !/Weit-Pw-333/.test(box.innerText);
@@ -8542,7 +8559,7 @@ test("Zugänge: mehrere Benutzer je Regelung – anlegen, entfernen mit Rückfra
   pruefe(!r.dbAlt[0] || r.dbAlt[0] === "erster-test", "altes Paar überschrieben: " + JSON.stringify(r.dbAlt));
   pruefe(r.verlaufDa && !r.verlaufWerte.length, "Verlauf: vermerkt " + r.verlaufDa + ", Werte darin: " + r.verlaufWerte.join(","));
   pruefe(JSON.stringify(r.geladen) === '["Service,Installateur","erster-test","Alt-Pw-111"]', "nach dem Laden: " + JSON.stringify(r.geladen));
-  pruefe(JSON.stringify(r.anzeige) === "[3,true,false]" && r.aufgedeckt, "Anzeige: " + JSON.stringify([r.anzeige, r.aufgedeckt]));
+  pruefe(JSON.stringify(r.anzeige) === "[3,true,false]" && r.aufgedeckt && r.kurz, "Anzeige: " + JSON.stringify([r.anzeige, r.aufgedeckt, r.kurz]));
   pruefe(!r.buch && !r.sicht && !/Weit-Pw/.test(r.verlaufWert), "geheim durchgesickert: " + JSON.stringify([r.buch, r.sicht, r.verlaufWert]));
   pruefe(r.verw && r.verw[0] === 2 && r.verw[1] === "password" && !r.verw[2] && r.verwDazu === 3, "Verwaltung: " + JSON.stringify([r.verw, r.verwDazu]));
   pruefe(r.breiter <= 4, "Handy: Seite " + r.breiter + "px breiter als der Bildschirm");

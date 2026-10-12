@@ -747,6 +747,7 @@ section.view.schmal{max-width:1180px;margin-inline:auto;width:100%}
   .blatt h2{break-after:avoid}
   .blatt table,.blatt .fotos figure{break-inside:avoid}
 }
+.leaflet-marker-icon.lidlkachel{border-radius:4px;box-shadow:0 1px 2px rgba(0,0,0,.35)}   /* Lidl-Kachel im Kundenkonto */
 .toast{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(18px + env(safe-area-inset-bottom,0px));z-index:100000;
   background:var(--ink);color:var(--ground);padding:11px 16px;border-radius:9px;font-size:13.5px;box-shadow:var(--shadow);display:none}
 table.dt{width:100%;border-collapse:collapse;font-size:13px}
@@ -5621,13 +5622,18 @@ function kundenMaerkte(){
   (kundenlisteAn()?kundenliste:[]).forEach(function(z){ var s=byId[z.standort_id]; if(s && s.lat && kundenStand(z).status!=="erledigt") m[s.id]=s; });
   return Object.keys(m).map(function(id){ return m[id]; });
 }
+/* Kundenkonto (Inhaber 12.10.2026, Präsentation): alle Märkte als Lidl-Kachel statt farbiger Punkte – keine Statusfarben, keine Auswahl.
+   Das Logo liegt NICHT im Repository (Markenzeichen), sondern als Merker „kundenlogo“ in den Stammdaten (felder.datenUrl, 96 px PNG);
+   die Sicht stammdaten_lesen gibt Merker auch dem Kunden. Fehlt der Merker, bleiben die Punkte. Intern bleibt alles wie bisher. */
+function kundeLogo(){ return String((((stammUeber||{})["merker:kundenlogo"]||{}).felder||{}).datenUrl||""); }
+function kundeKacheln(){ return nurLesen() && /^data:image\//.test(kundeLogo()); }
 function karteOsm(withGeo){
-  var T=S.tour.ergebnis;
+  var T=S.tour.ergebnis, kacheln=kundeKacheln();
   var card=el('<div class="card"><div class="pad stack">'+
     '<div><h2>Standortkarte</h2><div class="sub">'+withGeo.length+' Standorte auf OpenStreetMap. '+
-      'Punktgröße = Anzahl Wartungspositionen, Farbe = dringlichster Status. Antippen öffnet Details und die Navigation.</div></div>'+
+      (kacheln ? 'Antippen öffnet Details und die Navigation.' : 'Punktgröße = Anzahl Wartungspositionen, Farbe = dringlichster Status. Antippen öffnet Details und die Navigation.')+'</div></div>'+
     stoerungAusserhalbHinweis(withGeo)+
-    '<div class="stack" style="gap:4px"><div class="muted" style="font-size:12.5px">Anzeigen – antippen blendet ein oder aus:</div>'+
+    '<div class="stack" style="gap:4px"'+(kacheln ? ' hidden' : '')+'><div class="muted" style="font-size:12.5px">Anzeigen – antippen blendet ein oder aus:</div>'+
     '<div class="chips" id="kartefilter">'+KARTE_KAT.filter(function(k){ return !(nurLesen() && k[0]==="ueberfaellig"); }).map(function(k){
       var n = k[0]==="stoerung" ? stoerungsMaerkte().length : k[0]==="lidl" ? kundenMaerkte().length
             : withGeo.filter(function(s){ return karteKat(s)===k[0]; }).length;
@@ -5689,11 +5695,13 @@ function karteOsm(withGeo){
       /* zur Zeit nicht betreut: nur ganz leicht grau, klein und unten – nie in einer
          Statusfarbe (Büro 30.09.2026) */
       var ruht=marktPausiert(s);
-      var m=L.circleMarker([s.lat,s.lon],{
+      var m=kacheln
+        ? L.marker([s.lat,s.lon],{title:stName(s), icon:L.icon({iconUrl:kundeLogo(), iconSize:[22,22], iconAnchor:[11,11], popupAnchor:[0,-10], className:"lidlkachel"})}).addTo(ebene[karteKat(s)])
+        : L.circleMarker([s.lat,s.lon],{
         radius:ruht?7:r, color:ruht?"#5f6b6a":tokenFarbe("--surface"), weight:ruht?1.5:1.8, opacity:1, dashArray:ruht?"3 2":null,
         fillColor:ruht?"#b9c2c1":tokenFarbe(karteKat(s)==="bald"?"--karte-bald":KARTE_VAR[s.status]), fillOpacity:ruht?.75:1
       }).addTo(ebene[karteKat(s)]);
-      if(ruht) m.bringToBack();
+      if(ruht && m.bringToBack) m.bringToBack();
       /* Reihenfolge nach Fälligkeit (Inhaber 09.10.2026: „die grünen Punkte verdecken die roten und gelben – Rot immer sehen, dann Gelb,
          Grau, Grün, dann die nicht betreuten“) – höher = weiter oben, siehe punkteOrdnen */
       m._uktRang=ruht ? 0 : ({ueberfaellig:5, faellig:4, bald:3, sonst:2, plan:1})[karteKat(s)]||1;
@@ -6534,7 +6542,20 @@ function fernVonMarkt(s){
   return {fernzugriff:"ja", zugangLink:s.fernLink||"", zugangBenutzer:s.fernBenutzer||"", zugangPasswort:s.fernPasswort||"", zugangWeitere:s.fernWeitere||null, _vomMarkt:true};
 }
 function anlageHatEigenenZugang(d){ return !!(d.zugangLink || d.zugangBenutzer || d.zugangPasswort || (zugaengeLesen(d.zugangWeitere)||[]).length); }
+/* kompakt (Inhaber 12.10.2026: „das Feld Zugang zur Regelung benötigt unnötig viel Platz“): eine Zeile mit Knopf –
+   die Zugangsdaten öffnen sich als eigenes Fenster (zugangBoxVoll) */
 function zugangBox(d){
+  if(nurLesen()||demo()||!angemeldetOderLokal()) return null;
+  if(d.fernzugriff!=="ja") return null;
+  if(!anlageHatEigenenZugang(d) && !d._vomMarkt){ var fm=fernVonMarkt(byId[d.standortId]); if(fm) d=Object.assign({}, d, fm); }
+  if(!zugangBoxVoll(d)) return null;
+  var titel="Zugang zur Regelung"+(d._vomMarkt?" – gilt für den ganzen Markt":"");
+  var z=el('<div class="rowflex" data-zugang-kurz style="gap:8px;align-items:center;font-size:12.5px;flex-wrap:nowrap"><button class="btn ghost sm" type="button" style="flex:none">🔐 Zugang zur Regelung</button>'+
+    '<span class="muted" style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(String(d.zugangLink||"").replace(/^https?:\/\//,"").slice(0,60))+(d._vomMarkt?" · gilt für den ganzen Markt":"")+"</span></div>");
+  z.querySelector("button").onclick=function(){ var v=ansichtOeffnen(titel); v.inhalt.appendChild(zugangBoxVoll(d)); };
+  return z;
+}
+function zugangBoxVoll(d){
   if(nurLesen()||demo()||!angemeldetOderLokal()) return null;   /* Kunde, Präsentation und Abgemeldete sehen keine Zugangsdaten */
   if(d.fernzugriff!=="ja") return null;
   /* Anlage ohne eigenen Zugang: der Zugang des Markts gilt (eine Anmeldung für alle Anlagen) */
