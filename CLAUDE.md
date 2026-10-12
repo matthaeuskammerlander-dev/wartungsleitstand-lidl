@@ -575,8 +575,10 @@ Kammerlander Umwelt- und Klimatechnik (UKT) – oft kurz, vom Handy, im Feld.
   unter dem Markt, im geführten Dialog im Schritt „Gewartete/Betroffene Anlagen“. Zusätzlich ganz oben im Kopf
   „❓ n Frage(n) vor Ort“ (`P.vorOrtHinweis`, nur solange eine ohne Antwort offen ist; antippen springt hin – Inhaber 05.10.2026).
 - **Alte Liste prüfen** (`altlisteFunde`, Verwaltung › Datenpflege): Nebenfeld-Hinweise auf weitere Anlagen, Zellen ohne Datum,
-  Inbetriebnahme nach erster Wartung, zwei Märkte an einer Adresse (nur ohne bzw. gleiche Filialnummer), Lidl ohne Filialnummer;
-  „passt so“ bzw. „als Frage weitergegeben“ als Merker `altliste:<Schlüssel>`.
+  Inbetriebnahme nach erster Wartung, zwei Märkte an einer Adresse (nur ohne bzw. gleiche Filialnummer), Lidl ohne Filialnummer,
+  Kartenpunkt nur grob (Inhaber 12.10.2026: Genauigkeit ort/strasse/keine; „manuell“ gilt wie „adresse“ – auch in `datenpflegePunkte`);
+  „passt so“ bzw. „als Frage weitergegeben“ als Merker `altliste:<Schlüssel>`. Kartenpunkte am 12.10.2026 gegen OpenStreetMap (Lidl-Markt-Punkte)
+  abgeglichen und als Markt-Überschreibung (lat/lon → „manuell“) in Supabase gesetzt – nie ins Repository.
 - **Auslastung** (`auslastungRechnen`, Kalender, nur Büro): Wartungen der nächsten 12 Monate (gelernte Arbeitszeit, Fahrt als
   Rundfahrt je FM-Region, Störungen im Schnitt) gegen Sollzeit ohne Urlaub/Krank/Feiertag der gewählten Personen; Schätzung.
 - **Sicherung** (tools/sicherung.sql, nur Inhaber): wöchentlich beim Öffnen der App Datenbestand gepackt in den privaten
