@@ -6076,6 +6076,9 @@ test("Inbetriebnahmeprotokoll: aus der Anlage vorbelegt, Füllmenge und CO₂e g
         intervallCode: "JW", monat: 0, anlageZu: "NPibn2", neuAngelegt: jetzt, vorOrtNeu: true } });
     await x("ladeStammdaten().then(storeNachRender)"); await A.warte(300);
     db.projekte.find((p) => p.id === "pan1").daten.anlagen = ["NPibn1", "NPibn2"];
+    /* Zertifikate wie im Protokoll: Firma vom letzten Mal (Gerät), Person aus „Meine Angaben“ (Inhaber 12.10.2026) */
+    x("lsSet('ukt_zertu', 'AT-UNT-TEST-250'); 1");
+    x("Store.benutzer.user_metadata = Object.assign({}, Store.benutzer.user_metadata, {einstellungen: Object.assign({}, meineAngaben(), {zertp: 'G14-TEST-1'})}); 1");
     await x("projekteLaden()");
     x("projektAnsicht('pan1')");
     const karte = await A.bis(() => A.karte(/^Inbetriebnahmeprotokolle/));
@@ -6096,6 +6099,7 @@ test("Inbetriebnahmeprotokoll: aus der Anlage vorbelegt, Füllmenge und CO₂e g
     e.kopf = ["betreiber", "standort"].map((k) => d.querySelector('[data-k="' + k + '"]').value).concat(["hersteller", "modell", "snAussen"].map((k) => d.querySelector('[data-ak="' + k + '"]').value)).join("|") + "|" + d.querySelector('[data-at="snInnen"]').value.replace(/\n/g, "/");
     A.knopf(d, /^Weiter: Kältemittel/).click(); await A.warte(100);
     e.km = d.querySelector('[data-ak="kaeltemittel"]').value;
+    e.zert = d.querySelector('[data-k="zertUnternehmen"]').value + "|" + d.querySelector('[data-k="zertPerson"]').value;
     const tippe = (k, w) => { const i = d.querySelector('[data-k="' + k + '"]'); i.value = w; i.dispatchEvent(new Event("input", { bubbles: true })); };
     const tippeA = (k, w) => { const i = d.querySelector('[data-ak="' + k + '"]'); i.value = w; i.dispatchEvent(new Event("input", { bubbles: true })); };
     tippeA("fuellWerk", "11,8"); tippeA("nachfuellung", "4,5");
@@ -6158,7 +6162,7 @@ test("Inbetriebnahmeprotokoll: aus der Anlage vorbelegt, Füllmenge und CO₂e g
     const html = x("ibnBlattHtml")(pr, z);
     e.blatt = /INBETRIEBNAHMEPROTOKOLL KÄLTEANLAGE/.test(html) && /16,3 kg/.test(html) && /34,03 t CO₂e/.test(html) && /Gefälle fehlt/.test(html) && /Kühlen 22 °C · Nachtabsenkung 22:00–06:00/.test(html)
       && /siehe Abnahmeprotokoll des Auftraggebers – Endabnahme Lidl vom 24.09.2026/.test(html) && /FXFQ63/.test(html) && /Verordnung \(EU\) 2024\/573/.test(html) && !/mit Vorbehalt/.test(html)
-      && /Anlage 1 von 2: VRV Verkauf/.test(html) && /Anlage 2 von 2: Split Backshop/.test(html) && /Nachfüllung bei 18 m Rohrlänge/.test(html) && /4,05 t CO₂e/.test(html) && /KÄLTEANLAGEN/.test(html);
+      && /Anlage 1 von 2: VRV Verkauf/.test(html) && /Anlage 2 von 2: Split Backshop/.test(html) && /Nachfüllung bei 18 m Rohrlänge/.test(html) && /4,05 t CO₂e/.test(html) && /KÄLTEANLAGEN/.test(html) && /Unternehmenszertifikat Nr\.<\/td><td>AT-UNT-TEST-250/.test(html) && /G14-TEST-1/.test(html);
     x("ansichtenSchliessen(); 1");
     e.toasts = window.__toasts.join(" | ");
     return e;
@@ -6169,6 +6173,7 @@ test("Inbetriebnahmeprotokoll: aus der Anlage vorbelegt, Füllmenge und CO₂e g
   pruefe(r.kopf === "Lidl|Testfiliale 901, 1100 Musterstadt, Probegasse 1|Daikin|RXYLQ12T7Y1B|3601384|Verkauf FXFQ63 SN A1/Lager FXFQ40 SN A2", "Kopf: " + r.kopf);
   pruefe(r.km === "R410A" && r.gesamt === "16,3 kg" && /^34,03 t CO₂e \(GWP 2087,5\)/.test(r.co2), "Kältemittel/CO₂e: " + JSON.stringify([r.km, r.gesamt, r.co2]));
   pruefe(/^R32\|6 kg\|4,05 t CO₂e \(GWP 675\)/.test(r.km2), "zweite Anlage: " + r.km2);
+  pruefe(r.zert === "AT-UNT-TEST-250|G14-TEST-1", "Zertifikate nicht vorbelegt: " + r.zert);
   pruefe(/^VRV Verkauf/.test(r.messChips) && /1 Anlage noch ohne Angaben/.test(r.fehlenHinweis) && r.regelungBloecke === 2, "Messwerte je Anlage / Regelung je Anlage: " + JSON.stringify([r.messChips, r.fehlenHinweis, r.regelungBloecke]));
   pruefe(/1 Mangel/.test(r.zusammen) && /nichts offen/.test(r.zusammen) && /Nachtabsenkung 22:00–06:00/.test(r.zusammen), "Zusammenfassung: " + r.zusammen);
   pruefe(r.dokuAntworten === "erl,offen,nz" && r.zeitVorher === true && r.zeitNachher === false && r.uebergabePunkte === 4 && r.keineAbnahmeWahl, "Checkliste/Übergabe nach der Vorlage: " + JSON.stringify([r.dokuAntworten, r.zeitVorher, r.zeitNachher, r.uebergabePunkte, r.keineAbnahmeWahl]));

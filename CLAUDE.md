@@ -367,7 +367,10 @@ Kammerlander Umwelt- und Klimatechnik (UKT) – oft kurz, vom Handy, im Feld.
 - **Inbetriebnahmeprotokoll Kälteanlage** (Inhaber 12.10.2026, Tabelle `inbetriebnahmen`, tools/inbetriebnahmen.sql – gleiche Regeln und Trigger wie die
   Arbeitsnachweise; im SQL-Editor ohne Konto bleiben mitgegebene `erstellt_von`/`monteur` stehen, damit das Büro einem Monteur einen Entwurf anlegen kann):
   nach dem Muster „Inbetriebnahmeprotokoll Kälteanlage“ (KlimaCraft), mit den Anmerkungen des Inhabers auf der Vorlage. „Auftrag“ = Bestell-/Auftragsnummer des
-  Kunden wie auf der Rechnung (`daten.auftragNr` des Projekts; Inhaber 12.10.2026: nie unsere Projektnummer). EIN Protokoll für eine oder
+  Kunden wie auf der Rechnung (`daten.auftragNr` des Projekts; Inhaber 12.10.2026: nie unsere Projektnummer). F-Gase-Zertifikate wie im Wartungsprotokoll
+  (Inhaber 12.10.2026: „ist ja bereits in unserer App gespeichert“): `zertUnternehmen` ← `ibnZertUnternehmen` (Gerät `ukt_zertu`, sonst letztes Protokoll; beim
+  Speichern wieder gemerkt), `zertPerson` ← `ibnZertPerson(monteur)` („Meine Angaben“ `zertp` beim eigenen Konto, sonst Protokolle der Person); leere Felder werden
+  auch bei bestehenden Protokollen vorbelegt. EIN Protokoll für eine oder
   MEHRERE Anlagen (Inhaber 12.10.2026: „mehrere Anlagen auf einmal“): gemeinsam Betreiber/Standort/Auftrag/Datum/Zertifikat, Checkliste, Übergabe, Abnahme,
   Unterschrift; je Anlage `daten.anlagen[]` (`IBN_ANL_FELDER`: Typenschild, Kältemittel, Messwerte, Regelung; `anlage_id` = erste Anlage). Ältere Zeilen mit
   flachen Feldern liest `ibnAnlagen`/`ibnNormieren` gleich. Karte „Inbetriebnahmeprotokolle“
