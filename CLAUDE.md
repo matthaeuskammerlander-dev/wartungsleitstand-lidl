@@ -656,6 +656,12 @@ Kammerlander Umwelt- und Klimatechnik (UKT) – oft kurz, vom Handy, im Feld.
   `AUFTRAG_PDF_LESEN_MAX` (40 MB, `auftragPdfZuGross`); über `AUFTRAG_PDF_ORIGINAL` (1 MB) bleibt eine verkleinerte PDF aus den Seitenbildern
   (`pdfVerkleinern`, „… (verkleinert).pdf“), eingebettete Fotos (ab 300 px, höchstens `AUFTRAG_FOTO_MAX`, je `AUFTRAG_FOTO_PX` als JPEG, `pdfFotosHolen`)
   kommen zu den Auftragsbildern (`o.seiten`) bzw. in die Ansicht im Protokoll.
+- **Lidl-Leistungsstandort** (Lidl FM Filiale, Mail 08.10.2026 – neues FM-System; Inhaber 12.10.2026 „damit Lidl zufrieden ist“): „AT6631“ = AT + Gesellschaft
+  (6 Wundschuh, 9 Großebersdorf, 2 Laakirchen; `LIDL_GESELLSCHAFT`) + Filiale 631; alt „AT0405“. `lidlFilialeAus` (Filiale aus beiden Formen, auch „0405“/„405“) in
+  `standortZuAuftrag`, der Suche (`filtered`) und beim Rapport; `lidlGesellschaftAus`. Je Markt Feld `leistungsstandort` (STAMM_FELDER_ST; Verwaltung „Leistungsstandort (Lidl)“,
+  Form AT+4 Ziffern, muss zur Filialnummer passen; Marktinfo), aus dem Lidl-Auftrag beim Speichern der Störung gemerkt (`marktLeistungsstandortMerken`, nur neues Format,
+  nie geraten). Rechnung an Lidl: `kopf.leistungsstandort` vom Markt (`leistungsstandortVon`), Feld im Editor, Warnung `[data-lstandort-fehlt]`, Zeile „Leistungsstandort: AT6631 –
+  Filiale 631, Adresse (NL Wundschuh)“ im PDF und in der Ansicht (`leistungsstandortZeile`). KI liest das neue Lidl-Formular „Beauftragung“ (Bestellung → Auftragsnummer, „Auftrag Nr“ → Störungsnummer, Leistungsdatum → Zieltermin; ki-lesen).
 - **Störungen nie doppelt** (Büro 01.10.2026): eine Lidl-Auftragsnummer gibt es
   nur einmal als Störung (Datenbank-Index `stoerung_auftrag_einmal`,
   tools/stoerung-eindeutig.sql; im Dialog „Vorhandene öffnen“ statt neu – auch beim Ändern der Nummer).

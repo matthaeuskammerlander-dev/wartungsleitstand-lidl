@@ -825,7 +825,9 @@ var STAMM_FELDER_ST  = ["filiale","name","adresse","plz","ort","region","lat","l
                         /* zur Zeit nicht betreut (bleibt sichtbar, ohne Termine) – anders als aktiv=false (stillgelegt) */
                         "pausiert","pausiertGrund",
                         /* weiterer Kunde außer Lidl (Büro 01.10.2026): Kennung des Kunden – leer = Lidl */
-                        "kundeId"];
+                        "kundeId",
+                        /* Lidl-Leistungsstandort „AT6631“ (neues FM-System, 10/2026) – gehört auf jede Rechnung */
+                        "leistungsstandort"];
 var STAMM_FELDER_POS = ["anlagentyp","intervallCode","inbetriebnahme","monat","monatGrund","kaeltemittelKg",
                         "kaeltemittelArt","rueckkuehler","aktiv","notiz",
                         /* Anlagendaten, die vor Ort nach und nach ergänzt werden */
@@ -2548,8 +2550,8 @@ function stoerAuswahlAufheben(){
 }
 function filtered(){
   var q=suchNorm(S.q.trim());
-  /* Filialnummer in Lidl-Schreibweise: „AT0405“ oder „0405“ findet Filiale 405 */
-  var fil=/^(at)?0*(\d{1,4})$/i.exec(S.q.trim());
+  /* Filialnummer in Lidl-Schreibweise: „AT0405“, „AT6405“ (neuer Leistungsstandort) oder „0405“ findet Filiale 405 */
+  var fil=/^(at)?\s*\d{1,4}$/i.test(S.q.trim()) ? [null, null, lidlFilialeAus(S.q)] : null;
   return ST.filter(function(s){
     if(!kundeImFilter(s)) return false;
     if(S.region!=="alle" && s.region!==S.region) return false;
@@ -6394,6 +6396,7 @@ function standortDetail(s){
         : esc(s.adresse))+"</dd>"+
       (istLidl(s) ? "<dt>FM-Region</dt><dd>"+esc(s.region||"nicht zugeordnet")+"</dd>" : "<dt>Kunde</dt><dd>"+(nurLesen()?esc(kundeTitel(kundeVon(s))):kundeLink(kundeVon(s)))+"</dd>")+
       (s.filiale?"<dt>Filiale</dt><dd class='mono'>"+esc(s.filiale)+"</dd>":"")+
+      (leistungsstandortVon(s)?"<dt>Leistungsstandort</dt><dd class='mono' title='Lidl-Code für Rechnungen (neues FM-System)'>"+esc(leistungsstandortVon(s))+"</dd>":"")+
       /* Projekte an diesem Standort (neue Anlagen, Umbauten) */
       (function(){ var pl=nurLesen()?[]:PROJEKTE.filter(function(p){ return p.standort_id===s.id; });
         return pl.length ? "<dt>Projekte</dt><dd>"+pl.map(function(p){ return projektLink(p)+(projektOffen(p)?" ("+esc(projektSchritt(p.status)[1])+")":""); }).join("<br>")+"</dd>" : ""; })()+
@@ -9476,6 +9479,8 @@ function stoerungSpeichern(o, grund, rueck){
       if(vorher.termin!==o.termin || (vorher.terminZeit||"")!==(o.terminZeit||"") || stoerWer(vorher).join(", ")!==stoerWer(o).join(", "))
         stoerungEinsatzMelden(o, !vorher.termin);
     }
+    /* Leistungsstandort (AT6455) aus dem Auftrag am Markt merken – für die Rechnung (Lidl, 10/2026) */
+    if(wo!==false && o.standortId && byId[o.standortId]) marktLeistungsstandortMerken(byId[o.standortId], o.filialCode);
     /* Kontakt aus dem Störungsauftrag: ins Adressbuch (still – passiert bei jedem Speichern) */
     if(wo!==false && o.lidlKontakt && typeof kontaktErfassen==="function") kontaktErfassen(stoerungKontakt(o),
       {art:"stoerung", id:o._id, titel:"Störung "+(byId[o.standortId]?stName(byId[o.standortId]):"")+(o.auftragsnummer?" "+o.auftragsnummer:"")}, true);
@@ -10887,14 +10892,14 @@ function werteRapport(text, dateiname){
   else if(/Rapport ohne IMS-Auftrag/.test(t)) d.art="ohne IMS-Auftrag";
   if((m=/\((\d{6,})\)/.exec(t))) d.nummer=m[1];
   if((m=/\| (\d{6,}) \| Auftrag-Nr\./.exec(t)) || (m=/Auftrag-Nr\. \| (\d{6,}) \|/.exec(t))) d.auftrag=m[1];
-  if((m=/Filiale: \| AT0*(\d+)/.exec(t))) d.filiale=m[1];
+  if((m=/Filiale: \| (AT\d+)/.exec(t))) d.filiale=lidlFilialeAus(m[1])||m[1].replace(/^AT0*/,"");
   var zeile=/\| (\d\d\.\d\d\.\d{4}) \| (.+?) \| (\d{1,2}) \| (\d{1,2}:\d\d) \| (\d{1,2}:\d\d) \| (\d{1,2}:\d\d) \| (\d{1,3}:\d\d) \| (.+?)(?= \| \d\d\.\d\d\.\d{4} \| .+? \| \d{1,2} \| \d{1,2}:\d\d| \| Wir bestätigen)/g;
   while((m=zeile.exec(t))){
     d.zeilen.push({datum:datumIso(m[1]), firma:m[2].replace(/ \| /g," "), personen:+m[3], von:m[4], bis:m[5], pause:m[6],
       stunden:m[7], arbeiten:m[8].replace(/ \| /g," ").replace(/\s+/g," ").trim()});
   }
-  var n=/^(?:(\d{6,})_)?AT0*(\d+)_(\d{6,})_rapport/i.exec(dateiname||"");
-  if(n){ if(!d.auftrag && n[1]) d.auftrag=n[1]; if(!d.filiale) d.filiale=n[2]; if(!d.nummer) d.nummer=n[3]; }
+  var n=/^(?:(\d{6,})_)?(AT\d+)_(\d{6,})_rapport/i.exec(dateiname||"");
+  if(n){ if(!d.auftrag && n[1]) d.auftrag=n[1]; if(!d.filiale) d.filiale=lidlFilialeAus(n[2])||n[2].replace(/^AT0*/i,""); if(!d.nummer) d.nummer=n[3]; }
   var min=d.zeilen.reduce(function(s,z){ var h=z.stunden.split(":"); return s+(+h[0])*60+(+h[1]); },0);
   if(d.zeilen.length) d.stunden=Math.floor(min/60)+":"+String(min%60).padStart(2,"0");
   d.lesbar=d.zeilen.length>0;
@@ -14913,11 +14918,44 @@ function leseLidlPdf(datei){
   });
 }
 
-/* Kostenstelle AT0234 -> Filiale 234; sonst über die Adresse */
+/* Leistungsstandort von Lidl (FM Filiale, Mail 08.10.2026, neues FM-System): „AT6631“ = Land AT, Gesellschaft/Niederlassung
+   (6 = Wundschuh, 9 = Großebersdorf, 2 = Laakirchen), Filiale 631. Bisher „AT0405“ = Filiale 405 – beides wird verstanden.
+   Der volle Code steht je Markt in `leistungsstandort` (aus dem Auftrag gemerkt oder in der Verwaltung eingetragen) und gehört
+   so auf jede Lidl-Rechnung („damit Lidl zufrieden ist“, Inhaber 12.10.2026). */
+var LIDL_GESELLSCHAFT={"6":"Wundschuh","9":"Großebersdorf","2":"Laakirchen"};
+function lidlFilialeAus(text){
+  var t=String(text||"").trim(), m;
+  if((m=/^(?:AT)?\s*(\d)(\d{3})$/i.exec(t))) return String(+m[2]);     /* AT6631, AT0405, 6631, 0405 → 631 bzw. 405 */
+  if((m=/^(?:AT)?\s*0*(\d{1,3})$/i.exec(t))) return String(+m[1]);      /* 405, 45 */
+  if((m=/\bAT(\d)(\d{3})\b/i.exec(t))) return String(+m[2]);            /* irgendwo im Text */
+  return "";
+}
+function lidlGesellschaftAus(text){ var m=/^\s*AT([1-9])\d{3}\s*$/i.exec(String(text||"")); return m?m[1]:""; }
+/* der Code, wie er auf die Rechnung gehört – gemerkt am Markt; sonst leer (nie raten: die Gesellschaft steht nicht im Markt) */
+function leistungsstandortVon(s){ return s && s.leistungsstandort ? String(s.leistungsstandort).trim().toUpperCase() : ""; }
+function leistungsstandortZeile(s, code){
+  code=code||leistungsstandortVon(s); if(!code) return "";
+  var g=LIDL_GESELLSCHAFT[lidlGesellschaftAus(code)];
+  return code+(s ? " – "+(s.filiale?"Filiale "+s.filiale:stName(s))+(s.adresse?", "+s.adresse:"") : "")+(g?" (NL "+g+")":"");
+}
+/* aus einem Lidl-Auftrag den Code am Markt merken (nur neues Format mit Gesellschaft; passt die Filiale nicht, nichts merken) */
+function marktLeistungsstandortMerken(s, code){
+  code=String(code||"").trim().toUpperCase();
+  if(!s || !/^AT[1-9]\d{3}$/.test(code) || leistungsstandortVon(s)===code || !angemeldetOderLokal() || demo()) return Promise.resolve(false);
+  if(!s.filiale || lidlFilialeAus(code)!==String(+s.filiale)) return Promise.resolve(false);
+  var vorher=auswahl(s,STAMM_FELDER_ST); if(s.entfernt) vorher.aktiv=marktAktivGespeichert(s);
+  var neu=Object.assign({}, vorher, {leistungsstandort:code});
+  var gegenExcel=objDiff(EXCEL["standort:"+s.id]||{}, neu, STAMM_FELDER_ST);
+  var rec={id:"standort:"+s.id, typ:"standort", ziel:s.id, felder:s._neu?neu:gegenExcel, neu:!!s._neu,
+           geaendert:new Date().toISOString(), von:wer(), grund:"Leistungsstandort "+code+" aus dem Lidl-Auftrag übernommen"};
+  stammUeber[rec.id]=rec;
+  return stammSpeichern(rec, false, {}).then(function(wo){ if(wo!==false) wendeStammdatenAn(); return wo!==false; });
+}
+/* Kostenstelle/Leistungsstandort AT0234 bzw. AT6234 -> Filiale 234; sonst über die Adresse */
 function standortZuAuftrag(a){
   /* auch die blanke Filialnummer („405“, „0405“) */
-  var m=/^\s*(?:AT)?0*(\d{1,4})\s*$/i.exec(a.kostenstelle||"") || /AT0*(\d+)/i.exec(a.kostenstelle||"");
-  if(m){ var tr=ST.filter(function(s){ return String(s.filiale||"").replace(/^0+/,"")===m[1]; }); if(tr.length) return tr[0]; }
+  var f=lidlFilialeAus(a.kostenstelle);
+  if(f){ var tr=ST.filter(function(s){ return String(s.filiale||"").replace(/^0+/,"")===f; }); if(tr.length) return tr[0]; }
   if(a.adresse){
     var norm=function(t){ return String(t||"").toLowerCase().replace(/straße|strasse/g,"str").replace(/[^a-z0-9äöüß]/g,""); };
     var plz=(/\b(\d{4})\b/.exec(a.adresse)||[])[1], strasse=norm(a.adresse.split(",")[0]);
@@ -24016,6 +24054,7 @@ function verwaltungTeilSpeichern(P){
         filiale:c.querySelector("#a_filiale").value.trim(), name:c.querySelector("#a_name").value.trim()||(exS.name||""),
         adresse:c.querySelector("#a_adresse").value.trim(), plz:c.querySelector("#a_plz").value.trim(),
         ort:c.querySelector("#a_ort").value.trim(), region:c.querySelector("#a_region").value,
+        leistungsstandort:c.querySelector("#a_leistungsstandort").value.trim().toUpperCase(),
         lat:num(c.querySelector("#a_lat").value), lon:num(c.querySelector("#a_lon").value),
         notiz:c.querySelector("#a_notiz").value.trim(),
         kundeId:c.querySelector("#a_kunde").value==="lidl" ? null : c.querySelector("#a_kunde").value
@@ -24029,6 +24068,8 @@ function verwaltungTeilSpeichern(P){
       neuSt.pausiert = mStatus==="pausiert" ? true : null;
       neuSt.pausiertGrund = mStatus==="pausiert" ? (c.querySelector("#a_pausiertGrund").value.trim()||grund) : "";
       if(!neuSt.filiale && !neuSt.name && !neuSt.adresse){ P.fehler("Ein Markt braucht mindestens Filialnummer, Bezeichnung oder Adresse."); return; }
+      if(neuSt.leistungsstandort && !/^AT\d{4}$/.test(neuSt.leistungsstandort)){ P.fehler("Der Leistungsstandort hat die Form AT + 4 Ziffern, z. B. AT6631 (6 = Wundschuh, 9 = Großebersdorf, 2 = Laakirchen, 631 = Filiale)."); return; }
+      if(neuSt.leistungsstandort && neuSt.filiale && lidlFilialeAus(neuSt.leistungsstandort)!==String(+neuSt.filiale)){ P.fehler("Der Leistungsstandort „"+neuSt.leistungsstandort+"“ passt nicht zur Filialnummer "+neuSt.filiale+" (die letzten drei Ziffern sind die Filiale)."); return; }
       /* Postleitzahl: vier Ziffern (Österreich), fünf für Deutschland – sonst fände sich weder Zone noch Lage */
       if(neuSt.plz && !/^\d{4,5}$/.test(neuSt.plz)){ P.fehler("Die Postleitzahl „"+neuSt.plz+"“ stimmt nicht – bitte nur die Ziffern, z. B. 6060."); return; }
       if(neuSt.lat!=null && (isNaN(neuSt.lat)||neuSt.lat<46||neuSt.lat>49.5)){ P.fehler("Der Breitengrad liegt nicht in Österreich (etwa 46,3 bis 49,1)."); return; }
@@ -24353,6 +24394,8 @@ function verwaltungEditor(s){
         return '<option value="'+esc(k.id)+'"'+(kundeVon(s)===k.id?" selected":"")+">"+esc(k.name+(k.aktiv===false?" (nicht mehr betreut)":""))+"</option>"; }).join("")+
         (kundeVon(s)!=="lidl" && !KUNDEN[kundeVon(s)] ? '<option value="'+esc(kundeVon(s))+'" selected>Kunde (gelöscht)</option>' : "")+"</select></label>"+
       feld("a_filiale","Filialnummer",s.filiale,"text",hinweisExcel("filiale",s.filiale))+
+      feld("a_leistungsstandort","Leistungsstandort (Lidl, z. B. AT6"+esc(String(s.filiale||"631").padStart(3,"0"))+")",s.leistungsstandort||"","text",
+        '<span class="muted" style="font-weight:400"> – steht im Lidl-Auftrag, gehört auf die Rechnung</span>')+
       /* leer lassen = automatischer Name (Ort bzw. Ort + Straße) */
       '<label class="fl"><span>Bezeichnung</span><input type="text" id="a_name" value="'+esc(eigenerName(s))+
         '" placeholder="'+esc(s.autoName||"z. B. Seekirchen")+'"><span class="muted" style="font-size:11.5px">'+
@@ -24421,7 +24464,7 @@ function verwaltungEditor(s){
   /* Lidl-Felder nur bei Lidl: Filialnummer und FM-Region */
   var lidlFelder=function(){
     var lidl=c.querySelector("#a_kunde").value==="lidl";
-    ["#a_filiale","#a_region"].forEach(function(id){ var l=c.querySelector(id).closest("label"); if(l) l.hidden=!lidl; });
+    ["#a_filiale","#a_leistungsstandort","#a_region"].forEach(function(id){ var l=c.querySelector(id).closest("label"); if(l) l.hidden=!lidl; });
     c.querySelector("legend").textContent=lidl?"Markt":"Standort";
   };
   c.querySelector("#a_kunde").addEventListener("change", lidlFelder); lidlFelder();
@@ -26747,7 +26790,7 @@ Object.assign(RUNDGAENGE, {
       "Dieser Rundgang zeigt jeden Schritt – und die Rückfragen von Lidl mit der fertigen Antwort-Mail."},
     {reiter:"faellig", ziel:function(){ return rgEl("#st_neu"); }, titel:"Störungsauftrag erfassen",
       text:"„+ Störungsauftrag“ (Fällig oder am Markt) – oder aus dem Posteingang bzw. den Rückfragen. Den Auftrag einlesen:"+RG_LISTE([
-        "<strong>PDF öffnen</strong>: die App liest Auftragsnummer, Problem, Kontakt; „Ausführen bis“ wird der Zieltermin; der Markt kommt über die Kostenstelle (AT0405 = Filiale 405) oder die Adresse.",
+        "<strong>PDF öffnen</strong>: die App liest Auftragsnummer, Problem, Kontakt; „Ausführen bis“ wird der Zieltermin; der Markt kommt über die Kostenstelle bzw. den Leistungsstandort (AT0405 oder neu AT6405 = Filiale 405) oder die Adresse. Der neue Leistungsstandort (AT6631: 6 = Wundschuh, 9 = Großebersdorf, 2 = Laakirchen) wird beim Markt gemerkt und gehört auf jede Lidl-Rechnung.",
         "<strong>Foto</strong> oder eingescannte PDF: fehlen danach noch Angaben, liest <strong>„Fehlendes mit KI auslesen“</strong> sie – die Werte kommen zur Kontrolle (ist schon alles da, gibt es den Knopf nicht).",
         "<strong>QR-Code scannen</strong> – setzt die Auftragsnummer."])+
       RG_HG(["Die PDF bleibt an der Störung und wandert später ins Protokoll.",
@@ -26959,7 +27002,7 @@ Object.assign(RUNDGAENGE, {
   ]},
   anlagen:{thema:true, titel:"Märkte, Anlagen und Verlauf", fuer:function(){ return !nurLesen(); }, schritte:[
     {reiter:"faellig", ziel:function(){ return rgEl("#kundenchips") || rgEl("#regionchips") || rgEl("#q"); }, titel:"Auswahl oben",
-      text:"In Fällig, Karte und Anlagen: Kundenauswahl (Nur Lidl / Lidl + weitere / Nur weitere), Region, Suche (auch „AT0405“ oder „0405“ für Filiale 405). „× Auswahl aufheben“ setzt Suche und Region zurück."+
+      text:"In Fällig, Karte und Anlagen: Kundenauswahl (Nur Lidl / Lidl + weitere / Nur weitere), Region, Suche (auch „AT0405“, „AT6405“ oder „0405“ für Filiale 405). „× Auswahl aufheben“ setzt Suche und Region zurück."+
       RG_HG("Die Kundenauswahl gilt auch für Störungen, Rückfragen und Projekte; Suche und Region blenden offene Störungen nie aus (sie stehen „außerhalb der Auswahl“).")},
     {reiter:"faellig", ziel:function(){ return rgKarte(/^Anstehende Wartungen|^Termine im Zeitplan|^Fällig im/); }, titel:"Fällig: Kacheln und Liste",
       text:"Die Kacheln führen zur passenden Liste; „Fälligkeiten nach FM-Region“ filtert nach Region bzw. Monat (gilt dann für alle Reiter). Die Liste „Anstehende Wartungen“ zeigt bis 120 Zeilen, nach Fälligkeit."+
@@ -31097,6 +31140,7 @@ function belegPdfErzeugen(b, kx){
     if(b.art==="angebot" && kopf.gueltigBis) kz("Gültig bis", dfmt(kopf.gueltigBis));
     y=Math.max(y, ry)+8;
     schrift(9.5);
+    if(b.art==="rechnung" && kopf.leistungsstandort){ doc.text(T("Leistungsstandort: "+leistungsstandortZeile(b.standort_id && byId[b.standort_id], kopf.leistungsstandort)), L, y); y+=5; }
     if(b.art==="rechnung" && kopf.leistungszeitraum){ doc.text(T("Leistungszeitraum: "+kopf.leistungszeitraum), L, y); y+=7; }
     schrift(10.5, true);
     (kopf.betreff||[]).forEach(function(z){ doc.splitTextToSize(T(z), R-L).forEach(function(t){ doc.text(t, L, y); y+=5; }); });
@@ -31788,7 +31832,7 @@ function belegAnsicht(kx, b, fertig){
     v.inhalt.appendChild(el('<div class="note" style="font-size:13px">'+
       esc((kopf.betreff||[]).join(" · ")||kontextTitel(kx))+
       '<br><span class="muted">gehört zu: '+(kx.projekt?projektLink(kx.projekt):esc(kontextTitel(kx)))+"</span>"+
-      (kopf.bestellung?"<br>Bestellung: "+esc(kopf.bestellung):"")+(kopf.leistungszeitraum?"<br>Leistungszeitraum: "+esc(kopf.leistungszeitraum):"")+
+      (kopf.bestellung?"<br>Bestellung: "+esc(kopf.bestellung):"")+(kopf.leistungsstandort?"<br>Leistungsstandort: "+esc(leistungsstandortZeile(b.standort_id && byId[b.standort_id], kopf.leistungsstandort)):"")+(kopf.leistungszeitraum?"<br>Leistungszeitraum: "+esc(kopf.leistungszeitraum):"")+
       (b.art==="rechnung"&&kx.protokoll?"<br>"+(rap?"📎 Rapportbericht von Lidl wird hinten angehängt.":'<strong style="color:var(--warn)">Zum Einsatz liegt noch kein Rapportbericht vor</strong> – am Protokoll nachreichen, dann kommt er ins PDF.'):"")+
       (angebot?"<br>Zum Angebot "+esc(angebot.nummer)+" – rechte Spalte: Menge im Angebot, fett = abweichend.":"")+
       ((kopf.anhaenge||[]).length?"<br>📎 Hinten angehängt: "+kopf.anhaenge.map(function(x){ return esc(x.name||""); }).join(", "):"")+"</div>"));
@@ -32035,6 +32079,8 @@ function belegNeu(kx, art, vorlage, fertig){
     kopf.kundennummer=kopf.kundennummer||kd.kundennummer||""; kopf.uidKunde=kopf.uidKunde||kd.uid||"";
     kopf.sachbearbeiter=F.sachbearbeiter||meinName();
     var st=kx.standort_id && byId[kx.standort_id];
+    /* Lidl verlangt den Leistungsstandort (AT6631) auf jeder Rechnung (10/2026) – vom Markt, wenn bekannt */
+    if(art==="rechnung" && (kx.kunde_id||"lidl")==="lidl" && !kopf.leistungsstandort) kopf.leistungsstandort=leistungsstandortVon(st);
     if(kx.projekt && art==="rechnung"){
       var d=kx.projekt.daten||{};
       kopf.leistungszeitraum=[d.baustelleBeginn||d.beginn, d.baustelleEnde||d.ende].filter(Boolean).map(dfmt).join(" bis ")||kopf.leistungszeitraum||"";
@@ -32147,7 +32193,9 @@ function belegEditor(kx, b, fertig, vorschlaege){
     '<div '+raster+'>'+
       feld("Datum","datum",b.datum,"date")+feld("Betreff","betreff",(kopf.betreff||[]).join(" · "))+feld("Bestellung","bestellung",kopf.bestellung)+
       (b.art==="rechnung" ? feld("Leistungszeitraum","leistungszeitraum",kopf.leistungszeitraum) : feld("gültig bis","gueltigBis",kopf.gueltigBis,"date"))+
+      (b.art==="rechnung" && (kx.kunde_id||"lidl")==="lidl" ? feld("Leistungsstandort (Lidl)","leistungsstandort",kopf.leistungsstandort) : "")+
     "</div>"+
+    (b.art==="rechnung" && (kx.kunde_id||"lidl")==="lidl" && !kopf.leistungsstandort ? '<div class="note warnbox" style="font-size:12.5px" data-lstandort-fehlt><strong>Leistungsstandort fehlt.</strong> Lidl verlangt ihn seit Oktober 2026 auf jeder Rechnung, z. B. AT6631 (6 = Wundschuh, 9 = Großebersdorf, 2 = Laakirchen, 631 = Filiale). Er steht im Lidl-Auftrag in der Spalte „Leistungsstandort“ – hier eintragen und beim Markt in der Verwaltung merken.</div>' : "")+
     '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:10px">'+
       feld("Empfänger (je Zeile)","empfaenger",(kopf.empfaenger||[]).join("\n"),"lang")+
       '<div '+raster+'>'+feld("Kundennummer","kundennummer",kopf.kundennummer)+feld("UID des Kunden","uidKunde",kopf.uidKunde)+
@@ -32273,6 +32321,7 @@ function belegEditor(kx, b, fertig, vorschlaege){
     kopf.bestellung=K("bestellung").value.trim();
     kopf.empfaenger=K("empfaenger").value.split("\n").map(function(t){ return t.trim(); }).filter(Boolean);
     if(K("leistungszeitraum")) kopf.leistungszeitraum=K("leistungszeitraum").value.trim();
+    if(K("leistungsstandort")) kopf.leistungsstandort=K("leistungsstandort").value.trim().toUpperCase();
     if(K("gueltigBis")) kopf.gueltigBis=K("gueltigBis").value||null;
     ["kundennummer","uidKunde","sachbearbeiter","zahlung","einleitung","schluss"].forEach(function(k){ var n=K(k); if(n) kopf[k]=n.value.trim(); });
     return {projekt_id:kx.projekt?kx.projekt.id:(b.projekt_id||null), protokoll_id:kx.protokoll?kx.protokoll._id:(b.protokoll_id||null),

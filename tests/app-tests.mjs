@@ -5924,6 +5924,71 @@ test("KPlus-Rechnung als echte PDF: Wartung, Störung und Arbeitsnachweis – ge
   pruefe(!a.fehler.length, "Laufzeitfehler: " + a.fehler.join("; "));
   await a.zu();
 });
+/* Lidl FM Filiale 08.10.2026: neue Leistungsstandorte „AT6631“ (6 = Wundschuh, 9 = Großebersdorf, 2 = Laakirchen, 631 = Filiale) auf Rechnungen
+   und in Aufträgen – Inhaber 12.10.2026: „wir müssen das bei uns anpassen, damit Lidl zufrieden ist“ */
+test("Lidl-Leistungsstandort AT6631: Markt gefunden (alt AT0405 und neu AT6405), aus dem Auftrag am Markt gemerkt, auf der Rechnung, in der Verwaltung eintragbar", async () => {
+  const a = await oeffnen(KONTEN.inhaber);
+  const r = await a.seite.evaluate(async () => {
+    const x = window.__t.x, w = (ms) => new Promise((f) => setTimeout(f, ms)), db = window.__db.tabellen, e = {};
+    const fil = x("lidlFilialeAus");
+    e.filiale = ["AT6631", "AT0405", "at2901", "0405", "405", "45", "Kostenstelle AT9628 Saalfelden", "ATxyz"].map((v) => v + "→" + fil(v)).join(" | ");
+    e.gesellschaft = x("lidlGesellschaftAus")("AT6631") + x("lidlGesellschaftAus")("AT0405") + "|";
+    const st = x("standortZuAuftrag");
+    e.markt = [st({ kostenstelle: "AT6901" }), st({ kostenstelle: "AT0901" }), st({ kostenstelle: "901" }), st({ kostenstelle: "AT6999" })].map((m) => (m ? m.id : "-")).join(",");
+    /* Suche im Reiter Fällig */
+    x("S.view='faellig'; S.q='AT6901'; render(); 1"); await w(300);
+    e.suche = x("filtered().map(function(s){ return s.id; }).join()");
+    x("S.q=''; 1");
+    /* Störung mit dem neuen Code speichern: der Markt merkt sich den Leistungsstandort */
+    const o = { _id: "st_ls1", standortId: "TS1", filialCode: "AT6901", auftragsnummer: "2002599999", problemtyp: "Temperaturproblem", beschreibung: "Test", seiten: [] };
+    await x("stoerungSpeichern")(o, "Test Leistungsstandort"); await w(600);
+    e.gemerkt = x("leistungsstandortVon(byId.TS1)");
+    e.zeile = x("leistungsstandortZeile(byId.TS1)");
+    /* falscher Code (Filiale passt nicht) wird nicht gemerkt */
+    await x("marktLeistungsstandortMerken")(x("byId.TS2"), "AT6901"); await w(300);
+    e.fremd = x("leistungsstandortVon(byId.TS2)") || "leer";
+    /* Rechnung zum Einsatz: Leistungsstandort im Kopf, im Editor, im PDF-Text und in der Ansicht */
+    db.protokolle.push({ id: "pls1", client_id: "pls1", standort_id: "TS1", datum: "2026-10-05", wartungsart: "Störung", techniker: "Testtechniker", anlagen: [],
+      stoerung: { ankunft: "08:00", ende: "10:00" }, version: 1, erstellt: new Date().toISOString(), erstellt_von: "u_tech_test_at" });
+    await x("Promise.all([ladeProtokolle(), katalogLaden(), belegeAlleLaden()])");
+    x("belegNeu(kontextProtokoll(alleProtokolle(true).filter(function(p){ return p._id==='pls1'; })[0]), 'rechnung', null, function(){})");
+    let ed = null; for (let i = 0; i < 40 && !ed; i++) { await w(150); const d = [...document.querySelectorAll(".assistent")].pop(); if (d && d.querySelector('[data-k="leistungsstandort"]')) ed = d; }
+    e.editorFeld = ed ? ed.querySelector('[data-k="leistungsstandort"]').value : "kein Feld";
+    e.warnung = ed ? !!ed.querySelector("[data-lstandort-fehlt]") : null;
+    x("ansichtenSchliessen(); 1"); await w(200);
+    /* ohne Code am Markt: Warnung im Editor */
+    x("byId.TS3.leistungsstandort=''; 1");
+    db.protokolle.push({ id: "pls2", client_id: "pls2", standort_id: "TS3", datum: "2026-10-05", wartungsart: "Störung", techniker: "Testtechniker", anlagen: [],
+      stoerung: { ankunft: "08:00", ende: "10:00" }, version: 1, erstellt: new Date().toISOString(), erstellt_von: "u_tech_test_at" });
+    await x("ladeProtokolle()");
+    x("belegNeu(kontextProtokoll(alleProtokolle(true).filter(function(p){ return p._id==='pls2'; })[0]), 'rechnung', null, function(){})");
+    ed = null; for (let i = 0; i < 40 && !ed; i++) { await w(150); const d = [...document.querySelectorAll(".assistent")].pop(); if (d && d.querySelector('[data-k="leistungsstandort"]')) ed = d; }
+    e.warnungOhne = ed ? !!ed.querySelector("[data-lstandort-fehlt]") : null;
+    x("ansichtenSchliessen(); 1"); await w(200);
+    /* Ansicht eines gespeicherten Belegs */
+    db.belege.push({ id: "bls1", art: "rechnung", nummer: "T-R-9001", test: true, extern: false, datum: "2026-10-06", status: "entwurf", protokoll_id: "pls1", kunde_id: "lidl", standort_id: "TS1",
+      kopf: { betreff: ["Test"], leistungsstandort: "AT6901" }, positionen: [{ typ: "pos", nr: "1", menge: 1, eh: "Stk", text: "Test", preis: 10 }], summen: { netto: 10, brutto: 12 } });
+    x("belegAnsicht(kontextProtokoll(alleProtokolle(true).filter(function(p){ return p._id==='pls1'; })[0]), window.__db.tabellen.belege.filter(function(b){ return b.id==='bls1'; })[0], function(){})"); await w(400);
+    e.ansicht = ([...document.querySelectorAll(".assistent")].pop() || {}).textContent || "";
+    x("ansichtenSchliessen(); 1"); await w(200);
+    /* Verwaltung: Feld beim Markt, Prüfung der Form */
+    x("Admin.frei=true; S.view='verwaltung'; S.adm={suche:'',filter:'alle',sort:'filiale',auf:true,sel:'TS1',entwurf:null,tab:'maerkte'}; render(); 1"); await w(700);
+    const feld = document.querySelector("#a_leistungsstandort");
+    e.verwaltung = feld ? feld.value + "|" + !feld.closest("label").hidden : "kein Feld";
+    /* Marktinfo zeigt den Code */
+    x("ansichtenSchliessen(); 1"); e.detail = x("standortDetail(byId.TS1).textContent");
+    return e;
+  });
+  pruefe(r.filiale === "AT6631→631 | AT0405→405 | at2901→901 | 0405→405 | 405→405 | 45→45 | Kostenstelle AT9628 Saalfelden→628 | ATxyz→" && r.gesellschaft === "6|", "Filiale/Gesellschaft aus dem Code: " + r.filiale + " " + r.gesellschaft);
+  pruefe(r.markt === "TS1,TS1,TS1,-" && r.suche === "TS1", "Markt zum Code: " + r.markt + " Suche: " + r.suche);
+  pruefe(r.gemerkt === "AT6901" && /^AT6901 – Filiale 901, .*\(NL Wundschuh\)$/.test(r.zeile) && r.fremd === "leer", "am Markt gemerkt: " + JSON.stringify([r.gemerkt, r.zeile, r.fremd]));
+  pruefe(r.editorFeld === "AT6901" && r.warnung === false && r.warnungOhne === true, "Rechnung: " + JSON.stringify([r.editorFeld, r.warnung, r.warnungOhne]));
+  pruefe(/Leistungsstandort: AT6901 – Filiale 901/.test(r.ansicht), "Beleg-Ansicht ohne Leistungsstandort");
+  pruefe(r.verwaltung === "AT6901|true" && /Leistungsstandort\s*AT6901/.test(r.detail), "Verwaltung/Marktinfo: " + r.verwaltung + " / " + r.detail.slice(0, 200));
+  pruefe(!a.fehler.length, "Laufzeitfehler: " + a.fehler.join("; "));
+  await a.zu();
+});
+
 /* Antworten des Inhabers vom 05.10.2026 (Teil kern) */
 test("Antworten kern: „Nur Jahreswartung“ sperrt den Halbjahrestermin wie am Markt üblich – bleibt, bis die Verwaltung es zurücknimmt", async () => {
   const a = await oeffnen(KONTEN.admin);
