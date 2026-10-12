@@ -366,7 +366,8 @@ Kammerlander Umwelt- und Klimatechnik (UKT) – oft kurz, vom Handy, im Feld.
   selben Kunden; gilt für „Rechnung schreiben“, den Vergleich beim Hochladen und „⏱ Stunden aus Arbeitsnachweisen“ (`anVorschlagListe`, mehrere Nachweise).
 - **Inbetriebnahmeprotokoll Kälteanlage** (Inhaber 12.10.2026, Tabelle `inbetriebnahmen`, tools/inbetriebnahmen.sql – gleiche Regeln und Trigger wie die
   Arbeitsnachweise; im SQL-Editor ohne Konto bleiben mitgegebene `erstellt_von`/`monteur` stehen, damit das Büro einem Monteur einen Entwurf anlegen kann):
-  nach dem Muster „Inbetriebnahmeprotokoll Kälteanlage“ (KlimaCraft), mit den Anmerkungen des Inhabers auf der Vorlage. EIN Protokoll für eine oder
+  nach dem Muster „Inbetriebnahmeprotokoll Kälteanlage“ (KlimaCraft), mit den Anmerkungen des Inhabers auf der Vorlage. „Auftrag“ = Bestell-/Auftragsnummer des
+  Kunden wie auf der Rechnung (`daten.auftragNr` des Projekts; Inhaber 12.10.2026: nie unsere Projektnummer). EIN Protokoll für eine oder
   MEHRERE Anlagen (Inhaber 12.10.2026: „mehrere Anlagen auf einmal“): gemeinsam Betreiber/Standort/Auftrag/Datum/Zertifikat, Checkliste, Übergabe, Abnahme,
   Unterschrift; je Anlage `daten.anlagen[]` (`IBN_ANL_FELDER`: Typenschild, Kältemittel, Messwerte, Regelung; `anlage_id` = erste Anlage). Ältere Zeilen mit
   flachen Feldern liest `ibnAnlagen`/`ibnNormieren` gleich. Karte „Inbetriebnahmeprotokolle“
