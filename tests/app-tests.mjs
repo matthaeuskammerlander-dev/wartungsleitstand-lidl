@@ -6210,6 +6210,66 @@ test("Inbetriebnahmeprotokoll: aus der Anlage vorbelegt, Füllmenge und CO₂e g
   await b.zu();
 });
 
+/* Inhaber 12.10.2026 (Präsentation bei Lidl im Kundenkonto): nichts „überfällig“ – „in Planung“; Fernzugriff gehört zum Markt (Link auch für den Kunden,
+   Zugangsdaten nie), gilt für alle Anlagen dort; je Anlage weiter Regelung und Fernzugriff ja/nein */
+test("Kundenkonto: keine überfälligen Termine („in Planung“), Fernzugriff-Link am Markt sichtbar, Zugangsdaten nie; intern gilt der Markt-Zugang für die Anlagen", async () => {
+  const vorbereiten = async (seite) => seite.evaluate(async () => {
+    const x = window.__t.x, db = window.__db.tabellen, w = (ms) => new Promise((f) => setTimeout(f, ms)), jetzt = new Date().toISOString();
+    db.stammdaten.push({ id: "standort:TS1", typ: "standort", ziel: "TS1", neu: false, geaendert: jetzt, von: "Test", grund: "Fernzugriff am Markt",
+      felder: { fernLink: "https://regelung.test/ts1", fernBenutzer: "service", fernPasswort: "Geheim123", fernWeitere: [{ bez: "Kunde", benutzer: "lidl", passwort: "Pw2" }] } });
+    db.stammdaten.push({ id: "position:TP1", typ: "position", ziel: "TP1", neu: false, geaendert: jetzt, von: "Test", grund: "Regelung", felder: { regelung: "Daikin", fernzugriff: "ja" } });
+    await x("ladeStammdaten().then(storeNachRender)"); await w(300);
+    x("posById.TP2.historie=[plusMonate(isoLokal(new Date()),-18)]; berechneFaelligkeiten(); 1");   /* HJI versäumt */
+  });
+  /* intern (Techniker): überfällig bleibt überfällig; Zugang des Markts auch bei der Anlage ohne eigenen Zugang */
+  const a = await oeffnen(KONTEN.techniker);
+  await vorbereiten(a.seite);
+  const rt = await a.seite.evaluate(() => {
+    const x = window.__t.x, e = {};
+    e.tp2 = x("posById.TP2.status") + "|" + x("STATUS_LABEL.faellig");
+    const d = x("standortDetail(byId.TS1)");
+    e.link = (d.querySelector("[data-fernlink]") || {}).textContent;
+    e.marktZugang = /gilt für den ganzen Markt/.test(d.textContent) && /service/.test(d.textContent) && !/Geheim123/.test(d.innerHTML);
+    const host = document.createElement("div"); x("anlagenBloecke")(x("byId.TS1"), host);
+    e.anlageZugang = [...host.querySelectorAll(".note")].some((n) => /regelung\.test\/ts1/.test(n.textContent) && /gilt für den ganzen Markt/.test(n.textContent));
+    e.gruppe = x("ANLAGE_GRUPPEN.filter(function(g){ return g.titel==='Zugang zur Regelung'; })[0].wenn(anlageDaten(posById.TP1))") + "|" +
+      x("ANLAGE_GRUPPEN.filter(function(g){ return g.titel==='Zugang zur Regelung'; })[0].wenn(Object.assign(anlageDaten(posById.TP1), {zugangLink:'https://eigene.test'}))");
+    e.weitere = x("fernWeitereText([{bez:'Kunde', benutzer:'lidl', passwort:'Pw2'}])") + "|" + JSON.stringify(x("fernWeitereLesen('Kunde; lidl; Pw2\\nService; s; p')"));
+    e.geheim = x("GEHEIME_FELDER.indexOf('fernPasswort')>=0 && GEHEIME_FELDER.indexOf('fernLink')<0");
+    return e;
+  });
+  pruefe(/^ueberfaellig\|fällig in/.test(rt.tp2), "intern: " + rt.tp2);
+  pruefe(rt.link === "https://regelung.test/ts1" && rt.marktZugang && rt.anlageZugang, "Markt-Zugang intern: " + JSON.stringify([rt.link, rt.marktZugang, rt.anlageZugang]));
+  pruefe(rt.gruppe === "false|true" && rt.weitere === 'Kunde; lidl; Pw2|[{"bez":"Kunde","benutzer":"lidl","passwort":"Pw2"},{"bez":"Service","benutzer":"s","passwort":"p"}]' && rt.geheim, "Gruppe/weitere/geheim: " + JSON.stringify([rt.gruppe, rt.weitere, rt.geheim]));
+  pruefe(!a.fehler.length, "Laufzeitfehler: " + a.fehler.join("; "));
+  await a.zu();
+  /* Kunde: „in Planung“ statt überfällig, Link ja, Zugangsdaten nein */
+  const k = await oeffnen(KONTEN.kunde);
+  await vorbereiten(k.seite);
+  const rk = await k.seite.evaluate(async () => {
+    const x = window.__t.x, w = (ms) => new Promise((f) => setTimeout(f, ms)), e = {};
+    e.tp2 = x("posById.TP2.status") + "|" + x("posById.TP2.inPlanung") + "|" + x("STATUS_LABEL.faellig") + "|" + x("STATUS_VAR.faellig") + "|" + x("KARTE_KAT[1][1]");
+    e.keineUeber = !x("POS.some(function(p){ return p.status==='ueberfaellig'; }) || ST.some(function(s){ return s.status==='ueberfaellig'; })");
+    e.wann = x("wannText(posById.TP2).zeile");
+    x("S.view='faellig'; render(); 1"); await w(400);
+    const app = document.getElementById("app");
+    e.faelligText = /überfällig/i.test(app.innerText) ? "überfällig sichtbar: " + app.innerText.split(/\n/).filter((z) => /überfällig/i.test(z)).slice(0, 3).join(" ## ") : "ok";
+    e.inPlanung = /in Planung/.test(app.innerText);
+    const d = x("standortDetail(byId.TS1)");
+    e.link = (d.querySelector("[data-fernlink]") || {}).textContent;
+    e.ohneZugang = !/Geheim123|service|Pw2|Zugang zur Regelung/.test(d.innerHTML);
+    const lesen = (await x("Store.sb.from('stammdaten_lesen').select('*').eq('id','standort:TS1')")).data || [];
+    e.sicht = lesen.length === 1 && lesen[0].felder.fernLink === "https://regelung.test/ts1" && !("fernPasswort" in lesen[0].felder) && !("fernBenutzer" in lesen[0].felder);
+    e.markt = x("STATUS_LABEL[byId.TS1.status]");
+    return e;
+  });
+  pruefe(rk.tp2 === "faellig|true|in Planung|--good|in Planung" && rk.keineUeber && rk.wann === "in Planung", "Kunde Status: " + JSON.stringify([rk.tp2, rk.keineUeber, rk.wann]));
+  pruefe(rk.faelligText === "ok" && rk.inPlanung && rk.markt === "in Planung", "Kunde Fällig-Ansicht: " + JSON.stringify([rk.faelligText, rk.inPlanung, rk.markt]));
+  pruefe(rk.link === "https://regelung.test/ts1" && rk.ohneZugang && rk.sicht, "Kunde Fernzugriff: " + JSON.stringify([rk.link, rk.ohneZugang, rk.sicht]));
+  pruefe(!k.fehler.length, "Laufzeitfehler (Kunde): " + k.fehler.join("; "));
+  await k.zu();
+});
+
 /* Antworten des Inhabers vom 05.10.2026 (Teil kern) */
 test("Antworten kern: „Nur Jahreswartung“ sperrt den Halbjahrestermin wie am Markt üblich – bleibt, bis die Verwaltung es zurücknimmt", async () => {
   const a = await oeffnen(KONTEN.admin);

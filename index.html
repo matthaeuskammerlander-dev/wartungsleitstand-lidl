@@ -827,7 +827,11 @@ var STAMM_FELDER_ST  = ["filiale","name","adresse","plz","ort","region","lat","l
                         /* weiterer Kunde außer Lidl (Büro 01.10.2026): Kennung des Kunden – leer = Lidl */
                         "kundeId",
                         /* Lidl-Leistungsstandort „AT6631“ (neues FM-System, 10/2026) – gehört auf jede Rechnung */
-                        "leistungsstandort"];
+                        "leistungsstandort",
+                        /* Fernzugriff auf die Regelung – gilt für alle Anlagen am Markt (Inhaber 12.10.2026); der Link darf der Kunde sehen,
+                           Benutzer/Passwort/weitere Benutzer sind geheim wie an der Anlage (GEHEIM_MARKT) */
+                        "fernLink","fernBenutzer","fernPasswort","fernWeitere"];
+var GEHEIM_MARKT=["fernBenutzer","fernPasswort","fernWeitere"];
 var STAMM_FELDER_POS = ["anlagentyp","intervallCode","inbetriebnahme","monat","monatGrund","kaeltemittelKg",
                         "kaeltemittelArt","rueckkuehler","aktiv","notiz",
                         /* Anlagendaten, die vor Ort nach und nach ergänzt werden */
@@ -1559,6 +1563,19 @@ function tageBis(iso){
   return Math.round((b-a)/86400000);
 }
 
+/* Kundenkonto (Inhaber 12.10.2026, Präsentation bei Lidl – das Konto wird vorerst nicht ausgegeben): für den Kunden gibt es kein
+   „überfällig“ – versäumte Termine heißen „in Planung“ (grün), intern bleibt alles wie bisher. Die Beschriftungen werden je Rolle
+   gesetzt (kundeSichtLabels), die Termine in berechneFaelligkeiten umgestuft (p.inPlanung). */
+function kundeSichtLabels(){
+  /* läuft auch beim allerersten Aufbau, bevor Rolle und Beschriftungen weiter unten definiert sind */
+  var k=(typeof Rolle==="object" && !!Rolle && Rolle.name==="kunde");
+  if(typeof STATUS_LABEL!=="object" || !STATUS_LABEL) return k;
+  STATUS_LABEL.faellig=k ? "in Planung" : "fällig in "+VORLAUF_TAGE+" Tagen";
+  STATUS_VAR.faellig=k ? "--good" : "--warn";
+  KARTE_VAR.faellig=k ? "--karte-bald" : "--karte-gelb";
+  if(typeof KARTE_KAT==="object" && KARTE_KAT) KARTE_KAT[1][1]=STATUS_LABEL.faellig;
+  return k;
+}
 var STATUS_LABEL={ueberfaellig:"überfällig",faellig:"fällig in "+VORLAUF_TAGE+" Tagen",
                   geplant:"im Zeitplan",erledigt:"im Zeitplan",unbekannt:"ohne Termin",pausiert:"zur Zeit nicht gewartet"};
 var STATUS_RANK={ueberfaellig:0,faellig:1,unbekannt:2,geplant:3,erledigt:3,pausiert:4};
@@ -1934,6 +1951,10 @@ function berechneFaelligkeiten(){
       p.status = n<heute ? "ueberfaellig" : (n<bald ? "faellig" : "erledigt");
     });
   });
+
+  /* Kundenkonto: versäumte Termine sind „in Planung“ (kein Rot, keine Zählung) – siehe kundeSichtLabels */
+  var kundeSicht=kundeSichtLabels();
+  POS.forEach(function(p){ if(kundeSicht && p.status==="ueberfaellig"){ p.status="faellig"; p.inPlanung=true; } else p.inPlanung=false; });
 
   ST.forEach(function(s){
     var besuche=[];
@@ -2763,6 +2784,7 @@ function bandSVG(band, maxV){
   return '<svg class="chart" viewBox="0 0 '+W+" "+H+'" role="img" aria-label="Fälligkeiten der nächsten 12 Monate, Region '+esc(band.region)+'">'+parts.join("")+"</svg>";
 }
 function wannText(p){
+  if(p.inPlanung) return {zeile:"in Planung", zusatz:""};   /* Kundenkonto: kein „seit n Tagen“ */
   if(!p.naechste) return {zeile:"—", zusatz:""};
   var t=tageBis(p.naechste);
   return {zeile:dfmt(p.naechste).replace(/\.(\d\d)(\d\d)$/,".$2"),
@@ -5046,8 +5068,8 @@ function viewFaellig(){
   };
   var kpis=el('<div class="kpis">'+
     (stoerOffen.length?kachel("crit", stoerOffen.length, "offene Störung"+(stoerOffen.length===1?"":"en"), "stoerungen"):"")+
-    kachel("crit", c.ueberfaellig, "Termine überfällig", "ueberfaellig")+
-    kachel("warn", c.faellig, "fällig in "+VORLAUF_TAGE+" Tagen", "faellig")+
+    (nurLesen() ? "" : kachel("crit", c.ueberfaellig, "Termine überfällig", "ueberfaellig"))+
+    kachel(nurLesen() ? "good" : "warn", c.faellig, STATUS_LABEL.faellig, "faellig")+
     kachel("good", c.erledigt, "im Zeitplan", "plan")+
     kachel("", maerkte.length, "Märkte in der Auswahl", "maerkte")+
   '</div>');
@@ -5112,7 +5134,7 @@ function viewFaellig(){
     '<div class="sub">Jede Zeile hat einen festen Jahrestermin: die Jahreswartung am Jahrestag der Inbetriebnahme, '+
       'Halbjahreswartung und -inspektion sechs Monate versetzt. Gleiche Skala in allen Regionen (Maximum '+maxV+').</div></div>'+
     '<div class="legend">'+
-      '<span><i style="background:var(--crit)"></i>überfällig</span>'+
+      (nurLesen() ? "" : '<span><i style="background:var(--crit)"></i>überfällig</span>')+   /* Kundenkonto: kein „überfällig“ */
       '<span><i style="background:var(--warn)"></i>fällig in '+VORLAUF_TAGE+' Tagen</span>'+
       '<span><i style="background:var(--plan)"></i>später fällig</span>'+
     '</div>'+
@@ -5122,7 +5144,7 @@ function viewFaellig(){
          ein Monatsbalken zeigt die Termine dieses Monats */
       var reg=REGIONEN.indexOf(b.region)>=0;
       return '<div data-region="'+esc(reg?b.region:"")+'"><div class="chart-t">'+(reg?'<a href="#" class="sprunglink" data-rs="liste" title="Nur diese Region">'+esc(b.region)+"</a>":esc(b.region))+
-        '</div><div class="chart-s">'+(b.ueber&&reg?'<a href="#" class="sprunglink" data-rs="ueber">'+b.ueber+" überfällig</a>":b.ueber+" überfällig")+" · "+gesamt+' in 12 Monaten</div>'+bandSVG(b,maxV)+"</div>";
+        '</div><div class="chart-s">'+(nurLesen() ? "" : (b.ueber&&reg?'<a href="#" class="sprunglink" data-rs="ueber">'+b.ueber+" überfällig</a>":b.ueber+" überfällig")+" · ")+gesamt+' in 12 Monaten</div>'+bandSVG(b,maxV)+"</div>";
     }).join("")+"</div>"+
     '<div class="muted" style="font-size:12.5px">Antippen: Region bzw. Monat in der Liste unten zeigen. Die Region gilt dann für alle Reiter.</div>'+
   "</div></div>");
@@ -5603,7 +5625,7 @@ function karteOsm(withGeo){
       'Punktgröße = Anzahl Wartungspositionen, Farbe = dringlichster Status. Antippen öffnet Details und die Navigation.</div></div>'+
     stoerungAusserhalbHinweis(withGeo)+
     '<div class="stack" style="gap:4px"><div class="muted" style="font-size:12.5px">Anzeigen – antippen blendet ein oder aus:</div>'+
-    '<div class="chips" id="kartefilter">'+KARTE_KAT.map(function(k){
+    '<div class="chips" id="kartefilter">'+KARTE_KAT.filter(function(k){ return !(nurLesen() && k[0]==="ueberfaellig"); }).map(function(k){
       var n = k[0]==="stoerung" ? stoerungsMaerkte().length : k[0]==="lidl" ? kundenMaerkte().length
             : withGeo.filter(function(s){ return karteKat(s)===k[0]; }).length;
       /* ohne Rückfragen gibt es die Auswahl „L“ nicht */
@@ -6397,6 +6419,8 @@ function standortDetail(s){
       (istLidl(s) ? "<dt>FM-Region</dt><dd>"+esc(s.region||"nicht zugeordnet")+"</dd>" : "<dt>Kunde</dt><dd>"+(nurLesen()?esc(kundeTitel(kundeVon(s))):kundeLink(kundeVon(s)))+"</dd>")+
       (s.filiale?"<dt>Filiale</dt><dd class='mono'>"+esc(s.filiale)+"</dd>":"")+
       (leistungsstandortVon(s)?"<dt>Leistungsstandort</dt><dd class='mono' title='Lidl-Code für Rechnungen (neues FM-System)'>"+esc(leistungsstandortVon(s))+"</dd>":"")+
+      /* Fernzugriff auf die Regelung: die Adresse sehen alle (auch der Kunde), Benutzer/Passwort nur UKT (zugangBox unten) */
+      (s.fernLink?"<dt>Fernzugriff</dt><dd><a class='mono' href='"+esc(zugangsAdresse(s.fernLink))+"' target='_blank' rel='noopener' style='word-break:break-all' data-fernlink>"+esc(s.fernLink)+"</a></dd>":"")+
       /* Projekte an diesem Standort (neue Anlagen, Umbauten) */
       (function(){ var pl=nurLesen()?[]:PROJEKTE.filter(function(p){ return p.standort_id===s.id; });
         return pl.length ? "<dt>Projekte</dt><dd>"+pl.map(function(p){ return projektLink(p)+(projektOffen(p)?" ("+esc(projektSchritt(p.status)[1])+")":""); }).join("<br>")+"</dd>" : ""; })()+
@@ -6408,6 +6432,7 @@ function standortDetail(s){
     "</dl>"+
     marktVermerk(s)+
     kundenVermerk(s)+
+    '<div data-fernzugang></div>'+
     '<div data-abholhinweis></div>'+
     '<div data-ihmarkt></div>'+
     '<div class="rowflex">'+
@@ -6423,6 +6448,7 @@ function standortDetail(s){
     '<div class="stack" id="poslist"></div>'+
   "</div></div>");
   abholHinweisFuellen(d.querySelector("[data-abholhinweis]"), s.id);
+  var fz=fernVonMarkt(s), fzBox=fz && zugangBox(fz); if(fzBox) d.querySelector("[data-fernzugang]").appendChild(fzBox);
   if(ihAn()) ihKasten(d.querySelector("[data-ihmarkt]"), s.id);
   /* Historie: in der Markt-Ansicht steht sie im selben Fenster darunter – dorthin
      scrollen, statt in den Reiter Verlauf zu wechseln (ein angefangenes Protokoll
@@ -6499,9 +6525,17 @@ function zugangsAdresse(roh){
   if(!s) return "";
   return /^[a-z][a-z0-9+.-]*:\/\//i.test(s) ? s : "http://"+s;
 }
+/* Fernzugriff des Markts (Inhaber 12.10.2026: „der Link gehört zum Markt, nicht zu einer Anlage“) – in der Form der Anlagen-Zugangsdaten */
+function fernVonMarkt(s){
+  if(!s || !(s.fernLink || s.fernBenutzer || s.fernPasswort || (zugaengeLesen(s.fernWeitere)||[]).length)) return null;
+  return {fernzugriff:"ja", zugangLink:s.fernLink||"", zugangBenutzer:s.fernBenutzer||"", zugangPasswort:s.fernPasswort||"", zugangWeitere:s.fernWeitere||null, _vomMarkt:true};
+}
+function anlageHatEigenenZugang(d){ return !!(d.zugangLink || d.zugangBenutzer || d.zugangPasswort || (zugaengeLesen(d.zugangWeitere)||[]).length); }
 function zugangBox(d){
   if(nurLesen()||demo()||!angemeldetOderLokal()) return null;   /* Kunde, Präsentation und Abgemeldete sehen keine Zugangsdaten */
   if(d.fernzugriff!=="ja") return null;
+  /* Anlage ohne eigenen Zugang: der Zugang des Markts gilt (eine Anmeldung für alle Anlagen) */
+  if(!anlageHatEigenenZugang(d) && !d._vomMarkt){ var fm=fernVonMarkt(byId[d.standortId]); if(fm) d=Object.assign({}, d, fm); }
   /* je Zugang eine Zeile: der erste aus den bisherigen Feldern, dazu die weiteren
      Benutzer (Inhaber 06.10.2026) – jeder mit Bezeichnung, Passwort verdeckt */
   var zl=[];
@@ -6510,7 +6544,7 @@ function zugangBox(d){
   if(!d.zugangLink && !zl.length) return null;
   var mehrere=zl.length>1;
   var b=el('<div class="note" style="display:grid;gap:6px">'+
-    '<div class="l muted" style="font-size:11px;text-transform:uppercase;letter-spacing:.06em">Zugang zur Regelung</div>'+
+    '<div class="l muted" style="font-size:11px;text-transform:uppercase;letter-spacing:.06em">Zugang zur Regelung'+(d._vomMarkt?" – gilt für den ganzen Markt":"")+"</div>"+
     (d.zugangLink?'<div class="rowflex" style="gap:8px"><a href="'+esc(zugangsAdresse(d.zugangLink))+
       '" target="_blank" rel="noopener" class="mono" style="word-break:break-all">'+esc(d.zugangLink)+"</a>"+
       '<button class="btn ghost sm" type="button" data-kopiere="link">kopieren</button></div>':"")+
@@ -7659,7 +7693,8 @@ var ANLAGE_GRUPPEN=[
      Protokoll, nie auf dem Blatt, nie im PDF fürs Archiv und nie mit Wert im
      Änderungsverlauf. Sie gehören zur Anlage, nicht zum Einsatz. */
   {titel:"Zugang zur Regelung", frage:"Wie kommt man auf die Regelung?", geheim:true,
-    wenn:function(a){ return a.regelung!==OHNE_REGELUNG && a.fernzugriff==="ja"; }, felder:[
+    /* steht der Zugang am Markt (Verwaltung › Markt), wird er hier nur gefragt, wenn die Anlage einen eigenen hat (Inhaber 12.10.2026) */
+    wenn:function(a){ return a.regelung!==OHNE_REGELUNG && a.fernzugriff==="ja" && (anlageHatEigenenZugang(a) || !fernVonMarkt(byId[a.standortId])); }, felder:[
     {k:"zugangLink", l:"Adresse / Link", t:"text"},
     {k:"zugangBenutzer", l:"Benutzername", t:"text"},
     {k:"zugangPasswort", l:"Passwort", t:"geheim"},
@@ -7719,7 +7754,7 @@ var ANLAGE_FELDER=[].concat.apply([], ANLAGE_GRUPPEN.map(function(g){
   return g.felder.map(function(f){ return Object.assign({gruppe:g}, f); }); }));
 /* Zugangsdaten bleiben bei der Anlage. Sie dürfen weder in den Schnappschuss
    eines Protokolls noch auf das Blatt, das an Lidl geht. */
-var GEHEIME_FELDER=ANLAGE_FELDER.filter(function(f){ return f.gruppe.geheim; }).map(function(f){ return f.k; });
+var GEHEIME_FELDER=ANLAGE_FELDER.filter(function(f){ return f.gruppe.geheim; }).map(function(f){ return f.k; }).concat(GEHEIM_MARKT);
 function istGeheim(k){ return GEHEIME_FELDER.indexOf(k)>=0; }
 function leerWert(w){ return w==null || w==="" || (typeof w==="number" && isNaN(w)); }
 /* Die Auswahllisten lernen dazu: was einmal unter „andere …“ eingetippt wurde,
@@ -7928,6 +7963,12 @@ function zugangBelegt(z){ return !!z && ZUGANG_FELDER.some(function(f){ return S
 function zugaengeLesen(w){
   var l=(Array.isArray(w)?w:[]).filter(zugangBelegt).map(function(z){
     var r={}; ZUGANG_FELDER.forEach(function(f){ var v=String(z[f[0]]==null?"":z[f[0]]).trim(); if(v) r[f[0]]=v; }); return r; });
+  return l.length ? l : null;
+}
+/* weitere Benutzer des Markt-Fernzugriffs als Textzeilen „Bezeichnung; Benutzer; Passwort“ (Verwaltung) und zurück */
+function fernWeitereText(w){ return (zugaengeLesen(w)||[]).map(function(z){ return [z.bez||"", z.benutzer||"", z.passwort||""].join("; "); }).join("\n"); }
+function fernWeitereLesen(text){
+  var l=String(text||"").split(/\r?\n/).map(function(z){ var t=z.split(";").map(function(x){ return x.trim(); }); return {bez:t[0]||"", benutzer:t[1]||"", passwort:t[2]||""}; }).filter(zugangBelegt);
   return l.length ? l : null;
 }
 /* Übersicht und Zusammenführen: Bezeichnung und Benutzer, das Passwort nur verdeckt */
@@ -10228,6 +10269,8 @@ function adminPruefen(nochmal){
       document.body.classList.toggle("nurlesen", nurLesen());
       document.body.classList.toggle("demo", demo());
       demoBanner();
+      /* Rolle steht fest: Fälligkeiten für diese Sicht neu stufen (Kunde: „in Planung“ statt überfällig; sonst zurück) */
+      kundeSichtLabels(); berechneFaelligkeiten();
       /* Anlagendaten vom Gerät auch von Technikern – nicht unter einer nur gemerkten Rolle */
       if(!nurLesen() && !demo() && !Rolle.gemerkt) stammdatenUebertragen();
       wunschLinkNeu();
@@ -20706,7 +20749,8 @@ function korrekturZuruecknehmbar(e, p){
 var LABEL_ST={filiale:"Filialnummer", name:"Bezeichnung", adresse:"Adresse", plz:"PLZ", ort:"Ort",
   region:"FM-Region", lat:"Breitengrad", lon:"Längengrad", aktiv:"betreut (nicht stillgelegt)", notiz:"Notiz",
   entfernt:"aus der Liste entfernt", entferntGrund:"Grund (entfernt)",
-  pausiert:"zur Zeit nicht betreut", pausiertGrund:"Grund (nicht betreut)", kundeId:"Kunde"};
+  pausiert:"zur Zeit nicht betreut", pausiertGrund:"Grund (nicht betreut)", kundeId:"Kunde",
+  fernLink:"Fernzugriff – Adresse", fernBenutzer:"Fernzugriff – Benutzer", fernPasswort:"Fernzugriff – Passwort", fernWeitere:"Fernzugriff – weitere Benutzer"};
 var LABEL_POS={anlagentyp:"Anlagentyp", intervallCode:"Kürzel", inbetriebnahme:"Inbetriebnahme",
   monatGrund:"Grund für den abweichenden Soll-Monat",
   monat:"Soll-Monat", kaeltemittelKg:"Kältemittel (kg)", kaeltemittelArt:"Kältemittelart",
@@ -24046,6 +24090,7 @@ function verwaltungTeilSpeichern(P){
   var A=P.A, basisP=P.basisP, basisSt=P.basisSt, exS=P.exS, c=P.c, s=P.s;
   /* Aufbau – läuft, wenn alle Teile angemeldet sind, in der ursprünglichen Reihenfolge */
   return function(){
+    var fz=c.querySelector("#a_fernZeigen"); if(fz) fz.onclick=function(){ var pw=c.querySelector("#a_fernPasswort"); pw.type=pw.type==="password"?"text":"password"; fz.textContent=pw.type==="password"?"anzeigen":"verbergen"; };
     c.querySelector("#a_speichern").onclick=function(){
       var grund=P.grundHolen(); if(!grund) return;
       var num=function(v){ v=String(v).trim().replace(",","."); return v===""?null:+v; };
@@ -24055,6 +24100,8 @@ function verwaltungTeilSpeichern(P){
         adresse:c.querySelector("#a_adresse").value.trim(), plz:c.querySelector("#a_plz").value.trim(),
         ort:c.querySelector("#a_ort").value.trim(), region:c.querySelector("#a_region").value,
         leistungsstandort:c.querySelector("#a_leistungsstandort").value.trim().toUpperCase(),
+        fernLink:c.querySelector("#a_fernLink").value.trim(), fernBenutzer:c.querySelector("#a_fernBenutzer").value.trim(),
+        fernPasswort:c.querySelector("#a_fernPasswort").value, fernWeitere:fernWeitereLesen(c.querySelector("#a_fernWeitere").value),
         lat:num(c.querySelector("#a_lat").value), lon:num(c.querySelector("#a_lon").value),
         notiz:c.querySelector("#a_notiz").value.trim(),
         kundeId:c.querySelector("#a_kunde").value==="lidl" ? null : c.querySelector("#a_kunde").value
@@ -24414,6 +24461,15 @@ function verwaltungEditor(s){
         (s.lat?'<a class="btn ghost sm" target="_blank" rel="noopener" href="https://www.openstreetmap.org/?mlat='+s.lat+"&mlon="+s.lon+"#map=17/"+s.lat+"/"+s.lon+'">Auf Karte prüfen</a>':"")+
       "</div></div>"+
     "</div>"+
+    /* Fernzugriff auf die Regelung – gilt für alle Anlagen am Markt (Inhaber 12.10.2026); ob eine Anlage darüber gesteuert wird, steht je Anlage */
+    '<fieldset style="margin-top:12px"><legend>Fernzugriff auf die Regelung (für alle Anlagen am Markt)</legend>'+
+      '<div class="grid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px">'+
+        feld("a_fernLink","Adresse / Link",s.fernLink||"","text")+feld("a_fernBenutzer","Benutzername",s.fernBenutzer||"","text")+
+        '<label class="fl"><span>Passwort <button class="btn ghost sm" type="button" id="a_fernZeigen" style="margin-left:6px">anzeigen</button></span><input type="password" id="a_fernPasswort" value="'+esc(s.fernPasswort||"")+'" autocomplete="new-password"></label>'+
+      "</div>"+
+      '<label class="fl" style="margin-top:8px"><span>Weitere Benutzer – je Zeile: Bezeichnung; Benutzer; Passwort</span><textarea id="a_fernWeitere" rows="2" data-fest>'+esc(fernWeitereText(s.fernWeitere))+"</textarea></label>"+
+      '<div class="muted" style="font-size:12px">Welche Anlage über den Fernzugriff gesteuert wird, steht je Anlage (Regelung, Fernzugriff ja/nein). Die Adresse sieht auch der Kunde; Benutzer und Passwort nur UKT – nie im Protokoll, PDF oder Verlauf.</div>'+
+    "</fieldset>"+
     /* drei Stufen: betreut · zur Zeit nicht betreut (bleibt sichtbar, ohne Termine) · stillgelegt (geschlossen) */
     '<div class="grid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;margin-top:10px">'+
       '<label class="fl"><span>Status des Markts</span><select id="a_status">'+
@@ -26091,6 +26147,7 @@ function handbuchKarte(z){
         "<strong>Dichtheitskontrolle</strong> (F-Gase-Verordnung): ab 5 t CO₂e jährlich, ab 50 t halbjährlich, ab 500 t vierteljährlich – "+
           "mit Leckage-Erkennung jeweils doppelt so lang. Ab 30 kg in einem Kältekreis ist bei uns zusätzlich die Halbjahreswartung (HJW) vorgesehen.",
         "<strong>Prüfbuch-Ort:</strong> Standard „"+esc(PRUEFBUCH_ORT)+"“.",
+        "<strong>Fernzugriff</strong> gehört zum Markt (Verwaltung › Markt bearbeiten: Adresse, Benutzer, Passwort, weitere Benutzer) und gilt für alle Anlagen dort; je Anlage bleibt Regelung und Fernzugriff ja/nein. Die Adresse sieht auch der Kunde, Zugangsdaten nur UKT.",
         "<strong>Zugang zur Regelung</strong> (Link, Benutzer, Passwort – auch mehrere Benutzer mit Bezeichnung über „+ weiterer Benutzer“) steht nur bei der Anlage – nie im Protokoll, nie im PDF, nie im Archiv, "+
           "im Änderungsverlauf nur als „geändert“."]))+
 

@@ -700,6 +700,19 @@ Kammerlander Umwelt- und Klimatechnik (UKT) – oft kurz, vom Handy, im Feld.
   Form AT+4 Ziffern, muss zur Filialnummer passen; Marktinfo), aus dem Lidl-Auftrag beim Speichern der Störung gemerkt (`marktLeistungsstandortMerken`, nur neues Format,
   nie geraten). Rechnung an Lidl: `kopf.leistungsstandort` vom Markt (`leistungsstandortVon`), Feld im Editor, Warnung `[data-lstandort-fehlt]`, Zeile „Leistungsstandort: AT6631 –
   Filiale 631, Adresse (NL Wundschuh)“ im PDF und in der Ansicht (`leistungsstandortZeile`). KI liest das neue Lidl-Formular „Beauftragung“ (Bestellung → Auftragsnummer, „Auftrag Nr“ → Störungsnummer, Leistungsdatum → Zieltermin; ki-lesen).
+- **Kundenkonto ohne „überfällig“** (Inhaber 12.10.2026, Präsentation bei Lidl; das Konto wird vorerst nicht ausgegeben): für die Rolle kunde stuft
+  `berechneFaelligkeiten` versäumte Termine auf `faellig` + `p.inPlanung` um (kein Rot, keine Zählung), `kundeSichtLabels` setzt je Rolle
+  `STATUS_LABEL.faellig` („in Planung“ / „fällig in 30 Tagen“), `STATUS_VAR`/`KARTE_VAR` (grün bzw. gelbgrün) und `KARTE_KAT`; `wannText` zeigt
+  „in Planung“ ohne „seit n Tagen“, Kachel „Termine überfällig“ und Karten-Chip „überfällig“ fehlen beim Kunden. Nach der Rollenprüfung
+  (`adminPruefen`) wird neu gestuft. Intern bleibt alles wie bisher – die Fachregeln ändern sich nicht.
+- **Fernzugriff gehört zum Markt** (Inhaber 12.10.2026: „der Link ist für alle Anlagen am Markt“): Marktfelder `fernLink` (sichtbar für alle,
+  auch Kunde – Markt-Info `[data-fernlink]`), `fernBenutzer`, `fernPasswort`, `fernWeitere` ([{bez, benutzer, passwort}]) in `STAMM_FELDER_ST`; die drei
+  Zugangsdaten sind geheim (`GEHEIM_MARKT` in `GEHEIME_FELDER`: nie Verlauf/PDF/Kunde; Sicht `stammdaten_lesen` lässt sie weg – tools/fernzugriff-markt.sql,
+  hebt außerdem gleiche Anlagen-Zugänge eines Markts auf den Markt). Verwaltung › Markt bearbeiten: Fieldset „Fernzugriff auf die Regelung“
+  (`#a_fernLink`, `#a_fernBenutzer`, `#a_fernPasswort` mit anzeigen, `#a_fernWeitere` je Zeile „Bezeichnung; Benutzer; Passwort“ – `fernWeitereText`/`fernWeitereLesen`).
+  `fernVonMarkt(s)` liefert den Markt-Zugang in der Form der Anlagen-Zugangsdaten; `zugangBox` nimmt ihn für Anlagen mit Fernzugriff ja ohne eigenen Zugang
+  („gilt für den ganzen Markt“) und in der Markt-Info (`[data-fernzugang]`, nur intern). Je Anlage bleiben Regelung, betreut von, Fernzugriff ja/nein;
+  die Gruppe „Zugang zur Regelung“ fragt der Anlagendialog nur noch, wenn der Markt keinen Fernzugriff hat oder die Anlage einen eigenen (`anlageHatEigenenZugang`).
 - **Störungen nie doppelt** (Büro 01.10.2026): eine Lidl-Auftragsnummer gibt es
   nur einmal als Störung (Datenbank-Index `stoerung_auftrag_einmal`,
   tools/stoerung-eindeutig.sql; im Dialog „Vorhandene öffnen“ statt neu – auch beim Ändern der Nummer).
