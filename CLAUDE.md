@@ -704,7 +704,9 @@ Kammerlander Umwelt- und Klimatechnik (UKT) – oft kurz, vom Handy, im Feld.
   `berechneFaelligkeiten` versäumte Termine auf `faellig` + `p.inPlanung` um (kein Rot, keine Zählung), `kundeSichtLabels` setzt je Rolle
   `STATUS_LABEL.faellig` („in Planung“ / „fällig in 30 Tagen“), `STATUS_VAR`/`KARTE_VAR` (grün bzw. gelbgrün) und `KARTE_KAT`; `wannText` zeigt
   „in Planung“ ohne „seit n Tagen“, Kachel „Termine überfällig“ und Karten-Chip „überfällig“ fehlen beim Kunden. Nach der Rollenprüfung
-  (`adminPruefen`) wird neu gestuft. Intern bleibt alles wie bisher – die Fachregeln ändern sich nicht.
+  (`adminPruefen`) wird neu gestuft. Offene Störungen sieht der Kunde gar nicht (`offeneStoerungen` liefert für kunde [] – Kachel, Karte, Markt;
+  erledigte stehen als Protokolle im Verlauf). Kein Reiter Fällig für den Kunden (`reiterErlaubt`: Karte, Anlagen, Verlauf) – Start auf der Karte,
+  dort die Konto-Karte mit Abmelden (`viewKarte`). Intern bleibt alles wie bisher – die Fachregeln ändern sich nicht.
 - **Fernzugriff gehört zum Markt** (Inhaber 12.10.2026: „der Link ist für alle Anlagen am Markt“): Marktfelder `fernLink` (sichtbar für alle,
   auch Kunde – Markt-Info `[data-fernlink]`), `fernBenutzer`, `fernPasswort`, `fernWeitere` ([{bez, benutzer, passwort}]) in `STAMM_FELDER_ST`; die drei
   Zugangsdaten sind geheim (`GEHEIM_MARKT` in `GEHEIME_FELDER`: nie Verlauf/PDF/Kunde; Sicht `stammdaten_lesen` lässt sie weg – tools/fernzugriff-markt.sql,
