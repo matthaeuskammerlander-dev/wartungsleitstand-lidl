@@ -1,7 +1,7 @@
 /* Nachgebaute Supabase-Schnittstelle für die automatischen Tests (tests/app-tests.mjs) – nur Code, Startbestand aus seed.json (erfunden). */
 (function(){
   "use strict";
-  var T=["gelernte_werte","fahrzeuge","fahrzeug_eintraege","fahrzeug_kosten","kontakte","protokoll_vermerke","planung","planung_privat","belege","katalog","stempel","einstellungen","projekte","arbeitszeiten","anlagenfotos","touren","kundenliste","gelesen","push_ereignisse","kennzahlen","chat","abrechnung","push_abos","protokolle","aenderungen","stammdaten","admins","berichte","protokoll_fassungen","rollen","ki_nutzung","posteingang","stammdaten_lesen","aenderungswuensche","vor_ort_fragen","interne_hinweise","werkzeug","werkzeug_verlauf","bedarf","packlisten","auslagen","auslagen_konto","arbeitsnachweise","tag_geprueft"];
+  var T=["gelernte_werte","fahrzeuge","fahrzeug_eintraege","fahrzeug_kosten","kontakte","protokoll_vermerke","planung","planung_privat","belege","katalog","stempel","einstellungen","projekte","arbeitszeiten","anlagenfotos","touren","kundenliste","gelesen","push_ereignisse","kennzahlen","chat","abrechnung","push_abos","protokolle","aenderungen","stammdaten","admins","berichte","protokoll_fassungen","rollen","ki_nutzung","posteingang","stammdaten_lesen","aenderungswuensche","vor_ort_fragen","interne_hinweise","werkzeug","werkzeug_verlauf","bedarf","packlisten","auslagen","auslagen_konto","arbeitsnachweise","tag_geprueft","inbetriebnahmen"];
   var DB; try{ DB=JSON.parse(localStorage.getItem("attrappe_db")||"null"); }catch(e){ DB=null; }
   /* leerer Speicher (neuer Port, nach __db.zuruecksetzen()): Startbestand aus seed.json */
   if(!DB){ DB={}; try{ var x=new XMLHttpRequest(); x.open("GET","seed.json?"+Date.now(),false); x.send();
@@ -151,10 +151,10 @@
     }
     /* wie die Regeln der Arbeitsnachweise (Inhaber 06.10.2026): lesen und anlegen alle, die mitarbeiten; ändern wer ihn
        angelegt hat und der Inhaber; löschen nur der Inhaber (Prüfregeln des Triggers: anPruefen) */
-    if(tab==="arbeitsnachweise"){
-      if(rolle==="kunde"||rolle==="praesentation") return art==="select" ? "nur lesen: arbeitsnachweise gesperrt" : "nur lesen ("+rolle+")";
-      if(art==="update" && alt && alt.erstellt_von!==uid() && rolle!=="inhaber") return "arbeitsnachweise: aendern nur wer ihn angelegt hat oder der Inhaber";
-      if(art==="delete" && rolle!=="inhaber") return "arbeitsnachweise: loeschen nur Inhaber";
+    if(tab==="arbeitsnachweise"||tab==="inbetriebnahmen"){   /* Inbetriebnahmeprotokolle (Inhaber 12.10.2026): dieselben Regeln */
+      if(rolle==="kunde"||rolle==="praesentation") return art==="select" ? "nur lesen: "+tab+" gesperrt" : "nur lesen ("+rolle+")";
+      if(art==="update" && alt && alt.erstellt_von!==uid() && rolle!=="inhaber") return tab+": aendern nur wer ihn angelegt hat oder der Inhaber";
+      if(art==="delete" && rolle!=="inhaber") return tab+": loeschen nur Inhaber";
     }
     if(tab==="aenderungen" && art!=="insert" && art!=="select") return "aenderungen: unveraenderlich";
     /* wie interne-hinweise.sql: nur wer mitarbeitet (nie Kunde/Präsentation); Text ändert nur, wer angelegt hat, oder das Büro; löschen nur Büro */
@@ -189,7 +189,8 @@
      Monteur selbst, unterschrieben = fest (ändern nur als Korrektur mit Grund) – liefert eine Meldung oder null */
   function kontoName(){ var r=DB.rollen.filter(function(x){ return x.user_id===uid(); })[0]||{};
     return r.name || (meta(sitzung.user.email).einstellungen||{}).name || sitzung.user.email.split("@")[0]; }
-  function anPruefen(n, alt){
+  function anPruefen(n, alt, tab){
+    tab=tab||"arbeitsnachweise";
     var jetzt=new Date().toISOString();
     if(!alt){ n.erstellt_von=uid(); n.monteur=kontoName(); n.erstellt=jetzt; n.korrekturen=[]; n.unterschrieben=n.unterschrift!=null?jetzt:null; }
     else {
@@ -206,9 +207,9 @@
         else n.unterschrieben=null;
       }
     }
-    if(!n.projekt_id || !(n.nummer>=1)) return 'null value in column "nummer" of relation "arbeitsnachweise" violates not-null constraint';
-    if(!alt && DB.arbeitsnachweise.some(function(x){ return x.projekt_id===n.projekt_id && x.nummer===n.nummer; }))
-      return 'duplicate key value violates unique constraint "arbeitsnachweise_projekt_id_nummer_key"';
+    if(!n.projekt_id || !(n.nummer>=1)) return 'null value in column "nummer" of relation "'+tab+'" violates not-null constraint';
+    if(!alt && DB[tab].some(function(x){ return x.projekt_id===n.projekt_id && x.nummer===n.nummer; }))
+      return 'duplicate key value violates unique constraint "'+tab+'_projekt_id_nummer_key"';
     n.geaendert=jetzt; n.daten=n.daten||{};
     return null;
   }
@@ -391,7 +392,7 @@
         if(self.t==="projekte"){ r.erstellt=r.erstellt||new Date().toISOString(); r.geaendert=r.geaendert||r.erstellt; r.daten=r.daten||{}; r.verlauf=r.verlauf||[]; }
         return r; });
       if(self.t==="auslagen"){ neu.forEach(function(r){ v=v||kmOhneAuto(r, null)||auslagenCheck(r); }); if(v){ window.__abgelehnt.push(v); return {data:null,error:{message:v}}; } }
-      if(self.t==="arbeitsnachweise"){ neu.forEach(function(r){ v=v||anPruefen(r, null); }); if(v){ window.__abgelehnt.push(v); return {data:null,error:{message:v, code:/duplicate/.test(v)?"23505":undefined}}; } }
+      if(self.t==="arbeitsnachweise"||self.t==="inbetriebnahmen"){ neu.forEach(function(r){ v=v||anPruefen(r, null, self.t); }); if(v){ window.__abgelehnt.push(v); return {data:null,error:{message:v, code:/duplicate/.test(v)?"23505":undefined}}; } }
       if(self.t==="werkzeug") neu.forEach(function(r){ wzMerken(r); });
       if(self.t==="fahrzeuge") neu.forEach(function(r){ fzPrivatMerken(r, null); });
       neu.forEach(function(r){ tab.push(r); }); if(self.t==="planung") neu.forEach(function(r){ stundenSync(r.id); });
@@ -429,9 +430,9 @@
       if(!v && self.t==="auslagen") b.forEach(function(r){ var n=Object.assign({},r,self.d); if(n.km!=null) n.km=kmSpalte(n.km);
         if(n.art==="km") n.betrag=Math.round(n.km*(n.km_satz||0.5)*100)/100; v=v||kmOhneAuto(n, r)||auslagenCheck(n); });
       /* Arbeitsnachweise: Prüfregeln des Triggers vor dem Ändern; feste Spalten bleiben */
-      var anNeu=[]; if(!v && self.t==="arbeitsnachweise") b.forEach(function(r){ var n=JSON.parse(JSON.stringify(Object.assign({}, r, self.d))); v=v||anPruefen(n, r); anNeu.push(n); });
+      var anNeu=[]; if(!v && (self.t==="arbeitsnachweise"||self.t==="inbetriebnahmen")) b.forEach(function(r){ var n=JSON.parse(JSON.stringify(Object.assign({}, r, self.d))); v=v||anPruefen(n, r, self.t); anNeu.push(n); });
       if(v){ window.__abgelehnt.push(v); return {data:null,error:{message:v}}; }
-      if(self.t==="arbeitsnachweise"){ b.forEach(function(r, i){ Object.keys(anNeu[i]).forEach(function(k){ r[k]=anNeu[i][k]; }); erg.push(r); }); sichern(); return {data:aus(erg),error:null}; }
+      if(self.t==="arbeitsnachweise"||self.t==="inbetriebnahmen"){ b.forEach(function(r, i){ Object.keys(anNeu[i]).forEach(function(k){ r[k]=anNeu[i][k]; }); erg.push(r); }); sichern(); return {data:aus(erg),error:null}; }
       b.forEach(function(r){ if(self.t==="protokolle"){ var u=r.erstellt_von,g2=r.erstellt;
           DB.protokoll_fassungen.push({client_id:r.client_id,version:r.version,gesichert:new Date().toISOString(),daten:JSON.parse(JSON.stringify(r))});
           Object.assign(r,self.d); r.erstellt_von=u; r.erstellt=g2; }

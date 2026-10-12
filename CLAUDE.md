@@ -364,6 +364,21 @@ Kammerlander Umwelt- und Klimatechnik (UKT) – oft kurz, vom Handy, im Feld.
   Lernt wie beim Einsatz (Inhaber 10.10.2026): `anVorschlag` = `anRechnungPositionen` + `vorschlagMitGelerntem` mit pk = {_an:{ids, projekt_id}} – Lernbelege
   (`einsatzLernBelege`) sind KPlus-Rechnungen mit `kopf.lernen.art` „arbeitsnachweis“ zu ANDEREN Nachweisen, im selben Projekt (`lernOrtGleich`, zählt wie „am Markt“) oder beim
   selben Kunden; gilt für „Rechnung schreiben“, den Vergleich beim Hochladen und „⏱ Stunden aus Arbeitsnachweisen“ (`anVorschlagListe`, mehrere Nachweise).
+- **Inbetriebnahmeprotokoll Kälteanlage** (Inhaber 12.10.2026, Tabelle `inbetriebnahmen`, tools/inbetriebnahmen.sql – gleiche Regeln und Trigger wie die
+  Arbeitsnachweise; im SQL-Editor ohne Konto bleiben mitgegebene `erstellt_von`/`monteur` stehen, damit das Büro einem Monteur einen Entwurf anlegen kann):
+  nach dem Muster „Inbetriebnahmeprotokoll Kälteanlage“ (KlimaCraft), mit den Anmerkungen des Inhabers auf der Vorlage. Karte „Inbetriebnahmeprotokolle“
+  im Projekt (Reiter Baustelle; Schnellknopf „🧾 Inbetriebnahmeprotokoll“ in „Auf einen Blick“, `projektBaustelleKnoepfe`) → `ibnKarte` → `ibnEditor`
+  (geführt, Eingaben auf dem Gerät gemerkt): Anlage wählen (Anlagen des Markts, dem Projekt zugeordnete zuerst; `ibnVorbelegen` übernimmt aus `anlageDaten`
+  Hersteller, Modell, Seriennummer, Innengeräte, Kältemittel, GWP, Gesamtfüllmenge – nichts wird geraten) → Anlage und Betreiber (`IBN_KOPF`) → Kältemittel
+  und Elektrik (`IBN_KM`; Gesamtfüllmenge `ibnGesamtKg` = eingetragen, sonst werkseitig + Nachfüllung; CO₂e `ibnCo2` mit GWP aus `gwpVon`) → Messwerte
+  (`IBN_MESS`) → Checkliste (`IBN_CHECK`: Mechanik/Kältekreis und Elektrik/Regelung/Sicherheit mit i. O./Mangel/n. z. `IBN_BEFUND`, Dokumentation mit
+  erl./offen/n. z. `IBN_STAND`; „Alle auf …“ je Gruppe; bei „Regelung parametriert“ die Felder `daten.regelung` – Sollwert Kühlen/Heizen, Betriebsart,
+  Nachtabsenkung ja/nein von–bis, `ibnRegelungText`) → Übergabe (`IBN_UEBERGABE`: Einweisung, Betreiberpflichten (EU) 2024/573, Prüfintervall, Prüfbuch;
+  Mängel/Restarbeiten/Abnahme NICHT hier, sondern „siehe Abnahmeprotokoll des Auftraggebers“ – nur `abnahmeVerweis` + Datum) → Abschluss (Unterschrift des
+  Monteurs unter dem eigenen Konto; Betreiber unterschreibt auf dem Ausdruck; Haken „An der Anlage eintragen“: Inbetriebnahme-Datum und fehlende
+  Füllmenge über `positionenSchreiben` nach dem Unterschreiben – `daten.anlageNachtragen` wird nicht gespeichert). `ibnFehlt`: Datum, Anlagentyp oder
+  Modell, Kältemittel, Füllmenge, Unterschrift. PDF `ibnBlattHtml`/`ibnPdfAblegen` als Projektdatei Art „protokoll“ (`Inbetriebnahmeprotokoll_<Nr>_…pdf`).
+  Präsentation nur im Speicher (`IBN_DEMO`). Test „Inbetriebnahmeprotokoll: …“; Attrappe behandelt `inbetriebnahmen` wie `arbeitsnachweise`.
 - **Arbeitszeiten** (Tabelle `arbeitszeiten`): jede Person sieht nur ihre
   eigenen, der Inhaber alle; ein bestätigter Monat ist gesperrt – auch für NEUE Einträge (von Hand, Stempeln,
   Abgleich): bestätigt = die Person hat dort einen Eintrag mit `bestaetigt`; nur der Inhaber trägt danach ein oder
