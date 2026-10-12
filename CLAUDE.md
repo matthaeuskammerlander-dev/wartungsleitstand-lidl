@@ -390,6 +390,9 @@ Kammerlander Umwelt- und Klimatechnik (UKT) – oft kurz, vom Handy, im Feld.
   PDF `ibnBlattHtml` (Betreiber – je Anlage Block Typenschild/Kältemittel/Messwerte/Regelung, bei mehreren „Anlage n von m“ – Checkliste – Übergabe –
   Abnahme/Unterschriften)/`ibnPdfAblegen` als Projektdatei Art „protokoll“ (`Inbetriebnahmeprotokoll_<Nr>_<Anlage|n-Anlagen>_…pdf`).
   Unterschrieben mit PDF: „PDF neu erzeugen“ (Blatt frisch gezeichnet, Inhalt bleibt; alter Stand bleibt als Projektdatei; Inhaber 12.10.2026).
+  Schritt „Fotos“ (Inhaber 12.10.2026) wie „Rapporte und Fotos“ im Arbeitsnachweis: wählen / aus den Projektdateien / einfügen → sofort Projektdatei (Foto bzw.
+  Protokoll), am Protokoll `daten.anhaenge` [{pfad, name, typ, notiz}]; Fotos verkleinert, im Blatt `anFotosHtml` (eingebettet in `ibnPdfErzeugen`), PDFs hinten
+  über `anhaengeAnPdf`; Entfernen nimmt nur den Verweis.
   Präsentation nur im Speicher (`IBN_DEMO`). Test „Inbetriebnahmeprotokoll: …“ (zwei Anlagen); Attrappe behandelt `inbetriebnahmen` wie `arbeitsnachweise`.
 - **Arbeitszeiten** (Tabelle `arbeitszeiten`): jede Person sieht nur ihre
   eigenen, der Inhaber alle; ein bestätigter Monat ist gesperrt – auch für NEUE Einträge (von Hand, Stempeln,

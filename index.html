@@ -26986,6 +26986,7 @@ Object.assign(RUNDGAENGE, {
       "<strong>Anlage wählen</strong>: eine Anlage des Markts – Hersteller, Modell, Seriennummer, Kältemittel, Füllmenge und Innengeräte kommen aus den Anlagendaten (Typenschild-Fotos vorher mit der KI lesen lassen).",
       "<strong>Anlage und Betreiber</strong>, <strong>Kältemittel und Elektrik</strong> (werkseitige Füllung + Nachfüllung = Gesamtfüllmenge, CO₂-Äquivalent rechnet die App), <strong>Messwerte</strong> (Drücke, Temperaturen, Überhitzung, Unterkühlung, Strom).",
       "<strong>Checkliste</strong> (Mechanik/Kältekreis und Elektrik/Regelung/Sicherheit mit i. O. / Mangel / n. z., Dokumentation mit erl. / offen / n. z.) – bei „Regelung parametriert“ eintragen, was eingestellt wurde: Sollwerte, Betriebsart, Nachtabsenkung ja/nein von–bis. <strong>Übergabe</strong> (erl. / offen / n. z.); Mängel und Abnahme stehen im Abnahmeprotokoll des Auftraggebers (nur Verweis und Datum).",
+      "<strong>Fotos</strong>: Typenschild, Etikett, Geräte, Verrohrung als Foto, Unterlagen als PDF – wählen, aus den Projektdateien oder einfügen; Fotos mit Beschriftung im PDF, PDFs hinten angehängt.",
       "<strong>Abschluss</strong>: du unterschreibst als Monteur unter deinem eigenen Namen; das Inbetriebnahme-Datum (und eine fehlende Füllmenge) kann die App gleich an der Anlage eintragen. Der Betreiber unterschreibt auf dem Ausdruck. Das PDF kommt zu den Projektdateien."])},
     {titel:"Arbeitsnachweise", text:"Im Projekt „+ Arbeitsnachweis“ – wie das Papierformular, Schritt für Schritt am Handy: "+RG_LISTE([
       "<strong>Kopf</strong>: Auftraggeber, Objekt, Montage / Wartung / Reparatur / Garantie.",
@@ -31082,7 +31083,7 @@ function ibnEditor(p, a, fertig, opt){
   var v=ansichtOeffnen(korr ? "Korrektur: "+ibnTitel(a) : a ? ibnTitel(a) : "Neues Inbetriebnahmeprotokoll", function(){
     if(geaendert) toast("Auf diesem Gerät gemerkt – „+ Inbetriebnahmeprotokoll“ bzw. „Weiter bearbeiten“ macht dort weiter.");
   }, {breit:true});
-  var SCHRITTE=["Anlagen","Anlage und Betreiber","Kältemittel und Elektrik","Messwerte","Checkliste","Übergabe und Abnahme", korr ? "Korrektur" : "Abschluss"];
+  var SCHRITTE=["Anlagen","Anlage und Betreiber","Kältemittel und Elektrik","Messwerte","Checkliste","Übergabe und Abnahme","Fotos", korr ? "Korrektur" : "Abschluss"];
   var anlagen=s ? anlagenDesMarkts(s, true) : [], zu=(p.daten||{}).anlagen||[];
   anlagen.sort(function(x, y){ return (zu.indexOf(y.id)>=0)-(zu.indexOf(x.id)>=0); });   /* dem Projekt zugeordnete zuerst */
   var leaderVon=function(x){ var l=x && x.anlageId && anlagen.filter(function(q){ return q.id===x.anlageId; })[0]; return l ? l.leader : null; };
@@ -31098,7 +31099,7 @@ function ibnEditor(p, a, fertig, opt){
       c.onclick=function(){ schritt=i; merken(); zeichnen(); }; leiste.appendChild(c); });
     v.inhalt.appendChild(leiste);
     var box=el('<div class="stack" style="gap:10px"></div>'); v.inhalt.appendChild(box);
-    [anlageSchritt, kopfSchritt, kmSchritt, messSchritt, checkSchritt, uebergabeSchritt, abschlussSchritt][schritt](box);
+    [anlageSchritt, kopfSchritt, kmSchritt, messSchritt, checkSchritt, uebergabeSchritt, fotoSchritt, abschlussSchritt][schritt](box);
     /* gemeinsame Felder (data-k / data-t) und Felder der gerade gewählten Anlage (data-ak / data-at) */
     box.querySelectorAll("textarea[data-t]").forEach(function(t){ t.oninput=function(){ d[t.dataset.t]=t.value; merken(); }; feldHoehe(t); var l=t.closest("label"); if(l) l.querySelector("span").appendChild(diktatKnopf(t)); });
     box.querySelectorAll("textarea[data-at]").forEach(function(t){ t.oninput=function(){ var x=aktuell(); if(x){ x[t.dataset.at]=t.value; merken(); } }; feldHoehe(t); var l=t.closest("label"); if(l) l.querySelector("span").appendChild(diktatKnopf(t)); });
@@ -31274,6 +31275,107 @@ function ibnEditor(p, a, fertig, opt){
     box.appendChild(g);
     box.appendChild(el(feld(d, "Bemerkungen", "bemerkungen", 2, "")));
   }
+  /* Fotos und Unterlagen (Inhaber 12.10.2026: „beim Inbetriebnahmeprotokoll soll man auch Fotos anfügen können“) – wie „Rapporte und Fotos“ im
+     Arbeitsnachweis: Foto/PDF wählen, aus den Projektdateien oder einfügen; sofort Projektdatei (Foto bzw. Protokoll), am Protokoll nur der
+     Verweis (daten.anhaenge [{pfad, name, typ, notiz}]); Fotos stehen im PDF drei je Zeile, PDFs hängen hinten an. */
+  var hochladenLaeuft=false;
+  var EINFUEGEN_TEXT="📋 Einfügen: kopiertes Bild hier einfügen – am Handy lange tippen → „Einsetzen“; am Laptop Strg+V (auch PDF). PDF am Handy besser über „Foto / PDF wählen“.";
+  function anhaengeHochladen(liste){
+    var gut=liste.filter(function(x){ return /^image\//.test(x.type||"") || /pdf/i.test(x.type||"") || /\.(pdf|jpe?g|png|webp|gif)$/i.test(x.name||""); });
+    if(gut.length<liste.length) toast((liste.length-gut.length)+" Datei"+(liste.length-gut.length===1?"":"en")+" übersprungen – angehängt werden PDF und Fotos.");
+    if(!gut.length) return;
+    if(hochladenLaeuft){ toast("Es wird noch hochgeladen – bitte kurz warten."); return; }
+    var nr=(d.anhaenge||[]).length;
+    gut=gut.map(function(x, i){
+      if(/^image\.(png|jpe?g|gif|webp)$/i.test(x.name||"") || !x.name){
+        var en=(String(x.type||"").split("/")[1]||"png").replace("jpeg","jpg");
+        try{ return new File([x], "IBN_"+(p.nummer||"Projekt")+"_"+isoLokal(new Date())+"_"+(nr+i+1)+"."+en, {type:x.type||"image/png"}); }catch(e){ return x; }
+      }
+      return x;
+    });
+    hochladenLaeuft=true; zeichnen();
+    Promise.all(gut.map(function(f){
+      if(!anIstBild(f.name, f.type)) return f;
+      return verkleinere(f).then(function(k){ return fetch(k.datenUrl).then(function(r){ return r.blob(); }).then(function(b){
+        return new File([b], String(f.name||"Foto").replace(/\.[A-Za-z0-9]+$/, "")+".jpg", {type:"image/jpeg"}); }); }, function(){ return f; });
+    })).then(function(klein){ return projektDateienHochladen(PROJEKTE.filter(function(x){ return x.id===p.id; })[0]||p, function(f){ return anIstBild(f.name, f.type) ? "foto" : "protokoll"; }, klein); }).then(function(neue){
+      hochladenLaeuft=false;
+      var schon=(d.anhaenge||[]).map(function(a){ return a.pfad; }), doppelt=[];
+      neue=(neue||[]).filter(function(x){ if(schon.indexOf(x.pfad)>=0){ doppelt.push(x.name); return false; } schon.push(x.pfad); return true; });
+      if(doppelt.length) toast("Schon angehängt: "+doppelt.join(", ")+" – nicht nochmals.");
+      d.anhaenge=(d.anhaenge||[]).concat(neue.map(function(x){ var o={pfad:x.pfad, name:x.name, typ:x.typ||""}; if(x._url) o._url=x._url; return o; }));
+      if((neue||[]).length){ merken(); toast("✓ "+neue.length+" Datei"+(neue.length===1?"":"en")+" angehängt: "+neue.map(function(x){ return x.name; }).join(", ")+
+        (korr ? " – mit „Korrektur speichern“ (Grund) wird sie Teil des Protokolls." : " – gilt mit „Speichern“ bzw. „Unterschreiben“.")); }
+      if(v.inhalt.isConnected) zeichnen();
+    }, function(e){ hochladenLaeuft=false; toast("Nicht angehängt: "+technikDeutsch((e && e.message)||String(e))); if(v.inhalt.isConnected) zeichnen(); });
+  }
+  var einfuegen=function(e){
+    if(!v.inhalt.isConnected){ document.removeEventListener("paste", einfuegen); return; }
+    if(SCHRITTE[schritt]!=="Fotos") return;
+    var cd=e.clipboardData, l=[].slice.call((cd && cd.files)||[]);
+    if(!l.length && cd && cd.items) [].slice.call(cd.items).forEach(function(it){ if(it.kind==="file"){ var fi=it.getAsFile(); if(fi) l.push(fi); } });
+    if(!l.length){ if(e.target && e.target.closest && e.target.closest("[data-einfuegen]")){ e.preventDefault(); toast("In der Zwischenablage ist keine Datei und kein Bild – bitte die Datei selbst kopieren (nicht nur den Text)."); } return; }
+    e.preventDefault(); anhaengeHochladen(l);
+  };
+  document.addEventListener("paste", einfuegen);
+  function fotoSchritt(box){
+    d.anhaenge=d.anhaenge||[];
+    box.appendChild(el('<div class="muted" style="font-size:12.5px">Fotos von Typenschild, Etikett, Außen- und Innengeräten, Verrohrung – und Unterlagen als PDF (Druckprobe, Vakuumprotokoll, Messprotokoll). Fotos werden verkleinert und stehen im PDF, PDFs hängen hinten an.</div>'));
+    var liste=el('<div class="stack" style="gap:6px" data-anhaenge></div>');
+    if(!d.anhaenge.length) liste.appendChild(el('<div class="muted" style="font-size:12.5px">Noch kein Foto und keine Datei angehängt.</div>'));
+    d.anhaenge.forEach(function(x, i){
+      var bild=anIstBild(x.name, x.typ);
+      var z=el('<div class="stack" data-anhang style="gap:6px;border:1px solid var(--line);border-radius:8px;padding:6px 10px;font-size:13px">'+
+        '<div class="rowflex" style="gap:8px;flex-wrap:nowrap">'+
+          (bild ? '<button type="button" data-vorschau title="Foto ansehen" style="flex:none;width:64px;height:48px;padding:0;border:1px solid var(--line);border-radius:6px;background:var(--surface-2,#eee);overflow:hidden;cursor:pointer">'+
+              '<img alt="" style="width:100%;height:100%;object-fit:cover;display:block"></button>' : "<span>📄</span>")+
+          '<span data-name style="flex:1;min-width:0;overflow-wrap:anywhere">'+esc(x.name)+"</span>"+
+          '<button class="btn ghost sm" type="button" data-ansehen>ansehen</button><button class="btn ghost sm" type="button" data-weg aria-label="Entfernen">✕</button></div>'+
+        (bild ? '<label class="fl" style="min-width:0"><span>Beschriftung (steht im PDF unter dem Foto)</span><input type="text" data-notiz maxlength="200" value="'+esc(x.notiz||"")+'" placeholder="z. B. VRV 2 – Typenschild und Etikett"></label>' : "")+
+        "</div>");
+      var ansehen=function(){
+        if(!bild){ if(x._url) pdfAnsicht(x._url, x.name); else projektDateiOeffnen(x.pfad, x.name); return; }
+        anBildUrl(x).then(function(u){ if(u) bildAnsicht(u, x.name); else toast("Foto gerade nicht abrufbar – bitte bei Verbindung nochmals."); });
+      };
+      z.querySelector("[data-ansehen]").onclick=ansehen;
+      if(bild){
+        z.querySelector("[data-vorschau]").onclick=ansehen;
+        anBildUrl(x).then(function(u){ var im=z.querySelector("[data-vorschau] img"); if(u && im) im.src=bildUrl(u); });
+        z.querySelector("[data-notiz]").oninput=function(){ x.notiz=this.value.slice(0,200); merken(); };
+      }
+      z.querySelector("[data-weg]").onclick=function(){
+        if(!window.confirm("„"+x.name+"“ vom Protokoll entfernen?\n\nDie Datei bleibt bei den Projektdateien.")) return;
+        d.anhaenge.splice(i, 1); merken(); zeichnen(); toast("Entfernt – die Datei bleibt bei den Projektdateien."); };
+      liste.appendChild(z);
+    });
+    box.appendChild(liste);
+    if(hochladenLaeuft) box.appendChild(el('<div class="note" style="font-size:13px">⏳ wird verkleinert und hochgeladen …</div>'));
+    var wahl=el('<div class="rowflex" style="gap:8px;flex-wrap:wrap">'+
+      '<label class="btn sm" style="cursor:pointer">📷 Foto / 📎 PDF wählen<input type="file" data-datei accept="application/pdf,.pdf,image/*" multiple hidden></label>'+
+      '<button class="btn ghost sm" type="button" data-aus>aus den Projektdateien …</button></div>');
+    wahl.querySelector("[data-datei]").onchange=function(){ var l=[].slice.call(this.files||[]); this.value=""; anhaengeHochladen(l); };
+    box.appendChild(wahl);
+    var feld2=el('<div data-einfuegen contenteditable="true" role="textbox" aria-label="Foto oder PDF einfügen" style="border:1px dashed var(--line-2);border-radius:8px;padding:10px;font-size:12.5px;color:var(--muted);min-height:44px;outline:none"></div>');
+    feld2.textContent=EINFUEGEN_TEXT;
+    feld2.oninput=function(){ feld2.textContent=EINFUEGEN_TEXT; };
+    box.appendChild(feld2);
+    wahl.querySelector("[data-aus]").onclick=function(){
+      var alt=box.querySelector("[data-auswahl]"); if(alt){ alt.remove(); return; }
+      var pa=PROJEKTE.filter(function(x){ return x.id===p.id; })[0]||p, drin={};
+      d.anhaenge.forEach(function(x){ drin[x.pfad]=1; });
+      var dd=((pa.daten||{}).dateien||[]).filter(function(x){ return !/^buero\//.test(x.pfad) && !drin[x.pfad] && !/^Inbetriebnahmeprotokoll_/.test(x.name||"") &&
+        (/pdf|image\//i.test(x.typ||"") || /\.(pdf|jpe?g|png|webp|gif)$/i.test(x.name||"")); });
+      var w=el('<div class="stack" style="gap:4px;border:1px solid var(--line);border-radius:8px;padding:8px 10px;max-height:260px;overflow:auto" data-auswahl></div>');
+      if(!dd.length) w.appendChild(el('<div class="muted" style="font-size:12.5px">Keine passenden Projektdateien (PDF oder Foto).</div>'));
+      dd.slice().reverse().forEach(function(x){
+        var b=el('<button class="btn ghost sm" type="button" style="text-align:left;align-self:stretch;white-space:normal">+ '+esc(x.name)+"</button>");
+        b.onclick=function(){ d.anhaenge.push({pfad:x.pfad, name:x.name, typ:x.typ||""}); if(x._url) d.anhaenge[d.anhaenge.length-1]._url=x._url;
+          merken(); zeichnen(); toast("✓ „"+x.name+"“ angehängt."); };
+        w.appendChild(b);
+      });
+      wahl.after(w);
+    };
+  }
   function abschlussSchritt(box){
     var fehlt=ibnFehlt();
     var mangel=0; IBN_CHECK.forEach(function(g){ g.punkte.forEach(function(pn){ if(((d.check[g.k]||{})[pn[0]]||{}).s==="mangel") mangel++; }); });
@@ -31281,7 +31383,8 @@ function ibnEditor(p, a, fertig, opt){
     box.appendChild(el('<div class="note" style="font-size:13px"><strong>'+esc(d.betreiber||"–")+"</strong> · "+esc(d.standort||"–")+" · Inbetriebnahme "+esc(n.datum ? dfmt(n.datum) : "–")+"<br>"+
       d.anlagen.map(function(x){ var co2=ibnCo2(x); return "<strong>"+esc(ibnAnlageKurz(x))+"</strong>: "+esc(x.kaeltemittel||"Kältemittel?")+" "+(ibnGesamtKg(x)==null ? "" : ibnZahlText(ibnGesamtKg(x), 3)+" kg")+(co2 ? " · "+ibnZahlText(co2)+" t CO₂e" : "")+
         (x.regelung && x.regelung.nacht==="ja" ? " · Nachtabsenkung "+esc((x.regelung.nachtVon||"?")+"–"+(x.regelung.nachtBis||"?")) : ""); }).join("<br>")+
-      "<br>Checkliste: "+(mangel ? "<strong>"+(mangel===1 ? "1 Mangel" : mangel+" Mängel")+"</strong>" : "kein Mangel")+" · Dokumentation/Übergabe: "+(offen ? "<strong>"+offen+" offen</strong>" : "nichts offen")+"</div>"));
+      "<br>Checkliste: "+(mangel ? "<strong>"+(mangel===1 ? "1 Mangel" : mangel+" Mängel")+"</strong>" : "kein Mangel")+" · Dokumentation/Übergabe: "+(offen ? "<strong>"+offen+" offen</strong>" : "nichts offen")+
+      ((d.anhaenge||[]).length ? " · 📎 "+d.anhaenge.length+" Foto"+(d.anhaenge.length===1?"":"s")+"/Dateien angehängt" : "")+"</div>"));
     if(fehlt.length) box.appendChild(el('<div class="note warnbox" style="font-size:13px"><strong>Fehlt noch:</strong> '+fehlt.map(esc).join(" · ")+"</div>"));
     if(korr){
       box.appendChild(el('<div class="muted" style="font-size:12.5px">Das Protokoll ist unterschrieben – die Unterschrift von '+esc(a.monteur||"")+" bleibt. Die Korrektur steht mit Grund, Name und Datum im Protokoll und im PDF.</div>"));
@@ -31341,7 +31444,9 @@ function ibnEditor(p, a, fertig, opt){
   function speichern(knopf, abschliessen){
     var f=abschliessen ? ibnFehlt() : [];
     if(f.length){ schritt=SCHRITTE.length-1; zeichnen(); toast("Noch nicht fertig – es fehlt: "+f.join(", ")+"."); return; }
+    if(hochladenLaeuft){ toast("Es wird noch hochgeladen – bitte kurz warten, dann nochmals."); return; }
     var dd=JSON.parse(JSON.stringify(d)); var nachtragen=abschliessen && !korr ? dd.anlageNachtragen : null; delete dd.anlageNachtragen;
+    if(!demo()) (dd.anhaenge||[]).forEach(function(x){ delete x._url; });
     if(String(dd.zertUnternehmen||"").trim()) lsSet("ukt_zertu", dd.zertUnternehmen.trim());   /* fürs nächste Protokoll (wie das Wartungsprotokoll) */
     knopf.disabled=true; var t=knopf.textContent; knopf.textContent="wird gespeichert …";
     ibnSpeichern(p, a, {datum:n.datum||isoLokal(new Date()), daten:dd, anlage_id:(dd.anlagen[0]||{}).anlageId||null}, abschliessen && !korr ? sig : null, korr ? grund.trim() : "").then(function(row){
@@ -31398,7 +31503,7 @@ function ibnSpeichern(p, a, n, sig, grund){
   return los();
 }
 /* ---------- PDF wie das Muster (A4): Betreiber – je Anlage Typenschild/Kältemittel/Messwerte/Regelung – Checkliste – Übergabe – Abnahme/Unterschriften ---------- */
-function ibnBlattHtml(p, a){
+function ibnBlattHtml(p, a, fotos){
   var d=a.daten||{}, L="border:1px solid #555;padding:3px 5px", korr=a.korrekturen||[], anl=ibnAnlagen(d);
   var th=function(t, w){ return "<th style='"+L+(w?";width:"+w:"")+"'>"+esc(t)+"</th>"; };
   var td=function(t, m){ return "<td style='"+L+(m?";text-align:center":"")+"'>"+(t==null?"":t)+"</td>"; };
@@ -31434,6 +31539,9 @@ function ibnBlattHtml(p, a){
     "<h2>Übergabe an den Betreiber</h2><table style='border-collapse:collapse'><tr>"+th("Punkt")+th("erl.","7%")+th("offen","8%")+th("n. z.","7%")+th("Bemerkung","28%")+"</tr>"+
       IBN_UEBERGABE.map(function(pn){ return kreuzZeile(pn[1], (d.uebergabe||{})[pn[0]], IBN_STAND); }).join("")+"</table>"+
     (d.bemerkungen ? "<h2>Bemerkungen</h2><div style='"+L+";white-space:pre-wrap'>"+esc(d.bemerkungen)+"</div>" : "")+
+    anFotosHtml(d, fotos)+
+    ((d.anhaenge||[]).some(function(x){ return !anIstBild(x.name, x.typ); }) ? "<div style='margin-top:8px;font-size:12px'><strong>Anlagen (hinten angehängt):</strong> "+
+      d.anhaenge.filter(function(x){ return !anIstBild(x.name, x.typ); }).map(function(x){ return esc(x.name); }).join(", ")+"</div>" : "")+
     "<div class='zusammen'><h2>Abnahme</h2><div style='margin:4px 0 6px'><strong>Mängel, Restarbeiten und Abnahme:</strong> siehe Abnahmeprotokoll des Auftraggebers"+
       (d.abnahmeVerweis ? " – "+esc(d.abnahmeVerweis) : "")+(d.abnahmeDatum ? " &nbsp; <strong>Datum:</strong> "+esc(dfmt(d.abnahmeDatum)) : "")+"</div><div class='zwei'>"+
       "<div><table>"+zt("Fachbetrieb / Monteur", a.monteur)+
@@ -31449,8 +31557,20 @@ function ibnDateiname(p, a){
   return ("Inbetriebnahmeprotokoll_"+(p.nummer||"")+"_Nr"+(a.nummer||"")+"_"+(anl.length>1 ? anl.length+"-Anlagen" : String(ibnAnlageKurz(anl[0])).slice(0, 40))+"_"+String(dfmt(a.datum)).replace(/\./g,"-")+((a.korrekturen||[]).length ? "_Korrektur-"+a.korrekturen.length : "")+".pdf")
     .replace(/[\\\/:*?"<>|]+/g,"").replace(/\s+/g,"-");
 }
+/* Fotos eingebettet im Blatt, PDF-Unterlagen hinten angehängt (wie anPdfErzeugen) */
 function ibnPdfErzeugen(p, a){
-  return blattZuPdf({html:ibnBlattHtml(p, a), titel:ibnTitel(a)+" "+(p.nummer||""), fuss:ibnTitel(a)+" – "+projektTitel(p), betreff:"Inbetriebnahmeprotokoll Projekt "+(p.nummer||"")});
+  var alle=((a.daten||{}).anhaenge)||[], fehlt=[];
+  var fotos=alle.filter(function(x){ return anIstBild(x.name, x.typ); });
+  return Promise.all(fotos.map(function(x){
+    return anBildUrl(x).then(function(u){ if(!u) throw new Error("nicht abrufbar"); return fetch(u); })
+      .then(function(r){ if(!r.ok) throw new Error("HTTP "+r.status); return r.blob(); })
+      .then(function(b){ return new Promise(function(ok){ var fr=new FileReader(); fr.onload=function(){ ok(fr.result); }; fr.onerror=function(){ ok(""); }; fr.readAsDataURL(b); }); })
+      .catch(function(){ return ""; })
+      .then(function(u){ if(!u) fehlt.push(x.name); return {url:u, name:x.name, notiz:x.notiz}; });
+  })).then(function(eingebettet){
+    if(fehlt.length) toast("Foto(s) nicht abrufbar, im PDF nur mit Namen: "+fehlt.join(", "));
+    return blattZuPdf({html:ibnBlattHtml(p, a, eingebettet), titel:ibnTitel(a)+" "+(p.nummer||""), fuss:ibnTitel(a)+" – "+projektTitel(p), betreff:"Inbetriebnahmeprotokoll Projekt "+(p.nummer||"")});
+  }).then(function(blob){ return anhaengeAnPdf(blob, alle.filter(function(x){ return !anIstBild(x.name, x.typ); })); });
 }
 function ibnPdfZeigen(p, a){
   if(a.pdf_pfad && !demo()){ projektDateiOeffnen(a.pdf_pfad, ibnDateiname(p, a)); return; }

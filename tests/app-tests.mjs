@@ -6134,7 +6134,17 @@ test("Inbetriebnahmeprotokoll: aus der Anlage vorbelegt, Füllmenge und CO₂e g
     e.uebergabePunkte = d.querySelectorAll(".ibn-punkt").length;
     e.keineAbnahmeWahl = !d.querySelector("[data-ab]");
     tippe("abnahmeVerweis", "Endabnahme Lidl vom 24.09.2026");
+    /* Fotos (Inhaber 12.10.2026): Bild aus der Zwischenablage einfügen – Projektdatei, Beschriftung, im PDF */
+    A.knopf(d, /^Weiter: Fotos/).click(); await A.warte(50);
+    const cvF = document.createElement("canvas"); cvF.width = 60; cvF.height = 40; cvF.getContext("2d").fillRect(5, 5, 20, 20);
+    const pngF = await new Promise((ok) => cvF.toBlob((b) => ok(new File([b], "image.png", { type: "image/png" })), "image/png"));
+    const dtF = new DataTransfer(); dtF.items.add(pngF);
+    d.querySelector("[data-einfuegen]").dispatchEvent(new ClipboardEvent("paste", { clipboardData: dtF, bubbles: true, cancelable: true }));
+    await A.bis(() => d.querySelectorAll("[data-anhang]").length === 1);
+    e.foto = d.querySelector("[data-anhang] [data-name]").textContent;
+    const noF = d.querySelector("[data-anhang] [data-notiz]"); noF.value = "VRV 2 – Typenschild"; noF.dispatchEvent(new Event("input"));
     A.knopf(d, /^Weiter: Abschluss/).click(); await A.warte(100);
+    e.fotoZusammen = /1 Foto\/Dateien angehängt/.test(d.textContent);
     e.zusammen = d.querySelector(".note").textContent;
     e.nachtragen = (d.querySelector('[data-nt="inbetriebnahme"]') || {}).checked;
     e.nachtragenKg = (d.querySelector('[data-nt="kg"]') || {}).checked;
@@ -6148,6 +6158,7 @@ test("Inbetriebnahmeprotokoll: aus der Anlage vorbelegt, Füllmenge und CO₂e g
     const za = ((z.daten || {}).anlagen || []);
     e.gespeichert = [z.nummer, z.monteur, !!z.unterschrieben, z.anlage_id, z.erstellt_von, x("ibnRegelungText")(za[0] || {}), ((z.daten || {}).check || {}).mechanik && z.daten.check.mechanik.kondensat && z.daten.check.mechanik.kondensat.s].join("|");
     e.co2Gespeichert = za.map((q) => x("ibnCo2")(q)).join("|") + "|" + za.map((q) => q.anlageId).join(",");
+    e.anhaenge = ((z.daten || {}).anhaenge || []).map((q) => q.name + ":" + (q.notiz || "") + ":" + ("_url" in q)).join("|");
     /* PDF in den Projektdateien, Inbetriebnahme an der Anlage */
     await A.bis(() => z.pdf_pfad, 8000);
     const pr = db.projekte.find((p) => p.id === "pan1");
@@ -6162,7 +6173,7 @@ test("Inbetriebnahmeprotokoll: aus der Anlage vorbelegt, Füllmenge und CO₂e g
     const html = x("ibnBlattHtml")(pr, z);
     e.blatt = /INBETRIEBNAHMEPROTOKOLL KÄLTEANLAGE/.test(html) && /16,3 kg/.test(html) && /34,03 t CO₂e/.test(html) && /Gefälle fehlt/.test(html) && /Kühlen 22 °C · Nachtabsenkung 22:00–06:00/.test(html)
       && /siehe Abnahmeprotokoll des Auftraggebers – Endabnahme Lidl vom 24.09.2026/.test(html) && /FXFQ63/.test(html) && /Verordnung \(EU\) 2024\/573/.test(html) && !/mit Vorbehalt/.test(html)
-      && /Anlage 1 von 2: VRV Verkauf/.test(html) && /Anlage 2 von 2: Split Backshop/.test(html) && /Nachfüllung bei 18 m Rohrlänge/.test(html) && /4,05 t CO₂e/.test(html) && /KÄLTEANLAGEN/.test(html) && /Zertifikat Betrieb \(F-Gase\)<\/td><td>AT-UNT-TEST-250/.test(html) && /G14-TEST-1/.test(html);
+      && /Anlage 1 von 2: VRV Verkauf/.test(html) && /Anlage 2 von 2: Split Backshop/.test(html) && /Nachfüllung bei 18 m Rohrlänge/.test(html) && /4,05 t CO₂e/.test(html) && /KÄLTEANLAGEN/.test(html) && /<h2>Fotos<\/h2>/.test(html) && /VRV 2 – Typenschild/.test(html) && /Zertifikat Betrieb \(F-Gase\)<\/td><td>AT-UNT-TEST-250/.test(html) && /G14-TEST-1/.test(html);
     x("ansichtenSchliessen(); 1");
     e.toasts = window.__toasts.join(" | ");
     return e;
@@ -6174,6 +6185,7 @@ test("Inbetriebnahmeprotokoll: aus der Anlage vorbelegt, Füllmenge und CO₂e g
   pruefe(r.km === "R410A" && r.gesamt === "16,3 kg" && /^34,03 t CO₂e \(GWP 2087,5\)/.test(r.co2), "Kältemittel/CO₂e: " + JSON.stringify([r.km, r.gesamt, r.co2]));
   pruefe(/^R32\|6 kg\|4,05 t CO₂e \(GWP 675\)/.test(r.km2), "zweite Anlage: " + r.km2);
   pruefe(r.zert === "AT-UNT-TEST-250|G14-TEST-1", "Zertifikate nicht vorbelegt: " + r.zert);
+  pruefe(/^IBN_P-TEST-AN_\d{4}-\d\d-\d\d_1\.jpg$/.test(r.foto) && r.fotoZusammen && /^IBN_P-TEST-AN_[\d-]+_1\.jpg:VRV 2 – Typenschild:false$/.test(r.anhaenge), "Foto: " + JSON.stringify([r.foto, r.fotoZusammen, r.anhaenge]));
   pruefe(/^VRV Verkauf/.test(r.messChips) && /1 Anlage noch ohne Angaben/.test(r.fehlenHinweis) && r.regelungBloecke === 2, "Messwerte je Anlage / Regelung je Anlage: " + JSON.stringify([r.messChips, r.fehlenHinweis, r.regelungBloecke]));
   pruefe(/1 Mangel/.test(r.zusammen) && /nichts offen/.test(r.zusammen) && /Nachtabsenkung 22:00–06:00/.test(r.zusammen), "Zusammenfassung: " + r.zusammen);
   pruefe(r.dokuAntworten === "erl,offen,nz" && r.zeitVorher === true && r.zeitNachher === false && r.uebergabePunkte === 4 && r.keineAbnahmeWahl, "Checkliste/Übergabe nach der Vorlage: " + JSON.stringify([r.dokuAntworten, r.zeitVorher, r.zeitNachher, r.uebergabePunkte, r.keineAbnahmeWahl]));
