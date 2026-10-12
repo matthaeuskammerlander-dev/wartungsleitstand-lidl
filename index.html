@@ -30893,9 +30893,10 @@ function anPdfAblegen(p, a){
 }
 
 /* ---------- Inbetriebnahmeprotokoll Kälteanlage (Inhaber 12.10.2026: „muss erstellt werden … soll man im Projekt erstellen können“) ----------
-   Je Anlage ein Protokoll nach dem Muster „Inbetriebnahmeprotokoll Kälteanlage“ (Anlage/Betreiber/Ausführung, Kältemittel mit
-   CO₂-Äquivalent, Messwerte, Checkliste, Übergabe, Mängel/Abnahme, Unterschrift). Gleiche Regeln wie der Arbeitsnachweis:
-   Tabelle inbetriebnahmen (tools/inbetriebnahmen.sql), der Monteur erstellt und unterschreibt unter seinem eigenen Konto,
+   Ein Protokoll nach dem Muster „Inbetriebnahmeprotokoll Kälteanlage“ – für EINE oder MEHRERE Anlagen auf einmal (Inhaber 12.10.2026:
+   „ich will mehrere Anlagen auf einmal machen“): gemeinsam sind Betreiber/Standort/Auftrag, Checkliste, Übergabe, Abnahme und Unterschrift;
+   je Anlage (daten.anlagen[]) Typenschild, Kältemittel mit CO₂-Äquivalent, Messwerte und die Regelungs-Einstellungen. Gleiche Regeln wie der
+   Arbeitsnachweis: Tabelle inbetriebnahmen (tools/inbetriebnahmen.sql), der Monteur erstellt und unterschreibt unter seinem eigenen Konto,
    unterschrieben = fest (Korrektur mit Grund), PDF als Projektdatei Art „protokoll“. Keine Preise. */
 var IBN_FEHLT="Inbetriebnahmeprotokolle sind in der Datenbank noch nicht eingerichtet (tools/inbetriebnahmen.sql ausführen).";
 var IBN_DEMO={}, IBN_JE_PROJEKT={};
@@ -30916,17 +30917,18 @@ var IBN_CHECK=[
     ["brennbar","Bei brennbaren Kältemitteln: Zündquellenfreiheit und Warnhinweise geprüft"],["probelauf","Probelauf durchgeführt, Betriebsdaten aufgenommen"],["typenschild","Typenschild und Kältemittelkennzeichnung angebracht und lesbar"]]},
   {k:"doku", titel:"Dokumentation", antworten:IBN_STAND, punkte:[["datensatz","Anlagendatensatz angelegt: Kältemittel, Füllmenge, CO₂-Äquivalent"],["intervall","Prüfintervall aus dem CO₂-Äquivalent abgeleitet und terminiert"],
     ["protokoll","Inbetriebnahmeprotokoll unterschrieben und abgelegt"],["unterlagen","Unterlagen an den Betreiber übergeben"]]}];
-/* Was an der Regelung eingestellt wurde (Inhaber 12.10.2026: „welche Sollwerte eingestellt wurden, Nachtabsenkung von–bis“) – daten.regelung */
+/* Was an der Regelung eingestellt wurde (Inhaber 12.10.2026: „welche Sollwerte eingestellt wurden, Nachtabsenkung von–bis“) – je Anlage anlage.regelung */
 var IBN_REGELUNG=[["sollKuehlen","Sollwert Kühlen (°C)"],["sollHeizen","Sollwert Heizen (°C)"],["betriebsart","Betriebsart / Zeitprogramm"]];
-/* Messwerte bei der Inbetriebnahme */
+/* Messwerte bei der Inbetriebnahme – je Anlage */
 var IBN_MESS=[["pVerd","Verdampfungsdruck","bar"],["tVerd","Verdampfungstemperatur","°C"],["pVerfl","Verflüssigungsdruck","bar"],["tVerfl","Verflüssigungstemperatur","°C"],
   ["ueberhitzung","Überhitzung","K"],["unterkuehlung","Unterkühlung","K"],["tAussen","Lufttemperatur außen","°C"],["tInnenEin","Lufttemperatur innen Eintritt","°C"],
   ["tInnenAus","Lufttemperatur innen Austritt","°C"],["strom","Stromaufnahme L1 / L2 / L3","A"],["spannung","Spannung","V"],["hoehe","Höhendifferenz Außen-/Innengerät","m"]];
-/* Felder von Anlage und Betreiber (Schritt 2) und Kältemittel/Elektrik (Schritt 3) */
-var IBN_KOPF=[["betreiber","Betreiber"],["standort","Standort / Objekt"],["auftrag","Auftrag / Bestellung / Projekt-Nr."],["anlagentyp","Anlagentyp / Bezeichnung"],
-  ["hersteller","Hersteller"],["modell","Modell / Type"],["snAussen","Seriennummer Außengerät"],["leistungKw","Kälteleistung (kW)"]];
+/* gemeinsame Kopffelder und Felder je Anlage */
+var IBN_KOPF=[["betreiber","Betreiber"],["standort","Standort / Objekt"],["auftrag","Auftrag / Bestellung / Projekt-Nr."]];
+var IBN_ANL=[["anlagentyp","Anlagentyp / Bezeichnung"],["hersteller","Hersteller"],["modell","Modell / Type"],["snAussen","Seriennummer Außengerät"],["leistungKw","Kälteleistung (kW)"]];
 var IBN_KM=[["kaeltemittel","Kältemittel"],["sicherheitsgruppe","Sicherheitsgruppe"],["gwp","GWP"],["fuellWerk","Füllmenge werkseitig (kg)"],["nachfuellung","Nachfüllung (kg)"],
-  ["rohrlaenge","Rohrlänge einfach (m)"],["gesamtKg","Gesamtfüllmenge (kg)"],["elektrisch","Elektrischer Anschluss"],["zertifikat","Zertifikat-Nr. (Betrieb / Person)"]];
+  ["rohrlaenge","Rohrlänge einfach (m)"],["gesamtKg","Gesamtfüllmenge (kg)"],["elektrisch","Elektrischer Anschluss"]];
+var IBN_ANL_FELDER=["anlageId","anlagentyp","hersteller","modell","snAussen","snInnen","leistungKw","kaeltemittel","sicherheitsgruppe","gwp","fuellWerk","nachfuellung","rohrlaenge","gesamtKg","elektrisch","messwerte","regelung","ibnVorher"];
 function ibnLaden(pid){
   if(demo()) return Promise.resolve(IBN_JE_PROJEKT[pid]=(IBN_DEMO[pid]||[]).slice());
   if(!betriebAn()) return Promise.resolve([]);
@@ -30939,47 +30941,71 @@ function ibnTitel(a){ return "Inbetriebnahmeprotokoll "+(a && a.nummer ? "Nr. "+
 function ibnDarfAendern(a){ return !!a && betriebAn() && !demo() && (nurInhaber() || a.erstellt_von===Store.benutzer.id); }
 function ibnZahl(w){ var z=zahlLesen(String(w==null?"":w)); return z===z && String(w).trim()!=="" ? z : null; }
 function ibnZahlText(w, stellen){ var z=ibnZahl(w); return z==null ? "" : (Math.round(z*Math.pow(10, stellen==null?2:stellen))/Math.pow(10, stellen==null?2:stellen)).toString().replace(".",","); }
-/* Gesamtfüllmenge: eingetragen, sonst werkseitig + Nachfüllung */
-function ibnGesamtKg(d){
-  var g=ibnZahl(d.gesamtKg); if(g!=null) return g;
-  var w=ibnZahl(d.fuellWerk), n=ibnZahl(d.nachfuellung);
+/* Gesamtfüllmenge einer Anlage: eingetragen, sonst werkseitig + Nachfüllung */
+function ibnGesamtKg(x){
+  var g=ibnZahl(x.gesamtKg); if(g!=null) return g;
+  var w=ibnZahl(x.fuellWerk), n=ibnZahl(x.nachfuellung);
   return w==null && n==null ? null : Math.round(((w||0)+(n||0))*1000)/1000;
 }
 /* GWP: eingetragen, sonst Standardwert des Kältemittels (wie bei den Anlagen) */
-function ibnGwp(d){ var g=ibnZahl(d.gwp); return g!=null ? g : gwpVon({kaeltemittelArt:d.kaeltemittel}); }
-function ibnCo2(d){ var kg=ibnGesamtKg(d), gwp=ibnGwp(d); return kg && gwp ? Math.round(kg*gwp/10)/100 : null; }
-function ibnAnlageName(p, a){
-  var d=(a && a.daten)||{};
-  return d.anlagentyp || [d.hersteller, d.modell].filter(Boolean).join(" ") || "Anlage";
+function ibnGwp(x){ var g=ibnZahl(x.gwp); return g!=null ? g : gwpVon({kaeltemittelArt:x.kaeltemittel}); }
+function ibnCo2(x){ var kg=ibnGesamtKg(x), gwp=ibnGwp(x); return kg && gwp ? Math.round(kg*gwp/10)/100 : null; }
+/* die Anlagen eines Protokolls – ältere Stände (eine Anlage, Felder flach in daten) werden gleich behandelt */
+function ibnAnlagen(d){
+  d=d||{};
+  if(Array.isArray(d.anlagen)) return d.anlagen;
+  var x={}; IBN_ANL_FELDER.forEach(function(k){ if(k in d) x[k]=d[k]; });
+  return Object.keys(x).length ? [x] : [];
 }
-/* Vorbelegung aus Projekt und Anlage (anlageDaten: Typenschild, Kältemittel, Innengeräte) – nichts wird geraten */
-function ibnVorbelegen(p, leader){
+function ibnNormieren(d){
+  if(!Array.isArray(d.anlagen)){ d.anlagen=ibnAnlagen(d); IBN_ANL_FELDER.forEach(function(k){ delete d[k]; }); }
+  d.anlagen.forEach(function(x){ x.messwerte=x.messwerte||{}; x.regelung=x.regelung||{}; });
+  d.check=d.check||{}; d.uebergabe=d.uebergabe||{};
+  return d;
+}
+function ibnAnlageKurz(x){ return (x && (x.anlagentyp || [x.hersteller, x.modell].filter(Boolean).join(" "))) || "Anlage"; }
+function ibnAnlageName(p, a){
+  var l=ibnAnlagen((a && a.daten)||{});
+  if(!l.length) return "Anlage";
+  return l.length===1 ? ibnAnlageKurz(l[0]) : l.length+" Anlagen: "+l.map(ibnAnlageKurz).join(", ");
+}
+/* „Kühlen 22 °C · Heizen 20 °C · Nachtabsenkung 22:00–06:00 · …“ */
+function ibnRegelungText(x){
+  var rg=(x||{}).regelung||{}, t=[];
+  if(String(rg.sollKuehlen||"").trim()) t.push("Kühlen "+rg.sollKuehlen+" °C");
+  if(String(rg.sollHeizen||"").trim()) t.push("Heizen "+rg.sollHeizen+" °C");
+  if(String(rg.betriebsart||"").trim()) t.push(rg.betriebsart);
+  if(rg.nacht==="ja") t.push("Nachtabsenkung "+(rg.nachtVon||"?")+"–"+(rg.nachtBis||"?")); else if(rg.nacht==="nein") t.push("keine Nachtabsenkung");
+  if(String(rg.notiz||"").trim()) t.push(rg.notiz);
+  return t.join(" · ");
+}
+/* gemeinsame Vorbelegung aus dem Projekt – nichts wird geraten */
+function ibnVorbelegen(p){
   var s=p.standort_id && byId[p.standort_id], pd=p.daten||{};
   var best=(pd.bestellungen||[]).map(function(b){ return b.nummer||b.nr||""; }).filter(Boolean)[0];
-  var d={betreiber:kundeTitel(p.kunde_id||"lidl"), standort:[s ? stName(s) : "", s && s.adresse ? s.adresse : ""].filter(Boolean).join(", ")||p.titel||"",
-    auftrag:[p.nummer||"", best ? "Bestellung "+best : ""].filter(Boolean).join(" · "), fachbetrieb:"Kammerlander Umwelt- und Klimatechnik GmbH",
-    messwerte:{}, check:{}, uebergabe:{}, regelung:{}, abnahmeVerweis:"", vertreter:"", bemerkungen:""};
-  if(leader){
-    var a=anlageDaten(leader);
-    d.anlageId=anlageVon(leader).id;
-    d.anlagentyp=[a.anlagentyp, a.bauart && String(a.anlagentyp||"").indexOf(a.bauart)<0 ? a.bauart : ""].filter(Boolean).join(" – ");
-    d.hersteller=a.hersteller||""; d.modell=a.modell||""; d.snAussen=a.seriennummer||"";
-    d.snInnen=(Array.isArray(a.innengeraete)?a.innengeraete:[]).map(function(g){ return [g.raum, g.hersteller, g.modell, g.seriennummer ? "SN "+g.seriennummer : ""].filter(Boolean).join(" "); }).filter(Boolean).join("\n");
-    d.leistungKw=leerWert(a.leistungKw) ? "" : String(a.leistungKw).replace(".",",");
-    d.kaeltemittel=a.kaeltemittelArt||"";
-    d.gwp=leerWert(a.gwp) ? "" : String(a.gwp).replace(".",",");
+  return {betreiber:kundeTitel(p.kunde_id||"lidl"), standort:[s ? stName(s) : "", s && s.adresse ? s.adresse : ""].filter(Boolean).join(", ")||p.titel||"",
+    auftrag:[p.nummer||"", best ? "Bestellung "+best : ""].filter(Boolean).join(" · "), fachbetrieb:"Kammerlander Umwelt- und Klimatechnik GmbH", zertifikat:"",
+    anlagen:[], check:{}, uebergabe:{}, abnahmeVerweis:"", abnahmeDatum:"", vertreter:"", bemerkungen:""};
+}
+/* je Anlage aus den Anlagendaten (anlageDaten: Typenschild, Kältemittel, Innengeräte) */
+function ibnAnlageVorbelegen(leader){
+  var a=anlageDaten(leader);
+  return {anlageId:anlageVon(leader).id,
+    anlagentyp:[a.anlagentyp, a.bauart && String(a.anlagentyp||"").indexOf(a.bauart)<0 ? a.bauart : ""].filter(Boolean).join(" – "),
+    hersteller:a.hersteller||"", modell:a.modell||"", snAussen:a.seriennummer||"",
+    snInnen:(Array.isArray(a.innengeraete)?a.innengeraete:[]).map(function(g){ return [g.raum, g.hersteller, g.modell, g.seriennummer ? "SN "+g.seriennummer : ""].filter(Boolean).join(" "); }).filter(Boolean).join("\n"),
+    leistungKw:leerWert(a.leistungKw) ? "" : String(a.leistungKw).replace(".",","), kaeltemittel:a.kaeltemittelArt||"",
+    gwp:leerWert(a.gwp) ? "" : String(a.gwp).replace(".",","),
     /* die Anlage kennt nur die Gesamtfüllmenge – werkseitig/Nachfüllung trägt der Monteur ein */
-    d.gesamtKg=leerWert(a.kaeltemittelKg) ? "" : String(a.kaeltemittelKg).replace(".",",");
-    d.ibnVorher=a.inbetriebnahme||"";
-  }
-  return d;
+    gesamtKg:leerWert(a.kaeltemittelKg) ? "" : String(a.kaeltemittelKg).replace(".",","), fuellWerk:"", nachfuellung:"", rohrlaenge:"", elektrisch:"", sicherheitsgruppe:"",
+    messwerte:{}, regelung:{}, ibnVorher:a.inbetriebnahme||""};
 }
 /* ---------- Karte im Projekt: Liste + „+ Inbetriebnahmeprotokoll“ ---------- */
 function ibnKarte(p, schreiben){
   var k=el('<div class="card" style="box-shadow:none;margin-top:12px"><div class="pad stack" style="gap:8px">'+
     '<div class="rowflex" style="justify-content:space-between;gap:8px"><h2>Inbetriebnahmeprotokolle</h2>'+
       (schreiben && !nurLesen() ? '<button class="btn sm" type="button" data-ibn-neu>+ Inbetriebnahmeprotokoll</button>' : "")+"</div>"+
-    '<div class="muted" style="font-size:12.5px">Je Anlage ein Protokoll der Inbetriebnahme: Anlage und Betreiber, Kältemittel mit CO₂-Äquivalent, Messwerte, Checkliste, Übergabe, Abnahme. Vorbelegt aus den Anlagendaten; der Monteur unterschreibt unter seinem Namen, das PDF kommt zu den Projektdateien.</div>'+
+    '<div class="muted" style="font-size:12.5px">Protokoll der Inbetriebnahme – für eine oder mehrere Anlagen auf einmal: Betreiber, je Anlage Kältemittel mit CO₂-Äquivalent und Messwerte, Checkliste, Übergabe, Abnahme. Vorbelegt aus den Anlagendaten; der Monteur unterschreibt unter seinem Namen, das PDF kommt zu den Projektdateien.</div>'+
     '<div class="stack" data-ibn-liste style="gap:6px"><div class="muted" style="font-size:12.5px">wird geladen …</div></div></div></div>');
   var host=k.querySelector("[data-ibn-liste]");
   var zeichnen=function(){
@@ -30987,7 +31013,6 @@ function ibnKarte(p, schreiben){
       host.innerHTML="";
       if(!l.length){ host.appendChild(el('<div class="muted" style="font-size:12.5px">Noch kein Inbetriebnahmeprotokoll.</div>')); return; }
       l.slice().reverse().forEach(function(a){
-        var d=a.daten||{};
         var z=el('<div style="font-size:13px;border-left:3px solid '+(a.unterschrieben?"var(--ok)":"var(--warn)")+';padding-left:8px" data-ibn="'+esc(a.id)+'">'+
           "<strong>"+esc(ibnTitel(a))+"</strong> · "+esc(ibnAnlageName(p, a))+" · "+esc(dfmt(a.datum))+" · "+esc(a.monteur||"")+" · "+
           (a.unterschrieben ? '<span class="tag">✓ unterschrieben</span>' : '<span class="tag f30">Entwurf – nicht unterschrieben</span>')+
@@ -31015,7 +31040,8 @@ function ibnKarte(p, schreiben){
   return k;
 }
 /* ---------- Erstellen / Weiterbearbeiten / Korrigieren – geführt wie der Arbeitsnachweis ----------
-   Anlage → Anlage und Betreiber → Kältemittel und Elektrik → Messwerte → Checkliste → Übergabe und Abnahme → Abschluss.
+   Anlagen → Anlage und Betreiber → Kältemittel und Elektrik → Messwerte → Checkliste → Übergabe und Abnahme → Abschluss.
+   Bei mehreren Anlagen schaltet in den Anlage-Schritten eine Chip-Zeile zwischen den Anlagen um (✓ = schon etwas eingetragen).
    Jede Eingabe wird auf dem Gerät gemerkt; gespeichert wird erst mit dem Knopf. */
 function ibnEditor(p, a, fertig, opt){
   opt=opt||{};
@@ -31025,25 +31051,24 @@ function ibnEditor(p, a, fertig, opt){
   var s=p.standort_id && byId[p.standort_id];
   var monteur=a ? a.monteur : (kontoTechName()||meinName());
   var lsKey="ukt_ibn_entwurf:"+p.id+":"+(a ? a.id : "neu");
-  var n=a ? {datum:a.datum, daten:JSON.parse(JSON.stringify(a.daten||{}))} : {datum:isoLokal(new Date()), daten:ibnVorbelegen(p, null)};
-  var sig=null, grund="", schritt=0, geaendert=false;
+  var n=a ? {datum:a.datum, daten:JSON.parse(JSON.stringify(a.daten||{}))} : {datum:isoLokal(new Date()), daten:ibnVorbelegen(p)};
+  var sig=null, grund="", schritt=0, aktiv=0, geaendert=false;
   var gemerkt=lsGet(lsKey, null);
   if(gemerkt && gemerkt.n && window.confirm("Angefangenes Inbetriebnahmeprotokoll vom "+tagFmt(gemerkt.zeit)+" auf diesem Gerät – weitermachen?\n\nAbbrechen = neu beginnen (das Angefangene wird verworfen).")){
-    n=gemerkt.n; schritt=gemerkt.schritt||0; sig=korr ? null : gemerkt.sig||null; grund=gemerkt.grund||""; geaendert=true;
+    n=gemerkt.n; schritt=gemerkt.schritt||0; aktiv=gemerkt.aktiv||0; sig=korr ? null : gemerkt.sig||null; grund=gemerkt.grund||""; geaendert=true;
   } else if(gemerkt) lsSet(lsKey, null);
-  var d=n.daten;
-  d.messwerte=d.messwerte||{}; d.check=d.check||{}; d.uebergabe=d.uebergabe||{}; d.regelung=d.regelung||{};
-  var merken=function(){ geaendert=true; lsSet(lsKey, {n:n, schritt:schritt, sig:sig, grund:grund, zeit:new Date().toISOString()}); };
+  var d=ibnNormieren(n.daten);
+  var merken=function(){ geaendert=true; lsSet(lsKey, {n:n, schritt:schritt, aktiv:aktiv, sig:sig, grund:grund, zeit:new Date().toISOString()}); };
   var v=ansichtOeffnen(korr ? "Korrektur: "+ibnTitel(a) : a ? ibnTitel(a) : "Neues Inbetriebnahmeprotokoll", function(){
     if(geaendert) toast("Auf diesem Gerät gemerkt – „+ Inbetriebnahmeprotokoll“ bzw. „Weiter bearbeiten“ macht dort weiter.");
   }, {breit:true});
-  var SCHRITTE=["Anlage","Anlage und Betreiber","Kältemittel und Elektrik","Messwerte","Checkliste","Übergabe und Abnahme", korr ? "Korrektur" : "Abschluss"];
+  var SCHRITTE=["Anlagen","Anlage und Betreiber","Kältemittel und Elektrik","Messwerte","Checkliste","Übergabe und Abnahme", korr ? "Korrektur" : "Abschluss"];
   var anlagen=s ? anlagenDesMarkts(s, true) : [], zu=(p.daten||{}).anlagen||[];
-  /* dem Projekt zugeordnete Anlagen zuerst */
-  anlagen.sort(function(x, y){ return (zu.indexOf(y.id)>=0)-(zu.indexOf(x.id)>=0); });
-  var leaderVon=function(){ var l=anlagen.filter(function(x){ return x.id===d.anlageId; })[0]; return l ? l.leader : null; };
-  var feld=function(label, k, rows, platz){ return '<label class="fl"><span>'+esc(label)+'</span><textarea data-t="'+k+'" rows="'+(rows||3)+'" placeholder="'+esc(platz||"")+'">'+esc(d[k]||"")+"</textarea></label>"; };
-  var eingabe=function(label, k, wert, extra){ return '<label class="fl"><span>'+esc(label)+'</span><input type="text" data-k="'+k+'" value="'+esc(wert==null?"":wert)+'"'+(extra||"")+"></label>"; };
+  anlagen.sort(function(x, y){ return (zu.indexOf(y.id)>=0)-(zu.indexOf(x.id)>=0); });   /* dem Projekt zugeordnete zuerst */
+  var leaderVon=function(x){ var l=x && x.anlageId && anlagen.filter(function(q){ return q.id===x.anlageId; })[0]; return l ? l.leader : null; };
+  var aktuell=function(){ if(aktiv>=d.anlagen.length) aktiv=Math.max(0, d.anlagen.length-1); return d.anlagen[aktiv]||null; };
+  var feld=function(obj, label, k, rows, platz){ return '<label class="fl"><span>'+esc(label)+'</span><textarea data-t="'+k+'" rows="'+(rows||3)+'" placeholder="'+esc(platz||"")+'">'+esc(obj[k]||"")+"</textarea></label>"; };
+  var eingabe=function(attr, label, k, wert, extra){ return '<label class="fl"><span>'+esc(label)+'</span><input type="text" '+attr+'="'+k+'" value="'+esc(wert==null?"":wert)+'"'+(extra||"")+"></label>"; };
   var chips=function(liste, wert, attr){ return '<div class="chips">'+liste.map(function(x){ return '<button class="chip" type="button" '+attr+'="'+esc(x[0])+'" aria-pressed="'+(wert===x[0])+'">'+esc(x[1])+"</button>"; }).join("")+"</div>"; };
   var zeichnen=function(){
     v.inhalt.innerHTML=""; v.fuss.innerHTML="";
@@ -31054,8 +31079,11 @@ function ibnEditor(p, a, fertig, opt){
     v.inhalt.appendChild(leiste);
     var box=el('<div class="stack" style="gap:10px"></div>'); v.inhalt.appendChild(box);
     [anlageSchritt, kopfSchritt, kmSchritt, messSchritt, checkSchritt, uebergabeSchritt, abschlussSchritt][schritt](box);
+    /* gemeinsame Felder (data-k / data-t) und Felder der gerade gewählten Anlage (data-ak / data-at) */
     box.querySelectorAll("textarea[data-t]").forEach(function(t){ t.oninput=function(){ d[t.dataset.t]=t.value; merken(); }; feldHoehe(t); var l=t.closest("label"); if(l) l.querySelector("span").appendChild(diktatKnopf(t)); });
-    box.querySelectorAll("input[data-k]").forEach(function(i){ i.oninput=i.onchange=function(){ if(i.dataset.k==="datum") n.datum=i.value; else d[i.dataset.k]=i.value; merken(); if(i.dataset.rechnen) rechnen(box); }; });
+    box.querySelectorAll("textarea[data-at]").forEach(function(t){ t.oninput=function(){ var x=aktuell(); if(x){ x[t.dataset.at]=t.value; merken(); } }; feldHoehe(t); var l=t.closest("label"); if(l) l.querySelector("span").appendChild(diktatKnopf(t)); });
+    box.querySelectorAll("input[data-k]").forEach(function(i){ i.oninput=i.onchange=function(){ if(i.dataset.k==="datum") n.datum=i.value; else d[i.dataset.k]=i.value; merken(); }; });
+    box.querySelectorAll("input[data-ak]").forEach(function(i){ i.oninput=i.onchange=function(){ var x=aktuell(); if(!x) return; x[i.dataset.ak]=i.value; merken(); if(i.dataset.rechnen) rechnen(box); }; });
     var zur=el('<button class="btn ghost" type="button">Zurück</button>'), weiter=el('<button class="btn" type="button">Weiter: '+esc(SCHRITTE[schritt+1]||"")+"</button>");
     zur.disabled=schritt===0; zur.onclick=function(){ schritt--; merken(); zeichnen(); v.inhalt.scrollTop=0; };
     weiter.onclick=function(){ schritt++; merken(); zeichnen(); v.inhalt.scrollTop=0; };
@@ -31064,71 +31092,112 @@ function ibnEditor(p, a, fertig, opt){
     if(schritt<SCHRITTE.length-1) v.fuss.appendChild(weiter);
     else if(!fremd){ var ok=el('<button class="btn" type="button">'+(korr ? "Korrektur speichern" : "Unterschreiben und abschließen")+"</button>"); ok.onclick=function(){ speichern(ok, true); }; v.fuss.appendChild(ok); }
   };
-  /* Gesamtfüllmenge und CO₂-Äquivalent nachrechnen, sobald sich Kältemittel oder Mengen ändern */
+  /* Gesamtfüllmenge und CO₂-Äquivalent der gewählten Anlage nachrechnen */
   function rechnen(box){
-    var g=box.querySelector("[data-ibn-gesamt]"), c=box.querySelector("[data-ibn-co2]");
-    if(g) g.textContent=ibnGesamtKg(d)==null ? "–" : ibnZahlText(ibnGesamtKg(d), 3)+" kg";
-    if(c) c.textContent=ibnCo2(d)==null ? "– (Kältemittel und Füllmenge eintragen)" : ibnZahlText(ibnCo2(d))+" t CO₂e (GWP "+ibnZahlText(ibnGwp(d), 1)+")";
+    var x=aktuell()||{}, g=box.querySelector("[data-ibn-gesamt]"), c=box.querySelector("[data-ibn-co2]");
+    if(g) g.textContent=ibnGesamtKg(x)==null ? "–" : ibnZahlText(ibnGesamtKg(x), 3)+" kg";
+    if(c) c.textContent=ibnCo2(x)==null ? "– (Kältemittel und Füllmenge eintragen)" : ibnZahlText(ibnCo2(x))+" t CO₂e (GWP "+ibnZahlText(ibnGwp(x), 1)+")";
+  }
+  /* hat die Anlage in diesem Schritt schon etwas? (✓ am Chip) */
+  function anlageHat(x, was){
+    if(was==="kopf") return !!(String(x.anlagentyp||"").trim() || String(x.modell||"").trim());
+    if(was==="km") return ibnGesamtKg(x)!=null && !!String(x.kaeltemittel||"").trim();
+    if(was==="mess") return Object.keys(x.messwerte||{}).some(function(k){ return String(x.messwerte[k]||"").trim(); });
+    return false;
+  }
+  /* Chip-Zeile zum Umschalten zwischen den Anlagen (nur bei mehreren) – darunter die Felder der gewählten Anlage */
+  function anlageWahl(box, was){
+    var x=aktuell();
+    if(!x){ box.appendChild(el('<div class="note warnbox" style="font-size:13px">Noch keine Anlage gewählt – bitte zuerst im Schritt „Anlagen“ anhaken.</div>')); return null; }
+    if(d.anlagen.length>1){
+      var w=el('<div class="stack" style="gap:4px" data-ibn-anlwahl><div class="muted" style="font-size:12.5px">Angaben je Anlage – antippen wechselt (✓ = schon eingetragen):</div><div class="chips"></div></div>');
+      d.anlagen.forEach(function(q, i){ var c=el('<button class="chip" type="button" aria-pressed="'+(i===aktiv)+'">'+(anlageHat(q, was) ? "✓ " : "")+esc(ibnAnlageKurz(q))+"</button>");
+        c.onclick=function(){ aktiv=i; merken(); zeichnen(); }; w.querySelector(".chips").appendChild(c); });
+      box.appendChild(w);
+      var fehlen=d.anlagen.filter(function(q){ return !anlageHat(q, was); }).length;
+      if(fehlen && fehlen<d.anlagen.length) box.appendChild(el('<div class="muted" style="font-size:12.5px" data-ibn-fehlen>'+fehlen+" Anlage"+(fehlen===1?"":"n")+" noch ohne Angaben in diesem Schritt.</div>"));
+    } else box.appendChild(el('<div style="font-size:13px"><strong>'+esc(ibnAnlageKurz(x))+"</strong></div>"));
+    return x;
   }
   function anlageSchritt(box){
-    box.appendChild(el('<div class="muted" style="font-size:12.5px">Für welche Anlage? Hersteller, Modell, Seriennummer, Kältemittel, Füllmenge und Innengeräte kommen aus den Anlagendaten des Markts. Fehlt die Anlage: erst im Markt anlegen (Typenschild-Fotos mit der KI lesen lassen).</div>'));
+    box.appendChild(el('<div class="muted" style="font-size:12.5px">Welche Anlagen werden in Betrieb genommen? Mehrere anhaken – ein Protokoll für alle, je Anlage eigene Typenschild-Angaben, Kältemittel, Messwerte und Regelungs-Einstellungen. Hersteller, Modell, Seriennummer, Kältemittel, Füllmenge und Innengeräte kommen aus den Anlagendaten des Markts (fehlt die Anlage: erst im Markt anlegen, Typenschild-Fotos mit der KI lesen lassen).</div>'));
     if(!s) box.appendChild(el('<div class="note" style="font-size:13px">Dem Projekt ist noch kein Markt/Standort zugeordnet (Reiter Angaben) – das Protokoll geht auch ohne, die Anlagendaten sind dann von Hand einzutragen.</div>'));
     var liste=el('<div class="stack" style="gap:6px" data-ibn-anlagen></div>');
+    var drin=function(id){ return d.anlagen.filter(function(q){ return q.anlageId===id; })[0]||null; };
     anlagen.forEach(function(x){
-      var ad=anlageDaten(x.leader);
-      var z=el('<label class="chk" style="align-items:flex-start"><input type="radio" name="ibn_anlage" value="'+esc(x.id)+'"'+(d.anlageId===x.id?" checked":"")+'><span><strong>'+esc(anlagenName(x.leader))+"</strong>"+
+      var ad=anlageDaten(x.leader), da=drin(x.id);
+      var z=el('<label class="chk" style="align-items:flex-start"><input type="checkbox" name="ibn_anlage" value="'+esc(x.id)+'"'+(da?" checked":"")+'><span><strong>'+esc(anlagenName(x.leader))+"</strong>"+
         (zu.indexOf(x.id)>=0 ? ' <span class="tag">im Projekt</span>' : "")+'<br><span class="muted" style="font-size:12.5px">'+esc([ad.hersteller, ad.modell, ad.seriennummer ? "SN "+ad.seriennummer : "", anlageKurz(ad)].filter(Boolean).join(" · "))+
         (ad.inbetriebnahme ? " · IBN "+esc(dfmt(ad.inbetriebnahme)) : " · Inbetriebnahme-Datum fehlt noch")+"</span></span></label>");
       z.querySelector("input").onchange=function(){
-        /* Angaben der Anlage übernehmen – schon von Hand Eingetragenes bleibt */
-        var vor=ibnVorbelegen(p, x.leader);
-        Object.keys(vor).forEach(function(k){ if(k==="anlageId" || k==="ibnVorher" || leerWert(d[k]) || (typeof d[k]==="object" && !Object.keys(d[k]).length)) d[k]=vor[k]; });
-        d.anlageId=x.id; merken(); zeichnen();
+        if(this.checked){ d.anlagen.push(ibnAnlageVorbelegen(x.leader)); aktiv=d.anlagen.length-1; }
+        else {
+          var q=drin(x.id), hat=q && (anlageHat(q, "mess") || Object.keys(q.regelung||{}).length);
+          if(hat && !window.confirm("„"+anlagenName(x.leader)+"“ aus dem Protokoll nehmen?\n\nDie eingetragenen Messwerte und Regelungs-Einstellungen dieser Anlage gehen dabei verloren.")){ this.checked=true; return; }
+          d.anlagen=d.anlagen.filter(function(r){ return r!==q; });
+        }
+        merken(); zeichnen();
       };
       liste.appendChild(z);
     });
     if(!anlagen.length && s) liste.appendChild(el('<div class="muted" style="font-size:12.5px">Am Markt ist noch keine Anlage angelegt.</div>'));
-    var ohne=el('<label class="chk"><input type="radio" name="ibn_anlage" value=""'+(!d.anlageId?" checked":"")+'><span>Ohne Anlage aus der Liste – Angaben von Hand</span></label>');
-    ohne.querySelector("input").onchange=function(){ delete d.anlageId; delete d.ibnVorher; merken(); zeichnen(); };
-    liste.appendChild(ohne);
     box.appendChild(liste);
-    if(d.anlageId) box.appendChild(el('<div class="note" style="font-size:12.5px" data-ibn-vorbelegt>Übernommen: '+esc([d.hersteller, d.modell, d.snAussen ? "SN "+d.snAussen : "", d.kaeltemittel, d.gesamtKg ? d.gesamtKg+" kg" : ""].filter(Boolean).join(" · ")||"noch keine Typenschild-Angaben an der Anlage")+" – alles in den nächsten Schritten änderbar.</div>"));
+    /* Anlage von Hand (nicht in der Liste des Markts) */
+    d.anlagen.forEach(function(q, i){
+      if(q.anlageId) return;
+      var z=el('<div class="rowflex" style="gap:8px;align-items:center" data-ibn-hand><span>✎ <strong>'+esc(ibnAnlageKurz(q))+'</strong> <span class="muted">(von Hand – Angaben im nächsten Schritt)</span></span><button class="btn ghost sm" type="button" aria-label="Anlage entfernen">✕</button></div>');
+      z.querySelector("button").onclick=function(){ if(!window.confirm("„"+ibnAnlageKurz(q)+"“ aus dem Protokoll nehmen?")) return; d.anlagen.splice(i, 1); merken(); zeichnen(); };
+      box.appendChild(z);
+    });
+    var plus=el('<div><button class="btn ghost sm" type="button" data-ibn-hand-neu>+ Anlage ohne Liste – Angaben von Hand</button></div>');
+    plus.querySelector("button").onclick=function(){ d.anlagen.push({anlageId:null, anlagentyp:"", messwerte:{}, regelung:{}}); aktiv=d.anlagen.length-1; schritt=1; merken(); zeichnen(); };
+    box.appendChild(plus);
+    if(d.anlagen.length) box.appendChild(el('<div class="note" style="font-size:12.5px" data-ibn-vorbelegt>'+(d.anlagen.length===1 ? "Übernommen: " : d.anlagen.length+" Anlagen – übernommen: ")+
+      esc(d.anlagen.map(function(q){ return [q.hersteller, q.modell, q.snAussen ? "SN "+q.snAussen : "", q.kaeltemittel, q.gesamtKg ? q.gesamtKg+" kg" : ""].filter(Boolean).join(" · ")||"keine Typenschild-Angaben"; }).join(" | "))+" – alles in den nächsten Schritten änderbar.</div>"));
   }
   function kopfSchritt(box){
     var g=el('<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px"></div>');
     g.appendChild(el('<label class="fl"><span>Datum der Inbetriebnahme</span><input type="date" data-k="datum" value="'+esc(n.datum||"")+'"></label>'));
-    IBN_KOPF.forEach(function(f){ g.appendChild(el(eingabe(f[1], f[0], d[f[0]], f[0]==="leistungKw" ? ' inputmode="decimal"' : ""))); });
+    IBN_KOPF.forEach(function(f){ g.appendChild(el(eingabe("data-k", f[1], f[0], d[f[0]]))); });
     box.appendChild(g);
-    box.appendChild(el(feld("Seriennummern Innengeräte (je Zeile ein Gerät)", "snInnen", 3, "z. B. Verkauf FXFQ63 SN …")));
-    if(d.ibnVorher) box.appendChild(el('<div class="muted" style="font-size:12.5px">An der Anlage steht als Inbetriebnahme schon '+esc(dfmt(d.ibnVorher))+".</div>"));
+    box.appendChild(el('<h2 style="margin:6px 0 0">Anlage</h2>'));
+    var x=anlageWahl(box, "kopf"); if(!x) return;
+    var ga=el('<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px"></div>');
+    IBN_ANL.forEach(function(f){ ga.appendChild(el(eingabe("data-ak", f[1], f[0], x[f[0]], f[0]==="leistungKw" ? ' inputmode="decimal"' : ""))); });
+    box.appendChild(ga);
+    box.appendChild(el('<label class="fl"><span>Seriennummern Innengeräte (je Zeile ein Gerät)</span><textarea data-at="snInnen" rows="3" placeholder="z. B. Verkauf FXFQ63 SN …">'+esc(x.snInnen||"")+"</textarea></label>"));
+    if(x.ibnVorher) box.appendChild(el('<div class="muted" style="font-size:12.5px">An der Anlage steht als Inbetriebnahme schon '+esc(dfmt(x.ibnVorher))+".</div>"));
   }
   function kmSchritt(box){
+    var x=anlageWahl(box, "km"); if(!x) return;
     var g=el('<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:10px"></div>');
-    g.appendChild(el('<label class="fl"><span>Kältemittel</span><input type="text" data-k="kaeltemittel" data-rechnen="1" list="ibn_km" value="'+esc(d.kaeltemittel||"")+'"><datalist id="ibn_km">'+KAELTEMITTEL.map(function(x){ return '<option value="'+esc(x)+'">'; }).join("")+"</datalist></label>"));
-    g.appendChild(el('<label class="fl"><span>Sicherheitsgruppe</span><input type="text" data-k="sicherheitsgruppe" list="ibn_sg" value="'+esc(d.sicherheitsgruppe||"")+'" placeholder="A1 / A2L"><datalist id="ibn_sg">'+IBN_SICHERHEIT.map(function(x){ return '<option value="'+esc(x)+'">'; }).join("")+"</datalist></label>"));
-    g.appendChild(el(eingabe("GWP (leer = Standardwert)", "gwp", d.gwp, ' inputmode="decimal" data-rechnen="1"')));
-    g.appendChild(el(eingabe("Füllmenge werkseitig (kg)", "fuellWerk", d.fuellWerk, ' inputmode="decimal" data-rechnen="1"')));
-    g.appendChild(el(eingabe("Nachfüllung (kg)", "nachfuellung", d.nachfuellung, ' inputmode="decimal" data-rechnen="1"')));
-    g.appendChild(el(eingabe("Rohrlänge einfach (m)", "rohrlaenge", d.rohrlaenge, ' inputmode="decimal"')));
-    g.appendChild(el(eingabe("Gesamtfüllmenge (kg) – leer = werkseitig + Nachfüllung", "gesamtKg", d.gesamtKg, ' inputmode="decimal" data-rechnen="1"')));
+    g.appendChild(el('<label class="fl"><span>Kältemittel</span><input type="text" data-ak="kaeltemittel" data-rechnen="1" list="ibn_km" value="'+esc(x.kaeltemittel||"")+'"><datalist id="ibn_km">'+KAELTEMITTEL.map(function(q){ return '<option value="'+esc(q)+'">'; }).join("")+"</datalist></label>"));
+    g.appendChild(el('<label class="fl"><span>Sicherheitsgruppe</span><input type="text" data-ak="sicherheitsgruppe" list="ibn_sg" value="'+esc(x.sicherheitsgruppe||"")+'" placeholder="A1 / A2L"><datalist id="ibn_sg">'+IBN_SICHERHEIT.map(function(q){ return '<option value="'+esc(q)+'">'; }).join("")+"</datalist></label>"));
+    g.appendChild(el(eingabe("data-ak", "GWP (leer = Standardwert)", "gwp", x.gwp, ' inputmode="decimal" data-rechnen="1"')));
+    g.appendChild(el(eingabe("data-ak", "Füllmenge werkseitig (kg)", "fuellWerk", x.fuellWerk, ' inputmode="decimal" data-rechnen="1"')));
+    g.appendChild(el(eingabe("data-ak", "Nachfüllung (kg)", "nachfuellung", x.nachfuellung, ' inputmode="decimal" data-rechnen="1"')));
+    g.appendChild(el(eingabe("data-ak", "Rohrlänge einfach (m)", "rohrlaenge", x.rohrlaenge, ' inputmode="decimal"')));
+    g.appendChild(el(eingabe("data-ak", "Gesamtfüllmenge (kg) – leer = werkseitig + Nachfüllung", "gesamtKg", x.gesamtKg, ' inputmode="decimal" data-rechnen="1"')));
     box.appendChild(g);
     box.appendChild(el('<div class="note" style="font-size:13px">Gesamtfüllmenge: <strong data-ibn-gesamt></strong> · CO₂-Äquivalent: <strong data-ibn-co2></strong><br><span class="muted">So steht es auf dem F-Gase-Etikett der Anlage.</span></div>'));
-    box.appendChild(el(feld("Elektrischer Anschluss (Spannung, Phasen, Nennstrom, Absicherung)", "elektrisch", 2, "z. B. 3N~ 380–415 V 50 Hz, 24 A, Sicherung 32 A")));
-    box.appendChild(el(eingabe("Zertifikat-Nr. (Betrieb / Person)", "zertifikat", d.zertifikat, ' placeholder="z. B. Unternehmenszertifikat … / Personenzertifikat …"')));
+    box.appendChild(el('<label class="fl"><span>Elektrischer Anschluss (Spannung, Phasen, Nennstrom, Absicherung)</span><textarea data-at="elektrisch" rows="2" placeholder="z. B. 3N~ 380–415 V 50 Hz, 24 A, Sicherung 32 A">'+esc(x.elektrisch||"")+"</textarea></label>"));
+    box.appendChild(el('<h2 style="margin:6px 0 0">Fachbetrieb</h2>'));
+    box.appendChild(el(eingabe("data-k", "Zertifikat-Nr. (Betrieb / Person) – gilt für das ganze Protokoll", "zertifikat", d.zertifikat, ' placeholder="z. B. Unternehmenszertifikat … / Personenzertifikat …"')));
     rechnen(box);
   }
   function messSchritt(box){
     box.appendChild(el('<div class="muted" style="font-size:12.5px">Messwerte im Betrieb (Kühlen) – was nicht gemessen wurde, bleibt leer.</div>'));
+    var x=anlageWahl(box, "mess"); if(!x) return;
     var g=el('<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:10px"></div>');
     IBN_MESS.forEach(function(m){
-      var z=el('<label class="fl"><span>'+esc(m[1])+" ("+esc(m[2])+')</span><input type="text" inputmode="decimal" data-m="'+m[0]+'" value="'+esc(d.messwerte[m[0]]||"")+'"></label>');
-      z.querySelector("input").oninput=function(){ d.messwerte[m[0]]=this.value; merken(); };
+      var z=el('<label class="fl"><span>'+esc(m[1])+" ("+esc(m[2])+')</span><input type="text" inputmode="decimal" data-m="'+m[0]+'" value="'+esc(x.messwerte[m[0]]||"")+'"></label>');
+      z.querySelector("input").oninput=function(){ x.messwerte[m[0]]=this.value; merken(); };
       g.appendChild(z);
     });
     box.appendChild(g);
-    box.appendChild(el(feld("Bemerkungen zu den Messwerten", "messBemerkung", 2, "")));
+    box.appendChild(el(feld(d, "Bemerkungen zu den Messwerten (alle Anlagen)", "messBemerkung", 2, "")));
   }
-  /* Ankreuzliste: je Punkt drei Chips und eine Bemerkung */
+  /* Ankreuzliste: je Punkt drei Chips und eine Bemerkung (erst bei Mangel / offen / n. z. sichtbar – am Handy sonst drei Zeilen je Punkt) */
   function kreuzListe(box, liste, werte, attr, antworten, alleText){
     var alle=el('<div class="rowflex" style="gap:6px;flex-wrap:wrap"><span class="muted" style="font-size:12.5px">Alle auf</span></div>');
     antworten.slice(0, 1).forEach(function(x){ var b=el('<button class="btn ghost sm" type="button" data-alle="'+esc(x[0])+'">'+esc(x[1])+"</button>");
@@ -31137,7 +31206,6 @@ function ibnEditor(p, a, fertig, opt){
     box.appendChild(alle);
     liste.forEach(function(pn){
       var w=werte[pn[0]]||{};
-      /* die Bemerkung erst bei Mangel / offen / n. z. (oder wenn schon eine dasteht) – am Handy sonst drei Zeilen je Punkt */
       var bemZeigen=function(){ var x=werte[pn[0]]||{}; return !!(String(x.b||"").trim() || (x.s && x.s!==antworten[0][0])); };
       var z=el('<div class="ibn-punkt" style="display:grid;grid-template-columns:minmax(0,1fr) auto;gap:4px 10px;align-items:center;border-bottom:1px solid var(--line);padding:4px 0">'+
         '<div style="font-size:13px">'+esc(pn[1])+"</div>"+chips(antworten, w.s||null, attr)+
@@ -31148,18 +31216,19 @@ function ibnEditor(p, a, fertig, opt){
     });
   }
   function checkSchritt(box){
+    if(d.anlagen.length>1) box.appendChild(el('<div class="muted" style="font-size:12.5px">Die Checkliste gilt für alle '+d.anlagen.length+" Anlagen dieses Protokolls – Abweichungen einer Anlage in die Bemerkung (z. B. „Backshop: …“).</div>"));
     IBN_CHECK.forEach(function(g){
       d.check[g.k]=d.check[g.k]||{};
       var t=el('<div class="stack" style="gap:4px" data-ibn-gruppe="'+g.k+'"><h2 style="margin:6px 0 0">'+esc(g.titel)+"</h2></div>");
       kreuzListe(t, g.punkte, d.check[g.k], "data-ck", g.antworten);
-      if(g.k==="elektrik") t.appendChild(regelungFelder());
+      if(g.k==="elektrik") d.anlagen.forEach(function(x){ t.appendChild(regelungFelder(x)); });
       box.appendChild(t);
     });
   }
-  /* Was wurde an der Regelung eingestellt? Sollwerte, Betriebsart, Nachtabsenkung (Schall) ja/nein von–bis */
-  function regelungFelder(){
-    var rg=d.regelung;
-    var w=el('<div class="stack" style="gap:6px;border:1px solid var(--line);border-radius:8px;padding:8px 10px" data-ibn-regelung><div style="font-size:13px"><strong>Was wurde an der Regelung eingestellt?</strong></div>'+
+  /* Was wurde an der Regelung eingestellt? Sollwerte, Betriebsart, Nachtabsenkung (Schall) ja/nein von–bis – je Anlage */
+  function regelungFelder(x){
+    var rg=x.regelung=x.regelung||{};
+    var w=el('<div class="stack" style="gap:6px;border:1px solid var(--line);border-radius:8px;padding:8px 10px" data-ibn-regelung><div style="font-size:13px"><strong>Was wurde an der Regelung eingestellt?</strong>'+(d.anlagen.length>1 ? " – "+esc(ibnAnlageKurz(x)) : "")+"</div>"+
       '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px">'+IBN_REGELUNG.map(function(f){ return '<label class="fl"><span>'+esc(f[1])+'</span><input type="text" data-rg="'+f[0]+'"'+(/soll/.test(f[0])?' inputmode="decimal"':"")+' value="'+esc(rg[f[0]]||"")+'"></label>'; }).join("")+"</div>"+
       '<div class="fl"><span>Nachtabsenkung / Flüsterbetrieb (Schall)</span><div class="chips"><button class="chip" type="button" data-rgn="ja" aria-pressed="'+(rg.nacht==="ja")+'">ja</button><button class="chip" type="button" data-rgn="nein" aria-pressed="'+(rg.nacht==="nein")+'">nein</button></div></div>'+
       '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px" data-rgzeit'+(rg.nacht==="ja"?"":" hidden")+'><label class="fl"><span>von</span><input type="time" data-rg="nachtVon" value="'+esc(rg.nachtVon||"")+'"></label><label class="fl"><span>bis</span><input type="time" data-rg="nachtBis" value="'+esc(rg.nachtBis||"")+'"></label></div>'+
@@ -31174,20 +31243,20 @@ function ibnEditor(p, a, fertig, opt){
     box.appendChild(t);
     /* Mängel, Restarbeiten und Abnahme stehen im Abnahmeprotokoll des Auftraggebers (Inhaber 12.10.2026: „siehe Protokoll Lidl“) */
     var g=el('<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px"></div>');
-    g.appendChild(el(eingabe("Abnahme: siehe Abnahmeprotokoll des Auftraggebers – welches?", "abnahmeVerweis", d.abnahmeVerweis, ' placeholder="z. B. Endabnahme Lidl vom 24.09.2026"')));
+    g.appendChild(el(eingabe("data-k", "Abnahme: siehe Abnahmeprotokoll des Auftraggebers – welches?", "abnahmeVerweis", d.abnahmeVerweis, ' placeholder="z. B. Endabnahme Lidl vom 24.09.2026"')));
     g.appendChild(el('<label class="fl"><span>Datum der Abnahme</span><input type="date" data-k="abnahmeDatum" value="'+esc(d.abnahmeDatum||"")+'"></label>'));
-    g.appendChild(el(eingabe("Betreiber / Auftraggebervertreter (Name – unterschreibt auf dem Ausdruck)", "vertreter", d.vertreter)));
+    g.appendChild(el(eingabe("data-k", "Betreiber / Auftraggebervertreter (Name – unterschreibt auf dem Ausdruck)", "vertreter", d.vertreter)));
     box.appendChild(g);
-    box.appendChild(el(feld("Bemerkungen", "bemerkungen", 2, "")));
+    box.appendChild(el(feld(d, "Bemerkungen", "bemerkungen", 2, "")));
   }
   function abschlussSchritt(box){
-    var fehlt=ibnFehlt(), co2=ibnCo2(d);
+    var fehlt=ibnFehlt();
     var mangel=0; IBN_CHECK.forEach(function(g){ g.punkte.forEach(function(pn){ if(((d.check[g.k]||{})[pn[0]]||{}).s==="mangel") mangel++; }); });
     var offen=IBN_UEBERGABE.filter(function(pn){ return (d.uebergabe[pn[0]]||{}).s==="offen"; }).length+IBN_CHECK[2].punkte.filter(function(pn){ return ((d.check.doku||{})[pn[0]]||{}).s==="offen"; }).length;
-    box.appendChild(el('<div class="note" style="font-size:13px"><strong>'+esc(ibnAnlageName(p, {daten:d}))+"</strong> · "+esc(d.betreiber||"–")+" · "+esc(d.standort||"–")+"<br>"+
-      "Inbetriebnahme "+esc(n.datum ? dfmt(n.datum) : "–")+" · "+esc(d.kaeltemittel||"Kältemittel?")+" "+(ibnGesamtKg(d)==null ? "" : ibnZahlText(ibnGesamtKg(d), 3)+" kg")+(co2 ? " · "+ibnZahlText(co2)+" t CO₂e" : "")+
-      " · Checkliste: "+(mangel ? "<strong>"+(mangel===1 ? "1 Mangel" : mangel+" Mängel")+"</strong>" : "kein Mangel")+" · Dokumentation/Übergabe: "+(offen ? "<strong>"+offen+" offen</strong>" : "nichts offen")+
-      (d.regelung.nacht==="ja" ? " · Nachtabsenkung "+esc((d.regelung.nachtVon||"?")+"–"+(d.regelung.nachtBis||"?")) : "")+"</div>"));
+    box.appendChild(el('<div class="note" style="font-size:13px"><strong>'+esc(d.betreiber||"–")+"</strong> · "+esc(d.standort||"–")+" · Inbetriebnahme "+esc(n.datum ? dfmt(n.datum) : "–")+"<br>"+
+      d.anlagen.map(function(x){ var co2=ibnCo2(x); return "<strong>"+esc(ibnAnlageKurz(x))+"</strong>: "+esc(x.kaeltemittel||"Kältemittel?")+" "+(ibnGesamtKg(x)==null ? "" : ibnZahlText(ibnGesamtKg(x), 3)+" kg")+(co2 ? " · "+ibnZahlText(co2)+" t CO₂e" : "")+
+        (x.regelung && x.regelung.nacht==="ja" ? " · Nachtabsenkung "+esc((x.regelung.nachtVon||"?")+"–"+(x.regelung.nachtBis||"?")) : ""); }).join("<br>")+
+      "<br>Checkliste: "+(mangel ? "<strong>"+(mangel===1 ? "1 Mangel" : mangel+" Mängel")+"</strong>" : "kein Mangel")+" · Dokumentation/Übergabe: "+(offen ? "<strong>"+offen+" offen</strong>" : "nichts offen")+"</div>"));
     if(fehlt.length) box.appendChild(el('<div class="note warnbox" style="font-size:13px"><strong>Fehlt noch:</strong> '+fehlt.map(esc).join(" · ")+"</div>"));
     if(korr){
       box.appendChild(el('<div class="muted" style="font-size:12.5px">Das Protokoll ist unterschrieben – die Unterschrift von '+esc(a.monteur||"")+" bleibt. Die Korrektur steht mit Grund, Name und Datum im Protokoll und im PDF.</div>"));
@@ -31195,20 +31264,22 @@ function ibnEditor(p, a, fertig, opt){
       g.querySelector("textarea").oninput=function(){ grund=this.value; merken(); };
       box.appendChild(g); return;
     }
-    /* an der Anlage nachtragen, was dort fehlt (Inbetriebnahme-Datum bestimmt den Wartungsmonat; Füllmenge die Halbjahresregel) */
-    var l=leaderVon();
-    if(l && betriebAn() && !demo()){
-      var ad=anlageDaten(l), an={};
-      if(!ad.inbetriebnahme || ad.inbetriebnahme!==n.datum) an.inbetriebnahme=true;
-      if(leerWert(ad.kaeltemittelKg) && ibnGesamtKg(d)) an.kg=true;
-      if(Object.keys(an).length){
-        d.anlageNachtragen=d.anlageNachtragen||{inbetriebnahme:true, kg:true};
-        var nt=el('<div class="stack" style="gap:4px"><div style="font-size:13px"><strong>An der Anlage „'+esc(anlagenName(l))+'“ eintragen</strong> (nach dem Unterschreiben):</div></div>');
-        if(an.inbetriebnahme) nt.appendChild(el('<label class="chk"><input type="checkbox" data-nt="inbetriebnahme"'+(d.anlageNachtragen.inbetriebnahme?" checked":"")+"><span>Inbetriebnahme "+esc(n.datum ? dfmt(n.datum) : "–")+(ad.inbetriebnahme ? " (bisher "+esc(dfmt(ad.inbetriebnahme))+")" : " – fehlt noch; danach liegt die Jahreswartung in diesem Monat")+"</span></label>"));
-        if(an.kg) nt.appendChild(el('<label class="chk"><input type="checkbox" data-nt="kg"'+(d.anlageNachtragen.kg?" checked":"")+"><span>Füllmenge "+ibnZahlText(ibnGesamtKg(d), 3)+" kg "+esc(d.kaeltemittel||"")+" – fehlt an der Anlage noch</span></label>"));
-        nt.querySelectorAll("[data-nt]").forEach(function(c){ c.onchange=function(){ d.anlageNachtragen[c.dataset.nt]=c.checked; merken(); }; });
-        box.appendChild(nt);
-      }
+    /* an den Anlagen nachtragen, was dort fehlt (Inbetriebnahme-Datum bestimmt den Wartungsmonat; Füllmenge die Halbjahresregel) */
+    if(betriebAn() && !demo()){
+      d.anlageNachtragen=d.anlageNachtragen||{};
+      var nt=el('<div class="stack" style="gap:4px"></div>'), was=false;
+      d.anlagen.forEach(function(x){
+        var l=leaderVon(x); if(!l) return;
+        var ad=anlageDaten(l), an=x.anlageId;
+        var e=d.anlageNachtragen[an]=d.anlageNachtragen[an]||{inbetriebnahme:true, kg:true};
+        var zeilen=[];
+        if(!ad.inbetriebnahme || ad.inbetriebnahme!==n.datum) zeilen.push('<label class="chk"><input type="checkbox" data-nt="inbetriebnahme" data-nta="'+esc(an)+'"'+(e.inbetriebnahme?" checked":"")+"><span>Inbetriebnahme "+esc(n.datum ? dfmt(n.datum) : "–")+(ad.inbetriebnahme ? " (bisher "+esc(dfmt(ad.inbetriebnahme))+")" : " – fehlt noch; danach liegt die Jahreswartung in diesem Monat")+"</span></label>");
+        if(leerWert(ad.kaeltemittelKg) && ibnGesamtKg(x)) zeilen.push('<label class="chk"><input type="checkbox" data-nt="kg" data-nta="'+esc(an)+'"'+(e.kg?" checked":"")+"><span>Füllmenge "+ibnZahlText(ibnGesamtKg(x), 3)+" kg "+esc(x.kaeltemittel||"")+" – fehlt an der Anlage noch</span></label>");
+        if(!zeilen.length) return;
+        was=true;
+        nt.appendChild(el('<div class="stack" style="gap:2px"><div style="font-size:13px"><strong>An der Anlage „'+esc(anlagenName(l))+'“ eintragen</strong> (nach dem Unterschreiben):</div>'+zeilen.join("")+"</div>"));
+      });
+      if(was){ nt.querySelectorAll("[data-nt]").forEach(function(c){ c.onchange=function(){ d.anlageNachtragen[c.dataset.nta][c.dataset.nt]=c.checked; merken(); }; }); box.appendChild(nt); }
     }
     if(fremd){ box.appendChild(el('<div class="note warnbox" style="font-size:13px">Unterschreiben kann nur <strong>'+esc(a.monteur||"der Monteur")+"</strong> selbst – hier nur „Als Entwurf speichern“.</div>")); return; }
     var u=el('<div class="fl"><span>Monteur / Fachbetrieb: <strong>'+esc(monteur||"")+'</strong> – Unterschrift</span>'+
@@ -31230,10 +31301,14 @@ function ibnEditor(p, a, fertig, opt){
   function ibnFehlt(){
     var f=[];
     if(!n.datum) f.push("Datum der Inbetriebnahme");
-    if(!String(d.anlagentyp||"").trim() && !String(d.modell||"").trim()) f.push("Anlagentyp oder Modell");
-    if(!String(d.kaeltemittel||"").trim()) f.push("Kältemittel");
-    if(!(ibnGesamtKg(d)>0)) f.push("Füllmenge (werkseitig/Nachfüllung oder gesamt)");
-    ["fuellWerk","nachfuellung","gesamtKg","gwp","leistungKw","rohrlaenge"].forEach(function(k){ if(String(d[k]||"").trim() && ibnZahl(d[k])==null) f.push("„"+d[k]+"“ bei "+(IBN_KM.concat(IBN_KOPF).filter(function(x){ return x[0]===k; })[0]||[k,k])[1]+" ist keine Zahl"); });
+    if(!d.anlagen.length) f.push("mindestens eine Anlage (Schritt Anlagen)");
+    d.anlagen.forEach(function(x, i){
+      var nm=d.anlagen.length>1 ? " ("+ibnAnlageKurz(x)+(x.anlagentyp||x.modell ? "" : " "+(i+1))+")" : "";
+      if(!String(x.anlagentyp||"").trim() && !String(x.modell||"").trim()) f.push("Anlagentyp oder Modell"+nm);
+      if(!String(x.kaeltemittel||"").trim()) f.push("Kältemittel"+nm);
+      if(!(ibnGesamtKg(x)>0)) f.push("Füllmenge (werkseitig/Nachfüllung oder gesamt)"+nm);
+      ["fuellWerk","nachfuellung","gesamtKg","gwp","leistungKw","rohrlaenge"].forEach(function(k){ if(String(x[k]||"").trim() && ibnZahl(x[k])==null) f.push("„"+x[k]+"“ bei "+(IBN_KM.concat(IBN_ANL).filter(function(q){ return q[0]===k; })[0]||[k,k])[1]+nm+" ist keine Zahl"); });
+    });
     if(!korr && !sig) f.push("Unterschrift");
     if(korr && !grund.trim()) f.push("Grund der Korrektur");
     return f;
@@ -31243,16 +31318,20 @@ function ibnEditor(p, a, fertig, opt){
     if(f.length){ schritt=SCHRITTE.length-1; zeichnen(); toast("Noch nicht fertig – es fehlt: "+f.join(", ")+"."); return; }
     var dd=JSON.parse(JSON.stringify(d)); var nachtragen=abschliessen && !korr ? dd.anlageNachtragen : null; delete dd.anlageNachtragen;
     knopf.disabled=true; var t=knopf.textContent; knopf.textContent="wird gespeichert …";
-    ibnSpeichern(p, a, {datum:n.datum||isoLokal(new Date()), daten:dd, anlage_id:dd.anlageId||null}, abschliessen && !korr ? sig : null, korr ? grund.trim() : "").then(function(row){
+    ibnSpeichern(p, a, {datum:n.datum||isoLokal(new Date()), daten:dd, anlage_id:(dd.anlagen[0]||{}).anlageId||null}, abschliessen && !korr ? sig : null, korr ? grund.trim() : "").then(function(row){
       lsSet(lsKey, null); geaendert=false; v.zu();
       toast(demo() ? "Präsentation: "+ibnTitel(row)+" nicht gespeichert (nur zum Ansehen)." : ibnTitel(row)+(row.unterschrieben ? (korr ? " korrigiert." : " unterschrieben und gespeichert.") : " als Entwurf gespeichert – noch nicht unterschrieben."));
       if(fertig) fertig();
-      /* unterschrieben: Inbetriebnahme und Füllmenge an der Anlage, dann das PDF in die Projektdateien */
-      var l=leaderVon();
-      if(row.unterschrieben && nachtragen && l && betriebAn() && !demo()){
-        var werte={}; if(nachtragen.inbetriebnahme) werte.inbetriebnahme=row.datum; if(nachtragen.kg && ibnGesamtKg(dd)) werte.kaeltemittelKg=ibnGesamtKg(dd);
-        if(Object.keys(werte).length){ var pro={}; pro[l.id]=werte;
-          positionenSchreiben(pro, "Laut "+ibnTitel(row)+" (Projekt "+(p.nummer||"")+")", {}).then(function(wo){ if(wo===false) toast("An der Anlage nicht eingetragen – bitte in der Verwaltung nachtragen."); else { toast("An der Anlage eingetragen: "+Object.keys(werte).map(function(k){ return k==="inbetriebnahme" ? "Inbetriebnahme "+dfmt(row.datum) : "Füllmenge "+ibnZahlText(werte[k], 3)+" kg"; }).join(", ")+"."); render(); } }); }
+      /* unterschrieben: Inbetriebnahme und Füllmenge an den Anlagen (eine Speicherung für alle), dann das PDF in die Projektdateien */
+      if(row.unterschrieben && nachtragen && betriebAn() && !demo()){
+        var pro={}, texte=[];
+        dd.anlagen.forEach(function(x){
+          var l=leaderVon(x), e=x.anlageId && nachtragen[x.anlageId]; if(!l || !e) return;
+          var werte={}; if(e.inbetriebnahme) werte.inbetriebnahme=row.datum; if(e.kg && ibnGesamtKg(x)) werte.kaeltemittelKg=ibnGesamtKg(x);
+          if(Object.keys(werte).length){ pro[l.id]=werte; texte.push(ibnAnlageKurz(x)+": "+Object.keys(werte).map(function(k){ return k==="inbetriebnahme" ? "Inbetriebnahme "+dfmt(row.datum) : "Füllmenge "+ibnZahlText(werte[k], 3)+" kg"; }).join(", ")); }
+        });
+        if(Object.keys(pro).length) positionenSchreiben(pro, "Laut "+ibnTitel(row)+" (Projekt "+(p.nummer||"")+")", {}).then(function(wo){
+          if(wo===false) toast("An den Anlagen nicht eingetragen – bitte in der Verwaltung nachtragen."); else { toast("An den Anlagen eingetragen – "+texte.join(" · ")+"."); render(); } });
       }
       if(row.unterschrieben) ibnPdfAblegen(p, row).then(function(){ if(fertig) fertig(); },
         function(e){ toast("Gespeichert – das PDF ließ sich gerade nicht ablegen ("+(e && e.message || e)+"). In der Liste „PDF ablegen“ tippen."); });
@@ -31292,33 +31371,37 @@ function ibnSpeichern(p, a, n, sig, grund){
   };
   return los();
 }
-/* ---------- PDF wie das Muster (A4, drei Teile: Anlage/Kältemittel/Messwerte – Checkliste – Übergabe/Abnahme/Unterschriften) ---------- */
+/* ---------- PDF wie das Muster (A4): Betreiber – je Anlage Typenschild/Kältemittel/Messwerte/Regelung – Checkliste – Übergabe – Abnahme/Unterschriften ---------- */
 function ibnBlattHtml(p, a){
-  var d=a.daten||{}, L="border:1px solid #555;padding:3px 5px", korr=a.korrekturen||[];
+  var d=a.daten||{}, L="border:1px solid #555;padding:3px 5px", korr=a.korrekturen||[], anl=ibnAnlagen(d);
   var th=function(t, w){ return "<th style='"+L+(w?";width:"+w:"")+"'>"+esc(t)+"</th>"; };
   var td=function(t, m){ return "<td style='"+L+(m?";text-align:center":"")+"'>"+(t==null?"":t)+"</td>"; };
   var zt=function(k, v){ return "<tr><td class='k'>"+esc(k)+"</td><td>"+(v?esc(v):"–")+"</td></tr>"; };
   var zahl=function(w, e){ var z=ibnZahl(w); return z==null ? (String(w||"").trim() ? String(w)+(e?" "+e:"") : "") : ibnZahlText(z, 3)+(e?" "+e:""); };
   var kreuzZeile=function(name, w, antworten){ return "<tr>"+td(esc(name))+antworten.map(function(x){ return td(kreuz((w||{}).s===x[0]), true); }).join("")+td(esc((w||{}).b||""))+"</tr>"; };
+  var anlageBlock=function(x, i){
+    return "<div class='zusammen'>"+(anl.length>1 ? "<h2>Anlage "+(i+1)+" von "+anl.length+": "+esc(ibnAnlageKurz(x))+"</h2>" : "")+
+      "<div class='zwei'><div>"+(anl.length>1 ? "" : "<h2>Anlage</h2>")+"<table>"+
+        zt("Anlagentyp", x.anlagentyp)+zt("Hersteller / Modell", [x.hersteller, x.modell].filter(Boolean).join(" "))+zt("SN Außengerät", x.snAussen)+
+        "<tr><td class='k'>SN Innengeräte</td><td style='white-space:pre-wrap'>"+(x.snInnen?esc(x.snInnen):"–")+"</td></tr>"+
+        zt("Kälteleistung", zahl(x.leistungKw, "kW"))+zt("Elektrischer Anschluss", x.elektrisch)+zt("An der Regelung eingestellt", ibnRegelungText(x))+"</table></div>"+
+      "<div>"+(anl.length>1 ? "" : "<h2>Kältemittel</h2>")+"<table>"+zt("Kältemittel", x.kaeltemittel)+zt("Sicherheitsgruppe", x.sicherheitsgruppe)+zt("GWP", ibnGwp(x)!=null ? ibnZahlText(ibnGwp(x), 1) : "")+
+        zt("Füllmenge werkseitig", zahl(x.fuellWerk, "kg"))+zt("Nachfüllung"+(String(x.rohrlaenge||"").trim() ? " bei "+zahl(x.rohrlaenge, "m")+" Rohrlänge" : ""), zahl(x.nachfuellung, "kg"))+
+        "<tr><td class='k'>Gesamtfüllmenge</td><td><strong>"+(ibnGesamtKg(x)==null ? "–" : esc(ibnZahlText(ibnGesamtKg(x), 3)+" kg"))+"</strong></td></tr>"+
+        "<tr><td class='k'>CO₂-Äquivalent</td><td><strong>"+(ibnCo2(x)==null ? "–" : esc(ibnZahlText(ibnCo2(x))+" t CO₂e"))+"</strong></td></tr></table></div></div>"+
+      /* Messwerte in zwei Tabellen nebeneinander, Beschriftung breiter (sonst bricht „Verdampfungstemperatur“ im Wort) */
+      "<div style='font-size:9.6px;font-weight:600;color:#00726E;margin:6px 0 2px;letter-spacing:.09em;text-transform:uppercase'>Messwerte</div><div class='zwei'>"+
+      [IBN_MESS.slice(0, 6), IBN_MESS.slice(6)].map(function(h){ return "<div><table>"+h.map(function(m){ return "<tr><td class='k' style='width:56%'>"+esc(m[1])+"</td><td>"+(zahl((x.messwerte||{})[m[0]], m[2])||"–")+"</td></tr>"; }).join("")+"</table></div>"; }).join("")+"</div></div>";
+  };
   return '<div class="kopf"><div class="firma"><img src="logo.png" alt="Kammerlander Umwelt- und Klimatechnik GmbH"></div>'+
       '<div class="kontakt">Speckbacherstraße 92, A-6380 St. Johann in Tirol<br>Telefon 05352 / 61207-0 · office@ukt.at · www.ukt.at</div></div>'+
-    "<h1>INBETRIEBNAHMEPROTOKOLL KÄLTEANLAGE</h1><div style='color:#444'>Nr. "+esc(a.nummer||"")+" · Projekt "+esc(projektTitel(p))+" · "+esc(ibnAnlageName(p, a))+"</div>"+
-    "<div class='zwei' style='margin-top:8px'><div><h2>Anlage und Betreiber</h2><table>"+
-      zt("Betreiber", d.betreiber)+zt("Standort / Objekt", d.standort)+zt("Auftrag / Projekt-Nr.", d.auftrag)+zt("Datum der Inbetriebnahme", a.datum ? dfmt(a.datum) : "")+
-      zt("Anlagentyp", d.anlagentyp)+zt("Hersteller / Modell", [d.hersteller, d.modell].filter(Boolean).join(" "))+zt("SN Außengerät", d.snAussen)+
-      "<tr><td class='k'>SN Innengeräte</td><td style='white-space:pre-wrap'>"+(d.snInnen?esc(d.snInnen):"–")+"</td></tr>"+
-      zt("Kälteleistung", zahl(d.leistungKw, "kW"))+zt("Elektrischer Anschluss", d.elektrisch)+"</table></div>"+
-    "<div><h2>Kältemittel</h2><table>"+zt("Kältemittel", d.kaeltemittel)+zt("Sicherheitsgruppe", d.sicherheitsgruppe)+zt("GWP", ibnGwp(d)!=null ? ibnZahlText(ibnGwp(d), 1) : "")+
-      zt("Füllmenge werkseitig", zahl(d.fuellWerk, "kg"))+zt("Nachfüllung"+(String(d.rohrlaenge||"").trim() ? " bei "+zahl(d.rohrlaenge, "m")+" Rohrlänge" : ""), zahl(d.nachfuellung, "kg"))+
-      "<tr><td class='k'>Gesamtfüllmenge</td><td><strong>"+(ibnGesamtKg(d)==null ? "–" : esc(ibnZahlText(ibnGesamtKg(d), 3)+" kg"))+"</strong></td></tr>"+
-      "<tr><td class='k'>CO₂-Äquivalent</td><td><strong>"+(ibnCo2(d)==null ? "–" : esc(ibnZahlText(ibnCo2(d))+" t CO₂e"))+"</strong></td></tr>"+
-      zt("Fachbetrieb", d.fachbetrieb||"Kammerlander Umwelt- und Klimatechnik GmbH")+zt("Zertifikat-Nr.", d.zertifikat)+"</table></div></div>"+
-    /* Messwerte in zwei Tabellen nebeneinander, Beschriftung breiter (sonst bricht „Verdampfungstemperatur“ im Wort) */
-    "<h2>Messwerte</h2><div class='zwei'>"+[IBN_MESS.slice(0, 6), IBN_MESS.slice(6)].map(function(h){ return "<div><table>"+h.map(function(m){ return "<tr><td class='k' style='width:56%'>"+esc(m[1])+"</td><td>"+(zahl((d.messwerte||{})[m[0]], m[2])||"–")+"</td></tr>"; }).join("")+"</table></div>"; }).join("")+"</div>"+
+    "<h1>INBETRIEBNAHMEPROTOKOLL KÄLTEANLAGE"+(anl.length>1 ? "N" : "")+"</h1><div style='color:#444'>Nr. "+esc(a.nummer||"")+" · Projekt "+esc(projektTitel(p))+" · "+esc(ibnAnlageName(p, a))+"</div>"+
+    "<h2>Betreiber und Ausführung</h2><div class='zwei'><div><table>"+zt("Betreiber", d.betreiber)+zt("Standort / Objekt", d.standort)+zt("Auftrag / Projekt-Nr.", d.auftrag)+"</table></div>"+
+      "<div><table>"+zt("Datum der Inbetriebnahme", a.datum ? dfmt(a.datum) : "")+zt("Fachbetrieb", d.fachbetrieb||"Kammerlander Umwelt- und Klimatechnik GmbH")+zt("Zertifikat-Nr.", d.zertifikat)+"</table></div></div>"+
+    anl.map(anlageBlock).join("")+
     (d.messBemerkung ? "<div style='"+L+";margin-top:4px;white-space:pre-wrap'>"+esc(d.messBemerkung)+"</div>" : "")+
     IBN_CHECK.map(function(g){ return "<h2>Checkliste – "+esc(g.titel)+"</h2><table style='border-collapse:collapse'><tr>"+th("Punkt")+g.antworten.map(function(x, i){ return th(x[1], i===1?"8%":"7%"); }).join("")+th("Bemerkung","28%")+"</tr>"+
-      g.punkte.map(function(pn){ return kreuzZeile(pn[1], (d.check||{})[g.k] && d.check[g.k][pn[0]], g.antworten); }).join("")+"</table>"+
-      (g.k==="elektrik" ? "<table style='margin-top:4px'><tr><td class='k'>An der Regelung eingestellt</td><td>"+esc(ibnRegelungText(d)||"–")+"</td></tr></table>" : ""); }).join("")+
+      g.punkte.map(function(pn){ return kreuzZeile(pn[1], (d.check||{})[g.k] && d.check[g.k][pn[0]], g.antworten); }).join("")+"</table>"; }).join("")+
     "<h2>Übergabe an den Betreiber</h2><table style='border-collapse:collapse'><tr>"+th("Punkt")+th("erl.","7%")+th("offen","8%")+th("n. z.","7%")+th("Bemerkung","28%")+"</tr>"+
       IBN_UEBERGABE.map(function(pn){ return kreuzZeile(pn[1], (d.uebergabe||{})[pn[0]], IBN_STAND); }).join("")+"</table>"+
     (d.bemerkungen ? "<h2>Bemerkungen</h2><div style='"+L+";white-space:pre-wrap'>"+esc(d.bemerkungen)+"</div>" : "")+
@@ -31332,18 +31415,9 @@ function ibnBlattHtml(p, a){
     "<div class='fuss'>Inbetriebnahmeprotokoll "+esc(a.nummer||"")+" · Projekt "+esc(p.nummer||"")+(a.unterschrieben ? "" : " · ENTWURF – nicht unterschrieben")+
       korr.map(function(k){ return "<br>Korrigiert am "+esc(tagFmt(k.zeit))+" von "+esc(k.von||"")+": „"+esc(k.grund||"")+"“"; }).join("")+"</div>";
 }
-/* „Kühlen 22 °C · Heizen 20 °C · Nachtabsenkung 22:00–06:00 · …“ */
-function ibnRegelungText(d){
-  var rg=(d||{}).regelung||{}, t=[];
-  if(String(rg.sollKuehlen||"").trim()) t.push("Kühlen "+rg.sollKuehlen+" °C");
-  if(String(rg.sollHeizen||"").trim()) t.push("Heizen "+rg.sollHeizen+" °C");
-  if(String(rg.betriebsart||"").trim()) t.push(rg.betriebsart);
-  if(rg.nacht==="ja") t.push("Nachtabsenkung "+(rg.nachtVon||"?")+"–"+(rg.nachtBis||"?")); else if(rg.nacht==="nein") t.push("keine Nachtabsenkung");
-  if(String(rg.notiz||"").trim()) t.push(rg.notiz);
-  return t.join(" · ");
-}
 function ibnDateiname(p, a){
-  return ("Inbetriebnahmeprotokoll_"+(p.nummer||"")+"_Nr"+(a.nummer||"")+"_"+String(ibnAnlageName(p, a)).slice(0, 40)+"_"+String(dfmt(a.datum)).replace(/\./g,"-")+((a.korrekturen||[]).length ? "_Korrektur-"+a.korrekturen.length : "")+".pdf")
+  var anl=ibnAnlagen(a.daten||{});
+  return ("Inbetriebnahmeprotokoll_"+(p.nummer||"")+"_Nr"+(a.nummer||"")+"_"+(anl.length>1 ? anl.length+"-Anlagen" : String(ibnAnlageKurz(anl[0])).slice(0, 40))+"_"+String(dfmt(a.datum)).replace(/\./g,"-")+((a.korrekturen||[]).length ? "_Korrektur-"+a.korrekturen.length : "")+".pdf")
     .replace(/[\\\/:*?"<>|]+/g,"").replace(/\s+/g,"-");
 }
 function ibnPdfErzeugen(p, a){

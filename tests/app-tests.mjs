@@ -6070,8 +6070,12 @@ test("Inbetriebnahmeprotokoll: aus der Anlage vorbelegt, Füllmenge und CO₂e g
       felder: { standortId: "TS1", aktiv: true, anlagentyp: "VRV Verkauf", bauart: "VRV luftgekühlt", hersteller: "Daikin", modell: "RXYLQ12T7Y1B", seriennummer: "3601384",
         kaeltemittelArt: "R410A", intervallCode: "JW", monat: 0, anlageZu: "NPibn1", neuAngelegt: jetzt, vorOrtNeu: true,
         innengeraete: [{ raum: "Verkauf", modell: "FXFQ63", seriennummer: "A1" }, { raum: "Lager", modell: "FXFQ40", seriennummer: "A2" }] } });
+    /* zweite Anlage – ein Protokoll für beide (Inhaber 12.10.2026: „mehrere Anlagen auf einmal“) */
+    db.stammdaten.push({ id: "position:NPibn2", typ: "position", ziel: "NPibn2", neu: true, geaendert: jetzt, von: "Test", grund: "Anlage angelegt",
+      felder: { standortId: "TS1", aktiv: true, anlagentyp: "Split Backshop", bauart: "Split", hersteller: "Daikin", modell: "RZAG125N7Y1B", seriennummer: "2650949", kaeltemittelArt: "R32", kaeltemittelKg: 6,
+        intervallCode: "JW", monat: 0, anlageZu: "NPibn2", neuAngelegt: jetzt, vorOrtNeu: true } });
     await x("ladeStammdaten().then(storeNachRender)"); await A.warte(300);
-    db.projekte.find((p) => p.id === "pan1").daten.anlagen = ["NPibn1"];
+    db.projekte.find((p) => p.id === "pan1").daten.anlagen = ["NPibn1", "NPibn2"];
     await x("projekteLaden()");
     x("projektAnsicht('pan1')");
     const karte = await A.bis(() => A.karte(/^Inbetriebnahmeprotokolle/));
@@ -6079,20 +6083,33 @@ test("Inbetriebnahmeprotokoll: aus der Anlage vorbelegt, Füllmenge und CO₂e g
     e.schnell = !!(await A.bis(() => document.querySelector("[data-schnell-ibn]")));
     karte.querySelector("[data-ibn-neu]").click();
     const d = await A.bis(() => { const d = A.dlg(); return d && /Neues Inbetriebnahmeprotokoll/.test(d.querySelector(".as-titel").textContent) && d; });
-    /* Schritt Anlage: die dem Projekt zugeordnete Anlage steht oben und wird übernommen */
-    const radio = d.querySelector('input[name="ibn_anlage"][value="NPibn1"]');
-    e.imProjekt = !!radio && /im Projekt/.test(radio.closest("label").textContent);
-    radio.click(); await A.warte(100);
+    /* Schritt Anlagen: beide dem Projekt zugeordneten Anlagen anhaken – Angaben kommen aus den Anlagendaten */
+    const kasten = d.querySelector('input[name="ibn_anlage"][value="NPibn1"]');
+    e.imProjekt = !!kasten && /im Projekt/.test(kasten.closest("label").textContent);
+    kasten.click(); await A.warte(100);
+    d.querySelector('input[name="ibn_anlage"][value="NPibn2"]').click(); await A.warte(100);
     e.vorbelegt = (d.querySelector("[data-ibn-vorbelegt]") || {}).textContent || "";
     A.knopf(d, /^Weiter: Anlage und Betreiber/).click(); await A.warte(100);
-    e.kopf = ["betreiber", "standort", "hersteller", "modell", "snAussen"].map((k) => d.querySelector('[data-k="' + k + '"]').value).join("|") + "|" + d.querySelector('[data-t="snInnen"]').value.replace(/\n/g, "/");
+    /* Chip-Zeile je Anlage; zuerst zurück auf die erste */
+    e.chips = [...d.querySelectorAll("[data-ibn-anlwahl] .chip")].map((c) => c.textContent).join("|");
+    d.querySelector("[data-ibn-anlwahl] .chip").click(); await A.warte(100);
+    e.kopf = ["betreiber", "standort"].map((k) => d.querySelector('[data-k="' + k + '"]').value).concat(["hersteller", "modell", "snAussen"].map((k) => d.querySelector('[data-ak="' + k + '"]').value)).join("|") + "|" + d.querySelector('[data-at="snInnen"]').value.replace(/\n/g, "/");
     A.knopf(d, /^Weiter: Kältemittel/).click(); await A.warte(100);
-    e.km = d.querySelector('[data-k="kaeltemittel"]').value;
+    e.km = d.querySelector('[data-ak="kaeltemittel"]').value;
     const tippe = (k, w) => { const i = d.querySelector('[data-k="' + k + '"]'); i.value = w; i.dispatchEvent(new Event("input", { bubbles: true })); };
-    tippe("fuellWerk", "11,8"); tippe("nachfuellung", "4,5");
+    const tippeA = (k, w) => { const i = d.querySelector('[data-ak="' + k + '"]'); i.value = w; i.dispatchEvent(new Event("input", { bubbles: true })); };
+    tippeA("fuellWerk", "11,8"); tippeA("nachfuellung", "4,5");
     e.gesamt = d.querySelector("[data-ibn-gesamt]").textContent; e.co2 = d.querySelector("[data-ibn-co2]").textContent;
+    /* zweite Anlage: Gesamtfüllmenge aus der Anlage (6 kg R32), Rohrlänge */
+    [...d.querySelectorAll("[data-ibn-anlwahl] .chip")][1].click(); await A.warte(100);
+    e.km2 = d.querySelector('[data-ak="kaeltemittel"]').value + "|" + d.querySelector("[data-ibn-gesamt]").textContent + "|" + d.querySelector("[data-ibn-co2]").textContent;
+    tippeA("rohrlaenge", "18");
     A.knopf(d, /^Weiter: Messwerte/).click(); await A.warte(100);
+    e.messChips = [...d.querySelectorAll("[data-ibn-anlwahl] .chip")].map((c) => c.textContent).join("|");
+    d.querySelector("[data-ibn-anlwahl] .chip").click(); await A.warte(100);
     const m = d.querySelector('[data-m="ueberhitzung"]'); m.value = "6,5"; m.dispatchEvent(new Event("input"));
+    d.querySelector("[data-ibn-anlwahl] .chip").click(); await A.warte(100);   /* neu gezeichnet: Hinweis, welche Anlage noch fehlt */
+    e.fehlenHinweis = (d.querySelector("[data-ibn-fehlen]") || {}).textContent || "";
     A.knopf(d, /^Weiter: Checkliste/).click(); await A.warte(100);
     /* alle i. O., ein Mangel bei der Kondensatleitung */
     [...d.querySelectorAll('[data-alle="io"]')].forEach((b) => b.click()); await A.warte(100);
@@ -6100,6 +6117,7 @@ test("Inbetriebnahmeprotokoll: aus der Anlage vorbelegt, Füllmenge und CO₂e g
     kond.querySelector('[data-ck="mangel"]').click(); kond.querySelector("[data-bem]").value = "Gefälle fehlt"; kond.querySelector("[data-bem]").dispatchEvent(new Event("input"));
     /* Dokumentation hat erl./offen/n. z.; an der Regelung: Sollwerte und Nachtabsenkung von–bis (Inhaber 12.10.2026) */
     e.dokuAntworten = [...d.querySelectorAll('[data-ibn-gruppe="doku"] .ibn-punkt')[0].querySelectorAll("[data-ck]")].map((c) => c.dataset.ck).join(",");
+    e.regelungBloecke = d.querySelectorAll("[data-ibn-regelung]").length;
     const rg = d.querySelector("[data-ibn-regelung]");
     rg.querySelector('[data-rg="sollKuehlen"]').value = "22"; rg.querySelector('[data-rg="sollKuehlen"]').dispatchEvent(new Event("input"));
     e.zeitVorher = rg.querySelector("[data-rgzeit]").hidden;
@@ -6123,37 +6141,42 @@ test("Inbetriebnahmeprotokoll: aus der Anlage vorbelegt, Füllmenge und CO₂e g
     A.knopf(d, /^Unterschreiben und abschließen/).click();
     await A.bis(() => db.inbetriebnahmen.length === 1, 6000);
     const z = db.inbetriebnahmen[0] || {};
-    e.gespeichert = [z.nummer, z.monteur, !!z.unterschrieben, z.anlage_id, z.erstellt_von, x("ibnRegelungText")(z.daten || {}), ((z.daten || {}).check || {}).mechanik && z.daten.check.mechanik.kondensat && z.daten.check.mechanik.kondensat.s].join("|");
-    e.co2Gespeichert = x("ibnCo2")(z.daten || {});
+    const za = ((z.daten || {}).anlagen || []);
+    e.gespeichert = [z.nummer, z.monteur, !!z.unterschrieben, z.anlage_id, z.erstellt_von, x("ibnRegelungText")(za[0] || {}), ((z.daten || {}).check || {}).mechanik && z.daten.check.mechanik.kondensat && z.daten.check.mechanik.kondensat.s].join("|");
+    e.co2Gespeichert = za.map((q) => x("ibnCo2")(q)).join("|") + "|" + za.map((q) => q.anlageId).join(",");
     /* PDF in den Projektdateien, Inbetriebnahme an der Anlage */
     await A.bis(() => z.pdf_pfad, 8000);
     const pr = db.projekte.find((p) => p.id === "pan1");
     e.pdf = ((pr.daten || {}).dateien || []).filter((f) => /^Inbetriebnahmeprotokoll_P-TEST-AN_Nr1_/.test(f.name)).map((f) => f.art + ":" + f.name).join("|");
-    await A.bis(() => ((db.stammdaten.find((q) => q.id === "position:NPibn1") || {}).felder || {}).inbetriebnahme, 4000);
-    const an = (db.stammdaten.find((q) => q.id === "position:NPibn1") || {}).felder || {};
-    e.anlage = an.inbetriebnahme + "|" + an.kaeltemittelKg;
+    await A.bis(() => ((db.stammdaten.find((q) => q.id === "position:NPibn2") || {}).felder || {}).inbetriebnahme, 4000);
+    const an = (db.stammdaten.find((q) => q.id === "position:NPibn1") || {}).felder || {}, an2 = (db.stammdaten.find((q) => q.id === "position:NPibn2") || {}).felder || {};
+    e.anlage = an.inbetriebnahme + "|" + an.kaeltemittelKg + "|" + an2.inbetriebnahme + "|" + an2.kaeltemittelKg;
     /* Liste im Projekt */
     await A.bis(() => document.querySelector('[data-ibn="' + z.id + '"]'));
     e.liste = (document.querySelector('[data-ibn="' + z.id + '"]') || {}).textContent;
     /* Blatt: Füllmengen, CO₂e, Kreuze */
     const html = x("ibnBlattHtml")(pr, z);
     e.blatt = /INBETRIEBNAHMEPROTOKOLL KÄLTEANLAGE/.test(html) && /16,3 kg/.test(html) && /34,03 t CO₂e/.test(html) && /Gefälle fehlt/.test(html) && /Kühlen 22 °C · Nachtabsenkung 22:00–06:00/.test(html)
-      && /siehe Abnahmeprotokoll des Auftraggebers – Endabnahme Lidl vom 24.09.2026/.test(html) && /FXFQ63/.test(html) && /Verordnung \(EU\) 2024\/573/.test(html) && !/mit Vorbehalt/.test(html);
+      && /siehe Abnahmeprotokoll des Auftraggebers – Endabnahme Lidl vom 24.09.2026/.test(html) && /FXFQ63/.test(html) && /Verordnung \(EU\) 2024\/573/.test(html) && !/mit Vorbehalt/.test(html)
+      && /Anlage 1 von 2: VRV Verkauf/.test(html) && /Anlage 2 von 2: Split Backshop/.test(html) && /Nachfüllung bei 18 m Rohrlänge/.test(html) && /4,05 t CO₂e/.test(html) && /KÄLTEANLAGEN/.test(html);
     x("ansichtenSchliessen(); 1");
     e.toasts = window.__toasts.join(" | ");
     return e;
   });
   pruefe(r.karte && r.schnell, "Karte/Schnellknopf fehlen: " + JSON.stringify([r.karte, r.schnell]));
-  pruefe(r.imProjekt && /Daikin · RXYLQ12T7Y1B · SN 3601384/.test(r.vorbelegt), "Anlage nicht vorbelegt: " + r.vorbelegt);
+  pruefe(r.imProjekt && /^2 Anlagen – übernommen: Daikin · RXYLQ12T7Y1B · SN 3601384 · R410A \| Daikin · RZAG125N7Y1B · SN 2650949 · R32 · 6 kg/.test(r.vorbelegt), "Anlagen nicht vorbelegt: " + r.vorbelegt);
+  pruefe(r.chips === "✓ VRV Verkauf – VRV luftgekühlt|✓ Split Backshop", "Anlagen-Chips: " + r.chips);
   pruefe(r.kopf === "Lidl|Testfiliale 901, 1100 Musterstadt, Probegasse 1|Daikin|RXYLQ12T7Y1B|3601384|Verkauf FXFQ63 SN A1/Lager FXFQ40 SN A2", "Kopf: " + r.kopf);
   pruefe(r.km === "R410A" && r.gesamt === "16,3 kg" && /^34,03 t CO₂e \(GWP 2087,5\)/.test(r.co2), "Kältemittel/CO₂e: " + JSON.stringify([r.km, r.gesamt, r.co2]));
+  pruefe(/^R32\|6 kg\|4,05 t CO₂e \(GWP 675\)/.test(r.km2), "zweite Anlage: " + r.km2);
+  pruefe(/^VRV Verkauf/.test(r.messChips) && /1 Anlage noch ohne Angaben/.test(r.fehlenHinweis) && r.regelungBloecke === 2, "Messwerte je Anlage / Regelung je Anlage: " + JSON.stringify([r.messChips, r.fehlenHinweis, r.regelungBloecke]));
   pruefe(/1 Mangel/.test(r.zusammen) && /nichts offen/.test(r.zusammen) && /Nachtabsenkung 22:00–06:00/.test(r.zusammen), "Zusammenfassung: " + r.zusammen);
   pruefe(r.dokuAntworten === "erl,offen,nz" && r.zeitVorher === true && r.zeitNachher === false && r.uebergabePunkte === 4 && r.keineAbnahmeWahl, "Checkliste/Übergabe nach der Vorlage: " + JSON.stringify([r.dokuAntworten, r.zeitVorher, r.zeitNachher, r.uebergabePunkte, r.keineAbnahmeWahl]));
   pruefe(r.nachtragen === true && r.nachtragenKg === true && r.ohneUnterschrift >= 1, "Nachtragen/Unterschrift-Pflicht: " + JSON.stringify([r.nachtragen, r.nachtragenKg, r.ohneUnterschrift]));
-  pruefe(r.gespeichert === "1|Testtechniker|true|NPibn1|u_tech_test_at|Kühlen 22 °C · Nachtabsenkung 22:00–06:00|mangel" && r.co2Gespeichert === 34.03, "Gespeichert: " + r.gespeichert + " / " + r.co2Gespeichert);
-  pruefe(/^protokoll:Inbetriebnahmeprotokoll_P-TEST-AN_Nr1_VRV-Verkauf/.test(r.pdf), "PDF nicht in den Projektdateien: " + r.pdf);
-  pruefe(/^\d{4}-\d\d-\d\d\|16\.3$/.test(r.anlage), "Inbetriebnahme/Füllmenge nicht an der Anlage: " + r.anlage);
-  pruefe(/unterschrieben/.test(r.liste) && /VRV Verkauf/.test(r.liste), "Liste: " + r.liste);
+  pruefe(r.gespeichert === "1|Testtechniker|true|NPibn1|u_tech_test_at|Kühlen 22 °C · Nachtabsenkung 22:00–06:00|mangel" && r.co2Gespeichert === "34.03|4.05|NPibn1,NPibn2", "Gespeichert: " + r.gespeichert + " / " + r.co2Gespeichert);
+  pruefe(/^protokoll:Inbetriebnahmeprotokoll_P-TEST-AN_Nr1_2-Anlagen/.test(r.pdf), "PDF nicht in den Projektdateien: " + r.pdf);
+  pruefe(/^(\d{4}-\d\d-\d\d)\|16\.3\|\1\|6$/.test(r.anlage), "Inbetriebnahme/Füllmenge nicht an beiden Anlagen: " + r.anlage);
+  pruefe(/unterschrieben/.test(r.liste) && /2 Anlagen: VRV Verkauf/.test(r.liste), "Liste: " + r.liste);
   pruefe(r.blatt, "Blatt unvollständig");
   pruefe(!a.fehler.length, "Laufzeitfehler: " + a.fehler.join("; "));
   await a.zu();
@@ -6163,7 +6186,7 @@ test("Inbetriebnahmeprotokoll: aus der Anlage vorbelegt, Füllmenge und CO₂e g
     const x = window.__t.x, db = window.__db.tabellen;
     const vorher = db.inbetriebnahmen.length;
     const p = x("PROJEKTE[0]") || { id: "pdemo" };
-    const row = await x("ibnSpeichern")(p, null, { datum: "2026-10-01", daten: { anlagentyp: "Demo", kaeltemittel: "R32", gesamtKg: "2,5" }, anlage_id: null }, "data:image/png;base64,x", "");
+    const row = await x("ibnSpeichern")(p, null, { datum: "2026-10-01", daten: { anlagen: [{ anlagentyp: "Demo", kaeltemittel: "R32", gesamtKg: "2,5" }] }, anlage_id: null }, "data:image/png;base64,x", "");
     return { demo: /^demo-/.test(row.id) && row.nummer === 1 && !!row.unterschrieben, db: db.inbetriebnahmen.length === vorher };
   });
   pruefe(q.demo && q.db, "Präsentation: " + JSON.stringify(q));
