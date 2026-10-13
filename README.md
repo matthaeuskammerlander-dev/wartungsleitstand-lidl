@@ -167,9 +167,10 @@ zusätzliche Regel auf Marktebene gibt es nicht.
 
 **Was die App am Termin prüft** (Reiter Datenbasis, Spalte Fehler/Lücken):
 
-- zwei Termine desselben Marktes am selben Tag – dann kann eine Wartung nur
-  für einen von beiden zählen. Gehören sie zur selben Anlage, ist das ein
-  Fehler; sind es zwei Anlagen, die am selben Tag drankommen, nur ein Hinweis;
+- zwei Termine **derselben Anlage** am selben Tag – dann kann eine Wartung nur
+  für einen von beiden zählen, das ist ein Fehler. Zwei verschiedene Anlagen am
+  selben Tag sind normal und werden nicht gemeldet (alle Anlagen eines Markts
+  werden beim selben Termin gewartet, Inhaber 13.10.2026);
 - Termine einer Anlage mit verschiedenen Inbetriebnahmedaten;
 - ein Soll-Monat, der ohne Begründung mehr als 3 Monate von der Regel abweicht;
 - zweimal dasselbe Kürzel im selben Monat;
