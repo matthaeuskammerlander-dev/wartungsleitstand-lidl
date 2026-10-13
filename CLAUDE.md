@@ -445,8 +445,9 @@ Kammerlander Umwelt- und Klimatechnik (UKT) – oft kurz, vom Handy, im Feld.
   der Inhaber; selbst geändert → „hand“. Zeitausgleich zählt nicht als Ist (baut Überstunden ab). Stempeluhr: „📅 Heute
   geplant“ (`stempelPlanChips`), nach dem Ausstempeln Verknüpfung mit dem Termin (`zeitenMitPlanungVerknuepfen`).
   Soll je Tag/Woche in „Meine Arbeitszeit“ (`sollIstTag`) nur zur Info – Überstunden bleiben MONATSBILANZ.
-  Vor dem Bestätigen: `monatLuecken` (Tage ohne Eintrag, Abwesenheit ohne Stunden, Geplantes nicht erfasst) mit
-  „Nachricht an …“. Büro 03.10.2026.
+  Vor dem Bestätigen: `monatLuecken` (Tage ohne Eintrag, Abwesenheit ohne Stunden) mit „Nachricht an …“. Büro 03.10.2026.
+  Geplante Termine ohne Eintrag werden dort NICHT mehr gemeldet (Inhaber 13.10.2026: Planung ist nicht streng, meist kommt
+  Dringenderes dazwischen; der Vergleich gehört nicht in die Stundenabrechnung).
   Stempeluhr hat VORRANG (Büro 04.10.2026): Abgleich mit dem Kalender (`abgleichDialog`, `abgleichTeile`, Funktion `stempel_abgleich`,
   tools/stempel-abgleich.sql) teilt nur die gestempelte Zeit auf – Blöcke lückenlos und genau, Summe/Pause unverändert, Quelle
   „stempel_abgeglichen“; Lücken zwischen Terminen behalten, was dort gestempelt war (Bereich, Markt, Projekt – sonst Fahrt),

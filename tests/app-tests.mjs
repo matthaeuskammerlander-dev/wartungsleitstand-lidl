@@ -1240,10 +1240,13 @@ test("Stunden ↔ Kalender: Abwesenheit von selbst in den Stunden, Soll je Tag/W
     /* Lücken: ein Monat ohne Einträge hat Arbeitstage ohne Eintrag */
     const vorher = x("plusMonate(isoLokal(new Date()),-1).slice(0,7)");
     const luecken = x("monatLueckenText(monatLuecken([], '" + ich + "', '" + vorher + "'))");
+    /* ein geplanter Arbeitstermin ohne Stunden ist KEINE Lücke (Inhaber 13.10.2026) */
+    const geplantLuecke = x("(function(){ var e={id:'tplan-luecke', art:'termin', kategorie:'wartung', titel:'Wartung Test', datum:'" + vorher + "-02', wer:['" + ich + "']}; PLANUNG.push(e);" +
+      " var t=monatLueckenText(monatLuecken([], '" + ich + "', '" + vorher + "')).join('|'); PLANUNG.pop(); return /geplant/i.test(t); })()");
     return { soll, krank: { n: krank.length, sum: krank.reduce((s, z) => s + z.minuten, 0), quelle: [...new Set(krank.map((z) => z.quelle))], art: [...new Set(krank.map((z) => z.art))] },
       urlaub, gekuerzt, loeschenFehler: !!loeschen.error, nachLoeschen: db.arbeitszeiten.filter((z) => z.planung_id === k.id).length,
       krankZeile, erfassenBeiKrank, sollDa, wocheSoll, nachGenehmigung: /nach Genehmigung/.test(text), erfasst: /✓ erfasst/.test(text),
-      chip: !!chip, st: st && st.value, was: was && was.value, bereich, za, zaAbw, luecken };
+      chip: !!chip, st: st && st.value, was: was && was.value, bereich, za, zaAbw, luecken, geplantLuecke };
   });
   pruefe(r.krank.sum === r.soll && r.krank.quelle.join() === "kalender" && r.krank.art.join() === "krank", "Krankenstand ≠ Wochensoll: " + JSON.stringify(r));
   pruefe(r.urlaub.status === "beantragt" && r.urlaub.eintraege === 0, "beantragter Urlaub steht schon in den Stunden: " + JSON.stringify(r.urlaub));
@@ -1254,6 +1257,7 @@ test("Stunden ↔ Kalender: Abwesenheit von selbst in den Stunden, Soll je Tag/W
   pruefe(r.chip && r.st === "TS1" && /Wartung Testmarkt/.test(r.was) && !/ALTES FELD/.test(r.was) && r.bereich.join() === "wartung", "Stempeluhr-Vorschlag falsch: " + JSON.stringify(r));
   pruefe(r.za === "Zeitausgleich" && r.zaAbw, "Zeitausgleich fehlt im Kalender");
   pruefe(r.luecken.length && /ohne Eintrag/.test(r.luecken[0]), "Lücken vor dem Bestätigen nicht erkannt: " + JSON.stringify(r.luecken));
+  pruefe(r.geplantLuecke === false, "Geplanter Termin ohne Stunden wird noch als Lücke gemeldet (Inhaber 13.10.2026: nicht mehr)");
   pruefe(!a.fehler.length, "Laufzeitfehler: " + a.fehler.join("; "));
   await a.zu();
 });
