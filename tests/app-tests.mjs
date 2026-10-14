@@ -5943,7 +5943,9 @@ test("KPlus-Rechnung als echte PDF: Wartung, Störung und Arbeitsnachweis – ge
   pruefe(/liegt schon bei: Störung Testfiliale 901 vom 03\.09\.2026/.test(r.doppelt.frage) && r.doppelt.bleibt === "ss1" && r.doppelt.fensterOffen && /bleibt, wo sie war/.test(r.doppelt.meldung), "dieselbe Rechnung beim zweiten Einsatz: " + JSON.stringify(r.doppelt));
   pruefe(/2 unterschrieben, noch nicht abgerechnet/.test(r.anVorher) && r.belegB.projekt === "pan1" && r.belegB.an === '["sa1"]' && r.belegB.lernenArt === "arbeitsnachweis" && JSON.stringify(r.belegB.fehlte) === JSON.stringify(["Hebebühne Miete"]), "Arbeitsnachweis abgelegt/gelernt: " + JSON.stringify([r.anVorher, r.belegB]));
   pruefe(/^1 unterschrieben, noch nicht abgerechnet/.test(r.anNachher) && /€ abgerechnet KPlus-Rechnung 419903/.test(r.anNachher), "Arbeitsnachweis danach: " + r.anNachher);
-  pruefe(r.vorschlagB.length === 2 && /^Regiestunde Facharbeiter \| 16,00 \| 60,00/.test(r.vorschlagB[0]) && /^Hebebühne Miete \| 1,00 \| 150,00/.test(r.vorschlagB[1]), "Vorschlag nächster Arbeitsnachweis (keine doppelte Regiestunde, Hebebühne gelernt): " + JSON.stringify(r.vorschlagB));
+  /* seit 14.10.2026: Block je Nachweis mit Fahrtpauschale; Text und Preis der Regiestunde wie in der KPlus-Rechnung gelernt */
+  pruefe(r.vorschlagB.length === 3 && /^Regiestunde Facharbeiter \| 16,00 \| 60,00/.test(r.vorschlagB[0]) && r.vorschlagB.some((q) => /^Hebebühne Miete \| 1,00 \| 150,00/.test(q)) && r.vorschlagB.some((q) => /^Fahrtpauschale/.test(q)),
+    "Vorschlag nächster Arbeitsnachweis (keine doppelte Regiestunde, Hebebühne gelernt, Fahrtpauschale): " + JSON.stringify(r.vorschlagB));
   pruefe(r.chipVorher === "noch nicht abgerechnet (4)" && r.chipNachher === "noch nicht abgerechnet (2)", "Chip im Reiter Protokoll: " + r.chipVorher + " → " + r.chipNachher);
   pruefe(r.belegeReiter.length === 3 && r.belegeReiter.every((t) => /KPlus/.test(t) && /PDF abgelegt/.test(t)), "Reiter Rechnungen: " + JSON.stringify(r.belegeReiter));
   pruefe(r.einsatzWahl.length === 2 && !r.einsatzWahl.some((t) => /schon Rechnung/.test(t)) && r.einsatzWahlAlle === 2, "Rechnung zu einem Einsatz – nur ohne Rechnung: " + JSON.stringify([r.einsatzWahl, r.einsatzWahlAlle]));
@@ -6336,6 +6338,103 @@ test("Rollenprüfung hängt (Inhaber 14.10.2026): in der Sitzung bestätigte Rol
   pruefe(r.start[1] === true && r.start[2] === true, "Nur gemerkte Rolle: Zugangsdaten müssten ausgeblendet sein: " + JSON.stringify(r.start));
   pruefe(/ausgeblendet/.test(r.hinweis) && /erneut/.test(r.hinweis), "Kein sichtbarer Hinweis, dass die Zugangsdaten wegen der Rollenprüfung fehlen: " + JSON.stringify(r.hinweis));
   pruefe(r.wieder[0] === false && r.wieder[1] === true && r.wieder[2] === false, "Nach gelungener Prüfung nicht wieder bestätigt: " + JSON.stringify(r.wieder));
+});
+
+/* Mattighofen 419895 (Inhaber 14.10.2026): EINE Projektrechnung deckt mehrere Arbeitsnachweise ab – Angebotsteil + Regie-Blöcke je Nachweis,
+   Nachweise hinten angehängt; Samstag nur Zuschlag, Werktag Regie; die App lernt Text und Preis des Chefs; alte Belege als Vorlage */
+test("Projektrechnung aus KPlus wie Mattighofen: mehrere Arbeitsnachweise erkannt, Abrechnungsart je Nachweis, Vergleich nur im Regie-Teil, Text/Preis gelernt; Beleg aus Vorlage", async () => {
+  const a = await oeffnen(KONTEN.inhaber);
+  await a.seite.evaluate((h) => eval(h), AN_HILFEN);
+  const r = await a.seite.evaluate(async () => {
+    const x = window.__t.x, db = window.__db.tabellen, A = window.__an, w = A.warte, e = {}, jetzt = new Date().toISOString();
+    A.toastSpion(); A.daten();
+    db.projekte.push({ id: "pan2", nummer: "P-TEST-VL", titel: "Vorlage: Umbau Klima Zweitfiliale", kunde_id: "lidl", standort_id: "TS1", status: "angebot", daten: {}, verlauf: [], erstellt: jetzt, geaendert: jetzt });
+    const an = (id, nr, datum, personen, von, bis, arbeiten) => ({ id, projekt_id: "pan1", nummer: nr, monteur: "Testchef", erstellt_von: "u_inhaber_test_at", unterschrieben: jetzt, unterschrift: "data:image/png;base64,x",
+      daten: { zeilen: [{ datum, personen, von, bis, pause: 0.5 }], arbeiten }, erstellt: jetzt, geaendert: jetzt });
+    db.arbeitsnachweise.push(an("mh1", 1, "2026-10-12", 1, "11:00", "20:00", "Deckencassette Kassa versetzen"), an("mh2", 2, "2026-10-10", 4, "15:00", "21:00", "Zuschläge für Samstagsarbeit"),
+      an("mh3", 3, "2026-10-13", 1, "09:00", "17:00", "CVP Schaltschrank stillgelegt"));
+    db.katalog.push({ id: "kmh1", text: "Regiestunde Facharbeiter", eh: "Std", preis: 60, kunde_id: null, aktiv: true, quelle: "Test" },
+      { id: "kmh2", text: "Zuschlag 50 % Samstag", eh: "Std", preis: 32.5, kunde_id: null, aktiv: true, quelle: "Test" });
+    await x("Promise.all([projekteLaden(), katalogLaden(), abrechnungLaden(), belegeAlleLaden()])");
+    /* Vorgabe der Abrechnungsart: Samstag-Nachweis nur Zuschlag, Werktag Regie */
+    e.vorgabe = db.arbeitsnachweise.filter((q) => /^mh/.test(q.id)).map((q) => q.id + ":" + x("anModusVorgabe")(q)).join(",");
+    /* ---- KPlus-PDF wie 419895: Angebotsteil, Gruppe, Blöcke je Leistungszeitraum, Alternativ, hinten die Nachweise ---- */
+    const L = await x("(window.PDFLib ? Promise.resolve() : ladeSkript(PDF_LIB)).then(function(){ return window.PDFLib; })");
+    const doc = await L.PDFDocument.create(), pg = doc.addPage([595, 842]);
+    const fn = await doc.embedFont(L.StandardFonts.Helvetica), fb = await doc.embedFont(L.StandardFonts.HelveticaBold);
+    const T = (p, xx, yTop, txt, bold, size) => p.drawText(txt, { x: xx, y: 842 - yTop, size: size || 9, font: bold ? fb : fn });
+    T(pg, 50, 160, "Lidl Österreich GmbH"); T(pg, 50, 172, "Unter der Leiten 11"); T(pg, 50, 184, "5020 Salzburg");
+    T(pg, 330, 150, "Rechnung", true, 12); T(pg, 480, 150, "419895", true, 12); T(pg, 330, 168, "Datum"); T(pg, 480, 168, "13.10.2026");
+    T(pg, 50, 250, "Filiale 464 Mattighofen, Tausch CVP gegen VRV,", true); T(pg, 50, 262, "Bestellung 2002400044, IAN 21001463", true); T(pg, 50, 280, "Sehr geehrte Damen und Herren!");
+    T(pg, 60, 300, "Position"); T(pg, 100, 300, "Menge EH"); T(pg, 160, 300, "Bezeichnung"); T(pg, 420, 300, "Preis"); T(pg, 500, 300, "Positionspreis");
+    let y = 320, netto = 0; const g = (n) => n.toFixed(2).replace(".", ",").replace(/\B(?=(\d{3})+(?!\d))/g, ".");
+    const pos = (nr, menge, eh, text, preis, betrag) => { T(pg, 60, y, nr); T(pg, 100, y, menge + " " + eh); T(pg, 160, y, text); T(pg, 420, y, preis); T(pg, 500, y, betrag); y += 18; if (/\d/.test(betrag)) netto += +betrag.replace(/\./g, "").replace(",", "."); };
+    const zeile = (text, bold) => { T(pg, 160, y, text, bold); y += 18; };
+    pos("1", "3,00", "Stk", "Ausseneinheit R410a Daikin cold region", "15.044,00", "45.132,00");
+    pos("8", "3,00", "psh", "Adaptierung des Leitungssystems", "5.650,00", "16.950,00");
+    pos("15", "0,00", "Stk", "Kondensathebepumpe 8 l/h", "269,34", "0,00");
+    zeile("1. TK Zelle von CVP trennen, stilllegen", true);
+    zeile("Leistungszeitraum:12.10.2026 Arbeitsnachweis Kassa");
+    pos("1.0.2", "8,50", "Std", "Regiestundensatz für Techniker Kälte", "106,50", "905,25");
+    pos("1.0.3", "1,00", "psh", "Fahrtpauschale Zone 1", "181,05", "181,05");
+    zeile("Leistungszeitraum:10.10.2026 Arbeitsnachweis Zuschläge Samstag");
+    pos("1.1.3", "22,00", "Std", "Zuschlag Stundensatz Facharbeiter 50 % für Samstag", "39,40", "866,80");
+    pos("1.1.11", "1,00", "psh", "Fahrtpauschale Zone 1", "181,05", "Alternativ");
+    y += 10; T(pg, 300, y, "Netto-Summe"); T(pg, 500, y, g(netto)); y += 14; T(pg, 300, y, "Mwst 2 20,00 %"); T(pg, 500, y, g(netto * 0.2)); y += 14; T(pg, 300, y, "Gesamt"); T(pg, 500, y, g(netto * 1.2));
+    T(pg, 40, 800, "A-6380 St. Johann in Tirol Speckbacherstraße 92 · office@ukt.at");
+    const pg2 = doc.addPage([595, 842]); T(pg2, 50, 80, "ARBEITSNACHWEIS", true, 12); T(pg2, 50, 100, "Nr. 1 · Projekt P-TEST-AN"); T(pg2, 150, 800, "Arbeitsnachweis Nr. 1 - P-TEST-AN · Umbau Klima - Seite 1 von 1", false, 7);
+    const pdf = new File([await doc.save()], "419895.pdf", { type: "application/pdf" });
+    const gelesen = await x("kplusLesen")(new Uint8Array(await pdf.arrayBuffer()));
+    e.gelesen = { nummer: gelesen.nummer, netto: gelesen.summenPdf.netto, bestellung: gelesen.kopf.bestellung, anNummern: gelesen.anNummern, anDaten: gelesen.anDaten,
+      pos: gelesen.positionen.filter((q) => q.typ === "pos").map((q) => q.nr + ":" + q.menge + (q.alternativ ? "A" : "")), teil: x("kplusAnTeil")(gelesen.positionen).an.map((q) => q.nr).join(","), rest: x("kplusAnTeil")(gelesen.positionen).rest };
+    /* ---- im Projekt: KPlus-PDF einlesen → Nachweise erkannt, Abrechnungsart, Vergleich nur Regie-Teil ---- */
+    x("projektAnsicht('pan1'); 1");
+    const karte = await A.bis(() => A.karte(/^Angebote und Rechnungen/), 8000);
+    const datei = (input, file) => { const dt = new DataTransfer(); dt.items.add(file); input.files = dt.files; input.dispatchEvent(new Event("change", { bubbles: true })); };
+    datei(karte.querySelector("[data-kplus]"), pdf);
+    const d = await A.bis(() => { const d = A.dlg(); return d && /KPlus Rechnung 419895/.test(d.querySelector(".as-titel").textContent) && d.querySelector("[data-an-id]") && d; }, 8000);
+    e.erkannt = d ? [...d.querySelectorAll("[data-an-id]")].map((i) => i.dataset.anId + ":" + i.checked + ":" + d.querySelector('[data-an-modus="' + i.dataset.anId + '"]').value).join(",") : "kein Fenster";
+    const vgl = () => { const c = [...d.querySelectorAll(".card h2")].find((h) => /So hätte die App gerechnet/.test(h.textContent)); return c ? c.parentElement.textContent.replace(/\s+/g, " ") : ""; };
+    e.vergleich = vgl();
+    A.knopf(d, /^Am Projekt ablegen/).click();
+    const b = await A.bis(() => db.belege.find((q) => q.nummer === "419895"), 8000) || { kopf: {} };
+    const ln = b.kopf.lernen || {};
+    e.beleg = { an: JSON.stringify(b.kopf.arbeitsnachweise), modi: JSON.stringify(b.kopf.anModi), nurTeil: ln.nurTeil, fehlte: (ln.fehlte || []).map((q) => q.text.split("\n")[0]), anders: (ln.anders || []).map((q) => q.appSchluessel + " → " + q.kpText.split("\n")[0] + " " + q.kpPreis) };
+    await A.bis(() => window.__toasts.some((t) => /419895 abgelegt/.test(t)), 8000);
+    e.toast = window.__toasts.filter((t) => /419895/.test(t)).pop();
+    await x("Promise.all([belegeAlleLaden(), abrechnungLaden()])");
+    e.abgerechnet = ["mh1", "mh2", "mh3"].map((id) => id + ":" + !!x("anAbgerechnet")(db.arbeitsnachweise.find((q) => q.id === id))).join(",");
+    /* nächster Nachweis (Regie): Text und Preis wie der Chef – Techniker 106,50, Fahrtpauschale 181,05 */
+    const v3 = x("anVorschlag")(db.arbeitsnachweise.find((q) => q.id === "mh3"), x("PROJEKTE").find((q) => q.id === "pan1"), "lidl");
+    e.naechster = v3.pos.map((q) => (q.typ === "text" ? "T:" : "") + q.text.split("\n")[0] + (q.typ === "pos" ? " | " + q.menge + " | " + q.preis + (q.gelernt ? " [" + q.gelernt + "]" : "") : "")).join(" || ");
+    x("ansichtenSchliessen(); 1"); await w(200);
+    /* ---- Beleg aus Vorlage im zweiten Projekt ---- */
+    x("projektAnsicht('pan2'); 1");
+    const karte2 = await A.bis(() => A.karte(/^Angebote und Rechnungen/), 8000);
+    karte2.querySelector("[data-vorlage]").click();
+    const dv = await A.bis(() => { const d = A.dlg(); return d && /Beleg aus Vorlage/.test(d.querySelector(".as-titel").textContent) && d; }, 6000);
+    const treffer = dv ? [...dv.querySelectorAll("[data-liste] button")] : [];
+    e.vorlagen = treffer.map((t) => t.textContent.replace(/\s+/g, " ").slice(0, 60));
+    const tv = treffer.find((t) => /419895/.test(t.textContent)); if (tv) tv.click();
+    const ed = await A.bis(() => { const d = A.dlg(); return d && d.querySelector(".bpos") && d; }, 8000);
+    e.vorlage = ed ? { pos: ed.querySelectorAll(".bpos").length, betreff: (ed.querySelector('[data-k="betreff"]') || {}).value, titel: ed.querySelector(".as-titel").textContent } : "kein Editor";
+    x("ansichtenSchliessen(); 1");
+    return e;
+  });
+  pruefe(r.vorgabe === "mh1:regie,mh2:zuschlag,mh3:regie", "Vorgabe der Abrechnungsart: " + r.vorgabe);
+  pruefe(r.gelesen.nummer === "419895" && r.gelesen.bestellung === "2002400044" && JSON.stringify(r.gelesen.anNummern) === "[1]" && JSON.stringify(r.gelesen.anDaten) === '["2026-10-12","2026-10-10"]'
+    && r.gelesen.teil === "1.0.2,1.0.3,1.1.3,1.1.11" && r.gelesen.rest === 3, "PDF gelesen (Nachweise, Leistungszeiträume, Regie-Teil): " + JSON.stringify(r.gelesen));
+  pruefe(r.erkannt === "mh1:true:regie,mh2:true:zuschlag,mh3:false:regie", "Nachweise in der Rechnung erkannt: " + r.erkannt);
+  pruefe(/Regie-Teil/.test(r.vergleich) && /3 Angebotspositionen/.test(r.vergleich) && !/Ausseneinheit/.test(r.vergleich) && /≠ anders · Regiestund/.test(r.vergleich) && /≠ anders · Zuschlag/.test(r.vergleich),
+    "Vergleich nur im Regie-Teil: " + r.vergleich.slice(0, 700));
+  pruefe(r.beleg.an === '["mh1","mh2"]' && r.beleg.modi === '{"mh1":"regie","mh2":"zuschlag"}' && r.beleg.nurTeil === true && !r.beleg.fehlte.length && r.beleg.anders.length >= 2, "Beleg abgelegt: " + JSON.stringify(r.beleg));
+  pruefe(/2 Arbeitsnachweise als abgerechnet vermerkt/.test(r.toast || ""), "Meldung: " + r.toast);
+  pruefe(r.abgerechnet === "mh1:true,mh2:true,mh3:false", "abgerechnet: " + r.abgerechnet);
+  pruefe(/^T:Leistungszeitraum: 13\.10\.2026 · Arbeitsnachweis Nr\. 3: CVP Schaltschrank/.test(r.naechster) && /Regiestundensatz für Techniker Kälte \(1 Mann à 7,5 Std\) \| 7\.5 \| 106\.5 \[Text und Preis wie KPlus-Rechnung 419895\]/.test(r.naechster)
+    && /Fahrtpauschale Zone 1 \| 1 \| 181\.05 \[Text und Preis wie KPlus-Rechnung 419895\]/.test(r.naechster), "Nächster Nachweis lernt Text/Preis des Chefs nicht: " + r.naechster);
+  pruefe(r.vorlagen.length === 1 && /Rechnung 419895/.test(r.vorlagen[0]) && r.vorlage.pos === 7 && /Zweitfiliale/.test(r.vorlage.betreff || ""), "Beleg aus Vorlage: " + JSON.stringify([r.vorlagen, r.vorlage]));
+  pruefe(!a.fehler.length, "Laufzeitfehler: " + a.fehler.join("; "));
+  await a.zu();
 });
 
 /* Antworten des Inhabers vom 05.10.2026 (Teil kern) */
@@ -8010,7 +8109,10 @@ test("Arbeitsnachweis: Monteur erstellt aus Stunden und Kalender, unterschreibt 
   const regie = r.pos.filter((q) => /^Regiestunden Facharbeiter/.test(q.text))[0] || {}, sa = r.pos.filter((q) => /^Zuschlag 50 % Samstag/.test(q.text))[0] || {};
   pruefe(regie.menge === 29 && regie.preis === 65 && regie.eh === "Std" && /\(29 Std\)/.test(regie.text) && !/3 Mann a 10/.test(regie.text), "Regiestunden: " + JSON.stringify(regie));
   pruefe(sa.menge === 16 && sa.preis === 32.5 && /\(2 Mann à 8 Std\)/.test(sa.text), "Zuschlag Samstag: " + JSON.stringify(sa));
-  pruefe(r.pos.length === 2 && r.pos.every((q) => !q.pruef.length), "Positionsprüfung meldet: " + JSON.stringify(r.pos.map((q) => q.pruef)));
+  /* seit 14.10.2026 (Mattighofen 419895): je Nachweis ein Block – dazu das Material des Nachweises (ohne Katalogpreis mit Hinweis) und die Fahrtpauschale */
+  const material = r.pos.filter((q) => /Kupferrohr|Wandkonsole/.test(q.text)), fahrt = r.pos.filter((q) => /^Fahrtpauschale/.test(q.text));
+  pruefe(!regie.pruef.length && !sa.pruef.length && material.length === 2 && material.every((q) => /Preis bitte eintragen/.test(q.pruef.join(" "))) && fahrt.length === 1,
+    "Block je Nachweis (Regie, Zuschlag, Material mit Hinweis, Fahrtpauschale): " + JSON.stringify(r.pos.map((q) => [q.text.split("\n")[0], q.pruef])));
   pruefe(r.kopf.anh === 1 && r.kopf.ids === 1 && r.pdfMit, "PDF des Arbeitsnachweises nicht an der Rechnung: " + JSON.stringify([r.kopf, r.pdfMit]));
   pruefe(r.kundeLiest === 0, "Kunde liest Arbeitsnachweise");
   pruefe(!a.fehler.length, "Laufzeitfehler: " + a.fehler.join("; "));

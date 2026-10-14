@@ -365,6 +365,21 @@ Kammerlander Umwelt- und Klimatechnik (UKT) – oft kurz, vom Handy, im Feld.
   Lernt wie beim Einsatz (Inhaber 10.10.2026): `anVorschlag` = `anRechnungPositionen` + `vorschlagMitGelerntem` mit pk = {_an:{ids, projekt_id}} – Lernbelege
   (`einsatzLernBelege`) sind KPlus-Rechnungen mit `kopf.lernen.art` „arbeitsnachweis“ zu ANDEREN Nachweisen, im selben Projekt (`lernOrtGleich`, zählt wie „am Markt“) oder beim
   selben Kunden; gilt für „Rechnung schreiben“, den Vergleich beim Hochladen und „⏱ Stunden aus Arbeitsnachweisen“ (`anVorschlagListe`, mehrere Nachweise).
+  **Projektrechnung wie Mattighofen 419895** (Inhaber 14.10.2026, „Arbeitsweise verfeinern, System lernt automatisch“): Arbeitsnachweise werden nicht einzeln,
+  sondern gesammelt in Teil-/Schlussrechnungen abgerechnet, die Nachweise hängen hinten an der Rechnungs-PDF. Vorschlag (`anRechnungPositionen(liste, kid, {modi, standort})`)
+  je Nachweis ein Block wie in KPlus: Textzeile „Leistungszeitraum: … · Arbeitsnachweis Nr. n: <erste Zeile der Arbeiten>“, dann je **Abrechnungsart** (`AN_MODI`, Auswahl je
+  Nachweis im Dialog, Vorgabe `anModusVorgabe`: nur Sa/So/Feiertag-Zeilen → „zuschlag“, sonst „regie“ – ANNAHME aus 419895, Nachweise 3/4 „Zuschläge für Samstags-/Sonntagsarbeit“):
+  regie = Regiestunden + Zuschläge + Material des Nachweises (`materialListe`/`material`, Katalogpreis sonst Hinweis) + Fahrtpauschale der Zone je Nachweis; zuschlag = nur Zuschläge
+  (Arbeit in der Pauschale); pauschale = nichts. Gewählte Arten beim Beleg in `kopf.anModi`. KPlus-PDF am Projekt einlesen (`belegeKarte` → `kplusVorschau` → `kplusVorschauBauen`
+  mit den Nachweisen des Projekts): Karte „Arbeitsnachweise zu dieser Rechnung“ – erkannt an den angehängten Nachweisen (`erg.anNummern` aus „Arbeitsnachweis Nr. n“,
+  „lt. Arbeitsnachweis Nr.“) und den Leistungszeiträumen je Block (`erg.anDaten` aus „Leistungszeitraum:DD.MM.YYYY“, nicht der Kopfzeile), Abrechnungsart je Nachweis, Vergleich
+  „So hätte die App gerechnet (Regie-Teil)“ nur mit dem Regie-Teil (`kplusAnTeil`: ab einer Text-/Gruppenzeile „Leistungszeitraum/Arbeitsnachweis/Rapport/Regiearbeiten“, davor nur
+  Regie-/Zuschlag-/Fahrt-Positionen; Angebotspositionen, Menge 0 und Alternativ nie) – sonst lernte die App aus einer Schlussrechnung drei Außengeräte je Nachweis. Ablegen vermerkt die
+  angehakten als abgerechnet (`kopf.arbeitsnachweise`). **Text und Preis lernen** (`einsatzErsetzt`, aus `lernen.anders` mit `appSchluessel/kpText/kpEh/kpPreis`): eine App-Position
+  bekommt künftig Text/Einheit/Preis der jüngsten KPlus-Rechnung, die sie anders schrieb (Projekt/Markt zuerst, sonst Kunde; Wartungszeilen `einsatz` nicht) – „Regiestunden Facharbeiter
+  78,81“ → „Regiestundensatz für Techniker … 106,50“; Vermerk „Text und Preis wie KPlus-Rechnung N“. **Beleg aus Vorlage** (`belegVorlageWaehlen`, Karte „+ aus Vorlage“): Angebot/Rechnung
+  eines anderen Projekts (auch KPlus) mit Suche; Positionen und Preise kopiert, Bezüge (Nachweise, Anhänge, Leistungszeitraum, Bestellung, Gelerntes) nicht; `kopf.vorlage` nennt die Quelle.
+  `kopf.bestellung` aus dem Betreff ohne „, IAN …“. Test „Projektrechnung aus KPlus wie Mattighofen …“.
 - **Inbetriebnahmeprotokoll Kälteanlage** (Inhaber 12.10.2026, Tabelle `inbetriebnahmen`, tools/inbetriebnahmen.sql – gleiche Regeln und Trigger wie die
   Arbeitsnachweise; im SQL-Editor ohne Konto bleiben mitgegebene `erstellt_von`/`monteur` stehen, damit das Büro einem Monteur einen Entwurf anlegen kann):
   nach dem Muster „Inbetriebnahmeprotokoll Kälteanlage“ (KlimaCraft), mit den Anmerkungen des Inhabers auf der Vorlage. „Auftrag“ = Bestell-/Auftragsnummer des
