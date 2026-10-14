@@ -6134,6 +6134,10 @@ test("Inbetriebnahmeprotokoll: aus der Anlage vorbelegt, Füllmenge und CO₂e g
     rg.querySelector('[data-rg="nachtVon"]').value = "22:00"; rg.querySelector('[data-rg="nachtVon"]').dispatchEvent(new Event("input"));
     rg.querySelector('[data-rg="nachtBis"]').value = "06:00"; rg.querySelector('[data-rg="nachtBis"]').dispatchEvent(new Event("input"));
     e.zeitNachher = rg.querySelector("[data-rgzeit]").hidden;
+    /* Automatikbetrieb an der zweiten Anlage (Inhaber 14.10.2026): Bereich je Betriebsart und Umschaltpunkte */
+    const rg2 = d.querySelectorAll("[data-ibn-regelung]")[1];
+    Object.entries({ heizMin: "18", heizMax: "25", kuehlMin: "17", kuehlMax: "24", aufKuehlenBei: "24", aufHeizenBei: "17" }).forEach(([k, v]) => {
+      const i = rg2.querySelector('[data-rgauto] [data-rg="' + k + '"]'); i.value = v; i.dispatchEvent(new Event("input")); });
     A.knopf(d, /^Weiter: Übergabe/).click(); await A.warte(100);
     [...d.querySelectorAll('[data-alle="erl"]')].forEach((b) => b.click()); await A.warte(100);
     e.uebergabePunkte = d.querySelectorAll(".ibn-punkt").length;
@@ -6177,6 +6181,7 @@ test("Inbetriebnahmeprotokoll: aus der Anlage vorbelegt, Füllmenge und CO₂e g
     /* Blatt: Füllmengen, CO₂e, Kreuze */
     const html = x("ibnBlattHtml")(pr, z);
     e.blatt = /INBETRIEBNAHMEPROTOKOLL KÄLTEANLAGE/.test(html) && /16,3 kg/.test(html) && /34,03 t CO₂e/.test(html) && /Gefälle fehlt/.test(html) && /Kühlen 22 °C · Nachtabsenkung 22:00–06:00/.test(html)
+      && /Automatik: Heizen 18–25 °C, Kühlen 17–24 °C, auf Kühlen ab 24 °C, auf Heizen ab 17 °C/.test(html)
       && /siehe Abnahmeprotokoll des Auftraggebers – Endabnahme Lidl vom 24.09.2026/.test(html) && /FXFQ63/.test(html) && /Verordnung \(EU\) 2024\/573/.test(html) && !/mit Vorbehalt/.test(html)
       && /Anlage 1 von 2: VRV Verkauf/.test(html) && /Anlage 2 von 2: Split Backshop/.test(html) && /Nachfüllung bei 18 m Rohrlänge/.test(html) && /4,05 t CO₂e/.test(html) && /KÄLTEANLAGEN/.test(html) && /<h2>Fotos<\/h2>/.test(html) && /VRV 2 – Typenschild/.test(html) && /Zertifikat Betrieb \(F-Gase\)<\/td><td>AT-UNT-TEST-250/.test(html) && /G14-TEST-1/.test(html);
     x("ansichtenSchliessen(); 1");

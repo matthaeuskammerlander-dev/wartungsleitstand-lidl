@@ -382,7 +382,9 @@ Kammerlander Umwelt- und Klimatechnik (UKT) – oft kurz, vom Handy, im Feld.
   Anlagen eine Chip-Zeile um (`[data-ibn-anlwahl]`, ✓ = schon eingetragen, `anlageHat`; Hinweis „n Anlagen noch ohne Angaben“ `[data-ibn-fehlen]`; Felder der gewählten
   Anlage `data-ak`/`data-at`, gemeinsame `data-k`/`data-t`) → Checkliste (`IBN_CHECK`, gilt für alle Anlagen: Mechanik/Kältekreis und Elektrik/Regelung/Sicherheit mit
   i. O./Mangel/n. z. `IBN_BEFUND`, Dokumentation mit erl./offen/n. z. `IBN_STAND`; „Alle auf …“ je Gruppe; Bemerkung erst bei Abweichung sichtbar; bei „Regelung
-  parametriert“ je Anlage die Felder `anlage.regelung` – Sollwert Kühlen/Heizen, Betriebsart, Nachtabsenkung ja/nein von–bis, `ibnRegelungText`) → Übergabe
+  parametriert“ je Anlage die Felder `anlage.regelung` – Sollwert Kühlen/Heizen, Betriebsart, Nachtabsenkung ja/nein von–bis, seit 14.10.2026
+  (Inhaber, Mattighofen) auch Automatikbetrieb: Temperaturbereich Heizen/Kühlen min–max und Umschaltpunkte „auf Kühlen bei“/„auf Heizen bei“
+  (`heizMin/heizMax/kuehlMin/kuehlMax/aufKuehlenBei/aufHeizenBei`, `[data-rgauto]`), `ibnRegelungText` → „Automatik: Heizen 18–25 °C, …“) → Übergabe
   (`IBN_UEBERGABE`: Einweisung, Betreiberpflichten (EU) 2024/573, Prüfintervall, Prüfbuch; Mängel/Restarbeiten/Abnahme NICHT hier, sondern „siehe Abnahmeprotokoll
   des Auftraggebers“ – nur `abnahmeVerweis` + Datum) → Abschluss (Unterschrift des Monteurs unter dem eigenen Konto; Betreiber unterschreibt auf dem Ausdruck; je
   Anlage Haken „An der Anlage eintragen“: Inbetriebnahme-Datum und fehlende Füllmenge über EIN `positionenSchreiben` nach dem Unterschreiben –
