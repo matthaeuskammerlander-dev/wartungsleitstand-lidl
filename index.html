@@ -3111,8 +3111,8 @@ function stoerungTeilAuftragLesen(P){
         melde(""); warnen("In dieser PDF wurde kein Lidl-Störungsauftrag erkannt – nicht übernommen. Ist es die richtige Datei (nicht der Rapport)?");
         return;
       }
-      /* Seiten und die Fotos aus der PDF (verkleinert) */
-      o.seiten=(a._seiten||[]).slice(0,2).concat(a._fotos||[]);
+      /* Seiten und die Fotos aus der PDF (verkleinert) – dazu die Fotos, die schon da sind (von Hand, aus der Mail) */
+      o.seiten=(a._seiten||[]).slice(0,2).concat(a._fotos||[]).concat(o.fotoSeiten||[]);
       o.quelle="pdf";
       if(a._fotos && a._fotos.length) toast(a._fotos.length+" Foto"+(a._fotos.length===1?"":"s")+" aus dem Auftrag übernommen"+(a._verkleinert?" – PDF von "+String(a._verkleinert).replace(".",",")+" MB verkleinert":"")+".");
       else if(a._verkleinert) toast("PDF von "+String(a._verkleinert).replace(".",",")+" MB verkleinert.");
@@ -3142,14 +3142,19 @@ function stoerungTeilAuftragLesen(P){
     }, function(e){ melde(""); warnen("Die PDF konnte nicht gelesen werden: "+esc(e&&e.message||String(e))); });
   }
   function fotoNehmen(ein){
-    var datei=ein.files&&ein.files[0]; ein.value="";
-    if(!datei) return;
-    melde("Bild wird verkleinert …");
-    verkleinere(datei).then(function(k){
-      o.seiten=o.seiten.concat([k.datenUrl||k]); o.quelle=o.quelle||"foto";
-      melde("Bild übernommen. Bitte die Felder danach ausfüllen.");
-      P.zeichne(); P.fussNeu();
-    }, function(){ melde(""); warnen("Das Bild ließ sich nicht verarbeiten."); });
+    /* auch mehrere auf einmal (die Fotos einer Lidl-Auftragsmail aus dem Posteingang, 14.10.2026) – nacheinander verkleinert */
+    var dateien=Array.prototype.slice.call(ein.files||[]); ein.value="";
+    if(!dateien.length) return;
+    melde(dateien.length>1 ? dateien.length+" Bilder werden verkleinert …" : "Bild wird verkleinert …");
+    var weiter=function(i){
+      if(i>=dateien.length){ melde(dateien.length>1 ? dateien.length+" Bilder übernommen. Bitte die Felder danach ausfüllen." : "Bild übernommen. Bitte die Felder danach ausfüllen."); P.zeichne(); P.fussNeu(); return; }
+      verkleinere(dateien[i]).then(function(k){
+        var b=k.datenUrl||k;
+        o.seiten=o.seiten.concat([b]); o.fotoSeiten=(o.fotoSeiten||[]).concat([b]); o.quelle=o.quelle||"foto";
+        weiter(i+1);
+      }, function(){ melde(""); warnen("Das Bild "+dateien[i].name+" ließ sich nicht verarbeiten."); weiter(i+1); });
+    };
+    weiter(0);
   }
 
   /* Aufbau – läuft, wenn alle Teile angemeldet sind, in der ursprünglichen Reihenfolge */
@@ -3503,12 +3508,68 @@ function posteingangErledigt(art, bezug, rapport){
     /* ein anderer Rapport: der Eingang bleibt im Posteingang stehen */
     if(!istEr){ posteingangOffen=null; return; }
   }
-  if(demo()){ posteingangOffen=null; POSTEINGANG=POSTEINGANG.filter(function(x){ return x.id!==e.id; }); return; }
+  var ids=[e.id].concat(e.weitere||[]);   /* weitere: die Fotos derselben Lidl-Mail, die mit in die Störung kamen */
+  if(demo()){ posteingangOffen=null; POSTEINGANG=POSTEINGANG.filter(function(x){ return ids.indexOf(x.id)<0; }); return; }
   posteingangOffen=null;
   Store.sb.from("posteingang").update({status:"erledigt", bezug:bezug, erledigt_von:wer(), erledigt_am:new Date().toISOString()})
-    .eq("id", e.id).select("id").then(function(r){
+    .in("id", ids).select("id").then(function(r){
       if(r.error || !(r.data||[]).length){ toast("Posteingang: der Eintrag ließ sich nicht als erledigt markieren – bitte dort von Hand verwerfen."); return; }
-      POSTEINGANG=POSTEINGANG.filter(function(x){ return x.id!==e.id; }); }, function(){});
+      POSTEINGANG=POSTEINGANG.filter(function(x){ return ids.indexOf(x.id)<0; }); }, function(){});
+}
+/* Bild im Posteingang (Foto aus einer Mail)? */
+function posteingangBild(e){ return !!e && /\.(jpe?g|png|heic|heif|webp)$/i.test(String(e.dateiname||"")); }
+/* Fotos einer Lidl-Auftragsmail, deren Auftrag schon als Störung erfasst ist (die PDF ist erledigt, die Bilder blieben liegen –
+   Lidl 14.10.2026, Auftrag 624744474 Fil. AT0334): eine Karte je Mail, „Zur Störung hinzufügen“ */
+function posteingangFotoBox(l){
+  var e=l[0], gk=e.nachricht_id;
+  var z=el('<div class="posbox" data-pe="'+esc(e.id)+'" data-fotos><div class="rowflex" style="justify-content:space-between;gap:8px"><div style="min-width:0"><strong>📷 '+l.length+' Foto'+(l.length===1?"":"s")+' zu einem Lidl-Auftrag</strong><br>'+
+    '<span class="muted" style="font-size:12.5px">'+esc(zeitFmt(e.eingang))+(e.betreff?" · "+esc(e.betreff):"")+'</span></div><span class="tag">Fotos</span></div>'+
+    '<div class="rowflex" style="gap:6px;flex-wrap:wrap" data-bilder></div>'+
+    '<div style="font-size:12.5px" data-stand>Der Auftrag dazu wird gesucht …</div>'+
+    '<div class="rowflex" style="gap:6px" data-leiste></div></div>');
+  var bilder=z.querySelector("[data-bilder]"), stand=z.querySelector("[data-stand]"), leiste=z.querySelector("[data-leiste]");
+  l.forEach(function(x){
+    var b=el('<button class="btn ghost sm" type="button" style="max-width:100%;overflow:hidden;text-overflow:ellipsis">'+esc(x.dateiname)+" ansehen</button>");
+    b.onclick=function(){ posteingangDatei(x).then(function(f){ bildAnsicht(URL.createObjectURL(f), x.dateiname); }, function(y){ toast(y.message); }); };
+    bilder.appendChild(b);
+  });
+  var vb=el('<button class="btn ghost sm" type="button">verwerfen</button>');
+  vb.onclick=function(){ posteingangVerwerfen(e, function(){ l.slice(1).forEach(function(x){ Store.sb.from("posteingang").update({status:"verworfen", notiz:"mit "+e.dateiname, erledigt_von:wer(), erledigt_am:new Date().toISOString()}).eq("id",x.id).then(function(){},function(){}); }); z.remove(); }); };
+  Store.sb.from("posteingang").select("id,status,bezug,dateiname").eq("nachricht_id", gk).eq("art","auftrag").neq("status","neu").limit(5).then(function(r){
+    var pdf=((r && r.data)||[]).filter(function(x){ return !posteingangBild(x); }), erl=pdf.filter(function(x){ return x.status==="erledigt" && x.bezug; })[0];
+    var o=erl && OFFENE.filter(function(x){ return x._id===erl.bezug && !x.geloescht; })[0];
+    if(o){
+      var st=byId[o.standortId];
+      stand.innerHTML="Auftrag <strong>"+esc(o.auftragsnummer||erl.dateiname)+"</strong> ist schon als Störung erfasst"+(st?" ("+esc(stName(st))+")":"")+(o.erledigt?" und erledigt":"")+" – die Fotos fehlen dort noch.";
+      var hb=el('<button class="btn sm" type="button">Fotos zur Störung hinzufügen</button>');
+      hb.onclick=function(){ posteingangFotosZurStoerung(o, l, z, hb); };
+      leiste.insertBefore(hb, leiste.firstChild);
+    } else if(pdf.some(function(x){ return x.status==="verworfen"; })) stand.textContent="Der Auftrag dazu („"+pdf[0].dateiname+"“) wurde im Posteingang verworfen.";
+    else if(erl) stand.textContent="Die Störung zum Auftrag („"+erl.dateiname+"“) gibt es nicht mehr.";
+    else stand.textContent="Zum Auftrag dazu wurde noch keine Störung erfasst – zuerst den Auftrag erfassen, die Fotos lassen sich dann hinzufügen.";
+    leiste.appendChild(vb);
+  }, function(){ stand.textContent="Der Auftrag dazu ließ sich nicht nachsehen (Verbindung?)."; leiste.appendChild(vb); });
+  return z;
+}
+function posteingangFotosZurStoerung(o, l, box, knopf){
+  if(nurLesen()){ toast("Mit diesem Konto lässt sich nur ansehen."); return; }
+  knopf.disabled=true; knopf.textContent="Fotos werden übernommen …";
+  /* erst die vollständige Störung (Seitenbilder, PDF – die Liste kennt nur den leichten Stand), dann die Fotos dazu */
+  stoerungSchwerLaden(o).then(function(){ return Promise.all(l.map(posteingangDatei)); }).then(function(fl){ return Promise.all(fl.map(verkleinere)); }).then(function(ks){
+    o._schwer=false;
+    var z=Object.assign({}, o, {seiten:(o.seiten||[]).concat(ks.map(function(k){ return k.datenUrl||k; }))}), rueck={};
+    return stoerungSpeichern(z, "Fotos aus dem Posteingang ("+l.length+")", rueck).then(function(wo){
+      if(wo===false) throw new Error(Store.fehler||"nicht gespeichert");
+      stoerungVerlauf(z, "Fotos aus dem Posteingang", "", l.map(function(x){ return x.dateiname; }).join(", "), rueck);
+      var ids=l.map(function(x){ return x.id; });
+      return Store.sb.from("posteingang").update({status:"erledigt", bezug:o._id, erledigt_von:wer(), erledigt_am:new Date().toISOString()}).in("id", ids).select("id").then(function(r){
+        if(r.error || !(r.data||[]).length) toast("Fotos gespeichert – der Posteingang ließ sich aber nicht abhaken, bitte dort verwerfen.");
+        else toast(l.length+" Foto"+(l.length===1?"":"s")+" zur Störung"+(o.auftragsnummer?" Auftrag "+o.auftragsnummer:"")+" hinzugefügt.");
+        POSTEINGANG=POSTEINGANG.filter(function(x){ return ids.indexOf(x.id)<0; });
+        box.remove();
+      });
+    });
+  }).catch(function(x){ knopf.disabled=false; knopf.textContent="Fotos zur Störung hinzufügen"; toast("Nicht hinzugefügt: "+((x && x.message)||x)); });
 }
 function posteingangDatei(e){
   return Store.sb.storage.from("posteingang").createSignedUrl(e.pfad, 600).then(function(r){
@@ -3532,6 +3593,15 @@ function posteingangKarte(){
     /* weitergeleitete Mail (mit .eml): eine Karte je Mail, „Zu Projekt legen“ (Büro 02.10.2026) */
     var mailGr={}, gezeigt={};
     liste.forEach(function(e){ if(e.art==="mail" && !posteingangOhneDatei(e)) mailGr[e.nachricht_id||e.id]=1; });
+    /* Fotos aus derselben Lidl-Auftragsmail (WhatsApp-Bilder; Lidl 14.10.2026, Auftrag Fil. AT0334): keine eigene Karte – sie gehören
+       zum Auftrag und kommen mit „Als Störungsauftrag erfassen“ als Fotos in die Störung. Ist die PDF schon erfasst (erledigt),
+       bekommen die liegen gebliebenen Fotos eine Karte „Fotos zu einem Lidl-Auftrag“ mit „Zur Störung hinzufügen“. */
+    var auftragGr={}, fotosZu={}, verwaist={};
+    liste.forEach(function(e){ if(e.art==="auftrag" && !posteingangOhneDatei(e) && !posteingangBild(e)) auftragGr[e.nachricht_id||e.id]=1; });
+    liste.forEach(function(e){ var gk=e.nachricht_id||e.id;
+      if(!posteingangBild(e) || posteingangOhneDatei(e) || !e.nachricht_id || mailGr[gk] || e.art==="rapport") return;
+      if(auftragGr[gk]) (fotosZu[gk]=fotosZu[gk]||[]).push(e);
+      else if(e.art==="auftrag" || e.art==="unbekannt") (verwaist[gk]=verwaist[gk]||[]).push(e); });
     liste.forEach(function(e){
       /* Anhang bzw. Mail zu groß (Synology, Inhaber 05.10.2026): nur ein Hinweis ohne Datei – eigene Karte, nie in „Zu Projekt legen“ */
       if(posteingangOhneDatei(e)){ host.appendChild(posteingangHinweisBox(e)); return; }
@@ -3540,6 +3610,9 @@ function posteingangKarte(){
         if(!gezeigt[gk]){ gezeigt[gk]=1; host.appendChild(posteingangMailBox(liste.filter(function(x){ return (x.nachricht_id||x.id)===gk && !posteingangOhneDatei(x); }))); }
         return;
       }
+      if(posteingangBild(e) && fotosZu[gk]) return;
+      if(posteingangBild(e) && verwaist[gk]){ if(!gezeigt[gk]){ gezeigt[gk]=1; host.appendChild(posteingangFotoBox(verwaist[gk])); } return; }
+      var fotos=fotosZu[gk]||[];
       var info=werteRapport("", e.dateiname) || {};
       var s=info.filiale ? ST.filter(function(x){ return String(x.filiale||"").replace(/^0+/,"")===info.filiale; })[0] : null;
       var z=el('<div class="posbox" data-pe="'+esc(e.id)+'"><div class="rowflex" style="justify-content:space-between;gap:8px">'+
@@ -3547,8 +3620,14 @@ function posteingangKarte(){
           '<span class="muted" style="font-size:12.5px">'+esc(zeitFmt(e.eingang))+(e.betreff?" · "+esc(e.betreff):"")+"</span>"+
           (s?'<br><span style="font-size:13px">'+marktLink(s)+"</span>":"")+"</div>"+
         '<span class="tag">'+esc({rapport:"Rapport",auftrag:"Auftrag"}[e.art]||"unklar")+"</span></div>"+
+        (fotos.length ? '<div class="rowflex" style="gap:6px;flex-wrap:wrap;font-size:12.5px" data-fotos>📷 '+fotos.length+" Foto"+(fotos.length===1?"":"s")+" aus derselben Mail – kommen mit in die Störung:</div>" : "")+
         '<div class="rowflex" style="gap:6px"><button class="btn ghost sm" type="button" data-a="sehen">ansehen</button></div></div>');
       var leiste=z.querySelector(".rowflex:last-child");
+      fotos.forEach(function(x){
+        var fb=el('<button class="btn ghost sm" type="button" style="max-width:100%;overflow:hidden;text-overflow:ellipsis">'+esc(x.dateiname)+" ansehen</button>");
+        fb.onclick=function(){ posteingangDatei(x).then(function(f){ bildAnsicht(URL.createObjectURL(f), x.dateiname); }, function(y){ toast(y.message); }); };
+        z.querySelector("[data-fotos]").appendChild(fb);
+      });
       z.querySelector('[data-a="sehen"]').onclick=function(){
         posteingangDatei(e).then(function(f){
           var u=URL.createObjectURL(f);
@@ -3566,16 +3645,19 @@ function posteingangKarte(){
           /* doppelt angetippt: nur ein Dialog (das Laden der Datei dauert etwas) */
           if(ab.disabled) return;
           ab.disabled=true;
-          posteingangDatei(e).then(function(f){
+          Promise.all([posteingangDatei(e)].concat(fotos.map(posteingangDatei))).then(function(fl){
+            var f=fl[0], bilder=fl.slice(1).filter(function(b){ return /^image\//.test(b.type); });
             ab.disabled=false;
-            posteingangOffen={id:e.id, art:"auftrag"};
+            posteingangOffen={id:e.id, art:"auftrag", weitere:fotos.map(function(x){ return x.id; })};
             var ov=stoerungDialog(null);
             if(!ov) return;
             /* die PDF gleich einlesen, als hätte man sie geöffnet – in DIESEN Dialog */
             var ein=ov.querySelector("#st_pdf");
             if(ein && /pdf/.test(f.type)){ var dt=new DataTransfer(); dt.items.add(f); ein.files=dt.files; ein.dispatchEvent(new Event("change")); }
             /* ein abfotografierter Auftrag (JPG/PNG) kommt als Bild dazu */
-            else if(/^image\//.test(f.type)){ var fe=ov.querySelector("#st_foto"); if(fe){ var dt2=new DataTransfer(); dt2.items.add(f); fe.files=dt2.files; fe.dispatchEvent(new Event("change")); } }
+            else if(/^image\//.test(f.type)) bilder.unshift(f);
+            /* die Fotos aus derselben Mail (WhatsApp-Bilder) als Fotos der Störung */
+            if(bilder.length){ var fe=ov.querySelector("#st_foto"); if(fe){ var dt2=new DataTransfer(); bilder.forEach(function(b){ dt2.items.add(b); }); fe.files=dt2.files; fe.dispatchEvent(new Event("change")); } }
           }, function(x){ ab.disabled=false; toast(x.message); });
         };
         leiste.appendChild(ab);
@@ -10053,6 +10135,10 @@ function stoerungSchwerLaden(o){
     var z=r && !r.error && r.data && r.data[0]; if(!z || !z.felder) return o;
     var sw={pdfDaten:z.felder.pdfDaten||null, pdfName:z.felder.pdfName||o.pdfName||null, seiten:Array.isArray(z.felder.seiten)?z.felder.seiten:[], geaendert:z.geaendert};
     STOER_SCHWER[o._id]=sw;
+    /* der gemerkte Stand (Basis fürs Speichern) kennt die schweren Felder jetzt auch – sonst galt beim nächsten Speichern
+       „seiten“ als zentral geändert (Konflikt), und ein neu dazugekommenes Foto wurde verworfen (Posteingang-Fotos 14.10.2026) */
+    var st=stammStand[o._id];
+    if(st && st.geaendert===z.geaendert){ st.felder=st.felder||{}; st.felder.seiten=sw.seiten; if(z.felder.pdfDaten!=null) st.felder.pdfDaten=z.felder.pdfDaten; if(z.felder.pdfName!=null) st.felder.pdfName=z.felder.pdfName; }
     if(sw.pdfDaten){ o.pdfDaten=sw.pdfDaten; o.pdfName=sw.pdfName; } o.seiten=sw.seiten;
     OFFENE.forEach(function(x){ if(x._id===o._id && x!==o){ if(sw.pdfDaten){ x.pdfDaten=sw.pdfDaten; x.pdfName=sw.pdfName; } x.seiten=sw.seiten; } });
     return o;

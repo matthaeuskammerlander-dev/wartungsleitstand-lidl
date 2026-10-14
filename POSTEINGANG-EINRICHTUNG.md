@@ -17,7 +17,11 @@ legt die PDFs in den **Posteingang** der App. Alles ist vorbereitet und
      Rapport, schlägt das passende Protokoll vor (gleiche Filiale, derselbe
      Besuch) und hängt ihn dort an – „Korrektur speichern“, fertig.
    - **Als offene Störung erfassen:** öffnet die Störungserfassung mit dem
-     Auftrag schon eingelesen.
+     Auftrag schon eingelesen. Fotos aus derselben Mail (etwa WhatsApp-Bilder
+     zur Störung) stehen beim Auftrag und kommen als Fotos mit in die Störung
+     (seit 14.10.2026). Ist der Auftrag schon erfasst, zeigt der Posteingang die
+     liegen gebliebenen Fotos als „Fotos zu einem Lidl-Auftrag“ mit „Fotos zur
+     Störung hinzufügen“.
    - **verwerfen:** mit Grund; bleibt nachvollziehbar in der Tabelle.
    Erledigt ist ein Eingang erst, wenn Protokoll bzw. Störung gespeichert sind.
 4. **Weitergeleitete Mails zu Projekten** (seit 02.10.2026): Jede Mail, die kein

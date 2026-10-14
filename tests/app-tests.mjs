@@ -6537,6 +6537,74 @@ test("Stempeluhr: Position wie bei Crewmeister – Frage vor dem Stempeln, ohne 
   await b.zu();
 });
 
+/* Lidl 14.10.2026 (Auftrag 624744474, Fil. AT0334): die WhatsApp-Fotos aus der Auftragsmail kamen nicht in die Störung –
+   sie gehören zum Auftrag (gleiche Mail) und kommen mit „Als Störungsauftrag erfassen“ als Fotos mit; ist der Auftrag schon
+   erfasst, bekommen die liegen gebliebenen Fotos „Fotos zur Störung hinzufügen“ */
+test("Posteingang: Fotos aus der Lidl-Auftragsmail gehören zum Auftrag – keine eigene Karte, kommen mit in die Störung, alle Einträge erledigt; Fotos zu schon erfasstem Auftrag nachträglich hinzufügen", async () => {
+  const a = await tmSeite(KONTEN.admin);
+  const r = await a.seite.evaluate(async () => {
+    const x = window.__t.x, db = window.__db.tabellen, tm = window.__tm, jetzt = new Date().toISOString(), e = {};
+    window.UKT_CONFIG.posteingangAktiv = true; tm.toastSpion();
+    const sb = x("Store.sb");
+    const bild = () => new Promise((f) => { const c = document.createElement("canvas"); c.width = 24; c.height = 16; c.getContext("2d").fillStyle = "#c33"; c.getContext("2d").fillRect(0, 0, 24, 16); c.toBlob(f, "image/jpeg"); });
+    const pe = (id, gr, art, name, status, bezug) => ({ id, nachricht_id: "<" + gr + "@test>", art, dateiname: name, pfad: "2026/10/" + id + "_" + name.replace(/\W+/g, "_"), status, bezug: bezug || null,
+      betreff: "Störung Filiale AT0334 – Auftrag " + gr, absender: "e.test@lidl.at", eingang: jetzt });
+    /* Mail 1: Auftrag-PDF + 2 WhatsApp-Fotos, alles neu */
+    const z1 = [pe("lf1p", "lf1", "auftrag", "30865653_AT0334.pdf", "neu"), pe("lf1a", "lf1", "auftrag", "WhatsApp_Image_2026-10-14_at_09.52.27.jpeg", "neu"), pe("lf1b", "lf1", "auftrag", "WhatsApp_Image_2026-10-14_at_09.52.21.jpeg", "neu")];
+    await sb.storage.from("posteingang").upload(z1[0].pfad, new Blob(["%PDF-1.4 kein Lidl"], { type: "application/pdf" }));
+    for (const z of z1.slice(1)) await sb.storage.from("posteingang").upload(z.pfad, await bild());
+    z1.forEach((z) => db.posteingang.push(z));
+    /* Mail 2: die PDF ist schon als Störung erfasst (erledigt, bezug), die 2 Fotos blieben liegen */
+    db.stammdaten.push({ id: "sdF2", typ: "stoerung", ziel: "TS1", felder: { standortId: "TS1", auftragsnummer: "624744474", filialCode: "334", status: "offen", problemtyp: "Kühlung", seiten: [] }, neu: true, geaendert: jetzt, von: "Test", grund: "Test" });
+    const z2 = [pe("lf2p", "lf2", "auftrag", "30865654_AT0334.pdf", "erledigt", "sdF2"), pe("lf2a", "lf2", "auftrag", "WhatsApp_Image_2026-10-14_at_10.01.00.jpeg", "neu"), pe("lf2b", "lf2", "auftrag", "WhatsApp_Image_2026-10-14_at_10.01.05.jpeg", "neu")];
+    for (const z of z2.slice(1)) await sb.storage.from("posteingang").upload(z.pfad, await bild());
+    z2.forEach((z) => db.posteingang.push(z));
+    await x("ladeStammdaten().then(storeNachRender)"); await tm.warte(200);
+    e.offen = !!x("OFFENE.filter(function(o){ return o._id==='sdF2'; })[0]");
+    const k = x("posteingangKarte()"); document.body.appendChild(k); await tm.bis(() => k.querySelectorAll(".posbox").length >= 2);
+    const boxen = [...k.querySelectorAll(".posbox")];
+    e.karten = boxen.map((b) => (b.querySelector("strong") || {}).textContent);
+    const b1 = boxen.find((b) => /30865653_AT0334/.test(b.textContent));
+    e.b1 = b1 ? b1.textContent : "";
+    /* 1) Als Störungsauftrag erfassen → PDF + beide Fotos in den Dialog, Posteingang merkt sich alle drei */
+    tm.knopf(b1, /Als Störungsauftrag erfassen/).click();
+    await tm.bis(() => tm.dlg() && tm.dlg().querySelectorAll("#st_bild img").length >= 2, 6000);
+    const d = tm.dlg();
+    e.bilder = d ? d.querySelectorAll("#st_bild img").length : -1;
+    e.offenMerker = JSON.stringify(x("posteingangOffen"));
+    /* gespeichert (hier direkt der Schritt nach dem Speichern): alle drei Einträge erledigt mit demselben Bezug */
+    x("posteingangErledigt('auftrag', 'sdNeu1')"); await tm.warte(200);
+    e.erledigt1 = db.posteingang.filter((z) => z.nachricht_id === "<lf1@test>").map((z) => z.status + ":" + z.bezug).join(",");
+    x("ansichtenSchliessen(); document.querySelectorAll('.assistent').forEach(function(d){ d.remove(); })");
+    /* 2) Fotos zu schon erfasstem Auftrag: Karte „Fotos zu einem Lidl-Auftrag“, Auftrag gefunden, hinzufügen */
+    const b2 = boxen.find((b) => b.hasAttribute("data-fotos"));
+    e.b2 = b2 ? b2.textContent : "";
+    await tm.bis(() => b2 && tm.knopf(b2, /Fotos zur Störung hinzufügen/), 3000);
+    e.stand = b2 ? (b2.querySelector("[data-stand]") || {}).textContent : "";
+    window.__toasts = [];
+    tm.knopf(b2, /Fotos zur Störung hinzufügen/).click();
+    await tm.toastBis(/hinzugefügt|Nicht hinzugefügt/, 8000);
+    e.toast = window.__toasts.join(" | ");
+    const sd = db.stammdaten.find((z) => z.id === "sdF2");
+    e.seiten = sd && sd.felder.seiten ? sd.felder.seiten.length : -1;
+    e.erledigt2 = db.posteingang.filter((z) => z.nachricht_id === "<lf2@test>").map((z) => z.id + ":" + z.status + ":" + z.bezug).join(",");
+    e.weg = !document.body.contains(b2);
+    k.remove();
+    return e;
+  });
+  pruefe(r.offen, "Störung sdF2 nicht geladen");
+  pruefe(r.karten.length === 2 && !r.karten.some((t) => /WhatsApp/.test(t || "")), "Fotos bekamen eigene Karten / Karten: " + JSON.stringify(r.karten));
+  pruefe(/2 Fotos aus derselben Mail/.test(r.b1) && /09\.52\.27/.test(r.b1), "Auftragskarte zeigt die Fotos nicht: " + r.b1);
+  pruefe(r.bilder === 2, "Fotos nicht im Störungsdialog: " + r.bilder);
+  pruefe(/"weitere":\["lf1a","lf1b"\]/.test(r.offenMerker), "Posteingang merkt sich die Fotos nicht: " + r.offenMerker);
+  pruefe(r.erledigt1 === "erledigt:sdNeu1,erledigt:sdNeu1,erledigt:sdNeu1", "Nicht alle drei Einträge erledigt: " + r.erledigt1);
+  pruefe(/2 Fotos zu einem Lidl-Auftrag/.test(r.b2) && /624744474/.test(r.stand) && /schon als Störung erfasst/.test(r.stand), "Karte für liegen gebliebene Fotos: " + JSON.stringify([r.b2, r.stand]));
+  pruefe(/2 Fotos zur Störung Auftrag 624744474 hinzugefügt/.test(r.toast) && r.seiten === 2, "Fotos nicht zur Störung gekommen: " + JSON.stringify([r.toast, r.seiten]));
+  pruefe(r.erledigt2 === "lf2p:erledigt:sdF2,lf2a:erledigt:sdF2,lf2b:erledigt:sdF2" && r.weg, "Foto-Einträge nicht erledigt: " + JSON.stringify([r.erledigt2, r.weg]));
+  pruefe(!a.fehler.length, "Laufzeitfehler: " + a.fehler.join("; "));
+  await a.zu();
+});
+
 /* Antworten des Inhabers vom 05.10.2026 (Teil kern) */
 test("Antworten kern: „Nur Jahreswartung“ sperrt den Halbjahrestermin wie am Markt üblich – bleibt, bis die Verwaltung es zurücknimmt", async () => {
   const a = await oeffnen(KONTEN.admin);

@@ -504,6 +504,13 @@ Kammerlander Umwelt- und Klimatechnik (UKT) – oft kurz, vom Handy, im Feld.
   aus gemeinsamen nimmt sie nur sich selbst heraus; Admins wie Techniker (Inhaber 05.10.2026: `planAbwesenheitDarf`, Personenwahl
   nur „ich“, sonst schreibgeschützt „ändert nur der Inhaber“; Datenbank: Sperrregeln „abwesenheit … nur selbst oder inhaber“ und
   Trigger `planung_rechte_abwesenheit`, tools/rechte-2026-10-05.sql). Diese Grenzen nie lockern.
+- **Fotos in der Lidl-Auftragsmail** (Lidl 14.10.2026, Auftrag 624744474 Fil. AT0334 – WhatsApp-Bilder kamen nicht in die
+  Störung): Bilder derselben Mail (`nachricht_id`) wie ein Auftrag bekommen im Skript die Art „auftrag“ (`eintraege`) und in
+  der App keine eigene Karte – sie stehen beim Auftrag (`fotosZu`) und kommen mit „Als Störungsauftrag erfassen“ als Fotos in
+  die Störung (`#st_foto`, `fotoNehmen` nimmt mehrere; `posteingangOffen.weitere` → alle Einträge erledigt). Ist die PDF schon
+  erfasst, zeigt `posteingangFotoBox` „Fotos zu einem Lidl-Auftrag“ mit „Fotos zur Störung hinzufügen“
+  (`posteingangFotosZurStoerung`: erst `stoerungSchwerLaden`, das merkt den vollen Stand auch in `stammStand` – sonst Konflikt
+  „seiten“). Eine danach eingelesene PDF ersetzt vorhandene Fotos nicht mehr (`o.fotoSeiten`).
 - **Posteingang → Projekt** (Büro 02.10.2026): weitergeleitete Mails (nicht Lidl-Auftrag/Rapport)
   kommen mit `.eml` (art „mail“, `eintraege` in synology/ukt_posteingang.py, Test
   tools/posteingang_test.py); in der App eine Karte je Mail (`posteingangMailBox`), „Zu Projekt

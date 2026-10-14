@@ -27,6 +27,7 @@
     if(x.a==="eq") return r[x.s]===x.w;
     if(x.a==="is") return x.w===null?(r[x.s]==null):(r[x.s]===x.w);
     if(x.a==="gte") return String(r[x.s]||"")>=String(x.w);
+    if(x.a==="neq") return r[x.s]!==x.w;
     if(x.a==="like"){ var re=new RegExp("^"+String(x.w).split("%").map(function(t){ return t.replace(/[-\/\\^$*+?.()|[\]{}]/g, "\\$&"); }).join(".*")+"$"); return re.test(String(r[x.s]||"")); }
     if(x.a==="in") return (x.w||[]).indexOf(r[x.s])>=0;
     if(x.a==="lt") return String(r[x.s]||"")<String(x.w);
@@ -334,6 +335,7 @@
   Q.prototype.insert=function(d){ this.a="insert"; this.d=d; return this; };
   Q.prototype.upsert=function(d,o){ this.a="upsert"; this.d=d; this.o=o||{}; return this; };
   Q.prototype.gte=function(s,w){ this.f.push({a:"gte",s:s,w:w}); return this; };
+  Q.prototype.neq=function(s,w){ this.f.push({a:"neq",s:s,w:w}); return this; };
   Q.prototype.like=function(s,w){ this.f.push({a:"like",s:s,w:w}); return this; };
   Q.prototype.lt=function(s,w){ this.f.push({a:"lt",s:s,w:w}); return this; };
   Q.prototype.update=function(d){ this.a="update"; this.d=d; return this; };

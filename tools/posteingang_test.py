@@ -65,6 +65,11 @@ def main():
     # ein Bild von Lidl bleibt unklar (Logo, Foto) – Auftrag nur als PDF; die Mail kommt dann als .eml dazu (nur Inhaber)
     m, roh = mail("Filiale 4711", [("Foto.jpg", "image/jpeg", b"JPEG")])
     assert [x[3] for x in P.eintraege(m, roh, "Filiale 4711", "auftraege@lidl.example")] == ["unbekannt", "mail"]
+    # Fotos in einer Auftragsmail (WhatsApp-Bilder zur Störung, Lidl 14.10.2026): gehören zum Auftrag – gleiche Art, keine .eml
+    m, roh = mail("Filiale AT0334", [("30865653_AT0334.pdf", "application/pdf", b"%PDF-1.4"),
+                                    ("WhatsApp_Image_2026-10-14_at_09.52.27.jpeg", "image/jpeg", b"JPEG"), ("Notiz.txt", "text/plain", b"x")])
+    e = P.eintraege(m, roh, "Filiale AT0334", "elisabeth.test@lidl.example")
+    assert [(x[0], x[3]) for x in e] == [("30865653_AT0334.pdf", "auftrag"), ("WhatsApp_Image_2026-10-14_at_09.52.27.jpeg", "auftrag"), ("Notiz.txt", "unbekannt")], e
     ohne_leserecht()
     print("posteingang_test: alles in Ordnung")
 

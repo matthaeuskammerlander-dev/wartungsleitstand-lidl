@@ -253,6 +253,11 @@ def eintraege(nachricht, roh, betreff, absender="", lidl_domains=None):
         else:
             liste.append((n, None, None, "unbekannt", "Anhang zu groß (%s MB, der Speicher nimmt höchstens %s MB) – "
                           "bitte von Hand aus dem Postfach holen" % (mb(len(i)), mb(GROESSTE))))
+    # Fotos in einer Lidl-Auftragsmail (etwa WhatsApp-Bilder zur Störung, 14.10.2026) gehören zum Auftrag:
+    # gleiche Art, damit auch Admins sie sehen – die App legt sie mit dem Auftrag als Fotos in die Störung
+    if any(x[3] == "auftrag" for x in liste):
+        liste = [(n, i, t, "auftrag" if (x_art == "unbekannt" and i is not None and (t or "").startswith("image/")) else x_art, h)
+                 for n, i, t, x_art, h in liste]
     if not any(x[3] in ("rapport", "auftrag") for x in liste):
         name = (re.sub(r"\s+", " ", re.sub(r'[\\/:*?"<>|]+', " ", betreff or "")).strip()[:80] or "Mail") + ".eml"
         if len(roh) <= GROESSTE:
