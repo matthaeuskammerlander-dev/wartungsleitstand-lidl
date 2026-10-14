@@ -423,8 +423,14 @@ Kammerlander Umwelt- und Klimatechnik (UKT) – oft kurz, vom Handy, im Feld.
 - **Stempeluhr** (Tabelle `stempel`, Funktion `stempeln()`, tools/stempeluhr.sql):
   Zeit vom Server, Eintrag beim Ausstempeln vom Server berechnet (Quelle
   „stempel“); nachträglich geändert = „stempel_geaendert“. Standort nur, wenn
-  der Inhaber ihn eingeschaltet hat (`einstellungen`), und nur als Entfernung –
-  nie Koordinaten speichern, nie den Standort verfolgen. Diese Grenzen nie lockern.
+  der Inhaber ihn eingeschaltet hat (`einstellungen.stempel_standort.an`), als Entfernung.
+  **Position „wie bei Crewmeister“** (Seniorchef, Inhaber 14.10.2026, tools/stempeluhr-5.sql): Koordinaten des Stempelmoments
+  NUR wenn der Inhaber zusätzlich `position` eingeschaltet hat UND die Person in der App zugestimmt hat (Tabelle
+  `stempel_zustimmung`, Dialog `stempelZustimmungFragen` vor dem ersten Stempeln, Widerruf in der Stempeluhr bzw. beim Inhaber);
+  der Server (`stempeln()`) prüft das selbst und entfernt lat/lon sonst still. Position nur im Stempel (Person + Inhaber:
+  🗺 Karte `ortKarteZeigen`, Inhaber „Stempelungen heute“ `stempelHeuteKarte`), NIE in den Arbeitszeiten/Lohn/Listen
+  (`ort_ohne_position`), nach `tage` (Vorgabe 90) vom Server gelöscht (`stempel_position_bereinigen`). Keine Verfolgung
+  zwischen den Stempelungen. Diese Grenzen nie lockern; ohne Zustimmung bleibt es bei der Entfernung.
   Umstempeln (art „wechsel“, tools/stempeluhr-2.sql): je Abschnitt ein Eintrag
   mit Bereich; überschneidende Einträge von Hand ersetzt nur die Funktion
   `stempeln()` (p_ersetzen), sonst bleiben beide und sind mit ⚠ markiert.

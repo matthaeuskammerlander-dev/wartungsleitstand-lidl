@@ -6437,6 +6437,106 @@ test("Projektrechnung aus KPlus wie Mattighofen: mehrere Arbeitsnachweise erkann
   await a.zu();
 });
 
+/* Seniorchef/Inhaber 14.10.2026: „Standorterfassung beim Einstempeln wie bei Crewmeister“ – Position nur mit Schalter des Inhabers UND
+   Zustimmung der Person (in der App), nur im Stempel, nie in den Stunden, befristet, Karte für die Person und den Inhaber */
+test("Stempeluhr: Position wie bei Crewmeister – Frage vor dem Stempeln, ohne Zustimmung nur Entfernung, mit Zustimmung Koordinaten im Stempel (nie in den Stunden), Karte, Widerruf, Frist, Inhaber sieht „Stempelungen heute“", async () => {
+  const a = await oeffnen(KONTEN.techniker);
+  const r = await a.seite.evaluate(async () => {
+    const x = window.__t.x, w = (ms) => new Promise((f) => setTimeout(f, ms)), db = window.__db.tabellen, e = {};
+    const uid = x("Store.benutzer.id"), meine = () => db.stempel.filter((s) => s.user_id === uid);
+    const ov = () => [...document.querySelectorAll(".assistent")].pop();
+    navigator.geolocation.getCurrentPosition = (ok) => setTimeout(() => ok({ coords: { latitude: 48.21, longitude: 16.37, accuracy: 25 } }), 30);
+    /* Inhaber hat Standort + Position eingeschaltet, Frist 10 Tage; eine alte Position von vor 30 Tagen liegt noch im Speicher */
+    db.einstellungen.push({ schluessel: "stempel_standort", wert: { an: true, position: true, tage: 10 }, geaendert: new Date().toISOString(), von: "Test" });
+    db.stempel.push({ id: "st_alt", user_id: uid, name: "Test", art: "aus", zeit: new Date(Date.now() - 30 * 86400000).toISOString(), ort: { status: "unterwegs", lat: 47.1, lon: 15.2, genauigkeit: 10 } });
+    await x("stempelNachladen(true)"); x("S.view='stunden'; render()"); await w(400);
+    e.flags = x("[STEMPEL_ORT_AN, STEMPEL_ORT_POS, STEMPEL_ORT_TAGE, STEMPEL_ZUSTIMMUNG]");
+    e.hinweisKarte = (document.querySelector("#stempelkarte") || {}).textContent || "";
+    /* 1) Einstempeln → erst die Frage; „Nicht zustimmen“ → gestempelt wird nur mit der Entfernung */
+    const k = () => document.querySelector("#stempelkarte");
+    k().querySelector("[data-bw] [data-b]").click();
+    k().querySelector("[data-ein]").click(); await w(200);
+    e.frage = ov() ? ov().textContent : "";
+    e.nochNichts = !meine().some((s) => s.art === "ein");
+    ov().querySelector('[data-zust="nein"]').click();
+    for (let i = 0; i < 40 && !meine().some((s) => s.art === "ein"); i++) await w(100);
+    await w(300);
+    const s1 = meine().filter((s) => s.art === "ein").pop();
+    e.ohne = s1 ? JSON.stringify(s1.ort || null) : "kein Stempel";
+    e.alteBereinigt = !("lat" in (db.stempel.find((s) => s.id === "st_alt").ort || {}));
+    e.keineZust = !db.stempel_zustimmung.some((z) => z.user_id === uid);
+    e.keinKartenKnopf = !k().querySelector("[data-ortkarte]");
+    await x("stempelDruecken('aus', {taetigkeit:'Test'})");
+    for (let i = 0; i < 40 && meine()[meine().length - 1].art !== "aus"; i++) await w(100);
+    e.nichtNochmalGefragt = !(ov() && /Information und Zustimmung/.test(ov().textContent));   /* in derselben Sitzung nicht erneut fragen */
+    x("ansichtenSchliessen()"); await w(200);
+    /* 2) Zustimmen über „Mehr dazu / zustimmen“ in der Stempeluhr */
+    const link = k().querySelector("[data-zust-frage]"); e.link = !!link; if (link) link.click(); await w(200);
+    e.frage2 = ov() ? ov().textContent : "";
+    ov().querySelector('[data-zust="ja"]').click(); await w(400);
+    const z = db.stempel_zustimmung.find((zz) => zz.user_id === uid);
+    e.zust = z ? { fassung: z.fassung, name: z.name, zeit: !!z.zeit } : null;
+    e.widerrufLink = !!k().querySelector("[data-zust-weg]");
+    /* 3) Einstempeln mit Zustimmung → Koordinaten im Stempel, Karte sichtbar; Ausstempeln → Stundeneintrag ohne Koordinaten */
+    k().querySelector("[data-bw] [data-b]").click();
+    k().querySelector("[data-ein]").click();
+    for (let i = 0; i < 40 && !(meine().filter((s) => s.art === "ein").pop() || {}).ort; i++) await w(100);
+    await w(400);
+    const s2 = meine().filter((s) => s.art === "ein").pop();
+    e.mit = s2 ? JSON.stringify(s2.ort || null) : "kein Stempel";
+    e.keineFrage = !ov();
+    const kb = k().querySelector("[data-ortkarte]"); e.kartenKnopf = !!kb;
+    if (kb) { kb.click(); await w(300); e.karte = ov() ? ov().textContent : ""; e.karteHost = !!(ov() && ov().querySelector("[data-ortkarte]")); ov().querySelector('[data-a="zu"]').click(); }
+    const vorherAZ = db.arbeitszeiten.length;
+    await x("stempelDruecken('aus', {taetigkeit:'Test'})");
+    for (let i = 0; i < 40 && db.arbeitszeiten.length === vorherAZ; i++) await w(100);
+    await w(300); x("ansichtenSchliessen()"); await w(200);
+    const az = db.arbeitszeiten[db.arbeitszeiten.length - 1];
+    e.stunden = JSON.stringify(az.ort || null);
+    /* 4) Widerruf → Zustimmung weg, danach wieder nur Entfernung */
+    await x("stempelZustimmungWiderrufen(Store.benutzer.id)"); await w(100);
+    e.widerrufen = !db.stempel_zustimmung.some((zz) => zz.user_id === uid);
+    k().querySelector("[data-bw] [data-b]").click(); k().querySelector("[data-ein]").click();
+    for (let i = 0; i < 40 && !(meine().filter((s) => s.art === "ein").pop() || {}).ort; i++) await w(100);
+    await w(300);
+    e.nachWiderruf = JSON.stringify((meine().filter((s) => s.art === "ein").pop() || {}).ort || null);
+    e.keineFrageNachWiderruf = !ov();
+    return e;
+  });
+  pruefe(r.flags[0] && r.flags[1] && r.flags[2] === 10 && !r.flags[3], "Einstellung nicht geladen: " + JSON.stringify(r.flags));
+  pruefe(/nur mit deiner Zustimmung/.test(r.hinweisKarte), "Hinweis in der Stempeluhr fehlt: " + r.hinweisKarte.slice(0, 200));
+  pruefe(/Was:|Wofür|Wer sieht es|Wie lange|Freiwillig/.test(r.frage) && /10 Tagen/.test(r.frage) && r.nochNichts, "Frage vor dem Stempeln fehlt/unvollständig: " + r.frage.slice(0, 300));
+  pruefe(/"status"/.test(r.ohne) && !/lat/.test(r.ohne), "Ohne Zustimmung muss nur die Entfernung gespeichert sein: " + r.ohne);
+  pruefe(r.alteBereinigt && r.keineZust && r.keinKartenKnopf && r.nichtNochmalGefragt, "Frist/Zustimmung/Karte: " + JSON.stringify([r.alteBereinigt, r.keineZust, r.keinKartenKnopf, r.nichtNochmalGefragt]));
+  pruefe(r.link && /Zustimmung/.test(r.frage2) && r.zust && r.zust.fassung === "2026-10-14" && r.zust.zeit && r.widerrufLink, "Zustimmung nicht gespeichert: " + JSON.stringify([r.link, r.zust, r.widerrufLink]));
+  pruefe(/48\.21/.test(r.mit) && /16\.37/.test(r.mit) && r.keineFrage, "Mit Zustimmung fehlen die Koordinaten im Stempel: " + r.mit);
+  pruefe(r.kartenKnopf && /Position/.test(r.karte) && r.karteHost, "Karte zur Position fehlt: " + JSON.stringify([r.kartenKnopf, (r.karte || "").slice(0, 100), r.karteHost]));
+  pruefe(/"ein"/.test(r.stunden) && !/48\.21|lat/.test(r.stunden), "In den Stunden dürfen keine Koordinaten stehen: " + r.stunden);
+  pruefe(r.widerrufen && !/lat/.test(r.nachWiderruf) && r.keineFrageNachWiderruf, "Widerruf: " + JSON.stringify([r.widerrufen, r.nachWiderruf, r.keineFrageNachWiderruf]));
+  pruefe(!a.fehler.length, "Laufzeitfehler: " + a.fehler.join("; "));
+  await a.zu();
+  /* Inhaber: Schalter „Position speichern“ mit Frist und Zustimmungsliste, „Stempelungen heute“ mit Karte */
+  const b = await oeffnen(KONTEN.inhaber);
+  const q = await b.seite.evaluate(async () => {
+    const x = window.__t.x, w = (ms) => new Promise((f) => setTimeout(f, ms)), db = window.__db.tabellen, e = {};
+    db.einstellungen.push({ schluessel: "stempel_standort", wert: { an: true, position: true, tage: 10 }, geaendert: new Date().toISOString(), von: "Test" });
+    db.stempel_zustimmung.push({ user_id: "u_tech_test_at", name: "Toni Test", zeit: new Date().toISOString(), fassung: "2026-10-14" });
+    db.stempel.push({ id: "st_heute", user_id: "u_tech_test_at", name: "Toni Test", art: "ein", zeit: new Date(Date.now() - 60000).toISOString(), ort: { status: "unterwegs", lat: 48.2, lon: 16.3, genauigkeit: 20 } });
+    await x("stempelNachladen(true)"); x("S.view='stunden'; render()"); await w(500);
+    const box = document.querySelector("[data-ort]").closest(".note"), cp = box.querySelector("[data-position]"), tg = box.querySelector("[data-frist]");
+    e.schalter = !!cp && cp.checked && !!tg && tg.value === "10";
+    e.zustListe = (box.querySelector("[data-zust]") || {}).textContent || "";
+    const d = [...document.querySelectorAll("details")].find((dd) => /Stempelungen heute/.test(dd.textContent));
+    e.heute = !!d; if (d) { d.querySelector("summary").click(); await w(400); e.heuteText = d.textContent; e.heuteKarte = !!d.querySelector("[data-ortkarte]"); }
+    return e;
+  });
+  pruefe(q.schalter, "Inhaber-Schalter „Position speichern“/Frist fehlt: " + JSON.stringify(q));
+  pruefe(/Toni Test/.test(q.zustListe) && /widerrufen/.test(q.zustListe), "Zustimmungsliste beim Inhaber fehlt: " + q.zustListe);
+  pruefe(q.heute && /Toni Test/.test(q.heuteText || "") && q.heuteKarte, "„Stempelungen heute“ fehlt/ohne Karte: " + JSON.stringify(q));
+  pruefe(!b.fehler.length, "Laufzeitfehler: " + b.fehler.join("; "));
+  await b.zu();
+});
+
 /* Antworten des Inhabers vom 05.10.2026 (Teil kern) */
 test("Antworten kern: „Nur Jahreswartung“ sperrt den Halbjahrestermin wie am Markt üblich – bleibt, bis die Verwaltung es zurücknimmt", async () => {
   const a = await oeffnen(KONTEN.admin);

@@ -1,7 +1,7 @@
 /* Nachgebaute Supabase-Schnittstelle für die automatischen Tests (tests/app-tests.mjs) – nur Code, Startbestand aus seed.json (erfunden). */
 (function(){
   "use strict";
-  var T=["gelernte_werte","fahrzeuge","fahrzeug_eintraege","fahrzeug_kosten","kontakte","protokoll_vermerke","planung","planung_privat","belege","katalog","stempel","einstellungen","projekte","arbeitszeiten","anlagenfotos","touren","kundenliste","gelesen","push_ereignisse","kennzahlen","chat","abrechnung","push_abos","protokolle","aenderungen","stammdaten","admins","berichte","protokoll_fassungen","rollen","ki_nutzung","posteingang","stammdaten_lesen","aenderungswuensche","vor_ort_fragen","interne_hinweise","werkzeug","werkzeug_verlauf","bedarf","packlisten","auslagen","auslagen_konto","arbeitsnachweise","tag_geprueft","inbetriebnahmen"];
+  var T=["gelernte_werte","fahrzeuge","fahrzeug_eintraege","fahrzeug_kosten","kontakte","protokoll_vermerke","planung","planung_privat","belege","katalog","stempel","einstellungen","projekte","arbeitszeiten","anlagenfotos","touren","kundenliste","gelesen","push_ereignisse","kennzahlen","chat","abrechnung","push_abos","protokolle","aenderungen","stammdaten","admins","berichte","protokoll_fassungen","rollen","ki_nutzung","posteingang","stammdaten_lesen","aenderungswuensche","vor_ort_fragen","interne_hinweise","werkzeug","werkzeug_verlauf","bedarf","packlisten","auslagen","auslagen_konto","arbeitsnachweise","tag_geprueft","inbetriebnahmen","stempel_zustimmung"];
   var DB; try{ DB=JSON.parse(localStorage.getItem("attrappe_db")||"null"); }catch(e){ DB=null; }
   /* leerer Speicher (neuer Port, nach __db.zuruecksetzen()): Startbestand aus seed.json */
   if(!DB){ DB={}; try{ var x=new XMLHttpRequest(); x.open("GET","seed.json?"+Date.now(),false); x.send();
@@ -92,6 +92,12 @@
     var startpunkt=function(z){ return !!z && /^startpunkt:/.test(z.schluessel||""); };
     var startpunktOk=(art==="insert" && startpunkt(zeile)) || (art==="update" && startpunkt(alt) && (!zeile || !("schluessel" in zeile) || startpunkt(zeile)));
     if(tab==="einstellungen" && art!=="select" && rolle!=="inhaber" && !startpunktOk) return "einstellungen: nur Inhaber";
+    /* wie stempeluhr-5.sql: Zustimmung zur Position – lesen die eigene (Inhaber alle), eintragen nur die eigene (darf_schreiben), löschen eigene bzw. Inhaber */
+    if(tab==="stempel_zustimmung"){
+      if(rolle==="kunde"||rolle==="praesentation") return "stempel_zustimmung: gesperrt";
+      if((art==="insert"||art==="update") && zeile && zeile.user_id!==uid()) return "stempel_zustimmung: nur die eigene";
+      if(art==="delete" && rolle!=="inhaber" && alt && alt.user_id!==uid()) return "stempel_zustimmung: loeschen nur eigene oder Inhaber";
+    }
     /* wie die Sperrregel „startpunkt nur eigener“ (Inhaber 05.10.2026): den eigenen setzt jeder, fremde nur Inhaber und Admins */
     var spFremd=function(z){ return startpunkt(z) && z.schluessel!=="startpunkt:"+uid(); };
     if(tab==="einstellungen" && (art==="insert"||art==="update") && !(rolle==="inhaber" || admin()) && (spFremd(zeile) || spFremd(alt))) return "einstellungen: Startpunkt nur der eigene";
@@ -615,7 +621,14 @@
          Umstempeln, beim Ausstempeln je Abschnitt ein Eintrag, Einträge von Hand ersetzen */
       var fehler=function(m){ return Promise.resolve({data:null,error:{message:m}}); };
       if(!sitzung) return fehler("nicht angemeldet");
-      if(w.p_ort && ("lat" in w.p_ort || "lon" in w.p_ort)) return fehler("Koordinaten werden nicht gespeichert");
+      /* wie stempeluhr-5.sql: Koordinaten bleiben nur, wenn der Inhaber „Position speichern“ eingeschaltet hat UND die Person zugestimmt hat –
+         sonst werden lat/lon still entfernt (der Rest des Orts bleibt); alte Positionen über die Frist hinaus werden bereinigt */
+      var einstOrt=(DB.einstellungen.filter(function(e){ return e.schluessel==="stempel_standort"; })[0]||{}).wert||{};
+      var posOk=!!(einstOrt.an && einstOrt.position && (DB.stempel_zustimmung||[]).some(function(zz){ return zz.user_id===uid(); }));
+      var ohnePos=function(o){ if(!o) return o; var c=Object.assign({}, o); delete c.lat; delete c.lon; return c; };
+      if(w.p_ort && !posOk) w.p_ort=ohnePos(w.p_ort);
+      var fristTage=Math.max(1, +einstOrt.tage||90), fristAb=new Date(Date.now()-fristTage*86400000).toISOString();
+      DB.stempel.forEach(function(sx){ if(sx.ort && sx.ort.lat!=null && sx.zeit<fristAb) sx.ort=ohnePos(sx.ort); });
       var meine=DB.stempel.filter(function(s){ return s.user_id===uid(); }).sort(function(a,b){ return a.zeit<b.zeit?1:-1; });
       var l=meine[0], art=w.p_art;
       if(art==="ein" && l && l.art!=="aus") return fehler("Du bist schon eingestempelt");
@@ -656,7 +669,7 @@
         var e={id:"x"+(++z), user_id:uid(), name:w.p_name||g.name, datum:tagVon(g.zeit), beginn:hm(g.zeit), ende:hm(bis), pause_min:Math.round(pause/60000),
           minuten:min, art:"arbeit", taetigkeit:[g.taetigkeit, letzter?w.p_taetigkeit:segs[i+1].erledigt].filter(Boolean).join("; ")||null,
           standort_id:g.standort_id||(letzter?w.p_standort:null), projekt_id:g.projekt_id||(letzter?w.p_projekt:null),
-          quelle:q, ort:(g.ort||ortE)?{ein:g.ort||null, aus:ortE}:null, bereich:g.bereich||null, erstellt:jetzt};
+          quelle:q, ort:(g.ort||ortE)?{ein:ohnePos(g.ort)||null, aus:ohnePos(ortE)}:null, bereich:g.bereich||null, erstellt:jetzt};
         DB.arbeitszeiten.push(e); ee.push(e);
       });
       /* gesetzliche Pause wie stempeluhr-4.sql – je TAG: frühere gestempelte Einträge desselben Tages und die Lücke seit
