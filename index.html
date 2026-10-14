@@ -27093,7 +27093,7 @@ Object.assign(RUNDGAENGE, {
         "Über 6 h Arbeit und weniger als 30 min Pause: die fehlende Pause zieht er im längsten Abschnitt ab.",
         "Hinweise bei über 10 h und über 12 h am Tag.",
         "Passt ein Abschnitt zu einem heute geplanten Termin (gleicher Markt oder gleiches Projekt), verknüpft die App ihn – im Termin steht dann „✓ erfasst“.",
-        "<strong>Tagesrückblick</strong> (Inhaber 06.10.2026): nach jedem Ausstempeln „Was hast du heute wann und wo gemacht?“ – je Abschnitt von–bis (Grenze ±15 min oder Uhrzeit), Bereich, Wo/Projekt und <strong>„Was gemacht?“</strong> (Vorschlag aus dem eigenen Protokoll bzw. dem Termin; bei Baustellen 📷 Fotos – Text und Fotos gehen ins Baustellenbuch, gemachte Termine gelten als erledigt); <strong>„+ Weiterer Bereich“</strong> von–bis (z. B. zwischendurch Fahrt oder Material holen – davor und danach bleibt, wie es war; beliebig oft), „+ hier teilen“, „✕ entfernen“ (die Zeit geht an den Nachbarn). „✓ Passt so“ übernimmt den Vorschlag (richtig umgestempelt: nichts wird geschrieben, der Tag gilt als geprüft – auf allen Geräten); „Später“ speichert nichts, beim Tag bleibt „⇆ Tag prüfen“. Der Vorschlag teilt die gestempelte Zeit nach den Terminen auf – dazwischen Fahrt bzw. was dort gestempelt war (Bereich, Markt, Projekt); ein Termin mitten in einem anderen unterbricht ihn. Die Stempeluhr hat Vorrang: Summe und Pause bleiben genau gleich (prüft die Datenbank, die Vorschau zeigt die Stunden ohne Pause). Nicht Gemachtes bleibt offen oder wird auf den nächsten Arbeitstag ab heute verschoben (mehrtägige Termine bleiben, wie sie sind); scheitert das Verschieben, sagt es die Meldung."])},
+        "<strong>Tagesrückblick</strong> (Inhaber 06.10.2026): nach jedem Ausstempeln „Was hast du heute wann und wo gemacht?“ – je Abschnitt von–bis (Grenze ±15 min oder Uhrzeit), Bereich, Wo/Projekt und <strong>„Was gemacht?“</strong>. Fahrt zwischen Einsätzen nur so lang wie die Fahrt laut Straßenrouting (wie in der Tourenplanung; bis es da ist, Luftlinie-Schätzung) – der Rest bleibt, wie gestempelt (Vorschlag aus dem eigenen Protokoll bzw. dem Termin; bei Baustellen 📷 Fotos – Text und Fotos gehen ins Baustellenbuch, gemachte Termine gelten als erledigt); <strong>„+ Weiterer Bereich“</strong> von–bis (z. B. zwischendurch Fahrt oder Material holen – davor und danach bleibt, wie es war; beliebig oft), „+ hier teilen“, „✕ entfernen“ (die Zeit geht an den Nachbarn). „✓ Passt so“ übernimmt den Vorschlag (richtig umgestempelt: nichts wird geschrieben, der Tag gilt als geprüft – auf allen Geräten); „Später“ speichert nichts, beim Tag bleibt „⇆ Tag prüfen“. Der Vorschlag teilt die gestempelte Zeit nach den Terminen auf – dazwischen Fahrt bzw. was dort gestempelt war (Bereich, Markt, Projekt); ein Termin mitten in einem anderen unterbricht ihn. Die Stempeluhr hat Vorrang: Summe und Pause bleiben genau gleich (prüft die Datenbank, die Vorschau zeigt die Stunden ohne Pause). Nicht Gemachtes bleibt offen oder wird auf den nächsten Arbeitstag ab heute verschoben (mehrtägige Termine bleiben, wie sie sind); scheitert das Verschieben, sagt es die Meldung."])},
     {reiter:"stunden", ziel:function(){ return rgKarte(/^Meine Arbeitszeit/); }, titel:"Meine Arbeitszeit",
       text:RG_LISTE(["Woche mit Einträgen, Feiertagen und „⚠ über 12 h“; ‹ › blättern, „Monatsliste (PDF)“.",
         "<strong>+ Zeit erfassen</strong>: Art (Arbeit, Urlaub, Krankenstand, Feiertag, Zeitausgleich, Schule …), Bereich, von/bis/Pause oder Dauer, Was, Markt, Projekt – Vorschläge „laut Kalender“ und „laut deinen Protokollen“ (Urlaub, Krankenstand … nur als Hinweis – sie stehen von selbst in den Stunden).",
@@ -38484,8 +38484,41 @@ function abgleichOffen(tag){
   var bl=stempelBloecke(tag); if(!bl.length) return [];
   return geplantFuerMich(tag).filter(function(it){ return it.beginn!=null && !geplantErfasst(it, tag); });
 }
-/* Vorschlag für einen Block: Termine in ihrer Zeit (auf den Block begrenzt), dazwischen Fahrt bzw. was dort gestempelt war */
-function abgleichTeile(block, termine){
+/* Fahrzeiten im Tagesrückblick wie in der Tourenplanung (Inhaber 14.10.2026: „zuerst im Büro, dann nach Saalfelden – der ganze Tag
+   wurde als Fahrzeit gerechnet; die Fahrzeit soll anhand der Navigationsdaten errechnet werden“): Straßenrouting (OSRM, FAHR_CACHE),
+   bis es da ist Luftlinie × UMWEG bei TEMPO_KMH. Von wo nach wo: Markt/Baustelle des Termins, sonst die Position beim Stempeln
+   (nur mit Zustimmung gespeichert), sonst der beim Stempeln gewählte Markt, sonst der Betrieb. */
+function rueckblickFahrt(tag){
+  var punkte={}, merk=function(o){ if(o && o.id && o.lat!=null && o.lon!=null) punkte[o.id]=o; return o; };
+  var ortVonId=function(sid){ var s=sid && byId[sid]; return (s && s.lat!=null && s.lon!=null) ? merk(s) : null; };
+  /* eigener Stempel an diesem Tag nahe dieser Minute (±20 min) mit gespeicherter Position */
+  var stempelPos=function(arten, min){
+    var best=null;
+    STEMPEL.forEach(function(s){
+      if(arten.indexOf(s.art)<0 || tagLokal(s.zeit)!==tag || !s.ort || s.ort.lat==null || s.ort.lon==null) return;
+      var d=new Date(s.zeit), ab=Math.abs(d.getHours()*60+d.getMinutes()-min);
+      if(ab<=20 && (!best || ab<best.ab)) best={ab:ab, o:{id:"pos:"+s.id, name:"Position beim Stempeln", lat:s.ort.lat, lon:s.ort.lon}};
+    });
+    return best ? merk(best.o) : null;
+  };
+  var gestempeltOrt=function(block, min){ var z=block.eintraege.filter(function(e){ return zeitMin(e.beginn)<=min && min<=zeitMin(e.ende); })[0]; return z ? ortVonId(z.standort_id) : null; };
+  return {
+    von:function(block, min, ortVorher){ return ortVonId(ortVorher) || stempelPos(["ein","wechsel"], min) || gestempeltOrt(block, min) || merk(BETRIEB); },
+    nach:function(block, min, ortDanach){ return ortVonId(ortDanach) || stempelPos(["aus","wechsel"], min) || gestempeltOrt(block, min) || merk(BETRIEB); },
+    /* Minuten laut Route (genau) bzw. geschätzt; als Fahrt eingetragen: auf 5 min aufgerundet plus 5 min (Einsteigen, Parken) */
+    dauer:function(a, b){
+      if(!a || !b || a.id===b.id) return null;
+      var k=a.id+">"+b.id, genau=FAHR_CACHE[k]!=null, min=genau ? FAHR_CACHE[k] : fahrtSchaetzMin(a, b);
+      return {min:min, genau:genau, dauer:Math.ceil(min/5)*5+5};
+    },
+    punkte:function(){ return Object.keys(punkte).map(function(k){ return punkte[k]; }); },
+    /* Straßenzeiten holen (einmal je Punktmenge) – danach ruft fertig() den Vorschlag neu auf */
+    laden:function(fertig){ var l=this.punkte(); if(l.length>=2) fahrtenGenau(l, fertig); }
+  };
+}
+/* Vorschlag für einen Block: Termine in ihrer Zeit (auf den Block begrenzt), dazwischen Fahrt bzw. was dort gestempelt war;
+   fz (rueckblickFahrt): Fahrt nur so lang wie die Fahrt laut Route, der Rest wie gestempelt */
+function abgleichTeile(block, termine, fz){
   var l=termine.map(function(t){ return Object.assign({}, t, {s:Math.max(block.beginn, t.s), e:Math.min(block.ende, t.e)}); })
     .filter(function(t){ return t.e>t.s; }).sort(function(a,b){ return a.s-b.s; });
   var teile=[], cur=block.beginn, ortVorher=null, erste=true, vorEinsatz=false;
@@ -38493,13 +38526,25 @@ function abgleichTeile(block, termine){
   /* einsatzNah: neben einem erledigten Einsatz (Protokoll, Arbeitsnachweis) ist die Zeit dazwischen Fahrt – ohne Höchstdauer (Inhaber 09.10.2026) */
   var luecke=function(von, bis, ortDanach, einsatzNah){
     var fahrt=((bis-von)<=150 || einsatzNah) && ((ortDanach && ortDanach!==ortVorher) || (!ortDanach && ortVorher && !erste));
-    if(fahrt){ teile.push({beginn:von, ende:bis, bereich:"fahrt", taetigkeit:"Fahrt", standort_id:null, projekt_id:null, planung_id:null, luecke:true}); return; }
-    /* sonst je Abschnitt, was dort gestempelt war – Bereich, Was, Markt, Projekt (nicht der erste Abschnitt für alles:
+    var fahrtTeil=function(s, e, q){ teile.push({beginn:s, ende:e, bereich:"fahrt", taetigkeit:"Fahrt", standort_id:null, projekt_id:null, planung_id:null, luecke:true, fahrt:q||null}); };
+    /* je Abschnitt, was dort gestempelt war – Bereich, Was, Markt, Projekt (nicht der erste Abschnitt für alles:
        aus Montage an der Baustelle wurde sonst Fahrt, und die Projektstunden gingen verloren) */
-    block.eintraege.forEach(function(z){
-      var s=Math.max(von, zeitMin(z.beginn)), e=Math.min(bis, zeitMin(z.ende)); if(e<=s) return;
+    var gestempelt=function(s0, e0){ block.eintraege.forEach(function(z){
+      var s=Math.max(s0, zeitMin(z.beginn)), e=Math.min(e0, zeitMin(z.ende)); if(e<=s) return;
       teile.push({beginn:s, ende:e, bereich:z.bereich||"sonstiges", taetigkeit:z.taetigkeit||"", standort_id:z.standort_id||null, projekt_id:z.projekt_id||null, planung_id:null, luecke:true});
-    });
+    }); };
+    if(fahrt){
+      /* Fahrt nur so lang wie die Fahrt laut Route (Inhaber 14.10.2026) – vor einem Termin am Ende der Lücke (Ankunft), nach dem
+         letzten am Anfang (Abfahrt); der Rest, wie gestempelt. Ist die Lücke kaum länger als die Fahrt, bleibt sie ganz Fahrt. */
+      var q=fz ? fz.dauer(fz.von(block, von, ortVorher), fz.nach(block, bis, ortDanach)) : null;
+      if(q && (bis-von)-q.dauer>=10){
+        if(ortDanach){ gestempelt(von, bis-q.dauer); fahrtTeil(bis-q.dauer, bis, q); }
+        else { fahrtTeil(von, von+q.dauer, q); gestempelt(von+q.dauer, bis); }
+        return;
+      }
+      fahrtTeil(von, bis, q); return;
+    }
+    gestempelt(von, bis);
   };
   l.forEach(function(t){
     /* ganz in einem früheren Termin (etwa eine Besprechung während der Wartung): unterbricht ihn –
@@ -38658,11 +38703,12 @@ function abgleichDialog(tag, nachAusstempeln){
   /* die Abschnitte je Block – Vorschlag aus Gestempeltem und Kalender; hand: von Hand angepasst */
   var abs=[], hand=false, neuWerte={};   /* „+ Weiterer Bereich“: Eingaben je Block bis zum Eintragen */
   var abschnitt=function(x){ return {beginn:x.beginn, ende:x.ende, bereich:x.bereich||"sonstiges", taetigkeit:x.taetigkeit||"", standort_id:x.standort_id||null,
-    projekt_id:x.projekt_id||null, planung_id:x.planung_id||null, titel:x.titel||""}; };
+    projekt_id:x.projekt_id||null, planung_id:x.planung_id||null, titel:x.titel||"", fahrt:x.fahrt||null}; };
+  var fz=rueckblickFahrt(tag);   /* Fahrzeiten wie in der Tourenplanung (Inhaber 14.10.2026) */
   var vorschlagen=function(){
     var t=plan.filter(function(it){ return wahl[it.schluessel].an; }).map(function(it){ var w=wahl[it.schluessel]; return Object.assign({}, it, {s:w.s, e:w.e, bereich:w.bereich}); });
     abs=bloecke.map(function(b){
-      var teile=abgleichTeile(b, t);
+      var teile=abgleichTeile(b, t, fz);
       /* kein gemachter Termin in diesem Block: so, wie gestempelt (die Abschnitte vom Umstempeln) */
       if(!teile.some(function(x){ return !x.luecke; })) teile=b.eintraege.map(function(z){ return {beginn:zeitMin(z.beginn), ende:zeitMin(z.ende), bereich:z.bereich,
         taetigkeit:z.taetigkeit, standort_id:z.standort_id, projekt_id:z.projekt_id, planung_id:z.planung_id}; });
@@ -38671,6 +38717,8 @@ function abgleichDialog(tag, nachAusstempeln){
     hand=false;
   };
   vorschlagen();
+  /* Straßenzeiten (OSRM) kommen nach – dann neu vorschlagen, solange nichts von Hand geändert ist */
+  fz.laden(function(){ if(!hand && document.body.contains(host)){ vorschlagen(); zeichne(); } });
   /* Arbeitsnachweise kommen aus der Datenbank nach – dann neu vorschlagen, solange nichts von Hand geändert ist */
   anEinsaetzeFuerMich(tag).then(function(l){
     l=l.filter(function(x){ return !plan.some(function(y){ return y.schluessel===x.schluessel; }); });
@@ -38678,7 +38726,7 @@ function abgleichDialog(tag, nachAusstempeln){
     l.forEach(function(it){ plan.push(it); var drin=bloecke.some(function(b){ return Math.min(b.ende, it.ende)>Math.max(b.beginn, it.beginn); });
       wahl[it.schluessel]={an:drin, s:it.beginn, e:it.ende, bereich:it.bereich, verschieben:false}; });
     plan.sort(function(a,b){ return a.beginn-b.beginn; });
-    if(!hand) vorschlagen();
+    if(!hand){ vorschlagen(); fz.laden(function(){ if(!hand && document.body.contains(host)){ vorschlagen(); zeichne(); } }); }
     zeichne();
   });
   /* geändert gegenüber dem Gestempelten? nur solche Blöcke gehen an die Datenbank */
@@ -38721,7 +38769,7 @@ function abgleichDialog(tag, nachAusstempeln){
     if(plan.length){
       var pl=el('<div class="stack" style="gap:6px"><div style="font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--accent)">'+
         (plan.some(function(it){ return it.einsatz; }) ? "Erledigt laut Protokoll – und geplant laut Kalender" : "Laut Kalender geplant – was davon wurde gemacht?")+"</div>"+
-        (plan.some(function(it){ return it.einsatz; }) ? '<div class="muted" style="font-size:12.5px">Die Zeiten kommen aus dem Rapport (sonst Ankunft–Fertig). Dazwischen ist Fahrt. Stimmt eine Zeit nicht, hier ändern.</div>' : "")+"</div>");
+        (plan.some(function(it){ return it.einsatz; }) ? '<div class="muted" style="font-size:12.5px">Die Zeiten kommen aus dem Rapport (sonst Ankunft–Fertig). Dazwischen ist Fahrt – so lang wie die Fahrt laut Straßenrouting (wie in der Tourenplanung), der Rest wie gestempelt. Stimmt eine Zeit nicht, hier ändern.</div>' : "")+"</div>");
       plan.forEach(function(it){
         var w=wahl[it.schluessel], erf=geplantErfasst(it, tag);
         var z=el('<div class="stack" style="gap:4px;border:1px solid var(--line);border-radius:8px;padding:8px 10px'+(w.an?"":";opacity:.75")+'">'+
@@ -38759,7 +38807,8 @@ function abgleichDialog(tag, nachAusstempeln){
           tl.appendChild(g);
         }
         var st=a.standort_id && byId[a.standort_id], pr=a.projekt_id && PROJEKTE.filter(function(p){ return p.id===a.projekt_id; })[0];
-        var info=[a.titel, st?stName(st):"", pr?projektTitel(pr):"", a.taetigkeit].filter(function(t, k, arr){ return t && arr.indexOf(t)===k; }).join(" · ");
+        var info=[a.titel, st?stName(st):"", pr?projektTitel(pr):"", a.taetigkeit].filter(function(t, k, arr){ return t && arr.indexOf(t)===k; }).join(" · ")+
+          (a.fahrt ? ' <span class="muted" title="'+(a.fahrt.genau?"Straßenrouting (OpenStreetMap)":"Luftlinie mit Zuschlag – die Straßenzeit wird nachgeladen")+'">(lt. '+(a.fahrt.genau?"Route":"Schätzung")+" "+a.fahrt.min+" min)</span>" : "");
         var prOpt=PROJEKTE.filter(function(p){ return projektOffen(p) || p.id===a.projekt_id; }).map(function(p){ return [p.id, projektTitel(p)]; });
         var k=el('<div class="stack" data-abschnitt="'+esc(kalHm(a.beginn)+"-"+kalHm(a.ende)+" "+a.bereich)+'" style="gap:6px;border:1px solid var(--line);border-radius:8px;padding:8px 10px">'+
           '<div class="rowflex" style="gap:8px;flex-wrap:nowrap;font-size:13px"><span class="mono" style="white-space:nowrap">'+esc(kalHm(a.beginn)+"–"+kalHm(a.ende))+"</span>"+

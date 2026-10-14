@@ -491,7 +491,12 @@ Kammerlander Umwelt- und Klimatechnik (UKT) – oft kurz, vom Handy, im Feld.
   Aus dem Erledigten (Inhaber 09.10.2026: „anhand der geschriebenen Protokolle … Zeit aus dem Rapportzettel, dazwischen Fahrzeit“): `einsaetzeFuerMich` – eigene
   Protokolle des Tages (selbst geschrieben oder als Techniker/Weitere/r Techniker/in eingetragen), je Markt ein Einsatz, Zeit aus dem Rapport, sonst Ankunft–Fertig,
   sonst geschätzt (Uhrzeit = fertig, Dauer `arbeitStunden`); `anEinsaetzeFuerMich` – eigene Arbeitsnachweis-Zeilen (nachgeladen). Sie stehen oben als „✓ erledigt“,
-  ersetzen einen Kalendertermin (Wartung/Störung) am selben Markt; neben einem Einsatz ist die Lücke Fahrt ohne 150-min-Grenze (`abgleichTeile`, `einsatzNah`). Umstempeln mit Vorgabe aus dem Termin (`geplantFuerMich`, „⇄ Dorthin umstempeln“).
+  ersetzen einen Kalendertermin (Wartung/Störung) am selben Markt; neben einem Einsatz ist die Lücke Fahrt ohne 150-min-Grenze (`abgleichTeile`, `einsatzNah`).
+  **Fahrt nur so lang wie die Fahrt** (Inhaber 14.10.2026: „Büro, dann Saalfelden – der ganze Tag wurde Fahrzeit; Fahrzeit anhand der Navigationsdaten wie in der
+  Tourenplanung“): `rueckblickFahrt(tag)` – von wo (Markt des Termins, sonst Position beim Stempeln `STEMPEL[].ort.lat`, sonst gestempelter Markt, sonst BETRIEB) nach wo,
+  Minuten aus `FAHR_CACHE` (OSRM, `fahrtenGenau` nachgeladen → neu vorschlagen, solange nichts von Hand geändert) sonst `fahrtSchaetzMin`; eingetragen auf 5 min
+  aufgerundet + 5. Vor einem Termin liegt die Fahrt am Ende der Lücke, nach dem letzten am Anfang, der Rest wie gestempelt; Lücke kaum länger als die Fahrt → ganz Fahrt.
+  Tests blocken die Routendienste (`oeffnen`: `ROUTENDIENSTE` abgebrochen) – Erwartungen aus der Luftlinie. Die genaue Kosten-Nutzen-Rechnung kommt später (Meetings mit dem Chef). Umstempeln mit Vorgabe aus dem Termin (`geplantFuerMich`, „⇄ Dorthin umstempeln“).
   Abwesenheit und Arbeit am selben Tag (`abwesenheitPruefen`, tools/abwesenheit-arbeit.sql, `planung.ausnahmen`): beim Einstempeln und
   Erfassen fragen (ein halber Tag mit Uhrzeit – EIN Tag mit von–bis – nur, wenn die Arbeit bzw. das Einstempeln hineinfällt:
   `abwesenheitZeitTrifft`; ganztägig, mehrtägig oder Arbeit ohne Uhrzeit immer; Inhaber 05.10.2026) – „eingesprungen“ (beides zählt), Urlaub „zurückgeben“ (Inhaber nimmt den Tag heraus: `planTagHerausnehmen`, To-do),

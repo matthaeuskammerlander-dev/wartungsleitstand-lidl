@@ -71,6 +71,8 @@ async function oeffnen(konto, opt = {}) {
   const fehler = [];
   seite.on("pageerror", (e) => fehler.push(e.message));
   seite.on("dialog", (d) => (d.type() === "prompt" ? d.accept(opt.promptAntwort || "Test") : d.type() === "confirm" ? d.accept() : d.dismiss()));
+  /* kein echter Straßendienst im Test (Tourenplanung, Tagesrückblick): die App rechnet dann mit der Luftlinie – deterministisch */
+  await seite.route((u) => ROUTENDIENSTE.includes(u.hostname), (rt) => rt.abort());
   await seite.goto(`http://localhost:${PORT}/index.html`, { waitUntil: "load" });
   await seite.waitForFunction(() => !!window.__t, null, { timeout: 30000 });
   const x = (ausdruck) => seite.evaluate((a) => window.__t.x(a), ausdruck);
@@ -5579,7 +5581,8 @@ test("Tagesrückblick aus Protokollen: Rapport-Zeit bzw. Ankunft–Fertig, auch 
     const oben = d.textContent;
     return { abs, protokollZeile: /✓ erledigt 08:00–10:15 · Rapport/.test(oben), stoerZeile: /✓ erledigt 11:30–13:00 · Ankunft–Fertig/.test(oben), geplantWeg: !/Wartung geplant/.test(oben), fremdWeg: !/Testfiliale 902/.test(oben) };
   });
-  pruefe(JSON.stringify(r.abs) === '["07:00-08:00 fahrt","08:00-10:15 wartung","10:15-11:30 fahrt","11:30-13:00 stoerung","13:00-15:00 fahrt"]', "Abschnitte: " + JSON.stringify(r));
+  /* Rückfahrt TS3 → Betrieb: laut Schätzung 90 min (+5) – der Rest des Tages bleibt, wie gestempelt (Inhaber 14.10.2026) */
+  pruefe(JSON.stringify(r.abs) === '["07:00-08:00 fahrt","08:00-10:15 wartung","10:15-11:30 fahrt","11:30-13:00 stoerung","13:00-14:35 fahrt","14:35-15:00 wartung"]', "Abschnitte: " + JSON.stringify(r));
   pruefe(r.protokollZeile && r.stoerZeile && r.geplantWeg && r.fremdWeg, "Anzeige: " + JSON.stringify(r));
   pruefe(!a.fehler.length, "Laufzeitfehler: " + a.fehler.join("; "));
   await a.zu();
@@ -6601,6 +6604,56 @@ test("Posteingang: Fotos aus der Lidl-Auftragsmail gehören zum Auftrag – kein
   pruefe(/2 Fotos zu einem Lidl-Auftrag/.test(r.b2) && /624744474/.test(r.stand) && /schon als Störung erfasst/.test(r.stand), "Karte für liegen gebliebene Fotos: " + JSON.stringify([r.b2, r.stand]));
   pruefe(/2 Fotos zur Störung Auftrag 624744474 hinzugefügt/.test(r.toast) && r.seiten === 2, "Fotos nicht zur Störung gekommen: " + JSON.stringify([r.toast, r.seiten]));
   pruefe(r.erledigt2 === "lf2p:erledigt:sdF2,lf2a:erledigt:sdF2,lf2b:erledigt:sdF2" && r.weg, "Foto-Einträge nicht erledigt: " + JSON.stringify([r.erledigt2, r.weg]));
+  pruefe(!a.fehler.length, "Laufzeitfehler: " + a.fehler.join("; "));
+  await a.zu();
+});
+
+/* Inhaber 14.10.2026: „zuerst im Büro in Salzburg, dann nach Saalfelden zum Einsatz – der ganze Tag wurde als Fahrzeit gerechnet.
+   Die Fahrzeit soll anhand der Navigationsdaten errechnet werden, wie in der Tourenplanung.“ */
+test("Tagesrückblick: Fahrt nur so lang wie die Fahrt laut Route (sonst Schätzung) – vor dem Einsatz am Ende der Lücke, danach am Anfang; der Rest wie gestempelt; Position beim Stempeln als Startpunkt", async () => {
+  const a = await oeffnen(KONTEN.techniker);
+  await ttHilfen(a);
+  const r = await a.seite.evaluate(async () => {
+    const tt = window.__tt, x = window.__t.x, db = window.__db.tabellen, e = {}; tt.leeren();
+    const ich = x("meinName()"), uid = x("Store.benutzer.id");
+    const hm = (m) => ("0" + Math.floor(m / 60)).slice(-2) + ":" + ("0" + (m % 60)).slice(-2);
+    /* Tag 1: 07:00–17:00 Büro gestempelt (ohne Markt), Störung TS3 laut Protokoll 12:00–15:00 */
+    const T = tt.werktag(1);
+    tt.gestempelt({ datum: T, beginn: "07:00", ende: "17:00", minuten: 570, pause_min: 30, bereich: "buero" });
+    x("protokolle").push({ _id: "trf1", datum: T, uhrzeit: "15:30", standortId: "TS3", wartungsart: "Störung", positionId: "TP4", techniker: ich, erstelltVon: uid,
+      anlagen: [], stoerung: { ankunft: "12:00", ende: "15:00" } });
+    await tt.laden(); await x("stempelNachladen(true)");
+    x("abgleichDialog('" + T + "')"); await tt.warte(700);
+    let d = tt.dialog();
+    e.abs1 = [...d.querySelectorAll("[data-abschnitt]")].map((q) => q.dataset.abschnitt);
+    e.fahrtText = [...d.querySelectorAll("[data-abschnitt]")].filter((q) => /fahrt/.test(q.dataset.abschnitt)).map((q) => q.textContent).join(" | ");
+    e.hinweis = d.textContent;
+    /* erwartet: Schätzung Betrieb → TS3 (kein Straßendienst im Test), auf 5 min aufgerundet + 5 */
+    const min = x("fahrtSchaetzMin(BETRIEB, byId.TS3)"), dauer = Math.ceil(min / 5) * 5 + 5;
+    e.min = min; e.dauer = dauer;
+    e.erwartet1 = ["07:00-" + hm(720 - dauer) + " buero", hm(720 - dauer) + "-12:00 fahrt", "12:00-15:00 stoerung", "15:00-" + hm(900 + dauer) + " fahrt", hm(900 + dauer) + "-17:00 buero"];
+    x("ansichtenSchliessen()"); d.remove();
+    /* Tag 2: beim Einstempeln wurde die Position gespeichert (Zustimmung) – nahe TS3: die Fahrt davor ist kurz */
+    const T2 = tt.werktag(2);
+    tt.gestempelt({ datum: T2, beginn: "07:00", ende: "17:00", minuten: 570, pause_min: 30, bereich: "buero" });
+    const um = (t) => { const z = new Date(T2 + "T00:00:00"); z.setHours(+t.split(":")[0], +t.split(":")[1], 0, 0); return z.toISOString(); };
+    db.stempel.push({ id: "stf2", user_id: uid, name: "T", art: "ein", zeit: um("07:00"), ort: { status: "unterwegs", lat: 47.30, lon: 11.45, genauigkeit: 20 } });
+    x("protokolle").push({ _id: "trf2", datum: T2, uhrzeit: "15:30", standortId: "TS3", wartungsart: "Störung", positionId: "TP4", techniker: ich, erstelltVon: uid,
+      anlagen: [], stoerung: { ankunft: "12:00", ende: "15:00" } });
+    await tt.laden(); await x("stempelNachladen(true)");
+    x("abgleichDialog('" + T2 + "')"); await tt.warte(700);
+    d = tt.dialog();
+    e.abs2 = [...d.querySelectorAll("[data-abschnitt]")].map((q) => q.dataset.abschnitt);
+    const min2 = x("fahrtSchaetzMin({id:'p',lat:47.30,lon:11.45}, byId.TS3)"), dauer2 = Math.ceil(min2 / 5) * 5 + 5;
+    e.erwartet2 = ["07:00-" + hm(720 - dauer2) + " buero", hm(720 - dauer2) + "-12:00 fahrt", "12:00-15:00 stoerung", "15:00-" + hm(900 + dauer) + " fahrt", hm(900 + dauer) + "-17:00 buero"];
+    e.kurz = dauer2 < dauer;
+    x("ansichtenSchliessen()"); d.remove();
+    return e;
+  });
+  pruefe(JSON.stringify(r.abs1) === JSON.stringify(r.erwartet1), "Tag 1 – Fahrt nicht nach der Route: " + JSON.stringify([r.abs1, r.erwartet1, r.min]));
+  pruefe(/lt\. Schätzung \d+ min/.test(r.fahrtText), "Fahrtabschnitt ohne Herkunft der Zeit: " + r.fahrtText);
+  pruefe(/so lang wie die Fahrt laut Straßenrouting/.test(r.hinweis), "Hinweis im Dialog fehlt");
+  pruefe(r.kurz && JSON.stringify(r.abs2) === JSON.stringify(r.erwartet2), "Tag 2 – Position beim Stempeln nicht als Startpunkt: " + JSON.stringify([r.abs2, r.erwartet2]));
   pruefe(!a.fehler.length, "Laufzeitfehler: " + a.fehler.join("; "));
   await a.zu();
 });
