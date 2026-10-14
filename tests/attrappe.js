@@ -346,6 +346,8 @@
     if(!sitzung) return {data:[],error:null};
     /* window.__ohneTagGeprueft: die Tabelle ist noch nicht eingerichtet (SQL noch nicht ausgeführt) */
     if(this.t==="tag_geprueft" && window.__ohneTagGeprueft) return {data:null,error:{message:'relation "public.tag_geprueft" does not exist', code:"42P01"}};
+    /* window.__rollenFehler: die Rollenabfrage scheitert (kein Netz, hängende Verbindung) – wie ein echter Netzfehler */
+    if(this.t==="rollen" && window.__rollenFehler) return {data:null,error:{message:"TypeError: Failed to fetch"}};
     if(this.a==="select"){
       var sv=darf(this.t,"select",null,null); if(sv && /nur lesen/.test(sv)) return {data:[],error:null};
       if(this.t==="rollen") { /* wie die Regel: eigene Zeile, Admins alle */ }

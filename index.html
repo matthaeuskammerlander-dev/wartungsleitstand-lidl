@@ -10164,7 +10164,7 @@ var Admin={frei:false, zentral:false, geprueft:false};
    darf alles bedienen wie ein Admin, gespeichert wird aber nichts (demo() –
    jedes Speichern fängt demo() ab). Die Datenbank sperrt das Schreiben für
    beide selbst (tools/rollen.sql). */
-var Rolle={name:"techniker", da:false, gemerkt:false};
+var Rolle={name:"techniker", da:false, gemerkt:false, bestaetigt:null};   /* bestaetigt: in dieser Sitzung vom Server bestätigt {konto, rolle, anzeige, admin} */
 function nurLesen(){ return Rolle.name==="kunde"; }
 /* Zugangsdaten nicht zeigen: Kunde, Präsentation, Abgemeldete und eine nur
    gemerkte (noch nicht bestätigte) Rolle */
@@ -10244,14 +10244,24 @@ function adminPruefen(nochmal){
       var tabelleFehlt=!!fe && fe.code!=="PGRST002" && /42P01|PGRST205|Could not find the table|relation .* does not exist/i.test((fe.code||"")+" "+(fe.message||""));
       var gemerkt=null; try{ gemerkt=lsGet(merkName,null); }catch(e){}
       clearTimeout(rolleNochmal); rolleNochmal=null;
+      /* in DIESER Sitzung schon vom Server bestätigt (gleiches Konto): eine später hängende
+         oder gescheiterte Prüfung (Token erneuert, Tab wieder sichtbar, schlechte Verbindung)
+         stuft nicht mehr auf „nur gemerkt“ zurück – sonst verschwanden die Zugangsdaten der
+         Regelungen still aus der Verwaltung (Inhaber 14.10.2026). Die Datenbank setzt die
+         Rechte ohnehin selbst durch; geprüft wird trotzdem gleich nochmal. */
+      var best=(Rolle.bestaetigt && Rolle.bestaetigt.konto===Store.benutzer.id) ? Rolle.bestaetigt : null;
+      if(fa && best) imAdmins=best.admin;
       if(fe && !tabelleFehlt){
-        /* die gemerkte Rolle höchstens herabstufen: Admin/Inhaber nur, wenn
-           admins es jetzt bestätigt; solange sie nur gemerkt ist, weder
-           Zugangsdaten noch Übertragen vom Gerät (Rolle.gemerkt) */
-        Rolle.da=true; Rolle.gemerkt=true;
-        Rolle.name=(gemerkt && gemerkt.rolle) || "kunde";
-        if(/^(inhaber|admin)$/.test(Rolle.name) && !imAdmins) Rolle.name="techniker";
-        Rolle.anzeige=(gemerkt && gemerkt.name) || "";
+        if(best){ Rolle.da=true; Rolle.gemerkt=false; Rolle.name=best.rolle; Rolle.anzeige=best.anzeige; }
+        else {
+          /* die gemerkte Rolle höchstens herabstufen: Admin/Inhaber nur, wenn
+             admins es jetzt bestätigt; solange sie nur gemerkt ist, weder
+             Zugangsdaten noch Übertragen vom Gerät (Rolle.gemerkt) */
+          Rolle.da=true; Rolle.gemerkt=true;
+          Rolle.name=(gemerkt && gemerkt.rolle) || "kunde";
+          if(/^(inhaber|admin)$/.test(Rolle.name) && !imAdmins) Rolle.name="techniker";
+          Rolle.anzeige=(gemerkt && gemerkt.name) || "";
+        }
       } else {
         Rolle.da=!fe; Rolle.gemerkt=false;
         Rolle.name=(r[1].data&&r[1].data[0]&&r[1].data[0].rolle) || (imAdmins?"admin":"techniker");
@@ -10259,6 +10269,8 @@ function adminPruefen(nochmal){
         /* bestätigte Rolle je Konto merken – für einen Start ohne Netz (nicht
            aus Präsentation oder Vorschau: die schreiben nichts auf das Gerät) */
         if(!fe && !fa && !demo()) lsSet(merkName, {rolle:Rolle.name, name:Rolle.anzeige});
+        /* … und für diese Sitzung: eine spätere Störung der Prüfung stuft nicht zurück */
+        if(!fe && !fa) Rolle.bestaetigt={konto:Store.benutzer.id, rolle:Rolle.name, anzeige:Rolle.anzeige, admin:imAdmins};
       }
       /* Admin nur, wenn beides stimmt: admins sagt es und die Rolle erlaubt es
          (ohne Rollen-Tabelle zählt admins allein) – mit und ohne Netz dieselbe Regel.
@@ -10284,11 +10296,15 @@ function adminPruefen(nochmal){
             /* jetzt nur noch ansehen: offene Fenster gehören zu den Rechten von vorher */
             if((nurLesen()||demo()) && !warLesen) dialogeSchliessen();
             if(nurLesen()||demo()||Rolle.gemerkt) zugangsdatenVerwerfen();
+            /* vorher nur gemerkt, jetzt bestätigt: die ausgeblendeten Zugangsdaten kommen mit dem Laden wieder */
+            if(/\|true$/.test(vorher) && !Rolle.gemerkt && !nurLesen() && !demo()) toast("Rolle bestätigt – die Zugangsdaten der Regelungen werden wieder geladen.");
             flushQueue(); ladeProtokolle();
             ladeStammdaten().then(storeNachRender, function(){});
           });
         }, 15000);
         if(!nochmal && fe && !tabelleFehlt && !gemerkt) toast("Rolle konnte nicht geprüft werden (Verbindung?) – bis dahin nur Ansicht.");
+        /* gemerkte Rolle, aber Prüfung gescheitert: die Zugangsdaten fehlen bis zur nächsten Prüfung – nie still (Inhaber 14.10.2026) */
+        else if(!nochmal && Rolle.gemerkt && !nurLesen()) toast("Rolle konnte nicht geprüft werden (Verbindung?) – die Zugangsdaten der Regelungen bleiben bis zur nächsten Prüfung ausgeblendet, in 15 s wird es erneut versucht.");
         else if(!nochmal && fa && !fe && /^(inhaber|admin)$/.test(Rolle.name))
           toast("Admin-Rechte konnten nicht geprüft werden (Verbindung?) – Verwaltung erst danach, es wird erneut versucht.");
       }
@@ -10618,7 +10634,7 @@ function initSupabase(){
       /* abgemeldet: nichts von dem, was nur Angemeldete sehen dürfen, bleibt
          im Speicher – auch nicht die Zugangsdaten der Regelungen */
       clearTimeout(rolleNochmal); rolleNochmal=null; protokolleFehler="";
-      Rolle.name="techniker"; Rolle.da=false; Rolle.anzeige=""; Rolle.gemerkt=false; aenderungen=[]; POSTEINGANG=[];
+      Rolle.name="techniker"; Rolle.da=false; Rolle.anzeige=""; Rolle.gemerkt=false; Rolle.bestaetigt=null; aenderungen=[]; POSTEINGANG=[];
       OFFENE=[];   /* sofort weg – nicht erst, wenn die Stammdaten neu geladen sind */
       document.body.classList.remove("nurlesen","demo"); demoBanner();
       ladeStammdaten().then(storeNachRender, function(){});

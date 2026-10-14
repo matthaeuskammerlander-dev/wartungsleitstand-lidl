@@ -585,7 +585,13 @@ Kammerlander Umwelt- und Klimatechnik (UKT) – oft kurz, vom Handy, im Feld.
   `https://www.lidl.at/s/de-AT/filialsuche/sitemap.xml` listet alle Filialseiten; jede Seite trägt schema.org-Daten
   (`GroceryStore` mit `address` und `geo`). Damit wurden alle Lidl-Märkte abgeglichen: 113 stimmten, 21 Adressen (Hausnummer/
   Schreibweise/PLZ) und 27 Kartenpunkte als Überschreibung korrigiert, offene Fälle als `pruefHinweis` (Fil. 272 Triester Str.,
-  Fil. 515 Stiftgasse nicht mehr gelistet, Fil. 349 PLZ 5020/5026).
+  Fil. 515 Stiftgasse nicht mehr gelistet, Fil. 349 PLZ 5020/5026). Fil. 272 = Triester Straße 256 (Inhaber 13.10.2026).
+- **Rollenprüfung und Zugangsdaten** (Inhaber 14.10.2026: Fernzugriff verschwand nach dem Neuladen aus dem Markt-Editor –
+  die Daten waren in der Datenbank unversehrt): scheitert oder hängt `adminPruefen` (10 s), galt die Rolle nur als „gemerkt“ und
+  die App lud die Sicht ohne Zugangsdaten (`stammdaten_lesen`), ohne Hinweis. Jetzt: `Rolle.bestaetigt` (in dieser Sitzung vom
+  Server bestätigt, je Konto) – eine spätere Störung stuft nicht mehr zurück (die Datenbank erzwingt die Rechte ohnehin); beim
+  Start mit nur gemerkter Rolle bleibt es beim Ausblenden, aber mit Toast („… bis zur nächsten Prüfung ausgeblendet, in 15 s
+  erneut“) und Toast, wenn die Prüfung danach gelingt. Attrappe: `window.__rollenFehler` lässt die Rollenabfrage scheitern.
   OpenStreetMap-PLZ waren zweimal falsch (9710 statt 9711, 4030 statt 4020) – bei Widerspruch gilt lidl.at.
   Lehre Fil. 238 (Inhaber 13.10.2026): Tippfehler in der Liste („Jacksch“ statt „Jaksch“) ließen den Abgleich den nächsten
   fremden Lidl nehmen – bei „nahe, andere Straße“ nie automatisch den Nachbarmarkt übernehmen, sondern die Adresse mit Tippfehler-

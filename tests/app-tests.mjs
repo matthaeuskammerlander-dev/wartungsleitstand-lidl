@@ -104,7 +104,8 @@ test("Start: App startet am PC und am Handy ohne Laufzeitfehler", async () => {
 
 test("Rechte: jede Rolle sieht genau ihre Reiter", async () => {
   const erwartet = {
-    kunde: { sieht: ["faellig", "karte", "anlagen", "verlauf"], nicht: ["protokoll", "belege", "verwaltung", "stunden", "fahrzeuge", "werkzeug"] },
+    /* Kunde: ohne „Fällig“ – nach dem Anmelden gleich die Karte (Inhaber 12.10.2026, Präsentation) */
+    kunde: { sieht: ["karte", "anlagen", "verlauf"], nicht: ["faellig", "protokoll", "belege", "verwaltung", "stunden", "fahrzeuge", "werkzeug"] },
     techniker: { sieht: ["faellig", "kalender", "protokoll", "stunden", "fahrzeuge", "werkzeug"], nicht: ["belege"] },
     admin: { sieht: ["faellig", "protokoll", "verwaltung"], nicht: ["belege"] },
     inhaber: { sieht: ["belege", "verwaltung", "fahrzeuge"], nicht: [] },
@@ -6295,6 +6296,36 @@ test("Kundenkonto: keine überfälligen Termine („in Planung“), Fernzugriff-
   pruefe(rk.link === "https://regelung.test/ts1" && rk.ohneZugang && rk.sicht, "Kunde Fernzugriff: " + JSON.stringify([rk.link, rk.ohneZugang, rk.sicht]));
   pruefe(!k.fehler.length, "Laufzeitfehler (Kunde): " + k.fehler.join("; "));
   await k.zu();
+});
+
+test("Rollenprüfung hängt (Inhaber 14.10.2026): in der Sitzung bestätigte Rolle bleibt, Zugangsdaten werden nicht still ausgeblendet; nur gemerkte Rolle → sichtbarer Hinweis", async () => {
+  const a = await oeffnen(KONTEN.admin, { handy: true });
+  const r = await a.seite.evaluate(async () => {
+    const x = window.__t.x, e = {};
+    window.__tt2 = []; window.__tt2alt = x("toast");
+    x("toast=function(m){ window.__tt2.push(String(m)); return window.__tt2alt.apply(this, arguments); }; 1");
+    e.vorher = x("[Rolle.name, Rolle.gemerkt, !!Rolle.bestaetigt, geheimesAusgeblendet()]");
+    /* die Rollenabfrage scheitert jetzt (Verbindung) – die Rolle wurde aber in dieser Sitzung schon bestätigt */
+    window.__rollenFehler = 1;
+    await x("adminPruefen(true)");
+    e.gestoert = x("[Rolle.name, Rolle.gemerkt, geheimesAusgeblendet(), Admin.frei]");
+    /* Start ohne Bestätigung in dieser Sitzung (nur die gemerkte Rolle vom Gerät): ausgeblendet, aber mit Hinweis */
+    x("Rolle.bestaetigt=null; 1");
+    await x("adminPruefen()");
+    e.start = x("[Rolle.name, Rolle.gemerkt, geheimesAusgeblendet()]");
+    e.hinweis = window.__tt2.filter((t) => /Zugangsdaten/.test(t)).pop() || "";
+    /* Verbindung wieder da: nächste Prüfung bestätigt, Zugangsdaten kommen zurück */
+    window.__rollenFehler = 0;
+    await x("adminPruefen(true)");
+    e.wieder = x("[Rolle.gemerkt, !!Rolle.bestaetigt, geheimesAusgeblendet()]");
+    x("clearTimeout(rolleNochmal); rolleNochmal=null; 1");
+    return e;
+  });
+  pruefe(r.vorher[1] === false && r.vorher[2] === true && r.vorher[3] === false, "Ausgangslage: Rolle nicht bestätigt oder Zugangsdaten ausgeblendet: " + JSON.stringify(r.vorher));
+  pruefe(r.gestoert[1] === false && r.gestoert[2] === false && r.gestoert[0] === r.vorher[0] && r.gestoert[3] === true, "Gestörte Prüfung stuft die bestätigte Rolle zurück oder blendet Zugangsdaten aus: " + JSON.stringify(r.gestoert));
+  pruefe(r.start[1] === true && r.start[2] === true, "Nur gemerkte Rolle: Zugangsdaten müssten ausgeblendet sein: " + JSON.stringify(r.start));
+  pruefe(/ausgeblendet/.test(r.hinweis) && /erneut/.test(r.hinweis), "Kein sichtbarer Hinweis, dass die Zugangsdaten wegen der Rollenprüfung fehlen: " + JSON.stringify(r.hinweis));
+  pruefe(r.wieder[0] === false && r.wieder[1] === true && r.wieder[2] === false, "Nach gelungener Prüfung nicht wieder bestätigt: " + JSON.stringify(r.wieder));
 });
 
 /* Antworten des Inhabers vom 05.10.2026 (Teil kern) */
