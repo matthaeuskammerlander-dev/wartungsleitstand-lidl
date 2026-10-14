@@ -339,7 +339,8 @@ Kammerlander Umwelt- und Klimatechnik (UKT) – oft kurz, vom Handy, im Feld.
   Rechnungen und Positionskatalog kommen nie in `projekte.daten` (das sehen
   alle), sondern in eigene, nur für Inhaber lesbare Tabellen bzw. Dateien.
 - **Arbeitsnachweise** (Inhaber 06.10.2026, Tabelle `arbeitsnachweise`, SQL-Abschnitt „Arbeitsnachweise“ in tools/rechte-2026-10-05.sql):
-  wie das Papierformular (Auftraggeber, Objekt, Zeilen Datum/Monteure/von/bis/Pause/Stunden = Personen × (bis − von − Pause),
+  wie das Papierformular (Auftraggeber, Objekt, Zeilen Datum/Monteure/von/bis/Pause/Stunden = Personen × (bis − von − Pause);
+  Monteure mit Auswahlliste `#an_namen` aus `bekannteNamen()` + eigenes Konto, Inhaber 14.10.2026 – freier Text wie „4 Mann“ bleibt),
   Montage/Wartung/Reparatur/Garantie, Arbeiten beendet, Ausgeführte Arbeiten, Material, Prüfungen, Vorkommnisse). Material als Liste
   (Inhaber 06.10.2026: `daten.materialListe` [{menge, eh, text}], `anMaterial`, dazu freier Text `daten.material`; keine Preise). Schritt
   „Rapporte und Fotos“ (Inhaber 06.10.2026): PDF/Foto wählen, aus den Projektdateien oder einfügen (Strg+V / „Einsetzen“, `paste` nur
@@ -384,7 +385,9 @@ Kammerlander Umwelt- und Klimatechnik (UKT) – oft kurz, vom Handy, im Feld.
   i. O./Mangel/n. z. `IBN_BEFUND`, Dokumentation mit erl./offen/n. z. `IBN_STAND`; „Alle auf …“ je Gruppe; Bemerkung erst bei Abweichung sichtbar; bei „Regelung
   parametriert“ je Anlage die Felder `anlage.regelung` – Sollwert Kühlen/Heizen, Betriebsart, Nachtabsenkung ja/nein von–bis, seit 14.10.2026
   (Inhaber, Mattighofen) auch Automatikbetrieb: Temperaturbereich Heizen/Kühlen min–max und Umschaltpunkte „auf Kühlen bei“/„auf Heizen bei“
-  (`heizMin/heizMax/kuehlMin/kuehlMax/aufKuehlenBei/aufHeizenBei`, `[data-rgauto]`), `ibnRegelungText` → „Automatik: Heizen 18–25 °C, …“) → Übergabe
+  (`heizMin/heizMax/kuehlMin/kuehlMax/aufKuehlenBei/aufHeizenBei`, `[data-rgauto]`), `ibnRegelungText` → „Automatik: Heizen 18–25 °C, …“) → Übergabe.
+  PDF (`ibnBlattHtml`, Inhaber 14.10.2026): nicht ausgefüllte Zeilen entfallen (`zt` liefert "" statt „–“; Messwerte nur die erfassten,
+  `messwerteHtml`, ohne Messwert kein Abschnitt); nur „Betreiber (Vertreter)“ bleibt leer stehen (`ztImmer`, zum Handschreiben)
   (`IBN_UEBERGABE`: Einweisung, Betreiberpflichten (EU) 2024/573, Prüfintervall, Prüfbuch; Mängel/Restarbeiten/Abnahme NICHT hier, sondern „siehe Abnahmeprotokoll
   des Auftraggebers“ – nur `abnahmeVerweis` + Datum) → Abschluss (Unterschrift des Monteurs unter dem eigenen Konto; Betreiber unterschreibt auf dem Ausdruck; je
   Anlage Haken „An der Anlage eintragen“: Inbetriebnahme-Datum und fehlende Füllmenge über EIN `positionenSchreiben` nach dem Unterschreiben –

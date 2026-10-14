@@ -6180,10 +6180,14 @@ test("Inbetriebnahmeprotokoll: aus der Anlage vorbelegt, Füllmenge und CO₂e g
     e.liste = (document.querySelector('[data-ibn="' + z.id + '"]') || {}).textContent;
     /* Blatt: Füllmengen, CO₂e, Kreuze */
     const html = x("ibnBlattHtml")(pr, z);
-    e.blatt = /INBETRIEBNAHMEPROTOKOLL KÄLTEANLAGE/.test(html) && /16,3 kg/.test(html) && /34,03 t CO₂e/.test(html) && /Gefälle fehlt/.test(html) && /Kühlen 22 °C · Nachtabsenkung 22:00–06:00/.test(html)
-      && /Automatik: Heizen 18–25 °C, Kühlen 17–24 °C, auf Kühlen ab 24 °C, auf Heizen ab 17 °C/.test(html)
-      && /siehe Abnahmeprotokoll des Auftraggebers – Endabnahme Lidl vom 24.09.2026/.test(html) && /FXFQ63/.test(html) && /Verordnung \(EU\) 2024\/573/.test(html) && !/mit Vorbehalt/.test(html)
-      && /Anlage 1 von 2: VRV Verkauf/.test(html) && /Anlage 2 von 2: Split Backshop/.test(html) && /Nachfüllung bei 18 m Rohrlänge/.test(html) && /4,05 t CO₂e/.test(html) && /KÄLTEANLAGEN/.test(html) && /<h2>Fotos<\/h2>/.test(html) && /VRV 2 – Typenschild/.test(html) && /Zertifikat Betrieb \(F-Gase\)<\/td><td>AT-UNT-TEST-250/.test(html) && /G14-TEST-1/.test(html);
+    const muster = [/INBETRIEBNAHMEPROTOKOLL KÄLTEANLAGE/, /16,3 kg/, /34,03 t CO₂e/, /Gefälle fehlt/, /Kühlen 22 °C · Nachtabsenkung 22:00–06:00/,
+      /Automatik: Heizen 18–25 °C, Kühlen 17–24 °C, auf Kühlen ab 24 °C, auf Heizen ab 17 °C/,
+      /siehe Abnahmeprotokoll des Auftraggebers – Endabnahme Lidl vom 24.09.2026/, /FXFQ63/, /Verordnung \(EU\) 2024\/573/,
+      /Anlage 1 von 2: VRV Verkauf/, /Anlage 2 von 2: Split Backshop/, /Rohrlänge<\/td><td>18 m/, /4,05 t CO₂e/, /KÄLTEANLAGEN/, /<h2>Fotos<\/h2>/, /VRV 2 – Typenschild/, /Zertifikat Betrieb \(F-Gase\)<\/td><td>AT-UNT-TEST-250/, /G14-TEST-1/];
+    e.blattFehlt = muster.filter((m) => !m.test(html)).map(String).concat(/mit Vorbehalt/.test(html) ? ["NICHT: mit Vorbehalt"] : []);
+    /* leere Zeilen kommen nicht aufs Blatt (Inhaber 14.10.2026): kein „–“ als Wert, keine Messwerte-Überschrift ohne Messwert bei Anlage 2 */
+    e.blattLeer = (html.match(/<td>–<\/td>/g) || []).length + "|" + (html.match(/>Messwerte</g) || []).length;
+    e.blatt = !e.blattFehlt.length;
     x("ansichtenSchliessen(); 1");
     e.toasts = window.__toasts.join(" | ");
     return e;
@@ -6204,7 +6208,8 @@ test("Inbetriebnahmeprotokoll: aus der Anlage vorbelegt, Füllmenge und CO₂e g
   pruefe(/^protokoll:Inbetriebnahmeprotokoll_P-TEST-AN_Nr1_2-Anlagen/.test(r.pdf), "PDF nicht in den Projektdateien: " + r.pdf);
   pruefe(/^(\d{4}-\d\d-\d\d)\|16\.3\|\1\|6$/.test(r.anlage), "Inbetriebnahme/Füllmenge nicht an beiden Anlagen: " + r.anlage);
   pruefe(/unterschrieben/.test(r.liste) && /2 Anlagen: VRV Verkauf/.test(r.liste), "Liste: " + r.liste);
-  pruefe(r.blatt, "Blatt unvollständig");
+  pruefe(r.blatt, "Blatt unvollständig: " + JSON.stringify(r.blattFehlt));
+  pruefe(r.blattLeer === "0|1", "Leere Zeilen bzw. leerer Messwerte-Abschnitt auf dem Blatt (Striche|Messwerte-Überschriften): " + r.blattLeer);
   pruefe(!a.fehler.length, "Laufzeitfehler: " + a.fehler.join("; "));
   await a.zu();
   /* Präsentation: ausfüllen geht, gespeichert wird nichts */
@@ -8028,6 +8033,9 @@ test("Arbeitsnachweis: Präsentation füllt aus, speichert aber nichts; am Handy
     const setz = (k, v) => { const i = z.querySelector('[data-z="' + k + '"]'); i.value = v; i.dispatchEvent(new Event("input")); };
     setz("monteure", "4 Mann"); setz("von", "15:00"); setz("bis", "23:30"); setz("pause", "0,5");
     e.std = z.querySelector("[data-std]").textContent;
+    /* Monteure aus einer Liste wählbar (Inhaber 14.10.2026): Auswahlliste mit den bekannten Namen am Feld */
+    const dl = d.querySelector("#an_namen");
+    e.namenListe = z.querySelector('[data-z="monteure"]').getAttribute("list") + "|" + (dl ? dl.querySelectorAll("option").length : 0);
     e.breiter = document.documentElement.scrollWidth - window.innerWidth;
     /* Materialliste und Rapporte/Fotos am Handy: nichts ragt über den Rand */
     const raus = () => [...d.querySelectorAll("*")].filter((q) => { const b = q.getBoundingClientRect(); return b.width && b.right > window.innerWidth + 1; }).map((q) => q.tagName + "." + q.className);
@@ -8042,6 +8050,7 @@ test("Arbeitsnachweis: Präsentation füllt aus, speichert aber nichts; am Handy
     return e;
   });
   pruefe(r.std === "32,00", "4 Mann 15:00–23:30, Pause 0,5 ergibt nicht 32,00 h: " + r.std);
+  pruefe(/^an_namen\|[1-9]/.test(r.namenListe), "Monteure: keine Auswahlliste mit Namen am Feld: " + r.namenListe);
   pruefe(r.db === 0 && /Präsentation/.test(r.toast), "Präsentation hat gespeichert bzw. keine Meldung: " + JSON.stringify(r));
   pruefe(r.breiter <= 4, "Handy: Seite " + r.breiter + "px breiter als der Bildschirm");
   pruefe(!r.matRaus.length && !r.rapRaus.length, "Handy: Material/Rapporte ragen über den Rand " + JSON.stringify([r.matRaus.slice(0, 4), r.rapRaus.slice(0, 4)]));
