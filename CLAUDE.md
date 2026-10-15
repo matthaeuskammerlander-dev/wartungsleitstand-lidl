@@ -794,6 +794,8 @@ Kammerlander Umwelt- und Klimatechnik (UKT) – oft kurz, vom Handy, im Feld.
   „Speichern“). Anzeige: `zugangBoxVoll` zeigt System, Hinweis und den Vor-Ort-Block verdeckt (`fernVorOrtHtml`, anzeigen/kopieren); Bestandsplan in der
   Markt-Info (`[data-bestandsplan]`) und oben im Protokoll (`[data-planoben]`, `bestandsplanKnoepfe`) – nur intern. „Serviceebene“ auf dem Zettel =
   Passwort für Wartung (Inhaber). Zugangsdaten nie ins Repository – nur in Supabase.
+  Übersicht `fernzugriffUebersichtKarte` oben im Reiter Einrichtung (Inhaber 15.10.2026: „eine Übersicht mit allen Fernzugriffanlagen“): alle Märkte mit
+  Adresse oder Anlagen mit Fernzugriff durch UKT – Regelung, Anlagen mit/ohne Fernzugriff, vor Ort ✓, Bestandsplan ✓, „bearbeiten“ öffnet den Markt-Editor.
 - **Störungen nie doppelt** (Büro 01.10.2026): eine Lidl-Auftragsnummer gibt es
   nur einmal als Störung (Datenbank-Index `stoerung_auftrag_einmal`,
   tools/stoerung-eindeutig.sql; im Dialog „Vorhandene öffnen“ statt neu – auch beim Ändern der Nummer).

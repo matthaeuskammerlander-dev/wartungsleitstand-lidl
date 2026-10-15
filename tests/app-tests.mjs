@@ -6767,6 +6767,8 @@ test("Einrichtung: Standard-Zugänge speichern und an alle Märkte mit Fernzugri
     await bis(() => document.querySelector("[data-einrichtung-standard]"));
     const sk = document.querySelector("[data-einrichtung-standard]");
     e.reiter = !!document.querySelector('[data-tab="einrichtung"]');
+    const ue = document.querySelector("[data-fern-uebersicht]");
+    e.uebersicht = !!ue && /Märkte mit Fernzugriff · 1/.test(ue.textContent) && ue.querySelectorAll("[data-fern-markt]").length === 1 && /Testfiliale 901/.test(ue.textContent) && /vor Ort: –/.test(ue.textContent);
     const std = { system: "Daikin iTM Test", uktBenutzer: "UKTTest", uktPw: "UktPw1", onlineAdminBenutzer: "admin", onlineAdminPw: "AdminPw1", kundeBez: "Lidl (FM)", kundeBenutzer: "FMTest", kundePw: "KundePw1",
       displayPw: "DisplayPw1", adminPw: "AdmVorOrt1", wartungPw1: "WartungEins", wartungPw2: "WartungZwei", entsperren: "Ecken 1 oben rechts, 2 unten links, 3 oben links, 4 unten rechts", hinweis: "Beim Ausloggen sperren" };
     Object.keys(std).forEach((k) => tippe(sk.querySelector('[data-std="' + k + '"]'), std[k]));
@@ -6813,7 +6815,7 @@ test("Einrichtung: Standard-Zugänge speichern und an alle Märkte mit Fernzugri
     d.remove();
     return e;
   });
-  pruefe(r.reiter && r.pwVerdeckt && r.gespeichert, "Einrichtung-Reiter/Speichern: " + JSON.stringify([r.reiter, r.pwVerdeckt, r.gespeichert]));
+  pruefe(r.reiter && r.pwVerdeckt && r.gespeichert && r.uebersicht, "Einrichtung-Reiter/Übersicht/Speichern: " + JSON.stringify([r.reiter, r.uebersicht, r.pwVerdeckt, r.gespeichert]));
   pruefe(/Übernommen an 1 von 1/.test(r.stand || "") && r.ts2, "In alle Märkte: " + JSON.stringify([r.stand, r.ts2]));
   pruefe(r.ts1.benutzer === "UKTTest" && r.ts1.pw === "UktPw1" && r.ts1.vorOrt && r.ts1.vorOrt.wartungPw2 === "WartungZwei" && r.ts1.system === "Daikin iTM Test" && r.ts1.hinweis === "Beim Ausloggen sperren"
     && JSON.stringify(r.ts1.weitere) === JSON.stringify(["Lidl (FM)/FMTest", "Standard-Admin/admin", "Router/router"]), "TS1 nach Übernahme: " + JSON.stringify(r.ts1));
