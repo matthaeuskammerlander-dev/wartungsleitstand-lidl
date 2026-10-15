@@ -1,7 +1,7 @@
 /* Nachgebaute Supabase-Schnittstelle für die automatischen Tests (tests/app-tests.mjs) – nur Code, Startbestand aus seed.json (erfunden). */
 (function(){
   "use strict";
-  var T=["gelernte_werte","fahrzeuge","fahrzeug_eintraege","fahrzeug_kosten","kontakte","protokoll_vermerke","planung","planung_privat","belege","katalog","stempel","einstellungen","projekte","arbeitszeiten","anlagenfotos","touren","kundenliste","gelesen","push_ereignisse","kennzahlen","chat","abrechnung","push_abos","protokolle","aenderungen","stammdaten","admins","berichte","protokoll_fassungen","rollen","ki_nutzung","posteingang","stammdaten_lesen","aenderungswuensche","vor_ort_fragen","interne_hinweise","werkzeug","werkzeug_verlauf","bedarf","packlisten","auslagen","auslagen_konto","arbeitsnachweise","tag_geprueft","inbetriebnahmen","stempel_zustimmung"];
+  var T=["gelernte_werte","fahrzeuge","fahrzeug_eintraege","fahrzeug_kosten","kontakte","protokoll_vermerke","planung","planung_privat","belege","katalog","stempel","einstellungen","projekte","arbeitszeiten","anlagenfotos","touren","kundenliste","gelesen","push_ereignisse","kennzahlen","chat","abrechnung","push_abos","protokolle","aenderungen","stammdaten","admins","berichte","protokoll_fassungen","rollen","ki_nutzung","posteingang","stammdaten_lesen","aenderungswuensche","vor_ort_fragen","interne_hinweise","fern_pruefung_stand","werkzeug","werkzeug_verlauf","bedarf","packlisten","auslagen","auslagen_konto","arbeitsnachweise","tag_geprueft","inbetriebnahmen","stempel_zustimmung"];
   var DB; try{ DB=JSON.parse(localStorage.getItem("attrappe_db")||"null"); }catch(e){ DB=null; }
   /* leerer Speicher (neuer Port, nach __db.zuruecksetzen()): Startbestand aus seed.json */
   if(!DB){ DB={}; try{ var x=new XMLHttpRequest(); x.open("GET","seed.json?"+Date.now(),false); x.send();
@@ -553,6 +553,19 @@
       if(window.__netzWeg==="antwort") return Promise.resolve(JSON.parse(JSON.stringify(NETZ_FEHLER)));
       /* wie public.bereiche_eigene() (bereiche-eigen.sql): eigene Bereiche, häufigste zuerst */
       /* wie public.team_liste() (chat-direkt.sql): Büro und Techniker */
+      /* wie public.fern_pruefung_jetzt() / fern_pruefung_nachsehen() (fern-pruefung.sql): im Test antwortet window.__fernAntwort je Markt
+         (false = keine Antwort), sonst gilt jede Regelung als erreichbar; der Stand je Markt liegt gleich in fern_pruefung_stand */
+      if(name==="fern_pruefung_jetzt"){ var rlF=(DB.rollen.filter(function(r){ return r.user_id===uid(); })[0]||{}).rolle;
+        if(!sitzung || !(rlF==="admin"||rlF==="inhaber")) return Promise.resolve({data:null, error:{message:"Die Prüfung starten nur Admins und der Inhaber"}});
+        var nF=0, jetztF=new Date().toISOString();
+        DB.stammdaten.filter(function(r){ return r.typ==="standort" && /^https?:\/\//.test((r.felder||{}).fernLink||""); }).forEach(function(r){
+          var okF=!(window.__fernAntwort && window.__fernAntwort[r.ziel]===false), altF=DB.fern_pruefung_stand.filter(function(q){ return q.standort_id===r.ziel; })[0];
+          var neuF={standort_id:r.ziel, zeit:jetztF, erreichbar:okF, regelung:okF, status:okF?200:null,
+            hinweis:okF?"Regelung antwortet":"keine Antwort (Zeitüberschreitung) – Router oder Verbindung offline",
+            zuletzt_ok:okF?jetztF:(altF&&altF.zuletzt_ok)||null, gestoert_seit:okF?null:(altF&&altF.gestoert_seit)||jetztF, anzahl:((altF&&altF.anzahl)||0)+1};
+          if(altF) Object.assign(altF,neuF); else DB.fern_pruefung_stand.push(neuF); nF++; });
+        sichern(); return Promise.resolve({data:nF, error:null}); }
+      if(name==="fern_pruefung_nachsehen") return Promise.resolve({data:0, error:null});
       if(name==="team_liste"){ var rl={}; DB.rollen.forEach(function(r){ rl[r.user_id]=r; });
         var konten=["inhaber@test.at","admin@test.at","tech@test.at"].map(nutzer);
         return Promise.resolve({data:konten.filter(function(u){ var r=rl[u.id]; return !r || ["inhaber","admin","techniker"].indexOf(r.rolle)>=0; })

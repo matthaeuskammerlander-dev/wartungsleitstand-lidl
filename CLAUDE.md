@@ -799,6 +799,14 @@ Kammerlander Umwelt- und Klimatechnik (UKT) – oft kurz, vom Handy, im Feld.
   Schalter „● online / ✗ offline“ je Markt (Inhaber 15.10.2026: „grundsätzlich sollten alle an sein; wenn ich auf offline stelle, müssen wir das beim nächsten Termin
   lösen und wieder online bringen“): Marktfeld `fernOffline` (null = online, sonst {seit, von, notiz}; `fernStatusUmstellen`, Notiz über `textAbfrage`), sichtbar als
   `fernOfflineText` in der Übersicht, der Markt-Info (`[data-fernoffline]`) und oben im Protokoll (`[data-fernoben]`) – nur intern; wieder online = Feld leer.
+  **Automatische Prüfung täglich** (Inhaber 15.10.2026: „täglich laufen lassen, die überprüft, ob die Fernzugriffe funktionieren und ob sie online sind“, tools/fern-pruefung.sql):
+  die Datenbank selbst (pg_cron 04:30 UTC + pg_net) ruft jede `fernLink`-Adresse ohne Anmeldung auf; erreichbar = die Seite der Regelung kommt (Daikin ITM, „ITMFont“),
+  Router offline = Zeitüberschreitung, Plattform erreicht die Regelung nicht = 502 „Connection unsuccessful“. Tabelle `fern_pruefung`, Sicht `fern_pruefung_stand`
+  (letzter Stand, `zuletzt_ok`, `gestoert_seit`), RPC `fern_pruefung_jetzt` (Admins/Inhaber, „🔄 Jetzt prüfen“ in der Übersicht, Ergebnis nach ~30 s – `fernPruefungJetzt`)
+  und `fern_pruefung_nachsehen` (offene Antworten auswerten, vor jedem Lesen). App: `FERN_PRUEFUNG`, `fernPruefungLaden` (beim Start, höchstens alle 30 min), `fernPruefungText`,
+  `fernPruefungGestoert`; Übersicht (Kopfzeile `[data-fern-pruefung]`, je Markt `[data-fernpruefung]`, gestörte zuerst; bei Hand-offline und wieder erreichbar „→ wieder auf online stellen?“),
+  Markt-Info und Protokoll-Kopf (nur wenn nicht ohnehin von Hand offline), Büro-To-do im Kalender (`[data-fern-todo]`). Der Schalter bleibt von Hand – die Prüfung zeigt nur.
+  Attrappe: `window.__fernAntwort` je Markt, `window.__fernPruefungWartezeit`. Ohne das SQL (Sicht fehlt) blendet die App die Prüfung aus (`FERN_PRUEFUNG_AN`).
 - **Störungen nie doppelt** (Büro 01.10.2026): eine Lidl-Auftragsnummer gibt es
   nur einmal als Störung (Datenbank-Index `stoerung_auftrag_einmal`,
   tools/stoerung-eindeutig.sql; im Dialog „Vorhandene öffnen“ statt neu – auch beim Ändern der Nummer).
