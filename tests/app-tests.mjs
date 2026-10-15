@@ -6813,6 +6813,23 @@ test("Einrichtung: Standard-Zugänge speichern und an alle Märkte mit Fernzugri
     const d = x("standortDetail(byId.TS1)"); document.body.appendChild(d);
     e.info = !!d.querySelector("[data-bestandsplan] [data-bestandsplan]") && /Bestandsplan Erdgeschoss/.test(d.textContent);
     d.remove();
+    /* Schalter online/offline in der Übersicht (Inhaber 15.10.2026): offline mit Notiz → am Markt sichtbar; wieder online → weg */
+    x("S.adm.tab='einrichtung'; render()"); await bis(() => document.querySelector("[data-fern-uebersicht] [data-fernstatus]"));
+    const knopf = () => document.querySelector("[data-fern-uebersicht] [data-fernstatus]");
+    e.online = knopf().textContent;
+    knopf().click();   /* Dialog „Fernzugriff offline“: Notiz eintippen, „Offline stellen“ */
+    await bis(() => [...document.querySelectorAll(".assistent")].pop() && /Offline stellen/.test([...document.querySelectorAll(".assistent")].pop().textContent));
+    const dlg = [...document.querySelectorAll(".assistent")].pop(); tippe(dlg.querySelector("textarea"), "Router tot");
+    [...dlg.querySelectorAll("button")].find((b) => /Offline stellen/.test(b.textContent)).click();
+    await bis(() => (db.stammdaten.find((z) => z.id === "standort:TS1") || { felder: {} }).felder.fernOffline, 6000);
+    const fo = db.stammdaten.find((z) => z.id === "standort:TS1").felder.fernOffline;
+    e.offline = fo && !!fo.seit && fo.von;
+    await bis(() => /offline/.test((knopf() || {}).textContent || ""), 3000);
+    e.knopfOffline = (knopf() || {}).textContent;
+    const d2 = x("standortDetail(byId.TS1)"); e.infoOffline = /Fernzugriff OFFLINE seit/.test((d2.querySelector("[data-fernoffline]") || {}).textContent || "");
+    knopf().click();
+    await bis(() => !(db.stammdaten.find((z) => z.id === "standort:TS1") || { felder: {} }).felder.fernOffline, 6000);
+    e.wiederOnline = !db.stammdaten.find((z) => z.id === "standort:TS1").felder.fernOffline;
     return e;
   });
   pruefe(r.reiter && r.pwVerdeckt && r.gespeichert && r.uebersicht, "Einrichtung-Reiter/Übersicht/Speichern: " + JSON.stringify([r.reiter, r.uebersicht, r.pwVerdeckt, r.gespeichert]));
@@ -6822,6 +6839,7 @@ test("Einrichtung: Standard-Zugänge speichern und an alle Märkte mit Fernzugri
   pruefe(JSON.stringify(r.einrichtung.abschnitte) === '["Einstellungen Außengerät"]' && r.einrichtung.dateien.length === 1 && /^einrichtung\//.test(r.einrichtung.dateien[0]), "Anleitung/Dokument: " + JSON.stringify(r.einrichtung));
   pruefe(r.editor.wartung1 === "WartungEins" && r.editor.typ === "password" && r.editor.system === "Daikin iTM Test" && r.editor.zeilen === 3 && /Ecken/.test(r.editor.entsperren) && r.alleOffen, "Markt-Editor: " + JSON.stringify([r.editor, r.alleOffen]));
   pruefe(r.plan.length === 1 && /^Bestandsplan Erdgeschoss\|markt\/TS1\//.test(r.plan[0]) && r.nachSpeichern.vorOrt === "WartungEins" && r.nachSpeichern.weitere === 3 && r.info, "Bestandsplan: " + JSON.stringify([r.plan, r.nachSpeichern, r.info]));
+  pruefe(/online/.test(r.online) && r.offline && /offline/.test(r.knopfOffline) && r.infoOffline && r.wiederOnline, "Fernzugriff online/offline: " + JSON.stringify([r.online, r.offline, r.knopfOffline, r.infoOffline, r.wiederOnline]));
   pruefe(!a.fehler.length, "Laufzeitfehler: " + a.fehler.join("; "));
   await a.zu();
   /* Techniker: Zugang zur Regelung zeigt den Vor-Ort-Block verdeckt, Bestandsplan oben im Protokoll; Kunde: nichts davon */

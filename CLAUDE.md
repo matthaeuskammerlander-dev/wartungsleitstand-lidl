@@ -796,6 +796,9 @@ Kammerlander Umwelt- und Klimatechnik (UKT) – oft kurz, vom Handy, im Feld.
   Passwort für Wartung (Inhaber). Zugangsdaten nie ins Repository – nur in Supabase.
   Übersicht `fernzugriffUebersichtKarte` oben im Reiter Einrichtung (Inhaber 15.10.2026: „eine Übersicht mit allen Fernzugriffanlagen“): alle Märkte mit
   Adresse oder Anlagen mit Fernzugriff durch UKT – Regelung, Anlagen mit/ohne Fernzugriff, vor Ort ✓, Bestandsplan ✓, „bearbeiten“ öffnet den Markt-Editor.
+  Schalter „● online / ✗ offline“ je Markt (Inhaber 15.10.2026: „grundsätzlich sollten alle an sein; wenn ich auf offline stelle, müssen wir das beim nächsten Termin
+  lösen und wieder online bringen“): Marktfeld `fernOffline` (null = online, sonst {seit, von, notiz}; `fernStatusUmstellen`, Notiz über `textAbfrage`), sichtbar als
+  `fernOfflineText` in der Übersicht, der Markt-Info (`[data-fernoffline]`) und oben im Protokoll (`[data-fernoben]`) – nur intern; wieder online = Feld leer.
 - **Störungen nie doppelt** (Büro 01.10.2026): eine Lidl-Auftragsnummer gibt es
   nur einmal als Störung (Datenbank-Index `stoerung_auftrag_einmal`,
   tools/stoerung-eindeutig.sql; im Dialog „Vorhandene öffnen“ statt neu – auch beim Ändern der Nummer).

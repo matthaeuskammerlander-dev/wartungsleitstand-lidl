@@ -837,6 +837,9 @@ var STAMM_FELDER_ST  = ["filiale","name","adresse","plz","ort","region","lat","l
                         "fernSystem","fernHinweis","fernVorOrt",
                         /* Bestandsplan je Markt (Inhaber 15.10.2026: „Techniker sehen schon im Vorhinein, welche Anlagen wo stehen“) – Dateien im Speicher „dokumente“ */
                         "bestandsplaene",
+                        /* Fernzugriff offline gestellt (Inhaber 15.10.2026: „grundsätzlich sollten alle an sein; wenn ich auf offline stelle, müssen wir das beim
+                           nächsten Termin lösen und wieder online bringen“) – null = online, sonst {seit, von, notiz}; sichtbar für Techniker am Markt und im Protokoll */
+                        "fernOffline",
                         /* Prüfhinweis fürs Büro (Inhaber 12.10.2026: „das muss in der Verwaltung geprüft werden“) – steht in „Alte Liste prüfen“, bis er geleert wird */
                         "pruefHinweis"];
 var GEHEIM_MARKT=["fernBenutzer","fernPasswort","fernWeitere","fernVorOrt"];
@@ -6538,6 +6541,7 @@ function standortDetail(s){
       (leistungsstandortVon(s)?"<dt>Leistungsstandort</dt><dd class='mono' title='Lidl-Code für Rechnungen (neues FM-System)'>"+esc(leistungsstandortVon(s))+"</dd>":"")+
       /* Fernzugriff auf die Regelung: die Adresse sehen alle (auch der Kunde), Benutzer/Passwort nur UKT (zugangBox unten) */
       (s.fernLink?"<dt>Fernzugriff</dt><dd><a class='mono' href='"+esc(zugangsAdresse(s.fernLink))+"' target='_blank' rel='noopener' style='word-break:break-all' data-fernlink>"+esc(s.fernLink)+"</a></dd>":"")+
+      (!nurLesen() && s.fernOffline ? "<dt>Fernzugriff</dt><dd style='color:var(--crit)' data-fernoffline>"+esc(fernOfflineText(s))+"</dd>" : "")+
       /* Bestandsplan (Inhaber 15.10.2026): wo welche Anlage steht – nur intern */
       (!nurLesen() && (s.bestandsplaene||[]).length ? "<dt>Bestandsplan</dt><dd data-bestandsplan></dd>" : "")+
       /* Projekte an diesem Standort (neue Anlagen, Umbauten) */
@@ -8246,12 +8250,33 @@ function fernzugriffUebersichtKarte(){
       (s.fernSystem?' <span class="muted">· '+esc(s.fernSystem)+"</span>":"")+
       '<br><span class="muted" style="font-size:12px">'+(s.fernLink?'<a class="mono" href="'+esc(zugangsAdresse(s.fernLink))+'" target="_blank" rel="noopener">Adresse öffnen</a> · ':'<span style="color:var(--crit)">keine Adresse am Markt</span> · ')+
       mitFern.length+" Anlage"+(mitFern.length===1?"":"n")+" mit Fernzugriff"+(mitFern.length?" ("+esc(mitFern.map(function(d){ return d.anlagentyp||"Anlage"; }).join(", "))+")":"")+
-      (ohne.length?" · "+ohne.length+" ohne":"")+" · vor Ort: "+(s.fernVorOrt?"✓":"–")+" · Bestandsplan: "+((s.bestandsplaene||[]).length?"✓":"–")+"</span></span>"+
+      (ohne.length?" · "+ohne.length+" ohne":"")+" · vor Ort: "+(s.fernVorOrt?"✓":"–")+" · Bestandsplan: "+((s.bestandsplaene||[]).length?"✓":"–")+"</span>"+
+      (s.fernOffline?'<br><span style="font-size:12px;color:var(--crit)">'+esc(fernOfflineText(s))+"</span>":"")+"</span>"+
+      /* Schalter online/offline (Inhaber 15.10.2026): offline = beim nächsten Termin lösen und wieder online bringen */
+      '<button class="btn sm" type="button" data-fernstatus style="flex:none'+(s.fernOffline?";background:var(--crit);border-color:var(--crit)":"")+'">'+(s.fernOffline?"✗ offline":"● online")+"</button>"+
       '<button class="btn ghost sm" type="button" data-bearbeiten>bearbeiten</button></div>');
+    z.querySelector("[data-fernstatus]").onclick=function(){ fernStatusUmstellen(s); };
     z.querySelector("[data-bearbeiten]").onclick=function(){ if(!verwaltungVerwerfenOk()) return; S.adm.tab="maerkte"; S.adm.sel=s.id; render(); window.scrollTo({top:0}); };
     liste.appendChild(z);
   });
   return k;
+}
+/* Fernzugriff eines Markts auf offline/online stellen (Inhaber 15.10.2026): offline mit Notiz, seit wann und von wem – am Markt und
+   oben im Protokoll sichtbar, bis er wieder online gestellt ist */
+function fernOfflineText(s){ var o=s && s.fernOffline; if(!o) return ""; return "Fernzugriff OFFLINE seit "+dfmt(String(o.seit||"").slice(0,10))+(o.von?" ("+o.von+")":"")+(o.notiz?": "+o.notiz:"")+" – beim nächsten Termin lösen und wieder online bringen"; }
+function fernStatusUmstellen(s){
+  if(nurLesen()){ toast("Mit diesem Konto lässt sich nur ansehen."); return; }
+  if(s.fernOffline){
+    if(!window.confirm("Fernzugriff "+stName(s)+" wieder auf ONLINE stellen?")) return;
+    marktFelderSetzen(s, {fernOffline:null}, "Fernzugriff wieder online (Verwaltung › Fernzugriff)").then(function(ok){ if(ok){ wendeStammdatenAn(); toast("Fernzugriff "+stName(s)+": online."); render(); } else toast("Nicht gespeichert."); });
+    return;
+  }
+  textAbfrage("Fernzugriff "+stName(s)+" auf OFFLINE stellen – was ist los? (freiwillig)", {titel:"Fernzugriff offline", feld:"Notiz", ok:"Offline stellen"}).then(function(n){
+    if(n===null) return;
+    marktFelderSetzen(s, {fernOffline:{seit:new Date().toISOString(), von:meinName(), notiz:String(n||"").trim()}}, "Fernzugriff offline gestellt (Verwaltung › Fernzugriff)").then(function(ok){
+      if(ok){ wendeStammdatenAn(); toast("Fernzugriff "+stName(s)+": offline – beim nächsten Termin lösen."); render(); } else toast("Nicht gespeichert.");
+    });
+  });
 }
 function einrichtungStandardKarte(E){
   var st=E.standard||{};
@@ -18662,6 +18687,7 @@ function viewProtokoll(){
         '<div class="note warnbox" data-vororthinweis hidden style="font-size:13.5px"><a href="#" style="color:inherit;font-weight:600"></a> – antippen zum Beantworten</div>'+
         '<div data-abholoben></div>'+
         '<div data-planoben></div>'+
+        '<div data-fernoben></div>'+
         '<div data-ihoben class="stack" style="gap:6px"></div>'+
         '<div class="modus" role="group" aria-label="Art des Protokolls">'+
           '<button type="button" data-art="wartung" aria-pressed="'+(!stoer)+'">Wartung</button>'+
@@ -18686,6 +18712,10 @@ function viewProtokoll(){
     /* 🧰 am gewählten Markt abzuholen / mitzunehmen – gleich oben, wenn man dort ist */
     if(abholOben) abholHinweisFuellen(abholOben, P.bearb ? "" : P.selSt.value);
     /* 🗺 Bestandsplan des gewählten Markts – gleich oben (Inhaber 15.10.2026) */
+    /* ✗ Fernzugriff offline gestellt – beim nächsten Termin lösen (Inhaber 15.10.2026) */
+    var fernOben=P.head.querySelector("[data-fernoben]");
+    if(fernOben){ var sidF=P.bearb ? "" : P.selSt.value, sF=sidF && byId[sidF]; fernOben.innerHTML="";
+      if(sF && sF.fernOffline && !nurLesen()) fernOben.appendChild(el('<div class="note warnbox" data-fernoffline style="font-size:13px">✗ '+esc(fernOfflineText(sF))+"</div>")); }
     var planOben=P.head.querySelector("[data-planoben]");
     if(planOben){ var sidP=P.bearb ? "" : P.selSt.value; if(planOben.dataset.sid!==sidP){ planOben.dataset.sid=sidP; planOben.innerHTML=""; var sP=sidP && byId[sidP];
       if(sP && (sP.bestandsplaene||[]).length && !nurLesen()) planOben.appendChild(bestandsplanKnoepfe(sP)); } }
@@ -21158,7 +21188,7 @@ var LABEL_ST={filiale:"Filialnummer", name:"Bezeichnung", adresse:"Adresse", plz
   entfernt:"aus der Liste entfernt", entferntGrund:"Grund (entfernt)",
   pausiert:"zur Zeit nicht betreut", pausiertGrund:"Grund (nicht betreut)", kundeId:"Kunde",
   fernLink:"Fernzugriff – Adresse", fernBenutzer:"Fernzugriff – Benutzer", fernPasswort:"Fernzugriff – Passwort", fernWeitere:"Fernzugriff – weitere Benutzer",
-  fernSystem:"Fernzugriff – Regelung/System", fernHinweis:"Fernzugriff – Hinweis", fernVorOrt:"Zugang vor Ort (Display)", bestandsplaene:"Bestandsplan",
+  fernSystem:"Fernzugriff – Regelung/System", fernHinweis:"Fernzugriff – Hinweis", fernVorOrt:"Zugang vor Ort (Display)", bestandsplaene:"Bestandsplan", fernOffline:"Fernzugriff offline",
   pruefHinweis:"Prüfhinweis (Verwaltung)"};
 var LABEL_POS={anlagentyp:"Anlagentyp", intervallCode:"Kürzel", inbetriebnahme:"Inbetriebnahme",
   monatGrund:"Grund für den abweichenden Soll-Monat",
