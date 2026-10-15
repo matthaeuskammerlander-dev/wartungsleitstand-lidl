@@ -1,7 +1,7 @@
 /* Nachgebaute Supabase-Schnittstelle für die automatischen Tests (tests/app-tests.mjs) – nur Code, Startbestand aus seed.json (erfunden). */
 (function(){
   "use strict";
-  var T=["gelernte_werte","fahrzeuge","fahrzeug_eintraege","fahrzeug_kosten","kontakte","protokoll_vermerke","planung","planung_privat","belege","katalog","stempel","einstellungen","projekte","arbeitszeiten","anlagenfotos","touren","kundenliste","gelesen","push_ereignisse","kennzahlen","chat","abrechnung","push_abos","protokolle","aenderungen","stammdaten","admins","berichte","protokoll_fassungen","rollen","ki_nutzung","posteingang","stammdaten_lesen","aenderungswuensche","vor_ort_fragen","interne_hinweise","fern_pruefung_stand","werkzeug","werkzeug_verlauf","bedarf","packlisten","auslagen","auslagen_konto","arbeitsnachweise","tag_geprueft","inbetriebnahmen","stempel_zustimmung"];
+  var T=["gelernte_werte","fahrzeuge","fahrzeug_eintraege","fahrzeug_kosten","kontakte","protokoll_vermerke","planung","planung_privat","belege","katalog","stempel","einstellungen","projekte","arbeitszeiten","anlagenfotos","touren","kundenliste","gelesen","push_ereignisse","kennzahlen","chat","abrechnung","push_abos","protokolle","aenderungen","stammdaten","admins","berichte","protokoll_fassungen","rollen","ki_nutzung","posteingang","stammdaten_lesen","aenderungswuensche","vor_ort_fragen","interne_hinweise","fern_pruefung_stand","fernzugriff_zugang","werkzeug","werkzeug_verlauf","bedarf","packlisten","auslagen","auslagen_konto","arbeitsnachweise","tag_geprueft","inbetriebnahmen","stempel_zustimmung"];
   var DB; try{ DB=JSON.parse(localStorage.getItem("attrappe_db")||"null"); }catch(e){ DB=null; }
   /* leerer Speicher (neuer Port, nach __db.zuruecksetzen()): Startbestand aus seed.json */
   if(!DB){ DB={}; try{ var x=new XMLHttpRequest(); x.open("GET","seed.json?"+Date.now(),false); x.send();
@@ -37,16 +37,16 @@
   function darf(tab,art,zeile,alt){
     if(!sitzung) return "nicht angemeldet";
     var rolle=(DB.rollen.filter(function(r){ return r.user_id===uid(); })[0]||{}).rolle||"techniker";
-    if(art!=="select" && (rolle==="kunde"||rolle==="praesentation") && !(tab==="aenderungswuensche" && art==="insert" && rolle==="praesentation")) return "nur lesen ("+rolle+")";
-    if(art==="select" && (rolle==="kunde"||rolle==="praesentation") && (tab==="stammdaten"||tab==="aenderungen")) return "nur lesen: "+tab;
+    if(art!=="select" && (rolle==="kunde"||rolle==="praesentation"||rolle==="fernzugriff") && !(tab==="aenderungswuensche" && art==="insert" && rolle==="praesentation")) return "nur lesen ("+rolle+")";
+    if(art==="select" && (rolle==="kunde"||rolle==="praesentation"||rolle==="fernzugriff") && (tab==="stammdaten"||tab==="aenderungen")) return "nur lesen: "+tab;
     /* wie werkzeug.sql: lesen nur, wer mitarbeitet (darf_schreiben) – Kunde und Präsentation sehen nichts davon */
-    if(art==="select" && (rolle==="kunde"||rolle==="praesentation") && ["werkzeug","werkzeug_verlauf","bedarf","packlisten"].indexOf(tab)>=0) return "nur lesen: "+tab;
+    if(art==="select" && (rolle==="kunde"||rolle==="praesentation"||rolle==="fernzugriff") && ["werkzeug","werkzeug_verlauf","bedarf","packlisten"].indexOf(tab)>=0) return "nur lesen: "+tab;
     /* wie posteingang-lesen.sql: den Posteingang (weitergeleitete Mails auch anderer Kunden) liest nur, wer mitarbeitet */
-    if(art==="select" && (rolle==="kunde"||rolle==="praesentation") && tab==="posteingang") return "nur lesen: posteingang gesperrt";
+    if(art==="select" && (rolle==="kunde"||rolle==="praesentation"||rolle==="fernzugriff") && tab==="posteingang") return "nur lesen: posteingang gesperrt";
     /* wie anlagenfotos.sql: lesen und speichern nur, wer mitarbeitet (darf_schreiben), von = auth.uid(), Art und Beschriftung geprüft,
        Pfad eindeutig; löschen nur Admins (ist_admin) */
     if(tab==="anlagenfotos"){
-      if(art==="select" && (rolle==="kunde"||rolle==="praesentation")) return "nur lesen: anlagenfotos gesperrt";
+      if(art==="select" && (rolle==="kunde"||rolle==="praesentation"||rolle==="fernzugriff")) return "nur lesen: anlagenfotos gesperrt";
       if(art==="insert"){
         if(zeile.von!=null && zeile.von!==uid()) return "anlagenfotos: von ist nicht das eigene Konto";
         if(["pruefbuch","typenschild","anlage"].indexOf(zeile.art)<0) return 'new row for relation "anlagenfotos" violates check constraint "anlagenfotos_art_check"';
@@ -55,7 +55,7 @@
         if(DB.anlagenfotos.some(function(f){ return f.pfad===zeile.pfad; })) return 'duplicate key value violates unique constraint "anlagenfotos_pfad_key"';
       }
       /* wie anlagenfotos-korrigieren.sql: ändern (nur Anlage, Markt, Art, Beschriftung) und löschen – Büro alle, sonst nur die eigenen */
-      if((art==="update"||art==="delete") && (rolle==="kunde"||rolle==="praesentation")) return "anlagenfotos: nicht erlaubt";
+      if((art==="update"||art==="delete") && (rolle==="kunde"||rolle==="praesentation"||rolle==="fernzugriff")) return "anlagenfotos: nicht erlaubt";
       if((art==="update"||art==="delete") && !admin() && rolle!=="inhaber" && !(alt && alt.von===uid())) return "anlagenfotos: nur eigene";
       if(art==="update" && zeile && Object.keys(zeile).some(function(k){ return ["anlage_id","standort_id","art","beschriftung"].indexOf(k)<0; })) return "anlagenfotos: Spalte nicht änderbar";
       if(art==="update" && zeile && "art" in zeile && ["pruefbuch","typenschild","anlage"].indexOf(zeile.art)<0) return 'new row for relation "anlagenfotos" violates check constraint "anlagenfotos_art_check"';
@@ -98,7 +98,7 @@
     if(tab==="einstellungen" && art!=="select" && rolle!=="inhaber" && !startpunktOk && !einrichtungOk) return "einstellungen: nur Inhaber";
     /* wie stempeluhr-5.sql: Zustimmung zur Position – lesen die eigene (Inhaber alle), eintragen nur die eigene (darf_schreiben), löschen eigene bzw. Inhaber */
     if(tab==="stempel_zustimmung"){
-      if(rolle==="kunde"||rolle==="praesentation") return "stempel_zustimmung: gesperrt";
+      if(rolle==="kunde"||rolle==="praesentation"||rolle==="fernzugriff") return "stempel_zustimmung: gesperrt";
       if((art==="insert"||art==="update") && zeile && zeile.user_id!==uid()) return "stempel_zustimmung: nur die eigene";
       if(art==="delete" && rolle!=="inhaber" && alt && alt.user_id!==uid()) return "stempel_zustimmung: loeschen nur eigene oder Inhaber";
     }
@@ -162,14 +162,14 @@
     /* wie die Regeln der Arbeitsnachweise (Inhaber 06.10.2026): lesen und anlegen alle, die mitarbeiten; ändern wer ihn
        angelegt hat und der Inhaber; löschen nur der Inhaber (Prüfregeln des Triggers: anPruefen) */
     if(tab==="arbeitsnachweise"||tab==="inbetriebnahmen"){   /* Inbetriebnahmeprotokolle (Inhaber 12.10.2026): dieselben Regeln */
-      if(rolle==="kunde"||rolle==="praesentation") return art==="select" ? "nur lesen: "+tab+" gesperrt" : "nur lesen ("+rolle+")";
+      if(rolle==="kunde"||rolle==="praesentation"||rolle==="fernzugriff") return art==="select" ? "nur lesen: "+tab+" gesperrt" : "nur lesen ("+rolle+")";
       if(art==="update" && alt && alt.erstellt_von!==uid() && rolle!=="inhaber") return tab+": aendern nur wer ihn angelegt hat oder der Inhaber";
       if(art==="delete" && rolle!=="inhaber") return tab+": loeschen nur Inhaber";
     }
     if(tab==="aenderungen" && art!=="insert" && art!=="select") return "aenderungen: unveraenderlich";
     /* wie interne-hinweise.sql: nur wer mitarbeitet (nie Kunde/Präsentation); Text ändert nur, wer angelegt hat, oder das Büro; löschen nur Büro */
     if(tab==="interne_hinweise"){
-      if(rolle==="kunde"||rolle==="praesentation") return art==="select" ? "nur lesen: interne_hinweise gesperrt" : "nur lesen ("+rolle+")";
+      if(rolle==="kunde"||rolle==="praesentation"||rolle==="fernzugriff") return art==="select" ? "nur lesen: interne_hinweise gesperrt" : "nur lesen ("+rolle+")";
       var bueroI=admin() || rolle==="inhaber";
       if(art==="delete" && !bueroI) return "interne_hinweise: loeschen nur Buero";
       if(art==="update" && !bueroI && alt && alt.angelegt_uid!==uid() && Object.keys(zeile||{}).some(function(k){ return ["text","art","standort_id","position_id"].indexOf(k)>=0; })) return "interne_hinweise: Text aendert nur, wer angelegt hat";
@@ -365,6 +365,7 @@
       erg=tab.filter(function(r){ return passt(r,self.f); }).filter(sichtbar(this.t));
       if(this.t==="admins") erg=erg.filter(function(r){ return r.user_id===uid(); });
       if(this.t==="protokolle") erg=erg.filter(function(r){ return kundeSieht(r.standort_id); });   /* wie „angemeldete lesen alle protokolle“ */
+      if(["protokolle","protokoll_fassungen","berichte"].indexOf(this.t)>=0 && rolleVon()==="fernzugriff") erg=[];   /* wie „fernzugriff sieht nichts“ (fernzugriff-konto.sql) */
       if(this.t==="planung_privat") erg=erg.filter(function(r){ return r.user_id===uid(); });   /* wie die Regel: nur die eigenen */
       /* wie die Sperrregel vom 05.10.2026 (rechte-2026-10-05.sql): Inhaber alles, Admins nur Lidl-Aufträge und Rapporte, sonst nichts */
       if(this.t==="posteingang") erg=erg.filter(postSieht);
@@ -545,7 +546,14 @@
         return Promise.resolve({data:{user:sitzung.user},error:null}); } },
     from:function(t){
       if(t==="stammdaten_leicht") DB.stammdaten_leicht=DB.stammdaten.map(leicht);
-      if(t==="stammdaten_lesen") DB.stammdaten_lesen=DB.stammdaten.map(function(r){ var f=Object.assign({},r.felder); delete f.zugangLink; delete f.zugangBenutzer; delete f.zugangPasswort; delete f.zugangWeitere; delete f.fernBenutzer; delete f.fernPasswort; delete f.fernWeitere; delete f.fernVorOrt; return Object.assign({},r,{felder:f}); });
+      /* wie die Sicht fernzugriff_zugang (fernzugriff-konto.sql): nur Rolle fernzugriff, Admins, Inhaber – je Markt mit Adresse der Kunden-Zugang und online ja/nein */
+      if(t==="fernzugriff_zugang"){ var rlZ=rolleVon(), bezZ=((((DB.einstellungen.filter(function(e){ return e.schluessel==="einrichtung"; })[0]||{}).wert||{}).standard||{}).kundeBez)||"Lidl (FM-Admin)";
+        DB.fernzugriff_zugang=["fernzugriff","admin","inhaber"].indexOf(rlZ)<0 ? [] : DB.stammdaten.filter(function(r){ return r.typ==="standort" && (r.felder||{}).fernLink && String((r.felder||{}).aktiv)!=="false"; })
+          .map(function(r){ var k=((r.felder||{}).fernWeitere||[]).filter(function(w){ return w && w.bez===bezZ; })[0]||{}; return {standort_id:r.ziel, benutzer:k.benutzer||null, passwort:k.passwort||null, online:!(r.felder||{}).fernOffline}; }); }
+      /* Rolle fernzugriff: nur Märkte mit Fernzugriff-Adresse, Felder auf das Nötigste gekürzt (kein Zugang, kein Grund fürs Offline), dazu der Logo-Merker */
+      if(t==="stammdaten_lesen" && rolleVon()==="fernzugriff") DB.stammdaten_lesen=DB.stammdaten.filter(function(r){ return (r.typ==="standort" && (r.felder||{}).fernLink) || (r.typ==="merker" && r.ziel==="kundenlogo"); })
+        .map(function(r){ if(r.typ==="merker") return r; var f={}; ["name","adresse","plz","ort","filiale","lat","lon","aktiv","kundeId","fernLink"].forEach(function(k){ if(r.felder[k]!=null) f[k]=r.felder[k]; }); if(r.felder.fernOffline) f.fernOffline={seit:""}; return Object.assign({},r,{felder:f}); });
+      else if(t==="stammdaten_lesen") DB.stammdaten_lesen=DB.stammdaten.map(function(r){ var f=Object.assign({},r.felder); delete f.zugangLink; delete f.zugangBenutzer; delete f.zugangPasswort; delete f.zugangWeitere; delete f.fernBenutzer; delete f.fernPasswort; delete f.fernWeitere; delete f.fernVorOrt; return Object.assign({},r,{felder:f}); });
       return new Q(t); },
     functions:{invoke:function(name,o){ return Promise.resolve(window.__kiAntwort ? window.__kiAntwort(name,o.body) : {data:null,error:{message:"keine KI im Test"}}); }},
     storage:{from:function(n){ return new E(n); }},

@@ -89,7 +89,7 @@ const RENDER_ZAEHLER = `(function(){ if(window.__rz) return 1; window.__rz={n:0}
 /* ================================================================ Tests ================================================================ */
 
 const KONTEN = {
-  inhaber: "inhaber@test.at", admin: "admin@test.at", techniker: "tech@test.at", kunde: "kunde@test.at", praesentation: "praes@test.at",
+  inhaber: "inhaber@test.at", admin: "admin@test.at", techniker: "tech@test.at", kunde: "kunde@test.at", praesentation: "praes@test.at", fernzugriff: "fern@test.at",
 };
 
 test("Start: App startet am PC und am Handy ohne Laufzeitfehler", async () => {
@@ -6232,6 +6232,47 @@ test("Inbetriebnahmeprotokoll: aus der Anlage vorbelegt, Füllmenge und CO₂e g
 
 /* Inhaber 12.10.2026 (Präsentation bei Lidl im Kundenkonto): nichts „überfällig“ – „in Planung“; Fernzugriff gehört zum Markt (Link auch für den Kunden,
    Zugangsdaten nie), gilt für alle Anlagen dort; je Anlage weiter Regelung und Fernzugriff ja/nein */
+test("Fernzugriff-Konto (Inhaber 15.10.2026): nur Märkte mit Fernzugriff als Karte und Liste, online oder „in Wartung“, je Markt nur Link und Kunden-Zugang; Protokolle und andere Zugangsdaten nie", async () => {
+  const a = await oeffnen(KONTEN.fernzugriff);
+  const r = await a.seite.evaluate(async () => {
+    const x = window.__t.x, db = window.__db.tabellen, w = (ms) => new Promise((f) => setTimeout(f, ms)), jetzt = new Date().toISOString(), e = {};
+    const bis = async (bed, ms) => { const t = Date.now() + (ms || 5000); for (;;) { let ok = false; try { ok = bed(); } catch (err) {} if (ok || Date.now() > t) return ok; await w(50); } };
+    db.einstellungen.push({ schluessel: "einrichtung", wert: { standard: { kundeBez: "Lidl (FM-Admin)" }, abschnitte: [], dateien: [] }, geaendert: jetzt, von: "Test" });
+    db.stammdaten.push({ id: "standort:TS1", typ: "standort", ziel: "TS1", neu: false, geaendert: jetzt, von: "Test", grund: "Fern",
+      felder: { fernLink: "https://regelung.test/ts1", fernBenutzer: "service", fernPasswort: "Geheim123", fernWeitere: [{ bez: "Lidl (FM-Admin)", benutzer: "FMTest", passwort: "LidlPw1" }, { bez: "Router", benutzer: "admin", passwort: "RouterPw" }],
+        fernOffline: { seit: jetzt, von: "Automatische Prüfung", notiz: "Router tot" }, fernHinweis: "Beim Ausloggen sperren" } });
+    db.stammdaten.push({ id: "standort:TS2", typ: "standort", ziel: "TS2", neu: false, geaendert: jetzt, von: "Test", grund: "Fern",
+      felder: { fernLink: "https://regelung.test/ts2", fernWeitere: [{ bez: "Lidl (FM-Admin)", benutzer: "FMTest", passwort: "LidlPw2" }] } });
+    db.stammdaten.push({ id: "merker:kundenlogo", typ: "merker", ziel: "kundenlogo", felder: { datenUrl: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==" }, neu: false, geaendert: jetzt, von: "Test", grund: "Logo" });
+    db.protokolle.push({ id: "pf1", client_id: "pf1", standort_id: "TS1", datum: jetzt.slice(0, 10), techniker: "Darko", wartungsart: "Wartung", daten: {} });
+    await x("FERN_KONTO=null; ladeStammdaten().then(storeNachRender)"); await w(300); x("render()");
+    await bis(() => document.querySelector("[data-fernkonto] [data-fernkonto-markt]"), 6000); await w(400);
+    e.rolle = x("Rolle.name"); e.nurLesen = x("nurLesen()"); e.view = x("S.view");
+    e.reiter = [...document.querySelectorAll("#tabs button")].filter((b) => !b.hidden).map((b) => b.textContent);
+    const zeilen = [...document.querySelectorAll("[data-fernkonto-markt]")];
+    e.maerkte = zeilen.map((z) => z.querySelector("strong").textContent + "|" + z.querySelector("[data-status]").textContent);
+    e.geladen = x("Object.keys(stammUeber).filter(function(k){ return /^(standort|position|stoerung):/.test(k); }).sort().join(',')");
+    e.keinGeheim = !/Geheim123|RouterPw|Router tot|service|Beim Ausloggen/.test(JSON.stringify(x("stammUeber")));
+    e.kacheln = document.querySelectorAll("[data-fernkarte] .leaflet-marker-icon.lidlkachel").length;
+    zeilen[0].click(); await w(200);
+    const d = [...document.querySelectorAll(".assistent")].pop();
+    e.detail = { titel: d.querySelector(".as-titel").textContent, link: (d.querySelector("[data-fernlink]") || {}).href, benutzer: (d.querySelector("[data-benutzer]") || {}).textContent,
+      pwVerdeckt: (d.querySelector("[data-passwort]") || {}).textContent, status: (d.querySelector("[data-status]") || {}).textContent, nurDas: !/Geheim123|RouterPw|Router tot|service|Anlage|Protokoll/.test(d.innerHTML) };
+    d.querySelector("[data-zeigen]").click(); e.detail.pwOffen = d.querySelector("[data-passwort]").textContent;
+    x("ansichtenSchliessen(); 1");
+    const p = await x("Store.sb.from('protokolle').select('*')"); e.protokolle = ((p && p.data) || []).length;
+    const sd = await x("Store.sb.from('stammdaten').select('id')"); e.stammdatenDirekt = !!(sd && sd.error) || !((sd && sd.data) || []).length;
+    return e;
+  });
+  pruefe(r.rolle === "fernzugriff" && r.nurLesen && r.view === "fernkonto" && JSON.stringify(r.reiter) === '["Fernzugriff"]', "Rolle/Reiter: " + JSON.stringify([r.rolle, r.nurLesen, r.view, r.reiter]));
+  pruefe(JSON.stringify(r.maerkte) === JSON.stringify(["Testfiliale 901|in Wartung", "Testfiliale 902|online"]) && r.geladen === "standort:TS1,standort:TS2" && r.keinGeheim && r.kacheln === 2,
+    "Liste/Karte: " + JSON.stringify([r.maerkte, r.geladen, r.keinGeheim, r.kacheln]));
+  pruefe(r.detail.titel === "Testfiliale 901" && r.detail.link === "https://regelung.test/ts1" && r.detail.benutzer === "FMTest" && r.detail.pwVerdeckt === "••••••••" && r.detail.pwOffen === "LidlPw1" && r.detail.status === "in Wartung" && r.detail.nurDas,
+    "Markt-Fenster: " + JSON.stringify(r.detail));
+  pruefe(r.protokolle === 0 && r.stammdatenDirekt, "Datenbank gesperrt: " + JSON.stringify([r.protokolle, r.stammdatenDirekt]));
+  await a.zu();
+});
+
 test("Kundenkonto: keine überfälligen Termine („in Planung“), Fernzugriff-Link am Markt sichtbar, Zugangsdaten nie; intern gilt der Markt-Zugang für die Anlagen", async () => {
   const vorbereiten = async (seite) => seite.evaluate(async () => {
     const x = window.__t.x, db = window.__db.tabellen, w = (ms) => new Promise((f) => setTimeout(f, ms)), jetzt = new Date().toISOString();

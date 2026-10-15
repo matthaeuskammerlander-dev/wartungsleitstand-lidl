@@ -825,7 +825,12 @@ Kammerlander Umwelt- und Klimatechnik (UKT) – oft kurz, vom Handy, im Feld.
 
 ## Rollen
 
-inhaber, admin, techniker, kunde, praesentation. Testkonten ausblenden (Inhaber 05.10.2026): Haken „in
+inhaber, admin, techniker, kunde, praesentation, archiv, **fernzugriff** (Inhaber 15.10.2026, tools/fernzugriff-konto.sql: Konto
+fernzugriff@ukt.at – wie Kunde nur ansehen (`nurLesen()`), aber `istFernKonto()`: ein einziger Reiter „Fernzugriff“ (`viewFernKonto`: Karte mit
+Lidl-Kacheln + Liste der Märkte mit `fernLink`, Stand „online“/„in Wartung“ aus `fernOffline` ohne Grund; Markt-Fenster `fernKontoMarkt` nur Link,
+Benutzer und Passwort des Kunden-Zugangs aus der Sicht `fernzugriff_zugang` – Eintrag mit der Bezeichnung `standard.kundeBez`). Datenbank: `darf_schreiben()`
+falsch, `stammdaten_lesen` liefert nur Märkte mit Fernzugriff mit gekürzten Feldern + Logo-Merker, restriktive Regeln auf protokolle/fassungen/berichte/
+storage. Testkonto fern@test.at. Nie mehr zeigen als Link und Kunden-Zugang). Testkonten ausblenden (Inhaber 05.10.2026): Haken „in
 Personenlisten ausblenden“ in der Kontenübersicht (Verwaltung › Inhaber) → `einstellungen.personen_ausblenden`
 {ids}; `chatTeamLaden` lässt sie in jeder Personenauswahl weg (`PERSONEN_AUS`), das Konto bleibt bestehen,
 schon Eingetragenes bleibt sichtbar. Keine Namen oder Kennungen in den Code. Der Kunde darf nur ansehen

@@ -760,6 +760,7 @@ section.view.schmal{max-width:1180px;margin-inline:auto;width:100%}
   .blatt table,.blatt .fotos figure{break-inside:avoid}
 }
 .leaflet-marker-icon.lidlkachel{border-radius:4px;box-shadow:0 1px 2px rgba(0,0,0,.35)}   /* Lidl-Kachel im Kundenkonto */
+.fernkonto-zeile{appearance:none;display:flex;gap:10px;align-items:center;width:100%;text-align:left;font-family:var(--f-body);font-size:14px;padding:9px 12px;border:1px solid var(--line);border-radius:10px;background:var(--surface);color:var(--ink);cursor:pointer}
 .toast{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(18px + env(safe-area-inset-bottom,0px));z-index:100000;
   background:var(--ink);color:var(--ground);padding:11px 16px;border-radius:9px;font-size:13.5px;box-shadow:var(--shadow);display:none}
 table.dt{width:100%;border-collapse:collapse;font-size:13px}
@@ -2623,7 +2624,7 @@ function filteredPos(){ var ids={}; filtered().forEach(function(s){ids[s.id]=1;}
 /* Stunden, Projekte, Kunden: seit 01.10.2026 (weitere Kunden, Projekte bis zur Rechnung, Arbeitszeit) */
 /* Reihenfolge nach dem Arbeitsablauf (Büro 01.10.2026, Karte neben Kalender 02.10.2026): was ansteht, was geplant ist und wo,
    dann die Arbeit vor Ort (Protokoll, Anlagen, Stunden), dann das Büro */
-var VIEWS=[["faellig","Fällig"],["kalender","Kalender"],["karte","Karte"],["protokoll","Protokoll"],["anlagen","Anlagen"],["stunden","Stunden"],["fahrzeuge","Fahrzeuge"],["werkzeug","Werkzeug"],
+var VIEWS=[["faellig","Fällig"],["kalender","Kalender"],["karte","Karte"],["fernkonto","Fernzugriff"],["protokoll","Protokoll"],["anlagen","Anlagen"],["stunden","Stunden"],["fahrzeuge","Fahrzeuge"],["werkzeug","Werkzeug"],
            ["projekte","Projekte"],["kunden","Kunden & Kontakte"],["belege","Rechnungen"],["verlauf","Verlauf"],["verwaltung","Verwaltung"],["daten","Datenbasis"]];
 var tabsEl=document.getElementById("tabs");
 VIEWS.forEach(function(v){
@@ -5746,6 +5747,76 @@ function kundenMaerkte(){
    die Sicht stammdaten_lesen gibt Merker auch dem Kunden. Fehlt der Merker, bleiben die Punkte. Intern bleibt alles wie bisher. */
 function kundeLogo(){ return String((((stammUeber||{})["merker:kundenlogo"]||{}).felder||{}).datenUrl||""); }
 function kundeKacheln(){ return nurLesen() && /^data:image\//.test(kundeLogo()); }
+/* Fernzugriff-Konto (Inhaber 15.10.2026: „baut auf dem Kundenkonto auf, aber mit wesentlich weniger Informationen – nur die Märkte mit
+   Fernzugriff, nicht online = in Wartung, am Markt nur der Link und der FMLidl-Zugang; dazu die Karte mit den Lidl-Logos als Punkte“).
+   Die Datenbank gibt der Rolle fernzugriff nur diese Märkte (stammdaten_lesen ohne Zugangsdaten) und die Sicht fernzugriff_zugang
+   (Benutzer/Passwort des Kunden-Zugangs, online ja/nein); alles andere ist für sie gesperrt (tools/fernzugriff-konto.sql). */
+var FERN_KONTO=null, fernKontoLaedt=null, fernKarte=null;
+function fernKontoLaden(){
+  if(FERN_KONTO) return Promise.resolve(FERN_KONTO);
+  if(fernKontoLaedt) return fernKontoLaedt;
+  if(!Store.sb){ FERN_KONTO={}; return Promise.resolve(FERN_KONTO); }
+  fernKontoLaedt=Promise.resolve(Store.sb.from("fernzugriff_zugang").select("*")).then(function(r){
+    fernKontoLaedt=null; var m={}; ((r && r.data)||[]).forEach(function(z){ m[z.standort_id]=z; }); FERN_KONTO=m; return m;
+  }, function(){ fernKontoLaedt=null; FERN_KONTO=FERN_KONTO||{}; return FERN_KONTO; });
+  return fernKontoLaedt;
+}
+function fernKontoMaerkte(){ return ST.filter(function(s){ return s.fernLink && !s.entfernt && s.aktiv!==false; }).sort(nachMarktname); }
+/* online, solange der Schalter am Markt nicht auf offline steht (die Sicht sagt es der Rolle ohne Grund und Notiz) */
+function fernKontoOnline(s){ var z=FERN_KONTO && FERN_KONTO[s.id]; return z ? z.online!==false : !s.fernOffline; }
+function fernKontoStatusHtml(s){ var on=fernKontoOnline(s); return '<span class="tag'+(on?" f30":"")+'" data-status>'+(on?"online":"in Wartung")+"</span>"; }
+function viewFernKonto(){
+  var f=document.createDocumentFragment();
+  if(Store.modus==="supabase" && Store.benutzer) f.appendChild(kontoKarte());
+  var k=el('<div class="card" data-fernkonto><div class="pad stack" style="gap:8px"><h2>Märkte mit Fernzugriff</h2>'+
+    '<div class="muted" style="font-size:12.5px">Markt antippen: Link und Zugang. „in Wartung“ heißt, der Fernzugriff ist gerade nicht erreichbar.</div>'+
+    '<div data-fernkarte style="height:360px;border-radius:10px;overflow:hidden;border:1px solid var(--line)"></div>'+
+    '<div class="stack" style="gap:4px" data-liste><div class="muted">wird geladen …</div></div></div></div>');
+  var liste=k.querySelector("[data-liste]"), kHost=k.querySelector("[data-fernkarte]");
+  var zeichnen=function(){
+    liste.innerHTML="";
+    var maerkte=fernKontoMaerkte();
+    if(!maerkte.length){ liste.appendChild(el('<div class="muted">Kein Markt mit Fernzugriff.</div>')); return; }
+    maerkte.forEach(function(s){
+      var z=el('<button type="button" class="fernkonto-zeile" data-fernkonto-markt><span style="min-width:0;flex:1"><strong>'+esc(stName(s))+"</strong>"+
+        (s.adresse?'<br><span class="muted" style="font-size:12.5px">'+esc(s.adresse)+"</span>":"")+"</span>"+fernKontoStatusHtml(s)+"</button>");
+      z.onclick=function(){ fernKontoMarkt(s); }; liste.appendChild(z);
+    });
+    /* Karte: Lidl-Logo (Merker kundenlogo) als Punkt, sonst ein Kreis; „in Wartung“ blass */
+    if(window.L && kHost.isConnected !== false){
+      if(fernKarte){ try{ fernKarte.remove(); }catch(e){} fernKarte=null; }
+      var karte=L.map(kHost,{scrollWheelZoom:true}).setView([47.6,13.4],7); fernKarte=karte;
+      kachelEbene("https://tile.openstreetmap.org/{z}/{x}/{y}.png",{maxZoom:19, attribution:'&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'}).addTo(karte);
+      var logo=kundeLogo(), punkte=[];
+      maerkte.forEach(function(s){ if(!(s.lat && s.lon)) return; var on=fernKontoOnline(s), titel=stName(s)+(on?"":" – in Wartung");
+        var m=/^data:image\//.test(logo)
+          ? L.marker([s.lat,s.lon],{title:titel, opacity:on?1:0.45, icon:L.icon({iconUrl:logo, iconSize:[22,22], iconAnchor:[11,11], className:"lidlkachel"})})
+          : L.circleMarker([s.lat,s.lon],{radius:8, color:on?"#1a7f37":"#888", fillColor:on?"#2ea043":"#bbb", fillOpacity:0.9, weight:2});
+        m.addTo(karte); m.on("click", function(){ fernKontoMarkt(s); }); punkte.push([s.lat,s.lon]); });
+      if(punkte.length) karte.fitBounds(punkte,{padding:[30,30], maxZoom:11});
+      setTimeout(function(){ try{ karte.invalidateSize(); }catch(e){} }, 50);
+    }
+  };
+  fernKontoLaden().then(function(){ setTimeout(zeichnen, 0); });
+  f.appendChild(k); return f;
+}
+/* Fenster je Markt: Stand, Link, Benutzer und Passwort des Kunden-Zugangs – sonst nichts */
+function fernKontoMarkt(s){
+  var z=(FERN_KONTO && FERN_KONTO[s.id])||{}, on=fernKontoOnline(s);
+  var a=ansichtOeffnen(stName(s));
+  a.inhalt.appendChild(el('<div class="stack" style="gap:10px" data-fernkonto-detail>'+(s.adresse?'<div class="muted">'+esc(s.adresse)+"</div>":"")+
+    "<div>Stand: "+fernKontoStatusHtml(s)+(on?"":' <span class="muted" style="font-size:12.5px">– der Fernzugriff ist gerade nicht erreichbar</span>')+"</div>"+
+    '<div><a class="btn" href="'+esc(zugangsAdresse(s.fernLink))+'" target="_blank" rel="noopener" data-fernlink>Fernzugriff öffnen</a>'+
+      '<div class="mono muted" style="font-size:12px;word-break:break-all;margin-top:4px">'+esc(s.fernLink)+"</div></div>"+
+    (z.benutzer ? '<div class="rowflex" style="gap:8px;align-items:center;flex-wrap:wrap"><span>Benutzer: <strong class="mono" data-benutzer>'+esc(z.benutzer)+"</strong></span>"+
+      '<span>Passwort: <span class="mono" data-passwort>••••••••</span></span><button class="btn ghost sm" type="button" data-zeigen>anzeigen</button>'+
+      '<button class="btn ghost sm" type="button" data-kopieren>kopieren</button></div>'
+      : '<div class="muted">Kein Zugang hinterlegt – bitte bei UKT melden.</div>')+"</div>"));
+  var pw=a.inhalt.querySelector("[data-passwort]");
+  if(pw){ var offen=false;
+    a.inhalt.querySelector("[data-zeigen]").onclick=function(){ offen=!offen; pw.textContent=offen?String(z.passwort||""):"••••••••"; this.textContent=offen?"verbergen":"anzeigen"; };
+    a.inhalt.querySelector("[data-kopieren]").onclick=function(){ (navigator.clipboard ? navigator.clipboard.writeText(String(z.passwort||"")) : Promise.reject()).then(function(){ toast("Passwort kopiert."); }, function(){ toast("Kopieren nicht möglich – bitte anzeigen und abschreiben."); }); }; }
+}
 function karteOsm(withGeo){
   var T=S.tour.ergebnis, kacheln=kundeKacheln();
   var card=el('<div class="card"><div class="pad stack">'+
@@ -9577,6 +9648,8 @@ function wechselnOk(ziel, neu){
    Kunde: nur die Reiter zum Ansehen. Büro-Reiter nur für Admins: ein
    Techniker kann dort nichts tun. */
 function reiterErlaubt(v){
+  if(istFernKonto()) return v==="fernkonto";                                   /* Fernzugriff-Konto: ein einziger Reiter */
+  if(v==="fernkonto") return false;
   if(nurLesen()) return ["karte","anlagen","verlauf"].indexOf(v)>=0;   /* Kunde: ohne Reiter Fällig, Start auf der Karte (Inhaber 12.10.2026) */
   /* Stunden und Projekte brauchen die gemeinsame Datenbank (oder die Präsentation) */
   if((v==="stunden"||v==="projekte"||v==="kalender"||v==="fahrzeuge"||v==="werkzeug") && !(Store.modus==="supabase"||demo())) return false;
@@ -10686,7 +10759,10 @@ var Admin={frei:false, zentral:false, geprueft:false};
    jedes Speichern fängt demo() ab). Die Datenbank sperrt das Schreiben für
    beide selbst (tools/rollen.sql). */
 var Rolle={name:"techniker", da:false, gemerkt:false, bestaetigt:null};   /* bestaetigt: in dieser Sitzung vom Server bestätigt {konto, rolle, anzeige, admin} */
-function nurLesen(){ return Rolle.name==="kunde"; }
+function nurLesen(){ return Rolle.name==="kunde" || Rolle.name==="fernzugriff"; }
+/* Konto „Fernzugriff“ (Inhaber 15.10.2026, tools/fernzugriff-konto.sql): wie das Kundenkonto nur ansehen, aber noch weniger –
+   nur die Märkte mit Fernzugriff (Karte mit Lidl-Kacheln und Liste), je Markt der Link und der Kunden-Zugang */
+function istFernKonto(){ return Rolle.name==="fernzugriff"; }
 /* Zugangsdaten nicht zeigen: Kunde, Präsentation, Abgemeldete und eine nur
    gemerkte (noch nicht bestätigte) Rolle */
 function geheimesAusgeblendet(){ return nurLesen()||demo()||Rolle.gemerkt||!angemeldetOderLokal(); }
@@ -39951,7 +40027,7 @@ function render(){
   /* Reiter, die die Rolle nicht sehen darf (reiterErlaubt) */
   var versteckt=function(v){ return !reiterErlaubt(v); };
   ansichtWiederherstellen();   /* nach dem Neuladen: zurück zum Reiter von vorher */
-  if(versteckt(S.view)) S.view=nurLesen() ? "karte" : "faellig";
+  if(versteckt(S.view)) S.view=istFernKonto() ? "fernkonto" : nurLesen() ? "karte" : "faellig";
   Array.prototype.forEach.call(tabsEl.children,function(b){ b.hidden = versteckt(b.dataset.v); });
   Array.prototype.forEach.call(tabsEl.children,function(b){ b.setAttribute("aria-selected", b.dataset.v===S.view?"true":"false"); });
   /* am Handy passt die Reiterleiste nicht ganz aufs Bild: den gewählten Reiter
@@ -39984,7 +40060,7 @@ function render(){
     ab.querySelector("button").onclick=function(){ S.view="protokoll"; render(); window.scrollTo({top:0}); };
     host.appendChild(ab);
   }
-  if(["protokoll","daten","verlauf","verwaltung","pruefen","stunden","projekte","kunden","belege","kalender","fahrzeuge","werkzeug"].indexOf(S.view)<0) host.appendChild(filterBar());
+  if(["protokoll","daten","verlauf","verwaltung","pruefen","stunden","projekte","kunden","belege","kalender","fahrzeuge","werkzeug","fernkonto"].indexOf(S.view)<0) host.appendChild(filterBar());
   if(S.view==="faellig") sec.appendChild(viewFaellig());
   else if(S.view==="stunden") sec.appendChild(viewStunden());
   else if(S.view==="fahrzeuge") sec.appendChild(viewFahrzeuge());
@@ -39994,6 +40070,7 @@ function render(){
   else if(S.view==="kunden") sec.appendChild(viewKunden());
   else if(S.view==="belege") sec.appendChild(viewBelege());
   else if(S.view==="karte") sec.appendChild(viewKarte());
+  else if(S.view==="fernkonto") sec.appendChild(viewFernKonto());
   else if(S.view==="anlagen") sec.appendChild(viewAnlagen());
   else if(S.view==="protokoll") sec.appendChild(viewProtokoll());
   else if(S.view==="verlauf") sec.appendChild(viewVerlauf());
