@@ -69,6 +69,45 @@ kurz warten, sonst nimmt die Fernbedienung die Einstellung nicht an):
 4. **A/C Auto Register**: Liste der gefundenen Geräte prüfen – alle mit Adresse müssen da sein („Show Updates“ lädt
    neu, sonst Adressen prüfen) → Ja → der ITM startet neu und zeigt den Hauptbildschirm. Grundeinrichtung fertig.
 
+## 4b. Layout und Einstellungen am PC vorbereiten, per USB-Stick einspielen
+
+Das ist für uns der wichtigste Vorbereitungsschritt und hat in der Vergangenheit öfter Probleme gemacht. Was das
+Handbuch dazu sagt – eigene Erfahrungen bitte über „Bearbeiten“ dazuschreiben.
+
+- **Werkzeuge**: Daikin „Pre-engineering Tool“ (Vorkonfigurations-Werkzeugsatz, Windows-PC, Download auf der
+  Daikin-Distributor-Seite) mit einer PC-Version des ITM, in der man Bereiche, Verwaltungspunkte (Namen), Zeitpläne und
+  Systemeinstellungen im Büro vorbereitet. Darin das **Layout-Werkzeug** (Layout Screen Creation Tool, braucht die
+  Händleroption „Layout“): Grundriss-Ansicht je Markt – je Bildschirm ein Hintergrundbild, darauf die Geräte.
+- **Regeln fürs Layout**: Hintergrundbild nur JPEG, höchstens 500 KB, 600×500 bis 1500×1000 Pixel. Symbole fest
+  76×38 px, höchstens 100 je Bildschirm, höchstens 60 Bildschirme je Markt, Name bis 20 Zeichen. Je Bildschirm die
+  **Wechselliste** (List Settings) setzen: nur dorthin kann man am ITM umschalten – ohne Eintrag ist ein Bildschirm nicht
+  erreichbar. „Display Information“: ab Werk ist alles angehakt (Raumtemperatur, Sollwert, Betriebsart …), Unnötiges abhaken.
+- **Reihenfolge am PC**: Werkzeug starten → anmelden → „New“ (Ordner für den Markt; Achtung: OK löscht alles im
+  gewählten Ordner) → „Edit Data“ (PC-Version des ITM: Bereiche, Verwaltungspunkte, Zeitpläne; Aktivierungsschlüssel
+  gehen dort nicht) → Layout: die vier Ecken des Hauptfensters anklicken, „Exit“, Passwort für Wartung → „Edit Layout
+  Screen“ → Bildschirme anlegen (Add), Geräte hinzufügen (Add, höchstens 20 auf einmal), ausrichten, Wechselliste →
+  **Save** → Exit. Save und das Löschen eines Bildschirms lassen sich nicht rückgängig machen.
+- **Auf den Stick**: „Export to USB“ → Laufwerk → „Restore Data“ (alles: System, Einstellungen, Layout) oder „Layout
+  Setting Data Only“ → OK. **Der Stick wird dabei geleert.** Vorher prüfen: beschreibbar, nicht schreibgeschützt, genug
+  Platz – am besten ein eigener einfacher Stick nur für den ITM.
+- **Am ITM einspielen**, zwei Wege:
+  1. Nur Layout: Service-Modus → Service-Einstellungen → **Layout Setup** → Stick einstecken → „Layout Screen Data
+     Input“ → Ja → der ITM startet neu. Die Taste gibt es nur, wenn die Händleroption Layout aktiv ist und schon
+     Layout-Daten am ITM liegen – sonst Weg 2.
+  2. Alles (Vorkonfiguration, Wiederherstellung, Upgrade): Stick einstecken, ITM mit gedrückter **MONITOR-Taste**
+     einschalten (oder RESET drücken), MONITOR gedrückt halten, bis der Kalibrierbildschirm kommt → 5 Kreuze antippen
+     (Stift) → das Install-Tool vergleicht Version und MAC-Adresse → OK → Installation, Neustart.
+- **Zurück auf den PC**: Layout: Service-Einstellungen → Layout Setup → „Layout Screen Data Output“ (Ordner wird
+  angezeigt). Alles: Systemeinstellung → Sicherung (Ordner Backup_MAC-Adresse_Datum_Zeit) → am PC im Werkzeug mit
+  „Open“ öffnen (fragt bei älterem Stand nach einem Upgrade der Daten).
+- **Stolpersteine laut Handbuch**: Stick nicht erkannt, schreibgeschützt oder voll → Export schlägt fehl. „OK“ im
+  Install-Tool ist grau → die Daten auf dem Stick sind älter als der Stand am ITM: zuerst den Updater (Distributor-Seite)
+  installieren bzw. das Werkzeug auf den gleichen Stand bringen (Systemeinstellung › Version Information vergleichen).
+  „Error in the installer program“ → falscher oder unvollständiger Installer-Ordner auf dem Stick. MAC-Adresse passt
+  nicht (Daten eines anderen ITM) → Marktordner im Werkzeug mit „Open“ laden und neu exportieren. Hintergrundbild wird
+  nicht angenommen → Größe und Format. Bildschirm nicht erreichbar → Wechselliste. „Layout Setup“ fehlt → Händleroption
+  Layout. Während Export, Installation und Neustart den Stick nie abziehen.
+
 ## 5. Service-Modus und Service-Einstellungen
 
 - **Service-Modus öffnen**: Menüliste anzeigen, die vier Ecken des Bildschirms in der Reihenfolge aus „Wartungslogin
@@ -128,8 +167,16 @@ Standard-Zugänge in der App (Displaysperre, Administrator, Passwort für Wartun
   Übersicht Verwaltung › Fernzugriff. Der Link öffnet direkt die Anmeldeseite des ITM.
 - Die App ruft jeden Morgen alle Links auf: antwortet der ITM, ist der Markt „online“; sonst stellt sie ihn auf
   **offline** (Vermerk „Automatische Prüfung“) – beim nächsten Termin lösen. Meldet die Plattform „Verbindung nicht
-  möglich“, ist der Router erreichbar, aber der ITM dahinter nicht (LAN-Kabel, IP-Adresse, LAN SW auf BACK?, ITM aus?).
-  Kommt gar keine Antwort, ist der Router offline (Strom, SIM/Empfang, RMS).
+  möglich“, ist entweder der Link abgelaufen (siehe unten) oder der ITM hinter dem Router nicht erreichbar (LAN-Kabel,
+  IP-Adresse, LAN SW auf BACK?, ITM aus?). Kommt gar keine Antwort, ist der Router offline (Strom, SIM/Empfang, RMS).
+- **Die RMS-Links laufen ab.** RMS erzeugt zeitlich begrenzte Proxy-Links (Standard 45 Minuten; beim Erzeugen kann man
+  eine längere Dauer wählen). Ein abgelaufener Link meldet „Verbindung nicht möglich“. Dann braucht der Markt einen
+  neuen Link: RMS › RMS Connect › Remote access › Gerät › „Generate“ (Dauer wählen) → Link kopieren → in der App am
+  Markt unter Fernzugriff eintragen.
+- **Links selbst erzeugen** kann nur, wer in RMS Zugriff auf die Router hat – bisher unser Daikin-Partner mit seiner
+  RMS-Firma. Zwei Wege: der Partner legt für UKT Benutzer in seiner RMS-Firma an (mit Rechten auf unsere Router), oder
+  er übergibt die Router in eine eigene RMS-Firma von UKT (dann zahlt UKT die RMS-Credits je Router und Monat und das
+  Datenvolumen für RMS Connect). Mit eigenem Zugang kann die App die Links künftig selbst erneuern (RMS-Schnittstelle).
 
 ## 10. E-Mail-Fehlerbericht (Händleroption)
 
