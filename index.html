@@ -832,9 +832,14 @@ var STAMM_FELDER_ST  = ["filiale","name","adresse","plz","ort","region","lat","l
                         /* Fernzugriff auf die Regelung – gilt für alle Anlagen am Markt (Inhaber 12.10.2026); der Link darf der Kunde sehen,
                            Benutzer/Passwort/weitere Benutzer sind geheim wie an der Anlage (GEHEIM_MARKT) */
                         "fernLink","fernBenutzer","fernPasswort","fernWeitere",
+                        /* Fernzugriff genauer (Inhaber 15.10.2026, Zettel „Fernzugriff Zugänge“): Regelung/System, Hinweis (z. B. „beim Ausloggen sperren“),
+                           Zugang vor Ort am Display (Displaysperre, Administrator, Passwort für Wartung Stufe 1/2, Entsperr-Reihenfolge) – geheim */
+                        "fernSystem","fernHinweis","fernVorOrt",
+                        /* Bestandsplan je Markt (Inhaber 15.10.2026: „Techniker sehen schon im Vorhinein, welche Anlagen wo stehen“) – Dateien im Speicher „dokumente“ */
+                        "bestandsplaene",
                         /* Prüfhinweis fürs Büro (Inhaber 12.10.2026: „das muss in der Verwaltung geprüft werden“) – steht in „Alte Liste prüfen“, bis er geleert wird */
                         "pruefHinweis"];
-var GEHEIM_MARKT=["fernBenutzer","fernPasswort","fernWeitere"];
+var GEHEIM_MARKT=["fernBenutzer","fernPasswort","fernWeitere","fernVorOrt"];
 var STAMM_FELDER_POS = ["anlagentyp","intervallCode","inbetriebnahme","monat","monatGrund","kaeltemittelKg",
                         "kaeltemittelArt","rueckkuehler","aktiv","notiz",
                         /* Anlagendaten, die vor Ort nach und nach ergänzt werden */
@@ -6533,6 +6538,8 @@ function standortDetail(s){
       (leistungsstandortVon(s)?"<dt>Leistungsstandort</dt><dd class='mono' title='Lidl-Code für Rechnungen (neues FM-System)'>"+esc(leistungsstandortVon(s))+"</dd>":"")+
       /* Fernzugriff auf die Regelung: die Adresse sehen alle (auch der Kunde), Benutzer/Passwort nur UKT (zugangBox unten) */
       (s.fernLink?"<dt>Fernzugriff</dt><dd><a class='mono' href='"+esc(zugangsAdresse(s.fernLink))+"' target='_blank' rel='noopener' style='word-break:break-all' data-fernlink>"+esc(s.fernLink)+"</a></dd>":"")+
+      /* Bestandsplan (Inhaber 15.10.2026): wo welche Anlage steht – nur intern */
+      (!nurLesen() && (s.bestandsplaene||[]).length ? "<dt>Bestandsplan</dt><dd data-bestandsplan></dd>" : "")+
       /* Projekte an diesem Standort (neue Anlagen, Umbauten) */
       (function(){ var pl=nurLesen()?[]:PROJEKTE.filter(function(p){ return p.standort_id===s.id; });
         return pl.length ? "<dt>Projekte</dt><dd>"+pl.map(function(p){ return projektLink(p)+(projektOffen(p)?" ("+esc(projektSchritt(p.status)[1])+")":""); }).join("<br>")+"</dd>" : ""; })()+
@@ -6561,6 +6568,7 @@ function standortDetail(s){
   "</div></div>");
   abholHinweisFuellen(d.querySelector("[data-abholhinweis]"), s.id);
   var fz=fernVonMarkt(s), fzBox=fz && zugangBox(fz); if(fzBox) d.querySelector("[data-fernzugang]").appendChild(fzBox);
+  var bpl=d.querySelector("[data-bestandsplan]"); if(bpl) bpl.appendChild(bestandsplanKnoepfe(s));
   if(ihAn()) ihKasten(d.querySelector("[data-ihmarkt]"), s.id);
   /* Historie: in der Markt-Ansicht steht sie im selben Fenster darunter – dorthin
      scrollen, statt in den Reiter Verlauf zu wechseln (ein angefangenes Protokoll
@@ -6639,8 +6647,17 @@ function zugangsAdresse(roh){
 }
 /* Fernzugriff des Markts (Inhaber 12.10.2026: „der Link gehört zum Markt, nicht zu einer Anlage“) – in der Form der Anlagen-Zugangsdaten */
 function fernVonMarkt(s){
-  if(!s || !(s.fernLink || s.fernBenutzer || s.fernPasswort || (zugaengeLesen(s.fernWeitere)||[]).length)) return null;
-  return {fernzugriff:"ja", zugangLink:s.fernLink||"", zugangBenutzer:s.fernBenutzer||"", zugangPasswort:s.fernPasswort||"", zugangWeitere:s.fernWeitere||null, _vomMarkt:true};
+  if(!s || !(s.fernLink || s.fernBenutzer || s.fernPasswort || (zugaengeLesen(s.fernWeitere)||[]).length || s.fernVorOrt)) return null;
+  return {fernzugriff:"ja", zugangLink:s.fernLink||"", zugangBenutzer:s.fernBenutzer||"", zugangPasswort:s.fernPasswort||"", zugangWeitere:s.fernWeitere||null, _vomMarkt:true,
+          _fernVorOrt:s.fernVorOrt||null, _fernHinweis:s.fernHinweis||"", _fernSystem:s.fernSystem||""};
+}
+/* Zugang vor Ort am Gerät (Touch-Display): Passwörter verdeckt, anzeigen/kopieren wie die Online-Zugänge */
+function fernVorOrtHtml(vo){
+  var zeile=function(k, label){ return vo[k] ? '<div class="rowflex" style="gap:8px"><span>'+esc(label)+': <span class="mono" data-vo-pw="'+k+'">••••••••</span></span>'+
+    '<button class="btn ghost sm" type="button" data-vo-zeigen="'+k+'">anzeigen</button><button class="btn ghost sm" type="button" data-vo-kopiere="'+k+'">kopieren</button></div>' : ""; };
+  return '<div data-vorort style="display:grid;gap:4px;border-top:1px solid var(--line, #ddd);padding-top:6px"><strong>Vor Ort am Gerät (Touch-Display)</strong>'+
+    zeile("displayPw","Displaysperre")+zeile("adminPw","Administrator")+zeile("wartungPw1","Passwort für Wartung (Stufe 1)")+zeile("wartungPw2","Passwort für Wartung (Stufe 2)")+
+    (vo.entsperren?'<div>Programmierung freischalten: '+esc(vo.entsperren)+"</div>":"")+"</div>";
 }
 function anlageHatEigenenZugang(d){ return !!(d.zugangLink || d.zugangBenutzer || d.zugangPasswort || (zugaengeLesen(d.zugangWeitere)||[]).length); }
 /* kompakt (Inhaber 12.10.2026: „das Feld Zugang zur Regelung benötigt unnötig viel Platz“): eine Zeile mit Knopf –
@@ -6666,7 +6683,8 @@ function zugangBoxVoll(d){
   var zl=[];
   if(d.zugangBenutzer || d.zugangPasswort) zl.push({benutzer:d.zugangBenutzer||"", passwort:d.zugangPasswort||""});
   zl=zl.concat(zugaengeLesen(d.zugangWeitere)||[]);
-  if(!d.zugangLink && !zl.length) return null;
+  var vo=d._fernVorOrt||null;
+  if(!d.zugangLink && !zl.length && !vo) return null;
   var mehrere=zl.length>1;
   var b=el('<div class="note" style="display:grid;gap:6px">'+
     '<div class="l muted" style="font-size:11px;text-transform:uppercase;letter-spacing:.06em">Zugang zur Regelung'+(d._vomMarkt?" – gilt für den ganzen Markt":"")+"</div>"+
@@ -6686,7 +6704,15 @@ function zugangBoxVoll(d){
           '<button class="btn ghost sm" type="button" data-kopiere="passwort|'+i+'">kopieren</button></div>':"")+
       "</div>";
     }).join("")+
+    (d._fernSystem?'<div class="muted" style="font-size:12.5px">Regelung: '+esc(d._fernSystem)+"</div>":"")+
+    (d._fernHinweis?'<div class="note warnbox" style="font-size:12.5px">'+esc(d._fernHinweis)+"</div>":"")+
+    (vo ? fernVorOrtHtml(vo) : "")+
   "</div>");
+  b.querySelectorAll("[data-vo-zeigen]").forEach(function(zeig){
+    var pw=b.querySelector('[data-vo-pw="'+zeig.dataset.voZeigen+'"]'), wert=String((vo||{})[zeig.dataset.voZeigen]||"");
+    zeig.onclick=function(){ var zu=pw.textContent.indexOf("•")>=0; pw.textContent=zu?wert:"••••••••"; zeig.textContent=zu?"verbergen":"anzeigen"; };
+  });
+  b.querySelectorAll("[data-vo-kopiere]").forEach(function(k){ k.onclick=function(){ inZwischenablage(String((vo||{})[k.dataset.voKopiere]||""), "Passwort"); }; });
   b.querySelectorAll("[data-zeigen]").forEach(function(zeig){
     var zb=zeig.closest("[data-zugang]"), pw=zb.querySelector("[data-pw]"), z=zl[+zb.dataset.zugang];
     zeig.onclick=function(){
@@ -8089,6 +8115,208 @@ function zugaengeLesen(w){
   var l=(Array.isArray(w)?w:[]).filter(zugangBelegt).map(function(z){
     var r={}; ZUGANG_FELDER.forEach(function(f){ var v=String(z[f[0]]==null?"":z[f[0]]).trim(); if(v) r[f[0]]=v; }); return r; });
   return l.length ? l : null;
+}
+/* weitere Benutzer des Markt-Fernzugriffs als Zeilen im Markt-Editor (Inhaber 15.10.2026: Bezeichnung · Benutzer · Passwort) */
+function fernWeitereZeilen(host, liste){
+  host.innerHTML="";
+  var dazu=function(z){
+    var r=el('<div class="rowflex" data-fwz style="gap:6px;flex-wrap:wrap"><input type="text" data-bez placeholder="Bezeichnung (z. B. Kunde, Router)" value="'+esc(z.bez||"")+'" style="flex:1;min-width:140px">'+
+      '<input type="text" data-benutzer placeholder="Benutzer" value="'+esc(z.benutzer||"")+'" style="flex:1;min-width:120px"><input type="password" data-passwort data-fernpw placeholder="Passwort" value="'+esc(z.passwort||"")+'" autocomplete="new-password" style="flex:1;min-width:120px">'+
+      '<button class="btn ghost sm" type="button" data-weg title="Zeile entfernen">✕</button></div>');
+    r.querySelector("[data-weg]").onclick=function(){ r.remove(); };
+    host.appendChild(r);
+  };
+  (liste||[]).forEach(dazu); host._dazu=dazu;
+}
+function fernWeitereAusZeilen(host){
+  if(!host) return null;
+  var l=[].slice.call(host.querySelectorAll("[data-fwz]")).map(function(r){ return {bez:r.querySelector("[data-bez]").value.trim(), benutzer:r.querySelector("[data-benutzer]").value.trim(), passwort:r.querySelector("[data-passwort]").value}; }).filter(zugangBelegt);
+  return l.length ? l : null;
+}
+var FERN_VORORT=[["displayPw","a_fernDisplayPw"],["adminPw","a_fernAdminPw"],["wartungPw1","a_fernWartung1"],["wartungPw2","a_fernWartung2"],["entsperren","a_fernEntsperren"]];
+function fernVorOrtLesen(c){
+  var o={}; FERN_VORORT.forEach(function(p){ var i=c.querySelector("#"+p[1]); var v=i ? i.value.trim() : ""; if(v) o[p[0]]=v; });
+  return Object.keys(o).length ? o : null;
+}
+/* Standard-Zugänge der Einrichtung ins Markt-Formular (Inhaber 15.10.2026) – andere weitere Benutzer (Router) bleiben */
+function einrichtungStandardInFormular(c, std){
+  if(!std || !Object.keys(std).length){ toast("In der Einrichtung sind noch keine Standard-Zugänge hinterlegt."); return; }
+  var setz=function(id, v, nurLeer){ var i=c.querySelector("#"+id); if(!i || v==null || v==="") return; if(nurLeer && i.value.trim()) return; i.value=v; };
+  setz("a_fernSystem", std.system, true); setz("a_fernHinweis", std.hinweis, true);
+  setz("a_fernBenutzer", std.uktBenutzer); setz("a_fernPasswort", std.uktPw);
+  FERN_VORORT.forEach(function(p){ setz(p[1], std[p[0]]); });
+  var host=c.querySelector("[data-fernweitere]");
+  if(host){
+    var alt=(fernWeitereAusZeilen(host)||[]).filter(function(z){ return !(std.onlineAdminBenutzer && z.benutzer===std.onlineAdminBenutzer) && !(std.kundeBenutzer && z.benutzer===std.kundeBenutzer); });
+    var neu=[];
+    if(std.kundeBenutzer || std.kundePw) neu.push({bez:std.kundeBez||"Kunde", benutzer:std.kundeBenutzer||"", passwort:std.kundePw||""});
+    if(std.onlineAdminBenutzer || std.onlineAdminPw) neu.push({bez:"Standard-Admin", benutzer:std.onlineAdminBenutzer||"", passwort:std.onlineAdminPw||""});
+    fernWeitereZeilen(host, neu.concat(alt));
+  }
+  toast("Standard-Zugänge eingetragen – bitte prüfen und den Markt speichern.");
+}
+/* Felder eines Markts setzen (wie marktLeistungsstandortMerken) – für „In alle Märkte übernehmen“ */
+function marktFelderSetzen(s, aenderungen, grund){
+  if(!s || !angemeldetOderLokal() || demo()) return Promise.resolve(false);
+  var vorher=auswahl(s,STAMM_FELDER_ST); if(s.entfernt) vorher.aktiv=marktAktivGespeichert(s);
+  var neu=Object.assign({}, vorher, aenderungen);
+  if(!Object.keys(objDiff(vorher, neu, STAMM_FELDER_ST)).length) return Promise.resolve(true);
+  var gegenExcel=objDiff(EXCEL["standort:"+s.id]||{}, neu, STAMM_FELDER_ST);
+  var rec={id:"standort:"+s.id, typ:"standort", ziel:s.id, felder:s._neu?neu:gegenExcel, neu:!!s._neu, geaendert:new Date().toISOString(), von:wer(), grund:grund};
+  stammUeber[rec.id]=rec;
+  return stammSpeichern(rec, false, {}).then(function(wo){ return wo!==false; });
+}
+/* Dokumente im Speicher „dokumente“ (tools/einrichtung.sql): einrichtung/… (Anleitungen) und markt/<Kennung>/… (Bestandspläne) –
+   lesen alle Mitarbeiter, nie Kunden; hochladen wer mitarbeitet, entfernen Büro oder wer hochgeladen hat */
+function dokumentHochladen(ordner, f){
+  if(demo()){ toast("Präsentation: nichts hochgeladen."); return Promise.resolve(null); }
+  var name=String(f.name||"Datei").replace(/[^\w.\-äöüÄÖÜß ]+/g,"_").slice(0,80), pfad=ordner+"/"+Date.now().toString(36)+"_"+name;
+  return Store.sb.storage.from("dokumente").upload(pfad, f, {contentType:f.type||"application/octet-stream", upsert:false}).then(function(r){
+    if(r.error){ toast("„"+name+"“ nicht hochgeladen: "+technikDeutsch(r.error.message)); return null; }
+    return {pfad:pfad, name:name, titel:name.replace(/\.[a-z0-9]+$/i,""), typ:f.type||"", groesse:f.size||0, zeit:new Date().toISOString(), von:meinName()};
+  }, function(){ toast("Keine Verbindung – „"+name+"“ nicht hochgeladen."); return null; });
+}
+function dokumentOeffnen(d){
+  if(!Store.sb){ toast("Dafür bitte zuerst anmelden."); return; }
+  Store.sb.storage.from("dokumente").createSignedUrl(d.pfad, 600).then(function(r){
+    if(!r || !r.data){ toast("Datei nicht abrufbar."); return; }
+    if(/pdf/i.test(d.typ||"") || /\.pdf$/i.test(d.name||"")) pdfAnsicht(r.data.signedUrl, d.titel||d.name); else bildAnsicht(r.data.signedUrl, d.titel||d.name);
+  }, function(){ toast("Datei nicht abrufbar."); });
+}
+/* Bestandsplan je Markt (Inhaber 15.10.2026: „Techniker sehen schon im Vorhinein, welche Anlagen wo stehen“) */
+function bestandsplanKnoepfe(s){
+  var h=el('<div class="rowflex" style="gap:6px;flex-wrap:wrap"></div>');
+  (s.bestandsplaene||[]).forEach(function(d){ var b=el('<button class="btn ghost sm" type="button" data-bestandsplan>🗺 '+esc(d.titel||d.name||"Bestandsplan")+"</button>"); b.onclick=function(){ dokumentOeffnen(d); }; h.appendChild(b); });
+  return h;
+}
+/* Einrichtung (Inhaber 15.10.2026: „ein eigener Menüpunkt, wo alle Möglichkeiten, Dokumentation und Anleitung gesammelt sind“):
+   Standard-Zugänge zur Regelung (online und vor Ort am Display), Anleitungen als Text, Dokumente – Einstellung „einrichtung“,
+   lesen alle Mitarbeiter, schreiben Admins und Inhaber (tools/einrichtung.sql). Passwörter nur hier und am Markt, nie im Code. */
+var EINRICHTUNG=null, einrichtungLaedt=null;
+var EINRICHTUNG_STD=[["system","Regelung / System","text"],
+  ["uktBenutzer","UKT online – Benutzer","text"],["uktPw","UKT online – Passwort","pw"],
+  ["onlineAdminBenutzer","Standard-Admin online – Benutzer","text"],["onlineAdminPw","Standard-Admin online – Passwort","pw"],
+  ["kundeBez","Kunde – Bezeichnung","text"],["kundeBenutzer","Kunde – Benutzer","text"],["kundePw","Kunde – Passwort","pw"],
+  ["displayPw","Vor Ort: Displaysperre – Passwort","pw"],["adminPw","Vor Ort: Administrator – Passwort","pw"],
+  ["wartungPw1","Vor Ort: Passwort für Wartung (Stufe 1)","pw"],["wartungPw2","Vor Ort: Passwort für Wartung (Stufe 2)","pw"],
+  ["entsperren","Programmierung freischalten (Reihenfolge)","text"],["hinweis","Hinweis zum Zugriff","text"]];
+function einrichtungLeer(){ return {standard:{}, abschnitte:[], dateien:[]}; }
+function einrichtungLaden(frisch){
+  if(demo() || !Store.sb || Store.modus!=="supabase"){ EINRICHTUNG=EINRICHTUNG||einrichtungLeer(); return Promise.resolve(EINRICHTUNG); }
+  if(EINRICHTUNG && !frisch) return Promise.resolve(EINRICHTUNG);
+  if(einrichtungLaedt) return einrichtungLaedt;
+  einrichtungLaedt=Store.sb.from("einstellungen").select("wert").eq("schluessel","einrichtung").then(function(r){
+    einrichtungLaedt=null; var w=(r && !r.error && r.data && r.data[0] && r.data[0].wert)||{};
+    EINRICHTUNG={standard:w.standard||{}, abschnitte:Array.isArray(w.abschnitte)?w.abschnitte:[], dateien:Array.isArray(w.dateien)?w.dateien:[]};
+    return EINRICHTUNG;
+  }, function(){ einrichtungLaedt=null; EINRICHTUNG=EINRICHTUNG||einrichtungLeer(); return EINRICHTUNG; });
+  return einrichtungLaedt;
+}
+function einrichtungSpeichern(neu, was){
+  EINRICHTUNG=neu;
+  if(demo()){ toast("Präsentation: "+was+" – gespeichert wurde nichts."); return Promise.resolve(true); }
+  return Store.sb.from("einstellungen").upsert({schluessel:"einrichtung", wert:neu, geaendert:new Date().toISOString(), von:meinName()}).then(function(r){
+    if(r.error){ toast("Nicht gespeichert: "+technikDeutsch(r.error.message)); return false; }
+    toast(was+"."); return true;
+  }, function(){ toast("Keine Verbindung – nicht gespeichert."); return false; });
+}
+function einrichtungAnsicht(){
+  var f=document.createDocumentFragment();
+  var lade=el('<div class="card" data-einrichtung-lade><div class="pad muted">Einrichtung wird geladen …</div></div>'); f.appendChild(lade);
+  einrichtungLaden(true).then(function(E){
+    var host=lade.parentNode; if(!host) return;
+    host.insertBefore(einrichtungStandardKarte(E), lade); host.insertBefore(einrichtungAbschnitteKarte(E), lade); host.insertBefore(einrichtungDateienKarte(E), lade); lade.remove();
+  });
+  return f;
+}
+function einrichtungStandardKarte(E){
+  var st=E.standard||{};
+  var k=el('<div class="card" data-einrichtung-standard><div class="pad stack" style="gap:10px"><h2>Standard-Zugänge zur Regelung</h2>'+
+    '<div class="muted" style="font-size:12.5px">Was bei (fast) allen Märkten gleich ist – etwa beim Daikin intelligent Touch Manager: Online-Benutzer, Passwörter vor Ort am Display, wie man die Programmierung freischaltet. '+
+    'Je Markt steht es unter „Märkte &amp; Anlagen“ → Fernzugriff („Standard-Zugänge übernehmen“); „In alle Märkte übernehmen“ schreibt es an jeden Markt mit Fernzugriff-Adresse. Passwörter sieht nur UKT – nie im Protokoll, PDF oder Verlauf.</div>'+
+    '<div class="grid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px" data-felder></div>'+
+    '<div class="rowflex" style="gap:6px;flex-wrap:wrap"><button class="btn sm" type="button" data-speichern>Speichern</button><button class="btn ghost sm" type="button" data-zeigen>Passwörter anzeigen</button>'+
+      '<button class="btn ghost sm" type="button" data-alle>In alle Märkte mit Fernzugriff übernehmen</button></div><div data-stand class="muted" style="font-size:12.5px"></div></div></div>');
+  var fh=k.querySelector("[data-felder]");
+  EINRICHTUNG_STD.forEach(function(d){ fh.appendChild(el('<label class="fl"><span>'+esc(d[1])+'</span><input type="'+(d[2]==="pw"?"password":"text")+'" data-std="'+d[0]+'"'+(d[2]==="pw"?' data-pw autocomplete="new-password"':"")+' value="'+esc(st[d[0]]||"")+'"></label>')); });
+  var lesen=function(){ var o={}; fh.querySelectorAll("[data-std]").forEach(function(i){ var v=i.value.trim(); if(v) o[i.dataset.std]=v; }); return o; };
+  k.querySelector("[data-zeigen]").onclick=function(){ var zu=this.textContent.indexOf("anzeigen")>=0; fh.querySelectorAll("[data-pw]").forEach(function(i){ i.type=zu?"text":"password"; }); this.textContent=zu?"Passwörter verbergen":"Passwörter anzeigen"; };
+  k.querySelector("[data-speichern]").onclick=function(){ einrichtungSpeichern(Object.assign({}, EINRICHTUNG||einrichtungLeer(), {standard:lesen()}), "Standard-Zugänge gespeichert"); };
+  k.querySelector("[data-alle]").onclick=function(){
+    var std=lesen(), ziele=ST.filter(function(s){ return s.fernLink && !s.entfernt; });
+    if(!Object.keys(std).length){ toast("Bitte zuerst die Standard-Zugänge eintragen."); return; }
+    if(!ziele.length){ toast("Kein Markt mit Fernzugriff-Adresse."); return; }
+    if(!window.confirm("Standard-Zugänge an "+ziele.length+" Märkte mit Fernzugriff schreiben?\n\nUKT-Benutzer, Standard-Admin, Kunde und die Passwörter vor Ort werden gesetzt bzw. ersetzt; andere Benutzer (z. B. Router) bleiben. Regelung/System und Hinweis nur, wo noch leer.")) return;
+    var stand=k.querySelector("[data-stand]"); stand.textContent="wird übernommen …";
+    einrichtungSpeichern(Object.assign({}, EINRICHTUNG||einrichtungLeer(), {standard:std}), "Standard-Zugänge gespeichert").then(function(ok){ if(!ok) return null; return einrichtungInMaerkte(std, ziele); })
+      .then(function(n){ if(n==null){ stand.textContent=""; return; } stand.textContent="Übernommen an "+n+" von "+ziele.length+" Märkten mit Fernzugriff."; toast("Standard-Zugänge an "+n+" Märkte übernommen."); });
+  };
+  return k;
+}
+/* was an einem Markt gesetzt wird: UKT-Benutzer, Standard-Admin und Kunde (ersetzt gleichnamige), vor Ort; System/Hinweis nur, wo leer */
+function einrichtungStandardFelder(s, std){
+  var weitere=(zugaengeLesen(s.fernWeitere)||[]).filter(function(z){ return !(std.onlineAdminBenutzer && z.benutzer===std.onlineAdminBenutzer) && !(std.kundeBenutzer && z.benutzer===std.kundeBenutzer); });
+  var neu=[];
+  if(std.kundeBenutzer || std.kundePw) neu.push({bez:std.kundeBez||"Kunde", benutzer:std.kundeBenutzer||"", passwort:std.kundePw||""});
+  if(std.onlineAdminBenutzer || std.onlineAdminPw) neu.push({bez:"Standard-Admin", benutzer:std.onlineAdminBenutzer||"", passwort:std.onlineAdminPw||""});
+  weitere=neu.concat(weitere);
+  var vo={}; FERN_VORORT.forEach(function(p){ if(std[p[0]]) vo[p[0]]=std[p[0]]; });
+  var a={fernWeitere:weitere.length?weitere:null, fernVorOrt:Object.keys(vo).length?vo:null};
+  if(std.uktBenutzer) a.fernBenutzer=std.uktBenutzer; if(std.uktPw) a.fernPasswort=std.uktPw;
+  if(std.system && !s.fernSystem) a.fernSystem=std.system; if(std.hinweis && !s.fernHinweis) a.fernHinweis=std.hinweis;
+  return a;
+}
+function einrichtungInMaerkte(std, ziele){
+  var n=0, kette=Promise.resolve();
+  ziele.forEach(function(s){ kette=kette.then(function(){ return marktFelderSetzen(s, einrichtungStandardFelder(s, std), "Standard-Zugänge aus der Einrichtung übernommen").then(function(ok){ if(ok) n++; }); }); });
+  return kette.then(function(){ wendeStammdatenAn(); return n; });
+}
+function einrichtungAbschnitteKarte(E){
+  var k=el('<div class="card" data-einrichtung-abschnitte><div class="pad stack" style="gap:10px"><h2>Anleitungen und Hinweise</h2>'+
+    '<div class="muted" style="font-size:12.5px">Was man zur Einrichtung wissen muss – z. B. Einstellungen am Außengerät je VRV, Anschluss externer Fühler und Geräte. Frei beschreibbar, für alle Mitarbeiter sichtbar, nie für Kunden.</div>'+
+    '<div class="stack" style="gap:8px" data-liste></div><div class="rowflex" style="gap:6px"><button class="btn ghost sm" type="button" data-neu>+ Abschnitt</button><button class="btn sm" type="button" data-speichern>Speichern</button></div></div></div>');
+  var liste=k.querySelector("[data-liste]"), abs=(E.abschnitte||[]).map(function(a){ return {titel:String(a.titel||""), text:String(a.text||"")}; });
+  var zeichne=function(){
+    liste.innerHTML=""; if(!abs.length){ liste.appendChild(el('<div class="muted">Noch kein Abschnitt.</div>')); return; }
+    abs.forEach(function(a, i){
+      var z=el('<div class="note stack" data-abschnitt style="gap:6px"><div class="rowflex" style="gap:6px;flex-wrap:nowrap"><input type="text" data-titel maxlength="80" placeholder="Überschrift" value="'+esc(a.titel)+'" style="flex:1;min-width:0"><button class="btn ghost sm" type="button" data-weg title="Abschnitt entfernen">✕</button></div>'+
+        '<textarea data-text rows="3" placeholder="Text …">'+esc(a.text)+"</textarea></div>");
+      z.querySelector("[data-titel]").oninput=function(){ a.titel=this.value; }; z.querySelector("[data-text]").oninput=function(){ a.text=this.value; };
+      z.querySelector("[data-weg]").onclick=function(){ if(!window.confirm("Abschnitt „"+(a.titel||"ohne Überschrift")+"“ entfernen?")) return; abs.splice(i,1); zeichne(); };
+      liste.appendChild(z);
+    });
+  };
+  zeichne();
+  k.querySelector("[data-neu]").onclick=function(){ abs.push({titel:"", text:""}); zeichne(); var t=liste.querySelector("[data-abschnitt]:last-child [data-titel]"); if(t) t.focus(); };
+  k.querySelector("[data-speichern]").onclick=function(){ einrichtungSpeichern(Object.assign({}, EINRICHTUNG||einrichtungLeer(), {abschnitte:abs.filter(function(a){ return a.titel.trim()||a.text.trim(); })}), "Anleitungen gespeichert"); };
+  return k;
+}
+function einrichtungDateienKarte(E){
+  var k=el('<div class="card" data-einrichtung-dateien><div class="pad stack" style="gap:10px"><h2>Dokumente</h2>'+
+    '<div class="muted" style="font-size:12.5px">Anleitungen als PDF oder Foto – z. B. Daikin-Schulungsunterlagen, Anschlusspläne. Für alle Mitarbeiter, nie für Kunden.</div><div class="stack" style="gap:4px" data-liste></div>'+
+    '<div class="rowflex" style="gap:6px;align-items:center;flex-wrap:wrap"><label class="btn ghost sm" style="cursor:pointer">📎 Dokument hochladen<input type="file" data-datei hidden multiple accept="application/pdf,image/*"></label><span class="muted" data-stand style="font-size:12px"></span></div></div></div>');
+  var liste=k.querySelector("[data-liste]"), stand=k.querySelector("[data-stand]");
+  var zeichne=function(){
+    liste.innerHTML=""; var l=(EINRICHTUNG||E).dateien||[];
+    if(!l.length){ liste.appendChild(el('<div class="muted">Noch kein Dokument.</div>')); return; }
+    l.forEach(function(d){
+      var z=el('<div class="rowflex" data-dokument style="gap:8px;align-items:center;flex-wrap:wrap"><button class="btn ghost sm" type="button" data-auf>📄 '+esc(d.titel||d.name)+'</button><span class="muted" style="font-size:12px">'+esc(dfmt(String(d.zeit||"").slice(0,10)))+(d.von?" · "+esc(d.von):"")+'</span><button class="btn ghost sm" type="button" data-weg title="Entfernen">✕</button></div>');
+      z.querySelector("[data-auf]").onclick=function(){ dokumentOeffnen(d); };
+      z.querySelector("[data-weg]").onclick=function(){ if(!window.confirm("„"+(d.titel||d.name)+"“ entfernen?")) return;
+        Store.sb.storage.from("dokumente").remove([d.pfad]).then(function(){}, function(){});
+        einrichtungSpeichern(Object.assign({}, EINRICHTUNG||E, {dateien:((EINRICHTUNG||E).dateien||[]).filter(function(x){ return x.pfad!==d.pfad; })}), "Dokument entfernt").then(zeichne); };
+      liste.appendChild(z);
+    });
+  };
+  zeichne();
+  k.querySelector("[data-datei]").onchange=function(){
+    var dateien=[].slice.call(this.files||[]); this.value=""; if(!dateien.length) return;
+    stand.textContent="wird hochgeladen …";
+    var kette=Promise.resolve(), neueL=((EINRICHTUNG||E).dateien||[]).slice();
+    dateien.forEach(function(f){ kette=kette.then(function(){ return dokumentHochladen("einrichtung", f).then(function(e){ if(e) neueL.push(e); }); }); });
+    kette.then(function(){ stand.textContent=""; return einrichtungSpeichern(Object.assign({}, EINRICHTUNG||E, {dateien:neueL}), dateien.length+" Dokument"+(dateien.length===1?"":"e")+" abgelegt"); }).then(zeichne);
+  };
+  return k;
 }
 /* weitere Benutzer des Markt-Fernzugriffs als Textzeilen „Bezeichnung; Benutzer; Passwort“ (Verwaltung) und zurück */
 function fernWeitereText(w){ return (zugaengeLesen(w)||[]).map(function(z){ return [z.bez||"", z.benutzer||"", z.passwort||""].join("; "); }).join("\n"); }
@@ -18406,6 +18634,7 @@ function viewProtokoll(){
     : el('<div class="card"><div class="pad stack">'+
         '<div class="note warnbox" data-vororthinweis hidden style="font-size:13.5px"><a href="#" style="color:inherit;font-weight:600"></a> – antippen zum Beantworten</div>'+
         '<div data-abholoben></div>'+
+        '<div data-planoben></div>'+
         '<div data-ihoben class="stack" style="gap:6px"></div>'+
         '<div class="modus" role="group" aria-label="Art des Protokolls">'+
           '<button type="button" data-art="wartung" aria-pressed="'+(!stoer)+'">Wartung</button>'+
@@ -18429,6 +18658,10 @@ function viewProtokoll(){
     if(ihOben && ihAn()){ var sidI=P.bearb ? "" : P.selSt.value; if(ihOben.dataset.sid!==sidI){ ihOben.dataset.sid=sidI; ihKasten(ihOben, sidI, {alle:true}); } }
     /* 🧰 am gewählten Markt abzuholen / mitzunehmen – gleich oben, wenn man dort ist */
     if(abholOben) abholHinweisFuellen(abholOben, P.bearb ? "" : P.selSt.value);
+    /* 🗺 Bestandsplan des gewählten Markts – gleich oben (Inhaber 15.10.2026) */
+    var planOben=P.head.querySelector("[data-planoben]");
+    if(planOben){ var sidP=P.bearb ? "" : P.selSt.value; if(planOben.dataset.sid!==sidP){ planOben.dataset.sid=sidP; planOben.innerHTML=""; var sP=sidP && byId[sidP];
+      if(sP && (sP.bestandsplaene||[]).length && !nurLesen()) planOben.appendChild(bestandsplanKnoepfe(sP)); } }
     if(!vorOrtOben) return;
     var sid=P.selSt.value, n=sid ? vorOrtFragen(sid).filter(function(q){ return !String(q.antwort||"").trim(); }).length : 0;
     vorOrtOben.hidden=!n;
@@ -20898,6 +21131,7 @@ var LABEL_ST={filiale:"Filialnummer", name:"Bezeichnung", adresse:"Adresse", plz
   entfernt:"aus der Liste entfernt", entferntGrund:"Grund (entfernt)",
   pausiert:"zur Zeit nicht betreut", pausiertGrund:"Grund (nicht betreut)", kundeId:"Kunde",
   fernLink:"Fernzugriff – Adresse", fernBenutzer:"Fernzugriff – Benutzer", fernPasswort:"Fernzugriff – Passwort", fernWeitere:"Fernzugriff – weitere Benutzer",
+  fernSystem:"Fernzugriff – Regelung/System", fernHinweis:"Fernzugriff – Hinweis", fernVorOrt:"Zugang vor Ort (Display)", bestandsplaene:"Bestandsplan",
   pruefHinweis:"Prüfhinweis (Verwaltung)"};
 var LABEL_POS={anlagentyp:"Anlagentyp", intervallCode:"Kürzel", inbetriebnahme:"Inbetriebnahme",
   monatGrund:"Grund für den abweichenden Soll-Monat",
@@ -23482,7 +23716,7 @@ function viewVerwaltung(){
   if((A.tab==="inhaber"||A.tab==="wuensche") && !(istInhaber() && Store.modus==="supabase")) A.tab="nachbessern";   /* nach Kontowechsel */
   if(A.tab==="wuensche" && demo()) A.tab="nachbessern";
   var menue=el('<div class="card"><div class="pad"><div class="chips" role="tablist" style="gap:8px">'+
-    [["nachbessern","Nachbessern"+(fehlerZahl?" · "+fehlerZahl+" Fehler":"")],["maerkte","Märkte & Anlagen"]]
+    [["nachbessern","Nachbessern"+(fehlerZahl?" · "+fehlerZahl+" Fehler":"")],["maerkte","Märkte & Anlagen"],["einrichtung","Einrichtung"]]
       .concat(datenpflegeZahl() ? [["datenpflege","Datenpflege · "+datenpflegeZahl()]] : [])
       /* Änderungswünsche: was auf eine Entscheidung wartet, steht als Zahl dran */
       /* nicht in der Vorschau/Präsentation (demo): dort dürfen die Wünsche weder
@@ -23500,6 +23734,11 @@ function viewVerwaltung(){
   if(A.tab==="datenpflege"){ f.appendChild(vorOrtUebersichtKarte()); f.appendChild(altlisteKarte()); f.appendChild(datenpflegeAnsicht()); return f; }
   if(A.tab==="wuensche"){
     try{ f.appendChild(wuenscheAnsicht()); }catch(e){ console.error(e); }
+    return f;
+  }
+  if(A.tab==="einrichtung"){
+    /* Einrichtung (Inhaber 15.10.2026): Anleitungen, Dokumente, Standard-Zugänge zur Regelung */
+    try{ f.appendChild(einrichtungAnsicht()); }catch(e){ console.error(e); }
     return f;
   }
   if(A.tab==="inhaber"){
@@ -24251,7 +24490,29 @@ function verwaltungTeilSpeichern(P){
   var A=P.A, basisP=P.basisP, basisSt=P.basisSt, exS=P.exS, c=P.c, s=P.s;
   /* Aufbau – läuft, wenn alle Teile angemeldet sind, in der ursprünglichen Reihenfolge */
   return function(){
-    var fz=c.querySelector("#a_fernZeigen"); if(fz) fz.onclick=function(){ var pw=c.querySelector("#a_fernPasswort"); pw.type=pw.type==="password"?"text":"password"; fz.textContent=pw.type==="password"?"anzeigen":"verbergen"; };
+    /* alle Passwörter des Fernzugriffs gemeinsam anzeigen/verbergen (online, weitere Benutzer, vor Ort) */
+    var fz=c.querySelector("#a_fernZeigen"); if(fz) fz.onclick=function(){ var pw=c.querySelector("#a_fernPasswort"), zu=pw.type==="password";
+      [pw].concat([].slice.call(c.querySelectorAll("[data-fernpw]"))).forEach(function(i){ i.type=zu?"text":"password"; }); fz.textContent=zu?"alle verbergen":"alle anzeigen"; };
+    /* weitere Benutzer als Zeilen, Standard aus der Einrichtung, Bestandspläne (Inhaber 15.10.2026) */
+    var fwHost=c.querySelector("[data-fernweitere]");
+    if(fwHost){ fernWeitereZeilen(fwHost, zugaengeLesen(s.fernWeitere)||[]); c.querySelector("[data-fernweitere-neu]").onclick=function(){ fwHost._dazu({}); }; }
+    var fstd=c.querySelector("[data-fernstandard]"); if(fstd) fstd.onclick=function(){ einrichtungLaden().then(function(E){ einrichtungStandardInFormular(c, (E && E.standard)||{}); }); };
+    var fein=c.querySelector("[data-einrichtung]"); if(fein) fein.onclick=function(e){ e.preventDefault(); if(!verwaltungVerwerfenOk()) return; A.tab="einrichtung"; render(); window.scrollTo({top:0}); };
+    c._plaene=(s.bestandsplaene||[]).map(function(d){ return Object.assign({}, d); });
+    var planListe=function(){ var h=c.querySelector("[data-planliste]"); if(!h) return; h.innerHTML="";
+      if(!c._plaene.length){ h.appendChild(el('<div class="muted" style="font-size:12.5px">Noch kein Bestandsplan.</div>')); return; }
+      c._plaene.forEach(function(d){
+        var z=el('<div class="rowflex" data-plan style="gap:6px;align-items:center;flex-wrap:wrap"><button class="btn ghost sm" type="button" data-auf>🗺 '+esc(d.name||"Plan")+'</button><input type="text" data-titel value="'+esc(d.titel||"")+'" placeholder="Bezeichnung (z. B. Bestandsplan EG)" style="width:auto;max-width:260px"><button class="btn ghost sm" type="button" data-weg title="Entfernen">✕</button></div>');
+        z.querySelector("[data-auf]").onclick=function(){ dokumentOeffnen(d); };
+        z.querySelector("[data-titel]").oninput=function(){ d.titel=this.value; };
+        z.querySelector("[data-weg]").onclick=function(){ if(!window.confirm("Bestandsplan „"+(d.titel||d.name)+"“ entfernen? Gilt nach dem Speichern des Markts.")) return; c._plaene=c._plaene.filter(function(x){ return x!==d; }); planListe(); };
+        h.appendChild(z); }); };
+    planListe();
+    var planNeu=c.querySelector("[data-planneu]");
+    if(planNeu) planNeu.onchange=function(){ var dateien=[].slice.call(this.files||[]); this.value=""; if(!dateien.length) return;
+      var kette=Promise.resolve();
+      dateien.forEach(function(f){ kette=kette.then(function(){ return dokumentHochladen("markt/"+s.id, f).then(function(e){ if(e) c._plaene.push(e); }); }); });
+      kette.then(function(){ planListe(); toast("Hochgeladen – bitte den Markt speichern, damit der Plan dort steht."); }); };
     c.querySelector("#a_speichern").onclick=function(){
       var grund=P.grundHolen(); if(!grund) return;
       var num=function(v){ v=String(v).trim().replace(",","."); return v===""?null:+v; };
@@ -24262,7 +24523,9 @@ function verwaltungTeilSpeichern(P){
         ort:c.querySelector("#a_ort").value.trim(), region:c.querySelector("#a_region").value,
         leistungsstandort:c.querySelector("#a_leistungsstandort").value.trim().toUpperCase(),
         fernLink:c.querySelector("#a_fernLink").value.trim(), fernBenutzer:c.querySelector("#a_fernBenutzer").value.trim(),
-        fernPasswort:c.querySelector("#a_fernPasswort").value, fernWeitere:fernWeitereLesen(c.querySelector("#a_fernWeitere").value),
+        fernPasswort:c.querySelector("#a_fernPasswort").value, fernWeitere:fernWeitereAusZeilen(c.querySelector("[data-fernweitere]")),
+        fernSystem:c.querySelector("#a_fernSystem").value.trim(), fernHinweis:c.querySelector("#a_fernHinweis").value.trim(), fernVorOrt:fernVorOrtLesen(c),
+        bestandsplaene:(c._plaene && c._plaene.length) ? c._plaene.map(function(d){ return Object.assign({}, d, {titel:String(d.titel||"").trim()||d.name}); }) : null,
         lat:num(c.querySelector("#a_lat").value), lon:num(c.querySelector("#a_lon").value),
         notiz:c.querySelector("#a_notiz").value.trim(), pruefHinweis:c.querySelector("#a_pruefHinweis").value.trim(),
         kundeId:c.querySelector("#a_kunde").value==="lidl" ? null : c.querySelector("#a_kunde").value
@@ -24582,6 +24845,9 @@ function verwaltungEditor(s){
   var feld=function(id,label,wert,typ,extra){
     return '<label class="fl"><span>'+label+(extra||"")+'</span><input type="'+(typ||"text")+'" id="'+id+'" value="'+esc(wert==null?"":wert)+'"></label>';
   };
+  var vo=s.fernVorOrt||{};
+  var pwFeld=function(id,label,wert){ return '<label class="fl"><span>'+label+'</span><input type="password" id="'+id+'" value="'+esc(wert||"")+'" autocomplete="new-password" data-fernpw></label>'; };
+  var abschnittTitel=function(t){ return '<div style="font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--accent);margin-top:10px">'+t+"</div>"; };
   var regionen=REGIONEN.map(function(r){ return '<option'+(s.region===r?" selected":"")+">"+r+"</option>"; }).join("");
 
   var c=el('<div class="card" id="adm_editor" data-sid="'+esc(s.id)+'" style="border-color:var(--accent)"><div class="pad stack">'+
@@ -24623,14 +24889,32 @@ function verwaltungEditor(s){
       "</div></div>"+
     "</div>"+
     /* Fernzugriff auf die Regelung – gilt für alle Anlagen am Markt (Inhaber 12.10.2026); ob eine Anlage darüber gesteuert wird, steht je Anlage */
-    '<fieldset style="margin-top:12px"><legend>Fernzugriff auf die Regelung (für alle Anlagen am Markt)</legend>'+
+    '<fieldset style="margin-top:12px" data-fern><legend>Fernzugriff auf die Regelung (für alle Anlagen am Markt)</legend>'+
       '<div class="grid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px">'+
-        feld("a_fernLink","Adresse / Link",s.fernLink||"","text")+feld("a_fernBenutzer","Benutzername",s.fernBenutzer||"","text")+
-        '<label class="fl"><span>Passwort <button class="btn ghost sm" type="button" id="a_fernZeigen" style="margin-left:6px">anzeigen</button></span><input type="password" id="a_fernPasswort" value="'+esc(s.fernPasswort||"")+'" autocomplete="new-password"></label>'+
+        feld("a_fernSystem","Regelung / System (z. B. Daikin intelligent Touch Manager)",s.fernSystem||"","text")+feld("a_fernLink","Adresse / Link (online)",s.fernLink||"","text")+
       "</div>"+
-      '<label class="fl" style="margin-top:8px"><span>Weitere Benutzer – je Zeile: Bezeichnung; Benutzer; Passwort</span><textarea id="a_fernWeitere" rows="2" data-fest>'+esc(fernWeitereText(s.fernWeitere))+"</textarea></label>"+
-      '<div class="muted" style="font-size:12px">Welche Anlage über den Fernzugriff gesteuert wird, steht je Anlage (Regelung, Fernzugriff ja/nein). Die Adresse sieht auch der Kunde; Benutzer und Passwort nur UKT – nie im Protokoll, PDF oder Verlauf.</div>'+
+      abschnittTitel("Online-Zugang UKT")+
+      '<div class="grid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px">'+
+        feld("a_fernBenutzer","Benutzername",s.fernBenutzer||"","text")+
+        '<label class="fl"><span>Passwort <button class="btn ghost sm" type="button" id="a_fernZeigen" style="margin-left:6px">alle anzeigen</button></span><input type="password" id="a_fernPasswort" value="'+esc(s.fernPasswort||"")+'" autocomplete="new-password"></label>'+
+      "</div>"+
+      abschnittTitel("Weitere Benutzer online (Kunde, Standard-Admin, Router …)")+
+      '<div class="stack" style="gap:6px" data-fernweitere></div><div><button class="btn ghost sm" type="button" data-fernweitere-neu>+ Benutzer</button></div>'+
+      abschnittTitel("Vor Ort am Gerät (Touch-Display)")+
+      '<div class="grid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px">'+
+        pwFeld("a_fernDisplayPw","Displaysperre – Passwort",vo.displayPw)+pwFeld("a_fernAdminPw","Administrator – Passwort",vo.adminPw)+
+        pwFeld("a_fernWartung1","Passwort für Wartung (Stufe 1)",vo.wartungPw1)+pwFeld("a_fernWartung2","Passwort für Wartung (Stufe 2)",vo.wartungPw2)+
+      "</div>"+
+      feld("a_fernEntsperren","Programmierung freischalten (z. B. Ecken des Displays in dieser Reihenfolge antippen)",vo.entsperren||"","text")+
+      feld("a_fernHinweis","Hinweis zum Zugriff (z. B. beim Ausloggen sperren)",s.fernHinweis||"","text")+
+      '<div class="rowflex" style="gap:8px;flex-wrap:wrap;align-items:center;margin-top:6px"><button class="btn ghost sm" type="button" data-fernstandard>Standard-Zugänge übernehmen</button>'+
+        '<a class="sprunglink" href="#" data-einrichtung>→ Einrichtung: Anleitungen und Standard-Zugänge</a></div>'+
+      '<div class="muted" style="font-size:12px">Welche Anlage über den Fernzugriff gesteuert wird, steht je Anlage (Regelung, Fernzugriff ja/nein). Die Adresse sieht auch der Kunde; Benutzer und Passwörter nur UKT – nie im Protokoll, PDF oder Verlauf.</div>'+
     "</fieldset>"+
+    /* Bestandsplan (Inhaber 15.10.2026): PDF oder Foto, wo welche Anlage steht – Techniker sehen ihn in der Markt-Info und oben im Protokoll */
+    '<fieldset style="margin-top:12px" data-plaene><legend>Bestandsplan (wo welche Anlage steht)</legend><div class="stack" style="gap:6px" data-planliste></div>'+
+      '<div class="rowflex" style="gap:8px;flex-wrap:wrap;align-items:center;margin-top:6px"><label class="btn ghost sm" style="cursor:pointer">📎 Bestandsplan hochladen (PDF oder Foto)<input type="file" data-planneu hidden multiple accept="application/pdf,image/*"></label>'+
+        '<span class="muted" style="font-size:12px">Techniker sehen ihn in der Markt-Info und oben im Protokoll; nie für Kunden.</span></div></fieldset>'+
     /* drei Stufen: betreut · zur Zeit nicht betreut (bleibt sichtbar, ohne Termine) · stillgelegt (geschlossen) */
     '<div class="grid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;margin-top:10px">'+
       '<label class="fl"><span>Status des Markts</span><select id="a_status">'+
@@ -27257,7 +27541,8 @@ Object.assign(RUNDGAENGE, {
   verwaltung:{thema:true, titel:"Verwaltung: Daten pflegen", fuer:function(){ return rundgangBuero() && reiterErlaubt("verwaltung"); }, schritte:[
     {titel:"Verwaltung – Daten pflegen", text:"Hier pflegt das Büro Märkte, Anlagen und Termine. Die Verwaltung sehen Admins und der Inhaber."+
       RG_LISTE(["<strong>Nachbessern</strong> – was die App an Widersprüchen und Lücken findet, das Dringendste zuerst.",
-        "<strong>Märkte &amp; Anlagen</strong> – jeden Markt mit seinen Anlagen und Terminen bearbeiten.",
+        "<strong>Märkte &amp; Anlagen</strong> – jeden Markt mit seinen Anlagen und Terminen bearbeiten. Je Markt der Fernzugriff auf die Regelung (online: Adresse, UKT-Benutzer, weitere Benutzer; vor Ort: Displaysperre, Administrator, Passwort für Wartung, Freischalten der Programmierung) und der <strong>Bestandsplan</strong> (PDF/Foto, wo welche Anlage steht – Techniker sehen ihn in der Markt-Info und oben im Protokoll).",
+        "<strong>Einrichtung</strong> – Anleitungen und Dokumente zur Regelung (z. B. Daikin intelligent Touch Manager) und die Standard-Zugänge; „In alle Märkte mit Fernzugriff übernehmen“ schreibt sie an jeden Markt mit Adresse, im Markt-Editor „Standard-Zugänge übernehmen“ für einen.",
         "<strong>Datenpflege</strong> – Fragen für vor Ort, Funde der alten Liste, Märkte in Datenpflege."])+
       RG_HG(["Jede Änderung braucht einen <strong>Grund</strong> und steht mit Name im Verlauf – nichts geht verloren: darunter liegt immer die alte Excel-Liste, und der Inhaber kann zurücknehmen.",
         "Was Techniker im Protokoll an Anlagen ergänzen, landet hier genauso – mit ihrem Namen."])},

@@ -781,6 +781,19 @@ Kammerlander Umwelt- und Klimatechnik (UKT) – oft kurz, vom Handy, im Feld.
   `fernVonMarkt(s)` liefert den Markt-Zugang in der Form der Anlagen-Zugangsdaten; `zugangBox` nimmt ihn für Anlagen mit Fernzugriff ja ohne eigenen Zugang
   („gilt für den ganzen Markt“) und in der Markt-Info (`[data-fernzugang]`, nur intern). Je Anlage bleiben Regelung, betreut von, Fernzugriff ja/nein;
   die Gruppe „Zugang zur Regelung“ fragt der Anlagendialog nur noch, wenn der Markt keinen Fernzugriff hat oder die Anlage einen eigenen (`anlageHatEigenenZugang`).
+- **Einrichtung, Fernzugriff vor Ort, Bestandsplan** (Inhaber 15.10.2026, Zettel „Fernzugriff Zugänge“, tools/einrichtung.sql): Verwaltung › Reiter
+  **Einrichtung** (`einrichtungAnsicht`, Admins und Inhaber; Einstellung `einrichtung` {standard, abschnitte, dateien} – lesen alle Mitarbeiter, schreiben
+  Admins/Inhaber, nie Kunden): Standard-Zugänge zur Regelung (`EINRICHTUNG_STD`: System, UKT online, Standard-Admin, Kunde, vor Ort Displaysperre/
+  Administrator/Passwort für Wartung Stufe 1+2/Freischalten, Hinweis), „In alle Märkte mit Fernzugriff übernehmen“ (`einrichtungInMaerkte` →
+  `marktFelderSetzen` je Markt mit fernLink: UKT-Benutzer, Standard-Admin und Kunde ersetzt, andere weitere Benutzer wie Router bleiben, System/Hinweis nur
+  wo leer); Anleitungen als Abschnitte (Titel + Text); Dokumente (PDF/Fotos) im Speicher `dokumente` unter einrichtung/ (`dokumentHochladen`,
+  `dokumentOeffnen`). Markt: neue Felder `fernSystem`, `fernHinweis`, geheim `fernVorOrt` {displayPw, adminPw, wartungPw1, wartungPw2, entsperren}
+  (`GEHEIM_MARKT`, Sicht stammdaten_lesen ohne), `bestandsplaene` [{pfad, name, titel, typ}] unter markt/<Kennung>/. Markt-Editor: Fieldset Fernzugriff
+  mit Online-Zugang UKT, weiteren Benutzern als Zeilen (`fernWeitereZeilen`/`fernWeitereAusZeilen`), Vor Ort (`FERN_VORORT`, `fernVorOrtLesen`),
+  „alle anzeigen“, „Standard-Zugänge übernehmen“ (`einrichtungStandardInFormular`), Bestandsplan hochladen (sofort im Speicher, am Markt erst mit
+  „Speichern“). Anzeige: `zugangBoxVoll` zeigt System, Hinweis und den Vor-Ort-Block verdeckt (`fernVorOrtHtml`, anzeigen/kopieren); Bestandsplan in der
+  Markt-Info (`[data-bestandsplan]`) und oben im Protokoll (`[data-planoben]`, `bestandsplanKnoepfe`) – nur intern. „Serviceebene“ auf dem Zettel =
+  Passwort für Wartung (Inhaber). Zugangsdaten nie ins Repository – nur in Supabase.
 - **Störungen nie doppelt** (Büro 01.10.2026): eine Lidl-Auftragsnummer gibt es
   nur einmal als Störung (Datenbank-Index `stoerung_auftrag_einmal`,
   tools/stoerung-eindeutig.sql; im Dialog „Vorhandene öffnen“ statt neu – auch beim Ändern der Nummer).

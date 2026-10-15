@@ -6751,6 +6751,114 @@ test("Betriebsstandorte: Inhaber legt ein Büro an (Adresse → Kartenpunkt), Te
   await b.zu();
 });
 
+/* Inhaber 15.10.2026: Zettel „Fernzugriff Zugänge“ – eigener Menüpunkt „Einrichtung“ (Anleitungen, Dokumente, Standard-Zugänge),
+   Fernzugriff je Markt genauer (online, weitere Benutzer, vor Ort am Display), Standard an alle Märkte mit Link; Bestandsplan je Markt */
+test("Einrichtung: Standard-Zugänge speichern und an alle Märkte mit Fernzugriff übernehmen, Anleitung und Dokument; Markt-Editor mit Vor-Ort-Zugang und Bestandsplan; Techniker sieht vor Ort verdeckt, Kunde nie", async () => {
+  const a = await oeffnen(KONTEN.admin);
+  const r = await a.seite.evaluate(async () => {
+    const x = window.__t.x, db = window.__db.tabellen, w = (ms) => new Promise((f) => setTimeout(f, ms)), jetzt = new Date().toISOString(), e = {};
+    const bis = async (bed, ms) => { const t = Date.now() + (ms || 5000); for (;;) { let ok = false; try { ok = bed(); } catch (err) {} if (ok || Date.now() > t) return ok; await w(50); } };
+    const tippe = (el, v) => { el.value = v; el.dispatchEvent(new Event("input", { bubbles: true })); };
+    /* TS1 hat eine Fernzugriff-Adresse und einen Router-Benutzer, TS2 keine Adresse */
+    db.stammdaten.push({ id: "standort:TS1", typ: "standort", ziel: "TS1", neu: false, geaendert: jetzt, von: "Test", grund: "Fern",
+      felder: { fernLink: "https://regelung.test/ts1", fernBenutzer: "alt", fernPasswort: "AltPw", fernWeitere: [{ bez: "Router", benutzer: "router", passwort: "RouterPw" }] } });
+    await x("ladeStammdaten().then(storeNachRender)"); await w(200);
+    x("S.view='verwaltung'; S.adm=S.adm||{suche:'', filter:'alle', sort:'filiale', auf:true, sel:null, entwurf:null}; S.adm.tab='einrichtung'; render()");
+    await bis(() => document.querySelector("[data-einrichtung-standard]"));
+    const sk = document.querySelector("[data-einrichtung-standard]");
+    e.reiter = !!document.querySelector('[data-tab="einrichtung"]');
+    const std = { system: "Daikin iTM Test", uktBenutzer: "UKTTest", uktPw: "UktPw1", onlineAdminBenutzer: "admin", onlineAdminPw: "AdminPw1", kundeBez: "Lidl (FM)", kundeBenutzer: "FMTest", kundePw: "KundePw1",
+      displayPw: "DisplayPw1", adminPw: "AdmVorOrt1", wartungPw1: "WartungEins", wartungPw2: "WartungZwei", entsperren: "Ecken 1 oben rechts, 2 unten links, 3 oben links, 4 unten rechts", hinweis: "Beim Ausloggen sperren" };
+    Object.keys(std).forEach((k) => tippe(sk.querySelector('[data-std="' + k + '"]'), std[k]));
+    e.pwVerdeckt = sk.querySelector('[data-std="wartungPw1"]').type === "password";
+    sk.querySelector("[data-speichern]").click();
+    await bis(() => db.einstellungen.some((z) => z.schluessel === "einrichtung" && z.wert.standard && z.wert.standard.wartungPw1 === "WartungEins"));
+    e.gespeichert = !!db.einstellungen.find((z) => z.schluessel === "einrichtung");
+    /* an alle Märkte mit Adresse: TS1 ja (Router bleibt), TS2 nein */
+    sk.querySelector("[data-alle]").click();
+    await bis(() => /Übernommen an/.test(sk.querySelector("[data-stand]").textContent), 8000);
+    e.stand = sk.querySelector("[data-stand]").textContent;
+    const st1 = db.stammdaten.find((z) => z.id === "standort:TS1"), f1 = st1 ? st1.felder : {};
+    e.ts1 = { benutzer: f1.fernBenutzer, pw: f1.fernPasswort, vorOrt: f1.fernVorOrt, weitere: (f1.fernWeitere || []).map((z) => z.bez + "/" + z.benutzer), system: f1.fernSystem, hinweis: f1.fernHinweis };
+    e.ts2 = !db.stammdaten.some((z) => z.id === "standort:TS2");
+    /* Anleitung als Abschnitt, Dokument hochladen */
+    const ak = document.querySelector("[data-einrichtung-abschnitte]");
+    ak.querySelector("[data-neu]").click(); await w(50);
+    tippe(ak.querySelector("[data-abschnitt] [data-titel]"), "Einstellungen Außengerät"); tippe(ak.querySelector("[data-abschnitt] [data-text]"), "VRV 1: 2-01 01");
+    ak.querySelector("[data-speichern]").click();
+    await bis(() => (db.einstellungen.find((z) => z.schluessel === "einrichtung") || { wert: {} }).wert.abschnitte && db.einstellungen.find((z) => z.schluessel === "einrichtung").wert.abschnitte.length === 1);
+    const dk = document.querySelector("[data-einrichtung-dateien]"), dt = new DataTransfer();
+    dt.items.add(new File([new Blob(["%PDF-1.4 Anleitung"], { type: "application/pdf" })], "Anleitung ITM.pdf", { type: "application/pdf" }));
+    const fi = dk.querySelector("[data-datei]"); fi.files = dt.files; fi.dispatchEvent(new Event("change"));
+    await bis(() => dk.querySelector("[data-dokument]"), 6000);
+    const ein = db.einstellungen.find((z) => z.schluessel === "einrichtung").wert;
+    e.einrichtung = { abschnitte: ein.abschnitte.map((q) => q.titel), dateien: (ein.dateien || []).map((q) => q.pfad) };
+    /* Markt-Editor TS1: Vor-Ort-Felder gefüllt, weitere Benutzer als Zeilen, Bestandsplan hochladen und speichern */
+    x("S.adm.tab='maerkte'; S.adm.sel='TS1'; render()"); await bis(() => document.querySelector("#adm_editor #a_fernWartung1"));
+    const c = document.querySelector("#adm_editor");
+    e.editor = { wartung1: c.querySelector("#a_fernWartung1").value, typ: c.querySelector("#a_fernWartung1").type, system: c.querySelector("#a_fernSystem").value, zeilen: c.querySelectorAll("[data-fwz]").length, entsperren: c.querySelector("#a_fernEntsperren").value };
+    c.querySelector("#a_fernZeigen").click(); e.alleOffen = c.querySelector("#a_fernWartung1").type === "text" && c.querySelector("[data-fwz] [data-passwort]").type === "text";
+    const dp = new DataTransfer(); dp.items.add(new File([new Blob(["%PDF-1.4 Plan"], { type: "application/pdf" })], "Bestandsplan EG.pdf", { type: "application/pdf" }));
+    const pi = c.querySelector("[data-planneu]"); pi.files = dp.files; pi.dispatchEvent(new Event("change"));
+    await bis(() => c.querySelector("[data-plan]"), 6000);
+    tippe(c.querySelector("[data-plan] [data-titel]"), "Bestandsplan Erdgeschoss");
+    c.querySelector("#a_grund").value = "Test Bestandsplan"; c.querySelector("#a_speichern").click();
+    await bis(() => ((db.stammdaten.find((z) => z.id === "standort:TS1") || { felder: {} }).felder.bestandsplaene || []).length === 1, 6000);
+    const f2 = db.stammdaten.find((z) => z.id === "standort:TS1").felder;
+    e.plan = (f2.bestandsplaene || []).map((q) => q.titel + "|" + q.pfad);
+    e.nachSpeichern = { vorOrt: f2.fernVorOrt && f2.fernVorOrt.wartungPw1, weitere: (f2.fernWeitere || []).length };
+    await w(300);
+    const d = x("standortDetail(byId.TS1)"); document.body.appendChild(d);
+    e.info = !!d.querySelector("[data-bestandsplan] [data-bestandsplan]") && /Bestandsplan Erdgeschoss/.test(d.textContent);
+    d.remove();
+    return e;
+  });
+  pruefe(r.reiter && r.pwVerdeckt && r.gespeichert, "Einrichtung-Reiter/Speichern: " + JSON.stringify([r.reiter, r.pwVerdeckt, r.gespeichert]));
+  pruefe(/Übernommen an 1 von 1/.test(r.stand || "") && r.ts2, "In alle Märkte: " + JSON.stringify([r.stand, r.ts2]));
+  pruefe(r.ts1.benutzer === "UKTTest" && r.ts1.pw === "UktPw1" && r.ts1.vorOrt && r.ts1.vorOrt.wartungPw2 === "WartungZwei" && r.ts1.system === "Daikin iTM Test" && r.ts1.hinweis === "Beim Ausloggen sperren"
+    && JSON.stringify(r.ts1.weitere) === JSON.stringify(["Lidl (FM)/FMTest", "Standard-Admin/admin", "Router/router"]), "TS1 nach Übernahme: " + JSON.stringify(r.ts1));
+  pruefe(JSON.stringify(r.einrichtung.abschnitte) === '["Einstellungen Außengerät"]' && r.einrichtung.dateien.length === 1 && /^einrichtung\//.test(r.einrichtung.dateien[0]), "Anleitung/Dokument: " + JSON.stringify(r.einrichtung));
+  pruefe(r.editor.wartung1 === "WartungEins" && r.editor.typ === "password" && r.editor.system === "Daikin iTM Test" && r.editor.zeilen === 3 && /Ecken/.test(r.editor.entsperren) && r.alleOffen, "Markt-Editor: " + JSON.stringify([r.editor, r.alleOffen]));
+  pruefe(r.plan.length === 1 && /^Bestandsplan Erdgeschoss\|markt\/TS1\//.test(r.plan[0]) && r.nachSpeichern.vorOrt === "WartungEins" && r.nachSpeichern.weitere === 3 && r.info, "Bestandsplan: " + JSON.stringify([r.plan, r.nachSpeichern, r.info]));
+  pruefe(!a.fehler.length, "Laufzeitfehler: " + a.fehler.join("; "));
+  await a.zu();
+  /* Techniker: Zugang zur Regelung zeigt den Vor-Ort-Block verdeckt, Bestandsplan oben im Protokoll; Kunde: nichts davon */
+  const b = await oeffnen(KONTEN.techniker);
+  const q = await b.seite.evaluate(async () => {
+    const x = window.__t.x, db = window.__db.tabellen, w = (ms) => new Promise((f) => setTimeout(f, ms)), jetzt = new Date().toISOString(), e = {};
+    db.stammdaten.push({ id: "standort:TS1", typ: "standort", ziel: "TS1", neu: false, geaendert: jetzt, von: "Test", grund: "Fern",
+      felder: { fernLink: "https://regelung.test/ts1", fernBenutzer: "UKTTest", fernPasswort: "UktPw1", fernSystem: "Daikin iTM Test", fernHinweis: "Beim Ausloggen sperren",
+        fernVorOrt: { displayPw: "DisplayPw1", wartungPw1: "WartungEins", entsperren: "Ecken 1-2-3-4" }, bestandsplaene: [{ pfad: "markt/TS1/x_plan.pdf", name: "plan.pdf", titel: "Bestandsplan EG", typ: "application/pdf" }] } });
+    await x("ladeStammdaten().then(storeNachRender)"); await w(200);
+    const box = x("zugangBoxVoll(fernVonMarkt(byId.TS1))"); document.body.appendChild(box);
+    e.vorOrt = /Vor Ort am Gerät/.test(box.textContent) && /Displaysperre/.test(box.textContent) && /Beim Ausloggen sperren/.test(box.textContent) && /Daikin iTM Test/.test(box.textContent);
+    e.verdeckt = !/WartungEins|DisplayPw1/.test(box.innerHTML);
+    box.querySelector('[data-vo-zeigen="wartungPw1"]').click(); e.gezeigt = box.querySelector('[data-vo-pw="wartungPw1"]').textContent === "WartungEins";
+    box.remove();
+    x("S.view='protokoll'; render()"); await w(400);
+    const sel = document.querySelector("#f_standort");
+    e.protokollSelect = !!sel;
+    if (sel) { sel.value = "TS1"; sel.dispatchEvent(new Event("change")); await w(300); }
+    e.planOben = !!document.querySelector("[data-planoben] [data-bestandsplan]");
+    return e;
+  });
+  pruefe(q.vorOrt && q.verdeckt && q.gezeigt, "Techniker Vor-Ort-Zugang: " + JSON.stringify(q));
+  pruefe(!q.protokollSelect || q.planOben, "Bestandsplan oben im Protokoll fehlt: " + JSON.stringify(q));
+  pruefe(!b.fehler.length, "Laufzeitfehler: " + b.fehler.join("; "));
+  await b.zu();
+  const k = await oeffnen(KONTEN.kunde);
+  const rk = await k.seite.evaluate(async () => {
+    const x = window.__t.x, db = window.__db.tabellen, w = (ms) => new Promise((f) => setTimeout(f, ms)), jetzt = new Date().toISOString();
+    db.stammdaten.push({ id: "standort:TS1", typ: "standort", ziel: "TS1", neu: false, geaendert: jetzt, von: "Test", grund: "Fern",
+      felder: { fernLink: "https://regelung.test/ts1", fernVorOrt: { wartungPw1: "WartungEins" }, bestandsplaene: [{ pfad: "markt/TS1/x_plan.pdf", name: "plan.pdf", titel: "Bestandsplan EG" }] } });
+    await x("ladeStammdaten().then(storeNachRender)"); await w(200);
+    const d = x("standortDetail(byId.TS1)");
+    return { vorOrt: x("byId.TS1.fernVorOrt"), link: !!d.querySelector("[data-fernlink]"), plan: !!d.querySelector("[data-bestandsplan]"), html: /WartungEins/.test(d.innerHTML) };
+  });
+  pruefe(rk.vorOrt == null && rk.link && !rk.plan && !rk.html, "Kunde sieht Vor-Ort-Zugang oder Bestandsplan: " + JSON.stringify(rk));
+  await k.zu();
+});
+
 /* Antworten des Inhabers vom 05.10.2026 (Teil kern) */
 test("Antworten kern: „Nur Jahreswartung“ sperrt den Halbjahrestermin wie am Markt üblich – bleibt, bis die Verwaltung es zurücknimmt", async () => {
   const a = await oeffnen(KONTEN.admin);

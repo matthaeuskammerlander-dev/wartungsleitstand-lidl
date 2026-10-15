@@ -92,7 +92,10 @@
     /* wie startpunkte.sql: den Startpunkt („startpunkt:…“) dürfen alle anlegen und ändern, die schreiben dürfen – löschen nicht */
     var startpunkt=function(z){ return !!z && /^startpunkt:/.test(z.schluessel||""); };
     var startpunktOk=(art==="insert" && startpunkt(zeile)) || (art==="update" && startpunkt(alt) && (!zeile || !("schluessel" in zeile) || startpunkt(zeile)));
-    if(tab==="einstellungen" && art!=="select" && rolle!=="inhaber" && !startpunktOk) return "einstellungen: nur Inhaber";
+    /* wie einrichtung.sql: die Einrichtung (Anleitungen, Standard-Zugänge) schreiben auch Admins */
+    var einrichtung=function(z){ return !!z && z.schluessel==="einrichtung"; };
+    var einrichtungOk=admin() && ((art==="insert" && einrichtung(zeile)) || (art==="update" && einrichtung(alt) && (!zeile || !("schluessel" in zeile) || einrichtung(zeile))));
+    if(tab==="einstellungen" && art!=="select" && rolle!=="inhaber" && !startpunktOk && !einrichtungOk) return "einstellungen: nur Inhaber";
     /* wie stempeluhr-5.sql: Zustimmung zur Position – lesen die eigene (Inhaber alle), eintragen nur die eigene (darf_schreiben), löschen eigene bzw. Inhaber */
     if(tab==="stempel_zustimmung"){
       if(rolle==="kunde"||rolle==="praesentation") return "stempel_zustimmung: gesperrt";
@@ -542,7 +545,7 @@
         return Promise.resolve({data:{user:sitzung.user},error:null}); } },
     from:function(t){
       if(t==="stammdaten_leicht") DB.stammdaten_leicht=DB.stammdaten.map(leicht);
-      if(t==="stammdaten_lesen") DB.stammdaten_lesen=DB.stammdaten.map(function(r){ var f=Object.assign({},r.felder); delete f.zugangLink; delete f.zugangBenutzer; delete f.zugangPasswort; delete f.zugangWeitere; delete f.fernBenutzer; delete f.fernPasswort; delete f.fernWeitere; return Object.assign({},r,{felder:f}); });
+      if(t==="stammdaten_lesen") DB.stammdaten_lesen=DB.stammdaten.map(function(r){ var f=Object.assign({},r.felder); delete f.zugangLink; delete f.zugangBenutzer; delete f.zugangPasswort; delete f.zugangWeitere; delete f.fernBenutzer; delete f.fernPasswort; delete f.fernWeitere; delete f.fernVorOrt; return Object.assign({},r,{felder:f}); });
       return new Q(t); },
     functions:{invoke:function(name,o){ return Promise.resolve(window.__kiAntwort ? window.__kiAntwort(name,o.body) : {data:null,error:{message:"keine KI im Test"}}); }},
     storage:{from:function(n){ return new E(n); }},
