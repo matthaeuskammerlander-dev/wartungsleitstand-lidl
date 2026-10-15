@@ -6235,6 +6235,36 @@ test("Inbetriebnahmeprotokoll: aus der Anlage vorbelegt, Füllmenge und CO₂e g
 
 /* Inhaber 12.10.2026 (Präsentation bei Lidl im Kundenkonto): nichts „überfällig“ – „in Planung“; Fernzugriff gehört zum Markt (Link auch für den Kunden,
    Zugangsdaten nie), gilt für alle Anlagen dort; je Anlage weiter Regelung und Fernzugriff ja/nein */
+test("Fernsteuerung durch eine andere Firma (Inhaber 15.10.2026): im Markt-Editor eintragen, „nur beobachten“ im Zugangsfenster, in der Markt-Info, in der Übersicht und oben im Protokoll", async () => {
+  const a = await oeffnen(KONTEN.admin);
+  const r = await a.seite.evaluate(async () => {
+    const x = window.__t.x, db = window.__db.tabellen, w = (ms) => new Promise((f) => setTimeout(f, ms)), jetzt = new Date().toISOString(), e = {};
+    const bis = async (bed, ms) => { const t = Date.now() + (ms || 5000); for (;;) { let ok = false; try { ok = bed(); } catch (err) {} if (ok || Date.now() > t) return ok; await w(50); } };
+    db.stammdaten.push({ id: "standort:TS1", typ: "standort", ziel: "TS1", neu: false, geaendert: jetzt, von: "Test", grund: "Fern", felder: { fernLink: "https://regelung.test/ts1", fernBenutzer: "UKTTest" } });
+    await x("ladeStammdaten().then(storeNachRender)"); await w(200);
+    x("S.view='verwaltung'; S.adm=S.adm||{suche:'', filter:'alle', sort:'filiale', auf:true, sel:null, entwurf:null}; S.adm.tab='maerkte'; S.adm.sel='TS1'; render()");
+    await bis(() => document.querySelector("#adm_editor #a_fernFremd"));
+    const c = document.querySelector("#adm_editor");
+    e.vorschlaege = [...c.querySelectorAll("#a_fernFremdListe option")].map((o) => o.value);
+    c.querySelector("#a_fernFremd").value = "Licht Loidl"; c.querySelector("#a_fernFremdHinweis").value = "Herr Muster, Tel. im Kontakt";
+    c.querySelector("#a_grund").value = "Test Fremdsteuerung"; c.querySelector("#a_speichern").click();
+    await bis(() => ((db.stammdaten.find((z) => z.id === "standort:TS1") || { felder: {} }).felder.fernFremd) === "Licht Loidl", 6000);
+    e.db = (db.stammdaten.find((z) => z.id === "standort:TS1") || { felder: {} }).felder;
+    await w(300);
+    const d = x("standortDetail(byId.TS1)");
+    e.info = ((d.querySelector("dd[data-fernfremd]") || {}).textContent || "");
+    e.fenster = x("zugangBoxVoll ? 1 : 0") ? /Nur beobachten – Fernsteuerung durch Licht Loidl/.test(x("fernFremdText(byId.TS1)")) : false;
+    x("S.adm.tab='einrichtung'; render()"); await bis(() => document.querySelector("[data-fern-uebersicht] [data-fern-markt]"));
+    e.uebersicht = ((document.querySelector("[data-fern-uebersicht] [data-fernfremd]") || {}).textContent || "");
+    return e;
+  });
+  pruefe(r.vorschlaege.includes("Licht Loidl") && r.vorschlaege.includes("R+S"), "Vorschläge: " + JSON.stringify(r.vorschlaege));
+  pruefe(r.db.fernFremd === "Licht Loidl" && r.db.fernFremdHinweis === "Herr Muster, Tel. im Kontakt", "gespeichert: " + JSON.stringify([r.db.fernFremd, r.db.fernFremdHinweis]));
+  pruefe(/Nur beobachten – Fernsteuerung durch Licht Loidl\. UKT kann hier nichts einstellen, nur beobachten\. Herr Muster/.test(r.info) && r.fenster && /nur beobachten – Licht Loidl/.test(r.uebersicht),
+    "Anzeige: " + JSON.stringify([r.info, r.fenster, r.uebersicht]));
+  await a.zu();
+});
+
 test("Fernzugriff-Konto (Inhaber 15.10.2026): nur Märkte mit Fernzugriff als Karte und Liste, online oder „in Wartung“, je Markt nur Link und Kunden-Zugang; Protokolle und andere Zugangsdaten nie", async () => {
   const a = await oeffnen(KONTEN.fernzugriff);
   const r = await a.seite.evaluate(async () => {

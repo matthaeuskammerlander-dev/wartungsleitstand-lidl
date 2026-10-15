@@ -802,6 +802,10 @@ Kammerlander Umwelt- und Klimatechnik (UKT) – oft kurz, vom Handy, im Feld.
   Schalter „● online / ✗ offline“ je Markt (Inhaber 15.10.2026: „grundsätzlich sollten alle an sein; wenn ich auf offline stelle, müssen wir das beim nächsten Termin
   lösen und wieder online bringen“): Marktfeld `fernOffline` (null = online, sonst {seit, von, notiz}; `fernStatusUmstellen`, Notiz über `textAbfrage`), sichtbar als
   `fernOfflineText` in der Übersicht, der Markt-Info (`[data-fernoffline]`) und oben im Protokoll (`[data-fernoben]`) – nur intern; wieder online = Feld leer.
+  **Fernsteuerung durch eine andere Firma** (Inhaber 15.10.2026: „z. B. Licht Loidl oder R+S – UKT KANN dann nichts einstellen, die Anlage aber beobachten“):
+  Marktfelder `fernFremd` (Firma, Vorschläge `fernFremdFirmen`) und `fernFremdHinweis`, nicht geheim; Markt-Editor Abschnitt „Fernsteuerung durch eine andere Firma“
+  (`#a_fernFremd`, `#a_fernFremdHinweis`); `fernFremdText` „👁 Nur beobachten – Fernsteuerung durch …“ im Zugangsfenster (`zugangBoxVoll`, `_fernFremd`), Markt-Info, Übersicht
+  (Schild) und oben im Protokoll (`[data-fernfremd]`) – nur intern.
   **Automatische Prüfung täglich** (Inhaber 15.10.2026: „täglich laufen lassen, die überprüft, ob die Fernzugriffe funktionieren und ob sie online sind“, tools/fern-pruefung.sql):
   die Datenbank selbst (pg_cron 04:30 UTC + pg_net) ruft jede `fernLink`-Adresse ohne Anmeldung auf; erreichbar = die Seite der Regelung kommt (Daikin ITM, „ITMFont“),
   Router offline = Zeitüberschreitung, Plattform erreicht die Regelung nicht = 502 „Connection unsuccessful“. Tabelle `fern_pruefung`, Sicht `fern_pruefung_stand`

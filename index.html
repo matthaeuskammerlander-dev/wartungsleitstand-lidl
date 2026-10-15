@@ -862,6 +862,9 @@ var STAMM_FELDER_ST  = ["filiale","name","adresse","plz","ort","region","lat","l
                         /* Fernzugriff offline gestellt (Inhaber 15.10.2026: „grundsätzlich sollten alle an sein; wenn ich auf offline stelle, müssen wir das beim
                            nächsten Termin lösen und wieder online bringen“) – null = online, sonst {seit, von, notiz}; sichtbar für Techniker am Markt und im Protokoll */
                         "fernOffline",
+                        /* zusätzliche Fernsteuerung durch eine andere Firma (Inhaber 15.10.2026: „z. B. Licht Loidl oder R+S – dann können wir als UKT
+                           keine Einstellungen vornehmen, die Anlage aber trotzdem beobachten“): Firma und Hinweis, nicht geheim */
+                        "fernFremd", "fernFremdHinweis",
                         /* Prüfhinweis fürs Büro (Inhaber 12.10.2026: „das muss in der Verwaltung geprüft werden“) – steht in „Alte Liste prüfen“, bis er geleert wird */
                         "pruefHinweis"];
 var GEHEIM_MARKT=["fernBenutzer","fernPasswort","fernWeitere","fernVorOrt"];
@@ -6658,6 +6661,7 @@ function standortDetail(s){
       /* Fernzugriff auf die Regelung: die Adresse sehen alle (auch der Kunde), Benutzer/Passwort nur UKT (zugangBox unten) */
       (s.fernLink?"<dt>Fernzugriff</dt><dd><a class='mono' href='"+esc(zugangsAdresse(s.fernLink))+"' target='_blank' rel='noopener' style='word-break:break-all' data-fernlink>"+esc(s.fernLink)+"</a></dd>":"")+
       (!nurLesen() && s.fernOffline ? "<dt>Fernzugriff</dt><dd style='color:var(--crit)' data-fernoffline>"+esc(fernOfflineText(s))+"</dd>" : "")+
+      (!nurLesen() && s.fernFremd ? "<dt>Fernsteuerung</dt><dd data-fernfremd><strong>👁 "+esc(fernFremdText(s))+"</strong></dd>" : "")+
       /* laut automatischer Prüfung nicht erreichbar (Inhaber 15.10.2026) – nur, solange nicht ohnehin von Hand auf offline gestellt */
       (!nurLesen() && !s.fernOffline && fernPruefungGestoert(s) ? "<dt>Fernzugriff</dt><dd style='color:var(--crit)' data-fernpruefung>"+esc(fernPruefungText(s))+"</dd>" : "")+
       /* Bestandsplan (Inhaber 15.10.2026): wo welche Anlage steht – nur intern */
@@ -6771,7 +6775,7 @@ function zugangsAdresse(roh){
 function fernVonMarkt(s){
   if(!s || !(s.fernLink || s.fernBenutzer || s.fernPasswort || (zugaengeLesen(s.fernWeitere)||[]).length || s.fernVorOrt)) return null;
   return {fernzugriff:"ja", zugangLink:s.fernLink||"", zugangBenutzer:s.fernBenutzer||"", zugangPasswort:s.fernPasswort||"", zugangWeitere:s.fernWeitere||null, _vomMarkt:true,
-          _fernVorOrt:s.fernVorOrt||null, _fernHinweis:s.fernHinweis||"", _fernSystem:s.fernSystem||""};
+          _fernVorOrt:s.fernVorOrt||null, _fernHinweis:s.fernHinweis||"", _fernSystem:s.fernSystem||"", _fernFremd:fernFremdText(s)};
 }
 /* Zugang vor Ort am Gerät (Touch-Display): Passwörter verdeckt, anzeigen/kopieren wie die Online-Zugänge */
 function fernVorOrtHtml(vo){
@@ -6827,6 +6831,7 @@ function zugangBoxVoll(d){
       "</div>";
     }).join("")+
     (d._fernSystem?'<div class="muted" style="font-size:12.5px">Regelung: '+esc(d._fernSystem)+"</div>":"")+
+    (d._fernFremd?'<div class="note warnbox" style="font-size:13px" data-fernfremd><strong>👁 '+esc(d._fernFremd)+"</strong></div>":"")+
     (d._fernHinweis?'<div class="note warnbox" style="font-size:12.5px">'+esc(d._fernHinweis)+"</div>":"")+
     (vo ? fernVorOrtHtml(vo) : "")+
   "</div>");
@@ -8377,6 +8382,7 @@ function fernzugriffUebersichtKarte(){
     var anl=mitFernAnlagen(s), mitFern=anl.filter(function(d){ return d.fernzugriff==="ja"; }), ohne=anl.filter(function(d){ return d.fernzugriff!=="ja"; });
     var z=el('<div class="rowflex" data-fern-markt style="gap:8px;align-items:center;flex-wrap:wrap;border-top:1px solid var(--line);padding-top:4px"><span style="min-width:0;flex:1">'+marktLink(s)+
       (s.fernSystem?' <span class="muted">· '+esc(s.fernSystem)+"</span>":"")+
+      (s.fernFremd?' <span class="tag" style="background:var(--warn-soft);border-color:var(--warn)" data-fernfremd title="'+esc(fernFremdText(s))+'">👁 nur beobachten – '+esc(s.fernFremd)+"</span>":"")+
       '<br><span class="muted" style="font-size:12px">'+(s.fernLink?'<a class="mono" href="'+esc(zugangsAdresse(s.fernLink))+'" target="_blank" rel="noopener">Adresse öffnen</a> · ':'<span style="color:var(--crit)">keine Adresse am Markt</span> · ')+
       mitFern.length+" Anlage"+(mitFern.length===1?"":"n")+" mit Fernzugriff"+(mitFern.length?" ("+esc(mitFern.map(function(d){ return d.anlagentyp||"Anlage"; }).join(", "))+")":"")+
       (ohne.length?" · "+ohne.length+" ohne":"")+" · vor Ort: "+(s.fernVorOrt?"✓":"–")+" · Bestandsplan: "+((s.bestandsplaene||[]).length?"✓":"–")+"</span>"+
@@ -8394,6 +8400,9 @@ function fernzugriffUebersichtKarte(){
 }
 /* Fernzugriff eines Markts auf offline/online stellen (Inhaber 15.10.2026): offline mit Notiz, seit wann und von wem – am Markt und
    oben im Protokoll sichtbar, bis er wieder online gestellt ist */
+/* „nur beobachten“: eine andere Firma steuert die Anlage fern – UKT kann dort nichts einstellen (Inhaber 15.10.2026: „UKT KANN dann nichts einstellen“) */
+function fernFremdFirmen(){ var m={"Licht Loidl":1, "R+S":1}; ST.forEach(function(x){ if(x.fernFremd) m[x.fernFremd]=1; }); return Object.keys(m).sort(); }
+function fernFremdText(s){ return s && s.fernFremd ? "Nur beobachten – Fernsteuerung durch "+s.fernFremd+". UKT kann hier nichts einstellen, nur beobachten."+(s.fernFremdHinweis?" "+s.fernFremdHinweis:"") : ""; }
 function fernOfflineText(s){ var o=s && s.fernOffline; if(!o) return ""; return "Fernzugriff OFFLINE seit "+dfmt(String(o.seit||"").slice(0,10))+(o.von?" ("+o.von+")":"")+(o.notiz?": "+o.notiz:"")+" – beim nächsten Termin lösen und wieder online bringen"; }
 function fernStatusUmstellen(s){
   if(nurLesen()){ toast("Mit diesem Konto lässt sich nur ansehen."); return; }
@@ -18988,7 +18997,8 @@ function viewProtokoll(){
     var fernOben=P.head.querySelector("[data-fernoben]");
     if(fernOben){ var sidF=P.bearb ? "" : P.selSt.value, sF=sidF && byId[sidF]; fernOben.innerHTML="";
       if(sF && sF.fernOffline && !nurLesen()) fernOben.appendChild(el('<div class="note warnbox" data-fernoffline style="font-size:13px">✗ '+esc(fernOfflineText(sF))+"</div>"));
-      else if(sF && fernPruefungGestoert(sF) && !nurLesen()) fernOben.appendChild(el('<div class="note warnbox" data-fernpruefung style="font-size:13px">'+esc(fernPruefungText(sF))+" – bitte vor Ort nachsehen (Router, Netzwerk, Regelung)</div>")); }
+      else if(sF && fernPruefungGestoert(sF) && !nurLesen()) fernOben.appendChild(el('<div class="note warnbox" data-fernpruefung style="font-size:13px">'+esc(fernPruefungText(sF))+" – bitte vor Ort nachsehen (Router, Netzwerk, Regelung)</div>"));
+      if(sF && sF.fernFremd && !nurLesen()) fernOben.appendChild(el('<div class="note warnbox" data-fernfremd style="font-size:13px">👁 '+esc(fernFremdText(sF))+"</div>")); }
     var planOben=P.head.querySelector("[data-planoben]");
     if(planOben){ var sidP=P.bearb ? "" : P.selSt.value; if(planOben.dataset.sid!==sidP){ planOben.dataset.sid=sidP; planOben.innerHTML=""; var sP=sidP && byId[sidP];
       if(sP && (sP.bestandsplaene||[]).length && !nurLesen()) planOben.appendChild(bestandsplanKnoepfe(sP)); } }
@@ -21461,7 +21471,7 @@ var LABEL_ST={filiale:"Filialnummer", name:"Bezeichnung", adresse:"Adresse", plz
   entfernt:"aus der Liste entfernt", entferntGrund:"Grund (entfernt)",
   pausiert:"zur Zeit nicht betreut", pausiertGrund:"Grund (nicht betreut)", kundeId:"Kunde",
   fernLink:"Fernzugriff – Adresse", fernBenutzer:"Fernzugriff – Benutzer", fernPasswort:"Fernzugriff – Passwort", fernWeitere:"Fernzugriff – weitere Benutzer",
-  fernSystem:"Fernzugriff – Regelung/System", fernHinweis:"Fernzugriff – Hinweis", fernVorOrt:"Zugang vor Ort (Display)", bestandsplaene:"Bestandsplan", fernOffline:"Fernzugriff offline",
+  fernSystem:"Fernzugriff – Regelung/System", fernHinweis:"Fernzugriff – Hinweis", fernVorOrt:"Zugang vor Ort (Display)", bestandsplaene:"Bestandsplan", fernOffline:"Fernzugriff offline", fernFremd:"Fernsteuerung durch andere Firma", fernFremdHinweis:"Fernsteuerung – Hinweis",
   pruefHinweis:"Prüfhinweis (Verwaltung)"};
 var LABEL_POS={anlagentyp:"Anlagentyp", intervallCode:"Kürzel", inbetriebnahme:"Inbetriebnahme",
   monatGrund:"Grund für den abweichenden Soll-Monat",
@@ -24856,6 +24866,7 @@ function verwaltungTeilSpeichern(P){
         fernLink:c.querySelector("#a_fernLink").value.trim(), fernBenutzer:c.querySelector("#a_fernBenutzer").value.trim(),
         fernPasswort:c.querySelector("#a_fernPasswort").value, fernWeitere:fernWeitereAusZeilen(c.querySelector("[data-fernweitere]")),
         fernSystem:c.querySelector("#a_fernSystem").value.trim(), fernHinweis:c.querySelector("#a_fernHinweis").value.trim(), fernVorOrt:fernVorOrtLesen(c),
+        fernFremd:c.querySelector("#a_fernFremd").value.trim(), fernFremdHinweis:c.querySelector("#a_fernFremdHinweis").value.trim(),
         bestandsplaene:(c._plaene && c._plaene.length) ? c._plaene.map(function(d){ return Object.assign({}, d, {titel:String(d.titel||"").trim()||d.name}); }) : null,
         lat:num(c.querySelector("#a_lat").value), lon:num(c.querySelector("#a_lon").value),
         notiz:c.querySelector("#a_notiz").value.trim(), pruefHinweis:c.querySelector("#a_pruefHinweis").value.trim(),
@@ -25238,6 +25249,13 @@ function verwaltungEditor(s){
       "</div>"+
       feld("a_fernEntsperren","Programmierung freischalten (z. B. Ecken des Displays in dieser Reihenfolge antippen)",vo.entsperren||"","text")+
       feld("a_fernHinweis","Hinweis zum Zugriff (z. B. beim Ausloggen sperren)",s.fernHinweis||"","text")+
+      abschnittTitel("Fernsteuerung durch eine andere Firma")+
+      '<div class="muted" style="font-size:12.5px">Steuert zusätzlich eine andere Firma die Anlage fern (z. B. Licht Loidl, R+S), kann UKT dort nichts einstellen, nur beobachten. Leer = keine andere Firma.</div>'+
+      '<div class="grid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px">'+
+        '<label class="fl"><span>Firma</span><input type="text" id="a_fernFremd" list="a_fernFremdListe" value="'+esc(s.fernFremd||"")+'" placeholder="z. B. Licht Loidl"></label>'+
+        '<datalist id="a_fernFremdListe">'+fernFremdFirmen().map(function(f){ return '<option value="'+esc(f)+'">'; }).join("")+"</datalist>"+
+        feld("a_fernFremdHinweis","Hinweis (z. B. Ansprechpartner, was erlaubt ist)",s.fernFremdHinweis||"","text")+
+      "</div>"+
       '<div class="rowflex" style="gap:8px;flex-wrap:wrap;align-items:center;margin-top:6px"><button class="btn ghost sm" type="button" data-fernstandard>Standard-Zugänge übernehmen</button>'+
         '<a class="sprunglink" href="#" data-einrichtung>→ Reiter Fernzugriff: Übersicht, Anleitungen und Standard-Zugänge</a></div>'+
       '<div class="muted" style="font-size:12px">Welche Anlage über den Fernzugriff gesteuert wird, steht je Anlage (Regelung, Fernzugriff ja/nein). Die Adresse sieht auch der Kunde; Benutzer und Passwörter nur UKT – nie im Protokoll, PDF oder Verlauf.</div>'+
