@@ -10676,6 +10676,9 @@ function alleSeiten(bau, schluessel){
    (schlechter Empfang) ersetzt keinen vollständig geladenen Stand – sonst
    verschwänden offene Störungen und Anlagendaten bis zum nächsten Laden */
 var stammLeicht=true;
+/* nur das zuletzt GESTARTETE Laden zählt (Inhaber 15.10.2026: „hier fehlen die restlichen Zugangsdaten wie bei anderen Märkten“ –
+   ein beim Start noch mit ungeprüfter Rolle ohne Zugangsdaten begonnenes Laden kam nach dem vollständigen an und überschrieb es) */
+var stammGen=0;
 /* Auftrags-PDF und Seitenbilder einer Störung erst beim Öffnen (felder._schwer aus stammdaten_leicht); gemerkt je Stand */
 var STOER_SCHWER={};
 function stoerungSchwerFehlt(o){ return !!(o && o._schwer && !o.pdfDaten && !(o.seiten||[]).length); }
@@ -10699,6 +10702,7 @@ function ladeStammdaten(nurVollstaendig){
      sonst hielte der zweite Lauf „lädt gerade“ für „unvollständig“ und könnte
      einen vollständigen Stand durch einen lückenhaften ersetzen */
   if(nurVollstaendig && stammLaedt) return stammLaedt;
+  var meineGen=++stammGen, startKonto=Store.benutzer ? Store.benutzer.id : null, startGeprueft=!!Rolle.da && !Rolle.gemerkt;
   var lokal=idbVorgang("readonly",function(st){ return st.getAll(); },"stammdaten")
     .then(function(l){ return l||[]; }, function(){ return []; });
   /* maßgeblich ist der zuletzt ABGESCHLOSSENE Stand, nicht der Zwischenzustand eines laufenden Ladens */
@@ -10727,6 +10731,10 @@ function ladeStammdaten(nurVollstaendig){
     }, function(){ komplett=false; return []; });
   }
   var lauf=Promise.all([lokal,zentral]).then(function(r){
+    /* inzwischen wurde neu geladen (etwa nach der Rollenprüfung, dann MIT Zugangsdaten): dieses ältere Ergebnis verwerfen */
+    if(meineGen!==stammGen) return stammUeber;
+    /* anderes Konto als beim Start: gehört nicht zu ihm */
+    if((Store.benutzer ? Store.benutzer.id : null)!==startKonto) return stammUeber;
     if(nurVollstaendig && !komplett && vorherKomplett){ stammVollstaendig=true; return stammUeber; }
     var alle={};
     /* abgemeldet (gemeinsame Datenbank): was noch auf dem Gerät wartet, gehört
@@ -10751,7 +10759,8 @@ function ladeStammdaten(nurVollstaendig){
     });
     stammUeber=alle;
     stammVollstaendig=komplett; stammGeladenKomplett=komplett;
-    if(Store.benutzer && Rolle.da) datenFuerKonto=Store.benutzer.id;   /* geladen für dieses Konto mit geprüfter Rolle (anzeigeGesperrt) */
+    /* geladen für dieses Konto mit einer beim START schon geprüften Rolle (anzeigeGesperrt) – nicht mit der vorläufigen */
+    if(Store.benutzer && startGeprueft && Rolle.da) datenFuerKonto=Store.benutzer.id;
     /* unvollständig (etwa schlechter Empfang beim Anmelden): bald nochmal versuchen */
     if(!komplett && Store.modus==="supabase" && Store.benutzer) setTimeout(hintergrundNachladen, 30000);
     stammStand=JSON.parse(JSON.stringify(alle));

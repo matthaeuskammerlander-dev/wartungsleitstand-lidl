@@ -844,7 +844,9 @@ angezeigt werden, die diesen Benutzer nichts angehen“): `anzeigeGesperrt()` �
 geladene Stammdaten (`datenFuerKonto`, gesetzt am Ende von `ladeStammdaten` nur bei `Rolle.da`) → Karte „Anmeldung wird geprüft …“, abgemeldet → nur
 `viewAnmeldung()`; Reiterleiste dabei ganz versteckt. Die Grundliste wird abgemeldet NICHT mehr gezeigt. `speicherLeeren()` beim Sitzungsstart
 (`rolleVorlaeufig`) und beim Abmelden leert stammUeber/stammStand/OFFENE/aenderungen/FERN_KONTO/FERN_PRUEFUNG/EINRICHTUNG. Testhilfe `oeffnen()` wartet
-auf `!anzeigeGesperrt()`. Testkonten ausblenden (Inhaber 05.10.2026): Haken „in
+auf `!anzeigeGesperrt()`. **Nur das zuletzt gestartete Laden zählt** (`stammGen` in `ladeStammdaten`, Inhaber 15.10.2026: „hier fehlen die restlichen
+Zugangsdaten“ – ein beim Start mit ungeprüfter Rolle über stammdaten_lesen begonnenes Laden kam nach dem vollständigen an und überschrieb es); ein Ergebnis
+für ein anderes Konto wird verworfen; `datenFuerKonto` nur, wenn die Rolle beim START geprüft war. Attrappe: `window.__verzoegerung={tabelle:ms}`. Testkonten ausblenden (Inhaber 05.10.2026): Haken „in
 Personenlisten ausblenden“ in der Kontenübersicht (Verwaltung › Inhaber) → `einstellungen.personen_ausblenden`
 {ids}; `chatTeamLaden` lässt sie in jeder Personenauswahl weg (`PERSONEN_AUS`), das Konto bleibt bestehen,
 schon Eingetragenes bleibt sichtbar. Keine Namen oder Kennungen in den Code. Der Kunde darf nur ansehen

@@ -488,7 +488,9 @@
   Q.prototype.then=function(ok,nok){ var s=this;
     if(window.__netzWeg==="antwort" && s.a!=="select") return Promise.resolve(JSON.parse(JSON.stringify(NETZ_FEHLER))).then(ok,nok);
     if(window.__netzWeg && s.a!=="select") return Promise.reject(new TypeError("Failed to fetch")).then(ok,nok);
-    return new Promise(function(f){ setTimeout(function(){ f(s.lauf()); },0); }).then(ok,nok); };
+    /* window.__verzoegerung = {tabelle: ms}: diese Abfrage kommt später an (Wettlauf zweier Ladevorgänge im Test) – das Ergebnis gilt zum Zeitpunkt der Abfrage */
+    var vz=(window.__verzoegerung||{})[s.t]||0, erg=vz ? s.lauf() : null;
+    return new Promise(function(f){ setTimeout(function(){ f(vz ? erg : s.lauf()); }, vz); }).then(ok,nok); };
   function E(n){ this.n=n; }
   E.prototype.upload=function(p,b,o){ var k=this.n+"/"+p;
     if(DATEIEN[k]&&!(o&&o.upsert)) return Promise.resolve({data:null,error:{message:"exists"}});

@@ -6235,6 +6235,24 @@ test("Inbetriebnahmeprotokoll: aus der Anlage vorbelegt, Füllmenge und CO₂e g
 
 /* Inhaber 12.10.2026 (Präsentation bei Lidl im Kundenkonto): nichts „überfällig“ – „in Planung“; Fernzugriff gehört zum Markt (Link auch für den Kunden,
    Zugangsdaten nie), gilt für alle Anlagen dort; je Anlage weiter Regelung und Fernzugriff ja/nein */
+test("Zugangsdaten bleiben (Inhaber 15.10.2026): ein beim Start mit ungeprüfter Rolle begonnenes Laden ohne Zugangsdaten überschreibt das spätere vollständige nicht", async () => {
+  const a = await oeffnen(KONTEN.techniker);
+  const r = await a.seite.evaluate(async () => {
+    const x = window.__t.x, db = window.__db.tabellen, w = (ms) => new Promise((f) => setTimeout(f, ms)), jetzt = new Date().toISOString();
+    db.stammdaten.push({ id: "standort:TS1", typ: "standort", ziel: "TS1", neu: false, geaendert: jetzt, von: "Test", grund: "Fern",
+      felder: { fernLink: "https://regelung.test/ts1", fernBenutzer: "UKTTest", fernPasswort: "Pw1", fernWeitere: [{ bez: "Lidl (FM-Admin)", benutzer: "FMTest", passwort: "Pw2" }] } });
+    /* 1. Laden mit vorläufiger Rolle (nur ansehen) – langsam; 2. Laden nach der Prüfung (alle Felder) – schnell */
+    window.__verzoegerung = { stammdaten_lesen: 600 };
+    x("Rolle.name='kunde'; Rolle.da=false; 1"); const erstes = x("ladeStammdaten()");
+    x("Rolle.name='techniker'; Rolle.da=true; 1"); await x("ladeStammdaten()");
+    await erstes; await w(100); window.__verzoegerung = {};
+    const f = (x("stammUeber['standort:TS1']") || { felder: {} }).felder;
+    return { benutzer: f.fernBenutzer, weitere: (f.fernWeitere || []).length, frei: !x("anzeigeGesperrt()") };
+  });
+  pruefe(r.benutzer === "UKTTest" && r.weitere === 1 && r.frei, "Zugangsdaten nach dem Wettlauf: " + JSON.stringify(r));
+  await a.zu();
+});
+
 test("Fernsteuerung durch eine andere Firma (Inhaber 15.10.2026): im Markt-Editor eintragen, „nur beobachten“ im Zugangsfenster, in der Markt-Info, in der Übersicht und oben im Protokoll", async () => {
   const a = await oeffnen(KONTEN.admin);
   const r = await a.seite.evaluate(async () => {
