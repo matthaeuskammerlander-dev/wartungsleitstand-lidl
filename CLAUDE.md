@@ -711,6 +711,9 @@ Kammerlander Umwelt- und Klimatechnik (UKT) – oft kurz, vom Handy, im Feld.
   oder das Büro; „behoben“ jeder; löschen nur Büro). App: `ihLaden`, `ihNeu` (Art Fehler/Alarm/Notiz, Anlage oder ganzer Markt), `ihBehoben`, `ihKasten`;
   🔒 im Kopf der Anlagen-Karte (`[data-ihpill]`, auch eingeklappt) + Text (`[data-ihanlage]`), Marktinfo (`[data-ihmarkt]`), Protokoll-Kopf (`[data-ihoben]`)
   und geführter Schritt „Abschluss“. NIE ins Protokoll, PDF, Monatsbericht oder Archiv übernehmen.
+  Auf der Karte (Inhaber 15.10.2026: „intern eine kleine Störung aufgefallen – auf der Karte nicht angezeigt“): eigene Ebene in `karteOsm` – 🔒 links oben am
+  Marktpunkt (`.ihpin`, `[data-ihpin]`, 🧰 sitzt rechts oben), Anzahl bei mehreren; im Markt-Fenster der Karte (`popupInhalt`, `[data-ihpopup]`); nach `ihLaden`
+  neu gezeichnet (`ihKarteNeu` aus `ihAuffrischen`). Nur mit `ihAn()` – nie Kunde, Fernzugriff-Konto, Präsentation.
 - **Anlage löschen** (Inhaber 08.10.2026: „die KI hatte eine Anlage zu viel erkannt … die fehlerhaft angelegte komplett löschen“): `anlageLoeschen`
   (`anlageLoeschenDarf`: Inhaber und Admins, nie Präsentation), Knopf „🗑 Anlage löschen“ in der Verwaltung (`anlageKarte`). Setzt `geloescht`/`geloeschtVon`/
   `geloeschtAm` + `aktiv:false` an allen Zeilen (STAMM_FELDER_POS) über `positionenSchreiben` mit Änderungsverlauf (rücknehmbar). NICHT aus der Datenbank

@@ -9001,6 +9001,33 @@ test("Tour mit Endpunkt: z. B. Start Wien, Ende zu Hause – Reihenfolge Richtun
   await a.zu();
 });
 
+test("Interne Notiz auf der Karte (Inhaber 15.10.2026): 🔒 am Marktpunkt und im Markt-Fenster, nach „behoben“ weg; Kunde sieht nichts", async () => {
+  const a = await oeffnen(KONTEN.techniker);
+  const r = await a.seite.evaluate(async () => {
+    const x = window.__t.x, db = window.__db.tabellen, w = (ms) => new Promise((f) => setTimeout(f, ms)), e = {};
+    db.interne_hinweise.push({ id: "ihk1", standort_id: "TS1", position_id: null, art: "fehler", text: "A3 Lager tropft", angelegt: new Date().toISOString(), angelegt_von: "Test", erledigt: null });
+    await x("ihLaden(true)"); await w(100);
+    e.popup = /🔒 ⚠ Fehler/.test(x("popupInhalt(byId.TS1).textContent")) && /A3 Lager tropft/.test(x("popupInhalt(byId.TS1).textContent"));
+    e.popupAndere = !/A3 Lager/.test(x("popupInhalt(byId.TS2).textContent"));
+    x("S.view='karte'; render()"); await w(1500);
+    e.strassenkarte = x("KARTE_MODUS") === "osm" && !!document.querySelector("#osmkarte.leaflet-container");
+    if (e.strassenkarte) e.pin = !!document.querySelector('[data-ihpin="TS1"]') && !document.querySelector('[data-ihpin="TS2"]');
+    /* behoben → Zeichen weg */
+    db.interne_hinweise[db.interne_hinweise.length - 1].erledigt = new Date().toISOString();
+    await x("ihLaden(true)"); await w(200);
+    e.popupWeg = !/A3 Lager/.test(x("popupInhalt(byId.TS1).textContent"));
+    if (e.strassenkarte) e.pinWeg = !document.querySelector('[data-ihpin="TS1"]');
+    return e;
+  });
+  pruefe(r.popup && r.popupAndere && r.popupWeg, "Markt-Fenster: " + JSON.stringify(r));
+  if (r.strassenkarte) pruefe(r.pin && r.pinWeg, "🔒 auf der Karte: " + JSON.stringify(r));
+  await a.zu();
+  const k = await oeffnen(KONTEN.kunde);
+  const rk = await k.seite.evaluate(async () => { const x = window.__t.x; return { an: x("ihAn()"), popup: /🔒/.test(x("popupInhalt(byId.TS1).textContent")) }; });
+  pruefe(!rk.an && !rk.popup, "Kunde: " + JSON.stringify(rk));
+  await k.zu();
+});
+
 test("Interne Notiz (nur UKT): an der Anlage anlegen, 🔒 im Kopf der Anlagen-Karte, oben im Protokoll, ✓ behoben; Kunde sieht nichts", async () => {
   const a = await oeffnen(KONTEN.techniker, { handy: true });
   const r = await a.seite.evaluate(async () => {
