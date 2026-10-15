@@ -6658,6 +6658,99 @@ test("Tagesrückblick: Fahrt nur so lang wie die Fahrt laut Route (sonst Schätz
   await a.zu();
 });
 
+/* Inhaber 15.10.2026: „Büro Salzburg“ als zweiter Betriebsstandort – Einstellung (nicht im Code), beim Stempeln wählbar,
+   Startpunkt der Fahrzeit im Tagesrückblick und der Tourenplanung */
+test("Betriebsstandorte: Inhaber legt ein Büro an (Adresse → Kartenpunkt), Techniker wählt es beim Stempeln („im Betrieb – Büro“), Tagesrückblick rechnet die Fahrt ab dort, Tour bietet es als Start/Ziel", async () => {
+  const a = await oeffnen(KONTEN.inhaber);
+  await a.seite.route((u) => u.hostname === "nominatim.openstreetmap.org", (rt) => rt.fulfill({ status: 200, headers: { "Access-Control-Allow-Origin": "*", "Content-Type": "application/json" },
+    body: JSON.stringify([{ lat: "47.80000", lon: "13.04000", display_name: "Teststraße 1, 5020 Salzburg, Österreich" }]) }));
+  const r = await a.seite.evaluate(async () => {
+    const x = window.__t.x, w = (ms) => new Promise((f) => setTimeout(f, ms)), db = window.__db.tabellen, e = {};
+    const bis = async (bed, ms) => { const t = Date.now() + (ms || 4000); for (;;) { let ok = false; try { ok = bed(); } catch (err) {} if (ok || Date.now() > t) return ok; await w(50); } };
+    x("S.view='stunden'; render()"); await w(500);
+    const d = document.querySelector("details[data-betriebe]"); e.karte = !!d; if (!d) return e;
+    d.open = true;
+    e.leer = /Noch kein weiterer Standort/.test(d.textContent);
+    const tippe = (sel, v) => { const i = d.querySelector(sel); i.value = v; i.dispatchEvent(new Event("input", { bubbles: true })); };
+    tippe("[data-name]", "Büro Test"); tippe("[data-adresse]", "Teststraße 1, 5020 Salzburg");
+    d.querySelector("[data-suchen]").click();
+    await bis(() => !d.querySelector("[data-treffer]").hidden);
+    e.gefunden = (d.querySelector("[data-gefunden]") || {}).textContent;
+    d.querySelector("[data-speichern]").click();
+    await bis(() => (db.einstellungen.find((z) => z.schluessel === "betriebsstandorte") || { wert: { liste: [] } }).wert.liste.length === 1);
+    const ein = db.einstellungen.find((z) => z.schluessel === "betriebsstandorte");
+    e.gespeichert = ein ? JSON.stringify(ein.wert.liste) : null;
+    e.id = ein && ein.wert.liste[0] && ein.wert.liste[0].id;
+    await w(300);
+    const d2 = document.querySelector("details[data-betriebe]"); e.summary = d2 ? d2.querySelector("summary").textContent : "";
+    /* Tour: Start- und Zielauswahl kennen das Büro */
+    x("S.view='karte'; render()"); await w(800);
+    const st = document.querySelector("#t_start"), zi = document.querySelector("#t_ziel");
+    e.tourStart = !!st && [...st.options].some((o) => o.value === e.id && /Büro Test/.test(o.textContent));
+    e.tourZiel = !!zi && [...zi.options].some((o) => o.value === e.id);
+    return e;
+  });
+  pruefe(r.karte && r.leer, "Karte „Betriebsstandorte“ fehlt beim Inhaber: " + JSON.stringify(r));
+  pruefe(/Gefunden: Teststraße 1/.test(r.gefunden || ""), "Adresssuche: " + r.gefunden);
+  pruefe(r.id && /^bs:büro-test-/.test(r.id) && /"lat":47\.8,"lon":13\.04/.test(r.gespeichert || ""), "Nicht gespeichert: " + r.gespeichert);
+  pruefe(/Büro Test/.test(r.summary), "Liste zeigt den Standort nicht: " + r.summary);
+  pruefe(r.tourStart && r.tourZiel, "Tour kennt den Betriebsstandort nicht: " + JSON.stringify([r.tourStart, r.tourZiel]));
+  pruefe(!a.fehler.length, "Laufzeitfehler: " + a.fehler.join("; "));
+  await a.zu();
+  /* Techniker: beim Stempeln wählbar, Standort „im Betrieb – Büro Test“, Tagesrückblick rechnet die Fahrt ab dem Büro */
+  const b = await oeffnen(KONTEN.techniker);
+  await ttHilfen(b);
+  const q = await b.seite.evaluate(async ([id, liste]) => {
+    const tt = window.__tt, x = window.__t.x, db = window.__db.tabellen, e = {};
+    const w = (ms) => new Promise((f) => setTimeout(f, ms)), uid = x("Store.benutzer.id");
+    /* eigener Browser-Speicher je Testkontext: die Einstellung des Inhabers hier nachstellen */
+    db.einstellungen.push({ schluessel: "betriebsstandorte", wert: { liste: JSON.parse(liste) }, geaendert: new Date().toISOString(), von: "Test" });
+    try {
+    await x("stempelNachladen(true)"); x("S.view='stunden'; render()"); await w(400);
+    e.betriebe = x("BETRIEBE_WEITERE.map(function(b){ return b.id+'|'+b.name; })");
+    e.option = /🏢 Büro Test/.test(x("ortOptionenHtml(null,null)")) && new RegExp('value="' + id + '"').test(x("ortOptionenHtml(null,null)"));
+    const sel = document.querySelector("#stempelkarte [data-st]"); e.selectDa = !!sel && [...sel.options].some((o) => o.value === id);
+    /* Einstempeln am Büro: Position nahe dem Büro → „im Betrieb – Büro Test“ */
+    navigator.geolocation.getCurrentPosition = (ok) => setTimeout(() => ok({ coords: { latitude: 47.8003, longitude: 13.0404, accuracy: 20 } }), 30);
+    x("STEMPEL_ORT_AN=true; 1");
+    await x("stempelDruecken('ein', {standort_id:'" + id + "', bereich:'buero'})");
+    for (let i = 0; i < 40 && !db.stempel.some((s) => s.user_id === uid && s.art === "ein"); i++) await w(100);
+    await w(300);
+    const s = db.stempel.filter((z) => z.user_id === uid && z.art === "ein").pop();
+    e.stempel = s ? { standort_id: s.standort_id, status: s.ort && s.ort.status, betrieb: s.ort && s.ort.betrieb } : null;
+    e.kurz = s ? x("ortKurz(" + JSON.stringify(s.ort) + ")") : "";
+    e.karteText = (document.querySelector("#stempelkarte") || {}).textContent || "";
+    x("STEMPEL_ORT_AN=false; 1");
+    await x("stempelDruecken('aus', {taetigkeit:'Test'})"); await w(400); x("ansichtenSchliessen()");
+    /* Tagesrückblick an einem anderen Tag: Büro 07:00–17:00 am Büro Test gestempelt, Störung TS3 12:00–15:00 */
+    tt.leeren(); const T = tt.werktag(1);
+    tt.gestempelt({ datum: T, beginn: "07:00", ende: "17:00", minuten: 570, pause_min: 30, bereich: "buero", standort_id: id });
+    x("protokolle").push({ _id: "trb1", datum: T, uhrzeit: "15:30", standortId: "TS3", wartungsart: "Störung", positionId: "TP4", techniker: x("meinName()"), erstelltVon: uid,
+      anlagen: [], stoerung: { ankunft: "12:00", ende: "15:00" } });
+    await tt.laden(); await x("stempelNachladen(true)");
+    x("abgleichDialog('" + T + "')"); await tt.warte(700);
+    const d = tt.dialog();
+    e.abs = [...d.querySelectorAll("[data-abschnitt]")].map((q) => q.dataset.abschnitt);
+    e.info = [...d.querySelectorAll("[data-abschnitt]")].map((q) => q.textContent.replace(/\s+/g, " ")).join(" | ");
+    const hm = (m) => ("0" + Math.floor(m / 60)).slice(-2) + ":" + ("0" + (m % 60)).slice(-2);
+    const min = x("fahrtSchaetzMin(betriebVonId('" + id + "'), byId.TS3)"), dauer = Math.ceil(min / 5) * 5 + 5;
+    /* zurück: gestempelt war das Büro – die Rückfahrt rechnet dorthin; ist die Lücke kaum länger als die Fahrt, bleibt sie ganz Fahrt */
+    const minR = x("fahrtSchaetzMin(byId.TS3, betriebVonId('" + id + "'))"), dauerR = Math.ceil(minR / 5) * 5 + 5;
+    const ende = (120 - dauerR >= 10) ? ["15:00-" + hm(900 + dauerR) + " fahrt", hm(900 + dauerR) + "-17:00 buero"] : ["15:00-17:00 fahrt"];
+    e.erwartet = ["07:00-" + hm(720 - dauer) + " buero", hm(720 - dauer) + "-12:00 fahrt", "12:00-15:00 stoerung"].concat(ende);
+    e.rueckAbBuero = minR !== x("fahrtSchaetzMin(byId.TS3, BETRIEB)");
+    x("ansichtenSchliessen()");
+    return e; } catch (err) { e.err = String(err) + " @ " + String(err.stack || "").split("\n").slice(0, 3).join(" / "); return e; }
+  }, [r.id, r.gespeichert]);
+  pruefe(!q.err, "Laufzeitfehler im Techniker-Teil: " + q.err);
+  pruefe(q.betriebe && q.betriebe.length === 1 && q.option && q.selectDa, "Techniker sieht den Betriebsstandort nicht: " + JSON.stringify([q.betriebe, q.option, q.selectDa]));
+  pruefe(q.stempel && q.stempel.standort_id === r.id && q.stempel.status === "im_betrieb" && q.stempel.betrieb === "Büro Test" && /im Betrieb – Büro Test/.test(q.kurz), "Stempel am Büro: " + JSON.stringify([q.stempel, q.kurz]));
+  pruefe(JSON.stringify(q.abs) === JSON.stringify(q.erwartet), "Tagesrückblick rechnet die Fahrt nicht ab dem Büro: " + JSON.stringify([q.abs, q.erwartet]));
+  pruefe(/Büro Test/.test(q.info), "Abschnitt zeigt den Betriebsstandort nicht: " + q.info.slice(0, 300));
+  pruefe(!b.fehler.length, "Laufzeitfehler: " + b.fehler.join("; "));
+  await b.zu();
+});
+
 /* Antworten des Inhabers vom 05.10.2026 (Teil kern) */
 test("Antworten kern: „Nur Jahreswartung“ sperrt den Halbjahrestermin wie am Markt üblich – bleibt, bis die Verwaltung es zurücknimmt", async () => {
   const a = await oeffnen(KONTEN.admin);

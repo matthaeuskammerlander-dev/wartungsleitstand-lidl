@@ -496,7 +496,12 @@ Kammerlander Umwelt- und Klimatechnik (UKT) – oft kurz, vom Handy, im Feld.
   Tourenplanung“): `rueckblickFahrt(tag)` – von wo (Markt des Termins, sonst Position beim Stempeln `STEMPEL[].ort.lat`, sonst gestempelter Markt, sonst BETRIEB) nach wo,
   Minuten aus `FAHR_CACHE` (OSRM, `fahrtenGenau` nachgeladen → neu vorschlagen, solange nichts von Hand geändert) sonst `fahrtSchaetzMin`; eingetragen auf 5 min
   aufgerundet + 5. Vor einem Termin liegt die Fahrt am Ende der Lücke, nach dem letzten am Anfang, der Rest wie gestempelt; Lücke kaum länger als die Fahrt → ganz Fahrt.
-  Tests blocken die Routendienste (`oeffnen`: `ROUTENDIENSTE` abgebrochen) – Erwartungen aus der Luftlinie. Die genaue Kosten-Nutzen-Rechnung kommt später (Meetings mit dem Chef). Umstempeln mit Vorgabe aus dem Termin (`geplantFuerMich`, „⇄ Dorthin umstempeln“).
+  Tests blocken die Routendienste (`oeffnen`: `ROUTENDIENSTE` abgebrochen) – Erwartungen aus der Luftlinie. Die genaue Kosten-Nutzen-Rechnung kommt später (Meetings mit dem Chef).
+  **Betriebsstandorte** (Inhaber 15.10.2026: „Büro Salzburg“ – die App kannte nur den Betrieb St. Johann): `einstellungen` „betriebsstandorte“ {liste:[{id „bs:…“, name,
+  adresse, lat, lon}]}, nie im Code; Inhaber-Karte in Stunden `betriebsstandorteKarte` (Name + Adresse → „Kartenpunkt suchen“ über Nominatim → Speichern, entfernen mit Rückfrage),
+  geladen in `stempelNachladen` → `BETRIEBE_WEITERE`, `alleBetriebe`, `betriebVonId`, `ortAnzeige`. Wirkt beim Stempeln „Wo?“ (`ortOptionenHtml` Gruppe „Betriebsstandorte“, standort_id „bs:…“,
+  `stempelOrt` → status „im_betrieb“ + `ort.betrieb` Name, `ortKurz` „im Betrieb – Büro Salzburg“), im Tagesrückblick (`rueckblickFahrt.ortVonId`, Anzeige `abschnittText`/`ortAnzeige`)
+  und in der Tourenplanung (Start/Ziel-Auswahl, `tourZielPunkt`, Start in `tourRechnen`). Test „Betriebsstandorte: Inhaber legt ein Büro an …“ (Nominatim im Test gestellt). Umstempeln mit Vorgabe aus dem Termin (`geplantFuerMich`, „⇄ Dorthin umstempeln“).
   Abwesenheit und Arbeit am selben Tag (`abwesenheitPruefen`, tools/abwesenheit-arbeit.sql, `planung.ausnahmen`): beim Einstempeln und
   Erfassen fragen (ein halber Tag mit Uhrzeit – EIN Tag mit von–bis – nur, wenn die Arbeit bzw. das Einstempeln hineinfällt:
   `abwesenheitZeitTrifft`; ganztägig, mehrtägig oder Arbeit ohne Uhrzeit immer; Inhaber 05.10.2026) – „eingesprungen“ (beides zählt), Urlaub „zurückgeben“ (Inhaber nimmt den Tag heraus: `planTagHerausnehmen`, To-do),
