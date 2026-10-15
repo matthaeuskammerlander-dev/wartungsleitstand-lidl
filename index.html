@@ -447,6 +447,18 @@ legend{font-family:var(--f-disp);font-size:12.5px;font-weight:600;text-transform
 @media (max-width:640px){.mangelrow{grid-template-columns:1fr}}
 canvas.sig{width:100%;height:150px;border:1px dashed var(--line-2);border-radius:8px;background:#fff;touch-action:none;display:block}
 .note{font-size:12.5px;color:var(--ink-2);background:var(--surface-2);border-radius:8px;padding:10px 12px}
+/* Anleitungen als Menü (Verwaltung › Fernzugriff, Inhaber 15.10.2026): Schritte links, Inhalt rechts; am Handy Schritte als Leiste oben */
+.anl-menu-wrap{display:grid;grid-template-columns:230px minmax(0,1fr);gap:14px;align-items:start}
+.anl-menu{display:flex;flex-direction:column;gap:3px}
+.anl-punkt{appearance:none;text-align:left;font-family:var(--f-body);font-size:13px;padding:7px 10px;border:1px solid var(--line);border-radius:8px;background:var(--surface);color:var(--ink);cursor:pointer}
+.anl-punkt.aktiv{border-color:var(--accent);background:var(--accent-soft);font-weight:600}
+.anl-text{white-space:pre-wrap;font-size:14px;line-height:1.45;overflow-wrap:anywhere}
+.anl-bilder{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:10px}
+.anl-bild{margin:0;min-width:0}
+.anl-bildknopf{appearance:none;padding:0;border:1px solid var(--line);border-radius:8px;background:#fff;cursor:zoom-in;width:100%;display:block;overflow:hidden}
+.anl-bildknopf img{width:100%;display:block;min-height:40px}
+.anl-bild figcaption{font-size:12px;color:var(--ink-2);margin-top:3px}
+@media (max-width:700px){ .anl-menu-wrap{grid-template-columns:1fr} .anl-menu{flex-direction:row;overflow-x:auto;gap:6px;padding-bottom:4px} .anl-punkt{white-space:nowrap;flex:none} }
 /* Links im Inhalt: ohne eigene Farbe nimmt der Browser sein Blau, das im
    Dunkelmodus auf dunklem Grund praktisch unlesbar ist. */
 a:not(.btn){color:var(--accent);text-underline-offset:2px}
@@ -8376,24 +8388,97 @@ function einrichtungInMaerkte(std, ziele){
   ziele.forEach(function(s){ kette=kette.then(function(){ return marktFelderSetzen(s, einrichtungStandardFelder(s, std), "Standard-Zugänge aus der Einrichtung übernommen").then(function(ok){ if(ok) n++; }); }); });
   return kette.then(function(){ wendeStammdatenAn(); return n; });
 }
+/* Anleitungen als Menü (Inhaber 15.10.2026: „nur Text, etwas unübersichtlich – als Menü ausbauen, mit Screenshots aus dem Daikin-Handbuch“):
+   links die Schritte, rechts Text und Bilder des gewählten Schritts, ◀ ▶ zum Blättern. Je Abschnitt {titel, text, bilder:[{pfad, name, titel}]};
+   die Bilder liegen im Speicher dokumente unter einrichtung/anleitung/ (nur Mitarbeiter, nie Kunden). „✎ Bearbeiten“ zeigt die Eingabefelder
+   wie bisher, dazu Bilder hinzufügen/entfernen und die Reihenfolge der Abschnitte. */
+function anleitungTextHtml(t){
+  return esc(String(t||"")).replace(/(https?:\/\/[^\s<]+)/g, function(u){ return '<a href="'+u+'" target="_blank" rel="noopener">'+u+"</a>"; });
+}
+function anleitungBildUrl(pfad){
+  if(!Store.sb) return Promise.resolve("");
+  return Promise.resolve(Store.sb.storage.from("dokumente").createSignedUrl(pfad, 3600)).then(function(r){ return r && r.data && r.data.signedUrl ? r.data.signedUrl : ""; }, function(){ return ""; });
+}
 function einrichtungAbschnitteKarte(E){
-  var k=el('<div class="card" data-einrichtung-abschnitte><div class="pad stack" style="gap:10px"><h2>Anleitungen und Hinweise</h2>'+
-    '<div class="muted" style="font-size:12.5px">Was man zur Einrichtung wissen muss – z. B. Einstellungen am Außengerät je VRV, Anschluss externer Fühler und Geräte. Frei beschreibbar, für alle Mitarbeiter sichtbar, nie für Kunden.</div>'+
-    '<div class="stack" style="gap:8px" data-liste></div><div class="rowflex" style="gap:6px"><button class="btn ghost sm" type="button" data-neu>+ Abschnitt</button><button class="btn sm" type="button" data-speichern>Speichern</button></div></div></div>');
-  var liste=k.querySelector("[data-liste]"), abs=(E.abschnitte||[]).map(function(a){ return {titel:String(a.titel||""), text:String(a.text||"")}; });
-  var zeichne=function(){
-    liste.innerHTML=""; if(!abs.length){ liste.appendChild(el('<div class="muted">Noch kein Abschnitt.</div>')); return; }
+  var lesen=function(){ return ((EINRICHTUNG||E).abschnitte||[]).map(function(x){ return {titel:String(x.titel||""), text:String(x.text||""),
+    bilder:Array.isArray(x.bilder)?x.bilder.filter(function(q){ return q && q.pfad; }).map(function(q){ return {pfad:String(q.pfad), name:String(q.name||""), titel:String(q.titel||"")}; }):[]}; }); };
+  var abs=lesen(), bearb=false;
+  var k=el('<div class="card" data-einrichtung-abschnitte><div class="pad stack" style="gap:10px"><div class="rowflex" style="justify-content:space-between;gap:8px;align-items:center"><h2>Anleitungen und Hinweise</h2>'+
+    (nurLesen()?"":'<button class="btn ghost sm" type="button" data-bearbeiten>✎ Bearbeiten</button>')+'</div>'+
+    '<div class="muted" style="font-size:12.5px">Schritt für Schritt: links den Schritt wählen, rechts Text und Bilder (z. B. aus den Daikin-Handbüchern). Für alle Mitarbeiter sichtbar, nie für Kunden.</div>'+
+    '<div data-inhalt></div></div></div>');
+  var host=k.querySelector("[data-inhalt]"), bb=k.querySelector("[data-bearbeiten]");
+  if(S.anlSchritt==null) S.anlSchritt=0;
+  /* Ansicht: Menü + Inhalt */
+  var zeigen=function(){
+    host.innerHTML=""; if(bb) bb.textContent="✎ Bearbeiten";
+    if(!abs.length){ host.appendChild(el('<div class="muted">Noch kein Abschnitt.</div>')); return; }
+    if(S.anlSchritt>=abs.length || S.anlSchritt<0) S.anlSchritt=0;
+    var i0=S.anlSchritt, a=abs[i0];
+    var w=el('<div class="anl-menu-wrap"><div class="anl-menu" data-anl-menu></div><div class="stack" style="gap:10px;min-width:0" data-anl-inhalt></div></div>');
+    var menu=w.querySelector("[data-anl-menu]");
+    abs.forEach(function(x,i){ var p=el('<button type="button" class="anl-punkt'+(i===i0?" aktiv":"")+'" data-anl-punkt>'+esc(x.titel||("Abschnitt "+(i+1)))+(x.bilder.length?' <span class="muted">📷 '+x.bilder.length+"</span>":"")+"</button>");
+      p.onclick=function(){ S.anlSchritt=i; zeigen(); }; menu.appendChild(p); });
+    var inh=w.querySelector("[data-anl-inhalt]");
+    inh.appendChild(el('<h3 style="margin:0">'+esc(a.titel||"")+"</h3>"));
+    inh.appendChild(el('<div class="anl-text" data-anl-text>'+anleitungTextHtml(a.text)+"</div>"));
+    if(a.bilder.length){ var g=el('<div class="anl-bilder" data-anl-bilder></div>');
+      a.bilder.forEach(function(q){ var f=el('<figure class="anl-bild"><button type="button" class="anl-bildknopf" title="groß ansehen"><img alt="" loading="lazy"></button><figcaption>'+esc(q.titel||q.name)+"</figcaption></figure>");
+        anleitungBildUrl(q.pfad).then(function(u){ if(u) f.querySelector("img").src=u; else f.querySelector("figcaption").textContent=(q.titel||q.name)+" – Bild nicht abrufbar"; });
+        f.querySelector("button").onclick=function(){ dokumentOeffnen({pfad:q.pfad, name:q.name||q.pfad, titel:q.titel||q.name, typ:"image/jpeg"}); };
+        g.appendChild(f); });
+      inh.appendChild(g); }
+    var nav=el('<div class="rowflex" style="gap:6px;justify-content:space-between;align-items:center"><button class="btn ghost sm" type="button" data-anl-zurueck'+(i0?"":" disabled")+'>◀ Zurück</button>'+
+      '<span class="muted" style="font-size:12px">'+(i0+1)+" / "+abs.length+'</span><button class="btn ghost sm" type="button" data-anl-weiter'+(i0<abs.length-1?"":" disabled")+'>Weiter ▶</button></div>');
+    nav.querySelector("[data-anl-zurueck]").onclick=function(){ S.anlSchritt=i0-1; zeigen(); w.scrollIntoView({block:"start"}); };
+    nav.querySelector("[data-anl-weiter]").onclick=function(){ S.anlSchritt=i0+1; zeigen(); w.scrollIntoView({block:"start"}); };
+    inh.appendChild(nav);
+    host.appendChild(w);
+  };
+  /* Bearbeiten: Felder je Abschnitt, Bilder, Reihenfolge */
+  var speichern=function(){
+    return einrichtungSpeichern(Object.assign({}, EINRICHTUNG||einrichtungLeer(), {abschnitte:abs.filter(function(x){ return x.titel.trim()||x.text.trim()||x.bilder.length; })
+      .map(function(x){ return {titel:x.titel.trim(), text:x.text, bilder:x.bilder}; })}), "Anleitungen gespeichert");
+  };
+  var zeichneEditor=function(){
+    host.innerHTML=""; if(bb) bb.textContent="Abbrechen";
+    var liste=el('<div class="stack" style="gap:8px" data-liste></div>');
+    if(!abs.length) liste.appendChild(el('<div class="muted">Noch kein Abschnitt.</div>'));
     abs.forEach(function(a, i){
-      var z=el('<div class="note stack" data-abschnitt style="gap:6px"><div class="rowflex" style="gap:6px;flex-wrap:nowrap"><input type="text" data-titel maxlength="80" placeholder="Überschrift" value="'+esc(a.titel)+'" style="flex:1;min-width:0"><button class="btn ghost sm" type="button" data-weg title="Abschnitt entfernen">✕</button></div>'+
-        '<textarea data-text rows="3" placeholder="Text …">'+esc(a.text)+"</textarea></div>");
+      var z=el('<div class="note stack" data-abschnitt style="gap:6px"><div class="rowflex" style="gap:6px;flex-wrap:nowrap"><input type="text" data-titel maxlength="80" placeholder="Überschrift" value="'+esc(a.titel)+'" style="flex:1;min-width:0">'+
+        '<button class="btn ghost sm" type="button" data-hoch title="nach oben"'+(i?"":" disabled")+'>▲</button><button class="btn ghost sm" type="button" data-runter title="nach unten"'+(i<abs.length-1?"":" disabled")+'>▼</button>'+
+        '<button class="btn ghost sm" type="button" data-weg title="Abschnitt entfernen">✕</button></div>'+
+        '<textarea data-text rows="3" placeholder="Text …">'+esc(a.text)+'</textarea>'+
+        '<div class="stack" style="gap:4px" data-bilder></div>'+
+        '<div class="rowflex" style="gap:6px;align-items:center;flex-wrap:wrap"><label class="btn ghost sm" style="cursor:pointer">📷 Bild hinzufügen<input type="file" data-bildneu hidden multiple accept="image/*"></label><span class="muted" data-stand style="font-size:12px"></span></div></div>');
       z.querySelector("[data-titel]").oninput=function(){ a.titel=this.value; }; z.querySelector("[data-text]").oninput=function(){ a.text=this.value; };
-      z.querySelector("[data-weg]").onclick=function(){ if(!window.confirm("Abschnitt „"+(a.titel||"ohne Überschrift")+"“ entfernen?")) return; abs.splice(i,1); zeichne(); };
+      z.querySelector("[data-weg]").onclick=function(){ if(!window.confirm("Abschnitt „"+(a.titel||"ohne Überschrift")+"“ entfernen?")) return; abs.splice(i,1); zeichneEditor(); };
+      z.querySelector("[data-hoch]").onclick=function(){ abs.splice(i-1,0,abs.splice(i,1)[0]); zeichneEditor(); };
+      z.querySelector("[data-runter]").onclick=function(){ abs.splice(i+1,0,abs.splice(i,1)[0]); zeichneEditor(); };
+      var bh=z.querySelector("[data-bilder]");
+      var bilderZeichnen=function(){ bh.innerHTML="";
+        a.bilder.forEach(function(q, j){ var r=el('<div class="rowflex" data-bild style="gap:6px;align-items:center;flex-wrap:nowrap"><span style="flex:none;font-size:12px">📷 '+(j+1)+'</span><input type="text" data-bildtitel placeholder="Bildunterschrift" value="'+esc(q.titel)+'" style="flex:1;min-width:0;font-size:12.5px"><button class="btn ghost sm" type="button" data-bildweg title="Bild entfernen">✕</button></div>');
+          r.querySelector("[data-bildtitel]").oninput=function(){ q.titel=this.value; };
+          r.querySelector("[data-bildweg]").onclick=function(){ if(!window.confirm("Bild „"+(q.titel||q.name)+"“ aus dem Abschnitt entfernen?")) return; a.bilder.splice(j,1); bilderZeichnen(); };
+          bh.appendChild(r); }); };
+      bilderZeichnen();
+      z.querySelector("[data-bildneu]").onchange=function(){
+        var dateien=[].slice.call(this.files||[]); this.value=""; if(!dateien.length) return;
+        var stand=z.querySelector("[data-stand]"); stand.textContent="wird hochgeladen …";
+        var kette=Promise.resolve();
+        dateien.forEach(function(f){ kette=kette.then(function(){ return dokumentHochladen("einrichtung/anleitung", f).then(function(e){ if(e) a.bilder.push({pfad:e.pfad, name:e.name, titel:e.titel}); }); }); });
+        kette.then(function(){ stand.textContent=""; bilderZeichnen(); });
+      };
       liste.appendChild(z);
     });
+    host.appendChild(liste);
+    var kn=el('<div class="rowflex" style="gap:6px;flex-wrap:wrap"><button class="btn ghost sm" type="button" data-neu>+ Abschnitt</button><button class="btn sm" type="button" data-speichern>Speichern</button></div>');
+    kn.querySelector("[data-neu]").onclick=function(){ abs.push({titel:"", text:"", bilder:[]}); zeichneEditor(); var t=liste.querySelector("[data-abschnitt]:last-child [data-titel]"); if(t) t.focus(); };
+    kn.querySelector("[data-speichern]").onclick=function(){ speichern().then(function(ok){ if(ok){ bearb=false; abs=lesen(); zeigen(); } }); };
+    host.appendChild(kn);
   };
-  zeichne();
-  k.querySelector("[data-neu]").onclick=function(){ abs.push({titel:"", text:""}); zeichne(); var t=liste.querySelector("[data-abschnitt]:last-child [data-titel]"); if(t) t.focus(); };
-  k.querySelector("[data-speichern]").onclick=function(){ einrichtungSpeichern(Object.assign({}, EINRICHTUNG||einrichtungLeer(), {abschnitte:abs.filter(function(a){ return a.titel.trim()||a.text.trim(); })}), "Anleitungen gespeichert"); };
+  if(bb) bb.onclick=function(){ if(bearb){ abs=lesen(); bearb=false; zeigen(); } else { bearb=true; zeichneEditor(); } };
+  zeigen();
   return k;
 }
 function einrichtungDateienKarte(E){

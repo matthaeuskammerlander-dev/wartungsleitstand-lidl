@@ -810,6 +810,11 @@ Kammerlander Umwelt- und Klimatechnik (UKT) – oft kurz, vom Handy, im Feld.
   `fern_pruefung_auswerten()` nicht erreichbar → `fernOffline` {seit, von „Automatische Prüfung“, notiz = Hinweis}; wieder erreichbar → online NUR, wenn die
   Prüfung ihn gesetzt hat (von = „Automatische Prüfung“) – von Hand Gesetztes bleibt, die Übersicht zeigt dann „→ wieder auf online stellen?“.
   Attrappe: `window.__fernAntwort` je Markt, `window.__fernPruefungWartezeit`. Ohne das SQL (Sicht fehlt) blendet die App die Prüfung aus (`FERN_PRUEFUNG_AN`).
+  **Anleitungen als Menü** (Inhaber 15.10.2026: „nur Text, etwas unübersichtlich – als Menü ausbauen, mit Screenshots aus dem Daikin-Handbuch“): `einrichtungAbschnitteKarte`
+  zeigt die Abschnitte als Schritte (links Menü `[data-anl-punkt]`, am Handy Leiste; rechts `[data-anl-text]`, Bilder `[data-anl-bilder]`, ◀ ▶; gewählter Schritt `S.anlSchritt`);
+  je Abschnitt `bilder` [{pfad, name, titel}] im Speicher dokumente unter einrichtung/anleitung/ (signierte Adressen `anleitungBildUrl`, groß über `dokumentOeffnen`).
+  „✎ Bearbeiten“: Felder wie bisher, ▲▼ Reihenfolge, „📷 Bild hinzufügen“ (`dokumentHochladen("einrichtung/anleitung", f)`), Bildunterschrift, Speichern/Abbrechen.
+  Inhalt: die Einleitung aus FERNZUGRIFF-ITM-EINRICHTUNG.md je Schritt ein Abschnitt, Bilder aus den Daikin-Handbüchern (Rendering mit PyMuPDF, nie im Repository – nur im Speicher).
 - **Störungen nie doppelt** (Büro 01.10.2026): eine Lidl-Auftragsnummer gibt es
   nur einmal als Störung (Datenbank-Index `stoerung_auftrag_einmal`,
   tools/stoerung-eindeutig.sql; im Dialog „Vorhandene öffnen“ statt neu – auch beim Ändern der Nummer).

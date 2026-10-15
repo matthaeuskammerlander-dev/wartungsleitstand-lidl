@@ -6784,11 +6784,22 @@ test("Einrichtung: Standard-Zugänge speichern und an alle Märkte mit Fernzugri
     e.ts1 = { benutzer: f1.fernBenutzer, pw: f1.fernPasswort, vorOrt: f1.fernVorOrt, weitere: (f1.fernWeitere || []).map((z) => z.bez + "/" + z.benutzer), system: f1.fernSystem, hinweis: f1.fernHinweis };
     e.ts2 = !db.stammdaten.some((z) => z.id === "standort:TS2");
     /* Anleitung als Abschnitt, Dokument hochladen */
+    /* Anleitungen als Menü (Inhaber 15.10.2026): Bearbeiten → Abschnitt mit Text und Bild → Speichern → Menüpunkt, Text und Bild in der Ansicht */
     const ak = document.querySelector("[data-einrichtung-abschnitte]");
+    e.anlLeer = /Noch kein Abschnitt/.test(ak.textContent) && !ak.querySelector("[data-neu]");
+    ak.querySelector("[data-bearbeiten]").click(); await bis(() => ak.querySelector("[data-neu]"));
     ak.querySelector("[data-neu]").click(); await w(50);
-    tippe(ak.querySelector("[data-abschnitt] [data-titel]"), "Einstellungen Außengerät"); tippe(ak.querySelector("[data-abschnitt] [data-text]"), "VRV 1: 2-01 01");
+    tippe(ak.querySelector("[data-abschnitt] [data-titel]"), "Einstellungen Außengerät"); tippe(ak.querySelector("[data-abschnitt] [data-text]"), "VRV 1: 2-01 01\nSiehe https://www.daikin.eu/itm");
+    const db2 = new DataTransfer(); db2.items.add(new File([new Blob(["\x89PNG Bild"], { type: "image/png" })], "Außengerät Schalter.png", { type: "image/png" }));
+    const bi = ak.querySelector("[data-abschnitt] [data-bildneu]"); bi.files = db2.files; bi.dispatchEvent(new Event("change"));
+    await bis(() => ak.querySelector("[data-abschnitt] [data-bild]"), 6000);
+    tippe(ak.querySelector("[data-abschnitt] [data-bildtitel]"), "Schalter am Außengerät");
     ak.querySelector("[data-speichern]").click();
     await bis(() => (db.einstellungen.find((z) => z.schluessel === "einrichtung") || { wert: {} }).wert.abschnitte && db.einstellungen.find((z) => z.schluessel === "einrichtung").wert.abschnitte.length === 1);
+    await bis(() => ak.querySelector("[data-anl-punkt]"), 3000);
+    const anlB = (db.einstellungen.find((z) => z.schluessel === "einrichtung").wert.abschnitte[0].bilder || [])[0] || {};
+    e.anlMenu = { punkte: ak.querySelectorAll("[data-anl-punkt]").length, aktiv: (ak.querySelector("[data-anl-punkt].aktiv") || {}).textContent || "", text: (ak.querySelector("[data-anl-text]") || {}).textContent || "",
+      link: !!ak.querySelector("[data-anl-text] a[href='https://www.daikin.eu/itm']"), bilder: ak.querySelectorAll("[data-anl-bilder] figure").length, bildPfad: anlB.pfad || "", bildTitel: anlB.titel || "", bearbeitenWeg: !ak.querySelector("[data-neu]") };
     const dk = document.querySelector("[data-einrichtung-dateien]"), dt = new DataTransfer();
     dt.items.add(new File([new Blob(["%PDF-1.4 Anleitung"], { type: "application/pdf" })], "Anleitung ITM.pdf", { type: "application/pdf" }));
     const fi = dk.querySelector("[data-datei]"); fi.files = dt.files; fi.dispatchEvent(new Event("change"));
@@ -6863,6 +6874,8 @@ test("Einrichtung: Standard-Zugänge speichern und an alle Märkte mit Fernzugri
   pruefe(r.ts1.benutzer === "UKTTest" && r.ts1.pw === "UktPw1" && r.ts1.vorOrt && r.ts1.vorOrt.wartungPw2 === "WartungZwei" && r.ts1.system === "Daikin iTM Test" && r.ts1.hinweis === "Beim Ausloggen sperren"
     && JSON.stringify(r.ts1.weitere) === JSON.stringify(["Lidl (FM)/FMTest", "Standard-Admin/admin", "Router/router"]), "TS1 nach Übernahme: " + JSON.stringify(r.ts1));
   pruefe(JSON.stringify(r.einrichtung.abschnitte) === '["Einstellungen Außengerät"]' && r.einrichtung.dateien.length === 1 && /^einrichtung\//.test(r.einrichtung.dateien[0]), "Anleitung/Dokument: " + JSON.stringify(r.einrichtung));
+  pruefe(r.anlLeer && r.anlMenu.punkte === 1 && /Einstellungen Außengerät/.test(r.anlMenu.aktiv) && /VRV 1: 2-01 01/.test(r.anlMenu.text) && r.anlMenu.link && r.anlMenu.bilder === 1
+    && /^einrichtung\/anleitung\//.test(r.anlMenu.bildPfad) && r.anlMenu.bildTitel === "Schalter am Außengerät" && r.anlMenu.bearbeitenWeg, "Anleitungen als Menü: " + JSON.stringify([r.anlLeer, r.anlMenu]));
   pruefe(r.editor.wartung1 === "WartungEins" && r.editor.typ === "password" && r.editor.system === "Daikin iTM Test" && r.editor.zeilen === 3 && /Ecken/.test(r.editor.entsperren) && r.alleOffen, "Markt-Editor: " + JSON.stringify([r.editor, r.alleOffen]));
   pruefe(r.plan.length === 1 && /^Bestandsplan Erdgeschoss\|markt\/TS1\//.test(r.plan[0]) && r.nachSpeichern.vorOrt === "WartungEins" && r.nachSpeichern.weitere === 3 && r.info, "Bestandsplan: " + JSON.stringify([r.plan, r.nachSpeichern, r.info]));
   pruefe(/online/.test(r.online) && r.offline && /offline/.test(r.knopfOffline) && r.infoOffline && r.wiederOnline, "Fernzugriff online/offline: " + JSON.stringify([r.online, r.offline, r.knopfOffline, r.infoOffline, r.wiederOnline]));
