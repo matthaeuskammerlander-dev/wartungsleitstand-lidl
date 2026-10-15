@@ -830,7 +830,14 @@ fernzugriff@ukt.at – wie Kunde nur ansehen (`nurLesen()`), aber `istFernKonto(
 Lidl-Kacheln + Liste der Märkte mit `fernLink`, Stand „online“/„in Wartung“ aus `fernOffline` ohne Grund; Markt-Fenster `fernKontoMarkt` nur Link,
 Benutzer und Passwort des Kunden-Zugangs aus der Sicht `fernzugriff_zugang` – Eintrag mit der Bezeichnung `standard.kundeBez`). Datenbank: `darf_schreiben()`
 falsch, `stammdaten_lesen` liefert nur Märkte mit Fernzugriff mit gekürzten Feldern + Logo-Merker, restriktive Regeln auf protokolle/fassungen/berichte/
-storage. Testkonto fern@test.at. Nie mehr zeigen als Link und Kunden-Zugang). Testkonten ausblenden (Inhaber 05.10.2026): Haken „in
+storage. Testkonto fern@test.at. Nie mehr zeigen als Link und Kunden-Zugang; Markt-Fenster `fernKontoMarkt` mit Blöcken „Fernzugriff“
+(öffnen, Link kopieren) und „Anmeldung an der Regelung“ (`.fk-block`, `.fk-zeile`); Stand-Zeile ohne Zahlen).
+**Anzeigesperre** (Inhaber 15.10.2026: „vor dem Anmelden oder bis zum vollständigen Laden werden alte Daten angezeigt – es dürfen keine Daten
+angezeigt werden, die diesen Benutzer nichts angehen“): `anzeigeGesperrt()` – Modus „lade“ oder angemeldet ohne geprüfte Rolle bzw. ohne für dieses Konto
+geladene Stammdaten (`datenFuerKonto`, gesetzt am Ende von `ladeStammdaten` nur bei `Rolle.da`) → Karte „Anmeldung wird geprüft …“, abgemeldet → nur
+`viewAnmeldung()`; Reiterleiste dabei ganz versteckt. Die Grundliste wird abgemeldet NICHT mehr gezeigt. `speicherLeeren()` beim Sitzungsstart
+(`rolleVorlaeufig`) und beim Abmelden leert stammUeber/stammStand/OFFENE/aenderungen/FERN_KONTO/FERN_PRUEFUNG/EINRICHTUNG. Testhilfe `oeffnen()` wartet
+auf `!anzeigeGesperrt()`. Testkonten ausblenden (Inhaber 05.10.2026): Haken „in
 Personenlisten ausblenden“ in der Kontenübersicht (Verwaltung › Inhaber) → `einstellungen.personen_ausblenden`
 {ids}; `chatTeamLaden` lässt sie in jeder Personenauswahl weg (`PERSONEN_AUS`), das Konto bleibt bestehen,
 schon Eingetragenes bleibt sichtbar. Keine Namen oder Kennungen in den Code. Der Kunde darf nur ansehen

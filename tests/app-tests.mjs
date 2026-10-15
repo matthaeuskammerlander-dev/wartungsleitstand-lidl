@@ -78,7 +78,7 @@ async function oeffnen(konto, opt = {}) {
   const x = (ausdruck) => seite.evaluate((a) => window.__t.x(a), ausdruck);
   if (konto) {
     await seite.evaluate((m) => window.__t.x(`Store.sb.auth.signInWithPassword({email:'${m}',password:'test123'})`), konto);
-    await seite.waitForFunction(() => window.__t.x("Rolle.da && Store.modus==='supabase'"), null, { timeout: 15000 });
+    await seite.waitForFunction(() => window.__t.x("Rolle.da && Store.modus==='supabase' && !anzeigeGesperrt()"), null, { timeout: 15000 });
     await seite.waitForTimeout(300);
   }
   return { seite, x, fehler, zu: () => kontext.close() };
@@ -95,8 +95,11 @@ const KONTEN = {
 test("Start: App startet am PC und am Handy ohne Laufzeitfehler", async () => {
   for (const handy of [false, true]) {
     const a = await oeffnen(null, { handy });
-    const gestartet = await a.seite.evaluate(() => !document.getElementById("tabs").hidden);
-    pruefe(gestartet, (handy ? "Handy" : "PC") + ": Reiterleiste fehlt");
+    /* abgemeldet: nur die Anmeldung, keine Reiter, keine Daten (Inhaber 15.10.2026) */
+    await a.seite.waitForFunction(() => window.__t.x("Store.modus")==="anmeldung", null, { timeout: 15000 }); await a.seite.waitForTimeout(200);
+    const gestartet = await a.seite.evaluate(() => ({ ok: document.getElementById("tabs").hidden && !!document.querySelector("#loginform") && !document.querySelector("[data-fernkonto], .leaflet-container, [data-stoerung]"),
+      tabs: document.getElementById("tabs").hidden, login: !!document.querySelector("#loginform"), modus: window.__t.x("Store.modus"), sperre: window.__t.x("anzeigeGesperrt()"), karten: document.querySelectorAll("#app .card h2").length, h2: [...document.querySelectorAll("#app .card h2")].slice(0, 4).map((h) => h.textContent) }));
+    pruefe(gestartet.ok, (handy ? "Handy" : "PC") + ": abgemeldet soll nur die Anmeldung zu sehen sein: " + JSON.stringify(gestartet));
     const breiter = await a.seite.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
     pruefe(breiter <= 4, (handy ? "Handy" : "PC") + `: Seite ${breiter}px breiter als der Bildschirm`);
     pruefe(!a.fehler.length, "Laufzeitfehler: " + a.fehler.join("; "));
@@ -6262,6 +6265,16 @@ test("Fernzugriff-Konto (Inhaber 15.10.2026): nur Märkte mit Fernzugriff als Ka
     x("ansichtenSchliessen(); 1");
     const p = await x("Store.sb.from('protokolle').select('*')"); e.protokolle = ((p && p.data) || []).length;
     const sd = await x("Store.sb.from('stammdaten').select('id')"); e.stammdatenDirekt = !!(sd && sd.error) || !((sd && sd.data) || []).length;
+    /* bis Rolle und Daten des Kontos da sind: keine Reiter, keine Karte, nur „Anmeldung wird geprüft“ (Inhaber 15.10.2026) */
+    x("Rolle.da=false; render(); 1");
+    e.gesperrt = !!document.querySelector("[data-konto-pruefung]") && !document.querySelector("[data-fernkonto]") && [...document.querySelectorAll("#tabs button")].every((b) => b.hidden);
+    x("Rolle.da=true; datenFuerKonto=null; render(); 1");
+    e.gesperrtOhneDaten = !!document.querySelector("[data-konto-pruefung]");
+    x("datenFuerKonto=Store.benutzer.id; render(); 1"); await w(200);
+    e.wiederDa = !!document.querySelector("[data-fernkonto]");
+    /* Abmelden: Speicher leer, nur die Anmeldung */
+    await x("Store.sb.auth.signOut()"); await w(500);
+    e.nachAbmelden = { leer: x("Object.keys(stammUeber).length") === 0 && x("FERN_KONTO") === null, login: !!document.querySelector("#loginform"), reiter: [...document.querySelectorAll("#tabs button")].every((b) => b.hidden), keineKarte: !document.querySelector(".leaflet-container") };
     return e;
   });
   pruefe(r.rolle === "fernzugriff" && r.nurLesen && r.view === "fernkonto" && JSON.stringify(r.reiter) === '["Fernzugriff"]', "Rolle/Reiter: " + JSON.stringify([r.rolle, r.nurLesen, r.view, r.reiter]));
@@ -6270,6 +6283,8 @@ test("Fernzugriff-Konto (Inhaber 15.10.2026): nur Märkte mit Fernzugriff als Ka
   pruefe(r.detail.titel === "Testfiliale 901" && r.detail.link === "https://regelung.test/ts1" && r.detail.benutzer === "FMTest" && r.detail.pwVerdeckt === "••••••••" && r.detail.pwOffen === "LidlPw1" && r.detail.status === "in Wartung" && r.detail.nurDas,
     "Markt-Fenster: " + JSON.stringify(r.detail));
   pruefe(r.protokolle === 0 && r.stammdatenDirekt, "Datenbank gesperrt: " + JSON.stringify([r.protokolle, r.stammdatenDirekt]));
+  pruefe(r.gesperrt && r.gesperrtOhneDaten && r.wiederDa && r.nachAbmelden.leer && r.nachAbmelden.login && r.nachAbmelden.reiter && r.nachAbmelden.keineKarte,
+    "Anzeigesperre vor Rolle/Daten und nach dem Abmelden: " + JSON.stringify([r.gesperrt, r.gesperrtOhneDaten, r.wiederDa, r.nachAbmelden]));
   await a.zu();
 });
 
