@@ -16,7 +16,10 @@
 --        „Connection unsuccessful“. Angemeldet wird nirgends – es wird nur die Startseite aufgerufen, keine Zugangsdaten.
 --        Erster Lauf 15.10.2026: 7 Märkte erreichbar, 9× 502, 1× Zeitüberschreitung (S40, laut Liste vom 12.10. Router offline).
 -- WARUM: Inhaber 15.10.2026: „eine automatische Überprüfung täglich laufen lassen, die überprüft, ob die Fernzugriffe
---        funktionieren und ob sie online sind.“ Der Schalter online/offline in der App bleibt von Hand – die Prüfung zeigt nur.
+--        funktionieren und ob sie online sind … die automatische Prüfung soll diesen Schalter ändern können, dafür ist er da.“
+--        Darum legt die Auswertung den Schalter um: nicht erreichbar → Marktfeld fernOffline {seit, von „Automatische Prüfung“, notiz}
+--        (wie der Schalter in der App), wieder erreichbar → online, aber nur, wenn die Prüfung selbst ihn offline gestellt hat –
+--        ein von Hand gesetztes Offline bleibt, bis jemand es in der App umstellt (die Übersicht sagt dann „wieder erreichbar“).
 -- WIE:   Im Supabase-SQL-Editor einmal ausführen (nach tools/einrichtung.sql). Mehrfach ausführbar. Lesen dürfen alle, die
 --        mitarbeiten (darf_schreiben), nie Kunden; schreiben nur die Funktionen.
 -- -----------------------------------------------------------------------------------------------------
@@ -106,6 +109,24 @@ begin
     n := n + 1;
   end loop;
   delete from public.fern_pruefung where zeit < now() - interval '180 days';
+  -- Schalter umlegen (Inhaber 15.10.2026): genau wie der Schalter in der App, Verlauf über von/grund der Stammdaten-Zeile
+  for r in select p.regelung, p.hinweis, s.id as sid, s.felder->'fernOffline' as off
+             from public.fern_pruefung_stand p
+             join public.stammdaten s on s.typ = 'standort' and s.ziel = p.standort_id
+  loop
+    if not coalesce(r.regelung, false) and (r.off is null or r.off = 'null'::jsonb) then
+      update public.stammdaten
+         set felder = felder || jsonb_build_object('fernOffline', jsonb_build_object('seit', now(), 'von', 'Automatische Prüfung', 'notiz', coalesce(r.hinweis, ''))),
+             geaendert = now(), von = 'Automatische Prüfung',
+             grund = 'Fernzugriff laut täglicher Prüfung nicht erreichbar – auf offline gestellt'
+       where id = r.sid;
+    elsif coalesce(r.regelung, false) and r.off is not null and r.off <> 'null'::jsonb and r.off->>'von' = 'Automatische Prüfung' then
+      update public.stammdaten
+         set felder = felder - 'fernOffline', geaendert = now(), von = 'Automatische Prüfung',
+             grund = 'Fernzugriff laut Prüfung wieder erreichbar – auf online gestellt'
+       where id = r.sid;
+    end if;
+  end loop;
   return n;
 end $$;
 

@@ -6837,7 +6837,12 @@ test("Einrichtung: Standard-Zugänge speichern und an alle Märkte mit Fernzugri
     pk().click();
     await bis(() => /nicht erreichbar/.test(pz()), 6000);
     e.pruefZeile = pz(); e.pruefKopf = (document.querySelector("[data-fern-uebersicht] [data-fern-pruefung]") || {}).textContent || "";
-    const d3 = x("standortDetail(byId.TS1)"); e.infoPruef = /nicht erreichbar/.test((d3.querySelector("[data-fernpruefung]") || {}).textContent || "");
+    /* die Prüfung legt den Schalter selbst um (Inhaber 15.10.2026: „dafür ist er da“) */
+    await bis(() => ((db.stammdaten.find((z) => z.id === "standort:TS1") || { felder: {} }).felder.fernOffline || {}).von === "Automatische Prüfung", 4000);
+    await x("ladeStammdaten().then(storeNachRender)"); await w(200);
+    const foA = (db.stammdaten.find((z) => z.id === "standort:TS1") || { felder: {} }).felder.fernOffline || {};
+    e.autoOffline = foA.von === "Automatische Prüfung" && /Zeitüberschreitung/.test(foA.notiz || "");
+    const d3 = x("standortDetail(byId.TS1)"); e.infoPruef = /OFFLINE seit .*Automatische Prüfung/.test((d3.querySelector("[data-fernoffline]") || {}).textContent || "");
     x("S.view='kalender'; render()"); await bis(() => document.querySelector("#kal_todo"));
     e.todo = (document.querySelector("#kal_todo [data-fern-todo]") || {}).textContent || "";
     window.__fernAntwort = { TS1: true };
@@ -6845,7 +6850,10 @@ test("Einrichtung: Standard-Zugänge speichern und an alle Märkte mit Fernzugri
     pk().click();
     await bis(() => /✓ Fernzugriff erreichbar/.test(pz()), 6000);
     e.pruefOk = pz();
-    const d4 = x("standortDetail(byId.TS1)"); e.infoOk = !d4.querySelector("[data-fernpruefung]");
+    await bis(() => !(db.stammdaten.find((z) => z.id === "standort:TS1") || { felder: {} }).felder.fernOffline, 4000);
+    await x("ladeStammdaten().then(storeNachRender)"); await w(200);
+    e.autoOnline = !(db.stammdaten.find((z) => z.id === "standort:TS1") || { felder: {} }).felder.fernOffline;
+    const d4 = x("standortDetail(byId.TS1)"); e.infoOk = !d4.querySelector("[data-fernpruefung]") && !d4.querySelector("[data-fernoffline]");
     x("S.view='kalender'; render()"); await bis(() => document.querySelector("#kal_todo"));
     e.todoWeg = !document.querySelector("#kal_todo [data-fern-todo]");
     return e;
@@ -6858,9 +6866,10 @@ test("Einrichtung: Standard-Zugänge speichern und an alle Märkte mit Fernzugri
   pruefe(r.editor.wartung1 === "WartungEins" && r.editor.typ === "password" && r.editor.system === "Daikin iTM Test" && r.editor.zeilen === 3 && /Ecken/.test(r.editor.entsperren) && r.alleOffen, "Markt-Editor: " + JSON.stringify([r.editor, r.alleOffen]));
   pruefe(r.plan.length === 1 && /^Bestandsplan Erdgeschoss\|markt\/TS1\//.test(r.plan[0]) && r.nachSpeichern.vorOrt === "WartungEins" && r.nachSpeichern.weitere === 3 && r.info, "Bestandsplan: " + JSON.stringify([r.plan, r.nachSpeichern, r.info]));
   pruefe(/online/.test(r.online) && r.offline && /offline/.test(r.knopfOffline) && r.infoOffline && r.wiederOnline, "Fernzugriff online/offline: " + JSON.stringify([r.online, r.offline, r.knopfOffline, r.infoOffline, r.wiederOnline]));
-  pruefe(r.pruefKnopf && /nicht erreichbar seit/.test(r.pruefZeile) && /Zeitüberschreitung/.test(r.pruefZeile) && /1 nicht erreichbar/.test(r.pruefKopf) && r.infoPruef && /Testfiliale 901/.test(r.todo) && /nicht erreichbar/.test(r.todo),
-    "Automatische Prüfung gestört: " + JSON.stringify([r.pruefKnopf, r.pruefZeile, r.pruefKopf, r.infoPruef, r.todo]));
-  pruefe(/✓ Fernzugriff erreichbar/.test(r.pruefOk) && r.infoOk && r.todoWeg, "Automatische Prüfung wieder erreichbar: " + JSON.stringify([r.pruefOk, r.infoOk, r.todoWeg]));
+  pruefe(r.pruefKnopf && /nicht erreichbar seit/.test(r.pruefZeile) && /Zeitüberschreitung/.test(r.pruefZeile) && /1 nicht erreichbar/.test(r.pruefKopf) && r.autoOffline && r.infoPruef
+    && /Testfiliale 901/.test(r.todo) && /OFFLINE seit/.test(r.todo) && /Automatische Prüfung/.test(r.todo),
+    "Automatische Prüfung gestört → offline: " + JSON.stringify([r.pruefKnopf, r.pruefZeile, r.pruefKopf, r.autoOffline, r.infoPruef, r.todo]));
+  pruefe(/✓ Fernzugriff erreichbar/.test(r.pruefOk) && r.autoOnline && r.infoOk && r.todoWeg, "Automatische Prüfung wieder erreichbar → online: " + JSON.stringify([r.pruefOk, r.autoOnline, r.infoOk, r.todoWeg]));
   pruefe(!a.fehler.length, "Laufzeitfehler: " + a.fehler.join("; "));
   await a.zu();
   /* Techniker: Zugang zur Regelung zeigt den Vor-Ort-Block verdeckt, Bestandsplan oben im Protokoll; Kunde: nichts davon */

@@ -805,7 +805,10 @@ Kammerlander Umwelt- und Klimatechnik (UKT) – oft kurz, vom Handy, im Feld.
   (letzter Stand, `zuletzt_ok`, `gestoert_seit`), RPC `fern_pruefung_jetzt` (Admins/Inhaber, „🔄 Jetzt prüfen“ in der Übersicht, Ergebnis nach ~30 s – `fernPruefungJetzt`)
   und `fern_pruefung_nachsehen` (offene Antworten auswerten, vor jedem Lesen). App: `FERN_PRUEFUNG`, `fernPruefungLaden` (beim Start, höchstens alle 30 min), `fernPruefungText`,
   `fernPruefungGestoert`; Übersicht (Kopfzeile `[data-fern-pruefung]`, je Markt `[data-fernpruefung]`, gestörte zuerst; bei Hand-offline und wieder erreichbar „→ wieder auf online stellen?“),
-  Markt-Info und Protokoll-Kopf (nur wenn nicht ohnehin von Hand offline), Büro-To-do im Kalender (`[data-fern-todo]`). Der Schalter bleibt von Hand – die Prüfung zeigt nur.
+  Markt-Info und Protokoll-Kopf (nur wenn nicht ohnehin offline), Büro-To-do im Kalender (`[data-fern-todo]`: alle auf offline + laut Prüfung gestörte).
+  **Die Prüfung legt den Schalter selbst um** (Inhaber 15.10.2026: „die automatische Prüfung soll diesen Schalter ändern können, dafür ist er da“): in
+  `fern_pruefung_auswerten()` nicht erreichbar → `fernOffline` {seit, von „Automatische Prüfung“, notiz = Hinweis}; wieder erreichbar → online NUR, wenn die
+  Prüfung ihn gesetzt hat (von = „Automatische Prüfung“) – von Hand Gesetztes bleibt, die Übersicht zeigt dann „→ wieder auf online stellen?“.
   Attrappe: `window.__fernAntwort` je Markt, `window.__fernPruefungWartezeit`. Ohne das SQL (Sicht fehlt) blendet die App die Prüfung aus (`FERN_PRUEFUNG_AN`).
 - **Störungen nie doppelt** (Büro 01.10.2026): eine Lidl-Auftragsnummer gibt es
   nur einmal als Störung (Datenbank-Index `stoerung_auftrag_einmal`,

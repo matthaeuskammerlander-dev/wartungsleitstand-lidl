@@ -563,7 +563,11 @@
           var neuF={standort_id:r.ziel, zeit:jetztF, erreichbar:okF, regelung:okF, status:okF?200:null,
             hinweis:okF?"Regelung antwortet":"keine Antwort (Zeitüberschreitung) – Router oder Verbindung offline",
             zuletzt_ok:okF?jetztF:(altF&&altF.zuletzt_ok)||null, gestoert_seit:okF?null:(altF&&altF.gestoert_seit)||jetztF, anzahl:((altF&&altF.anzahl)||0)+1};
-          if(altF) Object.assign(altF,neuF); else DB.fern_pruefung_stand.push(neuF); nF++; });
+          if(altF) Object.assign(altF,neuF); else DB.fern_pruefung_stand.push(neuF); nF++;
+          /* Schalter umlegen wie fern_pruefung_auswerten(): nicht erreichbar → offline („Automatische Prüfung“), wieder erreichbar → online nur, wenn die Prüfung ihn gesetzt hat */
+          var offF=(r.felder||{}).fernOffline;
+          if(!okF && !offF){ r.felder.fernOffline={seit:jetztF, von:"Automatische Prüfung", notiz:neuF.hinweis}; r.geaendert=jetztF; r.von="Automatische Prüfung"; r.grund="Fernzugriff laut täglicher Prüfung nicht erreichbar – auf offline gestellt"; }
+          else if(okF && offF && offF.von==="Automatische Prüfung"){ delete r.felder.fernOffline; r.geaendert=jetztF; r.von="Automatische Prüfung"; r.grund="Fernzugriff laut Prüfung wieder erreichbar – auf online gestellt"; } });
         sichern(); return Promise.resolve({data:nF, error:null}); }
       if(name==="fern_pruefung_nachsehen") return Promise.resolve({data:0, error:null});
       if(name==="team_liste"){ var rl={}; DB.rollen.forEach(function(r){ rl[r.user_id]=r; });
