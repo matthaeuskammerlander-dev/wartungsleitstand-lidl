@@ -6253,6 +6253,53 @@ test("Zugangsdaten bleiben (Inhaber 15.10.2026): ein beim Start mit ungeprüfter
   await a.zu();
 });
 
+test("Projekt-Stand als Reiter (Inhaber 16.10.2026): ein Tipp zeigt Angaben und Dateien des Schritts, stellt nicht um; Preis-Dateien nur Inhaber", async () => {
+  for (const konto of [KONTEN.inhaber, KONTEN.admin]) {
+    const a = await oeffnen(konto);
+    const r = await a.seite.evaluate(async () => {
+      const x = window.__t.x, db = window.__db.tabellen, e = {}, w = (ms) => new Promise((f) => setTimeout(f, ms));
+      const bis = async (bed, ms) => { const t = Date.now() + (ms || 5000); for (;;) { let ok = false; try { ok = bed(); } catch (err) {} if (ok || Date.now() > t) return ok; await w(50); } };
+      const t = (tag) => "2026-03-" + tag + "T08:00:00.000Z", jetzt = new Date().toISOString();
+      if (!db.projekte.some((q) => q.id === "tmp_sr")) db.projekte.push({ id: "tmp_sr", nummer: "P-2026-907", titel: "Stand-Reiter Test", kunde_id: "lidl", status: "konzept", erstellt: t("01"), geaendert: jetzt,
+        verlauf: [{ zeit: t("02"), wer: "T", text: "Stand: Bestand / Begehung" }, { zeit: t("10"), wer: "T", text: "Stand: Konzept" }],
+        daten: { konzept: "Drei Außengeräte, Testkonzept Zeile 1", begehungDatum: "2026-03-05",
+          quellen: { konzept: ["tmp_sr/plan-a-Grundriss.pdf"] },
+          dateien: [
+            { pfad: "tmp_sr/plan-a-Grundriss.pdf", name: "Grundriss.pdf", art: "plan", von: "T", zeit: t("05") },
+            { pfad: "tmp_sr/foto-b-Bestand.jpg", name: "Bestand.jpg", art: "foto", von: "T", zeit: t("06") },
+            { pfad: "tmp_sr/dokument-c-Uebersicht.pdf", name: "Übersicht.pdf", art: "dokument", von: "T", zeit: t("12") },
+            { pfad: "tmp_sr/mail-d-Anfrage.eml", name: "Anfrage.eml", art: "mail", von: "T", zeit: t("12"), schritt: "anfrage" },
+            { pfad: "buero/tmp_sr/preise-e-Vergleich.pdf", name: "Vergleich mit Preisen.pdf", art: "preise", von: "T", zeit: t("12") }] } });
+      await x("projekteLaden()");
+      x("ansichtenSchliessen(); projektAnsicht('tmp_sr')");
+      await bis(() => document.querySelector("[data-schrittinfo]"));
+      const info = () => document.querySelector("[data-schrittinfo]");
+      e.start = info().dataset.schrittinfo; e.startText = info().textContent;
+      document.querySelector('[data-st="begehung"]').click(); await bis(() => info().dataset.schrittinfo === "begehung");
+      e.beg = info().textContent; e.status = db.projekte.find((q) => q.id === "tmp_sr").status;
+      e.setzen = !!info().querySelector("[data-stsetzen]");
+      document.querySelector('[data-st="anfrage"]').click(); await bis(() => info().dataset.schrittinfo === "anfrage"); e.anf = info().textContent;
+      document.querySelector('[data-st="baustelle"]').click(); await bis(() => info().dataset.schrittinfo === "baustelle"); e.leer = !!info().querySelector("[data-stleer]");
+      document.querySelector('[data-st="begehung"]').click(); await bis(() => info().dataset.schrittinfo === "begehung");
+      info().querySelector("[data-stsetzen]").click();
+      await bis(() => db.projekte.find((q) => q.id === "tmp_sr").status === "begehung");
+      const p = db.projekte.find((q) => q.id === "tmp_sr"); e.nachher = p.status; e.tagebuch = p.verlauf.map((v) => v.text);
+      /* zurück für den nächsten Durchgang */
+      p.status = "konzept"; p.verlauf = p.verlauf.slice(0, 2); x("ansichtenSchliessen()");
+      return e;
+    });
+    const inh = konto === KONTEN.inhaber;
+    pruefe(r.start === "konzept" && /Testkonzept Zeile 1/.test(r.startText) && /Übersicht\.pdf/.test(r.startText) && /Grundriss\.pdf/.test(r.startText) && !/Bestand\.jpg/.test(r.startText),
+      konto + ": Konzept-Reiter zeigt nicht Angaben, Quelle und Datei des Schritts: " + r.startText);
+    pruefe(inh ? /Vergleich mit Preisen/.test(r.startText) : !/Vergleich mit Preisen|Preisen/.test(r.startText), konto + ": Preis-Datei " + (inh ? "fehlt beim Inhaber" : "für Nicht-Inhaber sichtbar") + ": " + r.startText);
+    pruefe(/Bestand\.jpg/.test(r.beg) && /Grundriss\.pdf/.test(r.beg) && r.status === "konzept" && r.setzen, konto + ": Begehung-Reiter falsch bzw. Tipp hat umgestellt: " + JSON.stringify([r.beg, r.status, r.setzen]));
+    pruefe(/Anfrage\.eml/.test(r.anf) && r.leer, konto + ": gemerkter Schritt einer Datei bzw. leerer Schritt: " + JSON.stringify([r.anf, r.leer]));
+    pruefe(r.nachher === "begehung" && r.tagebuch.some((v) => v === "Stand: Bestand / Begehung") && r.tagebuch.length === 3, konto + ": „Stand auf … setzen“: " + JSON.stringify([r.nachher, r.tagebuch]));
+    if (process.env.FOTO && inh) { await a.seite.evaluate(() => window.__t.x("projektAnsicht('tmp_sr')")); await a.seite.waitForTimeout(900); await a.seite.screenshot({ path: process.env.FOTO }); }
+    await a.zu();
+  }
+});
+
 test("Dateiart „Preise / Kalkulation“ (Inhaber 16.10.2026): nur der Inhaber wählt sie, abgelegt unter buero/, andere sehen die Datei nicht", async () => {
   const a = await oeffnen(KONTEN.inhaber);
   const r = await a.seite.evaluate(async () => {

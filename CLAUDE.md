@@ -350,6 +350,13 @@ Kammerlander Umwelt- und Klimatechnik (UKT) – oft kurz, vom Handy, im Feld.
   („💶 enthält Preisangaben“ nur beim Inhaber in der Liste und in seiner Meldung), keine Nachricht, 🔒 nie vorbelegt. Gilt auch für Mails mit Preisen im
   Text (Posteingang, Mail-Programm, Mailverlauf) – vorher lagen sie nur beim Inhaber. Nur für den Inhaber bleibt, was bewusst gewählt ist: Art
   Angebot/Rechnung/Preise, KPlus-Belege und Mails mit Beleg (`mailMitBeleg`), 🔒.
+- **Stand als Reiter** (Inhaber 16.10.2026: „die ganzen Infos und Dateien zu Konzept in dem Reiter sehen – auch für die anderen Reiter bei
+  Stand“): die Schritt-Chips der Karte „Stand“ sind Reiter (`PROJEKT_STAND_WAHL`, Vorgabe der aktuelle Stand, unterstrichen `.st-aktuell`).
+  `projektSchrittInfo` zeigt die ausgefüllten Angaben des Schritts, seine Dateien (Quellen des Schritts + was in diesem Schritt hochgeladen
+  wurde), Aufgaben/Termine/Baustellenbuch (`projektSchrittAufgaben`) und „✎ Angaben und Quellen bearbeiten“ (springt in den Reiter Angaben).
+  Ein Tipp stellt NICHT mehr um (vorher sofort, ohne Rückfrage) – umgestellt wird mit „Weiter: …“ bzw. „Stand auf … setzen“, mit Tagebuch.
+  Schritt einer Datei: neue merken ihn beim Hochladen (`schritt`), ältere über `projektDateiSchritt` (Stand laut Tagebuch „Stand: …“ zur
+  Hochladezeit; ohne späteren Wechsel der heutige Stand; vor dem ersten Eintrag keiner). buero/-Dateien nur für Inhaber.
 - **Arbeitsnachweise** (Inhaber 06.10.2026, Tabelle `arbeitsnachweise`, SQL-Abschnitt „Arbeitsnachweise“ in tools/rechte-2026-10-05.sql):
   wie das Papierformular (Auftraggeber, Objekt, Zeilen Datum/Monteure/von/bis/Pause/Stunden = Personen × (bis − von − Pause);
   Monteure mit Auswahlliste `#an_namen` aus `bekannteNamen()` + eigenes Konto, Inhaber 14.10.2026 – freier Text wie „4 Mann“ bleibt),

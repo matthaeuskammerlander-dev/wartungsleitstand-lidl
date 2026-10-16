@@ -180,6 +180,8 @@ nav.tabs .tab-menue{display:none}
 .chip{appearance:none;font-family:var(--f-body);font-size:12.5px;font-weight:500;padding:5px 11px;border-radius:999px;
   border:1px solid var(--line-2);background:var(--surface);color:var(--ink-2);cursor:pointer}
 .chip[aria-pressed="true"]{background:var(--accent);border-color:var(--accent);color:var(--on-accent)}
+/* Projekt-Stand: der aktuelle Schritt bleibt erkennbar, auch wenn ein anderer angesehen wird */
+.chip.st-aktuell{font-weight:700;box-shadow:inset 0 -3px 0 var(--accent)}
 .chip:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 input[type="search"],input[type="text"],input[type="date"],input[type="time"],input[type="number"],input[type="tel"],input[type="email"],input[type="url"],select,textarea{
   font-family:var(--f-body);font-size:14px;color:var(--ink);background:var(--surface);
@@ -27856,7 +27858,7 @@ Object.assign(RUNDGAENGE, {
       RG_HG("Nummer P-Jahr-NNN, Stand „Anfrage“ mit heutigem Datum, Tagebuch „Projekt angelegt“ – dann öffnet sich das Projekt.")},
     {reiter:"projekte", ziel:function(){ return rgEl("#pr_chips"); }, titel:"Die Schritte",
       text:"Anfrage → Bestand/Begehung → Konzept → Einreichung → Angebot → Auftrag → Vorbereitung → Baustelle → Inbetriebnahme → Dokumentation → Abgerechnet (oder „Nicht beauftragt“). Die Chips oben filtern danach."+
-      RG_HG("Im Projekt stellt ein Tipp auf einen Schritt bzw. „Weiter: …“ sofort um – ohne Rückfrage, mit Eintrag im Tagebuch.")},
+      RG_HG("Im Projekt sind die Schritte unter „Stand“ Reiter: ein Tipp zeigt Angaben, Dateien, Aufgaben und Termine dieses Schritts. Umgestellt wird mit „Weiter: …“ bzw. „Stand auf … setzen“ – mit Eintrag im Tagebuch.")},
     {titel:"Im Projekt: Angaben, Quellen, Listen", text:RG_LISTE([
       "<strong>Angaben</strong> je Schritt (wer hat angefragt, Einreichung, Angebots-/Auftragsnummer, Montage, Rechnungsnummer …) – gespeichert erst mit „Angaben speichern“.",
       "<strong>📎 Quellen</strong> je Schritt: Projektdateien anhaken oder hochladen – sofort gespeichert.",
@@ -30055,6 +30057,20 @@ var PROJEKT_DATEIARTEN=[["plan","Plan / Skizze"],["foto","Foto"],["dokument","Un
   ["preise","Preise / Kalkulation",true]];
 var PROJEKTE=[], projekteGeladen=false, projekteLaedt=false, projekteVersuch=0, projekteKonto="";
 function projektSchritt(st){ return PROJEKT_SCHRITTE.filter(function(x){ return x[0]===st; })[0] || (st==="verloren"?PROJEKT_VERLOREN:PROJEKT_SCHRITTE[0]); }
+/* Zu welchem Schritt gehört eine Projektdatei? (Inhaber 16.10.2026: „die ganzen Infos und Dateien zu Konzept in dem Reiter sehen“)
+   Neue Dateien merken sich den Stand beim Hochladen (f.schritt). Ältere: der Stand laut Tagebuch („Stand: …“) zur Zeit des
+   Hochladens – gab es danach keinen Wechsel mehr, der heutige Stand; liegt die Datei vor dem ersten Eintrag, bleibt sie ohne Schritt. */
+function projektDateiSchritt(p, f){
+  if(f && f.schritt) return f.schritt;
+  var namen={}; PROJEKT_SCHRITTE.concat([PROJEKT_VERLOREN]).forEach(function(x){ namen[x[1]]=x[0]; });
+  var wechsel=(p.verlauf||[]).map(function(v){ var m=/^Stand: (.+?)\.?$/.exec(String(v.text||"")); return m && namen[m[1]] ? {zeit:String(v.zeit||""), st:namen[m[1]]} : null; })
+    .filter(Boolean).sort(function(a,b){ return a.zeit.localeCompare(b.zeit); });
+  var t=String((f&&f.zeit)||"");
+  if(!t) return wechsel.length ? null : p.status;
+  var vor=wechsel.filter(function(w){ return w.zeit<=t; }).pop();
+  if(vor) return vor.st;
+  return wechsel.length ? null : p.status;
+}
 function projektOffen(p){ return ["abgeschlossen","abgerechnet","verloren"].indexOf(p.status)<0; }
 function projektTitel(p){ return (p.nummer?p.nummer+" · ":"")+(p.titel||"Projekt"); }
 function projektPill(p){
@@ -30528,23 +30544,36 @@ function projektAnsicht(id){
       al.querySelector("a").onclick=function(e){ e.preventDefault(); protokollFenster(ausP); }; v.schritt.appendChild(al); }
     var d=p.daten||{};
 
-    /* Schritte: wo das Projekt steht – antippen stellt um (mit Tagebuch-Eintrag) */
+    /* Schritte: wo das Projekt steht. Die Schritte sind Reiter (Inhaber 16.10.2026: „die ganzen Infos und Dateien zu Konzept in dem
+       Reiter sehen – auch für die anderen Reiter bei Stand“): ein Tipp zeigt Angaben, Dateien, Aufgaben und Termine des Schritts.
+       Umgestellt wird nur mit „Weiter: …“ bzw. „Stand auf … setzen“ – mit Eintrag im Tagebuch. */
     var idx=PROJEKT_SCHRITTE.map(function(x){ return x[0]; }).indexOf(p.status);
     var stufen=el('<div class="card" style="box-shadow:none"><div class="pad stack" style="gap:8px">'+
       '<div class="rowflex" style="justify-content:space-between"><h2>Stand</h2>'+projektPill(p)+"</div>"+
-      '<div class="chips">'+PROJEKT_SCHRITTE.map(function(x,i){
-        return '<button class="chip" type="button" data-st="'+x[0]+'" aria-pressed="'+(x[0]===p.status)+'"'+(i<idx?' style="opacity:.75"':"")+">"+(i<idx?"✓ ":"")+esc(x[1])+"</button>"; }).join("")+
-        '<button class="chip" type="button" data-st="verloren" aria-pressed="'+(p.status==="verloren")+'">'+esc(PROJEKT_VERLOREN[1])+"</button></div>"+
-      '<div class="muted" style="font-size:12.5px">'+esc(projektSchritt(p.status)[2])+"</div>"+
+      '<div class="chips" role="tablist" aria-label="Schritte des Projekts">'+PROJEKT_SCHRITTE.map(function(x,i){
+        return '<button class="chip" type="button" role="tab" data-st="'+x[0]+'"'+(i<idx?' style="opacity:.75"':"")+">"+(i<idx?"✓ ":"")+esc(x[1])+"</button>"; }).join("")+
+        '<button class="chip" type="button" role="tab" data-st="verloren">'+esc(PROJEKT_VERLOREN[1])+"</button></div>"+
+      '<div data-stinfo></div>'+
       (idx>=0 && idx<PROJEKT_SCHRITTE.length-1 && schreiben ? '<div><button class="btn sm" type="button" data-weiter>Weiter: '+esc(PROJEKT_SCHRITTE[idx+1][1])+"</button></div>" : "")+
     "</div></div>");
     var umstellen=function(neuSt){
       if(!schreiben || neuSt===p.status) return;
-      projektSpeichern(p, {status:neuSt}, "Stand: "+projektSchritt(neuSt)[1]).then(function(){ toast("Stand: "+projektSchritt(neuSt)[1]+"."); aufbauen(); if(S.view==="projekte" && darfRendern()) render(); },
+      projektSpeichern(p, {status:neuSt}, "Stand: "+projektSchritt(neuSt)[1]).then(function(){ toast("Stand: "+projektSchritt(neuSt)[1]+"."); delete PROJEKT_STAND_WAHL[p.id]; aufbauen(); if(S.view==="projekte" && darfRendern()) render(); },
         function(e){ toast(e.message); });
     };
-    stufen.querySelectorAll("[data-st]").forEach(function(b){ b.onclick=function(){ if(schreiben) umstellen(b.dataset.st); }; });
+    var stZeigen=function(st){
+      PROJEKT_STAND_WAHL[p.id]=st;
+      stufen.querySelectorAll("[data-st]").forEach(function(b){ var an=b.dataset.st===st; b.setAttribute("aria-pressed", String(an)); b.setAttribute("aria-selected", String(an));
+        b.classList.toggle("st-aktuell", b.dataset.st===p.status); });
+      var h=stufen.querySelector("[data-stinfo]"); h.innerHTML=""; h.appendChild(projektSchrittInfo(p, st, schreiben, buero, umstellen, function(){
+        var r=v.inhalt.querySelector('[data-reiter="angaben"]'); if(r) r.click();
+        var dt=v.inhalt.querySelector('[data-stelle="schritt:'+st+'"]'); dt=dt && dt.closest("details");
+        if(dt){ dt.open=true; dt.scrollIntoView({block:"start", behavior:"smooth"}); }
+      }));
+    };
+    stufen.querySelectorAll("[data-st]").forEach(function(b){ b.onclick=function(){ stZeigen(b.dataset.st); }; });
     var w=stufen.querySelector("[data-weiter]"); if(w) w.onclick=function(){ umstellen(PROJEKT_SCHRITTE[idx+1][0]); };
+    stZeigen(PROJEKT_STAND_WAHL[p.id] || p.status || PROJEKT_SCHRITTE[0][0]);
     v.inhalt.appendChild(stufen);
     v.inhalt.appendChild(projektBlickKarte(p));
     /* Planung: Aufgaben und Termine des Projekts (Kalender) */
@@ -34999,7 +35028,7 @@ function projektDateienAblegen(p, art, liste, herkunft, nurBuero, preise, hinwei
   var meldung=function(m){ return /mime|type/i.test(m)?"Dateityp geht nicht – bitte als PDF oder Foto":/bucket|not found/i.test(m)?"Ablage für Projektdateien noch nicht eingerichtet (tools/kunden-projekte-stunden.sql)":/row-level|policy|unauthor/i.test(m)?"keine Berechtigung":m; };
   /* jede Datei für sich: klappt eine nicht, bleiben die anderen trotzdem am Projekt */
   return Promise.all(liste.map(function(f){
-    var fa=artVon(f), pfad=projektDateiPfad(p, fa, f.name, nurBuero && nurBuero(f)), eintrag={pfad:pfad, name:f.name, art:fa, groesse:f.size, typ:f.type||"", von:meinName(), zeit:new Date().toISOString()};
+    var fa=artVon(f), pfad=projektDateiPfad(p, fa, f.name, nurBuero && nurBuero(f)), eintrag={pfad:pfad, name:f.name, art:fa, groesse:f.size, typ:f.type||"", von:meinName(), zeit:new Date().toISOString(), schritt:p.status||undefined};
     var hk=herkunft ? herkunft(f) : ""; if(hk) eintrag.herkunft=hk;
     if(preise && preise.indexOf(f)>=0) eintrag.preise=true;   /* Mail mit Preisen im Text – Hinweis bei der Datei */
     if(f._preisPruefen) eintrag.preisPruefen=true;           /* enthält Preisangaben – nur ein Hinweis für den Inhaber, für alle sichtbar */
@@ -37260,6 +37289,60 @@ function planBezugKarte(titel, filter, vorgabe, knoepfe){
   return c;
 }
 /* Aufgaben eines Projektschritts – im Schritt selbst („an verschiedenen Punkten“) */
+/* Stand-Reiter: alles zu einem Schritt auf einen Blick – Angaben, Dateien (Quellen des Schritts und was in diesem Schritt
+   hochgeladen wurde), Aufgaben, Termine, Baustellenbuch. Preis-Dateien (buero/) sehen nur die Inhaber. */
+var PROJEKT_STAND_WAHL={};
+function projektSchrittInfo(p, st, schreiben, buero, umstellen, bearbeiten){
+  var x=projektSchritt(st), d=p.daten||{}, idx=PROJEKT_SCHRITTE.map(function(y){ return y[0]; }).indexOf(p.status), i=PROJEKT_SCHRITTE.map(function(y){ return y[0]; }).indexOf(st);
+  var lage=st===p.status ? "aktueller Stand" : (st!=="verloren" && i>=0 && idx>=0 && i<idx ? "erledigt" : "");
+  var h=el('<div class="stack" data-schrittinfo="'+esc(st)+'" style="gap:8px;border:1px solid var(--line);border-radius:10px;padding:10px 12px"></div>');
+  h.appendChild(el('<div class="rowflex" style="justify-content:space-between;gap:8px;flex-wrap:wrap"><strong>'+esc(x[1])+(lage?' <span class="muted" style="font-weight:400;font-size:12.5px">· '+lage+"</span>":"")+"</strong>"+
+    (schreiben && st!==p.status ? '<button class="btn ghost sm" type="button" data-stsetzen>Stand auf „'+esc(x[1])+'“ setzen</button>' : "")+"</div>"));
+  h.appendChild(el('<div class="muted" style="font-size:12.5px">'+esc(x[2])+"</div>"));
+  var b=h.querySelector("[data-stsetzen]"); if(b) b.onclick=function(){ umstellen(st); };
+  /* Angaben des Schritts (nur ausgefüllte) */
+  var felder=(PROJEKT_ANGABEN[st]||[]).filter(function(fd){ return String(d[fd[0]]||"").trim(); });
+  if(felder.length){
+    var a=el('<div class="stack" style="gap:6px" data-stangaben></div>');
+    felder.forEach(function(fd){
+      var wert=String(d[fd[0]]), lang=fd[2]==="lang" && wert.length>500;
+      var z=el('<div style="font-size:13.5px"><div class="muted" style="font-size:12px">'+esc(fd[1])+'</div><div style="white-space:pre-wrap;overflow-wrap:anywhere'+(lang?';max-height:9.5em;overflow:hidden':"")+'">'+esc(fd[2]==="datum"?dfmt(wert):wert)+"</div>"+
+        (lang?'<button class="btn ghost sm" type="button" style="margin-top:4px">ganz anzeigen</button>':"")+"</div>");
+      if(lang){ var t=z.children[1], k=z.querySelector("button"); k.onclick=function(){ var zu=t.style.maxHeight; t.style.maxHeight=zu?"":"9.5em"; k.textContent=zu?"weniger":"ganz anzeigen"; }; }
+      a.appendChild(z);
+    });
+    h.appendChild(a);
+  }
+  /* Dateien: Quellen des Schritts + in diesem Schritt hochgeladen */
+  var alle=(d.dateien||[]).filter(function(f){ return buero || !dateiImBuero(f); });
+  var quellen=((d.quellen||{})[st])||[], pfade={}, liste=[];
+  quellen.forEach(function(q){ var f=quelleDatei(p, q); if(f && alle.indexOf(f)>=0 && !pfade[f.pfad]){ pfade[f.pfad]=1; liste.push(f); } });
+  alle.forEach(function(f){ if(!pfade[f.pfad] && projektDateiSchritt(p, f)===st){ pfade[f.pfad]=1; liste.push(f); } });
+  var offen=quellen.filter(function(q){ return !quelleDatei(p, q); });
+  if(liste.length || offen.length){
+    var dl=el('<div data-stdateien><div class="muted" style="font-size:12px;margin-bottom:3px">Dateien ('+liste.length+')</div><div class="stack" style="gap:2px"></div></div>');
+    var box=dl.lastChild;
+    liste.slice(0, 40).forEach(function(f){
+      var art=(PROJEKT_DATEIARTEN.filter(function(y){ return y[0]===f.art; })[0]||[f.art,""])[1];
+      var z=el('<div style="font-size:13px;overflow-wrap:anywhere"><a href="#" class="sprunglink">📄 '+esc(f.name)+"</a>"+(art?' <span class="muted">· '+esc(art)+"</span>":"")+(dateiImBuero(f)?' <span class="muted">· 🔒 nur Inhaber</span>':"")+"</div>");
+      tippe(z.querySelector("a"), function(){ projektDateiOeffnen(f.pfad, f.name); });
+      box.appendChild(z);
+    });
+    if(liste.length>40) box.appendChild(el('<div class="muted" style="font-size:12.5px">… und '+(liste.length-40)+" weitere im Reiter Dateien</div>"));
+    offen.forEach(function(q){ box.appendChild(el('<div class="muted" style="font-size:12.5px">📎 '+esc(quelleName(q))+" · noch nicht hochgeladen</div>")); });
+    h.appendChild(dl);
+  }
+  /* Aufgaben, Termine und Baustellenbuch dieses Schritts */
+  var auf=projektSchrittAufgaben(p, st, schreiben);
+  if(auf.children.length) h.appendChild(auf);
+  var eigene=auf.children.length-(schreiben && planungAn()?1:0);
+  if(!felder.length && !liste.length && !offen.length && eigene<=0) h.appendChild(el('<div class="muted" style="font-size:12.5px" data-stleer>Zu diesem Schritt ist noch nichts eingetragen.</div>'));
+  if(st!=="verloren" && (PROJEKT_ANGABEN[st]||[]).length){
+    var e=el('<div><button class="btn ghost sm" type="button" data-stbearbeiten>'+(schreiben?"✎ Angaben und Quellen bearbeiten":"Alle Angaben ansehen")+"</button></div>");
+    e.querySelector("button").onclick=bearbeiten; h.appendChild(e);
+  }
+  return h;
+}
 function projektSchrittAufgaben(p, schritt, schreiben){
   var h=el('<div class="stack" style="gap:4px;margin-top:6px" data-planbezug></div>');
   h._neu=function(){
