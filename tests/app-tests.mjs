@@ -6253,6 +6253,28 @@ test("Zugangsdaten bleiben (Inhaber 15.10.2026): ein beim Start mit ungeprüfter
   await a.zu();
 });
 
+test("Dateiart „Preise / Kalkulation“ (Inhaber 16.10.2026): nur der Inhaber wählt sie, abgelegt unter buero/, andere sehen die Datei nicht", async () => {
+  const a = await oeffnen(KONTEN.inhaber);
+  const r = await a.seite.evaluate(async () => {
+    const x = window.__t.x, db = window.__db.tabellen, jetzt = new Date().toISOString(), e = {};
+    db.projekte.push({ id: "tmp_pk", nummer: "P-2026-905", titel: "Konzept Test", kunde_id: "lidl", status: "konzept", daten: {}, verlauf: [], erstellt: jetzt, geaendert: jetzt });
+    await x("projekteLaden()");
+    const p = () => x("PROJEKTE.filter(function(q){ return q.id==='tmp_pk'; })[0]");
+    e.karteInhaber = [...x("projektDateienKarte(PROJEKTE.filter(function(q){ return q.id==='tmp_pk'; })[0], true, true, function(){})").querySelectorAll("[data-art] option")].map((o) => o.value + "|" + o.textContent);
+    e.karteAndere = [...x("projektDateienKarte(PROJEKTE.filter(function(q){ return q.id==='tmp_pk'; })[0], false, true, function(){})").querySelectorAll("[data-art] option")].map((o) => o.value);
+    window.__datei = [new File(["%PDF-1.4 Preise"], "Konzept mit Preisen.pdf", { type: "application/pdf" }), new File(["%PDF-1.4 ohne"], "Konzept.pdf", { type: "application/pdf" })];
+    await x("projektDateienHochladen(PROJEKTE.filter(function(q){ return q.id==='tmp_pk'; })[0], function(f){ return /Preisen/.test(f.name) ? 'preise' : 'dokument'; }, window.__datei)");
+    e.dateien = (db.projekte.find((q) => q.id === "tmp_pk").daten.dateien || []).map((f) => f.art + "|" + f.pfad);
+    await x("projekteLaden()");
+    e.listeAndere = [...x("projektDateienKarte(PROJEKTE.filter(function(q){ return q.id==='tmp_pk'; })[0], false, false, function(){})").querySelectorAll("[data-liste]")].map((l) => l.textContent).join(" ");
+    return e;
+  });
+  pruefe(r.karteInhaber.some((o) => /^preise\|Preise \/ Kalkulation \(nur Inhaber\)$/.test(o)) && !r.karteAndere.includes("preise"), "Auswahl der Dateiart: " + JSON.stringify([r.karteInhaber, r.karteAndere]));
+  pruefe(r.dateien.some((f) => /^preise\|buero\/tmp_pk\/preise-/.test(f)) && r.dateien.some((f) => /^dokument\|tmp_pk\/dokument-/.test(f)), "Ablage: " + JSON.stringify(r.dateien));
+  pruefe(/Konzept\.pdf/.test(r.listeAndere) && !/Preisen/.test(r.listeAndere), "Liste für andere zeigt die Preisdatei: " + r.listeAndere);
+  await a.zu();
+});
+
 test("Fernsteuerung durch eine andere Firma (Inhaber 15.10.2026): im Markt-Editor eintragen, „nur beobachten“ im Zugangsfenster, in der Markt-Info, in der Übersicht und oben im Protokoll", async () => {
   const a = await oeffnen(KONTEN.admin);
   const r = await a.seite.evaluate(async () => {

@@ -338,6 +338,8 @@ Kammerlander Umwelt- und Klimatechnik (UKT) – oft kurz, vom Handy, im Feld.
   tools/nur-inhaber-buero.sql; Büro 01.10.2026). Preise, Angebote,
   Rechnungen und Positionskatalog kommen nie in `projekte.daten` (das sehen
   alle), sondern in eigene, nur für Inhaber lesbare Tabellen bzw. Dateien.
+  Dateiart „Preise / Kalkulation“ (`preise`, Inhaber 16.10.2026: Präsentation mit Preisvergleich „unter Projekte ablegen – Preise
+  natürlich nur für Inhaber“): wie Angebot/Rechnung unter `buero/`, wählbar nur für den Inhaber, Synology nur Büro-Ordner „Preise“.
 - **Arbeitsnachweise** (Inhaber 06.10.2026, Tabelle `arbeitsnachweise`, SQL-Abschnitt „Arbeitsnachweise“ in tools/rechte-2026-10-05.sql):
   wie das Papierformular (Auftraggeber, Objekt, Zeilen Datum/Monteure/von/bis/Pause/Stunden = Personen × (bis − von − Pause);
   Monteure mit Auswahlliste `#an_namen` aus `bekannteNamen()` + eigenes Konto, Inhaber 14.10.2026 – freier Text wie „4 Mann“ bleibt),

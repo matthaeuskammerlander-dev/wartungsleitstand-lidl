@@ -366,7 +366,7 @@ def abgleich(k, sb, stand):
 
 PROJEKT_UNTERORDNER = {"angebot": "Angebot", "rechnung": "Rechnung", "plan": "Plaene", "foto": "Fotos",
                        "dokument": "Unterlagen", "besprechung": "Besprechungen", "mail": "Mails",
-                       "lieferschein": "Lieferscheine", "protokoll": "Protokolle"}
+                       "lieferschein": "Lieferscheine", "protokoll": "Protokolle", "preise": "Preise"}
 PROJEKT_SCHRITTE = [("anfrage", "Anfrage"), ("begehung", "Bestand / Begehung"), ("konzept", "Konzept"),
                     ("einreichung", "Einreichung"), ("angebot", "Angebot"), ("auftrag", "Auftrag"), ("vorbereitung", "Vorbereitung"),
                     ("baustelle", "Baustelle"), ("inbetriebnahme", "Inbetriebnahme"),
