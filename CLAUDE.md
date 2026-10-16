@@ -345,9 +345,11 @@ Kammerlander Umwelt- und Klimatechnik (UKT) – oft kurz, vom Handy, im Feld.
   Verweise im Projekt umschreiben `dateiVerweiseErsetzen`, alte Kopie entfernen und prüfen) und „🗑 Datei löschen“ (`dateiLoeschen`, Rückfrage;
   `dateiLoeschenDarf`: buero/ nur Inhaber, sonst Inhaber, Admin oder wer hochgeladen hat). Preise erkennt `projektDateienHochladen` jetzt auch
   in PDFs (`pdfPreisDatei`: Text der ersten 25 Seiten, Zeilen über `pdfZeilen`, Regel wie Mails `mailTextMitPreis`) und am Namen
-  („Preis“, „Kalkulation“; `dateiMitPreis`) – beim Inhaber nach buero/; andere legen sie ab (Inhaber 16.10.2026: „nicht ablegen ist
-  zu streng“), markiert `preisPruefen` („💶 enthält vermutlich Preise“ in der Liste), Nachricht an den Inhaber (`chatAnInhaber`); speichert er den
-  ✎-Dialog, ist die Markierung erledigt (🔒 dort vorbelegt). Mails mit Preisen legen andere weiterhin nicht ab.
+  („Preis“, „Kalkulation“; `dateiMitPreis`) – seit 16.10.2026 NUR ein Hinweis (Inhaber: „sehr streng … blöd, wenn der Techniker etwas hochladen
+  oder ansehen will, das ihn doch auch betrifft – eine Preisangabe ist dort nur eine Randnotiz“): für alle abgelegt und sichtbar, `preisPruefen`
+  („💶 enthält Preisangaben“ nur beim Inhaber in der Liste und in seiner Meldung), keine Nachricht, 🔒 nie vorbelegt. Gilt auch für Mails mit Preisen im
+  Text (Posteingang, Mail-Programm, Mailverlauf) – vorher lagen sie nur beim Inhaber. Nur für den Inhaber bleibt, was bewusst gewählt ist: Art
+  Angebot/Rechnung/Preise, KPlus-Belege und Mails mit Beleg (`mailMitBeleg`), 🔒.
 - **Arbeitsnachweise** (Inhaber 06.10.2026, Tabelle `arbeitsnachweise`, SQL-Abschnitt „Arbeitsnachweise“ in tools/rechte-2026-10-05.sql):
   wie das Papierformular (Auftraggeber, Objekt, Zeilen Datum/Monteure/von/bis/Pause/Stunden = Personen × (bis − von − Pause);
   Monteure mit Auswahlliste `#an_namen` aus `bekannteNamen()` + eigenes Konto, Inhaber 14.10.2026 – freier Text wie „4 Mann“ bleibt),
@@ -538,9 +540,9 @@ Kammerlander Umwelt- und Klimatechnik (UKT) – oft kurz, vom Handy, im Feld.
   Dateien hochgeladen sind. Angebot/Rechnung als Art nur für den Inhaber. KPlus-PDFs (6-stellig, `kplusDateiname`; Tiefentest
   05.10.2026): beim Inhaber als Angebot/Rechnung erkannt (buero/), andere legen sie und die Mail dazu nicht ab (bleiben im
   Posteingang). Eine Mail mit Angebot/Rechnung (`mailMitBeleg`) liegt auch als .eml nur unter buero/ – ebenso aus dem Mail-Programm.
-  Ebenso eine Mail mit Preisen im TEXT (Inhaber 05.10.2026: Betrag mit €/EUR, `mailTextMitPreis`, `emlText` liest die .eml): beim
-  Inhaber nur unter buero/ mit Hinweis „enthält Preise – nur für den Inhaber abgelegt“ (`preise` an der Datei, `preisHinweis`), alle
-  anderen legen sie nicht ab – geprüft in `projektDateienHochladen`, gilt so für Posteingang, Mail-Programm, Mailverlauf und Dateien-Karte.
+  Eine Mail mit Preisen im TEXT (Betrag mit €/EUR, `mailTextMitPreis`, `emlText` liest die .eml): seit 16.10.2026 für alle abgelegt, nur mit
+  Hinweis „💶 enthält Preisangaben“ (Inhaber: „nur eine Randnotiz“; vorher 05.10.2026 nur beim Inhaber unter buero/) – geprüft in
+  `projektDateienHochladen`, gilt so für Posteingang, Mail-Programm, Mailverlauf und Dateien-Karte.
   Signatur/Impressum zählen nicht (`MAIL_IMPRESSUM`: Stammkapital, Firmenbuch, FN, UID …; nach dem Trenner „-- “ bis zu einer zitierten Mail).
   Anhänge ohne .eml (Rohmail zu groß, art „unbekannt“): „Zu Projekt legen“ an der Einzelkarte, für alle Anhänge derselben Mail.
   Zu Großes (über 20 MB, Anhang oder Mail) meldet das Skript als Eintrag OHNE Datei (art „unbekannt“, `pfad` leer, Hinweis in `notiz`;
