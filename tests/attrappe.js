@@ -499,6 +499,8 @@
     if(erlaubt && b && b.type && erlaubt.indexOf(b.type)<0)
       return Promise.resolve({data:null,error:{message:"mime type "+b.type+" is not supported"}});
     /* wie reisekosten.sql und die Antworten vom 05.10.2026: Belegfotos legt jede Person in ihren Ordner <user_id>/, der Inhaber auch in fremde */
+    if(this.n==="projektdateien" && /^buero\//.test(p) && rolleVon()!=="inhaber")
+      return Promise.resolve({data:null,error:{message:"new row violates row-level security policy"}});
     if(this.n==="auslagen" && String(p).split("/")[0]!==uid() && rolleVon()!=="inhaber")
       return Promise.resolve({data:null,error:{message:"new row violates row-level security policy"}});
     DATEIEN[k]=b; BESITZER[k]=uid(); return Promise.resolve({data:{path:p},error:null}); };
@@ -513,6 +515,8 @@
     if(n==="posteingang"){
       if(!sitzung || rl==="kunde" || rl==="praesentation") return true;
       return !(rl==="inhaber" || DB.posteingang.some(function(r){ return r.pfad===p && postSieht(r); })); }
+    /* projektdateien (nur-inhaber-buero.sql): nur wer mitarbeitet, buero/… nur der Inhaber */
+    if(n==="projektdateien") return !sitzung || rl==="kunde" || rl==="praesentation" || rl==="fernzugriff" || (/^buero\//.test(p) && rl!=="inhaber");
     if(n!=="protokollfotos") return false;
     if(!sitzung) return true;
     if(/^wunsch\//.test(p)) return !(BESITZER[n+"/"+p]===uid() || rl==="inhaber");
@@ -525,6 +529,12 @@
      das Foto eines abgegebenen oder ausbezahlten Eintrags –, der Inhaber überall; was die Regel nicht erlaubt, bleibt still
      liegen (wie Supabase: keine Fehlermeldung, nur nichts entfernt). Andere Bereiche: wie bisher (nichts entfernt). */
   E.prototype.remove=function(pfade){
+    /* projektdateien: buero/… nur der Inhaber, sonst wer hochgeladen hat oder Admin/Inhaber – Verbotenes bleibt still liegen */
+    if(this.n==="projektdateien" && sitzung){ var n0=this.n, rl0=rolleVon(), weg0=[];
+      (pfade||[]).forEach(function(p){ var k=n0+"/"+p; if(!DATEIEN[k]) return;
+        if(/^buero\//.test(p) ? rl0!=="inhaber" : !(rl0==="inhaber" || rl0==="admin" || BESITZER[k]===uid())) return;
+        delete DATEIEN[k]; weg0.push({name:p}); });
+      return Promise.resolve({data:weg0,error:null}); }
     if(this.n!=="auslagen" || !sitzung) return Promise.resolve({data:[],error:null});
     var n=this.n, inh=rolleVon()==="inhaber", weg=[];
     (pfade||[]).forEach(function(p){

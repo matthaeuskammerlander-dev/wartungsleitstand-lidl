@@ -4100,10 +4100,34 @@ function mailPreisDatei(f){
   if(!istEmlDatei(f) || typeof f.arrayBuffer!=="function") return Promise.resolve(false);
   return f.arrayBuffer().then(function(b){ return mailTextMitPreis(emlText(b)); }, function(){ return false; });
 }
+/* Preise auch in PDFs und am Dateinamen erkennen (Inhaber 16.10.2026: „Es wurde leider auch nicht automatisch erkannt, dass da
+   Preise enthalten sind und das nur für Inhaber sichtbar ist“ – die Präsentation mit Preisvergleich lag als Unterlage für alle):
+   Name mit „Preis“/„Kalkulation“ oder Text einer PDF mit Betrag in €/EUR (wie bei Mails, ohne Impressum-Zeilen) */
+var DATEI_PREIS_NAME=/preis|kalkulation/i, PDF_PREIS_MAX=20*1048576, PDF_PREIS_SEITEN=25;
+function pdfZeilen(items){
+  var z={};
+  (items||[]).forEach(function(it){ if(!it || !String(it.str||"").trim()) return; var y=Math.round(((it.transform||[])[5]||0)/2); (z[y]=z[y]||[]).push(it); });
+  return Object.keys(z).map(Number).sort(function(a,b){ return b-a; }).map(function(y){
+    return z[y].sort(function(a,b){ return ((a.transform||[])[4]||0)-((b.transform||[])[4]||0); }).map(function(it){ return it.str; }).join(" "); }).join("\n");
+}
+function pdfPreisDatei(f){
+  if(!(/\.pdf$/i.test(f.name||"") || /pdf/i.test(f.type||"")) || typeof f.arrayBuffer!=="function" || f.size>PDF_PREIS_MAX) return Promise.resolve(false);
+  return mitFrist(f.arrayBuffer().then(function(b){ return ladePdfJs().then(function(){ return window.pdfjsLib.getDocument({data:new Uint8Array(b)}).promise; }); })
+    .then(function(pdf){
+      var n=Math.min(pdf.numPages, PDF_PREIS_SEITEN), seiten=[]; for(var i=1;i<=n;i++) seiten.push(i);
+      return seiten.reduce(function(k, i){ return k.then(function(gef){ if(gef) return true;
+        return pdf.getPage(i).then(function(pg){ return pg.getTextContent(); }).then(function(tc){ return mailTextMitPreis(pdfZeilen(tc.items)); }); }); }, Promise.resolve(false))
+        .then(function(j){ try{ pdf.destroy(); }catch(e){} return j; });
+    }), 12000).catch(function(){ return false; });
+}
+function dateiMitPreis(f){
+  if(DATEI_PREIS_NAME.test(f.name||"")) return Promise.resolve(true);
+  return mailPreisDatei(f).then(function(ja){ return ja || pdfPreisDatei(f); });
+}
 /* Zusatz für die Erfolgsmeldung: welche abgelegten Mails Preise enthalten (stehen nur beim Inhaber) */
 function preisHinweis(neue){
   var n=(neue||[]).filter(function(x){ return x && x.preise; }).length;
-  return n ? " "+(n===1 ? "Die Mail enthält" : n+" Mails enthalten")+" Preise – nur für den Inhaber abgelegt." : "";
+  return n ? " "+(n===1 ? "Die Datei enthält" : n+" Dateien enthalten")+" Preise – nur für den Inhaber abgelegt." : "";
 }
 /* KPlus-PDFs (6-stellige Nummer) am Text als Angebot bzw. Rechnung erkennen – nur Inhaber; artJe: Map Datei → Art */
 function kplusArtenPruefen(files, artJe){
@@ -27843,7 +27867,7 @@ Object.assign(RUNDGAENGE, {
         "Projekttermine erscheinen im Kalender – ohne eigenen Kalendereintrag und ohne Nachricht; Aufgaben und „Einplanen“ dagegen mit Nachricht an die Eingetragenen."])},
     {titel:"Baustellenbuch, Dateien, PDF", text:RG_LISTE([
       "<strong>Baustellenbuch</strong>: Datum, Art, Beschreibung, Menge – orange, was für die Rechnung zählt (Zusatzleistung, Kran, Material, Wochenende, Erschwernis …). Mengen, keine Preise.",
-      "<strong>Dateien</strong>: Art wird erkannt; <strong>Pläne finden</strong>: Suchfeld (z. B. „dach klima“), Knöpfe für Art, Geschoss (UG/EG/OG/DG/Dach) und Gewerk – erkannt aus Name, Ordner und PDF-Titel, je Datei mit ✎ änderbar (dazu ein lesbarer Name); 📌 heftet wichtige Pläne oben an; mehrere Stände desselben Plans stehen beisammen (der neueste oben). Oben im Projekt springt die Leiste zu jedem Abschnitt. „Ganzen Ordner hochladen“ überspringt Gleichnamiges; doppelte Dateien erkennt die App am Inhalt (auch „Plan (1).pdf“ oder eine Kopie unter anderem Namen) und lädt sie nicht nochmals hoch; höchstens 50 MB je Datei (Größeres wird ausgelassen, der Rest hochgeladen).",
+      "<strong>Dateien</strong>: Art wird erkannt; <strong>Pläne finden</strong>: Suchfeld (z. B. „dach klima“), Knöpfe für Art, Geschoss (UG/EG/OG/DG/Dach) und Gewerk – erkannt aus Name, Ordner und PDF-Titel, je Datei mit ✎ änderbar (dazu ein lesbarer Name, die Art, beim Inhaber „🔒 Nur für den Inhaber“ und „🗑 Datei löschen“ mit Rückfrage); PDFs mit Beträgen in € erkennt die App beim Hochladen: beim Inhaber liegen sie gleich nur bei ihm, von anderen hochgeladen sind sie markiert „💶 enthält vermutlich Preise“ und der Inhaber bekommt eine Nachricht; 📌 heftet wichtige Pläne oben an; mehrere Stände desselben Plans stehen beisammen (der neueste oben). Oben im Projekt springt die Leiste zu jedem Abschnitt. „Ganzen Ordner hochladen“ überspringt Gleichnamiges; doppelte Dateien erkennt die App am Inhalt (auch „Plan (1).pdf“ oder eine Kopie unter anderem Namen) und lädt sie nicht nochmals hoch; höchstens 50 MB je Datei (Größeres wird ausgelassen, der Rest hochgeladen).",
       "<strong>Stunden</strong> auf das Projekt, <strong>Tagebuch</strong>, <strong>Nachrichten</strong>.",
       "<strong>Zusammenfassung (PDF)</strong>: Eckdaten, Angaben mit Quellen, Listen, Baustellenbuch, Dateiliste, Tagebuch – „Ablegen“ für die Synology."])+
       RG_HG(["Angebot und Rechnung als Dateiart (unter „buero/“) nur für den Inhaber – ebenso eine Mail (.eml), die ein Angebot/eine Rechnung als Anhang oder einen Preis im Text enthält (z. B. „4.800 € netto“; bei der Datei steht dann „enthält Preise“, andere legen sie nicht ab); auf der Synology nur im Büro-Ordner, nie im Projektordner, den Techniker sehen.",
@@ -34588,6 +34612,62 @@ function dateiAendern(p, x, werte, was, fertig){
     .then(function(){ toast(demo() ? "Präsentation: nur angezeigt, nicht gespeichert." : "✓ „"+(werte.titel||x.titel||x.name)+"“ – "+was+"."); if(fertig) fertig(); },
       function(e){ toast("Nicht gespeichert: "+technikDeutsch((e && e.message)||String(e))); });
 }
+/* ---------- Art ändern, „nur für den Inhaber“, löschen (Inhaber 16.10.2026) ----------
+   Ob eine Datei nur der Inhaber sieht, entscheidet ihr Speicherort (buero/… – Speicherregel in tools/nur-inhaber-buero.sql).
+   Umstellen heißt daher: Datei an den neuen Ort kopieren, Eintrag und Verweise im Projekt umschreiben, die alte Kopie entfernen. */
+function dateiImBuero(x){ return /^buero\//.test((x && x.pfad)||""); }
+function dateiArtBuero(art){ return PROJEKT_DATEIARTEN.some(function(a){ return a[0]===art && a[2]; }); }
+function dateiArtenWahl(x){ return PROJEKT_DATEIARTEN.filter(function(a){ return !a[2] || nurInhaber() || a[0]===x.art; }); }
+function dateiLoeschenDarf(x){ return !nurLesen() && (dateiImBuero(x) ? nurInhaber() : (nurInhaber() || Rolle.name==="admin" || x.von===meinName())); }
+/* Verweise im Projekt (Quellen, Anhänge) auf einen Pfad: umschreiben (neu = Pfad) oder – beim Löschen – zum Namen machen */
+function dateiVerweiseErsetzen(d, alt, neu, name){
+  var geh=function(o){
+    if(Array.isArray(o)){ for(var i=0;i<o.length;i++){ if(o[i]===alt) o[i]=neu!=null ? neu : {name:name, hinweis:"Datei gelöscht"}; else geh(o[i]); } return; }
+    if(o && typeof o==="object") Object.keys(o).forEach(function(k){
+      if(k==="dateien") return;
+      if(o[k]===alt){ if(k==="pfad" && neu==null) return; o[k]=neu!=null ? neu : name; } else geh(o[k]); });
+  };
+  geh(d);
+}
+function dateiUmlegen(p, x, buero, werte, fertig){
+  if(nurLesen() || !nurInhaber()){ toast("Nur der Inhaber kann das umstellen."); return Promise.resolve(); }
+  var art=werte.art||x.art, neu=projektDateiPfad(p, art, x.name, buero), eimer=demo() ? null : Store.sb.storage.from("projektdateien");
+  var kopieren=demo() ? Promise.resolve() : eimer.download(x.pfad).then(function(r){
+    if(r.error || !r.data) throw new Error("Datei nicht abrufbar"+(r.error?" ("+r.error.message+")":""));
+    return eimer.upload(neu, r.data, {contentType:x.typ||r.data.type||"application/octet-stream", upsert:false});
+  }).then(function(r){ if(r && r.error) throw new Error(r.error.message); });
+  return kopieren.then(function(){
+    return projektAendern(p, function(d){
+      (d.dateien||[]).forEach(function(f){ if(f.pfad!==x.pfad) return;
+        Object.keys(werte).forEach(function(k){ if(werte[k]==null || werte[k]==="" || werte[k]===false) delete f[k]; else f[k]=werte[k]; });
+        f.pfad=neu; if(buero) f.preise=true; else delete f.preise; });
+      dateiVerweiseErsetzen(d, x.pfad, neu);
+    }, "Datei „"+(werte.titel||x.titel||x.name)+"“: "+(buero ? "nur noch für den Inhaber (Büro)" : "für alle Mitarbeiter sichtbar"));
+  }).then(function(){
+    if(demo()){ toast("Präsentation: nur angezeigt, nicht gespeichert."); if(fertig) fertig(); return; }
+    /* die alte Kopie entfernen – Supabase meldet ein verweigertes Löschen nicht als Fehler, daher die Liste prüfen */
+    return eimer.remove([x.pfad]).then(function(r){
+      var weg=!r.error && (r.data||[]).length>0;
+      toast(weg ? "✓ „"+(werte.titel||x.titel||x.name)+"“ – "+(buero ? "nur noch für den Inhaber sichtbar." : "für alle Mitarbeiter sichtbar.")
+                : "Umgestellt, aber die alte Kopie ließ sich nicht entfernen ("+((r.error&&r.error.message)||"keine Berechtigung")+") – bitte Bescheid geben.");
+      if(fertig) fertig();
+    });
+  }).catch(function(e){ toast("Nicht umgestellt: "+technikDeutsch((e && e.message)||String(e))); });
+}
+function dateiLoeschen(p, x, fertig){
+  if(!dateiLoeschenDarf(x)){ toast("Diese Datei kannst du nicht löschen."); return Promise.resolve(); }
+  if(!window.confirm("„"+(x.titel||x.name)+"“ endgültig löschen?\n\nDie Datei verschwindet aus dem Projekt und aus dem Speicher. Das lässt sich nicht zurücknehmen.")) return Promise.resolve();
+  var entfernen=demo() ? Promise.resolve({data:[{name:x.pfad}]}) : Store.sb.storage.from("projektdateien").remove([x.pfad]);
+  return entfernen.then(function(r){
+    if(r.error) throw new Error(r.error.message);
+    if(!(r.data||[]).length) throw new Error("keine Berechtigung");
+    return projektAendern(p, function(d){
+      d.dateien=(d.dateien||[]).filter(function(f){ return f.pfad!==x.pfad; });
+      dateiVerweiseErsetzen(d, x.pfad, null, x.name);
+    }, "Datei „"+(x.titel||x.name)+"“ gelöscht");
+  }).then(function(){ toast(demo() ? "Präsentation: nur angezeigt, nicht gespeichert." : "✓ „"+(x.titel||x.name)+"“ gelöscht."); if(fertig) fertig(); },
+    function(e){ toast("Nicht gelöscht: "+technikDeutsch((e && e.message)||String(e))); });
+}
 /* Datei beschreiben: lesbarer Name (Vorschlag aus dem PDF-Titel), Geschoss und Gewerk zum Antippen, 📌 wichtig */
 function dateiBeschreiben(p, x, m, fertig){
   var v=ansichtOeffnen("Datei beschreiben");
@@ -34599,7 +34679,12 @@ function dateiBeschreiben(p, x, m, fertig){
     '<div class="fl"><span>Geschoss</span><div class="chips" data-ge></div></div>'+
     '<div class="fl"><span>Gewerk</span><div class="chips" data-gw></div></div>'+
     '<label class="chk"><input type="checkbox" data-wichtig'+(x.wichtig?" checked":"")+"><span>📌 wichtiger Plan – oben bei den Dateien</span></label>"+
-    '<div class="muted" style="font-size:12px">Geschoss und Gewerk erkennt die App von selbst; was du hier antippst, gilt dann für diese Datei.</div></div>');
+    '<div class="muted" style="font-size:12px">Geschoss und Gewerk erkennt die App von selbst; was du hier antippst, gilt dann für diese Datei.</div>'+
+    /* Inhaber 16.10.2026: „ich kann die Datei weder ändern, dass sie nur für Inhaber ist, weil sie Preise enthält, und ich kann sie nicht löschen“ */
+    '<label class="fl"><span>Art</span><select data-art>'+dateiArtenWahl(x).map(function(a){ return '<option value="'+esc(a[0])+'"'+(a[0]===x.art?" selected":"")+">"+esc(a[1])+(a[2]?" (nur Inhaber)":"")+"</option>"; }).join("")+"</select></label>"+
+    (nurInhaber() ? '<label class="chk"><input type="checkbox" data-buero'+(dateiImBuero(x)||x.preisPruefen?" checked":"")+'><span>🔒 Nur für den Inhaber (enthält Preise) – Admins und Techniker sehen die Datei nicht</span></label>' : "")+
+    (dateiLoeschenDarf(x) ? '<div><button class="btn ghost sm" type="button" data-loeschen style="color:var(--crit);border-color:var(--crit)">🗑 Datei löschen</button></div>' : "")+
+    "</div>");
   var knoepfe=function(host, liste, gew){ liste.forEach(function(w){ var b=el('<button class="chip" type="button" aria-pressed="'+(gew.indexOf(w[0])>=0)+'">'+esc(w[1])+"</button>");
     b.onclick=function(){ var i=gew.indexOf(w[0]); if(i>=0) gew.splice(i,1); else gew.push(w[0]); b.setAttribute("aria-pressed", String(i<0)); }; host.appendChild(b); }); };
   knoepfe(box.querySelector("[data-ge]"), DATEI_GESCHOSSE, ge); knoepfe(box.querySelector("[data-gw]"), DATEI_GEWERKE, gw);
@@ -34607,13 +34692,23 @@ function dateiBeschreiben(p, x, m, fertig){
   v.inhalt.appendChild(box);
   var ab=el('<button class="btn ghost" type="button">Abbrechen</button>'), ok=el('<button class="btn" type="button">Speichern</button>');
   ab.onclick=function(){ v.zu(); };
+  var lo=box.querySelector("[data-loeschen]"); if(lo) lo.onclick=function(){ dateiLoeschen(p, x, function(){ v.zu(); if(fertig) fertig(); }); };
+  var artSel=box.querySelector("[data-art]"), bueroChk=box.querySelector("[data-buero]");
+  /* eine Inhaber-Art (Angebot, Rechnung, Preise) gehört immer ins Büro */
+  if(artSel && bueroChk) artSel.onchange=function(){ if(dateiArtBuero(artSel.value)) bueroChk.checked=true; };
   ok.onclick=function(){
     var auto=dateiMerkmale(Object.assign({}, x, {geschoss:null, gewerk:null}));
     var gleich=function(a, b){ return a.slice().sort().join()===b.slice().sort().join(); };
-    ok.disabled=true;
-    dateiAendern(p, x, {titel:box.querySelector("[data-titel]").value.trim(), wichtig:box.querySelector("[data-wichtig]").checked,
-      geschoss:gleich(ge, auto.geschoss) ? null : ge, gewerk:gleich(gw, auto.gewerk) ? null : gw}, "beschrieben", function(){ v.zu(); if(fertig) fertig(); })
-      .then(function(){ ok.disabled=false; });
+    var art=artSel ? artSel.value : x.art, vorher=dateiImBuero(x);
+    var buero=dateiArtBuero(art) || (bueroChk ? bueroChk.checked : vorher);
+    if(vorher && !buero && !window.confirm("„"+(x.titel||x.name)+"“ für alle Mitarbeiter sichtbar machen?\n\nDann sehen auch Admins und Techniker die Datei – auch Preise darin.")) return;
+    var werte={titel:box.querySelector("[data-titel]").value.trim(), wichtig:box.querySelector("[data-wichtig]").checked,
+      geschoss:gleich(ge, auto.geschoss) ? null : ge, gewerk:gleich(gw, auto.gewerk) ? null : gw, art:art};
+    if(nurInhaber()) werte.preisPruefen=null;   /* der Inhaber hat die Datei angesehen – Markierung „vermutlich Preise“ erledigt */
+    ok.disabled=true; ok.textContent=buero!==vorher ? "wird umgelegt …" : "Speichern";
+    var zu=function(){ v.zu(); if(fertig) fertig(); };
+    (buero!==vorher ? dateiUmlegen(p, x, buero, werte, zu) : dateiAendern(p, x, werte, "beschrieben", zu))
+      .then(function(){ ok.disabled=false; ok.textContent="Speichern"; });
   };
   v.fuss.appendChild(ab); v.fuss.appendChild(ok);
 }
@@ -34694,10 +34789,11 @@ function projektDateienKarte(p, buero, schreiben, neuZeichnen){
       '<br><span class="muted" style="font-size:12px">'+esc(artName(x.art))+(m.stand?" · Stand "+esc(dfmt(m.stand)):"")+" · hochgeladen "+esc(dfmt(tagLokal(x.zeit)))+(x.von?" · "+esc(x.von):"")+(x.herkunft?" · aus „"+esc(x.herkunft)+"“":"")+"</span>"+
       (opt.aeltere?' · <a href="#" class="sprunglink" data-aeltere style="font-size:12px">'+(aeltereOffen[m.basis]?"▴ ältere Stände zu":"▾ "+opt.aeltere+(opt.aeltere===1?" älterer Stand":" ältere Stände"))+"</a>":"")+
       (x.preise?' <span class="tag" style="font-size:11.5px">enthält Preise – nur für den Inhaber abgelegt</span>':"")+
+      (x.preisPruefen && !dateiImBuero(x)?' <span class="tag" style="font-size:11.5px;background:var(--warn-soft);border-color:var(--warn)" data-preispruefen>💶 enthält vermutlich Preise – '+(nurInhaber()?"mit ✎ prüfen":"der Inhaber prüft")+"</span>":"")+
       (zu.length?'<br><span style="font-size:12px">gehört zu: '+zu.map(function(st){ return '<a href="#" class="sprunglink" data-zu="'+esc(st.bereich+":"+st.id)+'">'+esc(st.titel)+"</a>"; }).join(" · ")+"</span>"
         :'<br><span class="muted" style="font-size:12.5px">noch keiner Angabe zugeordnet</span>')+"</div>"+
       (schreiben && !nurLesen() ? '<button class="btn ghost sm" type="button" data-pin title="'+(x.wichtig?"nicht mehr wichtig":"als wichtigen Plan oben anheften")+'" aria-label="anheften" aria-pressed="'+!!x.wichtig+'">📌</button>'+
-        '<button class="btn ghost sm" type="button" data-bearb title="Name, Geschoss, Gewerk" aria-label="Datei beschreiben">✎</button>' : "")+"</div></div>");
+        '<button class="btn ghost sm" type="button" data-bearb title="Name, Art, Geschoss, Gewerk – nur für Inhaber, löschen" aria-label="Datei bearbeiten">✎</button>' : "")+"</div></div>");
     z.querySelectorAll("[data-zu]").forEach(function(a){ tippe(a, function(){ zurStelle(a.dataset.zu); }); });
     z.querySelector("[data-oeffnen]").onclick=function(e){ e.preventDefault(); oeffnen(x); };
     var al=z.querySelector("[data-aeltere]"); if(al) al.onclick=function(e){ e.preventDefault(); aeltereOffen[m.basis]=!aeltereOffen[m.basis]; zeichneListe(); };
@@ -34870,14 +34966,23 @@ function projektDateienHochladen(p, art, liste, herkunft, nurBuero){
     if(!liste.length) return Promise.resolve([]);
   }
   /* Mail mit Preisen im Text (Inhaber 05.10.2026): beim Inhaber nur unter buero/ (Hinweis bei der Datei und in der Meldung),
-     alle anderen legen sie nicht ab – wie eine KPlus-Rechnung */
-  var preise=[], vorhanden=[];
-  return Promise.all(liste.map(function(f){ return mailPreisDatei(f).then(function(ja){ if(ja) preise.push(f); }); })).then(function(){
+     alle anderen legen sie nicht ab – wie eine KPlus-Rechnung.
+     Andere Dateien mit Preisen (PDF mit Betrag, Name mit „Preis“/„Kalkulation“; Inhaber 16.10.2026): beim Inhaber ebenso unter buero/;
+     alle anderen legen sie ab (Inhaber 16.10.2026: „nicht ablegen ist ein wenig zu streng“) – markiert „enthält vermutlich Preise“
+     (preisPruefen), der Inhaber bekommt eine Nachricht und stellt sie mit ✎ → 🔒 um */
+  var preise=[], vorhanden=[], pruefen=[];
+  return Promise.all(liste.map(function(f){ return dateiMitPreis(f).then(function(ja){ if(ja) preise.push(f); }); })).then(function(){
     var hinweis="";
     if(preise.length && !nurInhaber()){
-      hinweis=preise.map(function(f){ return "„"+f.name+"“"; }).join(", ")+(preise.length===1?" enthält":" enthalten")+" Preise – ablegen darf das nur der Inhaber, nicht abgelegt.";
-      liste=liste.filter(function(f){ return preise.indexOf(f)<0; });
-      if(!liste.length){ toast(hinweis); return []; }
+      var mails=preise.filter(function(f){ return istEmlDatei(f); });
+      pruefen=preise.filter(function(f){ return mails.indexOf(f)<0; });
+      pruefen.forEach(function(f){ f._preisPruefen=true; });
+      preise=mails;
+      if(mails.length){
+        hinweis=mails.map(function(f){ return "„"+f.name+"“"; }).join(", ")+(mails.length===1?" enthält":" enthalten")+" Preise – ablegen darf das nur der Inhaber, nicht abgelegt.";
+        liste=liste.filter(function(f){ return mails.indexOf(f)<0; });
+        if(!liste.length){ toast(hinweis); return []; }
+      }
     }
     /* erst danach: schon am Projekt bzw. doppelt in der Auswahl – dann nicht nochmals hochladen; Büro-Dateien (buero/)
        gibt es als vorhandenen Eintrag nur für den Inhaber zurück */
@@ -34891,7 +34996,11 @@ function projektDateienHochladen(p, art, liste, herkunft, nurBuero){
       return Promise.all(liste.filter(function(f){ return /\.pdf$/i.test(f.name||"") || /pdf/i.test(f.type||""); }).map(function(f){
         return mitFrist(f.arrayBuffer().then(pdfTitelLesen), 8000).then(function(t){ f._pdfTitel=t||""; }, function(){});
       })).then(function(){ return projektDateienAblegen(p, art, liste, herkunft, function(f){ return preise.indexOf(f)>=0 || !!(nurBuero && nurBuero(f)); }, preise, hinweis); })
-        .then(function(neue){ return (neue||[]).concat(vorhanden); });
+        .then(function(neue){
+          var gepr=(neue||[]).filter(function(x){ return x.preisPruefen; });
+          if(gepr.length && !demo()) chatAnInhaber("💶 Projekt "+projektTitel(p)+": "+gepr.map(function(x){ return "„"+x.name+"“"; }).join(", ")+
+            (gepr.length===1?" enthält":" enthalten")+" vermutlich Preise und "+(gepr.length===1?"ist":"sind")+" für alle Mitarbeiter abgelegt – bitte prüfen (Dateien → ✎ → „🔒 Nur für den Inhaber“).");
+          return (neue||[]).concat(vorhanden); });
     });
   });
 }
@@ -34909,6 +35018,7 @@ function projektDateienAblegen(p, art, liste, herkunft, nurBuero, preise, hinwei
     var fa=artVon(f), pfad=projektDateiPfad(p, fa, f.name, nurBuero && nurBuero(f)), eintrag={pfad:pfad, name:f.name, art:fa, groesse:f.size, typ:f.type||"", von:meinName(), zeit:new Date().toISOString()};
     var hk=herkunft ? herkunft(f) : ""; if(hk) eintrag.herkunft=hk;
     if(preise && preise.indexOf(f)>=0) eintrag.preise=true;   /* Mail mit Preisen im Text – Hinweis bei der Datei */
+    if(f._preisPruefen) eintrag.preisPruefen=true;           /* vermutlich Preise, von jemand anderem abgelegt – der Inhaber prüft */
     if(f._hash) eintrag.hash=f._hash;   /* Prüfsumme – erkennt später dieselbe Datei unter anderem Namen */
     if(f._pdfTitel!=null) eintrag.pdfTitel=f._pdfTitel;   /* Titel in der PDF – hilft beim Finden (Geschoss, Gewerk) */
     if(demo()){ eintrag._url=URL.createObjectURL(f); neue.push(eintrag); return null; }
@@ -34920,7 +35030,7 @@ function projektDateienAblegen(p, art, liste, herkunft, nurBuero, preise, hinwei
     return projektAendern(p, function(d){ d.dateien=(d.dateien||[]).concat(neue); }, neue.length+" Datei"+(neue.length===1?"":"en")+" hinzugefügt ("+artName+")");
   }).then(function(){
     if(fehler.length) toast((neue.length?neue.length+" hochgeladen, ":"")+"nicht hochgeladen – "+fehler.join("; ")+(hinweis?" – "+hinweis:""));
-    else if(neue.length) toast("Hochgeladen."+(hinweis?" "+hinweis:"")+preisHinweis(neue));
+    else if(neue.length) toast("Hochgeladen."+(hinweis?" "+hinweis:"")+preisHinweis(neue)+(neue.some(function(x){ return x.preisPruefen; }) ? " Enthält vermutlich Preise – der Inhaber wurde verständigt und kann die Datei auf „nur für den Inhaber“ stellen." : ""));
     else if(hinweis) toast(hinweis);
     return neue;
   }, function(e){ toast("Hochgeladen, aber nicht am Projekt vermerkt: "+e.message); return []; });

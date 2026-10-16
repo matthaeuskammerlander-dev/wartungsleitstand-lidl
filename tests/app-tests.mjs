@@ -6275,6 +6275,81 @@ test("Dateiart „Preise / Kalkulation“ (Inhaber 16.10.2026): nur der Inhaber 
   await a.zu();
 });
 
+test("Projektdatei mit Preisen (Inhaber 16.10.2026): PDF mit Beträgen wird erkannt, nachträglich „nur für den Inhaber“ umstellen und löschen", async () => {
+  const a = await oeffnen(KONTEN.inhaber);
+  const r = await a.seite.evaluate(async () => {
+    const x = window.__t.x, db = window.__db.tabellen, jetzt = new Date().toISOString(), e = {}, w = (ms) => new Promise((f) => setTimeout(f, ms));
+    const bis = async (bed, ms) => { const t = Date.now() + (ms || 5000); for (;;) { let ok = false; try { ok = bed(); } catch (err) {} if (ok || Date.now() > t) return ok; await w(50); } };
+    window.__toasts = []; const alt = window.toast; window.toast = function (m) { window.__toasts.push(String(m)); return alt && alt.apply(this, arguments); };
+    db.projekte.push({ id: "tmp_pp", nummer: "P-2026-906", titel: "Preise Test", kunde_id: "lidl", status: "konzept", daten: {}, verlauf: [], erstellt: jetzt, geaendert: jetzt });
+    await x("projekteLaden()");
+    const L = await x("(window.PDFLib ? Promise.resolve() : ladeSkript(PDF_LIB)).then(function(){ return window.PDFLib; })"), pdf = async (zeilen, name) => { const doc = await L.PDFDocument.create(), pg = doc.addPage([595, 842]), f = await doc.embedFont(L.StandardFonts.Helvetica);
+      zeilen.forEach((z, i) => pg.drawText(z, { x: 50, y: 780 - i * 20, size: 12, font: f })); return new File([await doc.save()], name, { type: "application/pdf" }); };
+    /* 1. beim Hochladen: PDF mit Betrag → buero/, ohne Betrag → für alle; Name mit „Preis“ ebenso */
+    window.__datei = [await pdf(["Variante B luftgekühlt", "Summe netto 108.565,62 €"], "Variantenvergleich.pdf"), await pdf(["Grundriss EG", "Maßstab 1:100"], "Plan EG.pdf")];
+    await x("projektDateienHochladen(PROJEKTE.filter(function(q){ return q.id==='tmp_pp'; })[0], 'dokument', window.__datei)");
+    const dat = () => (db.projekte.find((q) => q.id === "tmp_pp").daten.dateien || []);
+    e.hoch = dat().map((f) => f.name + "|" + f.pfad.split("/")[0] + "|" + !!f.preise);
+    e.zeilen = x("pdfZeilen([{str:'108.565,62',transform:[1,0,0,1,300,100]},{str:'Summe',transform:[1,0,0,1,50,100]},{str:'€',transform:[1,0,0,1,380,100]}])");
+    /* 2. eine schon (falsch) für alle abgelegte Datei mit Preisen: im ✎-Dialog „nur für den Inhaber“ */
+    const sb = x("Store.sb"); await sb.storage.from("projektdateien").upload("tmp_pp/dokument-alt-Konzept.pdf", new Blob(["%PDF-1.4 x"], { type: "application/pdf" }));
+    db.projekte.find((q) => q.id === "tmp_pp").daten.dateien.push({ pfad: "tmp_pp/dokument-alt-Konzept.pdf", name: "Konzept mit Preisvergleich.pdf", art: "dokument", von: "Test", zeit: jetzt });
+    db.projekte.find((q) => q.id === "tmp_pp").daten.quellen = { konzept: ["tmp_pp/dokument-alt-Konzept.pdf"] };
+    await x("projekteLaden()");
+    x("ansichtenSchliessen(); projektAnsicht('tmp_pp')");
+    await bis(() => document.querySelector('[data-datei-zeile="tmp_pp/dokument-alt-Konzept.pdf"] [data-bearb]'));
+    document.querySelector('[data-datei-zeile="tmp_pp/dokument-alt-Konzept.pdf"] [data-bearb]').click();
+    await bis(() => [...document.querySelectorAll("[data-buero]")].pop());
+    const chk = [...document.querySelectorAll("[data-buero]")].pop(); e.vorher = chk.checked; chk.checked = true;
+    const dlg = chk.closest(".ansicht, .assistent, [role=dialog]") || document;
+    e.loeschKnopf = !!dlg.querySelector("[data-loeschen]");
+    [...document.querySelectorAll("button")].filter((b) => b.textContent === "Speichern").pop().click();
+    await bis(() => dat().some((f) => /^buero\/tmp_pp\//.test(f.pfad) && /Preisvergleich/.test(f.name)), 6000); await w(200);
+    const um = dat().find((f) => /Preisvergleich/.test(f.name)) || {};
+    e.um = [um.pfad, !!um.preise]; e.quelle = db.projekte.find((q) => q.id === "tmp_pp").daten.quellen.konzept[0];
+    e.altWeg = !(await sb.storage.from("projektdateien").download("tmp_pp/dokument-alt-Konzept.pdf")).data;
+    e.neuDa = !!(await sb.storage.from("projektdateien").download(um.pfad)).data;
+    /* 3. löschen (Rückfrage) */
+    x("ansichtenSchliessen()"); await x("projekteLaden()");
+    const plan = dat().find((f) => f.name === "Plan EG.pdf"); const cf = window.confirm; window.confirm = () => true;
+    await x("dateiLoeschen(PROJEKTE.filter(function(q){ return q.id==='tmp_pp'; })[0], " + JSON.stringify(plan) + ")");
+    window.confirm = cf;
+    e.nachLoeschen = dat().map((f) => f.name); e.planWeg = !(await sb.storage.from("projektdateien").download(plan.pfad)).data;
+    e.toasts = window.__toasts;
+    return e;
+  });
+  pruefe(r.hoch.includes("Variantenvergleich.pdf|buero|true") && r.hoch.includes("Plan EG.pdf|tmp_pp|false"), "Preise beim Hochladen erkannt: " + JSON.stringify(r.hoch));
+  pruefe(/Summe 108\.565,62 €/.test(r.zeilen), "PDF-Zeilen: " + r.zeilen);
+  pruefe(r.vorher === false && r.loeschKnopf && /^buero\/tmp_pp\//.test(r.um[0]) && r.um[1] && r.quelle === r.um[0] && r.altWeg && r.neuDa, "Umstellen nur für den Inhaber: " + JSON.stringify(r));
+  pruefe(!r.nachLoeschen.includes("Plan EG.pdf") && r.planWeg, "Löschen: " + JSON.stringify([r.nachLoeschen, r.planWeg, r.toasts]));
+  pruefe(!a.fehler.length, "Laufzeitfehler: " + a.fehler.join("; "));
+  await a.zu();
+});
+
+test("Projektdatei mit Preisen: ein Techniker legt eine PDF mit Beträgen ab (markiert „vermutlich Preise“, Nachricht an den Inhaber) und sieht keine Büro-Datei", async () => {
+  const a = await oeffnen(KONTEN.techniker);
+  const r = await a.seite.evaluate(async () => {
+    const x = window.__t.x, db = window.__db.tabellen, jetzt = new Date().toISOString();
+    db.projekte.push({ id: "tmp_pt", nummer: "P-2026-907", titel: "Preise Tech", kunde_id: "lidl", status: "baustelle", daten: { dateien: [{ pfad: "buero/tmp_pt/preise-x-Kalk.pdf", name: "Kalk.pdf", art: "preise", preise: true, zeit: jetzt }] }, verlauf: [], erstellt: jetzt, geaendert: jetzt });
+    await x("projekteLaden()");
+    const L = await x("(window.PDFLib ? Promise.resolve() : ladeSkript(PDF_LIB)).then(function(){ return window.PDFLib; })"), doc = await L.PDFDocument.create(), pg = doc.addPage([595, 842]), f = await doc.embedFont(L.StandardFonts.Helvetica);
+    pg.drawText("Lieferschein 4711 Gesamt 1.250,00 EUR", { x: 50, y: 780, size: 12, font: f });
+    window.__datei = [new File([await doc.save()], "Lieferschein.pdf", { type: "application/pdf" })];
+    const neu = await x("projektDateienHochladen(PROJEKTE.filter(function(q){ return q.id==='tmp_pt'; })[0], 'lieferschein', window.__datei)");
+    const p = x("PROJEKTE.filter(function(q){ return q.id==='tmp_pt'; })[0]");
+    const ls = (db.projekte.find((q) => q.id === "tmp_pt").daten.dateien || []).find((d) => d.name === "Lieferschein.pdf") || {};
+    await new Promise((f) => setTimeout(f, 300));
+    return { neu: (neu || []).length, ls: [ls.pfad, !!ls.preisPruefen, !!ls.preise], chat: (db.chat || []).filter((c) => /Lieferschein\.pdf.*vermutlich Preise/.test(c.text)).length,
+      dateien: (db.projekte.find((q) => q.id === "tmp_pt").daten.dateien || []).map((d) => d.name),
+      liste: x("projektDateienKarte(PROJEKTE.filter(function(q){ return q.id==='tmp_pt'; })[0], false, true, function(){})").textContent,
+      darf: x("dateiLoeschenDarf(" + JSON.stringify(p.daten.dateien[0]) + ")") };
+  });
+  pruefe(r.neu === 1 && /^tmp_pt\//.test(r.ls[0] || "") && r.ls[1] && !r.ls[2], "Techniker: PDF mit Preisen nicht (markiert) abgelegt: " + JSON.stringify(r));
+  pruefe(r.chat >= 1 && /vermutlich Preise/.test(r.liste), "Techniker: keine Nachricht an den Inhaber bzw. kein Hinweis in der Liste: " + JSON.stringify(r));
+  pruefe(!/Kalk\.pdf/.test(r.liste) && r.darf === false, "Techniker sieht bzw. löscht die Büro-Datei: " + JSON.stringify(r));
+  await a.zu();
+});
+
 test("Fernsteuerung durch eine andere Firma (Inhaber 15.10.2026): im Markt-Editor eintragen, „nur beobachten“ im Zugangsfenster, in der Markt-Info, in der Übersicht und oben im Protokoll", async () => {
   const a = await oeffnen(KONTEN.admin);
   const r = await a.seite.evaluate(async () => {

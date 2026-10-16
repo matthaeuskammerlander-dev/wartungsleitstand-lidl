@@ -340,6 +340,14 @@ Kammerlander Umwelt- und Klimatechnik (UKT) – oft kurz, vom Handy, im Feld.
   alle), sondern in eigene, nur für Inhaber lesbare Tabellen bzw. Dateien.
   Dateiart „Preise / Kalkulation“ (`preise`, Inhaber 16.10.2026: Präsentation mit Preisvergleich „unter Projekte ablegen – Preise
   natürlich nur für Inhaber“): wie Angebot/Rechnung unter `buero/`, wählbar nur für den Inhaber, Synology nur Büro-Ordner „Preise“.
+  Nachträglich (Inhaber 16.10.2026: „kann die Datei weder ändern, dass sie nur für Inhaber ist, noch löschen – Preise wurden nicht automatisch
+  erkannt“): ✎ an der Datei (`dateiBeschreiben`) mit Art, „🔒 Nur für den Inhaber“ (`dateiUmlegen`: kopieren nach buero/ bzw. zurück mit Rückfrage,
+  Verweise im Projekt umschreiben `dateiVerweiseErsetzen`, alte Kopie entfernen und prüfen) und „🗑 Datei löschen“ (`dateiLoeschen`, Rückfrage;
+  `dateiLoeschenDarf`: buero/ nur Inhaber, sonst Inhaber, Admin oder wer hochgeladen hat). Preise erkennt `projektDateienHochladen` jetzt auch
+  in PDFs (`pdfPreisDatei`: Text der ersten 25 Seiten, Zeilen über `pdfZeilen`, Regel wie Mails `mailTextMitPreis`) und am Namen
+  („Preis“, „Kalkulation“; `dateiMitPreis`) – beim Inhaber nach buero/; andere legen sie ab (Inhaber 16.10.2026: „nicht ablegen ist
+  zu streng“), markiert `preisPruefen` („💶 enthält vermutlich Preise“ in der Liste), Nachricht an den Inhaber (`chatAnInhaber`); speichert er den
+  ✎-Dialog, ist die Markierung erledigt (🔒 dort vorbelegt). Mails mit Preisen legen andere weiterhin nicht ab.
 - **Arbeitsnachweise** (Inhaber 06.10.2026, Tabelle `arbeitsnachweise`, SQL-Abschnitt „Arbeitsnachweise“ in tools/rechte-2026-10-05.sql):
   wie das Papierformular (Auftraggeber, Objekt, Zeilen Datum/Monteure/von/bis/Pause/Stunden = Personen × (bis − von − Pause);
   Monteure mit Auswahlliste `#an_namen` aus `bekannteNamen()` + eigenes Konto, Inhaber 14.10.2026 – freier Text wie „4 Mann“ bleibt),
