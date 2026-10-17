@@ -6309,8 +6309,10 @@ test("Dateiart „Preise / Kalkulation“ (Inhaber 16.10.2026): nur der Inhaber 
     const p = () => x("PROJEKTE.filter(function(q){ return q.id==='tmp_pk'; })[0]");
     e.karteInhaber = [...x("projektDateienKarte(PROJEKTE.filter(function(q){ return q.id==='tmp_pk'; })[0], true, true, function(){})").querySelectorAll("[data-art] option")].map((o) => o.value + "|" + o.textContent);
     e.karteAndere = [...x("projektDateienKarte(PROJEKTE.filter(function(q){ return q.id==='tmp_pk'; })[0], false, true, function(){})").querySelectorAll("[data-art] option")].map((o) => o.value);
+    x("(function(){ var alt=toast; window.__tt=[]; toast=function(m){ window.__tt.push(String(m)); return alt.apply(this, arguments); }; })()");
     window.__datei = [new File(["%PDF-1.4 Preise"], "Konzept mit Preisen.pdf", { type: "application/pdf" }), new File(["%PDF-1.4 ohne"], "Konzept.pdf", { type: "application/pdf" })];
     await x("projektDateienHochladen(PROJEKTE.filter(function(q){ return q.id==='tmp_pk'; })[0], function(f){ return /Preisen/.test(f.name) ? 'preise' : 'dokument'; }, window.__datei)");
+    e.toasts = (x("window.__tt") || []).slice();
     e.dateien = (db.projekte.find((q) => q.id === "tmp_pk").daten.dateien || []).map((f) => f.art + "|" + f.pfad);
     await x("projekteLaden()");
     e.listeAndere = [...x("projektDateienKarte(PROJEKTE.filter(function(q){ return q.id==='tmp_pk'; })[0], false, false, function(){})").querySelectorAll("[data-liste]")].map((l) => l.textContent).join(" ");
@@ -6319,6 +6321,8 @@ test("Dateiart „Preise / Kalkulation“ (Inhaber 16.10.2026): nur der Inhaber 
   pruefe(r.karteInhaber.some((o) => /^preise\|Preise \/ Kalkulation \(nur Inhaber\)$/.test(o)) && !r.karteAndere.includes("preise"), "Auswahl der Dateiart: " + JSON.stringify([r.karteInhaber, r.karteAndere]));
   pruefe(r.dateien.some((f) => /^preise\|buero\/tmp_pk\/preise-/.test(f)) && r.dateien.some((f) => /^dokument\|tmp_pk\/dokument-/.test(f)), "Ablage: " + JSON.stringify(r.dateien));
   pruefe(/Konzept\.pdf/.test(r.listeAndere) && !/Preisen/.test(r.listeAndere), "Liste für andere zeigt die Preisdatei: " + r.listeAndere);
+  /* Inhaber 17.10.2026: Art „Preise“ liegt unter buero/ – die Meldung darf nicht „für alle sichtbar“ sagen */
+  pruefe(r.toasts.length > 0 && !r.toasts.some((t) => /für alle sichtbar/.test(t)), "Meldung nach dem Hochladen als Preise: " + JSON.stringify(r.toasts));
   await a.zu();
 });
 
