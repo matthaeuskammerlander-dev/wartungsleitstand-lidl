@@ -706,6 +706,13 @@ Kammerlander Umwelt- und Klimatechnik (UKT) – oft kurz, vom Handy, im Feld.
   Belegfoto (Inhaber 05.10.2026, tools/rechte-2026-10-05.sql): nach der Abgabe ersetzt/entfernt es nur noch der Inhaber (Speicher-Regel; nach
   „zurückgeben“ wieder die Person); ersetzt er das Foto eines fremden Eintrags, liegt das neue im Ordner der Person (`akFotoHochladen(datei, fuer)`),
   das alte wird erst nach dem Speichern entfernt. Nie lockern.
+  **km berechnen** (Inhaber 18.10.2026: „automatisch berechnen … am besten anhand der Stempeluhr“): im km-Dialog `akKmRouteAnzeigen` →
+  `akKmBerechnen(tag)` holt die eigenen Stempel des Tages, `akTagesOrte` ordnet die Orte: Stempel (Ein/Umstempeln/Aus) – Koordinaten NUR mit
+  Zustimmung ab Fassung `AK_KM_FASSUNG` (2026-10-18, Zustimmungstext nennt seither den Zweck Kilometergeld; ältere Zustimmungen nur Markt/
+  Betrieb), sonst Markt/Betrieb bei status am_markt/im_betrieb; dann eigene Stunden (Markt bzw. Projekt-Standort); nur wenn beides leer:
+  eigene Kalendertermine. Start = `startpunktFuer("ich")`, Hin-/Rückfahrt abwählbar (Vorgabe: dabei, wenn > 1 km). km laut `strassenMatrix`,
+  sonst Luftlinie × UMWEG („geschätzt“). „Übernehmen“ füllt nur km + Strecke (Ortsnamen, keine Koordinaten) – gespeichert wird mit „Speichern“.
+  Nicht beim Eintrag einer anderen Person.
 - **Textfelder wachsen mit** (Inhaber 07.10.2026: „man muss innen drinnen scrollen“): jedes `<textarea>` passt seine Höhe dem Text an
   (`feldHoehe`, `textfelderAnpassen` bei Eingabe/Fokus/Klick/Größe/neuen Elementen), Zeilenzahl = Mindestmaß, keine Obergrenze;
   Ausnahme `data-fest`. Test „Textfelder wachsen mit dem Text …“.

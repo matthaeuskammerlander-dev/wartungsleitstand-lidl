@@ -27794,7 +27794,7 @@ Object.assign(RUNDGAENGE, {
         "Einträge „aus dem Kalender“ passt die Datenbank an, wenn sich der Kalendereintrag ändert, und entfernt sie, wenn er gelöscht wird (nie in einem bestätigten Monat). Änderst du so einen Eintrag selbst, gilt er als von Hand."])},
     {reiter:"stunden", ziel:function(){ return rgKarte(/^Reisekosten und Kilometergeld/); }, wenn:function(){ return akAn(); }, titel:"Reisekosten und Kilometergeld",
       text:RG_LISTE(["<strong>📷 + Beleg</strong>: mit eigenem Geld bezahlt (Bauhaus, Parken, Maut, Tanken, Nächtigung …) – Foto vom Beleg (Pflicht; sonst „Kein Beleg vorhanden“ mit Grund), Datum, wo/was, Betrag, wofür, Projekt/Markt.",
-        "<strong>🚗 + Kilometer</strong>: Fahrt mit dem Privatauto – Datum, Strecke (Vorschlag aus dem Kalender), km, Privatauto; die App rechnet das Kilometergeld (km × Satz, den der Chef einstellt). Ohne eingetragenes Privatauto geht es nicht – „+ Mein Privatauto“ (gleich im Hinweis oder im Reiter Fahrzeuge) trägt es ein, auch mehrere; dann wählst du beim Kilometergeld das Auto.",
+        "<strong>🚗 + Kilometer</strong>: Fahrt mit dem Privatauto – Datum, Strecke, km, Privatauto. <strong>🧭 Berechnet</strong>: die App rechnet die km des Tages aus deinen Stempeln (Markt bzw. Betrieb, mit Zustimmung die Position), sonst aus Stunden oder Kalender – laut Straßenroute, mit Hin- und Rückfahrt vom Startpunkt (abwählbar); „Übernehmen“ füllt km und Strecke, gespeichert wird erst mit „Speichern“; die App rechnet das Kilometergeld (km × Satz, den der Chef einstellt). Ohne eingetragenes Privatauto geht es nicht – „+ Mein Privatauto“ (gleich im Hinweis oder im Reiter Fahrzeuge) trägt es ein, auch mehrere; dann wählst du beim Kilometergeld das Auto.",
         "Am Monatsende <strong>„Monat abgeben“</strong> – danach ändert nur noch der Chef, auch das Belegfoto. „PDF“ wie das bisherige Blatt (Barbelege, Kilometer mit Privatauto, zu zahlen) mit allen Belegfotos.",
         "Unten „Konto für die Auszahlung“ (IBAN) einmal eintragen."])+
       RG_HG(["Nur du und der Inhaber sehen deine Reisekosten – keine Admins, keine Kollegen.",
@@ -38409,7 +38409,7 @@ function akOhneAutoText(fremdName){
 function akStreckeVorschlag(tag){
   var orte=[], dazu=function(s){ if(!s) return; var n=s.ort||stName(s); if(n && orte[orte.length-1]!==n) orte.push(n); };
   var m=(planungAn() ? kalenderEintraege(tag, tag, "ich")[tag] : [])||[];
-  m.filter(function(x){ return x.art!=="aufgabe"; }).forEach(function(x){ dazu(byId[x.e ? x.e.standort_id : x.o ? x.o.standortId : x.pr ? x.pr.standortId : null]); });
+  m.filter(function(x){ return x.art!=="aufgabe"; }).forEach(function(x){ dazu(byId[x.e ? x.e.standort_id : x.o ? x.o.standortId : x.p ? x.p.standort_id : null]); });
   ZEITEN.filter(function(z){ return z.datum===tag && z.standort_id; }).forEach(function(z){ dazu(byId[z.standort_id]); });
   if(!orte.length) return "";
   var st=null; try{ var sp=startpunktFuer("ich", tag); st=sp && sp.ort ? (sp.ort.name||"") : ""; }catch(e){}
@@ -38418,6 +38418,117 @@ function akStreckeVorschlag(tag){
 function akKmVorschlag(tag, fid){
   var e=FZ_E.filter(function(x){ return x.fahrzeug_id===fid && x.datum===tag && x.strecke!=null; });
   return e.length ? Math.round(e.reduce(function(s,x){ return s+(+x.strecke||0); },0)) : null;
+}
+/* Kilometer fürs Kilometergeld berechnen (Inhaber 18.10.2026: „die gefahrenen Kilometer automatisch berechnen – aus den
+   Kalendereinträgen … am besten anhand der Stempeluhr, das ist am genauesten“). Orte des Tages in zeitlicher Folge:
+   1. eigene Stempel (Ein, Umstempeln, Aus): die gespeicherte Position nur mit Zustimmung ab Fassung AK_KM_FASSUNG (die nennt den
+      Zweck Kilometergeld), sonst der Markt bzw. Betrieb, an dem gestempelt wurde (am_markt / im_betrieb);
+   2. eigene Stunden mit Markt bzw. Projekt-Standort;
+   3. nur wenn beides nichts liefert: eigene Kalendertermine.
+   Dazu Hin- und Rückfahrt vom Startpunkt (abwählbar). km laut Straßenroute (wie die Tour), sonst Luftlinie × Umweg, dann als
+   „geschätzt“ markiert. Nur ein Vorschlag – übernommen wird erst mit dem Knopf; gespeichert werden nur km und Ortsnamen. */
+var AK_KM_FASSUNG="2026-10-18";
+function akKmPositionErlaubt(){ return !!(STEMPEL_ZUSTIMMUNG && String(STEMPEL_ZUSTIMMUNG.fassung||"")>=AK_KM_FASSUNG); }
+function akTagesOrte(tag, stempel){
+  var l=[], posOk=akKmPositionErlaubt();
+  var ortVon=function(id){ var s=id && (byId[id] || betriebVonId(id)); return (s && s.lat!=null && s.lon!=null) ? {id:s.id, name:ortAnzeige(s.id), lat:+s.lat, lon:+s.lon} : null; };
+  var minVon=function(iso){ var d=new Date(iso); return d.getHours()*60+d.getMinutes(); };
+  var n={stempel:0, stunden:0, kalender:0};
+  (stempel||[]).filter(function(s){ return ["ein","wechsel","aus"].indexOf(s.art)>=0 && tagLokal(s.zeit)===tag && (!s.user_id || s.user_id===meineKennung()); })
+    .forEach(function(s){
+      var o=s.ort||{}, p=null;
+      if(posOk && o.lat!=null && o.lon!=null){
+        var nah=ortVon(o.naechster);
+        p=(nah && luftlinie(o, nah)*1000<=Math.max(300, +o.genauigkeit||0)) ? nah
+          : {id:"pos:"+s.id, name:"Stempelposition "+new Date(s.zeit).toLocaleTimeString("de-AT",{hour:"2-digit",minute:"2-digit"}), lat:+o.lat, lon:+o.lon, pos:true};
+      } else if(o.status==="am_markt" || o.status==="im_betrieb") p=ortVon(o.standort||o.naechster);
+      if(p){ l.push({min:minVon(s.zeit), rang:0, ort:p}); n.stempel++; }
+    });
+  ZEITEN.filter(function(z){ return z.datum===tag; }).forEach(function(z){
+    var pr=z.projekt_id && PROJEKTE.filter(function(p){ return p.id===z.projekt_id; })[0];
+    var p=ortVon(z.standort_id || (pr && pr.standort_id));
+    if(p){ l.push({min:zeitMin(z.beginn)||0, rang:1, ort:p}); n.stunden++; }
+  });
+  if(!l.length && planungAn()) ((kalenderEintraege(tag, tag, "ich")[tag])||[]).forEach(function(x){
+    if(["termin","stoerung","projekttermin"].indexOf(x.art)<0 || x.grau) return;
+    var p=ortVon(x.e ? x.e.standort_id : x.o ? x.o.standortId : x.p ? x.p.standort_id : null);
+    if(p){ l.push({min:zeitMin(x.zeit)||0, rang:2, ort:p}); n.kalender++; }
+  });
+  l.sort(function(a,b){ return a.min-b.min || a.rang-b.rang; });
+  /* derselbe Ort hintereinander (bzw. Positionen unter 300 m auseinander) nur einmal */
+  var orte=[]; l.forEach(function(x){ var v=orte[orte.length-1];
+    if(v && (v.id===x.ort.id || luftlinie(v, x.ort)<0.3)) return; orte.push(x.ort); });
+  return {orte:orte, n:n};
+}
+/* Strecke rechnen: liefert {orte, start, matrix-gestützte km je Abschnitt}; hin/rueck wählt die Ansicht */
+function akKmBerechnen(tag){
+  var heute=new Date(tag+"T00:00:00"), morgen=new Date(tag+"T00:00:00"); morgen.setDate(morgen.getDate()+1);
+  var stempelHolen=(demo() || !Store.sb || !Store.benutzer) ? Promise.resolve(STEMPEL)
+    : mitFrist(Store.sb.from("stempel").select("*").eq("user_id", Store.benutzer.id).gte("zeit", heute.toISOString()).lt("zeit", morgen.toISOString()).order("zeit"), 15000)
+      .then(function(r){ return (r && !r.error && r.data) ? r.data : STEMPEL; }, function(){ return STEMPEL; });
+  return stempelHolen.then(function(st){
+    var t=akTagesOrte(tag, st), sp=null;
+    try{ sp=startpunktFuer("ich", tag); }catch(e){}
+    var start=sp && sp.ort && sp.ort.lat!=null ? {id:sp.ort.id||"start", name:sp.ort.name||"Startpunkt", lat:+sp.ort.lat, lon:+sp.ort.lon, quelle:sp.quelle||""} : null;
+    if(!t.orte.length) return {orte:[], n:t.n, start:start};
+    var punkte=(start?[start]:[]).concat(t.orte), uniq=[], ids={};
+    punkte.forEach(function(p){ if(!ids[p.id]){ ids[p.id]=1; uniq.push(p); } });
+    return (uniq.length>=2 ? strassenMatrix(uniq) : Promise.resolve(null)).then(function(m){
+      var idx={}; uniq.forEach(function(p,i){ idx[p.id]=i; });
+      var genau=true;
+      var km=function(a,b){
+        if(a.id===b.id) return 0;
+        var d=m && m.distanz && m.distanz[idx[a.id]] && m.distanz[idx[a.id]][idx[b.id]];
+        if(d!=null) return d/1000;
+        genau=false; return fahrKm(a,b);
+      };
+      return {orte:t.orte, n:t.n, start:start, km:km, istGenau:function(){ return genau; },
+        /* weiter als 1 km vom Startpunkt weg: Hin- bzw. Rückfahrt standardmäßig dabei */
+        hinVorgabe:!!start && luftlinie(start, t.orte[0])>1, rueckVorgabe:!!start && luftlinie(start, t.orte[t.orte.length-1])>1};
+    });
+  });
+}
+function akKmStrecke(r, hin, rueck){
+  var folge=(hin && r.start ? [r.start] : []).concat(r.orte).concat(rueck && r.start ? [r.start] : []);
+  var teile=[], summe=0;
+  for(var i=1;i<folge.length;i++){ var k=r.km(folge[i-1], folge[i]); summe+=k; teile.push({von:folge[i-1], nach:folge[i], km:k}); }
+  return {folge:folge, teile:teile, km:Math.round(summe), text:folge.map(function(p){ return p.name; }).join(" – ")};
+}
+/* im km-Dialog: berechnete Strecke des gewählten Tages mit Abschnitten, Hin-/Rückfahrt abwählbar, „Übernehmen“ füllt km und Strecke */
+function akKmRouteAnzeigen(h, F, rechne){
+  var lauf=0;
+  var zeigen=function(){
+    var tag=F("datum").value, mein=++lauf;
+    if(!tag){ h.hidden=true; return; }
+    h.hidden=false; h.innerHTML="🧭 Kilometer werden aus Stempeluhr, Stunden und Kalender berechnet …";
+    akKmBerechnen(tag).then(function(r){
+      if(mein!==lauf || !h.isConnected) return;
+      if(!r.orte.length){ h.innerHTML="🧭 Für "+esc(dfmt(tag))+" gibt es keine Stempel, Stunden oder Termine mit Ort – die Kilometer bitte selbst eintragen."; return; }
+      var hin=r.hinVorgabe, rueck=r.rueckVorgabe;
+      var malen=function(){
+        var s=akKmStrecke(r, hin, rueck), quelle=[];
+        if(r.n.stempel) quelle.push(r.n.stempel+" Stempel"); if(r.n.stunden) quelle.push(r.n.stunden+" Stunden-Einträge"); if(r.n.kalender) quelle.push(r.n.kalender+" Kalendertermine");
+        h.innerHTML='<div><strong>🧭 Berechnet: '+s.km+" km</strong> "+(r.istGenau() ? '<span class="muted">laut Straßenroute</span>' : '<span class="muted">geschätzt (Luftlinie × Umweg – Straßendienst nicht erreichbar)</span>')+"</div>"+
+          '<ol style="margin:4px 0 0 18px;padding:0" data-abschnitte>'+(s.teile.length ? s.teile.map(function(t){ return "<li>"+esc(t.von.name)+" → "+esc(t.nach.name)+' <span class="muted">· '+String(Math.round(t.km*10)/10).replace(".",",")+" km</span></li>"; }).join("") : "<li>nur ein Ort – keine Fahrt</li>")+"</ol>"+
+          (r.start ? '<div class="rowflex" style="gap:12px;flex-wrap:wrap;margin-top:4px"><label class="chk"><input type="checkbox" data-hin'+(hin?" checked":"")+"><span>ab "+esc(r.start.name)+"</span></label>"+
+            '<label class="chk"><input type="checkbox" data-rueck'+(rueck?" checked":"")+"><span>zurück nach "+esc(r.start.name)+"</span></label></div>" :
+            '<div class="muted">Kein Startpunkt bekannt – Hin- und Rückfahrt fehlen (Startpunkt in der Tour bzw. beim Stempeln wählen).</div>')+
+          '<div class="muted" style="margin-top:2px">Grundlage: '+esc(quelle.join(", "))+(r.start && r.start.quelle ? " · Startpunkt: "+esc(r.start.quelle) : "")+". Umwege und Materialholen bitte dazurechnen.</div>"+
+          '<div style="margin-top:6px"><button class="btn sm" type="button" data-kmuebernehmen>Übernehmen: '+s.km+" km und Strecke</button></div>";
+        var hb=h.querySelector("[data-hin]"), rb=h.querySelector("[data-rueck]");
+        if(hb) hb.onchange=function(){ hin=hb.checked; malen(); };
+        if(rb) rb.onchange=function(){ rueck=rb.checked; malen(); };
+        h.querySelector("[data-kmuebernehmen]").onclick=function(){
+          if(!(s.km>0)){ toast("Keine Fahrt berechnet – bitte die Kilometer selbst eintragen."); return; }
+          F("km").value=String(s.km); F("text").value=s.text.slice(0,300); rechne();
+          toast("Übernommen: "+s.km+" km – bitte prüfen und speichern.");
+        };
+      };
+      malen();
+    }, function(){ if(mein===lauf && h.isConnected) h.innerHTML="🧭 Berechnung nicht möglich – die Kilometer bitte selbst eintragen."; });
+  };
+  F("datum").addEventListener("change", zeigen);
+  zeigen();
 }
 /* Belegfoto: verkleinert hochladen (PDF so, wie es ist) – immer in den Ordner der Person, der der Eintrag gehört
    (fuer: ihre Kennung, wenn der Inhaber den Eintrag einer anderen Person ändert; Inhaber 05.10.2026) */
@@ -38483,6 +38594,7 @@ function akEditor(z, vorgabe){
     "</div>"+
     (km ? '<label class="fl"><span class="req">Strecke</span><input type="text" data-f="text" maxlength="300" value="'+esc(a.text||"")+'" placeholder="z. B. Salzburg – Saalfelden – St. Johann i. T. – Salzburg"></label>'+
           '<div data-vorschlag class="chips"></div>'+
+          '<div data-kmroute class="note" style="font-size:12.5px" hidden></div>'+
           '<label class="fl"><span'+(demo()?"":' class="req"')+'>Privatauto</span><select data-f="fahrzeug_id"><option value="">– bitte wählen –</option>'+autos.map(function(f){
             return '<option value="'+esc(f.id)+'"'+(a.fahrzeug_id===f.id || (!a.fahrzeug_id && autos.length===1 && !fremd)?" selected":"")+">"+esc((f.kennzeichen||"gespeichertes Fahrzeug")+(f.bezeichnung?" · "+f.bezeichnung:""))+"</option>"; }).join("")+"</select></label>"+
           '<div class="note" data-kmbetrag style="font-size:13px"></div>'
@@ -38520,6 +38632,7 @@ function akEditor(z, vorgabe){
       if(kv){ var c2=el('<button class="chip" type="button">'+kv+" km laut Fahrzeug</button>"); c2.onclick=function(){ F("km").value=String(kv); rechne(); }; h.appendChild(c2); }
     };
     F("datum").addEventListener("change", vorschlag); F("fahrzeug_id").addEventListener("change", vorschlag); vorschlag();
+    if(!fremd && !gesperrt) akKmRouteAnzeigen(form.querySelector("[data-kmroute]"), F, rechne);
     /* gespeicherter Eintrag ohne Privatauto (vor der Regel erfasst) bzw. Präsentation: ändern geht erst mit Privatauto */
     if(!autos.length) form.insertBefore(el('<div class="note warnbox" style="font-size:12.5px">Kilometergeld gibt es nur mit eingetragenem <strong>Privatauto</strong>, nicht für ein Firmenfahrzeug. '+
       esc(demo() ? "Präsentation: im echten Betrieb zuerst im Reiter Fahrzeuge das Privatauto eintragen." : akOhneAutoText(fremd ? (a.name||"der Person") : ""))+"</div>"), form.firstChild);
@@ -38883,7 +38996,7 @@ var STEMPEL_ORT_AN=false;
 /* Position „wie bei Crewmeister“ (Seniorchef, Inhaber 14.10.2026, tools/stempeluhr-5.sql): Koordinaten beim Stempeln nur, wenn der
    Inhaber „Position speichern“ eingeschaltet hat UND die Person in der App zugestimmt hat (stempel_zustimmung); nur im Stempel
    (die Person, der Inhaber), nie in den Arbeitszeiten, nach STEMPEL_ORT_TAGE Tagen vom Server entfernt. Keine Verfolgung. */
-var STEMPEL_ORT_POS=false, STEMPEL_ORT_TAGE=90, STEMPEL_ZUSTIMMUNG=null, STEMPEL_ZUST_ALLE=[], stempelZustAbgelehnt=false, STEMPEL_ZUST_FASSUNG="2026-10-14";
+var STEMPEL_ORT_POS=false, STEMPEL_ORT_TAGE=90, STEMPEL_ZUSTIMMUNG=null, STEMPEL_ZUST_ALLE=[], stempelZustAbgelehnt=false, STEMPEL_ZUST_FASSUNG="2026-10-18";   /* 18.10.2026: Zweck Kilometergeld ergänzt (AK_KM_FASSUNG) */
 function stempelPositionAktiv(){ return STEMPEL_ORT_AN && STEMPEL_ORT_POS && !!STEMPEL_ZUSTIMMUNG; }
 /* Tätigkeitsbereich (Büro 01.10.2026) – an Stempel und Stunden, etwa um Fahrtzeit getrennt auszuweisen */
 var BEREICHE=[["fahrt","Fahrt"],["baustelle","Montage / Baustelle"],["wartung","Wartung"],["stoerung","Störung"],["werkstatt","Werkstatt"],["buero","Büro"],["sonstiges","Sonstiges"]];
@@ -39026,7 +39139,7 @@ var STEMPEL_ORT_MS=8000;
 /* Information und Zustimmung zur Position beim Stempeln (Art. 13 DSGVO, § 10 AVRAG) – in der App, einmal je Person;
    „Nicht zustimmen“ stempelt wie bisher nur mit der Entfernung, die Frage kommt erst in der nächsten Sitzung wieder */
 var STEMPEL_ZUST_TEXT=["<strong>Was:</strong> Beim Ein-, Um- und Ausstempeln wird einmal die Position deines Geräts (Koordinaten und Genauigkeit) gespeichert – nur in diesem Moment, keine Verfolgung dazwischen.",
-  "<strong>Wofür:</strong> Nachweis des Einsatzorts zur Arbeitszeit (wie früher bei Crewmeister).",
+  "<strong>Wofür:</strong> Nachweis des Einsatzorts zur Arbeitszeit (wie früher bei Crewmeister) – und, nur wenn du es selbst antippst, die Berechnung der gefahrenen Kilometer für dein Kilometergeld (Privatauto); dort steht dann nur die Strecke mit Ortsnamen und die km, keine Koordinaten.",
   "<strong>Wer sieht es:</strong> du selbst und der Inhaber. In den Stunden, der Lohnauswertung und den Listen steht nur die Entfernung zum Markt bzw. Betrieb.",
   "<strong>Wie lange:</strong> die Position wird nach <span data-tage></span> Tagen automatisch gelöscht; die Entfernung bleibt.",
   "<strong>Freiwillig:</strong> ohne Zustimmung wird weiter nur die Entfernung gespeichert. Die Zustimmung kannst du jederzeit in den Stunden widerrufen."];

@@ -6763,7 +6763,7 @@ test("Stempeluhr: Position wie bei Crewmeister – Frage vor dem Stempeln, ohne 
   pruefe(/Was:|Wofür|Wer sieht es|Wie lange|Freiwillig/.test(r.frage) && /10 Tagen/.test(r.frage) && r.nochNichts, "Frage vor dem Stempeln fehlt/unvollständig: " + r.frage.slice(0, 300));
   pruefe(/"status"/.test(r.ohne) && !/lat/.test(r.ohne), "Ohne Zustimmung muss nur die Entfernung gespeichert sein: " + r.ohne);
   pruefe(r.alteBereinigt && r.keineZust && r.keinKartenKnopf && r.nichtNochmalGefragt, "Frist/Zustimmung/Karte: " + JSON.stringify([r.alteBereinigt, r.keineZust, r.keinKartenKnopf, r.nichtNochmalGefragt]));
-  pruefe(r.link && /Zustimmung/.test(r.frage2) && r.zust && r.zust.fassung === "2026-10-14" && r.zust.zeit && r.widerrufLink, "Zustimmung nicht gespeichert: " + JSON.stringify([r.link, r.zust, r.widerrufLink]));
+  pruefe(r.link && /Zustimmung/.test(r.frage2) && r.zust && r.zust.fassung === "2026-10-18" && r.zust.zeit && r.widerrufLink, "Zustimmung nicht gespeichert: " + JSON.stringify([r.link, r.zust, r.widerrufLink]));
   pruefe(/48\.21/.test(r.mit) && /16\.37/.test(r.mit) && r.keineFrage, "Mit Zustimmung fehlen die Koordinaten im Stempel: " + r.mit);
   pruefe(r.kartenKnopf && /Position/.test(r.karte) && r.karteHost, "Karte zur Position fehlt: " + JSON.stringify([r.kartenKnopf, (r.karte || "").slice(0, 100), r.karteHost]));
   pruefe(/"ein"/.test(r.stunden) && !/48\.21|lat/.test(r.stunden), "In den Stunden dürfen keine Koordinaten stehen: " + r.stunden);
@@ -7459,6 +7459,72 @@ test("Antworten post: Reisekosten – Belegfoto nach der Abgabe nur noch der Inh
   });
   pruefe(!r.fehlt.length, r.fehlt.join(" | "));
   pruefe(!a.fehler.length, "Laufzeitfehler: " + a.fehler.join("; "));
+  await a.zu();
+});
+
+test("Kilometergeld berechnen (Inhaber 18.10.2026): Orte aus der Stempeluhr, Hin-/Rückfahrt vom Startpunkt, Position nur mit Zustimmung zur neuen Fassung, Übernehmen füllt nur das Formular", async () => {
+  const a = await rkSeite(KONTEN.techniker);
+  const r = await a.seite.evaluate(async () => {
+    const x = window.__t.x, db = window.__db.tabellen, { warte, dlg } = window.__rk, e = {};
+    const bis = async (bed, ms) => { const t = Date.now() + (ms || 5000); for (;;) { let ok = false; try { ok = bed(); } catch (err) {} if (ok || Date.now() > t) return ok; await warte(50); } };
+    const tag = x("plusTage(isoLokal(new Date()),-1)"), um = (hm) => new Date(tag + "T" + hm + ":00").toISOString();
+    const [mA, mB] = x("ST.filter(function(s){ return s.lat!=null; }).slice(0,2).map(function(s){ return {id:s.id, name:stName(s), lat:s.lat, lon:s.lon}; })");
+    const uid = "u_tech_test_at";
+    db.fahrzeuge.push({ id: "fzKmB", kennzeichen: "S-KM 1", fahrer: [uid], fahrer_namen: ["Testtechniker"], privat_von: uid, privat_name: "Testtechniker", aktiv: true });
+    /* Stempel: Ein am Markt A, Umstempeln am Markt B, Aus unterwegs mit Koordinaten (gespeichert, aber erst mit Zustimmung nutzbar) */
+    db.stempel.push(
+      { id: "stK1", user_id: uid, name: "Testtechniker", art: "ein", zeit: um("07:00"), standort_id: mA.id, ort: { status: "am_markt", standort: mA.id, naechster: mA.id, entfernung: 40 } },
+      { id: "stK2", user_id: uid, name: "Testtechniker", art: "wechsel", zeit: um("10:00"), standort_id: mB.id, ort: { status: "am_markt", standort: mB.id, naechster: mB.id, entfernung: 60 } },
+      { id: "stK3", user_id: uid, name: "Testtechniker", art: "aus", zeit: um("15:00"), ort: { status: "unterwegs", naechster: mB.id, naechsterEntfernung: 20000, lat: 47.0, lon: 13.0, genauigkeit: 20 } });
+    await x("fzLaden(true)");
+    /* feste Straßenrechnung statt Internet: Luftlinie × 1,25 in Metern */
+    x("strassenMatrix=function(p){ return Promise.resolve({dauer:p.map(function(a){ return p.map(function(){ return 600; }); }), distanz:p.map(function(a){ return p.map(function(b){ return luftlinie(a,b)*1250; }); })}); }");
+    x("STARTPUNKTE[Store.benutzer.id]={betrieb:true}; STEMPEL_ZUSTIMMUNG=null");
+    const oeffnen = async () => {
+      x("ansichtenSchliessen(); akEditor(null, {art:'km'})"); await warte(300);
+      const d = dlg(); d.querySelector('[data-f="datum"]').value = tag; d.querySelector('[data-f="datum"]').dispatchEvent(new Event("change"));
+      await bis(() => d.querySelector("[data-kmuebernehmen]") || /keine Stempel/.test(d.querySelector("[data-kmroute]").textContent));
+      return d;
+    };
+    let d = await oeffnen();
+    const route = () => d.querySelector("[data-kmroute]").textContent;
+    e.ohneZust = route();
+    e.ohneZustAbschnitte = d.querySelectorAll("[data-abschnitte] li").length;
+    /* ohne Rückfahrt: weniger km */
+    const km1 = +(/Berechnet: (\d+) km/.exec(route()) || [])[1];
+    d.querySelector("[data-rueck]").click(); await warte(50);
+    const km2 = +(/Berechnet: (\d+) km/.exec(route()) || [])[1];
+    e.rueckWeniger = km2 < km1;
+    d.querySelector("[data-rueck]").click(); await warte(50);
+    const vorher = db.auslagen.length;
+    d.querySelector("[data-kmuebernehmen]").click(); await warte(100);
+    e.kmFeld = d.querySelector('[data-f="km"]').value; e.km1 = km1; e.strecke = d.querySelector('[data-f="text"]').value;
+    e.nichtsGespeichert = db.auslagen.length === vorher;
+    /* mit Zustimmung zur alten Fassung: Koordinaten bleiben aus; zur neuen: die Stempelposition zählt mit */
+    x("STEMPEL_ZUSTIMMUNG={user_id:Store.benutzer.id, fassung:'2026-10-14'}"); d = await oeffnen(); e.alteFassung = route();
+    x("STEMPEL_ZUSTIMMUNG={user_id:Store.benutzer.id, fassung:'2026-10-18'}"); d = await oeffnen(); e.neueFassung = route();
+    e.text = x("STEMPEL_ZUST_TEXT.join(' ')");
+    /* ein Tag ohne Stempel, Stunden und Termine */
+    x("ansichtenSchliessen(); akEditor(null, {art:'km'})"); await warte(300); d = dlg();
+    d.querySelector('[data-f="datum"]').value = x("plusTage(isoLokal(new Date()),-40)"); d.querySelector('[data-f="datum"]').dispatchEvent(new Event("change"));
+    await bis(() => /keine Stempel/.test(d.querySelector("[data-kmroute]").textContent)); e.leer = d.querySelector("[data-kmroute]").textContent;
+    x("ansichtenSchliessen()");
+    e.mA = mA.name; e.mB = mB.name;
+    return e;
+  });
+  const betrieb = /ab .*Betrieb|ab /.test(r.ohneZust);
+  pruefe(r.ohneZust.includes(r.mA) && r.ohneZust.includes(r.mB) && !/Stempelposition/.test(r.ohneZust) && /laut Straßenroute/.test(r.ohneZust) && betrieb,
+    "ohne Zustimmung: Märkte aus den Stempeln, keine Koordinaten, mit Startpunkt: " + r.ohneZust);
+  pruefe(r.ohneZustAbschnitte === 3 && r.rueckWeniger, "Abschnitte Start → A → B → Start bzw. Rückfahrt abwählbar: " + JSON.stringify([r.ohneZustAbschnitte, r.rueckWeniger]));
+  pruefe(r.kmFeld === String(r.km1) && r.strecke.includes(r.mA) && r.strecke.includes(r.mB) && r.nichtsGespeichert, "Übernehmen: " + JSON.stringify([r.kmFeld, r.km1, r.strecke, r.nichtsGespeichert]));
+  pruefe(!/Stempelposition/.test(r.alteFassung) && /Stempelposition 15:00/.test(r.neueFassung), "Position nur mit Zustimmung zur neuen Fassung: " + JSON.stringify([r.alteFassung.slice(0, 200), r.neueFassung.slice(0, 200)]));
+  pruefe(/Kilometergeld/.test(r.text), "Zustimmungstext nennt das Kilometergeld nicht");
+  pruefe(/keine Stempel, Stunden oder Termine/.test(r.leer), "leerer Tag: " + r.leer);
+  if (process.env.FOTO) {
+    await a.seite.evaluate(async () => { const x = window.__t.x; x("STEMPEL_ZUSTIMMUNG=null; akEditor(null, {art:'km'})"); await new Promise((f) => setTimeout(f, 300));
+      const d = window.__rk.dlg(); d.querySelector('[data-f="datum"]').value = x("plusTage(isoLokal(new Date()),-1)"); d.querySelector('[data-f="datum"]').dispatchEvent(new Event("change")); });
+    await a.seite.waitForTimeout(900); await a.seite.screenshot({ path: process.env.FOTO });
+  }
   await a.zu();
 });
 
