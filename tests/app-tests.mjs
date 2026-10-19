@@ -6137,6 +6137,8 @@ test("Inbetriebnahmeprotokoll: aus der Anlage vorbelegt, Füllmenge und CO₂e g
     e.regelungBloecke = d.querySelectorAll("[data-ibn-regelung]").length;
     const rg = d.querySelector("[data-ibn-regelung]");
     rg.querySelector('[data-rg="sollKuehlen"]').value = "22"; rg.querySelector('[data-rg="sollKuehlen"]').dispatchEvent(new Event("input"));
+    /* Betriebsart als Auswahl, Zeitprogramm eigenes Feld (Inhaber 19.10.2026) */
+    e.betriebsartWahl = [...(rg.querySelector('select[data-rg="betriebsart"]') || { options: [] }).options].map((o) => o.textContent).join("|") + "|zeit:" + !!rg.querySelector('input[data-rg="zeitprogramm"]');
     e.zeitVorher = rg.querySelector("[data-rgzeit]").hidden;
     rg.querySelector('[data-rgn="ja"]').click();
     rg.querySelector('[data-rg="nachtVon"]').value = "22:00"; rg.querySelector('[data-rg="nachtVon"]').dispatchEvent(new Event("input"));
@@ -6217,6 +6219,7 @@ test("Inbetriebnahmeprotokoll: aus der Anlage vorbelegt, Füllmenge und CO₂e g
   pruefe(/^IBN_[A-Za-zÄÖÜäöüß-]+_\d{4}-\d\d-\d\d_1\.jpg$/.test(r.foto) && !/P-TEST/.test(r.foto) && r.fotoZusammen && /^IBN_[A-Za-zÄÖÜäöüß-]+_[\d-]+_1\.jpg:VRV 2 – Typenschild:false$/.test(r.anhaenge), "Foto: " + JSON.stringify([r.foto, r.fotoZusammen, r.anhaenge]));
   pruefe(/^VRV Verkauf/.test(r.messChips) && /1 Anlage noch ohne Angaben/.test(r.fehlenHinweis) && r.regelungBloecke === 2, "Messwerte je Anlage / Regelung je Anlage: " + JSON.stringify([r.messChips, r.fehlenHinweis, r.regelungBloecke]));
   pruefe(/1 Mangel/.test(r.zusammen) && /nichts offen/.test(r.zusammen) && /Nachtabsenkung \/ Flüsterbetrieb \(Schall\) 22:00–06:00/.test(r.zusammen), "Zusammenfassung: " + r.zusammen);
+  pruefe(r.betriebsartWahl === "– wählen –|Heizen|Kühlen|Automatik|Entfeuchten|Lüften|zeit:true", "Betriebsart-Auswahl: " + r.betriebsartWahl);
   pruefe(r.dokuAntworten === "erl,offen,nz" && r.zeitVorher === true && r.zeitNachher === false && r.uebergabePunkte === 4 && r.keineAbnahmeWahl, "Checkliste/Übergabe nach der Vorlage: " + JSON.stringify([r.dokuAntworten, r.zeitVorher, r.zeitNachher, r.uebergabePunkte, r.keineAbnahmeWahl]));
   pruefe(r.nachtragen === true && r.nachtragenKg === true && r.ohneUnterschrift >= 1, "Nachtragen/Unterschrift-Pflicht: " + JSON.stringify([r.nachtragen, r.nachtragenKg, r.ohneUnterschrift]));
   pruefe(r.gespeichert === "1|Testtechniker|true|NPibn1|u_tech_test_at|Kühlen 22 °C · Nachtabsenkung / Flüsterbetrieb (Schall) 22:00–06:00|mangel" && r.co2Gespeichert === "34.03|4.05|NPibn1,NPibn2", "Gespeichert: " + r.gespeichert + " / " + r.co2Gespeichert);
