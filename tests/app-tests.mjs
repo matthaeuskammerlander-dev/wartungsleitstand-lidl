@@ -6193,6 +6193,12 @@ test("Inbetriebnahmeprotokoll: aus der Anlage vorbelegt, Füllmenge und CO₂e g
       /siehe Abnahmeprotokoll des Auftraggebers – Endabnahme Lidl vom 24.09.2026/, /FXFQ63/, /Verordnung \(EU\) 2024\/573/,
       /Anlage 1 von 2: VRV Verkauf/, /Anlage 2 von 2: Split Backshop/, /Rohrlänge<\/td><td>18 m/, /4,05 t CO₂e/, /KÄLTEANLAGEN/, /<h2>Fotos<\/h2>/, /VRV 2 – Typenschild/, /Zertifikat Betrieb \(F-Gase\)<\/td><td>AT-UNT-TEST-250/, /G14-TEST-1/];
     e.blattFehlt = muster.filter((m) => !m.test(html)).map(String).concat(/mit Vorbehalt/.test(html) ? ["NICHT: mit Vorbehalt"] : []);
+    /* Inhaber 19.10.2026: keine Protokollnr./Projektnummer und kein „Korrigiert am …“ – weder im Blatt noch im Seitenfuß des PDFs */
+    { const m = /.{0,60}(P-TEST-AN|Nr\. 1 ·|Korrigiert am|Inbetriebnahmeprotokoll 1 ·).{0,40}/.exec(html); if (m) e.blattFehlt.push("NICHT im Blatt: " + m[0]); }
+    x("window.__altBlatt=blattZuPdf; window.__fussO=null; blattZuPdf=function(o){ window.__fussO=o; return Promise.reject(new Error('nur Fuß')); }");
+    await x("ibnPdfErzeugen")(pr, z).catch(() => {});
+    e.pdfFuss = x("window.__fussO ? __fussO.fuss+'|'+__fussO.titel+'|'+__fussO.betreff : '(kein Aufruf)'");
+    x("blattZuPdf=window.__altBlatt");
     /* leere Zeilen kommen nicht aufs Blatt (Inhaber 14.10.2026): kein „–“ als Wert, keine Messwerte-Überschrift ohne Messwert bei Anlage 2 */
     e.blattLeer = (html.match(/<td>–<\/td>/g) || []).length + "|" + (html.match(/>Messwerte</g) || []).length;
     e.blatt = !e.blattFehlt.length;
@@ -6207,7 +6213,8 @@ test("Inbetriebnahmeprotokoll: aus der Anlage vorbelegt, Füllmenge und CO₂e g
   pruefe(r.km === "R410A" && r.gesamt === "16,3 kg" && /^34,03 t CO₂e \(GWP 2087,5\)/.test(r.co2), "Kältemittel/CO₂e: " + JSON.stringify([r.km, r.gesamt, r.co2]));
   pruefe(/^R32\|6 kg\|4,05 t CO₂e \(GWP 675\)/.test(r.km2), "zweite Anlage: " + r.km2);
   pruefe(r.zert === "AT-UNT-TEST-250|G14-TEST-1", "Zertifikate nicht vorbelegt: " + r.zert);
-  pruefe(/^IBN_P-TEST-AN_\d{4}-\d\d-\d\d_1\.jpg$/.test(r.foto) && r.fotoZusammen && /^IBN_P-TEST-AN_[\d-]+_1\.jpg:VRV 2 – Typenschild:false$/.test(r.anhaenge), "Foto: " + JSON.stringify([r.foto, r.fotoZusammen, r.anhaenge]));
+  /* Fotonamen mit dem Ort statt der Projektnummer (Inhaber 19.10.2026) */
+  pruefe(/^IBN_[A-Za-zÄÖÜäöüß-]+_\d{4}-\d\d-\d\d_1\.jpg$/.test(r.foto) && !/P-TEST/.test(r.foto) && r.fotoZusammen && /^IBN_[A-Za-zÄÖÜäöüß-]+_[\d-]+_1\.jpg:VRV 2 – Typenschild:false$/.test(r.anhaenge), "Foto: " + JSON.stringify([r.foto, r.fotoZusammen, r.anhaenge]));
   pruefe(/^VRV Verkauf/.test(r.messChips) && /1 Anlage noch ohne Angaben/.test(r.fehlenHinweis) && r.regelungBloecke === 2, "Messwerte je Anlage / Regelung je Anlage: " + JSON.stringify([r.messChips, r.fehlenHinweis, r.regelungBloecke]));
   pruefe(/1 Mangel/.test(r.zusammen) && /nichts offen/.test(r.zusammen) && /Nachtabsenkung \/ Flüsterbetrieb \(Schall\) 22:00–06:00/.test(r.zusammen), "Zusammenfassung: " + r.zusammen);
   pruefe(r.dokuAntworten === "erl,offen,nz" && r.zeitVorher === true && r.zeitNachher === false && r.uebergabePunkte === 4 && r.keineAbnahmeWahl, "Checkliste/Übergabe nach der Vorlage: " + JSON.stringify([r.dokuAntworten, r.zeitVorher, r.zeitNachher, r.uebergabePunkte, r.keineAbnahmeWahl]));
@@ -6217,6 +6224,7 @@ test("Inbetriebnahmeprotokoll: aus der Anlage vorbelegt, Füllmenge und CO₂e g
   pruefe(/^(\d{4}-\d\d-\d\d)\|16\.3\|\1\|6$/.test(r.anlage), "Inbetriebnahme/Füllmenge nicht an beiden Anlagen: " + r.anlage);
   pruefe(/unterschrieben/.test(r.liste) && /2 Anlagen: VRV Verkauf/.test(r.liste), "Liste: " + r.liste);
   pruefe(r.blatt, "Blatt unvollständig: " + JSON.stringify(r.blattFehlt));
+  pruefe(/^Inbetriebnahmeprotokoll – /.test(r.pdfFuss) && !/P-TEST|Nr\.\s*\d|Projekt P-/.test(r.pdfFuss), "Seitenfuß/Titel des PDFs mit Projektnummer bzw. Nr.: " + r.pdfFuss);
   pruefe(r.blattLeer === "0|1", "Leere Zeilen bzw. leerer Messwerte-Abschnitt auf dem Blatt (Striche|Messwerte-Überschriften): " + r.blattLeer);
   pruefe(!a.fehler.length, "Laufzeitfehler: " + a.fehler.join("; "));
   await a.zu();
