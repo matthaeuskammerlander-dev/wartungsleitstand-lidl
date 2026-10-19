@@ -34757,6 +34757,33 @@ function dateiBeschreiben(p, x, m, fertig){
   };
   v.fuss.appendChild(ab); v.fuss.appendChild(ok);
 }
+/* ältere Stände einer Gruppe (Inhaber 19.10.2026: „lösche die alten Fassungen“ – vorher je Datei einzeln mit Rückfrage):
+   je Dateiendung bleibt der neueste Stand (PDF und Word desselben Namens stehen beisammen), alle anderen sind „älter“ */
+function dateiAeltereStaende(g){
+  var endung=function(x){ var m=/\.([a-z0-9]+)$/i.exec(x.name||""); return m ? m[1].toLowerCase() : ""; }, neu={};
+  g.forEach(function(x){ var e=endung(x); if(!neu[e] || String(x.zeit||"")>String(neu[e].zeit||"")) neu[e]=x; });
+  return g.filter(function(x){ return neu[endung(x)]!==x; });
+}
+/* mehrere Dateien mit EINER Rückfrage löschen – Speicher in einem Aufruf, dann Einträge und Verweise (Mappen, Quellen) */
+function dateienLoeschen(p, liste, fertig){
+  liste=(liste||[]).filter(dateiLoeschenDarf);
+  if(!liste.length){ toast("Keine Datei, die du löschen kannst."); return Promise.resolve(); }
+  var namen=liste.map(function(x){ return "• "+(x.titel||x.name)+" (hochgeladen "+dfmt(tagLokal(x.zeit))+")"; }).join("\n");
+  if(!window.confirm(liste.length+" ältere Stände endgültig löschen?\n\n"+namen+"\n\nDie neuesten Stände bleiben. Das lässt sich nicht zurücknehmen.")) return Promise.resolve();
+  var pfade=liste.map(function(x){ return x.pfad; });
+  var entfernen=demo() ? Promise.resolve({data:pfade.map(function(x){ return {name:x}; })}) : Store.sb.storage.from("projektdateien").remove(pfade);
+  return entfernen.then(function(r){
+    if(r.error) throw new Error(r.error.message);
+    var weg={}; (r.data||[]).forEach(function(o){ weg[o.name]=1; });
+    var geloescht=liste.filter(function(x){ return weg[x.pfad]; });
+    if(!geloescht.length) throw new Error("keine Berechtigung");
+    return projektAendern(p, function(d){
+      d.dateien=(d.dateien||[]).filter(function(f){ return !weg[f.pfad]; });
+      geloescht.forEach(function(x){ dateiVerweiseErsetzen(d, x.pfad, null, x.name); });
+    }, geloescht.length+" ältere Stände gelöscht: "+geloescht.map(function(x){ return x.name; }).join(", ")).then(function(){ return geloescht.length; });
+  }).then(function(n){ if(n==null) return; toast(demo() ? "Präsentation: nur angezeigt, nicht gespeichert." : "✓ "+n+" ältere Stände gelöscht"+(n<liste.length ? " – "+(liste.length-n)+" nicht (keine Berechtigung)" : "")+"."); if(fertig) fertig(); },
+    function(e){ toast("Nicht gelöscht: "+technikDeutsch((e && e.message)||String(e))); });
+}
 /* ---------- Mappen zum Versenden (Inhaber 19.10.2026: „gib dann alles in einen Unterordner im Projekt, was wir für die
    Einreichung der Unterlagen brauchen. Den soll man dann als ZIP downloaden können und an Lidl senden“) ----------
    daten.mappen = [{id, name, dateien:[Pfad …], angelegt, von}] – nur Verweise, die Datei liegt einmal im Projekt. Dateien unter
@@ -34972,6 +34999,7 @@ function projektDateienKarte(p, buero, schreiben, neuZeichnen){
       (marken.length?" "+marken.map(function(t){ return '<span class="tag" style="font-size:11px">'+esc(t)+"</span>"; }).join(" "):"")+
       '<br><span class="muted" style="font-size:12px">'+esc(artName(x.art))+(m.stand?" · Stand "+esc(dfmt(m.stand)):"")+" · hochgeladen "+esc(dfmt(tagLokal(x.zeit)))+(x.von?" · "+esc(x.von):"")+(x.herkunft?" · aus „"+esc(x.herkunft)+"“":"")+"</span>"+
       (opt.aeltere?' · <a href="#" class="sprunglink" data-aeltere style="font-size:12px">'+(aeltereOffen[m.basis]?"▴ ältere Stände zu":"▾ "+opt.aeltere+(opt.aeltere===1?" älterer Stand":" ältere Stände"))+"</a>":"")+
+      (opt.weg && opt.weg.length && aeltereOffen[m.basis] && opt.weg.every(dateiLoeschenDarf) ? ' · <a href="#" class="sprunglink" data-aeltereweg style="font-size:12px;color:var(--crit)">🗑 ältere Stände löschen ('+opt.weg.length+")</a>" : "")+
       (x.preise?' <span class="tag" style="font-size:11.5px">enthält Preise – nur für den Inhaber abgelegt</span>':"")+
       (x.preisPruefen && !dateiImBuero(x) && nurInhaber()?' <span class="tag" style="font-size:11.5px" data-preispruefen title="mit ✎ auf „🔒 Nur für den Inhaber“ stellen, falls nötig">💶 enthält Preisangaben</span>':"")+
       (zu.length?'<br><span style="font-size:12px">gehört zu: '+zu.map(function(st){ return '<a href="#" class="sprunglink" data-zu="'+esc(st.bereich+":"+st.id)+'">'+esc(st.titel)+"</a>"; }).join(" · ")+"</span>"
@@ -34981,6 +35009,7 @@ function projektDateienKarte(p, buero, schreiben, neuZeichnen){
     z.querySelectorAll("[data-zu]").forEach(function(a){ tippe(a, function(){ zurStelle(a.dataset.zu); }); });
     z.querySelector("[data-oeffnen]").onclick=function(e){ e.preventDefault(); oeffnen(x); };
     var al=z.querySelector("[data-aeltere]"); if(al) al.onclick=function(e){ e.preventDefault(); aeltereOffen[m.basis]=!aeltereOffen[m.basis]; zeichneListe(); };
+    var aw=z.querySelector("[data-aeltereweg]"); if(aw) aw.onclick=function(e){ e.preventDefault(); dateienLoeschen(p, opt.weg, neuZeichnen); };
     var pin=z.querySelector("[data-pin]"); if(pin) pin.onclick=function(){ dateiAendern(p, x, {wichtig:!x.wichtig}, x.wichtig ? "nicht mehr angeheftet" : "📌 angeheftet", neuZeichnen); };
     var be=z.querySelector("[data-bearb]"); if(be) be.onclick=function(){ dateiBeschreiben(p, x, m, neuZeichnen); };
     return z;
@@ -35005,7 +35034,7 @@ function projektDateienKarte(p, buero, schreiben, neuZeichnen){
     reihe.forEach(function(g){
       if(!alleZeigen && gezeigt>=25) return;
       gezeigt++;
-      l.appendChild(zeile(g[0], {aeltere:g.length-1}));
+      l.appendChild(zeile(g[0], {aeltere:g.length-1, weg:dateiAeltereStaende(g)}));
       if(g.length>1 && aeltereOffen[merk[g[0].pfad].basis]) g.slice(1).forEach(function(x){ l.appendChild(zeile(x, {alt:true})); });
     });
     if(!alleZeigen && reihe.length>25){

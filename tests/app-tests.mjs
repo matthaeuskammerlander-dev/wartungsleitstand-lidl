@@ -6367,6 +6367,34 @@ test("Mappe zum Versenden (Inhaber 19.10.2026): Dateien anhaken, als ZIP herunte
   await a.zu();
 });
 
+test("Ältere Stände löschen (Inhaber 19.10.2026): eine Rückfrage, je Endung bleibt der neueste, Mappe behält die neuen", async () => {
+  const a = await oeffnen(KONTEN.inhaber);
+  const r = await a.seite.evaluate(async () => {
+    const x = window.__t.x, db = window.__db.tabellen, sb = x("Store.sb"), e = {}, jetzt = new Date().toISOString();
+    const z = (h) => "2026-10-19T" + h + ":00:00.000Z";
+    const dd = [["tmp_al/a1-TB.pdf", "TB.pdf", z("09")], ["tmp_al/a2-TB.pdf", "TB.pdf", z("10")], ["tmp_al/a3-TB.pdf", "TB.pdf", z("11")],
+      ["tmp_al/b1-TB.docx", "TB.docx", z("09")], ["tmp_al/b2-TB.docx", "TB.docx", z("11")]];
+    for (const d of dd) await sb.storage.from("projektdateien").upload(d[0], new Blob(["x" + d[0]]));
+    db.projekte.push({ id: "tmp_al", nummer: "P-2026-903", titel: "Stände Test", kunde_id: "lidl", status: "inbetriebnahme", verlauf: [], erstellt: jetzt, geaendert: jetzt,
+      daten: { dateien: dd.map((d) => ({ pfad: d[0], name: d[1], art: "dokument", von: "T", zeit: d[2] })), mappen: [{ id: "m1", name: "M", dateien: ["tmp_al/a3-TB.pdf", "tmp_al/a1-TB.pdf"] }] } });
+    await x("projekteLaden()");
+    const p = () => x("PROJEKTE.filter(function(q){ return q.id==='tmp_al'; })[0]");
+    e.aeltere = x("dateiAeltereStaende(PROJEKTE.filter(function(q){ return q.id==='tmp_al'; })[0].daten.dateien)").map((f) => f.pfad).sort();
+    let gefragt = 0; window.confirm = () => { gefragt++; return true; };
+    await x("dateienLoeschen(PROJEKTE.filter(function(q){ return q.id==='tmp_al'; })[0], dateiAeltereStaende(PROJEKTE.filter(function(q){ return q.id==='tmp_al'; })[0].daten.dateien))");
+    e.gefragt = gefragt; e.rest = p().daten.dateien.map((f) => f.pfad).sort();
+    e.mappe = x("mappeDateien(PROJEKTE.filter(function(q){ return q.id==='tmp_al'; })[0], PROJEKTE.filter(function(q){ return q.id==='tmp_al'; })[0].daten.mappen[0])").map((f) => f.pfad);
+    e.speicherWeg = !(await sb.storage.from("projektdateien").download("tmp_al/a1-TB.pdf")).data;
+    e.tagebuch = (p().verlauf || []).map((v) => v.text).join(" | ");
+    db.projekte = db.projekte.filter((q) => q.id !== "tmp_al");
+    return e;
+  });
+  pruefe(JSON.stringify(r.aeltere) === JSON.stringify(["tmp_al/a1-TB.pdf", "tmp_al/a2-TB.pdf", "tmp_al/b1-TB.docx"]), "ältere Stände falsch: " + JSON.stringify(r.aeltere));
+  pruefe(r.gefragt === 1 && JSON.stringify(r.rest) === JSON.stringify(["tmp_al/a3-TB.pdf", "tmp_al/b2-TB.docx"]) && r.speicherWeg, "Löschen: " + JSON.stringify(r));
+  pruefe(JSON.stringify(r.mappe) === JSON.stringify(["tmp_al/a3-TB.pdf"]) && /3 ältere Stände gelöscht/.test(r.tagebuch), "Mappe/Tagebuch: " + JSON.stringify([r.mappe, r.tagebuch]));
+  await a.zu();
+});
+
 test("Dateiart „Preise / Kalkulation“ (Inhaber 16.10.2026): nur der Inhaber wählt sie, abgelegt unter buero/, andere sehen die Datei nicht", async () => {
   const a = await oeffnen(KONTEN.inhaber);
   const r = await a.seite.evaluate(async () => {

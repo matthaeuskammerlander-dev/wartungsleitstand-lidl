@@ -406,6 +406,9 @@ Kammerlander Umwelt- und Klimatechnik (UKT) – oft kurz, vom Handy, im Feld.
   „alle neuesten anhaken“; entfernen mit Rückfrage – Dateien bleiben). ZIP ohne Bibliothek (`zipErstellen`: ungepackt, CRC-32 `zipCrc`, UTF-8-Namen,
   gleiche Namen „ (2)“), Name `mappeZipName` „<Mappe> – <Ort>.zip“, `mappeHerunterladen` holt die Dateien aus dem Speicher (nicht abrufbare werden
   genannt). Gelöschte Dateien fallen heraus (`dateiVerweiseErsetzen`), umgelegte behalten ihren Platz. Test „Mappe zum Versenden …“.
+  **Ältere Stände löschen** (Inhaber 19.10.2026: „lösche die alten Fassungen“): aufgeklappte Gruppe → „🗑 ältere Stände löschen (n)“ (`dateiAeltereStaende`:
+  je Dateiendung bleibt der neueste, PDF und Word desselben Namens stehen beisammen; nur wenn alle `dateiLoeschenDarf`) → `dateienLoeschen` mit EINER Rückfrage (Namen + Datum),
+  Speicher in einem Aufruf, Einträge und Verweise wie `dateiLoeschen`. Test „Ältere Stände löschen …“.
 - **Protokoll-Namen und Downloads** (Inhaber 19.10.2026): Dateiname `Inbetriebnahmeprotokoll_<Ort>_<n>-Anlagen_<TT-MM-JJJJ>.pdf` bzw.
   `Arbeitsnachweis_<Ort>_<TT-MM-JJJJ>.pdf` (`projektOrtFuerDatei`: Ort des Standorts, sonst Projektnummer) – ohne Projektnummer, „Nr“, „Korrektur“;
   eine Korrektur heißt gleich und steht als neuerer Stand da. Im IBN-PDF keine Protokollnr./Projektnummer in der Kopfzeile und kein
