@@ -6334,6 +6334,7 @@ test("Mappe zum Versenden (Inhaber 19.10.2026): Dateien anhaken, als ZIP herunte
     await bis(() => (p().daten.mappen || []).length === 1);
     const m = p().daten.mappen[0]; e.name = m.name; e.anzahl = m.dateien.length;
     e.kasten = karte().querySelector("[data-mappen]").textContent;
+    e.links = karte().querySelectorAll("[data-mappen] [data-mappeoeffnen]").length;
     /* ZIP abfangen und lesen */
     let blob = null; const alt = URL.createObjectURL; URL.createObjectURL = (b) => { blob = b; return alt.call(URL, b); };
     e.zipZahl = await x("mappeHerunterladen(PROJEKTE.filter(function(q){ return q.id==='tmp_mp'; })[0], PROJEKTE.filter(function(q){ return q.id==='tmp_mp'; })[0].daten.mappen[0], null)");
@@ -6360,7 +6361,7 @@ test("Mappe zum Versenden (Inhaber 19.10.2026): Dateien anhaken, als ZIP herunte
     return e;
   });
   pruefe(r.leerNeu && r.liste.length === 3 && !r.liste.some((q) => /^buero\//.test(q)), "Mappe: Auswahl ohne Preis-Datei: " + JSON.stringify(r.liste));
-  pruefe(r.name === "Unterlagen für Lidl" && r.anzahl === 3 && /Unterlagen für Lidl/.test(r.kasten) && /3 Dateien/.test(r.kasten), "Mappe gespeichert/angezeigt: " + JSON.stringify([r.name, r.anzahl, r.kasten]));
+  pruefe(r.links === 3 && r.name === "Unterlagen für Lidl" && r.anzahl === 3 && /Unterlagen für Lidl/.test(r.kasten) && /3 Dateien/.test(r.kasten), "Mappe gespeichert/angezeigt: " + JSON.stringify([r.name, r.anzahl, r.kasten]));
   pruefe(r.zipZahl === 3 && r.typ === "application/zip" && r.sig === "4034b50" && r.endeSig === "6054b50" && r.eintraege === 3 && r.crcOk, "ZIP-Aufbau: " + JSON.stringify(r));
   pruefe(r.namen.includes("Technische Beschreibung.pdf") && r.namen.includes("Bestätigung KAV.pdf") && r.inhalt && /%PDF/.test(r.inhalt) && /\.zip$/.test(r.zipName) && /Unterlagen für Lidl/.test(r.zipName), "ZIP-Inhalt/Name: " + JSON.stringify([r.namen, r.inhalt, r.zipName]));
   pruefe(r.nachLoeschen === 2, "gelöschte Datei bleibt in der Mappe: " + r.nachLoeschen);
