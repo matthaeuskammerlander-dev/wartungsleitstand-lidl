@@ -14796,7 +14796,7 @@ function pdfAnsicht(quelle, name){
   var link=el('<a class="btn ghost sm" style="text-decoration:none" target="_blank" rel="noopener">Datei öffnen</a>');
   var holen = /^data:/.test(quelle)
     ? Promise.resolve().then(function(){ var u=a.blob(quelle); link.href=u; link.download=name||"auftrag.pdf"; return fetch(u); })
-    : Promise.resolve().then(function(){ link.href=quelle; return fetch(quelle); });
+    : Promise.resolve().then(function(){ link.href=speicherDownloadUrl(quelle, name); return fetch(quelle); });
   a.fuss.appendChild(link);
   Promise.all([ladePdfJs(), holen.then(function(r){ if(!r.ok) throw new Error("HTTP "+r.status); return r.arrayBuffer(); })])
     .then(function(x){ return window.pdfjsLib.getDocument({data:new Uint8Array(x[1])}).promise; })
@@ -31735,8 +31735,11 @@ function anBlattHtml(p, a, fotos){
     "<div class='fuss'>Arbeitsnachweis "+esc(a.nummer||"")+" · Projekt "+esc(p.nummer||"")+(a.unterschrieben ? "" : " · ENTWURF – nicht unterschrieben")+
       korr.map(function(k){ return "<br>Korrigiert am "+esc(tagFmt(k.zeit))+" von "+esc(k.von||"")+": „"+esc(k.grund||"")+"“"; }).join("")+"</div>";
 }
+/* Dateinamen der Protokolle (Inhaber 19.10.2026: „Namensgebung von Protokollen anpassen“ – Ort statt Projektnummer, ohne „Nr“ und
+   „Korrektur“): Ort des Markts bzw. Standorts, sonst die Projektnummer. Eine Korrektur heißt gleich und steht als neuerer Stand da. */
+function projektOrtFuerDatei(p){ var s=p && p.standort_id && byId[p.standort_id]; return String((s && (s.ort || stName(s))) || (p && p.nummer) || "Projekt").trim(); }
 function anDateiname(p, a){
-  return ("Arbeitsnachweis_"+(p.nummer||"")+"_Nr"+(a.nummer||"")+"_"+String(anZeitraum(a)||dfmt(a.datum)).split(" – ")[0].replace(/\./g,"-")+((a.korrekturen||[]).length ? "_Korrektur-"+a.korrekturen.length : "")+".pdf")
+  return ("Arbeitsnachweis_"+projektOrtFuerDatei(p)+"_"+String(anZeitraum(a)||dfmt(a.datum)).split(" – ")[0].replace(/\./g,"-")+".pdf")
     .replace(/[\\\/:*?"<>|]+/g,"").replace(/\s+/g,"-");
 }
 /* Fotos im Blatt wie im Protokoll: drei je Zeile, Beschriftung darunter (Inhaber 06.10.2026: „im PDF verbrauchen sie
@@ -31906,7 +31909,8 @@ function ibnRegelungText(x){
   if(String(rg.sollKuehlen||"").trim()) t.push("Kühlen "+rg.sollKuehlen+" °C");
   if(String(rg.sollHeizen||"").trim()) t.push("Heizen "+rg.sollHeizen+" °C");
   if(String(rg.betriebsart||"").trim()) t.push(rg.betriebsart);
-  if(rg.nacht==="ja") t.push("Nachtabsenkung "+(rg.nachtVon||"?")+"–"+(rg.nachtBis||"?")); else if(rg.nacht==="nein") t.push("keine Nachtabsenkung");
+  /* Inhaber 19.10.2026: „Nachtabsenkung SCHALL/Flüsterbetrieb fehlt am Protokoll“ – wie im Formular benennen, sonst liest man es als Temperaturabsenkung */
+  if(rg.nacht==="ja") t.push("Nachtabsenkung / Flüsterbetrieb (Schall) "+(rg.nachtVon||"?")+"–"+(rg.nachtBis||"?")); else if(rg.nacht==="nein") t.push("keine Nachtabsenkung / kein Flüsterbetrieb (Schall)");
   /* Automatikbetrieb: „Automatik: Heizen 18–25 °C, Kühlen 17–24 °C, auf Kühlen ab 24 °C, auf Heizen ab 17 °C“ */
   var w=function(k){ return String(rg[k]||"").trim(); }, a=[];
   if(w("heizMin")||w("heizMax")) a.push("Heizen "+(w("heizMin")||"?")+"–"+(w("heizMax")||"?")+" °C");
@@ -32324,7 +32328,7 @@ function ibnEditor(p, a, fertig, opt){
     var offen=IBN_UEBERGABE.filter(function(pn){ return (d.uebergabe[pn[0]]||{}).s==="offen"; }).length+IBN_CHECK[2].punkte.filter(function(pn){ return ((d.check.doku||{})[pn[0]]||{}).s==="offen"; }).length;
     box.appendChild(el('<div class="note" style="font-size:13px"><strong>'+esc(d.betreiber||"–")+"</strong> · "+esc(d.standort||"–")+" · Inbetriebnahme "+esc(n.datum ? dfmt(n.datum) : "–")+"<br>"+
       d.anlagen.map(function(x){ var co2=ibnCo2(x); return "<strong>"+esc(ibnAnlageKurz(x))+"</strong>: "+esc(x.kaeltemittel||"Kältemittel?")+" "+(ibnGesamtKg(x)==null ? "" : ibnZahlText(ibnGesamtKg(x), 3)+" kg")+(co2 ? " · "+ibnZahlText(co2)+" t CO₂e" : "")+
-        (x.regelung && x.regelung.nacht==="ja" ? " · Nachtabsenkung "+esc((x.regelung.nachtVon||"?")+"–"+(x.regelung.nachtBis||"?")) : ""); }).join("<br>")+
+        (x.regelung && x.regelung.nacht==="ja" ? " · Nachtabsenkung / Flüsterbetrieb (Schall) "+esc((x.regelung.nachtVon||"?")+"–"+(x.regelung.nachtBis||"?")) : ""); }).join("<br>")+
       "<br>Checkliste: "+(mangel ? "<strong>"+(mangel===1 ? "1 Mangel" : mangel+" Mängel")+"</strong>" : "kein Mangel")+" · Dokumentation/Übergabe: "+(offen ? "<strong>"+offen+" offen</strong>" : "nichts offen")+
       ((d.anhaenge||[]).length ? " · 📎 "+d.anhaenge.length+" Foto"+(d.anhaenge.length===1?"":"s")+"/Dateien angehängt" : "")+"</div>"));
     if(fehlt.length) box.appendChild(el('<div class="note warnbox" style="font-size:13px"><strong>Fehlt noch:</strong> '+fehlt.map(esc).join(" · ")+"</div>"));
@@ -32480,7 +32484,8 @@ function ibnBlattHtml(p, a, fotos){
   };
   return '<div class="kopf"><div class="firma"><img src="logo.png" alt="Kammerlander Umwelt- und Klimatechnik GmbH"></div>'+
       '<div class="kontakt">Speckbacherstraße 92, A-6380 St. Johann in Tirol<br>Telefon 05352 / 61207-0 · office@ukt.at · www.ukt.at</div></div>'+
-    "<h1>INBETRIEBNAHMEPROTOKOLL KÄLTEANLAGE"+(anl.length>1 ? "N" : "")+"</h1><div style='color:#444'>Nr. "+esc(a.nummer||"")+" · Projekt "+esc(projektTitel(p))+" · "+esc(ibnAnlageName(p, a))+"</div>"+
+    "<h1>INBETRIEBNAHMEPROTOKOLL KÄLTEANLAGE"+(anl.length>1 ? "N" : "")+"</h1><div style='color:#444'>"+/* ohne Protokollnr. und Projektnummer (Inhaber 19.10.2026: „auch hier ist die Projektnummer unerwünscht“) */
+      esc([p.titel||"", ibnAnlageName(p, a)].filter(Boolean).join(" · "))+"</div>"+
     /* links 4 Zeilen, rechts 3 mit kurzen Beschriftungen – gleich hoch (Inhaber 12.10.2026: „so viel leerer Raum bei den Zertifikaten“) */
     "<h2>Betreiber und Ausführung</h2><div class='zwei'><div><table>"+zt("Betreiber", d.betreiber)+zt("Standort / Objekt", d.standort)+zt("Bestell- / Auftragsnummer", d.auftrag)+
         zt("Datum der Inbetriebnahme", a.datum ? dfmt(a.datum) : "")+"</table></div>"+
@@ -32503,12 +32508,13 @@ function ibnBlattHtml(p, a, fotos){
         zt("Datum", a.unterschrieben ? tagFmt(a.unterschrieben) : "")+"</table></div>"+
       "<div><table>"+ztImmer("Betreiber (Vertreter)", d.vertreter||"")+"<tr><td class='k'>Unterschrift</td><td style='height:48px'>&nbsp;</td></tr><tr><td class='k'>Datum</td><td>&nbsp;</td></tr></table></div>"+
     "</div></div>"+
-    "<div class='fuss'>Inbetriebnahmeprotokoll "+esc(a.nummer||"")+" · Projekt "+esc(p.nummer||"")+(a.unterschrieben ? "" : " · ENTWURF – nicht unterschrieben")+
-      korr.map(function(k){ return "<br>Korrigiert am "+esc(tagFmt(k.zeit))+" von "+esc(k.von||"")+": „"+esc(k.grund||"")+"“"; }).join("")+"</div>";
+    /* Kleingedrucktes (Protokollnummer, Projekt, „Korrigiert am …“) nicht mehr im PDF (Inhaber 19.10.2026: „die Hinweise vom
+       Kleingedruckten kannst du auch weglassen“) – die Korrekturen bleiben in der App nachvollziehbar. Ein Entwurf bleibt als solcher markiert. */
+    (a.unterschrieben ? "" : "<div class='fuss'>ENTWURF – nicht unterschrieben</div>");
 }
 function ibnDateiname(p, a){
   var anl=ibnAnlagen(a.daten||{});
-  return ("Inbetriebnahmeprotokoll_"+(p.nummer||"")+"_Nr"+(a.nummer||"")+"_"+(anl.length>1 ? anl.length+"-Anlagen" : String(ibnAnlageKurz(anl[0])).slice(0, 40))+"_"+String(dfmt(a.datum)).replace(/\./g,"-")+((a.korrekturen||[]).length ? "_Korrektur-"+a.korrekturen.length : "")+".pdf")
+  return ("Inbetriebnahmeprotokoll_"+projektOrtFuerDatei(p)+"_"+(anl.length>1 ? anl.length+"-Anlagen" : String(ibnAnlageKurz(anl[0])).slice(0, 40))+"_"+String(dfmt(a.datum)).replace(/\./g,"-")+".pdf")
     .replace(/[\\\/:*?"<>|]+/g,"").replace(/\s+/g,"-");
 }
 /* Fotos eingebettet im Blatt, PDF-Unterlagen hinten angehängt (wie anPdfErzeugen) */
@@ -34791,7 +34797,7 @@ function projektDateienKarte(p, buero, schreiben, neuZeichnen){
     Store.sb.storage.from("projektdateien").createSignedUrl(x.pfad, 600).then(function(r){
       var u=r && r.data && r.data.signedUrl;
       if(!u){ toast("Datei nicht abrufbar"+(r&&r.error?" ("+r.error.message+")":"")+"."); return; }
-      if(/\.pdf$/i.test(x.name||"")) pdfAnsicht(u, x.name); else if(dateiIstBild(x)) bildAnsicht(u, x.name); else window.open(u, "_blank", "noopener");
+      if(/\.pdf$/i.test(x.name||"")) pdfAnsicht(u, x.name); else if(dateiIstBild(x)) bildAnsicht(u, x.name); else window.open(speicherDownloadUrl(u, x.name), "_blank", "noopener");
     });
   };
   var passt=function(x){
@@ -35129,8 +35135,14 @@ function projektDateiOeffnen(pfad, name){
   Store.sb.storage.from("projektdateien").createSignedUrl(pfad, 600).then(function(r){
     var u=r && r.data && r.data.signedUrl;
     if(!u){ toast("Datei nicht abrufbar"+(r&&r.error?" ("+r.error.message+")":"")+"."); return; }
-    if(/\.pdf$/i.test(name||pfad)) pdfAnsicht(u, name); else window.open(u, "_blank", "noopener");
+    if(/\.pdf$/i.test(name||pfad)) pdfAnsicht(u, name); else window.open(speicherDownloadUrl(u, name), "_blank", "noopener");
   });
+}
+/* Herunterladen unter dem lesbaren Namen (Inhaber 19.10.2026: „protokoll-mv7wncva-…“ → „Bestätigung KAV-Mattighofen-14.10.2026.pdf“):
+   signierte Speicher-Links von Supabase liefern mit ?download=<Name> die Datei unter genau diesem Namen aus */
+function speicherDownloadUrl(u, name){
+  if(!u || !name || !/\/storage\/v1\/object\/sign\//.test(u)) return u;
+  return u+(u.indexOf("?")<0 ? "?" : "&")+"download="+encodeURIComponent(name);
 }
 /* Dialog: Quellen einer Stelle wählen – vorhandene Projektdateien anhaken
    und/oder neue hochladen. fertig(neueQuellen) */

@@ -6179,7 +6179,7 @@ test("Inbetriebnahmeprotokoll: aus der Anlage vorbelegt, Füllmenge und CO₂e g
     /* PDF in den Projektdateien, Inbetriebnahme an der Anlage */
     await A.bis(() => z.pdf_pfad, 8000);
     const pr = db.projekte.find((p) => p.id === "pan1");
-    e.pdf = ((pr.daten || {}).dateien || []).filter((f) => /^Inbetriebnahmeprotokoll_P-TEST-AN_Nr1_/.test(f.name)).map((f) => f.art + ":" + f.name).join("|");
+    e.pdf = ((pr.daten || {}).dateien || []).filter((f) => /^Inbetriebnahmeprotokoll_/.test(f.name)).map((f) => f.art + ":" + f.name).join("|");
     await A.bis(() => ((db.stammdaten.find((q) => q.id === "position:NPibn2") || {}).felder || {}).inbetriebnahme, 4000);
     const an = (db.stammdaten.find((q) => q.id === "position:NPibn1") || {}).felder || {}, an2 = (db.stammdaten.find((q) => q.id === "position:NPibn2") || {}).felder || {};
     e.anlage = an.inbetriebnahme + "|" + an.kaeltemittelKg + "|" + an2.inbetriebnahme + "|" + an2.kaeltemittelKg;
@@ -6188,7 +6188,7 @@ test("Inbetriebnahmeprotokoll: aus der Anlage vorbelegt, Füllmenge und CO₂e g
     e.liste = (document.querySelector('[data-ibn="' + z.id + '"]') || {}).textContent;
     /* Blatt: Füllmengen, CO₂e, Kreuze */
     const html = x("ibnBlattHtml")(pr, z);
-    const muster = [/INBETRIEBNAHMEPROTOKOLL KÄLTEANLAGE/, /16,3 kg/, /34,03 t CO₂e/, /Gefälle fehlt/, /Kühlen 22 °C · Nachtabsenkung 22:00–06:00/,
+    const muster = [/INBETRIEBNAHMEPROTOKOLL KÄLTEANLAGE/, /16,3 kg/, /34,03 t CO₂e/, /Gefälle fehlt/, /Kühlen 22 °C · Nachtabsenkung \/ Flüsterbetrieb \(Schall\) 22:00–06:00/,
       /Automatik: Heizen 18–25 °C, Kühlen 17–24 °C, auf Kühlen ab 24 °C, auf Heizen ab 17 °C/,
       /siehe Abnahmeprotokoll des Auftraggebers – Endabnahme Lidl vom 24.09.2026/, /FXFQ63/, /Verordnung \(EU\) 2024\/573/,
       /Anlage 1 von 2: VRV Verkauf/, /Anlage 2 von 2: Split Backshop/, /Rohrlänge<\/td><td>18 m/, /4,05 t CO₂e/, /KÄLTEANLAGEN/, /<h2>Fotos<\/h2>/, /VRV 2 – Typenschild/, /Zertifikat Betrieb \(F-Gase\)<\/td><td>AT-UNT-TEST-250/, /G14-TEST-1/];
@@ -6209,11 +6209,11 @@ test("Inbetriebnahmeprotokoll: aus der Anlage vorbelegt, Füllmenge und CO₂e g
   pruefe(r.zert === "AT-UNT-TEST-250|G14-TEST-1", "Zertifikate nicht vorbelegt: " + r.zert);
   pruefe(/^IBN_P-TEST-AN_\d{4}-\d\d-\d\d_1\.jpg$/.test(r.foto) && r.fotoZusammen && /^IBN_P-TEST-AN_[\d-]+_1\.jpg:VRV 2 – Typenschild:false$/.test(r.anhaenge), "Foto: " + JSON.stringify([r.foto, r.fotoZusammen, r.anhaenge]));
   pruefe(/^VRV Verkauf/.test(r.messChips) && /1 Anlage noch ohne Angaben/.test(r.fehlenHinweis) && r.regelungBloecke === 2, "Messwerte je Anlage / Regelung je Anlage: " + JSON.stringify([r.messChips, r.fehlenHinweis, r.regelungBloecke]));
-  pruefe(/1 Mangel/.test(r.zusammen) && /nichts offen/.test(r.zusammen) && /Nachtabsenkung 22:00–06:00/.test(r.zusammen), "Zusammenfassung: " + r.zusammen);
+  pruefe(/1 Mangel/.test(r.zusammen) && /nichts offen/.test(r.zusammen) && /Nachtabsenkung \/ Flüsterbetrieb \(Schall\) 22:00–06:00/.test(r.zusammen), "Zusammenfassung: " + r.zusammen);
   pruefe(r.dokuAntworten === "erl,offen,nz" && r.zeitVorher === true && r.zeitNachher === false && r.uebergabePunkte === 4 && r.keineAbnahmeWahl, "Checkliste/Übergabe nach der Vorlage: " + JSON.stringify([r.dokuAntworten, r.zeitVorher, r.zeitNachher, r.uebergabePunkte, r.keineAbnahmeWahl]));
   pruefe(r.nachtragen === true && r.nachtragenKg === true && r.ohneUnterschrift >= 1, "Nachtragen/Unterschrift-Pflicht: " + JSON.stringify([r.nachtragen, r.nachtragenKg, r.ohneUnterschrift]));
-  pruefe(r.gespeichert === "1|Testtechniker|true|NPibn1|u_tech_test_at|Kühlen 22 °C · Nachtabsenkung 22:00–06:00|mangel" && r.co2Gespeichert === "34.03|4.05|NPibn1,NPibn2", "Gespeichert: " + r.gespeichert + " / " + r.co2Gespeichert);
-  pruefe(/^protokoll:Inbetriebnahmeprotokoll_P-TEST-AN_Nr1_2-Anlagen/.test(r.pdf), "PDF nicht in den Projektdateien: " + r.pdf);
+  pruefe(r.gespeichert === "1|Testtechniker|true|NPibn1|u_tech_test_at|Kühlen 22 °C · Nachtabsenkung / Flüsterbetrieb (Schall) 22:00–06:00|mangel" && r.co2Gespeichert === "34.03|4.05|NPibn1,NPibn2", "Gespeichert: " + r.gespeichert + " / " + r.co2Gespeichert);
+  pruefe(/^protokoll:Inbetriebnahmeprotokoll_[^_]+_2-Anlagen_\d\d-\d\d-\d{4}\.pdf$/.test(r.pdf) && !/P-TEST|_Nr\d/.test(r.pdf), "PDF nicht in den Projektdateien: " + r.pdf);
   pruefe(/^(\d{4}-\d\d-\d\d)\|16\.3\|\1\|6$/.test(r.anlage), "Inbetriebnahme/Füllmenge nicht an beiden Anlagen: " + r.anlage);
   pruefe(/unterschrieben/.test(r.liste) && /2 Anlagen: VRV Verkauf/.test(r.liste), "Liste: " + r.liste);
   pruefe(r.blatt, "Blatt unvollständig: " + JSON.stringify(r.blattFehlt));
@@ -8826,7 +8826,7 @@ test("Arbeitsnachweis: Monteur erstellt aus Stunden und Kalender, unterschreibt 
     e.an = { monteur: an.monteur, von: an.erstellt_von, unterschrieben: !!an.unterschrieben, sig: /^data:image\/png/.test(an.unterschrift || ""), nummer: an.nummer, pdf: an.pdf_pfad || "",
       summe: x("anSumme")(an), arbeiten: (an.daten || {}).arbeiten, beendet: (an.daten || {}).beendet };
     const pr = db.projekte.filter((p) => p.id === "pan1")[0];
-    e.datei = ((pr.daten || {}).dateien || []).filter((f) => f.art === "protokoll" && /^Arbeitsnachweis_P-TEST-AN_Nr1/.test(f.name)).length;
+    e.datei = ((pr.daten || {}).dateien || []).filter((f) => f.art === "protokoll" && /^Arbeitsnachweis_/.test(f.name)).length;
     /* das PDF-Blatt: Kopf mit Logo und Firmenangaben, Zeilen mit Stunden, Feld für den Auftraggebervertreter */
     const blatt = x("anBlattHtml")(pr, an);
     { const L = window.PDFLib, mitA = await L.PDFDocument.load(await (await x("anPdfErzeugen")(pr, an)).arrayBuffer()),

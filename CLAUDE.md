@@ -399,6 +399,11 @@ Kammerlander Umwelt- und Klimatechnik (UKT) – oft kurz, vom Handy, im Feld.
   78,81“ → „Regiestundensatz für Techniker … 106,50“; Vermerk „Text und Preis wie KPlus-Rechnung N“. **Beleg aus Vorlage** (`belegVorlageWaehlen`, Karte „+ aus Vorlage“): Angebot/Rechnung
   eines anderen Projekts (auch KPlus) mit Suche; Positionen und Preise kopiert, Bezüge (Nachweise, Anhänge, Leistungszeitraum, Bestellung, Gelerntes) nicht; `kopf.vorlage` nennt die Quelle.
   `kopf.bestellung` aus dem Betreff ohne „, IAN …“. Test „Projektrechnung aus KPlus wie Mattighofen …“.
+- **Protokoll-Namen und Downloads** (Inhaber 19.10.2026): Dateiname `Inbetriebnahmeprotokoll_<Ort>_<n>-Anlagen_<TT-MM-JJJJ>.pdf` bzw.
+  `Arbeitsnachweis_<Ort>_<TT-MM-JJJJ>.pdf` (`projektOrtFuerDatei`: Ort des Standorts, sonst Projektnummer) – ohne Projektnummer, „Nr“, „Korrektur“;
+  eine Korrektur heißt gleich und steht als neuerer Stand da. Im IBN-PDF keine Protokollnr./Projektnummer in der Kopfzeile und kein
+  Kleingedrucktes (Korrekturvermerk) – nur „ENTWURF – nicht unterschrieben“ bleibt. „Nachtabsenkung / Flüsterbetrieb (Schall)“ heißt im PDF so
+  wie im Formular. Herunterladen unter dem lesbaren Namen: `speicherDownloadUrl` hängt ?download=<Name> an signierte Speicher-Links.
 - **Inbetriebnahmeprotokoll Kälteanlage** (Inhaber 12.10.2026, Tabelle `inbetriebnahmen`, tools/inbetriebnahmen.sql – gleiche Regeln und Trigger wie die
   Arbeitsnachweise; im SQL-Editor ohne Konto bleiben mitgegebene `erstellt_von`/`monteur` stehen, damit das Büro einem Monteur einen Entwurf anlegen kann):
   nach dem Muster „Inbetriebnahmeprotokoll Kälteanlage“ (KlimaCraft), mit den Anmerkungen des Inhabers auf der Vorlage. „Auftrag“ = Bestell-/Auftragsnummer des
