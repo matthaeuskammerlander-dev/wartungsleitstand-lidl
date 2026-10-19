@@ -399,6 +399,13 @@ Kammerlander Umwelt- und Klimatechnik (UKT) – oft kurz, vom Handy, im Feld.
   78,81“ → „Regiestundensatz für Techniker … 106,50“; Vermerk „Text und Preis wie KPlus-Rechnung N“. **Beleg aus Vorlage** (`belegVorlageWaehlen`, Karte „+ aus Vorlage“): Angebot/Rechnung
   eines anderen Projekts (auch KPlus) mit Suche; Positionen und Preise kopiert, Bezüge (Nachweise, Anhänge, Leistungszeitraum, Bestellung, Gelerntes) nicht; `kopf.vorlage` nennt die Quelle.
   `kopf.bestellung` aus dem Betreff ohne „, IAN …“. Test „Projektrechnung aus KPlus wie Mattighofen …“.
+- **Mappen zum Versenden** (Inhaber 19.10.2026: „alles in einen Unterordner im Projekt, was wir für die Einreichung der Unterlagen brauchen –
+  als ZIP downloaden und an Lidl senden“): `daten.mappen` [{id, name, dateien:[Pfad], angelegt, von}] – nur Verweise auf Projektdateien, nie
+  buero/ (`mappeDateien` filtert; die Mappe sehen alle). Kasten „📦 Mappen zum Versenden“ oben in der Dateien-Karte (`mappenKasten`: Anzahl,
+  „Inhalt zeigen“, „⬇ Als ZIP“, ✎), „+ Mappe“ → `mappeEditor` (Name, Vorgabe „Unterlagen für Lidl“; Dateien anhaken, ältere Stände gekennzeichnet,
+  „alle neuesten anhaken“; entfernen mit Rückfrage – Dateien bleiben). ZIP ohne Bibliothek (`zipErstellen`: ungepackt, CRC-32 `zipCrc`, UTF-8-Namen,
+  gleiche Namen „ (2)“), Name `mappeZipName` „<Mappe> – <Ort>.zip“, `mappeHerunterladen` holt die Dateien aus dem Speicher (nicht abrufbare werden
+  genannt). Gelöschte Dateien fallen heraus (`dateiVerweiseErsetzen`), umgelegte behalten ihren Platz. Test „Mappe zum Versenden …“.
 - **Protokoll-Namen und Downloads** (Inhaber 19.10.2026): Dateiname `Inbetriebnahmeprotokoll_<Ort>_<n>-Anlagen_<TT-MM-JJJJ>.pdf` bzw.
   `Arbeitsnachweis_<Ort>_<TT-MM-JJJJ>.pdf` (`projektOrtFuerDatei`: Ort des Standorts, sonst Projektnummer) – ohne Projektnummer, „Nr“, „Korrektur“;
   eine Korrektur heißt gleich und steht als neuerer Stand da. Im IBN-PDF keine Protokollnr./Projektnummer in der Kopfzeile und kein

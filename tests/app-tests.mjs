@@ -6311,6 +6311,62 @@ test("Projekt-Stand als Reiter (Inhaber 16.10.2026): ein Tipp zeigt Angaben und 
   }
 });
 
+test("Mappe zum Versenden (Inhaber 19.10.2026): Dateien anhaken, als ZIP herunterladen; Preis-Dateien nie, gelöschte fallen heraus", async () => {
+  const a = await oeffnen(KONTEN.inhaber);
+  const r = await a.seite.evaluate(async () => {
+    const x = window.__t.x, db = window.__db.tabellen, sb = x("Store.sb"), e = {}, w = (ms) => new Promise((f) => setTimeout(f, ms));
+    const bis = async (bed, ms) => { const t = Date.now() + (ms || 5000); for (;;) { let ok = false; try { ok = bed(); } catch (err) {} if (ok || Date.now() > t) return ok; await w(50); } };
+    const jetzt = new Date().toISOString();
+    const dateien = [["tmp_mp/plan-a-Schema.pdf", "Anlagenschema Fil. 1.pdf", "plan", "%PDF-1.4 Schema"], ["tmp_mp/dokument-b-TB.pdf", "Technische Beschreibung.pdf", "dokument", "%PDF-1.4 TB äöü"],
+      ["tmp_mp/protokoll-c-KAV.pdf", "Bestätigung KAV.pdf", "protokoll", "%PDF-1.4 KAV"], ["buero/tmp_mp/preise-d-P.pdf", "Preise.pdf", "preise", "%PDF-1.4 Preise"]];
+    for (const d of dateien) await sb.storage.from("projektdateien").upload(d[0], new Blob([d[3]], { type: "application/pdf" }));
+    db.projekte.push({ id: "tmp_mp", nummer: "P-2026-904", titel: "Mappe Test", kunde_id: "lidl", status: "inbetriebnahme", verlauf: [], erstellt: jetzt, geaendert: jetzt,
+      daten: { dateien: dateien.map((d) => ({ pfad: d[0], name: d[1], art: d[2], von: "T", zeit: jetzt })) } });
+    await x("projekteLaden()");
+    const p = () => x("PROJEKTE.filter(function(q){ return q.id==='tmp_mp'; })[0]");
+    const karte = () => x("projektDateienKarte(PROJEKTE.filter(function(q){ return q.id==='tmp_mp'; })[0], true, true, function(){})");
+    e.leerNeu = !!karte().querySelector("[data-mappeneu]");
+    x("mappeEditor(PROJEKTE.filter(function(q){ return q.id==='tmp_mp'; })[0], null, function(){})");
+    await bis(() => document.querySelector("[data-mappeliste]"));
+    e.liste = [...document.querySelectorAll("[data-mappepfad]")].map((c) => c.dataset.mappepfad);
+    document.querySelector("[data-mappealle]").click();
+    const ok = [...document.querySelectorAll(".as-fuss .btn")].find((b) => b.textContent === "Speichern"); ok.click();
+    await bis(() => (p().daten.mappen || []).length === 1);
+    const m = p().daten.mappen[0]; e.name = m.name; e.anzahl = m.dateien.length;
+    e.kasten = karte().querySelector("[data-mappen]").textContent;
+    /* ZIP abfangen und lesen */
+    let blob = null; const alt = URL.createObjectURL; URL.createObjectURL = (b) => { blob = b; return alt.call(URL, b); };
+    e.zipZahl = await x("mappeHerunterladen(PROJEKTE.filter(function(q){ return q.id==='tmp_mp'; })[0], PROJEKTE.filter(function(q){ return q.id==='tmp_mp'; })[0].daten.mappen[0], null)");
+    URL.createObjectURL = alt;
+    const u8 = new Uint8Array(await blob.arrayBuffer()), dv = new DataView(u8.buffer), dec = new TextDecoder();
+    e.typ = blob.type; e.sig = dv.getUint32(0, true).toString(16);
+    const ende = u8.length - 22; e.endeSig = dv.getUint32(ende, true).toString(16); e.eintraege = dv.getUint16(ende + 10, true);
+    let o = dv.getUint32(ende + 16, true); e.namen = []; e.crcOk = true;
+    for (let i = 0; i < e.eintraege; i++) {
+      const nl = dv.getUint16(o + 28, true), crc = dv.getUint32(o + 16, true), lok = dv.getUint32(o + 42, true), gr = dv.getUint32(o + 20, true);
+      e.namen.push(dec.decode(u8.slice(o + 46, o + 46 + nl)));
+      const lnl = dv.getUint16(lok + 26, true), daten = u8.slice(lok + 30 + lnl, lok + 30 + lnl + gr);
+      if (x("zipCrc")(daten) !== crc) e.crcOk = false;
+      if (i === 1) e.inhalt = dec.decode(daten);
+      o += 46 + nl;
+    }
+    e.zipName = x("mappeZipName(PROJEKTE.filter(function(q){ return q.id==='tmp_mp'; })[0], PROJEKTE.filter(function(q){ return q.id==='tmp_mp'; })[0].daten.mappen[0])");
+    /* Datei löschen → fällt aus der Mappe */
+    x("ansichtenSchliessen()");
+    window.confirm = () => true;
+    await x("dateiLoeschen(PROJEKTE.filter(function(q){ return q.id==='tmp_mp'; })[0], PROJEKTE.filter(function(q){ return q.id==='tmp_mp'; })[0].daten.dateien[0])");
+    e.nachLoeschen = x("mappeDateien(PROJEKTE.filter(function(q){ return q.id==='tmp_mp'; })[0], PROJEKTE.filter(function(q){ return q.id==='tmp_mp'; })[0].daten.mappen[0]).length");
+    db.projekte = db.projekte.filter((q) => q.id !== "tmp_mp");
+    return e;
+  });
+  pruefe(r.leerNeu && r.liste.length === 3 && !r.liste.some((q) => /^buero\//.test(q)), "Mappe: Auswahl ohne Preis-Datei: " + JSON.stringify(r.liste));
+  pruefe(r.name === "Unterlagen für Lidl" && r.anzahl === 3 && /Unterlagen für Lidl/.test(r.kasten) && /3 Dateien/.test(r.kasten), "Mappe gespeichert/angezeigt: " + JSON.stringify([r.name, r.anzahl, r.kasten]));
+  pruefe(r.zipZahl === 3 && r.typ === "application/zip" && r.sig === "4034b50" && r.endeSig === "6054b50" && r.eintraege === 3 && r.crcOk, "ZIP-Aufbau: " + JSON.stringify(r));
+  pruefe(r.namen.includes("Technische Beschreibung.pdf") && r.namen.includes("Bestätigung KAV.pdf") && r.inhalt && /%PDF/.test(r.inhalt) && /\.zip$/.test(r.zipName) && /Unterlagen für Lidl/.test(r.zipName), "ZIP-Inhalt/Name: " + JSON.stringify([r.namen, r.inhalt, r.zipName]));
+  pruefe(r.nachLoeschen === 2, "gelöschte Datei bleibt in der Mappe: " + r.nachLoeschen);
+  await a.zu();
+});
+
 test("Dateiart „Preise / Kalkulation“ (Inhaber 16.10.2026): nur der Inhaber wählt sie, abgelegt unter buero/, andere sehen die Datei nicht", async () => {
   const a = await oeffnen(KONTEN.inhaber);
   const r = await a.seite.evaluate(async () => {

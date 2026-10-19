@@ -27869,7 +27869,7 @@ Object.assign(RUNDGAENGE, {
         "Projekttermine erscheinen im Kalender – ohne eigenen Kalendereintrag und ohne Nachricht; Aufgaben und „Einplanen“ dagegen mit Nachricht an die Eingetragenen."])},
     {titel:"Baustellenbuch, Dateien, PDF", text:RG_LISTE([
       "<strong>Baustellenbuch</strong>: Datum, Art, Beschreibung, Menge – orange, was für die Rechnung zählt (Zusatzleistung, Kran, Material, Wochenende, Erschwernis …). Mengen, keine Preise.",
-      "<strong>Dateien</strong>: Art wird erkannt; <strong>Pläne finden</strong>: Suchfeld (z. B. „dach klima“), Knöpfe für Art, Geschoss (UG/EG/OG/DG/Dach) und Gewerk – erkannt aus Name, Ordner und PDF-Titel, je Datei mit ✎ änderbar (dazu ein lesbarer Name, die Art, beim Inhaber „🔒 Nur für den Inhaber“ und „🗑 Datei löschen“ mit Rückfrage); PDFs mit Beträgen in € erkennt die App beim Hochladen: sie bleiben für alle sichtbar, der Inhaber sieht den Hinweis „💶 enthält Preisangaben“ und stellt sie bei Bedarf mit ✎ auf „nur für den Inhaber“; 📌 heftet wichtige Pläne oben an; mehrere Stände desselben Plans stehen beisammen (der neueste oben). Oben im Projekt springt die Leiste zu jedem Abschnitt. „Ganzen Ordner hochladen“ überspringt Gleichnamiges; doppelte Dateien erkennt die App am Inhalt (auch „Plan (1).pdf“ oder eine Kopie unter anderem Namen) und lädt sie nicht nochmals hoch; höchstens 50 MB je Datei (Größeres wird ausgelassen, der Rest hochgeladen).",
+      "<strong>Dateien</strong>: Art wird erkannt; <strong>Pläne finden</strong>: Suchfeld (z. B. „dach klima“), Knöpfe für Art, Geschoss (UG/EG/OG/DG/Dach) und Gewerk – erkannt aus Name, Ordner und PDF-Titel, je Datei mit ✎ änderbar (dazu ein lesbarer Name, die Art, beim Inhaber „🔒 Nur für den Inhaber“ und „🗑 Datei löschen“ mit Rückfrage); PDFs mit Beträgen in € erkennt die App beim Hochladen: sie bleiben für alle sichtbar, der Inhaber sieht den Hinweis „💶 enthält Preisangaben“ und stellt sie bei Bedarf mit ✎ auf „nur für den Inhaber“; 📌 heftet wichtige Pläne oben an; mehrere Stände desselben Plans stehen beisammen (der neueste oben). Oben im Projekt springt die Leiste zu jedem Abschnitt. „Ganzen Ordner hochladen“ überspringt Gleichnamiges; doppelte Dateien erkennt die App am Inhalt (auch „Plan (1).pdf“ oder eine Kopie unter anderem Namen) und lädt sie nicht nochmals hoch; höchstens 50 MB je Datei (Größeres wird ausgelassen, der Rest hochgeladen). <strong>📦 Mappen zum Versenden</strong>: „+ Mappe“ (z. B. „Unterlagen für Lidl“), Dateien anhaken, „⬇ Als ZIP“ lädt alle auf einmal herunter – zum Weitersenden; Dateien nur für den Inhaber kommen nie hinein.",
       "<strong>Stunden</strong> auf das Projekt, <strong>Tagebuch</strong>, <strong>Nachrichten</strong>.",
       "<strong>Zusammenfassung (PDF)</strong>: Eckdaten, Angaben mit Quellen, Listen, Baustellenbuch, Dateiliste, Tagebuch – „Ablegen“ für die Synology."])+
       RG_HG(["Angebot und Rechnung als Dateiart (unter „buero/“) nur für den Inhaber – ebenso eine Mail (.eml), die ein Angebot/eine Rechnung als Anhang oder einen Preis im Text enthält (z. B. „4.800 € netto“; bei der Datei steht dann „enthält Preise“, andere legen sie nicht ab); auf der Synology nur im Büro-Ordner, nie im Projektordner, den Techniker sehen.",
@@ -34757,6 +34757,144 @@ function dateiBeschreiben(p, x, m, fertig){
   };
   v.fuss.appendChild(ab); v.fuss.appendChild(ok);
 }
+/* ---------- Mappen zum Versenden (Inhaber 19.10.2026: „gib dann alles in einen Unterordner im Projekt, was wir für die
+   Einreichung der Unterlagen brauchen. Den soll man dann als ZIP downloaden können und an Lidl senden“) ----------
+   daten.mappen = [{id, name, dateien:[Pfad …], angelegt, von}] – nur Verweise, die Datei liegt einmal im Projekt. Dateien unter
+   buero/ (Preise) kommen nie hinein: die Mappe sehen alle. Gelöschte Dateien fallen von selbst heraus (dateiVerweiseErsetzen macht
+   den Pfad zum Namen), umgelegte behalten ihren Platz. ZIP ohne Zusatzbibliothek: Dateien ungepackt (PDFs und Fotos sind schon
+   gepackt), Prüfsumme CRC-32 selbst gerechnet, Namen in UTF-8. */
+var ZIP_CRC=null;
+function zipCrc(b){
+  if(!ZIP_CRC){ ZIP_CRC=new Uint32Array(256); for(var n=0;n<256;n++){ var c=n; for(var k=0;k<8;k++) c=c&1 ? 0xEDB88320^(c>>>1) : c>>>1; ZIP_CRC[n]=c>>>0; } }
+  var crc=0xFFFFFFFF; for(var i=0;i<b.length;i++) crc=ZIP_CRC[(crc^b[i])&255]^(crc>>>8);
+  return (crc^0xFFFFFFFF)>>>0;
+}
+/* dateien: [{name, daten (Uint8Array), zeit (Date)}] → Blob; gleiche Namen bekommen „ (2)“ */
+function zipErstellen(dateien){
+  var enc=new TextEncoder(), teile=[], zentral=[], ort=0, schon={};
+  dateien.forEach(function(f){
+    var name=String(f.name||"Datei").replace(/[\\/:*?"<>|]/g,"_"), basis=name, n=2;
+    while(schon[name.toLowerCase()]){ name=basis.replace(/(\.[^.]*)?$/, function(e){ return " ("+n+")"+(e||""); }); n++; }
+    schon[name.toLowerCase()]=1;
+    var nb=enc.encode(name), d=f.daten, crc=zipCrc(d), z=f.zeit instanceof Date && !isNaN(f.zeit) ? f.zeit : new Date();
+    var zt=(z.getHours()<<11)|(z.getMinutes()<<5)|(z.getSeconds()>>1), dt=((Math.max(1980, z.getFullYear())-1980)<<9)|((z.getMonth()+1)<<5)|z.getDate();
+    var k=new DataView(new ArrayBuffer(30));
+    k.setUint32(0, 0x04034b50, true); k.setUint16(4, 20, true); k.setUint16(6, 0x0800, true); k.setUint16(10, zt, true); k.setUint16(12, dt, true);
+    k.setUint32(14, crc, true); k.setUint32(18, d.length, true); k.setUint32(22, d.length, true); k.setUint16(26, nb.length, true);
+    teile.push(k.buffer, nb, d);
+    var c=new DataView(new ArrayBuffer(46));
+    c.setUint32(0, 0x02014b50, true); c.setUint16(4, 20, true); c.setUint16(6, 20, true); c.setUint16(8, 0x0800, true); c.setUint16(12, zt, true); c.setUint16(14, dt, true);
+    c.setUint32(16, crc, true); c.setUint32(20, d.length, true); c.setUint32(24, d.length, true); c.setUint16(28, nb.length, true); c.setUint32(42, ort, true);
+    zentral.push(c.buffer, nb);
+    ort+=30+nb.length+d.length;
+  });
+  var groesse=zentral.reduce(function(s, t){ return s+t.byteLength; }, 0), e=new DataView(new ArrayBuffer(22));
+  e.setUint32(0, 0x06054b50, true); e.setUint16(8, dateien.length, true); e.setUint16(10, dateien.length, true); e.setUint32(12, groesse, true); e.setUint32(16, ort, true);
+  return new Blob(teile.concat(zentral, [e.buffer]), {type:"application/zip"});
+}
+function projektMappen(p){ return ((p && p.daten)||{}).mappen||[]; }
+function mappeDateien(p, m){
+  var alle=((p && p.daten)||{}).dateien||[];
+  return (m.dateien||[]).map(function(pf){ return typeof pf==="string" ? alle.filter(function(x){ return x.pfad===pf && !dateiImBuero(x); })[0] : null; }).filter(Boolean);
+}
+function mappeZipName(p, m){ return ((m.name||"Mappe")+" – "+projektOrtFuerDatei(p)).replace(/[\\/:*?"<>|]/g,"").replace(/\s+/g," ").trim()+".zip"; }
+function mappeHerunterladen(p, m, knopf){
+  var liste=mappeDateien(p, m);
+  if(!liste.length){ toast("Die Mappe „"+m.name+"“ ist leer."); return Promise.resolve(); }
+  if(!Store.sb){ toast("ZIP geht nur mit Verbindung zum Speicher."); return Promise.resolve(); }
+  var text=knopf ? knopf.textContent : "", n=0, fehlt=[], eimer=Store.sb.storage.from("projektdateien");
+  if(knopf) knopf.disabled=true;
+  return liste.reduce(function(k, x){ return k.then(function(erg){
+    n++; if(knopf) knopf.textContent="wird gepackt … "+n+" von "+liste.length;
+    return eimer.download(x.pfad).then(function(r){
+      if(r.error || !r.data){ fehlt.push(x.name); return erg; }
+      return r.data.arrayBuffer().then(function(b){ erg.push({name:x.name, daten:new Uint8Array(b), zeit:x.zeit ? new Date(x.zeit) : new Date()}); return erg; });
+    }, function(){ fehlt.push(x.name); return erg; });
+  }); }, Promise.resolve([])).then(function(erg){
+    if(!erg.length) throw new Error("keine Datei abrufbar");
+    var url=URL.createObjectURL(zipErstellen(erg)), a=document.createElement("a");
+    a.href=url; a.download=mappeZipName(p, m); a.rel="noopener";
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    setTimeout(function(){ URL.revokeObjectURL(url); }, 60000);
+    toast(fehlt.length ? "ZIP erstellt – "+fehlt.length+" Datei"+(fehlt.length===1?"":"en")+" nicht abrufbar: "+fehlt.join(", ") : "✓ ZIP mit "+erg.length+" Dateien erstellt.");
+    return erg.length;
+  }).catch(function(e){ toast("ZIP nicht erstellt: "+technikDeutsch((e && e.message)||String(e))); })
+    .then(function(z){ if(knopf){ knopf.disabled=false; knopf.textContent=text; } return z; });
+}
+/* Mappe anlegen bzw. bearbeiten: Name und Dateien anhaken (ältere Stände eines Plans sind gekennzeichnet) */
+function mappeEditor(p, m, fertig){
+  if(nurLesen()){ nurAnsehenAbweisen(); return; }
+  var v=ansichtOeffnen(m ? "Mappe bearbeiten" : "Neue Mappe");
+  v.schritt.textContent=p.nummer+" · "+(p.titel||"");
+  var alle=(((p.daten||{}).dateien)||[]).filter(function(x){ return !dateiImBuero(x); }).slice().reverse();
+  var drin={}; (m ? m.dateien||[] : []).forEach(function(pf){ if(typeof pf==="string") drin[pf]=1; });
+  /* je Grundname der neueste Stand vorne; ältere tragen den Vermerk */
+  var neuester={}; alle.forEach(function(x){ var b=dateiMerkmale(x).basis; if(!b) return; if(!neuester[b] || String(x.zeit||"")>String(neuester[b].zeit||"")) neuester[b]=x; });
+  var artName=function(a){ return (PROJEKT_DATEIARTEN.filter(function(y){ return y[0]===a; })[0]||[a,a])[1]; };
+  var box=el('<div class="stack">'+
+    '<label class="fl"><span>Name der Mappe</span><input type="text" data-mappename maxlength="80" value="'+esc(m ? m.name : "Unterlagen für Lidl")+'"></label>'+
+    '<div class="muted" style="font-size:12.5px">Anhaken, was in die Mappe gehört. Die Dateien bleiben im Projekt – die Mappe merkt sich nur die Auswahl und lädt sie als ZIP herunter. Dateien nur für den Inhaber (Preise) kommen nie hinein.</div>'+
+    '<div class="rowflex" style="gap:6px;flex-wrap:wrap"><button class="btn ghost sm" type="button" data-mappealle>alle neuesten anhaken</button><button class="btn ghost sm" type="button" data-mappekeine>keine</button></div>'+
+    '<div class="stack" data-mappeliste style="gap:4px"></div>'+
+    (m ? '<div><button class="btn ghost sm" type="button" data-mappeweg style="color:var(--crit);border-color:var(--crit)">🗑 Mappe entfernen</button></div>' : "")+"</div>");
+  var liste=box.querySelector("[data-mappeliste]");
+  if(!alle.length) liste.appendChild(el('<div class="muted" style="font-size:12.5px">Noch keine Dateien im Projekt.</div>'));
+  alle.forEach(function(x){
+    var b=dateiMerkmale(x).basis, alt=b && neuester[b] && neuester[b]!==x;
+    liste.appendChild(el('<label class="chk" style="font-size:13px"><input type="checkbox" data-mappepfad="'+esc(x.pfad)+'"'+(drin[x.pfad]?" checked":"")+(alt?' data-mappealt="1"':"")+'><span>'+esc(x.titel||x.name)+
+      ' <span class="muted" style="font-size:12px">· '+esc(artName(x.art))+" · "+esc(dfmt(tagLokal(x.zeit)))+(alt?" · älterer Stand":"")+"</span></span></label>"));
+  });
+  box.querySelector("[data-mappealle]").onclick=function(){ liste.querySelectorAll("[data-mappepfad]").forEach(function(c){ if(!c.dataset.mappealt) c.checked=true; }); };
+  box.querySelector("[data-mappekeine]").onclick=function(){ liste.querySelectorAll("[data-mappepfad]").forEach(function(c){ c.checked=false; }); };
+  v.inhalt.appendChild(box);
+  var speichern=function(aendern, text){
+    return projektAendern(p, aendern, text).then(function(){ toast(demo() ? "Präsentation: nur angezeigt, nicht gespeichert." : "✓ "+text+"."); v.zu(); if(fertig) fertig(); },
+      function(e){ toast("Nicht gespeichert: "+technikDeutsch((e && e.message)||String(e))); });
+  };
+  var weg=box.querySelector("[data-mappeweg]");
+  if(weg) weg.onclick=function(){
+    if(!window.confirm("Mappe „"+m.name+"“ entfernen?\n\nDie Dateien bleiben im Projekt – nur die Auswahl verschwindet.")) return;
+    speichern(function(d){ d.mappen=(d.mappen||[]).filter(function(y){ return y.id!==m.id; }); }, "Mappe „"+m.name+"“ entfernt");
+  };
+  var ab=el('<button class="btn ghost" type="button">Abbrechen</button>'), ok=el('<button class="btn" type="button">Speichern</button>');
+  ab.onclick=function(){ v.zu(); };
+  ok.onclick=function(){
+    var name=box.querySelector("[data-mappename]").value.trim();
+    if(!name){ toast("Bitte der Mappe einen Namen geben."); return; }
+    var pfade=[].map.call(liste.querySelectorAll("[data-mappepfad]:checked"), function(c){ return c.dataset.mappepfad; });
+    ok.disabled=true;
+    speichern(function(d){
+      d.mappen=d.mappen||[];
+      var ziel=m && d.mappen.filter(function(y){ return y.id===m.id; })[0];
+      if(ziel){ ziel.name=name; ziel.dateien=pfade; }
+      else d.mappen.push({id:"mp"+Date.now().toString(36), name:name, dateien:pfade, angelegt:new Date().toISOString(), von:meinName()});
+    }, "Mappe „"+name+"“: "+pfade.length+" Datei"+(pfade.length===1?"":"en")).then(function(){ ok.disabled=false; });
+  };
+  v.fuss.appendChild(ab); v.fuss.appendChild(ok);
+}
+/* Kasten oben in der Dateien-Karte: je Mappe Name, Anzahl, Dateien zum Aufklappen, „⬇ Als ZIP“, „✎“; „+ Mappe“ */
+function mappenKasten(p, schreiben, neuZeichnen){
+  var mappen=projektMappen(p), darf=schreiben && !nurLesen();
+  if(!mappen.length && !darf) return null;
+  var k=el('<div class="stack" data-mappen style="gap:6px;border:1px solid var(--line);border-radius:10px;padding:8px 10px">'+
+    '<div class="rowflex" style="justify-content:space-between;gap:8px"><strong style="font-size:13px">📦 Mappen zum Versenden</strong>'+
+    (darf ? '<button class="btn ghost sm" type="button" data-mappeneu>+ Mappe</button>' : "")+"</div></div>");
+  if(!mappen.length) k.appendChild(el('<div class="muted" style="font-size:12.5px">Unterlagen für Lidl o. Ä. zusammenstellen und als ZIP herunterladen – z. B. „Unterlagen für Lidl“.</div>'));
+  mappen.forEach(function(m){
+    var dd=mappeDateien(p, m);
+    var z=el('<div style="font-size:13px" data-mappe="'+esc(m.id)+'"><div class="rowflex" style="gap:6px;flex-wrap:wrap;align-items:center">'+
+      '<span style="flex:1;min-width:0"><strong>📦 '+esc(m.name)+'</strong> <span class="muted" style="font-size:12px">· '+dd.length+" Datei"+(dd.length===1?"":"en")+"</span></span>"+
+      '<button class="btn sm" type="button" data-mappezip>⬇ Als ZIP</button>'+
+      (darf ? '<button class="btn ghost sm" type="button" data-mappebearb aria-label="Mappe bearbeiten">✎</button>' : "")+"</div>"+
+      (dd.length ? '<details style="margin-top:2px"><summary class="muted" style="font-size:12px;cursor:pointer">Inhalt zeigen</summary><ul style="margin:4px 0 0 18px;padding:0;font-size:12.5px">'+
+        dd.map(function(x){ return "<li>"+esc(x.titel||x.name)+"</li>"; }).join("")+"</ul></details>" : "")+"</div>");
+    z.querySelector("[data-mappezip]").onclick=function(){ mappeHerunterladen(p, m, this); };
+    var be=z.querySelector("[data-mappebearb]"); if(be) be.onclick=function(){ mappeEditor(PROJEKTE.filter(function(y){ return y.id===p.id; })[0]||p, m, neuZeichnen); };
+    k.appendChild(z);
+  });
+  var neu=k.querySelector("[data-mappeneu]"); if(neu) neu.onclick=function(){ mappeEditor(PROJEKTE.filter(function(y){ return y.id===p.id; })[0]||p, null, neuZeichnen); };
+  return k;
+}
 /* Titel aus einer PDF (Dokument-Eigenschaften) – leer, wenn keiner drin steht oder die Datei nicht lesbar ist */
 function pdfTitelLesen(daten){
   return ladePdfJs().then(function(){ return window.pdfjsLib.getDocument({data:new Uint8Array(daten)}).promise; })
@@ -34802,6 +34940,7 @@ function projektDateienKarte(p, buero, schreiben, neuZeichnen){
      beisammen (der neueste oben, ältere aufklappbar), lesbarer Name je Datei. Lange Listen: zuerst 25, „alle zeigen“. */
   var artFilter="", geschossFilter="", gewerkFilter="", suche="", alleZeigen=false, aeltereOffen={};
   var filterHost=el('<div class="stack" style="gap:6px"></div>'); l.parentNode.insertBefore(filterHost, l);
+  var mappenHost=mappenKasten(p, schreiben, neuZeichnen); if(mappenHost) l.parentNode.insertBefore(mappenHost, filterHost);
   var merk={}; dateien.forEach(function(x){ merk[x.pfad]=dateiMerkmale(x); });
   var oeffnen=function(x){
     if(demo() && x._url){ if(/\.pdf$/i.test(x.name||"")) pdfAnsicht(x._url, x.name); else if(dateiIstBild(x)) bildAnsicht(x._url, x.name); else window.open(x._url, "_blank"); return; }
