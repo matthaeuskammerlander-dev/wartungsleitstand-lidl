@@ -6368,6 +6368,21 @@ test("Mappe zum Versenden (Inhaber 19.10.2026): Dateien anhaken, als ZIP herunte
   await a.zu();
 });
 
+test("Inbetriebnahmeprotokoll: nur werkseitige Füllung bekannt → keine Gesamtfüllmenge, kein CO₂e (Inhaber 19.10.2026, Linz)", async () => {
+  const a = await oeffnen(KONTEN.inhaber);
+  const r = await a.seite.evaluate(() => {
+    const x = window.__t.x;
+    return {
+      nurWerk: [x("ibnGesamtKgFest({fuellWerk:'11,8', kaeltemittel:'R410A'})"), x("ibnCo2({fuellWerk:'11,8', kaeltemittel:'R410A'})"), x("ibnGesamtKg({fuellWerk:'11,8'})")],
+      mitNach: [x("ibnGesamtKgFest({fuellWerk:'11,8', nachfuellung:'9', kaeltemittel:'R410A'})"), x("ibnCo2({fuellWerk:'11,8', nachfuellung:'9', kaeltemittel:'R410A'})")],
+      gesamt: x("ibnGesamtKgFest({gesamtKg:'20,8'})"),
+    };
+  });
+  pruefe(r.nurWerk[0] === null && r.nurWerk[1] === null && r.nurWerk[2] === 11.8, "nur werkseitig: " + JSON.stringify(r.nurWerk));
+  pruefe(r.mitNach[0] === 20.8 && r.mitNach[1] === 43.42 && r.gesamt === 20.8, "mit Nachfüllung/gesamt: " + JSON.stringify(r));
+  await a.zu();
+});
+
 test("Ältere Stände löschen (Inhaber 19.10.2026): eine Rückfrage, je Endung bleibt der neueste, Mappe behält die neuen", async () => {
   const a = await oeffnen(KONTEN.inhaber);
   const r = await a.seite.evaluate(async () => {

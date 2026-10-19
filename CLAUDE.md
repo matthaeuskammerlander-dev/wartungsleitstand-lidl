@@ -428,7 +428,8 @@ Kammerlander Umwelt- und Klimatechnik (UKT) – oft kurz, vom Handy, im Feld.
   (geführt, Eingaben auf dem Gerät gemerkt): Anlagen anhaken (Anlagen des Markts, dem Projekt zugeordnete zuerst; `ibnAnlageVorbelegen` übernimmt aus `anlageDaten`
   Hersteller, Modell, Seriennummer, Innengeräte, Kältemittel, GWP, Gesamtfüllmenge – nichts wird geraten; „+ Anlage ohne Liste“; abhaken mit Rückfrage, wenn schon
   Messwerte da sind) → Anlage und Betreiber (`IBN_KOPF` gemeinsam, `IBN_ANL` je Anlage) → Kältemittel und Elektrik (`IBN_KM` je Anlage; Gesamtfüllmenge `ibnGesamtKg` =
-  eingetragen, sonst werkseitig + Nachfüllung; CO₂e `ibnCo2` mit GWP aus `gwpVon`) → Messwerte (`IBN_MESS` je Anlage). In den Anlage-Schritten schaltet bei mehreren
+  eingetragen, sonst werkseitig + Nachfüllung; CO₂e `ibnCo2` mit GWP aus `gwpVon`; Gesamtfüllmenge/CO₂e in PDF, Übersicht und „An der Anlage eintragen“ nur, wenn
+  gesamt oder Nachfüllung eingetragen ist – `ibnGesamtKgFest`, Inhaber 19.10.2026 Linz: nur werkseitig bekannt → im PDF nur „Füllmenge werkseitig“; abschließen geht damit) → Messwerte (`IBN_MESS` je Anlage). In den Anlage-Schritten schaltet bei mehreren
   Anlagen eine Chip-Zeile um (`[data-ibn-anlwahl]`, ✓ = schon eingetragen, `anlageHat`; Hinweis „n Anlagen noch ohne Angaben“ `[data-ibn-fehlen]`; Felder der gewählten
   Anlage `data-ak`/`data-at`, gemeinsame `data-k`/`data-t`) → Checkliste (`IBN_CHECK`, gilt für alle Anlagen: Mechanik/Kältekreis und Elektrik/Regelung/Sicherheit mit
   i. O./Mangel/n. z. `IBN_BEFUND`, Dokumentation mit erl./offen/n. z. `IBN_STAND`; „Alle auf …“ je Gruppe; Bemerkung erst bei Abweichung sichtbar; bei „Regelung

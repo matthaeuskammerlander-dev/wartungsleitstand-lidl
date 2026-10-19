@@ -31886,7 +31886,11 @@ function ibnGesamtKg(x){
 }
 /* GWP: eingetragen, sonst Standardwert des Kältemittels (wie bei den Anlagen) */
 function ibnGwp(x){ var g=ibnZahl(x.gwp); return g!=null ? g : gwpVon({kaeltemittelArt:x.kaeltemittel}); }
-function ibnCo2(x){ var kg=ibnGesamtKg(x), gwp=ibnGwp(x); return kg && gwp ? Math.round(kg*gwp/10)/100 : null; }
+/* Gesamtfüllmenge nur, wenn sie wirklich bekannt ist – gesamt eingetragen oder Nachfüllung dazu (Inhaber 19.10.2026, Linz: Füllmengen
+   unbekannt; nur „werkseitig“ wäre sonst als Gesamtfüllmenge und CO₂-Äquivalent im unterschriebenen Protokoll gestanden). Zum
+   Abschließen genügt weiter die werkseitige Füllung (ibnFehlt) – im PDF steht dann nur „Füllmenge werkseitig“. */
+function ibnGesamtKgFest(x){ return ibnZahl(x.gesamtKg)!=null || ibnZahl(x.nachfuellung)!=null ? ibnGesamtKg(x) : null; }
+function ibnCo2(x){ var kg=ibnGesamtKgFest(x), gwp=ibnGwp(x); return kg && gwp ? Math.round(kg*gwp/10)/100 : null; }
 /* die Anlagen eines Protokolls – ältere Stände (eine Anlage, Felder flach in daten) werden gleich behandelt */
 function ibnAnlagen(d){
   d=d||{};
@@ -32060,7 +32064,7 @@ function ibnEditor(p, a, fertig, opt){
   /* Gesamtfüllmenge und CO₂-Äquivalent der gewählten Anlage nachrechnen */
   function rechnen(box){
     var x=aktuell()||{}, g=box.querySelector("[data-ibn-gesamt]"), c=box.querySelector("[data-ibn-co2]");
-    if(g) g.textContent=ibnGesamtKg(x)==null ? "–" : ibnZahlText(ibnGesamtKg(x), 3)+" kg";
+    if(g) g.textContent=ibnGesamtKgFest(x)==null ? (ibnGesamtKg(x)!=null ? "– (nur werkseitig "+ibnZahlText(ibnGesamtKg(x), 3)+" kg bekannt)" : "–") : ibnZahlText(ibnGesamtKgFest(x), 3)+" kg";
     if(c) c.textContent=ibnCo2(x)==null ? "– (Kältemittel und Füllmenge eintragen)" : ibnZahlText(ibnCo2(x))+" t CO₂e (GWP "+ibnZahlText(ibnGwp(x), 1)+")";
   }
   /* hat die Anlage in diesem Schritt schon etwas? (✓ am Chip) */
@@ -32337,7 +32341,7 @@ function ibnEditor(p, a, fertig, opt){
     var mangel=0; IBN_CHECK.forEach(function(g){ g.punkte.forEach(function(pn){ if(((d.check[g.k]||{})[pn[0]]||{}).s==="mangel") mangel++; }); });
     var offen=IBN_UEBERGABE.filter(function(pn){ return (d.uebergabe[pn[0]]||{}).s==="offen"; }).length+IBN_CHECK[2].punkte.filter(function(pn){ return ((d.check.doku||{})[pn[0]]||{}).s==="offen"; }).length;
     box.appendChild(el('<div class="note" style="font-size:13px"><strong>'+esc(d.betreiber||"–")+"</strong> · "+esc(d.standort||"–")+" · Inbetriebnahme "+esc(n.datum ? dfmt(n.datum) : "–")+"<br>"+
-      d.anlagen.map(function(x){ var co2=ibnCo2(x); return "<strong>"+esc(ibnAnlageKurz(x))+"</strong>: "+esc(x.kaeltemittel||"Kältemittel?")+" "+(ibnGesamtKg(x)==null ? "" : ibnZahlText(ibnGesamtKg(x), 3)+" kg")+(co2 ? " · "+ibnZahlText(co2)+" t CO₂e" : "")+
+      d.anlagen.map(function(x){ var co2=ibnCo2(x); return "<strong>"+esc(ibnAnlageKurz(x))+"</strong>: "+esc(x.kaeltemittel||"Kältemittel?")+" "+(ibnGesamtKgFest(x)==null ? "" : ibnZahlText(ibnGesamtKgFest(x), 3)+" kg")+(co2 ? " · "+ibnZahlText(co2)+" t CO₂e" : "")+
         (x.regelung && x.regelung.nacht==="ja" ? " · Nachtabsenkung / Flüsterbetrieb (Schall) "+esc((x.regelung.nachtVon||"?")+"–"+(x.regelung.nachtBis||"?")) : ""); }).join("<br>")+
       "<br>Checkliste: "+(mangel ? "<strong>"+(mangel===1 ? "1 Mangel" : mangel+" Mängel")+"</strong>" : "kein Mangel")+" · Dokumentation/Übergabe: "+(offen ? "<strong>"+offen+" offen</strong>" : "nichts offen")+
       ((d.anhaenge||[]).length ? " · 📎 "+d.anhaenge.length+" Foto"+(d.anhaenge.length===1?"":"s")+"/Dateien angehängt" : "")+"</div>"));
@@ -32358,7 +32362,7 @@ function ibnEditor(p, a, fertig, opt){
         var e=d.anlageNachtragen[an]=d.anlageNachtragen[an]||{inbetriebnahme:true, kg:true};
         var zeilen=[];
         if(!ad.inbetriebnahme || ad.inbetriebnahme!==n.datum) zeilen.push('<label class="chk"><input type="checkbox" data-nt="inbetriebnahme" data-nta="'+esc(an)+'"'+(e.inbetriebnahme?" checked":"")+"><span>Inbetriebnahme "+esc(n.datum ? dfmt(n.datum) : "–")+(ad.inbetriebnahme ? " (bisher "+esc(dfmt(ad.inbetriebnahme))+")" : " – fehlt noch; danach liegt die Jahreswartung in diesem Monat")+"</span></label>");
-        if(leerWert(ad.kaeltemittelKg) && ibnGesamtKg(x)) zeilen.push('<label class="chk"><input type="checkbox" data-nt="kg" data-nta="'+esc(an)+'"'+(e.kg?" checked":"")+"><span>Füllmenge "+ibnZahlText(ibnGesamtKg(x), 3)+" kg "+esc(x.kaeltemittel||"")+" – fehlt an der Anlage noch</span></label>");
+        if(leerWert(ad.kaeltemittelKg) && ibnGesamtKgFest(x)) zeilen.push('<label class="chk"><input type="checkbox" data-nt="kg" data-nta="'+esc(an)+'"'+(e.kg?" checked":"")+"><span>Füllmenge "+ibnZahlText(ibnGesamtKgFest(x), 3)+" kg "+esc(x.kaeltemittel||"")+" – fehlt an der Anlage noch</span></label>");
         if(!zeilen.length) return;
         was=true;
         nt.appendChild(el('<div class="stack" style="gap:2px"><div style="font-size:13px"><strong>An der Anlage „'+esc(anlagenName(l))+'“ eintragen</strong> (nach dem Unterschreiben):</div>'+zeilen.join("")+"</div>"));
@@ -32414,7 +32418,7 @@ function ibnEditor(p, a, fertig, opt){
         var pro={}, texte=[];
         dd.anlagen.forEach(function(x){
           var l=leaderVon(x), e=x.anlageId && nachtragen[x.anlageId]; if(!l || !e) return;
-          var werte={}; if(e.inbetriebnahme) werte.inbetriebnahme=row.datum; if(e.kg && ibnGesamtKg(x)) werte.kaeltemittelKg=ibnGesamtKg(x);
+          var werte={}; if(e.inbetriebnahme) werte.inbetriebnahme=row.datum; if(e.kg && ibnGesamtKgFest(x)) werte.kaeltemittelKg=ibnGesamtKgFest(x);
           if(Object.keys(werte).length){ pro[l.id]=werte; texte.push(ibnAnlageKurz(x)+": "+Object.keys(werte).map(function(k){ return k==="inbetriebnahme" ? "Inbetriebnahme "+dfmt(row.datum) : "Füllmenge "+ibnZahlText(werte[k], 3)+" kg"; }).join(", ")); }
         });
         if(Object.keys(pro).length) positionenSchreiben(pro, "Laut "+ibnTitel(row)+" (Projekt "+(p.nummer||"")+")", {}).then(function(wo){
@@ -32479,7 +32483,7 @@ function ibnBlattHtml(p, a, fotos){
         zt("Füllmenge werkseitig", zahl(x.fuellWerk, "kg"))+
         /* Nachfüllung samt Rohrlänge; ohne Nachfüllung bleibt wenigstens die Rohrlänge stehen */
         (zahl(x.nachfuellung, "kg") ? zt("Nachfüllung"+(String(x.rohrlaenge||"").trim() ? " bei "+zahl(x.rohrlaenge, "m")+" Rohrlänge" : ""), zahl(x.nachfuellung, "kg")) : zt("Rohrlänge", zahl(x.rohrlaenge, "m")))+
-        (ibnGesamtKg(x)==null ? "" : "<tr><td class='k'>Gesamtfüllmenge</td><td><strong>"+esc(ibnZahlText(ibnGesamtKg(x), 3)+" kg")+"</strong></td></tr>")+
+        (ibnGesamtKgFest(x)==null ? "" : "<tr><td class='k'>Gesamtfüllmenge</td><td><strong>"+esc(ibnZahlText(ibnGesamtKgFest(x), 3)+" kg")+"</strong></td></tr>")+
         (ibnCo2(x)==null ? "" : "<tr><td class='k'>CO₂-Äquivalent</td><td><strong>"+esc(ibnZahlText(ibnCo2(x))+" t CO₂e")+"</strong></td></tr>")+"</table></div></div>"+
       messwerteHtml(x)+"</div>";
   };
