@@ -9842,6 +9842,91 @@ test("Tagesrückblick: Präsentation speichert nie, am Handy (390 px) ragt nicht
   pruefe(!fehl.length, fehl.join(" | "));
 });
 
+test("Lidl-Unterlagen (Inhaber 20.10.2026): Prüfliste, TB/KAV/Schema aus den Anlagen, Fehlendes bleibt weg, IBN nach letzter Vorlage, Mappe-Vorschlag; nur Inhaber", async () => {
+  const a = await oeffnen(KONTEN.inhaber);
+  await a.seite.evaluate((h) => eval(h), AN_HILFEN);
+  const r = await a.seite.evaluate(async () => {
+    const x = window.__t.x, db = window.__db.tabellen, A = window.__an, e = {}, jetzt = new Date().toISOString();
+    A.toastSpion();
+    const pos = (id, f) => db.stammdaten.push({ id: "position:" + id, typ: "position", ziel: id, neu: true, geaendert: jetzt, von: "Test", grund: "Anlage angelegt",
+      felder: Object.assign({ standortId: "TS1", aktiv: true, intervallCode: "JW", monat: 0, anlageZu: id, neuAngelegt: jetzt }, f) });
+    pos("NPlu1", { anlagentyp: "VRV 1", hersteller: "Daikin", modell: "RXYLQ10T7Y1B", seriennummer: "7000001", kaeltemittelArt: "R410A", kaeltemittelKg: 21, inbetriebnahme: "2026-02-02",
+      innengeraete: [{ raum: "Kassa" }, { raum: "Verkauf vorne" }, { raum: "Kassa" }] });
+    pos("NPlu2", { anlagentyp: "VRV 2", hersteller: "Daikin", modell: "RXYLQ10T7Y1B", kaeltemittelArt: "R410A", inbetriebnahme: "2026-02-02" });
+    await x("ladeStammdaten().then(storeNachRender)"); await A.warte(300);
+    db.projekte.push({ id: "tmp_lu", nummer: "P-2026-907", titel: "Lidl-Unterlagen Test", kunde_id: "lidl", standort_id: "TS1", status: "inbetriebnahme", verlauf: [], erstellt: jetzt, geaendert: jetzt,
+      daten: { anlagen: ["NPlu1", "NPlu2"], ibDatum: "2026-02-02", beteiligte: [{ rolle: "Planung TGA (Einreichplan)", firma: "TGA Planer Test, 1010 Wien" }] } });
+    await x("projekteLaden()");
+    const P = "PROJEKTE.filter(function(q){ return q.id==='tmp_lu'; })[0]";
+    const V = { ort: "Teststadt", verantwortlich: "Herr Test Verantwortlich, Zertifikat Nr. T-1", unternehmen: "Testfirma: Nr. 9", verfasser: "Ing. Test Verfasser", logos: [], geraete: [
+      { muster: "RXY", name: "Kurz", werte: "" }, { muster: "RXYLQ", name: "Daikin RXYLQ-T", werte: "Kühlleistung nominal: 28,0 kW\nohne Doppelpunkt\nGewicht: 302 kg" }] };
+    await x("lidlVorlageSpeichern(" + JSON.stringify(V) + ", 'Test')");
+    e.geraet = x("(lidlGeraet('RXYLQ10T7Y1B')||{}).name"); e.keinGeraet = x("lidlGeraet('FXF80')");
+    e.werte = x("lidlWerte(lidlGeraet('RXYLQ10T7Y1B'))");
+    const anl = "lidlAnlagen(" + P + ")";
+    e.anlNamen = x(anl + ".map(function(q){ return q.name; })");
+    const u = x("lidlAngaben(" + P + ", " + anl + ")");
+    e.datum = u.datum; e.tga = u.planungTga; e.bereich = u.bereiche.NPlu1; e.unter = u.kavUnter;
+    /* Prüfliste: VRV 2 ohne SN, Füllmenge, Bereiche; Schall fehlt */
+    const pl = x("lidlPruefliste(" + P + ", " + anl + ", lidlAngaben(" + P + ", " + anl + "), LIDL_VORLAGE, [])");
+    e.offen = pl.filter((z) => !z[0]).map((z) => z[1]);
+    /* TB: Füllmenge nur bei VRV 1, keine Hinweise auf Fehlendes; Prüfbücher-Satz */
+    u.schall = [{ text: "VRV Wärmepumpen Tag", db: "77" }, { text: "leer", db: "" }];
+    window.__u = u;
+    const tb = x("lidlTbHtml(" + P + ", " + anl + ", window.__u, LIDL_VORLAGE, lidlBeilagen(" + P + ", " + anl + ", LIDL_VORLAGE))");
+    const tbText = (() => { const d = document.createElement("div"); d.innerHTML = tb; return d.textContent; })();
+    e.tb = { sn: /7000001/.test(tbText), kg: /21,0 kg/.test(tbText), co2: /43,8\d t/.test(tbText), fehltNicht: !/fehlt|unbekannt/i.test(tbText),
+      pruefb: /Die Prüf- und Anlagenbücher \(2 Anlagen\) liegen im Original in der Filiale auf\./.test(tbText),
+      schall: /77 dB\(A\)/.test(tbText) && !/leer/.test(tbText), daten: /Kühlleistung nominal/.test(tbText) && !/ohne Doppelpunkt/.test(tbText), tga: /TGA Planer Test/.test(tbText), datum: /09\.02\.2026/.test(tbText) };
+    /* ohne jede Füllmenge entfällt die Spalte ganz (Linz) */
+    const tb2 = x("lidlTbHtml(" + P + ", " + anl + ".map(function(q){ q.d=Object.assign({}, q.d, {kaeltemittelKg:null}); return q; }), window.__u, LIDL_VORLAGE, [])");
+    e.tbOhneKg = !/Füllmenge/.test(tb2);
+    /* KAV: Texte aus der Vorlage, Schall; ohne Verantwortlichen wird keine erzeugt */
+    const kav = x("lidlKavHtml(" + P + ", " + anl + ", window.__u, LIDL_VORLAGE, {logos:[]})");
+    e.kav = { ver: /Herr Test Verantwortlich/.test(kav), verf: /Ing\. Test Verfasser/.test(kav), ort: /Teststadt, am 09\.02\.2026/.test(kav), schall: /VRV Wärmepumpen Tag/.test(kav) && /77 dB/.test(kav), flue: /22:00–06:00/.test(kav) };
+    e.kavGesperrt = await x("lidlErzeugen('kav', " + P + ", " + anl + ", window.__u, Object.assign({}, LIDL_VORLAGE, {verantwortlich:''})).then(function(){ return 'erzeugt'; }, function(f){ return f.message; })");
+    /* Schema: SN und Bereiche im SVG; PDF A3 quer */
+    const svg = x("lidlSchemaSvg(" + P + ", " + anl + ", window.__u, '')");
+    e.svg = /SN 7000001/.test(svg) && /Kassa, Verkauf vorne/.test(svg) && !/SN undefined/.test(svg);
+    const sb = await x("lidlSchemaPdf(" + P + ", " + anl + ", window.__u)");
+    e.schemaPdf = !!sb && sb.type === "application/pdf" && sb.size > 1000;
+    /* IBN nach letzter Vorlage: Regelung je Modell, Werksfüllung bei gleichem Modell, eigene SN; Messwerte nie */
+    const vl = { unterschrieben: jetzt, daten: { check: { doku: { protokoll: { s: "erl" } } }, uebergabe: { pruefbuch: { s: "erl" } }, zertUnternehmen: "Z-1",
+      anlagen: [{ modell: "RXYLQ10T7Y1B", snAussen: "ALT-1", fuellWerk: "11,8", regelung: { sollKuehlen: "23", nacht: "ja" }, messwerte: { hd: "30" } }] } };
+    const ib = x("ibnAusVorlage(" + P + ", " + JSON.stringify(vl) + ", " + anl + ")");
+    e.ibn = { anz: ib.anlagen.length, sn: ib.anlagen[0].snAussen, regel: ib.anlagen[1].regelung.sollKuehlen, werk: ib.anlagen[0].fuellWerk, mess: Object.keys(ib.anlagen[0].messwerte).length,
+      check: ib.check.doku.protokoll.s, ueb: ib.uebergabe.pruefbuch.s };
+    /* Karte im Projekt, Assistent öffnen, TB ablegen → Mappe-Vorschlag */
+    x("projektAnsicht('tmp_lu')");
+    const karte = await A.bis(() => document.querySelector("[data-lidlkarte]"));
+    e.karte = !!karte;
+    karte.querySelector("[data-lidloeffnen]").click();
+    const d = await A.bis(() => { const d = A.dlg(); return d && d.querySelector("[data-lidlpruef]") && d; });
+    e.assistent = !!d && d.querySelectorAll("[data-lidlpruef] li[data-ok='0']").length > 0;
+    d.querySelector('[data-lidl="tb"] [data-ablegen]').click();
+    e.abgelegt = await A.bis(() => (x(P).daten.dateien || []).some((f) => /^Technische Beschreibung Klimaanlage .*\.pdf$/.test(f.name)), 15000);
+    e.gespeichert = !!(x(P).daten.lidlUnterlagen || {}).datum;
+    e.vorschlag = x("lidlMappeVorschlag(" + P + ", LIDL_VORLAGE, [])").length;
+    x("ansichtenSchliessen()");
+    db.projekte = db.projekte.filter((q) => q.id !== "tmp_lu");
+    return e;
+  });
+  const fehl = [];
+  if (r.geraet !== "Daikin RXYLQ-T" || r.keinGeraet !== null || JSON.stringify(r.werte) !== JSON.stringify([["Kühlleistung nominal", "28,0 kW"], ["Gewicht", "302 kg"]])) fehl.push("Gerätebibliothek " + JSON.stringify([r.geraet, r.keinGeraet, r.werte]));
+  if (JSON.stringify(r.anlNamen) !== JSON.stringify(["VRV 1", "VRV 2"])) fehl.push("Anlagen " + JSON.stringify(r.anlNamen));
+  if (r.datum !== "2026-02-09" || r.tga !== "TGA Planer Test, 1010 Wien" || r.bereich !== "Kassa, Verkauf vorne" || r.unter !== "2 × Daikin RXYLQ10T7Y1B") fehl.push("Vorbelegung " + JSON.stringify([r.datum, r.tga, r.bereich, r.unter]));
+  if (!r.offen.some((t) => /VRV 2: es fehlt Seriennummer, Füllmenge, versorgte Bereiche/.test(t)) || !r.offen.some((t) => /Schallwerte fehlen/.test(t))) fehl.push("Prüfliste " + JSON.stringify(r.offen));
+  if (Object.values(r.tb).some((v) => !v)) fehl.push("TB " + JSON.stringify(r.tb));
+  if (!r.tbOhneKg) fehl.push("TB ohne Füllmengen zeigt die Spalte");
+  if (Object.values(r.kav).some((v) => !v) || !/KAV-Vorlage unvollständig/.test(r.kavGesperrt)) fehl.push("KAV " + JSON.stringify([r.kav, r.kavGesperrt]));
+  if (!r.svg || !r.schemaPdf) fehl.push("Schema " + JSON.stringify([r.svg, r.schemaPdf]));
+  if (r.ibn.anz !== 2 || r.ibn.sn !== "7000001" || r.ibn.regel !== "23" || r.ibn.werk !== "11,8" || r.ibn.mess || r.ibn.check !== "erl" || r.ibn.ueb !== "erl") fehl.push("IBN-Vorlage " + JSON.stringify(r.ibn));
+  if (!r.karte || !r.assistent || !r.abgelegt || !r.gespeichert || r.vorschlag !== 1) fehl.push("Assistent " + JSON.stringify([r.karte, r.assistent, r.abgelegt, r.gespeichert, r.vorschlag]));
+  if (a.fehler.length) fehl.push("Laufzeitfehler: " + a.fehler.join("; "));
+  await a.zu();
+  pruefe(!fehl.length, fehl.join(" | "));
+});
+
 /* ================================================================ Ablauf ================================================================ */
 const filterText = process.argv.slice(2).find((x) => !x.startsWith("--"));
 const filter = filterText ? new RegExp(filterText, "i") : null;

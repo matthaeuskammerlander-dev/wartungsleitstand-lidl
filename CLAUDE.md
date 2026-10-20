@@ -409,6 +409,23 @@ Kammerlander Umwelt- und Klimatechnik (UKT) – oft kurz, vom Handy, im Feld.
   **Ältere Stände löschen** (Inhaber 19.10.2026: „lösche die alten Fassungen“): aufgeklappte Gruppe → „🗑 ältere Stände löschen (n)“ (`dateiAeltereStaende`:
   je Dateiendung bleibt der neueste, PDF und Word desselben Namens stehen beisammen; nur wenn alle `dateiLoeschenDarf`) → `dateienLoeschen` mit EINER Rückfrage (Namen + Datum),
   Speicher in einem Aufruf, Einträge und Verweise wie `dateiLoeschen`. Test „Ältere Stände löschen …“.
+- **Lidl-Unterlagen je Filiale** (Inhaber 20.10.2026: „als nächstes bauen wir die Automation ein“ – Umfang alle vier Teile, nur PDF, KAV-Datum IB + 1 Woche,
+  nur Inhaber): Karte „📦 Lidl-Unterlagen“ im Projekt nach den Inbetriebnahmeprotokollen (`lidlUnterlagenKarte`; nur `nurInhaber()`, Kunde lidl, Projekt mit Markt) →
+  `lidlUnterlagenAssistent`: 1 Prüfliste (`lidlPruefliste`: Markt/Filialnummer, je Anlage Modell/SN/Füllmenge/Kältemittel/IB/Bereiche, Gerätebibliothek, Schall,
+  KAV-Vorlage, IBN unterschrieben; wassergekühlt RWEYQ → Warnung `lidlWassergekuehlt`, Inhaber 20.10.2026: Vorlagen dafür erst mit Robinigstraße verfeinern) –
+  2 Angaben `daten.lidlUnterlagen` (`lidlAngaben` belegt vor: Datum = `ibDatum` bzw. früheste Anlagen-IB + 7, Betreiber/Planer aus `beteiligte` nach Rolle,
+  Bereiche aus den Räumen der Innengeräte, Texte wie Graz/Oberwart; alles änderbar; beim Ablegen immer mitgespeichert) – 3 Unterlagen `lidlErzeugen`:
+  TB `lidlTbHtml` (A4, `blattZuPdf` mit neuen Schaltern `ohneWasserzeichen`/`ohneSeitenzahl`; Spalten ohne einen einzigen Wert entfallen, nie „fehlt“;
+  Beilagen `lidlBeilagen`; „Die Prüf- und Anlagenbücher (n Anlagen) liegen im Original in der Filiale auf.“), Schema `lidlSchemaSvg` → `lidlSchemaPdf`
+  (SVG → Zeichenfläche → jsPDF A3 quer; Zentralsteuerung aus `fernSystem` des Markts), KAV `lidlKavHtml` (wie Deutschlandsberg; ohne Verantwortlichen/Verfasser
+  wird keine erzeugt). Art: TB dokument, Schema plan, KAV protokoll. „Datenblätter aus der Bibliothek“ (`lidlDatenblaetterHolen`, Doppelte erkennt das Hochladen),
+  „Inbetriebnahmeprotokoll nach letzter Vorlage“ (`ibnLetzteVorlage` = zuletzt unterschriebenes, anderes Projekt zuerst; `ibnAusVorlage`: Checkliste, Übergabe,
+  Unternehmenszertifikat, je Anlage Regelung der Anlage gleichen Modells, Werksfüllung nur bei gleichem Modell; SN/Füllmenge aus den Anlagen, Messwerte nie) →
+  `ibnEditor(p, null, fertig, {vorlage, datum})`, gespeichert und unterschrieben erst dort. 4 „Mappe füllen …“: `lidlMappeVorschlag` (neuester Stand von TB,
+  Schema, KAV, Bestandsplan; abgelegte unterschriebene IBN-PDFs; Datenblätter der Bibliothek) → `mappeEditor(p, m, fertig, vorschlag)` vorab angehakt.
+  **Keine Personendaten im Code**: Verantwortlicher, Zertifikate, Verfasser, QR-Code, Fußzeilen-Logos und die Gerätebibliothek (Muster = Modellanfang, längstes
+  gewinnt `lidlGeraet`; Werte „Bezeichnung: Wert“ `lidlWerte`; Datenblatt in `dokumente/datenblaetter/`) stehen in `einstellungen` „lidl_vorlage“ (`lidlVorlageLaden`,
+  ändern nur Inhaber laut Regel), Editor `lidlVorlageEditor`. Test „Lidl-Unterlagen …“.
 - **Protokoll-Namen und Downloads** (Inhaber 19.10.2026): Dateiname `Inbetriebnahmeprotokoll_<Ort>_<n>-Anlagen_<TT-MM-JJJJ>.pdf` bzw.
   `Arbeitsnachweis_<Ort>_<TT-MM-JJJJ>.pdf` (`projektOrtFuerDatei`: Ort des Standorts, sonst Projektnummer) – ohne Projektnummer, „Nr“, „Korrektur“;
   eine Korrektur heißt gleich und steht als neuerer Stand da. Im IBN-PDF keine Protokollnr./Projektnummer in der Kopfzeile und kein
