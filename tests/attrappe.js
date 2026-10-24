@@ -245,7 +245,9 @@
   function stundenSync(id){
     var p=DB.planung.filter(function(x){ return x.id===id; })[0], zart=null, personen=[], bis=null;
     var rl=(DB.rollen.filter(function(x){ return x.user_id===uid(); })[0]||{}).rolle;
-    var soll=function(d){ return typeof window.sollMinutenTag==='function' ? window.sollMinutenTag(d) : ([480,480,480,480,390,0,0])[(new Date(d+'T12:00:00').getDay()+6)%7]; };
+    /* Tagessoll ohne Feiertage wie soll_minuten/feiertag_at – die App-Funktion liegt in starteWartungsleitstand(), erreichbar über __t */
+    var appSoll=typeof window.sollMinutenTag==='function' ? window.sollMinutenTag : (window.__t && window.__t.x ? window.__t.x('sollMinutenTag') : null);
+    var soll=function(d){ return typeof appSoll==='function' ? appSoll(d) : ([480,480,480,480,390,0,0])[(new Date(d+'T12:00:00').getDay()+6)%7]; };
     var plus=function(d){ var x=new Date(d+'T12:00:00'); x.setDate(x.getDate()+1); return x.getFullYear()+'-'+('0'+(x.getMonth()+1)).slice(-2)+'-'+('0'+x.getDate()).slice(-2); };
     if(p && p.art==='termin' && p.datum && p.status!=='abgelehnt' && ['urlaub','krank','schule','zeitausgleich'].indexOf(p.kategorie)>=0 && (p.kategorie!=='urlaub' || p.status==='genehmigt')){
       zart=p.kategorie; personen=(p.wer&&p.wer.length)?p.wer:[p.erstellt_von]; bis=p.datum_bis&&p.datum_bis>p.datum?p.datum_bis:p.datum; }

@@ -1213,7 +1213,9 @@ test("Stunden ↔ Kalender: Abwesenheit von selbst in den Stunden, Soll je Tag/W
   const a = await oeffnen(KONTEN.techniker);
   const r = await a.seite.evaluate(async () => {
     const x = window.__t.x, warte = (ms) => new Promise((f) => setTimeout(f, ms)), db = window.__db.tabellen;
-    const ich = x("meineKennung()"), mo = x("plusTage(montagVon(isoLokal(new Date())),7)"), so = x("plusTage(montagVon(isoLokal(new Date())),13)");
+    /* erste kommende Woche, deren Montag ein Arbeitstag ist (gekürzt wird unten auf den Montag – am Feiertag gäbe es keine Stunden) */
+    let mo = x("plusTage(montagVon(isoLokal(new Date())),7)"); while (!x("sollMinutenTag('" + mo + "')")) mo = x("plusTage('" + mo + "',7)");
+    const ich = x("meineKennung()"), so = x("plusTage('" + mo + "',6)");
     const einf = (z) => x("Store.sb.from('planung').insert(" + JSON.stringify(z) + ").select('*')");
     const k = (await einf({ art: "termin", kategorie: "krank", titel: "Krankenstand", datum: mo, datum_bis: so, wer: [ich], wer_namen: ["Test"] })).data[0];
     let soll = 0; for (let i = 0; i < 7; i++) soll += x("sollMinutenTag(plusTage('" + mo + "'," + i + "))");
