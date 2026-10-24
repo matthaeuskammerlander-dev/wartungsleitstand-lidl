@@ -9927,6 +9927,39 @@ test("Lidl-Unterlagen (Inhaber 20.10.2026): Prüfliste, TB/KAV/Schema aus den An
   pruefe(!fehl.length, fehl.join(" | "));
 });
 
+test("Projekte (Inhaber 24.10.2026): Name führt zum neuesten Stand, Stand-Reiter zeigt nur ihn; Liste mit Fortschritt und Termin; Folgeaufträge zugeklappt", async () => {
+  const a = await oeffnen(KONTEN.inhaber);
+  const r = await a.seite.evaluate(async () => {
+    const x = window.__t.x, db = window.__db.tabellen, e = {}, jetzt = new Date().toISOString(), w = (ms) => new Promise((f) => setTimeout(f, ms));
+    const z = (t) => "2026-10-" + t + "T09:00:00.000Z";
+    const dd = [["tmp_pa/a.pdf", z("16")], ["tmp_pa/b.pdf", z("19")], ["tmp_pa/c.pdf", z("18")]];
+    db.projekte.push({ id: "tmp_pa", nummer: "P-2026-908", titel: "Übersicht Test", kunde_id: "lidl", status: "konzept", verlauf: [], erstellt: jetzt, geaendert: jetzt,
+      daten: { dateien: dd.map((d) => ({ pfad: d[0], name: "Konzept.pdf", art: "dokument", von: "T", zeit: d[1], schritt: "konzept" })), quellen: { konzept: [{ name: "Konzept.pdf" }] },
+        termine: [{ id: "t1", datum: "2099-01-05", zeit: "08:00", was: "Begehung" }] } });
+    await x("projekteLaden()");
+    const P = "PROJEKTE.filter(function(q){ return q.id==='tmp_pa'; })[0]";
+    e.quelle = x("quelleDatei(" + P + ", {name:'Konzept.pdf'}).pfad");
+    const info = x("projektSchrittInfo(" + P + ", 'konzept', true, true, function(){}, function(){})");
+    const zeilen = [...info.querySelectorAll("[data-stdatei]")];
+    e.stZeilen = zeilen.length; e.stText = zeilen.map((q) => q.textContent).join(" | ");
+    const zeile = x("projektZeile(" + P + ")");
+    e.fortschritt = !!zeile.querySelector("[data-fortschritt]"); e.zeile = zeile.textContent;
+    /* Folgeauftrag aus einem Protokoll: Karte zugeklappt, Kopf mit Anzahl und Markt */
+    const dlg = x("folgeKarte()");
+    e.folge = dlg ? { zu: !dlg.querySelector("[data-folgeauf]").open, kopf: dlg.querySelector("summary").textContent } : null;
+    db.projekte = db.projekte.filter((q) => q.id !== "tmp_pa");
+    return e;
+  });
+  const fehl = [];
+  if (r.quelle !== "tmp_pa/b.pdf") fehl.push("Quelle führt nicht zum neuesten Stand: " + r.quelle);
+  if (r.stZeilen !== 1 || !/19\.10\.2026/.test(r.stText) || !/2 ältere/.test(r.stText)) fehl.push("Stand-Reiter: " + JSON.stringify([r.stZeilen, r.stText]));
+  if (!r.fortschritt || !/Schritt 3 von 11/.test(r.zeile) || !/05\.01\.2099 08:00 · Begehung/.test(r.zeile)) fehl.push("Projektzeile: " + r.zeile);
+  if (r.folge && (!r.folge.zu || !/Folgeaufträge – Angebot\? \(\d+\)/.test(r.folge.kopf))) fehl.push("Folgeaufträge: " + JSON.stringify(r.folge));
+  if (a.fehler.length) fehl.push("Laufzeitfehler: " + a.fehler.join("; "));
+  await a.zu();
+  pruefe(!fehl.length, fehl.join(" | "));
+});
+
 /* ================================================================ Ablauf ================================================================ */
 const filterText = process.argv.slice(2).find((x) => !x.startsWith("--"));
 const filter = filterText ? new RegExp(filterText, "i") : null;

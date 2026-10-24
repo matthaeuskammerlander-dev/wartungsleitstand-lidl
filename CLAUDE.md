@@ -409,6 +409,15 @@ Kammerlander Umwelt- und Klimatechnik (UKT) – oft kurz, vom Handy, im Feld.
   **Ältere Stände löschen** (Inhaber 19.10.2026: „lösche die alten Fassungen“): aufgeklappte Gruppe → „🗑 ältere Stände löschen (n)“ (`dateiAeltereStaende`:
   je Dateiendung bleibt der neueste, PDF und Word desselben Namens stehen beisammen; nur wenn alle `dateiLoeschenDarf`) → `dateienLoeschen` mit EINER Rückfrage (Namen + Datum),
   Speicher in einem Aufruf, Einträge und Verweise wie `dateiLoeschen`. Test „Ältere Stände löschen …“.
+- **Neuester Stand und Projektliste** (Inhaber 24.10.2026: Chef öffnete am iPad in der Übersicht die alte Fassung; „Projekte attraktiver“;
+  „Folgeaufträge nehmen viel Platz weg“): `projektIndex` ordnet gleiche Namen dem NEUESTEN Stand zu (vorher dem zuerst hochgeladenen) – alle
+  Verweise über `quelleDatei` (Quellen, „gehört zu“) öffnen so die aktuelle Fassung. Stand-Reiter (`projektSchrittInfo`): je Name nur der neueste
+  Stand (auch aus anderem Schritt), mit Datum und „neuester Stand, n ältere im Reiter Dateien“. Projektliste `projektZeile`: Farbstreifen je Phase
+  (`projektPhasenFarbe`: Planung --plan, Angebot --warn, Auftrag–Baustelle --good, IBN/Doku --accent, sonst --line), Balken „Schritt n von 11“,
+  nächster Termin aus `daten.termine` (`projektNaechsterTermin`), Anzahl Dateien (buero/ nur Inhaber); Typ-Auswahl neben der Suche.
+  „Auf einen Blick“: Stand-Kachel mit Fortschritt, leere Kacheln `.pb-leer` gestrichelt/blass. Folgeaufträge-Karte zugeklappt (`details[data-folgeauf]`,
+  Kopf mit Anzahl und Märkten, Zustand je Gerät `ukt_folge_auf`), Sprung aus dem Kalender und der Rundgang klappen sie auf (`folgeKarteAuf`).
+  Karte „📦 Lidl-Unterlagen“ im Reiter Baustelle. Test „Projekte (Inhaber 24.10.2026) …“.
 - **Lidl-Unterlagen je Filiale** (Inhaber 20.10.2026: „als nächstes bauen wir die Automation ein“ – Umfang alle vier Teile, nur PDF, KAV-Datum IB + 1 Woche,
   nur Inhaber): Karte „📦 Lidl-Unterlagen“ im Projekt nach den Inbetriebnahmeprotokollen (`lidlUnterlagenKarte`; nur `nurInhaber()`, Kunde lidl, Projekt mit Markt) →
   `lidlUnterlagenAssistent`: 1 Prüfliste (`lidlPruefliste`: Markt/Filialnummer, je Anlage Modell/SN/Füllmenge/Kältemittel/IB/Bereiche, Gerätebibliothek, Schall,
