@@ -418,6 +418,15 @@ Kammerlander Umwelt- und Klimatechnik (UKT) – oft kurz, vom Handy, im Feld.
   „Auf einen Blick“: Stand-Kachel mit Fortschritt, leere Kacheln `.pb-leer` gestrichelt/blass. Folgeaufträge-Karte zugeklappt (`details[data-folgeauf]`,
   Kopf mit Anzahl und Märkten, Zustand je Gerät `ukt_folge_auf`), Sprung aus dem Kalender und der Rundgang klappen sie auf (`folgeKarteAuf`).
   Karte „📦 Lidl-Unterlagen“ im Reiter Baustelle. Test „Projekte (Inhaber 24.10.2026) …“.
+- **Titelbild und Tafel** (Inhaber 24.10.2026: „ja“ zu beiden Vorschlägen): `projektTitelbild` = `daten.titelbild` (Pfad) – sonst angeheftetes (📌 `wichtig`)
+  – sonst neuestes Foto; nie buero/ (`projektBilder`). Vorschaubild statt Original (Supabase-Kontingent): `projektVorschauUrl` holt
+  `projektdateien/vorschau/<Pfad ohne Endung>.jpg` (`projektVorschauPfad`), fehlt es, erzeugt `vorschauErzeugen` es einmal (Original laden →
+  `vorschauVerkleinern` 480 px JPEG → hochladen, upsert:false; nacheinander über `vorschauKette`, nur `betriebSchreiben()`); Adressen 50 min im Speicher.
+  Nicht in `daten.dateien` → die Synology holt es nicht. `projektTitelbildEl` (Platzhalter, ohne Bild weg) in `projektZeile` (links), `projektTafelKarte`
+  (oben) und „Auf einen Blick“ (`.pb-mitbild`, Tipp → `projektTitelbildZeigen`, „🖼 Titelbild wählen“ → `projektTitelbildWahl`, „automatisch“ löscht die Wahl;
+  Tagebuch „Titelbild: …“). Tafel: Umschalter „☰ Liste / ▦ Tafel“ (`S.prAnsicht`, je Gerät `ukt_pr_ansicht`), `projektTafel` mit Spalten `PROJEKT_TAFEL`
+  (Planung, Angebot, Auftrag+Vorbereitung, Baustelle, Abschluss; „Nicht beauftragt“ nur wenn vorhanden), Filter/Suche/Typ gelten; nur Ansicht, kein Ziehen.
+  Test „Titelbild und Tafel …“.
 - **Lidl-Unterlagen je Filiale** (Inhaber 20.10.2026: „als nächstes bauen wir die Automation ein“ – Umfang alle vier Teile, nur PDF, KAV-Datum IB + 1 Woche,
   nur Inhaber): Karte „📦 Lidl-Unterlagen“ im Projekt nach den Inbetriebnahmeprotokollen (`lidlUnterlagenKarte`; nur `nurInhaber()`, Kunde lidl, Projekt mit Markt) →
   `lidlUnterlagenAssistent`: 1 Prüfliste (`lidlPruefliste`: Markt/Filialnummer, je Anlage Modell/SN/Füllmenge/Kältemittel/IB/Bereiche, Gerätebibliothek, Schall,

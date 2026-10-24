@@ -9960,6 +9960,60 @@ test("Projekte (Inhaber 24.10.2026): Name führt zum neuesten Stand, Stand-Reite
   pruefe(!fehl.length, fehl.join(" | "));
 });
 
+test("Titelbild und Tafel (Inhaber 24.10.2026): gewählt vor angeheftet vor neuestem, nie Inhaber-Fotos; Vorschau klein unter vorschau/, nicht in den Dateien; Tafel nach Phasen; am Handy nichts zu breit", async () => {
+  const a = await oeffnen(KONTEN.inhaber);
+  const r = await a.seite.evaluate(async () => {
+    const x = window.__t.x, db = window.__db.tabellen, e = {}, jetzt = new Date().toISOString(), sb = x("Store.sb"), w = (ms) => new Promise((f) => setTimeout(f, ms));
+    const bild = () => new Promise((ok) => { const c = document.createElement("canvas"); c.width = 1600; c.height = 1200; const g = c.getContext("2d"); g.fillStyle = "#4a7"; g.fillRect(0, 0, 1600, 1200); c.toBlob(ok, "image/jpeg", 0.95); });
+    const z = (t) => "2026-10-" + t + "T09:00:00.000Z";
+    const fs = [["tmp_tb/foto-a-alt.jpg", "Alt.jpg", z("10"), false], ["tmp_tb/foto-b-pin.jpg", "Pin.jpg", z("11"), true], ["tmp_tb/foto-c-neu.jpg", "Neu.jpg", z("12"), false],
+      ["buero/tmp_tb/preise-d-geheim.jpg", "Geheim.jpg", z("20"), true]];
+    for (const f of fs) await sb.storage.from("projektdateien").upload(f[0], await bild());
+    db.projekte.push({ id: "tmp_tb", nummer: "P-2026-909", titel: "Titelbild Test", kunde_id: "lidl", status: "auftrag", verlauf: [], erstellt: jetzt, geaendert: jetzt,
+      daten: { dateien: fs.map((f) => ({ pfad: f[0], name: f[1], art: f[0].startsWith("buero/") ? "preise" : "foto", zeit: f[2], wichtig: f[3] || undefined })) } },
+      { id: "tmp_tb2", nummer: "P-2026-910", titel: "Ohne Bild", kunde_id: "lidl", status: "inbetriebnahme", daten: {}, verlauf: [], erstellt: jetzt, geaendert: jetzt });
+    await x("projekteLaden()");
+    const P = "PROJEKTE.filter(function(q){ return q.id==='tmp_tb'; })[0]";
+    e.auto = x("projektTitelbild(" + P + ").pfad");
+    e.ohneBuero = x("projektBilder(" + P + ").every(function(f){ return !dateiImBuero(f); })");
+    /* Vorschaubild: einmal erzeugt, klein, unter vorschau/, nicht in daten.dateien */
+    const u = await x("projektVorschauUrl(projektTitelbild(" + P + "))");
+    const v = x("projektVorschauPfad(projektTitelbild(" + P + "))");
+    const vb = (await sb.storage.from("projektdateien").download(v)).data, orig = (await sb.storage.from("projektdateien").download("tmp_tb/foto-b-pin.jpg")).data;
+    e.vorschau = { u: !!u, pfad: v, klein: !!vb && vb.size < orig.size, typ: vb && vb.type, nichtInDateien: !x(P).daten.dateien.some((f) => f.pfad === v) };
+    /* wählen über den Dialog */
+    x("projektTitelbildWahl(" + P + ", function(){})");
+    await w(200);
+    document.querySelector('[data-bildpfad="tmp_tb/foto-a-alt.jpg"]').click();
+    for (let i = 0; i < 40 && !x(P).daten.titelbild; i++) await w(50);
+    e.gewaehlt = x("projektTitelbild(" + P + ").pfad"); e.knopfe = x("ansichtenSchliessen(); 1");
+    e.tagebuch = (x(P).verlauf || []).map((q) => q.text).join(" | ");
+    /* Tafel */
+    const t = x("projektTafel(PROJEKTE.filter(function(q){ return q.id==='tmp_tb' || q.id==='tmp_tb2'; }))");
+    e.tafel = [...t.querySelectorAll("[data-tafelspalte]")].map((s) => s.dataset.tafelspalte + ":" + s.querySelectorAll("[data-tafelkarte]").length).join(",");
+    e.zeile = !!x("projektZeile(" + P + ")").querySelector("[data-titelbild]"); e.zeileOhne = !x("projektZeile(PROJEKTE.filter(function(q){ return q.id==='tmp_tb2'; })[0])").querySelector("[data-titelbild]");
+    return e;
+  });
+  /* Handy: Liste und Tafel ragen nicht über den Rand (die Tafel scrollt in sich) */
+  await a.seite.setViewportSize({ width: 390, height: 844 });
+  const h = {};
+  for (const ans of ["liste", "tafel"]) {
+    await a.x("S.prAnsicht='" + ans + "'; S.prFilter='alle'; S.view='projekte'; render(); 1"); await a.seite.waitForTimeout(400);
+    h[ans] = await a.seite.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1);
+  }
+  await a.x("PROJEKTE=PROJEKTE.filter(function(q){ return q.id!=='tmp_tb' && q.id!=='tmp_tb2'; }); 1");
+  const fehl = [];
+  if (r.auto !== "tmp_tb/foto-b-pin.jpg" || !r.ohneBuero) fehl.push("automatisch: " + JSON.stringify([r.auto, r.ohneBuero]));
+  if (!r.vorschau.u || !/^vorschau\/tmp_tb\/foto-b-pin\.jpg$/.test(r.vorschau.pfad) || !r.vorschau.klein || r.vorschau.typ !== "image/jpeg" || !r.vorschau.nichtInDateien) fehl.push("Vorschau: " + JSON.stringify(r.vorschau));
+  if (r.gewaehlt !== "tmp_tb/foto-a-alt.jpg" || !/Titelbild: Alt\.jpg/.test(r.tagebuch)) fehl.push("Wahl: " + JSON.stringify([r.gewaehlt, r.tagebuch]));
+  if (r.tafel !== "planung:0,angebot:0,auftrag:1,baustelle:0,abschluss:1") fehl.push("Tafel: " + r.tafel);
+  if (!r.zeile || !r.zeileOhne) fehl.push("Zeile mit/ohne Bild: " + JSON.stringify([r.zeile, r.zeileOhne]));
+  if (!h.liste || !h.tafel) fehl.push("Handy zu breit: " + JSON.stringify(h));
+  if (a.fehler.length) fehl.push("Laufzeitfehler: " + a.fehler.join("; "));
+  await a.zu();
+  pruefe(!fehl.length, fehl.join(" | "));
+});
+
 /* ================================================================ Ablauf ================================================================ */
 const filterText = process.argv.slice(2).find((x) => !x.startsWith("--"));
 const filter = filterText ? new RegExp(filterText, "i") : null;
