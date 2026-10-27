@@ -1140,13 +1140,13 @@ test("Synology-Archiv hochladen (Inhaber 27.10.2026): Projektunterlagen (Preise 
   const r = await a.seite.evaluate(async () => {
     const x = window.__t.x, warte = (ms) => new Promise((f) => setTimeout(f, ms)), db = window.__db.tabellen, jetzt = new Date().toISOString();
     db.stammdaten.push({ id: "standort:TS1", typ: "standort", ziel: "TS1", neu: false, geaendert: jetzt, von: "T", grund: "T",
-      felder: { stoerungenArchiv: [{ datum: "2025-03-01", problem: "Test", quelle: "Synology 2025: Lidl/Störungen/1.Quartal/Testmarkt,2025-03-01.pdf" }] } });
+      felder: { stoerungenArchiv: [{ datum: "2025-03-01", problem: "Test", quelle: "Synology 2025: Lidl/Störungen/1.Quartal/Teststraße,2025-03-01.pdf" }] } });
     db.projekte.push({ id: "parch", nummer: "P-2025-901", titel: "Archivprojekt", kunde_id: "lidl", standort_id: "TS1", status: "abgeschlossen", erstellt: jetzt, geaendert: jetzt, verlauf: [],
       daten: { archiv: { ordner: ["2025/Lidl/Baustellen/Testort"], nurInhaber: ["2025/Lidl/Baustellen/Testort/Angebot 1.pdf"], ohne: ["2025/Lidl/Baustellen/Testort/weg.pdf"] } } });
     await x("Promise.all([ladeStammdaten(true), projekteLaden()])"); await warte(300);
     const datei = (pfad, inhalt) => { const f = new File([inhalt || ("%PDF-1.4 " + pfad)], pfad.split("/").pop(), { type: pfad.endsWith(".jpg") ? "image/jpeg" : "application/pdf" });
       Object.defineProperty(f, "webkitRelativePath", { value: pfad }); return f; };
-    const liste = [datei("Synology/2025/Lidl/Störungen/1.Quartal/Testmarkt,2025-03-01.pdf"), datei("Synology/2025/Lidl/Baustellen/Testort/Plan DG.pdf"), datei("Synology/2025/Lidl/Baustellen/Testort/Endabnahmeprotokoll VRV.pdf"), datei("Synology/2025/Lidl/Baustellen/Testort/Datenblatt Endabnahme.pdf"),
+    const liste = [datei("Synology/2025/Lidl/Störungen/1.Quartal/Teststraße,2025-03-01.pdf"), datei("Synology/2025/Lidl/Baustellen/Testort/Plan DG.pdf"), datei("Synology/2025/Lidl/Baustellen/Testort/Endabnahmeprotokoll VRV.pdf"), datei("Synology/2025/Lidl/Baustellen/Testort/Datenblatt Endabnahme.pdf"),
       datei("Synology/2025/Lidl/Baustellen/Testort/Angebot 1.pdf"), datei("Synology/2025/Lidl/Baustellen/Testort/weg.pdf"), datei("Synology/2025/Lidl/Baustellen/Testort/Thumbs.db"),
       datei("Synology/2025/Lidl/Baustellen/Anderes/fremd.pdf")];
     window.__liste = liste;
@@ -1163,7 +1163,7 @@ test("Synology-Archiv hochladen (Inhaber 27.10.2026): Projektunterlagen (Preise 
   await a.zu();
   pruefe(JSON.stringify(r.einzel) === JSON.stringify(["2025/Lidl/Baustellen/Testort/Bericht.pdf", "Bericht.pdf"]), "Einzeldatei mit Weg im Namen: " + JSON.stringify(r.einzel));
   pruefe(JSON.stringify(r.plan.s) === "[1]" && r.plan.p.length === 1 && r.plan.p[0][1].length === 4, "Plan: 1 Rapport, 4 Projektdateien (ohne weg.pdf, Thumbs.db, fremd): " + JSON.stringify(r.plan));
-  pruefe(r.datei && /^archiv\/2025\/TS1\//.test(r.datei.pfad), "Rapport an der Archiv-Störung: " + JSON.stringify(r.datei));
+  pruefe(r.datei && /^archiv\/2025\/TS1\//.test(r.datei.pfad) && /Teststrasse/.test(r.datei.pfad) && r.datei.name === "Teststraße_2025-03-01.pdf", "Rapport an der Archiv-Störung (Pfad ohne Umlaut, Name mit): " + JSON.stringify(r.datei));
   pruefe(r.pr.length === 4 && r.pr.some((d) => d[0] === "Angebot 1.pdf" && d[1]) && r.pr.some((d) => d[0] === "Plan DG.pdf" && !d[1] && /Synology 2025\/Lidl\/Baustellen\/Testort/.test(d[2])),
     "Projektdateien (Angebot nur Inhaber, Herkunft): " + JSON.stringify(r.pr));
   pruefe(r.nochmal === 0, "Nochmals: Rapport schon dran → nichts mehr offen");
