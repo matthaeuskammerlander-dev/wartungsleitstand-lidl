@@ -584,7 +584,8 @@ test("Mehrere Techniker: Tour an zwei Personen (gemeinsame Termine, je Tour + Na
     knopf.click(); await warte(1800);
     const neu = db.planung.slice(vorPlan);
     e.termine = neu.length; e.werAlle = neu.every((p) => (p.wer || []).length === 2 && p.wer.indexOf("u_tech_test_at") >= 0);
-    e.touren = db.touren.slice(vorTouren).map((t) => t.an).sort().join();
+    /* die gespeicherte Tour des Planers (Inhaber 27.10.2026) zählt nicht – nur die Touren zum Annehmen */
+    e.touren = db.touren.slice(vorTouren).filter((t) => !(t.daten || {}).gespeichert).map((t) => t.an).sort().join();
     e.chats = (db.chat || []).slice(vorChat).filter((c) => /Neue Tour/.test(c.text) && /Mit dir:/.test(c.text)).length;
     e.stoer = (x("OFFENE").filter((o) => o._id === "stm1")[0] || {}).terminTechniker || "";
     /* Störung: „Wer fährt hin“ – Knöpfe wählen mehrere, nochmals antippen nimmt heraus */
@@ -9484,6 +9485,123 @@ test("Tour mit Endpunkt: z. B. Start Wien, Ende zu Hause – Reihenfolge Richtun
   pruefe(r.ohneZiel, "Ohne Endpunkt nicht wie bisher: " + JSON.stringify(r));
   pruefe(!a.fehler.length, "Laufzeitfehler: " + a.fehler.join("; "));
   await a.zu();
+});
+
+test("Tour speichern (Inhaber 27.10.2026): gespeicherte Tour wieder öffnen, der Kalender zieht Änderungen nach (Montag auf Samstag, Markt raus, Markt dazu), Lidl samstags nur bis 18 Uhr", async () => {
+  const a = await oeffnen(KONTEN.inhaber);
+  const r = await a.seite.evaluate(async () => {
+    const x = window.__t.x, warte = (ms) => new Promise((f) => setTimeout(f, ms)), db = window.__db.tabellen;
+    const dlg = () => [...document.querySelectorAll(".assistent")].pop(), ok = (d) => [...d.querySelectorAll(".as-fuss button")].pop();
+    const setze = (el, w) => { el.value = w; el.dispatchEvent(new Event("change", { bubbles: true })); };
+    const hak = (el, w) => { el.checked = w; el.dispatchEvent(new Event("change", { bubbles: true })); };
+    /* ein Freitag, dahinter ein Samstag – beide keine Feiertage */
+    let fr = x("plusTage(isoLokal(new Date()),1)");
+    while (x("wochentagIdx('" + fr + "')") !== 4 || x("!!feiertag('" + fr + "')") || x("!!feiertag(plusTage('" + fr + "',1))")) fr = x("plusTage('" + fr + "',1)");
+    const sa = x("plusTage('" + fr + "',1)"), mo = x("werktagAb(plusTage('" + fr + "',1))");
+    const p2 = x("byId.TS2.pos[0]"), p3 = x("byId.TS3.pos[0]");
+    const stopp = (sid, pos, arbeitH) => ({ standort: x("byId." + sid), positionen: [pos], fahrtH: 0.5, arbeitH: arbeitH || 1 });
+    const erg = {};
+    /* 1) Samstag, Lidl-Markt bis nach 18 Uhr: gleich im Dialog gemeldet, nichts eingetragen */
+    window.__TL = { tage: [{ nr: 1, stopps: [stopp("TS2", p2, 12)] }], anzahlStopps: 1, kmGesamt: 20, stundenProTag: 14 };
+    const vorPlan = db.planung.length;
+    x("tourSchicken(window.__TL)"); await warte(500);
+    let d = dlg(); [...d.querySelectorAll("[data-an] .chip")].find((b) => /^Ich/.test(b.textContent)).click(); await warte(50);
+    setze(d.querySelector('[data-a="ab"]'), sa); hak(d.querySelector('[data-a="samstag"]'), true);
+    ok(d).click(); await warte(400);
+    erg.lidl = x("istLidl(byId.TS2)");
+    erg.samstagFehler = d.querySelector('[data-a="fehler"]').hidden ? "" : d.querySelector('[data-a="fehler"]').textContent;
+    erg.nichtsEingetragen = db.planung.length === vorPlan;
+    x("ansichtenSchliessen()");
+    /* 2) Tour Fr + nächster Werktag an mich und den Techniker – ohne Samstag */
+    window.__T1 = { tage: [{ nr: 1, stopps: [stopp("TS1", x("posById.TP1"))] }, { nr: 2, stopps: [stopp("TS2", p2)] }], anzahlStopps: 2, kmGesamt: 60, stundenProTag: 8 };
+    x("tourSchicken(window.__T1)"); await warte(500);
+    d = dlg();
+    const chips = [...d.querySelectorAll("[data-an] .chip")];
+    chips.find((b) => /^Ich/.test(b.textContent)).click(); chips.find((b) => /Testtechniker|tech/i.test(b.textContent)).click(); await warte(50);
+    d.querySelector('[data-a="titel"]').value = "Tour West";
+    setze(d.querySelector('[data-a="ab"]'), fr);
+    ok(d).click(); await warte(1800);
+    const zeile = (sid) => db.planung.filter((p) => p.standort_id === sid && p.art === "termin");
+    erg.vorher = ["TS1", "TS2"].map((s) => zeile(s).map((p) => p.datum).join());
+    const master = () => db.touren.filter((t) => (t.daten || {}).gespeichert && t.titel === "Tour West")[0];
+    const m1 = master();
+    erg.gespeichert = !!m1 && m1.an === m1.von && (m1.daten.kal || {}).termine.length === 2 && (m1.daten.kal.touren || []).length === 1;
+    /* 3) in der Tourenplanung unter „💾 Gespeicherte Touren“ – auf jedem Gerät (aus der Datenbank geladen) */
+    x("tourenGespeichert=[]; tourenVersuch=0; tourenLaden()"); await warte(600);
+    x("ansichtenSchliessen(); S.view='karte'; render()"); await warte(600);
+    erg.liste = !!document.querySelector("[data-tourgespeichert]") && !document.querySelector("[data-tourannehmen]");
+    /* 4) öffnen → gerechnet, „📅 Kalender anpassen“ statt nochmals eintragen */
+    document.querySelector("[data-tourgsoeffnen]").click(); await warte(2500);
+    erg.geoeffnet = x("!!S.tour.gespeichert && (S.tour.fest||[]).length") === 2 && !!document.querySelector("[data-tourkalanpassen]") && !!document.querySelector("[data-tourgsinfo]");
+    /* 5) spontan geändert: TS1 fällt weg, die Montags-Märkte (TS2) schon am Samstag, TS3 kommt dazu */
+    window.__T2 = { tage: [{ nr: 1, stopps: [stopp("TS2", p2), stopp("TS3", p3, 8)] }], anzahlStopps: 2, kmGesamt: 50, stundenProTag: 10 };
+    x("tourKalenderDialog(window.__T2)"); await warte(400);
+    d = dlg();
+    erg.vorgabeTag = d.querySelector("[data-tourtag='0'] input").value;
+    hak(d.querySelector('[data-k="samstag"]'), true);
+    setze(d.querySelector("[data-tourtag='0'] input"), sa); await warte(100);
+    d = dlg();
+    erg.vorschau = { verschoben: d.querySelectorAll("[data-tourverschoben]").length, neu: d.querySelectorAll("[data-tourneu]").length, weg: d.querySelectorAll("[data-weg]").length };
+    /* Samstag und Lidl: mit Beginn 09:00 wäre TS3 erst nach 18 Uhr fertig – gesperrt */
+    setze(d.querySelector('[data-k="start"]'), "09:00"); await warte(100);
+    d = dlg();
+    erg.spaet = { text: d.querySelector('[data-k="fehler"]').hidden ? "" : d.querySelector('[data-k="fehler"]').textContent, gesperrt: ok(d).disabled };
+    setze(d.querySelector('[data-k="start"]'), "07:00"); await warte(100);
+    d = dlg(); const vorChat = (db.chat || []).length;
+    ok(d).click(); await warte(1800);
+    erg.nachher = { TS1: zeile("TS1").length, TS2: zeile("TS2").map((p) => p.datum + " " + p.beginn).join(), TS3: zeile("TS3").map((p) => p.datum + " " + (p.wer || []).length).join() };
+    const m2 = master();
+    erg.kal = { tage: (m2.daten.kal.tage || []).join(), samstag: m2.daten.kal.samstag, termine: m2.daten.kal.termine.length, stopps: m2.daten.stopps.map((s) => s.s).join() };
+    erg.techTour = (db.touren.filter((t) => t.an === "u_tech_test_at")[0] || { daten: {} }).daten.stopps.map((s) => s.s).join();
+    erg.nachricht = (db.chat || []).slice(vorChat).filter((c) => c.an === "u_tech_test_at" && /geändert/.test(c.text)).length;
+    /* 6) nochmals „Kalender anpassen“ ohne Änderung: nichts zu tun, nichts doppelt */
+    x("tourKalenderDialog(window.__T2)"); await warte(400);
+    d = dlg();
+    erg.nichts = /nichts zu ändern/.test(d.textContent) && d.querySelectorAll("[data-tourverschoben],[data-tourneu],[data-weg]").length === 0;
+    x("ansichtenSchliessen()");
+    /* wieder zwei Tage (TS1, dann TS2 – TS2 steht am Samstag): Tag 2 liegt nach Tag 1, nie am selben Tag */
+    x("tourKalenderDialog(window.__T1)"); await warte(400);
+    d = dlg(); erg.zweiTage = [...d.querySelectorAll("[data-tourtag] input")].map((i) => i.value);
+    x("ansichtenSchliessen()");
+    /* 7) ohne Kalender: „💾 Tour speichern“ fragt den Namen und speichert */
+    x("S.tour.gespeichert=null; render()"); await warte(400);
+    const sp = document.querySelector("[data-toursp]"); erg.speichernKnopf = !!sp;
+    if (sp) { sp.click(); await warte(300); d = dlg(); d.querySelector("textarea").value = "Nur gemerkt"; ok(d).click(); await warte(800); }
+    const g = db.touren.filter((t) => t.titel === "Nur gemerkt")[0];
+    erg.ohneKal = !!g && g.daten.gespeichert === true && g.daten.kal === null;
+    erg.fr = fr; erg.sa = sa; erg.mo = mo;
+    return erg;
+  });
+  pruefe(r.lidl && /18:00/.test(r.samstagFehler) && r.nichtsEingetragen, "Samstag nach 18 Uhr nicht gemeldet: " + JSON.stringify(r));
+  pruefe(JSON.stringify(r.vorher) === JSON.stringify([r.fr, r.mo]), "ohne Samstag nicht auf Werktage gelegt: " + JSON.stringify(r));
+  pruefe(r.gespeichert, "Tour nach dem Eintragen nicht gespeichert: " + JSON.stringify(r));
+  pruefe(r.liste && r.geoeffnet, "gespeicherte Tour nicht in der Liste bzw. nicht geöffnet: " + JSON.stringify(r));
+  pruefe(r.vorgabeTag === r.mo, "Vorgabe-Tag nicht der Tag im Kalender: " + JSON.stringify(r));
+  pruefe(r.vorschau.verschoben === 1 && r.vorschau.neu === 1 && r.vorschau.weg === 1, "Vorschau falsch: " + JSON.stringify(r.vorschau));
+  pruefe(/Lidl hat nur bis 18:00/.test(r.spaet.text) && r.spaet.gesperrt, "Samstag 18 Uhr im Dialog nicht gesperrt: " + JSON.stringify(r.spaet));
+  pruefe(r.nachher.TS1 === 0 && r.nachher.TS2 === r.sa + " 07:30" && r.nachher.TS3 === r.sa + " 2", "Kalender nicht angepasst: " + JSON.stringify(r.nachher));
+  pruefe(r.kal.tage === r.sa && r.kal.samstag === true && r.kal.termine === 2 && r.kal.stopps === "TS2,TS3", "gespeicherte Tour nicht nachgezogen: " + JSON.stringify(r.kal));
+  pruefe(r.techTour === "TS2,TS3" && r.nachricht === 1, "Tour des Technikers bzw. Nachricht fehlt: " + JSON.stringify(r));
+  pruefe(r.nichts, "zweites Anpassen ohne Änderung schlägt etwas vor");
+  pruefe(r.zweiTage.length === 2 && r.zweiTage[0] === r.sa && r.zweiTage[1] > r.zweiTage[0], "Tag 2 nicht nach Tag 1: " + JSON.stringify(r.zweiTage));
+  pruefe(r.speichernKnopf && r.ohneKal, "Tour ohne Kalender nicht gespeichert: " + JSON.stringify(r));
+  pruefe(!a.fehler.length, "Laufzeitfehler: " + a.fehler.join("; "));
+  /* FOTO=<Datei>: „Kalender anpassen“ mit der ursprünglichen Tour (TS1 wieder dazu, TS3 heraus) zum Ansehen */
+  if (process.env.FOTO) { await a.seite.evaluate(() => { window.__t.x("ansichtenSchliessen(); S.tour.gespeichert=tourenGespeichert.filter(function(t){ return t.titel==='Tour West'; })[0]; tourKalenderDialog(window.__T1)"); });
+    await a.seite.waitForTimeout(700); await a.seite.screenshot({ path: process.env.FOTO }); }
+  await a.zu();
+  /* Techniker speichert die eigene Tour (Regel tools/touren-speichern.sql) – für andere geht es weiter nicht */
+  const t = await oeffnen(KONTEN.techniker);
+  const rt = await t.seite.evaluate(async () => {
+    const x = window.__t.x, db = window.__db.tabellen;
+    window.__T = { tage: [{ nr: 1, stopps: [{ standort: x("byId.TS1"), positionen: [x("posById.TP1")], fahrtH: 0.5, arbeitH: 1 }] }], anzahlStopps: 1, kmGesamt: 10, stundenProTag: 8 };
+    let eigen = null; try { eigen = await x("tourSpeichernDb(window.__T, 'Meine Tour')"); } catch (e) { eigen = String(e.message || e); }
+    const fremd = await x("Store.sb.from('touren').insert({an:'u_inhaber_test_at', von:meineKennung(), titel:'x', daten:{gespeichert:true}})");
+    return { eigen: eigen && eigen.id ? db.touren.filter((z) => z.id === eigen.id).map((z) => z.an === z.von && z.daten.gespeichert)[0] : eigen, fremd: !!(fremd && fremd.error) };
+  });
+  pruefe(rt.eigen === true && rt.fremd, "Techniker: eigene Tour speichern / fremde gesperrt: " + JSON.stringify(rt));
+  pruefe(!t.fehler.length, "Laufzeitfehler (Techniker): " + t.fehler.join("; "));
+  await t.zu();
 });
 
 test("Interne Notiz auf der Karte (Inhaber 15.10.2026): 🔒 am Marktpunkt und im Markt-Fenster, nach „behoben“ weg; Kunde sieht nichts", async () => {

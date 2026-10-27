@@ -665,6 +665,17 @@ Kammerlander Umwelt- und Klimatechnik (UKT) – oft kurz, vom Handy, im Feld.
   bekommen „Einsatz geplant am“ (ohne zweite Nachricht, `_ohneMeldung`), Wartungen stehen in Fällig als „📅 eingeplant“.
   Startpunkt (`einstellungen` „startpunkt:<Konto>“): jeder setzt nur seinen eigenen, Inhaber und Admins für alle
   (`startpunktDarf`; die Datenbank sperrt es mit einer Sperrregel – Inhaber 05.10.2026).
+  **Tour speichern und Kalender nachziehen** (Inhaber 27.10.2026: „kann ich mir eine Tour abspeichern? … werden spätere Änderungen auch im
+  Kalender übernommen? … die Montags-Aufgaben gleich am Samstag – Lidl hat nur bis 18 Uhr offen“): Tabelle `touren` mit an = von = ich und
+  `daten.gespeichert` (Insert-Regel für Nicht-Büro: tools/touren-speichern.sql), `daten.kal` = {ab, start, samstag, titel, wer, werNamen, tage,
+  termine:[{s, id, neu}], touren:[Zeilen der anderen]} – jede Tour, die in den Kalender geht, wird gespeichert (`tourSpeichernDb`); ohne Kalender
+  „💾 Tour speichern“ (`tourSpeichern`). Liste „💾 Gespeicherte Touren“ (`tourenGespeichertKarte`, auf jedem Gerät), Öffnen = `tourOeffnen(t, true)`
+  (Fälligkeit/Fahrzeit neu gerechnet). Steht sie im Kalender: statt erneut eintragen „📅 Kalender anpassen“ (`tourKalenderDialog`,
+  `tourAbgleichPlan`, `tourAbgleichAusfuehren`): Datum je Tour-Tag (Vorgabe = Tag, an dem seine Märkte stehen), Vorschau verschoben/neu/
+  nicht mehr in der Tour; entfernt werden NUR von der Tour angelegte Termine (Häkchen + Rückfrage, Störung verliert „Einsatz geplant am“),
+  erledigte und vorhandene Einträge bleiben; Tour der anderen nachgezogen + Nachricht. Gemeinsamer Zeitplan `tourZeitplan` (auch `tourInKalender`).
+  Samstag nur mit „Samstag mitnehmen“ (`werktagAb(t, samstag)`); Lidl-Märkte müssen samstags bis `LIDL_SAMSTAG_BIS` (18:00) fertig sein –
+  sonst gesperrt mit Meldung. Test „Tour speichern (Inhaber 27.10.2026) …“.
 - **Mehrere Techniker je Einsatz** (Inhaber 07.10.2026: „nur einen Techniker wählen – für Stempeluhr/Zeiterfassung unpraktisch“):
   Störung „Wer fährt hin“ (`terminTechniker`, Komma-Liste, `stoerWer` überall statt des einen Namens – Kalender, Doppelbuchung,
   Nachricht an jeden mit „Mit dir: …“, Bedarf, Tourfilter; Knöpfe `data-mehr` schalten um); „Tour verteilen“ an mehrere (`tourSchicken`:

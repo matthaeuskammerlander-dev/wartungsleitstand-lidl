@@ -129,6 +129,13 @@
       if(tab==="auslagen" && alt && alt.status!=="offen") return "auslagen: schon abgegeben";
       if(tab==="auslagen" && zeile && zeile.status==="ausbezahlt") return "auslagen: ausbezahlt nur Inhaber";
     }
+    /* wie tools/touren.sql + tools/touren-speichern.sql: schicken nur Büro (ist_admin), die eigene Tour speichern (an = von = ich,
+       daten.gespeichert) jeder, der mitarbeitet; ändern der Empfänger oder das Büro; löschen nur das Büro */
+    if(tab==="touren"){
+      if(art==="insert" && !(zeile.von===uid() && (admin() || (zeile.an===uid() && zeile.daten && zeile.daten.gespeichert)))) return 'new row violates row-level security policy for table "touren"';
+      if(art==="update" && !(admin() || (alt && alt.an===uid()))) return "touren: nicht erlaubt";
+      if(art==="delete" && !admin()) return "touren: loeschen nur Buero";
+    }
     if(tab==="planung" && (art==="update"||art==="delete") && alt && alt.privat && alt.erstellt_von!==uid() && (alt.wer||[]).indexOf(uid())<0) return "planung: privat";
     if(tab==="planung" && art==="update" && alt && alt.kategorie==="urlaub" && rolle!=="inhaber" && zeile && (zeile.status==="genehmigt"||zeile.status==="abgelehnt") && zeile.status!==alt.status) return "Urlaub genehmigt nur der Inhaber";
     /* wie tools/rechte-2026-10-05.sql (Inhaber 05.10.2026): Abwesenheit (Urlaub, Krankenstand, Schule, Zeitausgleich) anderer – auch
