@@ -402,10 +402,16 @@ Kammerlander Umwelt- und Klimatechnik (UKT) – oft kurz, vom Handy, im Feld.
 - **Mappen zum Versenden** (Inhaber 19.10.2026: „alles in einen Unterordner im Projekt, was wir für die Einreichung der Unterlagen brauchen –
   als ZIP downloaden und an Lidl senden“): `daten.mappen` [{id, name, dateien:[Pfad], angelegt, von}] – nur Verweise auf Projektdateien, nie
   buero/ (`mappeDateien` filtert; die Mappe sehen alle). Kasten „📦 Mappen zum Versenden“ oben in der Dateien-Karte (`mappenKasten`: Anzahl,
-  „Inhalt zeigen“, „⬇ Als ZIP“, ✎), „+ Mappe“ → `mappeEditor` (Name, Vorgabe „Unterlagen für Lidl“; Dateien anhaken, ältere Stände gekennzeichnet,
+  „Inhalt zeigen“, „⬇ Als ZIP“, ✎), „+ Mappe“ → `mappeEditor` (Name, Vorgabe nach Kunde `mappeVorgabeName`: „Unterlagen für Lidl“ bzw. „Unterlagen für <Kunde>“, Inhaber 27.10.2026; Dateien anhaken, ältere Stände gekennzeichnet,
   „alle neuesten anhaken“; entfernen mit Rückfrage – Dateien bleiben). ZIP ohne Bibliothek (`zipErstellen`: ungepackt, CRC-32 `zipCrc`, UTF-8-Namen,
   gleiche Namen „ (2)“), Name `mappeZipName` „<Mappe> – <Ort>.zip“, `mappeHerunterladen` holt die Dateien aus dem Speicher (nicht abrufbare werden
   genannt). Gelöschte Dateien fallen heraus (`dateiVerweiseErsetzen`), umgelegte behalten ihren Platz. Test „Mappe zum Versenden …“.
+  **Inhaber-Mappe** (Inhaber 27.10.2026: „wichtig, dass man auch Angebote oder Rechnungen anhängen kann“): nur der Inhaber sieht im Editor zusätzlich 🔒-Dateien
+  (buero/, `data-mappebuero`, „alle neuesten“ hakt sie nie an) und „💶 Angebote / Rechnungen (nur Inhaber)“ (`belegeLaden`, `[data-mappebeleg]`). Mit Beleg oder 🔒-Datei
+  trägt die Mappe `nurInhaber:true` und `belege:[Beleg-ID]` – nur IDs, nie Beträge; ohne beides wieder Mappe für alle. `mappenSichtbar` blendet sie für alle anderen aus,
+  `mappeDateien` lässt buero/ nur dann zu, `mappeBelegIds` nur für den Inhaber. ZIP (`mappeHerunterladen`): Belege hinten über `mappeBelegPdf` – App-Beleg frisch
+  (`belegPdfErzeugen`, `belegDateiname`), KPlus-Beleg Original (`belegKplusPfad`: `pdf_pfad` bzw. „<6-stellige Nummer>.pdf“ in den Projektdateien), fehlende werden genannt.
+  Synology: `ukt_archiv.py` lässt Inhaber-Mappen aus der Projekt-JSON weg. Test „Inhaber-Mappe …“.
   **Ältere Stände löschen** (Inhaber 19.10.2026: „lösche die alten Fassungen“): aufgeklappte Gruppe → „🗑 ältere Stände löschen (n)“ (`dateiAeltereStaende`:
   je Dateiendung bleibt der neueste, PDF und Word desselben Namens stehen beisammen; nur wenn alle `dateiLoeschenDarf`) → `dateienLoeschen` mit EINER Rückfrage (Namen + Datum),
   Speicher in einem Aufruf, Einträge und Verweise wie `dateiLoeschen`. Test „Ältere Stände löschen …“.

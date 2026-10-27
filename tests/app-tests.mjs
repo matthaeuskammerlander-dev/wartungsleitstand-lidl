@@ -6362,12 +6362,86 @@ test("Mappe zum Versenden (Inhaber 19.10.2026): Dateien anhaken, als ZIP herunte
     db.projekte = db.projekte.filter((q) => q.id !== "tmp_mp");
     return e;
   });
-  pruefe(r.leerNeu && r.liste.length === 3 && !r.liste.some((q) => /^buero\//.test(q)), "Mappe: Auswahl ohne Preis-Datei: " + JSON.stringify(r.liste));
+  /* der Inhaber sieht die 🔒-Datei in der Auswahl (Inhaber-Mappe, 27.10.2026), „alle neuesten“ hakt sie aber nie an */
+  pruefe(r.leerNeu && r.liste.length === 4 && r.liste.some((q) => /^buero\//.test(q)), "Mappe: Auswahl beim Inhaber mit 🔒-Datei: " + JSON.stringify(r.liste));
   pruefe(r.links === 3 && r.name === "Unterlagen für Lidl" && r.anzahl === 3 && /Unterlagen für Lidl/.test(r.kasten) && /3 Dateien/.test(r.kasten), "Mappe gespeichert/angezeigt: " + JSON.stringify([r.name, r.anzahl, r.kasten]));
   pruefe(r.zipZahl === 3 && r.typ === "application/zip" && r.sig === "4034b50" && r.endeSig === "6054b50" && r.eintraege === 3 && r.crcOk, "ZIP-Aufbau: " + JSON.stringify(r));
   pruefe(r.namen.includes("Technische Beschreibung.pdf") && r.namen.includes("Bestätigung KAV.pdf") && r.inhalt && /%PDF/.test(r.inhalt) && /\.zip$/.test(r.zipName) && /Unterlagen für Lidl/.test(r.zipName), "ZIP-Inhalt/Name: " + JSON.stringify([r.namen, r.inhalt, r.zipName]));
   pruefe(r.nachLoeschen === 2, "gelöschte Datei bleibt in der Mappe: " + r.nachLoeschen);
   await a.zu();
+});
+
+test("Inhaber-Mappe (Inhaber 27.10.2026): Angebot + Rechnung anhängen, ZIP mit Beleg-PDFs; Techniker sieht die Mappe nicht", async () => {
+  const jetzt = new Date().toISOString();
+  const projekt = { id: "tmp_im", nummer: "P-2026-905", titel: "Inhaber-Mappe Test", kunde_id: "lidl", status: "angebot", verlauf: [], erstellt: jetzt, geaendert: jetzt,
+    daten: { dateien: [{ pfad: "tmp_im/plan-a-Schema.pdf", name: "Schema.pdf", art: "plan", von: "T", zeit: jetzt }, { pfad: "buero/tmp_im/preise-b-K.pdf", name: "Kalkulation.pdf", art: "preise", von: "T", zeit: jetzt }] } };
+  const a = await oeffnen(KONTEN.inhaber);
+  const r = await a.seite.evaluate(async (projekt) => {
+    const x = window.__t.x, db = window.__db.tabellen, sb = x("Store.sb"), e = {}, w = (ms) => new Promise((f) => setTimeout(f, ms));
+    const bis = async (bed, ms) => { const t = Date.now() + (ms || 5000); for (;;) { let ok = false; try { ok = bed(); } catch (err) {} if (ok || Date.now() > t) return ok; await w(50); } };
+    await sb.storage.from("projektdateien").upload("tmp_im/plan-a-Schema.pdf", new Blob(["%PDF-1.4 Schema"], { type: "application/pdf" }));
+    await sb.storage.from("projektdateien").upload("buero/tmp_im/preise-b-K.pdf", new Blob(["%PDF-1.4 Kalk"], { type: "application/pdf" }));
+    await sb.storage.from("projektdateien").upload("buero/tmp_im/413999.pdf", new Blob(["%PDF-1.4 KPlus-Original"], { type: "application/pdf" }));
+    db.projekte.push(JSON.parse(JSON.stringify(projekt)));
+    db.belege.push({ id: "imA", art: "angebot", nummer: "413998", test: false, extern: false, datum: "2026-10-27", status: "entwurf", projekt_id: "tmp_im", kunde_id: "lidl",
+      kopf: { betreff: ["Testangebot"] }, positionen: [{ typ: "pos", menge: 1, eh: "Stk", text: "Gerät", preis: 1000 }], summen: { netto: 1000, mwst: 200, brutto: 1200, satz: 20 } });
+    db.belege.push({ id: "imR", art: "rechnung", nummer: "413999", test: false, extern: true, datum: "2026-10-20", status: "versendet", projekt_id: "tmp_im", kunde_id: "lidl",
+      pdf_pfad: "buero/tmp_im/413999.pdf", kopf: {}, positionen: [], summen: { netto: 500 } });
+    await x("projekteLaden()");
+    const P = "PROJEKTE.filter(function(q){ return q.id==='tmp_im'; })[0]", p = () => x(P);
+    x("mappeEditor(" + P + ", null, function(){})");
+    await bis(() => document.querySelectorAll("[data-mappebeleg]").length === 2);
+    e.belegZeilen = document.querySelectorAll("[data-mappebeleg]").length;
+    e.bueroSichtbar = !!document.querySelector("[data-mappebuero]");
+    document.querySelector("[data-mappealle]").click();
+    e.bueroNichtAngehakt = !document.querySelector("[data-mappebuero]").checked;
+    document.querySelectorAll("[data-mappebeleg]").forEach((c) => { c.checked = true; });
+    [...document.querySelectorAll(".as-fuss .btn")].find((b) => b.textContent === "Speichern").click();
+    await bis(() => (p().daten.mappen || []).length === 1);
+    const m = p().daten.mappen[0]; e.nurInhaber = m.nurInhaber; e.belege = m.belege; e.dateien = m.dateien.length;
+    e.ohneBetraege = !/netto|brutto|preis|summen|positionen/.test(JSON.stringify(m));
+    const karte = () => x("projektDateienKarte(" + P + ", true, true, function(){})");
+    await bis(() => /413998/.test(karte().querySelector("[data-mappen]").textContent));
+    e.kasten = karte().querySelector("[data-mappen]").textContent;
+    let blob = null; const alt = URL.createObjectURL; URL.createObjectURL = (b) => { blob = b; return alt.call(URL, b); };
+    e.zipZahl = await x("mappeHerunterladen(" + P + ", " + P + ".daten.mappen[0], null)");
+    URL.createObjectURL = alt;
+    const u8 = new Uint8Array(await blob.arrayBuffer()), dv = new DataView(u8.buffer), dec = new TextDecoder();
+    const ende = u8.length - 22; let o = dv.getUint32(ende + 16, true); e.namen = []; e.inhalte = {};
+    for (let i = 0; i < dv.getUint16(ende + 10, true); i++) {
+      const nl = dv.getUint16(o + 28, true), lok = dv.getUint32(o + 42, true), gr = dv.getUint32(o + 20, true), name = dec.decode(u8.slice(o + 46, o + 46 + nl));
+      e.namen.push(name); e.inhalte[name] = dec.decode(u8.slice(lok + 30 + dv.getUint16(lok + 26, true), lok + 30 + dv.getUint16(lok + 26, true) + 12));
+      o += 46 + nl;
+    }
+    /* Beleg wieder abwählen → Mappe für alle */
+    x("mappeEditor(" + P + ", " + P + ".daten.mappen[0], function(){})");
+    await bis(() => document.querySelectorAll("[data-mappebeleg]").length === 2);
+    document.querySelectorAll("[data-mappebeleg]").forEach((c) => { c.checked = false; });
+    [...document.querySelectorAll(".as-fuss .btn")].find((b) => b.textContent === "Speichern").click();
+    await bis(() => !p().daten.mappen[0].nurInhaber);
+    e.wiederFuerAlle = !p().daten.mappen[0].nurInhaber && !p().daten.mappen[0].belege;
+    /* für den Techniker-Test wieder als Inhaber-Mappe hinterlegen */
+    const roh = db.projekte.find((q) => q.id === "tmp_im"); roh.daten.mappen = [{ id: "mpX", name: "Geheim", dateien: ["tmp_im/plan-a-Schema.pdf"], nurInhaber: true, belege: ["imA"] }];
+    return e;
+  }, projekt);
+  await a.zu();
+  pruefe(r.belegZeilen === 2 && r.bueroSichtbar && r.bueroNichtAngehakt, "Editor: Belege/🔒-Datei: " + JSON.stringify(r));
+  pruefe(r.nurInhaber === true && JSON.stringify(r.belege) === '["imA","imR"]' && r.dateien === 1 && r.ohneBetraege, "Inhaber-Mappe gespeichert: " + JSON.stringify(r));
+  pruefe(/413998/.test(r.kasten) && /413999/.test(r.kasten) && /nur Inhaber/.test(r.kasten) && /2 Angebote\/Rechnungen/.test(r.kasten), "Kasten: " + r.kasten);
+  pruefe(r.zipZahl === 3 && r.namen.includes("Schema.pdf") && r.namen.includes("Rechnung_413999.pdf") && r.namen.some((n) => /^Angebot_413998/.test(n)) &&
+    Object.values(r.inhalte).every((t) => /^%PDF/.test(t)), "ZIP mit Beleg-PDFs: " + JSON.stringify([r.namen, r.inhalte]));
+  pruefe(r.wiederFuerAlle, "ohne Belege wieder Mappe für alle: " + JSON.stringify(r));
+  const t = await oeffnen(KONTEN.techniker);
+  const rt = await t.seite.evaluate(async (projekt) => {
+    const x = window.__t.x, db = window.__db.tabellen;
+    if (!db.projekte.find((q) => q.id === "tmp_im")) { const k = JSON.parse(JSON.stringify(projekt)); k.daten.mappen = [{ id: "mpX", name: "Geheim", dateien: ["tmp_im/plan-a-Schema.pdf"], nurInhaber: true, belege: ["imA"] }]; db.projekte.push(k); }
+    await x("projekteLaden()");
+    const P = "PROJEKTE.filter(function(q){ return q.id==='tmp_im'; })[0]";
+    const k = x("projektDateienKarte(" + P + ", true, true, function(){})").querySelector("[data-mappen]");
+    return { sichtbar: x("mappenSichtbar(" + P + ").length"), text: k ? k.textContent : "", ids: x("mappeBelegIds(" + P + ".daten.mappen[0]).length") };
+  }, projekt);
+  await t.zu();
+  pruefe(rt.sichtbar === 0 && !/Geheim/.test(rt.text) && rt.ids === 0, "Techniker sieht Inhaber-Mappe: " + JSON.stringify(rt));
 });
 
 test("Inbetriebnahmeprotokoll: nur werkseitige Füllung bekannt → keine Gesamtfüllmenge, kein CO₂e (Inhaber 19.10.2026, Linz)", async () => {

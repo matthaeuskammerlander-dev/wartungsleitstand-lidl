@@ -684,6 +684,8 @@ def projekte_abgleich(k, sb, stand):
                 # ohne Büro-Dateien und Belege (Angebote/Rechnungen) – den Ordner sehen auch Techniker
                 alle_d = (p.get("daten") or {}).get("dateien") or []
                 p_aus = dict(p, daten=dict(p.get("daten") or {}, dateien=[x for x in alle_d if not str(x.get("pfad") or "").startswith("buero/")]))
+                # Inhaber-Mappen (mit Angeboten/Rechnungen, Inhaber 27.10.2026) kommen gar nicht in den Projektordner
+                p_aus["daten"]["mappen"] = [m for m in (p_aus["daten"].get("mappen") or []) if not (isinstance(m, dict) and m.get("nurInhaber"))]
                 p_aus = ohne_buero(p_aus, {x.get("pfad"): x.get("name") for x in alle_d})
                 schreibe(os.path.join(ordner, name + ".json"),
                          json.dumps({"projekt": p_aus, "belege": []}, ensure_ascii=False, indent=1).encode("utf-8"))
