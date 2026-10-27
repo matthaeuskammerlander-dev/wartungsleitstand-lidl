@@ -1,5 +1,5 @@
 // ki-lesen – Bilder mit Claude auslesen: Prüfbuch-Seiten, Typenschilder,
-// eingescannte Lidl-Aufträge. Läuft als Supabase Edge Function (Deno).
+// eingescannte Lidl-Aufträge, Belege der Reisekosten. Läuft als Supabase Edge Function (Deno).
 //
 // Warum hier und nicht in der App: Der Schlüssel für die Claude-Schnittstelle
 // (ANTHROPIC_API_KEY) darf nie in die öffentliche Seite. Er liegt als Secret
@@ -114,6 +114,18 @@ const SCHEMAS: Record<string, unknown> = {
     unsicher: { type: "array", items: text },
     hinweise: text,
   }),
+  // Kassenbon / Rechnung einer Ausgabe (Reisekosten, Inhaber 27.10.2026)
+  beleg: objekt({
+    haendler: text,           // Geschäft / Firma laut Beleg
+    beschreibung: text,       // kurz, was gekauft wurde (z. B. „Silikon, Schrauben“, „Mittagessen 2 Personen“)
+    datum: text,              // TT.MM.JJJJ
+    betrag: text,             // Gesamtbetrag inkl. MwSt, z. B. „23,85“
+    mwst: text,               // enthaltene MwSt gesamt, z. B. „3,98“
+    mwstSatz: text,           // „20 %“ oder „10 % / 20 %“
+    kategorie: text,          // bewirtung | unterkunft | material | werkzeug | sonstiges
+    unsicher: { type: "array", items: text },
+    hinweise: text,
+  }),
 };
 
 const ANWEISUNG: Record<string, string> = {
@@ -159,6 +171,14 @@ const ANWEISUNG: Record<string, string> = {
     "(Typ, Modell, Hersteller, LIN/IA-Nummer, Seriennummer) und den Lidl-Ansprechpartner mit Telefon und " +
     "E-Mail. Daten als TT.MM.JJJJ. Lass leer, was nicht dasteht; nichts schätzen." +
     " Neues Lidl-Formular „Beauftragung“ (seit Oktober 2026): „Bestellung <Nummer> vom <Datum>“ im Titel → auftragsnummer und auftragsdatum; in der Tabelle „Auftrag Nr“ → stoerungsnr, Kostenstelle „AT…“ → filialCode, „Leistungs Datum/Zeitraum“ → zieltermin, „Inventartyp“ → lidlTyp, „Modell“ → lidlModell, „LIN“ → lin, „SN“ → seriennummer, „Problemtyp“ → problemtyp, „Bemerkung“ → beschreibung; der Kopf „Abteilung/Email/Tel.“ ist der Lidl-Ansprechpartner. „Best. Typ“ (z. B. Lidl Filiale Reparatur) ist keine Priorität.",
+  beleg:
+    "Das Bild zeigt einen Kassenbon oder eine Rechnung (meist Österreich). Lies den Namen des Geschäfts bzw. der Firma " +
+    "(haendler), kurz was gekauft wurde (beschreibung, wenige Wörter), das Belegdatum (TT.MM.JJJJ), den Gesamtbetrag inkl. " +
+    "Mehrwertsteuer (betrag, z. B. „23,85“), die darin enthaltene Mehrwertsteuer gesamt (mwst; bei mehreren Sätzen die Summe) " +
+    "und die Sätze (mwstSatz, z. B. „20 %“ oder „10 % / 20 %“). Ordne den Beleg ein (kategorie): bewirtung (Essen, Getränke, " +
+    "Restaurant, Bäckerei), unterkunft (Hotel, Pension, Nächtigung, Ortstaxe), material (Baumarkt, Großhandel, Verbrauchsmaterial), " +
+    "werkzeug (Werkzeug, Maschinen, Messgeräte), sonst sonstiges (Tanken, Parken, Maut, Post …). Lass leer, was nicht auf dem " +
+    "Beleg steht – nichts ausrechnen, nichts schätzen. Unklare Felder mit Feldnamen in \"unsicher\".",
 };
 
 // ------------------------------------------------------------ Aufruf

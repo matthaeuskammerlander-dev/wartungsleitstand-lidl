@@ -176,6 +176,10 @@ nav.tabs .tab-menue{display:none}
 
 /* ---- filter row ---- */
 .filters{display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding-block:12px}
+/* Überall suchen: eigene Zeile unter dem Suchfeld */
+.such-ueberall{flex-basis:100%;display:flex;flex-direction:column;gap:6px;padding:8px 10px;border:1px solid var(--line);border-radius:10px;background:var(--surface)}
+.such-gruppe{display:flex;flex-direction:column;gap:2px}
+.such-treffer{font-size:13px;line-height:1.45;overflow-wrap:anywhere}
 .chips{display:flex;gap:6px;flex-wrap:wrap}
 .chip{appearance:none;font-family:var(--f-body);font-size:12.5px;font-weight:500;padding:5px 11px;border-radius:999px;
   border:1px solid var(--line-2);background:var(--surface);color:var(--ink-2);cursor:pointer}
@@ -884,7 +888,10 @@ var STAMM_FELDER_ST  = ["filiale","name","adresse","plz","ort","region","lat","l
                            keine Einstellungen vornehmen, die Anlage aber trotzdem beobachten“): Firma und Hinweis, nicht geheim */
                         "fernFremd", "fernFremdHinweis",
                         /* Prüfhinweis fürs Büro (Inhaber 12.10.2026: „das muss in der Verwaltung geprüft werden“) – steht in „Alte Liste prüfen“, bis er geleert wird */
-                        "pruefHinweis"];
+                        "pruefHinweis",
+                        /* Störungen aus dem Archiv (Inhaber 27.10.2026: vergangene Störungen von der Synology nachtragen – vor der App, nie als Protokoll in fremdem
+                           Namen): [{datum, art:"stoerung", problem, techniker, auftrag, rapport, stunden, positionId?, datei?:{pfad,name,typ}, quelle}] – nur intern */
+                        "stoerungenArchiv"];
 var GEHEIM_MARKT=["fernBenutzer","fernPasswort","fernWeitere","fernVorOrt"];
 var STAMM_FELDER_POS = ["anlagentyp","intervallCode","inbetriebnahme","monat","monatGrund","kaeltemittelKg",
                         "kaeltemittelArt","rueckkuehler","aktiv","notiz",
@@ -2775,14 +2782,21 @@ function filterBar(){
         return '<button class="chip" type="button" data-r="'+esc(r)+'" aria-pressed="'+(S.region===r)+'">'+(r==="alle"?"Alle Regionen":esc(r))+"</button>";
       }).join("")+
     '</div>'+
-    '<input class="search" type="search" id="q" placeholder="Filiale, Ort, Anlagentyp …" value="'+esc(S.q)+'" aria-label="Standorte durchsuchen">'+
+    '<input class="search" type="search" id="q" placeholder="'+(nurLesen()?"Filiale, Ort, Anlagentyp …":"Suchen: Markt, Projekt, Plan, Einsatz … z. B. „Linz Plan DG“")+'" value="'+esc(S.q)+'" aria-label="'+(nurLesen()?"Standorte durchsuchen":"Märkte und überall suchen")+'">'+
     '<span class="muted mono" style="font-size:12.5px">'+n+" / "+ST.length+" Standorte</span>"+
     /* genau ein Treffer: gleich zum Markt (nicht automatisch – render läuft je Buchstabe) */
     (n===1?'<span style="font-size:13px">'+marktLink(filtered()[0], "1 Markt – öffnen")+"</span>":"")+
     ((S.q.trim()||S.region!=="alle")?'<button class="btn ghost sm" type="button" data-a="aufheben">× Auswahl aufheben</button>':"")+
-    suchStoerungHinweis()+suchBetriebHinweis()+
+    suchStoerungHinweis()+suchUeberallHtml()+
   "</div>";
   var d=el(h);
+  suchUeberallVerdrahten(d);
+  /* Kontakte und Anleitungen gehören zur Suche – im Hintergrund nachladen; nicht neu zeichnen (das nähme dem
+     Suchfeld mitten im Tippen den Fokus), sie stehen ab dem nächsten Buchstaben da */
+  if(S.q.trim() && !nurLesen()){
+    if(!kontakteGeladen) kontakteNachladen(function(){});
+    if(!EINRICHTUNG && Store.sb && Store.modus==="supabase") einrichtungLaden();
+  }
   var aufh=d.querySelector('[data-a="aufheben"]');
   if(aufh) aufh.onclick=function(){ S.q=""; S.region="alle"; S.sel=null; render(); };
   d.querySelectorAll("[data-suchstoer]").forEach(function(a){
@@ -7668,6 +7682,8 @@ function wiederkehrBerechnen(){
     if(!istStoerung(pr) || !pr.datum) return;
     protokollZeilen(pr).forEach(function(id){ merken(id, pr.datum); });
   });
+  /* Störungen aus dem Archiv zählen mit, wenn ihre Anlage feststeht */
+  ALLE_ST.forEach(function(s){ (Array.isArray(s.stoerungenArchiv)?s.stoerungenArchiv:[]).forEach(function(a){ if(a && a.positionId) merken(a.positionId, a.datum); }); });
   Object.keys(je).forEach(function(aid){
     var tage=je[aid].sort(), einzeln=[];
     tage.forEach(function(d){ if(!einzeln.length || !gleicherBesuch(einzeln[einzeln.length-1], d)) einzeln.push(d); });
@@ -20481,6 +20497,13 @@ function historieEintraege(s){
       art:stoe ? ("Störung"+(pr.stoerung&&pr.stoerung.problemtyp?": "+pr.stoerung.problemtyp:"")) : (pr.wartungsart||""),
       stoerung:stoe, wartung:zaehltAlsWartung(pr), zukunft:zukunft, techniker:kanonName(pr.techniker||pr.nameTechniker||""), quelle:"App", protokoll:pr});
   });
+  /* Störungen aus dem Archiv (vor der App, aus den Rapporten der Synology) – nur intern, nie Kunde/Fernzugriff */
+  if(!nurLesen()) (Array.isArray(s.stoerungenArchiv)?s.stoerungenArchiv:[]).forEach(function(a){
+    if(!a || !/^\d{4}-\d\d-\d\d$/.test(a.datum||"")) return;
+    var p=a.positionId && posById[a.positionId];
+    zeilen.push({datum:a.datum, anlage:p?anlagenName(p):"(Markt allgemein)", art:"Störung"+(a.problem?": "+a.problem:""),
+      stoerung:true, techniker:kanonName(a.techniker||""), quelle:"Archiv", archiv:a});
+  });
   return zeilen.sort(function(a,b){ return b.datum.localeCompare(a.datum); });
 }
 function historieAnsicht(s){
@@ -20536,16 +20559,17 @@ function historieAnsicht(s){
         (e.stoerung?'<span class="tag st">Störung</span> '+esc(e.art.replace(/^Störung:?\s*/,"")):esc(e.art))+
         (e.zukunft?' <span class="tag st">Datum in der Zukunft – zählt noch nicht</span>':"")+
         "</td><td>"+(e.techniker?esc(e.techniker):'<span class="muted">–</span>')+"</td><td>"+
-        (e.quelle==="App"?'<span class="tag f30">Protokoll</span>':'<span class="tag">Liste</span>')+"</td></tr>");
+        (e.quelle==="App"?'<span class="tag f30">Protokoll</span>':e.quelle==="Archiv"?'<span class="tag" data-archiv title="'+esc((e.archiv&&e.archiv.quelle)||"")+'">Archiv</span>':'<span class="tag">Liste</span>')+"</td></tr>");
       tr.dataset.datum=e.datum;   /* „Letzter Besuch“ findet die Zeile */
       /* antippen: nachlesen im Fenster – ein Protokoll selbst, ein Eintrag der
          Liste die Historie seiner Anlage. Kein Reiterwechsel: die Markt-Ansicht
          und ein angefangenes Protokoll bleiben stehen (auch beim Kunden) */
       var ziel = e.protokoll ? function(){ protokollFenster(e.protokoll); }
+               : e.archiv && e.archiv.datei ? function(){ dokumentOeffnen(e.archiv.datei); }
                : e.pos ? function(){ anlageHistorieAnsicht(e.pos); } : null;
       if(ziel){
         tr.style.cursor="pointer";
-        tr.title=e.protokoll?"Protokoll ansehen":"Historie der Anlage";
+        tr.title=e.protokoll?"Protokoll ansehen":e.archiv?"Rapport ansehen":"Historie der Anlage";
         tr.onclick=ziel;
       }
       tb.appendChild(tr);
@@ -24252,6 +24276,122 @@ function sicherungErinnerungKarte(){
   return c;
 }
 /* Verwaltung › Inhaber: Stand und Knöpfe */
+/* ---------- Synology-Archiv hochladen (Inhaber 27.10.2026: „kannst du nicht heute schon die Unterlagen hochladen?“) ----------
+   Einmal den Synology-Ordner wählen (darin 2025/, 2026/ …, auch „download at …/2026“): die App hängt die Rapporte an die
+   Archiv-Störungen der Märkte (stoerungenArchiv[].datei, Speicher „dokumente“ unter archiv/<Jahr>/<Markt>/) und legt die Unterlagen
+   der Projekte mit daten.archiv ab (ordner = ganze Synology-Ordner, einzeln = einzelne Dateien, ohne = auslassen, nurInhaber =
+   Angebote/Rechnungen/Bestellungen → buero/). Gleiche Dateien (Name oder Inhalt) überspringt das normale Hochladen – nochmals
+   starten schadet nicht. Nur Inhaber. */
+var ARCHIV_AUSLASSEN=/(^|\/)(\.[^\/]*|Thumbs\.db|desktop\.ini)$|\.(zip|bak|log|tmp)$/i;
+/* Inhaber 27.10.2026: erst „nur das Notwendige – nicht vollmüllen“, dann „1,5 GB klingt nicht dramatisch, ruhig großzügiger“: alle Unterlagen der
+   nachgetragenen Projekte (Angebote/Rechnungen/Bestellungen nur für den Inhaber, buero/), ohne CAD, HEIC (zeigt der Browser nicht), Videos – die bleiben auf
+   der Synology; der Pfad steht im Projekt. */
+var ARCHIV_NIE=/\.(dwg|dxf|heic|mov|mp4|avi)$/i;
+function archivPasst(k){ return !ARCHIV_NIE.test(k); }
+/* Weg ab dem Jahresordner („2025/Lidl/…“); null = nicht im Archiv */
+function archivSchluessel(f){
+  /* vom Büro-Assistenten vorbereitete Einzeldateien: der Synology-Weg steckt im Namen („2025§Lidl§…§Plan.pdf“) */
+  if(!f.webkitRelativePath && /^20\d\d§/.test(f.name||"")) return String(f.name).split("§").join("/");
+  var t=String(f.webkitRelativePath||f.name||"").split("/"), i=0;
+  while(i<t.length-1 && !/^20\d\d$/.test(t[i])) i++;
+  return i<t.length-1 ? t.slice(i).join("/") : null;
+}
+function archivIndex(dateien){
+  var idx={};
+  dateien.forEach(function(f){
+    var k=archivSchluessel(f); if(!k || ARCHIV_AUSLASSEN.test(k)) return;
+    /* gleiche Datei aus einer älteren Fassung („download at …“) gilt nur, wenn die neue fehlt */
+    if(idx[k] && /download at/i.test(f.webkitRelativePath||"")) return;
+    /* Einzeldatei mit Weg im Namen: unter ihrem eigentlichen Namen ablegen */
+    if(!f.webkitRelativePath && /§/.test(f.name||"")) f=new File([f], k.split("/").pop(), {type:f.type||"", lastModified:f.lastModified});
+    idx[k]=f;
+  });
+  return idx;
+}
+function archivPlan(idx, mitRapporten){
+  var stoer=[], projekte=[], schl=Object.keys(idx);
+  if(mitRapporten) ALLE_ST.forEach(function(s){
+    var l=[];
+    (Array.isArray(s.stoerungenArchiv)?s.stoerungenArchiv:[]).forEach(function(a, i){
+      if(!a || a.datei) return;
+      var k=String(a.quelle||"").replace(/^Synology (20\d\d): /, "$1/");
+      if(idx[k]) l.push({i:i, f:idx[k], k:k});
+    });
+    if(l.length) stoer.push({s:s, l:l});
+  });
+  PROJEKTE.forEach(function(p){
+    var a=(p.daten||{}).archiv; if(!a || (!(a.ordner||[]).length && !(a.einzeln||[]).length)) return;
+    var ohne={}; (a.ohne||[]).forEach(function(k){ ohne[k]=1; });
+    var l=schl.filter(function(k){ return !ohne[k] && ((a.ordner||[]).some(function(o){ return k.indexOf(o+"/")===0; }) || (a.einzeln||[]).indexOf(k)>=0) && archivPasst(k); });
+    if(l.length) projekte.push({p:p, l:l});
+  });
+  return {stoer:stoer, projekte:projekte};
+}
+function archivHochladen(plan, idx, melde){
+  var n=0, alle=plan.stoer.reduce(function(s,x){ return s+x.l.length; },0)+plan.projekte.reduce(function(s,x){ return s+x.l.length; },0);
+  var kette=Promise.resolve();
+  plan.stoer.forEach(function(x){ kette=kette.then(function(){
+    var neu=x.s.stoerungenArchiv.map(function(a){ return Object.assign({}, a); }), da=0;
+    return x.l.reduce(function(k, e){ return k.then(function(){
+      return dokumentHochladen("archiv/"+e.k.slice(0,4)+"/"+x.s.id, e.f).then(function(d){ n++; melde(n, alle, stName(x.s));
+        if(d){ neu[e.i].datei={pfad:d.pfad, name:d.name, typ:d.typ}; da++; } }); }); }, Promise.resolve())
+      .then(function(){ return da ? marktFelderSetzen(x.s, {stoerungenArchiv:neu}, "Rapporte aus dem Synology-Archiv angehängt") : null; });
+  }); });
+  plan.projekte.forEach(function(x){ kette=kette.then(function(){
+    var a=x.p.daten.archiv, ni={}; (a.nurInhaber||[]).forEach(function(k){ ni[k]=1; });
+    var schl=new Map(); x.l.forEach(function(k){ schl.set(idx[k], k); });
+    var ordnerVon=function(f){ var k=schl.get(f)||""; return k.split("/").slice(1,-1).join("/"); };
+    return projektDateienHochladen(x.p, function(f){ return dateiArtRaten(ordnerVon(f), f.name, f.type); }, x.l.map(function(k){ return idx[k]; }),
+      function(f){ return "Synology "+(schl.get(f)||"").split("/").slice(0,-1).join("/"); }, function(f){ return !!ni[schl.get(f)]; })
+      .then(function(){ n+=x.l.length; melde(n, alle, x.p.nummer); }, function(){ n+=x.l.length; melde(n, alle, x.p.nummer+" (Fehler)"); });
+  }); });
+  return kette;
+}
+function synologyArchivKarte(){
+  if(!nurInhaber() || demo() || nurLesen()) return null;
+  var c=el('<div class="card"><div class="pad stack" style="gap:8px"><h2>Synology-Archiv hochladen</h2>'+
+    '<div class="sub">Den Synology-Ordner wählen (darin 2025, 2026 …). Die App legt die Unterlagen der nachgetragenen Projekte ab – Angebote, Rechnungen und '+
+      'Bestellungen nur für dich; CAD-Dateien, HEIC-Fotos und Videos bleiben auf der Synology. Vorher steht da, wie viel es wird. Schon Hochgeladenes wird übersprungen. '+
+      'Bitte die Seite offen lassen, bis es fertig ist.</div>'+
+    '<label class="chk" style="font-size:13px"><input type="checkbox" data-rap checked><span>Auch die Rapporte der nachgetragenen Störungen (antippen in der Historie öffnet sie)</span></label>'+
+    '<label class="btn sm" style="cursor:pointer;align-self:flex-start">📂 Ordner wählen<input type="file" data-arch hidden webkitdirectory multiple></label>'+
+    /* Einzeldateien mit dem Synology-Weg im Namen (vorbereitet vom Büro-Assistenten): werden gleich hochgeladen, Stapel für Stapel */
+    '<label class="btn ghost sm" style="cursor:pointer;align-self:flex-start;font-size:12px">Vorbereitete Dateien (Weg im Namen)<input type="file" data-archdat hidden multiple></label>'+
+    '<div data-plan style="font-size:13px"></div><div class="muted" style="font-size:12.5px" data-st></div></div></div>');
+  var dat=c.querySelector("[data-archdat]"), stapel=0, laeuft=Promise.resolve();
+  dat.onchange=function(){
+    var dateien=[].slice.call(dat.files||[]); dat.value="";
+    if(!dateien.length) return;
+    var nr=++stapel;
+    laeuft=laeuft.then(function(){
+      var idx=archivIndex(dateien), plan=archivPlan(idx, c.querySelector("[data-rap]").checked);
+      st.textContent="Stapel "+nr+" läuft ("+dateien.length+" Dateien) …";
+      return archivHochladen(plan, idx, function(n, alle, wo){ st.textContent="Stapel "+nr+": "+n+" von "+alle+" – "+wo; })
+        .then(function(){ st.textContent="Stapel "+nr+" fertig."; }, function(e){ st.textContent="Stapel "+nr+" abgebrochen: "+technikDeutsch((e&&e.message)||String(e)); });
+    });
+  };
+  var inp=c.querySelector("[data-arch]"), planEl=c.querySelector("[data-plan]"), st=c.querySelector("[data-st]");
+  inp.onchange=function(){
+    var dateien=[].slice.call(inp.files||[]); inp.value="";
+    if(!dateien.length) return;
+    st.textContent="Ordner wird geprüft ("+dateien.length+" Dateien) …";
+    var idx=archivIndex(dateien), plan=archivPlan(idx, c.querySelector("[data-rap]").checked);
+    var ns=plan.stoer.reduce(function(s,x){ return s+x.l.length; },0), np=plan.projekte.reduce(function(s,x){ return s+x.l.length; },0);
+    var mb=Math.round([].concat.apply([], plan.stoer.map(function(x){ return x.l.map(function(e){ return e.f.size; }); }))
+      .concat([].concat.apply([], plan.projekte.map(function(x){ return x.l.map(function(k){ return idx[k].size; }); }))).reduce(function(s,v){ return s+v; },0)/1048576);
+    st.textContent="";
+    if(!ns && !np){ planEl.innerHTML='<div class="note">Im gewählten Ordner ist nichts, was noch fehlt (oder es ist der falsche Ordner – gewählt werden muss der Ordner, in dem „2025“/„2026“ liegen).</div>'; return; }
+    planEl.innerHTML="<div><strong>"+ns+"</strong> Rapporte für "+plan.stoer.length+" Märkte · <strong>"+np+"</strong> Projektdateien für "+plan.projekte.length+" Projekte · ca. "+mb+" MB</div>"+
+      '<button class="btn sm" type="button" data-los style="margin-top:6px">Jetzt hochladen</button>';
+    planEl.querySelector("[data-los]").onclick=function(){
+      this.disabled=true; inp.disabled=true;
+      archivHochladen(plan, idx, function(n, alle, wo){ st.textContent=n+" von "+alle+" – "+wo; }).then(function(){
+        st.textContent="Fertig."; toast("Synology-Archiv hochgeladen."); inp.disabled=false; },
+        function(e){ st.textContent="Abgebrochen: "+technikDeutsch((e&&e.message)||String(e)); inp.disabled=false; });
+    };
+  };
+  return c;
+}
 function sicherungKarte(){
   if(!sicherungAn()) return null;
   var st=sicherungStand();
@@ -24430,6 +24570,7 @@ function viewVerwaltung(){
     /* ein Fehler in der Inhaber-Karte darf die Verwaltung nie blockieren */
     try{ f.appendChild(inhaberKarte()); }catch(e){ console.error(e); }
     try{ var sk=sicherungKarte(); if(sk) f.appendChild(sk); }catch(e){ console.error(e); }
+    try{ var ak=synologyArchivKarte(); if(ak) f.appendChild(ak); }catch(e){ console.error(e); }
     return f;
   }
   if(A.vonNachbessern){
@@ -29762,13 +29903,127 @@ document.addEventListener("keydown", function(e){
   else if(p){ e.preventDefault(); projektAnsicht(p.dataset.projekt); }
 }, true);
 
-/* Suchfeld der Übersichten: passende Kunden und Projekte als Weg darunter */
-function suchBetriebHinweis(){
-  var q=suchNorm(S.q.trim()); if(q.length<3 || nurLesen()) return "";
-  var l=[];
-  weitereKunden(true).forEach(function(k){ if(suchNorm(k.name).indexOf(q)>=0) l.push('<span style="font-size:13px">Kunde: '+kundeLink(k.id)+"</span>"); });
-  PROJEKTE.forEach(function(p){ if(suchNorm([p.nummer, p.titel].join(" ")).indexOf(q)>=0) l.push('<span style="font-size:13px">Projekt: '+projektLink(p)+"</span>"); });
-  return l.slice(0,4).join("");
+/* ---------- Überall suchen (Inhaber 27.10.2026: „die Suchleiste intelligenter … nicht nur Märkte und Projekte, sondern gleich
+   etwas ganz Spezifisches – z. B. Plan von dort mit dieser Info im DG oder gewisse vergangene Einsätze. Sehr praktisch“) ----------
+   Unter dem Suchfeld der Übersichten: Kunden, Projekte, Pläne/Dateien (auch Bestandspläne der Märkte), vergangene Einsätze
+   (Historie samt Archiv), Anlagen, Kontakte, Anleitungen. Jedes Wort muss vorkommen – im Treffer selbst oder in seinem Umfeld
+   (Markt, Projekt); mindestens ein Wort muss den Treffer selbst betreffen, sonst stünde jeder Plan eines Projekts da, nur weil der
+   Ort passt. Füllwörter zählen nicht; „Plan“, „Foto“, „Störung“, „Wartung“ … grenzen die Art ein. Kunden-Konten sehen nur Märkte. */
+var SUCH_FUELL=" von vom im in mit der die das dem den des und oder fuer bei am an auf zu zum zur dort da alle ein eine einen einem wo welche welcher welches gibt es ist war waren letzte letzten letzter vergangene vergangenen gewisse info infos zeig zeige such suche finde ";
+var SUCH_ART=[[/^(plan|plaene|plane|zeichnung\w*|grundriss\w*|schnitt\w*)$/, "plan"],[/^(foto|fotos|bild|bilder)$/, "foto"],
+  [/^(stoerung|stoerungen|einsatz|einsaetze|rapport\w*|reparatur\w*)$/, "stoerung"],[/^(wartung|wartungen|inspektion\w*|jw|hji|hjw)$/, "wartung"],
+  [/^(kontakt|kontakte|telefon|ansprechpartner)$/, "kontakt"],[/^(anleitung\w*|handbuch|manual\w*)$/, "anleitung"]];
+var SUCH_GESCHOSS={UG:"ug keller untergeschoss garage tiefgarage", EG:"eg erdgeschoss", OG:"og obergeschoss", DG:"dg dachgeschoss", Dach:"dach dachdraufsicht dachflaeche"};
+var SUCH_MONATE=["jaenner januar","februar","maerz","april","mai","juni","juli","august","september","oktober","november","dezember"];
+var suchMehr={};
+function suchWoerter(q){
+  var art="", w=dateiNorm(q).split(" ").filter(function(t){ return t && SUCH_FUELL.indexOf(" "+t+" ")<0; });
+  w=w.filter(function(t){ var a=SUCH_ART.filter(function(x){ return x[0].test(t); })[0]; if(!a) return true;
+    if(!art) art=a[1]; return a[1]==="wartung" && /^(jw|hji|hjw)$/.test(t); });   /* das Kürzel selbst sucht weiter mit */
+  return {w:w, art:art};
+}
+/* kurze Wörter (DG, EG, JW …) nur am Wortanfang, längere überall */
+function suchDrin(hay, t){ return t.length<=3 ? hay.indexOf(" "+t)>=0 : hay.indexOf(t)>=0; }
+function suchDatumText(d){
+  var m=/^(\d{4})-(\d\d)-(\d\d)/.exec(d||""); if(!m) return "";
+  return [m[3]+"."+m[2]+"."+m[1], m[2]+"."+m[1], m[1], SUCH_MONATE[+m[2]-1]].join(" ");
+}
+function suchMarktText(s){ return s ? [stName(s), s.name, s.adresse, s.ort, s.plz, s.filiale?"fil "+s.filiale+" filiale "+s.filiale:"", s.region].join(" ") : ""; }
+/* passt? → Rang (Wörter im Treffer selbst), sonst 0 */
+function suchPasst(W, eigen, umfeld){
+  if(!W.length) return 0;
+  var e=" "+dateiNorm(eigen)+" ", u=" "+dateiNorm(umfeld)+" ", n=0;
+  for(var i=0;i<W.length;i++){ var t=W[i]; if(suchDrin(e, t)) n++; else if(!suchDrin(u, t)) return 0; }
+  return n;
+}
+/* ein Zeichnen ruft die Filterleiste u. U. mehrmals – dieselbe Eingabe kurz zwischenspeichern */
+var suchCache={q:null, zeit:0, G:null};
+function suchUeberallTreffer(q){
+  if(suchCache.q===q && Date.now()-suchCache.zeit<1500) return suchCache.G;
+  var G=suchUeberallRechnen(q);
+  suchCache={q:q, zeit:Date.now(), G:G};
+  return G;
+}
+function suchUeberallRechnen(q){
+  var x=suchWoerter(q), W=x.w, art=x.art, G={kunden:[], projekte:[], dateien:[], einsaetze:[], anlagen:[], kontakte:[], anleitungen:[]};
+  if(!W.length) return G;
+  var dazu=function(g, rang, t){ if(rang>0){ t.rang=rang; G[g].push(t); } };
+  var ohneArt=!art, artIst=function(a){ return ohneArt || art===a; };
+  if(ohneArt) weitereKunden(true).forEach(function(k){ dazu("kunden", suchPasst(W, k.name, ""), {html:kundeLink(k.id)}); });
+  var marktVon=function(p){ return p.standort_id && byId[p.standort_id]; };
+  PROJEKTE.forEach(function(p){
+    var d=p.daten||{}, s=marktVon(p), umfeld=[suchMarktText(s), kundeTitel(p.kunde_id||"lidl")].join(" ");
+    if(ohneArt) dazu("projekte", suchPasst(W, [p.nummer, p.titel, d.typ, d.beschreibung, (d.beteiligte||[]).map(function(b){ return [b.name, b.firma, b.rolle].join(" "); }).join(" ")].join(" "), umfeld),
+      {html:projektLink(p)+(s?' <span class="muted">· '+esc(stName(s))+"</span>":"")});
+    if(!artIst("plan") && !artIst("foto") && art!=="anleitung") return;
+    (d.dateien||[]).forEach(function(f){
+      if(dateiImBuero(f) && !nurInhaber()) return;
+      if(art==="plan" && f.art!=="plan") return;
+      if(art==="foto" && !dateiIstBild(f)) return;
+      var m=dateiMerkmale(f);
+      dazu("dateien", suchPasst(W, dateiSuchText(f, m)+" "+m.geschoss.map(function(g){ return SUCH_GESCHOSS[g]||""; }).join(" ")+" "+(f.art||""), [p.nummer, p.titel, umfeld].join(" ")),
+        {html:'<span class="marktlink" role="link" tabindex="0" data-suchdatei="'+esc(f.pfad)+'" data-name="'+esc(f.titel||f.name||"")+'">'+esc(f.titel||f.name||"Datei")+"</span>"+
+          (m.geschoss.length?' <span class="pill">'+esc(m.geschoss.map(dateiGeschossName).join("/"))+"</span>":"")+' <span class="muted">· '+projektLink(p, p.nummer||"Projekt")+(s?" · "+esc(stName(s)):"")+"</span>", plan:f.art==="plan"});
+    });
+  });
+  ST.forEach(function(s){
+    var umfeld=suchMarktText(s);
+    if(artIst("plan")) (Array.isArray(s.bestandsplaene)?s.bestandsplaene:[]).forEach(function(b){
+      dazu("dateien", suchPasst(W, [b.titel, b.name, "bestandsplan plan"].join(" "), umfeld),
+        {html:'<span class="marktlink" role="link" tabindex="0" data-suchdok="'+esc(JSON.stringify(b))+'">'+esc(b.titel||b.name||"Bestandsplan")+'</span> <span class="muted">· Bestandsplan · '+esc(stName(s))+"</span>", plan:true});
+    });
+    if(ohneArt || art==="stoerung" || art==="wartung") historieEintraege(s).forEach(function(e){
+      if(art==="stoerung" && !e.stoerung) return;
+      if(art==="wartung" && e.stoerung) return;
+      var a=e.archiv||{};
+      var r=suchPasst(W, [e.art, e.anlage, e.techniker, suchDatumText(e.datum), e.stoerung?"stoerung einsatz":"wartung", a.rapport, a.auftrag, e.quelle].join(" "), umfeld);
+      dazu("einsaetze", r, {datum:e.datum, html:'<span class="marktlink" role="link" tabindex="0" data-suchmarkt="'+esc(s.id)+'"'+(a.datei?' data-suchdok="'+esc(JSON.stringify(a.datei))+'"':"")+">"+
+        esc(dfmt(e.datum))+" · "+esc(stName(s))+"</span> – "+esc(e.art)+(e.anlage?' <span class="muted">· '+esc(e.anlage)+"</span>":"")+(e.techniker?' <span class="muted">· '+esc(e.techniker)+"</span>":"")});
+    });
+    if(ohneArt) anlagenDesMarkts(s, true).forEach(function(an){
+      var p=an.leader, d=ANLAGE_FELDER ? anlageDaten(p) : p;
+      dazu("anlagen", suchPasst(W, [anlagenName(p), d.modell, d.seriennummer, d.hersteller, d.kaeltemittelArt, d.bauart].join(" "), umfeld),
+        {html:'<span class="marktlink" role="link" tabindex="0" data-suchmarkt="'+esc(s.id)+'">'+esc(anlagenName(p))+'</span> <span class="muted">· '+esc(stName(s))+(d.modell?" · "+esc(d.modell):"")+"</span>"});
+    });
+  });
+  if(ohneArt || art==="kontakt") KONTAKTE.forEach(function(k){
+    dazu("kontakte", suchPasst(W, [k.name, k.firma, k.funktion, k.kategorie, k.telefon, k.mobil, k.mail].join(" "), ""),
+      {html:'<span class="marktlink" role="link" tabindex="0" data-suchkontakt="'+esc(k.id)+'">'+esc(k.name||k.firma||"Kontakt")+"</span>"+(k.name&&k.firma?' <span class="muted">· '+esc(k.firma)+"</span>":"")});
+  });
+  if((ohneArt || art==="anleitung") && EINRICHTUNG){
+    (EINRICHTUNG.abschnitte||[]).forEach(function(a, i){ dazu("anleitungen", suchPasst(W, [a.titel, a.text, "anleitung"].join(" "), ""),
+      {html:'<span class="marktlink" role="link" tabindex="0" data-sucheinrichtung="1">'+esc(a.titel||"Anleitung")+'</span> <span class="muted">· Einrichtung</span>'}); });
+    (EINRICHTUNG.dateien||[]).forEach(function(f){ dazu("anleitungen", suchPasst(W, [f.titel, f.name, "anleitung unterlage dokument"].join(" "), ""),
+      {html:'<span class="marktlink" role="link" tabindex="0" data-suchdok="'+esc(JSON.stringify(f))+'">'+esc(f.titel||f.name||"Unterlage")+'</span> <span class="muted">· Einrichtung</span>'}); });
+  }
+  /* bester Treffer zuerst; Einsätze dann nach Datum (neueste oben), Pläne vor anderen Dateien */
+  Object.keys(G).forEach(function(g){ G[g].sort(function(a,b){ return (b.rang-a.rang) || ((b.plan?1:0)-(a.plan?1:0)) || String(b.datum||"").localeCompare(String(a.datum||"")); }); });
+  return G;
+}
+var SUCH_GRUPPEN=[["kunden","Kunden"],["projekte","Projekte"],["dateien","Pläne & Dateien"],["einsaetze","Einsätze (Wartung, Störung)"],["anlagen","Anlagen"],["kontakte","Kontakte"],["anleitungen","Anleitungen & Unterlagen"]];
+function suchUeberallHtml(){
+  var q=S.q.trim(); if(dateiNorm(q).length<3 || nurLesen()) return "";
+  var G=suchUeberallTreffer(q), h="";
+  SUCH_GRUPPEN.forEach(function(g){
+    var l=G[g[0]]; if(!l.length) return;
+    var max=suchMehr[g[0]+"|"+q] ? 40 : 5;
+    h+='<div class="such-gruppe"><div class="muted" style="font-size:12px;font-weight:600">'+esc(g[1])+" ("+l.length+")</div>"+
+      l.slice(0,max).map(function(t){ return '<div class="such-treffer">'+t.html+"</div>"; }).join("")+
+      (l.length>max?'<button class="btn ghost sm" type="button" data-suchmehr="'+esc(g[0])+'">alle '+l.length+" zeigen</button>":"")+"</div>";
+  });
+  return h ? '<div class="such-ueberall" role="region" aria-label="Überall gefunden"><div style="font-size:13px;font-weight:600">🔎 Überall gefunden</div>'+h+"</div>" :
+    '<div class="such-ueberall muted" style="font-size:12.5px">🔎 Sonst nirgends gefunden (Projekte, Pläne, Einsätze, Anlagen, Kontakte).</div>';
+}
+function suchUeberallVerdrahten(d){
+  d.querySelectorAll("[data-suchmehr]").forEach(function(b){ b.onclick=function(){ suchMehr[b.dataset.suchmehr+"|"+S.q.trim()]=1; render(); }; });
+  d.querySelectorAll("[data-suchdatei]").forEach(function(a){ tippe(a, function(){ projektDateiOeffnen(a.dataset.suchdatei, a.dataset.name); }); });
+  d.querySelectorAll("[data-suchmarkt]").forEach(function(a){ tippe(a, function(){
+    /* Einsatz mit Rapport im Archiv: den Rapport zeigen, sonst den Markt (dort steht die Historie) */
+    if(a.dataset.suchdok){ try{ dokumentOeffnen(JSON.parse(a.dataset.suchdok)); return; }catch(e){} }
+    marktAnsicht(a.dataset.suchmarkt); }); });
+  d.querySelectorAll("[data-suchdok]:not([data-suchmarkt])").forEach(function(a){ tippe(a, function(){ try{ dokumentOeffnen(JSON.parse(a.dataset.suchdok)); }catch(e){ toast("Datei nicht abrufbar."); } }); });
+  d.querySelectorAll("[data-suchkontakt]").forEach(function(a){ tippe(a, function(){ var k=KONTAKTE.filter(function(x){ return x.id===a.dataset.suchkontakt; })[0]; if(k) kontaktAnsicht(k); }); });
+  d.querySelectorAll("[data-sucheinrichtung]").forEach(function(a){ tippe(a, function(){ einrichtungAnsicht(); }); });
 }
 
 /* Zahlen je Kunde: Standorte, Anlagen, offene Störungen, offene Projekte */
@@ -35547,6 +35802,11 @@ function lidlWerte(g){
 }
 /* wassergekühlte VRV (Inhaber 20.10.2026: „da müssen wir erst noch alle Unterlagen verfeinern“) – der Assistent warnt nur */
 function lidlWassergekuehlt(a){ return /^RWEY/i.test(String((a && a.modell)||"").replace(/\s/g,"")) || /wasser\s*gek/i.test(String((a && (a.anlagentyp+" "+a.bauart))||"")); }
+/* Wassergekühlte VRV (Inhaber 27.10.2026, Rollout „Moprotausch“ Arnoldstein, Robinig, Frastanz …): die RWEYQ-Außengeräte im Technikraum und die
+   Innengeräte bleiben meist kälteseitig unverändert – neu sind Rückkühler, Pumpenstation und Glykolkreis (früher gemeinsam mit der Gewerbekälte, AHT) */
+function lidlWasserProjekt(anl){ return (anl||[]).some(function(x){ return lidlWassergekuehlt(x.d); }); }
+/* Rückkühler in der Gerätebibliothek – auch mit Herstellername davor („Güntner GFHC FD 063.1/13-29“) */
+function lidlRkGeraet(typ, V){ var t=String(typ||"").trim(); return t ? (lidlGeraet(t, V) || lidlGeraet(t.replace(/^\S+\s+/, ""), V)) : null; }
 /* die dem Projekt zugeordneten Anlagen (Reiter „Anlagen aus diesem Projekt“), nach Namen sortiert (VRV 1, VRV 2 …) */
 function lidlAnlagen(p){
   var s=p && p.standort_id && byId[p.standort_id], zu=((p && p.daten)||{}).anlagen||[];
@@ -35571,6 +35831,20 @@ function lidlAngaben(p, anl){
   var u=JSON.parse(JSON.stringify(((p && p.daten)||{}).lidlUnterlagen||{})), s=lidlMarkt(p), bet=((p && p.daten)||{}).beteiligte||[];
   var rolle=function(re){ var b=bet.filter(function(x){ return re.test(x.rolle||""); })[0]; return b ? String(b.firma||b.name||"") : ""; };
   var vor=function(k, w){ if(u[k]==null) u[k]=w; };
+  if(lidlWasserProjekt(anl)){
+    /* wassergekühlt: eigene Vorgaben (alles änderbar; was je Filiale verschieden ist, bleibt leer und steht in der Prüfliste) */
+    vor("bauvorhaben", "Umbau und Austausch der Kälteanlagen – Klimatisierung (neuer Rückkühler und neue Pumpenstation der wassergekühlten VRV-Anlage)");
+    vor("allgemein", "Die Lidl Österreich GmbH hat in der "+(s.filiale ? "Filiale "+s.filiale+" in "+(s.ort||"") : stName(s))+" die Kälteanlagen erneuert. Heizung und Kühlung der Filiale "+
+      "erfolgen über eine wassergekühlte VRV-Anlage Fabrikat Daikin. Rückkühler und Pumpenstation des Wasserkreises waren bisher gemeinsam mit der Gewerbekälte ausgeführt; "+
+      "der Wasserkreis der Klimatisierung wird künftig getrennt von der Gewerbekälte betrieben.\n\nDiese Beschreibung umfasst die Klimatisierung (Heizung und Kühlung) der Filiale, ausgeführt von der Umwelt- und Klimatechnik GmbH.");
+    vor("demontage", "Der bisherige Rückkühler der Klimaanlage wurde außer Betrieb genommen.");
+    vor("weiter", "Die wassergekühlten VRV-Außengeräte im Technikraum und die Inneneinheiten bleiben kälteseitig unverändert.\nDie VRV-Außengeräte wurden an den neuen Wasserkreis angeschlossen.");
+    vor("schallText", "Die Schallreduktion erfolgt über die Drehzahlbegrenzung der EC-Ventilatoren des Rückkühlers (Nachtabsenkung), gesteuert über Zeitprogramm.");
+    if(!Array.isArray(u.schall)) u.schall=[{text:"Rückkühler VRV-Anlage", db:""}];
+    vor("rkTyp", ""); vor("medium", "Ethylenglykol 34 %");   /* UKT-Kreis immer Ethylenglykol 34 % (Inhaber 27.10.2026) */
+    vor("psOrt", "Technikraum"); vor("psText", ""); vor("wrg", ""); vor("puffer", "");
+    vor("regelung", /touch|itm/i.test(String(s.fernSystem||"")) ? String(s.fernSystem).trim() : "");
+  }
   vor("bauvorhaben", "Umbau und Austausch der Kälteanlagen – Klimatisierung (Austausch der ConveniPack-Anlage gegen VRV-Wärmepumpen)");
   vor("betreiber", rolle(/kunde|bauherr|betreiber/i) || "Lidl Österreich GmbH, Unter der Leiten 11, 5020 Salzburg");
   vor("planungBau", rolle(/planung bau|architekt|generalplan/i));
@@ -35610,10 +35884,17 @@ function lidlPruefliste(p, anl, u, V, ibn){
     if(!x.d.kaeltemittelArt) f.push("Kältemittel"); if(!x.d.inbetriebnahme) f.push("Inbetriebnahme-Datum");
     if(!String((u.bereiche||{})[x.id]||"").trim()) f.push("versorgte Bereiche");
     l.push([!f.length, x.name+(f.length ? ": es fehlt "+f.join(", ") : ": vollständig")]);
-    if(lidlWassergekuehlt(x.d)) l.push([false, x.name+": wassergekühlte VRV – die Vorlagen sind dafür noch nicht verfeinert (Inhaber 20.10.2026). Texte und Schema genau prüfen."]);
     var g=lidlGeraet(x.d.modell, V);
     if(x.d.modell) l.push([!!g, g ? x.name+": Gerätebibliothek „"+(g.name||g.muster)+"“"+(g.datenblatt ? " mit Datenblatt" : " – ohne Datenblatt") : x.name+": Modell "+x.d.modell+" nicht in der Gerätebibliothek (keine technischen Daten, kein Datenblatt)."]);
   });
+  if(lidlWasserProjekt(anl)){
+    /* wassergekühlt: der Wasserkreis ist je Filiale verschieden – was fehlt, bleibt in den Unterlagen weg */
+    var rk=String(u.rkTyp||"").trim(), rg=rk && lidlRkGeraet(rk, V);
+    l.push([!!rk, rk ? "Rückkühler: "+rk+(rg ? " (Gerätebibliothek"+(rg.datenblatt ? " mit Datenblatt" : "")+")" : " – nicht in der Gerätebibliothek, keine technischen Daten") : "Rückkühler-Typ fehlt (Angaben)."]);
+    l.push([!!String(u.medium||"").trim(), String(u.medium||"").trim() ? "Wärmeträger: "+u.medium : "Wärmeträger fehlt – unser Kreis: Ethylenglykol 34 % (Gewerbekälte AHT: Propylenglykol 38 % – nicht mischen)."]);
+    l.push([!!String(u.psText||"").trim(), String(u.psText||"").trim() ? "Pumpenstation beschrieben ("+(u.psOrt||"Ort fehlt")+")" : "Pumpenstation: Bauteile fehlen (Angaben)."]);
+    l.push([true, "Wassergekühlt: Anlagenschema laminiert im Technikraum, Leitungen beschriften, Flussrichtungspfeile (Abnahme Robinigstraße 27.01.2026)."]);
+  }
   l.push([!!u.datum, u.datum ? "Datum TB und KAV: "+dfmt(u.datum) : "Datum für TB und KAV fehlt (Inbetriebnahme unbekannt)."]);
   l.push([u.schall.some(function(z){ return String(z.db||"").trim(); }), "Schallwerte "+(u.schall.some(function(z){ return String(z.db||"").trim(); }) ? "eingetragen" : "fehlen (Einreichplan)")]);
   l.push([!!(V.verantwortlich && V.verfasser), V.verantwortlich && V.verfasser ? "KAV-Vorlage: Verantwortlicher und Verfasser hinterlegt" : "KAV-Vorlage unvollständig – „⚙ Vorlage“ öffnen."]);
@@ -35649,12 +35930,21 @@ function lidlTbHtml(p, anl, u, V, beilagen){
   sub=0; h+=h2("Heizung und Kühlung");
   if(String(u.demontage||"").trim()) h+=h3("Bestand und Demontage")+liste(u.demontage);
   if(String(u.weiter||"").trim()) h+=h3("Weiterverwendung")+liste(u.weiter);
-  h+=h3("Neuanlage")+"<p style='margin:0 0 4px'>"+esc("Beheizung und Kühlung erfolgen über "+(anl.length===1 ? "eine Wärmepumpe" : anl.length+" Wärmepumpen")+" mit Direktverdampfung"+
-      (anl.length>1 ? ". Jede Außeneinheit bildet einen eigenen Kältekreis:" : ":"))+"</p>"+
+  var wasser=lidlWasserProjekt(anl);
+  h+=h3(wasser ? "VRV-Anlage" : "Neuanlage")+"<p style='margin:0 0 4px'>"+esc("Beheizung und Kühlung erfolgen über "+(anl.length===1 ? "eine "+(wasser ? "wassergekühlte " : "")+"Wärmepumpe" : anl.length+" "+(wasser ? "wassergekühlte " : "")+"Wärmepumpen")+" mit Direktverdampfung"+
+      (wasser ? " (Außengeräte im "+(String(u.psOrt||"").trim()||"Technikraum")+")" : "")+(anl.length>1 ? ". Jede Außeneinheit bildet einen eigenen Kältekreis:" : ":"))+"</p>"+
     tab([["Kreis", "Versorgte Bereiche", "Außengerät", "Seriennr.", "Baujahr"]].concat(anl.map(function(x){
       return [x.name, (u.bereiche||{})[x.id]||"", [x.d.hersteller, x.d.modell].filter(Boolean).join(" "), x.d.seriennummer||"", bj(x)]; })), true, ["13%", "35%", "24%", "14%", "14%"]);
   modelle.forEach(function(g){ var w=lidlWerte(g); if(w.length) h+="<div class='zusammen'><p style='margin:4px 0 2px'><strong>"+esc("Technische Daten je Außengerät ("+(g.name||g.muster)+"):")+"</strong></p>"+tab(w, false, ["45%", "55%"])+"</div>"; });
-  if(String(u.aufstellort||"").trim()) h+=tab([["Aufstellort", u.aufstellort]], false, ["45%", "55%"]);
+  if(wasser){
+    /* Wasserkreis: Rückkühler und Pumpenstation – nur was eingetragen ist */
+    var rkG=String(u.rkTyp||"").trim() && lidlRkGeraet(u.rkTyp, V), psL=String(u.psText||"").split(/\r?\n/).map(function(z){ return z.replace(/^[-•·]\s*/,"").trim(); }).filter(Boolean);
+    h+=h3("Wasserkreis: Rückkühler und Pumpenstation")+"<p style='margin:0 0 4px'>"+esc("Die Abwärme der VRV-Außengeräte wird über einen geschlossenen Wasser-Glykol-Kreis an einen Rückkühler im Außenbereich abgegeben"+
+      (String(u.wrg||"").trim() ? "; im Heizbetrieb dient "+String(u.wrg).trim().replace(/\.$/,"")+" als Wärmequelle." : "."))+"</p>"+
+      tab([["Rückkühler", u.rkTyp], ["Aufstellort Rückkühler", u.aufstellort], ["Wärmeträger", u.medium], ["Pumpenstation", u.psOrt]]
+        .filter(function(z){ return String(z[1]||"").trim(); }).concat(rkG ? lidlWerte(rkG) : []), false, ["45%", "55%"]);
+    if(psL.length) h+="<p style='margin:4px 0 2px'><strong>Pumpenstation:</strong></p>"+liste(psL);
+  } else if(String(u.aufstellort||"").trim()) h+=tab([["Aufstellort", u.aufstellort]], false, ["45%", "55%"]);
   sub=0; h+=h2("Regelung, Betriebszeiten und Schall");
   var schall=(u.schall||[]).filter(function(z){ return String(z.db||"").trim(); }).map(function(z){ return ["Schallleistungspegel "+String(z.text||"").trim()+(u.schallQuelle ? " ("+u.schallQuelle+")" : ""), String(z.db).trim().replace(/\s*dB.*$/i,"")+" dB(A)"]; });
   if(u.nachtVon && u.nachtBis) schall.push(["Nachtabsenkung / Flüsterbetrieb (Schall)", u.nachtVon+" – "+u.nachtBis+" Uhr"]);
@@ -35665,8 +35955,11 @@ function lidlTbHtml(p, anl, u, V, beilagen){
   h+=tab([["Anlage", "Kältemittel", "Füllmenge", "CO₂-Äquivalent"]].concat(anl.map(function(x){
     var kg=lidlZahl(x.d.kaeltemittelKg), t=co2Tonnen(x.d);
     return [x.name+(x.d.modell ? " ("+x.d.modell+")" : ""), x.d.kaeltemittelArt||"", kg==null ? "" : lidlKomma(kg, 1)+" kg", t==null ? "" : lidlKomma(t, 2)+" t"]; })), true, ["40%", "20%", "18%", "22%"]);
-  h+=liste([ib ? "Druckprobe, Dichtheitsprüfung und Abnahmeprüfung vor der ersten Inbetriebnahme: "+dfmt(ib)+", dokumentiert in den Prüf- und Anlagenbüchern." : "",
-    ib ? "Bescheinigung gemäß § 17 Kälteanlagenverordnung über die ordnungsgemäße Ausführung: "+dfmt(ib)+"." : "",
+  /* wassergekühlt: der Kältekreis bleibt unverändert – keine „erste Inbetriebnahme“ und keine § 17-Bescheinigung behaupten */
+  h+=liste([ib && !wasser ? "Druckprobe, Dichtheitsprüfung und Abnahmeprüfung vor der ersten Inbetriebnahme: "+dfmt(ib)+", dokumentiert in den Prüf- und Anlagenbüchern." : "",
+    ib && !wasser ? "Bescheinigung gemäß § 17 Kälteanlagenverordnung über die ordnungsgemäße Ausführung: "+dfmt(ib)+"." : "",
+    ib && wasser ? "Wiederinbetriebnahme der VRV-Anlage nach Anschluss an den neuen Wasserkreis: "+dfmt(ib)+", Dichtheitskontrolle und Funktionsprüfung dokumentiert in den Prüf- und Anlagenbüchern." : "",
+    wasser && ib ? "Wasserkreis: Druckprobe, Spülung, Entlüftung und Füllung"+(String(u.medium||"").trim() ? " mit "+String(u.medium).trim() : "")+" vor der Inbetriebnahme." : "",
     "Für jede Anlage ist ein Prüf- und Anlagenbuch nach Kälteanlagenverordnung und Verordnung (EU) 2024/573 angelegt.",
     "Dichtheitskontrollen nach Verordnung (EU) 2024/573 gemäß CO₂-Äquivalent der jeweiligen Anlage."]);
   sub=0; h+="<div class='zusammen'>"+h2("Beilagen")+liste(beilagen||[])+
@@ -35678,6 +35971,9 @@ function lidlTbHtml(p, anl, u, V, beilagen){
 function lidlBeilagen(p, anl, V){
   var b=["Inbetriebnahmeprotokoll"], dbl=[];
   anl.forEach(function(x){ var g=lidlGeraet(x.d.modell, V); if(g && g.datenblatt && dbl.indexOf(g.name||g.muster)<0) dbl.push(g.name||g.muster); });
+  /* wassergekühlt: Datenblatt des Rückkühlers aus der Gerätebibliothek */
+  var u0=((p.daten||{}).lidlUnterlagen)||{}, rkG=lidlWasserProjekt(anl) && String(u0.rkTyp||"").trim() && lidlRkGeraet(u0.rkTyp, V);
+  if(rkG && rkG.datenblatt && dbl.indexOf(rkG.name||rkG.muster)<0) dbl.push(rkG.name||rkG.muster);
   if(dbl.length) b.push("Technische Datenblätter: "+dbl.join(", "));
   b.push("Anlagenschema");
   (((p.daten||{}).dateien)||[]).filter(function(x){ return !dateiImBuero(x) && /bestandsplan/i.test(x.titel||x.name||""); }).slice(0, 1)
@@ -35698,7 +35994,7 @@ function lidlKavHtml(p, anl, u, V, bilder){
     "<p style='"+P+"'>-Hiermit wird bestätigt, dass die Kälteanlagen (Wärmepumpen) gemäß Kälteanlagenverordnung, ÖNORM und EN378 in letztgültiger Fassung sach- und fachgerecht installiert und in Betrieb genommen wurden.</p>"+
     "<p style='"+P+"'>Die ausgeführten Arbeiten und Inbetriebnahmen sind in den Kälteprüfbüchern dokumentiert.</p>"+
     "<p style='"+P+"'>-Die Grenzwerte gemäß ÖNORM EN 378 wurden eingehalten.</p>"+
-    (schall.length ? "<p style='"+P+"'>-Schallwerte der Wärmepumpen"+(u.schallQuelle ? " ("+esc(u.schallQuelle)+")" : "")+":</p><table style='margin:0 0 0 46px;font-size:15px;border-collapse:collapse;border:0;width:auto'>"+
+    (schall.length ? "<p style='"+P+"'>-Schallwerte "+(lidlWasserProjekt(anl) ? "des Rückkühlers (wassergekühlte VRV, Außengeräte im Technikraum)" : "der Wärmepumpen")+(u.schallQuelle ? " ("+esc(u.schallQuelle)+")" : "")+":</p><table style='margin:0 0 0 46px;font-size:15px;border-collapse:collapse;border:0;width:auto'>"+
       schall.map(function(z){ return "<tr><td style='border:0;padding:0 30px 0 0'>"+esc(z.text||"")+"</td><td style='border:0;padding:0;white-space:nowrap'>"+esc(String(z.db).trim().replace(/\s*dB.*$/i,""))+" dB&nbsp;&nbsp;Schallleistungspegel</td></tr>"; }).join("")+"</table>" : "")+
     (u.nachtVon && u.nachtBis ? "<p style='"+P+";margin:12px 0 0 46px'>Nachtabsenkung / Flüsterbetrieb "+esc(u.nachtVon+"–"+u.nachtBis)+" Uhr über Zeitprogramm.</p>" : "")+
     "<p style='"+P+";margin-top:16px'>Darüber hinaus sind sämtliche Anlagen und Anlagenteile in technisch dauerhaft dichter Ausführung erstellt und einer nachher erfolgten Druckprüfung unterzogen;</p>"+
@@ -35725,11 +36021,116 @@ function lidlKavBilder(V){
 }
 /* ---------- Anlagenschema (A3 quer, Prinzipschema wie Graz/Oberwart) ---------- */
 var LIDL_FARBEN=["#c0392b","#27864a","#2f5d8a","#b7791f","#7b3fa0","#127a7a","#a0522d","#555f6b"];
+/* wassergekühlte VRV (Inhaber 27.10.2026: „genauer, Wärmerückgewinnung und Regelung hervorheben“): Hydraulikschema mit Symbolen –
+   Rückkühler (außen) · Technikraum: Pumpe, 3-Wege-Umschaltventil Heizen/Kühlen, Schmutzfänger, Ausdehnungsgefäß, Sicherheitsventil,
+   Wärmerückgewinnung (Plattentauscher mit Bypass, AHT-Seite), Puffer mit E-Heizstab, Sammelleitungen, RWEYQ mit Strömungswächter ·
+   Filiale: Innengeräte · Regelung mit Steuerleitungen. WRG und Puffer nur, wenn eingetragen (nichts raten). Hängt laminiert im Technikraum
+   (Abnahme Robinigstraße 27.01.2026: „Anlagenschema ergänzen, Beschriftungen und Flussrichtungspfeile“). */
+function lidlSchemaWasserSvg(p, anl, u, logoUrl, t, rect){
+  var s=lidlMarkt(p), W=1587, H=1123, svg="", VL="#c0392b", RL="#2f5d8a", WR="#d97706", AH="#7a8896", ST="#6b4fa0";
+  var hatWrg=!!String(u.wrg||"").trim(), hatPuffer=!!String(u.puffer||"").trim(), reg=String(u.regelung||"").trim();
+  var n=Math.max(1, anl.length), schritt=Math.min(150, Math.floor(420/n)), hoch=Math.min(110, schritt-18), yV=390;
+  var pfeil=function(x, y, r, f){ var d={o:[0,-1],u:[0,1],l:[-1,0],r:[1,0]}[r], q=[-d[1], d[0]];
+    return "<path d='M"+(x-d[0]*7+q[0]*7)+" "+(y-d[1]*7+q[1]*7)+" L"+(x+d[0]*7)+" "+(y+d[1]*7)+" L"+(x-d[0]*7-q[0]*7)+" "+(y-d[1]*7-q[1]*7)+" Z' fill='"+f+"'/>"; };
+  var rohr=function(d, f, o){ o=o||{}; return "<path d='"+d+"' fill='none' stroke='"+f+"' stroke-width='"+(o.w||4.5)+"'"+(o.d ? " stroke-dasharray='"+o.d+"'" : "")+"/>"; };
+  var stl=function(d){ return "<path d='"+d+"' fill='none' stroke='"+ST+"' stroke-width='1.6' stroke-dasharray='6 4'/>"; };
+  var pumpe=function(x, y){ return "<circle cx='"+x+"' cy='"+y+"' r='17' fill='#fff' stroke='#1b2422' stroke-width='2'/><path d='M"+(x-9)+" "+(y-11)+" L"+(x+12)+" "+y+" L"+(x-9)+" "+(y+11)+" Z' fill='none' stroke='#1b2422' stroke-width='2'/>"; };
+  var ventil3=function(x, y){ return "<path d='M"+(x-14)+" "+(y-9)+" L"+(x+14)+" "+(y+9)+" L"+(x+14)+" "+(y-9)+" L"+(x-14)+" "+(y+9)+" Z' fill='#fff' stroke='#1b2422' stroke-width='2'/><path d='M"+(x-9)+" "+(y+18)+" L"+x+" "+y+" L"+(x+9)+" "+(y+18)+" Z' fill='#fff' stroke='#1b2422' stroke-width='2'/><rect x='"+(x-7)+"' y='"+(y-26)+"' width='14' height='12' fill='#fff' stroke='#1b2422' stroke-width='1.5'/><path d='M"+x+" "+(y-14)+" V"+y+"' stroke='#1b2422' stroke-width='1.5'/>"; };
+  var fuehler=function(x, y){ return "<circle cx='"+x+"' cy='"+y+"' r='8' fill='#fff' stroke='#1b2422' stroke-width='1.5'/>"+t(x, y+4, 10, "T", {a:"middle", b:1}); };
+  var tauscher=function(x, y){ return rect(x, y, 34, 70, {r:2, sw:2})+"<path d='M"+x+" "+y+" L"+(x+34)+" "+(y+70)+"' stroke='#1b2422' stroke-width='1.5'/>"; };
+  svg+=rect(2, 2, W-4, H-4, {r:0, sw:2});
+  svg+=t(60, 70, 28, "Anlagenschema Klimatisierung – VRV wassergekühlt", {b:1})+t(60, 96, 15, [lidlObjekt(s), "Prinzipschema, nicht maßstäblich"].join(" · "), {f:"#4a5653"});
+  if(logoUrl) svg+="<image href='"+logoUrl+"' x='"+(W-60-240)+"' y='30' width='240' height='58' preserveAspectRatio='xMaxYMid meet'/>";
+  /* Zonen */
+  svg+=rect(30, 130, 270, 560, {fill:"#f3f5f7", s:"#7a8896", d:"8 6", r:10})+t(46, 158, 15, "AUSSENBEREICH", {b:1, f:"#4a5653"});
+  svg+=rect(315, 130, 905, 735, {fill:"#f7f7f3", s:"#7a8896", d:"8 6", r:10})+t(331, 158, 15, String(u.psOrt||"Technikraum").toUpperCase(), {b:1, f:"#4a5653"});
+  svg+=rect(1235, 130, 322, 735, {fill:"#fbfbf8", s:"#7a8896", d:"8 6", r:10})+t(1251, 158, 15, "FILIALE", {b:1, f:"#4a5653"});
+  /* Rückkühler mit 3 Ventilatoren */
+  svg+=rect(55, 190, 220, 150, {sw:2.4})+t(70, 214, 16, "Rückkühler", {b:1});
+  for(var k=0;k<3;k++) svg+="<circle cx='"+(95+k*70)+"' cy='248' r='22' fill='none' stroke='#1b2422' stroke-width='1.5'/><path d='M"+(95+k*70-14)+" 248 H"+(95+k*70+14)+" M"+(95+k*70)+" 234 V262' stroke='#1b2422' stroke-width='1.2'/>";
+  [String(u.rkTyp||"").trim(), (u.schall||[]).filter(function(z){ return String(z.db||"").trim(); }).slice(0, 1).map(function(z){ return "Lw "+String(z.db).trim().replace(/\s*dB.*$/i,"")+" dB(A)"+(u.nachtVon && u.nachtBis ? " · Nacht "+u.nachtVon.slice(0, 2)+"–"+u.nachtBis.slice(0, 2)+" Uhr" : ""); })[0]||""]
+    .filter(Boolean).forEach(function(z, i){ svg+=t(70, 296+i*18, 12, z.length>34 ? z.slice(0, 33)+"…" : z); });
+  if(String(u.aufstellort||"").trim()) svg+=t(55, 360, 12, String(u.aufstellort).slice(0, 40), {f:"#4a5653"});
+  /* Hauptkreis: warm von den Geräten (Sammelleitung xSW) → Pumpe → (Umschaltventil) → Rückkühler; gekühlt zurück → Schmutzfänger → Sammelleitung xSK */
+  var yW=230, yK=310, xUV=560, xP=760, xSW=1010, xSK=1030, mL=yV+(n-1)*schritt+Math.round(hoch/2);
+  svg+=rohr("M275 "+yW+" H"+xSW+" V"+(mL-14), VL)+pfeil(420, yW, "l", VL)+pfeil(930, yW, "l", VL);
+  svg+=rohr("M275 "+yK+" H"+xSK+" V"+(mL+14), RL)+pfeil(330, yK, "r", RL)+pfeil(960, yK, "r", RL);
+  svg+=pumpe(xP, yW)+t(xP, yW-26, 12, "Umwälzpumpe", {a:"middle", b:1});
+  svg+=fuehler(xP+120, yW)+fuehler(xSK-60, yK);
+  /* Schmutzfänger, Ausdehnungsgefäß, Sicherheitsventil, Entlüftung */
+  svg+="<path d='M628 "+(yK-10)+" L652 "+(yK+10)+" M628 "+(yK+10)+" L652 "+(yK-10)+"' stroke='#1b2422' stroke-width='2'/>"+t(640, yK+28, 11, "Schmutzfänger", {a:"middle"});
+  svg+=rohr("M720 "+yK+" V350", RL, {w:3})+"<ellipse cx='720' cy='372' rx='16' ry='22' fill='#fff' stroke='#1b2422' stroke-width='2'/>"+t(745, 376, 11, "Ausdehnungsgefäß");
+  svg+=rohr("M830 "+yW+" V196", VL, {w:3})+"<path d='M822 196 L838 196 L830 182 Z' fill='#fff' stroke='#1b2422' stroke-width='1.5'/>"+t(846, 192, 11, "Sicherheitsventil");
+  svg+="<circle cx='300' cy='"+(yW-14)+"' r='5' fill='#fff' stroke='#1b2422' stroke-width='1.5'/>"+t(308, yW-20, 10, "Entlüftung");
+  if(hatWrg){
+    /* Umschaltventil Heizen/Kühlen: Heizbetrieb über die Plattentauscher (WRG) statt Rückkühler */
+    svg+=ventil3(xUV, yW)+t(xUV, yW-34, 11, "3-Wege-Umschaltventil Heizen/Kühlen", {a:"middle", b:1});
+    var yT=480;
+    svg+=rohr("M"+xUV+" "+(yW+18)+" V"+(yT+35)+" H434", WR)+pfeil(xUV, 420, "u", WR);
+    svg+=rect(335, 455, 600, 185, {fill:"#fff7ed", s:WR, d:"6 4", r:8})+t(350, 474, 14, "Wärmerückgewinnung (Heizbetrieb)", {b:1, f:WR});
+    [400, 520].forEach(function(xT, i){
+      svg+=tauscher(xT, yT)+t(xT+17, yT+86, 11, "Plattentauscher "+(i+1), {a:"middle"});
+      svg+="<path d='M"+(xT+42)+" "+(yT+5)+" l10 -6 v12 z M"+(xT+62)+" "+(yT+5)+" l-10 -6 v12 z' fill='#fff' stroke='#1b2422' stroke-width='1.3'/>";
+    });
+    svg+=rohr("M434 "+(yT+35)+" H520", WR)+rohr("M554 "+(yT+35)+" H640", WR)+pfeil(600, yT+35, "r", WR);
+    svg+=t(580, yT+64, 11, "Bypass je Tauscher", {f:"#4a5653"});
+    svg+=rohr("M417 "+(yT+70)+" V"+(yT+112)+" M537 "+(yT+70)+" V"+(yT+112), AH, {w:3, d:"7 5"})+t(350, yT+128, 11, "von/zu Kühlmöbeln (AHT, Propylenglykol 38 %)", {f:AH});
+    svg+=t(350, yT+146, 11, String(u.wrg).trim().slice(0, 70), {f:"#4a5653"});
+    var xPu=760;
+    if(hatPuffer){
+      svg+=rect(xPu-35, yT-10, 70, 110, {r:14, sw:2})+t(xPu, yT+12, 12, "Puffer", {a:"middle", b:1});
+      svg+="<path d='M"+(xPu-20)+" "+(yT+70)+" h40 m-40 8 h40 m-40 8 h40' stroke='"+VL+"' stroke-width='2'/>"+t(xPu, yT+114, 10, "E-Heizstab", {a:"middle"});
+      svg+=rohr("M640 "+(yT+35)+" H"+(xPu-35), WR)+rohr("M"+(xPu+35)+" "+(yT+35)+" H900 V"+yK, WR)+pfeil(900, 410, "o", WR);
+      (String(u.puffer).trim().match(/.{1,22}(\s|$)/g)||[]).slice(0, 3).forEach(function(z, i){ svg+=t(xPu+45, yT+60+i*14, 10, z.trim(), {f:"#4a5653"}); });
+    } else svg+=rohr("M640 "+(yT+35)+" H900 V"+yK, WR)+pfeil(900, 410, "o", WR);
+  }
+  /* RWEYQ mit Strömungswächter je Gerät, Kältemittel zu den Innengeräten */
+  anl.forEach(function(x, i){
+    var y=yV+i*schritt, f=LIDL_FARBEN[i%LIDL_FARBEN.length], kg=lidlZahl(x.d.kaeltemittelKg), m=y+Math.round(hoch/2);
+    svg+=rect(1060, y, 160, hoch, {s:f, sw:2.4})+t(1072, y+22, 14, x.name, {b:1, f:f});
+    [[x.d.hersteller, x.d.modell].filter(Boolean).join(" "), x.d.seriennummer ? "SN "+x.d.seriennummer : "", kg!=null ? lidlKomma(kg, 1)+" kg "+(x.d.kaeltemittelArt||"") : ""]
+      .filter(Boolean).slice(0, 3).forEach(function(z, j){ svg+=t(1072, y+42+j*17, 11, z.length>24 ? z.slice(0, 23)+"…" : z); });
+    svg+=rohr("M"+xSW+" "+(m-14)+" H1060", VL)+pfeil(1050, m-14, "l", VL);
+    svg+=rohr("M"+xSK+" "+(m+14)+" H1060", RL)+"<circle cx='1045' cy='"+(m+14)+"' r='7' fill='#fff' stroke='#1b2422' stroke-width='1.5'/>"+t(1045, m+33, 9, "FS", {a:"middle"});
+    svg+="<path d='M1220 "+m+" H1260' fill='none' stroke='"+f+"' stroke-width='5'/><path d='M1220 "+m+" H1260' fill='none' stroke='#fff' stroke-width='1.6'/>";
+    svg+=rect(1260, m-34, 280, 68, {s:f, sw:2})+t(1274, m-6, 14, ((u.bereiche||{})[x.id]||"Innengeräte").slice(0, 34), {b:1});
+    svg+=t(1274, m+16, 11, (Array.isArray(x.d.innengeraete) && x.d.innengeraete.length ? x.d.innengeraete.length+" Innengeräte · " : "")+"kälteseitig unverändert", {f:"#4a5653"});
+  });
+  /* Regelung mit Steuerleitungen zu Pumpe, Rückkühler, Umschaltventil, Heizstab und VRV */
+  var rx=335, ry=690, rh=158;
+  svg+=rect(rx, ry, 330, rh, {s:ST, sw:2.2, fill:"#f7f4fb"})+t(rx+14, ry+24, 15, "Regelung", {b:1, f:ST});
+  (reg ? [reg] : ["Regelung (Typ eintragen)"]).concat(["Freigabe Pumpe und Rückkühler (Regler am Gerät)", hatWrg ? "Umschaltung Heizen/Kühlen, Bypass WRG" : "", hatPuffer ? "E-Heizstab (Stufen)" : "", "VRV über Daikin-Bus (F1/F2)", "Störmeldungen, Fernzugriff"])
+    .filter(Boolean).slice(0, 6).forEach(function(z, i){ svg+=t(rx+14, ry+46+i*18, 11.5, (i ? "· " : "")+(z.length>48 ? z.slice(0, 47)+"…" : z), i ? {} : {b:1}); });
+  svg+=stl("M"+(rx+330)+" "+(ry+30)+" H990 V"+(yW+20)+" H"+(xP+12));
+  svg+=stl("M"+rx+" "+(ry+30)+" H160 V340");
+  if(hatWrg) svg+=stl("M"+(rx+300)+" "+ry+" V665 H310 V"+(yW+46)+" H"+xUV+" V"+(yW+20));
+  if(hatPuffer) svg+=stl("M"+(rx+330)+" "+(ry+70)+" H760 V"+(480+100));
+  svg+=stl("M"+(rx+330)+" "+(ry+110)+" H1140 V"+(yV+(n-1)*schritt+hoch));
+  if(String(u.medium||"").trim()) svg+=t(1200, 845, 13, "Wärmeträger: "+u.medium, {b:1, f:"#4a5653", a:"end"});
+  /* Bauteile der Pumpenstation (Liste aus den Angaben) */
+  var bt=String(u.psText||"").split(/\r?\n/).map(function(z){ return z.replace(/^[-•·]\s*/,"").trim(); }).filter(Boolean);
+  if(bt.length){ svg+=t(1251, 900, 13, "Pumpenstation – Bauteile", {b:1, f:"#4a5653"}); bt.slice(0, 7).forEach(function(z, i){ svg+=t(1251, 920+i*16, 11, "· "+(z.length>44 ? z.slice(0, 43)+"…" : z)); }); }
+  /* Legende */
+  var ly=890, lg=[[VL, "", "Wasser-Glykol warm (von den Außengeräten)"], [RL, "", "Wasser-Glykol gekühlt (zu den Außengeräten)"]];
+  if(hatWrg){ lg.push([WR, "", "Heizbetrieb über Wärmerückgewinnung"]); lg.push([AH, "7 5", "Kühlmöbel-Kreis (AHT, nicht UKT)"]); }
+  svg+=t(40, ly, 13, "LEGENDE", {b:1, f:"#4a5653"});
+  lg.forEach(function(z, i){ svg+=rohr("M40 "+(ly+20+i*22)+" h50", z[0], z[1] ? {d:z[1], w:3} : {})+t(100, ly+25+i*22, 12, z[2]); });
+  var yl=ly+20+lg.length*22;
+  svg+="<path d='M40 "+yl+" h50' stroke='#1b2422' stroke-width='5'/><path d='M40 "+yl+" h50' stroke='#fff' stroke-width='1.6'/>"+t(100, yl+5, 12, "Kältemittelleitung, Kupfer, gedämmt");
+  svg+=stl("M40 "+(yl+22)+" h50")+t(100, yl+27, 12, "Steuerleitung");
+  svg+=pumpe(470, ly+10)+t(495, ly+14, 11, "Pumpe")+fuehler(470, ly+50)+t(485, ly+54, 11, "Temperaturfühler");
+  svg+="<circle cx='470' cy='"+(ly+86)+"' r='7' fill='#fff' stroke='#1b2422' stroke-width='1.5'/>"+t(485, ly+90, 11, "FS = Strömungswächter (je Außengerät)");
+  var ib=lidlIbDatum(p, anl);
+  svg+=t(W-40, H-46, 12, [ib ? "Inbetriebnahme "+dfmt(ib) : "", u.datum ? "Stand "+dfmt(u.datum) : ""].filter(Boolean).join(" · "), {a:"end", f:"#4a5653"});
+  svg+=t(W-40, H-28, 12, "Umwelt- und Klimatechnik GmbH, Speckbacherstraße 92, 6380 St. Johann in Tirol", {a:"end", f:"#4a5653"});
+  return "<svg xmlns='http://www.w3.org/2000/svg' width='"+W+"' height='"+H+"' viewBox='0 0 "+W+" "+H+"'><rect width='"+W+"' height='"+H+"' fill='#fff'/>"+svg+"</svg>";
+}
 function lidlSchemaSvg(p, anl, u, logoUrl){
   var s=lidlMarkt(p), W=1587, H=1123, svg="";
   var t=function(x, y, gr, txt, o){ o=o||{}; return "<text x='"+x+"' y='"+y+"' font-size='"+gr+"' font-family='Arial, Helvetica, sans-serif'"+(o.b ? " font-weight='700'" : "")+(o.a ? " text-anchor='"+o.a+"'" : "")+" fill='"+(o.f||"#1b2422")+"'>"+esc(txt)+"</text>"; };
   var rect=function(x, y, w, h, o){ o=o||{}; return "<rect x='"+x+"' y='"+y+"' width='"+w+"' height='"+h+"' rx='"+(o.r||6)+"' fill='"+(o.fill||"#fff")+"' stroke='"+(o.s||"#1b2422")+"' stroke-width='"+(o.sw||1.6)+"'"+(o.d ? " stroke-dasharray='"+o.d+"'" : "")+"/>"; };
   var leitung=function(x1, y1, x2, y2, f){ var d="M"+x1+" "+y1+" H"+((x1+x2)/2)+" V"+y2+" H"+x2; return "<path d='"+d+"' fill='none' stroke='"+f+"' stroke-width='5'/><path d='"+d+"' fill='none' stroke='#fff' stroke-width='1.6'/>"; };
+  if(lidlWasserProjekt(anl)) return lidlSchemaWasserSvg(p, anl, u, logoUrl, t, rect);
   var n=Math.max(1, anl.length), schritt=Math.min(152, Math.floor(600/n)), hoch=Math.min(128, schritt-16);
   svg+=rect(2, 2, W-4, H-4, {r:0, sw:2});
   svg+=t(60, 74, 30, "Anlagenschema Klimatisierung", {b:1})+t(60, 102, 16, [lidlObjekt(s), "Prinzipschema, nicht maßstäblich"].join(" · "), {f:"#4a5653"});
@@ -35813,6 +36214,8 @@ function lidlErzeugen(was, p, anl, u, V){
 /* Datenblätter der Gerätebibliothek ins Projekt kopieren (doppelte erkennt das Hochladen selbst) */
 function lidlDatenblaetterHolen(p, anl, V){
   var gs=[]; anl.forEach(function(x){ var g=lidlGeraet(x.d.modell, V); if(g && g.datenblatt && g.datenblatt.pfad && gs.indexOf(g)<0) gs.push(g); });
+  var u0=((p.daten||{}).lidlUnterlagen)||{}, rkG=lidlWasserProjekt(anl) && String(u0.rkTyp||"").trim() && lidlRkGeraet(u0.rkTyp, V);
+  if(rkG && rkG.datenblatt && rkG.datenblatt.pfad && gs.indexOf(rkG)<0) gs.push(rkG);
   if(!gs.length){ toast("In der Gerätebibliothek ist zu diesen Modellen kein Datenblatt."); return Promise.resolve([]); }
   if(!Store.sb){ toast("Dafür bitte zuerst anmelden."); return Promise.resolve([]); }
   return Promise.all(gs.map(function(g){
@@ -35896,7 +36299,14 @@ function lidlUnterlagenAssistent(p0){
       '<div class="pad stack" style="padding-top:0;gap:8px">'+
       '<div class="grid2" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:8px">'+
         f("datum", "Datum TB und KAV (Inbetriebnahme + 1 Woche)")+f("betreiber", "Bauherr / Betreiber")+f("planungBau", "Planung Bau")+f("planungTga", "Planung TGA (HKLS)")+
-        f("aufstellort", "Aufstellort Außengeräte (TB, Schema)", 0, "z. B. Techniknische Richtung Parkplatz, ca. +1,0 m")+f("kavUnter", "Zeile unter dem KAV-Titel")+"</div>"+
+        (lidlWasserProjekt(anl) ? f("aufstellort", "Aufstellort Rückkühler (TB, Schema)", 0, "z. B. Flachdach über TK-Zelle, ca. +4,5 m") :
+          f("aufstellort", "Aufstellort Außengeräte (TB, Schema)", 0, "z. B. Techniknische Richtung Parkplatz, ca. +1,0 m"))+f("kavUnter", "Zeile unter dem KAV-Titel")+"</div>"+
+      (lidlWasserProjekt(anl) ? '<div data-lidlwasser class="stack" style="gap:8px;border:1px solid var(--line);border-radius:10px;padding:8px 10px"><strong style="font-size:13px">💧 Wassergekühlte VRV – Wasserkreis</strong>'+
+        '<div class="grid2" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:8px">'+
+        f("rkTyp", "Rückkühler (Typ)", 0, "z. B. Güntner GFHC FD 063.1/13-29 – Daten aus der Gerätebibliothek")+f("medium", "Wärmeträger", 0, "z. B. Ethylenglykol 34 % – nicht raten")+
+        f("psOrt", "Aufstellort Außengeräte und Pumpenstation", 0, "Technikraum")+f("wrg", "Wärmerückgewinnung (Heizbetrieb)", 0, "z. B. Abwärme der Kühlmöbel über 2 Plattentauscher")+
+        f("puffer", "Puffer / E-Heizstab", 0, "z. B. Pufferspeicher 200 l mit E-Heizstab 26 kW – leer = keiner")+f("regelung", "Regelung", 0, "z. B. Daikin intelligent Touch Manager + WAGO")+"</div>"+
+        f("psText", "Pumpenstation – Bauteile (je Zeile eines)", 4, "Umwälzpumpe …\nAusdehnungsgefäß, Sicherheitsventil …\nSchmutzfänger, Strömungswächter je Außengerät\nEntlüftung, Absperrungen")+"</div>" : "")+
       f("bauvorhaben", "Bauvorhaben", 2)+f("allgemein", "1 Allgemein", 5)+f("demontage", "Bestand und Demontage (je Zeile ein Punkt)", 3)+f("weiter", "Weiterverwendung (je Zeile ein Punkt)", 3)+
       '<div><strong style="font-size:13px">Versorgte Bereiche je Anlage</strong><div class="stack" style="gap:4px;margin-top:4px" data-lidlbereiche></div></div>'+
       '<div><strong style="font-size:13px">Schall</strong> <span class="muted" style="font-size:12px">– Schallleistungspegel, leere Zeilen entfallen</span><div class="stack" style="gap:4px;margin-top:4px" data-lidlschall></div>'+
@@ -39670,10 +40080,18 @@ function zeitenInhaberKarte(){
    Speicher „auslagen“ (<user_id>/…), fahrzeuge.privat_von (Privatauto).
    ================================================================ */
 var AUSLAGEN=[], AK_KONTO=null, akGeladen=false, akLaedt=null, akFehlt=false, akFehler="", akStand=0, akKonto="", KM_SATZ=0.50;
-var AUSLAGE_KAT=[["material","Material"],["werkzeug","Werkzeug"],["tanken","Tanken"],["parken","Parken"],["maut","Maut / Vignette"],
-  ["naechtigung","Nächtigung"],["oeffis","Bahn / Öffis"],["post","Post"],["sonstiges","Sonstiges"]];
+var AUSLAGE_KAT=[["material","Material"],["werkzeug","Werkzeug"],["bewirtung","Bewirtung"],["tanken","Tanken"],["parken","Parken"],["maut","Maut / Vignette"],
+  ["naechtigung","Unterkunft"],["oeffis","Bahn / Öffis"],["post","Post"],["sonstiges","Sonstiges"]];
+/* Einteilung für die Abrechnung (Inhaber 27.10.2026: „Bewirtung, Unterkunft, Material/Werkzeug und Sonstiges“) – gespeichert bleibt
+   die Kategorie (Unterkunft = naechtigung, Material/Werkzeug = material bzw. werkzeug); ältere wie Parken oder Maut zählen als Sonstiges */
+var AK_GRUPPEN=[["bewirtung","Bewirtung"],["naechtigung","Unterkunft"],["material","Material/Werkzeug"],["sonstiges","Sonstiges"]];
+function akGruppe(k){ return k==="bewirtung" || k==="naechtigung" ? k : (k==="material" || k==="werkzeug") ? "material" : "sonstiges"; }
+function akGruppeName(k){ var g=akGruppe(k); return AK_GRUPPEN.filter(function(x){ return x[0]===g; })[0][1]; }
 var AK_STATUS={offen:"offen", eingereicht:"abgegeben", ausbezahlt:"ausbezahlt"};
-function akKatName(k){ return (AUSLAGE_KAT.filter(function(x){ return x[0]===k; })[0]||[k,k||""])[1]; }
+function akKatName(k){
+  var n=(AUSLAGE_KAT.filter(function(x){ return x[0]===k; })[0]||[k,k||""])[1];
+  return akGruppe(k)==="sonstiges" && k && k!=="sonstiges" ? "Sonstiges ("+n+")" : (k==="material" || k==="werkzeug") ? "Material/Werkzeug" : n;
+}
 function akAn(){ return betriebSchreiben(); }
 /* Betrag lesen: „23,85“, „23.85“, „1.234,50“ – ein Punkt mit zwei Stellen dahinter ist das Komma */
 function akBetragLesen(t){
@@ -39718,7 +40136,14 @@ function akImMonat(liste, monat){ return liste.filter(function(z){ return String
 function akSummen(l){
   var b=l.filter(function(z){ return z.art==="beleg"; }), k=l.filter(function(z){ return z.art==="km"; });
   var sb=b.reduce(function(s,z){ return s+(+z.betrag||0); },0), km=k.reduce(function(s,z){ return s+(+z.km||0); },0), sk=k.reduce(function(s,z){ return s+(+z.betrag||0); },0);
-  return {belege:b, kms:k, summeBelege:Math.round(sb*100)/100, km:Math.round(km*10)/10, summeKm:Math.round(sk*100)/100, gesamt:Math.round((sb+sk)*100)/100};
+  /* mit und ohne Mehrwertsteuer (Inhaber 27.10.2026) – je Einteilung; Belege ohne MwSt-Angabe werden gezählt, nicht geschätzt */
+  var r2=function(x){ return Math.round(x*100)/100; }, gruppen={}, mw=0, ohne=0;
+  AK_GRUPPEN.forEach(function(g){ gruppen[g[0]]={name:g[1], brutto:0, mwst:0, n:0, ohneMwst:0}; });
+  b.forEach(function(z){ var g=gruppen[akGruppe(z.kategorie)], m=z.mwst!=null && z.mwst!=="" ? +z.mwst : null;
+    g.brutto+=+z.betrag||0; g.n++; if(m!=null){ g.mwst+=m; mw+=m; } else { g.ohneMwst++; ohne++; } });
+  Object.keys(gruppen).forEach(function(k2){ var g=gruppen[k2]; g.brutto=r2(g.brutto); g.mwst=r2(g.mwst); g.netto=r2(g.brutto-g.mwst); });
+  return {belege:b, kms:k, summeBelege:r2(sb), km:Math.round(km*10)/10, summeKm:r2(sk), gesamt:r2(sb+sk),
+    mwstBelege:r2(mw), nettoBelege:r2(sb-mw), ohneMwst:ohne, gruppen:gruppen};
 }
 /* meine Privatautos (das Büro stellt beim Fahrzeug „Privatauto – Kilometergeld an …“ ein) */
 function meinePrivatautos(){ var ich=meineKennung(); return FZ.filter(function(f){ return f.privat_von===ich && f.aktiv!==false; }); }
@@ -39867,6 +40292,101 @@ function akFotoHochladen(datei, fuer){
 function akFotoUrl(pfad){
   return Store.sb.storage.from("auslagen").createSignedUrl(pfad, 600).then(function(r){ if(r.error || !r.data) throw new Error(r.error?r.error.message:"nicht gefunden"); return r.data.signedUrl; });
 }
+/* ---------- Beleg automatisch lesen (Inhaber 27.10.2026: „alles automatisch aus dem PDF oder dem Foto erkennen – wenn die App
+   das nicht schafft, kann gerne die KI nachhelfen“) ----------
+   PDF mit Text: die App liest selbst (Datum, Summe, MwSt, Händler, Einteilung). Foto, eingescannte PDF oder unvollständig
+   gelesen: die KI (ki-lesen, Art „beleg“, kostet wie jede KI-Erkennung und zählt zum Tageslimit). Übernommen wird nur in
+   Felder, die die Person nicht selbst ausgefüllt hat; was gesetzt wurde, steht da und ist markiert – bitte prüfen. */
+var AK_KAT_WORTE=[["bewirtung",/restaurant|gasthaus|gasthof|wirtshaus|pizzeria|cafe|café|konditorei|imbiss|kebap|kebab|mcdonald|burger king|speisen|getränke|menü|trinkgeld|bewirtung|kantine|raststation|rosenberger|autogrill|bistro|bäckerei|backhaus|anker|ströck/i],
+  ["naechtigung",/hotel|pension|übernachtung|nächtigung|zimmer|frühstücks?pension|booking\.com|ortstaxe|kurtaxe|aufenthaltsabgabe|appartement|gasthöf\w*\s+zimmer/i],
+  ["material",/bauhaus|hornbach|obi\b|hagebau|lagerhaus|baumax|würth|wuerth|hilti|berner|frauenthal|holter|kontinentale|schrauben|dübel|silikon|kabel|isolier|armaflex|kupferrohr|werkzeug|bohrer|akku|baumarkt|elektro|installations|kälte|klimatechnik|gc gruppe|schmidt'?s/i]];
+function akKategorieRaten(t){ var x=AK_KAT_WORTE.filter(function(k){ return k[1].test(t||""); })[0]; return x ? x[0] : ""; }
+function akDatumIso(t){
+  var m=/(\d{1,2})[.\/-](\d{1,2})[.\/-](\d{2,4})/.exec(t||""); if(!m) return null;
+  var j=+m[3]; if(j<100) j+=2000;
+  var d=j+"-"+("0"+m[2]).slice(-2)+"-"+("0"+m[1]).slice(-2);
+  return /^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/.test(d) ? d : null;
+}
+/* Beträge einer Zeile: „1.234,56“, „23,85“, „23.85“ (nicht Datum/Uhrzeit) */
+function akBetraege(z){
+  var l=[], re=/(?:^|[^\d.,:])(\d{1,3}(?:[.\s]\d{3})+,\d{2}|\d+,\d{2}|\d+\.\d{2})(?![\d.,:%])/g, m;
+  while((m=re.exec(z))) l.push(akBetragLesen(m[1].replace(/\s/g,"")));
+  return l.filter(function(x){ return x>0; });
+}
+function akBelegAusText(text){
+  var zeilen=String(text||"").split(/\n/).map(function(z){ return z.replace(/\s+/g," ").trim(); }).filter(Boolean);
+  var w={}, heute=isoLokal(new Date()), vorJahr=plusMonate(heute,-13);
+  /* Datum: bevorzugt eine Zeile mit „Datum“, sonst das erste plausible (nicht in der Zukunft, nicht älter als ein Jahr) */
+  var daten=zeilen.map(function(z){ return {z:z, d:akDatumIso(z)}; }).filter(function(x){ return x.d && x.d<=heute && x.d>=vorJahr; });
+  var dz=daten.filter(function(x){ return /datum|date|rechnung|beleg/i.test(x.z); })[0] || daten[0];
+  if(dz) w.datum=dz.d;
+  /* Summe: größter Betrag in Zeilen mit „Summe/Gesamt/zu zahlen …“ – nie einfach der größte Betrag des Belegs */
+  var sum=[];
+  zeilen.forEach(function(z){ if(/summe|gesamt|total|zu zahlen|zahlbetrag|endbetrag|rechnungsbetrag|brutto|bar\b|betrag eur|eur gesamt|kartenzahlung|bezahlt/i.test(z) && !/netto|zwischensumme/i.test(z)) sum=sum.concat(akBetraege(z)); });
+  if(sum.length) w.betrag=Math.max.apply(null, sum);
+  /* MwSt: Zeilen mit MwSt/USt und Prozentsatz; je Satz der Betrag, der zum Satz passt */
+  var saetze={}, mwstSumme=0, gefunden=false;
+  zeilen.forEach(function(z){
+    if(!/mwst|ust\b|u\.st|umsatzsteuer|mehrwertsteuer|steuer|vat/i.test(z)) return;
+    var p=/(\d{1,2})(?:[,.]0+)?\s*%/.exec(z); if(!p) return;
+    var satz=+p[1]; if([10,13,20,5,19,7].indexOf(satz)<0) return;
+    var b=akBetraege(z.replace(p[0]," ")), passend=null;
+    /* netto + MwSt = brutto in derselben Zeile, oder der Betrag, der dem Satz entspricht */
+    b.forEach(function(x){ if(passend!=null) return; if(b.some(function(y){ return y>x && Math.abs(y*satz/100-x)<=0.02; }) || b.some(function(y){ return y>x && Math.abs(y*satz/(100+satz)-x)<=0.02; })) passend=x; });
+    if(passend==null && b.length===1 && w.betrag && b[0]<w.betrag*0.25) passend=b[0];
+    if(passend!=null && !saetze[satz]){ saetze[satz]=passend; mwstSumme+=passend; gefunden=true; }
+    else if(!saetze[satz]) saetze[satz]=null;
+  });
+  var satzListe=Object.keys(saetze).map(Number).sort(function(a,b){ return a-b; });
+  if(satzListe.length) w.mwstSatz=satzListe.map(function(s){ return s+" %"; }).join(" / ");
+  if(gefunden && satzListe.every(function(s){ return saetze[s]!=null; })) w.mwst=Math.round(mwstSumme*100)/100;
+  /* Händler: die erste Zeile mit Buchstaben, die kein Rechnungs-/Datums-Kopf ist */
+  var h=zeilen.filter(function(z){ return /[a-zäöü]{3}/i.test(z) && !/rechnung|beleg|datum|kassa|bon\b|uid|atu\d|tel|www\.|@|str\.|straße|gasse|^\d/i.test(z); })[0];
+  if(h) w.text=h.slice(0,80);
+  var k=akKategorieRaten(zeilen.join(" ")); if(k) w.kategorie=k;
+  return w;
+}
+/* Datei → erkannte Werte; anzeige = Hinweisfeld im Dialog, fuellen(w) setzt die Felder und gibt die gesetzten Namen zurück */
+function akBelegErkennen(datei, anzeige, fuellen){
+  var lauf=++akErkennungNr;
+  var zeige=function(h, warn){ if(lauf!==akErkennungNr) return; anzeige.hidden=false; anzeige.className="note"+(warn?" warnbox":""); anzeige.innerHTML=h; };
+  var fertig=function(w, wie){
+    if(lauf!==akErkennungNr) return;
+    var g=fuellen(w||{});
+    if(g.length) zeige("✓ "+esc(wie)+" erkannt: <strong>"+esc(g.join(", "))+"</strong> – bitte prüfen (markiert).");
+    else zeige(esc(wie)+": nichts Neues erkannt – bitte die Felder selbst ausfüllen.", true);
+  };
+  var pdf=/pdf/i.test(datei.type||"") || /\.pdf$/i.test(datei.name||"");
+  var mitKi=function(bilder, schonW){
+    if(!kiAn()){ if(schonW) fertig(schonW, "Aus der PDF"); else zeige("Automatisch lesen: "+(pdf?"die PDF hat keinen lesbaren Text":"ein Foto")+" – das geht nur mit der KI, die hier nicht eingeschaltet ist. Bitte selbst eintragen.", true); return; }
+    zeige('<span class="kilaeuft" style="display:inline-block;width:14px;height:14px;vertical-align:middle"></span> Die KI liest den Beleg … (meist 10–30 Sekunden, bitte in der App bleiben)');
+    return kiTeilLesen("beleg", bilder, "Beleg einer Ausgabe von Kammerlander Umwelt- und Klimatechnik GmbH (Klima/Kälte-Betrieb, Österreich) – Mitarbeiter hat privat bezahlt.", 0, 1).then(function(r){
+      var d=(r && r.daten)||{}, w=Object.assign({}, schonW||{});
+      var dt=akDatumIso(d.datum); if(dt && dt<=isoLokal(new Date())) w.datum=w.datum||dt;
+      var b=akBetragLesen(d.betrag); if(b>0 && w.betrag==null) w.betrag=b;
+      var m=akBetragLesen(d.mwst); if(m>=0 && m!==null && !isNaN(m) && w.mwst==null && (!(w.betrag>0) || m<=w.betrag)) w.mwst=m;
+      if(d.mwstSatz && !w.mwstSatz) w.mwstSatz=String(d.mwstSatz).slice(0,40);
+      var t=[d.haendler, d.beschreibung].map(function(x){ return String(x||"").trim(); }).filter(Boolean).join(" – ");
+      if(t) w.text=t.slice(0,300);
+      var kk={bewirtung:"bewirtung", unterkunft:"naechtigung", material:"material", werkzeug:"werkzeug", sonstiges:"sonstiges"}[String(d.kategorie||"").toLowerCase()];
+      if(kk) w.kategorie=kk;
+      fertig(w, "Die KI hat");
+    }, function(e){ if(lauf!==akErkennungNr) return; if(schonW) fertig(schonW, "Aus der PDF");
+      zeige("Die KI konnte den Beleg nicht lesen ("+esc((e&&e.message)||String(e))+"). Bitte selbst eintragen.", true); });
+  };
+  zeige("Beleg wird gelesen …");
+  if(!pdf) return kiBild(datei).then(function(b){ return mitKi([b]); }, function(){ zeige("Das Bild ließ sich nicht lesen – bitte selbst eintragen.", true); });
+  return ladePdfJs().then(function(){ return datei.arrayBuffer(); }).then(function(buf){ return window.pdfjsLib.getDocument({data:new Uint8Array(buf)}).promise; }).then(function(doc){
+    var n=Math.min(doc.numPages, 3), seiten=[]; for(var i=1;i<=n;i++) seiten.push(i);
+    return Promise.all(seiten.map(function(i){ return doc.getPage(i).then(function(pg){ return pg.getTextContent(); }).then(function(tc){ return pdfZeilen(tc.items); }); })).then(function(t){
+      var w=akBelegAusText(t.join("\n"));
+      /* vollständig genug: Datum und Summe gefunden → ohne KI */
+      if(w.datum && w.betrag>0) return fertig(w, "Aus der PDF");
+      return pdfSeitenAlsBild(doc, 2).then(function(bilder){ return mitKi(bilder, (w.datum||w.betrag)?w:null); });
+    });
+  }).catch(function(e){ zeige("Die PDF ließ sich nicht lesen ("+esc((e&&e.message)||String(e))+") – bitte selbst eintragen.", true); });
+}
+var akErkennungNr=0;
 /* ---------- erfassen / ändern ---------- */
 function akEditor(z, vorgabe){
   if(!akAn()){ toast("Reisekosten gehen nur mit Anmeldung."); return; }
@@ -39908,6 +40428,7 @@ function akEditor(z, vorgabe){
         '<div class="rowflex" style="gap:8px;flex-wrap:wrap"><label class="btn sm" style="cursor:pointer">📷 Beleg fotografieren<input type="file" accept="image/*" capture="environment" data-foto hidden></label>'+
         '<label class="btn ghost sm" style="cursor:pointer">Bild / PDF wählen<input type="file" accept="image/*,application/pdf" data-foto hidden></label></div>')+
         '<div data-vorschau class="muted" style="font-size:12.5px">'+(a.foto?"Foto ist gespeichert – wird geladen …":"Noch kein Foto.")+"</div>"+
+        '<div data-erkennung class="note" style="font-size:12.5px" hidden></div>'+
         '<label class="chk" style="font-size:12.5px"><input type="checkbox" data-ohne'+(a.ohne_beleg?" checked":"")+"><span>Kein Beleg vorhanden</span></label>"+
         '<label class="fl" data-ohnegrund'+(a.ohne_beleg?"":" hidden")+'><span>Warum kein Beleg?</span><input type="text" data-f="ohne_beleg" maxlength="300" value="'+esc(a.ohne_beleg||"")+'" placeholder="z. B. Parkautomat ohne Beleg"></label></div>')+
     '<div class="grid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px">'+
@@ -39921,8 +40442,15 @@ function akEditor(z, vorgabe){
           '<label class="fl"><span'+(demo()?"":' class="req"')+'>Privatauto</span><select data-f="fahrzeug_id"><option value="">– bitte wählen –</option>'+autos.map(function(f){
             return '<option value="'+esc(f.id)+'"'+(a.fahrzeug_id===f.id || (!a.fahrzeug_id && autos.length===1 && !fremd)?" selected":"")+">"+esc((f.kennzeichen||"gespeichertes Fahrzeug")+(f.bezeichnung?" · "+f.bezeichnung:""))+"</option>"; }).join("")+"</select></label>"+
           '<div class="note" data-kmbetrag style="font-size:13px"></div>'
-        : '<label class="fl"><span class="req">Wo / was?</span><input type="text" data-f="text" maxlength="300" value="'+esc(a.text||"")+'" placeholder="z. B. Bauhaus – Silikon und Schrauben"></label>'+
-          '<div class="fl"><span>Wofür?</span></div><div class="chips" data-kat>'+AUSLAGE_KAT.map(function(x){ return '<button class="chip" type="button" data-w="'+x[0]+'" aria-pressed="'+(a.kategorie===x[0])+'">'+esc(x[1])+"</button>"; }).join("")+"</div>")+
+        : '<div class="grid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px">'+
+            '<label class="fl"><span>davon MwSt (€)</span><input type="text" inputmode="decimal" data-f="mwst" value="'+esc(a.mwst!=null?geld(a.mwst):"")+'" placeholder="z. B. 3,98"></label>'+
+            '<label class="fl"><span>MwSt-Satz</span><input type="text" data-f="mwst_satz" maxlength="40" value="'+esc(a.mwst_satz||"")+'" placeholder="z. B. 20 %"></label></div>'+
+          '<div class="muted" data-netto style="font-size:12.5px"></div>'+
+          '<label class="fl"><span class="req">Wo / was?</span><input type="text" data-f="text" maxlength="300" value="'+esc(a.text||"")+'" placeholder="z. B. Bauhaus – Silikon und Schrauben"></label>'+
+          '<div class="fl"><span>Wofür?</span></div><div class="chips" data-kat>'+AK_GRUPPEN.map(function(x){ return '<button class="chip" type="button" data-w="'+x[0]+'" aria-pressed="'+(akGruppe(a.kategorie)===x[0])+'">'+esc(x[1])+"</button>"; }).join("")+"</div>"+
+          /* Material oder Werkzeug genauer (gekauftes Werkzeug kommt auf Wunsch in die Werkzeugliste) */
+          '<div class="chips" data-katfein'+(akGruppe(a.kategorie)==="material"?"":" hidden")+'><span class="muted" style="font-size:12px;align-self:center">genauer:</span>'+
+            [["material","Material"],["werkzeug","Werkzeug"]].map(function(x){ return '<button class="chip" type="button" data-w="'+x[0]+'" aria-pressed="'+(a.kategorie===x[0])+'">'+esc(x[1])+"</button>"; }).join("")+"</div>")+
     '<div class="grid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:10px">'+
       '<label class="fl"><span>Projekt (falls dafür)</span><select data-f="projekt_id"><option value="">–</option>'+projekte.map(function(p){
         return '<option value="'+esc(p.id)+'"'+(a.projekt_id===p.id?" selected":"")+">"+esc(projektTitel(p))+"</option>"; }).join("")+"</select></label>"+
@@ -39934,11 +40462,40 @@ function akEditor(z, vorgabe){
   var err=form.querySelector("[data-err]"), fehler=function(t){ err.textContent=technikDeutsch(t); err.hidden=false; };
   var kat=a.kategorie, datei=null;
   if(!km){
-    form.querySelectorAll("[data-kat] .chip").forEach(function(c){ c.onclick=function(){ kat=c.dataset.w; form.querySelectorAll("[data-kat] .chip").forEach(function(x){ x.setAttribute("aria-pressed", String(x===c)); }); }; });
+    var fein=form.querySelector("[data-katfein]");
+    var katZeigen=function(){
+      form.querySelectorAll("[data-kat] .chip").forEach(function(x){ x.setAttribute("aria-pressed", String(x.dataset.w===akGruppe(kat))); });
+      fein.querySelectorAll(".chip").forEach(function(x){ x.setAttribute("aria-pressed", String(x.dataset.w===kat)); });
+      fein.hidden=akGruppe(kat)!=="material";
+    };
+    /* eine ältere Feinheit (Parken, Maut …) bleibt, solange „Sonstiges“ nicht neu gewählt wird */
+    var katBeruehrt=false;
+    form.querySelectorAll("[data-kat] .chip").forEach(function(c){ c.onclick=function(){ katBeruehrt=true; if(akGruppe(kat)!==c.dataset.w) kat=c.dataset.w; katZeigen(); }; });
+    fein.querySelectorAll(".chip").forEach(function(c){ c.onclick=function(){ katBeruehrt=true; kat=c.dataset.w; katZeigen(); }; });
+    /* netto = Betrag − MwSt, gleich unter den Feldern */
+    var nettoZeigen=function(){ var b=akBetragLesen(F("betrag").value), m=akBetragLesen(F("mwst").value), n=form.querySelector("[data-netto]");
+      n.textContent = b>0 && m>=0 && m!==null && !isNaN(m) ? (m>b ? "⚠ Die MwSt ist größer als der Betrag – bitte prüfen." : "ohne MwSt (netto): "+geld(Math.round((b-m)*100)/100)+" €") : ""; };
+    F("betrag").addEventListener("input", nettoZeigen); F("mwst").addEventListener("input", nettoZeigen); nettoZeigen();
+    /* was die Person selbst tippt, überschreibt die Erkennung nie */
+    var beruehrt={};
+    ["datum","betrag","mwst","mwst_satz","text"].forEach(function(k){ F(k).addEventListener("input", function(){ beruehrt[k]=true; }); });
     var vs=form.querySelector("[data-vorschau]");
     var zeigeBild=function(url, pdf){ vs.innerHTML=pdf ? '<a href="'+esc(url)+'" target="_blank" rel="noopener">📄 PDF ansehen</a>' : '<img alt="Beleg" src="'+esc(url)+'" style="max-width:100%;max-height:260px;border:1px solid var(--line);border-radius:8px">'; };
     form.querySelectorAll("[data-foto]").forEach(function(inp){ inp.onchange=function(){ if(!inp.files || !inp.files[0]) return; datei=inp.files[0];
-      var pdf=/pdf/i.test(datei.type||""); zeigeBild(URL.createObjectURL(datei), pdf); form.querySelector("[data-ohne]").checked=false; form.querySelector("[data-ohnegrund]").hidden=true; }; });
+      var pdf=/pdf/i.test(datei.type||"") || /\.pdf$/i.test(datei.name||""); zeigeBild(URL.createObjectURL(datei), pdf); form.querySelector("[data-ohne]").checked=false; form.querySelector("[data-ohnegrund]").hidden=true;
+      /* Inhaber 27.10.2026: „beim Eintragen alles automatisch aus dem PDF oder dem Foto erkennen – wenn nötig mit KI“ */
+      akBelegErkennen(datei, form.querySelector("[data-erkennung]"), function(w){
+        var gesetzt=[];
+        var setze=function(k, wert, name){ if(wert==null || wert==="" || beruehrt[k]) return; if(k==="datum" && z) return;
+          F(k).value=wert; F(k).style.outline="2px solid var(--accent)"; gesetzt.push(name); };
+        setze("datum", w.datum, "Datum"); setze("betrag", w.betrag!=null?geld(w.betrag):null, "Betrag");
+        setze("mwst", w.mwst!=null?geld(w.mwst):null, "MwSt"); setze("mwst_satz", w.mwstSatz, "MwSt-Satz");
+        setze("text", w.text, "Wo / was");
+        if(w.kategorie && !katBeruehrt && !z){ kat=w.kategorie; katZeigen(); gesetzt.push("Wofür („"+akGruppeName(kat)+"“)"); }
+        nettoZeigen();
+        return gesetzt;
+      });
+    }; });
     form.querySelector("[data-ohne]").onchange=function(){ form.querySelector("[data-ohnegrund]").hidden=!this.checked; };
     if(a.foto && !demo()) akFotoUrl(a.foto).then(function(u){ zeigeBild(u, /\.pdf$/i.test(a.foto)); }, function(){ vs.textContent="Foto nicht geladen."; });
     else if(a.foto) vs.textContent="Foto gewählt (Präsentation – nicht gespeichert).";
@@ -39998,7 +40555,10 @@ function akEditor(z, vorgabe){
       var ohne=form.querySelector("[data-ohne]").checked;
       if(!datei && !a.foto && !ohne){ fehler("Bitte den Beleg fotografieren – oder „Kein Beleg vorhanden“ mit Grund."); return; }
       if(ohne && !F("ohne_beleg").value.trim() && !datei && !a.foto){ fehler("Bitte kurz eintragen, warum es keinen Beleg gibt."); F("ohne_beleg").focus(); return; }
-      Object.assign(zeile, {betrag:b, kategorie:kat, ohne_beleg:(ohne && !datei) ? F("ohne_beleg").value.trim() : null});
+      var mw=F("mwst").value.trim() ? akBetragLesen(F("mwst").value) : null;
+      if(mw!=null && !(mw>=0)){ fehler("Die MwSt bitte als Zahl eintragen, z. B. 3,98 – oder leer lassen."); F("mwst").focus(); return; }
+      if(mw!=null && mw>b){ fehler("Die MwSt ist größer als der Betrag – bitte prüfen."); F("mwst").focus(); return; }
+      Object.assign(zeile, {betrag:b, kategorie:kat, mwst:mw, mwst_satz:F("mwst_satz").value.trim()||null, ohne_beleg:(ohne && !datei) ? F("ohne_beleg").value.trim() : null});
     }
     if(a.bedarf_id) zeile.bedarf_id=a.bedarf_id;
     ok.disabled=true; ok.textContent=datei ? "Foto wird hochgeladen …" : "wird gespeichert …";
@@ -40073,34 +40633,54 @@ function akPdfHtml(l, name, monat, konto, fotos){
     '<tr><td style="padding:2px 14px 2px 0">Monat / Jahr</td><td>'+esc(MONATE_L[+monat.slice(5,7)]+" "+monat.slice(0,4))+"</td></tr>"+
     '<tr><td style="padding:2px 14px 2px 0">Betreff</td><td>REISESPESEN</td></tr></table>'+
     '<div style="font-weight:700;margin:6px 0 4px">Ausgaben Barbelege</div>'+
-    '<table style="width:100%;border-collapse:collapse;font-size:11.5px"><thead><tr><th '+th+'>Beleg-Nr.</th><th '+th+'>Datum</th><th '+th+'>Text</th><th '+th+'>wofür</th><th '+th+' align="right">Betrag</th></tr></thead><tbody>'+
+    '<table style="width:100%;border-collapse:collapse;font-size:11.5px"><thead><tr><th '+th+'>Beleg-Nr.</th><th '+th+'>Datum</th><th '+th+'>Text</th><th '+th+'>wofür</th>'+
+      '<th '+th+' align="right">ohne MwSt</th><th '+th+' align="right">MwSt</th><th '+th+' align="right">Betrag</th></tr></thead><tbody>'+
     (s.belege.length ? s.belege.map(function(z, i){ return "<tr><td "+zelle+">"+(i+1)+"</td><td "+zelle+">"+esc(dfmt(z.datum))+"</td><td "+zelle+">"+esc(z.text||"")+
       (z.ohne_beleg?' <em style="color:#b00">(ohne Beleg: '+esc(z.ohne_beleg)+")</em>":"")+"</td><td "+zelle+">"+esc([akKatName(z.kategorie), z.projekt_id?((PROJEKTE.filter(function(p){ return p.id===z.projekt_id; })[0]||{}).nummer||""):""].filter(Boolean).join(" · "))+
-      "</td><td "+zelle+' align="right">'+geld(z.betrag)+" €</td></tr>"; }).join("") : "<tr><td "+zelle+' colspan="5">keine</td></tr>')+
-    "<tr><td colspan=\"4\" "+zelle+"><strong>Summe Barbelege</strong></td><td "+zelle+' align="right"><strong>'+geld(s.summeBelege)+" €</strong></td></tr></tbody></table>"+
+      "</td>"+(z.mwst!=null ? "<td "+zelle+' align="right">'+geld(Math.round((z.betrag-z.mwst)*100)/100)+" €</td><td "+zelle+' align="right">'+geld(z.mwst)+(z.mwst_satz?' <span style="color:#555">('+esc(z.mwst_satz)+")</span>":"")+" €</td>"
+        : "<td "+zelle+' align="right" colspan="2" style="color:#777">MwSt nicht angegeben</td>')+
+      "<td "+zelle+' align="right">'+geld(z.betrag)+" €</td></tr>"; }).join("") : "<tr><td "+zelle+' colspan="7">keine</td></tr>')+
+    "<tr><td colspan=\"4\" "+zelle+"><strong>Summe Barbelege</strong></td><td "+zelle+' align="right"><strong>'+geld(s.nettoBelege)+" €</strong></td><td "+zelle+' align="right"><strong>'+geld(s.mwstBelege)+" €</strong></td><td "+zelle+' align="right"><strong>'+geld(s.summeBelege)+" €</strong></td></tr></tbody></table>"+
+    (s.ohneMwst ? '<div style="font-size:11px;color:#555;margin-top:3px">Bei '+s.ohneMwst+" Beleg"+(s.ohneMwst===1?"":"en")+" ist keine MwSt angegeben – dort zählt der ganze Betrag zu „ohne MwSt“.</div>" : "")+
+    /* je Einteilung mit und ohne Mehrwertsteuer (Inhaber 27.10.2026) */
+    '<div style="font-weight:700;margin:12px 0 4px">Barbelege nach Einteilung</div>'+
+    '<table style="border-collapse:collapse;font-size:11.5px;min-width:60%"><thead><tr><th '+th+'>Einteilung</th><th '+th+' align="right">Belege</th><th '+th+' align="right">ohne MwSt</th><th '+th+' align="right">MwSt</th><th '+th+' align="right">mit MwSt</th></tr></thead><tbody>'+
+      AK_GRUPPEN.map(function(g){ var x=s.gruppen[g[0]]; return "<tr><td "+zelle+">"+esc(g[1])+"</td><td "+zelle+' align="right">'+x.n+"</td><td "+zelle+' align="right">'+geld(x.netto)+" €</td><td "+zelle+' align="right">'+geld(x.mwst)+" €</td><td "+zelle+' align="right">'+geld(x.brutto)+" €</td></tr>"; }).join("")+
+      "<tr><td "+zelle+"><strong>Summe</strong></td><td "+zelle+' align="right"><strong>'+s.belege.length+"</strong></td><td "+zelle+' align="right"><strong>'+geld(s.nettoBelege)+" €</strong></td><td "+zelle+' align="right"><strong>'+geld(s.mwstBelege)+" €</strong></td><td "+zelle+' align="right"><strong>'+geld(s.summeBelege)+" €</strong></td></tr></tbody></table>"+
     '<div style="font-weight:700;margin:14px 0 4px">Kilometer mit Privatauto</div>'+
     '<table style="width:100%;border-collapse:collapse;font-size:11.5px"><thead><tr><th '+th+'>Datum</th><th '+th+'>Strecke</th><th '+th+'>Fahrzeug</th><th '+th+' align="right">km</th><th '+th+' align="right">Betrag</th></tr></thead><tbody>'+
     (s.kms.length ? s.kms.map(function(z){ return "<tr><td "+zelle+">"+esc(dfmt(z.datum))+"</td><td "+zelle+">"+esc(z.text||"")+"</td><td "+zelle+">"+esc(z.fahrzeug_name||"")+"</td><td "+zelle+' align="right">'+
       esc(String(z.km).replace(".",","))+(saetze.length>1?' <span style="color:#555">× '+geld(z.km_satz||KM_SATZ)+" €</span>":"")+"</td><td "+zelle+' align="right">'+geld(z.betrag)+" €</td></tr>"; }).join("") : "<tr><td "+zelle+' colspan="5">keine</td></tr>')+
     "<tr><td colspan=\"3\" "+zelle+"><strong>Gesamt</strong> (€ pro km: "+(saetze.length?saetze.map(geld).join(" / "):geld(KM_SATZ))+")</td><td "+zelle+' align="right"><strong>'+esc(String(s.km).replace(".",","))+"</strong></td><td "+zelle+' align="right"><strong>'+geld(s.summeKm)+" €</strong></td></tr></tbody></table>"+
     '<table class="zusammen" style="margin-top:14px;border-collapse:collapse;font-size:12.5px">'+
-      '<tr><td style="padding:3px 18px 3px 0">Ausgaben Barbelege</td><td align="right">'+geld(s.summeBelege)+" €</td></tr>"+
+      '<tr><td style="padding:3px 18px 3px 0">Ausgaben Barbelege ohne MwSt</td><td align="right">'+geld(s.nettoBelege)+" €</td></tr>"+
+      '<tr><td style="padding:3px 18px 3px 0">+ MwSt</td><td align="right">'+geld(s.mwstBelege)+" €</td></tr>"+
+      '<tr><td style="padding:3px 18px 3px 0">Ausgaben Barbelege mit MwSt</td><td align="right">'+geld(s.summeBelege)+" €</td></tr>"+
       '<tr><td style="padding:3px 18px 3px 0">Kilometergeld</td><td align="right">'+geld(s.summeKm)+" €</td></tr>"+
       '<tr><td style="padding:3px 18px 3px 0;border-top:2px solid #333"><strong>zu zahlen</strong></td><td align="right" style="border-top:2px solid #333"><strong>'+geld(s.gesamt)+" €</strong></td></tr></table>"+
     '<div style="margin-top:10px;font-size:12px">Überweisen auf: '+(konto && konto.iban ? "<strong>"+esc(konto.kontoinhaber||name)+"</strong> · "+esc(konto.iban) : "<em>kein Konto eingetragen</em>")+"</div>"+
     '<div style="margin-top:26px;display:flex;gap:40px;font-size:11px"><div style="border-top:1px solid #333;padding-top:3px;width:220px">Datum, Unterschrift Mitarbeiter/in</div>'+
       '<div style="border-top:1px solid #333;padding-top:3px;width:220px">ausbezahlt am, Unterschrift</div></div>';
-  (fotos||[]).forEach(function(f){ h+='<figure style="margin:18px 0 0;page-break-inside:avoid"><figcaption style="font-size:11.5px;font-weight:700;margin-bottom:4px">Beleg '+f.nr+" – "+esc(dfmt(f.z.datum))+" · "+esc(f.z.text||"")+" · "+geld(f.z.betrag)+" €</figcaption>"+
-    (f.url ? '<img src="'+f.url+'" style="max-width:100%;max-height:900px;border:1px solid #ccc">' : '<div style="color:#777">'+esc(f.hinweis||"Foto nicht verfügbar")+"</div>")+"</figure>"; });
+  (fotos||[]).forEach(function(f){
+    var bilder=f.urls || (f.url ? [f.url] : []);
+    bilder.forEach(function(u, i){ h+='<figure style="margin:18px 0 0;page-break-inside:avoid"><figcaption style="font-size:11.5px;font-weight:700;margin-bottom:4px">Beleg '+f.nr+" – "+esc(dfmt(f.z.datum))+" · "+esc(f.z.text||"")+" · "+geld(f.z.betrag)+" €"+
+      (bilder.length>1 ? " (Seite "+(i+1)+" von "+bilder.length+")" : "")+"</figcaption>"+'<img src="'+u+'" style="max-width:100%;max-height:900px;border:1px solid #ccc"></figure>'; });
+    if(!bilder.length) h+='<figure style="margin:18px 0 0;page-break-inside:avoid"><figcaption style="font-size:11.5px;font-weight:700;margin-bottom:4px">Beleg '+f.nr+" – "+esc(dfmt(f.z.datum))+" · "+esc(f.z.text||"")+" · "+geld(f.z.betrag)+" €</figcaption>"+
+      '<div style="color:#777">'+esc(f.hinweis||"Foto nicht verfügbar")+"</div></figure>"; });
   return h;
 }
-/* die Fotos als Daten-URL (damit sie im PDF landen); PDF-Belege werden genannt, nicht eingebettet */
+/* die Belege als Daten-URL (damit sie im PDF landen) – Fotos direkt, PDF-Belege Seite für Seite als Bild
+   (Inhaber 27.10.2026: „im PDF alle Belege drinnen, nicht nur die Fotos“; höchstens 6 Seiten je Beleg) */
 function akFotosFuerPdf(l){
   var belege=l.filter(function(z){ return z.art==="beleg"; });
   return Promise.all(belege.map(function(z, i){
     var f={nr:i+1, z:z};
     if(!z.foto){ f.hinweis="kein Foto"+(z.ohne_beleg?" – "+z.ohne_beleg:""); return Promise.resolve(f); }
-    if(/\.pdf$/i.test(z.foto)){ f.hinweis="Beleg als PDF – in der App unter dem Eintrag"; return Promise.resolve(f); }
+    if(/\.pdf$/i.test(z.foto)) return Store.sb.storage.from("auslagen").download(z.foto).then(function(r){
+      if(r.error || !r.data){ f.hinweis="PDF-Beleg nicht geladen"; return f; }
+      return ladePdfJs().then(function(){ return r.data.arrayBuffer(); }).then(function(buf){ return window.pdfjsLib.getDocument({data:new Uint8Array(buf)}).promise; })
+        .then(function(doc){ return pdfSeitenAlsBild(doc, 6); }).then(function(urls){ f.urls=urls; return f; }, function(){ f.hinweis="PDF-Beleg nicht lesbar"; return f; });
+    }, function(){ f.hinweis="PDF-Beleg nicht geladen"; return f; });
     return Store.sb.storage.from("auslagen").download(z.foto).then(function(r){
       if(r.error || !r.data) { f.hinweis="Foto nicht geladen"; return f; }
       return new Promise(function(ok){ var fr=new FileReader(); fr.onload=function(){ f.url=fr.result; ok(f); }; fr.onerror=function(){ f.hinweis="Foto nicht lesbar"; ok(f); }; fr.readAsDataURL(r.data); });
@@ -40149,7 +40729,7 @@ function akMeineKarte(){
   s.belege.forEach(function(z, i){ h.appendChild(zeile(z, i+1)); });
   s.kms.forEach(function(z){ h.appendChild(zeile(z)); });
   var su=c.querySelector("[data-summe]");
-  su.appendChild(el('<span style="font-size:13px">Belege <strong>'+geld(s.summeBelege)+" €</strong>"+(s.kms.length?" · "+esc(String(s.km).replace(".",","))+" km = <strong>"+geld(s.summeKm)+" €</strong>":"")+
+  su.appendChild(el('<span style="font-size:13px">Belege <strong>'+geld(s.summeBelege)+" €</strong>"+(s.belege.length && s.mwstBelege>0 ? ' <span class="muted">(ohne MwSt '+geld(s.nettoBelege)+" €)</span>" : "")+(s.kms.length?" · "+esc(String(s.km).replace(".",","))+" km = <strong>"+geld(s.summeKm)+" €</strong>":"")+
     " · zu zahlen <strong>"+geld(s.gesamt)+" €</strong></span>"));
   var knoepfe=el('<span class="rowflex" style="gap:6px;flex-wrap:wrap"></span>');
   if(offen.length && !demo()){

@@ -1051,6 +1051,129 @@ test("Rechnung: Bezahl-Code (EPC-QR) – richtiger Inhalt, lesbar, nur mit gült
   await a.zu();
 });
 
+test("Störungen aus dem Archiv (Inhaber 27.10.2026): stehen in der Historie, zählen für wiederkehrende Störungen, nie beim Kunden", async () => {
+  const a = await oeffnen(KONTEN.inhaber);
+  const r = await a.seite.evaluate(async () => {
+    const x = window.__t.x, warte = (ms) => new Promise((f) => setTimeout(f, ms)), db = window.__db.tabellen;
+    const pid = x("ALLE_POS.filter(function(p){ return p.standortId==='TS1' && p.aktiv!==false; })[0].id");
+    const tag = (n) => { const d = new Date(Date.now() - n * 864e5); return d.toISOString().slice(0, 10); };
+    const t0 = new Date().toISOString();
+    db.stammdaten.push({ id: "standort:TS1", typ: "standort", ziel: "TS1", neu: false, geaendert: t0, von: "Test", grund: "Test",
+      felder: { stoerungenArchiv: [
+        { datum: tag(10), problem: "Kassa kühlt nicht", techniker: "Test Techniker", auftrag: "622000001", positionId: pid, quelle: "2026/Lidl/Störungen/a.pdf" },
+        { datum: tag(40), problem: "Fehler U4", positionId: pid, quelle: "2026/Lidl/Störungen/b.pdf" },
+        { datum: tag(70), problem: "Wasser tropft", positionId: pid, quelle: "2026/Lidl/Störungen/c.pdf" },
+        { datum: "kein Datum", problem: "fehlerhaft" }] } });
+    await x("ladeStammdaten(true)"); await warte(400);
+    x("wiederkehrBerechnen()");
+    const z = x("historieEintraege(byId['TS1']).filter(function(e){ return e.quelle==='Archiv'; }).map(function(e){ return [e.datum, e.art, e.stoerung, e.techniker]; })");
+    const w = x("wiederkehrVon(posById['" + pid + "'])");
+    const box = x("historieAnsicht(byId['TS1'])").textContent;
+    return { z, w, archivTag: /Archiv/.test(box), stoer: /Störungseinsätze/.test(box) };
+  });
+  await a.zu();
+  pruefe(r.z.length === 3 && r.z.every((e) => e[2] === true) && /Kassa kühlt nicht/.test(r.z.map((e) => e[1]).join()), "Archiv in der Historie: " + JSON.stringify(r.z));
+  pruefe(r.w && r.w.n >= 3, "Archiv zählt für wiederkehrende Störungen: " + JSON.stringify(r.w));
+  pruefe(r.archivTag && r.stoer, "Historie zeigt Quelle Archiv und Störungseinsätze");
+  const k = await oeffnen(KONTEN.kunde);
+  const rk = await k.seite.evaluate(async () => {
+    const x = window.__t.x, db = window.__db.tabellen;
+    db.stammdaten.push({ id: "standort:TS1", typ: "standort", ziel: "TS1", neu: false, geaendert: new Date().toISOString(), von: "Test", grund: "Test",
+      felder: { stoerungenArchiv: [{ datum: "2026-05-01", problem: "intern", quelle: "x.pdf" }] } });
+    await x("ladeStammdaten(true)"); await new Promise((f) => setTimeout(f, 400));
+    return x("historieEintraege(byId['TS1']).filter(function(e){ return e.quelle==='Archiv'; }).length");
+  });
+  await k.zu();
+  pruefe(rk === 0, "Kunde sieht Archiv-Störungen: " + rk);
+});
+
+test("Überall suchen (Inhaber 27.10.2026): Plan im DG, vergangener Einsatz, Kontakt – Füllwörter egal, Kunde sieht nur Märkte", async () => {
+  const a = await oeffnen(KONTEN.inhaber);
+  const r = await a.seite.evaluate(async () => {
+    const x = window.__t.x, warte = (ms) => new Promise((f) => setTimeout(f, ms)), db = window.__db.tabellen, jetzt = new Date().toISOString();
+    db.projekte.push({ id: "psu1", nummer: "P-SU-1", titel: "Umbau Klima", kunde_id: "lidl", standort_id: "TS1", status: "baustelle", erstellt: jetzt, geaendert: jetzt, verlauf: [],
+      daten: { dateien: [
+        { art: "plan", name: "999_UB_AP_HT_DG_20260301.pdf", pfad: "psu1/plan-a-dg.pdf", typ: "application/pdf" },
+        { art: "plan", name: "999_UB_AP_HT_EG_20260301.pdf", pfad: "psu1/plan-b-eg.pdf", typ: "application/pdf" },
+        { art: "foto", name: "Dach.jpg", pfad: "psu1/foto-dach.jpg", typ: "image/jpeg" },
+        { art: "angebot", name: "Angebot DG.pdf", pfad: "buero/psu1/angebot-dg.pdf", typ: "application/pdf" }] } });
+    db.stammdaten.push({ id: "standort:TS1", typ: "standort", ziel: "TS1", neu: false, geaendert: jetzt, von: "Test", grund: "Test",
+      felder: { stoerungenArchiv: [{ datum: "2025-11-20", problem: "Gassensor ausgelöst, getauscht", rapport: "29999999", quelle: "2025/Lidl/Störungen/x.pdf" }] } });
+    db.kontakte.push({ id: "ksu1", name: "Sepp Suchprobe", firma: "Kältefirma Probe", kategorie: "Sonstige", schluessel: "sepp suchprobe|" });
+    await x("Promise.all([ladeStammdaten(true), projekteLaden(), kontakteLaden()])"); await warte(400);
+    const markt = x("stName(byId['TS1'])");
+    const such = (q) => x("(function(){ var G=suchUeberallRechnen(" + JSON.stringify(q) + "); var o={}; Object.keys(G).forEach(function(k){ o[k]=G[k].map(function(t){ return t.html.replace(/<[^>]+>/g,''); }); }); return o; })()");
+    const plan = such("Plan von " + markt + " im DG");
+    const einsatz = such("Störung " + markt + " Gassensor");
+    const kontakt = such("suchprobe");
+    const nichts = such("im von der");
+    x("S.q=" + JSON.stringify("Plan " + markt + " DG")); x("S.view='anlagen'"); x("render()"); await warte(200);
+    const box = document.querySelector(".such-ueberall"), text = box ? box.textContent : "";
+    x("S.q=''"); x("render()");
+    return { plan, einsatz, kontakt, nichts, text };
+  });
+  await a.zu();
+  pruefe(r.plan.dateien.length === 1 && /DG_20260301/.test(r.plan.dateien[0]) && !r.plan.einsaetze.length && !r.plan.projekte.length,
+    "Plan im DG: genau der DG-Plan, keine anderen Gruppen: " + JSON.stringify(r.plan));
+  pruefe(r.einsatz.einsaetze.length === 1 && /Gassensor/.test(r.einsatz.einsaetze[0]) && !r.einsatz.dateien.length, "Vergangener Einsatz gefunden: " + JSON.stringify(r.einsatz.einsaetze));
+  pruefe(r.kontakt.kontakte.length === 1, "Kontakt gefunden: " + JSON.stringify(r.kontakt.kontakte));
+  pruefe(Object.keys(r.nichts).every((k) => !r.nichts[k].length), "Nur Füllwörter: nichts gefunden");
+  pruefe(/Überall gefunden/.test(r.text) && /DG/.test(r.text), "Feld unter der Suche zeigt die Treffer: " + r.text.slice(0, 200));
+  const t = await oeffnen(KONTEN.techniker);
+  const rt = await t.seite.evaluate(async () => {
+    const x = window.__t.x, db = window.__db.tabellen, jetzt = new Date().toISOString();
+    db.projekte.push({ id: "psu2", nummer: "P-SU-2", titel: "Umbau", kunde_id: "lidl", standort_id: "TS1", status: "baustelle", erstellt: jetzt, geaendert: jetzt, verlauf: [],
+      daten: { dateien: [{ art: "angebot", name: "Angebot Preisprobe.pdf", pfad: "buero/psu2/angebot.pdf" }] } });
+    await x("projekteLaden()"); await new Promise((f) => setTimeout(f, 300));
+    return x("suchUeberallRechnen('Preisprobe').dateien.length");
+  });
+  await t.zu();
+  pruefe(rt === 0, "Techniker findet keine Datei aus buero/: " + rt);
+  const k = await oeffnen(KONTEN.kunde);
+  const rk = await k.seite.evaluate(async () => { const x = window.__t.x; x("S.q='Gassensor'"); return x("suchUeberallHtml()"); });
+  await k.zu();
+  pruefe(rk === "", "Kunde: nur Märkte, keine Überall-Suche");
+});
+
+test("Synology-Archiv hochladen (Inhaber 27.10.2026): Projektunterlagen (Preise nur Inhaber), Rapporte, nochmals = nichts doppelt", async () => {
+  const a = await oeffnen(KONTEN.inhaber);
+  const r = await a.seite.evaluate(async () => {
+    const x = window.__t.x, warte = (ms) => new Promise((f) => setTimeout(f, ms)), db = window.__db.tabellen, jetzt = new Date().toISOString();
+    db.stammdaten.push({ id: "standort:TS1", typ: "standort", ziel: "TS1", neu: false, geaendert: jetzt, von: "T", grund: "T",
+      felder: { stoerungenArchiv: [{ datum: "2025-03-01", problem: "Test", quelle: "Synology 2025: Lidl/Störungen/1.Quartal/Testmarkt,2025-03-01.pdf" }] } });
+    db.projekte.push({ id: "parch", nummer: "P-2025-901", titel: "Archivprojekt", kunde_id: "lidl", standort_id: "TS1", status: "abgeschlossen", erstellt: jetzt, geaendert: jetzt, verlauf: [],
+      daten: { archiv: { ordner: ["2025/Lidl/Baustellen/Testort"], nurInhaber: ["2025/Lidl/Baustellen/Testort/Angebot 1.pdf"], ohne: ["2025/Lidl/Baustellen/Testort/weg.pdf"] } } });
+    await x("Promise.all([ladeStammdaten(true), projekteLaden()])"); await warte(300);
+    const datei = (pfad, inhalt) => { const f = new File([inhalt || ("%PDF-1.4 " + pfad)], pfad.split("/").pop(), { type: pfad.endsWith(".jpg") ? "image/jpeg" : "application/pdf" });
+      Object.defineProperty(f, "webkitRelativePath", { value: pfad }); return f; };
+    const liste = [datei("Synology/2025/Lidl/Störungen/1.Quartal/Testmarkt,2025-03-01.pdf"), datei("Synology/2025/Lidl/Baustellen/Testort/Plan DG.pdf"), datei("Synology/2025/Lidl/Baustellen/Testort/Endabnahmeprotokoll VRV.pdf"), datei("Synology/2025/Lidl/Baustellen/Testort/Datenblatt Endabnahme.pdf"),
+      datei("Synology/2025/Lidl/Baustellen/Testort/Angebot 1.pdf"), datei("Synology/2025/Lidl/Baustellen/Testort/weg.pdf"), datei("Synology/2025/Lidl/Baustellen/Testort/Thumbs.db"),
+      datei("Synology/2025/Lidl/Baustellen/Anderes/fremd.pdf")];
+    window.__liste = liste;
+    const plan = x("(function(){ var idx=archivIndex(window.__liste), pl=archivPlan(idx, true); window.__idx=idx; window.__plan=pl; return {s:pl.stoer.map(function(z){ return z.l.length; }), p:pl.projekte.map(function(z){ return [z.p.nummer, z.l]; })}; })()");
+    await x("archivHochladen(window.__plan, window.__idx, function(){})"); await warte(800);
+    const st = db.stammdaten.find((z) => z.id === "standort:TS1").felder.stoerungenArchiv[0];
+    const pr = db.projekte.find((z) => z.id === "parch").daten.dateien || [];
+    await x("Promise.all([ladeStammdaten(true), projekteLaden()])"); await warte(300);
+    const nochmal = x("(function(){ var pl=archivPlan(archivIndex(window.__liste), true); return pl.stoer.length; })()");
+    /* vorbereitete Einzeldatei: Weg im Namen, abgelegt unter dem eigentlichen Namen */
+    const einzel = x("(function(){ var idx=archivIndex([new File(['%PDF'], '2025§Lidl§Baustellen§Testort§Bericht.pdf')]), k=Object.keys(idx)[0]; return [k, idx[k].name]; })()");
+    return { plan, datei: st.datei, pr: pr.map((d) => [d.name, /^buero\//.test(d.pfad), d.herkunft]), nochmal, karte: !!x("synologyArchivKarte()"), einzel };
+  });
+  await a.zu();
+  pruefe(JSON.stringify(r.einzel) === JSON.stringify(["2025/Lidl/Baustellen/Testort/Bericht.pdf", "Bericht.pdf"]), "Einzeldatei mit Weg im Namen: " + JSON.stringify(r.einzel));
+  pruefe(JSON.stringify(r.plan.s) === "[1]" && r.plan.p.length === 1 && r.plan.p[0][1].length === 4, "Plan: 1 Rapport, 4 Projektdateien (ohne weg.pdf, Thumbs.db, fremd): " + JSON.stringify(r.plan));
+  pruefe(r.datei && /^archiv\/2025\/TS1\//.test(r.datei.pfad), "Rapport an der Archiv-Störung: " + JSON.stringify(r.datei));
+  pruefe(r.pr.length === 4 && r.pr.some((d) => d[0] === "Angebot 1.pdf" && d[1]) && r.pr.some((d) => d[0] === "Plan DG.pdf" && !d[1] && /Synology 2025\/Lidl\/Baustellen\/Testort/.test(d[2])),
+    "Projektdateien (Angebot nur Inhaber, Herkunft): " + JSON.stringify(r.pr));
+  pruefe(r.nochmal === 0, "Nochmals: Rapport schon dran → nichts mehr offen");
+  pruefe(r.karte, "Karte in der Verwaltung (Inhaber)");
+  const t = await oeffnen(KONTEN.admin);
+  const rt = await t.seite.evaluate(() => window.__t.x("synologyArchivKarte()"));
+  await t.zu();
+  pruefe(!rt, "Admin sieht die Archiv-Karte nicht");
+});
+
 test("Kundenauswahl gilt überall: Störungen, Rückfragen, Projekte in Fällig, Karte und Anlagen", async () => {
   const a = await oeffnen(KONTEN.inhaber);
   const r = await a.seite.evaluate(async () => {
@@ -1457,6 +1580,56 @@ test("Werkzeug lernt mit: je Projekttyp, je Markt, aus dem Angebot, unbekanntes 
   await a.zu();
 });
 
+test("Reisekosten: Beleg wird erkannt (PDF-Text, KI beim Foto), Einteilung, PDF mit und ohne MwSt (Inhaber 27.10.2026)", async () => {
+  const a = await oeffnen(KONTEN.techniker);
+  const r = await a.seite.evaluate(async () => {
+    const x = window.__t.x, warte = (ms) => new Promise((f) => setTimeout(f, ms)), db = window.__db.tabellen;
+    const dlg = () => [...document.querySelectorAll(".assistent")].pop();
+    const heute = x("isoLokal(new Date())"), [j, m, t] = heute.split("-");
+    /* Text eines PDF-Belegs: Datum, Summe, MwSt 20 %, Händler, Baumarkt → Material/Werkzeug */
+    const zeilen = (l) => JSON.stringify(l.join(String.fromCharCode(10)));
+    const pdf = x("akBelegAusText(" + zeilen(["BAUHAUS Salzburg", "Rechnung Nr. 4711", "Datum: " + t + "." + m + "." + j, "Silikon transparent 2 x 6,90 13,80",
+      "Schrauben 10,05", "Summe EUR 23,85", "MwSt 20% 19,88 3,97 23,85"]) + ")");
+    const ohneSumme = x("akBelegAusText(" + zeilen(["Gasthof Probe", "Menü 12,50"]) + ")");
+    /* Foto → KI (nachgebaut) füllt die Felder, Bewirtung */
+    window.__kiAntwort = (name, body) => ({ data: { art: body.art, daten: { haendler: "Gasthof Probe", beschreibung: "Mittagessen", datum: t + "." + m + "." + j,
+      betrag: "18,40", mwst: "1,67", mwstSatz: "10 %", kategorie: "bewirtung", unsicher: [], hinweise: "" } }, error: null });
+    x("S.view='stunden'; render()"); await warte(600);
+    x("akEditor(null, {art:'beleg'})"); await warte(400);
+    const d = dlg();
+    const cv = document.createElement("canvas"); cv.width = 60; cv.height = 90; cv.getContext("2d").fillRect(0, 0, 30, 30);
+    const blob = await new Promise((f) => cv.toBlob(f, "image/png"));
+    const dt = new DataTransfer(); dt.items.add(new File([blob], "bon.png", { type: "image/png" }));
+    const inp = d.querySelector("[data-foto]"); inp.files = dt.files; inp.dispatchEvent(new Event("change"));
+    await warte(1500);
+    const F = (k) => d.querySelector('[data-f="' + k + '"]').value;
+    const gefuellt = { text: F("text"), betrag: F("betrag"), mwst: F("mwst"), satz: F("mwst_satz"), datum: F("datum"),
+      kat: [...d.querySelectorAll("[data-kat] .chip")].filter((c) => c.getAttribute("aria-pressed") === "true").map((c) => c.dataset.w).join(),
+      hinweis: d.querySelector("[data-erkennung]").textContent, netto: d.querySelector("[data-netto]").textContent };
+    [...d.querySelectorAll(".as-fuss button")].pop().click(); await warte(1500);
+    const z = JSON.parse(JSON.stringify(db.auslagen.find((q) => q.text && /Gasthof/.test(q.text)) || {}));
+    /* zweiter Beleg ohne MwSt-Angabe → im PDF als „nicht angegeben“, zählt ganz zu „ohne MwSt“ */
+    db.auslagen.push({ id: "akx2", user_id: x("meineKennung()"), art: "beleg", datum: heute, text: "Parkgarage", kategorie: "parken", betrag: 5, status: "offen", foto: null, ohne_beleg: "Automat" });
+    await x("akLaden(true)");
+    const s = x("(function(){ var s=akSummen(akImMonat(AUSLAGEN, '" + heute.slice(0, 7) + "')); return {m:s.mwstBelege, n:s.nettoBelege, o:s.ohneMwst, bew:s.gruppen.bewirtung.brutto, so:s.gruppen.sonstiges.brutto}; })()");
+    const html = x("akPdfHtml(akImMonat(AUSLAGEN, '" + heute.slice(0, 7) + "'), 'Test', '" + heute.slice(0, 7) + "', null, [])");
+    window.__kiAntwort = null;
+    return { pdf, ohneSumme, gefuellt, z: { betrag: z.betrag, mwst: z.mwst, satz: z.mwst_satz, kat: z.kategorie }, s,
+      html: ["Barbelege nach Einteilung", "Bewirtung", "Unterkunft", "Material/Werkzeug", "Sonstiges", "ohne MwSt", "MwSt nicht angegeben", "Ausgaben Barbelege mit MwSt"].filter((w) => html.indexOf(w) < 0) };
+  });
+  const heute = new Date();
+  pruefe(r.pdf.betrag === 23.85 && r.pdf.mwst === 3.97 && r.pdf.mwstSatz === "20 %" && r.pdf.kategorie === "material" && /BAUHAUS/.test(r.pdf.text) && !!r.pdf.datum,
+    "PDF-Text erkannt: " + JSON.stringify(r.pdf));
+  pruefe(r.ohneSumme.betrag == null, "Ohne „Summe“ kein geratener Betrag: " + JSON.stringify(r.ohneSumme));
+  pruefe(/Gasthof/.test(r.gefuellt.text) && r.gefuellt.betrag === "18,40" && r.gefuellt.mwst === "1,67" && r.gefuellt.kat === "bewirtung" && /KI/.test(r.gefuellt.hinweis) && /16,73/.test(r.gefuellt.netto),
+    "KI hat das Formular gefüllt: " + JSON.stringify(r.gefuellt));
+  pruefe(r.z.betrag === 18.4 && r.z.mwst === 1.67 && r.z.satz === "10 %" && r.z.kat === "bewirtung", "Gespeichert mit MwSt: " + JSON.stringify(r.z));
+  pruefe(r.s.m === 1.67 && r.s.n === 21.73 && r.s.o === 1 && r.s.bew === 18.4 && r.s.so === 5, "Summen mit/ohne MwSt: " + JSON.stringify(r.s));
+  pruefe(!r.html.length, "PDF-Blatt unvollständig: " + r.html.join(", "));
+  pruefe(!a.fehler.length, "Laufzeitfehler: " + a.fehler.join("; "));
+  await a.zu();
+});
+
 test("Reisekosten: Beleg mit Foto, Kilometer Privatauto, Monat abgeben, Chef zahlt aus", async () => {
   const a = await oeffnen(KONTEN.techniker);
   const r = await a.seite.evaluate(async () => {
@@ -1477,7 +1650,8 @@ test("Reisekosten: Beleg mit Foto, Kilometer Privatauto, Monat abgeben, Chef zah
     const blob = await new Promise((f) => cv.toBlob(f, "image/png"));
     const dt = new DataTransfer(); dt.items.add(new File([blob], "beleg.png", { type: "image/png" }));
     const inp = d.querySelector("[data-foto]"); inp.files = dt.files; inp.dispatchEvent(new Event("change"));
-    [...d.querySelectorAll("[data-kat] .chip")].find((c) => c.dataset.w === "werkzeug").click();
+    [...d.querySelectorAll("[data-kat] .chip")].find((c) => c.dataset.w === "material").click();
+    [...d.querySelectorAll("[data-katfein] .chip")].find((c) => c.dataset.w === "werkzeug").click();
     [...d.querySelectorAll(".as-fuss button")].pop().click(); await warte(1500);
     const beleg = JSON.parse(JSON.stringify(db.auslagen.find((z) => z.art === "beleg") || {}));
     d = dlg();
@@ -10034,6 +10208,58 @@ test("Tagesrückblick: Präsentation speichert nie, am Handy (390 px) ragt nicht
   if (a.fehler.length) fehl.push("Laufzeitfehler: " + a.fehler.join("; "));
   await a.zu();
   pruefe(!fehl.length, fehl.join(" | "));
+});
+
+test("Lidl-Unterlagen wassergekühlt (Inhaber 27.10.2026): Wasserkreis in TB/Schema/KAV, Prüfliste nennt Rückkühler/Wärmeträger/Pumpenstation, Felder im Assistenten", async () => {
+  const a = await oeffnen(KONTEN.inhaber);
+  await a.seite.evaluate((h) => eval(h), AN_HILFEN);
+  if (process.env.VORSCHAU) await a.seite.evaluate(() => { window.__vorschau = 1; });
+  const r = await a.seite.evaluate(async () => {
+    const x = window.__t.x, db = window.__db.tabellen, A = window.__an, e = {}, jetzt = new Date().toISOString();
+    A.toastSpion();
+    const pos = (id, f) => db.stammdaten.push({ id: "position:" + id, typ: "position", ziel: id, neu: true, geaendert: jetzt, von: "Test", grund: "Anlage angelegt",
+      felder: Object.assign({ standortId: "TS1", aktiv: true, intervallCode: "JW", monat: 0, anlageZu: id, neuAngelegt: jetzt }, f) });
+    pos("NPwa1", { anlagentyp: "VRV 1", bauart: "VRV wassergekühlt", hersteller: "Daikin", modell: "RWEYQ10T9Y1B", seriennummer: "4400001", kaeltemittelArt: "R410A", kaeltemittelKg: 17.5, inbetriebnahme: "2026-03-01" });
+    pos("NPwa2", { anlagentyp: "VRV 2", bauart: "VRV wassergekühlt", hersteller: "Daikin", modell: "RWEYQ10T9Y1B", kaeltemittelArt: "R410A", inbetriebnahme: "2026-03-01" });
+    await x("ladeStammdaten().then(storeNachRender)"); await A.warte(300);
+    db.projekte.push({ id: "tmp_lw", nummer: "P-2026-908", titel: "Wasser Test", kunde_id: "lidl", standort_id: "TS1", status: "inbetriebnahme", verlauf: [], erstellt: jetzt, geaendert: jetzt,
+      daten: { anlagen: ["NPwa1", "NPwa2"], ibDatum: "2026-03-01" } });
+    await x("projekteLaden()");
+    const P = "PROJEKTE.filter(function(q){ return q.id==='tmp_lw'; })[0]", anl = "lidlAnlagen(" + P + ")";
+    await x("lidlVorlageSpeichern(" + JSON.stringify({ ort: "Teststadt", verantwortlich: "Herr V", verfasser: "Ing. F", logos: [], geraete: [{ muster: "GFHC", name: "Güntner GFHC", werte: "Leistung: 57,6 kW\nSchallleistung: 61 dB(A)" }] }) + ", 'Test')");
+    e.wasser = x("lidlWasserProjekt(" + anl + ")");
+    const u = x("lidlAngaben(" + P + ", " + anl + ")");
+    e.vorgaben = { bau: /Rückkühler/.test(u.bauvorhaben), weiter: /kälteseitig unverändert/.test(u.weiter), schall: u.schall[0].text, ps: u.psOrt, medium: u.medium };
+    e.offen = x("lidlPruefliste(" + P + ", " + anl + ", lidlAngaben(" + P + ", " + anl + "), LIDL_VORLAGE, [])").filter((z) => !z[0]).map((z) => z[1]);
+    Object.assign(u, { rkTyp: "Güntner GFHC FD 063.1/13-29", medium: "Ethylenglykol 34 %", aufstellort: "Flachdach über TK-Zelle", psText: "Umwälzpumpe\nAusdehnungsgefäß", wrg: "die Abwärme der Kühlmöbel", puffer: "Pufferspeicher 200 l mit E-Heizstab 26 kW", regelung: "Daikin intelligent Touch Manager",
+      schall: [{ text: "Rückkühler VRV-Anlage", db: "61" }] });
+    window.__u = u;
+    const tb = x("lidlTbHtml(" + P + ", " + anl + ", window.__u, LIDL_VORLAGE, lidlBeilagen(" + P + ", " + anl + ", LIDL_VORLAGE))");
+    const tt = (() => { const d = document.createElement("div"); d.innerHTML = tb; return d.textContent; })();
+    e.tb = { abschnitt: /Wasserkreis: Rückkühler und Pumpenstation/.test(tt), rk: /GFHC FD 063\.1\/13-29/.test(tt), lib: /57,6 kW/.test(tt), medium: /Ethylenglykol 34 %/.test(tt),
+      ps: /Umwälzpumpe/.test(tt) && /Ausdehnungsgefäß/.test(tt), wrg: /Abwärme der Kühlmöbel als Wärmequelle/.test(tt), wassergek: /wassergekühlte Wärmepumpen/.test(tt), keinConveni: !/ConveniPack/.test(tt), wieder: /Wiederinbetriebnahme/.test(tt) && !/§ 17/.test(tt) };
+    const kav = x("lidlKavHtml(" + P + ", " + anl + ", window.__u, LIDL_VORLAGE, {logos:[]})");
+    e.kav = /Schallwerte des Rückkühlers/.test(kav) && /61 dB/.test(kav);
+    const svg = x("lidlSchemaSvg(" + P + ", " + anl + ", window.__u, '')");
+    e.svg = /VRV wassergekühlt/.test(svg) && /Wärmerückgewinnung/.test(svg) && /Plattentauscher 2/.test(svg) && /Puffer/.test(svg) && /intelligent Touch Manager/.test(svg) && /Umschaltventil/.test(svg) && /Strömungswächter/.test(svg) && /Rückkühler/.test(svg) && /Ethylenglykol 34 %/.test(svg) && /SN 4400001/.test(svg);
+    const sb = await x("lidlSchemaPdf(" + P + ", " + anl + ", window.__u)");
+    e.pdf = !!sb && sb.type === "application/pdf" && sb.size > 1000;
+    x("projektAnsicht('tmp_lw')");
+    const karte = await A.bis(() => document.querySelector("[data-lidlkarte]"));
+    karte.querySelector("[data-lidloeffnen]").click();
+    const d = await A.bis(() => { const d = A.dlg(); return d && d.querySelector("[data-lidlwasser]") && d; });
+    e.felder = d ? ["rkTyp", "medium", "psOrt", "psText", "wrg", "puffer", "regelung"].every((k) => d.querySelector('[data-lu="' + k + '"]')) : false;
+    if (window.__vorschau) { e.vorschauTb = tb; e.vorschauSvg = svg; e.vorschauKav = kav; }
+    return e;
+  });
+  await a.zu();
+  pruefe(r.wasser && r.vorgaben.bau && r.vorgaben.weiter && r.vorgaben.schall === "Rückkühler VRV-Anlage" && r.vorgaben.ps === "Technikraum" && r.vorgaben.medium === "Ethylenglykol 34 %", "Vorgaben wassergekühlt: " + JSON.stringify(r.vorgaben));
+  pruefe(r.offen.some((t) => /Rückkühler-Typ fehlt/.test(t)) && !r.offen.some((t) => /Wärmeträger/.test(t)) && r.offen.some((t) => /Pumpenstation/.test(t)) && !r.offen.some((t) => /noch nicht verfeinert/.test(t)), "Prüfliste wassergekühlt: " + JSON.stringify(r.offen));
+  pruefe(Object.values(r.tb).every(Boolean), "TB wassergekühlt: " + JSON.stringify(r.tb));
+  pruefe(r.kav && r.svg && r.pdf, "KAV/Schema wassergekühlt: " + JSON.stringify([r.kav, r.svg, r.pdf]));
+  pruefe(r.felder, "Assistent zeigt die Felder für den Wasserkreis");
+  /* Vorschau für den Inhaber: VORSCHAU=<Ordner> node tests/app-tests.mjs "wassergekühlt" */
+  if (process.env.VORSCHAU && r.vorschauTb) { const fs = await import("node:fs"); fs.writeFileSync(join(process.env.VORSCHAU, "tb.html"), r.vorschauTb); fs.writeFileSync(join(process.env.VORSCHAU, "schema.svg"), r.vorschauSvg); fs.writeFileSync(join(process.env.VORSCHAU, "kav.html"), r.vorschauKav); }
 });
 
 test("Lidl-Unterlagen (Inhaber 20.10.2026): Prüfliste, TB/KAV/Schema aus den Anlagen, Fehlendes bleibt weg, IBN nach letzter Vorlage, Mappe-Vorschlag; nur Inhaber", async () => {

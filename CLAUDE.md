@@ -301,6 +301,26 @@ Kammerlander Umwelt- und Klimatechnik (UKT) – oft kurz, vom Handy, im Feld.
 - Monatsbericht: jeder Besuch steht drin. Zwei Wartungen für denselben Termin:
   die erste zählt für die Frist, die spätere steht als „zusätzlich“ da.
   Störungseinsätze sind eigene Einsätze und berühren die Wartungen nicht.
+- **Störungen aus dem Archiv** (Inhaber 27.10.2026: vergangene Störungen von der Synology nachtragen, vor der App; nie als Protokoll in fremdem
+  Namen): Marktfeld `stoerungenArchiv` [{datum, problem, techniker, auftrag, rapport, stunden, positionId?, datei?:{pfad,name,typ} im Speicher
+  „dokumente“ unter archiv/…, quelle = Synology-Pfad}] (STAMM_FELDER_ST). `historieEintraege` zeigt sie mit Quelle „Archiv“ (antippen → Rapport,
+  `dokumentOeffnen`), `wiederkehrBerechnen` zählt sie, wenn `positionId` gesetzt ist. Nur intern – nie Kunde/Fernzugriff (`nurLesen`).
+  Vergangene Wartungen kommen dagegen als `nachweise` an die Termin-Zeile (wie „Wartungen laut Prüfbuch“). Test „Störungen aus dem Archiv …“.
+  Nachgetragen am 27.10.2026 (von = „Claude (Synology-Archiv)“, je Eintrag `quelle` = Synology-Pfad): 2025 + 2026 bis 24.09. – ab 25.09. gelten die Protokolle der App.
+- **Überall suchen** (Inhaber 27.10.2026: „Suchleiste intelligenter … z. B. Plan von dort mit dieser Info im DG oder gewisse vergangene Einsätze“):
+  das Suchfeld der Übersichten (`#q`, Fällig/Karte/Anlagen) filtert weiter die Märkte (`filtered`) und zeigt darunter „🔎 Überall gefunden“
+  (`suchUeberallHtml` → `suchUeberallTreffer`/`suchUeberallRechnen`, Zwischenspeicher 1,5 s): Kunden, Projekte (Nummer, Titel, Beschreibung, Beteiligte),
+  Pläne & Dateien (`dateiMerkmale`/`dateiSuchText` + Geschoss-Wörter `SUCH_GESCHOSS`, auch Bestandspläne der Märkte), Einsätze (`historieEintraege` samt
+  Archiv; Datum auch als „03.2025“, „2025“, Monatsname), Anlagen (Typ, Modell, SN, Hersteller), Kontakte, Anleitungen/Unterlagen der Einrichtung.
+  Regel: jedes Wort muss im Treffer oder seinem Umfeld (Markt, Projekt) stehen, mindestens eines im Treffer selbst; Wörter ≤ 3 Zeichen nur am Wortanfang;
+  Füllwörter (`SUCH_FUELL`) zählen nicht; „Plan/Foto/Störung/Wartung/Kontakt/Anleitung“ (`SUCH_ART`) grenzen die Art ein. buero/-Dateien nur Inhaber,
+  Kunden-Konten (`nurLesen`) nur Märkte. Kontakte/Einrichtung werden beim Tippen still nachgeladen (kein Neuzeichnen – Fokus bleibt). Test „Überall suchen …“.
+- **Synology-Archiv hochladen** (Inhaber 27.10.2026, Verwaltung → Inhaber, `synologyArchivKarte`): Synology-Ordner wählen (webkitdirectory) → `archivIndex`
+  (Weg ab dem Jahresordner, „download at …“ nur wenn die neue Fassung fehlt) → `archivPlan` → `archivHochladen`. Projekte mit `daten.archiv`
+  {ordner[], einzeln[], ohne[], nurInhaber[], dateien (Anzahl), preise} – per SQL beim Nachtragen gesetzt. Inhaber: erst „nur das Notwendige“, dann
+  „1,5 GB klingt nicht dramatisch – ruhig großzügiger“ → alle Unterlagen der Projekte (`archivPasst`: ohne `ARCHIV_NIE` CAD/HEIC/Video; `ARCHIV_AUSLASSEN`
+  Systemdateien/ZIP), nurInhaber-Dateien unter buero/; Rapporte der Archiv-Störungen per Häkchen (vorgewählt, → `stoerungenArchiv[].datei`). Vorher Anzahl + MB.
+  Hochladen über `projektDateienHochladen` (Doppel-Prüfung) – nochmals starten schadet nicht. Test „Synology-Archiv hochladen …“.
 - Wiederkehrende Störungen: ab 3 Störungen in 90 Tagen an derselben Anlage
   (`WIEDERKEHR_ANZAHL`, `WIEDERKEHR_TAGE`) – Markierung, kein Eingriff.
 - „Zählt als“ im Protokoll (`fillPos`): ist ein Termin versäumt und liegt der
@@ -436,7 +456,15 @@ Kammerlander Umwelt- und Klimatechnik (UKT) – oft kurz, vom Handy, im Feld.
 - **Lidl-Unterlagen je Filiale** (Inhaber 20.10.2026: „als nächstes bauen wir die Automation ein“ – Umfang alle vier Teile, nur PDF, KAV-Datum IB + 1 Woche,
   nur Inhaber): Karte „📦 Lidl-Unterlagen“ im Projekt nach den Inbetriebnahmeprotokollen (`lidlUnterlagenKarte`; nur `nurInhaber()`, Kunde lidl, Projekt mit Markt) →
   `lidlUnterlagenAssistent`: 1 Prüfliste (`lidlPruefliste`: Markt/Filialnummer, je Anlage Modell/SN/Füllmenge/Kältemittel/IB/Bereiche, Gerätebibliothek, Schall,
-  KAV-Vorlage, IBN unterschrieben; wassergekühlt RWEYQ → Warnung `lidlWassergekuehlt`, Inhaber 20.10.2026: Vorlagen dafür erst mit Robinigstraße verfeinern) –
+  KAV-Vorlage, IBN unterschrieben) –
+  **wassergekühlt** (Inhaber 27.10.2026, Auswertung „VRV wassergekühlt Umbau“: beim Lidl-Rollout bleibt die RWEYQ kälteseitig unverändert, neu sind Rückkühler,
+  Pumpenstation, Glykolkreis): `lidlWasserProjekt(anl)` schaltet um – eigene Vorgaben in `lidlAngaben` (Bauvorhaben, Allgemein, Weiterverwendung, Schall
+  „Rückkühler VRV-Anlage“, Nachtabsenkung über EC-Drehzahl) und Felder `rkTyp`, `medium`, `psOrt`, `psText`, `wrg` (Assistent `[data-lidlwasser]`; leer = entfällt,
+  Prüfliste nennt es; Wärmeträger nie raten). TB: Abschnitt „Wasserkreis: Rückkühler und Pumpenstation“ (Daten aus der Gerätebibliothek über `lidlRkGeraet`, auch mit
+  Herstellername davor), statt „erste Inbetriebnahme/§ 17“ nur „Wiederinbetriebnahme nach Anschluss an den neuen Wasserkreis“. Schema `lidlSchemaWasserSvg`
+  (Außenbereich Rückkühler – Technikraum Pumpenstation + Sammelleitungen warm/gekühlt + RWEYQ – Filiale Innengeräte; hängt laminiert im Technikraum, Abnahme
+  Robinigstraße). KAV: „Schallwerte des Rückkühlers“. Datenblatt des Rückkühlers in Beilagen/`lidlDatenblaetterHolen`. Test „Lidl-Unterlagen wassergekühlt …“
+  (`VORSCHAU=<Ordner>` schreibt tb.html/schema.svg/kav.html zum Ansehen) –
   2 Angaben `daten.lidlUnterlagen` (`lidlAngaben` belegt vor: Datum = `ibDatum` bzw. früheste Anlagen-IB + 7, Betreiber/Planer aus `beteiligte` nach Rolle,
   Bereiche aus den Räumen der Innengeräte, Texte wie Graz/Oberwart; alles änderbar; beim Ablegen immer mitgespeichert) – 3 Unterlagen `lidlErzeugen`:
   TB `lidlTbHtml` (A4, `blattZuPdf` mit neuen Schaltern `ohneWasserzeichen`/`ohneSeitenzahl`; Spalten ohne einen einzigen Wert entfallen, nie „fehlt“;
@@ -774,6 +802,14 @@ Kammerlander Umwelt- und Klimatechnik (UKT) – oft kurz, vom Handy, im Feld.
   Belegfoto (Inhaber 05.10.2026, tools/rechte-2026-10-05.sql): nach der Abgabe ersetzt/entfernt es nur noch der Inhaber (Speicher-Regel; nach
   „zurückgeben“ wieder die Person); ersetzt er das Foto eines fremden Eintrags, liegt das neue im Ordner der Person (`akFotoHochladen(datei, fuer)`),
   das alte wird erst nach dem Speichern entfernt. Nie lockern.
+  **Erkennen, Einteilung, MwSt** (Inhaber 27.10.2026, tools/reisekosten-2.sql – am 27.10. ausgeführt): Beleg wählen → `akBelegErkennen`: PDF mit Text liest
+  die App selbst (`akBelegAusText`: Datum, Summe nur aus „Summe/Gesamt/zu zahlen …“-Zeilen – nie der größte Betrag, MwSt je Satz passend zum Betrag,
+  Händler, Einteilung über `AK_KAT_WORTE`); Foto, Scan-PDF oder ohne Datum/Summe → KI (ki-lesen Art „beleg“, Funktion Version 12). Gefüllt werden nur
+  Felder, die die Person nicht selbst getippt hat; markiert + „✓ … erkannt: … – bitte prüfen“. Einteilung `AK_GRUPPEN` Bewirtung/Unterkunft/
+  Material-Werkzeug/Sonstiges (gespeichert bleibt kategorie: bewirtung, naechtigung, material|werkzeug – „genauer“ wählbar, Werkzeug fragt nach der
+  Werkzeugliste –, Parken/Maut/… zählen als Sonstiges). Spalten `mwst` (€, ≤ Betrag) und `mwst_satz`. `akSummen` liefert mwstBelege/nettoBelege/ohneMwst/
+  gruppen; PDF: Barbelege mit „ohne MwSt / MwSt / Betrag“, Tabelle „nach Einteilung“, Zusammenfassung mit/ohne MwSt; PDF-Belege werden Seite für Seite als
+  Bild eingebettet (`akFotosFuerPdf`, bis 6 Seiten). Test „Reisekosten: Beleg wird erkannt …“.
   **km berechnen** (Inhaber 18.10.2026: „automatisch berechnen … am besten anhand der Stempeluhr“): im km-Dialog `akKmRouteAnzeigen` →
   `akKmBerechnen(tag)` holt die eigenen Stempel des Tages, `akTagesOrte` ordnet die Orte: Stempel (Ein/Umstempeln/Aus) – Koordinaten NUR mit
   Zustimmung ab Fassung `AK_KM_FASSUNG` (2026-10-18, Zustimmungstext nennt seither den Zweck Kilometergeld; ältere Zustimmungen nur Markt/
