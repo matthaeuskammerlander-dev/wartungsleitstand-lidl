@@ -1051,6 +1051,42 @@ test("Rechnung: Bezahl-Code (EPC-QR) – richtiger Inhalt, lesbar, nur mit gült
 });
 
 test("Kundenauswahl gilt überall: Störungen, Rückfragen, Projekte in Fällig, Karte und Anlagen", async () => {
+test("Störungen aus dem Archiv (Inhaber 27.10.2026): stehen in der Historie, zählen für wiederkehrende Störungen, nie beim Kunden", async () => {
+  const a = await oeffnen(KONTEN.inhaber);
+  const r = await a.seite.evaluate(async () => {
+    const x = window.__t.x, warte = (ms) => new Promise((f) => setTimeout(f, ms)), db = window.__db.tabellen;
+    const pid = x("ALLE_POS.filter(function(p){ return p.standortId==='TS1' && p.aktiv!==false; })[0].id");
+    const tag = (n) => { const d = new Date(Date.now() - n * 864e5); return d.toISOString().slice(0, 10); };
+    const t0 = new Date().toISOString();
+    db.stammdaten.push({ id: "standort:TS1", typ: "standort", ziel: "TS1", neu: false, geaendert: t0, von: "Test", grund: "Test",
+      felder: { stoerungenArchiv: [
+        { datum: tag(10), problem: "Kassa kühlt nicht", techniker: "Test Techniker", auftrag: "622000001", positionId: pid, quelle: "2026/Lidl/Störungen/a.pdf" },
+        { datum: tag(40), problem: "Fehler U4", positionId: pid, quelle: "2026/Lidl/Störungen/b.pdf" },
+        { datum: tag(70), problem: "Wasser tropft", positionId: pid, quelle: "2026/Lidl/Störungen/c.pdf" },
+        { datum: "kein Datum", problem: "fehlerhaft" }] } });
+    await x("ladeStammdaten(true)"); await warte(400);
+    x("wiederkehrBerechnen()");
+    const z = x("historieEintraege(byId['TS1']).filter(function(e){ return e.quelle==='Archiv'; }).map(function(e){ return [e.datum, e.art, e.stoerung, e.techniker]; })");
+    const w = x("wiederkehrVon(posById['" + pid + "'])");
+    const box = x("historieAnsicht(byId['TS1'])").textContent;
+    return { z, w, archivTag: /Archiv/.test(box), stoer: /Störungseinsätze/.test(box) };
+  });
+  await a.zu();
+  pruefe(r.z.length === 3 && r.z.every((e) => e[2] === true) && /Kassa kühlt nicht/.test(r.z.map((e) => e[1]).join()), "Archiv in der Historie: " + JSON.stringify(r.z));
+  pruefe(r.w && r.w.n >= 3, "Archiv zählt für wiederkehrende Störungen: " + JSON.stringify(r.w));
+  pruefe(r.archivTag && r.stoer, "Historie zeigt Quelle Archiv und Störungseinsätze");
+  const k = await oeffnen(KONTEN.kunde);
+  const rk = await k.seite.evaluate(async () => {
+    const x = window.__t.x, db = window.__db.tabellen;
+    db.stammdaten.push({ id: "standort:TS1", typ: "standort", ziel: "TS1", neu: false, geaendert: new Date().toISOString(), von: "Test", grund: "Test",
+      felder: { stoerungenArchiv: [{ datum: "2026-05-01", problem: "intern", quelle: "x.pdf" }] } });
+    await x("ladeStammdaten(true)"); await new Promise((f) => setTimeout(f, 400));
+    return x("historieEintraege(byId['TS1']).filter(function(e){ return e.quelle==='Archiv'; }).length");
+  });
+  await k.zu();
+  pruefe(rk === 0, "Kunde sieht Archiv-Störungen: " + rk);
+});
+
   const a = await oeffnen(KONTEN.inhaber);
   const r = await a.seite.evaluate(async () => {
     const x = window.__t.x, warte = (ms) => new Promise((f) => setTimeout(f, ms)), db = window.__db.tabellen;
@@ -10031,6 +10067,58 @@ test("Projekte (Inhaber 24.10.2026): Name führt zum neuesten Stand, Stand-Reite
   if (r.stZeilen !== 1 || !/19\.10\.2026/.test(r.stText) || !/2 ältere/.test(r.stText)) fehl.push("Stand-Reiter: " + JSON.stringify([r.stZeilen, r.stText]));
   if (!r.fortschritt || !/Schritt 3 von 11/.test(r.zeile) || !/05\.01\.2099 08:00 · Begehung/.test(r.zeile)) fehl.push("Projektzeile: " + r.zeile);
   if (r.folge && (!r.folge.zu || !/Folgeaufträge – Angebot\? \(\d+\)/.test(r.folge.kopf))) fehl.push("Folgeaufträge: " + JSON.stringify(r.folge));
+test("Lidl-Unterlagen wassergekühlt (Inhaber 27.10.2026): Wasserkreis in TB/Schema/KAV, Prüfliste nennt Rückkühler/Wärmeträger/Pumpenstation, Felder im Assistenten", async () => {
+  const a = await oeffnen(KONTEN.inhaber);
+  await a.seite.evaluate((h) => eval(h), AN_HILFEN);
+  if (process.env.VORSCHAU) await a.seite.evaluate(() => { window.__vorschau = 1; });
+  const r = await a.seite.evaluate(async () => {
+    const x = window.__t.x, db = window.__db.tabellen, A = window.__an, e = {}, jetzt = new Date().toISOString();
+    A.toastSpion();
+    const pos = (id, f) => db.stammdaten.push({ id: "position:" + id, typ: "position", ziel: id, neu: true, geaendert: jetzt, von: "Test", grund: "Anlage angelegt",
+      felder: Object.assign({ standortId: "TS1", aktiv: true, intervallCode: "JW", monat: 0, anlageZu: id, neuAngelegt: jetzt }, f) });
+    pos("NPwa1", { anlagentyp: "VRV 1", bauart: "VRV wassergekühlt", hersteller: "Daikin", modell: "RWEYQ10T9Y1B", seriennummer: "4400001", kaeltemittelArt: "R410A", kaeltemittelKg: 17.5, inbetriebnahme: "2026-03-01" });
+    pos("NPwa2", { anlagentyp: "VRV 2", bauart: "VRV wassergekühlt", hersteller: "Daikin", modell: "RWEYQ10T9Y1B", kaeltemittelArt: "R410A", inbetriebnahme: "2026-03-01" });
+    await x("ladeStammdaten().then(storeNachRender)"); await A.warte(300);
+    db.projekte.push({ id: "tmp_lw", nummer: "P-2026-908", titel: "Wasser Test", kunde_id: "lidl", standort_id: "TS1", status: "inbetriebnahme", verlauf: [], erstellt: jetzt, geaendert: jetzt,
+      daten: { anlagen: ["NPwa1", "NPwa2"], ibDatum: "2026-03-01" } });
+    await x("projekteLaden()");
+    const P = "PROJEKTE.filter(function(q){ return q.id==='tmp_lw'; })[0]", anl = "lidlAnlagen(" + P + ")";
+    await x("lidlVorlageSpeichern(" + JSON.stringify({ ort: "Teststadt", verantwortlich: "Herr V", verfasser: "Ing. F", logos: [], geraete: [{ muster: "GFHC", name: "Güntner GFHC", werte: "Leistung: 57,6 kW\nSchallleistung: 61 dB(A)" }] }) + ", 'Test')");
+    e.wasser = x("lidlWasserProjekt(" + anl + ")");
+    const u = x("lidlAngaben(" + P + ", " + anl + ")");
+    e.vorgaben = { bau: /Rückkühler/.test(u.bauvorhaben), weiter: /kälteseitig unverändert/.test(u.weiter), schall: u.schall[0].text, ps: u.psOrt, medium: u.medium };
+    e.offen = x("lidlPruefliste(" + P + ", " + anl + ", lidlAngaben(" + P + ", " + anl + "), LIDL_VORLAGE, [])").filter((z) => !z[0]).map((z) => z[1]);
+    Object.assign(u, { rkTyp: "Güntner GFHC FD 063.1/13-29", medium: "Ethylenglykol 34 %", aufstellort: "Flachdach über TK-Zelle", psText: "Umwälzpumpe\nAusdehnungsgefäß", wrg: "die Abwärme der Kühlmöbel", puffer: "Pufferspeicher 200 l mit E-Heizstab 26 kW", regelung: "Daikin intelligent Touch Manager",
+      schall: [{ text: "Rückkühler VRV-Anlage", db: "61" }] });
+    window.__u = u;
+    const tb = x("lidlTbHtml(" + P + ", " + anl + ", window.__u, LIDL_VORLAGE, lidlBeilagen(" + P + ", " + anl + ", LIDL_VORLAGE))");
+    const tt = (() => { const d = document.createElement("div"); d.innerHTML = tb; return d.textContent; })();
+    e.tb = { abschnitt: /Wasserkreis: Rückkühler und Pumpenstation/.test(tt), rk: /GFHC FD 063\.1\/13-29/.test(tt), lib: /57,6 kW/.test(tt), medium: /Ethylenglykol 34 %/.test(tt),
+      ps: /Umwälzpumpe/.test(tt) && /Ausdehnungsgefäß/.test(tt), wrg: /Abwärme der Kühlmöbel als Wärmequelle/.test(tt), wassergek: /wassergekühlte Wärmepumpen/.test(tt), keinConveni: !/ConveniPack/.test(tt), wieder: /Wiederinbetriebnahme/.test(tt) && !/§ 17/.test(tt) };
+    const kav = x("lidlKavHtml(" + P + ", " + anl + ", window.__u, LIDL_VORLAGE, {logos:[]})");
+    e.kav = /Schallwerte des Rückkühlers/.test(kav) && /61 dB/.test(kav);
+    const svg = x("lidlSchemaSvg(" + P + ", " + anl + ", window.__u, '')");
+    e.svg = /VRV wassergekühlt/.test(svg) && /Wärmerückgewinnung/.test(svg) && /Plattentauscher 2/.test(svg) && /Puffer/.test(svg) && /intelligent Touch Manager/.test(svg) && /Umschaltventil/.test(svg) && /Strömungswächter/.test(svg) && /Rückkühler/.test(svg) && /Ethylenglykol 34 %/.test(svg) && /SN 4400001/.test(svg);
+    const sb = await x("lidlSchemaPdf(" + P + ", " + anl + ", window.__u)");
+    e.pdf = !!sb && sb.type === "application/pdf" && sb.size > 1000;
+    x("projektAnsicht('tmp_lw')");
+    const karte = await A.bis(() => document.querySelector("[data-lidlkarte]"));
+    karte.querySelector("[data-lidloeffnen]").click();
+    const d = await A.bis(() => { const d = A.dlg(); return d && d.querySelector("[data-lidlwasser]") && d; });
+    e.felder = d ? ["rkTyp", "medium", "psOrt", "psText", "wrg", "puffer", "regelung"].every((k) => d.querySelector('[data-lu="' + k + '"]')) : false;
+    if (window.__vorschau) { e.vorschauTb = tb; e.vorschauSvg = svg; e.vorschauKav = kav; }
+    return e;
+  });
+  await a.zu();
+  pruefe(r.wasser && r.vorgaben.bau && r.vorgaben.weiter && r.vorgaben.schall === "Rückkühler VRV-Anlage" && r.vorgaben.ps === "Technikraum" && r.vorgaben.medium === "Ethylenglykol 34 %", "Vorgaben wassergekühlt: " + JSON.stringify(r.vorgaben));
+  pruefe(r.offen.some((t) => /Rückkühler-Typ fehlt/.test(t)) && !r.offen.some((t) => /Wärmeträger/.test(t)) && r.offen.some((t) => /Pumpenstation/.test(t)) && !r.offen.some((t) => /noch nicht verfeinert/.test(t)), "Prüfliste wassergekühlt: " + JSON.stringify(r.offen));
+  pruefe(Object.values(r.tb).every(Boolean), "TB wassergekühlt: " + JSON.stringify(r.tb));
+  pruefe(r.kav && r.svg && r.pdf, "KAV/Schema wassergekühlt: " + JSON.stringify([r.kav, r.svg, r.pdf]));
+  pruefe(r.felder, "Assistent zeigt die Felder für den Wasserkreis");
+  /* Vorschau für den Inhaber: VORSCHAU=<Ordner> node tests/app-tests.mjs "wassergekühlt" */
+  if (process.env.VORSCHAU && r.vorschauTb) { const fs = await import("node:fs"); fs.writeFileSync(join(process.env.VORSCHAU, "tb.html"), r.vorschauTb); fs.writeFileSync(join(process.env.VORSCHAU, "schema.svg"), r.vorschauSvg); fs.writeFileSync(join(process.env.VORSCHAU, "kav.html"), r.vorschauKav); }
+});
+
   if (a.fehler.length) fehl.push("Laufzeitfehler: " + a.fehler.join("; "));
   await a.zu();
   pruefe(!fehl.length, fehl.join(" | "));

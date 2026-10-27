@@ -884,7 +884,10 @@ var STAMM_FELDER_ST  = ["filiale","name","adresse","plz","ort","region","lat","l
                            keine Einstellungen vornehmen, die Anlage aber trotzdem beobachten“): Firma und Hinweis, nicht geheim */
                         "fernFremd", "fernFremdHinweis",
                         /* Prüfhinweis fürs Büro (Inhaber 12.10.2026: „das muss in der Verwaltung geprüft werden“) – steht in „Alte Liste prüfen“, bis er geleert wird */
-                        "pruefHinweis"];
+                        "pruefHinweis",
+                        /* Störungen aus dem Archiv (Inhaber 27.10.2026: vergangene Störungen von der Synology nachtragen – vor der App, nie als Protokoll in fremdem
+                           Namen): [{datum, art:"stoerung", problem, techniker, auftrag, rapport, stunden, positionId?, datei?:{pfad,name,typ}, quelle}] – nur intern */
+                        "stoerungenArchiv"];
 var GEHEIM_MARKT=["fernBenutzer","fernPasswort","fernWeitere","fernVorOrt"];
 var STAMM_FELDER_POS = ["anlagentyp","intervallCode","inbetriebnahme","monat","monatGrund","kaeltemittelKg",
                         "kaeltemittelArt","rueckkuehler","aktiv","notiz",
@@ -7668,6 +7671,8 @@ function wiederkehrBerechnen(){
 function wiederkehrVon(p){ var a=p && !nurLesen() && anlageVon(p); return a ? WIEDERKEHR[a.id]||null : null; }
 function wiederkehrText(w){ return w.n+" Störungen seit "+dfmt(w.seit)+" – wiederkehrend, Ursache prüfen"; }
 function stoerungenDerAnlage(a){
+  /* Störungen aus dem Archiv zählen mit, wenn ihre Anlage feststeht */
+  ALLE_ST.forEach(function(s){ (Array.isArray(s.stoerungenArchiv)?s.stoerungenArchiv:[]).forEach(function(a){ if(a && a.positionId) merken(a.positionId, a.datum); }); });
   var ids=a.termine.map(function(t){ return t.id; });
   return offeneStoerungen(true).filter(function(o){ return o.positionId && ids.indexOf(zeileWeiter(o.positionId))>=0; });
 }
@@ -20243,7 +20248,7 @@ function historieAnsicht(s){
         (e.stoerung?'<span class="tag st">Störung</span> '+esc(e.art.replace(/^Störung:?\s*/,"")):esc(e.art))+
         (e.zukunft?' <span class="tag st">Datum in der Zukunft – zählt noch nicht</span>':"")+
         "</td><td>"+(e.techniker?esc(e.techniker):'<span class="muted">–</span>')+"</td><td>"+
-        (e.quelle==="App"?'<span class="tag f30">Protokoll</span>':'<span class="tag">Liste</span>')+"</td></tr>");
+        (e.quelle==="App"?'<span class="tag f30">Protokoll</span>':e.quelle==="Archiv"?'<span class="tag" data-archiv title="'+esc((e.archiv&&e.archiv.quelle)||"")+'">Archiv</span>':'<span class="tag">Liste</span>')+"</td></tr>");
       tr.dataset.datum=e.datum;   /* „Letzter Besuch“ findet die Zeile */
       /* antippen: nachlesen im Fenster – ein Protokoll selbst, ein Eintrag der
          Liste die Historie seiner Anlage. Kein Reiterwechsel: die Markt-Ansicht
@@ -20252,7 +20257,7 @@ function historieAnsicht(s){
                : e.pos ? function(){ anlageHistorieAnsicht(e.pos); } : null;
       if(ziel){
         tr.style.cursor="pointer";
-        tr.title=e.protokoll?"Protokoll ansehen":"Historie der Anlage";
+        tr.title=e.protokoll?"Protokoll ansehen":e.archiv?"Rapport ansehen":"Historie der Anlage";
         tr.onclick=ziel;
       }
       tb.appendChild(tr);
@@ -20479,6 +20484,13 @@ function kaeltemittelKarte(){
       var leck=(!j || j===heuer) ? e.leck : null;
       if(!n && !en && !leck) return;
       var s=byId[e.standortId], co2=co2Kg(n, e.gwp);
+  /* Störungen aus dem Archiv (vor der App, aus den Rapporten der Synology) – nur intern, nie Kunde/Fernzugriff */
+  if(!nurLesen()) (Array.isArray(s.stoerungenArchiv)?s.stoerungenArchiv:[]).forEach(function(a){
+    if(!a || !/^\d{4}-\d\d-\d\d$/.test(a.datum||"")) return;
+    var p=a.positionId && posById[a.positionId];
+    zeilen.push({datum:a.datum, anlage:p?anlagenName(p):"(Markt allgemein)", art:"Störung"+(a.problem?": "+a.problem:""),
+      stoerung:true, techniker:kanonName(a.techniker||""), quelle:"Archiv", archiv:a});
+  });
       sumN+=n; sumE+=en; if(co2) sumC+=co2; else if(n) ohneGwp++;
       rows.push({e:e, s:s, n:n, en:en, co2:co2, leck:leck});
     });
@@ -20540,6 +20552,7 @@ function anlagenbuchHtml(leader){
     if(g.geheim || (g.wenn && !g.wenn(d))) return;
     var zeilen=g.felder.filter(function(f){ return !leerWert(d[f.k]) && (!f.wenn || f.wenn(d)); }).map(function(f){
       var w=d[f.k]; if(f.k==="innengeraete") return tz(f.l, innenText(w));
+               : e.archiv && e.archiv.datei ? function(){ dokumentOeffnen(e.archiv.datei); }
       return tz(f.l, anlageWertText(f, w)); }).join("");
     if(zeilen) stamm+="<tr><th colspan='2'>"+esc(g.titel)+"</th></tr>"+zeilen;
   });
@@ -35307,7 +35320,6 @@ function lidlPruefliste(p, anl, u, V, ibn){
     if(!x.d.kaeltemittelArt) f.push("Kältemittel"); if(!x.d.inbetriebnahme) f.push("Inbetriebnahme-Datum");
     if(!String((u.bereiche||{})[x.id]||"").trim()) f.push("versorgte Bereiche");
     l.push([!f.length, x.name+(f.length ? ": es fehlt "+f.join(", ") : ": vollständig")]);
-    if(lidlWassergekuehlt(x.d)) l.push([false, x.name+": wassergekühlte VRV – die Vorlagen sind dafür noch nicht verfeinert (Inhaber 20.10.2026). Texte und Schema genau prüfen."]);
     var g=lidlGeraet(x.d.modell, V);
     if(x.d.modell) l.push([!!g, g ? x.name+": Gerätebibliothek „"+(g.name||g.muster)+"“"+(g.datenblatt ? " mit Datenblatt" : " – ohne Datenblatt") : x.name+": Modell "+x.d.modell+" nicht in der Gerätebibliothek (keine technischen Daten, kein Datenblatt)."]);
   });
@@ -35346,12 +35358,21 @@ function lidlTbHtml(p, anl, u, V, beilagen){
   sub=0; h+=h2("Heizung und Kühlung");
   if(String(u.demontage||"").trim()) h+=h3("Bestand und Demontage")+liste(u.demontage);
   if(String(u.weiter||"").trim()) h+=h3("Weiterverwendung")+liste(u.weiter);
-  h+=h3("Neuanlage")+"<p style='margin:0 0 4px'>"+esc("Beheizung und Kühlung erfolgen über "+(anl.length===1 ? "eine Wärmepumpe" : anl.length+" Wärmepumpen")+" mit Direktverdampfung"+
-      (anl.length>1 ? ". Jede Außeneinheit bildet einen eigenen Kältekreis:" : ":"))+"</p>"+
+  var wasser=lidlWasserProjekt(anl);
+  h+=h3(wasser ? "VRV-Anlage" : "Neuanlage")+"<p style='margin:0 0 4px'>"+esc("Beheizung und Kühlung erfolgen über "+(anl.length===1 ? "eine "+(wasser ? "wassergekühlte " : "")+"Wärmepumpe" : anl.length+" "+(wasser ? "wassergekühlte " : "")+"Wärmepumpen")+" mit Direktverdampfung"+
+      (wasser ? " (Außengeräte im "+(String(u.psOrt||"").trim()||"Technikraum")+")" : "")+(anl.length>1 ? ". Jede Außeneinheit bildet einen eigenen Kältekreis:" : ":"))+"</p>"+
     tab([["Kreis", "Versorgte Bereiche", "Außengerät", "Seriennr.", "Baujahr"]].concat(anl.map(function(x){
       return [x.name, (u.bereiche||{})[x.id]||"", [x.d.hersteller, x.d.modell].filter(Boolean).join(" "), x.d.seriennummer||"", bj(x)]; })), true, ["13%", "35%", "24%", "14%", "14%"]);
   modelle.forEach(function(g){ var w=lidlWerte(g); if(w.length) h+="<div class='zusammen'><p style='margin:4px 0 2px'><strong>"+esc("Technische Daten je Außengerät ("+(g.name||g.muster)+"):")+"</strong></p>"+tab(w, false, ["45%", "55%"])+"</div>"; });
-  if(String(u.aufstellort||"").trim()) h+=tab([["Aufstellort", u.aufstellort]], false, ["45%", "55%"]);
+  if(wasser){
+    /* Wasserkreis: Rückkühler und Pumpenstation – nur was eingetragen ist */
+    var rkG=String(u.rkTyp||"").trim() && lidlRkGeraet(u.rkTyp, V), psL=String(u.psText||"").split(/\r?\n/).map(function(z){ return z.replace(/^[-•·]\s*/,"").trim(); }).filter(Boolean);
+    h+=h3("Wasserkreis: Rückkühler und Pumpenstation")+"<p style='margin:0 0 4px'>"+esc("Die Abwärme der VRV-Außengeräte wird über einen geschlossenen Wasser-Glykol-Kreis an einen Rückkühler im Außenbereich abgegeben"+
+      (String(u.wrg||"").trim() ? "; im Heizbetrieb dient "+String(u.wrg).trim().replace(/\.$/,"")+" als Wärmequelle." : "."))+"</p>"+
+      tab([["Rückkühler", u.rkTyp], ["Aufstellort Rückkühler", u.aufstellort], ["Wärmeträger", u.medium], ["Pumpenstation", u.psOrt]]
+        .filter(function(z){ return String(z[1]||"").trim(); }).concat(rkG ? lidlWerte(rkG) : []), false, ["45%", "55%"]);
+    if(psL.length) h+="<p style='margin:4px 0 2px'><strong>Pumpenstation:</strong></p>"+liste(psL);
+  } else if(String(u.aufstellort||"").trim()) h+=tab([["Aufstellort", u.aufstellort]], false, ["45%", "55%"]);
   sub=0; h+=h2("Regelung, Betriebszeiten und Schall");
   var schall=(u.schall||[]).filter(function(z){ return String(z.db||"").trim(); }).map(function(z){ return ["Schallleistungspegel "+String(z.text||"").trim()+(u.schallQuelle ? " ("+u.schallQuelle+")" : ""), String(z.db).trim().replace(/\s*dB.*$/i,"")+" dB(A)"]; });
   if(u.nachtVon && u.nachtBis) schall.push(["Nachtabsenkung / Flüsterbetrieb (Schall)", u.nachtVon+" – "+u.nachtBis+" Uhr"]);
@@ -35362,8 +35383,11 @@ function lidlTbHtml(p, anl, u, V, beilagen){
   h+=tab([["Anlage", "Kältemittel", "Füllmenge", "CO₂-Äquivalent"]].concat(anl.map(function(x){
     var kg=lidlZahl(x.d.kaeltemittelKg), t=co2Tonnen(x.d);
     return [x.name+(x.d.modell ? " ("+x.d.modell+")" : ""), x.d.kaeltemittelArt||"", kg==null ? "" : lidlKomma(kg, 1)+" kg", t==null ? "" : lidlKomma(t, 2)+" t"]; })), true, ["40%", "20%", "18%", "22%"]);
-  h+=liste([ib ? "Druckprobe, Dichtheitsprüfung und Abnahmeprüfung vor der ersten Inbetriebnahme: "+dfmt(ib)+", dokumentiert in den Prüf- und Anlagenbüchern." : "",
-    ib ? "Bescheinigung gemäß § 17 Kälteanlagenverordnung über die ordnungsgemäße Ausführung: "+dfmt(ib)+"." : "",
+  /* wassergekühlt: der Kältekreis bleibt unverändert – keine „erste Inbetriebnahme“ und keine § 17-Bescheinigung behaupten */
+  h+=liste([ib && !wasser ? "Druckprobe, Dichtheitsprüfung und Abnahmeprüfung vor der ersten Inbetriebnahme: "+dfmt(ib)+", dokumentiert in den Prüf- und Anlagenbüchern." : "",
+    ib && !wasser ? "Bescheinigung gemäß § 17 Kälteanlagenverordnung über die ordnungsgemäße Ausführung: "+dfmt(ib)+"." : "",
+    ib && wasser ? "Wiederinbetriebnahme der VRV-Anlage nach Anschluss an den neuen Wasserkreis: "+dfmt(ib)+", Dichtheitskontrolle und Funktionsprüfung dokumentiert in den Prüf- und Anlagenbüchern." : "",
+    wasser && ib ? "Wasserkreis: Druckprobe, Spülung, Entlüftung und Füllung"+(String(u.medium||"").trim() ? " mit "+String(u.medium).trim() : "")+" vor der Inbetriebnahme." : "",
     "Für jede Anlage ist ein Prüf- und Anlagenbuch nach Kälteanlagenverordnung und Verordnung (EU) 2024/573 angelegt.",
     "Dichtheitskontrollen nach Verordnung (EU) 2024/573 gemäß CO₂-Äquivalent der jeweiligen Anlage."]);
   sub=0; h+="<div class='zusammen'>"+h2("Beilagen")+liste(beilagen||[])+
@@ -35395,7 +35419,7 @@ function lidlKavHtml(p, anl, u, V, bilder){
     "<p style='"+P+"'>-Hiermit wird bestätigt, dass die Kälteanlagen (Wärmepumpen) gemäß Kälteanlagenverordnung, ÖNORM und EN378 in letztgültiger Fassung sach- und fachgerecht installiert und in Betrieb genommen wurden.</p>"+
     "<p style='"+P+"'>Die ausgeführten Arbeiten und Inbetriebnahmen sind in den Kälteprüfbüchern dokumentiert.</p>"+
     "<p style='"+P+"'>-Die Grenzwerte gemäß ÖNORM EN 378 wurden eingehalten.</p>"+
-    (schall.length ? "<p style='"+P+"'>-Schallwerte der Wärmepumpen"+(u.schallQuelle ? " ("+esc(u.schallQuelle)+")" : "")+":</p><table style='margin:0 0 0 46px;font-size:15px;border-collapse:collapse;border:0;width:auto'>"+
+    (schall.length ? "<p style='"+P+"'>-Schallwerte "+(lidlWasserProjekt(anl) ? "des Rückkühlers (wassergekühlte VRV, Außengeräte im Technikraum)" : "der Wärmepumpen")+(u.schallQuelle ? " ("+esc(u.schallQuelle)+")" : "")+":</p><table style='margin:0 0 0 46px;font-size:15px;border-collapse:collapse;border:0;width:auto'>"+
       schall.map(function(z){ return "<tr><td style='border:0;padding:0 30px 0 0'>"+esc(z.text||"")+"</td><td style='border:0;padding:0;white-space:nowrap'>"+esc(String(z.db).trim().replace(/\s*dB.*$/i,""))+" dB&nbsp;&nbsp;Schallleistungspegel</td></tr>"; }).join("")+"</table>" : "")+
     (u.nachtVon && u.nachtBis ? "<p style='"+P+";margin:12px 0 0 46px'>Nachtabsenkung / Flüsterbetrieb "+esc(u.nachtVon+"–"+u.nachtBis)+" Uhr über Zeitprogramm.</p>" : "")+
     "<p style='"+P+";margin-top:16px'>Darüber hinaus sind sämtliche Anlagen und Anlagenteile in technisch dauerhaft dichter Ausführung erstellt und einer nachher erfolgten Druckprüfung unterzogen;</p>"+
@@ -35545,6 +35569,11 @@ function ibnAusVorlage(p, vorlage, anl){
   var d=ibnVorbelegen(p), v=(vorlage && vorlage.daten)||{}, va=ibnAnlagen(v), kopie=function(o){ return JSON.parse(JSON.stringify(o||{})); };
   if(vorlage){ d.check=kopie(v.check); d.uebergabe=kopie(v.uebergabe); if(!String(d.zertUnternehmen||"").trim()) d.zertUnternehmen=v.zertUnternehmen||""; }
   var M=function(x){ return String((x && x.modell)||"").toUpperCase().replace(/\s/g,""); };
+/* Wassergekühlte VRV (Inhaber 27.10.2026, Rollout „Moprotausch“ Arnoldstein, Robinig, Frastanz …): die RWEYQ-Außengeräte im Technikraum und die
+   Innengeräte bleiben meist kälteseitig unverändert – neu sind Rückkühler, Pumpenstation und Glykolkreis (früher gemeinsam mit der Gewerbekälte, AHT) */
+function lidlWasserProjekt(anl){ return (anl||[]).some(function(x){ return lidlWassergekuehlt(x.d); }); }
+/* Rückkühler in der Gerätebibliothek – auch mit Herstellername davor („Güntner GFHC FD 063.1/13-29“) */
+function lidlRkGeraet(typ, V){ var t=String(typ||"").trim(); return t ? (lidlGeraet(t, V) || lidlGeraet(t.replace(/^\S+\s+/, ""), V)) : null; }
   d.anlagen=anl.map(function(x){
     var n=ibnAnlageVorbelegen(x.leader), m=M(n);
     var gleich=va.filter(function(y){ return m && M(y)===m; })[0], q=gleich || va.filter(function(y){ return m && M(y).slice(0, 5)===m.slice(0, 5); })[0] || va[0];
@@ -35569,6 +35598,20 @@ function lidlUnterlagenAssistent(p0){
   var v=ansichtOeffnen("📦 Lidl-Unterlagen", null, {breit:true});
   var P=function(){ return PROJEKTE.filter(function(q){ return q.id===p0.id; })[0]||p0; };
   v.schritt.textContent=projektTitel(p0);
+  if(lidlWasserProjekt(anl)){
+    /* wassergekühlt: eigene Vorgaben (alles änderbar; was je Filiale verschieden ist, bleibt leer und steht in der Prüfliste) */
+    vor("bauvorhaben", "Umbau und Austausch der Kälteanlagen – Klimatisierung (neuer Rückkühler und neue Pumpenstation der wassergekühlten VRV-Anlage)");
+    vor("allgemein", "Die Lidl Österreich GmbH hat in der "+(s.filiale ? "Filiale "+s.filiale+" in "+(s.ort||"") : stName(s))+" die Kälteanlagen erneuert. Heizung und Kühlung der Filiale "+
+      "erfolgen über eine wassergekühlte VRV-Anlage Fabrikat Daikin. Rückkühler und Pumpenstation des Wasserkreises waren bisher gemeinsam mit der Gewerbekälte ausgeführt; "+
+      "der Wasserkreis der Klimatisierung wird künftig getrennt von der Gewerbekälte betrieben.\n\nDiese Beschreibung umfasst die Klimatisierung (Heizung und Kühlung) der Filiale, ausgeführt von der Umwelt- und Klimatechnik GmbH.");
+    vor("demontage", "Der bisherige Rückkühler der Klimaanlage wurde außer Betrieb genommen.");
+    vor("weiter", "Die wassergekühlten VRV-Außengeräte im Technikraum und die Inneneinheiten bleiben kälteseitig unverändert.\nDie VRV-Außengeräte wurden an den neuen Wasserkreis angeschlossen.");
+    vor("schallText", "Die Schallreduktion erfolgt über die Drehzahlbegrenzung der EC-Ventilatoren des Rückkühlers (Nachtabsenkung), gesteuert über Zeitprogramm.");
+    if(!Array.isArray(u.schall)) u.schall=[{text:"Rückkühler VRV-Anlage", db:""}];
+    vor("rkTyp", ""); vor("medium", "Ethylenglykol 34 %");   /* UKT-Kreis immer Ethylenglykol 34 % (Inhaber 27.10.2026) */
+    vor("psOrt", "Technikraum"); vor("psText", ""); vor("wrg", ""); vor("puffer", "");
+    vor("regelung", /touch|itm/i.test(String(s.fernSystem||"")) ? String(s.fernSystem).trim() : "");
+  }
   v.inhalt.appendChild(el('<div class="muted" data-lidllade>wird geladen …</div>'));
   var V=null, ibn=[], u=null, anl=[], geaendert=false;
   var speichern=function(){
@@ -35593,7 +35636,14 @@ function lidlUnterlagenAssistent(p0){
       '<div class="pad stack" style="padding-top:0;gap:8px">'+
       '<div class="grid2" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:8px">'+
         f("datum", "Datum TB und KAV (Inbetriebnahme + 1 Woche)")+f("betreiber", "Bauherr / Betreiber")+f("planungBau", "Planung Bau")+f("planungTga", "Planung TGA (HKLS)")+
-        f("aufstellort", "Aufstellort Außengeräte (TB, Schema)", 0, "z. B. Techniknische Richtung Parkplatz, ca. +1,0 m")+f("kavUnter", "Zeile unter dem KAV-Titel")+"</div>"+
+        (lidlWasserProjekt(anl) ? f("aufstellort", "Aufstellort Rückkühler (TB, Schema)", 0, "z. B. Flachdach über TK-Zelle, ca. +4,5 m") :
+          f("aufstellort", "Aufstellort Außengeräte (TB, Schema)", 0, "z. B. Techniknische Richtung Parkplatz, ca. +1,0 m"))+f("kavUnter", "Zeile unter dem KAV-Titel")+"</div>"+
+      (lidlWasserProjekt(anl) ? '<div data-lidlwasser class="stack" style="gap:8px;border:1px solid var(--line);border-radius:10px;padding:8px 10px"><strong style="font-size:13px">💧 Wassergekühlte VRV – Wasserkreis</strong>'+
+        '<div class="grid2" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:8px">'+
+        f("rkTyp", "Rückkühler (Typ)", 0, "z. B. Güntner GFHC FD 063.1/13-29 – Daten aus der Gerätebibliothek")+f("medium", "Wärmeträger", 0, "z. B. Ethylenglykol 34 % – nicht raten")+
+        f("psOrt", "Aufstellort Außengeräte und Pumpenstation", 0, "Technikraum")+f("wrg", "Wärmerückgewinnung (Heizbetrieb)", 0, "z. B. Abwärme der Kühlmöbel über 2 Plattentauscher")+
+        f("puffer", "Puffer / E-Heizstab", 0, "z. B. Pufferspeicher 200 l mit E-Heizstab 26 kW – leer = keiner")+f("regelung", "Regelung", 0, "z. B. Daikin intelligent Touch Manager + WAGO")+"</div>"+
+        f("psText", "Pumpenstation – Bauteile (je Zeile eines)", 4, "Umwälzpumpe …\nAusdehnungsgefäß, Sicherheitsventil …\nSchmutzfänger, Strömungswächter je Außengerät\nEntlüftung, Absperrungen")+"</div>" : "")+
       f("bauvorhaben", "Bauvorhaben", 2)+f("allgemein", "1 Allgemein", 5)+f("demontage", "Bestand und Demontage (je Zeile ein Punkt)", 3)+f("weiter", "Weiterverwendung (je Zeile ein Punkt)", 3)+
       '<div><strong style="font-size:13px">Versorgte Bereiche je Anlage</strong><div class="stack" style="gap:4px;margin-top:4px" data-lidlbereiche></div></div>'+
       '<div><strong style="font-size:13px">Schall</strong> <span class="muted" style="font-size:12px">– Schallleistungspegel, leere Zeilen entfallen</span><div class="stack" style="gap:4px;margin-top:4px" data-lidlschall></div>'+
@@ -35612,6 +35662,14 @@ function lidlUnterlagenAssistent(p0){
       u.schall.forEach(function(z, i){ var r=el('<div class="rowflex" style="gap:6px;align-items:center"><input type="text" data-st style="flex:1;min-width:0" placeholder="z. B. VRV-Wärmepumpen Tag" value="'+esc(z.text||"")+'">'+
         '<input type="text" data-sd style="width:80px" placeholder="dB" value="'+esc(z.db||"")+'"><span class="muted" style="font-size:12px">dB(A)</span><button class="btn ghost sm" type="button" aria-label="Zeile entfernen">✕</button></div>');
         r.querySelector("[data-st]").oninput=function(){ z.text=this.value; geaendert=true; }; r.querySelector("[data-sd]").oninput=function(){ z.db=this.value; geaendert=true; };
+  if(lidlWasserProjekt(anl)){
+    /* wassergekühlt: der Wasserkreis ist je Filiale verschieden – was fehlt, bleibt in den Unterlagen weg */
+    var rk=String(u.rkTyp||"").trim(), rg=rk && lidlRkGeraet(rk, V);
+    l.push([!!rk, rk ? "Rückkühler: "+rk+(rg ? " (Gerätebibliothek"+(rg.datenblatt ? " mit Datenblatt" : "")+")" : " – nicht in der Gerätebibliothek, keine technischen Daten") : "Rückkühler-Typ fehlt (Angaben)."]);
+    l.push([!!String(u.medium||"").trim(), String(u.medium||"").trim() ? "Wärmeträger: "+u.medium : "Wärmeträger fehlt – unser Kreis: Ethylenglykol 34 % (Gewerbekälte AHT: Propylenglykol 38 % – nicht mischen)."]);
+    l.push([!!String(u.psText||"").trim(), String(u.psText||"").trim() ? "Pumpenstation beschrieben ("+(u.psOrt||"Ort fehlt")+")" : "Pumpenstation: Bauteile fehlen (Angaben)."]);
+    l.push([true, "Wassergekühlt: Anlagenschema laminiert im Technikraum, Leitungen beschriften, Flussrichtungspfeile (Abnahme Robinigstraße 27.01.2026)."]);
+  }
         r.querySelector("button").onclick=function(){ u.schall.splice(i, 1); geaendert=true; schallZeilen(); }; sh.appendChild(r); }); };
     schallZeilen();
     ang.querySelector("[data-lidlschallneu]").onclick=function(){ u.schall.push({text:"", db:""}); geaendert=true; schallZeilen(); };
@@ -35676,6 +35734,9 @@ function lidlUnterlagenAssistent(p0){
   Promise.all([lidlVorlageLaden(true), ibnLaden(p0.id).catch(function(){ return []; })]).then(function(x){ V=x[0]; ibn=x[1]||[]; zeichnen(); },
     function(e){ v.inhalt.innerHTML=""; v.inhalt.appendChild(el('<div class="note warnbox">'+esc((e && e.message)||String(e))+"</div>")); });
 }
+  /* wassergekühlt: Datenblatt des Rückkühlers aus der Gerätebibliothek */
+  var u0=((p.daten||{}).lidlUnterlagen)||{}, rkG=lidlWasserProjekt(anl) && String(u0.rkTyp||"").trim() && lidlRkGeraet(u0.rkTyp, V);
+  if(rkG && rkG.datenblatt && dbl.indexOf(rkG.name||rkG.muster)<0) dbl.push(rkG.name||rkG.muster);
 /* ---------- Vorlage bearbeiten (nur Inhaber): KAV-Angaben, QR-Code, Logos der Fußzeile, Gerätebibliothek ---------- */
 function lidlVorlageEditor(fertig){
   if(!nurInhaber()){ toast("Nur für den Inhaber."); return; }
@@ -35723,11 +35784,116 @@ function lidlVorlageEditor(fertig){
           '<label class="fl"><span>Technische Daten (je Zeile „Bezeichnung: Wert“)</span><textarea data-g="werte" rows="4" placeholder="Kühlleistung nominal: 28,0 kW">'+esc(g.werte||"")+"</textarea></label>"+
           '<div class="rowflex" style="gap:8px;align-items:center;flex-wrap:wrap"><span class="muted" style="font-size:12.5px;flex:1;min-width:0">Datenblatt: '+(g.datenblatt ? "✓ "+esc(g.datenblatt.name) : "keines")+"</span>"+
             '<label class="btn ghost sm" style="cursor:pointer">'+(g.datenblatt ? "ersetzen" : "PDF hochladen")+'<input type="file" accept="application/pdf" hidden data-gdb></label>'+
+/* wassergekühlte VRV (Inhaber 27.10.2026: „genauer, Wärmerückgewinnung und Regelung hervorheben“): Hydraulikschema mit Symbolen –
+   Rückkühler (außen) · Technikraum: Pumpe, 3-Wege-Umschaltventil Heizen/Kühlen, Schmutzfänger, Ausdehnungsgefäß, Sicherheitsventil,
+   Wärmerückgewinnung (Plattentauscher mit Bypass, AHT-Seite), Puffer mit E-Heizstab, Sammelleitungen, RWEYQ mit Strömungswächter ·
+   Filiale: Innengeräte · Regelung mit Steuerleitungen. WRG und Puffer nur, wenn eingetragen (nichts raten). Hängt laminiert im Technikraum
+   (Abnahme Robinigstraße 27.01.2026: „Anlagenschema ergänzen, Beschriftungen und Flussrichtungspfeile“). */
+function lidlSchemaWasserSvg(p, anl, u, logoUrl, t, rect){
+  var s=lidlMarkt(p), W=1587, H=1123, svg="", VL="#c0392b", RL="#2f5d8a", WR="#d97706", AH="#7a8896", ST="#6b4fa0";
+  var hatWrg=!!String(u.wrg||"").trim(), hatPuffer=!!String(u.puffer||"").trim(), reg=String(u.regelung||"").trim();
+  var n=Math.max(1, anl.length), schritt=Math.min(150, Math.floor(420/n)), hoch=Math.min(110, schritt-18), yV=390;
+  var pfeil=function(x, y, r, f){ var d={o:[0,-1],u:[0,1],l:[-1,0],r:[1,0]}[r], q=[-d[1], d[0]];
+    return "<path d='M"+(x-d[0]*7+q[0]*7)+" "+(y-d[1]*7+q[1]*7)+" L"+(x+d[0]*7)+" "+(y+d[1]*7)+" L"+(x-d[0]*7-q[0]*7)+" "+(y-d[1]*7-q[1]*7)+" Z' fill='"+f+"'/>"; };
+  var rohr=function(d, f, o){ o=o||{}; return "<path d='"+d+"' fill='none' stroke='"+f+"' stroke-width='"+(o.w||4.5)+"'"+(o.d ? " stroke-dasharray='"+o.d+"'" : "")+"/>"; };
+  var stl=function(d){ return "<path d='"+d+"' fill='none' stroke='"+ST+"' stroke-width='1.6' stroke-dasharray='6 4'/>"; };
+  var pumpe=function(x, y){ return "<circle cx='"+x+"' cy='"+y+"' r='17' fill='#fff' stroke='#1b2422' stroke-width='2'/><path d='M"+(x-9)+" "+(y-11)+" L"+(x+12)+" "+y+" L"+(x-9)+" "+(y+11)+" Z' fill='none' stroke='#1b2422' stroke-width='2'/>"; };
+  var ventil3=function(x, y){ return "<path d='M"+(x-14)+" "+(y-9)+" L"+(x+14)+" "+(y+9)+" L"+(x+14)+" "+(y-9)+" L"+(x-14)+" "+(y+9)+" Z' fill='#fff' stroke='#1b2422' stroke-width='2'/><path d='M"+(x-9)+" "+(y+18)+" L"+x+" "+y+" L"+(x+9)+" "+(y+18)+" Z' fill='#fff' stroke='#1b2422' stroke-width='2'/><rect x='"+(x-7)+"' y='"+(y-26)+"' width='14' height='12' fill='#fff' stroke='#1b2422' stroke-width='1.5'/><path d='M"+x+" "+(y-14)+" V"+y+"' stroke='#1b2422' stroke-width='1.5'/>"; };
+  var fuehler=function(x, y){ return "<circle cx='"+x+"' cy='"+y+"' r='8' fill='#fff' stroke='#1b2422' stroke-width='1.5'/>"+t(x, y+4, 10, "T", {a:"middle", b:1}); };
+  var tauscher=function(x, y){ return rect(x, y, 34, 70, {r:2, sw:2})+"<path d='M"+x+" "+y+" L"+(x+34)+" "+(y+70)+"' stroke='#1b2422' stroke-width='1.5'/>"; };
+  svg+=rect(2, 2, W-4, H-4, {r:0, sw:2});
+  svg+=t(60, 70, 28, "Anlagenschema Klimatisierung – VRV wassergekühlt", {b:1})+t(60, 96, 15, [lidlObjekt(s), "Prinzipschema, nicht maßstäblich"].join(" · "), {f:"#4a5653"});
+  if(logoUrl) svg+="<image href='"+logoUrl+"' x='"+(W-60-240)+"' y='30' width='240' height='58' preserveAspectRatio='xMaxYMid meet'/>";
+  /* Zonen */
+  svg+=rect(30, 130, 270, 560, {fill:"#f3f5f7", s:"#7a8896", d:"8 6", r:10})+t(46, 158, 15, "AUSSENBEREICH", {b:1, f:"#4a5653"});
+  svg+=rect(315, 130, 905, 735, {fill:"#f7f7f3", s:"#7a8896", d:"8 6", r:10})+t(331, 158, 15, String(u.psOrt||"Technikraum").toUpperCase(), {b:1, f:"#4a5653"});
+  svg+=rect(1235, 130, 322, 735, {fill:"#fbfbf8", s:"#7a8896", d:"8 6", r:10})+t(1251, 158, 15, "FILIALE", {b:1, f:"#4a5653"});
+  /* Rückkühler mit 3 Ventilatoren */
+  svg+=rect(55, 190, 220, 150, {sw:2.4})+t(70, 214, 16, "Rückkühler", {b:1});
+  for(var k=0;k<3;k++) svg+="<circle cx='"+(95+k*70)+"' cy='248' r='22' fill='none' stroke='#1b2422' stroke-width='1.5'/><path d='M"+(95+k*70-14)+" 248 H"+(95+k*70+14)+" M"+(95+k*70)+" 234 V262' stroke='#1b2422' stroke-width='1.2'/>";
+  [String(u.rkTyp||"").trim(), (u.schall||[]).filter(function(z){ return String(z.db||"").trim(); }).slice(0, 1).map(function(z){ return "Lw "+String(z.db).trim().replace(/\s*dB.*$/i,"")+" dB(A)"+(u.nachtVon && u.nachtBis ? " · Nacht "+u.nachtVon.slice(0, 2)+"–"+u.nachtBis.slice(0, 2)+" Uhr" : ""); })[0]||""]
+    .filter(Boolean).forEach(function(z, i){ svg+=t(70, 296+i*18, 12, z.length>34 ? z.slice(0, 33)+"…" : z); });
+  if(String(u.aufstellort||"").trim()) svg+=t(55, 360, 12, String(u.aufstellort).slice(0, 40), {f:"#4a5653"});
+  /* Hauptkreis: warm von den Geräten (Sammelleitung xSW) → Pumpe → (Umschaltventil) → Rückkühler; gekühlt zurück → Schmutzfänger → Sammelleitung xSK */
+  var yW=230, yK=310, xUV=560, xP=760, xSW=1010, xSK=1030, mL=yV+(n-1)*schritt+Math.round(hoch/2);
+  svg+=rohr("M275 "+yW+" H"+xSW+" V"+(mL-14), VL)+pfeil(420, yW, "l", VL)+pfeil(930, yW, "l", VL);
+  svg+=rohr("M275 "+yK+" H"+xSK+" V"+(mL+14), RL)+pfeil(330, yK, "r", RL)+pfeil(960, yK, "r", RL);
+  svg+=pumpe(xP, yW)+t(xP, yW-26, 12, "Umwälzpumpe", {a:"middle", b:1});
+  svg+=fuehler(xP+120, yW)+fuehler(xSK-60, yK);
+  /* Schmutzfänger, Ausdehnungsgefäß, Sicherheitsventil, Entlüftung */
+  svg+="<path d='M628 "+(yK-10)+" L652 "+(yK+10)+" M628 "+(yK+10)+" L652 "+(yK-10)+"' stroke='#1b2422' stroke-width='2'/>"+t(640, yK+28, 11, "Schmutzfänger", {a:"middle"});
+  svg+=rohr("M720 "+yK+" V350", RL, {w:3})+"<ellipse cx='720' cy='372' rx='16' ry='22' fill='#fff' stroke='#1b2422' stroke-width='2'/>"+t(745, 376, 11, "Ausdehnungsgefäß");
+  svg+=rohr("M830 "+yW+" V196", VL, {w:3})+"<path d='M822 196 L838 196 L830 182 Z' fill='#fff' stroke='#1b2422' stroke-width='1.5'/>"+t(846, 192, 11, "Sicherheitsventil");
+  svg+="<circle cx='300' cy='"+(yW-14)+"' r='5' fill='#fff' stroke='#1b2422' stroke-width='1.5'/>"+t(308, yW-20, 10, "Entlüftung");
+  if(hatWrg){
+    /* Umschaltventil Heizen/Kühlen: Heizbetrieb über die Plattentauscher (WRG) statt Rückkühler */
+    svg+=ventil3(xUV, yW)+t(xUV, yW-34, 11, "3-Wege-Umschaltventil Heizen/Kühlen", {a:"middle", b:1});
+    var yT=480;
+    svg+=rohr("M"+xUV+" "+(yW+18)+" V"+(yT+35)+" H434", WR)+pfeil(xUV, 420, "u", WR);
+    svg+=rect(335, 455, 600, 185, {fill:"#fff7ed", s:WR, d:"6 4", r:8})+t(350, 474, 14, "Wärmerückgewinnung (Heizbetrieb)", {b:1, f:WR});
+    [400, 520].forEach(function(xT, i){
+      svg+=tauscher(xT, yT)+t(xT+17, yT+86, 11, "Plattentauscher "+(i+1), {a:"middle"});
+      svg+="<path d='M"+(xT+42)+" "+(yT+5)+" l10 -6 v12 z M"+(xT+62)+" "+(yT+5)+" l-10 -6 v12 z' fill='#fff' stroke='#1b2422' stroke-width='1.3'/>";
+    });
+    svg+=rohr("M434 "+(yT+35)+" H520", WR)+rohr("M554 "+(yT+35)+" H640", WR)+pfeil(600, yT+35, "r", WR);
+    svg+=t(580, yT+64, 11, "Bypass je Tauscher", {f:"#4a5653"});
+    svg+=rohr("M417 "+(yT+70)+" V"+(yT+112)+" M537 "+(yT+70)+" V"+(yT+112), AH, {w:3, d:"7 5"})+t(350, yT+128, 11, "von/zu Kühlmöbeln (AHT, Propylenglykol 38 %)", {f:AH});
+    svg+=t(350, yT+146, 11, String(u.wrg).trim().slice(0, 70), {f:"#4a5653"});
+    var xPu=760;
+    if(hatPuffer){
+      svg+=rect(xPu-35, yT-10, 70, 110, {r:14, sw:2})+t(xPu, yT+12, 12, "Puffer", {a:"middle", b:1});
+      svg+="<path d='M"+(xPu-20)+" "+(yT+70)+" h40 m-40 8 h40 m-40 8 h40' stroke='"+VL+"' stroke-width='2'/>"+t(xPu, yT+114, 10, "E-Heizstab", {a:"middle"});
+      svg+=rohr("M640 "+(yT+35)+" H"+(xPu-35), WR)+rohr("M"+(xPu+35)+" "+(yT+35)+" H900 V"+yK, WR)+pfeil(900, 410, "o", WR);
+      (String(u.puffer).trim().match(/.{1,22}(\s|$)/g)||[]).slice(0, 3).forEach(function(z, i){ svg+=t(xPu+45, yT+60+i*14, 10, z.trim(), {f:"#4a5653"}); });
+    } else svg+=rohr("M640 "+(yT+35)+" H900 V"+yK, WR)+pfeil(900, 410, "o", WR);
+  }
+  /* RWEYQ mit Strömungswächter je Gerät, Kältemittel zu den Innengeräten */
+  anl.forEach(function(x, i){
+    var y=yV+i*schritt, f=LIDL_FARBEN[i%LIDL_FARBEN.length], kg=lidlZahl(x.d.kaeltemittelKg), m=y+Math.round(hoch/2);
+    svg+=rect(1060, y, 160, hoch, {s:f, sw:2.4})+t(1072, y+22, 14, x.name, {b:1, f:f});
+    [[x.d.hersteller, x.d.modell].filter(Boolean).join(" "), x.d.seriennummer ? "SN "+x.d.seriennummer : "", kg!=null ? lidlKomma(kg, 1)+" kg "+(x.d.kaeltemittelArt||"") : ""]
+      .filter(Boolean).slice(0, 3).forEach(function(z, j){ svg+=t(1072, y+42+j*17, 11, z.length>24 ? z.slice(0, 23)+"…" : z); });
+    svg+=rohr("M"+xSW+" "+(m-14)+" H1060", VL)+pfeil(1050, m-14, "l", VL);
+    svg+=rohr("M"+xSK+" "+(m+14)+" H1060", RL)+"<circle cx='1045' cy='"+(m+14)+"' r='7' fill='#fff' stroke='#1b2422' stroke-width='1.5'/>"+t(1045, m+33, 9, "FS", {a:"middle"});
+    svg+="<path d='M1220 "+m+" H1260' fill='none' stroke='"+f+"' stroke-width='5'/><path d='M1220 "+m+" H1260' fill='none' stroke='#fff' stroke-width='1.6'/>";
+    svg+=rect(1260, m-34, 280, 68, {s:f, sw:2})+t(1274, m-6, 14, ((u.bereiche||{})[x.id]||"Innengeräte").slice(0, 34), {b:1});
+    svg+=t(1274, m+16, 11, (Array.isArray(x.d.innengeraete) && x.d.innengeraete.length ? x.d.innengeraete.length+" Innengeräte · " : "")+"kälteseitig unverändert", {f:"#4a5653"});
+  });
+  /* Regelung mit Steuerleitungen zu Pumpe, Rückkühler, Umschaltventil, Heizstab und VRV */
+  var rx=335, ry=690, rh=158;
+  svg+=rect(rx, ry, 330, rh, {s:ST, sw:2.2, fill:"#f7f4fb"})+t(rx+14, ry+24, 15, "Regelung", {b:1, f:ST});
+  (reg ? [reg] : ["Regelung (Typ eintragen)"]).concat(["Freigabe Pumpe und Rückkühler (Regler am Gerät)", hatWrg ? "Umschaltung Heizen/Kühlen, Bypass WRG" : "", hatPuffer ? "E-Heizstab (Stufen)" : "", "VRV über Daikin-Bus (F1/F2)", "Störmeldungen, Fernzugriff"])
+    .filter(Boolean).slice(0, 6).forEach(function(z, i){ svg+=t(rx+14, ry+46+i*18, 11.5, (i ? "· " : "")+(z.length>48 ? z.slice(0, 47)+"…" : z), i ? {} : {b:1}); });
+  svg+=stl("M"+(rx+330)+" "+(ry+30)+" H990 V"+(yW+20)+" H"+(xP+12));
+  svg+=stl("M"+rx+" "+(ry+30)+" H160 V340");
+  if(hatWrg) svg+=stl("M"+(rx+300)+" "+ry+" V665 H310 V"+(yW+46)+" H"+xUV+" V"+(yW+20));
+  if(hatPuffer) svg+=stl("M"+(rx+330)+" "+(ry+70)+" H760 V"+(480+100));
+  svg+=stl("M"+(rx+330)+" "+(ry+110)+" H1140 V"+(yV+(n-1)*schritt+hoch));
+  if(String(u.medium||"").trim()) svg+=t(1200, 845, 13, "Wärmeträger: "+u.medium, {b:1, f:"#4a5653", a:"end"});
+  /* Bauteile der Pumpenstation (Liste aus den Angaben) */
+  var bt=String(u.psText||"").split(/\r?\n/).map(function(z){ return z.replace(/^[-•·]\s*/,"").trim(); }).filter(Boolean);
+  if(bt.length){ svg+=t(1251, 900, 13, "Pumpenstation – Bauteile", {b:1, f:"#4a5653"}); bt.slice(0, 7).forEach(function(z, i){ svg+=t(1251, 920+i*16, 11, "· "+(z.length>44 ? z.slice(0, 43)+"…" : z)); }); }
+  /* Legende */
+  var ly=890, lg=[[VL, "", "Wasser-Glykol warm (von den Außengeräten)"], [RL, "", "Wasser-Glykol gekühlt (zu den Außengeräten)"]];
+  if(hatWrg){ lg.push([WR, "", "Heizbetrieb über Wärmerückgewinnung"]); lg.push([AH, "7 5", "Kühlmöbel-Kreis (AHT, nicht UKT)"]); }
+  svg+=t(40, ly, 13, "LEGENDE", {b:1, f:"#4a5653"});
+  lg.forEach(function(z, i){ svg+=rohr("M40 "+(ly+20+i*22)+" h50", z[0], z[1] ? {d:z[1], w:3} : {})+t(100, ly+25+i*22, 12, z[2]); });
+  var yl=ly+20+lg.length*22;
+  svg+="<path d='M40 "+yl+" h50' stroke='#1b2422' stroke-width='5'/><path d='M40 "+yl+" h50' stroke='#fff' stroke-width='1.6'/>"+t(100, yl+5, 12, "Kältemittelleitung, Kupfer, gedämmt");
+  svg+=stl("M40 "+(yl+22)+" h50")+t(100, yl+27, 12, "Steuerleitung");
+  svg+=pumpe(470, ly+10)+t(495, ly+14, 11, "Pumpe")+fuehler(470, ly+50)+t(485, ly+54, 11, "Temperaturfühler");
+  svg+="<circle cx='470' cy='"+(ly+86)+"' r='7' fill='#fff' stroke='#1b2422' stroke-width='1.5'/>"+t(485, ly+90, 11, "FS = Strömungswächter (je Außengerät)");
+  var ib=lidlIbDatum(p, anl);
+  svg+=t(W-40, H-46, 12, [ib ? "Inbetriebnahme "+dfmt(ib) : "", u.datum ? "Stand "+dfmt(u.datum) : ""].filter(Boolean).join(" · "), {a:"end", f:"#4a5653"});
+  svg+=t(W-40, H-28, 12, "Umwelt- und Klimatechnik GmbH, Speckbacherstraße 92, 6380 St. Johann in Tirol", {a:"end", f:"#4a5653"});
+  return "<svg xmlns='http://www.w3.org/2000/svg' width='"+W+"' height='"+H+"' viewBox='0 0 "+W+" "+H+"'><rect width='"+W+"' height='"+H+"' fill='#fff'/>"+svg+"</svg>";
+}
             '<button class="btn ghost sm" type="button" data-gweg style="color:var(--crit);border-color:var(--crit)">Gerät entfernen</button></div></div>');
         z.querySelectorAll("[data-g]").forEach(function(i){ i.oninput=function(){ g[i.dataset.g]=i.value; }; });
         z.querySelector("[data-gdb]").onchange=function(){ var d=this.files[0]; if(d) hoch("datenblaetter", d).then(function(x){ if(x){ g.datenblatt=x; zeichnen(); } }); };
         z.querySelector("[data-gweg]").onclick=function(){ if(!window.confirm("„"+(g.name||g.muster||"Gerät")+"“ aus der Gerätebibliothek entfernen?")) return; V.geraete.splice(i, 1); zeichnen(); };
         gh.appendChild(z);
+  if(lidlWasserProjekt(anl)) return lidlSchemaWasserSvg(p, anl, u, logoUrl, t, rect);
       });
       box.querySelector("[data-lvgeraetneu]").onclick=function(){ V.geraete.push({id:"g"+Date.now().toString(36), muster:"", name:"", werte:""}); zeichnen(); };
     };
@@ -35811,6 +35977,8 @@ function projektDateienKarte(p, buero, schreiben, neuZeichnen){
     var marken=m.geschoss.map(function(g){ return dateiGeschossName(g); }).concat(m.gewerk.map(function(g){ return dateiGewerkName(g); })).concat(m.planart?[m.planart]:[]);
     var z=el('<div style="font-size:13px'+(opt.alt?";padding-left:14px;border-left:2px solid var(--line)":"")+'" data-datei-zeile="'+esc(x.pfad)+'">'+
       '<div class="rowflex" style="gap:6px;flex-wrap:nowrap;align-items:flex-start"><div style="flex:1;min-width:0;overflow-wrap:anywhere">'+
+  var u0=((p.daten||{}).lidlUnterlagen)||{}, rkG=lidlWasserProjekt(anl) && String(u0.rkTyp||"").trim() && lidlRkGeraet(u0.rkTyp, V);
+  if(rkG && rkG.datenblatt && rkG.datenblatt.pfad && gs.indexOf(rkG)<0) gs.push(rkG);
       (x.wichtig?"📌 ":"")+'<a href="#" class="sprunglink" data-oeffnen>'+esc(x.titel||x.name||"Datei")+"</a>"+
       (x.titel?' <span class="muted" style="font-size:12px">('+esc(x.name||"")+")</span>":"")+
       (marken.length?" "+marken.map(function(t){ return '<span class="tag" style="font-size:11px">'+esc(t)+"</span>"; }).join(" "):"")+
