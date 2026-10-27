@@ -301,11 +301,6 @@ Kammerlander Umwelt- und Klimatechnik (UKT) – oft kurz, vom Handy, im Feld.
 - Monatsbericht: jeder Besuch steht drin. Zwei Wartungen für denselben Termin:
   die erste zählt für die Frist, die spätere steht als „zusätzlich“ da.
   Störungseinsätze sind eigene Einsätze und berühren die Wartungen nicht.
-- **Störungen aus dem Archiv** (Inhaber 27.10.2026: vergangene Störungen von der Synology nachtragen, vor der App; nie als Protokoll in fremdem
-  Namen): Marktfeld `stoerungenArchiv` [{datum, problem, techniker, auftrag, rapport, stunden, positionId?, datei?:{pfad,name,typ} im Speicher
-  „dokumente“ unter archiv/…, quelle = Synology-Pfad}] (STAMM_FELDER_ST). `historieEintraege` zeigt sie mit Quelle „Archiv“ (antippen → Rapport,
-  `dokumentOeffnen`), `wiederkehrBerechnen` zählt sie, wenn `positionId` gesetzt ist. Nur intern – nie Kunde/Fernzugriff (`nurLesen`).
-  Vergangene Wartungen kommen dagegen als `nachweise` an die Termin-Zeile (wie „Wartungen laut Prüfbuch“). Test „Störungen aus dem Archiv …“.
 - Wiederkehrende Störungen: ab 3 Störungen in 90 Tagen an derselben Anlage
   (`WIEDERKEHR_ANZAHL`, `WIEDERKEHR_TAGE`) – Markierung, kein Eingriff.
 - „Zählt als“ im Protokoll (`fillPos`): ist ein Termin versäumt und liegt der
@@ -441,15 +436,7 @@ Kammerlander Umwelt- und Klimatechnik (UKT) – oft kurz, vom Handy, im Feld.
 - **Lidl-Unterlagen je Filiale** (Inhaber 20.10.2026: „als nächstes bauen wir die Automation ein“ – Umfang alle vier Teile, nur PDF, KAV-Datum IB + 1 Woche,
   nur Inhaber): Karte „📦 Lidl-Unterlagen“ im Projekt nach den Inbetriebnahmeprotokollen (`lidlUnterlagenKarte`; nur `nurInhaber()`, Kunde lidl, Projekt mit Markt) →
   `lidlUnterlagenAssistent`: 1 Prüfliste (`lidlPruefliste`: Markt/Filialnummer, je Anlage Modell/SN/Füllmenge/Kältemittel/IB/Bereiche, Gerätebibliothek, Schall,
-  KAV-Vorlage, IBN unterschrieben) –
-  **wassergekühlt** (Inhaber 27.10.2026, Auswertung „VRV wassergekühlt Umbau“: beim Lidl-Rollout bleibt die RWEYQ kälteseitig unverändert, neu sind Rückkühler,
-  Pumpenstation, Glykolkreis): `lidlWasserProjekt(anl)` schaltet um – eigene Vorgaben in `lidlAngaben` (Bauvorhaben, Allgemein, Weiterverwendung, Schall
-  „Rückkühler VRV-Anlage“, Nachtabsenkung über EC-Drehzahl) und Felder `rkTyp`, `medium`, `psOrt`, `psText`, `wrg` (Assistent `[data-lidlwasser]`; leer = entfällt,
-  Prüfliste nennt es; Wärmeträger nie raten). TB: Abschnitt „Wasserkreis: Rückkühler und Pumpenstation“ (Daten aus der Gerätebibliothek über `lidlRkGeraet`, auch mit
-  Herstellername davor), statt „erste Inbetriebnahme/§ 17“ nur „Wiederinbetriebnahme nach Anschluss an den neuen Wasserkreis“. Schema `lidlSchemaWasserSvg`
-  (Außenbereich Rückkühler – Technikraum Pumpenstation + Sammelleitungen warm/gekühlt + RWEYQ – Filiale Innengeräte; hängt laminiert im Technikraum, Abnahme
-  Robinigstraße). KAV: „Schallwerte des Rückkühlers“. Datenblatt des Rückkühlers in Beilagen/`lidlDatenblaetterHolen`. Test „Lidl-Unterlagen wassergekühlt …“
-  (`VORSCHAU=<Ordner>` schreibt tb.html/schema.svg/kav.html zum Ansehen) –
+  KAV-Vorlage, IBN unterschrieben; wassergekühlt RWEYQ → Warnung `lidlWassergekuehlt`, Inhaber 20.10.2026: Vorlagen dafür erst mit Robinigstraße verfeinern) –
   2 Angaben `daten.lidlUnterlagen` (`lidlAngaben` belegt vor: Datum = `ibDatum` bzw. früheste Anlagen-IB + 7, Betreiber/Planer aus `beteiligte` nach Rolle,
   Bereiche aus den Räumen der Innengeräte, Texte wie Graz/Oberwart; alles änderbar; beim Ablegen immer mitgespeichert) – 3 Unterlagen `lidlErzeugen`:
   TB `lidlTbHtml` (A4, `blattZuPdf` mit neuen Schaltern `ohneWasserzeichen`/`ohneSeitenzahl`; Spalten ohne einen einzigen Wert entfallen, nie „fehlt“;
