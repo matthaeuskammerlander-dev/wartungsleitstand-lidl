@@ -435,6 +435,15 @@ Kammerlander Umwelt- und Klimatechnik (UKT) – oft kurz, vom Handy, im Feld.
   **Ältere Stände löschen** (Inhaber 19.10.2026: „lösche die alten Fassungen“): aufgeklappte Gruppe → „🗑 ältere Stände löschen (n)“ (`dateiAeltereStaende`:
   je Dateiendung bleibt der neueste, PDF und Word desselben Namens stehen beisammen; nur wenn alle `dateiLoeschenDarf`) → `dateienLoeschen` mit EINER Rückfrage (Namen + Datum),
   Speicher in einem Aufruf, Einträge und Verweise wie `dateiLoeschen`. Test „Ältere Stände löschen …“.
+- **Benutzerfreundlichkeit** (Inhaber 28.10.2026, Durchsicht am iPhone/PC): „📚 Unterlagen“ unten (`#unterlagenlink`) und im Störungsschritt
+  (`[data-unterlagen]`) → `unterlagenFenster` = `einrichtungDateienKarte(E, true)` nur ansehen (kein Hochladen/✕), alle Mitarbeiter, nie Kunde; im Schritt
+  „Arbeiten“ stehen „Alles erledigt, keine Mängel“/„alle auswählen“ oben; Fällig am Handy: „Fälligkeiten nach FM-Region“ zugeklappt, Rundgang-Hinweis als eine
+  aufklappbare Zeile (`[data-rgklapp]`).
+- **Projekte aus dem Archiv** (Inhaber 28.10.2026: „sehr viele vergangene Projekte im Projektreiter – finde die aktuell wichtigen nicht mehr“): `daten.ausArchiv`
+  (per SQL bei den aus dem Synology-Archiv nachgetragenen Projekten gesetzt). `projektNurArchiv`: ausArchiv, nicht `daten.aktuell` und kein Tagebuch-Eintrag einer Person
+  (Einträge von „Claude …“ und „… Datei(en) hinzugefügt“ zählen nicht). Projektliste: Vorgabe-Chip „Aktuell“ (`projektAktuell` = offen und nicht nur Archiv), Chip
+  „Aus dem Archiv“ mit „📌 Ist aktuell“ je Projekt (`[data-praktuell]` → `daten.aktuell`, Tagebuch); mit Suchwort sucht „Aktuell“ in allen Projekten. „Laufende Projekte“
+  in Fällig ohne reine Archiv-Projekte. Test „Projekte aus dem Archiv …“.
 - **Neuester Stand und Projektliste** (Inhaber 24.10.2026: Chef öffnete am iPad in der Übersicht die alte Fassung; „Projekte attraktiver“;
   „Folgeaufträge nehmen viel Platz weg“): `projektIndex` ordnet gleiche Namen dem NEUESTEN Stand zu (vorher dem zuerst hochgeladenen) – alle
   Verweise über `quelleDatei` (Quellen, „gehört zu“) öffnen so die aktuelle Fassung. Stand-Reiter (`projektSchrittInfo`): je Name nur der neueste

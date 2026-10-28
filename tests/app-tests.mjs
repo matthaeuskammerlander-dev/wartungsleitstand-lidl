@@ -6660,6 +6660,38 @@ test("Einrichtung: Dokumente nach Gruppen, Suche ab 7 Dokumenten (Inhaber 28.10.
   pruefe(r.umlaut.zeilen === 1, "Suche mit Umlaut: " + JSON.stringify(r.umlaut));
 });
 
+test("Unterlagen für Techniker (Inhaber 28.10.2026): „📚 Unterlagen“ unten und im Störungsschritt, nur ansehen; Kunde sieht nichts", async () => {
+  const a = await oeffnen(KONTEN.techniker, { handy: true });
+  const r = await a.seite.evaluate(async () => {
+    const x = window.__t.x, w = (ms) => new Promise((f) => setTimeout(f, ms));
+    const db = window.__db.tabellen; db.einstellungen = (db.einstellungen || []).filter((z) => z.schluessel !== "einrichtung");
+    db.einstellungen.push({ schluessel: "einrichtung", wert: { standard: {}, abschnitte: [], dateien: [{ pfad: "einrichtung/a.pdf", name: "a.pdf", titel: "RTD Fehlercodes", gruppe: "RTD-Platinen", typ: "application/pdf" }] } });
+    await x("einrichtungLaden(true)");
+    const link = document.getElementById("unterlagenlink"), e = { link: !!link && !link.hidden };
+    link.click(); await w(300);
+    const fen = () => [...document.querySelectorAll(".assistent")].find((o) => /Fehlercodes & Unterlagen/.test(o.textContent));
+    e.zeilen = fen() ? fen().querySelectorAll("[data-dokument]").length : -1;
+    e.weg = fen() ? fen().querySelectorAll("[data-weg]").length : -1;
+    e.hochladen = fen() ? !!fen().querySelector("[data-datei]") : null;
+    fen() && fen().querySelector('[data-a="zu"]').click(); await w(150);
+    /* im geführten Störungsprotokoll, Schritt Störungsbehebung */
+    x("formDirty=false; S.protoArt='stoerung'; S.stoerungAus=null; S.bearbeiten=null; S.protoStandort='TS1'; S.protoPos='TP1'; S.view='protokoll'; render(); 1"); await w(450);
+    document.getElementById("p_gefuehrt").click(); await w(300);
+    const ov = () => document.querySelector(".assistent[data-gefuehrt]");
+    for (let i = 0; i < 12 && !/Störungsbehebung$/.test(ov().querySelector(".as-schritt").textContent); i++) {
+      const b = [...ov().querySelectorAll(".as-fuss button")].find((b) => /^Weiter$|Überspringen/.test(b.textContent.trim())); if (!b) break; b.click(); await w(250); }
+    e.imSchritt = !!ov().querySelector("[data-unterlagen]");
+    return e;
+  });
+  await a.zu();
+  pruefe(r.link && r.zeilen === 1 && r.weg === 0 && r.hochladen === false, "Techniker: Unterlagen nur ansehen: " + JSON.stringify(r));
+  pruefe(r.imSchritt, "Knopf im Schritt Störungsbehebung: " + JSON.stringify(r));
+  const k = await oeffnen(KONTEN.kunde);
+  const rk = await k.seite.evaluate(() => { const l = document.getElementById("unterlagenlink"); return !l || l.hidden; });
+  await k.zu();
+  pruefe(rk, "Kunde sieht den Unterlagen-Knopf nicht");
+});
+
 test("Inbetriebnahmeprotokoll: Wasserkreis bei wassergekühlter VRV (Inhaber 28.10.2026) – nur eingetragene Werte im PDF", async () => {
   const a = await oeffnen(KONTEN.inhaber);
   const r = await a.seite.evaluate(() => {
@@ -10385,6 +10417,36 @@ test("Lidl-Unterlagen (Inhaber 20.10.2026): Prüfliste, TB/KAV/Schema aus den An
   if (a.fehler.length) fehl.push("Laufzeitfehler: " + a.fehler.join("; "));
   await a.zu();
   pruefe(!fehl.length, fehl.join(" | "));
+});
+
+test("Projekte aus dem Archiv (Inhaber 28.10.2026): nicht unter „Aktuell“ und nicht in Fällig, bis jemand daran arbeitet oder „Ist aktuell“ tippt; Suche findet sie", async () => {
+  const a = await oeffnen(KONTEN.inhaber);
+  const r = await a.seite.evaluate(async () => {
+    const x = window.__t.x, warte = (ms) => new Promise((f) => setTimeout(f, ms)), db = window.__db.tabellen, jetzt = new Date().toISOString();
+    const arch = (id, nr, status, verlauf) => ({ id, nummer: nr, titel: "Archiv " + nr, kunde_id: "lidl", standort_id: "TS1", status, erstellt: jetzt, geaendert: jetzt,
+      daten: { ausArchiv: true }, verlauf: [{ wer: "Claude (Synology-Archiv)", text: "Projekt aus dem Synology-Archiv angelegt", zeit: jetzt }].concat(verlauf || []) });
+    db.projekte.push(arch("pa1", "P-2025-951", "baustelle"), arch("pa2", "P-2025-952", "konzept", [{ wer: "Inhaber", text: "8 Dateien hinzugefügt (nach Art sortiert)", zeit: jetzt }]),
+      arch("pa3", "P-2025-953", "baustelle", [{ wer: "Inhaber", text: "Stand: Baustelle", zeit: jetzt }]),
+      { id: "pn1", nummer: "P-2026-951", titel: "Neu", kunde_id: "lidl", standort_id: "TS1", status: "baustelle", erstellt: jetzt, geaendert: jetzt, daten: {}, verlauf: [] });
+    await x("projekteLaden()"); await warte(300);
+    const nr = () => [...document.querySelectorAll("#pr_liste .card, #pr_liste [data-pid], #pr_liste > *")].map((e) => (e.textContent.match(/P-202\d-95\d/g) || []).join(",")).join(",");
+    const zeige = async (f, q) => { x("S.prAnsicht='liste'; S.prFilter='" + f + "'; S.prQ='" + (q || "") + "'; S.view='projekte'; render(); 1"); await warte(400);
+      return [...new Set(nr().split(",").filter(Boolean))].sort().join(","); };
+    const e = {};
+    e.aktuell = await zeige("aktuell"); e.archiv = await zeige("archiv"); e.suche = await zeige("aktuell", "P-2025-951");
+    x("S.prQ=''; S.view='faellig'; render(); 1"); await warte(500);
+    e.faellig = [...new Set(((document.getElementById("pr_karte") || {}).textContent || "").match(/P-202\d-95\d/g) || [])].sort().join(",");
+    await zeige("archiv");
+    const b = [...document.querySelectorAll("#pr_liste [data-praktuell]")][0]; if (b) b.click(); await warte(600);
+    e.nachKlick = await zeige("aktuell");
+    return e;
+  });
+  await a.zu();
+  pruefe(r.aktuell === "P-2025-953,P-2026-951", "Aktuell: nur bearbeitete Archiv-Projekte und neue: " + JSON.stringify(r));
+  pruefe(r.archiv === "P-2025-951,P-2025-952", "Aus dem Archiv: unberührte (Dateien zählen nicht): " + JSON.stringify(r));
+  pruefe(r.suche === "P-2025-951", "Suche findet auch Archiv-Projekte: " + JSON.stringify(r));
+  pruefe(!/P-2025-951/.test(r.faellig) && /P-2026-951/.test(r.faellig) && /P-2025-953/.test(r.faellig), "Fällig: laufende ohne unberührte Archiv-Projekte: " + JSON.stringify(r));
+  pruefe(r.nachKlick === "P-2025-951,P-2025-953,P-2026-951", "„Ist aktuell“ holt es zurück: " + JSON.stringify(r));
 });
 
 test("Projekte (Inhaber 24.10.2026): Name führt zum neuesten Stand, Stand-Reiter zeigt nur ihn; Liste mit Fortschritt und Termin; Folgeaufträge zugeklappt", async () => {

@@ -831,6 +831,7 @@ table.dt td{padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:
 <div class="wrap" style="text-align:center;padding-top:18px"><button class="btn ghost sm" type="button" id="wunschlink" hidden>💡 Änderung vorschlagen</button>
   <button class="btn ghost sm" type="button" id="handbuchlink" hidden>📖 Handbuch</button>
   <button class="btn ghost sm" type="button" id="rundganglink" hidden>🧭 Rundgänge</button>
+  <button class="btn ghost sm" type="button" id="unterlagenlink" hidden>📚 Unterlagen</button>
   <button class="btn ghost sm" type="button" id="schriftbtn" hidden title="Schriftgröße auf diesem Gerät">Aa Schriftgröße</button></div>
 <div class="wrap" id="appversion" style="font-size:10.5px;color:var(--ink-2);opacity:.6;text-align:center;padding:14px 0 calc(10px + env(safe-area-inset-bottom,0px))"></div>
 <script>
@@ -5268,7 +5269,11 @@ function viewFaellig(){
       '<div data-rgwahl style="margin-top:8px"></div>'+
       '<div class="rowflex" style="gap:6px;margin-top:6px"><button class="btn ghost sm" type="button" data-rg="weg">Nicht mehr zeigen</button></div></div>');
     /* alle Rundgänge, die zur Rolle passen: Inhaber alle, Admin Techniker und Admin, Techniker den eigenen */
-    rgH.querySelector("[data-rgwahl]").appendChild(rundgangAuswahl());
+    if(schmalerBildschirm()){
+      /* am Handy nur eine Zeile – die Auswahl klappt auf (Benutzerfreundlichkeit 28.10.2026: belegte einen ganzen Bildschirm) */
+      var rgD=el('<details data-rgklapp><summary style="cursor:pointer;color:var(--accent);font-weight:600">🧭 Rundgänge ansehen</summary></details>');
+      rgD.appendChild(rundgangAuswahl()); rgH.querySelector("[data-rgwahl]").appendChild(rgD);
+    } else rgH.querySelector("[data-rgwahl]").appendChild(rundgangAuswahl());
     rgH.querySelector('[data-rg="weg"]').onclick=function(){ lsSet("ukt_rundgang_gesehen", true); rgH.remove(); };
     f.appendChild(rgH);
   }
@@ -5292,7 +5297,7 @@ function viewFaellig(){
   if(!nurLesen()) f.appendChild(einklappbar(stoerungsKarte(), "stoerungen", stoerOffen.length+" offen"));   /* Kunde: keine Störungskarte */
   /* der Störungskalender ist in den Kalender-Reiter gewandert (Schalter „nur Störungen“, Büro 02.10.2026) */
   /* laufende Projekte (Auftrag, Baustelle, Inbetriebnahme) – damit sie neben den Wartungen nicht untergehen */
-  var laufendAlle=nurLesen()?[]:PROJEKTE.filter(function(p){ return ["auftrag","baustelle","inbetriebnahme"].indexOf(p.status)>=0; });
+  var laufendAlle=nurLesen()?[]:PROJEKTE.filter(function(p){ return ["auftrag","baustelle","inbetriebnahme"].indexOf(p.status)>=0 && !projektNurArchiv(p); });
   /* nur die oben gewählten Kunden (Büro 03.10.2026) – die übrigen als kurzer Hinweis */
   var laufend=laufendAlle.filter(function(p){ return kundeIdImFilter(p.kunde_id); }), laufendSonst=laufendAlle.length-laufend.length;
   if(laufend.length || laufendSonst){
@@ -5303,7 +5308,7 @@ function viewFaellig(){
     laufend.slice(0,8).forEach(function(p){ pk.querySelector("[data-l]").appendChild(projektZeile(p)); });
     if(laufendSonst){ var ph=el('<div class="muted" style="font-size:12.5px">'+laufendSonst+" weitere"+(laufendSonst===1?"s laufendes Projekt":" laufende Projekte")+" bei Kunden, die oben nicht ausgewählt sind. "+
       '<a href="#" class="sprunglink">Alle Kunden zeigen</a></div>'); tippe(ph.querySelector("a"), function(){ kundenWahlSetzen("alle"); render(); }); pk.querySelector("[data-l]").appendChild(ph); }
-    pk.querySelector("[data-alle]").onclick=function(){ S.prFilter="offen"; springe({reiter:"projekte", block:"start"}); };
+    pk.querySelector("[data-alle]").onclick=function(){ S.prFilter="aktuell"; springe({reiter:"projekte", block:"start"}); };
     f.appendChild(einklappbar(pk, "projekte", laufend.length+" laufend"));
   }
 
@@ -5346,7 +5351,8 @@ function viewFaellig(){
   chart.querySelectorAll("[data-rs]").forEach(function(a){
     tippe(a, function(){ faelligSprung(a.dataset.rs==="ueber"?"ueberfaellig":"liste", {region:a.closest("[data-region]").dataset.region}); });
   });
-  f.appendChild(einklappbar(chart, "regionen"));
+  /* am Handy zugeklappt – sonst steht die Liste „Anstehende Wartungen“ erst nach drei Bildschirmen Grafik (Benutzerfreundlichkeit 28.10.2026) */
+  f.appendChild(einklappbar(chart, "regionen", "", schmalerBildschirm()));
 
 
   /* Positionsliste: nach Fälligkeitsdatum, das dringendste zuerst */
@@ -8665,11 +8671,23 @@ function einrichtungAbschnitteKarte(E){
   zeigen();
   return k;
 }
-function einrichtungDateienKarte(E){
+/* Service-Unterlagen zum Nachschlagen (Fehlercodes, Settinglisten, RTD, iTM …) – für alle Mitarbeiter, nur ansehen; nie Kunde/Fernzugriff */
+function unterlagenFenster(){
+  if(nurLesen()) return;
+  var v=ansichtOeffnen("Fehlercodes & Unterlagen"); v.schritt.textContent="wird geladen …";
+  einrichtungLaden().then(function(E){
+    v.schritt.textContent="";
+    var k=einrichtungDateienKarte(E, true); k.querySelector("h2").textContent="Service-Unterlagen";
+    v.inhalt.appendChild(k);
+    var f=k.querySelector("[data-doksuche]"); if(f && !schmalerBildschirm()) f.focus();
+  });
+}
+function einrichtungDateienKarte(E, nurAnsehen){
   var k=el('<div class="card" data-einrichtung-dateien><div class="pad stack" style="gap:10px"><h2>Dokumente</h2>'+
     '<div class="muted" style="font-size:12.5px">Anleitungen als PDF oder Foto – z. B. Daikin-Schulungsunterlagen, Anschlusspläne. Für alle Mitarbeiter, nie für Kunden.</div><div class="stack" style="gap:4px" data-liste></div>'+
     '<div class="rowflex" style="gap:6px;align-items:center;flex-wrap:wrap"><label class="btn ghost sm" style="cursor:pointer">📎 Dokument hochladen<input type="file" data-datei hidden multiple accept="application/pdf,image/*"></label><span class="muted" data-stand style="font-size:12px"></span></div></div></div>');
   var liste=k.querySelector("[data-liste]"), stand=k.querySelector("[data-stand]"), suche="";
+  if(nurAnsehen){ k.querySelector("[data-datei]").closest(".rowflex").remove(); k.querySelector(".muted").textContent="Fehlercodes, Settinglisten, Anleitungen – antippen öffnet das Dokument."; }
   /* Service-Unterlagen (Inhaber 28.10.2026: Fehlercodelisten, Settinglisten, RTD/iTM, Service Checker): nach `gruppe` zugeklappt,
      ab 7 Dokumenten mit Suchfeld (Titel, Name, Gruppe) – Suchtreffer klappen ihre Gruppe auf */
   var suchFeld=el('<input type="search" data-doksuche placeholder="Dokument suchen, z. B. „Fehlercode RTD“" style="max-width:420px">');
@@ -8689,9 +8707,9 @@ function einrichtungDateienKarte(E){
     if(mitGruppen){ var dg=el('<details data-dokgruppe'+(w.length || folge.length===1 ? " open" : "")+'><summary style="cursor:pointer;font-weight:600;padding:3px 0">'+esc(g)+' <span class="muted" style="font-weight:400">('+gruppen[g].length+')</span></summary><div class="stack" style="gap:4px;padding:4px 0 6px 12px"></div></details>');
       liste.appendChild(dg); ziel=dg.lastChild; }
     gruppen[g].forEach(function(d){
-      var z=el('<div class="rowflex" data-dokument style="gap:8px;align-items:center;flex-wrap:wrap"><button class="btn ghost sm" type="button" data-auf>📄 '+esc(d.titel||d.name)+'</button><span class="muted" style="font-size:12px">'+esc(dfmt(String(d.zeit||"").slice(0,10)))+(d.von?" · "+esc(d.von):"")+'</span><button class="btn ghost sm" type="button" data-weg title="Entfernen">✕</button></div>');
+      var z=el('<div class="rowflex" data-dokument style="gap:8px;align-items:center;flex-wrap:wrap"><button class="btn ghost sm" type="button" data-auf>📄 '+esc(d.titel||d.name)+'</button><span class="muted" style="font-size:12px">'+esc(dfmt(String(d.zeit||"").slice(0,10)))+(d.von?" · "+esc(d.von):"")+'</span>'+(nurAnsehen?"":'<button class="btn ghost sm" type="button" data-weg title="Entfernen">✕</button>')+'</div>');
       z.querySelector("[data-auf]").onclick=function(){ dokumentOeffnen(d); };
-      z.querySelector("[data-weg]").onclick=function(){ if(!window.confirm("„"+(d.titel||d.name)+"“ entfernen?")) return;
+      if(!nurAnsehen) z.querySelector("[data-weg]").onclick=function(){ if(!window.confirm("„"+(d.titel||d.name)+"“ entfernen?")) return;
         Store.sb.storage.from("dokumente").remove([d.pfad]).then(function(){}, function(){});
         einrichtungSpeichern(Object.assign({}, EINRICHTUNG||E, {dateien:((EINRICHTUNG||E).dateien||[]).filter(function(x){ return x.pfad!==d.pfad; })}), "Dokument entfernt").then(zeichne); };
       ziel.appendChild(z);
@@ -8699,7 +8717,7 @@ function einrichtungDateienKarte(E){
     });
   };
   zeichne();
-  k.querySelector("[data-datei]").onchange=function(){
+  if(!nurAnsehen) k.querySelector("[data-datei]").onchange=function(){
     var dateien=[].slice.call(this.files||[]); this.value=""; if(!dateien.length) return;
     stand.textContent="wird hochgeladen …";
     var kette=Promise.resolve(), neueL=((EINRICHTUNG||E).dateien||[]).slice();
@@ -16494,12 +16512,18 @@ function protoAssistentTeilArbeiten(P){
     P.schritte.push({titel:stoer?"Störungsbehebung":"Arbeiten", zeigen:function(){
       if(stoer){
         inhalt.innerHTML=frage("Was war los und was haben Sie gemacht?");
+        /* Fehlercodes, Settinglisten, Anleitungen gleich zur Hand (Inhaber 28.10.2026: Service-Unterlagen – lagen nur in der Verwaltung, die Techniker nicht sehen) */
+        var fc=el('<button class="btn ghost sm" type="button" data-unterlagen style="align-self:flex-start;margin-bottom:6px">📚 Fehlercodes &amp; Unterlagen</button>');
+        fc.onclick=function(){ unterlagenFenster(); }; inhalt.appendChild(fc);
         inhalt.appendChild(textFeld("Fehlerbild vor Ort","#s_fehlerbild",true));
         inhalt.appendChild(textFeld("Ursache","#s_ursache",true));
         inhalt.appendChild(textFeld("Durchgeführte Maßnahmen","#s_massnahmen",true));
         return;
       }
       inhalt.innerHTML=frage("Was haben Sie gemacht?");
+      /* die Abkürzungen stehen oben (Inhaber 28.10.2026, Benutzerfreundlichkeit: am iPhone kam „Alles erledigt“ erst nach zwölf Knöpfen) */
+      var oben=el('<div class="rowflex" style="gap:6px;flex-wrap:wrap;margin-bottom:8px"></div>');
+      inhalt.appendChild(oben);
       var box=el('<div class="chips"></div>');
       form.querySelectorAll('input[name="arbeit"]').forEach(function(cb){
         var b=el('<button class="chip" type="button" aria-pressed="'+cb.checked+'">'+esc(cb.nextElementSibling.textContent)+"</button>");
@@ -16514,8 +16538,8 @@ function protoAssistentTeilArbeiten(P){
       };
       var ok=el('<button class="btn sm" type="button">Alles erledigt, keine Mängel</button>');
       ok.onclick=function(){ var b=form.querySelector("#f_allesok"); if(b) b.click(); P.schritte[P.pos].zeigen(); P.fussNeu(); };
-      inhalt.appendChild(ok);
-      inhalt.appendChild(alle);
+      oben.appendChild(ok);
+      oben.appendChild(alle);
       inhalt.appendChild(textFeld("Sonstiges","#f_arb_sonst",false,"weitere Arbeiten"));
     }});
 
@@ -27350,6 +27374,7 @@ function handbuchKarte(z){
         "<strong>Reisekosten und Kilometergeld:</strong> Reiter <em>Stunden</em> – selbst bezahlte Belege mit Foto und Kilometer mit dem Privatauto; am Monatsende „Monat abgeben“, der Chef zahlt aus und hakt „ausbezahlt“ ab. "+
           "Beleg (Foto oder PDF) wählen – Datum, Betrag, MwSt und Händler liest die App selbst aus dem PDF, beim Foto hilft die KI; bitte kurz prüfen. Einteilung Bewirtung, Unterkunft, Material/Werkzeug oder Sonstiges; das Monats-PDF enthält alle Belege und die Summen mit und ohne MwSt.",
         "<strong>🔎 Überall suchen:</strong> das Suchfeld in Fällig, Karte und Anlagen findet unter „Überall gefunden“ auch Projekte, Pläne und Dateien (z. B. „Linz Plan DG“), vergangene Einsätze samt Archiv (z. B. „Steyr 2025“), Anlagen, Kontakte und Anleitungen.",
+        "<strong>📚 Unterlagen:</strong> ganz unten auf jeder Seite und im Störungsprotokoll (Schritt „Störungsbehebung“) – Fehlercodes, Settinglisten, RTD, iTM, Service Checker; nach Gruppen, mit Suchfeld.",
         "<strong>Werkzeug und Material:</strong> Reiter <em>Werkzeug</em> – was mitzunehmen, abzuholen oder zu bestellen ist (im Termin, in der Störung, im Projekt, am Markt eintragen; „Heute für dich“ und „Planung prüfen“ erinnern) und wo jedes Werkzeug gerade ist („Ich hab’s“, „In mein Auto“, „Ins Lager“, Reparatur, Prüfung; als Ort ist jedes Fahrzeug wählbar, von fremden nur mit Kennzeichen, Bezeichnung und Fahrer). Lernt mit: Vorschläge je Projekttyp und je Markt, Material aus dem Angebot, neues Werkzeug kommt auf Nachfrage in die Liste, nach dem Einsatz „Wo ist das Werkzeug jetzt?“.",
         "<strong>Stunden:</strong> ein-, um- und ausstempeln (Reiter <em>Stunden</em>; „📅 Heute geplant“ füllt Bereich und Markt, „⇄ Dorthin umstempeln“ mit einem Tippen) – die Stempeluhr hat Vorrang; nach jedem Ausstempeln kommt der <strong>Tagesrückblick</strong> „Was hast du heute wann und wo gemacht?“ (Vorschlag aus Gestempeltem und Kalender, „+ Weiterer Bereich“ von–bis, Grenzen ±15 min, teilen, entfernen, Markt/Projekt/Was – oder einfach „✓ Passt so“; „Später“ lässt beim Tag „⇆ Tag prüfen“ stehen). Ohne Stempeluhr: geplante Termine mit „erfassen“ übernehmen. "+
         "Urlaub (genehmigt), Krankenstand, Schule und Zeitausgleich im Kalender stehen von selbst in den Stunden; je Tag und Woche steht der Abstand zum Soll (nur zur Info – Überstunden zählen je Monat)."])+
@@ -29164,6 +29189,9 @@ function wunschLinkNeu(){ var e=document.getElementById("wunschlink"); if(e) e.h
   /* Rundgänge daneben (Büro 04.10.2026: „sehr versteckt“) – auch in der Präsentation */
   var rg=document.getElementById("rundganglink");
   if(rg){ rg.hidden=nurLesen() || !((Store.modus==="supabase" && Store.benutzer) || demo()); rg.onclick=function(){ rundgangAuswahlFenster(); }; }
+  /* Service-Unterlagen (Fehlercodes, Settinglisten …) für alle Mitarbeiter – sonst nur in der Verwaltung (Inhaber 28.10.2026) */
+  var ul=document.getElementById("unterlagenlink");
+  if(ul){ ul.hidden=nurLesen() || !(Store.modus==="supabase" && Store.benutzer); ul.onclick=function(){ unterlagenFenster(); }; }
 }
 /* Handbuch auf Papier (Büro 29.09.2026): dieselben Abschnitte, alle aufgeklappt,
    als Blatt – gedruckt wird über den Druckdialog des Geräts (dort auch „als PDF“) */
@@ -30671,6 +30699,15 @@ function projektDateiSchritt(p, f){
   return wechsel.length ? null : p.status;
 }
 function projektOffen(p){ return ["abgeschlossen","abgerechnet","verloren"].indexOf(p.status)<0; }
+/* Projekte aus dem Synology-Archiv (Inhaber 28.10.2026: „sehr viele vergangene Projekte im Projektreiter – finde die aktuell wichtigen nicht mehr“):
+   `daten.ausArchiv` (beim Nachtragen gesetzt) – sie stehen unter „Aus dem Archiv“, nicht unter „Aktuell“ und nicht bei den laufenden Projekten in Fällig,
+   bis jemand selbst daran arbeitet (Tagebuch-Eintrag einer Person, nicht nur hochgeladene Dateien) oder „📌 Ist aktuell“ tippt (`daten.aktuell`) */
+function projektNurArchiv(p){
+  var d=(p && p.daten)||{};
+  if(!d.ausArchiv || d.aktuell) return false;
+  return !(p.verlauf||[]).some(function(e){ return e && !/^Claude/.test(e.wer||"") && !/Dateie?n? hinzugefügt/.test(e.text||""); });
+}
+function projektAktuell(p){ return projektOffen(p) && !projektNurArchiv(p); }
 function projektTitel(p){ return (p.nummer?p.nummer+" · ":"")+(p.titel||"Projekt"); }
 function projektPill(p){
   var k = p.status==="verloren" ? "" : (projektOffen(p) ? "p-faellig" : "p-geplant");
@@ -30903,7 +30940,7 @@ function viewProjekte(){
     f.appendChild(el('<div class="card"><div class="pad"><h2>Projekte</h2><div class="note">Projekte gibt es nur mit Anmeldung bei der gemeinsamen Datenbank.</div></div></div>'));
     return f;
   }
-  S.prFilter=S.prFilter||"offen"; S.prQ=S.prQ||""; S.prAnsicht=S.prAnsicht||lsGet("ukt_pr_ansicht", "liste");
+  S.prFilter=S.prFilter||"aktuell"; S.prQ=S.prQ||""; S.prAnsicht=S.prAnsicht||lsGet("ukt_pr_ansicht", "liste");
   var c=el('<div class="card"><div class="pad stack">'+
     '<div class="rowflex" style="justify-content:space-between;align-items:flex-start;gap:12px">'+
       '<div><h2>Projekte</h2><div class="sub">Neue Anlagen und Umbauten – von der Anfrage über Angebot, Auftrag und Baustelle bis zur Inbetriebnahme und Rechnung. '+
@@ -30920,8 +30957,8 @@ function viewProjekte(){
     '<div class="stack" id="pr_liste" style="gap:8px"></div>'+
   "</div></div>");
   var chips=c.querySelector("#pr_chips"), liste=c.querySelector("#pr_liste");
-  var filterWahl=[["offen","Offen"]].concat(PROJEKT_SCHRITTE.map(function(x){ return [x[0], x[1]]; })).concat([["verloren","Nicht beauftragt"],["alle","Alle"]]);
-  var passt=function(p, fw){ return fw==="alle" || (fw==="offen" ? projektOffen(p) : p.status===fw); };
+  var filterWahl=[["aktuell","Aktuell"],["archiv","Aus dem Archiv"]].concat(PROJEKT_SCHRITTE.map(function(x){ return [x[0], x[1]]; })).concat([["verloren","Nicht beauftragt"],["alle","Alle"]]);
+  var passt=function(p, fw){ return fw==="alle" || (fw==="aktuell" ? projektAktuell(p) : fw==="archiv" ? projektNurArchiv(p) : fw==="offen" ? projektOffen(p) : p.status===fw); };
   var zeichnen=function(){
     chips.innerHTML=filterWahl.map(function(x){
       var n=PROJEKTE.filter(function(p){ return passt(p,x[0]); }).length;
@@ -30929,7 +30966,8 @@ function viewProjekte(){
     chips.querySelectorAll("[data-pf]").forEach(function(b){ b.onclick=function(){ S.prFilter=b.dataset.pf; zeichnen(); }; });
     liste.innerHTML="";
     var q=suchNorm(S.prQ);
-    var l=PROJEKTE.filter(function(p){ return passt(p, S.prFilter); }).filter(function(p){
+    /* mit Suchwort sucht „Aktuell“ in allen Projekten – auch im Archiv und abgeschlossenen */
+    var l=PROJEKTE.filter(function(p){ return passt(p, q && S.prFilter==="aktuell" ? "alle" : S.prFilter); }).filter(function(p){
       var s=p.standort_id && byId[p.standort_id];
       return !q || suchNorm([p.nummer, p.titel, kundeTitel(p.kunde_id), s?stName(s):"", (p.daten||{}).typ||""].join(" ")).indexOf(q)>=0; })
       .filter(function(p){ return !S.prTyp || ((p.daten||{}).typ||"")===S.prTyp; });
@@ -30937,8 +30975,17 @@ function viewProjekte(){
     else if(!l.length) liste.appendChild(el('<div class="muted" style="font-size:12.5px">'+(PROJEKTE.length?"Kein Projekt in dieser Auswahl.":"Noch keine Projekte. Ein neues beginnt mit „+ Neues Projekt“ – auch am Markt oder beim Kunden.")+"</div>"));
     /* Tafel (Inhaber 24.10.2026): Spalten nach Phase – gemerkt je Gerät; die Auswahl oben (Offen, Suche, Typ) gilt auch hier */
     c.querySelectorAll("[data-pa]").forEach(function(b){ b.setAttribute("aria-pressed", String(b.dataset.pa===S.prAnsicht)); });
+    if(S.prFilter==="archiv" && l.length) liste.appendChild(el('<div class="muted" style="font-size:12.5px">Aus dem Synology-Archiv nachgetragen – ein Projekt steht wieder unter „Aktuell“, sobald jemand daran arbeitet oder „📌 Ist aktuell“ tippt.</div>'));
     if(l.length && S.prAnsicht==="tafel") liste.appendChild(projektTafel(l));
-    else l.forEach(function(p){ liste.appendChild(projektZeile(p)); });
+    else l.forEach(function(p){
+      var z=projektZeile(p);
+      if(!(S.prFilter==="archiv" && betriebSchreiben())){ liste.appendChild(z); return; }
+      var w=el('<div class="stack" style="gap:4px"></div>'), b=el('<button class="btn ghost sm" type="button" data-praktuell style="align-self:flex-start">📌 Ist aktuell</button>');
+      b.onclick=function(){ b.disabled=true;
+        projektAendern(p, function(d){ d.aktuell=true; }, "Aus dem Archiv als aktuell markiert").then(function(){ toast("„"+projektTitel(p)+"“ steht jetzt unter „Aktuell“."); zeichnen(); },
+          function(e){ b.disabled=false; toast("Nicht gespeichert: "+technikDeutsch((e&&e.message)||String(e))); }); };
+      w.appendChild(z); w.appendChild(b); liste.appendChild(w);
+    });
   };
   c.querySelectorAll("[data-pa]").forEach(function(b){ b.onclick=function(){ S.prAnsicht=b.dataset.pa; lsSet("ukt_pr_ansicht", S.prAnsicht); zeichnen(); }; });
   zeichnen();
