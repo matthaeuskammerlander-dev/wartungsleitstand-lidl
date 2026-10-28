@@ -439,6 +439,11 @@ Kammerlander Umwelt- und Klimatechnik (UKT) – oft kurz, vom Handy, im Feld.
   (`[data-unterlagen]`) → `unterlagenFenster` = `einrichtungDateienKarte(E, true)` nur ansehen (kein Hochladen/✕), alle Mitarbeiter, nie Kunde; im Schritt
   „Arbeiten“ stehen „Alles erledigt, keine Mängel“/„alle auswählen“ oben; Fällig am Handy: „Fälligkeiten nach FM-Region“ zugeklappt, Rundgang-Hinweis als eine
   aufklappbare Zeile (`[data-rgklapp]`).
+  Zweite Runde (Inhaber 28.10.2026: „alle vier umsetzen“): Techniker (`startseiteTechniker`) sehen in Fällig zuerst „Heute für dich“
+  (`heuteFuerMichKarte(true)` auch leer, `data-techoben` → seite „oben“), Kacheln ohne „Märkte in der Auswahl“, die Wartungsliste gleich nach den
+  Störungen; Kalender am Handy ohne gemerkte Wahl als Liste, gewählte Ansicht je Gerät (`ukt_kal_modus`); „👤 Mein Konto“ im ☰ (`[data-kontomenue]`)
+  und unten (`#kontolink`) → `kontoFenster`; am Handy im Protokoll die Kontokarte nur bei Startpasswort (`startpasswortNoch`); im geführten Protokoll
+  „✓ Kein Material / Keine Mängel / Nichts nachgefüllt / Keine Fotos – weiter“ (`nichtsWeiter`, `[data-nichts]`) nur solange leer – sonst Meldung.
 - **Projekte aus dem Archiv** (Inhaber 28.10.2026: „sehr viele vergangene Projekte im Projektreiter – finde die aktuell wichtigen nicht mehr“): `daten.ausArchiv`
   (per SQL bei den aus dem Synology-Archiv nachgetragenen Projekten gesetzt). `projektNurArchiv`: ausArchiv, nicht `daten.aktuell` und kein Tagebuch-Eintrag einer Person
   (Einträge von „Claude …“ und „… Datei(en) hinzugefügt“ zählen nicht). Projektliste: Vorgabe-Chip „Aktuell“ (`projektAktuell` = offen und nicht nur Archiv), Chip

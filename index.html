@@ -832,6 +832,7 @@ table.dt td{padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:
   <button class="btn ghost sm" type="button" id="handbuchlink" hidden>📖 Handbuch</button>
   <button class="btn ghost sm" type="button" id="rundganglink" hidden>🧭 Rundgänge</button>
   <button class="btn ghost sm" type="button" id="unterlagenlink" hidden>📚 Unterlagen</button>
+  <button class="btn ghost sm" type="button" id="kontolink" hidden>👤 Mein Konto</button>
   <button class="btn ghost sm" type="button" id="schriftbtn" hidden title="Schriftgröße auf diesem Gerät">Aa Schriftgröße</button></div>
 <div class="wrap" id="appversion" style="font-size:10.5px;color:var(--ink-2);opacity:.6;text-align:center;padding:14px 0 calc(10px + env(safe-area-inset-bottom,0px))"></div>
 <script>
@@ -2732,6 +2733,11 @@ function reiterMenue(){
   var sg=el('<button type="button" role="menuitem" style="border-top:1px solid var(--line);margin-top:4px">Aa Schriftgröße</button>');
   sg.onclick=function(){ m._zu(); schriftDialog(); };
   m.appendChild(sg);
+  if(Store.modus==="supabase" && Store.benutzer && !nurLesen()){
+    var ko=el('<button type="button" role="menuitem" data-kontomenue>👤 Mein Konto'+(startpasswortNoch()?' <span class="tag f30">Startpasswort ändern</span>':"")+"</button>");
+    ko.onclick=function(){ m._zu(); kontoFenster(); };
+    m.appendChild(ko);
+  }
   m.style.top=Math.round(tabsEl.getBoundingClientRect().bottom+4)+"px";
   var aussen=function(e){ if(m.contains(e.target) || e.target===reiterMenueKnopf) return; m._zu(); };
   var taste=function(e){ if(e.key==="Escape") m._zu(); };
@@ -5240,6 +5246,8 @@ function stoerungEintraegeAuffrischen(){
   });
 }
 
+/* Startseite für Techniker (Inhaber 28.10.2026, Benutzerfreundlichkeit): „Heute für dich“ zuerst, Wartungsliste gleich nach den Störungen */
+function startseiteTechniker(){ return Rolle.name==="techniker" && !nurLesen(); }
 function viewFaellig(){
   var pos=filteredPos();
   var c={ueberfaellig:0,faellig:0,erledigt:0,unbekannt:0};
@@ -5248,6 +5256,7 @@ function viewFaellig(){
   var f=document.createDocumentFragment();
 
   var stoerOffen=offeneStoerungenKunde();
+  var tech=startseiteTechniker();
   /* Kacheln führen hin (antippen): eine Kachel mit 0 bleibt reine Anzeige */
   var kachel=function(klasse, n, text, sprung){
     return n ? '<button type="button" class="kpi'+(klasse?" "+klasse:"")+'" data-sprung="'+sprung+'"><span class="n">'+n+'</span><span class="l">'+text+"</span></button>"
@@ -5258,9 +5267,12 @@ function viewFaellig(){
     (nurLesen() ? "" : kachel("crit", c.ueberfaellig, "Termine überfällig", "ueberfaellig"))+
     kachel(nurLesen() ? "good" : "warn", c.faellig, STATUS_LABEL.faellig, "faellig")+
     kachel("good", c.erledigt, "im Zeitplan", "plan")+
-    kachel("", maerkte.length, "Märkte in der Auswahl", "maerkte")+
+    (tech ? "" : kachel("", maerkte.length, "Märkte in der Auswahl", "maerkte"))+
   '</div>');
   kpis.querySelectorAll("[data-sprung]").forEach(function(b){ b.onclick=function(){ faelligSprung(b.dataset.sprung); }; });
+  /* Techniker (Inhaber 28.10.2026, Benutzerfreundlichkeit): zuerst „Heute für dich“ (auch wenn nichts eingetragen ist),
+     dann die Kacheln ohne „Märkte in der Auswahl“ – die Liste der Wartungen folgt gleich nach den Störungen */
+  if(tech){ var hfmT=heuteFuerMichKarte(true); if(hfmT){ hfmT.dataset.techoben="1"; f.appendChild(hfmT); } }
   f.appendChild(kpis);
   /* einmal je Gerät: Hinweis auf die geführten Rundgänge (Büro 01.10.2026) */
   if(!nurLesen() && !lsGet("ukt_rundgang_gesehen", false)){
@@ -5278,7 +5290,7 @@ function viewFaellig(){
     f.appendChild(rgH);
   }
   /* Kalender: was heute für mich ansteht */
-  if(!nurLesen()){ var hfm=heuteFuerMichKarte(); if(hfm) f.appendChild(hfm); }
+  if(!nurLesen() && !tech){ var hfm=heuteFuerMichKarte(); if(hfm) f.appendChild(hfm); }
   if(!nurLesen()){ var abk=abholKarte(); if(abk) f.appendChild(abk); }
   /* Protokolle nicht geladen: die Wartungen darin fehlen – Termine erschienen
      sonst ohne Hinweis überfällig */
@@ -5295,6 +5307,8 @@ function viewFaellig(){
   /* Inhaber: Sicherung herunterladen, wenn die letzte Datei älter als eine Woche ist (Büro 03.10.2026) */
   var sek=sicherungErinnerungKarte(); if(sek) f.appendChild(sek);
   if(!nurLesen()) f.appendChild(einklappbar(stoerungsKarte(), "stoerungen", stoerOffen.length+" offen"));   /* Kunde: keine Störungskarte */
+  /* hier kommt beim Techniker die Wartungsliste hin (unten gebaut) */
+  var techStelle=tech ? f.appendChild(document.createComment("wartungsliste")) : null;
   /* der Störungskalender ist in den Kalender-Reiter gewandert (Schalter „nur Störungen“, Büro 02.10.2026) */
   /* laufende Projekte (Auftrag, Baustelle, Inbetriebnahme) – damit sie neben den Wartungen nicht untergehen */
   var laufendAlle=nurLesen()?[]:PROJEKTE.filter(function(p){ return ["auftrag","baustelle","inbetriebnahme"].indexOf(p.status)>=0 && !projektNurArchiv(p); });
@@ -5415,7 +5429,8 @@ function viewFaellig(){
     });
     card.appendChild(mehr);
   }
-  f.appendChild(einklappbar(card, "liste", show.length+" Positionen"));
+  var listeKarte=einklappbar(card, "liste", show.length+" Positionen");
+  if(techStelle){ f.insertBefore(listeKarte, techStelle); f.removeChild(techStelle); } else f.appendChild(listeKarte);
   /* der Kunde hat keinen Protokoll-Reiter – dort stünde sonst das Abmelden */
   if(nurLesen() && Store.modus==="supabase" && Store.benutzer) f.appendChild(kontoKarte());
   return f;
@@ -14865,6 +14880,18 @@ function anlagenFotosAnsicht(leaderId, titel){
   zeichnen();
   return v;
 }
+function startpasswortNoch(){
+  return !(demo()||nurLesen()||(Store.benutzer&&Store.benutzer.user_metadata&&Store.benutzer.user_metadata.eigenesPasswort));
+}
+/* „👤 Mein Konto“ im ☰ und unten (Inhaber 28.10.2026, Benutzerfreundlichkeit: die Kontokarte stand am Handy oben im Protokoll) */
+function kontoFenster(){
+  if(!(Store.modus==="supabase" && Store.benutzer)) return;
+  var v=ansichtOeffnen("Mein Konto");
+  var k=kontoKarte(); k.dataset.kontofenster="1";
+  var d=k.querySelector("details.konto"); if(d) d.open=true;
+  k._zu=v.zu;   /* Abmelden schließt das Fenster */
+  v.inhalt.appendChild(k);
+}
 function kontoKarte(){
   var mail=Store.benutzer&&Store.benutzer.email?Store.benutzer.email:"";
   var ich=meineAngaben();
@@ -14880,7 +14907,7 @@ function kontoKarte(){
     "</div>"+
     /* wer noch mit dem vom Büro vergebenen Startpasswort unterwegs ist, bekommt einen Hinweis */
     /* nicht bei Kunde und Präsentation: deren Passwort ändert nur das Büro */
-    ((demo()||nurLesen()||(Store.benutzer&&Store.benutzer.user_metadata&&Store.benutzer.user_metadata.eigenesPasswort))?"":
+    (!startpasswortNoch()?"":
       '<div class="note warnbox" id="k_hinweis">Sie verwenden noch das Startpasswort aus dem Büro. '+
       'Bitte vergeben Sie über „Passwort ändern" ein eigenes, das nur Sie kennen.</div>')+
     '<form id="k_form" class="stack" hidden autocomplete="off">'+
@@ -14905,7 +14932,7 @@ function kontoKarte(){
   var ka=c.querySelector("#k_angaben"); if(ka) ka.onclick=angabenDialog;
   var ksp=c.querySelector("#k_spiel"); if(ksp) ksp.onclick=spielwieseOeffnen;
   /* vor dem Abmelden die Benachrichtigungen dieses Geräts abbestellen (pushVorAbmelden) */
-  c.querySelector("#k_ab").onclick=function(){ if(!abmeldenErlaubt()) return; formDirty=false; pushVorAbmelden().then(function(){ Store.sb.auth.signOut({scope:"local"}); }); };
+  c.querySelector("#k_ab").onclick=function(){ if(!abmeldenErlaubt()) return; formDirty=false; if(c._zu) c._zu(); pushVorAbmelden().then(function(){ Store.sb.auth.signOut({scope:"local"}); }); };
   form.onsubmit=function(e){
     e.preventDefault();
     var p1=c.querySelector("#k_p1").value, p2=c.querySelector("#k_p2").value;
@@ -16549,6 +16576,8 @@ function protoAssistentTeilArbeiten(P){
       inhalt.innerHTML=frage("Welches Material oder welche Ersatzteile haben Sie eingesetzt?");
       var host=form.querySelector("#s_material"), neu=form.querySelector("#s_addmat");
       var zeilen=function(){ return [].slice.call(host.children); };
+      P.nichtsWeiter("Kein Material", function(){ var fa0=form.querySelector("#s_folgeauftrag");
+        return !(fa0 && fa0.checked) && !zeilen().some(function(z){ var t=z.querySelector(".mt-t"); return t && t.value.trim(); }); });
       /* was bei Störungen schon eingesetzt wurde – antippen legt eine Zeile an */
       var haeufig={};
       alleProtokolle().forEach(function(p){ ((p.stoerung&&p.stoerung.material)||[]).forEach(function(m){ var t=String(m&&m.text||"").trim(); if(t) haeufig[t]=(haeufig[t]||0)+1; }); });
@@ -16609,6 +16638,7 @@ function protoAssistentTeilArbeiten(P){
 
     P.schritte.push({titel:"Mängel", zeigen:function(){
       inhalt.innerHTML=frage("Gibt es Mängel?");
+      P.nichtsWeiter("Keine Mängel", function(){ return ![].some.call(form.querySelectorAll(".mangelrow .m-t"), function(t){ return t.value.trim(); }); });
       var liste=el('<div class="stack"></div>');
       var zeichne=function(){
         liste.innerHTML="";
@@ -16685,6 +16715,7 @@ function protoAssistentTeilFotos(P){
     if(f(P.kmVor+"Nach")) P.schritte.push({titel:"Kältemittel", zeigen:function(){
       inhalt.innerHTML=frage("Kältemittel nachgefüllt oder zurückgewonnen?")+
         '<div class="muted" style="font-size:12.5px">Nichts nachgefüllt und nichts zurückgewonnen: leer lassen und weiter.</div>';
+      P.nichtsWeiter("Nichts nachgefüllt", function(){ return !wert(P.kmVor+"Nach").trim() && !wert(P.kmVor+"Ent").trim(); });
       inhalt.appendChild(textFeld("Kältemittel", P.kmVor+"Art", false, "z. B. R410A"));
       [["Nach","nachgefüllt (kg)"],["Ent","zurückgewonnen (kg)"]].forEach(function(x){
         var d=textFeld(x[1], P.kmVor+x[0], false, "0");
@@ -16715,6 +16746,7 @@ function protoAssistentTeilFotos(P){
     P.schritte.push({titel:"Fotos und Rapport", zeigen:function(){
       var F=form._fotos, liste=F?F.liste():[], voll=liste.length>=FOTO_MAX;
       inhalt.innerHTML=frage("Fotos vom Einsatz (freiwillig)");
+      P.nichtsWeiter("Keine Fotos", function(){ var F0=form._fotos; return !(F0 && (F0.liste().length || F0.inArbeit()>0)); });
       var reihe=el('<div class="chips"></div>');
       var a=el('<button class="btn" type="button">Foto aufnehmen</button>');
       a.onclick=function(){ form.querySelector("#f_foto").click(); };
@@ -16939,12 +16971,23 @@ function protokollAssistent(form, stoer){
     if(art!=="text") n.onchange=n.oninput;
     return d;
   }
+  /* „Keine … – weiter“ oben im Schritt (Inhaber 28.10.2026, Benutzerfreundlichkeit: die Störung hat 12 Schritte – leere mit einem Tipp
+     überspringen); nur solange nichts eingetragen ist – sonst eine sichtbare Meldung statt still weiter */
+  function nichtsWeiter(text, leer){
+    if(!leer()) return null;
+    var d=el('<div style="margin:0 0 10px"><button class="btn sm" type="button" data-nichts>✓ '+esc(text)+' – weiter</button></div>');
+    d.querySelector("button").onclick=function(){
+      if(!leer()){ d.remove(); toast("Es ist schon etwas eingetragen – bitte prüfen und unten mit „Weiter“ fortfahren."); return; }
+      weiter();
+    };
+    inhalt.appendChild(d); return d;
+  }
   function knopf(text, art, fn){
     var b=el('<button class="btn'+(art?" "+art:"")+'" type="button">'+esc(text)+"</button>"); b.onclick=fn; fuss.appendChild(b); return b;
   }
   /* Die Teile (je eine Funktion protoAssistentTeil…): erst melden alle ihre Funktionen an, dann bauen sie
      in der ursprünglichen Reihenfolge auf – Gemeinsames liegt im Kontext P */
-  var P={form:form, stoer:stoer, ov:ov, inhalt:inhalt, fuss:fuss, zu:zu, merken:merken, f:f, setz:setz, wert:wert, frage:frage, feld:feld, chips:chips, textFeld:textFeld, knopf:knopf};
+  var P={form:form, stoer:stoer, ov:ov, inhalt:inhalt, fuss:fuss, zu:zu, merken:merken, f:f, setz:setz, wert:wert, frage:frage, feld:feld, chips:chips, textFeld:textFeld, knopf:knopf, nichtsWeiter:nichtsWeiter};
   /* Ablauf-Funktionen dieses Hauptteils, die die Teile aufrufen */
   P.fussNeu=fussNeu; P.zeige=zeige; P.weiter=weiter;
   [protoAssistentTeilMarkt(P),
@@ -19431,7 +19474,8 @@ function viewProtokoll(){
   });
   var gespK=gespeichertKarte();
   if(gespK) f.appendChild(gespK);
-  if(Store.modus==="supabase" && Store.sb && !bearb) f.appendChild(kontoKarte());
+  /* am Handy steht das Konto im ☰ (Inhaber 28.10.2026, Benutzerfreundlichkeit) – hier nur, solange das Startpasswort noch gilt */
+  if(Store.modus==="supabase" && Store.sb && !bearb && (!schmalerBildschirm() || startpasswortNoch())) f.appendChild(kontoKarte());
   f.appendChild(P.head);
   if(P.entwurfKasten) f.appendChild(P.entwurfKasten);
   /* zurück aus der Claude-App (die Seite war dabei neu geladen): das
@@ -26787,6 +26831,7 @@ function kartenOrdnen(host, regeln, praefix, mitLeiste, ausgleichen){
    aufräumen“). Was keiner Regel entspricht, bleibt in der Hauptspalte. */
 var ANSICHT_ORDNUNG={
   faellig:[
+    {wenn:function(k){ return !!(k.dataset && k.dataset.techoben); }, seite:"oben", key:"heute"},   /* Techniker: über den Kacheln */
     {klasse:"kpis", seite:"oben", fest:true},
     {h:/^Heute für dich/, seite:"haupt", key:"heute"},
     {h:/^Rückfragen/, seite:"neben"}, {h:/^Posteingang/, seite:"neben"}, {h:/^Diese Woche/, seite:"neben"}, {h:/^Sicherung herunterladen/, seite:"neben"},
@@ -27358,7 +27403,7 @@ function handbuchKarte(z){
 
     abschnitt("0 · Arbeitsabläufe Schritt für Schritt",
       "<p><strong>Techniker – ein Einsatz</strong></p>"+liste([
-        "<strong>Was steht an?</strong> Reiter <em>Fällig</em>: „Heute für dich“ (Kalender), offene Störungen, anstehende Wartungen. Reiter <em>Kalender</em>: Monat, Woche, Tag oder Liste (die Woche am Handy wie am iPhone: 3 Tage nebeneinander, wählbar 7 Tage oder Liste) – in Tag und Woche in eine freie Zeit tippen legt dort einen Termin an, einen Termin ziehen verschiebt ihn (am Handy kurz halten, dann ziehen), wischen wechselt den Tag; „nur Störungen“ zeigt Einsätze und Lidl-Zieltermine; eine geschickte Tour steht mit Uhrzeiten im Kalender des Technikers, und die Tour kann Termine, Aufgaben und Projekte mit einplanen; „🔍 Planung prüfen“ (Person wählen) zeigt eine kürzere Reihenfolge, zu knappe Fahrten und übersehene Wartungen/Störungen am Markt und in der Nähe; Fahrzeiten zwischen den Einsätzen stehen dabei.",
+        "<strong>Was steht an?</strong> Reiter <em>Fällig</em>: „Heute für dich“ (Kalender), offene Störungen, anstehende Wartungen. Reiter <em>Kalender</em>: Monat, Woche, Tag oder Liste (am Handy zuerst die Liste, das Gerät merkt sich die gewählte Ansicht; die Woche am Handy wie am iPhone: 3 Tage nebeneinander, wählbar 7 Tage oder Liste) – in Tag und Woche in eine freie Zeit tippen legt dort einen Termin an, einen Termin ziehen verschiebt ihn (am Handy kurz halten, dann ziehen), wischen wechselt den Tag; „nur Störungen“ zeigt Einsätze und Lidl-Zieltermine; eine geschickte Tour steht mit Uhrzeiten im Kalender des Technikers, und die Tour kann Termine, Aufgaben und Projekte mit einplanen; „🔍 Planung prüfen“ (Person wählen) zeigt eine kürzere Reihenfolge, zu knappe Fahrten und übersehene Wartungen/Störungen am Markt und in der Nähe; Fahrzeiten zwischen den Einsätzen stehen dabei.",
         "<strong>Protokoll beginnen:</strong> Wartungszeile oder Störung antippen – oder Reiter <em>Protokoll</em> → „Schritt für Schritt ausfüllen“.",
         "<strong>Vor Ort klären:</strong> steht oben im Protokoll (Schritt für Schritt: bei den Anlagen) eine Frage des Büros (etwa „Welche Hausnummer?“, „Dieselbe Anlage?“), bitte kurz antworten – sie erscheint nur, wenn es an diesem Markt eine gibt. Ganz oben steht dann „❓ 1 Frage vor Ort“: antippen springt zur Frage.",
         "<strong>Markt und Anlagen:</strong> gewartete (bzw. betroffene) Anlagen anhaken. Fehlt eine, „+ Anlage fehlt“ – erst prüfen, ob sie nicht doch in der Liste steht.",
@@ -27366,6 +27411,7 @@ function handbuchKarte(z){
           "Inbetriebnahme und Termine bestätigen, „Heute gewartet als“ wählen – bei einer neuen Anlage mit zwei Terminen bestimmt das, welcher Termin heute erledigt ist.",
         "<strong>Arbeiten, Mängel, Ergebnis, Kältemittel</strong> – bei der Störung Störungsbehebung und Material.",
         "<strong>🎤 Diktieren:</strong> neben Bemerkungen, Fehlerbild, Ursache und Maßnahmen – sprechen statt tippen, der Text wird angehängt (Spracherkennung des Handys, keine KI). Geht es nicht, das Mikrofon der Tastatur nehmen.",
+        "<strong>Mein Konto</strong> (Passwort ändern, Meine Angaben, Navi-App, Benachrichtigungen, Abmelden): ☰ → „👤 Mein Konto“ bzw. ganz unten „👤 Mein Konto“. Am Handy steht die Kontokarte im Reiter Protokoll nur noch, solange das Startpasswort nicht geändert ist.",
         "<strong>Schriftgröße:</strong> ☰ (oben bei den Reitern) → „Aa Schriftgröße“, am Handy auch „Aa Schriftgröße“ ganz unten auf jeder Seite – am Handy/Tablet Sehr klein, Klein, Normal, Groß oder Sehr groß, darunter feiner in 5-%-Schritten (− / +); gilt nur auf diesem Gerät, jede Person stellt es sich selbst ein. Am PC Strg und + / − (Strg und 0 = normal).",
         "<strong>🔒 Interne Notiz:</strong> nur für UKT – etwa eine kurze Störmeldung oder ein kleiner Fehler, der beim nächsten Mal behoben werden soll. Im Protokoll (oben bzw. im Schritt „Abschluss“) oder an der Anlage („🔒 Interne Notiz“); steht NICHT im Protokoll und Lidl sieht sie nie. Die Anlage zeigt dann 🔒 im Kopf, wer wieder hinkommt, sieht sie oben im Protokoll – bis jemand „✓ behoben“ tippt.",
         "<strong>Fotos und Rapport:</strong> bis 25 Fotos mit Notiz, bei Lidl den Rapportbericht anhängen (oder später nachreichen) – die ausgeführten Arbeiten daraus kommen zusätzlich in „Durchgeführte Maßnahmen“ (Störung) bzw. „Bemerkungen“ (Wartung).",
@@ -27752,7 +27798,8 @@ var RUNDGAENGE={
       RG_HG("Abgehakt wird hier nichts von Hand: die App rechnet bei jedem Öffnen neu aus, was fällig ist – aus allen bekannten Besuchen (alte Liste, Prüfbuch, Protokolle aus der App). "+
         "Sobald dein Protokoll gespeichert ist, rückt der Termin von selbst weiter.")},
     {reiter:"faellig", ziel:function(){ return rgKarte(/^Heute für dich/) || rgEl(".kpis"); }, titel:"Heute für dich",
-      text:"Was heute im Kalender für dich eingeplant ist und welche Aufgaben überfällig sind. Antippen öffnet den Termin – bei einer eingeplanten Wartung mit „Protokoll beginnen“."+
+      text:"Was heute im Kalender für dich eingeplant ist und welche Aufgaben überfällig sind. Antippen öffnet den Termin – bei einer eingeplanten Wartung mit „Protokoll beginnen“. "+
+        "Bei Technikern steht die Karte ganz oben (auch wenn heute nichts eingetragen ist), gleich nach den offenen Störungen kommen die anstehenden Wartungen."+
       RG_HG(["Was das Büro für dich einplant (Termin, Tour, Störung mit „Einsatz geplant“), steht hier von selbst – du bekommst dazu eine Nachricht.",
         "Ist die eingeplante Wartung gemacht (Protokoll gespeichert), gilt der Kalendereintrag automatisch als erledigt."])},
     {reiter:"faellig", ziel:function(){ return rgKarte(/^Offene Störungen/); }, titel:"Offene Störungen",
@@ -28141,6 +28188,7 @@ Object.assign(RUNDGAENGE, {
       text:RG_LISTE(["<strong>Wartung:</strong> Prüfpunkte anhaken; „Alles erledigt, keine Mängel“ hakt alle Arbeiten, das Ergebnis, die § 23-Aussage und „betriebsbereit: ja“ an – einzeln abwählbar.",
         "<strong>Störung:</strong> Ankunft, Fertig, Fehlerbild, Ursache, <strong>Durchgeführte Maßnahmen (Pflicht)</strong>, „+ Material“, Folgeauftrag mit „Was ist noch zu tun?“.",
         "<strong>Mängel</strong> mit Priorität und Maßnahme; betriebsbereit ja/eingeschränkt/nein; Sofortmaßnahme.",
+        "<strong>Nichts zu erfassen?</strong> Bei Material, Mängel, Kältemittel und Fotos steht oben „✓ Kein Material – weiter“, „✓ Keine Mängel – weiter“ usw. – ein Tipp und der Schritt ist erledigt (nur solange dort nichts eingetragen ist).",
         "🎤 neben den Textfeldern: diktieren statt tippen (Spracherkennung des Handys, keine KI)."])+
       RG_HG(["Widersprüchliche Ergebnisse wählt die App mit Hinweis ab – die spätere Wahl gilt.",
         "Mängel und „Folgeauftrag“ landen beim Inhaber als „Folgeauftrag – Angebot?“; Ankunft–Fertig lehrt die App, wie lange Einsätze an diesem Markt dauern."])},
@@ -29192,6 +29240,9 @@ function wunschLinkNeu(){ var e=document.getElementById("wunschlink"); if(e) e.h
   /* Service-Unterlagen (Fehlercodes, Settinglisten …) für alle Mitarbeiter – sonst nur in der Verwaltung (Inhaber 28.10.2026) */
   var ul=document.getElementById("unterlagenlink");
   if(ul){ ul.hidden=nurLesen() || !(Store.modus==="supabase" && Store.benutzer); ul.onclick=function(){ unterlagenFenster(); }; }
+  /* Konto: am Handy auch im ☰ (Inhaber 28.10.2026, Benutzerfreundlichkeit) */
+  var kl=document.getElementById("kontolink");
+  if(kl){ kl.hidden=nurLesen() || !(Store.modus==="supabase" && Store.benutzer); kl.onclick=function(){ kontoFenster(); }; }
 }
 /* Handbuch auf Papier (Büro 29.09.2026): dieselben Abschnitte, alle aufgeklappt,
    als Blatt – gedruckt wird über den Druckdialog des Geräts (dort auch „als PDF“) */
@@ -37616,7 +37667,11 @@ function viewKalender(){
   var heute=isoLokal(new Date());
   /* Monat zuerst (Büro 02.10.2026: „klassische Kalenderansicht wie bei Störungen“); die To-do-Liste
      steht immer daneben bzw. darunter statt hinter einem eigenen Knopf */
-  if(!S.kalModus || S.kalModus==="aufgaben") S.kalModus="monat";
+  /* am Handy die Liste (Inhaber 28.10.2026, Benutzerfreundlichkeit: der Monat ist dort zu klein); die zuletzt gewählte Ansicht merkt sich das Gerät */
+  if(!S.kalModus || S.kalModus==="aufgaben"){
+    var km=""; try{ km=localStorage.getItem("ukt_kal_modus")||""; }catch(e){}
+    S.kalModus=/^(monat|woche|tag|liste)$/.test(km) ? km : schmalerBildschirm() ? "liste" : "monat";
+  }
   S.kalWer=S.kalWer||kalWerStandard();
   S.kalWoche=S.kalWoche||montagVon(heute);
   if(!S.kalWocheArt) try{ var wa=localStorage.getItem("ukt_kal_wocheart"); if(/^(3|7|liste)$/.test(wa||"")) S.kalWocheArt=wa; }catch(e){}
@@ -37641,7 +37696,7 @@ function viewKalender(){
     b.onclick=function(){ S.kalWer=x[0]; render(); };
     werHost.appendChild(b);
   });
-  c.querySelectorAll("[data-m]").forEach(function(b){ b.onclick=function(){ S.kalModus=b.dataset.m; render(); }; });
+  c.querySelectorAll("[data-m]").forEach(function(b){ b.onclick=function(){ S.kalModus=b.dataset.m; try{ localStorage.setItem("ukt_kal_modus", b.dataset.m); }catch(e){} render(); }; });
   c.querySelector("[data-nur]").onclick=function(){ S.kalNur = S.kalNur==="stoerung" ? "" : "stoerung"; render(); };
   /* Planung prüfen (Büro 02.10.2026): Reihenfolge, Zeit, Übersehenes – für die gewählte Person */
   if(S.kalWer!=="alle" && !nurLesen()){
@@ -39203,7 +39258,7 @@ function projektSchrittAufgaben(p, schritt, schreiben){
   return h;
 }
 /* Fällig: was heute für mich ansteht (Termine, fällige Aufgaben) */
-function heuteFuerMichKarte(){
+function heuteFuerMichKarte(leerZeigen){
   if(!planungAn() || !planungGeladen) return null;
   var heute=isoLokal(new Date());
   var m=kalenderEintraege(heute, heute, "ich")[heute]||[];
@@ -39213,9 +39268,11 @@ function heuteFuerMichKarte(){
   if(wzAn() && !wzGeladen) wzNachladen();
   var morgen=plusTage(heute,1), besorgen=BEDARF.filter(function(b){ var w=bedarfWann(b); return bedarfOffen(b) && w && w>=heute && w<=morgen && bedarfIstMeins(b); });
   var nachher=wzAn() ? wzNachfragen() : [];
-  if(!m.length && !ueber.length && !besorgen.length && !nachher.length) return null;
+  var leer=!m.length && !ueber.length && !besorgen.length && !nachher.length;
+  if(leer && !leerZeigen) return null;
   var c=el('<div class="card"><div class="pad stack" style="gap:6px"><div class="rowflex" style="justify-content:space-between"><h2>Heute für dich</h2>'+
-    '<button class="btn ghost sm" type="button">Kalender</button></div></div></div>');
+    '<button class="btn ghost sm" type="button">Kalender</button></div>'+
+    (leer?'<div class="muted" style="font-size:13px" data-heuteleer>Heute steht für dich nichts im Kalender. Die fälligen Wartungen stehen unten.</div>':"")+"</div></div>");
   c.querySelector("button").onclick=function(){ S.kalModus="woche"; S.kalWer="ich"; S.kalWoche=montagVon(heute); springe({reiter:"kalender", block:"start"}); };
   m.forEach(function(x){ c.querySelector(".stack").appendChild(kalEintragZeile(x, true)); });
   if(ueber.length){

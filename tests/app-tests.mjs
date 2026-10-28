@@ -6692,6 +6692,67 @@ test("Unterlagen für Techniker (Inhaber 28.10.2026): „📚 Unterlagen“ unte
   pruefe(rk, "Kunde sieht den Unterlagen-Knopf nicht");
 });
 
+test("Benutzerfreundlichkeit 2 (Inhaber 28.10.2026): Techniker-Startseite, Kalender am Handy als Liste, Konto im ☰, leere Schritte mit einem Tipp", async () => {
+  const a = await oeffnen(KONTEN.techniker, { handy: true });
+  const r = await a.seite.evaluate(async () => {
+    const x = window.__t.x, w = (ms) => new Promise((f) => setTimeout(f, ms)), e = {};
+    x("S.view='kalender'; render(); 1"); await w(700);   /* lädt die Planung – „Heute für dich“ braucht sie */
+    x("S.view='faellig'; S.faelligListe=''; render(); 1"); await w(500);
+    const app = document.getElementById("app"), h2 = [...app.querySelectorAll("h2")].map((h) => h.textContent.trim());
+    const kp = app.querySelector(".kpis"), heute = [...app.querySelectorAll(".card")].find((c) => /^Heute für dich/.test((c.querySelector("h2") || {}).textContent || ""));
+    e.heuteVorKacheln = !!heute && !!kp && !!(heute.compareDocumentPosition(kp) & Node.DOCUMENT_POSITION_FOLLOWING);
+    e.ohneMaerkte = !/Märkte in der Auswahl/.test(kp ? kp.textContent : "x");
+    const liste = document.getElementById("du_karte"), chart = h2.findIndex((t) => /^Fälligkeiten nach/.test(t));
+    e.listeVorGrafik = !!liste && chart >= 0 && !!(liste.compareDocumentPosition([...app.querySelectorAll("h2")][chart]) & Node.DOCUMENT_POSITION_FOLLOWING);
+    /* Kalender: am Handy ohne gemerkte Wahl die Liste, die Wahl merkt sich das Gerät */
+    localStorage.removeItem("ukt_kal_modus");
+    x("S.kalModus=''; S.view='kalender'; render(); 1"); await w(400);
+    e.kalStart = x("S.kalModus");
+    [...document.querySelectorAll("[data-m]")].find((b) => b.dataset.m === "tag").click(); await w(300);
+    e.kalGemerkt = localStorage.getItem("ukt_kal_modus");
+    x("S.kalModus=''; render(); 1"); await w(300); e.kalWieder = x("S.kalModus");
+    localStorage.removeItem("ukt_kal_modus");
+    /* Konto: mit eigenem Passwort nicht mehr oben im Protokoll, aber im ☰ und unten */
+    x("Store.benutzer.user_metadata=Object.assign({}, Store.benutzer.user_metadata, {eigenesPasswort:true}); formDirty=false; S.protoArt='wartung'; S.stoerungAus=null; S.bearbeiten=null; S.view='protokoll'; render(); 1"); await w(400);
+    e.kontoImProtokoll = /Angemeldet als/.test(document.getElementById("app").innerText);
+    document.querySelector(".tab-menue").click(); await w(150);
+    const km = document.querySelector("#reiter_menue [data-kontomenue]"); e.menue = !!km;
+    km && km.click(); await w(300);
+    const fen = [...document.querySelectorAll(".assistent")].find((o) => /Mein Konto/.test(o.textContent));
+    e.fenster = !!fen && !!fen.querySelector("#k_ab") && !!fen.querySelector("details.konto[open]");
+    fen && fen.querySelector('[data-a="zu"]').click(); await w(150);
+    e.unten = !document.getElementById("kontolink").hidden;
+    /* Startpasswort: die Karte bleibt im Protokoll stehen */
+    x("Store.benutzer.user_metadata=Object.assign({}, Store.benutzer.user_metadata, {eigenesPasswort:false}); render(); 1"); await w(300);
+    e.kontoStartpw = /Angemeldet als/.test(document.getElementById("app").innerText);
+    /* geführtes Störungsprotokoll: Material und Mängel mit einem Tipp überspringen */
+    x("formDirty=false; S.protoArt='stoerung'; S.stoerungAus=null; S.bearbeiten=null; S.protoStandort='TS1'; S.protoPos='TP1'; S.view='protokoll'; render(); 1"); await w(450);
+    document.getElementById("p_gefuehrt").click(); await w(300);
+    const ov = () => document.querySelector(".assistent[data-gefuehrt]"), schritt = () => ov().querySelector(".as-schritt").textContent;
+    for (let i = 0; i < 12 && !/Material$/.test(schritt()); i++) {
+      const b = [...ov().querySelectorAll(".as-fuss button")].find((b) => /^Weiter$|Überspringen/.test(b.textContent.trim())); if (!b) break; b.click(); await w(250); }
+    e.material = /Material$/.test(schritt());
+    const n1 = ov().querySelector("[data-nichts]"); e.n1 = n1 ? n1.textContent.trim() : "";
+    n1 && n1.click(); await w(250); e.nach1 = schritt().split("· ").pop();
+    /* einen Mangel eintragen: der Knopf verschwindet, statt still „keine Mängel“ zu behaupten */
+    const n2 = ov().querySelector("[data-nichts]"); e.n2 = n2 ? n2.textContent.trim() : "";
+    const mt = ov().querySelector("textarea, input[type=text]"); if (mt) { mt.value = "Filter verschmutzt"; mt.dispatchEvent(new Event("input", { bubbles: true })); }
+    n2 && n2.click(); await w(250);
+    e.nachMangel = schritt().split("· ").pop(); e.n2weg = !ov().querySelector("[data-nichts]");
+    return e;
+  });
+  await a.zu();
+  pruefe(r.heuteVorKacheln && r.ohneMaerkte && r.listeVorGrafik, "Techniker-Startseite: " + JSON.stringify(r));
+  pruefe(r.kalStart === "liste" && r.kalGemerkt === "tag" && r.kalWieder === "tag", "Kalender am Handy: " + JSON.stringify(r));
+  pruefe(!r.kontoImProtokoll && r.menue && r.fenster && r.unten && r.kontoStartpw, "Konto im ☰: " + JSON.stringify(r));
+  pruefe(r.material && /Kein Material/.test(r.n1) && r.nach1 === "Mängel" && /Keine Mängel/.test(r.n2) && r.nachMangel === "Mängel" && r.n2weg, "Leere Schritte: " + JSON.stringify(r));
+  /* Admin: Kacheln wie bisher, Liste unten */
+  const b = await oeffnen(KONTEN.admin);
+  const rb = await b.seite.evaluate(() => /Märkte in der Auswahl/.test((document.querySelector(".kpis") || {}).textContent || ""));
+  await b.zu();
+  pruefe(rb, "Admin behält „Märkte in der Auswahl“");
+});
+
 test("Inbetriebnahmeprotokoll: Wasserkreis bei wassergekühlter VRV (Inhaber 28.10.2026) – nur eingetragene Werte im PDF", async () => {
   const a = await oeffnen(KONTEN.inhaber);
   const r = await a.seite.evaluate(() => {
