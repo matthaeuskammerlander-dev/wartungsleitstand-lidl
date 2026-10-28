@@ -517,6 +517,9 @@ Kammerlander Umwelt- und Klimatechnik (UKT) – oft kurz, vom Handy, im Feld.
   Schritt „Fotos“ (Inhaber 12.10.2026) wie „Rapporte und Fotos“ im Arbeitsnachweis: wählen / aus den Projektdateien / einfügen → sofort Projektdatei (Foto bzw.
   Protokoll), am Protokoll `daten.anhaenge` [{pfad, name, typ, notiz}]; Fotos verkleinert, im Blatt `anFotosHtml` (eingebettet in `ibnPdfErzeugen`), PDFs hinten
   über `anhaengeAnPdf`; Entfernen nimmt nur den Verweis.
+  Wasserkreis (Inhaber 28.10.2026): je Anlage `wasser` (`IBN_WASSER`: Wärmeträger, Glykolanteil, Frostschutz, Druck, Wassertemperaturen, Durchfluss, Strömungswächter,
+  Pumpe) im Schritt Messwerte – gezeigt bei wassergekühlter Anlage (`ibnWasserZeigen` → `lidlWassergekuehlt`) oder wenn schon etwas eingetragen ist, sonst Knopf
+  „+ Wasserkreis erfassen“; nichts vorbelegt. Im PDF Abschnitt „Wasserkreis“ nur mit Werten (`wasserHtml`). Pumpenstation im Lidl-Assistenten: UKT-Standard Einzelpumpe.
   Präsentation nur im Speicher (`IBN_DEMO`). Test „Inbetriebnahmeprotokoll: …“ (zwei Anlagen); Attrappe behandelt `inbetriebnahmen` wie `arbeitsnachweise`.
 - **Arbeitszeiten** (Tabelle `arbeitszeiten`): jede Person sieht nur ihre
   eigenen, der Inhaber alle; ein bestätigter Monat ist gesperrt – auch für NEUE Einträge (von Hand, Stempeln,
@@ -920,7 +923,9 @@ Kammerlander Umwelt- und Klimatechnik (UKT) – oft kurz, vom Handy, im Feld.
   Administrator/Passwort für Wartung Stufe 1+2/Freischalten, Hinweis), „In alle Märkte mit Fernzugriff übernehmen“ (`einrichtungInMaerkte` →
   `marktFelderSetzen` je Markt mit fernLink: UKT-Benutzer, Standard-Admin und Kunde ersetzt, andere weitere Benutzer wie Router bleiben, System/Hinweis nur
   wo leer); Anleitungen als Abschnitte (Titel + Text); Dokumente (PDF/Fotos) im Speicher `dokumente` unter einrichtung/ (`dokumentHochladen`,
-  `dokumentOeffnen`). Markt: neue Felder `fernSystem`, `fernHinweis`, geheim `fernVorOrt` {displayPw, adminPw, wartungPw1, wartungPw2, entsperren}
+  `dokumentOeffnen`; der Speicherpfad wird ohne Umlaute geschrieben – „Invalid key“ –, angezeigt bleibt der echte Name). Dokumente nach `gruppe`
+  zugeklappt, ab 7 mit Suchfeld (`einrichtungDateienKarte`, `[data-dokgruppe]`, `[data-doksuche]`; Inhaber 28.10.2026: Service-Unterlagen – Fehlercodelisten,
+  Settinglisten, RTD, iTM, Service Checker – aus dem Synology-Archiv, Gruppe/Titel per SQL in `einstellungen.einrichtung.dateien`). Markt: neue Felder `fernSystem`, `fernHinweis`, geheim `fernVorOrt` {displayPw, adminPw, wartungPw1, wartungPw2, entsperren}
   (`GEHEIM_MARKT`, Sicht stammdaten_lesen ohne), `bestandsplaene` [{pfad, name, titel, typ}] unter markt/<Kennung>/. Markt-Editor: Fieldset Fernzugriff
   mit Online-Zugang UKT, weiteren Benutzern als Zeilen (`fernWeitereZeilen`/`fernWeitereAusZeilen`), Vor Ort (`FERN_VORORT`, `fernVorOrtLesen`),
   „alle anzeigen“, „Standard-Zugänge übernehmen“ (`einrichtungStandardInFormular`), Bestandsplan hochladen (sofort im Speicher, am Markt erst mit

@@ -6634,6 +6634,46 @@ test("Inbetriebnahmeprotokoll: nur werkseitige Füllung bekannt → keine Gesamt
   await a.zu();
 });
 
+test("Einrichtung: Dokumente nach Gruppen, Suche ab 7 Dokumenten (Inhaber 28.10.2026, Service-Unterlagen)", async () => {
+  const a = await oeffnen(KONTEN.inhaber);
+  const r = await a.seite.evaluate(async () => {
+    const x = window.__t.x, warte = (ms) => new Promise((f) => setTimeout(f, ms));
+    const d = (t, g) => ({ pfad: "einrichtung/" + t + ".pdf", name: t + ".pdf", titel: t, gruppe: g, typ: "application/pdf" });
+    window.__dok = { dateien: [d("Fehlercodeliste Klima", "Daikin – Fehlercodes"), d("Störmeldungen Lidl", "Daikin – Fehlercodes"), d("Settingliste VRV V11.6", "Daikin – Settinglisten"),
+      d("RTD Fehlercodes", "RTD-Platinen"), d("RTD-NET Installation", "RTD-Platinen"), d("Service Checker 3.0", "Service Checker"), d("LG Fehlermeldungen", "Andere Marken – Fehlercodes")] };
+    x("EINRICHTUNG=null; 1");
+    const k = x("einrichtungDateienKarte(window.__dok)");
+    document.body.appendChild(k);
+    const stand = () => ({ gruppen: [...k.querySelectorAll("[data-dokgruppe] > summary")].map((s) => s.textContent), offen: k.querySelectorAll("[data-dokgruppe][open]").length,
+      zeilen: k.querySelectorAll("[data-dokument]").length, suche: !k.querySelector("[data-doksuche]").hidden });
+    const vorher = stand();
+    const f = k.querySelector("[data-doksuche]"); f.value = "fehlercode rtd"; f.dispatchEvent(new Event("input")); await warte(50);
+    const treffer = stand();
+    f.value = "störmeldung"; f.dispatchEvent(new Event("input")); await warte(50);
+    const umlaut = stand();
+    k.remove();
+    return { vorher, treffer, umlaut };
+  });
+  await a.zu();
+  pruefe(r.vorher.gruppen.length === 5 && r.vorher.offen === 0 && r.vorher.zeilen === 7 && r.vorher.suche, "Gruppen zugeklappt, Suchfeld da: " + JSON.stringify(r.vorher));
+  pruefe(r.treffer.zeilen === 1 && r.treffer.offen === 1 && /RTD-Platinen/.test(r.treffer.gruppen[0]), "Suche „fehlercode rtd“ → 1 Treffer, Gruppe offen: " + JSON.stringify(r.treffer));
+  pruefe(r.umlaut.zeilen === 1, "Suche mit Umlaut: " + JSON.stringify(r.umlaut));
+});
+
+test("Inbetriebnahmeprotokoll: Wasserkreis bei wassergekühlter VRV (Inhaber 28.10.2026) – nur eingetragene Werte im PDF", async () => {
+  const a = await oeffnen(KONTEN.inhaber);
+  const r = await a.seite.evaluate(() => {
+    const x = window.__t.x;
+    const blatt = (w) => x("ibnBlattHtml({titel:'T'}, {daten:{datum:'2026-10-28', anlagen:[{modell:'RWEYQ10T9', messwerte:{}, regelung:{}, wasser:" + JSON.stringify(w) + "}]}}, [])");
+    const mit = blatt({ medium: "Ethylenglykol", konz: "34", druck: "2,1" }), ohne = blatt({});
+    return { zeigen: [x("ibnWasserZeigen({modell:'RWEYQ10T9'})"), x("ibnWasserZeigen({modell:'RXYLQ10T'})"), x("ibnWasserZeigen({modell:'RXYLQ10T', wasser:{konz:'30'}})")],
+      mit: /Wasserkreis/.test(mit) && /Ethylenglykol/.test(mit) && /34 %/.test(mit) && /2,1 bar/.test(mit) && !/Durchfluss/.test(mit), ohne: /Wasserkreis/.test(ohne) };
+  });
+  await a.zu();
+  pruefe(JSON.stringify(r.zeigen) === "[true,false,true]", "Wasserkreis zeigen: " + JSON.stringify(r.zeigen));
+  pruefe(r.mit && !r.ohne, "PDF: Abschnitt nur mit Werten, leere Zeilen entfallen: " + JSON.stringify(r));
+});
+
 test("Ältere Stände löschen (Inhaber 19.10.2026): eine Rückfrage, je Endung bleibt der neueste, Mappe behält die neuen", async () => {
   const a = await oeffnen(KONTEN.inhaber);
   const r = await a.seite.evaluate(async () => {
