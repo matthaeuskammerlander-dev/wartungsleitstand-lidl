@@ -7760,7 +7760,7 @@ function anlageHistorie(leader){
       /* nachgetragen: Prüfbuch – außer beim Zusammenführen übernommene Listeneinträge */
       var nw=(t.nachweise||[]).filter(function(n){ return n && n.datum===d; })[0];
       z.push({datum:d, art:eintragArt(t, d), techniker:kanonName((t.techniker&&t.techniker[d.slice(0,4)])||""),
-        quelle:nw?(nw.quelle||"Prüfbuch"):"Liste"});
+        quelle:nw?(nw.quelle||"Prüfbuch"):"Liste", datei:nw&&nw.datei||null});
     });
   });
   return z.sort(function(x,y){ return String(y.datum).localeCompare(String(x.datum)); });
@@ -7804,6 +7804,12 @@ function anlageHistorieAnsicht(leader, ohneStoerung){
       var b=el('<button class="btn ghost sm" type="button" style="justify-self:start">Protokoll ansehen</button>');
       b.onclick=function(){ var w=ansichtOeffnen(x.stoerung?"Störungsprotokoll":"Wartungsprotokoll"); w.inhalt.appendChild(protokollDetail(x.protokoll)); };
       r.appendChild(b);
+    }
+    /* Wartung aus dem Synology-Archiv: der Lidl-Rapport dazu (Inhaber 29.10.2026: „warum kann ich den Bericht in PDF nicht öffnen“) */
+    if(x.datei){
+      var rb=el('<button class="btn ghost sm" type="button" style="justify-self:start">📄 Rapport ansehen</button>');
+      rb.onclick=function(){ dokumentOeffnen(x.datei); };
+      r.appendChild(rb);
     }
     box.appendChild(r);
   });
@@ -20570,8 +20576,12 @@ function historieEintraege(s){
         return zaehltAlsWartung(pr) && protokollZeilen(pr).indexOf(p.id)>=0 && gleicherBesuch(pr.datum,d);
       });
       if(ausApp) return;
+      /* aus dem Synology-Archiv nachgetragen: Quelle „Archiv“, antippen öffnet den Rapport (sobald hochgeladen) – nur intern */
+      var nw=(p.nachweise||[]).filter(function(n){ return n && n.datum===d && /^Synology /.test(n.quelle||""); })[0];
+      var ausArchiv=!!nw && !nurLesen();
       zeilen.push({datum:d, anlage:anlagenName(p), art:eintragArt(p, d),
-        techniker:kanonName((p.techniker&&p.techniker[d.slice(0,4)])||""), quelle:"Liste", wartung:true, pos:p});
+        techniker:kanonName((p.techniker&&p.techniker[d.slice(0,4)])||""), quelle:ausArchiv?"Archiv":"Liste", wartung:true, pos:p,
+        archiv:ausArchiv?{quelle:nw.quelle, datei:nw.datei||null}:null});
     });
   });
   alleProtokolle().forEach(function(pr){
@@ -20656,7 +20666,7 @@ function historieAnsicht(s){
                : e.pos ? function(){ anlageHistorieAnsicht(e.pos); } : null;
       if(ziel){
         tr.style.cursor="pointer";
-        tr.title=e.protokoll?"Protokoll ansehen":e.archiv?"Rapport ansehen":"Historie der Anlage";
+        tr.title=e.protokoll?"Protokoll ansehen":e.archiv&&e.archiv.datei?"Rapport ansehen":"Historie der Anlage";
         tr.onclick=ziel;
       }
       tb.appendChild(tr);
@@ -24406,17 +24416,43 @@ function archivPlan(idx, mitRapporten){
     });
     if(l.length) stoer.push({s:s, l:l});
   });
+  /* Wartungs-Rapporte der nachgetragenen Prüfbuch-Nachweise (quelle „Synology 2025: Lidl/Wartungen/….pdf (Art unsicher …)“):
+     eine Datei gilt oft für mehrere Anlagen eines Markts – einmal hochladen, an jeden Nachweis hängen */
+  var wart={};
+  if(mitRapporten) ALLE_POS.forEach(function(p){
+    (Array.isArray(p.nachweise)?p.nachweise:[]).forEach(function(n, i){
+      if(!n || n.datei) return;
+      var m=/^Synology (20\d\d): (.+?\.[A-Za-z0-9]{2,4})(?: \(.*\))?$/.exec(String(n.quelle||""));
+      var k=m && m[1]+"/"+m[2];
+      if(!k || !idx[k]) return;
+      (wart[k]=wart[k]||{k:k, f:idx[k], sid:p.standortId, an:[]}).an.push({pid:p.id, i:i});
+    });
+  });
   PROJEKTE.forEach(function(p){
     var a=(p.daten||{}).archiv; if(!a || (!(a.ordner||[]).length && !(a.einzeln||[]).length)) return;
     var ohne={}; (a.ohne||[]).forEach(function(k){ ohne[k]=1; });
     var l=schl.filter(function(k){ return !ohne[k] && ((a.ordner||[]).some(function(o){ return k.indexOf(o+"/")===0; }) || (a.einzeln||[]).indexOf(k)>=0) && archivPasst(k); });
     if(l.length) projekte.push({p:p, l:l});
   });
-  return {stoer:stoer, projekte:projekte};
+  return {stoer:stoer, wartungen:Object.keys(wart).map(function(k){ return wart[k]; }), projekte:projekte};
 }
 function archivHochladen(plan, idx, melde){
-  var n=0, alle=plan.stoer.reduce(function(s,x){ return s+x.l.length; },0)+plan.projekte.reduce(function(s,x){ return s+x.l.length; },0);
+  var n=0, alle=plan.stoer.reduce(function(s,x){ return s+x.l.length; },0)+plan.wartungen.length+plan.projekte.reduce(function(s,x){ return s+x.l.length; },0);
   var kette=Promise.resolve();
+  if(plan.wartungen.length) kette=kette.then(function(){
+    var pro={};
+    return plan.wartungen.reduce(function(k, w){ return k.then(function(){
+      return dokumentHochladen("archiv/"+w.k.slice(0,4)+"/"+w.sid, w.f).then(function(d){ n++; melde(n, alle, stName(byId[w.sid]||{})+" (Wartung)");
+        if(!d) return;
+        w.an.forEach(function(a){
+          var p=posById[a.pid]; if(!p) return;
+          var l=pro[a.pid] ? pro[a.pid].nachweise : p.nachweise.map(function(x){ return Object.assign({}, x); });
+          if(l[a.i]) l[a.i].datei={pfad:d.pfad, name:d.name, typ:d.typ};
+          pro[a.pid]={nachweise:l};
+        });
+      }); }); }, Promise.resolve())
+      .then(function(){ return Object.keys(pro).length ? positionenSchreiben(pro, "Rapporte aus dem Synology-Archiv angehängt", {}) : null; });
+  });
   plan.stoer.forEach(function(x){ kette=kette.then(function(){
     var neu=x.s.stoerungenArchiv.map(function(a){ return Object.assign({}, a); }), da=0;
     return x.l.reduce(function(k, e){ return k.then(function(){
@@ -24440,7 +24476,7 @@ function synologyArchivKarte(){
     '<div class="sub">Den Synology-Ordner wählen (darin 2025, 2026 …). Die App legt die Unterlagen der nachgetragenen Projekte ab – Angebote, Rechnungen und '+
       'Bestellungen nur für dich; CAD-Dateien, HEIC-Fotos und Videos bleiben auf der Synology. Vorher steht da, wie viel es wird. Schon Hochgeladenes wird übersprungen. '+
       'Bitte die Seite offen lassen, bis es fertig ist.</div>'+
-    '<label class="chk" style="font-size:13px"><input type="checkbox" data-rap checked><span>Auch die Rapporte der nachgetragenen Störungen (antippen in der Historie öffnet sie)</span></label>'+
+    '<label class="chk" style="font-size:13px"><input type="checkbox" data-rap checked><span>Auch die Rapporte der nachgetragenen Störungen und Wartungen (antippen in der Historie öffnet sie)</span></label>'+
     '<label class="btn sm" style="cursor:pointer;align-self:flex-start">📂 Ordner wählen<input type="file" data-arch hidden webkitdirectory multiple></label>'+
     /* Einzeldateien mit dem Synology-Weg im Namen (vorbereitet vom Büro-Assistenten): werden gleich hochgeladen, Stapel für Stapel */
     '<label class="btn ghost sm" style="cursor:pointer;align-self:flex-start;font-size:12px">Vorbereitete Dateien (Weg im Namen)<input type="file" data-archdat hidden multiple></label>'+
@@ -24463,12 +24499,13 @@ function synologyArchivKarte(){
     if(!dateien.length) return;
     st.textContent="Ordner wird geprüft ("+dateien.length+" Dateien) …";
     var idx=archivIndex(dateien), plan=archivPlan(idx, c.querySelector("[data-rap]").checked);
-    var ns=plan.stoer.reduce(function(s,x){ return s+x.l.length; },0), np=plan.projekte.reduce(function(s,x){ return s+x.l.length; },0);
+    var ns=plan.stoer.reduce(function(s,x){ return s+x.l.length; },0)+plan.wartungen.length, np=plan.projekte.reduce(function(s,x){ return s+x.l.length; },0);
     var mb=Math.round([].concat.apply([], plan.stoer.map(function(x){ return x.l.map(function(e){ return e.f.size; }); }))
+      .concat(plan.wartungen.map(function(w){ return w.f.size; }))
       .concat([].concat.apply([], plan.projekte.map(function(x){ return x.l.map(function(k){ return idx[k].size; }); }))).reduce(function(s,v){ return s+v; },0)/1048576);
     st.textContent="";
     if(!ns && !np){ planEl.innerHTML='<div class="note">Im gewählten Ordner ist nichts, was noch fehlt (oder es ist der falsche Ordner – gewählt werden muss der Ordner, in dem „2025“/„2026“ liegen).</div>'; return; }
-    planEl.innerHTML="<div><strong>"+ns+"</strong> Rapporte für "+plan.stoer.length+" Märkte · <strong>"+np+"</strong> Projektdateien für "+plan.projekte.length+" Projekte · ca. "+mb+" MB</div>"+
+    planEl.innerHTML="<div><strong>"+ns+"</strong> Rapporte (Störungen und Wartungen) · <strong>"+np+"</strong> Projektdateien für "+plan.projekte.length+" Projekte · ca. "+mb+" MB</div>"+
       '<button class="btn sm" type="button" data-los style="margin-top:6px">Jetzt hochladen</button>';
     planEl.querySelector("[data-los]").onclick=function(){
       this.disabled=true; inp.disabled=true;
@@ -28426,7 +28463,7 @@ Object.assign(RUNDGAENGE, {
         "Projekttermine erscheinen im Kalender – ohne eigenen Kalendereintrag und ohne Nachricht; Aufgaben und „Einplanen“ dagegen mit Nachricht an die Eingetragenen."])},
     {titel:"Baustellenbuch, Dateien, PDF", text:RG_LISTE([
       "<strong>Baustellenbuch</strong>: Datum, Art, Beschreibung, Menge – orange, was für die Rechnung zählt (Zusatzleistung, Kran, Material, Wochenende, Erschwernis …). Mengen, keine Preise.",
-      "<strong>Dateien</strong>: Art wird erkannt; <strong>Pläne finden</strong>: Suchfeld (z. B. „dach klima“), Knöpfe für Art, Geschoss (UG/EG/OG/DG/Dach) und Gewerk – erkannt aus Name, Ordner und PDF-Titel, je Datei mit ✎ änderbar (dazu ein lesbarer Name, die Art, beim Inhaber „🔒 Nur für den Inhaber“ und „🗑 Datei löschen“ mit Rückfrage); PDFs mit Beträgen in € erkennt die App beim Hochladen: sie bleiben für alle sichtbar, der Inhaber sieht den Hinweis „💶 enthält Preisangaben“ und stellt sie bei Bedarf mit ✎ auf „nur für den Inhaber“; 📌 heftet wichtige Pläne oben an; mehrere Stände desselben Plans stehen beisammen (der neueste oben). Oben im Projekt springt die Leiste zu jedem Abschnitt. „Ganzen Ordner hochladen“ überspringt Gleichnamiges; doppelte Dateien erkennt die App am Inhalt (auch „Plan (1).pdf“ oder eine Kopie unter anderem Namen) und lädt sie nicht nochmals hoch; höchstens 50 MB je Datei (Größeres wird ausgelassen, der Rest hochgeladen). <strong>📦 Mappen zum Versenden</strong>: „+ Mappe“ (z. B. „Unterlagen für Lidl“), Dateien anhaken, „⬇ Als ZIP“ lädt alle auf einmal herunter – zum Weitersenden; Dateien nur für den Inhaber kommen nur in eine <strong>Inhaber-Mappe</strong>: der Inhaber kann Angebote und Rechnungen des Projekts (App-Belege frisch als PDF, KPlus-Belege als Original) und 🔒-Dateien dazunehmen – diese Mappe sieht nur er. <strong>Projektliste</strong>: „☰ Liste“ oder „▦ Tafel“ (Spalten Planung · Angebot · Auftrag · Baustelle · Abschluss, das Gerät merkt sich die Wahl); je Projekt Farbe der Phase, „Schritt n von 11“, nächster Termin und <strong>Titelbild</strong> – ein angeheftetes, sonst das neueste Foto; in „Auf einen Blick“ mit „🖼 Titelbild wählen“ ändern, antippen zeigt es groß. Fotos nur für den Inhaber werden nie Titelbild. <strong>📦 Lidl-Unterlagen</strong> (nur Inhaber, Lidl-Projekte mit Markt): der Assistent zeigt eine Prüfliste (was an den Anlagen fehlt), nimmt die Angaben auf (Datum = Inbetriebnahme + 1 Woche, Planer, Aufstellort, Bereiche, Schall) und erzeugt Technische Beschreibung, Anlagenschema (A3) und KAV-Bestätigung als PDF – „👁 Ansehen“ ohne Ablegen, „⬆ Ablegen“ in die Dateien; dazu Datenblätter aus der Gerätebibliothek, das Inbetriebnahmeprotokoll nach der letzten Vorlage (du prüfst und unterschreibst) und „Mappe füllen …“ mit dem neuesten Stand jeder Unterlage. Fehlendes bleibt in den Unterlagen einfach weg. „⚙ Vorlage“: Verantwortlicher, Zertifikate, Logos, QR-Code und je Modell technische Daten und Datenblatt.",
+      "<strong>Dateien</strong>: Art wird erkannt; <strong>Pläne finden</strong>: Suchfeld (z. B. „dach klima“), Knöpfe für Art, Geschoss (UG/EG/OG/DG/Dach) und Gewerk – erkannt aus Name, Ordner und PDF-Titel, je Datei mit ✎ änderbar (dazu ein lesbarer Name, die Art, beim Inhaber „🔒 Nur für den Inhaber“ und „🗑 Datei löschen“ mit Rückfrage); PDFs mit Beträgen in € erkennt die App beim Hochladen: sie bleiben für alle sichtbar, der Inhaber sieht den Hinweis „💶 enthält Preisangaben“ und stellt sie bei Bedarf mit ✎ auf „nur für den Inhaber“; 📌 heftet wichtige Pläne oben an; mehrere Stände desselben Plans stehen beisammen (der neueste oben). Oben im Projekt springt die Leiste zu jedem Abschnitt. „Ganzen Ordner hochladen“ überspringt Gleichnamiges; doppelte Dateien erkennt die App am Inhalt (auch „Plan (1).pdf“ oder eine Kopie unter anderem Namen) und lädt sie nicht nochmals hoch; höchstens 50 MB je Datei (Größeres wird ausgelassen, der Rest hochgeladen). <strong>📦 Mappen zum Versenden</strong>: „+ Mappe“ (z. B. „Unterlagen für Lidl“), Dateien anhaken, „⬇ Als ZIP“ lädt alle auf einmal herunter – zum Weitersenden; Dateien nur für den Inhaber kommen nur in eine <strong>Inhaber-Mappe</strong>: der Inhaber kann Angebote und Rechnungen des Projekts (App-Belege frisch als PDF, KPlus-Belege als Original) und 🔒-Dateien dazunehmen – diese Mappe sieht nur er. <strong>Projektliste</strong>: „☰ Liste“ oder „▦ Tafel“ (Spalten Planung · Angebot · Auftrag · Baustelle · Abschluss, das Gerät merkt sich die Wahl); je Projekt Farbe der Phase, „Schritt n von 11“, nächster Termin und <strong>Titelbild</strong> – ein angeheftetes, sonst das neueste Foto; in „Auf einen Blick“ mit „🖼 Titelbild wählen“ ändern, antippen zeigt es groß. Fotos nur für den Inhaber werden nie Titelbild. <strong>📦 Lidl-Unterlagen</strong> (nur Inhaber, Lidl-Projekte mit Markt): der Assistent zeigt eine Prüfliste (was an den Anlagen fehlt), nimmt die Angaben auf (Datum = Inbetriebnahme + 1 Woche, Planer, Aufstellort, Bereiche, Schall; für die KAV Bescheid der Behörde und Schallgutachten – ohne Zahl steht „Zahl: wird nachgereicht“, die Prüfliste erinnert daran) und erzeugt Technische Beschreibung, Anlagenschema (A3) und KAV-Bestätigung als PDF – „👁 Ansehen“ ohne Ablegen, „⬆ Ablegen“ in die Dateien; dazu Datenblätter aus der Gerätebibliothek, das Inbetriebnahmeprotokoll nach der letzten Vorlage (du prüfst und unterschreibst) und „Mappe füllen …“ mit dem neuesten Stand jeder Unterlage. Fehlendes bleibt in den Unterlagen einfach weg. „⚙ Vorlage“: Verantwortlicher, Zertifikate, Logos, QR-Code und je Modell technische Daten und Datenblatt.",
       "<strong>Stunden</strong> auf das Projekt, <strong>Tagebuch</strong>, <strong>Nachrichten</strong>.",
       "<strong>Zusammenfassung (PDF)</strong>: Eckdaten, Angaben mit Quellen, Listen, Baustellenbuch, Dateiliste, Tagebuch – „Ablegen“ für die Synology."])+
       RG_HG(["Angebot und Rechnung als Dateiart (unter „buero/“) nur für den Inhaber – ebenso eine Mail (.eml), die ein Angebot/eine Rechnung als Anhang oder einen Preis im Text enthält (z. B. „4.800 € netto“; bei der Datei steht dann „enthält Preise“, andere legen sie nicht ab); auf der Synology nur im Büro-Ordner, nie im Projektordner, den Techniker sehen.",
@@ -35981,6 +36018,16 @@ function lidlAngaben(p, anl){
   var u=JSON.parse(JSON.stringify(((p && p.daten)||{}).lidlUnterlagen||{})), s=lidlMarkt(p), bet=((p && p.daten)||{}).beteiligte||[];
   var rolle=function(re){ var b=bet.filter(function(x){ return re.test(x.rolle||""); })[0]; return b ? String(b.firma||b.name||"") : ""; };
   var vor=function(k, w){ if(u[k]==null) u[k]=w; };
+  /* Neubau bzw. Neuanlage (Inhaber 28.10.2026, Fil. 639 Amstetten): keine Altanlage – ohne Demontage und Weiterverwendung, kein ConveniPack-Text */
+  var typ=String(((p && p.daten)||{}).typ||""), fil=s.filiale ? "Filiale "+s.filiale+" in "+(s.ort||"") : stName(s);
+  if(/neubau|neuanlage/i.test(typ)){
+    var nb=/neubau/i.test(typ), wa=lidlWasserProjekt(anl);
+    vor("bauvorhaben", (nb ? "Neubau der Filiale – Klimatisierung" : "Klimatisierung – Neuanlage")+" (Heizung und Kühlung über "+(wa ? "wassergekühlte VRV-Anlage" : "Wärmepumpen")+")");
+    vor("allgemein", "Die Lidl Österreich GmbH hat "+(nb ? "die "+fil+" neu errichtet." : "in der "+fil+" die Klimatisierung neu errichtet.")+" Heizung und Kühlung der Filiale erfolgen über "+
+      (wa ? "eine wassergekühlte VRV-Anlage" : "Wärmepumpen")+".\n\n"+
+      "Diese Beschreibung umfasst die Klimatisierung (Heizung und Kühlung) der Filiale, ausgeführt von der Umwelt- und Klimatechnik GmbH.");
+    vor("demontage", ""); vor("weiter", "");
+  }
   if(lidlWasserProjekt(anl)){
     /* wassergekühlt: eigene Vorgaben (alles änderbar; was je Filiale verschieden ist, bleibt leer und steht in der Prüfliste) */
     vor("bauvorhaben", "Umbau und Austausch der Kälteanlagen – Klimatisierung (neuer Rückkühler und neue Pumpenstation der wassergekühlten VRV-Anlage)");
@@ -36012,6 +36059,8 @@ function lidlAngaben(p, anl){
   vor("schallText", "Die Schallreduktion erfolgt über den Flüsterbetrieb der Außengeräte, gesteuert über Zeitprogramm.");
   if(!Array.isArray(u.schall)) u.schall=[{text:"VRV-Wärmepumpen je Gerät", db:""}];
   vor("kavUnter", lidlGeraeteZeile(anl));
+  /* Bescheid der Behörde und Schallgutachten (Inhaber 28.10.2026, Amstetten: Lidl verlangt die Bescheidnummer; Vorbild KAV Mattighofen) – leer = KAV wie Deutschlandsberg */
+  ["bescheidZahl", "bescheidBehoerde", "gutachtenVon", "gutachtenDatum", "messberichtVon", "messberichtDatum", "messungDatum"].forEach(function(k){ vor(k, ""); });
   u.bereiche=u.bereiche||{};
   anl.forEach(function(x){ if(u.bereiche[x.id]==null) u.bereiche[x.id]=(Array.isArray(x.d.innengeraete)?x.d.innengeraete:[]).map(function(g){ return String(g.raum||"").trim(); })
     .filter(function(r, i, l){ return r && l.indexOf(r)===i; }).join(", "); });
@@ -36048,6 +36097,10 @@ function lidlPruefliste(p, anl, u, V, ibn){
   l.push([!!u.datum, u.datum ? "Datum TB und KAV: "+dfmt(u.datum) : "Datum für TB und KAV fehlt (Inbetriebnahme unbekannt)."]);
   l.push([u.schall.some(function(z){ return String(z.db||"").trim(); }), "Schallwerte "+(u.schall.some(function(z){ return String(z.db||"").trim(); }) ? "eingetragen" : "fehlen (Einreichplan)")]);
   l.push([!!(V.verantwortlich && V.verfasser), V.verantwortlich && V.verfasser ? "KAV-Vorlage: Verantwortlicher und Verfasser hinterlegt" : "KAV-Vorlage unvollständig – „⚙ Vorlage“ öffnen."]);
+  /* Lidl verlangt die Bescheidnummer (Inhaber 28.10.2026, Amstetten) – nur Hinweis, die KAV entsteht trotzdem */
+  var bz=String(u.bescheidZahl||"").trim(), bb=String(u.bescheidBehoerde||"").trim();
+  l.push([!!bz, bz ? "KAV: Bescheid Zahl "+bz+(bb ? ", "+bb : " (Behörde nicht eingetragen)") : bb ? "KAV: Bescheidzahl fehlt – in der KAV steht „Zahl: wird nachgereicht, "+bb+"“. Lidl verlangt die Zahl."
+    : "KAV: Bescheid der Behörde fehlt (Zahl und Behörde unter Angaben) – Lidl verlangt die Bescheidnummer."]);
   var u2=(ibn||[]).filter(function(a){ return a.unterschrieben; });
   l.push([u2.length>0, u2.length ? "Inbetriebnahmeprotokoll unterschrieben"+(u2.some(function(a){ return a.pdf_pfad; }) ? " und abgelegt" : " – PDF noch nicht abgelegt") : (ibn||[]).length ? "Inbetriebnahmeprotokoll: Entwurf, noch nicht unterschrieben" : "Noch kein Inbetriebnahmeprotokoll"]);
   return l;
@@ -36136,15 +36189,25 @@ function lidlKavHtml(p, anl, u, V, bilder){
   var s=lidlMarkt(p), P="margin:0;font-size:15px;line-height:1.35";
   var schall=(u.schall||[]).filter(function(z){ return String(z.db||"").trim(); });
   var img=function(b, h){ return b && b.url ? "<img src='"+b.url+"' alt='' style='max-height:"+h+"px;max-width:100%'>" : ""; };
+  /* Bescheid und Schallgutachten (Inhaber 28.10.2026, wie KAV Mattighofen): Zahl fehlt, Behörde da → „Zahl: wird nachgereicht, BH …“; alles leer → wie Deutschlandsberg */
+  var zahl=String(u.bescheidZahl||"").trim(), beh=String(u.bescheidBehoerde||"").trim(), wasser=lidlWasserProjekt(anl);
+  var bescheid=zahl||beh ? "Zahl: "+(zahl||"wird nachgereicht")+(beh ? ", "+beh : "") : "";
+  var der=function(b){ return /^Magistrat\b/i.test(b) ? "des Magistrats"+b.slice(9) : "der "+b; };
+  var ref=function(art, von, am){ von=String(von||"").trim(); return von||am ? [art, von, am ? "vom "+dfmt(am) : ""].filter(Boolean).join(" ") : ""; };
+  var gut=ref("Schallschutz-Gutachten", u.gutachtenVon, u.gutachtenDatum), mess=ref("Schallmessbericht", u.messberichtVon, u.messberichtDatum);
+  if(u.messungDatum) mess=(mess||"Schallmessbericht")+" (Messung "+dfmt(u.messungDatum)+")";
   return "<div class='kopf' style='display:flex;justify-content:flex-end'><img src='logo.png' alt='Kammerlander Umwelt- und Klimatechnik GmbH' style='height:56px'></div>"+
     "<table style='font-size:18px;margin:10px 0 0;border-collapse:collapse;border:0'><tr><td style='border:0;padding:0 18px 0 0;width:110px;vertical-align:top'>Objekt:</td><td style='border:0;padding:0'>"+esc(lidlObjekt(s))+"</td></tr>"+
       "<tr><td style='border:0;padding:0 18px 0 0;vertical-align:top'>Betreiber:</td><td style='border:0;padding:0'>"+esc(u.betreiber||"")+"</td></tr></table>"+
     "<div style='text-align:center;margin:26px 0 30px'><div style='font-size:24px;font-weight:700;word-spacing:8px'>Bestätigung Kälteanlagen (Wärmepumpe)</div>"+
-      (u.kavUnter ? "<div style='font-size:15px;font-weight:700;margin-top:2px'>"+esc(u.kavUnter)+"</div>" : "")+"</div>"+
+      [u.kavUnter, bescheid, gut, mess].filter(function(z){ return String(z||"").trim(); }).map(function(z){ return "<div style='font-size:15px;font-weight:700;margin-top:2px'>"+esc(z)+"</div>"; }).join("")+"</div>"+
     "<p style='"+P+"'>-Hiermit wird bestätigt, dass die Kälteanlagen (Wärmepumpen) gemäß Kälteanlagenverordnung, ÖNORM und EN378 in letztgültiger Fassung sach- und fachgerecht installiert und in Betrieb genommen wurden.</p>"+
+    (bescheid ? "<p style='"+P+"'>-Die Auflagen gemäß o.g. Bescheid"+(beh ? " "+esc(der(beh)) : "")+" werden erfüllt.</p>" : "")+
     "<p style='"+P+"'>Die ausgeführten Arbeiten und Inbetriebnahmen sind in den Kälteprüfbüchern dokumentiert.</p>"+
     "<p style='"+P+"'>-Die Grenzwerte gemäß ÖNORM EN 378 wurden eingehalten.</p>"+
-    (schall.length ? "<p style='"+P+"'>-Schallwerte "+(lidlWasserProjekt(anl) ? "des Rückkühlers (wassergekühlte VRV, Außengeräte im Technikraum)" : "der Wärmepumpen")+(u.schallQuelle ? " ("+esc(u.schallQuelle)+")" : "")+":</p><table style='margin:0 0 0 46px;font-size:15px;border-collapse:collapse;border:0;width:auto'>"+
+    (schall.length ? "<p style='"+P+"'>"+(gut ? "-Die Einhaltung des höchstzulässigen Schallleistungspegels"+(wasser ? " des Rückkühlers" : "")+(schall.length>1 ? " für die unterschiedlichen Zeiträume" : "")+" gemäß "+esc(gut)+" wird wie folgt eingehalten:" :
+      "-Schallwerte "+(wasser ? "des Rückkühlers (wassergekühlte VRV, Außengeräte im Technikraum)" : "der Wärmepumpen")+(u.schallQuelle ? " ("+esc(u.schallQuelle)+")" : "")+":")+
+      "</p><table style='margin:0 0 0 46px;font-size:15px;border-collapse:collapse;border:0;width:auto'>"+
       schall.map(function(z){ return "<tr><td style='border:0;padding:0 30px 0 0'>"+esc(z.text||"")+"</td><td style='border:0;padding:0;white-space:nowrap'>"+esc(String(z.db).trim().replace(/\s*dB.*$/i,""))+" dB&nbsp;&nbsp;Schallleistungspegel</td></tr>"; }).join("")+"</table>" : "")+
     (u.nachtVon && u.nachtBis ? "<p style='"+P+";margin:12px 0 0 46px'>Nachtabsenkung / Flüsterbetrieb "+esc(u.nachtVon+"–"+u.nachtBis)+" Uhr über Zeitprogramm.</p>" : "")+
     "<p style='"+P+";margin-top:16px'>Darüber hinaus sind sämtliche Anlagen und Anlagenteile in technisch dauerhaft dichter Ausführung erstellt und einer nachher erfolgten Druckprüfung unterzogen;</p>"+
@@ -36171,6 +36234,41 @@ function lidlKavBilder(V){
 }
 /* ---------- Anlagenschema (A3 quer, Prinzipschema wie Graz/Oberwart) ---------- */
 var LIDL_FARBEN=["#c0392b","#27864a","#2f5d8a","#b7791f","#7b3fa0","#127a7a","#a0522d","#555f6b"];
+/* Schema-Texte passen immer (Inhaber 28.10.2026, Fil. 639 Amstetten: „R32-Split Backshop · Außengerät“ und „VRV 1 – Kassa, O&G, Verkauf vorne, Lager“
+   liefen über den Kastenrand, ein langer Aufstellort über die Spalte): Breite wie gezeichnet (Arial), ohne Zeichenfläche geschätzt */
+var LIDL_MESSEN=null;
+function lidlTextBreite(txt, gr, fett){
+  try{
+    if(!LIDL_MESSEN) LIDL_MESSEN=document.createElement("canvas").getContext("2d");
+    LIDL_MESSEN.font=(fett ? "700 " : "")+gr+"px Arial, Helvetica, sans-serif";
+    return LIDL_MESSEN.measureText(String(txt)).width;
+  }catch(f){ return String(txt).length*gr*(fett ? 0.6 : 0.55); }
+}
+/* erste Fassung, die mit Schrift gr … klein in platz passt; sonst die letzte gekürzt mit „…“ (nieKuerzen: null) */
+function lidlPassend(fassungen, platz, gr, klein, fett, nieKuerzen){
+  for(var i=0;i<fassungen.length;i++) for(var g=gr; g>=klein-0.01; g-=0.5) if(lidlTextBreite(fassungen[i], g, fett)<=platz) return {text:fassungen[i], gr:g};
+  if(nieKuerzen) return null;
+  var z=String(fassungen[fassungen.length-1]);
+  while(z.length>1 && lidlTextBreite(z+"…", klein, fett)>platz) z=z.slice(0, -1);
+  return {text:z.replace(/[\s,;·–-]+$/,"")+"…", gr:klein};
+}
+/* Kastentitel: ganzer Name (bis gut 4/5 der Schrift), sonst der Teil vor „ – “ (die Bereiche stehen beim Innengerät), dann ohne Zusatz, zuletzt gekürzt */
+function lidlTitelPassend(name, zusatz, platz, gr, klein){
+  name=String(name||"").trim(); var kurz=name.split(/\s+[–-]\s+/)[0].trim()||name, l=[name+zusatz];
+  if(kurz!==name) l.push(kurz+zusatz);
+  return lidlPassend(l, platz, gr, Math.max(klein, gr*0.84), true, true) || lidlPassend([kurz], platz, gr, klein, true);
+}
+/* Text auf platz umbrechen, höchstens max Zeilen – der Rest kommt gekürzt in die letzte */
+function lidlUmbrechen(txt, platz, gr, max){
+  var z=[], akt="";
+  String(txt||"").trim().split(/\s+/).filter(Boolean).forEach(function(w){
+    var neu=akt ? akt+" "+w : w;
+    if(akt && lidlTextBreite(neu, gr)>platz){ z.push(akt); akt=w; } else akt=neu;
+  });
+  if(akt) z.push(akt);
+  if(z.length>max) z=z.slice(0, max-1).concat([z.slice(max-1).join(" ")]);
+  return z.map(function(x){ return lidlPassend([x], platz, gr, gr).text; });
+}
 /* wassergekühlte VRV (Inhaber 27.10.2026: „genauer, Wärmerückgewinnung und Regelung hervorheben“): Hydraulikschema mit Symbolen –
    Rückkühler (außen) · Technikraum: Pumpe, 3-Wege-Umschaltventil Heizen/Kühlen, Schmutzfänger, Ausdehnungsgefäß, Sicherheitsventil,
    Wärmerückgewinnung (Plattentauscher mit Bypass, AHT-Seite), Puffer mit E-Heizstab, Sammelleitungen, RWEYQ mit Strömungswächter ·
@@ -36198,9 +36296,11 @@ function lidlSchemaWasserSvg(p, anl, u, logoUrl, t, rect){
   /* Rückkühler mit 3 Ventilatoren */
   svg+=rect(55, 190, 220, 150, {sw:2.4})+t(70, 214, 16, "Rückkühler", {b:1});
   for(var k=0;k<3;k++) svg+="<circle cx='"+(95+k*70)+"' cy='248' r='22' fill='none' stroke='#1b2422' stroke-width='1.5'/><path d='M"+(95+k*70-14)+" 248 H"+(95+k*70+14)+" M"+(95+k*70)+" 234 V262' stroke='#1b2422' stroke-width='1.2'/>";
-  [String(u.rkTyp||"").trim(), (u.schall||[]).filter(function(z){ return String(z.db||"").trim(); }).slice(0, 1).map(function(z){ return "Lw "+String(z.db).trim().replace(/\s*dB.*$/i,"")+" dB(A)"+(u.nachtVon && u.nachtBis ? " · Nacht "+u.nachtVon.slice(0, 2)+"–"+u.nachtBis.slice(0, 2)+" Uhr" : ""); })[0]||""]
-    .filter(Boolean).forEach(function(z, i){ svg+=t(70, 296+i*18, 12, z.length>34 ? z.slice(0, 33)+"…" : z); });
-  if(String(u.aufstellort||"").trim()) svg+=t(55, 360, 12, String(u.aufstellort).slice(0, 40), {f:"#4a5653"});
+  var rkZ=lidlUmbrechen(u.rkTyp, 195, 12, 2).concat([(u.schall||[]).filter(function(z){ return String(z.db||"").trim(); }).slice(0, 1).map(function(z){ return "Lw "+String(z.db).trim().replace(/\s*dB.*$/i,"")+" dB(A)"+(u.nachtVon && u.nachtBis ? " · Nacht "+u.nachtVon.slice(0, 2)+"–"+u.nachtBis.slice(0, 2)+" Uhr" : ""); })[0]||""]
+    .filter(Boolean).map(function(z){ return lidlPassend([z], 195, 12, 12).text; }));
+  rkZ.forEach(function(z, i){ svg+=t(70, 296+i*(rkZ.length>2 ? 16 : 18), 12, z); });
+  /* Aufstellort umgebrochen (höchstens 3 Zeilen) links der Steuerleitung zum Rückkühler */
+  lidlUmbrechen(u.aufstellort, 195, 12, 3).forEach(function(z, i){ svg+=t(55, 362+i*16, 12, z, {f:"#4a5653"}); });
   /* Hauptkreis: warm von den Geräten (Sammelleitung xSW) → Pumpe → (Umschaltventil) → Rückkühler; gekühlt zurück → Schmutzfänger → Sammelleitung xSK */
   var yW=230, yK=310, xUV=560, xP=760, xSW=1010, xSK=1030, mL=yV+(n-1)*schritt+Math.round(hoch/2);
   svg+=rohr("M275 "+yW+" H"+xSW+" V"+(mL-14), VL)+pfeil(420, yW, "l", VL)+pfeil(930, yW, "l", VL);
@@ -36235,15 +36335,19 @@ function lidlSchemaWasserSvg(p, anl, u, logoUrl, t, rect){
     } else svg+=rohr("M640 "+(yT+35)+" H900 V"+yK, WR)+pfeil(900, 410, "o", WR);
   }
   /* RWEYQ mit Strömungswächter je Gerät, Kältemittel zu den Innengeräten */
+  /* ab 5 Geräten wird der Kasten niedriger: Zeilen rücken zusammen (sonst stand die dritte unter dem Kasten), ab 6 kleinere Schrift */
+  var gw=Math.min(1, hoch/66), ih=Math.min(68, schritt-8);
   anl.forEach(function(x, i){
     var y=yV+i*schritt, f=LIDL_FARBEN[i%LIDL_FARBEN.length], kg=lidlZahl(x.d.kaeltemittelKg), m=y+Math.round(hoch/2);
-    svg+=rect(1060, y, 160, hoch, {s:f, sw:2.4})+t(1072, y+22, 14, x.name, {b:1, f:f});
+    var tt=lidlTitelPassend(x.name, "", 140, 14*gw, 10*gw);
+    svg+=rect(1060, y, 160, hoch, {s:f, sw:2.4})+t(1072, y+Math.min(22, Math.round(hoch*0.26)), tt.gr, tt.text, {b:1, f:f});
     [[x.d.hersteller, x.d.modell].filter(Boolean).join(" "), x.d.seriennummer ? "SN "+x.d.seriennummer : "", kg!=null ? lidlKomma(kg, 1)+" kg "+(x.d.kaeltemittelArt||"") : ""]
-      .filter(Boolean).slice(0, 3).forEach(function(z, j){ svg+=t(1072, y+42+j*17, 11, z.length>24 ? z.slice(0, 23)+"…" : z); });
+      .filter(Boolean).slice(0, 3).forEach(function(z, j){ var zz=lidlPassend([z], 140, 11*gw, 9*gw); svg+=t(1072, y+Math.min(42+j*17, Math.round(hoch*(0.44+j*0.19))), zz.gr, zz.text); });
     svg+=rohr("M"+xSW+" "+(m-14)+" H1060", VL)+pfeil(1050, m-14, "l", VL);
     svg+=rohr("M"+xSK+" "+(m+14)+" H1060", RL)+"<circle cx='1045' cy='"+(m+14)+"' r='7' fill='#fff' stroke='#1b2422' stroke-width='1.5'/>"+t(1045, m+33, 9, "FS", {a:"middle"});
     svg+="<path d='M1220 "+m+" H1260' fill='none' stroke='"+f+"' stroke-width='5'/><path d='M1220 "+m+" H1260' fill='none' stroke='#fff' stroke-width='1.6'/>";
-    svg+=rect(1260, m-34, 280, 68, {s:f, sw:2})+t(1274, m-6, 14, ((u.bereiche||{})[x.id]||"Innengeräte").slice(0, 34), {b:1});
+    var be=lidlPassend([(u.bereiche||{})[x.id]||"Innengeräte"], 256, 14, 11, true);
+    svg+=rect(1260, m-Math.round(ih/2), 280, ih, {s:f, sw:2})+t(1274, m-6, be.gr, be.text, {b:1});
     svg+=t(1274, m+16, 11, (Array.isArray(x.d.innengeraete) && x.d.innengeraete.length ? x.d.innengeraete.length+" Innengeräte · " : "")+"kälteseitig unverändert", {f:"#4a5653"});
   });
   /* Regelung mit Steuerleitungen zu Pumpe, Rückkühler, Umschaltventil, Heizstab und VRV */
@@ -36252,7 +36356,7 @@ function lidlSchemaWasserSvg(p, anl, u, logoUrl, t, rect){
   (reg ? [reg] : ["Regelung (Typ eintragen)"]).concat(["Freigabe Pumpe und Rückkühler (Regler am Gerät)", hatWrg ? "Umschaltung Heizen/Kühlen, Bypass WRG" : "", hatPuffer ? "E-Heizstab (Stufen)" : "", "VRV über Daikin-Bus (F1/F2)", "Störmeldungen, Fernzugriff"])
     .filter(Boolean).slice(0, 6).forEach(function(z, i){ svg+=t(rx+14, ry+46+i*18, 11.5, (i ? "· " : "")+(z.length>48 ? z.slice(0, 47)+"…" : z), i ? {} : {b:1}); });
   svg+=stl("M"+(rx+330)+" "+(ry+30)+" H990 V"+(yW+20)+" H"+(xP+12));
-  svg+=stl("M"+rx+" "+(ry+30)+" H160 V340");
+  svg+=stl("M"+rx+" "+(ry+30)+" H262 V340");
   if(hatWrg) svg+=stl("M"+(rx+300)+" "+ry+" V665 H310 V"+(yW+46)+" H"+xUV+" V"+(yW+20));
   if(hatPuffer) svg+=stl("M"+(rx+330)+" "+(ry+70)+" H760 V"+(480+100));
   svg+=stl("M"+(rx+330)+" "+(ry+110)+" H1140 V"+(yV+(n-1)*schritt+hoch));
@@ -36281,32 +36385,36 @@ function lidlSchemaSvg(p, anl, u, logoUrl){
   var rect=function(x, y, w, h, o){ o=o||{}; return "<rect x='"+x+"' y='"+y+"' width='"+w+"' height='"+h+"' rx='"+(o.r||6)+"' fill='"+(o.fill||"#fff")+"' stroke='"+(o.s||"#1b2422")+"' stroke-width='"+(o.sw||1.6)+"'"+(o.d ? " stroke-dasharray='"+o.d+"'" : "")+"/>"; };
   var leitung=function(x1, y1, x2, y2, f){ var d="M"+x1+" "+y1+" H"+((x1+x2)/2)+" V"+y2+" H"+x2; return "<path d='"+d+"' fill='none' stroke='"+f+"' stroke-width='5'/><path d='"+d+"' fill='none' stroke='#fff' stroke-width='1.6'/>"; };
   if(lidlWasserProjekt(anl)) return lidlSchemaWasserSvg(p, anl, u, logoUrl, t, rect);
-  var n=Math.max(1, anl.length), schritt=Math.min(152, Math.floor(600/n)), hoch=Math.min(128, schritt-16);
+  /* Fußzeilen links unten: Aufstellort umgebrochen auf die Spaltenbreite (höchstens 3 Zeilen), darunter Schall und Flüsterbetrieb */
+  var unten=lidlUmbrechen(u.aufstellort, 320, 13, 3).concat([(u.schall||[]).filter(function(z){ return String(z.db||"").trim(); }).slice(0, 1).map(function(z){ return String(z.db).trim().replace(/\s*dB.*$/i,"")+" dB(A) "+String(z.text||"").trim(); })[0],
+    u.nachtVon && u.nachtBis ? "Flüsterbetrieb "+u.nachtVon.slice(0, 2)+"–"+u.nachtBis.slice(0, 2) : ""].filter(Boolean).map(function(z){ return lidlPassend([z], 320, 13, 13).text; }));
+  /* Kästen enden über den Fußzeilen (Amstetten, 5 Anlagen: der letzte Kasten verdeckte Aufstellort und Schall); niedrige Kästen mit kleinerer Schrift */
+  var n=Math.max(1, anl.length), schritt=Math.min(152, Math.floor((812-(Math.max(1, unten.length)-1)*18-14-205)/n)), hoch=Math.min(128, schritt-16), gs=Math.min(1, hoch/95);
   svg+=rect(2, 2, W-4, H-4, {r:0, sw:2});
   svg+=t(60, 74, 30, "Anlagenschema Klimatisierung", {b:1})+t(60, 102, 16, [lidlObjekt(s), "Prinzipschema, nicht maßstäblich"].join(" · "), {f:"#4a5653"});
   if(logoUrl) svg+="<image href='"+logoUrl+"' x='"+(W-60-260)+"' y='36' width='260' height='62' preserveAspectRatio='xMaxYMid meet'/>";
   svg+=rect(60, 150, 360, 690, {fill:"#f3f5f7", s:"#7a8896", d:"8 6", r:10})+t(80, 182, 17, String(u.aufstellortKurz||"AUFSTELLORT AUSSENGERÄTE").toUpperCase(), {b:1, f:"#4a5653"});
-  var unten=[u.aufstellort, (u.schall||[]).filter(function(z){ return String(z.db||"").trim(); }).slice(0, 1).map(function(z){ return String(z.db).trim().replace(/\s*dB.*$/i,"")+" dB(A) "+String(z.text||"").trim(); })[0],
-    u.nachtVon && u.nachtBis ? "Flüsterbetrieb "+u.nachtVon.slice(0, 2)+"–"+u.nachtBis.slice(0, 2) : ""].filter(Boolean);
   unten.forEach(function(z, i){ svg+=t(80, 812-(unten.length-1-i)*18, 13, z, {f:"#4a5653"}); });
   svg+=rect(560, 150, 960, 690, {fill:"#fbfbf8", s:"#7a8896", d:"8 6", r:10})+t(580, 182, 17, "FILIALE – INNENBEREICH", {b:1, f:"#4a5653"});
   anl.forEach(function(x, i){
     var y=205+i*schritt, f=LIDL_FARBEN[i%LIDL_FARBEN.length], kg=lidlZahl(x.d.kaeltemittelKg), co=co2Tonnen(x.d), kw=lidlZahl(x.d.leistungKw);
+    var tt=lidlTitelPassend(x.name, " · Außengerät", 270, 19*gs, 13*gs);
     svg+=rect(90, y, 300, hoch, {s:f, sw:2.4});
-    svg+=t(110, y+Math.round(hoch*0.23), 19, x.name+" · Außengerät", {b:1, f:f});
+    svg+=t(110, y+Math.round(hoch*0.23), tt.gr, tt.text, {b:1, f:f});
     /* fehlt etwas (SN, Füllmenge), rücken die Zeilen nach – keine Lücke */
     [[[x.d.hersteller, x.d.modell].filter(Boolean).join(" ")], [x.d.seriennummer ? "SN "+x.d.seriennummer : "", kw!=null ? lidlKomma(kw, kw%1 ? 1 : 0)+" kW" : "", kg!=null ? lidlKomma(kg, 1)+" kg" : ""],
       [x.d.kaeltemittelArt||"", co!=null ? lidlKomma(co, 2)+" t CO₂e" : "", "1 Kältekreis"]].map(function(z){ return z.filter(Boolean).join(" · "); }).filter(Boolean)
-      .forEach(function(z, j){ svg+=t(110, y+Math.round(hoch*(0.44+j*0.19)), 15, z); });
-    var m=y+Math.round(hoch/2);
+      .forEach(function(z, j){ var zz=lidlPassend([z], 270, 15*gs, 12*gs); svg+=t(110, y+Math.round(hoch*(0.44+j*0.19)), zz.gr, zz.text); });
+    var m=y+Math.round(hoch/2), ih=Math.min(84, hoch), be=lidlPassend([(u.bereiche||{})[x.id]||"Innengeräte"], 560, 17*gs, 13*gs, true);
     svg+=leitung(390, m, 600, m, f);
-    svg+=rect(600, m-42, 600, 84, {s:f, sw:2});
-    svg+=t(620, m-6, 17, (u.bereiche||{})[x.id]||"Innengeräte", {b:1});
-    svg+=t(620, m+20, 14, (Array.isArray(x.d.innengeraete) && x.d.innengeraete.length ? x.d.innengeraete.length+" Innengeräte" : "Innengeräte")+(String(u.weiter||"").match(/weiterverwendet/i) ? " Bestand, weiterverwendet" : ""), {f:"#4a5653"});
+    svg+=rect(600, m-Math.round(ih/2), 600, ih, {s:f, sw:2});
+    svg+=t(620, m-Math.round(6*gs), be.gr, be.text, {b:1});
+    svg+=t(620, m+Math.round(20*gs), 14*gs, (Array.isArray(x.d.innengeraete) && x.d.innengeraete.length ? x.d.innengeraete.length+" Innengeräte" : "Innengeräte")+(String(u.weiter||"").match(/weiterverwendet/i) ? " Bestand, weiterverwendet" : ""), {f:"#4a5653"});
   });
   var zs=String(s.fernSystem||"").trim();
   if(zs && anl.length){
-    svg+=rect(90, 862, 300, 70, {s:"#2f5d8a", sw:2})+t(110, 890, 16, "Zentralsteuerung", {b:1, f:"#2f5d8a"})+t(110, 914, 14, zs.length>38 ? zs.slice(0, 37)+"…" : zs);
+    var zt=lidlPassend([zs], 270, 14, 11);
+    svg+=rect(90, 862, 300, 70, {s:"#2f5d8a", sw:2})+t(110, 890, 16, "Zentralsteuerung", {b:1, f:"#2f5d8a"})+t(110, 914, zt.gr, zt.text);
     var y1=205+Math.round(hoch/2);
     svg+="<path d='M90 897 H74 V"+y1+" H90' fill='none' stroke='#2f5d8a' stroke-width='2' stroke-dasharray='7 5'/>";
     anl.forEach(function(x, i){ var y=205+i*schritt+Math.round(hoch/2); svg+="<path d='M74 "+y+" H90' stroke='#2f5d8a' stroke-width='2'/><circle cx='74' cy='"+y+"' r='4' fill='#2f5d8a'/>"; });
@@ -36444,13 +36552,20 @@ function lidlUnterlagenAssistent(p0){
       '</ul><div class="muted" style="font-size:12px;margin-top:6px">Was fehlt, bleibt in den Unterlagen einfach weg – nichts wird geraten. Nachtragen an der Anlage bzw. am Markt, dann hier neu öffnen.</div></div></details>'));
     /* 2 Angaben */
     var f=function(k, label, rows, platz){ return '<label class="fl"><span>'+esc(label)+'</span>'+(rows ? '<textarea data-lu="'+k+'" rows="'+rows+'" placeholder="'+esc(platz||"")+'">'+esc(u[k]||"")+"</textarea>" :
-      '<input type="'+(k==="datum"?"date":"text")+'" data-lu="'+k+'" value="'+esc(u[k]||"")+'" placeholder="'+esc(platz||"")+'">')+"</label>"; };
+      '<input type="'+(/^datum$|Datum$/.test(k)?"date":"text")+'" data-lu="'+k+'" value="'+esc(u[k]||"")+'" placeholder="'+esc(platz||"")+'">')+"</label>"; };
     var ang=el('<details class="card" style="box-shadow:none" open><summary class="pad" style="cursor:pointer"><strong>2 Angaben</strong> <span class="muted" style="font-size:12.5px">· werden mit dem Projekt gespeichert</span></summary>'+
       '<div class="pad stack" style="padding-top:0;gap:8px">'+
       '<div class="grid2" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:8px">'+
         f("datum", "Datum TB und KAV (Inbetriebnahme + 1 Woche)")+f("betreiber", "Bauherr / Betreiber")+f("planungBau", "Planung Bau")+f("planungTga", "Planung TGA (HKLS)")+
         (lidlWasserProjekt(anl) ? f("aufstellort", "Aufstellort Rückkühler (TB, Schema)", 0, "z. B. Flachdach über TK-Zelle, ca. +4,5 m") :
           f("aufstellort", "Aufstellort Außengeräte (TB, Schema)", 0, "z. B. Techniknische Richtung Parkplatz, ca. +1,0 m"))+f("kavUnter", "Zeile unter dem KAV-Titel")+"</div>"+
+      /* KAV: Bescheid und Schallgutachten (Inhaber 28.10.2026, wie KAV Mattighofen) – alles leer = wie bisher */
+      '<div data-lidlbescheid class="stack" style="gap:8px;border:1px solid var(--line);border-radius:10px;padding:8px 10px"><strong style="font-size:13px">📄 KAV: Bescheid der Behörde und Schallgutachten</strong>'+
+        '<div class="muted" style="font-size:12px">Lidl verlangt die Bescheidnummer. Ist nur die Behörde eingetragen, steht in der KAV „Zahl: wird nachgereicht“. Alles leer = KAV wie bisher.</div>'+
+        '<div class="grid2" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:8px">'+
+        f("bescheidZahl", "Bescheid – Zahl (Geschäftszahl)", 0, "leer = wird nachgereicht")+f("bescheidBehoerde", "Behörde", 0, "z. B. BH … oder Magistrat …")+
+        f("gutachtenVon", "Schallschutz-Gutachten von", 0, "Verfasser, z. B. Ingenieurbüro …")+f("gutachtenDatum", "Gutachten vom")+
+        f("messberichtVon", "Schallmessbericht von", 0, "Verfasser")+f("messberichtDatum", "Messbericht vom")+f("messungDatum", "Messung am")+"</div></div>"+
       (lidlWasserProjekt(anl) ? '<div data-lidlwasser class="stack" style="gap:8px;border:1px solid var(--line);border-radius:10px;padding:8px 10px"><strong style="font-size:13px">💧 Wassergekühlte VRV – Wasserkreis</strong>'+
         '<div class="grid2" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:8px">'+
         f("rkTyp", "Rückkühler (Typ)", 0, "z. B. Güntner GFHC FD 063.1/13-29 – Daten aus der Gerätebibliothek")+f("medium", "Wärmeträger", 0, "z. B. Ethylenglykol 34 % – nicht raten")+

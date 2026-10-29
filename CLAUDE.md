@@ -321,6 +321,9 @@ Kammerlander Umwelt- und Klimatechnik (UKT) – oft kurz, vom Handy, im Feld.
   „1,5 GB klingt nicht dramatisch – ruhig großzügiger“ → alle Unterlagen der Projekte (`archivPasst`: ohne `ARCHIV_NIE` CAD/HEIC/Video; `ARCHIV_AUSLASSEN`
   Systemdateien/ZIP), nurInhaber-Dateien unter buero/; Rapporte der Archiv-Störungen per Häkchen (vorgewählt, → `stoerungenArchiv[].datei`). Vorher Anzahl + MB.
   Hochladen über `projektDateienHochladen` (Doppel-Prüfung) – nochmals starten schadet nicht. Test „Synology-Archiv hochladen …“.
+  Seit 29.10.2026 (Inhaber: „warum kann ich den Bericht in PDF nicht öffnen“) auch die Wartungs-Rapporte: Prüfbuch-Nachweise mit `quelle` „Synology 20xx: …“
+  (Hinweis in Klammern dahinter wird abgeschnitten) → `plan.wartungen`, eine Datei je Rapport, an alle Nachweise gehängt (`nachweise[].datei`, `positionenSchreiben`).
+  Anlage: Knopf „📄 Rapport ansehen“; Markt-Historie: Quelle „Archiv“, antippen öffnet den Rapport. Test „Synology-Archiv: Wartungs-Rapporte …“.
 - Wiederkehrende Störungen: ab 3 Störungen in 90 Tagen an derselben Anlage
   (`WIEDERKEHR_ANZAHL`, `WIEDERKEHR_TAGE`) – Markierung, kein Eingriff.
 - „Zählt als“ im Protokoll (`fillPos`): ist ein Termin versäumt und liegt der
@@ -484,7 +487,11 @@ Kammerlander Umwelt- und Klimatechnik (UKT) – oft kurz, vom Handy, im Feld.
   TB `lidlTbHtml` (A4, `blattZuPdf` mit neuen Schaltern `ohneWasserzeichen`/`ohneSeitenzahl`; Spalten ohne einen einzigen Wert entfallen, nie „fehlt“;
   Beilagen `lidlBeilagen`; „Die Prüf- und Anlagenbücher (n Anlagen) liegen im Original in der Filiale auf.“), Schema `lidlSchemaSvg` → `lidlSchemaPdf`
   (SVG → Zeichenfläche → jsPDF A3 quer; Zentralsteuerung aus `fernSystem` des Markts), KAV `lidlKavHtml` (wie Deutschlandsberg; ohne Verantwortlichen/Verfasser
-  wird keine erzeugt). Art: TB dokument, Schema plan, KAV protokoll. „Datenblätter aus der Bibliothek“ (`lidlDatenblaetterHolen`, Doppelte erkennt das Hochladen),
+  wird keine erzeugt). Bescheid und Schallgutachten (Inhaber 28.10.2026, Amstetten: Lidl verlangt die Bescheidnummer; Vorbild KAV Mattighofen): Felder `bescheidZahl`,
+  `bescheidBehoerde`, `gutachtenVon`/`gutachtenDatum`, `messberichtVon`/`messberichtDatum`/`messungDatum` (Kasten `[data-lidlbescheid]`) → unter dem Titel „Zahl: …, BH …“
+  (ohne Zahl „wird nachgereicht“), Gutachten-/Messbericht-Zeile, „-Die Auflagen gemäß o.g. Bescheid der … werden erfüllt.“ (Magistrat: „des Magistrats …“), Schall-Einleitung
+  „Die Einhaltung des höchstzulässigen Schallleistungspegels … gemäß Schallschutz-Gutachten … wird wie folgt eingehalten:“; alles leer = wie bisher. Fehlt die Zahl,
+  meldet es die Prüfliste (nur Hinweis, die KAV entsteht trotzdem). Echte Bescheidnummern nur in Supabase. Art: TB dokument, Schema plan, KAV protokoll. „Datenblätter aus der Bibliothek“ (`lidlDatenblaetterHolen`, Doppelte erkennt das Hochladen),
   „Inbetriebnahmeprotokoll nach letzter Vorlage“ (`ibnLetzteVorlage` = zuletzt unterschriebenes, anderes Projekt zuerst; `ibnAusVorlage`: Checkliste, Übergabe,
   Unternehmenszertifikat, je Anlage Regelung der Anlage gleichen Modells, Werksfüllung nur bei gleichem Modell; SN/Füllmenge aus den Anlagen, Messwerte nie) →
   `ibnEditor(p, null, fertig, {vorlage, datum})`, gespeichert und unterschrieben erst dort. 4 „Mappe füllen …“: `lidlMappeVorschlag` (neuester Stand von TB,
@@ -492,6 +499,12 @@ Kammerlander Umwelt- und Klimatechnik (UKT) – oft kurz, vom Handy, im Feld.
   **Keine Personendaten im Code**: Verantwortlicher, Zertifikate, Verfasser, QR-Code, Fußzeilen-Logos und die Gerätebibliothek (Muster = Modellanfang, längstes
   gewinnt `lidlGeraet`; Werte „Bezeichnung: Wert“ `lidlWerte`; Datenblatt in `dokumente/datenblaetter/`) stehen in `einstellungen` „lidl_vorlage“ (`lidlVorlageLaden`,
   ändern nur Inhaber laut Regel), Editor `lidlVorlageEditor`. Test „Lidl-Unterlagen …“.
+  Schema-Texte passen immer (Inhaber 28.10.2026, Amstetten: 5 Anlagen mit langen Namen – Titel liefen über den Kasten, der letzte Kasten verdeckte die Fußzeilen):
+  `lidlTextBreite` misst wie gezeichnet (Arial), `lidlPassend` verkleinert bzw. kürzt mit „…“, `lidlTitelPassend` nimmt sonst den Teil vor „ – “ (die Bereiche stehen beim
+  Innengerät), `lidlUmbrechen` bricht den Aufstellort um (höchstens 3 Zeilen); `schritt` = min(152, ⌊(812 − (Zeilen−1)·18 − 14 − 205)/n⌋) – die Kästen enden über den
+  Fußzeilen, niedrige Kästen mit kleinerer Schrift; wassergekühlt ebenso (Zeilen rücken im niedrigen Kasten zusammen, Aufstellort links der Steuerleitung). Projekttyp
+  „Neubau“/„Neuanlage“ (`daten.typ`): Vorgaben ohne Demontage und Weiterverwendung, kein ConveniPack-Text. Test „Lidl-Unterlagen: Schema mit 5 Anlagen …“ (prüft die Lage
+  jedes Texts wie gezeichnet; `VORSCHAU=<Ordner>` → schema.svg, schema-wasser.svg, tb.html).
 - **Protokoll-Namen und Downloads** (Inhaber 19.10.2026): Dateiname `Inbetriebnahmeprotokoll_<Ort>_<n>-Anlagen_<TT-MM-JJJJ>.pdf` bzw.
   `Arbeitsnachweis_<Ort>_<TT-MM-JJJJ>.pdf` (`projektOrtFuerDatei`: Ort des Standorts, sonst Projektnummer) – ohne Projektnummer, „Nr“, „Korrektur“;
   eine Korrektur heißt gleich und steht als neuerer Stand da. Im IBN-PDF keine Protokollnr./Projektnummer in der Kopfzeile und kein

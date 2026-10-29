@@ -1174,6 +1174,41 @@ test("Synology-Archiv hochladen (Inhaber 27.10.2026): Projektunterlagen (Preise 
   pruefe(!rt, "Admin sieht die Archiv-Karte nicht");
 });
 
+test("Synology-Archiv: Wartungs-Rapporte an den Prüfbuch-Nachweisen (Inhaber 29.10.2026: „warum kann ich den Bericht in PDF nicht öffnen“)", async () => {
+  const a = await oeffnen(KONTEN.inhaber);
+  const r = await a.seite.evaluate(async () => {
+    const x = window.__t.x, warte = (ms) => new Promise((f) => setTimeout(f, ms)), db = window.__db.tabellen, jetzt = new Date().toISOString();
+    const q = "Synology 2025: Lidl/Wartungen/3.Quartal abgerechnet/Teststadt,2025-08-05,JW,F,R.pdf";
+    const pos = (id, quelle) => ({ id: "position:" + id, typ: "position", ziel: id, neu: true, geaendert: jetzt, von: "Test", grund: "Anlage angelegt",
+      felder: { standortId: "TS1", aktiv: true, anlagentyp: "Archivtest " + id, intervallCode: "JW", sollMonat: 8, anlageZu: id, neuAngelegt: jetzt,
+        nachweise: [{ datum: "2025-08-05", kuerzel: "JW", quelle: quelle }] } });
+    /* ein Rapport für zwei Anlagen, einmal mit Hinweis in Klammern */
+    db.stammdaten.push(pos("NParch1", q), pos("NParch2", q + " (Art unsicher: Dateiname JW, Rapporttext nennt Halbjahr)"));
+    await x("ladeStammdaten(true)"); await warte(300);
+    const f = new File(["%PDF-1.4 wartung"], "Teststadt,2025-08-05,JW,F,R.pdf", { type: "application/pdf" });
+    Object.defineProperty(f, "webkitRelativePath", { value: "Synology/2025/Lidl/Wartungen/3.Quartal abgerechnet/Teststadt,2025-08-05,JW,F,R.pdf" });
+    window.__wl = [f];
+    const plan = x("(function(){ var idx=archivIndex(window.__wl), pl=archivPlan(idx, true); window.__widx=idx; window.__wplan=pl; return pl.wartungen.map(function(w){ return [w.k, w.an.length]; }); })()");
+    const vorher = x("historieEintraege(byId['TS1']).filter(function(e){ return e.datum==='2025-08-05'; }).map(function(e){ return e.quelle+'|'+!!(e.archiv&&e.archiv.datei); })");
+    await x("archivHochladen(window.__wplan, window.__widx, function(){})"); await warte(800);
+    const nw = ["NParch1", "NParch2"].map((id) => (db.stammdaten.find((z) => z.id === "position:" + id).felder.nachweise || [])[0] || {});
+    await x("ladeStammdaten(true)"); await warte(300);
+    const nachher = x("historieEintraege(byId['TS1']).filter(function(e){ return e.datum==='2025-08-05'; }).map(function(e){ return e.quelle+'|'+!!(e.archiv&&e.archiv.datei); })");
+    x("anlageHistorieAnsicht(posById['NParch1'])"); await warte(200);
+    const knopf = [...document.querySelectorAll("button")].some((b) => /Rapport ansehen/.test(b.textContent));
+    const nochmal = x("archivPlan(archivIndex(window.__wl), true).wartungen.length");
+    return { plan, vorher, nachher, datei: nw.map((n) => n.datei && n.datei.pfad), quelle: nw.map((n) => n.quelle), knopf, nochmal };
+  });
+  await a.zu();
+  pruefe(JSON.stringify(r.plan) === JSON.stringify([["2025/Lidl/Wartungen/3.Quartal abgerechnet/Teststadt,2025-08-05,JW,F,R.pdf", 2]]), "Plan: eine Datei für zwei Nachweise (Hinweis in Klammern abgeschnitten): " + JSON.stringify(r.plan));
+  pruefe(r.vorher.length === 2 && r.vorher.every((v) => v === "Archiv|false"), "Vorher: Quelle Archiv, noch ohne Datei: " + JSON.stringify(r.vorher));
+  pruefe(r.datei.every((p) => /^archiv\/2025\/TS1\//.test(p || "")) && r.datei[0] === r.datei[1], "Beide Nachweise zeigen auf dieselbe hochgeladene Datei: " + JSON.stringify(r.datei));
+  pruefe(/\(Art unsicher/.test(r.quelle[1]), "Hinweis in der Quelle bleibt stehen: " + r.quelle[1]);
+  pruefe(r.nachher.length === 2 && r.nachher.every((v) => v === "Archiv|true"), "Nachher: Markt-Historie öffnet den Rapport: " + JSON.stringify(r.nachher));
+  pruefe(r.knopf, "Anlage zeigt „📄 Rapport ansehen“");
+  pruefe(r.nochmal === 0, "Nochmals: nichts mehr offen");
+});
+
 test("Kundenauswahl gilt überall: Störungen, Rückfragen, Projekte in Fällig, Karte und Anlagen", async () => {
   const a = await oeffnen(KONTEN.inhaber);
   const r = await a.seite.evaluate(async () => {
@@ -10395,9 +10430,83 @@ test("Lidl-Unterlagen wassergekühlt (Inhaber 27.10.2026): Wasserkreis in TB/Sch
   if (process.env.VORSCHAU && r.vorschauTb) { const fs = await import("node:fs"); fs.writeFileSync(join(process.env.VORSCHAU, "tb.html"), r.vorschauTb); fs.writeFileSync(join(process.env.VORSCHAU, "schema.svg"), r.vorschauSvg); fs.writeFileSync(join(process.env.VORSCHAU, "kav.html"), r.vorschauKav); }
 });
 
+test("Lidl-Unterlagen: Schema mit 5 Anlagen und langen Namen (Inhaber 28.10.2026, Amstetten) – Titel passen, Kästen über den Fußzeilen, Aufstellort umgebrochen; Neubau ohne Demontage", async () => {
+  const a = await oeffnen(KONTEN.inhaber);
+  await a.seite.evaluate((h) => eval(h), AN_HILFEN);
+  if (process.env.VORSCHAU) await a.seite.evaluate(() => { window.__vorschau = 1; });
+  const r = await a.seite.evaluate(async () => {
+    const x = window.__t.x, db = window.__db.tabellen, A = window.__an, e = {}, jetzt = new Date().toISOString();
+    const pos = (id, f) => db.stammdaten.push({ id: "position:" + id, typ: "position", ziel: id, neu: true, geaendert: jetzt, von: "Test", grund: "Anlage angelegt",
+      felder: Object.assign({ standortId: "TS1", aktiv: true, intervallCode: "JW", monat: 0, anlageZu: id, neuAngelegt: jetzt, hersteller: "Daikin", kaeltemittelArt: "R32", inbetriebnahme: "2026-09-01" }, f) });
+    /* erfundene Anlagen wie in Amstetten: lange Namen mit Bereichen nach „ – “, ein Split ohne „ – “ */
+    const namen = ["VRV 1 – Kassa, O&G, Verkauf vorne, Lager", "VRV 2 – Verkauf hinten, Leergut, Pfandraum", "VRV 3 – Sozialräume, Büro, Filialleitung", "VRV 4 – Lager Trockensortiment und Anlieferung", "R32-Split Backshop"];
+    namen.forEach((n, i) => pos("NP5a" + i, { anlagentyp: n, modell: i < 4 ? "RXYLQ10T7Y1B" : "RZAG125N7Y1B", seriennummer: "880000" + i, kaeltemittelKg: 11.8 + i, leistungKw: 28,
+      innengeraete: [{ raum: "Verkauf vorne, Kassa, Obst und Gemüse, Lager Trockensortiment " + i }] }));
+    namen.forEach((n, i) => pos("NP5w" + i, { anlagentyp: n, bauart: "VRV wassergekühlt", modell: "RWEYQ10T9Y1B", seriennummer: "990000" + i, kaeltemittelArt: "R410A", kaeltemittelKg: 17.5,
+      innengeraete: [{ raum: "Verkauf vorne, Kassa, Obst und Gemüse, Lager Trockensortiment " + i }] }));
+    await x("ladeStammdaten().then(storeNachRender)"); await A.warte(300);
+    const proj = (id, typ, k) => db.projekte.push({ id, nummer: "P-2026-9" + id.slice(-2), titel: "Schema Test", kunde_id: "lidl", standort_id: "TS1", status: "inbetriebnahme", verlauf: [], erstellt: jetzt, geaendert: jetzt,
+      daten: { anlagen: namen.map((n, i) => k + i), ibDatum: "2026-09-01", typ } });
+    proj("tmp_s51", "Neubau", "NP5a"); proj("tmp_s52", "Anlagentausch / Umbau", "NP5a"); proj("tmp_s53", "Neubau", "NP5w");
+    await x("projekteLaden()");
+    const P = (id) => "PROJEKTE.filter(function(q){ return q.id==='" + id + "'; })[0]", anl = (id) => "lidlAnlagen(" + P(id) + ")";
+    await x("lidlVorlageSpeichern(" + JSON.stringify({ ort: "Teststadt", verantwortlich: "Herr V", verfasser: "Ing. F", logos: [], geraete: [] }) + ", 'Test')");
+    /* Vorgaben: Neubau ohne Demontage/Weiterverwendung und ohne ConveniPack, Umbau wie bisher */
+    const nb = x("lidlAngaben(" + P("tmp_s51") + ", " + anl("tmp_s51") + ")"), um = x("lidlAngaben(" + P("tmp_s52") + ", " + anl("tmp_s52") + ")");
+    e.neubau = { bau: /^Neubau der Filiale/.test(nb.bauvorhaben), allg: /neu errichtet/.test(nb.allgemein), dem: nb.demontage === "", weiter: nb.weiter === "", keinConveni: !/ConveniPack/.test(nb.bauvorhaben + nb.allgemein) };
+    e.umbau = /ConveniPack/.test(um.bauvorhaben) && /demontiert/.test(um.demontage) && /weiterverwendet/.test(um.weiter);
+    Object.assign(nb, { aufstellort: "Technikbereich auf dem Flachdach über dem Lager, Zugang über die Dachluke im Stiegenhaus Nord, ca. +6,5 m über Gelände",
+      schall: [{ text: "VRV-Wärmepumpen je Gerät", db: "72" }] });
+    window.__u5 = nb;
+    const tb = x("lidlTbHtml(" + P("tmp_s51") + ", " + anl("tmp_s51") + ", window.__u5, LIDL_VORLAGE, lidlBeilagen(" + P("tmp_s51") + ", " + anl("tmp_s51") + ", LIDL_VORLAGE))");
+    const tt = (() => { const d = document.createElement("div"); d.innerHTML = tb; return d.textContent; })();
+    e.tb = { keineDemontage: !/Demontage/.test(tt), keineWeiter: !/Weiterverwendung/.test(tt), neu: /neu errichtet/.test(tt) };
+    /* Lage prüfen wie gezeichnet: Text mit Ankerpunkt in einem Gerätekasten muss ganz drin sein, anderer Text darf ihn nicht schneiden */
+    const farben = x("LIDL_FARBEN");
+    const pruefen = (svg) => {
+      const d = document.createElement("div"); d.style.cssText = "position:absolute;left:0;top:0;width:1587px;height:1123px"; d.innerHTML = svg; document.body.appendChild(d);
+      const s = d.querySelector("svg"), f = [];
+      const kaesten = [...s.querySelectorAll("rect")].filter((q) => farben.indexOf(q.getAttribute("stroke")) >= 0).map((q) => ({ x: +q.getAttribute("x"), y: +q.getAttribute("y"), w: +q.getAttribute("width"), h: +q.getAttribute("height") }));
+      const texte = [...s.querySelectorAll("text")].map((q) => { const b = q.getBBox(); return { t: q.textContent, ax: +q.getAttribute("x"), ay: +q.getAttribute("y"), x: b.x, y: b.y, r: b.x + b.width, u: b.y + b.height }; });
+      kaesten.forEach((k) => texte.forEach((q) => {
+        /* knapp unter dem Kasten zählt mit (vorher stand bei 5 wassergekühlten Geräten die dritte Zeile darunter) */
+        const innen = q.ax >= k.x && q.ax <= k.x + k.w && q.ay >= k.y && q.ay <= k.y + k.h + 16;
+        if (innen && (q.x < k.x - 1 || q.r > k.x + k.w - 2 || q.y < k.y - 1 || q.u > k.y + k.h + 1)) f.push("ragt hinaus: " + q.t);
+        if (!innen && q.r > k.x && q.x < k.x + k.w && q.u > k.y && q.y < k.y + k.h) f.push("überdeckt: " + q.t);
+      }));
+      d.remove();
+      return { f, texte, kaesten: kaesten.length };
+    };
+    const svg = x("lidlSchemaSvg(" + P("tmp_s51") + ", " + anl("tmp_s51") + ", window.__u5, '')"), l = pruefen(svg);
+    const unten = l.texte.filter((q) => q.ax === 80 && q.ay > 600);
+    e.trocken = { fehler: l.f, kaesten: l.kaesten, kurz: l.texte.some((q) => q.t === "VRV 1 · Außengerät"), split: l.texte.some((q) => /^R32-Split Backshop/.test(q.t)),
+      zeilen: unten.map((q) => q.t), inSpalte: unten.every((q) => q.r <= 416), stelle: /Dachluke/.test(unten.map((q) => q.t).join(" ")) };
+    const uw = x("lidlAngaben(" + P("tmp_s53") + ", " + anl("tmp_s53") + ")");
+    window.__u5w = Object.assign(uw, { aufstellort: "Flachdach über der Tiefkühlzelle neben dem Lichtkuppel-Feld, ca. +4,5 m über Gelände", rkTyp: "Güntner GFHC FD 063.1/13-29 mit Schallhaube und EC-Ventilatoren", schall: [{ text: "Rückkühler VRV-Anlage", db: "61" }] });
+    const svgW = x("lidlSchemaSvg(" + P("tmp_s53") + ", " + anl("tmp_s53") + ", window.__u5w, '')"), w = pruefen(svgW);
+    const ort = w.texte.filter((q) => q.ax === 55 && q.ay >= 362 && q.ay < 420);
+    e.wasser = { fehler: w.f, kaesten: w.kaesten, ort: ort.map((q) => q.t), links: ort.every((q) => q.r <= 258), rk: w.texte.filter((q) => q.ax === 70 && q.ay >= 296 && q.ay < 340).every((q) => q.r <= 270),
+      neubau: !/kälteseitig unverändert/.test(uw.weiter || "") && uw.demontage === "" };
+    if (window.__vorschau) { e.vorschauSvg = svg; e.vorschauSvgW = svgW; e.vorschauTb = tb; }
+    db.projekte = db.projekte.filter((q) => !/^tmp_s5/.test(q.id));
+    return e;
+  });
+  await a.zu();
+  pruefe(Object.values(r.neubau).every(Boolean) && r.umbau, "Vorgaben Neubau/Umbau: " + JSON.stringify([r.neubau, r.umbau]));
+  pruefe(Object.values(r.tb).every(Boolean), "TB Neubau ohne Demontage/Weiterverwendung: " + JSON.stringify(r.tb));
+  pruefe(r.trocken.kaesten >= 10 && !r.trocken.fehler.length, "Schema 5 Anlagen: Text ragt hinaus/überdeckt: " + JSON.stringify(r.trocken.fehler));
+  pruefe(r.trocken.kurz && r.trocken.split, "Titel gekürzt bzw. ganzer Name: " + JSON.stringify(r.trocken));
+  pruefe(r.trocken.zeilen.length >= 4 && r.trocken.inSpalte && r.trocken.stelle, "Aufstellort umgebrochen in der Spalte, Schall und Flüsterbetrieb darunter: " + JSON.stringify(r.trocken.zeilen));
+  pruefe(r.wasser.kaesten >= 10 && !r.wasser.fehler.length, "Schema wassergekühlt 5 Anlagen: " + JSON.stringify(r.wasser.fehler));
+  pruefe(r.wasser.ort.length >= 2 && r.wasser.links && r.wasser.rk && r.wasser.neubau, "Wassergekühlt: Aufstellort umgebrochen links der Steuerleitung, Rückkühler-Typ im Kasten, Neubau: " + JSON.stringify(r.wasser));
+  /* Vorschau für den Inhaber: VORSCHAU=<Ordner> node tests/app-tests.mjs "5 Anlagen" → schema.svg, schema-wasser.svg, tb.html */
+  if (process.env.VORSCHAU && r.vorschauSvg) { const fs = await import("node:fs"); fs.writeFileSync(join(process.env.VORSCHAU, "schema.svg"), r.vorschauSvg); fs.writeFileSync(join(process.env.VORSCHAU, "schema-wasser.svg"), r.vorschauSvgW); fs.writeFileSync(join(process.env.VORSCHAU, "tb.html"), r.vorschauTb); }
+});
+
 test("Lidl-Unterlagen (Inhaber 20.10.2026): Prüfliste, TB/KAV/Schema aus den Anlagen, Fehlendes bleibt weg, IBN nach letzter Vorlage, Mappe-Vorschlag; nur Inhaber", async () => {
   const a = await oeffnen(KONTEN.inhaber);
   await a.seite.evaluate((h) => eval(h), AN_HILFEN);
+  if (process.env.VORSCHAU) await a.seite.evaluate(() => { window.__vorschau = 1; });
   const r = await a.seite.evaluate(async () => {
     const x = window.__t.x, db = window.__db.tabellen, A = window.__an, e = {}, jetzt = new Date().toISOString();
     A.toastSpion();
@@ -10438,6 +10547,26 @@ test("Lidl-Unterlagen (Inhaber 20.10.2026): Prüfliste, TB/KAV/Schema aus den An
     const kav = x("lidlKavHtml(" + P + ", " + anl + ", window.__u, LIDL_VORLAGE, {logos:[]})");
     e.kav = { ver: /Herr Test Verantwortlich/.test(kav), verf: /Ing\. Test Verfasser/.test(kav), ort: /Teststadt, am 09\.02\.2026/.test(kav), schall: /VRV Wärmepumpen Tag/.test(kav) && /77 dB/.test(kav), flue: /22:00–06:00/.test(kav) };
     e.kavGesperrt = await x("lidlErzeugen('kav', " + P + ", " + anl + ", window.__u, Object.assign({}, LIDL_VORLAGE, {verantwortlich:''})).then(function(){ return 'erzeugt'; }, function(f){ return f.message; })");
+    /* Bescheid und Schallgutachten (Inhaber 28.10.2026, wie KAV Mattighofen; erfundene Werte): leer = wie bisher, Prüfliste nennt die fehlende Zahl */
+    const kavText = (h) => { const d = document.createElement("div"); d.innerHTML = h; return d.textContent; };
+    const kavT = kavText(kav);
+    e.bescheidLeer = { vorbelegt: u.bescheidZahl === "" && u.bescheidBehoerde === "" && u.gutachtenVon === "", ohneZahl: !/Zahl:|Bescheid|Gutachten/.test(kavT),
+      alteEinleitung: /-Schallwerte der Wärmepumpen \(laut Einreichplan\):/.test(kavT), pruef: pl.some((z) => !z[0] && /KAV: Bescheid der Behörde fehlt/.test(z[1])) };
+    window.__ub = Object.assign({}, u, { bescheidBehoerde: "BH Teststadt", gutachtenVon: "Ingenieurbüro Test", gutachtenDatum: "2026-01-15", messberichtVon: "Ingenieurbüro Test",
+      messberichtDatum: "2026-01-20", messungDatum: "2026-01-10", schall: [{ text: "VRV Wärmepumpen Tag", db: "77" }, { text: "VRV Wärmepumpen Nacht", db: "70" }] });
+    const kavB = kavText(x("lidlKavHtml(" + P + ", " + anl + ", window.__ub, LIDL_VORLAGE, {logos:[]})"));
+    e.bescheidNach = { zahl: /Zahl: wird nachgereicht, BH Teststadt/.test(kavB), gut: /Schallschutz-Gutachten Ingenieurbüro Test vom 15\.01\.2026/.test(kavB),
+      mess: /Schallmessbericht Ingenieurbüro Test vom 20\.01\.2026 \(Messung 10\.01\.2026\)/.test(kavB),
+      auflagen: /in Betrieb genommen wurden\.-Die Auflagen gemäß o\.g\. Bescheid der BH Teststadt werden erfüllt\.Die ausgeführten Arbeiten/.test(kavB),
+      einleitung: /-Die Einhaltung des höchstzulässigen Schallleistungspegels für die unterschiedlichen Zeiträume gemäß Schallschutz-Gutachten Ingenieurbüro Test vom 15\.01\.2026 wird wie folgt eingehalten:/.test(kavB),
+      keinEinreichplan: !/laut Einreichplan/.test(kavB), nacht: /70 dB/.test(kavB),
+      pruef: x("lidlPruefliste(" + P + ", " + anl + ", window.__ub, LIDL_VORLAGE, [])").some((z) => !z[0] && /Bescheidzahl fehlt – in der KAV steht „Zahl: wird nachgereicht, BH Teststadt“/.test(z[1])) };
+    if (window.__vorschau) e.vorschauKav = x("lidlKavHtml(" + P + ", " + anl + ", window.__ub, LIDL_VORLAGE, {logos:[]})");
+    window.__ub.bescheidZahl = "TEST-123/2026"; window.__ub.bescheidBehoerde = "Magistrat Teststadt";
+    const kavZ = kavText(x("lidlKavHtml(" + P + ", " + anl + ", window.__ub, LIDL_VORLAGE, {logos:[]})"));
+    e.bescheidZahl = { zahl: /Zahl: TEST-123\/2026, Magistrat Teststadt/.test(kavZ) && !/nachgereicht/.test(kavZ), magistrat: /Bescheid des Magistrats Teststadt werden erfüllt/.test(kavZ),
+      pruef: x("lidlPruefliste(" + P + ", " + anl + ", window.__ub, LIDL_VORLAGE, [])").some((z) => z[0] && /KAV: Bescheid Zahl TEST-123\/2026, Magistrat Teststadt/.test(z[1])),
+      erzeugt: await x("lidlErzeugen('kav', " + P + ", " + anl + ", Object.assign({}, window.__ub, {bescheidZahl:''}), LIDL_VORLAGE).then(function(r){ return r.blob.size>1000; }, function(f){ return f.message; })") };
     /* Schema: SN und Bereiche im SVG; PDF A3 quer */
     const svg = x("lidlSchemaSvg(" + P + ", " + anl + ", window.__u, '')");
     e.svg = /SN 7000001/.test(svg) && /Kassa, Verkauf vorne/.test(svg) && !/SN undefined/.test(svg);
@@ -10456,9 +10585,14 @@ test("Lidl-Unterlagen (Inhaber 20.10.2026): Prüfliste, TB/KAV/Schema aus den An
     karte.querySelector("[data-lidloeffnen]").click();
     const d = await A.bis(() => { const d = A.dlg(); return d && d.querySelector("[data-lidlpruef]") && d; });
     e.assistent = !!d && d.querySelectorAll("[data-lidlpruef] li[data-ok='0']").length > 0;
+    /* Eingabe Bescheid/Gutachten im Assistenten: Datumsfelder als Datum, gespeichert mit den Angaben */
+    const bf = (k) => d.querySelector("[data-lidlbescheid] [data-lu='" + k + "']");
+    e.bescheidFelder = ["bescheidZahl", "bescheidBehoerde", "gutachtenVon", "gutachtenDatum", "messberichtVon", "messberichtDatum", "messungDatum"].every((k) => !!bf(k)) &&
+      bf("gutachtenDatum").type === "date" && bf("bescheidZahl").type === "text";
+    bf("bescheidBehoerde").value = "BH Teststadt"; bf("bescheidBehoerde").dispatchEvent(new Event("input"));
     d.querySelector('[data-lidl="tb"] [data-ablegen]').click();
     e.abgelegt = await A.bis(() => (x(P).daten.dateien || []).some((f) => /^Technische Beschreibung Klimaanlage .*\.pdf$/.test(f.name)), 15000);
-    e.gespeichert = !!(x(P).daten.lidlUnterlagen || {}).datum;
+    e.gespeichert = !!(x(P).daten.lidlUnterlagen || {}).datum && (x(P).daten.lidlUnterlagen || {}).bescheidBehoerde === "BH Teststadt";
     e.vorschlag = x("lidlMappeVorschlag(" + P + ", LIDL_VORLAGE, [])").length;
     x("ansichtenSchliessen()");
     db.projekte = db.projekte.filter((q) => q.id !== "tmp_lu");
@@ -10472,6 +10606,12 @@ test("Lidl-Unterlagen (Inhaber 20.10.2026): Prüfliste, TB/KAV/Schema aus den An
   if (Object.values(r.tb).some((v) => !v)) fehl.push("TB " + JSON.stringify(r.tb));
   if (!r.tbOhneKg) fehl.push("TB ohne Füllmengen zeigt die Spalte");
   if (Object.values(r.kav).some((v) => !v) || !/KAV-Vorlage unvollständig/.test(r.kavGesperrt)) fehl.push("KAV " + JSON.stringify([r.kav, r.kavGesperrt]));
+  if (Object.values(r.bescheidLeer).some((v) => !v)) fehl.push("KAV ohne Bescheid wie bisher " + JSON.stringify(r.bescheidLeer));
+  if (Object.values(r.bescheidNach).some((v) => !v)) fehl.push("KAV Zahl wird nachgereicht " + JSON.stringify(r.bescheidNach));
+  if (Object.values(r.bescheidZahl).some((v) => v !== true)) fehl.push("KAV mit Bescheidzahl " + JSON.stringify(r.bescheidZahl));
+  if (!r.bescheidFelder) fehl.push("Assistent: Felder Bescheid/Gutachten fehlen");
+  /* Vorschau für den Inhaber: VORSCHAU=<Ordner> node tests/app-tests.mjs "Lidl-Unterlagen .Inhaber 20" → kav-bescheid.html („Zahl: wird nachgereicht“) */
+  if (process.env.VORSCHAU && r.vorschauKav) { const fs = await import("node:fs"); fs.writeFileSync(join(process.env.VORSCHAU, "kav-bescheid.html"), r.vorschauKav); }
   if (!r.svg || !r.schemaPdf) fehl.push("Schema " + JSON.stringify([r.svg, r.schemaPdf]));
   if (r.ibn.anz !== 2 || r.ibn.sn !== "7000001" || r.ibn.regel !== "23" || r.ibn.werk !== "11,8" || r.ibn.mess || r.ibn.check !== "erl" || r.ibn.ueb !== "erl") fehl.push("IBN-Vorlage " + JSON.stringify(r.ibn));
   if (!r.karte || !r.assistent || !r.abgelegt || !r.gespeichert || r.vorschlag !== 1) fehl.push("Assistent " + JSON.stringify([r.karte, r.assistent, r.abgelegt, r.gespeichert, r.vorschlag]));
