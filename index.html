@@ -4020,9 +4020,36 @@ function mailAbholenStarten(){
   if(mailAbholenAn) return; mailAbholenAn=true;
   setInterval(function(){
     if(!mailBruecke() || document.visibilityState!=="visible" || Date.now()<mailAbholenPause) return;
-    mailHolen("/api/leitstand/abholen", {frist:4000}).then(function(r){ if(r && r.auftrag){ try{ window.focus(); }catch(e){} mailUebernehmen(r.auftrag); } },
+    mailHolen("/api/leitstand/abholen", {frist:4000}).then(function(r){ if(r && r.auftrag){ try{ window.focus(); }catch(e){} mailUebernehmen(r.auftrag); }
+      /* das Mail-Programm antwortet: Kontakte für die Adressvorschläge mitschicken (höchstens alle 10 Minuten) */
+      if(Date.now()-mailKontakteZeit>600000) mailKontakteSenden(); },
       function(){ mailAbholenPause=Date.now()+30000; });
   }, 3000);
+}
+/* Adressvorschläge im Mail-Programm (Büro 29.10.2026: „Leitstand-Kontakte auch vorschlagen“): Adressbuch, Kunden und
+   Beteiligte der Projekte – nur Name, Firma und Mail-Adresse, nur an das verbundene Mail-Programm am eigenen PC/Handy.
+   Geschickt wird nur, wenn sich etwas geändert hat (oder nach einer halben Stunde, falls das Mail-Programm neu war). */
+var mailKontakteZeit=0, mailKontakteStand="", mailKontakteGesendet=0;
+function mailKontakteListe(){
+  var l=[], gesehen={};
+  var dazu=function(mail, name, firma, quelle){
+    mail=String(mail||"").trim().toLowerCase();
+    if(!/^[^\s@<>]+@[^\s@<>]+\.[a-z]{2,}$/i.test(mail) || gesehen[mail]) return;
+    gesehen[mail]=1; l.push({mail:mail, name:String(name||"").trim(), firma:String(firma||"").trim(), quelle:quelle});
+  };
+  (KONTAKTE||[]).forEach(function(c){ dazu(c.mail, c.name, c.firma, "Adressbuch"); });
+  Object.keys(KUNDEN||{}).forEach(function(id){ var k=KUNDEN[id]; if(k && k.aktiv!==false) dazu(k.email, k.ansprechpartner||"", k.name, "Kunde"); });
+  (PROJEKTE||[]).forEach(function(p){ ((p.daten||{}).beteiligte||[]).forEach(function(b){ dazu(b.mail, b.name, b.firma, "Projekt "+(p.nummer||"")); }); });
+  return l;
+}
+function mailKontakteSenden(){
+  if(!mailBruecke()) return;
+  mailKontakteZeit=Date.now();
+  if(kontakteAn() && !kontakteGeladen){ kontakteLaden().then(function(){ mailKontakteZeit=0; }, function(){}); return; }
+  if(!projekteGeladen) projekteNachladen();
+  var l=mailKontakteListe(), stand=l.length+"|"+l.map(function(k){ return k.mail+k.name+k.firma; }).join("").length;
+  if(stand===mailKontakteStand && Date.now()-mailKontakteGesendet<1800000) return;
+  mailHolen("/api/leitstand/kontakte", {frist:15000, body:{kontakte:l}}).then(function(){ mailKontakteStand=stand; mailKontakteGesendet=Date.now(); }, function(){});
 }
 /* Verwaltung › Inhaber: Mail-Programm am PC per Code verbinden oder trennen */
 function mailKoppelnKasten(){

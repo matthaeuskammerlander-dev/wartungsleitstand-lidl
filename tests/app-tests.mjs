@@ -860,6 +860,34 @@ test("Angebot aus dem Folgeauftrag: Befund, Katalog-Vorschlag und Fahrtpauschale
   await a.zu();
 });
 
+test("Mail-Programm: Leitstand-Kontakte (Adressbuch, Kunden, Beteiligte) gehen für die Adressvorschläge ans verbundene Mail-Programm", async () => {
+  const a = await oeffnen(KONTEN.inhaber);
+  const r = await a.seite.evaluate(async () => {
+    const x = window.__t.x, warte = (ms) => new Promise((f) => setTimeout(f, ms)), db = window.__db.tabellen, t0 = new Date().toISOString();
+    db.kontakte.push({ id: "kk1", name: "Anna Adressbuch", firma: "Firma A", mail: "anna@firma-a.at", schluessel: "m:anna@firma-a.at", herkunft: [] });
+    db.stammdaten.push({ id: "kunde:KM1", typ: "kunde", ziel: "KM1", felder: { name: "Kunde Mail GmbH", email: "office@kunde-mail.at", ansprechpartner: "Karl Kunde", aktiv: true }, neu: true, geaendert: t0, von: "Test", grund: "Test" });
+    db.projekte.push({ id: "pkm", nummer: "P-T-9", titel: "Mailprojekt", kunde_id: "lidl", status: "anfrage", daten: { beteiligte: [{ id: "b1", rolle: "Planer HKLS", firma: "Planbüro", name: "Paula Plan", mail: "Paula@Planbuero.at" }] }, verlauf: [], erstellt: t0, geaendert: t0 });
+    await x("Promise.all([ladeStammdaten(), projekteLaden(), kontakteLaden()])"); await warte(400);
+    const gesendet = [], altFetch = window.fetch;
+    window.fetch = (u, o) => { u = String(u); if (!u.startsWith("http://localhost:4317")) return altFetch(u, o);
+      if (u.includes("/api/leitstand/kontakte")) gesendet.push(JSON.parse(o.body));
+      return Promise.resolve(new Response(JSON.stringify({ ok: true, auftrag: null }), { status: 200 })); };
+    const ohne = (x("mailKontakteSenden(); 1"), await warte(300), gesendet.length);   /* nicht verbunden: nichts */
+    localStorage.setItem("ukt_mailbruecke", JSON.stringify({ schluessel: "ab".repeat(16), konto: x("wer()"), seit: t0 }));
+    x("mailKontakteZeit=0; mailKontakteStand=''; mailKontakteSenden(); 1"); await warte(500);
+    x("mailKontakteZeit=0; mailKontakteSenden(); 1"); await warte(300);   /* unverändert: nicht nochmals */
+    window.fetch = altFetch; localStorage.removeItem("ukt_mailbruecke");
+    const k = (gesendet[0] || {}).kontakte || [];
+    return { ohne, anzahl: gesendet.length, mails: k.map((c) => c.mail + "|" + c.quelle), felder: k.length ? Object.keys(k[0]).sort().join(",") : "" };
+  });
+  pruefe(r.ohne === 0, "Ohne Verbindung wurden Kontakte geschickt");
+  pruefe(r.anzahl === 1, "Kontakte nicht genau einmal geschickt: " + r.anzahl);
+  pruefe(r.mails.includes("anna@firma-a.at|Adressbuch") && r.mails.includes("office@kunde-mail.at|Kunde") && r.mails.includes("paula@planbuero.at|Projekt P-T-9"), "Kontakte fehlen: " + JSON.stringify(r.mails));
+  pruefe(r.felder === "firma,mail,name,quelle", "Mehr als Name/Firma/Mail geschickt: " + r.felder);
+  pruefe(!a.fehler.length, "Laufzeitfehler: " + a.fehler.join("; "));
+  await a.zu();
+});
+
 test("Projekt aus Mailverlauf: Mails wählen, Claude-Vorschlag prüfen, anlegen mit Angaben, Quellen, Beteiligten, Terminen, Tagebuch und Dateien", async () => {
   const a = await oeffnen(KONTEN.inhaber);
   const r = await a.seite.evaluate(async () => {
