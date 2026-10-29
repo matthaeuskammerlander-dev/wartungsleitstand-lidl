@@ -7376,8 +7376,19 @@ test("Stempeluhr: Position wie bei Crewmeister – Frage vor dem Stempeln, ohne 
     await w(300);
     e.nachWiderruf = JSON.stringify((meine().filter((s) => s.art === "ein").pop() || {}).ort || null);
     e.keineFrageNachWiderruf = !ov();
+    /* 5) Zustimmung zur alten Fassung (ohne Kilometergeld, Inhaber 29.10.2026): Hinweis in der Stempeluhr, neu zustimmen ersetzt die alte Zeile */
+    x("ansichtenSchliessen()"); await w(150);
+    const alt = { user_id: uid, name: "Testtechniker", zeit: new Date().toISOString(), fassung: "2026-10-14" };
+    db.stempel_zustimmung.push(alt);
+    x("STEMPEL_ZUSTIMMUNG=" + JSON.stringify(alt) + "; render(); 1"); await w(300);
+    const neu = k().querySelector("[data-zust-frage]"); e.neuLink = !!neu && /Kilometergeld/.test(k().textContent);
+    if (neu) { neu.click(); await w(200); ov().querySelector('[data-zust="ja"]').click(); await w(500); }
+    const zz = db.stempel_zustimmung.filter((z) => z.user_id === uid);
+    e.neuZust = zz.map((z) => z.fassung);
+    e.erlaubt = x("akKmPositionErlaubt()");
     return e;
   });
+  pruefe(r.neuLink && JSON.stringify(r.neuZust) === '["2026-10-18"]' && r.erlaubt, "alte Fassung → neu zustimmen: " + JSON.stringify([r.neuLink, r.neuZust, r.erlaubt]));
   pruefe(r.flags[0] && r.flags[1] && r.flags[2] === 10 && !r.flags[3], "Einstellung nicht geladen: " + JSON.stringify(r.flags));
   pruefe(/nur mit deiner Zustimmung/.test(r.hinweisKarte), "Hinweis in der Stempeluhr fehlt: " + r.hinweisKarte.slice(0, 200));
   pruefe(/Was:|Wofür|Wer sieht es|Wie lange|Freiwillig/.test(r.frage) && /10 Tagen/.test(r.frage) && r.nochNichts, "Frage vor dem Stempeln fehlt/unvollständig: " + r.frage.slice(0, 300));
@@ -8140,6 +8151,51 @@ test("Kilometergeld berechnen (Inhaber 18.10.2026): Orte aus der Stempeluhr, Hin
   pruefe(!/Stempelposition/.test(r.alteFassung) && /Stempelposition 15:00/.test(r.neueFassung), "Position nur mit Zustimmung zur neuen Fassung: " + JSON.stringify([r.alteFassung.slice(0, 200), r.neueFassung.slice(0, 200)]));
   pruefe(/Kilometergeld/.test(r.text), "Zustimmungstext nennt das Kilometergeld nicht");
   pruefe(/keine Stempel, Stunden oder Termine/.test(r.leer), "leerer Tag: " + r.leer);
+  /* Inhaber 29.10.2026: Strecke selbst festlegen, Startpunkt aus dem, was wirklich war, „entfernt“-Stempel bis 5 km, Hinweis zur neuen Zustimmung */
+  const r2 = await a.seite.evaluate(async () => {
+    const x = window.__t.x, db = window.__db.tabellen, { warte, dlg } = window.__rk, e = {};
+    const bis = async (bed, ms) => { const t = Date.now() + (ms || 5000); for (;;) { let ok = false; try { ok = bed(); } catch (err) {} if (ok || Date.now() > t) return ok; await warte(50); } };
+    const uid = "u_tech_test_at", tag = x("plusTage(isoLokal(new Date()),-3)"), vt = x("plusTage(isoLokal(new Date()),-4)");
+    const um = (t, hm) => new Date(t + "T" + hm + ":00").toISOString();
+    const fern = x("(function(){ var s=ST.filter(function(s){ return s.lat!=null && fahrtSchaetzMin(s, BETRIEB)>90; })[0]; return s ? {id:s.id, name:stName(s)} : null; })()");
+    const nah = x("(function(){ var s=ST.filter(function(s){ return s.lat!=null && s.id!=='" + fern.id + "'; })[0]; return {id:s.id, name:stName(s)}; })()");
+    e.fern = !!fern;
+    /* Vortag: zuletzt am fernen Markt ausgestempelt → Übernachtung dort; Tag: „entfernt“ 3 km neben dem nahen Markt gestempelt */
+    db.stempel.push(
+      { id: "stV1", user_id: uid, name: "Testtechniker", art: "aus", zeit: um(vt, "18:00"), standort_id: fern.id, ort: { status: "am_markt", standort: fern.id, naechster: fern.id, entfernung: 50 } },
+      { id: "stT1", user_id: uid, name: "Testtechniker", art: "ein", zeit: um(tag, "07:30"), standort_id: nah.id, ort: { status: "entfernt", standort: nah.id, naechster: nah.id, entfernung: 3100 } },
+      { id: "stT2", user_id: uid, name: "Testtechniker", art: "aus", zeit: um(tag, "17:00"), standort_id: nah.id, ort: { status: "entfernt", standort: nah.id, naechster: nah.id, entfernung: 9000 } });
+    x("STARTPUNKTE[Store.benutzer.id]={betrieb:true}; STEMPEL_ORT_POS=true; STEMPEL_ZUSTIMMUNG={user_id:Store.benutzer.id, fassung:'2026-10-14'}");
+    x("ansichtenSchliessen(); akEditor(null, {art:'km'})"); await warte(300);
+    let d = dlg(); d.querySelector('[data-f="datum"]').value = tag; d.querySelector('[data-f="datum"]').dispatchEvent(new Event("change"));
+    await bis(() => d.querySelector("[data-kmselbst]"));
+    const route = () => d.querySelector("[data-kmroute]").textContent;
+    e.auto = route();
+    e.zustHinweis = !!d.querySelector("[data-kmzust]");
+    /* selbst festlegen: die berechnete Strecke als Start, dann den Betrieb als Ziel dazu, einen Punkt entfernen */
+    d.querySelector("[data-kmselbst]").click(); await warte(100);
+    e.vorher = d.querySelectorAll("[data-punkte] li").length;
+    const ow = d.querySelector("[data-ortwahl]"); d.querySelector("[data-als]").value = "ziel";
+    ow.value = x("BETRIEB.id"); ow.dispatchEvent(new Event("change")); await warte(50);
+    e.nachDazu = d.querySelectorAll("[data-punkte] li").length;
+    e.ziel = [...d.querySelectorAll("[data-punkte] li")].pop().textContent;
+    d.querySelectorAll("[data-punkte] li")[0].querySelector("[data-weg]").click(); await warte(50);
+    e.nachWeg = d.querySelectorAll("[data-punkte] li").length;
+    await bis(() => !d.querySelector("[data-kmuebernehmen]").disabled);
+    e.summe = d.querySelector("[data-kmsumme]").textContent;
+    d.querySelector("[data-kmuebernehmen]").click(); await warte(50);
+    e.km = d.querySelector('[data-f="km"]').value; e.text = d.querySelector('[data-f="text"]').value;
+    d.querySelector("[data-zurueck]").click(); await bis(() => /Berechnet:/.test(route()));
+    e.zurueck = /Berechnet:/.test(route());
+    x("ansichtenSchliessen(); STEMPEL_ORT_POS=false; STEMPEL_ZUSTIMMUNG=null");
+    e.fernName = fern.name; e.nahName = nah.name; e.betrieb = x("BETRIEB.name");
+    return e;
+  });
+  pruefe(r2.fern && r2.auto.includes(r2.fernName) && /laut Stempeluhr\/Stunden – Übernachtung angenommen/.test(r2.auto), "Startpunkt aus dem letzten Stempel des Vortags: " + r2.auto);
+  pruefe(r2.auto.includes(r2.nahName), "„entfernt“-Stempel 3 km neben der Baustelle zählt als Baustelle: " + r2.auto);
+  pruefe(r2.zustHinweis, "Hinweis: Zustimmung zur alten Fassung gilt nicht fürs Kilometergeld");
+  pruefe(r2.nachDazu === r2.vorher + 1 && r2.ziel.includes(r2.betrieb) && /^Ziel/.test(r2.ziel) && r2.nachWeg === r2.nachDazu - 1, "Strecke selbst festlegen: " + JSON.stringify(r2));
+  pruefe(/\d+ km/.test(r2.summe) && +r2.km > 0 && r2.text.includes(r2.betrieb) && r2.text.startsWith(r2.nahName) && r2.zurueck, "eigene Strecke übernehmen: " + JSON.stringify(r2));
   if (process.env.FOTO) {
     await a.seite.evaluate(async () => { const x = window.__t.x; x("STEMPEL_ZUSTIMMUNG=null; akEditor(null, {art:'km'})"); await new Promise((f) => setTimeout(f, 300));
       const d = window.__rk.dlg(); d.querySelector('[data-f="datum"]').value = x("plusTage(isoLokal(new Date()),-1)"); d.querySelector('[data-f="datum"]').dispatchEvent(new Event("change")); });

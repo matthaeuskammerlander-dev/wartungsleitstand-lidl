@@ -863,9 +863,15 @@ Kammerlander Umwelt- und Klimatechnik (UKT) – oft kurz, vom Handy, im Feld.
   `akKmBerechnen(tag)` holt die eigenen Stempel des Tages, `akTagesOrte` ordnet die Orte: Stempel (Ein/Umstempeln/Aus) – Koordinaten NUR mit
   Zustimmung ab Fassung `AK_KM_FASSUNG` (2026-10-18, Zustimmungstext nennt seither den Zweck Kilometergeld; ältere Zustimmungen nur Markt/
   Betrieb), sonst Markt/Betrieb bei status am_markt/im_betrieb; dann eigene Stunden (Markt bzw. Projekt-Standort); nur wenn beides leer:
-  eigene Kalendertermine. Start = `startpunktFuer("ich")`, Hin-/Rückfahrt abwählbar (Vorgabe: dabei, wenn > 1 km). km laut `strassenMatrix`,
-  sonst Luftlinie × UMWEG („geschätzt“). „Übernehmen“ füllt nur km + Strecke (Ortsnamen, keine Koordinaten) – gespeichert wird mit „Speichern“.
-  Nicht beim Eintrag einer anderen Person.
+  eigene Kalendertermine. Start = `startpunktIst(tag, stempel)` (seit 29.10.2026, Inhaber: „nie in der Tivoligasse, schlägt es immer vor“ –
+  vorher `startpunktFuer` = Kalender bis 4 Tage zurück): für den Tag festgelegt → letzter Ort des VORTAGS laut Stempel/Stunden (ohne Kalender,
+  `akTagesOrte(…, true)`), > 90 min von zu Hause/Betrieb = Übernachtung → fester Startpunkt; nur ein Tag zurück. Hin-/Rückfahrt abwählbar
+  (Vorgabe: dabei, wenn > 1 km). Stempel „entfernt“ mit gewähltem Ort ≤ 5 km zählen als dieser Ort (Hotel neben der Baustelle). km laut
+  `strassenMatrix`, sonst Luftlinie × UMWEG („geschätzt“). „Übernehmen“ füllt nur km + Strecke (Ortsnamen, keine Koordinaten) – gespeichert wird
+  mit „Speichern“. Nicht beim Eintrag einer anderen Person. **Strecke selbst festlegen** (`akKmEigeneStrecke`, „✎ Start, Ziel und
+  Zwischenpunkte selbst festlegen“, auch an Tagen ohne Daten): Punkte ↑/↓/✕, neu als Start/Zwischenpunkt/Ziel aus Markt, Betrieb oder Ort/Adresse
+  (Nominatim, Koordinaten nur zum Rechnen), `akKmFolgeRechnen`. Zustimmung zu einer älteren Fassung: Hinweis im km-Fenster (`[data-kmzust]`) und in
+  der Stempeluhr („Neue Fassung … Ansehen und zustimmen“); neu zustimmen löscht die eigene alte Zeile und trägt die neue ein (Tabelle ohne update).
 - **Textfelder wachsen mit** (Inhaber 07.10.2026: „man muss innen drinnen scrollen“): jedes `<textarea>` passt seine Höhe dem Text an
   (`feldHoehe`, `textfelderAnpassen` bei Eingabe/Fokus/Klick/Größe/neuen Elementen), Zeilenzahl = Mindestmaß, keine Obergrenze;
   Ausnahme `data-fest`. Test „Textfelder wachsen mit dem Text …“.
