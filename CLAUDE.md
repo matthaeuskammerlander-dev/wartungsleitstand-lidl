@@ -511,6 +511,9 @@ Kammerlander Umwelt- und Klimatechnik (UKT) – oft kurz, vom Handy, im Feld.
   Kleingedrucktes (Korrekturvermerk) – nur „ENTWURF – nicht unterschrieben“ bleibt. „Nachtabsenkung / Flüsterbetrieb (Schall)“ heißt im PDF so
   wie im Formular. Herunterladen unter dem lesbaren Namen: `speicherDownloadUrl` hängt ?download=<Name> an signierte Speicher-Links.
   Fotos ebenso (Inhaber 29.10.2026: „warum kann ich die Fotos nicht herunterladen?“): `bildAnsicht` hat unten „Herunterladen“ (Daten-Bilder als Blob, ohne Endung im Titel → .jpg).
+  Bildschirmfotos (Inhaber 29.10.2026: „Qualität der Screenshots zu gering, dass man die Texte lesen kann“): `fotoIstBildschirm` (Name „Screenshot/Bildschirmfoto…“ oder PNG)
+  → `verkleinere` bis `FOTO_KANTE_BILDSCHIRM` 2000 px / `FOTO_BUDGET_BILDSCHIRM` 450 KB, Qualität ab 0,88; im PDF (`fotosEinsetzen`, `anFotosHtml`) `figure.breit` über die ganze Breite statt zu dritt.
+  Test „Fotos: Bildansicht mit „Herunterladen“ …“.
 - **Inbetriebnahmeprotokoll Kälteanlage** (Inhaber 12.10.2026, Tabelle `inbetriebnahmen`, tools/inbetriebnahmen.sql – gleiche Regeln und Trigger wie die
   Arbeitsnachweise; im SQL-Editor ohne Konto bleiben mitgegebene `erstellt_von`/`monteur` stehen, damit das Büro einem Monteur einen Entwurf anlegen kann):
   nach dem Muster „Inbetriebnahmeprotokoll Kälteanlage“ (KlimaCraft), mit den Anmerkungen des Inhabers auf der Vorlage. „Auftrag“ = Bestell-/Auftragsnummer des

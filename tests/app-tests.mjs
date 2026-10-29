@@ -5910,6 +5910,54 @@ test("Protokoll-PDF: Seitenumbruch nie mitten in einer Tabelle – kurze Tabelle
   await a.zu();
 });
 
+/* Inhaber 29.10.2026: „warum kann ich die Fotos nicht herunterladen?“ und „die Qualität der Screenshots ist zu gering, dass man die Texte lesen kann“ */
+test("Fotos: Bildansicht mit „Herunterladen“; Bildschirmfotos schärfer gespeichert und im PDF über die ganze Breite", async () => {
+  const a = await oeffnen(KONTEN.inhaber);
+  const r = await a.seite.evaluate(async () => {
+    const x = window.__t.x, e = {};
+    /* erkannt am Namen bzw. PNG */
+    const ist = x("fotoIstBildschirm");
+    e.erkannt = [ist("Screenshot 2026-10-29 093728.jpg"), ist("Bildschirmfoto 2026-10-29.jpg"), ist("IMG_7745.PNG"), ist("x", "image/png"), ist("IMG_8194.jpeg"), ist("foto.heic")].join(",");
+    /* verkleinern: Bildschirmfoto bis 2000 px, Kamerafoto bis 1600 px */
+    const datei = (name, typ) => new Promise((ok) => { const c = document.createElement("canvas"); c.width = 2400; c.height = 1200;
+      const g = c.getContext("2d"); g.fillStyle = "#fff"; g.fillRect(0, 0, 2400, 1200); g.fillStyle = "#000"; g.font = "13px Arial";
+      for (let y = 20; y < 1200; y += 20) g.fillText("Lager hinten 25,9 °C Sollwert 20,0 °C A3 ".repeat(8), 4, y);
+      c.toBlob((b) => ok(new File([b], name, { type: typ })), typ); });
+    const v = x("verkleinere");
+    e.breiteBildschirm = (await v(await datei("Screenshot 1.png", "image/png"))).breite;
+    e.breiteFoto = (await v(await datei("IMG_1.jpeg", "image/jpeg"))).breite;
+    /* im Blatt: Bildschirmfoto über alle drei Spalten, Kamerafoto in einer */
+    const punkt = "data:image/jpeg;base64," + (await v(await datei("IMG_2.jpeg", "image/jpeg"))).datenUrl.split(",")[1];
+    const p = { _quelle: "geraet", fotos: [{ id: "f1", name: "Screenshot 1.jpg" }, { id: "f2", name: "IMG_2.jpeg" }],
+      _fotoDaten: [{ id: "f1", name: "Screenshot 1.jpg", hinweis: "Fernzugriff", datenUrl: punkt }, { id: "f2", name: "IMG_2.jpeg", hinweis: "Gerät", datenUrl: punkt }] };
+    const blatt = document.createElement("div"); blatt.className = "blatt"; blatt.style.cssText = "position:fixed;left:-5000px;top:0;width:794px";
+    const host = document.createElement("div"); blatt.appendChild(host); document.body.appendChild(blatt);
+    await x("fotosEinsetzen")(host, p, true);
+    const fig = [...host.querySelectorAll("figure")];
+    e.breit = fig.map((f) => f.classList.contains("breit")).join(",");
+    e.breiten = fig.map((f) => Math.round(f.getBoundingClientRect().width)).join(",");
+    blatt.remove();
+    /* Bildansicht: unten „Herunterladen“ unter dem Namen */
+    x("bildAnsicht")(punkt, "IMG_8194.jpeg");
+    const d = [...document.querySelectorAll(".assistent")].pop(), l = d && d.querySelector(".as-fuss a");
+    e.knopf = l ? l.textContent + "|" + l.getAttribute("download") + "|" + /^blob:/.test(l.href) : "";
+    x("bildAnsicht")("https://beispiel.supabase.co/storage/v1/object/sign/projektdateien/a.jpeg?token=t", "Foto aus dem Chat");
+    const d2 = [...document.querySelectorAll(".assistent")].pop(), l2 = d2 && d2.querySelector(".as-fuss a");
+    e.knopf2 = l2 ? l2.getAttribute("download") + "|" + /download=Foto%20aus%20dem%20Chat\.jpg/.test(l2.href) : "";
+    x("ansichtenSchliessen(); 1");
+    return e;
+  });
+  pruefe(r.erkannt === "true,true,true,true,false,false", "Bildschirmfoto falsch erkannt: " + r.erkannt);
+  pruefe(r.breiteBildschirm === 2000 && r.breiteFoto === 1600, "Verkleinern: " + r.breiteBildschirm + " / " + r.breiteFoto);
+  pruefe(r.breit === "true,false", "Klasse breit: " + r.breit);
+  const [b1, b2] = r.breiten.split(",").map(Number);
+  pruefe(b1 > 700 && b2 < 300, "Breite im Blatt: " + r.breiten);
+  pruefe(r.knopf === "Herunterladen|IMG_8194.jpeg|true", "Knopf Herunterladen (Daten-Bild): " + r.knopf);
+  pruefe(r.knopf2 === "Foto aus dem Chat.jpg|true", "Knopf Herunterladen (Speicher-Link): " + r.knopf2);
+  pruefe(!a.fehler.length, "Laufzeitfehler: " + a.fehler.join("; "));
+  await a.zu();
+});
+
 /* Inhaber 10.10.2026: „wird ein fertiger Arbeitsnachweis beim Rechnungschreiben gleich behandelt wie ein Protokoll? – ja, bau das so ein“ */
 test("Arbeitsnachweis abrechnen wie ein Protokoll: noch nicht abgerechnet (Projekt, To-do), Rechnung schreiben, KPlus-Rechnung hochladen, von Hand vermerken – nur Inhaber", async () => {
   const a = await oeffnen(KONTEN.inhaber);
