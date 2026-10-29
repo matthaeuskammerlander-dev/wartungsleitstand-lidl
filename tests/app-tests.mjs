@@ -1174,6 +1174,40 @@ test("Synology-Archiv hochladen (Inhaber 27.10.2026): Projektunterlagen (Preise 
   pruefe(!rt, "Admin sieht die Archiv-Karte nicht");
 });
 
+test("Störung ≠ Wartungstermin (Inhaber 29.10.2026): bei einer Störung vor Ort neu erfasste Anlage ohne Termin, beim Wartungsprotokoll wie bisher", async () => {
+  const a = await oeffnen(KONTEN.techniker);
+  const r = await a.seite.evaluate(async () => {
+    const x = window.__t.x, w = (ms) => new Promise((f) => setTimeout(f, ms)), db = window.__db.tabellen, e = {};
+    const lauf = async (art, id) => {
+      x("formDirty=false; S.protoArt='" + art + "'; S.stoerungAus=null; S.bearbeiten=null; S.protoStandort='TS1'; S.protoPos='TP1'; S.view='protokoll'; render(); 1"); await w(450);
+      const form = document.getElementById("proto");
+      form._neueAnlagen().push({ id: id, werte: { anlagentyp: "Split Büro " + art, _termine: [{ id: "NEU", intervallCode: "JW", monat: 5 }] } });
+      x("render === render");
+      form.querySelectorAll("fieldset.fs-zu").forEach((f) => f.classList.remove("fs-zu"));
+      const ok = document.getElementById("f_allesok"); if (ok) ok.click();
+      if (art === "stoerung") {
+        form.querySelectorAll("textarea").forEach((t) => { if (!t.value) { t.value = "Kommunikationsfehler behoben"; t.dispatchEvent(new Event("input", { bubbles: true })); } });
+        const au = form.querySelector("#f_auftrag"); if (au) { au.value = "620012717"; au.dispatchEvent(new Event("input", { bubbles: true })); }
+      }
+      e["fehlt_" + art] = form._fehltNoch();
+      const vorher = db.protokolle.length;
+      if (!e["fehlt_" + art].length) document.getElementById("save").click();
+      for (let i = 0; i < 40 && db.protokolle.length === vorher; i++) await w(250);
+      await w(400);
+      const rec = (db.stammdaten.find((z) => z.id === "position:" + id) || {}).felder || null;
+      return rec && { pausiert: !!rec.pausiert, grund: rec.pausiertGrund || "", iv: rec.intervallCode || "", status: x("(posById['" + id + "']||{}).status||''") };
+    };
+    e.stoer = await lauf("stoerung", "NPstoerneu1");
+    e.wart = await lauf("wartung", "NPwartneu1");
+    e.verlauf = JSON.stringify((db.verlauf || db.aenderungen || []).slice(-3));
+    return e;
+  });
+  await a.zu();
+  pruefe(r.stoer && r.stoer.pausiert && /Störung/.test(r.stoer.grund) && r.stoer.status === "pausiert", "Störung: neue Anlage zur Zeit nicht gewartet: " + JSON.stringify(r));
+  pruefe(r.stoer && r.stoer.iv === "JW", "Störung: Kürzel bleibt für später gespeichert: " + JSON.stringify(r.stoer));
+  pruefe(r.wart && !r.wart.pausiert && r.wart.status !== "pausiert", "Wartungsprotokoll: neue Anlage wie bisher mit Termin: " + JSON.stringify(r));
+});
+
 test("Synology-Archiv: Wartungs-Rapporte an den Prüfbuch-Nachweisen (Inhaber 29.10.2026: „warum kann ich den Bericht in PDF nicht öffnen“)", async () => {
   const a = await oeffnen(KONTEN.inhaber);
   const r = await a.seite.evaluate(async () => {
