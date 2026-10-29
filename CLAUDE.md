@@ -254,6 +254,12 @@ Kammerlander Umwelt- und Klimatechnik (UKT) – oft kurz, vom Handy, im Feld.
   die Rolle „archiv“ (tools/archiv-rolle.sql): liest wie ein Techniker plus
   Belege und Büro-Dateien, schreibt nirgends (restriktive Regeln). Test:
   `tools/archiv_test.py` läuft in der automatischen Prüfung.
+- **App auf der Synology** (Inhaber 29.10.2026 mit Georg: „die App läuft über die Synology, Änderungen trotzdem mit Claude“):
+  GitHub bleibt die Quelle, `synology/ukt_app_holen.py` holt alle 5 min die Dateien der App aus dem Hauptordner (`gehoert_zur_app`:
+  .html/.js/.json/Bilder, nie daten.js, .md, .sql) in den Web-Ordner – nur Stände mit bestandener Prüfung „App prüfen“, nur Geänderte,
+  index.html zuletzt und nie abgeschnitten (`index_ok`). Test tools/app_holen_test.py. Neue Dateien, die die App braucht, gehören
+  deshalb in den Hauptordner. tools/pruefen.mjs --browser: seit der Anzeigesperre gilt auch der Anmeldeschirm als gelungener Start
+  (scheiterte deshalb seit Mitte Oktober).
 - Stempeluhr: von Hand eingetragene Zeit, die in die Stempelzeit fällt, zählt
   für die 10-/12-Stunden-Hinweise nicht dazu (wird beim Ausstempeln abgeglichen).
 - Termine vor Ort prüfen (`termineOffen`, `termineSchritt`): im geführten

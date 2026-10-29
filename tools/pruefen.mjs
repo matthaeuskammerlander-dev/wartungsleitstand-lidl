@@ -72,8 +72,14 @@ if (process.argv.includes("--browser") && !fehler.length) {
     await seite.waitForTimeout(4000);
     const inhalt = await seite.evaluate(() => (document.getElementById("app")?.innerText || "").trim());
     if (!inhalt.length) melde(`${geraet.name}: Die App zeigt nach dem Laden nichts an`);
-    // wirklich gestartet? (Reiterleiste sichtbar, nicht der Passwort-Schirm)
-    const gestartet = await seite.evaluate(() => { const t = document.getElementById("tabs"); return !!t && !t.hidden; });
+    // wirklich gestartet? (Reiterleiste sichtbar, nicht der Passwort-Schirm). Seit der Anzeigesperre
+    // (Inhaber 15.10.2026: „vor dem Anmelden dürfen keine Daten angezeigt werden“) zeigt die App ohne
+    // Konto nur die Anmeldung, die Reiterleiste ist dann versteckt – auch das ist ein gelungener Start.
+    const gestartet = await seite.evaluate(() => {
+      const t = document.getElementById("tabs");
+      const anmeldung = !!document.querySelector('#app input[type="email"]') && !!document.querySelector('#app input[type="password"]');
+      return (!!t && !t.hidden) || anmeldung;
+    });
     if (!gestartet || /^Zugang\b/.test(inhalt)) melde(`${geraet.name}: Die App ist nicht gestartet (nur der Passwort-Schirm)`);
     const breit = await seite.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
     if (breit > 4) console.warn(`HINWEIS ${geraet.name}: Seite ist ${breit}px breiter als der Bildschirm`);

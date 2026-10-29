@@ -1225,6 +1225,60 @@ Archivkonto darf den Bereich dann lesen, aber nichts darin ändern. Im Protokoll
 `ukt_archiv.log` steht danach zum Beispiel
 `Sicherung: 672 Dateien im Bereich, 672 geholt, 0 noch offen, neueste datenbank/2026-10-29.json.gz`.
 
+## App auf der Synology (leitstand.ukt.at)
+
+Seit 29.10.2026 vorbereitet: Die App kann über die Synology laufen, und
+Änderungen macht Matthäus trotzdem weiter mit Claude. GitHub bleibt die Quelle
+für den Code. Die Synology holt alle 5 Minuten die neueste Fassung in ihren
+Web-Ordner, und alle arbeiten über `https://leitstand.ukt.at`. Die Daten bleiben
+bei Supabase.
+
+```
+Claude ändert die App  →  GitHub  →  Synology holt ab (alle 5 min)  →  leitstand.ukt.at
+```
+
+Das Skript `synology/ukt_app_holen.py`:
+
+- holt nur die Dateien der App aus dem Hauptordner: `index.html`, `config.js`,
+  `daten.enc.js`, `sw.js`, `manifest.json` und die Bilder. Beschreibungen,
+  Werkzeuge, Tests und Datenbank-Skripte kommen nicht auf die Synology;
+- holt nur Fassungen, deren automatische Prüfung „App prüfen“ bestanden ist.
+  Läuft die Prüfung noch, wartet es bis zum nächsten Lauf. Ist sie
+  gescheitert, bleibt die bisherige Fassung online;
+- holt nur Dateien, die sich geändert haben, und schaltet erst um, wenn alles
+  geladen ist. Die `index.html` kommt zuletzt, eine abgeschnittene nie;
+- fasst fremde Dateien im Web-Ordner nie an;
+- schreibt ins Protokoll `ukt_app_holen.log`, aber nur, wenn sich etwas tut.
+
+### Einrichtung (mit Georg)
+
+1. **Web-Ordner:** In der Web Station einen Ordner für die App anlegen, z. B.
+   `/volume1/web/leitstand`, und `leitstand.ukt.at` als virtuellen Host darauf
+   zeigen lassen.
+2. **Zertifikat:** Let's Encrypt für `leitstand.ukt.at`. Ohne HTTPS gehen
+   Anmeldung und Push am Handy nicht.
+3. **DNS:** `leitstand.ukt.at` auf die Synology (A-Eintrag auf die feste IP oder
+   DynDNS).
+4. **Skript:** `ukt_app_holen.py` und `ukt_app_holen.beispiel.json` in den
+   Skriptordner kopieren (derselbe wie beim Archiv, nur für Administratoren).
+   Die JSON in `ukt_app_holen.json` umbenennen und `ziel` eintragen. `token`
+   bleibt leer, solange das Repository öffentlich ist.
+5. **Testen:** `python3 ukt_app_holen.py --pruefen` zeigt, was geholt würde, und
+   schreibt nichts.
+6. **Aufgabenplaner:** neue Aufgabe als `root`, alle 5 Minuten:
+   `python3 /volume1/homes/<admin>/ukt-archiv/ukt_app_holen.py`
+7. **Supabase:** unter Authentication → URL Configuration die Site URL auf
+   `https://leitstand.ukt.at` stellen und die Adresse bei den Redirect URLs
+   ergänzen.
+8. **Umstellen:** Alle schicken vorher offene Protokolle ab. Danach öffnen sie
+   die neue Adresse, melden sich neu an, schalten Push neu ein und legen das
+   App-Symbol neu an. Die alte Adresse auf GitHub Pages läuft vorerst weiter.
+
+**Repository privat:** Dann braucht die Synology einen GitHub-Schlüssel, der
+nur lesen darf: Fine-grained Token, nur dieses Repository, Rechte „Contents:
+Read“ und „Checks: Read“. Er kommt bei `token` in `ukt_app_holen.json` und liegt
+nur auf der Synology.
+
 ## Einrichtung der Protokoll-Datenbank
 
 1. Auf [supabase.com](https://supabase.com) ein Projekt anlegen (Region Frankfurt).
@@ -1305,6 +1359,8 @@ wieder steht. Der Techniker muss nichts nachholen.
 
 ## Offene Punkte
 
+- **App auf der Synology** (`leitstand.ukt.at`) einrichten – siehe *App auf der
+  Synology*.
 - **Archiv auf der Synology** einrichten (Berechtigungen, Aufgabenplaner,
   Archivkonto mit Rolle „archiv“, `tools/sicherung.sql` für die Sicherung) –
   siehe *Archiv auf der Synology*. Das Archivkonto gibt es in Supabase noch
