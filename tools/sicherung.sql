@@ -19,3 +19,10 @@ create policy "sicherungen ersetzen"  on storage.objects for update to authentic
   using (bucket_id = 'sicherungen' and public.ist_inhaber()) with check (bucket_id = 'sicherungen' and public.ist_inhaber());
 create policy "sicherungen entfernen" on storage.objects for delete to authenticated
   using (bucket_id = 'sicherungen' and public.ist_inhaber());
+
+-- Synology (Inhaber 29.10.2026): das Archivkonto (Rolle „archiv“, tools/archiv-rolle.sql) holt die Sicherung
+-- einmal am Tag in den Büro-Ordner, den nur der Chef sieht (synology/ukt_archiv.py). Nur lesen – schreiben
+-- verbieten ihm die restriktiven Regeln „archiv schreibt nie …“.
+drop policy if exists "sicherungen archiv lesen" on storage.objects;
+create policy "sicherungen archiv lesen" on storage.objects for select to authenticated
+  using (bucket_id = 'sicherungen' and public.ist_archiv());

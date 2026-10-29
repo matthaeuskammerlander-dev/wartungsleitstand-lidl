@@ -5,24 +5,30 @@ Wartungsprotokolle aus dem Wartungsleitstand auf die Synology holen.
 
 Die App legt jedes Protokoll als PDF in Supabase ab. Dieses Skript läuft auf
 der Synology (Systemsteuerung -> Aufgabenplaner, alle 15 Minuten), meldet sich
-mit einem eigenen Konto an und legt neue und korrigierte PDFs ab unter
+mit einem eigenen Konto an und legt alles in der Ordnerstruktur ab, die das
+Büro schon kennt (Inhaber 29.10.2026: „gewohnte Synology-Ordnerstruktur“):
 
-    <basis>/<jahr>/Lidl/Wartungen/2026-09-21_Seekirchen_Darko.pdf
-    <basis>/<jahr>/Lidl/Störungen/…            (Störungsprotokolle, Büro 02.10.2026)
+    <basis>/<jahr>/Lidl/Wartungen/Seekirchen,2026-09-21,JW.pdf
+    <basis>/<jahr>/Lidl/Störungen/Innsbruck,2026-09-21.pdf     (+ Lidl-Rapport daneben)
+    <basis>/<jahr>/Lidl/Störungen/Beauftragungen/…              (Lidl-Auftrag)
+    <basis>/<jahr>/Wartungen/Auto Aicher,Kössen,2026-06-05,JW.pdf   (weitere Kunden)
+    <basis>/<jahr>/Störungen/…
+    <basis>/<jahr>/Lidl/Baustellen/Amstetten/                   (Baustellen, Lidl)
+    <basis>/<jahr>/Baustellen/Hotel Kunzmann Würzburg/          (Baustellen, weitere Kunden)
 
-Protokolle weiterer Kunden (nicht Lidl) kommen nach
-<basis>/<jahr>/Kunden/<Kunde>/Wartungen bzw. …/Störungen.
-
-Baustellen (Projekte) bekommen je einen Ordner mit Plänen, Fotos, Unterlagen
-und einer Projektmappe (HTML + JSON), nach Jahr und Kunde:
-
-    <basis>/<jahr>/Lidl/Baustellen/123-Musterort_P-2026-001/
-    <basis>/<jahr>/Kunden/<Kunde>/Baustellen/…
+Verschiebt das Büro eine Datei (z. B. nach „3.Quartal abgerechnet“), findet das
+Skript sie dort wieder und legt sie nicht ein zweites Mal ab; eine Korrektur
+ersetzt sie an ihrem neuen Platz. Projekte aus dem Synology-Archiv bleiben in
+ihrem Ordner, ihre Dateien werden nie zurückgeschrieben.
 
 Angebote und Rechnungen NIE dorthin (den Ordner sehen auch Techniker), sondern
 in den Büro-Ordner, den nur der Chef sieht (Einstellung "buero_basis", gleiche
 Gliederung darunter). Dafür braucht das Archivkonto die Rolle "archiv"
 (tools/archiv-rolle.sql). Ohne "buero_basis" werden sie gar nicht abgelegt.
+
+Einmal am Tag holt es außerdem die wöchentliche Sicherung der App (ganzer
+Datenbestand, Kopien der Dateien) nach <buero_basis>/Sicherung (seit 29.10.2026,
+Einstellung "sicherung_basis" für einen anderen Ordner; tools/sicherung.sql).
 
 Gelöschte Protokolle wandern in den Unterordner "_geloescht". Das Skript
 schreibt nur in diese Ordner und fasst sonst nichts an.
@@ -161,6 +167,23 @@ class Supabase:
         return anfrage("GET", self.url + "/storage/v1/object/" + eimer + "/" +
                        urllib.parse.quote(pfad), self.kopf(), roh=True)
 
+    def liste(self, eimer, ordner=""):
+        """alle Dateien eines Speicherbereichs samt Unterordnern: [{pfad, groesse}]"""
+        alle, start = [], 0
+        while True:
+            teil = anfrage("POST", self.url + "/storage/v1/object/list/" + eimer, self.kopf(),
+                           {"prefix": ordner, "limit": 1000, "offset": start,
+                            "sortBy": {"column": "name", "order": "asc"}}) or []
+            for x in teil:
+                pfad = (ordner + "/" if ordner else "") + x["name"]
+                if x.get("id") is None and not x.get("metadata"):
+                    alle.extend(self.liste(eimer, pfad))     # Unterordner
+                else:
+                    alle.append({"pfad": pfad, "groesse": int((x.get("metadata") or {}).get("size") or -1)})
+            if len(teil) < 1000:
+                return alle
+            start += 1000
+
 
 # ---------------------------------------------------------------- Dateien
 
@@ -180,21 +203,68 @@ def ungleich(p):
     return bool(t and n and t != n)
 
 
-def dateiname(p):
-    """2026-09-21_Seekirchen_Darko.pdf – der Markt so, wie UKT ihn nennt
-    (Ort bzw. Ort + Straße, vergibt die App); Störungen sind gekennzeichnet:
-    2026-09-21_Innsbruck_Stoerung_Darko.pdf"""
-    teile = [str(p.get("datum") or "ohne-Datum")[:10]]
-    if p.get("standort_name"):
-        teile.append(sauber(p["standort_name"]))
-    elif p.get("filiale"):
-        teile.append("Filiale-" + sauber(p["filiale"]))
-    if p.get("wartungsart") == "Störung":
-        teile.append("Stoerung")
-    tech = p.get("techniker") or p.get("name_techniker")
-    if tech:
-        teile.append(sauber(tech))
-    return "_".join(t for t in teile if t) + ".pdf"
+def name_ordner(text, laenge=60):
+    """Ordner- und Dateinamen wie auf der Synology üblich („Hotel Kunzmann Würzburg“,
+    „Graz,Wiener.str,2026-07-07,HJI.pdf“): Leerzeichen und Kommas bleiben,
+    nur Zeichen, die Windows/DSM nicht erlauben, fallen weg"""
+    t = re.sub(r"[\\/]+", "-", str(text or ""))
+    t = re.sub(r'[:*?"<>|\x00-\x1f]', "", t)
+    return re.sub(r"\s+", " ", t).strip(" .")[:laenge]
+
+
+def ist_stoerung(p):
+    return str(p.get("wartungsart") or "").strip().lower().startswith("stör")
+
+
+TERMIN_KUERZEL = (("halbjahresinspektion", "HJI"), ("halbjahreswartung", "HJW"), ("jahreswartung", "JW"))
+
+
+def termin_kuerzel(p):
+    """JW / HJI / HJW der gewarteten Anlagen („zählt als“ im Protokoll), mehrere mit +"""
+    ks = []
+    for a in p.get("anlagen") or []:
+        t = str((a or {}).get("termin") or "").strip()
+        k = next((v for w, v in TERMIN_KUERZEL if w in t.lower()), "")
+        if not k and re.match(r"^(JW|HJI|HJW|HI|HW|HJ)$", t.upper()):
+            k = t.upper()
+        if k and k not in ks:
+            ks.append(k)
+    return "+".join(ks)
+
+
+def dateiname(p, kunde=None):
+    """wie bisher auf der Synology (Inhaber 29.10.2026: „gewohnte Ordnerstruktur“):
+    Markt, Datum, Termin – „Seekirchen,2026-09-21,JW.pdf“; Störungen ohne Termin
+    („Innsbruck,2026-09-21.pdf“, sie liegen ohnehin im Ordner Störungen);
+    weitere Kunden mit dem Kunden vorne („Auto Aicher,Kössen,2026-06-05,JW.pdf“).
+    Gleicher Markt am gleichen Tag: _2, _3 … (freier_name)."""
+    markt = name_ordner(p.get("standort_name")) or (("Filiale " + name_ordner(p["filiale"])) if p.get("filiale") else "")
+    teile = []
+    if kunde and name_norm(kunde) not in name_norm(markt):
+        teile.append(name_ordner(kunde))
+    teile += [markt, str(p.get("datum") or "ohne-Datum")[:10]]
+    if not ist_stoerung(p):
+        teile.append(termin_kuerzel(p))
+    return ",".join(t for t in teile if t) + ".pdf"
+
+
+def wiederfinden(wurzel, name, groesse=None):
+    """Hat das Büro die Datei verschoben (z. B. nach „3.Quartal abgerechnet“ oder
+    „ABGERECHNET“)? Dieselbe Datei irgendwo unter dem Ordner suchen – sonst legte
+    das Skript sie beim nächsten Lauf ein zweites Mal ab."""
+    if not name or not os.path.isdir(wurzel):
+        return None
+    for r, _, fs in os.walk(wurzel):
+        if name in fs:
+            voll = os.path.join(r, name)
+            if groesse is None or groesse < 0 or os.path.getsize(voll) == groesse:
+                return voll
+    return None
+
+
+def im_ordner(datei, ordner):
+    """liegt die Datei im Ordner oder in einem Unterordner davon?"""
+    return bool(datei) and (os.path.dirname(datei) == ordner or datei.startswith(ordner + os.sep))
 
 
 def kunden_je_standort(sb):
@@ -217,10 +287,11 @@ def zielordner(k, p, kunden=None):
         jahr = "ohne-Datum"
     kunde = (kunden or {}).get(p.get("standort_id"))
     # Wartungen und Störungen getrennt (Büro 02.10.2026): …/Wartungen bzw. …/Störungen
-    art = "Störungen" if str(p.get("wartungsart") or "").strip().lower().startswith("stör") else "Wartungen"
+    art = "Störungen" if ist_stoerung(p) else "Wartungen"
     if kunde:
-        # weiterer Kunde: eigener Ordner je Kunde, z. B. 2026/Kunden/Muster-GmbH/Wartungen
-        muster = k.get("unterordner_kunde", "{jahr}/Kunden/{kunde}")
+        # weiterer Kunde: wie auf der Synology üblich direkt unter dem Jahr –
+        # 2026/Wartungen, 2026/Störungen, der Kunde steht im Dateinamen
+        muster = k.get("unterordner_kunde", "{jahr}")
     else:
         muster = k["unterordner"]
     teile = [t for t in muster.format(jahr=jahr, kunde=sauber(kunde) if kunde else "", art=art).replace("\\", "/").split("/") if t]
@@ -253,9 +324,51 @@ def schreibe(pfad, inhalt):
 
 # ---------------------------------------------------------------- Ablauf
 
+def anhaenge_ablegen(k, sb, p, s, ordner):
+    """Lidl-Rapport und Lidl-Auftrag eines Protokolls (Speicher „protokollfotos“,
+    <Protokoll>/rapport.pdf bzw. auftrag.pdf) wie auf der Synology üblich mit
+    ihrem Originalnamen: der Rapport neben das Protokoll, der Auftrag eines
+    Lidl-Markts nach …/Störungen/Beauftragungen (Inhaber 29.10.2026)."""
+    if PRUEFEN or not s.get("datei") or s.get("geloescht") or s.get("gesperrt"):
+        return
+    cid = p["client_id"]
+    st = p.get("stoerung") or {}
+    lidl = os.path.basename(os.path.dirname(ordner)) == "Lidl"
+    fertig = s.setdefault("anhaenge", {})
+    for art, ref in (("rapport", p.get("rapport") or st.get("rapportDatei")), ("auftrag", st.get("auftragDatei"))):
+        if not isinstance(ref, dict):
+            continue
+        pfad = ref.get("pfad") or "%s/%s.pdf" % (cid, art)
+        alt = fertig.get(pfad)
+        if alt and os.path.exists(alt):
+            continue
+        name = sauber_datei(ref.get("name") or art + ".pdf")
+        if not name.lower().endswith(".pdf"):
+            name += ".pdf"
+        unter = os.path.join(ordner, "Beauftragungen") if art == "auftrag" and lidl else os.path.dirname(s["datei"])
+        # vom Büro verschoben oder schon von Hand abgelegt: nicht doppelt
+        gefunden = wiederfinden(ordner, os.path.basename(alt)) if alt else None
+        if not gefunden and os.path.exists(os.path.join(unter, name)):
+            gefunden = os.path.join(unter, name)
+        if gefunden:
+            fertig[pfad] = gefunden
+            continue
+        try:
+            inhalt = sb.datei("protokollfotos", pfad)
+        except RuntimeError as e:
+            log("  %s nicht geholt (%s)" % (art, str(e)[:120]))
+            continue
+        if not inhalt.startswith(b"%PDF"):
+            continue
+        ziel = freie_datei(unter, name, set())
+        schreibe(ziel, inhalt)
+        log("  %s: %s" % ("Lidl-Rapport" if art == "rapport" else "Auftrag", os.path.relpath(ziel, k["basis"])))
+        fertig[pfad] = ziel
+
+
 def abgleich(k, sb, stand):
     protokolle = sb.tabelle("protokolle", "client_id,datum,filiale,standort_name,standort_id,"
-                                          "techniker,name_techniker,wartungsart,version,geloescht")
+                                          "techniker,name_techniker,wartungsart,version,geloescht,anlagen,rapport,stoerung")
     berichte = {b["client_id"]: b for b in sb.tabelle("berichte", "client_id,version,pfad")}
     kunden = kunden_je_standort(sb)
     log("%d Protokolle, %d PDFs in der Datenbank" % (len(protokolle), len(berichte)))
@@ -305,21 +418,23 @@ def abgleich(k, sb, stand):
             continue
         version = int(b.get("version") or 1)
         ordner = zielordner(k, p, kunden)
-        gewuenscht = os.path.join(ordner, dateiname(p))
+        name = dateiname(p, kunden.get(p.get("standort_id")))
+        # vom Büro weggeräumt (abgerechnet)? dort weiterführen statt neu ablegen
+        if s and s.get("datei") and not os.path.exists(s["datei"]) and not s.get("geloescht") and not s.get("gesperrt"):
+            gefunden = wiederfinden(ordner, os.path.basename(s["datei"]))
+            if gefunden:
+                log("verschoben gefunden: " + os.path.relpath(gefunden, k["basis"]))
+                s["datei"] = gefunden
         vorhanden = s and s.get("datei") and os.path.exists(s["datei"])
+        # Name bleibt, wenn er noch passt (auch mit _2, auch in einem Unterordner); sonst neu vergeben
+        passt = vorhanden and im_ordner(s["datei"], ordner) and os.path.basename(s["datei"]).startswith(name[:-4])
 
-        aktuell = (vorhanden and not s.get("geloescht") and not s.get("gesperrt") and int(s.get("version") or 0) >= version
-                   and os.path.dirname(s["datei"]) == ordner
-                   and os.path.basename(s["datei"]).startswith(dateiname(p)[:-4]))
+        aktuell = passt and not s.get("geloescht") and not s.get("gesperrt") and int(s.get("version") or 0) >= version
         if aktuell:
+            anhaenge_ablegen(k, sb, p, s, ordner)
             continue
 
-        # Name bleibt, wenn er noch passt (auch mit _2); sonst neu vergeben
-        if vorhanden and os.path.dirname(s["datei"]) == ordner and \
-                os.path.basename(s["datei"]).startswith(dateiname(p)[:-4]):
-            ziel = s["datei"]
-        else:
-            ziel = freier_name(ordner, dateiname(p), {s["datei"]} if vorhanden else set())
+        ziel = s["datei"] if passt else freier_name(ordner, name, {s["datei"]} if vorhanden else set())
 
         art = "erneuert (Fassung %d)" % version if s else "neu"
         log("%s: %s" % (art, os.path.relpath(ziel, k["basis"])))
@@ -332,7 +447,8 @@ def abgleich(k, sb, stand):
             if vorhanden and s["datei"] != ziel and s["datei"] in eigene:
                 os.remove(s["datei"])
                 log("  ersetzt: " + os.path.relpath(s["datei"], k["basis"]))
-        stand[cid] = {"version": version, "datei": ziel}
+        stand[cid] = {"version": version, "datei": ziel, "anhaenge": (s or {}).get("anhaenge") or {}}
+        anhaenge_ablegen(k, sb, p, stand[cid], ordner)
         if s:
             erneuert += 1
         else:
@@ -344,11 +460,11 @@ def abgleich(k, sb, stand):
 
 # ---------------------------------------------------------------- Baustellen (Projekte)
 #
-# Seit 01.10.2026: jedes Projekt bekommt einen eigenen Ordner, nach Jahr und
-# Kunde (Einstellung „unterordner_projekt“):
+# Seit 01.10.2026: jedes Projekt bekommt einen Ordner wie auf der Synology
+# üblich (29.10.2026; Einstellungen „unterordner_projekt“ / „…_kunde“):
 #
-#     <basis>/2026/Kunden/Lidl/Baustellen/123-Musterort_P-2026-001/
-#         Angebot/  Rechnung/  Plaene/  Fotos/  Unterlagen/  Lieferscheine/  Protokolle/
+#     <basis>/2026/Lidl/Baustellen/Amstetten/        (aus dem Archiv: sein Ordner dort)
+#         <Unterordner wie hochgeladen> bzw. Plaene/  Fotos/  Unterlagen/  Protokolle/
 #         Projekt_P-2026-001.html   (Mappe: Angaben, Beteiligte, Termine,
 #                                    Bestellungen, Baustellenbuch, Tagebuch, Belege)
 #         Projekt_P-2026-001.json   (dasselbe maschinenlesbar)
@@ -389,10 +505,11 @@ BAUBUCH_ARTEN = {"arbeit": "Arbeit / Fortschritt", "foto": "Fotos", "plan": "Pla
 
 
 def sauber_datei(name):
-    """Dateiname mit Endung: die Endung bleibt, der Rest wie sauber()"""
+    """Dateiname mit Endung: der Name bleibt wie hochgeladen (Leerzeichen auch –
+    so findet das Büro seine Dateien, Inhaber 29.10.2026), nur verbotene Zeichen fallen weg"""
     stamm, endung = os.path.splitext(str(name or "datei"))
     endung = re.sub(r"[^A-Za-z0-9.]", "", endung)[:10]
-    return (sauber(stamm)[:80] or "datei") + endung.lower()
+    return (name_ordner(stamm, 100) or "datei") + endung.lower()
 
 
 def freie_datei(ordner, name, eigene):
@@ -440,20 +557,66 @@ def stammdaten_fuer_projekte(sb):
     return kunden, standorte, anlagen
 
 
+def pfad_teile(text):
+    """„2026/Lidl/Baustellen/Amstetten“ → Teile; nie aus dem Ordner heraus"""
+    return [name_ordner(t, 120) for t in str(text or "").replace("\\", "/").split("/") if t.strip() not in ("", ".", "..")]
+
+
+def archiv_ordner(p):
+    """Projekt aus dem Synology-Archiv nachgetragen (27.10.2026): sein Ordner dort
+    (daten.archiv.ordner) – dann bleibt alles, wo das Büro es kennt"""
+    o = ((p.get("daten") or {}).get("archiv") or {}).get("ordner") or []
+    return o[0] if o and isinstance(o[0], str) and pfad_teile(o[0]) else None
+
+
 def projekt_ordner(k, p, kunden, standorte):
+    """wie bisher auf der Synology (Inhaber 29.10.2026): Lidl unter
+    <Jahr>/Lidl/Baustellen/<Markt> („Amstetten“, „Krems“), andere Kunden unter
+    <Jahr>/Baustellen/<Kunde Ort> („Hotel Kunzmann Würzburg“). Gibt es den Ordner
+    schon, kommt das Projekt dazu – die Mappe heißt nach der Projektnummer."""
+    arch = archiv_ordner(p)
+    if arch:
+        return os.path.join(k["basis"], *pfad_teile(arch))
     jahr = str(p.get("erstellt") or "")[:4]
     if not re.match(r"^\d{4}$", jahr):
         jahr = "ohne-Datum"
-    kunde = kunden.get(p.get("kunde_id") or "lidl") or "Kunde"
     st = standorte.get(p.get("standort_id")) or {}
-    markt = " ".join(str(x) for x in (st.get("filiale"), st.get("ort")) if x)
-    name = sauber(markt or p.get("titel") or "Projekt")[:50] + "_" + sauber(p.get("nummer") or p.get("id", "")[:8])
-    muster = k.get("unterordner_projekt", "{jahr}/Kunden/{kunde}/Baustellen/{projekt}")
-    teile = [t for t in muster.format(jahr=jahr, kunde=sauber(kunde), projekt=name).replace("\\", "/").split("/") if t]
-    # Lidl direkt unter dem Jahr: 2026/Lidl/Baustellen/… (Büro 02.10.2026), weitere Kunden unter Kunden/
-    if (p.get("kunde_id") or "lidl") == "lidl" and len(teile) > 2 and teile[1] == "Kunden" and teile[2] == sauber(kunde):
-        del teile[1]
+    titel = str(p.get("titel") or "")
+    # Titel bis zum Gedankenstrich, ohne „Fil. 444“: „Fil. 444 Wien Quellenstraße 80 – CVP in VRV“ → „Wien Quellenstraße 80“
+    kurz = re.sub(r"^(Fil\.|Filiale)\s*\d+\s*", "", re.split(r"\s+[–—-]\s+", titel)[0]).strip(" ,")
+    if (p.get("kunde_id") or "lidl") == "lidl":
+        # Wien, Graz, Linz … haben viele Märkte – dort trägt erst der Titel die Straße;
+        # „Filiale 455“ (neue Märkte) ist kein Ordnername
+        ort = st.get("ort") or ""
+        name = (kurz if re.match(r"^(Fil\.|Filiale)\s*\d", titel) else "") or ort or kurz or "Projekt"
+        muster = k.get("unterordner_projekt", "{jahr}/Lidl/Baustellen/{projekt}")
+    else:
+        name = kurz or kunden.get(p.get("kunde_id")) or "Projekt"
+        muster = k.get("unterordner_projekt_kunde", "{jahr}/Baustellen/{projekt}")
+    teile = pfad_teile(muster.format(jahr=jahr, projekt=name_ordner(name, 50), kunde=name_ordner(kunden.get(p.get("kunde_id") or "lidl") or "Kunde")))
     return os.path.join(k["basis"], *teile)
+
+
+def datei_unterordner(x):
+    """Unterordner einer Projektdatei: beim Hochladen eines ganzen Ordners der
+    Weg darin (herkunft, z. B. „Kika Amstetten/UKT“) – so wie das Büro ihn
+    angelegt hat; sonst nach Art (Pläne, Fotos …)"""
+    her = str(x.get("herkunft") or "").strip()
+    if her and not re.match(r"^(E-Mail|kopiert aus|Synology )", her) and not re.search(r"[(„“]", her) and len(her) <= 120:
+        teile = pfad_teile(her)
+        if teile:
+            return teile
+    return [PROJEKT_UNTERORDNER.get(x.get("art"), "Unterlagen")]
+
+
+def schon_auf_synology(k, x):
+    """aus dem Synology-Archiv hochgeladen (herkunft „Synology 2026/Lidl/…“):
+    liegt dort schon – nie ein zweites Mal ablegen. Liefert den Ort, falls gefunden."""
+    her = str(x.get("herkunft") or "")
+    if not her.startswith("Synology "):
+        return None, False
+    voll = os.path.join(k["basis"], *(pfad_teile(her[len("Synology "):]) + [x.get("name") or ""]))
+    return (voll if os.path.isfile(voll) else None), True
 
 
 def html_text(t):
@@ -632,9 +795,12 @@ def projekte_abgleich(k, sb, stand):
         schl = "projekt:" + pid
         s = stand.get(schl) or {}
         ordner = projekt_ordner(k, p, kunden, standorte)
-        # Ordner hat sich geändert (Titel, Markt, Kunde): einmal umbenennen
+        if "eigen" not in s:
+            # nur einen Ordner, den das Skript selbst angelegt hat, darf es später umbenennen
+            s["eigen"] = not os.path.exists(ordner)
+        # Ordner hat sich geändert (Markt, Kunde): einmal umbenennen
         alt = s.get("ordner")
-        if alt and alt != ordner and os.path.isdir(alt) and not os.path.exists(ordner):
+        if alt and alt != ordner and s.get("eigen") and os.path.isdir(alt) and not os.path.exists(ordner):
             log("Projektordner umbenannt: %s -> %s" % (os.path.relpath(alt, k["basis"]), os.path.relpath(ordner, k["basis"])))
             if not PRUEFEN:
                 os.makedirs(os.path.dirname(ordner), exist_ok=True)
@@ -651,16 +817,33 @@ def projekte_abgleich(k, sb, stand):
             pfad = x.get("pfad")
             if not pfad or (dateien.get(pfad) and os.path.exists(dateien[pfad])):
                 continue
+            # kam aus dem Synology-Archiv: liegt dort schon (nur merken, wo)
+            da, archiv = schon_auf_synology(k, x)
+            if archiv:
+                if da:
+                    dateien[pfad] = da
+                continue
+            groesse = x.get("groesse") if isinstance(x.get("groesse"), int) else None
             if pfad.startswith("buero/"):
                 # Angebot/Rechnung: nie in den Projektordner (den sehen auch Techniker) –
                 # nur in den Büro-Ordner, wenn er eingerichtet ist
                 if not buero_an(k):
                     continue
-                unter = os.path.join(buero_ordner(k, ordner), PROJEKT_UNTERORDNER.get(x.get("art"), "Unterlagen"))
+                wurzel = buero_ordner(k, ordner)
+                unter = os.path.join(wurzel, PROJEKT_UNTERORDNER.get(x.get("art"), "Unterlagen"))
             else:
-                unter = os.path.join(ordner, PROJEKT_UNTERORDNER.get(x.get("art"), "Unterlagen"))
+                wurzel = ordner
+                unter = os.path.join(ordner, *datei_unterordner(x))
+            name = sauber_datei(x.get("name"))
+            # schon da – vom Büro verschoben oder dieselbe Datei von Hand abgelegt: nicht doppelt
+            gefunden = wiederfinden(wurzel, os.path.basename(dateien[pfad]), groesse) if dateien.get(pfad) else None
+            if not gefunden and groesse:
+                gefunden = wiederfinden(wurzel, name, groesse) or wiederfinden(wurzel, x.get("name"), groesse)
+            if gefunden:
+                dateien[pfad] = gefunden
+                continue
             # nie eine vorhandene Datei überschreiben – gleicher Name bekommt _2, _3 …
-            ziel = freie_datei(unter, sauber_datei(x.get("name")), set())
+            ziel = freie_datei(unter, name, set())
             log("Projekt %s: %s" % (p.get("nummer"), ("Büro: " + os.path.relpath(ziel, k["buero_basis"])) if pfad.startswith("buero/") else os.path.relpath(ziel, k["basis"])))
             if not PRUEFEN:
                 try:
@@ -724,6 +907,7 @@ def projekte_abgleich(k, sb, stand):
                     log("  Büro-PDF nicht geholt (%s)" % str(e)[:120])
         stand[schl] = s
         ordner_je_projekt[pid] = ordner
+        ordner_je_projekt.setdefault("_dateien", []).extend(x.get("pfad") for x in (p.get("daten") or {}).get("dateien") or [])
     log("Projekte: %d, %d Dateien geholt, %d Mappen geschrieben" % (len(projekte), neu_dateien, mappen))
     if buero_an(k):
         belege_pdfs(k, sb, stand, belege_alle, kunden, standorte, ordner_je_projekt)
@@ -736,24 +920,29 @@ def belege_pdfs(k, sb, stand, belege, kunden, standorte, ordner_je_projekt):
     von Lidl darin – nach {jahr}/Kunden/{kunde}/Rechnungen bzw. Angebote.
     Test-Belege (solange KPlus führt) kommen in den Unterordner _Test."""
     neu = 0
+    # schon als Projektdatei abgelegt (KPlus-PDF am Projekt): nicht noch einmal
+    projekt_dateien = set(ordner_je_projekt.get("_dateien") or [])
     for b in belege:
         pfad = b.get("pdf_pfad")
-        if not pfad or b.get("extern"):
+        # auch KPlus-Belege (extern): ihr Original-PDF liegt sonst nirgends auf der Synology
+        if not pfad or pfad in projekt_dateien:
             continue
         schl = "beleg:" + b["id"]
         s = stand.get(schl) or {}
         art = "Rechnung" if b.get("art") == "rechnung" else "Angebot"
         st = standorte.get(b.get("standort_id")) or {}
         markt = " ".join(str(x) for x in (st.get("filiale"), st.get("ort")) if x)
-        name = sauber_datei(("TEST_" if b.get("test") else "") + "%s_%s%s.pdf" % (art, b.get("nummer"), ("_" + markt) if markt else ""))
+        kunde = kunden.get(b.get("kunde_id") or "lidl") or "Kunde"
+        lidl = (b.get("kunde_id") or "lidl") == "lidl"
+        name = sauber_datei(("TEST_" if b.get("test") else "") + "%s %s%s%s.pdf" % (
+            art, b.get("nummer"), "" if lidl else " " + kunde, (" " + markt) if markt else ""))
         # nur in den Büro-Ordner (nur Chef) – gleiche Gliederung wie im Archiv
         if b.get("projekt_id") in ordner_je_projekt:
             ordner = os.path.join(buero_ordner(k, ordner_je_projekt[b["projekt_id"]]), art)
         else:
             jahr = str(b.get("datum") or "")[:4] or "ohne-Datum"
-            kunde = kunden.get(b.get("kunde_id") or "lidl") or "Kunde"
-            lidl = (b.get("kunde_id") or "lidl") == "lidl"
-            muster = k.get("unterordner_belege", "{jahr}/Lidl/{art}" if lidl else "{jahr}/Kunden/{kunde}/{art}")
+            # gleiche Gliederung wie das Archiv: Lidl unter Lidl/, weitere Kunden direkt unter dem Jahr
+            muster = k.get("unterordner_belege", "{jahr}/Lidl/{art}" if lidl else "{jahr}/{art}")
             ordner = os.path.join(k["buero_basis"], muster.format(jahr=jahr, kunde=sauber(kunde), art=art + ("en" if art == "Rechnung" else "e")))
         if b.get("test"):
             ordner = os.path.join(ordner, "_Test")
@@ -774,6 +963,69 @@ def belege_pdfs(k, sb, stand, belege, kunden, standorte, ordner_je_projekt):
         neu += 1
     if neu:
         log("Belege: %d PDF geholt" % neu)
+
+
+# ---------------------------------------------------------------- Sicherung
+
+# Seit 29.10.2026 (Inhaber: „das automatische Abspeichern der Daten auf die
+# Synology muss … auch aktualisiert werden“): Die App legt einmal pro Woche den
+# ganzen Datenbestand im privaten Bereich „sicherungen“ ab
+# (datenbank/JJJJ-MM-TT.json.gz), am PC auch Kopien der Dateien
+# (dateien/<Bereich>/…). Das Skript holt beides in den Ordner, den nur der Chef
+# sieht – die Sicherung enthält alles, auch Preise und Zugangsdaten. Ohne
+# "buero_basis" (bzw. "sicherung_basis") holt es nichts.
+# Einmal am Tag reicht; bleibt etwas offen (Zeitgrenze je Lauf), geht es beim
+# nächsten Lauf weiter. Auf der Synology wird nie etwas gelöscht.
+
+SICHERUNG_ABSTAND = 20 * 3600   # höchstens einmal in 20 Stunden nachsehen
+SICHERUNG_ZEIT = 10 * 60        # je Lauf höchstens so lange Dateien holen
+
+
+def sicherung_ordner(k):
+    b = str(k.get("sicherung_basis") or "")
+    if b and "HIER" not in b:
+        return b
+    if buero_an(k):
+        return os.path.join(k["buero_basis"], "Sicherung")
+    return None
+
+
+def sicherung_ziel(ordner, pfad):
+    """Pfad im Speicher → Datei auf der Synology; nie aus dem Ordner heraus"""
+    teile = [t for t in pfad.split("/") if t]
+    if not teile or any(t in (".", "..") for t in teile):
+        return None
+    return os.path.join(ordner, *teile)
+
+
+def sicherungen_abgleich(k, sb, stand):
+    ordner = sicherung_ordner(k)
+    if not ordner:
+        return
+    s = stand.get("sicherung:") or {}
+    if not s.get("offen") and time.time() - s.get("zuletzt", 0) < SICHERUNG_ABSTAND:
+        return
+    alle = sb.liste("sicherungen")
+    beginn, neu, offen = time.time(), 0, 0
+    for o in alle:
+        ziel = sicherung_ziel(ordner, o["pfad"])
+        if not ziel:
+            continue
+        if os.path.exists(ziel) and os.path.getsize(ziel) == o["groesse"]:
+            continue
+        if time.time() - beginn > SICHERUNG_ZEIT:
+            offen += 1
+            continue
+        if PRUEFEN:
+            log("Sicherung: würde holen " + o["pfad"])
+        else:
+            schreibe(ziel, sb.datei("sicherungen", o["pfad"]))
+        neu += 1
+    if not PRUEFEN:
+        stand["sicherung:"] = {"zuletzt": time.time(), "offen": offen}
+    datenbank = sorted(o["pfad"] for o in alle if o["pfad"].startswith("datenbank/"))
+    log("Sicherung: %d Dateien im Bereich, %d geholt, %d noch offen%s" %
+        (len(alle), neu, offen, (", neueste " + datenbank[-1]) if datenbank else ", noch keine Datenbank-Sicherung"))
 
 
 def hash_text(t):
@@ -815,6 +1067,11 @@ def main():
                 projekte_abgleich(k, sb, stand)
             except Exception as e:
                 log("FEHLER bei den Projekten: %s" % e)
+            # Sicherung (Datenbestand + Dateien) in den Büro-Ordner: ebenso eigener Schritt
+            try:
+                sicherungen_abgleich(k, sb, stand)
+            except Exception as e:
+                log("FEHLER bei der Sicherung: %s" % e)
         finally:
             speichere_stand(stand)
     finally:

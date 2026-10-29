@@ -239,10 +239,14 @@ Kammerlander Umwelt- und Klimatechnik (UKT) – oft kurz, vom Handy, im Feld.
   im Nummernkreis): `belegNeu` zieht keine, der Editor zeigt „Nummer wird beim Speichern vergeben“, `belegNummer` (Funktion
   `beleg_nummer`, atomar) erst im Speichern – gescheitert bleibt sie für den nächsten Versuch, schon vergeben (unique art+nummer)
   → nächste; ein Doppeltipp öffnet nur einen Editor (`belegNeuLaeuft`).
-- Synology-Ablage der Baustellen (`synology/ukt_archiv.py`, `projekte_abgleich`):
-  je Projekt `{jahr}/Lidl/Baustellen/…` bzw. `{jahr}/Kunden/{kunde}/Baustellen/{Filiale Ort}_{Nummer}/`
-  (Protokolle `…/Wartungen` und `…/Störungen` getrennt, Büro 02.10.2026) mit
-  Unterordnern je Dateiart und Projektmappe (HTML + JSON). Angebote und
+- Synology-Ablage (`synology/ukt_archiv.py`) in der GEWOHNTEN Ordnerstruktur (Inhaber 29.10.2026, abgeglichen mit dem Synology-Download):
+  Protokolle `{jahr}/Lidl/Wartungen|Störungen/<Markt>,<JJJJ-MM-TT>,<JW|HJI|HJW>.pdf` (`dateiname`, `termin_kuerzel`), weitere Kunden
+  `{jahr}/Wartungen|Störungen/<Kunde>,<Markt>,…`; Lidl-Rapport mit Originalnamen daneben, Lidl-Auftrag nach `…/Störungen/Beauftragungen`
+  (`anhaenge_ablegen`, Speicher protokollfotos). Vom Büro verschobene Dateien („n.Quartal abgerechnet“, „ABGERECHNET“) findet `wiederfinden` – nie doppelt.
+  Projekte (`projekte_abgleich`): `{jahr}/Lidl/Baustellen/<Markt>` bzw. `{jahr}/Baustellen/<Kunde Ort>`; aus dem Archiv `daten.archiv.ordner`
+  (`archiv_ordner`); Dateien mit herkunft „Synology …“ nie zurückschreiben (`schon_auf_synology`); Unterordner = herkunft beim Ordner-Hochladen
+  (`datei_unterordner`), sonst nach Art; gleicher Name + Größe = schon da; umbenannt wird nur ein selbst angelegter Ordner (`eigen`).
+  Projektmappe (HTML + JSON) je Projektnummer. Angebote und
   Rechnungen (Belege, Büro-Dateien `buero/…`, Beträge) kommen NICHT auf die
   Synology – den Projektordner sehen auch Techniker (Büro 01.10.2026;
   sie gehen NUR in den Büro-Ordner, den nur der Chef sieht: `buero_basis`, `buero_an`,
@@ -794,7 +798,10 @@ Kammerlander Umwelt- und Klimatechnik (UKT) – oft kurz, vom Handy, im Feld.
   Rundfahrt je FM-Region, Störungen im Schnitt) gegen Sollzeit ohne Urlaub/Krank/Feiertag der gewählten Personen; Schätzung.
 - **Sicherung** (tools/sicherung.sql, nur Inhaber): wöchentlich beim Öffnen der App Datenbestand gepackt in den privaten
   Bereich `sicherungen` (datenbank/JJJJ-MM-TT.json.gz), am PC auch neue Dateien (dateien/<Bereich>/…); Erinnerung in Fällig zum
-  Herunterladen (Kopie außerhalb von Supabase). Stand im Merker `sicherung`. Später holt die Synology ab.
+  Herunterladen (Kopie außerhalb von Supabase). Stand im Merker `sicherung`. Die Synology holt den Bereich einmal am Tag in den
+  Büro-Ordner (`sicherungen_abgleich` in synology/ukt_archiv.py, `<buero_basis>/Sicherung`, Archivkonto liest per tools/sicherung.sql; Inhaber
+  29.10.2026). Neue Tabellen/Speicherbereiche in `SICHER_TABELLEN`/`SICHER_BEREICHE` nachtragen (fehlten bis 29.10.: Arbeitsnachweise, IBN, Reisekosten,
+  Werkzeug, Bedarf, interne Hinweise, Dokumente …); Push-Abos/-Schlüssel bewusst nicht.
 - **Angebot aus dem Folgeauftrag** (`angebotAusFolge`, nur Inhaber): Befund als Textzeile, je Mangel Katalog-Vorschlag
   (`katalogVorschlag`) oder Position ohne Preis, Fahrtpauschale der Zone; gespeichert → Merker `folge:<Protokoll>`.
 - **Bezahl-Code auf Rechnungen** (`epcQrText`, `epcQrBild`, Büro 03.10.2026): EPC-QR („Zahlen mit Code“) neben den Summen jeder

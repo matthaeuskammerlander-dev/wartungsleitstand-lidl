@@ -807,7 +807,9 @@ test("Sicherung: Inhaber legt den Datenbestand ab und wird ans Herunterladen eri
     if (datei.length) {
       const b = db.dateien[datei[0]];
       const txt = /\.gz$/.test(datei[0]) ? await new Response(b.stream().pipeThrough(new DecompressionStream("gzip"))).text() : await b.text();
-      const j = JSON.parse(txt); inhalt = { art: j.art, tabellen: Object.keys(j.tabellen).length, protokolle: !!j.tabellen.protokolle, stammdaten: (j.tabellen.stammdaten.zeilen || []).length };
+      const j = JSON.parse(txt); inhalt = { art: j.art, tabellen: Object.keys(j.tabellen).length, protokolle: !!j.tabellen.protokolle, stammdaten: (j.tabellen.stammdaten.zeilen || []).length,
+        // Inhaber 29.10.2026: seit dem 03.10. dazugekommene Tabellen fehlten in der Sicherung
+        neue: ["arbeitsnachweise", "inbetriebnahmen", "auslagen", "werkzeug", "bedarf", "interne_hinweise"].filter((n) => !j.tabellen[n]) };
     }
     const merker = (db.tabellen.stammdaten.filter((s) => s.id === "merker:sicherung")[0] || {}).felder || {};
     x("S.view='verwaltung'; S.adm={tab:'inhaber', suche:'', filter:'alle', sort:'filiale', auf:true, sel:null, entwurf:null}; render(); 1"); await warte(500);
@@ -815,7 +817,7 @@ test("Sicherung: Inhaber legt den Datenbestand ab und wird ans Herunterladen eri
     return { erinnerung, zeilen: e.zeilen, datei, inhalt, abgelegt: !!merker.abgelegt, karte };
   });
   pruefe(r.erinnerung, "Keine Erinnerung zum Herunterladen in „Fällig“");
-  pruefe(r.datei.length === 1 && r.inhalt && r.inhalt.art === "UKT-Leitstand-Sicherung" && r.inhalt.protokolle && r.inhalt.tabellen >= 20, "Sicherung nicht vollständig abgelegt: " + JSON.stringify(r));
+  pruefe(r.datei.length === 1 && r.inhalt && r.inhalt.art === "UKT-Leitstand-Sicherung" && r.inhalt.protokolle && r.inhalt.tabellen >= 40 && !r.inhalt.neue.length, "Sicherung nicht vollständig abgelegt: " + JSON.stringify(r));
   pruefe(r.abgelegt && r.karte, "Stand der Sicherung fehlt (Merker/Karte): " + JSON.stringify(r));
   pruefe(!a.fehler.length, "Laufzeitfehler: " + a.fehler.join("; "));
   await a.zu();

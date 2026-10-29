@@ -1035,12 +1035,28 @@ Tabellen `planung` und `planung_privat` an, dazu die Regeln und
 > „Archiv“ im SQL-Skript ausgeführt ist. Bis dahin passiert in diesem Teil
 > nichts, und alles andere funktioniert unverändert.
 
-Jedes Protokoll landet automatisch als PDF auf der Synology, im Ordner
-`Ukt/<Jahr>/Lidl/Wartungen` bzw. – Störungsprotokolle, seit 02.10.2026 –
-`Ukt/<Jahr>/Lidl/Störungen`, zum Beispiel `2026-09-21_Seekirchen_Darko.pdf`.
-Weitere Kunden: `Ukt/<Jahr>/Kunden/<Kunde>/Wartungen` bzw. `…/Störungen`. Das PDF sieht aus wie der Ausdruck aus der
-App, samt Fotos und Unterschrift. In der Fußzeile stehen die Protokollkennung
-und die Fassung.
+Jedes Protokoll landet automatisch als PDF auf der Synology, und zwar in der
+Ordnerstruktur, die das Büro schon kennt (seit 29.10.2026):
+
+```
+Ukt/2026/Lidl/Wartungen/Seekirchen,2026-09-21,JW.pdf
+Ukt/2026/Lidl/Störungen/Innsbruck,2026-09-21.pdf
+Ukt/2026/Lidl/Störungen/624589446_AT0405_32288533_rapport.pdf     Lidl-Rapport daneben
+Ukt/2026/Lidl/Störungen/Beauftragungen/…                         Lidl-Auftrag
+Ukt/2026/Wartungen/Auto Aicher,Kössen,2026-06-05,JW.pdf          weitere Kunden
+Ukt/2026/Störungen/…
+```
+
+Der Name ist Markt, Datum und Termin (JW, HJI, HJW), bei weiteren Kunden steht
+der Kunde vorne. Gibt es am selben Tag zwei Protokolle für denselben Markt,
+bekommt das zweite `_2`. Rapport und Auftrag behalten den Namen, den Lidl
+ihnen gegeben hat. Das PDF sieht aus wie der Ausdruck aus der App, samt Fotos
+und Unterschrift. In der Fußzeile stehen die Protokollkennung und die Fassung.
+
+**Abgerechnet und weggeräumt:** Das Büro darf die PDFs wie gewohnt in
+Unterordner verschieben, zum Beispiel nach „3.Quartal abgerechnet“ oder
+„ABGERECHNET“. Das Skript findet sie dort wieder und legt sie nicht noch
+einmal ab. Kommt eine Korrektur, ersetzt sie die Datei an ihrem neuen Platz.
 
 **So läuft es ab:**
 
@@ -1100,15 +1116,26 @@ hat. Andere Dateien im Ordner fasst es nicht an.
 
 Die endgültige Ablage ist die Synology – die App ist nur Zwischenlösung und
 Organisation für unterwegs. Seit 01.10.2026 holt dasselbe Skript auch die
-Projekte ab, je Projekt ein Ordner nach Jahr und Kunde:
+Projekte ab, je Projekt ein Ordner wie gewohnt (seit 29.10.2026):
 
 ```
-2026/Lidl/Baustellen/123-Musterort_P-2026-001/          (Lidl direkt unter dem Jahr)
-2026/Kunden/Michael Kors/Baustellen/…_P-2026-002/        (weitere Kunden unter Kunden/)
-    Plaene/  Fotos/  Unterlagen/  Lieferscheine/  Protokolle/
-    Projekt_P-2026-001.html   Mappe zum Lesen und Drucken
-    Projekt_P-2026-001.json   dasselbe maschinenlesbar
+2026/Lidl/Baustellen/Amstetten/                    Lidl: Name des Markts
+2026/Baustellen/Michael Kors Salzburg/             weitere Kunden: Kunde und Ort
+    Kika Amstetten/UKT/…      ganzer Ordner hochgeladen: dieselben Unterordner
+    Plaene/  Fotos/  Unterlagen/  Protokolle/  …   sonst nach Art der Datei
+    Projekt_P-2026-011.html   Mappe zum Lesen und Drucken
+    Projekt_P-2026-011.json   dasselbe maschinenlesbar
 ```
+
+- Gibt es den Ordner schon, kommt das Projekt dazu. Die Mappe heißt nach der
+  Projektnummer, nichts wird überschrieben.
+- **Projekte aus dem Synology-Archiv** bleiben in ihrem bisherigen Ordner.
+  Ihre Dateien liegen dort schon und werden nie ein zweites Mal abgelegt.
+- Liegt eine Datei mit gleichem Namen und gleicher Größe schon im
+  Projektordner (auch in einem Unterordner), wird sie nicht doppelt abgelegt.
+  Vom Büro verschobene Dateien findet das Skript wieder.
+- Arbeitsnachweise, Inbetriebnahmeprotokolle und die Lidl-Unterlagen (TB,
+  Schema, KAV) sind Projektdateien und kommen so mit.
 
 **Projektzusammenfassung (PDF)** (seit 01.10.2026, Knopf „Zusammenfassung
 (PDF)“ unten im Projekt). Das Projekt auf einen Blick: Eckdaten, Angaben je
@@ -1137,12 +1164,15 @@ den Ordner auf der Synology, den nur der Chef sieht – Einstellung
 `buero_basis` in `ukt_archiv.json`, darunter dieselbe Gliederung:
 
 ```
-<Büro-Ordner>/2026/Lidl/Baustellen/123-Musterort_P-2026-001/
-    Angebot/  Rechnung/  (_Test/ für Test-Belege der App)
-    Projekt_P-2026-001_mit_Angeboten_Rechnungen.pdf
+<Büro-Ordner>/2026/Lidl/Baustellen/Amstetten/
+    Angebot/  Rechnung/  Preise/  (_Test/ für Test-Belege der App)
+    Projekt_P-2026-011_mit_Angeboten_Rechnungen.pdf
 <Büro-Ordner>/2026/Lidl/Rechnungen/        Rechnungen ohne Projekt (Einsätze)
-<Büro-Ordner>/2026/Kunden/<Kunde>/…        weitere Kunden
+<Büro-Ordner>/2026/Rechnungen/             weitere Kunden (Kunde im Dateinamen)
 ```
+
+Auch das Original-PDF einer KPlus-Rechnung, die beim Einsatz hochgeladen wurde,
+kommt hierher.
 
 Dafür braucht das Archivkonto die Rolle „archiv“ (tools/archiv-rolle.sql).
 Ohne `buero_basis` legt das Skript Angebote und Rechnungen gar nicht ab.
@@ -1154,7 +1184,9 @@ Ohne `buero_basis` legt das Skript Angebote und Rechnungen gar nicht ab.
    ausführen. Das Archivkonto darf dann in der Datenbank **nichts mehr
    schreiben** (nur lesen).
 3. Die neue `ukt_archiv.py` auf die Synology kopieren (die alte ersetzen) und
-   in `ukt_archiv.json` die Zeile `unterordner_projekt` aus der Vorlage ergänzen.
+   in `ukt_archiv.json` die Zeilen `unterordner_kunde`, `unterordner_projekt`,
+   `unterordner_projekt_kunde` und `buero_basis` aus der Vorlage übernehmen
+   (Stand 29.10.2026 – gewohnte Ordnerstruktur).
 4. Einmal mit `--pruefen` laufen lassen und das Ergebnis ansehen.
 
 Jeder Lauf schreibt ins Protokoll `ukt_archiv.log` im Skriptordner. Ein
@@ -1163,12 +1195,35 @@ Beispiel:
 ```
 angemeldet als <E-Mail des Archivkontos>
 37 Protokolle, 37 PDFs in der Datenbank
-neu: 2026/Lidl/Wartungen/2026-09-21_Seekirchen_Darko.pdf
+neu: 2026/Lidl/Wartungen/Seekirchen,2026-09-21,JW.pdf
 fertig: 1 neu, 0 erneuert, 0 nach _geloescht, 0 noch ohne PDF
 ```
 
 `noch ohne PDF` heißt: Das Handy hat das PDF noch nicht hochgeladen. Es kommt
 beim nächsten Lauf nach dem Hochladen.
+
+### Sicherung auf der Synology
+
+Seit 29.10.2026 holt dasselbe Skript auch die **wöchentliche Sicherung** der App
+ab. Die App legt einmal pro Woche den ganzen Datenbestand im privaten Bereich
+`sicherungen` ab, am PC dazu Kopien der Dateien. Das Skript holt das **einmal
+am Tag** in den Büro-Ordner, den nur der Chef sieht:
+
+```
+<Büro-Ordner>/Sicherung/datenbank/2026-10-29.json.gz    ganzer Datenbestand
+<Büro-Ordner>/Sicherung/dateien/<Bereich>/…              Fotos, PDFs, Dokumente
+```
+
+Die Sicherung enthält alles, auch Preise und Zugangsdaten. Deshalb kommt sie nie
+in den Ukt-Ordner. Ohne `buero_basis` holt das Skript sie gar nicht (anderer
+Ordner: `sicherung_basis` in `ukt_archiv.json`). Gelöscht wird auf der Synology
+nichts. Was in einem Lauf nicht fertig wird (Zeitgrenze 10 Minuten), holt der
+nächste Lauf.
+
+**Einmalig dazu:** `tools/sicherung.sql` im SQL Editor erneut ausführen. Das
+Archivkonto darf den Bereich dann lesen, aber nichts darin ändern. Im Protokoll
+`ukt_archiv.log` steht danach zum Beispiel
+`Sicherung: 672 Dateien im Bereich, 672 geholt, 0 noch offen, neueste datenbank/2026-10-29.json.gz`.
 
 ## Einrichtung der Protokoll-Datenbank
 
@@ -1250,8 +1305,10 @@ wieder steht. Der Techniker muss nichts nachholen.
 
 ## Offene Punkte
 
-- **Archiv auf der Synology** einrichten (Berechtigungen, Aufgabenplaner) – siehe
-  *Archiv auf der Synology*.
+- **Archiv auf der Synology** einrichten (Berechtigungen, Aufgabenplaner,
+  Archivkonto mit Rolle „archiv“, `tools/sicherung.sql` für die Sicherung) –
+  siehe *Archiv auf der Synology*. Das Archivkonto gibt es in Supabase noch
+  nicht (Stand 29.10.2026).
 - **Datenbank-Postfach** für Aufträge und Rapporte – vorbereitet, siehe
   `POSTEINGANG-EINRICHTUNG.md` (mit Georg).
 - **KI-Erkennung** von Prüfbüchern, Typenschildern und Aufträgen – vorbereitet,
