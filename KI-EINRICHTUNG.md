@@ -79,6 +79,24 @@ automatisch den Kopier-Weg über die Claude-App an.
 
 In der Präsentation ist die KI immer aus – sie kostet echtes Geld.
 
+## Claude-Assistent (✦, Inhaber)
+
+Der Knopf ✦ ist für Inhaber der Claude-Assistent: Er bereitet Protokolle, Arbeitsnachweise,
+Inbetriebnahmeprotokolle, Angebote, Rechnungen, Lidl-Unterlagen und Mail-Vorschläge vor
+(Fotos, Screenshots und PDFs gehen mit). Er braucht eine eigene Funktion – derselbe
+Schlüssel `ANTHROPIC_API_KEY` wie oben:
+
+1. *Edge Functions* → *Deploy a new function* → *Via Editor*, Name genau **`ki-assistent`**,
+   Inhalt von `supabase/functions/ki-assistent/index.ts` → *Deploy function*. „Verify JWT“ an.
+2. Optional: `KI_ASSISTENT_JE_TAG` (Standard 300 Schritte je Person und Tag; eine Aufgabe
+   braucht meist 3–6) und `KI_ASSISTENT_ALLE=1`, um ihn auch für Admins und Techniker
+   freizugeben (ohne Preise und Lidl-Unterlagen) – dazu auch `assistentAn()` in der App.
+
+Modell `claude-opus-5-5` (Stand 2026: 4 USD je Million Eingabe-, 20 USD je Million
+Ausgabe-Tokens; wiederholte Teile des Gesprächs kosten über den Zwischenspeicher nur ein
+Zehntel). Eine Aufgabe kostet meist einige Cent bis rund 30 Cent, mit vielen Fotos mehr.
+Die Summe steht unter *Verwaltung → Inhaber* als „Claude-Assistent“.
+
 ## Datenschutz
 
 Die Bilder gehen an Anthropic (USA/EU je nach Konto) und werden dort nach den

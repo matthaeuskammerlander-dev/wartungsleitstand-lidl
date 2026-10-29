@@ -10653,6 +10653,148 @@ test("Lidl-Unterlagen: Schema mit 5 Anlagen und langen Namen (Inhaber 28.10.2026
   if (process.env.VORSCHAU && r.vorschauSvg) { const fs = await import("node:fs"); fs.writeFileSync(join(process.env.VORSCHAU, "schema.svg"), r.vorschauSvg); fs.writeFileSync(join(process.env.VORSCHAU, "schema-wasser.svg"), r.vorschauSvgW); fs.writeFileSync(join(process.env.VORSCHAU, "tb.html"), r.vorschauTb); }
 });
 
+test("Claude-Assistent (Inhaber 29.10.2026): ✦ bereitet vor – Bild geht mit, Werkzeuge lesen ohne Zugangsdaten, Entwürfe öffnen Protokoll, Beleg, Arbeitsnachweis, Inbetriebnahme und Lidl-Unterlagen vorausgefüllt, nichts gespeichert; Techniker wie bisher", async () => {
+  const a = await oeffnen(KONTEN.inhaber);
+  await a.seite.evaluate((h) => eval(h), AN_HILFEN);
+  const r = await a.seite.evaluate(async () => {
+    const x = window.__t.x, db = window.__db.tabellen, A = window.__an, e = {}, w = (ms) => new Promise((f) => setTimeout(f, ms)), jetzt = new Date().toISOString();
+    const fertig = async () => { for (let i = 0; i < 100 && x("ASSI.laeuft"); i++) await w(50); await w(100); };
+    const oben = () => [...document.querySelectorAll(".assistent")].pop();
+    /* erfundene Zugangsdaten am Markt und an der Anlage – dürfen nie an Claude gehen */
+    const s = x("byId.TS1"), anl = x("anlagenDesMarkts")(s, true)[0];
+    const gk = x("GEHEIME_FELDER").filter((k) => x("GEHEIM_MARKT").indexOf(k) < 0)[0];
+    s.fernPasswort = "GEHEIM-Markt"; anl.leader[gk] = "GEHEIM-Anlage";
+    e.geheimDa = typeof gk === "string" && x("anlageDaten")(anl.leader)[gk] === "GEHEIM-Anlage";
+    db.katalog = (db.katalog || []).concat([{ id: "kat_t1", text: "Fahrtpauschale Zone 1", eh: "psch", preis: 89.5 }]);
+    db.projekte.push({ id: "tmp_k1", nummer: "P-2026-981", titel: "Assistent Test", kunde_id: "lidl", standort_id: "TS1", status: "baustelle", verlauf: [], erstellt: jetzt, geaendert: jetzt,
+      daten: { anlagen: [anl.id], typ: "Neubau" } });
+    await x("projekteLaden()");
+    /* Claude nachgestellt: jede Antwort der Reihe nach, die Anfragen werden mitgeschrieben */
+    const tu = (id, name, input) => ({ type: "tool_use", id, name, input });
+    const antworten = [
+      { inhalt: [{ type: "thinking", thinking: "", signature: "sig1" }, { type: "text", text: "Ich suche den Markt." }, tu("tu1", "suchen", { text: "Musterstadt 901" })], stop: "tool_use" },
+      { inhalt: [tu("tu2", "markt_lesen", { markt_id: "TS1" })], stop: "tool_use" },
+      { inhalt: [tu("tu3", "entwurf_protokoll", { art: "stoerung", markt_id: "TS1", anlage_ids: [anl.id], datum: "2026-10-29", fehlerbild: "A3 Kondensat", ursache: "Kondensatleitung bauseitig verschmutzt",
+          massnahmen: "Reset per Fernzugriff", material: [{ text: "Reinigungsmittel", menge: "1 Stk" }], maengel: [{ text: "Kondensatleitung verschmutzt", prioritaet: "mittel", massnahme: "bauseits spülen" }],
+          bemerkungen: "Empfehlung: alle Kondensatleitungen bauseits spülen.", hinweise: "Lidl-Auftragsnummer fehlt." }),
+        tu("tu4", "entwurf_mail", { an: "fm@example.com", betreff: "Erledigt per Fernzugriff", text: "Sehr geehrte Damen und Herren,\n\nerledigt.\n\nTest" })], stop: "tool_use" },
+      { inhalt: [{ type: "text", text: "Fertig – **Entwurf** und Mail stehen bereit." }], stop: "end_turn" },
+      { inhalt: [tu("tu5", "katalog_suchen", { text: "Fahrtpauschale" })], stop: "tool_use" },
+      { inhalt: [tu("tu6", "entwurf_beleg", { art: "angebot", markt_id: "TS1", betreff: "Kondensatpumpe", positionen: [{ katalog_id: "kat_t1", menge: 1 }, { text: "Kondensatpumpe liefern und montieren", menge: 1, einheit: "Stk" }] })], stop: "tool_use" },
+      { inhalt: [{ type: "text", text: "Angebot steht bereit." }], stop: "end_turn" },
+    ];
+    const anfragen = [], inv = x("Store.sb.functions").invoke;
+    window.__kiAlt = x("kiAn"); x("kiAn=function(){ return true; }");
+    /* der Schalter in config.js (bis die Funktion eingerichtet ist aus) */
+    e.schalter = x("assistentAn()") === !!window.UKT_CONFIG.kiAssistent; window.UKT_CONFIG.kiAssistent = true;
+    x("Store.sb.functions").invoke = (n, o) => { anfragen.push({ n, body: JSON.parse(JSON.stringify(o.body)) });
+      const d = Object.assign({ modell: "claude-opus-5-5", tokens: { ein: 2000, aus: 300 } }, antworten[anfragen.length - 1] || { inhalt: [{ type: "text", text: "?" }], stop: "end_turn" });
+      return Promise.resolve({ data: d, error: null }); };
+    const vorher = { protokolle: (db.protokolle || []).length, belege: (db.belege || []).length, an: (db.arbeitsnachweise || []).length, ibn: (db.inbetriebnahmen || []).length, projekte: JSON.stringify(db.projekte.find((q) => q.id === "tmp_k1").daten) };
+    x("frageKnopfNeu()"); document.getElementById("fragebtn").click(); await w(200);
+    e.fenster = !!document.querySelector(".assistent[data-claudeassistent]");
+    e.schnellstart = /Störungsprotokoll/.test(oben().textContent);
+    /* ein Bild (Screenshot) dazu */
+    const cv = document.createElement("canvas"); cv.width = 40; cv.height = 30; cv.getContext("2d").fillRect(0, 0, 20, 20);
+    const blob = await new Promise((f) => cv.toBlob(f, "image/png"));
+    await x("assistentDateien")([new File([blob], "screenshot.png", { type: "image/png" })]);
+    e.vorschau = oben().querySelectorAll('[data-a="bilder"] img').length;
+    const feld = oben().querySelector('[data-a="text"]');
+    feld.value = "Störungsprotokoll Musterstadt: A3 Kondensat, per Fernzugriff zurückgesetzt"; feld.dispatchEvent(new Event("input"));
+    oben().querySelector("[data-assisenden]").click(); await fertig();
+    const tr = (i, id) => { const m = anfragen[i].body.nachrichten; return (m[m.length - 1].content.filter((b) => b.tool_use_id === id)[0] || {}).content || ""; };
+    const erste = anfragen[0].body.nachrichten[0].content;
+    e.anfrage = { name: anfragen[0].n, bild: erste.some((b) => b.type === "image" && b.source.media_type === "image/jpeg" && b.source.data.length > 50),
+      kontext: /\[Aus der App\] Angemeldet/.test(erste.filter((b) => b.type === "text")[0].text), schritte: anfragen.length };
+    e.suchen = /markt_id TS1/.test(tr(1, "tu1"));
+    const ml = tr(2, "tu2");
+    e.markt = { anlage: ml.indexOf("anlage_id " + anl.id) >= 0, protokolle: /Letzte Protokolle/.test(ml), geheim: /GEHEIM/.test(JSON.stringify(anfragen)) };
+    /* Denkblöcke gehen unverändert zurück */
+    e.denken = anfragen[1].body.nachrichten[1].content[0].type === "thinking";
+    e.zweiErgebnisse = anfragen[3].body.nachrichten[anfragen[3].body.nachrichten.length - 1].content.filter((b) => b.type === "tool_result").length === 2;
+    e.karten = { entwurf: oben().querySelectorAll("[data-assientwurf]").length, mail: oben().querySelectorAll("[data-assimail]").length,
+      antwort: [...oben().querySelectorAll("[data-assiantwort]")].some((b) => b.textContent === "Fertig – Entwurf und Mail stehen bereit."), kosten: /ct/.test(oben().querySelector('[data-a="kosten"]').textContent) };
+    const mt = oben().querySelector('[data-assimail] [data-m="mailto"]'); mt.onclick();
+    e.mailto = /^mailto:fm@example\.com\?subject=Erledigt%20per%20Fernzugriff&body=/.test(mt.getAttribute("href"));
+    /* Entwurf öffnen: Störungsprotokoll vorausgefüllt, orange, nichts gespeichert */
+    oben().querySelector("[data-assientwurf] button").click(); await w(700);
+    const q = (s2) => document.querySelector(s2);
+    e.proto = { reiter: x("S.view") === "protokoll" && x("S.protoArt") === "stoerung", ursache: q("#s_ursache").value === "Kondensatleitung bauseitig verschmutzt" && q("#s_ursache").hasAttribute("data-vonclaude"),
+      massnahmen: q("#s_massnahmen").value === "Reset per Fernzugriff", datum: q("#f_datum").value === "2026-10-29",
+      material: [...document.querySelectorAll("#s_material .mt-t")].some((i) => i.value === "Reinigungsmittel"),
+      mangel: [...document.querySelectorAll("#maengel .m-t")].some((i) => i.value === "Kondensatleitung verschmutzt"),
+      bem: /bauseits spülen/.test(q("#f_bem").value), anlage: [...document.querySelectorAll('input[name="posw"]')].some((c) => c.checked && c.dataset.anlage === anl.id),
+      hinweis: /Lidl-Auftragsnummer fehlt/.test((q("[data-assihinweis]") || {}).textContent || ""), tech: !!q("#f_tech").value, keinFolge: !q("#s_folgeauftrag").checked,
+      offen: !q("#s_ursache").closest("fieldset.fs-zu") && !q("#f_bem").closest("fieldset.fs-zu") };
+    /* zweite Aufgabe im selben Gespräch: Angebot mit Katalogpreis */
+    document.getElementById("fragebtn").click(); await w(200);
+    e.gespraechBleibt = oben().querySelectorAll("[data-assientwurf]").length === 1;
+    const f2 = oben().querySelector('[data-a="text"]'); f2.value = "Angebot Kondensatpumpe Musterstadt"; f2.dispatchEvent(new Event("input"));
+    oben().querySelector("[data-assisenden]").click(); await fertig();
+    e.katalog = /katalog_id kat_t1 · Fahrtpauschale Zone 1 · psch · 89,50 €/.test(tr(5, "tu5"));
+    e.wechsel = anfragen[4].body.nachrichten.every((m, i) => m.role === (i % 2 ? "assistant" : "user"));
+    [...oben().querySelectorAll("[data-assientwurf] button")].pop().click(); await w(900);
+    const be = oben();
+    e.beleg = { hinweis: !!be.querySelector("[data-assihinweis]"), text: [...be.querySelectorAll("textarea, input")].some((i) => /Fahrtpauschale Zone 1/.test(i.value)),
+      preis: [...be.querySelectorAll("input")].some((i) => /^89[.,]5/.test(i.value)), ohneKatalog: /Nicht im Katalog/.test(be.textContent) };
+    x("ansichtenSchliessen(); 1");
+    /* Arbeitsnachweis, Inbetriebnahme und Lidl-Unterlagen direkt aus Entwürfen */
+    x("assistentAnOeffnen")({ projekt_id: "tmp_k1", datum: "2026-10-29", arbeiten: "Kondensatpumpe getauscht", zeilen: [{ datum: "2026-10-29", von: "08:00", bis: "12:00", pause_h: 0 }] }); await w(300);
+    e.anHinweis = !!oben().querySelector("[data-assihinweis]");
+    oben().querySelectorAll(".chips .chip")[2].click(); await w(150);
+    const ta = oben().querySelector('textarea[data-t="arbeiten"]');
+    e.an = !!ta && ta.value === "Kondensatpumpe getauscht" && !!ta.style.background;
+    x("ansichtenSchliessen(); 1");
+    window.__ibnAlt = x("ibnEditor");
+    window.__ibnWrap = function (p, a2, f, o) { e.ibnVorlage = JSON.parse(JSON.stringify((o || {}).vorlage || {})); return window.__ibnAlt.apply(this, arguments); }; x("ibnEditor=window.__ibnWrap");
+    x("assistentIbnOeffnen")({ projekt_id: "tmp_k1", anlagen: [{ anlage_id: anl.id, rohrlaenge: "25", messwerte: { pVerd: "8,5", unsinn: "x" } }], bemerkungen: "Anlage läuft" }); await w(300);
+    x("ibnEditor=window.__ibnAlt");
+    const ia = (e.ibnVorlage.anlagen || [])[0] || {};
+    e.ibn = { hinweis: !!oben().querySelector("[data-assihinweis]"), mess: (ia.messwerte || {}).pVerd === "8,5" && !("unsinn" in (ia.messwerte || {})), rohr: ia.rohrlaenge === "25", bem: e.ibnVorlage.bemerkungen === "Anlage läuft" };
+    x("ansichtenSchliessen(); 1");
+    x("assistentLidlOeffnen")({ projekt_id: "tmp_k1", angaben: { allgemein: "Von Claude: Allgemein", unbekannt: "x" }, hinweise: "Bescheid fehlt" }); await w(1200);
+    const lu = oben().querySelector('[data-lu="allgemein"]');
+    e.lidl = { wert: !!lu && lu.value === "Von Claude: Allgemein" && !!lu.style.background, hinweis: /Bescheid fehlt/.test((oben().querySelector("[data-assihinweis]") || {}).textContent || "") };
+    x("ansichtenSchliessen(); 1");
+    e.nichtsGespeichert = (db.protokolle || []).length === vorher.protokolle && (db.belege || []).length === vorher.belege && (db.arbeitsnachweise || []).length === vorher.an &&
+      (db.inbetriebnahmen || []).length === vorher.ibn && JSON.stringify(db.projekte.find((q2) => q2.id === "tmp_k1").daten) === vorher.projekte;
+    x("kiAn=window.__kiAlt"); x("Store.sb.functions").invoke = inv;
+    delete s.fernPasswort; db.projekte = db.projekte.filter((q2) => q2.id !== "tmp_k1");
+    return e;
+  });
+  /* Vorschau für den Inhaber: VORSCHAU=<Ordner> node tests/app-tests.mjs "Claude-Assistent" → assistent.png, protokoll.png */
+  if (process.env.VORSCHAU) {
+    await a.seite.evaluate(() => document.getElementById("fragebtn").click()); await a.seite.waitForTimeout(400);
+    await a.seite.screenshot({ path: join(process.env.VORSCHAU, "assistent.png") });
+    await a.seite.evaluate(() => [...document.querySelectorAll("[data-assientwurf] button")][0].click()); await a.seite.waitForTimeout(800);
+    await a.seite.screenshot({ path: join(process.env.VORSCHAU, "protokoll.png"), fullPage: true });
+  }
+  await a.zu();
+  pruefe(r.schalter, "Schalter kiAssistent in config.js wirkt");
+  pruefe(r.fenster && r.schnellstart && r.vorschau === 1, "Assistent offen, Schnellstart, Bildvorschau: " + JSON.stringify(r));
+  pruefe(r.anfrage.name === "ki-assistent" && r.anfrage.bild && r.anfrage.kontext && r.anfrage.schritte === 4, "Anfragen: " + JSON.stringify(r.anfrage));
+  pruefe(r.geheimDa && r.suchen && r.markt.anlage && r.markt.protokolle && !r.markt.geheim, "Werkzeuge suchen/markt_lesen, keine Zugangsdaten: " + JSON.stringify(r.markt));
+  pruefe(r.denken && r.zweiErgebnisse && r.wechsel, "Gespräch: Denkblöcke zurück, Ergebnisse gesammelt, Rollen im Wechsel: " + JSON.stringify([r.denken, r.zweiErgebnisse, r.wechsel]));
+  pruefe(r.karten.entwurf === 1 && r.karten.mail === 1 && r.karten.antwort && r.karten.kosten && r.mailto, "Karten, Antwort, Kosten, Mail: " + JSON.stringify([r.karten, r.mailto]));
+  pruefe(Object.values(r.proto).every(Boolean), "Störungsprotokoll vorausgefüllt: " + JSON.stringify(r.proto));
+  pruefe(r.gespraechBleibt && r.katalog && Object.values(r.beleg).every(Boolean), "Angebot mit Katalogpreis: " + JSON.stringify([r.gespraechBleibt, r.katalog, r.beleg]));
+  pruefe(r.anHinweis && r.an, "Arbeitsnachweis vorausgefüllt: " + JSON.stringify([r.anHinweis, r.an]));
+  pruefe(Object.values(r.ibn).every(Boolean), "Inbetriebnahme: " + JSON.stringify(r.ibn));
+  pruefe(Object.values(r.lidl).every(Boolean), "Lidl-Unterlagen: " + JSON.stringify(r.lidl));
+  pruefe(r.nichtsGespeichert, "Nichts gespeichert");
+  pruefe(!a.fehler.length, "Laufzeitfehler: " + a.fehler.join("; "));
+  /* Techniker: ✦ wie bisher „Claude fragen“ */
+  const t = await oeffnen(KONTEN.techniker);
+  const rt = await t.seite.evaluate(async () => {
+    const x = window.__t.x; window.__kiAlt = x("kiAn"); x("kiAn=function(){ return true; }"); window.UKT_CONFIG.kiAssistent = true;
+    x("frageKnopfNeu()"); document.getElementById("fragebtn").click(); await new Promise((f) => setTimeout(f, 200));
+    const e = { assistent: !!document.querySelector(".assistent[data-claudeassistent]"), fragen: [...document.querySelectorAll(".as-titel")].some((q) => q.textContent === "Claude fragen"), an: x("assistentAn()") };
+    x("kiAn=window.__kiAlt"); x("ansichtenSchliessen(); 1"); return e;
+  });
+  await t.zu();
+  pruefe(!rt.assistent && rt.fragen && !rt.an, "Techniker: " + JSON.stringify(rt));
+});
+
 test("Lidl-Unterlagen (Inhaber 20.10.2026): Prüfliste, TB/KAV/Schema aus den Anlagen, Fehlendes bleibt weg, IBN nach letzter Vorlage, Mappe-Vorschlag; nur Inhaber", async () => {
   const a = await oeffnen(KONTEN.inhaber);
   await a.seite.evaluate((h) => eval(h), AN_HILFEN);

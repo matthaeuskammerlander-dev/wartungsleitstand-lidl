@@ -917,6 +917,18 @@ Kammerlander Umwelt- und Klimatechnik (UKT) – oft kurz, vom Handy, im Feld.
   wieder ein (`_uktKachel`), zeichnet nur die Zeichen neu und behält den Ausschnitt, solange Auswahl/Tour/Standort gleich sind (`_uktSchluessel`);
   ältere Rückrufe prüfen `aktuell()` (`_uktGen`). Kacheln: keepBuffer 4, updateWhenIdle aus. Test „Karte bleibt erhalten …“.
 - **Diktieren** (`diktatKnopf`): Spracherkennung des Browsers, keine KI, Text wird angehängt.
+- **Claude-Assistent** (Inhaber 29.10.2026: „den Claude-Knopf so nutzen wie ich es mit dir nutze – Protokolle, Vorbereitung, Angebot, Rechnung, Anlagenschema,
+  technische Beschreibung, Mail-Vorschlag … auch Bilder oder Screenshots“): ✦ (`fragebtnKlick`) öffnet bei `assistentAn()` (kiAn + nurInhaber) `claudeAssistent`,
+  sonst wie bisher `claudeFragen` („Andere Wege“ führt dorthin). Die App führt das Gespräch (`ASSI.verlauf` im Format der Claude-Schnittstelle, nur im Speicher,
+  Kontowechsel leert): je Schritt `assistentRunde` → Supabase-Funktion `ki-assistent` (Claude Opus 5.5, Werkzeugliste dort, Preis-/Lidl-Werkzeuge nur bei
+  `ist_inhaber`, ohne KI_ASSISTENT_ALLE=1 nur Inhaber; ki_nutzung art „assistent“, tokens_ein = Gegenwert mit Zwischenspeicher). Werkzeuge führt die App aus
+  (`ASSI_WERKZEUGE`): suchen, markt_lesen, protokoll_lesen, projekt_lesen, katalog_suchen (nur Inhaber) – nie Zugangsdaten (`istGeheim`); Entwürfe
+  (entwurf_protokoll/arbeitsnachweis/inbetriebnahme/beleg/lidl_unterlagen/mail) werden Karten mit „Öffnen und prüfen“: Protokoll über `protokollBeginnen` +
+  `ASSI_PROTO` → `protoTeilAssistent` (Felder, Anlagen, Mängel, Material; Abschnitte aufgeklappt; Techniker bleibt das Konto), `anEditor`/`ibnEditor` mit
+  `opt.vorlage`/`opt.kiHinweis`, `belegNeu` mit `vorlage.ki` (Positionen mit katalog_id → Katalogpreis, sonst ohne Preis mit `hinweis`; bei Protokoll gelten
+  Claudes Positionen), `lidlUnterlagenAssistent(p, {vorschlag, kiHinweis})`; Mail nur kopieren bzw. mailto. Orange (`ASSI_FARBE` = --warn-soft) = von Claude,
+  Hinweis `assistentHinweisEl`; gespeichert/unterschrieben/verschickt wird nie von selbst. Bilder: Datei, Kamera, Einfügen, Hineinziehen, PDF (3 Seiten),
+  1568 px, höchstens 12 je Gespräch. Test „Claude-Assistent …“ (Claude nachgestellt; VORSCHAU=<Ordner> → assistent.png, protokoll.png).
 - **Uhrzeit / Arbeitszeit im Protokoll** (Inhaber 08.10.2026: „die Uhrzeit soll am PDF nicht erscheinen; die Arbeitszeit von–bis kommt vom Rapport
   und steht dann am Protokoll; die gearbeitete Zeit brauchen wir im Kalender für Vor- und Nachplanung“): `blattInhalt` zeigt nur das Datum (nie `uhrzeit`);
   „Arbeitszeit vor Ort“ = `protokollArbeitszeit` (Rapport-Zeilen `rapportZeit`: früheste von – späteste bis; sonst Ankunft–Fertig), bei Wartung und Störung;

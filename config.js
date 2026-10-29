@@ -20,6 +20,10 @@ window.UKT_CONFIG = {
      KI-EINRICHTUNG.md). Dann auf true stellen. */
   kiAktiv: true,
 
+  /* Claude-Assistent hinter ✦ (Inhaber): bleibt aus, bis die Funktion ki-assistent in
+     Supabase eingerichtet ist (KI-EINRICHTUNG.md). Dann auf true stellen. */
+  kiAssistent: false,
+
   /* Posteingang aus dem Datenbank-Postfach (Synology-Skript). Bleibt aus, bis
      POSTEINGANG-EINRICHTUNG.md erledigt ist. */
   posteingangAktiv: false
