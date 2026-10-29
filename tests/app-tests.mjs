@@ -8133,7 +8133,11 @@ test("Kilometergeld berechnen (Inhaber 18.10.2026): Orte aus der Stempeluhr, Hin
     e.nichtsGespeichert = db.auslagen.length === vorher;
     /* mit Zustimmung zur alten Fassung: Koordinaten bleiben aus; zur neuen: die Stempelposition zählt mit */
     x("STEMPEL_ZUSTIMMUNG={user_id:Store.benutzer.id, fassung:'2026-10-14'}"); d = await oeffnen(); e.alteFassung = route();
+    /* Ortsname der Stempelposition (Inhaber 29.10.2026): Ort und Straße laut OpenStreetMap – hier erfunden, ohne Netz */
+    const fAlt = window.fetch; e.reverse = [];
+    window.fetch = function (u) { if (/nominatim\.openstreetmap\.org\/reverse/.test(String(u))) { e.reverse.push(String(u)); return Promise.resolve({ json: () => Promise.resolve({ address: { town: "Teststadt", road: "Testgasse", house_number: "7" } }) }); } return fAlt.apply(this, arguments); };
     x("STEMPEL_ZUSTIMMUNG={user_id:Store.benutzer.id, fassung:'2026-10-18'}"); d = await oeffnen(); e.neueFassung = route();
+    window.fetch = fAlt;
     e.text = x("STEMPEL_ZUST_TEXT.join(' ')");
     /* ein Tag ohne Stempel, Stunden und Termine */
     x("ansichtenSchliessen(); akEditor(null, {art:'km'})"); await warte(300); d = dlg();
@@ -8148,7 +8152,7 @@ test("Kilometergeld berechnen (Inhaber 18.10.2026): Orte aus der Stempeluhr, Hin
     "ohne Zustimmung: Märkte aus den Stempeln, keine Koordinaten, mit Startpunkt: " + r.ohneZust);
   pruefe(r.ohneZustAbschnitte === 3 && r.rueckWeniger, "Abschnitte Start → A → B → Start bzw. Rückfahrt abwählbar: " + JSON.stringify([r.ohneZustAbschnitte, r.rueckWeniger]));
   pruefe(r.kmFeld === String(r.km1) && r.strecke.includes(r.mA) && r.strecke.includes(r.mB) && r.nichtsGespeichert, "Übernehmen: " + JSON.stringify([r.kmFeld, r.km1, r.strecke, r.nichtsGespeichert]));
-  pruefe(!/Stempelposition/.test(r.alteFassung) && /Stempelposition 15:00/.test(r.neueFassung), "Position nur mit Zustimmung zur neuen Fassung: " + JSON.stringify([r.alteFassung.slice(0, 200), r.neueFassung.slice(0, 200)]));
+  pruefe(!/Stempelposition/.test(r.alteFassung) && /Teststadt, Testgasse/.test(r.neueFassung) && !/Testgasse 7|Stempelposition/.test(r.neueFassung) && r.reverse.length === 1, "Position nur mit Zustimmung zur neuen Fassung, benannt mit Ort und Straße ohne Hausnummer: " + JSON.stringify(r.reverse) + " " + JSON.stringify([r.alteFassung.slice(0, 200), r.neueFassung.slice(0, 200)]));
   pruefe(/Kilometergeld/.test(r.text), "Zustimmungstext nennt das Kilometergeld nicht");
   pruefe(/keine Stempel, Stunden oder Termine/.test(r.leer), "leerer Tag: " + r.leer);
   /* Inhaber 29.10.2026: Strecke selbst festlegen, Startpunkt aus dem, was wirklich war, „entfernt“-Stempel bis 5 km, Hinweis zur neuen Zustimmung */

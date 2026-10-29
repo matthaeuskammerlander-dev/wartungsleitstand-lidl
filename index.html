@@ -40540,6 +40540,23 @@ function startpunktIst(tag, stempel){
   if(sp.betrieb) return {ort:BETRIEB, quelle:"fester Startpunkt (Betrieb)"};
   return {ort:null, quelle:"unbekannt"};
 }
+/* Stempelpositionen benennen (Inhaber 29.10.2026: „schreibe bei Stempelposition den Ort, wo gestempelt wurde – Salzburg
+   Schönleitenstraße“): Ort und Straße laut OpenStreetMap, ohne Hausnummer; nacheinander (Nominatim: höchstens 1 Anfrage/s),
+   je Position einmal im Speicher der Sitzung. Klappt es nicht, bleibt „Stempelposition hh:mm“. */
+var AK_ORTNAMEN={};
+function akOrtsnamen(punkte){
+  var offen=punkte.filter(function(p){ return p && p.pos && p.lat!=null; });
+  return offen.reduce(function(k, p){ return k.then(function(){
+    var schl=(+p.lat).toFixed(4)+","+(+p.lon).toFixed(4);
+    if(AK_ORTNAMEN[schl]){ p.name=AK_ORTNAMEN[schl]; return; }
+    return mitFrist(fetch("https://nominatim.openstreetmap.org/reverse?format=jsonv2&zoom=17&addressdetails=1&accept-language=de&lat="+p.lat+"&lon="+p.lon)
+      .then(function(r){ return r.json(); }), 6000).then(function(j){
+        var a=(j && j.address)||{}, ort=a.city||a.town||a.village||a.municipality||a.suburb||a.county||"", str=a.road||a.pedestrian||a.square||a.neighbourhood||"";
+        var n=[ort, str].filter(Boolean).join(", ");
+        if(n){ AK_ORTNAMEN[schl]=n; p.name=n; }
+      }, function(){});
+  }); }, Promise.resolve());
+}
 /* Strecke rechnen: liefert {orte, start, matrix-gestützte km je Abschnitt}; hin/rueck wählt die Ansicht */
 function akKmBerechnen(tag){
   /* ab dem Vortag: dessen letzter Stempel-Ort entscheidet über die Übernachtung (startpunktIst) */
@@ -40550,10 +40567,11 @@ function akKmBerechnen(tag){
   return stempelHolen.then(function(st){
     var t=akTagesOrte(tag, st), sp=null;
     try{ sp=startpunktIst(tag, st); }catch(e){}
-    var start=sp && sp.ort && sp.ort.lat!=null ? {id:sp.ort.id||"start", name:sp.ort.name||"Startpunkt", lat:+sp.ort.lat, lon:+sp.ort.lon, quelle:sp.quelle||""} : null;
-    if(!t.orte.length) return {orte:[], n:t.n, start:start};
+    var start=sp && sp.ort && sp.ort.lat!=null ? {id:sp.ort.id||"start", name:sp.ort.name||"Startpunkt", lat:+sp.ort.lat, lon:+sp.ort.lon, quelle:sp.quelle||"", pos:!!sp.ort.pos} : null;
     var punkte=(start?[start]:[]).concat(t.orte), uniq=[], ids={};
     punkte.forEach(function(p){ if(!ids[p.id]){ ids[p.id]=1; uniq.push(p); } });
+    return akOrtsnamen(uniq).then(function(){
+    if(!t.orte.length) return {orte:[], n:t.n, start:start};
     return (uniq.length>=2 ? strassenMatrix(uniq) : Promise.resolve(null)).then(function(m){
       var idx={}; uniq.forEach(function(p,i){ idx[p.id]=i; });
       var genau=true;
@@ -40566,6 +40584,7 @@ function akKmBerechnen(tag){
       return {orte:t.orte, n:t.n, start:start, km:km, istGenau:function(){ return genau; },
         /* weiter als 1 km vom Startpunkt weg: Hin- bzw. Rückfahrt standardmäßig dabei */
         hinVorgabe:!!start && luftlinie(start, t.orte[0])>1, rueckVorgabe:!!start && luftlinie(start, t.orte[t.orte.length-1])>1};
+    });
     });
   });
 }
