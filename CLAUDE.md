@@ -315,6 +315,8 @@ Kammerlander Umwelt- und Klimatechnik (UKT) – oft kurz, vom Handy, im Feld.
   Regel: jedes Wort muss im Treffer oder seinem Umfeld (Markt, Projekt) stehen, mindestens eines im Treffer selbst; Wörter ≤ 3 Zeichen nur am Wortanfang;
   Füllwörter (`SUCH_FUELL`) zählen nicht; „Plan/Foto/Störung/Wartung/Kontakt/Anleitung“ (`SUCH_ART`) grenzen die Art ein. buero/-Dateien nur Inhaber,
   Kunden-Konten (`nurLesen`) nur Märkte. Kontakte/Einrichtung werden beim Tippen still nachgeladen (kein Neuzeichnen – Fokus bleibt). Test „Überall suchen …“.
+  Seit 29.10.2026 (Inhaber: „deutschlandsberg finde ich nicht mehr – also den Markt“): ganz oben die Gruppe „Märkte“ (= `filtered()`, dieselben wie „n / … Standorte“),
+  und bei Projekten zählt der Markt (`suchMarktText`) zum Projekt selbst – P-2026-001 kam vorher mit „Deutschlandsberg“ nicht.
 - **Synology-Archiv hochladen** (Inhaber 27.10.2026, Verwaltung → Inhaber, `synologyArchivKarte`): Synology-Ordner wählen (webkitdirectory) → `archivIndex`
   (Weg ab dem Jahresordner, „download at …“ nur wenn die neue Fassung fehlt) → `archivPlan` → `archivHochladen`. Projekte mit `daten.archiv`
   {ordner[], einzeln[], ohne[], nurInhaber[], dateien (Anzahl), preise} – per SQL beim Nachtragen gesetzt. Inhaber: erst „nur das Notwendige“, dann

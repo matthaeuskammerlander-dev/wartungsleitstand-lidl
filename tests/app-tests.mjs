@@ -1107,10 +1107,14 @@ test("Überall suchen (Inhaber 27.10.2026): Plan im DG, vergangener Einsatz, Kon
     const einsatz = such("Störung " + markt + " Gassensor");
     const kontakt = such("suchprobe");
     const nichts = such("im von der");
+    /* Inhaber 29.10.2026: der Ort steht nur am Markt – Projekt trotzdem, und der Markt selbst oben im Kasten */
+    const ort = such(x("byId['TS1'].ort") || markt);
+    x("S.q=" + JSON.stringify(markt)); x("S.view='anlagen'"); x("render()"); await warte(200);
+    const mbox = document.querySelector(".such-ueberall"), mtext = mbox ? mbox.textContent : "";
     x("S.q=" + JSON.stringify("Plan " + markt + " DG")); x("S.view='anlagen'"); x("render()"); await warte(200);
     const box = document.querySelector(".such-ueberall"), text = box ? box.textContent : "";
     x("S.q=''"); x("render()");
-    return { plan, einsatz, kontakt, nichts, text };
+    return { plan, einsatz, kontakt, nichts, text, ort, mtext };
   });
   await a.zu();
   pruefe(r.plan.dateien.length === 1 && /DG_20260301/.test(r.plan.dateien[0]) && !r.plan.einsaetze.length && !r.plan.projekte.length,
@@ -1119,6 +1123,8 @@ test("Überall suchen (Inhaber 27.10.2026): Plan im DG, vergangener Einsatz, Kon
   pruefe(r.kontakt.kontakte.length === 1, "Kontakt gefunden: " + JSON.stringify(r.kontakt.kontakte));
   pruefe(Object.keys(r.nichts).every((k) => !r.nichts[k].length), "Nur Füllwörter: nichts gefunden");
   pruefe(/Überall gefunden/.test(r.text) && /DG/.test(r.text), "Feld unter der Suche zeigt die Treffer: " + r.text.slice(0, 200));
+  pruefe(r.ort.projekte.some((h) => /P-SU-1/.test(h)), "Projekt über den Ort seines Markts gefunden: " + JSON.stringify(r.ort.projekte));
+  pruefe(/Märkte \(1\)/.test(r.mtext), "Markt steht oben unter „Überall gefunden“: " + r.mtext.slice(0, 200));
   const t = await oeffnen(KONTEN.techniker);
   const rt = await t.seite.evaluate(async () => {
     const x = window.__t.x, db = window.__db.tabellen, jetzt = new Date().toISOString();
