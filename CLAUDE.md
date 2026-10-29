@@ -510,6 +510,7 @@ Kammerlander Umwelt- und Klimatechnik (UKT) – oft kurz, vom Handy, im Feld.
   eine Korrektur heißt gleich und steht als neuerer Stand da. Im IBN-PDF keine Protokollnr./Projektnummer in der Kopfzeile und kein
   Kleingedrucktes (Korrekturvermerk) – nur „ENTWURF – nicht unterschrieben“ bleibt. „Nachtabsenkung / Flüsterbetrieb (Schall)“ heißt im PDF so
   wie im Formular. Herunterladen unter dem lesbaren Namen: `speicherDownloadUrl` hängt ?download=<Name> an signierte Speicher-Links.
+  Fotos ebenso (Inhaber 29.10.2026: „warum kann ich die Fotos nicht herunterladen?“): `bildAnsicht` hat unten „Herunterladen“ (Daten-Bilder als Blob, ohne Endung im Titel → .jpg).
 - **Inbetriebnahmeprotokoll Kälteanlage** (Inhaber 12.10.2026, Tabelle `inbetriebnahmen`, tools/inbetriebnahmen.sql – gleiche Regeln und Trigger wie die
   Arbeitsnachweise; im SQL-Editor ohne Konto bleiben mitgegebene `erstellt_von`/`monteur` stehen, damit das Büro einem Monteur einen Entwurf anlegen kann):
   nach dem Muster „Inbetriebnahmeprotokoll Kälteanlage“ (KlimaCraft), mit den Anmerkungen des Inhabers auf der Vorlage. „Auftrag“ = Bestell-/Auftragsnummer des
