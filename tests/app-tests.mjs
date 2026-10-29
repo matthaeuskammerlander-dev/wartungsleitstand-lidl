@@ -10827,6 +10827,29 @@ test("Titelbild und Tafel (Inhaber 24.10.2026): gewählt vor angeheftet vor neue
   pruefe(!fehl.length, fehl.join(" | "));
 });
 
+test("Stunden (Inhaber 29.10.2026): „Meine Arbeitszeit“ lässt sich einklappen, „+ Zeit erfassen“ bleibt sichtbar, der Zustand bleibt gemerkt", async () => {
+  const a = await oeffnen(KONTEN.techniker, { handy: true });
+  const karte = () => a.seite.evaluate(() => {
+    const c = [...document.querySelectorAll("#app .card")].find((k) => /^Meine Arbeitszeit/.test((k.querySelector("h2") || {}).textContent || ""));
+    if (!c) return null;
+    const sicht = (s) => { const e = c.querySelector(s); return !!(e && e.offsetParent !== null); };
+    return { klappbar: c.classList.contains("klappbar"), zu: c.classList.contains("zu"), tage: sicht("[data-tage]"), neu: sicht("[data-neu]") };
+  });
+  await a.x("S.view='stunden'; render(); 1"); await a.seite.waitForTimeout(700);
+  const vorher = await karte();
+  await a.seite.evaluate(() => [...document.querySelectorAll("#app .card h2")].find((h) => /^Meine Arbeitszeit/.test(h.textContent)).click());
+  const zu = await karte();
+  await a.x("render(); 1"); await a.seite.waitForTimeout(500);
+  const danach = await karte();
+  const fehl = [];
+  if (!vorher || !vorher.klappbar || vorher.zu || !vorher.tage) fehl.push("anfangs: " + JSON.stringify(vorher));
+  if (!zu || !zu.zu || zu.tage || !zu.neu) fehl.push("zugeklappt: " + JSON.stringify(zu));
+  if (!danach || !danach.zu) fehl.push("nach dem Neuzeichnen: " + JSON.stringify(danach));
+  if (a.fehler.length) fehl.push("Laufzeitfehler: " + a.fehler.join("; "));
+  await a.zu();
+  pruefe(!fehl.length, fehl.join(" | "));
+});
+
 /* ================================================================ Ablauf ================================================================ */
 const filterText = process.argv.slice(2).find((x) => !x.startsWith("--"));
 const filter = filterText ? new RegExp(filterText, "i") : null;
