@@ -15798,6 +15798,9 @@ function kiKopierweg(art, kontext, vorgang){
 }
 /* Prüfbuch und Typenschilder werden in Teilen gelesen; je Teil höchstens
    KI_PORTION Bilder (der Server nimmt bis 12), insgesamt bis KI_MAX_FOTOS */
+/* Mobilnetz (Inhaber 30.10.2026: „etwas schlechtere Verbindung, nur LTE – die App hat abgebrochen“): ein Teil dauert bis fast 3 Minuten, die Verbindung
+   kann in der Zeit abreißen. Solche Teile sendet die App von selbst nochmals; was schon gelesen ist, bleibt (kiLesen) */
+var KI_FRIST_MS=300000, KI_VERSUCHE=3, KI_WARTE_MS=[4000,12000];
 var KI_TEILBAR=["pruefbuch","typenschild"], KI_PORTION=8, KI_MAX_FOTOS=30, KI_MAX_PRUEFBUCH=50;   /* Prüfbuch bis 50 (Inhaber 08.10.2026) */
 function kiMaxFotos(art){ return art==="pruefbuch" ? KI_MAX_PRUEFBUCH : KI_TEILBAR.indexOf(art)>=0 ? KI_MAX_FOTOS : 12; }
 /* klarer Hinweis auf die Höchstzahl – vor dem Wählen und wenn zu viele gewählt wurden */
@@ -15814,12 +15817,50 @@ function kiTeilLesen(art, bilder, kontext, k, n){
     return (ctx && ctx.json ? ctx.json().catch(function(){ return null; }) : Promise.resolve(null)).then(function(j){
       /* Verbindung abgerissen (Netz, Handy gesperrt, Zeitüberschreitung) – verständlich sagen */
       if(!j && r.error.name==="FunctionsFetchError")
-        throw new Error("Die Verbindung zur KI ist abgebrochen (Netz schwach, App verlassen oder Bildschirm gesperrt). Bitte nochmals versuchen, eventuell mit weniger Bildern.");
-      throw new Error((n>1?"Teil "+(k+1)+" von "+n+": ":"")+((j && j.fehler) || r.error.message || "KI-Erkennung fehlgeschlagen"));
+        throw kiFehler("Die Verbindung zur KI ist abgebrochen (Netz schwach, App verlassen oder Bildschirm gesperrt).", true);
+      /* Serverfehler und „gerade ausgelastet“ gehen vorbei; Tageslimit, abgelehnte Bilder u. Ä. bleiben auch beim nächsten Versuch */
+      var status=(ctx && ctx.status)||0;
+      throw kiFehler((n>1?"Teil "+(k+1)+" von "+n+": ":"")+((j && j.fehler) || r.error.message || "KI-Erkennung fehlgeschlagen"), status>=500 || /ausgelastet/.test((j && j.fehler)||""));
     });
   });
-  var frist=new Promise(function(_, nein){ setTimeout(function(){ nein(new Error("Die KI hat nicht rechtzeitig geantwortet – bitte mit weniger Bildern nochmals versuchen.")); }, 170000); });
+  var frist=new Promise(function(_, nein){ setTimeout(function(){ nein(kiFehler("Die KI hat nicht rechtzeitig geantwortet (Verbindung zu langsam?).", true)); }, KI_FRIST_MS); });
   return Promise.race([anfrage, frist]);
+}
+function kiFehler(text, nochmal){ var e=new Error(text); e.nochmal=!!nochmal; return e; }
+/* warten – bei gesperrtem Bildschirm bis zum Zurückkommen, sonst wären die Versuche im Hintergrund schon verbraucht */
+function kiWarten(ms){
+  return new Promise(function(ok){ setTimeout(function(){
+    if(!document.hidden) return ok();
+    var da=function(){ if(document.hidden) return; document.removeEventListener("visibilitychange", da); ok(); };
+    document.addEventListener("visibilitychange", da);
+  }, ms); });
+}
+/* ein Teil mit Wiederholung: nur bei Netz- und Serverfehlern, stand() zeigt es an, aus() = abgebrochen */
+function kiTeilMitWiederholung(art, bilder, kontext, k, n, stand, aus){
+  var versuch=function(nr){
+    return kiTeilLesen(art, bilder, kontext, k, n).catch(function(e){
+      if(!e || !e.nochmal || nr>=KI_VERSUCHE || aus()) throw e;
+      stand("Verbindung unterbrochen – "+(n>1 ? "Teil "+(k+1)+" von "+n : "die Anfrage")+" wird gleich nochmals gesendet (Versuch "+(nr+1)+" von "+KI_VERSUCHE+") …");
+      return kiWarten(KI_WARTE_MS[nr-1]||KI_WARTE_MS[0]).then(function(){ if(aus()) throw e; return versuch(nr+1); });
+    });
+  };
+  return versuch(1);
+}
+/* Teile kamen trotz Wiederholung nicht durch: nichts verwerfen, fragen. ok("nochmal" | "weiter" | "aufgeben") */
+function kiTeileFehlen(v, warten, fehlt, teile, ergebnisse){
+  return new Promise(function(ok){
+    var gelesen=ergebnisse.filter(Boolean).length, bis=0, name=[];
+    teile.forEach(function(t, k){ var von=bis+1; bis+=t.length; if(fehlt.indexOf(k)>=0) name.push(teile.length>1 ? "Teil "+(k+1)+" von "+teile.length+" (Bild "+von+(t.length>1?"–"+bis:"")+")" : "Die Anfrage"); });
+    var box=el('<div class="note warnbox" data-kifehlt style="text-align:left"><strong>'+esc(name.join(", "))+' kam nicht durch.</strong><br>'+
+      (gelesen ? gelesen+" von "+teile.length+" Teilen sind gelesen und bleiben erhalten. " : "")+
+      "Die Fotos sind noch da – du musst sie nicht neu auswählen.<div class=\"muted\" data-kigrund style=\"margin-top:6px\"></div></div>");
+    box.querySelector("[data-kigrund]").textContent=v._kiGrund||"";
+    warten.hidden=true; v.inhalt.appendChild(box);
+    var knopf=function(text, wert, ghost){ var b=el('<button class="btn'+(ghost?" ghost":"")+'" type="button"></button>'); b.textContent=text; b.setAttribute("data-kiwahl", wert);
+      b.onclick=function(){ box.remove(); v.fuss.innerHTML=""; warten.hidden=false; ok(wert); }; v.fuss.appendChild(b); };
+    if(gelesen) knopf("Mit den gelesenen Teilen weiter", "weiter", true); else knopf("Nicht mehr versuchen", "aufgeben", true);
+    knopf("Nochmals versuchen", "nochmal");
+  });
 }
 /* Ergebnisse der Teile zu einem zusammensetzen – wie eine einzige Antwort.
    Prüfbuch: ein Buch ohne Anlagenangaben am Anfang eines Teils ist die
@@ -15878,7 +15919,7 @@ function kiLesen(art, quellen, kontext){
     '<div data-a="zeit" class="muted"></div>'+
     '<div class="note" style="text-align:left"><strong>Bitte in der App bleiben</strong> und den Bildschirm nicht sperren – '+
       'sonst bricht das Handy die Verbindung ab. Danach kommt alles zur Kontrolle, nichts wird ungesehen gespeichert.</div></div>'));
-  var stand=v.inhalt.querySelector('[data-a="stand"]'), zeit=v.inhalt.querySelector('[data-a="zeit"]'), t0=Date.now();
+  var stand=v.inhalt.querySelector('[data-a="stand"]'), zeit=v.inhalt.querySelector('[data-a="zeit"]'), t0=Date.now(), warten=v.inhalt.firstChild;
   var uhr=setInterval(function(){ zeit.textContent=Math.round((Date.now()-t0)/1000)+" s"; }, 1000);
   var ende=function(){ clearInterval(uhr); v.zu(); };
   /* „Schließen“ bricht nur die Anzeige ab – das Ergebnis wird dann verworfen */
@@ -15899,20 +15940,42 @@ function kiLesen(art, quellen, kontext){
        Zwei Teile gleichzeitig, danach zusammensetzen (kiTeileZusammen). */
     var portion=KI_TEILBAR.indexOf(art)>=0 ? KI_PORTION : bilder.length, teile=[];
     for(var i=0;i<bilder.length;i+=portion) teile.push(bilder.slice(i,i+portion));
-    var ergebnisse=[], fertigN=0, naechster=0;
+    var ergebnisse=teile.map(function(){ return null; }), fertigN=0, offen=teile.map(function(_, k){ return k; }), fehlt=[];   /* null: kiTeileZusammen zählt die Bildnummern auch über einen fehlenden Teil weiter */
     var zeigeStand=function(){
       stand.textContent="Claude liest "+bilder.length+" Bild"+(bilder.length===1?"":"er")+
         (teile.length>1 ? " in "+teile.length+" Teilen … ("+fertigN+" von "+teile.length+" fertig)" : " …");
     };
     zeigeStand();
+    var aus=function(){ return abgebrochen; }, meldung=function(t){ if(!abgebrochen) stand.textContent=t; }, feste=null;
     var arbeiter=function(){
-      if(abgebrochen || naechster>=teile.length) return Promise.resolve();
-      var k=naechster++;
-      return kiTeilLesen(art, teile[k], kontext, k, teile.length).then(function(d){ ergebnisse[k]=d; fertigN++; zeigeStand(); return arbeiter(); });
+      if(abgebrochen || !offen.length) return Promise.resolve();
+      var k=offen.shift();
+      return kiTeilMitWiederholung(art, teile[k], kontext, k, teile.length, meldung, aus).then(function(d){ ergebnisse[k]=d; fertigN++; zeigeStand(); }, function(e){
+        fehlt.push(k); v._kiGrund=e&&e.message||String(e); if(!(e&&e.nochmal)) feste=e;
+      }).then(arbeiter);
     };
-    return Promise.all([arbeiter(), arbeiter()]).then(function(){
-      return teile.length>1 ? kiTeileZusammen(art, ergebnisse, teile.map(function(t){ return t.length; })) : ergebnisse[0];
-    });
+    var fertig=function(){
+      var d=teile.length>1 ? kiTeileZusammen(art, ergebnisse, teile.map(function(t){ return t.length; })) : ergebnisse[0];
+      var nicht=ergebnisse.map(function(e, k){ return e ? 0 : k+1; }).filter(Boolean);
+      if(nicht.length && d && d.daten) d.daten.hinweise=[d.daten.hinweise, "Nicht gelesen wegen der Verbindung: Teil "+nicht.join(", ")+" von "+teile.length+" – diese Fotos bitte nochmals einlesen."].filter(Boolean).join(" ");
+      return d;
+    };
+    var durchgang=function(){
+      fehlt=[]; feste=null; zeigeStand();
+      return Promise.all([arbeiter(), arbeiter()]).then(function(){
+        if(abgebrochen) throw new Error("abgebrochen");
+        if(!fehlt.length) return fertig();
+        /* nichts gelesen und ein Fehler, den Wiederholen nicht behebt (Tageslimit, abgelehnte Bilder …): wie bisher melden */
+        if(feste && !ergebnisse.filter(Boolean).length) throw feste;
+        fehlt.sort(function(a, b){ return a-b; });
+        return kiTeileFehlen(v, warten, fehlt, teile, ergebnisse).then(function(w){
+          if(w==="weiter") return fertig();
+          if(w==="aufgeben") throw new Error(v._kiGrund||"KI-Erkennung fehlgeschlagen");
+          offen=fehlt.slice(); return durchgang();
+        });
+      });
+    };
+    return durchgang();
   });
   /* die gelesenen Bilder (verkleinert) gehen mit – sie können an der Anlage gespeichert werden */
   return Promise.race([lauf, abbruch]).then(function(d){ if(abgebrochen) throw new Error("abgebrochen"); ende(); if(d && typeof d==="object") try{ Object.defineProperty(d, "_bilder", {value:bilderMerk, enumerable:false}); }catch(e){} return d; },

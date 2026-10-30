@@ -11299,6 +11299,82 @@ test("KI-Erkennung (Inhaber 30.10.2026): jedes Foto einer Serie in voller Größ
   pruefe(!fehl.length, fehl.join(" | "));
 });
 
+/* Inhaber 30.10.2026: „etwas schlechtere Internetverbindung, nur LTE – die App hat leider abgebrochen“. Ein abgerissener Teil darf nie die ganze Serie kosten */
+test("KI-Erkennung bei schlechtem Netz (Inhaber 30.10.2026): abgerissener Teil wird von selbst wiederholt; bleibt er aus, gehen die gelesenen Teile nicht verloren, nur der fehlende wird nochmals gesendet", async () => {
+  const a = await oeffnen(KONTEN.techniker, { handy: true });
+  await afHilfen(a);
+  const r = await a.seite.evaluate(async () => {
+    const x = window.__t.x, af = window.__af, erg = {};
+    x("kiAn=function(){ return true; }"); x("KI_WARTE_MS=[5,5]; 1");
+    const fotos = await af.fotos(20);   /* 3 Teile: 8 + 8 + 4 */
+    const netzWeg = { data: null, error: { name: "FunctionsFetchError", message: "Load failed" } };
+    let gesendet = [], ausfall = () => false;
+    window.__kiAntwort = (name, body) => {
+      const k = +(/Teil (\d+) von/.exec(body.kontext) || [0, 1])[1];
+      gesendet.push(k);
+      if (ausfall(k, gesendet.filter((z) => z === k).length)) return netzWeg;
+      return { data: { art: body.art, daten: { pruefbuecher: [{ anlage: { seriennummer: "SN" + k }, pruefungen: [], unsicher: [], hinweise: "" }], bilder: [{ nr: "1" }], hinweise: "" } }, error: null };
+    };
+    const zaehle = () => [1, 2, 3].map((k) => gesendet.filter((z) => z === k).length).join(",");
+    const lesen = (art, quellen) => x("kiLesen")(art || "pruefbuch", quellen || fotos, "");
+    const sn = (d) => d.daten.pruefbuecher.map((b) => b.anlage.seriennummer).sort().join(",");
+    const warteKnopf = async () => { for (let i = 0; i < 100 && !document.querySelector("[data-kifehlt]"); i++) await af.warte(20); return document.querySelector("[data-kifehlt]"); };
+
+    /* 1) einmal abgerissen: geht von selbst weiter, keine Frage, die anderen Teile nicht doppelt */
+    ausfall = (k, nr) => k === 2 && nr === 1;
+    let d = await lesen();
+    erg.einmal = { sn: sn(d), n: zaehle(), bilder: d._bilder.length, frage: !!document.querySelector("[data-kifehlt]") };
+
+    /* 2) Teil 2 kommt dreimal nicht durch: Frage, Gelesenes bleibt; „Nochmals“ sendet NUR Teil 2 */
+    gesendet = []; ausfall = (k, nr) => k === 2 && nr <= 3;
+    let p = lesen();
+    let box = await warteKnopf();
+    erg.frage = { text: box ? box.textContent : "", n: zaehle(), knoepfe: [...document.querySelectorAll("[data-kiwahl]")].map((b) => b.dataset.kiwahl).join(",") };
+    document.querySelector('[data-kiwahl="nochmal"]').click();
+    d = await p;
+    erg.nochmal = { sn: sn(d), n: zaehle(), hinweis: d.daten.hinweise };
+
+    /* 3) „Mit den gelesenen Teilen weiter“: Bildnummern von Teil 3 zählen über die Lücke weiter, der Hinweis nennt den Teil */
+    gesendet = []; ausfall = (k) => k === 2;
+    p = lesen();
+    await warteKnopf();
+    document.querySelector('[data-kiwahl="weiter"]').click();
+    d = await p;
+    erg.weiter = { sn: sn(d), nr: d.daten.bilder.map((b) => b.nr).join(","), hinweis: d.daten.hinweise, bilder: d._bilder.length };
+
+    /* 4) Ein Fehler, den Wiederholen nicht behebt: kein zweiter Versuch, Meldung wie bisher */
+    gesendet = [];
+    window.__kiAntwort = (name, body) => { gesendet.push(1); return { data: null, error: { name: "FunctionsHttpError", message: "x", context: { status: 429, json: () => Promise.resolve({ fehler: "Tageslimit für die KI-Erkennung erreicht." }) } } }; };
+    erg.limit = await lesen("typenschild", fotos.slice(0, 2)).then(() => "kein Fehler", (e) => e.message);
+    erg.limitN = gesendet.length;
+
+    /* 5) nur eine Anfrage, Netz bleibt weg: „Nicht mehr versuchen“ führt zur Meldung; ein Serverfehler zählt als wiederholbar */
+    gesendet = []; window.__kiAntwort = () => { gesendet.push(1); return netzWeg; };
+    p = lesen("typenschild", fotos.slice(0, 2)).then(() => "kein Fehler", (e) => e.message);
+    await warteKnopf();
+    document.querySelector('[data-kiwahl="aufgeben"]').click();
+    erg.aufgeben = await p; erg.aufgebenN = gesendet.length;
+    gesendet = []; let einmal = true;
+    window.__kiAntwort = (name, body) => { gesendet.push(1); if (einmal) { einmal = false; return { data: null, error: { name: "FunctionsHttpError", message: "x", context: { status: 546, json: () => Promise.resolve(null) } } }; } return { data: { art: body.art, daten: { geraete: [] } }, error: null }; };
+    await lesen("typenschild", fotos.slice(0, 2)); erg.serverN = gesendet.length;
+    erg.frist = x("KI_FRIST_MS");
+    window.__kiAntwort = null;
+    return erg;
+  });
+  const fehl = [];
+  if (r.einmal.sn !== "SN1,SN2,SN3" || r.einmal.n !== "1,2,1" || r.einmal.bilder !== 20 || r.einmal.frage) fehl.push("einmal: " + JSON.stringify(r.einmal));
+  if (!/Teil 2 von 3 \(Bild 9–16\) kam nicht durch/.test(r.frage.text) || !/2 von 3 Teilen sind gelesen/.test(r.frage.text) || !/nicht neu auswählen/.test(r.frage.text) || r.frage.n !== "1,3,1" || r.frage.knoepfe !== "weiter,nochmal") fehl.push("Frage: " + JSON.stringify(r.frage));
+  if (r.nochmal.sn !== "SN1,SN2,SN3" || r.nochmal.n !== "1,4,1" || /Nicht gelesen/.test(r.nochmal.hinweis)) fehl.push("Nochmals: " + JSON.stringify(r.nochmal));
+  if (r.weiter.sn !== "SN1,SN3" || r.weiter.nr !== "1,17" || !/Nicht gelesen wegen der Verbindung: Teil 2 von 3/.test(r.weiter.hinweis) || r.weiter.bilder !== 20) fehl.push("Weiter: " + JSON.stringify(r.weiter));
+  if (!/Tageslimit/.test(r.limit) || r.limitN !== 1) fehl.push("Limit: " + JSON.stringify([r.limit, r.limitN]));
+  if (!/Verbindung zur KI ist abgebrochen/.test(r.aufgeben) || r.aufgebenN !== 3) fehl.push("Aufgeben: " + JSON.stringify([r.aufgeben, r.aufgebenN]));
+  if (r.serverN !== 2) fehl.push("Serverfehler wiederholt: " + r.serverN);
+  if (r.frist < 240000) fehl.push("Zeitgrenze zu kurz: " + r.frist);
+  if (a.fehler.length) fehl.push("Laufzeitfehler: " + a.fehler.join("; "));
+  await a.zu();
+  pruefe(!fehl.length, fehl.join(" | "));
+});
+
 /* ================================================================ Ablauf ================================================================ */
 const filterText = process.argv.slice(2).find((x) => !x.startsWith("--"));
 const filter = filterText ? new RegExp(filterText, "i") : null;
