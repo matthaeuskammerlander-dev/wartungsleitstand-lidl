@@ -11080,22 +11080,93 @@ test("Stunden (Inhaber 29.10.2026): „Meine Arbeitszeit“ lässt sich einklapp
   pruefe(!fehl.length, fehl.join(" | "));
 });
 
-test("KI-Erkennung (Inhaber 30.10.2026): jedes Foto einer Serie geht in voller Größe an die KI und zum Speichern – nicht nur das erste", async () => {
-  const a = await oeffnen(KONTEN.inhaber);
+/* Inhaber 30.10.2026: 24 Prüfbuch-Fotos kamen grau an, die KI las nichts – „so ein Fehler soll nicht mehr vorkommen“.
+   Fotos in echter iPhone-Größe, am Handy, durch alle Wege: was die KI bekommt, was in der Prüfansicht steht und was gespeichert wird */
+test("KI-Erkennung (Inhaber 30.10.2026): jedes Foto einer Serie in voller Größe und mit seinem Inhalt – an die KI, in der Prüfansicht, im Speicher; Prüfbuch, Typenschild, Auftrag", async () => {
+  const a = await oeffnen(KONTEN.techniker, { handy: true });
+  await afHilfen(a);
   const r = await a.seite.evaluate(async () => {
-    const x = window.__t.x, datei = (f) => new Promise((ok) => { const c = document.createElement("canvas"); c.width = 2400; c.height = 1200;
-      const g = c.getContext("2d"); g.fillStyle = f; g.fillRect(0, 0, 2400, 1200); c.toBlob((b) => ok(new File([b], "seite.jpg", { type: "image/jpeg" })), "image/jpeg", 0.9); });
-    const masse = (u) => new Promise((ok) => { const i = new Image(); i.onload = () => ok(i.naturalWidth + "x" + i.naturalHeight); i.onerror = () => ok("kaputt"); i.src = u; });
+    const x = window.__t.x, af = window.__af, erg = {};
+    const FARBEN = ["#c81e1e", "#1e9628", "#1e32c8", "#c8b41e", "#b41eb4", "#1eb4b4", "#783c14", "#dc7814", "#646464", "#e6e6e6", "#141414", "#3c8c64"];
+    const farbeVon = (h) => [1, 3, 5].map((k) => parseInt(h.slice(k, k + 2), 16));
+    const leinwand = (i, b, h) => { const c = document.createElement("canvas"); c.width = b; c.height = h; const g = c.getContext("2d"); g.fillStyle = FARBEN[i % FARBEN.length]; g.fillRect(0, 0, b, h); return c; };
+    const foto = (i) => new Promise((ok) => leinwand(i, 3024, 4032).toBlob((b) => ok(new File([b], "IMG_" + i + ".jpg", { type: "image/jpeg" })), "image/jpeg", 0.9));
+    /* Maße und Farbe in der Bildmitte eines angekommenen Bildes */
+    const messen = (u) => new Promise((ok) => { const b = new Image(); b.onerror = () => ok({ kaputt: true });
+      b.onload = () => { const c = document.createElement("canvas"); c.width = 1; c.height = 1; const g = c.getContext("2d"); g.drawImage(b, b.naturalWidth / 2, b.naturalHeight / 2, 1, 1, 0, 0, 1, 1);
+        ok({ b: b.naturalWidth, h: b.naturalHeight, f: [...g.getImageData(0, 0, 1, 1).data].slice(0, 3) }); }; b.src = u; });
+    const pruefen = async (urls, n, sollB, sollH) => { const fehl = []; if (urls.length !== n) fehl.push(urls.length + " statt " + n + " Bilder");
+      const m = await Promise.all(urls.map((u) => messen(u)));
+      m.forEach((w, i) => { if (w.kaputt || w.b !== sollB || w.h !== sollH) fehl.push("Bild " + (i + 1) + ": " + (w.kaputt ? "kaputt" : w.b + "x" + w.h));
+        else if (farbeVon(FARBEN[i % FARBEN.length]).some((v, k) => Math.abs(v - w.f[k]) > 24)) fehl.push("Bild " + (i + 1) + ": falscher Inhalt " + w.f); });
+      return fehl; };
     x("kiAn=function(){ return true; }");
     let gesendet = [];
-    window.__kiAntwort = (name, body) => { gesendet = gesendet.concat(body.bilder.map((b) => "data:image/jpeg;base64," + b.data)); return { data: { art: body.art, daten: { geraete: [] } } }; };
-    const d = await x("kiLesen")("typenschild", await Promise.all(["#c00", "#0a0", "#00c", "#cc0"].map(datei)), "");
+    const antworten = (daten) => { gesendet = []; window.__kiAntwort = (name, body) => { gesendet = gesendet.concat(body.bilder.map((b) => "data:image/jpeg;base64," + b.data)); return { data: { art: body.art, daten: daten }, error: null }; }; };
+    /* mehr als ein Teil (je 8), damit auch das Zusammensetzen dabei ist – die zwei Teile laufen gleichzeitig, also nach Größe zählen, die Reihenfolge prüft „gemerkt“ */
+    antworten({ pruefbuecher: [], hinweise: "" });
+    let d = await x("kiLesen")("pruefbuch", await Promise.all(Array.from({ length: 11 }, (_, i) => foto(i))), "");
+    erg.pruefbuchKi = await pruefen(gesendet, 11, 1350, 1800);
+    erg.pruefbuchGemerkt = await pruefen(d._bilder || [], 11, 1350, 1800);
+    antworten({ geraete: [] });
+    d = await x("kiLesen")("typenschild", await Promise.all([0, 1, 2, 3].map((i) => foto(i))), "");
+    erg.typenschildKi = await pruefen(gesendet, 4, 1350, 1800);
+    /* Lidl-Auftrag: Seiten kommen als fertige Bilder (Daten-Adressen) */
+    antworten({});
+    await x("kiLesen")("auftrag", [0, 1, 2].map((i) => leinwand(i, 1190, 1684).toDataURL("image/jpeg", 0.9)), "");
+    erg.auftragKi = await pruefen(gesendet, 3, 1190, 1684);
+    /* die Bildverkleinerung selbst: eine unsinnige Kante darf nie ein unlesbares Bild ergeben, eine echte gilt */
+    const eins = await foto(0);
+    erg.kanteUnsinn = await Promise.all([1, 7, 299].map((k) => x("kiBild")(eins, k).then(messen))).then((l) => l.map((w) => w.b + "x" + w.h));
+    erg.kanteEcht = await x("kiBild")(eins, 1568).then(messen).then((w) => w.b + "x" + w.h);
+    /* iPhone ohne Speicher für Zeichenflächen: leeres Bild bzw. keine Zeichenfläche – Meldung statt stiller Sendung an die KI */
+    const leer = async (art) => { const T = HTMLCanvasElement.prototype, d0 = T.toDataURL, g0 = T.getContext;
+      if (art === "leer") T.toDataURL = function () { return "data:,"; }; else T.getContext = function () { return null; };
+      antworten({ pruefbuecher: [], hinweise: "" });
+      let meldung = "";
+      try { await x("kiLesen")("pruefbuch", [eins], ""); } catch (e) { meldung = e.message; }
+      T.toDataURL = d0; T.getContext = g0;
+      return { meldung, gesendet: gesendet.length }; };
+    erg.speicherLeer = await leer("leer");
+    erg.speicherKein = await leer("kein");
+    /* der ganze Weg wie am Handy: Knopf → Fotos → Prüfansicht → Speichern an der Anlage */
+    const seiten = Array.from({ length: 10 }, (_, i) => ({ nr: String(i + 1), pruefungsdaten: ["10.03.2024"] }));
+    af.antwort([{ sn: "SN-G1", daten: ["10.03.2024"] }], seiten);
+    window.__grossFotos = await Promise.all(Array.from({ length: 10 }, (_, i) => foto(i)));
+    x("(function(){ kiFotosWaehlen=function(){ return Promise.resolve(window.__grossFotos); }; return 1; })()");
+    x("anlageDatenErgaenzen(posById.TP1); 1");
+    erg.knopf = !!(await af.knopf(/Aus Fotos lesen \(KI\)/)) && !!(await af.knopf(/^Prüfbuch/));
+    erg.weg = !!(await af.knopf(/Direkt in der App/));
+    const warteAuf = async (f, n) => { for (let i = 0; i < (n || 150) && !f(); i++) await af.warte(100); return f(); };
+    const wahl = () => { const o = af.oben(); return o ? [...o.querySelectorAll("[data-kifotos] [data-fotowahl]")] : []; };
+    await warteAuf(() => wahl().length >= 10);
+    const bilder = wahl().map((b) => b.querySelector("img")).filter(Boolean);
+    await warteAuf(() => bilder.length && bilder.every((b) => b.complete));
+    erg.ansichtAnzahl = bilder.length;
+    erg.ansicht = await pruefen(bilder.map((b) => b.src), 10, 1350, 1800);
+    const vorher = af.fotosDb().length;
+    wahl().forEach((b) => { if (b.getAttribute("aria-pressed") !== "true") b.click(); });
+    erg.speichern = !!(await af.knopf(/Angehakte übernehmen/, 3000));
+    await warteAuf(() => af.fotosDb().length >= vorher + 10);
+    const neu = af.fotosDb().slice(vorher);
+    erg.gespeichertAnzahl = neu.length;
+    erg.gespeichert = [];
+    for (const z of neu) {
+      const dl = await x("Store.sb.storage.from('protokollfotos')").download(z.pfad);
+      const u = dl && dl.data ? URL.createObjectURL(dl.data) : "";
+      const w = u ? await messen(u) : { kaputt: true };
+      if (w.kaputt || Math.max(w.b, w.h) < 1000) erg.gespeichert.push(z.pfad + ": " + (w.kaputt ? "kaputt" : w.b + "x" + w.h));
+    }
     window.__kiAntwort = null;
-    return { gesendet: await Promise.all(gesendet.map(masse)), gemerkt: await Promise.all((d._bilder || []).map(masse)) };
+    return erg;
   });
-  const fehl = [], soll = "1800x900";
-  if (r.gesendet.length !== 4 || r.gesendet.some((m) => m !== soll)) fehl.push("an die KI: " + JSON.stringify(r.gesendet));
-  if (r.gemerkt.length !== 4 || r.gemerkt.some((m) => m !== soll)) fehl.push("zum Speichern: " + JSON.stringify(r.gemerkt));
+  const fehl = [];
+  for (const k of ["pruefbuchKi", "pruefbuchGemerkt", "typenschildKi", "auftragKi", "ansicht", "gespeichert"]) if (!r[k] || r[k].length) fehl.push(k + ": " + JSON.stringify(r[k]));
+  if (r.kanteUnsinn.some((m) => m !== "1350x1800")) fehl.push("Kante unsinnig: " + r.kanteUnsinn);
+  if (r.kanteEcht !== "1176x1568") fehl.push("Kante 1568: " + r.kanteEcht);
+  for (const k of ["speicherLeer", "speicherKein"]) if (!/nicht verarbeiten/.test(r[k].meldung) || r[k].gesendet) fehl.push(k + ": " + JSON.stringify(r[k]));
+  if (!r.knopf || !r.weg || !r.speichern) fehl.push("Weg durch die Knöpfe: " + JSON.stringify([r.knopf, r.weg, r.speichern]));
+  if (r.ansichtAnzahl !== 10 || r.gespeichertAnzahl !== 10) fehl.push("Anzahl: " + JSON.stringify([r.ansichtAnzahl, r.gespeichertAnzahl]));
   if (a.fehler.length) fehl.push("Laufzeitfehler: " + a.fehler.join("; "));
   await a.zu();
   pruefe(!fehl.length, fehl.join(" | "));

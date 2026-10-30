@@ -42,6 +42,32 @@ skripte.forEach((code, i) => {
   }
 }
 
+// 2c. Funktion mit mehreren Parametern direkt an map/forEach/filter … übergeben: der Browser gibt ihr
+//     als zweiten Wert den Index mit (Inhaber 30.10.2026: quellen.map(kiBild) nahm den Index als Bildgröße –
+//     nur das erste Foto blieb lesbar, die KI bekam graue 1-Pixel-Bilder, ohne jede Fehlermeldung). Stattdessen:
+//     .map(function(x){ return f(x); }). Nur, wo der Index wirklich gewollt ist, gehört der Name in die Liste.
+const INDEX_GEWOLLT = new Set(["anlageBlock"]);
+function rueckrufFallen(code) {
+  const defs = [...code.matchAll(/function\s+([A-Za-z_$][\w$]*)\s*\(([^)]*)\)|\b([A-Za-z_$][\w$]*)\s*=\s*function\s*\(([^)]*)\)/g)]
+    .map((m) => ({ name: m[1] || m[3], anzahl: (m[2] ?? m[4]).trim() ? (m[2] ?? m[4]).split(",").length : 0, stelle: m.index }));
+  const je = new Map();
+  for (const d of defs) { if (!je.has(d.name)) je.set(d.name, []); je.get(d.name).push(d); }
+  const funde = [];
+  for (const m of code.matchAll(/\.(map|forEach|filter|some|every|find|findIndex|flatMap)\(\s*([A-Za-z_$][\w$.]*)\s*\)/g)) {
+    const name = m[2].split(".").pop();
+    if (name === "parseInt") { funde.push(m[0]); continue; }
+    const l = je.get(name); if (!l || INDEX_GEWOLLT.has(name)) continue;
+    /* gilt die nächste Definition davor (gleiche Namen in anderen Funktionen), sonst die erste */
+    const d = l.filter((x) => x.stelle < m.index).pop() || l[0];
+    if (d.anzahl >= 2) funde.push(m[0] + " – " + name + " hat " + d.anzahl + " Parameter");
+  }
+  return funde;
+}
+/* die Prüfung prüft sich selbst: sonst fiele es nicht auf, wenn sie nichts mehr findet */
+if (rueckrufFallen("function a(x,k){} [1].map(a)").length !== 1 || rueckrufFallen("function a(x){} [1].map(a)").length !== 0 ||
+    rueckrufFallen("var p=function(x,y){}; function g(){ var p=function(x){}; [1].filter(p); }").length !== 0) melde("Prüfung der Rückrufe (2c) arbeitet nicht mehr richtig");
+for (const f of rueckrufFallen(skripte.join("\n"))) melde("Index landet im zweiten Parameter: " + f + " – so schreiben: .map(function(x){ return f(x); })");
+
 // 3. Die Terminregeln stehen noch (vom Büro festgelegt – nicht versehentlich entfernen)
 for (const regel of ["var BESUCH_TAGE", "function standardRegel(", "function sollMonatVorschlag(", "function altlastenFaelle("]) {
   if (!html.includes(regel)) melde("Regel-Funktion fehlt: " + regel);

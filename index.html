@@ -15277,12 +15277,16 @@ function kiBild(quelle, kante){
   return new Promise(function(ok, nein){
     var img=new Image(), url=typeof quelle==="string" ? quelle : URL.createObjectURL(quelle);
     img.onload=function(){
-      var f=Math.min(1, (kante||1800)/Math.max(img.naturalWidth, img.naturalHeight));
+      /* eine Kante unter 300 px kann nie gewollt sein – lieber groß als unlesbar (Inhaber 30.10.2026: Prüfbuch-Fotos kamen grau an) */
+      var f=Math.min(1, (kante>=300 ? kante : 1800)/Math.max(img.naturalWidth, img.naturalHeight));
       var cv=document.createElement("canvas");
       cv.width=Math.round(img.naturalWidth*f); cv.height=Math.round(img.naturalHeight*f);
-      cv.getContext("2d").drawImage(img,0,0,cv.width,cv.height);
+      var g=cv.getContext("2d"), u=g ? (g.drawImage(img,0,0,cv.width,cv.height), cv.toDataURL("image/jpeg",0.85)) : "";
       if(typeof quelle!=="string") URL.revokeObjectURL(url);
-      ok(cv.toDataURL("image/jpeg",0.85));
+      cv.width=cv.height=0;   /* am iPhone ist der Speicher für Zeichenflächen knapp – gleich freigeben */
+      /* ist er doch aus, kommt still ein leeres Bild heraus: melden, nie an die KI schicken */
+      if(u.length<200){ nein(new Error("Das Foto ließ sich auf diesem Gerät nicht verarbeiten – bitte die App neu laden und mit weniger Fotos nochmals versuchen.")); return; }
+      ok(u);
     };
     img.onerror=function(){ nein(new Error("Bild nicht lesbar")); };
     img.src=url;
@@ -15851,7 +15855,13 @@ function kiLesen(art, quellen, kontext){
   v.inhalt.closest(".assistent").querySelector('[data-a="zu"]').textContent="Abbrechen";
   var abbruch=new Promise(function(_, nein){ v.inhalt.closest(".assistent").querySelector('[data-a="zu"]').onclick=function(){ abgebrochen=true; ende(); nein(new Error("abgebrochen")); }; });
   var bilderMerk=null;
-  var lauf=Promise.all(quellen.map(function(q){ return kiBild(q); })).then(function(bilder){   /* nicht .map(kiBild): der Index wäre sonst die Kante – Bild 2 nur 1 Pixel (Inhaber 30.10.2026) */
+  /* eines nach dem anderen: bis zu 50 Handyfotos gleichzeitig entpacken überfordert den Speicher des iPhones (Inhaber 30.10.2026) */
+  var bilderReihe=function(i, fertig){
+    if(i>=quellen.length || abgebrochen) return Promise.resolve(fertig);
+    stand.textContent="Bilder werden vorbereitet … ("+(i+1)+" von "+quellen.length+")";
+    return kiBild(quellen[i]).then(function(u){ fertig.push(u); return bilderReihe(i+1, fertig); });
+  };
+  var lauf=bilderReihe(0, []).then(function(bilder){
     bilderMerk=bilder;
     /* viele Fotos (Büro 01.10.2026: eine Seite Prüfbuch je Foto, 20 und mehr):
        in Teilen lesen – mit über 12 Bildern auf einmal klappte es nicht.
