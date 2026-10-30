@@ -1244,6 +1244,57 @@ test("Störung ≠ Wartungstermin (Inhaber 29.10.2026): bei einer Störung vor O
   pruefe(r.wart && !r.wart.pausiert && r.wart.status !== "pausiert", "Wartungsprotokoll: neue Anlage wie bisher mit Termin: " + JSON.stringify(r));
 });
 
+test("Neu erfasste Anlage: Techniker legt den Halbjahrestermin gleich an, wartende Protokolle gehen erneut raus (Inhaber 30.10.2026, Davidgasse)", async () => {
+  const a = await oeffnen(KONTEN.techniker);
+  const r = await a.seite.evaluate(async () => {
+    const x = window.__t.x, w = (ms) => new Promise((f) => setTimeout(f, ms)), e = {};
+    const schritt = (anl) => { window.__h = document.createElement("div"); window.__a = anl; document.body.appendChild(window.__h); x("termineSchritt(window.__h, window.__a); 1"); return window.__h; };
+    const neu = () => ({ _termine: [{ id: "NEU", intervallCode: "JW", monat: 5 }], inbetriebnahme: "2026-05-27", kaeltemittelKg: 1, kgKreise: [1], kreislaeufe: 1, standortId: "TS1" });
+    /* neu erfasst, Techniker: „Ja – Halbjahrestermin“ legt ihn an */
+    e.admin = x("Admin.frei");
+    let h = schritt(neu()), an = window.__a;
+    e.knopf = !!h.querySelector("[data-halbja]");
+    h.querySelector("[data-halbja]").click(); await w(300);
+    e.termine = an._termine.map((t) => t.intervallCode + t.monat);
+    e.wunsch = an.halbWunsch || "";
+    /* … und die Standardregel ebenso */
+    h.remove(); h = schritt(neu()); an = window.__a;
+    h.querySelector("[data-regelall]").click(); await w(300);
+    document.querySelector('.assistent [data-w="hji"]').click(); await w(300);
+    e.regel = an._termine.map((t) => t.intervallCode + t.monat);
+    /* bei einer Störung: kein Termin dazu */
+    h.remove(); h = schritt(Object.assign(neu(), { _stoer: true }));
+    e.stoerKnopf = !!h.querySelector("[data-halbja]");
+    /* bestehende Anlage: weiter nur Meldung ans Büro */
+    h.remove(); h = schritt(Object.assign(neu(), { _leaderId: "TP1" })); an = window.__a;
+    h.querySelector("[data-halbja]").click(); await w(300);
+    e.bestehend = { termine: an._termine.length, wunsch: an.halbWunsch || "" };
+    h.remove();
+    /* wartendes Protokoll: beim Zurückkommen in die App erneut senden */
+    x("window.__flushAlt=flushQueue; window.__flushN=0; flushQueue=function(){ window.__flushN++; }; 1");
+    document.dispatchEvent(new Event("visibilitychange")); e.ohne = window.__flushN;
+    x("lokaleProtokolle.push({id:'pWarte', doc:{}}); 1");
+    document.dispatchEvent(new Event("visibilitychange")); e.mit = window.__flushN;
+    x("lokaleProtokolle=lokaleProtokolle.filter(function(p){ return p.id!=='pWarte'; }); flushQueue=window.__flushAlt; 1");
+    /* nachträglich angelegter Halbjahrestermin (giltAb heute), noch diesen Monat oder nächsten fällig: das Protokoll von heute erledigt ihn, die JW bleibt */
+    const m = new Date().getMonth() + 1, hj = (m % 12) + 1, jw = ((hj + 5) % 12) + 1;
+    x("(function(){ var zeile=function(id,f){ stammUeber['position:'+id]={id:'position:'+id,typ:'position',ziel:id,neu:true,felder:Object.assign({standortId:'TS1',aktiv:true,anlagentyp:'Split Test',anlageZu:'NPa1',inbetriebnahme:'2026-01-10',kaeltemittelKg:1},f)}; };" +
+      " zeile('NPa1',{intervallCode:'JW',monat:" + jw + "}); zeile('NPa2',{intervallCode:'HJI',monat:" + hj + ",giltAb:isoLokal(new Date())}); wendeStammdatenAn(); berechneFaelligkeiten(); })(); 1");
+    e.hjVor = x("posById.NPa2.naechste"); e.jwVor = x("posById.NPa1.naechste");
+    x("protokolle=[{_id:'pHJ',standortId:'TS1',positionIds:['NPa2'],positionId:'NPa2',datum:isoLokal(new Date()),wartungsart:'planmäßig',techniker:'Test',anlagen:[],arbeiten:[],maengel:[]}].concat(protokolle); berechneFaelligkeiten(); 1");
+    e.hjNach = x("posById.NPa2.naechste"); e.jwNach = x("posById.NPa1.naechste"); e.hjStatus = x("posById.NPa2.status");
+    return e;
+  });
+  await a.zu();
+  pruefe(r.hjNach > r.hjVor && r.jwNach === r.jwVor && r.hjStatus !== "ueberfaellig", "Neuer Halbjahrestermin wird durch das Protokoll nicht erledigt: " + JSON.stringify(r));
+  pruefe(r.admin === false, "Testkonto ist kein Techniker: " + JSON.stringify(r));
+  pruefe(r.knopf && r.termine.join() === "JW5,HJI11" && !r.wunsch, "Neue Anlage: Halbjahrestermin nicht angelegt: " + JSON.stringify(r));
+  pruefe(r.regel.join() === "JW5,HJI11", "Neue Anlage: Standardregel ohne zweiten Termin: " + JSON.stringify(r));
+  pruefe(!r.stoerKnopf, "Störung: Halbjahrestermin wird angeboten: " + JSON.stringify(r));
+  pruefe(r.bestehend.termine === 1 && /HJI/.test(r.bestehend.wunsch), "Bestehende Anlage: Techniker meldet weiter nur ans Büro: " + JSON.stringify(r));
+  pruefe(r.ohne === 0 && r.mit === 1, "Wartendes Protokoll wird beim Zurückkommen nicht erneut gesendet: " + JSON.stringify(r));
+});
+
 test("Synology-Archiv: Wartungs-Rapporte an den Prüfbuch-Nachweisen (Inhaber 29.10.2026: „warum kann ich den Bericht in PDF nicht öffnen“)", async () => {
   const a = await oeffnen(KONTEN.inhaber);
   const r = await a.seite.evaluate(async () => {

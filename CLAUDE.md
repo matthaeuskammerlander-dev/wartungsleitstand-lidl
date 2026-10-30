@@ -300,7 +300,11 @@ Kammerlander Umwelt- und Klimatechnik (UKT) – oft kurz, vom Handy, im Feld.
   `termineOffen`): vor Ort wird gefragt – „Ja – Halbjahrestermin“ (Admins legen
   ihn an, sonst Meldung ans Büro: `halbWunsch`, steht in Nachbessern) oder
   „Nein – nur Jahreswartung“ (`nurJW`; dürfen auch Techniker, unter 30 kg auch
-  bei bekannter Füllmenge). Büro 29.09.2026.
+  bei bekannter Füllmenge). Büro 29.09.2026. Gerade neu erfasste Anlage (`neuErfasst`,
+  Inhaber 30.10.2026, Davidgasse): auch Techniker legen den Halbjahrestermin gleich an,
+  Monat wie am Markt oder JW + 6 (`marktHjHinweise`) – nicht bei einer Störung (`_stoer`).
+- Protokolle auf dem Gerät (`wartendeNochmal`, Inhaber 30.10.2026): bei offener App alle
+  2 Minuten und beim Zurückkommen erneut senden, nicht nur beim Start.
 - Neuer Soll-Monat, der den Termin sofort überfällig machte (`sollMonatFolge`):
   der Termine-Schritt warnt; „behalten – nach der nächsten Wartung umstellen“
   lässt den alten Monat stehen und merkt die Umstellung als Notiz an der Anlage
