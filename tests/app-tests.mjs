@@ -1359,6 +1359,33 @@ test("Kundenauswahl gilt überall: Störungen, Rückfragen, Projekte in Fällig,
       const anl = (document.querySelector("#app .note.warnbox strong") || {}).textContent || "";
       x("S.q=''; render(); 1");
       return { eintraege, hinweis, kachel, rueckfragen, projekte, karteSt, anl };
+test("Zugang zur Regelung steht am Markt: Anlagendialog und Protokoll fragen nicht danach (Inhaber 30.10.2026)", async () => {
+  const a = await oeffnen(KONTEN.techniker);
+  const r = await a.seite.evaluate(async () => {
+    const x = window.__t.x, w = (ms) => new Promise((f) => setTimeout(f, ms)), e = {};
+    x("posById.TP1.fernzugriff='ja'; posById.TP1.regelung='Daikin Touch Manager'; 1");
+    const karte = async () => {
+      x("formDirty=false; S.protoArt='wartung'; S.stoerungAus=null; S.bearbeiten=null; S.protoStandort='TS1'; S.protoPos='TP1'; S.view='protokoll'; render(); 1"); await w(450);
+      const k = document.querySelector('[data-karte="TP1"]'); return k ? k.textContent : "keine Karte";
+    };
+    const fragt = (anl) => x("ANLAGE_GRUPPEN.filter(function(g){ return g.titel==='Zugang zur Regelung'; })[0].wenn(" + anl + ")");
+    x("byId.TS1.fernLink=''; 1");
+    e.ohneMarkt = fragt("{fernzugriff:'ja', _leaderId:'TP1'}"); e.karteOhne = await karte();
+    x("byId.TS1.fernLink='https://regelung.invalid/'; 1");
+    e.mitLeader = fragt("{fernzugriff:'ja', _leaderId:'TP1'}");
+    e.mitMarkt = fragt("{fernzugriff:'ja', standortId:'TS1'}");
+    e.eigener = fragt("{fernzugriff:'ja', _leaderId:'TP1', zugangBenutzer:'x'}");
+    e.karteMit = await karte();
+    x("byId.TS1.fernLink=''; 1");
+    return e;
+  });
+  await a.zu();
+  pruefe(r.ohneMarkt === true, "Ohne Zugang am Markt muss gefragt werden: " + JSON.stringify(r));
+  pruefe(r.mitLeader === false && r.mitMarkt === false, "Zugang am Markt: Dialog fragt trotzdem: " + JSON.stringify(r));
+  pruefe(r.eigener === true, "Eigener Zugang der Anlage bleibt sichtbar: " + JSON.stringify(r));
+  pruefe(/Adresse/.test(r.karteOhne) && !/Adresse/.test(r.karteMit), "Protokoll-Karte: Fehlt-Liste passt nicht: " + JSON.stringify(r));
+});
+
     };
     return { lidl: await stand("lidl"), weitere: await stand("weitere"), alle: await stand("alle") };
   });
