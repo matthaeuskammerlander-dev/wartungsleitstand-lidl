@@ -11080,6 +11080,27 @@ test("Stunden (Inhaber 29.10.2026): „Meine Arbeitszeit“ lässt sich einklapp
   pruefe(!fehl.length, fehl.join(" | "));
 });
 
+test("KI-Erkennung (Inhaber 30.10.2026): jedes Foto einer Serie geht in voller Größe an die KI und zum Speichern – nicht nur das erste", async () => {
+  const a = await oeffnen(KONTEN.inhaber);
+  const r = await a.seite.evaluate(async () => {
+    const x = window.__t.x, datei = (f) => new Promise((ok) => { const c = document.createElement("canvas"); c.width = 2400; c.height = 1200;
+      const g = c.getContext("2d"); g.fillStyle = f; g.fillRect(0, 0, 2400, 1200); c.toBlob((b) => ok(new File([b], "seite.jpg", { type: "image/jpeg" })), "image/jpeg", 0.9); });
+    const masse = (u) => new Promise((ok) => { const i = new Image(); i.onload = () => ok(i.naturalWidth + "x" + i.naturalHeight); i.onerror = () => ok("kaputt"); i.src = u; });
+    x("kiAn=function(){ return true; }");
+    let gesendet = [];
+    window.__kiAntwort = (name, body) => { gesendet = gesendet.concat(body.bilder.map((b) => "data:image/jpeg;base64," + b.data)); return { data: { art: body.art, daten: { geraete: [] } } }; };
+    const d = await x("kiLesen")("typenschild", await Promise.all(["#c00", "#0a0", "#00c", "#cc0"].map(datei)), "");
+    window.__kiAntwort = null;
+    return { gesendet: await Promise.all(gesendet.map(masse)), gemerkt: await Promise.all((d._bilder || []).map(masse)) };
+  });
+  const fehl = [], soll = "1800x900";
+  if (r.gesendet.length !== 4 || r.gesendet.some((m) => m !== soll)) fehl.push("an die KI: " + JSON.stringify(r.gesendet));
+  if (r.gemerkt.length !== 4 || r.gemerkt.some((m) => m !== soll)) fehl.push("zum Speichern: " + JSON.stringify(r.gemerkt));
+  if (a.fehler.length) fehl.push("Laufzeitfehler: " + a.fehler.join("; "));
+  await a.zu();
+  pruefe(!fehl.length, fehl.join(" | "));
+});
+
 /* ================================================================ Ablauf ================================================================ */
 const filterText = process.argv.slice(2).find((x) => !x.startsWith("--"));
 const filter = filterText ? new RegExp(filterText, "i") : null;
