@@ -9818,6 +9818,55 @@ test("Karte bleibt erhalten: Reiter weg und zurück, Neuzeichnen – geladene Ka
   await a.zu();
 });
 
+test("Karte: Marktpunkt lässt sich immer antippen – unter dem Standort-Kreis, knapp daneben, mit wackelndem Finger; leerer Tipp schließt nur das Fenster", async () => {
+  const a = await oeffnen(KONTEN.techniker, { handy: true });
+  const seite = a.seite;
+  const lage = await seite.evaluate(async () => {
+    const x = window.__t.x, w = (ms) => new Promise((f) => setTimeout(f, ms));
+    x("S.view='karte'; render()"); await w(1500);
+    if (!document.querySelector("#osmkarte.leaflet-container")) return null;
+    const k = x("leafletKarte"), punkte = [];
+    k.eachLayer((l) => { if (l._uktRang != null && l.getLatLng) punkte.push(l); });
+    const p = punkte[0].getLatLng();
+    /* eigener Standort gleich daneben: sein großer Genauigkeitskreis liegt über dem Markt */
+    window.__t.x("S").meinOrt = { lat: p.lat + 0.006, lon: p.lng + 0.008, genauigkeit: 3000 };
+    x("render()"); await w(700);
+    x("leafletKarte").setView(p, 13, { animate: false }); await w(400);
+    return { lat: p.lat, lon: p.lng };
+  });
+  pruefe(lage, "keine Straßenkarte im Test");
+  const stelle = () => seite.evaluate(({ lat, lon }) => {
+    const k = window.__t.x("leafletKarte");
+    k.closePopup();
+    k.getContainer().scrollIntoView({ block: "center" });
+    const q = k.latLngToContainerPoint([lat, lon]), r = k.getContainer().getBoundingClientRect();
+    return { x: r.left + q.x, y: r.top + q.y };
+  }, lage);
+  const offen = async () => { await seite.waitForTimeout(350); return seite.evaluate(() => !!document.querySelector("#osmkarte .leaflet-popup")); };
+
+  let q = await stelle();
+  await seite.mouse.click(q.x, q.y);
+  pruefe(await offen(), "Punkt unter dem Standort-Kreis lässt sich nicht antippen");
+
+  q = await stelle();
+  await seite.mouse.click(q.x + 13, q.y + 6);
+  pruefe(await offen(), "Tipp knapp neben dem Punkt öffnet nichts");
+
+  q = await stelle();
+  await seite.mouse.move(q.x, q.y); await seite.mouse.down(); await seite.mouse.move(q.x + 4, q.y + 3); await seite.mouse.up();
+  pruefe(await offen(), "Finger wackelt 5 Bildpunkte: Tipp zählt nicht");
+
+  /* Fenster offen, leerer Tipp in die Nähe: nur schließen, nicht gleich wieder öffnen */
+  q = await stelle();
+  await seite.mouse.click(q.x, q.y);
+  pruefe(await offen(), "Fenster für den Schließ-Test ging nicht auf");
+  const fern = await seite.evaluate(() => { const r = window.__t.x("leafletKarte").getContainer().getBoundingClientRect(); return { x: r.right - 12, y: r.bottom - 40 }; });
+  await seite.mouse.click(fern.x, fern.y);
+  pruefe(!(await offen()), "Tipp ins Leere lässt das Fenster offen");
+  pruefe(!a.fehler.length, "Laufzeitfehler: " + a.fehler.join("; "));
+  await a.zu();
+});
+
 test("Kartenbilder auf dem Gerät: angesehene Kacheln gespeichert, ohne Netz von dort gezeigt, Anzahl und Leeren mit Rückfrage", async () => {
   const a = await oeffnen(KONTEN.techniker, { handy: true });
   const r = await a.seite.evaluate(async () => {

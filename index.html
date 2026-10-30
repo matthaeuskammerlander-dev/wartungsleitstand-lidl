@@ -5990,6 +5990,7 @@ function karteOsm(withGeo){
       if(karte._uktAnsicht) karte.setView(karte._uktAnsicht.c, karte._uktAnsicht.z, {animate:false});
     } else {
       if(alt){ try{ alt.stop(); alt._animatingZoom=false; alt.remove(); }catch(e){} }
+      L.Draggable.mergeOptions({clickTolerance:KARTE_WACKELN_PX});
       karte=L.map(host,{scrollWheelZoom:true}).setView([47.6,13.4],7);
       /* keepBuffer: rundum mehr Kacheln vorhalten; updateWhenIdle aus: am Handy schon beim Wischen nachladen */
       kachel=kachelEbene("https://tile.openstreetmap.org/{z}/{x}/{y}.png",{
@@ -6088,6 +6089,25 @@ function karteOsm(withGeo){
       alle.sort(function(a,b){ return a._uktRang-b._uktRang; }).forEach(function(l){ if(l.bringToFront) l.bringToFront(); });
     };
     ebenenZeigen();
+    /* Punkte sind kleiner als ein Finger (Inhaber 30.10.2026: „manchmal nicht möglich oder erst nach mehrmaligem Probieren“): ein Tipp knapp daneben
+       öffnet den nächsten sichtbaren Markt; war ein Fenster offen, schließt der Tipp nur dieses. Die Karte bleibt erhalten – der Rückruf wird je Zeichnung ersetzt, angemeldet nur einmal */
+    karte._uktNaechsterPunkt=function(p){
+      var best=null, abstand=KARTE_TIPP_PX;
+      Object.keys(ebene).forEach(function(k){ if(karte.hasLayer(ebene[k])) ebene[k].eachLayer(function(l){
+        if(l._uktRang==null) return;
+        var d=karte.latLngToContainerPoint(l.getLatLng()).distanceTo(p);
+        if(d<abstand){ abstand=d; best=l; }
+      }); });
+      return best;
+    };
+    if(!karte._uktTippAn){
+      karte._uktTippAn=true;
+      var fensterOffen=false, warOffen=false;
+      karte.on("popupopen", function(){ fensterOffen=true; });
+      karte.on("popupclose", function(){ fensterOffen=false; });
+      karte.on("preclick", function(){ warOffen=fensterOffen; });
+      karte.on("click", function(e){ if(warOffen) return; var l=karte._uktNaechsterPunkt(e.containerPoint); if(l) l.openPopup(); });
+    }
     card.querySelectorAll("[data-kf]").forEach(function(c){
       c.onclick=function(){ var f=karteFilter(); f[c.dataset.kf]=(f[c.dataset.kf]===false); karte.closePopup(); ebenenZeigen(); };
     });
@@ -6100,18 +6120,18 @@ function karteOsm(withGeo){
       if(S.tour.geometrie){
         /* tatsächlicher Straßenverlauf vom Routendienst */
         L.polyline(S.tour.geometrie.map(function(c){ return [c[1],c[0]]; }),{
-          color:tokenFarbe("--accent"), weight:4, opacity:.8
+          color:tokenFarbe("--accent"), weight:4, opacity:.8, interactive:false
         }).addTo(karte);
       } else {
         var linie=L.polyline(punkte.map(function(p){ return [p.lat,p.lon]; }),{
-          color:tokenFarbe("--accent"), weight:3, opacity:.85, dashArray:"8 6"
+          color:tokenFarbe("--accent"), weight:3, opacity:.85, dashArray:"8 6", interactive:false
         }).addTo(karte);
         /* kommt der Straßenverlauf nach (tourRechnen lädt ihn im Hintergrund), nur die Linie tauschen –
            die Karte bleibt, wo sie gerade ist */
         tourLinieNachladen=function(g){
           if(!document.body.contains(host)){ tourLinieNachladen=null; return false; }
           karte.removeLayer(linie);
-          L.polyline(g.map(function(c){ return [c[1],c[0]]; }),{ color:tokenFarbe("--accent"), weight:4, opacity:.8 }).addTo(karte);
+          L.polyline(g.map(function(c){ return [c[1],c[0]]; }),{ color:tokenFarbe("--accent"), weight:4, opacity:.8, interactive:false }).addTo(karte);
           tourLinieNachladen=null; return true;
         };
       }
@@ -6146,14 +6166,14 @@ function karteOsm(withGeo){
       icon:L.divIcon({className:"", iconSize:[22,22], iconAnchor:[11,11], popupAnchor:[0,-12], html:'<div class="ichpunkt" data-ich><b></b><i></i><em>Ich</em></div>'})}); };
     var ichZeichnen=function(g){
       ichEbene.clearLayers();
-      L.circle([g.lat,g.lon],{radius:Math.max(60,g.genauigkeit||0),color:tokenFarbe("--ich"),weight:1,dashArray:"4 3",fillColor:tokenFarbe("--ich"),fillOpacity:.1}).addTo(ichEbene);
+      L.circle([g.lat,g.lon],{radius:Math.max(60,g.genauigkeit||0),color:tokenFarbe("--ich"),weight:1,dashArray:"4 3",fillColor:tokenFarbe("--ich"),fillOpacity:.1,interactive:false}).addTo(ichEbene);
       ichMarker(g.lat, g.lon).addTo(ichEbene)
         .bindPopup("Mein Standort (auf rund "+Math.round(g.genauigkeit||0)+" m genau) – nur auf diesem Gerät, wird nicht gespeichert");
     };
     if(S.meinOrt && !S.tour.gps) ichZeichnen(S.meinOrt);
     if(S.tour.gps){
       L.circle([S.tour.gps.lat,S.tour.gps.lon],{radius:Math.max(60,S.tour.gps.genauigkeit),
-        color:tokenFarbe("--ich"),weight:1,dashArray:"4 3",fillColor:tokenFarbe("--ich"),fillOpacity:.1}).addTo(karte);
+        color:tokenFarbe("--ich"),weight:1,dashArray:"4 3",fillColor:tokenFarbe("--ich"),fillOpacity:.1,interactive:false}).addTo(karte);
       ichMarker(S.tour.gps.lat, S.tour.gps.lon).addTo(karte).bindPopup("Ihr aktueller Standort");
       bounds.push([S.tour.gps.lat,S.tour.gps.lon]);
     }
@@ -6234,6 +6254,7 @@ function karteOsm(withGeo){
 
 /* Fenster am Markt-Punkt (Inhaber 07.10.2026: „durch die neuen Knöpfe unnötig groß – man muss immer wieder hinaufscrollen“):
    höchstens so hoch wie die Karte (sonst schiebt Leaflet den Kopf aus dem Bild), darin scrollen; Knöpfe zweispaltig */
+var KARTE_TIPP_PX=20, KARTE_WACKELN_PX=8;   /* so weit daneben trifft ein Tipp noch den Punkt; so weit darf der Finger wackeln, ohne dass es als Verschieben gilt (Vorgabe von Leaflet: 3) */
 function popupOpt(){ return {minWidth:230, maxWidth:280, maxHeight:Math.max(200, Math.round(Math.min(560, (window.innerHeight||700)*0.68)-60)), autoPanPadding:[8,8]}; }
 function popupInhalt(s){
   var d=document.createElement("div");
