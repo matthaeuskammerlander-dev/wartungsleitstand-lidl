@@ -20,9 +20,9 @@ window.UKT_CONFIG = {
      KI-EINRICHTUNG.md). Dann auf true stellen. */
   kiAktiv: true,
 
-  /* Claude-Assistent hinter ✦ (Inhaber): bleibt aus, bis die Funktion ki-assistent in
-     Supabase eingerichtet ist (KI-EINRICHTUNG.md). Dann auf true stellen. */
-  kiAssistent: false,
+  /* Claude-Assistent hinter ✦ (Inhaber): eingeschaltet, seit die Funktion ki-assistent in
+     Supabase eingerichtet ist (30.10.2026, KI-EINRICHTUNG.md). false = wieder aus. */
+  kiAssistent: true,
 
   /* Posteingang aus dem Datenbank-Postfach (Synology-Skript). Bleibt aus, bis
      POSTEINGANG-EINRICHTUNG.md erledigt ist. */
