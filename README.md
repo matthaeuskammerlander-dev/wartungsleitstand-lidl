@@ -1337,7 +1337,7 @@ Dateien auf einen Webserver zu legen.
 
 **GitHub Pages**: Repository → Settings → Pages → Source *GitHub Actions*. Die App geht
 erst online, wenn „App prüfen“ für genau diesen Stand bestanden ist (etwa 25 Minuten,
-`.github/workflows/veroeffentlichen.yml`, Inhaber 30.10.2026). Fällt die Prüfung durch,
+Job „veroeffentlichen“ in `.github/workflows/pruefen.yml`, Inhaber 30.10.2026). Fällt die Prüfung durch,
 bleibt der letzte geprüfte Stand online. Welcher Stand online ist, steht in `stand.txt`.
 
 **Eigenes Hosting** (für den Echtbetrieb): den Inhalt dieses Repositories in

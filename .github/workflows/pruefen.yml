@@ -1,6 +1,9 @@
 # Automatische Prüfung jeder vorgeschlagenen Änderung (Änderungswünsche aus
 # der App, umgesetzt von Claude) und jedes Stands der echten App.
 # Ohne bestandene Prüfung lässt sich ein Wunsch in der App nicht übernehmen.
+# Ein Stand von main geht erst nach bestandener Prüfung online (Inhaber 30.10.2026, Job
+# „veroeffentlichen“; Repository → Settings → Pages → Source „GitHub Actions“). Fällt die Prüfung
+# durch, bleibt der letzte geprüfte Stand online; nach „Re-run“ läuft die Veröffentlichung von selbst.
 name: App prüfen
 
 on:
@@ -61,3 +64,63 @@ jobs:
       # Endlosschleifen, Protokoll speichern, Fälligkeit, Kalender, Rechnung, Eingabeprüfung, Spielwiese
       - name: App-Tests (Abläufe)
         run: node tests/app-tests.mjs
+
+  veroeffentlichen:
+    name: App veröffentlichen
+    needs: pruefen
+    # nur echte Stände von main, nie Vorschläge aus einem Änderungswunsch
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # immer nur eine Veröffentlichung gleichzeitig
+    concurrency:
+      group: pages
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+    env:
+      STAND_ADRESSE: https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/stand.txt
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # dauert eine Prüfung länger als die eines neueren Stands: den neueren nie überschreiben
+      - name: Nie einen älteren Stand über einen neueren legen
+        id: stand
+        run: |
+          online=$(curl -fsS "$STAND_ADRESSE?t=$(date +%s)" | tr -d '[:space:]' || true)
+          echo "Online: ${online:-unbekannt} · geprüft: $(git rev-parse HEAD)"
+          if [ -n "$online" ] && git merge-base --is-ancestor HEAD "$online" 2>/dev/null; then
+            echo "Online ist schon dieser oder ein neuerer Stand – nichts zu tun."
+            echo "weiter=nein" >> "$GITHUB_OUTPUT"
+          else
+            git rev-parse HEAD > stand.txt
+            echo "weiter=ja" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/upload-pages-artifact@v5
+        if: steps.stand.outputs.weiter == 'ja'
+        with:
+          path: .
+
+      - uses: actions/deploy-pages@v5
+        if: steps.stand.outputs.weiter == 'ja'
+
+      # „erfolgreich“ allein reicht nicht (30.10.2026: gemeldet erfolgreich, online blieb der alte Stand):
+      # erst wenn genau dieser Stand wirklich ausgeliefert wird, ist die Veröffentlichung gelungen
+      - name: Wirklich online?
+        if: steps.stand.outputs.weiter == 'ja'
+        run: |
+          soll=$(git rev-parse HEAD)
+          for i in $(seq 1 36); do
+            online=$(curl -fsS "$STAND_ADRESSE?t=$(date +%s)" | tr -d '[:space:]' || true)
+            if [ "$online" = "$soll" ]; then echo "Online: $soll"; exit 0; fi
+            sleep 10
+          done
+          echo "::error::Veröffentlicht gemeldet, aber online steht ${online:-nichts} statt $soll"
+          exit 1
