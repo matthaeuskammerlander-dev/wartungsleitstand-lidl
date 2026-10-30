@@ -1,0 +1,62 @@
+# Die App geht erst online, wenn „App prüfen“ für genau diesen Stand bestanden ist
+# (Inhaber 30.10.2026, nach den grauen Prüfbuch-Fotos). Einstellung dazu: Repository →
+# Settings → Pages → Source „GitHub Actions“. Schlägt die Prüfung fehl, bleibt der letzte
+# geprüfte Stand online; nach „Re-run“ einer bestandenen Prüfung läuft das hier von selbst.
+name: App veröffentlichen
+
+on:
+  workflow_run:
+    workflows: ["App prüfen"]
+    types: [completed]
+    branches: [main]
+
+permissions:
+  contents: read
+
+# immer nur eine Veröffentlichung gleichzeitig, keine bricht die andere ab
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  veroeffentlichen:
+    name: App veröffentlichen
+    # nur echte Stände von main, nie Vorschläge aus einem Änderungswunsch
+    if: github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+    steps:
+      # genau der geprüfte Stand – main kann inzwischen weiter sein
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+          fetch-depth: 0
+
+      # dauert eine Prüfung länger als die eines neueren Stands: den neueren nie überschreiben
+      - name: Nie einen älteren Stand über einen neueren legen
+        id: stand
+        run: |
+          adresse="https://${GITHUB_REPOSITORY_OWNER}.github.io/${GITHUB_REPOSITORY#*/}/stand.txt"
+          online=$(curl -fsS "$adresse?t=$(date +%s)" | tr -d '[:space:]' || true)
+          echo "Online: ${online:-unbekannt} · geprüft: $(git rev-parse HEAD)"
+          if [ -n "$online" ] && git merge-base --is-ancestor HEAD "$online" 2>/dev/null; then
+            echo "Online ist schon dieser oder ein neuerer Stand – nichts zu tun."
+            echo "weiter=nein" >> "$GITHUB_OUTPUT"
+          else
+            git rev-parse HEAD > stand.txt
+            echo "weiter=ja" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/upload-pages-artifact@v5
+        if: steps.stand.outputs.weiter == 'ja'
+        with:
+          path: .
+
+      - uses: actions/deploy-pages@v5
+        if: steps.stand.outputs.weiter == 'ja'

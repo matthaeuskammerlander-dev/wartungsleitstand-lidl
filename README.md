@@ -1335,9 +1335,10 @@ Die zweite Zeile sorgt dafür, dass die App wieder zum Ändern auffordert.
 Die Seite ist statisch und braucht keinen Build-Schritt — es reicht, die
 Dateien auf einen Webserver zu legen.
 
-**GitHub Pages** (zum Ausprobieren): Repository → Settings → Pages → Source
-*Deploy from a branch*, Branch `main`, Ordner `/ (root)`. Das Skript
-`deploy-github.ps1` erledigt das mit.
+**GitHub Pages**: Repository → Settings → Pages → Source *GitHub Actions*. Die App geht
+erst online, wenn „App prüfen“ für genau diesen Stand bestanden ist (etwa 25 Minuten,
+`.github/workflows/veroeffentlichen.yml`, Inhaber 30.10.2026). Fällt die Prüfung durch,
+bleibt der letzte geprüfte Stand online. Welcher Stand online ist, steht in `stand.txt`.
 
 **Eigenes Hosting** (für den Echtbetrieb): den Inhalt dieses Repositories in
 das Web-Verzeichnis kopieren, fertig. Sinnvoll sind dort zwei Dinge, die auf

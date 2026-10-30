@@ -9,7 +9,7 @@ App) einen Wunsch. Der Inhaber sieht alle Wünsche unter **Verwaltung →
    Minuten, läuft über das Claude-Abo).
 2. **Ansehen:** Rückmeldung von Claude, „Änderungen ansehen“, „Vorschau
    ausprobieren“ und das Ergebnis der **automatischen Prüfung**.
-3. **Übernehmen** (nur nach bestandener Prüfung) – nach 1–2 Minuten in der App.
+3. **Übernehmen** (nur nach bestandener Prüfung) – der übernommene Stand wird nochmals geprüft und geht danach online, zusammen etwa 25 Minuten.
    Oder **Nachbessern lassen** bzw. **Ablehnen**.
 4. **Rückgängig machen** geht bei jeder übernommenen Änderung – wieder als
    Vorschlag mit Prüfung, wirksam erst nach „Übernehmen“.
