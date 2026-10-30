@@ -5327,6 +5327,8 @@ function viewFaellig(){
   if(Store.modus==="supabase" && Store.benutzer && !protokolleGeladen && protokolleFehler)
     f.appendChild(el('<div class="note warnbox" style="font-size:13px"><strong>Protokolle konnten nicht geladen werden</strong> '+
       "(Verbindung?) – Fälligkeiten sind vorläufig, es wird erneut versucht.</div>"));
+  /* Protokoll liegt noch auf dem Gerät einer Person: erklärt, warum ein Termin weiter offen steht (wartendPruefen) */
+  if(wartendAn()){ var wartH=el('<div data-wartendfaellig'+(WARTEND.length?"":" hidden")+">"+(WARTEND.length?wartendFaelligHtml():"")+"</div>"); f.appendChild(wartH); }
 
   /* Offene Störungen stehen ganz oben – sie warten, nicht der Kalender. */
   /* Rückfragen des Kunden mit Frist: noch vor allem anderen */
@@ -6815,6 +6817,7 @@ function standortDetail(s){
     "</dl>"+
     marktVermerk(s)+
     kundenVermerk(s)+
+    (wartendAn() ? '<div data-wartendmarkt="'+esc(s.id)+'"'+(wartendMarktHtml(s.id)?"":" hidden")+">"+wartendMarktHtml(s.id)+"</div>" : "")+
     '<div data-fernzugang></div>'+
     '<div data-abholhinweis></div>'+
     '<div data-ihmarkt></div>'+
@@ -11015,7 +11018,7 @@ function speicherLeeren(){
   datenFuerKonto=null;
   Object.keys(stammUeber).forEach(function(k){ delete stammUeber[k]; });
   Object.keys(stammStand).forEach(function(k){ delete stammStand[k]; });
-  OFFENE=[]; aenderungen=[];
+  OFFENE=[]; aenderungen=[]; wartendLeeren();
   if(typeof FERN_KONTO!=="undefined") FERN_KONTO=null;
   if(typeof FERN_PRUEFUNG!=="undefined") FERN_PRUEFUNG=null;
   if(typeof EINRICHTUNG!=="undefined") EINRICHTUNG=null;
@@ -11643,6 +11646,7 @@ function ladeProtokolle(nurWennNeu){
     storeNachRender(nurWennNeu===true);
     offeneBerichteNachholen();
     vermerkeLaden();
+    wartendPruefen();
   }, function(x){ protokolleNichtGeladen((x&&x.message)||String(x)); });
 }
 /* Laden der Protokolle gescheitert (etwa schlechter Empfang): Hinweis in
@@ -12234,8 +12238,62 @@ function nachladenWennGeaendert(){ aenderungPruefen().then(function(neu){ if(neu
 /* Liegt ein Protokoll noch auf dem Gerät, gleich mit erneut senden (Inhaber 30.10.2026, Davidgasse: Fotos waren oben, das Protokoll
    nicht): bisher nur beim Start der App und beim Ereignis „online“ – am iPhone bleibt die App offen, und das Ereignis kommt oft nicht */
 function wartendeNochmal(){ if(lokaleProtokolle.length && Store.benutzer && Admin.geprueft) flushQueue(); }
-document.addEventListener("visibilitychange", function(){ if(!document.hidden){ nachladenWennGeaendert(); wartendeNochmal(); } });
-setInterval(function(){ if(!document.hidden){ nachladenWennGeaendert(); wartendeNochmal(); } }, 120000);
+/* Protokoll hängt auf dem Gerät einer Person (Inhaber 30.10.2026, Davidgasse: Verlauf und Anlagendaten kamen sofort an, das Protokoll erst nach den Fotos –
+   die Anlage blieb überfällig, und das Büro sah nicht, warum): Verlauf „angelegt“ älter als WARTEN_AB_MS ohne Zeile in protokolle → Hinweis in Fällig und am Markt.
+   Nur Inhaber und Admins; ändert weder Fälligkeit noch Protokolle. Vom Gerät gelöschte (Verlauf „geloescht“) zählen nicht.
+   Beim ersten Mal der ganze Verlauf dieser Arten, danach nur die letzten WARTEN_NACHLADEN_TAGE (Datenverbrauch) – ein Eintrag kann vom Gerät auch später nachkommen. */
+var WARTEN_AB_MS=15*60000, WARTEN_NACHLADEN_TAGE=7;
+var WARTEND=[], wartendEintraege={}, wartendGeloescht={}, wartendGanz=false, wartendLaeuft=false;
+function wartendAn(){ return Store.modus==="supabase" && !!Store.sb && !!Store.benutzer && !!Admin.geprueft && !Rolle.gemerkt && (Admin.zentral || nurInhaber()) && !demo() && !nurLesen() && !spielwiese(); }
+function wartendLeeren(){ WARTEND=[]; wartendEintraege={}; wartendGeloescht={}; wartendGanz=false; }
+function wartendPruefen(){
+  if(!wartendAn() || !protokolleGeladen || wartendLaeuft) return Promise.resolve();
+  wartendLaeuft=true;
+  var konto=Store.benutzer.id, frei=function(){ wartendLaeuft=false; }, offen=[];
+  return mitFrist(alleSeiten(function(){
+    var q=Store.sb.from("aenderungen").select("client_id,zeit,art,protokoll_id,standort_id,standort_name,von,felder")
+      .in("art",["angelegt","geloescht"]).not("protokoll_id","is",null);
+    if(wartendGanz) q=q.gte("zeit", new Date(Date.now()-WARTEN_NACHLADEN_TAGE*86400000).toISOString());
+    return q.order("zeit",{ascending:false});
+  }, "client_id").then(function(r){
+    if(r.error) throw new Error(r.error.message);
+    (r.data||[]).forEach(function(z){ if(z.art==="geloescht") wartendGeloescht[z.protokoll_id]=1; else wartendEintraege[z.protokoll_id]=z; });
+    wartendGanz=true;
+    var da={}; (protokolle||[]).forEach(function(p){ da[p._id]=1; });
+    offen=Object.keys(wartendEintraege).map(function(id){ return wartendEintraege[id]; }).filter(function(z){
+      return !da[z.protokoll_id] && !wartendGeloescht[z.protokoll_id] && Date.now()-Date.parse(z.zeit)>=WARTEN_AB_MS; });
+    /* die geladene Liste kann älter sein als das Protokoll: in der Datenbank nachsehen, sonst stünde der Hinweis falsch da */
+    return offen.length ? Store.sb.from("protokolle").select("client_id").in("client_id", offen.map(function(z){ return z.protokoll_id; })) : {data:[]};
+  }).then(function(r){
+    if(r.error) throw new Error(r.error.message);
+    if(!Store.benutzer || Store.benutzer.id!==konto) return;
+    var angekommen={}; (r.data||[]).forEach(function(z){ angekommen[z.client_id]=1; });
+    WARTEND=offen.filter(function(z){ return !angekommen[z.protokoll_id]; }).sort(function(a,b){ return String(a.zeit).localeCompare(String(b.zeit)); });
+    wartendZeigen();
+  }), 30000).then(frei, frei);   /* keine Verbindung: der letzte bekannte Stand bleibt */
+}
+function wartendFeld(z, feld){ return ((z.felder||[]).filter(function(x){ return x.feld===feld; })[0]||{}).neu||""; }
+/* ältere Einträge kennen nur die Anmeldeadresse und die Zeit des Anlegens */
+function wartendText(z){
+  return "Protokoll von "+(kanonName(wartendFeld(z,"techniker"))||wunschVorname(z.von))+" vom "+(wartendFeld(z,"datum")||tagFmt(z.zeit))+" liegt noch auf dem Gerät – noch nicht übertragen";
+}
+function wartendFaelligHtml(){
+  return '<div class="note warnbox" style="font-size:13px"><strong>Noch nicht übertragen</strong>'+WARTEND.map(function(z){
+    var s=byId[z.standort_id];
+    return '<div style="margin-top:4px">'+(s?marktLink(s):esc(z.standort_name||"Markt"))+": "+esc(wartendText(z))+"</div>"; }).join("")+
+    '<div class="muted" style="margin-top:4px;font-size:12.5px">Der Termin zählt erst, wenn es angekommen ist. Es geht von selbst raus, sobald die App auf dem Gerät offen ist und Verbindung hat – sonst die Person anrufen.</div></div>';
+}
+function wartendMarktHtml(sid){
+  var l=WARTEND.filter(function(z){ return z.standort_id===sid; });
+  return l.length ? '<div class="note warnbox" style="font-size:13px">'+l.map(function(z){ return "<div>"+esc(wartendText(z))+"</div>"; }).join("")+"</div>" : "";
+}
+/* gleich an Ort und Stelle – kein Neuzeichnen, das etwas Angefangenes stören könnte */
+function wartendZeigen(){
+  document.querySelectorAll("[data-wartendfaellig]").forEach(function(h){ h.innerHTML=WARTEND.length ? wartendFaelligHtml() : ""; h.hidden=!WARTEND.length; });
+  document.querySelectorAll("[data-wartendmarkt]").forEach(function(h){ h.innerHTML=wartendMarktHtml(h.dataset.wartendmarkt); h.hidden=!h.innerHTML; });
+}
+document.addEventListener("visibilitychange", function(){ if(!document.hidden){ nachladenWennGeaendert(); wartendeNochmal(); wartendPruefen(); } });
+setInterval(function(){ if(!document.hidden){ nachladenWennGeaendert(); wartendeNochmal(); wartendPruefen(); } }, 120000);
 
 function viewAnmeldung(){
   var f=document.createDocumentFragment();
@@ -19488,7 +19546,9 @@ function protoTeilSpeichern(P){
         lokaleProtokolle.unshift(eintrag);
         if(eintrag.rapport) posteingangErledigt("rapport", id, eintrag.rapport);
         protokolliere({art:"angelegt", protokollId:id, standortId:doc.standortId, standortName:doc.standortName,
-                       felder:[{feld:"positionIds", name:"Gewartete Anlagen", alt:"–", neu:feldText("positionIds",doc.positionIds)}]});
+                       felder:[{feld:"positionIds", name:"Gewartete Anlagen", alt:"–", neu:feldText("positionIds",doc.positionIds)},
+                               /* für den Hinweis „noch nicht übertragen“ (wartendText): vom Protokoll selbst weiß das Büro dann noch nichts */
+                               {feld:"techniker", name:"Techniker/in", alt:"–", neu:doc.techniker||""}, {feld:"datum", name:"Datum", alt:"–", neu:dfmt(doc.datum)}]});
 
         /* 2. gibt es eine zentrale Ablage, gleich dorthin übertragen */
         if(Store.modus!=="claude" && Store.modus!=="supabase"){
@@ -27779,6 +27839,8 @@ function handbuchKarte(z){
         "<strong>Monatsbericht (Verlauf, Admins):</strong> Monat und Region wählen – „PDF für Lidl“ (Wartungen, fristgerecht, Störungseinsätze mit "+
           "Erledigungsdauer, Kältemittel, ohne Internes) und für Inhaber „PDF intern“ (zusätzlich Abrechnungsstand, Stunden aus Rapporten, "+
           "überfällige Termine, wiederkehrende Störungen, Leck-Verdacht). „Vorschau“ zeigt den Bericht vorher in der App.",
+        "<strong>„Noch nicht übertragen“ (Fällig und Markt, Inhaber und Admins):</strong> Das Protokoll wurde auf dem Gerät gespeichert, ist aber nach 15 Minuten noch nicht angekommen – deshalb steht der Termin weiter offen. "+
+          "Es geht von selbst raus, sobald die App dort offen ist und Verbindung hat; sonst die Person anrufen. Der Hinweis verschwindet, sobald es da ist, und ändert an der Fälligkeit nichts.",
         "<strong>Wochenübersicht (Fällig, Admins):</strong> Karte „Diese Woche“ mit überfälligen und diese Woche fälligen Terminen, offenen Störungen, "+
           "wiederkehrenden Störungen und Leck-Verdacht. Dieselben Zahlen kommen Montag früh als Nachricht an Inhaber und Admins (Benachrichtigung „Wochenübersicht“).",
         "<strong>⚠ Wiederkehrende Störungen:</strong> ab 3 Störungen in 90 Tagen an derselben Anlage (offene Störungen und Störungsprotokolle, "+
@@ -28232,7 +28294,7 @@ var RUNDGAENGE={
       RG_HG("Die Fälligkeit wird bei jedem Öffnen neu berechnet – es gibt nichts abzuhaken. Den Soll-Monat ändert die App nie von selbst.")},
     {titel:"Was automatisch gespeichert wird", text:RG_LISTE([
       "<strong>Angefangenes Protokoll:</strong> jede Eingabe laufend auf dem Gerät (auch Fotos und Unterschrift) – „Weitermachen“ beim nächsten Öffnen.",
-      "<strong>Ohne Netz:</strong> gespeicherte Protokolle warten auf dem Gerät und gehen von selbst raus, sobald Verbindung ist.",
+      "<strong>Ohne Netz:</strong> gespeicherte Protokolle warten auf dem Gerät und gehen von selbst raus, sobald Verbindung ist. Hängt eines länger als 15 Minuten, sehen Inhaber und Admins in Fällig und am Markt „… liegt noch auf dem Gerät – noch nicht übertragen“, bis es angekommen ist.",
       "<strong>Termine</strong>, die im Protokoll bestätigt oder geändert werden: sofort.",
       "<strong>Antworten</strong> auf „Vor Ort klären“: sofort beim Tippen auf „Antwort speichern“.",
       "<strong>Alles andere</strong> (Markt bearbeiten, Termin, Projekt, Störungsauftrag …) erst mit „Speichern“ – schließt man ein Fenster mit ungespeicherten Eingaben, fragt die App nach."])},

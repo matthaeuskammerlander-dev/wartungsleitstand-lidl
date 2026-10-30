@@ -304,7 +304,9 @@ Kammerlander Umwelt- und Klimatechnik (UKT) – oft kurz, vom Handy, im Feld.
   Inhaber 30.10.2026, Davidgasse): auch Techniker legen den Halbjahrestermin gleich an,
   Monat wie am Markt oder JW + 6 (`marktHjHinweise`) – nicht bei einer Störung (`_stoer`).
 - Protokolle auf dem Gerät (`wartendeNochmal`, Inhaber 30.10.2026): bei offener App alle
-  2 Minuten und beim Zurückkommen erneut senden, nicht nur beim Start.
+  2 Minuten und beim Zurückkommen erneut senden, nicht nur beim Start. Für Inhaber und Admins (`wartendAn`, nie Kunde/Präsentation) in Fällig und am Markt
+  „Protokoll von … vom … liegt noch auf dem Gerät – noch nicht übertragen“ (`wartendPruefen`, `WARTEN_AB_MS` 15 min): Verlauf „angelegt“ ohne Zeile in `protokolle`, vom Gerät
+  gelöschte (Verlauf „geloescht“) nicht; vor dem Anzeigen in der Datenbank nachgesehen; Name und Datum stehen seither im Verlaufseintrag (`felder`). Ändert weder Fälligkeit noch Protokolle.
 - Neuer Soll-Monat, der den Termin sofort überfällig machte (`sollMonatFolge`):
   der Termine-Schritt warnt; „behalten – nach der nächsten Wartung umstellen“
   lässt den alten Monat stehen und merkt die Umstellung als Notiz an der Anlage

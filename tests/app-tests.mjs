@@ -331,9 +331,13 @@ test("Protokoll: Wartungsprotokoll speichern – landet in der Datenbank, Fälli
     if (!fehlt.length) document.getElementById("save").click();
     for (let i = 0; i < 40 && window.__db.tabellen.protokolle.length === vorher; i++) await new Promise((r) => setTimeout(r, 250));
     await new Promise((r) => setTimeout(r, 800));
+    const ev = window.__db.tabellen.aenderungen.filter((z) => z.art === "angelegt").slice(-1)[0] || {};
     return { fehlt, vorher, nachher: window.__db.tabellen.protokolle.length, statusVorher,
-      statusNachher: x("(POS.filter(function(p){ return p.id==='TP1'; })[0]||{}).status"), gespeichertKarte: !!x("S.gespeichert") };
+      statusNachher: x("(POS.filter(function(p){ return p.id==='TP1'; })[0]||{}).status"), gespeichertKarte: !!x("S.gespeichert"),
+      evText: ev.protokoll_id ? x("wartendText")(ev) : "" };
   });
+  /* der Verlaufseintrag kennt Person und Protokolldatum – für „noch nicht übertragen“, bevor das Protokoll selbst da ist */
+  pruefe(/^Protokoll von (?!Tech\b)\S.* vom \d\d\.\d\d\.\d{4} liegt noch auf dem Gerät/.test(r.evText), "Verlauf „angelegt“ ohne Name/Datum: " + r.evText);
   pruefe(!r.fehlt.length, "Formular verlangt nach „Alles erledigt“ noch: " + r.fehlt.join(", "));
   pruefe(r.nachher === r.vorher + 1, "Protokoll nicht in der Datenbank: " + JSON.stringify(r));
   pruefe(/faellig/.test(r.statusVorher || "") && !/faellig/.test(r.statusNachher || ""), "Fälligkeit nach dem Protokoll nicht weitergeschoben: " + r.statusVorher + " → " + r.statusNachher);
@@ -343,6 +347,66 @@ test("Protokoll: Wartungsprotokoll speichern – landet in der Datenbank, Fälli
   pruefe(r.fehlt.every((t) => typeof t === "string" && t.length > 2 && !/undefined|NaN/.test(t)), "unklare Fehlt-Meldung: " + JSON.stringify(r.fehlt));
   pruefe(!a.fehler.length, "Laufzeitfehler: " + a.fehler.join("; "));
   await a.zu();
+});
+
+test("Protokoll noch nicht übertragen: Hinweis in Fällig und am Markt für Inhaber/Admin, weg sobald es da ist; nie für Techniker, Kunde, Präsentation", async () => {
+  /* nach 30 Minuten ohne Protokoll; daneben: zu jung, schon angekommen, vom Gerät gelöscht, alter Eintrag ohne Name */
+  const einspielen = () => {
+    const db = window.__db.tabellen, vor = (min) => new Date(Date.now() - min * 60000).toISOString();
+    const ev = (id, min, art, felder) => db.aenderungen.push({ client_id: "ev_" + id + art, zeit: vor(min), art, protokoll_id: id, standort_id: "TS1", standort_name: "Testmarkt", von: "tech@test.at", felder: felder || [] });
+    ev("p_haengt", 30, "angelegt", [{ feld: "techniker", neu: "Tobias Test" }, { feld: "datum", neu: "30.10.2026" }]);
+    ev("p_jung", 5, "angelegt", [{ feld: "techniker", neu: "Jung Test" }, { feld: "datum", neu: "30.10.2026" }]);
+    ev("p_da", 30, "angelegt", [{ feld: "techniker", neu: "Da Test" }, { feld: "datum", neu: "30.10.2026" }]);
+    db.protokolle.push({ client_id: "p_da" });
+    ev("p_weg", 40, "angelegt", [{ feld: "techniker", neu: "Weg Test" }, { feld: "datum", neu: "30.10.2026" }]);
+    ev("p_weg", 35, "geloescht");
+    ev("p_alt", 60, "angelegt");
+  };
+  const zustand = async (a) => {
+    await a.seite.evaluate(einspielen);
+    return a.seite.evaluate(async () => {
+      const x = window.__t.x, w = (ms) => new Promise((f) => setTimeout(f, ms));
+      await x("wartendPruefen()");
+      const faelligSichtbar = () => { const h = document.querySelector("[data-wartendfaellig]"); return h && !h.hidden ? h.textContent : ""; };
+      x("S.view='faellig'; render()"); await w(300);
+      const faellig = faelligSichtbar();
+      const statusVorher = x("(POS.filter(function(p){ return p.id==='TP1'; })[0]||{}).status");
+      const f = x("marktAnsicht('TS1')"); await w(300);
+      const fenster = document.querySelector('[data-marktfenster="TS1"]');
+      const hm = fenster && fenster.querySelector("[data-wartendmarkt]");
+      const markt = hm && !hm.hidden ? hm.textContent : "";
+      const fensterText = fenster ? fenster.textContent : "";
+      /* das Protokoll kommt an, die geladene Liste weiß es noch nicht: Hinweis geht trotzdem weg, ohne Neuzeichnen, auch im offenen Fenster */
+      window.__db.tabellen.protokolle.push({ client_id: "p_haengt" }, { client_id: "p_alt" });
+      await x("wartendPruefen()");
+      const marktDanach = hm && !hm.hidden ? hm.textContent : "";
+      if (f && f.zu) f.zu(); await w(150);
+      return { an: x("wartendAn()"), faellig, markt, fensterText, marktDanach, faelligDanach: faelligSichtbar(), wartend: x("WARTEND.length"),
+        statusVorher, statusNachher: x("(POS.filter(function(p){ return p.id==='TP1'; })[0]||{}).status") };
+    });
+  };
+  for (const konto of [KONTEN.inhaber, KONTEN.admin]) {
+    const a = await oeffnen(konto);
+    const r = await zustand(a);
+    pruefe(r.an, konto + ": Hinweis nicht eingeschaltet");
+    const satz = "Protokoll von Tobias Test vom 30.10.2026 liegt noch auf dem Gerät – noch nicht übertragen";
+    pruefe(r.faellig.includes(satz), konto + ": Fällig zeigt den Hinweis nicht: " + r.faellig);
+    pruefe(r.markt.includes(satz), konto + ": Markt zeigt den Hinweis nicht: " + r.markt);
+    pruefe(/Protokoll von Tech vom \d\d\.\d\d\.\d{4} liegt noch/.test(r.faellig), konto + ": alter Eintrag ohne Name fehlt: " + r.faellig);
+    pruefe(!/Jung Test|Da Test|Weg Test/.test(r.faellig + r.markt), konto + ": zu junge, angekommene oder gelöschte stehen im Hinweis: " + r.faellig);
+    pruefe(!r.marktDanach && !r.faelligDanach && r.wartend === 0, konto + ": Hinweis bleibt nach dem Ankommen: " + JSON.stringify(r));
+    pruefe(r.statusVorher === r.statusNachher, konto + ": Fälligkeit hat sich geändert: " + r.statusVorher + " → " + r.statusNachher);
+    pruefe(!a.fehler.length, konto + ": Laufzeitfehler: " + a.fehler.join("; "));
+    await a.zu();
+  }
+  for (const konto of [KONTEN.techniker, KONTEN.kunde, KONTEN.praesentation]) {
+    const a = await oeffnen(konto);
+    const r = await zustand(a);
+    pruefe(!r.an && r.wartend === 0, konto + ": Hinweis eingeschaltet: " + JSON.stringify(r));
+    pruefe(!r.faellig && !r.markt && !/noch nicht übertragen/.test(r.fensterText), konto + ": sieht den Hinweis: " + JSON.stringify(r));
+    pruefe(!a.fehler.length, konto + ": Laufzeitfehler: " + a.fehler.join("; "));
+    await a.zu();
+  }
 });
 
 test("Keine Verbindung beim Speichern: sichtbare Meldung, kein hängender Knopf, nichts geht still verloren", async () => {
