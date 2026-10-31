@@ -68,7 +68,7 @@ Kammerlander Umwelt- und Klimatechnik (UKT) – oft kurz, vom Handy, im Feld.
   für Schritt. „+ Anlage fehlt“ fragt zuerst, ob die Anlage schon in der
   Liste steht (`anlageSchonDa`) – sonst bleibt die Zeile der alten Liste als
   Doppel zurück. Bezeichnung jeder Anlage in der Übersicht des Anlagendialogs
-  änderbar. KI-Fotos: Prüfbuch bis 50 (`KI_MAX_PRUEFBUCH`, Inhaber 08.10.2026; Höchstzahl steht vor dem Wählen, `kiMaxText`), Typenschilder bis 30 Bilder, gelesen in
+  änderbar; fiele „Viessmann“ weg, fragen Anlagendialog, Verwaltung und Zusammenführen vorher (`viessmannWeg`, `viessmannFrage`; Inhaber 30.10.2026: Viessmann-Anlagen werden anders abgerechnet, die App rechnet das nicht selbst). KI-Fotos: Prüfbuch bis 50 (`KI_MAX_PRUEFBUCH`, Inhaber 08.10.2026; Höchstzahl steht vor dem Wählen, `kiMaxText`), Typenschilder bis 30 Bilder, gelesen in
   Teilen zu 8 (`kiTeilLesen`, `kiTeileZusammen`; der Server nimmt 12 je Aufruf). Fotos eines nach dem anderen (`kiBild`: Kante unter 300 px gilt nie, leeres Bild wird gemeldet; Inhaber 30.10.2026). Schlechtes Netz (Inhaber 30.10.2026: „nur LTE – die App hat abgebrochen“): abgerissene Teile und Serverfehler sendet `kiTeilMitWiederholung` bis `KI_VERSUCHE` von selbst nochmals (bei gesperrtem Bildschirm erst nach dem Zurückkommen, `kiWarten`), Frist `KI_FRIST_MS`; bleibt ein Teil aus, fragt `kiTeileFehlen` – nur der fehlende Teil nochmals oder mit dem Gelesenen weiter (Hinweis in der Prüfansicht), nichts wird verworfen. Test „KI-Erkennung bei schlechtem Netz …“.
   Die gelesenen Fotos (Inhaber 06.10.2026) wählt man gleich in der KI-Prüfansicht („📷 Fotos an der Anlage
   speichern“, `kiFotoAuswahl`, `fotoVorschlag`; bei mehreren Büchern hängen sie an jedem Buch, `_fotoQuelle` mit `nr`/`andereTage`;

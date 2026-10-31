@@ -10490,6 +10490,62 @@ test("Karte: „📍 Mein Standort“ zeigt die eigene Position (nur auf dem Ger
   await a.zu();
 });
 
+test("Viessmann in der Bezeichnung: vor dem Wegfallen wird gefragt – Anlagendialog, Verwaltung, Zusammenführen (Inhaber 30.10.2026)", async () => {
+  const a = await oeffnen(KONTEN.admin);
+  const r = await a.seite.evaluate(async () => {
+    const x = window.__t.x, w = (ms) => new Promise((f) => setTimeout(f, ms)), db = window.__db.tabellen, e = {}, j = new Date().toISOString();
+    const dazu = (id, name) => db.stammdaten.push({ id: "position:" + id, typ: "position", ziel: id, neu: true, geaendert: j, von: "Test", grund: "Test",
+      felder: { standortId: "TS1", aktiv: true, anlagentyp: name, intervallCode: "JW", monat: 3, anlageZu: id, neuAngelegt: j } });
+    dazu("NPvies1", "Viessmann Test"); dazu("NPvies2", "VRV Zweit"); dazu("NPvies3", "Viessmann Drei");
+    await x("ladeStammdaten().then(storeNachRender)"); await w(300);
+    const name = (id) => db.stammdaten.find((z) => z.id === "position:" + id).felder.anlagentyp;
+    let fragen = [], antwort = false; const echt = window.confirm; window.confirm = (m) => { fragen.push(String(m)); return antwort; };
+    e.regel = [x("viessmannWeg('Viessmann','VRV')"), x("viessmannWeg('Viessmann','')"), x("viessmannWeg('Viessmann','VIESSMANN Halle')"), x("viessmannWeg('VRV','Split')"), x("viessmannWeg('','Split')")];
+    /* Anlagendialog: „Nein“ stellt den alten Namen wieder her, nichts gespeichert; mit Viessmann im neuen Namen keine Frage */
+    const ov = () => [...document.querySelectorAll(".assistent")].pop();
+    const knopf = (t) => [...ov().querySelectorAll(".as-fuss button")].find((b) => t.test(b.textContent));
+    const nameTippen = async (v) => {
+      ov().querySelector('[data-g="name"]').click(); await w(80);
+      const i = ov().querySelector('[data-in="anlagentyp"]'); e.feldVorher = i.value; i.value = v; i.dispatchEvent(new Event("input", { bubbles: true }));
+      knopf(/Übersicht/).click(); await w(80);
+    };
+    x("anlageDatenErgaenzen")(x("posById.NPvies1"), null, "seriennummer"); await w(300);
+    knopf(/Übersicht/).click(); await w(80);
+    await nameTippen("VRV Neu");
+    knopf(/Übernehmen/).click(); await w(300);
+    e.dialogNein = [fragen.length, /Viessmann Test.*VRV Neu/.test(fragen[0] || ""), name("NPvies1"), (ov().querySelector('[data-in="anlagentyp"]') || {}).value];
+    knopf(/Übersicht/).click(); await w(80);
+    fragen = []; await nameTippen("Viessmann Halle");
+    knopf(/Übernehmen/).click(); await w(900);
+    e.dialogMit = [fragen.length, name("NPvies1")];
+    /* Verwaltung: „Nein“ speichert nichts, „Ja“ speichert */
+    x("Admin.frei=true; S.view='verwaltung'; S.adm={suche:'',filter:'alle',sort:'filiale',auf:true,sel:'TS1',entwurf:null,tab:'maerkte'}; render(); 1"); await w(700);
+    const karte = [...document.querySelectorAll(".anlagekarte")].find((k) => k.querySelector('[data-a="anlagentyp"]').value === "Viessmann Halle");
+    karte.querySelector('[data-a="anlagentyp"]').value = "Klima Halle";
+    document.querySelector("#a_grund").value = "Test Viessmann";
+    fragen = []; document.querySelector("#a_speichern").click(); await w(500);
+    e.verwNein = [fragen.filter((m) => /Viessmann/.test(m)).length, name("NPvies1")];
+    antwort = true; fragen = []; document.querySelector("#a_speichern").click(); await w(1200);
+    e.verwJa = [fragen.filter((m) => /Viessmann/.test(m)).length, name("NPvies1")];
+    /* Zusammenführen: bliebe der Name ohne Viessmann, wird gefragt; bei „Nein“ bleibt der Dialog offen */
+    antwort = false; fragen = [];
+    x("Admin.frei=true; 1");
+    x("anlagenZusammenfuehren")(x("ANLAGEN.NPvies2"), x("ANLAGEN.NPvies3")); await w(300);
+    ov().querySelector('input[name="zf_anlagentyp"][value="h"]').checked = true;
+    [...ov().querySelectorAll("button")].find((b) => b.textContent === "Zusammenführen").click(); await w(300);
+    e.zusammen = [fragen.length, /Viessmann Drei/.test(fragen[0] || ""), !!ov(), db.stammdaten.find((z) => z.id === "position:NPvies3").felder.aktiv];
+    window.confirm = echt;
+    return e;
+  });
+  await a.zu();
+  pruefe(JSON.stringify(r.regel) === "[true,true,false,false,false]", "Regel passt nicht: " + JSON.stringify(r));
+  pruefe(r.dialogNein[0] === 1 && r.dialogNein[1] && r.dialogNein[2] === "Viessmann Test" && r.dialogNein[3] === "Viessmann Test", "Dialog bei Nein: " + JSON.stringify(r));
+  pruefe(r.dialogMit[0] === 0 && r.dialogMit[1] === "Viessmann Halle", "Name mit Viessmann darf nicht fragen: " + JSON.stringify(r));
+  pruefe(r.verwNein[0] === 1 && r.verwNein[1] === "Viessmann Halle", "Verwaltung bei Nein: " + JSON.stringify(r));
+  pruefe(r.verwJa[0] === 1 && r.verwJa[1] === "Klima Halle", "Verwaltung bei Ja: " + JSON.stringify(r));
+  pruefe(r.zusammen[0] === 1 && r.zusammen[1] && r.zusammen[2] && r.zusammen[3] === true, "Zusammenführen: " + JSON.stringify(r));
+});
+
 test("Zugänge: mehrere Benutzer je Regelung – anlegen, entfernen mit Rückfrage, speichern, neu laden; Verlauf ohne Werte; Kunde/Präsentation sehen nichts; altes Paar bleibt", async () => {
   const a = await oeffnen(KONTEN.admin, { handy: true });
   const r = await a.seite.evaluate(async () => {
