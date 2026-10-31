@@ -6157,8 +6157,28 @@ test("Fotos: Bildansicht mit „Herunterladen“; Bildschirmfotos schärfer gesp
     const d2 = [...document.querySelectorAll(".assistent")].pop(), l2 = d2 && d2.querySelector(".as-fuss a");
     e.knopf2 = l2 ? l2.getAttribute("download") + "|" + /download=Foto%20aus%20dem%20Chat\.jpg/.test(l2.href) : "";
     x("ansichtenSchliessen(); 1");
+    /* Antippen vergrößert und verkleinert wieder */
+    x("bildAnsicht")(punkt, "Prüfbuch");
+    const d3 = [...document.querySelectorAll(".assistent")].pop(), b3 = d3.querySelector("[data-bildrahmen] img");
+    b3.click(); e.gross = b3.style.width; b3.click(); e.klein = b3.style.width;
+    x("ansichtenSchliessen(); 1");
+    /* iPhone: Link öffnet kein leeres Fenster, die Datei geht ins Teilen-Menü (Inhaber 31.10.2026) */
+    const uaEcht = Object.getOwnPropertyDescriptor(Navigator.prototype, "userAgent");
+    Object.defineProperty(navigator, "userAgent", { configurable: true, get: () => "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X)" });
+    let geteilt = null; navigator.canShare = () => true; navigator.share = (o) => { geteilt = o.files[0]; return Promise.resolve(); };
+    x("bildAnsicht")(punkt, "Prüfbuch · 08.10.2026");
+    const d4 = [...document.querySelectorAll(".assistent")].pop(), l4 = d4.querySelector(".as-fuss a");
+    let klickErlaubt = true; d4.addEventListener("click", (v) => { if (v.target === l4) { klickErlaubt = !v.defaultPrevented; v.preventDefault(); } });
+    await new Promise((f) => setTimeout(f, 300));
+    l4.click();
+    e.teilen = geteilt ? geteilt.name + "|" + (geteilt.size > 0) + "|" + klickErlaubt : "nicht geteilt";
+    delete navigator.userAgent; delete navigator.canShare; delete navigator.share;
+    Object.defineProperty(Navigator.prototype, "userAgent", uaEcht);
+    x("ansichtenSchliessen(); 1");
     return e;
   });
+  pruefe(r.gross === "300%" && r.klein === "100%", "Antippen soll das Bild vergrößern: " + r.gross + " / " + r.klein);
+  pruefe(/^Prüfbuch _ 08\.10\.2026\.\w+\|true\|false$/.test(r.teilen), "iPhone: Datei soll ins Teilen-Menü, ohne den Link zu öffnen: " + r.teilen);
   pruefe(r.erkannt === "true,true,true,true,false,false", "Bildschirmfoto falsch erkannt: " + r.erkannt);
   pruefe(r.breiteBildschirm === 2000 && r.breiteFoto === 1600, "Verkleinern: " + r.breiteBildschirm + " / " + r.breiteFoto);
   pruefe(r.breit === "true,false", "Klasse breit: " + r.breit);

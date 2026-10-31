@@ -528,7 +528,7 @@ Kammerlander Umwelt- und Klimatechnik (UKT) – oft kurz, vom Handy, im Feld.
   eine Korrektur heißt gleich und steht als neuerer Stand da. Im IBN-PDF keine Protokollnr./Projektnummer in der Kopfzeile und kein
   Kleingedrucktes (Korrekturvermerk) – nur „ENTWURF – nicht unterschrieben“ bleibt. „Nachtabsenkung / Flüsterbetrieb (Schall)“ heißt im PDF so
   wie im Formular. Herunterladen unter dem lesbaren Namen: `speicherDownloadUrl` hängt ?download=<Name> an signierte Speicher-Links.
-  Fotos ebenso (Inhaber 29.10.2026: „warum kann ich die Fotos nicht herunterladen?“): `bildAnsicht` hat unten „Herunterladen“ (Daten-Bilder als Blob, ohne Endung im Titel → .jpg).
+  Fotos ebenso (Inhaber 29.10.2026: „warum kann ich die Fotos nicht herunterladen?“): `bildAnsicht` hat unten „Herunterladen“ (Daten-Bilder als Blob, ohne Endung im Titel → .jpg). iPhone/iPad (Inhaber 31.10.2026: Link blieb in der installierten App ein leeres Fenster): `iosSpeichern` holt die Datei vorab und gibt sie ans Teilen-Menü (auch „Datei öffnen“ in `pdfAnsicht`); Antippen vergrößert das Bild (`[data-bildrahmen]`).
   Bildschirmfotos (Inhaber 29.10.2026: „Qualität der Screenshots zu gering, dass man die Texte lesen kann“): `fotoIstBildschirm` (Name „Screenshot/Bildschirmfoto…“ oder PNG)
   → `verkleinere` bis `FOTO_KANTE_BILDSCHIRM` 2000 px / `FOTO_BUDGET_BILDSCHIRM` 450 KB, Qualität ab 0,88; im PDF (`fotosEinsetzen`, `anFotosHtml`) `figure.breit` über die ganze Breite statt zu dritt.
   Test „Fotos: Bildansicht mit „Herunterladen“ …“.

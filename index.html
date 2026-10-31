@@ -15329,15 +15329,49 @@ function ansichtOeffnen(titel, beimSchliessen, opt){
 }
 /* Herunterladen auch bei Bildern (Inhaber 29.10.2026: „warum kann ich die Fotos nicht herunterladen?“ – das Fenster
    hatte nur „Schließen“): signierte Speicher-Links über ?download=<Name>, Daten-/Blob-Bilder über das download-Attribut */
+/* iPhone/iPad (Inhaber 31.10.2026: „Prüfbuch nicht herunterladen“): ein Speicher-Link öffnet in der installierten App ein leeres
+   Fenster, der Download kommt dort nie an. Die Datei wird deshalb vorab geholt und geht beim Antippen über das Teilen-Menü
+   („In Fotos sichern“, „In Dateien sichern“); ohne Teilen-Menü wird sie direkt geöffnet. Andere Geräte bleiben beim Link. */
+function geraetIos(){ return /iPhone|iPad|iPod/.test(navigator.userAgent) || (/Macintosh/.test(navigator.userAgent) && navigator.maxTouchPoints>1); }
+function iosSpeichern(link, quelle, name){
+  if(!geraetIos()) return;
+  var datei=null, laeuft=false;
+  var holen=function(){
+    laeuft=true;
+    return fetch(quelle).then(function(r){ if(!r.ok) throw new Error("HTTP "+r.status); return r.blob(); })
+      .then(function(b){ datei=new File([b], name, {type:b.type||"application/octet-stream"}); })
+      .catch(function(){ datei=null; }).then(function(){ laeuft=false; });
+  };
+  holen();
+  link.addEventListener("click", function(e){
+    e.preventDefault();
+    if(!datei){
+      if(laeuft) toast("Datei wird noch geladen – gleich nochmals tippen.");
+      else { toast("Datei gerade nicht abrufbar – wird nochmals geholt, gleich nochmals tippen."); holen(); }
+      return;
+    }
+    if(navigator.canShare && navigator.canShare({files:[datei]})){
+      navigator.share({files:[datei]}).catch(function(x){ if(!x || x.name!=="AbortError") toast("Sichern ging nicht: "+(x&&x.message||x)); });
+      return;
+    }
+    window.open(URL.createObjectURL(datei), "_blank");
+  });
+}
 function bildAnsicht(bild, titel){
   var a=ansichtOeffnen(titel||"Auftrag"), src=bildUrl(bild);
-  a.inhalt.appendChild(el('<img alt="" src="'+src+'" style="width:100%;border:1px solid var(--line);border-radius:8px;background:#fff">'));
+  /* Antippen vergrößert (Inhaber 31.10.2026: Prüfbuch-Seiten sind sonst nicht lesbar), danach im Rahmen verschieben */
+  var rahmen=el('<div data-bildrahmen style="overflow:auto;-webkit-overflow-scrolling:touch"><img alt="" src="'+src+'" style="display:block;width:100%;max-width:none;cursor:zoom-in;border:1px solid var(--line);border-radius:8px;background:#fff"></div>');
+  var gross=false, bild1=rahmen.querySelector("img");
+  bild1.addEventListener("click", function(){ gross=!gross; bild1.style.width=gross?"300%":"100%"; bild1.style.cursor=gross?"zoom-out":"zoom-in"; });
+  a.inhalt.appendChild(rahmen);
   if(!src) return;
+  a.schritt.textContent="Antippen vergrößert";
   var endung=(/^data:image\/(\w+)/.exec(src)||[])[1], name=String(titel||"Bild");
   if(!/\.(jpe?g|png|webp|gif|heic|heif)$/i.test(name)) name=name.replace(/[\\\/:*?"<>|·]+/g, "_").replace(/\s+/g, " ").trim()+"."+(endung==="jpeg"||!endung ? "jpg" : endung);
   var link=el('<a class="btn ghost sm" style="text-decoration:none" target="_blank" rel="noopener">Herunterladen</a>');
   link.href=/^data:/.test(src) ? a.blob(src) : speicherDownloadUrl(src, name);
   link.download=name;
+  iosSpeichern(link, /^data:/.test(src) ? link.href : src, name);
   a.fuss.appendChild(link);
 }
 function pdfAnsicht(quelle, name){
@@ -15347,6 +15381,7 @@ function pdfAnsicht(quelle, name){
   var holen = /^data:/.test(quelle)
     ? Promise.resolve().then(function(){ var u=a.blob(quelle); link.href=u; link.download=name||"auftrag.pdf"; return fetch(u); })
     : Promise.resolve().then(function(){ link.href=speicherDownloadUrl(quelle, name); return fetch(quelle); });
+  if(!/^data:/.test(quelle)) iosSpeichern(link, quelle, name||"Datei.pdf");
   a.fuss.appendChild(link);
   Promise.all([ladePdfJs(), holen.then(function(r){ if(!r.ok) throw new Error("HTTP "+r.status); return r.arrayBuffer(); })])
     .then(function(x){ return window.pdfjsLib.getDocument({data:new Uint8Array(x[1])}).promise; })
