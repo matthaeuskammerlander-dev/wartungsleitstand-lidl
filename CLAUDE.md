@@ -785,6 +785,7 @@ Kammerlander Umwelt- und Klimatechnik (UKT) – oft kurz, vom Handy, im Feld.
   Im Protokoll nur sichtbar, wenn am Markt eine Frage offen ist (Fokus: Techniker nicht mit Neuem belasten) – im Formular
   unter dem Markt, im geführten Dialog im Schritt „Gewartete/Betroffene Anlagen“. Zusätzlich ganz oben im Kopf
   „❓ n Frage(n) vor Ort“ (`P.vorOrtHinweis`, nur solange eine ohne Antwort offen ist; antippen springt hin – Inhaber 05.10.2026).
+- **Nachbessern „Doppelt“** (`pruefListe`, Fehlalarme nach dem Archiv-Import 30.10.2026): Nur der Ort ohne Straße ist keine Adresse und wird nicht verglichen; Adresse und Kartenposition zählen nur beim selben Kunden (`kundeId`), ebenso „Doppelt?“ in `altlisteFunde`. Test „Nachbessern „Doppelt“ …“.
 - **Alte Liste prüfen** (`altlisteFunde`, Verwaltung › Datenpflege): Nebenfeld-Hinweise auf weitere Anlagen, Zellen ohne Datum,
   Inbetriebnahme nach erster Wartung, zwei Märkte an einer Adresse (nur ohne bzw. gleiche Filialnummer), Lidl ohne Filialnummer,
   Kartenpunkt nur grob (Inhaber 12.10.2026: Genauigkeit ort/strasse/keine; „manuell“ gilt wie „adresse“ – auch in `datenpflegePunkte`),

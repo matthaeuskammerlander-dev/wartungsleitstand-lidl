@@ -1359,6 +1359,33 @@ test("Neu erfasste Anlage: Techniker legt den Halbjahrestermin gleich an, warten
   pruefe(r.ohne === 0 && r.mit === 1, "Wartendes Protokoll wird beim Zurückkommen nicht erneut gesendet: " + JSON.stringify(r));
 });
 
+test("Zugang zur Regelung steht am Markt: Anlagendialog und Protokoll fragen nicht danach (Inhaber 30.10.2026)", async () => {
+  const a = await oeffnen(KONTEN.techniker);
+  const r = await a.seite.evaluate(async () => {
+    const x = window.__t.x, w = (ms) => new Promise((f) => setTimeout(f, ms)), e = {};
+    x("posById.TP1.fernzugriff='ja'; posById.TP1.regelung='Daikin Touch Manager'; 1");
+    const karte = async () => {
+      x("formDirty=false; S.protoArt='wartung'; S.stoerungAus=null; S.bearbeiten=null; S.protoStandort='TS1'; S.protoPos='TP1'; S.view='protokoll'; render(); 1"); await w(450);
+      const k = document.querySelector('[data-karte="TP1"]'); return k ? k.textContent : "keine Karte";
+    };
+    const fragt = (anl) => x("ANLAGE_GRUPPEN.filter(function(g){ return g.titel==='Zugang zur Regelung'; })[0].wenn(" + anl + ")");
+    x("byId.TS1.fernLink=''; 1");
+    e.ohneMarkt = fragt("{fernzugriff:'ja', _leaderId:'TP1'}"); e.karteOhne = await karte();
+    x("byId.TS1.fernLink='https://regelung.invalid/'; 1");
+    e.mitLeader = fragt("{fernzugriff:'ja', _leaderId:'TP1'}");
+    e.mitMarkt = fragt("{fernzugriff:'ja', standortId:'TS1'}");
+    e.eigener = fragt("{fernzugriff:'ja', _leaderId:'TP1', zugangBenutzer:'x'}");
+    e.karteMit = await karte();
+    x("byId.TS1.fernLink=''; 1");
+    return e;
+  });
+  await a.zu();
+  pruefe(r.ohneMarkt === true, "Ohne Zugang am Markt muss gefragt werden: " + JSON.stringify(r));
+  pruefe(r.mitLeader === false && r.mitMarkt === false, "Zugang am Markt: Dialog fragt trotzdem: " + JSON.stringify(r));
+  pruefe(r.eigener === true, "Eigener Zugang der Anlage bleibt sichtbar: " + JSON.stringify(r));
+  pruefe(/Adresse/.test(r.karteOhne) && !/Adresse/.test(r.karteMit), "Protokoll-Karte: Fehlt-Liste passt nicht: " + JSON.stringify(r));
+});
+
 test("Synology-Archiv: Wartungs-Rapporte an den Prüfbuch-Nachweisen (Inhaber 29.10.2026: „warum kann ich den Bericht in PDF nicht öffnen“)", async () => {
   const a = await oeffnen(KONTEN.inhaber);
   const r = await a.seite.evaluate(async () => {
@@ -1423,33 +1450,6 @@ test("Kundenauswahl gilt überall: Störungen, Rückfragen, Projekte in Fällig,
       const anl = (document.querySelector("#app .note.warnbox strong") || {}).textContent || "";
       x("S.q=''; render(); 1");
       return { eintraege, hinweis, kachel, rueckfragen, projekte, karteSt, anl };
-test("Zugang zur Regelung steht am Markt: Anlagendialog und Protokoll fragen nicht danach (Inhaber 30.10.2026)", async () => {
-  const a = await oeffnen(KONTEN.techniker);
-  const r = await a.seite.evaluate(async () => {
-    const x = window.__t.x, w = (ms) => new Promise((f) => setTimeout(f, ms)), e = {};
-    x("posById.TP1.fernzugriff='ja'; posById.TP1.regelung='Daikin Touch Manager'; 1");
-    const karte = async () => {
-      x("formDirty=false; S.protoArt='wartung'; S.stoerungAus=null; S.bearbeiten=null; S.protoStandort='TS1'; S.protoPos='TP1'; S.view='protokoll'; render(); 1"); await w(450);
-      const k = document.querySelector('[data-karte="TP1"]'); return k ? k.textContent : "keine Karte";
-    };
-    const fragt = (anl) => x("ANLAGE_GRUPPEN.filter(function(g){ return g.titel==='Zugang zur Regelung'; })[0].wenn(" + anl + ")");
-    x("byId.TS1.fernLink=''; 1");
-    e.ohneMarkt = fragt("{fernzugriff:'ja', _leaderId:'TP1'}"); e.karteOhne = await karte();
-    x("byId.TS1.fernLink='https://regelung.invalid/'; 1");
-    e.mitLeader = fragt("{fernzugriff:'ja', _leaderId:'TP1'}");
-    e.mitMarkt = fragt("{fernzugriff:'ja', standortId:'TS1'}");
-    e.eigener = fragt("{fernzugriff:'ja', _leaderId:'TP1', zugangBenutzer:'x'}");
-    e.karteMit = await karte();
-    x("byId.TS1.fernLink=''; 1");
-    return e;
-  });
-  await a.zu();
-  pruefe(r.ohneMarkt === true, "Ohne Zugang am Markt muss gefragt werden: " + JSON.stringify(r));
-  pruefe(r.mitLeader === false && r.mitMarkt === false, "Zugang am Markt: Dialog fragt trotzdem: " + JSON.stringify(r));
-  pruefe(r.eigener === true, "Eigener Zugang der Anlage bleibt sichtbar: " + JSON.stringify(r));
-  pruefe(/Adresse/.test(r.karteOhne) && !/Adresse/.test(r.karteMit), "Protokoll-Karte: Fehlt-Liste passt nicht: " + JSON.stringify(r));
-});
-
     };
     return { lidl: await stand("lidl"), weitere: await stand("weitere"), alle: await stand("alle") };
   });
@@ -10488,6 +10488,30 @@ test("Karte: „📍 Mein Standort“ zeigt die eigene Position (nur auf dem Ger
   pruefe(!r.gespeichert && !r.ls.length, "Position wurde gespeichert: " + JSON.stringify(r));
   pruefe(!a.fehler.length, "Laufzeitfehler: " + a.fehler.join("; "));
   await a.zu();
+});
+
+test("Nachbessern „Doppelt“: nur ein Ort ist keine Adresse, verschiedene Kunden sind nie derselbe Markt (Inhaber 31.10.2026)", async () => {
+  const a = await oeffnen(KONTEN.inhaber);
+  const r = await a.seite.evaluate(async () => {
+    const x = window.__t.x, w = (ms) => new Promise((f) => setTimeout(f, ms)), db = window.__db.tabellen, j = new Date().toISOString();
+    const markt = (id, adresse, plz, kundeId) => db.stammdaten.push({ id: "standort:" + id, typ: "standort", ziel: id, neu: true, geaendert: j, von: "Test", grund: "Test",
+      felder: { name: "Testmarkt " + id, adresse, plz, ort: "Testhausen", kundeId, aktiv: true, pausiert: true } });
+    markt("NbO1", "Testhausen", "", "Kb"); markt("NbO2", "Testhausen", "", "Kb");
+    markt("NbP1", "6999 Testhausen", "6999", "Kb"); markt("NbP2", "6999 Testhausen", "6999", "Kb");
+    markt("NbK1", "6999 Testhausen, Musterweg 7", "6999", "Ka"); markt("NbK2", "6999 Testhausen, Musterweg 7", "6999", "Kc");
+    markt("NbG1", "6999 Testhausen, Beispielgasse 3", "6999", "Kb"); markt("NbG2", "6999 Testhausen, Beispielgasse 3", "6999", "Kb");
+    await x("ladeStammdaten().then(storeNachRender)"); await w(300);
+    const da = x("ST.filter(function(s){ return /^Nb/.test(s.id); }).length");
+    const liste = x('pruefListe().filter(function(b){ return b.thema==="Doppelt" && /Testmarkt/.test(b.text); }).map(function(b){ return {schwere:b.schwere, text:b.text}; })');
+    return { da, liste };
+  });
+  await a.zu();
+  const nennt = (t) => r.liste.filter((b) => b.text.includes(t));
+  pruefe(r.da === 8, "Die Testmärkte fehlen: " + JSON.stringify(r));
+  pruefe(!nennt("NbO1").length, "Nur der Ort darf nicht als doppelt gelten: " + JSON.stringify(r));
+  pruefe(!nennt("NbP1").length, "PLZ und Ort ohne Straße dürfen nicht als doppelt gelten: " + JSON.stringify(r));
+  pruefe(!nennt("NbK1").length, "Verschiedene Kunden dürfen nicht als doppelt gelten: " + JSON.stringify(r));
+  pruefe(nennt("NbG1").length === 1 && nennt("NbG1")[0].schwere === "Fehler", "Gleiche Adresse beim selben Kunden muss weiter gemeldet werden: " + JSON.stringify(r));
 });
 
 test("Viessmann in der Bezeichnung: vor dem Wegfallen wird gefragt – Anlagendialog, Verwaltung, Zusammenführen (Inhaber 30.10.2026)", async () => {
