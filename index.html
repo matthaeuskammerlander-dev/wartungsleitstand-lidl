@@ -4968,7 +4968,10 @@ function posteingangRapport(e){
           esc(protoName(p))+" · "+esc(istStoerung(p)?"Störung":(p.wartungsart||"Wartung"))+((p.techniker||p.nameTechniker)?" · "+esc(kanonName(p.techniker||p.nameTechniker)):"")+
           (p.auftragsnummer?" · Auftrag "+esc(p.auftragsnummer):"")+
           (anl.length?'<br><span class="muted" style="font-size:12.5px">'+esc(anl.join(", "))+"</span>":"")+"</button>");
+        var pruef=rapportProblemeAn(daten, p);
+        if(pruef.length) b.appendChild(el('<div style="font-size:12.5px;color:var(--crit)">⚠ '+esc(pruef.map(function(x){ return x.text; }).join(" "))+"</div>"));
         b.onclick=function(){
+          if(pruef.length && !rapportFrage(pruef, "Trotzdem an dieses Protokoll anhängen?")) return;
           v.zu();
           /* an genau dieses Protokoll und genau diese PDF gebunden – eine andere
              Korrektur oder ein anderer angehängter Rapport erledigt ihn nicht */
@@ -4976,7 +4979,7 @@ function posteingangRapport(e){
           ladeUnterschrift(p).then(function(){
             protokollKorrigieren(p, function(){
               posteingangOffen={id:e.id, art:"rapport", ziel:p._id, name:e.dateiname, nummer:daten.nummer||""};
-              S.rapportNeu={name:e.dateiname, datenUrl:u, daten:daten};
+              S.rapportNeu={name:e.dateiname, datenUrl:u, daten:daten, bestaetigt:pruef.map(function(x){ return x.text; })};
             });
           }, function(x){ toast(x.message); });
         };
@@ -5062,7 +5065,7 @@ function abholKarte(){
   if(!l.length) return null;
   l.sort(function(a,b){ return stName(byId[a.standort_id]).localeCompare(stName(byId[b.standort_id]), "de"); });
   var c=el('<div class="card" data-abholkarte><div class="pad stack" style="gap:6px"><div><h2>🧰 An Märkten abholen / mitnehmen ('+l.length+')</h2>'+
-    '<div class="sub">Wer dort vorbeikommt, nimmt es mit. Antippen öffnet den Markt – dort abhaken.</div></div></div></div>');
+    '<div class="sub">Wer dort vorbeikommt, nimmt es mit. Antippen öffnet den Markt – dort abhaken oder „nicht mehr da“ wählen.</div></div></div></div>');
   l.forEach(function(b){
     var s=byId[b.standort_id], seit=String(b.erstellt||"").slice(0,10);
     var z=el('<button type="button" class="row" style="display:block;text-align:left;width:100%;padding:7px 10px;font:inherit"><strong>'+esc(stName(s))+"</strong> – "+esc(abholText(b))+
@@ -11887,7 +11890,7 @@ function speichereAnhangPdf(art, protokollId, pdf){
 function werteRapport(text, dateiname){
   var t=" | "+text+" | ", d={zeilen:[]};
   var m;
-  if((m=/Rapportzettel (\S+)/.exec(t))) d.art=m[1];
+  if((m=/Rapportzettel ([^\s|]+)/.exec(t))) d.art=m[1];
   else if(/Rapport ohne IMS-Auftrag/.test(t)) d.art="ohne IMS-Auftrag";
   if((m=/\((\d{6,})\)/.exec(t))) d.nummer=m[1];
   if((m=/\| (\d{6,}) \| Auftrag-Nr\./.exec(t)) || (m=/Auftrag-Nr\. \| (\d{6,}) \|/.exec(t))) d.auftrag=m[1];
@@ -11949,11 +11952,17 @@ function auftragZumVergleich(nr, stoer){
   var m=/^(\d{6,})(?!\d)/.exec(nr);
   return m ? m[1] : (stoer ? nr : "");
 }
-/* Passt der Rapport zum Protokoll? Lidl-Auftrag, Filiale und Tag gegenhalten. */
-function rapportAbweichung(d, filiale, datum, auftrag, einzeln){
+/* Passt der Rapport zum Protokoll? Lidl-Auftrag, Filiale, Tag und – wenn stoer angegeben ist – die Art gegenhalten.
+   Die Art steht im Kopf des Zettels („Rapportzettel Störung“/„Rapportzettel Wartung“). Reparatur, Prüfung und
+   Sonstiges können auf einem Störungs-Zettel stehen, deshalb dort keine Meldung. */
+function rapportAbweichung(d, filiale, datum, auftrag, einzeln, stoer, wartungsart){
   if(!d) return einzeln ? [] : "";
   var w=[];
   auftrag=String(auftrag||"").trim();
+  if(stoer===true && /^Wartung/i.test(d.art||""))
+    w.push({text:"Das ist ein Rapportzettel „Wartung“, das Protokoll ist eine Störung."});
+  if(stoer===false && /^St/i.test(d.art||"") && !/^(reparatur|pr(ü|ue)fung|sonstig)/i.test(String(wartungsart||"")))
+    w.push({text:"Das ist ein Rapportzettel „Störung“, das Protokoll ist eine Wartung."});
   /* einzeln: je Satz mit dem Feld des Formulars, in dem man es berichtigt */
   if(d.auftrag && auftrag && d.auftrag!==auftrag)
     w.push({feld:"#f_auftrag", auftrag:d.auftrag, text:"Der Rapport gehört zu Lidl-Auftrag "+d.auftrag+", das Protokoll zu Auftrag "+auftrag+"."});
@@ -11962,6 +11971,25 @@ function rapportAbweichung(d, filiale, datum, auftrag, einzeln){
   if(datum && d.zeilen && d.zeilen.length && !d.zeilen.some(function(z){ return z.datum===datum; }))
     w.push({feld:"#f_datum", text:"Der Rapport ist vom "+d.zeilen.map(function(z){ return dfmt(z.datum); }).join(", ")+", das Protokoll vom "+dfmt(datum)+"."});
   return einzeln ? w : w.map(function(x){ return x.text; }).join(" ");
+}
+/* Alles, was gegen diesen Rapport an diesem Protokoll spricht (Inhaber 31.10.2026: „wird geprüft, ob das der richtige
+   Rapportbericht ist?“): Abweichungen, gar kein erkennbarer Rapportzettel, Rapportnummer schon an einem anderen Protokoll.
+   o: {filiale, datum, auftrag, stoer, wartungsart, ohne = eigene Protokoll-Kennung} */
+function rapportProbleme(d, o){
+  var w=rapportAbweichung(d, o.filiale, o.datum, o.auftrag, true, o.stoer, o.wartungsart);
+  if(!d || (!d.art && !d.lesbar)) w.push({text:"Nicht als Lidl-Rapportzettel erkannt (eingescannt oder eine andere PDF) – Markt, Datum und Auftrag bitte selbst vergleichen."});
+  var schonDa=d && d.nummer ? alleProtokolle().filter(function(x){ var r=rapportVon(x);
+    return x._id!==o.ohne && !x.geloescht && r && r.daten && r.daten.nummer===d.nummer; })[0] : null;
+  if(schonDa) w.push({schonDa:schonDa, text:"Rapport Nr. "+d.nummer+" hängt schon am Protokoll vom "+dfmt(schonDa.datum)+" ("+protoName(schonDa)+")."});
+  return w;
+}
+/* dasselbe gegen ein gespeichertes Protokoll */
+function rapportProblemeAn(d, p){
+  var s=byId[p.standortId], st=istStoerung(p);
+  return rapportProbleme(d, {filiale:s&&s.filiale, datum:p.datum, auftrag:auftragZumVergleich(p.auftragsnummer, st), stoer:st, wartungsart:p.wartungsart, ohne:p._id});
+}
+function rapportFrage(liste, frage){
+  return window.confirm("Dieser Rapportbericht passt anscheinend nicht:\n\n"+liste.map(function(x){ return "• "+x.text; }).join("\n")+"\n\n"+frage);
 }
 function speichereAuftragPdf(protokollId, pdf){ return speichereAnhangPdf("auftrag", protokollId, pdf); }
 function speichereRapportPdf(protokollId, pdf){ return speichereAnhangPdf("rapport", protokollId, pdf); }
@@ -12682,8 +12710,9 @@ function pushZiel(z, versuch, frisch, seit){
   /* Störung, Markt oder Protokoll, die die offene App noch nicht kennt (eben
      erst von jemand anderem angelegt): erst frisch laden, dann springen. Ein
      Protokoll immer – es kann inzwischen korrigiert oder gelöscht sein, die
-     offene App zeigte sonst den alten Stand */
-  if(!frisch && (art==="stoerungen" || (art==="markt" && id && !byId[id]) || (art==="protokoll" && id))){
+     offene App zeigte sonst den alten Stand. Ein Markt ebenso (Inhaber 31.10.2026: „öffne ich die
+     Benachrichtigung, wird der alte Stand angezeigt – ich muss neu laden und den Markt neu öffnen“) */
+  if(!frisch && (art==="stoerungen" || (art==="markt" && id) || (art==="protokoll" && id))){
     /* dauert das Laden (schwache Verbindung, höchstens 10 s), steht das da */
     var hinweis=setTimeout(function(){ toast("Wird frisch geladen …"); }, 1500);
     frischLaden(seit).then(function(){ clearTimeout(hinweis); pushZiel(z, 99, true); });
@@ -17078,13 +17107,17 @@ function protoAssistentTeilFotos(P){
         (voll ? " – mehr gehen nicht. Prüfbuch- und Typenschild-Fotos gehören zur Anlage: bei „Anlagendaten“ über „Aus Fotos lesen“." : "")+"</div>"));
       liste.forEach(function(ft,i){
         var z=el('<div class="rowflex" style="align-items:flex-start;gap:10px;border:1px solid var(--line);border-radius:8px;padding:8px;margin-top:8px">'+
-          '<img alt="Foto '+(i+1)+'" src="'+bildUrl(ft.datenUrl)+'" style="width:64px;height:64px;object-fit:cover;border-radius:6px;flex:none">'+
+          '<button type="button" data-fotogross aria-label="Foto '+(i+1)+' groß ansehen" style="position:relative;width:64px;height:64px;padding:0;border:0;background:none;cursor:zoom-in;flex:none">'+
+            '<img alt="Foto '+(i+1)+'" src="'+bildUrl(ft.datenUrl)+'" style="width:64px;height:64px;object-fit:cover;border-radius:6px;display:block">'+
+            '<span aria-hidden="true" style="position:absolute;right:2px;bottom:2px;background:rgba(0,0,0,.6);color:#fff;border-radius:5px;padding:1px 4px;font-size:12px;line-height:1.3">🔍</span></button>'+
           '<label class="fl" style="flex:1 1 140px"><span>Notiz zum Foto</span><input type="text" placeholder="z. B. Mangel am Wärmetauscher"></label>'+
-          '<button class="btn ghost sm" type="button">entfernen</button></div>');
+          '<button class="btn ghost sm" type="button" data-fotoweg>entfernen</button></div>');
         var ein=z.querySelector("input"); ein.value=ft.hinweis||"";
         ein.oninput=function(){ F.hinweis(i, ein.value); };
         ein.onchange=function(){ F.zeichnen(); };   /* Formular darunter nachziehen */
-        z.querySelector("button").onclick=function(){ F.weg(i); P.schritte[P.pos].zeigen(); };
+        /* Inhaber 31.10.2026: „kann das Foto nicht ansehen und prüfen“ */
+        z.querySelector("[data-fotogross]").onclick=function(){ bildAnsicht(ft.datenUrl, "Foto "+(i+1)+" von "+liste.length); };
+        z.querySelector("[data-fotoweg]").onclick=function(){ F.weg(i); P.schritte[P.pos].zeigen(); };
         inhalt.appendChild(z);
       });
       /* Rapportbericht von Lidl (bei Wartung und Störung) – im Formular ein eigener Kasten */
@@ -17095,7 +17128,14 @@ function protoAssistentTeilFotos(P){
           '<div style="font-size:13px" data-rapinfo></div>'+
           '<button class="btn ghost sm" type="button" style="margin-top:6px">Rapportbericht (PDF) anhängen</button>'+
           '<div class="muted" style="font-size:12.5px;margin-top:4px">Kommt er erst später per Mail, lässt er sich am gespeicherten Protokoll nachreichen.</div></div>');
-        r.querySelector("[data-rapinfo]").textContent=info ? info.textContent : "";
+        /* samt Warnung und „ansehen“/„entfernen“ wie im Formular (vorher nur Fließtext, die Warnung ging darin unter);
+           die Sprünge ins Formular gehen hier nicht – es liegt unter dem Dialog */
+        var rapKopie=r.querySelector("[data-rapinfo]");
+        rapKopie.innerHTML=info ? info.innerHTML : "";
+        rapKopie.querySelectorAll("a").forEach(function(a){
+          if(!a.dataset.a){ a.replaceWith(document.createTextNode(a.textContent)); return; }
+          a.onclick=function(e){ e.preventDefault(); var ori=info.querySelector('[data-a="'+a.dataset.a+'"]'); if(ori) ori.click(); };
+        });
         r.querySelector("button").onclick=function(){ rapIn.click(); };
         inhalt.appendChild(r);
       }
@@ -17198,6 +17238,7 @@ function protoAssistentTeilAbschluss(P){
       var ergebnisse=[].slice.call(form.querySelectorAll('input[name="ergebnis"]:checked')).map(function(cb){ return cb.nextElementSibling.textContent; });
       var mit=mitTechnikerLesen(f("#f_mit"));
       var rapInfo=form.querySelector("#s_rapportinfo"), rapDa=form.querySelector("#s_rapport") && (!form._istLidl || form._istLidl());
+      var rapProb=rapDa && form._rapProbleme ? form._rapProbleme() : [];
       var gb=f("#f_grundbox");
       var fehlt=form._fehltNoch ? form._fehltNoch() : [];
       inhalt.innerHTML=frage("Passt so?")+
@@ -17217,7 +17258,7 @@ function protoAssistentTeilAbschluss(P){
           zeile("Bemerkungen", wert("#f_bem").trim().slice(0,80)||"keine", "Ergebnis")+
           (f(P.kmVor+"Nach")?zeile("Kältemittel", P.kmKurz()||"keines", "Kältemittel"):"")+
           zeile("Fotos", (form.querySelector("#f_fotoinfo")||{}).textContent||"–", "Fotos und Rapport")+
-          (rapDa?zeile("Rapportbericht", rapInfo?rapInfo.textContent.slice(0,60):"–", "Fotos und Rapport"):"")+
+          (rapDa?zeile("Rapportbericht", rapProb.length ? "⚠ "+rapProb[0].text : (rapInfo?rapInfo.textContent.slice(0,60):"–"), "Fotos und Rapport"):"")+
           zeile("Techniker/in", wert("#f_tech")+(mit.length?" + "+mit.join(", "):""), "Abschluss")+
           zeile("Unterschrift", form._sig.vorhanden()?"vorhanden":"fehlt", "Abschluss")+
         "</div>"+
@@ -17256,6 +17297,12 @@ function protokollAssistent(form, stoer){
      damit der Entwurf trotzdem mitschreibt, meldet jede Eingabe, jeder Haken
      und jeder Knopf hier sich beim Entwurf */
   var merken=function(){ setTimeout(function(){ if(form._entwurfMerken) form._entwurfMerken(); }, 0); };
+  /* Eintragen hier ist echte Arbeit, auch Diktiertes (Inhaber 31.10.2026: „nicht zwischengespeichert nach dem Neustart“ – das Formular sieht diese
+     Eingaben nicht, darum galt alles Getippte als „nur hineingeschaut“ und der Entwurf wurde gelöscht); die Marktsuche zählt nicht */
+  ov.addEventListener("input", function(e){
+    var t=e.target; if(!t || t.type==="search" || t.type==="file" || t.name==="posw") return;
+    if(form._entwurfEcht) form._entwurfEcht();
+  }, true);
   ov.addEventListener("input", merken);
   ov.addEventListener("change", merken);
   ov.addEventListener("click", merken);
@@ -17325,6 +17372,16 @@ function protokollAssistent(form, stoer){
            und im langen Formular rot zu markieren */
         var fehlt=form._fehltNoch ? form._fehltNoch() : [];
         if(fehlt.length){ s.zeigen(); inhalt.scrollTop=0; toast("Vor dem Speichern fehlt noch: "+fehlt.join(", ")); return; }
+        /* Rapport passt nicht: im Dialog zurück zum Rapport, statt zu schließen */
+        var rapOffen=form._rapNochFragen ? form._rapNochFragen() : [];
+        if(rapOffen.length){
+          if(!rapportFrage(rapOffen, "Trotzdem so speichern?")){
+            var iRap=P.schritte.map(function(x){ return x.titel; }).indexOf("Fotos und Rapport");
+            if(iRap>=0){ P.pos=iRap; zeige(); }
+            return;
+          }
+          form._rapBestaetigen(rapOffen);
+        }
         zu();
         var b=form.querySelector("#save"); b.scrollIntoView({block:"center"}); b.click();
       });
@@ -17348,6 +17405,9 @@ function protokollAssistent(form, stoer){
     var s=P.schritte[P.pos];
     ov.querySelector(".as-titel").textContent=(stoer?"Störungsprotokoll":"Wartungsprotokoll");
     ov.querySelector(".as-schritt").textContent="Schritt "+(P.pos+1)+" von "+P.schritte.length+" · "+s.titel;
+    /* über die Anlagen hinaus weitergegangen: das Protokoll ist begonnen, nicht nur angesehen */
+    var iAnl=P.schritte.map(function(x){ return x.titel; }).indexOf(stoer?"Betroffene Anlagen":"Gewartete Anlagen");
+    if(iAnl>=0 && P.pos>iAnl && form._entwurfEcht) form._entwurfEcht();
     s.zeigen(); fussNeu(); inhalt.scrollTop=0;
   }
   function weiter(){
@@ -18265,17 +18325,35 @@ function protoTeilRapport(P){
       var st0=byId[form.querySelector("#f_standort").value];
       /* Lidl-Auftrag gegenhalten: bei der Störung immer, bei der Wartung, wenn dort eine Auftragsnummer steht */
       var nrF=form.querySelector("#f_auftrag").value.trim();
-      return rapportAbweichung(daten, st0&&st0.filiale, form.querySelector("#f_datum").value, auftragZumVergleich(nrF, stoer), true);
+      var artW=form.querySelector('input[name="wart"]:checked');
+      return rapportProbleme(daten, {filiale:st0&&st0.filiale, datum:form.querySelector("#f_datum").value, auftrag:auftragZumVergleich(nrF, stoer),
+        stoer:!!stoer, wartungsart:artW?artW.value:"", ohne:bearb&&bearb._id});
     };
     /* je Satz ein Sprung ins Feld; gibt es zum Auftrag des Rapports ein
        Protokoll, dazu „ansehen“ (Fenster) */
     rapAbwHtml=function(liste){
       return liste.map(function(x){
+        if(x.schonDa) return '<a href="#" class="sprunglink" data-protfenster="'+esc(x.schonDa._id)+'">'+esc(x.text)+"</a>";
+        if(!x.feld) return esc(x.text);
         var pr=x.auftrag ? alleProtokolle().filter(function(q){ return auftragZumVergleich(q.auftragsnummer, true)===x.auftrag && (!bearb || q._id!==bearb._id); })[0] : null;
         return '<a href="#" class="sprunglink" data-zufeld="'+x.feld+'">'+esc(x.text)+"</a>"+
           (pr?' <a href="#" class="sprunglink" data-protfenster="'+esc(pr._id)+'">Protokoll zu Auftrag '+esc(x.auftrag)+" ansehen</a>":"");
       }).join(" ");
     };
+    /* was gegen den Rapport spricht, der gerade am Protokoll hängt bzw. mitgespeichert wird */
+    form._rapProbleme=function(){
+      if(form._istLidl && !form._istLidl()) return [];
+      var alt=rapportVon(bearb);
+      if(P.rapportPdf && (!alt || P.rapErsetzen)) return rapAbweichung(P.rapportPdf.daten);
+      return alt && alt.daten ? rapAbweichung(alt.daten) : [];
+    };
+    /* Schon beantwortet wird nicht nochmals gefragt; beim abgelegten Rapport zählt nur, was diese Korrektur neu verursacht */
+    P.rapBestaetigt=[];
+    form._rapNochFragen=function(){
+      var alt=rapportVon(bearb), vorher=(alt && alt.daten && !P.rapErsetzen) ? rapportProblemeAn(alt.daten, bearb).map(function(x){ return x.text; }) : [];
+      return form._rapProbleme().filter(function(x){ return P.rapBestaetigt.indexOf(x.text)<0 && vorher.indexOf(x.text)<0; });
+    };
+    form._rapBestaetigen=function(liste){ P.rapBestaetigt=P.rapBestaetigt.concat(liste.map(function(x){ return x.text; })); };
     P.rapZeigen=function(){ rapZeigen0(); if(form._nachRapport) form._nachRapport(); };
     rapZeigen0=function(){
       var alt=rapportVon(bearb);
@@ -18305,12 +18383,6 @@ function protoTeilRapport(P){
       } else if(P.rapportPdf){
         rapEin.disabled=false; rapEin.previousElementSibling.hidden=false;
         var abw=rapAbwHtml(rapAbweichung(P.rapportPdf.daten));
-        /* dieselbe Rapportnummer hängt schon an einem anderen Protokoll */
-        var nrR=P.rapportPdf.daten && P.rapportPdf.daten.nummer;
-        var schonDa=nrR ? alleProtokolle().filter(function(x){ var r=rapportVon(x);
-          return x._id!==(bearb&&bearb._id) && r && r.daten && r.daten.nummer===nrR; })[0] : null;
-        if(schonDa) abw=(abw?abw+" ":"")+"Rapport Nr. "+esc(nrR)+' hängt schon am <a href="#" class="sprunglink" data-protfenster="'+esc(schonDa._id)+'">Protokoll vom '+
-          dfmt(schonDa.datum)+" ("+esc(protoName(schonDa))+")</a> – doppelt?";
         rapInfo.innerHTML=(alt?"Ersetzt „"+esc(alt.name||"rapport.pdf")+"“: ":"")+'<strong>'+esc(P.rapportPdf.name)+'</strong> · <a href="#" data-a="rapsehen">ansehen</a> · <a href="#" data-a="rapweg">entfernen</a>'+
           (P.rapportPdf.daten ? '<br>'+esc(rapportZeile({daten:P.rapportPdf.daten}).replace(/^liegt bei · /,""))+
             (P.rapportPdf.daten.zeilen&&P.rapportPdf.daten.zeilen.length?'<br>'+esc(P.rapportPdf.daten.zeilen.map(function(z){ return z.arbeiten; }).join(" / ")):"")
@@ -18362,6 +18434,10 @@ function protoTeilRapport(P){
         return leseRapport(u, datei.name).then(function(daten){
           P.rapportLiest=Math.max(0, P.rapportLiest-1);
           if(P.formWeg()) return;   /* inzwischen gesichert oder ein anderes Formular */
+          /* gleich beim Anhängen prüfen – noch bevor Text und Zeiten des Rapports ins Protokoll kommen */
+          var pruef=rapAbweichung(daten);
+          if(pruef.length && !rapportFrage(pruef, "Trotzdem anhängen?")){ toast("Nicht angehängt – bitte den richtigen Rapportbericht wählen."); P.rapZeigen(); return; }
+          form._rapBestaetigen(pruef);
           P.rapportPdf={name:datei.name||"rapport.pdf", datenUrl:u, daten:daten}; formDirty=true; P.rapZeigen(); rapTextRein(daten);
         });
       }).catch(function(e){ P.rapportLiest=Math.max(0, P.rapportLiest-1); if(P.formWeg()) return;
@@ -18370,6 +18446,7 @@ function protoTeilRapport(P){
     /* vom gespeicherten Protokoll aus gewählt: gleich übernehmen */
     if(S.rapportNeu && bearb && !rapportVon(bearb)){
       P.rapportPdf=S.rapportNeu; formDirty=true;
+      P.rapBestaetigt=S.rapportNeu.bestaetigt||[];   /* vor dem Öffnen schon beantwortet */
       setTimeout(function(){
         var g=form.querySelector("#f_grund"); if(g && !g.value) g.value="Rapportbericht angehängt";
         if(P.rapportPdf) rapTextRein(P.rapportPdf.daten);
@@ -18630,7 +18707,7 @@ function protoTeilFotos(P){
       summe+=f.bytes;
       var z=el('<div class="rowflex" style="align-items:flex-start;gap:10px;border:1px solid var(--line);'+
         'border-radius:8px;padding:8px;background:var(--ground)">'+
-        '<img alt="Vorschau" src="'+bildUrl(f.datenUrl)+'" style="width:76px;height:76px;object-fit:cover;border-radius:6px;flex:none">'+
+        '<img alt="Vorschau" title="Groß ansehen" src="'+bildUrl(f.datenUrl)+'" style="width:76px;height:76px;object-fit:cover;border-radius:6px;flex:none;cursor:zoom-in">'+
         '<label class="fl" style="flex:1 1 160px"><span>Bildunterschrift</span>'+
           '<input type="text" value="'+esc(f.hinweis)+'" placeholder="z. B. Mangel am Wärmetauscher"></label>'+
         '<div style="display:grid;gap:6px;justify-items:end">'+
@@ -18639,6 +18716,7 @@ function protoTeilFotos(P){
         "</div>"+
       "</div>");
       z.querySelector("input").oninput=function(e2){ f.hinweis=e2.target.value; };
+      z.querySelector("img").onclick=function(){ bildAnsicht(f.datenUrl, "Foto "+(i+1)+" von "+P.fotos.length); };
       z.querySelector("button").onclick=function(){ P.fotos.splice(i,1); fotosZeichnen(); };
       P.fotoHost.appendChild(z);
     });
@@ -19246,6 +19324,7 @@ function protoTeilEntwurf(P){
        input aus – jeder Knopf im Formular meldet sich deshalb auch */
     form.addEventListener("click", function(e){ if(e.target.closest && e.target.closest("button")) entwurfMerken(); });
     form._entwurfMerken=entwurfMerken;   /* Fotos und Unterschrift melden sich selbst */
+    form._entwurfEcht=function(){ echteArbeit=true; entwurfMerken(); };   /* der geführte Dialog liegt außerhalb des Formulars */
     /* App geht in den Hintergrund (Handy gesperrt, anderer App gewechselt):
        ausstehenden Entwurf sofort schreiben, nicht erst nach dem Takt */
     entwurfSofort=function(){
@@ -19310,7 +19389,7 @@ function protoTeilEntwurf(P){
         if(formDirty){ clearTimeout(P.entwurfTakt); P.entwurfTakt=null; entwurfAblegen(); }
         toast("Entwurf verworfen.");
       };
-      P.entwurfKasten=kasten;
+      P.entwurfKasten=kasten; P.entwurfMarkt=e2.standort||"";
     }
     /* angefangene Korrektur desselben Protokolls (etwa vor dem Neuladen oder
        bevor die App am Handy beendet wurde) wieder anbieten */
@@ -19372,6 +19451,12 @@ function protoTeilSpeichern(P){
       if(P.fotosInArbeit>0){ toast("Die Fotos werden noch verkleinert – bitte einen Moment, dann nochmals speichern."); return; }
       if(P.rapportLiest>0){ toast("Der Rapportbericht wird noch gelesen – bitte einen Moment, dann nochmals speichern."); return; }
       if(!P.pflichtPruefung()) return;
+      /* Markt, Datum oder Auftrag können sich nach dem Anhängen geändert haben */
+      var rapOffen=form._rapNochFragen ? form._rapNochFragen() : [];
+      if(rapOffen.length){
+        if(!rapportFrage(rapOffen, "Trotzdem so speichern?")){ sprungHervorheben(form.querySelector("#s_rapportinfo")); return; }
+        form._rapBestaetigen(rapOffen);
+      }
       var v=function(id){ var n=form.querySelector("#"+id); return n?n.value.trim():""; };
       var radio=function(name){ var n=form.querySelector('input[name="'+name+'"]:checked'); return n?n.value:""; };
       /* frühere, frei getippte Anlagenblöcke bleiben erhalten; sonst der aktuelle Stand der angehakten Anlagen */
@@ -19787,7 +19872,16 @@ function viewProtokoll(){
   };
   P.vorOrtHinweis();
   P.gefuehrt=P.head.querySelector("#p_gefuehrt");
-  if(P.gefuehrt) P.gefuehrt.onclick=function(){ protokollAssistent(form, stoer); };
+  if(P.gefuehrt) P.gefuehrt.onclick=function(){
+    /* der Hinweis auf den Entwurf steht unter diesem Knopf und ginge am Handy leicht unter */
+    var kE=P.entwurfKasten, stJetzt=form.querySelector("#f_standort").value;
+    /* nur beim selben Markt (oder noch ohne Markt) – ein Entwurf von woanders ersetzte sonst das gerade Geöffnete */
+    if(kE && kE.isConnected && (!stJetzt || P.entwurfMarkt===stJetzt) && window.confirm("Es gibt ein angefangenes Protokoll für diesen Markt. Damit weitermachen?\n\nAbbrechen beginnt neu – das angefangene bleibt aufgehoben.")){
+      kE.querySelector('[data-e="weiter"]').onclick();
+      if(!document.body.contains(form)) return;   /* andere Art: das Formular wurde neu gezeichnet, dort steht der Hinweis wieder */
+    }
+    protokollAssistent(form, stoer);
+  };
   /* derselbe Knopf wie unten im Formular, mit derselben Rückfrage */
   var obenLeeren=P.head.querySelector("#p_leeren");
   if(obenLeeren) obenLeeren.onclick=function(){ form.querySelector("#reset").onclick(); };
@@ -20850,6 +20944,9 @@ function protokollDetail(p){
           });
         });
       }).then(function(neu){
+        var pruef=rapportProblemeAn(neu.daten, p);
+        if(pruef.length && !rapportFrage(pruef, "Trotzdem anhängen?")){ toast("Nicht angehängt – bitte den richtigen Rapportbericht wählen."); return; }
+        neu.bestaetigt=pruef.map(function(x){ return x.text; });
         /* erst nach der Rückfrage (angefangenes Protokoll) vormerken */
         protokollKorrigieren(p, function(){ S.rapportNeu=neu; });
       }, function(e){ toast(e&&(e.unlesbar||e.nachladen) ? e.message : "Die Datei ließ sich nicht lesen."); });
@@ -22757,7 +22854,10 @@ function bedarfZeile(b, opt){
     '<a href="#" class="sprunglink" style="flex:1;min-width:0;color:inherit"><strong'+(bedarfOffen(b)?"":' style="text-decoration:line-through"')+'>'+wg[2]+" "+esc(b.text)+"</strong>"+(b.menge?" · "+esc(b.menge):"")+
       ' <span class="muted">– '+esc(wg[1])+(b.bezugsquelle?" bei "+esc(b.bezugsquelle):"")+(b.status==="bestellt"||b.status==="abholbereit"?" · "+esc(b.status==="bestellt"?"bestellt":"abholbereit"):"")+"</span>"+
       (wann||opt.mitBezug||opt.mitWer?'<br><span class="muted" style="font-size:12px">'+esc([wann?dfmt(wann).slice(0,6):"", opt.mitBezug?bedarfBezugText(b):"", opt.mitWer?wer.namen.filter(Boolean).join(", "):""].filter(Boolean).join(" · "))+"</span>":"")+
-      (hw && bedarfOffen(b)?'<br><span style="font-size:12px'+(hw.warnen?";color:var(--crit)":"")+'">'+(hw.warnen?"⚠ ":"📍 ")+esc(hw.text)+"</span>":"")+"</a></div>");
+      (hw && bedarfOffen(b)?'<br><span style="font-size:12px'+(hw.warnen?";color:var(--crit)":"")+'">'+(hw.warnen?"⚠ ":"📍 ")+esc(hw.text)+"</span>":"")+
+      (bedarfNichtDa(b)?'<br><span style="font-size:12px" data-nichtdatext>❓ '+esc(b.notiz)+"</span>":"")+"</a>"+
+      (bedarfNichtDaKann(b)?'<button class="btn ghost sm" type="button" data-nichtda style="flex:none">❓ nicht mehr da</button>':"")+"</div>");
+  var nd=z.querySelector("[data-nichtda]"); if(nd) nd.onclick=function(){ bedarfNichtDaSetzen(b); };
   z.querySelector("a").onclick=function(ev){ ev.preventDefault(); bedarfEditor(b); };
   z.querySelector("input").onchange=function(){ var cb=this; bedarfStatus(b, cb.checked ? "erledigt" : "offen").catch(function(){ cb.checked=!cb.checked; }); };
   return z;
@@ -22775,8 +22875,24 @@ function bedarfSpeichern(b, felder){
     BEDARF=wzZeileSetzen(BEDARF, r.data[0]); BEDARF_ALLE=wzZeileSetzen(BEDARF_ALLE, r.data[0]); wzGeaendert(); return r.data[0];
   });
 }
+/* Abholen und nichts mehr gefunden (Inhaber 31.10.2026, Leiter und Wartungspickerl: „nur die Option, dass ich das erledigt habe und das
+   Werkzeug mit ist“): abgeschlossen wie erledigt, der Vermerk steht vorn in der Notiz – keine neue Spalte, wieder öffnen nimmt ihn heraus */
+var BEDARF_NICHT_DA="Nicht mehr da";
+function bedarfNichtDa(b){ return !!b && b.status==="erledigt" && String(b.notiz||"").indexOf(BEDARF_NICHT_DA+" – ")===0; }
+function bedarfNichtDaKann(b){ return !!b && bedarfOffen(b) && b.beschaffung==="abholen" && !nurLesen(); }
+function bedarfNichtDaSetzen(b, fertig){
+  if(!window.confirm("„"+b.text+"“ war nicht mehr da?\n\nDer Eintrag wird mit diesem Vermerk abgeschlossen und steht nicht mehr auf Karte und Tour. Das Häkchen wieder entfernen macht es rückgängig.")) return Promise.resolve(null);
+  var vermerk=BEDARF_NICHT_DA+" – "+dfmt(isoLokal(new Date()))+", "+(meinName()||"")+(b.notiz?" · "+b.notiz:"");
+  return bedarfSpeichern(b, {status:"erledigt", notiz:vermerk.slice(0,500)}).then(function(n){
+    var w=n.werkzeug_id && WZ.filter(function(x){ return x.id===n.werkzeug_id; })[0];
+    toast("Abgeschlossen: "+n.text+" war nicht mehr da."+(w?" In der Werkzeugliste steht noch „"+wzOrtText(w)+"“ – bitte richtigstellen.":""));
+    if(fertig) fertig(n); return n;
+  }, function(e){ toast("Nicht gespeichert: "+technikDeutsch(e.message||String(e))); return null; });
+}
 function bedarfStatus(b, status){
-  return bedarfSpeichern(b, {status:status}).then(function(n){ toast(status==="erledigt" ? "Erledigt: "+n.text+"." : "Wieder offen: "+n.text+"."); return n; },
+  var felder={status:status};
+  if(status!=="erledigt" && bedarfNichtDa(b)) felder.notiz=String(b.notiz).replace(/^[^·]*(· )?/,"").trim()||null;
+  return bedarfSpeichern(b, felder).then(function(n){ toast(status==="erledigt" ? "Erledigt: "+n.text+"." : "Wieder offen: "+n.text+"."); return n; },
     function(e){ toast("Nicht gespeichert: "+technikDeutsch(e.message||String(e))); throw e; });
 }
 /* anlegen / ändern. vorgabe: Bezug (projekt_id, stoerung_id, planung_id, standort_id), art, text … */
@@ -22969,6 +23085,11 @@ function bedarfEditor(b, vorgabe){
       }, function(e){ lo.disabled=false; fehler("Nicht gelöscht: "+(e.message||String(e))); });
     };
     v.fuss.appendChild(lo);
+  }
+  if(bedarfNichtDaKann(b)){
+    var ndK=el('<button class="btn ghost" type="button" data-nichtda>❓ Nicht mehr da</button>');
+    ndK.onclick=function(){ bedarfNichtDaSetzen(b, function(){ v.zu(); }); };
+    v.fuss.appendChild(ndK);
   }
   /* im Geschäft mit eigenem Geld bezahlt: gleich den Beleg erfassen (Reisekosten) – danach ist der Eintrag erledigt */
   if(b && bedarfOffen(b) && b.beschaffung!=="mitnehmen" && akAn() && !nurLesen()){
@@ -26505,7 +26626,7 @@ function pruefListe(){
     var d=r.daten;
     if(d && d.nummer) (rapNr[d.nummer]=rapNr[d.nummer]||[]).push(pr);
     var s=byId[pr.standortId];
-    var abw=rapportAbweichung(d, s&&s.filiale, pr.datum, auftragZumVergleich(pr.auftragsnummer, istStoerung(pr)));
+    var abw=rapportAbweichung(d, s&&s.filiale, pr.datum, auftragZumVergleich(pr.auftragsnummer, istStoerung(pr)), false, istStoerung(pr), pr.wartungsart);
     if(abw) dazu("Fehler","Rapporte", "Protokoll vom "+dfmt(pr.datum)+": "+abw, s, {protokolle:[pr._id]});
   });
   Object.keys(rapNr).forEach(function(nr){
@@ -28581,8 +28702,8 @@ Object.assign(RUNDGAENGE, {
       RG_HG("Die Menge wird der gewählten Anlage gebucht (sonst der ersten angehakten) und fließt in die Kältemittel-Bilanz; daraus erkennt die App einen Leck-Verdacht.")+
       RG_ACHTUNG(["Ohne „für Anlage“ geht die Menge auf die erste angehakte Anlage."])},
     {reiter:"protokoll", ziel:function(){ return rgEl("#s_rapport") ? rgEl("#s_rapport").closest("fieldset") : rgEl("#fotoliste"); }, titel:"Rapport und Fotos",
-      text:RG_LISTE(["<strong>Rapportbericht</strong> (Lidl): PDF anhängen – die App gleicht Markt, Datum und Auftrag ab und warnt bei Abweichung oder doppelter Rapportnummer. Kommt er später, im gespeicherten Protokoll nachreichen.",
-        "<strong>Fotos</strong>: Kamera oder Galerie, je Foto eine Bildunterschrift, höchstens 25."])+
+      text:RG_LISTE(["<strong>Rapportbericht</strong> (Lidl): PDF anhängen – die App prüft Markt, Datum, Auftrag und Art (Störung/Wartung) und die Rapportnummer. Passt etwas nicht, fragt sie beim Anhängen und nochmals beim Speichern, falls sich danach etwas geändert hat. Kommt er später, im gespeicherten Protokoll nachreichen.",
+        "<strong>Fotos</strong>: Kamera oder Galerie, je Foto eine Bildunterschrift, höchstens 25. Vorschau antippen zeigt das Foto groß."])+
       RG_HG(["Die ausgeführten Arbeiten aus dem Rapport kommen <strong>zusätzlich</strong> in „Maßnahmen“ (Störung) bzw. „Bemerkungen“ (Wartung) – nie ersetzt, nie doppelt; ohne Rapport verschwindet der Zusatz wieder.",
         "Fotos werden auf 1600 Pixel verkleinert (spart Datenvolumen)."])},
     {reiter:"protokoll", ziel:function(){ return rgEl("#sig"); }, titel:"Abschluss und Speichern",
@@ -35737,7 +35858,8 @@ function katalogWartung(art, kid, typ){
    es nicht kann (etwa manche installierte iPhone-App), erklärt der Knopf das Mikrofon der Tastatur.
    Gesprochenes wird angehängt, nie ersetzt; sichtbar „hört zu …“, nochmals tippen beendet, nach einer
    Pause endet es von selbst. Wird das Feld ausgeblendet (anderer Schritt), hört es auf. */
-var DIKTAT=null;
+var DIKTAT=null, DIKTAT_TASTATUR=false, DIKTAT_START_MS=10000, DIKTAT_STILLE_MS=30000;
+var DIKTAT_TASTATUR_TEXT="Diktieren geht hier über die Tastatur: ins Feld tippen, dann das Mikrofon unten auf der Tastatur.";
 function diktatKnopf(feld){
   var b=el('<button type="button" class="btn ghost sm diktat" title="Diktieren – Gesprochenes wird angehängt" aria-label="Diktieren">🎤</button>');
   b.onclick=function(ev){ ev.preventDefault(); ev.stopPropagation(); diktatUmschalten(feld, b); };
@@ -35746,28 +35868,52 @@ function diktatKnopf(feld){
 function diktatUmschalten(feld, b){
   if(DIKTAT){ var war=DIKTAT; war.stop(); if(war.feld===feld) return; }
   var SR=window.SpeechRecognition || window.webkitSpeechRecognition;
-  if(!SR){ toast("Diktieren geht hier über die Tastatur: ins Feld tippen, dann das Mikrofon unten auf der Tastatur."); try{ feld.focus(); }catch(e){} return; }
-  var r=new SR(), basis=feld.value||"", fertig="";
+  if(!SR || DIKTAT_TASTATUR){ toast(DIKTAT_TASTATUR_TEXT); try{ feld.focus(); }catch(e){} return; }
+  var r=new SR(), basis=feld.value||"", fertig="", zwischen="", uhr=null;
   r.lang="de-AT"; r.continuous=true; r.interimResults=true;
-  var lauf={feld:feld, stop:function(){ try{ r.stop(); }catch(e){} }};
-  var setze=function(zwischen){
+  var setze=function(zw){
     if(!document.body.contains(feld)){ lauf.stop(); return; }
-    var t=(fertig+" "+(zwischen||"")).replace(/\s+/g," ").trim();
+    var t=(fertig+" "+(zw||"")).replace(/\s+/g," ").trim();
     feld.value=basis.trim() ? basis.replace(/\s+$/,"")+(t?" "+t:"") : t;
     feld.dispatchEvent(new Event("input", {bubbles:true}));
   };
+  /* Inhaber 31.10.2026 („jetzt hängt die App, als ich diktieren wollte“, blieb auf „hört zu …“): das Ende nie vom Browser abhängig machen –
+     der Knopf ist sofort wieder frei, schon Gehörtes bleibt im Feld, Späteres vom alten Lauf zählt nicht mehr */
+  var beenden=function(){
+    if(lauf.aus) return;
+    lauf.aus=true; clearTimeout(uhr);
+    b.classList.remove("hoert"); b.textContent="🎤";
+    if(DIKTAT===lauf) DIKTAT=null;
+    fertig=(fertig+" "+zwischen).trim(); zwischen="";
+    if(document.body.contains(feld)) setze("");
+  };
+  var abbrechen=function(){ try{ r.abort(); }catch(e){} };
+  var lauf={feld:feld, aus:false, stop:function(){ beenden(); try{ r.stop(); }catch(e){} setTimeout(abbrechen, 1500); }};
+  var wache=function(ms, wenn){ clearTimeout(uhr); uhr=setTimeout(wenn, ms); };
+  var hoertZu=function(){
+    if(lauf.aus) return;
+    b.textContent="⏹ hört zu …";
+    wache(DIKTAT_STILLE_MS, function(){ lauf.stop(); toast("Diktieren beendet – nichts mehr gehört."); });
+  };
+  r.onstart=r.onaudiostart=hoertZu;
   r.onresult=function(ev){
+    if(lauf.aus) return;
+    hoertZu();
     var zw="";
     for(var i=ev.resultIndex; i<ev.results.length; i++){ var x=ev.results[i]; if(x.isFinal) fertig=(fertig+" "+x[0].transcript).trim(); else zw+=x[0].transcript; }
-    setze(zw);
+    zwischen=zw; setze(zw);
   };
   r.onerror=function(ev){
-    if(ev.error==="not-allowed" || ev.error==="service-not-allowed") toast("Mikrofon nicht freigegeben – im Browser erlauben oder das Mikrofon der Tastatur nehmen.");
+    if(lauf.aus) return;
+    if(ev.error==="not-allowed" || ev.error==="service-not-allowed"){ DIKTAT_TASTATUR=true; toast("Mikrofon nicht freigegeben. "+DIKTAT_TASTATUR_TEXT); }
     else if(ev.error!=="no-speech" && ev.error!=="aborted") toast("Diktieren unterbrochen ("+ev.error+").");
+    beenden();
   };
-  r.onend=function(){ b.classList.remove("hoert"); b.textContent="🎤"; if(DIKTAT===lauf) DIKTAT=null; if(document.body.contains(feld)) setze(""); };
-  try{ r.start(); }catch(e){ toast("Diktieren ließ sich nicht starten."); return; }
-  DIKTAT=lauf; b.classList.add("hoert"); b.textContent="⏹ hört zu …";
+  r.onend=beenden;
+  try{ r.start(); }catch(e){ toast("Diktieren ließ sich nicht starten. "+DIKTAT_TASTATUR_TEXT); return; }
+  DIKTAT=lauf; b.classList.add("hoert"); b.textContent="⏳ Mikrofon … (abbrechen)";
+  /* kommt das Mikrofon gar nicht: bis zum Neustart der App gleich über die Tastatur statt jedes Mal zu warten */
+  wache(DIKTAT_START_MS, function(){ DIKTAT_TASTATUR=true; beenden(); abbrechen(); toast("Das Diktieren startet auf diesem Gerät nicht. "+DIKTAT_TASTATUR_TEXT); });
 }
 var FAHRT_TIROL_LON=11.37;   /* westlich davon Zone 2 – Innsbruck (6020, 6080) zählt immer als Zone 1 */
 function fahrtZone(s){

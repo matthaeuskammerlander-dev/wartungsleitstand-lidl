@@ -751,6 +751,7 @@ Kammerlander Umwelt- und Klimatechnik (UKT) – oft kurz, vom Handy, im Feld.
 - **Vergessen / abholen am Markt** (Inhaber 07.10.2026: „Tobias hat seine Leiter in der Tivoligasse vergessen“): offene `bedarf`-Einträge mit
   standort_id (`marktAbholen`, `abholText`) – Knopf „🧰 Vergessen / abholen“ im Markt-Fenster und Karten-Popup (`marktAbholenNeu`, vorbelegt abholen/Werkzeug),
   🧰-Zeichen auf der Karte (`.abholpin`), je Tour-Stopp, im Tourausdruck, in den Kalenderterminen der Tour und „Unterwegs abholen“ mit „+ dazunehmen“.
+  Nicht mehr da (Inhaber 31.10.2026: Leiter und Pickerl nicht gefunden, „erledigt – dabei“ stimmte nicht): „❓ nicht mehr da“ bei offenem `abholen` (`bedarfNichtDaSetzen`, Zeile und Editor) schließt mit Vermerk vorn in `notiz` (`BEDARF_NICHT_DA`, keine neue Spalte), Häkchen weg nimmt ihn wieder heraus. Test „Abholen: „nicht mehr da“ …“.
   Geht nicht unter (Inhaber 07.10.2026: „nur auf der Karte sichtbar“): geladen bei jedem render() (`wzNachladen`), 🧰 neben jedem Marktnamen (`marktLink` → `abholZeichen`),
   Fällig-Karte „An Märkten abholen / mitnehmen“ (`abholKarte`), Hinweis in der Marktinfo (`standortDetail`, `abholHinweisFuellen`) und oben im Protokoll beim gewählten Markt (`[data-abholoben]`).
   Tour: ✕ an einem Stopp hält die Ansicht beim Nachbar-Stopp (`tourAnpassen`, Inhaber 08.10.2026: „springt sonst ganz nach oben“).
@@ -924,7 +925,8 @@ Kammerlander Umwelt- und Klimatechnik (UKT) – oft kurz, vom Handy, im Feld.
   Leaflet-Karte nicht ab, sondern hält sie an und merkt den Ausschnitt (`_uktAnsicht`); `karteOsm` setzt den Container mit den geladenen Kacheln
   wieder ein (`_uktKachel`), zeichnet nur die Zeichen neu und behält den Ausschnitt, solange Auswahl/Tour/Standort gleich sind (`_uktSchluessel`);
   ältere Rückrufe prüfen `aktuell()` (`_uktGen`). Kacheln: keepBuffer 4, updateWhenIdle aus. Test „Karte bleibt erhalten …“.
-- **Diktieren** (`diktatKnopf`): Spracherkennung des Browsers, keine KI, Text wird angehängt.
+- **Diktieren** (`diktatKnopf`): Spracherkennung des Browsers, keine KI, Text wird angehängt. Hängt nie (Inhaber 31.10.2026, am iPhone blieb „hört zu …“): Stopp gibt den Knopf sofort frei (`beenden`, nicht erst auf `onend` warten), Gehörtes bleibt;
+  startet das Mikrofon nicht binnen `DIKTAT_START_MS`, bis zum Neustart gleich der Hinweis auf das Tastatur-Mikrofon (`DIKTAT_TASTATUR`); nach `DIKTAT_STILLE_MS` ohne Text Ende. Test „Diktieren hängt nie …“.
 - **Claude-Assistent** (Inhaber 29.10.2026: „den Claude-Knopf so nutzen wie ich es mit dir nutze – Protokolle, Vorbereitung, Angebot, Rechnung, Anlagenschema,
   technische Beschreibung, Mail-Vorschlag … auch Bilder oder Screenshots“): ✦ (`fragebtnKlick`) öffnet bei `assistentAn()` (kiAn + nurInhaber) `claudeAssistent`,
   sonst wie bisher `claudeFragen` („Andere Wege“ führt dorthin). Die App führt das Gespräch (`ASSI.verlauf` im Format der Claude-Schnittstelle, nur im Speicher,
@@ -943,6 +945,15 @@ Kammerlander Umwelt- und Klimatechnik (UKT) – oft kurz, vom Handy, im Feld.
   `rapTextRein` füllt Ankunft/Fertig aus dem Rapport, wenn leer; Kalender zeigt beim erledigten Einsatz die gearbeitete Zeit.
 - **Rapport-Text** (`rapTextRein`): ausgeführte Arbeiten aus dem Lidl-Rapport zusätzlich in
   „Durchgeführte Maßnahmen“ bzw. „Bemerkungen“ – nie ersetzen, kein Feld fällt weg.
+- **Rapport-Prüfung** (Inhaber 31.10.2026: „wird geprüft, ob das der richtige Rapportbericht ist?“): `rapportProbleme` = `rapportAbweichung` (Auftrag, Filiale, Tag, seit
+  31.10. Art: Kopf „Rapportzettel Störung/Wartung“ gegen die Protokollart; Reparatur/Prüfung/Sonstiges dürfen auf einem Störungs-Zettel stehen) + kein erkennbarer Zettel + Rapportnummer schon an
+  einem anderen Protokoll. Gefragt wird (`rapportFrage`, nur Hinweis, nie Sperre – Lidl-Zettel können abweichen) beim Anhängen, vor dem Zuordnen aus dem Posteingang und am gespeicherten Protokoll (`rapportProblemeAn`),
+  beim Speichern nur noch, was neu ist (`form._rapNochFragen`, `P.rapBestaetigt`; beim abgelegten Rapport nur, was die Korrektur neu verursacht). Bei „Nein“ kommt nichts ins Protokoll. Geführt: Warnung sichtbar in „Fotos und
+  Rapport“ (`[data-rapinfo]`) und in der Übersicht. Echte Archiv-Rapporte (166) am 31.10. probegelesen; „Rapport ohne IMS-Auftrag“ hat keine Art und oft keine Auftragsnummer – dort entfällt der jeweilige Vergleich. Test „Rapportbericht wird geprüft …“.
+- **Fotos groß ansehen** (Inhaber 31.10.2026): Vorschau im Schritt „Fotos und Rapport“ (`[data-fotogross]`) und im Formular öffnet `bildAnsicht`.
+- **Entwurf im geführten Protokoll** (Inhaber 31.10.2026: „nicht zwischengespeichert nach dem Neustart“): der Dialog liegt außerhalb des Formulars, seine Eingaben zählten nicht als `echteArbeit`, der Entwurf wurde sogar gelöscht.
+  Jetzt `form._entwurfEcht`: jede Eingabe im Dialog außer Marktsuche/Anlagen-Haken und jeder Schritt über die Anlagen hinaus. „Schritt für Schritt“ fragt bei einem Entwurf für denselben Markt zuerst nach (`P.entwurfKasten`, `P.entwurfMarkt`; ein Entwurf von woanders ersetzte sonst das Geöffnete). Test „Geführtes Protokoll überlebt …“.
+- **Antippen einer Nachricht** (Inhaber 31.10.2026: „alter Stand, ich muss neu laden und den Markt neu öffnen“): `pushZiel` lädt auch vor einem bekannten Markt frisch (`frischLaden`), wie bei Störung und Protokoll.
 - **Fahrtpauschale** (`fahrtZone`, Büro 02.10.2026): Zone 2 = Kärnten, Steiermark, Vorarlberg, Tirol westlich von
   Innsbruck (Innsbruck selbst Zone 1), Osttirol; sonst Zone 1. `einsatzPositionen` nimmt die Katalog-Position der Zone. Nur auf Anweisung ändern.
 - **Fahrzeuge** (tools/fahrzeuge.sql, Büro 02.10.2026): km, Pickerl, Service, Reparatur, Schaden; Techniker nur

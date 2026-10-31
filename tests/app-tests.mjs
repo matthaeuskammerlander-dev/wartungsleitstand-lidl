@@ -10709,6 +10709,197 @@ test("Geführtes Protokoll, Schritt Markt: schon gewählt = nur dieser Markt, Li
   pruefe(r.weiter && r.karte2.indexOf(r.zielName) >= 0, "Anderer Markt: " + JSON.stringify(r));
 });
 
+test("Geführtes Protokoll überlebt das Beenden der App: Getipptes und weitergegangene Schritte bleiben als Entwurf; nur Hineinschauen nicht (Inhaber 31.10.2026)", async () => {
+  const a = await oeffnen(KONTEN.techniker, { handy: true });
+  const zumSchritt = (ziel) => a.seite.evaluate(async (ziel) => {
+    const x = window.__t.x, w = (ms) => new Promise((f) => setTimeout(f, ms));
+    x("formDirty=false; S.protoArt='stoerung'; S.stoerungAus=null; S.bearbeiten=null; S.protoStandort='TS1'; S.protoPos='TP1'; S.view='protokoll'; render(); 1"); await w(450);
+    document.getElementById("p_gefuehrt").click(); await w(300);
+    const ov = () => document.querySelector(".assistent[data-gefuehrt]"), schritt = () => ov().querySelector(".as-schritt").textContent;
+    for (let i = 0; i < 25 && !new RegExp(ziel).test(schritt()); i++) {
+      const b = [...ov().querySelectorAll(".as-fuss button")].reverse().find((k) => /Weiter|Überspringen|weiter/.test(k.textContent)); if (!b) break;
+      b.click(); await w(150);
+    }
+    return schritt();
+  }, ziel);
+  const neuStart = async () => {
+    await a.seite.waitForTimeout(1800);
+    await a.seite.evaluate(() => window.__t.x("entwurfSofort=null; formDirty=false; 1"));   /* geschrieben ist er; die Rückfrage beim Neuladen gibt es beim echten Beenden nicht */
+    await a.seite.reload({ waitUntil: "load" });
+    await a.seite.waitForFunction(() => !!window.__t, null, { timeout: 30000 });
+    await a.seite.evaluate((m) => window.__t.x(`Store.sb.auth.signInWithPassword({email:'${m}',password:'test123'})`), KONTEN.techniker);
+    await a.seite.waitForFunction(() => window.__t.x("Rolle.da && Store.modus==='supabase' && !anzeigeGesperrt()"), null, { timeout: 15000 });
+    await a.seite.waitForTimeout(800);
+    return a.seite.evaluate(async () => {
+      const x = window.__t.x, w = (ms) => new Promise((f) => setTimeout(f, ms));
+      x("S.protoArt='stoerung'; S.stoerungAus=null; S.bearbeiten=null; S.view='protokoll'; render(); 1"); await w(500);
+      const k = [...document.querySelectorAll(".note.warnbox")].find((n) => /Angefangenes Protokoll gefunden/.test(n.textContent));
+      if (!k) return { da: false };
+      k.querySelector('[data-e="weiter"]').click(); await w(400);
+      const wert = (document.querySelector("#s_massnahmen") || {}).value || "";
+      return { da: true, wert };
+    });
+  };
+  const wegRaeumen = () => a.seite.evaluate(async () => { const x = window.__t.x; await x("idbVorgang('readwrite',function(st){ return st.clear(); },'entwurf')"); x("entwurfStand=null; formDirty=false; 1"); });
+  /* getippt im geführten Dialog */
+  const s1 = await zumSchritt("Störungsbehebung$");
+  const feld = a.seite.locator(".assistent[data-gefuehrt] textarea").last();
+  await feld.click(); await feld.pressSequentially("Lüfter getauscht");
+  const r1 = await neuStart();
+  await wegRaeumen();
+  /* nichts getippt, aber schon weiter als die Anlagen – der Fall vom iPhone */
+  const s2 = await zumSchritt("Störungsbehebung$");
+  const r2 = await neuStart();
+  await wegRaeumen();
+  /* nur Formular angesehen: kein Entwurf */
+  await a.seite.evaluate(async () => { const x = window.__t.x; x("S.protoArt='stoerung'; S.stoerungAus=null; S.protoStandort='TS1'; S.protoPos='TP1'; S.view='protokoll'; render(); 1"); await new Promise((f) => setTimeout(f, 300)); document.getElementById("p_gefuehrt").click(); });
+  const r3 = await neuStart();
+  await a.zu();
+  pruefe(/Störungsbehebung$/.test(s1) && r1.da && r1.wert === "Lüfter getauscht", "Getipptes kommt wieder: " + JSON.stringify([s1, r1]));
+  pruefe(/Störungsbehebung$/.test(s2) && r2.da, "Weitergegangene Schritte kommen wieder: " + JSON.stringify([s2, r2]));
+  pruefe(!r3.da, "Nur geöffnet: kein Entwurf: " + JSON.stringify(r3));
+});
+
+test("Diktieren hängt nie (Inhaber 31.10.2026): Stopp wirkt sofort auch ohne Meldung des Browsers, Gehörtes bleibt, startet es nicht → Tastatur", async () => {
+  const a = await oeffnen(KONTEN.techniker, { handy: true });
+  const r = await a.seite.evaluate(async () => {
+    const x = window.__t.x, w = (ms) => new Promise((f) => setTimeout(f, ms)), e = {};
+    window.__sr = [];
+    /* ein Browser, der nach stop() und abort() nichts mehr meldet */
+    window.webkitSpeechRecognition = window.SpeechRecognition = function () { window.__sr.push(this); this.start = () => {}; this.stop = () => {}; this.abort = () => {}; };
+    const ta = document.createElement("textarea"); document.body.appendChild(ta); ta.value = "Vorher";
+    window.__ta = ta; window.__k = x("diktatKnopf(window.__ta)"); document.body.appendChild(window.__k);
+    const k = window.__k;
+    k.click(); e.wartet = k.textContent;
+    window.__sr[0].onstart(); e.hoert = k.textContent;
+    window.__sr[0].onresult({ resultIndex: 0, results: [{ isFinal: false, 0: { transcript: "Filter verstopft" } }] }); e.zwischen = ta.value;
+    k.click(); e.nachStopp = k.textContent; e.frei = x("DIKTAT===null"); e.textBleibt = ta.value;
+    window.__sr[0].onresult({ resultIndex: 0, results: [{ isFinal: true, 0: { transcript: "zu spät" } }] }); e.spaet = ta.value;
+    k.click(); e.zweiterLauf = window.__sr.length === 2; k.click();
+    /* startet gar nicht: nach der Wartezeit frei, danach gleich die Tastatur */
+    x("DIKTAT_START_MS=60; 1");
+    k.click(); await w(150);
+    e.startFrei = k.textContent; e.tastatur = x("DIKTAT_TASTATUR");
+    const n = window.__sr.length; k.click(); e.keinNeuerLauf = window.__sr.length === n;
+    x("DIKTAT_TASTATUR=false; DIKTAT_START_MS=10000; 1");
+    k.remove(); ta.remove();
+    return e;
+  });
+  await a.zu();
+  pruefe(/Mikrofon/.test(r.wartet) && /hört zu/.test(r.hoert) && /Filter verstopft/.test(r.zwischen), "Anzeige beim Start: " + JSON.stringify(r));
+  pruefe(r.nachStopp === "🎤" && r.frei && r.textBleibt === "Vorher Filter verstopft" && r.spaet === r.textBleibt, "Stopp sofort, Text bleibt, Späteres zählt nicht: " + JSON.stringify(r));
+  pruefe(r.zweiterLauf, "Neuer Lauf möglich: " + JSON.stringify(r));
+  pruefe(r.startFrei === "🎤" && r.tastatur === true && r.keinNeuerLauf, "Startet nicht → Tastatur: " + JSON.stringify(r));
+});
+
+test("Abholen: „nicht mehr da“ schließt mit Vermerk ab, Häkchen weg öffnet wieder ohne Vermerk (Inhaber 31.10.2026)", async () => {
+  const a = await oeffnen(KONTEN.techniker, { handy: true });
+  const r = await a.seite.evaluate(async () => {
+    const x = window.__t.x, w = (ms) => new Promise((f) => setTimeout(f, ms)), e = {};
+    await x("wzLaden()"); await w(100);
+    const b = await x("bedarfSpeichern(null, {art:'werkzeug', text:'Leiter TestND', beschaffung:'abholen', standort_id:'TS1', bezugsquelle:'im Markt', status:'offen', notiz:'Nicht auffindbar'})");
+    window.__b = b;
+    window.__mit = await x("bedarfSpeichern(null, {art:'material', text:'Filter TestND', beschaffung:'mitnehmen', standort_id:'TS1', status:'offen'})");
+    e.knopfAbholen = !!x("bedarfZeile(window.__b)").querySelector("[data-nichtda]");
+    e.knopfMitnehmen = !!x("bedarfZeile(window.__mit)").querySelector("[data-nichtda]");
+    e.offenVorher = x("marktAbholen('TS1').length");
+    window.__ja = false; window.__fragen = []; window.confirm = (m) => { window.__fragen.push(String(m)); return window.__ja; };
+    const z = x("bedarfZeile(window.__b)"); document.body.appendChild(z);
+    z.querySelector("[data-nichtda]").click(); await w(100);
+    e.neinBleibt = x("BEDARF.filter(function(q){ return q.id===window.__b.id; })[0].status");
+    window.__ja = true; z.querySelector("[data-nichtda]").click(); await w(250); z.remove();
+    const n = x("BEDARF.filter(function(q){ return q.id===window.__b.id; })[0]"); window.__n = n;
+    e.status = n.status; e.notiz = n.notiz; e.offenNachher = x("marktAbholen('TS1').length");
+    const z2 = x("bedarfZeile(window.__n)");
+    e.zeigt = (z2.querySelector("[data-nichtdatext]") || {}).textContent || ""; e.keinKnopfMehr = !z2.querySelector("[data-nichtda]");
+    await x("bedarfStatus(window.__n, 'offen')"); await w(100);
+    const o = x("BEDARF.filter(function(q){ return q.id===window.__b.id; })[0]");
+    e.wiederStatus = o.status; e.wiederNotiz = o.notiz;
+    return e;
+  });
+  await a.zu();
+  pruefe(r.knopfAbholen && !r.knopfMitnehmen, "Knopf nur bei „abholen“: " + JSON.stringify(r));
+  pruefe(r.neinBleibt === "offen", "Nein ändert nichts: " + JSON.stringify(r));
+  pruefe(r.status === "erledigt" && /^Nicht mehr da – /.test(r.notiz) && /Nicht auffindbar/.test(r.notiz) && r.offenNachher === r.offenVorher - 1, "Abgeschlossen mit Vermerk: " + JSON.stringify(r));
+  pruefe(/Nicht mehr da/.test(r.zeigt) && r.keinKnopfMehr, "Zeile zeigt den Vermerk: " + JSON.stringify(r));
+  pruefe(r.wiederStatus === "offen" && r.wiederNotiz === "Nicht auffindbar", "Wieder offen, alte Notiz bleibt: " + JSON.stringify(r));
+});
+
+test("Rapportbericht wird geprüft: Art, Filiale, Auftrag, Datum; beim Anhängen und Speichern gefragt; Fotos im geführten Schritt groß ansehen (Inhaber 31.10.2026)", async () => {
+  const a = await oeffnen(KONTEN.techniker, { handy: true });
+  const r = await a.seite.evaluate(async () => {
+    const x = window.__t.x, w = (ms) => new Promise((f) => setTimeout(f, ms)), e = {};
+    /* Prüfung selbst: je Fall die Sätze */
+    e.fil = String(x("byId.TS1.filiale")); e.heute = x("isoLokal(new Date())");
+    window.__o = { filiale: e.fil, datum: e.heute, auftrag: "600000001", stoer: false, wartungsart: "planmäßig" };
+    const zettel = (m) => JSON.stringify(Object.assign({ art: "Wartung", lesbar: true, filiale: e.fil, auftrag: "600000001", nummer: "39990001", zeilen: [{ datum: e.heute, arbeiten: "Wartung", personen: 1, von: "08:00", bis: "09:00", stunden: "1:00" }] }, m));
+    const pr = (m, o) => x("rapportProbleme(" + (m === null ? "null" : zettel(m)) + ", Object.assign({}, window.__o, " + JSON.stringify(o || {}) + ")).map(function(v){ return v.text; })");
+    e.passt = pr({});
+    e.artStoer = pr({ art: "Störung" });
+    e.artRep = pr({ art: "Störung" }, { wartungsart: "Reparatur" });
+    e.artWart = pr({}, { stoer: true });
+    e.filiale = pr({ filiale: "99912" });
+    e.auftrag = pr({ auftrag: "600000002" });
+    e.datum = pr({ zeilen: [{ datum: "2020-01-02", arbeiten: "x", personen: 1, von: "08:00", bis: "09:00", stunden: "1:00" }] });
+    e.keinZettel = pr(null);
+    /* Ablauf im geführten Protokoll */
+    x("formDirty=false; S.protoArt='wartung'; S.stoerungAus=null; S.bearbeiten=null; S.protoStandort='TS1'; S.protoPos='TP1'; S.view='protokoll'; render(); 1"); await w(450);
+    document.getElementById("p_gefuehrt").click(); await w(300);
+    const ov = () => document.querySelector(".assistent[data-gefuehrt]"), schritt = () => ov().querySelector(".as-schritt").textContent;
+    for (let i = 0; i < 25 && !/Fotos und Rapport$/.test(schritt()); i++) {
+      const b = [...ov().querySelectorAll(".as-fuss button")].reverse().find((k) => /Weiter|Überspringen|weiter/.test(k.textContent)); if (!b) break;
+      b.click(); await w(150);
+    }
+    e.schritt = schritt();
+    const form = document.querySelector("#s_rapport").closest("form");
+    /* Foto groß ansehen */
+    const cv = document.createElement("canvas"); cv.width = cv.height = 40; cv.getContext("2d").fillRect(0, 0, 40, 40);
+    form._fotos.liste().push({ datenUrl: cv.toDataURL("image/jpeg"), bytes: 500, hinweis: "" }); form._fotos.zeichnen(); await w(100);
+    const lupe = ov().querySelector("[data-fotogross]"); e.lupe = !!lupe;
+    if (lupe) {
+      lupe.click(); await w(250);
+      const gross = document.querySelector("[data-bildrahmen] img");
+      e.fotoGross = !!gross && !!gross.src;
+      if (gross) { const q = gross.getBoundingClientRect(); const oben = document.elementFromPoint(q.left + q.width / 2, q.top + Math.min(q.height, 200) / 2); e.fotoOben = gross === oben; e.fotoBreit = q.width > 200; }
+      const zu = [...document.querySelectorAll("button")].filter((b) => /^(Schließen|Zurück|←.*|✕)$/.test(b.textContent.trim()) && !ov().contains(b)).pop(); if (zu) zu.click(); await w(200);
+    }
+    e.nochImSchritt = !!ov() && /Fotos und Rapport$/.test(schritt());
+    /* Rapport anhängen: falscher Markt – Nein hängt nichts an, Ja hängt an, beim Speichern nicht nochmals gefragt */
+    window.__rap = JSON.parse(zettel({ filiale: "99912" }));
+    x("leseRapport=function(){ return Promise.resolve(window.__rap); }; 1");
+    window.__fragen = []; window.__ja = false; window.confirm = (m) => { window.__fragen.push(String(m)); return window.__ja; };
+    const wahl = () => { const dt = new DataTransfer(); dt.items.add(new File([new Blob(["%PDF-1.4"], { type: "application/pdf" })], "rapport.pdf", { type: "application/pdf" })); const i = form.querySelector("#s_rapport"); i.files = dt.files; i.dispatchEvent(new Event("change", { bubbles: true })); };
+    wahl(); await w(200);
+    e.neinFrage = window.__fragen.slice(); e.neinInfo = form.querySelector("#s_rapportinfo").textContent; e.neinKeinText = !/Laut Lidl-Rapport/.test(form.querySelector("#f_bem").value);
+    window.__ja = true; window.__fragen = [];
+    wahl(); await w(200);
+    e.jaFragen = window.__fragen.length;
+    e.warnForm = (form.querySelector("#s_rapportinfo .warnbox") || {}).textContent || "";
+    e.warnDialog = (ov().querySelector("[data-rapinfo] .warnbox") || {}).textContent || "";
+    e.dialogSprung = !!ov().querySelector("[data-rapinfo] [data-zufeld]");
+    e.nochZuFragen = form._rapNochFragen().length;
+    /* Datum geändert → neuer Grund → wieder zu fragen; im Dialog führt Nein zurück zum Rapport */
+    form.querySelector("#f_datum").value = "2020-01-02";
+    e.nachDatum = form._rapNochFragen().map((v) => v.text);
+    form.querySelector("#f_datum").value = e.heute;
+    /* entfernen im Dialog wirkt */
+    const weg = ov().querySelector('[data-rapinfo] [data-a="rapweg"]'); e.wegDa = !!weg; if (weg) { weg.click(); await w(100); }
+    e.wegInfo = form.querySelector("#s_rapportinfo").textContent;
+    x("formDirty=false; 1");
+    return e;
+  });
+  await a.zu();
+  pruefe(r.passt.length === 0, "Passender Zettel ohne Meldung: " + JSON.stringify(r.passt));
+  pruefe(/Rapportzettel „Störung“/.test(r.artStoer.join()) && r.artRep.length === 0 && /Rapportzettel „Wartung“/.test(r.artWart.join()), "Art: " + JSON.stringify([r.artStoer, r.artRep, r.artWart]));
+  pruefe(/Filiale 99912/.test(r.filiale.join()) && /600000002/.test(r.auftrag.join()) && /02\.01\.2020/.test(r.datum.join()) && /Nicht als Lidl-Rapportzettel/.test(r.keinZettel.join()), "Filiale, Auftrag, Datum, kein Zettel: " + JSON.stringify([r.filiale, r.auftrag, r.datum, r.keinZettel]));
+  pruefe(/Fotos und Rapport$/.test(r.schritt), "Schritt erreicht: " + r.schritt);
+  pruefe(r.lupe && r.fotoGross && r.fotoOben && r.fotoBreit && r.nochImSchritt, "Foto groß und danach zurück im Schritt: " + JSON.stringify([r.lupe, r.fotoGross, r.fotoOben, r.fotoBreit, r.nochImSchritt]));
+  pruefe(r.neinFrage.length === 1 && /Filiale 99912/.test(r.neinFrage[0]) && /noch keiner/.test(r.neinInfo) && r.neinKeinText, "Nein hängt nichts an: " + JSON.stringify([r.neinFrage, r.neinInfo, r.neinKeinText]));
+  pruefe(r.jaFragen === 1 && /Filiale 99912/.test(r.warnForm) && /Filiale 99912/.test(r.warnDialog) && !r.dialogSprung, "Ja hängt an, Warnung sichtbar: " + JSON.stringify([r.jaFragen, r.warnForm, r.warnDialog, r.dialogSprung]));
+  pruefe(r.nochZuFragen === 0 && r.nachDatum.length === 1 && /02\.01\.2020/.test(r.nachDatum[0]), "Beantwortetes nicht nochmals, Neues schon: " + JSON.stringify([r.nochZuFragen, r.nachDatum]));
+  pruefe(r.wegDa && /noch keiner/.test(r.wegInfo), "Entfernen im Dialog: " + JSON.stringify([r.wegDa, r.wegInfo]));
+});
+
 test("Zugänge: mehrere Benutzer je Regelung – anlegen, entfernen mit Rückfrage, speichern, neu laden; Verlauf ohne Werte; Kunde/Präsentation sehen nichts; altes Paar bleibt", async () => {
   const a = await oeffnen(KONTEN.admin, { handy: true });
   const r = await a.seite.evaluate(async () => {
