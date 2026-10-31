@@ -9283,7 +9283,7 @@ function anlageDialogTeilKi(P){
           }
         }
         var verworfen=gelesen._verworfen||[]; delete gelesen._verworfen;
-        var hinweis=[d.hinweise, intervallHinweis,
+        var hinweis=[d.hinweise, kiZweiWerteText(d.anlage), intervallHinweis,
           verworfen.length?"Nicht übernommen (ungültiges Datum oder in der Zukunft): "+verworfen.join(", ")+".":"",
           nw.ungueltig.length?"Nicht übernommen (Datum in der Zukunft oder ungültig): "+nw.ungueltig.join(", ")+".":""].filter(Boolean).join(" ");
         /* „unsicher“ auf die Schlüssel der Prüfansicht bringen: Pfade („anlage.x“,
@@ -9483,6 +9483,7 @@ function anlageDialogTeilFelder(P){
      Korrektur); mit Punkt eingegeben → sagen, wie die Zahl gelesen wurde */
   function zahlHinweisText(i){
     var n=zahlLesen(i.value);
+    if(n!==n && i.dataset.in==="leistungKw" && kiZweiWerte(i.value)) return "Zwei Werte – hier nur die Kälteleistung eintragen, z. B. 57.";
     if(n!==n) return "„"+i.value.trim()+"“ ist keine lesbare Zahl – bitte z. B. 12,5 eingeben.";
     return (n!=null && i.value.indexOf(".")>=0) ? "gelesen als "+String(n).replace(".",",") : "";
   }
@@ -13191,7 +13192,8 @@ function chatOeffnen(opt){
   if(entw && ((opt.bezug && !(entw.bezug && entw.bezug.art===opt.bezug.art && entw.bezug.id===opt.bezug.id)) || (opt.an && opt.an!==entw.an)))
     toast("Die angefangene Nachricht steht wieder da – bitte Empfänger und Bezug prüfen.");
   var box=el('<div class="stack" style="gap:10px" data-chatfenster>'+
-    '<div class="chips" data-reiter><button class="chip" type="button" data-r="chat" aria-pressed="true">Chat<span data-czahl></span></button>'+
+    /* bleibt beim Scrollen oben stehen (Inhaber 31.10.2026: „man muss immer nach oben scrollen“) */
+    '<div class="chips" data-reiter style="position:sticky;top:-16px;z-index:5;background:var(--surface);margin:-16px -16px 0;padding:8px 16px;border-bottom:1px solid var(--line)"><button class="chip" type="button" data-r="chat" aria-pressed="true">Chat<span data-czahl></span></button>'+
       '<button class="chip" type="button" data-r="meldungen" aria-pressed="false">Meldungen<span data-mzahl></span></button></div>'+
     '<div class="stack" data-meldungen hidden style="gap:6px"></div>'+
     '<div class="chatliste" data-liste></div>'+
@@ -16111,8 +16113,18 @@ function kiFotosWaehlen(){
   });
 }
 /* Werte aus der KI in die Form der App bringen */
+/* zwei Zahlen in einem Feld (Inhaber 31.10.2026: manche Firmen schreiben Heiz- und Kühlleistung
+   mit / getrennt ins Prüfbuch): welche gilt, entscheidet der Mensch – Reihenfolge je Firma anders */
+function kiZweiWerte(t){ return /\d\s*[^\d\s,.\-]+\s*\D*\d/.test(String(t==null?"":t)); }
+function kiZweiWerteText(k){
+  var l=KI_ZAHLFELDER.filter(function(x){ return k && kiZweiWerte(k[x]); }).map(function(x){
+    return (ANLAGE_FELDER.filter(function(f){ return f.k===x; })[0]||{l:x}).l+" „"+k[x]+"“"; });
+  return l.length ? "Zwei Werte gelesen, nicht übernommen – bitte von Hand eintragen: "+l.join(", ")+"." : "";
+}
+var KI_ZAHLFELDER=["kaeltemittelKg","gwp","leistungKw","psBar","toC","tkC","psv"];
 /* Zahl aus Text: „1.975,3“ und „1975,3“ und „1975.3“ – Tausenderpunkte erkannt */
 function kiZahl(t){
+  if(kiZweiWerte(t)) return null;   /* nie zusammenkleben: „57/63“ war 5763 */
   var v=String(t||"").replace(/[^\d,.\-]/g,"");
   if(v.indexOf(",")>=0) v=v.replace(/\./g,"").replace(",",".");
   else if(/^[1-9]\d{0,2}(\.\d{3})+$/.test(v)) v=v.replace(/\./g,"");   /* „0.500“ bleibt 0,5 */
@@ -16138,7 +16150,7 @@ function kiAnlage(k){
   setz("kreislaeufe", kiZahl(k.kreislaeufe)!=null ? Math.round(kiZahl(k.kreislaeufe)) : null);
   var km=String(k.kaeltemittelArt||"").replace(/[\s\-]+/g,"").toUpperCase().replace(/^(R\d+)([A-Z]?)$/,"$1$2");
   setz("kaeltemittelArt", KAELTEMITTEL.filter(function(x){ return x.toUpperCase()===km; })[0] || km);
-  ["kaeltemittelKg","gwp","leistungKw","psBar","toC","tkC","psv"].forEach(function(x){ setz(x, kiZahl(k[x])); });
+  KI_ZAHLFELDER.forEach(function(x){ setz(x, kiZahl(k[x])); });
   /* Füllgewicht je Kältekreislauf (Prüfbuch Seite 2) – „HJW ab 30 kg“ gilt je Kreis (Inhaber 06.10.2026).
      Steht keine Gesamtfüllmenge da, ist sie die Summe der Kreise. */
   var kk=(Array.isArray(k.kgKreise) ? k.kgKreise : (leerWert(k.kgKreise) ? [] : String(k.kgKreise).split(/[\/;|]/))).map(kiZahl);
@@ -16524,11 +16536,24 @@ function protoAssistentTeilMarkt(P){
     /* ---- Schritte ---- */
     P.schritte=[];
 
-    P.schritte.push({titel:"Markt", zeigen:function(){
+    /* schon gewählt (Inhaber 31.10.2026: „der Techniker ist immer versucht, den Markt auszuwählen“): nur der Markt, die Liste erst auf Wunsch */
+    var marktListeAuf=false;
+    var marktSchritt={titel:"Markt", zeigen:function(){
       var aktuell=f("#f_standort").value;
+      if(aktuell && !marktListeAuf){
+        var sg=byId[aktuell]||{};
+        inhalt.innerHTML=frage("Stimmt der Markt?");
+        inhalt.appendChild(el('<div class="posbox" data-marktgewaehlt><div style="font-size:16px"><strong>✓ '+esc(byId[aktuell]?stName(sg):aktuell)+"</strong></div>"+
+          '<div class="muted" style="font-size:12.5px">'+esc(sg.adresse||"")+(sg.filiale?" · Filiale "+esc(sg.filiale):"")+"</div></div>"));
+        var anders=el('<button class="btn ghost sm" type="button" data-marktanders style="justify-self:start">Anderen Markt wählen</button>');
+        anders.onclick=function(){ marktListeAuf=true; marktSchritt.zeigen(); };
+        inhalt.appendChild(anders);
+        return;
+      }
+      var marktGewaehlt=function(s){ var sel=f("#f_standort"); sel.value=s.id; sel.onchange(); formDirty=true; marktListeAuf=false; P.weiter(); };
       inhalt.innerHTML=frage("In welchem Markt sind Sie?");
       var suche=el('<input type="search" placeholder="Filiale, Ort oder Adresse suchen …" style="width:100%">');
-      var liste=el('<div class="stack" style="max-height:46vh;overflow:auto"></div>');
+      var liste=el('<div class="stack" style="max-height:46vh;overflow:auto;grid-auto-rows:max-content"></div>');
       var zeichne=function(){
         var q=suche.value.trim().toLowerCase();
         liste.innerHTML="";
@@ -16538,21 +16563,19 @@ function protoAssistentTeilMarkt(P){
             var b=el('<button class="chip" type="button" style="display:block;width:100%;text-align:left;padding:10px 12px"'+
               (s.id===f("#f_standort").value?' aria-pressed="true"':"")+"><strong>"+esc(stName(s))+"</strong>"+
               '<br><span class="muted" style="font-size:12.5px">'+esc(s.adresse)+(s.filiale?" · Filiale "+esc(s.filiale):"")+"</span></button>");
-            b.onclick=function(){
-              var sel=f("#f_standort"); sel.value=s.id; sel.onchange(); formDirty=true;
-              P.weiter();
-            };
+            b.onclick=function(){ marktGewaehlt(s); };
             liste.appendChild(b);
           });
       };
       suche.oninput=zeichne; zeichne();
       /* der schnellste Weg vor Ort: die nächsten Märkte (antippen = gewählt, weiter) */
-      inhalt.appendChild(naeheAuswahl(function(s){ var sel=f("#f_standort"); sel.value=s.id; sel.onchange(); formDirty=true; P.weiter(); }));
+      inhalt.appendChild(naeheAuswahl(marktGewaehlt));
       inhalt.appendChild(feldRahmen("Markt suchen", suche));
       inhalt.appendChild(liste);
       if(aktuell) inhalt.appendChild(el('<div class="muted" style="font-size:12.5px">Gewählt: <strong>'+
         esc(byId[aktuell]?stName(byId[aktuell]):aktuell)+"</strong> – weiter mit „Weiter“.</div>"));
-    }, pruefen:function(){ return f("#f_standort").value ? "" : "Bitte einen Markt wählen."; }});
+    }, pruefen:function(){ return f("#f_standort").value ? "" : "Bitte einen Markt wählen."; }};
+    P.schritte.push(marktSchritt);
     P.schritte.push({titel:stoer?"Betroffene Anlagen":"Gewartete Anlagen", zeigen:function(){
       inhalt.innerHTML=frage(stoer?"Welche Anlage war betroffen?":"Welche Anlagen haben Sie gewartet?");
       /* offene Fragen „Vor Ort klären“ zum Markt – auch hier, sonst sähe sie, wer Schritt

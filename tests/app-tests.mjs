@@ -10590,6 +10590,92 @@ test("Viessmann in der Bezeichnung: vor dem Wegfallen wird gefragt – Anlagendi
   pruefe(r.zusammen[0] === 1 && r.zusammen[1] && r.zusammen[2] && r.zusammen[3] === true, "Zusammenführen: " + JSON.stringify(r));
 });
 
+/* Inhaber 31.10.2026: 613665 kW in der Klosterneuburgerstraße, „manche Firmen geben Heiz- und Kühlleistung mit / getrennt an“; dazu „die Ziffer 6 konnte ich nicht eintippen“ */
+test("Zwei Werte in einem Feld (Heiz-/Kühlleistung): nie zusammenkleben – Hinweis statt Unsinn; von Hand geht jede Ziffer", async () => {
+  const a = await oeffnen(KONTEN.admin, { handy: true });
+  await afHilfen(a);
+  const r = await a.seite.evaluate(async () => {
+    const x = window.__t.x, w = (ms) => new Promise((f) => setTimeout(f, ms)), af = window.__af, e = {};
+    e.zahlen = ["57/63", "613/665", "61,3 / 66,5", "57 kW Heizen 63", "61,3", "1.975,3", "1 975", "39,8 kg"].map((t) => x("kiZahl")(t));
+    window.__kiAntwort = () => ({ data: { art: "pruefbuch", modell: "test", daten: { pruefbuecher: [{ anlage: { bezeichnung: "Zwei Werte", leistungKw: "57/63", psBar: "40", kaeltemittelKg: "22,4" }, pruefungen: [], unsicher: [], hinweise: "" }], bilder: [], hinweise: "" } }, error: null });
+    x("anlageDatenErgaenzen")(x("posById.TP1"), null, "leistungKw"); await w(300);
+    const ov = () => [...document.querySelectorAll(".assistent")].pop();
+    [...ov().querySelectorAll(".as-fuss button")].find((k) => /Übersicht/.test(k.textContent)).click(); await w(100);
+    e.lesen = await af.lesen(1); await w(500);
+    e.text = ov().innerText;
+    e.kw = x("kiAnlage")({ leistungKw: "57/63", psBar: "40" });
+    window.__kiAntwort = null;
+    return e;
+  });
+  const fehlKi = JSON.stringify(r.zahlen) === JSON.stringify([null, null, null, null, 61.3, 1975.3, 1975, 39.8]);
+  pruefe(fehlKi, "Zahlen: " + JSON.stringify(r.zahlen));
+  pruefe(!("leistungKw" in r.kw) && r.kw.psBar === 40, "Zwei Werte dürfen nicht übernommen werden: " + JSON.stringify(r.kw));
+  pruefe(!r.lesen && /Zwei Werte gelesen.*Kälteleistung.*57\/63/.test(r.text), "Hinweis fehlt in der Prüfansicht: " + r.lesen + " | " + r.text.slice(0, 400));
+  await a.zu();
+  /* von Hand: echte Tastenanschläge im Feld Kälteleistung */
+  const b = await oeffnen(KONTEN.admin, { handy: true });
+  await b.seite.evaluate(async () => { window.__t.x("anlageDatenErgaenzen")(window.__t.x("posById.TP1"), null, "leistungKw"); await new Promise((f) => setTimeout(f, 300)); });
+  const feld = b.seite.locator('.assistent [data-in="leistungKw"]').last();
+  await feld.click(); await feld.fill(""); await b.seite.keyboard.type("1234567890,6");
+  const wert = await feld.inputValue();
+  await feld.fill(""); await b.seite.keyboard.type("57/63");
+  const hinweis = await b.seite.locator('.assistent [data-hinweis="leistungKw"]').last().textContent();
+  await b.zu();
+  pruefe(wert === "1234567890,6", "Tasten kommen nicht an: " + wert);
+  pruefe(/nur die Kälteleistung/.test(hinweis), "Hinweis von Hand: " + hinweis);
+});
+
+test("Team-Chat am Handy: Chat und Meldungen bleiben beim Scrollen erreichbar (Inhaber 31.10.2026)", async () => {
+  const a = await oeffnen(KONTEN.admin, { handy: true });
+  const r = await a.seite.evaluate(async () => {
+    const x = window.__t.x, w = (ms) => new Promise((f) => setTimeout(f, ms)), e = {};
+    x("chatOeffnen")(); await w(500);
+    const f = document.querySelector("[data-chatfenster]"), sc = f.closest(".as-inhalt"), rl = f.querySelector("[data-reiter]");
+    const lage = (art) => { const b = f.querySelector('[data-r="' + art + '"]'), q = b.getBoundingClientRect(), o = sc.getBoundingClientRect();
+      const t = document.elementFromPoint(q.left + q.width / 2, q.top + q.height / 2); return { oben: q.top >= o.top - 1, trifft: !!t && (t === b || b.contains(t)) }; };
+    const prufe = async (art, liste) => { liste.style.minHeight = "3000px"; sc.scrollTop = 1500; await w(150); return [sc.scrollTop > 500, lage("chat"), lage("meldungen")]; };
+    e.chat = await prufe("chat", f.querySelector("[data-liste]"));
+    f.querySelector('[data-r="meldungen"]').click(); await w(300);
+    e.gewechselt = !f.querySelector("[data-meldungen]").hidden;
+    e.meld = await prufe("meldungen", f.querySelector("[data-meldungen]"));
+    f.querySelector('[data-r="chat"]').click(); await w(300);
+    e.zurueck = f.querySelector("[data-meldungen]").hidden;
+    return e;
+  });
+  await a.zu();
+  const gut = (l) => l[0] && l[1].oben && l[1].trifft && l[2].oben && l[2].trifft;
+  pruefe(gut(r.chat) && gut(r.meld) && r.gewechselt && r.zurueck, JSON.stringify(r));
+});
+
+test("Geführtes Protokoll, Schritt Markt: schon gewählt = nur dieser Markt, Liste erst auf Wunsch, Zeilen überlappen nicht (Inhaber 31.10.2026)", async () => {
+  const a = await oeffnen(KONTEN.techniker, { handy: true });
+  const r = await a.seite.evaluate(async () => {
+    const x = window.__t.x, w = (ms) => new Promise((f) => setTimeout(f, ms)), e = {};
+    x("formDirty=false; S.protoArt='wartung'; S.stoerungAus=null; S.bearbeiten=null; S.protoStandort='TS1'; S.protoPos='TP1'; S.view='protokoll'; render(); 1"); await w(450);
+    document.getElementById("p_gefuehrt").click(); await w(300);
+    const ov = () => document.querySelector(".assistent[data-gefuehrt]"), schritt = () => ov().querySelector(".as-schritt").textContent;
+    e.schritt = schritt();
+    e.karte = (ov().querySelector("[data-marktgewaehlt]") || {}).textContent || "";
+    e.name = x("stName(byId.TS1)");
+    e.listeZu = !ov().querySelector('input[type="search"]') && !ov().querySelector(".as-inhalt .chip");
+    ov().querySelector("[data-marktanders]").click(); await w(200);
+    e.listeAuf = !!ov().querySelector('input[type="search"]');
+    const z = [...ov().querySelectorAll(".as-inhalt button.chip")].filter((b) => /<br>/.test(b.innerHTML));
+    e.zeilen = z.length;
+    e.ueberlappt = z.slice(1).filter((b, i) => b.getBoundingClientRect().top < z[i].getBoundingClientRect().bottom - 0.5 || z[i].scrollHeight > z[i].clientHeight + 1).length;
+    /* anderen Markt wählen: geht weiter; zurück zeigt den neuen Markt, nicht die Liste */
+    const ziel = z.find((b) => !/\btrue\b/.test(b.getAttribute("aria-pressed") || "")); e.zielName = ziel.querySelector("strong").textContent; ziel.click(); await w(300);
+    e.weiter = !/Markt$/.test(schritt());
+    [...ov().querySelectorAll(".as-fuss button")].find((b) => /Zurück/.test(b.textContent)).click(); await w(300);
+    e.karte2 = (ov().querySelector("[data-marktgewaehlt]") || {}).textContent || "";
+    return e;
+  });
+  await a.zu();
+  pruefe(/Markt$/.test(r.schritt) && r.karte.indexOf(r.name) >= 0 && r.listeZu, "Gewählter Markt: " + JSON.stringify(r));
+  pruefe(r.listeAuf && r.zeilen > 1 && r.ueberlappt === 0, "Liste: " + JSON.stringify(r));
+  pruefe(r.weiter && r.karte2.indexOf(r.zielName) >= 0, "Anderer Markt: " + JSON.stringify(r));
+});
+
 test("Zugänge: mehrere Benutzer je Regelung – anlegen, entfernen mit Rückfrage, speichern, neu laden; Verlauf ohne Werte; Kunde/Präsentation sehen nichts; altes Paar bleibt", async () => {
   const a = await oeffnen(KONTEN.admin, { handy: true });
   const r = await a.seite.evaluate(async () => {
