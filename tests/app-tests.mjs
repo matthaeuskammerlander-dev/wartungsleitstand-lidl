@@ -9141,6 +9141,39 @@ test("Prüfbuch-Fotos mehrerer Bücher: vorgewählt nur sicher dieses Buch (KI-B
 /* Inhaber 06.10.2026: Anlagen-Karten im Markt einklappbar, am Handy zu („sonst muss man so weit scrollen“); „Beim Zurückspringen
    sollte es aber offen bleiben. Erst nachdem man lange nicht reingeschaut hat, wieder schließen.“ */
 
+/* Inhaber 31.10.2026 (Krems): „Tobias wollte nachsehen, wo die Regelung ist – nirgends direkt auslesbar“ */
+test("Wo steht was: Außengeräte, Absicherung, Regelung und Prüfbuch stehen als eigene Zeile auf der Anlagenkarte (Markt, Reiter Anlagen, Anlagenauswahl im Protokoll)", async () => {
+  const a = await oeffnen(KONTEN.techniker, { handy: true });
+  const r = await a.seite.evaluate(async () => {
+    const x = window.__t.x, w = (ms) => new Promise((f) => setTimeout(f, ms)), erg = {};
+    const oben = () => [...document.querySelectorAll(".assistent")].pop();
+    x("posById.TP1.ortAussen='Dach Filiale'; posById.TP1.ortStrom='Technikraum vorne, von außen'; posById.TP1.ortRegelung='Büro'; posById.TP1.pruefbuch='ja'; posById.TP1.ortPruefbuch=PRUEFBUCH_ORT; posById.TP1.regelung='Daikin iTM'; indexNeuAufbauen(); 1");
+    const d = x("anlageDaten")(x("posById.TP1"));
+    erg.orte = x("anlageOrte")(d);
+    erg.kurzOhne = x("anlageKurz")(d, true);
+    erg.kurzMit = x("anlageKurz")(d);
+    /* Markt: eigene Zeile in der aufgeklappten Karte */
+    x("ansichtenSchliessen(); marktAnsicht('TS1'); 1"); await w(500);
+    const k = oben().querySelector(".akarte"); k.querySelector(".ak-kopf").click(); await w(100);
+    const z = k.querySelector("[data-orte]");
+    erg.markt = z ? z.textContent : "";
+    erg.marktSichtbar = z ? getComputedStyle(z).display !== "none" && z.getBoundingClientRect().height > 0 : false;
+    /* ohne Regelung („keine eigene Regelung“) fällt nur der Regelungs-Ort weg */
+    x("posById.TP1.regelung=OHNE_REGELUNG; indexNeuAufbauen(); 1");
+    erg.ohneRegelung = x("anlageOrte")(x("anlageDaten")(x("posById.TP1")));
+    x("posById.TP1.regelung='Daikin iTM'; indexNeuAufbauen(); 1");
+    return erg;
+  });
+  pruefe(/Außengeräte: Dach Filiale/.test(r.orte) && /Absicherung: Technikraum vorne, von außen/.test(r.orte) && /Regelung: Büro/.test(r.orte) && /Prüfbuch: Büro Filiale/.test(r.orte), "Zeile unvollständig: " + r.orte);
+  pruefe(!/Außengeräte:/.test(r.kurzOhne) && !/Technikordner/.test(r.kurzOhne) && /Prüfbuch/.test(r.kurzOhne), "Kurzfassung ohne Orte zeigt sie doch: " + r.kurzOhne);
+  pruefe(/Außengeräte: Dach Filiale/.test(r.kurzMit), "Kurzfassung mit Orten (Verlauf, Druck) verlor die Außengeräte: " + r.kurzMit);
+  pruefe(/📍/.test(r.markt) && /Regelung: Büro/.test(r.markt) && r.marktSichtbar, "Markt-Karte ohne sichtbare Zeile „Wo steht was“: " + r.markt);
+  pruefe(!/Regelung:/.test(r.ohneRegelung) && /Absicherung:/.test(r.ohneRegelung), "ohne eigene Regelung falsch: " + r.ohneRegelung);
+  if (process.env.VORSCHAU) await a.seite.screenshot({ path: join(process.env.VORSCHAU, "wo-steht-was.png"), fullPage: false });
+  pruefe(!a.fehler.length, "Laufzeitfehler: " + a.fehler.join("; "));
+  await a.zu();
+});
+
 test("Anlagen-Karten: im Markt – am Handy eingeklappt mit Kurzinfo, bleiben offen beim Zurückkommen, nach langer Zeit wieder zu, Sprünge klappen auf", async () => {
   const a = await oeffnen(KONTEN.techniker, { handy: true });
   const r = await a.seite.evaluate(async () => {

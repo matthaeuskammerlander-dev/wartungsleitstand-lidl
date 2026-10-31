@@ -504,6 +504,9 @@ App deshalb zusätzlich:
   eines gibt – das Prüfbuch. Aus einer Liste der üblichen Orte (Technikraum
   hinten/vorne, von innen oder außen, Dachboden, Dach Filiale, Dach Backshop,
   Büro, Sozialraum, Pfandraum, Backshop, Lager, IT-Raum) oder frei eingetippt.
+  Was eingetragen ist, steht als eigene Zeile „📍 …“ direkt auf der
+  Anlagenkarte (Markt, Reiter Anlagen, Anlagenauswahl im Protokoll) – man
+  muss dafür nicht in „Anlagendaten prüfen“ hineingehen.
 - Zugang zur Regelung: Adresse bzw. Link, Benutzername, Passwort — erscheint
   nur, wenn „Fernzugriff durch UKT" auf **ja** steht
 - Typenschild: Hersteller, Modell, Seriennummer (freiwillig)

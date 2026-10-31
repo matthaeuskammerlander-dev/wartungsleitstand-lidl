@@ -6882,7 +6882,8 @@ function pausiertBox(p){
   var nurMarkt=!anlagePausiert(p) && marktPausiert(byId[p.standortId]);
   var b=el('<div class="posbox" style="opacity:.75"><div class="rowflex" style="justify-content:space-between;gap:8px">'+
     '<strong style="font-size:14px">'+esc(anlagenName(d))+"</strong>"+pill("pausiert")+"</div>"+
-    '<div class="muted" style="font-size:12.5px">'+esc([nurMarkt?"Markt zur Zeit nicht betreut":"", d.pausiertGrund&&!nurMarkt?"Grund: "+d.pausiertGrund:"", anlageKurz(d)].filter(Boolean).join(" · ")||"Keine Termine, bis die Anlage in der Verwaltung wieder auf „in Betrieb“ steht.")+"</div>"+
+    '<div class="muted" style="font-size:12.5px">'+esc([nurMarkt?"Markt zur Zeit nicht betreut":"", d.pausiertGrund&&!nurMarkt?"Grund: "+d.pausiertGrund:"", anlageKurz(d,true)].filter(Boolean).join(" · ")||"Keine Termine, bis die Anlage in der Verwaltung wieder auf „in Betrieb“ steht.")+"</div>"+
+    anlageOrteHtml(d, "font-size:12.5px")+
     '<div class="rowflex" style="gap:6px"><button class="btn ghost sm" type="button">Historie der Anlage</button>'+
       /* Admins: gleich zum Status in der Verwaltung (Markt bzw. Anlage) */
       (verwaltungDarf() && !demo()?'<button class="btn ghost sm" type="button" data-a="verw">In der Verwaltung ändern</button>':"")+"</div></div>");
@@ -7653,7 +7654,9 @@ function anlagenBloecke(s, host){
         (l.length&&!nurLesen()?'<span style="font-size:12.5px;color:var(--warn)">Fehlt: '+esc(l.slice(0,2).map(function(f){ return f.l; }).join(", ")+(l.length>2?" +"+(l.length-2):""))+"</span>":"")+"</span>"+
       '<span class="muted ak-lang" style="font-size:12.5px">'+a.termine.length+" Termin"+(a.termine.length===1?"":"e")+" im Jahr</span></div>"+
       '<div class="ak-koerper stack" style="gap:6px">'+
-      '<div style="font-size:13px">'+(anlageKurz(d)?esc(anlageKurz(d)):'<span class="muted">Anlagendaten noch nicht erfasst</span>')+"</div>"+
+      '<div style="font-size:13px">'+(anlageKurz(d,true)?esc(anlageKurz(d,true)):'<span class="muted">Anlagendaten noch nicht erfasst</span>')+"</div>"+
+      /* Wo steht was – eigene Zeile, im Einsatz sofort sichtbar (Inhaber 31.10.2026) */
+      anlageOrteHtml(d)+
       /* die Inbetriebnahme gehört der Anlage – oben bei den Anlagendaten, nicht nur unten je Termin */
       '<div style="font-size:13px">'+(ib ? 'Inbetriebnahme <strong class="mono">'+dfmt(ib)+"</strong>"
         : '<strong style="color:var(--warn)">Inbetriebnahme fehlt</strong>')+"</div>"+
@@ -8891,8 +8894,10 @@ function anlageWertText(f, w){
   if(f.t==="geheim") return "••••••••";
   return String(w);
 }
-/* kurze Zusammenfassung für Karten, Detailansicht und Druck */
-function anlageKurz(a){
+/* kurze Zusammenfassung für Karten, Detailansicht und Druck.
+   ohneOrte: Standorte weglassen – die Karte zeigt sie in einer eigenen Zeile
+   (anlageOrte), damit sie im Einsatz sofort ins Auge fallen. */
+function anlageKurz(a, ohneOrte){
   var t=[];
   if(a.bauart) t.push(a.bauart);
   if(a.kreislaeufe) t.push(a.kreislaeufe+" Kältekreis"+(+a.kreislaeufe===1?"":"e"));
@@ -8900,14 +8905,32 @@ function anlageKurz(a){
   if(kgJeKreis(a)) t.push("je Kreis "+kgKreiseText(a.kgKreise));   /* HJW ab 30 kg je Kreis (Inhaber 06.10.2026) */
   if(!leerWert(a.leistungKw)) t.push(String(a.leistungKw).replace(".",",")+" kW");
   var co2=co2Tonnen(a); if(co2) t.push(String(co2).replace(".",",")+" t CO₂e");
-  if(a.pruefbuch==="ja") t.push("Prüfbuch"+(a.ortPruefbuch?" ("+a.ortPruefbuch+")":""));
+  if(a.pruefbuch==="ja") t.push("Prüfbuch"+(a.ortPruefbuch&&!ohneOrte?" ("+a.ortPruefbuch+")":""));
   if(istWassergekuehlt(a) && (a.rkUkt||a.pumpeUkt))
     t.push("RK "+(a.rkUkt==="ja"?"UKT":"fremd")+" · Pumpen "+(a.pumpeUkt==="ja"?"UKT":"fremd"));
   if(a.regelung) t.push(a.regelung===OHNE_REGELUNG ? "ohne eigene Regelung"
     : a.regelung+(a.regelungFirma?" ("+regelungFirmaText(a)+")":"")+
       (a.fernzugriff?" · Fernzugriff von UKT "+a.fernzugriff:""));
-  if(a.ortAussen) t.push("Außengeräte: "+a.ortAussen);
+  if(a.ortAussen && !ohneOrte) t.push("Außengeräte: "+a.ortAussen);
   return t.join(" · ");
+}
+/* „Wo steht was“ – Außengeräte, elektrische Absicherung, Regelung, Prüfbuch.
+   Steht als eigene Zeile auf der Anlagenkarte (Inhaber 31.10.2026, Krems:
+   „Tobias wollte nachsehen, wo die Regelung ist – nirgends direkt auslesbar,
+   erst unter Anlagendaten prüfen“). Leer, solange nichts erfasst ist –
+   fehlende Angaben nennt ohnehin die Zeile „Fehlt“. */
+function anlageOrte(a){
+  var t=[];
+  if(a.ortAussen) t.push("Außengeräte: "+a.ortAussen);
+  if(a.ortStrom) t.push("Absicherung: "+a.ortStrom);
+  if(a.ortRegelung && a.regelung!==OHNE_REGELUNG) t.push("Regelung: "+a.ortRegelung);
+  if(a.pruefbuch==="ja" && a.ortPruefbuch) t.push("Prüfbuch: "+(a.ortPruefbuch===PRUEFBUCH_ORT_ALT?PRUEFBUCH_ORT:a.ortPruefbuch));
+  return t.join(" · ");
+}
+/* dieselbe Zeile als HTML für die Karten – mit 📍, damit man sie im Einsatz sofort findet */
+function anlageOrteHtml(a, stil){
+  var o=anlageOrte(a); if(!o) return "";
+  return '<div data-orte style="font-size:13px'+(stil?";"+stil:"")+'" title="Wo steht was">📍 '+esc(o)+"</div>";
 }
 
 /* Termine prüfen: Inbetriebnahme der Anlage, je Termin Kürzel und
@@ -17812,7 +17835,8 @@ function protoTeilAnlagen(P){
     var k=el('<div class="akarte">'+
       '<div class="rowflex" style="justify-content:space-between;gap:8px"><strong>'+esc(name)+"</strong>"+
         (neu?'<span class="tag st">neu erfasst</span>':markiert?'<span class="tag f30">wird aktualisiert</span>':"")+"</div>"+
-      '<div class="muted" style="font-size:12.5px">'+esc(anlageKurz(w)||"noch keine Angaben")+"</div>"+
+      '<div class="muted" style="font-size:12.5px">'+esc(anlageKurz(w,true)||"noch keine Angaben")+"</div>"+
+      anlageOrteHtml(w, "font-size:12.5px")+
       (neu && stoer ? '<div class="muted" style="font-size:12.5px" data-stoerneu>Wird <strong>ohne Wartungstermin</strong> angelegt (zur Zeit nicht gewartet) – ob UKT sie wartet, entscheidet das Büro.</div>' : "")+
       '<div class="rowflex" style="justify-content:space-between;gap:8px;align-items:center">'+
         '<span style="font-size:12.5px;color:'+(l.length?"var(--warn)":"var(--good)")+'">'+
@@ -17928,7 +17952,8 @@ function protoTeilAnlagen(P){
         var b=el('<button class="btn ghost" type="button" style="text-align:left;display:block;width:100%;margin-top:8px">'+
           "<strong>"+esc(anlagenName(d))+"</strong>"+(cb.checked?' <span class="tag">angehakt</span>':"")+
           (anlageIstNeu(an)?"":' <span class="tag f30">alte Liste</span>')+
-          '<br><span style="font-size:13px">'+esc(anlageKurz(d)||"noch keine Angaben")+"</span></button>");
+          '<br><span style="font-size:13px">'+esc(anlageKurz(d,true)||"noch keine Angaben")+"</span>"+
+          (anlageOrte(d)?'<br><span style="font-size:13px">📍 '+esc(anlageOrte(d))+"</span>":"")+"</button>");
         b.onclick=function(){ ende(cb.dataset.anlage); };
         v.inhalt.appendChild(b);
       });
